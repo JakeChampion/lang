@@ -10196,3 +10196,42 @@ function main(): i32 {
 		t.Errorf("Self in a default's body should be the impl type: %v", err)
 	}
 }
+
+// A parametric impl at a tuple trait argument (`It[(i32, T)]`) reads the
+// impl's own parameter inside the tuple as a parameter, in its inherited
+// defaults as in its written methods.
+func TestTupleTraitArgumentReadsImplParams(t *testing.T) {
+	src := `trait It[T] {
+  function next(self: Self): Option[(T, Self)];
+  function first_or(self: Self, d: T): T {
+    match (self.next()) {
+      Some(t) => { return t.0; },
+      None => { return d; }
+    }
+  }
+}
+struct Arr[T] { xs: T[], idx: i32 }
+impl[T] It[T] for Arr[T] {
+  function next(self: Arr[T]): Option[(T, Arr[T])] {
+    if (self.idx >= self.xs.len()) { return None; }
+    return Some((self.xs[self.idx], Arr { xs: self.xs, idx: self.idx + 1 }));
+  }
+}
+struct Numbered[I, T] { it: I, at: i32 }
+impl[I: It[T], T] It[(i32, T)] for Numbered[I, T] {
+  function next(self: Numbered[I, T]): Option[((i32, T), Numbered[I, T])] {
+    match (self.it.next()) {
+      Some(t) => { return Some(((self.at, t.0), Numbered[I, T] { it: t.1, at: self.at + 1 })); },
+      None => { return None; }
+    }
+  }
+}
+function main(): i32 {
+  let n: Numbered[Arr[string], string] = Numbered[Arr[string], string] { it: Arr { xs: ["a"], idx: 0 }, at: 0 };
+  let p: (i32, string) = n.first_or((9, "none"));
+  return p.0;
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("a tuple trait argument should read the impl's parameters: %v", err)
+	}
+}

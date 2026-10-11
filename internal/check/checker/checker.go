@@ -5328,6 +5328,12 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			if !ok && m.Body != nil && (len(m.TypeParams) > 0 || wrapsSelf(m.Result)) {
 				continue
 			}
+			// A per-call clone of a method generic in its own parameters is
+			// concrete where the trait is not; the generic was checked before
+			// monomorphisation.
+			if ok && len(m.TypeParams) > 0 && !slices.ContainsFunc(append(append([]ast.Type(nil), sig.Params...), sig.Result), containsParamType) {
+				continue
+			}
 			if !ok {
 				c.errfCode(impl.P, "E021", "%s does not implement %s: missing method %q", demangle(typeName), demangle(impl.Trait), m.Name)
 				conforms = false
@@ -10751,6 +10757,29 @@ func normalizeParamRefs(t ast.Type, tpSet map[string]bool) ast.Type {
 		}
 		b.Args = na
 		return b
+	case ast.EnumType:
+		na := make([]ast.Type, len(b.Args))
+		for i := range b.Args {
+			na[i] = normalizeParamRefs(b.Args[i], tpSet)
+		}
+		b.Args = na
+		return b
+	case ast.TupleType:
+		out := ast.TupleType{Elems: make([]ast.Type, len(b.Elems))}
+		for i := range b.Elems {
+			out.Elems[i] = normalizeParamRefs(b.Elems[i], tpSet)
+		}
+		return out
+	case ast.ArrayType:
+		return ast.ArrayType{Elem: normalizeParamRefs(b.Elem, tpSet)}
+	case ast.SliceType:
+		return ast.SliceType{Elem: normalizeParamRefs(b.Elem, tpSet)}
+	case *ast.FuncType:
+		out := &ast.FuncType{Result: normalizeParamRefs(b.Result, tpSet), ParamOwn: b.ParamOwn}
+		for _, p := range b.Params {
+			out.Params = append(out.Params, normalizeParamRefs(p, tpSet))
+		}
+		return out
 	}
 	return t
 }

@@ -11469,6 +11469,9 @@ function group_tokens(tokens: string[], at0: i32, n: i32, spare0: i32, structs: 
 // the first that names a declared struct or enum, with that type's arguments
 // grouped after it where it is generic; else the one token.
 function take_piece(tokens: string[], at: i32, spare: i32, structs: StructDecl[], enums: EnumDecl[]): Grouped {
+  if (tokens[at] == "tup") {
+    return take_tuple(tokens, at, structs, enums);
+  }
   let k: i32 = spare;
   while (k >= 0) {
     let end: i32 = at + k + 1;
@@ -11486,6 +11489,34 @@ function take_piece(tokens: string[], at: i32, spare: i32, structs: StructDecl[]
     k = k - 1;
   }
   return Grouped { pieces: [tokens[at]], at: at + 1 };
+}
+
+// A tuple argument from its `tup` token to the matching `put`, each element
+// grouped as an argument is.
+function take_tuple(tokens: string[], at: i32, structs: StructDecl[], enums: EnumDecl[]): Grouped {
+  let close: i32 = at + 1;
+  let depth: i32 = 1;
+  while (close < tokens.len() && depth > 0) {
+    if (tokens[close] == "tup") {
+      depth = depth + 1;
+    } else if (tokens[close] == "put") {
+      depth = depth - 1;
+    }
+    if (depth > 0) {
+      close = close + 1;
+    }
+  }
+  let elems: string = "";
+  let j: i32 = at + 1;
+  while (j < close) {
+    let e: Grouped = take_piece(tokens, j, close - j - 1, structs, enums);
+    if (elems.len() > 0) {
+      elems = elems + ", ";
+    }
+    elems = elems + e.pieces[0];
+    j = e.at;
+  }
+  return Grouped { pieces: ["(" + elems + ")"], at: close + 1 };
 }
 
 // How many type parameters the declared struct or enum `name` takes, or -1
@@ -11525,7 +11556,9 @@ function join_dunder(xs: string[], from: i32, to: i32): string {
 // that is already bracket-free (every existing case — a primitive, a bare
 // struct, or a nested struct clone like `Box__i32`) passes through unchanged, so
 // this is a no-op on the pre-existing instantiations and only reshapes the
-// generic-struct-of-generic-enum combo (#3694). The raw bracketed key is kept
+// generic-struct-of-generic-enum combo (#3694). A tuple argument is bracketed
+// by `tup` and `put` tokens (`(i32, i64)` → `tup__i32__i64__put`), which
+// take_piece reads back as one argument. The raw bracketed key is kept
 // for field-type SUBSTITUTION (so the enum pass still sees `Opt[i32]` to clone);
 // only the emitted NAME is sanitized.
 pub function sanitize_key(s: string): string {
@@ -11535,6 +11568,10 @@ pub function sanitize_key(s: string): string {
     let ch: u8 = s[i];
     if (ch == b'[') {
       out = out + "__";
+    } else if (ch == b'(') {
+      out = out + "tup__";
+    } else if (ch == b')') {
+      out = out + "__put";
     } else if (ch == b']') {} else if (ch == b',') {
       out = out + "__";
     } else if (ch == b';') {  // the multi-param key separator
@@ -12849,6 +12886,19 @@ function clone_recv_ret_of(funcs: MFns, tyname: string, method: string): string 
   return "";
 }
 
+// generic_base names the generic struct an instantiated spelling (`Box[i32]`)
+// or its clone (`Box__i32`) is of, or "".
+function generic_base(t: string, funcs: MFns): string {
+  if (first_bracket(t) > 0 && slice_unchecked(t, t.len() - 1, t.len()) == "]") {
+    return strip_struct_base(t);
+  }
+  let owner: InstStruct = inst_struct(t, funcs.structs, funcs.enums);
+  if (owner.at >= 0 && funcs.structs[owner.at].type_params.len() > 0) {
+    return funcs.structs[owner.at].name;
+  }
+  return "";
+}
+
 // stamped_type reads the checker's tag off an expression the walk could not
 // type (docs/TYPED-IR-REWRITE.md), admitted only where the tag and the declared
 // spelling coincide: a scalar, a string, or an array or view of one. A nominal
@@ -13105,8 +13155,8 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           if (smm_any(funcs, cfa.field)) {
             srt = mono_infer(cfa.obj, env, funcs);
           }
-          if (first_bracket(srt) > 0 && slice_unchecked(srt, srt.len() - 1, srt.len()) == "]") {
-            let sgi: i32 = bg_find(funcs, smm_name(strip_struct_base(srt), cfa.field));
+          if (generic_base(srt, funcs).len() > 0) {
+            let sgi: i32 = bg_find(funcs, smm_name(generic_base(srt, funcs), cfa.field));
             if (sgi >= 0) {
               let sargs: ast.Expr[] = [cfa.obj];
               let sk: i32 = 0;
@@ -13406,14 +13456,15 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
           // register_struct_method_generics. The receiver pins the
           // struct's vars and the arguments pin the method's own, so
           // folding the receiver into arg0 gives the worklist a fully
-          // concrete key. Struct mono runs AFTER this pass, so the
-          // receiver still reads as the generic `Box[i32]` spelling here.
+          // concrete key. The receiver reads as the generic `Box[i32]`
+          // spelling, or as the clone `Box__i32` in a method the struct
+          // pass is cloning.
           let srty: string = "";
           if (smm_any(funcs, fac.field)) {
             srty = mono_infer(fac.obj, env, funcs);
           }
-          if (first_bracket(srty) > 0 && slice_unchecked(srty, srty.len() - 1, srty.len()) == "]") {
-            let smn: string = smm_name(strip_struct_base(srty), fac.field);
+          if (generic_base(srty, funcs).len() > 0) {
+            let smn: string = smm_name(generic_base(srty, funcs), fac.field);
             let smg: i32 = bg_find(funcs, smn);
             if (smg >= 0) {
               let sraw: ast.Expr[] = [fac.obj];
