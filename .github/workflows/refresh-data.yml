@@ -3,11 +3,11 @@ name: Refresh bundled data
 # The standard library bundles tables taken from upstream sources: the
 # public suffix list (std/publicsuffix), Mozilla's root store
 # (std/tls/mozilla), and the IANA zones and Unicode tables that follow the
-# pinned Go toolchain (std/tz, std/unicode). Each goes stale between
-# regenerations. This runs scripts/refresh-data for every source once a
-# week and, where the output changed, opens a pull request on a branch of
-# the source's name, updating that pull request on later weeks until it
-# merges. The pull request then runs the ordinary CI, where a change
+# pinned Go toolchain (std/tz, std/unicode); and the toolchain itself is
+# pinned in mise.toml. Each goes stale between bumps by hand. This runs
+# scripts/refresh-data for every source once a week and, where the output
+# changed, opens a pull request on a branch of the source's name, updating
+# that pull request on later weeks until it merges. The pull request then runs the ordinary CI, where a change
 # upstream that breaks a test shows up as a red lane rather than landing
 # unseen; auto-merge is asked for, so one the repository allows to merge
 # itself lands once its checks pass.
@@ -32,6 +32,7 @@ on:
           - publicsuffix
           - roots
           - toolchain-tables
+          - toolchain
 
 permissions:
   contents: write
@@ -49,7 +50,7 @@ jobs:
         # Every source on the schedule and on an `all` dispatch, the one
         # named otherwise. Both arms of the ternary are non-empty strings,
         # which is what makes the `&& ||` form safe here.
-        source: ${{ fromJSON((github.event_name == 'schedule' || inputs.source == 'all') && '["publicsuffix", "roots", "toolchain-tables"]' || format('["{0}"]', inputs.source)) }}
+        source: ${{ fromJSON((github.event_name == 'schedule' || inputs.source == 'all') && '["publicsuffix", "roots", "toolchain-tables", "toolchain"]' || format('["{0}"]', inputs.source)) }}
     name: refresh-${{ matrix.source }}
     runs-on: ubuntu-latest
     timeout-minutes: 30

@@ -15,6 +15,11 @@
 #                     zones its zoneinfo.zip holds (cmd/tzdatagen -> std/tz)
 #                     and the Unicode tables of its unicode package plus the
 #                     UCD files of that release (cmd/unicodegen -> std/unicode)
+#   toolchain         the pinned toolchain itself: every tool in mise.toml to
+#                     its latest release (mise.lock with it), the WASI adapter
+#                     kept at wasmtime's version, the mise release the repo
+#                     runs (FERN_MISE_VERSION and every workflow's pin), then
+#                     the tables above regenerated under the new Go
 #   all               every source above, in that order
 #
 # Each source leaves its committed inputs and its generated output changed
@@ -60,6 +65,35 @@ same_but_date() {
   cmp -s <(git show "HEAD:$1" | sed -E "$undated") <(sed -E "$undated" "$1")
 }
 
+toolchain() {
+  echo "== toolchain"
+  mise upgrade --bump
+  # The adapter is an http: tool mise cannot look up; it ships from the
+  # wasmtime release and must stay at its version.
+  local wasmtime
+  wasmtime="$(sed -nE 's/^wasmtime = "([^"]+)"$/\1/p' mise.toml)"
+  sed -i -E "s|^(\"http:wasi-adapter\" = \{ version = \")[^\"]+|\1$wasmtime|" mise.toml
+  mise lock
+  pin_mise_release "$(curl -fsSL --max-time 60 https://mise.jdx.dev/VERSION)"
+  mise install
+  eval "$(scripts/toolchain-env)"
+  toolchain_tables
+  git status --short
+}
+
+pin_mise_release() {
+  # pin_mise_release VERSION — mise.toml's FERN_MISE_VERSION and every
+  # jdx/mise-action `version:` under .github, which sourcelint keeps equal.
+  local current
+  current="$(sed -nE 's/^FERN_MISE_VERSION = "([^"]+)"$/\1/p' mise.toml)"
+  if [ -z "$current" ] || [ "$current" = "$1" ]; then
+    return 0
+  fi
+  echo "mise $current -> $1"
+  sed -i "s/^FERN_MISE_VERSION = \"$current\"$/FERN_MISE_VERSION = \"$1\"/" mise.toml
+  grep -rl "version: $current" .github | xargs -r sed -i "s/version: $current$/version: $1/"
+}
+
 toolchain_tables() {
   echo "== toolchain-tables"
   go run ./cmd/tzdatagen
@@ -80,9 +114,10 @@ case "${1:-}" in
   publicsuffix) publicsuffix ;;
   roots) roots ;;
   toolchain-tables) toolchain_tables ;;
-  all) publicsuffix; roots; toolchain_tables ;;
+  toolchain) toolchain ;;
+  all) publicsuffix; roots; toolchain_tables; toolchain ;;
   *)
-    echo "usage: scripts/refresh-data publicsuffix|roots|toolchain-tables|all" >&2
+    echo "usage: scripts/refresh-data publicsuffix|roots|toolchain-tables|toolchain|all" >&2
     exit 2
     ;;
 esac
