@@ -23,7 +23,7 @@ import (
 // that is what it is: read at emit time, changing the module the backend
 // produces.
 
-var cliCensusRe = regexp.MustCompile(`leakcheck: allocs=(-?\d+) frees=(-?\d+) live_bytes=(-?\d+)\n`)
+var cliCensusRe = regexp.MustCompile(`leakcheck: allocs=(-?\d+) frees=(-?\d+) live_bytes=(-?\d+)( from=exit)?\n`)
 
 // buildCommandModule compiles src to a preview-1 command module with the
 // given FERN_* settings on the compiler process, and returns the path.
