@@ -1430,10 +1430,17 @@ function claimed_after(c: Claims, slots: i32, pos: i32): boolean {
 // their join. The held box stays in the donor's own local
 // until `build_at` writes the token slot, so a pairing on the way, whose token
 // is written and spent within its block, is unaffected.
-struct Carry { from: i32[], drop_at: i32[], held: i32[], to: i32[], build_at: i32[], donor: i32[], exit_from: i32[], exit_to: i32[], dropped: i32[] }
+//
+// A predecessor of the construction's block in which the donor dies as a box
+// of another count is a null edge (`null_from` to `null_to`, for `nulled`):
+// that block drops the donor where it dies, the edge zeroes its local, and
+// the construction's token test reads the box or null by the path taken. So
+// a donor dying in match arms of different counts still serves a
+// construction past their join on the paths whose box fits.
+struct Carry { from: i32[], drop_at: i32[], held: i32[], to: i32[], build_at: i32[], donor: i32[], exit_from: i32[], exit_to: i32[], dropped: i32[], null_from: i32[], null_to: i32[], nulled: i32[] }
 
 function no_carry(): Carry {
-  return Carry { from: [], drop_at: [], held: [], to: [], build_at: [], donor: [], exit_from: [], exit_to: [], dropped: [] };
+  return Carry { from: [], drop_at: [], held: [], to: [], build_at: [], donor: [], exit_from: [], exit_to: [], dropped: [], null_from: [], null_to: [], nulled: [] };
 }
 
 // The first construction in `b` claiming `slots`, or -1.
@@ -1462,19 +1469,26 @@ function last_claim(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): i32 {
 }
 
 // The constructions a box can be carried to from a set of holding blocks, by
-// block id, and the way to each.
-struct Routes { targets: i32[], ways: i32[][] }
+// block id, the way to each, and the null edges into each: the predecessors
+// of the construction's block in which the donor dies as a box of another
+// count, so arrive with it dropped.
+struct Routes { targets: i32[], ways: i32[][], nulls: i32[][] }
 
 // The per-function facts every route search reads: each block's position by
-// id and the slot counts its constructions claim.
-struct RouteGraph { at: i32[], claims: i32[][] }
+// id, the slot counts its constructions claim, and the values dying in it
+// after its last construction.
+struct RouteGraph { at: i32[], claims: i32[][], dies: i32[][] }
 
-function route_graph(f: ssasem.Func, p: ssaunits.Plan): RouteGraph {
+function route_graph(f: ssasem.Func, p: ssaunits.Plan, dying: Dying[]): RouteGraph {
   let claims: i32[][] = [];
-  for b in f.graph.blocks {
-    claims = claims.append(block_claims(f, p, b).counts);
+  let dies: i32[][] = [];
+  let k: i32 = 0;
+  while (k < f.graph.blocks.len()) {
+    claims = claims.append(block_claims(f, p, f.graph.blocks[k]).counts);
+    dies = dies.append(dying[k].values);
+    k = k + 1;
   }
-  return RouteGraph { at: ssa.block_positions(f.graph), claims: claims };
+  return RouteGraph { at: ssa.block_positions(f.graph), claims: claims, dies: dies };
 }
 
 // Whether the block at position `k` builds something claiming `slots`.
@@ -1490,7 +1504,7 @@ struct RouteMarks { seen: i32[], way: i32[], stamp: i32 }
 
 struct Searched { routes: Routes, marks: RouteMarks }
 
-struct Way { ok: boolean, blocks: i32[], marks: RouteMarks }
+struct Way { ok: boolean, blocks: i32[], nulls: i32[], marks: RouteMarks }
 
 function route_marks(n: i32): RouteMarks {
   let seen: i32[] = [];
@@ -1505,7 +1519,7 @@ function route_marks(n: i32): RouteMarks {
 // Where a box of `slots` held in `sources` can be carried: each block claiming
 // that count first on some path out of the sources whose way is entered from
 // nowhere else.
-function carry_routes(f: ssasem.Func, g: RouteGraph, sources: i32[], own m: RouteMarks, slots: i32): Searched {
+function carry_routes(f: ssasem.Func, g: RouteGraph, sources: i32[], own m: RouteMarks, slots: i32, d: i32): Searched {
   let ahead: i32 = m.stamp + 1;
   let seen: i32[] = m.seen;
   let way: i32[] = m.way;
@@ -1534,12 +1548,12 @@ function carry_routes(f: ssasem.Func, g: RouteGraph, sources: i32[], own m: Rout
     }
   }
   m = RouteMarks { seen: seen, way: way, stamp: ahead };
-  let found: Routes = Routes { targets: [], ways: [] };
+  let found: Routes = Routes { targets: [], ways: [], nulls: [] };
   for target in builds {
-    let w: Way = way_to(f, g, sources, m, ahead, target, slots);
+    let w: Way = way_to(f, g, sources, m, ahead, target, slots, d);
     m = w.marks;
     if (w.ok) {
-      found = Routes { targets: found.targets.append(target), ways: found.ways.append(w.blocks) };
+      found = Routes { targets: found.targets.append(target), ways: found.ways.append(w.blocks), nulls: found.nulls.append(w.nulls) };
     }
   }
   return Searched { routes: found, marks: m };
@@ -1549,13 +1563,16 @@ function carry_routes(f: ssasem.Func, g: RouteGraph, sources: i32[], own m: Rout
 // search from `sources`. The walk takes the predecessors of the target and of
 // each block on the way, marked `way` at a fresh stamp. Each must be a source,
 // on the way, or a block ahead claiming nothing of the count, which joins the
-// way; any other enters the way from elsewhere.
-function way_to(f: ssasem.Func, g: RouteGraph, sources: i32[], own m: RouteMarks, ahead: i32, target: i32, slots: i32): Way {
+// way; any other enters the way from elsewhere. A predecessor of the target
+// itself may instead be a null edge: a block where the donor dies as a box
+// of another count, which drops it and arrives with its local null.
+function way_to(f: ssasem.Func, g: RouteGraph, sources: i32[], own m: RouteMarks, ahead: i32, target: i32, slots: i32, d: i32): Way {
   let stamp: i32 = m.stamp + 1;
   let seen: i32[] = m.seen;
   let way: i32[] = m.way;
   let between: i32[] = [];
-  let work: i32[] = f.graph.blocks[g.at[target]].preds;
+  let entry: Preds = split_preds(f, g, sources, target, slots, d);
+  let work: i32[] = entry.carrying;
   let next: i32 = 0;
   while (next < work.len()) {
     let id: i32 = work[next];
@@ -1565,7 +1582,7 @@ function way_to(f: ssasem.Func, g: RouteGraph, sources: i32[], own m: RouteMarks
       continue;
     }
     if (seen[k] != ahead || claims_slots(g, k, slots)) {
-      return Way { ok: false, blocks: [], marks: RouteMarks { seen: seen, way: way, stamp: stamp } };
+      return Way { ok: false, blocks: [], nulls: [], marks: RouteMarks { seen: seen, way: way, stamp: stamp } };
     }
     between = between.append(id);
     way = way.with(k, stamp);
@@ -1573,7 +1590,31 @@ function way_to(f: ssasem.Func, g: RouteGraph, sources: i32[], own m: RouteMarks
       work = work.append(pr);
     }
   }
-  return Way { ok: true, blocks: between, marks: RouteMarks { seen: seen, way: way, stamp: stamp } };
+  return Way { ok: true, blocks: between, nulls: entry.nulls, marks: RouteMarks { seen: seen, way: way, stamp: stamp } };
+}
+
+// The target's predecessors, split into the null edges and the rest.
+struct Preds { carrying: i32[], nulls: i32[] }
+
+function split_preds(f: ssasem.Func, g: RouteGraph, sources: i32[], target: i32, slots: i32, d: i32): Preds {
+  let out: Preds = Preds { carrying: [], nulls: [] };
+  for pr in f.graph.blocks[g.at[target]].preds {
+    if (null_edge(f, g, sources, pr, slots, d)) {
+      out = Preds { ...out, nulls: out.nulls.append(pr) };
+    } else {
+      out = Preds { ...out, carrying: out.carrying.append(pr) };
+    }
+  }
+  return out;
+}
+
+// Whether block `id` drops donor `d` as a box of a count other than `slots`
+// after its last construction: not a holding block, and one whose edge into
+// the construction's block brings no box.
+function null_edge(f: ssasem.Func, g: RouteGraph, sources: i32[], id: i32, slots: i32, d: i32): boolean {
+  let k: i32 = g.at[id];
+  return util.index_of_i32(sources, id) < 0 && util.index_of_i32(g.dies[k], d) >= 0
+    && donor_slots(f, f.graph.blocks[k], d) != slots;
 }
 
 // The values that die after position `claim` of `b`, and where each dies, in
@@ -1625,14 +1666,14 @@ function carried_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i3
   if (off) {
     return c;
   }
-  let g: RouteGraph = route_graph(f, p);
-  let marks: RouteMarks = route_marks(f.graph.blocks.len());
   let dying: Dying[] = [];
   let holding: boolean[] = [];
   for b in f.graph.blocks {
     dying = dying.append(dying_after_claims(p, idx, links, b, last_claim(f, p, b)));
     holding = holding.append(false);
   }
+  let g: RouteGraph = route_graph(f, p, dying);
+  let marks: RouteMarks = route_marks(f.graph.blocks.len());
   let bi: i32 = 0;
   while (bi < dying.len()) {
     // One donor leaves a block. The first dying value whose count some
@@ -1648,7 +1689,7 @@ function carried_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i3
         let h: Holds = holds_of(f, dying, holding, bi, d, dying[bi].at[i], slots);
         if (h.blocks.len() > 1 || util.index_of_i32(tried, slots) < 0) {
           tried = tried.append(slots);
-          let found: Searched = carry_routes(f, g, h.blocks, marks, slots);
+          let found: Searched = carry_routes(f, g, h.blocks, marks, slots, d);
           marks = found.marks;
           let before: i32 = c.to.len();
           c = served_by(f, p, g, c, h, found.routes, d);
@@ -1680,6 +1721,7 @@ function served_by(f: ssasem.Func, p: ssaunits.Plan, g: RouteGraph, own c: Carry
     if (util.index_of_i32(c.to, to.id) < 0 && util.index_of_i32(to.insts[at_build].args, d) < 0) {
       targets = targets.append(to.id);
       builds = builds.append(at_build);
+      c = with_null_edges(c, r.nulls[k], to.id, d);
       for id in r.ways[k] {
         inside = inside.append(id);
       }
@@ -1715,6 +1757,33 @@ function served_by(f: ssasem.Func, p: ssaunits.Plan, g: RouteGraph, own c: Carry
   return c;
 }
 
+function with_null_edges(own c: Carry, from: i32[], to: i32, d: i32): Carry {
+  for id in from {
+    c = Carry { ...c, null_from: c.null_from.append(id), null_to: c.null_to.append(to), nulled: c.nulled.append(d) };
+  }
+  return c;
+}
+
+// The donors arriving null over the edge from `from` to `to`: dropped in
+// `from` as boxes of another count, their locals are zeroed on the edge so
+// the construction's token test reads null rather than a freed box.
+function carry_nulls(c: Carry, from: i32, to: i32): i32[] {
+  let out: i32[] = [];
+  let e: i32 = 0;
+  while (e < c.null_from.len()) {
+    if (c.null_from[e] == from && c.null_to[e] == to) {
+      out = out.append(c.nulled[e]);
+    }
+    e = e + 1;
+  }
+  return out;
+}
+
+// Whether some edge into block `to` brings its carried donor null.
+function carry_nullable(c: Carry, to: i32): boolean {
+  return util.index_of_i32(c.null_to, to) >= 0;
+}
+
 // The donors whose ways the edge from `from` to `to` leaves, dropped there.
 function carry_exits(c: Carry, from: i32, to: i32): i32[] {
   let out: i32[] = [];
@@ -1726,6 +1795,13 @@ function carry_exits(c: Carry, from: i32, to: i32): i32[] {
     e = e + 1;
   }
   return out;
+}
+
+// Whether the construction at position `pos` of block `b` is one a carry
+// hands its donor to.
+function carry_held_for(c: Carry, b: i32, pos: i32): boolean {
+  let into: i32 = util.index_of_i32(c.to, b);
+  return into >= 0 && c.build_at[into] == pos;
 }
 
 // The donor held rather than dropped at position `pos` of block `b`, or -1.
@@ -1836,6 +1912,28 @@ function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlo
 // CHILDREN ONLY, which is what makes it the one to call: the box itself is not
 // freed but handed on, and the runtime's mismatch path frees a donor block
 // shallowly, so its children are owed here either way.
+function zero_local(own r: irtables.LowerResult, slot: i32): irtables.LowerResult {
+  r = emit(r, ir.op_const_i32(0));
+  return emit(r, ir.op_store_local(slot));
+}
+
+// A carried donor's token where some edge into the block brought it null:
+// the token is null on that path, and the box's own test on the others.
+function self_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, nullable: boolean): irtables.LowerResult {
+  if (!nullable) {
+    return reuse_token(r, f, donor);
+  }
+  r = emit(r, ir.op_load_local(donor));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_bin("ne", 0, false));
+  r = emit(r, ir.op_if(0));
+  r = reuse_token(r, f, donor);
+  r = emit(r, ir.op_else());
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_store_local(token_slot(f)));
+  return emit(r, ir.op_end());
+}
+
 function reuse_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32): irtables.LowerResult {
   let token: i32 = token_slot(f);
   r = reserve(r, scratch_base(f));
@@ -6975,7 +7073,7 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
       // construction's.
       let kb: i32 = util.index_of_i32(keeps.built, pos);
       if (pairs.selfs[pos] >= 0 && kb < 0) {
-        r = reuse_token(r, f, pairs.selfs[pos]);
+        r = self_token(r, f, pairs.selfs[pos], carry_nullable(carry, b.id) && carry_held_for(carry, b.id, pos));
       }
       if (pairs.builds[pos] >= 0 || pairs.selfs[pos] >= 0) {
         r = reuse_construct(r, f, ins, keeps, kb);
@@ -7057,6 +7155,9 @@ function jump(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], posit
   // A donor dropped here may be the target's phi, which the edge overwrites.
   for left in carry_exits(e.carry, from, target) {
     e = Emit { ...e, r: drop_linked(e.r, left, e.links, f) };
+  }
+  for gone in carry_nulls(e.carry, from, target) {
+    e = Emit { ...e, r: zero_local(e.r, gone) };
   }
   e = Emit { ...e, r: edge(e.r, f, p, e.steps, e.links, from, target, e.at[target]) };
   let dest: i32 = e.ranks[target];
