@@ -3,10 +3,11 @@
 Status: `internal/oracle/ir/array_fusion.go` (#9731) and the primary compiler's
 `compiler/semfuse.fern` (#11072) implement the `map`/`filter` stages
 and `fold`/`reduce` sinks below. The primary compiler also implements `scan`
-as a materializing sink, and `take` and `take_while` as stages that stop
-the loop. This document states what each operator contributes to a
-fused loop, and why composing those contributions gives the guarantee
-`docs/ITERATOR-FUSION-CONTRACT.md` clause 1 asks for.
+as a materializing sink, `take` and `take_while` as stages that stop the
+loop, and `flat_map` as a stage that opens an inner loop. This document
+states what each operator contributes to a fused loop, and why composing
+those contributions gives the guarantee `docs/ITERATOR-FUSION-CONTRACT.md`
+clause 1 asks for.
 
 Written before the pass, because clause 1 is a claim a benchmark cannot
 establish:
@@ -52,10 +53,11 @@ An operator contributes three fragments, any of which may be empty:
 | `step` | once per surviving element | **zero** allocations, no unspecialised call |
 | `finish` | once, after the loop | at most O(1) allocations |
 
-A `step` may do one of four things to the element in flight: pass it
+A `step` may do one of five things to the element in flight: pass it
 through unchanged, rebind it to a new value, **skip** — abandon this
-element and advance the loop — or **stop**: let this element through and
-end the loop after it. Nothing else. That restriction is what makes the
+element and advance the loop — **stop**: end the whole pipeline, or
+**expand**: run the rest of the pipeline once for each element of an
+array it computes from this one. Nothing else. That restriction is what makes the
 fragments composable without the pass reasoning about any particular
 ordering of them.
 
@@ -140,8 +142,8 @@ past the end never fires, so both clamps of `std/array`'s `take` hold
 without a case of their own. Several takes in one chain each carry a count
 and each guard the fetch.
 
-The stop is a new outcome, so it needs its own argument rather than the
-three-outcome one. Against the sinks it is plain: `fold` and `scan`
+The stop is the one outcome that ends the loop early, so it needs its own
+argument. Against the sinks it is plain: `fold` and `scan`
 answer with whatever they hold when the loop ends, and `reduce`'s
 `finish` already answers `None` when nothing arrived, so a pipeline
 stopped early has an accumulator to answer with in every case. A
@@ -173,6 +175,37 @@ fails `p` leaves the loop rather than reaching the next fragment. `p` itself
 loses nothing: the eager `take_while` also stops calling it at the first
 element that fails. The stages ahead of it lose what `take`'s do, under the
 same rule.
+
+### `flat_map(f)` — expansion, a nested loop
+
+```
+init:    —
+step:    ys = f(x); for each y in ys { x = y; <the later steps and the sink> }
+finish:  —
+```
+
+The later stages and the sink run inside an inner loop over `ys`, which
+carries everything the outer loop does — the accumulator, the arrival
+flag, the scan output and every take's count — entering with the outer
+path's values and handing its own back on exit. A skip after the
+`flat_map` advances the inner loop; a stop leaves the whole pipeline,
+from either level, so the pipeline's exit takes the carried values from
+whichever level the stop left. A take after the `flat_map` guards the
+inner fetch, one before it the outer.
+
+The step allocates nothing itself; `ys` is `f`'s allocation, made once
+per element exactly as the eager `flat_map` makes it, and freed when the
+inner loop is done with it. What fusion removes is the concatenated
+array. One call per element, direct by §1, plus one per inner element
+for each later stage.
+
+`ys` holds as many elements as `f` returns, so the input length is no
+longer a bound on what reaches the sink: a fused `scan` behind a
+`flat_map` still reserves the input length but may grow its buffer, and
+reports `storage=no-intermediate-arrays/grown-output-buffer`. Since `f`
+returns an array literal or other allocation in nearly every use, a
+`flat_map` ahead of a take is refused as `element-fn-may-abort` unless
+its function only reads what it captured.
 
 ### `fold(z, h)` — reduction, a sink
 
@@ -297,8 +330,8 @@ fragment interface above:
 | operator | what it needs | status |
 | --- | --- | --- |
 | `take(n)`, `take_while(p)` | the **stop** outcome, above | done in the primary compiler |
+| `flat_map(f)` | the **expand** outcome, above | done in the primary compiler |
 | `drop_while(p)` | a latch in `init`, so `step` is stateful | next |
-| `flat_map(f)` | nested loop generation; a `step` that yields many elements is outside the three-outcome vocabulary | after |
 | `zip(a, b)` | two cursors advancing at mismatched rates, so there is no single `i` | last, and may stay unfused |
 
 `zip` is the contract's own cut line and `docs/ARRAY-ALGEBRA.md` §4
@@ -324,7 +357,8 @@ preconditions of the argument:
 3. **No fragment elides an application that would be observable** (§2).
    Only the stop elides applications, and the pass admits a stage ahead
    of a `take` or `take_while` only when its function can neither reach
-   an effect nor abort.
+   an effect nor abort. An expansion elides nothing: each element `f`
+   returns reaches the later stages, as it does eagerly.
 4. **Float reductions keep index order** (§3). The `step` fragments
    above are already in index order; the obligation is on any later
    vectorizer, not on this pass.
@@ -356,8 +390,8 @@ labelled Go analysis. See `ARRAY-ALGEBRA.md` for the closed refusal tags.
 The primary fusion report recognizes `map`, `filter`, `fold`, `reduce`,
 `scan`, `zip`, `take`, `take_while`, `drop`, `drop_while`, `flat_map`,
 `flatten`, `chunks`, `chunks_exact`, `windows`, `partition`, `enumerate`
-and `reverse`. `map`, `filter`, `take`, `take_while`, `fold`, `reduce` and
-`scan` belong to the primary fusion algebra;
+and `reverse`. `map`, `filter`, `take`, `take_while`, `flat_map`, `fold`,
+`reduce` and `scan` belong to the primary fusion algebra;
 the others report `operator-outside-algebra`. This report does not inventory
 every std/array helper. Calls outside this recognized set produce no site
 line, so silence is not evidence that such a call fused or avoided allocation.

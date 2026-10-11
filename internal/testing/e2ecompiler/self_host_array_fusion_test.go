@@ -461,6 +461,32 @@ function param_fn(xs: i64[], f: (i64) => i64): i64 {
 	return xs.map(f).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
 }
 
+function taken(xs: i64[]): i64 {
+	return xs.map((x: i64): i64 => x + (1 as i64)).take(1500).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
+}
+
+function taken_while(xs: i64[]): i64 {
+	return array.take_while(xs, (x: i64): boolean => x < (1500 as i64)).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
+}
+
+function flattened(xs: i64[]): i64 {
+	return xs.flat_map((x: i64): i64[] => [x, x]).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
+}
+
+// What the fused flat_map should cost: the element function's array per
+// element, and nothing else.
+function flattened_by_hand(xs: i64[]): i64 {
+	let acc: i64 = 0 as i64;
+	let i: i32 = 0;
+	while (i < xs.len()) {
+		let ys: i64[] = [xs[i], xs[i]];
+		let j: i32 = 0;
+		while (j < ys.len()) { acc = acc + ys[j]; j = j + 1; }
+		i = i + 1;
+	}
+	return acc;
+}
+
 function rounds(): i32 { return 20; }
 
 // The blocks one call of the chain numbered 'which' allocates, over every round.
@@ -476,6 +502,10 @@ function measure(xs: i64[], which: i32): i64 {
 		if (which == 4) { sink = sink + capture(xs, (r as i64) + (2 as i64)); }
 		if (which == 5) { sink = sink + shared(xs); }
 		if (which == 6) { sink = sink + param_fn(xs, (x: i64): i64 => x + (3 as i64)); }
+		if (which == 7) { sink = sink + taken(xs); }
+		if (which == 8) { sink = sink + taken_while(xs); }
+		if (which == 9) { sink = sink + flattened(xs); }
+		if (which == 10) { sink = sink + flattened_by_hand(xs); }
 		r = r + 1;
 	}
 	let used: i64 = __heap_alloc_count() - before;
@@ -498,14 +528,18 @@ function main(): i32 {
 	// each call. Unfused, each intermediate is a buffer per round plus a
 	// regrow per doubling, which is several times either.
 	let w: i32 = 0;
-	while (w < 5) {
+	while (w < 9) {
 		let used: i64 = measure(big, w);
 		let allowed: i64 = n;
 		if (w == 4) { allowed = n * (2 as i64); }
 		if (used < 0 as i64) { return 70 + w; }
 		if (used > allowed) { return 80 + w; }
 		w = w + 1;
+		if (w == 5) { w = 7; }
 	}
+	// A fused flat_map allocates what its element function returns, as the
+	// hand-written loop does, and no concatenated array.
+	if (measure(big, 9) > measure(big, 10) + n) { return 92; }
 	// Not fused: an intermediate read twice, and an element function the
 	// chain was handed. Each builds its intermediate every round.
 	if (measure(big, 5) < n) { return 90; }
@@ -587,7 +621,8 @@ func TestSelfHostArrayFusionMatchesHandWrittenLoops(t *testing.T) {
 
 // 70+w: chain w computed nothing; 80+w: chain w still allocates its
 // intermediates; 90 / 91: a chain that must not fuse stopped building its
-// intermediate; 98 / 99: the counter itself stopped working.
+// intermediate; 92: a flat_map allocates more than its hand-written loop;
+// 98 / 99: the counter itself stopped working.
 func TestSelfHostArrayFusionStopsAllocatingIntermediates(t *testing.T) {
 	for _, target := range selfHostFusionTargets {
 		t.Run(target, func(t *testing.T) {
