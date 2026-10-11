@@ -116,17 +116,61 @@ stage0() {
   echo "$stage0"
 }
 
+# measured FILE CMD...: CMD, with its wall seconds and peak resident set in
+# kB written to FILE. python3's getrusage is the one reading of a child's
+# peak that every host has (GNU time is not on the Linux runners, and
+# macOS's reports bytes); without python3 the wall is read alone.
+measured() {
+  local file="$1" t0
+  shift
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$file" "$@" <<'PY'
+import resource, subprocess, sys, time
+t0 = time.monotonic()
+code = subprocess.run(sys.argv[2:]).returncode
+wall = time.monotonic() - t0
+peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+if sys.platform == "darwin":
+    peak //= 1024
+with open(sys.argv[1], "w") as f:
+    f.write(f"{wall:.0f} {peak}\n")
+sys.exit(code)
+PY
+  else
+    t0=$(date +%s)
+    "$@" || return $?
+    echo "$(( $(date +%s) - t0 ))" > "$file"
+  fi
+}
+
 # stage NAME COMPILER: compile the compiler's own source with COMPILER into
 # $OUT/NAME, for this host, and report the cost.
 stage() {
-  local t0 out
+  local out wall peak
   out="$OUT/$1"
-  rm -f "$out"
-  t0=$(date +%s)
-  "$2" -target "$HOST" -o "$out" "$ENTRY" "$STDLIB" \
+  rm -f "$out" "$out.measure"
+  measured "$out.measure" "$2" -target "$HOST" -o "$out" "$ENTRY" "$STDLIB" \
     || die "$1 failed: $2 could not compile $ENTRY (an old stage0 meeting a construct it does not know? see docs/BOOTSTRAP.md on refreshing the pin)"
   chmod +x "$out"
-  echo "$1: $(( $(date +%s) - t0 )) s, $(size "$out") bytes"
+  read -r wall peak < "$out.measure"
+  echo "$1: $wall s, ${peak:+$((peak / 1024)) MB peak RSS, }$(size "$out") bytes"
+}
+
+# report: the stages' costs as `metric<TAB>value` rows in
+# $OUT/distcheck-report.txt, the format scripts/perf-history records, so the
+# self-compile's wall and peak memory per host are a trend over main.
+report() {
+  local name wall peak
+  {
+    echo "# bootstrap/bootstrap.sh report — host $HOST"
+    for name in stage1 stage2 stage3; do
+      [ -s "$OUT/$name.measure" ] || continue
+      read -r wall peak < "$OUT/$name.measure"
+      printf 'bootstrap/%s/%s.wall_s\t%s\n' "$HOST" "$name" "$wall"
+      [ -n "$peak" ] && printf 'bootstrap/%s/%s.peak_rss_mb\t%s\n' "$HOST" "$name" "$((peak / 1024))"
+      printf 'bootstrap/%s/%s.size_bytes\t%s\n' "$HOST" "$name" "$(size "$OUT/$name")"
+    done
+  } > "$OUT/distcheck-report.txt"
 }
 
 # smoke COMPILER: the compiler must compile a one-line program and
@@ -186,6 +230,7 @@ distcheck() {
     echo "stage1 != stage2: stage0 generates different code from the current source (its pin predates a code generator change)"
   fi
   echo "stage2 == stage3: fixed point reached (sha256 $(sha256 "$OUT/stage3"))"
+  report
 }
 
 mkdir -p "$OUT"

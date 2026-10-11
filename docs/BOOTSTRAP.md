@@ -124,7 +124,28 @@ directly.
 
 ## What `make distcheck` measures
 
-Measured 2026-09-28 on a 4-core, 16 GB x86-64 host, pin `stage0-20260925-f81d8d7`:
+Every stage is timed and its peak resident set read (`bootstrap.sh`'s
+`measured`, python3's `getrusage` of the child), printed as the stage
+finishes and written as `metric<TAB>value` rows to
+`build/bootstrap/distcheck-report.txt`: `bootstrap/<host>/<stage>.wall_s`,
+`.peak_rss_mb` and `.size_bytes` for stage1, stage2 and stage3. The `verify`
+job records that report to the main commit's note under `refs/notes/perf`
+as lane `bootstrap-<host>`, so the self-compile's cost per host is a trend
+read back with
+
+```
+scripts/perf-history show bootstrap/x86-64-linux/stage2.peak_rss_mb
+scripts/perf-history show bootstrap/arm64-darwin/stage3.wall_s
+```
+
+and a regression in the compiler's own memory or speed shows as a step in it
+on the first main commit that touches the compiler, rather than waiting for
+someone to measure by hand. The lane runs when the compiler's source, the
+stdlib or the bootstrap changes (ci.yml's lane table), which is when the
+figures can move.
+
+The last reading taken by hand, 2026-09-28 on a 4-core, 16 GB x86-64 host,
+pin `stage0-20260925-f81d8d7`:
 
 | step | compiler | wall | peak RSS | result |
 |---|---|---|---|---|

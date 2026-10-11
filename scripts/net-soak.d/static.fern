@@ -1,0 +1,34 @@
+// The static server the soak lane holds under load: one five-byte body,
+// so what grows is the loop's own.
+import "std/http";
+import "std/serve";
+import "std/platform";
+import "core/int";
+
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+  return http.ok("hello");
+}
+
+function port(): i32 {
+  match (env("PORT")) {
+    Some(p) => {
+      match (int.parse_int_radix(p, 10)) {
+        Some(n) => {
+          return n;
+        },
+        None => {
+          return 8080;
+        }
+      }
+    },
+    None => {
+      return 8080;
+    }
+  }
+  return 8080;
+}
+
+function main(): i32 {
+  let opts: serve.Config = serve.Config { ...serve.config(), max_connections: 16384, max_connections_per_ip: 0 };
+  return serve.run(port(), opts, handle);
+}
