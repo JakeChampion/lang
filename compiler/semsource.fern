@@ -208,6 +208,12 @@ function fail(s: State, why: string): State {
   return State { ...s, ok: false, why: why };
 }
 
+// A refused attempt's state, continued from: the attempt produced nothing,
+// so only its verdict is undone.
+function retried(s: State): State {
+  return State { ...s, ok: true, why: "" };
+}
+
 function refused(s: State, why: string): Value {
   return Value { s: fail(s, why), id: 0 - 1 };
 }
@@ -2723,20 +2729,25 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   // declared in the standard library on a `string` receiver, and a view
   // reaches them as a lent box; the builtins every text has come first.
   if (owner == "" && (fa.field == "len" || fa.field == "append" || fa.field == "bytes" || fa.field == "as_bytes" || !ssasem.is_text(s.values[recv]))) {
-    let b: Value = builtin_call(c, fa, recv, s, statement);
-    if (b.s.ok) {
-      return b;
-    }
     // A receiver the builtin vocabulary does not own may still be a method
     // DECLARED on a generic receiver. The builtin is tried first so a
     // shape this boundary lowers itself keeps its op, and the declared
-    // method fills the rest; the refused attempt's state is dropped, so
-    // the retry produces the arguments once.
-    let folded: Value = folded_method(c, fa, recv, s, statement);
+    // method fills the rest. The builtin decides on the receiver's shape,
+    // the method's name and the arity before it produces anything, so a
+    // refusal that produced nothing continues into the declared method
+    // from the state it handed back; one that produced an argument first
+    // failed a type guard the declared method would fail too, and is final.
+    let before: i32 = s.values.len();
+    let b: Value = builtin_call(c, fa, recv, s, statement);
+    if (b.s.ok || b.s.values.len() != before) {
+      return b;
+    }
+    let why: string = b.s.why;
+    let folded: Value = folded_method(c, fa, recv, retried(b.s), statement);
     if (folded.s.ok) {
       return folded;
     }
-    return b;
+    return Value { s: State { ...folded.s, why: why }, id: 0 - 1 };
   }
   if (owner == "") {
     owner = "string";
@@ -4458,11 +4469,24 @@ function branch(f: ast.StmtIf, s: State): State {
 
 struct Arms { s: State, preds: i32[], envs: i32[][], values: i32[] }
 
-function collect(arms: Arms, done: Arm): Arms {
+// The arms gathered so far, as the parts an arm's production keeps apart
+// from the state: an `Arms` held whole across the arm would keep the state it
+// arrived with, and the arm's first append would copy it.
+struct Gathered { preds: i32[], envs: i32[][], values: i32[] }
+
+function parts(arms: Arms): Gathered {
+  return Gathered { preds: arms.preds, envs: arms.envs, values: arms.values };
+}
+
+function gathered(s: State, g: Gathered): Arms {
+  return Arms { s: s, preds: g.preds, envs: g.envs, values: g.values };
+}
+
+function collect(g: Gathered, done: Arm): Arms {
   if (!done.live) {
-    return Arms { ...arms, s: done.s };
+    return gathered(done.s, g);
   }
-  return Arms { s: done.s, preds: arms.preds.append(done.end), envs: arms.envs.append(done.env), values: arms.values.append(done.value) };
+  return Arms { s: done.s, preds: g.preds.append(done.end), envs: g.envs.append(done.env), values: g.values.append(done.value) };
 }
 
 function qualified(name: string): boolean {
@@ -4525,8 +4549,9 @@ function narrowed(pv: ast.PatVariant, scrut: i32, s: State): State {
   if (pv.binding == "" || pv.binding == "_") {
     return s;
   }
+  let bound: boolean = util.index_of_str(s.names, pv.binding) >= 0;
   let v: Value = define(s, ssasem.variant_as(), [scrut], 0, pv.type_name, member_type(pv));
-  if (util.index_of_str(s.names, pv.binding) >= 0) {
+  if (bound) {
     return replace(v.s, pv.binding, v.id);
   }
   return bind(v.s, pv.binding, v.id);
@@ -4565,7 +4590,7 @@ function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: St
   while (k < names.len()) {
     if (names[k] != "_") {
       let v: Value = define(s, ssasem.variant_get(), [scrut], k, pv.type_name, fields[k]);
-      if (util.index_of_str(s.names, names[k]) >= 0) {
+      if (util.index_of_str(v.s.names, names[k]) >= 0) {
         s = replace(v.s, names[k], v.id);
       } else {
         s = bind(v.s, names[k], v.id);
@@ -4625,16 +4650,17 @@ function unqualified(pv: ast.PatVariant, owner: string): ast.PatVariant {
 }
 
 function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean, ty: typeinfo.Type): Arms {
+  let g: Gathered = parts(arms);
   let s: State = arms.s;
   pv = unqualified(pv, owner);
   let layout: i32 = union_layout(s, owner);
   let shape: Payloads = arm_payloads(s, s.values[scrut], pv.type_name, layout);
   let why: string = pattern_error(a, pv, shape, layout);
   if (why != "") {
-    return Arms { ...arms, s: fail(s, why) };
+    return gathered(fail(s, why), g);
   }
   if (closing) {
-    return closing_arm(a, pv, scrut, shape, arms, entry, join, count, scope, layout, ty);
+    return closing_arm(a, pv, scrut, shape, s, g, entry, join, count, scope, layout, ty);
   }
   let pred: i32 = s.cur.id;
   let id: i32 = s.next_block;
@@ -4646,11 +4672,14 @@ function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: str
   opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]) };
   let gate: Gate = guard_gate(a, opened, next);
   if (!gate.s.ok) {
-    return Arms { ...arms, s: gate.s };
+    return gathered(gate.s, g);
   }
+  // The edge is read before the body takes the state, or the gate would
+  // hold the state across the body.
+  let from: i32 = gate.from;
   let done: Arm = arm_body(a.body, gate.s, join, count, scope, ty);
-  done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, next_preds(pred, gate.from)) };
-  return collect(arms, done);
+  done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, next_preds(pred, from)) };
+  return collect(g, done);
 }
 
 // A CLOSING arm is the last of a TOTAL match: every other variant is named by
@@ -4659,36 +4688,37 @@ function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: str
 // makes a body whose every arm returns a body that does not fall through.
 // `ssasem.analyze` verifies this arm's payload projections against the same
 // exhaustion the omitted test rests on.
-function closing_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, shape: Payloads, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, layout: i32, ty: typeinfo.Type): Arms {
-  let s: State = arms.s;
+function closing_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, shape: Payloads, s: State, g: Gathered, entry: i32[], join: i32, count: i32, scope: checker.Scope, layout: i32, ty: typeinfo.Type): Arms {
   let pred: i32 = s.cur.id;
   let id: i32 = s.next_block;
   s = terminate(State { ...s, next_block: id + 1 }, t_br(id));
   let opened: State = payloads(pv, scrut, shape.types, open(State { ...s, vals: entry }, id, [pred]), layout);
   opened = State { ...opened, scope: checker.arm_scope(a, scope, opened.values[scrut]) };
-  return collect(arms, arm_body(a.body, opened, join, count, scope, ty));
+  return collect(g, arm_body(a.body, opened, join, count, scope, ty));
 }
 
 // A wildcard closes the chain, so the arms after it are not produced; a
 // GUARDED wildcard does not, and its failed guard leaves for the next arm's
 // test as a variant arm's does.
 function wildcard_arm(a: ast.MatchArm, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, ty: typeinfo.Type): Arms {
+  let g: Gathered = parts(arms);
   let s: State = arms.s;
   let pred: i32 = s.cur.id;
   let id: i32 = s.next_block;
   if (!a.has_guard) {
     s = terminate(State { ...s, next_block: id + 1 }, t_br(id));
-    return collect(arms, arm_body(a.body, open(State { ...s, vals: entry }, id, [pred]), join, count, scope, ty));
+    return collect(g, arm_body(a.body, open(State { ...s, vals: entry }, id, [pred]), join, count, scope, ty));
   }
   let next: i32 = id + 1;
   s = terminate(State { ...s, next_block: next + 1 }, t_br(id));
   let gate: Gate = guard_gate(a, open(State { ...s, vals: entry }, id, [pred]), next);
   if (!gate.s.ok) {
-    return Arms { ...arms, s: gate.s };
+    return gathered(gate.s, g);
   }
+  let from: i32 = gate.from;
   let done: Arm = arm_body(a.body, gate.s, join, count, scope, ty);
-  done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, [gate.from]) };
-  return collect(arms, done);
+  done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, [from]) };
+  return collect(g, done);
 }
 
 function match_arm(a: ast.MatchArm, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean, ty: typeinfo.Type): Arms {
@@ -4821,23 +4851,30 @@ function only_wildcards(m: ast.StmtMatch): boolean {
 
 // The arms of a match, tested in order, each ending on the join; `ty` is the
 // value a value block's arms carry to it, unchecked for a statement.
+// A chain with no arms, around the state a refusal left.
+function no_chain(s: State): Chain {
+  return Chain { arms: Arms { s: s, preds: [], envs: [], values: [] }, join: 0, count: 0 };
+}
+
 function match_chain(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Chain {
-  let none: Chain = Chain { arms: Arms { s: s, preds: [], envs: [], values: [] }, join: 0, count: 0 };
-  let scrut: Value = expr(m.scrutinee, s, typeinfo.unchecked());
-  s = scrut.s;
+  let produced: Value = expr(m.scrutinee, s, typeinfo.unchecked());
+  // The id alone: a Value kept across the arms would keep the state it
+  // carries, and every arm's first append would copy.
+  let scrut: i32 = produced.id;
+  s = produced.s;
   if (!s.ok) {
-    return Chain { ...none, arms: Arms { ...none.arms, s: s } };
+    return no_chain(s);
   }
-  let owner: string = union_name(s.values[scrut.id]);
-  m = inhabited_arms(m, s.values[scrut.id], s);
+  let owner: string = union_name(s.values[scrut]);
+  m = inhabited_arms(m, s.values[scrut], s);
   if ((owner == "" || union_layout(s, owner) == 0) && !only_wildcards(m)) {
-    return Chain { ...none, arms: Arms { ...none.arms, s: fail(s, "unsupported match scrutinee") } };
+    return no_chain(fail(s, "unsupported match scrutinee"));
   }
   let closes: i32 = 0 - 1;
-  if (total_match(s, m, s.values[scrut.id], union_layout(s, owner))) {
+  if (total_match(s, m, s.values[scrut], union_layout(s, owner))) {
     closes = m.arms.len() - 1;
   }
-  s = learn_escaping(m, s, s.values[scrut.id], owner);
+  s = learn_escaping(m, s, s.values[scrut], owner);
   let join: i32 = s.next_block;
   s = State { ...s, next_block: join + 1 };
   let count: i32 = s.names.len();
@@ -4846,7 +4883,7 @@ function match_chain(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Chain {
   let arms: Arms = Arms { s: s, preds: [], envs: [], values: [] };
   let i: i32 = 0;
   while (i < m.arms.len() && arms.s.ok && arms.s.live) {
-    arms = match_arm(m.arms[i], scrut.id, owner, arms, entry, join, count, scope, i == closes, ty);
+    arms = match_arm(m.arms[i], scrut, owner, arms, entry, join, count, scope, i == closes, ty);
     i = i + 1;
   }
   return Chain { arms: arms, join: join, count: count };
@@ -5104,12 +5141,13 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
   s = terminate(s, t_brif(test.id, body_id, exit_id));
 
   let opened: State = open(State { ...s, vals: advanced }, body_id, [cond_end]);
-  // The header's `step < n` test is the bounds check, so neither read repeats it.
-  let item: Value = define(opened, ssasem.array_get(), [it, step.id], 1, "", elem);
-  // A string's element is one byte, read rather than projected.
+  // The header's `step < n` test is the bounds check, so neither read repeats
+  // it. A string's element is one byte, read rather than projected.
+  let read: i32 = ssasem.array_get();
   if (text) {
-    item = define(opened, ssasem.str_index(), [it, step.id], 1, "", elem);
+    read = ssasem.str_index();
   }
+  let item: Value = define(opened, read, [it, step.id], 1, "", elem);
   // The element is a checker binding for the body's span as well: every type
   // this boundary reads from the checker is read in s.scope. A pattern header
   // destructures the element the way a declaration does.
@@ -5118,7 +5156,7 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
   if (vals >= 0) {
     let names: string[] = checker.split_pattern_names(fo.var_name);
     if (names.len() != 2) {
-      return fail(s, "unsupported loop binding");
+      return fail(body_state, "unsupported loop binding");
     }
     let vitem: Value = define(item.s, ssasem.array_get(), [vals, step.id], 1, "", vtype);
     body_state = bind_position(bind_position(vitem.s, names[0], item.id, inner), names[1], vitem.id, inner);

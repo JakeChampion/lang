@@ -554,6 +554,19 @@ Bracketing a region with `__arr_push_shared_bytes()` reads still narrows a
 phase quickly; confirm the site by *fixing* it and re-measuring an unprobed
 build.
 
+**Find the second holder with a watchpoint, not a stack scan.** A copy at a
+site means the array, or the record holding it, has a count of two, and the
+frames between the holder and the copy are usually innocent: scanning their
+stack slots for the pointer finds dead spills as readily as live references.
+The compile is deterministic under gdb, so pick one crossing in a first run
+(count the breakpoint's hits, read the box from the callee's register) and in
+a second run arm `watch *(int*)(box-8)` shortly before that hit number,
+logging each write's value and the `%rbp` chain. The log is the box's life:
+who took each count and who gave it back, by exact pc. This is what found the
+two retains of one join phi behind
+`docs/rc-log/2026-10-11-c-the-state-is-not-held-past-an-attempt.md`; a
+symbolised build is `-emit asm` plus `gcc -nostdlib -static`.
+
 ## arm64 / qemu locally: debug only, never a gate
 
 The aarch64 e2e + fixpoint tests under `qemu-aarch64` are the slow part of a

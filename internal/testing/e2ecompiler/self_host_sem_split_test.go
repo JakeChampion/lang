@@ -19,7 +19,13 @@ import (
 // string once: the rebuilds join in a phi, so no box is left at all.
 // kept_variant hands its option to a call and matches it too, so the option
 // is still built and its test and payload read both stay on the box.
+// gate joins two records holding the same call result and reads that field
+// three times: the reads share one part phi, so the record is unique where
+// the update rebuilds it, and a round allocates only what mk does.
 const semSplitProgram = `struct Pair { name: string, n: i32 }
+struct St { xs: i32[], n: i32 }
+struct Gate { s: St, from: i32 }
+@noinline function mk(i: i32): St { return St { xs: [i], n: i }; }
 @noinline function ids(s: string): string { return s; }
 @noinline function held(p: Pair): i32 { return p.name.len() + p.n; }
 @noinline function option_rounds(): i32 {
@@ -107,6 +113,22 @@ const semSplitProgram = `struct Pair { name: string, n: i32 }
     }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
+@noinline function gate_rounds(): i32 {
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) {
+        let s: St = mk(i);
+        let g: Gate = Gate { s: s, from: 0 - 1 };
+        if (i % 2 == 0) { g = Gate { s: s, from: i }; }
+        if (g.from > 1000) { return 0 - 1; }
+        t = t + g.s.n;
+        let r: St = St { ...g.s, n: g.s.n + 1 };
+        t = t + r.n + r.xs.len();
+        i = i + 1;
+    }
+    return t * 1000 + ((__heap_alloc_count() - before) as i32);
+}
 function print_int(n: i32): i32 {
     if (n > 9) { print_int(n / 10); }
     putchar(48 + n % 10);
@@ -120,22 +142,23 @@ function main(): i32 {
     print_int(held_rounds()); print("");
     print_int(threaded_rounds()); print("");
     print_int(kept_variant_rounds()); print("");
+    print_int(gate_rounds()); print("");
     return 0;
 }
 `
 
-var semSplitProduced = []string{"ids", "held", "option_rounds", "result_rounds", "record_rounds", "tuple_rounds", "held_rounds", "threaded_rounds", "shown", "kept_variant_rounds"}
+var semSplitProduced = []string{"ids", "held", "option_rounds", "result_rounds", "record_rounds", "tuple_rounds", "held_rounds", "threaded_rounds", "shown", "kept_variant_rounds", "mk", "gate_rounds"}
 
 func TestSelfHostSemanticSplit(t *testing.T) {
 	runSemanticProgram(t, "semsplit", semSplitProgram, semSplitProduced,
-		semInlineWants("150100\n2600100\n5150100\n5150100\n5150200\n102001\n250100\n"))
+		semInlineWants("150100\n2600100\n5150100\n5150100\n5150200\n102001\n250100\n10100200\n"))
 }
 
 // FERN_SEM_INLINE= turns the pass off, and every construction is a box again.
 func TestSelfHostSemanticSplitOff(t *testing.T) {
 	t.Setenv("FERN_SEM_INLINE", "")
 	runSemanticProgram(t, "semsplit-off", semSplitProgram, semSplitProduced,
-		semInlineWants("150150\n2600250\n5150200\n5150200\n5150200\n102002\n250100\n"))
+		semInlineWants("150150\n2600250\n5150200\n5150200\n5150200\n102002\n250100\n10100350\n"))
 }
 
 // A function spliced into its one caller leaves no body behind, on any

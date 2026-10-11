@@ -328,7 +328,7 @@ function census_line(fn_name: string, r: rccertify.Report, g: Gate): void {
 function dump_if_asked(fn_name: string, f: ssa.SFunc): void {
   match (env("FERN_RC_CERTIFY_DUMP")) {
     Some(want) => {
-      if (want == fn_name) {
+      if (want == fn_name || util.str_has_suffix(want, "*") && util.str_has_prefix(fn_name, slice_unchecked(want, 0, want.len() - 1))) {
         eprint("FERN_RC_CERTIFY: lifted " + fn_name + "\n" + ssa.print_func(f));
       }
     },

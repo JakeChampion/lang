@@ -1098,7 +1098,9 @@ function part(built: ssa.SInst, read: ssa.SInst): Part {
 // value each read becomes (`swap`, -1 where it stays), the flags and stand-ins
 // the entry gains after its parameters, and the per-part phis that go at the
 // head of the block of the phi they split. `defs` and `values` grow with them.
-struct Head { block: i32, ins: ssa.SInst }
+// `of` is the phi `ins` splits and `read` the read it answers: every read of
+// one part of one phi reads the same part phi (`made_part`).
+struct Head { block: i32, ins: ssa.SInst, of: i32, read: ssa.SInst }
 
 struct Edits { defs: Defs, values: typeinfo.Type[], swap: i32[], entry: ssa.SInst[], heads: Head[], kept: boolean[], chained: boolean[] }
 
@@ -1257,77 +1259,105 @@ function all_kept(own kept: boolean[], vs: i32[]): boolean[] {
 }
 
 // `e` with `read` resolved, when its operand is a construction or phis of
-// constructions, all the way down.
-function resolve(f: ssasem.Func, e: Edits, read: ssa.SInst): Edits {
-  let w: Walk = part_of(f, Walk { e: e, value: 0 - 1, ok: true, phis: [], parts: [] }, read, read.args[0], 0);
-  if (!w.ok) {
+// constructions, all the way down. Whether it resolves is decided first, over
+// the edits as they stand, so the walk that writes the edits owns them and
+// never has to give them back: a walk that could fail would hold every array
+// of the edits at a second count, and its first append would copy each one.
+function resolve(f: ssasem.Func, own e: Edits, read: ssa.SInst): Edits {
+  let feasible: (boolean, i32[]) = resolvable(f, e, read, read.args[0], 0, []);
+  if (!feasible.0) {
     return e;
   }
+  let w: Walk = part_of(f, Walk { e: e, value: 0 - 1, phis: [], parts: [] }, read, read.args[0], 0);
   return Edits { ...w.e, swap: w.e.swap.with(read.result, w.value) };
+}
+
+// Whether `read` resolves on `v`: the test `part_of` makes at each step, and
+// nothing else. The phis met so far come back beside the answer, so a loop's
+// phi is walked once; as a pair, so that a step builds nothing.
+function resolvable(f: ssasem.Func, e: Edits, read: ssa.SInst, v: i32, depth: i32, phis: i32[]): (boolean, i32[]) {
+  let x: i32 = through_copies(e.defs, v);
+  let d: ssa.SInst = def_inst(e.defs, x);
+  if (depth > 32 || blocked(f, e, read, v, x)) {
+    return (false, phis);
+  }
+  if (builds(d.kind_tag)) {
+    return (part(d, read).ok, phis);
+  }
+  if (d.kind_tag != 8 || index_of(phis, x) >= 0) {
+    return (d.kind_tag == 8 || d.kind_tag == ssasem.zero(), phis);
+  }
+  let seen: i32[] = phis.append(x);
+  for a in d.args {
+    let step: (boolean, i32[]) = resolvable(f, e, read, a, depth + 1, seen);
+    seen = step.1;
+    if (!step.0) {
+      return (false, seen);
+    }
+  }
+  return (true, seen);
+}
+
+// Where no read resolves: a kept value read other than as a scalar field, a
+// chained rebuild, or a value a debug binding names.
+function blocked(f: ssasem.Func, e: Edits, read: ssa.SInst, v: i32, x: i32): boolean {
+  return marked(e.kept, x) && !scalar_field(read, f.values[read.result]) || marked(e.chained, x)
+    || index_of(f.dbg_vals, v) >= 0 || index_of(f.dbg_vals, x) >= 0;
 }
 
 // One step of a read's resolution: the edits so far, the value found, and
 // the part phi already made for each phi met, so a loop's phi is split once.
-struct Walk { e: Edits, value: i32, ok: boolean, phis: i32[], parts: i32[] }
+struct Walk { e: Edits, value: i32, phis: i32[], parts: i32[] }
 
-// What `read` answers on `v`: a construction's part; a stand-in where `v` is
-// a stand-in itself, on a path no read reaches; or, for a phi, a phi of what
-// it answers on each operand, at the head of the phi's block.
-// A failed walk is dropped whole by `resolve`, so it is made where the walk
-// fails rather than kept beside the walk, which would hold every array of
-// the edits at a second count through the phi's split.
-function part_of(f: ssasem.Func, w: Walk, read: ssa.SInst, v: i32, depth: i32): Walk {
-  if (depth > 32) {
-    return Walk { ...w, ok: false };
-  }
+// What `read` answers on `v`, which `resolvable` has said it does: a
+// construction's part; a stand-in where `v` is a stand-in itself, on a path
+// no read reaches; or, for a phi, a phi of what it answers on each operand, at
+// the head of the phi's block.
+function part_of(f: ssasem.Func, own w: Walk, read: ssa.SInst, v: i32, depth: i32): Walk {
   let ty: typeinfo.Type = f.values[read.result];
   let x: i32 = through_copies(w.e.defs, v);
-  if (marked(w.e.kept, x) && !scalar_field(read, ty)) {
-    return Walk { ...w, ok: false };
-  }
   let d: ssa.SInst = def_inst(w.e.defs, x);
-  if (marked(w.e.chained, x) || index_of(f.dbg_vals, v) >= 0 || index_of(f.dbg_vals, x) >= 0) {
-    return Walk { ...w, ok: false };
-  }
   if (builds(d.kind_tag) || d.kind_tag == ssasem.zero()) {
     let p: Part = Part { ok: true, value: 0 - 1, flag: 0, filler: read.kind_tag != ssasem.variant_is() };
     if (builds(d.kind_tag)) {
       p = part(d, read);
     }
-    if (!p.ok) {
-      return Walk { ...w, ok: false };
-    }
-    let placed: Placed = part_value(w.e, p, ty);
-    return Walk { ...w, e: placed.e, value: placed.value };
-  }
-  if (d.kind_tag != 8) {
-    return Walk { ...w, ok: false };
+    return part_value(w, p, ty);
   }
   let seen: i32 = index_of(w.phis, x);
   if (seen >= 0) {
     return Walk { ...w, value: w.parts[seen] };
   }
+  let made: i32 = made_part(w.e, x, read, ty);
+  if (made >= 0) {
+    return Walk { ...w, value: made };
+  }
   let nv: i32 = w.e.values.len();
   let pb: i32 = w.e.defs.blocks[x];
-  let phis: i32[] = w.phis.append(x);
-  let parts: i32[] = w.parts.append(nv);
-  let e: Edits = w.e;
-  let values: typeinfo.Type[] = e.values.append(ty);
-  let base: Defs = e.defs;
-  let blocks: i32[] = base.blocks.append(pb);
-  let placeholder: Defs = Defs { insts: base.insts.append(no_inst()), blocks: blocks };
-  let cur: Walk = Walk { e: Edits { ...e, defs: placeholder, values: values }, value: 0 - 1, ok: true, phis: phis, parts: parts };
+  let cur: Walk = Walk {
+    e: Edits { ...w.e, defs: Defs { insts: w.e.defs.insts.append(no_inst()), blocks: w.e.defs.blocks.append(pb) }, values: w.e.values.append(ty) },
+    value: 0 - 1, phis: w.phis.append(x), parts: w.parts.append(nv),
+  };
   let args: i32[] = [];
   for a in d.args {
     cur = part_of(f, cur, read, a, depth + 1);
-    if (!cur.ok) {
-      return cur;
-    }
     args = args.append(cur.value);
   }
   let ins: ssa.SInst = ssa.SInst { kind_tag: 8, result: nv, args: args, imm: 0, str: "" };
-  let defs: Defs = Defs { insts: cur.e.defs.insts.with(nv, ins), blocks: cur.e.defs.blocks };
-  return Walk { ...cur, e: Edits { ...cur.e, defs: defs, heads: cur.e.heads.append(Head { block: pb, ins: ins }) }, value: nv };
+  return Walk { ...cur, e: Edits { ...cur.e, defs: Defs { ...cur.e.defs, insts: cur.e.defs.insts.with(nv, ins) }, heads: cur.e.heads.append(Head { block: pb, ins: ins, of: x, read: read }) }, value: nv };
+}
+
+// The part phi an earlier read this round made for the same part of `x`, or
+// -1. Reads of one part share it: a phi per read would hold a counted part
+// at one count per read, so the box it is stored or passed on from stays
+// shared for as long as the other reads' phis live.
+function made_part(e: Edits, x: i32, read: ssa.SInst, ty: typeinfo.Type): i32 {
+  for h in e.heads {
+    if (h.of == x && h.read.kind_tag == read.kind_tag && h.read.imm == read.imm && h.read.str == read.str && semtypes.equal(e.values[h.ins.result], ty)) {
+      return h.ins.result;
+    }
+  }
+  return 0 - 1;
 }
 
 // The rebuilds that are rebuilt in turn and rebuild a box the frame owns: a
@@ -1383,21 +1413,18 @@ function rebuilt_from(f: ssasem.Func, defs: Defs, a: i32, built: i32): i32 {
   return through_copies(defs, src.args[0]);
 }
 
-struct Placed { e: Edits, value: i32 }
-
-// The value a part names, adding a flag or a stand-in to the entry, where it
-// reaches every read.
-function part_value(e: Edits, p: Part, ty: typeinfo.Type): Placed {
+// The walk at the value a part names, adding a flag or a stand-in to the
+// entry, where it reaches every read.
+function part_value(own w: Walk, p: Part, ty: typeinfo.Type): Walk {
   if (p.value >= 0) {
-    return Placed { e: e, value: p.value };
+    return Walk { ...w, value: p.value };
   }
-  let nv: i32 = e.values.len();
+  let nv: i32 = w.e.values.len();
   let ins: ssa.SInst = ssa.SInst { kind_tag: 2, result: nv, args: [], imm: p.flag, str: "" };
   if (p.filler) {
     ins = ssa.SInst { kind_tag: ssasem.zero(), result: nv, args: [], imm: 0, str: "" };
   }
-  let defs: Defs = Defs { insts: e.defs.insts.append(ins), blocks: e.defs.blocks.append(0 - 1) };
-  return Placed { e: Edits { ...e, defs: defs, values: e.values.append(ty), entry: e.entry.append(ins) }, value: nv };
+  return Walk { ...w, e: Edits { ...w.e, defs: Defs { insts: w.e.defs.insts.append(ins), blocks: w.e.defs.blocks.append(0 - 1) }, values: w.e.values.append(ty), entry: w.e.entry.append(ins) }, value: nv };
 }
 
 // `f` with a round's edits written in, in one pass over its blocks.

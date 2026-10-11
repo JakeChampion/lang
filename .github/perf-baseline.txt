@@ -41,6 +41,17 @@
 # only its OWN namespace, so an x86_64 entry is not a missing measurement on the
 # aarch64 runner.
 
+# Re-pinned 2026-10-11 (#12117) on seven x86_64 and six aarch64 rows after a
+# carried reuse donor's token is taken where the donor dies and a split
+# read's part phi is shared by every read: the `.text` rows fell 1-4% on both
+# (http_hello -3.6%, perceus_cfold -3.3%, pmap_insert -2.3% and -1.8%,
+# pvec_with -2.0% and -2.2%, ordmap_insert -1.3% and -1.6%); pmap_insert.ir
+# fell 3.9% on x86_64 and ordmap_insert.ir 5.5% on aarch64, while
+# ordmap_insert.ir rose 1.2% on x86_64, the token taken at each arm's exit
+# with its uniqueness test and children drop there, where the construction
+# past the join tested it once. Values are the perf-x86_64 and perf-aarch64
+# lanes' measurements of the branch.
+
 x86_64/array_append.text	912
 x86_64/array_append.ir	13383897
 x86_64/array_index.text	913
@@ -57,7 +68,7 @@ x86_64/closure_call.text	814
 x86_64/closure_call.ir	103908097
 x86_64/enum_match.text	999
 x86_64/enum_match.ir	53775055
-x86_64/http_hello.text	19685
+x86_64/http_hello.text	18984
 x86_64/http_hello.ir	30524779
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
@@ -67,11 +78,11 @@ x86_64/map_probe_chain.text	6228
 x86_64/map_probe_chain.ir	401093025
 x86_64/map_string.text	9081
 x86_64/map_string.ir	82656686	2
-x86_64/ordmap_insert.text	4649
-x86_64/ordmap_insert.ir	220760932
-x86_64/pmap_insert.text	5063
-x86_64/pmap_insert.ir	83397970
-x86_64/pvec_with.text	2949
+x86_64/ordmap_insert.text	4588
+x86_64/ordmap_insert.ir	223421413
+x86_64/pmap_insert.text	4947
+x86_64/pmap_insert.ir	80136604
+x86_64/pvec_with.text	2890
 x86_64/pvec_with.ir	80788658
 x86_64/record_update.ir	142620274
 x86_64/record_update.text	1399
@@ -166,7 +177,7 @@ aarch64/closure_call.text	993
 aarch64/closure_call.ir	120768083
 aarch64/enum_match.text	1137
 aarch64/enum_match.ir	41400056
-aarch64/http_hello.text	20069
+aarch64/http_hello.text	19352
 aarch64/http_hello.ir	32796819
 aarch64/int_loop.text	90
 aarch64/int_loop.ir	18000025
@@ -176,11 +187,11 @@ aarch64/map_probe_chain.text	6335
 aarch64/map_probe_chain.ir	393409282
 aarch64/map_string.text	9219
 aarch64/map_string.ir	83175796	2
-aarch64/ordmap_insert.text	4770
-aarch64/ordmap_insert.ir	247937830
-aarch64/pmap_insert.text	5109
+aarch64/ordmap_insert.text	4694
+aarch64/ordmap_insert.ir	234201210
+aarch64/pmap_insert.text	5017
 aarch64/pmap_insert.ir	85354942
-aarch64/pvec_with.text	3163
+aarch64/pvec_with.text	3093
 aarch64/pvec_with.ir	85888297
 aarch64/record_update.text	1543
 aarch64/record_update.ir	129523944
@@ -212,7 +223,7 @@ aarch64/utf8_ingest_validated.text	15059
 aarch64/utf8_ingest_validated.ir	8019270	3
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-x86_64/perceus_cfold.text	2486
+x86_64/perceus_cfold.text	2404
 x86_64/perceus_cfold.ir	108160067
 x86_64/perceus_deriv.text	2598
 x86_64/perceus_deriv.ir	106587208
@@ -222,7 +233,7 @@ x86_64/perceus_rbtree.text	2642
 x86_64/perceus_rbtree.ir	128541020
 x86_64/perceus_rbtree_ck.text	2955
 x86_64/perceus_rbtree_ck.ir	136899157
-aarch64/perceus_cfold.text	2651
+aarch64/perceus_cfold.text	2564
 aarch64/perceus_cfold.ir	118173402
 aarch64/perceus_deriv.text	2798
 aarch64/perceus_deriv.ir	118616504

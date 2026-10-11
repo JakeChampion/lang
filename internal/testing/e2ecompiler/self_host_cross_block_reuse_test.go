@@ -68,6 +68,22 @@ function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 5000000) { l
 		// iteration.
 		{"if-arm-escaping-recipient", `struct P { x: i32, y: i32 }
 function main(): i32 { let acc: P[] = []; let i: i32 = 0; while (i < 4) { let a: P = P { x: i, y: i + 1 }; let s: i32 = a.x + a.y; if (i > 0) { acc = acc.append(P { x: s, y: 1 }); } i = i + 1; } let sum: i32 = 0; for p in acc { sum = sum + p.x + p.y; } return sum; }`, 18, 5},
+		// `s` is shared with `keep` when it dies in the arms, and `w` after the
+		// join claims its count. The token is taken where `s` dies, so the
+		// shared box is released there, the record taken out of `keep` is
+		// unique, and `grow` appends to its array in place. A box held to
+		// `w`'s construction instead keeps the record shared through `grow`,
+		// whose append then copies: the cliff count the exit code adds to ten
+		// times the value.
+		{"shared-donor-released-where-it-dies", `struct S { xs: i32[], n: i32 }
+@noinline function id(xs: i32[]): i32[] { return xs; }
+@noinline function two(): i32 { return 2; }
+@noinline function room(): i32[] { return id([1, 2, 3, 4, 5, 6, 7, 8]).append(9); }
+@noinline function mk(xs: i32[], n: i32): S { return S { xs: xs, n: n }; }
+@noinline function grow(s: S, m: i32): S { return S { ...s, xs: s.xs.append(m), n: m }; }
+@noinline function hold(w: S): i32 { return w.n + w.xs.len() - 1; }
+function f(k: i32): i32 { let s: S = mk(room(), k); let keep: S[] = [s]; let m: i32 = 0; if (k % 2 == 0) { m = s.n; } else { m = s.n * 2; } let t: S = keep[0]; let r: S = grow(t, m); let w: S = S { xs: id([3]), n: r.n + r.xs.len() }; return hold(w); }
+function main(): i32 { return f(two()) * 10 + __arr_push_shared_count(); }`, 120, 4},
 		// A donor shared with `keep` when it is carried: the construction finds
 		// it shared and allocates, and the skipping path only releases it.
 		{"shared-donor", `struct P { x: i32, y: i32 }

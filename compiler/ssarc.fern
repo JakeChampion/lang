@@ -1418,25 +1418,32 @@ function claimed_after(c: Claims, slots: i32, pos: i32): boolean {
 // later block, as a value dying at a construction does. A carry is a donor
 // value, the blocks holding it (`from`, at `drop_at`), the constructions it is
 // handed to (`to`, at `build_at`), and the edges where it goes back instead
-// (`exit_from` to `exit_to`, dropping `dropped`).
+// (`exit_from` to `exit_to`, freeing `dropped`).
 //
 // The blocks between the holding blocks and a construction, its way, claim
 // that count nowhere and are entered only from a holding block or a way, so
-// a path entering a way carries the box a holding block kept. A path leaves
-// the ways at a construction, which spends the box, or at an edge to any
-// other block, which drops it, and can enter them again only through a
+// a path entering a way carries the token a holding block took. A path
+// leaves the ways at a construction, which spends the token, or at an edge to
+// any other block, which frees it, and can enter them again only through a
 // holding block. So one donor serves a construction in each arm of a branch,
 // and a donor dying in each arm of a match serves one construction past
-// their join. The held box stays in the donor's own local
-// until `build_at` writes the token slot, so a pairing on the way, whose token
-// is written and spent within its block, is unaffected.
+// their join.
+//
+// A holding block takes the donor's token where the donor dies
+// (`hold_token`): the box with its children released when it is unique
+// there, else null once the donor's unit is released. The token stays in the
+// donor's own local until `build_at` moves it to the token slot or an exit
+// edge frees it, so a pairing on the way, whose token is written and spent
+// within its block, is unaffected. Taking the token at the death rather than
+// at the construction is what keeps a shared donor from being held across
+// the blocks between: its other holder's box would stay shared through them.
 //
 // A predecessor of the construction's block in which the donor dies as a box
 // of another count is a null edge (`null_from` to `null_to`, for `nulled`):
-// that block drops the donor where it dies, the edge zeroes its local, and
-// the construction's token test reads the box or null by the path taken. So
-// a donor dying in match arms of different counts still serves a
-// construction past their join on the paths whose box fits.
+// that block drops the donor where it dies and the edge zeroes its local, so
+// the construction reads a null token on that path and the holding blocks'
+// token on the others. So a donor dying in match arms of different counts
+// still serves a construction past their join on the paths whose box fits.
 struct Carry { from: i32[], drop_at: i32[], held: i32[], to: i32[], build_at: i32[], donor: i32[], exit_from: i32[], exit_to: i32[], dropped: i32[], null_from: i32[], null_to: i32[], nulled: i32[] }
 
 function no_carry(): Carry {
@@ -1779,12 +1786,8 @@ function carry_nulls(c: Carry, from: i32, to: i32): i32[] {
   return out;
 }
 
-// Whether some edge into block `to` brings its carried donor null.
-function carry_nullable(c: Carry, to: i32): boolean {
-  return util.index_of_i32(c.null_to, to) >= 0;
-}
-
-// The donors whose ways the edge from `from` to `to` leaves, dropped there.
+// The donors whose ways the edge from `from` to `to` leaves, their tokens
+// freed there.
 function carry_exits(c: Carry, from: i32, to: i32): i32[] {
   let out: i32[] = [];
   let e: i32 = 0;
@@ -1917,20 +1920,45 @@ function zero_local(own r: irtables.LowerResult, slot: i32): irtables.LowerResul
   return emit(r, ir.op_store_local(slot));
 }
 
-// A carried donor's token where some edge into the block brought it null:
-// the token is null on that path, and the box's own test on the others.
-function self_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, nullable: boolean): irtables.LowerResult {
-  if (!nullable) {
+// A construction's own donor's token: taken here when the donor dies at the
+// construction, and moved from the donor's local when a carry brought it,
+// where `hold_token` took it as the box or null and a null edge may have
+// zeroed it.
+function self_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, carried: boolean): irtables.LowerResult {
+  if (!carried) {
     return reuse_token(r, f, donor);
   }
   r = emit(r, ir.op_load_local(donor));
+  r = emit(r, ir.op_store_local(token_slot(f)));
+  return zero_local(r, donor);
+}
+
+// A carried donor's token, taken where the donor dies: the box with its
+// children released when it is unique, else null once the donor's unit is
+// released. It stays in the donor's local for the construction it is carried
+// to, or for the exit edge that frees it (`free_token`).
+function hold_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32): irtables.LowerResult {
+  r = reserve(r, scratch_base(f));
+  r = emit(r, ir.op_load_local(donor));
+  r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+  r = emit(r, ir.op_if(0));
+  if (has_children(f.values[donor], f)) {
+    r = drop_children(r, donor, f.values[donor], scratch_base(f), f);
+  }
+  r = emit(r, ir.op_else());
+  r = release(r, donor, f.values[donor], f);
+  r = zero_local(r, donor);
+  return emit(r, ir.op_end());
+}
+
+// A carried token leaving its ways unspent: a box is freed, its children
+// already released where the token was taken; null is nothing.
+function free_token(own r: irtables.LowerResult, slot: i32): irtables.LowerResult {
+  r = emit(r, ir.op_load_local(slot));
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_bin("ne", 0, false));
   r = emit(r, ir.op_if(0));
-  r = reuse_token(r, f, donor);
-  r = emit(r, ir.op_else());
-  r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_store_local(token_slot(f)));
+  r = helper(r, slot, "__fern_rc_dec");
   return emit(r, ir.op_end());
 }
 
@@ -7073,7 +7101,7 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
       // construction's.
       let kb: i32 = util.index_of_i32(keeps.built, pos);
       if (pairs.selfs[pos] >= 0 && kb < 0) {
-        r = self_token(r, f, pairs.selfs[pos], carry_nullable(carry, b.id) && carry_held_for(carry, b.id, pos));
+        r = self_token(r, f, pairs.selfs[pos], carry_held_for(carry, b.id, pos));
       }
       if (pairs.builds[pos] >= 0 || pairs.selfs[pos] >= 0) {
         r = reuse_construct(r, f, ins, keeps, kb);
@@ -7088,7 +7116,11 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
       if (pairs.tokens[pos] >= 0 && !token_kept(keeps, pos)) {
         r = reuse_token(r, f, pairs.tokens[pos]);
       }
-      r = drops_less(r, step, f, links, pairs.tokens[pos], pairs.selfs[pos], carry_held(carry, b.id, pos), ssaunits.shell_root(f, p, ins));
+      let held_on: i32 = carry_held(carry, b.id, pos);
+      r = drops_less(r, step, f, links, pairs.tokens[pos], pairs.selfs[pos], held_on, ssaunits.shell_root(f, p, ins));
+      if (held_on >= 0) {
+        r = hold_token(r, f, held_on);
+      }
     }
     pos = pos + 1;
   }
@@ -7152,9 +7184,9 @@ function order_ranks(f: ssa.SFunc, order: i32[], ids: i32): i32[] {
 
 function jump(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], position: i32, target: i32): Emit {
   let from: i32 = f.graph.blocks[order[position]].id;
-  // A donor dropped here may be the target's phi, which the edge overwrites.
+  // A token freed here may be the target's phi, which the edge overwrites.
   for left in carry_exits(e.carry, from, target) {
-    e = Emit { ...e, r: drop_linked(e.r, left, e.links, f) };
+    e = Emit { ...e, r: free_token(e.r, left) };
   }
   for gone in carry_nulls(e.carry, from, target) {
     e = Emit { ...e, r: zero_local(e.r, gone) };

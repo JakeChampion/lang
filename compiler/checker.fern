@@ -3861,27 +3861,41 @@ function (s: Scope) module_imported(path: string): boolean {
 // checker resolves them at their use sites, where native keeps them in the same
 // Info.Methods map it lists from.
 function (s: Scope) methods_in_namespace(ns: string): string[] {
-  let out: string[] = [];
-  if (ns == "Array") {
-    out = ["append", "len", "with"];
-  }
-  if (ns == "string") {
-    out = ["as_bytes", "len"];
-  }
-  // Map's runtime methods. `set` / `delete` / `clear` are NOT among them:
-  // native registers them and then deletes them (the pure-collection API's
-  // hard removal), which is what leaves retired_collection_spelling naming
-  // the value-returning replacement. core/map's own receiver methods
-  // (entries, merge, extend, …) arrive through the loop below.
-  if (ns == "Map") {
-    out = ["cleared", "get", "get_or", "has", "insert", "iter", "keys", "len", "values", "without"];
-  }
+  let out: string[] = preregistered_methods(ns);
   for method in s.methods.methods {
     if (method.receiver_type == ns || ns == "Map" && map_receiver_type(method.receiver_type)) {
       out = push_str_unique_sorted(out, method.name);
     }
   }
   return out;
+}
+
+// preregistered_methods: the method names the checker registers on a builtin
+// namespace before any declaration, sorted. Map's `set` / `delete` / `clear`
+// are NOT among them: native registers them and then deletes them (the
+// pure-collection API's hard removal), which is what leaves
+// retired_collection_spelling naming the value-returning replacement.
+// core/map's own receiver methods (entries, merge, extend, …) are declared.
+function preregistered_methods(ns: string): string[] {
+  if (ns == "Array") {
+    return ["append", "len", "with"];
+  }
+  if (ns == "slice") {
+    return ["len"];
+  }
+  if (ns == "string") {
+    return ["as_bytes", "len"];
+  }
+  if (ns == "Map") {
+    return ["cleared", "get", "get_or", "has", "insert", "iter", "keys", "len", "values", "without"];
+  }
+  if (ns == "MapIter") {
+    return ["advance", "has_next", "key", "value"];
+  }
+  if (ns == "Cell") {
+    return ["get", "set"];
+  }
+  return [];
 }
 
 // map_receiver_type: a receiver spelled `Map` or `Map[K, V]`. core/map declares
@@ -13400,25 +13414,33 @@ function unbound_map_arg_diags(c: ast.ExprCall, method: string, mt: typeinfo.Typ
   return out;
 }
 
-// E038: `insert`'s key and value must match the map's columns, as `append`'s
-// element does. It stores both, so a `str` view is not lent here (native's
-// storesArgument). A literal's own entries are the E045 check's, apart from
-// the view.
-function insert_arg_diags(c: ast.ExprCall, mt: typeinfo.TypeMap, s: Scope, out: util.Diag[]): util.Diag[] {
-  if (c.args.len() != 2) {
+// E038: a Map method's key and value arguments must match the map's columns,
+// as `append`'s element does. `insert` stores both, so a `str` view is not
+// lent there (native's storesArgument); a read borrows its key, so a view is.
+// A literal's own entries are the E045 check's, apart from the view.
+function map_arg_diags(c: ast.ExprCall, method: string, mt: typeinfo.TypeMap, s: Scope, out: util.Diag[]): util.Diag[] {
+  let slots: typeinfo.Type[] = [];
+  if (method == "insert" || method == "get_or") {
+    slots = [mt.key, mt.value];
+  }
+  if (method == "get" || method == "has" || method == "without") {
+    slots = [mt.key];
+  }
+  if (slots.len() == 0 || c.args.len() != slots.len()) {
     return out;
   }
-  let slots: typeinfo.Type[] = [mt.key, mt.value];
+  let stores: boolean = method == "insert";
   let ii: i32 = 0;
-  while (ii < 2) {
+  while (ii < slots.len()) {
     let it: typeinfo.Type = check_expr(c.args[ii], s);
-    let mismatch: boolean = is_str_view(it) && is_owned_string(slots[ii]);
+    let lent: boolean = !stores && view_arg_borrow(it, slots[ii]);
+    let mismatch: boolean = stores && is_str_view(it) && is_owned_string(slots[ii]);
     if (!literal_insert(c) && !is_unknown(slots[ii]) && !is_unknown(it)) {
       out = util.append_diags(out, int_dest_range_diags(c.args[ii], slots[ii]));
-      mismatch = !settles_to(c.args[ii], slots[ii], s) && !coercible(it, slots[ii], s);
+      mismatch = !lent && !settles_to(c.args[ii], slots[ii], s) && !coercible(it, slots[ii], s);
     }
     if (mismatch) {
-      out = out.append(dg_at("E038", "argument " + util.i32_to_string(ii + 1) + " to \"insert\": expected " + type_label(slots[ii]) + ", got " + type_label(it) + str_copy_hint(it, slots[ii]), expr_line(c.args[ii]), expr_col(c.args[ii])));
+      out = out.append(dg_at("E038", "argument " + util.i32_to_string(ii + 1) + " to \"" + method + "\": expected " + type_label(slots[ii]) + ", got " + type_label(it) + str_copy_hint(it, slots[ii]), expr_line(c.args[ii]), expr_col(c.args[ii])));
     }
     ii = ii + 1;
   }
@@ -13849,9 +13871,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           }
         },
         typeinfo.TypeMap(mt) => {
-          if (mfa.field == "insert") {
-            out = insert_arg_diags(c, mt, s, out);
-          }
+          out = map_arg_diags(c, mfa.field, mt, s, out);
           out = unbound_map_arg_diags(c, mfa.field, mt, s, out);
           // E043 (map method existence). methods_in_namespace("Map") is the
           // whole surface — the runtime builtins plus whatever core/map's
@@ -16439,9 +16459,9 @@ function registered_intrinsics(): string[] {
 
 // redeclares reports whether funcs[di] redeclares an earlier function, method
 // or associated function, or a surface builtin.
-function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): boolean {
+function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, helpers: string[], di: i32): boolean {
   let f2: parser.FuncDecl = funcs[di];
-  let earlier: boolean = false;
+  let earlier: boolean = redeclares_preregistered(f2, helpers);
   let ej: i32 = names.chain(f2.name);
   while (ej >= 0 && ej < di) {
     let pe: parser.FuncDecl = funcs[ej];
@@ -16472,6 +16492,36 @@ function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): b
 // same_method_decl: two declarations of one method by the same provider, the
 // type itself or one trait. An inherent method and a trait's are an ambiguity
 // (method_ambiguity_diags), not a redeclaration.
+// A method on a built-in namespace named like one the checker registers
+// there before any declaration (preregistered_methods), or an array method
+// named like a `__method_Array_<name>` helper the program imports, redeclares
+// it, as native's pre-registered table makes it.
+function redeclares_preregistered(f2: parser.FuncDecl, helpers: string[]): boolean {
+  if (f2.receiver_type.len() == 0) {
+    return false;
+  }
+  let ns: string = parser.receiver_namespace(f2.receiver_type);
+  if (util.has_str(preregistered_methods(ns), f2.name)) {
+    return true;
+  }
+  return ns == "Array" && util.has_str(helpers, f2.name);
+}
+
+// array_helper_methods: the `<name>` of every free `__method_Array_<name>`
+// function in the program, bare or `<mod>__`-mangled.
+function array_helper_methods(funcs: parser.FuncDecl[]): string[] {
+  let out: string[] = [];
+  for fd in funcs {
+    if (fd.receiver_type.len() == 0) {
+      let m: string = util.array_method_helper_name(fd.name);
+      if (m.len() > 0 && m != "push") {
+        out = out.append(m);
+      }
+    }
+  }
+  return out;
+}
+
 function same_method_decl(pe: parser.FuncDecl, f2: parser.FuncDecl): boolean {
   if (f2.receiver_type.len() == 0 || pe.receiver_type.len() == 0 || pe.name != f2.name) {
     return false;
@@ -16666,10 +16716,11 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
   }
   out = util.append_diags(out, method_ambiguity_diags(mod));
   let decl_index: util.NameIndex = util.name_index(decl_names);
+  let helpers: string[] = array_helper_methods(mod.funcs);
   let di: i32 = 0;
   while (di < mod.funcs.len()) {
     let f2: parser.FuncDecl = mod.funcs[di];
-    if (redeclares(mod.funcs, decl_index, di)) {
+    if (redeclares(mod.funcs, decl_index, helpers, di)) {
       if (f2.receiver_type.len() == 0) {
         out = out.append(dg_at("E006", "function \"" + f2.name + "\" redeclared", f2.line, f2.col));
       } else {
