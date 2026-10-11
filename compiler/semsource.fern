@@ -8938,7 +8938,8 @@ function inline_on(): boolean {
   }
 }
 
-// std/array combinator chains fused into one loop (semfuse).
+// std/array combinator chains, and core/iter adapter chains over an array,
+// fused into one loop (semfuse).
 // `FERN_NO_ARRAY_FUSION=1` turns the pass off, as it does native's.
 function fuse_pipelines(all: Produced[], names: string[], decls: parser.FuncDecl[]): Produced[] {
   let enabled: boolean = fusion_on();
@@ -8952,7 +8953,7 @@ function fuse_pipelines(all: Produced[], names: string[], decls: parser.FuncDecl
     funcs = funcs.append(p.func);
     usable = usable.append(p.ok && !p.template && !p.bodyless);
   }
-  let out: semfuse.Fused = semfuse.fuse_pipelines(funcs, names, usable, stdlib_names(all, names, decls, "std/array"), enabled, report);
+  let out: semfuse.Fused = semfuse.fuse_pipelines(funcs, names, usable, stdlib_names(all, names, decls, "std/array"), stdlib_names(all, names, decls, "core/iter"), enabled, report);
   if (inline_on()) {
     let inlinable: boolean[] = [];
     let modes: i32[][] = [];
