@@ -224,19 +224,34 @@ pub function parse_int_radix(s: string, base: i32): Option[i32] {
   if (i >= n) {  // sign without digits
     return None;
   }
-  let v: i32 = 0;
-  while (i < n) {
+  return __radix_value(s, i, base, neg);
+}
+
+// __radix_value accumulates the digits of `s` from `from` in i64 under the
+// sign, None on a digit outside the base or a magnitude past what i32
+// holds, one more for a negative, rather than a wrapped value.
+function __radix_value(s: string, from: i32, base: i32, neg: boolean): Option[i32] {
+  let limit: i64 = 2147483647 as i64;
+  if (neg) {
+    limit = limit + 1 as i64;
+  }
+  let v: i64 = 0 as i64;
+  let i: i32 = from;
+  while (i < s.len()) {
     let d: i32 = __radix_digit(s[i] as i32);
     if (d < 0 || d >= base) {
       return None;
     }
-    v = v * base + d;
+    v = v * (base as i64) + d as i64;
+    if (v > limit) {
+      return None;
+    }
     i = i + 1;
   }
   if (neg) {
-    v = 0 - v;
+    v = 0 as i64 - v;
   }
-  return Some(v);
+  return Some(v as i32);
 }
 
 // `int_to_string_radix(n, base)` — render `n` in `base` (2..36), digits

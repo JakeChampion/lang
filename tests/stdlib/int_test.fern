@@ -30,6 +30,25 @@ function test_to_string_min(): test.TestOutcome {
   return test.assert_eq(int.int_to_string(0 - 2147483647 - 1), "-2147483648");
 }
 
+function parsed(s: string, base: i32): string {
+  match (int.parse_int_radix(s, base)) {
+    Some(v) => {
+      return int.int_to_string(v);
+    },
+    None => {
+      return "None";
+    }
+  }
+  return "";
+}
+
+// A magnitude i32 cannot hold is None rather than a wrapped value, with
+// INT_MIN itself still parsed.
+function test_parse_overflow_none(): test.TestOutcome {
+  let got: string = parsed("2147483647", 10) + " " + parsed("2147483648", 10) + " " + parsed("-2147483648", 10) + " " + parsed("-2147483649", 10) + " " + parsed("99999999999999999999", 10) + " " + parsed("7fffffff", 16) + " " + parsed("80000000", 16) + " " + parsed("-80000000", 16);
+  return test.assert_eq(got, "2147483647 None -2147483648 None None 2147483647 None -2147483648");
+}
+
 function test_parse_hex(): test.TestOutcome {
   match (int.parse_int_radix("ff", 16)) {
     Some(v) => {
@@ -166,6 +185,7 @@ function main(): i32 {
   r = r.it("parse bad base is None", test_parse_bad_base_none);
   r = r.it("parse digit>=base None", test_parse_digit_ge_base_none);
   r = r.it("parse sign-only None", test_parse_sign_only_none);
+  r = r.it("parse past i32 is None", test_parse_overflow_none);
   r = r.it("radix hex", test_radix_hex);
   r = r.it("radix binary", test_radix_binary);
   r = r.it("radix zero", test_radix_zero);
