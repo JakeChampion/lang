@@ -136,20 +136,17 @@ dense rows themselves — the entry meet, `put_row`, `row_equal`, the per-block
 per-instruction scans (`taken_at`, `reloaded`, `mark_taken_loads`).
 
 The four variants after that are the shapes tried against the dense rows
-and the numbers they measured; none is kept. Keeping a block's own slots
-out of the rows saves little because most slots are read across blocks. A
-sparse row costs more than it saves: the per-slot writes rebuild the state
-struct and the rows are not sparse in a long function, where a value is
-live across most of it. Liveness-driven rows (only the live-in slots read,
-only the live-out written, a slot retired on the edge where it dies, which
-also reports a leak where the value dies rather than at the return) cost
-their fixpoint — several passes over `blocks × tracked` bits — more than the
-rows they save. A second round on an acyclic graph is nearly free, since it
-only compares. What would move this is a representation whose cost is the
-live set at a block rather than the tracked set, computed in one pass, and
-that is a different walk, not a tuning of this one. The fixpoint's share of
-a verifying compile is accepted for now; the budget question for the
-default compile is open.
+and the numbers they measured. Keeping a block's own slots out of the rows
+saves little because most slots are read across blocks. A sparse row costs
+more than it saves: the per-slot writes rebuild the state struct and the
+rows are not sparse in a long function, where a value is live across most
+of it. Liveness-driven rows (only the live-in slots read, only the live-out
+written, a slot retired on the edge where it dies, which also reports a
+leak where the value dies rather than at the return) cost their fixpoint —
+several passes over `blocks × tracked` bits, computed by the certifier
+itself — more than the rows they saved; that shape is the one taken below,
+once the liveness came from `ssalive` instead. A second round on an acyclic
+graph is nearly free, since it only compares.
 
 A profile of a compiler built without semantic inlining (`FERN_SEM_INLINE=`),
 so that callgrind attributes cost per function, puts the 4.64 G of the

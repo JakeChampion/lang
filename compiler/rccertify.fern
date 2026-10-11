@@ -2487,13 +2487,12 @@ function hand_edges(own p: Progress, w: Walk, lv: Live, bi: i32): RoundResult {
   return RoundResult { p: p, changed: changed };
 }
 
-// hand_edge settles what the branch proves on edge `e`, feeds the
-// successor's phis, retires what dies on the edge, and stores the row the
-// successor reads. Returns whether that row changed.
+// hand_edge feeds the successor's phis on edge `e` (feed settles what the
+// branch proves on the edge first), retires what dies on the edge, and
+// stores the row the successor reads. Returns whether that row changed.
 function hand_edge(own p: Progress, w: Walk, lv: Live, bi: i32, e: i32): RoundResult {
   let sid: i32 = ssa.successor_id(w.f.blocks[bi].term, e);
   let si: i32 = w.at[sid];
-  p = settle_edge(p, w, bi, sid);
   p = feed(p, w, bi, sid);
   p = retire(p, w, lv, lv.die_at[bi * 2 + e], lv.die_n[bi * 2 + e], w.f.blocks[bi].id, "leaked where it dies");
   let base: i32 = lv.out_at[bi * 2 + e];
