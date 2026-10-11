@@ -35,6 +35,7 @@ import "./asmcore";
 import "./astwalk";
 import "./ircore";
 import "./wasm_aes";
+import "./wasmlocals";
 
 // Linear-memory layout: the low scratch, then a unit's string literals, then
 // its aggregate constants, then the fl_cells-entry small freelist head array,
@@ -6909,9 +6910,9 @@ function emit_str_op_wat(o: ir.Op): string {
 }
 
 // emit_function_ir renders one IR-eligible function as a WAT (func ...). Locals
-// are numeric: slots 0..n_params-1 the params, n_params..n_locals-1 the body
-// locals, plus TWO scratch locals (indices n_locals, n_locals+1) the array ops
-// use to hold a base pointer / popped element while reordering the wasm stack.
+// are numeric: the params first, then the body slots as wasmlocals coalesces
+// them, then the five scratch locals the array and struct ops reorder the wasm
+// stack through.
 // emit_function_ir emits one function's WAT bodies from its PRE-LOWERED result
 // `r` (#5510 refactor / the wasm port of asm's #4394 lever 3). Previously it
 // re-lowered `fd` here — a SECOND lowering that had to be kept byte-identical to
@@ -6989,31 +6990,32 @@ function fallthrough_filler(result_wat: string): string {
 // fern-lint: allow cyclomatic-complexity
 // The wasm half of the same op table as asm_ir.fern: one guard per op.
 function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: string, result_wat: string, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate): string {
-  let arrtmp: i32 = r.n_locals;
-  let eltmp: i32 = r.n_locals + 1;
+  ircore.lower_failed_refuse(fn_name, r);
+  irverifygate.verify_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vgate);
+  let f: wasmlocals.Frame = wasmlocals.coalesce(r.ops, r.n_params, r.n_locals, r.i64_slots, r.f64_slots);
+  let arrtmp: i32 = f.n_locals;
+  let eltmp: i32 = f.n_locals + 1;
   // f64tmp: an f64-typed scratch local for reordering 64-bit struct field
   // values (struct_make / struct_set) through the typed wasm stack — the i32
   // eltmp can't hold an f64.
-  let f64tmp: i32 = r.n_locals + 2;
+  let f64tmp: i32 = f.n_locals + 2;
   // i64tmp: an i64-typed scratch local for reordering 8-byte INTEGER array
   // elements (i64[] arr_make / arr_set) through the typed wasm stack — the i32
   // eltmp can't hold an i64, and f64tmp is float-typed.
-  let i64tmp: i32 = r.n_locals + 3;
+  let i64tmp: i32 = f.n_locals + 3;
   // bctmp: an i32 scratch holding the index across the arr_get / arr_set bounds
   // check (arrtmp holds the base). Needed as a fifth scratch because arr_set's
   // i32 path already parks the value in eltmp, so the index needs its own home.
-  let bctmp: i32 = r.n_locals + 4;
-  ircore.lower_failed_refuse(fn_name, r);
-  irverifygate.verify_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vgate);
+  let bctmp: i32 = f.n_locals + 4;
   let parts: string[] = [];
   parts = parts.append("  (func $" + fn_name);
   let p: i32 = 0;
   while (p < r.n_params) {
-    // An i64 param is in r.i64_slots, an f64 param in r.f64_slots (the lowering
+    // An i64 param is in f.i64_slots, an f64 param in f.f64_slots (the lowering
     // marks them); the receiver slot 0 of a method never is.
-    if (slot_in_list(r.i64_slots, p)) {
+    if (slot_in_list(f.i64_slots, p)) {
       parts = parts.append(" (param i64)");
-    } else if (slot_in_list(r.f64_slots, p)) {
+    } else if (slot_in_list(f.f64_slots, p)) {
       parts = parts.append(" (param f64)");
     } else {
       parts = parts.append(" (param i32)");
@@ -7021,11 +7023,11 @@ function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: st
     p = p + 1;
   }
   parts = parts.append(result_wat);
-  // body locals + 5 scratch locals. A body local in r.i64_slots is declared
-  // (local i64), one in r.f64_slots (local f64); the trailing scratch locals
+  // body locals + 5 scratch locals. A body local in f.i64_slots is declared
+  // (local i64), one in f.f64_slots (local f64); the trailing scratch locals
   // are two i32 (arrtmp/eltmp), one f64 (f64tmp), one i64 (i64tmp), one i32
   // (bctmp, the bounds-check index holder).
-  let nbody: i32 = r.n_locals - r.n_params;
+  let nbody: i32 = f.n_locals - r.n_params;
   let nloc: i32 = nbody + 5;
   parts = parts.append("    (local");
   let l: i32 = 0;
@@ -7034,9 +7036,9 @@ function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: st
       parts = parts.append(" f64");
     } else if (l == nbody + 3) {
       parts = parts.append(" i64");
-    } else if (l < nbody && slot_in_list(r.i64_slots, r.n_params + l)) {
+    } else if (l < nbody && slot_in_list(f.i64_slots, r.n_params + l)) {
       parts = parts.append(" i64");
-    } else if (l < nbody && slot_in_list(r.f64_slots, r.n_params + l)) {
+    } else if (l < nbody && slot_in_list(f.f64_slots, r.n_params + l)) {
       parts = parts.append(" f64");
     } else {
       parts = parts.append(" i32");
@@ -7045,9 +7047,9 @@ function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: st
   }
   parts = parts.append(")\n");
   let i: i32 = 0;
-  while (i < r.ops.len()) {
-    let o: ir.Op = r.ops[i];
-    parts = parts.append(emit_ir_op(o, WasmOpCtx { ns: ns, str_vals: str_vals, cagg_vals: cagg_vals, structs: structs, fn_table: fn_table, funcs: funcs, base: r.n_locals }));
+  while (i < f.ops.len()) {
+    let o: ir.Op = f.ops[i];
+    parts = parts.append(emit_ir_op(o, WasmOpCtx { ns: ns, str_vals: str_vals, cagg_vals: cagg_vals, structs: structs, fn_table: fn_table, funcs: funcs, base: f.n_locals }));
     i = i + 1;
   }
   // Fallthrough result. Subset functions end in `return`, so this lands in the
