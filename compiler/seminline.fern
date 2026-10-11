@@ -1107,10 +1107,6 @@ struct Head { block: i32, ins: ssa.SInst, of: i32, read: ssa.SInst }
 // an array it holds alone.
 struct Edits { defs: Defs, base: i32, added: typeinfo.Type[], swap: i32[], entry: ssa.SInst[], heads: Head[], kept: boolean[], chained: boolean[] }
 
-function next_value(e: Edits): i32 {
-  return e.base + e.added.len();
-}
-
 function value_type(e: Edits, v: i32): typeinfo.Type {
   return e.added[v - e.base];
 }
@@ -1343,10 +1339,15 @@ function part_of(f: ssasem.Func, own w: Walk, read: ssa.SInst, v: i32, depth: i3
   if (made >= 0) {
     return Walk { ...w, value: made };
   }
-  let nv: i32 = next_value(w.e);
-  let pb: i32 = w.e.defs.blocks[x];
+  // Each record on the way to an array is read once: a second read of the
+  // same slot would keep the record from being taken apart, and the append
+  // would copy the array (#12135).
+  let e0: Edits = w.e;
+  let d0: Defs = e0.defs;
+  let nv: i32 = e0.base + e0.added.len();
+  let pb: i32 = d0.blocks[x];
   let cur: Walk = Walk {
-    e: Edits { ...w.e, defs: Defs { insts: w.e.defs.insts.append(no_inst()), blocks: w.e.defs.blocks.append(pb) }, added: w.e.added.append(ty) },
+    e: Edits { ...e0, defs: Defs { insts: d0.insts.append(no_inst()), blocks: d0.blocks.append(pb) }, added: e0.added.append(ty) },
     value: 0 - 1, phis: w.phis.append(x), parts: w.parts.append(nv),
   };
   let args: i32[] = [];
@@ -1355,7 +1356,9 @@ function part_of(f: ssasem.Func, own w: Walk, read: ssa.SInst, v: i32, depth: i3
     args = args.append(cur.value);
   }
   let ins: ssa.SInst = ssa.SInst { kind_tag: 8, result: nv, args: args, imm: 0, str: "" };
-  return Walk { ...cur, e: Edits { ...cur.e, defs: Defs { ...cur.e.defs, insts: cur.e.defs.insts.with(nv, ins) }, heads: cur.e.heads.append(Head { block: pb, ins: ins, of: x, read: read }) }, value: nv };
+  let e1: Edits = cur.e;
+  let d1: Defs = e1.defs;
+  return Walk { ...cur, e: Edits { ...e1, defs: Defs { ...d1, insts: d1.insts.with(nv, ins) }, heads: e1.heads.append(Head { block: pb, ins: ins, of: x, read: read }) }, value: nv };
 }
 
 // The part phi an earlier read this round made for the same part of `x`, or
@@ -1430,12 +1433,14 @@ function part_value(own w: Walk, p: Part, ty: typeinfo.Type): Walk {
   if (p.value >= 0) {
     return Walk { ...w, value: p.value };
   }
-  let nv: i32 = next_value(w.e);
+  let e0: Edits = w.e;
+  let d0: Defs = e0.defs;
+  let nv: i32 = e0.base + e0.added.len();
   let ins: ssa.SInst = ssa.SInst { kind_tag: 2, result: nv, args: [], imm: p.flag, str: "" };
   if (p.filler) {
     ins = ssa.SInst { kind_tag: ssasem.zero(), result: nv, args: [], imm: 0, str: "" };
   }
-  return Walk { ...w, e: Edits { ...w.e, defs: Defs { insts: w.e.defs.insts.append(ins), blocks: w.e.defs.blocks.append(0 - 1) }, added: w.e.added.append(ty), entry: w.e.entry.append(ins) }, value: nv };
+  return Walk { ...w, e: Edits { ...e0, defs: Defs { insts: d0.insts.append(ins), blocks: d0.blocks.append(0 - 1) }, added: e0.added.append(ty), entry: e0.entry.append(ins) }, value: nv };
 }
 
 // `f` with a round's edits written in, in one pass over its blocks.
