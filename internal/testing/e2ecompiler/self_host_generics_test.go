@@ -40,9 +40,13 @@ var genericsCases = []struct {
 	// stamp filter alone drops.
 	{"append-chain-record-array-method", "struct P { x: i32 } function (xs: T[]) count(): i32 { return xs.len(); } function main(): i32 { let a: P[] = [P { x: 1 }]; return a.append(P { x: 2 }).count() * 21; }", 42},
 	// The same chain inside a generic body, where the receiver is `T[]`
-	// until the clone binds `T`: the chain types in the clone, and the
+	// until the clone binds `T`: the chain types in the clone, as a
+	// generic call's argument, under `with`, and through a `let`, and the
 	// template keys no clone after a bare variable.
 	{"append-chain-in-generic-body", "struct P { x: i32 } function (xs: T[]) count(): i32 { return xs.len(); } function grow[T](xs: T[], x: T): i32 { return xs.append(x).count(); } function main(): i32 { let a: P[] = [P { x: 1 }]; return grow(a, P { x: 2 }) * 21; }", 42},
+	{"append-arg-to-generic-in-generic-body", "struct P { x: i32 } function count_of[U](ys: U[]): i32 { return ys.len(); } function grow[T](xs: T[], x: T): i32 { return count_of(xs.append(x)); } function main(): i32 { let a: P[] = [P { x: 1 }]; return grow(a, P { x: 2 }) * 21; }", 42},
+	{"with-arg-to-generic-in-generic-body", "struct P { x: i32 } function count_of[U](ys: U[]): i32 { return ys.len(); } function swap[T](xs: T[], x: T): i32 { return count_of(xs.with(0, x)) + 41; } function main(): i32 { let a: P[] = [P { x: 1 }]; return swap(a, P { x: 2 }); }", 42},
+	{"append-let-in-generic-body", "struct P { x: i32 } function (xs: T[]) count(): i32 { return xs.len(); } function grow[T](xs: T[], x: T): i32 { let ys = xs.append(x); return ys.count() * 21; } function main(): i32 { let a: P[] = [P { x: 1 }]; return grow(a, P { x: 2 }); }", 42},
 	{"variant-payload-struct-option", "struct Box[T] { n: i32, f: (i32, T) => i32 } function add_i(a: i32, b: i32): i32 { return a + b; } function boxed[T](n: i32, f: (i32, T) => i32): Option[Box[T]] { if (n < 0) { return None; } return Some(Box { n: n, f: f }); } function main(): i32 { match (boxed(40, add_i)) { Some(b) => { let g: (i32, i32) => i32 = b.f; return g(b.n, 2); }, None => { return 1; } } return 1; }", 42},
 }
 
