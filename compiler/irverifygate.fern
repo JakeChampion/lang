@@ -54,6 +54,10 @@ import "./util";
 import "./irverify";
 import "./irverifyrc";
 import "./irverifystack";
+import "./ssa";
+import "./ssa_lift";
+import "./rcsigs";
+import "./rccertify";
 
 // Gate is what the verifiers read beside the function: `sigs`, the
 // callee-arity index for the whole program being emitted, built once per emit
@@ -66,21 +70,32 @@ import "./irverifystack";
 // the stack pass modelled, one byte each in a buffer, so one gate shared by
 // an emit loop's calls can say at the end how much was verified (report).
 // Both are 0 unless FERN_IR_VERIFY=1 asks for the line.
-pub struct Gate { sigs: irverify.NameIndex, pops: i32[], seen: usize, modelled: usize }
+//
+// The emitted-RC certifier (rccertify.fern, #11908) reads the Gate too:
+// `abis` is the module's contracts, `rc` and `rcops` the runtime signature
+// tables, `kinds` the lift's kind table for a backend that does not lift on
+// its own. `census` counts what it certified, one line per function with
+// something to say, under FERN_RC_CERTIFY=report; 0 otherwise.
+pub struct Gate { sigs: irverify.NameIndex, pops: i32[], seen: usize, modelled: usize, abis: rccertify.Abis, rc: rcsigs.Table, rcops: rcsigs.OpTable, kinds: ssa_lift.KindTable, census: usize }
 
 // gate builds the Gate a program's emit loop hands to every
 // verify_or_refuse and reports at its end.
-pub function gate(sigs: irverify.NameIndex, pops: i32[]): Gate {
+pub function gate(sigs: irverify.NameIndex, pops: i32[], abis: rccertify.Abis): Gate {
+  let g: Gate = gate_unreported(sigs, pops, abis);
   if (!report_on()) {
-    return gate_unreported(sigs, pops);
+    return g;
   }
-  return Gate { sigs: sigs, pops: pops, seen: buf_new(64), modelled: buf_new(64) };
+  return Gate { ...g, seen: buf_new(64), modelled: buf_new(64) };
 }
 
 // gate_unreported is the Gate for the runtime helpers' bodies, which the
 // line does not count: native's counts the program's functions.
-pub function gate_unreported(sigs: irverify.NameIndex, pops: i32[]): Gate {
-  return Gate { sigs: sigs, pops: pops, seen: 0 as usize, modelled: 0 as usize };
+pub function gate_unreported(sigs: irverify.NameIndex, pops: i32[], abis: rccertify.Abis): Gate {
+  let census: usize = 0 as usize;
+  if (util.certify_mode() == 1) {
+    census = buf_new(256);
+  }
+  return Gate { sigs: sigs, pops: pops, seen: 0 as usize, modelled: 0 as usize, abis: abis, rc: rcsigs.table(), rcops: rcsigs.op_table(), kinds: ssa_lift.kind_table(), census: census };
 }
 
 // report_on reports whether the coverage line is wanted: FERN_IR_VERIFY=1,
@@ -102,6 +117,13 @@ pub function report_on(): boolean {
 // clean, so the line is what says how much was looked at — and releases the
 // counters. Silent unless report_on.
 pub function report(g: Gate): void {
+  if (g.census != 0 as usize) {
+    let lines: string = buf_take(g.census);
+    buf_free(g.census);
+    if (lines.len() > 0) {
+      eprint(lines);
+    }
+  }
   if (!report_on()) {
     return;
   }
@@ -172,4 +194,102 @@ pub function verify_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32, n_lo
     + irverify.format_problems(ps, 20));
   exit(4);
   return 0;
+}
+
+// ---- the emitted-RC certifier ----------------------------------------------
+
+// certify_or_refuse runs rccertify over one lifted function, under
+// FERN_RC_CERTIFY: a finding is a lowering refusal, naming the function and
+// the value, under `1`; under `report` every finding is printed and the
+// function's census appended to the gate's, and the compile continues.
+pub function certify_or_refuse(fn_name: string, f: ssa.SFunc, ops: ir.Op[], g: Gate): i32 {
+  let mode: i32 = util.certify_mode();
+  if (mode == 0) {
+    return 0;
+  }
+  let r: rccertify.Report = rccertify.certify(f, ops, g.abis.lookup(fn_name), g.abis, g.rc, g.rcops);
+  if (mode == 1) {
+    // A finding goes out at once: the census rides a buffer not every
+    // gate flushes, and a finding is what the mode exists to show.
+    for x in r.findings {
+      eprint("FERN_RC_CERTIFY: finding " + rccertify.render(fn_name, x));
+    }
+    census_line(fn_name, r, g);
+    dump_if_asked(fn_name, f);
+    return 0;
+  }
+  if (r.findings.len() == 0) {
+    return 0;
+  }
+  let out: string = "FERN_RC_CERTIFY: " + fn_name + " emits unbalanced reference counting (#11908):";
+  let i: i32 = 0;
+  while (i < r.findings.len() && i < 20) {
+    out = out + "\n    " + rccertify.render(fn_name, r.findings[i]);
+    i = i + 1;
+  }
+  eprint(out);
+  exit(5);
+  return 0;
+}
+
+// certify_ops_or_refuse is certify_or_refuse for a backend that does not
+// lift: the stack machine's. A stream the lift cannot take is not certified
+// and says so in the census; the backend's own refusal names the op.
+pub function certify_ops_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32, g: Gate): i32 {
+  if (util.certify_mode() == 0) {
+    return 0;
+  }
+  let lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(g.kinds, fn_name, n_params, n_locals, ops, false);
+  if (!lifted.ok) {
+    if (g.census != 0 as usize) {
+      buf_push(g.census, "FERN_RC_CERTIFY: census " + fn_name + " skipped=lift:" + lifted.bail + "\n");
+    }
+    return 0;
+  }
+  return certify_or_refuse(fn_name, ssa.register_form(lifted.func).f, ops, g);
+}
+
+// census_line records one function's report: every finding on its own
+// line, and a census line when the function was skipped, left something
+// unproved, or met a callee or op the tables do not know.
+function census_line(fn_name: string, r: rccertify.Report, g: Gate): void {
+  if (g.census == 0 as usize) {
+    return;
+  }
+  let line: string = "FERN_RC_CERTIFY: census " + fn_name + " tracked=" + util.i32_to_string(r.tracked)
+    + " unproved=" + util.i32_to_string(r.unproved) + " findings=" + util.i32_to_string(r.findings.len());
+  if (r.skipped != "") {
+    line = line + " skipped=" + r.skipped;
+  }
+  let own: rccertify.Abi = g.abis.lookup(fn_name);
+  if (!own.known) {
+    line = line + " abi=unknown";
+  } else {
+    line = line + " abi=";
+    for m in own.modes {
+      line = line + util.i32_to_string(m);
+    }
+    if (own.result_unit) {
+      line = line + ">unit";
+    }
+  }
+  for name in r.opaque {
+    line = line + " opaque=" + name;
+  }
+  buf_push(g.census, line + "\n");
+}
+
+// dump_if_asked prints the lifted SSA of the function FERN_RC_CERTIFY_DUMP
+// names, under the report mode: what the certifier read when it found what
+// it found.
+function dump_if_asked(fn_name: string, f: ssa.SFunc): void {
+  match (env("FERN_RC_CERTIFY_DUMP")) {
+    Some(want) => {
+      if (want == fn_name) {
+        eprint("FERN_RC_CERTIFY: lifted " + fn_name + "\n" + ssa.print_func(f));
+      }
+    },
+    None => {
+    }
+  }
 }

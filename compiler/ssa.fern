@@ -220,15 +220,25 @@ function carries_str(kind: i32): boolean {
 }
 
 // A variant projection carries BOTH: the field index and the variant name.
+// A memory or call-like instruction (40..60) prints the offset and mark it
+// carries: `ld_at 8 rc`.
+function shows_imm(ins: SInst): boolean {
+  return carries_imm(ins.kind_tag) || ins.kind_tag >= 40 && ins.kind_tag <= 43 && ins.imm != 0;
+}
+
+function shows_str(ins: SInst): boolean {
+  return carries_str(ins.kind_tag) || ins.kind_tag >= 40 && ins.kind_tag <= 60 && ins.str != "";
+}
+
 function inst_detail(ins: SInst): string {
   if (ins.kind_tag == 1 && ins.str != "") {
     return " " + ins.str;
   }
   let out: string = "";
-  if (carries_imm(ins.kind_tag)) {
+  if (shows_imm(ins)) {
     out = out + " " + util.i32_to_string(ins.imm);
   }
-  if (carries_str(ins.kind_tag)) {
+  if (shows_str(ins)) {
     out = out + " " + ins.str;
   }
   return out;

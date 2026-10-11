@@ -1,0 +1,2245 @@
+// compiler/rccertify.fern — the certifier of the reference counting the
+// physical lowering emits (#11908).
+//
+// ssaunits.verify_planned replays the abstract unit plan: every unit is moved,
+// dropped or returned exactly once. ssarc then lowers that plan to physical
+// RC — retains, releases, reuse tokens, takes and steals, grow brackets — and
+// nothing checked the ops it emits. This does. It reads the lifted SSA of a
+// lowered function (ssa_lift) and nothing of the plan, and accounts, per
+// path, the units the function holds:
+//
+//   - a value's definition says what the frame holds on it (`origin`): an
+//     allocation or an owned call result is a fresh unit, a counted parameter
+//     a unit handed in, a load or a borrowed parameter nothing, a phi whatever
+//     its edges bring;
+//   - a retain adds a unit, a release, a move into a callee or a container
+//     and a return each spend one;
+//   - at a join the counts are met per value, and a disagreement is
+//     `unproved` rather than a finding.
+//
+// A finding is a definite violation: a unit spent that the frame does not
+// hold (an over-release, a double move, a return of a borrow), or a unit the
+// frame definitely holds when it returns or when the value is redefined (a
+// leak). Fail-soft on what it cannot see — an unknown callee poisons its
+// operands, a disagreeing join is unproved, an op with no row consumes
+// nothing and produces what the lowering's mark says — so a clean report
+// over the compiler means no shape it understood is unbalanced, and the
+// counters say how much it understood.
+//
+// Ownership is tracked per rename root: a `copy`, a retain's result and the
+// pointer it was handed are one value. The counts are small integers with a
+// cap, met exactly, so a value retained once and moved twice is caught where
+// a boolean lattice would let the second move through.
+//
+// # The box the frame proved unique
+//
+// The lowering releases a box's children inline under `__fern_rc_is_unique`:
+// `if unique(b) { release(b.f) ... } release(b)`. A child read inside that
+// arm is the frame's to release — the box is about to be freed shallowly and
+// nothing else will — so a load from `b` in a block the arm dominates is a
+// unit the frame holds (`child`). The same holds under a reuse token's
+// nonzero test, since the token is the box itself when it was unique, and in
+// the body of a children-only drop helper (`__sem_drop_<T>`), whose parameter
+// its caller proved unique. Elsewhere a load is a borrow, and releasing one
+// is the finding this exists for.
+
+import "./ir";
+import "./ssa";
+import "./ssadeps";
+import "./rcsigs";
+import "./util";
+
+// ---- the boundary ---------------------------------------------------------
+
+// The parameter modes, as ssasem spells them.
+pub function value_mode(): i32 {
+  return 1;
+}
+
+pub function borrow_mode(): i32 {
+  return 2;
+}
+
+pub function counted_mode(): i32 {
+  return 3;
+}
+
+// A children-only drop helper's parameter: a box the caller proved unique,
+// whose every child the body releases and whose own unit stays the caller's.
+pub function children_mode(): i32 {
+  return 4;
+}
+
+// Abi is one function's declared ownership: a mode per parameter, and
+// whether its caller owns the result. `known` is false when nothing declared
+// it, and the certifier then assumes nothing of the parameters or the result.
+//
+// A function sempair returns in two words — a pair as its elements, a
+// variant as its position and one payload — is read by the words: the
+// callee's `ret` spends a unit of the first iff `pair_first`, its `ret_word`
+// one of the second iff `pair_second` says so, and a caller's `call_word` is
+// a fresh unit on the same terms. `pair_second` is 0 for a scalar word, -1
+// for a pair's reference, -2 where nothing is known, and otherwise the set
+// of variant tags whose payload is a reference, one bit per tag: the word
+// then holds a unit only where the first word is such a tag, which a
+// branch on it settles edge by edge. Whether a function IS paired is what
+// its body and its call sites say.
+//
+// `result_word` says the result is a raw word (`usize`), which core/map's
+// functions hand counted boxes around in: a unit the body holds may leave
+// through such a return, so one is given up where the frame holds one.
+pub struct Abi { known: boolean, modes: i32[], result_unit: boolean, pair_first: boolean, pair_second: i32, result_word: boolean }
+
+pub function unknown_abi(): Abi {
+  return Abi { known: false, modes: [], result_unit: false, pair_first: false, pair_second: -2, result_word: false };
+}
+
+pub function abi(modes: i32[], result_unit: boolean): Abi {
+  return Abi { known: true, modes: modes, result_unit: result_unit, pair_first: false, pair_second: -2, result_word: false };
+}
+
+// second_holds: a second word carries a unit under `pair_second` at all.
+function second_holds(pair_second: i32): boolean {
+  return pair_second == -1 || pair_second > 0;
+}
+
+// Abis is the module's contracts as plain rows keyed by function name, built
+// by the backend from the contracts the lowering handed it.
+pub struct Abis { names: util.NameIndex, modes: i32[][], results: boolean[], firsts: boolean[], seconds: i32[], words: boolean[] }
+
+pub function no_abis(): Abis {
+  let none: string[] = [];
+  return Abis { names: util.name_index(none), modes: [], results: [], firsts: [], seconds: [], words: [] };
+}
+
+pub function abis_of(names: string[], modes: i32[][], results: boolean[], firsts: boolean[], seconds: i32[], words: boolean[]): Abis {
+  return Abis { names: util.name_index(names), modes: modes, results: results, firsts: firsts, seconds: seconds, words: words };
+}
+
+// lookup is `name`'s declared ownership, or the generated helpers' by their
+// names: a children-only drop lends a unique box, a whole-value release
+// consumes its argument, and neither hands back a unit.
+// env_abi: core/map calls these through a function value, the environment
+// first: a column release takes its value owned, a key hash or equality
+// lends. A scalar column's value is a word, and a wide one's crosses as a
+// raw cell core/map frees, which no count covers.
+function env_abi(name: string): Abi {
+  if (util.str_has_prefix(name, "__sem_key")) {
+    return abi([borrow_mode(), borrow_mode(), borrow_mode()], false);
+  }
+  if (name == "__sem_scalar_release$env" || name == "__sem_cell_release$env") {
+    return abi([borrow_mode(), borrow_mode()], false);
+  }
+  return abi([borrow_mode(), counted_mode()], false);
+}
+
+// byte_view_abi: the helpers ssabytes writes in Fern over a borrowed view.
+function byte_view_abi(name: string): Abi {
+  if (name == "__sem_byte_view_len" || name == "__sem_byte_view_data") {
+    return abi([borrow_mode()], false);
+  }
+  if (name == "__sem_byte_view_slice") {
+    return abi([borrow_mode(), value_mode(), value_mode()], true);
+  }
+  if (name == "__sem_byte_view_release") {
+    return abi([counted_mode()], false);
+  }
+  return unknown_abi();
+}
+
+pub function (a: Abis) lookup(name: string): Abi {
+  let at: i32 = a.names.find(name);
+  if (at >= 0) {
+    return Abi { known: true, modes: a.modes[at], result_unit: a.results[at], pair_first: a.firsts[at], pair_second: a.seconds[at], result_word: a.words[at] };
+  }
+  if (rcsigs.is_children_drop(name)) {
+    return abi([children_mode()], false);
+  }
+  if (env_closure(name)) {
+    return env_abi(name);
+  }
+  if (rcsigs.is_generated_release(name)) {
+    return abi([counted_mode()], false);
+  }
+  return byte_view_abi(name);
+}
+
+// env_closure: a generated body core/map calls as a function value, named
+// with the `$env` suffix.
+function env_closure(name: string): boolean {
+  let n: i32 = name.len();
+  return n > 4 && slice_unchecked(name, n - 4, n) == "$env" && util.str_has_prefix(name, "__sem_");
+}
+
+// ---- the report -----------------------------------------------------------
+
+// Finding is one definite violation: `kind` names the class, `value` the SSA
+// value whose unit it concerns (its rename root), `block` the block it was
+// found in, `defined` the kind of the value's definition.
+pub struct Finding { kind: string, value: i32, block: i32, defined: string, message: string }
+
+pub function render(fn_name: string, x: Finding): string {
+  return fn_name + ": " + x.kind + " of v" + util.i32_to_string(x.value) + " (" + x.defined + ") in b"
+    + util.i32_to_string(x.block) + ": " + x.message;
+}
+
+// Report is one function's verdict and the coverage behind it: how many
+// rename roots the walk tracked, how many it left unproved at a return, the
+// callees it had no signature for and the IR ops its table does not name.
+// `skipped` names why the walk did not run at all, "" when it did.
+pub struct Report { findings: Finding[], tracked: i32, unproved: i32, opaque: string[], skipped: string }
+
+function skipped(why: string): Report {
+  return Report { findings: [], tracked: 0, unproved: 0, opaque: [], skipped: why };
+}
+
+// ---- origins --------------------------------------------------------------
+
+function org_none(): i32 {
+  return 0;
+}
+
+function org_fresh(): i32 {
+  return 1;
+}
+
+function org_transferred(): i32 {
+  return 2;
+}
+
+function org_borrowed(): i32 {
+  return 3;
+}
+
+function org_merged(): i32 {
+  return 4;
+}
+
+function org_unknown(): i32 {
+  return 5;
+}
+
+function org_child(): i32 {
+  return 6;
+}
+
+// The count a value's definition puts in the frame's hands.
+function initial_count(origin: i32): i32 {
+  if (origin == org_fresh() || origin == org_transferred() || origin == org_child()) {
+    return 1;
+  }
+  if (origin == org_unknown() || origin == org_merged()) {
+    return maybe();
+  }
+  return 0;
+}
+
+function origin_name(origin: i32): string {
+  if (origin == org_fresh()) {
+    return "fresh";
+  }
+  if (origin == org_transferred()) {
+    return "parameter";
+  }
+  if (origin == org_borrowed()) {
+    return "borrow";
+  }
+  if (origin == org_merged()) {
+    return "phi";
+  }
+  if (origin == org_child()) {
+    return "child";
+  }
+  if (origin == org_unknown()) {
+    return "unknown";
+  }
+  return "none";
+}
+
+// ---- the count lattice ----------------------------------------------------
+
+// A root's state is a count of the units the frame holds on it, or one of
+// two marks: `absent`, no definition reached this point, and `maybe`, the
+// paths disagree or an opaque call touched it.
+function absent(): i32 {
+  return -2;
+}
+
+function maybe(): i32 {
+  return -1;
+}
+
+// Counts above the cap are unproved rather than tracked: a retain repeated
+// round a loop with no release is a leak the fixpoint would otherwise climb
+// forever on.
+function cap(): i32 {
+  return 8;
+}
+
+function meet(a: i32, b: i32): i32 {
+  if (a == b || b == absent()) {
+    return a;
+  }
+  if (a == absent()) {
+    return b;
+  }
+  return maybe();
+}
+
+// ---- the walk's tables ----------------------------------------------------
+
+// Pos locates a value's definition: the block position and the instruction
+// index, -1 for a parameter or an undefined value.
+struct Defs { block: i32[], at: i32[] }
+
+function definitions(f: ssa.SFunc): Defs {
+  let block: i32[] = util.minus_ones(f.nvals);
+  let at: i32[] = util.minus_ones(f.nvals);
+  let bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    let insts: ssa.SInst[] = f.blocks[bi].insts;
+    let i: i32 = 0;
+    while (i < insts.len()) {
+      let r: i32 = insts[i].result;
+      if (r >= 0 && r < f.nvals) {
+        block = block.with(r, bi);
+        at = at.with(r, i);
+      }
+      i = i + 1;
+    }
+    bi = bi + 1;
+  }
+  return Defs { block: block, at: at };
+}
+
+function def_of(f: ssa.SFunc, d: Defs, v: i32): ssa.SInst {
+  if (v < 0 || v >= d.block.len() || d.block[v] < 0) {
+    return ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
+  }
+  return f.blocks[d.block[v]].insts[d.at[v]];
+}
+
+// A const_int zero, which the lowering stores to empty a slot and compares a
+// token against.
+function is_zero(f: ssa.SFunc, d: Defs, v: i32): boolean {
+  let ins: ssa.SInst = def_of(f, d, v);
+  return ins.kind_tag == 1 && ins.imm == 0;
+}
+
+// marked_result: the lowering marked this runtime call's or flat op's
+// result a counted reference (ir.counted): a runtime call carries it in
+// `imm`, a flat op on the op its `imm` indexes.
+function marked_result(w: Walk, ins: ssa.SInst): boolean {
+  if (ins.kind_tag == 49 || ins.kind_tag == 50) {
+    return (ins.imm & 2) != 0;
+  }
+  if (ins.kind_tag == 59) {
+    return ins.imm >= 0 && ins.imm < w.irops.len() && ir.is_counted(w.irops[ins.imm]);
+  }
+  return false;
+}
+
+function is_call(ins: ssa.SInst, name: string): boolean {
+  return ins.kind_tag == 11 && ins.str == name;
+}
+
+// A load of a counted reference: a byte-offset read (40) or a checked
+// element read (42) the lowering marked (ir.counted, carried as `rc`). An
+// unmarked load reads a scalar word — a length, a tag, a number — and holds
+// nothing.
+function is_load(ins: ssa.SInst): boolean {
+  return (ins.kind_tag == 40 || ins.kind_tag == 42) && ins.str == "rc";
+}
+
+// The kinds that store their last operand into the box their first names.
+function is_store(k: i32): boolean {
+  return k == 41 || k == 43 || k == 53 || k == 55;
+}
+
+// The kinds carrying an IR op by name: a Fern-compiled runtime helper (49),
+// a register-ABI runtime routine (50) and the stack machine's own arm (59).
+function is_named_op(k: i32): boolean {
+  return k == 49 || k == 50 || k == 59;
+}
+
+// ---- roots ------------------------------------------------------------------
+
+// Walk is everything the per-block transfer reads: the function, its tables
+// and the boundary, built once per function.
+struct Walk {
+  f: ssa.SFunc,
+  defs: Defs,
+  at: i32[],
+  root: i32[],
+  origin: i32[],
+  idx: i32[],
+  tracked: i32,
+  self_abi: Abi,
+  abis: Abis,
+  sigs: rcsigs.Table,
+  ops: rcsigs.OpTable,
+  paired: boolean,
+  why: i32[],
+  opened: i32[],
+  // The ops the function was lifted from: a flat op's `imm` indexes them,
+  // and the mark on the op (ir.counted) says its result is a reference.
+  irops: ir.Op[],
+  // `p + c`: an address inside the object `p` names, which aliases `p`'s
+  // root for a spend but carries no unit of its own into a phi.
+  derived: boolean[],
+  // For a paired call's second word, the first word it is read beside, and
+  // that callee's `pair_second` mask; -1 and 0 for any other value.
+  pair_tag: i32[],
+  pair_mask: i32[],
+  pair_words: i32[],
+}
+
+// returns_pair: the body sets a second return word, so it is a paired
+// callee and its `ret` returns the first word alone.
+function returns_pair(f: ssa.SFunc): boolean {
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == 59 && ins.str == "ret_word") {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// paired_call: the instruction after a call that reads its second word.
+function paired_call(b: ssa.SBlock, pos: i32): boolean {
+  if (pos + 1 >= b.insts.len()) {
+    return false;
+  }
+  let next: ssa.SInst = b.insts[pos + 1];
+  return next.kind_tag == 59 && next.str == "call_word";
+}
+
+// pair_word_origin classifies a paired call's words: the call itself is the
+// first word, the `call_word` after it the second.
+function word_origin(a: Abi, second: boolean): i32 {
+  if (!a.known) {
+    return org_unknown();
+  }
+  if (!second) {
+    if (a.pair_first) {
+      return org_fresh();
+    }
+    return org_none();
+  }
+  if (second_holds(a.pair_second)) {
+    return org_fresh();
+  }
+  if (a.pair_second == 0) {
+    return org_none();
+  }
+  return org_unknown();
+}
+
+// roots resolves every rename: a `copy`, and a helper that hands back the
+// operand it was given (the retains). Operands precede their renames in the
+// lift's block order, so one pass settles the chains.
+struct Roots { root: i32[], derived: boolean[] }
+
+// Alias is what an instruction renames: the operand index it aliases, -1 for
+// none, and whether as an address inside the object (`p + c`) rather than
+// the object itself.
+struct Alias { of: i32, derived: boolean }
+
+// arith_alias: `p + c` and `p - c` name the object `p` does — a tag on a
+// view box, a cursor's word, an interior address. A scalar's sum aliases
+// its scalar, which holds nothing either way.
+function arith_alias(f: ssa.SFunc, defs: Defs, ins: ssa.SInst): Alias {
+  if (ins.args.len() != 2 || (ins.str != "add" && ins.str != "sub")) {
+    return Alias { of: -1, derived: false };
+  }
+  if (def_of(f, defs, ins.args[1]).kind_tag == 1) {
+    return Alias { of: 0, derived: true };
+  }
+  if (ins.str == "add" && def_of(f, defs, ins.args[0]).kind_tag == 1) {
+    return Alias { of: 1, derived: true };
+  }
+  return Alias { of: -1, derived: false };
+}
+
+function alias_of(f: ssa.SFunc, defs: Defs, sigs: rcsigs.Table, ins: ssa.SInst): Alias {
+  if (ins.kind_tag == 7 && ins.args.len() == 1) {
+    return Alias { of: 0, derived: false };
+  }
+  if (ins.kind_tag == 9) {
+    return arith_alias(f, defs, ins);
+  }
+  if (ins.kind_tag == 11 && ins.args.len() > 0) {
+    let sg: rcsigs.Sig = sigs.lookup(ins.str);
+    if (sg.known && sg.result == rcsigs.result_operand() && sg.arg >= 0 && sg.arg < ins.args.len()) {
+      return Alias { of: sg.arg, derived: false };
+    }
+  }
+  return Alias { of: -1, derived: false };
+}
+
+function roots(f: ssa.SFunc, defs: Defs, sigs: rcsigs.Table): Roots {
+  let derived: boolean[] = __alloc_bool(f.nvals);
+  let root: i32[] = __alloc_i32(f.nvals);
+  let v: i32 = 0;
+  while (v < f.nvals) {
+    root = root.with(v, v);
+    v = v + 1;
+  }
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.result < 0 || ins.result >= f.nvals) {
+        continue;
+      }
+      let a: Alias = alias_of(f, defs, sigs, ins);
+      if (a.of >= 0) {
+        root = root.with(ins.result, root[ins.args[a.of]]);
+        derived = derived.with(ins.result, a.derived || derived[ins.args[a.of]]);
+      }
+    }
+  }
+  return Roots { root: root, derived: derived };
+}
+
+// ---- the unique regions -----------------------------------------------------
+
+// Cond is a branch condition's reading: `root` the box whose uniqueness it
+// tests, -1 when it tests no uniqueness; `on_true` whether the box is unique
+// on the true arm (else on the false arm).
+struct Cond { root: i32, on_true: boolean }
+
+function no_cond(): Cond {
+  return Cond { root: -1, on_true: true };
+}
+
+// token_root is the box a reuse token stands for: a phi of the box on edges
+// from blocks where it was proved unique and of null on the rest, through
+// copies. -1 for anything else.
+function token_root(w: Walk, regions: i32[][], v: i32): i32 {
+  let ins: ssa.SInst = def_of(w.f, w.defs, w.root[v]);
+  if (ins.kind_tag != 8) {
+    return -1;
+  }
+  let bi: i32 = w.defs.block[w.root[v]];
+  let preds: i32[] = w.f.blocks[bi].preds;
+  let found: i32 = -1;
+  let i: i32 = 0;
+  while (i < ins.args.len() && i < preds.len()) {
+    let a: i32 = ins.args[i];
+    if (a < 0) {
+      return -1;
+    }
+    if (!is_zero(w.f, w.defs, a)) {
+      let r: i32 = w.root[a];
+      if (found >= 0 && found != r) {
+        return -1;
+      }
+      let pi: i32 = w.at[preds[i]];
+      if (pi < 0 || util.index_of_i32(regions[pi], r) < 0) {
+        return -1;
+      }
+      found = r;
+    }
+    i = i + 1;
+  }
+  return found;
+}
+
+// cond_of reads a brif's condition: `__fern_rc_is_unique(b)`, a token's
+// test against null either way round, or a token itself.
+// token_cond reads `token == 0` / `token != 0` as a test of the token's box.
+function token_cond(w: Walk, regions: i32[][], ins: ssa.SInst): Cond {
+  let other: i32 = -1;
+  if (is_zero(w.f, w.defs, ins.args[1])) {
+    other = ins.args[0];
+  } else if (is_zero(w.f, w.defs, ins.args[0])) {
+    other = ins.args[1];
+  }
+  if (other < 0) {
+    return no_cond();
+  }
+  let r: i32 = token_root(w, regions, other);
+  if (r < 0) {
+    return no_cond();
+  }
+  return Cond { root: r, on_true: ins.str == "ne" };
+}
+
+function cond_of(w: Walk, regions: i32[][], cond: i32, with_tokens: boolean): Cond {
+  let ins: ssa.SInst = def_of(w.f, w.defs, cond);
+  if (is_call(ins, "__fern_rc_is_unique") && ins.args.len() == 1) {
+    return Cond { root: w.root[ins.args[0]], on_true: true };
+  }
+  if (!with_tokens) {
+    return no_cond();
+  }
+  if (ins.kind_tag == 9 && ins.args.len() == 2 && (ins.str == "eq" || ins.str == "ne")) {
+    return token_cond(w, regions, ins);
+  }
+  if (ins.kind_tag == 8) {
+    return phi_cond(w, regions, cond, ins);
+  }
+  return no_cond();
+}
+
+// phi_cond: a phi tested directly is a token, or a uniqueness test merged
+// with false.
+function phi_cond(w: Walk, regions: i32[][], cond: i32, ins: ssa.SInst): Cond {
+  let r: i32 = token_root(w, regions, cond);
+  if (r < 0) {
+    r = merged_unique(w, ins);
+  }
+  if (r >= 0) {
+    return Cond { root: r, on_true: true };
+  }
+  return no_cond();
+}
+
+// merged_unique reads a phi of one box's uniqueness tests and the constant
+// false — the test hoisted out of a branch's arm — as that test: the box,
+// or -1.
+function merged_unique(w: Walk, phi: ssa.SInst): i32 {
+  let root: i32 = -1;
+  for a in phi.args {
+    if (a < 0) {
+      return -1;
+    }
+    let d: ssa.SInst = def_of(w.f, w.defs, a);
+    if (is_zero(w.f, w.defs, a)) {
+      continue;
+    }
+    if (!is_call(d, "__fern_rc_is_unique") || d.args.len() != 1) {
+      return -1;
+    }
+    let r: i32 = w.root[d.args[0]];
+    if (root >= 0 && r != root) {
+      return -1;
+    }
+    root = r;
+  }
+  return root;
+}
+
+// Regions is, per block, the boxes proved unique there and, in parallel,
+// the block whose branch proved each.
+struct Regions { roots: i32[][], openers: i32[][] }
+
+// regions_round adds to `regions` the blocks each uniqueness test's arm
+// dominates, keyed by the box the test proved unique. An arm that is also
+// reached around the test (the join after a one-sided retain) opens nothing.
+// open_region adds `root` to every reachable block `arm` dominates, as
+// opened by block `by`.
+function open_region(own rg: Regions, w: Walk, dom: ssadeps.Dom, reach: boolean[], arm: i32, root: i32, by: i32): Regions {
+  let other: i32 = 0;
+  while (other < w.f.blocks.len()) {
+    if (reach[other] && ssadeps.dom_holds(dom, other, arm) && util.index_of_i32(rg.roots[other], root) < 0) {
+      rg = Regions { roots: rg.roots.with(other, rg.roots[other].append(root)), openers: rg.openers.with(other, rg.openers[other].append(by)) };
+    }
+    other = other + 1;
+  }
+  return rg;
+}
+
+function regions_round(w: Walk, own rg: Regions, dom: ssadeps.Dom, reach: boolean[], with_tokens: boolean): Regions {
+  let bi: i32 = 0;
+  while (bi < w.f.blocks.len()) {
+    let t: ssa.STerm = w.f.blocks[bi].term;
+    if (reach[bi] && t.kind_tag == 3 && t.t != t.f) {
+      let c: Cond = cond_of(w, rg.roots, t.cond, with_tokens);
+      let arm: i32 = w.at[t.f];
+      if (c.on_true) {
+        arm = w.at[t.t];
+      }
+      if (c.root >= 0 && arm >= 0 && w.f.blocks[arm].preds.len() == 1) {
+        rg = open_region(rg, w, dom, reach, arm, c.root, w.f.blocks[bi].id);
+      }
+    }
+    bi = bi + 1;
+  }
+  return rg;
+}
+
+function unique_regions(w: Walk, dom: ssadeps.Dom, reach: boolean[]): Regions {
+  let rg: Regions = Regions { roots: [], openers: [] };
+  while (rg.roots.len() < w.f.blocks.len()) {
+    rg = Regions { roots: rg.roots.append([]), openers: rg.openers.append([]) };
+  }
+  rg = regions_round(w, rg, dom, reach, false);
+  return regions_round(w, rg, dom, reach, true);
+}
+
+// ---- origins --------------------------------------------------------------
+
+// A value whose definition is a load from a box that is unique here, or
+// from a box a children-only drop owns the children of: the frame's to
+// release.
+function child_load(w: Walk, regions: i32[][], bi: i32, ins: ssa.SInst, children_box: boolean[]): boolean {
+  if (ins.args.len() == 0) {
+    return false;
+  }
+  let base: i32 = w.root[ins.args[0]];
+  if (base < children_box.len() && children_box[base]) {
+    return true;
+  }
+  return util.index_of_i32(regions[bi], base) >= 0;
+}
+
+// Shells is every shell release (ir.shell): the box released shallowly
+// after the frame took its payload, by root, with where the release sits.
+struct Shells { base: i32[], block: i32[], at: i32[] }
+
+function shells_of(w: Walk): Shells {
+  let out: Shells = Shells { base: [], block: [], at: [] };
+  let bi: i32 = 0;
+  while (bi < w.f.blocks.len()) {
+    let insts: ssa.SInst[] = w.f.blocks[bi].insts;
+    let i: i32 = 0;
+    while (i < insts.len()) {
+      let ins: ssa.SInst = insts[i];
+      if (ins.kind_tag == 11 && ins.imm == 2 && ins.args.len() > 0) {
+        out = Shells { base: out.base.append(w.root[ins.args[0]]), block: out.block.append(bi), at: out.at.append(i) };
+      }
+      i = i + 1;
+    }
+    bi = bi + 1;
+  }
+  return out;
+}
+
+// shell_taken: `ld` reads a box the frame releases as a shell after it, so
+// the payload it read is the frame's.
+function shell_taken(w: Walk, sh: Shells, dom: ssadeps.Dom, bi: i32, pos: i32, ld: ssa.SInst): boolean {
+  if (ld.args.len() == 0) {
+    return false;
+  }
+  let base: i32 = w.root[ld.args[0]];
+  let k: i32 = 0;
+  while (k < sh.base.len()) {
+    if (sh.base[k] == base) {
+      if (sh.block[k] == bi) {
+        if (sh.at[k] > pos) {
+          return true;
+        }
+      } else if (ssadeps.dom_holds(dom, sh.block[k], bi)) {
+        return true;
+      }
+    }
+    k = k + 1;
+  }
+  return false;
+}
+
+// children_boxes marks the roots whose children the frame owns outright: a
+// children-only drop's parameter, and a phi every edge of which brings such
+// a box or one proved unique in the block it comes from — the node of a
+// chain drop, rebound to the next link once that link is proved unique.
+// children_phi: every input of the phi is a children box or a box unique on
+// its edge, so the phi is a children box too.
+function children_phi(w: Walk, regions: i32[][], out: boolean[], b: ssa.SBlock, ins: ssa.SInst): boolean {
+  let i: i32 = 0;
+  while (i < ins.args.len()) {
+    let a: i32 = ins.args[i];
+    if (a < 0) {
+      return false;
+    }
+    let r: i32 = w.root[a];
+    let pb: i32 = w.at[b.preds[i]];
+    if (!out[r] && (pb < 0 || util.index_of_i32(regions[pb], r) < 0)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// children_params marks the parameters declared children-only.
+function children_params(w: Walk, own out: boolean[]): boolean[] {
+  let pi: i32 = 0;
+  while (w.self_abi.known && pi < w.self_abi.modes.len() && pi < w.f.nparams) {
+    if (w.self_abi.modes[pi] == children_mode()) {
+      out = out.with(pi, true);
+    }
+    pi = pi + 1;
+  }
+  return out;
+}
+
+function children_boxes(w: Walk, regions: i32[][]): boolean[] {
+  let f: ssa.SFunc = w.f;
+  let out: boolean[] = children_params(w, __alloc_bool(f.nvals));
+  let grown: boolean = true;
+  while (grown) {
+    grown = false;
+    for b in f.blocks {
+      for ins in b.insts {
+        if (ins.kind_tag != 8 || ins.result < 0 || out[ins.result] || ins.args.len() != b.preds.len()) {
+          continue;
+        }
+        if (children_phi(w, regions, out, b, ins)) {
+          out = out.with(ins.result, true);
+          grown = true;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function result_origin(result: i32): i32 {
+  if (result == rcsigs.result_fresh()) {
+    return org_fresh();
+  }
+  if (result == rcsigs.result_borrow()) {
+    return org_borrowed();
+  }
+  if (result == rcsigs.result_unknown()) {
+    return org_unknown();
+  }
+  return org_none();
+}
+
+// call_origin classifies a `call_direct` result: by the helper table, by
+// contract, else unknown. The table first: a runtime helper core/map calls
+// by name has a contract too, written for the planner, which reads the raw
+// word it answers as a value; what the call does to a count is this table's
+// to say wherever the name appears.
+function call_origin(w: Walk, ins: ssa.SInst): i32 {
+  let s: rcsigs.Sig = w.sigs.lookup(ins.str);
+  if (s.known) {
+    if (s.result == rcsigs.result_operand()) {
+      return org_none();
+    }
+    if (s.result == rcsigs.result_marked()) {
+      if (ins.imm == 1) {
+        return org_fresh();
+      }
+      if (ins.imm == 3) {
+        return org_borrowed();
+      }
+      return org_none();
+    }
+    return result_origin(s.result);
+  }
+  let a: Abi = w.abis.lookup(ins.str);
+  if (!a.known) {
+    return org_unknown();
+  }
+  if (a.result_unit) {
+    return org_fresh();
+  }
+  return org_none();
+}
+
+// scalar_phis clears the phis every edge of which brings a value that holds
+// nothing — a scalar, or another such phi — to a fixpoint. A phi of scalars
+// is stored, pushed and returned like any word, and must not read as a unit
+// spent without one.
+// phi_holds: one edge of the phi brings a value that holds something.
+function phi_holds(w: Walk, out: i32[], holds: boolean[], ins: ssa.SInst): boolean {
+  for a in ins.args {
+    if (a < 0 || w.derived[a]) {
+      continue;
+    }
+    let r: i32 = w.root[a];
+    if (out[r] != org_none() && (out[r] != org_merged() || holds[r])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function scalar_phis(w: Walk, own out: i32[]): i32[] {
+  let f: ssa.SFunc = w.f;
+  // A phi holds something when one of its edges brings a value that does, a
+  // phi included, to a fixpoint from nothing: a cycle of phis fed only by
+  // scalars and statics, an accumulator never appended to, holds nothing.
+  let holds: boolean[] = __alloc_bool(f.nvals);
+  let changed: boolean = true;
+  while (changed) {
+    changed = false;
+    for b in f.blocks {
+      for ins in b.insts {
+        if (ins.kind_tag == 8 && ins.result >= 0 && !holds[ins.result] && phi_holds(w, out, holds, ins)) {
+          holds = holds.with(ins.result, true);
+          changed = true;
+        }
+      }
+    }
+  }
+  return clear_scalar_phis(out, holds);
+}
+
+function clear_scalar_phis(own out: i32[], holds: boolean[]): i32[] {
+  let v: i32 = 0;
+  while (v < out.len()) {
+    if (out[v] == org_merged() && !holds[v]) {
+      out = out.with(v, org_none());
+    }
+    v = v + 1;
+  }
+  return out;
+}
+
+// origins classifies every value's definition. The parameters read the
+// boundary; everything else its kind, the tables and the regions.
+// Origins is every value's origin, and for a child the reason: 1 a load in
+// the box's unique region or of a children-only drop's box, 2 a slot the
+// frame overwrites, 3 a shell's payload.
+struct Origins { origin: i32[], why: i32[], opened: i32[], pair_tag: i32[], pair_mask: i32[], pair_words: i32[] }
+
+// Found is one value's origin with what goes beside it: a child's reason and
+// the block whose branch opened its region, a pair word's first word and
+// tag set.
+struct Found { origin: i32, why: i32, opened: i32, tag: i32, mask: i32 }
+
+function plain(origin: i32): Found {
+  return Found { origin: origin, why: 0, opened: -1, tag: -1, mask: 0 };
+}
+
+function child(why: i32): Found {
+  return Found { origin: org_child(), why: why, opened: -1, tag: -1, mask: 0 };
+}
+
+// Context is what classifying a definition reads besides the walk.
+struct Context { regions: i32[][], openers: i32[][], children_box: boolean[], dom: ssadeps.Dom, stores: Stores, shells: Shells }
+
+function param_origin(w: Walk, p: i32): i32 {
+  if (!w.self_abi.known || p >= w.self_abi.modes.len()) {
+    return org_unknown();
+  }
+  let m: i32 = w.self_abi.modes[p];
+  if (m == counted_mode()) {
+    return org_transferred();
+  }
+  if (m == borrow_mode() || m == children_mode()) {
+    return org_borrowed();
+  }
+  return org_none();
+}
+
+// load_origin: a marked load is a borrow, or the frame's own unit — a child
+// — when it reads a box the frame proved unique, a slot the frame
+// overwrites, or a shell's payload.
+function load_origin(w: Walk, c: Context, bi: i32, pos: i32, ins: ssa.SInst): Found {
+  if (child_load(w, c.regions, bi, ins, c.children_box)) {
+    let fd: Found = child(1);
+    if (ins.args.len() > 0) {
+      let at: i32 = util.index_of_i32(c.regions[bi], w.root[ins.args[0]]);
+      if (at >= 0 && at < c.openers[bi].len()) {
+        fd = Found { ...fd, opened: c.openers[bi][at] };
+      }
+    }
+    return fd;
+  }
+  if (overwritten(w, c.stores, c.dom, bi, pos, ins)) {
+    return child(2);
+  }
+  if (shell_taken(w, c.shells, c.dom, bi, pos, ins)) {
+    return child(3);
+  }
+  return plain(org_borrowed());
+}
+
+function call_origin_at(w: Walk, c: Context, bi: i32, pos: i32, ins: ssa.SInst): Found {
+  // A cursor's map, read to be dropped where the cursor is unique: the
+  // cursor's unit of it passes to the frame.
+  if (is_call(ins, "__mapiter_map_impl") && child_load(w, c.regions, bi, ins, c.children_box)) {
+    return child(1);
+  }
+  if (paired_call(w.f.blocks[bi], pos) && !w.sigs.lookup(ins.str).known) {
+    return plain(word_origin(w.abis.lookup(ins.str), false));
+  }
+  return plain(call_origin(w, ins));
+}
+
+// word_origin_at: a paired call's second word, read right after the call —
+// a fresh unit on the callee's terms, bound to the first word where those
+// terms are a set of tags.
+function word_origin_at(w: Walk, bi: i32, pos: i32): Found {
+  let insts: ssa.SInst[] = w.f.blocks[bi].insts;
+  if (pos == 0 || insts[pos - 1].kind_tag != 11) {
+    return plain(org_unknown());
+  }
+  let prev: ssa.SInst = insts[pos - 1];
+  let a: Abi = w.abis.lookup(prev.str);
+  let fd: Found = plain(word_origin(a, true));
+  if (a.pair_second > 0 && prev.result >= 0) {
+    fd = Found { ...fd, tag: prev.result, mask: a.pair_second };
+  }
+  return fd;
+}
+
+function named_origin(w: Walk, ins: ssa.SInst): i32 {
+  let sg: rcsigs.Sig = w.ops.op_lookup(ins.str);
+  if (sg.known) {
+    return result_origin(sg.result);
+  }
+  if (marked_result(w, ins)) {
+    return org_fresh();
+  }
+  return org_none();
+}
+
+// simple_origin classifies the definitions that need no context: a phi, a
+// fresh box, a frame view, a named op, an indirect call. -1 for the rest.
+function simple_origin(w: Walk, ins: ssa.SInst): i32 {
+  let k: i32 = ins.kind_tag;
+  if (k == 8) {
+    return org_merged();
+  }
+  if (k == 48) {
+    return org_fresh();
+  }
+  if (k == 51) {
+    if (ins.imm == 0) {
+      return org_fresh();
+    }
+    return org_none();
+  }
+  if (k == 56 || k == 60) {
+    return org_unknown();
+  }
+  if (is_named_op(k) && ins.str != "call_word") {
+    return named_origin(w, ins);
+  }
+  return -1;
+}
+
+function origin_of(w: Walk, c: Context, bi: i32, pos: i32, ins: ssa.SInst): Found {
+  let simple: i32 = simple_origin(w, ins);
+  if (simple >= 0) {
+    return plain(simple);
+  }
+  if (is_load(ins)) {
+    return load_origin(w, c, bi, pos, ins);
+  }
+  if (ins.kind_tag == 11) {
+    return call_origin_at(w, c, bi, pos, ins);
+  }
+  if (ins.kind_tag == 59) {
+    return word_origin_at(w, bi, pos);
+  }
+  return plain(org_none());
+}
+
+function origins(w: Walk, regions: i32[][], openers: i32[][], children_box: boolean[], dom: ssadeps.Dom): Origins {
+  let f: ssa.SFunc = w.f;
+  let c: Context = Context { regions: regions, openers: openers, children_box: children_box, dom: dom, stores: stores_of(w), shells: shells_of(w) };
+  let out: i32[] = __alloc_i32(f.nvals);
+  let why: i32[] = __alloc_i32(f.nvals);
+  let opened: i32[] = util.minus_ones(f.nvals);
+  let pair_tag: i32[] = util.minus_ones(f.nvals);
+  let pair_mask: i32[] = __alloc_i32(f.nvals);
+  let pair_words: i32[] = [];
+  let p: i32 = 0;
+  while (p < f.nparams && p < f.nvals) {
+    out = out.with(p, param_origin(w, p));
+    p = p + 1;
+  }
+  let bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    let pos: i32 = -1;
+    for ins in f.blocks[bi].insts {
+      pos = pos + 1;
+      let v: i32 = ins.result;
+      if (v < 0 || v >= f.nvals || w.root[v] != v || ins.kind_tag == 6) {
+        continue;
+      }
+      let fd: Found = origin_of(w, c, bi, pos, ins);
+      out = out.with(v, fd.origin);
+      why = why.with(v, fd.why);
+      opened = opened.with(v, fd.opened);
+      if (fd.tag >= 0) {
+        pair_tag = pair_tag.with(v, fd.tag);
+        pair_mask = pair_mask.with(v, fd.mask);
+        pair_words = pair_words.append(v);
+      }
+    }
+    bi = bi + 1;
+  }
+  return Origins { origin: scalar_phis(w, out), why: why, opened: opened, pair_tag: pair_tag, pair_mask: pair_mask, pair_words: pair_words };
+}
+
+// ---- the slots a frame takes from ---------------------------------------------
+
+// Stores is every field and element store, bucketed by the box it writes:
+// `key` is the field offset or the index value's root, `zero` whether the
+// stored value is the null word.
+struct Stores { base: i32[], key: i32[], block: i32[], at: i32[], zero: boolean[], by_base: i32[][] }
+
+function stores_of(w: Walk): Stores {
+  let f: ssa.SFunc = w.f;
+  let out: Stores = Stores { base: [], key: [], block: [], at: [], zero: [], by_base: [] };
+  while (out.by_base.len() < f.nvals) {
+    out = Stores { ...out, by_base: out.by_base.append([]) };
+  }
+  let bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    let insts: ssa.SInst[] = f.blocks[bi].insts;
+    let i: i32 = 0;
+    while (i < insts.len()) {
+      let st: ssa.SInst = insts[i];
+      if ((st.kind_tag == 41 && st.args.len() == 2 || st.kind_tag == 43 && st.args.len() == 3) && st.args[0] >= 0) {
+        let base: i32 = w.root[st.args[0]];
+        let key: i32 = st.imm;
+        if (st.kind_tag == 43) {
+          key = index_key(w, st.args[1]);
+        }
+        let n: i32 = out.base.len();
+        out = Stores {
+          base: out.base.append(base), key: out.key.append(key), block: out.block.append(bi), at: out.at.append(i),
+          zero: out.zero.append(is_zero(f, w.defs, st.args[st.args.len() - 1])),
+          by_base: out.by_base.with(base, out.by_base[base].append(n)),
+        };
+      }
+      i = i + 1;
+    }
+    bi = bi + 1;
+  }
+  return out;
+}
+
+// The slot a load reads: the box's root and the field offset or the index
+// key, the key stores_of files the writes under.
+function load_key(w: Walk, ld: ssa.SInst): i32 {
+  if (ld.kind_tag == 40) {
+    return ld.imm;
+  }
+  if (ld.args.len() >= 2) {
+    return index_key(w, ld.args[1]);
+  }
+  return -1;
+}
+
+// An index value's key: a constant by its value, below -1 so it meets no
+// root, else its root. Two constants of one value are two SSA values and
+// one slot.
+function index_key(w: Walk, v: i32): i32 {
+  let d: ssa.SInst = def_of(w.f, w.defs, w.root[v]);
+  if (d.kind_tag == 1 && d.imm >= 0) {
+    return -2 - d.imm;
+  }
+  return w.root[v];
+}
+
+function same_slot(w: Walk, st: Stores, k: i32, ld: ssa.SInst): boolean {
+  if (st.key[k] != load_key(w, ld)) {
+    return false;
+  }
+  if (ld.kind_tag == 40) {
+    return w.f.blocks[st.block[k]].insts[st.at[k]].kind_tag == 41;
+  }
+  return w.f.blocks[st.block[k]].insts[st.at[k]].kind_tag == 43;
+}
+
+// overwritten: a store of another value into the slot `ld` read, after it on
+// every path from it (in its block past it, or in a block it dominates). The
+// frame replaces what the slot holds, so the value it read is its own to
+// release before the write — an element `with` overwrites, a field grown in
+// place.
+function overwritten(w: Walk, st: Stores, dom: ssadeps.Dom, bi: i32, pos: i32, ld: ssa.SInst): boolean {
+  if (ld.args.len() == 0) {
+    return false;
+  }
+  let base: i32 = w.root[ld.args[0]];
+  for k in st.by_base[base] {
+    if (st.zero[k] || !same_slot(w, st, k, ld)) {
+      continue;
+    }
+    if (st.block[k] == bi) {
+      if (st.at[k] > pos && !reloaded(w, dom, ld, bi, pos, st.block[k], st.at[k])) {
+        return true;
+      }
+    } else if (ssadeps.dom_holds(dom, st.block[k], bi) && !reloaded(w, dom, ld, bi, pos, st.block[k], st.at[k])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// reloaded: another load of `ld`'s slot sits between `ld` (at lb, lp) and
+// the store (at sb, sp), on the path from the one to the other: after `ld`
+// in its block, before the store in its, or in a block the load's dominates
+// that dominates the store's. The one the frame releases is the nearest.
+// same_slot_load: `other` reads the slot `ld` reads, as a different value.
+function same_slot_load(w: Walk, other: ssa.SInst, ld: ssa.SInst): boolean {
+  return other.result != ld.result && is_load(other) && other.kind_tag == ld.kind_tag
+    && other.args.len() > 0 && w.root[other.args[0]] == w.root[ld.args[0]] && load_key(w, other) == load_key(w, ld);
+}
+
+// reloaded_in: block `mb` holds a later load of the same slot between the
+// load at (lb, lp) and the store at (sb, sp).
+function reloaded_in(w: Walk, ld: ssa.SInst, mb: i32, lb: i32, lp: i32, sb: i32, sp: i32): boolean {
+  let insts: ssa.SInst[] = w.f.blocks[mb].insts;
+  let i: i32 = 0;
+  while (i < insts.len()) {
+    let after_load: boolean = mb != lb || i > lp;
+    let before_store: boolean = mb != sb || i < sp;
+    if (after_load && before_store && same_slot_load(w, insts[i], ld)) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+function reloaded(w: Walk, dom: ssadeps.Dom, ld: ssa.SInst, lb: i32, lp: i32, sb: i32, sp: i32): boolean {
+  let mb: i32 = 0;
+  while (mb < w.f.blocks.len()) {
+    let on_path: boolean = mb == lb || mb == sb || ssadeps.dom_holds(dom, mb, lb) && ssadeps.dom_holds(dom, sb, mb);
+    if (on_path && reloaded_in(w, ld, mb, lb, lp, sb, sp)) {
+      return true;
+    }
+    mb = mb + 1;
+  }
+  return false;
+}
+
+// ---- which roots the walk tracks --------------------------------------------
+
+// A borrow or a phi enters the state only where something acts on its unit:
+// a retain, a release, a move, a store, a return. Keeping the untouched ones
+// out is what keeps a block's row small.
+struct Touch { touched: boolean[] }
+
+function touch(own t: Touch, w: Walk, v: i32): Touch {
+  if (v >= 0 && v < w.root.len()) {
+    t = Touch { touched: t.touched.with(w.root[v], true) };
+  }
+  return t;
+}
+
+function touch_all(own t: Touch, w: Walk, args: i32[]): Touch {
+  for a in args {
+    t = touch(t, w, a);
+  }
+  return t;
+}
+
+// touch_call marks what a call may spend: by the helper table, else by the
+// callee's contract, else every operand.
+// touch_sig marks the operands a helper's row names.
+function touch_sig(own t: Touch, w: Walk, ins: ssa.SInst, sg: rcsigs.Sig): Touch {
+  if (sg.arg >= 0 && sg.arg < ins.args.len() && sg.effect != rcsigs.effect_inspect()) {
+    t = touch(t, w, ins.args[sg.arg]);
+  }
+  for i in sg.also {
+    if (i < ins.args.len()) {
+      t = touch(t, w, ins.args[i]);
+    }
+  }
+  for i in sg.unsure {
+    if (i < ins.args.len()) {
+      t = touch(t, w, ins.args[i]);
+    }
+  }
+  return t;
+}
+
+function touch_call(own t: Touch, w: Walk, ins: ssa.SInst): Touch {
+  let sg: rcsigs.Sig = w.sigs.lookup(ins.str);
+  if (sg.known) {
+    return touch_sig(t, w, ins, sg);
+  }
+  let a: Abi = w.abis.lookup(ins.str);
+  if (!a.known) {
+    return touch_all(t, w, ins.args);
+  }
+  let i: i32 = 0;
+  while (i < ins.args.len() && i < a.modes.len()) {
+    if (a.modes[i] == counted_mode()) {
+      t = touch(t, w, ins.args[i]);
+    }
+    i = i + 1;
+  }
+  return t;
+}
+
+// touch_named marks what a named op may spend: the element a push stores,
+// every operand a box takes, the operand a row names.
+function touch_named(own t: Touch, w: Walk, ins: ssa.SInst): Touch {
+  if (ins.str == "ret_word") {
+    if (w.self_abi.pair_second != 0) {
+      t = touch_all(t, w, ins.args);
+    }
+    return t;
+  }
+  if (rcsigs.boxes_operands(ins.str)) {
+    return touch_all(t, w, ins.args);
+  }
+  let sg: rcsigs.Sig = w.ops.op_lookup(ins.str);
+  if (!sg.known) {
+    return t;
+  }
+  if (rcsigs.pushes_element(ins.str) && ins.args.len() > 0) {
+    t = touch(t, w, ins.args[ins.args.len() - 1]);
+  }
+  if (sg.arg >= 0 && sg.arg < ins.args.len() && sg.effect != rcsigs.effect_inspect()) {
+    t = touch(t, w, ins.args[sg.arg]);
+  }
+  return t;
+}
+
+function touch_inst(own t: Touch, w: Walk, ins: ssa.SInst): Touch {
+  let k: i32 = ins.kind_tag;
+  if (k == 11) {
+    return touch_call(t, w, ins);
+  }
+  if (is_store(k) && ins.args.len() > 0) {
+    return touch(t, w, ins.args[ins.args.len() - 1]);
+  }
+  if (is_named_op(k)) {
+    return touch_named(t, w, ins);
+  }
+  if (k == 56 || k == 60) {
+    return touch_all(t, w, ins.args);
+  }
+  return t;
+}
+
+function touches(w: Walk, null_taken: boolean[]): boolean[] {
+  let t: Touch = Touch { touched: null_taken };
+  let hands_out: boolean = w.self_abi.result_unit || w.self_abi.pair_first || w.self_abi.result_word;
+  for b in w.f.blocks {
+    for ins in b.insts {
+      t = touch_inst(t, w, ins);
+    }
+    if (b.term.kind_tag == 1 && b.term.value >= 0 && hands_out) {
+      t = touch(t, w, b.term.value);
+    }
+  }
+  return t.touched;
+}
+
+// null_takes marks the loads a null store empties the slot of: the frame has
+// taken the unit the slot held, so the loaded value holds it from the store
+// on. A load qualifies when it reads the same slot of the same box before
+// the store, in a block that dominates the store's.
+function null_takes(w: Walk, dom: ssadeps.Dom): boolean[] {
+  let f: ssa.SFunc = w.f;
+  let out: boolean[] = __alloc_bool(f.nvals);
+  let sb: i32 = 0;
+  while (sb < f.blocks.len()) {
+    let insts: ssa.SInst[] = f.blocks[sb].insts;
+    let si: i32 = 0;
+    while (si < insts.len()) {
+      let st: ssa.SInst = insts[si];
+      if ((st.kind_tag == 41 || st.kind_tag == 43) && st.args.len() >= 2 && is_zero(f, w.defs, st.args[st.args.len() - 1])) {
+        out = mark_taken_loads(w, dom, out, sb, si, st);
+      }
+      si = si + 1;
+    }
+    sb = sb + 1;
+  }
+  return out;
+}
+
+// The load `st` empties: same kind of read, same box, same offset or index.
+function matches_store(w: Walk, ld: ssa.SInst, st: ssa.SInst): boolean {
+  if (ld.args.len() == 0 || w.root[ld.args[0]] != w.root[st.args[0]]) {
+    return false;
+  }
+  if (st.kind_tag == 41) {
+    return ld.kind_tag == 40 && ld.imm == st.imm;
+  }
+  return ld.kind_tag == 42 && ld.args.len() >= 2 && st.args.len() >= 3 && w.root[ld.args[1]] == w.root[st.args[1]];
+}
+
+// mark_loads_in marks the loads of block `lb` before position `stop` that
+// read the slot `st` empties.
+function mark_loads_in(w: Walk, own out: boolean[], lb: i32, stop: i32, st: ssa.SInst): boolean[] {
+  let insts: ssa.SInst[] = w.f.blocks[lb].insts;
+  let li: i32 = 0;
+  while (li < insts.len() && li < stop) {
+    let ld: ssa.SInst = insts[li];
+    if (is_load(ld) && ld.result >= 0 && ld.result < w.f.nvals && matches_store(w, ld, st)) {
+      out = out.with(w.root[ld.result], true);
+    }
+    li = li + 1;
+  }
+  return out;
+}
+
+function mark_taken_loads(w: Walk, dom: ssadeps.Dom, own out: boolean[], sb: i32, si: i32, st: ssa.SInst): boolean[] {
+  let lb: i32 = 0;
+  while (lb < w.f.blocks.len()) {
+    if (lb == sb) {
+      out = mark_loads_in(w, out, lb, si, st);
+    } else if (ssadeps.dom_holds(dom, sb, lb)) {
+      out = mark_loads_in(w, out, lb, w.f.blocks[lb].insts.len(), st);
+    }
+    lb = lb + 1;
+  }
+  return out;
+}
+
+// indexes assigns each tracked root a slot in the rows: every fresh,
+// transferred, child and unknown root, and a borrow or a phi something
+// touches. A phi one of whose operands is tracked is tracked too, to a
+// fixpoint, since a unit reaches a phi through a phi.
+// tracked_root: a fresh, transferred, child or unknown root is always
+// tracked; a borrow only once something touches it.
+function tracked_root(w: Walk, touched: boolean[], v: i32): boolean {
+  if (w.root[v] != v) {
+    return false;
+  }
+  let o: i32 = w.origin[v];
+  if (o == org_fresh() || o == org_transferred() || o == org_child() || o == org_unknown()) {
+    return true;
+  }
+  return o != org_none() && touched[v];
+}
+
+// grow_phis marks each phi one of whose operands is marked, to a fixpoint:
+// a unit reaches a phi through a phi.
+function grow_phis(w: Walk, own on: boolean[]): boolean[] {
+  let grown: boolean = true;
+  while (grown) {
+    grown = false;
+    for b in w.f.blocks {
+      for ins in b.insts {
+        if (ins.kind_tag == 8 && ins.result >= 0 && !on[ins.result] && any_on(w, on, ins.args)) {
+          on = on.with(ins.result, true);
+          grown = true;
+        }
+      }
+    }
+  }
+  return on;
+}
+
+function any_on(w: Walk, on: boolean[], args: i32[]): boolean {
+  for a in args {
+    if (a >= 0 && !w.derived[a] && on[w.root[a]]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function indexes(w: Walk, touched: boolean[]): i32[] {
+  let f: ssa.SFunc = w.f;
+  let on: boolean[] = __alloc_bool(f.nvals);
+  let v: i32 = 0;
+  while (v < f.nvals) {
+    on = on.with(v, tracked_root(w, touched, v));
+    v = v + 1;
+  }
+  on = grow_phis(w, on);
+  let idx: i32[] = util.minus_ones(f.nvals);
+  let n: i32 = 0;
+  v = 0;
+  while (v < f.nvals) {
+    if (on[v]) {
+      idx = idx.with(v, n);
+      n = n + 1;
+    }
+    v = v + 1;
+  }
+  return idx;
+}
+
+// ---- the dataflow -----------------------------------------------------------
+
+// Progress is the dataflow's state: `out0` and `out1` hold each block's
+// out row per edge, flat, row `bi` at `bi * tracked`; `phin` holds each
+// tracked phi's inputs, those of phi `v` from `phi_at[v]`; `state` is the
+// row of the block being walked. Flat rather than nested so a write is one
+// element of one array the walk owns, not a copy of a row of rows.
+struct Progress { out0: i32[], out1: i32[], done: boolean[], phi_at: i32[], phin: i32[], state: i32[], findings: Finding[], opaque: string[], unproved: boolean[] }
+
+// row_equal: the row at `base` in `rows` is `state`.
+function row_equal(rows: i32[], base: i32, state: i32[]): boolean {
+  let k: i32 = 0;
+  while (k < state.len()) {
+    if (rows[base + k] != state[k]) {
+      return false;
+    }
+    k = k + 1;
+  }
+  return true;
+}
+
+function put_row(own rows: i32[], base: i32, state: i32[]): i32[] {
+  let k: i32 = 0;
+  while (k < state.len()) {
+    rows = rows.with(base + k, state[k]);
+    k = k + 1;
+  }
+  return rows;
+}
+
+function filled(n: i32, v: i32): i32[] {
+  let out: i32[] = __alloc_i32(n);
+  if (v == 0) {
+    return out;
+  }
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.with(i, v);
+    i = i + 1;
+  }
+  return out;
+}
+
+function kind_of(w: Walk, v: i32): string {
+  if (v < w.f.nparams) {
+    return "param";
+  }
+  return ssa.kind_name(def_of(w.f, w.defs, v).kind_tag);
+}
+
+function child_why(w: Walk, root: i32): string {
+  if (root >= w.why.len() || w.origin[root] != org_child()) {
+    return "";
+  }
+  if (w.why[root] == 1) {
+    if (root < w.opened.len() && w.opened[root] >= 0) {
+      return " in a unique region opened at b" + util.i32_to_string(w.opened[root]);
+    }
+    return " of a children-only drop's box";
+  }
+  if (w.why[root] == 2) {
+    return " of an overwritten slot";
+  }
+  return " of a shell";
+}
+
+function found(own p: Progress, w: Walk, kind: string, root: i32, block: i32, message: string): Progress {
+  let x: Finding = Finding { kind: kind, value: root, block: block, defined: origin_name(w.origin[root]) + " " + kind_of(w, root) + child_why(w, root), message: message };
+  return Progress { ...p, findings: p.findings.append(x) };
+}
+
+// spend takes one unit off `v`'s root: a release, a move or a return.
+function spend(own p: Progress, w: Walk, v: i32, block: i32, what: string): Progress {
+  let r: i32 = w.root[v];
+  let k: i32 = w.idx[r];
+  if (k < 0) {
+    return p;
+  }
+  let s: i32 = p.state[k];
+  if (s == maybe()) {
+    return p;
+  }
+  if (s == absent()) {
+    return Progress { ...p, state: p.state.with(k, maybe()) };
+  }
+  if (s == 0) {
+    return found(p, w, "spent without a unit", r, block, what);
+  }
+  return Progress { ...p, state: p.state.with(k, s - 1) };
+}
+
+// spend_counted is a release's or a move's spend: the callee consumes a
+// unit, so a word nothing counts — an op's result with no mark and no
+// row — handed to it is a producer the lowering left unmarked, or a
+// release of a scalar.
+function spend_counted(own p: Progress, w: Walk, v: i32, block: i32, what: string): Progress {
+  let r: i32 = w.root[v];
+  if (w.idx[r] < 0 && w.origin[r] == org_none() && r >= w.f.nparams) {
+    let k: i32 = def_of(w.f, w.defs, r).kind_tag;
+    if (is_named_op(k)) {
+      return found(p, w, "spent a word nothing counts", r, block, what);
+    }
+  }
+  return spend(p, w, v, block, what);
+}
+
+// spend_if_held is a return's spend where nothing declared whether the
+// result carries a unit: one is given up when the frame holds one, and a
+// borrow returned is not a finding.
+function spend_if_held(own p: Progress, w: Walk, v: i32): Progress {
+  let k: i32 = w.idx[w.root[v]];
+  if (k < 0 || p.state[k] <= 0) {
+    return p;
+  }
+  return Progress { ...p, state: p.state.with(k, p.state[k] - 1) };
+}
+
+function retain(own p: Progress, w: Walk, v: i32): Progress {
+  let k: i32 = w.idx[w.root[v]];
+  if (k < 0) {
+    return p;
+  }
+  let s: i32 = p.state[k];
+  if (s == maybe()) {
+    return p;
+  }
+  if (s == absent() || s + 1 > cap()) {
+    return Progress { ...p, state: p.state.with(k, maybe()) };
+  }
+  return Progress { ...p, state: p.state.with(k, s + 1) };
+}
+
+function poison(own p: Progress, w: Walk, v: i32): Progress {
+  let k: i32 = w.idx[w.root[v]];
+  if (k < 0) {
+    return p;
+  }
+  return Progress { ...p, state: p.state.with(k, maybe()) };
+}
+
+function poison_all(own p: Progress, w: Walk, args: i32[]): Progress {
+  for a in args {
+    p = poison(p, w, a);
+  }
+  return p;
+}
+
+// define sets a root's count to what its definition hands the frame. A count
+// still held from the previous execution of the same definition — a loop
+// body that allocates without releasing — is a leak of that earlier value.
+function define(own p: Progress, w: Walk, v: i32, block: i32): Progress {
+  if (v < 0 || w.root[v] != v) {
+    return p;
+  }
+  let k: i32 = w.idx[v];
+  if (k < 0) {
+    return p;
+  }
+  if (p.state[k] > 0) {
+    p = found(p, w, "redefined while held", v, block, "the previous value's unit was never spent");
+  }
+  return Progress { ...p, state: p.state.with(k, initial_count(w.origin[v])) };
+}
+
+// apply_sig applies a helper's row to its operands.
+function apply_sig(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, s: rcsigs.Sig): Progress {
+  if (s.arg >= 0 && s.arg < ins.args.len()) {
+    p = apply_effect(p, w, ins, block, s.effect, ins.args[s.arg]);
+  }
+  for i in s.also {
+    if (i < ins.args.len()) {
+      p = spend(p, w, ins.args[i], block, "moved into " + ins.str);
+    }
+  }
+  for i in s.unsure {
+    if (i < ins.args.len()) {
+      p = poison(p, w, ins.args[i]);
+    }
+  }
+  return p;
+}
+
+function apply_effect(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, effect: i32, v: i32): Progress {
+  if (effect == rcsigs.effect_retain()) {
+    return retain(p, w, v);
+  }
+  if (effect == rcsigs.effect_release() || effect == rcsigs.effect_move()) {
+    return spend_counted(p, w, v, block, "released by " + ins.str);
+  }
+  if (effect == rcsigs.effect_move_if_held()) {
+    return spend_if_held(p, w, v);
+  }
+  if (effect == rcsigs.effect_unsure()) {
+    return poison(p, w, v);
+  }
+  return p;
+}
+
+function apply_call(own p: Progress, w: Walk, ins: ssa.SInst, block: i32): Progress {
+  let s: rcsigs.Sig = w.sigs.lookup(ins.str);
+  if (s.known) {
+    p = apply_sig(p, w, ins, block, s);
+    return define(p, w, ins.result, block);
+  }
+  let a: Abi = w.abis.lookup(ins.str);
+  if (!a.known) {
+    p = poison_all(p, w, ins.args);
+    p = Progress { ...p, opaque: p.opaque.append(ins.str) };
+    return define(p, w, ins.result, block);
+  }
+  let i: i32 = 0;
+  while (i < ins.args.len() && i < a.modes.len()) {
+    if (a.modes[i] == counted_mode()) {
+      p = spend(p, w, ins.args[i], block, "moved into " + ins.str);
+    }
+    i = i + 1;
+  }
+  return define(p, w, ins.result, block);
+}
+
+// apply_ret_word: the second word of a paired return leaves with a unit on
+// the body's own terms.
+function apply_ret_word(own p: Progress, w: Walk, ins: ssa.SInst, block: i32): Progress {
+  if (second_holds(w.self_abi.pair_second)) {
+    return spend(p, w, ins.args[0], block, "returned as the second word");
+  }
+  if (w.self_abi.pair_second == -2) {
+    return spend_if_held(p, w, ins.args[0]);
+  }
+  return p;
+}
+
+// apply_op_row applies a named op's row: the operands it boxes or pushes,
+// and the one it consumes.
+function apply_op_row(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, s: rcsigs.Sig): Progress {
+  if (rcsigs.boxes_operands(ins.str)) {
+    for a in ins.args {
+      p = spend(p, w, a, block, "boxed by " + ins.str);
+    }
+  } else if (rcsigs.pushes_element(ins.str) && ins.args.len() > 0) {
+    p = spend(p, w, ins.args[ins.args.len() - 1], block, "pushed by " + ins.str);
+  }
+  if (s.arg < 0 || s.arg >= ins.args.len()) {
+    return p;
+  }
+  if (s.effect == rcsigs.effect_release() || s.effect == rcsigs.effect_move()) {
+    return spend_counted(p, w, ins.args[s.arg], block, "consumed by " + ins.str);
+  }
+  if (s.effect == rcsigs.effect_move_if_held()) {
+    return spend_if_held(p, w, ins.args[s.arg]);
+  }
+  return p;
+}
+
+function apply_named_op(own p: Progress, w: Walk, ins: ssa.SInst, block: i32): Progress {
+  if (ins.str == "ret_word" && ins.args.len() == 1) {
+    return apply_ret_word(p, w, ins, block);
+  }
+  let s: rcsigs.Sig = w.ops.op_lookup(ins.str);
+  if (s.known) {
+    p = apply_op_row(p, w, ins, block, s);
+  }
+  return define(p, w, ins.result, block);
+}
+
+// apply_store: the stored value's unit passes into the container. A null
+// store empties a slot the frame took the unit of: the loads it matched were
+// marked at the definition, and the count moves at the store.
+function apply_store(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken: i32[]): Progress {
+  let val: i32 = ins.args[ins.args.len() - 1];
+  if (is_zero(w.f, w.defs, val)) {
+    for r in taken {
+      let k: i32 = w.idx[r];
+      if (k >= 0 && p.state[k] != maybe()) {
+        let s: i32 = p.state[k];
+        if (s == absent() || s + 1 > cap()) {
+          p = Progress { ...p, state: p.state.with(k, maybe()) };
+        } else {
+          p = Progress { ...p, state: p.state.with(k, s + 1) };
+        }
+      }
+    }
+    return p;
+  }
+  return spend(p, w, val, block, "stored into a box");
+}
+
+function apply(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken: i32[]): Progress {
+  let k: i32 = ins.kind_tag;
+  if (k == 11) {
+    return apply_call(p, w, ins, block);
+  }
+  if (is_named_op(k)) {
+    return apply_named_op(p, w, ins, block);
+  }
+  if (is_store(k) && ins.args.len() >= 2) {
+    return apply_store(p, w, ins, block, taken);
+  }
+  if (k == 56 || k == 60) {
+    p = poison_all(p, w, ins.args);
+    return define(p, w, ins.result, block);
+  }
+  return define(p, w, ins.result, block);
+}
+
+// taken_by lists, for a null store, the load roots it empties the slot of.
+// Computed once per store position rather than per round.
+struct Takes { block: i32[], at: i32[], roots: i32[][] }
+
+function takes_of(w: Walk, dom: ssadeps.Dom): Takes {
+  let f: ssa.SFunc = w.f;
+  let out: Takes = Takes { block: [], at: [], roots: [] };
+  let sb: i32 = 0;
+  while (sb < f.blocks.len()) {
+    let insts: ssa.SInst[] = f.blocks[sb].insts;
+    let si: i32 = 0;
+    while (si < insts.len()) {
+      let st: ssa.SInst = insts[si];
+      if ((st.kind_tag == 41 || st.kind_tag == 43) && st.args.len() >= 2 && is_zero(f, w.defs, st.args[st.args.len() - 1])) {
+        let marks: boolean[] = mark_taken_loads(w, dom, __alloc_bool(f.nvals), sb, si, st);
+        let rs: i32[] = [];
+        let v: i32 = 0;
+        while (v < f.nvals) {
+          if (marks[v]) {
+            rs = rs.append(v);
+          }
+          v = v + 1;
+        }
+        out = Takes { block: out.block.append(sb), at: out.at.append(si), roots: out.roots.append(rs) };
+      }
+      si = si + 1;
+    }
+    sb = sb + 1;
+  }
+  return out;
+}
+
+function taken_at(t: Takes, block: i32, at: i32): i32[] {
+  let i: i32 = 0;
+  while (i < t.block.len()) {
+    if (t.block[i] == block && t.at[i] == at) {
+      return t.roots[i];
+    }
+    i = i + 1;
+  }
+  return [];
+}
+
+// exits reports a block that ends the process, whose return is never run.
+function exits(b: ssa.SBlock): boolean {
+  for ins in b.insts {
+    if (ins.kind_tag == 50 && ins.str == "exit") {
+      return true;
+    }
+  }
+  return false;
+}
+
+// entry_row meets the predecessors' rows into the block's entry state, then
+// the tracked phis read their edges.
+// entry_row meets the predecessors' edge rows. A count the paths disagree
+// on becomes unproved rather than a finding: the lowering pairs a retain on
+// one arm of a test with a consume on a later arm of the same test, so
+// disagreement at a join is routine, and the frame's balance shows at the
+// return instead.
+function entry_row(w: Walk, p: Progress, bi: i32): i32[] {
+  let b: ssa.SBlock = w.f.blocks[bi];
+  let state: i32[] = filled(w.tracked, absent());
+  let pi: i32 = 0;
+  while (pi < b.preds.len()) {
+    let pb: i32 = w.at[b.preds[pi]];
+    if (pb >= 0 && p.done[pb]) {
+      let rows: i32[] = p.out0;
+      if (ssa.successor_id(w.f.blocks[pb].term, 1) == b.id && ssa.successor_id(w.f.blocks[pb].term, 0) != b.id) {
+        rows = p.out1;
+      }
+      let base: i32 = pb * w.tracked;
+      let k: i32 = 0;
+      while (k < w.tracked) {
+        state = state.with(k, meet(state[k], rows[base + k]));
+        k = k + 1;
+      }
+    }
+    pi = pi + 1;
+  }
+  return state;
+}
+
+function enter_phis(own p: Progress, w: Walk, bi: i32): Progress {
+  let b: ssa.SBlock = w.f.blocks[bi];
+  for ins in b.insts {
+    if (ins.kind_tag != 8 || ins.result < 0) {
+      continue;
+    }
+    let k: i32 = w.idx[ins.result];
+    if (k < 0) {
+      continue;
+    }
+    if (p.state[k] > 0) {
+      p = found(p, w, "redefined while held", ins.result, b.id, "the previous value's unit was never spent");
+    }
+    let at: i32 = p.phi_at[ins.result];
+    let s: i32 = absent();
+    let i: i32 = 0;
+    while (i < b.preds.len()) {
+      s = meet(s, p.phin[at + i]);
+      i = i + 1;
+    }
+    if (s == absent()) {
+      s = maybe();
+    }
+    p = Progress { ...p, state: p.state.with(k, s) };
+  }
+  return p;
+}
+
+// null_on_edge is the value a branch proves null on the edge to `sid`: the
+// `x == 0` arm, the `x != 0` fall-through, or a `brif x` fall-through. A
+// null holds no unit whatever its count said, since every release guards
+// it, so on that edge the value is absent: a word, not a spent box.
+function null_on_edge(w: Walk, bi: i32, sid: i32): i32 {
+  let tg: Tag = tag_on_edge(w, bi, sid);
+  if (tg.word >= 0 && tg.c == 0 && tg.equal) {
+    return tg.word;
+  }
+  return -1;
+}
+
+// Tag is what a branch settles about a word on one edge: `word == c` or
+// `word != c`; `word` -1 when it settles nothing.
+struct Tag { word: i32, c: i32, equal: boolean }
+
+// compared reads `x == c` / `x != c` against a constant: the word and the
+// constant, word -1 when neither side is one.
+function compared(w: Walk, ins: ssa.SInst): Tag {
+  let a: ssa.SInst = def_of(w.f, w.defs, ins.args[1]);
+  if (a.kind_tag == 1) {
+    return Tag { word: ins.args[0], c: a.imm, equal: true };
+  }
+  let b: ssa.SInst = def_of(w.f, w.defs, ins.args[0]);
+  if (b.kind_tag == 1) {
+    return Tag { word: ins.args[1], c: b.imm, equal: true };
+  }
+  return Tag { word: -1, c: 0, equal: false };
+}
+
+function tag_on_edge(w: Walk, bi: i32, sid: i32): Tag {
+  let t: ssa.STerm = w.f.blocks[bi].term;
+  if (t.kind_tag != 3 || t.t == t.f) {
+    return Tag { word: -1, c: 0, equal: false };
+  }
+  let ins: ssa.SInst = def_of(w.f, w.defs, t.cond);
+  if (ins.kind_tag == 9 && ins.args.len() == 2 && (ins.str == "eq" || ins.str == "ne")) {
+    let tg: Tag = compared(w, ins);
+    let equal: boolean = sid == t.t;
+    if (ins.str == "ne") {
+      equal = !equal;
+    }
+    return Tag { ...tg, equal: equal };
+  }
+  return Tag { word: t.cond, c: 0, equal: sid == t.f };
+}
+
+// settle_edge applies what the branch into `sid` proves: a null word, and
+// the tag a pair word's unit hangs on.
+function settle_edge(own p: Progress, w: Walk, bi: i32, sid: i32): Progress {
+  let null_v: i32 = null_on_edge(w, bi, sid);
+  if (null_v >= 0 && w.idx[w.root[null_v]] >= 0) {
+    p = Progress { ...p, state: p.state.with(w.idx[w.root[null_v]], absent()) };
+  }
+  if (w.pair_words.len() > 0) {
+    p = settle_pair_words(p, w, bi, sid);
+  }
+  return p;
+}
+
+// settle_pair_words clears a paired call's second word on the edge where the
+// first word is settled to a tag whose payload is no reference, or away from
+// the one tag whose payload is.
+function settle_pair_words(own p: Progress, w: Walk, bi: i32, sid: i32): Progress {
+  let tg: Tag = tag_on_edge(w, bi, sid);
+  if (tg.word < 0 || tg.c < 0 || tg.c >= 31) {
+    return p;
+  }
+  let bit: i32 = 1 << tg.c;
+  for v in w.pair_words {
+    if (w.root[w.pair_tag[v]] != w.root[tg.word]) {
+      continue;
+    }
+    let mask: i32 = w.pair_mask[v];
+    let empty: boolean = false;
+    if (tg.equal) {
+      empty = (mask & bit) == 0;
+    } else {
+      empty = mask == bit;
+    }
+    let k: i32 = w.idx[w.root[v]];
+    if (empty && k >= 0) {
+      p = Progress { ...p, state: p.state.with(k, absent()) };
+    }
+  }
+  return p;
+}
+
+// feed hands each tracked phi of successor `sid` its input on the edge from
+// block `bi`, and spends the unit on the value that feeds it.
+// Fed is a phi's input on one edge, with the unit moved off the value that
+// feeds it.
+struct Fed { p: Progress, input: i32 }
+
+function phi_input(own p: Progress, w: Walk, a: i32): Fed {
+  if (a < 0 || w.derived[a]) {
+    return Fed { p: p, input: 0 };
+  }
+  let k: i32 = w.idx[w.root[a]];
+  if (k < 0) {
+    return Fed { p: p, input: 0 };
+  }
+  let st: i32 = p.state[k];
+  if (st == maybe() || st == absent()) {
+    return Fed { p: p, input: maybe() };
+  }
+  if (st > 0) {
+    p = Progress { ...p, state: p.state.with(k, st - 1) };
+    return Fed { p: p, input: 1 };
+  }
+  return Fed { p: p, input: 0 };
+}
+
+function feed(own p: Progress, w: Walk, bi: i32, sid: i32): Progress {
+  let si: i32 = w.at[sid];
+  if (si < 0) {
+    return p;
+  }
+  p = settle_edge(p, w, bi, sid);
+  let s: ssa.SBlock = w.f.blocks[si];
+  let pi: i32 = util.index_of_i32(s.preds, w.f.blocks[bi].id);
+  if (pi < 0) {
+    return p;
+  }
+  for ins in s.insts {
+    if (ins.kind_tag != 8 || ins.result < 0 || w.idx[ins.result] < 0 || pi >= ins.args.len()) {
+      continue;
+    }
+    let fed: Fed = phi_input(p, w, ins.args[pi]);
+    p = fed.p;
+    p = Progress { ...p, phin: p.phin.with(p.phi_at[ins.result] + pi, fed.input) };
+  }
+  return p;
+}
+
+
+// block_round runs one block's transfer and stores its edge rows. Returns
+// whether a row changed.
+struct RoundResult { p: Progress, changed: boolean }
+
+// apply_return spends what the return hands out and reports what the frame
+// still holds.
+function apply_return(own p: Progress, w: Walk, b: ssa.SBlock): Progress {
+  let t: ssa.STerm = b.term;
+  if (t.value >= 0) {
+    let unit: boolean = w.self_abi.result_unit;
+    let word: boolean = !w.self_abi.known || w.self_abi.result_word;
+    if (w.paired) {
+      unit = w.self_abi.pair_first;
+      word = !w.self_abi.known;
+    }
+    if (unit) {
+      p = spend(p, w, t.value, b.id, "returned");
+    } else if (word) {
+      p = spend_if_held(p, w, t.value);
+    }
+  }
+  let k: i32 = 0;
+  while (k < w.tracked) {
+    if (p.state[k] > 0) {
+      let held: string = util.i32_to_string(p.state[k]) + " unit(s) still held";
+      p = found(p, w, "leaked at return", root_at(w, k), b.id, held);
+    } else if (p.state[k] == maybe()) {
+      p = Progress { ...p, unproved: p.unproved.with(k, true) };
+    }
+    k = k + 1;
+  }
+  return p;
+}
+
+// feed_successors stores the block's out row per edge, each fed its phis.
+function feed_successors(own p: Progress, w: Walk, bi: i32): RoundResult {
+  let t: ssa.STerm = w.f.blocks[bi].term;
+  let changed: boolean = false;
+  let base: i32 = bi * w.tracked;
+  let entry: i32[] = p.state;
+  let s0: i32 = ssa.successor_id(t, 0);
+  p = feed(p, w, bi, s0);
+  if (!row_equal(p.out0, base, p.state)) {
+    changed = true;
+    p = Progress { ...p, out0: put_row(p.out0, base, p.state) };
+  }
+  let s1: i32 = ssa.successor_id(t, 1);
+  if (s1 >= 0 && s1 != s0) {
+    p = Progress { ...p, state: entry };
+    p = feed(p, w, bi, s1);
+    if (!row_equal(p.out1, base, p.state)) {
+      changed = true;
+      p = Progress { ...p, out1: put_row(p.out1, base, p.state) };
+    }
+  }
+  return RoundResult { p: p, changed: changed };
+}
+
+function block_round(own p: Progress, w: Walk, bi: i32, takes: Takes): RoundResult {
+  let f: ssa.SFunc = w.f;
+  let b: ssa.SBlock = f.blocks[bi];
+  p = Progress { ...p, state: entry_row(w, p, bi) };
+  if (bi == w.at[f.entry]) {
+    let v: i32 = 0;
+    while (v < f.nparams) {
+      p = define(p, w, v, b.id);
+      v = v + 1;
+    }
+  }
+  p = enter_phis(p, w, bi);
+  let i: i32 = 0;
+  while (i < b.insts.len()) {
+    let ins: ssa.SInst = b.insts[i];
+    if (ins.kind_tag != 8 && ins.kind_tag != 6) {
+      p = apply(p, w, ins, b.id, taken_at(takes, bi, i));
+    }
+    i = i + 1;
+  }
+  let changed: boolean = false;
+  if (exits(b)) {
+    // The process ends here: nothing flows on to a successor or a return.
+    let none: i32[] = filled(w.tracked, absent());
+    let base: i32 = bi * w.tracked;
+    if (!row_equal(p.out0, base, none)) {
+      changed = true;
+      p = Progress { ...p, out0: put_row(p.out0, base, none), out1: put_row(p.out1, base, none) };
+    }
+  } else if (b.term.kind_tag == 1) {
+    p = apply_return(p, w, b);
+  } else {
+    let r: RoundResult = feed_successors(p, w, bi);
+    p = r.p;
+    changed = r.changed;
+  }
+  if (!p.done[bi]) {
+    changed = true;
+    p = Progress { ...p, done: p.done.with(bi, true) };
+  }
+  return RoundResult { p: p, changed: changed };
+}
+
+// root_at is the root value at tracked index k.
+function root_at(w: Walk, k: i32): i32 {
+  let v: i32 = 0;
+  while (v < w.idx.len()) {
+    if (w.idx[v] == k) {
+      return v;
+    }
+    v = v + 1;
+  }
+  return -1;
+}
+
+// rpo is the reachable blocks in reverse postorder over successors.
+function rpo(f: ssa.SFunc, at: i32[]): i32[] {
+  let n: i32 = f.blocks.len();
+  let entry: i32 = at[f.entry];
+  let seen: boolean[] = __alloc_bool(n);
+  let order: i32[] = [];
+  let stack: i32[] = [entry];
+  let cursor: i32[] = util.minus_ones(n);
+  seen = seen.with(entry, true);
+  while (stack.len() > 0) {
+    let bi: i32 = stack[stack.len() - 1];
+    let k: i32 = cursor[bi] + 1;
+    let id: i32 = ssa.successor_id(f.blocks[bi].term, k);
+    while (id >= 0 && (at[id] < 0 || seen[at[id]])) {
+      k = k + 1;
+      id = ssa.successor_id(f.blocks[bi].term, k);
+    }
+    cursor = cursor.with(bi, k);
+    if (id >= 0) {
+      seen = seen.with(at[id], true);
+      stack = stack.append(at[id]);
+    } else {
+      order = order.append(bi);
+      stack = drop_last(stack);
+    }
+  }
+  let out: i32[] = [];
+  let i: i32 = order.len() - 1;
+  while (i >= 0) {
+    out = out.append(order[i]);
+    i = i - 1;
+  }
+  return out;
+}
+
+function drop_last(a: i32[]): i32[] {
+  let out: i32[] = [];
+  let i: i32 = 0;
+  while (i < a.len() - 1) {
+    out = out.append(a[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// The round limit is a safety net, not a bound the lattice needs: counts
+// climb to the cap and then to maybe, so every row settles.
+function round_limit(): i32 {
+  return 64;
+}
+
+// certify walks `f` against its boundary and the module's tables.
+// walk_of builds the walk's tables over `f`: roots, origins, the tracked
+// slots.
+function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: rcsigs.Table, ops: rcsigs.OpTable, at: i32[], dom: ssadeps.Dom, reach: boolean[]): Walk {
+  let defs: Defs = definitions(f);
+  let rt: Roots = roots(f, defs, sigs);
+  let w: Walk = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: returns_pair(f), why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [] };
+  let rg: Regions = unique_regions(w, dom, reach);
+  let o: Origins = origins(w, rg.roots, rg.openers, children_boxes(w, rg.roots), dom);
+  w = Walk { ...w, origin: o.origin, why: o.why, opened: o.opened, pair_tag: o.pair_tag, pair_mask: o.pair_mask, pair_words: o.pair_words };
+  let taken: boolean[] = null_takes(w, dom);
+  w = Walk { ...w, idx: indexes(w, touches(w, taken)) };
+  let tracked: i32 = 0;
+  for k in w.idx {
+    if (k >= 0) {
+      tracked = tracked + 1;
+    }
+  }
+  return Walk { ...w, tracked: tracked };
+}
+
+// progress_of lays out the edge rows and the phi input rows, all absent.
+function progress_of(w: Walk): Progress {
+  let f: ssa.SFunc = w.f;
+  let phi_at: i32[] = util.minus_ones(f.nvals);
+  let nphin: i32 = 0;
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == 8 && ins.result >= 0 && w.idx[ins.result] >= 0) {
+        phi_at = phi_at.with(ins.result, nphin);
+        nphin = nphin + b.preds.len();
+      }
+    }
+  }
+  let n: i32 = f.blocks.len() * w.tracked;
+  return Progress { out0: filled(n, absent()), out1: filled(n, absent()), done: __alloc_bool(f.blocks.len()), phi_at: phi_at, phin: filled(nphin, absent()), state: [], findings: [], opaque: [], unproved: __alloc_bool(w.tracked) };
+}
+
+// Settled is the walk's progress once no row changes, or `changed` still
+// true at the round limit.
+struct Settled { p: Progress, changed: boolean }
+
+function settle(own p: Progress, w: Walk, order: i32[], reach: boolean[], takes: Takes): Settled {
+  let rounds: i32 = 0;
+  let changed: boolean = true;
+  while (changed && rounds < round_limit()) {
+    changed = false;
+    // Findings and the census accumulate across rounds; only the final
+    // round's are kept, since an earlier round reads rows not yet settled.
+    p = Progress { ...p, findings: [], opaque: [], unproved: __alloc_bool(w.tracked) };
+    for bi in order {
+      if (reach[bi]) {
+        let r: RoundResult = block_round(p, w, bi, takes);
+        p = r.p;
+        if (r.changed) {
+          changed = true;
+        }
+      }
+    }
+    rounds = rounds + 1;
+  }
+  return Settled { p: p, changed: changed };
+}
+
+pub function certify(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: rcsigs.Table, ops: rcsigs.OpTable): Report {
+  if (f.blocks.len() == 0) {
+    return skipped("no blocks");
+  }
+  let at: i32[] = ssadeps.position_of(f);
+  if (f.entry < 0 || f.entry >= at.len() || at[f.entry] < 0) {
+    return skipped("no entry block");
+  }
+  let reach: boolean[] = ssadeps.reachable_blocks(f);
+  let dom: ssadeps.Dom = ssadeps.dominates(f);
+  let w: Walk = walk_of(f, irops, self_abi, abis, sigs, ops, at, dom, reach);
+  let done: Settled = settle(progress_of(w), w, rpo(f, at), reach, takes_of(w, dom));
+  if (done.changed) {
+    return skipped("did not settle in " + util.i32_to_string(round_limit()) + " rounds");
+  }
+  let unproved: i32 = 0;
+  for u in done.p.unproved {
+    if (u) {
+      unproved = unproved + 1;
+    }
+  }
+  return Report { findings: done.p.findings, tracked: w.tracked, unproved: unproved, opaque: done.p.opaque, skipped: "" };
+}

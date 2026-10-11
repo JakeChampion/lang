@@ -528,7 +528,16 @@ function lift_prod_host(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   if (k == "raw_addr") {
     return lift_pop_push(lv, 2, 9, 64, "add");
   }
-  return lift_pop_push(lv, 0, 49, 0, k);
+  return lift_pop_push(lv, 0, 49, counted_bit(op), k);
+}
+
+// counted_bit is the mark a runtime call carries in `imm` (bit 2, beside the
+// unique-push bit) when its result is a counted reference (ir.counted).
+function counted_bit(op: ir.Op): i32 {
+  if (ir.is_counted(op)) {
+    return 2;
+  }
+  return 0;
 }
 
 // prod_call_argc is the operand count of an op the stack machine emits as a
@@ -566,6 +575,16 @@ function prod_call_argc(k: string): i32 {
 function packed_suffix(op: ir.Op): string {
   if (ir.is_packed(op)) {
     return "_u8";
+  }
+  return "";
+}
+
+// The `str` a load of a counted reference carries (ir.counted): what the
+// emitted-RC certifier reads a unit-holding load by. A packed element is a
+// byte, never a reference, so the two marks never meet on one load.
+function counted_mark(op: ir.Op): string {
+  if (ir.is_counted(op)) {
+    return "rc";
   }
   return "";
 }
@@ -645,7 +664,7 @@ function lift_prod_mem(kt: KindTable, tag: i32, k: string, op: ir.Op, nvals: i32
     return lift_call_indirect_prod(op, lv);
   }
   if (kt.argc[tag] > 0) {
-    return lift_pop_push(lv, kt.argc[tag], prod_call_kind(k), unique_push(k, op), k + packed_suffix(op));
+    return lift_pop_push(lv, kt.argc[tag], prod_call_kind(k), unique_push(k, op) + counted_bit(op), k + packed_suffix(op));
   }
   let made: LiftVals = lift_prod_make(k, op, lv);
   if (made.ok || made.stack.len() != lv.stack.len()) {
@@ -765,7 +784,7 @@ function lift_struct_copy_prod(op: ir.Op, lv: LiftVals): LiftVals {
 // element and byte reads, and the two label addresses.
 function lift_prod_read(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   if (ld_off(k, op) >= 0) {
-    return lift_pop_push(lv, 1, 40, ld_off(k, op), "");
+    return lift_pop_push(lv, 1, 40, ld_off(k, op), counted_mark(op));
   }
   if (k == "raw_load_ptr") {
     return lift_pop_push(lv, 2, 52, 0, "");
@@ -774,7 +793,7 @@ function lift_prod_read(k: string, op: ir.Op, lv: LiftVals): LiftVals {
     return lift_pop_push(lv, 2, 54, 0, "");
   }
   if (k == "arr_get") {
-    return lift_pop_push(lv, 2, 42, op.i32_imm, packed_mark(op));
+    return lift_pop_push(lv, 2, 42, op.i32_imm, packed_mark(op) + counted_mark(op));
   }
   if (k == "str_index") {
     return lift_pop_push(lv, 2, 44, op.i32_imm, "");
@@ -2256,17 +2275,31 @@ function lift_call_direct(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SI
     }
     let pv: i32 = nvals;
     nvals = nvals + 1;
-    // The typed lowering may prove a reference has no byte-view tag.
-    // Preserve only that optional RC proof; other calls have no such flag.
-    let aligned: i32 = 0;
-    if (op.i64_imm == 4 && (op.str == "__fern_rc_inc" || op.str == "__fern_rc_is_unique")) {
-      aligned = 4;
-    }
-    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 11, result: pv, args: cargs, imm: aligned, str: op.str });
+    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 11, result: pv, args: cargs, imm: call_mark(op), str: op.str });
     stack = stack.append(pv);
   }
 
   return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+// call_mark is a call's `imm`: 4 where the typed lowering proved an rc
+// operand has no byte-view tag, which the emitters read; else the mark the
+// certifier reads — a shell's release (ir.shell) 2, a counted result
+// (ir.counted) 1, a lent one (ir.lent) 3.
+function call_mark(op: ir.Op): i32 {
+  if (op.i64_imm == 4 && (op.str == "__fern_rc_inc" || op.str == "__fern_rc_is_unique")) {
+    return 4;
+  }
+  if (ir.is_shell(op)) {
+    return 2;
+  }
+  if (ir.is_counted(op)) {
+    return 1;
+  }
+  if (ir.is_lent(op)) {
+    return 3;
+  }
+  return 0;
 }
 
 // ---- STerm constructors (ssa.fern's t_* helpers are module-private) ------

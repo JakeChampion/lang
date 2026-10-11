@@ -35,6 +35,7 @@ import "./asmcore";
 import "./astwalk";
 import "./ircore";
 import "./wasm_aes";
+import "./physicalbody";
 
 // Linear-memory layout: the low scratch, then a unit's string literals, then
 // its aggregate constants, then the fl_cells-entry small freelist head array,
@@ -3961,12 +3962,12 @@ pub function component_io_shims(needs: string[], stderr: boolean, proxy: boolean
 // emit_ir_module_units). `base` is the whole-program registry the cache was
 // lowered with; the RC bodies are seeded from it rather than from a second
 // run of the same fixpoints.
-pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerResult[], mode: i32, sw: asmcore.Switches): string {
+pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerResult[], mode: i32, sw: asmcore.Switches, physical: physicalbody.Collection): string {
   ircore.check_fip_claims(mod.funcs, 0, mod.funcs.len(), ir_cache);
   let sv: string[] = str_values(ir_cache);
   let cv: string[] = const_agg_values(ir_cache);
   let ft: string[] = fn_value_table(ir_cache);
-  let unit: string = emit_functions_ns("", mod, ir_cache);
+  let unit: string = emit_functions_ns("", mod, ir_cache, physical);
   let needs: string[] = needs_of(ir_cache);
   if (mode == 2 && module_is_proxy(mod)) {
     needs = needs.append("@proxy");
@@ -4063,7 +4064,7 @@ pub function emit_core_or_error_sub(mod: parser.Module, component: boolean, io: 
     let g: ircore.Lowered = ircore.gate(lm, sub);
     let cache: irtables.LowerResult[] = g.cache;
     if (g.ok && ir_route_final(cache, component, io, module_is_proxy(lm))) {
-      return EmittedCore { wat: emit_ir_module_mode(lm, cache, mode, sub.switches), needs: needs_of(cache) };
+      return EmittedCore { wat: emit_ir_module_mode(lm, cache, mode, sub.switches, g.physical), needs: needs_of(cache) };
     }
     // A module the lowering took whole but the component framing cannot
     // import for is not an IR bail, so name the op rather than blame the IR.
@@ -7005,6 +7006,7 @@ function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: st
   let bctmp: i32 = r.n_locals + 4;
   ircore.lower_failed_refuse(fn_name, r);
   irverifygate.verify_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vgate);
+  irverifygate.certify_ops_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vgate);
   let parts: string[] = [];
   parts = parts.append("  (func $" + fn_name);
   let p: i32 = 0;
@@ -7076,7 +7078,7 @@ function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: st
 //
 // Whole-program emit passes all_funcs = mod.funcs and all_structs = mod.structs,
 // so it is unchanged.
-pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables.LowerResult[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab): string {
+pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables.LowerResult[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, physical: physicalbody.Collection): string {
   // Infer return types for unannotated functions so the IR path's
   // ret-type-keyed call tagging matches what module_with_builtins supplies
   // (parity with the x86 IR path in asm_ir.emit_module_ir).
@@ -7091,7 +7093,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
   // The IR verify gate's callee-arity index: built once for the whole
   // program, not per function, which is what keeps a ~3000-declaration
   // lookup out of the emit loop's inner cost.
-  let vgate: irverifygate.Gate = irverifygate.gate(irtables.fn_sig_index(all_funcs), ir.pops_by_kind());
+  let vgate: irverifygate.Gate = irverifygate.gate(irtables.fn_sig_index(all_funcs), ir.pops_by_kind(), physicalbody.abis(physical));
   let parts: string[] = [];
   let fi: i32 = 0;
   while (fi < mod.funcs.len()) {
@@ -7124,9 +7126,9 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
 }
 
 // emit_functions_ns is the single-unit case: the unit IS the whole program.
-pub function emit_functions_ns(ns: string, mod: parser.Module, cache: irtables.LowerResult[]): string {
+pub function emit_functions_ns(ns: string, mod: parser.Module, cache: irtables.LowerResult[], physical: physicalbody.Collection): string {
   let im: parser.Module = parser.infer_ret_types_module(mod);
-  return emit_functions_view(ns, im, cache, im.funcs, irtables.struct_tab(im.structs));
+  return emit_functions_view(ns, im, cache, im.funcs, irtables.struct_tab(im.structs), physical);
 }
 
 // struct_type_id returns a struct's runtime type id = its index in the module's

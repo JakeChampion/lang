@@ -8114,9 +8114,9 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     s = s.write("    movq %rdi, __fern_lc_rt_req(%rip)\n");
   }
   if (util.str_has_suffix(ins.str, "_u8") && util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !s.rc_free_debug) {
-    s = arr_push_inline_u8(sym, lp + "apush" + util.i32_to_string(ins.result), ins.imm == 1, s);
+    s = arr_push_inline_u8(sym, lp + "apush" + util.i32_to_string(ins.result), (ins.imm & 1) == 1, s);
   } else if (util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !s.rc_free_debug) {
-    s = arr_push_inline(sym, lp + "apush" + util.i32_to_string(ins.result), ins.imm == 1, s);
+    s = arr_push_inline(sym, lp + "apush" + util.i32_to_string(ins.result), (ins.imm & 1) == 1, s);
   } else {
     s = ssa_call_sym(s, sym);
   }
@@ -9258,7 +9258,7 @@ function ssa_replace_all(text: string, mark: string, with: string): string {
 // is refused naming the op (ircore.ssa_refuse). Every op the lowering
 // produces has an arm, so a refusal here is a compiler bug, not a program
 // the backend does not cover.
-function emit_ssa_function(r: irtables.LowerResult, selected: physicalbody.Selected, label_name: string, s: asmcore.EmitState): asmcore.EmitState {
+function emit_ssa_function(r: irtables.LowerResult, selected: physicalbody.Selected, label_name: string, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   let t_lift: i64 = monotonic_ns();
   let lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(s.kinds, label_name, r.n_params, r.n_locals, r.ops, r.dbg_slots.len() > 0 && s.var_rows);
   let why: string = lifted.bail;
@@ -9275,6 +9275,10 @@ function emit_ssa_function(r: irtables.LowerResult, selected: physicalbody.Selec
   let lift_ms: i64 = (monotonic_ns() - t_lift) / 1000000i64;
   let t_emit: i64 = monotonic_ns();
   let prepared: ssaprepare.Body = ssaprepare.finish(r, selected, lifted, s.leaves);
+  // Certified in the form the emitter allocates: the leaves spliced, the
+  // trivial phis folded and the dead values pruned, so a slot the lowering
+  // wrote and never read carries no phi of its own.
+  irverifygate.certify_or_refuse(label_name, prepared.formed.f, r.ops, vgate);
   let context = asmcore.preparation_context(s, "x86-64");
   let entry = ircore.release_entry(r, "x86-64", s.rc_free_debug, s.reg_entries);
   s = emit_ssa_function_x86(prepared, label_name, entry, context, s);
@@ -9335,7 +9339,7 @@ function emit_function_via_ir_named(r: irtables.LowerResult, selected: physicalb
   }
 
   irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals, vgate);
-  return emit_ssa_function(r, selected, label_name, s);
+  return emit_ssa_function(r, selected, label_name, s, vgate);
 }
 
 // emit_dir_op calls a Dir op's runtime leaf, __fern_<kind name>, on the stack
@@ -10517,13 +10521,13 @@ function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.Emi
   // their own .rodata block then return to .text. A literal-free helper (the
   // str_eq / str_cmp / str_trim bodies) adds none, so
   // this is a no-op for them.
-  let vgate: irverifygate.Gate = irverifygate.gate_unreported(irtables.fn_sig_index(fns), s.kinds.pops);
   let lit0: i32 = s.string_lits.len();
   let agg0: i32 = s.const_aggs.len();
   let sh0: i32 = s.shape_lits.len();
   let lowered: physicalbody.Lowered = s.rt_lower(src);
   let bodies: irtables.LowerResult[] = lowered.bodies;
   let physical = physicalbody.collection(lowered);
+  let vgate: irverifygate.Gate = irverifygate.gate_unreported(irtables.fn_sig_index(fns), s.kinds.pops, physicalbody.abis(physical));
   let i: i32 = 0;
   while (i < fns.len()) {
     s = emit_function_via_ir_pre(bodies[i], physicalbody.select(physical, i), fns[i], s, vgate);
@@ -10574,7 +10578,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
   // The IR verify gate's callee-arity index, derived ONCE over the
   // whole-program all_funcs for the reason the registries above are: a
   // per-function rebuild would be O(n^2) on the compiler's own sources.
-  let vgate: irverifygate.Gate = irverifygate.gate(irtables.fn_sig_index(all_funcs), s.kinds.pops);
+  let vgate: irverifygate.Gate = irverifygate.gate(irtables.fn_sig_index(all_funcs), s.kinds.pops, physicalbody.abis(physical));
   // hi<0 is the "to the end" sentinel; an over-large hi is clamped so a shard
   // window that overshoots the module length can't index past mod.funcs.
   let hh: i32 = hi;
