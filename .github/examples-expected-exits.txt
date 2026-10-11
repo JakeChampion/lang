@@ -22,3 +22,4 @@ hello 0
 iter_pipeline 148
 regex_captures 219
 sum_for 55
+upload 0

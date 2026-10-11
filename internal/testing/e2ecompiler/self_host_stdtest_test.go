@@ -309,6 +309,8 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"http_request_builder", langSrcAbs(t, "tests/stdlib/http_request_builder_test.fern"), ""},
 		{"http_respond", langSrcAbs(t, "tests/stdlib/http_respond_test.fern"), ""},
 		{"http_router", langSrcAbs(t, "tests/stdlib/http_router_test.fern"), ""},
+		{"http_form", langSrcAbs(t, "tests/stdlib/http_form_test.fern"), ""},
+		{"http_multipart", langSrcAbs(t, "tests/stdlib/http_multipart_test.fern"), ""},
 		{"mock_platform_canned", langSrcAbs(t, "tests/stdlib/mock_platform_canned_test.fern"), ""},
 		// std/fetch's client over the scripted network: the dialled route's
 		// sim parity suite, behind the generic fetch.Transport seam.
