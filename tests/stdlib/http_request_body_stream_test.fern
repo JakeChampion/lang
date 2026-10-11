@@ -68,6 +68,7 @@ function scripted(chunks: string[]): BodySource {
       return Some(chunks[k].bytes());
     },
     fault: cell_new(0),
+    send: (bytes: u8[]): i32 => 0 - 95,
   };
 }
 
@@ -87,6 +88,7 @@ function faulting(chunks: string[], status: i32): BodySource {
       return Some(chunks[k].bytes());
     },
     fault: fault,
+    send: (bytes: u8[]): i32 => 0 - 95,
   };
 }
 
@@ -247,6 +249,32 @@ function test_sourced_read_n_spans_chunks(): test.TestOutcome {
   return test.assert_eq(string_from_bytes_unchecked(head) + "|" + option_text(tail), "abc|de");
 }
 
+// `counted(chunks, pulls)` — `scripted`, counting the pulls in `pulls`.
+function counted(chunks: string[], pulls: Cell[i32]): BodySource {
+  let inner: BodySource = scripted(chunks);
+  let next: () => Option[u8[]] = inner.next;
+  return BodySource {
+    next: (): Option[u8[]] => {
+      pulls.set(pulls.get() + 1);
+      return next();
+    },
+    fault: inner.fault,
+    send: inner.send,
+  };
+}
+
+// A read satisfied by the chunk in hand asks the source for nothing
+// more: a pull waits for the peer, and a frame read whole off a
+// connection must not wait for the next one (std/http/websocket).
+function test_sourced_read_n_pulls_only_what_it_owes(): test.TestOutcome {
+  let pulls: Cell[i32] = cell_new(0);
+  let (head, rest) = stream.stream_from_source(counted(["ab", "cd"], pulls)).read_n(2);
+  let after_first: i32 = pulls.get();
+  let (more, rest2) = rest.read_n(1);
+  let after_second: i32 = pulls.get();
+  return test.assert_eq(string_from_bytes_unchecked(head) + "|" + after_first.to_string() + "|" + string_from_bytes_unchecked(more) + "|" + after_second.to_string(), "ab|1|c|2");
+}
+
 function option_text(o: Option[string]): string {
   match (o) {
     Some(s) => {
@@ -339,6 +367,7 @@ function main(): i32 {
   r = r.it("a sourced stream reads every chunk", test_sourced_read_all_joins_the_chunks);
   r = r.it("read_line spans a chunk boundary", test_sourced_read_line_spans_chunks);
   r = r.it("read_n spans a chunk boundary", test_sourced_read_n_spans_chunks);
+  r = r.it("read_n pulls only what it owes", test_sourced_read_n_pulls_only_what_it_owes);
   r = r.it("read_byte reaches the end of a sourced stream", test_sourced_read_byte_ends);
   r = r.it("body_string drains a sourced body", test_sourced_body_string_drains);
   r = r.it("body_len is the declared length of a sourced body", test_sourced_body_len_is_declared);

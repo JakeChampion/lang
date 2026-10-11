@@ -1173,6 +1173,12 @@ func TestRunnerHTTPSSEExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "http_sse", "std/http/sse", 12)
 }
 
+// `tests/stdlib/http_websocket_test.fern` runs the WebSocket handshake
+// and a session over a scripted connection.
+func TestRunnerHTTPWebSocketExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_websocket", "std/http/websocket", 14)
+}
+
 func TestRunnerPublicSuffixExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "publicsuffix", "std/publicsuffix", 8)
 }
@@ -4285,8 +4291,9 @@ func TestRunnerHttpRequestBodyStreamExample(t *testing.T) {
 		"ok 7 - body_string ignores a partial walk",
 		"ok 10 - a bodyless request reads empty",
 		"ok 13 - read_line spans a chunk boundary",
-		"ok 18 - a fault is EndedEarly with its status",
-		"# pass 20",
+		"ok 15 - read_n pulls only what it owes",
+		"ok 19 - a fault is EndedEarly with its status",
+		"# pass 21",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {
