@@ -141,8 +141,8 @@ selfhost/arm64-linux/string_scan.emit	3907
 selfhost/arm64-linux/string_slice.emit	916
 selfhost/arm64-linux/struct_drop.emit	4077
 selfhost/arm64-linux/tokenize.emit	1172
-selfhost/arm64-linux/utf8_ingest_unchecked.emit	15840
-selfhost/arm64-linux/utf8_ingest_validated.emit	16090
+selfhost/arm64-linux/utf8_ingest_unchecked.emit	14809
+selfhost/arm64-linux/utf8_ingest_validated.emit	15059
 selfhost/wasm32-wasi/array_append.emit	465
 selfhost/wasm32-wasi/array_index.emit	471
 selfhost/wasm32-wasi/array_scale_f64.emit	2547
@@ -171,8 +171,8 @@ selfhost/wasm32-wasi/string_scan.emit	3346
 selfhost/wasm32-wasi/string_slice.emit	469
 selfhost/wasm32-wasi/struct_drop.emit	3508
 selfhost/wasm32-wasi/tokenize.emit	878
-selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	21085
-selfhost/wasm32-wasi/utf8_ingest_validated.emit	21922
+selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	21799
+selfhost/wasm32-wasi/utf8_ingest_validated.emit	22636
 selfhost/x86-64-linux/array_append.emit	912
 selfhost/x86-64-linux/array_index.emit	913
 selfhost/x86-64-linux/array_scale_f64.emit	2805
@@ -201,8 +201,8 @@ selfhost/x86-64-linux/string_scan.emit	3285
 selfhost/x86-64-linux/string_slice.emit	751
 selfhost/x86-64-linux/struct_drop.emit	3473
 selfhost/x86-64-linux/tokenize.emit	985
-selfhost/x86-64-linux/utf8_ingest_unchecked.emit	14494
-selfhost/x86-64-linux/utf8_ingest_validated.emit	14738
+selfhost/x86-64-linux/utf8_ingest_unchecked.emit	14598
+selfhost/x86-64-linux/utf8_ingest_validated.emit	14842
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 selfhost/x86-64-linux/perceus_cfold.emit	2486
