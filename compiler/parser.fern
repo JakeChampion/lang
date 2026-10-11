@@ -15590,6 +15590,13 @@ function is_bg_template(fd: FuncDecl): boolean {
   return fd.receiver_name.len() == 0 && fd.type_params.len() > 0;
 }
 
+// is_free_bg_template is is_bg_template without a receiver type: a bounded
+// impl's associated function (`impl[A: Default] Make for E[A]`) is shaped
+// like a template, but it is its type's to clone.
+function is_free_bg_template(fd: FuncDecl): boolean {
+  return is_bg_template(fd) && fd.receiver_type.len() == 0;
+}
+
 // cloned_per_instance: a declaration whose body is rewritten per clone, never
 // as written: a bounded generic, or a generic struct's or enum's method.
 function cloned_per_instance(fd: FuncDecl, structs: StructDecl[], enums: EnumDecl[]): boolean {
@@ -15627,7 +15634,7 @@ function drop_bg_templates(funcs: FuncDecl[], keep: string[]): FuncDecl[] {
   let out: FuncDecl[] = [];
   let i: i32 = 0;
   while (i < funcs.len()) {
-    if (!is_bg_template(funcs[i]) || str_in(keep, funcs[i].name)) {
+    if (!is_free_bg_template(funcs[i]) || str_in(keep, funcs[i].name)) {
       out = out.append(funcs[i]);
     }
     i = i + 1;
@@ -16787,7 +16794,7 @@ function ms_module(mod: Module): Module {
     let rbase: string = strip_struct_base(fn.receiver_type);
     if (keep && (gstruct_index(gstructs, rbase) >= 0 || is_bg_template(fn) || ms_deferred_owner("", fn.receiver_type, deferred))) {
       nfuncs = nfuncs.append(fn);
-    } else if (fn.receiver_type.len() > 0 && gstruct_index(gstructs, rbase) >= 0) {} else if (is_bg_template(fn)) {} else {
+    } else if (fn.receiver_type.len() > 0 && gstruct_index(gstructs, rbase) >= 0) {} else if (is_free_bg_template(fn)) {} else {
       // generic-struct method OR receiver-less associated fn (a derived
       // `default()`, receiver_name "") — dropped here, cloned in phase 2.
       // cloned on demand in phase 2; dropped.
