@@ -1157,6 +1157,19 @@ func TestRunnerHTTPRouterExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "http_router", "std/http/router", 8)
 }
 
+// `tests/stdlib/http_form_test.fern` reads a urlencoded body as its fields
+// and refuses another media type and a body that is not UTF-8.
+func TestRunnerHTTPFormExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_form", "std/http/form", 4)
+}
+
+// `tests/stdlib/http_multipart_test.fern` reads a multipart body part by
+// part, whole and in pieces, from a buffer and from a chunked stream, with
+// every refusal and cap, and checks the builder's output.
+func TestRunnerHTTPMultipartExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_multipart", "std/http/multipart", 9)
+}
+
 // `tests/stdlib/tls_client_test.fern` runs std/tls/client's session against
 // std/tls/handshake's server: a trusted chain, the name and root refusals,
 // a forged CertificateVerify, a saved and restored session, close_notify,
