@@ -127,7 +127,7 @@ function operation(op: ssa.SInst, b: ssa.SBlock, entry: i32): boolean {
   // The optional alignment annotation does not change is_unique's value.
   // Ignore it here; the machine proof must independently justify any omitted
   // normalization from its input ABI, never from this annotation.
-  if (op.imm != 0 && !(op.imm == 4 && op.kind_tag == 11 && op.str == "__fern_rc_is_unique")) {
+  if (ssa.plain_imm(op) != 0 && !(op.imm == 4 && op.kind_tag == 11 && op.str == "__fern_rc_is_unique")) {
     return false;
   }
   if (op.kind_tag == 8) {

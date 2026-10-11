@@ -211,6 +211,26 @@ function semantic_names_symbol(id: i32): boolean {
 // immediate carries the literal's TEXT instead, so that is what is printed for
 // it rather than the zero its immediate holds; the other kinds print the
 // immediate, the operator, or the symbol they name.
+// The emitted-RC certifier's marks on a lifted instruction (ssa_lift): a
+// load's `rc` in `str` when it reads a counted reference, a call's 1 (its
+// result is a counted reference), 2 (a shell release) or 3 (a lent result)
+// in `imm`; a call's 4 is the emitters' alignment proof and stays. A pass
+// that reads an instruction's shape rather than its ownership reads it
+// through these.
+pub function plain_str(ins: SInst): string {
+  if ((ins.kind_tag == 40 || ins.kind_tag == 42) && ins.str.len() >= 2 && slice_unchecked(ins.str, ins.str.len() - 2, ins.str.len()) == "rc") {
+    return slice_unchecked(ins.str, 0, ins.str.len() - 2) + "";
+  }
+  return ins.str;
+}
+
+pub function plain_imm(ins: SInst): i32 {
+  if (ins.kind_tag == 11 && ins.imm >= 1 && ins.imm <= 3) {
+    return 0;
+  }
+  return ins.imm;
+}
+
 function carries_imm(kind: i32): boolean {
   return kind == 1 || kind == 2 || kind == 6 || kind == 0 - 4 || kind == 0 - 6 || kind == 0 - 10 || kind == 0 - 49;
 }
@@ -220,15 +240,25 @@ function carries_str(kind: i32): boolean {
 }
 
 // A variant projection carries BOTH: the field index and the variant name.
+// A memory or call-like instruction (40..60) prints the offset and mark it
+// carries: `ld_at 8 rc`.
+function shows_imm(ins: SInst): boolean {
+  return carries_imm(ins.kind_tag) || ins.kind_tag >= 40 && ins.kind_tag <= 43 && ins.imm != 0;
+}
+
+function shows_str(ins: SInst): boolean {
+  return carries_str(ins.kind_tag) || ins.kind_tag >= 40 && ins.kind_tag <= 60 && ins.str != "";
+}
+
 function inst_detail(ins: SInst): string {
   if (ins.kind_tag == 1 && ins.str != "") {
     return " " + ins.str;
   }
   let out: string = "";
-  if (carries_imm(ins.kind_tag)) {
+  if (shows_imm(ins)) {
     out = out + " " + util.i32_to_string(ins.imm);
   }
-  if (carries_str(ins.kind_tag)) {
+  if (shows_str(ins)) {
     out = out + " " + ins.str;
   }
   return out;

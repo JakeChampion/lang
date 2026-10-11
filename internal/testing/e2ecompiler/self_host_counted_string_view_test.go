@@ -14,7 +14,7 @@ const countedStringViewProgram = `@noinline function join(a: string, b: string):
   if (before < 1) { return 11; }
   let allocations: i64 = __heap_alloc_count();
   __fern_rc_inc(p);
-  if (__load_i32(p - 8) != before + 1) { return 12; }
+  if (__load_i32(p - 8) != before + 1) { __fern_str_free(p); return 12; }
   __fern_str_free(p);
   if (__load_i32(p - 8) != before) { return 13; }
   if (__heap_alloc_count() != allocations) { return 14; }

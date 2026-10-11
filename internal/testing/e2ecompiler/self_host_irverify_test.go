@@ -524,7 +524,7 @@ func fernStringList(t *testing.T, src, fn string) []string {
 	t.Helper()
 	at := strings.Index(src, "function "+fn+"(")
 	if at < 0 {
-		t.Fatalf("irverifyrc.fern no longer defines %s — this test is no longer comparing anything", fn)
+		t.Fatalf("rcsigs.fern no longer defines %s — this test is no longer comparing anything", fn)
 	}
 	body := src[at:]
 	lo := strings.Index(body, "return [")
@@ -547,65 +547,67 @@ func fernStringList(t *testing.T, src, fn string) []string {
 	return names
 }
 
-// TestSelfHostIRVerifyRcReleaseSetMatchesNative pins the two verifiers'
-// idea of what a release IS.
+// TestSelfHostRcSigsReleaseSetCoversOracle pins the self-host's idea of what
+// a release IS against the oracle's.
 //
-// Both passes read a reuse site's decline arm looking for the release of
-// the donor, and both decide "this op is a release" from the callee's
-// name. A name one side counts and the other does not is a silent
-// divergence of the worst kind: the arm still parses, so nothing is
-// reported — one verifier simply checks a site the other skips, or
-// worse, reads a different op as the release and compares the wrong
-// slot.
-//
-// Native's record is internal/oracle/ir/rcsigs.go, which additionally carries
-// the retains, the inspection, the unmodelled helpers and a completeness
-// gate against the wasm runtime registry. Only the release half is
-// mirrored, and only the release half is compared here.
-func TestSelfHostIRVerifyRcReleaseSetMatchesNative(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "compiler", "irverifyrc.fern")
+// compiler/rcsigs.fern is the one table the self-host reads a callee's
+// ownership effect from — the emitted-RC certifier (rccertify.fern) and the
+// reuse-site verifier (irverifyrc.fern) both decide "this call consumes its
+// operand" from it. internal/oracle/ir/rcsigs.go is the oracle's record of
+// the same helpers. A name the oracle counts as a release that the self-host
+// does not is a silent divergence: one side reads a release the other skips.
+// The self-host's list is the wider one — it names the helpers its own
+// runtime defines, and core/map's drops written in Fern — so the pin is
+// one-directional on the names and exact on the prefixes.
+func TestSelfHostRcSigsReleaseSetCoversOracle(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "compiler", "rcsigs.fern")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	src := string(raw)
-
-	for _, tc := range []struct {
-		fn     string
-		native []string
-	}{
-		{"rc_release_helpers", ir.RcReleaseNames()},
-		{"generated_drop_prefixes", ir.RcGeneratedDropPrefixes()},
-		{"generated_drop_names", ir.RcGeneratedDropNames()},
-	} {
-		selfHost := map[string]bool{}
-		for _, n := range fernStringList(t, src, tc.fn) {
+	selfHost := map[string]bool{}
+	for _, fn := range []string{"release_helpers", "move_helpers", "release_names"} {
+		for _, n := range fernStringList(t, src, fn) {
 			selfHost[n] = true
 		}
-		native := map[string]bool{}
-		for _, n := range tc.native {
-			native[n] = true
+	}
+	var missing []string
+	for _, n := range append(ir.RcReleaseNames(), ir.RcGeneratedDropNames()...) {
+		if !selfHost[n] {
+			missing = append(missing, n)
 		}
-		var onlyNative, onlySelfHost []string
-		for n := range native {
-			if !selfHost[n] {
-				onlyNative = append(onlyNative, n)
-			}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Errorf("internal/oracle/ir/rcsigs.go releases %d name(s) rcsigs.fern does not: %s", len(missing), strings.Join(missing, ", "))
+	}
+
+	prefixes := map[string]bool{}
+	for _, n := range fernStringList(t, src, "release_prefixes") {
+		prefixes[n] = true
+	}
+	native := map[string]bool{}
+	for _, n := range ir.RcGeneratedDropPrefixes() {
+		native[n] = true
+	}
+	var onlyNative, onlySelfHost []string
+	for n := range native {
+		if !prefixes[n] {
+			onlyNative = append(onlyNative, n)
 		}
-		for n := range selfHost {
-			if !native[n] {
-				onlySelfHost = append(onlySelfHost, n)
-			}
+	}
+	for n := range prefixes {
+		if !native[n] {
+			onlySelfHost = append(onlySelfHost, n)
 		}
-		sort.Strings(onlyNative)
-		sort.Strings(onlySelfHost)
-		if len(onlyNative) > 0 {
-			t.Errorf("%s: internal/oracle/ir/rcsigs.go has %d entr(ies) irverifyrc.fern does not: %s",
-				tc.fn, len(onlyNative), strings.Join(onlyNative, ", "))
-		}
-		if len(onlySelfHost) > 0 {
-			t.Errorf("%s: irverifyrc.fern has %d entr(ies) internal/oracle/ir/rcsigs.go does not: %s",
-				tc.fn, len(onlySelfHost), strings.Join(onlySelfHost, ", "))
-		}
+	}
+	sort.Strings(onlyNative)
+	sort.Strings(onlySelfHost)
+	if len(onlyNative) > 0 {
+		t.Errorf("release_prefixes: internal/oracle/ir/rcsigs.go has %d prefix(es) rcsigs.fern does not: %s", len(onlyNative), strings.Join(onlyNative, ", "))
+	}
+	if len(onlySelfHost) > 0 {
+		t.Errorf("release_prefixes: rcsigs.fern has %d prefix(es) internal/oracle/ir/rcsigs.go does not: %s", len(onlySelfHost), strings.Join(onlySelfHost, ", "))
 	}
 }

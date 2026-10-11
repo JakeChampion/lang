@@ -98,7 +98,7 @@ func emitArm64Asm(t *testing.T, h ssaBackendHost, dir, src, name string, env []s
 	t.Helper()
 	out := filepath.Join(dir, name+".s")
 	cmd := exec.Command(h.cli, "-target", "arm64-linux", "-emit", "asm", "-o", out, src, h.stdlib)
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = append(append(os.Environ(), uncertified), env...)
 	if combined, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("emitting %s: %v\n%s", name, err, combined)
 	}
@@ -187,7 +187,7 @@ func TestSelfHostUafIncAfterFreeReportedArm64(t *testing.T) {
 	for _, flag := range []string{"FERN_SANITIZE=1", "FERN_RC_FREE_DEBUG=1"} {
 		bin := filepath.Join(dir, "uaf-"+strings.Split(flag, "=")[0])
 		cmd := exec.Command(h.cli, "-target", tg.target, "-o", bin, src, h.stdlib)
-		cmd.Env = append(os.Environ(), flag)
+		cmd.Env = append(os.Environ(), flag, uncertified)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("%s: %v\n%s", flag, err, out)
 		}
@@ -218,6 +218,7 @@ func TestSelfHostUafSilentWithoutFlagArm64(t *testing.T) {
 	}
 	bin := filepath.Join(dir, "uaf-off")
 	cmd := exec.Command(h.cli, "-target", tg.target, "-o", bin, src, h.stdlib)
+	cmd.Env = append(os.Environ(), uncertified)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}

@@ -127,10 +127,14 @@ function arr_get_op(elem: typeinfo.Type, unchecked: boolean): ir.Op {
   if (ssasem.is_wide(elem)) {
     return ir.op_arr_get_i64();
   }
+  let op: ir.Op = ir.op_arr_get(elem_width(elem));
   if (unchecked) {
-    return ir.op_arr_get_nc(elem_width(elem));
+    op = ir.op_arr_get_nc(elem_width(elem));
   }
-  return ir.op_arr_get(elem_width(elem));
+  if (ssasem.reference(elem)) {
+    return ir.counted(op);
+  }
+  return op;
 }
 
 function arr_set_op(elem: typeinfo.Type): ir.Op {
@@ -370,6 +374,19 @@ function release(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, f: ss
 
 function emit(own r: irtables.LowerResult, op: ir.Op): irtables.LowerResult {
   return irtables.LowerResult { ...r, ops: r.ops.append(op) };
+}
+
+// shell_release marks the release call `release` just emitted as a shell's
+// (ir.shell): the box goes shallowly, its payload is the frame's.
+function shell_release(own r: irtables.LowerResult): irtables.LowerResult {
+  let i: i32 = r.ops.len() - 1;
+  while (i >= 0) {
+    if (r.ops[i].kind_tag == ir.op_call_direct("", 1).kind_tag) {
+      return irtables.LowerResult { ...r, ops: r.ops.with(i, ir.shell(r.ops[i])) };
+    }
+    i = i - 1;
+  }
+  return r;
 }
 
 function helper(own r: irtables.LowerResult, slot: i32, name: string): irtables.LowerResult {
@@ -625,7 +642,7 @@ function bracket_take(own r: irtables.LowerResult, f: ssasem.Func, held: Held): 
     let slot: i32 = scratch_base(f) + k;
     r = reserve(r, slot + 1);
     r = emit(r, ir.op_load_local(held.records[k]));
-    r = emit(r, ir.op_struct_get(held.fields[k], 0));
+    r = emit(r, ir.counted(ir.op_struct_get(held.fields[k], 0)));
     r = emit(r, ir.op_store_local(slot));
     r = helper(r, slot, "__fern_arr_share_inc");
     k = k + 1;
@@ -647,7 +664,7 @@ function bracket_take(own r: irtables.LowerResult, f: ssasem.Func, held: Held): 
     let slot: i32 = gated_field_slot(f, held, g);
     r = reserve(r, slot + 2);
     r = emit(r, ir.op_load_local(held.gated_records[g]));
-    r = emit(r, ir.op_struct_get(held.gated_fields[g], 0));
+    r = emit(r, ir.counted(ir.op_struct_get(held.gated_fields[g], 0)));
     r = emit(r, ir.op_store_local(slot));
     r = emit(r, ir.op_load_local(held.gated_records[g]));
     r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
@@ -860,7 +877,7 @@ function drop_dyn(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scra
       r = emit(r, ir.op_variant_is("string"));
       r = emit(r, ir.op_if(0));
       r = emit(r, ir.op_load_local(slot));
-      r = emit(r, ir.op_struct_get(0, 0));
+      r = emit(r, ir.counted(ir.op_struct_get(0, 0)));
       r = emit(r, ir.op_store_local(scratch));
       r = drop_value(r, scratch, c, scratch + 1, f);
       r = emit(r, ir.op_end());
@@ -980,7 +997,7 @@ function drop_payload(own r: irtables.LowerResult, slot: i32, e: semrecords.Enum
       r = emit(r, ir.op_bin("eq", 0, false));
       r = emit(r, ir.op_if(0));
       r = emit(r, ir.op_load_local(slot));
-      r = emit(r, ir.op_opt_payload());
+      r = emit(r, ir.counted(ir.op_opt_payload()));
       r = emit(r, ir.op_store_local(child));
       r = drop_value(r, child, fields[0].ty, child + 1, f);
       r = emit(r, ir.op_end());
@@ -1069,7 +1086,7 @@ function drop_variant_chain(own r: irtables.LowerResult, t: typeinfo.Type, f: ss
     while (i < v.fields.len()) {
       if (walked(v.fields[i].ty)) {
         r = emit(r, ir.op_load_local(node));
-        r = emit(r, ir.op_struct_get(i, 0));
+        r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
         if (i == tail) {
           r = emit(r, ir.op_store_local(next));
         } else {
@@ -1124,7 +1141,7 @@ function drop_elements(own r: irtables.LowerResult, slot: i32, elem: typeinfo.Ty
   r = emit(r, ir.op_brif(1));
   r = emit(r, ir.op_load_local(slot));
   r = emit(r, ir.op_load_local(index));
-  r = emit(r, ir.op_arr_get_nc(32));
+  r = emit(r, ir.counted(ir.op_arr_get_nc(32)));
   r = emit(r, ir.op_store_local(child));
   r = drop_value(r, child, elem, child + 1, f);
   r = emit(r, ir.op_load_local(index));
@@ -1143,7 +1160,7 @@ function drop_tuple_fields(own r: irtables.LowerResult, slot: i32, tup: typeinfo
   while (i < tup.elements.len()) {
     if (ssasem.reference(tup.elements[i])) {
       r = emit(r, ir.op_load_local(slot));
-      r = emit(r, ir.op_tuple_get(i));
+      r = emit(r, ir.counted(ir.op_tuple_get(i)));
       r = emit(r, ir.op_store_local(child));
       r = drop_value(r, child, tup.elements[i], child + 1, f);
     }
@@ -1163,9 +1180,9 @@ function drop_record_fields(own r: irtables.LowerResult, slot: i32, fields: semr
       r = emit(r, ir.op_load_local(slot));
       if (env) {
         r = emit(r, ir.op_const_i32(i));
-        r = emit(r, ir.op_arr_get(32));
+        r = emit(r, ir.counted(ir.op_arr_get(32)));
       } else {
-        r = emit(r, ir.op_struct_get(i, 0));
+        r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
       }
       r = emit(r, ir.op_store_local(child));
       r = drop_value(r, child, fields[i].ty, child + 1, f);
@@ -1189,7 +1206,7 @@ function drops(own r: irtables.LowerResult, step: ssaunits.Step, f: ssasem.Func,
 function drops_less(own r: irtables.LowerResult, step: ssaunits.Step, f: ssasem.Func, links: i32[], taken: i32, took: i32, held: i32, shell: i32): irtables.LowerResult {
   for value in step.drops {
     if (value == shell) {
-      r = release(r, value, f.values[value], f);
+      r = shell_release(release(r, value, f.values[value], f));
     } else if (value != taken && value != took && value != held) {
       r = drop_linked(r, value, links, f);
     }
@@ -2066,7 +2083,7 @@ function drop_fields_except(own r: irtables.LowerResult, slot: i32, fields: semr
   while (i < fields.len()) {
     if (walked(fields[i].ty) && !(i < skip.len() && skip[i])) {
       r = emit(r, ir.op_load_local(slot));
-      r = emit(r, ir.op_struct_get(i, 0));
+      r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
       r = emit(r, ir.op_store_local(child));
       r = drop_value(r, child, fields[i].ty, child + 1, f);
     }
@@ -3768,7 +3785,8 @@ function container(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, 
     return emit(r, arr_get_op(f.values[ins.result], ins.imm == 1));
   }
   if (ins.kind_tag == ssasem.tuple_get()) {
-    return emit(r, ir.op_tuple_get_w(ins.imm, load_width(f.values[ins.result]), ssasem.is_wide(f.values[ins.result])));
+    let t: typeinfo.Type = f.values[ins.result];
+    return emit(r, marked_load(ir.op_tuple_get_w(ins.imm, load_width(t), ssasem.is_wide(t)), t));
   }
   return field_get(r, f, ins);
 }
@@ -3860,7 +3878,7 @@ function routed_lookup(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
     return cell_get_or(r, f, ins);
   }
   r = routed_slot(r, ins.args[2], v);
-  r = map_entry(r, f, ins, "__map_get_or_impl", "__map_get_or_keyed_impl", 3);
+  r = mark_got_value(map_entry(r, f, ins, "__map_get_or_impl", "__map_get_or_keyed_impl", 3), v);
   if (counted) {
     r = emit(r, ir.op_call_direct("__fern_rc_inc", 1));
   }
@@ -4187,7 +4205,7 @@ function retain_hit_payload(own r: irtables.LowerResult, ins: ssa.SInst): irtabl
   r = emit(r, ir.op_bin("eq", 0, false));
   r = emit(r, ir.op_if(0));
   r = emit(r, ir.op_load_local(ins.result));
-  r = emit(r, ir.op_opt_payload());
+  r = emit(r, ir.counted(ir.op_opt_payload()));
   r = emit(r, ir.op_call_direct("__fern_rc_inc", 1));
   r = emit(r, ir.op_drop());
   r = emit(r, ir.op_end());
@@ -4214,12 +4232,21 @@ function field_get(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
   let t: typeinfo.Type = f.values[ins.result];
   if (semtypes.is_env(f.values[ins.args[0]])) {
     r = emit(r, ir.op_const_i32(ins.imm));
-    return emit(r, ir.op_arr_get(32));
+    return emit(r, marked_load(ir.op_arr_get(32), t));
   }
   if (ssasem.is_wide(t)) {
     return emit(r, ir.op_struct_get_i64(ins.imm));
   }
-  return emit(r, ir.op_struct_get(ins.imm, load_width(t)));
+  return emit(r, marked_load(ir.op_struct_get(ins.imm, load_width(t)), t));
+}
+
+// A load of a counted reference carries ir.counted, which the emitted-RC
+// certifier reads; a scalar's does not.
+function marked_load(op: ir.Op, t: typeinfo.Type): ir.Op {
+  if (ssasem.reference(t)) {
+    return ir.counted(op);
+  }
+  return op;
 }
 
 function variant(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irtables.StructTab): irtables.LowerResult {
@@ -4325,7 +4352,7 @@ function option_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst
   if (wide_payload(got)) {
     return emit(r, ir.op_opt_payload_w(64, !ssasem.is_float(got)));
   }
-  return emit(r, ir.op_opt_payload());
+  return emit(r, marked_load(ir.op_opt_payload(), got));
 }
 
 // Zero at a given width: a 64-bit literal reaches the backends as source text,
@@ -4522,12 +4549,14 @@ function instruction(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
   } else if (container_op(ins.kind_tag)) {
     r = container(r, f, ins, structs);
   }
+  r = mark_reference_result(r, f, ins, container_op(ins.kind_tag));
   // A call's counted parameters were supplied before its operands were
   // loaded; its result is the unit the callee returns. A runtime builtin
   // is its own op, pushing the value its contract names or the dummy a
   // statement op pushes, so the store below takes either.
   if (ins.kind_tag == ssasem.call()) {
     r = call_site(r, f, ins);
+    r = mark_reference_result(r, f, ins, !paired_op(ins.str));
   }
   // A verified copy already has its single operand on the stack.
   r = emit(r, ir.op_store_local(ins.result));
@@ -5649,6 +5678,43 @@ function consecutive(args: i32[]): boolean {
 
 function dyn_site(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   return emit(r, ir.op_dyn_dispatch(ssasem.dyn_call_arms(ins.str), ins.args[0], ins.args.len()));
+}
+
+// mark_reference_result marks the op a builtin call or a container op just
+// emitted for its reference-typed result (ir.counted), which is how the
+// certifier tells an op that hands back a fresh unit from one that hands
+// back a word. A paired call's word is reloaded, not produced.
+function mark_reference_result(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, producer: boolean): irtables.LowerResult {
+  if (!producer || ins.result < 0 || ins.result >= f.values.len() || !ssasem.reference(f.values[ins.result])) {
+    return r;
+  }
+  return counted_result(r);
+}
+
+function counted_result(own r: irtables.LowerResult): irtables.LowerResult {
+  let last: i32 = r.ops.len() - 1;
+  if (last < 0) {
+    return r;
+  }
+  return irtables.LowerResult { ...r, ops: r.ops.with(last, ir.counted(r.ops[last])) };
+}
+
+// mark_got_value marks a get_or call for the certifier by its column: core/map
+// retains a box column's value as it answers (ir.counted); a text column's is
+// answered as stored (ir.lent) and retained by the caller.
+function mark_got_value(own r: irtables.LowerResult, v: typeinfo.Type): irtables.LowerResult {
+  if (routed_box(v)) {
+    return counted_result(r);
+  }
+  if (ssasem.is_text(v)) {
+    return lent_result(r);
+  }
+  return r;
+}
+
+function lent_result(own r: irtables.LowerResult): irtables.LowerResult {
+  let last: i32 = r.ops.len() - 1;
+  return irtables.LowerResult { ...r, ops: r.ops.with(last, ir.lent(r.ops[last])) };
 }
 
 function call_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {

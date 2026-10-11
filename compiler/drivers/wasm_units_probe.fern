@@ -33,6 +33,7 @@ import "../parser";
 import "./rundriver";
 import "../asmcore";
 import "../wasm_ir";
+import "../physicalbody";
 import "../irtables";
 import "../ircore";
 import "../semlower";
@@ -126,8 +127,8 @@ function main(): i32 {
   let cache_a: irtables.LowerResult[] = slice_cache(whole, 0, half);
   let cache_b: irtables.LowerResult[] = slice_cache(whole, half, whole.len());
 
-  let unit_a: string = wasm_ir.emit_functions_view("", mod_a, cache_a, im.funcs, stab);
-  let unit_b: string = wasm_ir.emit_functions_view("$u1", mod_b, cache_b, im.funcs, stab);
+  let unit_a: string = wasm_ir.emit_functions_view("", mod_a, cache_a, im.funcs, stab, physicalbody.no_collection());
+  let unit_b: string = wasm_ir.emit_functions_view("$u1", mod_b, cache_b, im.funcs, stab, physicalbody.no_collection());
 
   let strs_a: string[] = wasm_ir.str_values(cache_a);
   let strs_b: string[] = wasm_ir.str_values(cache_b);
