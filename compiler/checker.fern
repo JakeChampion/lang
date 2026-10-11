@@ -14021,6 +14021,64 @@ function binop_lit_range_diags(b: ast.ExprBinary, s: Scope): util.Diag[] {
   return out;
 }
 
+// tvar_operator_diags is E009 for an operator on a value of a type variable
+// whose bound supplies no method for it: an ordering needs `cmp`, arithmetic,
+// bitwise and shift operators their `ast.operator_method`, and the saturating
+// and checked forms are integer-only. With the method, the operator means that
+// method in every instance. Equality is not the bound's question: it holds on
+// any type variable.
+function tvar_operator_diags(b: ast.ExprBinary, s: Scope): util.Diag[] {
+  let method: string = tvar_operator_method(b.op);
+  if (method == "-") {
+    return [];
+  }
+  for side in [b.left, b.right] {
+    let name: string = unmet_tvar(check_expr(side, s), method, s);
+    if (name != "") {
+      return [dg_at("E009", "operator \"" + b.op + "\" requires an integer type, got " + name, b.line, b.col)];
+    }
+  }
+  return [];
+}
+
+// tvar_operator_method is the method a bound must supply for `op` on a type
+// variable: "" when none can, "-" when the bound is not asked.
+function tvar_operator_method(op: string): string {
+  if (op == "<" || op == "<=" || op == ">" || op == ">=") {
+    return "cmp";
+  }
+  let method: string = ast.operator_method(op);
+  if (method != "" || util.has_str(["+|", "-|", "*|", "<<|", "+?", "-?", "*?", "/?", "%?", "<<?", ">>?"], op)) {
+    return method;
+  }
+  return "-";
+}
+
+// unmet_tvar names `t` when it is a type variable of this function whose bound
+// supplies no `method` ("" supplied by none), else "".
+function unmet_tvar(t: typeinfo.Type, method: string, s: Scope): string {
+  let name: string = tvar_name(t);
+  if (name == "" || !util.has_str(s.fn_tvars, name)) {
+    return "";
+  }
+  if (method != "" && tp_bound_provides(s, name, method)) {
+    return "";
+  }
+  return name;
+}
+
+// tvar_neg_diags is E009 for `-` on a type variable whose bound supplies no `neg`.
+function tvar_neg_diags(u: ast.ExprUnary, s: Scope): util.Diag[] {
+  if (u.op != "-") {
+    return [];
+  }
+  let name: string = unmet_tvar(check_expr(u.operand, s), "neg", s);
+  if (name == "") {
+    return [];
+  }
+  return [dg_at("E009", "operator \"-\" requires an integer type, got " + name, u.line, u.col)];
+}
+
 function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.Diag[] {
   // A named-argument marker's left side is the parameter NAME, not a value
   // read: only the value beside it is walked (the marker survives only on a
@@ -14030,6 +14088,7 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
   }
   out = util.append_diags(call_diags(b.left, s), call_diags(b.right, s));
   out = util.append_diags(out, binop_lit_range_diags(b, s));
+  out = util.append_diags(out, tvar_operator_diags(b, s));
   // E009: `&&` / `||` require both operands to be boolean.
   if (b.op == "&&" || b.op == "||") {
     let lt: typeinfo.Type = check_expr(b.left, s);
@@ -14211,6 +14270,7 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
       out = out.append(dg_at("E009", "operator \"!\" requires boolean, got " + type_label(ot), u.line, u.col));
     }
   }
+  out = util.append_diags(out, tvar_neg_diags(u, s));
   // E009: unary `-` (negation) requires a numeric (i32 / f64) operand.
   // Mirrors the Go checker (requireInteger / requireFloat for unary
   // minus); a string / bool / composite operand is rejected.
