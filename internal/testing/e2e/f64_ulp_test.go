@@ -229,7 +229,8 @@ func refPow(x, y float64) float64 {
 // working precision runs out. exp and log keep Go's math over the range where
 // it is accurate to within the bound, and fall back to a literal bit pattern
 // per row where it is not — exp's two overflow/underflow bands, log's
-// subnormals. pow keeps Go's math throughout.
+// subnormals. pow is referenced against refPow, a 256-bit big.Float log and
+// exp, since math.Pow's own error grows with |y log x|.
 
 // piDigits is 420 significant digits (~1395 bits) and refPrec is sized to
 // match. Both are set by the LARGEST argument the sweep reduces, not by the
