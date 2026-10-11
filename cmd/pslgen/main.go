@@ -8,8 +8,9 @@
 //
 // To refresh the list: replace cmd/pslgen/public_suffix_list.dat with the
 // current file from https://publicsuffix.org/list/public_suffix_list.dat
-// and re-run. TestCommittedFileIsUpToDate fails until the output is
-// committed.
+// and re-run; that is what `scripts/refresh-data publicsuffix` does, and
+// what the refresh-data workflow does every week. TestCommittedFileIsUpToDate
+// fails until the output is committed.
 //
 // Only the ICANN section is taken: the private section names hosting
 // providers' domains (github.io, blogspot.com), which a cookie jar treats
