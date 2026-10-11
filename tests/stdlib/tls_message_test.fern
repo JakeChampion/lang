@@ -328,6 +328,50 @@ function test_build_client_hello(): test.TestOutcome {
   return test.assert_eq(hex.hex_encode(message.encode(message.ClientHelloMsg(h))), hex.hex_encode(client_hello()));
 }
 
+// pre_shared_key both ways: an offer of two identities round-trips, the
+// binders vector's length is what the binder transcript leaves out, the
+// server's choice round-trips, and an offer whose binders do not match its
+// identities is refused.
+function test_pre_shared_key(): test.TestOutcome {
+  let offer: message.OfferedPsks = message.OfferedPsks { identities: [message.PskIdentity { identity: "t1".bytes(), obfuscated_age: 0x01020304 as u32 }, message.PskIdentity { identity: "ticket-2".bytes(), obfuscated_age: 7 as u32 }], binders: [hex.hex_decode("3add4fb2d8fdf822a0ca3cf7678ef5e88dae990141c5924d57bb6fa31b9e5f9d"), hex.hex_decode("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")] };
+  let e: message.Extension = message.ext_pre_shared_key(offer);
+  if (e.kind != message.EXT_PRE_SHARED_KEY || message.binders_length(offer.binders) != 68 || e.data.len() != 2 + 8 + 14 + 68) {
+    return test.fail("offer encoding " + int.int_to_string(e.data.len()));
+  }
+  match (message.pre_shared_key(e.data)) {
+    Ok(o) => {
+      if (o.identities.len() != 2 || o.binders.len() != 2 || string_from_bytes_unchecked(o.identities[1].identity) != "ticket-2" || o.identities[0].obfuscated_age != 0x01020304 as u32 || hex.hex_encode(o.binders[0]) != hex.hex_encode(offer.binders[0])) {
+        return test.fail("offer read");
+      }
+    },
+    Err(err) => {
+      return test.fail(err.message());
+    }
+  }
+  match (message.pre_shared_key(message.ext_pre_shared_key(message.OfferedPsks { ...offer, binders: [offer.binders[0]] }).data)) {
+    Ok(o) => {
+      return test.fail("one binder for two identities");
+    },
+    Err(err) => {
+      if (err.message() != "tls message: illegal pre_shared_key binders") {
+        return test.fail(err.message());
+      }
+    }
+  }
+  if (hex.hex_encode(message.ext_selected_psk(1).data) != "0001") {
+    return test.fail("selected");
+  }
+  match (message.selected_psk(hex.hex_decode("0001"))) {
+    Ok(i) => {
+      return test.assert_eq(i, 1);
+    },
+    Err(err) => {
+      return test.fail(err.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
 function test_build_server_extensions(): test.TestOutcome {
   if (hex.hex_encode(message.ext_selected_version(message.TLS13).data) != "0304") {
     return test.fail("selected version");
@@ -462,6 +506,7 @@ function main(): i32 {
   r = r.it("the server's flight", test_server_flight_fields);
   r = r.it("build the ClientHello", test_build_client_hello);
   r = r.it("server extensions and KeyUpdate", test_build_server_extensions);
+  r = r.it("pre_shared_key", test_pre_shared_key);
   r = r.it("split", test_split);
   r = r.it("split refusals", test_split_refusals);
   r = r.it("refusals", test_refusals);

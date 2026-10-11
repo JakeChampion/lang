@@ -3,6 +3,7 @@ import "std/hex";
 import "std/crypto/ed25519";
 import "std/tls/client";
 import "std/tls/handshake";
+import "std/tls/keyschedule";
 import "std/tls/message";
 import "std/tls/record";
 import "std/tls/verify";
@@ -348,6 +349,88 @@ function test_close(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
+// has_resume is whether a server step asks about a ticket.
+function has_resume(events: handshake.Event[]): boolean {
+  for e in events {
+    match (e) {
+      handshake.ResumeOffered(o) => {
+        return true;
+      },
+      _ => {}
+    }
+  }
+  return false;
+}
+
+// issued has the server issue a ticket on a connected pair; the ticket as
+// the session keeps it, and the PSK the server derives for it.
+function issued(p: Pair): Result[(client.Ticket, u8[]), client.TlsError] {
+  let t: message.NewSessionTicket = message.NewSessionTicket { lifetime: 7200 as u32, age_add: 99 as u32, nonce: [0 as u8], ticket: "ticket-1".bytes(), extensions: [] };
+  let st: handshake.ServerStep = srv(p.server.ticket(t))?;
+  let cr: client.Step = rd(p.session, st.output)?;
+  if (cr.tickets.len() != 1) {
+    return Err(client.HandshakeFailed(handshake.Misuse("tickets")));
+  }
+  return Ok((cr.tickets[0], srv(st.server.resumption_psk([0 as u8]))?));
+}
+
+// connect_resumed drives a session offering its ticket against a server
+// that takes it up with `psk`; a server never asked is a refusal.
+function connect_resumed(cfg: client.Config, psk: u8[]): Result[Pair, client.TlsError] {
+  let start: client.Step = client.start(cfg)?;
+  let server: handshake.Server = srv(handshake.server_new(handshake.server_config([hex.hex_decode(LEAF)], [0x0807]), random_bytes(96)))?;
+  let s1: handshake.ServerStep = srv(server.read(start.output))?;
+  if (!has_resume(s1.events)) {
+    return Err(client.HandshakeFailed(handshake.Misuse("no ticket offered")));
+  }
+  let s2: handshake.ServerStep = srv(s1.server.resume(Some(handshake.Resumed { index: 0, psk: psk })))?;
+  let c1: client.Step = rd(start.session, s2.output)?;
+  let s3: handshake.ServerStep = srv(s2.server.read(c1.output))?;
+  if (!c1.session.connected() || !s3.server.connected() || !c1.session.resumed()) {
+    return Err(client.ClosedEarly);
+  }
+  return Ok(Pair { session: c1.session, server: s3.server });
+}
+
+// A ticket the server issued resumes the next session, whose chain is not
+// judged; one issued to another name, or past its lifetime, is not offered.
+function test_resumption(): test.TestOutcome {
+  match (connect(client.config("tls.example", roots(ROOT)), [], false)) {
+    Ok(p) => {
+      match (issued(p)) {
+        Ok(got) => {
+          let t: client.Ticket = got.0;
+          if (t.server_name != "tls.example" || t.suite != keyschedule.Aes128GcmSha256.code() || t.lifetime != 7200 as u32 || hex.hex_encode(t.psk) != hex.hex_encode(got.1)) {
+            return test.fail("the ticket kept");
+          }
+          match (connect_resumed(client.config("tls.example", roots(OTHER_ROOT)).with_ticket(t), got.1)) {
+            Ok(r) => {
+              if (exchanged(r.session, r.server) != "ping pong") {
+                return test.fail("after resuming");
+              }
+            },
+            Err(e) => {
+              return test.fail("resuming: " + e.message());
+            }
+          }
+          if (outcome(connect_resumed(client.config("192.0.2.7", roots(ROOT)).with_ticket(t), got.1)) != "tls handshake: no ticket offered called out of turn") {
+            return test.fail("another name: " + outcome(connect_resumed(client.config("192.0.2.7", roots(ROOT)).with_ticket(t), got.1)));
+          }
+          let stale: client.Ticket = client.Ticket { ...t, received_ms: t.received_ms - 7200 as i64 * (1000 as i64) };
+          return test.assert_eq(outcome(connect_resumed(client.config("tls.example", roots(ROOT)).with_ticket(stale), got.1)), "tls handshake: no ticket offered called out of turn");
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/tls/client");
   r = r.it("a trusted server", test_trusted);
@@ -356,5 +439,6 @@ function main(): i32 {
   r = r.it("a forged CertificateVerify", test_forged);
   r = r.it("save and restore", test_save_restore);
   r = r.it("close_notify", test_close);
+  r = r.it("resumption", test_resumption);
   return r.finish();
 }

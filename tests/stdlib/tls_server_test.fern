@@ -1,9 +1,11 @@
 import "std/test";
 import "std/hex";
+import "std/i32";
 import "std/tls/client";
 import "std/tls/handshake";
 import "std/tls/server";
 import "std/tls/verify";
+import "std/time";
 
 // tests/stdlib/tls_server_test.fern — std/tls/server: keys read from PKCS #8
 // and SEC 1, an identity checked against its leaf, and the session against
@@ -199,7 +201,7 @@ function identity_of(leaf: string, key_pem: string): server.Identity {
   return server.Identity { chain: [], key: server.Ed25519Seed([]) };
 }
 
-struct Pair { client: client.Session, server: server.Session }
+struct Pair { client: client.Session, server: server.Session, tickets: client.Ticket[] }
 
 function crd(s: client.Session, input: u8[]): Result[client.Step, string] {
   match (s.read(input)) {
@@ -259,7 +261,9 @@ function connect(cc: client.Config, sc: server.Config): Result[Pair, string] {
   if (!c1.session.connected() || !s2.session.connected()) {
     return Err("not connected");
   }
-  return Ok(Pair { client: c1.session, server: s2.session });
+  // What the server sends on connecting is its ticket, if it issues one.
+  let c2: client.Step = crd(c1.session, s2.output)?;
+  return Ok(Pair { client: c2.session, server: s2.session, tickets: c2.tickets });
 }
 
 function exchange(p: Pair): Result[string, string] {
@@ -487,6 +491,76 @@ function cclose(s: client.Session): Result[client.Step, string] {
   return Err("client");
 }
 
+// how is whether a pair resumed, and how many tickets the client was
+// issued.
+function how(r: Result[Pair, string]): string {
+  match (r) {
+    Ok(p) => {
+      let mode: string = "full";
+      if (p.client.resumed() && p.server.resumed()) {
+        mode = "resumed";
+      } else if (p.client.resumed() || p.server.resumed()) {
+        mode = "disagree";
+      }
+      match (exchange(p)) {
+        Ok(t) => {
+          return mode + " " + t + " " + p.tickets.len().to_string();
+        },
+        Err(e) => {
+          return e;
+        }
+      }
+    },
+    Err(e) => {
+      return e;
+    }
+  }
+  return "";
+}
+
+// The ticket a connection is issued resumes the next, and that one is
+// issued a ticket too; a ticket under another server's key, or one whose
+// lifetime is over, makes a full handshake; a server without tickets
+// issues none.
+function test_resumption(): test.TestOutcome {
+  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8)).with_alpn(["http/1.1"]);
+  let cc: client.Config = client.config("tls.example", roots()).with_alpn(["h2", "http/1.1"]);
+  let t: client.Ticket = client.Ticket { identity: [], psk: [], suite: 0, lifetime: 0 as u32, age_add: 0 as u32, received_ms: 0 as i64, server_name: "" };
+  match (connect(cc, sc)) {
+    Ok(p) => {
+      if (p.tickets.len() != 1 || p.client.resumed()) {
+        return test.fail("first: " + p.tickets.len().to_string());
+      }
+      t = p.tickets[0];
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  if (how(connect(cc.with_ticket(t), sc)) != "resumed ping pong 1") {
+    return test.fail("resumed: " + how(connect(cc.with_ticket(t), sc)));
+  }
+  let other: server.Config = sc.with_ticket_key(hex.hex_decode("0000000000000000000000000000000000000000000000000000000000000000"));
+  if (how(connect(cc.with_ticket(t), other)) != "full ping pong 1") {
+    return test.fail("another key: " + how(connect(cc.with_ticket(t), other)));
+  }
+  if (how(connect(cc, sc.without_tickets())) != "full ping pong 0") {
+    return test.fail("without tickets: " + how(connect(cc, sc.without_tickets())));
+  }
+  match (connect(cc, sc.with_ticket_lifetime(time.duration_seconds(0 as i64)))) {
+    Ok(p) => {
+      if (p.tickets.len() != 1) {
+        return test.fail("no ticket with a zero lifetime");
+      }
+      return test.assert_eq(how(connect(cc.with_ticket(p.tickets[0]), sc)), "full ping pong 1");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  return test.fail("unreachable");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/tls/server");
   r = r.it("keys from PKCS #8 and SEC 1", test_keys);
@@ -497,5 +571,6 @@ function main(): i32 {
   r = r.it("no signature scheme in common", test_no_common_scheme);
   r = r.it("a key that is not the chain's", test_wrong_key);
   r = r.it("close_notify", test_close);
+  r = r.it("resumption", test_resumption);
   return r.finish();
 }

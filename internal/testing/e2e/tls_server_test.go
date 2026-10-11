@@ -63,6 +63,7 @@ type tlsServerWorld struct {
 	kind     string
 	pool     *x509.CertPool
 	other    *x509.CertPool
+	cache    tls.ClientSessionCache
 }
 
 // newTLSServerWorld writes the server's certificate, key and source. The
@@ -70,7 +71,7 @@ type tlsServerWorld struct {
 // meet a key Go wrote.
 func newTLSServerWorld(t *testing.T, kind string) *tlsServerWorld {
 	t.Helper()
-	w := &tlsServerWorld{dir: t.TempDir(), kind: kind}
+	w := &tlsServerWorld{dir: t.TempDir(), kind: kind, cache: tls.NewLRUClientSessionCache(4)}
 	ca := newTestCA(t, mustKey(t, "p384"), "Fern TLS Server Interop CA")
 	other := newTestCA(t, mustKey(t, "p256"), "Fern TLS Server Interop Other CA")
 	w.pool = x509.NewCertPool()
@@ -177,8 +178,12 @@ function echo(c: server.Connection): string {
               if (end.ended) {
                 how = "closed";
               }
+              let mode: string = "fresh";
+              if (c.session.resumed()) {
+                mode = "resumed";
+              }
               end.conn.close();
-              return head + " " + line + " " + how;
+              return head + " " + line + " " + how + " " + mode;
             },
             Err(e) => {
               return head + " " + line + " recv " + e.message();
@@ -250,20 +255,27 @@ type tlsServerCase struct {
 	// want is the server's report for the connection; wantErr is what the
 	// Go client's dial must fail with, empty when it must succeed.
 	want, wantErr string
+	// resumed is whether the Go client must have resumed from a ticket.
+	resumed bool
 }
 
+// cases are run in order against one server. The default and resume cases
+// share a session cache, so the second resumes from the ticket the first
+// was issued.
 func (w *tlsServerWorld) cases() []tlsServerCase {
 	trusted := func(mod func(*tls.Config)) *tls.Config {
 		c := &tls.Config{RootCAs: w.pool, ServerName: "localhost", NextProtos: []string{"fern-echo", "h2"}, MinVersion: tls.VersionTLS13}
 		mod(c)
 		return c
 	}
+	cache := func(c *tls.Config) { c.ClientSessionCache = w.cache }
 	return []tlsServerCase{
-		{"default", trusted(func(*tls.Config) {}), "[localhost] [fern-echo] default closed", ""},
-		{"retry", trusted(func(c *tls.Config) { c.CurvePreferences = []tls.CurveID{tls.CurveP256, tls.X25519} }), "[localhost] [fern-echo] retry closed", ""},
-		{"address", trusted(func(c *tls.Config) { c.ServerName = "127.0.0.1"; c.NextProtos = nil }), "[] [] address closed", ""},
-		{"untrusted", trusted(func(c *tls.Config) { c.RootCAs = w.other }), "refused tls handshake: the peer sent alert 42", "certificate signed by unknown authority"},
-		{"tls12", trusted(func(c *tls.Config) { c.MinVersion = tls.VersionTLS12; c.MaxVersion = tls.VersionTLS12 }), "refused tls handshake: the peer does not speak TLS 1.3", "protocol version not supported"},
+		{"default", trusted(cache), "[localhost] [fern-echo] default closed fresh", "", false},
+		{"resume", trusted(cache), "[localhost] [fern-echo] resume closed resumed", "", true},
+		{"retry", trusted(func(c *tls.Config) { c.CurvePreferences = []tls.CurveID{tls.CurveP256, tls.X25519} }), "[localhost] [fern-echo] retry closed fresh", "", false},
+		{"address", trusted(func(c *tls.Config) { c.ServerName = "127.0.0.1"; c.NextProtos = nil }), "[] [] address closed fresh", "", false},
+		{"untrusted", trusted(func(c *tls.Config) { c.RootCAs = w.other }), "refused tls handshake: the peer sent alert 42", "certificate signed by unknown authority", false},
+		{"tls12", trusted(func(c *tls.Config) { c.MinVersion = tls.VersionTLS12; c.MaxVersion = tls.VersionTLS12 }), "refused tls handshake: the peer does not speak TLS 1.3", "protocol version not supported", false},
 	}
 }
 
@@ -332,8 +344,11 @@ func (w *tlsServerWorld) connect(t *testing.T, port string, c tlsServerCase) {
 	if st.CurveID != wantCurve {
 		t.Errorf("%s: key exchange %v, want %v", c.name, st.CurveID, wantCurve)
 	}
-	if len(st.PeerCertificates) != 1 {
-		t.Errorf("%s: %d peer certificates, want 1", c.name, len(st.PeerCertificates))
+	if st.DidResume != c.resumed {
+		t.Errorf("%s: resumed %v, want %v", c.name, st.DidResume, c.resumed)
+	}
+	if want := 1; !c.resumed && len(st.PeerCertificates) != want {
+		t.Errorf("%s: %d peer certificates, want %d", c.name, len(st.PeerCertificates), want)
 	}
 	if _, err := io.WriteString(conn, c.name+"\n"); err != nil {
 		t.Errorf("%s: write: %v", c.name, err)

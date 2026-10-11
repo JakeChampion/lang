@@ -17,6 +17,7 @@
 // when the client sent neither, and chooses the first of its own protocols
 // the client offers by ALPN.
 
+import "std/crypto/chacha20poly1305";
 import "std/crypto/ecdsa";
 import "std/crypto/ed25519";
 import "std/net";
@@ -24,6 +25,8 @@ import "std/tcp";
 import "std/time";
 import "std/tls/der";
 import "std/tls/handshake";
+import "std/tls/keyschedule";
+import "std/tls/message";
 import "std/tls/pem";
 import "std/tls/x509";
 
@@ -397,17 +400,36 @@ function __scheme(key: PrivateKey): i32 {
   return 0;
 }
 
-// Config — the identity to present and the protocols to accept by ALPN, in
-// preference order.
-pub struct Config { identity: Identity, alpn: string[] }
+// Config — the identity to present, the protocols to accept by ALPN in
+// preference order, and the session tickets: whether to issue one per
+// connection, how long it lives, and the key it is sealed under, which
+// every server that is to resume it must share.
+pub struct Config { identity: Identity, alpn: string[], tickets: boolean, ticket_lifetime: Duration, ticket_key: u8[] }
 
-// config accepts no application protocol.
+// config accepts no application protocol and issues tickets that live two
+// hours under a key drawn for this config.
 pub function config(identity: Identity): Config {
-  return Config { identity: identity, alpn: [] };
+  return Config { identity: identity, alpn: [], tickets: true, ticket_lifetime: time.duration_seconds(7200 as i64), ticket_key: random_bytes(32) };
 }
 
 pub function (c: Config) with_alpn(protocols: string[]): Config {
   return Config { ...c, alpn: protocols };
+}
+
+// with_ticket_key seals tickets under a 32-byte key of the caller's, so
+// that servers sharing it resume each other's sessions.
+pub function (c: Config) with_ticket_key(key: u8[]): Config {
+  return Config { ...c, ticket_key: key };
+}
+
+pub function (c: Config) with_ticket_lifetime(d: Duration): Config {
+  return Config { ...c, ticket_lifetime: d };
+}
+
+// without_tickets issues none; a ticket offered is still resumed when it
+// opens under the key.
+pub function (c: Config) without_tickets(): Config {
+  return Config { ...c, tickets: false };
 }
 
 // TlsError — why a connection failed: the handshake's own refusal, the
@@ -448,8 +470,9 @@ pub function (e: TlsError) message(): string {
 }
 
 // Session — one connection's TLS, bytes in and bytes out: the handshake's
-// server, the key it signs with, and the bytes of a record still arriving.
-pub struct Session { server: handshake.Server, key: PrivateKey, held: u8[] }
+// server, the config it signs and seals tickets with, and the bytes of a
+// record still arriving.
+pub struct Session { server: handshake.Server, config: Config, held: u8[] }
 
 // Failure — why `read` failed, and the alert record to send the client
 // before closing, sealed under the keys in force when it failed.
@@ -469,7 +492,7 @@ pub function start(config: Config): Result[Session, TlsError] {
   let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config(config.identity.chain, [__scheme(config.identity.key)]), alpn: config.alpn };
   match (handshake.server_new(sc, random_bytes(96))) {
     Ok(s) => {
-      return Ok(Session { server: s, key: config.identity.key, held: [] });
+      return Ok(Session { server: s, config: config, held: [] });
     },
     Err(e) => {
       return Err(HandshakeFailed(e));
@@ -543,6 +566,12 @@ pub function (s: Session) server_name(): string {
   return s.server.server_name;
 }
 
+// Whether the handshake resumed from a ticket, in which case no
+// certificate was sent.
+pub function (s: Session) resumed(): boolean {
+  return s.server.resumed();
+}
+
 function __step(r: Result[handshake.ServerStep, handshake.HandshakeError]): Result[handshake.ServerStep, TlsError] {
   match (r) {
     Ok(step) => {
@@ -555,8 +584,8 @@ function __step(r: Result[handshake.ServerStep, handshake.HandshakeError]): Resu
   return Err(ClosedEarly);
 }
 
-function __signature(srv: handshake.Server, sig: u8[]): Result[handshake.ServerStep, Failure] {
-  match (srv.signature(sig)) {
+function __failed(srv: handshake.Server, r: Result[handshake.ServerStep, handshake.HandshakeError]): Result[handshake.ServerStep, Failure] {
+  match (r) {
     Ok(step) => {
       return Ok(step);
     },
@@ -567,8 +596,9 @@ function __signature(srv: handshake.Server, sig: u8[]): Result[handshake.ServerS
   return Err(Failure { error: ClosedEarly, alert: [] });
 }
 
-// __signed answers each SignNeeded in a step and gathers what the handshake
-// goes on to produce.
+// __signed answers each event in a step that asks something of the server
+// (a signature, a ticket lookup, a ticket to issue once connected) and
+// gathers what the handshake goes on to produce.
 function __signed(s: Session, first: handshake.ServerStep): Result[Step, Failure] {
   let srv: handshake.Server = first.server;
   let output: u8[] = first.output;
@@ -577,31 +607,179 @@ function __signed(s: Session, first: handshake.ServerStep): Result[Step, Failure
   let closed: boolean = false;
   let i: i32 = 0;
   while (i < events.len()) {
-    match (events[i]) {
-      handshake.SignNeeded(sg) => {
-        let sig: u8[] = [];
-        match (__sign(s.key, sg)) {
-          Ok(b) => {
-            sig = b;
-          },
-          Err(e) => {
-            return Err(Failure { error: e, alert: srv.alert(handshake.HandshakeFailure("signing")) });
-          }
-        }
-        let next: handshake.ServerStep = __signature(srv, sig)?;
-        srv = next.server;
-        output = __cat(output, next.output);
-        data = __cat(data, next.data);
-        events = __more(events, next.events);
-      },
-      handshake.PeerClosed => {
-        closed = true;
-      },
-      _ => {}
-    }
+    let next: handshake.ServerStep = __answered(s, srv, events[i])?;
+    closed = closed || __peer_closed(events[i]);
+    srv = next.server;
+    output = __cat(output, next.output);
+    data = __cat(data, next.data);
+    events = __more(events, next.events);
     i = i + 1;
   }
   return Ok(Step { session: Session { ...s, server: srv }, output: output, data: data, closed: closed });
+}
+
+function __peer_closed(e: handshake.Event): boolean {
+  match (e) {
+    handshake.PeerClosed => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// __answered is what the server does about one event: nothing, for most.
+function __answered(s: Session, srv: handshake.Server, e: handshake.Event): Result[handshake.ServerStep, Failure] {
+  match (e) {
+    handshake.SignNeeded(sg) => {
+      match (__sign(s.config.identity.key, sg)) {
+        Ok(sig) => {
+          return __failed(srv, srv.signature(sig));
+        },
+        Err(err) => {
+          return Err(Failure { error: err, alert: srv.alert(handshake.HandshakeFailure("signing")) });
+        }
+      }
+    },
+    handshake.ResumeOffered(offer) => {
+      return __failed(srv, srv.resume(__lookup(s.config, offer, now_unix_ms())));
+    },
+    handshake.Connected => {
+      if (s.config.tickets) {
+        return __failed(srv, srv.ticket(__issue(s.config, srv, now_unix_ms())));
+      }
+    },
+    _ => {}
+  }
+  return Ok(handshake.ServerStep { server: srv, output: [], data: [], events: [] });
+}
+
+// Tickets. A ticket is the PSK it stands for, the suite it was issued
+// under, when it was issued and for how long, and the name it was issued
+// to, sealed under the config's key behind a fresh nonce (§4.6.1).
+
+const TICKET_AAD: string = "fern tls ticket";
+
+const TICKET_VERSION: i32 = 1;
+
+// __issue is the ticket to send once connected: nonce 0 is the only one
+// issued per connection.
+function __issue(config: Config, srv: handshake.Server, now: i64): message.NewSessionTicket {
+  let nonce: u8[] = [0 as u8];
+  let lifetime: i64 = config.ticket_lifetime.as_millis() / (1000 as i64);
+  let age_add: u8[] = random_bytes(4);
+  let body: u8[] = [TICKET_VERSION as u8];
+  body = __u16(body, srv.cipher_suite().code());
+  body = __i64(body, now);
+  body = __u16(__i64(body, lifetime), srv.server_name.bytes().len());
+  body = __cat(body, srv.server_name.bytes());
+  match (srv.resumption_psk(nonce)) {
+    Ok(psk) => {
+      body = __cat(body, psk);
+    },
+    Err(_) => {}
+  }
+  let ticket_nonce: u8[] = random_bytes(12);
+  let sealed: u8[] = [];
+  match (chacha20poly1305.seal(config.ticket_key, ticket_nonce, body, TICKET_AAD.bytes())) {
+    Ok(b) => {
+      sealed = b;
+    },
+    Err(_) => {}
+  }
+  return message.NewSessionTicket { lifetime: lifetime as u32, age_add: __u32_of(age_add), nonce: nonce, ticket: __cat(ticket_nonce, sealed), extensions: [] };
+}
+
+// __lookup is the first ticket offered that opens under the key, was issued
+// under a suite with the chosen suite's hash, to the name asked for, and is
+// still alive at `now`; None resumes nothing.
+function __lookup(config: Config, offer: handshake.Offer, now: i64): Option[handshake.Resumed] {
+  let i: i32 = 0;
+  while (i < offer.identities.len()) {
+    match (__open_ticket(config, offer, offer.identities[i].identity, now)) {
+      Some(psk) => {
+        return Some(handshake.Resumed { index: i, psk: psk });
+      },
+      None => {}
+    }
+    i = i + 1;
+  }
+  return None;
+}
+
+function __open_ticket(config: Config, offer: handshake.Offer, identity: [u8], now: i64): Option[u8[]] {
+  if (identity.len() < 12) {
+    return None;
+  }
+  match (chacha20poly1305.open(config.ticket_key, __copy(identity[0:12]), __copy(identity[12:identity.len()]), TICKET_AAD.bytes())) {
+    Ok(body) => {
+      return __usable_ticket(body, offer, now);
+    },
+    Err(_) => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// __usable_ticket reads an opened ticket and judges it against the offer.
+function __usable_ticket(body: u8[], offer: handshake.Offer, now: i64): Option[u8[]] {
+  let size: i32 = offer.suite.hash().size();
+  if (body.len() < 21 || body[0] as i32 != TICKET_VERSION) {
+    return None;
+  }
+  let name_len: i32 = body[19] as i32 << 8 | body[20] as i32;
+  if (body.len() != 21 + name_len + size) {
+    return None;
+  }
+  match (keyschedule.cipher_suite(body[1] as i32 << 8 | body[2] as i32)) {
+    Some(suite) => {
+      if (suite.hash().size() != size) {
+        return None;
+      }
+    },
+    None => {
+      return None;
+    }
+  }
+  let issued: i64 = __i64_at(body, 3);
+  let lifetime: i64 = __i64_at(body, 11);
+  if (now < issued || now >= issued + lifetime * (1000 as i64)) {
+    return None;
+  }
+  if (!__same(body[21:21 + name_len], offer.server_name.bytes())) {
+    return None;
+  }
+  return Some(__copy(body[21 + name_len:body.len()]));
+}
+
+function __u16(own out: u8[], v: i32): u8[] {
+  return out.append((v >> 8 & 255) as u8).append((v & 255) as u8);
+}
+
+function __i64(own out: u8[], v: i64): u8[] {
+  let i: i32 = 7;
+  while (i >= 0) {
+    out = out.append((v >> (8 * i) as i64 & 255 as i64) as u8);
+    i = i - 1;
+  }
+  return out;
+}
+
+function __i64_at(b: [u8], at: i32): i64 {
+  let v: i64 = 0 as i64;
+  let i: i32 = 0;
+  while (i < 8) {
+    v = v << 8 as i64 | b[at + i] as i64;
+    i = i + 1;
+  }
+  return v;
+}
+
+function __u32_of(b: u8[]): u32 {
+  return b[0] as u32 << 24 | b[1] as u32 << 16 | b[2] as u32 << 8 | b[3] as u32;
 }
 
 // __sign makes the CertificateVerify signature under the scheme the key

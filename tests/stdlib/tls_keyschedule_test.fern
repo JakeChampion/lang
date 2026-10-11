@@ -159,6 +159,21 @@ function test_application_secrets(): test.TestOutcome {
   return test.assert_eq(shown(m.resumption(th_client_finished(keyschedule.Sha256))), "7df235f2031d2a051287d02b0241b0bfdaf86cc856231f2d5aba46c434ec196c");
 }
 
+// RFC 8448 §4: the PSK the trace's ticket (nonce 0000) stands for, the
+// early secret it extracts to, and the binder key.
+function test_resumption(): test.TestOutcome {
+  let res: u8[] = hex.hex_decode("7df235f2031d2a051287d02b0241b0bfdaf86cc856231f2d5aba46c434ec196c");
+  let psk: u8[] = keyschedule.resumption_psk(keyschedule.Sha256, res, [0 as u8, 0 as u8]);
+  if (shown(psk) != "4ecd0eb6ec3b4d87f5d6028f922ca4c5851a277fd41311c9e62d2c9492e1c4f3") {
+    return test.fail("psk " + shown(psk));
+  }
+  let early: keyschedule.EarlySecret = keyschedule.early_secret(keyschedule.Sha256, psk);
+  if (shown(early.secret) != "9b2188e9b2fc6d64d71dc329900e20bb41915000f678aa839cbb797cb7d8332c") {
+    return test.fail("early secret " + shown(early.secret));
+  }
+  return test.assert_eq(shown(early.binder_key()), "69fe131a3bbad5d63c64eebcc30e395b9d8107726a13d074e389dbc8a4e47256");
+}
+
 // The trace's four AES-128-GCM key and IV pairs: §7.3's derivation with a
 // 16-byte key.
 function aes_keys(secret: u8[]): string {
@@ -310,6 +325,7 @@ function main(): i32 {
   r = r.it("handshake traffic secrets", test_handshake_traffic);
   r = r.it("master secret", test_master_secret);
   r = r.it("application, exporter and resumption secrets", test_application_secrets);
+  r = r.it("resumption PSK and binder key", test_resumption);
   r = r.it("AES-128-GCM traffic keys", test_aes_128_traffic_keys);
   r = r.it("ChaCha20-Poly1305 traffic keys", test_chacha20_poly1305_traffic_keys);
   r = r.it("cipher suite", test_cipher_suite);

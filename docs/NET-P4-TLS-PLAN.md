@@ -169,7 +169,19 @@ TLS itself is `std/tls/keyschedule`, `keyshare`, `message`, `record`,
     Fern echo server with each leaf (default shares, a P-256-only share
     drawing a HelloRetryRequest, an address with no SNI, an untrusted CA
     and a TLS 1.2 client) on both native ISAs and in the interpreter.
-    Remaining: resumption, client certificates, `std/serve`.
+
+    Then resumption (§4.6.1, §4.2.11): `std/tls/message` gained
+    `pre_shared_key`, `std/tls/keyschedule` the binder key and the PSK a
+    ticket stands for (checked against RFC 8448 §4), and the handshake
+    offers a ticket with its binder (after a HelloRetryRequest too), asks
+    the server's caller to look one up (`ResumeOffered`, `resume`), checks
+    the binder, and skips the certificate. `std/tls/server` issues a ticket
+    per connection, sealed under a per-config key shared by
+    `with_ticket_key`, and `std/tls/client` hands tickets to the caller in
+    `Step.tickets` and offers one back with `with_ticket` to the name it was
+    issued to. Gate: the handshake, client and server suites, and both Go
+    interop tests resuming in each direction. Remaining: client
+    certificates, `std/serve`.
 12. **Interop and fuzzing on `net-nightly`.** OpenSSL 3.5, Go, rustls'
     mio examples at a pinned tag, and BoringSSL's `bssl` at a pinned
     commit, plus the tlsfuzzer smoke set. A missing tool fails the lane.
