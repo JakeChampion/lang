@@ -792,7 +792,7 @@ function __producer_done[D: async.Driver](drv: D, c: __Conns, fd: i32, chunk: Op
       Whole => {}
     }
   }
-  let drained: (__Conns, i32, boolean) = __serve_drain(drv, c, at, opts, clk);
+  let drained: (__Conns, i32) = __serve_drain(drv, c, at, opts, clk);
   c = drained.0;
   if (drained.1 >= 0) {
     return __Conns { ...c, backlog: c.backlog.with(drained.1, true) };
@@ -1459,21 +1459,21 @@ function __corks(rest: __Tail, persists: boolean, answered: i32, behind: __Behin
 
 // __serve_drain(drv, c, at, opts) — a writable connection with a response
 // still pending: the rest written and the next piece of its tail
-// produced, and `(conns, at, false)` once it has gone out whole on a
+// produced, and `(conns, at)` once it has gone out whole on a
 // persisting connection with a request buffered behind it, watched for
-// reads again; `(conns, -1, false)` while it is still draining, when the
+// reads again; `(conns, -1)` while it is still draining, when the
 // connection waits for its next request, or when it is closed (the write
 // failed, the connection does not persist, or the reactor refused to
 // watch it again).
-function __serve_drain[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Config, clk: __Clock): (__Conns, i32, boolean) {
+function __serve_drain[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Config, clk: __Clock): (__Conns, i32) {
   let sent: (__Conns, __Sent) = __serve_send_raw(drv, c, at, c.pending[at], opts);
   c = sent.0;
   match (sent.1) {
     Partial => {
-      return (c, -1, false);
+      return (c, -1);
     },
     Failed => {
-      return (__serve_close(drv, c, at), -1, false);
+      return (__serve_close(drv, c, at), -1);
     },
     Whole => {}
   }
@@ -1481,25 +1481,25 @@ function __serve_drain[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Confi
   c = produced.0;
   match (produced.1) {
     Partial => {
-      return (c, -1, false);
+      return (c, -1);
     },
     Failed => {
-      return (__serve_close(drv, c, at), -1, false);
+      return (__serve_close(drv, c, at), -1);
     },
     Whole => {}
   }
   if (!c.keep[at]) {
-    return (__serve_close(drv, c, at), -1, false);
+    return (__serve_close(drv, c, at), -1);
   }
   if (drv.watch(c.fds[at], 1) < 0) {
-    return (__serve_close(drv, c, at), -1, false);
+    return (__serve_close(drv, c, at), -1);
   }
   let parsed: (__Behind, http.HttpFramed) = __serve_behind(http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits, c.last), c.last);
   let ready: (__Conns, boolean) = __serve_ready(drv, __Conns { ...c, pending: c.pending.with(at, []) }, at, opts, parsed.0, clk);
   if (!ready.1) {
-    return (ready.0, -1, false);
+    return (ready.0, -1);
   }
-  return (ready.0, at, false);
+  return (ready.0, at);
 }
 
 // __serve_eof(drv, c, at, opts, clk) — the peer has finished sending: a
@@ -1540,7 +1540,8 @@ function __serve_event[D: async.Driver](drv: D, c: __Conns, fd: i32, scratch: u8
     return (c, -1, false);
   }
   if (__in_flight(c, at)) {
-    return __serve_drain(drv, c, at, opts, clk);
+    let drained: (__Conns, i32) = __serve_drain(drv, c, at, opts, clk);
+    return (drained.0, drained.1, false);
   }
   let had: i32 = c.bufs[at].len();
   let backlog: boolean = c.backlog[at];
