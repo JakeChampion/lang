@@ -334,7 +334,7 @@ including zero counts, with these closed tags:
 | Tag | Meaning |
 | --- | --- |
 | `fused` | The pass replaced this chain with one traversal. |
-| `no-producer` | A sink has no recognized map, filter, take or take_while producer feeding it. |
+| `no-producer` | A sink has no recognized map, filter, take, take_while or flat_map producer feeding it. |
 | `intermediate-shared` | More than one use prevents eliminating an intermediate. |
 | `control-flow-boundary` | Producer and consumer are in different blocks. |
 | `effect-boundary` | An intervening instruction prevents stage reordering. |
@@ -353,7 +353,10 @@ environments or a reduction's result box. A refusal says
 loop during ownership lowering.
 Fused scans report `storage=no-intermediate-arrays/one-output-buffer`: one
 buffer holds the prefixes, with capacity reserved at the original input length
-and actual length determined by the elements that pass every filter.
+and actual length determined by the elements that pass every filter. A scan
+behind a `flat_map` reports `storage=no-intermediate-arrays/grown-output-buffer`
+instead: the flattened chain can yield more elements than the input has, so
+the buffer still starts at the input length but may grow past it.
 
 The `map storage` section reads the final selected ownership plans, using the
 same decision function that performs the R7 rewrite. `guarded-reuse` means
