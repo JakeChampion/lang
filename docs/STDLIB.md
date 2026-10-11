@@ -1727,11 +1727,13 @@ Percent-encoding, URL parsing, query parsing.
   broke
 - **Typed decode:** `FromJson` is the decode half of `Json`:
   `T.from_json_value(v: JsonValue): Result[T, string]`, implemented for the
-  integers, floats, `boolean` and `string`, and derived for a struct by
-  `@derive(json.FromJson)` (fields decode through their own `FromJson`; an
-  `E[]` field through `from_json_array[E]`, an `Option[E]` field through
-  `from_json_option[E]`, `None` when the field is missing or null; a
-  container nested in another is E021). `json.decode[T](text)` parses and
+  integers, floats, `boolean` and `string`, and derived for a struct or an
+  enum by `@derive(json.FromJson)` (fields decode through their own
+  `FromJson`; an `E[]` field through `from_json_array[E]`, an `Option[E]`
+  field through `from_json_option[E]`, `None` when the field is missing or
+  null; a container nested in another is E021). An enum reads back what
+  `Json` writes: the variant's name, as a string or as an object's one key
+  whose value is the payload. `json.decode[T](text)` parses and
   decodes in one call, and a derived type also has `T.from_json(text)`. A
   shape error says where: `missing field "id"`, `field "id": expected an
   integer, got a string`, `field "tags": [1]: expected a string, got null`;
