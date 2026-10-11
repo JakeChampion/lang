@@ -24,3 +24,4 @@
 scripts/net-bench.d/hyperhello/target/
 __pycache__/
 /rootsgen
+/pslgen
