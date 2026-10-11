@@ -1117,7 +1117,7 @@ func TestRunnerRSAExamplePasses(t *testing.T) {
 // Finished of RFC 8448's simple 1-RTT handshake, and the same schedule over
 // SHA-384.
 func TestRunnerTLSKeyScheduleExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_keyschedule", "std/tls/keyschedule", 17)
+	runnerSuitePasses(t, "tls_keyschedule", "std/tls/keyschedule", 18)
 }
 
 // `tests/stdlib/tls_der_test.fern` covers DER's lengths, tags and value
@@ -1146,16 +1146,25 @@ func TestRunnerTLSRootsExamplePasses(t *testing.T) {
 
 // `tests/stdlib/tls_client_test.fern` runs std/tls/client's session against
 // std/tls/handshake's server: a trusted chain, the name and root refusals,
-// a forged CertificateVerify, a saved and restored session, close_notify.
+// a forged CertificateVerify, a saved and restored session, close_notify,
+// and a session resumed from a ticket.
 func TestRunnerTLSClientExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_client", "std/tls/client", 6)
+	runnerSuitePasses(t, "tls_client", "std/tls/client", 7)
+}
+
+// `tests/stdlib/tls_server_test.fern` reads keys from PKCS #8 and SEC 1,
+// checks an identity against its leaf, runs std/tls/server's session
+// against std/tls/client over P-256, P-384 and Ed25519 leaves, and resumes
+// from the tickets it issues.
+func TestRunnerTLSServerExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "tls_server", "std/tls/server", 9)
 }
 
 // `tests/stdlib/tls_handshake_test.fern` runs the client through RFC 8448 §3
 // byte for byte, the server to the trace's ServerHello, and the two against
 // each other across suites and groups.
 func TestRunnerTLSHandshakeExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_handshake", "std/tls/handshake", 13)
+	runnerSuitePasses(t, "tls_handshake", "std/tls/handshake", 15)
 }
 
 // `tests/stdlib/tls_keyshare_test.fern` checks X25519 against RFC 8448's key
@@ -1167,7 +1176,7 @@ func TestRunnerTLSKeyshareExamplePasses(t *testing.T) {
 // `tests/stdlib/tls_message_test.fern` round-trips every handshake message
 // in RFC 8448 §3 and covers each refusal.
 func TestRunnerTLSMessageExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_message", "std/tls/message", 10)
+	runnerSuitePasses(t, "tls_message", "std/tls/message", 11)
 }
 
 // `tests/stdlib/tls_record_test.fern` covers framing against RFC 8448's

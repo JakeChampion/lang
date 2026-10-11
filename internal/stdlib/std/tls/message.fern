@@ -779,6 +779,82 @@ pub function alpn(d: [u8]): Result[string[], MsgError] {
   return Ok(out);
 }
 
+// PskIdentity — a ticket offered for resumption and the client's view of
+// its age in milliseconds, obfuscated by the ticket's age_add (§4.2.11).
+pub struct PskIdentity { identity: u8[], obfuscated_age: u32 }
+
+// OfferedPsks — the identities a ClientHello offers and a binder per
+// identity, in the same order.
+pub struct OfferedPsks { identities: PskIdentity[], binders: u8[][] }
+
+// pre_shared_key in a ClientHello: the identities, then the binders. The
+// binders are last in the extension and the extension last in the hello,
+// which is what lets a binder be computed over the hello without it.
+pub function ext_pre_shared_key(offer: OfferedPsks): Extension {
+  let ids: u8[] = [];
+  let i: i32 = 0;
+  while (i < offer.identities.len()) {
+    ids = __u32(__vec16(ids, offer.identities[i].identity), offer.identities[i].obfuscated_age);
+    i = i + 1;
+  }
+  return Extension { kind: EXT_PRE_SHARED_KEY, data: __vec16(__vec16([], ids), __binders(offer.binders)) };
+}
+
+function __binders(binders: u8[][]): u8[] {
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < binders.len()) {
+    out = __vec8(out, binders[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// binders_length is how many bytes the binders vector of an offer takes at
+// the end of a ClientHello, its two-byte length included: what the binder
+// transcript leaves out (§4.2.11.2).
+pub function binders_length(binders: u8[][]): i32 {
+  return 2 + __binders(binders).len();
+}
+
+pub function pre_shared_key(d: [u8]): Result[OfferedPsks, MsgError] {
+  let ids: Span = __vec(d, 0, 2, 7, 65535, "pre_shared_key identities")?;
+  let binders: Span = __vec(d, ids.to, 2, 33, 65535, "pre_shared_key binders")?;
+  if (binders.to != d.len()) {
+    return Err(__decode_error("pre_shared_key"));
+  }
+  let out: OfferedPsks = OfferedPsks { identities: [], binders: [] };
+  let at: i32 = ids.from;
+  while (at < ids.to) {
+    let id: Span = __vec(d, at, 2, 1, 65535, "psk_identity")?;
+    __need(d, id.to, 4, "obfuscated_ticket_age")?;
+    out = OfferedPsks { ...out, identities: out.identities.append(PskIdentity { identity: __copy(d, id.from, id.to), obfuscated_age: __get32(d, id.to) }) };
+    at = id.to + 4;
+  }
+  at = binders.from;
+  while (at < binders.to) {
+    let b: Span = __vec(d, at, 1, 32, 255, "psk_binder")?;
+    out = OfferedPsks { ...out, binders: out.binders.append(__copy(d, b.from, b.to)) };
+    at = b.to;
+  }
+  if (out.identities.len() != out.binders.len()) {
+    return Err(IllegalParameter("pre_shared_key binders"));
+  }
+  return Ok(out);
+}
+
+// pre_shared_key in a ServerHello: the index of the identity taken.
+pub function ext_selected_psk(index: i32): Extension {
+  return Extension { kind: EXT_PRE_SHARED_KEY, data: __u16([], index) };
+}
+
+pub function selected_psk(d: [u8]): Result[i32, MsgError] {
+  if (d.len() != 2) {
+    return Err(__decode_error("pre_shared_key"));
+  }
+  return Ok(__get16(d, 0));
+}
+
 // psk_key_exchange_modes: 1 is psk_dhe_ke.
 pub function ext_psk_modes(modes: i32[]): Extension {
   let list: u8[] = [];

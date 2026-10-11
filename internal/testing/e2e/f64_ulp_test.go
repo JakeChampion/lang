@@ -79,6 +79,14 @@ var f64UlpInputs = []float64{
 	5.3193726483265414e+255, math.MaxFloat64,
 	-1e-8, -0.5, -1, -2, -3.141592653589793, -7, -10, -100, -1000,
 	-1e7, -1e10, -1e18, -1e30, -1e300, -math.MaxFloat64,
+	// Results far smaller than the argument, on both reduction paths: the
+	// reduced argument's absolute error is a large relative error there, and
+	// these were 2 to 3 ulp out while the reduction rounded it to one double
+	// (#12042).
+	-8.167959597007928e+21, -9.85526768282372e+21, -2.217216507044164e+21,
+	9.018962311905212e+21, -5.150187184512172e+21, -2.4335988196029356e+21,
+	-4.0537208950325064e+21, -842990.3548382078, -58671.335186358076,
+	727539.9738490027,
 }
 
 // f64UlpPosInputs are the log-only inputs: strictly positive, spanning the
@@ -88,6 +96,11 @@ var f64UlpPosInputs = []float64{
 	2.2250738585072014e-308, 1e-300, 1e-30, 1e-5, 0.1, 0.5, 0.9, 1, 1.0000001,
 	1.5, 2, 2.718281828459045, 10, 1e5, 1e30, 1e300, math.MaxFloat64,
 }
+
+// sinCosULP is sin and cos's bound: the reduction carries the reduced
+// argument as y0 + y1 into kernels that take y1 as a correction, which holds
+// both within one ulp of the correctly rounded result on either path.
+const sinCosULP = 1
 
 // logULP is log's bound against the correctly rounded result: the table
 // kernel measures 0.53 ulp from the true value, so it rounds to within one of
@@ -551,6 +564,9 @@ func checkF64Output(t *testing.T, backend, out string, cs []f64Case, bound int64
 			b := bound
 			if strings.HasPrefix(c.call, "flog(") {
 				b = min(b, logULP)
+			}
+			if strings.HasPrefix(c.call, "fsin(") || strings.HasPrefix(c.call, "fcos(") {
+				b = min(b, sinCosULP)
 			}
 			if d := ulpDist(got, c.want); d > b {
 				t.Errorf("%s: %s = %v, want %v (%d ulp, bound %d)",

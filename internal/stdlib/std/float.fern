@@ -1000,16 +1000,28 @@ function _fd_trig(x: f64, shift: i64): f64 {
   if (ab >= 0x4130000000000000) {
     return _fd_trig_large(x, shift);
   }
+  // The two rounded subtractions are two-sums, so their errors become y1.
   let kf: f64 = _fd_rint(x * 6.36619772367581382433e-01);
-  let r: f64 = x - kf * 1.57079632673412561417e+00 - kf * 6.07710050630396597660e-11 - kf * 2.02226624879595063154e-21;
-  // Quadrant n of r takes sin r, cos r, -sin r, -cos r, here and in
+  let t: f64 = x - kf * 1.57079632673412561417e+00;
+  let w2: f64 = -(kf * 6.07710050630396597660e-11);
+  let w3: f64 = -(kf * 2.02226624879595063154e-21);
+  let a: f64 = t + w2;
+  let ba: f64 = a - t;
+  let ea: f64 = t - (a - ba) + (w2 - ba);
+  let b: f64 = a + w3;
+  let bb: f64 = b - a;
+  let eb: f64 = a - (b - bb) + (w3 - bb) + ea;
+  let y0: f64 = b + eb;
+  let b0: f64 = y0 - b;
+  let y1: f64 = b - (y0 - b0) + (eb - b0);
+  // Quadrant n of y0 + y1 takes sin, cos, -sin, -cos, here and in
   // _fd_trig_large; the select is spelled in both so neither path calls it.
   let n: i64 = kf as i64 + shift;
   let y: f64 = 0.0;
   if ((n & 1) == 0) {
-    y = _fd_ksin(r);
+    y = _fd_ksin(y0, y1);
   } else {
-    y = _fd_kcos(r);
+    y = _fd_kcos(y0, y1);
   }
   if ((n & 2) != 0) {
     return -y;
@@ -1017,19 +1029,23 @@ function _fd_trig(x: f64, shift: i64): f64 {
   return y;
 }
 
-function _fd_ksin(r: f64): f64 {
-  let z: f64 = r * r;
-  let p: f64 = -1.66666666666666324348e-01 + z * (8.33333333332248946124e-03 + z * (-1.98412698298579493134e-04 + z * (2.75573137070700676789e-06 + z * (-2.50507602534068634195e-08 + z * 1.58969099521155010221e-10))));
-  return r + p * (z * r);
+// _fd_ksin and _fd_kcos are fdlibm's __kernel_sin(x, y, 1) and
+// __kernel_cos(x, y): sin and cos of the reduced argument x + y, |y| below
+// half an ulp of x, which enters as a first-order correction.
+function _fd_ksin(x: f64, y: f64): f64 {
+  let z: f64 = x * x;
+  let v: f64 = z * x;
+  let r: f64 = 8.33333333332248946124e-03 + z * (-1.98412698298579493134e-04 + z * (2.75573137070700676789e-06 + z * (-2.50507602534068634195e-08 + z * 1.58969099521155010221e-10)));
+  return x - (z * (0.5 * y - v * r) - y - v * -1.66666666666666324348e-01);
 }
 
 // The (1 - w) - hz rewrite recovers the bits 1 - hz discards.
-function _fd_kcos(r: f64): f64 {
-  let z: f64 = r * r;
+function _fd_kcos(x: f64, y: f64): f64 {
+  let z: f64 = x * x;
   let p: f64 = 4.16666666666666019037e-02 + z * (-1.38888888888741095749e-03 + z * (2.48015872894767294178e-05 + z * (-2.75573143513906633035e-07 + z * (2.08757232129817482790e-09 + z * -1.13596475577881948265e-11))));
   let hz: f64 = 0.5 * z;
   let w: f64 = 1.0 - hz;
-  return w + (1.0 - w - hz + z * p * z);
+  return w + (1.0 - w - hz + (z * p * z - x * y));
 }
 
 // _two_over_pi is 2/pi in binary, one limb per 64 fraction bits from 2^-1 in
@@ -1082,23 +1098,39 @@ function _fd_trig_large(x: f64, shift: i64): f64 {
     }
     lo = 0 as u64 - lo;
   }
-  // The low word's bottom 11 bits fall off the double anyway; dropping them
-  // keeps its conversion exact.
-  let fr: f64 = (hi as i64) as f64 * 2.168404344971009e-19 + ((lo >> 11 as u64) as i64) as f64 * 2.407412430484045e-35;
-  if (neg) {
-    fr = -fr;
+  // The fraction as fh + fl: fh is hi rounded, and fl gathers hi's rounding
+  // error with lo, each piece converted exactly.
+  let ih: i64 = hi as i64;
+  let a: f64 = ih as f64;
+  let fh: f64 = a * 2.168404344971009e-19;
+  let fl: f64 = (ih - a as i64) as f64 * 2.168404344971009e-19 + ((lo >> 11 as u64) as i64) as f64 * 2.407412430484045e-35 + ((lo & 0x7ff as u64) as i64) as f64 * 1.1754943508222875e-38;
+  let s: f64 = fh + fl;
+  fl = fl - (s - fh);
+  fh = s;
+  // (fh + fl) * pi/2, pi/2 = 1.5707963267948966 + 6.123233995736766e-17:
+  // the leading product is exact as p + e by Dekker's split, the 27-bit
+  // halves of fh and of pi/2's leading double multiplying exactly.
+  let c: f64 = fh * 134217729.0;
+  let fhh: f64 = c - (c - fh);
+  let fhl: f64 = fh - fhh;
+  let p: f64 = fh * 1.5707963267948966;
+  let e: f64 = fhh * 1.5707963407039642 - p + fhh * -1.3909067675399456e-08 + fhl * 1.5707963407039642 + fhl * -1.3909067675399456e-08;
+  let tail: f64 = e + (fh * 6.123233995736766e-17 + fl * 1.5707963267948966);
+  let y0: f64 = p + tail;
+  let y1: f64 = tail - (y0 - p);
+  if (neg != b < 0) {
+    y0 = -y0;
+    y1 = -y1;
   }
   if (b < 0) {
-    fr = -fr;
     q = 0 - q;
   }
-  let r: f64 = fr * 1.5707963267948966 + fr * 6.123233995736766e-17;
   let n: i64 = q + shift;
   let y: f64 = 0.0;
   if ((n & 1) == 0) {
-    y = _fd_ksin(r);
+    y = _fd_ksin(y0, y1);
   } else {
-    y = _fd_kcos(r);
+    y = _fd_kcos(y0, y1);
   }
   if ((n & 2) != 0) {
     return -y;

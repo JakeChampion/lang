@@ -147,6 +147,9 @@ function event_names(events: handshake.Event[]): string {
       },
       handshake.Ticket(t) => {
         out = out + " ticket";
+      },
+      handshake.ResumeOffered(o) => {
+        out = out + " resume";
       }
     }
     i = i + 1;
@@ -825,6 +828,171 @@ function test_out_of_turn(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
+function signed(content: u8[]): u8[] {
+  match (ed25519.sign(seed(), content)) {
+    Ok(b) => {
+      return b;
+    },
+    Err(e) => {
+      return [];
+    }
+  }
+  return [];
+}
+
+// ticketed issues a ticket on a connected pair and derives its PSK on both
+// sides, which must agree.
+function ticketed(p: Pair): Result[handshake.Resumption, handshake.HandshakeError] {
+  let t: message.NewSessionTicket = message.NewSessionTicket { lifetime: 7200 as u32, age_add: 1234 as u32, nonce: [0 as u8], ticket: "ticket-1".bytes(), extensions: [] };
+  let st: handshake.ServerStep = p.server.ticket(t)?;
+  let cr: handshake.ClientStep = p.client.read(st.output)?;
+  if (event_names(cr.events) != " ticket") {
+    return Err(handshake.Misuse("ticket event"));
+  }
+  let psk: u8[] = cr.client.resumption_psk(t.nonce)?;
+  if (hex.hex_encode(psk) != hex.hex_encode(st.server.resumption_psk(t.nonce)?)) {
+    return Err(handshake.Misuse("psk"));
+  }
+  return Ok(handshake.Resumption { identity: t.ticket, psk: psk, suite: cr.client.cipher_suite(), obfuscated_age: 5678 as u32 });
+}
+
+// resume_with runs a handshake in which the client offers its ticket and
+// the server answers the offer with `answer`, signing when that makes a
+// full handshake of it.
+function resume_with(cc: handshake.ClientConfig, sc: handshake.ServerConfig, answer: Option[handshake.Resumed]): Result[Pair, handshake.HandshakeError] {
+  let start: handshake.ClientStep = handshake.client_start(cc, pattern(3, handshake.client_entropy(cc)))?;
+  let server: handshake.Server = handshake.server_new(sc, pattern(4, 96))?;
+  let s1: handshake.ServerStep = server.read(start.output)?;
+  if (s1.events.len() == 0) {
+    start = start.client.read(s1.output)?;
+    s1 = s1.server.read(start.output)?;
+  }
+  if (event_names(s1.events) != " resume") {
+    return Err(handshake.Misuse("resume event:" + event_names(s1.events)));
+  }
+  let s2: handshake.ServerStep = s1.server.resume(answer)?;
+  let out: u8[] = s2.output;
+  if (event_names(s2.events) == " sign") {
+    s2 = s2.server.signature(signed(signing(s2.events).signed))?;
+    out = cat(out, s2.output);
+  }
+  let c1: handshake.ClientStep = start.client.read(out)?;
+  if (event_names(c1.events) == " verify") {
+    c1 = c1.client.verdict(true)?;
+  }
+  let s3: handshake.ServerStep = s2.server.read(c1.output)?;
+  if (!c1.client.connected() || !s3.server.connected()) {
+    return Err(handshake.Misuse("not connected"));
+  }
+  return Ok(Pair { client: c1.client, server: s3.server });
+}
+
+function resumed_pair(cc: handshake.ClientConfig, sc: handshake.ServerConfig, answer: Option[handshake.Resumed]): string {
+  match (resume_with(cc, sc, answer)) {
+    Ok(p) => {
+      let how: string = "full";
+      if (p.client.resumed() && p.server.resumed()) {
+        how = "resumed";
+      } else if (p.client.resumed() || p.server.resumed()) {
+        how = "disagree";
+      }
+      return how + " " + p.server.server_name + " " + p.server.alpn + " " + exchange(p);
+    },
+    Err(e) => {
+      return int.int_to_string(e.alert()) + " " + e.message();
+    }
+  }
+  return "";
+}
+
+// A ticket from one handshake resumes the next: with the server's default
+// groups, after a HelloRetryRequest, and not when the server declines, when
+// the PSK is wrong, or when the index is.
+function test_resumption(): test.TestOutcome {
+  let cc: handshake.ClientConfig = handshake.ClientConfig { ...handshake.client_config("example.com"), alpn: ["http/1.1"] };
+  let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), alpn: ["http/1.1"] };
+  let r: handshake.Resumption = handshake.Resumption { identity: [], psk: [], suite: keyschedule.Aes128GcmSha256, obfuscated_age: 0 as u32 };
+  match (handshake_between(cc, sc)) {
+    Ok(p) => {
+      match (ticketed(p)) {
+        Ok(t) => {
+          r = t;
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  let offering: handshake.ClientConfig = handshake.ClientConfig { ...cc, resume: Some(r) };
+  let taken: Option[handshake.Resumed] = Some(handshake.Resumed { index: 0, psk: r.psk });
+  if (resumed_pair(offering, sc, taken) != "resumed example.com http/1.1 ping pong") {
+    return test.fail("resumed: " + resumed_pair(offering, sc, taken));
+  }
+  let retry: handshake.ServerConfig = handshake.ServerConfig { ...sc, groups: [keyshare.X25519] };
+  if (resumed_pair(offering, retry, taken) != "resumed example.com http/1.1 ping pong") {
+    return test.fail("after a retry: " + resumed_pair(offering, retry, taken));
+  }
+  if (resumed_pair(offering, sc, None) != "full example.com http/1.1 ping pong") {
+    return test.fail("declined: " + resumed_pair(offering, sc, None));
+  }
+  let wrong: u8[] = r.psk;
+  wrong = wrong.with(0, (wrong[0] as i32 ^ 1) as u8);
+  if (resumed_pair(offering, sc, Some(handshake.Resumed { index: 0, psk: wrong })) != "51 tls handshake: the peer's Finished does not verify") {
+    return test.fail("wrong psk: " + resumed_pair(offering, sc, Some(handshake.Resumed { index: 0, psk: wrong })));
+  }
+  return test.assert_eq(resumed_pair(offering, sc, Some(handshake.Resumed { index: 1, psk: r.psk })), "80 tls handshake: resume called out of turn");
+}
+
+// A ClientHello offering a PSK must name psk_dhe_ke and put the offer
+// last; a ticket's suite must be among those the client offers.
+function test_resumption_refusals(): test.TestOutcome {
+  let r: handshake.Resumption = handshake.Resumption { identity: "t".bytes(), psk: pattern(9, 32), suite: keyschedule.Aes128GcmSha256, obfuscated_age: 0 as u32 };
+  let cc: handshake.ClientConfig = handshake.ClientConfig { ...handshake.client_config("example.com"), suites: [keyschedule.Aes256GcmSha384], resume: Some(r) };
+  match (handshake.client_start(cc, pattern(3, handshake.client_entropy(cc)))) {
+    Ok(step) => {
+      return test.fail("a ticket under a suite not offered");
+    },
+    Err(e) => {
+      if (e.message() != "tls handshake: the ticket's suite is not offered") {
+        return test.fail(e.message());
+      }
+    }
+  }
+  let offer: message.Extension = message.ext_pre_shared_key(message.OfferedPsks { identities: [message.PskIdentity { identity: "t".bytes(), obfuscated_age: 0 as u32 }], binders: [zeros(32)] });
+  let share: message.KeyShareEntry = message.KeyShareEntry { group: 0x001d, key: pattern(7, 32) };
+  let base: message.Extension[] = [message.ext_supported_versions([message.TLS13]), message.ext_supported_groups([0x001d]), message.ext_key_shares([share]), message.ext_signature_algorithms([0x0807])];
+  if (hello_refusal(base.append(offer)) != "109 tls handshake: missing psk_key_exchange_modes") {
+    return test.fail("without modes: " + hello_refusal(base.append(offer)));
+  }
+  return test.assert_eq(hello_refusal(base.append(offer).append(message.ext_psk_modes([1]))), "47 tls handshake: illegal pre_shared_key is not the last extension");
+}
+
+// hello_refusal is how the server refuses a ClientHello with these
+// extensions.
+function hello_refusal(exts: message.Extension[]): string {
+  let h: message.ClientHello = message.ClientHello { random: pattern(8, 32), session_id: [], cipher_suites: [0x1301], extensions: exts };
+  match (handshake.server_new(handshake.server_config([ed_public()], [0x0807]), pattern(2, 96))) {
+    Ok(s) => {
+      match (s.read(record.frame(record.Handshake, 0x0301, message.encode(message.ClientHelloMsg(h))))) {
+        Ok(step) => {
+          return "accepted";
+        },
+        Err(e) => {
+          return int.int_to_string(e.alert()) + " " + e.message();
+        }
+      }
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/tls/handshake");
   r = r.it("the client's side of RFC 8448", test_client_trace);
@@ -840,5 +1008,7 @@ function main(): i32 {
   r = r.it("client refusals", test_client_refusals);
   r = r.it("server refusals", test_server_refusals);
   r = r.it("calls out of turn", test_out_of_turn);
+  r = r.it("resumption", test_resumption);
+  r = r.it("resumption refusals", test_resumption_refusals);
   return r.finish();
 }

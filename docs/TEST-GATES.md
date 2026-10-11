@@ -1033,8 +1033,8 @@ Worth knowing so you do not assume coverage you do not have:
   they are approximations by construction (#5541) — but they now have their
   ULP-shaped gate: `internal/testing/e2e/f64_ulp_test.go` measures the one
   `std/float` kernel on every lane (interp, x86-64, arm64, wasm, self-host
-  x86-64) against a 1400-bit reference, at 2 ulp, over a corpus spanning the full
-  finite range, plus a 1158-argument magnitude sweep over the Payne-Hanek
+  x86-64) against a 1400-bit reference, at 2 ulp (1 for sin, cos and log), over
+  a corpus spanning the full finite range, plus a 1158-argument magnitude sweep over the Payne-Hanek
   reduction path (#7878) with an oracle-free `|sin| <= 1` invariant. Two
   standing cautions: Go's `math.Sin`/`math.Cos` are NOT a usable oracle (their
   reduction error is unbounded in ulp terms near a zero), and

@@ -1250,15 +1250,22 @@ address is checked against the certificate's addresses and not sent as SNI
 (`tests/stdlib/tls_client_test.fern`, and Go's crypto/tls in
 `TestTLSClientAgainstGo`).
 
-- `config(server_name, roots)` and `(c).with_alpn(protocols)` make a `Config`.
+- `config(server_name, roots)`, `(c).with_alpn(protocols)` and
+  `(c).with_ticket(t)` make a `Config`.
 - `Session` is sans-IO, so any transport can carry it: `start(config)` draws
   its entropy from `random_bytes` and returns a `Step { session, output,
-  data, closed }`; `(s).read(input)` takes what arrived, `(s).write(data)`
-  seals application data and `(s).close()` is the close_notify. `read`
-  passes whole records to the handshake one at a time, so on failure it
-  returns a `Failure { error, alert }` whose alert is sealed under the keys
-  in force when it failed; send it, then close. `(s).alpn()` is the
-  protocol the server chose.
+  data, closed, tickets }`; `(s).read(input)` takes what arrived,
+  `(s).write(data)` seals application data and `(s).close()` is the
+  close_notify. `read` passes whole records to the handshake one at a time,
+  so on failure it returns a `Failure { error, alert }` whose alert is
+  sealed under the keys in force when it failed; send it, then close.
+  `(s).alpn()` is the protocol the server chose.
+- Resumption: `Step.tickets` are the `Ticket`s the server issued (identity,
+  the PSK it stands for, suite, lifetime, age_add, when it was received and
+  the server's name); keep one and offer it with `with_ticket` to the same
+  server name, where it is offered only within its lifetime. A session that
+  `resumed()` was sent no certificate: the ticket vouches for the server, so
+  a ticket is only ever offered to the name it was issued to.
 - `(s).save()` and `restore(saved)` turn a connected session into bytes
   and back, for a pool that can keep only bytes. The bytes hold the
   traffic secrets.
@@ -1267,7 +1274,8 @@ address is checked against the certificate's addresses and not sent as SNI
   within `timeout`; `over(fd, config, timeout)` does the handshake on a
   socket already connected (after a STARTTLS, or through a proxy's tunnel).
   `(c).send(data)`, `(c).recv(wait)`, a `Received { conn, data, ended }`
-  whose data is empty when the wait passed first, and `(c).close()`.
+  whose data is empty when the wait passed first, and `(c).close()`;
+  `c.tickets` are the tickets issued so far.
 - `TlsError` is `HandshakeFailed(HandshakeError)`, `Untrusted(VerifyError)`,
   `SignatureInvalid`, `Unresolved(DnsError)`, `NetFailed(NetError)`,
   `HandshakeTimeout`, `ClosedEarly` or `RecordCut` (closed inside a record),
@@ -1329,16 +1337,31 @@ step = step.client.read(received)?;   // step.output, step.data, step.events
   send (`output`), application data (`data`) and `events`: `VerifyServer`
   (the chain, scheme, signed content and signature: judge them, then call
   `verdict(ok)`), `SignNeeded` (sign `signed` under `scheme`, then call
-  `signature(sig)`), `Connected`, `PeerClosed` and `Ticket`. No private key
-  and no trust decision enter the module.
+  `signature(sig)`), `ResumeOffered` (the tickets a client offers, the
+  suite chosen and the name asked for: look one up, then call
+  `resume(Some(Resumed { index, psk }))`, or `resume(None)` for a full
+  handshake), `Connected`, `PeerClosed` and `Ticket`. No private key, no
+  ticket key and no trust decision enter the module.
+- Resumption (§4.6.1, §4.2.11): once connected, `resumption_psk(nonce)` on
+  either side is the PSK a ticket with that nonce stands for, and the
+  server's `ticket(t)` sends a `NewSessionTicket`. A client offers one by
+  `ClientConfig.resume: Some(Resumption { identity, psk, suite,
+  obfuscated_age })`: the ClientHello ends with `pre_shared_key`, its binder
+  computed over the hello cut before it (and, after a HelloRetryRequest,
+  over the first hello's hash and the retry), and names `psk_dhe_ke`. The
+  server checks the binder of the identity taken (decrypt_error when it
+  does not verify), takes up the PSK in the key schedule and sends no
+  certificate; `resumed()` and `cipher_suite()` say what happened. A ticket
+  whose suite has another hash than the one chosen is dropped. The ClientHello
+  always names `psk_dhe_ke`, so servers issue tickets.
 - `write(data)` once connected, `close()` for close_notify, `connected()`, and
   `alert(e)`, the record that reports a `HandshakeError` to the peer. A
   KeyUpdate is answered, and a compatibility change_cipher_spec ignored.
 - `HandshakeError` names the cause, with `alert()` and `message()`.
 - `certificate_verify_content(server, transcript_hash)` is what a
   CertificateVerify signs.
-- Not yet: PSK resumption and early data, and client certificates beyond
-  answering a request with an empty Certificate.
+- Not yet: early data, and client certificates beyond answering a request
+  with an empty Certificate.
 
 ### `std/tls/keyschedule`
 
@@ -1373,6 +1396,9 @@ let keys: keyschedule.TrafficKeys = keyschedule.traffic_keys(suite, hs.server_tr
 - `finished_verify_data(h, base_key, th)` and
   `verify_finished(h, base_key, th, verify_data)`, which compares in constant
   time (§4.4.4).
+- `EarlySecret.binder_key()` is Derive-Secret(., "res binder", "") and
+  `resumption_psk(h, resumption_master_secret, ticket_nonce)` the PSK a
+  ticket stands for; both checked against RFC 8448 §4.
 - `next_traffic_secret(h, traffic_secret)` — the secret after a KeyUpdate
   (§7.2).
 
@@ -1438,7 +1464,11 @@ let out: u8[] = message.encode(message.Finished(verify_data));
   `ext_selected_version` / `selected_version`, `ext_supported_groups`,
   `ext_signature_algorithms`, `ext_key_shares` / `key_shares` (the client's),
   `ext_key_share` / `key_share` (the server's), `ext_retry_group` /
-  `retry_group`, `ext_alpn` / `alpn` and `ext_psk_modes` / `psk_modes`.
+  `retry_group`, `ext_alpn` / `alpn`, `ext_psk_modes` / `psk_modes`, and
+  `ext_pre_shared_key` / `pre_shared_key` (an `OfferedPsks` of
+  `PskIdentity { identity, obfuscated_age }` and binders, with
+  `binders_length(binders)` the bytes a binder transcript leaves out) and
+  `ext_selected_psk` / `selected_psk` (the server's choice).
 - The HandshakeType and ExtensionType codes are constants (`CLIENT_HELLO`,
   `EXT_KEY_SHARE`, …), with `TLS13` and `LEGACY_VERSION`.
 - `MsgError` is `DecodeError(field)`, `IllegalParameter(field)`,
@@ -1489,6 +1519,54 @@ read = o.next;
   `EmptyFragment`, `NoContentType`, `BadRecordMac`, `SequenceExhausted` or
   `BadKeys(i32, i32)`, with `message()`; each variant's comment names the
   alert RFC 8446 sends for it.
+
+### `std/tls/server`
+
+A TLS 1.3 server: `std/tls/handshake`'s server signing its CertificateVerify
+with the certificate's private key, as a sans-IO `Session` any transport can
+carry and as a `Connection` over an accepted TCP socket. It takes every suite
+and X25519MLKEM768 or X25519, asking for a share by HelloRetryRequest when the
+client sent neither, and chooses the first of its own protocols the client
+offers by ALPN (`tests/stdlib/tls_server_test.fern` against `std/tls/client`,
+and Go's crypto/tls client in `TestTLSServerAgainstGo`).
+
+- `private_key_from_pem(text)` reads the first `PRIVATE KEY` (PKCS #8, RFC
+  5958) or `EC PRIVATE KEY` (SEC 1, RFC 5915) block; `pkcs8(der)` and
+  `sec1(der)` read the bytes. A `PrivateKey` is `EcdsaKey(ecdsa.PrivateKey)`
+  on P-256 or P-384, or `Ed25519Seed(seed)`. An RSA key is refused, since
+  `std/crypto/rsa` verifies only; the scheme offered is the key's (0x0403,
+  0x0503 or 0x0807), so a client that does not accept it gets
+  handshake_failure.
+- `identity(chain, key)` pairs a DER chain, leaf first, with the leaf's key,
+  refusing one that is not the leaf's; `identity_from_pem(chain_text,
+  key_text)` reads both from PEM. `config(identity)` and `(c).with_alpn
+  (protocols)` make a `Config`.
+- Tickets: `config` issues one session ticket per connection, living two
+  hours, sealed under a key drawn for the config; `with_ticket_key(key)`
+  shares a 32-byte key between servers that are to resume each other's
+  sessions, `with_ticket_lifetime(d)` changes the lifetime and
+  `without_tickets()` issues none. A ticket offered is resumed when it
+  opens under the key, was issued to the name asked for under a suite with
+  the chosen suite's hash, and is within its lifetime; otherwise the
+  handshake is a full one. `(s).resumed()` says which.
+- `Session`: `start(config)` draws its entropy from `random_bytes` and
+  returns a session with nothing to send until `(s).read(input)` has taken a
+  ClientHello; `read` signs the CertificateVerify when the handshake reaches
+  it and returns a `Step { session, output, data, closed }`, or on failure a
+  `Failure { error, alert }` whose alert is sealed under the keys in force
+  when it failed. `(s).write(data)`, `(s).close()`, `(s).connected()`,
+  `(s).alpn()` (the protocol chosen) and `(s).server_name()` (the SNI the
+  client sent, empty for none).
+- `Connection`: `accept(fd, config, timeout)` completes the handshake on a
+  socket just accepted, closing it on failure; `(c).send(data)`,
+  `(c).recv(wait)` giving a `Received { conn, data, ended }` (application
+  data the client sent in the same read as its Finished comes back first),
+  and `(c).close()`.
+- `KeyError` is `Pem`, `BadDer`, `Certificate`, `Scalar`, `Seed`, `NoKey`,
+  `NoCertificate`, `UnsupportedKey(what)`, `BadKey(part)` or `Mismatch`;
+  `TlsError` is `HandshakeFailed(HandshakeError)`, `SigningFailed`,
+  `NetFailed(NetError)`, `HandshakeTimeout`, `ClosedEarly` or `RecordCut`;
+  both with `message()`.
 
 ### `std/tls/verify`
 

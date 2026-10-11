@@ -154,15 +154,59 @@ function proxies(https_proxy: string): fetch.Policy {
   return fetch.Policy { public_only: false, proxies: fetch.ProxyEnv { http_proxy: "", https_proxy: https_proxy, no_proxy: "" } };
 }
 
+// socket runs one line through the echo server, then another on a session
+// resumed from the ticket the first was issued.
 function socket(roots: verify.Roots): string {
-  match (client.connect("localhost", @ECHO@, client.config("localhost", roots).with_alpn(["fern-echo"]), time.duration_seconds(10 as i64))) {
+  let first: client.Config = client.config("localhost", roots).with_alpn(["fern-echo"]);
+  match (connected(first)) {
     Ok(c) => {
       match (c.send("ping\n".bytes())) {
         Ok(sent) => {
           match (sent.recv(time.duration_seconds(10 as i64))) {
             Ok(got) => {
               got.conn.close();
-              return sent.session.alpn() + " " + string_from_bytes_unchecked(got.data).trim();
+              let line: string = sent.session.alpn() + " " + string_from_bytes_unchecked(got.data).trim();
+              return line + " / " + resumed_line(first, got.conn.tickets);
+            },
+            Err(e) => {
+              return "recv " + e.message();
+            }
+          }
+        },
+        Err(e) => {
+          return "send " + e.message();
+        }
+      }
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+// connected is a handshake with the echo server.
+function connected(cfg: client.Config): Result[client.Connection, client.TlsError] {
+  return client.connect("localhost", @ECHO@, cfg, time.duration_seconds(10 as i64));
+}
+
+// resumed_line echoes a line on a session resumed from the first ticket.
+function resumed_line(cfg: client.Config, tickets: client.Ticket[]): string {
+  if (tickets.len() == 0) {
+    return "no ticket";
+  }
+  match (connected(cfg.with_ticket(tickets[0]))) {
+    Ok(c) => {
+      let mode: string = "fresh";
+      if (c.session.resumed()) {
+        mode = "resumed";
+      }
+      match (c.send("again\n".bytes())) {
+        Ok(sent) => {
+          match (sent.recv(time.duration_seconds(10 as i64))) {
+            Ok(got) => {
+              got.conn.close();
+              return mode + " " + string_from_bytes_unchecked(got.data).trim();
             },
             Err(e) => {
               return "recv " + e.message();
@@ -220,7 +264,7 @@ func (w *tlsWorld) check(t *testing.T, got string, mainConns int64) {
 		"untrusted: error TLS: the server's certificate is not trusted: tls verify: no path from the certificate reaches a trusted root",
 		"wrongname: error TLS: the server's certificate is not trusted: tls verify: the certificate is not valid for 127.0.0.1",
 		"tunnel: " + ok("/g", "X25519MLKEM768"),
-		"socket: fern-echo echo ping",
+		"socket: fern-echo echo ping / resumed resumed-echo again",
 	}, "\n") + "\n"
 	if got != want {
 		t.Errorf("output:\n%s\nwant:\n%s", got, want)
@@ -272,7 +316,11 @@ func serveEcho(t *testing.T, cert tls.Certificate) int {
 					if err != nil {
 						return
 					}
-					_, _ = io.WriteString(c, "echo "+line)
+					echo := "echo "
+					if c.(*tls.Conn).ConnectionState().DidResume {
+						echo = "resumed-echo "
+					}
+					_, _ = io.WriteString(c, echo+line)
 				}
 			}()
 		}

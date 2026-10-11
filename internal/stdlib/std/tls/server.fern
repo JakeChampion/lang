@@ -1,0 +1,1028 @@
+// std/tls/server — a TLS 1.3 server: std/tls/handshake's server signing its
+// CertificateVerify with the certificate's private key, as a sans-IO
+// `Session` any transport can carry, and as a `Connection` over an accepted
+// TCP socket.
+//
+//   let id: server.Identity = server.identity_from_pem(chain_pem, key_pem)?;
+//   let cfg: server.Config = server.config(id).with_alpn(["http/1.1"]);
+//   let c: server.Connection = server.accept(fd, cfg, time.duration_seconds(10 as i64))?;
+//   let got: server.Received = c.recv(time.duration_seconds(30 as i64))?;
+//   c = got.conn.send("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".bytes())?;
+//
+// The key is P-256, P-384 or Ed25519, read from a PKCS #8 `PRIVATE KEY` or
+// a SEC 1 `EC PRIVATE KEY` block; an RSA key is refused, since std/crypto/rsa
+// verifies only. The signature scheme offered is the key's, so a client
+// that does not accept it gets handshake_failure. The server takes every
+// suite, X25519MLKEM768 and X25519, asking for a share by HelloRetryRequest
+// when the client sent neither, and chooses the first of its own protocols
+// the client offers by ALPN.
+
+import "std/crypto/chacha20poly1305";
+import "std/crypto/ecdsa";
+import "std/crypto/ed25519";
+import "std/net";
+import "std/tcp";
+import "std/time";
+import "std/tls/der";
+import "std/tls/handshake";
+import "std/tls/keyschedule";
+import "std/tls/message";
+import "std/tls/pem";
+import "std/tls/x509";
+
+// PrivateKey — the key a server signs with: a P-256 or P-384 scalar, or an
+// Ed25519 seed.
+pub enum PrivateKey {
+  EcdsaKey(ecdsa.PrivateKey),
+  Ed25519Seed(u8[]),
+}
+
+// Identity — a certificate chain, leaf first, and the leaf's private key.
+pub struct Identity { chain: u8[][], key: PrivateKey }
+
+// KeyError — why a key or an identity was refused.
+pub enum KeyError {
+  Pem(pem.PemError),
+  BadDer(der.DerError),
+  Certificate(x509.X509Error),
+  Scalar(ecdsa.EcdsaError),
+  Seed(ed25519.Ed25519Error),
+  // No PRIVATE KEY or EC PRIVATE KEY block.
+  NoKey,
+  NoCertificate,
+  // A key of an algorithm or curve this module cannot sign with, by name
+  // or OID.
+  UnsupportedKey(string),
+  // Key structure that is not RFC 5958's or RFC 5915's, naming the part.
+  BadKey(string),
+  // The key is not the leaf certificate's.
+  Mismatch,
+}
+
+// One arm per variant.
+// fern-lint: allow cyclomatic-complexity
+pub function (e: KeyError) message(): string {
+  match (e) {
+    Pem(p) => {
+      return p.message();
+    },
+    BadDer(d) => {
+      return "tls server key: " + d.message();
+    },
+    Certificate(c) => {
+      return "tls server: " + c.message();
+    },
+    Scalar(s) => {
+      return "tls server key: " + s.message();
+    },
+    Seed(s) => {
+      return "tls server key: " + s.message();
+    },
+    NoKey => {
+      return "tls server key: no PRIVATE KEY or EC PRIVATE KEY block";
+    },
+    NoCertificate => {
+      return "tls server: no certificate";
+    },
+    UnsupportedKey(what) => {
+      return "tls server key: cannot sign with " + what;
+    },
+    BadKey(what) => {
+      return "tls server key: malformed " + what;
+    },
+    Mismatch => {
+      return "tls server: the key is not the leaf certificate's";
+    }
+  }
+  return "";
+}
+
+function __d[T](r: Result[T, der.DerError]): Result[T, KeyError] {
+  match (r) {
+    Ok(v) => {
+      return Ok(v);
+    },
+    Err(e) => {
+      return Err(BadDer(e));
+    }
+  }
+  return Err(BadKey("der"));
+}
+
+// The curves' OIDs and scalar sizes.
+const P256_OID: string = "1.2.840.10045.3.1.7";
+
+const P384_OID: string = "1.3.132.0.34";
+
+function __curve(oid: string): Result[ecdsa.Curve, KeyError] {
+  if (oid == P256_OID) {
+    return Ok(ecdsa.P256);
+  }
+  if (oid == P384_OID) {
+    return Ok(ecdsa.P384);
+  }
+  return Err(UnsupportedKey("curve " + oid));
+}
+
+function __scalar_size(c: ecdsa.Curve): i32 {
+  match (c) {
+    ecdsa.P256 => {
+      return 32;
+    },
+    ecdsa.P384 => {
+      return 48;
+    }
+  }
+  return 32;
+}
+
+function __same_curve(a: ecdsa.Curve, b: ecdsa.Curve): boolean {
+  return __scalar_size(a) == __scalar_size(b);
+}
+
+// private_key_from_pem reads the first PRIVATE KEY (PKCS #8) or EC PRIVATE
+// KEY (SEC 1) block in text.
+pub function private_key_from_pem(text: string): Result[PrivateKey, KeyError] {
+  let blocks: pem.Block[] = [];
+  match (pem.decode(text)) {
+    Ok(b) => {
+      blocks = b;
+    },
+    Err(e) => {
+      return Err(Pem(e));
+    }
+  }
+  for b in blocks {
+    if (b.label == "PRIVATE KEY") {
+      return pkcs8(b.bytes);
+    }
+    if (b.label == "EC PRIVATE KEY") {
+      return sec1(b.bytes);
+    }
+    if (b.label == "RSA PRIVATE KEY") {
+      return Err(UnsupportedKey("RSA"));
+    }
+  }
+  return Err(NoKey);
+}
+
+// pkcs8 reads a PrivateKeyInfo (RFC 5958): the algorithm names the key's
+// kind, and the privateKey octets hold an ECPrivateKey or an Ed25519 seed.
+pub function pkcs8(b: [u8]): Result[PrivateKey, KeyError] {
+  let parts: der.Element[] = __pkcs8_parts(b)?;
+  let alg: der.Element[] = __d(der.children(b, parts[1]))?;
+  if (alg.len() == 0) {
+    return Err(BadKey("privateKeyAlgorithm"));
+  }
+  let oid: string = __d(der.oid(b, alg[0]))?;
+  let key: u8[] = der.bytes(b, parts[2]);
+  if (oid == "1.2.840.10045.2.1") {
+    return __pkcs8_ec(b, alg, key);
+  }
+  if (oid == "1.3.101.112") {
+    let inner: der.Element = __d(der.only(key, der.OCTET_STRING))?;
+    return __ed25519_seed(der.bytes(key, inner));
+  }
+  if (oid == "1.2.840.113549.1.1.1") {
+    return Err(UnsupportedKey("RSA"));
+  }
+  return Err(UnsupportedKey("algorithm " + oid));
+}
+
+// __pkcs8_ec reads an EC key's curve from the algorithm's parameters and
+// the ECPrivateKey the privateKey octets hold.
+function __pkcs8_ec(b: [u8], alg: der.Element[], key: u8[]): Result[PrivateKey, KeyError] {
+  if (alg.len() < 2) {
+    return Err(BadKey("EC parameters"));
+  }
+  return __ec_private_key(key, Some(__curve(__d(der.oid(b, alg[1]))?)?));
+}
+
+// __pkcs8_parts is a PrivateKeyInfo's version, algorithm and privateKey
+// elements, the version 0 or 1.
+function __pkcs8_parts(b: [u8]): Result[der.Element[], KeyError] {
+  let seq: der.Element = __d(der.only(b, der.SEQUENCE))?;
+  let parts: der.Element[] = __d(der.children(b, seq))?;
+  if (parts.len() < 3 || parts[1].tag != der.SEQUENCE || parts[2].tag != der.OCTET_STRING) {
+    return Err(BadKey("PrivateKeyInfo"));
+  }
+  let version: i32 = __d(der.small(b, parts[0]))?;
+  if (version != 0 && version != 1) {
+    return Err(BadKey("PrivateKeyInfo version"));
+  }
+  return Ok(parts);
+}
+
+// sec1 reads an ECPrivateKey (RFC 5915) on its own, whose parameters must
+// name the curve.
+pub function sec1(b: [u8]): Result[PrivateKey, KeyError] {
+  return __ec_private_key(b, None);
+}
+
+// __ec_private_key reads an ECPrivateKey: version 1, the scalar, and the
+// curve in its [0] parameters when the PKCS #8 wrapper did not name one;
+// when both do they must agree.
+function __ec_private_key(b: [u8], known: Option[ecdsa.Curve]): Result[PrivateKey, KeyError] {
+  let seq: der.Element = __d(der.only(b, der.SEQUENCE))?;
+  let parts: der.Element[] = __d(der.children(b, seq))?;
+  if (parts.len() < 2 || parts[1].tag != der.OCTET_STRING) {
+    return Err(BadKey("ECPrivateKey"));
+  }
+  if (__d(der.small(b, parts[0]))? != 1) {
+    return Err(BadKey("ECPrivateKey version"));
+  }
+  let curve: ecdsa.Curve = __ec_curve(b, parts, known)?;
+  match (ecdsa.private_key(curve, __padded(der.bytes(b, parts[1]), __scalar_size(curve)))) {
+    Ok(k) => {
+      return Ok(EcdsaKey(k));
+    },
+    Err(e) => {
+      return Err(Scalar(e));
+    }
+  }
+  return Err(BadKey("ECPrivateKey"));
+}
+
+// __padded is a scalar left-padded with zeros to the curve's size.
+function __padded(d: u8[], size: i32): u8[] {
+  let out: u8[] = [];
+  while (out.len() + d.len() < size) {
+    out = out.append(0 as u8);
+  }
+  return __cat(out, d);
+}
+
+// __ec_curve is the curve an ECPrivateKey is on: its [0] parameters, the
+// wrapper's, or both when they agree.
+function __ec_curve(b: [u8], parts: der.Element[], known: Option[ecdsa.Curve]): Result[ecdsa.Curve, KeyError] {
+  let named: Option[ecdsa.Curve] = __ec_params(b, parts)?;
+  match (known) {
+    Some(k) => {
+      match (named) {
+        Some(n) => {
+          if (!__same_curve(k, n)) {
+            return Err(BadKey("ECPrivateKey parameters"));
+          }
+        },
+        None => {}
+      }
+      return Ok(k);
+    },
+    None => {
+      match (named) {
+        Some(n) => {
+          return Ok(n);
+        },
+        None => {
+          return Err(BadKey("ECPrivateKey parameters"));
+        }
+      }
+    }
+  }
+  return Err(BadKey("ECPrivateKey parameters"));
+}
+
+// __ec_params is the curve an ECPrivateKey's [0] parameters name, None
+// when it has none.
+function __ec_params(b: [u8], parts: der.Element[]): Result[Option[ecdsa.Curve], KeyError] {
+  let i: i32 = 2;
+  while (i < parts.len()) {
+    if (parts[i].tag == der.context(0, true)) {
+      let inner: der.Element[] = __d(der.children(b, parts[i]))?;
+      if (inner.len() != 1) {
+        return Err(BadKey("ECPrivateKey parameters"));
+      }
+      return Ok(Some(__curve(__d(der.oid(b, inner[0]))?)?));
+    }
+    i = i + 1;
+  }
+  return Ok(None);
+}
+
+function __ed25519_seed(seed: u8[]): Result[PrivateKey, KeyError] {
+  match (ed25519.public_key(seed)) {
+    Ok(_) => {
+      return Ok(Ed25519Seed(seed));
+    },
+    Err(e) => {
+      return Err(Seed(e));
+    }
+  }
+  return Err(BadKey("Ed25519 seed"));
+}
+
+// identity pairs a chain, leaf first, with the leaf's key, refusing a key
+// that is not the leaf's.
+pub function identity(chain: u8[][], key: PrivateKey): Result[Identity, KeyError] {
+  if (chain.len() == 0) {
+    return Err(NoCertificate);
+  }
+  match (x509.parse(chain[0])) {
+    Ok(leaf) => {
+      if (!__key_matches(leaf.key, key)) {
+        return Err(Mismatch);
+      }
+    },
+    Err(e) => {
+      return Err(Certificate(e));
+    }
+  }
+  return Ok(Identity { chain: chain, key: key });
+}
+
+// identity_from_pem reads the CERTIFICATE blocks of chain_text, leaf first,
+// and the key in key_text.
+pub function identity_from_pem(chain_text: string, key_text: string): Result[Identity, KeyError] {
+  let key: PrivateKey = private_key_from_pem(key_text)?;
+  match (pem.certificates(chain_text)) {
+    Ok(chain) => {
+      return identity(chain, key);
+    },
+    Err(e) => {
+      return Err(Pem(e));
+    }
+  }
+  return Err(NoCertificate);
+}
+
+// __key_matches checks that the private key makes the certificate's public
+// key.
+function __key_matches(public: x509.PublicKey, key: PrivateKey): boolean {
+  match (key) {
+    EcdsaKey(k) => {
+      match (public) {
+        x509.EcKey(curve, point) => {
+          return __same_curve(curve, k.curve) && __same(point, k.public_point());
+        },
+        _ => {
+          return false;
+        }
+      }
+    },
+    Ed25519Seed(seed) => {
+      match (public) {
+        x509.Ed25519Key(p) => {
+          match (ed25519.public_key(seed)) {
+            Ok(q) => {
+              return __same(p, q);
+            },
+            Err(_) => {
+              return false;
+            }
+          }
+        },
+        _ => {
+          return false;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+// The TLS 1.3 SignatureScheme the key makes.
+function __scheme(key: PrivateKey): i32 {
+  match (key) {
+    EcdsaKey(k) => {
+      match (k.curve) {
+        ecdsa.P256 => {
+          return 0x0403;
+        },
+        ecdsa.P384 => {
+          return 0x0503;
+        }
+      }
+    },
+    Ed25519Seed(_) => {
+      return 0x0807;
+    }
+  }
+  return 0;
+}
+
+// Config — the identity to present, the protocols to accept by ALPN in
+// preference order, and the session tickets: whether to issue one per
+// connection, how long it lives, and the key it is sealed under, which
+// every server that is to resume it must share.
+pub struct Config { identity: Identity, alpn: string[], tickets: boolean, ticket_lifetime: Duration, ticket_key: u8[] }
+
+// config accepts no application protocol and issues tickets that live two
+// hours under a key drawn for this config.
+pub function config(identity: Identity): Config {
+  return Config { identity: identity, alpn: [], tickets: true, ticket_lifetime: time.duration_seconds(7200 as i64), ticket_key: random_bytes(32) };
+}
+
+pub function (c: Config) with_alpn(protocols: string[]): Config {
+  return Config { ...c, alpn: protocols };
+}
+
+// with_ticket_key seals tickets under a 32-byte key of the caller's, so
+// that servers sharing it resume each other's sessions.
+pub function (c: Config) with_ticket_key(key: u8[]): Config {
+  return Config { ...c, ticket_key: key };
+}
+
+pub function (c: Config) with_ticket_lifetime(d: Duration): Config {
+  return Config { ...c, ticket_lifetime: d };
+}
+
+// without_tickets issues none; a ticket offered is still resumed when it
+// opens under the key.
+pub function (c: Config) without_tickets(): Config {
+  return Config { ...c, tickets: false };
+}
+
+// TlsError — why a connection failed: the handshake's own refusal, the
+// key failing to sign, the socket's error, the handshake outlasting its
+// bound, the peer closing before the handshake ended, or closing inside a
+// record.
+pub enum TlsError {
+  HandshakeFailed(handshake.HandshakeError),
+  SigningFailed,
+  NetFailed(net.NetError),
+  HandshakeTimeout,
+  ClosedEarly,
+  RecordCut,
+}
+
+pub function (e: TlsError) message(): string {
+  match (e) {
+    HandshakeFailed(h) => {
+      return h.message();
+    },
+    SigningFailed => {
+      return "the key could not sign the CertificateVerify";
+    },
+    NetFailed(n) => {
+      return n.message();
+    },
+    HandshakeTimeout => {
+      return "the handshake did not finish in time";
+    },
+    ClosedEarly => {
+      return "the peer closed the connection during the handshake";
+    },
+    RecordCut => {
+      return "the peer closed the connection inside a record";
+    }
+  }
+  return "";
+}
+
+// Session — one connection's TLS, bytes in and bytes out: the handshake's
+// server, the config it signs and seals tickets with, and the bytes of a
+// record still arriving.
+pub struct Session { server: handshake.Server, config: Config, held: u8[] }
+
+// Failure — why `read` failed, and the alert record to send the client
+// before closing, sealed under the keys in force when it failed.
+pub struct Failure { error: TlsError, alert: u8[] }
+
+pub function (f: Failure) message(): string {
+  return f.error.message();
+}
+
+// Step — the session after a call, the bytes to send, the application data
+// read, and whether the peer has sent close_notify.
+pub struct Step { session: Session, output: u8[], data: u8[], closed: boolean }
+
+// start waits for a ClientHello: there is nothing to send until `read` has
+// taken one.
+pub function start(config: Config): Result[Session, TlsError] {
+  let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config(config.identity.chain, [__scheme(config.identity.key)]), alpn: config.alpn };
+  match (handshake.server_new(sc, random_bytes(96))) {
+    Ok(s) => {
+      return Ok(Session { server: s, config: config, held: [] });
+    },
+    Err(e) => {
+      return Err(HandshakeFailed(e));
+    }
+  }
+  return Err(ClosedEarly);
+}
+
+// read takes bytes from the client, signing the CertificateVerify when the
+// handshake reaches it. Whole records go to the handshake one at a time:
+// the keys change only between records, so a failure's alert is sealed
+// under the keys the records before it left.
+pub function (s: Session) read(input: [u8]): Result[Step, Failure] {
+  let buf: u8[] = __copy(s.held);
+  buf = __cat(buf, input);
+  let session: Session = Session { ...s, held: [] };
+  let output: u8[] = [];
+  let data: u8[] = [];
+  let closed: boolean = false;
+  let at: i32 = 0;
+  while (!closed && buf.len() - at >= 5) {
+    let end: i32 = at + 5 + (buf[at + 3] as i32 << 8 | buf[at + 4] as i32);
+    if (end > buf.len()) {
+      break;
+    }
+    let next: Step = __record(session, buf[at:end])?;
+    session = next.session;
+    output = __cat(output, next.output);
+    data = __cat(data, next.data);
+    closed = next.closed;
+    at = end;
+  }
+  return Ok(Step { session: Session { ...session, held: __copy(buf[at:buf.len()]) }, output: output, data: data, closed: closed });
+}
+
+function __record(s: Session, record: [u8]): Result[Step, Failure] {
+  match (s.server.read(record)) {
+    Ok(step) => {
+      return __signed(s, step);
+    },
+    Err(e) => {
+      return Err(Failure { error: HandshakeFailed(e), alert: s.server.alert(e) });
+    }
+  }
+  return Err(Failure { error: ClosedEarly, alert: [] });
+}
+
+// write seals application data; the session must be connected.
+pub function (s: Session) write(data: [u8]): Result[Step, TlsError] {
+  let step: handshake.ServerStep = __step(s.server.write(data))?;
+  return Ok(Step { session: Session { ...s, server: step.server }, output: step.output, data: [], closed: false });
+}
+
+// close is the close_notify to send; nothing more may be written.
+pub function (s: Session) close(): Result[Step, TlsError] {
+  let step: handshake.ServerStep = __step(s.server.close())?;
+  return Ok(Step { session: Session { ...s, server: step.server }, output: step.output, data: [], closed: false });
+}
+
+pub function (s: Session) connected(): boolean {
+  return s.server.connected();
+}
+
+// The protocol chosen by ALPN, empty when none was.
+pub function (s: Session) alpn(): string {
+  return s.server.alpn;
+}
+
+// The name the client asked for by SNI, empty when it sent none.
+pub function (s: Session) server_name(): string {
+  return s.server.server_name;
+}
+
+// Whether the handshake resumed from a ticket, in which case no
+// certificate was sent.
+pub function (s: Session) resumed(): boolean {
+  return s.server.resumed();
+}
+
+function __step(r: Result[handshake.ServerStep, handshake.HandshakeError]): Result[handshake.ServerStep, TlsError] {
+  match (r) {
+    Ok(step) => {
+      return Ok(step);
+    },
+    Err(e) => {
+      return Err(HandshakeFailed(e));
+    }
+  }
+  return Err(ClosedEarly);
+}
+
+function __failed(srv: handshake.Server, r: Result[handshake.ServerStep, handshake.HandshakeError]): Result[handshake.ServerStep, Failure] {
+  match (r) {
+    Ok(step) => {
+      return Ok(step);
+    },
+    Err(e) => {
+      return Err(Failure { error: HandshakeFailed(e), alert: srv.alert(e) });
+    }
+  }
+  return Err(Failure { error: ClosedEarly, alert: [] });
+}
+
+// __signed answers each event in a step that asks something of the server
+// (a signature, a ticket lookup, a ticket to issue once connected) and
+// gathers what the handshake goes on to produce.
+function __signed(s: Session, first: handshake.ServerStep): Result[Step, Failure] {
+  let srv: handshake.Server = first.server;
+  let output: u8[] = first.output;
+  let data: u8[] = first.data;
+  let events: handshake.Event[] = first.events;
+  let closed: boolean = false;
+  let i: i32 = 0;
+  while (i < events.len()) {
+    let next: handshake.ServerStep = __answered(s, srv, events[i])?;
+    closed = closed || __peer_closed(events[i]);
+    srv = next.server;
+    output = __cat(output, next.output);
+    data = __cat(data, next.data);
+    events = __more(events, next.events);
+    i = i + 1;
+  }
+  return Ok(Step { session: Session { ...s, server: srv }, output: output, data: data, closed: closed });
+}
+
+function __peer_closed(e: handshake.Event): boolean {
+  match (e) {
+    handshake.PeerClosed => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// __answered is what the server does about one event: nothing, for most.
+function __answered(s: Session, srv: handshake.Server, e: handshake.Event): Result[handshake.ServerStep, Failure] {
+  match (e) {
+    handshake.SignNeeded(sg) => {
+      match (__sign(s.config.identity.key, sg)) {
+        Ok(sig) => {
+          return __failed(srv, srv.signature(sig));
+        },
+        Err(err) => {
+          return Err(Failure { error: err, alert: srv.alert(handshake.HandshakeFailure("signing")) });
+        }
+      }
+    },
+    handshake.ResumeOffered(offer) => {
+      return __failed(srv, srv.resume(__lookup(s.config, offer, now_unix_ms())));
+    },
+    handshake.Connected => {
+      if (s.config.tickets) {
+        return __failed(srv, srv.ticket(__issue(s.config, srv, now_unix_ms())));
+      }
+    },
+    _ => {}
+  }
+  return Ok(handshake.ServerStep { server: srv, output: [], data: [], events: [] });
+}
+
+// Tickets. A ticket is the PSK it stands for, the suite it was issued
+// under, when it was issued and for how long, and the name it was issued
+// to, sealed under the config's key behind a fresh nonce (§4.6.1).
+
+const TICKET_AAD: string = "fern tls ticket";
+
+const TICKET_VERSION: i32 = 1;
+
+// __issue is the ticket to send once connected: nonce 0 is the only one
+// issued per connection.
+function __issue(config: Config, srv: handshake.Server, now: i64): message.NewSessionTicket {
+  let nonce: u8[] = [0 as u8];
+  let lifetime: i64 = config.ticket_lifetime.as_millis() / (1000 as i64);
+  let age_add: u8[] = random_bytes(4);
+  let body: u8[] = [TICKET_VERSION as u8];
+  body = __u16(body, srv.cipher_suite().code());
+  body = __i64(body, now);
+  body = __u16(__i64(body, lifetime), srv.server_name.bytes().len());
+  body = __cat(body, srv.server_name.bytes());
+  match (srv.resumption_psk(nonce)) {
+    Ok(psk) => {
+      body = __cat(body, psk);
+    },
+    Err(_) => {}
+  }
+  let ticket_nonce: u8[] = random_bytes(12);
+  let sealed: u8[] = [];
+  match (chacha20poly1305.seal(config.ticket_key, ticket_nonce, body, TICKET_AAD.bytes())) {
+    Ok(b) => {
+      sealed = b;
+    },
+    Err(_) => {}
+  }
+  return message.NewSessionTicket { lifetime: lifetime as u32, age_add: __u32_of(age_add), nonce: nonce, ticket: __cat(ticket_nonce, sealed), extensions: [] };
+}
+
+// __lookup is the first ticket offered that opens under the key, was issued
+// under a suite with the chosen suite's hash, to the name asked for, and is
+// still alive at `now`; None resumes nothing.
+function __lookup(config: Config, offer: handshake.Offer, now: i64): Option[handshake.Resumed] {
+  let i: i32 = 0;
+  while (i < offer.identities.len()) {
+    match (__open_ticket(config, offer, offer.identities[i].identity, now)) {
+      Some(psk) => {
+        return Some(handshake.Resumed { index: i, psk: psk });
+      },
+      None => {}
+    }
+    i = i + 1;
+  }
+  return None;
+}
+
+function __open_ticket(config: Config, offer: handshake.Offer, identity: [u8], now: i64): Option[u8[]] {
+  if (identity.len() < 12) {
+    return None;
+  }
+  match (chacha20poly1305.open(config.ticket_key, __copy(identity[0:12]), __copy(identity[12:identity.len()]), TICKET_AAD.bytes())) {
+    Ok(body) => {
+      return __usable_ticket(body, offer, now);
+    },
+    Err(_) => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// __usable_ticket reads an opened ticket and judges it against the offer.
+function __usable_ticket(body: u8[], offer: handshake.Offer, now: i64): Option[u8[]] {
+  let size: i32 = offer.suite.hash().size();
+  if (body.len() < 21 || body[0] as i32 != TICKET_VERSION) {
+    return None;
+  }
+  let name_len: i32 = body[19] as i32 << 8 | body[20] as i32;
+  if (body.len() != 21 + name_len + size) {
+    return None;
+  }
+  match (keyschedule.cipher_suite(body[1] as i32 << 8 | body[2] as i32)) {
+    Some(suite) => {
+      if (suite.hash().size() != size) {
+        return None;
+      }
+    },
+    None => {
+      return None;
+    }
+  }
+  let issued: i64 = __i64_at(body, 3);
+  let lifetime: i64 = __i64_at(body, 11);
+  if (now < issued || now >= issued + lifetime * (1000 as i64)) {
+    return None;
+  }
+  if (!__same(body[21:21 + name_len], offer.server_name.bytes())) {
+    return None;
+  }
+  return Some(__copy(body[21 + name_len:body.len()]));
+}
+
+function __u16(own out: u8[], v: i32): u8[] {
+  return out.append((v >> 8 & 255) as u8).append((v & 255) as u8);
+}
+
+function __i64(own out: u8[], v: i64): u8[] {
+  let i: i32 = 7;
+  while (i >= 0) {
+    out = out.append((v >> (8 * i) as i64 & 255 as i64) as u8);
+    i = i - 1;
+  }
+  return out;
+}
+
+function __i64_at(b: [u8], at: i32): i64 {
+  let v: i64 = 0 as i64;
+  let i: i32 = 0;
+  while (i < 8) {
+    v = v << 8 as i64 | b[at + i] as i64;
+    i = i + 1;
+  }
+  return v;
+}
+
+function __u32_of(b: u8[]): u32 {
+  return b[0] as u32 << 24 | b[1] as u32 << 16 | b[2] as u32 << 8 | b[3] as u32;
+}
+
+// __sign makes the CertificateVerify signature under the scheme the key
+// offered.
+function __sign(key: PrivateKey, sg: handshake.Signing): Result[u8[], TlsError] {
+  if (sg.scheme != __scheme(key)) {
+    return Err(SigningFailed);
+  }
+  match (key) {
+    EcdsaKey(k) => {
+      let h: ecdsa.Hash = ecdsa.Sha256;
+      if (sg.scheme == 0x0503) {
+        h = ecdsa.Sha384;
+      }
+      match (ecdsa.sign(k, h, sg.signed)) {
+        Ok(sig) => {
+          return Ok(sig);
+        },
+        Err(_) => {
+          return Err(SigningFailed);
+        }
+      }
+    },
+    Ed25519Seed(seed) => {
+      match (ed25519.sign(seed, sg.signed)) {
+        Ok(sig) => {
+          return Ok(sig);
+        },
+        Err(_) => {
+          return Err(SigningFailed);
+        }
+      }
+    }
+  }
+  return Err(SigningFailed);
+}
+
+function __cat(own a: u8[], b: [u8]): u8[] {
+  let i: i32 = 0;
+  while (i < b.len()) {
+    a = a.append(b[i]);
+    i = i + 1;
+  }
+  return a;
+}
+
+function __copy(b: [u8]): u8[] {
+  return __cat([], b);
+}
+
+function __same(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < a.len()) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function __more(own a: handshake.Event[], b: handshake.Event[]): handshake.Event[] {
+  for e in b {
+    a = a.append(e);
+  }
+  return a;
+}
+
+// Over a socket.
+
+// Connection — a session over an accepted TCP socket, with the application
+// data the client sent in the same read as the end of the handshake, and
+// whether it has already closed.
+pub struct Connection { fd: i32, session: Session, pending: u8[], ended: boolean }
+
+// Received — what `recv` read: application data, empty when the wait
+// passed first, and whether the peer has ended the stream, by close_notify
+// or by closing the socket.
+pub struct Received { conn: Connection, data: u8[], ended: boolean }
+
+// accept completes a handshake on a socket just accepted, within
+// `timeout`. The socket is closed if the handshake fails.
+pub function accept(fd: i32, config: Config, timeout: Duration): Result[Connection, TlsError] {
+  match (__handshake_on(fd, config, monotonic_ns() + timeout.as_nanos())) {
+    Ok(c) => {
+      return Ok(c);
+    },
+    Err(e) => {
+      tcp_close(fd);
+      return Err(e);
+    }
+  }
+  return Err(ClosedEarly);
+}
+
+function __handshake_on(fd: i32, config: Config, deadline: i64): Result[Connection, TlsError] {
+  let s: Session = start(config)?;
+  let pending: u8[] = [];
+  let ended: boolean = false;
+  while (!s.connected() && !ended) {
+    let input: u8[] = [];
+    match (__await(fd, deadline)?) {
+      Some(b) => {
+        input = b;
+      },
+      None => {
+        return Err(HandshakeTimeout);
+      }
+    }
+    if (input.len() == 0) {
+      return Err(ClosedEarly);
+    }
+    let step: Step = __exchange(fd, s, input)?;
+    s = step.session;
+    pending = __cat(pending, step.data);
+    ended = step.closed;
+  }
+  if (!s.connected()) {
+    return Err(ClosedEarly);
+  }
+  return Ok(Connection { fd: fd, session: s, pending: pending, ended: ended });
+}
+
+// send writes data to the client.
+pub function (c: Connection) send(data: [u8]): Result[Connection, TlsError] {
+  let step: Step = c.session.write(data)?;
+  __send_fd(c.fd, step.output)?;
+  return Ok(Connection { ...c, session: step.session });
+}
+
+// recv waits at most `wait` for application data, answering first with
+// what arrived with the handshake.
+pub function (c: Connection) recv(wait: Duration): Result[Received, TlsError] {
+  if (c.pending.len() > 0 || c.ended) {
+    return Ok(Received { conn: Connection { ...c, pending: [] }, data: c.pending, ended: c.ended });
+  }
+  return __recv_until(c, monotonic_ns() + wait.as_nanos());
+}
+
+// __recv_until reads until application data or the end of the stream
+// arrives, or the deadline passes.
+function __recv_until(c: Connection, deadline: i64): Result[Received, TlsError] {
+  let s: Session = c.session;
+  while (true) {
+    let input: u8[] = [];
+    match (__await(c.fd, deadline)?) {
+      Some(b) => {
+        input = b;
+      },
+      None => {
+        return Ok(__received(c, s, [], false));
+      }
+    }
+    if (input.len() == 0) {
+      return __stream_ended(c, s);
+    }
+    let step: Step = __exchange(c.fd, s, input)?;
+    s = step.session;
+    if (step.data.len() > 0 || step.closed) {
+      return Ok(__received(c, s, step.data, step.closed));
+    }
+  }
+  return Ok(__received(c, c.session, [], true));
+}
+
+function __received(c: Connection, s: Session, data: u8[], ended: boolean): Received {
+  return Received { conn: Connection { ...c, session: s, ended: ended }, data: data, ended: ended };
+}
+
+// __stream_ended is the socket's end of stream: the peer has gone, which
+// inside a record is a cut.
+function __stream_ended(c: Connection, s: Session): Result[Received, TlsError] {
+  if (s.held.len() > 0) {
+    return Err(RecordCut);
+  }
+  return Ok(__received(c, s, [], true));
+}
+
+// __exchange reads input and sends what the session answers, or the alert a
+// failure calls for.
+function __exchange(fd: i32, s: Session, input: [u8]): Result[Step, TlsError] {
+  match (s.read(input)) {
+    Ok(step) => {
+      __send_fd(fd, step.output)?;
+      return Ok(step);
+    },
+    Err(f) => {
+      __send_fd(fd, f.alert);
+      return Err(f.error);
+    }
+  }
+  return Err(ClosedEarly);
+}
+
+// close sends close_notify and closes the socket.
+pub function (c: Connection) close(): void {
+  if let Ok(step) = c.session.close() {
+    __send_fd(c.fd, step.output);
+  }
+  tcp_close(c.fd);
+}
+
+function __send_fd(fd: i32, data: [u8]): Result[void, TlsError] {
+  let at: i32 = 0;
+  while (at < data.len()) {
+    let n: i32 = tcp_send_bytes(fd, __cat([], data[at:data.len()]));
+    if (n < 0) {
+      return Err(NetFailed(net.error_from_errno(0 - n)));
+    }
+    if (n == 0) {
+      return Err(NetFailed(net.ConnectionReset));
+    }
+    at = at + n;
+  }
+  return Ok(());
+}
+
+// __await is the next bytes off the socket before `deadline`, empty at the
+// end of the stream, or None once the deadline has passed.
+function __await(fd: i32, deadline: i64): Result[Option[u8[]], TlsError] {
+  let left: i64 = deadline - monotonic_ns();
+  if (left <= 0) {
+    return Ok(None);
+  }
+  return __recv_fd(fd, time.duration_nanos(left));
+}
+
+// __recv_fd is the next bytes off the socket within `wait`, empty at the
+// end of the stream, or None when the wait passed first.
+function __recv_fd(fd: i32, wait: Duration): Result[Option[u8[]], TlsError] {
+  match (tcp.tcp_recv_deadline(fd, 65536, wait)) {
+    tcp.Chunk(b) => {
+      return Ok(Some(b));
+    },
+    tcp.Elapsed => {
+      return Ok(None);
+    },
+    tcp.Abandoned => {
+      return Err(NetFailed(net.Interrupted));
+    }
+  }
+  return Ok(None);
+}
