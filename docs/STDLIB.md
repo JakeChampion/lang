@@ -2252,7 +2252,8 @@ points that run a handler under it.
   data_rate_grace, response_min_data_rate, response_data_rate_grace,
   keep_alive_idle, keep_alive_requests, max_connections,
   max_connections_per_ip, max_in_flight, workers, shutdown_grace,
-  readiness_path, drain_deadline, limits, stop_with_parent, stream_bodies }`
+  readiness_path, drain_deadline, limits, stop_with_parent, stream_bodies,
+  tls }`
   (`config()` is
   128, one listener per port, the 10 s deadline, 240 bytes per second after
   5 s for a request body and the same for a response, 130 s, 1000, 1024, 100
@@ -2327,6 +2328,17 @@ points that run a handler under it.
   entry, and a supervised worker that binds its own).
   A listener the process was started with (`LISTEN_FDS` at least 1,
   descriptor 3) is served instead of a fresh one.
+  `tls` (None) is a `std/tls/server` config, set by `(c).with_tls(cfg)`:
+  every connection then speaks TLS 1.3, the handshake running on the
+  connection's own reads and writes before its first request, each
+  response sealed as it is written, and a file body read and sealed
+  rather than moved by sendfile; the protocol offered by ALPN is
+  `http/1.1`. A client that does not speak TLS, or whose handshake the
+  server refuses, is sent the alert and closed, and the read deadline
+  bounds the handshake as it bounds a request. Under `supervise` the
+  workers share the config's ticket key, so a session resumes at any of
+  them; a handler pulling a streamed body reads it through the session
+  (`TestServeTLSAgainstGo`).
 - `run_shutdown(port, cfg, handler, shutdown)` and
   `run_with_shutdown(port, cfg, init, handler, shutdown)` —
   `run` and `run_with` with a hook the loop calls
