@@ -18428,11 +18428,34 @@ function bg_refs_stmt(st: ast.Stmt, own r: BgRefs): BgRefs {
 
 function bg_refs_expr(e: ast.Expr, own r: BgRefs): BgRefs {
   if let ast.ExprIdent(id) = e {
-    if (str_in(r.names, id.name) && !str_in(r.hit, id.name)) {
-      return BgRefs { ...r, hit: r.hit.append(id.name) };
+    return bg_ref_hit(r, id.name);
+  }
+  if let ast.ExprFieldAccess(fa) = e {
+    for n in r.names {
+      if (folds_method(n, fa.field)) {
+        r = bg_ref_hit(r, n);
+      }
     }
   }
   return r;
+}
+
+function bg_ref_hit(own r: BgRefs, name: string): BgRefs {
+  if (str_in(r.names, name) && !str_in(r.hit, name)) {
+    return BgRefs { ...r, hit: r.hit.append(name) };
+  }
+  return r;
+}
+
+// folds_method reports whether `name` is the free generic a method `verb`
+// of an array, view, map or generic struct was folded into, which a call
+// `x.verb(…)` reaches.
+function folds_method(name: string, verb: string): boolean {
+  if (name == "__arrm_" + verb || name == "__viewm_" + verb || name == "__mapm_" + verb) {
+    return true;
+  }
+  let sfx: string = "_" + verb;
+  return util.str_has_prefix(name, "__smm_") && name.len() > sfx.len() && slice_unchecked(name, name.len() - sfx.len(), name.len()) == sfx;
 }
 
 struct BgStep { funcs: FuncDecl[], ins: Insts }
