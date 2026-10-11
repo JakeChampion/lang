@@ -3,7 +3,7 @@
 `ssaunits.held_elements`, every target. Refs #11913, the copies `define`
 still made under `semsource.method_call`. The append cliff compiling
 `checker.fern` (`scripts/cliff-bench`, x86-64, stage 2 on the dev container):
-30,032,608 bytes over 198,978 crossings to 25,114,608 over 193,550.
+30,032,608 bytes over 198,978 crossings to 24,148,960 over 193,521.
 
 ## The shape
 
@@ -54,6 +54,12 @@ to either take.
 `TestSelfHostCrossBlockReuse`'s `read-outliving-the-attempt-takes-its-unit`
 pins the shape above: `grow`'s append copied once and copies nothing.
 
+`seminline.part_of` copied the round's value table once per round: the
+edits seeded it with the function's own `values`, which the function still
+held, so the first part phi's append copied every type in it. The round now
+keeps the types of the values it makes apart (`Edits.added`, from `base`
+up) and the function's table is extended once, when the round is applied.
+
 ## Measured
 
 Stage-2 compilers on the dev container, compiling `checker.fern`:
@@ -61,7 +67,7 @@ Stage-2 compilers on the dev container, compiling `checker.fern`:
 | | bytes | crossings |
 |---|--:|--:|
 | before (4c038d0) | 30,032,608 | 198,978 |
-| this change | 25,114,608 | 193,550 |
+| this change | 24,148,960 | 193,521 |
 
 `FERN_RC_CERTIFY_DUMP` now prints the lifted function on a refusal as well
 as under the report mode, which is how the double unit above was read.
