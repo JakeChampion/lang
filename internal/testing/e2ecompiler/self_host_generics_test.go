@@ -29,6 +29,12 @@ var genericsCases = []struct {
 	{"two-type-params-struct", "struct Pair[A, B] { fst: A, snd: B } function main(): i32 { let p = Pair { fst: 40, snd: 2 }; return p.fst + p.snd; }", 42},
 	// One generic body used at two concrete types in the same program.
 	{"mixed-instantiation", "function id[T](x: T): T { return x; } function main(): i32 { let n: i32 = id(40); let s: string = id(\"hi\"); return n + s.len(); }", 42},
+	// A generic struct literal written as a variant's payload takes its
+	// instantiation from the destination the variant goes to, as one under
+	// `let` does: `Ok(Boxes { … })` under a `Result[Boxes[T], string]`
+	// return, `Some(Box { … })` under an `Option[Box[T]]` one.
+	{"variant-payload-struct-result", "struct Box[T] { n: i32, f: (i32, T) => i32 } struct Boxes[T] { items: Box[T][] } function add_i(a: i32, b: i32): i32 { return a + b; } function (b: Boxes[T]) add(n: i32, f: (i32, T) => i32): Result[Boxes[T], string] { return Ok(Boxes { items: b.items.append(Box { n: n, f: f }) }); } function main(): i32 { let b: Boxes[i32] = Boxes { items: [] }; match (b.add(40, add_i)) { Ok(b2) => { let g: (i32, i32) => i32 = b2.items[0].f; return g(b2.items[0].n, 2); }, Err(e) => { return 1; } } return 1; }", 42},
+	{"variant-payload-struct-option", "struct Box[T] { n: i32, f: (i32, T) => i32 } function add_i(a: i32, b: i32): i32 { return a + b; } function boxed[T](n: i32, f: (i32, T) => i32): Option[Box[T]] { if (n < 0) { return None; } return Some(Box { n: n, f: f }); } function main(): i32 { match (boxed(40, add_i)) { Some(b) => { let g: (i32, i32) => i32 = b.f; return g(b.n, 2); }, None => { return 1; } } return 1; }", 42},
 }
 
 // TestSelfHostGenericsX86_64 — user generics (erasure) with the
