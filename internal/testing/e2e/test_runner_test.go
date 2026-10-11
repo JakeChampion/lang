@@ -1144,6 +1144,12 @@ func TestRunnerTLSRootsExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "tls_roots", "std/tls/verify roots", 3)
 }
 
+// `tests/stdlib/tls_mozilla_test.fern` parses every bundled root and verifies
+// a public chain against them.
+func TestRunnerTLSMozillaExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "tls_mozilla", "std/tls/mozilla", 3)
+}
+
 // `tests/stdlib/tls_client_test.fern` runs std/tls/client's session against
 // std/tls/handshake's server: a trusted chain, the name and root refusals,
 // a forged CertificateVerify, a saved and restored session, close_notify,

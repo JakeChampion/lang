@@ -34,7 +34,9 @@ import (
 // takes only X25519 so the client's X25519MLKEM768 share draws a
 // HelloRetryRequest, one under a CA the client does not trust, a CONNECT
 // proxy, and a line-echo server for the socket client. The client trusts
-// the CA through SSL_CERT_FILE. Both native backends and the interpreter.
+// the CA through SSL_CERT_FILE, and once through the policy's own roots,
+// which also carry an empty store past the machine's. Both native backends
+// and the interpreter.
 func TestTLSClientAgainstGo(t *testing.T) {
 	bin := buildFernCLI(t)
 	w := startTLSWorld(t)
@@ -166,7 +168,12 @@ function show(label: string, r: Result[HttpResponse, fetch.FetchError]): void {
 }
 
 function proxies(https_proxy: string): fetch.Policy {
-  return fetch.Policy { public_only: false, proxies: fetch.ProxyEnv { http_proxy: "", https_proxy: https_proxy, no_proxy: "" } };
+  return fetch.Policy { public_only: false, proxies: fetch.ProxyEnv { http_proxy: "", https_proxy: https_proxy, no_proxy: "" }, roots: None };
+}
+
+// trusting is a policy with its own roots in place of the machine's.
+function trusting(roots: verify.Roots): fetch.Policy {
+  return fetch.Policy { ...proxies(""), roots: Some(roots) };
 }
 
 // socket runs one line through the echo server, then another on a session
@@ -314,6 +321,8 @@ function main(): i32 {
   show("tunnel", fetch.send_on(fetch.sockets(), fetch.get("https://tls.test:@MAIN@/g"), proxies("http://127.0.0.1:@PROXY@")));
   match (verify.system_roots()) {
     Some(roots) => {
+      show("given", fetch.send_on(fetch.sockets(), fetch.get("https://localhost:@RSA@/h"), trusting(roots)));
+      show("none", fetch.send_on(fetch.sockets(), fetch.get("https://localhost:@RSA@/i"), trusting(verify.roots([]))));
       print("socket: " + socket(roots));
       print("mtls: " + mtls(roots));
     },
@@ -340,6 +349,8 @@ func (w *tlsWorld) check(t *testing.T, got string, mainConns int64) {
 		"untrusted: error TLS: the server's certificate is not trusted: tls verify: no path from the certificate reaches a trusted root",
 		"wrongname: error TLS: the server's certificate is not trusted: tls verify: the certificate is not valid for 127.0.0.1",
 		"tunnel: " + ok("/g", "X25519MLKEM768"),
+		"given: " + ok("/h", "X25519MLKEM768"),
+		"none: error TLS: the server's certificate is not trusted: tls verify: no path from the certificate reaches a trusted root",
 		"socket: fern-echo echo ping / resumed resumed-echo again",
 		"mtls: echo fern-client hello / recv tls handshake: the peer sent alert 116",
 	}, "\n") + "\n"

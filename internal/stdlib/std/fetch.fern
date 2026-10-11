@@ -23,10 +23,11 @@
 // leaves the origin; an idempotent request the peer resets before
 // answering is sent once more. Where the client dials, `https` is TLS 1.3
 // (std/tls/client): the server's certificate must chain to the system's
-// roots (`verify.system_roots`, which `SSL_CERT_FILE` overrides) and name
-// the URL's host. A connection whose response was framed and that the
-// peer did not ask to close is kept in the transport's `Idle` pool, with
-// its TLS session when it has one, and
+// roots (`verify.system_roots`, which `SSL_CERT_FILE` overrides) or to the
+// `Policy`'s own (`roots`, say `mozilla.roots()`), and name the URL's host.
+// A connection whose response was framed and that the peer did not ask to
+// close is kept in the transport's `Idle` pool, with its TLS session when
+// it has one, and
 // the next idempotent request to the same host and port takes it rather
 // than dialling; `send` keeps a pool for the one call (so a redirect back
 // to the same origin reuses its connection) and closes it after, a caller
@@ -845,7 +846,7 @@ impl Transport for Sockets {
 // `req.redirects` hops, all under the one total bound. Blocking: every
 // connection is closed before it answers.
 pub function send(req: Request): Result[HttpResponse, FetchError] {
-  return __send_closing(Policy { public_only: false, proxies: __proxies() }, req);
+  return __send_closing(Policy { public_only: false, proxies: __proxies(), roots: None }, req);
 }
 
 // `send_public(req)` — `send`, refusing a host that resolves to an address
@@ -853,14 +854,14 @@ pub function send(req: Request): Result[HttpResponse, FetchError] {
 // deployment exposes publicly. A proxy the environment names is dialled
 // wherever it is.
 pub function send_public(req: Request): Result[HttpResponse, FetchError] {
-  return __send_closing(Policy { public_only: true, proxies: __proxies() }, req);
+  return __send_closing(Policy { public_only: true, proxies: __proxies(), roots: None }, req);
 }
 
 // `send_public_on(tr, req)` — `send_public` over the transport `tr`, whose
 // pool keeps the connection for the next request: the route a handler's
 // platform fetches through (std/platform), the pool the platform's own.
 pub function send_public_on[T: Transport](tr: T, req: Request): Result[HttpResponse, FetchError] {
-  return send_on(tr, req, Policy { public_only: true, proxies: __proxies() });
+  return send_on(tr, req, Policy { public_only: true, proxies: __proxies(), roots: None });
 }
 
 // `__send_closing(policy, req)` — `req` sent over the machine's transport
@@ -893,8 +894,9 @@ function __proxies(): ProxyEnv {
 // `Policy` — what a route may reach: `public_only` refuses a host that
 // resolves to an address `net.is_global` does not admit; `proxies` is the
 // proxy configuration, which `send` and `plat.http` read from the
-// environment once per request.
-pub struct Policy { public_only: boolean, proxies: ProxyEnv }
+// environment once per request; `roots` are the roots a server's chain
+// must reach, the machine's (`verify.system_roots()`) when None.
+pub struct Policy { public_only: boolean, proxies: ProxyEnv, roots: Option[verify.Roots] }
 
 // `send_on(tr, req, policy)` — `send` over the transport `tr` under
 // `policy`: every connection, read and clock reading of the dialled route
@@ -1061,11 +1063,11 @@ function __send_once[T: Transport](tr: T, req: Request, started: i64, policy: Po
 function __send_dialled[T: Transport](tr: T, req: Request, t: __Target, started: i64, policy: Policy): Result[HttpResponse, FetchError] {
   __origin_checked(tr, t, policy)?;
   let guard: boolean = policy.public_only && t.direct;
-  let first: Result[HttpResponse, FetchError] = __attempt(tr, req, t, started, guard, true);
+  let first: Result[HttpResponse, FetchError] = __attempt(tr, req, t, started, guard, policy.roots, true);
   match (first) {
     Err(e) => {
       if (__reset(e) && http.http_method_idempotent(req.method)) {
-        return __attempt(tr, req, t, started, guard, false);
+        return __attempt(tr, req, t, started, guard, policy.roots, false);
       }
       return Err(e);
     },
@@ -1102,20 +1104,21 @@ function __reset(e: FetchError): boolean {
   return false;
 }
 
-// `__attempt(tr, req, t, started, guard, reuse)` — one connection: a kept
-// one to the same place when `reuse` and the method is idempotent (one
+// `__attempt(tr, req, t, started, guard, roots, reuse)` — one connection: a
+// kept one to the same place when `reuse` and the method is idempotent (one
 // that is not may have been acted on by the time a closed kept connection
 // shows itself, so it never risks one), else one opened (only to a global
-// address when `guard`); the request written, the response read, and the
-// connection kept when the response left it reusable, closed otherwise.
-function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64, guard: boolean, reuse: boolean): Result[HttpResponse, FetchError] {
+// address when `guard`, its chain reaching `roots`); the request written,
+// the response read, and the connection kept when the response left it
+// reusable, closed otherwise.
+function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64, guard: boolean, roots: Option[verify.Roots], reuse: boolean): Result[HttpResponse, FetchError] {
   let key: string = __pool_key(t, guard);
   let conn: __Conn = __no_conn();
   if (reuse && http.http_method_idempotent(req.method)) {
     conn = __take_idle(tr, key);
   }
   if (conn.fd < 0) {
-    conn = __connect(tr, t, req.timeouts, guard)?;
+    conn = __connect(tr, t, req.timeouts, guard, roots)?;
   }
   let body: u8[] = req.body.bytes();
   match (__send_all(tr, conn, __head(req, t, body.len()).bytes().concat(body))) {
@@ -1176,10 +1179,11 @@ function __close[T: Transport](tr: T, conn: __Conn): void {
   tr.close(conn.fd);
 }
 
-// `__connect(tr, t, timeouts, guard)` — a connection to the host,
+// `__connect(tr, t, timeouts, guard, roots)` — a connection to the host,
 // resolved and raced under the connect bound; with `guard`, refused
-// before the race when any address resolved is not a global one.
-function __connect[T: Transport](tr: T, t: __Target, timeouts: Timeouts, guard: boolean): Result[__Conn, FetchError] {
+// before the race when any address resolved is not a global one; secured
+// under `roots` when the target is https.
+function __connect[T: Transport](tr: T, t: __Target, timeouts: Timeouts, guard: boolean, roots: Option[verify.Roots]): Result[__Conn, FetchError] {
   let begun: i64 = tr.now_ns();
   let addrs: net.IpAddr[] = __resolve(tr, t.host, guard)?;
   match (tr.connect(addrs, t.port, __connect_bound(timeouts).as_millis() as i32)) {
@@ -1187,7 +1191,7 @@ function __connect[T: Transport](tr: T, t: __Target, timeouts: Timeouts, guard: 
       if (!t.tls) {
         return Ok(__Conn { fd: fd, tls: None, closed: false });
       }
-      match (__secured(tr, fd, t, begun + __connect_bound(timeouts).as_nanos())) {
+      match (__secured(tr, fd, t, begun + __connect_bound(timeouts).as_nanos(), roots)) {
         Ok(s) => {
           return Ok(__Conn { fd: fd, tls: Some(s), closed: false });
         },
@@ -1210,14 +1214,14 @@ function __connect[T: Transport](tr: T, t: __Target, timeouts: Timeouts, guard: 
   return Err(Timeout(Connecting));
 }
 
-// `__secured(tr, fd, t, deadline)` — a TLS session with the origin on
-// `fd`, through the proxy's tunnel when `fd` reaches a proxy, before the
+// `__secured(tr, fd, t, deadline, roots)` — a TLS session with the origin
+// on `fd`, through the proxy's tunnel when `fd` reaches a proxy, before the
 // transport's clock reaches `deadline`.
-function __secured[T: Transport](tr: T, fd: i32, t: __Target, deadline: i64): Result[client.Session, FetchError] {
+function __secured[T: Transport](tr: T, fd: i32, t: __Target, deadline: i64, roots: Option[verify.Roots]): Result[client.Session, FetchError] {
   if (!t.direct) {
     __tunnel(tr, fd, t, deadline)?;
   }
-  return __tls_handshake(tr, fd, t.origin, deadline);
+  return __tls_handshake(tr, fd, t.origin, deadline, roots);
 }
 
 // `__tunnel(tr, fd, t, deadline)` — the proxy on `fd` asked to open a
@@ -1286,11 +1290,11 @@ function __tunnel_status(head: string): Result[void, FetchError] {
   return Ok(());
 }
 
-// `__tls_handshake(tr, fd, host, deadline)` — a TLS session on `fd` for
-// `host` before the transport's clock reaches `deadline`, the server's
-// chain checked against the system's roots.
-function __tls_handshake[T: Transport](tr: T, fd: i32, host: string, deadline: i64): Result[client.Session, FetchError] {
-  let roots: verify.Roots = __system_roots()?;
+// `__tls_handshake(tr, fd, host, deadline, roots)` — a TLS session on `fd`
+// for `host` before the transport's clock reaches `deadline`, the server's
+// chain checked against `roots`, the system's when none are given.
+function __tls_handshake[T: Transport](tr: T, fd: i32, host: string, deadline: i64, given: Option[verify.Roots]): Result[client.Session, FetchError] {
+  let roots: verify.Roots = __roots(given)?;
   let step: client.Step = __tls(client.start(client.config(__tls_name(host), roots).with_alpn(["http/1.1"])))?;
   __write_all(tr, fd, step.output)?;
   let s: client.Session = step.session;
@@ -1327,7 +1331,11 @@ function __handshake_read(got: tcp.Recv): Result[u8[], FetchError] {
   return Err(Timeout(Connecting));
 }
 
-function __system_roots(): Result[verify.Roots, FetchError] {
+// `__roots(given)` — the roots given, else the machine's.
+function __roots(given: Option[verify.Roots]): Result[verify.Roots, FetchError] {
+  if let Some(r) = given {
+    return Ok(r);
+  }
   match (verify.system_roots()) {
     Some(r) => {
       return Ok(r);
