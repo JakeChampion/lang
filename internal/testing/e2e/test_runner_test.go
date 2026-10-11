@@ -1159,8 +1159,16 @@ func TestRunnerHTTPRouterExamplePasses(t *testing.T) {
 
 // `tests/stdlib/http_form_test.fern` reads a urlencoded body as its fields
 // and refuses another media type and a body that is not UTF-8.
+func TestRunnerHTTPCookieExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_cookie", "std/http/cookie", 13)
+}
+
 func TestRunnerHTTPFormExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "http_form", "std/http/form", 4)
+}
+
+func TestRunnerPublicSuffixExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "publicsuffix", "std/publicsuffix", 8)
 }
 
 // `tests/stdlib/http_multipart_test.fern` reads a multipart body part by

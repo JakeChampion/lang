@@ -47,6 +47,17 @@ function __json_hex_lower(d: i32): i32 {
   return d + 87;  // 'a' - 10 + d
 }
 
+// JSON_ESCAPES marks the bytes json_escape rewrites: every C0 control, `"`
+// and `\`. A byte past its end is not in it.
+const JSON_ESCAPES: u8[] = [
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8,
+];
+
 // `json.json_escape(s)` — escape a raw string for embedding inside a
 // JSON string literal (the caller supplies the surrounding quotes).
 // Backslash and double-quote are backslash-escaped, newline / carriage-
@@ -60,64 +71,65 @@ function __json_hex_lower(d: i32): i32 {
 // (#4388 item 4 — it was previously copy-pasted per consumer).
 pub function json_escape(s: string): string {
   let n: i32 = s.len();
-  // Two-pass exact-size buffer (#4379): the five named escapes (" \ \n \r \t)
-  // expand to 2 bytes, any other control byte (<32) to a 6-byte \u00XX, and
-  // everything else passes through 1:1. Replaces the O(n²) `out = out + …` that
-  // recopied the growing result each byte.
-  let total: i32 = 0;
-  let i: i32 = 0;
+  let i: i32 = __scan_set(s, 0, JSON_ESCAPES);
+  if (i == n) {
+    return s;
+  }
+  // An exact-size buffer (#4379): each escaped byte widens to its escape.
+  let total: i32 = n;
   while (i < n) {
-    let b: i32 = s[i] as i32;
-    if (b == 34 || b == 92 || b == 10 || b == 13 || b == 9) {
-      total = total + 2;
-    } else if (b < 32) {
-      total = total + 6;
-    } else {
-      total = total + 1;
-    }
-    i = i + 1;
+    total = total + __json_escape_width(s[i] as i32) - 1;
+    i = __scan_set(s, i + 1, JSON_ESCAPES);
   }
   let buf: u8[] = __alloc_u8(total);
   let pos: i32 = 0;
-  i = 0;
-  while (i < n) {
-    let b: i32 = s[i] as i32;
-    if (b == 34) {  // \"
-      buf = buf.with(pos, 92 as u8);
-      buf = buf.with(pos + 1, 34 as u8);
-      pos = pos + 2;
-    } else if (b == 92) {  // \\
-      buf = buf.with(pos, 92 as u8);
-      buf = buf.with(pos + 1, 92 as u8);
-      pos = pos + 2;
-    } else if (b == 10) {  // \n
-      buf = buf.with(pos, 92 as u8);
-      buf = buf.with(pos + 1, 110 as u8);
-      pos = pos + 2;
-    } else if (b == 13) {  // \r
-      buf = buf.with(pos, 92 as u8);
-      buf = buf.with(pos + 1, 114 as u8);
-      pos = pos + 2;
-    } else if (b == 9) {  // \t
-      buf = buf.with(pos, 92 as u8);
-      buf = buf.with(pos + 1, 116 as u8);
-      pos = pos + 2;
-    } else if (b < 32) {
-      // \u00XX with lowercase hex.
-      buf = buf.with(pos, 92 as u8);  // \
-      buf = buf.with(pos + 1, 117 as u8);  // u
-      buf = buf.with(pos + 2, 48 as u8);  // 0
-      buf = buf.with(pos + 3, 48 as u8);  // 0
-      buf = buf.with(pos + 4, __json_hex_lower(b >> 4 & 15) as u8);
-      buf = buf.with(pos + 5, __json_hex_lower(b & 15) as u8);
-      pos = pos + 6;
-    } else {
-      buf = buf.with(pos, s[i] as u8);
+  let from: i32 = 0;
+  while (from < n) {
+    let stop: i32 = __scan_set(s, from, JSON_ESCAPES);
+    while (from < stop) {
+      buf = buf.with(pos, s[from] as u8);
       pos = pos + 1;
+      from = from + 1;
     }
-    i = i + 1;
+    if (stop < n) {
+      buf = __json_put_escape(buf, pos, s[stop] as i32);
+      pos = pos + __json_escape_width(s[stop] as i32);
+      from = stop + 1;
+    }
   }
   return string_from_bytes_unchecked(buf);
+}
+
+// The escape of a byte JSON_ESCAPES marks is two bytes for `"`, `\`, newline,
+// carriage return and tab, and a six-byte `\u00XX` for any other control.
+function __json_escape_width(b: i32): i32 {
+  if (b == 34 || b == 92 || b == 10 || b == 13 || b == 9) {
+    return 2;
+  }
+  return 6;
+}
+
+// __json_put_escape writes the escape of `b` into `buf` at `pos`.
+function __json_put_escape(buf: u8[], pos: i32, b: i32): u8[] {
+  let out: u8[] = buf.with(pos, 92 as u8);
+  if (b == 34 || b == 92) {
+    return out.with(pos + 1, b as u8);
+  }
+  if (b == 10) {
+    return out.with(pos + 1, 110 as u8);
+  }
+  if (b == 13) {
+    return out.with(pos + 1, 114 as u8);
+  }
+  if (b == 9) {
+    return out.with(pos + 1, 116 as u8);
+  }
+  // \u00XX with lowercase hex.
+  out = out.with(pos + 1, 117 as u8);
+  out = out.with(pos + 2, 48 as u8);
+  out = out.with(pos + 3, 48 as u8);
+  out = out.with(pos + 4, __json_hex_lower(b >> 4 & 15) as u8);
+  return out.with(pos + 5, __json_hex_lower(b & 15) as u8);
 }
 
 pub function json_encode(v: JsonValue): string {
@@ -542,6 +554,11 @@ function __json_p_string(p0: __JsonParser): (string, __JsonParser) {
     return ("", __json_fail(p));
   }
   p = __JsonParser { ...p, pos: p.pos + 1 };
+  // A string with no escape is one slice of the input.
+  let plain: i32 = __scan_set(p.s, p.pos, JSON_STRING_STOPS);
+  if (plain < p.s.len() && p.s[plain] == 34) {
+    return (slice_unchecked(p.s, p.pos, plain) + "", __JsonParser { ...p, pos: plain + 1 });
+  }
   // Accumulate the decoded value in a LOCAL growable u8[] (#4379): the old
   // `out = out + p.s[p.pos:p.pos+1]` appended one byte at a time onto an
   // immutable string -- O(value²), recopying the whole decoded prefix per
@@ -646,11 +663,34 @@ function __json_p_string(p0: __JsonParser): (string, __JsonParser) {
         p = __JsonParser { ...p, pos: p.pos + 1 };
       }
     } else {
-      out = out.append(p.s[p.pos] as u8);
-      p = __JsonParser { ...p, pos: p.pos + 1 };
+      let stop: i32 = __scan_set(p.s, p.pos, JSON_STRING_STOPS);
+      out = __json_append_run(out, p.s, p.pos, stop);
+      p = __JsonParser { ...p, pos: stop };
     }
   }
   return ("", p);  // unreachable
+}
+
+// JSON_STRING_STOPS marks where a string's plain run ends: `"`, `\`, and a NUL
+// byte, so an embedded NUL falls through to the loop that rejects it.
+const JSON_STRING_STOPS: u8[] = [
+  1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8,
+];
+
+// __json_append_run appends s[from:stop] to out.
+function __json_append_run(out: u8[], s: string, from: i32, stop: i32): u8[] {
+  let acc: u8[] = out;
+  let i: i32 = from;
+  while (i < stop) {
+    acc = acc.append(s[i] as u8);
+    i = i + 1;
+  }
+  return acc;
 }
 
 // __json_p_array consumes a JSON array and returns the decoded

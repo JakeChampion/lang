@@ -1,0 +1,83 @@
+import "std/test";
+import "std/publicsuffix";
+
+// tests/stdlib/publicsuffix_test.fern — std/publicsuffix: the registrable
+// domain of publicsuffix.org's own checks (tests/test_psl.txt), those of
+// its ICANN section, in their ASCII spelling; the public suffix behind
+// each; case, a trailing dot and an empty label.
+
+// registrable is `registrable_domain` as the checks write it: the name or
+// "null".
+function registrable(host: string): string {
+  match (publicsuffix.registrable_domain(host)) {
+    Some(d) => {
+      return d;
+    },
+    None => {
+      return "null";
+    }
+  }
+  return "";
+}
+
+// mismatches runs every pair and names the hosts whose answer differs.
+function mismatches(cases: (string, string)[]): string {
+  let out: string = "";
+  for c in cases {
+    let got: string = registrable(c.0);
+    if (got != c.1) {
+      out = out + c.0 + "=" + got + " ";
+    }
+  }
+  return out;
+}
+
+function test_mixed_case_and_leading_dot(): test.TestOutcome {
+  return test.assert_eq(mismatches([("COM", "null"), ("example.COM", "example.com"), ("WwW.example.COM", "example.com"), (".com", "null"), (".example", "null"), (".example.com", "null"), (".example.example", "null"), ("example.com.", "example.com")]), "");
+}
+
+function test_unlisted_tld(): test.TestOutcome {
+  return test.assert_eq(mismatches([("example", "null"), ("example.example", "example.example"), ("b.example.example", "example.example"), ("a.b.example.example", "example.example")]), "");
+}
+
+function test_listed_tlds(): test.TestOutcome {
+  return test.assert_eq(mismatches([("biz", "null"), ("domain.biz", "domain.biz"), ("b.domain.biz", "domain.biz"), ("a.b.domain.biz", "domain.biz"), ("com", "null"), ("example.com", "example.com"), ("b.example.com", "example.com"), ("a.b.example.com", "example.com"), ("test.ac", "test.ac")]), "");
+}
+
+function test_wildcards(): test.TestOutcome {
+  return test.assert_eq(mismatches([("mm", "null"), ("c.mm", "null"), ("b.c.mm", "b.c.mm"), ("a.b.c.mm", "b.c.mm"), ("ck", "null"), ("test.ck", "null"), ("b.test.ck", "b.test.ck"), ("a.b.test.ck", "b.test.ck")]), "");
+}
+
+function test_exceptions(): test.TestOutcome {
+  return test.assert_eq(mismatches([("www.ck", "www.ck"), ("www.www.ck", "www.ck"), ("c.kobe.jp", "null"), ("b.c.kobe.jp", "b.c.kobe.jp"), ("a.b.c.kobe.jp", "b.c.kobe.jp"), ("city.kobe.jp", "city.kobe.jp"), ("www.city.kobe.jp", "city.kobe.jp")]), "");
+}
+
+function test_deeper_rules(): test.TestOutcome {
+  return test.assert_eq(mismatches([("jp", "null"), ("test.jp", "test.jp"), ("www.test.jp", "test.jp"), ("ac.jp", "null"), ("test.ac.jp", "test.ac.jp"), ("www.test.ac.jp", "test.ac.jp"), ("kyoto.jp", "null"), ("test.kyoto.jp", "test.kyoto.jp"), ("ide.kyoto.jp", "null"), ("b.ide.kyoto.jp", "b.ide.kyoto.jp"), ("a.b.ide.kyoto.jp", "b.ide.kyoto.jp"), ("us", "null"), ("test.us", "test.us"), ("www.test.us", "test.us"), ("ak.us", "null"), ("test.ak.us", "test.ak.us"), ("www.test.ak.us", "test.ak.us"), ("k12.ak.us", "null"), ("test.k12.ak.us", "test.k12.ak.us"), ("www.test.k12.ak.us", "test.k12.ak.us")]), "");
+}
+
+function test_idn_as_alabels(): test.TestOutcome {
+  return test.assert_eq(mismatches([("xn--85x722f.com.cn", "xn--85x722f.com.cn"), ("xn--85x722f.xn--55qx5d.cn", "xn--85x722f.xn--55qx5d.cn"), ("www.xn--85x722f.xn--55qx5d.cn", "xn--85x722f.xn--55qx5d.cn"), ("shishi.xn--55qx5d.cn", "shishi.xn--55qx5d.cn"), ("xn--55qx5d.cn", "null"), ("xn--85x722f.xn--fiqs8s", "xn--85x722f.xn--fiqs8s"), ("www.xn--85x722f.xn--fiqs8s", "xn--85x722f.xn--fiqs8s"), ("shishi.xn--fiqs8s", "shishi.xn--fiqs8s"), ("xn--fiqs8s", "null")]), "");
+}
+
+function test_public_suffix(): test.TestOutcome {
+  let got: string = publicsuffix.public_suffix("www.example.co.uk") + "|" + publicsuffix.public_suffix("a.b.c.mm") + "|" + publicsuffix.public_suffix("www.www.ck") + "|" + publicsuffix.public_suffix("example") + "|" + publicsuffix.public_suffix("CO.UK.") + "|" + publicsuffix.public_suffix(".com") + "|" + publicsuffix.public_suffix("");
+  let is: string = publicsuffix.is_public_suffix("co.uk").to_string() + publicsuffix.is_public_suffix("example.co.uk").to_string() + publicsuffix.is_public_suffix("test.ck").to_string() + publicsuffix.is_public_suffix("www.ck").to_string() + publicsuffix.is_public_suffix("").to_string();
+  if (publicsuffix.COUNT < 6000) {
+    return test.fail("fewer than 6000 rules bundled");
+  }
+  return test.assert_eq(got + "|" + is, "co.uk|c.mm|ck|example|co.uk|||truefalsetruefalsefalse");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/publicsuffix");
+  r = r.it("mixed case and a leading dot", test_mixed_case_and_leading_dot);
+  r = r.it("an unlisted TLD", test_unlisted_tld);
+  r = r.it("listed TLDs", test_listed_tlds);
+  r = r.it("wildcards", test_wildcards);
+  r = r.it("exceptions", test_exceptions);
+  r = r.it("deeper rules", test_deeper_rules);
+  r = r.it("IDN rules as A-labels", test_idn_as_alabels);
+  r = r.it("the public suffix", test_public_suffix);
+  return r.finish();
+}

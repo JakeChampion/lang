@@ -12996,6 +12996,19 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           if ((cfa.field == "to_string" || cfa.field == "to_debug") && c.args.len() == 0) {
             return "string";
           }
+          // A builtin array method that hands back an array of the
+          // receiver's type (`append`, `with`) has that type: the stamp
+          // alone is dropped for an element that is not a primitive, so
+          // without this a chained `xs.append(x).concat(ys)` on a record
+          // array never folds its outer call. A template body's `T[]`
+          // receiver is not inferred here with its variables erased (a
+          // clone binds `T` first), so no bare variable is answered.
+          if (cfa.field == "append" && c.args.len() == 1 || cfa.field == "with" && c.args.len() == 2) {
+            let brt: string = mono_infer(cfa.obj, env, funcs);
+            if (array_method_element(brt).len() > 0) {
+              return brt;
+            }
+          }
           // Generic array method `recv.m(args)` whose receiver is an
           // array — folded to `__arrm_m[T]` by
           // register_array_method_generics. Infer the receiver's element

@@ -97,10 +97,10 @@ x86_64/struct_drop.text	3384
 x86_64/struct_drop.ir	358420237
 x86_64/tokenize.text	984
 x86_64/tokenize.ir	36950039
-x86_64/utf8_ingest_unchecked.text	14494
-x86_64/utf8_ingest_unchecked.ir	6251274	3
-x86_64/utf8_ingest_validated.text	14738
-x86_64/utf8_ingest_validated.ir	9325096	3
+x86_64/utf8_ingest_unchecked.text	14598
+x86_64/utf8_ingest_unchecked.ir	4454876	3
+x86_64/utf8_ingest_validated.text	14842
+x86_64/utf8_ingest_validated.ir	7575282	3
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -137,6 +137,12 @@ x86_64/utf8_ingest_validated.ir	9325096	3
 # pins rather than re-pins — and their aarch64 `.ir` half is missing, because
 # no aarch64 host measures it here; perf-aarch64 reports the two UNBASELINED
 # for one run and its block goes in verbatim.
+#
+# Re-pinned 2026-10-11 (#12103) on the four utf8_ingest rows of each arch,
+# whose json_parse now scans strings with __scan_set: `.ir` fell 19-29%
+# (x86_64 unchecked -28.7%, validated -18.8%; aarch64 -26.4%, -18.4%) and
+# `.text` grew 0.7-1.7% for the scan's tables and run helpers. Both figures
+# for both arches are this branch's own measurement.
 #
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
@@ -200,10 +206,10 @@ aarch64/struct_drop.text	3516
 aarch64/struct_drop.ir	428300325
 aarch64/tokenize.text	1170
 aarch64/tokenize.ir	38580038
-aarch64/utf8_ingest_unchecked.text	14568
-aarch64/utf8_ingest_unchecked.ir	6001290	3
-aarch64/utf8_ingest_validated.text	14818
-aarch64/utf8_ingest_validated.ir	9826926	3
+aarch64/utf8_ingest_unchecked.text	14809
+aarch64/utf8_ingest_unchecked.ir	4416066	3
+aarch64/utf8_ingest_validated.text	15059
+aarch64/utf8_ingest_validated.ir	8019270	3
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 x86_64/perceus_cfold.text	2486

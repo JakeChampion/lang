@@ -562,7 +562,7 @@ function main(): i32 {
     show("reset", fetch.send(fetch.get(base() + "/reset")));
     show("resetpost", fetch.send(fetch.request("POST", base() + "/reset-post").with_text("x")));
     let kept: fetch.Sockets = fetch.sockets();
-    let open: fetch.Policy = fetch.Policy { public_only: false, proxies: fetch.proxy_env(), roots: None };
+    let open: fetch.Policy = fetch.Policy { public_only: false, proxies: fetch.proxy_env(), roots: None, jar: None };
     show("kept1", fetch.send_on(kept, fetch.get(base() + "/kept"), open));
     show("kept2", fetch.send_on(kept, fetch.get(base() + "/kept"), open));
     fetch.close_idle(kept);
