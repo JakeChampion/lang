@@ -45,18 +45,20 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
 		{
 			// THE REPRO. Was 400/0 live 16000.
 			name: "unmatched_nested_option",
-			src: `function round(i: i32): i32 {
+			src: `@noinline function hold(o: Option[Option[i32]]): i32 { return 0; }
+function round(i: i32): i32 {
     let o: Option[Option[i32]] = Some(Some(i));
-    return i % 7;
+    return i % 7 + hold(o);
 }` + unmatchedOptoptMain,
 			want: 13,
 		},
 		{
 			// The None-payload spelling of the same construction.
 			name: "unmatched_nested_none",
-			src: `function round(i: i32): i32 {
+			src: `@noinline function hold(o: Option[Option[i32]]): i32 { return 0; }
+function round(i: i32): i32 {
     let o: Option[Option[i32]] = Some(None);
-    return i % 7;
+    return i % 7 + hold(o);
 }` + unmatchedOptoptMain,
 			want: 13,
 		},
@@ -163,9 +165,10 @@ function round(i: i32): i32 {
 			// None, so there is no string to release, and an unguarded walk would
 			// hand __fern_str_free whatever the payload word holds. Was 400/0.
 			name: "rc_inner_none_payload",
-			src: `function round(i: i32): i32 {
+			src: `@noinline function hold(o: Option[Option[string]]): i32 { return 0; }
+function round(i: i32): i32 {
     let o: Option[Option[string]] = Some(None);
-    return i % 7;
+    return i % 7 + hold(o);
 }` + unmatchedOptoptMain,
 			want: 13,
 		},
