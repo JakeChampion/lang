@@ -9,9 +9,9 @@
 //
 // The server's chain must reach one of the roots at the current time and
 // name the server (std/tls/verify), and its CertificateVerify must verify
-// under the leaf's key. The client offers X25519MLKEM768 with X25519 as the
-// group a HelloRetryRequest may ask for, every suite, and the protocols in
-// `alpn`. A server name that is an IP address is checked against the
+// under the leaf's key. The client offers X25519MLKEM768 with X25519,
+// secp256r1 and SecP256r1MLKEM768 as the groups a HelloRetryRequest may
+// ask for, every suite, and the protocols in `alpn`. A server name that is an IP address is checked against the
 // certificate's addresses and not sent as SNI, which carries names only.
 
 import "core/int";
@@ -463,7 +463,10 @@ function __more(own a: handshake.Event[], b: handshake.Event[]): handshake.Event
 
 // Connection — a session over a connected TCP socket, and the tickets the
 // server has issued on it so far, for `with_ticket`.
-pub struct Connection { fd: i32, session: Session, tickets: Ticket[] }
+// `open` is whether the socket is still the connection's: a failure in
+// `recv` or `send` sends the alert and closes it, and `close` after that
+// does nothing.
+pub struct Connection { fd: i32, session: Session, tickets: Ticket[], open: Cell[boolean] }
 
 // Received — what `recv` read: application data, empty when the wait
 // passed first, and whether the peer has ended the stream, by close_notify
@@ -532,11 +535,11 @@ function __handshake_on(fd: i32, config: Config, deadline: i64): Result[Connecti
     if (input.len() == 0) {
       return Err(ClosedEarly);
     }
-    let step: Step = __exchange(fd, s, input)?;
+    let step: Step = __exchange_fd(fd, s, input)?;
     s = step.session;
     tickets = __more_tickets(tickets, step.tickets);
   }
-  return Ok(Connection { fd: fd, session: s, tickets: tickets });
+  return Ok(Connection { fd: fd, session: s, tickets: tickets, open: cell_new(true) });
 }
 
 function __more_tickets(own a: Ticket[], b: Ticket[]): Ticket[] {
@@ -571,7 +574,7 @@ pub function (c: Connection) recv(wait: Duration): Result[Received, TlsError] {
     if (input.len() == 0) {
       return __stream_ended(conn, s);
     }
-    let step: Step = __exchange(c.fd, s, input)?;
+    let step: Step = __exchange(c, s, input)?;
     s = step.session;
     conn = Connection { ...conn, tickets: __more_tickets(conn.tickets, step.tickets) };
     if (step.data.len() > 0 || step.closed) {
@@ -594,9 +597,25 @@ function __stream_ended(c: Connection, s: Session): Result[Received, TlsError] {
   return Ok(__received(c, s, [], true));
 }
 
-// __exchange reads input and sends what the session answers, or the alert a
-// failure calls for.
-function __exchange(fd: i32, s: Session, input: [u8]): Result[Step, TlsError] {
+// __exchange reads input on an open connection and sends what the session
+// answers; a failure sends its alert and closes the socket.
+function __exchange(c: Connection, s: Session, input: [u8]): Result[Step, TlsError] {
+  match (__exchange_fd(c.fd, s, input)) {
+    Ok(step) => {
+      return Ok(step);
+    },
+    Err(e) => {
+      tcp_close(c.fd);
+      c.open.set(false);
+      return Err(e);
+    }
+  }
+  return Err(ClosedEarly);
+}
+
+// __exchange_fd reads input and sends what the session answers, or the
+// alert a failure calls for.
+function __exchange_fd(fd: i32, s: Session, input: [u8]): Result[Step, TlsError] {
   match (s.read(input)) {
     Ok(step) => {
       __send_fd(fd, step.output)?;
@@ -610,8 +629,12 @@ function __exchange(fd: i32, s: Session, input: [u8]): Result[Step, TlsError] {
   return Err(ClosedEarly);
 }
 
-// close sends close_notify and closes the socket.
+// close sends close_notify and closes the socket, once.
 pub function (c: Connection) close(): void {
+  if (!c.open.get()) {
+    return;
+  }
+  c.open.set(false);
   if let Ok(step) = c.session.close() {
     __send_fd(c.fd, step.output);
   }

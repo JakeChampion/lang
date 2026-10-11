@@ -519,6 +519,75 @@ function main(): i32 {
   return signs(ecdsa.P256, ecdsa.Sha256, 32) + 10 * signs(ecdsa.P384, ecdsa.Sha384, 48);
 }
 `, false},
+	// ECDH over P-256 with both scalars secret: the peer's point is public,
+	// and only the two shared secrets are declassified, to compare.
+	{"p256-ecdh", `import "std/crypto/ecdsa";
+
+function filled(seed: i32): u8[] {
+  let b: u8[] = __alloc_u8(32);
+  let i: i32 = 0;
+  while (i < 32) {
+    b = b.with(i, ((i * 13 + seed) & 255) as u8);
+    i = i + 1;
+  }
+  return b;
+}
+
+function agreed(ka: ecdsa.PrivateKey, kb: ecdsa.PrivateKey): i32 {
+  let pa: u8[] = ka.public_point();
+  let pb: u8[] = kb.public_point();
+  __ct_public(pa);
+  __ct_public(pb);
+  match (ecdsa.ecdh(ka, pb)) {
+    Ok(sa) => {
+      match (ecdsa.ecdh(kb, pa)) {
+        Ok(sb) => {
+          __ct_public(sa);
+          __ct_public(sb);
+          let i: i32 = 0;
+          while (i < 32) {
+            if (sa[i] != sb[i]) {
+              return 1;
+            }
+            i = i + 1;
+          }
+          return 0;
+        },
+        Err(e) => {
+          return 2;
+        }
+      }
+    },
+    Err(e) => {
+      return 3;
+    }
+  }
+  return 4;
+}
+
+function main(): i32 {
+  let a: u8[] = filled(5);
+  let b: u8[] = filled(9);
+  __ct_secret(a);
+  __ct_secret(b);
+  match (ecdsa.private_key(ecdsa.P256, a)) {
+    Ok(ka) => {
+      match (ecdsa.private_key(ecdsa.P256, b)) {
+        Ok(kb) => {
+          return agreed(ka, kb);
+        },
+        Err(e) => {
+          return 5;
+        }
+      }
+    },
+    Err(e) => {
+      return 6;
+    }
+  }
+  return 7;
+}
+`, false},
 }
 
 const ctUninitialised = "depends on uninitialised value"

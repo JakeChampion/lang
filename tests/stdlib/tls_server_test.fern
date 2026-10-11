@@ -599,6 +599,70 @@ function presented(cc: client.Config, sc: server.Config): string {
   return "";
 }
 
+// refused_with runs a handshake the server is expected to refuse and
+// reports the server's reason with the alert the client then reads.
+function refused_with(cc: client.Config, sc: server.Config): string {
+  match (started(cc)) {
+    Ok(c0) => {
+      match (listening(sc)) {
+        Ok(s0) => {
+          match (srd(s0, c0.output)) {
+            Ok(s1) => {
+              match (crd(c0.session, s1.output)) {
+                Ok(c1) => {
+                  match (s1.session.read(c1.output)) {
+                    Ok(_) => {
+                      return "accepted";
+                    },
+                    Err(f) => {
+                      match (crd(c1.session, f.alert)) {
+                        Ok(_) => {
+                          return "server: " + f.message() + " / client: no alert";
+                        },
+                        Err(e) => {
+                          return "server: " + f.message() + " / " + e;
+                        }
+                      }
+                    }
+                  }
+                },
+                Err(e) => {
+                  return e;
+                }
+              }
+            },
+            Err(e) => {
+              return e;
+            }
+          }
+        },
+        Err(e) => {
+          return e;
+        }
+      }
+    },
+    Err(e) => {
+      return e;
+    }
+  }
+  return "";
+}
+
+// A client whose CertificateVerify does not verify under its leaf's key is
+// refused with decrypt_error, and one signing under a scheme its leaf's key
+// cannot make with illegal_parameter (§4.4.3, §4.2.3): identities put
+// together from the client's chain and a key that is not its own.
+function test_client_signature_refused(): test.TestOutcome {
+  let cc: client.Config = client.config("tls.example", roots());
+  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8)).with_client_roots(roots());
+  let other_ed: identity.Identity = identity.Identity { ...identity_of(ED_LEAF, ED_PKCS8), chain: [hex.hex_decode(CLIENT_LEAF)] };
+  if (refused_with(cc.with_identity(other_ed), sc) != "server: the client's CertificateVerify does not verify / client: tls handshake: the peer sent alert 51") {
+    return test.fail("another key: " + refused_with(cc.with_identity(other_ed), sc));
+  }
+  let p256: identity.Identity = identity.Identity { ...identity_of(P256_LEAF, P256_PKCS8), chain: [hex.hex_decode(CLIENT_LEAF)] };
+  return test.assert_eq(refused_with(cc.with_identity(p256), sc), "server: the client's CertificateVerify names a scheme its key cannot make / client: tls handshake: the peer sent alert 47");
+}
+
 // A server with client roots takes a client whose chain reaches them and
 // whose CertificateVerify verifies, and refuses one sending nothing (the
 // client reads certificate_required), one under another root, and one
@@ -703,6 +767,7 @@ function main(): i32 {
   r = r.it("close_notify", test_close);
   r = r.it("resumption", test_resumption);
   r = r.it("client certificate", test_client_certificate);
+  r = r.it("client signature refused", test_client_signature_refused);
   r = r.it("client certificate and resumption", test_client_certificate_resumed);
   return r.finish();
 }

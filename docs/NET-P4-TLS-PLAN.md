@@ -230,6 +230,29 @@ TLS itself is `std/tls/keyschedule`, `keyshare`, `message`, `record`,
     way with OpenSSL, Go and curl) under lane `net-tls-interop` in
     `refs/notes/perf`. Remaining: the tlsfuzzer set.
 
+    tlsfuzzer's first finding came before its lane did: its TLS 1.3
+    scripts offer a secp256r1 key share by default, and every one ended
+    in handshake_failure because `std/tls/keyshare` had only X25519 and
+    X25519MLKEM768, while RFC 8446 §9.1 makes secp256r1 the one key
+    exchange every implementation must have. `keyshare.Secp256r1`
+    (0x0017) now rides `ecdsa.ecdh`, the signer's constant-time
+    multiplication over the peer's point, with a 40-byte draw reduced
+    modulo the order so no draw is refused; both sides name it after
+    X25519, so a server with only P-256 gets there by HelloRetryRequest.
+    Gate: RFC 5903 §8.1's exchange in the keyshare and ecdsa suites, the
+    handshake suite, and `TestSelfHostCtGateX86_64/p256-ecdh`. With the
+    P-256 half in place, SecP256r1MLKEM768 (0x11eb) is the same hybrid
+    composition as X25519MLKEM768 with the P-256 part first, and the
+    server's entropy is sized from its groups (`server_entropy(config)`)
+    rather than fixed. The same scripts found two more: a client
+    CertificateVerify that does not verify was refused with
+    bad_certificate where §4.4.3 says decrypt_error, and one under a
+    scheme the client's key cannot make with bad_certificate where §4.2.3
+    says illegal_parameter; and a socket `Connection` whose `recv` had
+    failed still sent close_notify from `close()` after the fatal alert,
+    where nothing may follow a fatal alert, so a failed exchange now
+    closes the socket and `close()` after it does nothing.
+
 kTLS and the QUIC secret hooks come after slice 11. The handshake
 interface in slice 8 keeps the secrets and handshake messages separable,
 so HTTP/3 can be a package.

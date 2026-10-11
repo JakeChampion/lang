@@ -388,6 +388,22 @@ pub function (k: PrivateKey) public_point(): u8[] {
   return out;
 }
 
+// ecdh(key, peer) — the x-coordinate of [d]Q, Q the uncompressed SEC 1
+// point `peer` on the key's curve: the shared secret of ECDHE (RFC 8446
+// §7.4.1), big-endian at the curve's size. Constant time in d, as signing
+// is; the peer's point is public and checked to lie on the curve.
+pub function ecdh(key: PrivateKey, peer: [u8]): Result[u8[], EcdsaError] {
+  match (public_key(key.curve, peer)) {
+    Ok(_) => {},
+    Err(e) => {
+      return Err(e);
+    }
+  }
+  let s: Signer = __signer(key.curve);
+  let q: Proj = Proj { x: mont.from_bytes(s.fp, peer[1:1 + s.bytes]), y: mont.from_bytes(s.fp, peer[1 + s.bytes:1 + 2 * s.bytes]), z: s.fp.one };
+  return Ok(__affine(s, __scalar_mul(s, q, key.d)).0);
+}
+
 // sign(key, hash, msg) — the DER ECDSA-Sig-Value over msg's digest, with
 // RFC 6979's nonce. SHA-256 and SHA-384 only.
 pub function sign(key: PrivateKey, hash: Hash, msg: [u8]): Result[u8[], EcdsaError] {
@@ -480,14 +496,19 @@ function __padd(s: Signer, p1: Proj, p2: Proj): Proj {
   return Proj { x: x3, y: y3, z: z3 };
 }
 
-// __base_mul is [k]G for a secret big-endian k: four doublings and one
-// addition per 4-bit digit, the digit's multiple of G taken from all
-// sixteen by mask.
+// __base_mul is [k]G for a secret big-endian k.
 function __base_mul(s: Signer, k: [u8]): Proj {
-  let table: Proj[] = [__identity(s), s.g];
+  return __scalar_mul(s, s.g, k);
+}
+
+// __scalar_mul is [k]P for a secret big-endian k: four doublings and one
+// addition per 4-bit digit, the digit's multiple of P taken from all
+// sixteen by mask.
+function __scalar_mul(s: Signer, point: Proj, k: [u8]): Proj {
+  let table: Proj[] = [__identity(s), point];
   let i: i32 = 2;
   while (i < 16) {
-    table = table.append(__padd(s, table[i - 1], s.g));
+    table = table.append(__padd(s, table[i - 1], point));
     i = i + 1;
   }
   let r: Proj = __identity(s);

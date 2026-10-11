@@ -1201,6 +1201,13 @@ and the valgrind gate checks it (`TestSelfHostCtGateX86_64/ecdsa`).
 - `private_key(curve, d)` takes a big-endian scalar at the curve's size,
   refused with `ScalarRange` outside [1, n); `(k).public_point()` is its
   uncompressed SEC 1 point.
+- `ecdh(key, peer: [u8]): Result[u8[], EcdsaError]` is the x-coordinate of
+  the key's scalar times the peer's uncompressed SEC 1 point, big-endian at
+  the curve's size: ECDHE's shared secret (RFC 8446 §7.4.1). The peer's
+  point is checked as `public_key` checks one; the multiplication is the
+  signer's, constant time in the scalar
+  (`TestSelfHostCtGateX86_64/p256-ecdh`). RFC 5903 §8.1's P-256 exchange
+  is the vector (`tests/stdlib/ecdsa_test.fern`).
 - `sign(key, hash, msg): Result[u8[], EcdsaError]` is the DER signature,
   the same bytes for the same key and message (RFC 6979). It takes `Sha256`
   or `Sha384`, the hashes TLS 1.3 pairs with these curves, and refuses
@@ -1278,7 +1285,9 @@ address is checked against the certificate's addresses and not sent as SNI
   socket already connected (after a STARTTLS, or through a proxy's tunnel).
   `(c).send(data)`, `(c).recv(wait)`, a `Received { conn, data, ended }`
   whose data is empty when the wait passed first, and `(c).close()`;
-  `c.tickets` are the tickets issued so far.
+  `c.tickets` are the tickets issued so far. A failure in `send` or `recv`
+  sends the alert it calls for and closes the socket, and `close()` after
+  it does nothing.
 - `TlsError` is `HandshakeFailed(HandshakeError)`, `Untrusted(VerifyError)`,
   `SignatureInvalid`, `Unresolved(DnsError)`, `NetFailed(NetError)`,
   `HandshakeTimeout`, `ClosedEarly` or `RecordCut` (closed inside a record),
@@ -1331,7 +1340,7 @@ step = step.client.read(received)?;   // step.output, step.data, step.events
   such a retry share.
 - `server_config(chain, schemes)` and `ServerConfig` (`chain`, leaf first;
   `schemes` its key can make; `suites`, `groups` and `alpn` in preference
-  order). `server_new(config, entropy)` takes 96 bytes. The server reads the
+  order). `server_new(config, entropy)` takes `server_entropy(config)` random bytes. The server reads the
   client's `server_name` and chooses its `alpn`. When the client sent no
   share in a group the server takes but names one, the server sends a
   HelloRetryRequest for it, and the client answers with a second
@@ -1436,14 +1445,20 @@ let keys: keyschedule.TrafficKeys = keyschedule.traffic_keys(suite, hs.server_tr
 
 ### `std/tls/keyshare`
 
-The key exchange a TLS 1.3 key_share carries: X25519, and X25519MLKEM768, the
-hybrid of ML-KEM-768 and X25519 (draft-ietf-tls-ecdhe-mlkem). The caller
-supplies the randomness, so a handshake replays exactly. ML-KEM's part comes
-first in the client's share (encapsulation key, then X25519 key), the
-server's (ciphertext, then X25519 key) and the shared secret. Verified against
-RFC 8448 §3's X25519 shares and against Go's crypto/mlkem and crypto/ecdh for
-the hybrid (`tests/stdlib/tls_keyshare_test.fern`), and run under the
-constant-time gate.
+The key exchange a TLS 1.3 key_share carries: X25519, X25519MLKEM768, the
+hybrid of ML-KEM-768 and X25519 (draft-ietf-tls-ecdhe-mlkem), secp256r1,
+the exchange RFC 8446 §9.1 requires of every implementation, and
+SecP256r1MLKEM768, the hybrid of ML-KEM-768 and secp256r1. The caller
+supplies the randomness, so a handshake replays exactly. In X25519MLKEM768
+ML-KEM's part comes first in the client's share (encapsulation key, then
+X25519 key), the server's (ciphertext, then X25519 key) and the shared
+secret; in SecP256r1MLKEM768 the P-256 part comes first throughout. A
+secp256r1 share is an uncompressed SEC 1 point, and its scalar is a
+40-byte draw reduced modulo the order (FIPS 186-5 A.2.1), so no draw is
+refused. Verified against RFC 8448 §3's X25519 shares, against Go's
+crypto/mlkem and crypto/ecdh for the X25519 hybrid, and against RFC 5903
+§8.1 for secp256r1 and its hybrid (`tests/stdlib/tls_keyshare_test.fern`),
+and run under the constant-time gate.
 
 ```fern
 let mine: keyshare.ClientShare = keyshare.client_share(keyshare.X25519MlKem768, entropy)?;
@@ -1451,18 +1466,21 @@ let theirs: keyshare.ServerShare = keyshare.server_share(mine.group, mine.public
 let shared: u8[] = mine.shared_secret(theirs.public)?;   // theirs.shared_secret
 ```
 
-- `Group` is `X25519` or `X25519MlKem768`, with `code()` (0x001d, 0x11ec),
-  `client_entropy()` and `server_entropy()` (32 and 96, 32 and 64 bytes), and
-  `client_share_len()` and `server_share_len()`. `group(code)` is the
-  `Option[Group]` for a NamedGroup code.
+- `Group` is `X25519`, `X25519MlKem768`, `Secp256r1` or `Secp256r1MlKem768`,
+  with `code()` (0x001d, 0x11ec, 0x0017, 0x11eb), `client_entropy()` and
+  `server_entropy()` (32, 96, 40 and 104 bytes for the client; 32, 64, 40
+  and 72 for the server), and `client_share_len()` and `server_share_len()`.
+  `group(code)` is the `Option[Group]` for a NamedGroup code.
 - `client_share(g, entropy): Result[ClientShare, KeyShareError]` — `public`
   goes in the ClientHello; `shared_secret(server_public)` finishes the
   exchange.
 - `server_share(g, client_public, entropy): Result[ServerShare,
   KeyShareError]` — `public` for the ServerHello and `shared_secret`.
 - `KeyShareError` is `EntropyLength(n, want)`, `ShareLength(n, want)`,
-  `LowOrder` (an X25519 key whose shared secret is all zeros) or
-  `BadEncapsulationKey`, with `message()`.
+  `LowOrder` (an X25519 key whose shared secret is all zeros),
+  `BadEncapsulationKey`, `OffCurve` (a secp256r1 point off the curve) or
+  `ZeroScalar` (the one draw in 2^256 that reduces to zero), with
+  `message()`.
 
 ### `std/tls/message`
 
@@ -1595,10 +1613,14 @@ crypto/tls client in `TestTLSServerAgainstGo`).
   socket just accepted, closing it on failure; `(c).send(data)`,
   `(c).recv(wait)` giving a `Received { conn, data, ended }` (application
   data the client sent in the same read as its Finished comes back first),
-  and `(c).close()`.
+  and `(c).close()`. A failure in `send` or `recv` sends the alert it calls
+  for and closes the socket, and `close()` after it does nothing.
 - `TlsError` is `HandshakeFailed(HandshakeError)`, `SigningFailed`,
-  `ClientCertificateMissing`, `ClientUntrusted(VerifyError)`,
-  `ClientSignatureInvalid`, `NetFailed(NetError)`, `HandshakeTimeout`,
+  `ClientCertificateMissing` (alert certificate_required),
+  `ClientUntrusted(VerifyError)` (bad_certificate), `ClientSignatureInvalid`
+  (decrypt_error), `ClientSchemeMismatch` (a CertificateVerify under a
+  scheme the client's key cannot make; illegal_parameter),
+  `NetFailed(NetError)`, `HandshakeTimeout`,
   `ClosedEarly` or `RecordCut`, with `message()`.
 
 ### `std/tls/verify`

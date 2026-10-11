@@ -235,6 +235,49 @@ function test_bad_keys(): test.TestOutcome {
   return test.assert_eq(key_error(hex.hex_encode(off)), "ecdsa: the point is not on the curve");
 }
 
+function ecdh_shown(curve: ecdsa.Curve, d: string, peer: string): string {
+  match (ecdsa.private_key(curve, hex.hex_decode(d))) {
+    Ok(k) => {
+      match (ecdsa.ecdh(k, hex.hex_decode(peer))) {
+        Ok(shared) => {
+          return hex.hex_encode(shared);
+        },
+        Err(e) => {
+          return e.message();
+        }
+      }
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+// ECDH: RFC 5903 §8.1's P-256 exchange both ways, a P-384 exchange against
+// Python's cryptography, and a point off the curve refused.
+function test_ecdh(): test.TestOutcome {
+  let gi: string = "04dad0b65394221cf9b051e1feca5787d098dfe637fc90b9ef945d0c37725811805271a0461cdb8252d61f1c456fa3e59ab1f45b33accf5f58389e0577b8990bb3";
+  let gr: string = "04d12dfb5289c8d4f81208b70270398c342296970a0bccb74c736fc7554494bf6356fbf3ca366cc23e8157854c13c58d6aac23f046ada30f8353e74f33039872ab";
+  let shared: string = "d6840f6b42f6edafd13116e0e12565202fef8e9ece7dce03812464d04b9442de";
+  if (ecdh_shown(ecdsa.P256, "c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433", gr) != shared) {
+    return test.fail("the initiator's secret");
+  }
+  if (ecdh_shown(ecdsa.P256, "c6ef9c5d78ae012a011164acb397ce2088685d8f06bf9be0b283ab46476bee53", gi) != shared) {
+    return test.fail("the responder's secret");
+  }
+  let pb: string = "04b01380bb42d55e316eed81928efebef108186c6d6c88cdad320ca9c4320cad6a603be8d80e57dd2782b8b1a4cdbe6e82f596d07d1c2f16249a6ce4cf99b192f0c486b5a37096fc91a6c0c354546abe352a99cdf1ad679eaeb03b7864e790c15f";
+  if (ecdh_shown(ecdsa.P384, "333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333", pb) != "41d79200620b9d74eff5bf04c6dea1535f44679f7c12716d0435a854e8fd7900ccb9d52c58c84d45685b1a6239234572") {
+    return test.fail("P-384");
+  }
+  let off: u8[] = hex.hex_decode(gr);
+  off = off.with(64, off[64] ^ 1 as u8);
+  if (ecdh_shown(ecdsa.P256, "c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433", hex.hex_encode(off)) != "ecdsa: the point is not on the curve") {
+    return test.fail("a point off the curve");
+  }
+  return test.assert_eq(ecdh_shown(ecdsa.P256, "c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433", pb), "ecdsa: the key is not an uncompressed SEC 1 point on its curve");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/crypto/ecdsa");
   r = r.it("P-256 SHA-256", test_sha256);
@@ -244,5 +287,6 @@ function main(): i32 {
   r = r.it("malformed keys", test_bad_keys);
   r = r.it("signing", test_signing);
   r = r.it("signing refusals", test_signing_refusals);
+  r = r.it("ECDH", test_ecdh);
   return r.finish();
 }
