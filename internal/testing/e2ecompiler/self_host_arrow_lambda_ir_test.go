@@ -34,6 +34,11 @@ var arrowLambdaIRCases = []struct {
 	// `own` on the FIRST parameter: the lookahead must read past the modifier
 	// to the `name: T` shape, as it does on a declaration.
 	{"own-first-param", `function main(): i32 { let f = (own a: string[]): string[] => a; let xs: string[] = f(["x", "y"]); return xs.len(); }`},
+	// A void arrow lambda whose body is a void call, and `return f();` in
+	// a void function: the call runs for its effect, then the exit.
+	{"void-call-body", `function bump(c: Cell[i32], by: i32): void { c.set(c.get() + by); }
+function twice(c: Cell[i32]): void { return bump(c, 2); }
+function main(): i32 { let c: Cell[i32] = cell_new(1); let f = (n: i32): void => bump(c, n); f(4); twice(c); return c.get(); }`},
 }
 
 // TestSelfHostArrowLambdaIR compiles each case with the self-host CLI for

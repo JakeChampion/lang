@@ -8966,7 +8966,9 @@ function void_ret_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.D
         }
         if (!bare) {
           let t: typeinfo.Type = check_expr(r.value, cur);
-          out = out.append(dg_at("E002", "return value: expected void, got " + type_label(t), r.line, r.col));
+          if (!is_void(t)) {
+            out = out.append(dg_at("E002", "return value: expected void, got " + type_label(t), r.line, r.col));
+          }
         }
       },
       ast.StmtIf(f) => {
