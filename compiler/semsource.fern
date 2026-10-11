@@ -17,6 +17,7 @@ import "./ssaunits";
 import "./ownership";
 import "./util";
 import "./seminline";
+import "./semdead";
 import "./semfuse";
 import "./semoption";
 import "./semndarray";
@@ -8683,7 +8684,7 @@ function produce_module(mod: parser.Module, verify: boolean, debug_lines: boolea
     // Fusion first: it recognises a pipeline by its calls to std/array's
     // combinators, which a function called once would otherwise absorb.
     let inlined: Spliced = inline_leaves(fuse_pipelines(all, names, mod.funcs), names, mod);
-    all = scale_ndarray_maps(without_unnamed(inlined.all, names, inlined.spliced, mod), names, mod);
+    all = prune_dead_constructions(scale_ndarray_maps(without_unnamed(inlined.all, names, inlined.spliced, mod), names, mod));
   }
   decls = [];
   instances = [];
@@ -8917,6 +8918,25 @@ function fuse_pipelines(all: Produced[], names: string[], decls: parser.FuncDecl
     i = i + 1;
   }
   return result;
+}
+
+// A construction nothing reads is not built (semdead). Last, since the
+// splices above are what leave most such constructions behind.
+function prune_dead_constructions(all: Produced[]): Produced[] {
+  let out: Produced[] = [];
+  let i: i32 = 0;
+  while (i < all.len()) {
+    let p: Produced = all[i];
+    if (p.ok && !p.template && !p.bodyless) {
+      let pr: semdead.Pruned = semdead.prune(p.func);
+      if (pr.removed > 0) {
+        p = Produced { ...p, func: pr.f, analysis: None };
+      }
+    }
+    out = out.append(p);
+    i = i + 1;
+  }
+  return out;
 }
 
 function ndarray_kernels_needed(names: string[], enabled: boolean, products: boolean, report: boolean): boolean {

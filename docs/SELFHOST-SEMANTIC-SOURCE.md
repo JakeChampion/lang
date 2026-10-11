@@ -34,6 +34,11 @@ Unsupported constructs refuse the whole function with a reason.
   one, so a member widens to the union the tuple or array declares; an empty
   literal has nothing else to name it.
 - Index and tuple-field projections as `array_get` / `tuple_get`.
+- A record, tuple or variant construction nothing reads is removed before
+  the unit plan sees it (`semdead`, last in the pipeline after the splices
+  that leave such constructions behind): its operands lose a reader and are
+  released where they die. A record update, a type with a finalizer, and
+  under `-g` a value a source variable is bound to are kept.
 - Record literals as `record_new` and named-field projections as
   `record_get`. A record is a declared struct with no type parameters and no
   enum owner; its schema (`semrecords.Record`) is the declaration's field

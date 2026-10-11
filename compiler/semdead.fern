@@ -1,0 +1,65 @@
+// A record, tuple or variant construction nothing reads is not built
+// (#11912): its box, the stores into it and its release would be the whole
+// of its effect. Each operand loses a reader and is released where it dies,
+// which is where the construction stood. A construction is kept when it is
+// a record update (its base's box may be consumed through it), when its type
+// has a finalizer (the drop is the point of building it), and under `-g`
+// when a source variable is bound to it. Removing one can leave another
+// unread, so the pass runs to a fixpoint.
+import "./ssa";
+import "./ssasem";
+import "./util";
+
+pub struct Pruned { f: ssasem.Func, removed: i32 }
+
+pub function prune(f: ssasem.Func): Pruned {
+  let g: ssa.SFunc = f.graph;
+  let removed: i32 = 0;
+  let round: i32 = 1;
+  while (round > 0) {
+    let r: Round = prune_round(f, g, ssa.use_counts(g));
+    g = r.g;
+    round = r.removed;
+    removed = removed + r.removed;
+  }
+  if (removed == 0) {
+    return Pruned { f: f, removed: 0 };
+  }
+  return Pruned { f: ssasem.Func { ...f, graph: g }, removed: removed };
+}
+
+struct Round { g: ssa.SFunc, removed: i32 }
+
+function prune_round(f: ssasem.Func, g: ssa.SFunc, uses: i32[]): Round {
+  let blocks: ssa.SBlock[] = [];
+  let removed: i32 = 0;
+  for b in g.blocks {
+    let kept: ssa.SInst[] = [];
+    for ins in b.insts {
+      if (unread_construction(f, uses, ins)) {
+        removed = removed + 1;
+      } else {
+        kept = kept.append(ins);
+      }
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: kept });
+  }
+  if (removed == 0) {
+    return Round { g: g, removed: 0 };
+  }
+  return Round { g: ssa.SFunc { ...g, blocks: blocks }, removed: removed };
+}
+
+function unread_construction(f: ssasem.Func, uses: i32[], ins: ssa.SInst): boolean {
+  let k: i32 = ins.kind_tag;
+  if (k != ssasem.record_new() && k != ssasem.tuple_new() && k != ssasem.variant_new()) {
+    return false;
+  }
+  if (ins.result < 0 || ins.result >= uses.len() || uses[ins.result] != 0) {
+    return false;
+  }
+  if (ssasem.update_base(ins) >= 0 || util.index_of_i32(f.dbg_vals, ins.result) >= 0) {
+    return false;
+  }
+  return !ssasem.has_finalizer(f, f.values[ins.result]);
+}
