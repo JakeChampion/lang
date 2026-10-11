@@ -1076,6 +1076,15 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 		if err != nil {
 			return nil, err
 		}
+		var mtps []string
+		var mbounds map[string][]string
+		var mbargs map[string][][]ast.Type
+		if p.match(lexer.Punct, "[") {
+			mtps, mbounds, mbargs, err = p.parseTypeParamListWithArgs()
+			if err != nil {
+				return nil, err
+			}
+		}
 		if _, err := p.expect(lexer.Punct, "("); err != nil {
 			return nil, err
 		}
@@ -1136,8 +1145,14 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 		} else if _, err := p.expect(lexer.Punct, ";"); err != nil {
 			return nil, err
 		}
+		// An impl method cannot declare type parameters of its own, so a
+		// required method with them could never be provided.
+		if body == nil && len(mtps) > 0 {
+			return nil, p.errorf(mkw.Pos, "trait method %q declares its own type parameters, so it must have a default body", mname.Text)
+		}
 		td.Methods = append(td.Methods, ast.TraitMethod{
 			P: mkw.Pos, Name: mname.Text, Params: params, Result: ret, Assoc: assoc, Body: body,
+			TypeParams: mtps, Bounds: mbounds, BoundArgs: mbargs,
 		})
 	}
 	if _, err := p.expect(lexer.Punct, "}"); err != nil {

@@ -10140,3 +10140,59 @@ function main(): i32 {
 		t.Errorf("inherited generic-trait default should typecheck: %v", err)
 	}
 }
+
+// A default with its own type parameter, inherited by an impl that declares a
+// parameter of the same name, keeps the two apart.
+func TestTraitDefaultOwnTypeParamRenamedApart(t *testing.T) {
+	src := `trait Iter[T] {
+  function next(self: Self): Option[(T, Self)];
+  function fold[U](self: Self, init: U, f: (U, T) => U): U {
+    let acc: U = init;
+    let cur: Self = self;
+    let go: boolean = true;
+    while (go) {
+      match (cur.next()) {
+        Some(t) => { acc = f(acc, t.0); cur = t.1; },
+        None => { go = false; }
+      }
+    }
+    return acc;
+  }
+}
+struct Pair[T, U] { a: T, b: U, done: boolean }
+impl[T, U] Iter[U] for Pair[T, U] {
+  function next(self: Pair[T, U]): Option[(U, Pair[T, U])] {
+    if (self.done) { return None; }
+    return Some((self.b, Pair { a: self.a, b: self.b, done: true }));
+  }
+}
+function main(): i32 {
+  let p: Pair[string, i32] = Pair { a: "x", b: 4, done: false };
+  let n: boolean = p.fold(false, (acc: boolean, v: i32): boolean => acc || v == 4);
+  return 0;
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("own type parameter of an inherited default should typecheck: %v", err)
+	}
+}
+
+// `Self` written in a default's body is the impl type, as in a hand-written
+// impl method (#12114).
+func TestTraitDefaultBodySelfIsImplType(t *testing.T) {
+	src := `trait Count {
+  function step(self: Self): Self;
+  function twice(self: Self): Self {
+    let a: Self = self.step();
+    return a.step();
+  }
+}
+struct C { n: i32 }
+impl Count for C { function step(self: C): C { return C { n: self.n + 1 }; } }
+function main(): i32 {
+  let c: C = C { n: 0 };
+  return c.twice().n;
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("Self in a default's body should be the impl type: %v", err)
+	}
+}

@@ -742,6 +742,7 @@ func (f *formatter) formatTraitMethod(m ast.TraitMethod) {
 	f.indent(1)
 	f.b.WriteString("function ")
 	f.b.WriteString(m.Name)
+	f.writeTypeParams(m.TypeParams, m.Bounds, m.BoundArgs)
 	f.b.WriteByte('(')
 	for i, p := range m.Params {
 		if i > 0 {

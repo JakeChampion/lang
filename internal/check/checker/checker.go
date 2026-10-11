@@ -5322,6 +5322,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 				mangled = got
 			}
 			sig, ok := c.info.FuncSigs[mangled]
+			// A default generic in its own parameters is inherited by every
+			// impl; a concrete clone carries only the instances it calls.
+			if !ok && len(m.TypeParams) > 0 && m.Body != nil {
+				continue
+			}
 			if !ok {
 				c.errfCode(impl.P, "E021", "%s does not implement %s: missing method %q", demangle(typeName), demangle(impl.Trait), m.Name)
 				conforms = false
@@ -5344,7 +5349,18 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 					traitSub[tp] = impl.TraitArgs[i]
 				}
 			}
+			// A method's own type parameters are renamed apart from the
+			// impl's as synthesizeTraitDefaults renames them.
+			ownSub := map[string]ast.Type{}
+			if _, renamed := renameApart(m.TypeParams, impl.TypeParams, impl.TraitArgs); len(renamed) > 0 {
+				for from, to := range renamed {
+					ownSub[from] = ast.ParamType{Name: to}
+				}
+			}
 			subTrait := func(t ast.Type) ast.Type {
+				if len(ownSub) > 0 {
+					t = substByName(t, ownSub)
+				}
 				if len(traitSub) > 0 {
 					t = substByName(t, traitSub)
 				}
@@ -7307,7 +7323,7 @@ func (c *checker) synthesizeTraitDefaults(prog *ast.Program) {
 				P:              m.P,
 				NamePos:        m.P,
 				Name:           m.Name,
-				ReturnType:     ast.SubstSelf(m.Result, impl.Type),
+				ReturnType:     m.Result,
 				Body:           ast.CloneBlock(m.Body),
 				SourceModule:   impl.SourceModule,
 				DefiningModule: td.SourceModule,
@@ -7317,7 +7333,7 @@ func (c *checker) synthesizeTraitDefaults(prog *ast.Program) {
 				// Associated default (no `self`): hoists to
 				// `__assoc_<Type>_<name>`. Use methodTypeName so the hoist
 				// key matches what the conformance pass looks up.
-				method.Params = substSelfParams(m.Params, impl.Type)
+				method.Params = append([]ast.Param(nil), m.Params...)
 				if tn, ok := methodTypeName(impl.Type); ok {
 					method.AssocType = tn
 				} else {
@@ -7328,22 +7344,100 @@ func (c *checker) synthesizeTraitDefaults(prog *ast.Program) {
 				// receiver the hoist prepends as Params[0].
 				recv := m.Params[0]
 				method.Receiver = &ast.Param{Name: recv.Name, Type: impl.Type, Own: recv.Own}
-				method.Params = substSelfParams(m.Params[1:], impl.Type)
+				method.Params = append([]ast.Param(nil), m.Params[1:]...)
+			}
+			// The default's own type parameters are renamed apart from the
+			// impl's first, so the trait's arguments substituted next cannot
+			// be taken for them.
+			own, renamed := renameApart(m.TypeParams, impl.TypeParams, impl.TraitArgs)
+			if len(renamed) > 0 {
+				from := make([]string, 0, len(renamed))
+				to := make([]ast.Type, 0, len(renamed))
+				for _, v := range m.TypeParams {
+					if r, ok := renamed[v]; ok {
+						from = append(from, v)
+						to = append(to, ast.ParamType{Name: r})
+					}
+				}
+				substTraitArgs(method, from, to)
 			}
 			substTraitArgs(method, td.TypeParams, implTraitArgs(impl))
+			// `Self` expands last: the impl type names the impl's own
+			// parameters, which neither substitution above may touch.
+			method.ReturnType = ast.SubstSelf(method.ReturnType, impl.Type)
+			method.Params = substSelfParams(method.Params, impl.Type)
+			ast.Walk(method.Body, func(n ast.Node) bool {
+				forEachDeclaredType(n, func(t *ast.Type, _ ast.Position) {
+					*t = ast.SubstSelf(*t, impl.Type)
+				})
+				return true
+			})
 			// A parametric impl (`impl[T: Bound] Trait for Box[T]`) makes
 			// every method generic over the impl's type params — a default
 			// body may reference T — so carry the params + bounds exactly as
-			// the parser does for written methods.
-			if len(impl.TypeParams) > 0 {
-				method.TypeParams = append([]string(nil), impl.TypeParams...)
-				method.Bounds = impl.Bounds
-				method.BoundArgs = impl.BoundArgs
+			// the parser does for written methods, followed by the default's
+			// own.
+			if len(impl.TypeParams) > 0 || len(own) > 0 {
+				method.TypeParams = append(append([]string(nil), impl.TypeParams...), own...)
+				method.Bounds = mergeBounds(impl.Bounds, m.Bounds, renamed)
+				method.BoundArgs = mergeBounds(impl.BoundArgs, m.BoundArgs, renamed)
 			}
 			prog.Funcs = append(prog.Funcs, method)
 			impl.MethodNames = append(impl.MethodNames, m.Name)
 		}
 	}
+}
+
+// renameApart gives each of a default's own type parameters a name no impl
+// type parameter or trait argument uses, returning the new list and the
+// renames it made.
+func renameApart(own, impl []string, args []ast.Type) ([]string, map[string]string) {
+	taken := map[string]bool{}
+	for _, n := range impl {
+		taken[n] = true
+	}
+	for _, a := range args {
+		taken[a.String()] = true
+	}
+	for _, n := range own {
+		taken[n] = true
+	}
+	var out []string
+	var renamed map[string]string
+	for _, n := range own {
+		fresh := n
+		if slices.Contains(impl, n) || slices.ContainsFunc(args, func(a ast.Type) bool { return a.String() == n }) {
+			for k := 1; taken[fresh]; k++ {
+				fresh = fmt.Sprintf("%s%d", n, k)
+			}
+			taken[fresh] = true
+			if renamed == nil {
+				renamed = map[string]string{}
+			}
+			renamed[n] = fresh
+		}
+		out = append(out, fresh)
+	}
+	return out, renamed
+}
+
+// mergeBounds is an impl's bounds with a default's own beside them, under
+// the names renameApart gave the default's.
+func mergeBounds[V any](impl, own map[string]V, renamed map[string]string) map[string]V {
+	if len(own) == 0 {
+		return impl
+	}
+	out := make(map[string]V, len(impl)+len(own))
+	for k, v := range impl {
+		out[k] = v
+	}
+	for k, v := range own {
+		if r, ok := renamed[k]; ok {
+			k = r
+		}
+		out[k] = v
+	}
+	return out
 }
 
 // implTraitArgs is an impl's trait arguments with its own type parameters
@@ -8809,10 +8903,20 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 			}
 		}
 		for i := range td.Methods {
-			for j := range td.Methods[i].Params {
-				c.resolveType(&td.Methods[i].Params[j].Type, params, td.Methods[i].P)
+			mparams := params
+			if len(td.Methods[i].TypeParams) > 0 {
+				mparams = make(map[string]bool, len(params)+len(td.Methods[i].TypeParams))
+				for n := range params {
+					mparams[n] = true
+				}
+				for _, n := range td.Methods[i].TypeParams {
+					mparams[n] = true
+				}
 			}
-			c.resolveType(&td.Methods[i].Result, params, td.Methods[i].P)
+			for j := range td.Methods[i].Params {
+				c.resolveType(&td.Methods[i].Params[j].Type, mparams, td.Methods[i].P)
+			}
+			c.resolveType(&td.Methods[i].Result, mparams, td.Methods[i].P)
 		}
 	}
 	for _, fn := range prog.Funcs {

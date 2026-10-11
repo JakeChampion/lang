@@ -27790,6 +27790,16 @@ function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]
 // method parses with the ordinary parse_func_decl machinery (no receiver
 // clause; its first parameter is `self: Self`); an abstract one ends at
 // `;` and so comes back with an empty body, which we skip.
+// required_own_tps reports a required trait method that declares type
+// parameters of its own: an impl method cannot declare them, so it could never
+// be provided.
+function required_own_tps(bad: ast.Stmt[], at: Par, fd: FuncDecl): ast.Stmt[] {
+  if (fd.body.len() == 0 && fd.all_type_params.len() > 0) {
+    return bad.append(decl_sentinel(at, "trait method \"" + fd.name + "\" declares its own type parameters, so it must have a default body"));
+  }
+  return bad;
+}
+
 function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stmt[], Par) {
   let defaults: TraitDefault[] = [];
   let trait_bad: ast.Stmt[] = [];
@@ -27882,8 +27892,10 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
         continue;
       }
       if (p.peek_keyword() == "function") {
+        let fn_at: Par = p;
         let (fr_func, fr_p) = parse_func_decl(p);
         p = fr_p;
+        trait_bad = required_own_tps(trait_bad, fn_at, fr_func);
         // check_decl_names reports the nameless method; the rest of its
         // signature is skipped so it does not read as stray tokens.
         if (fr_func.name.len() == 0) {

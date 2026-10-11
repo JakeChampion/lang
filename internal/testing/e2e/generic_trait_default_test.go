@@ -2,7 +2,9 @@ package e2e
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -90,8 +92,7 @@ func TestWasmGenericTraitDefault(t *testing.T) {
 // A default with a type parameter of its own (`map[U]`), inherited by an impl
 // that declares a `U` too, keeps the two apart. Taking the impl's `U` for its
 // own made every clone's inherited `map` name a larger instantiation, and
-// monomorphisation never finished. The Go parser does not read a trait
-// method's own type parameters, so there is no interpreter leg.
+// monomorphisation never finished.
 const traitDefaultOwnParamSrc = `import "std/i32";
 
 pub trait Iter[T] {
@@ -140,6 +141,17 @@ function main(): i32 {
 
 const traitDefaultOwnParamWant = "2\n"
 
+func TestInterpTraitDefaultOwnParam(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "prog.fern")
+	if err := os.WriteFile(path, []byte(traitDefaultOwnParamSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := runLangInterp(t, buildLangBinForInterp(t), path)
+	if code != 0 || out != traitDefaultOwnParamWant {
+		t.Fatalf("exit %d, printed %q, want %q\nstderr: %s", code, out, traitDefaultOwnParamWant, errOut)
+	}
+}
+
 func TestX86_64TraitDefaultOwnParam(t *testing.T) {
 	out, code := compileAndRunX86_64(t, traitDefaultOwnParamSrc)
 	if code != 0 || out != traitDefaultOwnParamWant {
@@ -157,5 +169,20 @@ func TestArm64TraitDefaultOwnParam(t *testing.T) {
 func TestWasmTraitDefaultOwnParam(t *testing.T) {
 	if out := compileAndRunWasmCapture(t, traitDefaultOwnParamSrc); out != traitDefaultOwnParamWant {
 		t.Fatalf("printed %q, want %q", out, traitDefaultOwnParamWant)
+	}
+}
+
+// A required trait method may not declare type parameters of its own, since
+// no impl method could provide it. The self-host parser refuses it as the Go
+// parser does.
+func TestSelfHostTraitRequiredMethodOwnParamsRefused(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "prog.fern")
+	src := "trait Iter[T] { function map[U](self: Self, f: (T) => U): U; }\nfunction main(): i32 { return 0; }\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(buildLangBinForInterp(t), "-target", "x86-64-linux", "-o", filepath.Join(t.TempDir(), "a.out"), path).CombinedOutput()
+	if err == nil || !strings.Contains(string(out), `trait method "map" declares its own type parameters, so it must have a default body`) {
+		t.Fatalf("compile: %v\n%s", err, out)
 	}
 }

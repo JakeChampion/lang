@@ -4170,6 +4170,11 @@ type TraitMethod struct {
 	// checker's synthesizeTraitDefaults and docs/TRAITS.md. nil = an
 	// abstract signature every impl must provide.
 	Body *Block
+	// TypeParams are a default method's own type parameters (`map[U]`),
+	// beside the trait's, with their bounds. Only a default may have them.
+	TypeParams []string
+	Bounds     map[string][]string
+	BoundArgs  map[string][][]Type
 }
 
 // ImplDecl is a top-level `impl Trait for Type { <function>… }`. The

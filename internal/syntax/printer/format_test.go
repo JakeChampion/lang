@@ -1854,3 +1854,18 @@ impl[I: Iter[T], T] Iter[T] for W[I, T] { function next(self: Self): Option[(T, 
 		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
 	}
 }
+
+// A trait default's own type parameters survive a format.
+func TestFormatTraitDefaultOwnTypeParams(t *testing.T) {
+	src := `trait Iter[T] {
+  function next(self: Self): Option[(T, Self)];
+  function fold[A](self: Self, init: A, f: (A, T) => A): A { return init; }
+}`
+	got := formatSrc(t, src)
+	if !strings.Contains(got, "function fold[A](self: Self, init: A, f: (A, T) => A): A {") {
+		t.Errorf("type parameters lost:\n%s", got)
+	}
+	if again := formatSrc(t, got); got != again {
+		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+	}
+}
