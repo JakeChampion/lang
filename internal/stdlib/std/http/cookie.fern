@@ -756,18 +756,20 @@ function __month_of(token: string): i32 {
   return 0;
 }
 
-// __place is rfc6265bis §5.7's domain and path steps: a Domain the host
-// is not under or that is a public suffix (unless it is the host itself)
-// is refused; without one the cookie is host-only; a Path not starting
-// with `/` takes the default path.
+// __place is rfc6265bis §5.7's domain and path steps: a Domain that is
+// a public suffix is refused unless it is the host itself, which is then
+// host-only; a Domain the host is not under is refused; any other Domain,
+// the host's own name included, reaches every host under it; without one
+// the cookie is host-only; a Path not starting with `/` takes the default
+// path.
 function __place(j: Jar, u: Url, p: __Parsed, now: i64): Result[Cookie, Ignored] {
   let host: string = u.host.to_lower();
   let domain: string = host;
   let host_only: boolean = true;
-  if (p.domain.len() > 0 && p.domain != host) {
-    if (j.suffix(p.domain)) {
-      return Err(PublicSuffixDomain);
-    }
+  if (p.domain.len() > 0 && j.suffix(p.domain) && p.domain != host) {
+    return Err(PublicSuffixDomain);
+  }
+  if (p.domain.len() > 0 && !j.suffix(p.domain)) {
     if (!domain_matches(host, p.domain)) {
       return Err(ForeignDomain);
     }
@@ -783,10 +785,11 @@ function __place(j: Jar, u: Url, p: __Parsed, now: i64): Result[Cookie, Ignored]
 
 // __secure_shadowed is rfc6265bis §5.7's "leave Secure cookies alone":
 // over plain http a cookie does not replace a Secure one of the same name
-// whose domain and path cover its own.
+// whose domain covers its own or is under it, and whose path covers its
+// own.
 function __secure_shadowed(all: Cookie[], c: Cookie): boolean {
   for old in all {
-    if (old.secure && old.name == c.name && domain_matches(c.domain, old.domain) && path_matches(c.path, old.path)) {
+    if (old.secure && old.name == c.name && (domain_matches(c.domain, old.domain) || domain_matches(old.domain, c.domain)) && path_matches(c.path, old.path)) {
       return true;
     }
   }
@@ -794,12 +797,15 @@ function __secure_shadowed(all: Cookie[], c: Cookie): boolean {
 }
 
 // __prefixes_ok: `__Secure-` needs Secure; `__Host-` needs Secure, no
-// Domain and a `Path` attribute of `/`; Partitioned needs Secure.
+// Domain and a `Path` attribute of `/`; Partitioned needs Secure. A jar
+// matches the prefixes in any case (rfc6265bis §5.4), since a server
+// that miscapitalises one still means it.
 function __prefixes_ok(c: Cookie, has_path: boolean): Result[boolean, Ignored] {
-  if (c.name.starts_with("__Secure-") && !c.secure) {
+  let name: string = c.name.to_lower();
+  if (name.starts_with("__secure-") && !c.secure) {
     return Err(PrefixBroken);
   }
-  if (c.name.starts_with("__Host-") && (!c.secure || !c.host_only || !has_path || c.path != "/")) {
+  if (name.starts_with("__host-") && (!c.secure || !c.host_only || !has_path || c.path != "/")) {
     return Err(PrefixBroken);
   }
   if (c.partitioned && !c.secure) {
