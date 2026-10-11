@@ -101,7 +101,7 @@ var heapBumpFlatCases = []heapBumpFlatCase{
 	// and an array buffer.
 	{name: "discarded-call-struct", src: func(n string) string {
 		return `struct P { x: i32, y: i32 }
-function mk(v: i32): P { return P { x: v, y: v }; }
+@noinline function mk(v: i32): P { return P { x: v, y: v }; }
 function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
     let i: i32 = 0;

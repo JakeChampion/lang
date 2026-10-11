@@ -191,11 +191,11 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 		{
 			// The same shape on an Option of an array (the unmatched half).
 			name: "optarr_collide",
-			src: `
+			src: `@noinline function hold(o: Option[i32[]]): i32 { return 0; }
 function round(i: i32): i32 {
     let keep: Option[i32[]] = Some([7, 8]);
     let t: i32 = 0;
-    if (i % 2 == 0) { let o: Option[i32[]] = Some([i, i + 1]); t = t + 1; }
+    if (i % 2 == 0) { let o: Option[i32[]] = Some([i, i + 1]); t = t + 1 + hold(o); }
     if (i % 2 == 1) { let o: Option[i32[]] = keep; t = t + 2; }
     match (keep) { Some(q) => { t = t + q[0]; }, None => {} }
     return t;
@@ -206,11 +206,11 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 		{
 			// Its pairwise control.
 			name: "optarr_renamed",
-			src: `
+			src: `@noinline function hold(o: Option[i32[]]): i32 { return 0; }
 function round(i: i32): i32 {
     let keep: Option[i32[]] = Some([7, 8]);
     let t: i32 = 0;
-    if (i % 2 == 0) { let o: Option[i32[]] = Some([i, i + 1]); t = t + 1; }
+    if (i % 2 == 0) { let o: Option[i32[]] = Some([i, i + 1]); t = t + 1 + hold(o); }
     if (i % 2 == 1) { let u: Option[i32[]] = keep; t = t + 2; }
     match (keep) { Some(q) => { t = t + q[0]; }, None => {} }
     return t;
@@ -221,10 +221,11 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 		{
 			// The same shape on an Option of a string.
 			name: "optstr_collide",
-			src: `function round(i: i32): i32 {
+			src: `@noinline function hold(o: Option[string]): i32 { return 0; }
+function round(i: i32): i32 {
     let keep: Option[string] = Some("keeper");
     let t: i32 = 0;
-    if (i % 2 == 0) { let o: Option[string] = Some("fresh"); t = t + 1; }
+    if (i % 2 == 0) { let o: Option[string] = Some("fresh"); t = t + 1 + hold(o); }
     if (i % 2 == 1) { let o: Option[string] = keep; t = t + 2; }
     match (keep) { Some(q) => { t = t + q.len(); }, None => {} }
     return t;
@@ -235,10 +236,11 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 		{
 			// Its pairwise control.
 			name: "optstr_renamed",
-			src: `function round(i: i32): i32 {
+			src: `@noinline function hold(o: Option[string]): i32 { return 0; }
+function round(i: i32): i32 {
     let keep: Option[string] = Some("keeper");
     let t: i32 = 0;
-    if (i % 2 == 0) { let o: Option[string] = Some("fresh"); t = t + 1; }
+    if (i % 2 == 0) { let o: Option[string] = Some("fresh"); t = t + 1 + hold(o); }
     if (i % 2 == 1) { let u: Option[string] = keep; t = t + 2; }
     match (keep) { Some(q) => { t = t + q.len(); }, None => {} }
     return t;
@@ -299,9 +301,10 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 		{
 			// Positive control.
 			name: "credited_optarr",
-			src: `function round(i: i32): i32 {
+			src: `@noinline function hold(o: Option[i32[]]): i32 { return 0; }
+function round(i: i32): i32 {
     let o: Option[i32[]] = Some([i, i + 1]);
-    return i + 1;
+    return i + 1 + hold(o);
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 70, allocs: 200, frees: 200,
@@ -309,9 +312,10 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 		{
 			// Positive control.
 			name: "credited_optstr",
-			src: `function round(i: i32): i32 {
+			src: `@noinline function hold(o: Option[string]): i32 { return 0; }
+function round(i: i32): i32 {
     let o: Option[string] = Some("fresh");
-    return i + 1;
+    return i + 1 + hold(o);
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 70, allocs: 100, frees: 100,
@@ -321,10 +325,11 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			// in the sibling: the binder must not inherit the var's verdict
 			// and release elements of `keep` that `keep` still owns.
 			name: "binder_forin_collide",
-			src: `function round(i: i32): i32 {
+			src: `@noinline function hold(o: Option[i32[]]): i32 { return 0; }
+function round(i: i32): i32 {
     let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
     let t: i32 = 0;
-    { let o: Option[i32[]] = Some([i + 7, i + 8]); t = t + 1; }
+    { let o: Option[i32[]] = Some([i + 7, i + 8]); t = t + 1 + hold(o); }
     for o in keep { match (o) { Some(p) => { t = t + p[0]; }, None => {} } }
     return t + keep.len();
 }
@@ -336,10 +341,11 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			// colliding row move together, which is the property this pair
 			// exists to assert.
 			name: "binder_forin_renamed",
-			src: `function round(i: i32): i32 {
+			src: `@noinline function hold(o: Option[i32[]]): i32 { return 0; }
+function round(i: i32): i32 {
     let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
     let t: i32 = 0;
-    { let o: Option[i32[]] = Some([i + 7, i + 8]); t = t + 1; }
+    { let o: Option[i32[]] = Some([i + 7, i + 8]); t = t + 1 + hold(o); }
     for e in keep { match (e) { Some(p) => { t = t + p[0]; }, None => {} } }
     return t + keep.len();
 }

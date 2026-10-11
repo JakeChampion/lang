@@ -36,10 +36,11 @@ func rcEnumStrCallCases() []rcEnumStrCallCase {
 			// payload. Base: 150/0, 3600 live bytes.
 			name: "call_payload_if_block",
 			src: `enum R { Full(string), Empty }
+@noinline function hold(o: R): i32 { return 0; }
 function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
     let t: i32 = 0;
-    if (i % 2 == 0) { let o: R = R.Full(w("x")); t = t + 1; }
+    if (i % 2 == 0) { let o: R = R.Full(w("x")); t = t + 1 + hold(o); }
     return t;
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
@@ -49,6 +50,7 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			// The match-consumed sibling, same payload. Base: 300/0, 7200 live bytes.
 			name: "call_payload_match_consumed",
 			src: `enum R { Full(string), Empty }
+@noinline function hold(o: R): i32 { return 0; }
 function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
     let o: R = R.Full(w("x"));
@@ -63,10 +65,11 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			// construction, superseded chain plus final value all released.
 			name: "call_payload_rebind",
 			src: `enum R { Full(string), Empty }
+@noinline function hold(o: R): i32 { return 0; }
 function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
     let t: i32 = 0;
-    if (i % 2 == 0) { let o: R = R.Full(w("x")); o = R.Full(w("yz")); t = t + 1; }
+    if (i % 2 == 0) { let o: R = R.Full(w("x")); t = t + hold(o); o = R.Full(w("yz")); t = t + 1 + hold(o); }
     return t;
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
@@ -77,10 +80,11 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			// balanced and unchanged. `ids` keeps the variant a heap box.
 			name: "ctl_literal_payload",
 			src: `enum R { Full(string), Empty }
+@noinline function hold(o: R): i32 { return 0; }
 @noinline function ids(s: string): string { return s; }
 function round(i: i32): i32 {
     let t: i32 = 0;
-    if (i % 2 == 0) { let o: R = R.Full(ids("x")); t = t + 1; }
+    if (i % 2 == 0) { let o: R = R.Full(ids("x")); t = t + 1 + hold(o); }
     return t;
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
@@ -92,12 +96,13 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			// here would exit 99.
 			name: "refused_alias_returning_callee",
 			src: `enum R { Full(string), Empty }
+@noinline function hold(o: R): i32 { return 0; }
 function w(a: string): string { return a + "!"; }
 @noinline function id(a: string): string { return a; }
 function round(i: i32): i32 {
     let keep: string = w("base");
     let t: i32 = 0;
-    if (i % 2 == 0) { let o: R = R.Full(id(keep)); t = t + 1; }
+    if (i % 2 == 0) { let o: R = R.Full(id(keep)); t = t + 1 + hold(o); }
     t = t + keep.len();
     return t;
 }

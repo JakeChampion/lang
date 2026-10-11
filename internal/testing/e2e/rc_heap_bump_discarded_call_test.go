@@ -21,9 +21,12 @@ import (
 // rc==1 receiver alias the gate couldn't distinguish. Mirrors the shipped
 // `let t = call(); /* t unused */` exit-sweep dec.
 
+// `mk` is kept out of line: spliced into the loop, its construction would
+// be read by nothing and semdead would not build it at all, which is not the
+// reclaim under test.
 func discardedCallStructBump(n string) string {
 	return `struct P { x: i32, y: i32 }
-function mk(v: i32): P { return P { x: v, y: v }; }
+@noinline function mk(v: i32): P { return P { x: v, y: v }; }
 function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
     let i: i32 = 0;

@@ -596,17 +596,23 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 		},
 		{
 			// The alias is REASSIGNED; the tuple it held and the one it holds after the
-			// rebind are both freed.
+			// rebind are both freed. `hold` reads each tuple whole: read through a
+			// projection alone, a tuple literal is forwarded and never built
+			// (semdead), which is not the release under test. Read and unique at
+			// the rebind, the first tuple's box is written in place by the second,
+			// so a round allocates two blocks.
 			name: "refused_alias_reassigned",
-			src: `function round(i: i32): i32 {
+			src: `@noinline function hold(t: (i32, i32[])): i32 { return 0; }
+function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
     let t: (i32, i32[]) = (i, xs);
     let v: (i32, i32[]) = t;
+    let w: i32 = hold(v);
     v = (i + 1, xs);
-    return v.1[0];
+    return v.1[0] + w + hold(v);
 }
 function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 53, allocs: 300, frees: 300,
+			want: 53, allocs: 200, frees: 200,
 		},
 		{
 			// The string limb. A string box is rc-headered on every backend —
