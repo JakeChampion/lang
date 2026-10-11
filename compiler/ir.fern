@@ -7278,9 +7278,26 @@ pub function eliminate_dead_stores(ops: Op[]): Op[] {
 // drop_dead_stores turns each store to a slot nothing loads into a drop, and
 // removes each tee of one.
 function drop_dead_stores(ops: Op[]): Op[] {
-  let k_load: i32 = kind_id("load_local");
   let k_store: i32 = kind_id("store_local");
   let k_tee: i32 = kind_id("tee_local");
+  let loads: i32[] = slot_reads(ops);
+  let out: Op[] = [];
+  for o in ops {
+    if (o.kind_tag == k_tee && loads[o.i32_imm] == 0) {
+      continue;
+    }
+    if (o.kind_tag == k_store && loads[o.i32_imm] == 0) {
+      out = out.append(op_drop());
+    } else {
+      out = out.append(o);
+    }
+  }
+  return out;
+}
+
+// slot_reads counts the reads of each slot.
+function slot_reads(ops: Op[]): i32[] {
+  let k_load: i32 = kind_id("load_local");
   let k_str_slice: i32 = kind_id("str_slice");
   let k_dyn: i32 = kind_id("dyn_dispatch");
   let loads: i32[] = __alloc_i32(cp_max_slot(ops) + 1);
@@ -7298,18 +7315,7 @@ function drop_dead_stores(ops: Op[]): Op[] {
       loads = slots_read(loads, o.i32_imm, o.width);
     }
   }
-  let out: Op[] = [];
-  for o in ops {
-    if (o.kind_tag == k_tee && loads[o.i32_imm] == 0) {
-      continue;
-    }
-    if (o.kind_tag == k_store && loads[o.i32_imm] == 0) {
-      out = out.append(op_drop());
-    } else {
-      out = out.append(o);
-    }
-  }
-  return out;
+  return loads;
 }
 
 // slots_read counts the `n` slots from `first` as read.
