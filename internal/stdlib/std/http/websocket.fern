@@ -55,19 +55,23 @@ import "std/string";
 import "std/utf8";
 import "std/array";
 import "std/option";
+import "std/deflate";
 
 // `Options` — the session's bounds: `max_message`, the largest message
 // taken whole (1009 past it); `backpressure`, the corked bytes past which
 // `send` answers `Backpressure`; `max_backpressure`, past which it drops
-// the message; and `protocols`, the subprotocols the server speaks, the
-// first of the client's offers among them chosen.
-pub struct Options { max_message: i32, backpressure: i32, max_backpressure: i32, protocols: string[] }
+// the message; `protocols`, the subprotocols the server speaks, the
+// first of the client's offers among them chosen; and `compression`,
+// whether to take a client's `permessage-deflate` offer (RFC 7692) in
+// the shared-compressor mode, no context carried from one message to
+// the next on either side, so a connection costs no window of its own.
+pub struct Options { max_message: i32, backpressure: i32, max_backpressure: i32, protocols: string[], compression: boolean }
 
 // `options()` — a 1 MiB message, 64 KiB of cork before backpressure, 1
-// MiB before a drop, no subprotocol.
+// MiB before a drop, no subprotocol, no compression.
 pub function options(): Options {
   let none: string[] = [];
-  return Options { max_message: 1048576, backpressure: 65536, max_backpressure: 1048576, protocols: none };
+  return Options { max_message: 1048576, backpressure: 65536, max_backpressure: 1048576, protocols: none, compression: false };
 }
 
 // `Message` — one message the peer sent: text, decoded, or bytes.
@@ -126,9 +130,11 @@ pub function handlers(message: (Conn, Message) => void): Handlers {
 }
 
 // `Conn` — the session's connection as the handler sees it: `protocol`,
-// the subprotocol chosen ("" for none); `path`, the request's. What the
-// handler sends is corked in `out` until its callback returns.
-pub struct Conn { protocol: string, path: string, opts: Options, out: Cell[u8[]], state: Cell[i32], code: Cell[i32], reason: Cell[string], pressured: Cell[i32], write: (u8[]) => i32 }
+// the subprotocol chosen ("" for none); `path`, the request's; `window`,
+// the LZ77 window bits messages are compressed with, 0 for a connection
+// without compression. What the handler sends is corked in `out` until
+// its callback returns.
+pub struct Conn { protocol: string, path: string, window: i32, opts: Options, out: Cell[u8[]], state: Cell[i32], code: Cell[i32], reason: Cell[string], pressured: Cell[i32], write: (u8[]) => i32 }
 
 // `(c).send_text(s)`, `(c).send_binary(b)` — a message corked for the
 // peer.
@@ -179,14 +185,85 @@ pub function accept(req: HttpRequest, opts: Options, h: Handlers): Result[HttpRe
     return Err(KeyMissing);
   }
   let protocol: string = __protocol(req, opts);
-  let conn: Conn = __conn(req, protocol, opts);
+  let deflated: (i32, string) = __negotiated(req, opts);
+  let conn: Conn = __conn(req, protocol, deflated.0, opts);
   let body: Stream = req.body;
   let resp: HttpResponse = http.chunks(101, (i: i32): Option[u8[]] => __run(i, conn, body, h));
   resp = resp.with_header("Upgrade", "websocket").with_header("Sec-WebSocket-Accept", accept_key(key));
   if (protocol.len() > 0) {
     resp = resp.with_header("Sec-WebSocket-Protocol", protocol);
   }
+  if (deflated.1.len() > 0) {
+    resp = resp.with_header("Sec-WebSocket-Extensions", deflated.1);
+  }
   return Ok(resp);
+}
+
+// __negotiated(req, opts) — the `permessage-deflate` offer taken, when
+// the server compresses and the client made one it can take: the window
+// bits the server compresses with (the client's `server_max_window_bits`
+// where it named one, 15 otherwise) and the extension's response line,
+// which names no context takeover on either side; `(0, "")` otherwise.
+function __negotiated(req: HttpRequest, opts: Options): (i32, string) {
+  if (!opts.compression) {
+    return (0, "");
+  }
+  for v in req.headers.get_all("sec-websocket-extensions") {
+    for offer in v.split(",") {
+      let bits: i32 = __deflate_offer(offer);
+      if (bits > 0) {
+        return (bits, "permessage-deflate; server_no_context_takeover; client_no_context_takeover; server_max_window_bits=" + bits.to_string());
+      }
+    }
+  }
+  return (0, "");
+}
+
+// __deflate_offer(offer) — the window bits one offer asks the server to
+// keep to, 15 for none asked, 0 for an offer that is not
+// permessage-deflate or names a parameter this server cannot take.
+function __deflate_offer(offer: string): i32 {
+  let parts: string[] = offer.split(";");
+  if (parts.len() == 0 || parts[0].trim() != "permessage-deflate") {
+    return 0;
+  }
+  let bits: i32 = 15;
+  let i: i32 = 1;
+  while (i < parts.len()) {
+    bits = __deflate_param(parts[i], bits);
+    if (bits == 0) {
+      return 0;
+    }
+    i = i + 1;
+  }
+  return bits;
+}
+
+// __deflate_param(param, bits) — the window bits after one parameter of
+// the offer: `server_max_window_bits` sets them (8 to 15, quoted or
+// not), the takeover parameters and `client_max_window_bits` leave
+// them, and anything else is 0, a parameter the server cannot take.
+function __deflate_param(param: string, bits: i32): i32 {
+  let kv: string[] = param.trim().split("=");
+  let name: string = kv[0].trim();
+  if (name == "server_no_context_takeover" || name == "client_no_context_takeover" || name == "client_max_window_bits") {
+    return bits;
+  }
+  if (name != "server_max_window_bits" || kv.len() < 2) {
+    return 0;
+  }
+  match (kv[1].trim().trim_chars("\"").parse_int()) {
+    Some(n) => {
+      if (n < 8 || n > 15) {
+        return 0;
+      }
+      return n;
+    },
+    None => {
+      return 0;
+    }
+  }
+  return 0;
 }
 
 // `accept_key(key)` — the `Sec-WebSocket-Accept` for a client's key.
@@ -213,7 +290,7 @@ pub function frame(fin: boolean, opcode: i32, payload: u8[], mask: u8[]): u8[] {
     out = out.append((masked | 126) as u8).append((n >> 8) as u8).append((n & 255) as u8);
   } else {
     out = out.append((masked | 127) as u8).append(0 as u8).append(0 as u8).append(0 as u8).append(0 as u8);
-    out = out.append(((n >> 24) & 255) as u8).append(((n >> 16) & 255) as u8).append(((n >> 8) & 255) as u8).append((n & 255) as u8);
+    out = out.append((n >> 24 & 255) as u8).append((n >> 16 & 255) as u8).append((n >> 8 & 255) as u8).append((n & 255) as u8);
   }
   if (mask.len() == 4) {
     return out.concat(mask).concat(__masked(payload, mask));
@@ -224,6 +301,19 @@ pub function frame(fin: boolean, opcode: i32, payload: u8[], mask: u8[]): u8[] {
 function __frame(opcode: i32, payload: u8[]): u8[] {
   let none: u8[] = [];
   return frame(true, opcode, payload, none);
+}
+
+// __frame_out(c, opcode, payload) — a data frame as the connection sends
+// it: compressed under RSV1 when the connection compresses and there is
+// something to compress, the stream's open tail dropped as RFC 7692 has
+// it; a control frame, or an empty payload, as it is.
+function __frame_out(c: Conn, opcode: i32, payload: u8[]): u8[] {
+  if (c.window == 0 || opcode > 2 || payload.len() == 0) {
+    return __frame(opcode, payload);
+  }
+  let packed: u8[] = deflate.deflate_flushed(payload, c.window);
+  let f: u8[] = __frame(opcode, array.take(packed, packed.len() - 4));
+  return f.with(0, (f[0] as i32 | 64) as u8);
 }
 
 function __masked(payload: u8[], mask: u8[]): u8[] {
@@ -290,7 +380,7 @@ function __protocol(req: HttpRequest, opts: Options): string {
   return "";
 }
 
-function __conn(req: HttpRequest, protocol: string, opts: Options): Conn {
+function __conn(req: HttpRequest, protocol: string, window: i32, opts: Options): Conn {
   let none: u8[] = [];
   let write: (u8[]) => i32 = (b: u8[]): i32 => 0 - 95;
   match (req.body.source) {
@@ -299,7 +389,7 @@ function __conn(req: HttpRequest, protocol: string, opts: Options): Conn {
     },
     None => {}
   }
-  return Conn { protocol: protocol, path: req.path, opts: opts, out: cell_new(none), state: cell_new(0), code: cell_new(1005), reason: cell_new(""), pressured: cell_new(0), write: write };
+  return Conn { protocol: protocol, path: req.path, window: window, opts: opts, out: cell_new(none), state: cell_new(0), code: cell_new(1005), reason: cell_new(""), pressured: cell_new(0), write: write };
 }
 
 // ---- sending -----------------------------------------------------------
@@ -309,7 +399,7 @@ function __send(c: Conn, opcode: i32, payload: u8[]): SendResult {
     return Dropped;
   }
   let out: u8[] = c.out.get();
-  let f: u8[] = __frame(opcode, payload);
+  let f: u8[] = __frame_out(c, opcode, payload);
   if (out.len() + f.len() > c.opts.max_backpressure) {
     return Dropped;
   }
@@ -347,12 +437,14 @@ function __flush(c: Conn, h: Handlers): boolean {
 // ---- the session -------------------------------------------------------
 
 // __Reading — the frame reader's state across frames: the fragmented
-// message under way (`opcode` 0 for none, its bytes and its UTF-8 check
-// so far), and whether the peer sent its close.
-struct __Reading { opcode: i32, parts: u8[], need: i32, lo: i32, hi: i32, peer_closed: boolean, code: i32, reason: string }
+// message under way (`opcode` 0 for none, its bytes so far in the
+// builder `parts`, so a fragment is appended and not copied onto,
+// whether it came compressed, and its UTF-8 check so far), and whether
+// the peer sent its close.
+struct __Reading { opcode: i32, parts: usize, compressed: boolean, need: i32, lo: i32, hi: i32, peer_closed: boolean, code: i32, reason: string }
 
-// __Frame — one frame off the wire.
-struct __Frame { fin: boolean, opcode: i32, payload: u8[] }
+// __Frame — one frame off the wire, `rsv1` its compression bit.
+struct __Frame { fin: boolean, opcode: i32, rsv1: boolean, payload: u8[] }
 
 // __Read — what reading a frame answered: a frame; the peer's bytes
 // ended; a protocol error, with the close code that answers it.
@@ -366,8 +458,7 @@ function __run(i: i32, c: Conn, body: Stream, h: Handlers): Option[u8[]] {
   }
   let open: (Conn) => void = h.open;
   open(c);
-  let empty: u8[] = [];
-  let r: __Reading = __Reading { opcode: 0, parts: empty, need: 0, lo: 128, hi: 191, peer_closed: false, code: 1006, reason: "" };
+  let r: __Reading = __Reading { opcode: 0, parts: buf_new(1024), compressed: false, need: 0, lo: 128, hi: 191, peer_closed: false, code: 1006, reason: "" };
   let s: Stream = body;
   let going: boolean = __flush(c, h);
   while (going) {
@@ -376,6 +467,7 @@ function __run(i: i32, c: Conn, body: Stream, h: Handlers): Option[u8[]] {
     s = step.1;
     going = step.2;
   }
+  buf_free(r.parts);
   let closed: (Conn, i32, string) => void = h.close;
   closed(c, __final_code(c, r), __final_reason(c, r));
   return None;
@@ -406,7 +498,7 @@ function __final_reason(c: Conn, r: __Reading): string {
 // __step(c, h, r, s) — one frame read and acted on: the reader after it,
 // the stream after it, and whether the session goes on.
 function __step(c: Conn, h: Handlers, r: __Reading, s: Stream): (__Reading, Stream, boolean) {
-  let read: (__Read, Stream) = __read_frame(s, c.opts.max_message);
+  let read: (__Read, Stream) = __read_frame(s, c.opts.max_message, c.window > 0);
   s = read.1;
   match (read.0) {
     FrameRead(f) => {
@@ -515,11 +607,12 @@ function __on_data(c: Conn, h: Handlers, r: __Reading, f: __Frame): (__Reading, 
   if (opcode < 0) {
     return __violated(c, r, 1002);
   }
-  if (r.parts.len() + f.payload.len() > c.opts.max_message) {
+  if (buf_len(r.parts) + f.payload.len() > c.opts.max_message) {
     return __violated(c, r, 1009);
   }
-  let next: __Reading = __Reading { ...r, opcode: opcode, parts: r.parts.concat(f.payload) };
-  if (opcode == 1) {
+  buf_push_bytes_range(r.parts, f.payload, 0, f.payload.len());
+  let next: __Reading = __Reading { ...r, opcode: opcode, compressed: r.compressed || f.rsv1 };
+  if (opcode == 1 && !next.compressed) {
     let checked: (__Reading, boolean) = __text_checked(next, f);
     next = checked.0;
     if (!checked.1) {
@@ -529,11 +622,55 @@ function __on_data(c: Conn, h: Handlers, r: __Reading, f: __Frame): (__Reading, 
   if (!f.fin) {
     return (next, true);
   }
-  if (c.state.get() == 0) {
-    __deliver(c, h, opcode, next.parts);
+  return __message_done(c, h, next, opcode);
+}
+
+// __message_done(c, h, r, opcode) — the message complete: decompressed
+// when it came compressed (1009 past the cap, 1007 for a stream the
+// decoder refuses, or text that is not UTF-8 once decoded), delivered
+// unless the handler closed, and the reader cleared for the next.
+function __message_done(c: Conn, h: Handlers, r: __Reading, opcode: i32): (__Reading, boolean) {
+  let data: u8[] = buf_take_bytes(r.parts);
+  if (r.compressed) {
+    match (__inflated(c, data)) {
+      Ok(out) => {
+        data = out;
+      },
+      Err(code) => {
+        return __violated(c, r, code);
+      }
+    }
+    if (opcode == 1 && !utf8.from_bytes(data).is_some()) {
+      return __violated(c, r, 1007);
+    }
   }
-  let empty: u8[] = [];
-  return (__Reading { ...next, opcode: 0, parts: empty, need: 0, lo: 128, hi: 191 }, true);
+  if (c.state.get() == 0) {
+    __deliver(c, h, opcode, data);
+  }
+  return (__Reading { ...r, opcode: 0, compressed: false, need: 0, lo: 128, hi: 191 }, true);
+}
+
+// __inflated(c, parts) — a compressed message decoded: the stream closed
+// with the tail the sender dropped and a final empty block, under the
+// message cap; the close code for one that cannot be.
+function __inflated(c: Conn, parts: u8[]): Result[u8[], i32] {
+  let closed: u8[] = parts.concat([0 as u8, 0 as u8, 255 as u8, 255 as u8, 1 as u8, 0 as u8, 0 as u8, 255 as u8, 255 as u8]);
+  match (deflate.inflate(closed, c.opts.max_message)) {
+    Ok(got) => {
+      return Ok(got.out);
+    },
+    Err(e) => {
+      match (e) {
+        deflate.OutputLimit => {
+          return Err(1009);
+        },
+        _ => {
+          return Err(1007);
+        }
+      }
+    }
+  }
+  return Err(1007);
 }
 
 // __message_opcode(r, f) — the opcode of the message the frame belongs
@@ -654,7 +791,7 @@ function __utf8_hi(v: i32, lead: i32, lowered: i32): i32 {
 
 // __read_frame(s, max) — one frame off the stream: the frame, the end of
 // the bytes, or the violation that refuses it, with the stream after.
-function __read_frame(s: Stream, max: i32): (__Read, Stream) {
+function __read_frame(s: Stream, max: i32, compressing: boolean): (__Read, Stream) {
   let head: (u8[], Stream) = s.read_n(2);
   s = head.1;
   if (head.0.len() < 2) {
@@ -664,7 +801,7 @@ function __read_frame(s: Stream, max: i32): (__Read, Stream) {
   let b1: i32 = head.0[1] as i32;
   let opcode: i32 = b0 & 15;
   let fin: boolean = (b0 & 128) != 0;
-  if (!__head_ok(b0, b1)) {
+  if (!__head_ok(b0, b1, compressing)) {
     return (Violation(1002), s);
   }
   let len: (i32, Stream, i32) = __read_length(s, b1 & 127, max);
@@ -683,14 +820,18 @@ function __read_frame(s: Stream, max: i32): (__Read, Stream) {
   if (rest.0.len() < 4 + len.0) {
     return (BytesEnded, s);
   }
-  return (FrameRead(__Frame { fin: fin, opcode: opcode, payload: __masked(array.slice(rest.0, 4, rest.0.len()), array.take(rest.0, 4)) }), s);
+  return (FrameRead(__Frame { fin: fin, opcode: opcode, rsv1: (b0 & 64) != 0, payload: __masked(array.slice(rest.0, 4, rest.0.len()), array.take(rest.0, 4)) }), s);
 }
 
-// __head_ok(b0, b1) — no reserved bit set, an opcode the protocol
-// defines, and the mask bit a client must set.
-function __head_ok(b0: i32, b1: i32): boolean {
+// __head_ok(b0, b1, compressing) — no reserved bit set, but RSV1 on a
+// message's first data frame when the connection compresses; an opcode
+// the protocol defines; and the mask bit a client must set.
+function __head_ok(b0: i32, b1: i32, compressing: boolean): boolean {
   let opcode: i32 = b0 & 15;
-  if ((b0 & 112) != 0 || (b1 & 128) == 0) {
+  if ((b0 & 48) != 0 || (b1 & 128) == 0) {
+    return false;
+  }
+  if ((b0 & 64) != 0 && !(compressing && (opcode == 1 || opcode == 2))) {
     return false;
   }
   return opcode <= 2 || opcode >= 8 && opcode <= 10;

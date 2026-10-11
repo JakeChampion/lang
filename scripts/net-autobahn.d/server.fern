@@ -1,0 +1,45 @@
+// The server scripts/net-autobahn runs the Autobahn suite against: the
+// echo at /ws with compression on and a 16 MiB message, which the
+// suite's largest cases send; /ok for the readiness probe. PORT names
+// its port, 9001 by default.
+import "std/http";
+import "std/serve";
+import "std/platform";
+import "std/http/websocket";
+import "core/int";
+
+function echo(c: websocket.Conn, m: websocket.Message): void {
+  match (m) {
+    Text(s) => {
+      let r: websocket.SendResult = c.send_text(s);
+    },
+    Binary(b) => {
+      let r: websocket.SendResult = c.send_binary(b);
+    }
+  }
+}
+
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+  if (req.path == "/ws") {
+    let opts: websocket.Options = websocket.Options { ...websocket.options(), max_message: 16777216, max_backpressure: 33554432, compression: true };
+    return http.respond(websocket.accept(req, opts, websocket.handlers(echo)));
+  }
+  return http.ok("ok");
+}
+
+function port(): i32 {
+  match (env("PORT")) {
+    Some(p) => {
+      return int.parse_int_radix(p, 10).unwrap_or(9001);
+    },
+    None => {
+      return 9001;
+    }
+  }
+  return 9001;
+}
+
+function main(): i32 {
+  let opts: serve.Config = serve.Config { ...serve.config(), workers: 1 };
+  return serve.supervise(port(), opts, handle);
+}

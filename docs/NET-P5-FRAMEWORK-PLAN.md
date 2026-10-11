@@ -145,9 +145,17 @@ decides what wraps it.
    flight that carries the lent body (TLS writes go through the lent
    session). Gate: `tests/stdlib/http_websocket_test.fern` in the stdtest
    differential; `TestSelfHostServeWebSocket` (x86-64, arm64) and
-   `TestServeWebSocketSequentialInterp`. The shared compressor mode
-   (permessage-deflate) and the Autobahn suite on the `net-nightly`
-   lane are next.
+   `TestServeWebSocketSequentialInterp`. permessage-deflate (RFC 7692)
+   in its shared-compressor mode: `Options.compression` takes the
+   client's offer with no context takeover on either side, so no
+   connection holds a window; `std/deflate` gained the encoder it needs
+   (`deflate`, `deflate_flushed`: fixed Huffman codes over LZ77, the
+   sync flush a continuing stream ends on), a compressed message is
+   inflated whole under `max_message`, and the echo's replies go out
+   compressed. The Autobahn suite's fuzzing client runs every case
+   against `scripts/net-autobahn.d/server.fern` on the `net-nightly`
+   lane (`scripts/net-autobahn`, the image pinned by digest), each
+   case passing or the job failing.
 5. **Static files, compression, proxies, caching.** ETag, `Range` and
    precompressed variants; response compression (gzip and zstd; brotli
    decode only) off by default as every 2026 server has it; PROXY protocol

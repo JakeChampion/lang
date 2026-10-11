@@ -337,7 +337,7 @@ func TestRunnerDeflateExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/deflate", "# pass 14", "# fail 0", "1..14"} {
+	for _, w := range []string{"# Suite: std/deflate", "# pass 16", "# fail 0", "1..16"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -1176,7 +1176,7 @@ func TestRunnerHTTPSSEExamplePasses(t *testing.T) {
 // `tests/stdlib/http_websocket_test.fern` runs the WebSocket handshake
 // and a session over a scripted connection.
 func TestRunnerHTTPWebSocketExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_websocket", "std/http/websocket", 14)
+	runnerSuitePasses(t, "http_websocket", "std/http/websocket", 17)
 }
 
 func TestRunnerPublicSuffixExamplePasses(t *testing.T) {

@@ -939,10 +939,11 @@ RFC 4648 base32 (standard `A–Z 2–7` alphabet, `=` padding).
 
 ### `std/deflate`
 
-DEFLATE decoding (RFC 1951) with the zlib (RFC 1950) and gzip (RFC 1952)
-framings, pure Fern. Every decoder takes `max_out`, the most bytes it
-will produce, and answers `OutputLimit` past it: a compressed body is a
-caller-controlled expansion, so the bound is part of the call.
+DEFLATE (RFC 1951) with the zlib (RFC 1950) and gzip (RFC 1952)
+framings, pure Fern: a full decoder and a fixed-Huffman encoder. Every
+decoder takes `max_out`, the most bytes it will produce, and answers
+`OutputLimit` past it: a compressed body is a caller-controlled
+expansion, so the bound is part of the call.
 
 - `inflate(input, max_out): Result[Inflated, InflateError]` and
   `inflate_from(input, from, max_out)` decode a raw stream;
@@ -954,7 +955,17 @@ caller-controlled expansion, so the bound is part of the call.
   public). A preset dictionary is not supported.
 - `InflateError`: `Truncated`, `Malformed(what)`, `OutputLimit`,
   `BadChecksum`, `BadHeader(what)`; `(e).message()`.
-- No encoder yet.
+- `deflate(input): u8[]` encodes a raw stream as one final block of
+  fixed Huffman codes over LZ77 matches (a 32 KiB window, a hash chain
+  of bounded depth), which every inflater reads and which beats a stored
+  block on any text; `deflate_flushed(input, window_bits)` encodes a
+  non-final block ended by an empty stored block (the `00 00 ff ff`
+  sync flush of a stream that goes on), matches kept within `2 ^
+  window_bits` as a peer that announced that window needs. Neither
+  computes dynamic Huffman tables, so the output runs longer than
+  zlib's at a level above 1; what it is for is a protocol that must
+  compress (WebSocket's permessage-deflate, `std/http/websocket`), not
+  the smallest file.
 
 ### `std/hex`
 
@@ -2305,11 +2316,12 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
   version 13, a 16-byte key) and answers the 101 whose body runs the
   session; `UpgradeError` (`NotWebSocket`, `WrongVersion`, `KeyMissing`)
   is `ToResponse`, a 426 naming the upgrade or a 400. `Options {
-  max_message, backpressure, max_backpressure, protocols }`: the
-  largest message taken whole (1 MiB), the corked bytes past which a
+  max_message, backpressure, max_backpressure, protocols, compression }`:
+  the largest message taken whole (1 MiB), the corked bytes past which a
   send answers `Backpressure` (64 KiB) and past which it drops (1 MiB),
-  and the subprotocols spoken, the first of the client's offers among
-  them chosen (`Conn.protocol`).
+  the subprotocols spoken, the first of the client's offers among
+  them chosen (`Conn.protocol`), and whether a `permessage-deflate`
+  offer (RFC 7692) is taken, off by default.
 - `Handlers { open, message, drain, close }`, `handlers(message)` for one
   with the rest empty: `message` gets each `Message` (`Text(string)`,
   `Binary(u8[])`), `drain` runs once a cork that was past the soft bound
@@ -2327,10 +2339,21 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
   the fragments arrive, 1007; a message past the cap 1009; a bad close
   frame 1002 or 1007), answers a ping with its pong at once, echoes the
   peer's close, and is closed as an idle persistent connection is after
-  `serve.Config.keep_alive_idle` of quiet. `accept_key(key)` and
+  `serve.Config.keep_alive_idle` of quiet. With `compression` the
+  extension is negotiated in its shared-compressor mode, no context
+  carried from one message to the next on either side
+  (`server_no_context_takeover; client_no_context_takeover`, the
+  client's `server_max_window_bits` honoured), so a connection costs no
+  window of its own; a compressed message is inflated whole under
+  `max_message` once its last fragment arrives (1009 past it, 1007 for a
+  stream that does not inflate or text that is not UTF-8 once it does),
+  and every data message the handler sends goes out compressed under
+  RSV1 (`Conn.window` is the window bits, 0 without the extension). `accept_key(key)` and
   `frame(fin, opcode, payload, mask)` are the handshake's and the codec's
   pieces for a client or a test (`tests/stdlib/http_websocket_test.fern`,
-  a session over a scripted connection).
+  a session over a scripted connection). The Autobahn suite runs
+  against the echo in `scripts/net-autobahn.d/server.fern` on the
+  `net-nightly` lane (`scripts/net-autobahn`, every case).
 - Under std/serve an upgrade request's body is the connection's bytes
   after the head, streamed as `stream_bodies` streams one whatever the
   setting says, and a handler that answers 101 with a producer keeps the
