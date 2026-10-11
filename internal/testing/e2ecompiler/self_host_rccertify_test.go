@@ -96,6 +96,12 @@ function pick(name: string): Case {
         let b2: ssa.SBlock = block(2, [0], [call(4, "__fern_rc_dec", [0]), const_int(5, 0)], ret(5));
         return Case { f: func(1, 6, [b0, b1, b2]), modes: [counted], returns_unit: false };
     }
+    if (name == "resumed-frame-not-certified") {
+        // A body that re-enters through the task stack is left alone, leak
+        // and all: its tokens come back as popped words.
+        let insts: ssa.SInst[] = [call(0, "__fern_task_mode", []), fresh_box(1), const_int(2, 0)];
+        return Case { f: one_block(0, 3, insts, ret(2)), modes: [], returns_unit: false };
+    }
     if (name == "released-on-one-arm") {
         let b0: ssa.SBlock = block(0, [], [param(0), fresh_box(1), const_int(2, 1)], brif(2, 1, 2));
         let b1: ssa.SBlock = block(1, [0], [call(3, "__fern_rc_dec", [1])], br(2));
@@ -116,7 +122,7 @@ function main(): i32 {
     for x in r.findings {
         print(rccertify.render("case", x));
     }
-    print("findings=" + util.i32_to_string(r.findings.len()) + " tracked=" + util.i32_to_string(r.tracked) + " unproved=" + util.i32_to_string(r.unproved));
+    print("findings=" + util.i32_to_string(r.findings.len()) + " tracked=" + util.i32_to_string(r.tracked) + " unproved=" + util.i32_to_string(r.unproved) + " skipped=" + r.skipped);
     return 0;
 }
 `
@@ -142,20 +148,23 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		// finding (the lowering pairs one arm's retain with a later arm's
 		// consume) but it is not certified either, and the census says so.
 		unproved int
+		// The reason the body was not certified at all, "" when it was.
+		skipped string
 	}{
-		{"balanced", nil, 0},
-		{"leak", []string{"leaked at return of v0"}, 0},
-		{"double-release", []string{"spent without a unit of v0"}, 0},
-		{"fresh-returned", nil, 0},
-		{"borrowed-param-released", []string{"spent without a unit of v0"}, 0},
-		{"counted-param-returned", nil, 0},
-		{"counted-param-kept", []string{"leaked at return of v0"}, 0},
-		{"retained-into-box", nil, 0},
-		{"stored-without-retain", []string{"spent without a unit of v0"}, 0},
-		{"unique-child-released", nil, 0},
-		{"shared-child-released", []string{"spent without a unit of v1"}, 0},
-		{"null-guarded-release", nil, 0},
-		{"released-on-one-arm", nil, 1},
+		{"balanced", nil, 0, ""},
+		{"leak", []string{"leaked at return of v0"}, 0, ""},
+		{"double-release", []string{"spent without a unit of v0"}, 0, ""},
+		{"fresh-returned", nil, 0, ""},
+		{"borrowed-param-released", []string{"spent without a unit of v0"}, 0, ""},
+		{"counted-param-returned", nil, 0, ""},
+		{"counted-param-kept", []string{"leaked at return of v0"}, 0, ""},
+		{"retained-into-box", nil, 0, ""},
+		{"stored-without-retain", []string{"spent without a unit of v0"}, 0, ""},
+		{"unique-child-released", nil, 0, ""},
+		{"shared-child-released", []string{"spent without a unit of v1"}, 0, ""},
+		{"null-guarded-release", nil, 0, ""},
+		{"released-on-one-arm", nil, 1, ""},
+		{"resumed-frame-not-certified", nil, 0, "resumes from a task frame"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -174,7 +183,7 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 					t.Errorf("finding %d: want %q in %q", i, want, findings[i])
 				}
 			}
-			if want := fmt.Sprintf(" unproved=%d", tc.unproved); !strings.HasSuffix(lines[len(lines)-1], want) {
+			if want := fmt.Sprintf(" unproved=%d skipped=%s", tc.unproved, tc.skipped); !strings.HasSuffix(lines[len(lines)-1], want) {
 				t.Errorf("want%s, got %q", want, lines[len(lines)-1])
 			}
 		})

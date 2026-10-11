@@ -392,6 +392,8 @@ struct Walk {
   pair_tag: i32[],
   pair_mask: i32[],
   pair_words: i32[],
+  // How many instructions and terminators read each value.
+  uses: i32[],
 }
 
 // returns_pair: the body sets a second return word, so it is a paired
@@ -479,9 +481,14 @@ function alias_of(f: ssa.SFunc, defs: Defs, sigs: rcsigs.Table, ins: ssa.SInst):
   return Alias { of: -1, derived: false };
 }
 
+function is_zero_const(ins: ssa.SInst): boolean {
+  return ins.kind_tag == 1 && ins.imm == 0 && ins.str == "";
+}
+
 function roots(f: ssa.SFunc, defs: Defs, sigs: rcsigs.Table): Roots {
   let derived: boolean[] = __alloc_bool(f.nvals);
   let root: i32[] = __alloc_i32(f.nvals);
+  let zero: i32 = -1;
   let v: i32 = 0;
   while (v < f.nvals) {
     root = root.with(v, v);
@@ -497,6 +504,15 @@ function roots(f: ssa.SFunc, defs: Defs, sigs: rcsigs.Table): Roots {
         root = root.with(ins.result, root[ins.args[a.of]]);
         derived = derived.with(ins.result, a.derived || derived[ins.args[a.of]]);
       }
+      // Every zero is one value: null, and the address of the empty static
+      // box, which a uniqueness test and a load name by different constants.
+      if (is_zero_const(ins)) {
+        if (zero < 0) {
+          zero = ins.result;
+        } else {
+          root = root.with(ins.result, zero);
+        }
+      }
     }
   }
   return Roots { root: root, derived: derived };
@@ -507,23 +523,111 @@ function roots(f: ssa.SFunc, defs: Defs, sigs: rcsigs.Table): Roots {
 // Cond is a branch condition's reading: `root` the box whose uniqueness it
 // tests, -1 when it tests no uniqueness; `on_true` whether the box is unique
 // on the true arm (else on the false arm).
-struct Cond { root: i32, on_true: boolean }
+struct Cond { root: i32, on_true: boolean, also: i32[] }
 
 function no_cond(): Cond {
-  return Cond { root: -1, on_true: true };
+  return Cond { root: -1, on_true: true, also: [] };
+}
+
+// Unique is what a word says of a box: the box it proves unique when the
+// word is true, -1 for none, and the phis beside the word's phis that
+// select that box on the same edges, so are the box where the word holds.
+struct Unique { root: i32, also: i32[] }
+
+function no_unique(): Unique {
+  return Unique { root: -1, also: [] };
+}
+
+// unique_word reads `v` as a uniqueness test of one box: the test itself, or
+// a phi of such tests and the constant false — the test hoisted out of an
+// arm, or carried across an async frame's resume — through phis of phis.
+function unique_word(w: Walk, v: i32, depth: i32): Unique {
+  let root: i32 = w.root[v];
+  let ins: ssa.SInst = def_of(w.f, w.defs, root);
+  if (is_call(ins, "__fern_rc_is_unique") && ins.args.len() == 1) {
+    return Unique { root: w.root[ins.args[0]], also: [] };
+  }
+  if (ins.kind_tag != 8 || depth >= 8) {
+    return no_unique();
+  }
+  let out: Unique = no_unique();
+  let i: i32 = 0;
+  while (i < ins.args.len()) {
+    let a: i32 = ins.args[i];
+    if (a < 0) {
+      return no_unique();
+    }
+    if (!is_zero(w.f, w.defs, a) && w.root[a] != root) {
+      out = unique_input(w, root, i, a, depth, out);
+      if (out.root < 0) {
+        return no_unique();
+      }
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// unique_input folds one non-null input of a phi into what the phi says:
+// the input must say the same box, and the phis beside this one that
+// select it on this edge are the box too.
+function unique_input(w: Walk, phi: i32, i: i32, a: i32, depth: i32, out: Unique): Unique {
+  let u: Unique = unique_word(w, a, depth + 1);
+  if (u.root < 0 || out.root >= 0 && u.root != out.root) {
+    return no_unique();
+  }
+  let also: i32[] = out.also;
+  for x in u.also {
+    also = also.append(x);
+  }
+  also = beside(w, phi, i, u.root, also);
+  return Unique { root: u.root, also: also };
+}
+
+// beside adds the phis in `phi`'s block that select `box` on edge `i`.
+function beside(w: Walk, phi: i32, i: i32, box: i32, also: i32[]): i32[] {
+  let out: i32[] = also;
+  for q in w.f.blocks[w.defs.block[phi]].insts {
+    if (q.kind_tag == 8 && q.result >= 0 && q.result != phi && i < q.args.len() && q.args[i] >= 0 && w.root[q.args[i]] == box && util.index_of_i32(out, q.result) < 0) {
+      out = out.append(q.result);
+    }
+  }
+  return out;
 }
 
 // token_root is the box a reuse token stands for: a phi of the box on edges
 // from blocks where it was proved unique and of null on the rest, through
 // copies. -1 for anything else.
 function token_root(w: Walk, regions: i32[][], v: i32): i32 {
-  let ins: ssa.SInst = def_of(w.f, w.defs, w.root[v]);
-  if (ins.kind_tag != 8) {
+  let none: i32[] = [];
+  let r: i32 = token_root_at(w, regions, v, none);
+  if (r == -2) {
     return -1;
   }
-  let bi: i32 = w.defs.block[w.root[v]];
-  let preds: i32[] = w.f.blocks[bi].preds;
-  let found: i32 = -1;
+  return r;
+}
+
+// token_root_at follows a token through phis of phis: each non-null input
+// is the box, unique in the block it comes from, or a token of the same box
+// — the shape an async frame's resume gives a token carried across a
+// suspension.
+function token_root_at(w: Walk, regions: i32[][], v: i32, path: i32[]): i32 {
+  let root: i32 = w.root[v];
+  if (util.index_of_i32(path, root) >= 0) {
+    // Back round a loop to a token on the path: it constrains nothing.
+    return -2;
+  }
+  let ins: ssa.SInst = def_of(w.f, w.defs, root);
+  if (ins.kind_tag != 8 || path.len() >= 8) {
+    return -1;
+  }
+  return token_inputs(w, regions, ins, w.f.blocks[w.defs.block[root]].preds, path.append(root));
+}
+
+// token_inputs folds a token phi's inputs: every non-null one must name
+// the same box; -2 when none names one, -1 when one is neither box nor token.
+function token_inputs(w: Walk, regions: i32[][], ins: ssa.SInst, preds: i32[], path: i32[]): i32 {
+  let found: i32 = -2;
   let i: i32 = 0;
   while (i < ins.args.len() && i < preds.len()) {
     let a: i32 = ins.args[i];
@@ -531,94 +635,77 @@ function token_root(w: Walk, regions: i32[][], v: i32): i32 {
       return -1;
     }
     if (!is_zero(w.f, w.defs, a)) {
-      let r: i32 = w.root[a];
-      if (found >= 0 && found != r) {
+      found = token_merge(found, token_input(w, regions, a, w.at[preds[i]], path));
+      if (found == -1) {
         return -1;
       }
-      let pi: i32 = w.at[preds[i]];
-      if (pi < 0 || util.index_of_i32(regions[pi], r) < 0) {
-        return -1;
-      }
-      found = r;
     }
     i = i + 1;
   }
   return found;
 }
 
-// cond_of reads a brif's condition: `__fern_rc_is_unique(b)`, a token's
-// test against null either way round, or a token itself.
-// token_cond reads `token == 0` / `token != 0` as a test of the token's box.
-function token_cond(w: Walk, regions: i32[][], ins: ssa.SInst): Cond {
-  let other: i32 = -1;
+// token_merge combines what two inputs say: a box each must agree on, -2
+// for no constraint, -1 for a conflict or a non-token.
+function token_merge(found: i32, r: i32): i32 {
+  if (r == -1 || found == -1) {
+    return -1;
+  }
+  if (r == -2) {
+    return found;
+  }
+  if (found == -2 || found == r) {
+    return r;
+  }
+  return -1;
+}
+
+// token_input reads one input of a token phi from predecessor `pi`: the box
+// itself when unique there, else a token of the box (-2 when it constrains
+// nothing, -1 when it is neither).
+function token_input(w: Walk, regions: i32[][], a: i32, pi: i32, path: i32[]): i32 {
+  let r: i32 = w.root[a];
+  if (pi >= 0 && util.index_of_i32(regions[pi], r) >= 0) {
+    return r;
+  }
+  return token_root_at(w, regions, a, path);
+}
+
+// Tested is the word a branch condition tests and the arm it holds on:
+// `brif x` on the true arm, `x != 0` likewise, `x == 0` on the false arm.
+struct Tested { word: i32, on_true: boolean }
+
+function tested(w: Walk, cond: i32): Tested {
+  let ins: ssa.SInst = def_of(w.f, w.defs, cond);
+  if (ins.kind_tag != 9 || ins.args.len() != 2 || ins.str != "eq" && ins.str != "ne") {
+    return Tested { word: cond, on_true: true };
+  }
+  let word: i32 = -1;
   if (is_zero(w.f, w.defs, ins.args[1])) {
-    other = ins.args[0];
+    word = ins.args[0];
   } else if (is_zero(w.f, w.defs, ins.args[0])) {
-    other = ins.args[1];
+    word = ins.args[1];
   }
-  if (other < 0) {
-    return no_cond();
-  }
-  let r: i32 = token_root(w, regions, other);
-  if (r < 0) {
-    return no_cond();
-  }
-  return Cond { root: r, on_true: ins.str == "ne" };
+  return Tested { word: word, on_true: ins.str == "ne" };
 }
 
 function cond_of(w: Walk, regions: i32[][], cond: i32, with_tokens: boolean): Cond {
-  let ins: ssa.SInst = def_of(w.f, w.defs, cond);
-  if (is_call(ins, "__fern_rc_is_unique") && ins.args.len() == 1) {
-    return Cond { root: w.root[ins.args[0]], on_true: true };
+  let t: Tested = tested(w, cond);
+  if (t.word < 0) {
+    return no_cond();
+  }
+  let u: Unique = unique_word(w, t.word, 0);
+  if (u.root >= 0) {
+    return Cond { root: u.root, on_true: t.on_true, also: u.also };
   }
   if (!with_tokens) {
     return no_cond();
   }
-  if (ins.kind_tag == 9 && ins.args.len() == 2 && (ins.str == "eq" || ins.str == "ne")) {
-    return token_cond(w, regions, ins);
-  }
-  if (ins.kind_tag == 8) {
-    return phi_cond(w, regions, cond, ins);
-  }
-  return no_cond();
-}
-
-// phi_cond: a phi tested directly is a token, or a uniqueness test merged
-// with false.
-function phi_cond(w: Walk, regions: i32[][], cond: i32, ins: ssa.SInst): Cond {
-  let r: i32 = token_root(w, regions, cond);
-  if (r < 0) {
-    r = merged_unique(w, ins);
-  }
+  let r: i32 = token_root(w, regions, t.word);
   if (r >= 0) {
-    return Cond { root: r, on_true: true };
+    return Cond { root: r, on_true: t.on_true, also: [] };
   }
   return no_cond();
-}
-
-// merged_unique reads a phi of one box's uniqueness tests and the constant
-// false — the test hoisted out of a branch's arm — as that test: the box,
-// or -1.
-function merged_unique(w: Walk, phi: ssa.SInst): i32 {
-  let root: i32 = -1;
-  for a in phi.args {
-    if (a < 0) {
-      return -1;
-    }
-    let d: ssa.SInst = def_of(w.f, w.defs, a);
-    if (is_zero(w.f, w.defs, a)) {
-      continue;
-    }
-    if (!is_call(d, "__fern_rc_is_unique") || d.args.len() != 1) {
-      return -1;
-    }
-    let r: i32 = w.root[d.args[0]];
-    if (root >= 0 && r != root) {
-      return -1;
-    }
-    root = r;
-  }
-  return root;
 }
 
 // Regions is, per block, the boxes proved unique there and, in parallel,
@@ -653,6 +740,9 @@ function regions_round(w: Walk, own rg: Regions, dom: ssadeps.Dom, reach: boolea
       }
       if (c.root >= 0 && arm >= 0 && w.f.blocks[arm].preds.len() == 1) {
         rg = open_region(rg, w, dom, reach, arm, c.root, w.f.blocks[bi].id);
+        for other in c.also {
+          rg = open_region(rg, w, dom, reach, arm, other, w.f.blocks[bi].id);
+        }
       }
     }
     bi = bi + 1;
@@ -666,7 +756,24 @@ function unique_regions(w: Walk, dom: ssadeps.Dom, reach: boolean[]): Regions {
     rg = Regions { roots: rg.roots.append([]), openers: rg.openers.append([]) };
   }
   rg = regions_round(w, rg, dom, reach, false);
-  return regions_round(w, rg, dom, reach, true);
+  // A token's region can open another token's test, so the token pass runs
+  // until no region grows.
+  let before: i32 = -1;
+  let after: i32 = region_count(rg);
+  while (after != before) {
+    before = after;
+    rg = regions_round(w, rg, dom, reach, true);
+    after = region_count(rg);
+  }
+  return rg;
+}
+
+function region_count(rg: Regions): i32 {
+  let n: i32 = 0;
+  for r in rg.roots {
+    n = n + r.len();
+  }
+  return n;
 }
 
 // ---- origins --------------------------------------------------------------
@@ -1557,9 +1664,17 @@ function spend_if_held(own p: Progress, w: Walk, v: i32): Progress {
   return Progress { ...p, state: p.state.with(k, p.state[k] - 1) };
 }
 
-function retain(own p: Progress, w: Walk, v: i32): Progress {
-  let k: i32 = w.idx[w.root[v]];
+function retain(own p: Progress, w: Walk, v: i32, result: i32): Progress {
+  let r: i32 = w.root[v];
+  let k: i32 = w.idx[r];
   if (k < 0) {
+    return p;
+  }
+  // A retain of a value read out of a box the frame owns, where neither the
+  // retain's result nor the value is read again: the box takes the unit, as
+  // when the lowering fills an option it made with a payload it borrowed.
+  // Read again, the value is the frame's own binding and the unit is its.
+  if (result >= 0 && w.uses[result] == 0 && w.uses[v] == 1 && w.origin[r] == org_borrowed() && owned_base(w, r)) {
     return p;
   }
   let s: i32 = p.state[k];
@@ -1570,6 +1685,15 @@ function retain(own p: Progress, w: Walk, v: i32): Progress {
     return Progress { ...p, state: p.state.with(k, maybe()) };
   }
   return Progress { ...p, state: p.state.with(k, s + 1) };
+}
+
+function owned_base(w: Walk, v: i32): boolean {
+  let d: ssa.SInst = def_of(w.f, w.defs, v);
+  if (!is_load(d) || d.args.len() == 0) {
+    return false;
+  }
+  let o: i32 = w.origin[w.root[d.args[0]]];
+  return o == org_fresh() || o == org_transferred() || o == org_child();
 }
 
 function poison(own p: Progress, w: Walk, v: i32): Progress {
@@ -1624,7 +1748,7 @@ function apply_sig(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, s: rcsi
 
 function apply_effect(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, effect: i32, v: i32): Progress {
   if (effect == rcsigs.effect_retain()) {
-    return retain(p, w, v);
+    return retain(p, w, v, ins.result);
   }
   if (effect == rcsigs.effect_release() || effect == rcsigs.effect_move()) {
     return spend_counted(p, w, v, block, "released by " + ins.str);
@@ -2156,12 +2280,51 @@ function round_limit(): i32 {
 }
 
 // certify walks `f` against its boundary and the module's tables.
+function use_counts(f: ssa.SFunc): i32[] {
+  let uses: i32[] = __alloc_i32(f.nvals);
+  for b in f.blocks {
+    for ins in b.insts {
+      for a in ins.args {
+        uses = count_use(uses, a);
+      }
+    }
+    uses = count_use(uses, b.term.value);
+    if (b.term.kind_tag == 3) {
+      uses = count_use(uses, b.term.cond);
+    }
+  }
+  return uses;
+}
+
+function count_use(own uses: i32[], v: i32): i32[] {
+  if (v < 0 || v >= uses.len()) {
+    return uses;
+  }
+  return uses.with(v, uses[v] + 1);
+}
+
+// resumes: the body is an async frame that re-enters through the task
+// stack (`__fern_task_mode`). Its boxes and reuse tokens come back as popped
+// words, and whether a token is null is decided by a word of the frame the
+// certifier cannot read, so a child released under it reads as a borrow
+// released. Such a body is not certified; the census says so.
+function resumes(f: ssa.SFunc): boolean {
+  for b in f.blocks {
+    for ins in b.insts {
+      if (is_call(ins, "__fern_task_mode")) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 // walk_of builds the walk's tables over `f`: roots, origins, the tracked
 // slots.
 function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: rcsigs.Table, ops: rcsigs.OpTable, at: i32[], dom: ssadeps.Dom, reach: boolean[]): Walk {
   let defs: Defs = definitions(f);
   let rt: Roots = roots(f, defs, sigs);
-  let w: Walk = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: returns_pair(f), why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [] };
+  let w: Walk = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: returns_pair(f), why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [], uses: use_counts(f) };
   let rg: Regions = unique_regions(w, dom, reach);
   let o: Origins = origins(w, rg.roots, rg.openers, children_boxes(w, rg.roots), dom);
   w = Walk { ...w, origin: o.origin, why: o.why, opened: o.opened, pair_tag: o.pair_tag, pair_mask: o.pair_mask, pair_words: o.pair_words };
@@ -2226,6 +2389,9 @@ pub function certify(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, si
   let at: i32[] = ssadeps.position_of(f);
   if (f.entry < 0 || f.entry >= at.len() || at[f.entry] < 0) {
     return skipped("no entry block");
+  }
+  if (resumes(f)) {
+    return skipped("resumes from a task frame");
   }
   let reach: boolean[] = ssadeps.reachable_blocks(f);
   let dom: ssadeps.Dom = ssadeps.dominates(f);

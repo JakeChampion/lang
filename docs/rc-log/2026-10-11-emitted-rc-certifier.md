@@ -23,10 +23,20 @@ line under `FERN_RC_CERTIFY=report`.
   unit"; a unit still held at a return is "leaked at return".
 - A marked load is the frame's own unit — a child — inside a region a
   uniqueness test opened (`__fern_rc_is_unique`, a reuse token's null test,
-  or either merged through a phi with `false`), in a children-only drop
-  (`__sem_drop_<T>`), before an overwrite of the same slot, or beside a shell
-  release (`ir.shell`). Elsewhere it is a borrow, and releasing one is the
-  finding this exists for.
+  or either carried through phis of phis with `false`, together with the
+  phis beside them that select the same box on the same edges), in a
+  children-only drop (`__sem_drop_<T>`), before an overwrite of the same
+  slot, or beside a shell release (`ir.shell`). Elsewhere it is a borrow,
+  and releasing one is the finding this exists for.
+- A retain of a value read out of a box the frame owns, where neither the
+  retain's result nor the value is read again, hands the unit to that box:
+  the lowering filling an option it made with a payload it borrowed. Read
+  again, the value is the frame's binding and the unit is the frame's.
+- A body that re-enters through the task stack (`__fern_task_mode`) is not
+  certified: its boxes and reuse tokens come back as popped words, and
+  which path a child release sits on is decided by a word of the saved
+  frame. The census reports it as skipped. This is the one hole worth
+  closing next; std/serve and std/stream are what it covers.
 - A branch settles a word on its edges: `x == 0` makes `x` absent on that
   arm, and a paired call's second word (sempair) holds a unit only where the
   first word is settled to a variant whose payload is a reference
@@ -70,6 +80,13 @@ Every one of the 570 fixtures of the conformance corpus compiles under it on
 all three targets, and so does every e2ecompiler driver (the suite sets
 `FERN_IR_VERIFY=quiet`).
 
+The Go-side e2e suite (`internal/testing/e2e`, which also compiles under
+`FERN_IR_VERIFY=quiet`) compiles 325 more programs; the first CI round
+refused 26 of them and every one was a model gap, fixed here. Two of its
+tests compile deliberately broken programs for the runtime sanitizer to
+catch (a double free, a corrupted count); those opt out with
+`FERN_RC_CERTIFY=0`, since the certifier now refuses them at compile time.
+
 Getting there was a sequence of model corrections, not lowering fixes, each
 surfaced by a finding over the corpus: the one-sided retain whose "unique"
 arm was the join block (a region needs an arm with one predecessor); the
@@ -78,8 +95,12 @@ builtin result lists, replaced by the lowering's marks after `sleep_ms` and
 column and a word on a scalar one; `free` and `__map_cell_free`, which free a
 raw cell no count covers; the pair word of a `Result` whose `Err` payload is
 the reference; a cursor's map read to be dropped inside the cursor's unique
-region. Two test scaffolds were unbalanced on their error exits and were
-fixed rather than exempted (`physicalRCHelpers`, `byteViewRCDriver`).
+region; the retain that fills an option's payload; the uniqueness test
+hoisted across a resume and the array phi beside it; the empty static box
+and null, which two constants named; a reuse token carried round a loop
+and across a suspension. Two test scaffolds were unbalanced on their error
+exits and were fixed rather than exempted (`physicalRCHelpers`,
+`byteViewRCDriver`).
 
 The planted bug the issue asks for is `TestSelfHostSSAPhysicalRC`'s
 `omit-retains` mutation: with every physical retain stripped from `produce`,

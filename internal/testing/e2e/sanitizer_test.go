@@ -41,8 +41,19 @@ import (
 // contract is "stderr only, stdout untouched").
 func runSanitizeX86_64(t *testing.T, src string) (string, string, int) {
 	t.Helper()
+	return runSanitizeX86_64With(t, src)
+}
+
+// uncertified compiles a program the emitted-RC certifier would refuse: one
+// that plants the over-release or double free the runtime detector under
+// test is meant to catch. The certifier runs in every verifying compile
+// (FERN_IR_VERIFY), so a planted bug has to opt out to reach the runtime.
+const uncertified = "FERN_RC_CERTIFY=0"
+
+func runSanitizeX86_64With(t *testing.T, src string, extra ...string) (string, string, int) {
+	t.Helper()
 	runner := e2eharness.X86_64Runner(t)
-	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetX86_64Linux, src, []string{"FERN_SANITIZE=1"})
+	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetX86_64Linux, src, append([]string{"FERN_SANITIZE=1"}, extra...))
 	return runSplit(t, runX86_64Bin(runner, bin))
 }
 
@@ -50,8 +61,13 @@ func runSanitizeX86_64(t *testing.T, src string) (string, string, int) {
 // runs in CI).
 func runSanitizeArm64(t *testing.T, src string) (string, string, int) {
 	t.Helper()
+	return runSanitizeArm64With(t, src)
+}
+
+func runSanitizeArm64With(t *testing.T, src string, extra ...string) (string, string, int) {
+	t.Helper()
 	qemu := e2eharness.Arm64Runner(t)
-	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetArm64Linux, src, []string{"FERN_SANITIZE=1"})
+	bin := e2eharness.CompileSelfHostSource(t, e2eharness.TargetArm64Linux, src, append([]string{"FERN_SANITIZE=1"}, extra...))
 	return runSplit(t, runArm64Bin(qemu, bin))
 }
 
@@ -59,12 +75,17 @@ func runSanitizeArm64(t *testing.T, src string) (string, string, int) {
 // target's runner, splitting stdout, stderr and the exit code.
 func runPlain(t *testing.T, target, src string) (string, string, int) {
 	t.Helper()
+	return runPlainWith(t, target, src)
+}
+
+func runPlainWith(t *testing.T, target, src string, extra ...string) (string, string, int) {
+	t.Helper()
 	if target == e2eharness.TargetArm64Linux {
 		qemu := e2eharness.Arm64Runner(t)
-		return runSplit(t, runArm64Bin(qemu, e2eharness.CompileSelfHostSource(t, target, src, nil)))
+		return runSplit(t, runArm64Bin(qemu, e2eharness.CompileSelfHostSource(t, target, src, extra)))
 	}
 	runner := e2eharness.X86_64Runner(t)
-	return runSplit(t, runX86_64Bin(runner, e2eharness.CompileSelfHostSource(t, target, src, nil)))
+	return runSplit(t, runX86_64Bin(runner, e2eharness.CompileSelfHostSource(t, target, src, extra)))
 }
 
 // checkSanitizedBalanced runs src under the sanitizer and asserts the answer,
@@ -221,7 +242,7 @@ func TestX86_64SanitizeLeakVerdict(t *testing.T) {
 }
 
 func TestX86_64SanitizeDoubleFreeReported(t *testing.T) {
-	_, stderr, code := runSanitizeX86_64(t, sanDoubleFreeSrc)
+	_, stderr, code := runSanitizeX86_64With(t, sanDoubleFreeSrc, uncertified)
 	if code != e2eharness.ExitSanitizer {
 		t.Errorf("exit=%d, want %d (a sanitizer finding is fatal and has its own status)", code, e2eharness.ExitSanitizer)
 	}
@@ -330,7 +351,7 @@ func TestArm64SanitizeQuarantinesFreedBlocks(t *testing.T) {
 }
 
 func TestArm64SanitizeDoubleFreeReported(t *testing.T) {
-	_, stderr, code := runSanitizeArm64(t, sanDoubleFreeSrc)
+	_, stderr, code := runSanitizeArm64With(t, sanDoubleFreeSrc, uncertified)
 	if code != e2eharness.ExitSanitizer {
 		t.Errorf("exit=%d, want %d", code, e2eharness.ExitSanitizer)
 	}
