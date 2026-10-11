@@ -334,7 +334,7 @@ including zero counts, with these closed tags:
 | Tag | Meaning |
 | --- | --- |
 | `fused` | The pass replaced this chain with one traversal. |
-| `no-producer` | A sink has no recognized map/filter producer feeding it. |
+| `no-producer` | A sink has no recognized map, filter, take or take_while producer feeding it. |
 | `intermediate-shared` | More than one use prevents eliminating an intermediate. |
 | `control-flow-boundary` | Producer and consumer are in different blocks. |
 | `effect-boundary` | An intervening instruction prevents stage reordering. |
@@ -345,6 +345,7 @@ including zero counts, with these closed tags:
 | `no-reduction-sink` | A remaining producer has no fusible fold, reduce or scan consumer. |
 | `operator-outside-algebra` | A recognized combinator, such as reverse, is outside this pass. |
 | `disabled` | `FERN_NO_ARRAY_FUSION=1` prevented rewriting. |
+| `element-fn-may-abort` | A stage ahead of a `take` or `take_while` can abort, and the stop would skip its applications (§2 rule 3). |
 
 `storage=no-intermediate-arrays` describes the eliminated arrays, not closure
 environments or a reduction's result box. A refusal says

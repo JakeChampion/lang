@@ -1,11 +1,12 @@
-// Producer-consumer fusion of std/array pipelines (#11072): a chain of `map`
-// and `filter` stages ending in `fold`, `reduce` or `scan` becomes one loop.
+// Producer-consumer fusion of std/array pipelines (#11072): a chain of `map`,
+// `filter`, `take` and `take_while` stages ending in `fold`, `reduce` or
+// `scan` becomes one loop.
 // Intermediate arrays are never built; scan reserves its output once. This
 // extends internal/oracle/ir/array_fusion.go on the typed semantic graphs every
 // backend lowers from, before ownership planning accounts for the output.
 //
 // docs/ARRAY-FUSION-OPERATORS.md is the contract: each stage contributes a
-// step (pass through, rebind, or skip), the fused body is the steps
+// step (pass through, rebind, skip, or stop), the fused body is the steps
 // concatenated. Each sink seeds and finishes its accumulator; scan also appends
 // each prefix to its output. docs/ARRAY-ALGEBRA.md §1 is the purity boundary: every
 // element function is a closure built here whose body reaches no effect, since
@@ -16,7 +17,9 @@
 //     the array the loop never builds;
 //   - the stages and the sink sit in one block with nothing but inert values
 //     between them, so no effect moves relative to the stages' calls;
-//   - every element and the accumulator is a scalar.
+//   - every element and the accumulator is a scalar;
+//   - no stage ahead of a `take` or `take_while` can abort, since the stop
+//     skips the applications the eager chain would make past it.
 import "./ssa";
 import "./ssasem";
 import "./semtypes";
@@ -31,7 +34,8 @@ pub struct Fused { funcs: ssasem.Func[], rewritten: boolean[], sites: semarrayre
 // combinator body i is, or ""; `bad[i]` says body i can reach an effect. A
 // body that was not produced is no combinator and counts as effectful. `any`
 // says the module holds a combinator at all.
-struct Context { index: util.NameIndex, verbs: string[], report_verbs: string[], bad: boolean[], any: boolean }
+// `aborts[i]` says body i may abort.
+struct Context { index: util.NameIndex, verbs: string[], report_verbs: string[], bad: boolean[], aborts: boolean[], any: boolean }
 
 // One recognised chain. `stages` are instruction positions in `block`, head
 // first, with `verbs` and the element function values `fns` beside them.
@@ -89,7 +93,7 @@ function context(funcs: ssasem.Func[], names: string[], usable: boolean[], trust
     if (report) {
       report_verbs = report_verbs.append(v);
     }
-    if (!util.has_str(["map", "filter", "fold", "reduce", "scan"], v)) {
+    if (!util.has_str(["map", "filter", "take", "take_while", "fold", "reduce", "scan"], v)) {
       v = "";
     }
     verbs = verbs.append(v);
@@ -99,9 +103,9 @@ function context(funcs: ssasem.Func[], names: string[], usable: boolean[], trust
   // A module with no combinator body has no chain, and is spared the effect
   // analysis.
   if (!any) {
-    return Context { index: index, verbs: verbs, report_verbs: report_verbs, bad: [], any: false };
+    return Context { index: index, verbs: verbs, report_verbs: report_verbs, bad: [], aborts: [], any: false };
   }
-  return Context { index: index, verbs: verbs, report_verbs: report_verbs, bad: effectful(funcs, usable, index), any: true };
+  return Context { index: index, verbs: verbs, report_verbs: report_verbs, bad: effectful(funcs, usable, index), aborts: may_abort(funcs, usable, index), any: true };
 }
 
 // ---- recognition ----------------------------------------------------------
@@ -189,6 +193,44 @@ function effectful(funcs: ssasem.Func[], usable: boolean[], index: util.NameInde
     bad = bad.append(!usable[i] || direct_effect(funcs[i]));
     i = i + 1;
   }
+  return through_calls(funcs, bad, index);
+}
+
+// docs/ARRAY-ALGEBRA.md §2: what aborts is an index or slice out of range and
+// an allocation that does not fit; integer division is total and float
+// arithmetic does not trap. So a body that only computes scalars, converts
+// them, and reads its captures cannot abort, and anything else may.
+function aborting_kind(k: i32): boolean {
+  if (k >= 1) {
+    return k > 10;
+  }
+  return k != ssasem.call() && k != ssasem.cast() && k != ssasem.tuple_get() && k != ssasem.record_get() && k != ssasem.zero();
+}
+
+function direct_abort(f: ssasem.Func): boolean {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (aborting_kind(ins.kind_tag)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function may_abort(funcs: ssasem.Func[], usable: boolean[], index: util.NameIndex): boolean[] {
+  let bad: boolean[] = [];
+  let i: i32 = 0;
+  while (i < funcs.len()) {
+    bad = bad.append(!usable[i] || direct_abort(funcs[i]));
+    i = i + 1;
+  }
+  return through_calls(funcs, bad, index);
+}
+
+// Spreads `bad` from callee to caller until nothing changes.
+function through_calls(funcs: ssasem.Func[], bad: boolean[], index: util.NameIndex): boolean[] {
+  let i: i32 = 0;
   let changed: boolean = true;
   while (changed) {
     changed = false;
@@ -316,7 +358,7 @@ function stage_verb(ins: ssa.SInst, cx: Context): string {
     return "";
   }
   let v: string = verb_at(cx, ins.str);
-  if (v == "map" || v == "filter") {
+  if (v == "map" || v == "filter" || v == "take" || v == "take_while") {
     return v;
   }
   return "";
@@ -338,14 +380,29 @@ function effect_between(b: ssa.SBlock, c: Chain): i32 {
 }
 
 // Every element function, and the sink's, is a closure built in this body
-// whose own body reaches no effect.
+// whose own body reaches no effect. A stage ahead of a `take` or `take_while`
+// loses the applications past the stop, so its function must also be unable
+// to abort.
+// A `take`'s operand is its count, not a function.
 function purity_decision(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): Decision {
   let sink: ssa.SInst = f.graph.blocks[c.block].insts[c.sink];
+  let last_take: i32 = 0 - 1;
   let j: i32 = 0;
+  while (j < c.verbs.len()) {
+    if (c.verbs[j] == "take" || c.verbs[j] == "take_while") {
+      last_take = j;
+    }
+    j = j + 1;
+  }
+  j = 0;
   for v in c.fns.append(sink.args[sink.args.len() - 1]) {
     let stage: i32 = c.sink;
     if (j < c.stages.len()) {
       stage = c.stages[j];
+    }
+    if (j < c.verbs.len() && c.verbs[j] == "take") {
+      j = j + 1;
+      continue;
     }
     let d: Def = defs[v];
     if (d.block < 0) {
@@ -358,6 +415,9 @@ function purity_decision(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): De
     }
     if (cx.bad[at]) {
       return Decision { reason: semarrayreport.fusion_element_fn_effectful(), stage: stage };
+    }
+    if (j < last_take && cx.aborts[at]) {
+      return Decision { reason: semarrayreport.fusion_element_fn_may_abort(), stage: stage };
     }
     j = j + 1;
   }
@@ -592,6 +652,10 @@ function term_targets(t: ssa.STerm): i32[] {
 
 // ---- building the loop ----------------------------------------------------
 
+function int32(): typeinfo.Type {
+  return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
+}
+
 // The blocks built so far, the open block, and the next free block id.
 struct Build { values: typeinfo.Type[], blocks: ssa.SBlock[], id: i32, preds: i32[], insts: ssa.SInst[], next: i32 }
 
@@ -623,25 +687,49 @@ function fresh(s: Build, n: i32): Build {
 
 // The loop carries the cursor and accumulator, plus an arrival flag for an
 // unpeeled reduce or an output array for scan. Every back edge supplies them.
-struct Loop { head: i32, i: i32, acc: i32, seen: i32, out: i32, next_i: i32, backs: i32[], accs: i32[], seens: i32[], outs: i32[] }
+// Each `take` adds a count of the elements that reached it: `counts` are the
+// header's, `at` the values on the path being built, `counted` what each back
+// edge supplies, one row per edge. `exits` are the blocks a stop leaves the
+// loop from.
+struct Loop { head: i32, i: i32, acc: i32, seen: i32, out: i32, next_i: i32, backs: i32[], accs: i32[], seens: i32[], outs: i32[], counts: i32[], at: i32[], counted: i32[], exits: i32[] }
 
 function back(l: Loop, from: i32, acc: i32, seen: i32, out: i32): Loop {
   let outs: i32[] = l.outs;
   if (l.out >= 0) {
     outs = outs.append(out);
   }
-  return Loop { ...l, backs: l.backs.append(from), accs: l.accs.append(acc), seens: l.seens.append(seen), outs: outs };
+  return Loop { ...l, backs: l.backs.append(from), accs: l.accs.append(acc), seens: l.seens.append(seen), outs: outs, counted: util.append_all(l.counted, l.at) };
+}
+
+function no_loop(): Loop {
+  return Loop { head: 0 - 1, i: 0 - 1, acc: 0 - 1, seen: 0 - 1, out: 0 - 1, next_i: 0 - 1, backs: [], accs: [], seens: [], outs: [], counts: [], at: [], counted: [], exits: [] };
 }
 
 struct Stepped { s: Build, l: Loop, e: i32 }
 
 // The stages' steps, concatenated: a `map` rebinds the element, a `filter`
-// whose predicate says no skips straight back to the header.
+// whose predicate says no skips straight back to the header, a `take`
+// counts the element, and a `take_while` whose predicate says no leaves the
+// loop. The take's stop is the guard `guards` puts ahead of the fetch, so no
+// stage runs on an element past it.
 function steps(f: ssasem.Func, c: Chain, s: Build, l: Loop, e: i32): Stepped {
   let j: i32 = 0;
+  let k: i32 = 0;
   while (j < c.stages.len()) {
     let fn: i32 = c.fns[j];
-    if (c.verbs[j] == "map") {
+    if (c.verbs[j] == "take") {
+      let one: Emitted = emit(s, 1, int32(), [], 1, "");
+      let more: Emitted = emit(one.s, 9, int32(), [l.at[k], one.v], 0, "+");
+      s = more.s;
+      l = Loop { ...l, at: l.at.with(k, more.v) };
+      k = k + 1;
+    } else if (c.verbs[j] == "take_while") {
+      let keep: Emitted = emit(s, ssasem.call_value(), typeinfo.TypeBool { tag: 0 }, [fn, e], 0, "");
+      let from: i32 = keep.s.id;
+      let on: i32 = keep.s.next;
+      s = open(close(fresh(keep.s, 1), brif(keep.v, on, l.head + 2)), on, [from]);
+      l = Loop { ...l, exits: l.exits.append(from) };
+    } else if (c.verbs[j] == "map") {
       let m: Emitted = emit(s, ssasem.call_value(), ssasem.func_result(f.values[fn]), [fn, e], 0, "");
       s = m.s;
       e = m.v;
@@ -703,32 +791,50 @@ function finish(f: ssasem.Func, c: Chain, s: Build, l: Loop, result: i32): Build
   return emit_at(open(s, some + 2, [some, some + 1]), 8, [vs.v, vn.v], result);
 }
 
-// The header's phis, completed once every back edge is known.
-function header(s: Build, l: Loop, entry: i32, start: i32, init: i32, unseen: i32, output: i32): Build {
+// The header's phis, completed once every back edge is known. A chain with a
+// `take` is never peeled, so its cursor starts at zero, as its counts do.
+function header(s: Build, l: Loop, o: Opened): Build {
   let at: i32 = 0;
   while (s.blocks[at].id != l.head) {
     at = at + 1;
   }
   let h: ssa.SBlock = s.blocks[at];
-  let is: i32[] = [start];
+  let is: i32[] = [o.start];
   for _ in l.backs {
     is = is.append(l.next_i);
   }
   let phis: ssa.SInst[] = [
     ssa.SInst { kind_tag: 8, result: l.i, args: is, imm: 0, str: "" },
-    ssa.SInst { kind_tag: 8, result: l.acc, args: prepend(init, l.accs), imm: 0, str: "" },
+    ssa.SInst { kind_tag: 8, result: l.acc, args: prepend(o.init, l.accs), imm: 0, str: "" },
   ];
   if (l.seen >= 0) {
-    phis = phis.append(ssa.SInst { kind_tag: 8, result: l.seen, args: prepend(unseen, l.seens), imm: 0, str: "" });
+    phis = phis.append(ssa.SInst { kind_tag: 8, result: l.seen, args: prepend(o.unseen, l.seens), imm: 0, str: "" });
   }
   if (l.out >= 0) {
-    phis = phis.append(ssa.SInst { kind_tag: 8, result: l.out, args: prepend(output, l.outs), imm: 0, str: "" });
+    phis = phis.append(ssa.SInst { kind_tag: 8, result: l.out, args: prepend(o.output, l.outs), imm: 0, str: "" });
   }
+  phis = util.append_all(phis, count_phis(l, o.start));
   for ins in h.insts {
     phis = phis.append(ins);
   }
-  let full: ssa.SBlock = ssa.SBlock { ...h, insts: phis, preds: prepend(entry, l.backs) };
+  let full: ssa.SBlock = ssa.SBlock { ...h, insts: phis, preds: prepend(o.entry, l.backs) };
   return Build { ...s, blocks: s.blocks.with(at, full) };
+}
+
+function count_phis(l: Loop, zero: i32): ssa.SInst[] {
+  let out: ssa.SInst[] = [];
+  let k: i32 = 0;
+  while (k < l.counts.len()) {
+    let args: i32[] = [zero];
+    let b: i32 = 0;
+    while (b < l.backs.len()) {
+      args = args.append(l.counted[b * l.counts.len() + k]);
+      b = b + 1;
+    }
+    out = out.append(ssa.SInst { kind_tag: 8, result: l.counts[k], args: args, imm: 0, str: "" });
+    k = k + 1;
+  }
+  return out;
 }
 
 struct Opened { s: Build, l: Loop, init: i32, unseen: i32, yes: i32, start: i32, entry: i32, output: i32 }
@@ -749,7 +855,7 @@ function scan_buffer(f: ssasem.Func, c: Chain, o: Opened, capacity: i32): Opened
 // proves the increment cannot overflow, which the physical SSA pass uses to
 // remove the redundant signed32 wrap without changing integer semantics.
 function enter(f: ssasem.Func, c: Chain, s: Build, acc_t: typeinfo.Type, seed: i32): Opened {
-  let i32t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
+  let i32t: typeinfo.Type = int32();
   let bool_t: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
   let n: Emitted = emit(s, ssasem.length(), i32t, [c.base], 0, "");
   let first: i32 = 0;
@@ -759,7 +865,7 @@ function enter(f: ssasem.Func, c: Chain, s: Build, acc_t: typeinfo.Type, seed: i
   let start: Emitted = emit(n.s, 1, i32t, [], first, "");
   s = start.s;
   let sink: ssa.SInst = f.graph.blocks[c.block].insts[c.sink];
-  let o: Opened = Opened { s: s, l: Loop { head: 0, i: 0, acc: 0, seen: 0 - 1, out: 0 - 1, next_i: 0, backs: [], accs: [], seens: [], outs: [] }, init: 0, unseen: 0 - 1, yes: 0 - 1, start: start.v, entry: s.id, output: 0 - 1 };
+  let o: Opened = Opened { s: s, l: no_loop(), init: 0, unseen: 0 - 1, yes: 0 - 1, start: start.v, entry: s.id, output: 0 - 1 };
   if (seed >= 0) {
     o = Opened { ...o, init: seed };
   } else if (c.verb == "fold" || c.verb == "scan") {
@@ -779,6 +885,13 @@ function enter(f: ssasem.Func, c: Chain, s: Build, acc_t: typeinfo.Type, seed: i
     l = Loop { ...l, seen: s.values.len() };
     s = Build { ...s, values: s.values.append(bool_t) };
   }
+  for v in c.verbs {
+    if (v == "take") {
+      l = Loop { ...l, counts: l.counts.append(s.values.len()) };
+      s = Build { ...s, values: s.values.append(i32t) };
+    }
+  }
+  l = Loop { ...l, at: l.counts };
   s = open(close(s, br(head)), head, []);
   let more: Emitted = emit(s, 9, bool_t, [l.i, n.v], 0, "<");
   s = close(more.s, brif(more.v, head + 1, head + 2));
@@ -792,12 +905,33 @@ function enter(f: ssasem.Func, c: Chain, s: Build, acc_t: typeinfo.Type, seed: i
 // combining callback runs only in the loop. Filters retain the arrival flag.
 struct Peeled { s: Build, seed: i32, empty: i32, none: i32, join: i32 }
 
+// Each `take` stops the loop once its count reaches its operand, before the
+// element is fetched. A count at or below zero stops it before the first.
+function guards(c: Chain, o: Opened): Opened {
+  let s: Build = o.s;
+  let l: Loop = o.l;
+  let j: i32 = 0;
+  let k: i32 = 0;
+  while (j < c.stages.len()) {
+    if (c.verbs[j] == "take") {
+      let below: Emitted = emit(s, 9, typeinfo.TypeBool { tag: 0 }, [l.counts[k], c.fns[j]], 0, "<");
+      let from: i32 = below.s.id;
+      let on: i32 = below.s.next;
+      s = open(close(fresh(below.s, 1), brif(below.v, on, l.head + 2)), on, [from]);
+      l = Loop { ...l, exits: l.exits.append(from) };
+      k = k + 1;
+    }
+    j = j + 1;
+  }
+  return Opened { ...o, s: s, l: l };
+}
+
 function peel_seed(f: ssasem.Func, c: Chain, s: Build): Peeled {
   let out: Peeled = Peeled { s: s, seed: 0 - 1, empty: 0 - 1, none: 0 - 1, join: 0 - 1 };
-  if (c.verb != "reduce" || util.has_str(c.verbs, "filter")) {
+  if (c.verb != "reduce" || util.has_str(c.verbs, "filter") || util.has_str(c.verbs, "take") || util.has_str(c.verbs, "take_while")) {
     return out;
   }
-  let i32t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
+  let i32t: typeinfo.Type = int32();
   let n: Emitted = emit(s, ssasem.length(), i32t, [c.base], 0, "");
   let zero: Emitted = emit(n.s, 1, i32t, [], 0, "");
   let nonempty: Emitted = emit(zero.s, 9, typeinfo.TypeBool { tag: 0 }, [n.v, zero.v], 0, ">");
@@ -808,8 +942,7 @@ function peel_seed(f: ssasem.Func, c: Chain, s: Build): Peeled {
   let none: Emitted = emit(open(s, empty, [from]), ssasem.variant_new(), f.values[result], [], 0, "None");
   s = open(close(none.s, br(empty + 2)), empty + 1, [from]);
   let value: Emitted = emit(s, ssasem.array_get(), element(f.values[c.base]), [c.base, zero.v], 1, "");
-  let no_loop: Loop = Loop { head: 0 - 1, i: 0 - 1, acc: 0 - 1, seen: 0 - 1, out: 0 - 1, next_i: 0 - 1, backs: [], accs: [], seens: [], outs: [] };
-  let st: Stepped = steps(f, c, value.s, no_loop, value.v);
+  let st: Stepped = steps(f, c, value.s, no_loop(), value.v);
   return Peeled { s: st.s, seed: st.e, empty: empty, none: none.v, join: empty + 2 };
 }
 
@@ -839,17 +972,17 @@ function fuse(f: ssasem.Func, c: Chain): ssasem.Func {
   }
   let s: Build = Build { values: f.values, blocks: [], id: b.id, preds: b.preds, insts: kept_before(b, c), next: next_block_id(g) };
   let peeled: Peeled = peel_seed(f, c, s);
-  let o: Opened = enter(f, c, peeled.s, acc_t, peeled.seed);
+  let o: Opened = guards(c, enter(f, c, peeled.s, acc_t, peeled.seed));
   let fetched: Emitted = emit(o.s, ssasem.array_get(), element(f.values[c.base]), [c.base, o.l.i], 1, "");
   let st: Stepped = steps(f, c, fetched.s, o.l, fetched.v);
   st = sink_step(c, sink.args[sink.args.len() - 1], acc_t, st, o.yes);
-  s = finish_seeded(f, c, open(st.s, o.l.head + 2, [o.l.head]), st.l, peeled, sink.result);
+  s = finish_seeded(f, c, open(st.s, o.l.head + 2, prepend(o.l.head, st.l.exits)), st.l, peeled, sink.result);
   let p: i32 = c.sink + 1;
   while (p < b.insts.len()) {
     s = Build { ...s, insts: s.insts.append(b.insts[p]) };
     p = p + 1;
   }
-  s = header(close(s, b.term), st.l, o.entry, o.start, o.init, o.unseen, o.output);
+  s = header(close(s, b.term), st.l, o);
   let graph: ssa.SFunc = ssa.SFunc { ...g, blocks: spliced(g, c.block, s.blocks), nvals: s.values.len() };
   let gone: string[] = [sink.str];
   for at in c.stages {

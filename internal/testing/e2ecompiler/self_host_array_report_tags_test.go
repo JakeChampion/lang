@@ -19,6 +19,7 @@ func TestSelfHostArrayReportReasonTags(t *testing.T) {
 			"fused", "no-producer", "intermediate-shared", "control-flow-boundary",
 			"effect-boundary", "element-fn-unresolved", "element-fn-effectful",
 			"non-scalar", "result-escapes", "no-reduction-sink", "operator-outside-algebra", "disabled",
+			"element-fn-may-abort",
 		}},
 		{"storage", "storage_reasons", []string{
 			"guarded-reuse", "reuse-disabled", "shape-unsupported", "borrow-linked-result",
