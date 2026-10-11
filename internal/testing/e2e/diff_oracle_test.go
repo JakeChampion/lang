@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/check/checker"
+	"github.com/jakechampion/lang/internal/check/constfold"
 	"github.com/jakechampion/lang/internal/oracle/interp"
 	"github.com/jakechampion/lang/internal/oracle/monomorph"
 	"github.com/jakechampion/lang/internal/pkg/modload"
@@ -204,6 +205,11 @@ func interpByte(t *testing.T, src string, skipGaps bool) int {
 	prog, _, err := modload.LoadSource(src)
 	if err != nil {
 		t.Fatalf("load: %v\nsrc:\n%s", err, src)
+	}
+	// The CLI folds constants before checking, and an imported module's
+	// `const` is visible to the checker only through that fold.
+	if err := constfold.Fold(prog, nil); err != nil {
+		t.Fatalf("constfold: %v\nsrc:\n%s", err, src)
 	}
 	info, err := checker.Check(prog)
 	if err != nil {
