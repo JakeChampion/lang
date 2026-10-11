@@ -10801,7 +10801,7 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
   let array_concrete: i32[] = [];
   let i: i32 = 0;
   while (i < decls.len()) {
-    if (decls[i].type_params.len() > 0 && decls[i].receiver_name.len() == 0) {
+    if (is_free_bg_template(decls[i])) {
       gname = gname.append(decls[i].name);
       gat = gat.append(i);
     }
@@ -12495,10 +12495,16 @@ function me_method_decl(funcs: MFns, rty: string, name: string): i32 {
 // `ty`, a spelling in method `fd`'s signature, with the type parameters its
 // receiver binds replaced by what the receiver typed `rty` binds them to.
 function me_receiver_subst(fd: FuncDecl, rty: string, ty: string, funcs: MFns): string {
-  let binds: MEnv = bind_unify(fd.receiver_type, rty, fd.all_type_params, MEnv { mnames: [], mtypes: [] }, funcs);
+  // An impl's method records no type parameters of its own; its receiver
+  // spells the impl's.
+  let vars: string[] = fd.all_type_params;
+  if (vars.len() == 0) {
+    vars = struct_receiver_typevars(fd.receiver_type);
+  }
+  let binds: MEnv = bind_unify(fd.receiver_type, rty, vars, MEnv { mnames: [], mtypes: [] }, funcs);
   let tps: string[] = [];
   let cts: string[] = [];
-  for tp in fd.all_type_params {
+  for tp in vars {
     let ct: string = binds.elook(tp);
     if (ct.len() > 0) {
       tps = tps.append(tp);
@@ -15532,14 +15538,15 @@ function monomorphize_module(mod: Module, erased: string[]): Module {
   // generic's body is rewritten per clone instead; the template itself is
   // passed through so monomorphize_structs can still clone it from a
   // generic-struct METHOD clone, and is dropped there. A generic struct's
-  // method is generic in the struct's params, so its body is likewise
-  // rewritten only per struct instantiation (env concrete), never here
-  // where `k: K` would key a clone on the variable.
+  // or cloned generic enum's method is generic in the type's params, so its
+  // body is likewise rewritten only per instantiation (env concrete), never
+  // here where `k: K` would key a clone on the variable.
+  let menums: EnumDecl[] = me_mono_enums(mod);
   let rewritten: FuncDecl[] = [];
   let i: i32 = 0;
   while (i < funcs.len()) {
     let fd: FuncDecl = funcs[i];
-    if (is_bg_template(fd) || is_gstruct_method(fd, mod.structs)) {
+    if (cloned_per_instance(fd, mod.structs, menums)) {
       rewritten = rewritten.append(fd);
     } else {
       let env: MEnv = env_from_decl(fd);
@@ -15589,6 +15596,26 @@ function is_bg_template(fd: FuncDecl): boolean {
   return fd.receiver_name.len() == 0 && fd.type_params.len() > 0;
 }
 
+// is_free_bg_template is is_bg_template without a receiver type: a bounded
+// impl's associated function (`impl[A: Default] Make for E[A]`) is shaped
+// like a template, but it is its type's to clone.
+function is_free_bg_template(fd: FuncDecl): boolean {
+  return is_bg_template(fd) && fd.receiver_type.len() == 0;
+}
+
+// cloned_per_instance: a declaration whose body is rewritten per clone, never
+// as written: a bounded generic, or a generic struct's or enum's method.
+function cloned_per_instance(fd: FuncDecl, structs: StructDecl[], enums: EnumDecl[]): boolean {
+  return is_bg_template(fd) || is_gstruct_method(fd, structs) || is_genum_method(fd, enums);
+}
+
+// is_genum_method: a method (or receiver-less associated fn) of a generic
+// enum in `enums`, cloned per instantiation by monomorphize_enums.
+function is_genum_method(fd: FuncDecl, enums: EnumDecl[]): boolean {
+  let gi: i32 = genum_index(enums, strip_struct_base(fd.receiver_type));
+  return fd.receiver_type.len() > 0 && gi >= 0 && enums[gi].type_params.len() > 0;
+}
+
 // is_gstruct_method: a method (or receiver-less associated fn) of a generic
 // struct declared in `structs` — cloned per struct instantiation by
 // monomorphize_structs.
@@ -15609,11 +15636,11 @@ function is_gstruct_method(fd: FuncDecl, structs: StructDecl[]): boolean {
 
 // drop_bg_templates removes the bounded-generic templates once no pass can
 // instantiate them further.
-function drop_bg_templates(funcs: FuncDecl[]): FuncDecl[] {
+function drop_bg_templates(funcs: FuncDecl[], keep: string[]): FuncDecl[] {
   let out: FuncDecl[] = [];
   let i: i32 = 0;
   while (i < funcs.len()) {
-    if (!is_bg_template(funcs[i])) {
+    if (!is_free_bg_template(funcs[i]) || str_in(keep, funcs[i].name)) {
       out = out.append(funcs[i]);
     }
     i = i + 1;
@@ -16262,27 +16289,49 @@ function method_decl_at(callee: ast.Expr, env: MEnv, funcs: MFns): i32 {
 // `<concrete>.<method>`. The generic-struct guard keeps a plain `mod.func()`
 // untouched. Other inits pass through.
 function retype_assoc_ctor(init: ast.Expr, dest: string, gstructs: StructDecl[], funcs: MFns): ast.Expr {
-  match (init) {
-    ast.ExprCall(c) => {
-      match (c.callee) {
-        ast.ExprFieldAccess(fa) => {
-          match (fa.obj) {
-            ast.ExprIdent(oid) => {
-              if (gstruct_index(gstructs, oid.name) >= 0) {
-                let concrete: string = assoc_ctor_concrete(oid.name, fa.field, dest, funcs);
-                let pfx: string = oid.name + "__";
-                if (concrete.len() > pfx.len() && util.str_has_prefix(concrete, pfx)) {
-                  return ast.ExprCall { callee: ast.ExprFieldAccess { obj: ast.ExprIdent { name: concrete, line: oid.line, col: oid.col, ty: "" }, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, args: c.args, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
-                }
-              }
-            },
-            _ => {}
-          }
-        },
-        _ => {}
+  let base: string = assoc_call_base(init);
+  if (base.len() > 0 && gstruct_index(gstructs, base) >= 0) {
+    return retype_assoc_call(init, base, dest, funcs);
+  }
+  return init;
+}
+
+// retype_enum_assoc is retype_assoc_ctor for a generic enum base, `let e:
+// E[i32] = E.default()` naming the clone `E__i32`.
+function retype_enum_assoc(init: ast.Expr, dest: string, enums: EnumDecl[], funcs: MFns): ast.Expr {
+  let base: string = assoc_call_base(init);
+  if (base.len() > 0 && genum_index(enums, base) >= 0) {
+    return retype_assoc_call(init, base, dest, funcs);
+  }
+  return init;
+}
+
+// assoc_call_base is the type an associated call `Base.f(args)` is made on,
+// or "" for any other expression.
+function assoc_call_base(e: ast.Expr): string {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprFieldAccess(fa) = c.callee {
+      if let ast.ExprIdent(oid) = fa.obj {
+        return oid.name;
       }
-    },
-    _ => {}
+    }
+  }
+  return "";
+}
+
+// retype_assoc_call points the associated call `init`, made on `base`, at the
+// clone the destination pins, when there is one.
+function retype_assoc_call(init: ast.Expr, base: string, dest: string, funcs: MFns): ast.Expr {
+  if let ast.ExprCall(c) = init {
+    if let ast.ExprFieldAccess(fa) = c.callee {
+      let concrete: string = assoc_ctor_concrete(base, fa.field, dest, funcs);
+      if let ast.ExprIdent(oid) = fa.obj {
+        if (concrete.len() > base.len() + 2 && util.str_has_prefix(concrete, base + "__")) {
+          let obj: ast.Expr = ast.ExprIdent { ...oid, name: concrete, ty: "" };
+          return ast.ExprCall { ...c, callee: ast.ExprFieldAccess { ...fa, obj: obj } };
+        }
+      }
+    }
   }
   return init;
 }
@@ -16708,8 +16757,9 @@ function ms_module(mod: Module): Module {
     }
     gi = gi + 1;
   }
+  let enum_refs: string[] = genum_bg_refs(mod.funcs, mod.enums);
   if (gstructs.len() == 0) {
-    return Module { ...mod, funcs: drop_bg_templates(mod.funcs) };
+    return Module { ...mod, funcs: drop_bg_templates(mod.funcs, enum_refs) };
   }
   // Retained enum templates still need the generic record schemas they name
   // after enum cloning. Concrete enum clones are processed normally below.
@@ -16750,7 +16800,7 @@ function ms_module(mod: Module): Module {
     let rbase: string = strip_struct_base(fn.receiver_type);
     if (keep && (gstruct_index(gstructs, rbase) >= 0 || is_bg_template(fn) || ms_deferred_owner("", fn.receiver_type, deferred))) {
       nfuncs = nfuncs.append(fn);
-    } else if (fn.receiver_type.len() > 0 && gstruct_index(gstructs, rbase) >= 0) {} else if (is_bg_template(fn)) {} else {
+    } else if (fn.receiver_type.len() > 0 && gstruct_index(gstructs, rbase) >= 0) {} else if (is_free_bg_template(fn)) {} else {
       // generic-struct method OR receiver-less associated fn (a derived
       // `default()`, receiver_name "") — dropped here, cloned in phase 2.
       // cloned on demand in phase 2; dropped.
@@ -16761,6 +16811,7 @@ function ms_module(mod: Module): Module {
     fi2 = fi2 + 1;
   }
 
+  nfuncs = util.append_all(nfuncs, enum_bg_templates(mod.funcs, enum_refs, keep));
   let topenv: MEnv = MEnv { mnames: [], mtypes: [] };
   let tr: RStmts = ms_stmts(mod.top_stmts, topenv, gstructs, sfns, ins, "");
   ins = tr.rins3;
@@ -17531,6 +17582,44 @@ function me_env_from_params(params: ast.ParamDecl[]): MEnv {
   return e;
 }
 
+// me_call_arg_type is the type argument i of a plain call to `fname` is
+// expected at: its declared parameter's, or for a built-in Option / Result
+// constructor, the payload the expected type gives it (`Ok(Nn)` under
+// `Result[Opt[i32], string]` is `Opt[i32]`).
+function me_call_arg_type(funcs: MFns, fname: string, i: i32, expected: string): string {
+  let at: i32 = 0 - 1;
+  if (fname == "Some" && strip_struct_base(expected) == "Option" || fname == "Ok" && strip_struct_base(expected) == "Result") {
+    at = 0;
+  } else if (fname == "Err" && strip_struct_base(expected) == "Result") {
+    at = 1;
+  }
+  let targs: string[] = type_args_of(expected);
+  if (i == 0 && at >= 0 && at < targs.len()) {
+    return targs[at];
+  }
+  return func_param_type_at(funcs.decls, fname, i);
+}
+
+// me_ident rewrites an identifier the enum pass can key. A type parameter
+// substituted into an associated call's object (subst_expr) can be an applied
+// generic enum, `E[i32].f()`, which names its clone. A bare unit-variant
+// construction `Nn` needs the expected annotation to pin its instantiation
+// (no payload to infer from).
+function me_ident(id: ast.ExprIdent, expected: string, env: MEnv, enums: EnumDecl[], funcs: MFns, ins: Insts): RExpr {
+  if (first_bracket(id.name) > 0 && genum_index(enums, strip_struct_base(id.name)) >= 0) {
+    return RExpr { rexpr: ast.ExprIdent { ...id, name: me_rewrite_ty(id.name, enums) }, rins: me_collect_anno(id.name, enums, ins) };
+  }
+  let owner: i32 = genum_owner_of_variant(enums, id.name);
+  if (owner >= 0 && !str_list_contains(env.mnames, id.name) && !fda_known_func(id.name, funcs.decls)) {
+    let key: string = genum_key_from_anno(expected, enums[owner].name, enums);
+    if (key.len() > 0) {
+      let nins: Insts = ins.iadd_arg(enums[owner].name, key, genum_single_arg(expected));
+      return RExpr { rexpr: ast.ExprIdent { name: id.name + "__" + key, line: id.line, col: id.col, ty: id.ty }, rins: nins };
+    }
+  }
+  return RExpr { rexpr: ast.ExprIdent { ...id }, rins: ins };
+}
+
 // me_expr rewrites generic-enum variant constructions to their mangled
 // clone names and recurses through every sub-expression. `expected` is the
 // type the expression flows into (a let annotation / return type), used to
@@ -17615,7 +17704,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
         if (i < fexps.len()) {
           ae = fexps[i];
         } else if (calleeFn.len() > 0) {
-          ae = func_param_type_at(funcs.decls, calleeFn, i);
+          ae = me_call_arg_type(funcs, calleeFn, i, expected);
         } else if (i < mexps.len()) {
           ae = mexps[i];
         }
@@ -17633,17 +17722,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
       return RExpr { rexpr: ast.ExprCall { callee: rc.rexpr, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: rc.rins };
     },
     ast.ExprIdent(id) => {
-      // A bare unit-variant construction `Nn` — needs the expected
-      // annotation to pin its instantiation (no payload to infer from).
-      let owner: i32 = genum_owner_of_variant(enums, id.name);
-      if (owner >= 0 && !str_list_contains(env.mnames, id.name) && !fda_known_func(id.name, funcs.decls)) {
-        let key: string = genum_key_from_anno(expected, enums[owner].name, enums);
-        if (key.len() > 0) {
-          let nins: Insts = ins.iadd_arg(enums[owner].name, key, genum_single_arg(expected));
-          return RExpr { rexpr: ast.ExprIdent { name: id.name + "__" + key, line: id.line, col: id.col, ty: id.ty }, rins: nins };
-        }
-      }
-      return RExpr { rexpr: e, rins: ins };
+      return me_ident(id, expected, env, enums, funcs, ins);
     },
     ast.ExprArray(a) => {
       // An array literal flowing into `Opt[i32][]` propagates the ELEMENT
@@ -18116,19 +18195,23 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
       if (vty.len() == 0) {
         vty = me_scrutinee_type(v.init, env, enums, structs, funcs);
       }
-      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: nslot.ty, init: iv.rexpr, line: v.line, col: v.col, fn_ret: nslot.fn_ret, fn_param_types: nslot.fn_params }, renv: me_bind_var(env, v, vty, enums, structs, funcs), rins2: cins };
+      let ninit: ast.Expr = retype_enum_assoc(iv.rexpr, nslot.ty, enums, funcs);
+      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: nslot.ty, init: ninit, line: v.line, col: v.col, fn_ret: nslot.fn_ret, fn_param_types: nslot.fn_params }, renv: me_bind_var(env, v, vty, enums, structs, funcs), rins2: cins };
     },
     ast.StmtReturn(r) => {
       let rv: RExpr = me_expr(r.value, ret_ty, env, enums, structs, funcs, ins);
-      return RStmtOne { rstmt: ast.StmtReturn { value: rv.rexpr, line: r.line, col: r.col }, renv: env, rins2: rv.rins };
+      let rval: ast.Expr = retype_enum_assoc(rv.rexpr, me_rewrite_ty(ret_ty, enums), enums, funcs);
+      return RStmtOne { rstmt: ast.StmtReturn { value: rval, line: r.line, col: r.col }, renv: env, rins2: rv.rins };
     },
     ast.StmtExpr(x) => {
       let xv: RExpr = me_expr(x.value, "", env, enums, structs, funcs, ins);
       return RStmtOne { rstmt: ast.StmtExpr { value: xv.rexpr, line: 0 }, renv: env, rins2: xv.rins };
     },
     ast.StmtAssign(a) => {
-      let av: RExpr = me_expr(a.value, env.elook(a.target), env, enums, structs, funcs, ins);
-      return RStmtOne { rstmt: ast.StmtAssign { target: a.target, value: av.rexpr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }, renv: env, rins2: av.rins };
+      let dest: string = env.elook(a.target);
+      let av: RExpr = me_expr(a.value, dest, env, enums, structs, funcs, ins);
+      let aval: ast.Expr = retype_enum_assoc(av.rexpr, me_rewrite_ty(dest, enums), enums, funcs);
+      return RStmtOne { rstmt: ast.StmtAssign { target: a.target, value: aval, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }, renv: env, rins2: av.rins };
     },
     ast.StmtIf(f) => {
       let cv: RExpr = me_expr(f.cond, "", env, enums, structs, funcs, ins);
@@ -18297,7 +18380,14 @@ function clone_enum_method(m: FuncDecl, ed: EnumDecl, cts: string[], mname: stri
   if (m.receiver_name.len() > 0) {
     env = env.ebind(m.receiver_name, recv);
   }
-  let rb: RStmts = me_stmts(subst_stmts(m.body, tps, cts), env, rt, mod.enums, mod.structs, efns, cur);
+  // With the variables bound, the bounded generics the body calls key their
+  // clones (`from_json_elem[A]` -> `from_json_elem__i32`).
+  let menv: MEnv = env_from_params(nparams);
+  if (m.receiver_name.len() > 0) {
+    menv = menv.ebind(m.receiver_name, recv);
+  }
+  let mb: RStmts = mono_stmts(subst_stmts(m.body, tps, cts), menv, efns, cur, fn_tag_spelling(rt, rfr, rfps));
+  let rb: RStmts = me_stmts(mb.rstmts, env, rt, mod.enums, mod.structs, efns, mb.rins3);
   let notp: string[] = [];
   let fn: FuncDecl = FuncDecl {
     ...m, receiver_type: mname, type_params: notp, all_type_params: [], bound_traits: [],
@@ -18310,16 +18400,148 @@ function clone_enum_method(m: FuncDecl, ed: EnumDecl, cts: string[], mname: stri
   return FRes { ffn: fn, fins: rb.rins3 };
 }
 
-// enum_self_ty reads a bare `Opt` (or `Opt[]`) in a generic enum's own
-// method signature as the instantiation `recv` being cloned.
+// genum_bg_refs names the bounded generics a generic enum's method calls,
+// transitively. The enum pass clones such a method per instance and the
+// bounded generics with it, and keeps the method as written beside the
+// clones, so those templates must survive the struct passes.
+function genum_bg_refs(funcs: FuncDecl[], enums: EnumDecl[]): string[] {
+  let names: string[] = [];
+  for fd in funcs {
+    if (is_free_bg_template(fd)) {
+      names = names.append(fd.name);
+    }
+  }
+  let refs: BgRefs = BgRefs { names: names, hit: [] };
+  for fd in funcs {
+    if (is_genum_method(fd, enums)) {
+      refs = bg_refs_body(fd.body, refs);
+    }
+  }
+  let i: i32 = 0;
+  while (i < refs.hit.len()) {
+    for fd in funcs {
+      if (fd.name == refs.hit[i] && is_free_bg_template(fd)) {
+        refs = bg_refs_body(fd.body, refs);
+      }
+    }
+    i = i + 1;
+  }
+  return refs.hit;
+}
+
+// enum_bg_templates is the templates genum_bg_refs names, for a struct pass
+// that drops the rest (`keep` retains every template already).
+function enum_bg_templates(funcs: FuncDecl[], refs: string[], keep: boolean): FuncDecl[] {
+  if (keep) {
+    return [];
+  }
+  let out: FuncDecl[] = [];
+  for fd in funcs {
+    if (is_free_bg_template(fd) && str_in(refs, fd.name)) {
+      out = out.append(fd);
+    }
+  }
+  return out;
+}
+
+struct BgRefs { names: string[], hit: string[] }
+
+function bg_refs_body(body: ast.Stmt[], own r: BgRefs): BgRefs {
+  for st in body {
+    r = astwalk.fold_stmt_nodes(st, r, bg_refs_stmt, bg_refs_expr, astwalk.descend_all);
+  }
+  return r;
+}
+
+function bg_refs_stmt(st: ast.Stmt, own r: BgRefs): BgRefs {
+  return r;
+}
+
+function bg_refs_expr(e: ast.Expr, own r: BgRefs): BgRefs {
+  if let ast.ExprIdent(id) = e {
+    return bg_ref_hit(r, id.name);
+  }
+  if let ast.ExprFieldAccess(fa) = e {
+    for n in r.names {
+      if (folds_method(n, fa.field)) {
+        r = bg_ref_hit(r, n);
+      }
+    }
+  }
+  return r;
+}
+
+function bg_ref_hit(own r: BgRefs, name: string): BgRefs {
+  if (str_in(r.names, name) && !str_in(r.hit, name)) {
+    return BgRefs { ...r, hit: r.hit.append(name) };
+  }
+  return r;
+}
+
+// folds_method reports whether `name` is the free generic a method `verb`
+// of an array, view, map or generic struct was folded into, which a call
+// `x.verb(…)` reaches.
+function folds_method(name: string, verb: string): boolean {
+  if (name == "__arrm_" + verb || name == "__viewm_" + verb || name == "__mapm_" + verb) {
+    return true;
+  }
+  let sfx: string = "_" + verb;
+  return util.str_has_prefix(name, "__smm_") && name.len() > sfx.len() && slice_unchecked(name, name.len() - sfx.len(), name.len()) == sfx;
+}
+
+struct BgStep { funcs: FuncDecl[], ins: Insts }
+
+// me_bg_step clones the bounded generic a worklist entry names, when it names
+// one not yet cloned rather than a generic enum (gidx >= 0).
+function me_bg_step(gidx: i32, base: string, key: string, mod: Module, efns: MFns, st: BgStep): BgStep {
+  let at: i32 = bg_find(efns, base);
+  if (gidx >= 0 || at < 0 || has_func_named(mod.funcs, st.funcs, base + "__" + sanitize_key(key))) {
+    return st;
+  }
+  let bc: FRes = me_clone_bg(efns.decls[at], key, mod, efns, st.ins);
+  return BgStep { funcs: st.funcs.append(bc.ffn), ins: bc.fins };
+}
+
+// me_clone_bg clones the bounded generic `fd` at `key` for a call an enum
+// method clone makes, then rewrites the clone as monomorphize_module and this
+// pass rewrite any body: its own bounded-generic calls, then its
+// generic-enum references.
+function me_clone_bg(fd: FuncDecl, key: string, mod: Module, efns: MFns, ins: Insts): FRes {
+  let cl: FuncDecl = clone_bg(fd, key, mod.impls, mod.trait_reqs, efns);
+  let ret: string = fn_tag_spelling(cl.ret_type, cl.ret_fn_ret, cl.ret_fn_param_types);
+  let mb: RStmts = mono_stmts(cl.body, env_from_params(cl.params), efns, ins, ret);
+  let rb: RStmts = me_stmts(mb.rstmts, me_env_from_params(cl.params), cl.ret_type, mod.enums, mod.structs, efns, mb.rins3);
+  let cur: Insts = me_collect_anno(cl.ret_type, mod.enums, rb.rins3);
+  for p in cl.params {
+    cur = me_collect_slot(p.type_name, p.fn_ret, p.fn_param_types, mod.enums, cur);
+  }
+  let fslot: MeSlot = me_rewrite_slot(cl.ret_type, cl.ret_fn_ret, cl.ret_fn_param_types, mod.enums);
+  let fn: FuncDecl = FuncDecl {
+    ...cl, receiver_name: "", receiver_type: "", params: me_rewrite_params(cl.params, mod.enums),
+    ret_type: fslot.ty, ret_fn_ret: fslot.fn_ret, ret_fn_param_types: fslot.fn_params, body: rb.rstmts,
+  };
+  return FRes { ffn: fn, fins: cur };
+}
+
+// enum_self_ty reads a bare `Opt` in a generic enum's own method signature,
+// anywhere in it (`Opt[]`, `Result[Opt, string]`), as the instantiation
+// `recv` being cloned.
 function enum_self_ty(ty: string, name: string, recv: string): string {
-  if (ty == name) {
-    return recv;
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < ty.len()) {
+    let end: i32 = i + name.len();
+    let bare: boolean = end <= ty.len() && slice_unchecked(ty, i, end) == name && (i == 0 || !ident_byte(ty[i - 1] as i32))
+      && (end == ty.len() || !ident_byte(ty[end] as i32) && ty[end] != b'[');
+    if (bare) {
+      out = out + recv;
+      i = end;
+    } else {
+      out = out + slice_unchecked(ty, i, i + 1);
+      i = i + 1;
+    }
   }
-  if (ty == name + "[]") {
-    return recv + "[]";
-  }
-  return ty;
+  return out;
 }
 
 // Derived methods spell their generic enum without arguments. Once retained
@@ -18526,6 +18748,9 @@ pub function monomorphize_enums(mod: Module): Module {
     let base: string = ins.inames[wi];
     let key: string = ins.itypes[wi];
     let gidx: i32 = genum_index(menums, base);
+    let step: BgStep = me_bg_step(gidx, base, key, mmod, efns, BgStep { funcs: nfuncs, ins: ins });
+    nfuncs = step.funcs;
+    ins = step.ins;
     if (gidx >= 0) {
       let ed: EnumDecl = menums[gidx];
       // A single-type-param enum substitutes T with the ORIGINAL arg
