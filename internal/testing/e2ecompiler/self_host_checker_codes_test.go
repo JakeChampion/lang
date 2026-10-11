@@ -191,6 +191,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"view-custom-with-method", "function (xs: [u8]) with(s: string): string { return s; } function main(): i32 { let v: [u8] = \"abc\".as_bytes(); return v.with(\"x\").len(); }", nil},
 		{"view-custom-append-discard", "function (xs: [u8]) append(): i32 { return xs.len(); } function main(): i32 { let v: [u8] = \"abc\".as_bytes(); v.append(); return 0; }", nil},
 		{"view-custom-with-discard", "function (xs: [u8]) with(): i32 { return xs.len(); } function main(): i32 { let v: [u8] = \"abc\".as_bytes(); v.with(); return 0; }", nil},
+		// A method on an array named like one the checker registers there
+		// before any declaration redeclares it (E006), and a call still types
+		// as the builtin, its argument checked against the element (E038). So
+		// a builtin that produced an argument and then refused it has no
+		// declared method to fall back to (semsource.method_call).
+		{"array-append-redeclares-builtin", "function (xs: i32[]) append(x: i32): i32[] { return xs; } function main(): i32 { let xs: i32[] = [1, 2]; return xs.append(3).len(); }", []string{"E006"}},
+		{"array-append-user-method-other-type", "function (xs: i32[]) append(s: string): i32 { return xs.len() + s.len(); } function main(): i32 { let xs: i32[] = [1, 2]; let n: i32 = xs.append(\"abc\").len(); return n; }", []string{"E006", "E038"}},
+		{"array-with-user-method-other-type", "function (xs: i32[]) with(i: i32, s: string): i32 { return xs.len() + i + s.len(); } function main(): i32 { let xs: i32[] = [1, 2]; let n: i32 = xs.with(1, \"abc\").len(); return n; }", []string{"E006", "E038"}},
 		// A method an enum or union does not have (#11852): Option's and
 		// Result's live in std/option and std/result, so without the import
 		// they have none. The bundle differential holds the imported side.

@@ -39,6 +39,15 @@ function main(): i32 {
     let z: string = k.read_chunk(4);
     return x * 10 + y.len() + z.len();
 }`},
+	// A declared array method named like a builtin the checker does not
+	// pre-register (`join` is the semantic boundary's, not the checker's):
+	// the call resolves to the declaration and reaches the boundary as a
+	// direct call, never as the builtin's shape; the oracle says which ran.
+	{"user_join_on_string_array", `function (xs: string[]) join(sep: i32): i32 { return xs.len() + sep; }
+function main(): i32 {
+    let xs: string[] = ["a", "b"];
+    return xs.join(3);
+}`},
 	// A stdlib method winning the name: std/array's `(xs: T[]) first(): Option[T]`
 	// claimed `Bag.first` and the call typed as Option[i32].
 	{"stdlib_first_shadows_user_method", `import "std/array";

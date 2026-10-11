@@ -16441,7 +16441,7 @@ function registered_intrinsics(): string[] {
 // or associated function, or a surface builtin.
 function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): boolean {
   let f2: parser.FuncDecl = funcs[di];
-  let earlier: boolean = false;
+  let earlier: boolean = redeclares_preregistered(f2);
   let ej: i32 = names.chain(f2.name);
   while (ej >= 0 && ej < di) {
     let pe: parser.FuncDecl = funcs[ej];
@@ -16472,6 +16472,18 @@ function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): b
 // same_method_decl: two declarations of one method by the same provider, the
 // type itself or one trait. An inherent method and a trait's are an ambiguity
 // (method_ambiguity_diags), not a redeclaration.
+// A method on a built-in namespace named like one the checker registers
+// there before any declaration (`xs.append`, `xs.with`, `xs.len`, a view's
+// `len`, a Map's `insert`, `without` and `cleared`, a Cell's `get` and
+// `set`) redeclares it, as native's pre-registered table makes it.
+function redeclares_preregistered(f2: parser.FuncDecl): boolean {
+  if (f2.receiver_type.len() == 0) {
+    return false;
+  }
+  let key: string = parser.receiver_namespace(f2.receiver_type) + "." + f2.name;
+  return util.has_str(["Array.append", "Array.len", "Array.with", "Cell.get", "Cell.set", "Map.cleared", "Map.insert", "Map.without", "slice.len"], key);
+}
+
 function same_method_decl(pe: parser.FuncDecl, f2: parser.FuncDecl): boolean {
   if (f2.receiver_type.len() == 0 || pe.receiver_type.len() == 0 || pe.name != f2.name) {
     return false;
