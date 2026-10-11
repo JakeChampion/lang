@@ -222,6 +222,21 @@ pub function early_secret(h: Hash, psk: [u8]): EarlySecret {
   return EarlySecret { hash: h, secret: hkdf_extract(h, __zeros(h.size()), psk) };
 }
 
+// binder_key is Derive-Secret(early_secret, "res binder", ""), the base key
+// of a resumption PSK's binder (§4.2.11.2); the binder itself is
+// `finished_verify_data` over it and the truncated ClientHello's hash.
+pub function (e: EarlySecret) binder_key(): u8[] {
+  let none: u8[] = [];
+  return derive_secret(e.hash, e.secret, "res binder", e.hash.digest(none));
+}
+
+// resumption_psk is the PSK a ticket stands for: HKDF-Expand-Label(
+// resumption_master_secret, "resumption", ticket_nonce, Hash.length)
+// (§4.6.1).
+pub function resumption_psk(h: Hash, resumption_master_secret: [u8], ticket_nonce: [u8]): u8[] {
+  return hkdf_expand_label(h, resumption_master_secret, "resumption", ticket_nonce, h.size());
+}
+
 // handshake_secret takes the (EC)DHE shared secret.
 pub function (e: EarlySecret) handshake_secret(shared_secret: [u8]): HandshakeSecret {
   return HandshakeSecret { hash: e.hash, secret: __next(e.hash, e.secret, shared_secret) };
