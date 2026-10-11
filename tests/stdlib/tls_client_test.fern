@@ -3,8 +3,10 @@ import "std/hex";
 import "std/crypto/ed25519";
 import "std/tls/client";
 import "std/tls/handshake";
+import "std/tls/identity";
 import "std/tls/keyschedule";
 import "std/tls/message";
+import "std/tls/pem";
 import "std/tls/record";
 import "std/tls/verify";
 
@@ -19,6 +21,15 @@ const ROOT: string = "3082011b3081cea003020102020165300506032b657030243122302006
 const LEAF: string = "3082013d3081f0a003020102020166300506032b657030243122302006035504030c194665726e20544c5320436c69656e74205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b746c732e6578616d706c65302a300506032b6570032100511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8aa3533051300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301301c0603551d1104153013820b746c732e6578616d706c658704c0000207300506032b65700341004d3b2dbd279de4c58e998fc45411b30ce83466c697e11a463807a1e4c8a83b5e6b146b49f2eb1b2ffc8d9ec9618e084eb9c71a9c93af3604f984f5e0d2065c08";
 
 const OTHER_ROOT: string = "3082011d3081d0a003020102020167300506032b657030253123302106035504030c1a4665726e20544c5320436c69656e74204f7468657220526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30253123302106035504030c1a4665726e20544c5320436c69656e74204f7468657220526f6f74302a300506032b657003210031debe55d37c722768b137131caa6087080b2e0b60b94bd785d14575cfa498bca3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300506032b6570034100a9d36bd35a8fc8b9f4185019799b57f15117b07297fac4c6ba2ca04dcb0ef2efcd63a0d9dea29154c6ca3073a465948eb35c2420de91445faa250ca4590e610f";
+
+// The identity fixtures are std/tls/server's, under its test root.
+const IDENTITY_ROOT: string = "3082011c3081cfa00302010202020201300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30243122302006035504030c194665726e20544c5320536572766572205465737420526f6f74302a300506032b6570032100d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737a3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300506032b65700341007353a91b5ad2e713d51d2fa08f3e800b99afa9e5725cfd746269d03210b1faadccfc942258bb8151da41be07943a4e8a14bd615e96692c8b896872460e827c0a";
+
+const CLIENT_LEAF: string = "308201203081d3a00302010202020301300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b6665726e2d636c69656e74302a300506032b6570032100c6822637c7d310ec57627be00ba259d253749f4aaf644470cffbe53a35f73242a3353033300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070302300506032b6570034100161c1f81f20e2ac01097ac7bf062898a3fa631c14e14d69861e37755887101605670ad0a5cafeab706169f96d64df8635f7f88b247d8d524612892d543765a0c";
+
+const CLIENT_PKCS8: string = "-----BEGIN PRIVATE KEY-----\n"
+  + "MC4CAQAwBQYDK2VwBCIEIFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV\n"
+  + "-----END PRIVATE KEY-----\n";
 
 function roots(der: string): verify.Roots {
   return verify.roots([hex.hex_decode(der)]);
@@ -431,6 +442,97 @@ function test_resumption(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
+function client_shown(events: handshake.Event[]): Option[handshake.Verification] {
+  for e in events {
+    match (e) {
+      handshake.VerifyClient(v) => {
+        return Some(v);
+      },
+      _ => {}
+    }
+  }
+  return None;
+}
+
+// connect_asked drives a session against a server asking for a client
+// certificate and reports what it was shown: the chain's length and
+// whether the signature verifies under the leaf's key.
+function connect_asked(cfg: client.Config): Result[string, client.TlsError] {
+  let start: client.Step = client.start(cfg)?;
+  let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([hex.hex_decode(LEAF)], [0x0807]), request_client_certificate: true };
+  let s1: handshake.ServerStep = srv(srv(handshake.server_new(sc, random_bytes(96)))?.read(start.output))?;
+  let sig: u8[] = [];
+  match (ed25519.sign(leaf_seed(), signing(s1.events))) {
+    Ok(b) => {
+      sig = b;
+    },
+    Err(e) => {
+      return Err(client.SignatureInvalid);
+    }
+  }
+  let s2: handshake.ServerStep = srv(s1.server.signature(sig))?;
+  let c1: client.Step = rd(start.session, cat(s1.output, s2.output))?;
+  let s3: handshake.ServerStep = srv(s2.server.read(c1.output))?;
+  let shown: string = "not shown";
+  match (client_shown(s3.events)) {
+    Some(v) => {
+      shown = "chain " + v.chain.len().to_string();
+      if (v.chain.len() > 0) {
+        match (verify.verify_client(v.chain, roots(IDENTITY_ROOT), 1700000000 as i64)) {
+          Ok(leaf) => {
+            if (verify.verify_signed(leaf, v.scheme, v.signed, v.signature)) {
+              shown = shown + " verified";
+            }
+          },
+          Err(e) => {
+            shown = shown + " " + e.message();
+          }
+        }
+      }
+    },
+    None => {}
+  }
+  let s4: handshake.ServerStep = srv(s3.server.verdict(true))?;
+  if (!c1.session.connected() || !s4.server.connected()) {
+    return Err(client.ClosedEarly);
+  }
+  return Ok(shown);
+}
+
+function asked_outcome(cfg: client.Config): string {
+  match (connect_asked(cfg)) {
+    Ok(t) => {
+      return t;
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+// A session with an identity presents it when asked, signed with its key;
+// one without sends an empty Certificate.
+function test_identity(): test.TestOutcome {
+  let id: identity.Identity = identity.Identity { chain: [], key: identity.Ed25519Seed([]) };
+  match (identity.from_pem(pem_of(CLIENT_LEAF), CLIENT_PKCS8)) {
+    Ok(i) => {
+      id = i;
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  if (asked_outcome(client.config("tls.example", roots(ROOT)).with_identity(id)) != "chain 1 verified") {
+    return test.fail("with an identity: " + asked_outcome(client.config("tls.example", roots(ROOT)).with_identity(id)));
+  }
+  return test.assert_eq(asked_outcome(client.config("tls.example", roots(ROOT))), "chain 0");
+}
+
+function pem_of(der_hex: string): string {
+  return pem.encode("CERTIFICATE", hex.hex_decode(der_hex));
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/tls/client");
   r = r.it("a trusted server", test_trusted);
@@ -440,5 +542,6 @@ function main(): i32 {
   r = r.it("save and restore", test_save_restore);
   r = r.it("close_notify", test_close);
   r = r.it("resumption", test_resumption);
+  r = r.it("an identity", test_identity);
   return r.finish();
 }

@@ -3,423 +3,50 @@
 // `Session` any transport can carry, and as a `Connection` over an accepted
 // TCP socket.
 //
-//   let id: server.Identity = server.identity_from_pem(chain_pem, key_pem)?;
+//   let id: identity.Identity = identity.from_pem(chain_pem, key_pem)?;
 //   let cfg: server.Config = server.config(id).with_alpn(["http/1.1"]);
 //   let c: server.Connection = server.accept(fd, cfg, time.duration_seconds(10 as i64))?;
 //   let got: server.Received = c.recv(time.duration_seconds(30 as i64))?;
 //   c = got.conn.send("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".bytes())?;
 //
-// The key is P-256, P-384 or Ed25519, read from a PKCS #8 `PRIVATE KEY` or
-// a SEC 1 `EC PRIVATE KEY` block; an RSA key is refused, since std/crypto/rsa
-// verifies only. The signature scheme offered is the key's, so a client
-// that does not accept it gets handshake_failure. The server takes every
+// The identity is std/tls/identity's: a P-256, P-384 or Ed25519 key with
+// its chain. The signature scheme offered is the key's, so a client that
+// does not accept it gets handshake_failure. The server takes every
 // suite, X25519MLKEM768 and X25519, asking for a share by HelloRetryRequest
 // when the client sent neither, and chooses the first of its own protocols
 // the client offers by ALPN.
 
+import "std/crypto";
 import "std/crypto/chacha20poly1305";
-import "std/crypto/ecdsa";
-import "std/crypto/ed25519";
 import "std/net";
 import "std/tcp";
 import "std/time";
-import "std/tls/der";
 import "std/tls/handshake";
+import "std/tls/identity";
 import "std/tls/keyschedule";
 import "std/tls/message";
-import "std/tls/pem";
-import "std/tls/x509";
-
-// PrivateKey — the key a server signs with: a P-256 or P-384 scalar, or an
-// Ed25519 seed.
-pub enum PrivateKey {
-  EcdsaKey(ecdsa.PrivateKey),
-  Ed25519Seed(u8[]),
-}
-
-// Identity — a certificate chain, leaf first, and the leaf's private key.
-pub struct Identity { chain: u8[][], key: PrivateKey }
-
-// KeyError — why a key or an identity was refused.
-pub enum KeyError {
-  Pem(pem.PemError),
-  BadDer(der.DerError),
-  Certificate(x509.X509Error),
-  Scalar(ecdsa.EcdsaError),
-  Seed(ed25519.Ed25519Error),
-  // No PRIVATE KEY or EC PRIVATE KEY block.
-  NoKey,
-  NoCertificate,
-  // A key of an algorithm or curve this module cannot sign with, by name
-  // or OID.
-  UnsupportedKey(string),
-  // Key structure that is not RFC 5958's or RFC 5915's, naming the part.
-  BadKey(string),
-  // The key is not the leaf certificate's.
-  Mismatch,
-}
-
-// One arm per variant.
-// fern-lint: allow cyclomatic-complexity
-pub function (e: KeyError) message(): string {
-  match (e) {
-    Pem(p) => {
-      return p.message();
-    },
-    BadDer(d) => {
-      return "tls server key: " + d.message();
-    },
-    Certificate(c) => {
-      return "tls server: " + c.message();
-    },
-    Scalar(s) => {
-      return "tls server key: " + s.message();
-    },
-    Seed(s) => {
-      return "tls server key: " + s.message();
-    },
-    NoKey => {
-      return "tls server key: no PRIVATE KEY or EC PRIVATE KEY block";
-    },
-    NoCertificate => {
-      return "tls server: no certificate";
-    },
-    UnsupportedKey(what) => {
-      return "tls server key: cannot sign with " + what;
-    },
-    BadKey(what) => {
-      return "tls server key: malformed " + what;
-    },
-    Mismatch => {
-      return "tls server: the key is not the leaf certificate's";
-    }
-  }
-  return "";
-}
-
-function __d[T](r: Result[T, der.DerError]): Result[T, KeyError] {
-  match (r) {
-    Ok(v) => {
-      return Ok(v);
-    },
-    Err(e) => {
-      return Err(BadDer(e));
-    }
-  }
-  return Err(BadKey("der"));
-}
-
-// The curves' OIDs and scalar sizes.
-const P256_OID: string = "1.2.840.10045.3.1.7";
-
-const P384_OID: string = "1.3.132.0.34";
-
-function __curve(oid: string): Result[ecdsa.Curve, KeyError] {
-  if (oid == P256_OID) {
-    return Ok(ecdsa.P256);
-  }
-  if (oid == P384_OID) {
-    return Ok(ecdsa.P384);
-  }
-  return Err(UnsupportedKey("curve " + oid));
-}
-
-function __scalar_size(c: ecdsa.Curve): i32 {
-  match (c) {
-    ecdsa.P256 => {
-      return 32;
-    },
-    ecdsa.P384 => {
-      return 48;
-    }
-  }
-  return 32;
-}
-
-function __same_curve(a: ecdsa.Curve, b: ecdsa.Curve): boolean {
-  return __scalar_size(a) == __scalar_size(b);
-}
-
-// private_key_from_pem reads the first PRIVATE KEY (PKCS #8) or EC PRIVATE
-// KEY (SEC 1) block in text.
-pub function private_key_from_pem(text: string): Result[PrivateKey, KeyError] {
-  let blocks: pem.Block[] = [];
-  match (pem.decode(text)) {
-    Ok(b) => {
-      blocks = b;
-    },
-    Err(e) => {
-      return Err(Pem(e));
-    }
-  }
-  for b in blocks {
-    if (b.label == "PRIVATE KEY") {
-      return pkcs8(b.bytes);
-    }
-    if (b.label == "EC PRIVATE KEY") {
-      return sec1(b.bytes);
-    }
-    if (b.label == "RSA PRIVATE KEY") {
-      return Err(UnsupportedKey("RSA"));
-    }
-  }
-  return Err(NoKey);
-}
-
-// pkcs8 reads a PrivateKeyInfo (RFC 5958): the algorithm names the key's
-// kind, and the privateKey octets hold an ECPrivateKey or an Ed25519 seed.
-pub function pkcs8(b: [u8]): Result[PrivateKey, KeyError] {
-  let parts: der.Element[] = __pkcs8_parts(b)?;
-  let alg: der.Element[] = __d(der.children(b, parts[1]))?;
-  if (alg.len() == 0) {
-    return Err(BadKey("privateKeyAlgorithm"));
-  }
-  let oid: string = __d(der.oid(b, alg[0]))?;
-  let key: u8[] = der.bytes(b, parts[2]);
-  if (oid == "1.2.840.10045.2.1") {
-    return __pkcs8_ec(b, alg, key);
-  }
-  if (oid == "1.3.101.112") {
-    let inner: der.Element = __d(der.only(key, der.OCTET_STRING))?;
-    return __ed25519_seed(der.bytes(key, inner));
-  }
-  if (oid == "1.2.840.113549.1.1.1") {
-    return Err(UnsupportedKey("RSA"));
-  }
-  return Err(UnsupportedKey("algorithm " + oid));
-}
-
-// __pkcs8_ec reads an EC key's curve from the algorithm's parameters and
-// the ECPrivateKey the privateKey octets hold.
-function __pkcs8_ec(b: [u8], alg: der.Element[], key: u8[]): Result[PrivateKey, KeyError] {
-  if (alg.len() < 2) {
-    return Err(BadKey("EC parameters"));
-  }
-  return __ec_private_key(key, Some(__curve(__d(der.oid(b, alg[1]))?)?));
-}
-
-// __pkcs8_parts is a PrivateKeyInfo's version, algorithm and privateKey
-// elements, the version 0 or 1.
-function __pkcs8_parts(b: [u8]): Result[der.Element[], KeyError] {
-  let seq: der.Element = __d(der.only(b, der.SEQUENCE))?;
-  let parts: der.Element[] = __d(der.children(b, seq))?;
-  if (parts.len() < 3 || parts[1].tag != der.SEQUENCE || parts[2].tag != der.OCTET_STRING) {
-    return Err(BadKey("PrivateKeyInfo"));
-  }
-  let version: i32 = __d(der.small(b, parts[0]))?;
-  if (version != 0 && version != 1) {
-    return Err(BadKey("PrivateKeyInfo version"));
-  }
-  return Ok(parts);
-}
-
-// sec1 reads an ECPrivateKey (RFC 5915) on its own, whose parameters must
-// name the curve.
-pub function sec1(b: [u8]): Result[PrivateKey, KeyError] {
-  return __ec_private_key(b, None);
-}
-
-// __ec_private_key reads an ECPrivateKey: version 1, the scalar, and the
-// curve in its [0] parameters when the PKCS #8 wrapper did not name one;
-// when both do they must agree.
-function __ec_private_key(b: [u8], known: Option[ecdsa.Curve]): Result[PrivateKey, KeyError] {
-  let seq: der.Element = __d(der.only(b, der.SEQUENCE))?;
-  let parts: der.Element[] = __d(der.children(b, seq))?;
-  if (parts.len() < 2 || parts[1].tag != der.OCTET_STRING) {
-    return Err(BadKey("ECPrivateKey"));
-  }
-  if (__d(der.small(b, parts[0]))? != 1) {
-    return Err(BadKey("ECPrivateKey version"));
-  }
-  let curve: ecdsa.Curve = __ec_curve(b, parts, known)?;
-  match (ecdsa.private_key(curve, __padded(der.bytes(b, parts[1]), __scalar_size(curve)))) {
-    Ok(k) => {
-      return Ok(EcdsaKey(k));
-    },
-    Err(e) => {
-      return Err(Scalar(e));
-    }
-  }
-  return Err(BadKey("ECPrivateKey"));
-}
-
-// __padded is a scalar left-padded with zeros to the curve's size.
-function __padded(d: u8[], size: i32): u8[] {
-  let out: u8[] = [];
-  while (out.len() + d.len() < size) {
-    out = out.append(0 as u8);
-  }
-  return __cat(out, d);
-}
-
-// __ec_curve is the curve an ECPrivateKey is on: its [0] parameters, the
-// wrapper's, or both when they agree.
-function __ec_curve(b: [u8], parts: der.Element[], known: Option[ecdsa.Curve]): Result[ecdsa.Curve, KeyError] {
-  let named: Option[ecdsa.Curve] = __ec_params(b, parts)?;
-  match (known) {
-    Some(k) => {
-      match (named) {
-        Some(n) => {
-          if (!__same_curve(k, n)) {
-            return Err(BadKey("ECPrivateKey parameters"));
-          }
-        },
-        None => {}
-      }
-      return Ok(k);
-    },
-    None => {
-      match (named) {
-        Some(n) => {
-          return Ok(n);
-        },
-        None => {
-          return Err(BadKey("ECPrivateKey parameters"));
-        }
-      }
-    }
-  }
-  return Err(BadKey("ECPrivateKey parameters"));
-}
-
-// __ec_params is the curve an ECPrivateKey's [0] parameters name, None
-// when it has none.
-function __ec_params(b: [u8], parts: der.Element[]): Result[Option[ecdsa.Curve], KeyError] {
-  let i: i32 = 2;
-  while (i < parts.len()) {
-    if (parts[i].tag == der.context(0, true)) {
-      let inner: der.Element[] = __d(der.children(b, parts[i]))?;
-      if (inner.len() != 1) {
-        return Err(BadKey("ECPrivateKey parameters"));
-      }
-      return Ok(Some(__curve(__d(der.oid(b, inner[0]))?)?));
-    }
-    i = i + 1;
-  }
-  return Ok(None);
-}
-
-function __ed25519_seed(seed: u8[]): Result[PrivateKey, KeyError] {
-  match (ed25519.public_key(seed)) {
-    Ok(_) => {
-      return Ok(Ed25519Seed(seed));
-    },
-    Err(e) => {
-      return Err(Seed(e));
-    }
-  }
-  return Err(BadKey("Ed25519 seed"));
-}
-
-// identity pairs a chain, leaf first, with the leaf's key, refusing a key
-// that is not the leaf's.
-pub function identity(chain: u8[][], key: PrivateKey): Result[Identity, KeyError] {
-  if (chain.len() == 0) {
-    return Err(NoCertificate);
-  }
-  match (x509.parse(chain[0])) {
-    Ok(leaf) => {
-      if (!__key_matches(leaf.key, key)) {
-        return Err(Mismatch);
-      }
-    },
-    Err(e) => {
-      return Err(Certificate(e));
-    }
-  }
-  return Ok(Identity { chain: chain, key: key });
-}
-
-// identity_from_pem reads the CERTIFICATE blocks of chain_text, leaf first,
-// and the key in key_text.
-pub function identity_from_pem(chain_text: string, key_text: string): Result[Identity, KeyError] {
-  let key: PrivateKey = private_key_from_pem(key_text)?;
-  match (pem.certificates(chain_text)) {
-    Ok(chain) => {
-      return identity(chain, key);
-    },
-    Err(e) => {
-      return Err(Pem(e));
-    }
-  }
-  return Err(NoCertificate);
-}
-
-// __key_matches checks that the private key makes the certificate's public
-// key.
-function __key_matches(public: x509.PublicKey, key: PrivateKey): boolean {
-  match (key) {
-    EcdsaKey(k) => {
-      match (public) {
-        x509.EcKey(curve, point) => {
-          return __same_curve(curve, k.curve) && __same(point, k.public_point());
-        },
-        _ => {
-          return false;
-        }
-      }
-    },
-    Ed25519Seed(seed) => {
-      match (public) {
-        x509.Ed25519Key(p) => {
-          match (ed25519.public_key(seed)) {
-            Ok(q) => {
-              return __same(p, q);
-            },
-            Err(_) => {
-              return false;
-            }
-          }
-        },
-        _ => {
-          return false;
-        }
-      }
-    }
-  }
-  return false;
-}
-
-// The TLS 1.3 SignatureScheme the key makes.
-function __scheme(key: PrivateKey): i32 {
-  match (key) {
-    EcdsaKey(k) => {
-      match (k.curve) {
-        ecdsa.P256 => {
-          return 0x0403;
-        },
-        ecdsa.P384 => {
-          return 0x0503;
-        }
-      }
-    },
-    Ed25519Seed(_) => {
-      return 0x0807;
-    }
-  }
-  return 0;
-}
+import "std/tls/verify";
 
 // Config — the identity to present, the protocols to accept by ALPN in
 // preference order, and the session tickets: whether to issue one per
 // connection, how long it lives, and the key it is sealed under, which
 // every server that is to resume it must share.
-pub struct Config { identity: Identity, alpn: string[], tickets: boolean, ticket_lifetime: Duration, ticket_key: u8[] }
+pub struct Config { identity: identity.Identity, alpn: string[], tickets: boolean, ticket_lifetime: Duration, ticket_key: u8[], client_roots: Option[verify.Roots] }
 
 // config accepts no application protocol and issues tickets that live two
 // hours under a key drawn for this config.
-pub function config(identity: Identity): Config {
-  return Config { identity: identity, alpn: [], tickets: true, ticket_lifetime: time.duration_seconds(7200 as i64), ticket_key: random_bytes(32) };
+pub function config(id: identity.Identity): Config {
+  return Config { identity: id, alpn: [], tickets: true, ticket_lifetime: time.duration_seconds(7200 as i64), ticket_key: random_bytes(32), client_roots: None };
 }
 
 pub function (c: Config) with_alpn(protocols: string[]): Config {
   return Config { ...c, alpn: protocols };
 }
 
-// with_ticket_key seals tickets under a 32-byte key of the caller's, so
-// that servers sharing it resume each other's sessions.
+// with_ticket_key seals tickets under a key derived from the caller's
+// bytes, so that servers sharing them resume each other's sessions.
 pub function (c: Config) with_ticket_key(key: u8[]): Config {
-  return Config { ...c, ticket_key: key };
+  return Config { ...c, ticket_key: crypto.sha256_new().update_bytes(key).final_bytes() };
 }
 
 pub function (c: Config) with_ticket_lifetime(d: Duration): Config {
@@ -432,6 +59,15 @@ pub function (c: Config) without_tickets(): Config {
   return Config { ...c, tickets: false };
 }
 
+// with_client_roots asks every client for a certificate and requires one
+// whose chain reaches the roots at the current time, allowed a TLS
+// client, with a CertificateVerify under its key; a client sending none
+// is refused with certificate_required. A resumed session asks for none:
+// the ticket stands for the certificate shown when it was issued.
+pub function (c: Config) with_client_roots(roots: verify.Roots): Config {
+  return Config { ...c, client_roots: Some(roots) };
+}
+
 // TlsError — why a connection failed: the handshake's own refusal, the
 // key failing to sign, the socket's error, the handshake outlasting its
 // bound, the peer closing before the handshake ended, or closing inside a
@@ -439,6 +75,10 @@ pub function (c: Config) without_tickets(): Config {
 pub enum TlsError {
   HandshakeFailed(handshake.HandshakeError),
   SigningFailed,
+  // A client certificate is required and the client sent none.
+  ClientCertificateMissing,
+  ClientUntrusted(verify.VerifyError),
+  ClientSignatureInvalid,
   NetFailed(net.NetError),
   HandshakeTimeout,
   ClosedEarly,
@@ -452,6 +92,15 @@ pub function (e: TlsError) message(): string {
     },
     SigningFailed => {
       return "the key could not sign the CertificateVerify";
+    },
+    ClientCertificateMissing => {
+      return "the client sent no certificate";
+    },
+    ClientUntrusted(v) => {
+      return "the client's certificate is not trusted: " + v.message();
+    },
+    ClientSignatureInvalid => {
+      return "the client's CertificateVerify does not verify";
     },
     NetFailed(n) => {
       return n.message();
@@ -489,7 +138,14 @@ pub struct Step { session: Session, output: u8[], data: u8[], closed: boolean }
 // start waits for a ClientHello: there is nothing to send until `read` has
 // taken one.
 pub function start(config: Config): Result[Session, TlsError] {
-  let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config(config.identity.chain, [__scheme(config.identity.key)]), alpn: config.alpn };
+  let asks: boolean = false;
+  match (config.client_roots) {
+    Some(_) => {
+      asks = true;
+    },
+    None => {}
+  }
+  let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config(config.identity.chain, [config.identity.key.scheme()]), alpn: config.alpn, request_client_certificate: asks };
   match (handshake.server_new(sc, random_bytes(96))) {
     Ok(s) => {
       return Ok(Session { server: s, config: config, held: [] });
@@ -572,6 +228,12 @@ pub function (s: Session) resumed(): boolean {
   return s.server.resumed();
 }
 
+// The chain the client presented, leaf first, judged against the config's
+// client roots; empty when the session resumed or no roots were set.
+pub function (s: Session) client_chain(): u8[][] {
+  return s.server.client_chain();
+}
+
 function __step(r: Result[handshake.ServerStep, handshake.HandshakeError]): Result[handshake.ServerStep, TlsError] {
   match (r) {
     Ok(step) => {
@@ -634,17 +296,27 @@ function __peer_closed(e: handshake.Event): boolean {
 function __answered(s: Session, srv: handshake.Server, e: handshake.Event): Result[handshake.ServerStep, Failure] {
   match (e) {
     handshake.SignNeeded(sg) => {
-      match (__sign(s.config.identity.key, sg)) {
+      match (s.config.identity.key.sign(sg.scheme, sg.signed)) {
         Ok(sig) => {
           return __failed(srv, srv.signature(sig));
         },
-        Err(err) => {
-          return Err(Failure { error: err, alert: srv.alert(handshake.HandshakeFailure("signing")) });
+        Err(_) => {
+          return Err(Failure { error: SigningFailed, alert: srv.alert(handshake.HandshakeFailure("signing")) });
         }
       }
     },
     handshake.ResumeOffered(offer) => {
       return __failed(srv, srv.resume(__lookup(s.config, offer, now_unix_ms())));
+    },
+    handshake.VerifyClient(v) => {
+      match (__client_trusted(s.config, v)) {
+        Ok(_) => {
+          return __failed(srv, srv.verdict(true));
+        },
+        Err(err) => {
+          return Err(Failure { error: err, alert: srv.alert(__client_alert(err)) });
+        }
+      }
     },
     handshake.Connected => {
       if (s.config.tickets) {
@@ -654,6 +326,48 @@ function __answered(s: Session, srv: handshake.Server, e: handshake.Event): Resu
     _ => {}
   }
   return Ok(handshake.ServerStep { server: srv, output: [], data: [], events: [] });
+}
+
+// __client_trusted judges a client's chain against the config's roots now,
+// and its CertificateVerify under the leaf's key.
+function __client_trusted(config: Config, v: handshake.Verification): Result[void, TlsError] {
+  let roots: verify.Roots = verify.roots([]);
+  match (config.client_roots) {
+    Some(r) => {
+      roots = r;
+    },
+    None => {
+      return Ok(());
+    }
+  }
+  if (v.chain.len() == 0) {
+    return Err(ClientCertificateMissing);
+  }
+  match (verify.verify_client(v.chain, roots, now_unix_ms() / 1000)) {
+    Ok(leaf) => {
+      if (!verify.verify_signed(leaf, v.scheme, v.signed, v.signature)) {
+        return Err(ClientSignatureInvalid);
+      }
+      return Ok(());
+    },
+    Err(e) => {
+      return Err(ClientUntrusted(e));
+    }
+  }
+  return Err(ClientSignatureInvalid);
+}
+
+// The alert a refused client certificate draws.
+function __client_alert(e: TlsError): handshake.HandshakeError {
+  match (e) {
+    ClientCertificateMissing => {
+      return handshake.CertificateRequired;
+    },
+    _ => {
+      return handshake.BadCertificate;
+    }
+  }
+  return handshake.BadCertificate;
 }
 
 // Tickets. A ticket is the PSK it stands for, the suite it was issued
@@ -709,11 +423,11 @@ function __lookup(config: Config, offer: handshake.Offer, now: i64): Option[hand
   return None;
 }
 
-function __open_ticket(config: Config, offer: handshake.Offer, identity: [u8], now: i64): Option[u8[]] {
-  if (identity.len() < 12) {
+function __open_ticket(config: Config, offer: handshake.Offer, id: [u8], now: i64): Option[u8[]] {
+  if (id.len() < 12) {
     return None;
   }
-  match (chacha20poly1305.open(config.ticket_key, __copy(identity[0:12]), __copy(identity[12:identity.len()]), TICKET_AAD.bytes())) {
+  match (chacha20poly1305.open(config.ticket_key, __copy(id[0:12]), __copy(id[12:id.len()]), TICKET_AAD.bytes())) {
     Ok(body) => {
       return __usable_ticket(body, offer, now);
     },
@@ -780,41 +494,6 @@ function __i64_at(b: [u8], at: i32): i64 {
 
 function __u32_of(b: u8[]): u32 {
   return b[0] as u32 << 24 | b[1] as u32 << 16 | b[2] as u32 << 8 | b[3] as u32;
-}
-
-// __sign makes the CertificateVerify signature under the scheme the key
-// offered.
-function __sign(key: PrivateKey, sg: handshake.Signing): Result[u8[], TlsError] {
-  if (sg.scheme != __scheme(key)) {
-    return Err(SigningFailed);
-  }
-  match (key) {
-    EcdsaKey(k) => {
-      let h: ecdsa.Hash = ecdsa.Sha256;
-      if (sg.scheme == 0x0503) {
-        h = ecdsa.Sha384;
-      }
-      match (ecdsa.sign(k, h, sg.signed)) {
-        Ok(sig) => {
-          return Ok(sig);
-        },
-        Err(_) => {
-          return Err(SigningFailed);
-        }
-      }
-    },
-    Ed25519Seed(seed) => {
-      match (ed25519.sign(seed, sg.signed)) {
-        Ok(sig) => {
-          return Ok(sig);
-        },
-        Err(_) => {
-          return Err(SigningFailed);
-        }
-      }
-    }
-  }
-  return Err(SigningFailed);
 }
 
 function __cat(own a: u8[], b: [u8]): u8[] {

@@ -180,8 +180,19 @@ TLS itself is `std/tls/keyschedule`, `keyshare`, `message`, `record`,
     `with_ticket_key`, and `std/tls/client` hands tickets to the caller in
     `Step.tickets` and offers one back with `with_ticket` to the name it was
     issued to. Gate: the handshake, client and server suites, and both Go
-    interop tests resuming in each direction. Remaining: client
-    certificates, `std/serve`.
+    interop tests resuming in each direction.
+
+    Then client certificates (§4.4.2): the key and chain reading moved from
+    `std/tls/server` to `std/tls/identity`, which both sides present; the
+    handshake's server sends a CertificateRequest when asked to (never on
+    a resumed handshake), puts the client's chain and CertificateVerify to
+    its caller (`VerifyClient`, `verdict`), and its client sends its chain
+    and asks its caller for the signature; `std/tls/verify` gained
+    `verify_client`; `std/tls/server` requires a chain reaching
+    `with_client_roots` (certificate_required for none, bad_certificate
+    for a bad one) and `std/tls/client` presents `with_identity`. Gate: the
+    handshake, client and server suites, and both Go interop tests with a
+    client certificate each way. Remaining: `std/serve`.
 12. **Interop and fuzzing on `net-nightly`.** OpenSSL 3.5, Go, rustls'
     mio examples at a pinned tag, and BoringSSL's `bssl` at a pinned
     commit, plus the tlsfuzzer smoke set. A missing tool fails the lane.

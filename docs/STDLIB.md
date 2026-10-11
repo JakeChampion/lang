@@ -1250,8 +1250,11 @@ address is checked against the certificate's addresses and not sent as SNI
 (`tests/stdlib/tls_client_test.fern`, and Go's crypto/tls in
 `TestTLSClientAgainstGo`).
 
-- `config(server_name, roots)`, `(c).with_alpn(protocols)` and
-  `(c).with_ticket(t)` make a `Config`.
+- `config(server_name, roots)`, `(c).with_alpn(protocols)`,
+  `(c).with_ticket(t)` and `(c).with_identity(id)` make a `Config`. With an
+  identity (`std/tls/identity`), a server asking for a client certificate
+  is sent the chain and a CertificateVerify under its key; without one, an
+  empty Certificate, and the server decides.
 - `Session` is sans-IO, so any transport can carry it: `start(config)` draws
   its entropy from `random_bytes` and returns a `Step { session, output,
   data, closed, tickets }`; `(s).read(input)` takes what arrived,
@@ -1340,8 +1343,17 @@ step = step.client.read(received)?;   // step.output, step.data, step.events
   `signature(sig)`), `ResumeOffered` (the tickets a client offers, the
   suite chosen and the name asked for: look one up, then call
   `resume(Some(Resumed { index, psk }))`, or `resume(None)` for a full
-  handshake), `Connected`, `PeerClosed` and `Ticket`. No private key, no
+  handshake), `VerifyClient` (on the server: the client's chain and its
+  signature, or an empty chain when it sent none: judge them, then call
+  `verdict(ok)`), `Connected`, `PeerClosed` and `Ticket`. No private key, no
   ticket key and no trust decision enter the module.
+- Client certificates (§4.4.2): `ServerConfig.request_client_certificate`
+  sends a CertificateRequest naming the schemes `std/tls/verify` checks,
+  except on a resumed handshake. A client with `ClientConfig.chain` and a
+  scheme in `sign_schemes` the request names sends the chain and asks its
+  caller for the CertificateVerify's signature (`SignNeeded`, then
+  `signature(sig)`); otherwise it sends an empty Certificate. The server's
+  `client_chain()` is what it was shown.
 - Resumption (§4.6.1, §4.2.11): once connected, `resumption_psk(nonce)` on
   either side is the PSK a ticket with that nonce stands for, and the
   server's `ticket(t)` sends a `NewSessionTicket`. A client offers one by
@@ -1360,8 +1372,28 @@ step = step.client.read(received)?;   // step.output, step.data, step.events
 - `HandshakeError` names the cause, with `alert()` and `message()`.
 - `certificate_verify_content(server, transcript_hash)` is what a
   CertificateVerify signs.
-- Not yet: early data, and client certificates beyond answering a request
-  with an empty Certificate.
+- Not yet: early data.
+
+### `std/tls/identity`
+
+A certificate chain and the private key that goes with its leaf, as a TLS
+server presents one and a client presents one when asked
+(`tests/stdlib/tls_server_test.fern`).
+
+- `private_key_from_pem(text)` reads the first `PRIVATE KEY` (PKCS #8, RFC
+  5958) or `EC PRIVATE KEY` (SEC 1, RFC 5915) block; `pkcs8(der)` and
+  `sec1(der)` read the bytes. A `PrivateKey` is `EcdsaKey(ecdsa.PrivateKey)`
+  on P-256 or P-384, or `Ed25519Seed(seed)`. An RSA key is refused, since
+  `std/crypto/rsa` verifies only.
+- `pair(chain, key)` pairs a DER chain, leaf first, with the leaf's key,
+  refusing one that is not the leaf's; `from_pem(chain_text, key_text)`
+  reads both from PEM. An `Identity` is `chain` and `key`.
+- `(k).scheme()` is the one TLS 1.3 signature scheme the key makes (0x0403,
+  0x0503 or 0x0807), and `(k).sign(scheme, content)` the signature under
+  it: a DER ECDSA-Sig-Value, or Ed25519's 64 bytes.
+- `KeyError` is `Pem`, `BadDer`, `Certificate`, `Scalar`, `Seed`, `NoKey`,
+  `NoCertificate`, `UnsupportedKey(what)`, `BadKey(part)`, `Mismatch` or
+  `CannotSign(scheme)`, with `message()`.
 
 ### `std/tls/keyschedule`
 
@@ -1523,32 +1555,34 @@ read = o.next;
 ### `std/tls/server`
 
 A TLS 1.3 server: `std/tls/handshake`'s server signing its CertificateVerify
-with the certificate's private key, as a sans-IO `Session` any transport can
-carry and as a `Connection` over an accepted TCP socket. It takes every suite
-and X25519MLKEM768 or X25519, asking for a share by HelloRetryRequest when the
-client sent neither, and chooses the first of its own protocols the client
-offers by ALPN (`tests/stdlib/tls_server_test.fern` against `std/tls/client`,
-and Go's crypto/tls client in `TestTLSServerAgainstGo`).
+with its identity's key (`std/tls/identity`), as a sans-IO `Session` any
+transport can carry and as a `Connection` over an accepted TCP socket. It
+takes every suite and X25519MLKEM768 or X25519, asking for a share by
+HelloRetryRequest when the client sent neither, and chooses the first of
+its own protocols the client offers by ALPN
+(`tests/stdlib/tls_server_test.fern` against `std/tls/client`, and Go's
+crypto/tls client in `TestTLSServerAgainstGo`).
 
-- `private_key_from_pem(text)` reads the first `PRIVATE KEY` (PKCS #8, RFC
-  5958) or `EC PRIVATE KEY` (SEC 1, RFC 5915) block; `pkcs8(der)` and
-  `sec1(der)` read the bytes. A `PrivateKey` is `EcdsaKey(ecdsa.PrivateKey)`
-  on P-256 or P-384, or `Ed25519Seed(seed)`. An RSA key is refused, since
-  `std/crypto/rsa` verifies only; the scheme offered is the key's (0x0403,
-  0x0503 or 0x0807), so a client that does not accept it gets
-  handshake_failure.
-- `identity(chain, key)` pairs a DER chain, leaf first, with the leaf's key,
-  refusing one that is not the leaf's; `identity_from_pem(chain_text,
-  key_text)` reads both from PEM. `config(identity)` and `(c).with_alpn
-  (protocols)` make a `Config`.
+- `config(identity)`, `(c).with_alpn(protocols)` and the ticket and client
+  certificate options below make a `Config`. The scheme offered is the
+  key's (0x0403, 0x0503 or 0x0807), so a client that does not accept it
+  gets handshake_failure.
 - Tickets: `config` issues one session ticket per connection, living two
   hours, sealed under a key drawn for the config; `with_ticket_key(key)`
-  shares a 32-byte key between servers that are to resume each other's
-  sessions, `with_ticket_lifetime(d)` changes the lifetime and
+  derives the sealing key from the caller's bytes, so servers sharing them
+  resume each other's sessions, `with_ticket_lifetime(d)` changes the
+  lifetime and
   `without_tickets()` issues none. A ticket offered is resumed when it
   opens under the key, was issued to the name asked for under a suite with
   the chosen suite's hash, and is within its lifetime; otherwise the
   handshake is a full one. `(s).resumed()` says which.
+- Client certificates: `with_client_roots(roots)` asks every client for a
+  certificate and requires a chain reaching the roots now, allowed a TLS
+  client (`verify.verify_client`), with a CertificateVerify under its key;
+  a client sending none is refused with certificate_required, one with a
+  bad chain with bad_certificate. `(s).client_chain()` is the chain shown,
+  leaf first. A resumed session shows none: the ticket stands for the
+  certificate shown when it was issued.
 - `Session`: `start(config)` draws its entropy from `random_bytes` and
   returns a session with nothing to send until `(s).read(input)` has taken a
   ClientHello; `read` signs the CertificateVerify when the handshake reaches
@@ -1562,11 +1596,10 @@ and Go's crypto/tls client in `TestTLSServerAgainstGo`).
   `(c).recv(wait)` giving a `Received { conn, data, ended }` (application
   data the client sent in the same read as its Finished comes back first),
   and `(c).close()`.
-- `KeyError` is `Pem`, `BadDer`, `Certificate`, `Scalar`, `Seed`, `NoKey`,
-  `NoCertificate`, `UnsupportedKey(what)`, `BadKey(part)` or `Mismatch`;
-  `TlsError` is `HandshakeFailed(HandshakeError)`, `SigningFailed`,
-  `NetFailed(NetError)`, `HandshakeTimeout`, `ClosedEarly` or `RecordCut`;
-  both with `message()`.
+- `TlsError` is `HandshakeFailed(HandshakeError)`, `SigningFailed`,
+  `ClientCertificateMissing`, `ClientUntrusted(VerifyError)`,
+  `ClientSignatureInvalid`, `NetFailed(NetError)`, `HandshakeTimeout`,
+  `ClosedEarly` or `RecordCut`, with `message()`.
 
 ### `std/tls/verify`
 
@@ -1589,6 +1622,9 @@ if (!verify.verify_signed(leaf, scheme, signed, signature)) { … }
   against the subject alternative names, never the common name. A wildcard
   in a certificate covers exactly the leftmost label, and a name asked for
   is never a wildcard.
+- `verify_client(chain, roots, now)`: the same for a client's chain, with
+  no name to match and the leaf's client extended key usage (an absent one
+  allows any) in place of the server's; refused with `NotForClients`.
 - `roots(ders)` and `roots_from_pem(text)` make `Roots`, skipping
   certificates that do not parse. `roots_from_file(path)` reads a bundle;
   `system_roots()` reads the one `SSL_CERT_FILE` names, else the first of

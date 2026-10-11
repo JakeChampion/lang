@@ -1147,24 +1147,24 @@ func TestRunnerTLSRootsExamplePasses(t *testing.T) {
 // `tests/stdlib/tls_client_test.fern` runs std/tls/client's session against
 // std/tls/handshake's server: a trusted chain, the name and root refusals,
 // a forged CertificateVerify, a saved and restored session, close_notify,
-// and a session resumed from a ticket.
+// a session resumed from a ticket, and an identity presented when asked.
 func TestRunnerTLSClientExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_client", "std/tls/client", 7)
+	runnerSuitePasses(t, "tls_client", "std/tls/client", 8)
 }
 
 // `tests/stdlib/tls_server_test.fern` reads keys from PKCS #8 and SEC 1,
 // checks an identity against its leaf, runs std/tls/server's session
-// against std/tls/client over P-256, P-384 and Ed25519 leaves, and resumes
-// from the tickets it issues.
+// against std/tls/client over P-256, P-384 and Ed25519 leaves, resumes
+// from the tickets it issues, and requires client certificates.
 func TestRunnerTLSServerExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_server", "std/tls/server", 9)
+	runnerSuitePasses(t, "tls_server", "std/tls/server", 11)
 }
 
 // `tests/stdlib/tls_handshake_test.fern` runs the client through RFC 8448 §3
 // byte for byte, the server to the trace's ServerHello, and the two against
 // each other across suites and groups.
 func TestRunnerTLSHandshakeExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_handshake", "std/tls/handshake", 15)
+	runnerSuitePasses(t, "tls_handshake", "std/tls/handshake", 17)
 }
 
 // `tests/stdlib/tls_keyshare_test.fern` checks X25519 against RFC 8448's key
