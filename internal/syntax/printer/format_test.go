@@ -1840,3 +1840,17 @@ function main(): i32 {
 		t.Errorf("Format changed the member comments or blank lines:\n%s", got)
 	}
 }
+
+// A parametric impl's bound keeps its trait arguments through a format.
+func TestFormatImplBoundArgsRoundTrip(t *testing.T) {
+	src := `trait Iter[T] { function next(self: Self): Option[(T, Self)]; }
+struct W[I, T] { it: I, k: T }
+impl[I: Iter[T], T] Iter[T] for W[I, T] { function next(self: Self): Option[(T, Self)] { return None; } }`
+	got := formatSrc(t, src)
+	if !strings.Contains(got, "impl[I: Iter[T], T] Iter[T] for W[I, T] {") {
+		t.Errorf("bound arguments lost:\n%s", got)
+	}
+	if again := formatSrc(t, got); got != again {
+		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+	}
+}

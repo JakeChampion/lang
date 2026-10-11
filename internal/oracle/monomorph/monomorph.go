@@ -550,6 +550,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 					ci := *impl
 					ci.TypeParams = nil
 					ci.Bounds = nil
+					ci.BoundArgs = nil
 					if _, isEnum := impl.Type.(ast.EnumType); isEnum {
 						ci.Type = ast.EnumType{Name: sk.mang}
 					} else {

@@ -7337,6 +7337,7 @@ func (c *checker) synthesizeTraitDefaults(prog *ast.Program) {
 			if len(impl.TypeParams) > 0 {
 				method.TypeParams = append([]string(nil), impl.TypeParams...)
 				method.Bounds = impl.Bounds
+				method.BoundArgs = impl.BoundArgs
 			}
 			prog.Funcs = append(prog.Funcs, method)
 			impl.MethodNames = append(impl.MethodNames, m.Name)

@@ -1165,8 +1165,9 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 	// docs/TRAITS.md.
 	var implTypeParams []string
 	var implBounds map[string][]string
+	var implBoundArgs map[string][][]ast.Type
 	if p.match(lexer.Punct, "[") {
-		implTypeParams, implBounds, err = p.parseTypeParamList()
+		implTypeParams, implBounds, implBoundArgs, err = p.parseTypeParamListWithArgs()
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1233,7 +1234,7 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, nil, err
 	}
-	id := &ast.ImplDecl{P: kw.Pos, Trait: trait, TraitPos: tnameTok.Pos, Type: implType, TypePos: typePos, TypeParams: implTypeParams, Bounds: implBounds, TraitArgs: traitArgs}
+	id := &ast.ImplDecl{P: kw.Pos, Trait: trait, TraitPos: tnameTok.Pos, Type: implType, TypePos: typePos, TypeParams: implTypeParams, Bounds: implBounds, BoundArgs: implBoundArgs, TraitArgs: traitArgs}
 	var methods []*ast.FuncDecl
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
 		// Associated-type binding: `type Item = T;`. Records the concrete
@@ -1327,6 +1328,7 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 			}
 			fn.TypeParams = implTypeParams
 			fn.Bounds = implBounds
+			fn.BoundArgs = implBoundArgs
 		}
 		methods = append(methods, fn)
 		id.MethodNames = append(id.MethodNames, fn.Name)

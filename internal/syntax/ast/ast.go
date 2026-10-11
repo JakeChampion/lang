@@ -4206,6 +4206,9 @@ type ImplDecl struct {
 	// checker synthesises later — a trait's default method inherited by
 	// a parametric impl (synthesizeTraitDefaults). Nil for a plain impl.
 	Bounds map[string][]string
+	// BoundArgs carries each bound's type arguments (`impl[I: Iter[T], T]`),
+	// parallel to Bounds as FuncDecl.BoundArgs is.
+	BoundArgs map[string][][]Type
 	// AssocTypeBindings maps each of the trait's associated-type names to
 	// the concrete type this impl binds it to (`type Item = i32;`). The
 	// conformance check requires one entry per trait associated type; the
