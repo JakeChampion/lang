@@ -370,20 +370,39 @@ struct __JsonParser {
   depth: i32,
 }
 
+// JSON_NOT_WS marks every byte but the four JSON whitespace bytes, so a scan
+// over it finds the end of a whitespace run.
+const JSON_NOT_WS: u8[] = [
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 0u8, 0u8, 1u8, 1u8, 0u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  0u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+];
+
 // __json_p_skip_ws advances past leading whitespace and returns
 // the advanced cursor. Advance-only: no value to surface, so it
 // returns just the new __JsonParser (rebind: `p = __json_p_skip_ws(p);`).
 function __json_p_skip_ws(p: __JsonParser): __JsonParser {
-  let cur: __JsonParser = p;
-  let n: i32 = cur.s.len();
-  while (cur.pos < n) {
-    let b: i32 = cur.s[cur.pos] as i32;
-    if (b != 32 && b != 9 && b != 10 && b != 13) {
-      break;
-    }
-    cur = __JsonParser { ...cur, pos: cur.pos + 1 };
+  if (p.pos >= p.s.len()) {
+    return p;
   }
-  return cur;
+  let b: i32 = p.s[p.pos] as i32;
+  if (b != 32 && b != 9 && b != 10 && b != 13) {
+    return p;
+  }
+  return __JsonParser { ...p, pos: __scan_set(p.s, p.pos + 1, JSON_NOT_WS) };
 }
 
 function __json_p_byte(p: __JsonParser): i32 {
