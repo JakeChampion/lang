@@ -64,6 +64,10 @@ pub function fusion_disabled(): i32 {
   return 11;
 }
 
+pub function fusion_element_fn_may_abort(): i32 {
+  return 12;
+}
+
 pub function storage_guarded_reuse(): i32 {
   return 0;
 }
@@ -175,7 +179,7 @@ pub function kernel_element_not_binary_add(): i32 {
 // Stable ordinals are shared by the decision and its diagnostic. A successful
 // rewrite has its own tag; refusals never predict a rewrite.
 pub function reasons(): string[] {
-  return ["fused", "no-producer", "intermediate-shared", "control-flow-boundary", "effect-boundary", "element-fn-unresolved", "element-fn-effectful", "non-scalar", "result-escapes", "no-reduction-sink", "operator-outside-algebra", "disabled"];
+  return ["fused", "no-producer", "intermediate-shared", "control-flow-boundary", "effect-boundary", "element-fn-unresolved", "element-fn-effectful", "non-scalar", "result-escapes", "no-reduction-sink", "operator-outside-algebra", "disabled", "element-fn-may-abort"];
 }
 
 pub function render(sites: Site[]): string {

@@ -49,6 +49,32 @@ const selfHostArrayReportSrc = `import "std/array";
 @noinline function lone(xs: i64[]): i64 {
   return xs.fold(0 as i64, (a: i64, b: i64): i64 => a + b);
 }
+@noinline function taken(xs: i64[]): i64 {
+  return xs.map((x: i64): i64 => x + (1 as i64)).take(2).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
+}
+@noinline function aborting(xs: i64[]): i64 {
+  return xs.map((x: i64): i64 => xs[0] + x).take(2).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
+}
+@noinline function prefix(xs: i64[]): i64 {
+  return array.take_while(xs, (x: i64): boolean => x < (3 as i64)).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
+}
+@noinline function flattened(xs: i64[]): i64 {
+  return xs.flat_map((x: i64): i64[] => [x, x]).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
+}
+@noinline function flat_taken(xs: i64[]): i64 {
+  return xs.flat_map((x: i64): i64[] => [x, x]).take(3).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
+}
+@noinline function flat_scan(xs: i64[]): i64[] {
+  return xs.flat_map((x: i64): i64[] => [x, x]).scan(0 as i64, (a: i64, b: i64): i64 => a + b);
+}
+@noinline function concat_taken(xs: i64[], s: string): i64 {
+  return xs.map((x: i64): i64 => {
+    if (s + s == "aa") {
+      return x;
+    }
+    return x + 1 as i64;
+  }).take(2).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
+}
 @noinline function length(xs: i64[]): i32 {
   return xs.map((x: i64): i64 => x).len();
 }
@@ -62,6 +88,9 @@ function main(): i32 {
   if (effectful(xs) != 6 as i64 || unsupported(xs) != 6 as i64) { return 4; }
   if (boundary(xs) != 6 as i64 || control(xs) != 6 as i64) { return 5; }
   if (nonscalar(["one", "two"]) != 6 as i64 || lone(xs) != 6 as i64 || length(xs) != 3) { return 6; }
+  if (taken(xs) != 5 as i64 || aborting(xs) != 5 as i64 || prefix(xs) != 3 as i64) { return 7; }
+  if (flattened(xs) != 12 as i64 || flat_taken(xs) != 4 as i64 || flat_scan(xs).len() != 6) { return 8; }
+  if (concat_taken(xs, "a") != 3 as i64) { return 9; }
   return 0;
 }
 `
@@ -102,6 +131,13 @@ func TestSelfHostArrayReportMatchesEmission(t *testing.T) {
 		{"nonscalar", "map -> fold; not fused", "non-scalar"},
 		{"lone", "fold; not fused", "no-producer"},
 		{"length", "map; not fused", "no-reduction-sink"},
+		{"taken", "map -> take -> fold; one traversal", "fused"},
+		{"aborting", "map -> take -> fold; not fused", "element-fn-may-abort"},
+		{"prefix", "take_while -> fold; one traversal", "fused"},
+		{"flattened", "flat_map -> fold; one traversal", "fused"},
+		{"flat_taken", "flat_map -> take -> fold; not fused", "element-fn-may-abort"},
+		{"flat_scan", "flat_map -> scan; one traversal", "fused"},
+		{"concat_taken", "map -> take -> fold; not fused", "element-fn-may-abort"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			start := strings.Index(report, tc.name+": "+tc.plan+"\n")
@@ -124,6 +160,9 @@ func TestSelfHostArrayReportMatchesEmission(t *testing.T) {
 				t.Fatalf("reported %s but retained=%t\n%s", tc.reason, retained, body)
 			}
 		})
+	}
+	if at := strings.Index(report, "flat_scan: "); at < 0 || !strings.Contains(strings.SplitN(report[at:], "\n", 3)[1], " storage=no-intermediate-arrays/grown-output-buffer") {
+		t.Fatalf("a scan behind a flat_map claimed its reserve suffices:\n%s", report)
 	}
 	start := strings.Index(report, "own_map: map; ownership lowering\n")
 	if start < 0 || !strings.Contains(strings.SplitN(report[start:], "\n", 3)[1], "reason=guarded-reuse storage=unique-reuse/shared-copy") {

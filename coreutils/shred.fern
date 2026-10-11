@@ -290,17 +290,17 @@ function rand_none(): Rand {
   return Rand { from_file: false, r: stdin(), name: "", st: cell_new(rand.rng_seed_from_os()), block: buf_new(block_bytes(random_pass())) };
 }
 
-function rand_open(s: Settings): (Rand, boolean) {
+function rand_open(s: Settings): Option[Rand] {
   if (!s.source_given) {
-    return (rand_none(), true);
+    return Some(rand_none());
   }
   match (open_reader(s.source)) {
     Ok(r) => {
-      return (Rand { from_file: true, r: r, name: s.source, st: cell_new(0 as i64), block: 0 as usize }, true);
+      return Some(Rand { from_file: true, r: r, name: s.source, st: cell_new(0 as i64), block: 0 as usize });
     },
     Err(e) => {
       gnu.error(s.source + ": " + gnu.io_error_text(e));
-      return (rand_none(), false);
+      return None;
     }
   }
 }
@@ -1055,11 +1055,20 @@ pub function main(): i32 {
   if (operands.len() == 0) {
     gnu.die_usage("missing file operand", 1);
   }
-  let opened: (Rand, boolean) = rand_open(s);
-  if (!opened.1) {
-    return 1;
+  match (rand_open(s)) {
+    Some(rnd) => {
+      return shred_all(operands, s, rnd);
+    },
+    None => {
+      return 1;
+    }
   }
-  let rnd: Rand = opened.0;
+  return 1;
+}
+
+// shred_all shreds every operand from one random source and closes it:
+// the exit status.
+function shred_all(operands: string[], s: Settings, rnd: Rand): i32 {
   let ok: boolean = true;
   let i: i32 = 0;
   while (i < operands.len()) {

@@ -105,6 +105,9 @@ func TestSelfHostArm64Leakcheck(t *testing.T) {
 			}
 			switch tc.verdict {
 			case "balanced":
+				if strings.HasSuffix(summary, " from=exit") {
+					t.Errorf("%s: %s — main returned, and the line says exit() printed it", tc.name, summary)
+				}
 				if allocs == 0 {
 					t.Errorf("%s: allocs=0 — the probe exercised no allocation", tc.name)
 				}
@@ -115,6 +118,9 @@ func TestSelfHostArm64Leakcheck(t *testing.T) {
 				if allocs <= frees || live <= 0 {
 					t.Errorf("%s: %s — this shape leaks soundly per round; a balanced census "+
 						"here means the counters miss a free path or an alloc path", tc.name, summary)
+				}
+				if !strings.HasSuffix(summary, " from=exit") {
+					t.Errorf("%s: %s — exit() printed this line, and it must say so", tc.name, summary)
 				}
 			case "zero":
 				if allocs != 0 || frees != 0 || live != 0 {

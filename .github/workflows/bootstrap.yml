@@ -88,6 +88,9 @@ jobs:
           - { runner: macos-15,         host: arm64-darwin }
     name: verify-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
+    # To push the stages' cost to refs/notes/perf on main.
+    permissions:
+      contents: write
     # Three whole-compiler compiles: 307 s + 209 s + 137 s at up to 6.1 GB on a
     # 4-core 16 GB x86-64 host (measured 2026-09-28, docs/BOOTSTRAP.md), plus
     # the download and the smoke test. About a minute per stage on macos-15.
@@ -98,6 +101,20 @@ jobs:
         run: make bootstrap
       - name: make distcheck (stage1 -> stage2 -> stage3, stage2 == stage3)
         run: make distcheck
+      # The self-compile's wall and peak memory per stage and host, the rows
+      # bootstrap.sh writes, recorded on main so a regression in either is a
+      # step in `scripts/perf-history show bootstrap/x86-64-linux/stage2.peak_rss_mb`
+      # rather than a figure someone measures by hand (docs/BOOTSTRAP.md).
+      - name: Record the stages' cost in refs/notes/perf
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: scripts/perf-history record bootstrap-${{ matrix.host }} build/bootstrap/distcheck-report.txt
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bootstrap-report-${{ matrix.host }}
+          path: build/bootstrap/distcheck-report.txt
+          if-no-files-found: warn
 
   # The freshly built arm64 candidate compiling the whole compiler. `verify`
   # above runs the PINNED stage0, and stage2-fixpoint-arm64 drives
