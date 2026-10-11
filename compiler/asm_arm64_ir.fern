@@ -3141,7 +3141,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
   if (ins.str == "exit") {
     s = ssa_load(reg_of, ins.args[0], "x0", s);
     if (s.leak_check) {
-      s = s.write("    mov x19, x0\n    bl __fern_lc_report\n    mov x0, x19\n");
+      s = s.write("    mov x19, x0\n    bl __fern_lc_report_exit\n    mov x0, x19\n");
     }
     s = s.write("    mov x8, #93\n    svc #0\n    mov x0, #0\n");
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
@@ -6648,9 +6648,12 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
 //     leakcheck: allocs=<N> frees=<M> live_bytes=<K>
 //
 // K = alloc_bytes - free_bytes, signed, so an over-free shows negative
-// rather than wrapping. Called from the _start epilogue and the exit()
-// builtin, which park the exit code in x19 across the call — the helper and
-// its two local subroutines touch caller-saved registers only. .globl: the
+// rather than wrapping. Called from the _start epilogue and, through
+// __fern_lc_report_exit, from the exit() builtin, whose line ends
+// ` from=exit`: the frames above the call are never unwound, so what they
+// hold is not a leak the program could have freed. Both park the exit code
+// in x19 across the call — the helper and its two local subroutines touch
+// caller-saved registers only. .globl: the
 // exit op is emitted into ORDINARY generated code, which under
 // -per-module-emit-all lands in a different unit from this (the entry's).
 // Entry-only, alongside the counters it reads.
@@ -6669,10 +6672,12 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_lc_rt_req: .quad 0\n");
   s = s.write("__fern_lc_free_count: .quad 0\n");
   s = s.write("__fern_lc_free_bytes: .quad 0\n");
+  s = s.write("__fern_lc_exited: .quad 0\n");
   s = s.write("    .section .rodata\n");
   s = s.write(".Llc_a:\n    .ascii \"leakcheck: allocs=\"\n");
   s = s.write(".Llc_f:\n    .ascii \" frees=\"\n");
   s = s.write(".Llc_l:\n    .ascii \" live_bytes=\"\n");
+  s = s.write(".Llc_x:\n    .ascii \" from=exit\"\n");
   s = s.write(".Llc_nl:\n    .ascii \"\\n\"\n");
   if (s.sanitize) {
     // The texts must match the native backends' byte-for-byte: a
@@ -6682,6 +6687,12 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Lsan_blocks:\n    .ascii \" blocks\"\n");
   }
   s = s.write("    .text\n");
+  s = s.write("    .globl __fern_lc_report_exit\n");
+  s = s.write("__fern_lc_report_exit:\n");
+  s = s.write("    adrp x9, __fern_lc_exited\n");
+  s = s.write("    add x9, x9, :lo12:__fern_lc_exited\n");
+  s = s.write("    mov x10, #1\n");
+  s = s.write("    str x10, [x9]\n");
   s = s.write("    .globl __fern_lc_report\n");
   s = s.write("__fern_lc_report:\n");
   s = s.write("    stp x29, x30, [sp, #-16]!\n");
@@ -6727,6 +6738,15 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ldr x1, [x9]\n");
   s = s.write("    sub x0, x0, x1\n");
   s = s.write("    bl .Llc_wrnum\n");
+  s = s.write("    adrp x9, __fern_lc_exited\n");
+  s = s.write("    add x9, x9, :lo12:__fern_lc_exited\n");
+  s = s.write("    ldr x0, [x9]\n");
+  s = s.write("    cbz x0, .Llc_from_done\n");
+  s = s.write("    adrp x1, .Llc_x\n");
+  s = s.write("    add x1, x1, :lo12:.Llc_x\n");
+  s = s.write("    mov x2, #10\n");
+  s = s.write("    bl .Llc_write\n");
+  s = s.write(".Llc_from_done:\n");
   s = s.write("    adrp x1, .Llc_nl\n");
   s = s.write("    add x1, x1, :lo12:.Llc_nl\n");
   s = s.write("    mov x2, #1\n");
