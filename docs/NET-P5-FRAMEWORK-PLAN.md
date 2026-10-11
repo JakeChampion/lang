@@ -153,15 +153,16 @@ decides what wraps it.
    sync flush a continuing stream ends on), a compressed message is
    inflated whole under `max_message`, and the echo's replies go out
    compressed. The Autobahn suite's fuzzing client runs the conformance
-   sections and permessage-deflate correctness against
-   `scripts/net-autobahn.d/server.fern` on the `net-nightly` lane
-   (`scripts/net-autobahn`, the image pinned by digest), each case
-   passing or the job failing. The high-volume performance cases
-   (sections 9, 12 and 13.2) are left out of the default set: each
-   passes in seconds in isolation, but late in the full suite one
-   intermittently runs past the budget on a CI runner, an interaction
+   sections (1-8, 10) against `scripts/net-autobahn.d/server.fern` on the
+   `net-nightly` lane (`scripts/net-autobahn`, the image pinned by
+   digest), each case passing or the job failing; the client offers
+   permessage-deflate throughout, so they cross-check the compressor on
+   ordinary frames. The performance and compression-volume sections (9,
+   12, 13) are left out of the default set: each case passes in seconds
+   in isolation, but any high-frame-count case late in the full suite
+   stalls once a few hundred connections precede it, an accumulation
    tracked in issue #12136; the wstest run is bounded by a timeout and
-   `net-autobahn "9.*" "12.*" "13.2.*"` runs them by hand.
+   `net-autobahn - "13.*"` runs an excluded section by hand.
 5. **Static files, compression, proxies, caching.** ETag, `Range` and
    precompressed variants; response compression (gzip and zstd; brotli
    decode only) off by default as every 2026 server has it; PROXY protocol

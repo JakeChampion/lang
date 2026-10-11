@@ -2351,9 +2351,13 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
   RSV1 (`Conn.window` is the window bits, 0 without the extension). `accept_key(key)` and
   `frame(fin, opcode, payload, mask)` are the handshake's and the codec's
   pieces for a client or a test (`tests/stdlib/http_websocket_test.fern`,
-  a session over a scripted connection). The Autobahn suite runs
-  against the echo in `scripts/net-autobahn.d/server.fern` on the
-  `net-nightly` lane (`scripts/net-autobahn`, every case).
+  a session over a scripted connection). The Autobahn suite's
+  conformance cases (sections 1-8, 10) run against the echo in
+  `scripts/net-autobahn.d/server.fern` on the `net-nightly` lane; the
+  client offers permessage-deflate throughout, so they cross-check the
+  compressor on ordinary frames. Its performance and compression-volume
+  sections (9, 12, 13) are deferred to #12136 and run on demand
+  (`net-autobahn - "13.*"`).
 - Under std/serve an upgrade request's body is the connection's bytes
   after the head, streamed as `stream_bodies` streams one whatever the
   setting says, and a handler that answers 101 with a producer keeps the
