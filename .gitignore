@@ -22,3 +22,4 @@
 
 # cargo's build directory when the hyper bench server is built in place
 scripts/net-bench.d/hyperhello/target/
+__pycache__/

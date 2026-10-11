@@ -52,7 +52,9 @@ Against a 200-bit mpmath reference, 20,000 random arguments each:
 | cos | \|x\| < 1e22 | 2.71 |
 | pow | x in [0, 100), y in [-30, 30) | 193 |
 
-These are the old kernels' errors too, since the results are identical. pow's
-error grows with `|y log x|`; that is #12041. The large-argument sin and cos
-exceed 2 ulp on some arguments, which `f64_ulp_test.go`'s fixed corpus
-happens to miss; that is #12042.
+These are the old kernels' errors too, since the results were identical on
+this date. pow's error grew with `|y log x|` (#12041), and the large-argument
+sin and cos exceeded 2 ulp on arguments `f64_ulp_test.go`'s fixed corpus
+missed (#12042). Both are fixed since: sin and cos carry the reduced argument
+as y0 + y1, pow carries log|x| and y log|x| as hi + lo, and the ulp gate holds
+all three to 1 ulp of the correctly rounded result.
