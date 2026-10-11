@@ -7258,8 +7258,9 @@ pub function eliminate_dead_code(ops: Op[]): Op[] {
 // constant array's elements are each stored, then loaded and dropped, when the
 // construction becomes a static box that never reads them. The register
 // backends prune the values when they lift to SSA; wasm emitted every one.
-// load_local, store_local and tee_local are the only ops that name a slot, so
-// a slot with no load_local is dead: its tee goes and its store becomes a drop.
+// A slot is read by load_local, by str_slice's frame form and by dyn_dispatch,
+// which name slots in their immediates. A slot none of them reads is dead: its
+// tee goes and its store becomes a drop.
 // A drop then cancels the constant or load just before it, which can leave
 // another slot unloaded, so the pass repeats until nothing changes.
 pub function eliminate_dead_stores(ops: Op[]): Op[] {
@@ -7327,7 +7328,7 @@ function slots_read(own loads: i32[], first: i32, n: i32): i32[] {
 // what it drops, when that op is the nearest one still kept and only pushes a
 // constant or a slot's value. Runs of pushes then drops unwind pairwise.
 function cancel_dropped_pushes(ops: Op[]): Op[] {
-  let k_load: i32 = kind_id("load_local");
+  let pushes: i32[] = [kind_id("const_i32"), kind_id("const_i32_text"), kind_id("const_i64"), kind_id("const_f64"), kind_id("const_str"), kind_id("load_local")];
   let k_drop: i32 = kind_id("drop");
   let gone: boolean[] = __alloc_bool(ops.len());
   let kept: i32[] = __alloc_i32(ops.len());
@@ -7336,7 +7337,7 @@ function cancel_dropped_pushes(ops: Op[]): Op[] {
   let i: i32 = 0;
   while (i < ops.len()) {
     let t: i32 = ops[i].kind_tag;
-    if (t == k_drop && top > 0 && pure_push(ops[kept[top - 1]].kind_tag, k_load)) {
+    if (t == k_drop && top > 0 && util.index_of_i32(pushes, ops[kept[top - 1]].kind_tag) >= 0) {
       top = top - 1;
       gone = gone.with(kept[top], true).with(i, true);
       any = true;
@@ -7358,12 +7359,6 @@ function cancel_dropped_pushes(ops: Op[]): Op[] {
     i = i + 1;
   }
   return out;
-}
-
-// pure_push reports whether an op of kind `t` only pushes one value: a
-// constant or a slot's value.
-function pure_push(t: i32, k_load: i32): boolean {
-  return t == 1 || t == 2 || t == 3 || t == 4 || t == 5 || t == k_load;
 }
 
 // ---- zero-slot uniqueness guards (native internal/oracle/ir/zeroslot.go) -------
@@ -7574,12 +7569,18 @@ pub struct OptimizedOps {
 // the lowering routes every value through a slot (the typed path's `ssarc`
 // does), so strength reduction gets one more pass over its output.
 function finish_ops(cur: Op[], n_locals: i32): OptimizedOps {
-  let done: Op[] = eliminate_dead_code(eliminate_dead_stores(propagate_fold(fuse_tee(eliminate_dead_code(cur)))));
+  let done: Op[] = cleanup(fuse_tee(eliminate_dead_code(cur)));
   let again: StrengthResult = reduce_strength_ex(done);
   if (again.changed) {
-    done = eliminate_dead_code(propagate_fold(strength_fixpoint(fold_const_binaries(again.ops))));
+    done = cleanup(strength_fixpoint(fold_const_binaries(again.ops)));
   }
   return hoist_loop_invariants(done, n_locals);
+}
+
+// cleanup propagates and folds constants, then removes the stores and the
+// code that leaves dead.
+function cleanup(ops: Op[]): Op[] {
+  return eliminate_dead_code(eliminate_dead_stores(propagate_fold(ops)));
 }
 
 // propagate_fold alternates propagation and folding until a fold rewrites
