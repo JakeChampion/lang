@@ -199,6 +199,24 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"array-append-redeclares-builtin", "function (xs: i32[]) append(x: i32): i32[] { return xs; } function main(): i32 { let xs: i32[] = [1, 2]; return xs.append(3).len(); }", []string{"E006"}},
 		{"array-append-user-method-other-type", "function (xs: i32[]) append(s: string): i32 { return xs.len() + s.len(); } function main(): i32 { let xs: i32[] = [1, 2]; let n: i32 = xs.append(\"abc\").len(); return n; }", []string{"E006", "E038"}},
 		{"array-with-user-method-other-type", "function (xs: i32[]) with(i: i32, s: string): i32 { return xs.len() + i + s.len(); } function main(): i32 { let xs: i32[] = [1, 2]; let n: i32 = xs.with(1, \"abc\").len(); return n; }", []string{"E006", "E038"}},
+		// The same for every name the checker registers on a builtin namespace
+		// before any declaration: Map's reads as well as its writes, a
+		// string's, a MapIter's, a Cell's. A Map read of a mistyped key is
+		// produced before it is refused, so these are the shapes that would
+		// strand without the E006.
+		{"map-has-redeclares-builtin", "import \"core/map\";\nfunction (m: Map[string, i32]) has(k: string): boolean { return false; }\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); if (m.has(\"a\")) { return 1; } return 0; }\n", []string{"E006"}},
+		{"map-get-or-redeclares-builtin", "import \"core/map\";\nfunction (m: Map[string, i32]) get_or(k: string, d: i32): i32 { return d; }\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); return m.get_or(\"a\", 2); }\n", []string{"E006"}},
+		{"map-get-or-key-type-e038", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); return m.get_or(5, 1); }\n", []string{"E038"}},
+		{"map-has-key-type-e038", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); if (m.has(5)) { return 1; } return 0; }\n", []string{"E038"}},
+		{"map-get-key-type-e038", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let v: Option[i32] = m.get(5); return 0; }\n", []string{"E038"}},
+		{"map-without-key-type-e038", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let r = m.without(5); return 0; }\n", []string{"E038"}},
+		{"map-get-or-value-type-e038", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); return m.get_or(\"a\", \"b\"); }\n", []string{"E038"}},
+		{"map-get-or-key-and-value-clean", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); if (m.has(\"a\")) { return m.get_or(\"a\", 1); } return 0; }\n", nil},
+		{"map-get-or-user-method-other-key-type", "import \"core/map\";\nfunction (m: Map[string, i32]) get_or(k: i32, d: i32): i32 { return k + d; }\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); return m.get_or(5, 1); }\n", []string{"E006", "E038"}},
+		{"map-keys-redeclares-builtin", "import \"core/map\";\nfunction (m: Map[string, i32]) keys(): i32 { return 1; }\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); return m.keys().len(); }\n", []string{"E006"}},
+		{"string-len-redeclares-builtin", "function (s: string) len(): i32 { return 1; }\nfunction main(): i32 { return \"ab\".len(); }\n", []string{"E006"}},
+		{"map-iter-key-redeclares-builtin", "import \"core/map\";\nfunction (it: MapIter[string, i32]) key(): string { return \"k\"; }\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let it: MapIter[string, i32] = m.iter(); return it.key().len(); }\n", []string{"E006"}},
+		{"cell-get-redeclares-builtin", "function (c: Cell[i32]) get(): i32 { return 1; }\nfunction main(): i32 { let c: Cell[i32] = cell_new(3); return c.get(); }\n", []string{"E006"}},
 		// A method an enum or union does not have (#11852): Option's and
 		// Result's live in std/option and std/result, so without the import
 		// they have none. The bundle differential holds the imported side.
@@ -3878,6 +3896,11 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// Here rather than in the codes table because std/array has to be
 		// in scope for the call to be a method call at all.
 		{"e053-map-on-an-own-array", "import \"std/array\";\nfip function f(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => x); }\nfunction main(): i32 { return f([1 as i64]).len(); }\n"},
+		// An array method named like a `__method_Array_<name>` helper the
+		// program imports redeclares it (E006), as a name the checker registers
+		// before any declaration does.
+		{"std-array-method-redeclares-imported", "import \"std/array\";\nfunction (xs: i32[]) abs_each(): i32[] { return xs; }\nfunction main(): i32 { let xs: i32[] = [1, 2]; return xs.abs_each().len(); }\n"},
+		{"std-array-method-other-name-clean", "import \"std/array\";\nfunction (xs: i32[]) abs_first(): i32 { return xs[0]; }\nfunction main(): i32 { let xs: i32[] = [1, 2]; return xs.abs_first(); }\n"},
 		// A derive resolves against the traits of the module its qualifier
 		// names (#9322): the import makes `cmp.Eq` resolve and a bare `Eq`
 		// still unknown, and a qualified derive's field conformance is
