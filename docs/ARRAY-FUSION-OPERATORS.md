@@ -3,7 +3,8 @@
 Status: `internal/oracle/ir/array_fusion.go` (#9731) and the primary compiler's
 `compiler/semfuse.fern` (#11072) implement the `map`/`filter` stages
 and `fold`/`reduce` sinks below. The primary compiler also implements `scan`
-as a materializing sink. This document states what each operator contributes to a
+as a materializing sink, and `take` and `take_while` as stages that stop
+the loop. This document states what each operator contributes to a
 fused loop, and why composing those contributions gives the guarantee
 `docs/ITERATOR-FUSION-CONTRACT.md` clause 1 asks for.
 
@@ -51,11 +52,12 @@ An operator contributes three fragments, any of which may be empty:
 | `step` | once per surviving element | **zero** allocations, no unspecialised call |
 | `finish` | once, after the loop | at most O(1) allocations |
 
-A `step` may do one of three things to the element in flight: pass it
-through unchanged, rebind it to a new value, or **skip** — abandon this
-element and advance the loop. Nothing else. That restriction is what
-makes the fragments composable without the pass reasoning about any
-particular ordering of them.
+A `step` may do one of four things to the element in flight: pass it
+through unchanged, rebind it to a new value, **skip** — abandon this
+element and advance the loop — or **stop**: let this element through and
+end the loop after it. Nothing else. That restriction is what makes the
+fragments composable without the pass reasoning about any particular
+ordering of them.
 
 ## The composition argument
 
@@ -117,6 +119,60 @@ the next fragment, and the ones that do not never do.
 This is why `filter` is trivial to fuse while being the operator that
 breaks a scheme built on a fixed trip count. The trip count is over the
 *input*, and always was; only the sink sees how many elements arrived.
+
+### `take(n)` — prefix, the stop
+
+```
+init:    c = 0
+guard:   if c >= n { stop }        ahead of fetching the element
+step:    c = c + 1
+finish:  —
+```
+
+The count is one `i32` carried around the loop like the cursor, so `init`
+is O(1) and `step` allocates nothing and calls nothing. The guard runs
+before `x = xs[i]` rather than inside the step, so once a take has passed
+`n` elements no stage — before it or after it — runs on another. A filter
+ahead of the take leaves `c` unchanged on the elements it skips, which is
+exactly the clamped `take` of the filtered array: the first `n` that
+arrive. `n` at or below zero stops before the first element, and an `n`
+past the end never fires, so both clamps of `std/array`'s `take` hold
+without a case of their own. Several takes in one chain each carry a count
+and each guard the fetch.
+
+The stop is a new outcome, so it needs its own argument rather than the
+three-outcome one. Against the sinks it is plain: `fold` and `scan`
+answer with whatever they hold when the loop ends, and `reduce`'s
+`finish` already answers `None` when nothing arrived, so a pipeline
+stopped early has an accumulator to answer with in every case. A
+`reduce` behind a take keeps its arrival flag rather than being seeded
+from element zero, since the seed would run ahead of the guard.
+
+Against the stages it is not free. Every stage ahead of a take loses the
+applications past the stop that the eager pipeline would make, which is
+`docs/ARRAY-ALGEBRA.md` §2 rule 3: allowed only where the lost
+applications are unobservable. Purity (§1) covers effects; the pass also
+requires those functions to be unable to abort, which it decides over the
+already-resolved bodies. A body that only computes scalars, converts
+them and reads its captures cannot abort; one that indexes, slices,
+allocates or calls something that might is refused with
+`element-fn-may-abort`. Stages behind the last take and the sink lose
+nothing, since they only ever saw the elements the take let through.
+
+### `take_while(p)` — prefix by predicate
+
+```
+init:    —
+step:    if !p(x) { stop, without x }
+finish:  —
+```
+
+Allocates nothing. One call, direct by §1. Its guard needs the element, so
+it sits in the step rather than ahead of the fetch, and the element that
+fails `p` leaves the loop rather than reaching the next fragment. `p` itself
+loses nothing: the eager `take_while` also stops calling it at the first
+element that fails. The stages ahead of it lose what `take`'s do, under the
+same rule.
 
 ### `fold(z, h)` — reduction, a sink
 
@@ -240,7 +296,7 @@ fragment interface above:
 
 | operator | what it needs | status |
 | --- | --- | --- |
-| `take(n)`, `take_while(p)` | a termination flag threaded through the loop — the `step` vocabulary gains a **stop**, distinct from **skip** | next |
+| `take(n)`, `take_while(p)` | the **stop** outcome, above | done in the primary compiler |
 | `drop_while(p)` | a latch in `init`, so `step` is stateful | next |
 | `flat_map(f)` | nested loop generation; a `step` that yields many elements is outside the three-outcome vocabulary | after |
 | `zip(a, b)` | two cursors advancing at mismatched rates, so there is no single `i` | last, and may stay unfused |
@@ -249,12 +305,6 @@ fragment interface above:
 already fixes its truncation semantics, so deferring it costs nothing
 that has to be revisited.
 
-Adding **stop** to the vocabulary is a real extension, not a widening:
-it interacts with `reduce`'s `finish` (a pipeline stopped early still
-has an accumulator to answer with) and with §2's rule about eliding
-element-function applications. It is listed as next rather than folded
-in here because the proof above is only sound for the three outcomes it
-names.
 
 ## What the proof rests on
 
@@ -272,9 +322,9 @@ preconditions of the argument:
    inverted — a program function, walked through, or a codegen runtime
    helper, and nothing else.
 3. **No fragment elides an application that would be observable** (§2).
-   The three-outcome vocabulary cannot express early exit, so the first
-   slice satisfies this by construction — which is the other reason
-   `take` is deferred rather than squeezed in.
+   Only the stop elides applications, and the pass admits a stage ahead
+   of a `take` or `take_while` only when its function can neither reach
+   an effect nor abort.
 4. **Float reductions keep index order** (§3). The `step` fragments
    above are already in index order; the obligation is on any later
    vectorizer, not on this pass.
@@ -306,7 +356,8 @@ labelled Go analysis. See `ARRAY-ALGEBRA.md` for the closed refusal tags.
 The primary fusion report recognizes `map`, `filter`, `fold`, `reduce`,
 `scan`, `zip`, `take`, `take_while`, `drop`, `drop_while`, `flat_map`,
 `flatten`, `chunks`, `chunks_exact`, `windows`, `partition`, `enumerate`
-and `reverse`. Only the first five belong to the primary fusion algebra;
+and `reverse`. `map`, `filter`, `take`, `take_while`, `fold`, `reduce` and
+`scan` belong to the primary fusion algebra;
 the others report `operator-outside-algebra`. This report does not inventory
 every std/array helper. Calls outside this recognized set produce no site
 line, so silence is not evidence that such a call fused or avoided allocation.

@@ -49,6 +49,15 @@ const selfHostArrayReportSrc = `import "std/array";
 @noinline function lone(xs: i64[]): i64 {
   return xs.fold(0 as i64, (a: i64, b: i64): i64 => a + b);
 }
+@noinline function taken(xs: i64[]): i64 {
+  return xs.map((x: i64): i64 => x + (1 as i64)).take(2).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
+}
+@noinline function aborting(xs: i64[]): i64 {
+  return xs.map((x: i64): i64 => xs[0] + x).take(2).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
+}
+@noinline function prefix(xs: i64[]): i64 {
+  return array.take_while(xs, (x: i64): boolean => x < (3 as i64)).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
+}
 @noinline function length(xs: i64[]): i32 {
   return xs.map((x: i64): i64 => x).len();
 }
@@ -62,6 +71,7 @@ function main(): i32 {
   if (effectful(xs) != 6 as i64 || unsupported(xs) != 6 as i64) { return 4; }
   if (boundary(xs) != 6 as i64 || control(xs) != 6 as i64) { return 5; }
   if (nonscalar(["one", "two"]) != 6 as i64 || lone(xs) != 6 as i64 || length(xs) != 3) { return 6; }
+  if (taken(xs) != 5 as i64 || aborting(xs) != 5 as i64 || prefix(xs) != 3 as i64) { return 7; }
   return 0;
 }
 `
@@ -102,6 +112,9 @@ func TestSelfHostArrayReportMatchesEmission(t *testing.T) {
 		{"nonscalar", "map -> fold; not fused", "non-scalar"},
 		{"lone", "fold; not fused", "no-producer"},
 		{"length", "map; not fused", "no-reduction-sink"},
+		{"taken", "map -> take -> fold; one traversal", "fused"},
+		{"aborting", "map -> take -> fold; not fused", "element-fn-may-abort"},
+		{"prefix", "take_while -> fold; one traversal", "fused"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			start := strings.Index(report, tc.name+": "+tc.plan+"\n")
