@@ -15532,14 +15532,15 @@ function monomorphize_module(mod: Module, erased: string[]): Module {
   // generic's body is rewritten per clone instead; the template itself is
   // passed through so monomorphize_structs can still clone it from a
   // generic-struct METHOD clone, and is dropped there. A generic struct's
-  // method is generic in the struct's params, so its body is likewise
-  // rewritten only per struct instantiation (env concrete), never here
-  // where `k: K` would key a clone on the variable.
+  // or cloned generic enum's method is generic in the type's params, so its
+  // body is likewise rewritten only per instantiation (env concrete), never
+  // here where `k: K` would key a clone on the variable.
+  let menums: EnumDecl[] = me_mono_enums(mod);
   let rewritten: FuncDecl[] = [];
   let i: i32 = 0;
   while (i < funcs.len()) {
     let fd: FuncDecl = funcs[i];
-    if (is_bg_template(fd) || is_gstruct_method(fd, mod.structs)) {
+    if (cloned_per_instance(fd, mod.structs, menums)) {
       rewritten = rewritten.append(fd);
     } else {
       let env: MEnv = env_from_decl(fd);
@@ -15589,6 +15590,19 @@ function is_bg_template(fd: FuncDecl): boolean {
   return fd.receiver_name.len() == 0 && fd.type_params.len() > 0;
 }
 
+// cloned_per_instance: a declaration whose body is rewritten per clone, never
+// as written: a bounded generic, or a generic struct's or enum's method.
+function cloned_per_instance(fd: FuncDecl, structs: StructDecl[], enums: EnumDecl[]): boolean {
+  return is_bg_template(fd) || is_gstruct_method(fd, structs) || is_genum_method(fd, enums);
+}
+
+// is_genum_method: a method (or receiver-less associated fn) of a generic
+// enum in `enums`, cloned per instantiation by monomorphize_enums.
+function is_genum_method(fd: FuncDecl, enums: EnumDecl[]): boolean {
+  let gi: i32 = genum_index(enums, strip_struct_base(fd.receiver_type));
+  return fd.receiver_type.len() > 0 && gi >= 0 && enums[gi].type_params.len() > 0;
+}
+
 // is_gstruct_method: a method (or receiver-less associated fn) of a generic
 // struct declared in `structs` — cloned per struct instantiation by
 // monomorphize_structs.
@@ -15609,11 +15623,11 @@ function is_gstruct_method(fd: FuncDecl, structs: StructDecl[]): boolean {
 
 // drop_bg_templates removes the bounded-generic templates once no pass can
 // instantiate them further.
-function drop_bg_templates(funcs: FuncDecl[]): FuncDecl[] {
+function drop_bg_templates(funcs: FuncDecl[], keep: string[]): FuncDecl[] {
   let out: FuncDecl[] = [];
   let i: i32 = 0;
   while (i < funcs.len()) {
-    if (!is_bg_template(funcs[i])) {
+    if (!is_bg_template(funcs[i]) || str_in(keep, funcs[i].name)) {
       out = out.append(funcs[i]);
     }
     i = i + 1;
@@ -16730,8 +16744,9 @@ function ms_module(mod: Module): Module {
     }
     gi = gi + 1;
   }
+  let enum_refs: string[] = genum_bg_refs(mod.funcs, mod.enums);
   if (gstructs.len() == 0) {
-    return Module { ...mod, funcs: drop_bg_templates(mod.funcs) };
+    return Module { ...mod, funcs: drop_bg_templates(mod.funcs, enum_refs) };
   }
   // Retained enum templates still need the generic record schemas they name
   // after enum cloning. Concrete enum clones are processed normally below.
@@ -16783,6 +16798,7 @@ function ms_module(mod: Module): Module {
     fi2 = fi2 + 1;
   }
 
+  nfuncs = util.append_all(nfuncs, enum_bg_templates(mod.funcs, enum_refs, keep));
   let topenv: MEnv = MEnv { mnames: [], mtypes: [] };
   let tr: RStmts = ms_stmts(mod.top_stmts, topenv, gstructs, sfns, ins, "");
   ins = tr.rins3;
@@ -18333,7 +18349,14 @@ function clone_enum_method(m: FuncDecl, ed: EnumDecl, cts: string[], mname: stri
   if (m.receiver_name.len() > 0) {
     env = env.ebind(m.receiver_name, recv);
   }
-  let rb: RStmts = me_stmts(subst_stmts(m.body, tps, cts), env, rt, mod.enums, mod.structs, efns, cur);
+  // With the variables bound, the bounded generics the body calls key their
+  // clones (`from_json_elem[A]` -> `from_json_elem__i32`).
+  let menv: MEnv = env_from_params(nparams);
+  if (m.receiver_name.len() > 0) {
+    menv = menv.ebind(m.receiver_name, recv);
+  }
+  let mb: RStmts = mono_stmts(subst_stmts(m.body, tps, cts), menv, efns, cur, fn_tag_spelling(rt, rfr, rfps));
+  let rb: RStmts = me_stmts(mb.rstmts, env, rt, mod.enums, mod.structs, efns, mb.rins3);
   let notp: string[] = [];
   let fn: FuncDecl = FuncDecl {
     ...m, receiver_type: mname, type_params: notp, all_type_params: [], bound_traits: [],
@@ -18346,16 +18369,125 @@ function clone_enum_method(m: FuncDecl, ed: EnumDecl, cts: string[], mname: stri
   return FRes { ffn: fn, fins: rb.rins3 };
 }
 
-// enum_self_ty reads a bare `Opt` (or `Opt[]`) in a generic enum's own
-// method signature as the instantiation `recv` being cloned.
+// genum_bg_refs names the bounded generics a generic enum's method calls,
+// transitively. The enum pass clones such a method per instance and the
+// bounded generics with it, and keeps the method as written beside the
+// clones, so those templates must survive the struct passes.
+function genum_bg_refs(funcs: FuncDecl[], enums: EnumDecl[]): string[] {
+  let names: string[] = [];
+  for fd in funcs {
+    if (is_bg_template(fd)) {
+      names = names.append(fd.name);
+    }
+  }
+  let refs: BgRefs = BgRefs { names: names, hit: [] };
+  for fd in funcs {
+    if (is_genum_method(fd, enums)) {
+      refs = bg_refs_body(fd.body, refs);
+    }
+  }
+  let i: i32 = 0;
+  while (i < refs.hit.len()) {
+    for fd in funcs {
+      if (fd.name == refs.hit[i] && is_bg_template(fd)) {
+        refs = bg_refs_body(fd.body, refs);
+      }
+    }
+    i = i + 1;
+  }
+  return refs.hit;
+}
+
+// enum_bg_templates is the templates genum_bg_refs names, for a struct pass
+// that drops the rest (`keep` retains every template already).
+function enum_bg_templates(funcs: FuncDecl[], refs: string[], keep: boolean): FuncDecl[] {
+  if (keep) {
+    return [];
+  }
+  let out: FuncDecl[] = [];
+  for fd in funcs {
+    if (is_bg_template(fd) && str_in(refs, fd.name)) {
+      out = out.append(fd);
+    }
+  }
+  return out;
+}
+
+struct BgRefs { names: string[], hit: string[] }
+
+function bg_refs_body(body: ast.Stmt[], own r: BgRefs): BgRefs {
+  for st in body {
+    r = astwalk.fold_stmt_nodes(st, r, bg_refs_stmt, bg_refs_expr, astwalk.descend_all);
+  }
+  return r;
+}
+
+function bg_refs_stmt(st: ast.Stmt, own r: BgRefs): BgRefs {
+  return r;
+}
+
+function bg_refs_expr(e: ast.Expr, own r: BgRefs): BgRefs {
+  if let ast.ExprIdent(id) = e {
+    if (str_in(r.names, id.name) && !str_in(r.hit, id.name)) {
+      return BgRefs { ...r, hit: r.hit.append(id.name) };
+    }
+  }
+  return r;
+}
+
+struct BgStep { funcs: FuncDecl[], ins: Insts }
+
+// me_bg_step clones the bounded generic a worklist entry names, when it names
+// one not yet cloned rather than a generic enum (gidx >= 0).
+function me_bg_step(gidx: i32, base: string, key: string, mod: Module, efns: MFns, st: BgStep): BgStep {
+  let at: i32 = bg_find(efns, base);
+  if (gidx >= 0 || at < 0 || has_func_named(mod.funcs, st.funcs, base + "__" + sanitize_key(key))) {
+    return st;
+  }
+  let bc: FRes = me_clone_bg(efns.decls[at], key, mod, efns, st.ins);
+  return BgStep { funcs: st.funcs.append(bc.ffn), ins: bc.fins };
+}
+
+// me_clone_bg clones the bounded generic `fd` at `key` for a call an enum
+// method clone makes, then rewrites the clone as monomorphize_module and this
+// pass rewrite any body: its own bounded-generic calls, then its
+// generic-enum references.
+function me_clone_bg(fd: FuncDecl, key: string, mod: Module, efns: MFns, ins: Insts): FRes {
+  let cl: FuncDecl = clone_bg(fd, key, mod.impls, mod.trait_reqs, efns);
+  let ret: string = fn_tag_spelling(cl.ret_type, cl.ret_fn_ret, cl.ret_fn_param_types);
+  let mb: RStmts = mono_stmts(cl.body, env_from_params(cl.params), efns, ins, ret);
+  let rb: RStmts = me_stmts(mb.rstmts, me_env_from_params(cl.params), cl.ret_type, mod.enums, mod.structs, efns, mb.rins3);
+  let cur: Insts = me_collect_anno(cl.ret_type, mod.enums, rb.rins3);
+  for p in cl.params {
+    cur = me_collect_slot(p.type_name, p.fn_ret, p.fn_param_types, mod.enums, cur);
+  }
+  let fslot: MeSlot = me_rewrite_slot(cl.ret_type, cl.ret_fn_ret, cl.ret_fn_param_types, mod.enums);
+  let fn: FuncDecl = FuncDecl {
+    ...cl, receiver_name: "", receiver_type: "", params: me_rewrite_params(cl.params, mod.enums),
+    ret_type: fslot.ty, ret_fn_ret: fslot.fn_ret, ret_fn_param_types: fslot.fn_params, body: rb.rstmts,
+  };
+  return FRes { ffn: fn, fins: cur };
+}
+
+// enum_self_ty reads a bare `Opt` in a generic enum's own method signature,
+// anywhere in it (`Opt[]`, `Result[Opt, string]`), as the instantiation
+// `recv` being cloned.
 function enum_self_ty(ty: string, name: string, recv: string): string {
-  if (ty == name) {
-    return recv;
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < ty.len()) {
+    let end: i32 = i + name.len();
+    let bare: boolean = end <= ty.len() && slice_unchecked(ty, i, end) == name && (i == 0 || !ident_byte(ty[i - 1] as i32))
+      && (end == ty.len() || !ident_byte(ty[end] as i32) && ty[end] != b'[');
+    if (bare) {
+      out = out + recv;
+      i = end;
+    } else {
+      out = out + slice_unchecked(ty, i, i + 1);
+      i = i + 1;
+    }
   }
-  if (ty == name + "[]") {
-    return recv + "[]";
-  }
-  return ty;
+  return out;
 }
 
 // Derived methods spell their generic enum without arguments. Once retained
@@ -18562,6 +18694,9 @@ pub function monomorphize_enums(mod: Module): Module {
     let base: string = ins.inames[wi];
     let key: string = ins.itypes[wi];
     let gidx: i32 = genum_index(menums, base);
+    let step: BgStep = me_bg_step(gidx, base, key, mmod, efns, BgStep { funcs: nfuncs, ins: ins });
+    nfuncs = step.funcs;
+    ins = step.ins;
     if (gidx >= 0) {
       let ed: EnumDecl = menums[gidx];
       // A single-type-param enum substitutes T with the ORIGINAL arg

@@ -333,9 +333,10 @@ func Run(prog *ast.Program, info *checker.Info) error {
 			}
 		}
 	}
+	keptGenerics := genericsReachedFrom(prog, info, keptEnumMethods)
 	keep := prog.Funcs[:0]
 	for _, fn := range prog.Funcs {
-		if _, isGen := info.Generics[fn.Name]; isGen && !keptEnumMethods[fn.Name] {
+		if _, isGen := info.Generics[fn.Name]; isGen && !keptGenerics[fn.Name] {
 			continue
 		}
 		keep = append(keep, fn)
@@ -863,6 +864,41 @@ func boundEnumImplMethods(prog *ast.Program, info *checker.Info, gen *ast.FuncDe
 				}
 			}
 		}
+	}
+	return out
+}
+
+// genericsReachedFrom is the kept generic enum methods and every generic
+// function their bodies reach, transitively: a kept method is re-checked as
+// written, so a generic it calls must still be declared.
+func genericsReachedFrom(prog *ast.Program, info *checker.Info, kept map[string]bool) map[string]bool {
+	byName := make(map[string]*ast.FuncDecl, len(prog.Funcs))
+	for _, fn := range prog.Funcs {
+		byName[fn.Name] = fn
+	}
+	out := make(map[string]bool, len(kept))
+	var work []string
+	for name := range kept {
+		out[name] = true
+		work = append(work, name)
+	}
+	for len(work) > 0 {
+		fn := byName[work[len(work)-1]]
+		work = work[:len(work)-1]
+		if fn == nil || fn.Body == nil {
+			continue
+		}
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			id, ok := n.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			if _, isGen := info.GenericFuncs[id.Name]; isGen && !out[id.Name] {
+				out[id.Name] = true
+				work = append(work, id.Name)
+			}
+			return true
+		})
 	}
 	return out
 }
