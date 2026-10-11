@@ -2280,6 +2280,67 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
   `TestServeSSESequentialInterp` is the Go compiler's twin, where the
   blocking fallback naps the worker through the producer's sleep.
 
+### `std/http/websocket`
+
+The WebSocket protocol (RFC 6455) on the server: the opening handshake,
+and the session on the upgraded connection.
+
+```fern
+import "std/http/websocket";
+
+function echo(c: websocket.Conn, m: websocket.Message): void {
+  match (m) {
+    Text(s) => { let r: websocket.SendResult = c.send_text(s); },
+    Binary(b) => { let r: websocket.SendResult = c.send_binary(b); }
+  }
+}
+
+function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
+  return http.respond(websocket.accept(req, websocket.options(), websocket.handlers(echo)));
+}
+```
+
+- `accept(req, opts, h): Result[HttpResponse, UpgradeError]` checks the
+  handshake (`GET`, `Upgrade: websocket` under `Connection: upgrade`,
+  version 13, a 16-byte key) and answers the 101 whose body runs the
+  session; `UpgradeError` (`NotWebSocket`, `WrongVersion`, `KeyMissing`)
+  is `ToResponse`, a 426 naming the upgrade or a 400. `Options {
+  max_message, backpressure, max_backpressure, protocols }`: the
+  largest message taken whole (1 MiB), the corked bytes past which a
+  send answers `Backpressure` (64 KiB) and past which it drops (1 MiB),
+  and the subprotocols spoken, the first of the client's offers among
+  them chosen (`Conn.protocol`).
+- `Handlers { open, message, drain, close }`, `handlers(message)` for one
+  with the rest empty: `message` gets each `Message` (`Text(string)`,
+  `Binary(u8[])`), `drain` runs once a cork that was past the soft bound
+  has gone out, `close` gets the code and reason the session ended with
+  (the peer's, the handler's, 1005 for a close with none, 1006 when the
+  bytes ended without one).
+- `Conn`: `send_text`, `send_binary`, `ping` answer `SendResult` (`Sent`,
+  `Backpressure`, `Dropped`); `close(code, reason)` corks the close,
+  after which nothing more is sent and the session ends once the peer's
+  close or the end of its bytes arrives; `is_open()`. What a callback
+  sends is corked and leaves in one write when it returns.
+- The session is strict as the protocol asks (a reserved bit, an unknown
+  opcode, an unmasked frame, a bad fragment sequence, a fragmented or
+  oversized control frame close 1002; text that is not UTF-8, checked as
+  the fragments arrive, 1007; a message past the cap 1009; a bad close
+  frame 1002 or 1007), answers a ping with its pong at once, echoes the
+  peer's close, and is closed as an idle persistent connection is after
+  `serve.Config.keep_alive_idle` of quiet. `accept_key(key)` and
+  `frame(fin, opcode, payload, mask)` are the handshake's and the codec's
+  pieces for a client or a test (`tests/stdlib/http_websocket_test.fern`,
+  a session over a scripted connection).
+- Under std/serve an upgrade request's body is the connection's bytes
+  after the head, streamed as `stream_bodies` streams one whatever the
+  setting says, and a handler that answers 101 with a producer keeps the
+  connection for the session, which reads frames through the request's
+  stream (parked between them, so the worker serves its other
+  connections) and writes through its source's `send`; the stateful
+  loop (`run_with`) does not upgrade. Gate: `TestSelfHostServeWebSocket`
+  (x86-64, arm64) with an idle session beside another connection, and
+  `TestServeWebSocketSequentialInterp`.
+
 ### `std/net`
 
 IP addresses, socket addresses, and the typed error every networking
@@ -2600,7 +2661,12 @@ points that run a handler under it.
   invites the body, and a connection whose body the handler did not read
   whole closes after the response. A `Stream` that ended early faults
   (`(s).fault()`); `body_string()` reports it as `EndedEarly`. The stateful
-  loop (`run_with`) reads bodies whole either way. `cookie_jar` (false)
+  loop (`run_with`) reads bodies whole either way. An upgrade request
+  (`Connection: upgrade` naming an `Upgrade`) is streamed whatever the
+  setting says, its body the connection's bytes after the head, and a
+  handler that answers it 101 with a producer keeps the connection for
+  the session the producer runs (std/http/websocket); any other answer
+  closes the connection after it. `cookie_jar` (false)
   gives each worker's platform a cookie jar (std/http/cookie), so its
   `plat.http` sends and stores cookies as a browser would.
   A listener it cannot bind is `serve: cannot listen on ADDR:PORT:` —
@@ -2917,9 +2983,14 @@ Byte-stream value backing `HttpRequest.body: Stream`: a `data: u8[]`
 buffer with a `pos` cursor, and for a body that arrives as it is read a
 `BodySource` the reads pull the next chunk from once the buffer is
 exhausted (docs/NET-P3-SUSPENSION-PLAN.md §3.9), so the whole is never
-held. `BodySource { next: () => Option[u8[]], fault: Cell[i32] }`:
-`next` answers None at the end and on every call after, `fault` why the
-stream ended early (an HTTP status, or `async.cancelled()`).
+held. `BodySource { next: () => Option[u8[]], fault: Cell[i32], send:
+(u8[]) => i32 }`: `next` answers None at the end and on every call
+after, `fault` why the stream ended early (an HTTP status, or
+`async.cancelled()`), and `send` writes to the peer behind the body
+where there is one (an upgraded connection's, std/http/websocket),
+answering the bytes written or a negative errno, -ENOTSUP for a body
+with no peer. A read asks the source only for bytes still owed, since a
+pull waits for the peer.
 
 - Constructors: `stream_from_bytes(bs)`, `stream_from_string(s)`,
   `stream_empty()`, `stream_from_source(src)`.

@@ -132,9 +132,22 @@ decides what wraps it.
    `tests/stdlib/http_sse_test.fern` in the stdtest differential;
    `TestSelfHostServeSSE` (x86-64, arm64) streaming while another
    connection is answered, `TestServeSSESequentialInterp` its twin.
-   WebSocket (RFC 6455) with cork, the `Sent` / `Backpressure` /
-   `Dropped` send result and drain event from P1, and the shared compressor
-   mode, next. Gate: the Autobahn suite on the `net-nightly` lane.
+   `std/http/websocket` (landed): the handshake and the session as
+   callbacks (`open`, `message`, `drain`, `close`), what a callback sends
+   corked into one write when it returns, with `Sent` / `Backpressure` /
+   `Dropped` from the cork's size against `Options` and `drain` once a
+   cork past the soft bound has gone out. The serve loop's part: an
+   upgrade request's body is streamed as the connection's bytes after
+   the head (the lent pull of `stream_bodies`, raw framing, bounded by
+   `keep_alive_idle`), `BodySource` gained `send` as the write side of
+   that connection, and a handler answering 101 with a producer keeps
+   the connection for the session, the producer running it as a parked
+   flight that carries the lent body (TLS writes go through the lent
+   session). Gate: `tests/stdlib/http_websocket_test.fern` in the stdtest
+   differential; `TestSelfHostServeWebSocket` (x86-64, arm64) and
+   `TestServeWebSocketSequentialInterp`. The shared compressor mode
+   (permessage-deflate) and the Autobahn suite on the `net-nightly`
+   lane are next.
 5. **Static files, compression, proxies, caching.** ETag, `Range` and
    precompressed variants; response compression (gzip and zstd; brotli
    decode only) off by default as every 2026 server has it; PROXY protocol

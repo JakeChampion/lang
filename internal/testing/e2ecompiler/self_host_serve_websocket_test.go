@@ -1,0 +1,34 @@
+package e2ecompiler
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
+)
+
+// The WebSocket gate (docs/NET-P5-FRAMEWORK-PLAN.md slice 4,
+// std/http/websocket): the self-host server runs an echo session on an
+// upgraded connection, parked between frames so the worker answers
+// another connection meanwhile, and the sequential checks over the
+// protocol's frames.
+func TestSelfHostServeWebSocket(t *testing.T) {
+	bin, runner := selfHostServer(t, e2eharness.WebSocketServerSource())
+	cmd := binCmd(runner, bin)
+	addr, _ := e2eharness.StartInheritedServer(t, cmd)
+	e2eharness.CheckWebSocketOverlap(t, addr)
+	e2eharness.CheckWebSocketSequential(t, addr)
+}
+
+func TestSelfHostServeWebSocketArm64(t *testing.T) {
+	_, qemu := arm64Tooling(t)
+	cli := buildSelfHostCLI(t)
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(e2eharness.WebSocketServerSource()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	addr, _ := e2eharness.StartInheritedServer(t, runArm64Bin(qemu, cli.arm64Binary(t, src)))
+	e2eharness.CheckWebSocketOverlap(t, addr)
+	e2eharness.CheckWebSocketSequential(t, addr)
+}
