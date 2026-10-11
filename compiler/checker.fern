@@ -19219,7 +19219,7 @@ function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.N
 // guard). No-op when the module declares no `own` parameter anywhere, so
 // ordinary programs are untouched. The result-borrow fixpoint always spans the
 // module; only the bodies `focus` admits (in_focus) are walked.
-pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: string[]): util.Diag[] {
+pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex): util.Diag[] {
   let ofuncs: OwnFuncs = collect_own_funcs(mod);
   let builtins: util.NameIndex = util.name_index(ow_fresh_builtins());
   let borrows: util.NameIndex = ow_result_borrows(mod, ofuncs, builtins);
@@ -19551,7 +19551,7 @@ function e049_find(stmts: ast.Stmt[], enclosing: NameTy[]): util.Diag[] {
   return out;
 }
 
-pub function e049_diags(mod: parser.Module, env: ModuleEnv, focus: string[]): util.Diag[] {
+pub function e049_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex): util.Diag[] {
   let out: util.Diag[] = [];
   for fn in mod.funcs {
     if (!in_focus(focus, fn)) {
@@ -22283,7 +22283,7 @@ function e021_dyn_locals_of(stmts: ast.Stmt[]): string[] {
 // silent where native draws E021 — the same trait in a parameter or return type
 // was caught all along, which is what made the gap look like the whole check
 // being absent rather than one site of three (#7974).
-function e021_object_safety_diags(mod: parser.Module, focus: string[]): util.Diag[] {
+function e021_object_safety_diags(mod: parser.Module, focus: util.NameIndex): util.Diag[] {
   let out: util.Diag[] = [];
   for fn in mod.funcs {
     if (!in_focus(focus, fn)) {
@@ -22584,7 +22584,7 @@ function e060_decl_is_enum(mod: parser.Module, name: string): boolean {
 
 // e060_e062_diags: per function, collect the dyn-annotated params/locals then
 // walk the body for the two expression-level checks.
-function e060_e062_diags(mod: parser.Module, focus: string[]): util.Diag[] {
+function e060_e062_diags(mod: parser.Module, focus: util.NameIndex): util.Diag[] {
   let out: util.Diag[] = [];
   for fn in mod.funcs {
     if (!in_focus(focus, fn)) {
@@ -22915,8 +22915,8 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
 // in_focus: a pass with a non-empty `focus` walks only the bodies it names.
 // The re-check over a clean module's clones names them, since every other body
 // already answered.
-function in_focus(focus: string[], fd: parser.FuncDecl): boolean {
-  return focus.len() == 0 || util.has_str(focus, fd.name);
+function in_focus(focus: util.NameIndex, fd: parser.FuncDecl): boolean {
+  return focus.names.len() == 0 || focus.find(fd.name) >= 0;
 }
 
 // prepared_module is a default-filled module as the checker types it.
@@ -22941,7 +22941,8 @@ function prepared_module(filled: parser.Module): parser.Module {
 // check_module_pass types a prepared module against its tables, `env`, which
 // module_env built from it; `fda_diags` are the default filling's diagnostics,
 // reported first.
-function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.Diag[], focus: string[]): ModuleTypes {
+function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.Diag[], focus_names: string[]): ModuleTypes {
+  let focus: util.NameIndex = util.name_index(focus_names);
   let import_paths: string[] = env.imports;
   let rnames: string[] = env.structs.resources.names;
   let st: SigTable = env.sigs;
@@ -23386,7 +23387,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   // for move / capture analysis. The declarations and impls are a re-check's
   // template module's, which the first pass found clean.
   let decl_diags: util.Diag[] = [];
-  if (focus.len() == 0) {
+  if (focus_names.len() == 0) {
     decl_diags = util.append_diags(util.append_diags(collect_decl_diags(mod), util.append_diags(orphan_impl_diags(mod), e021_diags(mod))), derive_diags);
   }
   let dd: util.Diag[] = thin_map_import_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(fda_diags, decl_diags), body_diags), own_diags(mod, env, focus)), e049_diags(mod, env, focus)), e021_object_safety_diags(mod, focus)), e060_e062_diags(mod, focus)));
