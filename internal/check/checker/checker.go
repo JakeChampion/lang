@@ -19782,6 +19782,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.settleNumeric(n.Value, lt)
 			rt = c.postSettleType(n.Value, rt)
 			rt = c.maybeWrapForUnion(lt, &n.Value, rt, s)
+			c.stampStructTypeArgs(n.Value, lt)
+			c.refineCallTypeArgsFromDest(n.Value, lt)
 		}
 		if lt != nil && rt != nil && !ast.Equal(lt, rt) && !c.assignable(lt, rt) {
 			what := "assignment"

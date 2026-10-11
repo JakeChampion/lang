@@ -358,6 +358,38 @@ function empty[T](): T[] { return []; }
 	}
 }
 
+// An assignment target stamps a call's type arguments as a `let` annotation
+// does: map_new's bare `Map` result takes the key and value types the lowering
+// reads for the key kind.
+func TestAssignmentTargetStampsMapNewTypeArgs(t *testing.T) {
+	prog, err := parser.Parse(`function main(): i32 { let m: Map[string, i32] = map_new(4); m = map_new(8); return 0; }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("want no diagnostic, got %v", err)
+	}
+	var calls []*ast.Call
+	ast.Walk(prog.Funcs[0].Body, func(n ast.Node) bool {
+		if c, ok := n.(*ast.Call); ok {
+			if id, ok := c.Callee.(*ast.Ident); ok && id.Name == "map_new" {
+				calls = append(calls, c)
+			}
+		}
+		return true
+	})
+	if len(calls) != 2 {
+		t.Fatalf("found %d map_new calls, want 2", len(calls))
+	}
+	assigned := calls[1]
+	if len(assigned.TypeArgs) != 2 {
+		t.Fatalf("the assigned map_new's type arguments were not stamped: %v", assigned.TypeArgs)
+	}
+	if _, isStr := assigned.TypeArgs[0].(ast.StringType); !isStr {
+		t.Errorf("key type argument = %v, want string", assigned.TypeArgs[0])
+	}
+}
+
 // Construction-site type arguments on a struct literal (#6812): the
 // written instantiation seeds the field checks and outranks any
 // destination annotation, and its arity is validated against the decl.
