@@ -2,8 +2,8 @@
 # scripts/net-tls-interop share, sourced (`. scripts/net-lib`) from the
 # repository root: the target the host builds for, bin/fern built, a work
 # directory removed on exit, servers run in a session of their own and
-# stopped with their whole process group, a free loopback port, and the
-# lane's h2o configuration.
+# stopped with their whole process group, a free loopback port, a TLS
+# certificate made by openssl, and the lane's h2o configuration.
 # shellcheck shell=bash
 
 case "$(uname -m)" in
@@ -108,6 +108,32 @@ s.connect(("127.0.0.1", int(sys.argv[1])))' "$2" 2>/dev/null; do
     fi
     sleep 0.2
   done
+}
+
+# tls_certificate NAME KEY SUBJECT ISSUER EXT... — a certificate and its
+# key under $certs (the caller's directory), self-signed when ISSUER is
+# empty and otherwise signed by $certs/ISSUER; KEY is a curve name or
+# ed25519. Two days of validity, for a run.
+tls_certificate() {
+  local name="$1" key="$2" subject="$3" issuer="$4"
+  shift 4
+  local args=()
+  if [ "$key" = ed25519 ]; then
+    args+=(-newkey ed25519)
+  else
+    args+=(-newkey ec -pkeyopt "ec_paramgen_curve:$key")
+  fi
+  if [ -n "$issuer" ]; then
+    args+=(-CA "$certs/$issuer.pem" -CAkey "$certs/$issuer.key")
+  fi
+  local ext
+  for ext in "$@"; do
+    args+=(-addext "$ext")
+  done
+  openssl req -x509 -nodes -days 2 -subj "$subject" -keyout "$certs/$name.key" -out "$certs/$name.pem" "${args[@]}" 2> "$work/openssl-req.log" || {
+    cat "$work/openssl-req.log" >&2
+    exit 1
+  }
 }
 
 free_port() {

@@ -253,6 +253,20 @@ TLS itself is `std/tls/keyschedule`, `keyshare`, `message`, `record`,
     where nothing may follow a fatal alert, so a failed exchange now
     closes the socket and `close()` after it does nothing.
 
+    Landed, the fuzzing: `scripts/net-tls-fuzz` and the
+    `net-tls-fuzz-x86_64` job, tlsfuzzer's TLS 1.3 scripts at a pinned
+    commit against `scripts/net-tls-fuzz.d/server.fern` in four
+    instances. `scripts/net-tls-fuzz.d/cases` is the set, fifteen scripts
+    with every excluded probe and its reason beside it: a probe
+    presupposing a curve, scheme or KEM the stack does not have is
+    excluded, and one where the stack's behaviour is the right one
+    (RFC 8446 lets a server drop repeated compatibility CCS records and
+    says unexpected_message for a plaintext record) is expected to fail,
+    so a change in either direction is a red nightly. The 38 scripts
+    whose handshakes offer only RSA signature schemes are outside the
+    set: std/tls verifies RSA and does not sign with it, and the
+    constant-time gate is the reason it does not.
+
 kTLS and the QUIC secret hooks come after slice 11. The handshake
 interface in slice 8 keeps the secrets and handshake messages separable,
 so HTTP/3 can be a package.

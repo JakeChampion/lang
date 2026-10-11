@@ -34,6 +34,12 @@ name: Net nightly
 # timing) is appended to the commit's note like the bench's. The two
 # peers built from source are cached on the script's hash, which holds
 # their pins.
+#
+# The `tls-fuzz` job runs scripts/net-tls-fuzz: tlsfuzzer's TLS 1.3
+# scripts, at a pinned commit, against the Fern TLS server, with the set
+# and every exclusion and its reason in scripts/net-tls-fuzz.d/cases
+# (#9858). It passes or fails; tlsfuzzer and its venv are cached on the
+# script's hash, which holds the pins.
 
 on:
   schedule:
@@ -139,3 +145,18 @@ jobs:
           name: tls-report-x86_64
           path: ${{ runner.temp }}/tls-report.txt
           if-no-files-found: warn
+
+  tls-fuzz:
+    name: net-tls-fuzz-x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - name: Restore tlsfuzzer and its venv
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/fern-tls-fuzz
+          key: tls-fuzz-${{ runner.os }}-${{ hashFiles('scripts/net-tls-fuzz', 'scripts/net-tls-fuzz.d/requirements.txt') }}
+      - name: Run tlsfuzzer's TLS 1.3 scripts against the server
+        run: scripts/net-tls-fuzz
