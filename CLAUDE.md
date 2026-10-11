@@ -34,6 +34,11 @@ counting. When a design choice trades general-purpose fitness for a narrow
 edge/CLI optimisation, weigh that trade explicitly rather than assuming
 short-lived-process semantics.
 
+The **standard library aims to be the fastest implementation in the world** of
+everything it provides. Where a module has a best-in-class counterpart elsewhere
+(simdjson for JSON, #12105), that is the benchmark to beat, measured, not a
+target to approach; speed comes from the compiler and the runtime kernels first.
+
 The reach goes below the OS as well: hosted apps, guest libraries inside someone
 else's firmware, drivers, and kernels are all targets, anchored by the long-term
 goal of an **entire OS written in Fern** — `docs/BARE-METAL-PLAN.md` for what that
