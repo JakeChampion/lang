@@ -329,6 +329,35 @@ function empty[T](): T[] { return []; }
 	}
 }
 
+// An assignment's target pins a generic call's result the way a `let`
+// annotation or a `return` does (#12093): a free function, a method, and
+// an associated function, each with nothing else to infer from.
+func TestAssignmentTargetPinsTypeArgs(t *testing.T) {
+	const decls = `struct Holder { n: i32 }
+struct Box[T] { items: T[] }
+trait Make { function make(): Self; }
+impl[T] Make for Box[T] { function make(): Self { return Box { items: [] }; } }
+function (h: Holder) fresh[T](): T[] { return []; }
+function empty[T](): T[] { return []; }
+`
+	ok := []string{
+		`function main(): i32 { let xs: i32[] = [1]; xs = empty(); return xs.len(); }`,
+		`function main(): i32 { let h = Holder { n: 1 }; let xs: i32[] = [1]; xs = h.fresh(); return xs.len(); }`,
+		`function main(): i32 { let b: Box[i32] = Box { items: [1] }; b = Box.make(); return b.items.len(); }`,
+	}
+	for _, body := range ok {
+		if err := checkSource(t, decls+body); err != nil {
+			t.Errorf("should type-check, got: %v\nsrc: %s", err, body)
+		}
+	}
+	// The target's type is an expectation, not a cast: a call whose result
+	// cannot be the target's type is still refused.
+	bad := `function main(): i32 { let n: i32 = 1; n = empty(); return n; }`
+	if err := checkSource(t, decls+bad); err == nil {
+		t.Errorf("expected an error assigning an array to an i32, got none")
+	}
+}
+
 // Construction-site type arguments on a struct literal (#6812): the
 // written instantiation seeds the field checks and outranks any
 // destination annotation, and its arity is validated against the decl.
