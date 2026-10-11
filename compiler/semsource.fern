@@ -4549,8 +4549,9 @@ function narrowed(pv: ast.PatVariant, scrut: i32, s: State): State {
   if (pv.binding == "" || pv.binding == "_") {
     return s;
   }
+  let bound: boolean = util.index_of_str(s.names, pv.binding) >= 0;
   let v: Value = define(s, ssasem.variant_as(), [scrut], 0, pv.type_name, member_type(pv));
-  if (util.index_of_str(s.names, pv.binding) >= 0) {
+  if (bound) {
     return replace(v.s, pv.binding, v.id);
   }
   return bind(v.s, pv.binding, v.id);
