@@ -100,7 +100,7 @@ function main(): i32 {
 // returns a fresh no-base `P { … }`.
 func stmtTempFreshCallBumpSrc(n string) string {
 	return `struct P { x: i32, y: i32 }
-function mk(a: i32): P { return P { x: a, y: a + 1 }; }
+@noinline function mk(a: i32): P { return P { x: a, y: a + 1 }; }
 function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
     let i: i32 = 0;
@@ -376,17 +376,20 @@ func TestSelfHostStmtTempReclaimIRX86_64(t *testing.T) {
 	fixpointShapes := []struct {
 		name string
 		src  func(n string) string
+		// unbuilt: a scalar tuple or struct literal nothing reads is not
+		// built at all (semdead), so the high-water is 0 rather than bounded.
+		unbuilt bool
 	}{
-		{"scalar-array", stmtTempArrBumpSrc},
-		{"scalar-tuple", stmtTempTupleBumpSrc},
-		{"scalar-struct", stmtTempStructBumpSrc},
-		{"rc-field-struct", stmtTempRcFieldStructBumpSrc},
-		{"string-concat", stmtTempStrConcatBumpSrc},
-		{"fresh-call-struct", stmtTempFreshCallBumpSrc},
-		{"fresh-call-rc-field-struct", stmtTempFreshCallRcFieldBumpSrc},
-		{"fresh-call-array", stmtTempFreshCallArrBumpSrc},
-		{"len-receiver-concat", stmtTempLenReceiverBumpSrc},
-		{"fresh-strarr", stmtTempFreshStrArrBumpSrc},
+		{"scalar-array", stmtTempArrBumpSrc, false},
+		{"scalar-tuple", stmtTempTupleBumpSrc, true},
+		{"scalar-struct", stmtTempStructBumpSrc, true},
+		{"rc-field-struct", stmtTempRcFieldStructBumpSrc, false},
+		{"string-concat", stmtTempStrConcatBumpSrc, false},
+		{"fresh-call-struct", stmtTempFreshCallBumpSrc, false},
+		{"fresh-call-rc-field-struct", stmtTempFreshCallRcFieldBumpSrc, false},
+		{"fresh-call-array", stmtTempFreshCallArrBumpSrc, false},
+		{"len-receiver-concat", stmtTempLenReceiverBumpSrc, false},
+		{"fresh-strarr", stmtTempFreshStrArrBumpSrc, false},
 	}
 	for _, sh := range fixpointShapes {
 		t.Run("fixpoint-bounded/"+sh.name, func(t *testing.T) {
@@ -395,7 +398,10 @@ func TestSelfHostStmtTempReclaimIRX86_64(t *testing.T) {
 			if small != large {
 				t.Errorf("discarded-%s-temp bump must be bounded: N=50 -> %d, N=5000 -> %d", sh.name, small, large)
 			}
-			if small == 0 {
+			if sh.unbuilt && small != 0 {
+				t.Errorf("%s: the literal nothing reads was built: high-water %d, want 0", sh.name, small)
+			}
+			if !sh.unbuilt && small == 0 {
 				t.Errorf("%s: expected a non-zero bounded high-water, got 0 (nothing allocated / measured)", sh.name)
 			}
 		})

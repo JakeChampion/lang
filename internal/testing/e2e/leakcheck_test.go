@@ -849,13 +849,16 @@ const ctorRetainedContainerReadSrc = `function main(): i32 {
 
 // Same retain through an ENUM payload rather than a tuple — emitEnumNew's
 // inc site, the fourth routing computeCtorAliasInced covers.
-const ctorRetainedEnumPayloadSrc = `function main(): i32 {
+// `keep` reads the Option, so the construction whose retain is under test is
+// built: a construction nothing reads is not built at all (semdead).
+const ctorRetainedEnumPayloadSrc = `@noinline function keep(o: Option[i32[]]): i32 { return 0; }
+function main(): i32 {
     let s: i32 = 0;
     let k: i32 = 0;
     while (k < 40) {
         let xs: i32[] = [4, 5, 6];
         let o = Some(xs);
-        s = s + xs[1];
+        s = s + xs[1] + keep(o);
         k = k + 1;
     }
     return s % 251;
@@ -1001,25 +1004,29 @@ func TestArm64LeakCheckCtorRetainedLoopSource(t *testing.T) {
 // static string the box is the only allocation, so allocs==frees isolates the
 // box exactly. The array fixture is the control — Option[i32[]] always had a
 // pointer payload, so it was never affected.
-const enumStringPayloadBoxSrc = `function main(): i32 {
+// `keep` reads each Option, so the construction under test is built: a
+// construction nothing reads is not built at all (semdead).
+const enumStringPayloadBoxSrc = `@noinline function keep(o: Option[string]): i32 { return 0; }
+function main(): i32 {
     let t: i32 = 0;
     let k: i32 = 0;
     while (k < 100) {
         let st: string = "ab" + "cd";
         let o = Some(st);
-        t = t + st.len();
+        t = t + st.len() + keep(o);
         k = k + 1;
     }
     return t % 251;
 }`
 
-const enumArrayPayloadBoxSrc = `function main(): i32 {
+const enumArrayPayloadBoxSrc = `@noinline function keep(o: Option[i32[]]): i32 { return 0; }
+function main(): i32 {
     let t: i32 = 0;
     let k: i32 = 0;
     while (k < 100) {
         let xs: i32[] = [1, 2];
         let o = Some(xs);
-        t = t + xs[1];
+        t = t + xs[1] + keep(o);
         k = k + 1;
     }
     return t % 251;
@@ -1037,12 +1044,13 @@ const enumArrayPayloadBoxSrc = `function main(): i32 {
 // an Option LOCAL is represented — and a local is boxed in every measured shape,
 // including one bound from a pair-form-eligible callee (the returned-from-callee
 // fixture below).
-const enumScalarPayloadNoBoxSrc = `function main(): i32 {
+const enumScalarPayloadNoBoxSrc = `@noinline function keep(o: Option[i32]): i32 { return 0; }
+function main(): i32 {
     let t: i32 = 0;
     let k: i32 = 0;
     while (k < 100) {
         let o = Some(k);
-        t = t + 1;
+        t = t + 1 + keep(o);
         k = k + 1;
     }
     return t % 251;

@@ -37,6 +37,10 @@ import (
 // Counts here are ONE block per heap string: #7351 fused the box into the
 // buffer's reserved header. A pre-fusion number quoted in a row note below is
 // twice its pin.
+//
+// Each reassigned `keep` has its first value read (`w`, its array's length)
+// before the store: a construction nothing reads is not built (semdead), and
+// the store's release of the previous value is what these rows pin.
 
 type structAliasReassignCase struct {
 	name   string
@@ -64,8 +68,9 @@ func structAliasReassignCases() []structAliasReassignCase {
 function round(i: i32): i32 {
     let p: P = P { xs: id([7, 8]) };
     let keep: P = P { xs: id([0]) };
+    let w: i32 = keep.xs.len();
     keep = p;
-    return keep.xs[0] + keep.xs[keep.xs.len() - 1];
+    return keep.xs[0] + keep.xs[keep.xs.len() - 1] + w - 1;
 }
 ` + sarMain,
 			want: 9, allocs: 40, frees: 40,
@@ -81,10 +86,11 @@ function round(i: i32): i32 {
 function round(i: i32): i32 {
     let p: P = P { xs: id([7, 8]) };
     let keep: P = P { xs: id([0]) };
+    let w: i32 = keep.xs.len();
     keep = p;
     let j1: i32[] = [111, 222];
     let j2: i32[] = [333, 444];
-    return keep.xs[0] + keep.xs[keep.xs.len() - 1] + j1[0] - j1[0] + j2[0] - j2[0];
+    return keep.xs[0] + keep.xs[keep.xs.len() - 1] + j1[0] - j1[0] + j2[0] - j2[0] + w - 1;
 }
 ` + sarMain,
 			want: 9, allocs: 40, frees: 40,
@@ -120,16 +126,19 @@ function round(i: i32): i32 {
 			// A reassign from a FRESH literal rather than an alias. This is what
 			// established the diagnosis: the same slot reclaims fully here, so the
 			// reclaim machinery was never the problem — only the alias was refused.
+			// One box per round: the first value's field read is forwarded off
+			// its construction, which then has no reader and is not built.
 			name: "fresh_rhs_reassign_unchanged",
 			src: `struct P { xs: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
     let keep: P = P { xs: id([0]) };
+    let w: i32 = keep.xs.len();
     keep = P { xs: id([7, 8]) };
-    return keep.xs[0] + keep.xs[keep.xs.len() - 1];
+    return keep.xs[0] + keep.xs[keep.xs.len() - 1] + w - 1;
 }
 ` + sarMain,
-			want: 9, allocs: 40, frees: 40,
+			want: 9, allocs: 20, frees: 20,
 		},
 		{
 			// The string-builder CONSUME-REBIND (`s = s + part`): its RHS is a

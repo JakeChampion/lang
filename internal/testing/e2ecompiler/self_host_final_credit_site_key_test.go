@@ -192,10 +192,11 @@ function main(): i32 { let pre: string = "ab"; let t: i32 = 0; let i: i32 = 0; w
 			// The same shape on a scalar-enum array source.
 			name: "scenum_collide",
 			src: `enum S { P(i32), Q }
+@noinline function hold(o: S): i32 { return 0; }
 function round(i: i32): i32 {
     let keep: S = S.P(i);
     let t: i32 = 0;
-    if (i % 2 == 0) { let o: S = S.P(i + 1); t = t + 1; }
+    if (i % 2 == 0) { let o: S = S.P(i + 1); t = t + 1 + hold(o); }
     if (i % 2 == 1) { let o: S = keep; t = t + 2; }
     match (keep) { S.P(v) => { t = t + v; }, S.Q => {} }
     return t;
@@ -208,10 +209,11 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			// renamed. The colliding row must match these exact numbers.
 			name: "scenum_renamed",
 			src: `enum S { P(i32), Q }
+@noinline function hold(o: S): i32 { return 0; }
 function round(i: i32): i32 {
     let keep: S = S.P(i);
     let t: i32 = 0;
-    if (i % 2 == 0) { let o: S = S.P(i + 1); t = t + 1; }
+    if (i % 2 == 0) { let o: S = S.P(i + 1); t = t + 1 + hold(o); }
     if (i % 2 == 1) { let u: S = keep; t = t + 2; }
     match (keep) { S.P(v) => { t = t + v; }, S.Q => {} }
     return t;
@@ -339,9 +341,10 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			// denies the credit, which no exit code would show.
 			name: "credited_scenum",
 			src: `enum S { P(i32), Q }
+@noinline function hold(o: S): i32 { return 0; }
 function round(i: i32): i32 {
     let o: S = S.P(i);
-    return i + 1;
+    return i + 1 + hold(o);
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 70, allocs: 100, frees: 100,

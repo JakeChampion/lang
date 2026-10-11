@@ -39,9 +39,10 @@ func rcEnumIfBlockCases() []rcEnumIfBlockCase {
 			// THE REPRO (#7360). Faulted at exit 139 before the guard.
 			name: "if_block_local",
 			src: `enum R { Full(i32[]), Empty }
+@noinline function hold(o: R): i32 { return 0; }
 function round(i: i32): i32 {
     let t: i32 = 0;
-    if (i % 2 == 0) { let o: R = R.Full([i + 2, i + 3]); t = t + 1; }
+    if (i % 2 == 0) { let o: R = R.Full([i + 2, i + 3]); t = t + 1 + hold(o); }
     return t;
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
@@ -53,9 +54,10 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			// that reached the fault.
 			name: "two_calls",
 			src: `enum R { Full(i32[]), Empty }
+@noinline function hold(o: R): i32 { return 0; }
 function round(i: i32): i32 {
     let t: i32 = 0;
-    if (i % 2 == 0) { let o: R = R.Full([i + 2, i + 3]); t = t + 1; }
+    if (i % 2 == 0) { let o: R = R.Full([i + 2, i + 3]); t = t + 1 + hold(o); }
     return t;
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 2) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
@@ -67,9 +69,10 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 2) { t = t + r
 			// frees here would mean the guard's body double-releases.
 			name: "ctl_plain_block",
 			src: `enum R { Full(i32[]), Empty }
+@noinline function hold(o: R): i32 { return 0; }
 function round(i: i32): i32 {
     let t: i32 = 0;
-    { let o: R = R.Full([i + 2, i + 3]); t = t + 1; }
+    { let o: R = R.Full([i + 2, i + 3]); t = t + 1 + hold(o); }
     return t;
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
@@ -81,9 +84,10 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			// dispatch, so it never faulted.
 			name: "ctl_scalar_payload",
 			src: `enum R { Full(i32), Empty }
+@noinline function hold(o: R): i32 { return 0; }
 function round(i: i32): i32 {
     let t: i32 = 0;
-    if (i % 2 == 0) { let o: R = R.Full(i + 2); t = t + 1; }
+    if (i % 2 == 0) { let o: R = R.Full(i + 2); t = t + 1 + hold(o); }
     return t;
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
@@ -95,9 +99,10 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			// — the shape a re-dec (double free) would surface on.
 			name: "second_return_edge",
 			src: `enum R { Full(i32[]), Empty }
+@noinline function hold(o: R): i32 { return 0; }
 function round(i: i32): i32 {
     let t: i32 = 0;
-    if (i % 2 == 0) { let o: R = R.Full([i + 2, i + 3]); t = t + 1; }
+    if (i % 2 == 0) { let o: R = R.Full([i + 2, i + 3]); t = t + 1 + hold(o); }
     if (i % 3 == 0) { return t + 1; }
     return t;
 }
@@ -109,10 +114,11 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			// the sweep releases the string and the box.
 			name: "string_payload_swept",
 			src: `enum R { Full(string), Empty }
+@noinline function hold(o: R): i32 { return 0; }
 function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
     let t: i32 = 0;
-    if (i % 2 == 0) { let o: R = R.Full(w("x")); t = t + 1; }
+    if (i % 2 == 0) { let o: R = R.Full(w("x")); t = t + 1 + hold(o); }
     return t;
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,

@@ -30,6 +30,9 @@ import (
 // value and every earlier iteration still leaks (22400 improves only to
 // 18400). The store is where the previous value has to go.
 //
+// The inline constructors hand `v` to an out-of-line `keep`, so the Option
+// is built: a construction nothing reads is not built at all (semdead).
+//
 // SCOPE: `Result[i32[], string]` strands its Err strings (6400) and stays open:
 // an Err payload is never reached — stranded, not dangled — and releasing it
 // needs its own whole-body verdict.
@@ -102,12 +105,13 @@ function main(): i32 {
 			// Inline constructor rather than a call — admitted on the payload being a
 			// fresh concat, not on registry membership.
 			name: "option_string_inline_concat",
-			src: `function round(r: i32): i32 {
+			src: `@noinline function keep(v: Option[string]): i32 { return 0; }
+function round(r: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
     while (i < 4) {
         let v: Option[string] = Some("v" + "x");
-        acc = acc + i;
+        acc = acc + i + keep(v);
         i = i + 1;
     }
     return acc + r;
@@ -123,12 +127,13 @@ function main(): i32 {
 			// A bare literal payload: `__fern_str_free`'s heap-base guard no-ops on
 			// .rodata data, so the box is released and the data is left alone.
 			name: "option_string_literal",
-			src: `function round(r: i32): i32 {
+			src: `@noinline function keep(v: Option[string]): i32 { return 0; }
+function round(r: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
     while (i < 4) {
         let v: Option[string] = Some("literal");
-        acc = acc + i;
+        acc = acc + i + keep(v);
         i = i + 1;
     }
     return acc + r;

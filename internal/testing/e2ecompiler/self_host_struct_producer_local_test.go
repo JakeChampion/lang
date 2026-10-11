@@ -179,12 +179,16 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			// it: the caller's binding releases it and the callee's rebind frees
 			// the superseded literal. An alias, a second declaration, or a field
 			// move are the refused rows below.
+			// `hold` reads the first literal so it is built (semdead); read and
+			// unique at the rebind, its box is written in place by the second,
+			// so a round allocates three blocks rather than four.
 			name: "admitted_reassigned_all_fresh",
 			src: `struct P { xs: i32[] }
-function mk(i: i32): P { let p: P = P { xs: [i, i + 1] }; p = P { xs: [i + 2, i + 3] }; return p; }
+@noinline function hold(p: P): i32 { return 0; }
+function mk(i: i32): P { let p: P = P { xs: [i, i + 1] }; p = P { xs: [i + 2 + hold(p), i + 3] }; return p; }
 function round(i: i32): i32 { let v: P = mk(i); return v.xs.len(); }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 34, allocs: 400, frees: 400,
+			want: 34, allocs: 300, frees: 300,
 		},
 		{
 			// Two declarations of the same spelling in sibling blocks. Each is its

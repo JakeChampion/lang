@@ -205,10 +205,11 @@ enum S { V(P), N }
 function round(i: i32): i32 {
     let v: S = S.V(P { xs: id([7, 8]) });
     let keep: P = P { xs: id([0]) };
+    let w: i32 = keep.xs.len();
     match (v) { S.V(p) => { keep = p; }, S.N => { keep = P { xs: [0] }; } }
     let j1: i32[] = [111, 222];
     let j2: i32[] = [333, 444];
-    return keep.xs[0] + keep.xs[keep.xs.len() - 1] + j1[0] - j1[0] + j2[0] - j2[0];
+    return keep.xs[0] + keep.xs[keep.xs.len() - 1] + j1[0] - j1[0] + j2[0] - j2[0] + w - 1;
 }
 ` + mvsChurnMain,
 			want: 9, allocs: 60, frees: 60,
