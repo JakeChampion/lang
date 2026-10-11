@@ -391,6 +391,32 @@ compiles each utility once per process, without `-O` so the assert() checks
 stay live. When the corpus grows past what the unit lane should carry, it
 moves to a lane of its own; that is a workflow change, not a change here.
 
+### The leak leg
+
+`TestCorpusFreesWhatItAllocates` builds every utility a third time, with
+`FERN_LEAKCHECK`, runs the same corpus against it, and requires every run
+that returned from `main` to print a balanced census: allocs equal to
+frees, zero live bytes. The parity gate compares output and cannot see a
+leak; `ls -l` and `stat` leaked the string builder behind every mode
+column they printed through every green parity run, which is what
+`TestUtilitiesFreeWhatTheyAllocate`, the directory case beside it, was
+written for.
+
+A run the `exit()` builtin ended cannot be held to that, and the census
+line says when it was one (` from=exit`): the frames above the call are
+never unwound, so what `main` built and still held is not something the
+program could have freed. The usage errors, `--help`, `--version` and
+every diagnostic that leaves through `gnu.die` are such runs; they are
+counted, not checked. So is a run that exec'd another program (`env`,
+`nice`, `nohup`, `chroot`), which leaves no census at all, and a run a
+signal ended (a `tail -f` the harness stops, a writer killed by SIGPIPE).
+A utility every one of whose cases left through `exit()` fails outright:
+its success path leaves that way too, and the census can say nothing about
+it until it returns from `main`.
+
+The leg runs in the `test-coreutils` lane, sharded by utility with the
+self-host leg.
+
 ### The wasm leg
 
 `TestWasmSmoke` compiles a handful of utilities for `wasm32-wasi`, runs them

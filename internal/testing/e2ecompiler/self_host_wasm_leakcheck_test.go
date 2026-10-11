@@ -311,10 +311,12 @@ func TestSelfHostWasmLeakcheckComponent(t *testing.T) {
 		name, src            string
 		exit                 int
 		allocs, frees, bytes int64
+		// fromExit: the line says the exit shim printed it.
+		fromExit bool
 	}{
-		{"returning", `function main(): i32 { let p: usize = __alloc(24); return 0; }`, 0, 1, 0, 24},
-		{"exiting", `function main(): i32 { let p: usize = __alloc(24); exit(9); return 1; }`, 1, 1, 0, 24},
-		{"printing", "import \"std/i32\";\nfunction main(): i32 { let s: string = \"a\" + 7.to_string(); print(s); return 0; }", 0, 5, 5, 0},
+		{"returning", `function main(): i32 { let p: usize = __alloc(24); return 0; }`, 0, 1, 0, 24, false},
+		{"exiting", `function main(): i32 { let p: usize = __alloc(24); exit(9); return 1; }`, 1, 1, 0, 24, true},
+		{"printing", "import \"std/i32\";\nfunction main(): i32 { let s: string = \"a\" + 7.to_string(); print(s); return 0; }", 0, 5, 5, 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -341,6 +343,9 @@ func TestSelfHostWasmLeakcheckComponent(t *testing.T) {
 			var allocs, frees, live int64
 			if _, err := fmtSscan(leakSummaryLine(stderr.String()), &allocs, &frees, &live); err != nil || allocs != tc.allocs || frees != tc.frees || live != tc.bytes {
 				t.Errorf("census %q, want allocs=%d frees=%d live_bytes=%d", leakSummaryLine(stderr.String()), tc.allocs, tc.frees, tc.bytes)
+			}
+			if got := strings.HasSuffix(leakSummaryLine(stderr.String()), " from=exit"); got != tc.fromExit {
+				t.Errorf("census %q says from=exit %v, want %v", leakSummaryLine(stderr.String()), got, tc.fromExit)
 			}
 		})
 	}

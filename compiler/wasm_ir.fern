@@ -11476,6 +11476,9 @@ pub function lc_globals(lc: boolean): string {
   o = o + "  (global $__fern_lc_alloc_bytes (mut i64) (i64.const 0))\n";
   o = o + "  (global $__fern_lc_free_count (mut i64) (i64.const 0))\n";
   o = o + "  (global $__fern_lc_free_bytes (mut i64) (i64.const 0))\n";
+  // Set by the exit paths: the frames above an exit() are never unwound,
+  // so the line says it came from one.
+  o = o + "  (global $__fern_lc_exited (mut i32) (i32.const 0))\n";
   return o;
 }
 
@@ -11540,10 +11543,13 @@ function lc_label(text: string): string {
 }
 
 // lc_report_and_exit_wrapper: `$__fern_lc_report` — the census summary on
-// stderr, one `leakcheck: allocs=<N> frees=<M> live_bytes=<K>` line, and
-// under FERN_SANITIZE the leak verdict after it — plus the `$__fern_proc_exit`
-// wrapper that reports before exiting, so BOTH exit paths (the exit() op
-// and $__fern_start) report through the one flag-gated definition;
+// stderr, one `leakcheck: allocs=<N> frees=<M> live_bytes=<K>` line, ending
+// ` from=exit` when the exit() op reached it (the frames above the call are
+// never unwound, so what they hold is not a leak the program could have
+// freed), and under FERN_SANITIZE the leak verdict after it — plus the
+// `$__fern_proc_exit` wrapper that reports before exiting, so BOTH exit
+// paths (the exit() op and $__fern_start) report through the one flag-gated
+// definition;
 // preview1_imports renames the raw import to $__fern_proc_exit_raw under the
 // same flag. Mode 0's; a component reports from its run entry and its exit
 // shim instead. The line is built in fixed scratch below the data pool (the
@@ -11557,7 +11563,7 @@ pub function lc_report_and_exit_wrapper(lc: boolean, sanitize: boolean, set_args
   if (dir_off) {
     tables = dir_off_release();
   }
-  return lc_report_funcs(sanitize, set_args, tables) + "  (func $__fern_proc_exit (param $c i32)\n    (call $__fern_lc_report)\n    (call $__fern_proc_exit_raw (local.get $c)))\n";
+  return lc_report_funcs(sanitize, set_args, tables) + "  (func $__fern_proc_exit (param $c i32)\n    (global.set $__fern_lc_exited (i32.const 1))\n    (call $__fern_lc_report)\n    (call $__fern_proc_exit_raw (local.get $c)))\n";
 }
 
 // fdt_release frees a component's handle table (fd_table_funcs). Writing the
@@ -11581,7 +11587,7 @@ function lc_exit_report(lc: boolean): string {
   if (!lc) {
     return "";
   }
-  return "    (call $__fern_lc_report)\n";
+  return "    (global.set $__fern_lc_exited (i32.const 1))\n    (call $__fern_lc_report)\n";
 }
 
 // component_run_entry is `$__fern_lang_run`: main's result mapped to the 0 = ok /
@@ -11656,6 +11662,9 @@ function lc_report_funcs(sanitize: boolean, set_args: boolean, tables: string): 
   o = o + "    (call $__fern_lc_wrnum (local.get $nf) (local.get $b))\n";
   o = o + lc_label(" live_bytes=");
   o = o + "    (call $__fern_lc_wrnum (local.get $live) (local.get $b))\n";
+  o = o + "    (if (global.get $__fern_lc_exited) (then\n";
+  o = o + lc_label(" from=exit");
+  o = o + "    ))\n";
   o = o + lc_label("\n");
   if (sanitize) {
     // The sanitizer's leak verdict, the text the register backends print.
