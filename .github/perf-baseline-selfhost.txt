@@ -116,8 +116,9 @@
 # 2026-10-11 — the 35 wasm32-wasi rows re-pinned where the IR optimiser began
 # removing stores to slots nothing reads (#12106): the wasm corpus falls
 # 174,255 -> 158,352 (-9.1%), every row by 1.8-15.8%, measured against main at
-# 869cc95c. The x86-64 and arm64 rows are untouched by it; the register
-# backends already pruned those values in SSA.
+# 869cc95c. The rows as previously pinned summed 175,543; the other 1,288 lines
+# were main's drift, not this change. The x86-64 and arm64 rows are untouched
+# by it; the register backends already pruned those values in SSA.
 
 selfhost/arm64-linux/array_append.emit	1052
 selfhost/arm64-linux/array_index.emit	1050
