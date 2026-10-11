@@ -98,6 +98,78 @@ err negative
 string V()
 `
 
+// genericEnumNameClashSrc has a free bounded generic and a bounded impl's
+// associated function share the name `make`, the free one called from a
+// generic enum's method beside a generic struct: the associated function
+// must neither be cloned in the free one's place nor kept twice.
+const genericEnumNameClashSrc = `import "core/cmp";
+import "std/i32";
+
+struct Holder[T] { v: T }
+
+function make[T: cmp.Default](): T {
+  return T.default();
+}
+
+enum E[A] { V(A), W }
+
+trait Size {
+  function size(self: Self): i32;
+}
+
+impl[A] Size for E[A] {
+  function size(self: Self): i32 {
+    let n: i32 = make();
+    match (self) {
+      V(_) => {
+        return n + 1;
+      },
+      W => {
+        return n;
+      }
+    }
+    return n;
+  }
+}
+
+trait Make {
+  function make(n: i32): Self;
+}
+
+impl[A: cmp.Default] Make for E[A] {
+  function make(n: i32): Self {
+    if (n == 0) {
+      return W;
+    }
+    return V(A.default());
+  }
+}
+
+function main(): i32 {
+  let h: Holder[i32] = Holder { v: 2 };
+  let e: E[i32] = E.make(1);
+  print((e.size() + h.v).to_string());
+  return 0;
+}
+`
+
+func TestGenericEnumNameClash(t *testing.T) {
+	const want = "3\n"
+	path := filepath.Join(t.TempDir(), "prog.fern")
+	if err := os.WriteFile(path, []byte(genericEnumNameClashSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errOut := runLangInterp(t, buildLangBinForInterp(t), path); code != 0 || out != want {
+		t.Fatalf("interp exit %d, printed %q, want %q\nstderr: %s", code, out, want, errOut)
+	}
+	if out, code := compileAndRunX86_64(t, genericEnumNameClashSrc); code != 0 || out != want {
+		t.Fatalf("x86-64 exit %d, printed %q, want %q", code, out, want)
+	}
+	if out := compileAndRunWasmCapture(t, genericEnumNameClashSrc); out != want {
+		t.Fatalf("wasm printed %q, want %q", out, want)
+	}
+}
+
 func TestInterpGenericEnumSelf(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "prog.fern")
 	if err := os.WriteFile(path, []byte(genericEnumSelfSrc), 0o644); err != nil {

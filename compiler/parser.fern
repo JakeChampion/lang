@@ -10801,7 +10801,7 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
   let array_concrete: i32[] = [];
   let i: i32 = 0;
   while (i < decls.len()) {
-    if (decls[i].type_params.len() > 0 && decls[i].receiver_name.len() == 0) {
+    if (is_free_bg_template(decls[i])) {
       gname = gname.append(decls[i].name);
       gat = gat.append(i);
     }
@@ -18407,7 +18407,7 @@ function clone_enum_method(m: FuncDecl, ed: EnumDecl, cts: string[], mname: stri
 function genum_bg_refs(funcs: FuncDecl[], enums: EnumDecl[]): string[] {
   let names: string[] = [];
   for fd in funcs {
-    if (is_bg_template(fd)) {
+    if (is_free_bg_template(fd)) {
       names = names.append(fd.name);
     }
   }
@@ -18420,7 +18420,7 @@ function genum_bg_refs(funcs: FuncDecl[], enums: EnumDecl[]): string[] {
   let i: i32 = 0;
   while (i < refs.hit.len()) {
     for fd in funcs {
-      if (fd.name == refs.hit[i] && is_bg_template(fd)) {
+      if (fd.name == refs.hit[i] && is_free_bg_template(fd)) {
         refs = bg_refs_body(fd.body, refs);
       }
     }
@@ -18437,7 +18437,7 @@ function enum_bg_templates(funcs: FuncDecl[], refs: string[], keep: boolean): Fu
   }
   let out: FuncDecl[] = [];
   for fd in funcs {
-    if (is_bg_template(fd) && str_in(refs, fd.name)) {
+    if (is_free_bg_template(fd) && str_in(refs, fd.name)) {
       out = out.append(fd);
     }
   }
