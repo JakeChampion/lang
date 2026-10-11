@@ -1348,6 +1348,18 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"eq-i32-string", "function main(): i32 { if (1 == \"x\") { return 1; } return 0; }\n", []string{"E041"}},
 		{"eq-bool-i32", "function main(): i32 { if ((1 < 2) == 3) { return 1; } return 0; }\n", []string{"E041"}},
 		{"eq-i32-i32-ok", "function main(): i32 { if (1 == 2) { return 1; } return 0; }\n", nil},
+		// An operator on a type variable needs a bound supplying its method:
+		// `cmp` for an ordering, the operator's own for arithmetic, and the
+		// saturating forms are integer-only (#12034). Equality needs none.
+		{"order-on-ord-tvar-ok", "import \"core/cmp\" as cmp;\nfunction gt[T: cmp.Ord](a: T, b: T): boolean { return a > b; }\nfunction main(): i32 { if (gt(2, 1)) { return 1; } return 0; }\n", nil},
+		{"eq-on-eq-tvar-ok", "import \"core/cmp\" as cmp;\nfunction same[T: cmp.Eq](a: T, b: T): boolean { return a != b; }\nfunction main(): i32 { if (same(2, 1)) { return 1; } return 0; }\n", nil},
+		{"eq-on-tvar-ok", "function same[T](a: T, b: T): boolean { return a == b; }\nfunction main(): i32 { if (same(2, 1)) { return 1; } return 0; }\n", nil},
+		{"order-on-tvar", "function gt[T](a: T, b: T): boolean { return a > b; }\nfunction main(): i32 { if (gt(2, 1)) { return 1; } return 0; }\n", []string{"E009"}},
+		{"order-on-eq-tvar", "trait Same { function eq(self: Self, other: Self): boolean; }\nfunction gt[T: Same](a: T, b: T): boolean { return a <= b; }\nfunction main(): i32 { return 0; }\n", []string{"E009"}},
+		{"add-on-tvar", "function add[T](a: T, b: T): T { return a + b; }\nfunction main(): i32 { return add(2, 1); }\n", []string{"E009"}},
+		{"sub-on-add-tvar", "trait Plus { function add(self: Self, other: Self): Self; }\nfunction sub[T: Plus](a: T, b: T): T { return a - b; }\nfunction main(): i32 { return 0; }\n", []string{"E009"}},
+		{"shift-on-tvar", "function sh[T](a: T, b: T): T { return a << b; }\nfunction main(): i32 { return sh(2, 1); }\n", []string{"E009"}},
+		{"neg-on-tvar", "function ng[T](a: T): T { let b = -a; return a; }\nfunction main(): i32 { return ng(2); }\n", []string{"E009"}},
 		{"eq-string-string-ok", "function main(): i32 { if (\"a\" == \"b\") { return 1; } return 0; }\n", nil},
 		// E041 (composite ordering): `<` / `>` / `<=` / `>=` on two values of
 		// the SAME composite type (struct / array / tuple) is E041, not E009.

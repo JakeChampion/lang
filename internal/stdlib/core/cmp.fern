@@ -558,13 +558,13 @@ impl Debug for string {
 // ---- Generic Ord helpers ---------------------------------------
 // Free functions over any `T: Ord`, derived from the single `cmp`
 // primitive — so they work for the integer/string impls above and for
-// any user `Ord` type (incl. `@derive(Ord)`). A bounded generic whose
-// body calls `a.cmp(b)` monomorphises to a direct call, so these lower
-// on the self-host IR path too (#2691 / #3558).
+// any user `Ord` type (incl. `@derive(Ord)`). An ordering operator on a
+// `T: Ord` value means `cmp`'s order in every instance, and an integer or
+// string instance compiles it to the one native compare (#12034).
 
 // min returns the smaller of `a` and `b` (`a` when equal).
 pub function min[T: Ord](a: T, b: T): T {
-  if (b.cmp(a) < 0) {
+  if (b < a) {
     return b;
   }
   return a;
@@ -572,7 +572,7 @@ pub function min[T: Ord](a: T, b: T): T {
 
 // max returns the larger of `a` and `b` (`a` when equal).
 pub function max[T: Ord](a: T, b: T): T {
-  if (a.cmp(b) < 0) {
+  if (a < b) {
     return b;
   }
   return a;
@@ -580,10 +580,10 @@ pub function max[T: Ord](a: T, b: T): T {
 
 // clamp constrains `x` to the inclusive range [lo, hi]. Assumes lo <= hi.
 pub function clamp[T: Ord](x: T, lo: T, hi: T): T {
-  if (x.cmp(lo) < 0) {
+  if (x < lo) {
     return lo;
   }
-  if (x.cmp(hi) > 0) {
+  if (x > hi) {
     return hi;
   }
   return x;
@@ -604,7 +604,7 @@ pub function max_of[T: Ord](xs: T[]): Option[T] {
   let best: T = xs[0];
   let i: i32 = 1;
   while (i < xs.len()) {
-    if (xs[i].cmp(best) > 0) {
+    if (xs[i] > best) {
       best = xs[i];
     }
     i = i + 1;
@@ -620,7 +620,7 @@ pub function min_of[T: Ord](xs: T[]): Option[T] {
   let best: T = xs[0];
   let i: i32 = 1;
   while (i < xs.len()) {
-    if (xs[i].cmp(best) < 0) {
+    if (xs[i] < best) {
       best = xs[i];
     }
     i = i + 1;
@@ -628,22 +628,22 @@ pub function min_of[T: Ord](xs: T[]): Option[T] {
   return Some(best);
 }
 
-// lt / lte / gt / gte are the named relational forms of `cmp`, for call
-// sites that read better than a bare `a.cmp(b) < 0`.
+// lt / lte / gt / gte are the ordering operators as functions, for a call
+// site that wants one as a value.
 pub function lt[T: Ord](a: T, b: T): boolean {
-  return a.cmp(b) < 0;
+  return a < b;
 }
 
 pub function lte[T: Ord](a: T, b: T): boolean {
-  return a.cmp(b) <= 0;
+  return a <= b;
 }
 
 pub function gt[T: Ord](a: T, b: T): boolean {
-  return a.cmp(b) > 0;
+  return a > b;
 }
 
 pub function gte[T: Ord](a: T, b: T): boolean {
-  return a.cmp(b) >= 0;
+  return a >= b;
 }
 
 // is_sorted reports whether `arr` is in non-decreasing `Ord` order.

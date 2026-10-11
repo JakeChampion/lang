@@ -9602,6 +9602,25 @@ var arithOpTrait = map[string]string{
 	"add": "Add", "sub": "Sub", "mul": "Mul", "div": "Div", "neg": "Neg",
 }
 
+// paramComparison is the `a.<method>(b)` call a comparison of two operands of
+// one type parameter means when the parameter's bound supplies `method`:
+// `cmp` for the orderings on `T: Ord`, `eq` for the equalities on `T: Eq`. So
+// a generic comparison means the bound's order in every instance, f64's total
+// order included, rather than the instance type's native operator. nil when
+// the operands are not one bounded parameter.
+func (c *checker) paramComparison(n *ast.Binary, lt, rt ast.Type, method string, s *scope) *ast.Call {
+	pt, ok := lt.(ast.ParamType)
+	if !ok || !ast.Equal(lt, rt) {
+		return nil
+	}
+	if _, _, found := c.resolveTraitMethodForParam(pt.Name, method); !found {
+		return nil
+	}
+	call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: method}, Args: []ast.Expr{n.Right}}
+	c.checkExpr(call, s)
+	return call
+}
+
 // compositeOpOverload handles operator overloading for a binary operator
 // whose operands are the same composite (struct / enum) type: it desugars
 // `a <op> b` to the type's conventionally-named method (`arithOpMethod`),
@@ -19353,6 +19372,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			return common
 		case "<", ">", "<=", ">=":
+			if call := c.paramComparison(n, lt, rt, "cmp", s); call != nil {
+				n.CmpCall = call
+				return ast.BoolType{}
+			}
 			// Composite-type ordering. `<` / `<=` / `>` / `>=` on a
 			// struct or enum desugars to the type's `Ord` impl —
 			// `a.cmp(b) <op> 0` (cmp returns -1/0/1). Without this the
@@ -19468,6 +19491,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// after erasure both sides are the same string comparison.
 			if lt != nil && rt != nil && !ast.Equal(lt, rt) && !(isStringLike(lt) && isStringLike(rt)) {
 				c.errfCode(n.P, "E041", "cannot compare %s with %s: both sides of %q must have the same type", lt, rt, n.Op)
+			}
+			if call := c.paramComparison(n, lt, rt, "eq", s); call != nil {
+				n.EqCall = call
+				n.EqNegate = n.Op == "!="
+				return ast.BoolType{}
 			}
 			// Composite-type equality. `==` / `!=` on a struct or
 			// enum is STRUCTURAL equality via the type's `Eq` impl —
