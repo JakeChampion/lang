@@ -1264,39 +1264,38 @@ function all_kept(own kept: boolean[], vs: i32[]): boolean[] {
 // never has to give them back: a walk that could fail would hold every array
 // of the edits at a second count, and its first append would copy each one.
 function resolve(f: ssasem.Func, own e: Edits, read: ssa.SInst): Edits {
-  if (!resolvable(f, e, read, read.args[0], 0, []).ok) {
+  let feasible: (boolean, i32[]) = resolvable(f, e, read, read.args[0], 0, []);
+  if (!feasible.0) {
     return e;
   }
   let w: Walk = part_of(f, Walk { e: e, value: 0 - 1, phis: [], parts: [] }, read, read.args[0], 0);
   return Edits { ...w.e, swap: w.e.swap.with(read.result, w.value) };
 }
 
-// What a resolution has decided so far: whether it holds, and the phis met,
-// so a loop's phi is walked once.
-struct Feasible { ok: boolean, phis: i32[] }
-
 // Whether `read` resolves on `v`: the test `part_of` makes at each step, and
-// nothing else.
-function resolvable(f: ssasem.Func, e: Edits, read: ssa.SInst, v: i32, depth: i32, phis: i32[]): Feasible {
+// nothing else. The phis met so far come back beside the answer, so a loop's
+// phi is walked once; as a pair, so that a step builds nothing.
+function resolvable(f: ssasem.Func, e: Edits, read: ssa.SInst, v: i32, depth: i32, phis: i32[]): (boolean, i32[]) {
   let x: i32 = through_copies(e.defs, v);
   let d: ssa.SInst = def_inst(e.defs, x);
   if (depth > 32 || blocked(f, e, read, v, x)) {
-    return Feasible { ok: false, phis: phis };
+    return (false, phis);
   }
   if (builds(d.kind_tag)) {
-    return Feasible { ok: part(d, read).ok, phis: phis };
+    return (part(d, read).ok, phis);
   }
   if (d.kind_tag != 8 || index_of(phis, x) >= 0) {
-    return Feasible { ok: d.kind_tag == 8 || d.kind_tag == ssasem.zero(), phis: phis };
+    return (d.kind_tag == 8 || d.kind_tag == ssasem.zero(), phis);
   }
-  let cur: Feasible = Feasible { ok: true, phis: phis.append(x) };
+  let seen: i32[] = phis.append(x);
   for a in d.args {
-    cur = resolvable(f, e, read, a, depth + 1, cur.phis);
-    if (!cur.ok) {
-      return cur;
+    let step: (boolean, i32[]) = resolvable(f, e, read, a, depth + 1, seen);
+    seen = step.1;
+    if (!step.0) {
+      return (false, seen);
     }
   }
-  return cur;
+  return (true, seen);
 }
 
 // Where no read resolves: a kept value read other than as a scalar field, a
