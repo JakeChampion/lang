@@ -1,0 +1,112 @@
+// std/http/form — an `application/x-www-form-urlencoded` body as the
+// fields it carries, decoded as `std/url` decodes a query string (`+` a
+// space, `%XX` a byte), with a `FormError` that answers 415 for another
+// media type and passes a body's own failure through.
+//
+//     let f: form.Form = form.parse(req)?;
+//     let name: string = f.get("name").unwrap_or("");
+
+import "std/http";
+import "std/url";
+import "std/string";
+
+// Form — the fields, each name to every value sent under it, in order.
+pub struct Form { fields: Map[string, string[]] }
+
+pub enum FormError {
+  NotAForm(string),
+  FormBody(http.BodyError),
+}
+
+impl http.ToResponse for FormError {
+  function to_response(self: FormError): HttpResponse {
+    match (self) {
+      NotAForm(ct) => {
+        if (ct.len() == 0) {
+          return http.problem(415, "", "expected a Content-Type of application/x-www-form-urlencoded");
+        }
+        return http.problem(415, "", "expected application/x-www-form-urlencoded, got " + ct);
+      },
+      FormBody(e) => {
+        return e.to_response();
+      }
+    }
+    return http.problem(500, "", "");
+  }
+}
+
+// parse reads the request's body as a form: 415 for another media type
+// (parameters such as a charset are allowed after the type), and a body
+// that is not UTF-8 or that ended early as `body_string` reports it.
+pub function parse(req: HttpRequest): Result[Form, FormError] {
+  let ct: string = "";
+  match (req.headers.get("content-type")) {
+    Some(v) => {
+      ct = v;
+    },
+    None => {}
+  }
+  if (!__is_form(ct)) {
+    return Err(NotAForm(ct));
+  }
+  match (req.body_string()) {
+    Ok(text) => {
+      return Ok(Form { fields: url.query_parse(text) });
+    },
+    Err(e) => {
+      return Err(FormBody(e));
+    }
+  }
+  return Err(NotAForm(ct));
+}
+
+// __is_form: the media type is the form's, whatever parameters follow.
+function __is_form(ct: string): boolean {
+  let kind: string = ct;
+  let semi: i32 = ct.index_of(";");
+  if (semi >= 0) {
+    kind = ct.slice_snap(0, semi);
+  }
+  return kind.trim().to_lower() == "application/x-www-form-urlencoded";
+}
+
+// (f).get(name) — the first value sent under the name.
+pub function (f: Form) get(name: string): Option[string] {
+  match (f.fields.get(name)) {
+    Some(vs) => {
+      if (vs.len() == 0) {
+        return None;
+      }
+      return Some(vs[0]);
+    },
+    None => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// (f).get_all(name) — every value sent under the name, in order.
+pub function (f: Form) get_all(name: string): string[] {
+  match (f.fields.get(name)) {
+    Some(vs) => {
+      return vs;
+    },
+    None => {
+      return [];
+    }
+  }
+  return [];
+}
+
+pub function (f: Form) has(name: string): boolean {
+  match (f.fields.get(name)) {
+    Some(vs) => {
+      return true;
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
+}
