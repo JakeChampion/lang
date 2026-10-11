@@ -146,7 +146,10 @@ func octal(line string) ([]byte, error) {
 }
 
 // root is one certificate object of certdata.txt with what its trust
-// object says about server authentication.
+// object says about server authentication. A distrust date is read in
+// the two encodings the file uses, a MULTILINE_OCTAL time and CK_FALSE
+// for none; any other fails, so a distrusted root cannot slip in
+// unread.
 type root struct {
 	label    string
 	der      []byte
@@ -177,12 +180,18 @@ func roots(objects []map[string]attr) ([]root, error) {
 			return nil, fmt.Errorf("%q has no trust object", r.label)
 		}
 		r.trusted = t["CKA_TRUST_SERVER_AUTH"].text == "CKT_NSS_TRUSTED_DELEGATOR"
-		if d, ok := o["CKA_NSS_SERVER_DISTRUST_AFTER"]; ok && d.typ == "MULTILINE_OCTAL" {
-			when, err := time.Parse("060102150405Z", string(d.bytes))
-			if err != nil {
-				return nil, fmt.Errorf("%q: distrust date %q: %v", r.label, d.bytes, err)
+		if d, ok := o["CKA_NSS_SERVER_DISTRUST_AFTER"]; ok {
+			switch {
+			case d.typ == "MULTILINE_OCTAL":
+				when, err := time.Parse("060102150405Z", string(d.bytes))
+				if err != nil {
+					return nil, fmt.Errorf("%q: distrust date %q: %v", r.label, d.bytes, err)
+				}
+				r.distrust = when
+			case d.typ == "CK_BBOOL" && d.text == "CK_FALSE":
+			default:
+				return nil, fmt.Errorf("%q: distrust date in an encoding this generator does not read: %s %s", r.label, d.typ, d.text)
 			}
-			r.distrust = when
 		}
 		out = append(out, r)
 	}
