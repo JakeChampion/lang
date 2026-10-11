@@ -18,7 +18,10 @@
 // (`async.real_driver()`: epoll, kqueue or wasi pollables) watches the
 // listener and every open connection, so many slow clients are read
 // side by side and a request is answered as soon as its bytes are in.
-// Per-connection lifecycle:
+// Per-connection lifecycle (under `Config.tls` every read below goes
+// through the connection's TLS session and every write is sealed by it,
+// the handshake running on the same reads and writes before the first
+// request):
 //   1. accept when the listener is readable, switch the connection to
 //      non-blocking and watch it for reads; its read deadline (default
 //      10 s; `Config.recv_deadline`) is the
@@ -93,6 +96,7 @@ import "std/http";
 import "std/stream";
 import "std/net";
 import "std/time";
+import "std/tls/server";
 import "std/i64";
 // core/int — int_to_string for the supervisor's worker-death log
 // lines (the raw exit code, straight to stderr).
@@ -166,6 +170,7 @@ pub struct Config {
   limits: http.HttpLimits,
   stop_with_parent: boolean,
   stream_bodies: boolean,
+  tls: Option[server.Config],
 }
 
 // config() — the defaults: a backlog of 128, the port held
@@ -174,7 +179,19 @@ pub struct Config {
 // client, 1024 handlers parked at once, a worker per processing unit, and
 // the parser's `http_limits()`, bodies read whole before the handler runs.
 pub function config(): Config {
-  return Config { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false, stream_bodies: false };
+  return Config { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false, stream_bodies: false, tls: None };
+}
+
+// (c).with_tls(cfg) — every connection speaks TLS 1.3 under `cfg`
+// (std/tls/server): the handshake runs on the connection's own reads and
+// writes before its first request, responses are sealed as they are
+// written, and a file body is read and sealed rather than moved by
+// sendfile. The protocol offered by ALPN is `http/1.1`, whatever `cfg`
+// named. A client that does not speak TLS, or whose handshake the server
+// refuses, is sent the alert and closed; the read deadline bounds the
+// handshake as it bounds a request.
+pub function (c: Config) with_tls(cfg: server.Config): Config {
+  return Config { ...c, tls: Some(cfg.with_alpn(["http/1.1"])) };
 }
 
 // run(port, opts, handler) — serve `handler` on `port` in this process,
@@ -382,7 +399,13 @@ function __recv_scratch(): u8[] {
 // scratch is lent to for the current event, -1 between events: only that
 // connection's buffer may be the scratch, and `__serve_compact` hands it
 // back before the event is done with the connection.
-struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], tails: __Tail[], last: http.HttpFramed, out: usize, lent: i32 }
+struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], tails: __Tail[], tls: __Tls[], last: http.HttpFramed, out: usize, lent: i32 }
+
+// __Tls — a connection's TLS: none; its session, through which every
+// byte read and written passes; or lent to the handler pulling a streamed
+// body (`__Body.tls`), which reads the connection itself until the body
+// ends.
+enum __Tls { Plain, Secured(server.Session), Lent }
 
 // __Tail — what of a response is still to be produced once its head and
 // the bytes pending have gone: nothing; a file the loop reads as the
@@ -621,9 +644,19 @@ function __conns_index(c: __Conns, fd: i32): i32 {
   return -1;
 }
 
-function __conns_add(c: __Conns, fd: i32, deadline: i64, peer: i32): __Conns {
+// A TLS connection starts with `keep` set: its handshake may leave bytes
+// pending, and a connection that has drained its pending bytes is closed
+// unless it persists.
+function __conns_add(c: __Conns, fd: i32, deadline: i64, peer: i32, tls: __Tls): __Conns {
   let empty: u8[] = [];
-  return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), keep: c.keep.append(false), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), tails: c.tails.append(NoTail), last: c.last, out: c.out, lent: c.lent };
+  let keep: boolean = false;
+  match (tls) {
+    Secured(_) => {
+      keep = true;
+    },
+    _ => {}
+  }
+  return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), keep: c.keep.append(keep), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), tails: c.tails.append(NoTail), tls: c.tls.append(tls), last: c.last, out: c.out, lent: c.lent };
 }
 
 // __conns_from_peer(c, peer) — how many open connections the peer holds.
@@ -653,6 +686,7 @@ function __conns_remove(c: __Conns, at: i32): __Conns {
   let send_base: i32[] = [];
   let peers: i32[] = [];
   let tails: __Tail[] = [];
+  let tls: __Tls[] = [];
   let i: i32 = 0;
   while (i < c.fds.len()) {
     if (i != at) {
@@ -671,10 +705,11 @@ function __conns_remove(c: __Conns, at: i32): __Conns {
       send_base = send_base.append(c.send_base[i]);
       peers = peers.append(c.peers[i]);
       tails = tails.append(c.tails[i]);
+      tls = tls.append(c.tls[i]);
     }
     i = i + 1;
   }
-  return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base, send_since: send_since, send_base: send_base, peers: peers, tails: tails, last: c.last, out: c.out, lent: 0 - 1 };
+  return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base, send_since: send_since, send_base: send_base, peers: peers, tails: tails, tls: tls, last: c.last, out: c.out, lent: 0 - 1 };
 }
 
 // __conns_timeout(c, now) — the wait's timeout: the milliseconds until the
@@ -724,22 +759,55 @@ function __serve_accept[D: async.Driver](drv: D, listener: i32, c: __Conns, opts
   }
   tcp_socket_ctl(fd, 3, 1);
   tcp_socket_ctl(fd, 1, 1);
+  let tls: __Tls = Plain;
+  match (__tls_session(opts)) {
+    Ok(t) => {
+      tls = t;
+    },
+    Err(_) => {
+      tcp_close(fd);
+      return c;
+    }
+  }
   if (drv.watch(fd, 1) < 0) {
     tcp_close(fd);
     return c;
   }
-  return __conns_add(c, fd, monotonic_ns() + opts.recv_deadline.as_nanos(), peer);
+  return __conns_add(c, fd, monotonic_ns() + opts.recv_deadline.as_nanos(), peer, tls);
+}
+
+// __tls_session(opts) — a fresh TLS session for a connection under
+// `Config.tls`, or none without it.
+function __tls_session(opts: Config): Result[__Tls, server.TlsError] {
+  match (opts.tls) {
+    Some(cfg) => {
+      let sess: server.Session = server.start(cfg)?;
+      return Ok(Secured(sess));
+    },
+    None => {
+      return Ok(Plain);
+    }
+  }
+  return Ok(Plain);
 }
 
 // __serve_close(drv, c, at) — the connection at `at` unwatched, closed
 // and forgotten.
 function __serve_close[D: async.Driver](drv: D, c: __Conns, at: i32): __Conns {
   drv.unwatch(c.fds[at]);
+  match (c.tls[at]) {
+    Secured(sess) => {
+      if let Ok(step) = sess.close() {
+        tcp_send_bytes(c.fds[at], step.output);
+      }
+    },
+    _ => {}
+  }
   tcp_close(c.fds[at]);
   return __conns_remove(__tail_drop(c, at), at);
 }
 
-// __serve_read(c, at, scratch, opts) — the readable connection at `at`
+// __serve_read(drv, c, at, scratch, opts) — the readable connection at `at`
 // read until a read comes back short or nothing is queued: `(conns,
 // done)`, where `done` says the peer is finished (EOF, an error, or the
 // size cap) and what it sent is what the buffer holds. A read into an
@@ -752,7 +820,21 @@ function __serve_close[D: async.Driver](drv: D, c: __Conns, at: i32): __Conns {
 // deadline, replacing the keep-alive idle span an answered connection
 // was waiting under, and the body's clock keeps the deadline no earlier
 // than what the body has delivered buys (`__body_deadline`).
-function __serve_read(c: __Conns, at: i32, scratch: u8[], opts: Config): (__Conns, boolean) {
+function __serve_read[D: async.Driver](drv: D, c: __Conns, at: i32, scratch: u8[], opts: Config): (__Conns, boolean) {
+  match (c.tls[at]) {
+    Secured(sess) => {
+      return __serve_read_tls(drv, c, at, sess, scratch, opts);
+    },
+    _ => {
+      return __serve_read_plain(c, at, scratch, opts);
+    }
+  }
+  return __serve_read_plain(c, at, scratch, opts);
+}
+
+// __serve_read_plain(c, at, scratch, opts) — `__serve_read` on the socket's
+// own bytes.
+function __serve_read_plain(c: __Conns, at: i32, scratch: u8[], opts: Config): (__Conns, boolean) {
   let buf: u8[] = c.bufs[at];
   let was_idle: boolean = buf.len() == 0;
   let lent: i32 = c.lent;
@@ -799,6 +881,81 @@ function __serve_read(c: __Conns, at: i32, scratch: u8[], opts: Config): (__Conn
   }
   c = __Conns { ...c, deadlines: c.deadlines.with(at, deadline) };
   return (__body_deadline(c, at, opts, monotonic_ns()), false);
+}
+
+// __serve_read_tls(drv, c, at, sess, scratch, opts) — `__serve_read` for a
+// TLS connection: each read goes through the session, what the handshake
+// answers is written at once (a short write pends it, as a response's),
+// and the application data it yields is what the buffer gains; the
+// peer's close_notify, a refused record and a failed write all finish
+// the connection. The scratch is never lent: the plaintext is the
+// session's own array.
+function __serve_read_tls[D: async.Driver](drv: D, c: __Conns, at: i32, sess: server.Session, scratch: u8[], opts: Config): (__Conns, boolean) {
+  let buf: u8[] = c.bufs[at];
+  let was_idle: boolean = buf.len() == 0;
+  let s: server.Session = sess;
+  let done: boolean = false;
+  let more: boolean = true;
+  while (more) {
+    __arr_set_len(scratch, __recv_room());
+    let n: i32 = tcp_recv_into(c.fds[at], scratch);
+    if (n == 0 - __eagain()) {
+      more = false;
+    } else if (n <= 0) {
+      more = false;
+      done = true;
+    } else {
+      let took: (__Conns, server.Session, u8[], boolean) = __tls_taken(drv, c, at, s, scratch[0:n], opts);
+      c = took.0;
+      s = took.1;
+      buf = buf.concat(took.2);
+      done = took.3;
+      more = !done && n == __recv_room() && buf.len() <= http.http_request_bytes_cap(opts.limits);
+      if (buf.len() > http.http_request_bytes_cap(opts.limits)) {
+        done = true;
+      }
+    }
+  }
+  c = __Conns { ...c, bufs: c.bufs.with(at, buf), tls: c.tls.with(at, Secured(s)) };
+  if (done) {
+    return (c, true);
+  }
+  let deadline: i64 = c.deadlines[at];
+  if (was_idle && buf.len() > 0) {
+    deadline = monotonic_ns() + opts.recv_deadline.as_nanos();
+  }
+  c = __Conns { ...c, deadlines: c.deadlines.with(at, deadline) };
+  return (__body_deadline(c, at, opts, monotonic_ns()), false);
+}
+
+// __tls_taken(drv, c, at, sess, raw, opts) — raw bytes off a TLS
+// connection given to its session: `(conns, session, data, done)`, the
+// plaintext they yielded and whether the connection is finished. What the
+// session answers is written through `__serve_send_raw`; a failure's
+// alert is written as far as the socket takes it.
+function __tls_taken[D: async.Driver](drv: D, c: __Conns, at: i32, sess: server.Session, raw: [u8], opts: Config): (__Conns, server.Session, u8[], boolean) {
+  let none: u8[] = [];
+  match (sess.read(raw)) {
+    Ok(step) => {
+      let done: boolean = step.closed;
+      if (step.output.len() > 0) {
+        let sent: (__Conns, __Sent) = __serve_send_raw(drv, c, at, step.output, opts);
+        c = sent.0;
+        match (sent.1) {
+          Failed => {
+            done = true;
+          },
+          _ => {}
+        }
+      }
+      return (c, step.session, step.data, done);
+    },
+    Err(f) => {
+      tcp_send_bytes(c.fds[at], f.alert);
+      return (c, sess, none, true);
+    }
+  }
+  return (c, sess, none, true);
 }
 
 // __bytes_from(buf, from) — buf[from, len) as its own array: the bytes
@@ -1132,7 +1289,7 @@ function __corks(rest: __Tail, persists: boolean, answered: i32, behind: __Behin
 // failed, the connection does not persist, or the reactor refused to
 // watch it again).
 function __serve_drain[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Config, clk: __Clock): (__Conns, i32, boolean) {
-  let sent: (__Conns, __Sent) = __serve_send(drv, c, at, c.pending[at], opts);
+  let sent: (__Conns, __Sent) = __serve_send_raw(drv, c, at, c.pending[at], opts);
   c = sent.0;
   match (sent.1) {
     Partial => {
@@ -1210,7 +1367,7 @@ function __serve_event[D: async.Driver](drv: D, c: __Conns, fd: i32, scratch: u8
   }
   let had: i32 = c.bufs[at].len();
   let backlog: boolean = c.backlog[at];
-  let read: (__Conns, boolean) = __serve_read(c, at, scratch, opts);
+  let read: (__Conns, boolean) = __serve_read(drv, c, at, scratch, opts);
   if (!read.1 && !backlog && read.0.bufs[at].len() == had) {
     return (read.0, -1, false);
   }
@@ -1280,6 +1437,27 @@ enum __Sent { Whole, Partial, Failed }
 // finishes the write on later waits. A write the kernel refuses (the
 // peer is gone) leaves the connection to the caller to close.
 function __serve_send[D: async.Driver](drv: D, c: __Conns, at: i32, payload: u8[], opts: Config): (__Conns, __Sent) {
+  match (c.tls[at]) {
+    Secured(sess) => {
+      match (sess.write(payload)) {
+        Ok(step) => {
+          return __serve_send_raw(drv, __Conns { ...c, tls: c.tls.with(at, Secured(step.session)) }, at, step.output, opts);
+        },
+        Err(_) => {
+          return (c, Failed);
+        }
+      }
+    },
+    _ => {}
+  }
+  return __serve_send_raw(drv, c, at, payload, opts);
+}
+
+// __serve_send_raw(drv, c, at, payload, opts) — `__serve_send` for bytes
+// that go on the wire as they are: a plain connection's, or a TLS
+// connection's records once sealed, which is also what its pending bytes
+// are.
+function __serve_send_raw[D: async.Driver](drv: D, c: __Conns, at: i32, payload: u8[], opts: Config): (__Conns, __Sent) {
   let n: i32 = tcp_send_bytes(c.fds[at], payload);
   if (n >= payload.len()) {
     return (c, Whole);
@@ -1299,6 +1477,12 @@ function __serve_send[D: async.Driver](drv: D, c: __Conns, at: i32, payload: u8[
 // and the builder emptied: only a short write copies, the rest it leaves
 // becoming the connection's pending bytes.
 function __serve_send_out[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Config): (__Conns, __Sent) {
+  match (c.tls[at]) {
+    Secured(sess) => {
+      return __serve_send(drv, c, at, buf_take_bytes(c.out), opts);
+    },
+    _ => {}
+  }
   let n: i32 = tcp_send_buf(c.fds[at], c.out, 0);
   if (n >= buf_len(c.out)) {
     buf_clear(c.out);
@@ -1366,6 +1550,12 @@ function __serve_produce[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Con
 // sends the piece itself. A file shorter than its head announced is
 // Failed, as the read path answers it.
 function __file_tail_send[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Config): (__Conns, __Sent, boolean) {
+  match (c.tls[at]) {
+    Secured(sess) => {
+      return (c, Whole, false);
+    },
+    _ => {}
+  }
   match (c.tails[at]) {
     FileTail(r, left) => {
       let want: i32 = 65536;
@@ -1665,7 +1855,7 @@ function __serve_expire[D: async.Driver](drv: D, c: __Conns, opts: Config, now: 
 // `state`, 0 while the body is being read, 1 once it ended whole, 2 once
 // it faulted; `rest`, the bytes the pull read past the body, the next
 // request's, for the loop to take back.
-struct __Body { state: Cell[i32], rest: Cell[u8[]] }
+struct __Body { state: Cell[i32], rest: Cell[u8[]], tls: Cell[Option[server.Session]] }
 
 // __Pull — a streamed body's reader: the connection; what a Content-Length
 // body still owes (`left`, -1 for a chunked body) or the chunked decoder's
@@ -1699,7 +1889,7 @@ function __body_next(p: __Pull): Option[u8[]] {
   }
   if (p.continue_owed.get() == 1) {
     p.continue_owed.set(0);
-    tcp_send(p.fd, "HTTP/1.1 100 Continue\r\n\r\n");
+    __pull_send(p, "HTTP/1.1 100 Continue\r\n\r\n".bytes());
   }
   while (p.body.state.get() == 0) {
     let bytes: u8[] = __body_take(p);
@@ -1737,17 +1927,97 @@ function __body_take(p: __Pull): u8[] {
     if (woke < 0) {
       return __body_fault(p, 408);
     }
-    let scratch: u8[] = __alloc_u8(__body_recv_size(p));
-    let n: i32 = tcp_recv_into(p.fd, scratch);
-    if (n > 0) {
-      p.got.set(p.got.get() + n);
-      return scratch.take(n);
-    }
-    if (n != 0 - __eagain()) {
-      return __body_fault(p, 400);
+    match (__pull_chunk(p)) {
+      Some(bytes) => {
+        return bytes;
+      },
+      None => {}
     }
   }
   return none;
+}
+
+// __pull_chunk(p) — one read off a readable connection: the bytes to hand
+// the body (none once it faulted), or None to wait for more, nothing
+// having arrived or a TLS record still arriving.
+function __pull_chunk(p: __Pull): Option[u8[]] {
+  let scratch: u8[] = __alloc_u8(__body_recv_size(p));
+  let n: i32 = tcp_recv_into(p.fd, scratch);
+  if (n > 0) {
+    p.got.set(p.got.get() + n);
+    let data: u8[] = __pull_read(p, scratch.take(n));
+    if (data.len() > 0 || p.body.state.get() != 0) {
+      return Some(data);
+    }
+    return None;
+  }
+  if (n != 0 - __eagain()) {
+    return Some(__body_fault(p, 400));
+  }
+  return None;
+}
+
+// __pull_read(p, raw) — raw bytes a pull read as the body sees them:
+// themselves on a plain connection, or the plaintext the session yields on
+// a TLS one, the body faulted when the session ended.
+function __pull_read(p: __Pull, raw: u8[]): u8[] {
+  match (p.body.tls.get()) {
+    Some(sess) => {
+      match (__pull_opened(p, sess, raw)) {
+        Some(data) => {
+          return data;
+        },
+        None => {
+          return __body_fault(p, 400);
+        }
+      }
+    },
+    None => {
+      return raw;
+    }
+  }
+  return raw;
+}
+
+// __pull_opened(p, sess, raw) — raw bytes a pull read, opened by the
+// session it holds: the plaintext (possibly none yet, a record still
+// arriving), or None when the peer closed the session or a record was
+// refused, its alert written. What the session answers is written as far
+// as the socket takes it.
+function __pull_opened(p: __Pull, sess: server.Session, raw: u8[]): Option[u8[]] {
+  match (sess.read(raw)) {
+    Ok(step) => {
+      p.body.tls.set(Some(step.session));
+      if (step.output.len() > 0) {
+        tcp_send_bytes(p.fd, step.output);
+      }
+      if (step.closed) {
+        return None;
+      }
+      return Some(step.data);
+    },
+    Err(f) => {
+      tcp_send_bytes(p.fd, f.alert);
+      return None;
+    }
+  }
+  return None;
+}
+
+// __pull_send(p, bytes) — bytes written on the pull's connection, sealed
+// by the session it holds.
+function __pull_send(p: __Pull, bytes: u8[]): void {
+  match (p.body.tls.get()) {
+    Some(sess) => {
+      if let Ok(step) = sess.write(bytes) {
+        p.body.tls.set(Some(step.session));
+        tcp_send_bytes(p.fd, step.output);
+      }
+    },
+    None => {
+      tcp_send_bytes(p.fd, bytes);
+    }
+  }
 }
 
 // __body_wait_ms(p) — how long the pull may wait for the next bytes: what
@@ -1857,6 +2127,7 @@ function __body_live(fl: __Flight): boolean {
 // again, and a connection whose body was not read whole does not persist,
 // since what is left of the body would be read as the next request.
 function __body_settled[D: async.Driver](drv: D, c: __Conns, at: i32, body: __Body): __Conns {
+  c = __tls_back(c, at, body);
   let rest: u8[] = body.rest.get();
   if (rest.len() > 0) {
     c = __Conns { ...c, bufs: c.bufs.with(at, rest.concat(__bytes_from(c.bufs[at], c.offs[at]))), offs: c.offs.with(at, 0) };
@@ -1864,6 +2135,36 @@ function __body_settled[D: async.Driver](drv: D, c: __Conns, at: i32, body: __Bo
   drv.watch(c.fds[at], 1);
   if (body.state.get() != 1) {
     return __Conns { ...c, keep: c.keep.with(at, false) };
+  }
+  return c;
+}
+
+// __tls_back(c, at, body) — the TLS session a streamed body's pull held,
+// back on the connection.
+function __tls_back(c: __Conns, at: i32, body: __Body): __Conns {
+  match (body.tls.get()) {
+    Some(sess) => {
+      body.tls.set(None);
+      return __Conns { ...c, tls: c.tls.with(at, Secured(sess)) };
+    },
+    None => {
+      return c;
+    }
+  }
+  return c;
+}
+
+// __tls_regained(c, at, fl) — the connection with its session back from
+// the flight's body once the pull is done with it, so the loop's reads
+// go through it again.
+function __tls_regained(c: __Conns, at: i32, fl: __Flight): __Conns {
+  match (fl.body) {
+    Some(b) => {
+      return __tls_back(c, at, b);
+    },
+    None => {
+      return c;
+    }
   }
   return c;
 }
@@ -1906,7 +2207,14 @@ function __serve_stream[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at
   let fd: i32 = c.fds[at];
   let buf: u8[] = c.bufs[at];
   let empty: u8[] = [];
-  let body: __Body = __Body { state: cell_new(0), rest: cell_new(empty) };
+  let body: __Body = __Body { state: cell_new(0), rest: cell_new(empty), tls: cell_new(None) };
+  match (c.tls[at]) {
+    Secured(sess) => {
+      body.tls.set(Some(sess));
+      c = __Conns { ...c, tls: c.tls.with(at, Lent) };
+    },
+    _ => {}
+  }
   let src: BodySource = __body_source(fd, h, __bytes_from(buf, c.offs[at] + h.len), opts, body);
   let req: HttpRequest = HttpRequest { ...h.request, body: stream.stream_from_source(src) };
   let served: i32 = c.served[at] + 1;
@@ -2030,7 +2338,7 @@ function __serve_held_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[]
     drv.unwatch(fd);
     return (c, fls);
   }
-  let read: (__Conns, boolean) = __serve_read(c, at, scratch, opts);
+  let read: (__Conns, boolean) = __serve_read(drv, __tls_regained(c, at, fls[fi]), at, scratch, opts);
   c = __serve_compact(read.0, at);
   if (read.1) {
     c = __serve_parked_eof(c, fd);
@@ -2296,7 +2604,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
   let accepting: boolean = true;
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle());
-  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1 };
+  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [], tls: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1 };
   let flights: __Flight[] = [];
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, line: "" };
@@ -2448,7 +2756,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
   let accepting: boolean = true;
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle());
-  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1 };
+  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [], tls: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1 };
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, line: "" };
   let events: i32[] = async.event_room(64);

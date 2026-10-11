@@ -192,7 +192,18 @@ TLS itself is `std/tls/keyschedule`, `keyshare`, `message`, `record`,
     `with_client_roots` (certificate_required for none, bad_certificate
     for a bad one) and `std/tls/client` presents `with_identity`. Gate: the
     handshake, client and server suites, and both Go interop tests with a
-    client certificate each way. Remaining: `std/serve`.
+    client certificate each way.
+
+    Then `std/serve`: `Config.with_tls(cfg)` runs every connection
+    through a `std/tls/server` session in the loop's own read and write
+    paths, with the handshake on the connection's reads before its first
+    request, responses sealed as the builder is written out, a file body
+    read and sealed in place of sendfile, and a streamed body pulled
+    through the session the handler holds while it reads. Gate:
+    `TestServeTLSAgainstGo` (Go's net/http client: a kept connection, an
+    upload, a response of many records, a file body, a streamed body with
+    Expect: 100-continue, a resumed connection, a plaintext client
+    refused) in the interpreter and on x86-64.
 12. **Interop and fuzzing on `net-nightly`.** OpenSSL 3.5, Go, rustls'
     mio examples at a pinned tag, and BoringSSL's `bssl` at a pinned
     commit, plus the tlsfuzzer smoke set. A missing tool fails the lane.
