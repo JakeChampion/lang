@@ -208,6 +208,12 @@ function fail(s: State, why: string): State {
   return State { ...s, ok: false, why: why };
 }
 
+// A refused attempt's state, continued from: the attempt produced nothing,
+// so only its verdict is undone.
+function retried(s: State): State {
+  return State { ...s, ok: true, why: "" };
+}
+
 function refused(s: State, why: string): Value {
   return Value { s: fail(s, why), id: 0 - 1 };
 }
@@ -2723,20 +2729,25 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   // declared in the standard library on a `string` receiver, and a view
   // reaches them as a lent box; the builtins every text has come first.
   if (owner == "" && (fa.field == "len" || fa.field == "append" || fa.field == "bytes" || fa.field == "as_bytes" || !ssasem.is_text(s.values[recv]))) {
-    let b: Value = builtin_call(c, fa, recv, s, statement);
-    if (b.s.ok) {
-      return b;
-    }
     // A receiver the builtin vocabulary does not own may still be a method
     // DECLARED on a generic receiver. The builtin is tried first so a
     // shape this boundary lowers itself keeps its op, and the declared
-    // method fills the rest; the refused attempt's state is dropped, so
-    // the retry produces the arguments once.
-    let folded: Value = folded_method(c, fa, recv, s, statement);
+    // method fills the rest. The builtin decides on the receiver's shape,
+    // the method's name and the arity before it produces anything, so a
+    // refusal that produced nothing continues into the declared method
+    // from the state it handed back; one that produced an argument first
+    // failed a type guard the declared method would fail too, and is final.
+    let before: i32 = s.values.len();
+    let b: Value = builtin_call(c, fa, recv, s, statement);
+    if (b.s.ok || b.s.values.len() != before) {
+      return b;
+    }
+    let why: string = b.s.why;
+    let folded: Value = folded_method(c, fa, recv, retried(b.s), statement);
     if (folded.s.ok) {
       return folded;
     }
-    return b;
+    return Value { s: State { ...folded.s, why: why }, id: 0 - 1 };
   }
   if (owner == "") {
     owner = "string";
@@ -4565,7 +4576,7 @@ function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: St
   while (k < names.len()) {
     if (names[k] != "_") {
       let v: Value = define(s, ssasem.variant_get(), [scrut], k, pv.type_name, fields[k]);
-      if (util.index_of_str(s.names, names[k]) >= 0) {
+      if (util.index_of_str(v.s.names, names[k]) >= 0) {
         s = replace(v.s, names[k], v.id);
       } else {
         s = bind(v.s, names[k], v.id);
@@ -4823,21 +4834,24 @@ function only_wildcards(m: ast.StmtMatch): boolean {
 // value a value block's arms carry to it, unchecked for a statement.
 function match_chain(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Chain {
   let none: Chain = Chain { arms: Arms { s: s, preds: [], envs: [], values: [] }, join: 0, count: 0 };
-  let scrut: Value = expr(m.scrutinee, s, typeinfo.unchecked());
-  s = scrut.s;
+  let produced: Value = expr(m.scrutinee, s, typeinfo.unchecked());
+  // The id alone: a Value kept across the arms would keep the state it
+  // carries, and every arm's first append would copy.
+  let scrut: i32 = produced.id;
+  s = produced.s;
   if (!s.ok) {
     return Chain { ...none, arms: Arms { ...none.arms, s: s } };
   }
-  let owner: string = union_name(s.values[scrut.id]);
-  m = inhabited_arms(m, s.values[scrut.id], s);
+  let owner: string = union_name(s.values[scrut]);
+  m = inhabited_arms(m, s.values[scrut], s);
   if ((owner == "" || union_layout(s, owner) == 0) && !only_wildcards(m)) {
     return Chain { ...none, arms: Arms { ...none.arms, s: fail(s, "unsupported match scrutinee") } };
   }
   let closes: i32 = 0 - 1;
-  if (total_match(s, m, s.values[scrut.id], union_layout(s, owner))) {
+  if (total_match(s, m, s.values[scrut], union_layout(s, owner))) {
     closes = m.arms.len() - 1;
   }
-  s = learn_escaping(m, s, s.values[scrut.id], owner);
+  s = learn_escaping(m, s, s.values[scrut], owner);
   let join: i32 = s.next_block;
   s = State { ...s, next_block: join + 1 };
   let count: i32 = s.names.len();
@@ -4846,7 +4860,7 @@ function match_chain(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Chain {
   let arms: Arms = Arms { s: s, preds: [], envs: [], values: [] };
   let i: i32 = 0;
   while (i < m.arms.len() && arms.s.ok && arms.s.live) {
-    arms = match_arm(m.arms[i], scrut.id, owner, arms, entry, join, count, scope, i == closes, ty);
+    arms = match_arm(m.arms[i], scrut, owner, arms, entry, join, count, scope, i == closes, ty);
     i = i + 1;
   }
   return Chain { arms: arms, join: join, count: count };
@@ -5104,12 +5118,13 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
   s = terminate(s, t_brif(test.id, body_id, exit_id));
 
   let opened: State = open(State { ...s, vals: advanced }, body_id, [cond_end]);
-  // The header's `step < n` test is the bounds check, so neither read repeats it.
-  let item: Value = define(opened, ssasem.array_get(), [it, step.id], 1, "", elem);
-  // A string's element is one byte, read rather than projected.
+  // The header's `step < n` test is the bounds check, so neither read repeats
+  // it. A string's element is one byte, read rather than projected.
+  let read: i32 = ssasem.array_get();
   if (text) {
-    item = define(opened, ssasem.str_index(), [it, step.id], 1, "", elem);
+    read = ssasem.str_index();
   }
+  let item: Value = define(opened, read, [it, step.id], 1, "", elem);
   // The element is a checker binding for the body's span as well: every type
   // this boundary reads from the checker is read in s.scope. A pattern header
   // destructures the element the way a declaration does.
