@@ -150,3 +150,21 @@ live set at a block rather than the tracked set, computed in one pass, and
 that is a different walk, not a tuning of this one. The fixpoint's share of
 a verifying compile is accepted for now; the budget question for the
 default compile is open.
+
+A profile of a compiler built without semantic inlining (`FERN_SEM_INLINE=`),
+so that callgrind attributes cost per function, puts the 4.64 G of the
+certifier as:
+
+| Function | Instructions | Share |
+|---|---:|---:|
+| `settle`, the fixpoint | 3.54 G | 76% |
+| of which `entry_row` (the meet over predecessors) | 1.69 G | 36% |
+| of which `feed_successors` (`put_row`, `row_equal`, `filled`) | 1.37 G | 30% |
+| of which `apply`, the accounting itself | 0.22 G | 5% |
+| `walk_of` (regions, origins, touches, takes) | 0.67 G | 14% |
+
+The accounting is 5% of the certifier; the rows are three quarters. A row
+restricted to the values live at the block, with liveness taken from
+`ssalive` (the register allocator computes it for the same SSA and the
+liveness variant above paid for computing it again), takes the rows'
+share down to the size of the live sets. That is the next step.
