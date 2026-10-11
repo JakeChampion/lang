@@ -137,6 +137,55 @@ function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
   return ssa.SFunc { ...f, blocks: blocks };
 }
 
+// with_join_phi gives the join after `require`'s branch a phi for the phi
+// controls to corrupt: zero from the path that returns, and the exit's result
+// from the path that exits. The lowering leaves no phi there of its own.
+function with_join_phi(f: ssa.SFunc): ssa.SFunc {
+  let zero: i32 = 0 - 1;
+  let exit_blocks: i32[] = [];
+  let exits: i32[] = [];
+  for b in f.blocks {
+    for op in b.insts {
+      if (b.id == f.entry && op.kind_tag == 1 && op.imm == 0) {
+        zero = op.result;
+      }
+      if (op.kind_tag == 50) {
+        exit_blocks = exit_blocks.append(b.id);
+        exits = exits.append(op.result);
+      }
+    }
+  }
+  let blocks: ssa.SBlock[] = [];
+  let added: i32 = 0;
+  for b in f.blocks {
+    if (b.preds.len() == 2) {
+      let args: i32[] = [];
+      for p in b.preds {
+        let at: i32 = 0;
+        while (at < exit_blocks.len() && exit_blocks[at] != p) {
+          at = at + 1;
+        }
+        if (at < exits.len()) {
+          args = args.append(exits[at]);
+        } else {
+          args = args.append(zero);
+        }
+      }
+      let phi = ssa.SInst { kind_tag: 8, result: f.nvals, args: args, imm: 0, str: "" };
+      let insts: ssa.SInst[] = [phi];
+      for op in b.insts {
+        insts = insts.append(op);
+      }
+      blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
+      added = added + 1;
+    } else {
+      blocks = blocks.append(b);
+    }
+  }
+  require(added == 1 && zero >= 0 && exits.len() == 1, 53);
+  return ssa.SFunc { ...f, blocks: blocks, nvals: f.nvals + 1 };
+}
+
 function target_checks(target: string): void {
   let source = "@noinline\nfunction require(ok: boolean, id: i32): void { if (!ok) { exit(id); } }\nfunction main(): i32 { require(true, 9); return 0; }\n";
   let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
@@ -154,9 +203,15 @@ function target_checks(target: string): void {
   outcome_controls(f);
   expect(f, true, "proved scalar zero-or-exit effects", 6);
   let reasons = ["unsupported scalar helper effect", "unsupported scalar helper effect", "unsupported scalar helper effect", "unavailable scalar helper operand", "unsupported scalar helper effect", "unsupported scalar helper effect", "scalar helper return not proven zero", "unavailable scalar phi operand", "invalid scalar helper parameter", "invalid scalar helper phi", "unavailable scalar phi operand", "invalid scalar helper definition", "scalar helper return not proven zero", "unavailable scalar helper operand"];
+  let phi_form = with_join_phi(f);
+  expect(phi_form, true, "proved scalar zero-or-exit effects", 52);
   let i: i32 = 0;
   while (i < reasons.len()) {
-    expect(changed(f, i), false, reasons[i], 10 + i);
+    if (i == 7 || i == 9 || i == 10) {
+      expect(changed(phi_form, i), false, reasons[i], 10 + i);
+    } else {
+      expect(changed(f, i), false, reasons[i], 10 + i);
+    }
     i = i + 1;
   }
   let reverse: ssa.SBlock[] = [];
