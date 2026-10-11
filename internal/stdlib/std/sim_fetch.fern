@@ -210,6 +210,9 @@ impl fetch.Transport for Net {
   function now_ns(self: Net): i64 {
     return self.drv.clock_ns.get();
   }
+  function wall_ms(self: Net): i64 {
+    return self.drv.clock_ns.get() / 1000000;
+  }
   function lookup(self: Net, host: string, checked: boolean): Result[fetch.Lookup, dns.DnsError] {
     let found: net.IpAddr[] = __addrs_of(self, host);
     if (found.len() == 0) {

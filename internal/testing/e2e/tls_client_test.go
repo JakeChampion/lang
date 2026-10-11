@@ -169,7 +169,7 @@ function show(label: string, r: Result[HttpResponse, fetch.FetchError]): void {
 }
 
 function proxies(https_proxy: string): fetch.Policy {
-  return fetch.Policy { public_only: false, proxies: fetch.ProxyEnv { http_proxy: "", https_proxy: https_proxy, no_proxy: "" }, roots: None };
+  return fetch.Policy { public_only: false, proxies: fetch.ProxyEnv { http_proxy: "", https_proxy: https_proxy, no_proxy: "" }, roots: None, jar: None };
 }
 
 // trusting is a policy with its own roots in place of the machine's.

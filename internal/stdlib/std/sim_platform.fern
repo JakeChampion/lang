@@ -22,15 +22,22 @@ import "std/sim";
 import "std/sim_fetch";
 import "std/fetch";
 import "std/mock_platform";
+import "std/http/cookie";
 
 // `SimPlatform` — the simulated platform: the driver whose clock and PRNG
 // it reads, the network its `http` sends over, and the mock whose canned
 // table and call log it keeps its configuration and record in.
-pub struct SimPlatform { drv: sim.Sim, net: sim_fetch.Net, mock: mock_platform.MockPlatform }
+pub struct SimPlatform { drv: sim.Sim, net: sim_fetch.Net, mock: mock_platform.MockPlatform, jar: Option[cookie.Jar] }
 
 // `new(drv, net)` — a sim platform over `drv` and `net`, with nothing set.
 pub function new(drv: sim.Sim, net: sim_fetch.Net): SimPlatform {
-  return SimPlatform { drv: drv, net: net, mock: mock_platform.mock_platform_new() };
+  return SimPlatform { drv: drv, net: net, mock: mock_platform.mock_platform_new(), jar: None };
+}
+
+// `(p).with_jar(jar)` — the platform with `jar` (std/http/cookie), as
+// `platform.Host.with_jar`: its `http` carries and stores cookies.
+pub function (p: SimPlatform) with_jar(jar: cookie.Jar): SimPlatform {
+  return SimPlatform { ...p, jar: Some(jar) };
 }
 
 impl platform.Platform for SimPlatform {
@@ -72,7 +79,7 @@ impl platform.Platform for SimPlatform {
   // addresses only, the network's pool keeping the connection.
   function http(self: SimPlatform, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
     self.mock.record("http", req.method + " " + req.url);
-    return fetch.send_public_on(self.net, req);
+    return fetch.send_on(self.net, req, fetch.Policy { ...fetch.public_policy(), jar: self.jar });
   }
 }
 
