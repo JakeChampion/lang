@@ -2841,8 +2841,8 @@ function __upgrading(resp: HttpResponse): boolean {
 // `stream_bodies` says. An upgrade the loop cannot serve — no
 // `Sec-WebSocket-Key` — is not matched here, so it reaches the handler as
 // an ordinary request and the connection persists as any request's would;
-// a handshake whose handler answers anything but 101 ends after the
-// response.
+// a matched handshake the handler declines (a response that is not a 101)
+// is answered and its connection kept, as `__upgrade_head` says.
 function __upgrade_request(req: HttpRequest): boolean {
   if (!req.headers.has("sec-websocket-key") || !req.headers.has("upgrade")) {
     return false;

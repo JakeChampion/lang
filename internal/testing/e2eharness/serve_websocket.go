@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -214,9 +215,51 @@ func CheckWebSocketSequential(t *testing.T, addr string) {
 	c.expect(8, []byte{0x03, 0xea}, "an unknown opcode closed 1002")
 	c.conn.Close()
 
+	checkDeclinedHandshakeKeepsConnection(t, addr)
+
 	if resp := HTTPRoundTrip(t, addr, "/ok", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
 		t.Fatalf("/ok after the sessions: want 200, got\n%s", resp)
 	}
+}
+
+// checkDeclinedHandshakeKeepsConnection sends a valid handshake the
+// handler declines — a `Sec-WebSocket-Key` is present, so the loop
+// streams it as an upgrade (length -2), but `Sec-WebSocket-Version: 8`
+// makes `accept` answer 426 rather than 101. The loop must keep the
+// connection: `__upgrade_head` carries the request's keep-alive and the
+// declined branch restores it for the -2 head, so a plain request follows
+// on the same connection. Without the restore the 426 would close it.
+func checkDeclinedHandshakeKeepsConnection(t *testing.T, addr string) {
+	t.Helper()
+	conn := dialRaw(t, addr)
+	defer conn.Close()
+	key := base64.StdEncoding.EncodeToString([]byte("0123456789abcdef"))
+	handshake := "GET /ws HTTP/1.1\r\nHost: h\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: " + key + "\r\nSec-WebSocket-Version: 8\r\n\r\n"
+	if _, err := io.WriteString(conn, handshake); err != nil {
+		t.Fatal(err)
+	}
+	r := bufio.NewReader(conn)
+	declined, err := http.ReadResponse(r, nil)
+	if err != nil {
+		t.Fatalf("declined handshake: %v", err)
+	}
+	if declined.StatusCode != http.StatusUpgradeRequired {
+		t.Fatalf("declined handshake: status %d, want 426", declined.StatusCode)
+	}
+	_, _ = io.Copy(io.Discard, declined.Body)
+	declined.Body.Close()
+	if _, err := io.WriteString(conn, "GET /ok HTTP/1.1\r\nHost: h\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := http.ReadResponse(r, nil)
+	if err != nil {
+		t.Fatalf("request after a declined handshake (connection not kept): %v", err)
+	}
+	if after.StatusCode != http.StatusOK {
+		t.Fatalf("request after a declined handshake: status %d, want 200", after.StatusCode)
+	}
+	_, _ = io.Copy(io.Discard, after.Body)
+	after.Body.Close()
 }
 
 // CheckWebSocketOverlap drives WebSocketServerSource with a session held
