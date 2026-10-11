@@ -1198,7 +1198,7 @@ function list_text(xs: string[]): string {
 // per-module cache keyed on it moves whenever a unit's lowering does, including
 // when that lowering depends on another module's body.
 pub function lowered_digest(cache: irtables.LowerResult[]): string {
-  let d: util.Digest = util.digest_start();
+  let d: i64 = util.digest_start();
   for r in cache {
     d = util.roll(util.roll(util.roll(util.roll(d, r.n_locals), r.n_params), r.result_kind), r.ops.len());
     d = util.roll_text(util.roll(util.roll(d, digest_flags(r.superseded, r.erased_wide)), digest_flags(r.ok, false)), r.name);

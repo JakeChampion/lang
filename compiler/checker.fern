@@ -13429,30 +13429,42 @@ function unbound_map_arg_diags(c: ast.ExprCall, method: string, mt: typeinfo.Typ
 // lent there (native's storesArgument); a read borrows its key, so a view is.
 // A literal's own entries are the E045 check's, apart from the view.
 function map_arg_diags(c: ast.ExprCall, method: string, mt: typeinfo.TypeMap, s: Scope, out: util.Diag[]): util.Diag[] {
-  let slots: typeinfo.Type[] = [];
-  if (method == "insert" || method == "get_or") {
-    slots = [mt.key, mt.value];
-  }
-  if (method == "get" || method == "has" || method == "without") {
-    slots = [mt.key];
-  }
+  let slots: typeinfo.Type[] = map_arg_slots(method, mt);
   if (slots.len() == 0 || c.args.len() != slots.len()) {
     return out;
   }
-  let stores: boolean = method == "insert";
   let ii: i32 = 0;
   while (ii < slots.len()) {
-    let it: typeinfo.Type = check_expr(c.args[ii], s);
-    let lent: boolean = !stores && view_arg_borrow(it, slots[ii]);
-    let mismatch: boolean = stores && is_str_view(it) && is_owned_string(slots[ii]);
-    if (!literal_insert(c) && !is_unknown(slots[ii]) && !is_unknown(it)) {
-      out = util.append_diags(out, int_dest_range_diags(c.args[ii], slots[ii]));
-      mismatch = !lent && !settles_to(c.args[ii], slots[ii], s) && !coercible(it, slots[ii], s);
-    }
-    if (mismatch) {
-      out = out.append(dg_at("E038", "argument " + util.i32_to_string(ii + 1) + " to \"" + method + "\": expected " + type_label(slots[ii]) + ", got " + type_label(it) + str_copy_hint(it, slots[ii]), expr_line(c.args[ii]), expr_col(c.args[ii])));
-    }
+    out = map_arg_diag(c, ii, method, slots[ii], s, out);
     ii = ii + 1;
+  }
+  return out;
+}
+
+// The types a Map method's arguments are checked against, none for a method
+// whose arguments are not checked here.
+function map_arg_slots(method: string, mt: typeinfo.TypeMap): typeinfo.Type[] {
+  if (method == "insert" || method == "get_or") {
+    return [mt.key, mt.value];
+  }
+  if (method == "get" || method == "has" || method == "without") {
+    return [mt.key];
+  }
+  return [];
+}
+
+function map_arg_diag(c: ast.ExprCall, ii: i32, method: string, slot: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {
+  let arg: ast.Expr = c.args[ii];
+  let it: typeinfo.Type = check_expr(arg, s);
+  let stores: boolean = method == "insert";
+  let lent: boolean = !stores && view_arg_borrow(it, slot);
+  let mismatch: boolean = stores && is_str_view(it) && is_owned_string(slot);
+  if (!literal_insert(c) && !is_unknown(slot) && !is_unknown(it)) {
+    out = util.append_diags(out, int_dest_range_diags(arg, slot));
+    mismatch = !lent && !settles_to(arg, slot, s) && !coercible(it, slot, s);
+  }
+  if (mismatch) {
+    out = out.append(dg_at("E038", "argument " + util.i32_to_string(ii + 1) + " to \"" + method + "\": expected " + type_label(slot) + ", got " + type_label(it) + str_copy_hint(it, slot), expr_line(arg), expr_col(arg)));
   }
   return out;
 }

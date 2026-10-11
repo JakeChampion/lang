@@ -11547,8 +11547,8 @@ function lc_label(text: string): string {
 // ` from=exit` when the exit() op reached it (the frames above the call are
 // never unwound, so what they hold is not a leak the program could have
 // freed), and under FERN_SANITIZE the leak verdict after it — plus the
-// `$__fern_proc_exit` wrapper the exit() op reports through before exiting
-// ($__fern_start reports for itself, start_func);
+// `$__fern_proc_exit` wrapper the exit() op reaches, which reports before
+// exiting ($__fern_start reports on main's return and exits raw);
 // preview1_imports renames the raw import to $__fern_proc_exit_raw under the
 // same flag. Mode 0's; a component reports from its run entry and its exit
 // shim instead. The line is built in fixed scratch below the data pool (the
@@ -11563,16 +11563,6 @@ pub function lc_report_and_exit_wrapper(lc: boolean, sanitize: boolean, set_args
     tables = dir_off_release();
   }
   return lc_report_funcs(sanitize, set_args, tables) + "  (func $__fern_proc_exit (param $c i32)\n    (global.set $__fern_lc_exited (i32.const 1))\n    (call $__fern_lc_report)\n    (call $__fern_proc_exit_raw (local.get $c)))\n";
-}
-
-// start_func is mode 0's `_start`. Under the census, a main that returns
-// reports and then exits through the raw import, so its line does not end
-// ` from=exit`, which only the exit() op's wrapper sets.
-function start_func(lc: boolean): string {
-  if (!lc) {
-    return "  (func $__fern_start (call $__fern_proc_exit (call $main)))\n";
-  }
-  return "  (func $__fern_start (local $c i32)\n    (local.set $c (call $main))\n    (call $__fern_lc_report)\n    (call $__fern_proc_exit_raw (local.get $c)))\n";
 }
 
 // fdt_release frees a component's handle table (fd_table_funcs). Writing the
@@ -12482,7 +12472,7 @@ function preview1_imports(needs: string[], lc: boolean): string {
   if (lc) {
     // Census (#5362): the raw import is renamed so the flag-gated
     // reporting $__fern_proc_exit (lc_report_and_exit_wrapper) can define the
-    // name every existing call site — the exit op and $__fern_start — uses.
+    // name the exit op calls; $__fern_start calls the raw import.
     parts = parts.append("  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $__fern_proc_exit_raw (param i32)))\n");
   } else {
     parts = parts.append("  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $__fern_proc_exit (param i32)))\n");
@@ -13641,17 +13631,19 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // component modes have no preview1 proc_exit to wrap. Empty when the
     // flag is off.
     parts = parts.append(lc_report_and_exit_wrapper(lc, sw.sanitize, need(needs, "@calls_set_args"), need(needs, "reader_seek")));
-    parts = parts.append(start_func(lc));
     parts = parts.append(xps);
     // `main` is exported beside `_start` so a host can read its result
     // directly (`wasmtime run --invoke main`): proc_exit refuses a status
     // outside [0..126), so through `_start` alone a result of 126 or more
-    // is unreadable. That call never reaches $__fern_proc_exit, so under the census
-    // the export reports on its way out.
+    // is unreadable. Under the census both report on main's return, and
+    // `_start` exits through the raw import: the reporting $__fern_proc_exit
+    // marks its line ` from=exit`, which is the exit() op's alone.
     if (lc) {
       parts = parts.append("  (func $__fern_main_reporting (result i32) (local $r i32)\n    (local.set $r (call $main))\n    (call $__fern_lc_report)\n    (local.get $r))\n");
+      parts = parts.append("  (func $__fern_start (call $__fern_proc_exit_raw (call $__fern_main_reporting)))\n");
       parts = parts.append("  (export \"main\" (func $__fern_main_reporting))\n");
     } else {
+      parts = parts.append("  (func $__fern_start (call $__fern_proc_exit (call $main)))\n");
       parts = parts.append("  (export \"main\" (func $main))\n");
     }
     parts = parts.append("  (export \"_start\" (func $__fern_start)))\n");
