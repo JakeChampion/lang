@@ -23,6 +23,17 @@ name: Net nightly
 # reuse, `Expect: 100-continue`, a chunked upload) and h2load (#9855). It
 # passes or fails rather than recording, and installs every server it
 # needs, so a missing one fails the job instead of skipping its cases.
+#
+# The `tls-interop` job runs scripts/net-tls-interop: the Fern TLS 1.3
+# client against OpenSSL's s_server, Go's crypto/tls, rustls' tlsserver-mio
+# example at a pinned tag and BoringSSL's bssl at a pinned commit, and the
+# Fern server under Go's client, curl, openssl s_client, tlsclient-mio and
+# bssl, with a client certificate each way and a resumed session each way
+# (#9858). Its cases pass or fail, and its report (handshakes per second
+# and bulk throughput, from openssl s_time, curl and the clients' own
+# timing) is appended to the commit's note like the bench's. The two
+# peers built from source are cached on the script's hash, which holds
+# their pins.
 
 on:
   schedule:
@@ -94,3 +105,37 @@ jobs:
         run: sudo apt-get install -y --no-install-recommends nginx h2o nghttp2-client
       - name: Run the client and server against them
         run: scripts/net-interop
+
+  tls-interop:
+    name: net-tls-interop-x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      MISE_ENV: net-nightly
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      # openssl, curl, cmake and Go are the runner image's; the Rust
+      # toolchain that builds rustls' examples is mise.net-nightly.toml's,
+      # and ninja builds bssl. The report names the versions.
+      - name: Install rust (mise.net-nightly.toml) and ninja
+        run: |
+          mise install rust
+          sudo apt-get install -y --no-install-recommends ninja-build
+      - name: Restore the peers built from source
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/fern-tls-interop
+          key: tls-interop-peers-${{ runner.os }}-${{ hashFiles('scripts/net-tls-interop') }}
+      - name: Run the client and server against OpenSSL, Go, rustls and BoringSSL
+        run: scripts/net-tls-interop "${{ runner.temp }}/tls-report.txt"
+      - name: Record the report in refs/notes/perf
+        if: github.ref == 'refs/heads/main'
+        run: scripts/perf-history record net-tls-interop "${{ runner.temp }}/tls-report.txt"
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: tls-report-x86_64
+          path: ${{ runner.temp }}/tls-report.txt
+          if-no-files-found: warn

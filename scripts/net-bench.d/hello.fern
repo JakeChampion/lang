@@ -3,15 +3,25 @@
 // note, so the loop's own cost is what the load generator sees.
 // scripts/net-interop also uploads to it: a request with a body is
 // answered with the body's length and text, so an upload sent chunked or
-// behind `Expect: 100-continue` shows whether it arrived whole. The caps
-// are lifted for the load generator, which is one client holding
-// thousands of connections.
+// behind `Expect: 100-continue` shows whether it arrived whole. With
+// TLS_CERT and TLS_KEY set it speaks TLS, requiring a client certificate
+// under the roots TLS_CLIENT_CA names when that is set too, and /bulk is
+// a 16 MiB body: scripts/net-tls-interop's server cases and its
+// throughput record. The caps are lifted for the load generator, which
+// is one client holding thousands of connections.
 import "std/http";
 import "std/serve";
 import "std/platform";
+import "std/string";
+import "std/tls/identity";
+import "std/tls/server";
+import "std/tls/verify";
 import "core/int";
 
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+  if (req.path == "/bulk") {
+    return http.bytes(200, "x".repeat(16777216).bytes());
+  }
   if (req.body_len() == 0) {
     return http.ok("hello");
   }
@@ -45,7 +55,91 @@ function port(): i32 {
   return 8080;
 }
 
+function identity_from(cert_path: string, key_path: string): Result[identity.Identity, string] {
+  let cert: string = "";
+  match (read_file(cert_path)) {
+    Ok(text) => {
+      cert = text;
+    },
+    Err(_) => {
+      return Err("cannot read " + cert_path);
+    }
+  }
+  let key: string = "";
+  match (read_file(key_path)) {
+    Ok(text) => {
+      key = text;
+    },
+    Err(_) => {
+      return Err("cannot read " + key_path);
+    }
+  }
+  match (identity.from_pem(cert, key)) {
+    Ok(id) => {
+      return Ok(id);
+    },
+    Err(e) => {
+      return Err(e.message());
+    }
+  }
+  return Err("identity");
+}
+
+// secured is opts serving TLS when TLS_CERT and TLS_KEY name the
+// certificate chain and key, opts itself when neither is set.
+function secured(opts: serve.Config): Result[serve.Config, string] {
+  let cert_path: string = "";
+  match (env("TLS_CERT")) {
+    Some(p) => {
+      cert_path = p;
+    },
+    None => {
+      return Ok(opts);
+    }
+  }
+  match (env("TLS_KEY")) {
+    Some(key_path) => {
+      let id: identity.Identity = identity_from(cert_path, key_path)?;
+      return Ok(opts.with_tls(client_roots(server.config(id))?));
+    },
+    None => {
+      return Err("TLS_CERT is set without TLS_KEY");
+    }
+  }
+  return Ok(opts);
+}
+
+// client_roots is cfg requiring a client certificate under the roots
+// TLS_CLIENT_CA names, cfg itself when it is unset.
+function client_roots(cfg: server.Config): Result[server.Config, string] {
+  match (env("TLS_CLIENT_CA")) {
+    Some(path) => {
+      match (verify.roots_from_file(path)) {
+        Ok(roots) => {
+          return Ok(cfg.with_client_roots(roots));
+        },
+        Err(e) => {
+          return Err(e.message());
+        }
+      }
+    },
+    None => {
+      return Ok(cfg);
+    }
+  }
+  return Ok(cfg);
+}
+
 function main(): i32 {
   let opts: serve.Config = serve.Config { ...serve.config(), max_connections: 16384, max_connections_per_ip: 0 };
-  return serve.supervise(port(), opts, handle);
+  match (secured(opts)) {
+    Ok(o) => {
+      return serve.supervise(port(), o, handle);
+    },
+    Err(e) => {
+      eprint("hello: " + e);
+      return 2;
+    }
+  }
+  return 2;
 }

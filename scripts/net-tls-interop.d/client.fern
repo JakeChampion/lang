@@ -1,0 +1,270 @@
+// The Fern TLS client scripts/net-tls-interop runs against OpenSSL's
+// s_server and Go's crypto/tls server: one line per case, the same lines
+// whichever server answers, so the script compares them with one
+// expected text. Every server answers GET /hello with "hello".
+//
+//   get      std/fetch over HTTPS, the roots from SSL_CERT_FILE
+//   socket   a std/tls/client session on a socket of its own, with ALPN
+//   resume   another, resumed from the ticket the first was issued
+//   mtls     the server requiring a client certificate, shown one
+//   nocert   the same server, shown none, which it refuses
+//   bulk     the 16 MiB body of /bulk over std/fetch, with its time, when
+//            BULK is set: not every server has one to give
+//   handshakes  twenty connections, with their time
+//
+// A body is shown by its first line: the whole of a hello, the heading of
+// a page of connection details. The protocol ALPN agreed on follows the
+// socket cases' answers when there is one.
+import "std/fetch";
+import "std/http";
+import "std/string";
+import "std/time";
+import "std/tls/client";
+import "std/tls/identity";
+import "std/tls/verify";
+import "core/int";
+
+struct Outcome { answer: string, tickets: client.Ticket[], resumed: boolean }
+
+function setting(name: string, fallback: string): string {
+  match (env(name)) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
+function port_of(name: string): i32 {
+  match (int.parse_int_radix(setting(name, "0"), 10)) {
+    Some(n) => {
+      return n;
+    },
+    None => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+// first_line is the first line of a body with something on it: the whole
+// of a hello, the heading of a page of connection details.
+function first_line(body: string): string {
+  let lines: string[] = body.lines_non_empty();
+  if (lines.len() == 0) {
+    return "<empty>";
+  }
+  return lines[0].trim();
+}
+
+// The status and body of `answer`, or the error.
+function line(answer: Result[HttpResponse, fetch.FetchError]): string {
+  match (answer) {
+    Ok(resp) => {
+      match (resp.body_text()) {
+        Some(text) => {
+          return resp.status.to_string() + " " + first_line(text);
+        },
+        None => {
+          return resp.status.to_string() + " <not utf-8>";
+        }
+      }
+    },
+    Err(e) => {
+      return "error " + e.message();
+    }
+  }
+  return "";
+}
+
+function identity_from(cert_path: string, key_path: string): Result[identity.Identity, string] {
+  let cert: string = "";
+  match (read_file(cert_path)) {
+    Ok(text) => {
+      cert = text;
+    },
+    Err(_) => {
+      return Err("cannot read " + cert_path);
+    }
+  }
+  let key: string = "";
+  match (read_file(key_path)) {
+    Ok(text) => {
+      key = text;
+    },
+    Err(_) => {
+      return Err("cannot read " + key_path);
+    }
+  }
+  match (identity.from_pem(cert, key)) {
+    Ok(id) => {
+      return Ok(id);
+    },
+    Err(e) => {
+      return Err(e.message());
+    }
+  }
+  return Err("identity");
+}
+
+// answered is the status on the response's first line and the first line
+// of its body.
+function answered(raw: u8[]): string {
+  let text: string = string_from_bytes_unchecked(raw);
+  if (!text.starts_with("HTTP/1.")) {
+    return "no response";
+  }
+  let (head, rest) = text.split_at(9);
+  let (code, tail) = rest.split_at(3);
+  let at: i32 = tail.index_of("\r\n\r\n");
+  if (at < 0) {
+    return code + " <no body>";
+  }
+  let (headers, body) = tail.split_at(at + 4);
+  return code + " " + first_line(body);
+}
+
+// exchange sends the request and reads the response to the server's
+// close.
+function exchange(conn: client.Connection): Result[(client.Connection, u8[]), client.TlsError] {
+  let c: client.Connection = conn.send("GET /hello HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n".bytes())?;
+  let out: u8[] = [];
+  let going: boolean = true;
+  while (going) {
+    let got: client.Received = c.recv(time.duration_seconds(10 as i64))?;
+    let i: i32 = 0;
+    while (i < got.data.len()) {
+      out = out.append(got.data[i]);
+      i = i + 1;
+    }
+    c = got.conn;
+    going = !got.ended;
+  }
+  return Ok((c, out));
+}
+
+// over is one request on a session of its own at `port`.
+function over(cfg: client.Config, port: i32): Result[Outcome, client.TlsError] {
+  let conn: client.Connection = client.connect("localhost", port, cfg, time.duration_seconds(10 as i64))?;
+  let (c, raw) = exchange(conn)?;
+  c.close();
+  let alpn: string = "";
+  if (c.session.alpn().len() > 0) {
+    alpn = " " + c.session.alpn();
+  }
+  return Ok(Outcome { answer: answered(raw) + alpn, tickets: c.tickets, resumed: c.session.resumed() });
+}
+
+function describe(r: Result[Outcome, client.TlsError], resumption: boolean): string {
+  match (r) {
+    Ok(o) => {
+      if (!resumption) {
+        return o.answer;
+      }
+      if (o.resumed) {
+        return "resumed " + o.answer;
+      }
+      return "fresh " + o.answer;
+    },
+    Err(e) => {
+      return "error " + e.message();
+    }
+  }
+  return "";
+}
+
+function millis_since(started: Instant): string {
+  return time.instant_now().duration_since(started).as_millis().to_string();
+}
+
+// bulk is the body of /bulk read whole, and the time that took.
+function bulk(base: string): string {
+  let started: Instant = time.instant_now();
+  let roomy: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 17 * 1048576 };
+  match (fetch.send(fetch.get(base + "/bulk").with_limits(roomy))) {
+    Ok(resp) => {
+      return resp.body_bytes().len().to_string() + " bytes " + millis_since(started) + " ms";
+    },
+    Err(e) => {
+      return "error " + e.message();
+    }
+  }
+  return "";
+}
+
+// handshakes is twenty full handshakes in turn, and the time they took.
+function handshakes(cfg: client.Config, port: i32): string {
+  let started: Instant = time.instant_now();
+  let n: i32 = 0;
+  while (n < 20) {
+    match (client.connect("localhost", port, cfg, time.duration_seconds(10 as i64))) {
+      Ok(c) => {
+        c.close();
+      },
+      Err(e) => {
+        return "error " + e.message();
+      }
+    }
+    n = n + 1;
+  }
+  return "20 in " + millis_since(started) + " ms";
+}
+
+function main(): i32 {
+  let base: string = setting("BASE", "https://localhost:8443");
+  print("get: " + line(fetch.send(fetch.get(base + "/hello"))));
+  let roots: verify.Roots = verify.Roots { certs: [] };
+  match (verify.roots_from_file(setting("CA", "ca.pem"))) {
+    Ok(r) => {
+      roots = r;
+    },
+    Err(e) => {
+      print("roots: " + e.message());
+      return 2;
+    }
+  }
+  let cfg: client.Config = client.config("localhost", roots).with_alpn(["http/1.1"]);
+  let port: i32 = port_of("PORT");
+  let first: Result[Outcome, client.TlsError] = over(cfg, port);
+  print("socket: " + describe(first, false));
+  match (first) {
+    Ok(o) => {
+      if (o.tickets.len() == 0) {
+        print("resume: no ticket");
+      } else {
+        print("resume: " + describe(over(cfg.with_ticket(o.tickets[0]), port), true));
+      }
+    },
+    Err(_) => {
+      print("resume: not tried");
+    }
+  }
+  let mtls: i32 = port_of("MTLS_PORT");
+  match (identity_from(setting("CLIENT_CERT", "client.pem"), setting("CLIENT_KEY", "client.key"))) {
+    Ok(id) => {
+      print("mtls: " + describe(over(cfg.with_identity(id), mtls), false));
+    },
+    Err(e) => {
+      print("mtls: " + e);
+    }
+  }
+  match (over(cfg, mtls)) {
+    Ok(o) => {
+      print("nocert: accepted " + o.answer);
+    },
+    Err(_) => {
+      print("nocert: refused");
+    }
+  }
+  match (env("BULK")) {
+    Some(_) => {
+      print("bulk: " + bulk(base));
+    },
+    None => {}
+  }
+  print("handshakes: " + handshakes(cfg, port));
+  return 0;
+}
