@@ -12495,10 +12495,16 @@ function me_method_decl(funcs: MFns, rty: string, name: string): i32 {
 // `ty`, a spelling in method `fd`'s signature, with the type parameters its
 // receiver binds replaced by what the receiver typed `rty` binds them to.
 function me_receiver_subst(fd: FuncDecl, rty: string, ty: string, funcs: MFns): string {
-  let binds: MEnv = bind_unify(fd.receiver_type, rty, fd.all_type_params, MEnv { mnames: [], mtypes: [] }, funcs);
+  // An impl's method records no type parameters of its own; its receiver
+  // spells the impl's.
+  let vars: string[] = fd.all_type_params;
+  if (vars.len() == 0) {
+    vars = struct_receiver_typevars(fd.receiver_type);
+  }
+  let binds: MEnv = bind_unify(fd.receiver_type, rty, vars, MEnv { mnames: [], mtypes: [] }, funcs);
   let tps: string[] = [];
   let cts: string[] = [];
-  for tp in fd.all_type_params {
+  for tp in vars {
     let ct: string = binds.elook(tp);
     if (ct.len() > 0) {
       tps = tps.append(tp);
@@ -17576,6 +17582,24 @@ function me_env_from_params(params: ast.ParamDecl[]): MEnv {
   return e;
 }
 
+// me_call_arg_type is the type argument i of a plain call to `fname` is
+// expected at: its declared parameter's, or for a built-in Option / Result
+// constructor, the payload the expected type gives it (`Ok(Nn)` under
+// `Result[Opt[i32], string]` is `Opt[i32]`).
+function me_call_arg_type(funcs: MFns, fname: string, i: i32, expected: string): string {
+  let at: i32 = 0 - 1;
+  if (fname == "Some" && strip_struct_base(expected) == "Option" || fname == "Ok" && strip_struct_base(expected) == "Result") {
+    at = 0;
+  } else if (fname == "Err" && strip_struct_base(expected) == "Result") {
+    at = 1;
+  }
+  let targs: string[] = type_args_of(expected);
+  if (i == 0 && at >= 0 && at < targs.len()) {
+    return targs[at];
+  }
+  return func_param_type_at(funcs.decls, fname, i);
+}
+
 // me_ident rewrites an identifier the enum pass can key. A type parameter
 // substituted into an associated call's object (subst_expr) can be an applied
 // generic enum, `E[i32].f()`, which names its clone. A bare unit-variant
@@ -17680,7 +17704,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
         if (i < fexps.len()) {
           ae = fexps[i];
         } else if (calleeFn.len() > 0) {
-          ae = func_param_type_at(funcs.decls, calleeFn, i);
+          ae = me_call_arg_type(funcs, calleeFn, i, expected);
         } else if (i < mexps.len()) {
           ae = mexps[i];
         }
