@@ -156,9 +156,11 @@ applications past the stop that the eager pipeline would make, which is
 applications are unobservable. Purity (§1) covers effects; the pass also
 requires those functions to be unable to abort, which it decides over the
 already-resolved bodies. A body that only computes scalars, converts
-them and reads its captures cannot abort; one that indexes, slices,
-allocates or calls something that might is refused with
-`element-fn-may-abort`. Stages behind the last take and the sink lose
+them and reads its captures is admitted; one that indexes, slices,
+allocates (a string `+` included) or calls something that might is
+refused with `element-fn-may-abort`. The test is syntactic and errs
+towards refusal: some refused bodies, such as one reading a capture's
+length, cannot in fact abort. Stages behind the last take and the sink lose
 nothing, since they only ever saw the elements the take let through.
 
 ### `take_while(p)` — prefix by predicate
@@ -205,7 +207,7 @@ longer a bound on what reaches the sink: a fused `scan` behind a
 reports `storage=no-intermediate-arrays/grown-output-buffer`. Since `f`
 returns an array literal or other allocation in nearly every use, a
 `flat_map` ahead of a take is refused as `element-fn-may-abort` unless
-its function only reads what it captured.
+its function only computes scalars, converts them and reads its captures.
 
 ### `fold(z, h)` — reduction, a sink
 

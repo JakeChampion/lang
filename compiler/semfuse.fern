@@ -211,12 +211,17 @@ function aborting_kind(k: i32): boolean {
 function direct_abort(f: ssasem.Func): boolean {
   for b in f.graph.blocks {
     for ins in b.insts {
-      if (aborting_kind(ins.kind_tag)) {
+      if (aborting_kind(ins.kind_tag) || concatenates(f, ins)) {
         return true;
       }
     }
   }
   return false;
+}
+
+// A `+` that yields text joins two strings into a fresh allocation.
+function concatenates(f: ssasem.Func, ins: ssa.SInst): boolean {
+  return ins.kind_tag == 9 && ins.str == "+" && ssasem.is_text(f.values[ins.result]);
 }
 
 function may_abort(funcs: ssasem.Func[], usable: boolean[], index: util.NameIndex): boolean[] {

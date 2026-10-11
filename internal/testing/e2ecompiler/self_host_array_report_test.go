@@ -67,6 +67,14 @@ const selfHostArrayReportSrc = `import "std/array";
 @noinline function flat_scan(xs: i64[]): i64[] {
   return xs.flat_map((x: i64): i64[] => [x, x]).scan(0 as i64, (a: i64, b: i64): i64 => a + b);
 }
+@noinline function concat_taken(xs: i64[], s: string): i64 {
+  return xs.map((x: i64): i64 => {
+    if (s + s == "aa") {
+      return x;
+    }
+    return x + 1 as i64;
+  }).take(2).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
+}
 @noinline function length(xs: i64[]): i32 {
   return xs.map((x: i64): i64 => x).len();
 }
@@ -82,6 +90,7 @@ function main(): i32 {
   if (nonscalar(["one", "two"]) != 6 as i64 || lone(xs) != 6 as i64 || length(xs) != 3) { return 6; }
   if (taken(xs) != 5 as i64 || aborting(xs) != 5 as i64 || prefix(xs) != 3 as i64) { return 7; }
   if (flattened(xs) != 12 as i64 || flat_taken(xs) != 4 as i64 || flat_scan(xs).len() != 6) { return 8; }
+  if (concat_taken(xs, "a") != 3 as i64) { return 9; }
   return 0;
 }
 `
@@ -128,6 +137,7 @@ func TestSelfHostArrayReportMatchesEmission(t *testing.T) {
 		{"flattened", "flat_map -> fold; one traversal", "fused"},
 		{"flat_taken", "flat_map -> take -> fold; not fused", "element-fn-may-abort"},
 		{"flat_scan", "flat_map -> scan; one traversal", "fused"},
+		{"concat_taken", "map -> take -> fold; not fused", "element-fn-may-abort"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			start := strings.Index(report, tc.name+": "+tc.plan+"\n")
