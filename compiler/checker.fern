@@ -10124,8 +10124,10 @@ function exits_unify(a: typeinfo.Type, b: typeinfo.Type): boolean {
 
 // lret_expr walks an expression looking for lambdas and, for each one
 // that declares a return type, checks the lambda body's `return`s against
-// THAT type (not the enclosing function's) by reusing ret_diags; one that
-// declares none has its exits unified instead (lambda_exit_diags). This is
+// THAT type (not the enclosing function's) by reusing ret_diags, or
+// void_ret_diags for one declared `: void`, where a bare `return;` is the
+// right exit; one that declares none has its exits unified instead
+// (lambda_exit_diags). This is
 // the lambda-body counterpart of the top-level ret_diags pass: ret_diags
 // itself recurses through if/while/for/match/defer sub-bodies but stops at
 // a lambda boundary (a nested function has its own return contract), so
@@ -10154,7 +10156,9 @@ function lret_expr(e: ast.Expr, cur: Scope, unions: UnionSig[], self_name: strin
         lsc = lsc.bind(lm.params[bi].name, pts[bi]);
         bi = bi + 1;
       }
-      if (lm.ret_type.len() > 0) {
+      if (lm.ret_type.len() > 0 && is_void(rt)) {
+        out = util.append_diags(out, void_ret_diags(lm.body, lsc, unions));
+      } else if (lm.ret_type.len() > 0) {
         out = util.append_diags(out, ret_diags(lm.body, lsc, rt, unions));
       } else {
         out = util.append_diags(out, lambda_exit_diags(lm, lsc));
