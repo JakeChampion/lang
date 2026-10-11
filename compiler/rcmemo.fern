@@ -28,7 +28,7 @@ import "./util";
 pub struct Memo { on: boolean, path: string, known: util.NameIndex, adds: usize, hits: usize, misses: usize, call_kind: i32 }
 
 function version(): string {
-  return "1";
+  return "2";
 }
 
 // keep is how many digests the file keeps when it is rewritten: the newest.
@@ -132,14 +132,15 @@ function newest(lines: string[]): string[] {
 
 // key digests what the certifier reads of one function: its name (a
 // generated helper's contract is read off its name), its own contract, the
-// shape of its lifted SSA, its ops, and the contract of every callee its
-// ops name.
+// shape of its lifted SSA, every field of its ops the lift reads, and the
+// contract of every callee its ops name.
 pub function key(m: Memo, fn_name: string, f: ssa.SFunc, ops: ir.Op[], abis: rccertify.Abis): string {
   let d: util.Digest = util.roll_text(util.digest_start(), fn_name);
   d = roll_abi(d, abis.lookup(fn_name));
   d = util.roll(util.roll(util.roll_flag(util.roll(d, f.nparams), f.takes_env), f.nvals), f.blocks.len());
   for o in ops {
-    d = util.roll_text(util.roll_wide(util.roll(util.roll(d, o.kind_tag), o.i32_imm), o.i64_imm), o.str);
+    d = util.roll_flag(util.roll(util.roll(util.roll(util.roll(d, o.kind_tag), o.i32_imm), o.width), o.decl), o.unsigned);
+    d = util.roll_text(util.roll_wide(util.roll_wide(d, o.i64_imm), f64_bits(o.f64_imm)), o.str);
     if (o.kind_tag == m.call_kind) {
       d = roll_abi(d, abis.lookup(o.str));
     }
