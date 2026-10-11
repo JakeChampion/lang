@@ -212,6 +212,7 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], sp: Spliceable
     i = i + 1;
   }
   let once: boolean[] = alone;
+  let sizes: i32[] = sizes_of(funcs0);
   let folded: boolean = false;
   let round: i32 = 0;
   let more: boolean = true;
@@ -225,8 +226,9 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], sp: Spliceable
       ready = ready.append(s.leaves[j] || ctors[j] || once[j] && !awaits(out.funcs[j], s.ix, once, s.shared, j));
       j = j + 1;
     }
-    let next: Round = splice_round(out, rewrite, s.ix, ready, ctors, if (folded) { s.shared } else { none_of(s.shared.len()) });
+    let next: Round = splice_round(out, sizes, rewrite, s.ix, ready, ctors, if (folded) { s.shared } else { none_of(s.shared.len()) });
     more = next.changed;
+    sizes = next.sizes;
     if (!more && !folded) {
       folded = true;
       once = s.once;
@@ -253,19 +255,21 @@ function grown_leaves(sofar: Inlined, sp: Spliceable): Spliceable {
   return Spliceable { ...sp, leaves: leaves };
 }
 
-struct Round { out: Inlined, changed: boolean }
+// `sizes` is each body's count_insts, kept beside the bodies it counts.
+struct Round { out: Inlined, changed: boolean, sizes: i32[] }
 
 // splice_round and split_all keep the arrays they rewrite in locals, so each
 // `.with` after the first writes in place rather than copying every body.
-function splice_round(prev: Inlined, rewrite: boolean[], ix: util.NameIndex, ready: boolean[], ctors: boolean[], shared: boolean[]): Round {
+function splice_round(prev: Inlined, own sizes: i32[], rewrite: boolean[], ix: util.NameIndex, ready: boolean[], ctors: boolean[], shared: boolean[]): Round {
   let funcs: ssasem.Func[] = prev.funcs;
   let rewritten: boolean[] = prev.rewritten;
   let changed: boolean = false;
   let i: i32 = 0;
   while (i < funcs.len()) {
-    if (rewrite[i] && count_insts(funcs[i].graph) <= max_caller_insts()) {
-      let spliced: Rewrite = splice_calls(funcs[i], funcs, ix, ready, ctors, shared, false);
+    if (rewrite[i] && sizes[i] <= max_caller_insts()) {
+      let spliced: Rewrite = splice_calls(funcs[i], sizes[i], funcs, sizes, ix, ready, ctors, shared, false);
       if (spliced.changed) {
+        sizes = sizes.with(i, count_insts(spliced.f.graph));
         funcs = funcs.with(i, spliced.f);
         rewritten = rewritten.with(i, true);
         changed = true;
@@ -273,7 +277,7 @@ function splice_round(prev: Inlined, rewrite: boolean[], ix: util.NameIndex, rea
     }
     i = i + 1;
   }
-  return Round { out: Inlined { ...prev, funcs: funcs, rewritten: rewritten }, changed: changed };
+  return Round { out: Inlined { ...prev, funcs: funcs, rewritten: rewritten }, changed: changed, sizes: sizes };
 }
 
 // Variant returns paired (sempair) once nothing more is spliced, so split
@@ -286,7 +290,7 @@ function paired_all(prev: Inlined, names: string[], rewrite: boolean[], unnamed:
   let i: i32 = 0;
   while (i < funcs.len()) {
     if (p.changed[i]) {
-      funcs = funcs.with(i, drop_unread(funcs[i]));
+      funcs = funcs.with(i, drop_unread(funcs[i]).f);
       rewritten = rewritten.with(i, true);
     }
     i = i + 1;
@@ -417,12 +421,14 @@ pub function inline_closures(funcs: ssasem.Func[], names: string[], modes: i32[]
     leaves = leaves.append(inlinable[i] && env >= 0 && leaf_body(candidates[i], env));
     i = i + 1;
   }
+  let sizes: i32[] = sizes_of(candidates);
   let out: ssasem.Func[] = [];
   i = 0;
   while (i < funcs.len()) {
     let f: ssasem.Func = funcs[i];
-    if (rewrite[i] && count_insts(f.graph) <= max_caller_insts()) {
-      f = drop_unread(splice_calls(f, candidates, ix, leaves, none_of(candidates.len()), none_of(candidates.len()), true).f);
+    let size: i32 = count_insts(f.graph);
+    if (rewrite[i] && size <= max_caller_insts()) {
+      f = drop_unread(splice_calls(f, size, candidates, sizes, ix, leaves, none_of(candidates.len()), none_of(candidates.len()), true).f).f;
     }
     out = out.append(f);
     i = i + 1;
@@ -755,8 +761,10 @@ function closure_callee(f: ssasem.Func, ins: ssa.SInst, ix: util.NameIndex): i32
 // A call to a `shared` function is spliced only where the caller takes its
 // result apart: anywhere else the copy saves no box. A constructor leaf among
 // them still folds its literal calls into static boxes.
-function splice_calls(f0: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, ready: boolean[], ctors: boolean[], shared: boolean[], closures: boolean): Rewrite {
+// `size` is f0's count_insts and `sizes[i]` funcs[i]'s.
+function splice_calls(f0: ssasem.Func, size: i32, funcs: ssasem.Func[], sizes: i32[], ix: util.NameIndex, ready: boolean[], ctors: boolean[], shared: boolean[], closures: boolean): Rewrite {
   let f: ssasem.Func = f0;
+  let fsize: i32 = size;
   let done: i32 = 0;
   let bi: i32 = 0;
   while (bi < f.graph.blocks.len() && done < max_splices()) {
@@ -773,8 +781,9 @@ function splice_calls(f0: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex,
       // A module const's body becomes one static box wherever it lands, so
       // it costs the caller nothing the budget measures.
       if (at >= 0 && funcs[at].graph.name != f.graph.name
-        && (count_insts(f.graph) + count_insts(funcs[at].graph) <= max_caller_insts() || ctors[at] && funcs[at].params.len() == 0)) {
+        && (fsize + sizes[at] <= max_caller_insts() || ctors[at] && funcs[at].params.len() == 0)) {
         f = splice(f, bi, k, funcs[at]);
+        fsize = count_insts(f.graph);
         done = done + 1;
         spliced = true;
       }
@@ -1124,9 +1133,9 @@ function split_constructions(f0: ssasem.Func, modes: i32[]): Rewrite {
   let rewritten: boolean = false;
   while (changed && round < 8) {
     let split: Rewrite = split_round(f, modes);
-    let swept: ssasem.Func = drop_unread(split.f);
-    changed = split.changed || count_insts(swept.graph) != count_insts(split.f.graph);
-    f = swept;
+    let swept: Rewrite = drop_unread(split.f);
+    changed = split.changed || swept.changed;
+    f = swept.f;
     rewritten = rewritten || changed;
     round = round + 1;
   }
@@ -1564,6 +1573,16 @@ function built_type(f: ssasem.Func, built: typeinfo.Type[], t: typeinfo.Type): b
   return false;
 }
 
+function sizes_of(funcs: ssasem.Func[]): i32[] {
+  let out: i32[] = __alloc_i32(funcs.len());
+  let i: i32 = 0;
+  while (i < funcs.len()) {
+    out = out.with(i, count_insts(funcs[i].graph));
+    i = i + 1;
+  }
+  return out;
+}
+
 function count_insts(g: ssa.SFunc): i32 {
   let n: i32 = 0;
   for b in g.blocks {
@@ -1578,15 +1597,15 @@ function count_insts(g: ssa.SFunc): i32 {
 
 // Constructions, and phis and copies of a type one builds, that nothing reads.
 // A box whose type has a finalizer is kept: dropping it would skip the drop.
-function drop_unread(f: ssasem.Func): ssasem.Func {
+function drop_unread(f: ssasem.Func): Rewrite {
   let g: ssa.SFunc = f.graph;
   let built: typeinfo.Type[] = built_types(g, f);
   if (built.len() == 0 && !has_static_closure(g)) {
-    return f;
+    return Rewrite { f: f, changed: false };
   }
   let reads: i32[] = read_counts(f);
   if (!any_unread(f, built, reads)) {
-    return f;
+    return Rewrite { f: f, changed: false };
   }
   let blocks: ssa.SBlock[] = [];
   for b in g.blocks {
@@ -1598,7 +1617,7 @@ function drop_unread(f: ssasem.Func): ssasem.Func {
     }
     blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
   }
-  return ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks } };
+  return Rewrite { f: ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks } }, changed: true };
 }
 
 function has_static_closure(g: ssa.SFunc): boolean {
