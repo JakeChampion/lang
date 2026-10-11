@@ -2052,6 +2052,64 @@ serializer.
   so a reply allocates nothing once the builder has grown. The loop adds
   a `Date`, formatted once per second, unless the handler set one.
 
+### `std/http/router`
+
+A request routed to a handler by method and path, in Go 1.22's shape, for
+`serve.run` and a wasi-http `handle` alike (`docs/NET-P5-FRAMEWORK-PLAN.md`).
+
+```fern
+import "std/http";
+import "std/http/router";
+import "std/platform";
+import "std/serve";
+
+function users_show(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+  return http.respond(show(params));
+}
+
+function show(params: router.Params): Result[HttpResponse, http.HttpError] {
+  let id: i32 = params.int("id")?;
+  return Ok(http.json("{\"id\":" + id.to_string() + "}"));
+}
+
+function routes(): Result[router.Router[platform.Host], router.RouteError] {
+  let r: router.Router[platform.Host] = router.new();
+  r = r.get("/users/{id}", users_show)?;
+  r = r.post("/users", users_create)?;
+  r = r.route("/static/", files)?;
+  return Ok(r);
+}
+```
+
+- Patterns are `[METHOD ]/path`: `{name}` binds one non-empty segment,
+  `{name...}` the rest of the path from there (the segment must exist, so
+  `/files/{p...}` takes `/files/` and `/files/a/b`, not `/files`), `{$}`
+  only the end (`/a/{$}` is `/a/` alone), a trailing `/` every path below
+  it, and no method any method. The most specific pattern takes precedence:
+  a literal over a parameter, a parameter over the rest, a method over none.
+  A GET route answers HEAD.
+- `route(pattern, handler)` and `get` / `post` / `put` / `patch` / `delete`
+  answer the router with the route added, or `RouteError`: `BadPattern` for
+  one malformed, `PatternConflict` for one that could tie with a registered
+  pattern on some request (`/a/{x}` against `/{y}/b`, say), so a program
+  learns at startup, never at the request. `message()` says which.
+- `handle(req, plat)` answers the request: the handler's response, 405
+  with `Allow` (HEAD listed beside GET) when routes match the path under
+  other methods, 404 when none matches it. `handler()` is the closure
+  `serve.run` takes. A route handler is `(req, params, plat)`; `Router[P]`
+  is generic over the platform type.
+- `Params` holds the values a pattern bound, percent-decoded, in its order:
+  `get(name)` is the value when bound; `param(name)` answers a 500
+  `HttpError` for a name the pattern does not bind, `int(name)` a 400 for a
+  value that is not an integer, so a handler writes `params.int("id")?` and
+  `http.respond` makes the problem+json. `no_params()` is for a handler
+  called outside the router.
+- Middleware is a plain function whose last parameter is the next handler,
+  composed with `use`: `use req <- timed(req, plat);` then the rest of the
+  handler. One that stops the chain returns without calling `next`; one
+  that produces a value gives it to `next`, and the handler behind it takes
+  it as a parameter (`tests/stdlib/http_router_test.fern`).
+
 ### `std/net`
 
 IP addresses, socket addresses, and the typed error every networking
