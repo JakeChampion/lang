@@ -105,6 +105,60 @@ pub function i64_to_string(n: i64): string {
   return string_from_bytes_unchecked(buf);
 }
 
+// Digest is two independent 30-bit polynomial rolls, hash_key's, folded a
+// word, a wide word, a string or a list at a time; `digest_text` renders it.
+pub struct Digest { a: i32, b: i32 }
+
+pub function digest_start(): Digest {
+  return Digest { a: 208357, b: 5381 };
+}
+
+// Each word rolls its low 30 bits and then its top two.
+pub function roll(d: Digest, w: i32): Digest {
+  let a: i32 = d.a * 31 + (w & 1073741823) + 1 & 1073741823;
+  let b: i32 = d.b * 131 + (w & 1073741823) + 7 & 1073741823;
+  a = a * 31 + (w >> 30 & 3) + 1 & 1073741823;
+  b = b * 131 + (w >> 30 & 3) + 7 & 1073741823;
+  return Digest { a: a, b: b };
+}
+
+pub function roll_wide(d: Digest, v: i64): Digest {
+  return roll(roll(roll(d, (v & 1073741823i64) as i32), (v >> 30 & 1073741823i64) as i32), (v >> 60) as i32);
+}
+
+// A string rolls its length and then its bytes, so adjacent strings cannot
+// trade bytes and roll the same.
+pub function roll_text(d: Digest, s: string): Digest {
+  let out: Digest = roll(d, s.len());
+  let i: i32 = 0;
+  while (i < s.len()) {
+    out = roll(out, s[i] as i32);
+    i = i + 1;
+  }
+  return out;
+}
+
+pub function roll_words(d: Digest, xs: i32[]): Digest {
+  let out: Digest = roll(d, xs.len());
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    out = roll(out, xs[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+pub function roll_flag(d: Digest, x: boolean): Digest {
+  if (x) {
+    return roll(d, 1);
+  }
+  return roll(d, 0);
+}
+
+pub function digest_text(d: Digest): string {
+  return i32_to_string(d.a) + "_" + i32_to_string(d.b);
+}
+
 // hash_key maps a string to a content-addressed key string, used by the
 // per-module incremental-codegen cache (#3451 step 6 / #3458) to fingerprint
 // a module's compilation inputs (its own source, and the public signatures of
@@ -1059,26 +1113,23 @@ pub function verify_on(): boolean {
 }
 
 // certify_mode is what the emitted-RC certifier (rccertify.fern) does with
-// what it finds: 0, nothing runs; 1, FERN_RC_CERTIFY=report, every finding
-// and the per-function census go to stderr and the compile continues; 2,
-// FERN_RC_CERTIFY=1, a finding refuses the function as a lowering refusal
-// does. Unset, it follows FERN_IR_VERIFY: the verifying compile certifies.
+// what it finds: 0, FERN_RC_CERTIFY=0, nothing runs; 1, FERN_RC_CERTIFY=report,
+// every finding and the per-function census go to stderr and the compile
+// continues; 2, the default, a finding refuses the function as a lowering
+// refusal does, through the memo (rcmemo.fern) of what was certified before.
 pub function certify_mode(): i32 {
   match (env("FERN_RC_CERTIFY")) {
     Some(v) => {
       if (v == "report") {
         return 1;
       }
-      if (v == "1") {
-        return 2;
+      if (v == "0") {
+        return 0;
       }
-      return 0;
+      return 2;
     },
     None => {
-      if (verify_on()) {
-        return 2;
-      }
-      return 0;
+      return 2;
     }
   }
 }

@@ -211,3 +211,32 @@ a steady-state compile pays nothing for a function whose lowering it has
 certified before. The memo is the next step; the remaining cold cost is
 `ssalive.compute` over every value rather than the tracked ones, the
 region passes, and the allocation the slot lists do.
+
+## The memo, and the default compile
+
+The budget question was settled as default-on with caching. `rcmemo.fern`
+keeps, per target, the digests of the functions certified clean: a digest
+of the function's name (a generated helper's contract is read off it), its
+own contract, the shape of its lifted SSA, its lowered ops, and the contract
+of every callee the ops name; everything the certifier reads. The file lives
+under the package store's root (`$FERN_CACHE_DIR`, `$XDG_CACHE_HOME/fern`,
+`~/.cache/fern`) in `certified/`, is read when a backend opens its gate and
+rewritten whole when the gate reports, and keeps its newest 200,000 lines.
+A refusing compile consults it before certifying and records what it
+certified; a report compile reads it not at all. `util.certify_mode` is 2
+unless `FERN_RC_CERTIFY` says otherwise, so the plain compile certifies.
+
+Compiling `checker_run` on x86-64, wall time on the 4-core container:
+
+| | wall |
+|---|---:|
+| certifier off (`FERN_RC_CERTIFY=0`) | 4.06 s |
+| cold memo, 1661 functions certified | 4.63 s |
+| warm memo, 1661 hits | 4.1 s |
+
+The replay (`ssaunits.verify_planned`) stays under `FERN_IR_VERIFY`: the
+certifier checks what the lowering emitted, which is what a plan error would
+have to reach to matter, and the replay's own cost has not been attributed
+yet. The perf lane's allocation and cliff benches set `FERN_RC_CERTIFY=0`,
+since they measure the lowering.
+

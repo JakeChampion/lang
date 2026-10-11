@@ -58,6 +58,7 @@ import "./ssa";
 import "./ssa_lift";
 import "./rcsigs";
 import "./rccertify";
+import "./rcmemo";
 
 // Gate is what the verifiers read beside the function: `sigs`, the
 // callee-arity index for the whole program being emitted, built once per emit
@@ -76,7 +77,9 @@ import "./rccertify";
 // tables, `kinds` the lift's kind table for a backend that does not lift on
 // its own. `census` counts what it certified, one line per function with
 // something to say, under FERN_RC_CERTIFY=report; 0 otherwise.
-pub struct Gate { sigs: irverify.NameIndex, pops: i32[], seen: usize, modelled: usize, abis: rccertify.Abis, rc: rcsigs.Table, rcops: rcsigs.OpTable, kinds: ssa_lift.KindTable, census: usize }
+// `memo` is the certifier's memo (rcmemo): off until a backend opens it with
+// `with_memo`, the drivers' gates never do.
+pub struct Gate { sigs: irverify.NameIndex, pops: i32[], seen: usize, modelled: usize, abis: rccertify.Abis, rc: rcsigs.Table, rcops: rcsigs.OpTable, kinds: ssa_lift.KindTable, census: usize, memo: rcmemo.Memo }
 
 // gate builds the Gate a program's emit loop hands to every
 // verify_or_refuse and reports at its end.
@@ -95,7 +98,34 @@ pub function gate_unreported(sigs: irverify.NameIndex, pops: i32[], abis: rccert
   if (util.certify_mode() == 1) {
     census = buf_new(256);
   }
-  return Gate { sigs: sigs, pops: pops, seen: 0 as usize, modelled: 0 as usize, abis: abis, rc: rcsigs.table(), rcops: rcsigs.op_table(), kinds: ssa_lift.kind_table(), census: census };
+  return Gate { sigs: sigs, pops: pops, seen: 0 as usize, modelled: 0 as usize, abis: abis, rc: rcsigs.table(), rcops: rcsigs.op_table(), kinds: ssa_lift.kind_table(), census: census, memo: rcmemo.off() };
+}
+
+// with_memo hands a gate the compile's memo (rcmemo): a function the memo
+// knows is not certified again. Only a gate that refuses reads it; a report
+// compile reads no memo, so every function's census is in the report.
+pub function with_memo(g: Gate, m: rcmemo.Memo): Gate {
+  if (util.certify_mode() != 2) {
+    return g;
+  }
+  return Gate { ...g, memo: m };
+}
+
+// open_memo opens the memo of `target` for one compile; close_memo writes
+// it back when the compile's last gate is done and, under FERN_IR_VERIFY=1,
+// says how many functions it answered for.
+pub function open_memo(target: string): rcmemo.Memo {
+  if (util.certify_mode() != 2) {
+    return rcmemo.off();
+  }
+  return rcmemo.open(target);
+}
+
+pub function close_memo(m: rcmemo.Memo): void {
+  let line: string = rcmemo.close(m);
+  if (line != "" && report_on()) {
+    eprint("FERN_RC_CERTIFY: memo " + line);
+  }
 }
 
 // report_on reports whether the coverage line is wanted: FERN_IR_VERIFY=1,
@@ -210,6 +240,13 @@ pub function certify_or_refuse(fn_name: string, f: ssa.SFunc, ops: ir.Op[], g: G
   if (mode == 0) {
     return 0;
   }
+  let k: string = "";
+  if (mode == 2 && g.memo.on) {
+    k = rcmemo.key(g.memo, fn_name, f, ops, g.abis);
+    if (rcmemo.hit(g.memo, k)) {
+      return 0;
+    }
+  }
   let r: rccertify.Report = rccertify.certify(f, ops, g.abis.lookup(fn_name), g.abis, g.rc, g.rcops);
   if (mode == 1) {
     // A finding goes out at once: the census rides a buffer not every
@@ -222,6 +259,9 @@ pub function certify_or_refuse(fn_name: string, f: ssa.SFunc, ops: ir.Op[], g: G
     return 0;
   }
   if (r.findings.len() == 0) {
+    if (k != "") {
+      rcmemo.add(g.memo, k);
+    }
     return 0;
   }
   let out: string = "FERN_RC_CERTIFY: " + fn_name + " emits unbalanced reference counting (#11908):";

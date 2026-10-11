@@ -79,8 +79,10 @@ chmod +x "$work/fern-selfhost-lc"
 # A compile that died still prints a tally, covering only the fraction of the
 # module it reached — which would read as a large improvement. The status is the
 # only thing separating the two, so the run is not allowed to fail.
+# FERN_RC_CERTIFY=0: the figure is what the lowering allocates; the emitted-RC
+# certifier runs by default and its own allocation is not the subject.
 set +e
-"$work/fern-selfhost-lc" -target "$TARGET" -emit asm -o "$work/out.s" "$PWD/$SUBJECT" \
+FERN_RC_CERTIFY=0 "$work/fern-selfhost-lc" -target "$TARGET" -emit asm -o "$work/out.s" "$PWD/$SUBJECT" \
   "$PWD/internal/stdlib" > /dev/null 2> "$work/lc"
 status=$?
 set -e
@@ -124,7 +126,7 @@ if [ "${FERN_ALLOC_PEAK_RSS:-1}" != "0" ]; then
     ./bin/fern -target "$TARGET" -o "$work/fern-selfhost" compiler/fern.fern
     chmod +x "$work/fern-selfhost"
     bash -c 'echo $$ > "$1/cgroup.procs"; shift; exec "$@"' _ "$cg" \
-      "$work/fern-selfhost" -target "$TARGET" -emit asm -o /dev/null "$PWD/$SUBJECT" \
+      env FERN_RC_CERTIFY=0 "$work/fern-selfhost" -target "$TARGET" -emit asm -o /dev/null "$PWD/$SUBJECT" \
       "$PWD/internal/stdlib" > /dev/null 2>&1 || true
     for f in memory.peak memory.max_usage_in_bytes; do
       if [ -f "$cg/$f" ]; then peak="$(cat "$cg/$f" 2>/dev/null || true)"; break; fi

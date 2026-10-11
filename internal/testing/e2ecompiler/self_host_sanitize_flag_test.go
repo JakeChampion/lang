@@ -29,7 +29,7 @@ func TestSelfHostSanitizeFlag(t *testing.T) {
 		out := filepath.Join(dir, name)
 		args := append(flags, "-o", out, src, cli.stdlib)
 		cmd := runX86_64Bin(cli.runner, cli.bin, args...)
-		cmd.Env = append(e2eharness.ChildEnv(), env...)
+		cmd.Env = append(e2eharness.ChildEnv(uncertified), env...)
 		var stderr strings.Builder
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {

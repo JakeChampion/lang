@@ -143,7 +143,7 @@ func TestSelfHostSanitizeLeakVerdictX86_64(t *testing.T) {
 }
 
 func TestSelfHostSanitizeDoubleFreeReportedX86_64(t *testing.T) {
-	bin, runner := sanSelfHostBuild(t, "san_dfree", sanSelfHostDoubleFreeSrc, []string{"FERN_SANITIZE=1"})
+	bin, runner := sanSelfHostBuild(t, "san_dfree", sanSelfHostDoubleFreeSrc, []string{"FERN_SANITIZE=1", uncertified})
 	stderr, code := hevRun(t, runner, bin)
 	if code != e2eharness.ExitSanitizer {
 		t.Errorf("exit=%d, want %d (a sanitizer finding is fatal and has its own status)", code, e2eharness.ExitSanitizer)
@@ -163,7 +163,7 @@ func TestSelfHostSanitizeDoubleFreeReportedX86_64(t *testing.T) {
 // out to promote. Pins that the promotion is opt-in rather than a
 // change to what the self-host compiler emits by default.
 func TestSelfHostDoubleFreeSilentWithoutSanitizeX86_64(t *testing.T) {
-	bin, runner := sanSelfHostBuild(t, "san_dfree_off", sanSelfHostDoubleFreeSrc, nil)
+	bin, runner := sanSelfHostBuild(t, "san_dfree_off", sanSelfHostDoubleFreeSrc, []string{uncertified})
 	stderr, code := hevRun(t, runner, bin)
 	if code != 0 {
 		t.Errorf("exit=%d, want 0 (an unsanitized build must not abort)", code)
