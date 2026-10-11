@@ -25128,7 +25128,19 @@ function respell_type_vars_module(mod: Module, written: boolean): Module {
     let ivars: string[] = add_tvars(add_tvars(none, im.all_type_params), im.type_params);
     impls = impls.append(rename_impl_type_vars(im, ivars, tvar_respellings(ivars, written)));
   }
-  return Module { ...mod, funcs: funcs, structs: structs, enums: enums, impls: impls };
+  // A trait's default method is copied onto each impl, in a later module when
+  // the impl is another module's, so it is respelled with the functions: its
+  // own variables and the trait's.
+  let traits: TraitDecl[] = [];
+  for td in mod.trait_decls {
+    let methods: FuncDecl[] = [];
+    for m in td.methods {
+      let mvars: string[] = add_tvars(fn_type_vars(m, mod, written), td.type_params);
+      methods = methods.append(rename_fn_type_vars(m, mvars, tvar_respellings(mvars, written), mvals));
+    }
+    traits = traits.append(TraitDecl { ...td, type_params: tvar_respellings(td.type_params, written), methods: methods });
+  }
+  return Module { ...mod, funcs: funcs, structs: structs, enums: enums, impls: impls, trait_decls: traits };
 }
 
 // module_value_names is every module-level name the checker resolves as a
