@@ -264,6 +264,7 @@ pub function certify_or_refuse(fn_name: string, f: ssa.SFunc, ops: ir.Op[], g: G
     }
     return 0;
   }
+  dump_if_asked(fn_name, f);
   let out: string = "FERN_RC_CERTIFY: " + fn_name + " emits unbalanced reference counting (#11908):";
   let i: i32 = 0;
   while (i < r.findings.len() && i < 20) {
@@ -323,8 +324,8 @@ function census_line(fn_name: string, r: rccertify.Report, g: Gate): void {
 }
 
 // dump_if_asked prints the lifted SSA of the function FERN_RC_CERTIFY_DUMP
-// names, under the report mode: what the certifier read when it found what
-// it found.
+// names, under the report mode and with a refusal: what the certifier read
+// when it found what it found.
 function dump_if_asked(fn_name: string, f: ssa.SFunc): void {
   match (env("FERN_RC_CERTIFY_DUMP")) {
     Some(want) => {
