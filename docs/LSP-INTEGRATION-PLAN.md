@@ -124,10 +124,12 @@ dependency and keeps the wasm build small.
 
 ### Playground wiring
 
-Same wasm binary, in-process LSP. Extend `cmd/fern-wasm/main.go` to export
-a second global `fernLsp(jsonString) -> jsonString`. The browser drives the
-editor, posts JSON-RPC messages synchronously into wasm, and gets
-diagnostics / hover back. No worker, no server, no protocol mismatch.
+Same wasm binary, in-process LSP. `cmd/fern-wasm/main.go` exports a global
+`fernLsp(jsonString) -> jsonString`, called in `web/lsp-worker.js`: the page
+posts JSON-RPC messages to that worker and gets diagnostics / hover back as
+messages. No server, no protocol mismatch. The worker exists because a check
+type-checks every module the program imports, seconds in wasm for anything
+importing `std/platform`, and on the page's thread that froze the editor.
 
 Replace the `<textarea>` in `web/index.html` with **CodeMirror 6**
 (~150 KB vs Monaco's ~2 MB; lint, hover, autocomplete extensions ship

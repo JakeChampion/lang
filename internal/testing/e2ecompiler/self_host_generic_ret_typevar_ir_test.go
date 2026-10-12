@@ -9,13 +9,13 @@ import (
 )
 
 // A call whose generic callee returns an UNBOUNDED type parameter — `fold[T, A,
-// I]: A` (core/iter.fold), where `A` is erased from `type_params`, so the
-// monomorphiser never substitutes it. `mono_infer` reports such a bare type
-// variable as "unknown" rather than as the call's type, so binding `let s =
-// iter.fold(..)` cannot key a spurious clone of a trait-bounded generic `s`
-// flows into (`assert_eq[T: Eq + Display](s, 6)` -> `assert_eq__A`, whose
-// `A.eq` / `A.to_string` cannot resolve); the other concrete-literal argument
-// binds the call at `i32` (e.g. tests/stdlib/iter_test.fern).
+// I]: A`, where `A` is erased from `type_params`, so the monomorphiser never
+// substitutes it. `mono_infer` reports such a bare type variable as "unknown"
+// rather than as the call's type, so binding `let s = gfold(..)` cannot key a
+// spurious clone of a trait-bounded generic `s` flows into
+// (`assert_eq[T: Eq + Display](s, 6)` -> `assert_eq__A`, whose `A.eq` /
+// `A.to_string` cannot resolve); the other concrete-literal argument binds the
+// call at `i32`.
 //
 // `gfold` reproduces the exact shape (return type = an unbounded type param,
 // with the other type var only in a closure param so the key can't be inferred

@@ -26,7 +26,7 @@ function main(): i32 { let a: i32[] = [10, 20, 12]; return iter.sum(iter.of(a));
 function main(): i32 { let a: i32[] = [2, 3, 7]; return iter.product(iter.of(a)); }`, 42},
 	// composed pipeline: sum of the evens of 1..6 (filter then sum) → 2+4+6 = 12.
 	{"sum-filter", `import "core/iter";
-function main(): i32 { let a: i32[] = [1, 2, 3, 4, 5, 6]; let e: i32[] = iter.filter(iter.of(a), (n: i32): boolean => { return n % 2 == 0; }); return iter.sum(iter.of(e)); }`, 12},
+function main(): i32 { let a: i32[] = [1, 2, 3, 4, 5, 6]; let e: i32[] = iter.of(a).filter((n: i32): boolean => { return n % 2 == 0; }).collect(); return iter.sum(iter.of(e)); }`, 12},
 	// i64 sum past the i32 range, with no annotation on the result.
 	{"sum-i64", `import "core/iter";
 function main(): i32 { let b: i64[] = [3000000000, 3000000000]; let s = iter.sum(iter.of(b)); if (s == 6000000000) { return 7; } return 0; }`, 7},

@@ -10,12 +10,11 @@ import (
 )
 
 // `collect` — the canonical terminal of an iterator chain (#2709): drains an
-// `Iterator[T]` into a fresh `T[]`. Same bounded-collector shape as the shipped
-// `to_array` (`T` recovered by bound-driven inference on the native side, erased
-// + monomorphised on `I` for the self-host IR path), so it lowers on every
-// native backend AND the self-host IR path. The inline cases pin the routing /
-// genericity (i32 + a boolean element type); a native module test drives the
-// real `core/iter` body. (The keyed `Map` sink `to_map` is deferred — see the
+// `Iterator[T]` into a fresh `T[]`. The inline cases write it as a bounded
+// generic collector (`T` recovered by bound-driven inference on the native side,
+// erased + monomorphised on `I` for the self-host IR path) and pin the routing /
+// genericity (i32 + a boolean element type) on every native backend AND the
+// self-host IR path; a native module test drives core/iter's `collect` method. (The keyed `Map` sink `to_map` is deferred — see the
 // note in core/iter.fern: a generic `Map[K, V]` in a generic body hits the same
 // abstract-key dispatch gap as the generic `Set[T]` in #2671.)
 var iterCollectCases = []struct {
@@ -81,9 +80,9 @@ func TestNativeIterCollectModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
     let r = 0;
-    let ys = iter.collect(iter.of([3, 1, 2]));
+    let ys = iter.of([3, 1, 2]).collect();
     if (ys.len() == 3 && ys[0] == 3 && ys[1] == 1 && ys[2] == 2) { r = r + 1; }
-    let zs = iter.collect(iter.range(0, 4));
+    let zs = iter.range(0, 4).collect();
     if (zs.len() == 4 && zs[0] == 0 && zs[3] == 3) { r = r + 2; }
     return r;
 }

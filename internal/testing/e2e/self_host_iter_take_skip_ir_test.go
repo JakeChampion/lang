@@ -9,13 +9,11 @@ import (
 	"testing"
 )
 
-// Bounded iterator collectors `take` / `skip` in core/iter — the eager
-// prefix/suffix forms next to map / filter (#2691, the iterator-protocol
-// surface). `take(it, k)` collects the first k yielded values; `skip(it, k)`
-// drops them and collects the rest. Both return a fresh `T[]` (the same safe
-// shape as filter — no tuple/struct field access on a generic return), so they
-// lower on the self-host IR path. The inline prelude mirrors core/iter's bodies
-// so both backends exercise byte-for-byte the same shape.
+// Bounded eager iterator collectors `take` / `skip`, written in the inline
+// prelude as bounded generics (#2691). `take(it, k)` collects the first k
+// yielded values; `skip(it, k)` drops them and collects the rest. Both return a
+// fresh `T[]` (the same safe shape as filter — no tuple/struct field access on
+// a generic return), so they lower on the self-host IR path.
 const iterTakeSkipPrelude = `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 pub struct Range { lo: i32, hi: i32 }
 pub function range(lo: i32, hi: i32): Range { return Range { lo: lo, hi: hi }; }
@@ -88,15 +86,16 @@ func TestNativeIterTakeSkipArm64(t *testing.T) {
 }
 
 // TestNativeIterTakeSkipModule exercises the shipped `import "core/iter"`
-// module's `take` / `skip` over real `range` iterators on the native backends.
+// module's lazy `take` method and eager `skip` over real `range` iterators on
+// the native backends.
 func TestNativeIterTakeSkipModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
-    let a = iter.take(iter.range(0, 100), 4);  // [0,1,2,3]
-    let sa = 0; for v in a { sa = sa + v; }     // 6
-    let b = iter.skip(iter.range(0, 6), 4);     // [4,5]
-    let sb = 0; for v in b { sb = sb + v; }     // 9
-    return sa + a.len() + sb + b.len();         // 6+4+9+2 = 21
+    let a = iter.range(0, 100).take(4).collect();  // [0,1,2,3]
+    let sa = 0; for v in a { sa = sa + v; }        // 6
+    let b = iter.skip(iter.range(0, 6), 4);        // [4,5]
+    let sb = 0; for v in b { sb = sb + v; }        // 9
+    return sa + a.len() + sb + b.len();            // 6+4+9+2 = 21
 }
 `
 	p := writeIterProg(t, src)
