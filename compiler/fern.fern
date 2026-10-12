@@ -559,6 +559,8 @@ function export_func_index(merged: parser.Module, name: string): i32 {
 // stack. The entry pushes each argument where the callee reads it, widened as
 // its type says, and hands an f64 or f32 result back in %xmm0. A Fern f32 is
 // held as the f64 it rounds to, so an f32 crosses as a conversion, not a move.
+// Each entry holds `__fern_busy` for the length of the call, so a second
+// thread entering the object aborts (docs/RC-DESIGN.md §2.1).
 function export_entries(merged: parser.Module, names: string[], arm64: boolean): string {
   let out: string = "";
   for n in names {
@@ -593,13 +595,13 @@ function export_entry(f: parser.FuncDecl): string {
       stack = stack + 8;
     }
   }
-  let out: string = "__fern_export_" + f.name + ":\n    pushq %rbp\n    movq %rsp, %rbp\n";
+  let out: string = "__fern_export_" + f.name + ":\n    pushq %rbp\n    movq %rsp, %rbp\n" + asm_ir.busy_take_x86();
   let i: i32 = f.params.len() - 1;
   while (i >= 0) {
     out = out + export_arg(srcs[i], f.params[i].type_name) + "    pushq %rax\n";
     i = i - 1;
   }
-  out = out + "    call __fn_" + f.name + "\n";
+  out = out + "    call __fn_" + f.name + "\n    movl $0, __fern_busy(%rip)\n";
   if (f.ret_type == "f64") {
     out = out + "    movq %rax, %xmm0\n";
   } else if (f.ret_type == "f32") {
@@ -655,7 +657,7 @@ function export_entry_arm64(f: parser.FuncDecl): string {
     }
   }
   let n: i32 = f.params.len();
-  let out: string = "__fern_export_" + f.name + ":\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n";
+  let out: string = "__fern_export_" + f.name + ":\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n" + asm_arm64_ir.busy_take_arm64();
   if (n > 0) {
     out = out + "    sub sp, sp, #" + util.i32_to_string(16 * n) + "\n";
   }
@@ -664,7 +666,7 @@ function export_entry_arm64(f: parser.FuncDecl): string {
     out = out + export_arg_arm64(srcs[i], f.params[i].type_name) + "    str x16, [sp, #" + util.i32_to_string(16 * i) + "]\n";
     i = i + 1;
   }
-  out = out + "    bl __fn_" + f.name + "\n";
+  out = out + "    bl __fn_" + f.name + "\n" + asm_arm64_ir.busy_release_arm64();
   if (f.ret_type == "f64") {
     out = out + "    fmov d0, x0\n";
   } else if (f.ret_type == "f32") {
@@ -3684,7 +3686,7 @@ function run(): i32 {
   // statement, the emitter renders the marks as `.loc` rows over the `.file`
   // table prepended below, and the image writer encodes .debug_line (#11410).
   let debug_lines: boolean = emit_syms && (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin");
-  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, debug_lines), switches: asmcore.Switches { backtrace: backtrace, sanitize: sanitize_flag || asmcore.sanitize_on(), var_rows: debug_lines && emit != "asm" } };
+  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, debug_lines), switches: asmcore.Switches { backtrace: backtrace, sanitize: sanitize_flag || asmcore.sanitize_on(), var_rows: debug_lines && emit != "asm", shared: shared } };
   let out_asm: string = "";
   let emit_text: boolean = emit == "asm";
   if (target == "arm64-linux") {

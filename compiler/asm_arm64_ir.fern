@@ -3143,7 +3143,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
     if (s.leak_check) {
       s = s.write("    mov x19, x0\n    bl __fern_lc_report_exit\n    mov x0, x19\n");
     }
-    s = s.write("    mov x8, #93\n    svc #0\n    mov x0, #0\n");
+    s = s.write("    mov x8, #94\n    svc #0\n    mov x0, #0\n");
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
   }
   s = s.mark_heap();
@@ -5729,7 +5729,7 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], i: i32, l
   }
   // No arm matched. Unreachable for a well-typed dyn value, so abort
   // (exit 134, like __fern_oob_abort) rather than answer 0.
-  s = s.write("    mov x8, #93\n    mov x0, #134\n    svc #0\n");
+  s = s.write("    mov x8, #94\n    mov x0, #134\n    svc #0\n");
   s = s.write(dend + ":\n");
   return s;
 }
@@ -5963,7 +5963,7 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
     s = s.write("    bl __fern_lc_report\n");
     s = s.write("    mov x0, x19\n");
   }
-  s = s.write("    mov x8, #93\n");  // sys_exit (Linux arm64); darwinize remaps the number + svc
+  s = s.write("    mov x8, #94\n");  // exit_group (Linux arm64); darwinize remaps the number + svc
   s = s.write("    svc #0\n");
   return s;
 }
@@ -6116,7 +6116,15 @@ function emit_ccall_shim1_arm64(s: asmcore.EmitState, variant: string, n: i32): 
   if (n >= 4) {
     s = s.write("    ldr x3, [x29, #80]\n");
   }
+  // A -shared build lets the C callee enter an export on this thread, so
+  // the busy flag is free for the call and taken back after it.
+  if (s.shared) {
+    s = s.write(busy_release_arm64());
+  }
   s = s.write("    blr x9\n");
+  if (s.shared) {
+    s = s.write(busy_take_arm64());
+  }
   // An FP result comes back in d0 (s0 for an f32, widened to the f64 a Fern
   // f32 is held as) and moves to x0, where every Fern result is read.
   if (util.str_has_suffix(variant, "_f32")) {
@@ -6127,6 +6135,17 @@ function emit_ccall_shim1_arm64(s: asmcore.EmitState, variant: string, n: i32): 
   }
   s = s.write("    ldp x29, x30, [sp], #16\n    ret\n");
   return s;
+}
+
+// busy_take_arm64 takes the -shared build's busy flag, aborting when another
+// thread holds it; busy_release_arm64 frees it. x16 and x17 are the AAPCS64's
+// scratch registers, live across neither a call's arguments nor its result.
+pub function busy_take_arm64(): string {
+  return "    adrp x16, __fern_busy\n    add x16, x16, :lo12:__fern_busy\n    mov w17, #1\n    swpal w17, w17, [x16]\n    cbnz w17, __fern_busy_abort\n";
+}
+
+pub function busy_release_arm64(): string {
+  return "    adrp x16, __fern_busy\n    add x16, x16, :lo12:__fern_busy\n    stlr wzr, [x16]\n";
 }
 
 function emit_ccall_shims_arm64(s: asmcore.EmitState): asmcore.EmitState {
@@ -7036,7 +7055,7 @@ function san_report_exit(s: asmcore.EmitState): string {
   if (s.backtrace) {
     return "    mov x19, #124\n    b __fern_bt_exit\n";
   }
-  return "    mov x0, #124\n    mov x8, #93\n    svc #0\n";
+  return "    mov x0, #124\n    mov x8, #94\n    svc #0\n";
 }
 
 // emit_bt_exit emits __fern_bt_exit: "backtrace:" and then each return
@@ -7077,7 +7096,7 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    b .Lbt_loop\n");
   s = s.write(".Lbt_done:\n");
   s = s.write("    mov x0, x19\n");
-  s = s.write("    mov x8, #93\n");
+  s = s.write("    mov x8, #94\n");
   s = s.write("    svc #0\n");
   // .Lbt_hex(x1 = value): one "  0x<16 hex>\n" line on stderr, nibbles
   // written right to left.
@@ -7674,7 +7693,7 @@ function emit_rt_report(s: asmcore.EmitState): asmcore.EmitState {
     return emit_bt_exit(s);
   }
   s = s.write("    mov x0, x19\n");
-  s = s.write("    mov x8, #93\n");
+  s = s.write("    mov x8, #94\n");
   s = s.write("    svc #0\n");
   return s.write(".size __fern_report, .-__fern_report\n");
 }
@@ -9848,8 +9867,15 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
   // to it, and under either sanitizer flag, whose reports below end in its
   // walk even when the program allocates nothing. A build that has neither
   // carries no reporter, so its rodata stays empty.
-  if (s.has_need("heap") || s.rc_free_debug || s.sanitize) {
+  if (s.has_need("heap") || s.rc_free_debug || s.sanitize || s.shared) {
     s = emit_rt_report(s);
+  }
+  // A -shared build's busy flag: set while this thread runs the object's
+  // code, so a second thread entering an export aborts rather than racing the
+  // non-atomic counts. The export entries and the __c_call shims keep it.
+  if (s.shared) {
+    s = s.write("    .section .bss\n    .align 3\n__fern_busy: .skip 8\n    .text\n");
+    s = abort_trap(s, "__fern_busy_abort", ".Lmsg_busy", asmcore.msg_busy(), 134);
   }
   // The UAF quarantine's fatal report. Self-contained — its own write(2) +
   // exit(124) rather than the census writer — so FERN_RC_FREE_DEBUG works
