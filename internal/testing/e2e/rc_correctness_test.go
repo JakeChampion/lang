@@ -4503,7 +4503,7 @@ function main(): i32 {
 		// early, and the still-live aliases double-freed it — freelist
 		// corruption that crashed __fern_alloc at recursion depth 4.
 		// Scalar-only cursors were the exact gap: string/array-bearing ones
-		// (json.fern's __JsonParser) were already consumed-promoted.
+		// were already consumed-promoted.
 		// 3^5 = 243 per build.
 		name: "tuple_return_scalar_cursor_recursion",
 		src: `
