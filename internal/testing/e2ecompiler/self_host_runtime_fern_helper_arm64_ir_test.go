@@ -491,7 +491,7 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	// The abort paths (#11405): each trap loads its status and branches to
 	// __fern_report, whose write(2) and exit are the two syscalls darwinize
 	// must remap — `mov x8, #64` -> `mov x16, #4` with the errno fold, and
-	// `mov x8, #93` -> `mov x16, #1`, where only a sticky pending-syscall
+	// `mov x8, #94` -> `mov x16, #1`, where only a sticky pending-syscall
 	// survives the status move between the number and the trap, and exit
 	// needs no normalisation.
 	for _, status := range []string{"125", "134"} {
@@ -505,7 +505,7 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	if !strings.Contains(asm, "    mov x0, x19\n    mov x16, #1\n    svc #0x80\n") {
 		t.Error("__fern_report's exit still traps through the Linux vector on Mach-O")
 	}
-	if strings.Contains(asm, "mov x8, #93") {
+	if strings.Contains(asm, "mov x8, #94") {
 		t.Error("an exit kept Linux's number register in Mach-O output")
 	}
 	// arr_slice's range check is Fern, and it aborts through the shared trap
