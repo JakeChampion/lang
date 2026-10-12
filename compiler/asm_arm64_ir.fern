@@ -2991,6 +2991,9 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
       s = ssa_cmp_rr(s, b, "x6");
       s = ssa_trap_guard(s, CC_LO, "__fern_oob_abort");
     }
+    if (ins.imm == 2) {
+      return s;
+    }
     s = ssa_ldst0(s, true, "x6", a);
     s = ssa_ldrb_reg(s, ssa_wreg(d), "x6", b);
     return ssa_store(reg_of, ins.result, d, s);

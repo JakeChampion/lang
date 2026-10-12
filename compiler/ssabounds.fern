@@ -78,8 +78,13 @@ pub function proven_indices(f: ssasem.Func): ssasem.Func {
   return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks } };
 }
 
+// index_read is a byte or element read `b[i]` of an array or a string.
+function index_read(ins: ssa.SInst): boolean {
+  return (ins.kind_tag == ssasem.array_get() || ins.kind_tag == ssasem.str_index()) && ins.args.len() == 2;
+}
+
 function checked_index(ins: ssa.SInst): boolean {
-  return (ins.kind_tag == ssasem.array_get() || ins.kind_tag == ssasem.str_index()) && ins.imm == 0 && ins.args.len() == 2;
+  return index_read(ins) && ins.imm == 0;
 }
 
 function any_checked_index(f: ssasem.Func): boolean {
@@ -93,10 +98,10 @@ function any_checked_index(f: ssasem.Func): boolean {
   return false;
 }
 
-function any_array_read(f: ssasem.Func): boolean {
+function any_index_read(f: ssasem.Func): boolean {
   for blk in f.graph.blocks {
     for ins in blk.insts {
-      if (ins.kind_tag == ssasem.array_get()) {
+      if (index_read(ins)) {
         return true;
       }
     }
@@ -543,10 +548,10 @@ function at_least(g: Graph, b: i32, y: i32, n: i32): boolean {
   return false;
 }
 
-// grouped_reads checks a run of reads of one array at one index plus
-// constants, `bs[off]` then `bs[off + 1]` ... `bs[off + 63]` in any order, or
-// at constant indexes, once rather than at every read. Before the run's first
-// read, a check (an `array_get` with `imm` ssasem.check_only()) of the index
+// grouped_reads checks a run of reads of one array or string at one index
+// plus constants, `bs[off]` then `bs[off + 1]` ... `bs[off + 63]` in any order,
+// or at constant indexes, once rather than at every read. Before the run's
+// first read, a check (a read with `imm` ssasem.check_only()) of the index
 // `(lo + span) | (lo >> 31)` stands for every read: `lo` is the lowest index
 // and `span` the distance to the highest, so it is in range exactly when all of
 // them are, a negative `lo` making it -1 and an `lo + span` past INT32_MAX
@@ -668,7 +673,7 @@ function probes_in_run(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], st
   let k: i32 = start;
   while (k < end) {
     let ins: ssa.SInst = insts[k];
-    if (ins.kind_tag == ssasem.array_get() && checked_index(ins) && ssasem.is_i32(f.values[ins.args[1]]) && scalar(f, ins.result)) {
+    if (checked_index(ins) && ssasem.is_i32(f.values[ins.args[1]]) && scalar(f, ins.result)) {
       reads = reads.append(k);
     }
     k = k + 1;
@@ -773,14 +778,14 @@ function scalar(f: ssasem.Func, v: i32): boolean {
 
 // silent reports whether an instruction can neither abort nor be observed:
 // integer and boolean arithmetic other than division, an integer conversion, a
-// constant, a phi, a length or an array read, whose own abort says the same as
-// the probe's.
+// constant, a phi, a length or an array or string read, whose own abort says
+// the same as the probe's.
 function silent(f: ssasem.Func, ins: ssa.SInst): boolean {
   let k: i32 = ins.kind_tag;
   if (k == 1 || k == 2 || k == 3 || k == 7 || k == 8 || k == ssasem.param()) {
     return true;
   }
-  if (k == ssasem.array_get() || k == ssasem.length()) {
+  if (k == ssasem.array_get() || k == ssasem.str_index() || k == ssasem.length()) {
     return true;
   }
   if (ins.result < 0 || ins.result >= f.values.len()) {
@@ -799,7 +804,7 @@ function silent(f: ssasem.Func, ins: ssa.SInst): boolean {
   return false;
 }
 
-// word_loads rewrites a word assembled from a byte array —
+// word_loads rewrites a word assembled from a byte array or a string —
 // `b[x] as u32 | b[x + 1] as u32 << 8 | … | b[x + 3] as u32 << 24`, or the
 // eight-byte u64 form — into one load of the word, which every target reads
 // unaligned and stores little-endian (#8782). A big-endian word, the bytes'
@@ -811,7 +816,7 @@ function silent(f: ssasem.Func, ins: ssa.SInst): boolean {
 // view, which reaches its bytes through a decoded data pointer rather than its
 // box, and `swaps` the four- and eight-byte byte swaps.
 pub function word_loads(f: ssasem.Func, contracts: ssasem.Contract[], view_words: string[], swaps: string[]): ssasem.Func {
-  if (!any_array_read(f)) {
+  if (!any_index_read(f)) {
     return f;
   }
   let defs: ssa.SInst[] = definitions(f);
@@ -830,8 +835,6 @@ pub function word_loads(f: ssasem.Func, contracts: ssasem.Contract[], view_words
       }
       parts = word_parts(defs, ins.args, w, parts);
       let v: i32 = values.len();
-      let wide: typeinfo.Type = typeinfo.TypeI32 { width: w.bytes * 8, unsigned: false, is_char: false, polymorphic: false };
-      let addr_t: typeinfo.Type = typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false, polymorphic: false };
       let i32_t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
       // v + 1 is the word's first index: the base plus the lowest offset, or
       // that offset alone.
@@ -843,36 +846,9 @@ pub function word_loads(f: ssasem.Func, contracts: ssasem.Contract[], view_words
       }
       values = values.append(i32_t).append(i32_t);
       fused = true;
-      if (is_byte_view(f.values[w.arr])) {
-        let name: string = view_words[0];
-        if (w.bytes == 8) {
-          name = view_words[1];
-        }
-        insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v + 2, args: [w.arr, v + 1], imm: 0, str: name });
-        values = values.append(wide);
-        insts = in_order(insts, w, swaps, v + 2, ins.result);
-        if (w.big) {
-          values = values.append(wide);
-        }
-        continue;
-      }
-      let load: string = "__load_i32";
-      if (w.bytes == 8) {
-        load = "__load_i64";
-      }
-      // An array's bytes start eight bytes into its box on every target. The
-      // eight is added to the address, not the i32 index, so it cannot wrap.
-      insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v + 2, args: [w.arr], imm: 0, str: "__raw_arr_ptr" });
-      insts = insts.append(ssa.SInst { kind_tag: 1, result: v + 3, args: [], imm: 8, str: "" });
-      insts = insts.append(ssa.SInst { kind_tag: 9, result: v + 4, args: [v + 2, v + 3], imm: 0, str: "+" });
-      insts = insts.append(ssa.SInst { kind_tag: ssasem.cast(), result: v + 5, args: [v + 1], imm: 0, str: "" });
-      insts = insts.append(ssa.SInst { kind_tag: 9, result: v + 6, args: [v + 4, v + 5], imm: 0, str: "+" });
-      insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v + 7, args: [v + 6], imm: 0, str: load });
-      values = values.append(addr_t).append(addr_t).append(addr_t).append(addr_t).append(addr_t).append(wide);
-      insts = in_order(insts, w, swaps, v + 7, ins.result);
-      if (w.big) {
-        values = values.append(wide);
-      }
+      let l: Load = load_word(Load { insts: insts, values: values }, f.values[w.arr], w, v + 1, ins.result, view_words, swaps);
+      insts = l.insts;
+      values = l.values;
     }
     if (fused) {
       blk = ssa.SBlock { ...blk, insts: insts };
@@ -891,6 +867,52 @@ pub function word_loads(f: ssasem.Func, contracts: ssasem.Contract[], view_words
     }
   }
   return ssasem.Func { ...f, values: values, calls: calls, graph: ssa.SFunc { ...f.graph, blocks: blocks, nvals: values.len() } };
+}
+
+// The instructions a function is being rebuilt into and the types of its
+// values, which they extend.
+struct Load { insts: ssa.SInst[], values: typeinfo.Type[] }
+
+// load_word appends the load of word `w` from `arr`, a value of type `t`,
+// starting at index value `first`, as `result` in its unsigned type. A `[u8]`
+// view reads its bytes through a decoded data pointer (`view_words`), an
+// array's bytes start eight bytes into its box on every target, and a
+// string's at the address `__raw_data` reads. The eight and the index are
+// added to the address, not to the i32 index, so neither can wrap.
+function load_word(own l: Load, t: typeinfo.Type, w: Word, first: i32, result: i32, view_words: string[], swaps: string[]): Load {
+  let wide: typeinfo.Type = typeinfo.TypeI32 { width: w.bytes * 8, unsigned: false, is_char: false, polymorphic: false };
+  let addr_t: typeinfo.Type = typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false, polymorphic: false };
+  let insts: ssa.SInst[] = l.insts;
+  let values: typeinfo.Type[] = l.values;
+  let v: i32 = values.len();
+  let word: i32 = v;
+  if (is_byte_view(t)) {
+    insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v, args: [w.arr, first], imm: 0, str: view_words[w.bytes / 8] });
+  } else {
+    let base: i32 = v;
+    if (ssasem.is_string(t)) {
+      insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v, args: [w.arr], imm: 0, str: "__raw_data" });
+      values = values.append(addr_t);
+    } else {
+      insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v, args: [w.arr], imm: 0, str: "__raw_arr_ptr" });
+      insts = insts.append(ssa.SInst { kind_tag: 1, result: v + 1, args: [], imm: 8, str: "" });
+      insts = insts.append(ssa.SInst { kind_tag: 9, result: v + 2, args: [v, v + 1], imm: 0, str: "+" });
+      values = values.append(addr_t).append(addr_t).append(addr_t);
+      base = v + 2;
+    }
+    let at: i32 = values.len();
+    insts = insts.append(ssa.SInst { kind_tag: ssasem.cast(), result: at, args: [first], imm: 0, str: "" });
+    insts = insts.append(ssa.SInst { kind_tag: 9, result: at + 1, args: [base, at], imm: 0, str: "+" });
+    insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: at + 2, args: [at + 1], imm: 0, str: ["__load_i32", "__load_i64"][w.bytes / 8] });
+    values = values.append(addr_t).append(addr_t);
+    word = at + 2;
+  }
+  values = values.append(wide);
+  insts = in_order(insts, w, swaps, word, result);
+  if (w.big) {
+    values = values.append(wide);
+  }
+  return Load { insts: insts, values: values };
 }
 
 // in_order appends the cast that gives the word `loaded` its unsigned type as
@@ -1091,7 +1113,7 @@ function word_byte(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type):
     return no;
   }
   let g: ssa.SInst = defs[d.args[0]];
-  if (g.kind_tag != ssasem.array_get() || g.args.len() != 2 || !ssasem.is_u8(f.values[g.result])) {
+  if (!index_read(g) || !ssasem.is_u8(f.values[g.result])) {
     return no;
   }
   let x: i32 = g.args[1];

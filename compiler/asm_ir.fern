@@ -7505,6 +7505,9 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     if (ins.imm != 1) {
       s = ssa_jump_sym(ssa_alu_rm(s, 7, 64, true, b, a, 8), "jae", "__fern_oob_abort");
     }
+    if (ins.imm == 2) {
+      return s;
+    }
     s = ssa_movzb_mi(ssa_mov_rm0(s, 64, true, "%rdx", a), 0, d, "%rdx", b, 0);
     return ssa_store(reg_of, ins.result, d, s);
   }

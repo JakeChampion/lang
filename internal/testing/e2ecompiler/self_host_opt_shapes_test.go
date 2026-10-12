@@ -288,6 +288,17 @@ function main(): i32 {
 	{name: "be_word_constant_indexes", fn: "header", exit: 5, src: wordLoadSrc,
 		want:   map[string][]string{"x86-64-linux": {`\bbswapl %e\w+`, `__fern_oob_abort`}, "arm64-linux": {`\brev w\d+, w\d+`, `__fern_oob_abort`}},
 		forbid: wordForbid},
+	// The same words read from a string's bytes, as core/map's string hash
+	// reads them.
+	{name: "le_word_string_u32", fn: "sword32", exit: 110, src: stringWordSrc,
+		want:   oneCheck,
+		forbid: wordForbid},
+	{name: "be_word_string_u64", fn: "sbigend64", exit: 110, src: stringWordSrc,
+		want:   map[string][]string{"x86-64-linux": {`\bbswapq %r\w+`, `__fern_oob_abort`}, "arm64-linux": {`\brev x\d+, x\d+`, `__fern_oob_abort`}},
+		forbid: wordForbid},
+	{name: "le_word_string_constant_indexes", fn: "sheader", exit: 110, src: stringWordSrc,
+		want:   oneCheck,
+		forbid: wordForbid},
 	{name: "word_bytes_out_of_place_kept", fn: "swapped", exit: 5, src: wordLoadSrc,
 		want:   map[string][]string{"x86-64-linux": {`\bmovzb`}, "arm64-linux": {`\bldrb\b`}},
 		forbid: map[string][]string{"x86-64-linux": {`\bbswap[lq]?\b`}, "arm64-linux": {`\brev\b`}}},
@@ -601,6 +612,23 @@ function main(): i32 {
     let y: u64 = bigend64(b[1:20], 3) ^ swapped(b, 11) as u64;
     let z: u32 = scrambled(b, 7) ^ header(b);
     return ((x ^ (y >> 13u64) as u32 ^ y as u32 ^ z) & 127u32) as i32;
+}
+`
+
+const stringWordSrc = `
+@noinline function sword32(s: string, o: i32): u32 {
+    return s[o] as u32 | s[o + 1] as u32 << 8 | s[o + 2] as u32 << 16 | s[o + 3] as u32 << 24;
+}
+@noinline function sbigend64(s: string, o: i32): u64 {
+    return s[o] as u64 << 56 | s[o + 1] as u64 << 48 | s[o + 2] as u64 << 40 | s[o + 3] as u64 << 32 | s[o + 4] as u64 << 24 | s[o + 5] as u64 << 16 | s[o + 6] as u64 << 8 | s[o + 7] as u64;
+}
+@noinline function sheader(s: string): u32 {
+    return s[4] as u32 | s[5] as u32 << 8 | s[6] as u32 << 16 | s[7] as u32 << 24;
+}
+function main(): i32 {
+    let s: string = "pack my box with five dozen liquor jugs";
+    let x: u32 = sword32(s, 5) ^ (sbigend64(s, 11) >> 29u64) as u32 ^ sheader(slice_unchecked(s, 3, 20));
+    return (x & 127u32) as i32;
 }
 `
 
