@@ -42,7 +42,7 @@ function values_as_jarray(values: string[]): json.JsonValue {
 // Build a JSON object reporting the path + first value of `q`
 // (if any) + every value of `tag`.
 function describe(path: string, q: Map[string, string[]]): json.JsonValue {
-  let out: Map[string, json.JsonValue] = map_new(4);
+  let out: json.JsonObject = json.object();
   out = out.insert("path", JString(path));
   match (q.get("q")) {
     Some(qs) => {

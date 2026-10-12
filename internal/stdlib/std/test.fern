@@ -2413,8 +2413,8 @@ pub function assert_close_to_now_ms(actual_ms: i64, max_skew_ms: i64): TestOutco
 // trees in order-independent fashion.
 
 // __json_value_eq compares two JsonValue trees recursively.
-// JObject is order-independent (Map iteration order isn't
-// observable); arrays, strings, numbers, booleans, null all
+// JObject is order-independent (member order is not
+// significant in JSON); arrays, strings, numbers, booleans, null all
 // compare structurally. JNumber compares the textual payload
 // — the JSON spec doesn't fix precision, so two emitters
 // producing "1.0" vs "1" would diverge here; callers that
@@ -2487,7 +2487,7 @@ function __json_value_eq(a: json.JsonValue, b: json.JsonValue): boolean {
           if (am.len() != bm.len()) {
             return false;
           }
-          let keys: string[] = am.keys();
+          let keys: string[] = am.keys;
           let i: i32 = 0;
           while (i < keys.len()) {
             let k: string = keys[i];

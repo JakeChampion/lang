@@ -2,16 +2,15 @@ package e2ecompiler
 
 import "testing"
 
-// enumMapShakeSrc names std/json's enum only through a variant that holds no
-// map, in a body. `JObject` holds a `Map`, and `JsonValue`'s drop walks it, so
-// the tree shaker has to keep core/map's routed helpers; it dropped them, and
-// the x86-64 assembler refused the module for calling `__map_drop_boxes_impl`
-// (#10772).
-const enumMapShakeSrc = `import "std/json";
-import "std/i32";
+// enumMapShakeSrc names an enum only through a variant that holds no map, in a
+// body. `O` holds a `Map`, and `J`'s drop walks it, so the tree shaker has to
+// keep core/map's routed helpers; it dropped them, and the x86-64 assembler
+// refused the module for calling `__map_drop_boxes_impl` (#10772).
+const enumMapShakeSrc = `import "std/i32";
+enum J { S(string), O(Map[string, J]) }
 function main(): i32 {
-    let j: json.JsonValue = JString("hi");
-    match (j) { JString(s) => { print(s.len().to_string()); }, _ => { print("other"); } }
+    let j: J = S("hi");
+    match (j) { S(s) => { print(s.len().to_string()); }, _ => { print("other"); } }
     return 0;
 }
 `

@@ -38,8 +38,8 @@ The parent `examples/` directory holds the cross-target basics
 | File | Target | What it shows |
 |---|---|---|
 | `wc.fern` | wasm | argv, stdin / `Reader` API, file I/O via `open_reader`, `Result + match` for fallible operations |
-| `json_pretty.fern` | wasm | Recursive `match` over std/json's `JsonValue` enum, `MapIter` for ordered object iteration, `s.repeat(n)` for indentation |
-| `csv_to_json.fern` | wasm | Building `JsonValue` trees by hand, `Map[string, json.JsonValue]` for object construction, the pipe operator |
+| `json_pretty.fern` | wasm | Recursive `match` over std/json's `JsonValue` enum, document-ordered object members, `s.repeat(n)` for indentation |
+| `csv_to_json.fern` | wasm | Building `JsonValue` trees by hand, `json.JsonObject` for object construction, the pipe operator |
 | `word_freq.fern` | wasm | `Map[string, i32]` counting, `m.keys()` / `m.values()` snapshots, `s.to_lower` + manual whitespace tokenisation, the immutable-array update idiom (`arr = arr.with(i, v)`) with a tuple-returning sort |
 | `use_chain.fern` | wasm | Gleam-style `use` desugaring across fallible Option calls, the closure-factory pattern (`adder(7)` returns a closure) — defunctionalisation + inlining together erase the `call_indirect` from the final wat |
 | `shape_area.fern` | wasm | Tagged-union enums with mixed payloads, exhaustive `match` with payload destructuring, `match` guards, generic enums (`Result[T, E]`), wide payloads (`Cuboid(f64, f64, f64)` with 8-byte slot layout) |

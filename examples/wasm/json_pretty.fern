@@ -3,7 +3,7 @@
 //
 // Showcases: std/json's JsonValue enum, recursive
 // match (over JNull / JBool / JNumber / JString / JArray /
-// JObject), MapIter for ordered object iteration, the
+// JObject), an object's members in document order, the
 // `s.repeat(n)` indentation helper, build-once-print-once.
 // The parser's intermediate allocations are reclaimed by
 // reference counting as they fall out of scope; for CLI mode
@@ -80,17 +80,13 @@ function pretty(v: json.JsonValue, depth: i32): string {
         return "{}";
       }
       let obj_out: string = "{\n";
-      let first: boolean = true;
-      let it: MapIter[string, json.JsonValue] = m.iter();
-      while (it.has_next()) {
-        if (!first) {
+      let i: i32 = 0;
+      while (i < m.len()) {
+        if (i > 0) {
           obj_out = obj_out + ",\n";
         }
-        first = false;
-        let k: string = it.key();
-        let entry_v: json.JsonValue = it.value();
-        obj_out = obj_out + pad_inner + json.json_encode(JString(k)) + ": " + pretty(entry_v, depth + 1);
-        it.advance();
+        obj_out = obj_out + pad_inner + json.json_encode(JString(m.keys[i])) + ": " + pretty(m.values[i], depth + 1);
+        i = i + 1;
       }
       return obj_out + "\n" + pad + "}";
     }

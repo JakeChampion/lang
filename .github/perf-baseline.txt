@@ -68,7 +68,7 @@ x86_64/closure_call.text	814
 x86_64/closure_call.ir	103908097
 x86_64/enum_match.text	999
 x86_64/enum_match.ir	53775055
-x86_64/http_hello.text	19252
+x86_64/http_hello.text	20154
 x86_64/http_hello.ir	29964671
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
@@ -108,10 +108,10 @@ x86_64/struct_drop.text	3384
 x86_64/struct_drop.ir	358420237
 x86_64/tokenize.text	984
 x86_64/tokenize.ir	36950039
-x86_64/utf8_ingest_unchecked.text	14482
-x86_64/utf8_ingest_unchecked.ir	3990676	3
-x86_64/utf8_ingest_validated.text	14726
-x86_64/utf8_ingest_validated.ir	7038098	3
+x86_64/utf8_ingest_unchecked.text	11070
+x86_64/utf8_ingest_unchecked.ir	3331077	3
+x86_64/utf8_ingest_validated.text	11309
+x86_64/utf8_ingest_validated.ir	6413083	3
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -154,6 +154,13 @@ x86_64/utf8_ingest_validated.ir	7038098	3
 # (x86_64 unchecked -28.7%, validated -18.8%; aarch64 -26.4%, -18.4%) and
 # `.text` grew 0.7-1.7% for the scan's tables and run helpers. Both figures
 # for both arches are this branch's own measurement.
+#
+# Re-pinned 2026-10-12 (#12105 slice 4) on the four utf8_ingest rows of each
+# arch, whose json_parse builds an object as two arrays instead of a Map
+# (x86_64 `.ir` -16.5% unchecked, -8.9% validated; `.text` -23%), and on
+# http_hello.text (+4.7%): std/http imports std/json, and the tree shaker keeps
+# a method by bare name where a call's receiver is untyped, so JsonObject's
+# `get` / `len` and its seeded key hash are kept.
 #
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18

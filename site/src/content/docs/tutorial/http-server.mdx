@@ -186,7 +186,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
         None => { return http.bad_request("bad URL\n"); },
         Some(u) => {
             let q: Map[string, string[]] = url.query_parse(u.query);
-            let out: Map[string, json.JsonValue] = map_new(2);
+            let out: json.JsonObject = json.object();
             out = out.insert("path", JString(u.path));
             match (q.get("q")) {
                 Some(vs) => {

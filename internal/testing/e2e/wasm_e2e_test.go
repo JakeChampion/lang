@@ -6622,7 +6622,6 @@ function main(): i32 {
 // escape-encoding path for strings.
 func TestWASMJsonEncode(t *testing.T) {
 	src := `
-import "core/map";
 import "std/json";
 function main(): i32 {
 		// Primitives.
@@ -6644,15 +6643,14 @@ function main(): i32 {
 		// Empty object — empty array literal needs a type
 		// annotation that's awkward at construction site, so
 		// just exercise empty objects.
-		let emptyMap: Map[string, json.JsonValue] = map_new(4);
-		if (json.json_encode(JObject(emptyMap)) != "{}") { return 20; }
+		if (json.json_encode(JObject(json.object())) != "{}") { return 20; }
 
 		// Heterogeneous array.
 		let a: json.JsonValue[] = [JNumber("1"), JString("two"), JBool(true), JNull];
 		if (json.json_encode(JArray(a)) != "[1,\"two\",true,null]") { return 30; }
 
-		// Object — insertion order preserved (IndexMap).
-		let m: Map[string, json.JsonValue] = map_new(4);
+		// Object — insertion order preserved.
+		let m: json.JsonObject = json.object();
 		m = m.insert("name", JString("alice"));
 		m = m.insert("age", JNumber("30"));
 		m = m.insert("admin", JBool(false));
@@ -6662,7 +6660,7 @@ function main(): i32 {
 
 		// Nested: object containing an array of numbers.
 		let inner: json.JsonValue[] = [JNumber("1"), JNumber("2"), JNumber("3")];
-		let outer: Map[string, json.JsonValue] = map_new(2);
+		let outer: json.JsonObject = json.object();
 		outer = outer.insert("nums", JArray(inner));
 		if (json.json_encode(JObject(outer)) != "{\"nums\":[1,2,3]}") { return 50; }
 

@@ -3,7 +3,7 @@
 // header columns.
 //
 // Showcases: building JsonValue trees by hand (JArray /
-// JObject / JString), Map[string, JsonValue] for the
+// JObject / JString), a json.JsonObject for the
 // per-row object, the pipe operator for the row → JsonValue
 // transform, generic-style dispatch through method receivers
 // on `string` (split / trim).
@@ -35,7 +35,7 @@ function read_all(r: Reader): string {
 }
 
 function row_to_object(headers: string[], row: string[]): json.JsonValue {
-  let m: Map[string, json.JsonValue] = map_new(headers.len());
+  let m: json.JsonObject = json.object();
   let i: i32 = 0;
   while (i < headers.len() && i < row.len()) {
     m = m.insert(headers[i].trim().to_owned(), JString(row[i].trim().to_owned()));
