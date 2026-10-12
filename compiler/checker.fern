@@ -23501,6 +23501,17 @@ pub function expr_type(e: ast.Expr, s: Scope): typeinfo.Type {
   return check_expr(e, s);
 }
 
+// binary_types is the type of `b` and of its two operands, typing each operand
+// once: check_expr of `b` itself would type them again.
+pub function binary_types(b: ast.ExprBinary, s: Scope): (typeinfo.Type, typeinfo.Type, typeinfo.Type) {
+  let lt: typeinfo.Type = check_expr(b.left, s);
+  let rt: typeinfo.Type = check_expr(b.right, s);
+  if (b.op == "__named_arg") {
+    return (rt, lt, rt);
+  }
+  return (binary_result_type(b, lt, rt, s), lt, rt);
+}
+
 pub function scope_type(s: Scope, name: string): typeinfo.Type {
   return s.lookup(name);
 }

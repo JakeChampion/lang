@@ -652,7 +652,13 @@ function is_none_only(t: typeinfo.Type): boolean {
 // ---- expressions ------------------------------------------------------------
 
 function checked(e: ast.Expr, s: State): typeinfo.Type {
-  return settled(resolved(checker.expr_type(e, s.scope), s.template, s.binding, s.scope));
+  return settled_in(checker.expr_type(e, s.scope), s);
+}
+
+// settled_in is a type the checker gave, resolved in this instantiation and
+// settled.
+function settled_in(t: typeinfo.Type, s: State): typeinfo.Type {
+  return settled(resolved(t, s.template, s.binding, s.scope));
 }
 
 function decimal(text: string): boolean {
@@ -1609,25 +1615,27 @@ function operand_width(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typei
   if (parser.float_literal_tree(e) && ssasem.is_float(expected)) {
     return expected;
   }
-  let addr: typeinfo.Type = address_width(b, s);
-  if (ssasem.is_usize(addr)) {
-    return addr;
+  let (whole_t, left_t, right_t) = checker.binary_types(b, s.scope);
+  let l: typeinfo.Type = settled_in(left_t, s);
+  let r: typeinfo.Type = settled_in(right_t, s);
+  // An address decides the width on whichever side it appears: the checker
+  // widens the other operand to the pointer width rather than running the
+  // operator at the narrower one.
+  if (width_bearing(b.left) && ssasem.is_usize(l)) {
+    return l;
   }
-  let whole: typeinfo.Type = checked(e, s);
+  if (width_bearing(b.right) && ssasem.is_usize(r)) {
+    return r;
+  }
+  let whole: typeinfo.Type = settled_in(whole_t, s);
   if (operand_type(whole)) {
     return whole;
   }
-  if (width_bearing(b.left)) {
-    let l: typeinfo.Type = checked(b.left, s);
-    if (operand_type(l)) {
-      return l;
-    }
+  if (width_bearing(b.left) && operand_type(l)) {
+    return l;
   }
-  if (width_bearing(b.right)) {
-    let r: typeinfo.Type = checked(b.right, s);
-    if (operand_type(r)) {
-      return r;
-    }
+  if (width_bearing(b.right) && operand_type(r)) {
+    return r;
   }
   return typeinfo.unchecked();
 }
@@ -1638,27 +1646,6 @@ function option_payload(t: typeinfo.Type): typeinfo.Type {
   if let typeinfo.TypeUnion(u) = t {
     if (u.name == "Option" && u.args.len() == 1) {
       return u.args[0];
-    }
-  }
-  return typeinfo.unchecked();
-}
-
-// An address decides the width of the operator it appears in, on whichever
-// side it appears: the checker widens the other operand to the pointer width
-// rather than running the operator at the narrower one. A comparison is why
-// this is asked of the operands rather than read off the whole expression,
-// whose type is the boolean.
-function address_width(b: ast.ExprBinary, s: State): typeinfo.Type {
-  if (width_bearing(b.left)) {
-    let l: typeinfo.Type = checked(b.left, s);
-    if (ssasem.is_usize(l)) {
-      return l;
-    }
-  }
-  if (width_bearing(b.right)) {
-    let r: typeinfo.Type = checked(b.right, s);
-    if (ssasem.is_usize(r)) {
-      return r;
     }
   }
   return typeinfo.unchecked();
