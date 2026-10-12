@@ -3623,9 +3623,9 @@ func builtinReadDirAll(_ *Interp, args []Value) (Value, error) {
 	return readDirLike("read_dir_all", false, args)
 }
 
-// builtinReadDirIno is read_dir with each name's inode number from the
-// same directory record, as a DirEntry. `ino` is 0 where the platform's
-// reader supplies none.
+// builtinReadDirIno is read_dir with each name's inode number and file type
+// from the same directory record, as a DirEntry. Either is 0 where the
+// platform's reader supplies none.
 func builtinReadDirIno(_ *Interp, args []Value) (Value, error) {
 	entries, res, err := readDirEntries("read_dir_ino", true, args)
 	if entries == nil {
@@ -3635,7 +3635,7 @@ func builtinReadDirIno(_ *Interp, args []Value) (Value, error) {
 	for i, e := range entries {
 		out.E[i] = &Struct{
 			TypeName: "DirEntry",
-			Fields:   map[string]Value{"name": String(e.name), "ino": Number(int64(e.ino))},
+			Fields:   map[string]Value{"name": String(e.name), "ino": Number(int64(e.ino)), "kind": Number(int64(e.kind))},
 		}
 	}
 	return resultOk(out), nil
@@ -3659,6 +3659,7 @@ func readDirLike(name string, skipDots bool, args []Value) (Value, error) {
 type dirent struct {
 	name string
 	ino  uint64
+	kind uint32 // the file type as stat's mode bits, 0 when unknown
 }
 
 // readDirEntries drains the directory at the path in args. A nil slice

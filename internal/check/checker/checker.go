@@ -861,14 +861,16 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "btime_nsec", Type: ast.NumberType{Width: 64, Signed: true}},
 			},
 		},
-		// DirEntry — one `read_dir_ino(path)` entry: the base name
-		// and the inode number the directory reader hands back with
-		// it. `ino` is 0 where the platform does not supply one.
+		// DirEntry — one `read_dir_ino(path)` entry: the base name,
+		// and the inode number and file type (as stat's mode bits) the
+		// directory reader hands back with it. Either is 0 where the
+		// platform does not supply one.
 		{
 			Name: "DirEntry",
 			Fields: []ast.Param{
 				{Name: "name", Type: ast.StringType{}},
 				{Name: "ino", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "kind", Type: ast.NumberType{Width: 32, Signed: false}},
 			},
 		},
 		// FsStat — `statfs(path)` shape: what a FILESYSTEM reports

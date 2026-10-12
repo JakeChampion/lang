@@ -231,7 +231,9 @@ retired the op: `.chars()` is std/string's codepoint decoder, not a builtin.
 >
 > **`read_dir_all`** (#9279) is that same source with the `.` / `..` clause
 > suppressed, and **`read_dir_ino`** (#9317) is it with each entry appended as a
-> `DirEntry { name, ino }`, the `ino` read from the record's `d_ino@0` —
+> `DirEntry { name, ino, kind }`, the `ino` read from the record's `d_ino@0` and
+> the `kind` from its `d_type` (offset 18 on Linux, 20 on XNU) shifted into
+> stat's file-type bits —
 > `rt_src_read_dir`, `rt_src_read_dir_all` and `rt_src_read_dir_ino` are three
 > calls into one `rt_src_read_dir_like(t, fname, skip_dots, ino)`, which emits
 > the function under the name it is asked for, wraps the per-entry append in

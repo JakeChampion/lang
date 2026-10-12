@@ -10408,6 +10408,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     let def: StructFieldDecl[] = [];
     def = def.append(StructFieldDecl { name: "name", type_name: "string", fn_ret: "", fn_param_types: "" });
     def = def.append(StructFieldDecl { name: "ino", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    def = def.append(StructFieldDecl { name: "kind", type_name: "u32", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "DirEntry", fields: def, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
   }
   // FsStat: the builtin struct returned by statfs(path) — the filesystem's

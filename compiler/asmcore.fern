@@ -2415,10 +2415,16 @@ pub function direntoff(t: string, name: string): string {
     if (name == "name") {
       return "21";
     }
+    if (name == "type") {
+      return "20";
+    }
     return "16";
   }
   if (name == "name") {
     return "19";
+  }
+  if (name == "type") {
+    return "18";
   }
   return "16";
 }
@@ -4975,7 +4981,7 @@ function dir_drain_src(t: string, elem: string, skip_dots: boolean, ino: boolean
   let nameoff: string = direntoff(t, "name");
   let entry: string = "__raw_string(nbuf, nlen)";
   if (ino) {
-    entry = "DirEntry { name: __raw_string(nbuf, nlen), ino: __load_i64((buf + pos + " + direntoff(t, "ino") + ")) }";
+    entry = "DirEntry { name: __raw_string(nbuf, nlen), ino: __load_i64((buf + pos + " + direntoff(t, "ino") + ")), kind: (__raw_load8(buf, pos + " + direntoff(t, "type") + ") as u32) << 12 }";
   }
   let guard_open: string = "";
   let guard_close: string = "";
