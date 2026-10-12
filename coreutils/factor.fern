@@ -191,43 +191,19 @@ function help_text(): string {
 // Residues are held as `a * 2^64 mod n`, so a modular multiply is two
 // 64x64 products and no division. Fern has no 128-bit integer, and a
 // (hi, lo) tuple would be a heap box per multiply, so the high word of a
-// product is computed on its own from 32-bit halves, and the low word is
-// the wrapping product.
+// product is `__mulhi_u64`'s, the machine's widening multiply, and the low
+// word is the wrapping product.
 //
 // `n` is odd, which is what lets `ninv` (n^-1 mod 2^64) exist. Every
 // routine takes `n` and `ninv` as plain arguments: the modulus lives in
 // locals of the loops that are the cost of a 64-bit semiprime, and a
 // field load per multiply would be in every one of them.
-// `mul_hi(x, y)` — the high word of the 128-bit product. The two middle
-// sums cannot overflow: a 32x32 product leaves room for a 32-bit carry.
-function mul_hi(x: u64, y: u64): u64 {
-  let m: u64 = 4294967295 as u64;
-  let a0: u64 = x & m;
-  let a1: u64 = x >> 32 as u64;
-  let b0: u64 = y & m;
-  let b1: u64 = y >> 32 as u64;
-  let mid: u64 = a0 * b1 + (a0 * b0 >> 32 as u64);
-  let mid2: u64 = a1 * b0 + (mid & m);
-  return a1 * b1 + (mid >> 32 as u64) + (mid2 >> 32 as u64);
-}
-
-// `sq_hi(x)` — the high word of x * x, a multiply fewer than `mul_hi`.
-function sq_hi(x: u64): u64 {
-  let m: u64 = 4294967295 as u64;
-  let a0: u64 = x & m;
-  let a1: u64 = x >> 32 as u64;
-  let p01: u64 = a0 * a1;
-  let mid: u64 = p01 + (a0 * a0 >> 32 as u64);
-  let mid2: u64 = p01 + (mid & m);
-  return a1 * a1 + (mid >> 32 as u64) + (mid2 >> 32 as u64);
-}
-
 // `redc(hi, lo, n, ninv)` — hi:lo * 2^-64 mod n, for hi:lo below n * 2^64.
 // With q = lo * n^-1, the low words of hi:lo and q * n agree, so their
 // difference is (hi - t) * 2^64 exactly and lies in (-n, n): one
 // conditional add finishes it.
 function redc(hi: u64, lo: u64, n: u64, ninv: u64): u64 {
-  let t: u64 = mul_hi(lo * ninv, n);
+  let t: u64 = __mulhi_u64(lo * ninv, n);
   if (hi >= t) {
     return hi - t;
   }
@@ -235,11 +211,11 @@ function redc(hi: u64, lo: u64, n: u64, ninv: u64): u64 {
 }
 
 function mont_mul(a: u64, b: u64, n: u64, ninv: u64): u64 {
-  return redc(mul_hi(a, b), a * b, n, ninv);
+  return redc(__mulhi_u64(a, b), a * b, n, ninv);
 }
 
 function mont_sq(a: u64, n: u64, ninv: u64): u64 {
-  return redc(sq_hi(a), a * a, n, ninv);
+  return redc(__mulhi_u64(a, a), a * a, n, ninv);
 }
 
 function addmod(a: u64, b: u64, n: u64): u64 {
