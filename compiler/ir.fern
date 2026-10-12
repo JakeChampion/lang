@@ -2089,6 +2089,16 @@ pub function op_read_dir_ino_all(): Op {
   return op0(432);
 }
 
+// `utf8_blocks` pops [buf, start, n] and checks the bytes of buf[start..n) a
+// vector block at a time against UTF-8's well-formedness rules, reading the
+// three bytes before `start` as context: start must be at least 3 and on a
+// character boundary. It pushes the offset of the character boundary it
+// checked up to, at most n, or -1 when a block is malformed; the caller's
+// scalar walk takes the rest. Read_file's validator runs on it (#12105).
+pub function op_utf8_blocks(): Op {
+  return op0(433);
+}
+
 // `env` pops a name string value and looks up that environment variable,
 // pushing a fresh Option[string]: Some(value) when set, None when unset (a
 // VALUE op — one arg consumed, the box left on the stack). Lowers to each
@@ -4299,6 +4309,9 @@ function kind_id_len11(name: string): i32 {
   if (c == b'o' && name == "opt_payload") {
     return 123;
   }
+  if (c == b'u' && name == "utf8_blocks") {
+    return 433;
+  }
   if (c == b'r') {
     return kind_id_len11_r(name);
   }
@@ -5760,6 +5773,9 @@ pub function kind_name(id: i32): string {
   if (id == 432) {
     return "read_dir_ino_all";
   }
+  if (id == 433) {
+    return "utf8_blocks";
+  }
   if (id == 408) {
     return "pipe";
   }
@@ -6130,7 +6146,8 @@ function pops3(t: i32): boolean {
     || t == 327  // count_runs (str, inside, set)
     || t == 364 || t == 365 || t == 376 || t == 377  // setxattr, lsetxattr (path, name, value)
     || t == 366 || t == 380  // fd_drop_cache, str_from_bytes_range
-    || t == 403 || t == 404;  // aes_ctr32, ghash
+    || t == 403 || t == 404  // aes_ctr32, ghash
+    || t == 433;  // utf8_blocks (buf, start, n)
 }
 
 // pops_buf is the operand count of one of the capacity-carrying string
@@ -8949,5 +8966,5 @@ pub function is_str_op_kind(tag: i32): boolean {
     || tag == 99 || tag == 100 || tag == 225 || tag == 227
     || tag == 234 || tag == 235 || tag == 245 || tag == 253
     || tag == 309 || tag == 322 || tag == 324 || tag == 327 || tag == 329 || tag == 390
-    || is_aes_gcm_op(tag) || tag == 410;
+    || is_aes_gcm_op(tag) || tag == 410 || tag == 433;
 }
