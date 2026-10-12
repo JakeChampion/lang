@@ -228,12 +228,15 @@ pub function anchored_of(deps: i32[][], nvals: i32): Anchored {
   return Anchored { start: start, at: at };
 }
 
-// What reads each value: for value v, one entry per operand naming it, the
-// kind of the instruction it is an operand of, at `kinds[start[v]]` up to
-// `kinds[start[v + 1]]`; a return of v or a branch on it is `term_use()`.
-// The planner's rules that ask what every use of a value is read it here
-// rather than each scanning the function.
-pub struct Uses { start: i32[], kinds: i32[] }
+// What reads each value: for value v, one entry per operand naming it, at
+// `start[v]` up to `start[v + 1]`, in block and position order. `kinds` is the
+// kind of the instruction the operand belongs to, `term_use()` for a return
+// of v or a branch on it; `block` and `at` are where that instruction sits,
+// the block's index and the instruction's, a terminator at its block's
+// instruction count; `slot` is the operand's index, which for a phi names the
+// edge it is read on. The planner's rules that ask where or how a value is
+// read read it here rather than each scanning the function.
+pub struct Uses { start: i32[], kinds: i32[], block: i32[], at: i32[], slot: i32[] }
 
 pub function term_use(): i32 {
   return 0 - 1000;
@@ -254,6 +257,19 @@ pub function uses_only(u: Uses, v: i32, allowed: i32[]): boolean {
     i = i + 1;
   }
   return true;
+}
+
+// Whether an operand after position `pos` of block `bi` names `v`, the
+// block's terminator included.
+pub function read_after(u: Uses, bi: i32, pos: i32, v: i32): boolean {
+  let i: i32 = u.start[v];
+  while (i < u.start[v + 1]) {
+    if (u.block[i] == bi && u.at[i] > pos) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
 }
 
 function uses_of(f: Func): Uses {
@@ -278,23 +294,39 @@ function uses_of(f: Func): Uses {
     v = v + 1;
   }
   let kinds: i32[] = __alloc_i32(count[n]);
+  let block: i32[] = __alloc_i32(count[n]);
+  let at: i32[] = __alloc_i32(count[n]);
+  let slot: i32[] = __alloc_i32(count[n]);
   let next: i32[] = count;
+  let bi: i32 = 0;
   for b in f.graph.blocks {
+    let ii: i32 = 0;
     for ins in b.insts {
+      let si: i32 = 0;
       for a in ins.args {
         if (a >= 0 && a < n) {
-          kinds = kinds.with(next[a], ins.kind_tag);
-          next = next.with(a, next[a] + 1);
+          let k: i32 = next[a];
+          kinds = kinds.with(k, ins.kind_tag);
+          block = block.with(k, bi);
+          at = at.with(k, ii);
+          slot = slot.with(k, si);
+          next = next.with(a, k + 1);
         }
+        si = si + 1;
       }
+      ii = ii + 1;
     }
     let t: i32 = term_operand(b.term);
     if (t >= 0 && t < n) {
-      kinds = kinds.with(next[t], term_use());
-      next = next.with(t, next[t] + 1);
+      let k: i32 = next[t];
+      kinds = kinds.with(k, term_use());
+      block = block.with(k, bi);
+      at = at.with(k, ii);
+      next = next.with(t, k + 1);
     }
+    bi = bi + 1;
   }
-  return Uses { start: count, kinds: kinds };
+  return Uses { start: count, kinds: kinds, block: block, at: at, slot: slot };
 }
 
 // The value a terminator reads: a return's, or a branch's condition.
@@ -617,7 +649,7 @@ pub function refused_analysis(why: string): Analysis {
 }
 
 function failed(why: string): Analysis {
-  return Analysis { ok: false, why: why, parents: [], dependencies: [], flow: ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], at: [], none: [] }, uses: Uses { start: [0], kinds: [] }, anchored: Anchored { start: [0], at: [] } };
+  return Analysis { ok: false, why: why, parents: [], dependencies: [], flow: ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], at: [], none: [] }, uses: Uses { start: [0], kinds: [], block: [], at: [], slot: [] }, anchored: Anchored { start: [0], at: [] } };
 }
 
 function empty_dependencies(n: i32): i32[][] {

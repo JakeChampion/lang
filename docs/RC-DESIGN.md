@@ -93,13 +93,16 @@ what the read took. That question is asked in two relations, both read off
 `ssasem.Analysis` and `ssalive`: the **anchored** one, whether the storage
 behind a value is still needed (`used_after`), and the **direct** one,
 whether the value itself is still in hand (`read_after_direct`, the flow over
-`a.parents` alone). Two more are tables on the analysis: what reads a value
-(`ssasem.Analysis.uses`, queried by `uses_only` and `use_count`), and what
-borrows from it, the chains read backwards (`ssasem.Analysis.anchored`).
+`a.parents` alone). Both are answered from two tables on the analysis: what
+reads a value and where (`ssasem.Analysis.uses`, each operand with its block,
+position and operand slot, queried by `uses_only`, `use_count` and
+`read_after`), and what borrows from it, the chains read backwards
+(`ssasem.Analysis.anchored`).
 `needed_past_slot` is the anchored question asked about
 one slot of a box: a later read of the box in the block, a value anchored to
 it used after the point, or a block that can run later naming it
-(`named_after`, which reads a phi's operand only on its own edge), with a
+(`named_after`, which reads a phi's operand only on its own edge, the edge
+its slot names), with a
 read of another slot let through. Each rule is a query over those, with its
 allowances stated at the call, and folded into the ownership table the walk
 reads (`units_of`):
