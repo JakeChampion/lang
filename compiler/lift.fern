@@ -1327,6 +1327,27 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs):
   return HoistResult { func: none, ok: false };
 }
 
+// named_wrap_name names the trampoline a bare function value takes. A function
+// this module defines shares one, named for it; another module's gets one per
+// taking site, since that module may mint the shared name too.
+function named_wrap_name(fnname: string, fd: parser.FuncDecl, counter: i32, mfuncs: MFuncs): string {
+  if (irtables.sig_reg_has_exact(mfuncs.local, fnname)) {
+    return fnname + "$wrap";
+  }
+  return clo_owner_name(fd) + "$wrap" + util.i32_to_string(counter);
+}
+
+// with_hoisted appends f unless funcs already holds a function of its name,
+// as it does a shared trampoline taken twice.
+function with_hoisted(funcs: parser.FuncDecl[], f: parser.FuncDecl): parser.FuncDecl[] {
+  for g in funcs {
+    if (g.name == f.name) {
+      return funcs;
+    }
+  }
+  return funcs.append(f);
+}
+
 // try_fn_field_value lifts ONE fn-typed struct-field value into a `__mkclo$…`
 // env-box marker. Capturing inline lambda → try_inline_closure (box [funcval,
 // caps…]). No-capture inline lambda → a `$wrapN` trampoline, marker with no cap
@@ -1367,13 +1388,13 @@ function try_fn_field_value(e: ast.Expr, fd: parser.FuncDecl, vars: VarDecls, fu
         return InlineCloRes { expr: e, funcs: funcs, counter: counter };
       }
       // Bare fn-name field (`Box { f: dbl }`): build a trampoline calling it.
-      let wn2: string = clo_owner_name(fd) + "$wrap" + util.i32_to_string(counter);
+      let wn2: string = named_wrap_name(id.name, fd, counter, mfuncs);
       let hr: HoistResult = make_wrap_named_func(id.name, wn2, mfuncs);
       if (!hr.ok) {
         return InlineCloRes { expr: e, funcs: funcs, counter: counter };
       }
       let marker2: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__mkclo$" + wn2, line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
-      return InlineCloRes { expr: marker2, funcs: funcs.append(hr.func), counter: counter + 1 };
+      return InlineCloRes { expr: marker2, funcs: with_hoisted(funcs, hr.func), counter: counter + 1 };
     },
     ast.ExprCall(c) => {
       // A value-position `if`/`match` in a fn-value position parses as an
@@ -2279,6 +2300,9 @@ pub struct MFuncs {
   // the build did.
   head: i32[],
   next: i32[],
+  // The receiver-less functions the module being lifted defines, as opposed to
+  // the view's other modules.
+  local: irtables.SigReg,
 }
 
 // mfuncs_buckets is the bucket count of the name index. Prime, so unrelated
@@ -2293,7 +2317,7 @@ function mfuncs_buckets(): i32 {
 // ascending index order without a per-bucket tail — the same order the linear
 // scan visited, so a chain walk and a full scan agree on which same-named decl
 // answers first. Mirrors checker.sig_table.
-pub function mfuncs_table(decls: parser.FuncDecl[]): MFuncs {
+pub function mfuncs_table(decls: parser.FuncDecl[], local: irtables.SigReg): MFuncs {
   let head: i32[] = [];
   let b: i32 = 0;
   let nb: i32 = mfuncs_buckets();
@@ -2314,7 +2338,7 @@ pub function mfuncs_table(decls: parser.FuncDecl[]): MFuncs {
     head = head.with(bk, k);
     k = k - 1;
   }
-  return MFuncs { decls: decls, head: head, next: next };
+  return MFuncs { decls: decls, head: head, next: next, local: local };
 }
 
 // mfuncs_extend appends `extra` to an existing table and indexes only those, so
@@ -2340,7 +2364,7 @@ pub function mfuncs_extend(base: MFuncs, extra: parser.FuncDecl[]): MFuncs {
     head = head.with(bk, k);
     i = i + 1;
   }
-  return MFuncs { decls: decls, head: head, next: next };
+  return MFuncs { decls: decls, head: head, next: next, local: base.local };
 }
 
 // lift_callee_is_typevar_passthrough reports whether free function `callee`
@@ -3775,11 +3799,11 @@ function ilc_stmt_at(st: ast.Stmt, acc: InlineCloAcc, fd: parser.FuncDecl, vars:
           // function, so the init is an ordinary value copy — see
           // lift_ident_is_param (#6191, and #6854 for this site).
           if (!lift_ident_is_param(fd, vid.name) && lift_names_fn_value(mfuncs, vid.name)) {
-            let wn: string = clo_owner_name(fd) + "$wrap" + util.i32_to_string(ct);
+            let wn: string = named_wrap_name(vid.name, fd, ct, mfuncs);
             let hr: HoistResult = make_wrap_named_func(vid.name, wn, mfuncs);
             if (hr.ok) {
               let marker: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__mkclo$" + wn, line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
-              return (ast.StmtVar { ...v, init: marker }, InlineCloAcc { funcs: fs.append(hr.func), counter: ct + 1 }, true);
+              return (ast.StmtVar { ...v, init: marker }, InlineCloAcc { funcs: with_hoisted(fs, hr.func), counter: ct + 1 }, true);
             }
           }
         },
@@ -5252,6 +5276,17 @@ function needs_lift(body: ast.Stmt[], gset: irtables.SigReg): boolean {
   return n > 0;
 }
 
+// free_fn_names is the names of the receiver-less functions in decls.
+function free_fn_names(decls: parser.FuncDecl[]): string[] {
+  let names: string[] = [];
+  for d in decls {
+    if (d.receiver_type.len() == 0) {
+      names = names.append(d.name);
+    }
+  }
+  return names;
+}
+
 pub function lift_lambdas_view_typed(raw_mod: parser.Module, view: parser.FuncDecl[]): parser.Module {
   // Fill omitted trailing arguments from default parameter values before the
   // IR path inspects the module, so `f(5)` to `f(a, b = 128)` reaches the IR
@@ -5266,20 +5301,16 @@ pub function lift_lambdas_view_typed(raw_mod: parser.Module, view: parser.FuncDe
   }
   // Indexed once here: sigs is settled before the drain and never changes
   // across its rounds, so every lift_callee_* lookup below shares one index.
-  let mf: MFuncs = mfuncs_table(sigs);
+  let mf: MFuncs = mfuncs_table(sigs, irtables.sig_reg_of(free_fn_names(mod.funcs)));
   let mstab: irtables.StructTab = irtables.struct_tab(mod.structs);
-  let gfns: string[] = [];
-  let gi: i32 = 0;
-  while (gi < sigs.len()) {
-    if (sigs[gi].receiver_type.len() == 0) {
-      gfns = gfns.append(sigs[gi].name);
-    }
-    gi = gi + 1;
-  }
+  let gfns: string[] = free_fn_names(sigs);
   // Indexed once for the whole lift (see gfns_visible_in).
   let gset: irtables.SigReg = irtables.sig_reg_of(gfns);
   let acc: LiftAcc = LiftAcc { funcs: [], counter: 0 };
   let newfuncs: parser.FuncDecl[] = [];
+  // What lift_inline_closures has hoisted, so a trampoline two functions share
+  // is emitted once.
+  let hoisted: string[] = [];
   // Worklist: the module's functions PLUS every function lifted out of a
   // lambda body. Re-processing the lifted `__lam_N` / `$clo` functions is what
   // lets a NESTED lambda (a lambda defined inside another lambda's body) lift:
@@ -5357,10 +5388,11 @@ pub function lift_lambdas_view_typed(raw_mod: parser.Module, view: parser.FuncDe
     let (ic_stmts, ic_funcs) = lift_inline_closures(fd, gfns, mstab, mf);
     if (ic_funcs.len() > 0) {
       fd = parser.FuncDecl { ...fd, body: ic_stmts };
-      let ici: i32 = 0;
-      while (ici < ic_funcs.len()) {
-        acc = LiftAcc { funcs: acc.funcs.append(ic_funcs[ici]), counter: acc.counter + 1 };
-        ici = ici + 1;
+      for icf in ic_funcs {
+        if (!util.has_str(hoisted, icf.name)) {
+          hoisted = hoisted.append(icf.name);
+          acc = LiftAcc { funcs: acc.funcs.append(icf), counter: acc.counter + 1 };
+        }
       }
     }
     // 1. Capturing lambdas bound to a local + only directly called: param-lift.

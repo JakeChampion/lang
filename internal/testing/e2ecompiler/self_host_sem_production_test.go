@@ -521,7 +521,7 @@ function main(): i32 {
     return f(40);
 }
 `},
-	{name: "if-expr-function-name-arms-assigned-and-passed", atLeast: 10, want: "41|", src: `
+	{name: "if-expr-function-name-arms-assigned-and-passed", atLeast: 8, want: "41|", src: `
 function inc(x: i32): i32 { return x + 1; }
 function dbl(x: i32): i32 { return x * 2; }
 function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
@@ -3578,7 +3578,7 @@ function main(): i32 {
 	// The value reaches the call every way a function value can: a parameter,
 	// a local, a record field, a tuple element, a lambda and a bare name (the
 	// lift's trampoline for a void target calls it as a statement).
-	{name: "void-callback", atLeast: 7, want: "1|a\nb\nc!\nd\ne\nf\n", src: `
+	{name: "void-callback", atLeast: 5, want: "1|a\nb\nc!\nd\ne\nf\n", src: `
 function each(xs: string[], f: (string) => void): void {
     for x in xs { f(x); }
 }
@@ -6435,7 +6435,7 @@ function main(): i32 {
 	// element that leaves the array (returned, reassigned, passed) reaches a
 	// caller that dispatches it env-first. A zero-parameter function names a
 	// function value unless it is a `const`, so it boxes too.
-	{name: "a-function-array-holds-boxes", atLeast: 15, want: "64|", src: `
+	{name: "a-function-array-holds-boxes", atLeast: 13, want: "64|", src: `
 struct M { k: i32 }
 enum E { Wrap(() => i32), No }
 function a(b: i32): i32 { return b + 1; }
@@ -6602,7 +6602,7 @@ function main(): i32 {
     return n * 10 + parsed * 5 + code(Reply.Ok) + code(Reply.Busy);
 }
 `},
-	{name: "a-function-returning-a-function-returns-a-box", atLeast: 15, want: "53|", src: `
+	{name: "a-function-returning-a-function-returns-a-box", atLeast: 14, want: "53|", src: `
 enum Box { W((i32) => i32), No }
 function id[T](x: T): T { return x; }
 function inc(x: i32): i32 { return x + 1; }
