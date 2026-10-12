@@ -129,3 +129,378 @@ func TestWasmScanSetBlocks(t *testing.T) {
 		t.Fatalf("printed %q, want %q", out, scanSetBlocksWant)
 	}
 }
+
+// scanSetShapesSrc probes one constant set of each shape asmcore.scan_set_shape
+// tells apart: a byte range, a range's complement, a short list, a short
+// list's complement, a list of high bytes, and a range with bytes beside it
+// and its complement.
+const scanSetShapesSrc = `import "std/i32";
+const RANGE: u8[] = [
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+];
+const NOT_RANGE: u8[] = [
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+];
+const LIST: u8[] = [
+  1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+];
+const NOT_LIST: u8[] = [
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 0u8, 0u8, 1u8, 1u8, 0u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  0u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+];
+const LIST_HIGH: u8[] = [
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8,
+];
+const RANGE_PLUS: u8[] = [
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+];
+const NOT_RANGE_PLUS: u8[] = [
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 0u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 1u8, 1u8, 1u8, 0u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 0u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+];
+
+// For every byte value b, a 72-byte string of plain bytes with b at position
+// p, scanned from several offsets: the sum over all of them of the index found
+// times b + 1, so a single wrong answer moves it.
+function probe_range(plain: u8): i32 {
+  let total: i32 = 0;
+  let b: i32 = 0;
+  while (b < 256) {
+    let bs: u8[] = [];
+    let p: i32 = 0;
+    while (p < 72) {
+      bs = bs.append(plain);
+      p = p + 1;
+    }
+    let pos: i32 = 0;
+    while (pos < 72) {
+      let s: string = string_from_bytes_unchecked(bs.with(pos, b as u8));
+      let from: i32 = 0;
+      while (from < 72) {
+        total = total + __scan_set(s, from, RANGE) * (b + 1);
+        from = from + 7;
+      }
+      pos = pos + 3;
+    }
+    b = b + 1;
+  }
+  return total;
+}
+
+// For every byte value b, a 72-byte string of plain bytes with b at position
+// p, scanned from several offsets: the sum over all of them of the index found
+// times b + 1, so a single wrong answer moves it.
+function probe_not_range(plain: u8): i32 {
+  let total: i32 = 0;
+  let b: i32 = 0;
+  while (b < 256) {
+    let bs: u8[] = [];
+    let p: i32 = 0;
+    while (p < 72) {
+      bs = bs.append(plain);
+      p = p + 1;
+    }
+    let pos: i32 = 0;
+    while (pos < 72) {
+      let s: string = string_from_bytes_unchecked(bs.with(pos, b as u8));
+      let from: i32 = 0;
+      while (from < 72) {
+        total = total + __scan_set(s, from, NOT_RANGE) * (b + 1);
+        from = from + 7;
+      }
+      pos = pos + 3;
+    }
+    b = b + 1;
+  }
+  return total;
+}
+
+// For every byte value b, a 72-byte string of plain bytes with b at position
+// p, scanned from several offsets: the sum over all of them of the index found
+// times b + 1, so a single wrong answer moves it.
+function probe_list(plain: u8): i32 {
+  let total: i32 = 0;
+  let b: i32 = 0;
+  while (b < 256) {
+    let bs: u8[] = [];
+    let p: i32 = 0;
+    while (p < 72) {
+      bs = bs.append(plain);
+      p = p + 1;
+    }
+    let pos: i32 = 0;
+    while (pos < 72) {
+      let s: string = string_from_bytes_unchecked(bs.with(pos, b as u8));
+      let from: i32 = 0;
+      while (from < 72) {
+        total = total + __scan_set(s, from, LIST) * (b + 1);
+        from = from + 7;
+      }
+      pos = pos + 3;
+    }
+    b = b + 1;
+  }
+  return total;
+}
+
+// For every byte value b, a 72-byte string of plain bytes with b at position
+// p, scanned from several offsets: the sum over all of them of the index found
+// times b + 1, so a single wrong answer moves it.
+function probe_not_list(plain: u8): i32 {
+  let total: i32 = 0;
+  let b: i32 = 0;
+  while (b < 256) {
+    let bs: u8[] = [];
+    let p: i32 = 0;
+    while (p < 72) {
+      bs = bs.append(plain);
+      p = p + 1;
+    }
+    let pos: i32 = 0;
+    while (pos < 72) {
+      let s: string = string_from_bytes_unchecked(bs.with(pos, b as u8));
+      let from: i32 = 0;
+      while (from < 72) {
+        total = total + __scan_set(s, from, NOT_LIST) * (b + 1);
+        from = from + 7;
+      }
+      pos = pos + 3;
+    }
+    b = b + 1;
+  }
+  return total;
+}
+
+// For every byte value b, a 72-byte string of plain bytes with b at position
+// p, scanned from several offsets: the sum over all of them of the index found
+// times b + 1, so a single wrong answer moves it.
+function probe_list_high(plain: u8): i32 {
+  let total: i32 = 0;
+  let b: i32 = 0;
+  while (b < 256) {
+    let bs: u8[] = [];
+    let p: i32 = 0;
+    while (p < 72) {
+      bs = bs.append(plain);
+      p = p + 1;
+    }
+    let pos: i32 = 0;
+    while (pos < 72) {
+      let s: string = string_from_bytes_unchecked(bs.with(pos, b as u8));
+      let from: i32 = 0;
+      while (from < 72) {
+        total = total + __scan_set(s, from, LIST_HIGH) * (b + 1);
+        from = from + 7;
+      }
+      pos = pos + 3;
+    }
+    b = b + 1;
+  }
+  return total;
+}
+
+// For every byte value b, a 72-byte string of plain bytes with b at position
+// p, scanned from several offsets: the sum over all of them of the index found
+// times b + 1, so a single wrong answer moves it.
+function probe_range_plus(plain: u8): i32 {
+  let total: i32 = 0;
+  let b: i32 = 0;
+  while (b < 256) {
+    let bs: u8[] = [];
+    let p: i32 = 0;
+    while (p < 72) {
+      bs = bs.append(plain);
+      p = p + 1;
+    }
+    let pos: i32 = 0;
+    while (pos < 72) {
+      let s: string = string_from_bytes_unchecked(bs.with(pos, b as u8));
+      let from: i32 = 0;
+      while (from < 72) {
+        total = total + __scan_set(s, from, RANGE_PLUS) * (b + 1);
+        from = from + 7;
+      }
+      pos = pos + 3;
+    }
+    b = b + 1;
+  }
+  return total;
+}
+
+// For every byte value b, a 72-byte string of plain bytes with b at position
+// p, scanned from several offsets: the sum over all of them of the index found
+// times b + 1, so a single wrong answer moves it.
+function probe_not_range_plus(plain: u8): i32 {
+  let total: i32 = 0;
+  let b: i32 = 0;
+  while (b < 256) {
+    let bs: u8[] = [];
+    let p: i32 = 0;
+    while (p < 72) {
+      bs = bs.append(plain);
+      p = p + 1;
+    }
+    let pos: i32 = 0;
+    while (pos < 72) {
+      let s: string = string_from_bytes_unchecked(bs.with(pos, b as u8));
+      let from: i32 = 0;
+      while (from < 72) {
+        total = total + __scan_set(s, from, NOT_RANGE_PLUS) * (b + 1);
+        from = from + 7;
+      }
+      pos = pos + 3;
+    }
+    b = b + 1;
+  }
+  return total;
+}
+
+function main(): i32 {
+  print("RANGE " + probe_range(97u8).to_string());
+  print("NOT_RANGE " + probe_not_range(97u8).to_string());
+  print("LIST " + probe_list(97u8).to_string());
+  print("NOT_LIST " + probe_not_list(32u8).to_string());
+  print("LIST_HIGH " + probe_list_high(97u8).to_string());
+  print("RANGE_PLUS " + probe_range_plus(97u8).to_string());
+  print("NOT_RANGE_PLUS " + probe_not_range_plus(95u8).to_string());
+  return 0;
+}
+`
+
+const scanSetShapesWant = "RANGE 623423763\nNOT_RANGE 520717059\nLIST 624837861\nNOT_LIST 510947244\nLIST_HIGH 623695437\nRANGE_PLUS 623002320\nNOT_RANGE_PLUS 518881518\n"
+
+// Each shape takes its own block test; a bad one moves that line's sum.
+func TestScanSetShapes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "prog.fern")
+	if err := os.WriteFile(path, []byte(scanSetShapesSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errOut := runLangInterp(t, buildLangBinForInterp(t), path); code != 0 || out != scanSetShapesWant {
+		t.Fatalf("interp: exit %d, printed %q, want %q\nstderr: %s", code, out, scanSetShapesWant, errOut)
+	}
+	if out, code := compileAndRunX86_64(t, scanSetShapesSrc); code != 0 || out != scanSetShapesWant {
+		t.Errorf("x86-64: exit %d, printed %q, want %q", code, out, scanSetShapesWant)
+	}
+	if out, code := compileAndRunArm64(t, scanSetShapesSrc); code != 0 || out != scanSetShapesWant {
+		t.Errorf("arm64: exit %d, printed %q, want %q", code, out, scanSetShapesWant)
+	}
+	if out := compileAndRunWasmCapture(t, scanSetShapesSrc); out != scanSetShapesWant {
+		t.Errorf("wasm: printed %q, want %q", out, scanSetShapesWant)
+	}
+	for _, tc := range []struct{ target, rangeTest, nibble string }{{"x86-64-linux", "vpminub", "vpshufb"}, {"arm64-linux", "cmhs", "tbl v"}} {
+		asm := path + "." + tc.target + ".s"
+		if out, err := exec.Command(buildLangBinForInterp(t), "-target", tc.target, "-emit", "asm", "-o", asm, path).CombinedOutput(); err != nil {
+			t.Fatalf("%s emit: %v\n%s", tc.target, err, out)
+		}
+		text, err := os.ReadFile(asm)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(text), tc.rangeTest) || strings.Contains(string(text), tc.nibble) {
+			t.Errorf("%s: want the range test %q and no nibble lookup %q", tc.target, tc.rangeTest, tc.nibble)
+		}
+	}
+}
