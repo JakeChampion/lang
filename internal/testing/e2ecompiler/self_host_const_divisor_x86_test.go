@@ -75,10 +75,13 @@ func TestSelfHostConstDivisorShapesX86_64(t *testing.T) {
 @noinline function d100uw(x: u64): u64 { return x / 100u64; }
 @noinline function m14u(x: u32): u32 { return x % 14u32; }
 @noinline function dm100uw(x: u64): u64 { return x / 100u64 + x % 100u64; }
+@noinline function dmxyuw(x: u64, y: u64): u64 { return x / y + x % y; }
+@noinline function dmxyb(x: i32, y: i32): i32 { let r: i32 = x % y; if (r > 3) { return x / y; } return r; }
 function main(): i32 {
   return m4093(9000) + d7(50) + d8(-17) + m8(-17) + (d3u(20u32) as i32) + (m7u(20u32) as i32) + dxy(9, 2)
     + (mxyu(9u32, 2u32) as i32) + (m97w(200i64) as i32) + (d8w(-9i64) as i32) + (mbig(5i64) as i32) + dneg1(5)
-    + (d10uw(70u64) as i32) + (mtw(5i64) as i32) + (d100uw(700u64) as i32) + (m14u(30u32) as i32) + (dm100uw(705u64) as i32);
+    + (d10uw(70u64) as i32) + (mtw(5i64) as i32) + (d100uw(700u64) as i32) + (m14u(30u32) as i32) + (dm100uw(705u64) as i32)
+    + (dmxyuw(705u64, 9u64) as i32) + dmxyb(705, 9);
 }
 `
 	asm := selfHostX86Emit(t, runner, driverBin, src)
@@ -130,6 +133,15 @@ function main(): i32 {
 	}
 	if n := strings.Count(selfHostFnBody(t, asm, "dm100uw"), " mulq "); n != 1 {
 		t.Errorf("dm100uw multiplies %d times, want 1: the remainder reuses the quotient", n)
+	}
+	// By a runtime divisor too, in one block or with the remainder in a
+	// block that dominates the division: one divide, the remainder its
+	// product taken back off.
+	if n := strings.Count(selfHostFnBody(t, asm, "dmxyuw"), "divq"); n != 1 {
+		t.Errorf("dmxyuw divides %d times, want 1: the remainder reuses the quotient", n)
+	}
+	if n := strings.Count(selfHostFnBody(t, asm, "dmxyb"), "idivl"); n != 1 {
+		t.Errorf("dmxyb divides %d times, want 1: the division reuses the remainder's quotient", n)
 	}
 	for _, c := range cases {
 		t.Run(c.fn, func(t *testing.T) {

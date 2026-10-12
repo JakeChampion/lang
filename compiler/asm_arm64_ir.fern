@@ -7451,6 +7451,36 @@ function emit_buf_take_bytes(s: asmcore.EmitState, packed: boolean): asmcore.Emi
   return s;
 }
 
+// emit_buf_mapped_neon translates 16 bytes a round through a packed 256-entry
+// table held in v16-v31, one tbl or tbx per 64-entry slice: after k slices the
+// bytes have dropped by 64k, so only those that started in slice k index it,
+// and tbx leaves every lane already filled.
+function emit_buf_mapped_neon(s: asmcore.EmitState, lm: string): asmcore.EmitState {
+  s = s.write("    cmp x2, #16\n");
+  s = s.write("    b.lo " + lm + "_full\n");
+  s = s.write("    add x6, x21, #8\n");
+  let r: i32 = 0;
+  while (r < 8) {
+    s = s.write("    ldp q" + util.i32_to_string(16 + 2 * r) + ", q" + util.i32_to_string(17 + 2 * r) + ", [x6, #" + util.i32_to_string(32 * r) + "]\n");
+    r = r + 1;
+  }
+  s = s.write("    movi v7.16b, #64\n");
+  s = s.write(lm + "_vec:\n");
+  s = s.write("    ldr q0, [x1], #16\n");
+  s = s.write("    tbl v1.16b, {v16.16b-v19.16b}, v0.16b\n");
+  s = s.write("    sub v0.16b, v0.16b, v7.16b\n");
+  s = s.write("    tbx v1.16b, {v20.16b-v23.16b}, v0.16b\n");
+  s = s.write("    sub v0.16b, v0.16b, v7.16b\n");
+  s = s.write("    tbx v1.16b, {v24.16b-v27.16b}, v0.16b\n");
+  s = s.write("    sub v0.16b, v0.16b, v7.16b\n");
+  s = s.write("    tbx v1.16b, {v28.16b-v31.16b}, v0.16b\n");
+  s = s.write("    str q1, [x3], #16\n");
+  s = s.write("    sub x2, x2, #16\n");
+  s = s.write("    cmp x2, #16\n");
+  s = s.write("    b.hs " + lm + "_vec\n");
+  return s.write("    cbz x2, " + lm + "_len\n");
+}
+
 // emit_buf_table_helpers emits the three buffer pushes that read a u8[]
 // table: a slot table holds entry i in the low byte of the 8-byte slot
 // 8 + i*8, a packed one (the `_u8` helpers) at byte 8 + i. An expanded
@@ -7524,6 +7554,9 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: bool
   s = s.write("    mov x2, x22\n");
   s = s.write("    cmp x4, #256\n");
   s = s.write("    b.lo " + lm + "_short\n");
+  if (packed) {
+    s = emit_buf_mapped_neon(s, lm);
+  }
   s = s.write(lm + "_full:\n");
   s = s.write("    ldrb w5, [x1], #" + srcstep + "\n");
   s = s.write("    add x6, x21, x5" + tsh + "\n");
