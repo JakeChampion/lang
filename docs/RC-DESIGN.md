@@ -286,6 +286,35 @@ The drop helpers the lowering emits per type (`__sem_release_<T>`,
 entries it supersedes or walks (`release_helper_name`), so one release
 discipline covers values the frame holds and values a container holds.
 
+### 2.1 One context per heap
+
+Counts and the allocator's freelists are not atomic, and stay that way
+(#11914; `docs/MULTICORE-RESEARCH.md` C1). The guarantee that makes this sound
+is that no two contexts ever run Fern code against one heap. Each boundary
+where a second context exists holds it in its own way:
+
+| Boundary | What crosses | What holds it |
+|---|---|---|
+| `proc_fork`, `subprocess`, the forked `serve` workers | a copy-on-write heap, then pipes, argv and exit codes | separate processes |
+| `signal_catch` and its siblings | a signal number | the handler is a fixed stub that sets one flag the program polls; no builtin installs a Fern function as a handler |
+| tasks, `Future` combinators, `std/sim` | values in the one heap | one thread; a task parks only at `__task_park` |
+| wasm `async function` exports and imports | canonical-ABI copies | the export signature admits scalars only |
+| `-shared` exports | C arguments | `__fern_busy`: each export entry takes it and aborts when another thread holds it; a `__c_call` frees it for the call, so a C callback entering an export on the same thread still runs |
+
+`TestX86_64SignalPreemption` and its arm64 sibling hold the signal row under
+real preemption. They interrupt heavy count traffic with signals sent from
+outside, and require the same output and the same census as a quiet run.
+`TestSharedLibX86BusyFlag` holds the `-shared` row: two threads inside the
+object at once abort, while threads that take turns and a same-thread
+callback both run.
+
+An abort or `exit` ends the process with `exit_group`, not `exit`, so a
+report inside a host's thread takes the whole host down rather than one
+thread (#12169).
+
+A new boundary (`spawn`, an `interrupt` attribute) lands with its own check,
+never as a convention.
+
 ## 3. Debugging
 
 In the order they are usually reached for:

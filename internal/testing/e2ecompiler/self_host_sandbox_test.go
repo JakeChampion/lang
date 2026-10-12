@@ -141,8 +141,8 @@ func TestSelfHostSandboxFilterShape(t *testing.T) {
 		}
 		allowed[f[i].k] = true
 	}
-	// close, socket, bind, listen, getsockname, exit.
-	for _, nr := range []uint32{3, 41, 49, 50, 51, 60} {
+	// close, socket, bind, listen, getsockname, exit_group.
+	for _, nr := range []uint32{3, 41, 49, 50, 51, 231} {
 		if !allowed[nr] {
 			t.Errorf("syscall %d is issued by the program but not allowed: the binary would be killed on a legitimate path", nr)
 		}
