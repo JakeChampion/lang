@@ -1174,6 +1174,13 @@ func TestRunnerHTTPCacheExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "http_cache", "std/http/cache", 16)
 }
 
+// `tests/stdlib/http_static_test.fern` serves a mock platform's files:
+// validators, preconditions, ranges, precompressed siblings and the paths
+// refused.
+func TestRunnerHTTPStaticExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_static", "std/http/static", 18)
+}
+
 // `tests/stdlib/http_sse_test.fern` encodes and decodes server-sent
 // events and streams them as a response.
 func TestRunnerHTTPSSEExamplePasses(t *testing.T) {
@@ -4061,7 +4068,8 @@ func TestRunnerHeaderMapMigratedExample(t *testing.T) {
 		"ok 8 - set takes the caller's spelling in place",
 		"ok 10 - names fold ASCII only",
 		"ok 13 - unquote undoes a quoted string",
-		"# pass 13",
+		"ok 15 - weight reads a qvalue",
+		"# pass 15",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {

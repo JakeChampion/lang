@@ -4,7 +4,7 @@
 // (`handle(req: HttpRequest, plat: platform.Platform)`,
 // docs/PLATFORM-RESEARCH.md Rec §1): the host effects it is allowed to reach
 // — a log sink, a clock, the invocation environment, configuration, entropy,
-// outbound HTTP — as methods on the value it was handed rather than as
+// outbound HTTP, the file system — as methods on the value it was handed rather than as
 // ambient free functions. A function that is handed a platform and reaches
 // around it, directly or through a helper, is refused at check time (E080).
 //
@@ -86,6 +86,13 @@ pub trait Platform {
   // the peer kept open carries the platform's next request to the same
   // place.
   function http(self: Self, req: fetch.Request): Result[HttpResponse, fetch.FetchError];
+
+  // `.stat(path)` — what the file system holds at `path`: whether it is a
+  // file or a directory, its size and its modification time. Needs the
+  // `fs` capability, which the wasi-http proxy world does not grant. A
+  // handler answers with a file's bytes without reading them, as a
+  // `BodyFile` or `BodyFileRanges` the serve loop sends.
+  function stat(self: Self, path: string): Result[FileStat, IoError];
 }
 
 // `Host` — the platform that performs its effects on the machine it runs
@@ -157,5 +164,9 @@ impl Platform for Host {
 
   function http(self: Host, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
     return fetch.send_on(fetch.sockets_with(self.pool), req, fetch.Policy { ...fetch.public_policy(), jar: self.jar });
+  }
+
+  function stat(self: Host, path: string): Result[FileStat, IoError] {
+    return stat(path);
   }
 }

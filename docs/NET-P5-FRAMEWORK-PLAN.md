@@ -180,10 +180,22 @@ decides what wraps it.
    `get_list`, `split_list` and `unquote`, the quote-aware list parsing
    the later modules share. Gate: `tests/stdlib/http_cache_test.fern` in
    the stdtest differential.
-   `std/http/static`: a directory served with `ETag` and `Last-Modified`
-   through `std/http/cache`, `Range` (206, 416, `If-Range`), and
-   precompressed `.br`, `.zst` and `.gz` siblings chosen by
-   `Accept-Encoding` under `Vary`.
+   `std/http/static` (landed): a directory served with `ETag` and
+   `Last-Modified` through `std/http/cache`, `Range` (206, 416,
+   `If-Range`), and precompressed `.br`, `.zst` and `.gz` siblings chosen
+   by `Accept-Encoding` under `Vary` (`HeaderMap.preferred_coding`, which
+   compression shares). A handler still reads no file: the platform
+   gained `stat`, and the body is a `BodyFileRanges`, ranges of a file with
+   the seams between them, which the serve loop sends by `sendfile(2)`
+   after a seek, so a range, or a `multipart/byteranges` of several, costs
+   what a whole file does.
+   The mock and the sim answer `stat` from files a test sets and read a
+   file body back with `materialize`. Gate:
+   `tests/stdlib/http_static_test.fern` in the stdtest differential;
+   `TestStaticServeInterp` and `TestStaticServeX86_64` against the real
+   loop; `TestStaticPreconditionsMatchGo`, every combination of the
+   precondition fields, `Range` and `If-Range` against Go's
+   `http.ServeContent`.
    `std/http/forwarded`: `Forwarded` (RFC 7239) and the PROXY protocol v2
    header the serve loop reads before the request.
    Compression: a gzip encoder over `std/deflate`, zstd both ways, brotli
