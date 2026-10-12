@@ -2653,6 +2653,12 @@ func TestOuterRebindReachingCapturedClosureRejected(t *testing.T) {
 			d = Wrap { cb: f };
 			return 0;
 		}`},
+		{"generic_enum_of_closure", `function main(): i32 {
+			let o: Option[() => i32] = None;
+			let f: () => i32 = (): i32 => { return match (o) { Some(_) => 1, None => 0 }; };
+			o = Some(f);
+			return 0;
+		}`},
 	}
 	for _, tc := range cases {
 		err := checkSource(t, tc.src)
@@ -2729,6 +2735,22 @@ func TestOuterRebindOfFunctionFreeCaptureAllowed(t *testing.T) {
 			let n: i32 = 1;
 			let f: () => i32 = (): i32 => { return n; };
 			n = 99;
+			return f();
+		}`},
+		// A generic declaration is read at its arguments: Some's payload in
+		// Option[i32] is an i32, not a parameter that might be a function.
+		{"generic-enum-of-scalar", `struct S { o: Option[i32] }
+		function main(): i32 {
+			let s: S = S { o: Some(1) };
+			let f: () => i32 = (): i32 => { return match (s.o) { Some(v) => v, None => 0 }; };
+			s = S { o: None };
+			return f();
+		}`},
+		{"generic-struct-of-scalar", `struct Box[T] { v: T }
+		function main(): i32 {
+			let b: Box[i32] = Box { v: 1 };
+			let f: () => i32 = (): i32 => { return b.v; };
+			b = Box { v: 2 };
 			return f();
 		}`},
 		// The stored value's type is judged, not the variable's: a struct that

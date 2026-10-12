@@ -13192,6 +13192,21 @@ func (c *checker) captureView(p ast.Position, name string, t ast.Type) {
 // resolved here. `seen` breaks the recursion on a self-referential struct or
 // enum; the key is the nominal name, so `Node` is visited once however deeply
 // it nests.
+// declArgs binds a generic declaration's type parameters to the arguments an
+// instantiation names, so its members are read at those arguments: Some's
+// payload in Option[i32] is an i32, not a parameter that might be a function.
+// An uninstantiated or partly instantiated use binds nothing.
+func declArgs(params []string, args []ast.Type) map[string]ast.Type {
+	if len(params) == 0 || len(params) != len(args) {
+		return nil
+	}
+	sub := make(map[string]ast.Type, len(params))
+	for i, p := range params {
+		sub[p] = args[i]
+	}
+	return sub
+}
+
 func (c *checker) typeReachesFunc(t ast.Type, seen map[string]bool) bool {
 	switch v := t.(type) {
 	case nil:
@@ -13228,8 +13243,9 @@ func (c *checker) typeReachesFunc(t ast.Type, seen map[string]bool) bool {
 			}
 		}
 		if sd, ok := c.info.Structs[v.Name]; ok {
+			sub := declArgs(sd.TypeParams, v.Args)
 			for _, f := range sd.Fields {
-				if c.typeReachesFunc(f.Type, seen) {
+				if c.typeReachesFunc(substituteType(f.Type, sub), seen) {
 					return true
 				}
 			}
@@ -13246,9 +13262,10 @@ func (c *checker) typeReachesFunc(t ast.Type, seen map[string]bool) bool {
 			}
 		}
 		if ed, ok := c.info.Enums[v.Name]; ok {
+			sub := declArgs(ed.TypeParams, v.Args)
 			for _, variant := range ed.Variants {
 				for _, pt := range variant.Payloads {
-					if c.typeReachesFunc(pt, seen) {
+					if c.typeReachesFunc(substituteType(pt, sub), seen) {
 						return true
 					}
 				}
