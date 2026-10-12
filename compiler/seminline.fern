@@ -378,18 +378,21 @@ function awaits(f: ssasem.Func, ix: util.NameIndex, once: boolean[], shared: boo
 }
 
 // Whether `splice` can copy `f`'s body: one entry with no predecessor, no
-// environment, only return and branch terminators, and at most `limit`
-// instructions.
+// environment, only return, branch and unreachable terminators (the end of
+// an exhaustive match), at least one return, so the call has a result to
+// stand for, and at most `limit` instructions.
 function spliceable(f: ssasem.Func, limit: i32): boolean {
   if (f.graph.takes_env || f.graph.blocks.len() == 0 || f.graph.blocks[f.graph.entry].preds.len() > 0) {
     return false;
   }
+  let returns: boolean = false;
   for b in f.graph.blocks {
-    if (b.term.kind_tag < 1 || b.term.kind_tag > 3) {
+    if (b.term.kind_tag < 1 || b.term.kind_tag > 4) {
       return false;
     }
+    returns = returns || b.term.kind_tag == 1;
   }
-  return count_insts(f.graph) <= limit;
+  return returns && count_insts(f.graph) <= limit;
 }
 
 // Fusion creates calls through closures whose exact bodies are already known.
@@ -924,7 +927,7 @@ function splice(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Fu
       t = br(cont);
     } else if (t.kind_tag == 2) {
       t = br(first + index_of(ids, t.target));
-    } else {
+    } else if (t.kind_tag == 3) {
       t = ssa.STerm { ...t, cond: mapped(vmap, t.cond), t: first + index_of(ids, t.t), f: first + index_of(ids, t.f) };
     }
     copied = copied.append(ssa.SBlock { id: first + j, insts: insts, term: t, preds: preds });
