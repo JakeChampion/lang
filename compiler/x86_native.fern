@@ -2425,6 +2425,17 @@ function x86_gas_ymm(tok: string): i32 {
   return v;
 }
 
+// x86_gas_vreg maps a vector register token to its number, plus 16 for a
+// ymm, so one value carries both the register and the VEX.L it needs; -1 for
+// anything else.
+function x86_gas_vreg(tok: string): i32 {
+  let y: i32 = x86_gas_ymm(tok);
+  if (y >= 0) {
+    return y + 16;
+  }
+  return x86_gas_xmm(tok);
+}
+
 // Correctly-rounding decimal -> f64 (SH-004): round-to-nearest, ties to
 // even, bit-exact with strtod / the GNU-as path. Mirrored VERBATIM from
 // watbin.fern's parse_f64 machinery (pf64_*) — the assemblers are
@@ -4236,9 +4247,9 @@ function x86_vex(own buf: i32[], rex_r: boolean, rex_x: boolean, rex_b: boolean,
 }
 
 // x86_gas_vex_rm emits one VEX instruction whose ModRM.rm is a memory
-// operand or a register: the prefix from the operand's REX bits, the
-// opcode, then the ModRM (+SIB+disp).
-function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: i32, op: i32, reg: i32, rm: string): X86Asm {
+// operand or a vector register: the prefix from the operand's REX bits, the
+// opcode, then the ModRM (+SIB+disp). l is VEX.L, set for the 256-bit form.
+function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: i32, op: i32, reg: i32, rm: string, l: boolean): X86Asm {
   if (x86_gas_has_paren(rm)) {
     let m: GasMem = x86_gas_parse_mem(rm);
     if (!x86_gas_mem_ok(m)) {
@@ -4252,56 +4263,39 @@ function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: 
       }
       bs = m.base >= 8;
     }
-    x86_push_arr(a.code, x86_vex([], reg >= 8, ix, bs, mmmmm, false, vvvv, true, pp));
+    x86_push_arr(a.code, x86_vex([], reg >= 8, ix, bs, mmmmm, false, vvvv, l, pp));
     buf_push_byte(a.code, op);
     return x86_gas_membytes(a, reg, m, 0);
   }
-  let rr: i32 = x86_gas_ymm(rm);
-  if (rr < 0) {
+  let rv: i32 = x86_gas_vreg(rm);
+  if (rv < 0) {
     return x86_gas_bad(a, mnem + " " + rm);
   }
-  x86_push_arr(a.code, x86_vex([], reg >= 8, false, rr >= 8, mmmmm, false, vvvv, true, pp));
+  let rr: i32 = rv & 15;
+  x86_push_arr(a.code, x86_vex([], reg >= 8, false, rr >= 8, mmmmm, false, vvvv, l, pp));
   buf_push_byte(a.code, op);
   buf_push_byte(a.code, x86_modrm(3, reg, rr));
   return a;
 }
 
-// x86_gas_vex_two: the two-operand AVX2 forms, AT&T `src, dst` —
-// `vmovdqu ymm/m256, %ymm` (VEX.256.F3.0F 6F /r), its store `vmovdqu
-// %ymm, m256` (VEX.256.F3.0F 7F /r), `vmovupd ymm/m256, %ymm`
-// (VEX.256.66.0F 10 /r) and its store (VEX.256.66.0F 11 /r),
-// `vpbroadcastb %xmm, %ymm` (VEX.256.66.0F38 78 /r), `vbroadcastsd %xmm,
-// %ymm` (VEX.256.66.0F38 19 /r) and `vpmovmskb %ymm, %r32` (VEX.256.66.0F
-// D7 /r). A 64-bit vpmovmskb destination is not a form the kernels use, so
-// it is refused.
+// x86_gas_vex_two: the two-operand AVX forms, AT&T `src, dst` — `vmovdqu
+// v/m, %v` (VEX.F3.0F 6F /r) and its store `vmovdqu %v, m` (VEX.F3.0F 7F
+// /r) at either width, `vmovupd ymm/m256, %ymm` (VEX.256.66.0F 10 /r) and its
+// store (VEX.256.66.0F 11 /r), `vpbroadcastb %xmm, %ymm` (VEX.256.66.0F38 78
+// /r), `vbroadcastsd %xmm, %ymm` (VEX.256.66.0F38 19 /r), `vbroadcasti128
+// m128, %ymm` (VEX.256.66.0F38 5A /r) and `vpmovmskb %v, %r32` (VEX.66.0F D7
+// /r). A 64-bit vpmovmskb destination is not a form the kernels use, so it is
+// refused.
 function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string): X86Asm {
-  if (mnem == "vmovupd" && x86_gas_has_paren(dst)) {
-    let us0: i32 = x86_gas_ymm(src);
-    if (us0 < 0) {
-      return x86_gas_bad(a, mnem + " " + src + ", " + dst);
-    }
-    return x86_gas_vex_rm(a, mnem, 1, 1, 0, 17, us0, dst);
+  if (mnem == "vmovupd" || mnem == "vmovdqu") {
+    return x86_gas_vex_move(a, mnem, src, dst);
   }
-  if (mnem == "vmovupd") {
-    let ud: i32 = x86_gas_ymm(dst);
-    if (ud < 0) {
+  if (mnem == "vbroadcasti128") {
+    let id: i32 = x86_gas_ymm(dst);
+    if (id < 0 || !x86_gas_has_paren(src)) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
-    return x86_gas_vex_rm(a, mnem, 1, 1, 0, 16, ud, src);
-  }
-  if (mnem == "vmovdqu" && x86_gas_has_paren(dst)) {
-    let ys0: i32 = x86_gas_ymm(src);
-    if (ys0 < 0) {
-      return x86_gas_bad(a, mnem + " " + src + ", " + dst);
-    }
-    return x86_gas_vex_rm(a, mnem, 1, 2, 0, 127, ys0, dst);
-  }
-  if (mnem == "vmovdqu") {
-    let yd: i32 = x86_gas_ymm(dst);
-    if (yd < 0) {
-      return x86_gas_bad(a, mnem + " " + src + ", " + dst);
-    }
-    return x86_gas_vex_rm(a, mnem, 1, 2, 0, 111, yd, src);
+    return x86_gas_vex_rm(a, mnem, 2, 1, 0, 90, id, src, true);
   }
   if (mnem == "vpbroadcastb" || mnem == "vbroadcastsd") {
     let bd: i32 = x86_gas_ymm(dst);
@@ -4319,38 +4313,105 @@ function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string):
     return a;
   }
   let rd: i32 = x86_gas_reg32(dst);
-  let ys: i32 = x86_gas_ymm(src);
-  if (rd < 0 || ys < 0) {
+  let vs: i32 = x86_gas_vreg(src);
+  if (rd < 0 || vs < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
-  x86_push_arr(a.code, x86_vex([], rd >= 8, false, ys >= 8, 1, false, 0, true, 1));
+  let ys: i32 = vs & 15;
+  x86_push_arr(a.code, x86_vex([], rd >= 8, false, ys >= 8, 1, false, 0, vs >= 16, 1));
   buf_push_byte(a.code, 215);
   buf_push_byte(a.code, x86_modrm(3, rd, ys));
   return a;
 }
 
-function x86_gas_is_vex_two(mnem: string): boolean {
-  return mnem == "vmovdqu" || mnem == "vmovupd" || mnem == "vpbroadcastb" || mnem == "vbroadcastsd" || mnem == "vpmovmskb";
+// x86_gas_vex_move is vmovupd (ymm only) and vmovdqu (either width), a load
+// when the destination is a register and a store when it is memory.
+function x86_gas_vex_move(own a: X86Asm, mnem: string, src: string, dst: string): X86Asm {
+  let store: boolean = x86_gas_has_paren(dst);
+  let v: i32 = x86_gas_vreg(dst);
+  if (store) {
+    v = x86_gas_vreg(src);
+  }
+  if (v < 0 || mnem == "vmovupd" && v < 16) {
+    return x86_gas_bad(a, mnem + " " + src + ", " + dst);
+  }
+  let pp: i32 = 2;
+  let op: i32 = 111;
+  if (mnem == "vmovupd") {
+    pp = 1;
+    op = 16;
+  }
+  if (store) {
+    return x86_gas_vex_rm(a, mnem, 1, pp, 0, op + x86_vex_store_delta(mnem), v & 15, dst, v >= 16);
+  }
+  return x86_gas_vex_rm(a, mnem, 1, pp, 0, op, v & 15, src, v >= 16);
 }
 
-// x86_gas_vex_three: the three-operand `vpcmpeqb src2, %ymm_src1,
-// %ymm_dst` (VEX.256.66.0F 74 /r) and `vmulpd` (VEX.256.66.0F 59 /r), src2
-// a ymm or memory; src1 rides in VEX.vvvv.
+// x86_vex_store_delta is how far a move's store opcode sits above its load:
+// 7F against 6F for vmovdqu, 11 against 10 for vmovupd.
+function x86_vex_store_delta(mnem: string): i32 {
+  if (mnem == "vmovupd") {
+    return 1;
+  }
+  return 16;
+}
+
+function x86_gas_is_vex_two(mnem: string): boolean {
+  return mnem == "vmovdqu" || mnem == "vmovupd" || mnem == "vpbroadcastb" || mnem == "vbroadcastsd" || mnem == "vbroadcasti128" || mnem == "vpmovmskb";
+}
+
+// x86_vex_three_op is the map and opcode of a three-operand VEX.66 form,
+// map * 256 + opcode, or -1: vpcmpeqb (0F 74), vmulpd (0F 59), vpand (0F DB),
+// vpor (0F EB), vpxor (0F EF) and vpshufb (0F38 00).
+function x86_vex_three_op(mnem: string): i32 {
+  match (mnem) {
+    "vpcmpeqb" => {
+      return 256 + 116;
+    },
+    "vmulpd" => {
+      return 256 + 89;
+    },
+    "vpand" => {
+      return 256 + 219;
+    },
+    "vpor" => {
+      return 256 + 235;
+    },
+    "vpxor" => {
+      return 256 + 239;
+    },
+    "vpshufb" => {
+      return 512;
+    },
+    _ => {
+      return 0 - 1;
+    }
+  }
+}
+
+// x86_gas_vex_three: the three-operand forms `op src2, %v_src1, %v_dst` at
+// either width (x86_vex_three_op), src2 a register or memory and src1 in
+// VEX.vvvv; and `vpsrlw $imm8, %v_src, %v_dst` (VEX.66.0F 71 /2 ib), whose
+// destination rides in VEX.vvvv and source in ModRM.rm.
 function x86_gas_vex_three(own a: X86Asm, mnem: string, rest: string): X86Asm {
   let ops: string[] = x86_gas_split_ops(rest);
   if (ops.len() != 3) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  let y1: i32 = x86_gas_ymm(ops[1]);
-  let yd: i32 = x86_gas_ymm(ops[2]);
-  if (y1 < 0 || yd < 0) {
+  let v1: i32 = x86_gas_vreg(ops[1]);
+  let vd: i32 = x86_gas_vreg(ops[2]);
+  if (v1 < 0 || vd < 0 || v1 >= 16 != vd >= 16) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  let op: i32 = 116;
-  if (mnem == "vmulpd") {
-    op = 89;
+  if (mnem == "vpsrlw") {
+    x86_push_arr(a.code, x86_vex([], false, false, (v1 & 15) >= 8, 1, false, vd & 15, vd >= 16, 1));
+    buf_push_byte(a.code, 113);
+    buf_push_byte(a.code, x86_modrm(3, 2, v1 & 15));
+    buf_push_byte(a.code, x86_gas_atoi(ops[0]) & 255);
+    return a;
   }
-  return x86_gas_vex_rm(a, mnem, 1, 1, y1, op, yd, ops[0]);
+  let mo: i32 = x86_vex_three_op(mnem);
+  return x86_gas_vex_rm(a, mnem, mo / 256, 1, v1 & 15, mo & 255, vd & 15, ops[0], vd >= 16);
 }
 
 // x86_gas_rorx: BMI2's `rorx $imm8, r/m, %reg` (VEX.LZ.F2.0F3A.W0/W1 F0
@@ -7334,7 +7395,7 @@ struct MnemVerdict { vz: boolean, fixed: i32, a_kind: i32, a_ext: i32, a_sfx: i3
 // in the order x86_gas_emit_op once tried its arms inline.
 function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   let v: MnemVerdict = MnemVerdict { vz: mnem == "vzeroupper", fixed: x86_gas_fixed_op(mnem), a_kind: GK_NONE, a_ext: 0 - 1, a_sfx: 0, sfx: 0, b_kind: GK_NONE, b_ext: 0 - 1, vshift: x86_gas_vshift_op(mnem), c_kind: GK_NONE, c_ext: 0 - 1 };
-  if (mnem == "vpcmpeqb" || mnem == "vmulpd") {
+  if (x86_vex_three_op(mnem) >= 0 || mnem == "vpsrlw") {
     return MnemVerdict { ...v, a_kind: GK_VEX_THREE };
   }
   if (mnem == "rorxl") {

@@ -68,8 +68,8 @@ function main(): i32 {
 
 const scanSetBlocksWant = "620532873 0 3 2\n"
 
-// A scan over a constant set classifies sixteen bytes at a time: pshufb on
-// x86-64, tbl on arm64. A set only known at run time keeps the table loop.
+// A scan over a constant set classifies a block at a time: 32 bytes with AVX2
+// on x86-64, sixteen with tbl on arm64. A set only known at run time keeps the table loop.
 func TestScanSetBlocksOnlyForAConstantSet(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, src string) string {
@@ -81,7 +81,7 @@ func TestScanSetBlocksOnlyForAConstantSet(t *testing.T) {
 	}
 	constant := write("const.fern", scanSetBlocksSrc)
 	runtime := write("runtime.fern", "function main(): i32 { let set: u8[] = [0u8, 1u8]; set = set.append(1u8); return __scan_set(\"abc\", 0, set); }\n")
-	for _, tc := range []struct{ target, kernel string }{{"x86-64-linux", "pshufb"}, {"arm64-linux", "tbl v"}} {
+	for _, tc := range []struct{ target, kernel string }{{"x86-64-linux", "vpshufb %ymm"}, {"arm64-linux", "tbl v"}} {
 		for _, src := range []string{constant, runtime} {
 			asm := src + "." + tc.target + ".s"
 			if out, err := exec.Command(buildLangBinForInterp(t), "-target", tc.target, "-emit", "asm", "-o", asm, src).CombinedOutput(); err != nil {

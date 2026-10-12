@@ -4798,18 +4798,19 @@ function ir_f2u_sat_rax(width: i32, lb: string, d: string): string {
   return u;
 }
 
-// emit_scan_set_blocks is scan_set over a constant set, sixteen bytes a turn
-// with SSSE3 (asmcore.scan_set_tables for the layout). A byte x is a member
-// when bit (x >> 4) & 7 of its row is set, the row being the low-nibble table
-// for x < 0x80 and the high one otherwise: pshufb zeroes a lane whose index
-// has bit 7 set, so `x & 0x8f` reads the first table only for a low byte and
-// `(x ^ 0x80) & 0x8f` the second only for a high one, and or-ing the two rows
-// gives the right row everywhere. The set operand is popped and not read.
-// %r11 holds the tables, %r9 the block cursor against %r10, the last address
-// a whole block can start at.
+// emit_scan_set_blocks is scan_set over a constant set, 32 bytes a turn with
+// AVX2 and then one 16-byte turn (asmcore.scan_set_tables for the layout). A
+// byte x is a member when bit (x >> 4) & 7 of its row is set, the row being the
+// low-nibble table for x < 0x80 and the high one otherwise: vpshufb zeroes a
+// lane whose index has bit 7 set, so `x & 0x8f` reads the first table only for
+// a low byte and `(x ^ 0x80) & 0x8f` the second only for a high one, and or-ing
+// the two rows gives the right row everywhere. vpshufb looks up within each
+// 128-bit lane, so every table is broadcast to both. The set operand is popped
+// and not read. %r11 holds the tables, %r9 the block cursor against %r10, the
+// last address a 16-byte block can start at.
 function emit_scan_set_blocks(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let names: string[] = [];
-  while (names.len() < 7) {
+  while (names.len() < 9) {
     let lo: asmcore.LabelOut = asmcore.fresh_label(s);
     names = names.append(lo.name);
     s = lo.state;
@@ -4824,6 +4825,8 @@ function emit_scan_set_blocks(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState
   let l_hit: string = names[4];
   let l_end: string = names[5];
   let l_done: string = names[6];
+  let l_half: string = names[7];
+  let l_rest: string = names[8];
   s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
   if (o.kind_tag == 361) {
     s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
@@ -4834,20 +4837,17 @@ function emit_scan_set_blocks(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState
   s = s.write(l_from_ok + ":\n    leaq " + tables + "(%rip), %r11\n");
   s = s.write("    leaq (%rax,%rcx), %r9\n    leaq -16(%rax,%r8), %r10\n");
   s = s.write("    cmpq %r10, %r9\n    jg " + l_tail + "\n");
-  s = s.write("    movdqu (%r11), %xmm2\n    movdqu 16(%r11), %xmm3\n    movdqu 32(%r11), %xmm4\n");
-  s = s.write("    movdqu 48(%r11), %xmm5\n    movdqu 64(%r11), %xmm6\n    movdqu 80(%r11), %xmm7\n");
-  s = s.write(l_loop + ":\n    movdqu (%r9), %xmm0\n");
-  s = s.write("    movdqa %xmm0, %xmm1\n    pand %xmm5, %xmm1\n");
-  s = s.write("    movdqa %xmm0, %xmm8\n    pxor %xmm6, %xmm8\n    pand %xmm5, %xmm8\n");
-  s = s.write("    movdqa %xmm2, %xmm9\n    pshufb %xmm1, %xmm9\n");
-  s = s.write("    movdqa %xmm3, %xmm1\n    pshufb %xmm8, %xmm1\n    por %xmm9, %xmm1\n");
-  s = s.write("    psrlw $4, %xmm0\n    pand %xmm7, %xmm0\n");
-  s = s.write("    movdqa %xmm4, %xmm8\n    pshufb %xmm0, %xmm8\n");
-  s = s.write("    pand %xmm8, %xmm1\n    pcmpeqb %xmm8, %xmm1\n    pmovmskb %xmm1, %edx\n");
+  s = s.write("    vbroadcasti128 (%r11), %ymm2\n    vbroadcasti128 16(%r11), %ymm3\n    vbroadcasti128 32(%r11), %ymm4\n");
+  s = s.write("    vbroadcasti128 48(%r11), %ymm5\n    vbroadcasti128 64(%r11), %ymm6\n    vbroadcasti128 80(%r11), %ymm7\n");
+  s = s.write(l_loop + ":\n    leaq 16(%r9), %rdx\n    cmpq %r10, %rdx\n    jg " + l_half + "\n");
+  s = s.write("    vmovdqu (%r9), %ymm0\n" + scan_set_classify("ymm") + "    vpmovmskb %ymm1, %edx\n");
   s = s.write("    testl %edx, %edx\n    jnz " + l_hit16 + "\n");
-  s = s.write("    addq $16, %r9\n    cmpq %r10, %r9\n    jle " + l_loop + "\n");
-  s = s.write("    movq %r9, %rcx\n    subq %rax, %rcx\n    jmp " + l_tail + "\n");
-  s = s.write(l_hit16 + ":\n    bsfl %edx, %edx\n    subq %rax, %r9\n    addq %rdx, %r9\n");
+  s = s.write("    addq $32, %r9\n    jmp " + l_loop + "\n");
+  s = s.write(l_half + ":\n    cmpq %r10, %r9\n    jg " + l_rest + "\n");
+  s = s.write("    vmovdqu (%r9), %xmm0\n" + scan_set_classify("xmm") + "    vpmovmskb %xmm1, %edx\n");
+  s = s.write("    testl %edx, %edx\n    jnz " + l_hit16 + "\n    addq $16, %r9\n");
+  s = s.write(l_rest + ":\n    vzeroupper\n    movq %r9, %rcx\n    subq %rax, %rcx\n    jmp " + l_tail + "\n");
+  s = s.write(l_hit16 + ":\n    vzeroupper\n    bsfl %edx, %edx\n    subq %rax, %r9\n    addq %rdx, %r9\n");
   s = s.write("    pushq %r9\n    jmp " + l_done + "\n");
   // Under sixteen bytes left: the membership bytes at 96, one at a time.
   s = s.write(l_tail + ":\n    cmpq %r8, %rcx\n    jge " + l_end + "\n");
@@ -4856,6 +4856,18 @@ function emit_scan_set_blocks(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState
   s = s.write(l_hit + ":\n    pushq %rcx\n    jmp " + l_done + "\n");
   s = s.write(l_end + ":\n    pushq %r8\n");
   return s.write(l_done + ":\n");
+}
+
+// scan_set_classify sets each byte lane of %<w>1 to all-ones where the lane of
+// %<w>0 is a member, from the tables emit_scan_set_blocks loads into %<w>2-7.
+function scan_set_classify(w: string): string {
+  let r: string = "    vpand %" + w + "5, %" + w + "0, %" + w + "1\n";
+  r = r + "    vpxor %" + w + "6, %" + w + "0, %" + w + "8\n    vpand %" + w + "5, %" + w + "8, %" + w + "8\n";
+  r = r + "    vpshufb %" + w + "1, %" + w + "2, %" + w + "9\n";
+  r = r + "    vpshufb %" + w + "8, %" + w + "3, %" + w + "1\n    vpor %" + w + "9, %" + w + "1, %" + w + "1\n";
+  r = r + "    vpsrlw $4, %" + w + "0, %" + w + "0\n    vpand %" + w + "7, %" + w + "0, %" + w + "0\n";
+  r = r + "    vpshufb %" + w + "0, %" + w + "4, %" + w + "8\n";
+  return r + "    vpand %" + w + "8, %" + w + "1, %" + w + "1\n    vpcmpeqb %" + w + "8, %" + w + "1, %" + w + "1\n";
 }
 
 // set_entry_test tests entry `idx` of the set on %rdx for zero: the low byte
