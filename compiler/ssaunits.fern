@@ -3696,7 +3696,7 @@ pub function with_reuse(f: ssasem.Func, p: Plan): Plan {
   let keeps: Keeps[] = [];
   for b in f.graph.blocks {
     let pr: ReusePairs = reuse_pairs(f, p, idx, vr, b, off, carry);
-    keeps = keeps.append(block_keeps(f, p, idx, b, pr, uses));
+    keeps = keeps.append(block_keeps(f, p, idx, b, pr, carry, links, uses));
     pairs = pairs.append(pr);
   }
   return Plan { ...p, links: links, reuse: Reuse { pairs: pairs, keeps: keeps, carry: carry } };
@@ -4554,24 +4554,38 @@ function without_at(xs: i32[], k: i32): i32[] {
 //
 // The token slot is held from that first read to the construction, so a donor
 // is kept only where no other pairing's token is live in between. `start` is
-// the position of the first counted kept read, else the donor's drop, and
-// `taken` the donor's drop.
+// the position of the first counted kept read or other take, else the
+// donor's drop, and `taken` the donor's drop.
 //
 // A kept field the construction alone reads is not read at all while the
 // donor is unique: its slot is already the construction's. `late` holds those
 // values; the construction copies them from the donor, a counted one retained,
 // under the token's null arm, where its box is fresh (reuse_construct).
-pub struct Keeps { donors: i32[], slots: boolean[][], values: i32[][], late: i32[][], start: i32[], taken: i32[], built: i32[] }
+//
+// Any other take from the donor follows the same answer (`moved`, at the slots
+// `freed` marks): the construction overwrites the slot, so a unique donor's
+// child is the frame's with neither a null nor a second uniqueness read, and
+// the donor's release walks past it. The donor is only read between the first
+// such take and the construction, so nothing can raise its count while the
+// answer stands.
+//
+// A declared enum's variant is rebuilt as a record is: its box is the record
+// layout behind the variant's shape word, and a read naming the variant the
+// construction builds says the donor holds that shape already.
+pub struct Keeps { donors: i32[], slots: boolean[][], values: i32[][], late: i32[][], moved: i32[][], freed: boolean[][], start: i32[], taken: i32[], built: i32[] }
 
 function keep_slots(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, ins: ssa.SInst, built: i32, donor: i32, taken: i32, uses: ssasem.Uses): Keeps {
-  let none: Keeps = Keeps { donors: [], slots: [], values: [], late: [], start: [], taken: [], built: [] };
-  if (ins.kind_tag != ssasem.record_new() || !semtypes.equal(f.values[ins.result], f.values[donor])) {
+  let none: Keeps = no_keeps();
+  if (!rebuilds(f, ins, donor)) {
     return none;
   }
   let slots: boolean[] = [];
   while (slots.len() < ins.args.len()) {
     slots = slots.append(false);
   }
+  let freed: boolean[] = slots;
+  let moved: i32[] = [];
+  let first_moved: i32 = 0 - 1;
   let values: i32[] = [];
   let late: i32[] = [];
   let start: i32 = 0 - 1;
@@ -4588,13 +4602,15 @@ function keep_slots(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, ins: s
     // A counted read keeps exactly one unit: one taken AND retained at the
     // construction holds two, and keeping in place stands in for one. A
     // scalar read has no unit and is kept as it stands.
-    let counted: boolean = get.kind_tag == ssasem.record_get() && ssasem.reference(f.values[get.result]);
-    if (get.kind_tag == ssasem.record_get() && get.args[0] == donor
-      && (!counted || payload_taken(f, p, get) != util.index_of_i32(retained, get.result) >= 0)) {
+    let read: boolean = rebuilt_read(ins, get, donor);
+    let counted: boolean = read && ssasem.reference(f.values[get.result]);
+    let kept: boolean = false;
+    if (read && (!counted || payload_taken(f, p, get) != util.index_of_i32(retained, get.result) >= 0)) {
       let i: i32 = util.index_of_i32(ins.args, get.result);
       // Once: the donor's slot holds one unit, which a second operand
       // naming the same value would need a retain of its own for.
       if (i == get.imm && !slots[i] && occurrences(ins.args, get.result) == 1) {
+        kept = true;
         values = values.append(get.result);
         slots = slots.with(i, true);
         if (ssasem.use_count(uses, get.result) == 1 && !held_read(p, get)) {
@@ -4608,7 +4624,20 @@ function keep_slots(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, ins: s
         }
       }
     }
+    if (counted && !kept && payload_taken(f, p, get) && get.imm < freed.len() && slot_reads(b, donor, get.imm, built) == 1) {
+      moved = moved.append(get.result);
+      freed = freed.with(get.imm, true);
+      if (first_moved < 0) {
+        first_moved = pos;
+      }
+    }
     pos = pos + 1;
+  }
+  if (first_moved >= 0 && only_read(b, donor, first_moved, built) && (start < 0 || first_moved < start)) {
+    start = first_moved;
+  } else if (first_moved >= 0 && (start < 0 || first_moved < start)) {
+    moved = [];
+    freed = slots;
   }
   if (start < 0 && scalars) {
     start = taken;
@@ -4616,7 +4645,63 @@ function keep_slots(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, ins: s
   if (start < 0) {
     return none;
   }
-  return Keeps { donors: [donor], slots: [slots], values: [values], late: [late], start: [start], taken: [taken], built: [] };
+  return Keeps { donors: [donor], slots: [slots], values: [values], late: [late], moved: [moved], freed: [freed], start: [start], taken: [taken], built: [] };
+}
+
+pub function no_keeps(): Keeps {
+  return Keeps { donors: [], slots: [], values: [], late: [], moved: [], freed: [], start: [], taken: [], built: [] };
+}
+
+// A construction that can be built in its donor's box as it stands: a record
+// of the donor's type, or a variant of a declared enum.
+function rebuilds(f: ssasem.Func, ins: ssa.SInst, donor: i32): boolean {
+  if (!semtypes.equal(f.values[ins.result], f.values[donor])) {
+    return false;
+  }
+  if (ins.kind_tag == ssasem.record_new()) {
+    return true;
+  }
+  let e: i32 = semrecords.find_enum(f.enums, f.values[donor]);
+  return ins.kind_tag == ssasem.variant_new() && e >= 0 && f.enums[e].layout == semrecords.layout_variant();
+}
+
+// A read of one of the donor's fields as the construction lays them out.
+function rebuilt_read(ins: ssa.SInst, get: ssa.SInst, donor: i32): boolean {
+  if (get.args.len() != 1 || get.args[0] != donor) {
+    return false;
+  }
+  if (ins.kind_tag == ssasem.record_new()) {
+    return get.kind_tag == ssasem.record_get();
+  }
+  return get.kind_tag == ssasem.variant_get() && get.str == ins.str;
+}
+
+// The reads of `v`'s field `slot` in the block up to `to`.
+function slot_reads(b: ssa.SBlock, v: i32, slot: i32, to: i32): i32 {
+  let n: i32 = 0;
+  let pos: i32 = 0;
+  while (pos <= to && pos < b.insts.len()) {
+    let ins: ssa.SInst = b.insts[pos];
+    if (taken_read(ins.kind_tag) && ins.args.len() == 1 && ins.args[0] == v && ins.imm == slot) {
+      n = n + 1;
+    }
+    pos = pos + 1;
+  }
+  return n;
+}
+
+// Whether every instruction from `from` to `to` that names `v` only reads it,
+// so none takes a unit of its box.
+function only_read(b: ssa.SBlock, v: i32, from: i32, to: i32): boolean {
+  let pos: i32 = from;
+  while (pos <= to && pos < b.insts.len()) {
+    let ins: ssa.SInst = b.insts[pos];
+    if (util.index_of_i32(ins.args, v) >= 0 && !taken_read(ins.kind_tag) && ins.kind_tag != ssasem.variant_is()) {
+      return false;
+    }
+    pos = pos + 1;
+  }
+  return true;
 }
 
 // A read the plan gives an effect of its own at its position: a take that
@@ -4647,8 +4732,8 @@ function token_busy(pairs: ReusePairs, from: i32, to: i32, own_build: i32): bool
   return false;
 }
 
-function block_keeps(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs, uses: ssasem.Uses): Keeps {
-  let out: Keeps = Keeps { donors: [], slots: [], values: [], late: [], start: [], taken: [], built: [] };
+function block_keeps(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs, carry: Carry, links: i32[], uses: ssasem.Uses): Keeps {
+  let out: Keeps = no_keeps();
   let pos: i32 = 0;
   while (pos < b.insts.len()) {
     let donor: i32 = pairs.selfs[pos];
@@ -4663,13 +4748,149 @@ function block_keeps(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs
         out = Keeps {
           donors: out.donors.append(donor), slots: out.slots.append(k.slots[0]),
           values: out.values.append(k.values[0]), late: out.late.append(k.late[0]),
+          moved: out.moved.append(k.moved[0]), freed: out.freed.append(k.freed[0]),
           start: out.start.append(k.start[0]), taken: out.taken.append(taken), built: out.built.append(pos),
         };
       }
     }
     pos = pos + 1;
   }
+  return classified(f, p, idx, b, pairs, carry, links, out);
+}
+
+// A donor whose payload this block takes and which dies in the block, by its
+// drop or as a token held for a construction, without a construction here
+// that keeps its fields: its uniqueness is read once, at its first take, and
+// the takes and its death follow that answer. A type with a finalizer is left
+// to its drop helper, which runs it. It is a keep without a
+// construction (`built` -1): a unique donor's taken slots are the frame's,
+// and its death releases the other fields alone. One donor at a time holds
+// the token slot, so a window that would overlap another is left as it was.
+function classified(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs, carry: Carry, links: i32[], own out: Keeps): Keeps {
+  let pos: i32 = 0;
+  while (pos < b.insts.len()) {
+    let dying: i32[] = step_of(p, idx, b.id, pos, 0 - 1).drops;
+    if (pairs.tokens[pos] >= 0) {
+      dying = dying.append(pairs.tokens[pos]);
+    }
+    if (carry_held(carry, b.id, pos) >= 0) {
+      dying = dying.append(carry_held(carry, b.id, pos));
+    }
+    for d in dying {
+      let start: i32 = first_classified_take(f, p, b, d, pos, links);
+      if (start >= 0 && util.index_of_i32(out.donors, d) < 0 && util.index_of_i32(pairs.selfs, d) < 0
+        && !token_busy(pairs, start, pos, util.index_of_i32(pairs.builds, d)) && !keep_overlaps(out, start, pos)) {
+        let moved: i32[] = [];
+        let freed: boolean[] = [];
+        let n: i32 = donor_fields(f, b.insts[start], d);
+        while (freed.len() < n) {
+          freed = freed.append(false);
+        }
+        let i: i32 = start;
+        while (i <= pos) {
+          let get: ssa.SInst = b.insts[i];
+          if (classified_take(f, p, get, d)) {
+            moved = moved.append(get.result);
+            freed = freed.with(get.imm, true);
+          }
+          i = i + 1;
+        }
+        out = Keeps {
+          donors: out.donors.append(d), slots: out.slots.append([]), values: out.values.append([]), late: out.late.append([]),
+          moved: out.moved.append(moved), freed: out.freed.append(freed),
+          start: out.start.append(start), taken: out.taken.append(pos), built: out.built.append(0 - 1),
+        };
+      }
+    }
+    pos = pos + 1;
+  }
   return out;
+}
+
+// The position of the donor's first payload take when every read of it from
+// there to its death at `dies` is a take of one variant's slot, read once, or
+// a test: else -1. A record donor's reads are its fields; an enum donor's
+// name the variant whose fields its death walks.
+function first_classified_take(f: ssasem.Func, p: Plan, b: ssa.SBlock, d: i32, dies: i32, links: i32[]): i32 {
+  if (d < 0 || d < links.len() && links[d] >= 0 || !ssasem.reference(f.values[d]) || ssasem.finalizer_of(f, f.values[d]) != "") {
+    return 0 - 1;
+  }
+  let first: i32 = 0 - 1;
+  let pos: i32 = 0;
+  while (pos <= dies) {
+    let ins: ssa.SInst = b.insts[pos];
+    if (first < 0 && classified_take(f, p, ins, d)) {
+      first = pos;
+    }
+    if (first >= 0 && util.index_of_i32(ins.args, d) >= 0) {
+      let same: boolean = ins.kind_tag == ssasem.record_get() || ins.str == b.insts[first].str;
+      let fits: boolean = classified_take(f, p, ins, d) && same && slot_reads(b, d, ins.imm, dies) == 1
+        || ins.kind_tag == ssasem.variant_is() || taken_read(ins.kind_tag) && !(ins.result < p.payloads.len() && p.payloads[ins.result]);
+      if (!fits || shell_root(f, p, ins) == d) {
+        return 0 - 1;
+      }
+    }
+    pos = pos + 1;
+  }
+  if (first >= 0 && donor_fields(f, b.insts[first], d) < 0) {
+    return 0 - 1;
+  }
+  return first;
+}
+
+// A payload take out of a record's field or a declared variant's slot.
+function classified_take(f: ssasem.Func, p: Plan, ins: ssa.SInst, d: i32): boolean {
+  if (ins.args.len() != 1 || ins.args[0] != d || !payload_taken(f, p, ins) || !ssasem.reference(f.values[ins.result])) {
+    return false;
+  }
+  if (ins.kind_tag == ssasem.record_get()) {
+    return semrecords.find(f.records, f.values[d]) >= 0;
+  }
+  let e: i32 = semrecords.find_enum(f.enums, f.values[d]);
+  return ins.kind_tag == ssasem.variant_get() && e >= 0 && f.enums[e].layout == semrecords.layout_variant();
+}
+
+// The number of fields a donor read by `get` lays out, or -1.
+function donor_fields(f: ssasem.Func, get: ssa.SInst, d: i32): i32 {
+  if (get.kind_tag == ssasem.record_get()) {
+    return record_fields(f.values[d], f).len();
+  }
+  let e: i32 = semrecords.find_enum(f.enums, f.values[d]);
+  if (e < 0) {
+    return 0 - 1;
+  }
+  let v: i32 = semrecords.find_variant(f.enums[e], get.str);
+  if (v < 0) {
+    return 0 - 1;
+  }
+  return f.enums[e].variants[v].fields.len();
+}
+
+function keep_overlaps(k: Keeps, from: i32, to: i32): boolean {
+  let i: i32 = 0;
+  while (i < k.donors.len()) {
+    let end: i32 = k.built[i];
+    if (end < 0) {
+      end = k.taken[i];
+    }
+    if (k.start[i] <= to && from <= end) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// The keep with no construction whose donor dies at `pos`, or -1.
+pub function classified_at(k: Keeps, pos: i32): i32 {
+  let i: i32 = 0;
+  while (i < k.donors.len()) {
+    if (k.built[i] < 0 && k.taken[i] == pos) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
 }
 
 pub function kept_values(k: Keeps): i32[] {
@@ -4682,17 +4903,28 @@ pub function kept_values(k: Keeps): i32[] {
   return out;
 }
 
-// Whether a keep's donor dies at `pos` for a construction later in the block:
-// its box is released at that construction, not here.
-pub function token_kept(k: Keeps, pos: i32): boolean {
+// Whether a keep's donor dies at `pos` for a construction later in the block,
+// its box released at that construction, or is classified there: either way
+// its token is not taken as an ordinary one.
+pub function token_kept(k: Keeps, pos: i32, donor: i32): boolean {
   let i: i32 = 0;
   while (i < k.taken.len()) {
-    if (k.taken[i] == pos && k.built[i] != pos) {
+    if (k.taken[i] == pos && k.built[i] != pos && k.donors[i] == donor) {
       return true;
     }
     i = i + 1;
   }
   return false;
+}
+
+pub function moved_values(k: Keeps): i32[] {
+  let out: i32[] = [];
+  for vs in k.moved {
+    for v in vs {
+      out = out.append(v);
+    }
+  }
+  return out;
 }
 
 pub function late_values(k: Keeps): i32[] {
@@ -5038,7 +5270,17 @@ function verify_keeps(pr: ReusePairs, k: Keeps): string {
   while (i < k.donors.len()) {
     let built: i32 = k.built[i];
     let taken: i32 = k.taken[i];
-    if (built < 0 || built >= pr.selfs.len() || taken < 0 || taken > built || k.start[i] < 0 || k.start[i] > built) {
+    if (built < 0) {
+      if (taken < 0 || taken >= pr.selfs.len() || k.start[i] < 0 || k.start[i] > taken) {
+        return "a classified donor's positions are outside its block";
+      }
+      if (token_busy(pr, k.start[i], taken, util.index_of_i32(pr.builds, k.donors[i]))) {
+        return "a classified donor's token overlaps a pairing's";
+      }
+      i = i + 1;
+      continue;
+    }
+    if (built >= pr.selfs.len() || taken < 0 || taken > built || k.start[i] < 0 || k.start[i] > built) {
       return "a kept donor's positions are outside its block";
     }
     let own: boolean = built == taken && pr.selfs[built] == k.donors[i];
