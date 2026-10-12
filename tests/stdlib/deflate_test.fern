@@ -215,16 +215,75 @@ function round_trip(input: u8[]): string {
 }
 
 // The encoder's streams read back by the decoder: empty, one byte (the
-// three bytes zlib writes for it), text with matches, 100 KiB of
+// three bytes zlib writes for it), text with matches, 10 KiB of
 // repetition well under a hundredth of its size, and bytes with no
-// matches no larger than a stored copy by more than the code's cost.
+// matches stored, five bytes over their size.
 function test_deflate_round_trip(): test.TestOutcome {
   let none: u8[] = [];
   let one: string = hex.hex_encode(deflate.deflate("a".bytes()));
   let text: string = round_trip("the quick brown fox jumps over the lazy dog; the quick brown fox jumps over the lazy dog".bytes());
   let repeated: string = round_trip("abcdefgh".repeat(1280).bytes());
   let noise: string = round_trip(lcg_bytes(3000));
-  return test.assert_eq(round_trip(none) + "|" + one + "|" + text + "|" + repeated + "|" + noise, "ok 2|4b0400|ok 48|ok 80|ok 3166");
+  return test.assert_eq(round_trip(none) + "|" + one + "|" + text + "|" + repeated + "|" + noise, "ok 2|4b0400|ok 47|ok 40|ok 3005");
+}
+
+// varied() — runs of noise, each followed by a copy of an earlier span:
+// one copy of every match length from 3 to 258, at distances spread
+// across the window.
+function varied(): u8[] {
+  let noise: u8[] = lcg_bytes(2560);
+  let out: u8[] = [];
+  let len: i32 = 3;
+  while (len <= 258) {
+    let k: i32 = 0;
+    while (k < 10) {
+      out = out.append(noise[(len - 3) * 10 + k]);
+      k = k + 1;
+    }
+    let from: i32 = out.len() - 1 - len * 127 % out.len();
+    k = 0;
+    while (k < len) {
+      out = out.append(out[from + k]);
+      k = k + 1;
+    }
+    len = len + 1;
+  }
+  return out;
+}
+
+function test_deflate_varied(): test.TestOutcome {
+  return test.assert_eq(round_trip(varied()), "ok 3571");
+}
+
+// More tokens than one block holds: 17000 bytes of noise, stored, then
+// 1760 bytes of text in a block coded for it.
+function test_deflate_blocks(): test.TestOutcome {
+  let input: u8[] = lcg_bytes(17000).concat("the quick brown fox jumps over the lazy dog ".repeat(40).bytes());
+  return test.assert_eq(round_trip(input), "ok 17095");
+}
+
+// `gzip` read back by `gunzip`: the corpus `test_corpus_gzip` decodes,
+// in fewer bytes than zlib's level 6 makes of it (7815).
+function test_gzip_round_trip(): test.TestOutcome {
+  let want: u8[] = [];
+  let i: i32 = 0;
+  while (i < 3000) {
+    want = __appended(want, "line " + int.int_to_string(i) + " of the corpus\n");
+    i = i + 1;
+  }
+  let packed: u8[] = deflate.gzip(want);
+  match (deflate.gunzip(packed, 1048576)) {
+    Ok(out) => {
+      if (hex.hex_encode(out) != hex.hex_encode(want)) {
+        return test.fail("the output differs");
+      }
+      return test.assert_eq(packed.len(), 7798);
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
 }
 
 // `deflate_flushed` leaves the stream open behind an empty stored block:
@@ -265,5 +324,8 @@ function main(): i32 {
   r = r.it("hand-rolled refusals", test_hand_rolled_refusals);
   r = r.it("the encoder's streams read back", test_deflate_round_trip);
   r = r.it("a flushed stream ends open", test_deflate_flushed);
+  r = r.it("every match length reads back", test_deflate_varied);
+  r = r.it("blocks of each kind in one stream", test_deflate_blocks);
+  r = r.it("gzip reads back", test_gzip_round_trip);
   return r.finish();
 }

@@ -940,7 +940,7 @@ RFC 4648 base32 (standard `A–Z 2–7` alphabet, `=` padding).
 ### `std/deflate`
 
 DEFLATE (RFC 1951) with the zlib (RFC 1950) and gzip (RFC 1952)
-framings, pure Fern: a full decoder and a fixed-Huffman encoder. Every
+framings, pure Fern: a full decoder and an encoder. Every
 decoder takes `max_out`, the most bytes it will produce, and answers
 `OutputLimit` past it: a compressed body is a caller-controlled
 expansion, so the bound is part of the call.
@@ -955,17 +955,19 @@ expansion, so the bound is part of the call.
   public). A preset dictionary is not supported.
 - `InflateError`: `Truncated`, `Malformed(what)`, `OutputLimit`,
   `BadChecksum`, `BadHeader(what)`; `(e).message()`.
-- `deflate(input): u8[]` encodes a raw stream as one final block of
-  fixed Huffman codes over LZ77 matches (a 32 KiB window, a hash chain
-  of bounded depth), which every inflater reads and which beats a stored
-  block on any text; `deflate_flushed(input, window_bits)` encodes a
-  non-final block ended by an empty stored block (the `00 00 ff ff`
-  sync flush of a stream that goes on), matches kept within `2 ^
-  window_bits` as a peer that announced that window needs. Neither
-  computes dynamic Huffman tables, so the output runs longer than
-  zlib's at a level above 1; what it is for is a protocol that must
-  compress (WebSocket's permessage-deflate, `std/http/websocket`), not
-  the smallest file.
+- `deflate(input): u8[]` encodes a raw stream ending the stream: LZ77
+  matches through a 32 KiB window (a hash chain searched 32 deep, with
+  zlib's lazy evaluation: a match is deferred a byte when the next
+  position starts a longer one), in blocks of up to 16 384 tokens, each
+  written stored, under the fixed code or under Huffman codes built for
+  it (length-limited, Moffat and Katajainen's construction), whichever is
+  shortest. On 3000 numbered lines it writes 7 798 bytes of gzip where
+  zlib's level 6 writes 7 815. `gzip(input)` is one gzip member around
+  that stream, with no name or time. `deflate_flushed(input,
+  window_bits)` encodes the same blocks non-final, ended by an empty
+  stored block (the `00 00 ff ff` sync flush of a stream that goes on),
+  matches kept within `2 ^ window_bits` as a peer that announced that
+  window needs: WebSocket's permessage-deflate (`std/http/websocket`).
 
 ### `std/hex`
 
@@ -1969,6 +1971,8 @@ serializer.
   `(resp).with_cookie(c)`, and the client's jar.
 - **Caching:** `std/http/cache` — validators and conditional requests
   (304, 412, `If-Range`), `Cache-Control` and `Vary`.
+- **Compression:** `std/http/compress` — a response body in the coding
+  `Accept-Encoding` ranks highest, under `Vary`.
 - **Client address:** `std/http/forwarded` — `Forwarded` (RFC 7239) read
   and written, and the client found past the proxies a deployment trusts.
 - **Static files:** `std/http/static` — a directory's files with their
@@ -2202,6 +2206,37 @@ is the suite; `TestStaticServeInterp` and `TestStaticServeX86_64` serve a
 real directory under the loop, and `TestStaticPreconditionsMatchGo` sends
 every combination of the precondition fields, `Range` and `If-Range` to it
 and to Go's `http.ServeContent`, which is the oracle.
+
+### `std/http/compress`
+
+A response body in the content coding the client ranks highest
+(`HeaderMap.preferred_coding` over `Options.codings`), off unless a
+handler asks for it:
+
+```fern
+function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
+  use req <- compress.compressed(req);
+  return http.ok(page()).with_content_type("text/html");
+}
+```
+
+- `response(req, resp, o)` codes `resp`'s body when it is held whole
+  (`BodyText`, `BodyBytes`), of a media type `compressible` names, and at
+  least `o.min_size` bytes: `Content-Encoding` names the coding, an `ETag`
+  becomes weak, and `Accept-Ranges` goes. `Vary: Accept-Encoding` goes on
+  every such response, coded or not. A response already coded, marked
+  `no-transform`, a 206, a bodiless status, a file or a stream is left as
+  it is, and so is a body the coding would not shrink.
+- `compressed(req, next)` and `compressed_with(req, o, next)` are the
+  middleware; `options()` is 1 KiB and up, in gzip.
+- `encode(coding, body)` is the body in a coding this module writes
+  (gzip, through `std/deflate`), None otherwise. `compressible(ct)` is
+  text, `+json` and `+xml` types, JSON, JavaScript, XML, WebAssembly,
+  NDJSON, icons and the uncompressed font formats.
+
+`tests/stdlib/http_compress_test.fern` is the suite;
+`TestCompressServeInterp` and `TestCompressServeX86_64` serve coded pages
+through the loop to Go's gzip reader.
 
 ### `std/http/forwarded`
 
@@ -3215,6 +3250,7 @@ entries, and insertion-ordered iteration. Backs `HttpRequest`'s
   for what they do not name and `x-gzip` for `gzip`; None means identity,
   which wins only when it ranks strictly higher. `weight(member)` is a
   member's `q` in thousandths (1000 without one, 0 when malformed).
+- `(h).remove(name)` — every entry for `name` dropped, the rest in order.
 
 ### `std/stream`
 

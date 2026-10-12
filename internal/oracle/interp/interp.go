@@ -27,6 +27,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -201,6 +202,10 @@ func (m *Map) clone() *Map {
 // dies (scope exit, reassignment of the old value, function return). The
 // net count is what set/delete/clear consult to decide mutate-in-place
 // vs copy. See docs/INTERP-MAP-COW-PLAN.md (M1).
+// rcWalked counts the array elements adjustRC has visited, so a test can
+// pin how much a shape of program walks.
+var rcWalked atomic.Int64
+
 func retain(v Value)  { adjustRC(v, +1) }
 func release(v Value) { adjustRC(v, -1) }
 
@@ -287,6 +292,7 @@ func adjustRC(v Value, delta int) {
 		if x.h != nil {
 			x.h.paths += int32(delta)
 		}
+		rcWalked.Add(int64(len(x.E)))
 		for _, e := range x.E {
 			adjustRC(e, delta)
 		}
@@ -6761,6 +6767,9 @@ func (i *Interp) CallByName(name string, args []Value) (Value, error) {
 type env struct {
 	parent *env
 	vars   map[string]Value
+	// unwalked names the bindings declareTyped took without retaining,
+	// which releaseScope therefore does not release.
+	unwalked map[string]bool
 }
 
 type binding struct {
@@ -6850,19 +6859,60 @@ func (e *env) bindValue(name string, v Value) {
 
 // declare always creates a new binding in the innermost scope.
 func (e *env) declare(name string, v Value) {
+	delete(e.unwalked, name)
 	e.bindValue(name, v)
 	retain(v)
 	arrOwn(v)
 }
 
+// declareTyped is declare for a binding of type t. When no value of t
+// can reach a Map, the walk retain and release make over it changes only
+// array path counts, which nothing reads below an array of such values,
+// so the binding skips it on the way in and out: passing a large `i32[]`
+// to a function costs O(1) rather than O(len).
+func (e *env) declareTyped(name string, v Value, t ast.Type) {
+	if !holdsNoMap(t) {
+		e.declare(name, v)
+		return
+	}
+	e.bindValue(name, v)
+	arrOwn(v)
+	if e.unwalked == nil {
+		e.unwalked = make(map[string]bool)
+	}
+	e.unwalked[name] = true
+}
+
+// holdsNoMap reports whether no value of type t can contain a Map.
+func holdsNoMap(t ast.Type) bool {
+	switch x := t.(type) {
+	case ast.NumberType, ast.BoolType, ast.StringType, ast.StrType, ast.CharType, ast.FloatType:
+		return true
+	case ast.ArrayType:
+		return holdsNoMap(x.Elem)
+	case ast.SliceType:
+		return holdsNoMap(x.Elem)
+	case ast.TupleType:
+		for _, el := range x.Elems {
+			if !holdsNoMap(el) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
 // Captured cells keep their owning reference beyond scope exit, like values
 // stored in containers. Go GC owns their lifetime; COW counts are conservative.
 func (e *env) releaseScope() {
-	for _, v := range e.vars {
+	for name, v := range e.vars {
 		if _, captured := v.(*binding); captured {
 			continue
 		}
-		release(v)
+		if !e.unwalked[name] {
+			release(v)
+		}
 		arrDisown(v)
 	}
 }
@@ -6914,7 +6964,7 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 	}
 	e := newEnv(nil)
 	for k, p := range fn.Params {
-		e.declare(p.Name, args[k])
+		e.declareTyped(p.Name, args[k], p.Type)
 	}
 	defer e.releaseScope()
 	i.envs = append(i.envs, e)
@@ -7218,7 +7268,7 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		if err != nil {
 			return result{}, err
 		}
-		e.declare(x.Name, v)
+		e.declareTyped(x.Name, v, x.Type)
 		return result{flow: flowNormal}, nil
 	case *ast.Destructure:
 		v, err := i.evalExpr(x.Init, e)
@@ -8742,7 +8792,7 @@ func (i *Interp) callClosure(c *Closure, args []Value) (Value, error) {
 	}
 	e := newEnv(c.Env)
 	for k, p := range c.Decl.Params {
-		e.declare(p.Name, args[k])
+		e.declareTyped(p.Name, args[k], p.Type)
 	}
 	defer e.releaseScope()
 	i.envs = append(i.envs, e)
