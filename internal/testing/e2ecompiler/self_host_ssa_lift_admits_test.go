@@ -47,10 +47,11 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	// retired: the compiler writes its text through a buf_* builder.
 	// writer_splice_forever (431) adds one admitted kind with two inputs that
 	// pushes one Option.
+	// read_dir_ino_all (432) adds one with one input that pushes a Result.
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
-		"registered=377 declined=3\n"
+		"registered=378 declined=3\n"
 
 	cmd := runX86_64Bin(runner, bin)
 	out, err := cmd.Output()

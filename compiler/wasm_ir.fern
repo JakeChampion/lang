@@ -303,7 +303,7 @@ pub function need_ops(): string[] {
     "arr_push_owned_f64", "env", "environ", "eprint_str", "exit", "monotonic_ns", "now_ns", "now_unix_ms", "clock_resolution", "clock_set", "clone_file", "poll", "print_str", "putchar",
     "random_bytes", "read_chunk", "read_chunk_bytes", "fd_stat", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache",
     "fd_dup_onto", "reader_seek", "reader_splice", "reader_copy_range", "writer_splice_forever", "fd_flags", "writer_truncate", "read_dir",
-    "read_dir_all", "read_dir_ino", "read_file", "read_file_bytes", "read_line",
+    "read_dir_all", "read_dir_ino", "read_dir_ino_all", "read_file", "read_file_bytes", "read_line",
     "reader_close", "remove_dir_all", "remove_file", "create_dir_all", "create_dir",
     "remove_dir", "create_link", "create_symlink", "rename", "read_link", "set_file_times",
     "truncate", "sleep_ms", "sleep_ns", "stat", "lstat", "str_bytes", "str_from_bytes", "str_from_bytes_range",
@@ -2687,7 +2687,7 @@ function need_fd_read(needs: string[]): boolean {
 // need_dir_list: the module lists a directory (read_dir and its variants, or
 // remove_dir_all, which walks one).
 function need_dir_list(needs: string[]): boolean {
-  return need_any(needs, ["read_dir", "read_dir_all", "read_dir_ino", "remove_dir_all"]);
+  return need_any(needs, ["read_dir", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "remove_dir_all"]);
 }
 
 // need_open_at_p2: the ops that open a descriptor under the preopen.
@@ -2719,7 +2719,7 @@ function component_fs_needs(): string[] {
   return [
     "open_file", "open_with", "reader_close", "read_line", "read_chunk", "read_chunk_bytes",
     "fd_stat", "fd_fsync", "fd_fdatasync", "fd_drop_cache", "reader_seek", "fd_flags", "writer_truncate",
-    "stat", "lstat", "read_dir", "read_dir_all", "read_dir_ino", "create_dir", "create_dir_all", "remove_file",
+    "stat", "lstat", "read_dir", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "create_dir", "create_dir_all", "remove_file",
     "remove_dir", "remove_dir_all", "rename", "read_link", "create_symlink", "create_link",
     "truncate", "set_file_times", "temp_dir",
   ];
@@ -3365,14 +3365,14 @@ function truncate_body(mode: i32): string {
   return truncate_func();
 }
 
-// read_dir_body is $__fern_read_dir, $__fern_read_dir_all or
-// $__fern_read_dir_ino (`fname`) for emit mode `mode`.
+// read_dir_body is $__fern_read_dir, $__fern_read_dir_all, $__fern_read_dir_ino or
+// $__fern_read_dir_ino_all (`fname`) for emit mode `mode`.
 function read_dir_body(fname: string, mode: i32): string {
-  if (fname == "__fern_read_dir_ino") {
+  if (fname == "__fern_read_dir_ino" || fname == "__fern_read_dir_ino_all") {
     if (mode == 2) {
-      return read_dir_ino_func_p2();
+      return read_dir_ino_func_p2(fname);
     }
-    return read_dir_func_like(fname, true, true) + wasi_kind_func();
+    return read_dir_func_like(fname, fname == "__fern_read_dir_ino", true);
   }
   if (mode == 2) {
     return read_dir_func_p2(fname);
@@ -3398,13 +3398,14 @@ function wasi_kind_func(): string {
   return o;
 }
 
-// read_dir_ino_func_p2 emits the preview2 $__fern_read_dir_ino(path, tid):
-// $__fern_dir_names_p2's names, each moved into a DirEntry whose ino and kind
-// are 0, since a preview2 directory-entry carries no inode and the names
-// arrive without their types. The emptied name list
+// read_dir_ino_func_p2 emits the preview2 $__fern_read_dir_ino(path, tid), or
+// $__fern_read_dir_ino_all, which is the same list: preview 2 reports no "."
+// or "..", as its read_dir_all does not. Each of $__fern_dir_names_p2's names
+// is moved into a DirEntry whose ino and kind are 0, since a preview2
+// directory-entry carries no inode and the names arrive without their types. The emptied name list
 // is freed flat, its elements now owned by the entries.
-function read_dir_ino_func_p2(): string {
-  let o: string = "  (func $__fern_read_dir_ino (param $path i32) (param $tid i32) (result i32)\n";
+function read_dir_ino_func_p2(fname: string): string {
+  let o: string = "  (func $" + fname + " (param $path i32) (param $tid i32) (result i32)\n";
   o = o + "    (local $r i32) (local $res i32) (local $arr i32) (local $ent i32) (local $i i32) (local $n i32)\n";
   o = o + "    (local.set $r (call $__fern_dir_names_p2 (local.get $path)))\n";
   o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
@@ -5723,7 +5724,7 @@ function is_host_op_kind(tag: i32): boolean {
   return tag == 163 || tag == 164 || tag == 182 || tag == 184
     || tag == 183 || tag == 389 || tag == 388 || tag == 209 || tag == 168 || tag == 169 || tag == 233 || tag == 170 || tag == 352
     || tag == 203 || tag == 304 || tag == 305 || tag == 202 || tag == 308 || tag == 176 || tag == 175 || tag == 236 || tag == 173 || tag == 231
-    || tag == 171 || tag == 310 || tag == 391 || tag == 172 || tag == 180 || tag == 249 || tag == 166
+    || tag == 171 || tag == 310 || tag == 391 || tag == 432 || tag == 172 || tag == 180 || tag == 249 || tag == 166
     || tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264
     || tag == 267 || tag == 269 || tag == 273 || tag == 405;
 }
@@ -5935,6 +5936,10 @@ function emit_host_op_wat(o: ir.Op): string {
     // read_dir's walk boxing a DirEntry per name, so it takes DirEntry's
     // type id after the path, as stat takes FileStat's.
     return tid_get("DirEntry") + "    call $__fern_read_dir_ino\n";
+  }
+  if (o.kind_tag == 432) {  // read_dir_ino_all
+    // read_dir_ino without the "." / ".." skip.
+    return tid_get("DirEntry") + "    call $__fern_read_dir_ino_all\n";
   }
   if (o.kind_tag == 172) {  // remove_dir_all
     // stack: path strblock ptr -> recursively rm -rf the path, push a
@@ -12869,10 +12874,13 @@ function path_fs_bodies(parts: string[], needs: string[], mode: i32): string[] {
   // IoError] box. Heap-backed (allocates names + array + box) and uses
   // $__fern_arr_push (emitted by emit_ir_module_units' arr_push gate,
   // which folds read_dir in).
-  for name in ["read_dir", "read_dir_all", "read_dir_ino"] {
+  for name in ["read_dir", "read_dir_all", "read_dir_ino", "read_dir_ino_all"] {
     if (need(needs, name)) {
       parts = parts.append(read_dir_body("__fern_" + name, mode));
     }
+  }
+  if (mode != 2 && (need(needs, "read_dir_ino") || need(needs, "read_dir_ino_all"))) {
+    parts = parts.append(wasi_kind_func());
   }
   // $__fern_remove_dir_all(path): recursive rm -rf -> Result[(), IoError] box.
   // Heap-backed + uses $__fern_arr_push (both folded into emit_ir_module_units' gates).
@@ -13051,7 +13059,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // would otherwise emit `call $__fern_alloc` against nothing.
   if (mode == 2 || module_extern_needs_heap(mod) || needs_fd_sync(needs) || need_open_file(needs) || need_any(needs, [
     "@allocates", "@uses_i32_to_string", "@uses_i64_to_string", "@uses_u64_to_string", "@uses_u32_to_string", "@uses_buf",
-    "env", "stat", "lstat", "remove_file", "create_dir_all", "read_dir", "read_dir_all", "read_dir_ino", "remove_dir_all", "temp_dir", "read_chunk", "read_chunk_bytes", "reader_close", "fd_stat", "reader_seek", "writer_truncate",
+    "env", "stat", "lstat", "remove_file", "create_dir_all", "read_dir", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "remove_dir_all", "temp_dir", "read_chunk", "read_chunk_bytes", "reader_close", "fd_stat", "reader_seek", "writer_truncate",
     "writer_write", "write_some", "write_bytes", "write_some_bytes", "wasm_poll", "tcp_connect", "tcp_connect_with", "tcp_send", "tcp_send_bytes", "tcp_send_buf", "tcp_recv", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_send", "udp_send_bytes", "udp_bind", "udp_connect", "udp_sendto", "udp_sendto_bytes", "udp_recvfrom", "poll", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into",
   ])) {
     parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv), need(needs, "@heap_alloc_count"), lc));
@@ -17031,7 +17039,7 @@ function stdin_builtins(): string[] {
 function fs_builtins(): string[] {
   return [
     "open_reader", "open_writer", "open_appender", "open_exclusive", "open_reader_with", "open_writer_with",
-    "stdin", "read_line", "stat", "lstat", "read_dir", "read_dir_all", "read_dir_ino", "create_dir", "create_dir_all", "remove_file",
+    "stdin", "read_line", "stat", "lstat", "read_dir", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "create_dir", "create_dir_all", "remove_file",
     "remove_dir", "remove_dir_all", "rename", "read_link", "create_symlink", "create_link", "truncate",
     "set_file_times", "temp_dir",
   ];

@@ -10252,7 +10252,7 @@ pub function builtin_function_names(): string[] {
     // a directory held open, whose methods name entries relative to it
     "open_dir",
     // filesystem
-    "read_file", "read_file_bytes", "write_file", "write_file_bytes", "write_file_exec", "read_dir", "read_dir_all", "read_dir_ino", "remove_dir_all", "remove_file",
+    "read_file", "read_file_bytes", "write_file", "write_file_bytes", "write_file_exec", "read_dir", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "remove_dir_all", "remove_file",
     "create_dir_all", "stat", "lstat", "access", "temp_dir",
     // the FILESYSTEM a path resolves on, where stat describes one entry
     "statfs", "mounts",

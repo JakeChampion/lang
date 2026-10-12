@@ -1614,6 +1614,7 @@ func New() *Interp {
 	i.Builtins["read_dir"] = &Builtin{Fn: builtinReadDir}
 	i.Builtins["read_dir_all"] = &Builtin{Fn: builtinReadDirAll}
 	i.Builtins["read_dir_ino"] = &Builtin{Fn: builtinReadDirIno}
+	i.Builtins["read_dir_ino_all"] = &Builtin{Fn: builtinReadDirInoAll}
 	i.Builtins["stat"] = &Builtin{Fn: builtinStat}
 	i.Builtins["lstat"] = &Builtin{Fn: builtinLstat}
 	i.Builtins["access"] = &Builtin{Fn: builtinAccess}
@@ -3627,7 +3628,17 @@ func builtinReadDirAll(_ *Interp, args []Value) (Value, error) {
 // from the same directory record, as a DirEntry. Either is 0 where the
 // platform's reader supplies none.
 func builtinReadDirIno(_ *Interp, args []Value) (Value, error) {
-	entries, res, err := readDirEntries("read_dir_ino", true, args)
+	return readDirInoLike("read_dir_ino", true, args)
+}
+
+// builtinReadDirInoAll is read_dir_ino with `.` and `..` kept.
+func builtinReadDirInoAll(_ *Interp, args []Value) (Value, error) {
+	return readDirInoLike("read_dir_ino_all", false, args)
+}
+
+// readDirInoLike is the body read_dir_ino and read_dir_ino_all share.
+func readDirInoLike(name string, skipDots bool, args []Value) (Value, error) {
+	entries, res, err := readDirEntries(name, skipDots, args)
 	if entries == nil {
 		return res, err
 	}

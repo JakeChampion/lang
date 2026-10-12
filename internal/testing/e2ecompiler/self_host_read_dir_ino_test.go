@@ -18,7 +18,10 @@ import (
 // readDirInoSource builds a directory of two files, a subdirectory and a
 // symlink, lists it with read_dir_ino, and prints one line per entry: the
 // name, the inode number read_dir_ino reported, whether lstat of the same path
-// reports that number too, and the entry's kind. read_dir_ino must hand back read_dir's names in read_dir's
+// reports that number too, and the entry's kind. read_dir_ino_all must hand
+// back read_dir_all's names in read_dir_all's order, "." and ".." typed as
+// directories where a kind is supplied, and a line says how many more names
+// it holds than read_dir_ino. read_dir_ino must hand back read_dir's names in read_dir's
 // order, so any difference is an exit code rather than a line. The last line
 // is the missing directory's error.
 const readDirInoSource = `import "std/i64";
@@ -50,6 +53,21 @@ function main(): i32 {
             }
         },
     }
+    let all: string[] = [];
+    match (read_dir_all("d")) { Ok(ns) => { all = ns; }, Err(_) => { return 12; } }
+    match (read_dir_ino_all("d")) {
+        Err(_) => { return 13; },
+        Ok(es) => {
+            if (es.len() != all.len()) { return 14; }
+            let i: i32 = 0;
+            while (i < es.len()) {
+                if (es[i].name != all[i]) { return 15; }
+                if ((es[i].name == "." || es[i].name == "..") && es[i].kind != (16384 as u32) && es[i].kind != (0 as u32)) { return 16; }
+                i = i + 1;
+            }
+        },
+    }
+    print("dots " + ((all.len() - names.len()) as i64).to_string());
     match (read_dir_ino("missing")) {
         Ok(_) => { return 9; },
         Err(e) => {
@@ -65,13 +83,18 @@ function main(): i32 {
 
 // readDirInoWant is what a leg prints once the inode numbers are masked. The
 // kinds are stat's file-type bits for a regular file, a symlink and a
-// directory, or all 0 where the platform supplies none.
+// directory, or all 0 where the platform supplies none — preview 2, whose
+// directory listing also reports no "." or "..".
 func readDirInoWant(kinds bool) string {
 	file, link, dir := "kind=32768", "kind=40960", "kind=16384"
 	if !kinds {
 		file, link, dir = "kind=0", "kind=0", "kind=0"
 	}
-	return "a.txt N agrees " + file + "\nb.txt N agrees " + file + "\nlnk N agrees " + link + "\nmissing NotFound\nsub N agrees " + dir + "\n"
+	dots := "dots 2"
+	if !kinds {
+		dots = "dots 0"
+	}
+	return "a.txt N agrees " + file + "\nb.txt N agrees " + file + "\n" + dots + "\nlnk N agrees " + link + "\nmissing NotFound\nsub N agrees " + dir + "\n"
 }
 
 // readDirInoSource's inode contract per leg. A kernel's d_ino is the inode

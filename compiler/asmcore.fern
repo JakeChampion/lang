@@ -4964,6 +4964,12 @@ pub function rt_src_read_dir_ino(t: string): string {
   return rt_src_read_dir_like(t, "__fern_read_dir_ino", true, true);
 }
 
+// rt_src_read_dir_ino_all backs `read_dir_ino_all(path)`: read_dir_ino's drain
+// with the "." / ".." records kept.
+pub function rt_src_read_dir_ino_all(t: string): string {
+  return rt_src_read_dir_like(t, "__fern_read_dir_ino_all", false, true);
+}
+
 // rt_src_read_dir_like is the source all three share. `skip_dots` wraps the
 // per-entry append in the "." / ".." test; `ino` makes each entry a DirEntry.
 function rt_src_read_dir_like(t: string, fname: string, skip_dots: boolean, ino: boolean): string {
@@ -6155,7 +6161,7 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
           if (id.name == "read_dir" || id.name == "read_dir_all") {
             return ty_array_string();
           }
-          if (id.name == "read_dir_ino") {
+          if (id.name == "read_dir_ino" || id.name == "read_dir_ino_all") {
             return ty_array();
           }
           // Arbitrary free / module function returning
@@ -8000,7 +8006,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "read_dir" || id.name == "read_dir_all") {
     return ty_result(ty_array_string());
   }
-  if (id.name == "read_dir_ino") {
+  if (id.name == "read_dir_ino" || id.name == "read_dir_ino_all") {
     return ty_result(ty_array());
   }
   if (id.name == "environ") {
@@ -8779,7 +8785,7 @@ pub function runtime_need_deps(name: string): string[] {
     let d8: string[] = ["heap", "arr_push", "arr_push_owned", "str_concat"];
     return d8;
   }
-  if (name == "read_dir" || name == "read_dir_all" || name == "read_dir_ino") {
+  if (name == "read_dir" || name == "read_dir_all" || name == "read_dir_ino" || name == "read_dir_ino_all") {
     // __fern_read_dir (#2649) builds the result string[] with .append() — same
     // arr_push / arr_push_owned pairing as str_split. (Its call to __fern_io_error
     // is not a need: io_error is emitted inside the fs bundle alongside read_dir.)
@@ -10842,7 +10848,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_write_file_bytes", "__fn___fern_write_file_bytes_u8",
     "__fn___fern_reader_read_chunk_bytes", "__fn___fern_reader_read_chunk_bytes_u8", "__fn___fern_writer_write_bytes", "__fn___fern_writer_write_bytes_u8", "__fn___fern_writer_write_some_bytes", "__fn___fern_writer_write_some_bytes_u8",
     "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir",
-    "__fern_read_dir_all", "__fn___fern_read_dir_all", "__fn___fern_read_dir_ino", "__fn___fern_remove_file",
+    "__fern_read_dir_all", "__fn___fern_read_dir_all", "__fn___fern_read_dir_ino", "__fn___fern_read_dir_ino_all", "__fn___fern_remove_file",
     "__fn___fern_create_dir_all",
     "__fn___fern_create_dir", "__fn___fern_remove_dir",
     "__fn___fern_create_link", "__fn___fern_create_symlink",

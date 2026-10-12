@@ -3063,6 +3063,16 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// read_dir_ino_all(path) is read_dir_ino with `.` and `..` kept, in
+	// the order the directory reader reports them, as read_dir_all is
+	// read_dir's.
+	c.info.FuncSigs["read_dir_ino_all"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.ArrayType{Elem: ast.StructType{Name: "DirEntry"}},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// stat(path): Result[FileStat, IoError] — pull file
 	// metadata. `is_file` / `is_dir` distinguish the kind;
 	// `size` carries byte size for regular files (and the
