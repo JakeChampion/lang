@@ -13,7 +13,7 @@ import (
 // returning, and array-collecting combinators all in one gate. Every combinator
 // below must route "ir" and match the interpreter. The sharpest shape is a
 // fn-value ARGUMENT to a call in MATCH-SCRUTINEE position
-// (`match (iter.find(iter.of(xs), gt1)) { … }`): a NAMED-function predicate
+// (`match (iter.of(xs).find(gt1)) { … }`): a NAMED-function predicate
 // must reach the callee as a closure box; passed as a raw fn-pointer it
 // segfaults.
 var iterCombinatorIRCases = []struct {
@@ -24,21 +24,21 @@ var iterCombinatorIRCases = []struct {
 	// lift's match-scrutinee walk covers; without it this segfaults.
 	{"find-named", `import "core/iter";
 function gt1(x: i32): boolean { return x > 1; }
-function main(): i32 { let xs: i32[] = [1, 2, 3]; match (iter.find(iter.of(xs), gt1)) { Some(v) => { return v; }, None => { return 0; } } }`},
+function main(): i32 { let xs: i32[] = [1, 2, 3]; match (iter.of(xs).find(gt1)) { Some(v) => { return v; }, None => { return 0; } } }`},
 	// find with a named predicate, no match (returns None → 7).
 	{"find-named-none", `import "core/iter";
 function big(x: i32): boolean { return x > 100; }
-function main(): i32 { let xs: i32[] = [1, 2, 3]; match (iter.find(iter.of(xs), big)) { Some(v) => { return v; }, None => { return 7; } } }`},
+function main(): i32 { let xs: i32[] = [1, 2, 3]; match (iter.of(xs).find(big)) { Some(v) => { return v; }, None => { return 7; } } }`},
 	// find with a lambda predicate (closure box — worked before; guards the path).
 	{"find-lambda", `import "core/iter";
-function main(): i32 { match (iter.find(iter.of([1, 2, 3]), (x: i32): boolean => { return x >= 2; })) { Some(v) => { return v; }, None => { return 0; } } }`},
+function main(): i32 { match (iter.of([1, 2, 3]).find((x: i32): boolean => { return x >= 2; })) { Some(v) => { return v; }, None => { return 0; } } }`},
 	// any / all over named predicates.
 	{"any", `import "core/iter";
 function gt2(x: i32): boolean { return x > 2; }
-function main(): i32 { let xs: i32[] = [1, 2, 3]; if (iter.any(iter.of(xs), gt2)) { return 1; } return 0; }`},
+function main(): i32 { let xs: i32[] = [1, 2, 3]; if (iter.of(xs).any(gt2)) { return 1; } return 0; }`},
 	{"all", `import "core/iter";
 function gt0(x: i32): boolean { return x > 0; }
-function main(): i32 { let xs: i32[] = [1, 2, 3]; if (iter.all(iter.of(xs), gt0)) { return 1; } return 0; }`},
+function main(): i32 { let xs: i32[] = [1, 2, 3]; if (iter.of(xs).all(gt0)) { return 1; } return 0; }`},
 	// position_by / count_by (named predicate, i32 result).
 	{"position_by", `import "core/iter";
 function gt1(x: i32): boolean { return x > 1; }
@@ -52,12 +52,12 @@ function dup(x: i32): i32[] { return [x, x]; }
 function main(): i32 { let xs: i32[] = [1, 2]; let ys: i32[] = iter.flat_map(iter.of(xs), dup); return ys.len(); }`},
 	// enumerate / zip → tuple-array collectors.
 	{"enumerate", `import "core/iter";
-function main(): i32 { let xs: i32[] = [5, 6, 7]; let ys: (i32, i32)[] = iter.enumerate(iter.of(xs)); return ys.len(); }`},
+function main(): i32 { let xs: i32[] = [5, 6, 7]; let ys: (i32, i32)[] = iter.of(xs).enumerate().collect(); return ys.len(); }`},
 	{"zip", `import "core/iter";
-function main(): i32 { let a: i32[] = [1, 2]; let b: i32[] = [3, 4]; let ys: (i32, i32)[] = iter.zip(iter.of(a), iter.of(b)); return ys.len(); }`},
+function main(): i32 { let a: i32[] = [1, 2]; let b: i32[] = [3, 4]; let ys: (i32, i32)[] = iter.of(a).zip(iter.of(b)).collect(); return ys.len(); }`},
 	// take / skip → array collectors.
 	{"take", `import "core/iter";
-function main(): i32 { let xs: i32[] = [1, 2, 3, 4]; let ys: i32[] = iter.take(iter.of(xs), 2); return ys.len(); }`},
+function main(): i32 { let xs: i32[] = [1, 2, 3, 4]; let ys: i32[] = iter.of(xs).take(2).collect(); return ys.len(); }`},
 	{"skip", `import "core/iter";
 function main(): i32 { let xs: i32[] = [1, 2, 3, 4]; let ys: i32[] = iter.skip(iter.of(xs), 2); return ys.len(); }`},
 	// nth / last → Option in match scrutinee (no fn-value, but match-scrutinee).

@@ -20,9 +20,25 @@ import (
 // not catch this.
 const genericFnArgWidthProgram = `import "core/iter" as iter;
 
+function filter[T, I: iter.Iterator[T]](it: I, keep: (T) => boolean): T[] {
+    let out: T[] = [];
+    let cur = it;
+    let go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => {
+                if (keep(t.0)) { out = out.append(t.0); }
+                cur = t.1;
+            },
+            None => { go = false; }
+        }
+    }
+    return out;
+}
+
 function main(): i32 {
     let xs: f64[] = [5.5, 2.25, 8.5, 1.75, 4.5];
-    let big = iter.filter(iter.of(xs), (x: f64): boolean => { return x > 3.0; });
+    let big = filter(iter.of(xs), (x: f64): boolean => { return x > 3.0; });
     if (big.len() != 3) { return 99; }
     return (big[0] as i32) + (big[1] as i32) + (big[2] as i32);
 }

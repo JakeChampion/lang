@@ -33,17 +33,16 @@ function main(): i32 { let xs: i32[] = []; return iter.sum(iter.of(xs)); }`},
 	// product: 1*2*3*4 = 24.
 	{"product", `import "core/iter";
 function main(): i32 { let xs: i32[] = [1, 2, 3, 4]; return iter.product(iter.of(xs)); }`},
-	// count[T, I: Iterator[T]]: the unbounded T stays erased (only in the
-	// trait bound), I monomorphises to ArrayIter[i32]; yields 5.
+	// The Iterator trait's count method over ArrayIter[i32]; yields 5.
 	{"count", `import "core/iter";
-function main(): i32 { let xs: i32[] = [1, 2, 3, 4, 5]; return iter.count(iter.of(xs)); }`},
-	// to_array[T, I: Iterator[T]]: T erased, returns T[]; len of the collected
-	// array is 3.
-	{"to_array-len", `import "core/iter";
-function main(): i32 { let xs: i32[] = [9, 8, 7]; let ys: i32[] = iter.to_array(iter.of(xs)); return ys.len(); }`},
-	// to_array element fidelity: ys[1] == 8.
-	{"to_array-elem", `import "core/iter";
-function main(): i32 { let xs: i32[] = [9, 8, 7]; let ys: i32[] = iter.to_array(iter.of(xs)); return ys[1]; }`},
+function main(): i32 { let xs: i32[] = [1, 2, 3, 4, 5]; return iter.of(xs).count(); }`},
+	// skip[T, I: Iterator[T]]: T erased, returns T[]; skipping none collects
+	// the whole array, len 3.
+	{"skip-len", `import "core/iter";
+function main(): i32 { let xs: i32[] = [9, 8, 7]; let ys: i32[] = iter.skip(iter.of(xs), 0); return ys.len(); }`},
+	// skip element fidelity: ys[1] == 8.
+	{"skip-elem", `import "core/iter";
+function main(): i32 { let xs: i32[] = [9, 8, 7]; let ys: i32[] = iter.skip(iter.of(xs), 0); return ys[1]; }`},
 	// sum over a Range iterator (the non-generic Iterator impl) still routes IR:
 	// 1+2+3+4 = 10.
 	{"range-sum", `import "core/iter";
