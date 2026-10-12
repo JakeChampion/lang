@@ -7,7 +7,9 @@
 // its seeded PRNG, `plat.http(req)` the public-only route over the scripted
 // network, with the network's pool keeping a connection for the next
 // request as the host platform's does. `env`, `config`, `secret`, `stat`
-// and `peer` answer what the test set, and every call is recorded, as a mock
+// and `peer` answer what the test set, `deadline` the bound `with_deadline`
+// gave on the sim's clock, which `cancelled` then reports passed once the
+// clock reaches it; and every call is recorded, as a mock
 // platform's is: the table and the log are a `mock_platform.MockPlatform`
 // the sim platform carries, so `calls()` reads back what the handler did.
 //
@@ -25,15 +27,16 @@ import "std/time";
 import "std/mock_platform";
 import "std/net";
 import "std/http/cookie";
+import "std/async";
 
 // `SimPlatform` — the simulated platform: the driver whose clock and PRNG
 // it reads, the network its `http` sends over, and the mock whose canned
 // table and call log it keeps its configuration and record in.
-pub struct SimPlatform { drv: sim.Sim, net: sim_fetch.Net, mock: mock_platform.MockPlatform, jar: Option[cookie.Jar], allow: Option[fetch.Allow] }
+pub struct SimPlatform { drv: sim.Sim, net: sim_fetch.Net, mock: mock_platform.MockPlatform, jar: Option[cookie.Jar], allow: Option[fetch.Allow], deadline: Option[i64] }
 
 // `new(drv, net)` — a sim platform over `drv` and `net`, with nothing set.
 pub function new(drv: sim.Sim, net: sim_fetch.Net): SimPlatform {
-  return SimPlatform { drv: drv, net: net, mock: mock_platform.mock_platform_new(), jar: None, allow: None };
+  return SimPlatform { drv: drv, net: net, mock: mock_platform.mock_platform_new(), jar: None, allow: None, deadline: None };
 }
 
 // `(p).with_jar(jar)` — the platform with `jar` (std/http/cookie), as
@@ -46,6 +49,12 @@ pub function (p: SimPlatform) with_jar(jar: cookie.Jar): SimPlatform {
 // names, as `platform.Host.with_allow`.
 pub function (p: SimPlatform) with_allow(a: fetch.Allow): SimPlatform {
   return SimPlatform { ...p, allow: Some(a) };
+}
+
+// `(p).with_deadline(at)` — the platform whose request is due by `at`, a
+// reading of the sim's clock in nanoseconds, as `platform.Host.with_deadline`.
+pub function (p: SimPlatform) with_deadline(at: i64): SimPlatform {
+  return SimPlatform { ...p, deadline: Some(at) };
 }
 
 impl platform.Platform for SimPlatform {
@@ -101,6 +110,16 @@ impl platform.Platform for SimPlatform {
 
   function peer(self: SimPlatform): Option[net.SocketAddr] {
     return self.mock.peer();
+  }
+
+  function deadline(self: SimPlatform): Option[i64] {
+    self.mock.record("deadline", "");
+    return self.deadline;
+  }
+
+  function cancelled(self: SimPlatform): boolean {
+    self.mock.record("cancelled", "");
+    return async.task_cancelled() || platform.passed(self.deadline, self.drv.now_ns());
   }
 }
 

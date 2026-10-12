@@ -187,6 +187,34 @@ function test_a_secret_is_logged_by_name_only(): test.TestOutcome {
   return test.pass();
 }
 
+function __bound(plat: platform.Platform): string {
+  let cancelled: string = "live";
+  if (plat.cancelled()) {
+    cancelled = "cancelled";
+  }
+  match (plat.deadline()) {
+    Some(at) => {
+      return cancelled + " due " + at.to_string();
+    },
+    None => {
+      return cancelled + " unbounded";
+    }
+  }
+  return "";
+}
+
+function test_the_deadline_and_cancellation_answer_what_was_canned(): test.TestOutcome {
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  let before: string = __bound(m);
+  m.deadline_set(5000 as i64);
+  m.cancel();
+  let after: string = __bound(m);
+  if (m.call_count() != 4) {
+    return test.fail("calls: " + m.call_count().to_string());
+  }
+  return test.assert_eq(before + "|" + after, "live unbounded|cancelled due 5000");
+}
+
 function main(): i32 {
   let t: test.TestRunner = test.test_new("mock_platform.MockPlatform canned answers");
   t = t.it("without canned answers the fixed values apply", test_defaults_without_canned_answers);
@@ -198,5 +226,6 @@ function main(): i32 {
   t = t.it("an empty value round-trips", test_an_empty_value_round_trips);
   t = t.it("config and secret answer what was canned", test_config_and_secret_answer_what_was_canned);
   t = t.it("a secret is logged by name only", test_a_secret_is_logged_by_name_only);
+  t = t.it("the deadline and cancellation answer what was canned", test_the_deadline_and_cancellation_answer_what_was_canned);
   return t.finish();
 }

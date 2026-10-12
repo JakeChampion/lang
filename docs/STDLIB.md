@@ -2990,7 +2990,13 @@ points that run a handler under it.
   gives each worker's platform a cookie jar (std/http/cookie), so its
   `plat.http` sends and stores cookies as a browser would, and
   `http_allow` (None) the hosts that `plat.http` may reach
-  (`fetch.allow`), refusing the rest as `Blocked`.
+  (`fetch.allow`), refusing the rest as `Blocked`. `handler_deadline` (0,
+  no bound) is how long a handler has to answer from its start, which it
+  reads as `plat.deadline()`: a handler parked on a wait when it passes is
+  cancelled, its waits answering `async.cancelled()` from then on, and a
+  handler that has not answered by then is answered 503 in its place,
+  as Go's `http.TimeoutHandler` answers. A handler that never waits cannot
+  be cut off, so work between waits asks `plat.cancelled()`.
   A listener it cannot bind is `serve: cannot listen on ADDR:PORT:` —
   `[::]` where the host has IPv6, `0.0.0.0` where it has not and on
   wasm — and the error's text on stderr, and the entry returns 98 (every
@@ -3523,7 +3529,8 @@ old `concurrent { … }` / `await` keyword surface.
   self-host compiler lowers every function that reaches it to a resumable
   form, and the native compiler keeps the blocking fallback, where
   `task_start` runs its entry to completion. `cancelled()` is what a
-  cancelled task's waits answer from then on.
+  cancelled task's waits answer from then on, and `task_cancelled()`
+  whether the task running the caller was cancelled (false outside one).
 - `gather_tasks(entries, on_incomplete)`, `race_tasks(entries, none_val)`
   and `with_deadline_tasks(deadline, entries)` — the task combinators: each
   runs its `() => T` entries as tasks of the calling task and parks on the
@@ -3615,7 +3622,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   handler directly or a caller of `serve.run` handing its own handler
   what the accept loop would; `host_on(reactor)` is the one std/serve
   builds per worker loop; `(h).with_jar(jar)` gives it a cookie jar
-  (std/http/cookie) its `http` carries and stores cookies through.
+  (std/http/cookie) its `http` carries and stores cookies through, and
+  `(h).with_deadline(at)` the request's deadline, a `monotonic_ns()`
+  reading.
 - `(plat).log(msg)` — one line to the platform's log sink (`log`).
 - `(plat).now_ms()` — wall-clock ms since the epoch (`now`).
 - `(plat).elapsed_ns()` — monotonic ns, for measuring (`now`).
@@ -3650,6 +3659,15 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   hands each connection's handlers; None where the host does not say (the
   wasi-http proxy world). Behind a proxy this is the proxy;
   std/http/forwarded finds the client past the proxies a deployment trusts.
+- `(plat).deadline()` — the `elapsed_ns()` reading the request must be
+  answered by, an `Option[i64]`: std/serve sets it from
+  `Config.handler_deadline` and answers 503 in place of a later response.
+  None for no bound.
+- `(plat).cancelled()` — whether nothing the handler does any more reaches
+  the client: the client reset the connection while the handler waited,
+  or the deadline passed. Its waits answer at once from then on
+  (`plat.http` with `Cancelled`), so work between waits asks here to stop
+  early. `platform.passed(deadline, now)` is the deadline half of it.
 
 ### `std/sim_fetch`
 
@@ -3712,7 +3730,9 @@ set (`env_set`, `config_set`, `secret_set`, `file_set`, `dir_set`, `peer_set`;
 `materialize(resp)` reads a file body back from them). Every call is recorded as a
 mock's: `calls()` and `reset()` read and clear the log, a secret logged by
 its name alone. `(p).with_jar(jar)` gives it a cookie jar as
-`platform.Host.with_jar` does.
+`platform.Host.with_jar` does, `(p).with_allow(a)` an allow-list, and
+`(p).with_deadline(at)` a deadline on the sim's clock, which `cancelled`
+reports passed once the clock reaches it.
 
 ```fern
 let d: sim.Sim = sim.new(1);
@@ -3739,7 +3759,8 @@ assert_eq(m.calls()[0].name, "log");
 Mocked capabilities answer what the test canned, else a fixed value — 0
 for `now_ms` / `elapsed_ns` / `random_i32`, `None` for `env` / `config` /
 `secret`, `Err(Connect(ConnectionRefused))` for `http`, `NotFound` for
-`stat`, None for `peer`, and `log` swallows the line.
+`stat`, None for `peer` and `deadline`, false for `cancelled`, and `log`
+swallows the line.
 
 - `mock_platform_new()`.
 - `(m).env_set(name, value)`, `(m).config_set(name, value)`,
@@ -3754,6 +3775,8 @@ for `now_ms` / `elapsed_ns` / `random_i32`, `None` for `env` / `config` /
   (`tests/stdlib/mock_platform_canned_test.fern`).
 - `(m).peer_set(addr)` — what `peer` answers, the `SocketAddr` `addr`
   spells (`192.0.2.7:51234`, `[2001:db8::1]:443`).
+- `(m).deadline_set(at)`, `(m).cancel()` — `deadline` answers `Some(at)`,
+  `cancelled` true.
 - `(m).file_set(path, content, mtime)`, `(m).dir_set(path)` — what
   `stat` answers for `path`; `(m).materialize(resp)` is `resp` with a
   `BodyFile` or `BodyFileRanges` naming a canned file read into its bytes,
