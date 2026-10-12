@@ -1371,7 +1371,7 @@ function main(): i32 {
 		// self-host), full of bare-identifier reads — locals, params, loop
 		// variables, match payloads, lambda params, the module's own
 		// functions / consts, enum/union variants, and the builtin Option /
-		// Result / JsonValue / IoError variants. Running the self-host
+		// Result / IoError variants. Running the self-host
 		// `-check` over each (which flattens its `./` imports and checks the
 		// whole bundle) must NOT report E001 (undefined name); any E001 here
 		// is a false positive. This is the bundle-wide FP guard the

@@ -11,8 +11,8 @@ import (
 // `enum Shape { Circle(i32) }` to a variant STRUCT, never a FuncDecl — so
 // before #6808 `Circle(7)` reached the end of call_func's walk and came back as
 // `undefined function: Circle`. Only the four Option / Result names were
-// special-cased, which left every user enum and both checker-injected ones
-// (JsonValue, IoError) uninterpretable.
+// special-cased, which left every user enum and the checker-injected ones
+// (IoError, Body) uninterpretable.
 //
 // Each case is oracle-checked against the native interpreter rather than
 // against a hardcoded exit code, so what they pin is the language's behaviour.
@@ -34,11 +34,10 @@ var interpEnumCtorCases = []struct {
 	// Option / Result, the four names that were special-cased before and are
 	// now ordinary entries in the same variant table.
 	{"option-result", "function find(n: i32): Option[i32] {\n  if (n > 0) { return Some(n * 2); }\n  return None;\n}\nfunction half(n: i32): Result[i32, string] {\n  if (n % 2 == 0) { return Ok(n / 2); }\n  return Err(\"odd\");\n}\nfunction main(): i32 {\n  let a: i32 = 0;\n  match (find(3)) { Some(v) => { a = v; }, None => { a = 100; } }\n  match (find(0 - 1)) { Some(_) => { a = a + 100; }, None => { a = a + 1; } }\n  match (half(4)) { Ok(v) => { a = a + v; }, Err(_) => { a = a + 100; } }\n  match (half(5)) { Ok(_) => { a = a + 100; }, Err(e) => { if (e == \"odd\") { a = a + 1; } } }\n  if (a == 10) { return 7; }\n  return a;\n}\n"},
-	// JsonValue and IoError are declared in no module the interpreter parses —
-	// the front end injects them — so the interpreter needs its own copy of
-	// their variant decls, the way internal/oracle/interp gets them from the checker's
-	// builtin table. `Other` is the one builtin variant carrying THREE payloads.
-	{"builtin-jsonvalue", "function main(): i32 {\n  let v: JsonValue = JNumber(\"42\");\n  match (v) {\n    JNumber(s) => { if (s == \"42\") { return 7; } return 1; },\n    JNull => { return 2; },\n    _ => { return 3; }\n  }\n}\n"},
+	// IoError is declared in no module the interpreter parses — the front end
+	// injects it — so the interpreter needs its own copy of its variant decls,
+	// the way internal/oracle/interp gets them from the checker's builtin
+	// table. `Other` is the one builtin variant carrying THREE payloads.
 	{"builtin-ioerror", "function main(): i32 {\n  let e: IoError = Other(\"p\", \"m\", 9);\n  match (e) {\n    NotFound(_) => { return 1; },\n    Other(p, m, n) => { if (p == \"p\" && m == \"m\" && n == 9) { return 7; } return 2; },\n    _ => { return 3; }\n  }\n}\n"},
 	// A constructed value has to survive being passed, returned, and stored in
 	// a collection, not just matched where it was built.
@@ -47,11 +46,12 @@ var interpEnumCtorCases = []struct {
 	// the union-alias dispatch path, which only sees variants that were built
 	// in the first place.
 	{"enum-method-dispatch", "enum Shape { Circle(i32), Square(i32) }\nfunction (s: Shape) size(): i32 {\n  match (s) { Circle(r) => { return r; }, Square(w) => { return w * 2; } }\n}\nfunction main(): i32 {\n  let a: Shape = Circle(3);\n  let b: Shape = Square(2);\n  return a.size() + b.size();\n}\n"},
-	// A method declared on a BUILTIN enum. Body / JsonValue / IoError reach the
+	// A method declared on a BUILTIN enum. Body / IoError reach the
 	// interpreter as injected variant structs and never as EnumDecls, so the
 	// owner has to be read off the variant table for `b.kind()` to dispatch.
 	{"builtin-enum-method-dispatch", "function (b: Body) kind(): i32 {\n  match (b) { BodyText(_) => { return 1; }, BodyBytes(bs) => { return bs.len() + 5; }, _ => { return 2; } }\n}\nfunction main(): i32 {\n  let bs: u8[] = [1 as u8, 2 as u8];\n  let b: Body = BodyBytes(bs);\n  return b.kind();\n}\n"},
-	{"builtin-jsonvalue-method-dispatch", "function (v: JsonValue) tag(): i32 {\n  match (v) { JNull => { return 1; }, JNumber(s) => { if (s == \"42\") { return 7; } return 2; }, _ => { return 3; } }\n}\nfunction main(): i32 {\n  let v: JsonValue = JNumber(\"42\");\n  return v.tag();\n}\n"},
+	// An imported module's enum, constructed and matched by its bare variants.
+	{"imported-enum", "import \"std/json\";\nfunction main(): i32 {\n  let v: json.JsonValue = JNumber(\"42\");\n  match (v) {\n    JNumber(s) => { if (s == \"42\") { return 7; } return 1; },\n    JNull => { return 2; },\n    _ => { return 3; }\n  }\n}\n"},
 	// A variant carrying another enum, so the payload is itself a variant.
 	{"nested-variant-payload", "enum Inner { One, Two }\nenum Outer { Wrap(Inner) }\nfunction main(): i32 {\n  let o: Outer = Wrap(Two);\n  match (o) {\n    Wrap(i) => { match (i) { One => { return 1; }, Two => { return 7; } } }\n  }\n}\n"},
 

@@ -168,7 +168,7 @@ a new response — chain as many as you like.
 
 Real handlers parse query parameters and emit structured output.
 `std/url` gives you `url_parse` and `query_parse`; `std/json` builds and
-encodes a `JsonValue`. Query parsing is multi-valued — `?tag=a&tag=b`
+encodes a `json.JsonValue`. Query parsing is multi-valued — `?tag=a&tag=b`
 collects both into a `string[]`.
 
 ```fern
@@ -186,7 +186,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
         None => { return http.bad_request("bad URL\n"); },
         Some(u) => {
             let q: Map[string, string[]] = url.query_parse(u.query);
-            let out: Map[string, JsonValue] = map_new(2);
+            let out: json.JsonObject = json.object();
             out = out.insert("path", JString(u.path));
             match (q.get("q")) {
                 Some(vs) => {

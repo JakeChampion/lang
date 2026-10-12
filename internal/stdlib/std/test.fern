@@ -2413,13 +2413,13 @@ pub function assert_close_to_now_ms(actual_ms: i64, max_skew_ms: i64): TestOutco
 // trees in order-independent fashion.
 
 // __json_value_eq compares two JsonValue trees recursively.
-// JObject is order-independent (Map iteration order isn't
-// observable); arrays, strings, numbers, booleans, null all
+// JObject is order-independent (member order is not
+// significant in JSON); arrays, strings, numbers, booleans, null all
 // compare structurally. JNumber compares the textual payload
 // — the JSON spec doesn't fix precision, so two emitters
 // producing "1.0" vs "1" would diverge here; callers that
 // want numeric tolerance should parse + cast themselves.
-function __json_value_eq(a: JsonValue, b: JsonValue): boolean {
+function __json_value_eq(a: json.JsonValue, b: json.JsonValue): boolean {
   match (a) {
     JNull => {
       match (b) {
@@ -2487,7 +2487,7 @@ function __json_value_eq(a: JsonValue, b: JsonValue): boolean {
           if (am.len() != bm.len()) {
             return false;
           }
-          let keys: string[] = am.keys();
+          let keys: string[] = am.keys;
           let i: i32 = 0;
           while (i < keys.len()) {
             let k: string = keys[i];
@@ -3608,8 +3608,8 @@ pub function assert_ends_with_any(s: string, suffixes: string[]): TestOutcome {
 // decls under the `json__` prefix; bare-name lookup would
 // miss them).
 pub function assert_json_eq(actual: string, expected: string): TestOutcome {
-  let av: Option[JsonValue] = json.json_parse(actual);
-  let ev: Option[JsonValue] = json.json_parse(expected);
+  let av: Option[json.JsonValue] = json.json_parse(actual);
+  let ev: Option[json.JsonValue] = json.json_parse(expected);
   match (av) {
     None => {
       return Fail("assert_json_eq: actual is not valid JSON: " + actual);

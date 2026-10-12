@@ -183,7 +183,7 @@ deterministic sweep misses (which it has, twice in this thread).
 ## 7. 🛠 `IsReservedName(s string) bool` helper
 
 The checker's `TestReservedBuiltinNamesCannotBeShadowed`
-enumerates Option, Result, IoError, JsonValue, Reader, Writer,
+enumerates Option, Result, IoError, Reader, Writer,
 HttpRequest, HttpResponse. The list is duplicated in the checker
 init code and in the test. Langsmith has to know these too (to
 avoid generating clashing names).

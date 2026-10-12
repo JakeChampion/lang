@@ -2914,7 +2914,7 @@ function main(): i32 {
         },
         None => { bad = bad + 100; }
     }
-    let arr: JsonValue[] = [JNumber("1"), JBool(true)];
+    let arr: json.JsonValue[] = [JNumber("1"), JBool(true)];
     if (json.json_encode(JArray(arr)) != "[1,true]") { bad = bad + 1000; }
     return bad + __rc_underflow_count();
 }`,

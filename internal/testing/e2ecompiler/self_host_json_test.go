@@ -19,8 +19,8 @@ var jsonCases = []struct {
 	main string
 	exit int
 }{
-	{"encode-number", `let v: JsonValue = JNumber("42"); return json.json_encode(v).len();`, 2},
-	{"encode-string", `let v: JsonValue = JString("hi"); return json.json_encode(v).len();`, 4},
+	{"encode-number", `let v: json.JsonValue = JNumber("42"); return json.json_encode(v).len();`, 2},
+	{"encode-string", `let v: json.JsonValue = JString("hi"); return json.json_encode(v).len();`, 4},
 	{"parse-object-ok", `match (json.json_parse("{\"a\":1}")) { Some(v) => { return 7; }, None => { return 0; } }`, 7},
 	{"parse-bad", `match (json.json_parse("{bad")) { Some(v) => { return 1; }, None => { return 9; } }`, 9},
 	{"get-i32", `match (json.json_parse("{\"n\":42}")) { Some(v) => { match (json.json_get_i32(v, "n")) { Some(x) => { return x; }, None => { return 0; } } }, None => { return 0; } } return 0;`, 42},
@@ -32,8 +32,8 @@ var jsonCases = []struct {
 
 // jsonProgram wraps a main body into a loader-shaped program: the
 // entry imports std/json and calls it qualified, the way modload
-// routes stdlib access. JsonValue/JNumber stay bare — the builtin
-// enum is auto-injected on every pipeline.
+// routes stdlib access. The enum is `json.JsonValue`; its variants stay
+// bare, since the entry imports std/json.
 func jsonProgram(mainBody string) string {
 	return "import \"std/json\";\nfunction main(): i32 { " + mainBody + " }\n"
 }

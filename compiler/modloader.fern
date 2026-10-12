@@ -752,7 +752,7 @@ pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, r
 
 // merge_builtins reads `<dir>builtins.fern` (the real built-in-type
 // module) and appends its struct + enum decls to `merged`, unmangled, so
-// the program's references to JsonValue / IoError / FileStat / … resolve.
+// the program's references to IoError / FileStat / … resolve.
 // When the file is absent the program is returned unchanged and
 // module_with_builtins' idempotent synthetic injection fills the types in.
 // fern.fern never calls this: the compiler's IoError layout is the injection's.

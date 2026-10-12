@@ -1853,6 +1853,15 @@ Percent-encoding, URL parsing, query parsing.
 
 ### `std/json`
 
+- `JsonValue` (`json.JsonValue` to an importer) — `JNull`, `JBool`,
+  `JNumber` (the number's text), `JString`, `JArray`, `JObject`
+- `JsonObject` — an object's members in document order, one per key:
+  `keys: string[]` and `values: JsonValue[]` side by side. `object()` is
+  the empty one, `object_of(keys, values)` builds one (a repeated key keeps
+  its first position and takes its last value), and `insert(key, value)`
+  returns the object with `key` bound. `get` / `get_or` / `has` /
+  `position` / `len` look a key up: linearly up to 8 members, through a
+  seeded hash index built with the object beyond that
 - `json_encode(v: JsonValue): string` — compact canonical JSON
 - `json_encode_pretty(v: JsonValue, indent: i32): string` — indented,
   human-readable JSON (`indent` spaces per level; empty arrays/objects
@@ -4338,8 +4347,6 @@ The following types are synthesised by the checker (declared in
   `InvalidUtf8`, `Interrupted`, `Unsupported` (the target does not offer
   the operation), `Other(path, message, errno)` (`std/errno` names the
   errno)
-- `JsonValue` — `JNull`, `JBool`, `JNumber`, `JString`,
-  `JArray`, `JObject`
 - `Reader`, `Writer` — stdin / stdout / stderr / file
 - `HttpRequest`, `HttpResponse` — request / response shape
 - `Url` — host / port / path / query / fragment parts
