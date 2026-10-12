@@ -27,9 +27,9 @@ copy of the tree, each on a warm memo of its own.
 | | Ir |
 |---|--:|
 | before (5d4f79c, the branch with #12155's changes) | 72.857 G |
-| both changes | 71.350 G (−2.07%) |
+| both changes, and main's #11910 commits | 71.350 G (−2.07%) |
 
-Most of the drop is not the lookups themselves. By module:
+Most of the drop is not these changes. By module:
 
 | | change |
 |---|--:|
@@ -40,25 +40,22 @@ Most of the drop is not the lookups themselves. By module:
 | `ssa_lift` | −33 M |
 
 The `ssaunits` share is `needed_past_slot` (−407 M), `reaches_root`
-(−605 M) and `reads` (−386 M). This change touches none of them. Built
-before it, the three are out-of-line calls: `needed_past_slot` asks
-`reaches_root` about every value anchored to the root, 17.2 M calls for
-41 K questions, and `reaches_root` asks `reads`. Built after it, `seminline`
-places them differently, and the same 17.2 M checks cost about 1.2 G less.
-The same three functions moved by about +1.08 G in the first A/B of
-2026-10-12-b, the one with the wrong base. So about 0.45 G (0.6%) of this
-row is the constants and the reserved-name check. The rest is `seminline`'s
-placement of a quadratic loop, and an unrelated change could move it back.
+(−605 M) and `reads` (−386 M), and it is not this change. The after build
+included main's #11910 commits, which landed between the two builds. One of
+them, f3df35f, gave the analysis an index of the reads anchored to each value.
+Before it, `needed_past_slot` asked `reaches_root` about every value of the
+function: 17.2 M checks. After it, `needed_past_slot` asks only about the values
+anchored to the root: 881 K. So about 0.45 G (0.6%) of this row is the
+constants and the reserved-name check, and the `ssaunits` drop is #11910's.
 
 ## Then: one pass in `reaches_root`
 
 `reaches_root` scanned each value's chain twice: `reads` to find the root,
 then `first_hop` for the projection before it. One pass now finds both. On
-top of the row above it measured 71.350 G → 71.327 G (−0.03%), because in
-this layout the anchored-loop call is spliced into `needed_past_slot` and
-only 880 K calls stay out of line. In the other layout the second scan was
-`reads`' 329 M. The RC plans for `checker.fern` and `fern.fern` are
-unchanged.
+top of the row above it measured 71.350 G → 71.327 G (−0.03%): with the
+anchored index there are only 881 K checks. Before it, when `reaches_root` ran
+on every value, its second scan was `reads`' 329 M. The RC plans for
+`checker.fern` and `fern.fern` are unchanged.
 
 ## Then: an operator's width types each operand once
 
@@ -82,11 +79,11 @@ with its unknown type and reason string, and that added 118 M to
 `check_module_pass`. The whole compile measured +0.17% (71.117 G →
 71.241 G), so the change was dropped.
 
-## Open
+## Measured and not kept: each anchored read's first hop, computed once
 
-`needed_past_slot` walks every value anchored to the root for each
-question: about 410 per call. `reaches_root` returns false for all but 0.2% of
-them, which is 40 K `used_after` calls against 17.2 M checks. A question
-answered without that walk would make this loop cheap whatever
-`seminline` does with it. It decides what an RC take may move, so the
-rewrite needs its own proof that it gives the same answer.
+The first hop of a read towards its root does not depend on the take, so it
+can be computed with the anchored index rather than per check. With 881 K
+checks over the 22 K questions that reach the loop, `needed_past_slot` fell by
+34 M and `anchored_of` grew by 27 M. That is −0.01% on the whole compile, so the
+change was dropped. Most of `needed_past_slot`'s 322 M inclusive cost is
+outside the anchored loop.
