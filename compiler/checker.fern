@@ -15729,6 +15729,45 @@ function cover_arg_types(t: typeinfo.Type, ctor: string, arity: i32, s: Scope): 
   return out;
 }
 
+// The arms of a flat match whose only guard is the payload test the parser
+// made of a literal payload slot (`Patch(_, true)`: `__pl… == true`), as
+// patterns with those literals back in their slots. Another guard can fall
+// through, so its arm covers nothing.
+function literal_payload_rows(arms: ast.MatchArm[]): CoverPat[][] {
+  let rows: CoverPat[][] = [];
+  for a in arms {
+    if (!a.has_guard || !slot_tests_only(a.guard)) {
+      continue;
+    }
+    if let ast.PatVariant(pv) = a.pattern {
+      rows = rows.append([pattern_cover(ast.PatVariant { ...pv, lit_cond: a.guard, has_lit_cond: true })]);
+    }
+  }
+  return rows;
+}
+
+// Whether `e` is a conjunction of tests of `__pl` slot binders only.
+function slot_tests_only(e: ast.Expr): boolean {
+  if let ast.ExprBinary(b) = e {
+    if (b.op == "&&") {
+      return slot_tests_only(b.left) && slot_tests_only(b.right);
+    }
+    if let ast.ExprIdent(id) = b.left {
+      return util.str_has_prefix(id.name, "__pl");
+    }
+  }
+  return false;
+}
+
+// Whether `rows` leave no value of variant `ctor` of `t` unmatched.
+function rows_cover(rows: CoverPat[][], t: typeinfo.Type, ctor: string, s: Scope): boolean {
+  if (rows.len() == 0) {
+    return false;
+  }
+  let arity: i32 = cover_arity(rows, ctor);
+  return !cover_useful(cover_split(rows, ctor, arity), cover_arg_types(t, ctor, arity, s), s);
+}
+
 // Whether a written pattern's constructor is `ctor`. The arms ride on the
 // chain as written, so a variant of an enum another module declares is named
 // bare there while the type lists it mangled (`rbtree__Node`).
@@ -16062,8 +16101,9 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
                 }
               }
               if (!saw_wild) {
+                let lit_rows: CoverPat[][] = literal_payload_rows(m.arms);
                 for variant in usig.variants {
-                  if (!util.has_str(covered, variant)) {
+                  if (!util.has_str(covered, variant) && !rows_cover(lit_rows, mst, variant, cur)) {
                     out = out.append(dg_at("E030", "match does not cover variant " + variant + " of enum " + mun.name + " — add an arm for it, or a `_` arm", m.line, m.col));
                   }
                 }

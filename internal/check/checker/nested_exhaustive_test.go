@@ -11,6 +11,7 @@ enum Tree { Node(Color, Tree, i32, Tree), Leaf }
 enum Swatch { Patch(Shade, boolean), Blank }
 enum Pair { Two((Color, Color)), Zero }
 struct Lamp { on: boolean, level: i32 }
+struct Pair2 { x: boolean, y: boolean }
 `
 
 // A variant is covered when no value of its payloads escapes every
@@ -67,6 +68,21 @@ func TestNestedPatternExhaustiveness(t *testing.T) {
   match (l) {
     Lamp { on: true, level } => { return level; },
     Lamp { on: false, level } => { return 0; }
+  }
+}`,
+		"struct fields written in different orders": `function f(q: Pair2): i32 {
+  match (q) {
+    Pair2 { x: true, y: true } => { return 1; },
+    Pair2 { x: true, y: false } => { return 2; },
+    Pair2 { y: false, x: false } => { return 3; },
+    Pair2 { y: true, x: false } => { return 4; }
+  }
+}`,
+		"a field one arm leaves out": `function f(q: Pair2): i32 {
+  match (q) {
+    Pair2 { y: true } => { return 1; },
+    Pair2 { x: true, y: false } => { return 2; },
+    Pair2 { y: false, x: false } => { return 3; }
   }
 }`,
 	}

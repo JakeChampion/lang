@@ -15605,8 +15605,13 @@ func (c *checker) payloadsExhaustive(arms []structArmPat) bool {
 	var types []ast.Type
 	var rows [][]coverPat
 	for _, a := range arms {
-		if len(a.types) > len(types) {
-			types = a.types
+		for len(types) < len(a.types) {
+			types = append(types, nil)
+		}
+		for k, t := range a.types {
+			if types[k] == nil {
+				types[k] = t
+			}
 		}
 	}
 	for _, a := range arms {
@@ -15746,6 +15751,31 @@ func (c *checker) coverUseful(rows [][]coverPat, types []ast.Type) bool {
 		}
 	}
 	return false
+}
+
+// structArmPatOf is a struct arm's field patterns in the struct's declared
+// field order, whatever order the arm wrote them in, so a column is one field
+// across every arm. A field the arm does not name matches anything.
+func structArmPatOf(sd *ast.StructDecl, bindings, fieldNames []string, payloads []*ast.TuplePatElem, types []ast.Type, guarded bool) structArmPat {
+	out := structArmPat{payloads: make([]*ast.TuplePatElem, len(sd.Fields)), types: make([]ast.Type, len(sd.Fields)), guarded: guarded}
+	for k, b := range bindings {
+		field := b
+		if k < len(fieldNames) && fieldNames[k] != "" {
+			field = fieldNames[k]
+		}
+		for i, f := range sd.Fields {
+			if f.Name != field {
+				continue
+			}
+			if k < len(payloads) {
+				out.payloads[i] = payloads[k]
+			}
+			if k < len(types) {
+				out.types[i] = types[k]
+			}
+		}
+	}
+	return out
 }
 
 // tupleArmPat is a tuple arm's elements as payloadsExhaustive reads them.
@@ -16833,7 +16863,7 @@ func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
 			seen[b] = true
 			armScope.names[b] = ft
 		}
-		structArms = append(structArms, structArmPat{payloads: arm.Payloads, types: arm.BindingTypes, guarded: arm.Guard != nil})
+		structArms = append(structArms, structArmPatOf(sd, arm.Bindings, arm.FieldNames, arm.Payloads, arm.BindingTypes, arm.Guard != nil))
 		irrefutable := !armPayloadsRefutable(arm.Payloads)
 		if arm.Guard != nil {
 			irrefutable = false
@@ -17191,7 +17221,7 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 			seen[b] = true
 			armScope.names[b] = ft
 		}
-		structArms = append(structArms, structArmPat{payloads: arm.Payloads, types: arm.BindingTypes, guarded: arm.Guard != nil})
+		structArms = append(structArms, structArmPatOf(sd, arm.Bindings, arm.FieldNames, arm.Payloads, arm.BindingTypes, arm.Guard != nil))
 		irrefutable := !armPayloadsRefutable(arm.Payloads)
 		if arm.Guard != nil {
 			irrefutable = false
