@@ -112,6 +112,7 @@ char_byte_literals                                   0
 char_cast_receiver                                   0
 closure_adder                                        0
 closure_capture_shared_cell                          0
+closure_captures_builtin_record_binding              0
 closure_captures_defining_scope                      0
 closure_captures_generic_value                       0
 closure_field_match                                  0

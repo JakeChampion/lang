@@ -253,6 +253,22 @@ decides what wraps it.
    `tests/stdlib/mock_platform_canned_test.fern`;
    `TestHandlerDeadlineServeInterp` and `TestHandlerDeadlineServeX86_64`
    through the real loop, the latter with a client that resets.
+   Background work (landed), on the response rather than the platform: a
+   platform has nowhere to hold a closure for the loop, since a `Cell` may
+   not hold one (E057, the cycle rule), so the work rides out of the
+   handler in the value it returns, as a chunk producer does.
+   `HttpResponse.background` holds it and `with_background` adds to it in
+   order. The loop starts it as a task once the response is written,
+   holding one that parks as a flight on no connection until
+   `Config.background_deadline` (30 s) cancels it, and a shutdown's drain
+   waits for it. wasi-http runs it once the body is finished. Gate: the
+   ordering case in `tests/stdlib/http_respond_test.fern`;
+   `TestBackgroundServeInterp` and `TestBackgroundServeX86_64` through the
+   real loop. On the way: the typed lowering refused a lambda capturing a
+   binding matched out of a built-in record's field (`BodyChunks(p)` from
+   `resp.body`), since `module_env` left the built-in structs out when
+   lowering annotated a module before injecting them; the
+   `closure_captures_builtin_record_binding` conformance case pins it.
 7. **Observability.** The OTel HTTP semantic conventions, `traceparent`
    propagation through `plat.http`, a JSON-lines access log with the OTel
    log data model's fields, health and readiness helpers; `std/log`'s

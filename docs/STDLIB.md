@@ -1984,6 +1984,14 @@ serializer.
   answers a response whose headers or trailers fail it with a bare 500
   instead, so a value copied from the request (a decoded path can hold
   CR LF) cannot add a field or end the head.
+- **Background work:** `(resp).with_background(work)` adds `work`, a
+  `() => void`, to `HttpResponse.background`, run once the response is
+  sent and after any work added before it: a log line shipped or a cache
+  filled without holding the response, what Cloudflare Workers'
+  `waitUntil` is for. std/serve starts it as a task once the event that
+  wrote the response is done, parking as a handler does, and cancels it
+  at `Config.background_deadline`; the wasi-http entry runs it once the
+  outgoing body is finished, before `handle` returns.
 - **Response parsing:** `http_parse_response_framed(buf, method, eof,
   limits): HttpResponseFraming` is the client side of the wire, the
   request parser's twin: `Complete(HttpResponseFramed { response, len,
@@ -3006,6 +3014,10 @@ points that run a handler under it.
   handler that has not answered by then is answered 503 in its place,
   as Go's `http.TimeoutHandler` answers. A handler that never waits cannot
   be cut off, so work between waits asks `plat.cancelled()`.
+  `background_deadline` (30 s, as Workers bound `waitUntil`; 0 for no
+  bound) is how long a response's background work may run on, the loop
+  cancelling it then. A shutdown's drain waits for background work too,
+  up to `drain_deadline`.
   A listener it cannot bind is `serve: cannot listen on ADDR:PORT:` —
   `[::]` where the host has IPv6, `0.0.0.0` where it has not and on
   wasm — and the error's text on stderr, and the entry returns 98 (every

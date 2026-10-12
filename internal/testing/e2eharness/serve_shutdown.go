@@ -307,6 +307,34 @@ func CheckShutdownAbortsAtDrainDeadline(t *testing.T, cmd *exec.Cmd, addr string
 	}
 }
 
+// CheckShutdownWaitsForBackground asks `path` of a server whose response
+// leaves background work running, signals SIGTERM, and expects the process
+// to exit 0 within `within`, the work having logged `logged` by then: that
+// it ran to its end inside the drain deadline, or that it saw itself
+// cancelled at it. Background work holds no connection, so cutting it off
+// is not an aborted drain.
+func CheckShutdownWaitsForBackground(t *testing.T, cmd *exec.Cmd, addr, stderrPath, path, logged string, within time.Duration) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	conn := rawRequest(t, addr, path, "")
+	defer conn.Close()
+	if resp := readResponse(t, conn, path); resp.StatusCode != 200 {
+		t.Fatalf("%s: status %d, want 200", path, resp.StatusCode)
+	}
+	started := time.Now()
+	sigterm(t, cmd)
+	if code := waitExit(t, cmd, 15*time.Second); code != 0 {
+		t.Fatalf("exit code %d, want 0", code)
+	}
+	waited := time.Since(started)
+	if out, _ := os.ReadFile(stderrPath); !strings.Contains(string(out), logged) {
+		t.Fatalf("%q not logged by exit; stderr:\n%s", logged, out)
+	}
+	if waited > within {
+		t.Fatalf("the server exited %v after SIGTERM, want within %v", waited, within)
+	}
+}
+
 // CheckSupervisedShutdown drives a supervisor over two workers: SIGTERM to
 // the supervisor is forwarded, a request in flight on a worker is
 // answered, the supervisor exits 0 once its workers drained, and no

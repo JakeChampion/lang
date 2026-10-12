@@ -65,7 +65,7 @@ x86_64/closure_call.text	814
 x86_64/closure_call.ir	103908097
 x86_64/enum_match.text	999
 x86_64/enum_match.ir	53775055
-x86_64/http_hello.text	20154
+x86_64/http_hello.text	20236
 x86_64/http_hello.ir	29964671
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
@@ -155,7 +155,7 @@ x86_64/utf8_ingest_validated.ir	6413083
 # Re-pinned 2026-10-12 (#12105 slice 4) on the four utf8_ingest rows of each
 # arch, whose json_parse builds an object as two arrays instead of a Map
 # (x86_64 `.ir` -16.5% unchecked, -8.9% validated; `.text` -23%), and on
-# http_hello.text (+4.7%): std/http imports std/json, and the tree shaker keeps
+# http_hello.text (+3.8%): std/http imports std/json, and the tree shaker keeps
 # a method by bare name where a call's receiver is untyped, so JsonObject's
 # `get` / `len` and its seeded key hash are kept.
 #

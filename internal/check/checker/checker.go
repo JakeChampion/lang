@@ -584,6 +584,11 @@ func builtinStructDecls() []*ast.StructDecl {
 				// nowhere to carry them, and the wasi-http wrapper
 				// finishes the outgoing body without them.
 				{Name: "trailers", Type: ast.StructType{Name: "HeaderMap"}},
+				// `background` is work that outlives the response
+				// (std/http's `with_background`): the serve loop runs it
+				// once the response is written, the wasi-http wrapper
+				// once the body is finished.
+				{Name: "background", Type: ast.EnumType{Name: "Option", Args: []ast.Type{&ast.FuncType{Params: []ast.Type{}, Result: ast.VoidType{}}}}},
 			},
 		},
 		// HeaderMap — case-insensitive, multi-valued, insertion-
