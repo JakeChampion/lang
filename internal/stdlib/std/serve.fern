@@ -92,6 +92,7 @@
 
 import "std/async";
 import "std/platform";
+import "std/fetch";
 import "std/http/cookie";
 import "std/http/forwarded";
 import "std/http";
@@ -154,7 +155,8 @@ function __recv_deadline_default(): Duration {
 // (`run_with`) runs its handler to completion and reads bodies whole either
 // way; and whether each worker's platform carries a cookie jar
 // (`cookie_jar`, std/http/cookie), its `plat.http` then sending and storing
-// cookies as a browser would.
+// cookies as a browser would, and the hosts that `plat.http` may reach
+// (`http_allow`, `fetch.allow`; None for any global address).
 pub struct Config {
   backlog: i32,
   reuse_port: boolean,
@@ -177,6 +179,7 @@ pub struct Config {
   stream_bodies: boolean,
   tls: Option[server.Config],
   cookie_jar: boolean,
+  http_allow: Option[fetch.Allow],
   proxy_protocol: boolean,
 }
 
@@ -187,7 +190,7 @@ pub struct Config {
 // processing unit, and
 // the parser's `http_limits()`, bodies read whole before the handler runs.
 pub function config(): Config {
-  return Config { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, proxy_protocol: false };
+  return Config { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, proxy_protocol: false };
 }
 
 // (c).with_tls(cfg) — every connection speaks TLS 1.3 under `cfg`
@@ -3294,6 +3297,12 @@ function __host_platform(reactor: i32, opts: Config): platform.Host {
   let host: platform.Host = platform.host();
   if (reactor >= 0) {
     host = platform.host_on(reactor);
+  }
+  match (opts.http_allow) {
+    Some(a) => {
+      host = host.with_allow(a);
+    },
+    None => {}
   }
   if (opts.cookie_jar) {
     return host.with_jar(cookie.jar());

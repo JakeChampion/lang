@@ -6472,6 +6472,9 @@ function arm_escapes_scope(ops: Op[], lo: i32, hi: i32): boolean {
 }
 
 pub function fold_const_binaries(ops: Op[]): Op[] {
+  let k_i32: i32 = K_CONST_I32;
+  let k_i32_text: i32 = K_CONST_I32_TEXT;
+  let k_i64: i32 = K_CONST_I64;
   let k_not: i32 = K_NOT;
   let k_if: i32 = K_IF;
   let k_brif: i32 = K_BRIF;
@@ -6491,19 +6494,20 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
     while (i < cur.len()) {
       let folded: boolean = false;
       let at: i32 = i;
-      // Decided once per position: six arms ask whether the op here is a
-      // readable 32-bit constant and two whether it is a 64-bit one.
-      let r32: boolean = const_i32_readable(cur[i]);
-      let r64: boolean = const_i64_readable(cur[i]);
       // Every fold below starts at a readable constant, a const_str or a
       // const_f64.
-      if (!r32 && !r64 && cur[i].kind_tag != k_const_str && cur[i].kind_tag != k_const_f64) {
+      let kt: i32 = cur[i].kind_tag;
+      if (kt != k_i32 && kt != k_i32_text && kt != k_i64 && kt != k_const_str && kt != k_const_f64) {
         if (copying) {
           out = out.append(cur[i]);
         }
         i = i + 1;
         continue;
       }
+      // Decided once per position: six arms ask whether the op here is a
+      // readable 32-bit constant and two whether it is a 64-bit one.
+      let r32: boolean = const_i32_readable(cur[i]);
+      let r64: boolean = const_i64_readable(cur[i]);
       // `const_f64 c ; fneg` is -c, the sign bit flipped: a negative float
       // literal is a literal rather than an instruction.
       if (i + 1 < cur.len() && cur[i].kind_tag == k_const_f64 && cur[i + 1].kind_tag == k_fneg) {
@@ -7263,13 +7267,16 @@ function strength_rewrite(ks: StrengthKinds, k: i32, bop: Op): StrengthRewrite {
 // rewrite's output is appended, never rescanned, but the REMAINING input is,
 // so the second site is found in the same pass.
 pub function reduce_strength_ex(ops: Op[]): StrengthResult {
+  let k_i32: i32 = K_CONST_I32;
+  let k_i32_text: i32 = K_CONST_I32_TEXT;
   let ks: StrengthKinds = strength_kinds();
   // `out` is written from the first rewrite on.
   let out: Op[] = [];
   let changed: boolean = false;
   let i: i32 = 0;
   while (i < ops.len()) {
-    if (i + 1 < ops.len() && const_i32_readable(ops[i]) && ops[i + 1].width == 0) {
+    let kt: i32 = ops[i].kind_tag;
+    if ((kt == k_i32 || kt == k_i32_text) && i + 1 < ops.len() && const_i32_readable(ops[i]) && ops[i + 1].width == 0) {
       let repl: StrengthRewrite = strength_rewrite(ks, const_i32_value(ops[i]), ops[i + 1]);
       if (repl.ok) {
         if (!changed) {
