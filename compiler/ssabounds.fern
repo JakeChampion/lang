@@ -29,7 +29,8 @@
 //     length, so the addition cannot wrap;
 //   - `x` is `length(b) - c` with a fact putting `length(b)` at `c` or more;
 //   - `x` is a phi whose operands are all at least zero, assuming the phi is;
-//   - `x` is `y & c` for a constant `c` at least zero.
+//   - `x` is `y & c` for a constant `c` at least zero;
+//   - `x` is what a byte-set scan returns, which is never negative.
 import "./ssa";
 import "./ssadeps";
 import "./ssasem";
@@ -442,6 +443,9 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
     return true;
   }
   let d: ssa.SInst = g.defs[x];
+  if (d.kind_tag == ssasem.call() && (d.str == "__scan_set" || d.str == "__scan_set_bytes")) {
+    return true;
+  }
   let at: i32 = g.home[x];
   if (binary(d, "+")) {
     let y: i32 = 0 - 1;
