@@ -284,6 +284,13 @@ decides what wraps it.
    `tests/stdlib/http_trace_test.fern` and the propagation case in
    `tests/stdlib/sim_platform_test.fern`; `TestTraceServeInterp` and
    `TestTraceServeX86_64` through the real loop.
+   Access log (landed): `std/http/accesslog`'s `logged` middleware writes
+   one JSON line per request through `plat.log` in the OTel log data
+   model's OTLP/JSON spelling, its attributes under the HTTP semantic
+   conventions' names and its span from `plat.trace()`. A middleware rather
+   than a loop hook, so a wasi-http handler logs the same way. Gate:
+   `tests/stdlib/http_accesslog_test.fern`; `TestAccessLogServeInterp` and
+   `TestAccessLogServeX86_64`.
 8. **The developer loop.** In-memory serving through the full router and
    middleware stack on the simulated `Platform`; recording and replay of
    upstream traffic; a rate-driven load tool in `tools/` with latency

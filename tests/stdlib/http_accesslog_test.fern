@@ -1,0 +1,71 @@
+import "std/test";
+import "std/http";
+import "std/http/accesslog";
+import "std/mock_platform";
+
+// tests/stdlib/http_accesslog_test.fern — std/http/accesslog: a request's
+// record in the OTel log data model's OTLP/JSON spelling, its span, peer and
+// user agent included when present and left out when not; a 5xx logged at
+// ERROR; durations in seconds; a body size only where it is known without
+// reading the body; and the middleware writing the record through
+// `plat.log` and returning the response untouched.
+
+function plat(): mock_platform.MockPlatform {
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  m.now_set(1700000000123 as i64);
+  return m;
+}
+
+function get(path: string): HttpRequest {
+  return http.request("GET", path);
+}
+
+function test_a_record_carries_every_field(): test.TestOutcome {
+  let m: mock_platform.MockPlatform = plat();
+  m.peer_set("192.0.2.7:5000");
+  m.trace_set("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+  let req: HttpRequest = HttpRequest { ...get("/users/7"), headers: get("/").headers.set("User-Agent", "curl/8.9 \"x\"") };
+  let line: string = accesslog.record(req, http.ok("hello"), m, 412345 as i64);
+  return test.assert_eq(line, "{\"timeUnixNano\":\"1700000000123000000\",\"severityNumber\":9,\"severityText\":\"INFO\",\"body\":\"GET /users/7 200\",\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\",\"spanId\":\"00f067aa0ba902b7\",\"attributes\":{\"http.request.method\":\"GET\",\"url.path\":\"/users/7\",\"http.response.status_code\":200,\"http.server.request.duration\":0.000412,\"client.address\":\"192.0.2.7\",\"user_agent.original\":\"curl/8.9 \\\"x\\\"\",\"http.response.body.size\":5}}");
+}
+
+function test_absent_fields_are_left_out_and_a_5xx_is_an_error(): test.TestOutcome {
+  let line: string = accesslog.record(get("/boom"), http.text(503, ""), plat(), 2500000000 as i64);
+  return test.assert_eq(line, "{\"timeUnixNano\":\"1700000000123000000\",\"severityNumber\":17,\"severityText\":\"ERROR\",\"body\":\"GET /boom 503\",\"attributes\":{\"http.request.method\":\"GET\",\"url.path\":\"/boom\",\"http.response.status_code\":503,\"http.server.request.duration\":2.500000,\"http.response.body.size\":0}}");
+}
+
+function test_a_produced_body_is_not_counted(): test.TestOutcome {
+  let line: string = accesslog.record(get("/events"), http.chunks(200, (i: i32): Option[u8[]] => None), plat(), 0 as i64);
+  if (line.contains("body.size")) {
+    return test.fail("a producer's body was counted: " + line);
+  }
+  return test.pass();
+}
+
+function test_the_middleware_logs_and_passes_the_response_on(): test.TestOutcome {
+  let m: mock_platform.MockPlatform = plat();
+  let resp: HttpResponse = accesslog.logged(get("/"), m, (r: HttpRequest): HttpResponse => http.ok("done"));
+  if (resp.body_string() != "done") {
+    return test.fail("the response changed: " + resp.body_string());
+  }
+  match (m.find_call("log")) {
+    Some(c) => {
+      if (!c.args.starts_with("{\"timeUnixNano\":\"1700000000123000000\"") || !c.args.contains("\"body\":\"GET / 200\"")) {
+        return test.fail("logged " + c.args);
+      }
+    },
+    None => {
+      return test.fail("nothing was logged");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/http/accesslog");
+  r = r.it("a record carries every field", test_a_record_carries_every_field);
+  r = r.it("absent fields are left out and a 5xx is an error", test_absent_fields_are_left_out_and_a_5xx_is_an_error);
+  r = r.it("a produced body is not counted", test_a_produced_body_is_not_counted);
+  r = r.it("the middleware logs and passes the response on", test_the_middleware_logs_and_passes_the_response_on);
+  return r.finish();
+}
