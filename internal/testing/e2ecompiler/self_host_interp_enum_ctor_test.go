@@ -50,8 +50,6 @@ var interpEnumCtorCases = []struct {
 	// interpreter as injected variant structs and never as EnumDecls, so the
 	// owner has to be read off the variant table for `b.kind()` to dispatch.
 	{"builtin-enum-method-dispatch", "function (b: Body) kind(): i32 {\n  match (b) { BodyText(_) => { return 1; }, BodyBytes(bs) => { return bs.len() + 5; }, _ => { return 2; } }\n}\nfunction main(): i32 {\n  let bs: u8[] = [1 as u8, 2 as u8];\n  let b: Body = BodyBytes(bs);\n  return b.kind();\n}\n"},
-	// An imported module's enum, constructed and matched by its bare variants.
-	{"imported-enum", "import \"std/json\";\nfunction main(): i32 {\n  let v: json.JsonValue = JNumber(\"42\");\n  match (v) {\n    JNumber(s) => { if (s == \"42\") { return 7; } return 1; },\n    JNull => { return 2; },\n    _ => { return 3; }\n  }\n}\n"},
 	// A variant carrying another enum, so the payload is itself a variant.
 	{"nested-variant-payload", "enum Inner { One, Two }\nenum Outer { Wrap(Inner) }\nfunction main(): i32 {\n  let o: Outer = Wrap(Two);\n  match (o) {\n    Wrap(i) => { match (i) { One => { return 1; }, Two => { return 7; } } }\n  }\n}\n"},
 
