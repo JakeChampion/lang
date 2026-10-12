@@ -89,6 +89,8 @@ function main(): i32 { return (word("abcde", 1) + word("abcde", 0)) % 101; }`},
 	{"grouped_string_word", `function word(s: string, o: i32): u32 { return s[o + 2] as u32 << 16 | s[o] as u32 | s[o + 3] as u32 << 24 | s[o + 1] as u32 << 8; }
 function wide(s: string, o: i32): u64 { return s[o] as u64 << 56 | s[o + 1] as u64 << 48 | s[o + 2] as u64 << 40 | s[o + 3] as u64 << 32 | s[o + 4] as u64 << 24 | s[o + 5] as u64 << 16 | s[o + 6] as u64 << 8 | s[o + 7] as u64; }
 function main(): i32 { let s: string = "the quick brown fox"; return ((word(s, 3) ^ word(s, 15) ^ (wide(s, 9) >> 21u64) as u32 ^ wide(slice_unchecked(s, 2, 12), 1) as u32) & 63u32) as i32; }`},
+	{"grouped_view_word", `function word(v: str, o: i32): u32 { return v[o] as u32 | v[o + 1] as u32 << 8 | v[o + 2] as u32 << 16 | v[o + 3] as u32 << 24; }
+function main(): i32 { let s: string = "the quick brown fox"; let v: str = slice_unchecked(s, 4, 15); return ((word(v, 2) ^ word(slice_unchecked(s, 1, 9), 3)) & 63u32) as i32; }`},
 }
 
 // guardBoundsTwins pairs each proven program with one whose guard proves
@@ -185,6 +187,8 @@ function main(): i32 { return word("abcdefghij", 0 - 1) as i32; }`},
 function main(): i32 { return word("abcdefg") as i32; }`},
 	{"grouped_string_word_of_slice_far_end", `function word(s: string, o: i32): u32 { return s[o] as u32 | s[o + 1] as u32 << 8 | s[o + 2] as u32 << 16 | s[o + 3] as u32 << 24; }
 function main(): i32 { let s: string = "abcdefghijkl"; return word(slice_unchecked(s, 2, 7), 2) as i32; }`},
+	{"grouped_view_word_far_end", `function word(v: str, o: i32): u32 { return v[o] as u32 | v[o + 1] as u32 << 8 | v[o + 2] as u32 << 16 | v[o + 3] as u32 << 24; }
+function main(): i32 { let s: string = "abcdefghijkl"; let v: str = slice_unchecked(s, 2, 7); return word(v, 2) as i32; }`},
 }
 
 func TestSelfHostGuardBoundsX86_64(t *testing.T) {

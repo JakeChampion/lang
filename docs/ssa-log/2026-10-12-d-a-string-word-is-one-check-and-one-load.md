@@ -17,7 +17,9 @@
   check-only from 2026-10-10, for the string layouts.
 - **The fused load reads from `__raw_data`.** A string's word is
   `__load_i32` / `__load_i64` at `__raw_data(s)` plus the index at pointer
-  width, which covers a slice's view box as well as an owned string.
+  width. A `str` view is first retagged as an owned string (`str_as`, as
+  `lend` does), since `__raw_data` takes one; its box holds its data pointer
+  where an owned string's does.
 
 core/map's string hash, `__map_fnv_str_seeded`, reads every key four bytes at
 a time. Its loop body on x86-64 went from 45 instructions (four checks, four

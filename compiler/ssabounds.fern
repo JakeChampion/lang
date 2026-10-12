@@ -890,9 +890,11 @@ function load_word(own l: Load, t: typeinfo.Type, w: Word, first: i32, result: i
     insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v, args: [w.arr, first], imm: 0, str: view_words[w.bytes / 8] });
   } else {
     let base: i32 = v;
-    if (ssasem.is_string(t)) {
-      insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v, args: [w.arr], imm: 0, str: "__raw_data" });
-      values = values.append(addr_t);
+    if (ssasem.is_text(t)) {
+      let d: Load = text_data(Load { insts: insts, values: values }, t, w.arr, addr_t);
+      insts = d.insts;
+      values = d.values;
+      base = values.len() - 1;
     } else {
       insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v, args: [w.arr], imm: 0, str: "__raw_arr_ptr" });
       insts = insts.append(ssa.SInst { kind_tag: 1, result: v + 1, args: [], imm: 8, str: "" });
@@ -913,6 +915,21 @@ function load_word(own l: Load, t: typeinfo.Type, w: Word, first: i32, result: i
     values = values.append(wide);
   }
   return Load { insts: insts, values: values };
+}
+
+// text_data appends the address of string `arr`'s bytes. `__raw_data` takes
+// an owned string, so a view is first retagged as one, as `lend` does.
+function text_data(own l: Load, t: typeinfo.Type, arr: i32, addr_t: typeinfo.Type): Load {
+  let insts: ssa.SInst[] = l.insts;
+  let values: typeinfo.Type[] = l.values;
+  let s: i32 = arr;
+  if (ssasem.is_view(t)) {
+    s = values.len();
+    insts = insts.append(ssa.SInst { kind_tag: ssasem.str_as(), result: s, args: [arr], imm: 0, str: "" });
+    values = values.append(typeinfo.TypeString { tag: 0 });
+  }
+  insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: values.len(), args: [s], imm: 0, str: "__raw_data" });
+  return Load { insts: insts, values: values.append(addr_t) };
 }
 
 // in_order appends the cast that gives the word `loaded` its unsigned type as

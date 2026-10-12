@@ -299,6 +299,9 @@ function main(): i32 {
 	{name: "le_word_string_constant_indexes", fn: "sheader", exit: 110, src: stringWordSrc,
 		want:   oneCheck,
 		forbid: wordForbid},
+	{name: "le_word_str_view", fn: "vword32", exit: 110, src: stringWordSrc,
+		want:   oneCheck,
+		forbid: wordForbid},
 	// A raw byte load at a constant offset reads it as a displacement, so the
 	// offset takes no register: __fern_str_cmp's tail reads both strings'
 	// bytes at offset 0.
@@ -631,10 +634,13 @@ const stringWordSrc = `
 @noinline function sheader(s: string): u32 {
     return s[4] as u32 | s[5] as u32 << 8 | s[6] as u32 << 16 | s[7] as u32 << 24;
 }
+@noinline function vword32(v: str, o: i32): u32 {
+    return v[o] as u32 | v[o + 1] as u32 << 8 | v[o + 2] as u32 << 16 | v[o + 3] as u32 << 24;
+}
 function main(): i32 {
     let s: string = "pack my box with five dozen liquor jugs";
     let x: u32 = sword32(s, 5) ^ (sbigend64(s, 11) >> 29u64) as u32 ^ sheader(slice_unchecked(s, 3, 20));
-    return (x & 127u32) as i32;
+    return ((x ^ vword32(slice_unchecked(s, 8, 30), 4) << 7u32) & 127u32) as i32;
 }
 `
 
