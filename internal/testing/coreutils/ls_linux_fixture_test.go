@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -47,4 +48,49 @@ func TestLsTreeTimesSurviveReads(t *testing.T) {
 				path, want.Atim, got.Atim, want.Mtim, got.Mtim, want.Ctim, got.Ctim)
 		}
 	}
+}
+
+// lsDeepTree is a chain of directories whose relative path runs past
+// PATH_MAX, built through descriptors because no path reaches its bottom.
+// A regular file and a symlink sit at the top level for the indicator
+// cases, which stat the one and not the other.
+func lsDeepTree(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "file"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("file", filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	name := strings.Repeat("d", 100)
+	fd, err := syscall.Open(root, syscall.O_RDONLY|syscall.O_DIRECTORY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for level := 0; level < 45; level++ {
+		if err := syscall.Mkdirat(fd, name, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		next, err := syscall.Openat(fd, name, syscall.O_RDONLY|syscall.O_DIRECTORY, 0)
+		syscall.Close(fd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fd = next
+	}
+	syscall.Close(fd)
+	return root
+}
+
+// GNU does not stat a directory to recurse into it, so the one past
+// PATH_MAX is a directory it cannot open — named once on standard error,
+// with no header — rather than an entry it cannot access.
+func TestLsRecursivePastPathMax(t *testing.T) {
+	dir := lsDeepTree(t)
+	var cases []invocation
+	for _, flags := range [][]string{{"-R"}, {"-lR"}, {"-FR"}, {"-aR"}, {"-LR"}, {"-iR"}, {"-R", "--group-directories-first"}} {
+		cases = append(cases, invocation{name: strings.Join(flags, ""), args: append(flags, "."), dir: dir})
+	}
+	requireParity(t, "ls", cases)
 }

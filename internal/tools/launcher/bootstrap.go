@@ -249,3 +249,33 @@ func fileSHA256(path string) (string, error) {
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
+
+// KeySuffix names the file beside a self-host compiler that records SourcesKey
+// for the sources it was built from. `make selfhost-cli` and `make bootstrap`
+// write it.
+const KeySuffix = ".key"
+
+// SourcesKey identifies the compiler and stdlib sources this `fern` embeds,
+// for its host.
+func SourcesKey() (string, error) {
+	host := hostTarget()
+	if host == "" {
+		return "", fmt.Errorf("no stage0 compiler is published for %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	return sourcesKey(host)
+}
+
+// current reports whether the self-host compiler at p exists and its key file
+// names the sources this `fern` embeds. One left from an older tree, or with no
+// key, is not used: it would compile with sources other than these.
+func current(p string) bool {
+	if _, err := os.Stat(p); err != nil {
+		return false
+	}
+	stamp, err := os.ReadFile(p + KeySuffix)
+	if err != nil {
+		return false
+	}
+	key, err := SourcesKey()
+	return err == nil && strings.TrimSpace(string(stamp)) == key
+}

@@ -211,6 +211,15 @@ build() {
   mkdir -p "$ROOT/bin"
   cp "$OUT/stage1" "$ROOT/bin/fern-selfhost"
   echo "installed bin/fern-selfhost ($HOST, sha256 $(sha256 "$OUT/stage1"))"
+  # bin/fern compiles with this only when the key beside it names the sources
+  # bin/fern embeds (internal/tools/launcher). Computing the key takes Go and
+  # cmd/fern; without them the old key goes, so no bin/fern uses this.
+  local key
+  if key="$(cd "$ROOT" && go run ./cmd/fern -selfhost-key 2>/dev/null)"; then
+    echo "$key" > "$ROOT/bin/fern-selfhost.key"
+  else
+    rm -f "$ROOT/bin/fern-selfhost.key"
+  fi
 }
 
 distcheck() {

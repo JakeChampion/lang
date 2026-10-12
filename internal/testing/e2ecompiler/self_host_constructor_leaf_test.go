@@ -66,3 +66,60 @@ func TestSelfHostConstructorLeavesOff(t *testing.T) {
 	runSemanticProgram(t, "ctorleaf-off", constructorLeafProgram, constructorLeafProduced,
 		semInlineWants("1300300\n5950300\n"))
 }
+
+// A constructor leaf may return a record as a member of a union of records,
+// as the checker's `t_unknown(reason)` returns a `TypeUnknown` as a `Type`.
+// Called with a literal it is a static box too: lit_rounds allocates nothing,
+// while dyn_rounds, whose reason is a phi of two literals, pays one box a
+// round.
+const unionConstructorLeafProgram = `struct Known { width: i32 }
+struct Unknown { reason: string }
+type Ty = Known | Unknown;
+function unknown(reason: string): Ty { return Unknown { reason: reason }; }
+function weigh(t: Ty): i32 {
+    if let Unknown(u) = t { return u.reason.len(); }
+    return 1;
+}
+@noinline function lit_rounds(): i32 {
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) { t = t + weigh(unknown("no type")); i = i + 1; }
+    return t * 1000 + ((__heap_alloc_count() - before) as i32);
+}
+@noinline function dyn_rounds(): i32 {
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) {
+        let r: string = "a";
+        if (i % 2 == 1) { r = "bb"; }
+        t = t + weigh(unknown(r));
+        i = i + 1;
+    }
+    return t * 1000 + ((__heap_alloc_count() - before) as i32);
+}
+function print_int(n: i32): i32 {
+    if (n > 9) { print_int(n / 10); }
+    putchar(48 + n % 10);
+    return 0;
+}
+function main(): i32 {
+    print_int(lit_rounds()); print("");
+    print_int(dyn_rounds()); print("");
+    return 0;
+}
+`
+
+var unionConstructorLeafProduced = []string{"unknown", "weigh", "lit_rounds", "dyn_rounds"}
+
+func TestSelfHostConstructorLeafUnionMember(t *testing.T) {
+	runSemanticProgram(t, "ctorleaf-union", unionConstructorLeafProgram, unionConstructorLeafProduced,
+		semInlineWants("700000\n150100\n"), "unknown")
+}
+
+func TestSelfHostConstructorLeafUnionMemberOff(t *testing.T) {
+	t.Setenv("FERN_SEM_INLINE", "")
+	runSemanticProgram(t, "ctorleaf-union-off", unionConstructorLeafProgram, unionConstructorLeafProduced,
+		semInlineWants("700100\n150100\n"))
+}

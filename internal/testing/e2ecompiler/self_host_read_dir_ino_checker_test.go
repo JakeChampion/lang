@@ -20,11 +20,12 @@ func TestSelfHostReadDirInoChecker(t *testing.T) {
 	for _, tc := range []struct{ name, src, code string }{
 		{"fields", `function main(): i32 {
     match (read_dir_ino(".")) {
-        Ok(es) => { let e: DirEntry = es[0]; let n: string = e.name; let ino: i64 = e.ino; return n.len(); },
+        Ok(es) => { let e: DirEntry = es[0]; let n: string = e.name; let ino: i64 = e.ino; let k: u32 = e.kind; return n.len(); },
         Err(_) => { return 1; },
     }
 }`, ""},
 		{"ino is i64", `function main(): i32 { match (read_dir_ino(".")) { Ok(es) => { let n: i32 = es[0].ino; return n; }, Err(_) => { return 1; } } }`, "E003"},
+		{"kind is u32", `function main(): i32 { match (read_dir_ino(".")) { Ok(es) => { let k: string = es[0].kind; return 0; }, Err(_) => { return 1; } } }`, "E003"},
 		{"entries are not names", `function main(): i32 { match (read_dir_ino(".")) { Ok(es) => { let s: string[] = es; return 0; }, Err(_) => { return 1; } } }`, "E003"},
 		{"path is a string", `function main(): i32 { match (read_dir_ino(1)) { Ok(_) => { return 0; }, Err(_) => { return 1; } } }`, "E038"},
 		{"DirEntry is reserved", "struct DirEntry { name: string }\nfunction main(): i32 { return 0; }", "E010"},

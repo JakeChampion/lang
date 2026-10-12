@@ -10252,7 +10252,7 @@ pub function builtin_function_names(): string[] {
     // a directory held open, whose methods name entries relative to it
     "open_dir",
     // filesystem
-    "read_file", "read_file_bytes", "write_file", "write_file_bytes", "write_file_exec", "read_dir", "read_dir_all", "read_dir_ino", "remove_dir_all", "remove_file",
+    "read_file", "read_file_bytes", "write_file", "write_file_bytes", "write_file_exec", "read_dir", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "remove_dir_all", "remove_file",
     "create_dir_all", "stat", "lstat", "access", "temp_dir",
     // the FILESYSTEM a path resolves on, where stat describes one entry
     "statfs", "mounts",
@@ -10408,6 +10408,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     let def: StructFieldDecl[] = [];
     def = def.append(StructFieldDecl { name: "name", type_name: "string", fn_ret: "", fn_param_types: "" });
     def = def.append(StructFieldDecl { name: "ino", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    def = def.append(StructFieldDecl { name: "kind", type_name: "u32", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "DirEntry", fields: def, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
   }
   // FsStat: the builtin struct returned by statfs(path) — the filesystem's

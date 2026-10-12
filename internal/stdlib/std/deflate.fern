@@ -918,8 +918,8 @@ function __span(toks: i32[], at: i32, end: i32): i32 {
 // costs fewest bits.
 function __put_block(w: __Bits, input: u8[], toks: i32[], s: __Span, fixed: (__Code, __Code)): __Bits {
   let f: (i32[], i32[]) = __freqs(toks, s.at, s.end);
-  let lit: __Code = __canonical(__code_lens(__two_used(f.0), 15));
-  let dist: __Code = __canonical(__code_lens(__two_used(f.1), 15));
+  let lit: __Code = __canonical(huffman_lengths(__two_used(f.0), 15));
+  let dist: __Code = __canonical(huffman_lengths(__two_used(f.1), 15));
   let h: __Header = __header(lit.lens, dist.lens);
   let extra: i32 = __extra_cost(f.0, f.1);
   let own_cost: i32 = h.bits + __weighted(f.0, lit.lens) + __weighted(f.1, dist.lens);
@@ -1055,11 +1055,13 @@ function __two_used(freq: i32[]): i32[] {
   return freq;
 }
 
-// __code_lens(freq, limit) — the lengths of a Huffman code for `freq`,
-// none past `limit`: Moffat and Katajainen's in-place construction over
-// the used symbols in order of frequency, then any length past `limit`
-// folded to it and the code made complete again, as miniz does.
-function __code_lens(freq: i32[], limit: i32): i32[] {
+// `huffman_lengths(freq, limit)` — the lengths of a complete Huffman code
+// for the symbol counts `freq` (at least two of them nonzero, fewer than
+// 2^22 each), none past `limit`, 0 for an unused symbol: Moffat and
+// Katajainen's in-place construction over the used symbols in order of
+// frequency, then any length past `limit` folded to it and the code made
+// complete again, as miniz does. std/zstd codes its literals with it.
+pub function huffman_lengths(freq: i32[], limit: i32): i32[] {
   let keys: i32[] = [];
   let s: i32 = 0;
   while (s < freq.len()) {
@@ -1213,7 +1215,7 @@ function __header(lit: i32[], dist: i32[]): __Header {
   for r in rle {
     freq = __bump(freq, r & 31);
   }
-  let cl: __Code = __canonical(__code_lens(__two_used(freq), 7));
+  let cl: __Code = __canonical(huffman_lengths(__two_used(freq), 7));
   let order: i32[] = __cl_order();
   let hclen: i32 = 19;
   while (hclen > 4 && cl.lens[order[hclen - 1]] == 0) {

@@ -2415,12 +2415,30 @@ pub function direntoff(t: string, name: string): string {
     if (name == "name") {
       return "21";
     }
+    if (name == "type") {
+      return "20";
+    }
     return "16";
   }
   if (name == "name") {
     return "19";
   }
+  if (name == "type") {
+    return "18";
+  }
   return "16";
+}
+
+// dirent_name_len binds `nlen`, the length of the name in the record at
+// `buf + pos` whose length is `reclen`. XNU records it as d_namlen. Linux
+// does not, so the NUL is found eight bytes a turn while a whole word still
+// fits in the record, then a byte at a time.
+function dirent_name_len(t: string): string {
+  if (t == "arm64-darwin") {
+    return "let nlen: i32 = __raw_load8(buf, pos + 18) + __raw_load8(buf, pos + 19) * 256; ";
+  }
+  let nameoff: string = direntoff(t, "name");
+  return "let nlen: i32 = 0; let room: i32 = reclen - " + nameoff + "; let scan: i32 = 1; while (scan == 1 && nlen + 8 <= room) { let w: i64 = __load_i64(buf + pos + " + nameoff + " + nlen); let z: i64 = (w - (72340172838076673 as i64)) & (w ^ (0 - 1) as i64) & ((0 - 9187201950435737472) as i64); if (z != (0 as i64)) { nlen = nlen + (__ctz64(z as u64) >> 3); scan = 0; } else { nlen = nlen + 8; } } if (scan == 1) { while (__raw_load8(buf, pos + " + nameoff + " + nlen) != 0) { nlen = nlen + 1; } } ";
 }
 
 // rt_src_random_bytes backs `random_bytes(n)` (#2649) — the first syscall-leaf
@@ -4958,6 +4976,12 @@ pub function rt_src_read_dir_ino(t: string): string {
   return rt_src_read_dir_like(t, "__fern_read_dir_ino", true, true);
 }
 
+// rt_src_read_dir_ino_all backs `read_dir_ino_all(path)`: read_dir_ino's drain
+// with the "." / ".." records kept.
+pub function rt_src_read_dir_ino_all(t: string): string {
+  return rt_src_read_dir_like(t, "__fern_read_dir_ino_all", false, true);
+}
+
 // rt_src_read_dir_like is the source all three share. `skip_dots` wraps the
 // per-entry append in the "." / ".." test; `ino` makes each entry a DirEntry.
 function rt_src_read_dir_like(t: string, fname: string, skip_dots: boolean, ino: boolean): string {
@@ -4975,7 +4999,7 @@ function dir_drain_src(t: string, elem: string, skip_dots: boolean, ino: boolean
   let nameoff: string = direntoff(t, "name");
   let entry: string = "__raw_string(nbuf, nlen)";
   if (ino) {
-    entry = "DirEntry { name: __raw_string(nbuf, nlen), ino: __load_i64((buf + pos + " + direntoff(t, "ino") + ")) }";
+    entry = "DirEntry { name: __raw_string(nbuf, nlen), ino: __load_i64((buf + pos + " + direntoff(t, "ino") + ")), kind: (__raw_load8(buf, pos + " + direntoff(t, "type") + ") as u32) << 12 }";
   }
   let guard_open: string = "";
   let guard_close: string = "";
@@ -4983,7 +5007,7 @@ function dir_drain_src(t: string, elem: string, skip_dots: boolean, ino: boolean
     guard_open = "let skip: i32 = 0; if (nlen == 1) { if (__raw_load8(buf, pos + " + nameoff + ") == 46) { skip = 1; } } if (nlen == 2) { if (__raw_load8(buf, pos + " + nameoff + ") == 46) { if (__raw_load8(buf, pos + " + nameoff + " + 1) == 46) { skip = 1; } } } if (skip == 0) { ";
     guard_close = "} ";
   }
-  return "let basep: usize = __raw_alloc(8); let names: " + elem + "[] = []; let bad: i32 = 0; let done: i32 = 0; while (done == 0) { let buf: usize = __raw_alloc(65536); let n: i32 = __syscall4(" + sysno(t, "getdents") + ", fd as i64, buf as i64, 65536, basep as i64) as i32; if (n <= 0) { done = 1; bad = n; } else { let pos: i32 = 0; while (pos < n) { let reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; let nlen: i32 = 0; while (__raw_load8(buf, pos + " + nameoff + " + nlen) != 0) { nlen = nlen + 1; } " + guard_open + "let nbuf: usize = __raw_alloc(nlen); let k: i32 = 0; while (k < nlen) { __raw_store8(nbuf, k, __raw_load8(buf, pos + " + nameoff + " + k)); k = k + 1; } names = names.append(" + entry + "); " + guard_close + "pos = pos + reclen; } } let buf_own: string = __raw_string(buf, 65536); } let basep_own: string = __raw_string(basep, 8); ";
+  return "let basep: usize = __raw_alloc(8); let names: " + elem + "[] = []; let bad: i32 = 0; let done: i32 = 0; while (done == 0) { let buf: usize = __raw_alloc(65536); let n: i32 = __syscall4(" + sysno(t, "getdents") + ", fd as i64, buf as i64, 65536, basep as i64) as i32; if (n <= 0) { done = 1; bad = n; } else { let pos: i32 = 0; while (pos < n) { let reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; " + dirent_name_len(t) + guard_open + "let nbuf: usize = __raw_alloc(nlen); __memcpy(nbuf, buf + pos + " + nameoff + ", nlen); names = names.append(" + entry + "); " + guard_close + "pos = pos + reclen; } } let buf_own: string = __raw_string(buf, 65536); } let basep_own: string = __raw_string(basep, 8); ";
 }
 
 // rt_src_remove_dir_all backs `remove_dir_all(path)` (#2649, the last fs leaf) →
@@ -5008,7 +5032,7 @@ function dir_drain_src(t: string, elem: string, skip_dots: boolean, ino: boolean
 // rows as read_dir, plus AT_REMOVEDIR (512 on Linux, 128 on XNU — atflag).
 pub function rt_src_remove_dir_all(t: string): string {
   let nameoff: string = direntoff(t, "name");
-  return "function __fern_remove_dir_all(path: string): Result[void, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz as i64, " + oflag(t, "rd_directory") + ") as i32; if (fd < 0) { let e: i32 = 0 - fd; if (e == 20) { __syscall3(" + sysno(t, "unlinkat") + ", " + at_fdcwd(t) + ", pathz as i64, 0); } let pathz_own0: string = __raw_string(pathz, plen + 1); if (e == 2) { return Ok(()); } if (e == 20) { return Ok(()); } return Err(__fern_io_error(e, __fern_path_copy(pathz_own0, plen))); } let basep: usize = __raw_alloc(8); let done: i32 = 0; while (done == 0) { let buf: usize = __raw_alloc(65536); let n: i32 = __syscall4(" + sysno(t, "getdents") + ", fd as i64, buf as i64, 65536, basep as i64) as i32; if (n <= 0) { done = 1; } else { let pos: i32 = 0; while (pos < n) { let reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; let nl: i32 = 0; while (__raw_load8(buf, pos + " + nameoff + " + nl) != 0) { nl = nl + 1; } let skip: i32 = 0; if (nl == 1) { if (__raw_load8(buf, pos + " + nameoff + ") == 46) { skip = 1; } } if (nl == 2) { if (__raw_load8(buf, pos + " + nameoff + ") == 46) { if (__raw_load8(buf, pos + " + nameoff + " + 1) == 46) { skip = 1; } } } if (skip == 0) { let cl: i32 = plen + 1 + nl; let cb: usize = __raw_alloc(cl); let a: i32 = 0; while (a < plen) { __raw_store8(cb, a, path[a] as i32); a = a + 1; } __raw_store8(cb, plen, 47); let b: i32 = 0; while (b < nl) { __raw_store8(cb, plen + 1 + b, __raw_load8(buf, pos + " + nameoff + " + b)); b = b + 1; } match (__fern_remove_dir_all(__raw_string(cb, cl))) { Ok(_) => {}, Err(_) => {} } } pos = pos + reclen; } } let buf_own: string = __raw_string(buf, 65536); } let basep_own: string = __raw_string(basep, 8); __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); __syscall3(" + sysno(t, "unlinkat") + ", " + at_fdcwd(t) + ", pathz as i64, " + atflag(t, "removedir") + "); let pathz_own: string = __raw_string(pathz, plen + 1); return Ok(()); }";
+  return "function __fern_remove_dir_all(path: string): Result[void, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz as i64, " + oflag(t, "rd_directory") + ") as i32; if (fd < 0) { let e: i32 = 0 - fd; if (e == 20) { __syscall3(" + sysno(t, "unlinkat") + ", " + at_fdcwd(t) + ", pathz as i64, 0); } let pathz_own0: string = __raw_string(pathz, plen + 1); if (e == 2) { return Ok(()); } if (e == 20) { return Ok(()); } return Err(__fern_io_error(e, __fern_path_copy(pathz_own0, plen))); } let basep: usize = __raw_alloc(8); let done: i32 = 0; while (done == 0) { let buf: usize = __raw_alloc(65536); let n: i32 = __syscall4(" + sysno(t, "getdents") + ", fd as i64, buf as i64, 65536, basep as i64) as i32; if (n <= 0) { done = 1; } else { let pos: i32 = 0; while (pos < n) { let reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; " + dirent_name_len(t) + "let skip: i32 = 0; if (nlen == 1) { if (__raw_load8(buf, pos + " + nameoff + ") == 46) { skip = 1; } } if (nlen == 2) { if (__raw_load8(buf, pos + " + nameoff + ") == 46) { if (__raw_load8(buf, pos + " + nameoff + " + 1) == 46) { skip = 1; } } } if (skip == 0) { let cl: i32 = plen + 1 + nlen; let cb: usize = __raw_alloc(cl); __memcpy(cb, __raw_data(path), plen); __raw_store8(cb, plen, 47); __memcpy(cb + plen + 1, buf + pos + " + nameoff + ", nlen); match (__fern_remove_dir_all(__raw_string(cb, cl))) { Ok(_) => {}, Err(_) => {} } } pos = pos + reclen; } } let buf_own: string = __raw_string(buf, 65536); } let basep_own: string = __raw_string(basep, 8); __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); __syscall3(" + sysno(t, "unlinkat") + ", " + at_fdcwd(t) + ", pathz as i64, " + atflag(t, "removedir") + "); let pathz_own: string = __raw_string(pathz, plen + 1); return Ok(()); }";
 }
 
 // clock_read emits the statements that leave `sec` and `sub` bound — the
@@ -6149,7 +6173,7 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
           if (id.name == "read_dir" || id.name == "read_dir_all") {
             return ty_array_string();
           }
-          if (id.name == "read_dir_ino") {
+          if (id.name == "read_dir_ino" || id.name == "read_dir_ino_all") {
             return ty_array();
           }
           // Arbitrary free / module function returning
@@ -7994,7 +8018,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "read_dir" || id.name == "read_dir_all") {
     return ty_result(ty_array_string());
   }
-  if (id.name == "read_dir_ino") {
+  if (id.name == "read_dir_ino" || id.name == "read_dir_ino_all") {
     return ty_result(ty_array());
   }
   if (id.name == "environ") {
@@ -8773,7 +8797,7 @@ pub function runtime_need_deps(name: string): string[] {
     let d8: string[] = ["heap", "arr_push", "arr_push_owned", "str_concat"];
     return d8;
   }
-  if (name == "read_dir" || name == "read_dir_all" || name == "read_dir_ino") {
+  if (name == "read_dir" || name == "read_dir_all" || name == "read_dir_ino" || name == "read_dir_ino_all") {
     // __fern_read_dir (#2649) builds the result string[] with .append() — same
     // arr_push / arr_push_owned pairing as str_split. (Its call to __fern_io_error
     // is not a need: io_error is emitted inside the fs bundle alongside read_dir.)
@@ -10836,7 +10860,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_write_file_bytes", "__fn___fern_write_file_bytes_u8",
     "__fn___fern_reader_read_chunk_bytes", "__fn___fern_reader_read_chunk_bytes_u8", "__fn___fern_writer_write_bytes", "__fn___fern_writer_write_bytes_u8", "__fn___fern_writer_write_some_bytes", "__fn___fern_writer_write_some_bytes_u8",
     "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir",
-    "__fern_read_dir_all", "__fn___fern_read_dir_all", "__fn___fern_read_dir_ino", "__fn___fern_remove_file",
+    "__fern_read_dir_all", "__fn___fern_read_dir_all", "__fn___fern_read_dir_ino", "__fn___fern_read_dir_ino_all", "__fn___fern_remove_file",
     "__fn___fern_create_dir_all",
     "__fn___fern_create_dir", "__fn___fern_remove_dir",
     "__fn___fern_create_link", "__fn___fern_create_symlink",

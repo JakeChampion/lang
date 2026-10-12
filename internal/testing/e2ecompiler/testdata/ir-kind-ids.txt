@@ -375,3 +375,4 @@ dir_chmod=426
 dir_chown=427
 mulhi_u=430
 writer_splice_forever=431
+read_dir_ino_all=432

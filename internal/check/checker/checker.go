@@ -861,14 +861,16 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "btime_nsec", Type: ast.NumberType{Width: 64, Signed: true}},
 			},
 		},
-		// DirEntry — one `read_dir_ino(path)` entry: the base name
-		// and the inode number the directory reader hands back with
-		// it. `ino` is 0 where the platform does not supply one.
+		// DirEntry — one `read_dir_ino(path)` entry: the base name,
+		// and the inode number and file type (as stat's mode bits) the
+		// directory reader hands back with it. Either is 0 where the
+		// platform does not supply one.
 		{
 			Name: "DirEntry",
 			Fields: []ast.Param{
 				{Name: "name", Type: ast.StringType{}},
 				{Name: "ino", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "kind", Type: ast.NumberType{Width: 32, Signed: false}},
 			},
 		},
 		// FsStat — `statfs(path)` shape: what a FILESYSTEM reports
@@ -3055,6 +3057,16 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// identifier for the file, the same one `stat` reports there,
 	// which is not the kernel's inode number.
 	c.info.FuncSigs["read_dir_ino"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.ArrayType{Elem: ast.StructType{Name: "DirEntry"}},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// read_dir_ino_all(path) is read_dir_ino with `.` and `..` kept, in
+	// the order the directory reader reports them, as read_dir_all is
+	// read_dir's.
+	c.info.FuncSigs["read_dir_ino_all"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
 			ast.ArrayType{Elem: ast.StructType{Name: "DirEntry"}},

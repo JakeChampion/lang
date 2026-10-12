@@ -184,10 +184,19 @@ func TestBuildInstallsSmokeTestedStage1(t *testing.T) {
 	root := checkout(t)
 	stage0 := filepath.Join(root, "candidate")
 	write(t, stage0, []byte(fixpointCompiler), 0o755)
+	// A key from an earlier install: this checkout has no cmd/fern to compute
+	// the new one, so the build must not leave the old one claiming it.
+	if err := os.MkdirAll(filepath.Join(root, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, "bin", "fern-selfhost.key"), []byte("stale\n"), 0o644)
 
 	out, err := run(t, root, "build", []string{"STAGE0=" + stage0}, "")
 	if err != nil {
 		t.Fatalf("expected success: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "bin", "fern-selfhost.key")); err == nil {
+		t.Errorf("build left the previous install's bin/fern-selfhost.key")
 	}
 	if !strings.Contains(out, "smoke: ") || !strings.Contains(out, "installed bin/fern-selfhost") {
 		t.Errorf("output does not report the smoke test and the install")
