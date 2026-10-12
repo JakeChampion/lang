@@ -627,13 +627,19 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
           let kids: string[] = [];
           let held: Option[Dir] = None;
           let listed: Result[string[], IoError] = Err(Unsupported);
-          match (open_child(stack, sp, p_path, p_name, p_via_link)) {
-            Ok(d) => {
-              listed = d.entries();
-              held = Some(d);
-            },
-            Err(e) => {
-              listed = Err(e);
+          if (target_os() == "wasi") {
+            // No wasm backend lowers a directory handle yet (fsdir), so the
+            // listing is by path and so is each child's stat.
+            listed = read_dir(p_path);
+          } else {
+            match (open_child(stack, sp, p_path, p_name, p_via_link)) {
+              Ok(d) => {
+                listed = d.entries();
+                held = Some(d);
+              },
+              Err(e) => {
+                listed = Err(e);
+              }
             }
           }
           match (listed) {
