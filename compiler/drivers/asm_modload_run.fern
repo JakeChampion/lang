@@ -5,7 +5,7 @@
 //     glued together with `///MODULE <name>` marker lines — a hand-packed
 //     bundle the Go test harness concatenates, not real module loading.
 //   * the synthetic builtin table (parser.inject_builtin_enums), which
-//     conjures the built-in TYPES (JsonValue / IoError / FileStat / …) in
+//     conjures the built-in TYPES (IoError / Body / FileStat / …) in
 //     code instead of reading them from source.
 //
 // This driver instead does what the native compiler's `modload` does:

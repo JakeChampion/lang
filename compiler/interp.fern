@@ -3641,8 +3641,8 @@ function variant_simple_name(name: string): string {
 
 // aliases_with_enums appends a synthetic union alias (enum name → variant
 // names) for each enum the variant structs in `types` name as their owner —
-// the module's own enums and the injected builtin ones (IoError, Body,
-// Body) alike. Enums desugar to variant structs but not to a TypeAlias, so
+// the module's own enums and the injected builtin ones (IoError, Body)
+// alike. Enums desugar to variant structs but not to a TypeAlias, so
 // without this a method declared on the enum type — `function (s: Shape)
 // area()` — wouldn't dispatch on a variant value: is_variant_of_alias_interp
 // only consults the alias table.

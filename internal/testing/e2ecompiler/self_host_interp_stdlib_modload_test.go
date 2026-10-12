@@ -165,8 +165,8 @@ function main(): i32 {
 	// parsed AST and the parser ran to completion only to stop at
 	// `undefined function: JNumber` when it went to build a value.
 	{"json-parse-array", "import \"std/json\";\nfunction main(): i32 {\n  match (json.json_parse(\"[1,2,3]\")) {\n    Some(v) => {\n      match (v) {\n        JArray(items) => {\n          match (items[1]) {\n            JNumber(s) => { if (s == \"2\") { return 7; } return 1; },\n            _ => { return 2; }\n          }\n        },\n        _ => { return 3; }\n      }\n    },\n    None => { return 4; }\n  }\n}\n"},
-	// The object shape, which reaches JNumber through a `Map[string, JsonValue]`
-	// payload and a `.get` returning `Option[JsonValue]`.
+	// The object shape, which reaches JNumber through a `JsonObject` payload
+	// and a `.get` returning `Option[JsonValue]`.
 	{"json-parse-object", "import \"std/json\";\nfunction main(): i32 {\n  match (json.json_parse(\"{\\\"a\\\":[1,2,3]}\")) {\n    Some(v) => {\n      match (v) {\n        JObject(m) => {\n          match (m.get(\"a\")) {\n            Some(arr) => {\n              match (arr) {\n                JArray(items) => {\n                  match (items[1]) {\n                    JNumber(s) => { if (s == \"2\") { return 7; } return 1; },\n                    _ => { return 2; }\n                  }\n                },\n                _ => { return 3; }\n              }\n            },\n            None => { return 4; }\n          }\n        },\n        _ => { return 5; }\n      }\n    },\n    None => { return 6; }\n  }\n}\n"},
 	// Round-tripping a hand-built document through the encoder: construction on
 	// the way in, variant matching on the way out.
