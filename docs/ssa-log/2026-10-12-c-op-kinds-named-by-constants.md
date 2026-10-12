@@ -70,6 +70,18 @@ from one typing of each operand. On top of the rows above: 71.327 G →
 106 M. A chain still types each level's subtree once, so it stays quadratic,
 with a constant about a third of what it was.
 
+## Measured and not kept: calls typed from their annotated operands
+
+`annotate_typed` is bottom-up for every node but a call, which it typed with
+`check_expr` on the whole call. A `check_call_known` that read the receiver
+and argument types the annotation already had removed that, so
+`annotate_typed`'s `check_expr` calls (310 M) went away. Yet `annotate_block`
+measured the same inclusive cost (2,594 M before and after). Every ordinary
+`check_call_expr` also built the empty known record, an `unsettled` `Typed`
+with its unknown type and reason string, and that added 118 M to
+`check_module_pass`. The whole compile measured +0.17% (71.117 G →
+71.241 G), so the change was dropped.
+
 ## Open
 
 `needed_past_slot` walks every value anchored to the root for each
