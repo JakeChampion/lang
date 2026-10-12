@@ -955,9 +955,9 @@ function wrap_seq(p: Palette, code: string): string {
 }
 
 // ---- one entry --------------------------------------------------------------
-// `name` is what gets printed and `path` what gets stat'ed: inside a
-// directory they differ, and for a command-line operand they are the
-// same string.
+// `name` is what gets printed, and `ent_path` what gets stat'ed: the
+// name inside `dir`, or the name itself for a command-line operand,
+// whose `dir` is `.`. The path is joined only where it is used.
 //
 // `link_mode` is the TARGET's mode when the entry is a symlink whose
 // target could be reached. Two options need it and neither dereferences
@@ -967,14 +967,14 @@ function wrap_seq(p: Palette, code: string): string {
 // prints it.
 // `dkind` is the file type the directory record gave, as mode bits, 0 when
 // it gave none; an entry nothing stat'ed is judged by it.
-struct Ent { name: string, path: string, st: FileStat, stated: boolean, followed: boolean, target: string, has_target: boolean, link_mode: u32, link_ok: boolean, owner: string, group: string, context: string, dkind: u32 }
+struct Ent { name: string, dir: string, st: FileStat, stated: boolean, followed: boolean, target: string, has_target: boolean, link_mode: u32, link_ok: boolean, owner: string, group: string, context: string, dkind: u32 }
 
 function blank_stat(): FileStat {
   return FileStat { is_file: false, is_dir: false, size: 0 as i64, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0 as i64, rdev: 0 as i64, ino: 0 as i64, blksize: 0 as i64, blocks: 0 as i64, atime: 0 as i64, atime_nsec: 0 as i64, mtime: 0 as i64, mtime_nsec: 0 as i64, ctime: 0 as i64, ctime_nsec: 0 as i64, btime: 0 as i64, btime_nsec: 0 as i64 };
 }
 
-function ent_new(name: string, path: string): Ent {
-  return Ent { name: name, path: path, st: blank_stat(), stated: false, followed: false, target: "", has_target: false, link_mode: 0 as u32, link_ok: false, owner: "", group: "", context: "?", dkind: 0 as u32 };
+function ent_new(name: string, dir: string): Ent {
+  return Ent { name: name, dir: dir, st: blank_stat(), stated: false, followed: false, target: "", has_target: false, link_mode: 0 as u32, link_ok: false, owner: "", group: "", context: "?", dkind: 0 as u32 };
 }
 
 // Whether the listing needs a stat(2) per entry at all. A plain `ls`
@@ -1050,8 +1050,9 @@ function stat_entry(c: Cfg, e: Ent, cmdline: boolean): (Ent, boolean, string) {
 function stat_record(c: Cfg, e: Ent, cmdline: boolean): (Ent, boolean, string) {
   let follow: boolean = c.deref == deref_all() || cmdline && c.deref == deref_cmd();
   let out: Ent = e;
+  let path: string = ent_path(e);
   if (follow) {
-    match (stat(e.path)) {
+    match (stat(path)) {
       Ok(s) => {
         return (Ent { ...out, st: s, stated: true, followed: true }, true, "");
       },
@@ -1060,7 +1061,7 @@ function stat_record(c: Cfg, e: Ent, cmdline: boolean): (Ent, boolean, string) {
       }
     }
   }
-  match (lstat(e.path)) {
+  match (lstat(path)) {
     Ok(s) => {
       out = Ent { ...out, st: s, stated: true };
     },
@@ -1075,7 +1076,7 @@ function stat_record(c: Cfg, e: Ent, cmdline: boolean): (Ent, boolean, string) {
   // symlink-to-dir`, both replace the record with the target's — but
   // only when the target is one.
   if (cmdline && (c.deref == deref_cmd_dir() || c.deref == deref_cmd())) {
-    match (stat(e.path)) {
+    match (stat(path)) {
       Ok(s) => {
         if (filetype.is_dir(s.mode)) {
           return (Ent { ...out, st: s, followed: true }, true, "");
@@ -1085,7 +1086,7 @@ function stat_record(c: Cfg, e: Ent, cmdline: boolean): (Ent, boolean, string) {
     }
   }
   if (c.format == fmt_long()) {
-    match (read_link(e.path)) {
+    match (read_link(path)) {
       Ok(t) => {
         out = Ent { ...out, target: t, has_target: true };
       },
@@ -1093,7 +1094,7 @@ function stat_record(c: Cfg, e: Ent, cmdline: boolean): (Ent, boolean, string) {
     }
   }
   if (needs_link_mode(c)) {
-    match (stat(e.path)) {
+    match (stat(path)) {
       Ok(s) => {
         out = Ent { ...out, link_mode: s.mode, link_ok: true };
       },
@@ -1723,7 +1724,7 @@ function resolve_ids(c: Cfg, n: pwdb.Names, e: Ent): (Ent, pwdb.Names) {
 // other than ENOTSUP and ENODATA; neither reaches a kernel whose files
 // carry labels.
 function context_of(e: Ent): string {
-  match (selinux.file_context(e.path, e.followed)) {
+  match (selinux.file_context(ent_path(e), e.followed)) {
     Ok(ctx) => {
       return ctx;
     },
@@ -2014,7 +2015,7 @@ function write_name(c: Cfg, o: Out, p: Paint, e: Ent, colour: (string, boolean),
     body = slice_unchecked(text, 1, text.len() - 1) + "";
   }
   if (c.hyperlink) {
-    out = put(out, "\x1b]8;;file://" + hostname() + uri_encode(canonical(e.path)) + osc_end());
+    out = put(out, "\x1b]8;;file://" + hostname() + uri_encode(canonical(ent_path(e))) + osc_end());
   }
   if (record) {
     out = put_name(c, out, body);
@@ -2113,7 +2114,7 @@ function emit_name(c: Cfg, o: Out, p: Paint, e: Ent, long: boolean, pad: boolean
   }
   if (long && e.has_target) {
     out = put(out, " -> ");
-    let target: Ent = ent_new(e.target, e.target);
+    let target: Ent = ent_new(e.target, ".");
     if (e.link_ok) {
       target = Ent { ...target, st: FileStat { ...e.st, mode: e.link_mode }, stated: true };
     }
@@ -2527,6 +2528,10 @@ function attach(dir: string, name: string): string {
   return gnu.join_path(dir, name);
 }
 
+function ent_path(e: Ent): string {
+  return attach(e.dir, e.name);
+}
+
 function dir_entries(c: Cfg, o: Out, path: string, seed: pwdb.Names): (Ent[], Out, pwdb.Names, boolean) {
   let out: Out = o;
   let read: DirEntry[] = [];
@@ -2561,7 +2566,7 @@ function dir_entries(c: Cfg, o: Out, path: string, seed: pwdb.Names): (Ent[], Ou
     if (hidden(c, d.name) || ignored(c, d.name)) {
       continue;
     }
-    list = list.append(Ent { ...ent_new(d.name, attach(path, d.name)), dkind: d.kind });
+    list = list.append(Ent { ...ent_new(d.name, path), dkind: d.kind });
   }
   if (!needs_stat(c)) {
     return (list, out, seed, true);
@@ -2578,11 +2583,12 @@ function dir_entries(c: Cfg, o: Out, path: string, seed: pwdb.Names): (Ent[], Ou
     let r: (Ent, boolean, string) = stat_entry(c, list[k], false);
     let e: Ent = r.0;
     if (!r.1) {
-      out = fail(out, "cannot access " + gnu.quotea(e.path) + ": " + r.2, status_minor());
+      let at: string = ent_path(e);
+      out = fail(out, "cannot access " + gnu.quotea(at) + ": " + r.2, status_minor());
       // lstat still answers for a link whose TARGET is what could not
       // be reached, and its kind is the one letter the mode column
       // keeps.
-      match (lstat(e.path)) {
+      match (lstat(at)) {
         Ok(s) => {
           e = Ent { ...e, link_mode: s.mode };
         },
@@ -2676,7 +2682,7 @@ function run_operands(c: Cfg, o: Out, operands: string[]): Out {
   let i: i32 = 0;
   while (i < args.len()) {
     let arg: string = args[i];
-    let e: Ent = ent_new(arg, arg);
+    let e: Ent = ent_new(arg, ".");
     let r: (Ent, boolean, string) = stat_entry(c, e, true);
     if (!r.1) {
       out = fail(out, "cannot access " + gnu.quotea(arg) + ": " + r.2, status_usage());
