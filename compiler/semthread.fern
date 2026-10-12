@@ -1,0 +1,462 @@
+// Branches whose outcome the path to them already decided. The done-flag
+// chain the parser builds for nested patterns (#7524) tests a flag that is
+// `false` wherever it is read, since every arm that sets it leaves; and each
+// arm tests the scrutinee's variant again after an earlier arm failed on a
+// payload, so `Node(Red(), ..)` then `Node(Black(), ..)` tests `Node` twice
+// and reads every field twice.
+//
+// A branch on a constant, or on a variant test a dominating test decided,
+// becomes a jump. An edge into an empty block that jumps goes to its target,
+// and an edge into a block that only tests a variant goes to the side the
+// edge's own tests decide. A tested value is known by its projection path, so
+// a payload a later arm reads again is the payload an earlier arm tested.
+// An edge moves only into a block without phis, so no phi gains an operand.
+import "./ssa";
+import "./ssadeps";
+import "./ssasem";
+import "./semrecords";
+import "./typeinfo";
+import "./util";
+
+pub struct Threaded { f: ssasem.Func, changed: i32 }
+
+pub function thread(f: ssasem.Func): Threaded {
+  let g: ssa.SFunc = f.graph;
+  if (!decidable(g)) {
+    return Threaded { f: f, changed: 0 };
+  }
+  let changed: i32 = 0;
+  let round: i32 = 0;
+  while (round < 8) {
+    let r: Round = thread_round(f, g);
+    if (r.changed == 0) {
+      break;
+    }
+    g = r.g;
+    changed = changed + r.changed;
+    round = round + 1;
+  }
+  if (changed == 0) {
+    return Threaded { f: f, changed: 0 };
+  }
+  return Threaded { f: ssasem.Func { ...f, graph: g }, changed: changed };
+}
+
+struct Round { g: ssa.SFunc, changed: i32 }
+
+// Whether anything here could be decided: a branch on a constant, or two
+// variant tests of one value or of parts of one value. Most functions have
+// neither, and are left before anything is built for them.
+function decidable(g: ssa.SFunc): boolean {
+  let up: i32[] = util.minus_ones(g.nvals);
+  let constant: boolean[] = __alloc_bool(g.nvals);
+  let tested: i32[] = [];
+  for b in g.blocks {
+    for ins in b.insts {
+      if (ins.result < 0 || ins.result >= g.nvals) {
+        continue;
+      }
+      let k: i32 = ins.kind_tag;
+      if (k == 2) {
+        constant = constant.with(ins.result, true);
+      } else if (ins.args.len() == 1 && (k == 7 || k == ssasem.variant_get() || k == ssasem.record_get() || k == ssasem.tuple_get())) {
+        up = up.with(ins.result, ins.args[0]);
+      } else if (k == ssasem.variant_is() && ins.args.len() == 1) {
+        tested = tested.append(ins.args[0]);
+      }
+    }
+  }
+  for b in g.blocks {
+    if (b.term.kind_tag == 3 && b.term.cond >= 0 && b.term.cond < g.nvals && constant[b.term.cond]) {
+      return true;
+    }
+  }
+  let roots: i32[] = [];
+  for v in tested {
+    let r: i32 = v;
+    let hops: i32 = 0;
+    while (r >= 0 && r < g.nvals && up[r] >= 0 && hops < 32) {
+      r = up[r];
+      hops = hops + 1;
+    }
+    if (util.index_of_i32(roots, r) >= 0) {
+      return true;
+    }
+    roots = roots.append(r);
+  }
+  return false;
+}
+
+// What a round reads of the graph it starts from. `head` is each block's
+// facts by position; `on_t` and `on_f` the facts on each side of its branch,
+// or -1 where it tests no variant.
+struct Seen { at: i32[], defs: ssa.SInst[], uses: i32[], facts: Facts, head: i32[], on_t: i32[], on_f: i32[] }
+
+function thread_round(f: ssasem.Func, g: ssa.SFunc): Round {
+  let n: i32 = g.blocks.len();
+  let none: i32[] = util.minus_ones(n);
+  let s: Seen = Seen { at: ssadeps.position_of(g), defs: definitions(g), uses: ssa.use_counts(g), facts: no_facts(), head: none, on_t: none, on_f: none };
+  s = block_facts(f, g, s);
+  let blocks: ssa.SBlock[] = g.blocks;
+  let changed: i32 = 0;
+  let bi: i32 = 0;
+  while (bi < n) {
+    let b: ssa.SBlock = g.blocks[bi];
+    let t: ssa.STerm = moved_term(f, g, s, bi, decided_term(f, s, bi, b.term));
+    if (!same_term(t, b.term)) {
+      changed = changed + 1;
+      blocks = blocks.with(bi, ssa.SBlock { ...b, term: t });
+    }
+    bi = bi + 1;
+  }
+  if (changed == 0) {
+    return Round { g: g, changed: 0 };
+  }
+  let moved: ssa.SFunc = ssa.SFunc { ...g, blocks: blocks };
+  let kept: ssa.SFunc = ssa.SFunc { ...moved, blocks: reachable_only(moved) };
+  let fresh: ssa.SFunc = ssa.SFunc { ...kept, blocks: ssa.refreshed_preds(kept) };
+  return Round { g: ssa.SFunc { ...fresh, blocks: untested(fresh) }, changed: changed };
+}
+
+// A branch the block's own facts decide, as a jump to the side it takes.
+function decided_term(f: ssasem.Func, s: Seen, bi: i32, t: ssa.STerm): ssa.STerm {
+  if (t.kind_tag != 3 || t.t == t.f) {
+    return t;
+  }
+  let d: i32 = outcome(f, s, s.head[bi], no_facts(), t.cond);
+  if (d == 1) {
+    return jump(t.t);
+  }
+  if (d == 0) {
+    return jump(t.f);
+  }
+  return t;
+}
+
+// 1 when `cond` holds wherever the facts from `h` and those in `path` do, 0
+// when it fails, -1 when they do not say.
+function outcome(f: ssasem.Func, s: Seen, h: i32, path: Facts, cond: i32): i32 {
+  let c: ssa.SInst = through_copies(s.defs, cond);
+  if (c.kind_tag == 2) {
+    if (c.imm != 0) {
+      return 1;
+    }
+    return 0;
+  }
+  let q: Test = test_of(f, s.defs, cond);
+  if (!q.ok) {
+    return 0 - 1;
+  }
+  let d: i32 = decide(f, s.facts, h, path, q);
+  if (d < 0 || q.yes) {
+    return d;
+  }
+  return 1 - d;
+}
+
+// Each edge out of block `bi` taken to the block it reaches through empty
+// jumps and decided tests.
+function moved_term(f: ssasem.Func, g: ssa.SFunc, s: Seen, bi: i32, t: ssa.STerm): ssa.STerm {
+  if (t.kind_tag == 2) {
+    return jump(reached(f, g, s, s.head[bi], t.target));
+  }
+  if (t.kind_tag != 3) {
+    return t;
+  }
+  if (t.t == t.f) {
+    return jump(reached(f, g, s, s.head[bi], t.t));
+  }
+  let ht: i32 = s.on_t[bi];
+  let hf: i32 = s.on_f[bi];
+  if (ht < 0) {
+    ht = s.head[bi];
+    hf = s.head[bi];
+  }
+  let nt: i32 = reached(f, g, s, ht, t.t);
+  let nf: i32 = reached(f, g, s, hf, t.f);
+  if (nt == nf) {
+    return jump(nt);
+  }
+  return ssa.STerm { ...t, t: nt, f: nf };
+}
+
+// The block an edge into `id` reaches, with the facts from `h`: on through an
+// empty block that jumps, and through a block that only tests a variant the
+// facts decide, adding what that test decided. Never into the entry or a
+// block with phis. An edge that passes no decided test stays where it was:
+// the backend threads plain jumps away itself.
+function reached(f: ssasem.Func, g: ssa.SFunc, s: Seen, h: i32, id: i32): i32 {
+  let cur: i32 = id;
+  let landed: i32 = id;
+  let path: Facts = no_facts();
+  let hops: i32 = 0;
+  while (hops < 16) {
+    let b: ssa.SBlock = g.blocks[s.at[cur]];
+    let next: i32 = 0 - 1;
+    if (b.insts.len() == 0 && b.term.kind_tag == 2) {
+      next = b.term.target;
+    } else if (only_tests(s, b)) {
+      let d: i32 = outcome(f, s, h, path, b.term.cond);
+      if (d >= 0) {
+        path = with_fact(path, test_of(f, s.defs, b.term.cond), d == 1, 0 - 1);
+        next = b.term.f;
+        if (d == 1) {
+          next = b.term.t;
+        }
+      }
+    }
+    if (next < 0 || next == cur || next == g.entry || has_phi(g.blocks[s.at[next]])) {
+      return landed;
+    }
+    if (b.insts.len() > 0) {
+      landed = next;
+    }
+    cur = next;
+    hops = hops + 1;
+  }
+  return landed;
+}
+
+// A block holding one variant test, read only by its own branch.
+function only_tests(s: Seen, b: ssa.SBlock): boolean {
+  if (b.insts.len() != 1 || b.term.kind_tag != 3 || b.term.t == b.term.f) {
+    return false;
+  }
+  let ins: ssa.SInst = b.insts[0];
+  return ins.kind_tag == ssasem.variant_is() && ins.result == b.term.cond && s.uses[ins.result] == 1;
+}
+
+// ---- facts ------------------------------------------------------------------
+
+// What a path has tested, as a list linked through `up`: the value at `path`
+// from `root` is `variant` when `is`, and is not when not.
+struct Facts { root: i32[], path: string[], variant: string[], is: boolean[], up: i32[] }
+
+function no_facts(): Facts {
+  return Facts { root: [], path: [], variant: [], is: [], up: [] };
+}
+
+// `facts` with what test `q` says on its `taken` side, linked to `up`.
+function with_fact(own facts: Facts, q: Test, taken: boolean, up: i32): Facts {
+  return Facts { root: facts.root.append(q.root), path: facts.path.append(q.path), variant: facts.variant.append(q.variant), is: facts.is.append(taken == q.yes), up: facts.up.append(up) };
+}
+
+// A variant test a branch reads, through `!`: on the branch's true side the
+// value at `path` from `root` is `variant` exactly when `yes`.
+struct Test { ok: boolean, root: i32, path: string, variant: string, ty: typeinfo.Type, yes: boolean }
+
+function test_of(f: ssasem.Func, defs: ssa.SInst[], cond: i32): Test {
+  let yes: boolean = true;
+  let d: ssa.SInst = through_copies(defs, cond);
+  let hops: i32 = 0;
+  while (d.kind_tag == 10 && d.str == "!" && d.args.len() == 1 && hops < 8) {
+    yes = !yes;
+    d = through_copies(defs, d.args[0]);
+    hops = hops + 1;
+  }
+  if (d.kind_tag != ssasem.variant_is() || d.args.len() != 1 || d.args[0] < 0) {
+    return Test { ok: false, root: 0 - 1, path: "", variant: "", ty: f.values[0], yes: false };
+  }
+  let k: Key = key_of(defs, d.args[0]);
+  return Test { ok: true, root: k.root, path: k.path, variant: d.str, ty: f.values[d.args[0]], yes: yes };
+}
+
+// A value as the value it was read out of, through copies, and the reads
+// that reached it: two reads of one payload of one value share a key, and a
+// value read out of nothing has an empty path.
+struct Key { root: i32, path: string }
+
+function key_of(defs: ssa.SInst[], v: i32): Key {
+  let d: ssa.SInst = through_copies(defs, v);
+  let k: i32 = d.kind_tag;
+  let reads: boolean = k == ssasem.variant_get() || k == ssasem.record_get() || k == ssasem.tuple_get();
+  if (!reads || d.args.len() != 1 || d.args[0] < 0) {
+    return Key { root: d.result, path: "" };
+  }
+  let from: Key = key_of(defs, d.args[0]);
+  return Key { root: from.root, path: from.path + "." + util.i32_to_string(k) + ":" + util.i32_to_string(d.imm) + ":" + d.str };
+}
+
+// 1 when the facts say the tested value is the test's variant, 0 when they
+// say it is not, -1 when they do not say: a value ruled out of every variant
+// but one is that one. The facts are those in `path`, newest first, then
+// those from `h`.
+function decide(f: ssasem.Func, facts: Facts, h: i32, path: Facts, q: Test): i32 {
+  let ruled: string[] = [];
+  let i: i32 = path.root.len() - 1;
+  while (i >= 0) {
+    let d: i32 = fact_says(path, i, q);
+    if (d >= 0) {
+      return d;
+    }
+    if (d == 0 - 2) {
+      ruled = ruled.append(path.variant[i]);
+    }
+    i = i - 1;
+  }
+  let at: i32 = h;
+  let hops: i32 = 0;
+  while (at >= 0 && hops < 64) {
+    let d: i32 = fact_says(facts, at, q);
+    if (d >= 0) {
+      return d;
+    }
+    if (d == 0 - 2) {
+      ruled = ruled.append(facts.variant[at]);
+    }
+    at = facts.up[at];
+    hops = hops + 1;
+  }
+  if (ruled.len() == 0) {
+    return 0 - 1;
+  }
+  let e: i32 = semrecords.find_enum(f.enums, q.ty);
+  if (e < 0) {
+    return 0 - 1;
+  }
+  for v in f.enums[e].variants {
+    if (v.name != q.variant && util.index_of_str(ruled, v.name) < 0) {
+      return 0 - 1;
+    }
+  }
+  return 1;
+}
+
+// What fact `i` says of test `q`: 1 or 0 when it decides it, -2 when it rules
+// out another variant of the same value, -1 when it is about another value.
+function fact_says(facts: Facts, i: i32, q: Test): i32 {
+  if (facts.root[i] != q.root || facts.path[i] != q.path) {
+    return 0 - 1;
+  }
+  if (facts.is[i]) {
+    if (facts.variant[i] == q.variant) {
+      return 1;
+    }
+    return 0;
+  }
+  if (facts.variant[i] == q.variant) {
+    return 0;
+  }
+  return 0 - 2;
+}
+
+// Each block's facts, by position, in a walk of the dominator tree: its
+// immediate dominator's, and, entered from that block alone, what that
+// block's branch says on the side that enters it.
+function block_facts(f: ssasem.Func, g: ssa.SFunc, s: Seen): Seen {
+  let dom: ssadeps.Dom = ssadeps.dominates(g);
+  let facts: Facts = no_facts();
+  let head: i32[] = s.head;
+  let on_t: i32[] = s.on_t;
+  let on_f: i32[] = s.on_f;
+  for bi in dom.by_clock {
+    if (bi < 0) {
+      continue;
+    }
+    let id: i32 = dom.idom[bi];
+    if (id < 0) {
+      continue;
+    }
+    let b: ssa.SBlock = g.blocks[bi];
+    if (id != bi) {
+      let h: i32 = head[id];
+      if (b.preds.len() == 1 && s.at[b.preds[0]] == id && on_t[id] >= 0) {
+        h = on_f[id];
+        if (g.blocks[id].term.t == b.id) {
+          h = on_t[id];
+        }
+      }
+      head = head.with(bi, h);
+    }
+    if (b.term.kind_tag == 3 && b.term.t != b.term.f) {
+      let q: Test = test_of(f, s.defs, b.term.cond);
+      if (q.ok) {
+        on_t = on_t.with(bi, facts.root.len());
+        facts = with_fact(facts, q, true, head[bi]);
+        on_f = on_f.with(bi, facts.root.len());
+        facts = with_fact(facts, q, false, head[bi]);
+      }
+    }
+  }
+  return Seen { ...s, facts: facts, head: head, on_t: on_t, on_f: on_f };
+}
+
+// ---- graph ------------------------------------------------------------------
+
+function jump(target: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: 2, cond: 0, target: target, t: 0, f: 0, value: 0 };
+}
+
+function same_term(a: ssa.STerm, b: ssa.STerm): boolean {
+  return a.kind_tag == b.kind_tag && a.cond == b.cond && a.target == b.target && a.t == b.t && a.f == b.f && a.value == b.value;
+}
+
+function has_phi(b: ssa.SBlock): boolean {
+  for ins in b.insts {
+    if (ins.kind_tag == 8) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function reachable_only(g: ssa.SFunc): ssa.SBlock[] {
+  let live: boolean[] = ssadeps.reachable_blocks(g);
+  let out: ssa.SBlock[] = [];
+  let i: i32 = 0;
+  while (i < g.blocks.len()) {
+    if (live[i]) {
+      out = out.append(g.blocks[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// The blocks with each variant test no branch reads any more dropped.
+function untested(g: ssa.SFunc): ssa.SBlock[] {
+  let uses: i32[] = ssa.use_counts(g);
+  let out: ssa.SBlock[] = [];
+  for b in g.blocks {
+    let insts: ssa.SInst[] = [];
+    for ins in b.insts {
+      if (ins.kind_tag != ssasem.variant_is() || ins.result < 0 || uses[ins.result] > 0) {
+        insts = insts.append(ins);
+      }
+    }
+    out = out.append(ssa.SBlock { ...b, insts: insts });
+  }
+  return out;
+}
+
+function definitions(g: ssa.SFunc): ssa.SInst[] {
+  let none: ssa.SInst = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  let out: ssa.SInst[] = [];
+  while (out.len() < g.nvals) {
+    out = out.append(none);
+  }
+  for b in g.blocks {
+    for ins in b.insts {
+      if (ins.result >= 0 && ins.result < out.len()) {
+        out = out.with(ins.result, ins);
+      }
+    }
+  }
+  return out;
+}
+
+function through_copies(defs: ssa.SInst[], v: i32): ssa.SInst {
+  if (v < 0 || v >= defs.len()) {
+    return ssa.SInst { kind_tag: 0, result: v, args: [], imm: 0, str: "" };
+  }
+  let d: ssa.SInst = defs[v];
+  let hops: i32 = 0;
+  while (d.kind_tag == 7 && d.args.len() == 1 && d.args[0] >= 0 && hops < 16) {
+    d = defs[d.args[0]];
+    hops = hops + 1;
+  }
+  if (d.result < 0) {
+    return ssa.SInst { ...d, result: v };
+  }
+  return d;
+}
