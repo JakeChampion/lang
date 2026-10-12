@@ -396,9 +396,11 @@ jobs:
   # scripts/fernsmith-mutant builds a compiler with a parameter/capture swap
   # and runs TestFernsmithShrinksAPlantedMiscompile with FERN_FERNSMITH_MUTANT
   # naming it, which checks that GenMainBytes corpora catch the plant and that
-  # truncation shrinks the failing corpus. Nightly rather than per PR, since it costs a compiler
-  # build and about five minutes of sweep; it fails when a plant's anchor in
-  # compiler/lift.fern moves or a generator change stops the catch.
+  # ShrinkMainBytes reduces the failing corpus to a small repro. Nightly
+  # rather than per PR, since it costs a compiler build and about seven
+  # minutes of sweep and shrink; it fails when a plant's anchor in
+  # compiler/lift.fern moves, a generator change stops the catch, or a repro
+  # outgrows its bound.
   fernsmith-mutant:
     if: github.repository == 'JakeChampion/lang'
     runs-on: ubuntu-latest

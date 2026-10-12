@@ -110,8 +110,9 @@ func TestFernsmithShrinksAPlantedMiscompile(t *testing.T) {
 // functions generated ahead of it, and main then returns a constant.
 const mutantCorpusBytes = 8192
 
-// mutantReproBytes bounds the shrunk repro past the preamble.
-const mutantReproBytes = 1 << 20
+// mutantReproBytes bounds the shrunk repro past the preamble; the plant
+// shrinks to 708 bytes.
+const mutantReproBytes = 1024
 
 // mutantCorpus is corpus `seed`'s bytes, the same for every run.
 func mutantCorpus(seed uint64) []byte {
