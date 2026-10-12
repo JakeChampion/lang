@@ -182,8 +182,13 @@ for every plan ownership inference tries):
   may be **carried** to a construction in a later block (`Carry`): the
   blocks holding it, the constructions it is handed to, the edges leaving
   its ways that free it, and the edges on which it arrives null because the
-  donor died there as a box of another count. A record update that reads a
-  field back from its donor **keeps** the field in place (`Keeps`). The
+  donor died there as a box of another count. A construction that reads a
+  field back from its donor at the same slot, a record's or a declared
+  variant's, **keeps** the field in place (`Keeps`), and every other take
+  from that donor follows the one uniqueness read the keep makes. A donor
+  whose payloads a block takes and which dies in the block with no such
+  construction is **classified** (a keep with no construction, `built` -1):
+  its takes and its death follow one uniqueness read. The
   routes and the one-token-slot discipline are decided here, once; the
   lowering only emits what the tables say. `FERN_SELFHOST_NO_REUSE=1`
   (`reuse_layer_disabled`) plans no token, and the program's behaviour is
@@ -201,7 +206,8 @@ hold agreeing with what the replay derives. It then replays the tokens
 (`verify_reuse`): a token is taken from a value the step drops and never
 while the block's one slot is held, spent by the construction it was handed
 to, which reads nothing of the box it builds in, a kept donor is its
-construction's token, and a carried token is held on every path into a block
+construction's token, a classified donor holds the slot only where no pairing
+does, and a carried token is held on every path into a block
 or on none, spent where the carry says, freed where its way leaves, and held
 at no return. It is independent of the walk that planned: a disagreement
 names the step. It runs under `FERN_IR_VERIFY=1` (the
@@ -217,9 +223,15 @@ locals sit above `nvals`. It emits:
 - **retains** before a construction or return for every acquired supply, and
   **releases** at a drop: a parent releases its children only under
   `__fern_rc_is_unique`, then its own box (`drop_value`, the per-type
-  `__sem_release_<T>` helpers, and `__sem_drop_<T>` for children only);
+  `__sem_release_<T>` helpers, and `__sem_drop_<T>` for children only); a
+  value whose variant a payload read fixes (`ssaunits.known_variant`) is
+  released by what that variant holds, in place, and a variant holding no
+  counted field by its box alone (`drop_known`, `token_children`);
 - **takes and steals** as a uniqueness test, a slot store of zero and the
-  value in its local (`steal`);
+  value in its local (`steal`); a kept or classified donor's takes read the
+  token slot instead, and on its unique arm leave the slot as it is: its
+  death releases only the fields nothing took (`keep_release`,
+  `classified_death`);
 - **reuse**, as the plan's tables say (`Plan.reuse`): where a token is taken,
   `__fern_rc_is_unique(d)` selects the box or null (`reuse_token`); where it
   is spent, `__fern_alloc_reuse(token, slots)` hands back the box or a fresh

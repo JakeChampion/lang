@@ -33,6 +33,18 @@ function max_leaf_blocks(): i32 {
   return 16;
 }
 
+// The blocks of `g` that emit anything: a block holding nothing but a jump is
+// a trampoline the match lowering leaves and the SSA backend threads away.
+function code_blocks(g: ssa.SFunc): i32 {
+  let n: i32 = 0;
+  for b in g.blocks {
+    if (b.term.kind_tag != 2 || b.insts.len() > 0) {
+      n = n + 1;
+    }
+  }
+  return n;
+}
+
 // A function called from one place is spliced there whatever it computes, as
 // long as it is no larger than this: the original goes once the splice leaves
 // it unreferenced (ircore.cull_spliced_leaves), so the program does not grow.
@@ -93,18 +105,21 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
   let leaves: boolean[] = [];
   let once: boolean[] = [];
   let shared: boolean[] = [];
+  let small: boolean[] = [];
   let i: i32 = 0;
   while (i < funcs0.len()) {
     let is_leaf: boolean = inlinable[i] && leaf(funcs0[i]);
     let is_shared: boolean = !is_leaf && inlinable[i] && unnamed[i] && shared_spliceable(funcs0[i], calls[i]);
+    small = small.append(is_shared && count_insts(funcs0[i].graph) <= max_shared_insts());
     leaves = leaves.append(is_leaf);
     shared = shared.append(is_shared);
     once = once.append(is_shared || !is_leaf && inlinable[i] && unnamed[i] && once_spliceable(funcs0[i], calls[i]));
     i = i + 1;
   }
-  let sp: Spliceable = Spliceable { ix: ix, leaves: leaves, once: once, shared: shared, inlinable: inlinable, calls: calls, unnamed: unnamed };
-  let rounds: Inlined = splice_rounds(funcs0, rewrite, sp);
-  sp = grown_leaves(rounds, sp);
+  let sp: Spliceable = Spliceable { ix: ix, leaves: leaves, once: once, shared: shared, small: small, inlinable: inlinable, calls: calls, unnamed: unnamed };
+  let done: Rounds = splice_rounds(funcs0, rewrite, sp);
+  let rounds: Inlined = done.out;
+  sp = grown_leaves(rounds, done.sp);
   let ctors: boolean[] = constructor_leaves(rounds.funcs, sp);
   let out: Inlined = split_all(paired_all(rounds, names, rewrite, unnamed), rewrite, modes);
   match (env("FERN_SEM_DUMP")) {
@@ -231,13 +246,18 @@ function spliced_away(sp: Spliceable, ctors: boolean[], calls: i32[], left: i32[
 // calls whose arguments are all literals. `inlinable` is what may be spliced
 // at all. `calls` counts each function's call sites and `unnamed` says that
 // nothing outside the bodies names it.
-struct Spliceable { ix: util.NameIndex, leaves: boolean[], once: boolean[], shared: boolean[], inlinable: boolean[], calls: i32[], unnamed: boolean[] }
+// `small` marks the shared functions within max_shared_insts when they became
+// shared, the ones a caller that reads the result apart may splice: a body
+// later grown by its own splices keeps the answer it was given.
+struct Spliceable { ix: util.NameIndex, leaves: boolean[], once: boolean[], shared: boolean[], small: boolean[], inlinable: boolean[], calls: i32[], unnamed: boolean[] }
 
 // A function called once is spliced only after the ones it calls once are in
 // it, so a chain of them folds from the bottom up. The shared ones wait for
 // the chains to fold: spliced earlier, their copies would carry a caller
 // past max_caller_insts before the function called once from it was ready.
-function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], sp: Spliceable): Inlined {
+struct Rounds { out: Inlined, sp: Spliceable }
+
+function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], sp: Spliceable): Rounds {
   let out: Inlined = Inlined { funcs: funcs0, rewritten: [], spliced: [] };
   let alone: boolean[] = [];
   let i: i32 = 0;
@@ -266,7 +286,7 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], sp: Spliceable
       ready = ready.append(s.leaves[j] || ctors[j] || once[j] && !awaits(out.funcs[j], s.ix, once, s.shared, j));
       j = j + 1;
     }
-    let next: Round = splice_round(out, sizes, callees, rewrite, s.ix, ready, ctors, if (folded) { s.shared } else { none_of(s.shared.len()) });
+    let next: Round = splice_round(out, sizes, callees, rewrite, s.ix, ready, ctors, if (folded) { s.shared } else { none_of(s.shared.len()) }, s.small);
     more = next.changed;
     sizes = next.sizes;
     callees = next.callees;
@@ -278,7 +298,7 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], sp: Spliceable
     out = next.out;
     round = round + 1;
   }
-  return out;
+  return Rounds { out: out, sp: s };
 }
 
 // A function whose every call has been spliced into it can be a leaf itself:
@@ -303,15 +323,17 @@ function grown_leaves(sofar: Inlined, sp: Spliceable): Spliceable {
 function grown_shared(sofar: Inlined, sp: Spliceable): Spliceable {
   let shared: boolean[] = sp.shared;
   let once: boolean[] = sp.once;
+  let small: boolean[] = sp.small;
   let i: i32 = 0;
   while (i < sofar.funcs.len()) {
     if (!shared[i] && !sp.leaves[i] && sofar.rewritten[i] && sp.inlinable[i] && sp.unnamed[i] && shared_spliceable(sofar.funcs[i], sp.calls[i])) {
       shared = shared.with(i, true);
       once = once.with(i, true);
+      small = small.with(i, count_insts(sofar.funcs[i].graph) <= max_shared_insts());
     }
     i = i + 1;
   }
-  return Spliceable { ...sp, shared: shared, once: once };
+  return Spliceable { ...sp, shared: shared, once: once, small: small };
 }
 
 // `sizes` is each body's count_insts and `callees` the functions it calls
@@ -320,7 +342,7 @@ struct Round { out: Inlined, changed: boolean, sizes: i32[], callees: i32[][] }
 
 // splice_round and split_all keep the arrays they rewrite in locals, so each
 // `.with` after the first writes in place rather than copying every body.
-function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rewrite: boolean[], ix: util.NameIndex, ready: boolean[], ctors: boolean[], shared: boolean[]): Round {
+function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rewrite: boolean[], ix: util.NameIndex, ready: boolean[], ctors: boolean[], shared: boolean[], small: boolean[]): Round {
   let funcs: ssasem.Func[] = prev.funcs;
   let rewritten: boolean[] = prev.rewritten;
   let changed: boolean = false;
@@ -328,7 +350,7 @@ function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rew
   while (i < funcs.len()) {
     // A body that calls no ready function has nothing to splice.
     if (rewrite[i] && sizes[i] <= max_caller_insts() && any_ready(callees[i], ready)) {
-      let spliced: Rewrite = splice_calls(funcs[i], sizes[i], funcs, sizes, ix, ready, ctors, shared, false);
+      let spliced: Rewrite = splice_calls(funcs[i], sizes[i], funcs, sizes, ix, ready, ctors, shared, small, false);
       if (spliced.changed) {
         sizes = sizes.with(i, count_insts(spliced.f.graph));
         callees = callees.with(i, callees_of(spliced.f, ix));
@@ -493,7 +515,7 @@ pub function inline_closures(funcs: ssasem.Func[], names: string[], modes: i32[]
     let f: ssasem.Func = funcs[i];
     let size: i32 = count_insts(f.graph);
     if (rewrite[i] && size <= max_caller_insts()) {
-      f = drop_unread(splice_calls(f, size, candidates, sizes, ix, leaves, none_of(candidates.len()), none_of(candidates.len()), true).f).f;
+      f = drop_unread(splice_calls(f, size, candidates, sizes, ix, leaves, none_of(candidates.len()), none_of(candidates.len()), none_of(candidates.len()), true).f).f;
     }
     out = out.append(f);
     i = i + 1;
@@ -635,7 +657,7 @@ function constructor_leaves(funcs: ssasem.Func[], sp: Spliceable): boolean[] {
 }
 
 function constructor_body(f: ssasem.Func): boolean {
-  if (f.graph.takes_env || f.graph.blocks.len() > max_leaf_blocks() || lends_view(f)) {
+  if (f.graph.takes_env || code_blocks(f.graph) > max_leaf_blocks() || lends_view(f)) {
     return false;
   }
   if (f.graph.blocks[f.graph.entry].preds.len() > 0) {
@@ -770,7 +792,7 @@ function leaf_value_records(f: ssasem.Func, ignored: i32): i32 {
 }
 
 function leaf_body(f: ssasem.Func, ignored: i32): boolean {
-  if (f.graph.takes_env && ignored < 0 || f.graph.blocks.len() > max_leaf_blocks()) {
+  if (f.graph.takes_env && ignored < 0 || code_blocks(f.graph) > max_leaf_blocks()) {
     return false;
   }
   // The splice gives the entry one predecessor, the caller's block.
@@ -788,10 +810,14 @@ function leaf_body(f: ssasem.Func, ignored: i32): boolean {
   // counts mean every record is one of the two.
   let record_sources: i32 = 0;
   let n: i32 = 0;
+  // An exhaustive match ends in an unreachable block, which a splice copies
+  // as it stands; a body still needs a return to be a value.
+  let returns: boolean = false;
   for b in f.graph.blocks {
-    if (b.term.kind_tag < 1 || b.term.kind_tag > 3) {
+    if (b.term.kind_tag < 1 || b.term.kind_tag > 4) {
       return false;
     }
+    returns = returns || b.term.kind_tag == 1;
     for ins in b.insts {
       if (!leaf_kind(ins.kind_tag) && !(ins.kind_tag == ssasem.call() && ssasem.scalar_primitive(ins.str))) {
         return false;
@@ -811,7 +837,7 @@ function leaf_body(f: ssasem.Func, ignored: i32): boolean {
       }
     }
   }
-  return records == record_sources && n <= max_leaf_insts();
+  return returns && records == record_sources && n <= max_leaf_insts();
 }
 
 // The ready function a call instruction names, as an index into `funcs`, or -1.
@@ -844,7 +870,7 @@ function closure_callee(f: ssasem.Func, ins: ssa.SInst, ix: util.NameIndex): i32
 // result apart: anywhere else the copy saves no box. A constructor leaf among
 // them still folds its literal calls into static boxes.
 // `size` is f0's count_insts and `sizes[i]` funcs[i]'s.
-function splice_calls(f0: ssasem.Func, size: i32, funcs: ssasem.Func[], sizes: i32[], ix: util.NameIndex, ready: boolean[], ctors: boolean[], shared: boolean[], closures: boolean): Rewrite {
+function splice_calls(f0: ssasem.Func, size: i32, funcs: ssasem.Func[], sizes: i32[], ix: util.NameIndex, ready: boolean[], ctors: boolean[], shared: boolean[], small: boolean[], closures: boolean): Rewrite {
   let f: ssasem.Func = f0;
   let fsize: i32 = size;
   let done: i32 = 0;
@@ -864,7 +890,7 @@ function splice_calls(f0: ssasem.Func, size: i32, funcs: ssasem.Func[], sizes: i
         f = renamed(f, swap);
         swap = [];
         let r: i32 = f.graph.blocks[bi].insts[k].result;
-        let apart: boolean = sizes[at] <= max_shared_insts() && !whole_at(sempair.whole_values(f, ix, shared, false), r);
+        let apart: boolean = small[at] && !whole_at(sempair.whole_values(f, ix, shared, false), r);
         if (!apart && !(returned_only(f, r) && takes_apart(f, r))) {
           at = 0 - 1;
         }
@@ -905,17 +931,12 @@ function splice_calls(f0: ssasem.Func, size: i32, funcs: ssasem.Func[], sizes: i
 // callee's construction becomes the caller's result, rebuilding the box the
 // caller took apart.
 function returned_only(f: ssasem.Func, v: i32): boolean {
-  let names: i32[] = [v];
+  let names: i32[] = copies_of(f, v);
   let returned: boolean = false;
   for b in f.graph.blocks {
     for ins in b.insts {
-      for a in ins.args {
-        if (util.index_of_i32(names, a) >= 0) {
-          if (ins.kind_tag != 7) {
-            return false;
-          }
-          names = names.append(ins.result);
-        }
+      if (ins.kind_tag != 7 && (named_arg(ins.args, names) || util.index_of_i32(names, ssasem.update_base(ins)) >= 0)) {
+        return false;
       }
     }
   }
@@ -927,6 +948,34 @@ function returned_only(f: ssasem.Func, v: i32): boolean {
     }
   }
   return returned;
+}
+
+// `v` and its copies, to a fixpoint: a splice appends the block holding a
+// call's result copy after the blocks that use it.
+function copies_of(f: ssasem.Func, v: i32): i32[] {
+  let names: i32[] = [v];
+  let grew: boolean = true;
+  while (grew) {
+    grew = false;
+    for b in f.graph.blocks {
+      for ins in b.insts {
+        if (ins.kind_tag == 7 && named_arg(ins.args, names) && util.index_of_i32(names, ins.result) < 0) {
+          names = names.append(ins.result);
+          grew = true;
+        }
+      }
+    }
+  }
+  return names;
+}
+
+function named_arg(args: i32[], names: i32[]): boolean {
+  for a in args {
+    if (util.index_of_i32(names, a) >= 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // Whether `f` reads a payload or field of a box of `v`'s type: a box it takes

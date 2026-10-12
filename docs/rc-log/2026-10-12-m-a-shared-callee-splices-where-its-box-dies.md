@@ -49,6 +49,13 @@ things kept `__om_balance` out:
   caller that only inspects a node it keeps also qualified, the splices
   cascaded, and pvec_with's code grew sixfold for nothing.
 
+`returned_only` follows the result's copies to a fixpoint, since a splice
+appends the block holding a call's result copy after the blocks that use
+it, and counts a record update's base, which the update carries outside
+its operands, as another use. A function `grown_shared` makes shared is
+dropped once it is spliced into every caller, as one shared from the
+start is: the flags the rounds grew reach `spliced_away`.
+
 ## Measured
 
 `TestX86_64OrdmapReuse` (and arm64, wasm, interpreter) re-inserts every
@@ -68,7 +75,8 @@ A map kept across each round is still copied, and keeps its values.
 | ordmap_insert | 890,828 | 7,984 |
 
 ordmap_insert retires 24% fewer instructions on x86-64 and its code grows
-38% (95% on wasm), the two copies of `__om_balance`. The other Perceus
+17% (5,385 bytes against 4,588; 47% on wasm), the two copies of
+`__om_balance` with its own body dropped. The other Perceus
 and collection benchmarks allocate as before; map_int, map_probe_chain
 and pmap_insert shrink about 1% in code. The compiler binary is 0.4%
 smaller, it compiles itself in the same time, compiling `checker.fern`

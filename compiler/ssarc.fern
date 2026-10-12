@@ -1140,13 +1140,63 @@ function drops(own r: irtables.LowerResult, step: ssaunits.Step, f: ssasem.Func,
 // storage became the result's, so releasing it here would free a live box.
 // `shell` is a box whose payload this step took without emptying its slot
 // (`ssaunits.shell_root`), so its drop releases the box alone.
-function drops_less(own r: irtables.LowerResult, step: ssaunits.Step, f: ssasem.Func, links: i32[], taken: i32, took: i32, held: i32, shell: i32): irtables.LowerResult {
+function drops_less(own r: irtables.LowerResult, step: ssaunits.Step, f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock, links: i32[], taken: i32, took: i32, held: i32, shell: i32): irtables.LowerResult {
   for value in step.drops {
     if (value == shell) {
       r = shell_release(release(r, value, f.values[value], f));
     } else if (value != taken && value != took && value != held) {
-      r = drop_linked(r, value, links, f);
+      r = drop_known(r, value, links, f, known_fields(f, p, b, value));
     }
+  }
+  return r;
+}
+
+// The fields of the variant a dying value's box holds where a payload read
+// fixes it (ssaunits.known_variant), when they are few enough to walk in
+// place and its type has no finalizer for the helper to run.
+struct KnownFields { ok: boolean, fields: semrecords.Field[] }
+
+function known_fields(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock, d: i32): KnownFields {
+  let none: KnownFields = KnownFields { ok: false, fields: [] };
+  let name: string = ssaunits.known_variant(p.reuse.reads, b, d);
+  if (name == "" || ssasem.finalizer_of(f, f.values[d]) != "") {
+    return none;
+  }
+  let e: i32 = semrecords.find_enum(f.enums, f.values[d]);
+  if (e < 0 || f.enums[e].layout != semrecords.layout_variant()) {
+    return none;
+  }
+  let v: i32 = semrecords.find_variant(f.enums[e], name);
+  if (v < 0 || walked_rest(f.enums[e].variants[v].fields, []) > max_inline_rest()) {
+    return none;
+  }
+  return KnownFields { ok: true, fields: f.enums[e].variants[v].fields };
+}
+
+// A dying value of a known variant: one with no counted field is released
+// alone, and one with a few has them walked in place, where the type's
+// release helper would test the variant again.
+function drop_known(own r: irtables.LowerResult, value: i32, links: i32[], f: ssasem.Func, k: KnownFields): irtables.LowerResult {
+  if (!k.ok || value < links.len() && links[value] >= 0) {
+    return drop_linked(r, value, links, f);
+  }
+  if (walked_rest(k.fields, []) > 0) {
+    r = emit(r, ir.op_load_local(value));
+    r = emit(r, aligned_unique());
+    r = emit(r, ir.op_if(0));
+    r = drop_fields_except(r, value, k.fields, [], scratch_base(f), f);
+    r = emit(r, ir.op_end());
+  }
+  return release(r, value, f.values[value], f);
+}
+
+// The children a unique donor gives up as it becomes a token.
+function token_children(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, k: KnownFields): irtables.LowerResult {
+  if (k.ok) {
+    return drop_fields_except(r, donor, k.fields, [], scratch_base(f), f);
+  }
+  if (has_children(f.values[donor], f)) {
+    r = drop_children(r, donor, f.values[donor], scratch_base(f), f);
   }
   return r;
 }
@@ -1174,9 +1224,9 @@ function zero_local(own r: irtables.LowerResult, slot: i32): irtables.LowerResul
 // construction, and moved from the donor's local when a carry brought it,
 // where `hold_token` took it as the box or null and a null edge may have
 // zeroed it.
-function self_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, carried: boolean): irtables.LowerResult {
+function self_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, carried: boolean, k: KnownFields): irtables.LowerResult {
   if (!carried) {
-    return reuse_token(r, f, donor);
+    return reuse_token(r, f, donor, k);
   }
   r = emit(r, ir.op_load_local(donor));
   r = emit(r, ir.op_store_local(token_slot(f)));
@@ -1187,14 +1237,12 @@ function self_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, car
 // children released when it is unique, else null once the donor's unit is
 // released. It stays in the donor's local for the construction it is carried
 // to, or for the exit edge that frees it (`free_token`).
-function hold_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32): irtables.LowerResult {
+function hold_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, k: KnownFields): irtables.LowerResult {
   r = reserve(r, scratch_base(f));
   r = emit(r, ir.op_load_local(donor));
   r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
   r = emit(r, ir.op_if(0));
-  if (has_children(f.values[donor], f)) {
-    r = drop_children(r, donor, f.values[donor], scratch_base(f), f);
-  }
+  r = token_children(r, f, donor, k);
   r = emit(r, ir.op_else());
   r = release(r, donor, f.values[donor], f);
   r = zero_local(r, donor);
@@ -1212,15 +1260,13 @@ function free_token(own r: irtables.LowerResult, slot: i32): irtables.LowerResul
   return emit(r, ir.op_end());
 }
 
-function reuse_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32): irtables.LowerResult {
+function reuse_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, k: KnownFields): irtables.LowerResult {
   let token: i32 = token_slot(f);
   r = reserve(r, scratch_base(f));
   r = emit(r, ir.op_load_local(donor));
   r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
   r = emit(r, ir.op_if(0));
-  if (has_children(f.values[donor], f)) {
-    r = drop_children(r, donor, f.values[donor], scratch_base(f), f);
-  }
+  r = token_children(r, f, donor, k);
   r = emit(r, ir.op_load_local(donor));
   r = emit(r, ir.op_store_local(token));
   r = emit(r, ir.op_else());
@@ -1250,19 +1296,92 @@ function keep_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32): ir
   return emit(r, ir.op_end());
 }
 
-// The kept donor's drop: a unique donor gives up the children it does not keep
-// and its box is the token; a shared one is released as any dying value.
-function keep_release(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, slots: boolean[]): irtables.LowerResult {
+// The kept donor's drop: a unique donor gives up the children it neither keeps
+// nor has moved out, and its box is the token; a shared one is released as any
+// dying value.
+function keep_release(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, fields: semrecords.Field[], skip: boolean[]): irtables.LowerResult {
   r = emit(r, ir.op_load_local(token_slot(f)));
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_bin("ne", 0, false));
   r = emit(r, ir.op_if(0));
-  r = drop_fields_except(r, donor, record_fields(f.values[donor], f), slots, scratch_base(f), f);
+  r = drop_fields_except(r, donor, fields, skip, scratch_base(f), f);
   r = emit(r, ir.op_else());
   r = drop_value(r, donor, f.values[donor], scratch_base(f), f);
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_const_i32(0));
   return emit(r, ir.op_store_local(donor));
+}
+
+// A classified donor's death (ssaunits.classified): the token slot holds its
+// box when it was unique at its first take, and the slots it took are then
+// the frame's, so only its other fields are released before the box is freed,
+// or, `held` for a construction, left in its local as the token. Past a few
+// such fields the taken slots are nulled and the type's drop helper walks the
+// rest, which costs a store a slot rather than a walk a field at every death.
+// A donor read as shared had its takes retained, and is released whole by the
+// ordinary test, which also covers its count having fallen since.
+function classified_death(own r: irtables.LowerResult, f: ssasem.Func, k: ssaunits.Keeps, at: i32, held: boolean): irtables.LowerResult {
+  let donor: i32 = k.donors[at];
+  let fields: semrecords.Field[] = donor_fields(f, k.moved[at][0], donor);
+  r = emit(r, ir.op_load_local(token_slot(f)));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_bin("ne", 0, false));
+  r = emit(r, ir.op_if(0));
+  if (walked_rest(fields, k.freed[at]) <= max_inline_rest()) {
+    r = drop_fields_except(r, donor, fields, k.freed[at], scratch_base(f), f);
+  } else {
+    r = null_slots(r, donor, k.freed[at]);
+    r = drop_children(r, donor, f.values[donor], scratch_base(f), f);
+  }
+  if (!held) {
+    r = release(r, donor, f.values[donor], f);
+  }
+  r = emit(r, ir.op_else());
+  r = drop_value(r, donor, f.values[donor], scratch_base(f), f);
+  if (held) {
+    r = zero_local(r, donor);
+  }
+  return emit(r, ir.op_end());
+}
+
+function max_inline_rest(): i32 {
+  return 2;
+}
+
+// The counted fields `skip` does not mark.
+function walked_rest(fields: semrecords.Field[], skip: boolean[]): i32 {
+  let n: i32 = 0;
+  let i: i32 = 0;
+  while (i < fields.len()) {
+    if (walked(fields[i].ty) && !(i < skip.len() && skip[i])) {
+      n = n + 1;
+    }
+    i = i + 1;
+  }
+  return n;
+}
+
+function null_slots(own r: irtables.LowerResult, box: i32, slots: boolean[]): irtables.LowerResult {
+  let i: i32 = 0;
+  while (i < slots.len()) {
+    if (slots[i]) {
+      r = emit(r, ir.op_load_local(box));
+      r = emit(r, ir.op_const_i32(0));
+      r = emit(r, ir.op_struct_set(i, 0));
+    }
+    i = i + 1;
+  }
+  return r;
+}
+
+// The fields of the record or variant the take `taken` read out of `donor`.
+function donor_fields(f: ssasem.Func, taken: i32, donor: i32): semrecords.Field[] {
+  let get: ssa.SInst = definition(f, taken);
+  if (get.kind_tag == ssasem.record_get()) {
+    return record_fields(f.values[donor], f);
+  }
+  let owner: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, f.values[donor])];
+  return owner.variants[semrecords.find_variant(owner, get.str)].fields;
 }
 
 // drop_record_fields over the fields `skip` does not mark.
@@ -1350,7 +1469,7 @@ function reuse_construct(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.S
     r = emit(r, ir.op_load_local(token_slot(f)));
     r = emit(r, ir.op_store_local(ins.result));
     r = emit(r, ir.op_end());
-    r = keep_release(r, f, k.donors[at], kept);
+    r = keep_release(r, f, k.donors[at], fields, either(kept, k.freed[at]));
   }
   let i: i32 = 0;
   while (i < ins.args.len() && i < fields.len()) {
@@ -1362,6 +1481,16 @@ function reuse_construct(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.S
     i = i + 1;
   }
   return r;
+}
+
+function either(a: boolean[], b: boolean[]): boolean[] {
+  let out: boolean[] = [];
+  let i: i32 = 0;
+  while (i < a.len() || i < b.len()) {
+    out = out.append(i < a.len() && a[i] || i < b.len() && b[i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // The store of field `i` from the box and the value on the stack.
@@ -5941,11 +6070,12 @@ function builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): irtables.Low
 }
 
 function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], b: ssa.SBlock, structs: irtables.StructTab, grows: ssaunits.GrowTable, maps: boolean[], carry: ssaunits.Carry, bpos: i32): irtables.LowerResult {
-  r = drops(r, at(p, idx, b.id, ssaunits.entry_point(), 0 - 1), f, links);
+  r = drops_less(r, at(p, idx, b.id, ssaunits.entry_point(), 0 - 1), f, p, b, links, 0 - 1, 0 - 1, 0 - 1, 0 - 1);
   let pos: i32 = 0;
   let pairs: ssaunits.ReusePairs = p.reuse.pairs[bpos];
   let keeps: ssaunits.Keeps = p.reuse.keeps[bpos];
   let kept: i32[] = ssaunits.kept_values(keeps);
+  let moved: i32[] = ssaunits.moved_values(keeps);
   let late: i32[] = ssaunits.late_values(keeps);
   for ins in b.insts {
     if (ins.kind_tag != 6 && ins.kind_tag != 8) {
@@ -5976,9 +6106,9 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
       // kept donor's token was taken at its first kept read, and its drop
       // is the construction's.
       if (pairs.selfs[pos] >= 0 && kb < 0) {
-        r = self_token(r, f, pairs.selfs[pos], ssaunits.carry_held_for(carry, b.id, pos));
+        r = self_token(r, f, pairs.selfs[pos], ssaunits.carry_held_for(carry, b.id, pos), known_fields(f, p, b, pairs.selfs[pos]));
       } else if (pairs.builds[pos] >= 0 && kb < 0) {
-        r = self_token(r, f, pairs.builds[pos], true);
+        r = self_token(r, f, pairs.builds[pos], true, known_fields(f, p, b, pairs.builds[pos]));
       }
       if (pairs.builds[pos] >= 0 || pairs.selfs[pos] >= 0) {
         r = reuse_construct(r, f, ins, keeps, kb);
@@ -5986,17 +6116,31 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
         r = map_in_place(r, f, ins);
         step = ssaunits.Step { ...step, drops: without(step.drops, ins.args[0]) };
       } else if (util.index_of_i32(late, ins.result) < 0) {
-        r = instruction(r, f, p, ins, structs, defer0, link_at(f, links, ins), util.index_of_i32(kept, ins.result) >= 0);
+        let under_token: boolean = util.index_of_i32(kept, ins.result) >= 0 || util.index_of_i32(moved, ins.result) >= 0;
+        r = instruction(r, f, p, ins, structs, defer0, link_at(f, links, ins), under_token);
         r = settle_call_link(r, f, links, ins);
       }
       r = bracket_give(r, f, held);
-      if (pairs.tokens[pos] >= 0 && !ssaunits.token_kept(keeps, pos)) {
-        r = hold_token(r, f, pairs.tokens[pos]);
+      let c: i32 = ssaunits.classified_at(keeps, pos);
+      let dies: i32 = 0 - 1;
+      if (c >= 0) {
+        dies = keeps.donors[c];
+      }
+      if (pairs.tokens[pos] >= 0 && !ssaunits.token_kept(keeps, pos, pairs.tokens[pos])) {
+        r = hold_token(r, f, pairs.tokens[pos], known_fields(f, p, b, pairs.tokens[pos]));
+      } else if (dies >= 0 && dies == pairs.tokens[pos]) {
+        r = classified_death(r, f, keeps, c, true);
       }
       let held_on: i32 = ssaunits.carry_held(carry, b.id, pos);
-      r = drops_less(r, step, f, links, pairs.tokens[pos], pairs.selfs[pos], held_on, ssaunits.shell_root(f, p, ins));
-      if (held_on >= 0) {
-        r = hold_token(r, f, held_on);
+      if (dies >= 0 && dies != pairs.tokens[pos] && dies != held_on) {
+        r = classified_death(r, f, keeps, c, false);
+        step = ssaunits.Step { ...step, drops: without(step.drops, dies) };
+      }
+      r = drops_less(r, step, f, p, b, links, pairs.tokens[pos], pairs.selfs[pos], held_on, ssaunits.shell_root(f, p, ins));
+      if (held_on >= 0 && held_on == dies) {
+        r = classified_death(r, f, keeps, c, true);
+      } else if (held_on >= 0) {
+        r = hold_token(r, f, held_on, known_fields(f, p, b, held_on));
       }
     }
     pos = pos + 1;
