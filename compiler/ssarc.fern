@@ -2959,6 +2959,9 @@ function container(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, 
   if (unchecked_str_index(ins)) {
     return emit(r, ir.op_raw_load8());
   }
+  if (ins.kind_tag == ssasem.str_index() && ins.imm == ssasem.check_only()) {
+    return emit(r, ir.check_only(ir.op_str_index()));
+  }
   if (ins.kind_tag == ssasem.str_index()) {
     return emit(r, ir.op_str_index());
   }
