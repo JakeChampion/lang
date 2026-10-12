@@ -103,3 +103,58 @@ func checkBackgroundServe(t *testing.T, addr, stderrPath, forever string) {
 	}
 	e2eharness.WaitStderrContains(t, stderrPath, forever, 10*time.Second)
 }
+
+// A shutdown's drain waits for background work, up to its deadline: work
+// that ends inside it finishes before the process exits, and work that
+// outlives it is cancelled there, its sleep answering at once and
+// `plat.cancelled()` saying so. x86-64 only: the interpreter runs the work
+// to completion before the loop reads the signal, so nothing is left to wait
+// for.
+func TestBackgroundShutdownX86_64(t *testing.T) {
+	bin := buildFernCLI(t)
+	qemu := x86QemuOrEmpty(t)
+	src := filepath.Join(t.TempDir(), "background_shutdown.fern")
+	if err := os.WriteFile(src, []byte(backgroundShutdownSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(filepath.Dir(src), "background_shutdown.bin")
+	if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", out, src).CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, o)
+	}
+	t.Run("ends inside the drain", func(t *testing.T) {
+		cmd := runX86Bin(qemu, out)
+		addr, stderrPath := e2eharness.StartInheritedServer(t, cmd)
+		e2eharness.CheckShutdownWaitsForBackground(t, cmd, addr, stderrPath, "/short", "short: done", 10*time.Second)
+	})
+	t.Run("outlives the drain", func(t *testing.T) {
+		cmd := runX86Bin(qemu, out)
+		addr, stderrPath := e2eharness.StartInheritedServer(t, cmd)
+		e2eharness.CheckShutdownWaitsForBackground(t, cmd, addr, stderrPath, "/long", "long: cut off", 6*time.Second)
+	})
+}
+
+const backgroundShutdownSource = `import "std/http";
+import "std/platform";
+import "std/serve";
+import "std/time";
+
+function later(plat: platform.Host, name: string, ms: i64): void {
+  plat.sleep(time.duration_millis(ms));
+  if (plat.cancelled()) {
+    plat.log(name + ": cut off");
+  } else {
+    plat.log(name + ": done");
+  }
+}
+
+function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
+  if (req.path == "/long") {
+    return http.ok("long").with_background(() => later(plat, "long", 10000 as i64));
+  }
+  return http.ok("short").with_background(() => later(plat, "short", 1000 as i64));
+}
+
+function main(): i32 {
+  return serve.run(0, serve.Config { ...serve.config(), shutdown_grace: time.duration_millis(0 as i64), drain_deadline: time.duration_millis(2000 as i64) }, handle);
+}
+`
