@@ -9,8 +9,8 @@ import (
 )
 
 // A record whose fields are constants is one static box even when a field is
-// itself a static box, an empty array, a constant array or another such
-// record, so `HeaderMap { names: [], values: [] }` costs nothing to build.
+// itself a static box, an empty array, a constant array, a None or another
+// such record, so `HeaderMap { names: [], values: [] }` costs nothing to build.
 // The box behaves as one built per call: an update copies it, an append to a
 // field grows a box of its own, and nested reads see the nested constants. A
 // Some is not a record, so one around a constant record stays an Option box.
@@ -40,6 +40,7 @@ func TestSelfHostRecordOfStaticBoxesIsStatic(t *testing.T) {
 
 const staticRecordSrc = `struct Pair { names: string[], vals: i32[] }
 struct Outer { tag: i32, inner: Pair, more: Pair }
+struct Reply { code: i32, inner: Pair, later: Option[() => void], hint: Option[string] }
 
 function fresh(): Pair {
   let names: string[] = [];
@@ -51,6 +52,26 @@ function nested(): Outer {
   return Outer { tag: 7, inner: Pair { names: [], vals: [] }, more: Pair { names: [], vals: [1, 2, 3] } };
 }
 
+function reply(): Reply {
+  return Reply { code: 200, inner: Pair { names: [], vals: [] }, later: None, hint: None };
+}
+
+// Recursive, so the record reaches it built rather than spliced apart.
+function unset(r: Reply, k: i32): i32 {
+  if (k > 0) {
+    return unset(r, k - 1);
+  }
+  match (r.hint) {
+    Some(h) => { return 100; },
+    None => {},
+  }
+  match (r.later) {
+    Some(g) => { return 100; },
+    None => {},
+  }
+  return r.code - 200;
+}
+
 function main(): i32 {
   let before: i64 = __heap_alloc_count();
   let n: i32 = 0;
@@ -58,7 +79,7 @@ function main(): i32 {
   while (i < 100) {
     let p: Pair = fresh();
     let o: Outer = nested();
-    n = n + p.names.len() + o.tag + o.more.vals[2] + o.inner.vals.len();
+    n = n + p.names.len() + o.tag + o.more.vals[2] + o.inner.vals.len() + unset(reply(), 2);
     i = i + 1;
   }
   if (__heap_alloc_count() - before != (0 as i64)) {
