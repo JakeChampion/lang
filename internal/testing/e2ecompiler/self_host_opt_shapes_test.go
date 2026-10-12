@@ -23,6 +23,15 @@ type optShapeCase struct {
 }
 
 var optShapeCases = []optShapeCase{
+	// A shift by a constant takes the register of an operand that dies at it
+	// and shifts there, with no copy into a fresh register first.
+	{name: "shift_in_operand_home", fn: "pack", exit: 38, src: `
+@noinline function pack(a: u64, b: u64, c: u64): u64 {
+    return (a & 255u64) << 16 | (b & 255u64) << 8 | c;
+}
+function main(): i32 { return (pack(1u64, 2u64, 3u64) % 251u64) as i32; }
+`,
+		forbid: map[string][]string{"x86-64-linux": {`movq %r\w+, %r\w+\s+shlq`}}},
 	// `while (i < xs.len())` with `i` counting up from 0 reads in bounds.
 	{name: "bce_while_len", fn: "sum_while", exit: 39, src: `
 @noinline function sum_while(xs: i32[]): i32 {

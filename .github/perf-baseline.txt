@@ -72,16 +72,16 @@ x86_64/http_hello.text	19252
 x86_64/http_hello.ir	29964671
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
-x86_64/map_int.text	5940
-x86_64/map_int.ir	42814841
-x86_64/map_probe_chain.text	5955
-x86_64/map_probe_chain.ir	401093025
+x86_64/map_int.text	5860
+x86_64/map_int.ir	41907080
+x86_64/map_probe_chain.text	5875
+x86_64/map_probe_chain.ir	389755986
 x86_64/map_string.text	8831
 x86_64/map_string.ir	66093136	2
 x86_64/ordmap_insert.text	4588
 x86_64/ordmap_insert.ir	223421413
-x86_64/pmap_insert.text	4947
-x86_64/pmap_insert.ir	78456383
+x86_64/pmap_insert.text	4896
+x86_64/pmap_insert.ir	77593554
 x86_64/pvec_with.text	2890
 x86_64/pvec_with.ir	80788658
 x86_64/record_update.ir	142620274
@@ -111,7 +111,7 @@ x86_64/tokenize.ir	36950039
 x86_64/utf8_ingest_unchecked.text	14482
 x86_64/utf8_ingest_unchecked.ir	3990676	3
 x86_64/utf8_ingest_validated.text	14726
-x86_64/utf8_ingest_validated.ir	7271282	3
+x86_64/utf8_ingest_validated.ir	7038098	3
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
