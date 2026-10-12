@@ -50,6 +50,16 @@ The same three functions moved by about +1.08 G in the first A/B of
 row is the constants and the reserved-name check. The rest is `seminline`'s
 placement of a quadratic loop, and an unrelated change could move it back.
 
+## Then: one pass in `reaches_root`
+
+`reaches_root` scanned each value's chain twice: `reads` to find the root,
+then `first_hop` for the projection before it. One pass now finds both. On
+top of the row above it measured 71.350 G → 71.327 G (−0.03%), because in
+this layout the anchored-loop call is spliced into `needed_past_slot` and
+only 880 K calls stay out of line. In the other layout the second scan was
+`reads`' 329 M. The RC plans for `checker.fern` and `fern.fern` are
+unchanged.
+
 ## Open
 
 `needed_past_slot` walks every value anchored to the root for each
