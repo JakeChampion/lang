@@ -60,6 +60,16 @@ only 880 K calls stay out of line. In the other layout the second scan was
 `reads`' 329 M. The RC plans for `checker.fern` and `fern.fern` are
 unchanged.
 
+## Then: an operator's width types each operand once
+
+`semsource.operand_width` typed the whole operator through the checker, which
+types both operands, and `address_width` typed each operand again, up to five
+subtree walks per operator node. `checker.binary_types` gives all three types
+from one typing of each operand. On top of the rows above: 71.327 G →
+71.117 G (−0.29%), and the checker calls `semsource` makes fell from 337 M to
+106 M. A chain still types each level's subtree once, so it stays quadratic,
+with a constant about a third of what it was.
+
 ## Open
 
 `needed_past_slot` walks every value anchored to the root for each
