@@ -392,11 +392,29 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+  # The generator against a planted closure miscompile (#6073):
+  # scripts/fernsmith-mutant builds a compiler with a parameter/capture swap
+  # and runs TestFernsmithShrinksAPlantedMiscompile with FERN_FERNSMITH_MUTANT
+  # naming it, which checks that GenMainBytes corpora catch the plant and that
+  # truncation shrinks the failing corpus. Nightly rather than per PR, since it costs a compiler
+  # build and about five minutes of sweep; it fails when a plant's anchor in
+  # compiler/lift.fern moves or a generator change stops the catch.
+  fernsmith-mutant:
+    if: github.repository == 'JakeChampion/lang'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
+      - name: scripts/fernsmith-mutant
+        run: scripts/fernsmith-mutant
+
   # A nightly nobody looks at is a nightly that does not exist. Failures
   # land on one long-lived issue rather than a fresh one per night, so a
   # week of the same break is a thread and not eight duplicates.
   report:
-    needs: [window, differential, differential-selfhost, differential-selfhost-arm64, differential-selfhost-wasm, fuzz, fuzz-selfhost-coverage]
+    needs: [window, differential, differential-selfhost, differential-selfhost-arm64, differential-selfhost-wasm, fuzz, fuzz-selfhost-coverage, fernsmith-mutant]
     if: failure() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:

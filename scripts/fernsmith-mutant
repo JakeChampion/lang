@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# fernsmith-mutant — plant a closure miscompile in a scratch copy of the
+# compiler and check that fernsmith catches it and shrinks it to a small
+# repro (#6073).
+#
+# Usage: fernsmith-mutant
+#
+# The plant swaps a closure's first parameter with its first capture when
+# the two have the same type, on both closure paths compiler/lift.fern
+# builds: the direct function a call-only lambda is lifted to, and the boxed
+# body an escaping one is hoisted to. That is the environment/argument
+# mix-up the #5001/#5007/#5009/#5026 cluster was made of. The mutant
+# compiler is built from the scratch copy, and
+# TestFernsmithShrinksAPlantedMiscompile sweeps GenMainBytes corpora against
+# the interpreter until one diverges, shrinks its corpus, and checks
+# the repro against the unplanted compiler. Each plant has an anchor line in
+# compiler/lift.fern; when one changes the script fails rather than building
+# an unplanted "mutant".
+#
+# Environment:
+#
+#   FERNSMITH_MUTANT_SEEDS  corpora to sweep before giving up. Default: 1024.
+#
+# x86-64 Linux only: the test drives the self-host CLI natively.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+case "$(uname -sm)" in
+  "Linux x86_64") ;;
+  *) echo "fernsmith-mutant: needs an x86-64 Linux host" >&2; exit 2 ;;
+esac
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+go build -o bin/fern ./cmd/fern
+cp -r compiler "$work/"
+python3 - "$work/compiler/lift.fern" <<'PY'
+import sys
+path = sys.argv[1]
+src = open(path).read()
+plants = [
+    # try_lift_binding: the lifted function's parameter list.
+    ('  let lname: string = "__lam_" + util.i32_to_string(acc.counter);\n',
+     '  if (lam.params.len() >= 1 && caps.len() >= 1 && lparams[0].type_name == lparams[lam.params.len()].type_name) {\n'
+     '    let first: ast.ParamDecl = lparams[0];\n'
+     '    lparams = lparams.with(0, lparams[lam.params.len()]).with(lam.params.len(), first);\n'
+     '  }\n'),
+    # The boxed closure body: its parameter and its first environment read.
+    ('  let bk: i32 = 0;\n  while (bk < lam.body.len()) {\n    bd = bd.append(lam.body[bk]);',
+     '  if (caps.len() >= 1 && lam.params.len() >= 1 && ctys[0] == lam.params[0].type_name) {\n'
+     '    ps = ps.with(1, ast.ParamDecl { ...lam.params[0], name: caps[0] });\n'
+     '    bd = bd.with(0, ast.StmtVar { name: lam.params[0].name, type_name: ctys[0], init: ast.ExprIndex { array: ast.ExprIdent { name: "__env", line: 0, col: 0, ty: "" }, index: ast.ExprNumber { text: "1", suffix: "", raw: "", is_float: false, line: 0, col: 0 }, unchecked: false, ty: "", line: 0, col: 0 }, line: 0, col: 0, fn_ret: "", fn_param_types: "" });\n'
+     '  }\n'),
+]
+for anchor, plant in plants:
+    if src.count(anchor) != 1:
+        sys.exit("fernsmith-mutant: a plant's anchor in compiler/lift.fern is gone; update the script")
+    src = src.replace(anchor, plant + anchor)
+open(path, "w").write(src)
+PY
+echo "fernsmith-mutant: building the mutant compiler" >&2
+bin/fern -target x86-64-linux -o "$work/mutant" "$work/compiler/fern.fern"
+FERN_FERNSMITH_MUTANT="$work/mutant" go test ./internal/testing/e2e \
+  -run '^TestFernsmithShrinksAPlantedMiscompile$' -count=1 -v -timeout 120m

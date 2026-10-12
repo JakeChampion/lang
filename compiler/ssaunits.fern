@@ -1508,25 +1508,16 @@ function reads(a: ssasem.Analysis, arg: i32, w: i32): boolean {
 
 // Whether `w` is read after position `pos` of block `bi`: by a later
 // instruction, by the terminator, or on the way out of the block.
-function used_after(f: ssasem.Func, a: ssasem.Analysis, bi: i32, pos: i32, w: i32): boolean {
-  let b: ssa.SBlock = f.graph.blocks[bi];
-  if (ssalive.live_out_has(a.flow, bi, w)) {
+function used_after(a: ssasem.Analysis, bi: i32, pos: i32, w: i32): boolean {
+  if (ssalive.live_out_has(a.flow, bi, w) || ssasem.read_after(a.uses, bi, pos, w)) {
     return true;
   }
-  let i: i32 = pos + 1;
-  while (i < b.insts.len()) {
-    for arg in b.insts[i].args {
-      if (reads(a, arg, w)) {
-        return true;
-      }
+  let k: i32 = a.anchored.start[w];
+  while (k < a.anchored.start[w + 1]) {
+    if (ssasem.read_after(a.uses, bi, pos, a.anchored.at[k])) {
+      return true;
     }
-    i = i + 1;
-  }
-  if (b.term.kind_tag == 1 && reads(a, b.term.value, w)) {
-    return true;
-  }
-  if (b.term.kind_tag == 3 && reads(a, b.term.cond, w)) {
-    return true;
+    k = k + 1;
   }
   return false;
 }
@@ -1536,21 +1527,19 @@ function used_after(f: ssasem.Func, a: ssasem.Analysis, bi: i32, pos: i32, w: i3
 // relations are the model's two questions: the anchored one asks whether the
 // storage behind a value is still needed, the direct one whether the value
 // itself is still in hand.
-function read_after_direct(f: ssasem.Func, a: ssasem.Analysis, direct: ssalive.Flow, bi: i32, pos: i32, v: i32): boolean {
-  let b: ssa.SBlock = f.graph.blocks[bi];
-  if (ssalive.live_out_has(direct, bi, v)) {
+function read_after_direct(a: ssasem.Analysis, direct: ssalive.Flow, bi: i32, pos: i32, v: i32): boolean {
+  if (ssalive.live_out_has(direct, bi, v) || ssasem.read_after(a.uses, bi, pos, v)) {
     return true;
   }
-  let i: i32 = pos + 1;
-  while (i < b.insts.len()) {
-    for u in b.insts[i].args {
-      if (reads_source(a, u, v)) {
-        return true;
-      }
+  let k: i32 = a.anchored.start[v];
+  while (k < a.anchored.start[v + 1]) {
+    let w: i32 = a.anchored.at[k];
+    if (has_id(a.parents[w], v) && ssasem.read_after(a.uses, bi, pos, w)) {
+      return true;
     }
-    i = i + 1;
+    k = k + 1;
   }
-  return b.term.kind_tag == 1 && reads_source(a, b.term.value, v) || b.term.kind_tag == 3 && reads_source(a, b.term.cond, v);
+  return false;
 }
 
 function other_field_get(ins: ssa.SInst, root: i32, field: i32): boolean {
@@ -1867,7 +1856,7 @@ function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned:
       if (si >= 0) {
         live = ssalive.live_in_has(a.flow, si, w);
       } else {
-        live = used_after(f, a, bi, pos, w) || has_id(args, w) && !used_after(f, a, bi, pos, s);
+        live = used_after(a, bi, pos, w) || has_id(args, w) && !used_after(a, bi, pos, s);
       }
       if (live) {
         out = out.append(w);
@@ -1994,18 +1983,12 @@ function dying_reads(f: ssasem.Func, a: ssasem.Analysis, direct: ssalive.Flow, o
       if (!(owned[v] || held[v]) || has_id(out, v) || supplied(supplies, v)) {
         continue;
       }
-      if (!read_after_direct(f, a, direct, bi, pos, v)) {
+      if (!read_after_direct(a, direct, bi, pos, v)) {
         out = out.append(v);
       }
     }
   }
   return out;
-}
-
-// Whether `v`, or a direct projection of it, is an operand of a later
-// operation of `b` or of its terminator.
-function reads_source(a: ssasem.Analysis, u: i32, v: i32): boolean {
-  return u == v || u >= 0 && has_id(a.parents[u], v);
 }
 
 function supplied(supplies: Supply[], v: i32): boolean {
@@ -2155,25 +2138,29 @@ function slot_takeable(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], go
 // different allowances; what each allows is stated at its call.
 function needed_past_slot(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, pos: i32, root: i32, take: ssa.SInst, strict: boolean, own_root: boolean, through_take: boolean): boolean {
   let b: ssa.SBlock = f.graph.blocks[bi];
-  if (ssalive.live_out_has(a.flow, bi, root) && (strict || named_after(f, a.flow, bi, root, take))) {
+  if (ssalive.live_out_has(a.flow, bi, root) && (strict || named_after(f, a, bi, root, take))) {
     return true;
   }
   let stores: i32 = 0;
-  let i: i32 = pos + 1;
-  while (i < b.insts.len()) {
-    let later: ssa.SInst = b.insts[i];
-    if (same_slot_with(later, take)) {
-      stores = stores + 1;
-      if (stores > 1) {
+  let u: i32 = a.uses.start[root];
+  while (u < a.uses.start[root + 1]) {
+    if (a.uses.block[u] == bi && a.uses.at[u] > pos) {
+      if (a.uses.kinds[u] == ssasem.term_use()) {
         return true;
       }
-    } else if (ssa.reads_value(later, root) && !other_slot_get(later, take)) {
-      return true;
+      let later: ssa.SInst = b.insts[a.uses.at[u]];
+      if (same_slot_with(later, take)) {
+        if (a.uses.slot[u] == 0) {
+          stores = stores + 1;
+          if (stores > 1) {
+            return true;
+          }
+        }
+      } else if (!other_slot_get(later, take)) {
+        return true;
+      }
     }
-    i = i + 1;
-  }
-  if (ssa.term_reads_value(b.term, root)) {
-    return true;
+    u = u + 1;
   }
   if (own_root) {
     for arg in b.insts[pos].args {
@@ -2185,7 +2172,7 @@ function needed_past_slot(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[],
   let k: i32 = a.anchored.start[root];
   while (k < a.anchored.start[root + 1]) {
     let w: i32 = a.anchored.at[k];
-    if (reaches_root(a, defs, take, root, through_take, w) && used_after(f, a, bi, pos, w)) {
+    if (reaches_root(a, defs, take, root, through_take, w) && used_after(a, bi, pos, w)) {
       return true;
     }
     k = k + 1;
@@ -2240,28 +2227,28 @@ function reaches_root(a: ssasem.Analysis, defs: ssa.SInst[], take: ssa.SInst, ro
 // on the same box is refused. The walk keeps to v's live range: a block v is
 // not live out of hands it to no successor, phi edges included, and a block v
 // is not live into reads it nowhere.
-function named_after(f: ssasem.Func, fl: ssalive.Flow, bi: i32, v: i32, take: ssa.SInst): boolean {
+function named_after(f: ssasem.Func, a: ssasem.Analysis, bi: i32, v: i32, take: ssa.SInst): boolean {
   let seen: boolean[] = __alloc_bool(f.graph.blocks.len());
   let work: i32[] = [bi];
   let next: i32 = 0;
   while (next < work.len()) {
     let at: i32 = work[next];
     next = next + 1;
-    if (!ssalive.live_out_has(fl, at, v)) {
+    if (!ssalive.live_out_has(a.flow, at, v)) {
       continue;
     }
     let from: ssa.SBlock = f.graph.blocks[at];
     for id in successors(from) {
-      let k: i32 = ssalive.position(fl, id);
+      let k: i32 = ssalive.position(a.flow, id);
       if (k >= 0) {
         let blk: ssa.SBlock = f.graph.blocks[k];
-        if (phi_reads_on(blk, from.id, v)) {
+        if (phi_reads_on(a.uses, blk, k, from.id, v)) {
           return true;
         }
         if (!seen[k]) {
           seen = seen.with(k, true);
-          if (ssalive.live_in_has(fl, k, v) && !block_defines(blk, v)) {
-            if (block_reads(blk, v, take)) {
+          if (ssalive.live_in_has(a.flow, k, v) && !block_defines(blk, v)) {
+            if (block_reads(a.uses, blk, k, v, take)) {
               return true;
             }
             work = work.append(k);
@@ -2282,31 +2269,36 @@ function block_defines(blk: ssa.SBlock, v: i32): boolean {
   return false;
 }
 
-// A phi of blk takes v on the edge from block `pred`.
-function phi_reads_on(blk: ssa.SBlock, pred: i32, v: i32): boolean {
-  for ins in blk.insts {
-    if (ins.kind_tag == 8) {
-      let i: i32 = 0;
-      while (i < blk.preds.len() && i < ins.args.len()) {
-        if (blk.preds[i] == pred && ins.args[i] == v) {
-          return true;
-        }
-        i = i + 1;
-      }
+// A phi of blk, the block at index `k`, takes v on the edge from block
+// `pred`.
+function phi_reads_on(u: ssasem.Uses, blk: ssa.SBlock, k: i32, pred: i32, v: i32): boolean {
+  let i: i32 = u.start[v];
+  while (i < u.start[v + 1]) {
+    if (u.block[i] == k && u.kinds[i] == 8 && u.slot[i] < blk.preds.len() && blk.preds[u.slot[i]] == pred) {
+      return true;
     }
+    i = i + 1;
   }
   return false;
 }
 
-// A non-phi instruction or the terminator of blk reads v other than through
-// another of its slots; a phi's reads are `phi_reads_on`'s, edge by edge.
-function block_reads(blk: ssa.SBlock, v: i32, take: ssa.SInst): boolean {
-  for ins in blk.insts {
-    if (ins.kind_tag != 8 && ssa.reads_value(ins, v) && !other_slot_get(ins, take)) {
-      return true;
+// A non-phi instruction or the terminator of blk, the block at index `k`,
+// reads v other than through another of its slots; a phi's reads are
+// `phi_reads_on`'s, edge by edge.
+function block_reads(u: ssasem.Uses, blk: ssa.SBlock, k: i32, v: i32, take: ssa.SInst): boolean {
+  let i: i32 = u.start[v];
+  while (i < u.start[v + 1]) {
+    if (u.block[i] == k) {
+      if (u.kinds[i] == ssasem.term_use()) {
+        return true;
+      }
+      if (u.kinds[i] != 8 && !other_slot_get(blk.insts[u.at[i]], take)) {
+        return true;
+      }
     }
+    i = i + 1;
   }
-  return ssa.term_reads_value(blk.term, v);
+  return false;
 }
 
 // The with that stores back at the array element `take` read, by the same
@@ -2535,7 +2527,7 @@ function hands(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.S
   for v in ins.args {
     let root: i32 = 0 - 1;
     let field: i32 = 0 - 1;
-    let lent_param: boolean = defs[v].kind_tag == 6 && !owned[v] && occurrences(ins.args, v) == 1 && !used_after(f, a, bi, pos, v);
+    let lent_param: boolean = defs[v].kind_tag == 6 && !owned[v] && occurrences(ins.args, v) == 1 && !used_after(a, bi, pos, v);
     if (is_array(f.values[v]) && !ssasem.is_text(f.values[v]) && occurrences(ins.args, v) == 1) {
       if (lent_param) {
         root = v;
