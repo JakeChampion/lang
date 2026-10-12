@@ -8124,17 +8124,13 @@ function value_contracts(): ssasem.Contract[] {
   ];
 }
 
-// The two writers and the string builder's append copy the bytes of a string
-// they only read, the builder's reset and take own no argument, the byte
+// The two writers copy the bytes of a string they only read, and the byte
 // search reads its string.
 function string_contracts(): ssasem.Contract[] {
   let writer: i32[] = [ssaunits.borrow_mode()];
   return [
     ssasem.Contract { name: "print", params: [t_string()], modes: writer, result: t_void() },
     ssasem.Contract { name: "eprint", params: [t_string()], modes: writer, result: t_void() },
-    ssasem.Contract { name: "strbuf_append", params: [t_string()], modes: writer, result: t_void() },
-    ssasem.Contract { name: "strbuf_reset", params: [], modes: [], result: t_void() },
-    ssasem.Contract { name: "strbuf_take", params: [], modes: [], result: t_string() },
     ssasem.Contract { name: "__memchr", params: [t_string(), t_i32(), t_i32()], modes: [ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode()], result: t_i32() },
     ssasem.Contract { name: "write", params: [t_string()], modes: writer, result: t_void() },
     ssasem.Contract { name: "exit", params: [t_i32()], modes: [ssaunits.value_mode()], result: t_void() },

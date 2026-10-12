@@ -102,11 +102,9 @@ function caller(n: i32): i32[] {
 }
 function noop(): void { return; }
 function void_call(): i32 { noop(); return 1; }
-// The runtime builtins with a contract: the writers and the builder's append
-// read a string, reset and take own nothing, the byte search reads its
-// string; a void call stands only as a statement.
+// The runtime builtins with a contract: the writers read a string, the byte
+// search reads its string; a void call stands only as a statement.
 function shout(s: string): i32 { print(s); eprint(s); return s.len(); }
-function built(s: string): i32 { strbuf_reset(); strbuf_append("ab"); strbuf_append(s); let t: string = strbuf_take(); return t.len(); }
 function find_byte(s: string, b: i32): i32 { return __memchr(s, b, 1); }
 function array_length(xs: i32[]): i32 { return xs.len(); }
 // A borrowed receiver's box is not this function's to grow: the push takes a
@@ -2503,10 +2501,11 @@ const TAG: string = "ab";
 @noinline function tick(n: i32): void { if (n > 0) { print("tick"); } }
 @noinline function ticked(n: i32): i32 { tick(n); return n + 1; }
 @noinline function built(s: string): i32 {
-    strbuf_reset();
-    strbuf_append("ab");
-    strbuf_append(s);
-    let t: string = strbuf_take();
+    let h: usize = buf_new(8);
+    buf_push(h, "ab");
+    buf_push(h, s);
+    let t: string = buf_take(h);
+    buf_free(h);
     return t.len();
 }
 @noinline function find_byte(s: string, b: i32): i32 { return __memchr(s, b, 1); }

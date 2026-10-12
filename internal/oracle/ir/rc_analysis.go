@@ -1441,10 +1441,8 @@ func pureReadReceiverBuiltin(name string) bool {
 // calleeRetainsAnyArg; `__heap_release_to` invalidates memory wholesale.
 // Those stay out entirely.
 //
-//   - strbuf_append memcpys the string's bytes past the buffer tail
-//     and returns void (its runtime doc, all three implementations);
-//   - buf_push / buf_push_range do the same into a capacity-carrying
-//     builder, and the piece is the argument at position 1 — position 0
+//   - buf_push / buf_push_range memcpy the string's bytes past a
+//     capacity-carrying builder's tail and return void, and the piece is the argument at position 1 — position 0
 //     is the builder's handle; buf_push_mapped, buf_push_filtered and
 //     buf_push_expanded read their table (2) too;
 //   - print / write / eprint write the bytes to an fd, void result;
@@ -1478,7 +1476,6 @@ func pureReadReceiverBuiltin(name string) bool {
 // The checker rejects a user function redeclaring a builtin name, so
 // the table can never answer for a defined function.
 var copyingBuiltinArgs = map[string][]int{
-	"strbuf_append":                    {0},
 	"buf_push":                         {1},
 	"buf_push_range":                   {1},
 	"buf_push_bytes_range":             {1},
@@ -2031,7 +2028,7 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]boo
 					mark(id)
 				}
 			}
-			// A copying builtin — strbuf_append, print, the byte
+			// A copying builtin — buf_push, print, the byte
 			// scanners — memcpys or writes the bytes out and retains
 			// nothing, and its scalar/void result cannot alias the
 			// argument. (The checker rejects a user function
@@ -3304,7 +3301,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 										// so the binding must keep its
 										// scope-exit drop. Without this,
 										// `let msg = pfx + body;
-										// strbuf_append(msg);` stranded
+										// buf_push(h, msg);` stranded
 										// msg's buffer once per call — the
 										// bound-local half of #7867's
 										// slice 2, distinct from the

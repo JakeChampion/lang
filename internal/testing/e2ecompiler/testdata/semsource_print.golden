@@ -506,20 +506,6 @@ func shout {
     ret v3
 }
 
-modes 2 result i32
-v0:string v1:void v2:string v3:void v4:void v5:string v6:i32
-func built {
-  b0:
-    v0 = param 0
-    v1 = call strbuf_reset
-    v2 = const_str
-    v3 = call strbuf_append v2
-    v4 = call strbuf_append v0
-    v5 = call strbuf_take
-    v6 = length v5
-    ret v6
-}
-
 modes 2 1 result i32
 v0:string v1:i32 v2:i32 v3:i32
 func find_byte {

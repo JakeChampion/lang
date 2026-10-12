@@ -38,7 +38,7 @@ var allRuntimeNeedRoots = []string{
 	"read_file_bytes", "sleep_ms", "str_bytes", "str_case", "str_cmp",
 	"str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
 	"str_read_line", "str_repeat", "str_replace",
-	"str_grow", "str_own", "str_split", "str_trim", "strbuf",
+	"str_grow", "str_own", "str_split", "str_trim",
 }
 
 // assertAsmLinks writes asm to <dir>/<name>.s and links it as a static,
@@ -103,8 +103,8 @@ func TestRuntimeHelperClosureArm64(t *testing.T) {
 // cross-module need-aggregation path), then link-checks the emitted runtime.
 // This validates asmcore's runtime_need_deps + close_needs transitive closure
 // per helper: if a root's helper body calls another helper the closure misses,
-// the link dangles. (str_lines → str_split and strbuf → heap are the edges this
-// most directly guards.)
+// the link dangles. (str_lines → str_split is the edge this most directly
+// guards.)
 func TestSelfHostIRRuntimeHelperClosure(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

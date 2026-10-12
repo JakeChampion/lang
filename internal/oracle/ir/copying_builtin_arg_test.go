@@ -6,18 +6,17 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// A string handed to a copying builtin — strbuf_append, print, the
+// A string handed to a copying builtin — buf_push, print, the
 // byte scanners — is memcpy'd or written out and never retained, so
 // the parameter must be credited (#7867 slice 2). Before the credit,
 // `EmitState.write`-shaped callees left every caller's fresh concat
 // temp permanently unreclaimed, and a bound local passed to
-// strbuf_append lost its scope-exit drop via the same taint.
+// a copying builtin lost its scope-exit drop via the same taint.
 func TestCopyingBuiltinArgIsCounted(t *testing.T) {
 	cases := []struct {
 		name string
 		body string
 	}{
-		{"strbuf_append", `strbuf_append(p); return 0;`},
 		{"buf_push", `let b: usize = buf_new(16); buf_push(b, p); buf_free(b); return 0;`},
 		{"buf_push_range", `let b: usize = buf_new(16); buf_push_range(b, p, 0, 1); buf_free(b); return 0;`},
 		{"buf_push_mapped", `let b: usize = buf_new(16); let t: u8[] = [1 as u8]; buf_push_mapped(b, p, t); buf_free(b); return 0;`},
@@ -266,7 +265,9 @@ func TestCopyingBuiltinArgsCreditTheMapReadKey(t *testing.T) {
 func TestBoundLocalPassedToCopyingBuiltinIsFreed(t *testing.T) {
 	src := `function shout(pfx: string, body: string): i32 {
     let msg: string = pfx + body;
-    strbuf_append(msg);
+    let h: usize = buf_new(16);
+    buf_push(h, msg);
+    buf_free(h);
     return msg.len();
 }
 function main(): i32 { return 0; }`
@@ -285,7 +286,9 @@ func TestCopyingBuiltinCreditIsInertWithFreeOff(t *testing.T) {
 	ast.RcFreeEnabled = false
 	src := `function shout(pfx: string, body: string): i32 {
     let msg: string = pfx + body;
-    strbuf_append(msg);
+    let h: usize = buf_new(16);
+    buf_push(h, msg);
+    buf_free(h);
     return msg.len();
 }
 function main(): i32 { return 0; }`

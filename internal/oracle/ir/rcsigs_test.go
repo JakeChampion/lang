@@ -149,7 +149,7 @@ func TestRcReleasesAndRcRetainsSplitTheTable(t *testing.T) {
 // classification, not just the runtime helpers.
 //
 // `providedSigs` is the verifier's record of exactly those callees, and
-// it covers the BUILTINS as well — `strbuf_append`, the Map methods,
+// it covers the BUILTINS as well — `buf_push`, the Map methods,
 // the platform surface. A builtin that moves a count and is absent from
 // this file reads to the rc verifier (`verifyrc.go`) as an opaque callee
 // that borrows, which is the unsafe direction: a callee that really
@@ -183,7 +183,7 @@ func TestEveryProvidedCalleeHasAnRcClassification(t *testing.T) {
 // actually fire — and only on an exact match.
 func TestBuiltinRuntimeAliasFollowsTheRenameAndOnlyOnAnExactMatch(t *testing.T) {
 	for _, tc := range []struct{ builtin, want string }{
-		{"strbuf_append", ""}, // classified directly; no __fern_strbuf_append helper
+		{"string_from_bytes_unchecked", ""}, // lowers to __fern_string_from_bytes; the names do not correspond
 		{"read_file", "__fern_read_file"},
 		{"exit", "__fern_exit"},
 		{"__alloc", "__fern_alloc"},

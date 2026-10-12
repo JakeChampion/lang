@@ -4897,9 +4897,6 @@ function builtin_sigs(): string[] {
     "stderr(): Writer",
     "stdin(): Reader",
     "stdout(): Writer",
-    "strbuf_append(string): void",
-    "strbuf_reset(): void",
-    "strbuf_take(): string",
     "string_from_bytes_unchecked(u8[]): string",
     "string_from_bytes_range_unchecked(u8[], i32, i32): string",
     "subprocess(string, string[], string): ProcessResult",
@@ -9128,7 +9125,7 @@ function view_sum_flags(sums: ViewSum[], vix: ViewIndex, key: string): boolean[]
 
 // view_sum_known reports whether key names a summarised declaration at
 // all. A callee with no entry is a BUILTIN — the only string-returning
-// ones are `strbuf_take`, `buf_take` and `string_from_bytes_unchecked`,
+// ones are `buf_take` and `string_from_bytes_unchecked`,
 // and all allocate fresh — so a miss means fresh rather than harmless.
 function view_sum_known(sums: ViewSum[], vix: ViewIndex, key: string): boolean {
   return view_sum_pos(sums, vix, key) >= 0;
@@ -19064,7 +19061,7 @@ function ow_fresh_builtins(): string[] {
     "hostname", "map_new", "mounts", "pipe", "random_bytes", "read_line", "set_priority",
     "setgid", "setuid",
     "signal_send", "set_extproc", "set_process_group", "set_window_size",
-    "stderr", "stdin", "stdout", "strbuf_take", "target_arch", "target_os",
+    "stderr", "stdin", "stdout", "target_arch", "target_os",
     "tcp_recv", "termios_get", "uname_field", "window_size",
   ];
   // `termios_set` is deliberately absent beside its read half: it TAKES the

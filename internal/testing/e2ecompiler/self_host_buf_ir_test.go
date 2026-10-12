@@ -9,9 +9,9 @@ import (
 )
 
 // bufIRCases exercise the capacity-carrying string builder (#8773) on the IR
-// path. Each builtin lowers to its own IR op rather than a call_direct, the
-// way the strbuf ops beside them do, and every register backend emits it as a
-// call into the shared __fern_buf_* runtime.
+// path. Each builtin lowers to its own IR op rather than a call_direct, and
+// every register backend emits it as a call into the shared __fern_buf_*
+// runtime.
 //
 // The cases that matter beyond "it appends": a take leaves the builder usable,
 // two builders accumulate independently (the property the singleton cannot

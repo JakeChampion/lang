@@ -214,8 +214,7 @@ var BuiltinCaps = map[string]string{
 // capability: stdio (including `isatty`, which reads one bit about a
 // stream the invoker already handed the process), argv, process exit,
 // the compile target's name (`target_os`, a literal once compiled),
-// pure math / bit casts, the
-// strbuf scratch buffer, in-heap constructors (map_new / cell_new /
+// pure math / bit casts, in-heap constructors (map_new / cell_new /
 // string_from_bytes_unchecked), the readiness helpers whose authority lives on
 // the pollable constructors instead, and the interp's pure stdlib
 // overrides. A builtin absent from both this set and BuiltinCaps
@@ -330,12 +329,8 @@ var Ungated = map[string]bool{
 	// process-wide state the two setters already reach.
 	"signal_mask":        true,
 	"signal_disposition": true,
-	"strbuf_reset":       true,
-	"strbuf_append":      true,
-	"strbuf_take":        true,
 	// The capacity-carrying builder (#8773). Bytes into a block this
-	// process allocated, and back out as a string: the same reach as
-	// the strbuf above, with the singleton removed.
+	// process allocated, and back out as a string.
 	"buf_new":                     true,
 	"buf_push":                    true,
 	"buf_push_range":              true,

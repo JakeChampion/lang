@@ -43,11 +43,12 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	// sha256_hw and sha256_hw_blocks are two more, and bswap one more.
 	// The five transcendental kinds (62-66) are retired: std/float now
 	// computes them in Fern. mulhi_u (430) adds one admitted binary operation
-	// with two inputs and one result.
+	// with two inputs and one result. The three strbuf kinds (117-119) are
+	// retired: the compiler writes its text through a buf_* builder.
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
-		"registered=379 declined=3\n"
+		"registered=376 declined=3\n"
 
 	cmd := runX86_64Bin(runner, bin)
 	out, err := cmd.Output()

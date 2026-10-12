@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// The wasm runtime's I/O helpers gave back none of their scratch (#9305):
-// strbuf abandoned every outgrown buffer and kept the last one, read_line its
+// The wasm runtime's I/O helpers gave back none of their scratch (#9305): the
+// string builder abandoned every outgrown buffer, read_line its
 // 256-byte line buffer, stat and fd_stat their 64-byte record, and
 // remove_dir_all a 4 KiB readdir buffer per directory, every child path, the
 // name array and every recursive result box. Each program below touches one
@@ -24,13 +24,14 @@ func TestSelfHostWasmIOScratchReleased(t *testing.T) {
 		want             int
 		setup            func(t *testing.T, dir string)
 	}{
-		{"strbuf_grows", `function main(): i32 {
-    strbuf_reset();
+		{"buf_grows", `function main(): i32 {
+    let h: usize = buf_new(16);
     let i: i32 = 0;
-    while (i < 100) { strbuf_append("0123456789"); i = i + 1; }
-    let t: string = strbuf_take();
-    strbuf_append("again");
-    let u: string = strbuf_take();
+    while (i < 100) { buf_push(h, "0123456789"); i = i + 1; }
+    let t: string = buf_take(h);
+    buf_push(h, "again");
+    let u: string = buf_take(h);
+    buf_free(h);
     return (t.len() + u.len()) % 101;
 }`, "", (1000 + 5) % 101, nil},
 		{"read_line", `function main(): i32 {

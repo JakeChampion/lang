@@ -1887,7 +1887,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
 function needs_heap_runtime(s: asmcore.EmitState): boolean {
   return s.any_need([
     "heap", "i32_to_string", "u32_to_string",
-    "str_read_line", "strbuf", "buf", "reader",
+    "str_read_line", "buf", "reader",
     "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "temp_dir",
     "read_dir", "read_dir_all", "read_dir_ino", "remove_file", "create_dir_all", "create_dir",
     "remove_dir", "create_link", "clone_file", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at",
@@ -2369,7 +2369,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   //
   // These two — the cliff counter and the heap cursor/end pair above — are the
   // ONLY .bss words an op lowering reads inline; every other reference
-  // (__fern_rc_underflow, __fern_freelist, __fern_envp, __fern_strbuf_*,
+  // (__fern_rc_underflow, __fern_freelist, __fern_envp,
   // __fern_heap_base) is emitted inside a runtime helper, which lands in this
   // same unit. That is why __fern_heap_base stays local: only __fern_str_free
   // reads it.
@@ -2678,7 +2678,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // rc-aware __fern_str_free at rc==1.
   //
   // This is the SEPARATE-BUFFER form, for data the box does not own the block of:
-  // argv entries, the strbuf drain, the subprocess pipe buffers. Data that came
+  // argv entries and the subprocess pipe buffers. Data that came
   // from __raw_alloc goes through __fern_str_box_hdr instead and costs no second
   // allocation; the `fused` word at base+4 (zeroed here by the 8-byte rc store) is
   // what tells __fern_str_free the two apart.
@@ -3627,159 +3627,21 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // via emit_ir_runtime_fern_fn in the entry block. Both write their one scratch
   // byte — the newline, the character — into the static __fern_scratch, which is
   // why they join its gate; a Fern helper has no way to name a stack slot.
-  // Global string-builder primitive — the amortised-O(1) output accumulator
-  // (strbuf_reset / strbuf_append / strbuf_take). The buffer is a heap block
-  // that doubles (from 64 KiB) when an append would not fit, so the
-  // accumulated output has no fixed ceiling (#8212). Three .bss words: len,
-  // data ptr, cap. take allocates a fresh box via __fern_alloc (so this is
-  // heap-gated too). Gated on the strbuf need the op handlers marked.
-  if (s.has_need("strbuf") || s.has_need("buf")) {
+  if (s.has_need("buf")) {
     s = emit_runtime_memcpy(s);
   }
-  if (s.has_need("strbuf")) {
-    s = s.write("    .section .bss\n");
-    s = s.write("    .align 8\n");
-    s = s.write("__fern_strbuf_len: .quad 0\n");
-    s = s.write("__fern_strbuf_ptr: .quad 0\n");
-    s = s.write("__fern_strbuf_cap: .quad 0\n");
-    s = s.write("    .section .text\n");
-    s = s.write("__fern_strbuf_reset:\n");
-    s = s.write("    movq $0, __fern_strbuf_len(%rip)\n");
-    s = s.write("    ret\n");
-    // grow(need in %rdi): replace the buffer with one of at least `need`
-    // bytes and copy the live bytes across. The old buffer is left to the
-    // arena, like the wasm runtime's strbuf. %rbx = need / new buffer,
-    // %r12 = new cap, across the __fern_alloc call.
-    s = s.write("__fern_strbuf_grow:\n");
-    s = s.write("    pushq %rbp\n");
-    s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    pushq %rbx\n");
-    s = s.write("    pushq %r12\n");
-    s = s.write("    movq %rdi, %rbx\n");
-    s = s.write("    movq __fern_strbuf_cap(%rip), %r12\n");
-    s = s.write("    testq %r12, %r12\n");
-    s = s.write("    jne .Lsbgrow_dbl\n");
-    s = s.write("    movq $65536, %r12\n");
-    s = s.write(".Lsbgrow_dbl:\n");
-    s = s.write("    cmpq %rbx, %r12\n");
-    s = s.write("    jae .Lsbgrow_alloc\n");
-    s = s.write("    addq %r12, %r12\n");
-    s = s.write("    jmp .Lsbgrow_dbl\n");
-    s = s.write(".Lsbgrow_alloc:\n");
-    s = s.write("    movq %r12, %rdi\n");
-    s = s.write("    call __fern_alloc\n");
-    if (s.leak_check) {
-      // The builder's buffer is runtime state the program never holds,
-      // so the census leaves it out as it left out the .bss reservation
-      // it replaced. %r12 is a power of two >= 64 KiB, already 16-rounded.
-      s = s.write("    movq __fern_lc_alloc_count(%rip), %rcx\n");
-      s = s.write("    subq $1, %rcx\n");
-      s = s.write("    movq %rcx, __fern_lc_alloc_count(%rip)\n");
-      s = s.write("    movq __fern_lc_alloc_bytes(%rip), %rcx\n");
-      s = s.write("    subq %r12, %rcx\n");
-      s = s.write("    movq %rcx, __fern_lc_alloc_bytes(%rip)\n");
-    }
-    s = s.write("    movq %rax, %rbx\n");  // new buffer
-    s = s.write("    movq __fern_strbuf_ptr(%rip), %rsi\n");  // old buffer (0 on the first grow)
-    s = s.write("    movq __fern_strbuf_len(%rip), %rcx\n");  // live bytes (0 while old is null)
-    s = s.write("    movq %rbx, %rdx\n");
-    s = s.write("    cmpq $0, %rcx\n");
-    s = s.write("    je .Lsbgrow_copied\n");
-    s = s.write("    movq %rdx, %rdi\n");
-    s = s.write("    movq %rcx, %rdx\n");
-    s = s.write("    call __fern_memcpy\n");
-    s = s.write(".Lsbgrow_copied:\n");
-    s = s.write("    movq %rbx, __fern_strbuf_ptr(%rip)\n");
-    s = s.write("    movq %r12, __fern_strbuf_cap(%rip)\n");
-    s = s.write("    popq %r12\n");
-    s = s.write("    popq %rbx\n");
-    s = s.write("    popq %rbp\n");
-    s = s.write("    ret\n");
-    // append(box in %rdi): grow if box.len more bytes do not fit, copy them
-    // from box.data to strbuf_ptr + strbuf_len, then bump len. %rbx holds
-    // the box across the grow call.
-    s = s.write("__fern_strbuf_append:\n");
-    s = s.write("    pushq %rbp\n");
-    s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    pushq %rbx\n");
-    s = s.write("    pushq %r12\n");
-    s = s.write("    movq %rdi, %rbx\n");
-    s = s.write("    movq 8(%rbx), %rcx\n");  // src len
-    s = s.write("    movq __fern_strbuf_len(%rip), %rdi\n");
-    s = s.write("    addq %rcx, %rdi\n");  // bytes needed after this append
-    s = s.write("    movq __fern_strbuf_cap(%rip), %rax\n");
-    s = s.write("    cmpq %rax, %rdi\n");
-    s = s.write("    jbe .Lsbapp_fits\n");
-    s = s.write("    call __fern_strbuf_grow\n");
-    s = s.write(".Lsbapp_fits:\n");
-    s = s.write("    movq (%rbx), %rsi\n");  // src data ptr
-    s = s.write("    movq 8(%rbx), %rcx\n");  // src len
-    s = s.write("    movq __fern_strbuf_ptr(%rip), %rdx\n");
-    s = s.write("    addq __fern_strbuf_len(%rip), %rdx\n");  // dst = ptr + len
-    s = s.write("    cmpq $0, %rcx\n");
-    s = s.write("    je .Lsbapp_done\n");
-    s = s.write("    movq %rdx, %rdi\n");
-    s = s.write("    movq %rcx, %rdx\n");
-    s = s.write("    call __fern_memcpy\n");
-    s = s.write(".Lsbapp_done:\n");
-    s = s.write("    movq 8(%rbx), %rcx\n");  // reload src len
-    s = s.write("    addq %rcx, __fern_strbuf_len(%rip)\n");
-    s = s.write("    popq %r12\n");
-    s = s.write("    popq %rbx\n");
-    s = s.write("    popq %rbp\n");
-    s = s.write("    ret\n");
-    s = s.write("__fern_strbuf_take:\n");
-    s = s.write("    pushq %rbp\n");
-    s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    pushq %r12\n");
-    s = s.write("    pushq %r13\n");
-    s = s.write("    pushq %r14\n");
-    s = s.write("    pushq %r15\n");
-    s = s.write("    movq __fern_strbuf_len(%rip), %r12\n");  // len
-    s = s.write("    movq %r12, %rdi\n");
-    s = s.write("    call __fern_alloc\n");
-    s = s.write("    movq %rax, %r13\n");  // data ptr
-    s = s.write("    movq __fern_strbuf_ptr(%rip), %rsi\n");
-    s = s.write("    movq %r13, %rdi\n");
-    s = s.write("    movq %r12, %rcx\n");
-    s = s.write("    cmpq $0, %rcx\n");
-    s = s.write("    je .Lsbtake_box\n");
-    s = s.write("    movq %rcx, %rdx\n");
-    s = s.write("    call __fern_memcpy\n");
-    s = s.write(".Lsbtake_box:\n");
-    // The result box comes from __fern_str_box, not a bare __fern_alloc(16):
-    // the drained string is an ordinary owned string (the lowering's str-tracking
-    // treats `strbuf_take()` as fresh), so a dropped one reaches
-    // __fn___fern_str_free, which reads the refcount at box-8. A headerless
-    // box makes that read the last word of the PRECEDING allocation — here
-    // the tail of the text just copied. Native has built this one with an
-    // rc-headered allocation since docs/RC-STRINGS-PLAN.md; the self-host was
-    // the last producer left unconverted. data@box+0 / len@box+8 are where
-    // they always were, so no consumer moves.
-    s = s.write("    movq %r13, %rdi\n");  // data
-    s = s.write("    movq %r12, %rsi\n");  // len
-    s = s.write("    call __fern_str_box\n");
-    s = s.write("    movq $0, __fern_strbuf_len(%rip)\n");  // reset
-    s = s.write("    popq %r15\n");
-    s = s.write("    popq %r14\n");
-    s = s.write("    popq %r13\n");
-    s = s.write("    popq %r12\n");
-    s = s.write("    popq %rbp\n");
-    s = s.write("    ret\n");
-  }
-  // The capacity-carrying string builder (#8773) — the accumulator above with
-  // the handle made explicit, so any number of builders are live at once and
-  // they nest. A handle is the address of a 32-byte control block:
+  // The capacity-carrying string builder (#8773). Any number of builders are
+  // live at once and they nest. A handle is the address of a 32-byte control block:
   //   [H +  0] data     — the buffer, 0 when a take left the builder unarmed
   //   [H +  8] len      — bytes accumulated so far
   //   [H + 16] cap      — bytes the buffer holds before it has to grow
   //   [H + 24] reserve  — the capacity a re-arm after a take starts from
-  // Register ABI, like the strbuf helpers above. The buffer is a bare byte
+  // Register ABI. The buffer is a bare byte
   // block; a take copies the accumulated bytes into a block of their own
   // length and boxes that, so every block frees at the class it was bumped
   // at (#9179) and the builder keeps its buffer.
   //
-  // Unlike the strbuf above, a grown-past buffer is RETURNED to the freelist
+  // A grown-past buffer is RETURNED to the freelist
   // rather than left to the arena: a builder that doubles its way up from the
   // floor would otherwise strand every prefix it passed through.
   if (s.has_need("buf")) {
@@ -3876,7 +3738,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    popq %rbp\n");
     s = s.write("    ret\n");
     // __fern_buf_push(%rdi = H, %rsi = string box): append every byte of
-    // the box's data. Box form only, like __fern_strbuf_append's operand.
+    // the box's data. Box form only.
     s = s.write("__fern_buf_push:\n");
     s = s.write("    movq 8(%rsi), %rcx\n");
     s = s.write("    xorl %edx, %edx\n");
@@ -7711,9 +7573,9 @@ function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // ssa_host_kind names the register-ABI ops ssa_host_call selects: the raw
-// syscalls, exit, the string box stamp and the string builder.
+// syscalls, exit and the string box stamp.
 function ssa_host_kind(op: string): boolean {
-  return util.str_has_prefix(op, "syscall") || op == "exit" || op == "raw_string" || util.str_has_prefix(op, "strbuf_");
+  return util.str_has_prefix(op, "syscall") || op == "exit" || op == "raw_string";
 }
 
 // ssa_host_call emits the host-floor ops as the stack machine's arms do. A
@@ -7752,18 +7614,9 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
   }
   s = s.need("heap");
-  if (ins.str == "raw_string") {
-    s = ssa_load(reg_of, ins.args[0], "%r11", s);
-    s = ssa_load(reg_of, ins.args[1], "%rcx", s);
-    s = s.write("    movq %r11, %rdi\n    movq %rcx, %rsi\n    call __fern_str_box_hdr\n");
-    return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
-  }
-  s = s.need("strbuf");
-  if (ins.args.len() > 0) {
-    s = ssa_load(reg_of, ins.args[0], "%r11", s);
-    s = s.write("    movq %r11, %rdi\n");
-  }
-  s = ssa_call_sym(s, "__fern_" + ins.str);
+  s = ssa_load(reg_of, ins.args[0], "%r11", s);
+  s = ssa_load(reg_of, ins.args[1], "%rcx", s);
+  s = s.write("    movq %r11, %rdi\n    movq %rcx, %rsi\n    call __fern_str_box_hdr\n");
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
 }
 
@@ -9308,7 +9161,7 @@ function emit_ssa_function(r: irtables.LowerResult, selected: physicalbody.Selec
 }
 
 // emit_function_via_ir_pre emits declaration `fd`'s lowered body `r` through
-// the register path, writing through the global strbuf.
+// the register path, writing through the state's builder.
 function emit_function_via_ir_pre(r: irtables.LowerResult, selected: physicalbody.Selected, fd: parser.FuncDecl, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   // Methods get the receiver-type-qualified label `__fn_<Type>.<name>` (matching
   // the lowering's dispatch); free functions stay `__fn_<name>`.
@@ -10653,15 +10506,14 @@ function emit_named_bodies(cache: irtables.LowerResult[], physical: physicalbody
 // knows its own needs — a library module that uses a helper the entry doesn't
 // (e.g. str_concat) would reference an undefined symbol at link. It runs the
 // unit's emit over `cache` (its lowered bodies, ircore.split_units) so the
-// need-set is exact, but discards the asm (strbuf_reset) and reads `needed`.
+// need-set is exact, but discards the asm and reads `needed`.
 pub function module_runtime_needs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, cache: irtables.LowerResult[], physical: physicalbody.Collection): string[] {
-  strbuf_reset();
   let s: asmcore.EmitState = asmcore.new_state();
   s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs, retain_prepared: false, memo: irverifygate.open_memo("x86-64") }, all_funcs);
   s = emit_module_funcs(mod, all_funcs, s, false, 0, 0 - 1, cache, physical, false);
   s = s.close_needs();
   irverifygate.close_memo(s.memo);
-  strbuf_reset();
+  s.release();
   return s.needed;
 }
 
@@ -10735,7 +10587,6 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
   // emit_module_funcs instead of re-lowering. The caller must have inferred
   // ret types before lowering; infer_ret_types_module is idempotent, so this
   // re-infer is a no-op there and the cache indices stay aligned.)
-  strbuf_reset();
   let s: asmcore.EmitState = asmcore.new_state();
   s = asmcore.EmitState { ...s, retain_prepared: retain, memo: irverifygate.open_memo("x86-64") };
   // struct_decls and funcs are the WHOLE-PROGRAM sets, so an imported struct's
@@ -10928,7 +10779,7 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
     }
   }
   irverifygate.close_memo(s.memo);
-  return ssaprepare.Output { text: strbuf_take(), bodies: s.prepared };
+  return ssaprepare.Output { text: s.take_text(), bodies: s.prepared };
 }
 
 // emit_seccomp_install writes `__fern_seccomp_install` and the seccomp-bpf

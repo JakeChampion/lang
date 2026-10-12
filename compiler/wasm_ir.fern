@@ -514,9 +514,6 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_uses_str_trim(cache)) {
     out = out.append("@uses_str_trim");
   }
-  if (module_uses_strbuf(cache)) {
-    out = out.append("@uses_strbuf");
-  }
   if (module_uses_buf(cache)) {
     out = out.append("@uses_buf");
   }
@@ -1625,21 +1622,10 @@ pub function module_calls_arr_str_join(cache: irtables.LowerResult[]): boolean {
   return module_calls_direct(cache, "__fern_arr_str_join");
 }
 
-// module_uses_strbuf reports whether any function emits a global string-builder
-// op (strbuf_reset / strbuf_append / strbuf_take) — so wasm.strbuf_helpers + the
-// heap allocator are emitted. strbuf_take boxes its result via $__fern_str_box,
-// so the strbuf gate also pulls the heap in (folds into the heap gate alongside
-// module_allocates / module_uses_i32_to_string).
-pub function module_uses_strbuf(cache: irtables.LowerResult[]): boolean {
-  return module_emits_op_cached(cache, "strbuf_reset") || module_emits_op_cached(cache, "strbuf_append")
-    || module_emits_op_cached(cache, "strbuf_take");
-}
-
 // module_uses_buf reports whether any function emits one of the capacity-
 // carrying string builder's ops (#8773) — so wasm.buf_helpers + the heap
 // allocator are emitted. Every one of them reaches $__fern_str_box or
-// $__fern_arr_dec, so the buf gate folds into the heap gate the way the strbuf
-// one does.
+// $__fern_arr_dec, so the buf gate folds into the heap gate.
 pub function module_uses_buf(cache: irtables.LowerResult[]): boolean {
   return module_emits_op_cached(cache, "buf_new") || module_emits_op_cached(cache, "buf_push")
     || module_emits_op_cached(cache, "buf_push_range") || module_emits_op_cached(cache, "buf_push_byte")
@@ -3985,16 +3971,12 @@ pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerRes
   );
 }
 
-// ir_route_ok is the wasm routing decision as a PROBE: the use_ir default is
-// on, the typed lowering `sub` passes the gate (ircore.gate), and
-// ir_route_final admits it.
+// ir_route_ok is the wasm routing decision as a PROBE: the typed lowering
+// `sub` passes the gate (ircore.gate), and ir_route_final admits it.
 // emit_module_mode_or_error_sub makes the same decision
 // inline because it goes on to emit from that lowering; a driver's `-decide`
 // asks here so the probe cannot drift from the emitter it describes.
 pub function ir_route_ok(lm: parser.Module, component: boolean, io: boolean, sub: ircore.Sub): boolean {
-  if (!asmcore.new_state().use_ir) {
-    return false;
-  }
   let g: ircore.Lowered = ircore.gate(ircore.with_records(lm, sub), sub);
   return g.ok && ir_route_final(g.cache, component, io, module_is_proxy(lm));
 }
@@ -4061,19 +4043,17 @@ pub function emit_core_or_error_sub(mod: parser.Module, component: boolean, io: 
   }
   // The gate (ir_route_ok's decision, inline so the bodies it judged feed the
   // emit directly).
-  if (asmcore.new_state().use_ir) {
-    let g: ircore.Lowered = ircore.gate(lm, sub);
-    let cache: irtables.LowerResult[] = g.cache;
-    if (g.ok && ir_route_final(cache, component, io, module_is_proxy(lm))) {
-      return EmittedCore { wat: emit_ir_module_mode(lm, cache, mode, sub.switches, g.physical), needs: needs_of(cache) };
-    }
-    // A module the lowering took whole but the component framing cannot
-    // import for is not an IR bail, so name the op rather than blame the IR.
-    if (g.ok && component && wasm_ir_deferrals_ok(cache)) {
-      eprint("error: " + component_refused_need(needs_of(cache), io, module_is_proxy(lm))
-        + " is not supported in a wasm component: the component framing has no import for it (build with -emit core-module for a preview1 module)");
-      exit(1);
-    }
+  let g: ircore.Lowered = ircore.gate(lm, sub);
+  let cache: irtables.LowerResult[] = g.cache;
+  if (g.ok && ir_route_final(cache, component, io, module_is_proxy(lm))) {
+    return EmittedCore { wat: emit_ir_module_mode(lm, cache, mode, sub.switches, g.physical), needs: needs_of(cache) };
+  }
+  // A module the lowering took whole but the component framing cannot
+  // import for is not an IR bail, so name the op rather than blame the IR.
+  if (g.ok && component && wasm_ir_deferrals_ok(cache)) {
+    eprint("error: " + component_refused_need(needs_of(cache), io, module_is_proxy(lm))
+      + " is not supported in a wasm component: the component framing has no import for it (build with -emit core-module for a preview1 module)");
+    exit(1);
   }
   ircore.eprint_ir_ineligible();
   exit(1);
@@ -6638,20 +6618,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append(emit_host_op_wat(o));
   } else if (o.kind_tag == 165) {  // putchar
     parts = emit_wasm_putchar(eltmp, parts);
-  } else if (o.kind_tag == 117) {  // strbuf_reset
-    // no args -> clear the global string-builder length. Void helper, so
-    // push a dummy i32 for the statement-level drop (mirrors print_str).
-    parts = parts.append("    call $__fern_strbuf_reset\n    i32.const 0\n");
-  } else if (o.kind_tag == 118) {  // strbuf_append
-    // stack: strblock ptr -> copy its bytes onto the builder. Void helper
-    // (consumes the arg); push a dummy i32 for the statement-level drop.
-    parts = parts.append("    call $__fern_strbuf_append\n    i32.const 0\n");
   } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372 || o.kind_tag == 386) {  // the buf_* builder
     parts = emit_wasm_buf_op(o, parts);
-  } else if (o.kind_tag == 119) {  // strbuf_take
-    // no args -> snapshot the builder into a fresh string box and reset it
-    // (a value op, allocates). Pushes the box ptr.
-    parts = parts.append("    call $__fern_strbuf_take\n");
   } else if (o.kind_tag == 138) {  // struct_make
     parts = emit_wasm_struct_make(arrtmp, eltmp, f64tmp, i64tmp, o, structs, parts);
   } else if (o.kind_tag == 218) {  // const_struct
@@ -9821,7 +9789,7 @@ pub function arr_slice_helper(): string {
 // emit_wasm_buf_op emits the capacity-carrying string builder's seven ops
 // (#8773). WAT's operand order already matches the helpers' parameter order, so
 // each arm is the bare call; the four void helpers push a dummy i32 for the
-// statement-level drop, the way strbuf_append does.
+// statement-level drop.
 function emit_wasm_buf_op(o: ir.Op, parts: string[]): string[] {
   if (o.kind_tag == 370) {
     return parts.append("    call $__fern_buf_push_bytes_mapped\n    i32.const 0\n");
@@ -9872,69 +9840,6 @@ function emit_wasm_buf_op(o: ir.Op, parts: string[]): string[] {
     return parts.append("    call $__fern_buf_take\n");
   }
   return parts.append("    call $__fern_buf_free\n    i32.const 0\n");  // buf_free
-}
-
-// strbuf_helpers emits the wasm global string-builder runtime (strbuf_reset /
-// strbuf_append / strbuf_take) — the wasm sibling of asm_ir's __fern_strbuf_*
-// (asm_ir.fern, a .bss buffer). The wasm AST backend never had strbuf, so this
-// is authored fresh and the IR path is its only consumer. A growable byte buffer
-// lives in the heap: $__fern_strbuf_ptr / _len / _cap track it; ensure()
-// doubles the capacity (alloc a bigger block, copy, free the old one) when an
-// append would overflow. append copies a wasm string's bytes ([s+4 .. s+4+[s]])
-// onto the buffer; take snapshots the buffer into a fresh rc-boxed string
-// ($__fern_str_box: [s]=len, bytes@[s+4]) and frees the buffer, so a build owns
-// it from its first append to its take — the natives keep it in .bss (#9305). Heap-backed (str_box / alloc), so emitted only with the
-// heap runtime (module_uses_strbuf folds into the heap gate).
-pub function strbuf_helpers(): string {
-  let o: string = "";
-  o = o + "  (global $__fern_strbuf_ptr (mut i32) (i32.const 0))\n";
-  o = o + "  (global $__fern_strbuf_len (mut i32) (i32.const 0))\n";
-  o = o + "  (global $__fern_strbuf_cap (mut i32) (i32.const 0))\n";
-  // reset: clear length (the buffer + capacity persist for reuse).
-  o = o + "  (func $__fern_strbuf_reset\n";
-  o = o + "    (global.set $__fern_strbuf_len (i32.const 0)))\n";
-  // ensure(need): grow the buffer to hold at least `need` total bytes.
-  o = o + "  (func $__fern_strbuf_ensure (param $need i32)\n";
-  o = o + "    (local $ncap i32) (local $np i32) (local $i i32)\n";
-  o = o + "    (if (i32.le_u (local.get $need) (global.get $__fern_strbuf_cap)) (then (return)))\n";
-  o = o + "    (local.set $ncap (global.get $__fern_strbuf_cap))\n";
-  o = o + "    (if (i32.eqz (local.get $ncap)) (then (local.set $ncap (i32.const 256))))\n";
-  o = o + "    (block $gd (loop $gl (br_if $gd (i32.ge_u (local.get $ncap) (local.get $need))) (local.set $ncap (i32.mul (local.get $ncap) (i32.const 2))) (br $gl)))\n";
-  o = o + "    (local.set $np (call $__fern_alloc (local.get $ncap)))\n";
-  o = o + "    (local.set $i (i32.const 0))\n";
-  o = o + "    (block $cd (loop $cl (br_if $cd (i32.ge_u (local.get $i) (global.get $__fern_strbuf_len)))\n";
-  o = o + "      (i32.store8 (i32.add (local.get $np) (local.get $i)) (i32.load8_u (i32.add (global.get $__fern_strbuf_ptr) (local.get $i))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $cl)))\n";
-  o = o + "    (call $__fern_raw_free (global.get $__fern_strbuf_ptr) (global.get $__fern_strbuf_cap))\n";
-  o = o + "    (global.set $__fern_strbuf_ptr (local.get $np))\n";
-  o = o + "    (global.set $__fern_strbuf_cap (local.get $ncap)))\n";
-  // append(s): copy wasm string s's bytes ([s]=len, bytes@[s+4]) onto the buffer.
-  o = o + "  (func $__fern_strbuf_append (param $s i32)\n";
-  o = o + "    (local $sl i32) (local $i i32) (local $d i32)\n";
-  o = o + "    (local.set $sl (i32.load (local.get $s)))\n";
-  o = o + "    (call $__fern_strbuf_ensure (i32.add (global.get $__fern_strbuf_len) (local.get $sl)))\n";
-  o = o + "    (local.set $d (i32.add (global.get $__fern_strbuf_ptr) (global.get $__fern_strbuf_len)))\n";
-  o = o + "    (local.set $i (i32.const 0))\n";
-  o = o + "    (block $ad (loop $al (br_if $ad (i32.ge_u (local.get $i) (local.get $sl)))\n";
-  o = o + "      (i32.store8 (i32.add (local.get $d) (local.get $i)) (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $al)))\n";
-  o = o + "    (global.set $__fern_strbuf_len (i32.add (global.get $__fern_strbuf_len) (local.get $sl))))\n";
-  // take(): snapshot the buffer into a fresh rc-boxed string, reset len to 0.
-  o = o + "  (func $__fern_strbuf_take (result i32)\n";
-  o = o + "    (local $len i32) (local $box i32) (local $i i32)\n";
-  o = o + "    (local.set $len (global.get $__fern_strbuf_len))\n";
-  o = o + "    (local.set $box (call $__fern_str_box (i32.add (i32.const 4) (local.get $len))))\n";
-  o = o + "    (i32.store (local.get $box) (local.get $len))\n";
-  o = o + "    (local.set $i (i32.const 0))\n";
-  o = o + "    (block $td (loop $tl (br_if $td (i32.ge_u (local.get $i) (local.get $len)))\n";
-  o = o + "      (i32.store8 (i32.add (i32.add (local.get $box) (i32.const 4)) (local.get $i)) (i32.load8_u (i32.add (global.get $__fern_strbuf_ptr) (local.get $i))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $tl)))\n";
-  o = o + "    (global.set $__fern_strbuf_len (i32.const 0))\n";
-  o = o + "    (call $__fern_raw_free (global.get $__fern_strbuf_ptr) (global.get $__fern_strbuf_cap))\n";
-  o = o + "    (global.set $__fern_strbuf_ptr (i32.const 0))\n";
-  o = o + "    (global.set $__fern_strbuf_cap (i32.const 0))\n";
-  o = o + "    (local.get $box))\n";
-  return o;
 }
 
 // Appends a[lo:hi) of a packed u8[], the range clamped to the array.
@@ -13102,7 +13007,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // is a wrapper's return area / lifted string block (module_extern_needs_heap)
   // would otherwise emit `call $__fern_alloc` against nothing.
   if (mode == 2 || module_extern_needs_heap(mod) || needs_fd_sync(needs) || need_open_file(needs) || need_any(needs, [
-    "@allocates", "@uses_i32_to_string", "@uses_i64_to_string", "@uses_u64_to_string", "@uses_u32_to_string", "@uses_strbuf", "@uses_buf",
+    "@allocates", "@uses_i32_to_string", "@uses_i64_to_string", "@uses_u64_to_string", "@uses_u32_to_string", "@uses_buf",
     "env", "stat", "lstat", "remove_file", "create_dir_all", "read_dir", "read_dir_all", "read_dir_ino", "remove_dir_all", "temp_dir", "read_chunk", "read_chunk_bytes", "reader_close", "fd_stat", "reader_seek", "writer_truncate",
     "writer_write", "write_some", "write_bytes", "write_some_bytes", "wasm_poll", "tcp_connect", "tcp_connect_with", "tcp_send", "tcp_send_bytes", "tcp_send_buf", "tcp_recv", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_send", "udp_send_bytes", "udp_bind", "udp_connect", "udp_sendto", "udp_sendto_bytes", "udp_recvfrom", "poll", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into",
   ])) {
@@ -13128,11 +13033,6 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (need(needs, "@calls_optarrarr_free")) {
     parts = parts.append(optarrarr_free_func(heap_base_for_strs(sv, cv)));
-  }
-  // $__fern_strbuf_* (global string-builder): a growable bump-heap buffer +
-  // reset/append/take. Heap-backed (str_box / alloc), emitted above.
-  if (need(needs, "@uses_strbuf")) {
-    parts = parts.append(strbuf_helpers());
   }
   if (need(needs, "@uses_buf")) {
     parts = parts.append(buf_helpers(needs));

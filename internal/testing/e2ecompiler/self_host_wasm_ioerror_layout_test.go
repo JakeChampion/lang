@@ -104,7 +104,7 @@ function main(): i32 {
 
 // TestSelfHostWasmIoErrorMessageIsRcBoxed pins the fourth instance of the
 // headerless-box shape this migration keeps turning up (the Reader leaves,
-// subprocess, strbuf, and now this one).
+// subprocess, the old string-builder singleton, and now this one).
 //
 // `$__fern_build_io_error`'s six mapped arms all build their box with
 // `$__fern_str_box`, which writes rc=1 at base and returns base+8. The default

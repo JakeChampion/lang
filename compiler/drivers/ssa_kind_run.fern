@@ -4,11 +4,11 @@
 //
 // It walks BOTH registries (ids 1..kind_count() / 1..term_count()) and
 // asserts the id<->name bijection — kind_id(kind_name(id)) == id and
-// kind_name(id) is never the "invalid" sentinel — so a kind added to one
-// direction but not the other (or a duplicate id) fails here rather than
-// silently misdispatching a backend once the int tag is wired. It also
-// pins both sentinel contracts: unknown SInst kind -> 0 / id 0 or
-// out-of-range -> "invalid", and the STerm none sentinel (term_id("") == 0,
+// kind_name(id) is never the "invalid" sentinel except at a retired id — so
+// a kind added to one direction but not the other (or a duplicate id) fails
+// here rather than silently misdispatching a backend once the int tag is
+// wired. It also pins both sentinel contracts: unknown SInst kind -> 0 /
+// id 0 or out-of-range -> "invalid", and the STerm none sentinel (term_id("") == 0,
 // term_name(0) == "" — t_none's empty-string kind maps to tag 0).
 //
 // The companion Go test (internal/testing/e2ecompiler/self_host_ssa_kind_test.go)
@@ -22,13 +22,21 @@ function main(): i32 {
   let n: i32 = ssa.kind_count();
 
   // 1. Full-table SInst bijection sweep.
+  // A retired id must name nothing.
   let failures: i32 = 0;
   let ok: i32 = 0;
+  let retired: i32 = 0;
   let id: i32 = 1;
   while (id <= n) {
     let name: string = ssa.kind_name(id);
     let back: i32 = ssa.kind_id(name);
-    if (name == "invalid" || back != id) {
+    if (ssa.kind_retired(id)) {
+      if (name == "invalid") {
+        retired = retired + 1;
+      } else {
+        failures = failures + 1;
+      }
+    } else if (name == "invalid" || back != id) {
       failures = failures + 1;
     } else {
       ok = ok + 1;
@@ -40,6 +48,7 @@ function main(): i32 {
   out = out + "kind_count=" + util.i32_to_string(n) + "\n";
   out = out + "bijection_ok=" + util.i32_to_string(ok) + "\n";
   out = out + "bijection_failures=" + util.i32_to_string(failures) + "\n";
+  out = out + "retired=" + util.i32_to_string(retired) + "\n";
 
   // 2. SInst invalid contract: unknown kind -> 0, and 0 / out-of-range id
   //    -> the "invalid" sentinel.

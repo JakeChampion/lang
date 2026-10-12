@@ -562,15 +562,8 @@ type Interp struct {
 	// `let x = 7` at the prompt declares x here so the next prompt
 	// can read it.
 	Global *env
-	// strbuf is the interpreter's analogue of the compiled backends'
-	// single global string-builder scratch buffer: strbuf_reset zeroes
-	// it, strbuf_append adds a string's bytes, strbuf_take returns the
-	// accumulated string and resets. (The AOT backends grow a heap
-	// buffer; the interp grows a []byte.)
-	strbuf []byte
-	// bufs is the same idea for the capacity-carrying builder (#8773),
-	// with the singleton removed: a handle table, since any number of
-	// builders may be live at once. The compiled backends give the handle
+	// bufs backs the capacity-carrying builder (#8773): a handle table,
+	// since any number of builders may be live at once. The compiled backends give the handle
 	// the address of a control block; here it is a table key, which is the
 	// same opacity the Fern-level `usize` promises.
 	bufs    map[int64][]byte
@@ -658,12 +651,6 @@ func New() *Interp {
 	i.Builtins["set_extproc"] = &Builtin{Fn: builtinSetExtproc}
 	i.Builtins["target_os"] = &Builtin{Fn: builtinTargetOS}
 	i.Builtins["target_arch"] = &Builtin{Fn: builtinTargetArch}
-	// strbuf_reset() / strbuf_append(s) / strbuf_take() — the global
-	// string-builder primitive (see checker FuncSigs); the compiled
-	// backends back it with a growable heap buffer.
-	i.Builtins["strbuf_reset"] = &Builtin{Fn: builtinStrbufReset}
-	i.Builtins["strbuf_append"] = &Builtin{Fn: builtinStrbufAppend}
-	i.Builtins["strbuf_take"] = &Builtin{Fn: builtinStrbufTake}
 	// buf_new(cap) / buf_push(b, s) / buf_push_range(b, s, lo, hi) /
 	// buf_push_byte(b, x) / buf_push_u64(b, v) / buf_len(b) / buf_take(b) /
 	// buf_free(b) — the capacity-carrying builder (see checker FuncSigs).
@@ -6308,25 +6295,6 @@ func builtinTargetArch(_ *Interp, args []Value) (Value, error) {
 	return String(runtime.GOARCH), nil
 }
 
-// builtinStrbufReset zeroes the global string-builder buffer.
-func builtinStrbufReset(i *Interp, args []Value) (Value, error) {
-	i.strbuf = i.strbuf[:0]
-	return Void{}, nil
-}
-
-// builtinStrbufAppend appends a string's bytes to the global builder.
-func builtinStrbufAppend(i *Interp, args []Value) (Value, error) {
-	if len(args) != 1 {
-		return nil, fmt.Errorf("strbuf_append: expected 1 arg, got %d", len(args))
-	}
-	s, ok := args[0].(String)
-	if !ok {
-		return nil, fmt.Errorf("strbuf_append: expected string arg, got %T", args[0])
-	}
-	i.strbuf = append(i.strbuf, string(s)...)
-	return Void{}, nil
-}
-
 // bufHandle reads a builder handle argument and returns the builder's
 // bytes. An unknown handle is an error rather than a silent empty
 // builder: on the compiled backends it would be a wild pointer, and the
@@ -6731,15 +6699,6 @@ func builtinBufFree(i *Interp, args []Value) (Value, error) {
 	}
 	delete(i.bufs, h)
 	return Void{}, nil
-}
-
-// builtinStrbufTake returns the accumulated string and resets the buffer
-// (matching the compiled backends: take allocates a fresh string of the
-// accumulated bytes and zeroes the length).
-func builtinStrbufTake(i *Interp, args []Value) (Value, error) {
-	s := String(i.strbuf)
-	i.strbuf = i.strbuf[:0]
-	return s, nil
 }
 
 // Register adds a user-defined function to the interpreter. Subsequent

@@ -96,6 +96,7 @@ function runtime(target: string): void {
   let unrelated = state.rt_lower("function scalar(x: i64): i64 { return x; }");
   require(count(unrelated.enums, "Box") == 0 && count(lowered.enums, "Box") == 1, 221);
   require(semrecords.verify(m.records, m.enums) == "", 222);
+  state.release();
 }
 
 pub function run(target: string): void {

@@ -14,9 +14,9 @@ import (
 // as a program in its own right. Two real bugs hid here until someone
 // manually probed:
 //
-//  1. `strbuf_take` was missing from the two-word-return set, so its byte
-//     length went through as garbage from the stack — any program using
-//     strbuf silently mis-rendered its output. (PR #1676.)
+//  1. A string-returning builtin was missing from the two-word-return set,
+//     so its byte length went through as garbage from the stack and the
+//     program silently mis-rendered its output. (PR #1676.)
 //
 //  2. `"ProcessResult"` wasn't pre-interned in the arm64 rodata-dump
 //     prelude, so a program that used `subprocess()` without otherwise
@@ -28,7 +28,7 @@ import (
 // then assert the emitted aarch64 asm is byte-identical to what the same
 // driver built for x86-64-linux produces. If they diverge, the PIN's arm64
 // codegen has an emit bug on the self-host source (or a silent runtime
-// helper gap in the strbuf / shape-name family). The current source's own
+// helper gap in the string-return / shape-name family). The current source's own
 // arm64 compile is gated by the module self-tests (TestSelfHostParserArm64
 // and its siblings), which build the current modules for arm64 with the pin
 // and run them under qemu.
@@ -79,7 +79,7 @@ func TestSelfHostArm64NativeMmcMatchesCrossHost(t *testing.T) {
 				t.Fatalf("mmc_arm64_native: %v", err)
 			}
 			if len(nativeOut) == 0 {
-				t.Fatal("mmc_arm64_native emitted 0 bytes — the bugs the gate guards against (strbuf return shape, ProcessResult rodata, arm64 heap size)")
+				t.Fatal("mmc_arm64_native emitted 0 bytes — the bugs the gate guards against (string return shape, ProcessResult rodata, arm64 heap size)")
 			}
 			crossOut, err := runX86_64Bin(x86runner, mmcCross, testSrc, stdlibRoot, "-target", "arm64-linux").Output()
 			if err != nil {

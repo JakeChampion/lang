@@ -166,7 +166,6 @@ function settled(g: ircore.Gated, arm: boolean): void {
 }
 
 function direct(g: ircore.Gated): void {
-  strbuf_reset();
   let base = asmcore.new_state();
   base = asmcore.EmitState { ...base, struct_decls: g.stab, rt_lower: runtime, retain_prepared: true, rc_free_debug: true };
   let out = asm_arm64_ir.emit_body(g.im, base, false, g.cache, g.physical);
@@ -174,14 +173,12 @@ function direct(g: ircore.Gated): void {
   require(out.native_sites.len() == 0 && !out.retain_sites && out.capture == base.capture, 164);
   require(out.prepared[0].context.rc_free_debug && !out.prepared[0].context.records, 31);
   allocation.consistent(out.prepared[0]);
-  strbuf_reset();
   let disabled = asm_arm64_ir.emit_body(g.im, asmcore.EmitState { ...base, retain_prepared: false }, false, g.cache, g.physical);
   require(disabled.prepared.len() == 0, 32);
-  strbuf_reset();
+  base.release();
 }
 
 function discarded_trial(): void {
-  strbuf_reset();
   let base = asmcore.new_state();
   base = asmcore.EmitState { ...base, rt_lower: runtime, retain_prepared: true, needed: ["str_cmp"], sanitize: false, leak_check: false, rc_free_debug: false };
   let trial = asm_arm64_ir.emit_ir_runtime(base, false);
@@ -189,11 +186,10 @@ function discarded_trial(): void {
   require(at >= 0 && !util.has_str(trial.prepared[at].context.needed, "heap"), 35);
   require(util.has_str(trial.needed, "heap") && base.prepared.len() == 0, 36);
   require(base.native_sites.len() == 0 && trial.native_sites.len() == 0 && !trial.retain_sites, 165);
-  strbuf_reset();
+  base.release();
 }
 
 function renamed(g: ircore.Gated): void {
-  strbuf_reset();
   let base = asmcore.new_state();
   base = asmcore.EmitState { ...base, retain_prepared: true, reg_entries: irtables.sig_reg_of(["Token.first"]) };
   let gate = irverifygate.gate_unreported(irtables.fn_sig_index(g.im.funcs), base.kinds.pops, rccertify.no_abis());
@@ -202,7 +198,7 @@ function renamed(g: ircore.Gated): void {
   require(out.prepared.len() == 1 && out.prepared[0].label_name == "Token.first", 37);
   require(out.prepared[0].body.lowered.name == g.cache[0].name && out.prepared[0].body.formed.f.name == "Token.first", 38);
   require(irtables.sig_reg_has_exact(out.prepared[0].context.reg_entries, "Token.first"), 39);
-  strbuf_reset();
+  base.release();
 }
 
 function debug_body(g: ircore.Gated, arm: boolean, var_rows: boolean): void {
@@ -210,13 +206,12 @@ function debug_body(g: ircore.Gated, arm: boolean, var_rows: boolean): void {
   let r = irtables.LowerResult { ...g.cache[0], n_locals: 1, ops: [ir.op_const_i32(43), ir.op_store_local(0), ir.op_load_local(0), ir.op_return()], dbg_slots: [0], dbg_names: ["observed"], dbg_types: ["i32"] };
   let rows: ssaprepare.Emitted[] = [];
   if (arm) {
-    strbuf_reset();
     let s = asmcore.new_state();
     s = asmcore.EmitState { ...s, recs: recs, retain_prepared: true, var_rows: var_rows };
     let gate = irverifygate.gate_unreported(irtables.fn_sig_index(g.im.funcs), s.kinds.pops, rccertify.no_abis());
     let out = asm_arm64_ir.emit_function_via_ir_pre(r, physicalbody.select(g.physical, 0), g.im.funcs[0], s, gate);
     rows = out.prepared;
-    strbuf_reset();
+    s.release();
   } else {
     let sw = asmcore.Switches { ...asmcore.env_switches(), var_rows: var_rows };
     let out = asm_ir.emit_module_ir_unit_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, 1, g.cache.with(0, r), g.physical, runtime, recs, sw, true);
@@ -246,7 +241,9 @@ function main(): i32 {
   let d = semlower.driven(mod, "x86-64-linux");
   let g = semlower.program(d);
   require(g.ok && g.im.funcs.len() == 3 && g.cache.len() == 3, 1);
-  require(!asmcore.new_state().retain_prepared, 2);
+  let fresh = asmcore.new_state();
+  require(!fresh.retain_prepared, 2);
+  fresh.release();
   selection(g, false);
   selection(g, true);
   settled(g, false);

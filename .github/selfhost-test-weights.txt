@@ -1293,7 +1293,6 @@ TestSelfHostStrarrFieldToStringArm64 2
 TestSelfHostStrarrFieldToStringSanitizeX86_64 2
 TestSelfHostStrarrFieldToStringWasm 2
 TestSelfHostStrarrFieldToStringX86_64 2
-TestSelfHostStrbufTakeIsRcHeaded 2
 TestSelfHostStreamIR 7
 TestSelfHostStreamUTF8 2
 TestSelfHostStrengthIR 2

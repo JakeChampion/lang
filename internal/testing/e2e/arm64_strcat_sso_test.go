@@ -128,13 +128,14 @@ func TestArm64StrcatSlice(t *testing.T) {
 	}
 }
 
-// __fern_strbuf_append reads a built argument's bytes. 4 + 'd' = 104.
-func TestArm64StrcatStrbufAppend(t *testing.T) {
+// __fern_buf_push reads a built argument's bytes. 4 + 'd' = 104.
+func TestArm64StrcatBufPush(t *testing.T) {
 	_, stderr, code := runLeakCheckArm64(t, `function pick(i: i32): string { if (i == 0) { return "ab"; } return "AB"; }
 function main(): i32 {
-    strbuf_reset();
-    strbuf_append(pick(0) + "cd");
-    let s: string = strbuf_take();
+    let h: usize = buf_new(16);
+    buf_push(h, pick(0) + "cd");
+    let s: string = buf_take(h);
+    buf_free(h);
     if (s != "abcd") { return 1; }
     return s.len() + (s[3] as i32);
 }`)

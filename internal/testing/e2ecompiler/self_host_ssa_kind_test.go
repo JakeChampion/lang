@@ -31,8 +31,9 @@ func TestSelfHostSSAKindRegistry(t *testing.T) {
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/ssa_kind_run.fern", "ssa_kind_run")
 
 	const want = "kind_count=35\n" +
-		"bijection_ok=35\n" +
+		"bijection_ok=32\n" +
 		"bijection_failures=0\n" +
+		"retired=3\n" +
 		"unknown_id=0\n" +
 		"id0=invalid\n" +
 		"oob=invalid\n" +
