@@ -18,13 +18,9 @@
 // the block it actually uses. main_test.go re-derives both tables with math/big
 // and checks the committed literals decode back to them.
 //
-// The tables ship as Fern STRING literals rather than array literals: a string
-// literal is static rodata, so a lookup allocates nothing and no table is ever
-// "built" at run time (a Fern array literal is executable code — see the same
-// note in std/unicode.fern). Each 64-bit word is 11 characters of a
-// 64-character alphabet, most significant digit first. Unused tables are
-// dead-code eliminated, so a program that never converts floats does not carry
-// them.
+// The tables ship as `const` u64 arrays, which every backend lays out as static
+// data: a lookup is one load and allocates nothing. A 128-bit entry is two
+// consecutive words, high then low.
 package main
 
 import (
@@ -35,51 +31,6 @@ import (
 
 	"github.com/jakechampion/lang/internal/syntax/fmtsource"
 )
-
-// ---------------------------------------------------------------- alphabet
-
-// The alphabet is 64 printable ASCII characters in two contiguous spans,
-// '0'..'[' (48..91) and ']'..'p' (93..112). It skips '\\' (92) and stays
-// clear of '"' (34), so no encoded character ever needs an escape inside a
-// Fern string literal, and every character is a single UTF-8 byte.
-func enc6(v int) byte {
-	if v < 44 {
-		return byte(48 + v)
-	}
-	return byte(49 + v)
-}
-
-func dec6(c byte) int {
-	if c < 92 {
-		return int(c) - 48
-	}
-	return int(c) - 49
-}
-
-// WordChars is the number of alphabet characters per 64-bit word: ceil(64/6).
-const WordChars = 11
-
-// EncodeWord renders a 64-bit word as WordChars alphabet characters, most
-// significant base-64 digit first.
-func EncodeWord(v uint64) string {
-	var b [WordChars]byte
-	for i := WordChars - 1; i >= 0; i-- {
-		b[i] = enc6(int(v & 63))
-		v >>= 6
-	}
-	return string(b[:])
-}
-
-// DecodeWord is the inverse of EncodeWord. It mirrors the Fern decoders
-// (`_db_word` / `_el_word`) exactly: accumulate v*64 + digit, most significant
-// digit first.
-func DecodeWord(s string) uint64 {
-	var v uint64
-	for i := 0; i < WordChars; i++ {
-		v = v*64 + uint64(dec6(s[i]))
-	}
-	return v
-}
 
 // split128 renders a 128-bit value as its high then low 64-bit word.
 func split128(v *big.Int) (hi, lo uint64) {
@@ -149,26 +100,6 @@ func Cache32() []uint64 {
 	return out
 }
 
-// EncodeCache64 renders the binary64 table as 22 characters per entry: 11 for
-// the high half then 11 for the low half.
-func EncodeCache64() string {
-	var b strings.Builder
-	for _, e := range Cache64() {
-		b.WriteString(EncodeWord(e[0]))
-		b.WriteString(EncodeWord(e[1]))
-	}
-	return b.String()
-}
-
-// EncodeCache32 renders the binary32 table as 11 characters per entry.
-func EncodeCache32() string {
-	var b strings.Builder
-	for _, e := range Cache32() {
-		b.WriteString(EncodeWord(e))
-	}
-	return b.String()
-}
-
 // ---------------------------------------------------------------- eisel-lemire
 
 // Eisel-Lemire power-of-five bounds: q spans every decimal exponent that can
@@ -230,13 +161,28 @@ func Pow5() [][2]uint64 {
 	return out
 }
 
-// EncodePow5 renders the power-of-five table as 22 characters per entry.
-func EncodePow5() string {
-	var b strings.Builder
-	for _, e := range Pow5() {
-		b.WriteString(EncodeWord(e[0]))
-		b.WriteString(EncodeWord(e[1]))
+// flat lays out 128-bit entries as consecutive high and low words.
+func flat(t [][2]uint64) []uint64 {
+	out := make([]uint64, 0, 2*len(t))
+	for _, e := range t {
+		out = append(out, e[0], e[1])
 	}
+	return out
+}
+
+// ArrayLiteral renders words as the elements of a Fern u64 array literal,
+// `per` to a line.
+func ArrayLiteral(words []uint64, per int) string {
+	var b strings.Builder
+	for i, w := range words {
+		if i%per == 0 {
+			b.WriteString("\n    ")
+		} else {
+			b.WriteString(" ")
+		}
+		fmt.Fprintf(&b, "0x%016xu64,", w)
+	}
+	b.WriteString("\n")
 	return b.String()
 }
 
@@ -255,17 +201,12 @@ var blocks = []block{
 		end:   "// END GENERATED DRAGONBOX TABLES",
 		generate: func() string {
 			return fmt.Sprintf(`// Dragonbox 128-bit power-of-ten cache for f64: k = %d..%d (%d entries),
-// 22 characters each — 11 for the high 64 bits, then 11 for the low.
-function _db_cache64(): string {
-    return %q;
-}
-// Dragonbox 64-bit power-of-ten cache for f32: k = %d..%d (%d entries),
-// 11 characters each.
-function _db_cache32(): string {
-    return %q;
-}
-`, MinK64, MaxK64, MaxK64-MinK64+1, EncodeCache64(),
-				MinK32, MaxK32, MaxK32-MinK32+1, EncodeCache32())
+// the high 64 bits of each, then the low.
+const DB_CACHE64: u64[] = [%s];
+// Dragonbox 64-bit power-of-ten cache for f32: k = %d..%d (%d entries).
+const DB_CACHE32: u64[] = [%s];
+`, MinK64, MaxK64, MaxK64-MinK64+1, ArrayLiteral(flat(Cache64()), 2),
+				MinK32, MaxK32, MaxK32-MinK32+1, ArrayLiteral(Cache32(), 2))
 		},
 	},
 	{
@@ -273,11 +214,9 @@ function _db_cache32(): string {
 		end:   "// END GENERATED EISEL-LEMIRE TABLE",
 		generate: func() string {
 			return fmt.Sprintf(`// Eisel-Lemire 128-bit power-of-five table: q = %d..%d (%d entries),
-// 22 characters each — 11 for the high 64 bits, then 11 for the low.
-function _el_pow5(): string {
-    return %q;
-}
-`, MinQ, MaxQ, MaxQ-MinQ+1, EncodePow5())
+// the high 64 bits of each, then the low.
+const EL_POW5: u64[] = [%s];
+`, MinQ, MaxQ, MaxQ-MinQ+1, ArrayLiteral(flat(Pow5()), 2))
 		},
 	},
 }
