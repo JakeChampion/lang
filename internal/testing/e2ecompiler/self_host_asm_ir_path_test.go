@@ -238,12 +238,13 @@ struct S { data: u8[], pos: i32 } function mk(s: string): S { return S { data: s
 		// 7+11+3=21; enum: A(7)->7 + B->100 + 3 = 110.
 		{"structarr-tuple-elem", `struct P { x: i32 } function mk(): (P[], i32) { let a: P[] = []; a = a.append(P { x: 7 }); a = a.append(P { x: 11 }); return (a, 3); } function main(): i32 { let (ps, n) = mk(); return ps[0].x + ps[1].x + n; }`, 21},
 		{"enumarr-tuple-elem", `enum E { A(i32), B } function mk(): (E[], i32) { let a: E[] = []; a = a.append(A(7)); a = a.append(B); return (a, 3); } function main(): i32 { let (es, n) = mk(); let sum: i32 = n; let i: i32 = 0; while (i < es.len()) { match (es[i]) { A(x) => { sum = sum + x; }, B => { sum = sum + 100; } } i = i + 1; } return sum; }`, 110},
-		// A Map-typed enum-variant PAYLOAD (`JObject(Map[string, JsonValue])`) —
-		// the std/json `json_get` shape. The match binds `m` from the variant
-		// payload and `m.get(k)` dispatches as a map op returning Option[V].
-		// Builds {k: JNumber("42")}, gets it back, reads len = 2.
+		// A Map-typed enum-variant PAYLOAD (`O(Map[string, J])`) — the std/json
+		// `json_get` shape. The match binds `m` from the variant payload and
+		// `m.get(k)` dispatches as a map op returning Option[V]. Builds
+		// {k: N("42")}, gets it back, reads len = 2.
 		{"map-enum-payload-get", `import "core/map";
-function jget(obj: JsonValue, key: string): Option[JsonValue] { match (obj) { JObject(m) => { match (m.get(key)) { Some(v) => { return Some(v); }, None => { return None; } } }, _ => { return None; } } return None; } function main(): i32 { let m: Map[string, JsonValue] = map_new(8); m = m.insert("k", JNumber("42")); let o: JsonValue = JObject(m); match (jget(o, "k")) { Some(v) => { match (v) { JNumber(s) => { return s.len(); }, _ => { return 0; } } }, None => { return 99; } } return 0; }`, 2},
+enum J { N(string), O(Map[string, J]) }
+function jget(obj: J, key: string): Option[J] { match (obj) { O(m) => { match (m.get(key)) { Some(v) => { return Some(v); }, None => { return None; } } }, _ => { return None; } } return None; } function main(): i32 { let m: Map[string, J] = map_new(8); m = m.insert("k", N("42")); let o: J = O(m); match (jget(o, "k")) { Some(v) => { match (v) { N(s) => { return s.len(); }, _ => { return 0; } } }, None => { return 99; } } return 0; }`, 2},
 		// A Map[K, V]-RECEIVER method — the shape core/map's contains_value /
 		// get_or_insert / merge use. Built-in map ops on `self` (m.has / m.get_or
 		// / m.len) dispatch as map ops, and a NON-builtin method on `self`

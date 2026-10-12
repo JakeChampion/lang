@@ -1853,6 +1853,8 @@ Percent-encoding, URL parsing, query parsing.
 
 ### `std/json`
 
+- `JsonValue` (`json.JsonValue` to an importer) — `JNull`, `JBool`,
+  `JNumber` (the number's text), `JString`, `JArray`, `JObject`
 - `json_encode(v: JsonValue): string` — compact canonical JSON
 - `json_encode_pretty(v: JsonValue, indent: i32): string` — indented,
   human-readable JSON (`indent` spaces per level; empty arrays/objects
@@ -4326,8 +4328,6 @@ The following types are synthesised by the checker (declared in
   `InvalidUtf8`, `Interrupted`, `Unsupported` (the target does not offer
   the operation), `Other(path, message, errno)` (`std/errno` names the
   errno)
-- `JsonValue` — `JNull`, `JBool`, `JNumber`, `JString`,
-  `JArray`, `JObject`
 - `Reader`, `Writer` — stdin / stdout / stderr / file
 - `HttpRequest`, `HttpResponse` — request / response shape
 - `Url` — host / port / path / query / fragment parts

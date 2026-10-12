@@ -3,7 +3,7 @@
 // parser.inject_builtin_enums / add_builtin_variant.
 //
 // Historically the self-host compiler synthesised these decls in code: a
-// loop of `add_builtin_variant(structs, "JString", ["string"], "JsonValue")`
+// loop of `add_builtin_variant(structs, "NotFound", ["string"], "IoError")`
 // calls plus open-coded StructDecl literals for FileStat / ProcessResult /
 // HeaderMap / HttpRequest / HttpResponse. That "synthesise the AST by
 // hand" approach is exactly the `.wants/.needs`-style boilerplate we want
@@ -26,17 +26,6 @@
 //
 // Option / Result are NOT here: Some/None/Ok/Err are special-cased in the
 // emitter, never synthesised as variant structs.
-
-// JsonValue — the std/json document model. `JString(x)` / `match … JObject(m) …`
-// resolve against these variants.
-enum JsonValue {
-  JNull,
-  JBool(boolean),
-  JNumber(string),
-  JString(string),
-  JArray(JsonValue[]),
-  JObject(Map[string, JsonValue]),
-}
 
 // IoError — the error arm of filesystem / io Results.
 enum IoError {

@@ -6,13 +6,12 @@ import (
 )
 
 // Regression for #4425: dropping a value of a Map-transitively-containing enum
-// (the built-in JsonValue, whose JObject variant carries a Map[string,
-// JsonValue]) must not emit a call to __map_drop_values in the generated
-// drop glue. That helper lives in core/map.fern and is loaded ONLY when a program
-// imports "core/map" (the checker requires the import for map *operations*) —
-// but a program can use JsonValue WITHOUT any map operation (e.g. a local /
-// array of JString values). The whole-enum drop glue still emits the JObject
-// arm, so the reference was to an unloaded symbol: a hard wasm "unknown callee
+// (`J` below, whose `O` variant carries a Map[string, J]) must not emit a call
+// to __map_drop_values in the generated drop glue. That helper lives in
+// core/map.fern and is loaded ONLY when a program imports "core/map" (the
+// checker requires the import for map *operations*) — but a program can use
+// such an enum WITHOUT any map operation (e.g. a local / array of `S` values).
+// The whole-enum drop glue still emits the `O` arm, so the reference was to an unloaded symbol: a hard wasm "unknown callee
 // __map_drop_values" build error (and native "undefined label").
 //
 // Fix: the enum drop skips the Map payload reclaim (a documented safe leak —
@@ -20,26 +19,26 @@ import (
 // enum-drop paths (genEnumDropFn and emitEnumSlotDrop's inline variant plan).
 // The map's buffer + values leak; nothing dangles. These pin that the affected
 // shapes BUILD and run correctly on both the native x86-64 and wasm backends.
+const mapEnum = "enum J { N, S(string), O(Map[string, J]) }\n"
+
 var mapInEnumDropCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// A local JsonValue bound to a payload variant, dropped at scope exit — the
+	// A local J bound to a payload variant, dropped at scope exit — the
 	// inline emitEnumSlotDrop path. No `import "core/map"`.
-	{"local-jstring",
-		`function main(): i32 { let j: JsonValue = JString("hi"); match (j) { JString(s) => { return s.len(); }, _ => { return 0; } } }`, 2},
-	// A JsonValue[] element drop — the genEnumDropFn (__drop_enum_JsonValue)
-	// path, reached through the array-buffer deep drop. No `import "core/map"`.
-	// (This is the TestWASMArrayPushEnum shape; pinned here on x86-64 too.)
-	{"array-jstring",
-		`function main(): i32 { let xs: JsonValue[] = []; xs = xs.append(JString("a")); xs = xs.append(JString("bb")); return match (xs[1]) { JString(s) => s.len(), _ => 0 - 1 }; }`, 2},
-	// A REAL JObject wrapping a populated map, dropped — exercises the map-payload
+	{"local-string",
+		mapEnum + `function main(): i32 { let j: J = S("hi"); match (j) { S(s) => { return s.len(); }, _ => { return 0; } } }`, 2},
+	// A J[] element drop — the genEnumDropFn path, reached through the
+	// array-buffer deep drop. No `import "core/map"`.
+	{"array-string",
+		mapEnum + `function main(): i32 { let xs: J[] = []; xs = xs.append(S("a")); xs = xs.append(S("bb")); return match (xs[1]) { S(s) => s.len(), _ => 0 - 1 }; }`, 2},
+	// A REAL O wrapping a populated map, dropped — exercises the map-payload
 	// arm with an actual map present (import "core/map" IS loaded here, so
-	// __map_drop_values exists, but the enum drop still safe-leaks it). Must build
-	// and return the map length.
-	{"real-jobject-map",
-		"import \"core/map\";\nfunction main(): i32 { let m: Map[string, JsonValue] = map_new(8); m = m.insert(\"k\", JString(\"v\")); let o: JsonValue = JObject(m); match (o) { JObject(mm) => { return mm.len(); }, _ => { return 0; } } }", 1},
+	// __map_drop_values exists). Must build and return the map length.
+	{"real-map",
+		"import \"core/map\";\n" + mapEnum + "function main(): i32 { let m: Map[string, J] = map_new(8); m = m.insert(\"k\", S(\"v\")); let o: J = O(m); match (o) { O(mm) => { return mm.len(); }, _ => { return 0; } } }", 1},
 }
 
 func TestX86_64MapInEnumDropBuilds(t *testing.T) {

@@ -1,5 +1,5 @@
-// std/json — JSON encode / decode over the built-in
-// `JsonValue` enum.
+// std/json — JSON encode / decode over the `JsonValue` enum,
+// which an importer names `json.JsonValue`.
 //
 // `json_encode(v)` walks the `JsonValue` tree and produces
 // canonical JSON text. `json_parse(s)` is the inverse —
@@ -39,6 +39,17 @@ import "std/u32";
 import "std/u64";
 // Float `to_string` for the `impl Json for f32 / f64` serialisers.
 import "std/float";
+
+// JsonValue is a JSON document. A number keeps its text, since JSON fixes no
+// precision; `s.parse_int()` / `s.parse_float()` read it.
+pub enum JsonValue {
+  JNull,
+  JBool(boolean),
+  JNumber(string),
+  JString(string),
+  JArray(JsonValue[]),
+  JObject(Map[string, JsonValue]),
+}
 
 function __json_hex_lower(d: i32): i32 {
   if (d < 10) {  // '0' + d

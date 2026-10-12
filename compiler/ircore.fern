@@ -441,7 +441,7 @@ pub function flip_int_cmp_kind(id: i32): i32 {
 // can hoist no-capture lambda arguments before the eligibility check + emit
 // without importing lift directly. It also
 // injects the built-in struct/enum declarations (FileStat / HeaderMap /
-// JsonValue / the std/time types / …) into the module's struct table — the AST
+// IoError / the std/time types / …) into the module's struct table — the AST
 // path got these via parser.module_with_builtins, and the IR path (probe +
 // emit_module_ir) both funnel through here, so this is the single point that
 // gives the IR path that struct visibility. Without

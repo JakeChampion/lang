@@ -2419,7 +2419,7 @@ pub function assert_close_to_now_ms(actual_ms: i64, max_skew_ms: i64): TestOutco
 // — the JSON spec doesn't fix precision, so two emitters
 // producing "1.0" vs "1" would diverge here; callers that
 // want numeric tolerance should parse + cast themselves.
-function __json_value_eq(a: JsonValue, b: JsonValue): boolean {
+function __json_value_eq(a: json.JsonValue, b: json.JsonValue): boolean {
   match (a) {
     JNull => {
       match (b) {
@@ -3608,8 +3608,8 @@ pub function assert_ends_with_any(s: string, suffixes: string[]): TestOutcome {
 // decls under the `json__` prefix; bare-name lookup would
 // miss them).
 pub function assert_json_eq(actual: string, expected: string): TestOutcome {
-  let av: Option[JsonValue] = json.json_parse(actual);
-  let ev: Option[JsonValue] = json.json_parse(expected);
+  let av: Option[json.JsonValue] = json.json_parse(actual);
+  let ev: Option[json.JsonValue] = json.json_parse(expected);
   match (av) {
     None => {
       return Fail("assert_json_eq: actual is not valid JSON: " + actual);

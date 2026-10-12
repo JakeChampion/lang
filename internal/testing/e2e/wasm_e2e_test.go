@@ -4580,16 +4580,17 @@ func TestWASMArrayPushI32(t *testing.T) {
 }
 
 func TestWASMArrayPushEnum(t *testing.T) {
-	// JsonValue is a pointer-shaped enum, so push routes to the
-	// same 4-byte helper. Confirms enum payloads survive the
-	// push round-trip.
-	src := `function main(): i32 {
-    let xs: JsonValue[] = [];
-    xs = xs.append(JString("a"));
-    xs = xs.append(JString("bb"));
+	// An enum is pointer-shaped, so push routes to the same
+	// 4-byte helper. Confirms enum payloads survive the push
+	// round-trip.
+	src := `enum V { N, S(string) }
+function main(): i32 {
+    let xs: V[] = [];
+    xs = xs.append(S("a"));
+    xs = xs.append(S("bb"));
     return match (xs[1]) {
-        JString(s) => s.len(),
-        _          => 0 - 1
+        S(s) => s.len(),
+        _    => 0 - 1
     };
 }`
 	if got := runWasm(t, src); got != 2 {
@@ -6615,8 +6616,8 @@ function main(): i32 {
 	}
 }
 
-// `json_encode(v: JsonValue): string` — serialize the
-// auto-injected JsonValue tree to canonical JSON text.
+// `json_encode(v: JsonValue): string` — serialize a
+// JsonValue tree to canonical JSON text.
 // Covers each variant, nested arrays/objects, and the
 // escape-encoding path for strings.
 func TestWASMJsonEncode(t *testing.T) {
@@ -6643,15 +6644,15 @@ function main(): i32 {
 		// Empty object — empty array literal needs a type
 		// annotation that's awkward at construction site, so
 		// just exercise empty objects.
-		let emptyMap: Map[string, JsonValue] = map_new(4);
+		let emptyMap: Map[string, json.JsonValue] = map_new(4);
 		if (json.json_encode(JObject(emptyMap)) != "{}") { return 20; }
 
 		// Heterogeneous array.
-		let a: JsonValue[] = [JNumber("1"), JString("two"), JBool(true), JNull];
+		let a: json.JsonValue[] = [JNumber("1"), JString("two"), JBool(true), JNull];
 		if (json.json_encode(JArray(a)) != "[1,\"two\",true,null]") { return 30; }
 
 		// Object — insertion order preserved (IndexMap).
-		let m: Map[string, JsonValue] = map_new(4);
+		let m: Map[string, json.JsonValue] = map_new(4);
 		m = m.insert("name", JString("alice"));
 		m = m.insert("age", JNumber("30"));
 		m = m.insert("admin", JBool(false));
@@ -6660,8 +6661,8 @@ function main(): i32 {
 		}
 
 		// Nested: object containing an array of numbers.
-		let inner: JsonValue[] = [JNumber("1"), JNumber("2"), JNumber("3")];
-		let outer: Map[string, JsonValue] = map_new(2);
+		let inner: json.JsonValue[] = [JNumber("1"), JNumber("2"), JNumber("3")];
+		let outer: Map[string, json.JsonValue] = map_new(2);
 		outer = outer.insert("nums", JArray(inner));
 		if (json.json_encode(JObject(outer)) != "{\"nums\":[1,2,3]}") { return 50; }
 

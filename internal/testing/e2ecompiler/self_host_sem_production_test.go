@@ -6573,24 +6573,25 @@ function main(): i32 {
     return (s * 4.0) as i32 + (t / 1000000000) as i32 + (w * 4.0) as i32 + (tu.0 * 2.0) as i32 + tu.1;
 }
 `},
-	// A map that reaches the program only as JObject's payload. JsonValue's
-	// variants are injected after the tree shake, which kept none of the
-	// routed map functions, so the typed lowering's map iteration called
-	// `__map_iter_impl` and the module was refused (#10796).
-	{name: "a-map-reached-only-through-a-jsonvalue-is-produced", atLeast: 81, want: "4|", src: `
+	// A map that reaches the program only as an enum variant's payload. The
+	// tree shake kept none of the routed map functions, so the typed lowering's
+	// map iteration called `__map_iter_impl` and the module was refused
+	// (#10796).
+	{name: "a-map-reached-only-through-an-enum-payload-is-produced", atLeast: 81, want: "4|", src: `
 import "core/map";
-function width(v: JsonValue): i32 {
+enum J { N, S(string), O(Map[string, J]) }
+function width(v: J): i32 {
     match (v) {
-        JObject(m) => {
+        O(m) => {
             let n: i32 = 0;
             for (k, x) in m { n = n + k.len() + width(x); }
             return n;
         },
-        JString(s) => { return s.len(); },
+        S(s) => { return s.len(); },
         _ => { return 1; }
     }
 }
-function main(): i32 { return width(JString("abc")) + width(JNull); }
+function main(): i32 { return width(S("abc")) + width(N); }
 `},
 	{name: "std-json-encode-is-produced", atLeast: 137, want: "2|42\n", src: `
 import "std/json";

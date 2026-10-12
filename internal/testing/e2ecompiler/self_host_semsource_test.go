@@ -829,7 +829,7 @@ function main(): i32 {
         return 8;
     }
     // The production pipeline injects the front end's own enum variants
-    // (IoError, JsonValue) as declarations before the lambda lift runs;
+    // (IoError, Body) as declarations before the lambda lift runs;
     // without them a Result's error arm names a union nothing declares.
     let mod = lift.lift_lambdas_typed(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }))));
     // Every declaration the fixture wrote, in order, then every instance its

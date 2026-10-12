@@ -1988,8 +1988,6 @@ func TestReservedBuiltinNamesCannotBeShadowed(t *testing.T) {
 			function main(): i32 { return 0; }`},
 		{"IoError", `enum IoError { Whatever }
 			function main(): i32 { return 0; }`},
-		{"JsonValue", `enum JsonValue { JNull }
-			function main(): i32 { return 0; }`},
 		{"Reader", `struct Reader { fd: i32 }
 			function main(): i32 { return 0; }`},
 		{"Writer", `struct Writer { fd: i32 }
@@ -2033,6 +2031,14 @@ func TestReservedBuiltinNamesCannotBeShadowed(t *testing.T) {
 		if IsReservedName(name) {
 			t.Errorf("IsReservedName(%q) returned true for a user-name", name)
 		}
+	}
+}
+
+// std/json declares JsonValue, so a program's own enum may take the name.
+func TestJsonValueIsNotReserved(t *testing.T) {
+	if err := checkSource(t, `enum JsonValue { JNull }
+function main(): i32 { let v: JsonValue = JNull; return 0; }`); err != nil {
+		t.Fatalf("check: %v", err)
 	}
 }
 
@@ -6532,7 +6538,8 @@ function main(): i32 { return 0; }`
 // @derive(FromJson)'s decoder is std/json's: the checker refuses it, on a
 // struct or an enum, without std/json in the program.
 func TestDeriveFromJson(t *testing.T) {
-	const fromJsonTrait = `trait FromJson { function from_json_value(v: JsonValue): Result[Self, string]; }
+	const fromJsonTrait = `enum JsonValue { JNull }
+trait FromJson { function from_json_value(v: JsonValue): Result[Self, string]; }
 `
 	cases := []struct{ src, want string }{
 		{fromJsonTrait + `@derive(FromJson) enum E { A, B }

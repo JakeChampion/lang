@@ -1,7 +1,7 @@
 // json_pretty.fern — read JSON from stdin, pretty-print to
 // stdout with 2-space indents.
 //
-// Showcases: the auto-injected JsonValue enum, recursive
+// Showcases: std/json's JsonValue enum, recursive
 // match (over JNull / JBool / JNumber / JString / JArray /
 // JObject), MapIter for ordered object iteration, the
 // `s.repeat(n)` indentation helper, build-once-print-once.
@@ -38,7 +38,7 @@ function read_all(r: Reader): string {
   return out;  // unreachable
 }
 
-function pretty(v: JsonValue, depth: i32): string {
+function pretty(v: json.JsonValue, depth: i32): string {
   let pad: string = "  ".repeat(depth);
   let pad_inner: string = "  ".repeat(depth + 1);
   match (v) {
@@ -81,14 +81,14 @@ function pretty(v: JsonValue, depth: i32): string {
       }
       let obj_out: string = "{\n";
       let first: boolean = true;
-      let it: MapIter[string, JsonValue] = m.iter();
+      let it: MapIter[string, json.JsonValue] = m.iter();
       while (it.has_next()) {
         if (!first) {
           obj_out = obj_out + ",\n";
         }
         first = false;
         let k: string = it.key();
-        let entry_v: JsonValue = it.value();
+        let entry_v: json.JsonValue = it.value();
         obj_out = obj_out + pad_inner + json.json_encode(JString(k)) + ": " + pretty(entry_v, depth + 1);
         it.advance();
       }
