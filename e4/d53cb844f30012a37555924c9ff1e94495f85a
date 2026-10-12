@@ -1,0 +1,11 @@
+# lane: net-tls-interop
+tls/client/openssl.bulk_mbytes_per_s	72.0
+tls/client/openssl.handshakes_per_s	51.0
+tls/client/go.bulk_mbytes_per_s	71.4
+tls/client/go.handshakes_per_s	50.3
+tls/client/rustls.handshakes_per_s	51.9
+tls/client/bssl.handshakes_per_s	51.2
+tls/server/go.bulk_mbytes_per_s	128.1
+tls/server/curl.bulk_mbytes_per_s	145.7
+tls/server/handshakes_per_s	206.3
+tls/server/resumed_handshakes_per_s	226.3
