@@ -1177,7 +1177,7 @@ func TestRunnerHTTPCacheExamplePasses(t *testing.T) {
 // `tests/stdlib/http_forwarded_test.fern` reads and writes Forwarded
 // elements and walks the client back past trusted proxies.
 func TestRunnerHTTPForwardedExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_forwarded", "std/http/forwarded", 12)
+	runnerSuitePasses(t, "http_forwarded", "std/http/forwarded", 14)
 }
 
 // `tests/stdlib/http_static_test.fern` serves a mock platform's files:

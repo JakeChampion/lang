@@ -2245,6 +2245,12 @@ match (forwarded.trust(["10.0.0.0/8"])) {
   proto)` is the element describing how `req` reached this server, and
   `(req).with_hop(h)` appends it, as a proxy does before it forwards a
   request on.
+- `proxy_header(buf, from)` reads the PROXY protocol header (version 1's
+  text line or version 2's binary block) starting at `buf[from]`:
+  `HeaderRead(src, len)` with the source address, None for LOCAL, UNKNOWN
+  or a family other than IPv4 and IPv6, and the header's length;
+  `HeaderShort` when more bytes could still complete it; `HeaderBad`
+  otherwise. `serve.Config.proxy_protocol` reads it for the serve loop.
 
 `tests/stdlib/http_forwarded_test.fern` is the suite;
 `TestForwardedServeInterp` and `TestForwardedServeX86_64` run the client walk
@@ -2804,7 +2810,7 @@ points that run a handler under it.
   keep_alive_idle, keep_alive_requests, max_connections,
   max_connections_per_ip, max_in_flight, workers, shutdown_grace,
   readiness_path, drain_deadline, limits, stop_with_parent, stream_bodies, cookie_jar,
-  tls }`
+  tls, proxy_protocol }`
   (`config()` is
   128, one listener per port, the 10 s deadline, 240 bytes per second after
   5 s for a request body and the same for a response, 130 s, 1000, 1024, 100
@@ -2898,6 +2904,15 @@ points that run a handler under it.
   workers share the config's ticket key, so a session resumes at any of
   them; a handler pulling a streamed body reads it through the session
   (`TestServeTLSAgainstGo`).
+  `proxy_protocol` (false) reads a PROXY protocol header, version 1 or 2,
+  at the start of every connection, before TLS when both are set
+  (`forwarded.proxy_header`): its source address becomes the connection's
+  peer, what `plat.peer()` answers, a LOCAL or UNKNOWN header keeping the
+  socket's own. A connection without a valid header is closed unanswered,
+  and the read deadline bounds the header as it bounds a request.
+  `max_connections_per_ip` still counts by the socket's peer, the load
+  balancer, so a server behind one sets it to 0
+  (`TestProxyProtocolServeInterp`, `TestProxyProtocolServeX86_64`).
 - `run_shutdown(port, cfg, handler, shutdown)` and
   `run_with_shutdown(port, cfg, init, handler, shutdown)` —
   `run` and `run_with` with a hook the loop calls

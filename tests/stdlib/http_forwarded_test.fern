@@ -221,6 +221,63 @@ function test_hop_of(): test.TestOutcome {
   return test.assert_eq(out.headers.get_all("forwarded").join(" / "), "for=198.51.100.1 / for=\"192.0.2.7:5000\";host=example.com;proto=https");
 }
 
+function proxied(bs: u8[]): string {
+  match (forwarded.proxy_header(bs, 0)) {
+    HeaderShort => {
+      return "short";
+    },
+    HeaderBad => {
+      return "bad";
+    },
+    HeaderRead(src, n) => {
+      match (src) {
+        Some(a) => {
+          return a.to_string() + " " + n.to_string();
+        },
+        None => {
+          return "- " + n.to_string();
+        }
+      }
+    }
+  }
+}
+
+function bytes_of(xs: i32[]): u8[] {
+  let out: u8[] = [];
+  for x in xs {
+    out = out.append(x as u8);
+  }
+  return out;
+}
+
+// Version 1: TCP4, TCP6 and UNKNOWN, the length up to the CRLF, a header not
+// all here, and what is not a header or not a valid one.
+function test_proxy_v1(): test.TestOutcome {
+  let got: string = "";
+  for t in ["PROXY TCP4 192.0.2.1 198.51.100.2 56324 443\r\nGET /", "PROXY TCP6 2001:db8::1 2001:db8::2 4000 443\r\n", "PROXY UNKNOWN\r\n", "PROXY TCP4 192.0", "PRO", "GET / HTTP/1.1\r\n", "PROXY TCP4 192.0.2.1 198.51.100.2 99999 443\r\n", "PROXY TCP4 2001:db8::1 2001:db8::2 1 2\r\n", "PROXY TCP4 192.0.2.1 198.51.100.2 1\r\n"] {
+    got = got + proxied(t.bytes()) + " | ";
+  }
+  let long: string = "PROXY UNKNOWN ";
+  while (long.len() < 120) {
+    long = long + "x";
+  }
+  return test.assert_eq(got + proxied(long.bytes()), "192.0.2.1:56324 45 | [2001:db8::1]:4000 45 | - 15 | short | short | bad | bad | bad | bad | bad");
+}
+
+// Version 2: PROXY over IPv4 and IPv6, a TLV after the addresses skipped,
+// LOCAL naming no source, a header not all here, and a bad version.
+function test_proxy_v2(): test.TestOutcome {
+  let sig: i32[] = [13, 10, 13, 10, 0, 13, 10, 81, 85, 73, 84, 10];
+  let v4: i32[] = sig.concat([33, 17, 0, 12, 192, 0, 2, 1, 198, 51, 100, 2, 220, 4, 1, 187]);
+  let tlv: i32[] = sig.concat([33, 17, 0, 15, 192, 0, 2, 1, 198, 51, 100, 2, 220, 4, 1, 187, 4, 0, 0]);
+  let v6: i32[] = sig.concat([33, 33, 0, 36, 32, 1, 13, 184, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 32, 1, 13, 184, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 15, 160, 1, 187]);
+  let local: i32[] = sig.concat([32, 0, 0, 0]);
+  let short: i32[] = sig.concat([33, 17, 0, 12, 192, 0]);
+  let bad: i32[] = sig.concat([17, 17, 0, 0]);
+  let got: string = proxied(bytes_of(v4)) + " | " + proxied(bytes_of(tlv)) + " | " + proxied(bytes_of(v6)) + " | " + proxied(bytes_of(local)) + " | " + proxied(bytes_of(short)) + " | " + proxied(bytes_of(bad));
+  return test.assert_eq(got, "192.0.2.1:56324 28 | 192.0.2.1:56324 31 | [2001:db8::1]:4000 52 | - 16 | short | bad");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/http/forwarded");
   r = r.it("RFC 7239's examples", test_rfc_examples);
@@ -235,5 +292,7 @@ function main(): i32 {
   r = r.it("trust names a bad block", test_trust_errors);
   r = r.it("address blocks", test_prefix);
   r = r.it("hop_of and with_hop", test_hop_of);
+  r = r.it("PROXY protocol version 1", test_proxy_v1);
+  r = r.it("PROXY protocol version 2", test_proxy_v2);
   return r.finish();
 }

@@ -33,6 +33,8 @@ import "std/http";
 import "std/headers";
 import "std/net";
 import "std/platform";
+import "std/utf8" as utf8;
+import "std/array";
 
 // `Node` — a node identifier's name (RFC 7239 §6): an address, an
 // obfuscated name (`_hidden`, §6.3), or `unknown` (§6.2).
@@ -593,4 +595,158 @@ pub function hop_of(req: HttpRequest, plat: platform.Platform, proto: string): H
     None => {}
   }
   return Hop { from: from, by: None, host: req.headers.get("host"), proto: Some(proto) };
+}
+
+// ---------------------------------------------------------------------------
+// The PROXY protocol
+
+// `ProxyHeader` — what the start of a connection says under the PROXY
+// protocol (HAProxy's, versions 1 and 2): `HeaderShort`, not all of the
+// header has arrived; `HeaderBad`, the connection does not start with one,
+// which a receiver must not guess past; or `HeaderRead(source, len)`, the
+// address the proxy took the connection from, None for a header that names
+// none (a `LOCAL` command, an `UNKNOWN` or unspecified family), and the
+// header's length.
+pub enum ProxyHeader { HeaderShort, HeaderBad, HeaderRead(Option[net.SocketAddr], i32) }
+
+// `proxy_header(buf, from)` — the PROXY protocol header at the start of
+// buf[from..], in either version.
+pub function proxy_header(buf: u8[], from: i32): ProxyHeader {
+  let v1: u8[] = "PROXY ".bytes();
+  let v2: u8[] = [13 as u8, 10 as u8, 13 as u8, 10 as u8, 0 as u8, 13 as u8, 10 as u8, 81 as u8, 85 as u8, 73 as u8, 84 as u8, 10 as u8];
+  if (__prefix_of(buf, from, v2)) {
+    return __proxy_v2(buf, from);
+  }
+  if (__prefix_of(buf, from, v1)) {
+    return __proxy_v1(buf, from);
+  }
+  return HeaderBad;
+}
+
+// `__prefix_of(buf, from, sig)` — whether the bytes from `from` agree with
+// `sig` as far as both go, and there are as many as `sig` has or fewer.
+function __prefix_of(buf: u8[], from: i32, sig: u8[]): boolean {
+  let i: i32 = 0;
+  while (i < sig.len() && from + i < buf.len()) {
+    if (buf[from + i] != sig[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// `__proxy_v1(buf, from)` — `PROXY TCP4|TCP6 src dst sport dport\r\n` or
+// `PROXY UNKNOWN …\r\n`, at most 107 bytes.
+function __proxy_v1(buf: u8[], from: i32): ProxyHeader {
+  let end: i32 = from;
+  while (end + 1 < buf.len() && !(buf[end] == 13 as u8 && buf[end + 1] == 10 as u8)) {
+    if (end - from >= 105) {
+      return HeaderBad;
+    }
+    end = end + 1;
+  }
+  if (end + 1 >= buf.len()) {
+    if (buf.len() - from > 107) {
+      return HeaderBad;
+    }
+    return HeaderShort;
+  }
+  let fields: string[] = utf8.from_bytes_lossy(array.slice(buf, from, end)).split(" ");
+  return __v1_fields(fields, end + 2 - from);
+}
+
+function __v1_fields(f: string[], len: i32): ProxyHeader {
+  if (f.len() >= 2 && f[1] == "UNKNOWN") {
+    return HeaderRead(None, len);
+  }
+  if (f.len() != 6 || f[1] != "TCP4" && f[1] != "TCP6" || !__port_digits(f[4]) || !__port_digits(f[5])) {
+    return HeaderBad;
+  }
+  match (__v1_source(f[2], f[1] == "TCP4", __port_value(f[4]))) {
+    Some(a) => {
+      return HeaderRead(Some(a), len);
+    },
+    None => {
+      return HeaderBad;
+    }
+  }
+}
+
+// `__v1_source(text, v4, port)` — the source address, of the family the
+// header named, with a port in range.
+function __v1_source(text: string, v4: boolean, port: i32): Option[net.SocketAddr] {
+  match (net.ip_parse(text)) {
+    Some(ip) => {
+      if (ip.is_v4() != v4 || port > 65535) {
+        return None;
+      }
+      return Some(net.socket_addr(ip, port));
+    },
+    None => {
+      return None;
+    }
+  }
+}
+
+function __port_value(s: string): i32 {
+  let n: i32 = 0;
+  for b in s.bytes() {
+    n = n * 10 + (b - 48 as u8) as i32;
+  }
+  return n;
+}
+
+// `__proxy_v2(buf, from)` — the binary header: the 12-byte signature, the
+// version (2) and command (`LOCAL` or `PROXY`), the family, the length of
+// what follows, the addresses, and TLVs, which are skipped.
+function __proxy_v2(buf: u8[], from: i32): ProxyHeader {
+  if (buf.len() - from < 16) {
+    return HeaderShort;
+  }
+  let ver_cmd: i32 = buf[from + 12] as i32;
+  if (ver_cmd >> 4 != 2 || (ver_cmd & 15) > 1) {
+    return HeaderBad;
+  }
+  let len: i32 = 16 + (buf[from + 14] as i32 << 8 | buf[from + 15] as i32);
+  if (buf.len() - from < len) {
+    return HeaderShort;
+  }
+  if ((ver_cmd & 15) == 0) {
+    return HeaderRead(None, len);
+  }
+  return __v2_source(buf, from, buf[from + 13] as i32 >> 4, len);
+}
+
+// `__v2_source(buf, from, family, len)` — the source address of a `PROXY`
+// command: IPv4 (family 1) or IPv6 (family 2), the source port after both
+// addresses; None for an unspecified or UNIX family.
+function __v2_source(buf: u8[], from: i32, family: i32, len: i32): ProxyHeader {
+  let width: i32 = 0;
+  if (family == 1) {
+    width = 4;
+  } else if (family == 2) {
+    width = 16;
+  } else if (family == 0 || family == 3) {
+    return HeaderRead(None, len);
+  } else {
+    return HeaderBad;
+  }
+  let at: i32 = from + 16;
+  if (len - 16 < 2 * width + 4) {
+    return HeaderBad;
+  }
+  let port: i32 = buf[at + 2 * width] as i32 << 8 | buf[at + 2 * width + 1] as i32;
+  let ip: net.IpAddr = net.ipv4(buf[at] as i32, buf[at + 1] as i32, buf[at + 2] as i32, buf[at + 3] as i32);
+  if (width == 16) {
+    match (net.ipv6(array.slice(buf, at, at + 16))) {
+      Some(v6) => {
+        ip = v6;
+      },
+      None => {
+        return HeaderBad;
+      }
+    }
+  }
+  return HeaderRead(Some(net.socket_addr(ip, port)), len);
 }
