@@ -24,14 +24,14 @@ const (
 import "core/iter" as iter;
 function main(): i32 {
     let xs: i32[] = [5, 2, 8, 1, 4, 9].append(6);
-    return iter.filter(iter.of(xs), (x: i32): boolean => { return x % 2 == 0; }).len();
+    return iter.of(xs).filter((x: i32): boolean => { return x % 2 == 0; }).collect().len();
 }
 `
 	iterMapSrc = `
 import "core/iter" as iter;
 function main(): i32 {
     let xs: i32[] = [5, 2, 8, 1, 4, 9].append(6);
-    return iter.map(iter.of(xs), (x: i32): i32 => { return x + 1; }).len();
+    return iter.of(xs).map((x: i32): i32 => { return x + 1; }).collect().len();
 }
 `
 	iterSumSrc = `

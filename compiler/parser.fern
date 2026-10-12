@@ -13091,7 +13091,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           // unbounded `gfold[T, A]: A` has empty `type_params`, so its
           // raw `A` ret_type is returned verbatim). That bare `A` then
           // flows into any bounded generic it's passed to
-          // (`let s = iter.fold(..); assert_eq(s, 6)`), keying a
+          // (`let s = gfold(..); assert_eq(s, 6)`), keying a
           // spurious clone `assert_eq__A` whose `A.eq` / `A.to_string`
           // can't resolve — bailing the module. A
           // bare type variable is never a usable concrete type, so

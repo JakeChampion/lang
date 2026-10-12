@@ -1369,7 +1369,7 @@ function main(): i32 {
         + narrow_keys(a) + narrow_key_str_value(b);
 }`},
 	// A type variable that only a CONSTRAINT mentions. `nth[T, I: Iterator[T]]`
-	// and `last[T, I: Iterator[T]]` return `Option[T]`, and `to_array` returns
+	// and `last[T, I: Iterator[T]]` return `Option[T]`, and `skip` returns
 	// `T[]`, but no parameter spells T — it is the impl the bound resolved to
 	// that says what it is (`impl Iterator[i32] for Range`,
 	// `impl[T] Iterator[T] for ArrayIter[T]`). The parser dropped a bound's
@@ -1402,7 +1402,7 @@ function pick(n: i32): i32 {
 }
 
 function words(ws: string[]): i32 {
-    let out: string[] = iter.to_array(iter.of(ws));
+    let out: string[] = iter.skip(iter.of(ws), 0);
     let sum: i32 = 0;
     for w in out { sum = sum + w.len(); }
     return sum;
@@ -2785,13 +2785,45 @@ function main(): i32 {
 	{name: "type-param-only-in-a-lambda-parameter", atLeast: 10, want: "52|", src: `
 import "core/iter" as iter;
 
+function filter[T, I: iter.Iterator[T]](it: I, keep: (T) => boolean): T[] {
+    let out: T[] = [];
+    let cur = it;
+    let go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => {
+                if (keep(t.0)) { out = out.append(t.0); }
+                cur = t.1;
+            },
+            None => { go = false; }
+        }
+    }
+    return out;
+}
+
+function map[T, U, I: iter.Iterator[T]](it: I, f: (T) => U): U[] {
+    let out: U[] = [];
+    let cur = it;
+    let go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => {
+                out = out.append(f(t.0));
+                cur = t.1;
+            },
+            None => { go = false; }
+        }
+    }
+    return out;
+}
+
 function kept(xs: i32[]): i32 {
-    let big = iter.filter(iter.of(xs), (x: i32): boolean => { return x > 3; });
+    let big = filter(iter.of(xs), (x: i32): boolean => { return x > 3; });
     return big.len() * 10 + big[0] + big[1];
 }
 
 function doubled(xs: i32[]): i32 {
-    let all = iter.map(iter.of(xs), (x: i32): i32 => { return x * 2; });
+    let all = map(iter.of(xs), (x: i32): i32 => { return x * 2; });
     return all.len() + all[2];
 }
 

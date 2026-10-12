@@ -1,5 +1,5 @@
 // A generic whose type parameter is reachable ONLY through a fn-parameter's
-// ARGUMENT position. `core/iter`'s filter is the shape:
+// ARGUMENT position. `filter` below is the shape:
 //
 //     filter[T, I: Iterator[T]](it: I, keep: (T) => boolean): T[]
 //
@@ -17,7 +17,7 @@
 //   filter_chain — the bail shape: unannotated filter result into a generic.
 //   map_chain    — the sibling that always worked, so a regression on the
 //                  existing return-position recovery is visible too.
-//   annotated    — `let ys: i32[] = iter.filter(...)`, the workaround that
+//   annotated    — `let ys: i32[] = filter(...)`, the workaround that
 //                  lowered before this change; it must keep working.
 //   strings      — a non-i32 element, so the fix is not i32-shaped.
 //   floats       — an f64 element, where an unresolved element type is not
@@ -39,10 +39,42 @@
 import "core/iter" as iter;
 import "core/cmp" as cmp;
 
+function filter[T, I: iter.Iterator[T]](it: I, keep: (T) => boolean): T[] {
+    let out: T[] = [];
+    let cur = it;
+    let go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => {
+                if (keep(t.0)) { out = out.append(t.0); }
+                cur = t.1;
+            },
+            None => { go = false; }
+        }
+    }
+    return out;
+}
+
+function map[T, U, I: iter.Iterator[T]](it: I, f: (T) => U): U[] {
+    let out: U[] = [];
+    let cur = it;
+    let go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => {
+                out = out.append(f(t.0));
+                cur = t.1;
+            },
+            None => { go = false; }
+        }
+    }
+    return out;
+}
+
 // The bail shape: filter's result, unannotated, feeding a generic consumer.
 function filter_chain(i: i32): i32 {
     let xs: i32[] = [5, 2, 8, 1, 4];
-    let evens = iter.filter(iter.of(xs), (x: i32): boolean => { return x % 2 == 0; });
+    let evens = filter(iter.of(xs), (x: i32): boolean => { return x % 2 == 0; });
     let asc = cmp.sort(evens);
     if (asc.len() != 3) { return 253; }
     return asc[0];
@@ -51,7 +83,7 @@ function filter_chain(i: i32): i32 {
 // The sibling that always worked — U comes from the lambda's declared return.
 function map_chain(i: i32): i32 {
     let xs: i32[] = [3, 1, 2];
-    let dbl = iter.map(iter.of(xs), (x: i32): i32 => { return x * 2; });
+    let dbl = map(iter.of(xs), (x: i32): i32 => { return x * 2; });
     let asc = cmp.sort(dbl);
     if (asc.len() != 3) { return 253; }
     return asc[0];
@@ -60,7 +92,7 @@ function map_chain(i: i32): i32 {
 // The annotated workaround, which lowered before this change.
 function annotated(i: i32): i32 {
     let xs: i32[] = [5, 2, 8];
-    let evens: i32[] = iter.filter(iter.of(xs), (x: i32): boolean => { return x % 2 == 0; });
+    let evens: i32[] = filter(iter.of(xs), (x: i32): boolean => { return x % 2 == 0; });
     let asc = cmp.sort(evens);
     return asc[0];
 }
@@ -68,7 +100,7 @@ function annotated(i: i32): i32 {
 // A non-i32 element, so the recovery is not i32-shaped.
 function strings(i: i32): i32 {
     let ss: string[] = ["pear", "fig", "plum"];
-    let keep = iter.filter(iter.of(ss), (s: string): boolean => { return s.len() > 3; });
+    let keep = filter(iter.of(ss), (s: string): boolean => { return s.len() > 3; });
     let asc = cmp.sort(keep);
     if (asc.len() != 2) { return 252; }
     return asc[0].len();
@@ -77,7 +109,7 @@ function strings(i: i32): i32 {
 // An f64 element: the width an untyped read gets wrong, on every backend.
 function floats(i: i32): i32 {
     let xs: f64[] = [5.5, 2.25, 8.5, 1.75, 4.5];
-    let big = iter.filter(iter.of(xs), (x: f64): boolean => { return x > 3.0; });
+    let big = filter(iter.of(xs), (x: f64): boolean => { return x > 3.0; });
     if (big.len() != 3) { return 253; }
     return (big[0] as i32) + (big[1] as i32) + (big[2] as i32);
 }
@@ -86,7 +118,7 @@ function floats(i: i32): i32 {
 function env_lambda(i: i32): i32 {
     let xs: f64[] = [5.5, 2.25, 8.5, 1.75, 4.5];
     let keep = (x: f64): boolean => { return x > 3.0; };
-    let big = iter.filter(iter.of(xs), keep);
+    let big = filter(iter.of(xs), keep);
     if (big.len() != 3) { return 253; }
     return big[0] as i32;
 }
