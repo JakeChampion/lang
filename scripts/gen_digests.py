@@ -130,7 +130,7 @@ def load_word(i, bpw, big_endian, ty, width):
     return " | ".join(parts)
 
 
-def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endian, ivs, rounds_body, doc, hw=False):
+def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endian, ivs, rounds_body, doc, hw=False, order_doc=()):
     """Everything but the block function's round body: struct, constructors,
     absorb, update, final and the one-shot wrappers. `ivs` maps a constructor
     name to (iv words, output length). With `hw`, __{tag}_blocks takes the
@@ -168,7 +168,9 @@ def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endi
         p(f"// __{tag}_blocks folds `nblocks` {block}-byte blocks of `bs`, starting at byte")
         p(f"// `from`, into the state. Generated: the rounds are unrolled with the working")
         p(f"// variables renamed per round and the message schedule a rolling window of")
-        p(f"// locals, so the loop touches no array but the input.")
+        p(f"// locals, so the loop touches no array but the input.{' ' + order_doc[0] if order_doc else ''}")
+        for line in order_doc[1:]:
+            p(f"// {line}")
     p(f"function {rounds}(st: {struct}, bs: [u8], from: i32, nblocks: i32): {struct} {{")
     rounds_body(p)
     fields = ", ".join(f"h{i}: {'abcdefgh'[i]}" for i in range(nwords))
@@ -352,7 +354,7 @@ def sha1_rounds(p):
             f, k = f"((({B} ^ {C}) & {D}) ^ ({B} & {C}))", 0x8f1bbcdc
         else:
             f, k = f"({B} ^ {C} ^ {D})", 0xca62c1d6
-        p(f"        {E} = {E} + {rotl(A, 5, 32)} + {f} + 0x{k:08x} + {w};")
+        p(f"        {E} = {E} + 0x{k:08x} + {w} + {f} + {rotl(A, 5, 32)};")
         p(f"        {B} = {rotl(B, 30, 32)};")
     for n in names:
         p(f"        {n} = {n} + {n}{n};")
@@ -380,12 +382,13 @@ def md5_rounds(p):
         if i < 16:
             f, k = f"({D} ^ ({B} & ({C} ^ {D})))", i
         elif i < 32:
-            f, k = f"({C} ^ ({D} & ({B} ^ {C})))", (5 * i + 1) % 16
+            # c ^ (d & (b ^ c)) as two disjoint terms, the one on b last.
+            f, k = f"({C} & ({D} ^ 0xffffffff)) + ({D} & {B})", (5 * i + 1) % 16
         elif i < 48:
-            f, k = f"({B} ^ {C} ^ {D})", (3 * i + 5) % 16
+            f, k = f"({B} ^ ({C} ^ {D}))", (3 * i + 5) % 16
         else:
             f, k = f"({C} ^ ({B} | ({D} ^ 0xffffffff)))", (7 * i) % 16
-        t = f"({A} + {f} + 0x{MD5_K[i]:08x} + x{k})"
+        t = f"({A} + 0x{MD5_K[i]:08x} + x{k} + {f})"
         p(f"        {A} = {B} + {rotl(t, MD5_S[i], 32)};")
     for n in names:
         p(f"        {n} = {n} + {n}{n};")
@@ -604,10 +607,15 @@ def unformatted():
     p("")
     emit_family(p, tag="md5", struct="Md5", ty="u32", width=32, nwords=4, block=64, len_bytes=8,
                 big_endian=False, ivs={"md5_new": (MD5_IV, 16)}, rounds_body=md5_rounds,
-                doc="MD5 (RFC 1321)")
+                doc="MD5 (RFC 1321)",
+                order_doc=("Each round adds the", "constant and the message word before the boolean function, and the",
+                           "function's term on the newest variable last, so only that term, the",
+                           "rotate and one add sit between one round's result and the next's."))
     emit_family(p, tag="sha1", struct="Sha1", ty="u32", width=32, nwords=5, block=64, len_bytes=8,
                 big_endian=True, ivs={"sha1_new": (SHA1_IV, 20)}, rounds_body=sha1_rounds,
-                doc="SHA-1 (RFC 3174)")
+                doc="SHA-1 (RFC 3174)",
+                order_doc=("Each round adds the", "rotated newest variable last, after the constant, the word and the",
+                           "function, so one rotate and one add sit between consecutive rounds."))
     emit_family(p, tag="sha256", struct="Sha256", ty="u32", width=32, nwords=8, block=64, len_bytes=8,
                 big_endian=True, ivs={"sha256_new": (SHA256_IV, 32), "sha224_new": (SHA224_IV, 28)},
                 rounds_body=sha2_rounds(32, 64, SHA256_K, (2, 13, 22), (6, 11, 25), (7, 18, 3), (17, 19, 10)),
