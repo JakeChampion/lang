@@ -6838,10 +6838,21 @@ function ssa_unary_asm(what: string, unsigned: boolean, lb: string, d: string): 
   return "";
 }
 
-// ssa_unary_from selects a width op or bit count that reads its operand from
+// ssa_unary_from selects a width op, bit count or rotate that reads its operand from
 // register `src` and writes `d`, so an operand outside `d` needs no copy into
-// it first; "" for an op whose only form works in place.
+// it first; "" for an op whose only form works in place. A rotate also takes
+// a frame slot for `src`.
 function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string): string {
+  if (util.str_has_prefix(what, "rotr:")) {
+    let n: string = util.i32_to_string(ssa.rotr_count(what));
+    if (ssa.rotr_width(what) == 64) {
+      return "    rorxq $" + n + ", " + src + ", " + d + "\n";
+    }
+    if (src[0] == b'%') {
+      src = ssa_r32(src);
+    }
+    return "    rorxl $" + n + ", " + src + ", " + ssa_r32(d) + "\n";
+  }
   if (what == "load_i32") {
     return "    movslq (" + src + "), " + d + "\n";
   }
@@ -8406,6 +8417,8 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     let src: string = "";
     if (ssa_in_x(reg_of, ins.args[0]) && ssa_reg(reg_of[ins.args[0]]) != d) {
       src = ssa_reg(reg_of[ins.args[0]]);
+    } else if (reg_of[ins.args[0]] < 0 && util.str_has_prefix(ins.str, "rotr:")) {
+      src = ssa_slot(ssa.spill_slot(reg_of[ins.args[0]]), s.ssa_save);
     }
     let from: string = "";
     if (src != "") {

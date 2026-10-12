@@ -262,7 +262,7 @@ inside a codegen switch:
 | backend | baseline | what it buys |
 | ------- | -------- | ------------ |
 | arm64 / arm64-darwin | ARMv8.2-A with the cryptographic extensions | `clz`, `rbit`, the SIMD-side popcount (`cnt` + `addv`), `crc32`, LSE atomics, the carry-less multiply `pmull` / `pmull2` in its `.1q` form, the AES rounds `aese` / `aesmc`, and the SHA-256 instructions `sha256h` / `sha256h2` / `sha256su0` / `sha256su1` (the SHA-512 ones, FEAT_SHA512, are not in the baseline). This one IS a raise: FEAT_AES (which carries FEAT_PMULL) stays optional in every ARMv8-A and ARMv9-A profile, and taking it is what drops the Raspberry Pi. |
-| x86-64 | **x86-64-v3 plus AES-NI** — Haswell-class 2013 (AMD: Excavator 2015, Zen 2017) | `popcnt` (SSE4.2), `lzcnt` / `tzcnt` (BMI1), `pshufb` (SSSE3), the SSE4.1 `roundsd`, SSE2 floating point, `pclmulqdq`, `aesenc` / `aesenclast` / `aeskeygenassist`, and the **AVX2** 32-byte loops the byte kernels already emit. |
+| x86-64 | **x86-64-v3 plus AES-NI** — Haswell-class 2013 (AMD: Excavator 2015, Zen 2017) | `popcnt` (SSE4.2), `lzcnt` / `tzcnt` (BMI1), `rorx` (BMI2), `pshufb` (SSSE3), the SSE4.1 `roundsd`, SSE2 floating point, `pclmulqdq`, `aesenc` / `aesenclast` / `aeskeygenassist`, and the **AVX2** 32-byte loops the byte kernels already emit. |
 | wasm | core wasm 2.0, fixed-width SIMD included | the `v128` family — `v128.load`, `i8x16.splat`, `i8x16.eq`, `i8x16.bitmask` and siblings. SIMD is part of the 2.0 standard rather than an option, and every engine Fern targets (wasmtime, and browsers since 2021) enables it unconditionally, so this is the same kind of floor as arm64's Advanced SIMD. |
 
 **LZCNT / TZCNT have a failure mode POPCNT does not, and it is the reason to
@@ -279,7 +279,8 @@ self-host's byte kernels (`__fern_count_byte`, `__fern_memchr`,
 `vmovdqu` / `vpcmpeqb` / `vpbroadcastb` / `vpmovmskb` on `ymm`, with no cpuid
 check anywhere — ahead of their 16-byte SSE2 ones, through the five VEX forms
 its in-process assembler encodes (`x86_native.fern`), and the `clz` / `ctz` /
-`popcount` ops lower to `lzcnt` / `tzcnt` / `popcnt`, so its output sits at v3.
+`popcount` ops lower to `lzcnt` / `tzcnt` / `popcnt` and a rotate by a constant
+whose operand stays live to BMI2's `rorx`, so its output sits at v3.
 
 x86-64-v3 is the standard name for the class that has it, and no real
 part carries AVX2 without v3's other bits. The AMD floor moves with it: Jaguar
