@@ -2020,8 +2020,9 @@ function index_of_reg(a: i32[], x: i32): i32 {
 // `hints.hint[v]`, its phi mate, before any other: when the slot is free, or
 // when the mate still holds it and `hints.take_over[v]` says the two were
 // found not to interfere. The edge between them then moves nothing. Failing
-// that it takes the slot of one of the values it reads (a phi's operands, or
-// the operands a two-address op computes over) when no value in that slot is
+// that it takes the slot of its mate or of one of the values it reads (a
+// phi's operands, or the operands a two-address op computes over), the mate
+// first, when no value in that slot is
 // live where it is defined, nor it where they are (path_slot), although their
 // intervals meet: an else-if chain inside a loop merges each arm's value with
 // the loop header's phi, whose interval covers the whole body when it is read
@@ -2042,9 +2043,17 @@ function assign_spill_slots(f: SFunc, shape: SlotShape, lo: i32[], hi: i32[], re
     if (hi[v] < 0 || reg_of[v] >= 0) {
       continue;
     }
-    let s: i32 = hinted_slot(slot_end, holder, reg_of, hints.hint[v], from[v], hints.take_over[v]);
+    let h: i32 = hints.hint[v];
+    let s: i32 = hinted_slot(slot_end, holder, reg_of, h, from[v], hints.take_over[v]);
     if (s < 0 && def_pos[v] >= 0) {
       let reads: i32[] = slot_operands(f, shape, reg_of, v);
+      if (h >= 0 && reg_of[h] < 0 - 1) {
+        let mate_first: i32[] = [h];
+        for r in reads {
+          mate_first = mate_first.append(r);
+        }
+        reads = mate_first;
+      }
       if (reads.len() > 0 && !built) {
         sites = read_sites(f, shape.at, shape.blk_start);
         built = true;
@@ -3448,6 +3457,10 @@ pub function register_form(f: SFunc): Formed {
   if (unwrapped.repl.len() > 0) {
     g = prune_dead(g);
   }
+  let bytes: Formed = fold_byte_access(g);
+  if (bytes.repl.len() > 0) {
+    g = prune_dead(bytes.f);
+  }
   let t: Threading = thread_bool_joins(g);
   if (t.changed) {
     g = prune_dead(t.f);
@@ -3457,7 +3470,145 @@ pub function register_form(f: SFunc): Formed {
   if (fw.changed) {
     g = prune_dead(g);
   }
-  return Formed { f: g, repl: compose_repl(compose_repl(folded.repl, merged.repl), unwrapped.repl) };
+  return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), unwrapped.repl), bytes.repl) };
+}
+
+// fold_byte_access does two things for a byte. It replaces an extension,
+// wrap or widening cast of a byte value by its operand: a byte load leaves
+// 0..255 in the whole register, which every one of those leaves unchanged.
+// And it gives a byte load or store at `add(a, b) + 0` the address `a + b`,
+// when the full-width sum is read nowhere else, so the backends use the
+// base-plus-index form rather than computing the sum and a zero index. The
+// register backends only: on wasm an extension changes the value's type.
+pub function fold_byte_access(f: SFunc): Formed {
+  let def_b: i32[] = __alloc_i32(f.nvals);
+  let def_k: i32[] = __alloc_i32(f.nvals);
+  let i: i32 = 0;
+  while (i < f.nvals) {
+    def_b = def_b.with(i, 0 - 1);
+    def_k = def_k.with(i, 0 - 1);
+    i = i + 1;
+  }
+  let bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    let k: i32 = 0;
+    while (k < f.blocks[bi].insts.len()) {
+      let r: i32 = f.blocks[bi].insts[k].result;
+      if (r >= 0 && r < f.nvals) {
+        def_b = def_b.with(r, bi);
+        def_k = def_k.with(r, k);
+      }
+      k = k + 1;
+    }
+    bi = bi + 1;
+  }
+  let byte: boolean[] = __alloc_bool(f.nvals);
+  let repl: i32[] = [];
+  let uses: i32[] = use_counts(f);
+  let changed: boolean = false;
+  let nblocks: SBlock[] = [];
+  for blk in f.blocks {
+    let ninsts: SInst[] = [];
+    for ins0 in blk.insts {
+      let ins: SInst = ins0;
+      if (repl.len() > 0) {
+        let nargs: i32[] = [];
+        for a in ins.args {
+          nargs = nargs.append(resolve_repl(repl, a));
+        }
+        ins = SInst { ...ins, args: nargs };
+      }
+      let r: i32 = ins.result;
+      if (r >= 0 && r < f.nvals && byte_extension(ins) && ins.args[0] >= 0 && ins.args[0] < f.nvals && byte[ins.args[0]]) {
+        if (repl.len() == 0) {
+          i = 0;
+          while (i < f.nvals) {
+            repl = repl.append(i);
+            i = i + 1;
+          }
+        }
+        repl = repl.with(r, ins.args[0]);
+        byte = byte.with(r, true);
+        changed = true;
+        continue;
+      }
+      if (r >= 0 && r < f.nvals && byte_source(f, def_b, def_k, ins)) {
+        byte = byte.with(r, true);
+      }
+      if ((ins.kind_tag == 54 || ins.kind_tag == 55) && const_zero(f, def_b, def_k, ins.args[1])) {
+        let base: i32 = ins.args[0];
+        let d: SInst = def_at(f, def_b, def_k, base);
+        if (d.kind_tag == 9 && d.str == "add" && d.imm == 64 && d.args.len() == 2 && base >= 0 && base < uses.len() && uses[base] == 1) {
+          let nargs: i32[] = [d.args[0], d.args[1]];
+          if (ins.kind_tag == 55) {
+            nargs = nargs.append(ins.args[2]);
+          }
+          ins = SInst { ...ins, args: nargs };
+          changed = true;
+        }
+      }
+      ninsts = ninsts.append(ins);
+    }
+    let t: STerm = blk.term;
+    if (repl.len() > 0) {
+      if (t.kind_tag == 1) {
+        t = STerm { ...t, value: resolve_repl(repl, t.value) };
+      } else if (t.kind_tag == 3) {
+        t = STerm { ...t, cond: resolve_repl(repl, t.cond) };
+      }
+    }
+    nblocks = nblocks.append(SBlock { ...blk, insts: ninsts, term: t });
+  }
+  if (!changed) {
+    return Formed { f: f, repl: [] };
+  }
+  if (repl.len() == 0) {
+    repl = identity_repl(f.nvals);
+  }
+  return formed_by(SFunc { ...f, blocks: nblocks }, repl);
+}
+
+// byte_source is an instruction whose value is a byte, 0..255 zero-extended
+// to the whole register: a byte load, an element of a u8 array, a byte of a
+// string, or an `and` with a constant mask no wider than a byte.
+function byte_source(f: SFunc, def_b: i32[], def_k: i32[], ins: SInst): boolean {
+  if (ins.kind_tag == 54 || ins.kind_tag == 44) {
+    return true;
+  }
+  if (ins.kind_tag == 42) {
+    return ins.imm != 2 && ins.str == "u8";
+  }
+  if (ins.kind_tag == 9 && ins.str == "and" && ins.args.len() == 2) {
+    return const_in(f, def_b, def_k, ins.args[0], 0i64, 255i64) || const_in(f, def_b, def_k, ins.args[1], 0i64, 255i64);
+  }
+  return false;
+}
+
+// byte_extension is a unary that leaves a value in 0..255 unchanged: a 32-bit
+// wrap or extension, signed or not, or a cast to u8, i32 or u32.
+function byte_extension(ins: SInst): boolean {
+  if (ins.kind_tag != 10 || ins.args.len() != 1) {
+    return false;
+  }
+  return ins.str == "int_wrap" || ins.str == "int_extend" || ins.str == "u32_wrap"
+    || ins.str == "int_cast:u8" || ins.str == "int_cast:i32" || ins.str == "int_cast:u32";
+}
+
+function const_zero(f: SFunc, def_b: i32[], def_k: i32[], v: i32): boolean {
+  return const_in(f, def_b, def_k, v, 0i64, 0i64);
+}
+
+// const_in says v is an integer constant in lo..hi.
+function const_in(f: SFunc, def_b: i32[], def_k: i32[], v: i32, lo: i64, hi: i64): boolean {
+  let d: SInst = def_at(f, def_b, def_k, v);
+  if (d.kind_tag == 1) {
+    return d.imm as i64 >= lo && d.imm as i64 <= hi;
+  }
+  if (d.kind_tag == 3) {
+    let c: i64 = util.lit_to_i64(d.str);
+    return c >= lo && c <= hi;
+  }
+  return false;
 }
 
 // drop_low_wraps replaces a 32-bit wrap, extend or cast, signed or unsigned, by

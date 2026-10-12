@@ -2,8 +2,10 @@ package coreutils
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -172,6 +174,21 @@ func duTree(t *testing.T) string {
 		duWrite(t, filepath.Join(deep, "f"), 1)
 	}
 
+	// A chain whose full path is past PATH_MAX, Linux's 4096 and Darwin's
+	// 1024: du names each entry inside the directory it walks, as GNU's fts
+	// does, so the depth is no limit. The shell steps into each directory it
+	// makes, so no path to the leaf is ever formed here either.
+	mk := exec.Command("/bin/sh", "-c", `set -e
+mkdir longpath && cd longpath
+i=0
+while [ $i -lt 45 ]; do mkdir `+strings.Repeat("d", 100)+` && cd -P `+strings.Repeat("d", 100)+`; i=$((i + 1)); done
+printf leaf > leaf
+`)
+	mk.Dir = dir
+	if out, err := mk.CombinedOutput(); err != nil {
+		t.Fatalf("building longpath: %v\n%s", err, out)
+	}
+
 	// Names a diagnostic has to quote: a space, an apostrophe, a tab, and
 	// bytes that are not UTF-8 at all.
 	duMkdir(t, j("weird dir"))
@@ -260,6 +277,8 @@ func duCases(t *testing.T) []invocation {
 	add("total-depth0", "-c", "-d", "0", "a")
 	add("deep", "-a", "deep")
 	add("deep-d1", "-d", "1", "deep")
+	add("beyond-path-max", "-s", "longpath")
+	add("beyond-path-max-all", "-a", "longpath")
 	add("deep-d2", "-d", "2", "deep")
 	add("deep-a-d1", "-a", "-d1", "deep")
 	add("fifo-and-devices", "-a", "fifo", "/dev/null", "/dev/zero")

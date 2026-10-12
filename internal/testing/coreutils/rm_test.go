@@ -1,7 +1,9 @@
 package coreutils
 
 import (
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -102,6 +104,25 @@ func rmDeep(t *testing.T, dir string) {
 	seedWrite(t, dir, "d/a/b/c/x", "")
 	seedWrite(t, dir, "d/a/y", "")
 	seedWrite(t, dir, "d/z", "")
+}
+
+// rmBeyondPathMax is a chain 80 levels of 100 characters deep, about 8 KiB
+// of path, past PATH_MAX on Linux and Darwin. A shell steps into each
+// directory it makes, so no path to the leaf is formed while building it;
+// rm, like GNU's fts, removes it by name inside each held directory.
+func rmBeyondPathMax(t *testing.T, dir string) {
+	t.Helper()
+	d := strings.Repeat("d", 100)
+	cmd := exec.Command("/bin/sh", "-c", `set -e
+mkdir long && cd long
+i=0
+while [ $i -lt 80 ]; do mkdir `+d+` && cd -P `+d+`; i=$((i + 1)); done
+printf leaf > leaf
+`)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("building long: %v\n%s", err, out)
+	}
 }
 
 // rmEmpty is one empty directory: the shape `-d` exists for, and the one
@@ -334,6 +355,8 @@ func rmCases(t *testing.T) []invocation {
 		{name: "a tree with -R", args: []string{"-Rv", "d"}, seedTree: rmTree},
 		{name: "a tree with --recursive", args: []string{"--recursive", "-v", "d"}, seedTree: rmTree},
 		{name: "a deep tree unwinds post-order", args: []string{"-rv", "d"}, seedTree: rmDeep},
+		{name: "a tree past PATH_MAX goes whole", args: []string{"-rf", "long"}, seedTree: rmBeyondPathMax},
+		{name: "a tree past PATH_MAX, verbose", args: []string{"-rv", "long"}, seedTree: rmBeyondPathMax},
 		// Neither side sorts, so `-v` prints raw readdir order.
 		{name: "26 names in readdir order", args: []string{"-rv", "d"}, seedTree: rmWide},
 		{name: "files and directories interleaved", args: []string{"-rv", "d"}, seedTree: rmMixed},

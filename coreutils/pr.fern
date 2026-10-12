@@ -248,8 +248,9 @@ function clump_width(b: i32, c: Cfg): i32 {
 // the line, which is what trims a row whose last column is absent.
 struct Line { buf: usize, pos: i32, pend: i32 }
 
-function line_new(): Line {
-  return Line { buf: buf_new(0), pos: 0, pend: 0 };
+// `line_on(h)` — a line written into the builder `h`.
+function line_on(h: usize): Line {
+  return Line { buf: h, pos: 0, pend: 0 };
 }
 
 function append_bytes(h: usize, bytes: u8[]): void {
@@ -888,12 +889,12 @@ function put_column(l0: Line, c: Cfg, i: i32, txt: u8[], n: i64, numbered: boole
   return l;
 }
 
-// `row_text(c, texts, nums, numbered)` — one body line. Pending
+// `row_into(out, c, texts, nums, numbered)` — one body line, onto `out`. Pending
 // whitespace is never flushed at the end, so a row whose last column is
 // ABSENT carries no trailing pad; a column that exists and renders
 // nothing still does, because its separator is a byte.
-function row_text(c: Cfg, texts: u8[][], nums: i64[], numbered: boolean): u8[] {
-  let l: Line = line_new();
+function row_into(out: usize, c: Cfg, texts: u8[][], nums: i64[], numbered: boolean): void {
+  let l: Line = line_on(out);
   if (c.num_prefix > 0 && nums.len() > 0) {
     l = l.to(c.offset, c);
     l = put_number(l, c, c.offset, nums[0]);
@@ -908,8 +909,7 @@ function row_text(c: Cfg, texts: u8[][], nums: i64[], numbered: boolean): u8[] {
     l = put_column(l, c, i, texts[i], num, want);
     i = i + 1;
   }
-  buf_push_byte(l.buf, 10);
-  return take_bytes(l.buf);
+  buf_push_byte(out, 10);
 }
 
 // ---- the page ---------------------------------------------------------------
@@ -948,12 +948,9 @@ function column_lengths(n: i32, c: Cfg): i32[] {
   return out;
 }
 
-struct Page { text: u8[], lines: i32 }
-
-// `body_text(c, lines, first_no)` — the rows of one page, and how many
-// output lines they took.
-function body_text(c: Cfg, lines: u8[][], first_no: i64): Page {
-  let out: usize = buf_new(0);
+// `body_into(out, c, lines, first_no)` — the rows of one page onto `out`,
+// answering how many output lines they took.
+function body_into(out: usize, c: Cfg, lines: u8[][], first_no: i64): i32 {
   let count: i32 = 0;
   let n: i32 = lines.len();
   if (c.columns == 1 && !c.merge) {
@@ -967,8 +964,7 @@ function body_text(c: Cfg, lines: u8[][], first_no: i64): Page {
         append_bytes(out, lines[i]);
         buf_push_byte(out, 10);
       } else {
-        let l: Line = put_column(line_new(), c, 0, lines[i], wrap32(first_no + i as i64), c.numbering);
-        append_bytes(out, take_bytes(l.buf));
+        put_column(line_on(out), c, 0, lines[i], wrap32(first_no + i as i64), c.numbering);
         buf_push_byte(out, 10);
       }
       count = count + 1;
@@ -978,7 +974,7 @@ function body_text(c: Cfg, lines: u8[][], first_no: i64): Page {
       }
       i = i + 1;
     }
-    return Page { text: take_bytes(out), lines: count };
+    return count;
   }
   let rows: i32 = (n + c.columns - 1) / c.columns;
   let lens: i32[] = column_lengths(n, c);
@@ -1013,7 +1009,7 @@ function body_text(c: Cfg, lines: u8[][], first_no: i64): Page {
         col = col + 1;
       }
     }
-    append_bytes(out, row_text(c, texts, nums, c.numbering));
+    row_into(out, c, texts, nums, c.numbering);
     count = count + 1;
     if (c.double_space && (r + 1 < rows || !c.omit_header || c.across)) {
       buf_push_byte(out, 10);
@@ -1021,13 +1017,12 @@ function body_text(c: Cfg, lines: u8[][], first_no: i64): Page {
     }
     r = r + 1;
   }
-  return Page { text: take_bytes(out), lines: count };
+  return count;
 }
 
-// `merge_body(c, rows, first_no)` — the rows of a parallel page, which
-// are already laid out one column per FILE.
-function merge_body(c: Cfg, rows: u8[][], width: i32, row_widths: i32[], first_no: i64): Page {
-  let out: usize = buf_new(0);
+// `merge_body_into(out, c, rows, first_no)` — the rows of a parallel page,
+// which are already laid out one column per FILE, onto `out`.
+function merge_body_into(out: usize, c: Cfg, rows: u8[][], width: i32, row_widths: i32[], first_no: i64): i32 {
   let count: i32 = 0;
   let nrows: i32 = 0;
   if (width > 0) {
@@ -1043,7 +1038,7 @@ function merge_body(c: Cfg, rows: u8[][], width: i32, row_widths: i32[], first_n
       nums = nums.append(wrap32(first_no + r as i64));
       col = col + 1;
     }
-    append_bytes(out, row_text(c, texts, nums, c.numbering));
+    row_into(out, c, texts, nums, c.numbering);
     count = count + 1;
     if (c.double_space) {
       buf_push_byte(out, 10);
@@ -1051,43 +1046,43 @@ function merge_body(c: Cfg, rows: u8[][], width: i32, row_widths: i32[], first_n
     }
     r = r + 1;
   }
-  return Page { text: take_bytes(out), lines: count };
+  return count;
 }
 
-// `page_text(c, body, page, name, t, nsec)` — the header block, the
-// body and whatever closes the page: five blank lines after padding it
-// out, a single form feed, or nothing at all under -t.
-function page_text(c: Cfg, body: Page, page: u64, name: string, t: i64, nsec: i64): u8[] {
+// `page_head(out, c, page, name, t, nsec)` and `page_tail(out, c, lines)` —
+// the header block before a page's body, and whatever closes the page after
+// it: five blank lines after padding it out, a single form feed, or, like the
+// header, nothing at all under -t.
+function page_head(out: usize, c: Cfg, page: u64, name: string, t: i64, nsec: i64): void {
   if (c.omit_header) {
-    return body.text;
+    return;
   }
-  let lead: Line = line_new();
-  lead = lead.to(c.offset, c);
+  let lead: Line = line_on(out).to(c.offset, c);
   lead = lead.flush(c);
-  let head: Line = line_new();
-  head = head.to(c.offset, c);
+  buf_push(out, "\n\n");
+  let head: Line = line_on(out).to(c.offset, c);
   let header: u8[] = header_text(c, name, t, nsec, page);
   head = head.put_range(header, 0, header.len(), 0, c);
-  let out: usize = buf_new(body.text.len());
-  append_bytes(out, take_bytes(lead.buf));
-  buf_push(out, "\n\n");
-  append_bytes(out, take_bytes(head.buf));
   buf_push(out, "\n\n\n");
-  append_bytes(out, body.text);
+}
+
+function page_tail(out: usize, c: Cfg, lines: i32): void {
+  if (c.omit_header) {
+    return;
+  }
   if (c.form_feed) {
     buf_push_byte(out, 12);
-    return take_bytes(out);
+    return;
   }
   let body_lines: i32 = c.page_length - 10;
   if (c.double_space) {
     body_lines = rows_per_page(c) * 2;
   }
-  let pad: i32 = body_lines - body.lines;
+  let pad: i32 = body_lines - lines;
   if (pad > 0) {
     buf_push(out, "\n".repeat(pad));
   }
   buf_push(out, "\n\n\n\n\n");
-  return take_bytes(out);
 }
 
 // ---- running one job --------------------------------------------------------
@@ -1220,8 +1215,10 @@ function run_serial(c: Cfg, name: string, o0: io_buffered.BufWriter, ok0: boolea
       }
     }
     if (printing) {
-      let body: Page = body_text(c, lines, line_no);
-      o = gnu.check(o.write_bytes(page_text(c, body, page, hdr_name, s.mtime, s.mnsec)));
+      let h: usize = o.handle();
+      page_head(h, c, page, hdr_name, s.mtime, s.mnsec);
+      page_tail(h, c, body_into(h, c, lines, line_no));
+      o = gnu.settle(o);
       if (!paginate && broke && !c.omit_pagination) {
         o = gnu.put(o, "\x0c");
       }
@@ -1391,8 +1388,10 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
       }
     }
     if (printing) {
-      let body: Page = merge_body(c, cells, width, row_widths, line_no);
-      o = gnu.check(o.write_bytes(page_text(c, body, page, "", now, 0 as i64)));
+      let h: usize = o.handle();
+      page_head(h, c, page, "", now, 0 as i64);
+      page_tail(h, c, merge_body_into(h, c, cells, width, row_widths, line_no));
+      o = gnu.settle(o);
       if (c.omit_header && page_ff && !c.omit_pagination) {
         o = gnu.put(o, "\x0c");
       }

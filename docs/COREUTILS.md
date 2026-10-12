@@ -797,6 +797,33 @@ to becoming the default.
 
 ## Performance
 
+### The whole catalogue, one compiler, 2026-10-12, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
+
+The first run of the single-column bench over every workload: 661 rows over
+104 utilities, built by the self-hosted compiler at 394767a. Full table:
+`docs/COREUTILS-BENCH-2026-10-12.md`. Builds ran on the same 4-core machine
+for part of the run, so a ratio within about 10% of 1 is not a measured
+difference.
+
+| | rows | faster than GNU | faster than uutils |
+|---|---|---|---|
+| every workload | 661 | 501 (76%) | 534 of 616 |
+
+The median row is 1.68x GNU and 3.09x uutils, and 66 of the 104 utilities
+beat GNU on every row. The 160 rows that lose to GNU fall into a few families:
+
+| family | rows lost | worst | where the time goes |
+|---|---|---|---|
+| `base32` / `base64` / `basenc` encoding | 11 | 0.12x | one character per builder push; `base64 -w0` of 8 MiB was 661 M instructions to GNU's 90 M |
+| the digests (`sha*sum`, `md5sum`, `b2sum`, `cksum -a`) | 33 | 0.50x | GNU calls OpenSSL's assembly: `sha256sum` of 8 MiB is 447 M instructions to its 235 M |
+| `ls` / `dir` / `vdir` | 31 | 0.66x | |
+| `dd` conversions | 9 | 0.43x | `conv=unblock`, `swab`, `block` |
+| `pr` | 9 | 0.53x | a builder allocated per line, and padding built as a string |
+| `du` | 9 | 0.61x | every row |
+| `fmt` | 9 | 0.66x | every row |
+| `shuf` | 6 | 0.29x | `-n 10` of a large file reads all of it |
+| `join`, `ptx`, `stat`, `cp`, `sort`, `numfmt`, `tac`, `split`, the rest | 43 | 0.53x | |
+
 ### Both compilers, 2026-09-17 — the self-host build does not meet requirement 2
 
 The first run of the two-compiler bench (`fern` = `bin/fern`'s build,
@@ -4038,15 +4065,6 @@ tree can reach. It costs one fork and one reap per
 invocation — measured at two tenths of a millisecond in the table above,
 against a startup lead that more than covers it.
 
-**`du` cannot walk past `PATH_MAX`.** Every filesystem primitive takes a PATH,
-so a component 8 KiB down is `File name too long` where GNU's fts, which opens
-each directory and reads it fd-relative, keeps going. Measured on a 40-level
-tree of 200-byte components: GNU 168, Fern 80 plus one `cannot access` per
-level it could not reach, exit 1 — the same shape an unreadable directory has,
-so it degrades rather than lying. #9078 and #9074 are the same `openat` /
-`fdopendir` / `fstatat` family, which `rm -r`, `ls -R`, `find` and `cp -r` all
-want too.
-
 **`dircolors -p` prints GNU 9.12's database.** The text `-p` prints is a data
 file that changes between coreutils releases — the copyright year on its third
 line moves, and entries come and go — so there is no version-independent answer
@@ -4245,45 +4263,24 @@ still declared, since their getopt behaviour is observable either way.
 
 ## Open gaps
 
-**A directory walk is bounded by PATH_MAX (#9074).** Every filesystem builtin
-takes a path, so a recursive walk concatenates one per entry and the kernel
-refuses it past 4096 bytes. GNU's fts is fd-relative (FTS_CWDFD: openat /
-fdopendir / unlinkat against a held descriptor) and has no such bound: on a
-tree built with fd-relative mkdir to 80 levels of 100 characters, `rm -rf`
-removes it in silence while `rm.fern` stops at level 40 with `File name too
-long` and leaves the rest. Shallow ENAMETOOLONG is an ordinary error path both
-sides agree on. `remove_dir_all` is fd-relative already but offers no
-per-entry hook, so it cannot carry `-v`, `-i`, or the per-entry diagnostics
-that decide the exit status. `du`, `ls -R`, `cp -r`, `chmod -R` and `find`
-want the same primitive.
+**`ls -R` is the one directory walk still bounded by PATH_MAX.** The
+directory handle #9074 asked for exists (`open_dir` and `Dir`, #12024): a
+directory held open whose methods list, stat, open, chmod, chown and remove
+entries by name, the openat / fstatat / unlinkat family GNU's fts runs on.
+`du`, `rm`, `chmod -R`, `chown -R` and `chgrp -R` walk through it. None of them
+has a depth bound: each handles a tree 45 to 80 levels of 100 characters deep
+as GNU does. The kernel resolves no ancestor path per entry; on a 60-level tree
+`du`'s system time fell from 4.5 ms to 1.5 ms.
 
-It is also why `du` loses every bench row it has (0.29x to 0.73x). `du.fern`
-makes FEWER syscalls than GNU on the same tree (1505 against 2064 on a
-20-file directory 60 levels down: no fcntl, fstat or fdopendir), but each of
-its 1260 `newfstatat` calls carries the whole path, so the kernel walks every
-component again — 9 µs a call against GNU's 4 with a directory descriptor
-and a bare name. A `chdir` walk would recover the time and is not taken: it
-is the fts mode GNU abandoned, and it changes which path an error names.
+Below the top level they act fd-relative, as GNU does, opening each directory
+by name with `O_NOFOLLOW`. So a rename of an interior directory under a running
+walk cannot redirect a call outside the tree. A directory reached through a
+symlink that `-L` or `-H` follows is opened by its path, which is the one place
+a walk still forms one.
 
-`chmod -R` is the second utility standing on it, and there the gap costs more
-than depth. strace shows GNU descends fd-relative below the top level —
-`fchmodat(4, "sub", …)` against a held descriptor, then `openat(4, "sub",
-O_NOFOLLOW|O_DIRECTORY)` — so renaming an interior directory under a running
-walk cannot redirect a chmod at anything outside the tree. `chmod.fern`
-rebuilds the path per entry, so it can. Nothing in the corpus renames anything
-under a running chmod, and the 333 cases agree on stdout, stderr, exit status
-and the mode of every entry; what is missing is a safety property no case
-asserts, which is why it is recorded here rather than left to the depth
-sentence above.
-
-`ls -R` is the fifth, and there the bound is only depth: it rebuilds the
-path per entry the way the other four do, and a tree deeper than PATH_MAX
-stops with `File name too long` where GNU keeps walking.
-
-`chown -R` and `chgrp -R` are the third and fourth, with the same shape: they
-rebuild the path per entry where GNU holds a descriptor, so a rename of an
-interior directory under a running walk can redirect a call outside the tree.
-Nothing in the corpus renames anything under a running chown.
+`ls -R` rebuilds the path per entry, so a tree deeper than PATH_MAX stops with
+`File name too long` where GNU keeps walking. Shallow ENAMETOOLONG is an
+ordinary error path both sides agree on.
 
 **`chown -v` on a dangling symlink it was told to FOLLOW is the one place the
 corpus deliberately does not compare stdout, and the reason is that GNU has no

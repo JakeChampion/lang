@@ -228,7 +228,10 @@ from another Dir, so gating `d.lstat` as well would count one authority
 twice. Both WASI previews are descriptor-relative underneath (`path_open`
 and `path_filestat_get` take a directory fd), so this is the family that maps
 most directly onto them, but neither wasm backend lowers the handle yet; a
-refusal is the truthful answer until one does.
+refusal is the truthful answer until one does. A program can still call the
+methods on a Dir it holds only off wasm (`du` opens one under a
+`target_os()` branch the wasm build prunes): no Dir exists there, so the
+wasm backend lowers each method to `unreachable`.
 
 **`truncate` is plain `fs`, and `mknod` is the one that is not.** Both
 create or change an entry, which is why the pair is worth stating

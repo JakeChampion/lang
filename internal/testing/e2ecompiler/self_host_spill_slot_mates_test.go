@@ -58,6 +58,48 @@ const spillSlotNestedProg = `@noinline function flush(x: i64): i64 { return x * 
 function main(): i32 { return (carry(1000i64, 3i64) % 200i64) as i32; }
 `
 
+// spillSlotJoinProg can replace fourteen arrays at two points in a turn, and
+// rarely does: in an inner loop, and after it in an `if` whose merge feeds the
+// loop header. Each merge phi's mate is the header's phi, whose slot the inner
+// header's phi holds by then; the merge takes it too, so a turn that skips
+// both moves nothing, and only an arm that ran pays its moves.
+const spillSlotJoinProg = `struct W { f0: i64[], f1: i64[], f2: i64[], f3: i64[], f4: i64[], f5: i64[], f6: i64[], f7: i64[], f8: i64[], f9: i64[], f10: i64[], f11: i64[], f12: i64[], f13: i64[] }
+@noinline function rare(w: W): W { return w; }
+@noinline function carry(n: i32, xs: i64[]): i32 {
+    let v0: i64[] = xs;
+    let v1: i64[] = xs;
+    let v2: i64[] = xs;
+    let v3: i64[] = xs;
+    let v4: i64[] = xs;
+    let v5: i64[] = xs;
+    let v6: i64[] = xs;
+    let v7: i64[] = xs;
+    let v8: i64[] = xs;
+    let v9: i64[] = xs;
+    let v10: i64[] = xs;
+    let v11: i64[] = xs;
+    let v12: i64[] = xs;
+    let v13: i64[] = xs;
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) {
+        while (acc > 1000000) {
+            let w1: W = rare(W { f0: v0, f1: v1, f2: v2, f3: v3, f4: v4, f5: v5, f6: v6, f7: v7, f8: v8, f9: v9, f10: v10, f11: v11, f12: v12, f13: v13 });
+            v0 = w1.f0; v1 = w1.f1; v2 = w1.f2; v3 = w1.f3; v4 = w1.f4; v5 = w1.f5; v6 = w1.f6; v7 = w1.f7; v8 = w1.f8; v9 = w1.f9; v10 = w1.f10; v11 = w1.f11; v12 = w1.f12; v13 = w1.f13;
+            acc = acc - 1;
+        }
+        acc = acc + v13.len() + i;
+        if (acc > 2000000) {
+            let w2: W = rare(W { f0: v0, f1: v1, f2: v2, f3: v3, f4: v4, f5: v5, f6: v6, f7: v7, f8: v8, f9: v9, f10: v10, f11: v11, f12: v12, f13: v13 });
+            v0 = w2.f0; v1 = w2.f1; v2 = w2.f2; v3 = w2.f3; v4 = w2.f4; v5 = w2.f5; v6 = w2.f6; v7 = w2.f7; v8 = w2.f8; v9 = w2.f9; v10 = w2.f10; v11 = w2.f11; v12 = w2.f12; v13 = w2.f13;
+        }
+        i = i + 1;
+    }
+    return acc + v0.len() + v1.len() + v2.len() + v3.len() + v4.len() + v5.len() + v6.len() + v7.len() + v8.len() + v9.len() + v10.len() + v11.len() + v12.len() + v13.len();
+}
+function main(): i32 { let xs: i64[] = [1i64, 2i64]; return carry(1000, xs) % 200; }
+`
+
 func TestSelfHostSpillSlotMates(t *testing.T) {
 	t.Run("carried", func(t *testing.T) { checkSpillSlotMates(t, spillSlotMatesProg, 164) })
 	t.Run("nested", func(t *testing.T) { checkSpillSlotMates(t, spillSlotNestedProg, 88) })
@@ -65,9 +107,53 @@ func TestSelfHostSpillSlotMates(t *testing.T) {
 	// phi they replace, although that phi's interval covers the whole body
 	// (ssa.path_slot).
 	t.Run("merges", func(t *testing.T) { checkSpillSlotMates(t, mergeHintProg, 86) })
+	t.Run("join", func(t *testing.T) { checkSkippedArmMovesNothing(t, spillSlotJoinProg, 128) })
+}
+
+// checkSkippedArmMovesNothing requires the edge that skips spillSlotJoinProg's
+// `if` to reach the loop's increment with no slot copied to another.
+func checkSkippedArmMovesNothing(t *testing.T, prog string, want int) {
+	body := spillSlotListing(t, prog, want)
+	skip := regexp.MustCompile(`cmpq \$2000000, \S+\n\s*jle (\S+)\n`).FindStringSubmatch(body)
+	if skip == nil {
+		t.Fatalf("no skip of the rare arm in:\n%s", body)
+	}
+	at := strings.Index(body, "\n"+skip[1]+":\n")
+	if at < 0 {
+		t.Fatalf("%s is not in the listing", skip[1])
+	}
+	path := body[at+1:]
+	if end := regexp.MustCompile(`\n\s*j[a-z]+ `).FindStringIndex(path); end != nil {
+		path = path[:end[0]]
+	}
+	if regexp.MustCompile(`movq -?\d+\(%rbp\), %rcx\n\s*movq %rcx, -?\d+\(%rbp\)`).MatchString(path) {
+		t.Errorf("the turn that skips the rare arm copies slots:\n%s", path)
+	}
 }
 
 func checkSpillSlotMates(t *testing.T, prog string, want int) {
+	body := spillSlotListing(t, prog, want)
+	lines := strings.Split(body, "\n")
+	load := regexp.MustCompile(`^\s*movq (-?\d+)\(%rbp\), %rcx$`)
+	store := regexp.MustCompile(`^\s*movq %rcx, (-?\d+)\(%rbp\)$`)
+	slot := regexp.MustCompile(`^\s*movq .*-\d+\(%rbp\)`)
+	spills := 0
+	for i, l := range lines {
+		if slot.MatchString(l) {
+			spills++
+		}
+		if i+1 < len(lines) && load.MatchString(l) && store.MatchString(lines[i+1]) {
+			t.Errorf("carry copies one slot to another:\n%s\n%s\n\n%s", l, lines[i+1], body)
+		}
+	}
+	if spills == 0 {
+		t.Fatalf("carry spills nothing, so the absence of slot copies proves nothing:\n%s", body)
+	}
+}
+
+// spillSlotListing is `carry`'s x86-64 listing, after running the program on
+// every host target and requiring the interpreter's exit status.
+func spillSlotListing(t *testing.T, prog string, want int) string {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "carry.fern")
@@ -86,22 +172,6 @@ func checkSpillSlotMates(t *testing.T, prog string, want int) {
 	if m == nil {
 		t.Fatal("__fn_carry.r not in the listing")
 	}
-	lines := strings.Split(m[1], "\n")
-	load := regexp.MustCompile(`^\s*movq (-?\d+)\(%rbp\), %rcx$`)
-	store := regexp.MustCompile(`^\s*movq %rcx, (-?\d+)\(%rbp\)$`)
-	slot := regexp.MustCompile(`^\s*movq .*-\d+\(%rbp\)`)
-	spills := 0
-	for i, l := range lines {
-		if slot.MatchString(l) {
-			spills++
-		}
-		if i+1 < len(lines) && load.MatchString(l) && store.MatchString(lines[i+1]) {
-			t.Errorf("carry copies one slot to another:\n%s\n%s\n\n%s", l, lines[i+1], m[1])
-		}
-	}
-	if spills == 0 {
-		t.Fatalf("carry spills nothing, so the absence of slot copies proves nothing:\n%s", m[1])
-	}
 	for _, tg := range h.targets {
 		bin := filepath.Join(dir, tg.target+".bin")
 		if combined, err := exec.Command(h.cli, "-O", "-target", tg.target, "-o", bin, src, h.stdlib).CombinedOutput(); err != nil {
@@ -116,4 +186,5 @@ func checkSpillSlotMates(t *testing.T, prog string, want int) {
 			t.Errorf("%s: exit %d, want %d (the interpreter's)", tg.target, got, want)
 		}
 	}
+	return m[1]
 }

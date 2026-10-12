@@ -1498,63 +1498,84 @@ func openTreeForWalk(t *testing.T, root string) map[string]uint32 {
 func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int, opts treeOpts) []treeEntry {
 	t.Helper()
 	opened := openTreeForWalk(t, root)
+	// Every entry is reached relative to root one component at a time, so a
+	// tree deeper than PATH_MAX reads like any other.
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatalf("read the tree under %s: %v", root, err)
+	}
+	defer r.Close()
 	var out []treeEntry
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	var walk func(dir string) error
+	walk = func(dir string) error {
+		d, err := r.Open(dir)
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(root, path)
+		names, err := d.Readdirnames(-1)
+		d.Close()
 		if err != nil {
 			return err
 		}
-		if rel == "." {
-			return nil
-		}
-		mode := info.Mode()
-		e := treeEntry{name: prefix + rel, kind: treeKind(mode), mode: permBits(mode), blocks: -1}
-		if opts.ownership {
-			e.owner = ownerOf(t, path, info)
-		}
-		if opts.context {
-			e.selinux = entryContext(path)
-		}
-		if was, ok := opened[path]; ok {
-			// Reopened below so the walk could enter it; the mode the
-			// utility actually left is the one recorded here.
-			e.mode = was
-		}
-		switch {
-		case mode&os.ModeSymlink != 0:
-			target, err := os.Readlink(path)
+		sort.Strings(names)
+		for _, name := range names {
+			rel := filepath.Join(dir, name)
+			path := filepath.Join(root, rel)
+			info, err := r.Lstat(rel)
 			if err != nil {
 				return err
 			}
-			e.target = target
-		case mode&os.ModeDevice != 0:
-			if st, ok := info.Sys().(*syscall.Stat_t); ok {
-				e.rdev = uint64(st.Rdev)
+			mode := info.Mode()
+			e := treeEntry{name: prefix + rel, kind: treeKind(mode), mode: permBits(mode), blocks: -1}
+			if opts.ownership {
+				e.owner = ownerOf(t, path, info)
 			}
-		case mode.IsRegular():
-			e.group = linkGroup(info, groups)
-			if opts.sparse {
-				if st, ok := info.Sys().(*syscall.Stat_t); ok {
-					e.blocks = st.Blocks
-				}
+			if opts.context {
+				e.selinux = entryContext(path)
 			}
-			if info.Size() > 1<<22 {
-				e.content = fmt.Sprintf("<%d bytes>", info.Size())
-			} else {
-				b, err := os.ReadFile(path)
+			if was, ok := opened[path]; ok {
+				// Reopened below so the walk could enter it; the mode the
+				// utility actually left is the one recorded here.
+				e.mode = was
+			}
+			switch {
+			case mode&os.ModeSymlink != 0:
+				target, err := r.Readlink(rel)
 				if err != nil {
 					return err
 				}
-				e.content = string(b)
+				e.target = target
+			case mode&os.ModeDevice != 0:
+				if st, ok := info.Sys().(*syscall.Stat_t); ok {
+					e.rdev = uint64(st.Rdev)
+				}
+			case mode.IsRegular():
+				e.group = linkGroup(info, groups)
+				if opts.sparse {
+					if st, ok := info.Sys().(*syscall.Stat_t); ok {
+						e.blocks = st.Blocks
+					}
+				}
+				if info.Size() > 1<<22 {
+					e.content = fmt.Sprintf("<%d bytes>", info.Size())
+				} else {
+					b, err := r.ReadFile(rel)
+					if err != nil {
+						return err
+					}
+					e.content = string(b)
+				}
+			}
+			out = append(out, e)
+			if info.IsDir() {
+				if err := walk(rel); err != nil {
+					return err
+				}
 			}
 		}
-		out = append(out, e)
 		return nil
-	})
-	if err != nil {
+	}
+	if err := walk("."); err != nil {
 		t.Fatalf("read the tree under %s: %v", root, err)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })

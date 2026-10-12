@@ -34,6 +34,11 @@ func ddSeed(t *testing.T, dir string) {
 	write("pre", "0123456789")
 	write("lines", "a\nbcdef\nghi\n")
 	write("recs", "ab  cd  ef  ")
+	// An empty line, one longer than any cbs below, trailing spaces kept
+	// by block, and a last line with no newline.
+	write("lines2", "a\n\nlonger than ten bytes\nxy  \nend")
+	// Records of all spaces, of inner spaces, of none, and a short last one.
+	write("recs2", "ab      a b abcdx")
 	// Bytes that are not ASCII letters and one that is not UTF-8 at all,
 	// for the case conversions: in the C locale neither is a letter, so
 	// both have to reach the output untouched.
@@ -214,6 +219,12 @@ func ddCases(t *testing.T) []invocation {
 	add("conv-swab-odd", "if=in10", "of=out", "bs=3", "conv=swab", "status=noxfer")
 	add("conv-sync-pads", "if=in10", "of=out", "ibs=4", "conv=sync", "status=noxfer")
 	add("conv-two", "if=in10", "of=out", "bs=4", "conv=ucase,swab", "status=noxfer")
+	// Pairs are swapped eight bytes at a time, so these put a held byte and
+	// a short read on either side of a word.
+	add("conv-swab-words", "if=all256", "of=out", "conv=swab", "status=noxfer")
+	add("conv-swab-words-bs5", "if=all256", "of=out", "bs=5", "conv=swab", "status=noxfer")
+	add("conv-swab-words-bs9", "if=all256", "of=out", "bs=9", "conv=swab", "status=noxfer")
+	add("conv-swab-words-bs17", "if=all256", "of=out", "ibs=17", "obs=8", "conv=swab", "status=noxfer")
 	// The case conversions are C-locale tolower/toupper: the 26 ASCII
 	// letters and nothing else, so a byte over 0x7F and a byte that is
 	// not UTF-8 both pass through as they stand.
@@ -232,6 +243,14 @@ func ddCases(t *testing.T) []invocation {
 	add("conv-block-no-cbs", "if=lines", "of=out", "conv=block", "status=noxfer")
 	add("conv-unblock", "if=recs", "of=out", "conv=unblock", "cbs=4", "status=noxfer")
 	add("conv-unblock-partial", "if=recs", "of=out", "conv=unblock", "cbs=5", "status=noxfer")
+	// A line or a record split across reads is held until it completes.
+	add("conv-block-split-reads", "if=lines2", "of=out", "bs=3", "conv=block", "cbs=10", "status=noxfer")
+	add("conv-block-split-truncates", "if=lines2", "of=out", "bs=4", "conv=block", "cbs=3", "status=noxfer")
+	add("conv-block-one-byte-reads", "if=lines2", "of=out", "bs=1", "conv=block", "cbs=6", "status=noxfer")
+	add("conv-block-whole", "if=lines2", "of=out", "conv=block", "cbs=10", "status=noxfer")
+	add("conv-unblock-split-reads", "if=recs2", "of=out", "bs=3", "conv=unblock", "cbs=4", "status=noxfer")
+	add("conv-unblock-one-byte-reads", "if=recs2", "of=out", "bs=1", "conv=unblock", "cbs=4", "status=noxfer")
+	add("conv-unblock-whole", "if=recs2", "of=out", "conv=unblock", "cbs=4", "status=noxfer")
 	add("conv-block-and-unblock", "if=lines", "of=out", "conv=block,unblock", "cbs=4", "status=noxfer")
 	// Without a `cbs` the flags are dropped before the conflict check.
 	add("conv-block-and-unblock-no-cbs", "if=lines", "of=out", "conv=block,unblock", "status=noxfer")
