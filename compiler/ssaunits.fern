@@ -1852,10 +1852,10 @@ function units_analysis(f: ssasem.Func, a: ssasem.Analysis, units: Units): ssase
     }
   }
   if (!any) {
-    return ssasem.Analysis { ...a, parents: units.parents, dependencies: units.deps };
+    return ssasem.Analysis { ...a, parents: units.parents, dependencies: units.deps, anchored: ssasem.anchored_of(units.deps, f.graph.nvals) };
   }
   let flow: ssalive.Flow = ssadeps.analyze(f.graph, units.deps);
-  return ssasem.Analysis { ...a, ok: flow.ok, why: flow.why, parents: units.parents, dependencies: units.deps, flow: flow };
+  return ssasem.Analysis { ...a, ok: flow.ok, why: flow.why, parents: units.parents, dependencies: units.deps, flow: flow, anchored: ssasem.anchored_of(units.deps, f.graph.nvals) };
 }
 
 // A read of an array element, a record field or a tuple element, of a type
@@ -1870,53 +1870,6 @@ function retainable_read(f: ssasem.Func, defs: ssa.SInst[], w: i32): boolean {
   return ssasem.reference(t) && !ssasem.is_view(t);
 }
 
-// The dependency chains read backwards: the values anchored to `v` are
-// `at[start[v] .. start[v + 1])`, ascending. Built once per function, so a
-// query for one source walks its anchored values rather than every value.
-struct Anchored { start: i32[], at: i32[] }
-
-function anchored_to(a: ssasem.Analysis, nvals: i32): Anchored {
-  let count: i32[] = __alloc_i32(nvals + 1);
-  // The chains run to the values the analysis saw; a refused analysis has
-  // none.
-  let known: i32 = a.dependencies.len();
-  if (known > nvals) {
-    known = nvals;
-  }
-  let w: i32 = 0;
-  while (w < known) {
-    for dep in a.dependencies[w] {
-      if (dep >= 0 && dep < nvals) {
-        count = count.with(dep, count[dep] + 1);
-      }
-    }
-    w = w + 1;
-  }
-  let start: i32[] = [];
-  let total: i32 = 0;
-  let v: i32 = 0;
-  while (v <= nvals) {
-    start = start.append(total);
-    if (v < nvals) {
-      total = total + count[v];
-    }
-    v = v + 1;
-  }
-  let at: i32[] = __alloc_i32(total);
-  let fill: i32[] = start;
-  w = 0;
-  while (w < known) {
-    for dep in a.dependencies[w] {
-      if (dep >= 0 && dep < nvals) {
-        at = at.with(fill[dep], w);
-        fill = fill.with(dep, fill[dep] + 1);
-      }
-    }
-    w = w + 1;
-  }
-  return Anchored { start: start, at: at };
-}
-
 // The reads anchored to `s` that are still in hand once `s` is
 // supplied: past the operation at (`bi`, `pos`), into block `si` when `s`
 // goes out along an edge, or as an operand of that same operation (`args`)
@@ -1925,11 +1878,11 @@ function anchored_to(a: ssasem.Analysis, nvals: i32): Anchored {
 // array was retained for the call instead of moved into it, and every
 // append the callee made copied the buffer. A read already `owned` took its
 // slot (payload_root) and has its unit.
-function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchored: Anchored, owned: boolean[], held: boolean[], s: i32, bi: i32, pos: i32, si: i32, args: i32[]): i32[] {
+function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned: boolean[], held: boolean[], s: i32, bi: i32, pos: i32, si: i32, args: i32[]): i32[] {
   let out: i32[] = [];
-  let k: i32 = anchored.start[s];
-  while (k < anchored.start[s + 1]) {
-    let w: i32 = anchored.at[k];
+  let k: i32 = a.anchored.start[s];
+  while (k < a.anchored.start[s + 1]) {
+    let w: i32 = a.anchored.at[k];
     if (w != s && !held[w] && !owned[w] && retainable_read(f, defs, w)) {
       let live: boolean = false;
       if (si >= 0) {
@@ -1966,20 +1919,19 @@ function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchor
 // own, so what it is consumed beside is asked again until no read is added.
 function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[]): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
-  let anchored: Anchored = anchored_to(a, f.graph.nvals);
   let direct: ssalive.Flow = ssalive.compute_checked(f.graph, a.parents);
   let consumed: boolean[] = consumed_values(f, owned);
   let before: i32 = 0 - 1;
   let count: i32 = 0;
   while (count != before) {
     before = count;
-    out = hold_pass(f, a, defs, anchored, direct, consumed, owned, out);
+    out = hold_pass(f, a, defs, direct, consumed, owned, out);
     count = count_true(out);
   }
   return out;
 }
 
-function hold_pass(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchored: Anchored, direct: ssalive.Flow, consumed: boolean[], owned: boolean[], own out: boolean[]): boolean[] {
+function hold_pass(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], direct: ssalive.Flow, consumed: boolean[], owned: boolean[], own out: boolean[]): boolean[] {
   let bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
     let b: ssa.SBlock = f.graph.blocks[bi];
@@ -1987,28 +1939,28 @@ function hold_pass(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchor
     while (pos < b.insts.len()) {
       let ins: ssa.SInst = b.insts[pos];
       if (ins.kind_tag != 6 && ins.kind_tag != 8) {
-        out = hold_at(f, a, defs, anchored, direct, consumed, owned, out, ins, bi, pos);
+        out = hold_at(f, a, defs, direct, consumed, owned, out, ins, bi, pos);
       }
       pos = pos + 1;
     }
-    out = hold_along(f, a, defs, anchored, owned, out, b, bi);
+    out = hold_along(f, a, defs, owned, out, b, bi);
     bi = bi + 1;
   }
   return out;
 }
 
 // hold_pass at the instruction `ins`, `pos` in block `bi`.
-function hold_at(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchored: Anchored, direct: ssalive.Flow, consumed: boolean[], owned: boolean[], own out: boolean[], ins: ssa.SInst, bi: i32, pos: i32): boolean[] {
+function hold_at(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], direct: ssalive.Flow, consumed: boolean[], owned: boolean[], own out: boolean[], ins: ssa.SInst, bi: i32, pos: i32): boolean[] {
   let supplies: Supply[] = operation_supplies(f, ins);
   for got in supplies {
     if (owned[got.value] || out[got.value]) {
-      let past: i32[] = outliving(f, a, defs, anchored, owned, out, got.value, bi, pos, 0 - 1, ins.args);
+      let past: i32[] = outliving(f, a, defs, owned, out, got.value, bi, pos, 0 - 1, ins.args);
       out = mark_all(out, past);
     }
   }
   for v in dying_reads(f, a, direct, owned, out, supplies, bi, pos) {
-    for w in outliving(f, a, defs, anchored, owned, out, v, bi, pos, 0 - 1, []) {
-      if (wanted(anchored, consumed, w)) {
+    for w in outliving(f, a, defs, owned, out, v, bi, pos, 0 - 1, []) {
+      if (wanted(a.anchored, consumed, w)) {
         out = out.with(w, true);
       }
     }
@@ -2017,14 +1969,14 @@ function hold_at(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchored
 }
 
 // hold_pass along the edges out of block `b`, `bi`.
-function hold_along(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchored: Anchored, owned: boolean[], own out: boolean[], b: ssa.SBlock, bi: i32): boolean[] {
+function hold_along(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned: boolean[], own out: boolean[], b: ssa.SBlock, bi: i32): boolean[] {
   let targets: i32[] = successors(b);
   for target in targets {
     let si: i32 = ssalive.position(a.flow, target);
     let along: Supply[] = edge_supplies(f, b, si, owned);
     for got in along {
       if (owned[got.value] || out[got.value]) {
-        let past: i32[] = outliving(f, a, defs, anchored, owned, out, got.value, bi, 0, si, []);
+        let past: i32[] = outliving(f, a, defs, owned, out, got.value, bi, 0, si, []);
         out = mark_all(out, past);
       }
     }
@@ -2110,7 +2062,7 @@ function consumed_values(f: ssasem.Func, owned: boolean[]): boolean[] {
 }
 
 // Whether `w` or a read anchored to it is consumed somewhere.
-function wanted(anchored: Anchored, consumed: boolean[], w: i32): boolean {
+function wanted(anchored: ssasem.Anchored, consumed: boolean[], w: i32): boolean {
   if (consumed[w]) {
     return true;
   }
@@ -2251,12 +2203,13 @@ function needed_past_slot(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[],
       }
     }
   }
-  let w: i32 = 0;
-  while (w < f.graph.nvals) {
-    if (w != root && reaches_root(a, defs, take, root, through_take, w) && used_after(f, a, bi, pos, w)) {
+  let k: i32 = a.anchored.start[root];
+  while (k < a.anchored.start[root + 1]) {
+    let w: i32 = a.anchored.at[k];
+    if (reaches_root(a, defs, take, root, through_take, w) && used_after(f, a, bi, pos, w)) {
       return true;
     }
-    w = w + 1;
+    k = k + 1;
   }
   return false;
 }
