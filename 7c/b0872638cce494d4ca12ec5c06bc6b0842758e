@@ -61,3 +61,14 @@ net/hyper-twofetch/c4096.p99_us	632889
 net/hyper-twofetch/c4096.failed	0
 net/fern/held.bytes_per_connection	680
 net/fern/held.bytes_per_suspended_handler	6245
+
+# lane: bootstrap-arm64-linux
+bootstrap/arm64-linux/stage1.wall_s	15
+bootstrap/arm64-linux/stage1.peak_rss_mb	1385
+bootstrap/arm64-linux/stage1.size_bytes	12609008
+bootstrap/arm64-linux/stage2.wall_s	17
+bootstrap/arm64-linux/stage2.peak_rss_mb	1439
+bootstrap/arm64-linux/stage2.size_bytes	12347624
+bootstrap/arm64-linux/stage3.wall_s	15
+bootstrap/arm64-linux/stage3.peak_rss_mb	1383
+bootstrap/arm64-linux/stage3.size_bytes	12347624
