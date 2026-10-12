@@ -202,12 +202,14 @@ function in_block(block: string, ip: string): string {
 }
 
 // Blocks at their edges, each family against the other, a v4-mapped
-// address against an IPv4 block, /0 and a single address.
+// address against an IPv4 block and IPv4 addresses against v4-mapped and
+// IPv6 blocks, /0 and a single address.
 function test_prefix(): test.TestOutcome {
   let got: string = in_block("172.16.0.0/12", "172.31.255.255") + " " + in_block("172.16.0.0/12", "172.32.0.0") + " " + in_block("2001:db8::/32", "2001:db8:ffff::1") + " " + in_block("2001:db8::/32", "2001:db9::1");
   got = got + " " + in_block("10.0.0.0/8", "::ffff:10.1.2.3") + " " + in_block("10.0.0.0/8", "2001:db8::1") + " " + in_block("0.0.0.0/0", "203.0.113.1") + " " + in_block("192.0.2.7", "192.0.2.8");
   got = got + " " + in_block("10.0.0.0/7", "11.0.0.0") + " " + in_block("11.0.0.0/7", "10.0.0.0") + " " + in_block("10.128.0.0/9", "10.127.0.0");
-  return test.assert_eq(got, "true false true false true false true false true bad-block false");
+  got = got + " " + in_block("::ffff:10.0.0.1", "10.0.0.1") + " " + in_block("::ffff:10.0.0.0/104", "10.9.9.9") + " " + in_block("::ffff:10.0.0.0/104", "11.0.0.1") + " " + in_block("::ffff:0:0/96", "::ffff:192.0.2.1") + " " + in_block("::/0", "192.0.2.1") + " " + in_block("10.0.0.0/8", "2001:db8::a00:1");
+  return test.assert_eq(got, "true false true false true false true false true bad-block false true true false true true false");
 }
 
 // The element a proxy appends for the request it received.
