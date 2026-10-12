@@ -7,6 +7,7 @@ package e2e
 
 import (
 	"encoding/binary"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -234,20 +235,36 @@ func interpLoaded(t *testing.T, src string) *interp.Interp {
 // accepted, and for a hand-written one they are the bug.
 func interpByte(t *testing.T, src string, skipGaps bool) int {
 	t.Helper()
+	code, err := interpRunExit(t, src)
+	if err != nil {
+		if skipGaps {
+			t.Skipf("interp coverage gap: %v", err)
+		}
+		t.Fatalf("interp: %v\nsrc:\n%s", err, src)
+	}
+	return code
+}
+
+// interpRunExit runs src's main in the interpreter and returns its exit byte, or
+// the error that kept it from producing one: a runtime error, or a main that
+// returned something other than a number. Front-end errors are fatal, since a
+// program the front end refuses is the bug.
+func interpRunExit(t *testing.T, src string) (int, error) {
+	t.Helper()
 	i := interpLoaded(t, src)
 	// `exit(code)` must be captured, not run as a real os.Exit (which would
 	// kill the whole test binary). The interp expects a non-returning Exiter
 	// substitute, so panic with the code and recover it here — the captured
 	// code wins over main's return value, matching process semantics.
-	type interpExit struct{ code int }
-	i.Exiter = func(code int) { panic(interpExit{code}) }
+	type exited struct{ code int }
+	i.Exiter = func(code int) { panic(exited{code}) }
 	var v interp.Value
 	var err error
 	exitCode := -1
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
-				if ie, ok := r.(interpExit); ok {
+				if ie, ok := r.(exited); ok {
 					exitCode = ie.code
 					return
 				}
@@ -257,20 +274,14 @@ func interpByte(t *testing.T, src string, skipGaps bool) int {
 		v, err = i.CallByName("main", nil)
 	}()
 	if exitCode >= 0 {
-		return exitCode & 0xFF
+		return exitCode & 0xFF, nil
 	}
 	if err != nil {
-		if skipGaps {
-			t.Skipf("interp coverage gap: %v", err)
-		}
-		t.Fatalf("interp: %v\nsrc:\n%s", err, src)
+		return 0, err
 	}
 	n, ok := v.(interp.Number)
 	if !ok {
-		if skipGaps {
-			t.Skipf("interp main returned non-number %T (coverage gap)", v)
-		}
-		t.Fatalf("interp: main returned %T, want a number\nsrc:\n%s", v, src)
+		return 0, fmt.Errorf("main returned %T, want a number", v)
 	}
-	return int(int64(n) & 0xFF)
+	return int(int64(n) & 0xFF), nil
 }
