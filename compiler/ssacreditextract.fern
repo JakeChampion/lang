@@ -1,17 +1,25 @@
 // Guarded containment pilot over actual physical SSA. One owned parent with
-// a selected flat child slot, no allocations, parent retains, phis or cycles.
-// Sibling slot releases are discharged by the independently checked helper.
-// No compile gate.
+// a selected flat child slot, no allocations, parent retains or cycles. The
+// one phi admitted is the uniqueness token: the parent where it is unique and
+// zero where it is shared. Each sibling slot carries its own credit, released
+// inline or by the independently checked helper. No compile gate.
 import "./ssa";
 import "./ssacreditguard" as guard;
 import "./ssacredithelper" as helper;
 import "./util";
 
+// kind: -1 unreadable, 0 scalar, 1 parent, 2 selected child, 3 uniqueness
+// token (number: whether it holds the parent), 4 sibling child (number: its
+// index in `others`).
 struct Value { kind: i32, number: i32, available: i32 }
 
-struct State { path: i32, parent: i32, child: i32, slot: i32 }
+// `rest` is each sibling slot's credit, parallel to Context.others.
+struct State { path: i32, parent: i32, child: i32, slot: i32, rest: i32[] }
 
-struct Context { arena: guard.Arena, values: Value[], state: State, unique: i32, temp: i32, error: string }
+// The path each edge `from -> to` is taken on, recorded as blocks finish.
+struct Edge { from: i32, to: i32, path: i32 }
+
+struct Context { arena: guard.Arena, values: Value[], state: State, unique: i32, temp: i32, error: string, others: i32[], edges: Edge[] }
 
 function failed(c: Context, why: string): Context {
   if (c.error != "") {
@@ -50,7 +58,7 @@ function available(c: Context, id: i32): Context {
   return equal(c, c.state.path, c.values[id].available, 1, "unavailable physical operand");
 }
 
-function live(c: Context, kind: i32): Context {
+function live(c: Context, kind: i32, number: i32): Context {
   if (kind == 1) {
     return positive(c, c.state.parent, "parent used after release");
   }
@@ -58,10 +66,118 @@ function live(c: Context, kind: i32): Context {
     let out = calc(c, 0, c.state.child, c.state.slot);
     return positive(out, out.temp, "child used after final anchor");
   }
+  if (kind == 4) {
+    return positive(c, c.state.rest[number], "sibling used after release");
+  }
   return failed(c, "reference provenance required");
 }
 
-function transfer(c: Context, op: ssa.SInst, offset: i32, release: string): Context {
+function with_rest(c: Context, k: i32, credit: i32): Context {
+  return Context { ...c, state: State { ...c.state, rest: c.state.rest.with(k, credit) } };
+}
+
+// The path edge `from -> to` was taken on, or -1 before it was.
+function edge_path(c: Context, from: i32, to: i32): i32 {
+  for e in c.edges {
+    if (e.from == from && e.to == to) {
+      return e.path;
+    }
+  }
+  return -1;
+}
+
+// A phi joins one operand per predecessor, each of which must be defined
+// wherever its edge is taken. Scalars join to a scalar; the parent and a
+// zero join to the uniqueness token, true on the edges that carry the parent.
+function phi(c: Context, op: ssa.SInst, preds: i32[], block: i32): Context {
+  if (op.args.len() != preds.len() || preds.len() == 0) {
+    return failed(c, "unsupported containment phi");
+  }
+  let out = c;
+  let parents: i32 = 0;
+  let i: i32 = 0;
+  while (i < op.args.len()) {
+    let arg = op.args[i];
+    if (arg < 0 || arg >= out.values.len() || out.values[arg].kind < 0) {
+      return failed(out, "undefined physical operand");
+    }
+    let path = edge_path(out, preds[i], block);
+    if (path < 0) {
+      return failed(out, "unsupported containment phi");
+    }
+    out = equal(out, path, out.values[arg].available, 1, "unavailable physical operand");
+    if (out.values[arg].kind == 1) {
+      parents = parents + 1;
+    } else if (out.values[arg].kind != 0) {
+      return failed(out, "unsupported containment phi");
+    }
+    i = i + 1;
+  }
+  let number: i32 = 0;
+  let zero = guard.constant(out.arena, 0);
+  out = Context { ...out, arena: zero.arena };
+  number = zero.id;
+  i = 0;
+  while (i < op.args.len() && out.error == "") {
+    let v = out.values[op.args[i]];
+    let path = edge_path(out, preds[i], block);
+    let part: i32 = v.number;
+    if (v.kind == 1) {
+      part = 1;
+    } else if (parents > 0) {
+      out = equal(out, path, v.number, 0, "uniqueness token joins a nonzero value");
+    }
+    out = calc(out, 4, path, part);
+    out = calc(out, 0, number, out.temp);
+    number = out.temp;
+    i = i + 1;
+  }
+  let kind: i32 = 0;
+  if (parents > 0) {
+    kind = 3;
+  }
+  if (out.error != "") {
+    return out;
+  }
+  return Context { ...out, values: out.values.with(op.result, Value { kind: kind, number: number, available: out.state.path }) };
+}
+
+// A comparison of two scalars, or of the uniqueness token with zero, which
+// asks whether the token holds the parent.
+function compare(c: Context, op: ssa.SInst): Context {
+  let a = c.values[op.args[0]];
+  let b = c.values[op.args[1]];
+  let out = c;
+  let left: i32 = a.number;
+  let right: i32 = b.number;
+  if (a.kind == 3 && b.kind == 0 || a.kind == 0 && b.kind == 3) {
+    let scalar: i32 = b.number;
+    if (a.kind == 0) {
+      scalar = a.number;
+    }
+    out = equal(out, out.state.path, scalar, 0, "uniqueness token compared with a nonzero value");
+    let zero = guard.constant(out.arena, 0);
+    out = Context { ...out, arena: zero.arena };
+    left = a.number;
+    right = zero.id;
+    if (a.kind == 0) {
+      left = zero.id;
+      right = b.number;
+    }
+  } else if (a.kind != 0 || b.kind != 0) {
+    return failed(out, "unsupported containment operation");
+  }
+  out = calc(out, 2, left, right);
+  if (op.str == "ne") {
+    out = calc(out, 1, 1, out.temp);
+  }
+  return out;
+}
+
+function transfer(c: Context, op: ssa.SInst, offset: i32, release: string, preds: i32[], block: i32): Context {
+  if (op.kind_tag == 8) {
+    return phi(c, op, preds, block);
+  }
   let out = c;
   for arg in op.args {
     out = available(out, arg);
@@ -80,18 +196,23 @@ function transfer(c: Context, op: ssa.SInst, offset: i32, release: string): Cont
   } else if (op.kind_tag == 7 && op.args.len() == 1) {
     kind = out.values[op.args[0]].kind;
     number = out.values[op.args[0]].number;
-    if (kind != 0) {
-      out = live(out, kind);
+    if (kind != 0 && kind != 3) {
+      out = live(out, kind, number);
     }
   } else if (op.kind_tag == 40 && op.args.len() == 1 && op.imm == offset && out.values[op.args[0]].kind == 1) {
-    out = live(out, 1);
+    out = live(out, 1, 0);
     out = equal(out, out.state.path, out.state.slot, 1, "load from cleared child slot");
     kind = 2;
+  } else if (op.kind_tag == 40 && op.args.len() == 1 && util.index_of_i32(out.others, op.imm) >= 0 && out.values[op.args[0]].kind == 1) {
+    number = util.index_of_i32(out.others, op.imm);
+    out = live(out, 1, 0);
+    out = equal(out, out.state.path, out.state.rest[number], 1, "load from released sibling slot");
+    kind = 4;
   } else if (op.kind_tag == 41 && op.args.len() == 2 && op.imm == offset && out.values[op.args[0]].kind == 1 && out.values[op.args[1]].kind == 0) {
     // Physical stores have no readable result. Do not invent a scalar zero
     // that a later condition could use to discard a feasible bad path.
     kind = -1;
-    out = live(out, 1);
+    out = live(out, 1, 0);
     out = equal(out, out.state.path, out.values[op.args[1]].number, 0, "only child-slot clearing admitted");
     out = equal(out, out.state.path, out.unique, 1, "clearing a shared parent");
     out = equal(out, out.state.path, out.state.slot, 1, "duplicate child-slot transfer");
@@ -99,12 +220,13 @@ function transfer(c: Context, op: ssa.SInst, offset: i32, release: string): Cont
     out = Context { ...out, state: State { ...out.state, child: out.temp } };
     out = calc(out, 1, out.state.slot, out.state.path);
     out = Context { ...out, state: State { ...out.state, slot: out.temp } };
-  } else if (op.kind_tag == 9 && op.str == "eq" && op.args.len() == 2 && out.values[op.args[0]].kind == 0 && out.values[op.args[1]].kind == 0) {
-    out = calc(out, 2, out.values[op.args[0]].number, out.values[op.args[1]].number);
+  } else if (op.kind_tag == 9 && (op.str == "eq" || op.str == "ne") && op.args.len() == 2) {
+    out = compare(out, op);
     number = out.temp;
   } else if (op.kind_tag == 11 && op.args.len() == 1) {
     let subject = out.values[op.args[0]].kind;
-    out = live(out, subject);
+    let which = out.values[op.args[0]].number;
+    out = live(out, subject, which);
     if (op.str == "__fern_rc_is_unique" && subject == 1) {
       // No admitted effect changes the parent's count except consuming its
       // final local credit. Liveness rejects any subsequent use on that path.
@@ -118,13 +240,49 @@ function transfer(c: Context, op: ssa.SInst, offset: i32, release: string): Cont
       out = positive(out, out.state.child, "child release without local credit");
       out = calc(out, 1, out.state.child, out.state.path);
       out = Context { ...out, state: State { ...out.state, child: out.temp } };
+    } else if (op.str == "__fern_rc_dec" && subject == 4) {
+      // A sibling's slot credit is the unique parent's to spend; a shared
+      // parent's children are not this frame's to release.
+      kind = -1;
+      out = equal(out, out.state.path, out.unique, 1, "releasing a shared parent's child");
+      out = calc(out, 1, out.state.rest[which], out.state.path);
+      out = with_rest(out, which, out.temp);
+    } else if (op.str == "__fern_rc_dec" && subject == 1) {
+      // Frees the unique parent's box without visiting its slots: every
+      // sibling must already be released, and the selected slot's credit
+      // passes to the child loaded from it.
+      kind = -1;
+      out = equal(out, out.state.path, out.unique, 1, "freeing a shared parent");
+      let k: i32 = 0;
+      while (k < out.state.rest.len()) {
+        out = equal(out, out.state.path, out.state.rest[k], 0, "sibling slot left in a freed parent");
+        k = k + 1;
+      }
+      out = calc(out, 4, out.state.path, out.state.slot);
+      let moved = out.temp;
+      out = calc(out, 0, out.state.child, moved);
+      out = Context { ...out, state: State { ...out.state, child: out.temp } };
+      out = calc(out, 1, out.state.slot, moved);
+      out = Context { ...out, state: State { ...out.state, slot: out.temp } };
+      out = calc(out, 1, out.state.parent, out.state.path);
+      out = Context { ...out, state: State { ...out.state, parent: out.temp } };
     } else if (op.str == release && subject == 1) {
       out = calc(out, 1, out.state.parent, out.state.path);
       out = Context { ...out, state: State { ...out.state, parent: out.temp } };
       out = calc(out, 4, out.state.path, out.unique);
-      out = calc(out, 4, out.temp, out.state.slot);
+      let dropped = out.temp;
+      out = calc(out, 4, dropped, out.state.slot);
       out = calc(out, 1, out.state.slot, out.temp);
       out = Context { ...out, state: State { ...out.state, slot: out.temp } };
+      // The helper releases every sibling slot of a unique parent, so one the
+      // frame already released would be released twice.
+      let k: i32 = 0;
+      while (k < out.state.rest.len()) {
+        out = equal(out, dropped, out.state.rest[k], 1, "sibling released twice");
+        out = calc(out, 1, out.state.rest[k], dropped);
+        out = with_rest(out, k, out.temp);
+        k = k + 1;
+      }
     } else {
       return failed(out, "unsupported containment call");
     }
@@ -228,10 +386,18 @@ function merged(c: Context, old: State, path: i32): Context {
   out = calc(out, 4, path, s.slot);
   out = calc(out, 0, old.slot, out.temp);
   let slot = out.temp;
+  let rest: i32[] = [];
+  let k: i32 = 0;
+  while (k < s.rest.len()) {
+    out = calc(out, 4, path, s.rest[k]);
+    out = calc(out, 0, old.rest[k], out.temp);
+    rest = rest.append(out.temp);
+    k = k + 1;
+  }
   out = calc(out, 0, old.path, path);
   let joined = out.temp;
   out = calc(out, 4, joined, 1);  // Refuse overlapping path contributions.
-  return Context { ...out, state: State { path: joined, parent: parent, child: child, slot: slot } };
+  return Context { ...out, state: State { path: joined, parent: parent, child: child, slot: slot, rest: rest } };
 }
 
 pub function check(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, layout: helper.FlatChild): helper.Proof {
@@ -262,18 +428,28 @@ pub function check_selected(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, l
     values = values.append(Value { kind: -1, number: 0, available: 0 });
     i = i + 1;
   }
-  let empty = State { path: 0, parent: 0, child: 0, slot: 0 };
+  let others: i32[] = [];
+  let none: i32[] = [];
+  let full: i32[] = [];
+  for o in layout.offsets {
+    if (o != offset) {
+      others = others.append(o);
+      none = none.append(0);
+      full = full.append(1);
+    }
+  }
+  let empty = State { path: 0, parent: 0, child: 0, slot: 0, rest: none };
   let incoming: State[] = [];
   let done: boolean[] = [];
   for b in f.blocks {
     let initial = empty;
     if (b.id == f.entry) {
-      initial = State { path: 1, parent: 1, child: 0, slot: 1 };
+      initial = State { path: 1, parent: 1, child: 0, slot: 1, rest: full };
     }
     incoming = incoming.append(initial);
     done = done.append(false);
   }
-  let c = Context { arena: unique.arena, values: values, state: empty, unique: unique.id, temp: 0, error: "" };
+  let c = Context { arena: unique.arena, values: values, state: empty, unique: unique.id, temp: 0, error: "", others: others, edges: [] };
   let remaining = f.blocks.len();
   while (remaining > 0 && c.error == "") {
     let chosen: i32 = -1;
@@ -297,7 +473,7 @@ pub function check_selected(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, l
       c = Context { ...c, state: incoming[chosen] };
       for op in b.insts {
         if (c.error == "") {
-          c = transfer(c, op, offset, release.name);
+          c = transfer(c, op, offset, release.name, b.preds, b.id);
         }
       }
       if (c.error == "" && b.term.kind_tag == 1) {
@@ -334,6 +510,7 @@ pub function check_selected(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, l
         for target in targets {
           if (c.error == "") {
             let ti = at(f, target);
+            c = Context { ...c, edges: c.edges.append(Edge { from: b.id, to: target, path: paths[i] }) };
             c = merged(c, incoming[ti], paths[i]);
             incoming = incoming.with(ti, c.state);
             c = Context { ...c, state: state };
