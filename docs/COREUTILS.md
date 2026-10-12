@@ -799,7 +799,7 @@ to becoming the default.
 
 ### The whole catalogue, one compiler, 2026-10-12, Linux x86-64 (GNU coreutils 9.12, uutils 0.0.24)
 
-The single-column bench over every workload: 669 rows over 105 utilities,
+The single-column bench over every workload: 669 rows over 106 utilities,
 built by the self-hosted compiler at b506237, on a 4-core container with
 nothing else running. Full table: `docs/COREUTILS-BENCH-2026-10-12.md`. A
 ratio within about 10% of 1 is still not a measured difference: `mv a
@@ -808,10 +808,10 @@ alone.
 
 | | rows | faster than GNU | faster than uutils |
 |---|---|---|---|
-| every workload | 669 | 502 of 667 (75%) | 560 of 623 |
+| every workload | 669 | 502 (75%) | 560 of 623 |
 
-The median row is 1.70x GNU and 3.26x uutils, and 65 of the 105 utilities
-beat GNU on every row. The 165 rows that lose to GNU fall into a few families:
+The median row is 1.70x GNU and 3.26x uutils, and 65 of the 106 utilities
+beat GNU on every row. The 167 rows that lose to GNU fall into a few families:
 
 | family | rows lost | worst | where the time goes |
 |---|---|---|---|
@@ -824,6 +824,7 @@ beat GNU on every row. The 165 rows that lose to GNU fall into a few families:
 | `shuf` | 6 | 0.57x | every large-input row |
 | `du` | 5 | 0.77x | `--apparent-size`, `--inodes`, `-h -c` |
 | `dd` | 3 | 0.71x | the two `bs=512` rows and `conv=swab` |
+| `yes` | 2 | 0.28x | both rows: GNU 9.12 writes the 70000-byte line to `head -c 1G` in 302 ms, where 9.4 took 1056 ms and Fern takes 1064 ms |
 | `ptx`, `tac`, `cp`, `sort`, `split`, `chown -R`, `numfmt`, the rest | 38 | 0.57x | the worst is `mv` of a tree, which is 0.94x run alone; the next is 0.74x |
 
 ### Both compilers, 2026-09-17 — the self-host build does not meet requirement 2
