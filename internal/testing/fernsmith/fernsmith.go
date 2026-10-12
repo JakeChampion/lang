@@ -308,6 +308,10 @@ func (p Profile) floatsAllowed() bool { return p == ProfileFree || p == ProfileP
 type Generator struct {
 	ch  chooser
 	cfg Config
+	// spans records, under a byteChooser, each list element the program
+	// holds: a helper or a statement, with the byte its list's count came
+	// from. ShrinkMainBytes deletes them.
+	spans []span
 	// profile names the generator's operating mode. Two values
 	// today: ProfileFree (the free-form Gen / GenBytes path,
 	// every production allowed) and ProfileRunnable (the
@@ -826,9 +830,11 @@ func (g *Generator) MainProgram() string {
 	// expression, but non-i32 helpers still get
 	// exercised: any helper can call any earlier helper of
 	// matching arg/return types.
-	nHelpers := g.ch.intN(maxInt(g.cfg.MaxFuncs, 1))
+	nHelpers, helpersAt := g.listCount(maxInt(g.cfg.MaxFuncs, 1))
 	for i := 0; i < nHelpers; i++ {
+		start := g.pos()
 		g.funcDecl(&b, i)
+		g.markSpan(helpersAt, start)
 	}
 
 	sc := newScope(nil)
@@ -839,43 +845,36 @@ func (g *Generator) MainProgram() string {
 	prevLocals := g.localHelpers
 	g.localHelpers = nil
 	defer func() { g.localHelpers = prevLocals }()
-	n := g.ch.intN(maxInt(g.cfg.MaxStmts, 0) + 1)
+	n, stmtsAt := g.listCount(maxInt(g.cfg.MaxStmts, 0) + 1)
 	for i := 0; i < n; i++ {
-		if g.maybeEmitWhile(&b, sc) {
-			continue
-		}
-		if g.maybeEmitForEach(&b, sc) {
-			continue
-		}
-		if g.maybeEmitLocalFn(&b, sc) {
-			continue
-		}
-		if g.maybeEmitArrayAliasCow(&b, sc) {
-			continue
-		}
-		if g.maybeEmitLoopReadBeforeWith(&b, sc) {
-			continue
-		}
-		if g.maybeEmitControlStmt(&b, sc, tI32) {
-			continue
-		}
-		// Main's vars are drawn from the deterministic-across-
-		// backends subset (no floats, no strings whose
-		// observation needs a print channel). Composite types
-		// (arrays / Pair / Color) are pure values that flow
-		// through the i32 return path via index / field /
-		// match-expr productions in expr(), so they're safe.
-		vt := g.pickMainVarType()
-		vname := fmt.Sprintf("v%d", i)
-		fmt.Fprintf(&b, "let %s: %s = ", vname, g.typeName(vt))
-		g.expr(&b, sc, vt, 0)
-		b.WriteString("; ")
-		sc.declare(vt, vname)
+		start := g.pos()
+		g.mainStmt(&b, sc, i)
+		g.markSpan(stmtsAt, start)
 	}
 	b.WriteString("return (")
 	g.expr(&b, sc, tI32, 0)
 	b.WriteString(" & 255i32); }\n")
 	return b.String()
+}
+
+// mainStmt emits main's i-th statement.
+func (g *Generator) mainStmt(b *strings.Builder, sc *scope, i int) {
+	if g.maybeEmitWhile(b, sc) || g.maybeEmitForEach(b, sc) || g.maybeEmitLocalFn(b, sc) ||
+		g.maybeEmitArrayAliasCow(b, sc) || g.maybeEmitLoopReadBeforeWith(b, sc) || g.maybeEmitControlStmt(b, sc, tI32) {
+		return
+	}
+	// Main's vars are drawn from the deterministic-across-
+	// backends subset (no floats, no strings whose
+	// observation needs a print channel). Composite types
+	// (arrays / Pair / Color) are pure values that flow
+	// through the i32 return path via index / field /
+	// match-expr productions in expr(), so they're safe.
+	vt := g.pickMainVarType()
+	vname := fmt.Sprintf("v%d", i)
+	fmt.Fprintf(b, "let %s: %s = ", vname, g.typeName(vt))
+	g.expr(b, sc, vt, 0)
+	b.WriteString("; ")
+	sc.declare(vt, vname)
 }
 
 // MainPrintableProgram emits the printable-oracle counterpart of
@@ -1475,36 +1474,29 @@ func (g *Generator) body(b *strings.Builder, sc *scope, retT gtype) {
 	prevLocals := g.localHelpers
 	g.localHelpers = nil
 	defer func() { g.localHelpers = prevLocals }()
-	n := g.ch.intN(maxInt(g.cfg.MaxStmts, 0) + 1)
+	n, stmtsAt := g.listCount(maxInt(g.cfg.MaxStmts, 0) + 1)
 	for i := 0; i < n; i++ {
-		if g.maybeEmitWhile(b, sc) {
-			continue
-		}
-		if g.maybeEmitForEach(b, sc) {
-			continue
-		}
-		if g.maybeEmitLocalFn(b, sc) {
-			continue
-		}
-		if g.maybeEmitArrayAliasCow(b, sc) {
-			continue
-		}
-		if g.maybeEmitLoopReadBeforeWith(b, sc) {
-			continue
-		}
-		if g.maybeEmitControlStmt(b, sc, retT) {
-			continue
-		}
-		vt := g.pickType()
-		vname := fmt.Sprintf("v%d", i)
-		fmt.Fprintf(b, "let %s: %s = ", vname, g.typeName(vt))
-		g.expr(b, sc, vt, 0)
-		b.WriteString("; ")
-		sc.declare(vt, vname)
+		start := g.pos()
+		g.bodyStmt(b, sc, retT, i)
+		g.markSpan(stmtsAt, start)
 	}
 	b.WriteString("return ")
 	g.expr(b, sc, retT, 0)
 	b.WriteString("; ")
+}
+
+// bodyStmt emits a function body's i-th statement.
+func (g *Generator) bodyStmt(b *strings.Builder, sc *scope, retT gtype, i int) {
+	if g.maybeEmitWhile(b, sc) || g.maybeEmitForEach(b, sc) || g.maybeEmitLocalFn(b, sc) ||
+		g.maybeEmitArrayAliasCow(b, sc) || g.maybeEmitLoopReadBeforeWith(b, sc) || g.maybeEmitControlStmt(b, sc, retT) {
+		return
+	}
+	vt := g.pickType()
+	vname := fmt.Sprintf("v%d", i)
+	fmt.Fprintf(b, "let %s: %s = ", vname, g.typeName(vt))
+	g.expr(b, sc, vt, 0)
+	b.WriteString("; ")
+	sc.declare(vt, vname)
 }
 
 // maybeEmitWhile probabilistically emits a bounded-counter while

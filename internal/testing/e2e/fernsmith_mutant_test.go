@@ -91,36 +91,30 @@ func TestFernsmithShrinksAPlantedMiscompile(t *testing.T) {
 	}
 	original := fernsmith.GenMainBytes(data)
 
-	// Each cut that still diverges is kept, and the step halves when it does
-	// not.
-	n := len(data)
 	tries := 0
-	for step := n / 2; step >= 1; {
-		if step < n {
-			tries++
-			if bad, _, _ := diverges(data[:n-step]); bad {
-				n -= step
-				continue
-			}
-		}
-		step /= 2
-	}
-	if n == mutantCorpusBytes {
-		t.Errorf("no truncation of the %d-byte corpus still diverges", mutantCorpusBytes)
-	}
-	data = data[:n]
+	data = fernsmith.ShrinkMainBytes(data, func(cand []byte) bool {
+		tries++
+		bad, _, _ := diverges(cand)
+		return bad
+	})
 	repro := fernsmith.GenMainBytes(data)
 	_, want, got := diverges(data)
 	if v := verdict(good, repro); v != want {
 		t.Fatalf("the unplanted compiler gets the repro wrong too (%s, interpreter %s), so it shows another bug:\n%s", v, want, repro)
 	}
 	t.Logf("caught at corpus %d; %d corpus bytes shrank to %d in %d tries; program %d bytes to %d; interpreter %s, mutant %s\n%s",
-		caught, mutantCorpusBytes, n, tries, programBytes(original), programBytes(repro), want, got, repro)
+		caught, mutantCorpusBytes, len(data), tries, programBytes(original), programBytes(repro), want, got, repro)
+	if programBytes(repro) > mutantReproBytes {
+		t.Errorf("the repro is %d bytes past the preamble, over the %d a planted closure swap needs", programBytes(repro), mutantReproBytes)
+	}
 }
 
 // mutantCorpusBytes reaches main: a shorter stream runs out on the helper
 // functions generated ahead of it, and main then returns a constant.
 const mutantCorpusBytes = 8192
+
+// mutantReproBytes bounds the shrunk repro past the preamble.
+const mutantReproBytes = 1 << 20
 
 // mutantCorpus is corpus `seed`'s bytes, the same for every run.
 func mutantCorpus(seed uint64) []byte {
