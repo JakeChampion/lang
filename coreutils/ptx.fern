@@ -1534,6 +1534,17 @@ pub function main(): i32 {
   let occs: Occ[] = [];
   let maxword: i32 = 0;
   let maxref: i32 = 0;
+  // A line's reference is built once and shared by its occurrences; the
+  // plain-text output's left-side `-A` reference carries its colon.
+  let colon: boolean = o.auto_ref && !o.right_ref && o.format != 1 && o.format != 2;
+  let no_ref: u8[] = [];
+  let line_refs: u8[][] = [];
+  let li_n: i32 = 0;
+  while (li_n < lines.starts.len()) {
+    line_refs = line_refs.append(no_ref);
+    li_n = li_n + 1;
+  }
+  let ref_built: boolean[] = __alloc_bool(lines.starts.len());
   let wi: i32 = 0;
   i = 0;
   while (i < files.len()) {
@@ -1602,15 +1613,31 @@ pub function main(): i32 {
           }
         }
         if (keep) {
-          let refv: u8[] = [];
-          if (o.auto_ref) {
-            refv = (show + ":" + lines.nums[line_of(lines, ws)].to_string()).bytes();
-          } else if (o.input_ref) {
+          let refv: u8[] = no_ref;
+          let reflen: i32 = 0;
+          if (o.auto_ref || o.input_ref) {
             let li: i32 = line_of(lines, ws);
-            refv = copy_range(buf, lines.starts[li], lines.ref_end[li]);
+            if (!ref_built[li]) {
+              let made: u8[] = [];
+              if (o.auto_ref) {
+                made = (show + ":" + lines.nums[li].to_string()).bytes();
+                if (colon) {
+                  made = made.append(58 as u8);
+                }
+              } else {
+                made = copy_range(buf, lines.starts[li], lines.ref_end[li]);
+              }
+              line_refs = line_refs.with(li, made);
+              ref_built = ref_built.with(li, true);
+            }
+            refv = line_refs[li];
+            reflen = refv.len();
+            if (colon) {
+              reflen = reflen - 1;
+            }
           }
-          if (refv.len() > maxref) {
-            maxref = refv.len();
+          if (reflen > maxref) {
+            maxref = reflen;
           }
           occs = occs.append(Occ { kw_start: ws, kw_end: we, ctx_start: start, ctx_end: ce, ref: refv, wi: k });
         }
@@ -1653,16 +1680,12 @@ pub function main(): i32 {
   while (j < order.len()) {
     let oc: Occ = occs[order[j]];
     let f: Fields = cut_fields(nbuf, oc, words, geom, maxword);
-    let refv2: u8[] = oc.ref;
-    if (o.auto_ref && refs_left) {
-      refv2 = refv2.append(58 as u8);
-    }
     if (o.format == 1) {
       render_roff(h, nbuf, f, oc.ref, geom, o);
     } else if (o.format == 2) {
       render_tex(h, nbuf, f, oc.ref, geom, o);
     } else {
-      ln = render_dumb(ln, nbuf, f, refv2, geom, o);
+      ln = render_dumb(ln, nbuf, f, oc.ref, geom, o);
     }
     w = gnu.settle(w);
     j = j + 1;
