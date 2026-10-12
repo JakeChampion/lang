@@ -7,7 +7,7 @@ import (
 )
 
 // TestExampleIterPipeline runs the committed examples/iter_pipeline.fern — a
-// tour of the core/iter + core/cmp stdlib (iter.of / filter / map / sum +
+// tour of the core/iter + core/cmp stdlib (iter.of / filter / map / fold +
 // cmp.sort) — on the native interp / x86-64 / wasm backends and oracle-
 // checks the exit code. End-to-end integration coverage that the shipped
 // iterator/sort surface composes (each piece is unit-tested elsewhere; this

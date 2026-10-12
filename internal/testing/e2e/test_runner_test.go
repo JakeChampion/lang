@@ -171,10 +171,10 @@ func TestRunnerRegexExamplePasses(t *testing.T) {
 }
 
 // `tests/stdlib/iter_test.fern` covers the core/iter stdlib (the
-// generic Iterator[T] protocol + Range / ArrayIter and the eager
-// drivers — sum / count / of / product / nth / last / min / max /
-// contains / count_value / fold / any / all / map / filter) through the
-// pure-Fern runner. Passing suite → exit 0.
+// generic Iterator[T] protocol + Range / ArrayIter, the free reducers and
+// the Iterator methods — sum / count / of / product / nth / last / min /
+// max / contains / count_value / fold / any / all / map / filter) through
+// the pure-Fern runner. Passing suite → exit 0.
 func TestRunnerIterExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/iter_test.fern")
@@ -1593,12 +1593,8 @@ func TestRunnerArrayBatchExamplePasses(t *testing.T) {
 
 // `tests/stdlib/iter_combinators_test.fern` covers the core/iter
 // combinators NOT in iter_test (sum/count/of/product/nth/last/min/max/
-// contains/count_value/fold/any/all/map/filter): to_array / take / skip /
-// find / position / position_by / count_by. Interp-gated only: `take` / `skip`
-// over an `ArrayIter[T]` argument make the self-host monomorphiser emit an
-// invalid symbol — `bl __fn_iter__take__iter__ArrayIter[T]` with the
-// unsubstituted `[T]` (bracket chars the assembler rejects; see the audit log)
-// — so the suite is intentionally NOT in selfHostStdTestCases. Passing → exit 0.
+// contains/count_value/fold/any/all/map/filter): collect / take / skip /
+// find / position / position_by / count_by. Passing → exit 0.
 func TestRunnerIterCombinatorsExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/iter_combinators_test.fern")

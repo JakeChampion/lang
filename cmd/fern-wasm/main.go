@@ -12,8 +12,8 @@
 // is left here is the language server, which that compiler does not have
 // (docs/PLAYGROUND-SELFHOST-WASM.md).
 //
-// API surface (set as globals on `globalThis` so the page can
-// call them without an explicit binding step):
+// API surface, set as globals on `globalThis` for web/lsp-worker.js, which
+// hosts this module off the page's thread:
 //
 //	fernLsp(jsonRpcRequestString) -> jsonRpcResponseString
 //	  Routes a single LSP message into the in-process server in
