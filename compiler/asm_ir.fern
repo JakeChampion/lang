@@ -244,7 +244,15 @@ function emit_ccall_shim1(s: asmcore.EmitState, variant: string, n: i32): asmcor
     s = s.write("    movq 48(%rbp), %rcx\n");
   }
   s = s.write("    andq $-16, %rsp\n");
+  // A -shared build lets the C callee enter an export on this thread, so
+  // the busy flag is free for the call and taken back after it.
+  if (s.shared) {
+    s = s.write("    movl $0, __fern_busy(%rip)\n");
+  }
   s = s.write("    call *%r11\n");
+  if (s.shared) {
+    s = s.write(busy_take_x86());
+  }
   if (util.str_has_suffix(variant, "_f32")) {
     s = s.write("    cvtss2sd %xmm0, %xmm0\n");
   }
@@ -253,6 +261,12 @@ function emit_ccall_shim1(s: asmcore.EmitState, variant: string, n: i32): asmcor
   }
   s = s.write("    movq %rbp, %rsp\n    popq %rbp\n    ret\n");
   return s;
+}
+
+// busy_take_x86 takes the -shared build's busy flag, aborting when another
+// thread holds it. %r11 is free: the System V ABI preserves nothing in it.
+pub function busy_take_x86(): string {
+  return "    movl $1, %r11d\n    xchgl %r11d, __fern_busy(%rip)\n    testl %r11d, %r11d\n    jnz __fern_busy_abort\n";
 }
 
 // emit_ccall_shims emits every __c_call variant the module referenced (each
@@ -1171,7 +1185,7 @@ function san_report_exit(s: asmcore.EmitState): asmcore.EmitState {
   if (s.backtrace) {
     return s.write("    movq $124, %r15\n    jmp __fern_bt_exit\n");
   }
-  return s.write("    movq $124, %rdi\n    movq $60, %rax\n").syscall(60);
+  return s.write("    movq $124, %rdi\n    movq $231, %rax\n").syscall(231);
 }
 
 // emit_bt_exit emits __fern_bt_exit: "backtrace:" and then each return
@@ -1213,8 +1227,8 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jmp .Lbt_loop\n");
   s = s.write(".Lbt_done:\n");
   s = s.write("    movq %r15, %rdi\n");
-  s = s.write("    movq $60, %rax\n");
-  s = s.syscall(60);
+  s = s.write("    movq $231, %rax\n");
+  s = s.syscall(231);
   // .Lbt_hex(%rsi = value): one "  0x<16 hex>\n" line on stderr, nibbles
   // written right to left.
   s = s.write(".Lbt_hex:\n");
@@ -2306,8 +2320,8 @@ function emit_report(s: asmcore.EmitState): asmcore.EmitState {
     return emit_bt_exit(s);
   }
   s = s.write("    movq %r15, %rdi\n");
-  s = s.write("    movq $60, %rax\n");
-  return s.syscall(60);
+  s = s.write("    movq $231, %rax\n");
+  return s.syscall(231);
 }
 
 function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
@@ -7631,7 +7645,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
     if (s.leak_check) {
       s = s.write("    pushq %r11\n    call __fern_lc_report_exit\n    popq %r11\n");
     }
-    s = s.write("    movq %r11, %rdi\n    movq $60, %rax\n").syscall(60).write("    xorl %eax, %eax\n");
+    s = s.write("    movq %r11, %rdi\n    movq $231, %rax\n").syscall(231).write("    xorl %eax, %eax\n");
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
   }
   s = s.need("heap");
@@ -10343,7 +10357,7 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], i: i32, l
   }
   // No arm matched. Unreachable for a well-typed dyn value, so abort
   // (exit 134, like __fern_oob_abort) rather than answer 0.
-  s = s.write("    movq $60, %rax\n    movq $134, %rdi\n").syscall(60);
+  s = s.write("    movq $231, %rax\n    movq $134, %rdi\n").syscall(231);
   s = s.write(dend + ":\n");
   return s;
 }
@@ -10718,8 +10732,8 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
       }
       s = s.write("    movq $0, %rdi\n");
     }
-    s = s.write("    movq $60, %rax\n");
-    s = s.syscall(60);
+    s = s.write("    movq $231, %rax\n");
+    s = s.syscall(231);
   }
   // Pre-intern "FileStat" so the __fern_stat runtime helper (emitted after this
   // literal pool, inside the heap/stat block) can reference its shape label. The
@@ -10926,9 +10940,16 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // it, and under either sanitizer flag, whose reports end in its walk even
   // when the program allocates nothing. A build that has neither carries no
   // reporter.
-  if (needs_heap_runtime(s) || s.rc_free_debug || s.sanitize) {
+  if (needs_heap_runtime(s) || s.rc_free_debug || s.sanitize || s.shared) {
     s = s.write("    .text\n");
     s = emit_report(s);
+  }
+  // A -shared build's busy flag: set while this thread runs the object's
+  // code, so a second thread entering an export aborts rather than racing the
+  // non-atomic counts. The export entries and the __c_call shims keep it.
+  if (s.shared) {
+    s = s.write("    .section .bss\n    .align 8\n__fern_busy: .skip 8\n    .text\n");
+    s = abort_trap(s, "__fern_busy_abort", ".Lmsg_busy", asmcore.msg_busy(), 134);
   }
   // The UAF quarantine's fatal report. Self-contained — its own write(2) +
   // exit(124) rather than the hev writer — so FERN_RC_FREE_DEBUG works
