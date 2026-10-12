@@ -272,7 +272,9 @@ func TestSelfHostOwnershipInference(t *testing.T) {
 // `keep_or_new` hands its parameter back on one arm and drops it on the other,
 // and `lends_to_builtin` only lends a field to a builtin's lent slot, which
 // takes no unit. For a recursive enum: `pick` hands back one tree and drops the
-// other, `depth` walks its tree and must not drop it. And for a receiver:
+// other, `depth` walks its tree and must not drop it, and neither may
+// `visit_depth`, which also hands each node to a function value that lends it;
+// `hand_to` gives its tree to a function value's `own` slot. And for a receiver:
 // `advance` builds a new cursor out of its parameter and must drop it, `peek`
 // returns an element of its token array and must not. For a user callee's lends:
 // `checked_keep` reads its record only through a function whose result holds
@@ -293,6 +295,14 @@ function (c: Cursor) advance(): Cursor { return Cursor { toks: c.toks, pos: c.po
 function depth(t: Tree): i32 {
     match (t) { Tip(_) => { return 1; }, Fork(l, r) => { return 1 + depth(l) + depth(r); } }
 }
+@noinline
+function visit_depth(t: Tree, f: (Tree) => i32): i32 {
+    match (t) { Tip(_) => { return f(t); }, Fork(l, r) => { return f(t) + visit_depth(l, f) + visit_depth(r, f); } }
+}
+function one_node(t: Tree): i32 { return 1; }
+@noinline
+function hand_to(t: Tree, f: (own Tree) => Tree): Tree { return f(t); }
+function keep_tree(own t: Tree): Tree { return t; }
 @noinline
 function pick(a: Tree, b: Tree, k: i32): Tree {
     if (k > 0) { return a; }
@@ -355,6 +365,9 @@ function main(): i32 {
     if (depth(t) != 5) { return 4; }
     t = pick(t, Tip(9), 1);
     if (depth(t) != 5) { return 5; }
+    if (visit_depth(t, one_node) != 5) { return 8; }
+    t = hand_to(t, keep_tree);
+    if (depth(t) != 5) { return 9; }
     let c: Cursor = Cursor { toks: [Leaf(2), Label("xy" + "")], pos: 0 };
     let w: i32 = 0;
     while (c.pos < 3) { w = w + reads_only(c.peek()); c = c.advance(); }
@@ -463,6 +476,13 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 	}
 	if strings.Contains(walk, treeDrop) {
 		t.Errorf("depth calls %s: a recursive walk whose result holds no reference was inferred COUNTED through its own recursive call", treeDrop)
+	}
+	visit, ok := asmWholeFunc(string(asm), "visit_depth")
+	if !ok {
+		t.Fatal("no __fn_visit_depth in the emitted code")
+	}
+	if strings.Contains(visit, treeDrop) {
+		t.Errorf("visit_depth calls %s: a parameter lent to a function value's borrowing slot was inferred COUNTED", treeDrop)
 	}
 	const cursorDrop = "__sem_release_Cursor"
 	step, ok := asmWholeFunc(string(asm), "Cursor__advance")
