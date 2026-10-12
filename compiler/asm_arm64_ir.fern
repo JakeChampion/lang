@@ -8261,33 +8261,31 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    b .Lbufbyte_fits\n");
     s = s.write(".size __fern_buf_push_byte, .-__fern_buf_push_byte\n");
     // __fern_buf_push_u64(x0 = H, x1 = v): append the eight bytes of v,
-    // least significant first.
+    // least significant first, as a leaf unless the buffer grows.
     s = s.write(".globl __fern_buf_push_u64\n");
     s = s.write(".type __fern_buf_push_u64, %function\n");
     s = s.write("__fern_buf_push_u64:\n");
+    s = s.write("    ldr x4, [x0, #8]\n");
+    s = s.write("    add x5, x4, #8\n");
+    s = s.write("    ldr x6, [x0, #16]\n");
+    s = s.write("    cmp x5, x6\n");
+    s = s.write("    b.hi .Lbufu64_grow\n");
+    s = s.write(".Lbufu64_fits:\n");
+    s = s.write("    ldr x6, [x0]\n");
+    s = s.write("    str x1, [x6, x4]\n");
+    s = s.write("    str x5, [x0, #8]\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lbufu64_grow:\n");
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
-    s = s.write("    stp x19, x20, [sp, #-16]!\n");
-    s = s.write("    mov x19, x0\n");
-    s = s.write("    mov x20, x1\n");
-    s = s.write("    ldr x0, [x19, #8]\n");
-    s = s.write("    add x0, x0, #8\n");
-    s = s.write("    ldr x1, [x19, #16]\n");
-    s = s.write("    cmp x0, x1\n");
-    s = s.write("    b.ls .Lbufu64_fits\n");
-    s = s.write("    mov x1, x0\n");
-    s = s.write("    mov x0, x19\n");
+    s = s.write("    stp x0, x1, [sp, #-16]!\n");
+    s = s.write("    mov x1, x5\n");
     s = s.write("    bl __fern_buf_reserve\n");
-    s = s.write(".Lbufu64_fits:\n");
-    s = s.write("    ldr x0, [x19]\n");
-    s = s.write("    ldr x1, [x19, #8]\n");
-    s = s.write("    add x0, x0, x1\n");
-    s = s.write("    str x20, [x0]\n");
-    s = s.write("    add x1, x1, #8\n");
-    s = s.write("    str x1, [x19, #8]\n");
-    s = s.write("    ldp x19, x20, [sp], #16\n");
+    s = s.write("    ldp x0, x1, [sp], #16\n");
     s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
+    s = s.write("    ldr x4, [x0, #8]\n");
+    s = s.write("    add x5, x4, #8\n");
+    s = s.write("    b .Lbufu64_fits\n");
     s = s.write(".size __fern_buf_push_u64, .-__fern_buf_push_u64\n");
     // __fern_buf_len(x0 = H) -> x0 = len.
     s = s.write(".globl __fern_buf_len\n");
