@@ -134,3 +134,38 @@ func TestSelfHostIROpConstructorTags(t *testing.T) {
 		t.Errorf("ir.fern has %d op0 uses but %d matched constructors (+ the definition): an unchecked call site", n, len(matches))
 	}
 }
+
+// TestSelfHostIRKindConstants pins each `K_<KIND>` constant in ir.fern to the
+// id testdata/ir-kind-ids.txt gives <kind>. The compiler compares op tags
+// against these constants, so a wrong number would match another kind.
+func TestSelfHostIRKindConstants(t *testing.T) {
+	table, err := os.ReadFile(filepath.Join("testdata", "ir-kind-ids.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(table)), "\n") {
+		name, id, _ := strings.Cut(line, "=")
+		ids[name] = id
+	}
+	src, err := os.ReadFile(filepath.Join("..", "..", "..", "compiler", "ir.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	konst := regexp.MustCompile(`(?m)^pub const K_(\w+): i32 = (\d+);`)
+	matches := konst.FindAllStringSubmatch(string(src), -1)
+	if len(matches) < 60 {
+		t.Fatalf("found %d K_ constants in ir.fern, want at least 60 — the pattern no longer matches", len(matches))
+	}
+	for _, m := range matches {
+		kind := strings.ToLower(m[1])
+		want, ok := ids[kind]
+		if !ok {
+			t.Errorf("K_%s: no kind %q in ir-kind-ids.txt", m[1], kind)
+			continue
+		}
+		if m[2] != want {
+			t.Errorf("K_%s is %s, but %s is %s", m[1], m[2], kind, want)
+		}
+	}
+}

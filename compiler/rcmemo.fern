@@ -81,7 +81,7 @@ pub function open(target: string): Memo {
     return off();
   }
   let path: string = dir + "/certified/" + version() + "-" + target + ".txt";
-  return Memo { on: true, path: path, known: util.name_index(lines_of(path)), adds: buf_new(4096), hits: buf_new(64), misses: buf_new(64), call_kind: ir.kind_id("call_direct") };
+  return Memo { on: true, path: path, known: util.name_index(lines_of(path)), adds: buf_new(4096), hits: buf_new(64), misses: buf_new(64), call_kind: ir.K_CALL_DIRECT };
 }
 
 function lines_of(path: string): string[] {

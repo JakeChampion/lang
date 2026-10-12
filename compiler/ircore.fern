@@ -1093,7 +1093,7 @@ function unit_owners(g: Gated, declared: i32[], entry: i32): i32[] {
       if (o.str == "") {
         continue;
       }
-      if (o.kind_tag == ir.kind_id("const_struct")) {
+      if (o.kind_tag == ir.K_CONST_STRUCT) {
         refs = refs.append(ir.const_struct_fn_body(o.str));
       } else {
         refs = refs.append(o.str);
@@ -1321,7 +1321,7 @@ function cull_spliced_leaves(mod: parser.Module, cache: irtables.LowerResult[], 
         continue;
       }
       let ref: string = o.str;
-      if (o.kind_tag == ir.kind_id("const_struct")) {
+      if (o.kind_tag == ir.K_CONST_STRUCT) {
         ref = ir.const_struct_fn_body(o.str);
       }
       if (irtables.sig_reg_has_exact(reg, ref)) {
@@ -1352,15 +1352,15 @@ function inline_leaf(fd: parser.FuncDecl, r: irtables.LowerResult): boolean {
   if (!r.ok || r.superseded || fd.no_inline || r.n_params > r.n_locals) {
     return false;
   }
-  let k_calld: i32 = ir.kind_id("call_direct");
-  let k_load: i32 = ir.kind_id("load_local");
-  let k_store: i32 = ir.kind_id("store_local");
-  let k_tee: i32 = ir.kind_id("tee_local");
-  let k_calli: i32 = ir.kind_id("call_indirect");
-  let k_callc: i32 = ir.kind_id("call_closure_direct");
-  let k_const_func: i32 = ir.kind_id("const_func");
-  let k_dyn: i32 = ir.kind_id("dyn_dispatch");
-  let k_line: i32 = ir.kind_id("line");
+  let k_calld: i32 = ir.K_CALL_DIRECT;
+  let k_load: i32 = ir.K_LOAD_LOCAL;
+  let k_store: i32 = ir.K_STORE_LOCAL;
+  let k_tee: i32 = ir.K_TEE_LOCAL;
+  let k_calli: i32 = ir.K_CALL_INDIRECT;
+  let k_callc: i32 = ir.K_CALL_CLOSURE_DIRECT;
+  let k_const_func: i32 = ir.K_CONST_FUNC;
+  let k_dyn: i32 = ir.K_DYN_DISPATCH;
+  let k_line: i32 = ir.K_LINE;
   let work: i32 = 0;
   for o in r.ops {
     let k: i32 = o.kind_tag;
@@ -1386,7 +1386,7 @@ struct Spliced { r: irtables.LowerResult, changed: boolean, budget: i32 }
 // returns (every function returns one, irverifystack) parked in one more
 // fresh slot and loaded after the block.
 function splice_leaves(r: irtables.LowerResult, self: string, reg: irtables.SigReg, names: string[], at: i32[], cache: irtables.LowerResult[], budget: i32): Spliced {
-  let k_calld: i32 = ir.kind_id("call_direct");
+  let k_calld: i32 = ir.K_CALL_DIRECT;
   let out: ir.Op[] = [];
   let n_locals: i32 = r.n_locals;
   let changed: boolean = false;
@@ -1418,16 +1418,16 @@ function splice_leaves(r: irtables.LowerResult, self: string, reg: irtables.SigR
     let depth: i32 = 0;
     for b in leaf.ops {
       let k: i32 = b.kind_tag;
-      if (k == ir.kind_id("load_local") || k == ir.kind_id("store_local") || k == ir.kind_id("tee_local")) {
+      if (k == ir.K_LOAD_LOCAL || k == ir.K_STORE_LOCAL || k == ir.K_TEE_LOCAL) {
         out = out.append(ir.Op { ...b, i32_imm: b.i32_imm + base });
-      } else if (k == ir.kind_id("return")) {
+      } else if (k == ir.K_RETURN) {
         out = out.append(ir.op_store_local(ret));
         out = out.append(ir.op_br(depth));
       } else {
-        if (k == ir.kind_id("block") || k == ir.kind_id("loop") || k == ir.kind_id("if")) {
+        if (k == ir.K_BLOCK || k == ir.K_LOOP || k == ir.K_IF) {
           depth = depth + 1;
         }
-        if (k == ir.kind_id("end")) {
+        if (k == ir.K_END) {
           depth = depth - 1;
         }
         out = out.append(b);
