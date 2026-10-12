@@ -5970,13 +5970,15 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
       r = supplies(r, f, p, step, defer0, built_kept, late);
       r = bracket_take(r, f, held);
       // A box superseded by the construction at this same instruction is
-      // taken BEFORE it, where an earlier drop's token was taken at the
-      // drop and is already in the slot. Either way `reuse_construct`
-      // reads one token slot and the runtime decides. A kept donor's token
-      // was taken at its first kept read, and its drop is the
-      // construction's.
+      // taken BEFORE it. An earlier drop's token was taken at the drop and
+      // waits in its donor's local, and moves to the slot here. Either way
+      // `reuse_construct` reads one token slot and the runtime decides. A
+      // kept donor's token was taken at its first kept read, and its drop
+      // is the construction's.
       if (pairs.selfs[pos] >= 0 && kb < 0) {
         r = self_token(r, f, pairs.selfs[pos], ssaunits.carry_held_for(carry, b.id, pos));
+      } else if (pairs.builds[pos] >= 0 && kb < 0) {
+        r = self_token(r, f, pairs.builds[pos], true);
       }
       if (pairs.builds[pos] >= 0 || pairs.selfs[pos] >= 0) {
         r = reuse_construct(r, f, ins, keeps, kb);
@@ -5989,7 +5991,7 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
       }
       r = bracket_give(r, f, held);
       if (pairs.tokens[pos] >= 0 && !ssaunits.token_kept(keeps, pos)) {
-        r = reuse_token(r, f, pairs.tokens[pos]);
+        r = hold_token(r, f, pairs.tokens[pos]);
       }
       let held_on: i32 = ssaunits.carry_held(carry, b.id, pos);
       r = drops_less(r, step, f, links, pairs.tokens[pos], pairs.selfs[pos], held_on, ssaunits.shell_root(f, p, ins));

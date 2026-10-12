@@ -240,9 +240,9 @@ selfhost/wasm32-wasi/perceus_deriv.emit	2977
 selfhost/x86-64-linux/perceus_nqueens.emit	1425
 selfhost/arm64-linux/perceus_nqueens.emit	1600
 selfhost/wasm32-wasi/perceus_nqueens.emit	1223
-selfhost/x86-64-linux/perceus_rbtree.emit	3356
-selfhost/arm64-linux/perceus_rbtree.emit	3481
-selfhost/wasm32-wasi/perceus_rbtree.emit	4227
-selfhost/x86-64-linux/perceus_rbtree_ck.emit	3461
-selfhost/arm64-linux/perceus_rbtree_ck.emit	3593
-selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4333
+selfhost/x86-64-linux/perceus_rbtree.emit	3448
+selfhost/arm64-linux/perceus_rbtree.emit	3581
+selfhost/wasm32-wasi/perceus_rbtree.emit	4295
+selfhost/x86-64-linux/perceus_rbtree_ck.emit	3553
+selfhost/arm64-linux/perceus_rbtree_ck.emit	3693
+selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4401

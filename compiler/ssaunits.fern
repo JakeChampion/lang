@@ -3807,8 +3807,9 @@ function receiver_retained(step: Step): boolean {
 //
 // `tokens[i]` is the value whose drop at instruction i becomes a token, and
 // `builds[i]` the token an instruction i construction builds in; -1 for
-// neither. One pairing is live at a time, so one token slot serves the block —
-// a second candidate while one is pending is simply left to drop normally.
+// neither. A token waits in its donor's own local, from the drop to the
+// construction, which moves it into the frame's token slot just before it
+// builds, so any number of tokens may be held at once.
 //
 // The donor and the recipient need not share a TYPE, and the pairing does not
 // ask: a box is storage, and what separates two of them is the number of
@@ -4441,8 +4442,10 @@ function reuse_pairs(f: ssasem.Func, p: Plan, idx: i32[][], vr: VariantReads, b:
   let builds: i32[] = [];
   let selfs: i32[] = [];
   let claims_tab: Claims = block_claims(f, p, b);
-  let pending: i32 = 0 - 1;
-  let pending_at: i32 = 0 - 1;
+  // The donors held for a construction further down, each in its own local,
+  // and where each died.
+  let pending: i32[] = [];
+  let pending_at: i32[] = [];
   let pos: i32 = 0;
   while (pos < b.insts.len()) {
     tokens = tokens.append(0 - 1);
@@ -4455,16 +4458,19 @@ function reuse_pairs(f: ssasem.Func, p: Plan, idx: i32[][], vr: VariantReads, b:
       let step: Step = step_of(p, idx, b.id, pos, 0 - 1);
       let claims: i32 = recipient_slots(f, p, ins);
       if (off || into >= 0 && pos < carry.build_at[into]) {
-        pending = 0 - 1;
+        pending = [];
+        pending_at = [];
       } else {
-        if (claims >= 0 && pending >= 0
-          && claims == donor_slots(f, vr, b, pending)
-          && util.index_of_i32(ins.args, pending) < 0) {
-          builds = builds.with(pos, pending);
-          tokens = tokens.with(pending_at, pending);
-          pending = 0 - 1;
-          pending_at = 0 - 1;
-        } else if (pending < 0 && claims >= 0) {
+        let k: i32 = 0 - 1;
+        if (claims >= 0) {
+          k = held_for(f, vr, b, pending, ins, claims);
+        }
+        if (k >= 0) {
+          builds = builds.with(pos, pending[k]);
+          tokens = tokens.with(pending_at[k], pending[k]);
+          pending = without_at(pending, k);
+          pending_at = without_at(pending_at, k);
+        } else if (claims >= 0) {
           // Nothing earlier serves this construction, so the box it
           // supersedes may: a value dying HERE, of the count this
           // construction claims, that the construction does not read.
@@ -4480,12 +4486,6 @@ function reuse_pairs(f: ssasem.Func, p: Plan, idx: i32[][], vr: VariantReads, b:
           // module its last allocating op, so the heap runtime block
           // stopped being emitted and the link broke on an undefined
           // `__fn___fern_arr_dec`.
-          //
-          // `pending < 0` is a soundness condition, not a preference:
-          // the frame has ONE token slot, so a self pairing emitted
-          // while a donor is held for a later construction overwrites
-          // that donor's box with its own — which this construction
-          // has already built into and is returning live.
           for d in step.drops {
             if (selfs[pos] < 0 && d != ins.result && !static_box(p, d)
               && donor_slots(f, vr, b, d) == claims
@@ -4494,20 +4494,17 @@ function reuse_pairs(f: ssasem.Func, p: Plan, idx: i32[][], vr: VariantReads, b:
             }
           }
         }
-        // A construction this pending cannot serve leaves it HELD
-        // rather than dropped, the one it is waiting for being further
-        // down the block. A value dying AT a construction was offered
-        // to that construction above and is not taken as a pending
-        // here: the shape that reading was worth — a dying box refilling
-        // the slot the construction just emptied — is the same-instruction
-        // pairing, which spends it on the spot rather than saving it.
-        if (pending < 0 && claims < 0) {
-          for d in step.drops {
-            let sl: i32 = donor_slots(f, vr, b, d);
-            if (pending < 0 && sl >= 0 && !static_box(p, d) && claimed_after(claims_tab, sl, pos)) {
-              pending = d;
-              pending_at = pos;
-            }
+        // A value dying here that this construction does not spend is
+        // held for one further down claiming its count. One donor is
+        // taken per position: `tokens` names one value there.
+        let taken: boolean = false;
+        for d in step.drops {
+          let sl: i32 = donor_slots(f, vr, b, d);
+          if (!taken && d != selfs[pos] && d != ins.result && sl >= 0 && !static_box(p, d)
+            && claimed_after(claims_tab, sl, pos) && util.index_of_i32(pending, d) < 0) {
+            pending = pending.append(d);
+            pending_at = pending_at.append(pos);
+            taken = true;
           }
         }
       }
@@ -4515,6 +4512,31 @@ function reuse_pairs(f: ssasem.Func, p: Plan, idx: i32[][], vr: VariantReads, b:
     pos = pos + 1;
   }
   return ReusePairs { tokens: tokens, builds: builds, selfs: selfs };
+}
+
+// The first held donor of `claims` slots that construction `ins` does not
+// read, or -1.
+function held_for(f: ssasem.Func, vr: VariantReads, b: ssa.SBlock, pending: i32[], ins: ssa.SInst, claims: i32): i32 {
+  let k: i32 = 0;
+  while (k < pending.len()) {
+    if (donor_slots(f, vr, b, pending[k]) == claims && util.index_of_i32(ins.args, pending[k]) < 0) {
+      return k;
+    }
+    k = k + 1;
+  }
+  return 0 - 1;
+}
+
+function without_at(xs: i32[], k: i32): i32[] {
+  let out: i32[] = [];
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    if (i != k) {
+      out = out.append(xs[i]);
+    }
+    i = i + 1;
+  }
+  return out;
 }
 
 // A construction that rebuilds its own donor keeps in place every field it
@@ -4953,7 +4975,7 @@ function verify_block_tokens(f: ssasem.Func, p: Plan, idx: i32[][], bi: i32, r: 
   if (pr.tokens.len() != b.insts.len() || pr.builds.len() != b.insts.len() || pr.selfs.len() != b.insts.len()) {
     return "reuse pairing rows do not cover the block";
   }
-  let pending: i32 = 0 - 1;
+  let held: i32[] = [];
   let pos: i32 = 0;
   while (pos < b.insts.len()) {
     let ins: ssa.SInst = b.insts[pos];
@@ -4964,18 +4986,19 @@ function verify_block_tokens(f: ssasem.Func, p: Plan, idx: i32[][], bi: i32, r: 
     } else {
       let step: Step = step_of(p, idx, b.id, pos, 0 - 1);
       if (pr.builds[pos] >= 0) {
-        if (pending != pr.builds[pos]) {
+        let k: i32 = util.index_of_i32(held, pr.builds[pos]);
+        if (k < 0) {
           return "a construction spends a token it was not handed";
         }
-        if (util.index_of_i32(ins.args, pending) >= 0) {
+        if (util.index_of_i32(ins.args, pr.builds[pos]) >= 0) {
           return "a construction reads the box it builds in";
         }
-        pending = 0 - 1;
+        held = without_at(held, k);
       }
       if (pr.selfs[pos] >= 0) {
         let d: i32 = pr.selfs[pos];
-        if (pending >= 0 || pr.builds[pos] >= 0) {
-          return "a token is taken while another is held";
+        if (pr.builds[pos] >= 0) {
+          return "a construction spends two tokens";
         }
         let carried: boolean = carry_held_for(r.carry, b.id, pos);
         if (carried && r.carry.donor[util.index_of_i32(r.carry.to, b.id)] != d) {
@@ -4991,18 +5014,18 @@ function verify_block_tokens(f: ssasem.Func, p: Plan, idx: i32[][], bi: i32, r: 
         return "a carried token reaches a construction that does not spend it";
       }
       if (pr.tokens[pos] >= 0) {
-        if (pending >= 0) {
-          return "a token is taken while another is held";
+        if (util.index_of_i32(held, pr.tokens[pos]) >= 0 || pr.tokens[pos] == pr.selfs[pos]) {
+          return "a token is taken twice";
         }
         if (util.index_of_i32(step.drops, pr.tokens[pos]) < 0 || static_box(p, pr.tokens[pos])) {
           return "a token is taken from a value not dying here";
         }
-        pending = pr.tokens[pos];
+        held = held.append(pr.tokens[pos]);
       }
     }
     pos = pos + 1;
   }
-  if (pending >= 0) {
+  if (held.len() > 0) {
     return "a token taken in a block is spent by no construction in it";
   }
   return verify_keeps(pr, r.keeps[bi]);
