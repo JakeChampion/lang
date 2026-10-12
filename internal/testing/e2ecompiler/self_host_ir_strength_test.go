@@ -276,6 +276,8 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		// drop across a scope boundary. ds_frame and ds_dyn keep stores into
 		// slots read without a load: the three str_slice's frame form builds its
 		// box in, and the operands dyn_dispatch reloads from its base slot.
+		// ds_copies takes a round per copy; ds_read_again keeps a store whose
+		// cancelled load was not its slot's last read.
 		"ds_const: const_i32 0 ; return\n" +
 		"ds_loaded: const_i32 7 ; store_local 1 ; load_local 1 ; return\n" +
 		"ds_effect: call_direct side/0 ; drop ; const_i32 0 ; return\n" +
@@ -284,7 +286,9 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		"ds_not_top: load_local 0 ; const_i32 1 ; add ; drop ; const_i32 0 ; return\n" +
 		"ds_scope: const_i32 1 ; block ; drop ; end ; const_i32 0 ; return\n" +
 		"ds_frame: const_i32 5 ; store_local 2 ; load_local 0 ; const_i32 0 ; const_i32 1 ; str_slice frame:2 ; return\n" +
-		"ds_dyn: load_local 0 ; store_local 2 ; const_i32 9 ; store_local 3 ; dyn_dispatch ; return\n"
+		"ds_dyn: load_local 0 ; store_local 2 ; const_i32 9 ; store_local 3 ; dyn_dispatch ; return\n" +
+		"ds_copies: const_i32 0 ; return\n" +
+		"ds_read_again: const_i32 7 ; store_local 0 ; load_local 0 ; return\n"
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()

@@ -7392,25 +7392,28 @@ pub function eliminate_dead_code(ops: Op[]): Op[] {
 // which name slots in their immediates. A slot none of them reads is dead: its
 // tee goes and its store becomes a drop.
 // A drop then cancels the constant or load just before it, which can leave
-// another slot unloaded, so the pass repeats until nothing changes.
+// another slot unloaded, so the pass repeats while a cancelled load takes a
+// slot's last read. The read counts are kept up to date across rounds.
 pub function eliminate_dead_stores(ops: Op[]): Op[] {
   let cur: Op[] = ops;
+  let loads: i32[] = slot_reads(ops);
   while (true) {
-    let next: Op[] = cancel_dropped_pushes(drop_dead_stores(cur));
-    if (next.len() == cur.len()) {
-      return next;
+    let stored: Op[] = drop_dead_stores(cur, loads);
+    let c: Cancelled = cancel_dropped_pushes(stored, loads);
+    cur = c.ops;
+    loads = c.loads;
+    if (!c.emptied) {
+      return cur;
     }
-    cur = next;
   }
   return cur;
 }
 
 // drop_dead_stores turns each store to a slot nothing loads into a drop, and
-// removes each tee of one.
-function drop_dead_stores(ops: Op[]): Op[] {
+// removes each tee of one. `loads` counts each slot's reads.
+function drop_dead_stores(ops: Op[], loads: i32[]): Op[] {
   let k_store: i32 = K_STORE_LOCAL;
   let k_tee: i32 = K_TEE_LOCAL;
-  let loads: i32[] = slot_reads(ops);
   if (!writes_unread(ops, loads, k_store, k_tee)) {
     return ops;
   }
@@ -7473,21 +7476,33 @@ function slots_read(own loads: i32[], first: i32, n: i32): i32[] {
   return loads;
 }
 
+// Cancelled is cancel_dropped_pushes' result: the ops, each slot's reads in
+// them, and whether a cancelled load took a slot's last read.
+struct Cancelled { ops: Op[], loads: i32[], emptied: boolean }
+
 // cancel_dropped_pushes removes each drop together with the op that pushed
 // what it drops, when that op is the nearest one still kept and only pushes a
-// constant or a slot's value. Runs of pushes then drops unwind pairwise.
-function cancel_dropped_pushes(ops: Op[]): Op[] {
+// constant or a slot's value. Runs of pushes then drops unwind pairwise, so
+// one pass leaves nothing more to cancel.
+function cancel_dropped_pushes(ops: Op[], own loads: i32[]): Cancelled {
   let pushes: i32[] = [K_CONST_I32, K_CONST_I32_TEXT, K_CONST_I64, K_CONST_F64, K_CONST_STR, K_LOAD_LOCAL];
   let k_drop: i32 = K_DROP;
+  let k_load: i32 = K_LOAD_LOCAL;
   let gone: boolean[] = __alloc_bool(ops.len());
   let kept: i32[] = __alloc_i32(ops.len());
   let top: i32 = 0;
   let any: boolean = false;
+  let emptied: boolean = false;
   let i: i32 = 0;
   while (i < ops.len()) {
     let t: i32 = ops[i].kind_tag;
     if (t == k_drop && top > 0 && util.index_of_i32(pushes, ops[kept[top - 1]].kind_tag) >= 0) {
       top = top - 1;
+      let pushed: Op = ops[kept[top]];
+      if (pushed.kind_tag == k_load) {
+        loads = loads.with(pushed.i32_imm, loads[pushed.i32_imm] - 1);
+        emptied = emptied || loads[pushed.i32_imm] == 0;
+      }
       gone = gone.with(kept[top], true).with(i, true);
       any = true;
     } else {
@@ -7497,7 +7512,7 @@ function cancel_dropped_pushes(ops: Op[]): Op[] {
     i = i + 1;
   }
   if (!any) {
-    return ops;
+    return Cancelled { ops: ops, loads: loads, emptied: false };
   }
   let out: Op[] = [];
   i = 0;
@@ -7507,7 +7522,7 @@ function cancel_dropped_pushes(ops: Op[]): Op[] {
     }
     i = i + 1;
   }
-  return out;
+  return Cancelled { ops: out, loads: loads, emptied: emptied };
 }
 
 // ---- zero-slot uniqueness guards (native internal/oracle/ir/zeroslot.go) -------
