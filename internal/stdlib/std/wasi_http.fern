@@ -150,6 +150,12 @@ pub function serve(request: i32, response_out: i32, handle: (HttpRequest, platfo
   let req: HttpRequest = HttpRequest { method: method, path: path, body: stream.stream_from_bytes(data), headers: headers, trailers: HeaderMap { names: [], values: [] } };
   let resp: HttpResponse = handle(req, platform.host());
   send(response_out, resp);
+  match (resp.background) {
+    Some(work) => {
+      work();
+    },
+    None => {}
+  }
 }
 
 function method_name(m: WasiHttpMethod): string {
@@ -583,5 +589,5 @@ function read_response(resp: i32, cap: i32): Result[HttpResponse, OutgoingError]
   if (how == READ_FAILED) {
     return Err(CutShort);
   }
-  return Ok(HttpResponse { status: status, headers: headers, body: BodyBytes(data), trailers: HeaderMap { names: [], values: [] } });
+  return Ok(HttpResponse { status: status, headers: headers, body: BodyBytes(data), trailers: HeaderMap { names: [], values: [] }, background: None });
 }
