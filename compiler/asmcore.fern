@@ -5980,9 +5980,11 @@ pub function rt_src_arr_slice(): string {
 // matching the hand-written helper. Both string params are read-only, so borrow
 // analysis keeps them borrowed (no RC free). The common prefix is compared
 // eight bytes at a time; both native targets are little-endian, so the lowest
-// set bit of the two words' xor is in the first byte that differs.
+// set bit of the two words' xor is in the first byte that differs. It walks
+// two raw pointers to `end` rather than indexing the strings, which keeps
+// every value it carries in a caller-saved register on x86-64.
 pub function rt_src_str_cmp(): string {
-  return "function __fern_str_cmp(a: string, b: string): i32 { let la: i32 = a.len(); let lb: i32 = b.len(); let n: i32 = la; if (lb < n) { n = lb; } let pa: usize = __raw_data(a); let pb: usize = __raw_data(b); let i: i32 = 0; while (i + 8 <= n) { let x: i64 = __load_i64(pa + i) ^ __load_i64(pb + i); if (x != (0 as i64)) { let k: i32 = i + (__ctz64(x as u64) >> 3); return (a[k] as i32) - (b[k] as i32); } i = i + 8; } while (i < n) { let ca: i32 = a[i] as i32; let cb: i32 = b[i] as i32; if (ca != cb) { return ca - cb; } i = i + 1; } return la - lb; }";
+  return "function __fern_str_cmp(a: string, b: string): i32 { let la: i32 = a.len(); let lb: i32 = b.len(); let n: i32 = la; if (lb < n) { n = lb; } let dl: i32 = la - lb; let p: usize = __raw_data(a); let q: usize = __raw_data(b); let end: usize = p + n; while (p + 8 <= end) { let x: i64 = __load_i64(p) ^ __load_i64(q); if (x != (0 as i64)) { let k: i32 = __ctz64(x as u64) >> 3; return __load_u8(p + k) - __load_u8(q + k); } p = p + 8; q = q + 8; } while (p < end) { let ca: i32 = __load_u8(p); let cb: i32 = __load_u8(q); if (ca != cb) { return ca - cb; } p = p + 1; q = q + 1; } return dl; }";
 }
 
 // rt_src_arr_str_join backs `xs.join(sep)` on string arrays (#2649). TWO PASSES
