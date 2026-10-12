@@ -308,10 +308,11 @@ func (p Profile) floatsAllowed() bool { return p == ProfileFree || p == ProfileP
 type Generator struct {
 	ch  chooser
 	cfg Config
-	// spans records, under a byteChooser, each list element the program
-	// holds: a helper or a statement, with the byte its list's count came
-	// from. ShrinkMainBytes deletes them.
+	// spans and exprs record, under a byteChooser, what ShrinkMainBytes
+	// reduces: each helper and statement, with the byte its list's count came
+	// from, and each expression.
 	spans []span
+	exprs []exprSpan
 	// profile names the generator's operating mode. Two values
 	// today: ProfileFree (the free-form Gen / GenBytes path,
 	// every production allowed) and ProfileRunnable (the
@@ -1840,6 +1841,16 @@ func (g *Generator) maybeEmitLoopReadBeforeWith(b *strings.Builder, sc *scope) b
 // current recursion level; once it exceeds cfg.MaxExprDepth, only
 // leaf productions (literals + variable references) are emitted so
 // the tree always terminates.
+func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
+	start := g.pos()
+	g.production(b, sc, t, depth)
+	g.markExpr(start, t, depth < g.cfg.MaxExprDepth)
+}
+
+// leafChance is how often an expression above the depth limit is a leaf.
+const leafChance = 0.4
+
+// production is expr's body.
 //
 // Two non-leaf productions are tried before falling through to the
 // per-type composite path: a call to a registered helper whose
@@ -1847,8 +1858,8 @@ func (g *Generator) maybeEmitLoopReadBeforeWith(b *strings.Builder, sc *scope) b
 // Either can short-circuit the rest of the dispatch — when neither
 // applies, the dispatch falls into numericExpr / boolExpr / a
 // leaf depending on t.
-func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
-	if depth >= g.cfg.MaxExprDepth || g.flip(0.4) {
+func (g *Generator) production(b *strings.Builder, sc *scope, t gtype, depth int) {
+	if depth >= g.cfg.MaxExprDepth || g.flip(leafChance) {
 		g.leaf(b, sc, t, depth)
 		return
 	}

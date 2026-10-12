@@ -13,8 +13,7 @@ import (
 
 // TestFernsmithShrinksAPlantedMiscompile is #6073's last acceptance item: a
 // compiler with a planted closure miscompile is caught by the generator, and
-// the failing corpus shrinks by truncation, the minimisation contract
-// GenMainBytes keeps (TestGenBytesShrinkIsMonotonicAndValid).
+// fernsmith.ShrinkMainBytes reduces the failing corpus to a small repro.
 //
 // The mutant is built by scripts/fernsmith-mutant, which plants the bug in a
 // scratch copy of compiler/: a closure's first parameter and first capture
@@ -26,9 +25,7 @@ import (
 // A corpus diverges when the mutant's program does not exit with the
 // interpreter's byte (a wrong byte, a crash or a hang). The shrunk repro must
 // also compile correctly with the unplanted compiler, so what it shows is the
-// plant and not some other bug. The repro's size is logged, not bounded: a
-// helper generated ahead of main cannot shrink without shifting the bytes
-// main reads, so truncation does not reduce a program far (#6073).
+// plant and not some other bug, and must be within mutantReproBytes.
 func TestFernsmithShrinksAPlantedMiscompile(t *testing.T) {
 	mutant := os.Getenv("FERN_FERNSMITH_MUTANT")
 	if mutant == "" {

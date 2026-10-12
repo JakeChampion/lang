@@ -1343,24 +1343,26 @@ func TestGenDeferBodyHasNoTry(t *testing.T) {
 	}
 }
 
-// Deleting any one helper or statement ShrinkMainBytes records leaves a corpus
-// whose program still type-checks.
-func TestMainBytesDeletionsAreValid(t *testing.T) {
+// Every structural move ShrinkMainBytes makes, deleting a helper or a
+// statement or hoisting an expression, leaves a corpus whose program still
+// type-checks. A corpus offers hundreds of moves; eight spread across them
+// are checked.
+func TestMainBytesReductionsAreValid(t *testing.T) {
 	checked := 0
 	for seed := uint64(0); seed < sweepN(t, 8); seed++ {
 		r := rand.New(rand.NewPCG(seed, 0x5bad))
 		corpus := randBytes(r, 2048)
-		dels := fernsmith.MainBytesDeletions(corpus)
-		checked += len(dels)
-		for i, d := range dels {
-			src := fernsmith.GenMainBytes(d)
+		dels := fernsmith.MainBytesReductions(corpus)
+		for i := 0; i < len(dels); i += len(dels)/8 + 1 {
+			checked++
+			src := fernsmith.GenMainBytes(dels[i])
 			if _, err := astNodeCount(t, src); err != nil {
-				t.Fatalf("seed %d deletion %d does not type-check:\n%s\nerr: %v", seed, i, src, err)
+				t.Fatalf("seed %d move %d does not type-check:\n%s\nerr: %v", seed, i, src, err)
 			}
 		}
 	}
 	if checked == 0 {
-		t.Fatal("no corpus recorded a helper or a statement")
+		t.Fatal("no corpus offered a move")
 	}
 }
 
