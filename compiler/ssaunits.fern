@@ -1692,7 +1692,9 @@ function tuple_take_field(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], 
   if (!ssasem.reference(f.values[ins.result])) {
     return none;
   }
-  if (!owned[root] || !takeable_root(defs[root].kind_tag) || !only_element_reads(f, root)) {
+  // A box this frame built has a count of 1 only until something else is
+  // handed it, so every use has to be an element read.
+  if (!owned[root] || !takeable_root(defs[root].kind_tag) || !ssasem.uses_only(a.uses, root, [ssasem.tuple_get()])) {
     return none;
   }
   // The untested take: the tuple must die in this block, so any liveness out
@@ -1701,23 +1703,6 @@ function tuple_take_field(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], 
     return none;
   }
   return ins.imm;
-}
-
-// A box this frame built has a count of 1 only until something else is handed
-// it: a container it is stored in, a call, a phi. Every use has to be an
-// element read.
-function only_element_reads(f: ssasem.Func, root: i32): boolean {
-  for b in f.graph.blocks {
-    for ins in b.insts {
-      if (ins.kind_tag != ssasem.tuple_get() && ssa.reads_value(ins, root)) {
-        return false;
-      }
-    }
-    if (ssa.term_reads_value(b.term, root)) {
-      return false;
-    }
-  }
-  return true;
 }
 
 // The element each tuple read takes, indexed by the read's result value, and
@@ -2191,7 +2176,7 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs
   if (element && takeable_root(defs[root].kind_tag)) {
     return none;
   }
-  if (!slot_takeable(f, defs, f.values[ins.result], root, field, element, slot)) {
+  if (!slot_takeable(f, a, defs, f.values[ins.result], root, field, element, slot)) {
     return none;
   }
   if (!owned[root] || projection(defs[root].kind_tag) && !taken_read(defs[root].kind_tag)) {
@@ -2208,7 +2193,7 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs
 // Whether the box `root` can give up the slot the read `got` names: a
 // buffer, map or record field of a record, element of a tuple or element of
 // an owned array, or a reference payload of a union. A view, or the builtin Option layout, needs a box nobody else sees.
-function slot_takeable(f: ssasem.Func, defs: ssa.SInst[], got: typeinfo.Type, root: i32, field: boolean, element: boolean, slot: boolean): boolean {
+function slot_takeable(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], got: typeinfo.Type, root: i32, field: boolean, element: boolean, slot: boolean): boolean {
   let box: typeinfo.Type = f.values[root];
   if (field) {
     return field_takeable(got) && is_record(box) && !semtypes.is_env(box);
@@ -2222,7 +2207,7 @@ function slot_takeable(f: ssasem.Func, defs: ssa.SInst[], got: typeinfo.Type, ro
   if (!ssasem.reference(got) || !is_union(box)) {
     return false;
   }
-  return !(ssasem.is_view(got) || option_layout(f, box)) || sole_box(f, defs, root, __alloc_bool(f.graph.nvals));
+  return !(ssasem.is_view(got) || option_layout(f, box)) || sole_box(a, defs, root, __alloc_bool(f.graph.nvals));
 }
 
 // Whether `root` is still needed past position `pos` of block `bi` other than
@@ -2412,7 +2397,7 @@ function taken_read(kind: i32): boolean {
 // runtime test — which a view needs, since the test's shared arm retains, and
 // the builtin Option layout needs, since it has no store to null the slot with.
 // The box's drop in that step then releases the box alone (`shell_root`).
-function sole_box(f: ssasem.Func, defs: ssa.SInst[], v: i32, seen: boolean[]): boolean {
+function sole_box(a: ssasem.Analysis, defs: ssa.SInst[], v: i32, seen: boolean[]): boolean {
   if (v < 0 || v >= defs.len()) {
     return false;
   }
@@ -2423,26 +2408,13 @@ function sole_box(f: ssasem.Func, defs: ssa.SInst[], v: i32, seen: boolean[]): b
   if (d.kind_tag != ssasem.variant_new() && d.kind_tag != 8) {
     return false;
   }
-  for b in f.graph.blocks {
-    for ins in b.insts {
-      let reads: boolean = false;
-      for a in ins.args {
-        if (a == v) {
-          reads = true;
-        }
-      }
-      if (reads && ins.kind_tag != 8 && ins.kind_tag != ssasem.variant_is() && ins.kind_tag != ssasem.variant_get()) {
-        return false;
-      }
-    }
-    if (b.term.kind_tag == 1 && b.term.value == v) {
-      return false;
-    }
+  if (!ssasem.uses_only(a.uses, v, [8, ssasem.variant_is(), ssasem.variant_get()])) {
+    return false;
   }
   if (d.kind_tag == 8) {
     let next: boolean[] = seen.with(v, true);
-    for a in d.args {
-      if (!sole_box(f, defs, a, next)) {
+    for x in d.args {
+      if (!sole_box(a, defs, x, next)) {
         return false;
       }
     }
@@ -3766,7 +3738,7 @@ pub function with_reuse(f: ssasem.Func, p: Plan): Plan {
   let links: i32[] = links_of(f, p, idx);
   let off: boolean = reuse_layer_disabled();
   let carry: Carry = carried_pairs(f, p, idx, links, off);
-  let uses: i32[] = use_counts(f);
+  let uses: ssasem.Uses = p.analysis.uses;
   let pairs: ReusePairs[] = [];
   let keeps: Keeps[] = [];
   for b in f.graph.blocks {
@@ -4582,7 +4554,7 @@ function reuse_pairs(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, off: 
 // under the token's null arm, where its box is fresh (reuse_construct).
 pub struct Keeps { donors: i32[], slots: boolean[][], values: i32[][], late: i32[][], start: i32[], taken: i32[], built: i32[] }
 
-function keep_slots(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, ins: ssa.SInst, built: i32, donor: i32, taken: i32, uses: i32[]): Keeps {
+function keep_slots(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, ins: ssa.SInst, built: i32, donor: i32, taken: i32, uses: ssasem.Uses): Keeps {
   let none: Keeps = Keeps { donors: [], slots: [], values: [], late: [], start: [], taken: [], built: [] };
   if (ins.kind_tag != ssasem.record_new() || !semtypes.equal(f.values[ins.result], f.values[donor])) {
     return none;
@@ -4616,7 +4588,7 @@ function keep_slots(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, ins: s
       if (i == get.imm && !slots[i] && occurrences(ins.args, get.result) == 1) {
         values = values.append(get.result);
         slots = slots.with(i, true);
-        if (uses[get.result] == 1 && !held_read(p, get)) {
+        if (ssasem.use_count(uses, get.result) == 1 && !held_read(p, get)) {
           late = late.append(get.result);
         }
         // Only a counted read needs the donor's uniqueness at the read.
@@ -4645,26 +4617,6 @@ function held_read(p: Plan, ins: ssa.SInst): boolean {
     || ins.result < p.held.len() && p.held[ins.result];
 }
 
-// How many operands name each value, over every instruction and terminator
-// of the function.
-function use_counts(f: ssasem.Func): i32[] {
-  let out: i32[] = __alloc_i32(f.graph.nvals);
-  for b in f.graph.blocks {
-    for ins in b.insts {
-      for a in ins.args {
-        out = out.with(a, out[a] + 1);
-      }
-    }
-    if (b.term.kind_tag == 1 && b.term.value >= 0) {
-      out = out.with(b.term.value, out[b.term.value] + 1);
-    }
-    if (b.term.kind_tag == 3) {
-      out = out.with(b.term.cond, out[b.term.cond] + 1);
-    }
-  }
-  return out;
-}
-
 // Every pairing's token interval in the block: `from` where the token is taken,
 // `to` where it is spent.
 function token_busy(pairs: ReusePairs, from: i32, to: i32, own_build: i32): boolean {
@@ -4686,7 +4638,7 @@ function token_busy(pairs: ReusePairs, from: i32, to: i32, own_build: i32): bool
   return false;
 }
 
-function block_keeps(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs, uses: i32[]): Keeps {
+function block_keeps(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs, uses: ssasem.Uses): Keeps {
   let out: Keeps = Keeps { donors: [], slots: [], values: [], late: [], start: [], taken: [], built: [] };
   let pos: i32 = 0;
   while (pos < b.insts.len()) {

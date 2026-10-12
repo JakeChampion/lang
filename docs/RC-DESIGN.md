@@ -93,7 +93,9 @@ what the read took. That question is asked in two relations, both read off
 `ssasem.Analysis` and `ssalive`: the **anchored** one, whether the storage
 behind a value is still needed (`used_after`), and the **direct** one,
 whether the value itself is still in hand (`read_after_direct`, the flow over
-`a.parents` alone). `needed_past_slot` is the anchored question asked about
+`a.parents` alone). A third question, what reads a value, is answered by
+the table `ssasem.Analysis.uses` carries (`uses_only`, `use_count`).
+`needed_past_slot` is the anchored question asked about
 one slot of a box: a later read of the box in the block, a value anchored to
 it used after the point, or a block that can run later naming it
 (`named_after`, which reads a phi's operand only on its own edge), with a

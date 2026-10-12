@@ -178,6 +178,87 @@ pub struct Analysis {
   parents: i32[][],
   dependencies: i32[][],
   flow: ssalive.Flow,
+  uses: Uses,
+}
+
+// What reads each value: for value v, one entry per operand naming it, the
+// kind of the instruction it is an operand of, at `kinds[start[v]]` up to
+// `kinds[start[v + 1]]`; a return of v or a branch on it is `term_use()`.
+// The planner's rules that ask what every use of a value is read it here
+// rather than each scanning the function.
+pub struct Uses { start: i32[], kinds: i32[] }
+
+pub function term_use(): i32 {
+  return 0 - 1000;
+}
+
+// How many operands name `v`, a terminator's included.
+pub function use_count(u: Uses, v: i32): i32 {
+  return u.start[v + 1] - u.start[v];
+}
+
+// Whether every use of `v` is an instruction of one of the `allowed` kinds.
+pub function uses_only(u: Uses, v: i32, allowed: i32[]): boolean {
+  let i: i32 = u.start[v];
+  while (i < u.start[v + 1]) {
+    if (util.index_of_i32(allowed, u.kinds[i]) < 0) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function uses_of(f: Func): Uses {
+  let n: i32 = f.graph.nvals;
+  let count: i32[] = __alloc_i32(n + 1);
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      for a in ins.args {
+        if (a >= 0 && a < n) {
+          count = count.with(a + 1, count[a + 1] + 1);
+        }
+      }
+    }
+    let t: i32 = term_operand(b.term);
+    if (t >= 0 && t < n) {
+      count = count.with(t + 1, count[t + 1] + 1);
+    }
+  }
+  let v: i32 = 0;
+  while (v < n) {
+    count = count.with(v + 1, count[v + 1] + count[v]);
+    v = v + 1;
+  }
+  let kinds: i32[] = __alloc_i32(count[n]);
+  let next: i32[] = count;
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      for a in ins.args {
+        if (a >= 0 && a < n) {
+          kinds = kinds.with(next[a], ins.kind_tag);
+          next = next.with(a, next[a] + 1);
+        }
+      }
+    }
+    let t: i32 = term_operand(b.term);
+    if (t >= 0 && t < n) {
+      kinds = kinds.with(next[t], term_use());
+      next = next.with(t, next[t] + 1);
+    }
+  }
+  return Uses { start: count, kinds: kinds };
+}
+
+// The value a terminator reads: a return's, or a branch's condition.
+function term_operand(t: ssa.STerm): i32 {
+  if (t.kind_tag == 1) {
+    return t.value;
+  }
+  if (t.kind_tag == 3) {
+    return t.cond;
+  }
+  return 0 - 1;
 }
 
 // Negative tags belong to this semantic phase. Physical SSA consumers do not
@@ -489,7 +570,7 @@ pub function refused_analysis(why: string): Analysis {
 }
 
 function failed(why: string): Analysis {
-  return Analysis { ok: false, why: why, parents: [], dependencies: [], flow: ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], at: [], none: [] } };
+  return Analysis { ok: false, why: why, parents: [], dependencies: [], flow: ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], at: [], none: [] }, uses: Uses { start: [0], kinds: [] } };
 }
 
 function empty_dependencies(n: i32): i32[][] {
@@ -3834,7 +3915,7 @@ function analyze_parents(f: Func, parents: i32[][]): Analysis {
   if (!flow.ok) {
     return failed(flow.why);
   }
-  return Analysis { ok: true, why: "", parents: parents, dependencies: c.dependencies, flow: flow };
+  return Analysis { ok: true, why: "", parents: parents, dependencies: c.dependencies, flow: flow, uses: uses_of(f) };
 }
 
 // The callee names this graph names in a call instruction.
