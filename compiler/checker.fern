@@ -15417,6 +15417,388 @@ function for_iter_diags(fr: ast.StmtFor, s: Scope): util.Diag[] {
   return util.append_diags(call_diags(len_call, bound), call_diags(first, bound));
 }
 
+// ---- exhaustiveness of a desugared match --------------------------------------
+//
+// A match on a tuple or a struct, and one whose variant arms nest
+// sub-patterns, reaches the checker as the done-flag chain the parser built,
+// which falls through by construction. Its arms as written ride on the
+// chain's `if` (ast.MatchSugar), and E030 is decided over them: the
+// usefulness check over the arms' patterns, one row per unguarded arm. A
+// column whose every constructor some row names (an enum's variants, a
+// tuple's or a struct's one shape, a boolean's two values) is split per
+// constructor, each split checked in turn; any other column needs a row that
+// matches anything there. A literal other than `true` or `false` covers only
+// itself (#12257). A match on a literal has its own rule
+// (scalar_match_exhaustive_diags).
+
+// A pattern as the check reads it: a constructor and its payload patterns, one
+// that matches anything (ctor ""), or a test it cannot split on (opaque).
+struct CoverPat { ctor: string, opaque: boolean, args: CoverPat[] }
+
+function cover_any(): CoverPat {
+  return CoverPat { ctor: "", opaque: false, args: [] };
+}
+
+function cover_opaque(): CoverPat {
+  return CoverPat { ctor: "", opaque: true, args: [] };
+}
+
+function sugar_exhaustive_diags(sg: ast.MatchSugar, s: Scope): util.Diag[] {
+  let none: util.Diag[] = [];
+  if (sg.origin != "" || sg.tup.len() + sg.strct.len() + sg.arms.len() == 0) {
+    return none;
+  }
+  let t: typeinfo.Type = check_expr(sg.scrut, s);
+  if (is_unknown(t)) {
+    return none;
+  }
+  let rows: CoverPat[][] = sugar_rows(sg, t, s);
+  if (sg.arms.len() > 0) {
+    return variant_cover_diags(rows, t, sg, s);
+  }
+  if (!cover_useful(rows, [t], s)) {
+    return none;
+  }
+  if (sg.tup.len() > 0) {
+    return [dg_at("E030", "match on tuple is not exhaustive — add an unguarded `_` or all-binder arm", sg.line, sg.col)];
+  }
+  return [dg_at("E030", "match on struct is not exhaustive — add an unguarded struct-pattern or `_` arm", sg.line, sg.col)];
+}
+
+// One E030 per variant of the scrutinee's enum some value of escapes every
+// arm, in declaration order.
+function variant_cover_diags(rows: CoverPat[][], t: typeinfo.Type, sg: ast.MatchSugar, s: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  if let typeinfo.TypeUnion(u) = t {
+    for v in cover_ctor_names(t, s) {
+      let arity: i32 = cover_arity(rows, v);
+      if (cover_useful(cover_split(rows, v, arity), cover_arg_types(t, v, arity, s), s)) {
+        out = out.append(dg_at("E030", "match does not cover variant " + v + " of enum " + u.name + " — add an arm for it, or a `_` arm", sg.line, sg.col));
+      }
+    }
+  }
+  return out;
+}
+
+function sugar_rows(sg: ast.MatchSugar, t: typeinfo.Type, s: Scope): CoverPat[][] {
+  let rows: CoverPat[][] = [];
+  for a in sg.tup {
+    if (!a.has_guard) {
+      let p: CoverPat = cover_any();
+      if (!a.is_wild) {
+        p = tuple_cover(a.elem_kinds, a.lits, a.elem_pats);
+      }
+      rows = rows.append([p]);
+    }
+  }
+  for a in sg.strct {
+    if (!a.has_guard) {
+      let p: CoverPat = cover_any();
+      if (!a.is_wild) {
+        p = struct_cover(a, t, s);
+      }
+      rows = rows.append([p]);
+    }
+  }
+  for a in sg.arms {
+    if (!a.has_guard) {
+      rows = rows.append([pattern_cover(a.pattern)]);
+    }
+  }
+  return rows;
+}
+
+function literal_cover(e: ast.Expr): CoverPat {
+  if let ast.ExprBool(b) = e {
+    if (b.value) {
+      return CoverPat { ctor: "true", opaque: false, args: [] };
+    }
+    return CoverPat { ctor: "false", opaque: false, args: [] };
+  }
+  return cover_opaque();
+}
+
+// A tuple pattern's elements, by the TupArm encoding: 0 a binder, 1 `_`, 2 a
+// literal, 3 a variant sub-pattern, 4 a nested tuple.
+function tuple_cover(kinds: i32[], lits: ast.Expr[], pats: ast.Pattern[]): CoverPat {
+  let args: CoverPat[] = [];
+  let k: i32 = 0;
+  while (k < kinds.len()) {
+    let a: CoverPat = cover_any();
+    if (kinds[k] == 2 && k < lits.len()) {
+      a = literal_cover(lits[k]);
+    } else if (kinds[k] == 3 && k < pats.len()) {
+      a = pattern_cover(pats[k]);
+    } else if (kinds[k] == 4 && k < pats.len()) {
+      if let ast.PatVariant(np) = pats[k] {
+        a = tuple_cover(np.tup_kinds, np.tup_lits, np.tup_pats);
+      }
+    }
+    args = args.append(a);
+    k = k + 1;
+  }
+  return CoverPat { ctor: "()", opaque: false, args: args };
+}
+
+// A struct pattern's fields in declaration order: a field it does not name
+// matches anything.
+function struct_cover(a: ast.StructArm, t: typeinfo.Type, s: Scope): CoverPat {
+  let args: CoverPat[] = [];
+  if let typeinfo.TypeStruct(st) = t {
+    for name in s.lookup_struct(st.name).field_names {
+      let p: CoverPat = cover_any();
+      let j: i32 = util.index_of_str(a.fields, name);
+      if (j >= 0 && j < a.field_kinds.len() && a.field_kinds[j] == 2) {
+        p = literal_cover(a.field_lits[j]);
+      } else if (j >= 0 && j < a.field_kinds.len() && a.field_kinds[j] == 3) {
+        p = pattern_cover(a.field_pats[j]);
+      }
+      args = args.append(p);
+    }
+  }
+  return CoverPat { ctor: "{}", opaque: false, args: args };
+}
+
+// A variant pattern and what each payload slot tests: a sub-pattern, a
+// tuple, a literal (a synthetic `__pl` binder its lit_cond compares), or
+// nothing.
+function pattern_cover(p: ast.Pattern): CoverPat {
+  match (p) {
+    ast.PatWildcard(_) => {
+      return cover_any();
+    },
+    ast.PatVariant(pv) => {
+      if (pv.type_name.len() == 0) {
+        if (pv.tup_kinds.len() > 0) {
+          return tuple_cover(pv.tup_kinds, pv.tup_lits, pv.tup_pats);
+        }
+        return cover_any();
+      }
+      let slots: string[] = [];
+      if (pv.binding.len() > 0 || pv.extra_bindings.len() > 0) {
+        slots = [pv.binding];
+        for b in pv.extra_bindings {
+          slots = slots.append(b);
+        }
+      }
+      let args: CoverPat[] = [];
+      let i: i32 = 0;
+      while (i < slots.len() || i < pv.nested.len()) {
+        let a: CoverPat = cover_any();
+        let named: string = "";
+        if (i < slots.len()) {
+          named = slots[i];
+        }
+        if (i < pv.nested.len() && nested_tests(pv.nested[i])) {
+          a = pattern_cover(pv.nested[i]);
+        } else if (named == "__tupslot") {
+          a = tuple_cover(pv.tup_kinds, pv.tup_lits, pv.tup_pats);
+        } else if (util.str_has_prefix(named, "__pl")) {
+          a = slot_literal_cover(pv.lit_cond, named);
+        }
+        args = args.append(a);
+        i = i + 1;
+      }
+      return CoverPat { ctor: variant_pattern_name(pv.type_name), opaque: false, args: args };
+    }
+  }
+}
+
+function nested_tests(p: ast.Pattern): boolean {
+  if let ast.PatVariant(np) = p {
+    return np.type_name.len() > 0 || np.tup_kinds.len() > 0;
+  }
+  return false;
+}
+
+// What a literal payload slot `slot` tests, from the conjunction lit_cond: a
+// boolean constructor for `slot == true` or `slot == false`, opaque for
+// anything else.
+function slot_literal_cover(cond: ast.Expr, slot: string): CoverPat {
+  if let ast.ExprBinary(b) = cond {
+    if (b.op == "&&") {
+      let l: CoverPat = slot_literal_cover(b.left, slot);
+      if (l.ctor.len() > 0 || l.opaque) {
+        return l;
+      }
+      return slot_literal_cover(b.right, slot);
+    }
+    if let ast.ExprIdent(id) = b.left {
+      if (id.name == slot) {
+        if (b.op == "==") {
+          return literal_cover(b.right);
+        }
+        return cover_opaque();
+      }
+    }
+    if (expr_mentions(b.left, slot) || expr_mentions(b.right, slot)) {
+      return cover_opaque();
+    }
+  }
+  return cover_any();
+}
+
+function expr_mentions(e: ast.Expr, name: string): boolean {
+  if let ast.ExprIdent(id) = e {
+    return id.name == name;
+  }
+  if let ast.ExprBinary(b) = e {
+    return expr_mentions(b.left, name) || expr_mentions(b.right, name);
+  }
+  return false;
+}
+
+// Every constructor of `t` when it has finitely many: an enum's variants, a
+// tuple's or a struct's one shape, a boolean's two values. None for any other
+// type, which only a pattern that matches anything covers.
+function cover_ctor_names(t: typeinfo.Type, s: Scope): string[] {
+  match (t) {
+    typeinfo.TypeUnion(u) => {
+      let us: UnionSig = s.lookup_union(u.name);
+      if (us.name.len() == 0) {
+        us = builtin_union_sig(u.name);
+      }
+      return us.variants;
+    },
+    typeinfo.TypeTuple(_) => {
+      return ["()"];
+    },
+    typeinfo.TypeStruct(_) => {
+      return ["{}"];
+    },
+    typeinfo.TypeBool(_) => {
+      return ["false", "true"];
+    },
+    _ => {
+      let none: string[] = [];
+      return none;
+    }
+  }
+}
+
+function cover_arg_types(t: typeinfo.Type, ctor: string, arity: i32, s: Scope): typeinfo.Type[] {
+  let out: typeinfo.Type[] = [];
+  match (t) {
+    typeinfo.TypeTuple(tt) => {
+      return tt.elements;
+    },
+    typeinfo.TypeStruct(st) => {
+      return s.lookup_struct(st.name).field_types;
+    },
+    typeinfo.TypeUnion(u) => {
+      let i: i32 = 0;
+      while (i < arity) {
+        out = out.append(variant_pattern_payload_type(s, u.name + "." + ctor, t, i));
+        i = i + 1;
+      }
+    },
+    _ => {}
+  }
+  return out;
+}
+
+// The payload count rows naming `ctor` give it.
+function cover_arity(rows: CoverPat[][], ctor: string): i32 {
+  let n: i32 = 0;
+  for r in rows {
+    if (!r[0].opaque && r[0].ctor == ctor && r[0].args.len() > n) {
+      n = r[0].args.len();
+    }
+  }
+  return n;
+}
+
+// The rows that can match a value built by `ctor`, with its payloads in place
+// of the first column.
+function cover_split(rows: CoverPat[][], ctor: string, arity: i32): CoverPat[][] {
+  let out: CoverPat[][] = [];
+  for r in rows {
+    let head: CoverPat = r[0];
+    if (head.opaque || head.ctor.len() > 0 && head.ctor != ctor) {
+      continue;
+    }
+    let row: CoverPat[] = [];
+    let i: i32 = 0;
+    while (i < arity) {
+      if (i < head.args.len()) {
+        row = row.append(head.args[i]);
+      } else {
+        row = row.append(cover_any());
+      }
+      i = i + 1;
+    }
+    let j: i32 = 1;
+    while (j < r.len()) {
+      row = row.append(r[j]);
+      j = j + 1;
+    }
+    out = out.append(row);
+  }
+  return out;
+}
+
+// Whether some value of `types` escapes every row. A column of a type the
+// checker could not resolve is passed over, every row that tests it counted
+// as matching, so an unresolved payload never draws an E030.
+function cover_useful(rows: CoverPat[][], types: typeinfo.Type[], s: Scope): boolean {
+  if (types.len() == 0) {
+    return rows.len() == 0;
+  }
+  let rest_types: typeinfo.Type[] = [];
+  let k: i32 = 1;
+  while (k < types.len()) {
+    rest_types = rest_types.append(types[k]);
+    k = k + 1;
+  }
+  let names: string[] = cover_ctor_names(types[0], s);
+  let complete: boolean = names.len() > 0;
+  for n in names {
+    if (!cover_names(rows, n)) {
+      complete = false;
+    }
+  }
+  if (!complete) {
+    let rest: CoverPat[][] = [];
+    for r in rows {
+      let matches_all: boolean = r[0].ctor.len() == 0 && !r[0].opaque;
+      if (matches_all || is_unknown(types[0]) && !r[0].opaque) {
+        rest = rest.append(cover_tail(r));
+      }
+    }
+    return cover_useful(rest, rest_types, s);
+  }
+  for n in names {
+    let arity: i32 = cover_arity(rows, n);
+    let arg_types: typeinfo.Type[] = cover_arg_types(types[0], n, arity, s);
+    for rt in rest_types {
+      arg_types = arg_types.append(rt);
+    }
+    if (cover_useful(cover_split(rows, n, arity), arg_types, s)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function cover_names(rows: CoverPat[][], ctor: string): boolean {
+  for r in rows {
+    if (!r[0].opaque && r[0].ctor == ctor) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function cover_tail(r: CoverPat[]): CoverPat[] {
+  let out: CoverPat[] = [];
+  let j: i32 = 1;
+  while (j < r.len()) {
+    out = out.append(r[j]);
+    j = j + 1;
+  }
+  return out;
+}
+
 function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   let cur: Scope = bind_mutual_siblings(stmts, s);
@@ -15469,6 +15851,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
         out = util.append_diags(out, array_elem_check(array_elem_type_of(cur.lookup(a.target)), a.value, cur));
       },
       ast.StmtIf(f) => {
+        out = util.append_diags(out, sugar_exhaustive_diags(f.sugar, cur));
         out = util.append_diags(out, call_diags(f.cond, cur));
         out = util.append_diags(out, stmts_call_diags(f.then_body, cur));
         out = util.append_diags(out, stmts_call_diags(f.else_body, cur));
