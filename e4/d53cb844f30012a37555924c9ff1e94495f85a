@@ -353,3 +353,26 @@ bootstrap/arm64-linux/stage2.size_bytes	12352544
 bootstrap/arm64-linux/stage3.wall_s	14
 bootstrap/arm64-linux/stage3.peak_rss_mb	1374
 bootstrap/arm64-linux/stage3.size_bytes	12352544
+
+# lane: net-soak
+soak/static.requests	23582225
+soak/static.failed	0
+soak/static.rss_warm_kb	3604
+soak/static.rss_end_kb	3604
+soak/static.rss_growth_kb	0
+soak/static.allocs	3406221
+soak/static.live_bytes	0
+soak/echo.requests	16207560
+soak/echo.failed	0
+soak/echo.rss_warm_kb	3680
+soak/echo.rss_end_kb	3680
+soak/echo.rss_growth_kb	0
+soak/echo.allocs	864658905
+soak/echo.live_bytes	0
+soak/recent.requests	14913819
+soak/recent.failed	0
+soak/recent.rss_warm_kb	3412
+soak/recent.rss_end_kb	3412
+soak/recent.rss_growth_kb	0
+soak/recent.allocs	411242489
+soak/recent.live_bytes	0
