@@ -152,7 +152,7 @@ selfhost/arm64-linux/int_loop.emit	90
 selfhost/arm64-linux/map_int.emit	6107
 selfhost/arm64-linux/map_probe_chain.emit	6118
 selfhost/arm64-linux/map_string.emit	9002
-selfhost/arm64-linux/ordmap_insert.emit	4694
+selfhost/arm64-linux/ordmap_insert.emit	6491
 selfhost/arm64-linux/pmap_insert.emit	5017
 selfhost/arm64-linux/pvec_with.emit	3093
 selfhost/arm64-linux/record_update.emit	1543
@@ -182,7 +182,7 @@ selfhost/wasm32-wasi/int_loop.emit	117
 selfhost/wasm32-wasi/map_int.emit	7435
 selfhost/wasm32-wasi/map_probe_chain.emit	7460
 selfhost/wasm32-wasi/map_string.emit	10733
-selfhost/wasm32-wasi/ordmap_insert.emit	6792
+selfhost/wasm32-wasi/ordmap_insert.emit	13254
 selfhost/wasm32-wasi/pmap_insert.emit	5639
 selfhost/wasm32-wasi/pvec_with.emit	2813
 selfhost/wasm32-wasi/record_update.emit	730
@@ -209,11 +209,11 @@ selfhost/x86-64-linux/closure_call.emit	814
 selfhost/x86-64-linux/enum_match.emit	999
 selfhost/x86-64-linux/http_hello.emit	19252
 selfhost/x86-64-linux/int_loop.emit	33
-selfhost/x86-64-linux/map_int.emit	5940
-selfhost/x86-64-linux/map_probe_chain.emit	5955
+selfhost/x86-64-linux/map_int.emit	5861
+selfhost/x86-64-linux/map_probe_chain.emit	5876
 selfhost/x86-64-linux/map_string.emit	8831
-selfhost/x86-64-linux/ordmap_insert.emit	4588
-selfhost/x86-64-linux/pmap_insert.emit	4947
+selfhost/x86-64-linux/ordmap_insert.emit	6346
+selfhost/x86-64-linux/pmap_insert.emit	4896
 selfhost/x86-64-linux/pvec_with.emit	2890
 selfhost/x86-64-linux/record_update.emit	1398
 selfhost/x86-64-linux/sort_inplace.emit	2872
