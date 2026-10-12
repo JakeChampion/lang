@@ -4913,6 +4913,9 @@ function handle_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "Writer.write_some") {
     return Lowered { found: true, r: emit(r, ir.op_write_some()) };
   }
+  if (ins.str == "Writer.splice_forever") {
+    return Lowered { found: true, r: emit(r, ir.op_writer_splice_forever()) };
+  }
   if (ins.str == "Reader.splice_to") {
     return Lowered { found: true, r: emit(r, ir.op_reader_splice()) };
   }
@@ -5760,7 +5763,6 @@ function raw_floor_ops(): RawOps[] {
     RawOps { name: "__raw_array", ops: [] },
     RawOps { name: "__raw_arr_ptr", ops: [] },
     RawOps { name: "__raw_data", ops: [ir.op_str_data()] },
-    RawOps { name: "__raw_addr", ops: [ir.op_raw_addr()] },
     RawOps { name: "__raw_arr_box", ops: [ir.op_raw_arr_box()] },
     RawOps { name: "__raw_scratch", ops: [ir.op_raw_scratch()] },
     RawOps { name: "__raw_environ", ops: [ir.op_raw_environ()] },
@@ -5951,7 +5953,15 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
       if (k >= 0) {
         r = keep_token(r, f, keeps.donors[k]);
       }
-      r = supplies(r, f, p, step, defer0, kept, late);
+      // Keeping a field in place stands in for the construction's retain of
+      // it alone: an earlier operation that takes a unit of the same value
+      // still needs its own.
+      let kb: i32 = util.index_of_i32(keeps.built, pos);
+      let built_kept: i32[] = [];
+      if (kb >= 0) {
+        built_kept = keeps.values[kb];
+      }
+      r = supplies(r, f, p, step, defer0, built_kept, late);
       r = bracket_take(r, f, held);
       // A box superseded by the construction at this same instruction is
       // taken BEFORE it, where an earlier drop's token was taken at the
@@ -5959,7 +5969,6 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
       // reads one token slot and the runtime decides. A kept donor's token
       // was taken at its first kept read, and its drop is the
       // construction's.
-      let kb: i32 = util.index_of_i32(keeps.built, pos);
       if (pairs.selfs[pos] >= 0 && kb < 0) {
         r = self_token(r, f, pairs.selfs[pos], ssaunits.carry_held_for(carry, b.id, pos));
       }

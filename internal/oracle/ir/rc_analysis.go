@@ -1490,6 +1490,7 @@ var copyingBuiltinArgs = map[string][]int{
 	"eprint":                           {0},
 	"__method_Writer_write":            {1},
 	"__method_Writer_write_some":       {1},
+	"__method_Writer_splice_forever":   {1},
 	"__method_Writer_write_bytes":      {1},
 	"__method_Writer_write_some_bytes": {1},
 	"string_from_bytes_unchecked":      {0},

@@ -783,17 +783,9 @@ pub function op_syscall6(): Op {
   return op0(323);
 }
 
-// raw_addr (#2649 raw-memory floor): pops [ptr, off] → ptr + off, computed at
-// the machine's FULL pointer width. It exists because `p + off` written in the
-// helper source does not survive: the surface type of a raw pointer is i32, so
-// the arm64 backend sign-extends the sum back to 32 bits (`sxtw x0, w0`) and a
-// high heap address comes out truncated. The TWO-ARGUMENT raw load/stores
-// (raw_load8 / raw_store8 / raw_load_ptr / raw_store_ptr) dodge this by folding
-// their `off` operand into the addressing mode. Everything else needs this op:
-// a pointer PASSED somewhere (a syscall buffer arg), and — the trap #6386 fell
-// into — the ONE-argument loads, `__load_i32(a)` / `__load_i64(a)` /
-// `__load_ptr(a)`, which have no offset operand to fold, so their caller must
-// not reach for a bare `a + off`.
+// raw_addr: pops [ptr, off] → ptr + off at the machine's full pointer width,
+// the i32 offset sign-extended. The lowering's own pointer adjustments (a byte
+// view's data pointer, a string's header) are made of it.
 pub function op_raw_addr(): Op {
   return op0(223);
 }
@@ -2232,6 +2224,14 @@ pub function op_fd_drop_cache(): Op {
 // number, so the wasm backends answer Unsupported.
 pub function op_fd_dup_onto(): Op {
   return op0(311);
+}
+
+// `writer_splice_forever` pops [fd, str box] and pushes Option[IoError]: the
+// string vmsplice(2)d into the writer over and over, returning only on a
+// failure. Some(Unsupported) means nothing reached the writer, and the caller
+// writes the block itself. Backs `w.splice_forever(block)`.
+pub function op_writer_splice_forever(): Op {
+  return op0(431);
 }
 
 // `sync` pops nothing and pushes nothing: sync(2), write-back of every dirty
@@ -4757,6 +4757,9 @@ function kind_id_len21(name: string): i32 {
   if (c == b'a' && name == "arr_push_shared_bytes") {
     return 217;
   }
+  if (c == b'w' && name == "writer_splice_forever") {
+    return 431;
+  }
   return 0;
 }
 
@@ -5736,6 +5739,9 @@ pub function kind_name(id: i32): string {
   if (id == 430) {
     return "mulhi_u";
   }
+  if (id == 431) {
+    return "writer_splice_forever";
+  }
   if (id == 408) {
     return "pipe";
   }
@@ -6081,7 +6087,7 @@ function pops2_io(t: i32): boolean {
     || t == 178 || t == 348 || t == 349 || t == 350 || t == 187  // read_chunk, read_chunk_bytes, poll
     || t == 110 || t == 114 || t == 353 || t == 115 || t == 334 || t == 339  // tcp_connect, tcp_send, tcp_send_bytes, tcp_recv, udp_bind, unix_listen
     || t == 344  // tcp_recv_into (fd, buf)
-    || t == 202 || t == 213 || t == 308  // writer_write, proc_exec, write_some
+    || t == 202 || t == 213 || t == 308 || t == 431  // writer_write, proc_exec, write_some, writer_splice_forever
     || t == 278  // signal_mask (how, mask)
     || t == 388;  // clock_set (sec, nsec)
 }
@@ -6359,9 +6365,9 @@ pub function is_foldable_binary_kind(id: i32): boolean {
 //
 // is_foldable_binary_kind has existed since the registry landed and had no
 // consumer but its own registry test — this is that consumer. Without it the
-// stack-machine lowering emits the whole sequence for a literal: `0 - 8` in a
-// helper's `__raw_addr(p, 0 - 8)` costs a const, a const, two pops, a sub and
-// a push, none of which survive folding.
+// stack-machine lowering emits the whole sequence for a literal: `0 - 8`
+// costs a const, a const, two pops, a sub and a push, none of which survive
+// folding.
 //
 // It runs on every build, beside constfold.fold_module, its AST-level sibling.
 //
@@ -8746,8 +8752,9 @@ pub function op_allocates(tag: i32): boolean {
   }
   // writer_write boxes its Option[IoError] result (and, on a failing write,
   // the IoError inside it), so it needs the heap runtime too (#7926).
-  // write_some boxes a Result[i64, IoError] the same way.
-  if (tag == 202 || tag == 308) {
+  // write_some boxes a Result[i64, IoError] the same way, and
+  // writer_splice_forever an Option[IoError].
+  if (tag == 202 || tag == 308 || tag == 431) {
     return true;
   }
   // read_file_bytes boxes the contents into a fresh u8[] + a Result wrapper.

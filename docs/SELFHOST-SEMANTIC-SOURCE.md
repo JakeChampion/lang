@@ -2232,7 +2232,7 @@ program on demand. `asm_ir` and `asm_arm64_ir` compile them through
 `emit_ir_runtime_fern_fn`, which takes their bodies from the typed lowering
 (below). They are written on the raw floor: `__raw_alloc`,
 `__raw_store8` / `__raw_load8`, `__raw_store_ptr` / `__raw_load_ptr`,
-`__raw_string`, `__raw_data`, `__raw_array`, `__raw_arr_box`, `__raw_addr`,
+`__raw_string`, `__raw_data`, `__raw_array`, `__raw_arr_box`,
 `__raw_scratch`, `__raw_environ`, `__raw_splice_pipe`, `__syscall3`–`6`
 and `__fern_str_eq`.
 

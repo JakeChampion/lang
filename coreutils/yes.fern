@@ -13,10 +13,11 @@
 // original order plus everything after `--`. See gnu.fern for the
 // shared implementation and the messages it reproduces.
 //
-// The write loop is one syscall per block, not per line: the line is
-// repeated into a block once and the block is written unchanged forever.
-// Per-line writes measured 2.8 MB/s against GNU's 385 MB/s — two bytes
-// per syscall was the whole difference.
+// The block goes to the kernel by vmsplice(2) where it takes one
+// (w.splice_forever), as GNU 9.12's yes does. Elsewhere the write loop is one
+// syscall per block, not per line: the line is repeated into a block once and
+// the block is written unchanged forever. Per-line writes measured 2.8 MB/s
+// against GNU's 385 MB/s — two bytes per syscall was the whole difference.
 //
 // A closed or full stdout is reported the way yes(1) reports it, with
 // its own wording (`standard output:`) rather than the `write error:`
@@ -70,6 +71,14 @@ pub function main(): i32 {
   let block: string = line.repeat(copies);
 
   let w: Writer = stdout();
+  match (w.splice_forever(block)) {
+    Some(Unsupported()) => {},
+    Some(e) => {
+      gnu.error("standard output: " + gnu.io_error_text(e));
+      exit(1);
+    },
+    None => {}
+  }
   while (true) {
     match (w.write(block)) {
       Some(e) => {

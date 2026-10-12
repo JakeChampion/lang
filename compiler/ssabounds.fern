@@ -864,11 +864,12 @@ pub function word_loads(f: ssasem.Func, contracts: ssasem.Contract[], view_words
       // eight is added to the address, not the i32 index, so it cannot wrap.
       insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v + 2, args: [w.arr], imm: 0, str: "__raw_arr_ptr" });
       insts = insts.append(ssa.SInst { kind_tag: 1, result: v + 3, args: [], imm: 8, str: "" });
-      insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v + 4, args: [v + 2, v + 3], imm: 0, str: "__raw_addr" });
-      insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v + 5, args: [v + 4, v + 1], imm: 0, str: "__raw_addr" });
-      insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v + 6, args: [v + 5], imm: 0, str: load });
-      values = values.append(addr_t).append(i32_t).append(addr_t).append(addr_t).append(wide);
-      insts = in_order(insts, w, swaps, v + 6, ins.result);
+      insts = insts.append(ssa.SInst { kind_tag: 9, result: v + 4, args: [v + 2, v + 3], imm: 0, str: "+" });
+      insts = insts.append(ssa.SInst { kind_tag: ssasem.cast(), result: v + 5, args: [v + 1], imm: 0, str: "" });
+      insts = insts.append(ssa.SInst { kind_tag: 9, result: v + 6, args: [v + 4, v + 5], imm: 0, str: "+" });
+      insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v + 7, args: [v + 6], imm: 0, str: load });
+      values = values.append(addr_t).append(addr_t).append(addr_t).append(addr_t).append(addr_t).append(wide);
+      insts = in_order(insts, w, swaps, v + 7, ins.result);
       if (w.big) {
         values = values.append(wide);
       }

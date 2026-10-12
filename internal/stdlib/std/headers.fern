@@ -291,6 +291,21 @@ pub function (h: HeaderMap) set(name: string, value: string): HeaderMap {
   return HeaderMap { ...h, names: new_names, values: new_values };
 }
 
+// `.remove(name)` — every entry for `name` dropped, the rest in order.
+pub function (h: HeaderMap) remove(name: string): HeaderMap {
+  let new_names: string[] = [];
+  let new_values: string[] = [];
+  let i: i32 = 0;
+  while (i < h.names.len()) {
+    if (!h.names[i].eq_ignore_ascii_case(name)) {
+      new_names = new_names.append(h.names[i]);
+      new_values = new_values.append(h.values[i]);
+    }
+    i = i + 1;
+  }
+  return HeaderMap { ...h, names: new_names, values: new_values };
+}
+
 // `.len()` — total entries (duplicates counted separately).
 // `h = h.set("Set-Cookie", "a"); h = h.append("Set-Cookie",
 // "b"); h.len()` is 2. (set/append are functional — rebind.)

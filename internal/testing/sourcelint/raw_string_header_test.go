@@ -1,6 +1,7 @@
 package sourcelint
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -31,9 +32,8 @@ import (
 var rawStringCallRe = regexp.MustCompile(`__raw_string\(`)
 
 // rawAllocBindRe matches the binding form the helpers use: `let p: usize =
-// __raw_alloc(...)`, or `i32` in a helper not yet retyped against the raw
-// floor's types.
-var rawAllocBindRe = regexp.MustCompile(`let\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(?:usize|i32)\s*=\s*__raw_alloc\(`)
+// __raw_alloc(...)`.
+var rawAllocBindRe = regexp.MustCompile(`let\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*usize\s*=\s*__raw_alloc\(`)
 
 // genFnRe matches the start of one asmcore.fern generator function.
 var genFnRe = regexp.MustCompile(`(?m)^(?:pub )?function\s+[A-Za-z_][A-Za-z0-9_]*\s*\(`)
@@ -64,14 +64,6 @@ func TestRawStringPointerComesFromRawAlloc(t *testing.T) {
 				continue
 			}
 			name := strings.TrimSpace(arg)
-			if strings.HasPrefix(name, "__raw_addr(") {
-				t.Errorf("asmcore.fern:%d: __raw_string's pointer is %s — an INTERIOR "+
-					"address. __raw_alloc reserves the 24-byte string-box header ahead "+
-					"of the pointer it returns, and only that pointer; boxing an offset "+
-					"one stamps the box over the buffer's own bytes (#7351)",
-					lineOf(src, chunk.off+open), name)
-				continue
-			}
 			if !bareAddrArgRe.MatchString(name) {
 				t.Errorf("asmcore.fern:%d: __raw_string's pointer is `%s` — it has to be "+
 					"the bare name of a __raw_alloc result, whose reserved 24-byte header "+
@@ -113,4 +105,75 @@ func splitGeneratorFns(src string) []genFnChunk {
 		out = append(out, genFnChunk{name: name, off: loc[0], text: src[loc[0]:end]})
 	}
 	return out
+}
+
+// bareAddrArgRe matches a plain pointer name, the one spelling __raw_string's
+// pointer argument may take.
+//
+// asmcore.fern builds helper bodies as Fern string literals, so a name can also
+// arrive as the generator's own interpolation — `__raw_store8(" + buf + ", 0,
+// 2)` in sockaddr_head. That is still a bare name in the emitted text, so the
+// leading `" + ` and trailing ` + "` seams are part of the accepted form. They
+// have to sit at the very ends: `buf + " + statoff(t, "mode") + "` (the #6386
+// shape) keeps the seam in the middle and is rejected.
+var bareAddrArgRe = regexp.MustCompile(`^(?:"\s*\+\s*)?[A-Za-z_][A-Za-z0-9_]*(?:\s*\+\s*")?$`)
+
+// firstArg returns the text of the first argument of the call whose `(` is at
+// open — everything up to the matching `)` or the first comma at depth 1.
+func firstArg(src string, open int) (string, bool) {
+	depth := 0
+	for i := open; i < len(src); i++ {
+		switch src[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return src[open+1 : i], true
+			}
+		case ',':
+			if depth == 1 {
+				return src[open+1 : i], true
+			}
+		}
+	}
+	return "", false
+}
+
+func lineOf(src string, off int) int {
+	return strings.Count(src[:off], "\n") + 1
+}
+
+// blankFullLineComments replaces the body of every whole-line `//` comment with
+// spaces, so the scan sees only code. Offsets are preserved, keeping lineOf's
+// reported line numbers correct.
+//
+// Only lines whose first non-space characters are `//` are blanked. Cutting at
+// any `//` would truncate a code line that carries one inside a Fern string
+// literal, and asmcore.fern is nothing but string literals.
+//
+// A helper's block comment naturally spells the intrinsic it describes —
+// "ordinary Some(__raw_string(...)) lowering" is the shape that surfaced this —
+// and an argument of `...` is not a pointer expression to check.
+func blankFullLineComments(src string) string {
+	out := []byte(src)
+	for i := 0; i < len(out); {
+		end := bytes.IndexByte(out[i:], '\n')
+		if end < 0 {
+			end = len(out)
+		} else {
+			end += i
+		}
+		j := i
+		for j < end && (out[j] == ' ' || out[j] == '\t') {
+			j++
+		}
+		if j+1 < end && out[j] == '/' && out[j+1] == '/' {
+			for k := j; k < end; k++ {
+				out[k] = ' '
+			}
+		}
+		i = end + 1
+	}
+	return string(out)
 }
