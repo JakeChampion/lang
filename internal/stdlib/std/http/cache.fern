@@ -322,7 +322,7 @@ pub function (r: HttpResponse) with_validators(v: Validators, now: Instant): Htt
 // (`Cache-Control`, `Content-Location`, `ETag`, `Expires`, `Vary`), with
 // `Last-Modified` too when there is no `ETag` to revalidate against.
 pub function not_modified(resp: HttpResponse): HttpResponse {
-  let out: HttpResponse = HttpResponse { status: 304, body: BodyText(""), headers: headers.header_map_new(), trailers: headers.header_map_new() };
+  let out: HttpResponse = HttpResponse { status: 304, body: BodyText(""), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
   for name in ["Cache-Control", "Content-Location", "ETag", "Expires", "Vary"] {
     out = __carry(out, resp, name);
   }
@@ -342,7 +342,7 @@ function __carry(out: HttpResponse, from: HttpResponse, name: string): HttpRespo
 
 // `precondition_failed()` — 412 Precondition Failed, no body.
 pub function precondition_failed(): HttpResponse {
-  return HttpResponse { status: 412, body: BodyText(""), headers: headers.header_map_new(), trailers: headers.header_map_new() };
+  return HttpResponse { status: 412, body: BodyText(""), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
 }
 
 // The value a delta-seconds caps at (RFC 9111 §1.2.2), and what a bare

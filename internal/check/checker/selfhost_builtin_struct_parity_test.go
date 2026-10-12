@@ -162,6 +162,8 @@ func fernTypeSpelling(t *testing.T, ty ast.Type) string {
 		return "string"
 	case ast.BoolType:
 		return "boolean"
+	case ast.VoidType:
+		return "void"
 	case ast.FloatType:
 		if v.Width == 32 {
 			return "f32"
