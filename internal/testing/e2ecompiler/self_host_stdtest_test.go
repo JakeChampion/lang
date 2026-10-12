@@ -400,6 +400,7 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"json_roundtrip", langSrcAbs(t, "tests/stdlib/json_roundtrip_test.fern"), ""},
 		{"json_pointer", langSrcAbs(t, "tests/stdlib/json_pointer_test.fern"), ""},
 		{"json_object", langSrcAbs(t, "tests/stdlib/json_object_test.fern"), ""},
+		{"json_document", langSrcAbs(t, "tests/stdlib/json_document_test.fern"), ""},
 		{"array_combinators", langSrcAbs(t, "tests/stdlib/array_combinators_test.fern"), ""},
 		// Generic array CLOSURE-methods (.reduce / .flat_map / .sort_by / .map[U] /
 		// .fold[A]) flipped to IR by the __arrm_* free-generic rewrite (slices 3+4,

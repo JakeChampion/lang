@@ -1870,6 +1870,19 @@ Percent-encoding, URL parsing, query parsing.
 - `json_parse(s: string): Option[JsonValue]`;
   `json_parse_result(s): Result[JsonValue, JsonError]` with where the text
   broke
+- `parse_document(s): Result[Document, JsonError]` — the whole document in
+  one flat tape of `u64` nodes over the source text, with no allocation per
+  value: two to three times the speed of `json_parse` when a reader visits
+  part of a document or turns it straight into its own types. It accepts and
+  rejects exactly what `json_parse_result` does, with the same error. A node
+  is an `i32` index: `root()` is the top-level value; `is_null` / `is_bool` /
+  `is_number` / `is_string` / `is_array` / `is_object` ask its kind; `len` is
+  a container's member count; `first(n)` / `next(n, c)` walk a container's
+  members (an object's member is its key node and `value(key)` its value);
+  `at(n, k)` and `get(n, key)` (the last of a repeated key, as `json_parse`
+  keeps) look one up. `as_bool`, `as_string` (escapes decoded), `as_f64`,
+  `as_i64` (an integer that fits, else `None`) and `number_text` read a
+  scalar, and `to_value(n)` builds the `JsonValue` `json_parse` would
 - **Typed decode:** `FromJson` is the decode half of `Json`:
   `T.from_json_value(v: JsonValue): Result[T, string]`, implemented for the
   integers, floats, `boolean` and `string`, and derived for a struct or an

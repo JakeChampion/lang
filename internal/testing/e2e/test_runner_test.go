@@ -965,6 +965,22 @@ func TestRunnerJsonObjectExamplePasses(t *testing.T) {
 	}
 }
 
+// `tests/stdlib/json_document_test.fern` covers std/json's Document tape:
+// navigation, scalar reads, and parity with json_parse and json_parse_result.
+func TestRunnerJsonDocumentExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/json_document_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/json document", "# pass 9", "# fail 0", "1..9"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `tests/stdlib/utf8_test.fern` covers std/utf8 — UTF-8 codepoint
 // decode (1..4-byte, plus the stray-continuation / truncated / overlong
 // / surrogate rejections), encode (widths + U+FFFD substitution),

@@ -1,0 +1,278 @@
+import "std/test";
+import "std/json";
+import "std/i32";
+import "std/i64";
+import "std/float";
+import "std/option";
+
+// tests/stdlib/json_document_test.fern — std/json's Document: one parse into a
+// flat tape over the source text, navigated by node index. Parsing must accept
+// and reject exactly what json_parse_result does, at the same offset, and
+// to_value must rebuild the JsonValue json_parse builds.
+
+function doc(text: string): json.Document {
+  match (json.parse_document(text)) {
+    Ok(d) => {
+      return d;
+    },
+    Err(_) => {
+      return json.Document { text: "", tape: [] };
+    }
+  }
+}
+
+function str(v: Option[string]): string {
+  match (v) {
+    Some(s) => {
+      return s;
+    },
+    None => {
+      return "<none>";
+    }
+  }
+}
+
+function int(v: Option[i64]): string {
+  match (v) {
+    Some(n) => {
+      return n.to_string();
+    },
+    None => {
+      return "<none>";
+    }
+  }
+}
+
+function idx(v: Option[i32]): i32 {
+  match (v) {
+    Some(n) => {
+      return n;
+    },
+    None => {
+      return -1;
+    }
+  }
+}
+
+function dom_error(text: string): string {
+  match (json.json_parse_result(text)) {
+    Ok(_) => {
+      return "ok";
+    },
+    Err(e) => {
+      return e.offset.to_string() + " " + e.to_string();
+    }
+  }
+}
+
+function tape_error(text: string): string {
+  match (json.parse_document(text)) {
+    Ok(_) => {
+      return "ok";
+    },
+    Err(e) => {
+      return e.offset.to_string() + " " + e.to_string();
+    }
+  }
+}
+
+function nested(n: i32): string {
+  let s: string = "";
+  let i: i32 = 0;
+  while (i < n) {
+    s = s + "[";
+    i = i + 1;
+  }
+  i = 0;
+  while (i < n) {
+    s = s + "]";
+    i = i + 1;
+  }
+  return s;
+}
+
+function test_to_value_matches_json_parse(): test.TestOutcome {
+  let texts: string[] = [
+    "null", "true", "false", "0", "-0.5e+10", "\"\"", "[]", "{}",
+    " [ 1 , [ ] , { } , \"a\\u00e9\\n\" ] ",
+    "{\"a\": {\"b\": [null, {\"c\": 1}]}, \"d\": \"\\ud83d\\ude00\"}",
+    "{\"k\": 1, \"k\": 2, \"j\": [true, false]}",
+    "[1,2,3,4,5,6,7,8,9,10,11,12]",
+  ];
+  let i: i32 = 0;
+  while (i < texts.len()) {
+    let want: string = json.json_encode(json.json_parse(texts[i]).unwrap_or(JString("<unparsed>")));
+    let d: json.Document = doc(texts[i]);
+    if (d.tape.len() == 0) {
+      return test.fail("parse_document rejected " + texts[i]);
+    }
+    let got: string = json.json_encode(d.to_value(d.root()));
+    if (got != want) {
+      return test.assert_eq(got, want);
+    }
+    i = i + 1;
+  }
+  return test.pass();
+}
+
+function test_errors_match_json_parse_result(): test.TestOutcome {
+  let texts: string[] = [
+    "", " ", "[", "]", "{", "{\"a\"", "{\"a\":}", "{\"a\" 1}", "{1: 2}",
+    "[1,]", "[1 2]", "{\"a\":1,}", "01", "-", "1.", "1e", "1e+", "tru",
+    "nul", "\"abc", "\"\\x\"", "\"\\u12g4\"", "\"a\tb\"", "[1] 2", "{}}",
+    nested(128), nested(129), "[\"\\ud800\"]",
+  ];
+  let i: i32 = 0;
+  while (i < texts.len()) {
+    let want: string = dom_error(texts[i]);
+    let got: string = tape_error(texts[i]);
+    if (got != want) {
+      return test.assert_eq("[" + texts[i] + "] " + got, "[" + texts[i] + "] " + want);
+    }
+    i = i + 1;
+  }
+  return test.pass();
+}
+
+function test_walk_array(): test.TestOutcome {
+  let d: json.Document = doc("[10, [20, 21], {\"x\": 30}, 40]");
+  let r: i32 = d.root();
+  let seen: string = "";
+  let c: i32 = d.first(r);
+  while (c >= 0) {
+    if (d.is_number(c)) {
+      seen = seen + str(d.number_text(c)) + " ";
+    } else {
+      seen = seen + "(" + d.len(c).to_string() + ") ";
+    }
+    c = d.next(r, c);
+  }
+  return test.assert_eq(seen + d.len(r).to_string(), "10 (2) (1) 40 4");
+}
+
+function test_walk_object(): test.TestOutcome {
+  let d: json.Document = doc("{\"a\": [1, 2], \"b\\u0021\": {\"c\": null}, \"d\": 3}");
+  let r: i32 = d.root();
+  let seen: string = "";
+  let k: i32 = d.first(r);
+  while (k >= 0) {
+    let v: i32 = d.value(k);
+    seen = seen + str(d.as_string(k)) + "=" + d.len(v).to_string() + " ";
+    k = d.next(r, k);
+  }
+  return test.assert_eq(seen, "a=2 b!=1 d=0 ");
+}
+
+function test_empty_containers(): test.TestOutcome {
+  let d: json.Document = doc("[[], {}]");
+  let a: i32 = idx(d.at(d.root(), 0));
+  let o: i32 = idx(d.at(d.root(), 1));
+  if (d.first(a) != -1 || d.first(o) != -1 || d.len(a) != 0 || d.len(o) != 0) {
+    return test.fail("an empty container has a member");
+  }
+  return test.assert_eq(idx(d.at(d.root(), 2)), -1);
+}
+
+function test_at_and_get(): test.TestOutcome {
+  let d: json.Document = doc("{\"xs\": [5, [6], 7], \"k\": 1, \"k\": 2, \"e\\n\": 3}");
+  let r: i32 = d.root();
+  let xs: i32 = idx(d.get(r, "xs"));
+  let third: string = str(d.number_text(idx(d.at(xs, 2))));
+  let k: string = str(d.number_text(idx(d.get(r, "k"))));
+  let e: string = str(d.number_text(idx(d.get(r, "e\n"))));
+  let missing: i32 = idx(d.get(r, "nope")) + idx(d.at(xs, 3)) + idx(d.at(xs, -1)) + idx(d.get(xs, "k")) + idx(d.at(r, 0));
+  return test.assert_eq(third + " " + k + " " + e + " " + missing.to_string(), "7 2 3 -5");
+}
+
+function test_scalars(): test.TestOutcome {
+  let d: json.Document = doc("[true, false, null, \"plain\", \"t\\u00e9\\\"x\", 2.5e1]");
+  let r: i32 = d.root();
+  let out: string = "";
+  match (d.as_bool(idx(d.at(r, 0)))) {
+    Some(b) => {
+      out = out + b.to_string();
+    },
+    None => {
+      out = out + "?";
+    }
+  }
+  match (d.as_bool(idx(d.at(r, 1)))) {
+    Some(b) => {
+      out = out + " " + b.to_string();
+    },
+    None => {
+      out = out + " ?";
+    }
+  }
+  if (!d.is_null(idx(d.at(r, 2))) || d.as_bool(idx(d.at(r, 2))).is_some()) {
+    return test.fail("null");
+  }
+  out = out + " " + str(d.as_string(idx(d.at(r, 3)))) + " " + str(d.as_string(idx(d.at(r, 4))));
+  match (d.as_f64(idx(d.at(r, 5)))) {
+    Some(f) => {
+      out = out + " " + f.to_string();
+    },
+    None => {
+      out = out + " ?";
+    }
+  }
+  out = out + " " + str(d.as_string(idx(d.at(r, 5)))) + " " + str(d.number_text(idx(d.at(r, 3))));
+  return test.assert_eq(out, "true false plain té\"x 25 <none> <none>");
+}
+
+function test_as_i64(): test.TestOutcome {
+  let d: json.Document = doc("[0, -0, 42, -42, 9223372036854775807, -9223372036854775808, 9223372036854775808, -9223372036854775809, 1.0, 1e2, 99999999999999999999]");
+  let r: i32 = d.root();
+  let out: string = "";
+  let c: i32 = d.first(r);
+  while (c >= 0) {
+    out = out + int(d.as_i64(c)) + " ";
+    c = d.next(r, c);
+  }
+  return test.assert_eq(out, "0 0 42 -42 9223372036854775807 -9223372036854775808 <none> <none> <none> <none> <none> ");
+}
+
+function test_kinds(): test.TestOutcome {
+  let d: json.Document = doc("[null, true, 1, \"s\", [], {}]");
+  let r: i32 = d.root();
+  let out: string = "";
+  let c: i32 = d.first(r);
+  while (c >= 0) {
+    let n: i32 = 0;
+    if (d.is_null(c)) {
+      n = n + 1;
+    }
+    if (d.is_bool(c)) {
+      n = n + 10;
+    }
+    if (d.is_number(c)) {
+      n = n + 100;
+    }
+    if (d.is_string(c)) {
+      n = n + 1000;
+    }
+    if (d.is_array(c)) {
+      n = n + 10000;
+    }
+    if (d.is_object(c)) {
+      n = n + 100000;
+    }
+    out = out + n.to_string() + " ";
+    c = d.next(r, c);
+  }
+  return test.assert_eq(out, "1 10 100 1000 10000 100000 ");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/json document");
+  r = r.it("to_value matches json_parse", test_to_value_matches_json_parse);
+  r = r.it("errors match json_parse_result", test_errors_match_json_parse_result);
+  r = r.it("walk an array", test_walk_array);
+  r = r.it("walk an object", test_walk_object);
+  r = r.it("empty containers", test_empty_containers);
+  r = r.it("at and get", test_at_and_get);
+  r = r.it("scalars", test_scalars);
+  r = r.it("as_i64", test_as_i64);
+  r = r.it("kinds", test_kinds);
+  return r.finish();
+}
