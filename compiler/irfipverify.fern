@@ -141,7 +141,7 @@ pub function fresh_alloc_what(o: ir.Op): string {
   // A std/array `map` E053 admitted on an `own` receiver (#9733). A map R7
   // of docs/REUSE-CONTRACT.md writes through its donor lowers to a loop
   // (ssarc.map_in_place), so a combinator call still here is one it declined.
-  if (t == ir.kind_id("call_direct") && util.str_has_prefix(o.str, "__arrm_map__")) {
+  if (t == ir.K_CALL_DIRECT && util.str_has_prefix(o.str, "__arrm_map__")) {
     return "`map` materialized by the combinator: R7 writes a map in place only over an `own` parameter that dies at the call, with an i64 element it does not change and an element function that captures nothing and reaches no effect";
   }
   return "";
@@ -152,7 +152,7 @@ pub function fresh_alloc_what(o: ir.Op): string {
 // charged: it is the evidence that the fbip claim is being earned rather than
 // merely tolerated.
 pub function is_paired_alloc(o: ir.Op): boolean {
-  return o.kind_tag == ir.kind_id("call_direct") && o.str == "__fern_alloc_reuse";
+  return o.kind_tag == ir.K_CALL_DIRECT && o.str == "__fern_alloc_reuse";
 }
 
 // elided_carried_at counts the carried fields elided by the reuse site whose
@@ -166,13 +166,13 @@ pub function is_paired_alloc(o: ir.Op): boolean {
 // so their fresh arm has no `struct_set` and no raw shape copy, and they
 // count 0 here.
 pub function elided_carried_at(ops: ir.Op[], at: i32): i32 {
-  let k_if: i32 = ir.kind_id("if");
-  let k_else: i32 = ir.kind_id("else");
-  let k_end: i32 = ir.kind_id("end");
-  let k_block: i32 = ir.kind_id("block");
-  let k_loop: i32 = ir.kind_id("loop");
-  let k_store: i32 = ir.kind_id("struct_set");
-  let k_shape_copy: i32 = ir.kind_id("raw_store_ptr");
+  let k_if: i32 = ir.K_IF;
+  let k_else: i32 = ir.K_ELSE;
+  let k_end: i32 = ir.K_END;
+  let k_block: i32 = ir.K_BLOCK;
+  let k_loop: i32 = ir.K_LOOP;
+  let k_store: i32 = ir.K_STRUCT_SET;
+  let k_shape_copy: i32 = ir.K_RAW_STORE_PTR;
   let i: i32 = at + 1;
   // The uniqueness branch: the first `if` after the call.
   while (i < ops.len() && ops[i].kind_tag != k_if) {

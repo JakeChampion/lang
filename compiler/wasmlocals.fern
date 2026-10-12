@@ -39,11 +39,11 @@ pub function coalesce(ops: ir.Op[], n_params: i32, n_locals: i32, i64_slots: i32
 }
 
 function scopes(ops: ir.Op[]): Scopes {
-  let k_block: i32 = ir.kind_id("block");
-  let k_loop: i32 = ir.kind_id("loop");
-  let k_if: i32 = ir.kind_id("if");
-  let k_else: i32 = ir.kind_id("else");
-  let k_end: i32 = ir.kind_id("end");
+  let k_block: i32 = ir.K_BLOCK;
+  let k_loop: i32 = ir.K_LOOP;
+  let k_if: i32 = ir.K_IF;
+  let k_else: i32 = ir.K_ELSE;
+  let k_end: i32 = ir.K_END;
   let scope_of: i32[] = [];
   let parent: i32[] = [0];
   let depth: i32[] = [0];
@@ -112,9 +112,9 @@ function common_scope(sc: Scopes, a: i32, b: i32): i32 {
 }
 
 function slots(ops: ir.Op[], n_params: i32, n_locals: i32, sc: Scopes): Slots {
-  let k_load: i32 = ir.kind_id("load_local");
-  let k_store: i32 = ir.kind_id("store_local");
-  let k_tee: i32 = ir.kind_id("tee_local");
+  let k_load: i32 = ir.K_LOAD_LOCAL;
+  let k_store: i32 = ir.K_STORE_LOCAL;
+  let k_tee: i32 = ir.K_TEE_LOCAL;
   let first: i32[] = filled_i32(n_locals, 0 - 1);
   let last: i32[] = filled_i32(n_locals, 0 - 1);
   let first_scope: i32[] = filled_i32(n_locals, 0);
@@ -151,7 +151,7 @@ function slots(ops: ir.Op[], n_params: i32, n_locals: i32, sc: Scopes): Slots {
 // dyn_dispatch_slots marks the slots a dyn_dispatch reads: argc of them from
 // its base, which its emission names by offset.
 function dyn_dispatch_slots(ops: ir.Op[], n_locals: i32): boolean[] {
-  let k_dyn: i32 = ir.kind_id("dyn_dispatch");
+  let k_dyn: i32 = ir.K_DYN_DISPATCH;
   let pinned: boolean[] = filled_bool(n_locals, false);
   for o in ops {
     if (o.kind_tag == k_dyn) {
@@ -281,10 +281,10 @@ function slots_of_type(types: i32[], ty: i32): i32[] {
 }
 
 function rewrite(ops: ir.Op[], map: i32[]): ir.Op[] {
-  let k_load: i32 = ir.kind_id("load_local");
-  let k_store: i32 = ir.kind_id("store_local");
-  let k_tee: i32 = ir.kind_id("tee_local");
-  let k_dyn: i32 = ir.kind_id("dyn_dispatch");
+  let k_load: i32 = ir.K_LOAD_LOCAL;
+  let k_store: i32 = ir.K_STORE_LOCAL;
+  let k_tee: i32 = ir.K_TEE_LOCAL;
+  let k_dyn: i32 = ir.K_DYN_DISPATCH;
   let out: ir.Op[] = [];
   for o in ops {
     let k: i32 = o.kind_tag;

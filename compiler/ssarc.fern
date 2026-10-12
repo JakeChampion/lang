@@ -6228,7 +6228,7 @@ function box_use_ok(ins: ssa.SInst, boxes: i32[]): boolean {
 function place_views(own r: irtables.LowerResult): irtables.LowerResult {
   let ops: ir.Op[] = r.ops;
   let next: i32 = r.n_locals;
-  let k_str_slice: i32 = ir.kind_id("str_slice");
+  let k_str_slice: i32 = ir.K_STR_SLICE;
   let i: i32 = 0;
   while (i < ops.len()) {
     if (ops[i].kind_tag == k_str_slice && ops[i].i32_imm > 0) {
@@ -6293,8 +6293,8 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irta
 // i64_imm == 4 on these two calls is an optional alignment proof; consumers
 // that do not use it retain the fully general runtime behavior.
 function aligned_rc(own r: irtables.LowerResult, f: ssasem.Func): irtables.LowerResult {
-  let call_direct: i32 = ir.kind_id("call_direct");
-  let load_local: i32 = ir.kind_id("load_local");
+  let call_direct: i32 = ir.K_CALL_DIRECT;
+  let load_local: i32 = ir.K_LOAD_LOCAL;
   let ops: ir.Op[] = r.ops;
   let i: i32 = 1;
   while (i < ops.len()) {

@@ -599,7 +599,7 @@ function next_op(ops: ir.Op[], at: i32, open: i32[], end_of: i32[]): i32 {
   if (k == 157) {
     return branch_target(ops, open, end_of, ops[at].i32_imm, ops.len());
   }
-  if (k == ir.kind_id("return") || k == ir.kind_id("exit")) {
+  if (k == ir.K_RETURN || k == ir.K_EXIT) {
     return ops.len();
   }
   if (k == 155) {
