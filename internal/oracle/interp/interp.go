@@ -726,6 +726,7 @@ func New() *Interp {
 	i.Builtins["__method_Writer_isatty"] = &Builtin{Fn: builtinHandleIsatty}
 	i.Builtins["__method_Writer_write"] = &Builtin{Fn: builtinWriterWrite}
 	i.Builtins["__method_Writer_write_some"] = &Builtin{Fn: builtinWriterWriteSome}
+	i.Builtins["__method_Writer_splice_forever"] = &Builtin{Fn: builtinWriterSpliceForever}
 	i.Builtins["__method_Writer_write_bytes"] = &Builtin{Fn: builtinWriterWriteBytes}
 	i.Builtins["__method_Writer_write_some_bytes"] = &Builtin{Fn: builtinWriterWriteSomeBytes}
 	i.Builtins["__method_Writer_close"] = &Builtin{Fn: builtinWriterClose}
@@ -5711,6 +5712,16 @@ func builtinWriterTruncate(i *Interp, args []Value) (Value, error) {
 		return optionSome(classifyIoError("", terr)), nil
 	}
 	return optionNone(), nil
+}
+
+// builtinWriterSpliceForever answers `w.splice_forever(block)` with
+// Unsupported: the interpreter moves nothing, so the caller writes the block
+// itself.
+func builtinWriterSpliceForever(i *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("splice_forever: expected 2 args")
+	}
+	return optionSome(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
 }
 
 // builtinDupOnto answers `r.dup_onto(fd)` / `w.dup_onto(fd)`: dup3(2)
