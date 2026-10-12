@@ -3556,7 +3556,6 @@ function earlier_shape(f: SFunc, at: i32[], bi: i32, k: i32, box: i32): i32 {
     b = pb;
     j = f.blocks[b].insts.len() - 1;
   }
-  return 0 - 1;
 }
 
 // may_write is an instruction that may write memory: one with an effect other
