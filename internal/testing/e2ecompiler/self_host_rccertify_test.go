@@ -97,6 +97,18 @@ function pick(name: string): Case {
         let insts: ssa.SInst[] = [param(0), counted_load(1, 0, 8), call(2, "__fern_rc_dec", [1]), call(3, "__fern_rc_dec", [0]), const_int(4, 0)];
         return Case { f: one_block(1, 5, insts, ret(4)), modes: [counted], returns_unit: false };
     }
+    if (name == "shell-slot-read-twice") {
+        // A box released as a shell (a call with imm 2) after two reads of
+        // one slot: the release follows the second read, which takes the
+        // payload; the first only borrowed it (#12189).
+        let insts: ssa.SInst[] = [param(0), counted_load(1, 0, 8), inst(40, 2, [1], 8, ""), counted_load(3, 0, 8),
+            inst(11, 4, [0], 2, "__fern_rc_dec"), call(5, "__fern_rc_dec", [3]), const_int(6, 0)];
+        return Case { f: one_block(1, 7, insts, ret(6)), modes: [counted], returns_unit: false };
+    }
+    if (name == "shell-payload-kept") {
+        let insts: ssa.SInst[] = [param(0), counted_load(1, 0, 8), inst(40, 2, [1], 8, ""), inst(11, 3, [0], 2, "__fern_rc_dec"), const_int(4, 0)];
+        return Case { f: one_block(1, 5, insts, ret(4)), modes: [counted], returns_unit: false };
+    }
     if (name == "null-guarded-release") {
         // A counted parameter that may be null is released only where it is
         // not, and the null arm owes nothing.
@@ -190,6 +202,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"stored-without-retain", []string{"spent without a unit of v0"}, 0, ""},
 		{"unique-child-released", nil, 0, ""},
 		{"shared-child-released", []string{"spent without a unit of v1"}, 0, ""},
+		{"shell-slot-read-twice", nil, 0, ""},
+		{"shell-payload-kept", []string{"of v1"}, 0, ""},
 		{"null-guarded-release", nil, 0, ""},
 		{"released-on-one-arm", []string{"leaked where it dies of v1"}, 0, ""},
 		{"retained-on-one-arm-released-on-another", nil, 1, ""},
