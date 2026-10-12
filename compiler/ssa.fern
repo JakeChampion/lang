@@ -300,7 +300,7 @@ pub function print_func(f: SFunc): string {
 //   41 st_at      args [base, val]      imm = byte offset; 8-byte store, no result read
 //   42 arr_at     args [base, idx]      element idx of a length-prefixed box, bounds-checked (imm 1: unchecked; imm 2: the check alone, no load or result)
 //   43 arr_st     args [base, idx, val] the checked store
-//   44 str_at     args [box, idx]       byte idx of a string box, bounds-checked
+//   44 str_at     args [box, idx]       byte idx of a string box, bounds-checked (imm as on arr_at)
 //   45 fn_addr    str = function name   the address of __fn_<name>
 //   46 shape_addr str = shape name      the address of the interned shape
 //   47 str_lit    str = literal         the address of the literal's static box
@@ -2372,7 +2372,8 @@ function free_slot(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: i32
 // qualifies when it lies in lo..hi and every use is a binary op reading it as
 // the right operand of an op named in `right`, or as the left operand of one
 // named in `left` (the commutative ops and the comparisons, which the emitter
-// turns round), a phi operand, which the edge's moves load into the phi's
+// turns round), the offset of a byte load or store (54, 55), which the
+// emitter reads as a displacement, a phi operand, which the edge's moves load into the phi's
 // home, or a returned value, loaded into the result register; a use anywhere
 // else keeps it in a register. When both
 // operands are constants (the optimiser's folds do not run here, so
@@ -2424,6 +2425,9 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
 }
 
 function imm_use(ins: SInst, a: i32, konst: boolean[], right: string[], left: string[]): boolean {
+  if ((ins.kind_tag == 54 || ins.kind_tag == 55) && a == 1) {
+    return true;
+  }
   if (ins.kind_tag != 9 || ins.args.len() != 2) {
     return false;
   }
@@ -3667,11 +3671,11 @@ pub function fold_byte_access(f: SFunc): Formed {
 // to the whole register: a byte load, an element of a u8 array, a byte of a
 // string, or an `and` with a constant mask no wider than a byte.
 function byte_source(f: SFunc, def_b: i32[], def_k: i32[], ins: SInst): boolean {
-  if (ins.kind_tag == 54 || ins.kind_tag == 44) {
+  if (ins.kind_tag == 54) {
     return true;
   }
-  if (ins.kind_tag == 42) {
-    return ins.imm != 2 && ins.str == "u8";
+  if (ins.kind_tag == 42 || ins.kind_tag == 44) {
+    return ins.imm != 2 && (ins.kind_tag == 44 || ins.str == "u8");
   }
   if (ins.kind_tag == 9 && ins.str == "and" && ins.args.len() == 2) {
     return const_in(f, def_b, def_k, ins.args[0], 0i64, 255i64) || const_in(f, def_b, def_k, ins.args[1], 0i64, 255i64);

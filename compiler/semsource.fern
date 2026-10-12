@@ -7802,6 +7802,7 @@ function word_load_contracts(): ssasem.Contract[] {
   let view: typeinfo.Type = typeinfo.TypeArray { elem: t_u8(), view: true };
   return [
     ssasem.Contract { name: "__raw_arr_ptr", params: [typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [b], result: t_usize() },
+    ssasem.Contract { name: "__raw_data", params: [t_string()], modes: [b], result: t_usize() },
     ssasem.Contract { name: "__load_i32", params: [t_usize()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "__load_i64", params: [t_usize()], modes: [v], result: t_i64() },
     ssasem.Contract { name: ssabytes.word_name(4), params: [view, t_i32()], modes: [b, v], result: t_i32() },
