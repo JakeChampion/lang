@@ -729,13 +729,17 @@ struct Regions { roots: i32[][], openers: i32[][] }
 // reached around the test (the join after a one-sided retain) opens nothing.
 // open_region adds `root` to every reachable block `arm` dominates, as
 // opened by block `by`.
-function open_region(own rg: Regions, w: Walk, dom: ssadeps.Dom, reach: boolean[], arm: i32, root: i32, by: i32): Regions {
-  let other: i32 = 0;
-  while (other < w.f.blocks.len()) {
-    if (reach[other] && ssadeps.dom_holds(dom, other, arm) && util.index_of_i32(rg.roots[other], root) < 0) {
+function open_region(own rg: Regions, dom: ssadeps.Dom, reach: boolean[], arm: i32, root: i32, by: i32): Regions {
+  if (dom.pre[arm] < 0) {
+    return rg;
+  }
+  let c: i32 = dom.pre[arm];
+  while (c < dom.post[arm]) {
+    let other: i32 = dom.by_clock[c];
+    if (other >= 0 && reach[other] && util.index_of_i32(rg.roots[other], root) < 0) {
       rg = Regions { roots: rg.roots.with(other, rg.roots[other].append(root)), openers: rg.openers.with(other, rg.openers[other].append(by)) };
     }
-    other = other + 1;
+    c = c + 1;
   }
   return rg;
 }
@@ -751,9 +755,9 @@ function regions_round(w: Walk, own rg: Regions, dom: ssadeps.Dom, reach: boolea
         arm = w.at[t.t];
       }
       if (c.root >= 0 && arm >= 0 && w.f.blocks[arm].preds.len() == 1) {
-        rg = open_region(rg, w, dom, reach, arm, c.root, w.f.blocks[bi].id);
+        rg = open_region(rg, dom, reach, arm, c.root, w.f.blocks[bi].id);
         for other in c.also {
-          rg = open_region(rg, w, dom, reach, arm, other, w.f.blocks[bi].id);
+          rg = open_region(rg, dom, reach, arm, other, w.f.blocks[bi].id);
         }
       }
     }
@@ -1497,17 +1501,13 @@ function matches_store(w: Walk, ld: ssa.SInst, st: ssa.SInst): boolean {
 // nothing. With no load read after, the nearest one is marked, so a take
 // the lowering emits and never uses still shows as held.
 function mark_taken_loads(w: Walk, dom: ssadeps.Dom, own out: boolean[], sb: i32, si: i32, st: ssa.SInst): boolean[] {
-  let pick: Picked = Picked { used: -1, any: -1 };
-  let lb: i32 = 0;
-  while (lb < w.f.blocks.len()) {
-    if (lb == sb || ssadeps.dom_holds(dom, sb, lb)) {
-      let stop: i32 = w.f.blocks[lb].insts.len();
-      if (lb == sb) {
-        stop = si;
-      }
-      pick = pick_loads(w, dom, pick, lb, stop, sb, si, st);
-    }
-    lb = lb + 1;
+  let after: boolean[] = reached_from(w, sb);
+  let pick: Picked = pick_loads(w, dom, after, Picked { used: -1, any: -1 }, sb, si, sb, si, st);
+  // The blocks that dominate the store's are its dominator-tree ancestors.
+  let lb: i32 = sb;
+  while (dom.idom[lb] >= 0 && dom.idom[lb] != lb) {
+    lb = dom.idom[lb];
+    pick = pick_loads(w, dom, after, pick, lb, w.f.blocks[lb].insts.len(), sb, si, st);
   }
   if (pick.used >= 0) {
     return out.with(w.root[pick.used], true);
@@ -1522,13 +1522,13 @@ function mark_taken_loads(w: Walk, dom: ssadeps.Dom, own out: boolean[], sb: i32
 // nearest at all, -1 for none yet.
 struct Picked { used: i32, any: i32 }
 
-function pick_loads(w: Walk, dom: ssadeps.Dom, own pick: Picked, lb: i32, stop: i32, sb: i32, si: i32, st: ssa.SInst): Picked {
+function pick_loads(w: Walk, dom: ssadeps.Dom, after: boolean[], own pick: Picked, lb: i32, stop: i32, sb: i32, si: i32, st: ssa.SInst): Picked {
   let li: i32 = 0;
   while (li < stop) {
     let ld: ssa.SInst = w.f.blocks[lb].insts[li];
     if (is_load(ld) && ld.result >= 0 && ld.result < w.f.nvals && matches_store(w, ld, st)) {
       pick = Picked { ...pick, any: nearer(w, dom, sb, pick.any, ld.result) };
-      if (used_after(w, dom, w.root[ld.result], sb, si)) {
+      if (used_after(w, after, w.root[ld.result], sb, si)) {
         pick = Picked { ...pick, used: nearer(w, dom, sb, pick.used, ld.result) };
       }
     }
@@ -1559,9 +1559,8 @@ function nearer(w: Walk, dom: ssadeps.Dom, sb: i32, a: i32, b: i32): i32 {
 }
 
 // used_after: some value of `root` is read after position (sb, si): later
-// in that block, or in a block that does not dominate it.
-function used_after(w: Walk, dom: ssadeps.Dom, root: i32, sb: i32, si: i32): boolean {
-  let after: boolean[] = reached_from(w, sb);
+// in that block, or in a block reached from it (`after`).
+function used_after(w: Walk, after: boolean[], root: i32, sb: i32, si: i32): boolean {
   let bi: i32 = 0;
   while (bi < w.f.blocks.len()) {
     if (bi == sb || after[bi]) {
