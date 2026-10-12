@@ -250,19 +250,13 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
 }`, 21, 1, 3, 6, false, false},
-	// The frame has ONE token slot, and this case is the shape that made that
-	// matter: a 3-slot donor held for a later 3-slot construction, with a
-	// 4-slot self-update between them. The self pairing's token overwrote the
-	// held donor's box, so the later construction was handed a box the update
-	// had already built into and was returning live. It read as a LEAK
-	// (`live_bytes=24` where the same program balances with the pairing off)
-	// because the two boxes differ in size class, so `__fern_alloc_reuse`
-	// declined and put a live block on its freelist — the same clobber lands
-	// as an alias whenever the sizes agree.
-	//
-	// Nothing in the compiler's own sources has this overlap: the firing count
-	// over the whole tree is 1,167 either way, which is why every suite passed
-	// while it was wrong. Only a fixture built for it can fail.
+	// A 3-slot donor held for a later 3-slot construction, with a 4-slot
+	// self-update between them. The held token waits in the donor's local and
+	// the self pairing's in the frame's token slot, so both reuse. While the
+	// two shared the slot, the self pairing's token overwrote the held one and
+	// the later construction was handed a box the update was returning live:
+	// a leak where the sizes differ, an alias where they agree. Nothing in the
+	// compiler's own sources has this overlap, so only this fixture fails.
 	{"token-slot-overlap", `struct A3 { p: string, q: i32 }
 struct B4 { x: string, y: i32, z: i32 }
 function f(seed: i32): i32 {
@@ -277,7 +271,7 @@ function main(): i32 {
     let t: i32 = f(5);
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
-}`, 21, 1, 3, 4, false, false},
+}`, 21, 2, 2, 4, false, false},
 	// A construction whose value is never read has its drop at its own step, so
 	// the value dying there IS the construction's result. The first cut of the
 	// same-instruction pairing took it as a donor for itself: it read a token

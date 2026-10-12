@@ -1299,7 +1299,7 @@ function main(): i32 {
     if (!ssarc.lower(tok, [1], tp, irtables.struct_tab_empty(), ssaunits.no_grows(), util.name_index([]), ssaunits.no_view(), suspend.none()).ok) { return 252; }
     if (!token_refused(tok, tp, ssaunits.ReusePairs { ...tpr, builds: tpr.builds.with(5, 1) }, "a construction spends a token it was not handed")) { return 253; }
     if (!token_refused(tok, tp, ssaunits.ReusePairs { ...tpr, tokens: tpr.tokens.with(2, 0 - 1).with(1, 1) }, "a token is taken from a value not dying here")) { return 254; }
-    if (!token_refused(tok, tp, ssaunits.ReusePairs { ...tpr, tokens: tpr.tokens.with(3, 3) }, "a token is taken while another is held")) { return 255; }
+    if (!token_refused(tok, tp, ssaunits.ReusePairs { ...tpr, tokens: tpr.tokens.with(3, 1) }, "a token is taken twice")) { return 255; }
     if (!token_refused(tok, tp, ssaunits.ReusePairs { ...tpr, selfs: tpr.selfs.with(5, 3) }, "a construction reads the box it builds in")) { return 256; }
     if (!token_refused(tok, tp, ssaunits.ReusePairs { ...tpr, builds: tpr.builds.with(4, 0 - 1) }, "a token taken in a block is spent by no construction in it")) { return 257; }
     let split = token_func(true);
