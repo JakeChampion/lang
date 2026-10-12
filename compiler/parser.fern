@@ -15539,7 +15539,8 @@ function fwd_scan_stmt(st: ast.Stmt, own acc: FwdScan): FwdScan {
 }
 
 // fwd_scan_expr marks the scan when a call to a bounded generic passes a bare
-// identifier naming one of the function's own erased-var-typed parameters.
+// identifier naming one of the function's own parameters whose type is an
+// erased var, or a function type that mentions one.
 function fwd_scan_expr(e: ast.Expr, own acc: FwdScan): FwdScan {
   if (acc.hit) {
     return acc;
@@ -15556,7 +15557,7 @@ function fwd_scan_expr(e: ast.Expr, own acc: FwdScan): FwdScan {
               ast.ExprIdent(aid) => {
                 let pi: i32 = 0;
                 while (pi < acc.params.len()) {
-                  if (acc.params[pi].name == aid.name && util.has_str(acc.evars, acc.params[pi].type_name)) {
+                  if (acc.params[pi].name == aid.name && carries_erased_var(acc.params[pi], acc.evars)) {
                     return FwdScan { ...acc, hit: true };
                   }
                   pi = pi + 1;
@@ -15579,12 +15580,31 @@ function fwd_scan_expr(e: ast.Expr, own acc: FwdScan): FwdScan {
   return acc;
 }
 
+function carries_erased_var(pd: ast.ParamDecl, evars: string[]): boolean {
+  if (util.has_str(evars, pd.type_name)) {
+    return true;
+  }
+  if (!is_fn_contract_tag(pd.type_name)) {
+    return false;
+  }
+  for v in evars {
+    if (type_mentions_var(pd.fn_ret, v) || type_mentions_var(pd.fn_param_types, v)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // erased_vars_of lists the type variables of `fd`'s signature that are not in
-// its bounded set — the ones the parser left erased.
+// its bounded set — the ones the parser left erased. A function-typed
+// parameter's variables live in its fn sidecars, not its `fn` tag.
 function erased_vars_of(fd: FuncDecl): string[] {
   let vs: string[] = type_str_vars(fd.ret_type, []);
   for pd in fd.params {
     vs = type_str_vars(pd.type_name, vs);
+    if (is_fn_contract_tag(pd.type_name)) {
+      vs = type_str_vars(pd.fn_param_types, type_str_vars(pd.fn_ret, vs));
+    }
   }
   let out: string[] = [];
   for v in vs {
@@ -15595,11 +15615,11 @@ function erased_vars_of(fd: FuncDecl): string[] {
   return out;
 }
 
-// erased_vars_bindable: every var is bindable from some param — the same test
-// as clause (b) of the promotion loop, so the clone's key is complete.
+// erased_vars_bindable: every var is bindable from some param — the same tests
+// as clauses (b) and (c-fn) of the promotion loop, so the clone's key is complete.
 function erased_vars_bindable(params: ast.ParamDecl[], vars: string[]): boolean {
   for v in vars {
-    let ok: boolean = false;
+    let ok: boolean = has_fn_param_arg_var(params, v) || has_fn_param_ret_var(params, v);
     for pd in params {
       if (token_at_paren_depth0(pd.type_name, v) || token_in_tuple_param(pd.type_name, v)) {
         ok = true;
