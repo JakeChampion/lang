@@ -138,8 +138,8 @@ before anyone tries it, the map runtime, or `arr_push_owned`, because the
 blocker is not the one the rest of this document would lead you to expect.
 
 Expressiveness was fine. The box header needs no new primitive — cap sits at
-`data-16` and rc at `data-8`, and `__raw_addr` takes a BYTE offset with
-full-width pointer arithmetic, so `__load_i32(__raw_addr(p, 0 - 8))` reads the
+`data-16` and rc at `data-8`, and a `usize` address takes a BYTE offset with
+full-width pointer arithmetic, so `__load_i32(p - 8)` reads the
 rc word's low half, where the immortal bit (31) lives. The ownership contract
 needs no special handling either: the helper writes through its parameter and
 returns its own receiver, and the emitted body carried ZERO refcount traffic,

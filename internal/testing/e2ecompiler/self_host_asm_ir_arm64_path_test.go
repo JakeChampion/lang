@@ -713,15 +713,13 @@ function main(): i32 { let ms = [Map { 1: "abcd" }]; return ms[0].get_or(1, "z")
 		{"random-bytes-byte-range", `function main(): i32 { let s: u8[] = random_bytes(4); let x: i32 = s[0] as i32; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
 		// random_bytes over MORE than one chunk (#2649). The Fern helper fills
 		// the buffer in <= 256-byte pieces — getentropy's per-call ceiling on
-		// Darwin, and on Linux the fix for getrandom short-filling a big n. The
-		// chunk address is __raw_addr(p, off), so a truncated heap pointer (what
-		// plain `p + off` produces on arm64, where i32 arithmetic sign-extends
-		// back to 32 bits) EFAULTs and leaves the tail zeroed -> 2.
+		// Darwin, and on Linux the fix for getrandom short-filling a big n. A
+		// wrong chunk address EFAULTs and leaves the tail zeroed -> 2.
 		// write -> read -> remove -> confirm-gone, through the Fern fs leaves
 		// (#2649). An absolute /tmp path works under qemu-user too, since the
 		// syscalls pass through to the host. The read and write are LOOPS over
-		// __raw_addr now, so a wrong chunk address shows up as a length or
-		// content mismatch rather than a silent partial file.
+		// a moving chunk address, so a wrong one shows up as a length or content
+		// mismatch rather than a silent partial file.
 		// temp_dir + env, the last two leaves that needed only constants (#2649):
 		// mkdirat into a monotonic_ns-named /tmp dir, then a write/read/remove
 		// inside it, then a set and an unset environment variable. PATH is

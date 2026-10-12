@@ -220,7 +220,7 @@ aarch64/tokenize.ir	38580038
 aarch64/utf8_ingest_unchecked.text	14575
 aarch64/utf8_ingest_unchecked.ir	3891266	3
 aarch64/utf8_ingest_validated.text	14825
-aarch64/utf8_ingest_validated.ir	7719270	3
+aarch64/utf8_ingest_validated.ir	7486486	3
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 x86_64/perceus_cfold.text	2404

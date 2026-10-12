@@ -476,9 +476,9 @@ function helper_source(keys: string[], ret: string): string {
   }
   let names: string = util.str_join_chunks(lines);
   let src: string = "function __fern_cov_table(): usize { let t: usize = __raw_alloc(" + n + " * 8 + 8); let i: i32 = 0; while (i <= " + n + ") { __raw_store_ptr(t, i, 0 as usize); i = i + 1; } __raw_store_ptr(__raw_cover(), 0, t); return t; }\n";
-  src = src + "function __fern_cov_hit(k: i32): boolean { let t: usize = __raw_load_ptr(__raw_cover(), 0); if (t == 0 as usize) { t = __fern_cov_table(); } let p: usize = __raw_addr(t, k * 8); __store_i64(p, __load_i64(p) + 1i64); return true; }\n";
+  src = src + "function __fern_cov_hit(k: i32): boolean { let t: usize = __raw_load_ptr(__raw_cover(), 0); if (t == 0 as usize) { t = __fern_cov_table(); } let p: usize = t + k * 8; __store_i64(p, __load_i64(p) + 1i64); return true; }\n";
   src = src + "function __fern_cov_count(n: i64): string { if (n == 0i64) { return \"0\"; } let d: string[] = [\"0\", \"1\", \"2\", \"3\", \"4\", \"5\", \"6\", \"7\", \"8\", \"9\"]; let s: string = \"\"; let v: i64 = n; while (v > 0i64) { s = d[(v % 10i64) as i32] + s; v = v / 10i64; } return s; }\n";
-  src = src + "function __fern_cov_report(): void { let names: string = \"" + names + "\"; let t: usize = __raw_load_ptr(__raw_cover(), 0); let k: i32 = 0; let from: i32 = 0; let i: i32 = 0; while (i < names.len()) { if ((names[i] as i32) == 10) { let c: i64 = 0i64; if (t != 0 as usize) { c = __load_i64(__raw_addr(t, k * 8)); } eprint(slice_unchecked(names, from, i) + __fern_cov_count(c)); k = k + 1; from = i + 1; } i = i + 1; } }\n";
+  src = src + "function __fern_cov_report(): void { let names: string = \"" + names + "\"; let t: usize = __raw_load_ptr(__raw_cover(), 0); let k: i32 = 0; let from: i32 = 0; let i: i32 = 0; while (i < names.len()) { if ((names[i] as i32) == 10) { let c: i64 = 0i64; if (t != 0 as usize) { c = __load_i64(t + k * 8); } eprint(slice_unchecked(names, from, i) + __fern_cov_count(c)); k = k + 1; from = i + 1; } i = i + 1; } }\n";
   if (ret == "i32") {
     src = src + "function main(): i32 { let r: i32 = __fern_cov_main(); __fern_cov_report(); return r; }\n";
   } else if (ret == "" || ret == "void") {
