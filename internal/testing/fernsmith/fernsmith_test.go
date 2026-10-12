@@ -1006,10 +1006,11 @@ var (
 // but far enough above zero that a regression to "technically possible"
 // fails here.
 func TestGenPrintableFloatsReachAggregates(t *testing.T) {
-	const seeds = 512
-	// Measured over 1024 seeds when written: each mandatory-observation
-	// kind ~19-21%, each ordinary main-local kind ~7-9%, float struct
-	// field 64%, float enum payload 41%.
+	const seeds = 2048
+	// Measured over 2048 seeds: each mandatory-observation kind ~19-21%,
+	// each ordinary main-local kind ~4-5%, float struct field 64%, float
+	// enum payload 41%. A main-local kind is rare enough that 512 seeds
+	// put it two deviations either side of its rate.
 	landmarks := []struct {
 		name  string
 		floor float64
@@ -1035,13 +1036,13 @@ func TestGenPrintableFloatsReachAggregates(t *testing.T) {
 			k, ok := floatAggObservation(body)
 			return k == "FShape" && ok
 		}},
-		{"f32[] as an ordinary main-level local", 0.03, mainLocalIs("f32[]")},
-		{"f64[] as an ordinary main-level local", 0.03, mainLocalIs("f64[]")},
-		{"(f32, f64) as an ordinary main-level local", 0.03, mainLocalIs("(f32, f64)")},
-		{"Vec2 as an ordinary main-level local", 0.03, mainLocalIs("Vec2")},
-		{"FShape as an ordinary main-level local", 0.03, mainLocalIs("FShape")},
-		{"f32 as an ordinary main-level local", 0.03, mainLocalIs("f32")},
-		{"f64 as an ordinary main-level local", 0.03, mainLocalIs("f64")},
+		{"f32[] as an ordinary main-level local", 0.02, mainLocalIs("f32[]")},
+		{"f64[] as an ordinary main-level local", 0.02, mainLocalIs("f64[]")},
+		{"(f32, f64) as an ordinary main-level local", 0.02, mainLocalIs("(f32, f64)")},
+		{"Vec2 as an ordinary main-level local", 0.02, mainLocalIs("Vec2")},
+		{"FShape as an ordinary main-level local", 0.02, mainLocalIs("FShape")},
+		{"f32 as an ordinary main-level local", 0.02, mainLocalIs("f32")},
+		{"f64 as an ordinary main-level local", 0.02, mainLocalIs("f64")},
 		{"dynamic struct with a float field", 0.25, func(src, _ string) bool {
 			return reDynStructFloatField.MatchString(src)
 		}},
@@ -1415,5 +1416,46 @@ func TestShrinkMainBytesReachesPastTruncation(t *testing.T) {
 	}
 	if beat == 0 {
 		t.Errorf("deleting elements beat truncation on none of %d corpora", shrunk)
+	}
+}
+
+// TestGenReachesOwnershipShapes pins how often GenMain produces the shapes
+// added for the rc and layout paths: a struct field that owns a box, a local
+// of a program-declared array type, a projection through a nested value, a
+// functional update, the ownership cluster and its reassignment of a shared
+// value, a fuel-bounded recursive helper and its self-call, and the state
+// fold. Each floor is about half the rate measured over 1024 seeds (in
+// parentheses), so a change that leaves a shape technically reachable but
+// rare fails here rather than quietly thinning what the oracles judge.
+func TestGenReachesOwnershipShapes(t *testing.T) {
+	const seeds = 1024
+	landmarks := []struct {
+		name  string
+		floor float64
+		re    *regexp.Regexp
+	}{
+		{"struct field holding a box (33%)", 0.15, regexp.MustCompile(`struct S\d \{[^}]*: (i32\[\]|Option|Result|\(|Pair|Xyz|Map|S\d|E\d)`)},
+		{"local of a program-declared array type (9%)", 0.04, regexp.MustCompile(`: [SE]\d\[\] =`)},
+		{"projection through a nested value (10%)", 0.04, regexp.MustCompile(`[a-z_][a-z0-9_]*(\.[a-z0-9]+|\[0i32\])(\.[a-z0-9]+|\[0i32\])`)},
+		{"functional update (18%)", 0.08, regexp.MustCompile(`\{ \.\.\.`)},
+		{"ownership cluster (17%)", 0.08, regexp.MustCompile(`let __own_a\d+: `)},
+		{"shared value reassigned (8%)", 0.03, regexp.MustCompile(`; __own_a\d+ = `)},
+		{"fuel-bounded recursive helper (20%)", 0.10, regexp.MustCompile(`__fuel: i32`)},
+		{"recursive self-call (14%)", 0.06, regexp.MustCompile(`\(__fuel - 1i32\)`)},
+		{"state fold in main's return (57%)", 0.30, regexp.MustCompile(`\* 31i32 \+`)},
+	}
+	hits := make([]int, len(landmarks))
+	for seed := uint64(0); seed < seeds; seed++ {
+		src := fernsmith.GenMain(seed)
+		for i, l := range landmarks {
+			if l.re.MatchString(src) {
+				hits[i]++
+			}
+		}
+	}
+	for i, l := range landmarks {
+		if got := float64(hits[i]) / seeds; got < l.floor {
+			t.Errorf("%s: %d/%d seeds (%.1f%%), want at least %.1f%%", l.name, hits[i], seeds, 100*got, 100*l.floor)
+		}
 	}
 }
