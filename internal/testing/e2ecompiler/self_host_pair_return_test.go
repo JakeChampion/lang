@@ -211,7 +211,8 @@ function main(): i32 {
 // it. The program covers a pair built at the return, one
 // returned from another paired call, one whose return joins two
 // constructions (so the callee projects it), a scalar first with a reference
-// second, a caller reading only the second element; and the ones that stay
+// second, a first wider than a word or a float, which the result carries
+// whole, a caller reading only the second element; and the ones that stay
 // boxed: a pair a caller keeps whole, a triple, and an element wider than a
 // word. The total is the interpreter's.
 const pairTupleProg = `import "std/bench";
@@ -244,6 +245,15 @@ struct Box2 { n: i32, s: string }
     return (n, s);
   }
   return (0 - n, s);
+}
+
+// A first element no word holds on every target: it is the result itself.
+@noinline function wide_first(n: i32, b: Box2): (u64, Box2) {
+  return (n as u64 * 4000000000 as u64, b);
+}
+
+@noinline function float_first(n: i32, s: string): (f64, string) {
+  return (n as f64 * 0.5, s);
 }
 
 // Only the second element is read.
@@ -286,6 +296,10 @@ function main(): i32 {
     let q: (i32, string) = scalar_first(i, s);
     total = total + q.0 + q.1.len();
     total = total + second_only(i, s).1;
+    let wf: (u64, Box2) = wide_first(i, b);
+    total = total + (wf.0 / 1000000000 as u64) as i32 + wf.1.n;
+    let ff: (f64, string) = float_first(i, s);
+    total = total + (ff.0 * 2.0) as i32 + ff.1.len();
     i = i + 1;
   }
   let a1: i64 = bench.alloc_count();
@@ -303,7 +317,7 @@ function main(): i32 {
   let w: (i32, i64) = wide_second(3);
   total = total + w.0 + (w.1 / 1000000000 as i64) as i32;
   print(total.to_string());
-  if (total != 465) {
+  if (total != 915) {
     return 1;
   }
   if (a1 != a0) {

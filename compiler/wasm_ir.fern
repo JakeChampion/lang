@@ -6930,7 +6930,18 @@ function emit_function_ir(ns: string, r: irtables.LowerResult, fd: parser.FuncDe
   if (fd.receiver_type.len() > 0) {
     fn_name = util.base_type_name(fd.receiver_type) + "." + fd.name;
   }
-  return emit_function_ir_named(ns, r, fn_name, decl_result_wat(fd, structs), str_vals, cagg_vals, structs, fn_table, funcs, vgate);
+  return emit_function_ir_named(ns, r, fn_name, result_wat(r, fd, structs), str_vals, cagg_vals, structs, fn_table, funcs, vgate);
+}
+
+// The result clause of a declared function: what its lowered body returns,
+// which is not the declaration's type once a paired return (sempair) hands
+// back the first element of a tuple. An erased-generic passthrough keeps the
+// declaration's widened slot, which the lowering does not model.
+function result_wat(r: irtables.LowerResult, fd: parser.FuncDecl, structs: irtables.StructTab): string {
+  if (r.result_kind == irtables.result_from_decl() || irtables.erased_passthrough_safe(fd)) {
+    return decl_result_wat(fd, structs);
+  }
+  return produced_result_wat(r);
 }
 
 // decl_result_wat is the WAT result clause a DECLARATION's return type asks for.
