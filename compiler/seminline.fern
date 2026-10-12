@@ -1156,11 +1156,14 @@ function split_round(f: ssasem.Func, modes: i32[]): Rewrite {
     swap = swap.append(0 - 1);
     v = v + 1;
   }
-  let e: Edits = Edits { defs: defs, base: f.values.len(), added: [], swap: swap, entry: [], heads: [], kept: kept_values(f.graph), chained: chained_rebuilds(f, defs, modes) };
+  // The edits hold the only count of `defs`: a second holder would make the
+  // first part phi of the round copy both of its arrays.
+  let chained: boolean[] = chained_rebuilds(f, defs, modes);
+  let e: Edits = Edits { defs: defs, base: f.values.len(), added: [], swap: swap, entry: [], heads: [], kept: kept_values(f.graph), chained: chained };
   let any: boolean = false;
   for b in f.graph.blocks {
     for ins in b.insts {
-      if (sempair.reads_apart(ins.kind_tag) && ins.args.len() == 1 && splittable(f, defs, ins.args[0])) {
+      if (sempair.reads_apart(ins.kind_tag) && ins.args.len() == 1 && splittable(f, e.defs, ins.args[0])) {
         e = resolve(f, e, ins);
         any = any || e.swap[ins.result] >= 0;
       }
