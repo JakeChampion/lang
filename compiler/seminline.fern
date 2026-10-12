@@ -606,12 +606,18 @@ function constructor_body(f: ssasem.Func): boolean {
   }
   // One taking no parameters (a module const) is a constant wherever it is
   // spliced, a static box rather than code, so no size makes it too large.
-  return returned >= 0 && (n <= max_leaf_insts() || f.params.len() == 0) && construction_kind(defs_of(f.graph).insts[returned].kind_tag);
+  return returned >= 0 && (n <= max_leaf_insts() || f.params.len() == 0) && built_kind(defs_of(f.graph).insts[returned].kind_tag);
 }
 
 // A literal, a parameter, a copy, a construction, a direct call or a line mark.
 function constructor_kind(k: i32): boolean {
-  return literal_kind(k) || k == ssasem.param() || k == 7 || line_mark(k) || k == ssasem.call() || construction_kind(k);
+  return literal_kind(k) || k == ssasem.param() || k == 7 || line_mark(k) || k == ssasem.call() || built_kind(k);
+}
+
+// A construction, or a record taken up into a union of records: `TypeUnknown
+// { reason: r }` returned as a `Type`.
+function built_kind(k: i32): boolean {
+  return construction_kind(k) || k == ssasem.variant_up();
 }
 
 // A negation, which is how a negative literal arrives.
@@ -650,15 +656,26 @@ function calls_constructors(f: ssasem.Func, ix: util.NameIndex, ctors: boolean[]
   return true;
 }
 
-// Every argument of the call `ins` is a literal of `f`.
-function literal_args(f: ssasem.Func, ins: ssa.SInst): boolean {
-  let defs: Defs = defs_of(f.graph);
-  for a in ins.args {
-    if (a < 0 || a >= defs.insts.len() || !literal_kind(defs.insts[a].kind_tag)) {
+// Every argument of the call at `k` in block `b` is a literal defined before
+// it in the block.
+function literal_args(b: ssa.SBlock, k: i32): boolean {
+  for a in b.insts[k].args {
+    if (!literal_before(b, k, a)) {
       return false;
     }
   }
   return true;
+}
+
+function literal_before(b: ssa.SBlock, k: i32, v: i32): boolean {
+  let j: i32 = k - 1;
+  while (j >= 0) {
+    if (b.insts[j].result == v) {
+      return literal_kind(b.insts[j].kind_tag);
+    }
+    j = j - 1;
+  }
+  return false;
 }
 
 function none_of(n: i32): boolean[] {
@@ -771,25 +788,46 @@ function splice_calls(f0: ssasem.Func, size: i32, funcs: ssasem.Func[], sizes: i
   let f: ssasem.Func = f0;
   let fsize: i32 = size;
   let done: i32 = 0;
+  // The renames the straight splices so far leave to make, made together
+  // before anything reads f whole.
+  let swap: i32[] = [];
   let bi: i32 = 0;
   while (bi < f.graph.blocks.len() && done < max_splices()) {
     let k: i32 = 0;
     let spliced: boolean = false;
-    while (k < f.graph.blocks[bi].insts.len() && !spliced) {
+    while (k < f.graph.blocks[bi].insts.len() && !spliced && done < max_splices()) {
       let at: i32 = ready_callee(f, f.graph.blocks[bi].insts[k], ix, ready, closures);
-      if (at >= 0 && ctors[at] && !shared[at] && !literal_args(f, f.graph.blocks[bi].insts[k])) {
+      if (at >= 0 && ctors[at] && !shared[at] && !literal_args(f.graph.blocks[bi], k)) {
         at = 0 - 1;
       }
-      if (at >= 0 && shared[at] && whole_at(sempair.whole_values(f, ix, shared, false), f.graph.blocks[bi].insts[k].result)) {
-        at = 0 - 1;
+      if (at >= 0 && shared[at]) {
+        f = renamed(f, swap);
+        swap = [];
+        if (whole_at(sempair.whole_values(f, ix, shared, false), f.graph.blocks[bi].insts[k].result)) {
+          at = 0 - 1;
+        }
       }
       // A module const's body becomes one static box wherever it lands, so
       // it costs the caller nothing the budget measures.
       if (at >= 0 && funcs[at].graph.name != f.graph.name
         && (fsize + sizes[at] <= max_caller_insts() || ctors[at] && funcs[at].params.len() == 0)) {
-        f = splice(f, bi, k, funcs[at]);
-        fsize = count_insts(f.graph);
         done = done + 1;
+        // A straight callee's body now stands at k, and is walked in turn.
+        if (straight(funcs[at])) {
+          let ip: InPlace = splice_in_place(f, bi, k, funcs[at]);
+          f = ip.f;
+          if (ip.from >= 0) {
+            while (swap.len() <= ip.from) {
+              swap = swap.append(0 - 1);
+            }
+            swap = swap.with(ip.from, ip.to);
+          }
+          fsize = count_insts(f.graph);
+          continue;
+        }
+        f = splice(renamed(f, swap), bi, k, funcs[at]);
+        swap = [];
+        fsize = count_insts(f.graph);
         spliced = true;
       }
       k = k + 1;
@@ -798,7 +836,7 @@ function splice_calls(f0: ssasem.Func, size: i32, funcs: ssasem.Func[], sizes: i
     // reaches in turn.
     bi = bi + 1;
   }
-  return Rewrite { f: f, changed: done > 0 };
+  return Rewrite { f: renamed(f, swap), changed: done > 0 };
 }
 
 function whole_at(whole: boolean[], v: i32): boolean {
@@ -942,6 +980,77 @@ function splice(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Fu
   blocks = blocks.append(ssa.SBlock { id: cont, insts: tail, term: b.term, preds: rets });
   let joined: ssasem.Func = with_tables(f, callee, vmap);
   return ssasem.Func { ...joined, graph: ssa.SFunc { ...g, blocks: swapped_blocks(blocks, swap), nvals: base + callee.graph.nvals }, values: values, dbg_vals: swapped_all(swap, joined.dbg_vals) };
+}
+
+// Whether `f` is one block that returns: spliced, its instructions take the
+// call's place in the caller's block, which needs no split.
+function straight(f: ssasem.Func): boolean {
+  return f.graph.blocks.len() == 1 && f.graph.blocks[0].term.kind_tag == 1;
+}
+
+// A straight splice, and the rename it leaves to make: `from`, the call's
+// result, stands for `to` in every use, or -1 for none.
+struct InPlace { f: ssasem.Func, from: i32, to: i32 }
+
+function splice_in_place(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): InPlace {
+  let g: ssa.SFunc = f.graph;
+  let b: ssa.SBlock = g.blocks[bi];
+  let call: ssa.SInst = b.insts[k];
+  let base: i32 = g.nvals;
+  let cb: ssa.SBlock = callee.graph.blocks[0];
+  let vmap: i32[] = [];
+  let v: i32 = 0;
+  while (v < callee.graph.nvals) {
+    vmap = vmap.append(base + v);
+    v = v + 1;
+  }
+  for ins in cb.insts {
+    if (ins.kind_tag == ssasem.param()) {
+      vmap = vmap.with(ins.result, call.args[ins.imm]);
+    }
+  }
+  let insts: ssa.SInst[] = [];
+  let p: i32 = 0;
+  while (p < k) {
+    insts = insts.append(b.insts[p]);
+    p = p + 1;
+  }
+  for ins in cb.insts {
+    if (ins.kind_tag == ssasem.param()) {
+      continue;
+    }
+    let args: i32[] = [];
+    for a in ins.args {
+      args = args.append(mapped(vmap, a));
+    }
+    insts = insts.append(ssa.SInst { ...ins, result: mapped(vmap, ins.result), args: args });
+  }
+  let ret_vals: i32[] = [];
+  if (cb.term.value >= 0) {
+    ret_vals = [vmap[cb.term.value]];
+  }
+  let values: typeinfo.Type[] = util.append_all(f.values, callee.values);
+  let swap: i32[] = result_swap(call, [0], ret_vals, values);
+  if (call.result >= 0 && ret_vals.len() > 0 && swap.len() == 0) {
+    insts = insts.append(ssa.SInst { kind_tag: 7, result: call.result, args: ret_vals, imm: 0, str: "" });
+  }
+  p = k + 1;
+  while (p < b.insts.len()) {
+    insts = insts.append(b.insts[p]);
+    p = p + 1;
+  }
+  let joined: ssasem.Func = with_tables(f, callee, vmap);
+  let blocks: ssa.SBlock[] = g.blocks.with(bi, ssa.SBlock { ...b, insts: insts });
+  let out: ssasem.Func = ssasem.Func { ...joined, graph: ssa.SFunc { ...g, blocks: blocks, nvals: base + callee.graph.nvals }, values: values };
+  if (swap.len() == 0) {
+    return InPlace { f: out, from: 0 - 1, to: 0 - 1 };
+  }
+  return InPlace { f: out, from: call.result, to: ret_vals[0] };
+}
+
+// `f` with the renames `swap` holds made in every use.
+function renamed(f: ssasem.Func, swap: i32[]): ssasem.Func {
+  return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: swapped_blocks(f.graph.blocks, swap) }, dbg_vals: swapped_all(swap, f.dbg_vals) };
 }
 
 // `f` with the tables `callee`'s body reads added to its own: the contracts of
