@@ -40,6 +40,10 @@ lowered function it:
    operation on the same operands with constants compared by value, onto the
    earlier one (`ssa.merge_duplicates`; loads, calls and integer divisions are left
    alone), so a rotate whose operand is written out twice has one operand;
+   maps a load of a box's word 0, its shape, onto an earlier load of the same
+   word that reaches it through blocks each entered from one predecessor, with
+   no call, store or allocation between (`ssa.share_shape_loads`), so a
+   `match`'s chain of variant tests loads the shape once;
    turns `(x >> n) | (x << (W - n))`, Fern's only spelling of a rotate, into
    one `rotr:W:n` unary on x at either width (`ssa.fuse_rotates`; a u32's
    left half is recognised through the zero extension that follows it),
