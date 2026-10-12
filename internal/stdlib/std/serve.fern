@@ -53,7 +53,10 @@
 //      requests stay in order. `run_with`'s handler, whose state threads
 //      through every request, runs to completion instead. A handler that
 //      has not answered by `Config.handler_deadline` is answered 503 in
-//      its place, and cancelled when it is parked then.
+//      its place, and cancelled when it is parked then. A response's
+//      background work (`HttpResponse.background`) starts as a task once
+//      the event that wrote the response is done, parking as a handler
+//      does, until `Config.background_deadline` cancels it.
 //   5. http_serialize_response_into the loop's one builder →
 //      tcp_send_buf, with a `Date` the loop formats once per second (RFC
 //      9110 §6.6.1) unless the handler set one, and no body on a response
@@ -74,8 +77,9 @@
 //      then closes the listener, stops keep-alive (every response says
 //      close), closes the connections with nothing in flight, and gives
 //      the rest `drain_deadline` from the signal to finish before
-//      closing them too; it returns 0 once every connection is gone,
-//      1 when it cut one off. A listener the process was started with
+//      closing them too, responses' background work getting the same
+//      span; it returns 0 once every connection and background task is
+//      gone, 1 when it cut a connection off. A listener the process was started with
 //      (`LISTEN_FDS`, descriptor 3) is served instead of a fresh one.
 //
 // The native targets wire this through the Fern-bodied __fern_tcp_* and
@@ -162,7 +166,10 @@ function __recv_deadline_default(): Duration {
 // long a handler has to answer from its start (`handler_deadline`, which
 // the handler reads as `plat.deadline()`; 0 for no bound): a handler parked
 // when it passes is cancelled, and one that has not answered by then is
-// answered 503 in its place.
+// answered 503 in its place; and how long a response's background work
+// (`HttpResponse.background`, std/http's `with_background`) may run on
+// after it, the loop cancelling it then (`background_deadline`, 30 s as
+// Cloudflare Workers bound `waitUntil`; 0 for no bound).
 pub struct Config {
   backlog: i32,
   reuse_port: boolean,
@@ -187,6 +194,7 @@ pub struct Config {
   cookie_jar: boolean,
   http_allow: Option[fetch.Allow],
   handler_deadline: Duration,
+  background_deadline: Duration,
   proxy_protocol: boolean,
 }
 
@@ -194,10 +202,11 @@ pub struct Config {
 // by one listener, the 10 s read deadline, a 130 s keep-alive idle span,
 // 1000 requests per connection, 1024 connections open and 100 of them per
 // client, 1024 handlers or chunk producers parked at once, a worker per
-// processing unit, no handler deadline, and
+// processing unit, no handler deadline, background work cut off after
+// 30 s, and
 // the parser's `http_limits()`, bodies read whole before the handler runs.
 pub function config(): Config {
-  return Config { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), proxy_protocol: false };
+  return Config { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), background_deadline: time.duration_seconds(30 as i64), proxy_protocol: false };
 }
 
 // (c).with_tls(cfg) — every connection speaks TLS 1.3 under `cfg`
@@ -417,13 +426,14 @@ function __recv_scratch(): u8[] {
 // scratch is lent to for the current event, -1 between events: only that
 // connection's buffer may be the scratch, and `__serve_compact` hands it
 // back before the event is done with the connection. `parked` is the
-// flights a chunk producer's park staged during the event, for the loop
-// to take (`__parked_taken`) once the event's work hands the
-// connections back. `bodies` is each connection's streamed body while a
+// flights a chunk producer's park staged during the event, and `later`
+// the background work of the responses it wrote
+// (`HttpResponse.background`), for the loop to take (`__staged_taken`)
+// once the event's work hands the connections back. `bodies` is each connection's streamed body while a
 // pull owns the read side (`__serve_stream`), None otherwise: what the
 // loop writes through when the session is lent (`__serve_send`), and
 // what an upgraded connection's producer flight carries.
-struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], hosts: platform.Host[], tails: __Tail[], tls: __Tls[], bodies: Option[__Body][], last: http.HttpFramed, out: usize, lent: i32, parked: __Flight[] }
+struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], hosts: platform.Host[], tails: __Tail[], tls: __Tls[], bodies: Option[__Body][], last: http.HttpFramed, out: usize, lent: i32, parked: __Flight[], later: (() => void)[] }
 
 // __Tls — a connection's TLS: none; its session, through which every
 // byte read and written passes; lent to the handler pulling a streamed
@@ -951,6 +961,63 @@ function __producer_done[D: async.Driver](drv: D, c: __Conns, fd: i32, chunk: Op
   return c;
 }
 
+// __staged_taken(drv, c, fls, opts) — what the event's work staged, taken
+// once it is done: the flights a producer's park staged, and the
+// background work of the responses it wrote, each started as a task, one
+// that parks held as a flight under `Config.background_deadline`.
+function __staged_taken[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: Config): (__Conns, __Flight[]) {
+  let taken: (__Conns, __Flight[]) = __parked_taken(c, fls);
+  c = taken.0;
+  fls = taken.1;
+  if (c.later.len() == 0) {
+    return (c, fls);
+  }
+  let work: (() => void)[] = c.later;
+  let none: (() => void)[] = [];
+  c = __Conns { ...c, later: none };
+  for w in work {
+    fls = __background_start(drv, fls, w, opts);
+  }
+  return (c, fls);
+}
+
+// __background_start(drv, fls, work, opts) — `work` run as a task: done
+// at once, or parked and held as a flight on no connection until it ends
+// or `Config.background_deadline` cancels it.
+function __background_start[D: async.Driver](drv: D, fls: __Flight[], work: () => void, opts: Config): __Flight[] {
+  let t: async.Task[i32] = async.task_new((): i32 => __background_run(work));
+  match (async.task_start(t)) {
+    Suspended(w) => {
+      let none: i32[] = [];
+      let now: i64 = monotonic_ns();
+      return fls.append(__flight_watch(drv, __Flight { job: Background(t), wait: w, fd: 0 - 1, set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: None, idle: 0 - 1 as i64, ends: __bound_ends(opts.background_deadline, now) }, now));
+    },
+    _ => {
+      async.task_free(t);
+    }
+  }
+  return fls;
+}
+
+function __background_run(work: () => void): i32 {
+  work();
+  return 0;
+}
+
+// __stage_background(c, resp) — the response's background work staged for
+// the loop to start once the event is done (`__staged_taken`).
+function __stage_background(c: __Conns, resp: HttpResponse): __Conns {
+  match (resp.background) {
+    Some(work) => {
+      return __Conns { ...c, later: c.later.append(work) };
+    },
+    None => {
+      return c;
+    }
+  }
+  return c;
+}
+
 // __parked_taken(c, fls) — the flights a producer's park staged on the
 // connections, moved to the loop's.
 function __parked_taken(c: __Conns, fls: __Flight[]): (__Conns, __Flight[]) {
@@ -992,7 +1059,7 @@ function __conns_add(c: __Conns, fd: i32, deadline: i64, peer: i32, host: platfo
     },
     _ => {}
   }
-  return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), keep: c.keep.append(keep), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), hosts: c.hosts.append(host), tails: c.tails.append(NoTail), tls: c.tls.append(tls), bodies: c.bodies.append(None), last: c.last, out: c.out, lent: c.lent, parked: c.parked };
+  return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), keep: c.keep.append(keep), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), hosts: c.hosts.append(host), tails: c.tails.append(NoTail), tls: c.tls.append(tls), bodies: c.bodies.append(None), last: c.last, out: c.out, lent: c.lent, parked: c.parked, later: c.later };
 }
 
 // __conns_from_peer(c, peer) — how many open connections the peer holds.
@@ -1049,7 +1116,7 @@ function __conns_remove(c: __Conns, at: i32): __Conns {
     }
     i = i + 1;
   }
-  return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base, send_since: send_since, send_base: send_base, peers: peers, hosts: hosts, tails: tails, tls: tls, bodies: bodies, last: c.last, out: c.out, lent: 0 - 1, parked: c.parked };
+  return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base, send_since: send_since, send_base: send_base, peers: peers, hosts: hosts, tails: tails, tls: tls, bodies: bodies, last: c.last, out: c.out, lent: 0 - 1, parked: c.parked, later: c.later };
 }
 
 // __conns_timeout(c, now) — the wait's timeout: the milliseconds until the
@@ -1644,6 +1711,7 @@ function __serve_refuse[D: async.Driver](drv: D, c: __Conns, at: i32, status: i3
 // the burst has answered and not yet written, in front of this response,
 // so one readable event's answers leave in one write (`__corks`).
 function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, method: string, version: string, resp: HttpResponse, keep_alive: boolean, opts: Config, answered: i32, behind: __Behind, clk: __Clock): (__Conns, boolean) {
+  c = __stage_background(c, resp);
   let rest: __Tail = __serve_wire(c.out, method, version, resp, keep_alive, clk);
   c = __Conns { ...c, tails: c.tails.with(at, rest), keep: c.keep.with(at, c.keep[at] && keep_alive && __tail_keeps(rest)) };
   if (__corks(rest, c.keep[at], answered, behind)) {
@@ -2211,7 +2279,7 @@ function __serve_pass_end[D: async.Driver](drv: D, listener: i32, c: __Conns, op
   if (!__serve_stopping(stop)) {
     accepting = __serve_gate(drv, listener, c, opts, accepting, parked);
   }
-  return __serve_stop_step(drv, listener, c, opts, stop, accepting, now);
+  return __serve_stop_step(drv, listener, c, opts, stop, accepting, now, parked);
 }
 
 // __Stop — where a loop is in its shutdown: the monotonic time the stop
@@ -2253,14 +2321,14 @@ function __stop_timeout(stop: __Stop, opts: Config, now: i64, timeout: i32): i32
   return ms as i32;
 }
 
-// __serve_stop_step(drv, listener, c, opts, stop, accepting, now) — the
-// shutdown's next step, once per pass: past the accept grace the
+// __serve_stop_step(drv, listener, c, opts, stop, accepting, now, parked) —
+// the shutdown's next step, once per pass: past the accept grace the
 // listener is closed and every connection with nothing in flight (an
 // empty buffer and nothing to write) is closed too; past the drain
 // deadline the rest are closed and the loop remembers it cut them off.
-// `(conns, stop, accepting, done)`, `done` once the listener is closed
-// and no connection remains.
-function __serve_stop_step[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: Config, stop: __Stop, accepting: boolean, now: i64): (__Conns, __Stop, boolean, boolean) {
+// `(conns, stop, accepting, done)`, `done` once the listener is closed,
+// no connection remains, and no background work is left (`__stop_done`).
+function __serve_stop_step[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: Config, stop: __Stop, accepting: boolean, now: i64, parked: i32): (__Conns, __Stop, boolean, boolean) {
   if (!__serve_stopping(stop)) {
     return (c, stop, accepting, false);
   }
@@ -2275,8 +2343,16 @@ function __serve_stop_step[D: async.Driver](drv: D, listener: i32, c: __Conns, o
     stop = __Stop { ...stop, closed: true };
     accepting = false;
   }
-  let swept: (__Conns, __Stop) = __stop_sweep(drv, c, stop, now >= stop.at + opts.drain_deadline.as_nanos());
-  return (swept.0, swept.1, accepting, swept.0.fds.len() == 0);
+  let past_drain: boolean = now >= stop.at + opts.drain_deadline.as_nanos();
+  let swept: (__Conns, __Stop) = __stop_sweep(drv, c, stop, past_drain);
+  return (swept.0, swept.1, accepting, __stop_done(swept.0, parked, past_drain));
+}
+
+// __stop_done(c, parked, past_drain) — whether a shutdown has finished:
+// every connection closed, and the flights left, which with no connection
+// are responses' background work, ended or cut off at the drain deadline.
+function __stop_done(c: __Conns, parked: i32, past_drain: boolean): boolean {
+  return c.fds.len() == 0 && (parked == 0 || past_drain);
 }
 
 // __stop_sweep(drv, c, stop, past_drain) — the connections with nothing
@@ -2881,9 +2957,10 @@ function __serve_stream[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at
 struct __Flight { job: __Job, wait: async.Wait, fd: i32, set: i32[], due: i64, method: string, version: string, kept: boolean, behind: __Behind, body: Option[__Body], idle: i64, ends: i64 }
 
 // __Job — the task a flight runs: a handler, whose response the flight
-// answers, or a response's chunk producer (`__tail_park`), whose chunk
-// the flight writes.
-enum __Job { Handler(async.Call[HttpRequest, platform.Host, HttpResponse]), Producer(async.Task[Option[u8[]]]) }
+// answers, a response's chunk producer (`__tail_park`), whose chunk
+// the flight writes, or a response's background work, which answers
+// nothing and holds no connection.
+enum __Job { Handler(async.Call[HttpRequest, platform.Host, HttpResponse]), Producer(async.Task[Option[u8[]]]), Background(async.Task[i32]) }
 
 // __Started — how a handler's first run ended: with its response, or parked
 // on a wait, the flight not yet watching it.
@@ -2911,7 +2988,7 @@ function __serve_start(handler: (HttpRequest, platform.Host) => HttpResponse, pl
   if (__serve_not_ready(f, opts, stop)) {
     return HandlerDone(http.text(503, ""));
   }
-  let ends: i64 = __handler_ends(opts, plat.elapsed_ns());
+  let ends: i64 = __bound_ends(opts.handler_deadline, plat.elapsed_ns());
   if (ends >= 0 as i64) {
     plat = plat.with_deadline(ends);
   }
@@ -2929,10 +3006,10 @@ function __serve_start(handler: (HttpRequest, platform.Host) => HttpResponse, pl
   return HandlerDone(http.text(503, ""));
 }
 
-// __handler_ends(opts, now) — the monotonic nanosecond a handler starting
-// at `now` must answer by (`Config.handler_deadline`), -1 for no bound.
-function __handler_ends(opts: Config, now: i64): i64 {
-  let span: i64 = opts.handler_deadline.as_nanos();
+// __bound_ends(bound, now) — the monotonic nanosecond `bound` from `now`
+// falls due, -1 for a zero bound, which is none.
+function __bound_ends(bound: Duration, now: i64): i64 {
+  let span: i64 = bound.as_nanos();
   if (span <= 0 as i64) {
     return 0 - 1 as i64;
   }
@@ -2951,7 +3028,7 @@ function __in_time(resp: HttpResponse, ends: i64, now: i64): HttpResponse {
 // __serve_step(handler, st, req, plat, opts) — the stateful handler run for
 // the request under its deadline, as `__serve_start` runs `run`'s.
 function __serve_step[S](handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), st: S, req: HttpRequest, plat: platform.Host, opts: Config): (S, HttpResponse) {
-  let ends: i64 = __handler_ends(opts, plat.elapsed_ns());
+  let ends: i64 = __bound_ends(opts.handler_deadline, plat.elapsed_ns());
   if (ends >= 0 as i64) {
     plat = plat.with_deadline(ends);
   }
@@ -3048,19 +3125,7 @@ function __flight_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fi:
   fls = __flights_remove(fls, fi);
   match (fl.job) {
     Handler(call) => {
-      match (async.call_resume(call, ready)) {
-        Done(resp) => {
-          async.call_free(call);
-          return (__serve_answer(drv, c, fl, __in_time(resp, fl.ends, monotonic_ns()), opts, clk), fls);
-        },
-        Suspended(w) => {
-          return (c, fls.append(__flight_watch(drv, __Flight { ...fl, wait: w }, monotonic_ns())));
-        },
-        Cancelled => {
-          async.call_free(call);
-          return (__serve_abandon(drv, c, fl.fd), fls);
-        }
-      }
+      return __handler_wake(drv, c, fls, fl, call, ready, opts, clk);
     },
     Producer(t) => {
       if (__conns_index(c, fl.fd) < 0) {
@@ -3081,9 +3146,47 @@ function __flight_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fi:
           return (__serve_abandon(drv, c, fl.fd), fls);
         }
       }
+    },
+    Background(t) => {
+      return (c, __background_wake(drv, fls, fl, t, ready));
     }
   }
   return (c, fls);
+}
+
+// __handler_wake(drv, c, fls, fl, call, ready, opts, clk) — handler flight
+// `fl` run on with `ready`: its response answered when it returns (503 in
+// its place past its deadline), its new wait watched when it parks again,
+// its connection closed when it was cancelled.
+function __handler_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fl: __Flight, call: async.Call[HttpRequest, platform.Host, HttpResponse], ready: i32, opts: Config, clk: __Clock): (__Conns, __Flight[]) {
+  match (async.call_resume(call, ready)) {
+    Done(resp) => {
+      async.call_free(call);
+      return (__serve_answer(drv, c, fl, __in_time(resp, fl.ends, monotonic_ns()), opts, clk), fls);
+    },
+    Suspended(w) => {
+      return (c, fls.append(__flight_watch(drv, __Flight { ...fl, wait: w }, monotonic_ns())));
+    },
+    Cancelled => {
+      async.call_free(call);
+      return (__serve_abandon(drv, c, fl.fd), fls);
+    }
+  }
+  return (c, fls);
+}
+
+// __background_wake(drv, fls, fl, t, ready) — background flight `fl` run
+// on with `ready`: held again when it parks, freed when it ends.
+function __background_wake[D: async.Driver](drv: D, fls: __Flight[], fl: __Flight, t: async.Task[i32], ready: i32): __Flight[] {
+  match (async.task_resume(t, ready)) {
+    Suspended(w) => {
+      return fls.append(__flight_watch(drv, __Flight { ...fl, wait: w }, monotonic_ns()));
+    },
+    _ => {
+      async.task_free(t);
+    }
+  }
+  return fls;
 }
 
 // __serve_answer(drv, c, fl, resp, opts, clk) — the flight's response
@@ -3199,6 +3302,10 @@ function __flight_cancel[D: async.Driver](drv: D, fl: __Flight): void {
     },
     Producer(t) => {
       let st: async.TaskStatus[Option[u8[]]] = async.task_cancel(t);
+      async.task_free(t);
+    },
+    Background(t) => {
+      let st: async.TaskStatus[i32] = async.task_cancel(t);
       async.task_free(t);
     }
   }
@@ -3317,10 +3424,9 @@ function __flights_expire[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], 
     let i: i32 = 0;
     while (i < fls.len() && !again) {
       if (fls[i].ends >= 0 as i64 && fls[i].ends <= now) {
-        let late: __Flight = fls[i];
-        __flight_cancel(drv, late);
-        fls = __flights_remove(fls, i);
-        c = __serve_answer(drv, c, late, http.text(503, ""), opts, clk);
+        let late: (__Conns, __Flight[]) = __flight_overdue(drv, c, fls, i, opts, clk);
+        c = late.0;
+        fls = late.1;
         again = true;
       } else if (fls[i].due >= 0 as i64 && fls[i].due <= now) {
         let woke: (__Conns, __Flight[]) = __flight_wake(drv, c, fls, i, -1, opts, clk);
@@ -3335,6 +3441,22 @@ function __flights_expire[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], 
       }
       i = i + 1;
     }
+  }
+  return (c, fls);
+}
+
+// __flight_overdue(drv, c, fls, i, opts, clk) — flight `i`, past the bound
+// its request or its background work had, cancelled, and a handler's
+// request answered 503 in place of the response it did not give.
+function __flight_overdue[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], i: i32, opts: Config, clk: __Clock): (__Conns, __Flight[]) {
+  let late: __Flight = fls[i];
+  __flight_cancel(drv, late);
+  fls = __flights_remove(fls, i);
+  match (late.job) {
+    Handler(call) => {
+      return (__serve_answer(drv, c, late, http.text(503, ""), opts, clk), fls);
+    },
+    _ => {}
   }
   return (c, fls);
 }
@@ -3387,7 +3509,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts);
   let host_for: (Option[net.SocketAddr]) => platform.Host = (peer: Option[net.SocketAddr]): platform.Host => plat.with_peer(peer);
-  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], bodies: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [] };
+  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], bodies: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [] };
   let flights: __Flight[] = [];
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, line: "" };
@@ -3423,7 +3545,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
         let woke: (__Conns, __Flight[]) = __flight_wake(drv, conns, flights, fi, __flight_pair(flights[fi], fd), opts, clk);
         conns = woke.0;
         flights = woke.1;
-        let taken: (__Conns, __Flight[]) = __parked_taken(conns, flights);
+        let taken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts);
         conns = taken.0;
         flights = taken.1;
         continue;
@@ -3433,7 +3555,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
         let held: (__Conns, __Flight[]) = __serve_held_event(drv, conns, flights, busy, fd, readiness, scratch, opts);
         conns = held.0;
         flights = held.1;
-        let taken: (__Conns, __Flight[]) = __parked_taken(conns, flights);
+        let taken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts);
         conns = taken.0;
         flights = taken.1;
         continue;
@@ -3512,14 +3634,14 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
         framed = next_framed;
       }
       conns = __serve_settle(drv, conns, flights, fd, ev.2, opts, clk);
-      let taken: (__Conns, __Flight[]) = __parked_taken(conns, flights);
+      let taken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts);
       conns = taken.0;
       flights = taken.1;
     }
     let due: (__Conns, __Flight[]) = __flights_expire(drv, conns, flights, opts, clk);
     conns = due.0;
     flights = due.1;
-    let woken: (__Conns, __Flight[]) = __parked_taken(conns, flights);
+    let woken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts);
     conns = woken.0;
     flights = woken.1;
     let ended: (__Conns, __Stop, boolean, boolean) = __serve_pass_end(drv, listener, conns, opts, stop, accepting, flights.len());
@@ -3559,7 +3681,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts);
   let host_for: (Option[net.SocketAddr]) => platform.Host = (peer: Option[net.SocketAddr]): platform.Host => plat.with_peer(peer);
-  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], bodies: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [] };
+  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], bodies: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [] };
   let flights: __Flight[] = [];
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, line: "" };
@@ -3588,7 +3710,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
         let woke: (__Conns, __Flight[]) = __flight_wake(drv, conns, flights, fi, __flight_pair(flights[fi], fd), opts, clk);
         conns = woke.0;
         flights = woke.1;
-        let taken: (__Conns, __Flight[]) = __parked_taken(conns, flights);
+        let taken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts);
         conns = taken.0;
         flights = taken.1;
         continue;
@@ -3598,7 +3720,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
         let held: (__Conns, __Flight[]) = __serve_held_event(drv, conns, flights, busy, fd, readiness, scratch, opts);
         conns = held.0;
         flights = held.1;
-        let taken: (__Conns, __Flight[]) = __parked_taken(conns, flights);
+        let taken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts);
         conns = taken.0;
         flights = taken.1;
         continue;
@@ -3650,14 +3772,14 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
         framed = next_framed;
       }
       conns = __serve_finish(drv, conns, fd, ev.2, opts, clk);
-      let taken: (__Conns, __Flight[]) = __parked_taken(conns, flights);
+      let taken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts);
       conns = taken.0;
       flights = taken.1;
     }
     let due: (__Conns, __Flight[]) = __flights_expire(drv, conns, flights, opts, clk);
     conns = due.0;
     flights = due.1;
-    let woken: (__Conns, __Flight[]) = __parked_taken(conns, flights);
+    let woken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts);
     conns = woken.0;
     flights = woken.1;
     let ended: (__Conns, __Stop, boolean, boolean) = __serve_pass_end(drv, listener, conns, opts, stop, accepting, flights.len());

@@ -1,0 +1,96 @@
+// A lambda capturing a binding matched out of a BUILT-IN record's field. The
+// self-host refused the function: lowering annotates a module before the
+// built-in structs are injected, so `module_env` held only the structs the
+// program declares, `r.body` typed as unknown, the binding `p` with it, and
+// the lift declined a lambda whose capture had no type.
+//
+// Positions:
+//   chunks     — `BodyChunks(p)` out of `HttpResponse.body`, the capture
+//                called inside the lambda.
+//   background — `Some(first)` out of `HttpResponse.background`, composed
+//                with a second closure as `with_background` does.
+//   control    — the same capture through an annotated local, which lowered
+//                before the fix.
+//
+// Sentinels are 201-203; the success path returns 42.
+function empty(): HeaderMap {
+  return HeaderMap { names: [], values: [] };
+}
+
+function respond(next: (i32) => Option[u8[]], bg: Option[() => void]): HttpResponse {
+  let filler: u8[] = [];
+  return HttpResponse { status: 200, body: BodyChunks(ChunkProducer { next: next, idle_ms: 0, filler: filler }), headers: empty(), trailers: empty(), background: bg };
+}
+
+function chunks(r: HttpResponse): (i32) => i32 {
+  match (r.body) {
+    BodyChunks(p) => {
+      return (i: i32): i32 => {
+        match (p.next(i)) {
+          Some(b) => {
+            return b.len();
+          },
+          None => {
+            return 0;
+          }
+        }
+        return 0;
+      };
+    },
+    _ => {}
+  }
+  return (i: i32): i32 => 0 - 1;
+}
+
+function both(r: HttpResponse, work: () => void): () => void {
+  match (r.background) {
+    Some(first) => {
+      return () => {
+        first();
+        work();
+      };
+    },
+    None => {}
+  }
+  return work;
+}
+
+function control(r: HttpResponse): () => void {
+  let o: Option[() => void] = r.background;
+  match (o) {
+    Some(first) => {
+      return () => { first(); };
+    },
+    None => {}
+  }
+  return () => {};
+}
+
+function main(): i32 {
+  let log: Cell[i32] = cell_new(0);
+  let r: HttpResponse = respond(
+    (i: i32): Option[u8[]] => {
+      if (i < 2) {
+        let three: u8[] = [1 as u8, 2 as u8, 3 as u8];
+        return Some(three);
+      }
+      return None;
+    },
+    Some(() => log.set(log.get() * 10 + 1)),
+  );
+  let sized: (i32) => i32 = chunks(r);
+  if (sized(0) != 3 || sized(5) != 0) {
+    return 201;
+  }
+  let run: () => void = both(r, () => log.set(log.get() * 10 + 2));
+  run();
+  if (log.get() != 12) {
+    return 202;
+  }
+  let again: () => void = control(r);
+  again();
+  if (log.get() != 121) {
+    return 203;
+  }
+  return 42;
+}

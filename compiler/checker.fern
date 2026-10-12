@@ -23468,9 +23468,11 @@ pub struct ModuleEnv { sigs: SigTable, structs: StructTable, unions: UnionTable,
 function module_env(mod: parser.Module): ModuleEnv {
   // The struct sigs resolve against the union NAMES, so a struct field typed
   // as a union resolves rather than going unknown; the full union sigs, with
-  // their variants, come after, and func sigs read both.
+  // their variants, come after, and func sigs read both. The built-in structs
+  // are in it whether or not the module was prepared, so a pass that types a
+  // module lowering hands it (annotate_module) reads a built-in's fields too.
   let rnames: string[] = resource_names(mod);
-  let structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod), rnames);
+  let structs: StructSig[] = collect_struct_sigs(parser.inject_builtin_enums(mod.structs), declared_union_names(mod), rnames);
   let struct_names: string[] = [];
   for sd in structs {
     struct_names = struct_names.append(sd.name);
