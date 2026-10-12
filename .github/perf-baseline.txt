@@ -65,7 +65,7 @@ x86_64/closure_call.text	814
 x86_64/closure_call.ir	103908097
 x86_64/enum_match.text	999
 x86_64/enum_match.ir	53775055
-x86_64/http_hello.text	20236
+x86_64/http_hello.text	19073
 x86_64/http_hello.ir	29336671
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
@@ -77,7 +77,7 @@ x86_64/map_string.text	8831
 x86_64/map_string.ir	66093136	2
 x86_64/ordmap_insert.text	5385
 x86_64/ordmap_insert.ir	115466142
-x86_64/pmap_insert.text	4896
+x86_64/pmap_insert.text	4853
 x86_64/pmap_insert.ir	64758246
 x86_64/pvec_with.text	2769
 x86_64/pvec_with.ir	60818474
@@ -105,10 +105,10 @@ x86_64/struct_drop.text	3384
 x86_64/struct_drop.ir	358420237
 x86_64/tokenize.text	984
 x86_64/tokenize.ir	36950039
-x86_64/utf8_ingest_unchecked.text	11070
-x86_64/utf8_ingest_unchecked.ir	3331077
-x86_64/utf8_ingest_validated.text	11309
-x86_64/utf8_ingest_validated.ir	6413083
+x86_64/utf8_ingest_unchecked.text	9390
+x86_64/utf8_ingest_unchecked.ir	3007277
+x86_64/utf8_ingest_validated.text	9629
+x86_64/utf8_ingest_validated.ir	6089283
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -160,6 +160,14 @@ x86_64/utf8_ingest_validated.ir	6413083
 # `get` / `len` and its seeded key hash are kept. The aarch64 `.text` rows are
 # cross-compiled readings; its `.ir` rows come from the perf-aarch64 lane.
 #
+# Re-pinned 2026-10-12 (#12262) on the four utf8_ingest rows of each arch,
+# whose json_parse threads one position cell instead of a cursor (x86_64 `.ir`
+# -9.7% unchecked, -5.1% validated; `.text` -15%), and on http_hello.text and
+# pmap_insert.text (-5.8% and -0.9%): the tree shaker now keeps a method by its
+# receiver's type wherever that type is known, not by its bare name. The
+# aarch64 `.text` rows are cross-compiled readings; its `.ir` rows come from
+# the perf-aarch64 lane.
+#
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
 # (utf8_ingest_unchecked) — one ISA emitting fewer instructions than the other
@@ -182,7 +190,7 @@ aarch64/closure_call.text	993
 aarch64/closure_call.ir	120768083
 aarch64/enum_match.text	1137
 aarch64/enum_match.ir	41400056
-aarch64/http_hello.text	20511
+aarch64/http_hello.text	19372
 aarch64/http_hello.ir	31296723
 aarch64/int_loop.text	90
 aarch64/int_loop.ir	18000025
@@ -194,7 +202,7 @@ aarch64/map_string.text	9002
 aarch64/map_string.ir	66191654	2
 aarch64/ordmap_insert.text	5503
 aarch64/ordmap_insert.ir	122175759
-aarch64/pmap_insert.text	5017
+aarch64/pmap_insert.text	4965
 aarch64/pmap_insert.ir	71272111
 aarch64/pvec_with.text	2975
 aarch64/pvec_with.ir	63238555
@@ -222,10 +230,10 @@ aarch64/struct_drop.text	3516
 aarch64/struct_drop.ir	428300325
 aarch64/tokenize.text	1170
 aarch64/tokenize.ir	38580038
-aarch64/utf8_ingest_unchecked.text	11226
-aarch64/utf8_ingest_unchecked.ir	3196476
-aarch64/utf8_ingest_validated.text	11469
-aarch64/utf8_ingest_validated.ir	6782680
+aarch64/utf8_ingest_unchecked.text	9570
+aarch64/utf8_ingest_unchecked.ir	2898276
+aarch64/utf8_ingest_validated.text	9813
+aarch64/utf8_ingest_validated.ir	6484480
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 x86_64/perceus_cfold.text	2436
