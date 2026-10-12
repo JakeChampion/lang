@@ -827,7 +827,9 @@ function shells_of(w: Walk): Shells {
 }
 
 // shell_taken: `ld` reads a box the frame releases as a shell after it, so
-// the payload it read is the frame's.
+// the payload it read is the frame's, unless a later read of the same slot
+// comes before the release: that read is the one the release follows, and
+// `ld` only borrowed.
 function shell_taken(w: Walk, sh: Shells, dom: ssadeps.Dom, bi: i32, pos: i32, ld: ssa.SInst): boolean {
   if (ld.args.len() == 0) {
     return false;
@@ -835,16 +837,38 @@ function shell_taken(w: Walk, sh: Shells, dom: ssadeps.Dom, bi: i32, pos: i32, l
   let base: i32 = w.root[ld.args[0]];
   let k: i32 = 0;
   while (k < sh.base.len()) {
-    if (sh.base[k] == base) {
-      if (sh.block[k] == bi) {
-        if (sh.at[k] > pos) {
-          return true;
-        }
-      } else if (ssadeps.dom_holds(dom, sh.block[k], bi)) {
-        return true;
-      }
+    if (sh.base[k] == base && before(dom, bi, pos, sh.block[k], sh.at[k]) && !reread_between(w, dom, ld, bi, pos, sh.block[k], sh.at[k])) {
+      return true;
     }
     k = k + 1;
+  }
+  return false;
+}
+
+// Whether position `pos` of block `bi` comes before position `at` of block
+// `sb` on every path to the latter.
+function before(dom: ssadeps.Dom, bi: i32, pos: i32, sb: i32, at: i32): boolean {
+  if (sb == bi) {
+    return at > pos;
+  }
+  return ssadeps.dom_holds(dom, sb, bi);
+}
+
+// Whether another marked load of the slot `ld` reads sits after `ld` (block
+// `bi`, `pos`) and before the release at `at` of block `sb`.
+function reread_between(w: Walk, dom: ssadeps.Dom, ld: ssa.SInst, bi: i32, pos: i32, sb: i32, at: i32): boolean {
+  let ob: i32 = 0;
+  while (ob < w.f.blocks.len()) {
+    let insts: ssa.SInst[] = w.f.blocks[ob].insts;
+    let i: i32 = 0;
+    while (i < insts.len()) {
+      let o: ssa.SInst = insts[i];
+      if (same_slot_load(w, o, ld) && before(dom, bi, pos, ob, i) && before(dom, ob, i, sb, at)) {
+        return true;
+      }
+      i = i + 1;
+    }
+    ob = ob + 1;
   }
   return false;
 }
