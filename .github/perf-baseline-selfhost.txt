@@ -221,8 +221,8 @@ selfhost/x86-64-linux/string_scan.emit	3196
 selfhost/x86-64-linux/string_slice.emit	751
 selfhost/x86-64-linux/struct_drop.emit	3384
 selfhost/x86-64-linux/tokenize.emit	985
-selfhost/x86-64-linux/utf8_ingest_unchecked.emit	14334
-selfhost/x86-64-linux/utf8_ingest_validated.emit	14578
+selfhost/x86-64-linux/utf8_ingest_unchecked.emit	14482
+selfhost/x86-64-linux/utf8_ingest_validated.emit	14726
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 selfhost/x86-64-linux/perceus_cfold.emit	2404

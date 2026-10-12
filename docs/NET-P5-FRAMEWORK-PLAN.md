@@ -13,7 +13,7 @@ each piece a module a program imports when it wants it: `std/http/router`
 (patterns, parameters, 405), `std/http/form` and `std/http/multipart`
 (bodies), `std/http/cookie` (the jar and the stricter `SetCookie`),
 `std/http/sse` and `std/http/websocket`, `std/http/static`,
-`std/http/compress`, `std/http/forwarded` (PROXY protocol v2 and
+`std/http/compress`, `std/http/forwarded` (the PROXY protocol and
 `Forwarded`), `std/http/cache` (RFC 9111's response-side helpers),
 `std/http/trace` (W3C `traceparent`, the OTel conventions) and
 `std/metrics`. Every module type-checks standalone
@@ -205,9 +205,12 @@ decides what wraps it.
    cancel signal ride on too. Gate: `tests/stdlib/http_forwarded_test.fern`
    in the stdtest differential; `TestForwardedServeInterp` and
    `TestForwardedServeX86_64` against the real loop.
-   PROXY protocol v1 and v2: the header a load balancer writes before the
-   request, read by the serve loop when `Config` asks for it, its source
-   address becoming the connection's peer.
+   PROXY protocol v1 and v2 (landed): the header a load balancer writes
+   before the request, `forwarded.proxy_header`, read by the serve loop
+   when `Config.proxy_protocol` asks for it, before TLS, its source address
+   becoming the connection's peer. Gate: the parser cases in the same
+   suite; `TestProxyProtocolServeInterp` and `TestProxyProtocolServeX86_64`
+   send both versions, a split header, LOCAL, none, and TLS behind it.
    Compression: a gzip encoder over `std/deflate`, zstd both ways, brotli
    decode only, and `std/http/compress` negotiating `Accept-Encoding` for
    a response, off by default as every 2026 server has it.
