@@ -218,8 +218,12 @@ decides what wraps it.
    as every 2026 server has it. Gate: `tests/stdlib/http_compress_test.fern`
    and the deflate suite in the stdtest differential;
    `TestCompressServeInterp` and `TestCompressServeX86_64` read the loop's
-   gzip with Go's decoder. Then zstd both ways, offered ahead of gzip, and
-   brotli decode only.
+   gzip with Go's decoder. The second (landed): `std/zstd` both ways,
+   offered ahead of gzip. Gate: `tests/stdlib/zstd_test.fern` decoding
+   the reference encoder's frames in the stdtest differential, and
+   `TestZstdEncodeAgainstGo`, where Go's own zstd decoder (the one
+   `debug/elf` uses for compressed sections) reads the encoder's frames.
+   Then brotli decode only.
 6. **Host seams as `Platform` methods.** The request deadline and cancel
    signal, background work that outlives the response (`wait_until`,
    bounded like Workers' 30 s), outbound HTTP gated by an allow-list.

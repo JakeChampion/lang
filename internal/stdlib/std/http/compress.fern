@@ -20,6 +20,7 @@
 // `Options.min_size`, or when the coded body would be no smaller.
 
 import "std/deflate";
+import "std/zstd";
 import "std/headers";
 import "std/http";
 import "std/http/cache";
@@ -28,10 +29,11 @@ import "std/http/cache";
 // offered, the most preferred first.
 pub struct Options { min_size: i32, codings: string[] }
 
-// `options()` — bodies of 1 KiB and up, in gzip: below a packet's worth,
-// compression saves no round trip.
+// `options()` — bodies of 1 KiB and up, in zstd or gzip, zstd preferred
+// when the client ranks them alike: below a packet's worth, compression
+// saves no round trip.
 pub function options(): Options {
-  return Options { min_size: 1024, codings: ["gzip"] };
+  return Options { min_size: 1024, codings: ["zstd", "gzip"] };
 }
 
 // `compressed(req, next)` — the middleware: `next`'s response through
@@ -68,10 +70,14 @@ pub function response(req: HttpRequest, resp: HttpResponse, o: Options): HttpRes
 }
 
 // `encode(coding, body)` — `body` in `coding`, None for one this module
-// does not write.
+// does not write. zstd's window is at most 1 MiB, inside the 8 MiB a
+// client decoding `Content-Encoding: zstd` may hold (RFC 9659).
 pub function encode(coding: string, body: u8[]): Option[u8[]] {
   if (coding == "gzip") {
     return Some(deflate.gzip(body));
+  }
+  if (coding == "zstd") {
+    return Some(zstd.compress(body));
   }
   return None;
 }
@@ -81,7 +87,7 @@ pub function encode(coding: string, body: u8[]): Option[u8[]] {
 function __written(codings: string[]): string[] {
   let out: string[] = [];
   for c in codings {
-    if (c == "gzip") {
+    if (c == "gzip" || c == "zstd") {
       out = out.append(c);
     }
   }

@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"bytes"
 	"compress/gzip"
 	"fmt"
 	"io"
@@ -14,9 +15,9 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// std/http/compress under std/serve's loop, its gzip read by Go's
-// decoder: a page of numbered lines and one mixing them with
-// pseudo-random words, each asked for with and without
+// std/http/compress under std/serve's loop, its gzip and zstd read by
+// Go's decoders: a page of numbered lines and one mixing them with
+// pseudo-random words, each asked for in gzip, in zstd and without
 // `Accept-Encoding`. The interpreter and the x86-64 backend.
 func TestCompressServeInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
@@ -123,7 +124,7 @@ func checkCompressServe(t *testing.T, addr string) {
 	client := &http.Client{Transport: tr}
 	for _, path := range []string{"/lines", "/mixed"} {
 		want := compressExpected(path)
-		for _, accept := range []string{"gzip", ""} {
+		for _, accept := range []string{"gzip", "zstd", ""} {
 			req, err := http.NewRequest("GET", "http://"+addr+path, nil)
 			if err != nil {
 				t.Fatal(err)
@@ -143,27 +144,40 @@ func checkCompressServe(t *testing.T, addr string) {
 			if got := resp.Header.Get("Vary"); got != "Accept-Encoding" {
 				t.Errorf("%s %q: Vary %q", path, accept, got)
 			}
-			body := raw
-			if accept == "gzip" {
-				if resp.Header.Get("Content-Encoding") != "gzip" {
-					t.Fatalf("%s: Content-Encoding %q", path, resp.Header.Get("Content-Encoding"))
-				}
-				zr, err := gzip.NewReader(strings.NewReader(string(raw)))
-				if err != nil {
-					t.Fatalf("%s: %v", path, err)
-				}
-				if body, err = io.ReadAll(zr); err != nil {
-					t.Fatalf("%s: Go's gzip reader: %v", path, err)
-				}
-				if len(raw)*4 > len(want) {
-					t.Errorf("%s: %d bytes coded from %d", path, len(raw), len(want))
-				}
-			} else if resp.Header.Get("Content-Encoding") != "" {
-				t.Errorf("%s: coded without being asked", path)
+			if got := resp.Header.Get("Content-Encoding"); got != accept {
+				t.Fatalf("%s: Content-Encoding %q, want %q", path, got, accept)
+			}
+			body := decodeCompressed(t, path, accept, raw, len(want))
+			if accept != "" && len(raw)*4 > len(want) {
+				t.Errorf("%s %s: %d bytes coded from %d", path, accept, len(raw), len(want))
 			}
 			if string(body) != want {
 				t.Errorf("%s %q: body differs (%d bytes, want %d)", path, accept, len(body), len(want))
 			}
 		}
 	}
+}
+
+// decodeCompressed is `raw` read by Go's decoder for `coding`.
+func decodeCompressed(t *testing.T, path, coding string, raw []byte, size int) []byte {
+	t.Helper()
+	switch coding {
+	case "gzip":
+		zr, err := gzip.NewReader(bytes.NewReader(raw))
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		body, err := io.ReadAll(zr)
+		if err != nil {
+			t.Fatalf("%s: Go's gzip reader: %v", path, err)
+		}
+		return body
+	case "zstd":
+		body, err := zstdDecodeGo(raw, size)
+		if err != nil {
+			t.Fatalf("%s: Go's zstd decoder: %v", path, err)
+		}
+		return body
+	}
+	return raw
 }

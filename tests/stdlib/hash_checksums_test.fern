@@ -5,7 +5,8 @@ import "std/string";
 // tests/stdlib/hash_checksums_test.fern — std/hash's cksum(1) CRC-32 and the
 // sum(1) checksums against values from GNU coreutils (`printf abc | cksum`,
 // `sum -r`, `sum -s`), streamed in 7-byte updates and cross-checked against the
-// one-shot forms, with the block counts the utilities print.
+// one-shot forms, with the block counts the utilities print; and XXH64 against
+// the reference vectors.
 
 // __pseudo builds the 10,003-byte fixed pattern byte i = (i * 7 + 3) & 255:
 // long enough that 7-byte updates straddle every block boundary offset, and
@@ -226,6 +227,22 @@ function test_block_counts(): test.TestOutcome {
   return test.assert_eq(hash.sysv_sum_new().blocks(), 0 as u64);
 }
 
+// XXH64 under seeds 0 and 2654435761: empty, "a" and "abc" (the
+// reference's published vectors), a 39-byte string past the 8-byte steps,
+// and bytes 0 to 99 through the 32-byte stripes.
+function test_xxh64(): test.TestOutcome {
+  let hundred: u8[] = [];
+  while (hundred.len() < 100) {
+    hundred = hundred.append(hundred.len() as u8);
+  }
+  let ins: u8[][] = ["".bytes(), "a".bytes(), "abc".bytes(), "Nobody inspects the spammish repetition".bytes(), hundred];
+  let got: string = "";
+  for b in ins {
+    got = got + hash.xxh64(b, 0).to_string() + "/" + hash.xxh64(b, 2654435761).to_string() + " ";
+  }
+  return test.assert_eq(got.trim(), "17241709254077376921/12427117621484918767 15154266338359012955/4124638339981780891 4952883123889572249/1376095083568989693 18144624926692707313/6258634441271611719 7692681977284421015/9813981487457390353");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/hash checksums");
   r = r.it("cksum vectors", test_cksum_vectors);
@@ -236,5 +253,6 @@ function main(): i32 {
   r = r.it("sysv sum", test_sysv_sum);
   r = r.it("sysv sum string updates", test_sysv_sum_string_updates);
   r = r.it("block counts", test_block_counts);
+  r = r.it("xxh64", test_xxh64);
   return r.finish();
 }

@@ -1180,10 +1180,16 @@ func TestRunnerHTTPForwardedExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "http_forwarded", "std/http/forwarded", 14)
 }
 
+// `tests/stdlib/zstd_test.fern` decodes frames the reference zstd wrote
+// and reads back the encoder's.
+func TestRunnerZstdExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "zstd", "std/zstd", 9)
+}
+
 // `tests/stdlib/http_compress_test.fern` codes response bodies by
 // `Accept-Encoding` and leaves alone the ones it must.
 func TestRunnerHTTPCompressExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_compress", "std/http/compress", 10)
+	runnerSuitePasses(t, "http_compress", "std/http/compress", 11)
 }
 
 // `tests/stdlib/http_static_test.fern` serves a mock platform's files:
@@ -1259,7 +1265,7 @@ func TestRunnerTLSRecordExamplePasses(t *testing.T) {
 }
 
 func TestRunnerHashChecksumsExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "hash_checksums", "std/hash checksums", 8)
+	runnerSuitePasses(t, "hash_checksums", "std/hash checksums", 9)
 }
 
 // `tests/stdlib/cli_test.fern` covers std/cli's spec-driven argument
