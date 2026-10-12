@@ -7438,6 +7438,7 @@ function handle_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "Writer.write_bytes", params: [writer, typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: io_error },
     ssasem.Contract { name: "Writer.write_some_bytes", params: [writer, typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: t_io_result(t_i64()) },
     ssasem.Contract { name: "Writer.write", params: [writer, t_string()], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: io_error },
+    ssasem.Contract { name: "Writer.splice_forever", params: [writer, t_string()], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: io_error },
   ];
   for c in opens {
     out = out.append(c);

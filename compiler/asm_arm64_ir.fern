@@ -4940,6 +4940,13 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("write_some");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_writer_write_some\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
+  } else if (o.kind_tag == 431) {  // writer_splice_forever
+    // [fd, str box], marshalled as write_some's are, into
+    // __fn___fern_writer_splice_forever(fd, s) -> a fresh Option[IoError].
+    s = s.need("heap");
+    s = s.need("splice_forever");
+    s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_writer_splice_forever\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 203) {  // open_file (#4372)
     // [path box] -> __fern_open_res(x0=path, x1=flags(imm), x2=mode) -> a
     // fresh Result[Reader|Writer, IoError] box. Body emitted in the fs
@@ -10546,6 +10553,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("write_some")) {
       fs_src = fs_src + " " + asmcore.rt_src_writer_write_some(tgt);
     }
+    if (s.has_need("splice_forever")) {
+      fs_src = fs_src + " " + asmcore.rt_src_writer_splice_forever(tgt);
+    }
     if (s.has_need("reader")) {
       fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk(tgt) + " " + asmcore.rt_src_reader_close(tgt);
     }
@@ -11572,7 +11582,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc", "pipe", "set_file_times", "read_link",
     "getcwd", "chdir", "chroot", "setuid", "setgid", "setgroups", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
     "temp_dir", "stat", "lstat", "statfs", "mounts", "sysctl", "access", "read_dir", "read_dir_all", "read_dir_ino",
-    "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
+    "remove_dir_all", "open_file", "open_with", "writer_write", "write_some", "splice_forever",
     "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority", "clock_set",
     "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown",
   ]);

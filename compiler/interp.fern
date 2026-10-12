@@ -1944,6 +1944,10 @@ function writer_method(rs: VStruct, name: string, args: Value[]): Value {
     if (name == "write") {
       return option_io_error_value(w.write(s.v));
     }
+    // Nothing reaches the writer, so the caller writes the block itself.
+    if (name == "splice_forever") {
+      return option_io_error_value(Some(Unsupported));
+    }
     return write_count_value(w.write_some(s.v));
   }
   return v_err("Writer." + name + ": expected string");
@@ -3911,7 +3915,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
       if (rs.type_name == "Reader" && (name == "read_chunk" || name == "read_chunk_bytes" || name == "read_line" || name == "close")) {
         return reader_method(rs, name, args);
       }
-      if (rs.type_name == "Writer" && (name == "write" || name == "write_some" || name == "write_bytes" || name == "write_some_bytes" || name == "close")) {
+      if (rs.type_name == "Writer" && (name == "write" || name == "write_some" || name == "splice_forever" || name == "write_bytes" || name == "write_some_bytes" || name == "close")) {
         return writer_method(rs, name, args);
       }
     },
