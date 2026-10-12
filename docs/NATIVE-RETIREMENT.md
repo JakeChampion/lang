@@ -206,7 +206,8 @@ Every step is DONE.
    literate modes. Every `-target` compile execs the self-host compiler
    (`cmd/fern/selfhost.go`) with the embedded stdlib written to the user
    cache directory as its stdlib root. The compiler is `$FERN_SELFHOST`, else
-   `fern-selfhost` beside `fern`, else one built on first use from the
+   a `fern-selfhost` beside `fern` whose `fern-selfhost.key` matches `fern`'s
+   sources (#12185), else one built on first use from the
    embedded sources by the pinned stage0 (`internal/tools/launcher`). `run()` and
    its link helpers are gone, and so are the flags only it read: `-cc`,
    `-native`, `-component-wrap`, `-component-wrap-cli`, `-async-export` and

@@ -59,7 +59,9 @@ else. Compiling a Fern program needs nothing else either — no `gcc`, no
 `fern` compiles through Fern's self-hosted compiler, which is written
 in Fern. (`fern -interp` and `fern -check` do not need it.) It uses
 `$FERN_SELFHOST` when that is set, else a `fern-selfhost` in the same
-directory as `fern`. With neither, the first compile downloads the stage0
+directory as `fern` that was built from the same sources (the
+`fern-selfhost.key` beside it says so). With neither, the first compile
+downloads the stage0
 compiler pinned in `bootstrap/stage0.lock` from the project's GitHub
 releases, checks its sha256, and builds the self-hosted compiler from the
 sources inside `fern`. That takes about a minute, once per version; the
@@ -74,7 +76,8 @@ make bootstrap                       # writes bin/fern-selfhost
 export FERN_SELFHOST=$PWD/bin/fern-selfhost
 ```
 
-or copy `bin/fern-selfhost` next to `fern`.
+or copy `bin/fern-selfhost` and `bin/fern-selfhost.key` next to a `fern`
+built from the same checkout.
 
 ## Verify the install
 

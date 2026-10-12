@@ -167,12 +167,14 @@ check-sources: bin/fern
 # until #6002 (AT_FDCWD is -2 on XNU, not -100), and absolute is what every
 # harness uses anyway. Note the exit code cannot carry a value >= 126: WASI
 # refuses anything outside [0..126), so wasmtime reports 1.
-SELFHOST_TARGET ?= $(shell uname -sm | sed -e 's/^Darwin.*/arm64-darwin/' -e 's/^Linux aarch64/arm64-linux/' -e 's/^Linux x86_64/x86-64-linux/')
+HOST_TARGET := $(shell uname -sm | sed -e 's/^Darwin.*/arm64-darwin/' -e 's/^Linux aarch64/arm64-linux/' -e 's/^Linux x86_64/x86-64-linux/')
+SELFHOST_TARGET ?= $(HOST_TARGET)
+# The key marks the compiler bin/fern may run, so a cross build gets none.
 selfhost-cli: bin/fern
 	@mkdir -p bin
 	./bin/fern -target $(SELFHOST_TARGET) -o bin/fern-selfhost compiler/fern.fern
 	@chmod +x bin/fern-selfhost
-	./bin/fern -selfhost-key > bin/fern-selfhost.key
+	@if [ "$(SELFHOST_TARGET)" = "$(HOST_TARGET)" ]; then ./bin/fern -selfhost-key > bin/fern-selfhost.key; else rm -f bin/fern-selfhost.key; fi
 	@echo "built bin/fern-selfhost ($(SELFHOST_TARGET)) — see the Makefile comment for the loop"
 
 # Build the same bin/fern-selfhost with NO Go toolchain and NO native backend:
