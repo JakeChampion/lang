@@ -135,9 +135,9 @@ function test_params(): test.TestOutcome {
   let r: router.Router[platform.Host] = router.new();
   match (r.route("/{kind}/{id}/{rest...}", echo_params)) {
     Ok(r1) => {
-      let a: string = status_of(r1, "GET", "/user%20s/4%2F2/a%20b/c");
+      let a: string = status_of(r1, "GET", "/user s/100%41/a b/c");
       let b: string = status_of(r1, "GET", "/x/y/");
-      return test.assert_eq(a + "|" + b, "kind=user s;id=4/2;rest=a b/c;|kind=x;id=y;rest=;");
+      return test.assert_eq(a + "|" + b, "kind=user s;id=100%41;rest=a b/c;|kind=x;id=y;rest=;");
     },
     Err(e) => {
       return test.fail(e.message());

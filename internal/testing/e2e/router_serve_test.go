@@ -117,6 +117,7 @@ func checkRouterServe(t *testing.T, addr string) {
 		{"PUT", "/users", "", 405, "POST", ""},
 		{"POST", "/users", "ann", 201, "", "made ann"},
 		{"GET", "/files/a/b%20c.txt", "", 200, "", "file a/b c.txt"},
+		{"GET", "/files/a%2541", "", 200, "", "file a%41"},
 		{"GET", "/files/", "", 200, "", "file "},
 		{"GET", "/files", "", 404, "", ""},
 		{"GET", "/nope?x=1", "", 404, "", ""},

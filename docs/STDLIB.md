@@ -2293,7 +2293,9 @@ function routes(): Result[router.Router[platform.Host], router.RouteError] {
   other methods, 404 when none matches it. `handler()` is the closure
   `serve.run` takes. A route handler is `(req, params, plat)`; `Router[P]`
   is generic over the platform type.
-- `Params` holds the values a pattern bound, percent-decoded, in its order:
+- `Params` holds the values a pattern bound, in its order, as the
+  request's path holds them (decoded once already, by the serve loop or
+  the wasi-http entry):
   `get(name)` is the value when bound; `param(name)` answers a 500
   `HttpError` for a name the pattern does not bind, `int(name)` a 400 for a
   value that is not an integer, so a handler writes `params.int("id")?` and
