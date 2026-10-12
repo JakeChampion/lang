@@ -9,12 +9,11 @@ import (
 	"testing"
 )
 
-// iterPrelude mirrors internal/stdlib/core/iter.fern (the numeric Iterator
-// trait + integer Range + eager drivers), inlined as a self-contained program.
-// The self-host IR tests inline it (the self-host core tests inline the stdlib
+// iterPrelude is a self-contained i32-only Iterator trait + integer Range +
+// eager drivers (sum / count / to_array). The self-host IR tests inline it (the self-host core tests inline the stdlib
 // source rather than importing — see self_host_core_int_parse_ir_test.go); the
 // native side ALSO runs this inlined form so both backends exercise byte-for-
-// byte the same trait shape; a separate native test below exercises the real
+// byte the same trait shape; separate native tests below exercise the real
 // `import "core/iter"` module.
 const iterPrelude = `pub trait Iterator { function next(self: Self): Option[(i32, Self)]; }
 pub struct Range { lo: i32, hi: i32 }
@@ -112,8 +111,8 @@ func TestNativeIteratorTraitModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
     let s = iter.sum(iter.range(0, 5));            // 10
-    let c = iter.count(iter.range(2, 9));          // 7
-    let xs = iter.to_array(iter.range(0, 4));      // [0,1,2,3]
+    let c = iter.range(2, 9).count();              // 7
+    let xs = iter.range(0, 4).collect();           // [0,1,2,3]
     let t = 0;
     for x in xs { t = t + x; }                     // 6
     return s + c + t + xs.len();                   // 10+7+6+4 = 27
@@ -168,20 +167,20 @@ function main(): i32 {
 
 // TestNativeIteratorTraitModuleGeneric exercises the GENERIC face of the
 // shipped `core/iter` module: a user type that implements `iter.Iterator[T]`
-// for a non-i32 element type (`boolean`) and drives the module's generic
-// `count` / `to_array` over it. This proves the stdlib trait is genuinely
-// generic (#2691), not the old i32-only shape — `count`/`to_array` infer the
-// element type from the impl (bound-driven inference, #3596).
+// for a non-i32 element type (`boolean`) and drives the trait's `count` /
+// `collect` methods over it. This proves the stdlib trait is genuinely
+// generic (#2691), not the old i32-only shape — the methods take their
+// element type from the impl.
 func TestNativeIteratorTraitModuleGeneric(t *testing.T) {
 	src := `import "core/iter" as iter;
 struct BoolSeq { n: i32 }
 impl iter.Iterator[boolean] for BoolSeq { function next(self: Self): Option[(boolean, Self)] { if (self.n <= 0) { return None; } return Some((true, BoolSeq { n: self.n - 1 })); } }
 function main(): i32 {
-    let c = iter.count(BoolSeq { n: 3 });           // 3
-    let bs = iter.to_array(BoolSeq { n: 2 });        // [true, true]
+    let c = (BoolSeq { n: 3 }).count();              // 3
+    let bs = (BoolSeq { n: 2 }).collect();           // [true, true]
     let k = 0;
     for b in bs { if (b) { k = k + 1; } }            // 2
-    let f = iter.fold(iter.range(1, 5), 1, (a: i32, x: i32): i32 => { return a * x; });  // 1*1*2*3*4 = 24
+    let f = iter.range(1, 5).fold(1, (a: i32, x: i32): i32 => { return a * x; });  // 1*1*2*3*4 = 24
     return c + k + bs.len() + f - 24;                // 3+2+2+24-24 = 7
 }
 `
@@ -207,17 +206,17 @@ func TestNativeIteratorTraitModulePredicates(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
     let a = 0;
-    if (iter.any(iter.range(0, 5), (x: i32): boolean => { return x == 3; })) { a = 1; }      // 1
+    if (iter.range(0, 5).any((x: i32): boolean => { return x == 3; })) { a = 1; }      // 1
     let b = 0;
-    if (!iter.any(iter.range(0, 5), (x: i32): boolean => { return x > 9; })) { b = 2; }       // 2
+    if (!iter.range(0, 5).any((x: i32): boolean => { return x > 9; })) { b = 2; }       // 2
     let c = 0;
-    if (iter.all(iter.range(0, 5), (x: i32): boolean => { return x < 10; })) { c = 4; }       // 4
+    if (iter.range(0, 5).all((x: i32): boolean => { return x < 10; })) { c = 4; }       // 4
     let d = 0;
-    if (!iter.all(iter.range(0, 5), (x: i32): boolean => { return x % 2 == 0; })) { d = 8; }   // 8
+    if (!iter.range(0, 5).all((x: i32): boolean => { return x % 2 == 0; })) { d = 8; }   // 8
     let e = 0;
-    match (iter.find(iter.range(0, 9), (x: i32): boolean => { return x >= 2 && x % 2 == 0; })) { Some(v) => { e = v; }, None => {} }  // 2
+    match (iter.range(0, 9).find((x: i32): boolean => { return x >= 2 && x % 2 == 0; })) { Some(v) => { e = v; }, None => {} }  // 2
     let f = 0;
-    match (iter.find(iter.range(0, 3), (x: i32): boolean => { return x > 100; })) { Some(v) => { f = v; }, None => { f = 16; } }      // 16
+    match (iter.range(0, 3).find((x: i32): boolean => { return x > 100; })) { Some(v) => { f = v; }, None => { f = 16; } }      // 16
     return a + b + c + d + e + f;                                                                   // 1+2+4+8+2+16 = 33
 }
 `

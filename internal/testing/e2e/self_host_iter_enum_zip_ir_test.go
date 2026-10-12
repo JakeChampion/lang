@@ -9,14 +9,15 @@ import (
 	"testing"
 )
 
-// Tuple-producing iterator adapters `enumerate` / `zip` in core/iter (#2691).
-// `enumerate` numbers each value into `(i32, T)[]`; `zip` walks two iterators in
-// lockstep into `(T, U)[]`, stopping at the shorter. Despite returning a tuple
-// array from a bounded generic — and the driver reading `p.0` / `p.1` field
-// positions off that generic return — both lower on the self-host IR path (the
-// generic tuple-array field access works; an earlier belief that it didn't was a
-// process-exit-code (u8) truncation artifact in the test oracle, not a codegen
-// limit). All oracles here stay < 256 so the i32 result survives the exit code.
+// Tuple-producing eager iterator adapters `enumerate` / `zip`, written in the
+// inline prelude as bounded generics (#2691). `enumerate` numbers each value
+// into `(i32, T)[]`; `zip` walks two iterators in lockstep into `(T, U)[]`,
+// stopping at the shorter. Despite returning a tuple array from a bounded
+// generic — and the driver reading `p.0` / `p.1` field positions off that
+// generic return — both lower on the self-host IR path (the generic tuple-array
+// field access works; an earlier belief that it didn't was a process-exit-code
+// (u8) truncation artifact in the test oracle, not a codegen limit). All
+// oracles here stay < 256 so the i32 result survives the exit code.
 const iterEnumZipPrelude = `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 pub struct Range { lo: i32, hi: i32 }
 pub function range(lo: i32, hi: i32): Range { return Range { lo: lo, hi: hi }; }
@@ -89,15 +90,16 @@ func TestNativeIterEnumZipArm64(t *testing.T) {
 }
 
 // TestNativeIterEnumZipModule exercises the shipped `import "core/iter"`
-// module's enumerate / zip over real `range` iterators on the native backends.
+// module's lazy enumerate / zip methods over real `range` iterators on the
+// native backends.
 func TestNativeIterEnumZipModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
-    let e = iter.enumerate(iter.range(10, 14));                   // [(0,10),(1,11),(2,12),(3,13)]
-    let s = 0; for p in e { s = s + p.0 + p.1; }                  // 6 + 46 = 52
-    let z = iter.zip(iter.range(0, 4), iter.range(100, 102));     // [(0,100),(1,101)] (shorter wins)
-    let t = 0; for p in z { t = t + p.0; }                        // 0+1 = 1
-    return s + e.len() + z.len() + t;                             // 52+4+2+1 = 59
+    let e = iter.range(10, 14).enumerate().collect();              // [(0,10),(1,11),(2,12),(3,13)]
+    let s = 0; for p in e { s = s + p.0 + p.1; }                   // 6 + 46 = 52
+    let z = iter.range(0, 4).zip(iter.range(100, 102)).collect();  // [(0,100),(1,101)] (shorter wins)
+    let t = 0; for p in z { t = t + p.0; }                         // 0+1 = 1
+    return s + e.len() + z.len() + t;                              // 52+4+2+1 = 59
 }
 `
 	p := writeIterProg(t, src)

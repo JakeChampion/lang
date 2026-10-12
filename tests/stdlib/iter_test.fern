@@ -2,8 +2,8 @@ import "std/test";
 import "core/iter" as iter;
 
 // tests/stdlib/iter_test.fern — pure-Fern coverage of the core/iter
-// stdlib (the generic Iterator[T] protocol + Range / ArrayIter and the
-// eager drivers), driven through the std/test runner. The Go-side
+// stdlib (the generic Iterator[T] protocol + Range / ArrayIter, the free
+// reducers and the Iterator methods), driven through the std/test runner. The Go-side
 // *_test.go suites unit-test each piece; this is the migration-shaped
 // (pure-Fern) companion, exercising the surface end-to-end via assertions.
 function test_sum_range(): test.TestOutcome {
@@ -11,7 +11,7 @@ function test_sum_range(): test.TestOutcome {
 }
 
 function test_count_range(): test.TestOutcome {
-  return test.assert_eq(iter.count(iter.range(2, 9)), 7);
+  return test.assert_eq(iter.range(2, 9).count(), 7);
 }
 
 function test_of_sum(): test.TestOutcome {
@@ -79,26 +79,26 @@ function test_count_value(): test.TestOutcome {
 }
 
 function test_fold(): test.TestOutcome {
-  let s = iter.fold(iter.range(1, 5), 0, (a: i32, x: i32): i32 => a + x);
+  let s = iter.range(1, 5).fold(0, (a: i32, x: i32): i32 => a + x);
   return test.assert_eq(s, 10);
 }
 
 function test_any(): test.TestOutcome {
-  return test.assert_true(iter.any(iter.range(0, 5), (x: i32): boolean => x == 3));
+  return test.assert_true(iter.range(0, 5).any((x: i32): boolean => x == 3));
 }
 
 function test_all(): test.TestOutcome {
-  return test.assert_true(iter.all(iter.range(0, 5), (x: i32): boolean => x < 10));
+  return test.assert_true(iter.range(0, 5).all((x: i32): boolean => x < 10));
 }
 
 function test_any_miss(): test.TestOutcome {
-  return test.assert_false(iter.any(iter.range(0, 5), (x: i32): boolean => x > 99));
+  return test.assert_false(iter.range(0, 5).any((x: i32): boolean => x > 99));
 }
 
 function test_map_filter(): test.TestOutcome {
   let xs: i32[] = [1, 2, 3, 4, 5, 6];
-  let evens = iter.filter(iter.of(xs), (x: i32): boolean => x % 2 == 0);
-  let doubled = iter.map(iter.of(evens), (x: i32): i32 => x * 2);
+  let evens = iter.of(xs).filter((x: i32): boolean => x % 2 == 0).collect();
+  let doubled = iter.of(evens).map((x: i32): i32 => x * 2).collect();
   return test.assert_eq(iter.sum(iter.of(doubled)), 24);  // (2+4+6)*2
 }
 

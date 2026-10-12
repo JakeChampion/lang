@@ -9,14 +9,12 @@ import (
 	"testing"
 )
 
-// Eager iterator transforms `map` / `filter` in core/iter — closure-taking
-// adapters that consume an Iterator and collect into a fresh array (#2691, the
-// iterator-protocol surface that feeds `collect` #2709). Like the predicate
-// adapters, the closure is applied inside a `match` arm, and the whole driver is
-// called in a `let` / `for-in` position; both lower on the self-host IR path now
-// that the #2686 condition-lift gap is fixed. The inline prelude mirrors
-// core/iter's `map` / `filter` so both backends exercise byte-for-byte the same
-// shape.
+// Eager iterator transforms `map` / `filter`, written in the inline prelude as
+// bounded generics — closure-taking adapters that consume an Iterator and
+// collect into a fresh array (#2691). Like the predicate adapters, the closure
+// is applied inside a `match` arm, and the whole driver is called in a `let` /
+// `for-in` position; both lower on the self-host IR path now that the #2686
+// condition-lift gap is fixed. The module test runs core/iter's lazy methods.
 const iterMapFilterPrelude = `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 pub struct Range { lo: i32, hi: i32 }
 pub function range(lo: i32, hi: i32): Range { return Range { lo: lo, hi: hi }; }
@@ -88,15 +86,16 @@ func TestNativeIterMapFilterArm64(t *testing.T) {
 }
 
 // TestNativeIterMapFilterModule exercises the shipped `import "core/iter"`
-// module's `map` / `filter` over real `range` iterators on the native backends.
+// module's `map` / `filter` methods over real `range` iterators on the native
+// backends.
 func TestNativeIterMapFilterModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
-    let sq = iter.map(iter.range(0, 4), (x: i32): i32 => { return x * x; });   // [0,1,4,9]
-    let s = 0; for v in sq { s = s + v; }                                            // 14
-    let ev = iter.filter(iter.range(0, 8), (x: i32): boolean => { return x % 2 == 0; });  // [0,2,4,6]
-    let t = 0; for v in ev { t = t + v; }                                            // 12
-    return s + t + sq.len() + ev.len();                                              // 14+12+4+4 = 34
+    let sq = iter.range(0, 4).map((x: i32): i32 => { return x * x; }).collect();              // [0,1,4,9]
+    let s = 0; for v in sq { s = s + v; }                                                     // 14
+    let ev = iter.range(0, 8).filter((x: i32): boolean => { return x % 2 == 0; }).collect();  // [0,2,4,6]
+    let t = 0; for v in ev { t = t + v; }                                                     // 12
+    return s + t + sq.len() + ev.len();                                                       // 14+12+4+4 = 34
 }
 `
 	p := writeIterProg(t, src)
