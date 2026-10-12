@@ -4457,7 +4457,7 @@ function reuse_pairs(f: ssasem.Func, p: Plan, idx: i32[][], vr: VariantReads, b:
     } else if (ins.kind_tag != 6 && ins.kind_tag != 8) {
       let step: Step = step_of(p, idx, b.id, pos, 0 - 1);
       let claims: i32 = recipient_slots(f, p, ins);
-      if (off || into >= 0 && pos < carry.build_at[into]) {
+      if (off) {
         pending = [];
         pending_at = [];
       } else {

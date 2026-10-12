@@ -6345,14 +6345,26 @@ function named_by_schemas(out: Schemas, nr: i32, ne: i32, pending: typeinfo.Type
   return pending;
 }
 
-// with_schema_root keeps `t` for the schema closure only when the closure can
-// find something in it: a scalar or a string names no schema, function type
-// or dyn type.
-function with_schema_root(own named: typeinfo.Type[], t: typeinfo.Type): typeinfo.Type[] {
-  if (names_schema(t) || ssasem.is_dyn(t)) {
-    return named.append(t);
+// Roots is the schema closure's roots with each type once, in the order
+// first met: `ix` indexes their spellings and `at[i]` is where the type
+// spelled by `ix`'s i-th name stands. A type without a spelling is kept each
+// time it comes. A root is a type the closure can find something in: not a
+// scalar or a string, which name no schema, function type or dyn type.
+struct Roots { types: typeinfo.Type[], at: i32[], ix: util.NameIndex }
+
+function with_distinct_root(r: Roots, t: typeinfo.Type): Roots {
+  if (!names_schema(t) && !ssasem.is_dyn(t)) {
+    return r;
   }
-  return named;
+  let sp: string = typeinfo.spelling(t);
+  if (sp.len() == 0) {
+    return Roots { ...r, types: r.types.append(t) };
+  }
+  let j: i32 = r.ix.find(sp);
+  if (j >= 0 && semtypes.equal(r.types[r.at[j]], t)) {
+    return r;
+  }
+  return Roots { types: r.types.append(t), at: r.at.append(r.types.len()), ix: r.ix.added(sp) };
 }
 
 function names_schema(t: typeinfo.Type): boolean {
@@ -7012,15 +7024,15 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo,
     params = params.append(f.values[at]);
     at = at + 1;
   }
-  let named: typeinfo.Type[] = [];
+  let roots: Roots = Roots { types: [], at: [], ix: util.name_index([]) };
   for t in f.values {
-    named = with_schema_root(named, t);
+    roots = with_distinct_root(roots, t);
   }
-  named = with_schema_root(named, s.result);
+  roots = with_distinct_root(roots, s.result);
   for t in contract_types(s.calls) {
-    named = with_schema_root(named, t);
+    roots = with_distinct_root(roots, t);
   }
-  let closed: Closed = env_rows_closed(named, s, memo);
+  let closed: Closed = env_rows_closed(roots.types, s, memo);
   let table: Schemas = closed.table;
   if (!table.ok) {
     return Made { p: refuse(table.why), memo: table.memo };

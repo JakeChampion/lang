@@ -1816,7 +1816,7 @@ pub function spill_count(reg_of: i32[]): i32 {
 // operand that dies at them: both emitters read the operands before writing
 // the destination, or swap them when the right one lives there.
 function shares_operand_home(op: string): boolean {
-  let ops: string[] = ["add", "sub", "mul", "and", "or", "xor", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u"];
+  let ops: string[] = ["add", "sub", "mul", "and", "or", "xor", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "shl", "shr_s", "shr_u"];
   for o in ops {
     if (o == op) {
       return true;

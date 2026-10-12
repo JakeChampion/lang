@@ -174,7 +174,7 @@ selfhost/wasm32-wasi/array_index.emit	452
 selfhost/wasm32-wasi/array_scale_f64.emit	2417
 selfhost/wasm32-wasi/array_with.emit	495
 selfhost/wasm32-wasi/ascii_scan.emit	3066
-selfhost/wasm32-wasi/call_overhead.emit	169
+selfhost/wasm32-wasi/call_overhead.emit	164
 selfhost/wasm32-wasi/closure_call.emit	493
 selfhost/wasm32-wasi/enum_match.emit	598
 selfhost/wasm32-wasi/http_hello.emit	21989
@@ -182,9 +182,9 @@ selfhost/wasm32-wasi/int_loop.emit	117
 selfhost/wasm32-wasi/map_int.emit	7435
 selfhost/wasm32-wasi/map_probe_chain.emit	7460
 selfhost/wasm32-wasi/map_string.emit	10733
-selfhost/wasm32-wasi/ordmap_insert.emit	6863
-selfhost/wasm32-wasi/pmap_insert.emit	5809
-selfhost/wasm32-wasi/pvec_with.emit	2842
+selfhost/wasm32-wasi/ordmap_insert.emit	6792
+selfhost/wasm32-wasi/pmap_insert.emit	5639
+selfhost/wasm32-wasi/pvec_with.emit	2813
 selfhost/wasm32-wasi/record_update.emit	730
 selfhost/wasm32-wasi/sort_inplace.emit	2673
 selfhost/wasm32-wasi/sort_ints.emit	4161
@@ -231,18 +231,18 @@ selfhost/x86-64-linux/utf8_ingest_unchecked.emit	14482
 selfhost/x86-64-linux/utf8_ingest_validated.emit	14726
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-selfhost/x86-64-linux/perceus_cfold.emit	2553
-selfhost/arm64-linux/perceus_cfold.emit	2721
-selfhost/wasm32-wasi/perceus_cfold.emit	2876
+selfhost/x86-64-linux/perceus_cfold.emit	2652
+selfhost/arm64-linux/perceus_cfold.emit	2817
+selfhost/wasm32-wasi/perceus_cfold.emit	2944
 selfhost/x86-64-linux/perceus_deriv.emit	2708
 selfhost/arm64-linux/perceus_deriv.emit	2902
 selfhost/wasm32-wasi/perceus_deriv.emit	2977
-selfhost/x86-64-linux/perceus_nqueens.emit	1425
+selfhost/x86-64-linux/perceus_nqueens.emit	1448
 selfhost/arm64-linux/perceus_nqueens.emit	1600
-selfhost/wasm32-wasi/perceus_nqueens.emit	1223
-selfhost/x86-64-linux/perceus_rbtree.emit	3448
-selfhost/arm64-linux/perceus_rbtree.emit	3581
-selfhost/wasm32-wasi/perceus_rbtree.emit	4295
-selfhost/x86-64-linux/perceus_rbtree_ck.emit	3553
-selfhost/arm64-linux/perceus_rbtree_ck.emit	3693
-selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4401
+selfhost/wasm32-wasi/perceus_nqueens.emit	1244
+selfhost/x86-64-linux/perceus_rbtree.emit	3623
+selfhost/arm64-linux/perceus_rbtree.emit	3722
+selfhost/wasm32-wasi/perceus_rbtree.emit	4507
+selfhost/x86-64-linux/perceus_rbtree_ck.emit	3529
+selfhost/arm64-linux/perceus_rbtree_ck.emit	3663
+selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4475
