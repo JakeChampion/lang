@@ -963,7 +963,8 @@ function wrap_seq(p: Palette, code: string): string {
 // target could be reached. Two options need it and neither dereferences
 // the entry outright: `--group-directories-first` counts a link to a
 // directory as a directory, and `ln=target` colours a link as its
-// referent.
+// referent. `target` is read only for the long format, the one that
+// prints it.
 struct Ent { name: string, path: string, st: FileStat, stated: boolean, followed: boolean, target: string, has_target: boolean, link_mode: u32, link_ok: boolean, owner: string, group: string, context: string }
 
 function blank_stat(): FileStat {
@@ -992,11 +993,11 @@ function needs_stat(c: Cfg): boolean {
 // a link to a directory leaves the target name UNCOLOURED, because
 // nothing asked what the target was. Four things ask — `ln=target` and
 // the `or` / `mi` capabilities, which decide the colour, and an
-// indicator style that distinguishes kinds — plus
-// `--group-directories-first`, which counts a link to a directory as
-// one.
+// indicator style that distinguishes kinds on the ` -> target` the long
+// format prints — plus `--group-directories-first`, which counts a link
+// to a directory as one.
 function needs_link_mode(c: Cfg): boolean {
-  if (c.indicator == ind_file_type() || c.indicator == ind_classify()) {
+  if (c.format == fmt_long() && (c.indicator == ind_file_type() || c.indicator == ind_classify())) {
     return true;
   }
   if (c.dirs_first) {
@@ -1019,7 +1020,8 @@ function stat_entry(c: Cfg, e: Ent, cmdline: boolean): (Ent, boolean, string) {
 }
 
 // `stat_record(c, e, cmdline)` — the entry's record. The link target is
-// read whenever the entry IS a link and something will print or judge it.
+// read when the entry IS a link and the long format will print it, and
+// stat'ed when something judges it.
 function stat_record(c: Cfg, e: Ent, cmdline: boolean): (Ent, boolean, string) {
   let follow: boolean = c.deref == deref_all() || cmdline && c.deref == deref_cmd();
   let out: Ent = e;
@@ -1057,11 +1059,13 @@ function stat_record(c: Cfg, e: Ent, cmdline: boolean): (Ent, boolean, string) {
       Err(_) => {}
     }
   }
-  match (read_link(e.path)) {
-    Ok(t) => {
-      out = Ent { ...out, target: t, has_target: true };
-    },
-    Err(_) => {}
+  if (c.format == fmt_long()) {
+    match (read_link(e.path)) {
+      Ok(t) => {
+        out = Ent { ...out, target: t, has_target: true };
+      },
+      Err(_) => {}
+    }
   }
   if (needs_link_mode(c)) {
     match (stat(e.path)) {
