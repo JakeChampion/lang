@@ -3,7 +3,7 @@
 // parser.inject_builtin_enums / add_builtin_variant.
 //
 // Historically the self-host compiler synthesised these decls in code: a
-// loop of `add_builtin_variant(structs, "JString", "string", "JsonValue")`
+// loop of `add_builtin_variant(structs, "JString", ["string"], "JsonValue")`
 // calls plus open-coded StructDecl literals for FileStat / ProcessResult /
 // HeaderMap / HttpRequest / HttpResponse. That "synthesise the AST by
 // hand" approach is exactly the `.wants/.needs`-style boilerplate we want
@@ -62,12 +62,15 @@ struct ChunkProducer { next: (i32) => Option[u8[]], idle_ms: i32, filler: u8[] }
 // Body — what an HttpResponse carries (std/http): text or bytes held
 // whole, a Stream drained to the wire, a file the serve loop streams, or
 // chunks the loop pulls from a producer by index until it answers None.
+// `BodyFileRanges(path, ranges, seams)` is ranges of a file (start, length
+// pairs) with the bytes of `seams` before, between and after them.
 enum Body {
   BodyText(string),
   BodyBytes(u8[]),
   BodyStream(Stream),
   BodyFile(string),
   BodyChunks(ChunkProducer),
+  BodyFileRanges(string, i64[], u8[][]),
 }
 
 // FileStat — returned by stat(path). The emitter resolves

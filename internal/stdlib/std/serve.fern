@@ -420,14 +420,65 @@ struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: u8[][], deadlin
 enum __Tls { Plain, Secured(server.Session), Lent }
 
 // __Tail — what of a response is still to be produced once its head and
-// the bytes pending have gone: nothing; a file the loop reads as the
-// socket takes it, with the bytes its Content-Length still owes; or the
+// the bytes pending have gone: nothing; a range of a file the loop reads
+// as the socket takes it, with the bytes the range still owes and the
+// spans after it (`FileTail`), or the seam written between two ranges
+// (`SeamTail`); or the
 // chunks a producer answers from the next index, under chunked transfer
 // coding with the last chunk and trailer section that end them, or
 // close-delimited (an empty ending) for an HTTP/1.0 client; or those
 // chunks while the producer is parked on a wait for the next one
 // (`ParkedTail`), the flight running it holding the task.
-enum __Tail { NoTail, FileTail(Reader, i64), ChunkTail(ChunkProducer, i32, string), ParkedTail(ChunkProducer, i32, string) }
+enum __Tail { NoTail, FileTail(Reader, i64, __Spans), SeamTail(Reader, u8[], __Spans), ChunkTail(ChunkProducer, i32, string), ParkedTail(ChunkProducer, i32, string) }
+
+// __Spans — what a file body sends after its current range: the ranges
+// still to come (start, length pairs) and the seams written after the
+// current range and after each of those.
+struct __Spans { ranges: i64[], seams: u8[][] }
+
+// __after_range(r, rest) — the tail once a range of `r` has gone: the seam
+// after it, else the next range, else nothing, `r` closed then. None when
+// the next range cannot be sought to.
+function __after_range(r: Reader, rest: __Spans): Option[__Tail] {
+  let next: __Spans = __Spans { ranges: rest.ranges, seams: __from(rest.seams, 1) };
+  if (rest.seams.len() > 0 && rest.seams[0].len() > 0) {
+    return Some(SeamTail(r, rest.seams[0], next));
+  }
+  return __range_tail(r, next);
+}
+
+// __range_tail(r, sp) — the tail sending the first of `sp`'s ranges, `r`
+// sought to its start; nothing once no range is left, `r` closed.
+function __range_tail(r: Reader, sp: __Spans): Option[__Tail] {
+  if (sp.ranges.len() < 2) {
+    r.close();
+    return Some(NoTail);
+  }
+  let rest: __Spans = __Spans { ranges: __from(sp.ranges, 2), seams: sp.seams };
+  if (sp.ranges[1] == 0 as i64) {
+    return __after_range(r, rest);
+  }
+  match (r.seek(sp.ranges[0], 0)) {
+    Ok(at) => {
+      return Some(FileTail(r, sp.ranges[1], rest));
+    },
+    Err(e) => {
+      r.close();
+      return None;
+    }
+  }
+  return None;
+}
+
+function __from[T](xs: T[], from: i32): T[] {
+  let out: T[] = [];
+  let i: i32 = from;
+  while (i < xs.len()) {
+    out = out.append(xs[i]);
+    i = i + 1;
+  }
+  return out;
+}
 
 // __tail_keeps(t) — whether the connection may persist once `t` has
 // gone: a close-delimited tail is what ends it.
@@ -484,7 +535,15 @@ function __serve_wire(out: usize, method: string, version: string, answer: HttpR
   let headless: boolean = http.http_bodiless(answer.status) || method == "HEAD";
   match (answer.body) {
     BodyFile(path) => {
-      return __wire_file(out, method, version, answer, path, headless, keep_alive, clk, date);
+      let whole: i64[] = [];
+      let none: u8[] = [];
+      return __wire_file(out, method, version, answer, path, __Spans { ranges: whole, seams: [none, none] }, headless, keep_alive, clk, date);
+    },
+    BodyFileRanges(path, ranges, seams) => {
+      if (ranges.len() == 0 || !http.file_ranges_ok(ranges, seams)) {
+        return __serve_wire(out, method, version, http.internal_error(""), keep_alive, clk);
+      }
+      return __wire_file(out, method, version, answer, path, __Spans { ranges: ranges, seams: seams }, headless, keep_alive, clk, date);
     },
     BodyChunks(producer) => {
       if (answer.status == 101) {
@@ -501,35 +560,68 @@ function __serve_wire(out: usize, method: string, version: string, answer: HttpR
   return NoTail;
 }
 
-// __wire_file(out, method, version, resp, path, headless, keep_alive, clk,
-// date) — a file body opened here and streamed as the tail under its
-// size, or answered 404 when it cannot be opened.
-function __wire_file(out: usize, method: string, version: string, resp: HttpResponse, path: string, headless: boolean, keep_alive: boolean, clk: __Clock, date: string): __Tail {
+// __wire_file(out, method, version, resp, path, body, headless, keep_alive,
+// clk, date) — a file body opened here: the head under the body's length,
+// its first seam, and its ranges as the tail, the whole file when `body`
+// names none; or a 404 when the file cannot be opened, no longer holds the
+// ranges, or cannot be sought to the first, decided before the head goes.
+function __wire_file(out: usize, method: string, version: string, resp: HttpResponse, path: string, body: __Spans, headless: boolean, keep_alive: boolean, clk: __Clock, date: string): __Tail {
   match (open_reader(path)) {
     Ok(r) => {
-      let size: i64 = 0 - 1 as i64;
-      match (r.stat()) {
-        Ok(st) => {
-          size = st.size;
-        },
-        Err(e) => {}
-      }
-      if (size < 0 as i64) {
+      let ranges: i64[] = __ranges_held(r, body.ranges);
+      if (ranges.len() == 0) {
         r.close();
         return __serve_wire(out, method, version, http.not_found(), keep_alive, clk);
       }
-      http.http_serialize_response_head_into(out, resp, keep_alive, date + "Content-Length: " + size.to_string() + "\r\n");
-      if (headless || size == 0 as i64) {
+      let framing: string = date + "Content-Length: " + http.file_ranges_len(ranges, body.seams).to_string() + "\r\n";
+      if (headless) {
         r.close();
+        http.http_serialize_response_head_into(out, resp, keep_alive, framing);
         return NoTail;
       }
-      return FileTail(r, size);
+      match (__range_tail(r, __Spans { ranges: ranges, seams: __from(body.seams, 1) })) {
+        Some(t) => {
+          http.http_serialize_response_head_into(out, resp, keep_alive, framing);
+          buf_push_bytes_range(out, body.seams[0], 0, body.seams[0].len());
+          return t;
+        },
+        None => {
+          return __serve_wire(out, method, version, http.not_found(), keep_alive, clk);
+        }
+      }
     },
     Err(e) => {
       return __serve_wire(out, method, version, http.not_found(), keep_alive, clk);
     }
   }
   return NoTail;
+}
+
+// __ranges_held(r, ranges) — `ranges` when the file holds every one of
+// them, the whole file as one range when there are none; empty when the
+// file cannot be measured or ends before a range does.
+function __ranges_held(r: Reader, ranges: i64[]): i64[] {
+  let none: i64[] = [];
+  let size: i64 = 0 - 1 as i64;
+  match (r.stat()) {
+    Ok(st) => {
+      size = st.size;
+    },
+    Err(e) => {
+      return none;
+    }
+  }
+  if (ranges.len() == 0) {
+    return [0 as i64, size];
+  }
+  let i: i32 = 0;
+  while (i + 1 < ranges.len()) {
+    if (ranges[i] + ranges[i + 1] > size) {
+      return none;
+    }
+    i = i + 2;
+  }
+  return ranges;
 }
 
 // __wire_chunks(out, version, resp, producer, headless, keep_alive, date) —
@@ -572,24 +664,31 @@ function __in_flight(c: __Conns, at: i32): boolean {
 
 // __tail_left(c, at) — the bytes a file tail still owes, 0 for any other.
 function __tail_left(c: __Conns, at: i32): i32 {
+  let left: i64 = 0 as i64;
   match (c.tails[at]) {
-    FileTail(r, left) => {
-      if (left > 2147483647 as i64) {
-        return 2147483647;
-      }
-      return left as i32;
+    FileTail(r, n, rest) => {
+      left = n + http.file_ranges_len(rest.ranges, rest.seams);
+    },
+    SeamTail(r, seam, rest) => {
+      left = seam.len() as i64 + http.file_ranges_len(rest.ranges, rest.seams);
     },
     _ => {
       return 0;
     }
   }
-  return 0;
+  if (left > 2147483647 as i64) {
+    return 2147483647;
+  }
+  return left as i32;
 }
 
 // __tail_drop(c, at) — the tail let go: a file's reader closed.
 function __tail_drop(c: __Conns, at: i32): __Conns {
   match (c.tails[at]) {
-    FileTail(r, left) => {
+    FileTail(r, left, rest) => {
+      r.close();
+    },
+    SeamTail(r, seam, rest) => {
       r.close();
     },
     _ => {}
@@ -616,33 +715,57 @@ function __tail_piece[D: async.Driver](drv: D, c: __Conns, at: i32): (__Conns, u
     ParkedTail(_, _, _) => {
       return (c, none, true);
     },
-    FileTail(r, left) => {
-      let want: i32 = 65536;
-      if (left < want as i64) {
-        want = left as i32;
-      }
-      match (r.read_chunk_bytes(want)) {
-        Ok(bytes) => {
-          if (bytes.len() == 0) {
-            return (__tail_drop(c, at), none, false);
-          }
-          let rest: i64 = left - bytes.len() as i64;
-          if (rest <= 0 as i64) {
-            return (__tail_drop(c, at), bytes, true);
-          }
-          return (__Conns { ...c, tails: c.tails.with(at, FileTail(r, rest)) }, bytes, true);
-        },
-        Err(e) => {
-          return (__tail_drop(c, at), none, false);
-        }
-      }
-      return (c, none, false);
+    FileTail(r, left, after) => {
+      return __file_piece(c, at, r, left, after);
+    },
+    SeamTail(r, seam, after) => {
+      return __tail_then(c, at, __range_tail(r, after), seam);
     },
     ChunkTail(producer, index, end) => {
       return __chunk_piece(drv, c, at, producer, index, end);
     }
   }
   return (c, none, true);
+}
+
+// __file_piece(c, at, r, left, after) — `__tail_piece` for a range of a
+// file: its next piece, read.
+function __file_piece(c: __Conns, at: i32, r: Reader, left: i64, after: __Spans): (__Conns, u8[], boolean) {
+  let none: u8[] = [];
+  let want: i32 = 65536;
+  if (left < want as i64) {
+    want = left as i32;
+  }
+  match (r.read_chunk_bytes(want)) {
+    Ok(bytes) => {
+      if (bytes.len() == 0) {
+        return (__tail_drop(c, at), none, false);
+      }
+      let rest: i64 = left - bytes.len() as i64;
+      if (rest <= 0 as i64) {
+        return __tail_then(c, at, __after_range(r, after), bytes);
+      }
+      return (__Conns { ...c, tails: c.tails.with(at, FileTail(r, rest, after)) }, bytes, true);
+    },
+    Err(e) => {
+      return (__tail_drop(c, at), none, false);
+    }
+  }
+  return (c, none, false);
+}
+
+// __tail_then(c, at, next, piece) — `piece` sent with the tail moved on to
+// `next`; a tail that cannot go on (None) fails the connection.
+function __tail_then(c: __Conns, at: i32, next: Option[__Tail], piece: u8[]): (__Conns, u8[], boolean) {
+  match (next) {
+    Some(t) => {
+      return (__Conns { ...c, tails: c.tails.with(at, t) }, piece, true);
+    },
+    None => {
+      return (__Conns { ...c, tails: c.tails.with(at, NoTail) }, piece, false);
+    }
+  }
+  return (c, piece, false);
 }
 
 // __chunk_piece(drv, c, at, producer, index, end) — `__tail_piece` for a
@@ -1838,7 +1961,7 @@ function __file_tail_send[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Co
     _ => {}
   }
   match (c.tails[at]) {
-    FileTail(r, left) => {
+    FileTail(r, left, after) => {
       let want: i32 = 65536;
       if (left < want as i64) {
         want = left as i32;
@@ -1856,16 +1979,41 @@ function __file_tail_send[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Co
       }
       let rest: i64 = left - n as i64;
       if (rest <= 0 as i64) {
-        return (__tail_drop(c, at), Whole, true);
+        return __sent_range(drv, c, at, __after_range(r, after));
       }
       drv.watch(c.fds[at], 2);
-      return (__Conns { ...c, tails: c.tails.with(at, FileTail(r, rest)) }, Partial, true);
+      return (__Conns { ...c, tails: c.tails.with(at, FileTail(r, rest, after)) }, Partial, true);
     },
     _ => {
       return (c, Whole, false);
     }
   }
   return (c, Whole, false);
+}
+
+// __sent_range(drv, c, at, next) — `__file_tail_send` once a range has
+// gone by sendfile: Whole when nothing follows, Partial with the tail moved
+// on when a seam or range does, Failed when the next range cannot be
+// sought to.
+function __sent_range[D: async.Driver](drv: D, c: __Conns, at: i32, next: Option[__Tail]): (__Conns, __Sent, boolean) {
+  match (next) {
+    Some(t) => {
+      let moved: __Conns = __Conns { ...c, tails: c.tails.with(at, t) };
+      match (t) {
+        NoTail => {
+          return (moved, Whole, true);
+        },
+        _ => {
+          drv.watch(c.fds[at], 2);
+          return (moved, Partial, true);
+        }
+      }
+    },
+    None => {
+      return (__Conns { ...c, tails: c.tails.with(at, NoTail) }, Failed, true);
+    }
+  }
+  return (c, Failed, true);
 }
 
 // __drain_deadline(c, at, opts, first) — the deadline of a response being

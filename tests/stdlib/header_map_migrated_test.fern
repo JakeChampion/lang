@@ -130,6 +130,44 @@ function test_unquote(): test.TestOutcome {
   return test.assert_eq(headers.unquote("\"a\\\"b\\\\c\"") + "|" + headers.unquote("token") + "|" + headers.unquote("\""), "a\"b\\c|token|\"");
 }
 
+function coding(accept: string): string {
+  let h: HeaderMap = headers.header_map_new();
+  if (accept.len() > 0) {
+    h = h.append("Accept-Encoding", accept);
+  }
+  match (h.preferred_coding(["br", "zstd", "gzip"])) {
+    Some(c) => {
+      return c;
+    },
+    None => {
+      return "identity";
+    }
+  }
+}
+
+// The highest weight wins and a tie goes to the earlier offer; `*` stands
+// for what the field does not name, `x-gzip` is `gzip`, and identity is
+// sent when nothing was asked for or it ranks above every offer.
+function test_preferred_coding(): test.TestOutcome {
+  let got: string[] = [
+    coding(""),
+    coding("gzip, br"),
+    coding("gzip;q=1.0, br;q=0.5"),
+    coding("x-gzip"),
+    coding("*;q=0.3, br;q=0"),
+    coding("gzip;q=0.5, identity"),
+    coding("deflate"),
+    coding("br;q=bad, gzip;q=0.001"),
+  ];
+  return test.assert_eq(joined(got), "[identity][br][gzip][gzip][zstd][identity][identity][gzip]");
+}
+
+// RFC 9110 §12.4.2's qvalue grammar, in thousandths.
+function test_weight(): test.TestOutcome {
+  let got: string = headers.weight("a").to_string() + " " + headers.weight("a; Q=0.25").to_string() + " " + headers.weight("a;level=1;q=0.008").to_string() + " " + headers.weight("a;q=1.5").to_string() + " " + headers.weight("a;q=0.1234").to_string();
+  return test.assert_eq(got, "1000 250 8 0 0");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("HeaderMap (migrated)");
   r = r.it(
@@ -175,5 +213,7 @@ function main(): i32 {
   r = r.it("split_list respects quoted strings", test_split_list);
   r = r.it("get_list reads every line", test_get_list);
   r = r.it("unquote undoes a quoted string", test_unquote);
+  r = r.it("preferred_coding ranks Accept-Encoding", test_preferred_coding);
+  r = r.it("weight reads a qvalue", test_weight);
   return r.finish();
 }

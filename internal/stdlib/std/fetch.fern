@@ -492,6 +492,9 @@ function __request_ok(req: Request): Result[void, FetchError] {
     BodyFile(path) => {
       return Err(InvalidRequest("a file body cannot be sent"));
     },
+    BodyFileRanges(path, ranges, seams) => {
+      return Err(InvalidRequest("a file body cannot be sent"));
+    },
     _ => {}
   }
   return Ok(());
