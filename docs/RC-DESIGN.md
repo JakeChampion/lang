@@ -223,7 +223,10 @@ locals sit above `nvals`. It emits:
 - **retains** before a construction or return for every acquired supply, and
   **releases** at a drop: a parent releases its children only under
   `__fern_rc_is_unique`, then its own box (`drop_value`, the per-type
-  `__sem_release_<T>` helpers, and `__sem_drop_<T>` for children only);
+  `__sem_release_<T>` helpers, and `__sem_drop_<T>` for children only); a
+  value whose variant a payload read fixes (`ssaunits.known_variant`) is
+  released by what that variant holds, in place, and a variant holding no
+  counted field by its box alone (`drop_known`, `token_children`);
 - **takes and steals** as a uniqueness test, a slot store of zero and the
   value in its local (`steal`); a kept or classified donor's takes read the
   token slot instead, and on its unique arm leave the slot as it is: its

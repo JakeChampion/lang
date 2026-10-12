@@ -235,7 +235,7 @@ selfhost/x86-64-linux/perceus_cfold.emit	2652
 selfhost/arm64-linux/perceus_cfold.emit	2817
 selfhost/wasm32-wasi/perceus_cfold.emit	2944
 selfhost/x86-64-linux/perceus_deriv.emit	2708
-selfhost/arm64-linux/perceus_deriv.emit	2902
+selfhost/arm64-linux/perceus_deriv.emit	2935
 selfhost/wasm32-wasi/perceus_deriv.emit	2977
 selfhost/x86-64-linux/perceus_nqueens.emit	1448
 selfhost/arm64-linux/perceus_nqueens.emit	1600
