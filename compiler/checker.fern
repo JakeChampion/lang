@@ -4761,6 +4761,7 @@ function builtin_sigs(): string[] {
     "__method_Writer_fsync(Writer): Option[IoError]",
     "__method_Writer_isatty(Writer): boolean",
     "__method_Writer_seek(Writer, i64, i32): Result[i64, IoError]",
+    "__method_Writer_splice_forever(Writer, string): Option[IoError]",
     "__method_Writer_stat(Writer): Result[FileStat, IoError]",
     "__method_Writer_syncfs(Writer): Option[IoError]",
     "__method_Writer_truncate(Writer, i64): Option[IoError]",

@@ -302,7 +302,7 @@ pub function need_ops(): string[] {
     "args", "arr_reserve", "arr_push", "arr_push_f64", "arr_push_i64", "arr_push_owned", "arr_push_owned_i64",
     "arr_push_owned_f64", "env", "environ", "eprint_str", "exit", "monotonic_ns", "now_ns", "now_unix_ms", "clock_resolution", "clock_set", "clone_file", "poll", "print_str", "putchar",
     "random_bytes", "read_chunk", "read_chunk_bytes", "fd_stat", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache",
-    "fd_dup_onto", "reader_seek", "reader_splice", "reader_copy_range", "fd_flags", "writer_truncate", "read_dir",
+    "fd_dup_onto", "reader_seek", "reader_splice", "reader_copy_range", "writer_splice_forever", "fd_flags", "writer_truncate", "read_dir",
     "read_dir_all", "read_dir_ino", "read_file", "read_file_bytes", "read_line",
     "reader_close", "remove_dir_all", "remove_file", "create_dir_all", "create_dir",
     "remove_dir", "create_link", "create_symlink", "rename", "read_link", "set_file_times",
@@ -2729,7 +2729,7 @@ function component_fs_needs(): string[] {
 // The three past component_fs_needs answer Unsupported on every WASI target
 // and import nothing.
 function component_admits_fs(n: string): boolean {
-  return util.has_str(component_fs_needs(), n) || util.has_str(["fd_syncfs", "fd_dup_onto", "reader_splice", "reader_copy_range"], n);
+  return util.has_str(component_fs_needs(), n) || util.has_str(["fd_syncfs", "fd_dup_onto", "reader_splice", "reader_copy_range", "writer_splice_forever"], n);
 }
 
 // component_framable reports whether a fixed framing can wire a component
@@ -6233,6 +6233,10 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     // r.copy_range_to(w, max) -> Result[i64, IoError]: always
     // Err(Unsupported), as reader_splice is.
     parts = parts.append("    call $__fern_reader_copy_range\n");
+  } else if (o.kind_tag == 431) {  // writer_splice_forever
+    // w.splice_forever(block) -> Option[IoError]: always Some(Unsupported),
+    // so the caller writes the block itself.
+    parts = parts.append("    call $__fern_writer_splice_forever\n");
   } else if (o.kind_tag == 242) {  // reader_seek
     // r.seek(offset, whence) -> Result[i64, IoError]: fd, i64 offset and
     // whence are on the stack in param order.
@@ -7170,7 +7174,7 @@ function io_err_field_off(i: i32): string {
 function needs_fd_sync(needs: string[]): boolean {
   return need(needs, "fd_fsync") || need(needs, "fd_fdatasync") || need(needs, "fd_syncfs")
     || need(needs, "fd_drop_cache") || need(needs, "fd_dup_onto") || need(needs, "reader_splice")
-    || need(needs, "reader_copy_range") || need(needs, "clock_set") || need(needs, "clone_file");
+    || need(needs, "reader_copy_range") || need(needs, "writer_splice_forever") || need(needs, "clock_set") || need(needs, "clone_file");
 }
 
 // needs_io_error reports whether the module carries any fs op — the gate on
@@ -7668,6 +7672,9 @@ pub function fd_sync_funcs(needs: string[]): string {
   if (need(needs, "reader_copy_range")) {
     o = o + refused_copy_func("$__fern_reader_copy_range");
   }
+  if (need(needs, "writer_splice_forever")) {
+    o = o + splice_forever_func();
+  }
   return o;
 }
 
@@ -7753,6 +7760,20 @@ pub function fd_syncfs_func(): string {
 pub function fd_dup_onto_func(): string {
   let o: string = "";
   o = o + "  (func $__fern_fd_dup_onto (param $fd i32) (param $newfd i32) (result i32)\n";
+  o = o + "    (local $res i32)\n";
+  o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+  o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
+  o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error " + refused_errno() + " (i32.const 0)))\n";
+  o = o + "    (local.get $res))\n";
+  return o;
+}
+
+// splice_forever_func emits $__fern_writer_splice_forever(fd, box) ->
+// Option[IoError]: always Some(Unsupported). Neither preview has vmsplice or
+// splice, so the caller writes the block itself.
+pub function splice_forever_func(): string {
+  let o: string = "";
+  o = o + "  (func $__fern_writer_splice_forever (param $fd i32) (param $box i32) (result i32)\n";
   o = o + "    (local $res i32)\n";
   o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o = o + "    (i32.store (local.get $res) (i32.const 0))\n";

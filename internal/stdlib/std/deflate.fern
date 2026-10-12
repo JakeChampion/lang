@@ -6,10 +6,13 @@
 // Every decoder takes `max_out`, the most bytes it will produce, and fails
 // with `OutputLimit` past it: a compressed body is a caller-controlled
 // expansion, so the bound is part of the call, not an afterthought.
-// Encoding is the fixed-Huffman LZ77 of `deflate` at the end: what a
-// message framing (std/http/websocket) and a served body compress with.
+// Encoding is `deflate` and `gzip` at the end: what a message framing
+// (std/http/websocket) and a served body (std/http/compress) compress
+// with.
 
 import "std/hash";
+import "std/array";
+import "core/cmp";
 import "core/int";
 
 // `InflateError` — why a stream could not be decoded. `Truncated` for
@@ -660,12 +663,25 @@ pub function adler32(bs: u8[]): u32 {
 // ---------------------------------------------------------------------------
 // The encoder
 
-// `deflate(input)` — `input` as a raw DEFLATE stream: fixed-Huffman blocks
-// over LZ77 matches found through a 32 KiB window, ending the stream. Any
-// inflater reads it; a stream a size-conscious encoder makes is smaller,
-// since the fixed code fits no data in particular.
+// `deflate(input)` — `input` as a raw DEFLATE stream ending the stream:
+// LZ77 matches found through a 32 KiB window with zlib's lazy evaluation,
+// in blocks each stored, under the fixed code or under a Huffman code
+// built for it, whichever is shortest.
 pub function deflate(input: u8[]): u8[] {
   return __deflated(input, 15, true);
+}
+
+// `gzip(input)` — `input` as one gzip member (RFC 1952) around its
+// `deflate` stream: no name, no modification time, the operating system
+// unknown.
+pub function gzip(input: u8[]): u8[] {
+  let crc: u32 = hash.crc32_new().update_array(input).finish();
+  let head: u8[] = [31 as u8, 139 as u8, 8 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 255 as u8];
+  return __put_le32(__put_le32(__joined(head, deflate(input)), crc), input.len() as u32);
+}
+
+function __put_le32(own out: u8[], v: u32): u8[] {
+  return out.append((v & 255) as u8).append((v >> 8 & 255) as u8).append((v >> 16 & 255) as u8).append((v >> 24) as u8);
 }
 
 // `deflate_flushed(input, window_bits)` — `deflate` with matches found
@@ -694,18 +710,6 @@ function __put(w: __Bits, value: i32, bits: i32): __Bits {
   return __Bits { out: out, acc: acc, n: n };
 }
 
-// A Huffman code goes most significant bit first, so it is reversed into
-// the stream.
-function __put_code(w: __Bits, code: i32, bits: i32): __Bits {
-  let rev: i32 = 0;
-  let i: i32 = 0;
-  while (i < bits) {
-    rev = rev << 1 | code >> i & 1;
-    i = i + 1;
-  }
-  return __put(w, rev, bits);
-}
-
 function __flush_byte(w: __Bits): __Bits {
   if (w.n == 0) {
     return w;
@@ -713,58 +717,177 @@ function __flush_byte(w: __Bits): __Bits {
   return __Bits { out: w.out.append((w.acc & 255) as u8), acc: 0, n: 0 };
 }
 
-// The fixed literal/length code (RFC 1951 §3.2.6).
-function __put_literal(w: __Bits, sym: i32): __Bits {
+// __Code — a canonical Huffman code: each symbol's length in bits, 0 for
+// a symbol it leaves out, and its code bit-reversed, since DEFLATE writes
+// a code most significant bit first into a stream filled from the least.
+struct __Code { lens: i32[], codes: i32[] }
+
+function __put_sym(w: __Bits, c: __Code, sym: i32): __Bits {
+  return __put(w, c.codes[sym], c.lens[sym]);
+}
+
+// __canonical(lens) — the code RFC 1951 §3.2.2 assigns those lengths.
+function __canonical(lens: i32[]): __Code {
+  let count: i32[] = __filled(16, 0);
+  for l in lens {
+    if (l > 0) {
+      count = __bump(count, l);
+    }
+  }
+  let next: i32[] = __filled(16, 0);
+  let code: i32 = 0;
+  let b: i32 = 1;
+  while (b < 16) {
+    code = code + count[b - 1] << 1;
+    next = next.with(b, code);
+    b = b + 1;
+  }
+  let codes: i32[] = [];
+  for l in lens {
+    codes = codes.append(__reversed(next[l], l));
+    next = __bump(next, l);
+  }
+  return __Code { lens: lens, codes: codes };
+}
+
+function __reversed(code: i32, bits: i32): i32 {
+  let rev: i32 = 0;
+  let i: i32 = 0;
+  while (i < bits) {
+    rev = rev << 1 | code >> i & 1;
+    i = i + 1;
+  }
+  return rev;
+}
+
+function __bump(own xs: i32[], i: i32): i32[] {
+  return xs.with(i, xs[i] + 1);
+}
+
+// __fixed_lit() and __fixed_dist() — the fixed codes (RFC 1951 §3.2.6).
+function __fixed_lit(): __Code {
+  let lens: i32[] = [];
+  let s: i32 = 0;
+  while (s < 288) {
+    lens = lens.append(__fixed_len(s));
+    s = s + 1;
+  }
+  return __canonical(lens);
+}
+
+function __fixed_len(sym: i32): i32 {
   if (sym < 144) {
-    return __put_code(w, 48 + sym, 8);
+    return 8;
   }
   if (sym < 256) {
-    return __put_code(w, 400 + sym - 144, 9);
+    return 9;
   }
   if (sym < 280) {
-    return __put_code(w, sym - 256, 7);
+    return 7;
   }
-  return __put_code(w, 192 + sym - 280, 8);
+  return 8;
 }
 
-// __put_match(w, length, distance) — a back-reference: the length's code
-// and extra bits, then the distance's.
-function __put_match(w: __Bits, length: i32, distance: i32): __Bits {
-  let lb: i32[] = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
-  let le: i32[] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
-  let li: i32 = __code_index(lb, length);
-  w = __put_literal(w, 257 + li);
-  w = __put(w, length - lb[li], le[li]);
-  let db: i32[] = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
-  let de: i32[] = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
-  let di: i32 = __code_index(db, distance);
-  w = __put_code(w, di, 5);
-  return __put(w, distance - db[di], de[di]);
+function __fixed_dist(): __Code {
+  return __canonical(__filled(30, 5));
 }
 
-// The index of the last base at or below `v`.
-function __code_index(bases: i32[], v: i32): i32 {
-  let i: i32 = bases.len() - 1;
-  while (i > 0 && bases[i] > v) {
-    i = i - 1;
+// The length and distance symbols (RFC 1951 §3.2.5): a symbol's base
+// value and extra bits follow from its index, two symbols (four for a
+// length) to each doubling of the base.
+function __len_sym(len: i32): i32 {
+  if (len == 258) {
+    return 28;
   }
-  return i;
+  let x: i32 = len - 3;
+  if (x < 8) {
+    return x;
+  }
+  let k: i32 = __log2(x);
+  return 4 * (k - 1) + (x >> k - 2 & 3);
 }
 
-// __deflated(input, window_bits, final) — the stream: one fixed-Huffman
-// block of the whole input (a fixed block has no length limit), ended
-// as `final` says, an empty stored block after it otherwise.
+function __len_base_of(li: i32): i32 {
+  if (li < 8) {
+    return 3 + li;
+  }
+  if (li == 28) {
+    return 258;
+  }
+  return 3 + ((4 | li & 3) << (li >> 2) - 1);
+}
+
+function __len_extra_of(li: i32): i32 {
+  if (li < 8 || li == 28) {
+    return 0;
+  }
+  return (li >> 2) - 1;
+}
+
+function __dist_sym(d: i32): i32 {
+  let x: i32 = d - 1;
+  if (x < 4) {
+    return x;
+  }
+  let k: i32 = __log2(x);
+  return 2 * k + (x >> k - 1 & 1);
+}
+
+function __dist_base_of(di: i32): i32 {
+  if (di < 4) {
+    return di + 1;
+  }
+  return 1 + ((2 | di & 1) << (di >> 1) - 1);
+}
+
+function __dist_extra_of(di: i32): i32 {
+  if (di < 4) {
+    return 0;
+  }
+  return (di >> 1) - 1;
+}
+
+function __log2(x: i32): i32 {
+  let k: i32 = 0;
+  while (x > 1) {
+    x = x >> 1;
+    k = k + 1;
+  }
+  return k;
+}
+
+// __put_match(w, length, distance, lit, dist) — a back-reference: the
+// length's symbol and extra bits, then the distance's.
+function __put_match(w: __Bits, length: i32, distance: i32, lit: __Code, dist: __Code): __Bits {
+  let li: i32 = __len_sym(length);
+  w = __put_sym(w, lit, 257 + li);
+  w = __put(w, length - __len_base_of(li), __len_extra_of(li));
+  let di: i32 = __dist_sym(distance);
+  w = __put_sym(w, dist, di);
+  return __put(w, distance - __dist_base_of(di), __dist_extra_of(di));
+}
+
+// __deflated(input, window_bits, final) — the stream: the input's tokens
+// in blocks of at most 16384, each stored, under the fixed code or under
+// a code of its own, whichever is shortest; the last block ended as
+// `final` says, an empty stored block after it otherwise.
 function __deflated(input: u8[], window_bits: i32, final: boolean): u8[] {
+  let toks: i32[] = __tokens(input, 1 << window_bits);
+  let fixed: (__Code, __Code) = (__fixed_lit(), __fixed_dist());
   let empty: u8[] = [];
   let w: __Bits = __Bits { out: empty, acc: 0, n: 0 };
-  let fin: i32 = 0;
-  if (final) {
-    fin = 1;
+  let s: __Span = __Span { from: 0, len: 0, at: 0, end: 0, last: false };
+  while (s.end < toks.len() || s.at == 0 && s.end == 0) {
+    let end: i32 = s.end + 16384;
+    if (end > toks.len()) {
+      end = toks.len();
+    }
+    s = __Span { from: s.from + s.len, len: __span(toks, s.end, end), at: s.end, end: end, last: final && end == toks.len() };
+    w = __put_block(w, input, toks, s, fixed);
+    if (end == 0) {
+      s = __Span { ...s, at: 1 };
+    }
   }
-  w = __put(w, fin, 1);
-  w = __put(w, 1, 2);
-  w = __lz77(w, input, 1 << window_bits);
-  w = __put_literal(w, 256);
   if (final) {
     return __flush_byte(w).out;
   }
@@ -773,38 +896,467 @@ function __deflated(input: u8[], window_bits: i32, final: boolean): u8[] {
   return w.out.append(0 as u8).append(0 as u8).append(255 as u8).append(255 as u8);
 }
 
-// __lz77(w, input, window) — the input as literals and matches: each
-// position is hashed on its three bytes, the chain of earlier positions
-// with that hash searched (32 deep) within the window for the longest
-// match of 3 to 258 bytes, and taken greedily.
-function __lz77(w: __Bits, input: u8[], window: i32): __Bits {
+// __Span — a block: the input bytes `from` for `len` its tokens `at` to
+// `end` cover, and whether it ends the stream.
+struct __Span { from: i32, len: i32, at: i32, end: i32, last: boolean }
+
+function __span(toks: i32[], at: i32, end: i32): i32 {
+  let n: i32 = 0;
+  let i: i32 = at;
+  while (i < end) {
+    if (toks[i] < 256) {
+      n = n + 1;
+    } else {
+      n = n + (toks[i] >> 16);
+    }
+    i = i + 1;
+  }
+  return n;
+}
+
+// __put_block(w, input, toks, s, fixed) — the block `s` written whichever way
+// costs fewest bits.
+function __put_block(w: __Bits, input: u8[], toks: i32[], s: __Span, fixed: (__Code, __Code)): __Bits {
+  let f: (i32[], i32[]) = __freqs(toks, s.at, s.end);
+  let lit: __Code = __canonical(__code_lens(__two_used(f.0), 15));
+  let dist: __Code = __canonical(__code_lens(__two_used(f.1), 15));
+  let h: __Header = __header(lit.lens, dist.lens);
+  let extra: i32 = __extra_cost(f.0, f.1);
+  let own_cost: i32 = h.bits + __weighted(f.0, lit.lens) + __weighted(f.1, dist.lens);
+  let fixed_cost: i32 = __weighted(f.0, fixed.0.lens) + __weighted(f.1, fixed.1.lens);
+  if (__stored_cost(s.len) < 3 + extra + cmp.min(own_cost, fixed_cost)) {
+    return __put_stored(w, input, s);
+  }
+  let fin: i32 = 0;
+  if (s.last) {
+    fin = 1;
+  }
+  w = __put(w, fin, 1);
+  if (own_cost < fixed_cost) {
+    w = __put_header(__put(w, 2, 2), h);
+    return __put_tokens(w, toks, s, lit, dist);
+  }
+  return __put_tokens(__put(w, 1, 2), toks, s, fixed.0, fixed.1);
+}
+
+// __freqs(toks, at, end) — how often each literal/length symbol occurs
+// among the tokens, the end of block once, and each distance symbol.
+function __freqs(toks: i32[], at: i32, end: i32): (i32[], i32[]) {
+  let lit: i32[] = __filled(286, 0);
+  let dist: i32[] = __filled(30, 0);
+  let i: i32 = at;
+  while (i < end) {
+    let t: i32 = toks[i];
+    if (t < 256) {
+      lit = lit.with(t, lit[t] + 1);
+    } else {
+      let ls: i32 = 257 + __len_sym(t >> 16);
+      let ds: i32 = __dist_sym(t & 65535);
+      lit = lit.with(ls, lit[ls] + 1);
+      dist = dist.with(ds, dist[ds] + 1);
+    }
+    i = i + 1;
+  }
+  return (__bump(lit, 256), dist);
+}
+
+// __extra_cost(lit, dist) — the extra bits the counted matches carry.
+function __extra_cost(lit: i32[], dist: i32[]): i32 {
+  let bits: i32 = 0;
+  let i: i32 = 0;
+  while (i < 29) {
+    bits = bits + lit[257 + i] * __len_extra_of(i);
+    i = i + 1;
+  }
+  i = 0;
+  while (i < 30) {
+    bits = bits + dist[i] * __dist_extra_of(i);
+    i = i + 1;
+  }
+  return bits;
+}
+
+function __weighted(freq: i32[], lens: i32[]): i32 {
+  let bits: i32 = 0;
+  let i: i32 = 0;
+  while (i < freq.len()) {
+    bits = bits + freq[i] * lens[i];
+    i = i + 1;
+  }
+  return bits;
+}
+
+// __stored_cost(len) — the bits stored blocks of `len` bytes take at
+// most: each block's header, padding and length fields, then the bytes.
+function __stored_cost(len: i32): i32 {
+  return (len / 65535 + 1) * 42 + len * 8;
+}
+
+function __put_stored(w: __Bits, input: u8[], s: __Span): __Bits {
+  let at: i32 = s.from;
+  let end: i32 = s.from + s.len;
+  let first: boolean = true;
+  while (first || at < end) {
+    let n: i32 = cmp.min(end - at, 65535);
+    let fin: i32 = 0;
+    if (s.last && at + n == end) {
+      fin = 1;
+    }
+    w = __flush_byte(__put(__put(w, fin, 1), 0, 2));
+    w = __put(__put(w, n, 16), n ^ 65535, 16);
+    w = __Bits { ...w, out: __joined_range(w.out, input, at, at + n) };
+    at = at + n;
+    first = false;
+  }
+  return w;
+}
+
+function __joined_range(out: u8[], more: u8[], from: i32, to: i32): u8[] {
+  let i: i32 = from;
+  while (i < to) {
+    out = out.append(more[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+function __put_tokens(w: __Bits, toks: i32[], s: __Span, lit: __Code, dist: __Code): __Bits {
+  let i: i32 = s.at;
+  while (i < s.end) {
+    let t: i32 = toks[i];
+    if (t < 256) {
+      w = __put_sym(w, lit, t);
+    } else {
+      w = __put_match(w, t >> 16, t & 65535, lit, dist);
+    }
+    i = i + 1;
+  }
+  return __put_sym(w, lit, 256);
+}
+
+// __two_used(freq) — `freq` with symbols 0 and 1 counted once when fewer
+// than two symbols occur: a code needs two symbols to be complete, and
+// not every inflater reads one that is not.
+function __two_used(freq: i32[]): i32[] {
+  let used: i32 = 0;
+  for f in freq {
+    if (f > 0) {
+      used = used + 1;
+    }
+  }
+  let s: i32 = 0;
+  while (used < 2) {
+    if (freq[s] == 0) {
+      freq = freq.with(s, 1);
+      used = used + 1;
+    }
+    s = s + 1;
+  }
+  return freq;
+}
+
+// __code_lens(freq, limit) — the lengths of a Huffman code for `freq`,
+// none past `limit`: Moffat and Katajainen's in-place construction over
+// the used symbols in order of frequency, then any length past `limit`
+// folded to it and the code made complete again, as miniz does.
+function __code_lens(freq: i32[], limit: i32): i32[] {
+  let keys: i32[] = [];
+  let s: i32 = 0;
+  while (s < freq.len()) {
+    if (freq[s] > 0) {
+      keys = keys.append(freq[s] << 9 | s);
+    }
+    s = s + 1;
+  }
+  keys = cmp.sort(keys);
+  let weights: i32[] = [];
+  for k in keys {
+    weights = weights.append(k >> 9);
+  }
+  return __assigned(keys, __limited(__moffat(weights), limit), freq.len());
+}
+
+// __assigned(keys, counts, size) — `counts[l]` symbols given length `l`,
+// the shortest to the most frequent.
+function __assigned(keys: i32[], counts: i32[], size: i32): i32[] {
+  let lens: i32[] = __filled(size, 0);
+  let j: i32 = keys.len();
+  let l: i32 = 1;
+  while (l < counts.len()) {
+    let c: i32 = counts[l];
+    while (c > 0) {
+      j = j - 1;
+      lens = lens.with(keys[j] & 511, l);
+      c = c - 1;
+    }
+    l = l + 1;
+  }
+  return lens;
+}
+
+// __moffat(a) — the code lengths for weights `a`, in ascending order,
+// computed in place (Moffat and Katajainen, 1995): each leaf's length,
+// longest first.
+function __moffat(own a: i32[]): i32[] {
+  let n: i32 = a.len();
+  if (n == 1) {
+    return a.with(0, 1);
+  }
+  if (n == 0) {
+    return a;
+  }
+  return __moffat_depths(__moffat_parents(a));
+}
+
+// The first pass: each internal node's weight, then each its parent.
+function __moffat_parents(own a: i32[]): i32[] {
+  let n: i32 = a.len();
+  a = a.with(0, a[0] + a[1]);
+  let root: i32 = 0;
+  let leaf: i32 = 2;
+  let next: i32 = 1;
+  while (next < n - 1) {
+    if (leaf >= n || a[root] < a[leaf]) {
+      a = a.with(next, a[root]).with(root, next);
+      root = root + 1;
+    } else {
+      a = a.with(next, a[leaf]);
+      leaf = leaf + 1;
+    }
+    if (leaf >= n || root < next && a[root] < a[leaf]) {
+      a = a.with(next, a[next] + a[root]).with(root, next);
+      root = root + 1;
+    } else {
+      a = a.with(next, a[next] + a[leaf]);
+      leaf = leaf + 1;
+    }
+    next = next + 1;
+  }
+  return a;
+}
+
+// The second and third passes: each internal node's depth, then each
+// leaf's.
+function __moffat_depths(own a: i32[]): i32[] {
+  let n: i32 = a.len();
+  a = a.with(n - 2, 0);
+  let next: i32 = n - 3;
+  while (next >= 0) {
+    a = a.with(next, a[a[next]] + 1);
+    next = next - 1;
+  }
+  let avail: i32 = 1;
+  let depth: i32 = 0;
+  let root: i32 = n - 2;
+  next = n - 1;
+  while (avail > 0) {
+    let used: i32 = 0;
+    while (root >= 0 && a[root] == depth) {
+      used = used + 1;
+      root = root - 1;
+    }
+    while (avail > used) {
+      a = a.with(next, depth);
+      next = next - 1;
+      avail = avail - 1;
+    }
+    avail = 2 * used;
+    depth = depth + 1;
+  }
+  return a;
+}
+
+// __limited(depths, limit) — how many codes of each length 0 to `limit`,
+// those past `limit` folded to it and the code completed again: while it
+// is over-full, one code at `limit` goes and the longest shorter code
+// splits in two.
+function __limited(depths: i32[], limit: i32): i32[] {
+  let counts: i32[] = __filled(limit + 1, 0);
+  for d in depths {
+    counts = __bump(counts, cmp.min(d, limit));
+  }
+  let total: i32 = 0;
+  let l: i32 = 1;
+  while (l <= limit) {
+    total = total + (counts[l] << limit - l);
+    l = l + 1;
+  }
+  while (total > 1 << limit) {
+    counts = counts.with(limit, counts[limit] - 1);
+    let i: i32 = limit - 1;
+    while (counts[i] == 0) {
+      i = i - 1;
+    }
+    counts = counts.with(i, counts[i] - 1).with(i + 1, counts[i + 1] + 2);
+    total = total - 1;
+  }
+  return counts;
+}
+
+// __Header — a dynamic block's code lengths as the header sends them:
+// how many of each code's lengths, the lengths run-length coded (a
+// symbol of the code-length alphabet, its extra bits above bit 5), that
+// alphabet's code, how many of its lengths are sent, and the header's
+// size in bits.
+struct __Header { hlit: i32, hdist: i32, rle: i32[], cl: __Code, hclen: i32, bits: i32 }
+
+function __cl_order(): i32[] {
+  return [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+}
+
+function __header(lit: i32[], dist: i32[]): __Header {
+  let hlit: i32 = __sent(lit, 257);
+  let hdist: i32 = __sent(dist, 1);
+  let lens: i32[] = array.slice(lit, 0, hlit).concat(array.slice(dist, 0, hdist));
+  let rle: i32[] = __rle(lens);
+  let freq: i32[] = __filled(19, 0);
+  for r in rle {
+    freq = __bump(freq, r & 31);
+  }
+  let cl: __Code = __canonical(__code_lens(__two_used(freq), 7));
+  let order: i32[] = __cl_order();
+  let hclen: i32 = 19;
+  while (hclen > 4 && cl.lens[order[hclen - 1]] == 0) {
+    hclen = hclen - 1;
+  }
+  let bits: i32 = 14 + 3 * hclen;
+  for r in rle {
+    bits = bits + cl.lens[r & 31] + __cl_extra(r & 31);
+  }
+  return __Header { hlit: hlit, hdist: hdist, rle: rle, cl: cl, hclen: hclen, bits: bits };
+}
+
+// __sent(lens, least) — how many of `lens` a header sends: through the
+// last nonzero one, at least `least`.
+function __sent(lens: i32[], least: i32): i32 {
+  let n: i32 = lens.len();
+  while (n > least && lens[n - 1] == 0) {
+    n = n - 1;
+  }
+  return n;
+}
+
+function __cl_extra(sym: i32): i32 {
+  if (sym == 16) {
+    return 2;
+  }
+  if (sym == 17) {
+    return 3;
+  }
+  if (sym == 18) {
+    return 7;
+  }
+  return 0;
+}
+
+// __rle(lens) — the lengths in the code-length alphabet (RFC 1951
+// §3.2.7): 16 repeats the previous length 3 to 6 times, 17 and 18 write 3
+// to 10 and 11 to 138 zeros.
+function __rle(lens: i32[]): i32[] {
+  let out: i32[] = [];
+  let i: i32 = 0;
+  while (i < lens.len()) {
+    let step: (i32, i32) = __rle_step(lens, i);
+    out = out.append(step.0);
+    i = i + step.1;
+  }
+  return out;
+}
+
+// __rle_step(lens, i) — the symbol at `i` and how many lengths it covers.
+function __rle_step(lens: i32[], i: i32): (i32, i32) {
+  let v: i32 = lens[i];
+  let run: i32 = __run(lens, i);
+  if (v == 0 && run >= 11) {
+    return (18 | run - 11 << 5, run);
+  }
+  if (v == 0 && run >= 3) {
+    let r: i32 = cmp.min(run, 10);
+    return (17 | r - 3 << 5, r);
+  }
+  if (v != 0 && i > 0 && lens[i - 1] == v && run >= 3) {
+    let r: i32 = cmp.min(run, 6);
+    return (16 | r - 3 << 5, r);
+  }
+  return (v, 1);
+}
+
+// __run(lens, i) — how many lengths from `i` equal it, at most 138.
+function __run(lens: i32[], i: i32): i32 {
+  let run: i32 = 1;
+  while (run < 138 && i + run < lens.len() && lens[i + run] == lens[i]) {
+    run = run + 1;
+  }
+  return run;
+}
+
+function __put_header(w: __Bits, h: __Header): __Bits {
+  w = __put(w, h.hlit - 257, 5);
+  w = __put(w, h.hdist - 1, 5);
+  w = __put(w, h.hclen - 4, 4);
+  let order: i32[] = __cl_order();
+  let k: i32 = 0;
+  while (k < h.hclen) {
+    w = __put(w, h.cl.lens[order[k]], 3);
+    k = k + 1;
+  }
+  for r in h.rle {
+    w = __put(__put_sym(w, h.cl, r & 31), r >> 5, __cl_extra(r & 31));
+  }
+  return w;
+}
+
+// __tokens(input, window) — the input as LZ77 tokens: a literal byte as
+// itself, a match as its length << 16 | its distance. Each position is
+// hashed on its three bytes and the chain of earlier positions with that
+// hash searched (32 deep) within the window for the longest match of 3 to
+// 258 bytes; a match is deferred a byte when the next position starts a
+// longer one, as zlib's lazy evaluation has it. The chains are updated
+// here rather than in a helper so each update stays in place.
+function __tokens(input: u8[], window: i32): i32[] {
   let n: i32 = input.len();
   let head: i32[] = __filled(32768, 0 - 1);
   let prev: i32[] = __filled(window, 0 - 1);
+  let out: i32[] = [];
+  let held: (i32, i32) = (0 - 1, 0);
+  let skip: i32 = 0;
   let pos: i32 = 0;
   while (pos < n) {
-    let best: (i32, i32) = (0, 0);
+    let cur: (i32, i32) = __match_at(input, pos, skip, head, prev, window);
     if (pos + 2 < n) {
-      best = __longest(input, pos, head[__hash3(input, pos)], prev, window);
+      let h: i32 = __hash3(input, pos);
+      prev = prev.with(pos & window - 1, head[h]);
+      head = head.with(h, pos);
     }
-    if (best.0 >= 3) {
-      w = __put_match(w, best.0, best.1);
-      let end: i32 = pos + best.0;
-      while (pos < end) {
-        let kept: (i32[], i32[]) = __remember(input, pos, head, prev, window);
-        head = kept.0;
-        prev = kept.1;
-        pos = pos + 1;
+    if (pos >= skip && held.0 >= 3 && cur.0 <= held.0) {
+      out = out.append(held.0 << 16 | held.1);
+      skip = pos - 1 + held.0;
+      held = (0 - 1, 0);
+    } else if (pos >= skip) {
+      if (held.0 >= 0) {
+        out = out.append(input[pos - 1] as i32);
       }
-    } else {
-      w = __put_literal(w, input[pos] as i32);
-      let kept: (i32[], i32[]) = __remember(input, pos, head, prev, window);
-      head = kept.0;
-      prev = kept.1;
-      pos = pos + 1;
+      held = cur;
     }
+    pos = pos + 1;
   }
-  return w;
+  if (held.0 >= 3) {
+    return out.append(held.0 << 16 | held.1);
+  }
+  if (held.0 >= 0) {
+    return out.append(input[n - 1] as i32);
+  }
+  return out;
+}
+
+// __match_at(input, pos, skip, head, prev, window) — the longest match
+// at `pos`, none where a token cannot start: before `skip`, inside the
+// match last taken, or too near the end for one.
+function __match_at(input: u8[], pos: i32, skip: i32, head: i32[], prev: i32[], window: i32): (i32, i32) {
+  if (pos < skip || pos + 2 >= input.len()) {
+    return (0, 0);
+  }
+  return __longest(input, pos, head[__hash3(input, pos)], prev, window);
 }
 
 function __filled(n: i32, v: i32): i32[] {
@@ -823,19 +1375,6 @@ function __hash3(input: u8[], pos: i32): i32 {
   }
   let h: i32 = input[pos] as i32 << 10 ^ input[pos + 1] as i32 << 5 ^ input[pos + 2] as i32;
   return h * 2057 & 32767;
-}
-
-// __remember(input, pos, head, prev, window) — position `pos` put at the
-// head of its hash's chain: the tables after it, owned so the update is
-// in place.
-function __remember(input: u8[], pos: i32, own head: i32[], own prev: i32[], window: i32): (i32[], i32[]) {
-  if (pos + 2 >= input.len()) {
-    return (head, prev);
-  }
-  let h: i32 = __hash3(input, pos);
-  prev = prev.with(pos & window - 1, head[h]);
-  head = head.with(h, pos);
-  return (head, prev);
 }
 
 // __longest(input, pos, cand, prev, window) — the longest match at

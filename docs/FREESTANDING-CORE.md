@@ -587,7 +587,9 @@ reader, so reading and writing from the same offset finishes the copy. A
 target that cannot splice is therefore slower but not wrong, which is why the
 method is ungated rather than a capability. `r.copy_range_to(w, max)` is copy_file_range(2)
 on Linux under the same contract, and `Unsupported` on Darwin, WASI and in the
-interpreter.
+interpreter. So is `w.splice_forever(block)`, vmsplice(2) of one block into a
+pipe until the writer fails, as GNU 9.12's `yes` does; `Unsupported` there
+promises nothing reached the writer, so the caller writes the block itself.
 
 **`termios_get` / `termios_set` surrender the KERNEL's words**, which is the
 one place here that does not invent Fern's own numbering, and `stty -g` is

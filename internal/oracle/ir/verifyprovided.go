@@ -329,6 +329,7 @@ var providedSigs = map[string]providedSig{
 	"__method_Writer_dup_onto":         {-1, rWord},
 	"__method_Writer_write":            {-1, rWord},
 	"__method_Writer_write_some":       {-1, rWord},
+	"__method_Writer_splice_forever":   {-1, rWord},
 	"__method_Writer_write_bytes":      {-1, rWord},
 	"__method_Writer_write_some_bytes": {-1, rWord},
 	"__method_slice_len":               {-1, rWord},

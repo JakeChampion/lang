@@ -5,8 +5,11 @@
 import "./ssa";
 
 // The sets are bit rows, one per block POSITION (block ids need not be
-// contiguous after CFG simplification), `words` i64s each, value id v at bit
-// v % 64 of word v / 64. Read them through live_in_has / live_out_has.
+// contiguous after CFG simplification), `words` i64s each. Only the values
+// some block reads before defining them, or some phi edge carries, can be
+// live into or out of a block, so only they have a bit: value v's is `slot[v]`,
+// -1 for every other value, and `slot_value` maps a bit back to its value in
+// ascending order. Read them through live_in_has / live_out_has.
 // `at` maps a block id to its position in the graph the flow was computed
 // over (position). `none` is the all-false row of nvals flags: a reader that
 // fills a row per block starts from it, and its first write takes the copy.
@@ -16,12 +19,14 @@ pub struct Flow {
   words: i32,
   live_in: i64[],
   live_out: i64[],
+  slot: i32[],
+  slot_value: i32[],
   at: i32[],
   none: boolean[],
 }
 
 function failed(why: string): Flow {
-  return Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], at: [], none: [] };
+  return Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], slot: [], slot_value: [], at: [], none: [] };
 }
 
 // position is block id's position, -1 for an id the graph does not carry.
@@ -30,30 +35,38 @@ pub function position(fl: Flow, id: i32): i32 {
 }
 
 pub function live_in_has(fl: Flow, bi: i32, v: i32): boolean {
-  return bit_has(fl.live_in, bi * fl.words, v);
+  return bit_has(fl.live_in, bi * fl.words, slot_of(fl, v));
 }
 
 pub function live_out_has(fl: Flow, bi: i32, v: i32): boolean {
-  return bit_has(fl.live_out, bi * fl.words, v);
+  return bit_has(fl.live_out, bi * fl.words, slot_of(fl, v));
+}
+
+function slot_of(fl: Flow, v: i32): i32 {
+  if (v < 0 || v >= fl.slot.len()) {
+    return 0 - 1;
+  }
+  return fl.slot[v];
 }
 
 // live_in_ids / live_out_ids list block bi's live-in / live-out values in
 // ascending order; out_not_in the values live out of bi and not into si.
 pub function live_in_ids(fl: Flow, bi: i32): i32[] {
-  return set_ids(fl.live_in, bi * fl.words, [], 0, fl.words);
+  return set_ids(fl.live_in, bi * fl.words, [], 0, fl.words, fl.slot_value);
 }
 
 pub function live_out_ids(fl: Flow, bi: i32): i32[] {
-  return set_ids(fl.live_out, bi * fl.words, [], 0, fl.words);
+  return set_ids(fl.live_out, bi * fl.words, [], 0, fl.words, fl.slot_value);
 }
 
 pub function out_not_in(fl: Flow, bi: i32, si: i32): i32[] {
-  return set_ids(fl.live_out, bi * fl.words, fl.live_in, si * fl.words, fl.words);
+  return set_ids(fl.live_out, bi * fl.words, fl.live_in, si * fl.words, fl.words, fl.slot_value);
 }
 
 // set_ids walks `words` words of rows from base a word at a time, clearing
-// the bits set in minus from mbase when minus is not empty.
-function set_ids(rows: i64[], base: i32, minus: i64[], mbase: i32, words: i32): i32[] {
+// the bits set in minus from mbase when minus is not empty, and names each bit
+// left by the value it stands for.
+function set_ids(rows: i64[], base: i32, minus: i64[], mbase: i32, words: i32, values: i32[]): i32[] {
   let out: i32[] = [];
   if (rows.len() == 0) {
     return out;
@@ -65,7 +78,7 @@ function set_ids(rows: i64[], base: i32, minus: i64[], mbase: i32, words: i32): 
       x = x & (minus[mbase + w] ^ 0i64 - 1i64);
     }
     while (x != 0i64) {
-      out = out.append(w * 64 + __ctz64(x as u64));
+      out = out.append(values[w * 64 + __ctz64(x as u64)]);
       x = x & x - 1i64;
     }
     w = w + 1;
@@ -76,20 +89,20 @@ function set_ids(rows: i64[], base: i32, minus: i64[], mbase: i32, words: i32): 
 // live_in_bits / live_out_bits spell a set out as one flag per block * nvals,
 // for a reader that wants every bit.
 pub function live_in_bits(fl: Flow, nblocks: i32, nvals: i32): boolean[] {
-  return spelled(fl.live_in, fl.words, nblocks, nvals);
+  return spelled(fl, fl.live_in, nblocks, nvals);
 }
 
 pub function live_out_bits(fl: Flow, nblocks: i32, nvals: i32): boolean[] {
-  return spelled(fl.live_out, fl.words, nblocks, nvals);
+  return spelled(fl, fl.live_out, nblocks, nvals);
 }
 
-function spelled(rows: i64[], words: i32, nblocks: i32, nvals: i32): boolean[] {
+function spelled(fl: Flow, rows: i64[], nblocks: i32, nvals: i32): boolean[] {
   let out: boolean[] = [];
   let bi: i32 = 0;
   while (bi < nblocks) {
     let v: i32 = 0;
     while (v < nvals) {
-      out = out.append(bit_has(rows, bi * words, v));
+      out = out.append(bit_has(rows, bi * fl.words, slot_of(fl, v)));
       v = v + 1;
     }
     bi = bi + 1;
@@ -221,30 +234,45 @@ pub function input_error(f: ssa.SFunc, dependencies: i32[][]): string {
   return "";
 }
 
-function add_use(own bits: i64[], base: i32, value: i32, dependencies: i32[][]): i64[] {
+// add_use sets in a row the bits of `value` and its dependencies.
+function add_use(own bits: i64[], slot: i32[], value: i32, dependencies: i32[][]): i64[] {
   if (value < 0) {
     return bits;
   }
-  bits = bit_set(bits, base, value);
+  bits = bit_set(bits, 0, slot[value]);
   for dep in dependencies[value] {
-    bits = bit_set(bits, base, dep);
+    bits = bit_set(bits, 0, slot[dep]);
   }
   return bits;
 }
 
-function add_local_use(own bits: i64[], defs: i64[], base: i32, value: i32, dependencies: i32[][]): i64[] {
+// named_with marks `value` and its dependencies.
+function named_with(own named: boolean[], value: i32, dependencies: i32[][]): boolean[] {
   if (value < 0) {
-    return bits;
+    return named;
   }
-  if (!bit_has(defs, base, value)) {
-    bits = bit_set(bits, base, value);
+  named = named.with(value, true);
+  for dep in dependencies[value] {
+    named = named.with(dep, true);
+  }
+  return named;
+}
+
+// exposed appends `value` and each of its dependencies that position `k` of
+// block `bi` reads before the block defines it.
+function exposed(own up: i32[], def_b: i32[], def_k: i32[], bi: i32, k: i32, value: i32, dependencies: i32[][]): i32[] {
+  if (value < 0) {
+    return up;
+  }
+  if (def_b[value] != bi || def_k[value] >= k) {
+    up = up.append(value);
   }
   for dep in dependencies[value] {
-    if (!bit_has(defs, base, dep)) {
-      bits = bit_set(bits, base, dep);
+    if (def_b[dep] != bi || def_k[dep] >= k) {
+      up = up.append(dep);
     }
   }
-  return bits;
+  return up;
 }
 
 // Dependencies must already be transitive
@@ -260,43 +288,98 @@ pub function compute(f: ssa.SFunc, dependencies: i32[][]): Flow {
 // compute_checked is compute over a graph and dependencies input_error has
 // already passed.
 pub function compute_checked(f: ssa.SFunc, dependencies: i32[][]): Flow {
-  let words: i32 = (f.nvals + 63) / 64;
   let nb: i32 = f.blocks.len();
   let at: i32[] = position_of(f);
-  let uses: i64[] = __alloc_i64(nb * words);
-  let defs: i64[] = __alloc_i64(nb * words);
+  // Where each value is defined: its block's position and its own.
+  let def_b: i32[] = __alloc_i32(f.nvals);
+  let def_k: i32[] = __alloc_i32(f.nvals);
+  let v: i32 = 0;
+  while (v < f.nvals) {
+    def_b = def_b.with(v, 0 - 1);
+    v = v + 1;
+  }
+  let bi: i32 = 0;
+  while (bi < nb) {
+    let k: i32 = 0;
+    for ins in f.blocks[bi].insts {
+      if (ins.result >= 0) {
+        def_b = def_b.with(ins.result, bi);
+        def_k = def_k.with(ins.result, k);
+      }
+      k = k + 1;
+    }
+    bi = bi + 1;
+  }
+  // The reads before a definition in each block, `up[up_from[b] ..
+  // up_from[b + 1]]`, and every value one of those or a phi edge names.
+  let up: i32[] = [];
+  let up_from: i32[] = [];
+  let named: boolean[] = __alloc_bool(f.nvals);
   // phi_at lists each block's phis by position, from phi_from[block] to
   // phi_from[block + 1], so a predecessor's recompute reads only them.
   let phi_at: i32[] = [];
   let phi_from: i32[] = [];
-  let bi: i32 = 0;
+  bi = 0;
   while (bi < nb) {
     let b: ssa.SBlock = f.blocks[bi];
-    let base: i32 = bi * words;
+    up_from = up_from.append(up.len());
     phi_from = phi_from.append(phi_at.len());
     let k: i32 = 0;
     for ins in b.insts {
       if (ins.kind_tag != 8) {
         for arg in ins.args {
-          uses = add_local_use(uses, defs, base, arg, dependencies);
+          up = exposed(up, def_b, def_k, bi, k, arg, dependencies);
         }
       } else {
         phi_at = phi_at.append(k);
-      }
-      if (ins.result >= 0) {
-        defs = bit_set(defs, base, ins.result);
+        for arg in ins.args {
+          named = named_with(named, arg, dependencies);
+        }
       }
       k = k + 1;
     }
     if (b.term.kind_tag == 1) {
-      uses = add_local_use(uses, defs, base, b.term.value, dependencies);
+      up = exposed(up, def_b, def_k, bi, b.insts.len(), b.term.value, dependencies);
     }
     if (b.term.kind_tag == 3) {
-      uses = add_local_use(uses, defs, base, b.term.cond, dependencies);
+      up = exposed(up, def_b, def_k, bi, b.insts.len(), b.term.cond, dependencies);
     }
     bi = bi + 1;
   }
+  up_from = up_from.append(up.len());
   phi_from = phi_from.append(phi_at.len());
+  for u in up {
+    named = named.with(u, true);
+  }
+  let slot: i32[] = __alloc_i32(f.nvals);
+  let slot_value: i32[] = [];
+  v = 0;
+  while (v < f.nvals) {
+    if (named[v]) {
+      slot = slot.with(v, slot_value.len());
+      slot_value = slot_value.append(v);
+    } else {
+      slot = slot.with(v, 0 - 1);
+    }
+    v = v + 1;
+  }
+  let words: i32 = (slot_value.len() + 63) / 64;
+  let uses: i64[] = __alloc_i64(nb * words);
+  let defs: i64[] = __alloc_i64(nb * words);
+  bi = 0;
+  while (bi < nb) {
+    let j: i32 = up_from[bi];
+    while (j < up_from[bi + 1]) {
+      uses = bit_set(uses, bi * words, slot[up[j]]);
+      j = j + 1;
+    }
+    bi = bi + 1;
+  }
+  for sv in slot_value {
+    if (def_b[sv] >= 0) {
+      defs = bit_set(defs, def_b[sv] * words, slot[sv]);
+    }
+  }
   let live_in: i64[] = __alloc_i64(nb * words);
   let live_out: i64[] = __alloc_i64(nb * words);
   // row holds the block being recomputed, so a pass updates live_out in
@@ -350,7 +433,7 @@ pub function compute_checked(f: ssa.SFunc, dependencies: i32[][]): Flow {
           let pi: i32 = pred_index(f.blocks[sb], b.id);
           let pj: i32 = phi_from[sb];
           while (pj < phi_from[sb + 1]) {
-            row = add_use(row, 0, f.blocks[sb].insts[phi_at[pj]].args[pi], dependencies);
+            row = add_use(row, slot, f.blocks[sb].insts[phi_at[pj]].args[pi], dependencies);
             pj = pj + 1;
           }
         }
@@ -388,7 +471,7 @@ pub function compute_checked(f: ssa.SFunc, dependencies: i32[][]): Flow {
       bi = bi - 1;
     }
   }
-  return Flow { ok: true, why: "", words: words, live_in: live_in, live_out: live_out, at: at, none: __alloc_bool(f.nvals) };
+  return Flow { ok: true, why: "", words: words, live_in: live_in, live_out: live_out, slot: slot, slot_value: slot_value, at: at, none: __alloc_bool(f.nvals) };
 }
 
 // position_of maps a block id to its position in f.blocks, -1 for an id no
