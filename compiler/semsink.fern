@@ -19,41 +19,40 @@ import "./util";
 
 pub struct Sunk { f: ssasem.Func, reread: i32 }
 
-// Each counted projection's instruction and the position of its block, by
-// value, -1 for every other value; the dominator tree; which values are live
+// Each counted projection's parent and the position of its block, by value,
+// -1 for every other value's block; the dominator tree; which values are live
 // out of each block, counting only the uses that name them; and, by value,
 // the positions of the blocks that use it other than to read a projection of
 // it or test its variant.
-struct Reads { dom: ssadeps.Dom, def: ssa.SInst[], at: i32[], flow: ssalive.Flow, pos: i32[], spent: i32[][] }
+struct Reads { dom: ssadeps.Dom, par: i32[], at: i32[], flow: ssalive.Flow, pos: i32[], spent: i32[][] }
 
 // A phi operand a block's edge hands on, rewritten to the block's re-read.
 struct PhiEdit { block: i32, phi: i32, slot: i32, value: i32 }
 
 pub function sink(f: ssasem.Func): Sunk {
   let g: ssa.SFunc = f.graph;
-  if (!any_projection(g, f.values)) {
+  let at: i32[] = crossing_projections(g, f.values);
+  if (at.len() == 0) {
     return Sunk { f: f, reread: 0 };
   }
-  let rd: Reads = reads_of(g, f.values);
+  let rd: Reads = reads_of(g, f.values, at);
   if (!rd.flow.ok) {
     return Sunk { f: f, reread: 0 };
   }
   let values: typeinfo.Type[] = f.values;
-  let blocks: ssa.SBlock[] = [];
+  let blocks: ssa.SBlock[] = g.blocks;
   let edits: PhiEdit[] = [];
   let reread: i32 = 0;
   let bi: i32 = 0;
   for b in g.blocks {
-    if (rd.dom.pre[bi] >= 0) {
+    if (rd.dom.pre[bi] >= 0 && rereads_any(rd, g, bi, b)) {
       let s: Sinking = sink_block(rd, g, bi, b, values);
       values = s.values;
       reread = reread + s.added;
-      blocks = blocks.append(s.b);
+      blocks = blocks.with(bi, s.b);
       for e in s.edits {
         edits = edits.append(e);
       }
-    } else {
-      blocks = blocks.append(b);
     }
     bi = bi + 1;
   }
@@ -87,50 +86,52 @@ function projection(kind: i32): boolean {
   return kind == ssasem.variant_get() || kind == ssasem.record_get() || kind == ssasem.tuple_get();
 }
 
-function reads_of(g: ssa.SFunc, values: typeinfo.Type[]): Reads {
-  let none: ssa.SInst = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
-  let def: ssa.SInst[] = [];
-  let at: i32[] = [];
+// `at` is crossing_projections'.
+function reads_of(g: ssa.SFunc, values: typeinfo.Type[], at: i32[]): Reads {
+  let par: i32[] = __alloc_i32(values.len());
+  let parent: boolean[] = __alloc_bool(values.len());
   let deps: i32[][] = [];
-  while (def.len() < values.len()) {
-    def = def.append(none);
-    at = at.append(0 - 1);
+  while (deps.len() < values.len()) {
     deps = deps.append([]);
+  }
+  for b in g.blocks {
+    for ins in b.insts {
+      if (counted_projection(ins, values)) {
+        par = par.with(ins.result, ins.args[0]);
+        parent = parent.with(ins.args[0], true);
+      }
+    }
   }
   let spent: i32[][] = deps;
   let pos: i32[] = ssa.block_positions(g);
   let bi: i32 = 0;
   for b in g.blocks {
     for ins in b.insts {
-      if (counted_projection(ins, values)) {
-        def = def.with(ins.result, ins);
-        at = at.with(ins.result, bi);
-      }
       if (!projection(ins.kind_tag) && ins.kind_tag != ssasem.variant_is() && ins.kind_tag != 8) {
         for a in ins.args {
-          spent = spend(spent, a, bi);
+          spent = spend(spent, parent, a, bi);
         }
       }
     }
     if (b.term.kind_tag == 1) {
-      spent = spend(spent, b.term.value, bi);
+      spent = spend(spent, parent, b.term.value, bi);
     }
     for sid in successors(b.term) {
       let s: ssa.SBlock = g.blocks[pos[sid]];
       let slot: i32 = util.index_of_i32(s.preds, b.id);
       for phi in s.insts {
         if (phi.kind_tag == 8 && slot >= 0 && slot < phi.args.len()) {
-          spent = spend(spent, phi.args[slot], bi);
+          spent = spend(spent, parent, phi.args[slot], bi);
         }
       }
     }
     bi = bi + 1;
   }
-  return Reads { dom: ssadeps.dominates(g), def: def, at: at, flow: ssalive.compute(g, deps), pos: pos, spent: spent };
+  return Reads { dom: ssadeps.dominates(g), par: par, at: at, flow: ssalive.compute(g, deps), pos: pos, spent: spent };
 }
 
-function spend(own spent: i32[][], v: i32, bi: i32): i32[][] {
-  if (v < 0 || v >= spent.len() || util.index_of_i32(spent[v], bi) >= 0) {
+function spend(own spent: i32[][], parent: boolean[], v: i32, bi: i32): i32[][] {
+  if (v < 0 || v >= spent.len() || !parent[v] || util.index_of_i32(spent[v], bi) >= 0) {
     return spent;
   }
   return spent.with(v, spent[v].append(bi));
@@ -141,12 +142,70 @@ function counted_projection(ins: ssa.SInst, values: typeinfo.Type[]): boolean {
     && ssasem.reference(values[ins.result]);
 }
 
-// Whether a counted projection exists: only then is there anything to
-// re-read, and the liveness and dominators are worth computing.
-function any_projection(g: ssa.SFunc, values: typeinfo.Type[]): boolean {
+// The position of each counted projection's block, by value, -1 for every
+// other value; empty when no block uses one another block read, since only
+// then is there anything to re-read, and the liveness and dominators are
+// worth computing. A phi operand counts as a use in the phi's block.
+function crossing_projections(g: ssa.SFunc, values: typeinfo.Type[]): i32[] {
+  let at: i32[] = [];
+  let bi: i32 = 0;
   for b in g.blocks {
     for ins in b.insts {
       if (counted_projection(ins, values)) {
+        if (at.len() == 0) {
+          at = __alloc_i32(values.len());
+          let k: i32 = 0;
+          while (k < at.len()) {
+            at = at.with(k, 0 - 1);
+            k = k + 1;
+          }
+        }
+        at = at.with(ins.result, bi);
+      }
+    }
+    bi = bi + 1;
+  }
+  if (at.len() == 0) {
+    return at;
+  }
+  bi = 0;
+  for b in g.blocks {
+    for ins in b.insts {
+      for a in ins.args {
+        if (a >= 0 && a < at.len() && at[a] >= 0 && at[a] != bi) {
+          return at;
+        }
+      }
+    }
+    let v: i32 = b.term.value;
+    if (b.term.kind_tag == 1 && v >= 0 && v < at.len() && at[v] >= 0 && at[v] != bi) {
+      return at;
+    }
+    bi = bi + 1;
+  }
+  return [];
+}
+
+// Whether the block at `bi` re-reads anything: sink_block rebuilds a block,
+// so it is run only on one that does.
+function rereads_any(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock): boolean {
+  for ins in b.insts {
+    if (ins.kind_tag != 6 && ins.kind_tag != 8) {
+      for a in ins.args {
+        if (read_above(rd, bi, a)) {
+          return true;
+        }
+      }
+    }
+  }
+  if (b.term.kind_tag == 1 && read_above(rd, bi, b.term.value)) {
+    return true;
+  }
+  for sid in successors(b.term) {
+    let s: ssa.SBlock = g.blocks[rd.pos[sid]];
+    let slot: i32 = util.index_of_i32(s.preds, b.id);
+    for phi in s.insts {
+      if (phi.kind_tag == 8 && slot >= 0 && slot < phi.args.len() && read_above(rd, bi, phi.args[slot])) {
         return true;
       }
     }
@@ -168,7 +227,7 @@ function sink_block(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock, values: typ
     } else {
       let args: i32[] = [];
       for a in ins.args {
-        r = reread(rd, bi, r, a);
+        r = reread(rd, g, bi, r, a);
         args = args.append(standing(r, a));
       }
       insts = insts.append(ssa.SInst { ...ins, args: args });
@@ -176,7 +235,7 @@ function sink_block(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock, values: typ
   }
   let term: ssa.STerm = b.term;
   if (b.term.kind_tag == 1) {
-    r = reread(rd, bi, r, b.term.value);
+    r = reread(rd, g, bi, r, b.term.value);
     term = ssa.STerm { ...term, value: standing(r, b.term.value) };
   }
   let edits: PhiEdit[] = [];
@@ -190,7 +249,7 @@ function sink_block(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock, values: typ
         let slot: i32 = 0;
         while (slot < s.preds.len() && slot < phi.args.len()) {
           if (s.preds[slot] == b.id) {
-            r = reread(rd, bi, r, phi.args[slot]);
+            r = reread(rd, g, bi, r, phi.args[slot]);
             let v: i32 = standing(r, phi.args[slot]);
             if (v != phi.args[slot]) {
               edits = edits.append(PhiEdit { block: si, phi: k, slot: slot, value: v });
@@ -238,7 +297,7 @@ function read_above(rd: Reads, bi: i32, v: i32): boolean {
   if (v < 0 || v >= rd.at.len() || rd.at[v] < 0 || rd.at[v] == bi) {
     return false;
   }
-  let p: i32 = rd.def[v].args[0];
+  let p: i32 = rd.par[v];
   if (!ssadeps.dom_holds(rd.dom, bi, rd.at[v]) || ssalive.live_out_has(rd.flow, bi, p)) {
     return false;
   }
@@ -255,15 +314,25 @@ function read_above(rd: Reads, bi: i32, v: i32): boolean {
 
 // `r` with `v` re-read in the block when it is read above, its parent first
 // when that is too.
-function reread(rd: Reads, bi: i32, own r: Rereads, v: i32): Rereads {
+function reread(rd: Reads, g: ssa.SFunc, bi: i32, own r: Rereads, v: i32): Rereads {
   if (!read_above(rd, bi, v) || util.index_of_i32(r.old, v) >= 0) {
     return r;
   }
-  let def: ssa.SInst = rd.def[v];
-  r = reread(rd, bi, r, def.args[0]);
+  let def: ssa.SInst = read_of(g, rd, v);
+  r = reread(rd, g, bi, r, def.args[0]);
   let id: i32 = r.values.len();
   let get: ssa.SInst = ssa.SInst { ...def, result: id, args: [standing(r, def.args[0])] };
   return Rereads { old: r.old.append(v), fresh: r.fresh.append(id), insts: r.insts.append(get), values: r.values.append(r.values[v]) };
+}
+
+// The instruction reading counted projection `v`.
+function read_of(g: ssa.SFunc, rd: Reads, v: i32): ssa.SInst {
+  for ins in g.blocks[rd.at[v]].insts {
+    if (ins.result == v) {
+      return ins;
+    }
+  }
+  return ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
 }
 
 // The value standing for `v` in the block: its re-read, else itself.

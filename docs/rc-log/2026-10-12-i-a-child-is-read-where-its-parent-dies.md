@@ -84,7 +84,15 @@ The rbtree benchmark at 420,000 inserts, x86-64:
 
 The compiler compiles itself in the same time (23.3 s against 23.4 s for a
 stage 2 on the 4-core container), and a sanitizer stage 1 compiles
-`checker.fern` clean.
+`checker.fern` clean. Compiling `checker.fern` allocates 0.4% more
+(`scripts/selfhost-alloc-bench`, 23.77 M to 23.86 M): the liveness and
+dominators semsink computes for a function where a block uses a projection
+another block read. It rebuilt every block of such a function at first, which
+cost 1.5%; it now rebuilds only a block that re-reads.
+
+Code grows where an arm gains a reuse path: `.text` +27% on perceus_rbtree,
++17% on rbtree_ck, +6% on cfold and +4% on deriv, x86-64, with rbtree
+retiring 14% fewer instructions and rbtree_ck 11% fewer.
 
 ## What is left
 

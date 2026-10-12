@@ -132,6 +132,12 @@
 # http_hello, int_loop, map_int, map_probe_chain, map_string), which both
 # #12106 and #12117 moved. Those six carry #12106's reading plus #12117's
 # difference; the lane's reading of the merged tree is the pin to keep.
+#
+# 2026-10-12 — 13 rows re-pinned where a nested pattern's arm builds in its
+# scrutinee and a child is re-read where its parent dies (#12183): the arms
+# that rebuild a node gain a reuse path on every target, perceus_rbtree
+# +26-27%, rbtree_ck +16-17%, cfold +5-6%, deriv +4-5%, and wasm http_hello
+# +2.3%, while rbtree retires 14% fewer instructions.
 
 selfhost/arm64-linux/array_append.emit	1052
 selfhost/arm64-linux/array_index.emit	1050
@@ -171,7 +177,7 @@ selfhost/wasm32-wasi/ascii_scan.emit	3066
 selfhost/wasm32-wasi/call_overhead.emit	169
 selfhost/wasm32-wasi/closure_call.emit	493
 selfhost/wasm32-wasi/enum_match.emit	598
-selfhost/wasm32-wasi/http_hello.emit	21497
+selfhost/wasm32-wasi/http_hello.emit	21989
 selfhost/wasm32-wasi/int_loop.emit	117
 selfhost/wasm32-wasi/map_int.emit	7435
 selfhost/wasm32-wasi/map_probe_chain.emit	7460
@@ -225,18 +231,18 @@ selfhost/x86-64-linux/utf8_ingest_unchecked.emit	14482
 selfhost/x86-64-linux/utf8_ingest_validated.emit	14726
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-selfhost/x86-64-linux/perceus_cfold.emit	2404
-selfhost/arm64-linux/perceus_cfold.emit	2564
-selfhost/wasm32-wasi/perceus_cfold.emit	2735
-selfhost/x86-64-linux/perceus_deriv.emit	2598
-selfhost/arm64-linux/perceus_deriv.emit	2798
-selfhost/wasm32-wasi/perceus_deriv.emit	2825
+selfhost/x86-64-linux/perceus_cfold.emit	2553
+selfhost/arm64-linux/perceus_cfold.emit	2721
+selfhost/wasm32-wasi/perceus_cfold.emit	2876
+selfhost/x86-64-linux/perceus_deriv.emit	2708
+selfhost/arm64-linux/perceus_deriv.emit	2902
+selfhost/wasm32-wasi/perceus_deriv.emit	2977
 selfhost/x86-64-linux/perceus_nqueens.emit	1425
 selfhost/arm64-linux/perceus_nqueens.emit	1600
 selfhost/wasm32-wasi/perceus_nqueens.emit	1223
-selfhost/x86-64-linux/perceus_rbtree.emit	2642
-selfhost/arm64-linux/perceus_rbtree.emit	2771
-selfhost/wasm32-wasi/perceus_rbtree.emit	3356
-selfhost/x86-64-linux/perceus_rbtree_ck.emit	2955
-selfhost/arm64-linux/perceus_rbtree_ck.emit	3099
-selfhost/wasm32-wasi/perceus_rbtree_ck.emit	3738
+selfhost/x86-64-linux/perceus_rbtree.emit	3356
+selfhost/arm64-linux/perceus_rbtree.emit	3481
+selfhost/wasm32-wasi/perceus_rbtree.emit	4227
+selfhost/x86-64-linux/perceus_rbtree_ck.emit	3461
+selfhost/arm64-linux/perceus_rbtree_ck.emit	3593
+selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4333

@@ -223,23 +223,23 @@ aarch64/utf8_ingest_validated.text	14825
 aarch64/utf8_ingest_validated.ir	7486486	3
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-x86_64/perceus_cfold.text	2404
+x86_64/perceus_cfold.text	2553
 x86_64/perceus_cfold.ir	108160067
-x86_64/perceus_deriv.text	2598
+x86_64/perceus_deriv.text	2708
 x86_64/perceus_deriv.ir	104609608
 x86_64/perceus_nqueens.text	1425
 x86_64/perceus_nqueens.ir	116800533
-x86_64/perceus_rbtree.text	2642
-x86_64/perceus_rbtree.ir	128541020
-x86_64/perceus_rbtree_ck.text	2955
-x86_64/perceus_rbtree_ck.ir	136899157
-aarch64/perceus_cfold.text	2564
+x86_64/perceus_rbtree.text	3356
+x86_64/perceus_rbtree.ir	110575969
+x86_64/perceus_rbtree_ck.text	3461
+x86_64/perceus_rbtree_ck.ir	122089807
+aarch64/perceus_cfold.text	2721
 aarch64/perceus_cfold.ir	118173402
-aarch64/perceus_deriv.text	2798
+aarch64/perceus_deriv.text	2902
 aarch64/perceus_deriv.ir	115606904
 aarch64/perceus_nqueens.text	1600
 aarch64/perceus_nqueens.ir	132085204
-aarch64/perceus_rbtree.text	2771
+aarch64/perceus_rbtree.text	3481
 aarch64/perceus_rbtree.ir	139751314
-aarch64/perceus_rbtree_ck.text	3099
+aarch64/perceus_rbtree_ck.text	3593
 aarch64/perceus_rbtree_ck.ir	148206250
