@@ -16,8 +16,10 @@
 // over-approximates reachability by NAME: a function is kept if its name
 // appears anywhere reachable as
 //   * an identifier read (`f(...)`, a function value, a mangled call target),
-//   * a called method's name (`x.eq(...)` keeps every `*.eq`); a field read
-//     names nothing, since a method is never a value,
+//   * a called method, by its receiver's type where the checker stamped a
+//     declared one (`x.eq(...)` on a `P` keeps `P.eq`) and by name otherwise
+//     (keeping every `*.eq`); a field read names nothing, since a method is
+//     never a value,
 //   * the trait method an operator desugars to (`a < b` keeps `*.cmp`,
 //     `a + b` keeps `*.add`, …) — covering operator overloading even if the
 //     `+`→`.add()` rewrite has not run yet,
@@ -87,7 +89,23 @@ function ts_recv_tag(e: ast.Expr): string {
 // struct name or a Map spelling, and a method name is an identifier — so a
 // qualified root can never collide with the bare names sharing the set.
 function ts_qualified_root(tag: string, method: string): string {
-  return tag + "|" + method;
+  return ts_canonical_tag(tag) + "|" + method;
+}
+
+// ts_canonical_tag is the spelling a type's methods are declared under, for a
+// type the language spells two ways: `str` is a `string` view, and `bool` and
+// `float` are `boolean` and `f64`.
+function ts_canonical_tag(tag: string): string {
+  if (tag == "str") {
+    return "string";
+  }
+  if (tag == "bool") {
+    return "boolean";
+  }
+  if (tag == "float") {
+    return "f64";
+  }
+  return tag;
 }
 
 // ts_free_root is the root a bare identifier contributes: the qualified
@@ -110,16 +128,6 @@ function ts_named_tag(tag: string): boolean {
     i = i + 1;
   }
   return true;
-}
-
-// ts_recv_rooted reports whether `name` is a method ts_kept_name resolves by
-// receiver: the ones the operators dispatch to, `neg`, and `to_string`, which
-// the checker's Display rewrite calls on a `print` / `write` / `eprint`
-// argument. Every other function matches exactly as it
-// did before qualification existed, which is what bounds this to what was
-// measured.
-function ts_recv_rooted(name: string): boolean {
-  return ast.is_operator_method(name) || name == "neg" || name == "to_string";
 }
 
 // ts_name_of contributes the names ONE node could reference; astwalk's fold
@@ -251,19 +259,67 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
 // token had to be BUILT, by a string concatenation at every field access in
 // the program, and the bare `<m>` is already in `refs`.
 //
-// A receiver-rooted method (ts_recv_rooted) whose receiver carries a stamped
-// named type contributes the qualified root instead, so `q.to_string()` —
-// the call the checker's Display rewrite spells for `print(q)` — keeps Q's
-// method and not every type's. A receiver with no stamp, or a composite one
-// (`dyn Display`, `Map[…]`), stays bare.
+// A method whose receiver carries a stamped named type contributes the
+// qualified root instead, so `q.to_string()` — the call the checker's Display
+// rewrite spells for `print(q)` — keeps Q's method and not every type's. A
+// receiver with no stamp, a composite one (`dyn Display`, `Map[…]`) or an
+// array, whose methods are the helpers above, stays bare.
 function ts_called_method(fa: ast.ExprFieldAccess, own acc: string[]): string[] {
-  if (ts_recv_rooted(fa.field)) {
-    let ft: string = util.base_type_name(ts_recv_tag(fa.obj));
-    if (ts_named_tag(ft)) {
-      return acc.append(ts_qualified_root(ft, fa.field));
-    }
+  let tag: string = ts_recv_tag(fa.obj);
+  let ft: string = util.base_type_name(tag);
+  if (ts_named_tag(ft) && !util.str_has_suffix(tag, "[]")) {
+    return acc.append(ts_qualified_root(ft, fa.field)).append(ts_any_root(fa.field));
   }
   return acc.append(fa.field);
+}
+
+// ts_any_root is what every typed call of `method` also contributes, for a
+// method whose receiver is its own type parameter: a template any receiver
+// type may instantiate (ts_recv_kept).
+function ts_any_root(method: string): string {
+  return ts_qualified_root("*", method);
+}
+
+// ts_widened is `names` plus the bare method of every qualified root whose tag
+// no receiver can spell: one of `open` (ts_open_tags), a type parameter of
+// `fd`, or a trait bound (ts_bound_type), which a type can meet with a plain
+// method as well as an impl. Such a call reaches whatever type stands there,
+// so it keeps every method of that name.
+function ts_widened(names: string[], open: RefSet, fd: parser.FuncDecl): string[] {
+  let out: string[] = names;
+  for n in names {
+    let bar: i32 = util.index_of_sub(n, "|");
+    if (bar > 0) {
+      let tag: string = slice_unchecked(n, 0, bar) + "";
+      if (refset_has(open, tag) || util.has_str(fd.type_params, tag) || util.has_str(fd.all_type_params, tag) || util.str_has_prefix(tag, "impl ")) {
+        out = out.append(slice_unchecked(n, bar + 1, n.len()) + "");
+      }
+    }
+  }
+  return out;
+}
+
+// ts_open_tags is every name a receiver's type can be spelled by that is not
+// the type a method is declared on: the module's type parameters, aliases and
+// traits.
+function ts_open_tags(mod: parser.Module): RefSet {
+  let names: string[] = [];
+  for fd in mod.funcs {
+    names = util.append_all(names, fd.type_params);
+  }
+  for sd in mod.structs {
+    names = util.append_all(names, sd.type_params);
+  }
+  for ed in mod.enums {
+    names = util.append_all(names, ed.type_params);
+  }
+  for al in mod.aliases {
+    names = names.append(al.name);
+  }
+  for td in mod.trait_decls {
+    names = names.append(td.name);
+  }
+  return refset_of(names);
 }
 
 // ts_names_stmt appends every name `st` could reference to `acc`.
@@ -271,8 +327,19 @@ function ts_names_stmt(st: ast.Stmt, own acc: string[]): string[] {
   return astwalk.fold_stmt(st, acc, ts_name_of);
 }
 
-// ts_func_names appends every name function `fd`'s body references to `acc`.
+// ts_func_names appends every name function `fd`'s body references to `acc`. A
+// method called on a name `fd` binds with a declared type is qualified by that
+// type (typed_method_name_of), which the checker's stamps do not always carry.
 function ts_func_names(fd: parser.FuncDecl, acc: string[]): string[] {
+  let lt: LocalTypes = local_types(fd);
+  function name_of(e: ast.Expr, own names: string[]): string[] {
+    if let ast.ExprCall(c) = e {
+      if let ast.ExprFieldAccess(fa) = c.callee {
+        return typed_method_name_of(fa, lt, names);
+      }
+    }
+    return ts_name_of(e, names);
+  }
   // The typed ndarray planner may replace inner with its checked adapter.
   // Keep that synthetic dependency until the typed rewrite and final DCE;
   // otherwise the planner can never find the adapter's body and contract.
@@ -281,7 +348,7 @@ function ts_func_names(fd: parser.FuncDecl, acc: string[]): string[] {
   }
   let i: i32 = 0;
   while (i < fd.body.len()) {
-    acc = ts_names_stmt(fd.body[i], acc);
+    acc = astwalk.fold_stmt(fd.body[i], acc, name_of);
     i = i + 1;
   }
   return acc;
@@ -317,13 +384,15 @@ function ts_interposed_method_name(name: string): string {
 // over-approximated root worth removing: a bare `add` root keeps `add` for
 // every type in the program, and on a minimal std/string program that is 24
 // functions — 12 of them core/bigint's `BigInt.add` / `sub` / `negate` and the
-// `__bi_*` helpers behind them, reached by nothing the program does (§4f). The
-// names ts_recv_rooted lists are the ones rooted this way.
+// `__bi_*` helpers behind them, reached by nothing the program does (§4f).
+// An interposed method (ts_interposed_method_name) resolves by the name its
+// call sites spell.
 //
 // A receiver spelled as the decl's OWN type parameter is a template no concrete
-// tag can name — monomorph instantiates it after this pass — so it is kept
-// rather than resolved. `base_type_name` strips the argument list, so
-// `impl Add for Box[T]` resolves on `Box`, which is the tag a struct carries.
+// tag can name — monomorph instantiates it after this pass — so any typed call
+// of its name keeps it (ts_any_root). `base_type_name` strips the argument
+// list, so `impl Add for Box[T]` resolves on `Box`, which is the tag a struct
+// carries.
 function ts_recv_kept(fd: parser.FuncDecl, refs: RefSet): boolean {
   if (fd.receiver_type.len() == 0) {
     return false;
@@ -332,10 +401,18 @@ function ts_recv_kept(fd: parser.FuncDecl, refs: RefSet): boolean {
   if (base.len() == 0) {
     return false;
   }
+  let name: string = fd.name;
+  let im: string = ts_interposed_method_name(fd.name);
+  if (im.len() > 0) {
+    name = im;
+  }
   if (util.has_str(fd.type_params, base)) {
+    return refset_has(refs, ts_any_root(name));
+  }
+  if (fd.impl_trait.len() > 0 && refset_has(refs, ts_qualified_root(ts_impl_tag(fd.impl_trait), name))) {
     return true;
   }
-  return refset_has(refs, ts_qualified_root(base, fd.name));
+  return refset_has(refs, ts_qualified_root(base, name));
 }
 
 // RefSet is the reachable-name set with a chained hash index over it — the
@@ -397,8 +474,9 @@ pub function body_refs(fd: parser.FuncDecl): BodyRefs {
 }
 
 // LocalTypes pairs the names a function binds with a declared type — its
-// receiver, its parameters and every annotated `let` — with that type. A
-// type parameter, and a name bound again under another spelling, map to "".
+// receiver, its parameters, every annotated `let` and every `let` of a struct
+// literal — with that type. A type parameter, and a name bound again under
+// another spelling, map to "".
 struct LocalTypes { names: string[], types: string[] }
 
 function lt_bind(own lt: LocalTypes, name: string, ty: string): LocalTypes {
@@ -415,6 +493,11 @@ function lt_bind(own lt: LocalTypes, name: string, ty: string): LocalTypes {
 function lt_stmt(st: ast.Stmt, own lt: LocalTypes): LocalTypes {
   match (st) {
     ast.StmtVar(v) => {
+      if (v.type_name.len() == 0) {
+        if let ast.ExprStructLit(lit) = v.init {
+          return lt_bind(lt, v.name, lit.type_name);
+        }
+      }
       return lt_bind(lt, v.name, v.type_name);
     },
     ast.StmtFor(f) => {
@@ -498,8 +581,8 @@ function typed_method_name_of(fa: ast.ExprFieldAccess, lt: LocalTypes, own acc: 
         return acc;
       }
       let base: string = util.base_type_name(spelled);
-      if (ts_named_tag(base)) {
-        return acc.append(ts_qualified_root(base, fa.field));
+      if (ts_named_tag(base) && !util.str_has_suffix(spelled, "[]")) {
+        return acc.append(ts_qualified_root(base, fa.field)).append(ts_any_root(fa.field));
       }
     }
   }
@@ -614,7 +697,7 @@ function ts_kept_name(fd: parser.FuncDecl, refs: RefSet): boolean {
   if (im.len() > 0 && refset_has(refs, im)) {
     return true;
   }
-  return ts_recv_rooted(fd.name) && ts_recv_kept(fd, refs);
+  return ts_recv_kept(fd, refs);
 }
 
 // treeshake returns `mod` with `mod.funcs` pruned to those reachable, by name,
@@ -629,6 +712,7 @@ struct TsGrown { rs: RefSet, pending: i32[] }
 // and leaves `pending`. The names a body references do not change between
 // rounds, so each function contributes once.
 function ts_grow(mod: parser.Module, rs0: RefSet, pending0: i32[]): TsGrown {
+  let open: RefSet = ts_open_tags(mod);
   let rs: RefSet = rs0;
   let pending: i32[] = pending0;
   let changed: boolean = true;
@@ -639,7 +723,7 @@ function ts_grow(mod: parser.Module, rs0: RefSet, pending0: i32[]): TsGrown {
     while (pi < pending.len()) {
       let fi: i32 = pending[pi];
       if (ts_kept_name(mod.funcs[fi], rs)) {
-        let body_names: string[] = ts_func_names(mod.funcs[fi], []);
+        let body_names: string[] = ts_widened(ts_func_names(mod.funcs[fi], []), open, mod.funcs[fi]);
         let bi: i32 = 0;
         while (bi < body_names.len()) {
           if (!refset_has(rs, body_names[bi])) {
