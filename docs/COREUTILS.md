@@ -797,34 +797,34 @@ to becoming the default.
 
 ## Performance
 
-### The whole catalogue, one compiler, 2026-10-12, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
+### The whole catalogue, one compiler, 2026-10-12, Linux x86-64 (GNU coreutils 9.12, uutils 0.0.24)
 
-The first run of the single-column bench over every workload: 661 rows over
-104 utilities, built by the self-hosted compiler at 394767a. Full table:
-`docs/COREUTILS-BENCH-2026-10-12.md`. Builds ran on the same 4-core machine
-for part of the run, so a ratio within about 10% of 1 is not a measured
-difference. The GNU column is 9.4, below the 9.12 the bench is held to:
-the container that ran it could not fetch 9.12, so every ratio here is owed a
-re-run against 9.12.
+The single-column bench over every workload: 669 rows over 105 utilities,
+built by the self-hosted compiler at b506237, on a 4-core container with
+nothing else running. Full table: `docs/COREUTILS-BENCH-2026-10-12.md`. A
+ratio within about 10% of 1 is still not a measured difference: `mv a
+400-file tree` read 0.57x in the full run and 0.94x when `mv` was re-run
+alone.
 
 | | rows | faster than GNU | faster than uutils |
 |---|---|---|---|
-| every workload | 661 | 501 (76%) | 534 of 616 |
+| every workload | 669 | 502 of 667 (75%) | 560 of 623 |
 
-The median row is 1.68x GNU and 3.09x uutils, and 66 of the 104 utilities
-beat GNU on every row. The 160 rows that lose to GNU fall into a few families:
+The median row is 1.70x GNU and 3.26x uutils, and 65 of the 105 utilities
+beat GNU on every row. The 165 rows that lose to GNU fall into a few families:
 
 | family | rows lost | worst | where the time goes |
 |---|---|---|---|
-| `base32` / `base64` / `basenc` encoding | 11 | 0.12x | one character per builder push; `base64 -w0` of 8 MiB was 661 M instructions to GNU's 90 M |
-| the digests (`sha*sum`, `md5sum`, `b2sum`, `cksum -a`) | 33 | 0.50x | GNU calls OpenSSL's assembly: `sha256sum` of 8 MiB is 447 M instructions to its 235 M |
-| `ls` / `dir` / `vdir` | 31 | 0.66x | |
-| `dd` conversions | 9 | 0.43x | `conv=unblock`, `swab`, `block` |
-| `pr` | 9 | 0.53x | a builder allocated per line, and padding built as a string |
-| `du` | 9 | 0.61x | every row |
-| `fmt` | 9 | 0.66x | every row |
-| `shuf` | 6 | 0.29x | `-n 10` of a large file reads all of it |
-| `join`, `ptx`, `stat`, `cp`, `sort`, `numfmt`, `tac`, `split`, the rest | 43 | 0.53x | |
+| `ls` / `dir` / `vdir` | 44 | 0.67x | GNU 9.12's `ls` is about 9% faster than 9.4's at the median row; `-R` still walks full paths, and `DirEntry` carries no `d_type`, so `-F` stats every entry |
+| the digests (`sha*sum`, `md5sum`, `b2sum`, `cksum -a`) | 32 | 0.51x | GNU calls OpenSSL's assembly: `sha256sum` of 8 MiB is 372 M instructions to its 235 M |
+| `base32` / `base64` / `basenc` | 10 | 0.51x | the 64 MiB rows only: encoding is 0.55x to 0.72x after #12159's word-at-a-time push, and `--base16 -d` and `base32 -d` lose too |
+| `stat` | 10 | 0.77x | formatting 4000 operands |
+| `fmt` | 9 | 0.67x | every row |
+| `pr` | 8 | 0.55x | a record allocated per input line, and padding built as a string |
+| `shuf` | 6 | 0.57x | every large-input row |
+| `du` | 5 | 0.77x | `--apparent-size`, `--inodes`, `-h -c` |
+| `dd` | 3 | 0.71x | the two `bs=512` rows and `conv=swab` |
+| `ptx`, `tac`, `cp`, `sort`, `split`, `chown -R`, `numfmt`, the rest | 38 | 0.57x | the worst is `mv` of a tree, which is 0.94x run alone; the next is 0.74x |
 
 ### Both compilers, 2026-09-17 — the self-host build does not meet requirement 2
 
