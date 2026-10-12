@@ -276,6 +276,14 @@ decides what wraps it.
    fixed-bucket histograms in a static registry, snapshotted to the
    supervisor over its pipe once a second and served at `/metrics` in
    Prometheus text format so a scrape never touches a worker.
+   Trace Context (landed): `std/http/trace` reads, writes and continues
+   `traceparent` and `tracestate` by W3C Trace Context (Level 2's random
+   flag included); `serve.Config { trace }` opens a span per request,
+   read as `plat.trace()` and carried upstream by `plat.http` as a child.
+   Opt-in, as Go's `net/http` and axum ship no tracing by default. Gate:
+   `tests/stdlib/http_trace_test.fern` and the propagation case in
+   `tests/stdlib/sim_platform_test.fern`; `TestTraceServeInterp` and
+   `TestTraceServeX86_64` through the real loop.
 8. **The developer loop.** In-memory serving through the full router and
    middleware stack on the simulated `Platform`; recording and replay of
    upstream traffic; a rate-driven load tool in `tools/` with latency
