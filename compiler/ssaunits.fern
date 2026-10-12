@@ -3656,7 +3656,7 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
 pub struct Reuse { pairs: ReusePairs[], keeps: Keeps[], carry: Carry, reads: VariantReads }
 
 pub function no_reuse(): Reuse {
-  return Reuse { pairs: [], keeps: [], carry: no_carry(), reads: VariantReads { at: [], dom: ssadeps.Dom { pre: [], post: [], idom: [] }, sites: [], names: [] } };
+  return Reuse { pairs: [], keeps: [], carry: no_carry(), reads: VariantReads { at: [], dom: ssadeps.Dom { pre: [], post: [], idom: [], by_clock: [] }, sites: [], names: [] } };
 }
 
 // reuse_layer_disabled: the #4350 §6.5 differential switch. When
