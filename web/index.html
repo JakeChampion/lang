@@ -692,10 +692,19 @@
 // CDN; the editor module below consumes this shared boot via
 // window.__fernRuntimeReady instead of instantiating its own.
 (function () {
-  var go = new Go();
-  window.__fernRuntimeReady = WebAssembly
-    .instantiateStreaming(fetch("fern.wasm"), go.importObject)
-    .then(function (result) { go.run(result.instance); return result.instance; });
+  // The language server (fern.wasm) runs in web/lsp-worker.js, off this
+  // thread; ready once the worker has booted it.
+  var lsp = new Worker("lsp-worker.js");
+  window.__fernLspWorker = lsp;
+  window.__fernRuntimeReady = new Promise(function (resolve, reject) {
+    function onBoot(e) {
+      if (!e.data.ready && !e.data.failed) return;
+      lsp.removeEventListener("message", onBoot);
+      if (e.data.ready) resolve();
+      else reject(new Error(e.data.failed));
+    }
+    lsp.addEventListener("message", onBoot);
+  });
   // The self-host compiler (web/playground.wasm), compiled once here and
   // instantiated afresh for every run by web/wasi-shim.js, so nothing one
   // run leaves behind reaches the next.
@@ -1240,13 +1249,26 @@ shareBtn.addEventListener("click", async () => {
 // web/playground.wasm is compiler/playground_run.fern built by the
 // self-host compiler: the program on stdin, the mode in argv, the artifact on
 // stdout, diagnostics on stderr. It is compiled once at boot
-// (window.__fernDriverReady) and instantiated afresh for every call through
-// web/wasi-shim.js. Run, Run (wasm), View assembly and Build component all go
-// through it, on both worlds; the language server still comes from
-// fern.wasm, the Go toolchain.
+// (window.__fernDriverReady) and instantiated afresh for every call, in
+// web/driver-worker.js so a compile never blocks the page. Run, Run (wasm),
+// View assembly and Build component all go through it, on both worlds; the
+// language server still comes from fern.wasm, the Go toolchain.
 let driverModule = null;
+const driverWorker = new Worker("driver-worker.js", { type: "module" });
+const driverPending = new Map();
+let driverCallId = 0;
+driverWorker.addEventListener("message", (e) => {
+  const call = driverPending.get(e.data.id);
+  driverPending.delete(e.data.id);
+  if (e.data.error !== undefined) call.reject(new Error(e.data.error));
+  else call.resolve(e.data.result);
+});
 function runDriver(src, args) {
-  return runCoreWasm(driverModule, { stdin: src, args: ["fern"].concat(args) });
+  return new Promise((resolve, reject) => {
+    const id = ++driverCallId;
+    driverPending.set(id, { resolve, reject });
+    driverWorker.postMessage({ id, module: driverModule, src, args: ["fern"].concat(args) });
+  });
 }
 
 async function runOnce() {
@@ -1355,9 +1377,7 @@ function runWasmOnce() {
     ? "compiling handler to wasm…"
     : "compiling to wasm…";
   metaEl.textContent = "";
-  // setTimeout(0) lets the disabled state + "compiling…" paint before
-  // the synchronous compile call blocks the UI thread.
-  setTimeout(async () => {
+  (async () => {
     try {
       const compiled = await runDriver(getSrc(), driverArgs(["-emit", "core-module"], httpWorld));
       if (compiled.exit !== 0) {
@@ -1396,7 +1416,7 @@ function runWasmOnce() {
       runWasmBtn.disabled = false;
       runWasmBtn.textContent = "Run (wasm)";
     }
-  }, 0);
+  })();
 }
 
 runWasmBtn.addEventListener("click", runWasmOnce);
@@ -1468,9 +1488,7 @@ function buildComponentOnce() {
   buildComponentBtn.textContent = "Building…";
   outEl.textContent = "compiling to a " + world + " component…";
   metaEl.textContent = "";
-  // Defer to the event loop so the disabled state + label paint
-  // before the synchronous wasm call blocks.
-  setTimeout(async () => {
+  (async () => {
     try {
       const built = await runDriver(getSrc(), driverArgs(["-emit", "component"], httpWorld));
       if (built.exit !== 0) {
@@ -1488,7 +1506,7 @@ function buildComponentOnce() {
       buildComponentBtn.disabled = false;
       buildComponentBtn.textContent = "Build component";
     }
-  }, 0);
+  })();
 }
 
 buildComponentBtn.addEventListener("click", buildComponentOnce);
@@ -1597,17 +1615,13 @@ if (embedTargetEl) {
 
 // ---- Language server wiring ----
 //
-// The wasm bundle exposes the same in-tree LSP server that
-// `cmd/fern-lsp` runs over stdio. We talk to it through two
-// globals:
-//
-//   fernLsp(jsonRpcMsg) -> jsonRpcResponse | ""   (sync request)
-//   fernLspOnNotify(cb)                           (push channel)
-//
-// Synchronous from JS's point of view (the wasm call returns
-// before yielding), but we still tag requests with ids so the
-// server's response shape is spec-compliant.
+// The language server is the in-tree LSP that `cmd/fern-lsp` runs
+// over stdio, compiled to fern.wasm and hosted in web/lsp-worker.js
+// (started by the boot script above). Requests and notifications are
+// posted to the worker in order; a request resolves with the server's
+// parsed response, or null when it sent none.
 const LSP_URI = "file:///playground.fern";
+const lspWorker = window.__fernLspWorker;
 let lspReady = false;
 let docOpen = false;
 let docVersion = 0;
@@ -1618,34 +1632,41 @@ let docSyncTimer = null;
 // changes. publishDiagnostics is async-arrival; forceLinting
 // pokes CM to re-render.
 let currentDiagnostics = [];
+const lspPending = new Map();
 
-function lspRequest(method, params, withId) {
-  if (typeof globalThis.fernLsp !== "function") return null;
-  const msg = { jsonrpc: "2.0", method, params };
-  if (withId) msg.id = ++rpcId;
-  const respStr = globalThis.fernLsp(JSON.stringify(msg));
-  if (!respStr) return null;
-  try { return JSON.parse(respStr); }
-  catch (e) { return null; }
+lspWorker.addEventListener("message", (e) => {
+  const d = e.data;
+  if (d.id !== undefined) {
+    const resolve = lspPending.get(d.id);
+    lspPending.delete(d.id);
+    if (!resolve) return;
+    try { resolve(d.resp ? JSON.parse(d.resp) : null); }
+    catch (err) { resolve(null); }
+  } else if (d.method === "textDocument/publishDiagnostics") {
+    currentDiagnostics = d.params.diagnostics || [];
+    renderProblemList(currentDiagnostics);
+    if (editorView) forceLinting(editorView);
+  }
+});
+
+function lspRequest(method, params) {
+  const id = ++rpcId;
+  return new Promise((resolve) => {
+    lspPending.set(id, resolve);
+    lspWorker.postMessage({ id, msg: JSON.stringify({ jsonrpc: "2.0", id, method, params }) });
+  });
 }
 
-function lspNotify(method, params) { return lspRequest(method, params, false); }
+function lspNotify(method, params) {
+  lspWorker.postMessage({ msg: JSON.stringify({ jsonrpc: "2.0", method, params }) });
+}
 
 function initLsp() {
-  // Install the notification sink BEFORE any didOpen so the
-  // first publishDiagnostics frame has somewhere to land.
-  globalThis.fernLspOnNotify((method, params) => {
-    if (method === "textDocument/publishDiagnostics") {
-      currentDiagnostics = params.diagnostics || [];
-      renderProblemList(currentDiagnostics);
-      if (editorView) forceLinting(editorView);
-    }
-  });
   lspRequest("initialize", {
     processId: null,
     rootUri: null,
     capabilities: {},
-  }, true);
+  });
   lspNotify("initialized", {});
   lspReady = true;
   syncDoc(getSrc()); // initial open + first diagnostics
@@ -1799,13 +1820,13 @@ function fernLinter(view) {
 }
 
 // Hover tooltip. Returns null when the LSP says nothing.
-const fernHover = hoverTooltip((view, pos) => {
+const fernHover = hoverTooltip(async (view, pos) => {
   if (!lspReady) return null;
   const lspPos = lspPosFromOffset(view.state, pos);
-  const resp = lspRequest("textDocument/hover", {
+  const resp = await lspRequest("textDocument/hover", {
     textDocument: { uri: LSP_URI },
     position: lspPos,
-  }, true);
+  });
   if (!resp || !resp.result || !resp.result.contents) return null;
   const value = resp.result.contents.value
     .replace(/^```fern\n/, "")
@@ -1844,7 +1865,7 @@ const fernHover = hoverTooltip((view, pos) => {
 // (CodeMirror's default keybinding) and after `.` per the LSP's
 // declared trigger character. We send the LSP request and map
 // each item into CM's option shape.
-function fernCompletionSource(context) {
+async function fernCompletionSource(context) {
   if (!lspReady) return null;
   // Find the identifier-shaped prefix the user has typed so far
   // so CM can offer a `from` to replace on selection.
@@ -1852,10 +1873,10 @@ function fernCompletionSource(context) {
   if (!word && !context.explicit) return null;
   const from = word ? word.from : context.pos;
   const lspPos = lspPosFromOffset(context.state, context.pos);
-  const resp = lspRequest("textDocument/completion", {
+  const resp = await lspRequest("textDocument/completion", {
     textDocument: { uri: LSP_URI },
     position: lspPos,
-  }, true);
+  });
   if (!resp || !resp.result) return null;
   const items = resp.result.items || [];
   return {
@@ -1990,11 +2011,7 @@ Promise.all([window.__fernRuntimeReady, window.__fernDriverReady])
       ? "ready"
       : "ready · Ctrl/Cmd+Enter to run · hover for types";
     initLsp();
-    if (autoRun) {
-      // Defer to the next tick so the "ready" status paints before
-      // the synchronous wasm call freezes the UI.
-      setTimeout(runOnce, 0);
-    }
+    if (autoRun) runOnce();
   })
   .catch(err => {
     statusEl.textContent = "wasm load failed: " + err;
