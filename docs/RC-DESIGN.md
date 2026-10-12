@@ -85,10 +85,23 @@ runs over the flow with dependencies, so a borrowed projection keeps its
 container alive and a container is dropped where its last anchored read ends.
 
 Before the walk, a family of analyses decides which reads are **units of
-their own** rather than borrows. Each is a query answered once over the graph
-and folded into the ownership table the walk reads (`units_of`):
+their own** rather than borrows. They share one model: every unit has a
+holder (the value the walk counts), the values anchored to it borrow its
+storage, a move ends it, and a rule that lets a read become a unit of its
+own has to show the holder is not needed past a point other than through
+what the read took. That question is asked in two relations, both read off
+`ssasem.Analysis` and `ssalive`: the **anchored** one, whether the storage
+behind a value is still needed (`used_after`), and the **direct** one,
+whether the value itself is still in hand (`read_after_direct`, the flow over
+`a.parents` alone). `needed_past_slot` is the anchored question asked about
+one slot of a box: a later read of the box in the block, a value anchored to
+it used after the point, or a block that can run later naming it
+(`named_after`, which reads a phi's operand only on its own edge), with a
+read of another slot let through. Each rule is a query over those, with its
+allowances stated at the call, and folded into the ownership table the walk
+reads (`units_of`):
 
-- **Payload take** (`payload_takes`, `slot_takeable`, `needed_past`): a read
+- **Payload take** (`payload_takes`, `slot_takeable`, `needed_past_slot`): a read
   of a reference payload out of an enum, or of a buffer, record or map out of
   a record field, a tuple element or an owned array element, when the box is
   the frame's unit and the frame reads it no further through that slot.
@@ -99,7 +112,8 @@ and folded into the ownership table the walk reads (`units_of`):
 - **Tuple take** (`tuple_takes`, `takeable_root`): the untested form, for a
   tuple this frame allocated (`tuple_new`, `map_delete`'s pair) whose other
   elements are only read: the slot is nulled with no runtime test, since no
-  one else can see the box. Pinned by `TestSelfHostMapTupleElemReclaim*`.
+  one else can see the box. It asks `needed_past_slot` strictly: the tuple
+  must die in the block. Pinned by `TestSelfHostMapTupleElemReclaim*`.
 - **Hold** (`held_elements`): a projection of a counted type that is still in
   hand where its source is consumed, or where its source dies unconsumed and
   the read (or a read anchored to it) is consumed later, is retained at the
