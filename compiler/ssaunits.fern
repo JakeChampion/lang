@@ -1531,6 +1531,28 @@ function used_after(f: ssasem.Func, a: ssasem.Analysis, bi: i32, pos: i32, w: i3
   return false;
 }
 
+// used_after over the DIRECT relation (`direct`, the flow over `a.parents`
+// alone): whether `v`, or a projection of it, is read after `pos`. The two
+// relations are the model's two questions: the anchored one asks whether the
+// storage behind a value is still needed, the direct one whether the value
+// itself is still in hand.
+function read_after_direct(f: ssasem.Func, a: ssasem.Analysis, direct: ssalive.Flow, bi: i32, pos: i32, v: i32): boolean {
+  let b: ssa.SBlock = f.graph.blocks[bi];
+  if (ssalive.live_out_has(direct, bi, v)) {
+    return true;
+  }
+  let i: i32 = pos + 1;
+  while (i < b.insts.len()) {
+    for u in b.insts[i].args {
+      if (reads_source(a, u, v)) {
+        return true;
+      }
+    }
+    i = i + 1;
+  }
+  return b.term.kind_tag == 1 && reads_source(a, b.term.value, v) || b.term.kind_tag == 3 && reads_source(a, b.term.cond, v);
+}
+
 // The projection of `root` that `w` reaches it through: `w` itself when its
 // parent is the root, else the chain element just before the root. -1 when a
 // value on the chain is anchored to more than one, since the chain then names
@@ -1588,49 +1610,14 @@ function projection_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], d
   if (projection(defs[root].kind_tag)) {
     return none;
   }
-  let b: ssa.SBlock = f.graph.blocks[bi];
-  if (ssalive.live_out_has(a.flow, bi, root) && named_after(f, a.flow, bi, root, get)) {
+  // The field is read at `get` and taken or grown HERE, at a later use: the
+  // instruction's own other operands count (`own_root`), the record beside
+  // its field being the record read whole, and so does the field value
+  // itself used again later, since the slot is not moved out at the read.
+  if (needed_past_slot(f, a, defs, bi, pos, root, get, false, true, false)) {
     return none;
-  }
-  let i: i32 = pos + 1;
-  while (i < b.insts.len()) {
-    let later: ssa.SInst = b.insts[i];
-    if (ssa.reads_value(later, root) && !other_field_get(later, root, get.imm)) {
-      return none;
-    }
-    i = i + 1;
-  }
-  if (b.term.kind_tag == 1 && b.term.value == root) {
-    return none;
-  }
-  // The instruction's own other operands read the record as the callee or
-  // the op sees it, after the field is taken or grown.
-  for arg in b.insts[pos].args {
-    if (arg != v && reaches_past_field(a, defs, root, get.imm, arg)) {
-      return none;
-    }
-  }
-  let w: i32 = 0;
-  while (w < f.graph.nvals) {
-    if (w != root && reaches_past_field(a, defs, root, get.imm, w) && used_after(f, a, bi, pos, w)) {
-      return none;
-    }
-    w = w + 1;
   }
   return root;
-}
-
-// Whether `w` reaches the record `root` other than through a read of one of
-// its fields other than `field`.
-function reaches_past_field(a: ssasem.Analysis, defs: ssa.SInst[], root: i32, field: i32, w: i32): boolean {
-  if (w == root) {
-    return true;
-  }
-  if (!reads(a, w, root)) {
-    return false;
-  }
-  let hop: i32 = first_hop(a, w, root);
-  return hop < 0 || !other_field_get(defs[hop], root, field);
 }
 
 function other_tuple_get(ins: ssa.SInst, root: i32, field: i32): boolean {
@@ -1708,30 +1695,10 @@ function tuple_take_field(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], 
   if (!owned[root] || !takeable_root(defs[root].kind_tag) || !only_element_reads(f, root)) {
     return none;
   }
-  let b: ssa.SBlock = f.graph.blocks[bi];
-  if (ssalive.live_out_has(a.flow, bi, root)) {
+  // The untested take: the tuple must die in this block, so any liveness out
+  // of it refuses (`strict`); another element's read is let through.
+  if (needed_past_slot(f, a, defs, bi, pos, root, ins, true, false, true)) {
     return none;
-  }
-  let i: i32 = pos + 1;
-  while (i < b.insts.len()) {
-    let later: ssa.SInst = b.insts[i];
-    if (ssa.reads_value(later, root) && !other_tuple_get(later, root, ins.imm)) {
-      return none;
-    }
-    i = i + 1;
-  }
-  if (ssa.term_reads_value(b.term, root)) {
-    return none;
-  }
-  let w: i32 = 0;
-  while (w < f.graph.nvals) {
-    if (w != root && w != ins.result && reads(a, w, root) && used_after(f, a, bi, pos, w)) {
-      let hop: i32 = first_hop(a, w, root);
-      if (hop != ins.result && (hop < 0 || !other_tuple_get(defs[hop], root, ins.imm))) {
-        return none;
-      }
-    }
-    w = w + 1;
   }
   return ins.imm;
 }
@@ -2103,8 +2070,7 @@ function count_true(flags: boolean[]): i32 {
 // direct projection of them, whatever else still depends on them.
 function dying_reads(f: ssasem.Func, a: ssasem.Analysis, direct: ssalive.Flow, owned: boolean[], held: boolean[], supplies: Supply[], bi: i32, pos: i32): i32[] {
   let out: i32[] = [];
-  let b: ssa.SBlock = f.graph.blocks[bi];
-  for u in b.insts[pos].args {
+  for u in f.graph.blocks[bi].insts[pos].args {
     if (u < 0) {
       continue;
     }
@@ -2112,7 +2078,7 @@ function dying_reads(f: ssasem.Func, a: ssasem.Analysis, direct: ssalive.Flow, o
       if (!(owned[v] || held[v]) || has_id(out, v) || supplied(supplies, v)) {
         continue;
       }
-      if (!ssalive.live_out_has(direct, bi, v) && !read_later(a, b, pos, v)) {
+      if (!read_after_direct(f, a, direct, bi, pos, v)) {
         out = out.append(v);
       }
     }
@@ -2133,19 +2099,6 @@ function supplied(supplies: Supply[], v: i32): boolean {
     }
   }
   return false;
-}
-
-function read_later(a: ssasem.Analysis, b: ssa.SBlock, pos: i32, v: i32): boolean {
-  let i: i32 = pos + 1;
-  while (i < b.insts.len()) {
-    for u in b.insts[i].args {
-      if (reads_source(a, u, v)) {
-        return true;
-      }
-    }
-    i = i + 1;
-  }
-  return b.term.kind_tag == 1 && reads_source(a, b.term.value, v) || b.term.kind_tag == 3 && reads_source(a, b.term.cond, v);
 }
 
 // The values some operation consumes: a supply of an operation, of an owned
@@ -2198,7 +2151,7 @@ function other_payload_get(ins: ssa.SInst, root: i32, slot: i32): boolean {
 // element (field_takeable). Same shape as
 // `projection_root` above, over the one slot the read names: the box is a
 // unit of this frame's own, no later block names it, and after the read it
-// is reached only through reads of its OTHER slots (`needed_past`).
+// is reached only through reads of its OTHER slots (`needed_past_slot`).
 //
 // The untested tuple take next door demands more of its source —
 // `takeable_root`, a box this frame ALLOCATED — because it nulls without
@@ -2244,10 +2197,9 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs
   if (!owned[root] || projection(defs[root].kind_tag) && !taken_read(defs[root].kind_tag)) {
     return none;
   }
-  if (needed_past(f, a, defs, bi, ins, root)) {
-    return none;
-  }
-  if (read_later_in_block(f, a, defs, bi, pos, root)) {
+  // Another slot's read is let through, and so is what the taken value
+  // carries: the slot is moved out, not borrowed.
+  if (needed_past_slot(f, a, defs, bi, pos, root, ins, false, false, true)) {
     return none;
   }
   return root;
@@ -2273,23 +2225,33 @@ function slot_takeable(f: ssasem.Func, defs: ssa.SInst[], got: typeinfo.Type, ro
   return !(ssasem.is_view(got) || option_layout(f, box)) || sole_box(f, defs, root, __alloc_bool(f.graph.nvals));
 }
 
-// Whether the rest of block bi, after the read at pos, reads `root` other than
-// through another of its slots. An array's elements have no other slot a
-// read can be proven to name, so the one read let through is the `with`
-// that stores back at the element the take emptied — `xs.with(i, f(xs[i]))`
-// — and only one: a second with from the same box would carry the hole.
-function read_later_in_block(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, pos: i32, root: i32): boolean {
+// Whether `root` is still needed past position `pos` of block `bi` other than
+// through the slot the read `take` names: a later read of it in the block, a
+// value anchored to it that is used after `pos`, or a block that can run
+// later naming it (`named_after`). A read of another of its slots is let
+// through everywhere; so is a value that reaches it only through the taken
+// value, when `through_take` is set, since the take moves that value out.
+// `strict` refuses any liveness out of the block, a tuple take's rule.
+// `own_root` counts the instruction's own operands too, the root among them:
+// a call handed a record beside its field reads the record whole.
+//
+// The three takes and the field steal are this one question asked with
+// different allowances; what each allows is stated at its call.
+function needed_past_slot(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, pos: i32, root: i32, take: ssa.SInst, strict: boolean, own_root: boolean, through_take: boolean): boolean {
   let b: ssa.SBlock = f.graph.blocks[bi];
-  let ins: ssa.SInst = b.insts[pos];
+  if (ssalive.live_out_has(a.flow, bi, root) && (strict || named_after(f, a.flow, bi, root, take))) {
+    return true;
+  }
   let stores: i32 = 0;
   let i: i32 = pos + 1;
   while (i < b.insts.len()) {
-    if (same_slot_with(b.insts[i], ins)) {
+    let later: ssa.SInst = b.insts[i];
+    if (same_slot_with(later, take)) {
       stores = stores + 1;
       if (stores > 1) {
         return true;
       }
-    } else if (ssa.reads_value(b.insts[i], root) && !other_slot_get(b.insts[i], ins)) {
+    } else if (ssa.reads_value(later, root) && !other_slot_get(later, take)) {
       return true;
     }
     i = i + 1;
@@ -2297,74 +2259,38 @@ function read_later_in_block(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst
   if (ssa.term_reads_value(b.term, root)) {
     return true;
   }
-  return anchored_after(f, a, defs, bi, pos, root);
-}
-
-// A value used after pos in block bi reaches root other than through the read
-// at pos or a read of another of root's slots. The values the rest of the
-// block reads are enumerated from its instructions, each with the chain it
-// reads through, rather than every value of the function asked whether the
-// block reads it; what leaves the block is read off the live-out set.
-function anchored_after(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, pos: i32, root: i32): boolean {
-  let b: ssa.SBlock = f.graph.blocks[bi];
-  let ins: ssa.SInst = b.insts[pos];
-  for w in ssalive.live_out_ids(a.flow, bi) {
-    if (reaches_root(a, defs, ins, root, w)) {
-      return true;
-    }
-  }
-  let i: i32 = pos + 1;
-  while (i < b.insts.len()) {
-    for arg in b.insts[i].args {
-      if (read_reaches_root(a, defs, ins, root, arg)) {
+  if (own_root) {
+    for arg in b.insts[pos].args {
+      if (arg != take.result && (arg == root || reaches_root(a, defs, take, root, through_take, arg))) {
         return true;
       }
     }
-    i = i + 1;
   }
-  if (b.term.kind_tag == 1 && read_reaches_root(a, defs, ins, root, b.term.value)) {
-    return true;
-  }
-  return b.term.kind_tag == 3 && read_reaches_root(a, defs, ins, root, b.term.cond);
-}
-
-// Whether reading `arg` reads a value that reaches `root` other than through
-// the take `ins`: `arg` itself or one it is anchored to.
-function read_reaches_root(a: ssasem.Analysis, defs: ssa.SInst[], ins: ssa.SInst, root: i32, arg: i32): boolean {
-  if (arg < 0) {
-    return false;
-  }
-  if (reaches_root(a, defs, ins, root, arg)) {
-    return true;
-  }
-  for dep in a.dependencies[arg] {
-    if (reaches_root(a, defs, ins, root, dep)) {
+  let w: i32 = 0;
+  while (w < f.graph.nvals) {
+    if (w != root && reaches_root(a, defs, take, root, through_take, w) && used_after(f, a, bi, pos, w)) {
       return true;
     }
+    w = w + 1;
   }
   return false;
 }
 
-// Whether `w`, read after the take `ins`, reaches `root` other than through
-// the take or a read of another of root's slots.
-function reaches_root(a: ssasem.Analysis, defs: ssa.SInst[], ins: ssa.SInst, root: i32, w: i32): boolean {
-  if (w == root || w == ins.result || !reads(a, w, root)) {
+// Whether `w` reaches `root` other than through the slot `take` names: it is
+// anchored to the root, and its first hop towards it is neither a read of
+// another slot nor, with `through_take`, the taken value itself.
+function reaches_root(a: ssasem.Analysis, defs: ssa.SInst[], take: ssa.SInst, root: i32, through_take: boolean, w: i32): boolean {
+  if (w < 0 || w == root || !reads(a, w, root)) {
+    return false;
+  }
+  if (through_take && w == take.result) {
     return false;
   }
   let hop: i32 = first_hop(a, w, root);
-  return hop != ins.result && (hop < 0 || !other_slot_get(defs[hop], ins));
-}
-
-// Whether `root` is still needed after block `bi` other than through what the
-// read `take` moves out of it: a block that can run later, `bi` itself again
-// included, names it, or a live-out value is anchored to it other than through
-// a read of another of its slots.
-// The value taken keeps `root` live in the flow, which predates the take.
-function needed_past(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, take: ssa.SInst, root: i32): boolean {
-  if (!ssalive.live_out_has(a.flow, bi, root)) {
+  if (through_take && hop == take.result) {
     return false;
   }
-  return named_after(f, a.flow, bi, root, take) || reached_past_take(a, defs, bi, take, root);
+  return hop < 0 || !other_slot_get(defs[hop], take);
 }
 
 // A block after bi reads v. The walk stops at the block defining v — a loop's
@@ -2372,8 +2298,8 @@ function needed_past(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: 
 // an operand only on its own incoming edge, so it counts where the walk enters
 // its block by that edge: an arm that rebuilt v hands the join its new value,
 // whatever the join takes from the arms that left v alone. A later read of
-// another of v's slots is let through, as `reached_past_take` and
-// `read_later_in_block` do: what keeps v live is then not the slot taken. A
+// another of v's slots is let through, as `needed_past_slot` lets it through
+// within the block: what keeps v live is then not the slot taken. A
 // read of the taken slot itself still counts, so a take a loop would run again
 // on the same box is refused. The walk keeps to v's live range: a block v is
 // not live out of hands it to no successor, phi edges included, and a block v
@@ -2445,20 +2371,6 @@ function block_reads(blk: ssa.SBlock, v: i32, take: ssa.SInst): boolean {
     }
   }
   return ssa.term_reads_value(blk.term, v);
-}
-
-// A value live out of bi reaches root other than through `take` or a read of
-// another of root's slots.
-function reached_past_take(a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, take: ssa.SInst, root: i32): boolean {
-  for w in ssalive.live_out_ids(a.flow, bi) {
-    if (w != root && reads(a, w, root)) {
-      let hop: i32 = first_hop(a, w, root);
-      if (hop != take.result && (hop < 0 || !other_slot_get(defs[hop], take))) {
-        return true;
-      }
-    }
-  }
-  return false;
 }
 
 // The with that stores back at the array element `take` read, by the same
