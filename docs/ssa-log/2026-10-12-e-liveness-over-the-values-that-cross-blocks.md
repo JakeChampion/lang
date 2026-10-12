@@ -42,3 +42,14 @@ exposed reads costs 151 M.
 The changed compiler compiles `checker.fern` to the same bytes for x86-64,
 arm64 and wasm, and `fern.fern` for x86-64 and arm64, and rebuilds itself byte
 for byte.
+
+## Measured and not kept: walking each read back
+
+On SSA the same sets can be found without iterating: walk each read back
+through predecessors, marking live-out and then live-in unless the block
+defines the value, and stop at a bit already set. That gives the same sets,
+and the compiler compiled to the same bytes. But it sets and tests one bit at
+a time, and many values (a function's parameters, say) are live across most
+of its blocks. `bit_set` grew by 431 M and `bit_has` by 285 M, against
+`compute_checked`'s −171 M. The whole compile measured +0.95%, so the word-wide
+iteration stays.
