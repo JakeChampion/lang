@@ -165,11 +165,30 @@ decides what wraps it.
    stalls once a few hundred connections precede it, an accumulation
    tracked in issue #12136; the wstest run is bounded by a timeout and
    `net-autobahn - "13.*"` runs an excluded section by hand.
-5. **Static files, compression, proxies, caching.** ETag, `Range` and
-   precompressed variants; response compression (gzip and zstd; brotli
-   decode only) off by default as every 2026 server has it; PROXY protocol
-   v2 and `Forwarded`; the response-side RFC 9111 helpers (validators,
-   `Cache-Control`, `Vary`).
+5. **Static files, compression, proxies, caching.** Four PRs, in the
+   order each builds on the last.
+   `std/http/cache` (landed): the response-side RFC 9111 helpers and the
+   validators static files answer with — `ETag` written, read and
+   compared both ways, `Validators`, `evaluate` taking RFC 9110 §13.2.2's
+   preconditions in order to `Proceed`, `NotModified` or
+   `PreconditionFailed`, `if_range`, `respond` producing the 304 with the
+   fields §15.4.5 has it repeat, `CacheControl` read and written, and
+   `with_vary`. The current time is the caller's, from `plat.now_ms()`:
+   `std/time`'s `http_date_parse_at` reads all three HTTP-date forms a
+   recipient must accept, RFC 850's two-digit year against it, and
+   `Last-Modified` is never sent later than it. `std/headers` gained
+   `get_list`, `split_list` and `unquote`, the quote-aware list parsing
+   the later modules share. Gate: `tests/stdlib/http_cache_test.fern` in
+   the stdtest differential.
+   `std/http/static`: a directory served with `ETag` and `Last-Modified`
+   through `std/http/cache`, `Range` (206, 416, `If-Range`), and
+   precompressed `.br`, `.zst` and `.gz` siblings chosen by
+   `Accept-Encoding` under `Vary`.
+   `std/http/forwarded`: `Forwarded` (RFC 7239) and the PROXY protocol v2
+   header the serve loop reads before the request.
+   Compression: a gzip encoder over `std/deflate`, zstd both ways, brotli
+   decode only, and `std/http/compress` negotiating `Accept-Encoding` for
+   a response, off by default as every 2026 server has it.
 6. **Host seams as `Platform` methods.** The request deadline and cancel
    signal, background work that outlives the response (`wait_until`,
    bounded like Workers' 30 s), outbound HTTP gated by an allow-list.
