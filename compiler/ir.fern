@@ -7246,6 +7246,9 @@ function drop_dead_stores(ops: Op[]): Op[] {
   let k_store: i32 = kind_id("store_local");
   let k_tee: i32 = kind_id("tee_local");
   let loads: i32[] = slot_reads(ops);
+  if (!writes_unread(ops, loads, k_store, k_tee)) {
+    return ops;
+  }
   let out: Op[] = [];
   for o in ops {
     if (o.kind_tag == k_tee && loads[o.i32_imm] == 0) {
@@ -7258,6 +7261,16 @@ function drop_dead_stores(ops: Op[]): Op[] {
     }
   }
   return out;
+}
+
+// writes_unread says some store or tee writes a slot `loads` counts no read of.
+function writes_unread(ops: Op[], loads: i32[], k_store: i32, k_tee: i32): boolean {
+  for o in ops {
+    if ((o.kind_tag == k_store || o.kind_tag == k_tee) && loads[o.i32_imm] == 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // slot_reads counts the reads of each slot.
@@ -8127,11 +8140,15 @@ pub function const_propagate(ops: Op[]): Op[] {
   let depth: i32 = 0;
   let wc: i32 = 0;
 
+  // `out` is written from the first replaced load on, so a list with nothing
+  // to propagate comes back as it is.
   let out: Op[] = [];
+  let copying: boolean = false;
   let i: i32 = 0;
   while (i < ops.len()) {
     let o: Op = ops[i];
     let kt: i32 = o.kind_tag;
+    let emit: Op = o;
     if (kt == k_block || kt == k_loop || kt == k_if) {
       if (depth < fr_kind.len()) {
         fr_kind = fr_kind.with(depth, kt);
@@ -8148,7 +8165,6 @@ pub function const_propagate(ops: Op[]): Op[] {
       if (kt == k_loop) {
         has = cp_loop_body_kill(ops, i, has);
       }
-      out = out.append(o);
     } else if (kt == k_else) {
       // The then-arm's bindings do not reach the else-arm; dropping what the
       // arm wrote leaves exactly the state the if opened with.
@@ -8156,7 +8172,6 @@ pub function const_propagate(ops: Op[]): Op[] {
         has = cp_kill_after(has, wrote, fr_at[depth - 1], bound);
         bound = cp_still_bound(bound, has);
       }
-      out = out.append(o);
     } else if (kt == k_end) {
       if (depth > 0) {
         // A block nothing branches to runs straight through, so what it
@@ -8168,7 +8183,6 @@ pub function const_propagate(ops: Op[]): Op[] {
         }
         depth = depth - 1;
       }
-      out = out.append(o);
     } else if (kt == k_br || kt == k_brif) {
       // A branch makes its target scope's writes conditional. Depth is
       // relative and 0 is the innermost open scope; a depth past the stack
@@ -8177,7 +8191,6 @@ pub function const_propagate(ops: Op[]): Op[] {
       if (o.i32_imm >= 0 && tgt >= 0) {
         fr_br = fr_br.with(tgt, true);
       }
-      out = out.append(o);
     } else if (kt == k_str_slice && o.i32_imm > 0) {
       // str_slice_frame is the ONE op that writes locals without being a
       // store: the frame form builds its box in three consecutive slots at
@@ -8200,7 +8213,6 @@ pub function const_propagate(ops: Op[]): Op[] {
         }
         fk = fk + 1;
       }
-      out = out.append(o);
     } else if (kt == k_store || kt == k_tee) {
       // A store binds the slot to the constant that produced it, read off the
       // REWRITTEN list so a load this pass just replaced counts as a constant
@@ -8209,8 +8221,9 @@ pub function const_propagate(ops: Op[]): Op[] {
       if (sl >= 0 && sl < nslots) {
         wrote = wrote.with(sl, i);
         wc = wc + 1;
-        if (out.len() > 0 && (const_i32_readable(out[out.len() - 1]) || const_i64_readable(out[out.len() - 1]))) {
-          known = known.with(sl, out[out.len() - 1]);
+        let prev: Op = cp_prev(ops, out, copying, i);
+        if (const_i32_readable(prev) || const_i64_readable(prev)) {
+          known = known.with(sl, prev);
           if (!has[sl]) {
             bound = bound.append(sl);
           }
@@ -8219,15 +8232,35 @@ pub function const_propagate(ops: Op[]): Op[] {
           has = has.with(sl, false);
         }
       }
-      out = out.append(o);
     } else if (kt == k_load && o.i32_imm >= 0 && o.i32_imm < nslots && has[o.i32_imm]) {
-      out = out.append(known[o.i32_imm]);
-    } else {
-      out = out.append(o);
+      emit = known[o.i32_imm];
+      if (!copying) {
+        out = fold_prefixed(ops, i, []);
+        copying = true;
+      }
+    }
+    if (copying) {
+      out = out.append(emit);
     }
     i = i + 1;
   }
-  return out;
+  if (copying) {
+    return out;
+  }
+  return ops;
+}
+
+// cp_prev is the op const_propagate's rewritten list holds just before index
+// `i`: the input's own while nothing has been replaced yet, and a drop, which
+// is no constant, before the first.
+function cp_prev(ops: Op[], out: Op[], copying: boolean, i: i32): Op {
+  if (i == 0) {
+    return op_drop();
+  }
+  if (copying) {
+    return out[out.len() - 1];
+  }
+  return ops[i - 1];
 }
 
 pub function propagate_copies(ops: Op[]): Op[] {

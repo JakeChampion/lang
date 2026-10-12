@@ -10763,6 +10763,8 @@ pub struct MFns {
   // reason the index does: built from one array, it cannot disagree with the
   // decls it is read beside.
   structs: StructDecl[],
+  // The structs by name.
+  snames: util.NameIndex,
   // The module's enum decls, so a `match` arm's payload bindings can be
   // typed from the variant's declared fields with the enum's type params
   // substituted from the scrutinee's spelling.
@@ -10784,6 +10786,14 @@ pub struct MFns {
 // chains are almost all length 0 or 1.
 function mfns_buckets(): i32 {
   return 257;
+}
+
+function struct_names(structs: StructDecl[]): string[] {
+  let out: string[] = [];
+  for sd in structs {
+    out = out.append(sd.name);
+  }
+  return out;
 }
 
 // mfns_of builds the index. Chains are laid down by walking the qualifying
@@ -10833,7 +10843,7 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
     ghead = ghead.with(bk, k);
     k = k - 1;
   }
-  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, array_concrete: array_concrete, structs: structs, enums: enums, impls: impls, keep_vars: false, on_call: [] };
+  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, array_concrete: array_concrete, structs: structs, snames: util.name_index(struct_names(structs)), enums: enums, impls: impls, keep_vars: false, on_call: [] };
 }
 
 // bg_find returns the position in `fns.decls` of the bounded-generic function
@@ -12007,7 +12017,7 @@ function fn_value_spelling(e: ast.Expr, env: MEnv, funcs: MFns): string {
     }
   }
   if let ast.ExprFieldAccess(fa) = e {
-    let owner: InstStruct = inst_struct(mono_infer(fa.obj, env, funcs), funcs.structs, funcs.enums);
+    let owner: InstStruct = inst_struct(mono_infer(fa.obj, env, funcs), funcs);
     if (owner.at >= 0) {
       let sd: StructDecl = funcs.structs[owner.at];
       for f in sd.fields {
@@ -12906,7 +12916,7 @@ function generic_base(t: string, funcs: MFns): string {
   if (first_bracket(t) > 0 && slice_unchecked(t, t.len() - 1, t.len()) == "]") {
     return strip_struct_base(t);
   }
-  let owner: InstStruct = inst_struct(t, funcs.structs, funcs.enums);
+  let owner: InstStruct = inst_struct(t, funcs);
   if (owner.at >= 0 && funcs.structs[owner.at].type_params.len() > 0) {
     return funcs.structs[owner.at].name;
   }
@@ -13273,7 +13283,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
       if (hides_var(ot, funcs)) {
         return "";
       }
-      let ft: string = struct_field_ty_inst(ot, fa.field, funcs.structs, funcs.enums);
+      let ft: string = struct_field_ty_inst(ot, fa.field, funcs);
       if (hides_var(ft, funcs)) {
         return "";
       }
@@ -13863,8 +13873,9 @@ function mono_variant_field_tys(sty: string, vname: string, fns: MFns): string[]
 // substituted from the spelling (`Split[string, i32]`) or, once the struct
 // pass has renamed the value, from its mangled clone name
 // (`Split__string__i32`). "" when the struct or field is unknown.
-function struct_field_ty_inst(ot: string, fname: string, structs: StructDecl[], enums: EnumDecl[]): string {
-  let owner: InstStruct = inst_struct(ot, structs, enums);
+function struct_field_ty_inst(ot: string, fname: string, funcs: MFns): string {
+  let owner: InstStruct = inst_struct(ot, funcs);
+  let structs: StructDecl[] = funcs.structs;
   if (owner.at < 0) {
     return "";
   }
@@ -13890,30 +13901,41 @@ function field_spelling(f: StructFieldDecl): string {
 // when no declaration matches with that many arguments.
 struct InstStruct { at: i32, cts: string[] }
 
-function inst_struct(ot: string, structs: StructDecl[], enums: EnumDecl[]): InstStruct {
-  let base: string = strip_struct_base(ot);
+function inst_struct(ot: string, funcs: MFns): InstStruct {
   let cts: string[] = type_args_of(ot);
-  let si: i32 = 0 - 1;
-  let i: i32 = 0;
-  while (i < structs.len() && si < 0) {
-    if (structs[i].enum_owner.len() == 0) {
-      if (structs[i].name == base) {
-        si = i;
-      } else if (structs[i].type_params.len() > 0 && first_bracket(ot) < 0) {
-        let pfx: string = structs[i].name + "__";
-        if (ot.len() > pfx.len() && util.str_has_prefix(ot, pfx)) {
-          let rest: string = slice_unchecked(ot, pfx.len(), ot.len()) + "";
-          cts = split_key(rest, structs[i].type_params.len(), structs, enums);
-          si = i;
+  let si: i32 = first_struct_named(funcs, strip_struct_base(ot), false);
+  if (first_bracket(ot) < 0) {
+    // A clone `Base__args` of a generic struct declared ahead of any exact match.
+    let k: i32 = 1;
+    while (k + 2 < ot.len() && si != 0) {
+      if (ot[k] == b'_' && ot[k + 1] == b'_') {
+        let gi: i32 = first_struct_named(funcs, slice_unchecked(ot, 0, k) + "", true);
+        if (gi >= 0 && (si < 0 || gi < si)) {
+          si = gi;
+          cts = split_key(slice_unchecked(ot, k + 2, ot.len()) + "", funcs.structs[gi].type_params.len(), funcs.structs, funcs.enums);
         }
       }
+      k = k + 1;
     }
-    i = i + 1;
   }
-  if (si < 0 || cts.len() != structs[si].type_params.len()) {
+  if (si < 0 || cts.len() != funcs.structs[si].type_params.len()) {
     return InstStruct { at: 0 - 1, cts: [] };
   }
   return InstStruct { at: si, cts: cts };
+}
+
+// first_struct_named is the first struct declaration, outside any enum, named
+// `name` and, when `generic`, taking type parameters; -1 for none.
+function first_struct_named(funcs: MFns, name: string, generic: boolean): i32 {
+  let i: i32 = funcs.snames.chain(name);
+  while (i >= 0) {
+    let sd: StructDecl = funcs.structs[i];
+    if (funcs.snames.names[i] == name && sd.enum_owner.len() == 0 && (!generic || sd.type_params.len() > 0)) {
+      return i;
+    }
+    i = funcs.snames.next[i];
+  }
+  return 0 - 1;
 }
 
 // menv_bind_destructure binds each binder of a comma-joined destructure spelling
