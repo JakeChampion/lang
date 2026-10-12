@@ -807,27 +807,31 @@ ratio within about 10% of 1 is still not a measured difference: `mv a
 alone. The two `yes` rows are from a later run, after `w.splice_forever` gave
 `yes` the vmsplice(2) path GNU 9.12's has, and the `ls` / `dir` / `vdir` rows
 from one after `ls` took each entry's type from its directory record and
-stopped joining paths it does not use.
+stopped joining paths it does not use. The rows of the thirteen utilities
+#12225 and #12232 changed (`tr`'s vector table, `tac`'s backward scan, `ptx`'s
+reference cache, `cp`'s per-device clone refusal, the regenerated MD5 and
+SHA-1 rounds, `pr`, `shuf`, `stat` and the base encoders) were re-run at
+61a9a6b.
 
 | | rows | faster than GNU | faster than uutils |
 |---|---|---|---|
-| every workload | 669 | 513 (77%) | 561 of 623 |
+| every workload | 669 | 526 (79%) | 568 of 623 |
 
-The median row is 1.70x GNU and 3.28x uutils, and 66 of the 106 utilities
-beat GNU on every row. The 156 rows that lose to GNU fall into a few families:
+The median row is 1.71x GNU and 3.24x uutils, and 67 of the 106 utilities
+beat GNU on every row. The 143 rows that lose to GNU fall into a few families:
 
 | family | rows lost | worst | where the time goes |
 |---|---|---|---|
 | `ls` / `dir` / `vdir` | 35 | 0.70x | the 4000-name rows, where neither side stats more than the other: the sort's comparator is called out of line and pays a full prologue for a two-load compare. `-F` and `-R` win now that `ls` stats only what GNU does |
-| the digests (`sha*sum`, `md5sum`, `b2sum`, `cksum -a`) | 32 | 0.51x | GNU calls OpenSSL's assembly: `sha256sum` of 8 MiB is 372 M instructions to its 235 M |
-| `base32` / `base64` / `basenc` | 10 | 0.51x | the 64 MiB rows only: encoding is 0.55x to 0.72x after #12159's word-at-a-time push, and `--base16 -d` and `base32 -d` lose too |
-| `stat` | 10 | 0.77x | formatting 4000 operands |
+| the digests (`sha*sum`, `b2sum`, `cksum -a`) | 27 | 0.50x | GNU calls OpenSSL's assembly: `sha256sum` of 8 MiB is 372 M instructions to its 235 M, and on x86-64 its SHA-256 uses the SHA extensions, which the baseline does not assume. `md5sum` wins every row now; `sha1sum` still loses its three large-file rows |
 | `fmt` | 9 | 0.67x | every row |
-| `pr` | 8 | 0.55x | a record allocated per input line, and padding built as a string |
-| `shuf` | 6 | 0.57x | every large-input row |
+| `stat` | 8 | 0.80x | formatting 4000 operands, most rows within noise of 1 |
+| `base32` / `base64` / `basenc` | 8 | 0.59x | encoding the 64 MiB rows, and `base32 -d`; `base64 -d` and `--base16 -d` win now |
+| `pr` | 7 | 0.61x | `pr -m` at 0.61x; the other six are single-file rows at 0.79x to 0.89x |
+| `shuf` | 6 | 0.56x | every large-input row |
 | `du` | 5 | 0.77x | `--apparent-size`, `--inodes`, `-h -c` |
 | `dd` | 3 | 0.71x | the two `bs=512` rows and `conv=swab` |
-| `ptx`, `tac`, `cp`, `sort`, `split`, `chown -R`, `numfmt`, the rest | 38 | 0.57x | the worst is `mv` of a tree, which is 0.94x run alone; the next is 0.74x |
+| `ptx`, `tac`, `cp`, `sort`, `split`, `wc`, `numfmt`, the rest | 35 | 0.57x | the worst is `mv` of a tree, which is 0.94x run alone; the next is `ptx` from a pipe at 0.72x |
 
 ### Both compilers, 2026-09-17 — the self-host build does not meet requirement 2
 

@@ -181,7 +181,7 @@ func TestSelfHostWasiHttpTargetCoreModule(t *testing.T) {
 		}
 	}
 	// Every import must be a function the browser host provides: the
-	// shim's two tables are the whole of what web/wasi-http-shim.js links,
+	// shim's tables are the whole of what web/wasi-http-shim.js links,
 	// and an import outside them is a LinkError in the page.
 	shim := browserHttpShimImports(t)
 	for _, line := range strings.Split(text, "\n") {
@@ -202,7 +202,7 @@ func TestSelfHostWasiHttpTargetCoreModule(t *testing.T) {
 }
 
 // browserHttpShimImports reads the function names web/wasi-http-shim.js
-// provides under each interface, the two tables it instantiates the core
+// provides under each interface, the tables it instantiates the core
 // against, so the test's notion of the host is the file the page loads.
 func browserHttpShimImports(t *testing.T) map[string]map[string]bool {
 	t.Helper()
@@ -210,7 +210,14 @@ func browserHttpShimImports(t *testing.T) map[string]map[string]bool {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tables := map[string]string{"wasi:http/types@0.2.0": "httpTypes", "wasi:io/streams@0.2.0": "ioStreams"}
+	tables := map[string]string{
+		"wasi:http/types@0.2.0":    "httpTypes",
+		"wasi:io/streams@0.2.0":    "ioStreams",
+		"wasi:cli/stdout@0.2.0":    "cliStdout",
+		"wasi:cli/stderr@0.2.0":    "cliStderr",
+		"wasi:io/error@0.2.0":      "ioError",
+		"wasi:random/random@0.2.0": "random",
+	}
 	out := map[string]map[string]bool{}
 	for iface, object := range tables {
 		start := strings.Index(string(src), "const "+object+" = {")

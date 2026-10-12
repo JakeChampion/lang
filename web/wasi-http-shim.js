@@ -6,9 +6,12 @@
 // Browsers can only instantiate *core* modules, and our handler core
 // (the self-host driver's `-target wasm32-wasi-http -emit core-module`) exports
 // `wasi:http/incoming-handler@0.2.0#handle(incoming-request,
-// response-outparam)` plus `memory` + `cabi_realloc`, and imports 22
-// Canonical-ABI functions across wasi:http/types and wasi:io/streams.
-// We implement exactly those, mint opaque i32 resource handles, and
+// response-outparam)` plus `memory` + `cabi_realloc`, and imports
+// Canonical-ABI functions across wasi:http/types and wasi:io/streams, plus
+// the parts of the proxy world every core may reach: stdout and stderr
+// (print, eprint), wasi:io/error, and wasi:random (core/map's string-hash
+// seed draws from it). We implement exactly those, mint opaque i32 resource
+// handles, and
 // marshal the request/response across linear memory. The outgoing side
 // (wasi:http/outgoing-handler, what std/fetch sends through on this
 // target) is not hosted: a handler that calls std/fetch fails to
@@ -224,16 +227,41 @@ export async function runHttpHandler(bytes, request) {
       w32(retptr, 8, n);
     },
     "[method]output-stream.blocking-write-and-flush": (self, ptr, len, retptr) => {
-      handles.get(self).body.chunks.push(readBytes(ptr, len));
+      const stream = handles.get(self);
+      if (stream.kind === "console") {
+        stream.log(decoder.decode(readBytes(ptr, len)));
+      } else {
+        stream.body.chunks.push(readBytes(ptr, len));
+      }
       w8(retptr, 0, 0); // Ok
     },
     "[resource-drop]input-stream": () => {},
     "[resource-drop]output-stream": () => {},
   };
 
+  const cliStdout = {
+    "get-stdout": () => mint({ kind: "console", log: (text) => console.log(text) }),
+  };
+
+  const cliStderr = {
+    "get-stderr": () => mint({ kind: "console", log: (text) => console.error(text) }),
+  };
+
+  const ioError = {
+    "[resource-drop]error": () => {},
+  };
+
+  const random = {
+    "get-random-u64": () => crypto.getRandomValues(new BigUint64Array(1))[0],
+  };
+
   const result = await WebAssembly.instantiate(bytes, {
     "wasi:http/types@0.2.0": httpTypes,
     "wasi:io/streams@0.2.0": ioStreams,
+    "wasi:cli/stdout@0.2.0": cliStdout,
+    "wasi:cli/stderr@0.2.0": cliStderr,
+    "wasi:io/error@0.2.0": ioError,
+    "wasi:random/random@0.2.0": random,
   });
   instance = result.instance;
 
