@@ -231,9 +231,9 @@ selfhost/x86-64-linux/utf8_ingest_unchecked.emit	14482
 selfhost/x86-64-linux/utf8_ingest_validated.emit	14726
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-selfhost/x86-64-linux/perceus_cfold.emit	2553
-selfhost/arm64-linux/perceus_cfold.emit	2721
-selfhost/wasm32-wasi/perceus_cfold.emit	2876
+selfhost/x86-64-linux/perceus_cfold.emit	2652
+selfhost/arm64-linux/perceus_cfold.emit	2817
+selfhost/wasm32-wasi/perceus_cfold.emit	2944
 selfhost/x86-64-linux/perceus_deriv.emit	2708
 selfhost/arm64-linux/perceus_deriv.emit	2902
 selfhost/wasm32-wasi/perceus_deriv.emit	2977
@@ -243,6 +243,6 @@ selfhost/wasm32-wasi/perceus_nqueens.emit	1244
 selfhost/x86-64-linux/perceus_rbtree.emit	3623
 selfhost/arm64-linux/perceus_rbtree.emit	3722
 selfhost/wasm32-wasi/perceus_rbtree.emit	4507
-selfhost/x86-64-linux/perceus_rbtree_ck.emit	3295
-selfhost/arm64-linux/perceus_rbtree_ck.emit	3412
-selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4305
+selfhost/x86-64-linux/perceus_rbtree_ck.emit	3529
+selfhost/arm64-linux/perceus_rbtree_ck.emit	3663
+selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4475
