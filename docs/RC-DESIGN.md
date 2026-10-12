@@ -25,7 +25,12 @@ an earlier one.
 The seminline pass (`seminline.fern`) rewrites graphs before the plan: it
 inlines leaves, splits reads of known constructions into their parts, and
 runs tail recursion modulo cons. It is a graph-to-graph pass; the stages
-below never see what it removed.
+below never see what it removed. Two more run last: `semsink.fern` re-reads,
+in a block where a projection's parent dies, the counted projections the
+block uses that a dominating block read, so the plan takes them instead of
+borrowing them; and `semdead.fern` drops constructions nothing reads.
+`ssasem`'s guard check treats two reads of one slot of one box as one value,
+so a test of the first read settles the re-read.
 
 ### 1.1 The semantic graph
 
