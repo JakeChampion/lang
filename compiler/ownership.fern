@@ -33,6 +33,7 @@
 // until a call inside a quiet cycle stopped carrying (#10941).
 import "./ssa";
 import "./ssasem";
+import "./typeinfo";
 import "./util";
 
 // One row per produced symbol: whether each parameter leaves the frame.
@@ -317,14 +318,17 @@ function unchanged_slot(f: ssasem.Func, value: i32, slot: i32): boolean {
   return false;
 }
 
-// A call THROUGH a function value reads its slots off the type the box hands
-// out, and this boundary has no declaration to consult for it, so every
-// reference operand is taken as consumed.
+// A call THROUGH a function value consumes only at the slots its type spells
+// `own`; the callee box (operand 0) and every other reference are lent, as
+// the unit planner reads the same call (`ssaunits.call_value_supplied`).
 function indirect_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst): boolean[] {
-  for arg in ins.args {
-    if (ssasem.reference(f.values[arg])) {
-      out = carry(out, a, arg);
+  let callee: typeinfo.Type = f.values[ins.args[0]];
+  let i: i32 = 1;
+  while (i < ins.args.len()) {
+    if (ssasem.func_param_own(callee, i - 1) && ssasem.reference(f.values[ins.args[i]])) {
+      out = carry(out, a, ins.args[i]);
     }
+    i = i + 1;
   }
   return out;
 }
