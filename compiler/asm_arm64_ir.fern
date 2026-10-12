@@ -3563,28 +3563,36 @@ function ssa_view_off(fr: SsaFrame, v: i32): i32 {
 }
 
 // ssa_raw_inst selects the raw memory floor (52..55): unchecked 8-byte and
-// byte loads and stores at base + idx.
-function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+// byte loads and stores at base + idx, a byte's constant idx read as the
+// unsigned immediate offset.
+function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let k: i32 = ins.kind_tag;
   let a: string = ssa_src(reg_of, ins.args[0], "x4");
   s = ssa_load(reg_of, ins.args[0], a, s);
-  let b: string = ssa_src(reg_of, ins.args[1], "x5");
-  s = ssa_load(reg_of, ins.args[1], b, s);
+  let at: string = "[" + a + ", #" + util.i64_to_string(imm.value[ins.args[1]]) + "]";
+  if (!imm.is_imm[ins.args[1]]) {
+    let b: string = ssa_src(reg_of, ins.args[1], "x5");
+    s = ssa_load(reg_of, ins.args[1], b, s);
+    at = "[" + a + ", " + b + "]";
+    if (k == 52 || k == 53) {
+      at = "[" + a + ", " + b + ", lsl #3]";
+    }
+  }
   let d: string = ssa_dst(reg_of, ins.result);
   if (k == 52) {
-    s = s.write("    ldr " + d + ", [" + a + ", " + b + ", lsl #3]\n");
+    s = s.write("    ldr " + d + ", " + at + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
   if (k == 54) {
-    s = s.write("    ldrb " + ssa_wreg(d) + ", [" + a + ", " + b + "]\n");
+    s = s.write("    ldrb " + ssa_wreg(d) + ", " + at + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
   let c: string = ssa_src(reg_of, ins.args[2], "x6");
   s = ssa_load(reg_of, ins.args[2], c, s);
   if (k == 53) {
-    return s.write("    str " + c + ", [" + a + ", " + b + ", lsl #3]\n");
+    return s.write("    str " + c + ", " + at + "\n");
   }
-  return s.write("    strb " + ssa_wreg(c) + ", [" + a + ", " + b + "]\n");
+  return s.write("    strb " + ssa_wreg(c) + ", " + at + "\n");
 }
 
 // ssa_call_ind is the stack machine's call through a function value: the
@@ -3697,7 +3705,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     return ssa_sym_addr(ins, reg_of, s);
   }
   if (k >= 52 && k <= 55) {
-    return ssa_raw_inst(ins, reg_of, s);
+    return ssa_raw_inst(ins, reg_of, fr.imm, s);
   }
   if (k == 56) {
     return ssa_call_ind(ins, reg_of, s);

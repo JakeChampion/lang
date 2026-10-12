@@ -299,6 +299,12 @@ function main(): i32 {
 	{name: "le_word_string_constant_indexes", fn: "sheader", exit: 110, src: stringWordSrc,
 		want:   oneCheck,
 		forbid: wordForbid},
+	// A raw byte load at a constant offset reads it as a displacement, so the
+	// offset takes no register: __fern_str_cmp's tail reads both strings'
+	// bytes at offset 0.
+	{name: "raw_byte_load_constant_offset", fn: "__fern_str_cmp", exit: 73, src: strCmpSrc,
+		want:   map[string][]string{"x86-64-linux": {`\bmovzbl 0\(%r\w+\), %e\w+`}, "arm64-linux": {`\bldrb w\d+, \[x\d+, #0\]`}},
+		forbid: map[string][]string{"x86-64-linux": {`\bxorl %e\w+, %e\w+\n\s+movzbl \(`}}},
 	{name: "word_bytes_out_of_place_kept", fn: "swapped", exit: 5, src: wordLoadSrc,
 		want:   map[string][]string{"x86-64-linux": {`\bmovzb`}, "arm64-linux": {`\bldrb\b`}},
 		forbid: map[string][]string{"x86-64-linux": {`\bbswap[lq]?\b`}, "arm64-linux": {`\brev\b`}}},
@@ -629,6 +635,19 @@ function main(): i32 {
     let s: string = "pack my box with five dozen liquor jugs";
     let x: u32 = sword32(s, 5) ^ (sbigend64(s, 11) >> 29u64) as u32 ^ sheader(slice_unchecked(s, 3, 20));
     return (x & 127u32) as i32;
+}
+`
+
+const strCmpSrc = `
+@noinline function order(a: string, b: string, c: string, d: string): i32 {
+    let n: i32 = 0;
+    if (a < b) { n = n + 1; }
+    if (b > c) { n = n + 2; }
+    if (d > c) { n = n + 4; }
+    return n;
+}
+function main(): i32 {
+    return order("pack my box with five dozen", "pack my box with five dozes", "pa", "pac") * 10 + 3;
 }
 `
 

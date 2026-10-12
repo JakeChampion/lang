@@ -2372,7 +2372,8 @@ function free_slot(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: i32
 // qualifies when it lies in lo..hi and every use is a binary op reading it as
 // the right operand of an op named in `right`, or as the left operand of one
 // named in `left` (the commutative ops and the comparisons, which the emitter
-// turns round), a phi operand, which the edge's moves load into the phi's
+// turns round), the offset of a byte load or store (54, 55), which the
+// emitter reads as a displacement, a phi operand, which the edge's moves load into the phi's
 // home, or a returned value, loaded into the result register; a use anywhere
 // else keeps it in a register. When both
 // operands are constants (the optimiser's folds do not run here, so
@@ -2424,6 +2425,9 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
 }
 
 function imm_use(ins: SInst, a: i32, konst: boolean[], right: string[], left: string[]): boolean {
+  if ((ins.kind_tag == 54 || ins.kind_tag == 55) && a == 1) {
+    return true;
+  }
   if (ins.kind_tag != 9 || ins.args.len() != 2) {
     return false;
   }
