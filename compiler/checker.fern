@@ -15445,7 +15445,7 @@ function cover_opaque(): CoverPat {
 
 function sugar_exhaustive_diags(sg: ast.MatchSugar, s: Scope): util.Diag[] {
   let none: util.Diag[] = [];
-  if (sg.origin != "" || sg.tup.len() + sg.strct.len() + sg.arms.len() == 0) {
+  if (sg.origin != "" || sg.tup.len() + sg.strct.len() + sg.arms.len() == 0 || has_catch_all(sg)) {
     return none;
   }
   let t: typeinfo.Type = check_expr(sg.scrut, s);
@@ -15478,6 +15478,38 @@ function variant_cover_diags(rows: CoverPat[][], t: typeinfo.Type, sg: ast.Match
     }
   }
   return out;
+}
+
+// An unguarded arm that matches anything, which settles the question before
+// the scrutinee is typed: a `_`, or a tuple arm of binders and `_`s.
+function has_catch_all(sg: ast.MatchSugar): boolean {
+  for a in sg.tup {
+    if (!a.has_guard && (a.is_wild || binds_only(a.elem_kinds))) {
+      return true;
+    }
+  }
+  for a in sg.strct {
+    if (!a.has_guard && a.is_wild) {
+      return true;
+    }
+  }
+  for a in sg.arms {
+    if let ast.PatWildcard(_) = a.pattern {
+      if (!a.has_guard) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function binds_only(kinds: i32[]): boolean {
+  for k in kinds {
+    if (k != 0 && k != 1) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function sugar_rows(sg: ast.MatchSugar, t: typeinfo.Type, s: Scope): CoverPat[][] {
