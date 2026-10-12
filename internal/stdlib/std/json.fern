@@ -429,73 +429,69 @@ function __json_hex_value(c: i32): i32 {
 // decoded JNumber plus the advanced cursor: `(JsonValue,
 // __JsonParser)`. On a malformed number it threads back a
 // cursor with `error: 1` and a JNull placeholder.
+//
+// Each digit run is one scan, and the cursor is rebuilt once per number.
 function __json_p_number(p: __JsonParser): (JsonValue, __JsonParser) {
+  let s: string = p.s;
+  let n: i32 = s.len();
   let start: i32 = p.pos;
-  let n: i32 = p.s.len();
-  let b: i32 = 0;
-  // Optional '-'
-  if (__json_p_byte(p) == 45) {
-    p = __JsonParser { ...p, pos: p.pos + 1 };
+  let i: i32 = start;
+  if (i < n && s[i] == 45) {  // '-'
+    i = i + 1;
   }
-  // At least one digit.
-  b = __json_p_byte(p);
-  if (b < 48 || b > 57) {
-    return (JNull, __json_fail(p));
+  // RFC 8259's `int` is `zero / digit1-9 *DIGIT`, so a leading zero may not
+  // be followed by another digit: `01` is two tokens, not a number.
+  let intStart: i32 = i;
+  i = __scan_set(s, i, JSON_NOT_DIGIT);
+  if (i == intStart) {
+    return (JNull, __json_fail(__JsonParser { ...p, pos: i }));
   }
-  // Integer digits. RFC 8259's `int` is `zero / digit1-9 *DIGIT`, so a
-  // leading zero may not be followed by another digit: `01` is not a
-  // number, it is two tokens. Accepting it made Fern disagree with every
-  // other JSON implementation on the same bytes.
-  let intStart: i32 = p.pos;
-  while (p.pos < n) {
-    b = p.s[p.pos] as i32;
-    if (b < 48 || b > 57) {
-      break;
-    }
-    p = __JsonParser { ...p, pos: p.pos + 1 };
-  }
-  if (p.s[intStart] as i32 == 48 && p.pos - intStart > 1) {
+  if (s[intStart] == 48 && i - intStart > 1) {
     return (JNull, __json_fail(__JsonParser { ...p, pos: intStart + 1 }));
   }
-  // Optional '.<digits>' — `frac` is `"." 1*DIGIT`, so at least one.
-  if (__json_p_byte(p) == 46) {
-    p = __JsonParser { ...p, pos: p.pos + 1 };
-    let fracDigits: i32 = 0;
-    while (p.pos < n) {
-      b = p.s[p.pos] as i32;
-      if (b < 48 || b > 57) {
-        break;
-      }
-      p = __JsonParser { ...p, pos: p.pos + 1 };
-      fracDigits = fracDigits + 1;
-    }
-    if (fracDigits == 0) {
-      return (JNull, __json_fail(p));
+  // `frac` is `"." 1*DIGIT`.
+  if (i < n && s[i] == 46) {
+    let fracStart: i32 = i + 1;
+    i = __scan_set(s, fracStart, JSON_NOT_DIGIT);
+    if (i == fracStart) {
+      return (JNull, __json_fail(__JsonParser { ...p, pos: i }));
     }
   }
-  // Optional [eE][+-]?<digits> — `exp` is likewise 1*DIGIT.
-  b = __json_p_byte(p);
-  if (b == 101 || b == 69) {
-    p = __JsonParser { ...p, pos: p.pos + 1 };
-    b = __json_p_byte(p);
-    if (b == 43 || b == 45) {
-      p = __JsonParser { ...p, pos: p.pos + 1 };
+  // `exp` is `[eE][+-]?1*DIGIT`.
+  if (i < n && (s[i] == 101 || s[i] == 69)) {
+    i = i + 1;
+    if (i < n && (s[i] == 43 || s[i] == 45)) {
+      i = i + 1;
     }
-    let expDigits: i32 = 0;
-    while (p.pos < n) {
-      b = p.s[p.pos] as i32;
-      if (b < 48 || b > 57) {
-        break;
-      }
-      p = __JsonParser { ...p, pos: p.pos + 1 };
-      expDigits = expDigits + 1;
-    }
-    if (expDigits == 0) {
-      return (JNull, __json_fail(p));
+    let expStart: i32 = i;
+    i = __scan_set(s, expStart, JSON_NOT_DIGIT);
+    if (i == expStart) {
+      return (JNull, __json_fail(__JsonParser { ...p, pos: i }));
     }
   }
-  return (JNumber(slice_unchecked(p.s, start, p.pos) + ""), p);
+  return (JNumber(slice_unchecked(s, start, i) + ""), __JsonParser { ...p, pos: i });
 }
+
+// JSON_NOT_DIGIT marks every byte but `0`-`9`, so a scan over it finds the
+// end of a digit run.
+const JSON_NOT_DIGIT: u8[] = [
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+];
 
 // __json_emit_codepoint encodes a single Unicode scalar value
 // as the matching UTF-8 byte sequence (1-4 bytes) and appends
