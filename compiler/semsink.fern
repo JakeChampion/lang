@@ -145,7 +145,8 @@ function counted_projection(ins: ssa.SInst, values: typeinfo.Type[]): boolean {
 // The position of each counted projection's block, by value, -1 for every
 // other value; empty when no block uses one another block read, since only
 // then is there anything to re-read, and the liveness and dominators are
-// worth computing. A phi operand counts as a use in the phi's block.
+// worth computing. A phi operand is a use in the predecessor its edge
+// leaves.
 function crossing_projections(g: ssa.SFunc, values: typeinfo.Type[]): i32[] {
   let at: i32[] = [];
   let bi: i32 = 0;
@@ -171,10 +172,18 @@ function crossing_projections(g: ssa.SFunc, values: typeinfo.Type[]): i32[] {
   bi = 0;
   for b in g.blocks {
     for ins in b.insts {
+      let slot: i32 = 0;
       for a in ins.args {
-        if (a >= 0 && a < at.len() && at[a] >= 0 && at[a] != bi) {
-          return at;
+        if (a >= 0 && a < at.len() && at[a] >= 0) {
+          let from: i32 = b.id;
+          if (ins.kind_tag == 8 && slot < b.preds.len()) {
+            from = b.preds[slot];
+          }
+          if (g.blocks[at[a]].id != from) {
+            return at;
+          }
         }
+        slot = slot + 1;
       }
     }
     let v: i32 = b.term.value;
