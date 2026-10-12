@@ -6120,18 +6120,6 @@ function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layo
   return e;
 }
 
-function derives(a: ssasem.Analysis, v: i32, root: i32): boolean {
-  if (v == root) {
-    return true;
-  }
-  for dep in a.dependencies[v] {
-    if (dep == root) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function built_record(f: ssasem.Func, plan: ssaunits.Plan): boolean {
   if let typeinfo.TypeStruct(_) = f.result {
     return built_result(f, plan);
