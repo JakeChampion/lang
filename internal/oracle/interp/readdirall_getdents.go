@@ -56,7 +56,8 @@ func readDirAll(path string) ([]dirent, error) {
 			for end < len(rec) && rec[end] != 0 {
 				end++
 			}
-			entries = append(entries, dirent{name: string(rec[:end]), ino: uint64(d.Ino)})
+			// d_type is the mode's file-type bits shifted down by 12.
+			entries = append(entries, dirent{name: string(rec[:end]), ino: uint64(d.Ino), kind: uint32(d.Type) << 12})
 		}
 	}
 }

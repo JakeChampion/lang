@@ -15,10 +15,13 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// readDirInoSource builds a directory of two files and a subdirectory, lists
-// it with read_dir_ino, and prints one line per entry: the name, the inode
-// number read_dir_ino reported, and whether lstat of the same path reports
-// that number too. read_dir_ino must hand back read_dir's names in read_dir's
+// readDirInoSource builds a directory of two files, a subdirectory and a
+// symlink, lists it with read_dir_ino, and prints one line per entry: the
+// name, the inode number read_dir_ino reported, whether lstat of the same path
+// reports that number too, and the entry's kind. read_dir_ino_all must hand
+// back read_dir_all's names in read_dir_all's order, "." and ".." typed as
+// directories where a kind is supplied, and a line says how many more names
+// it holds than read_dir_ino. read_dir_ino must hand back read_dir's names in read_dir's
 // order, so any difference is an exit code rather than a line. The last line
 // is the missing directory's error.
 const readDirInoSource = `import "std/i64";
@@ -27,6 +30,7 @@ function main(): i32 {
     match (create_dir_all("d/sub")) { Err(_) => { return 1; }, Ok(_) => {} }
     match (write_file("d/a.txt", "x")) { Err(_) => { return 2; }, Ok(_) => {} }
     match (write_file("d/b.txt", "y")) { Err(_) => { return 3; }, Ok(_) => {} }
+    match (create_symlink("a.txt", "d/lnk")) { Err(_) => { return 11; }, Ok(_) => {} }
     let names: string[] = [];
     match (read_dir("d")) { Ok(ns) => { names = ns; }, Err(_) => { return 4; } }
     match (read_dir_ino("d")) {
@@ -41,7 +45,7 @@ function main(): i32 {
                     Ok(st) => {
                         let agrees: string = "differs";
                         if (st.ino == e.ino) { agrees = "agrees"; }
-                        print(e.name + " " + e.ino.to_string() + " " + agrees);
+                        print(e.name + " " + e.ino.to_string() + " " + agrees + " kind=" + (e.kind as i64).to_string());
                     },
                     Err(_) => { return 8; },
                 }
@@ -49,6 +53,21 @@ function main(): i32 {
             }
         },
     }
+    let all: string[] = [];
+    match (read_dir_all("d")) { Ok(ns) => { all = ns; }, Err(_) => { return 12; } }
+    match (read_dir_ino_all("d")) {
+        Err(_) => { return 13; },
+        Ok(es) => {
+            if (es.len() != all.len()) { return 14; }
+            let i: i32 = 0;
+            while (i < es.len()) {
+                if (es[i].name != all[i]) { return 15; }
+                if ((es[i].name == "." || es[i].name == "..") && es[i].kind != (16384 as u32) && es[i].kind != (0 as u32)) { return 16; }
+                i = i + 1;
+            }
+        },
+    }
+    print("dots " + ((all.len() - names.len()) as i64).to_string());
     match (read_dir_ino("missing")) {
         Ok(_) => { return 9; },
         Err(e) => {
@@ -62,8 +81,21 @@ function main(): i32 {
 }
 `
 
-// readDirInoWant is what every leg prints once the inode numbers are masked.
-const readDirInoWant = "a.txt N agrees\nb.txt N agrees\nmissing NotFound\nsub N agrees\n"
+// readDirInoWant is what a leg prints once the inode numbers are masked. The
+// kinds are stat's file-type bits for a regular file, a symlink and a
+// directory, or all 0 where the platform supplies none — preview 2, whose
+// directory listing also reports no "." or "..".
+func readDirInoWant(kinds bool) string {
+	file, link, dir := "kind=32768", "kind=40960", "kind=16384"
+	if !kinds {
+		file, link, dir = "kind=0", "kind=0", "kind=0"
+	}
+	dots := "dots 2"
+	if !kinds {
+		dots = "dots 0"
+	}
+	return "a.txt N agrees " + file + "\nb.txt N agrees " + file + "\n" + dots + "\nlnk N agrees " + link + "\nmissing NotFound\nsub N agrees " + dir + "\n"
+}
 
 // readDirInoSource's inode contract per leg. A kernel's d_ino is the inode
 // lstat reports, so the native legs and the interpreter are checked against
@@ -87,7 +119,7 @@ func checkReadDirIno(t *testing.T, workDir, stdout string, mode int) {
 	var masked strings.Builder
 	for _, line := range lines {
 		f := strings.Fields(line)
-		if len(f) != 3 {
+		if len(f) != 4 {
 			masked.WriteString(line + "\n")
 			continue
 		}
@@ -116,10 +148,13 @@ func checkReadDirIno(t *testing.T, workDir, stdout string, mode int) {
 				t.Errorf("%s: read_dir_ino ino = %d, want 0 where the platform supplies none", f[0], ino)
 			}
 		}
-		masked.WriteString(f[0] + " N " + f[2] + "\n")
+		masked.WriteString(f[0] + " N " + f[2] + " " + f[3] + "\n")
 	}
-	if got := masked.String(); got != readDirInoWant {
-		t.Errorf("read_dir_ino listing, inode numbers masked:\n%s\nwant:\n%s\nraw:\n%s", got, readDirInoWant, stdout)
+	// Preview 2's names arrive without their types, so every kind is 0
+	// there, as every ino is.
+	want := readDirInoWant(mode != inoAbsent)
+	if got := masked.String(); got != want {
+		t.Errorf("read_dir_ino listing, inode numbers masked:\n%s\nwant:\n%s\nraw:\n%s", got, want, stdout)
 	}
 }
 

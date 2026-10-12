@@ -1172,7 +1172,7 @@ function walk_order(dir: string, entries: DirEntry[]): DirEntry[] {
   let es: DirEntry[] = [];
   for e in entries {
     if (e.ino == 0) {
-      es = es.append(DirEntry { name: e.name, ino: lstat_of(gnu.join_path(dir, e.name)).ino });
+      es = es.append(DirEntry { ...e, ino: lstat_of(gnu.join_path(dir, e.name)).ino });
     } else {
       es = es.append(e);
     }
