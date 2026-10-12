@@ -41,6 +41,14 @@
 # only its OWN namespace, so an x86_64 entry is not a missing measurement on the
 # aarch64 runner.
 
+# Re-pinned 2026-10-12 on eleven x86_64 and seven aarch64 rows when
+# `__fern_str_cmp` took its word-at-a-time body: `sort_strings.ir` fell 11% on
+# x86_64, and the `.text` of every program that orders strings grew by the
+# word loop. The perceus rows had moved on main already, none of them ordering
+# strings: `perceus_rbtree.ir` -14% and -19%, its `.text` +27% and +26%.
+# x86_64 values are perf-bench on the branch; aarch64 `.text` is the same
+# count cross-compiled, and its `.ir` rows the perf-aarch64 lane's.
+
 # Re-pinned 2026-10-11 (#12117) on seven x86_64 and six aarch64 rows after a
 # carried reuse donor's token is taken where the donor dies and a split
 # read's part phi is shared by every read: the `.text` rows fell 1-4% on both
@@ -56,11 +64,11 @@ x86_64/array_append.text	912
 x86_64/array_append.ir	13383897
 x86_64/array_index.text	913
 x86_64/array_index.ir	16455548
-x86_64/array_scale_f64.text	2723
+x86_64/array_scale_f64.text	2752
 x86_64/array_scale_f64.ir	21337821
 x86_64/array_with.ir	37762183
 x86_64/array_with.text	1072
-x86_64/ascii_scan.text	2996
+x86_64/ascii_scan.text	3026
 x86_64/ascii_scan.ir	37119510
 x86_64/call_overhead.text	91
 x86_64/call_overhead.ir	8550862
@@ -86,15 +94,15 @@ x86_64/pvec_with.text	2890
 x86_64/pvec_with.ir	80788658
 x86_64/record_update.ir	142620274
 x86_64/record_update.text	1399
-x86_64/sort_inplace.text	2872
+x86_64/sort_inplace.text	2901
 x86_64/sort_inplace.ir	43380614
 x86_64/sort_ints.text	3398
 x86_64/sort_ints.ir	30711812
 x86_64/sort_strings.text	4210
-x86_64/sort_strings.ir	119948830
+x86_64/sort_strings.ir	106813057
 x86_64/string_build.text	3180
 x86_64/string_build.ir	98161013
-x86_64/string_count_byte.text	2876
+x86_64/string_count_byte.text	2906
 x86_64/string_count_byte.ir	135589612
 x86_64/string_find_byte.text	3260
 x86_64/string_find_byte.ir	43567682
@@ -223,23 +231,23 @@ aarch64/utf8_ingest_validated.text	14825
 aarch64/utf8_ingest_validated.ir	7486486	3
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-x86_64/perceus_cfold.text	2404
+x86_64/perceus_cfold.text	2553
 x86_64/perceus_cfold.ir	108160067
-x86_64/perceus_deriv.text	2598
+x86_64/perceus_deriv.text	2708
 x86_64/perceus_deriv.ir	104609608
 x86_64/perceus_nqueens.text	1425
 x86_64/perceus_nqueens.ir	116800533
-x86_64/perceus_rbtree.text	2642
-x86_64/perceus_rbtree.ir	128541020
-x86_64/perceus_rbtree_ck.text	2955
-x86_64/perceus_rbtree_ck.ir	136899157
-aarch64/perceus_cfold.text	2564
+x86_64/perceus_rbtree.text	3356
+x86_64/perceus_rbtree.ir	110575969
+x86_64/perceus_rbtree_ck.text	3461
+x86_64/perceus_rbtree_ck.ir	122089807
+aarch64/perceus_cfold.text	2721
 aarch64/perceus_cfold.ir	118173402
-aarch64/perceus_deriv.text	2798
-aarch64/perceus_deriv.ir	115606904
+aarch64/perceus_deriv.text	2902
+aarch64/perceus_deriv.ir	113782904
 aarch64/perceus_nqueens.text	1600
 aarch64/perceus_nqueens.ir	132085204
-aarch64/perceus_rbtree.text	2771
-aarch64/perceus_rbtree.ir	139751314
-aarch64/perceus_rbtree_ck.text	3099
-aarch64/perceus_rbtree_ck.ir	148206250
+aarch64/perceus_rbtree.text	3481
+aarch64/perceus_rbtree.ir	113234678
+aarch64/perceus_rbtree_ck.text	3593
+aarch64/perceus_rbtree_ck.ir	123640690

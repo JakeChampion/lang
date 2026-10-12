@@ -5982,7 +5982,7 @@ pub function rt_src_arr_slice(): string {
 // eight bytes at a time; both native targets are little-endian, so the lowest
 // set bit of the two words' xor is in the first byte that differs.
 pub function rt_src_str_cmp(): string {
-  return "function __fern_str_cmp(a: string, b: string): i32 { let la: i32 = a.len(); let lb: i32 = b.len(); let n: i32 = la; if (lb < n) { n = lb; } let pa: usize = __raw_data(a); let pb: usize = __raw_data(b); let i: i32 = 0; while (i + 8 <= n) { let x: i64 = __load_i64(pa + i) ^ __load_i64(pb + i); if (x != (0 as i64)) { let k: i32 = i + (__ctz64(x as u64) >> 3); return (a[k] as i32) - (b[k] as i32); } i = i + 8; } while (i < n) { let ca: i32 = a[i] as i32; let cb: i32 = b[i] as i32; if (ca != cb) { return ca - cb; } i = i + 1; } return la - lb; }";
+  return "function __fern_str_cmp(a: string, b: string): i32 { let d: i32 = a.len() - b.len(); let n: i32 = a.len(); if (d > 0) { n = b.len(); } let pa: usize = __raw_data(a); let pb: usize = __raw_data(b); let i: i32 = 0; while (i + 8 <= n) { let x: i64 = __load_i64(pa + i) ^ __load_i64(pb + i); if (x != (0 as i64)) { i = i + (__ctz64(x as u64) >> 3); return __raw_load8(pa, i) - __raw_load8(pb, i); } i = i + 8; } while (i < n) { let ca: i32 = __raw_load8(pa, i); let cb: i32 = __raw_load8(pb, i); if (ca != cb) { return ca - cb; } i = i + 1; } return d; }";
 }
 
 // rt_src_arr_str_join backs `xs.join(sep)` on string arrays (#2649). TWO PASSES
