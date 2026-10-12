@@ -223,7 +223,9 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
       continue;
     }
     let ins: ssa.SInst = f.graph.blocks[at[s.block]].insts[s.point];
-    out = dying_lent_rows(callee, f, p, defs, s, ins, table, tix, out);
+    let scan: GrowScan = dying_lent_rows(callee, f, p, defs, s, ins, table, tix, GrowScan { rows: out, seen: seen });
+    out = scan.rows;
+    seen = scan.seen;
     let i: i32 = 0;
     while (i < s.hand_roots.len()) {
       let root: i32 = s.hand_roots[i];
@@ -244,18 +246,24 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
   return out;
 }
 
+// The rows found so far, and `carried_params`' scratch set.
+struct GrowScan { rows: GrowRow[], seen: boolean[] }
+
 // The rows of a direct call's array operands that die at it, at the positions
 // the callee may grow: the box they carry from a parameter is lent on with
 // nothing in this frame reading it again.
-function dying_lent_rows(callee: string, f: ssasem.Func, p: Plan, defs: ssa.SInst[], s: Step, ins: ssa.SInst, table: GrowRow[], tix: util.NameIndex, own out: GrowRow[]): GrowRow[] {
+function dying_lent_rows(callee: string, f: ssasem.Func, p: Plan, defs: ssa.SInst[], s: Step, ins: ssa.SInst, table: GrowRow[], tix: util.NameIndex, own scan: GrowScan): GrowScan {
   if (ins.kind_tag != ssasem.call()) {
-    return out;
+    return scan;
   }
+  let out: GrowRow[] = scan.rows;
+  let seen: boolean[] = scan.seen;
   let i: i32 = 0;
   while (i < ins.args.len()) {
     let v: i32 = ins.args[i];
     if (v >= f.graph.nparams && is_array(f.values[v]) && occurrences(s.drops, v) > 0 && has_row_at(table, tix, ins.str, i, 0 - 1)) {
-      let carried: Carried = carried_params(f, defs, v, __alloc_bool(f.graph.nvals));
+      let carried: Carried = carried_params(f, defs, v, seen);
+      seen = carried.seen;
       for param in carried.params {
         if (!p.owned[param]) {
           out = with_row(out, callee, defs[param].imm, 0 - 1);
@@ -264,7 +272,7 @@ function dying_lent_rows(callee: string, f: ssasem.Func, p: Plan, defs: ssa.SIns
     }
     i = i + 1;
   }
-  return out;
+  return GrowScan { rows: out, seen: seen };
 }
 
 struct Carried { params: i32[], seen: boolean[] }
@@ -1582,7 +1590,7 @@ function projection_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], d
   // instruction's own other operands count (`own_root`), the record beside
   // its field being the record read whole, and so does the field value
   // itself used again later, since the slot is not moved out at the read.
-  if (needed_past_slot(f, a, defs, bi, pos, root, get, false, true, false)) {
+  if (needed_past_slot(f, a, defs, bi, pos, get, false, true, false)) {
     return none;
   }
   return root;
@@ -1667,7 +1675,7 @@ function tuple_take_field(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], 
   }
   // The untested take: the tuple must die in this block, so any liveness out
   // of it refuses (`strict`); another element's read is let through.
-  if (needed_past_slot(f, a, defs, bi, pos, root, ins, true, false, true)) {
+  if (needed_past_slot(f, a, defs, bi, pos, ins, true, false, true)) {
     return none;
   }
   return ins.imm;
@@ -2098,7 +2106,7 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs
   }
   // Another slot's read is let through, and so is what the taken value
   // carries: the slot is moved out, not borrowed.
-  if (needed_past_slot(f, a, defs, bi, pos, root, ins, false, false, true)) {
+  if (needed_past_slot(f, a, defs, bi, pos, ins, false, false, true)) {
     return none;
   }
   return root;
@@ -2124,10 +2132,10 @@ function slot_takeable(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], go
   return !(ssasem.is_view(got) || option_layout(f, box)) || sole_box(a, defs, root, __alloc_bool(f.graph.nvals));
 }
 
-// Whether `root` is still needed past position `pos` of block `bi` other than
-// through the slot the read `take` names: a later read of it in the block, a
-// value anchored to it that is used after `pos`, or a block that can run
-// later naming it (`named_after`). A read of another of its slots is let
+// Whether the box the read `take` reads from is still needed past position
+// `pos` of block `bi` other than through the slot `take` names: a later read
+// of it in the block, a value anchored to it that is used after `pos`, or a
+// block that can run later naming it (`named_after`). A read of another of its slots is let
 // through everywhere; so is a value that reaches it only through the taken
 // value, when `through_take` is set, since the take moves that value out.
 // `strict` refuses any liveness out of the block, a tuple take's rule.
@@ -2136,7 +2144,8 @@ function slot_takeable(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], go
 //
 // The three takes and the field steal are this one question asked with
 // different allowances; what each allows is stated at its call.
-function needed_past_slot(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, pos: i32, root: i32, take: ssa.SInst, strict: boolean, own_root: boolean, through_take: boolean): boolean {
+function needed_past_slot(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, pos: i32, take: ssa.SInst, strict: boolean, own_root: boolean, through_take: boolean): boolean {
+  let root: i32 = take.args[0];
   let b: ssa.SBlock = f.graph.blocks[bi];
   if (ssalive.live_out_has(a.flow, bi, root) && (strict || named_after(f, a, bi, root, take))) {
     return true;
