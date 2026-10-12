@@ -6,8 +6,8 @@
 // in virtual time: `plat.now_ms()` is the sim's clock, `plat.random_i32()`
 // its seeded PRNG, `plat.http(req)` the public-only route over the scripted
 // network, with the network's pool keeping a connection for the next
-// request as the host platform's does. `env`, `config`, `secret` and
-// `stat` answer what the test set, and every call is recorded, as a mock
+// request as the host platform's does. `env`, `config`, `secret`, `stat`
+// and `peer` answer what the test set, and every call is recorded, as a mock
 // platform's is: the table and the log are a `mock_platform.MockPlatform`
 // the sim platform carries, so `calls()` reads back what the handler did.
 //
@@ -23,6 +23,7 @@ import "std/sim_fetch";
 import "std/fetch";
 import "std/time";
 import "std/mock_platform";
+import "std/net";
 import "std/http/cookie";
 
 // `SimPlatform` — the simulated platform: the driver whose clock and PRNG
@@ -91,6 +92,10 @@ impl platform.Platform for SimPlatform {
   function stat(self: SimPlatform, path: string): Result[FileStat, IoError] {
     return self.mock.stat(path);
   }
+
+  function peer(self: SimPlatform): Option[net.SocketAddr] {
+    return self.mock.peer();
+  }
 }
 
 // `(p: SimPlatform).env_set(name, value)` — `plat.env(name)` answers
@@ -116,6 +121,11 @@ pub function (p: SimPlatform) secret_set(name: string, value: string): void {
 // seconds), and `materialize` reads it.
 pub function (p: SimPlatform) file_set(path: string, content: string, mtime: i64): void {
   p.mock.file_set(path, content, mtime);
+}
+
+// `(p: SimPlatform).peer_set(addr)` — `plat.peer()` answers `addr`.
+pub function (p: SimPlatform) peer_set(addr: string): void {
+  p.mock.peer_set(addr);
 }
 
 // `(p: SimPlatform).dir_set(path)` — `plat.stat(path)` answers a directory.

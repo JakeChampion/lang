@@ -1,0 +1,239 @@
+import "std/test";
+import "std/http";
+import "std/http/forwarded";
+import "std/headers";
+import "std/mock_platform";
+import "std/net";
+
+// tests/stdlib/http_forwarded_test.fern — std/http/forwarded: RFC 7239's
+// own examples read, the malformed forms refused, elements written back;
+// the client walked back from the connection's peer past trusted proxies,
+// a forged hop left of them ignored, the peer itself when it is not a
+// proxy or the field does not parse; the X-Forwarded-* fields when asked;
+// and std/net's address blocks.
+
+function req(fields: string[]): HttpRequest {
+  let r: HttpRequest = http.request("GET", "/");
+  let i: i32 = 0;
+  while (i + 1 < fields.len()) {
+    r = HttpRequest { ...r, headers: r.headers.append(fields[i], fields[i + 1]) };
+    i = i + 2;
+  }
+  return r;
+}
+
+function opt(s: Option[string]): string {
+  match (s) {
+    Some(x) => {
+      return x;
+    },
+    None => {
+      return "-";
+    }
+  }
+}
+
+function node(n: Option[forwarded.NodeId]): string {
+  match (n) {
+    Some(id) => {
+      return id.to_string();
+    },
+    None => {
+      return "-";
+    }
+  }
+}
+
+function hops_of(fields: string[]): string {
+  match (forwarded.hops(req(fields).headers)) {
+    Some(hs) => {
+      let out: string = "";
+      for h in hs {
+        out = out + "[" + node(h.from) + " " + node(h.by) + " " + opt(h.host) + " " + opt(h.proto) + "]";
+      }
+      return out;
+    },
+    None => {
+      return "malformed";
+    }
+  }
+}
+
+// RFC 7239 §4 and §7's examples, a parameter name in any case, an
+// extension parameter skipped, and every line's elements in order.
+function test_rfc_examples(): test.TestOutcome {
+  let got: string = hops_of(["Forwarded", "for=\"_gazonk\""]);
+  got = got + hops_of(["Forwarded", "For=\"[2001:db8:cafe::17]:4711\""]);
+  got = got + hops_of(["Forwarded", "for=192.0.2.60;proto=http;by=203.0.113.43"]);
+  got = got + hops_of(["Forwarded", "for=192.0.2.43, for=198.51.100.17", "forwarded", "for=unknown;ext=x"]);
+  return test.assert_eq(got, "[_gazonk - - -][[2001:db8:cafe::17]:4711 - - -][192.0.2.60 203.0.113.43 - http][192.0.2.43 - - -][198.51.100.17 - - -][unknown - - -]");
+}
+
+// A quoted value may hold `,` and `;`; an obfuscated port; a host as given.
+function test_quoting(): test.TestOutcome {
+  let got: string = hops_of(["Forwarded", "for=192.0.2.1;host=\"a.example;b,c\", for=\"unknown:_p1\""]);
+  return test.assert_eq(got, "[192.0.2.1 - a.example;b,c -][unknown:_p1 - - -]");
+}
+
+// An IPv6 node unquoted, a parameter twice, a port of six digits, a bad
+// scheme, an empty value, a bare `_`, a pair with no `=`, and an IPv6
+// address where IPv4 must be: each makes the whole list unread.
+function test_malformed(): test.TestOutcome {
+  let got: string = "";
+  for v in ["for=[2001:db8::1]", "for=192.0.2.1;for=192.0.2.2", "for=\"192.0.2.1:123456\"", "proto=1http", "for=", "for=\"_\"", "for", "for=\"2001:db8::1\"", "for=192.0.2.1, by"] {
+    got = got + hops_of(["Forwarded", v]) + " ";
+  }
+  return test.assert_eq(got, "malformed malformed malformed malformed malformed malformed malformed malformed malformed ");
+}
+
+// Writing: `for`, `by`, `host`, `proto` in order, a value that is not a
+// token quoted, which reads back the same.
+function test_write(): test.TestOutcome {
+  let h: forwarded.Hop = forwarded.Hop { ...forwarded.hop(), from: forwarded.node_parse("[2001:db8::1]:443"), host: Some("example.com"), proto: Some("https") };
+  let obf: forwarded.Hop = forwarded.Hop { ...forwarded.hop(), from: forwarded.node_parse("_x"), by: forwarded.node_parse("192.0.2.9") };
+  let text: string = h.to_string();
+  return test.assert_eq(text + " | " + obf.to_string() + " | " + hops_of(["Forwarded", text]), "for=\"[2001:db8::1]:443\";host=example.com;proto=https | for=_x;by=192.0.2.9 | [[2001:db8::1]:443 - example.com https]");
+}
+
+function shown(c: forwarded.Client): string {
+  return node(c.node) + " " + opt(c.proto) + " " + opt(c.host);
+}
+
+function trusted(blocks: string[]): forwarded.Trust {
+  match (forwarded.trust(blocks)) {
+    Ok(t) => {
+      return t;
+    },
+    Err(bad) => {
+      return forwarded.Trust { proxies: [], legacy: false };
+    }
+  }
+}
+
+function client_of(peer: string, blocks: string[], fields: string[]): string {
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  if (peer.len() > 0) {
+    m.peer_set(peer);
+  }
+  return shown(forwarded.client(req(fields), m, trusted(blocks)));
+}
+
+// A peer that is not a proxy is the client, whatever the field says.
+function test_untrusted_peer(): test.TestOutcome {
+  return test.assert_eq(client_of("203.0.113.9:5000", ["10.0.0.0/8"], ["Host", "shop.example", "Forwarded", "for=192.0.2.60;proto=https"]), "203.0.113.9:5000 - shop.example");
+}
+
+// Behind a trusted proxy, the client is the node its element names, with
+// the scheme and host it used.
+function test_one_proxy(): test.TestOutcome {
+  return test.assert_eq(client_of("10.0.0.5:4000", ["10.0.0.0/8"], ["Host", "internal", "Forwarded", "for=192.0.2.60;proto=https;host=shop.example"]), "192.0.2.60 https shop.example");
+}
+
+// Two trusted proxies are walked past; a hop the client forged left of
+// them is never reached; when every node is trusted, the first hop is the
+// client.
+function test_chain_and_forgery(): test.TestOutcome {
+  let chain: string = client_of("10.0.0.5:1", ["10.0.0.0/8"], ["Forwarded", "for=198.51.100.7;proto=https", "Forwarded", "for=10.0.0.9;proto=http"]);
+  let forged: string = client_of("10.0.0.5:1", ["10.0.0.0/8"], ["Forwarded", "for=10.9.9.9, for=192.0.2.60;proto=https"]);
+  let all: string = client_of("10.0.0.5:1", ["10.0.0.0/8"], ["Forwarded", "for=10.0.0.1, for=10.0.0.2"]);
+  return test.assert_eq(chain + " | " + forged + " | " + all, "198.51.100.7 https - | 192.0.2.60 https - | 10.0.0.1 - -");
+}
+
+// A malformed field leaves the trusted peer as the client; an obfuscated
+// client has no address; a platform that knows no peer trusts nothing.
+function test_edges(): test.TestOutcome {
+  let bad: string = client_of("10.0.0.5:1", ["10.0.0.0/8"], ["Forwarded", "for=192.0.2.60;for=192.0.2.61"]);
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  m.peer_set("10.0.0.5:1");
+  let hidden: forwarded.Client = forwarded.client(req(["Forwarded", "for=_hidden"]), m, trusted(["10.0.0.0/8"]));
+  let no_ip: boolean = false;
+  match (hidden.ip()) {
+    Some(ip) => {},
+    None => {
+      no_ip = true;
+    }
+  }
+  let unknown: string = client_of("", ["10.0.0.0/8"], ["Host", "h", "Forwarded", "for=192.0.2.60"]);
+  return test.assert_eq(bad + " | " + node(hidden.node) + " " + no_ip.to_string() + " | " + unknown, "10.0.0.5:1 - - | _hidden true | - - h");
+}
+
+// X-Forwarded-For only when asked and no Forwarded field was sent, its
+// proto and host paired from the right or given to every hop.
+function test_legacy(): test.TestOutcome {
+  let t: forwarded.Trust = forwarded.Trust { ...trusted(["10.0.0.0/8"]), legacy: true };
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  m.peer_set("10.0.0.5:1");
+  let fields: string[] = ["X-Forwarded-For", "203.0.113.1, 10.0.0.3", "X-Forwarded-Proto", "https", "X-Forwarded-Host", "shop.example"];
+  let on: string = shown(forwarded.client(req(fields), m, t));
+  let off: string = shown(forwarded.client(req(fields), m, trusted(["10.0.0.0/8"])));
+  let both: string = shown(forwarded.client(req(["Forwarded", "for=192.0.2.60", "X-Forwarded-For", "203.0.113.1"]), m, t));
+  let v6: string = shown(forwarded.client(req(["X-Forwarded-For", "2001:db8::7, [2001:db8::8]:443"]), m, t));
+  return test.assert_eq(on + " | " + off + " | " + both + " | " + v6, "203.0.113.1 https shop.example | 10.0.0.5:1 - - | 192.0.2.60 - - | [2001:db8::8]:443 - -");
+}
+
+// `trust` names the first block that does not parse.
+function test_trust_errors(): test.TestOutcome {
+  match (forwarded.trust(["10.0.0.0/8", "10.0.0.1/8"])) {
+    Ok(t) => {
+      return test.fail("a block with host bits set was accepted");
+    },
+    Err(bad) => {
+      return test.assert_eq(bad, "10.0.0.1/8");
+    }
+  }
+}
+
+function in_block(block: string, ip: string): string {
+  match (net.prefix_parse(block)) {
+    Some(p) => {
+      match (net.ip_parse(ip)) {
+        Some(a) => {
+          return p.contains(a).to_string();
+        },
+        None => {
+          return "bad-ip";
+        }
+      }
+    },
+    None => {
+      return "bad-block";
+    }
+  }
+}
+
+// Blocks at their edges, each family against the other, a v4-mapped
+// address against an IPv4 block and IPv4 addresses against v4-mapped and
+// IPv6 blocks, /0 and a single address.
+function test_prefix(): test.TestOutcome {
+  let got: string = in_block("172.16.0.0/12", "172.31.255.255") + " " + in_block("172.16.0.0/12", "172.32.0.0") + " " + in_block("2001:db8::/32", "2001:db8:ffff::1") + " " + in_block("2001:db8::/32", "2001:db9::1");
+  got = got + " " + in_block("10.0.0.0/8", "::ffff:10.1.2.3") + " " + in_block("10.0.0.0/8", "2001:db8::1") + " " + in_block("0.0.0.0/0", "203.0.113.1") + " " + in_block("192.0.2.7", "192.0.2.8");
+  got = got + " " + in_block("10.0.0.0/7", "11.0.0.0") + " " + in_block("11.0.0.0/7", "10.0.0.0") + " " + in_block("10.128.0.0/9", "10.127.0.0");
+  got = got + " " + in_block("::ffff:10.0.0.1", "10.0.0.1") + " " + in_block("::ffff:10.0.0.0/104", "10.9.9.9") + " " + in_block("::ffff:10.0.0.0/104", "11.0.0.1") + " " + in_block("::ffff:0:0/96", "::ffff:192.0.2.1") + " " + in_block("::/0", "192.0.2.1") + " " + in_block("10.0.0.0/8", "2001:db8::a00:1");
+  return test.assert_eq(got, "true false true false true false true false true bad-block false true true false true true false");
+}
+
+// The element a proxy appends for the request it received.
+function test_hop_of(): test.TestOutcome {
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  m.peer_set("192.0.2.7:5000");
+  let r: HttpRequest = req(["Host", "example.com", "Forwarded", "for=198.51.100.1"]);
+  let out: HttpRequest = r.with_hop(forwarded.hop_of(r, m, "https"));
+  return test.assert_eq(out.headers.get_all("forwarded").join(" / "), "for=198.51.100.1 / for=\"192.0.2.7:5000\";host=example.com;proto=https");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/http/forwarded");
+  r = r.it("RFC 7239's examples", test_rfc_examples);
+  r = r.it("quoted values and obfuscated ports", test_quoting);
+  r = r.it("malformed elements leave the list unread", test_malformed);
+  r = r.it("an element written and read back", test_write);
+  r = r.it("an untrusted peer is the client", test_untrusted_peer);
+  r = r.it("one trusted proxy", test_one_proxy);
+  r = r.it("a chain, a forged hop, every node trusted", test_chain_and_forgery);
+  r = r.it("malformed, obfuscated, no peer", test_edges);
+  r = r.it("X-Forwarded-* when asked", test_legacy);
+  r = r.it("trust names a bad block", test_trust_errors);
+  r = r.it("address blocks", test_prefix);
+  r = r.it("hop_of and with_hop", test_hop_of);
+  return r.finish();
+}

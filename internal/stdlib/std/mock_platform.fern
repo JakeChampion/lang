@@ -19,11 +19,12 @@
 //
 // What a mocked capability RETURNS is what the test canned for it, or a
 // fixed value: `env_set`, `config_set`, `secret_set`, `now_set`,
-// `elapsed_set`, `random_set`, `http_set`, `file_set` and `dir_set` record
+// `elapsed_set`, `random_set`, `http_set`, `file_set`, `dir_set` and
+// `peer_set` record
 // an answer the mock gives from then on; otherwise `now_ms` and
 // `elapsed_ns` answer 0, `env`, `config` and `secret` answer None,
 // `random_i32` answers 0, `log` discards the line, `stat` answers
-// `NotFound`, and `http` answers `Err(Connect(ConnectionRefused))` — what a
+// `NotFound`, `peer` answers None, and `http` answers `Err(Connect(ConnectionRefused))` — what a
 // real request gives for a host that is not listening, so a handler that
 // already handles a failed request handles a mocked one. A canned answer is
 // a row of the same log, `canned`, tab, the capability's key, tab, the
@@ -123,6 +124,19 @@ impl platform.Platform for MockPlatform {
     }
     return Err(NotFound(path));
   }
+
+  function peer(self: MockPlatform): Option[net.SocketAddr] {
+    self.record("peer", "");
+    match (self.canned("peer")) {
+      Some(addr) => {
+        return net.socket_addr_parse(addr);
+      },
+      None => {
+        return None;
+      }
+    }
+    return None;
+  }
 }
 
 // `(m: MockPlatform).record(name, args)` — append an entry to the log; each
@@ -203,6 +217,12 @@ pub function (m: MockPlatform) http_set(method: string, url: string, status: i32
 pub function (m: MockPlatform) file_set(path: string, content: string, mtime: i64): void {
   m.can("file " + path, content);
   m.can("mtime " + path, mtime.to_string());
+}
+
+// `(m: MockPlatform).peer_set(addr)` — `plat.peer()` answers the address
+// `addr` spells (`192.0.2.7:51234`, `[2001:db8::1]:443`) from now on.
+pub function (m: MockPlatform) peer_set(addr: string): void {
+  m.can("peer", addr);
 }
 
 // `(m: MockPlatform).dir_set(path)` — `plat.stat(path)` answers a

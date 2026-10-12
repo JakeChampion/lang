@@ -30,6 +30,7 @@ import "std/fetch";
 import "std/http/cookie";
 import "std/async";
 import "std/time";
+import "std/net";
 
 pub trait Platform {
   // `.log(msg)` — write one diagnostic line to the platform's log sink.
@@ -93,6 +94,13 @@ pub trait Platform {
   // handler answers with a file's bytes without reading them, as a
   // `BodyFile` or `BodyFileRanges` the serve loop sends.
   function stat(self: Self, path: string): Result[FileStat, IoError];
+
+  // `.peer()` — the address the request's connection came from: the
+  // socket's peer, or the client a PROXY protocol header named for it.
+  // None where the host does not say (the wasi-http proxy world). Behind
+  // a proxy this is the proxy; std/http/forwarded finds the client past
+  // the proxies a deployment trusts.
+  function peer(self: Self): Option[net.SocketAddr];
 }
 
 // `Host` — the platform that performs its effects on the machine it runs
@@ -103,7 +111,8 @@ pub trait Platform {
 // the platform and kept for as long as it lives: a worker loop's, in
 // std/serve. `jar` is the cookies its `http` carries and stores, as a
 // browser's would, once `with_jar` gave it one; None sends and keeps none.
-pub struct Host { reactor: i32, pool: fetch.Idle, jar: Option[cookie.Jar] }
+// `peer` is the connection's peer, which std/serve sets per connection.
+pub struct Host { reactor: i32, pool: fetch.Idle, jar: Option[cookie.Jar], peer: Option[net.SocketAddr] }
 
 // `host()` — a host platform with no reactor and an empty pool, for code
 // that has to build one: a test driving a handler directly, or a caller of
@@ -117,7 +126,13 @@ pub function host(): Host {
 // `host_on(reactor)` — the host platform of the worker whose reactor is
 // `reactor`; std/serve builds one per worker loop.
 pub function host_on(reactor: i32): Host {
-  return Host { reactor: reactor, pool: fetch.idle(), jar: None };
+  return Host { reactor: reactor, pool: fetch.idle(), jar: None, peer: None };
+}
+
+// `(h).with_peer(addr)` — the host answering `peer()` with `addr`: what
+// std/serve hands the handlers of one connection.
+pub function (h: Host) with_peer(addr: Option[net.SocketAddr]): Host {
+  return Host { ...h, peer: addr };
 }
 
 // `(h).with_jar(jar)` — the host with `jar` (std/http/cookie): every
@@ -168,5 +183,9 @@ impl Platform for Host {
 
   function stat(self: Host, path: string): Result[FileStat, IoError] {
     return stat(path);
+  }
+
+  function peer(self: Host): Option[net.SocketAddr] {
+    return self.peer;
   }
 }
