@@ -69,6 +69,15 @@ func TestParseFloatCorrectlyRounded(t *testing.T) {
 		"123456789012345678901234567890",
 		"1e22", "1e-22", "2.4703282292062327e-324",
 	)
+	// The seams of the 19-digit u64 path: exactly 19 significant digits, a
+	// zero and a nonzero 20th, zeros past the 19th, leading fraction zeros.
+	edge = append(edge,
+		"1234567890123456789", "12345678901234567890", "12345678901234567891",
+		"1.2345678901234567890000000000", "100000000000000000000000000000",
+		"0.000000000000000000001234567890123456789", "1234567890123456789e-30",
+		"9999999999999999999", "18446744073709551615", "18446744073709551616",
+		"1.", ".5", "-0.0001",
+	)
 	vals := append([]string{}, edge...)
 
 	// Exact decimal midpoints between adjacent doubles: written out in full,

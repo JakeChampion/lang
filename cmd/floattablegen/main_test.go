@@ -2,10 +2,9 @@ package main
 
 import (
 	"math/big"
-	"math/rand"
 	"os"
 	"regexp"
-	"strings"
+	"strconv"
 	"testing"
 )
 
@@ -13,49 +12,6 @@ const (
 	floatFern  = "../../internal/stdlib/std/float.fern"
 	stringFern = "../../internal/stdlib/std/string.fern"
 )
-
-// The encoded tables ship as Fern STRING literals, so the alphabet has to
-// survive a Fern string literal unescaped. Fern source is UTF-8 and the table
-// is indexed by byte, so the alphabet must also stay below 0x80.
-func TestAlphabetNeedsNoEscapes(t *testing.T) {
-	seen := map[byte]bool{}
-	for v := 0; v < 64; v++ {
-		c := enc6(v)
-		switch {
-		case c < 0x20 || c >= 0x80:
-			t.Errorf("enc6(%d) = %#x: outside printable ASCII", v, c)
-		case c == '"' || c == '\\':
-			t.Errorf("enc6(%d) = %q: needs escaping in a Fern string literal", v, c)
-		}
-		if seen[c] {
-			t.Errorf("enc6(%d) = %q: duplicate alphabet character", v, c)
-		}
-		seen[c] = true
-		if got := dec6(c); got != v {
-			t.Errorf("dec6(enc6(%d)) = %d, want %d", v, got, v)
-		}
-	}
-}
-
-func TestEncodeWordRoundTrip(t *testing.T) {
-	vals := []uint64{
-		0, 1, 63, 64, 1 << 32, ^uint64(0), ^uint64(0) - 1,
-		1 << 63, (1 << 63) | 1, 0x8000000000000000, 0xcccccccccccccccd,
-	}
-	r := rand.New(rand.NewSource(20260805))
-	for i := 0; i < 100000; i++ {
-		vals = append(vals, r.Uint64())
-	}
-	for _, v := range vals {
-		s := EncodeWord(v)
-		if len(s) != WordChars {
-			t.Fatalf("EncodeWord(%d) has length %d, want %d", v, len(s), WordChars)
-		}
-		if got := DecodeWord(s); got != v {
-			t.Fatalf("DecodeWord(EncodeWord(%d)) = %d", v, got)
-		}
-	}
-}
 
 // The cache entry must be the ceiling of the exact rational 10^k * 2^shift,
 // and must be normalised (top bit set) so Dragonbox's fixed shift amounts land
@@ -124,62 +80,46 @@ func TestCommittedFileIsUpToDate(t *testing.T) {
 	}
 }
 
-// Decode the literals straight out of the committed file the same way the Fern
-// `_db_word` decoder does, and check every entry against the big.Int cache.
-// This is the invariant the Fern port actually depends on.
-func TestCommittedTablesDecodeToCache(t *testing.T) {
-	src, err := os.ReadFile(floatFern)
+// committedTable reads the elements of `const name: u64[]` out of a committed
+// Fern source.
+func committedTable(t *testing.T, path, name string) []uint64 {
+	t.Helper()
+	src, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lit := func(fn string) string {
-		re := regexp.MustCompile(`(?s)function ` + fn + `\(\): string \{\s*return "([^"]*)";`)
-		m := re.FindStringSubmatch(string(src))
-		if m == nil {
-			t.Fatalf("could not find the %s table literal in %s", fn, floatFern)
+	re := regexp.MustCompile(`(?s)const ` + name + `: u64\[\] = \[(.*?)\];`)
+	m := re.FindStringSubmatch(string(src))
+	if m == nil {
+		t.Fatalf("could not find `const %s: u64[]` in %s", name, path)
+	}
+	var out []uint64
+	for _, w := range regexp.MustCompile(`0x([0-9a-f]+)u64`).FindAllStringSubmatch(m[1], -1) {
+		v, err := strconv.ParseUint(w[1], 16, 64)
+		if err != nil {
+			t.Fatal(err)
 		}
-		return m[1]
+		out = append(out, v)
 	}
+	return out
+}
 
-	t64 := lit("_db_cache64")
-	want64 := Cache64()
-	if len(t64) != len(want64)*2*WordChars {
-		t.Fatalf("_db_cache64 has %d chars, want %d", len(t64), len(want64)*2*WordChars)
+func checkTable(t *testing.T, name string, got, want []uint64) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s has %d words, want %d", name, len(got), len(want))
 	}
-	for i, e := range want64 {
-		hi := DecodeWord(t64[i*2*WordChars:])
-		lo := DecodeWord(t64[i*2*WordChars+WordChars:])
-		if hi != e[0] || lo != e[1] {
-			t.Fatalf("_db_cache64 k=%d: decoded {%#016x,%#016x}, want {%#016x,%#016x}",
-				i+MinK64, hi, lo, e[0], e[1])
-		}
-	}
-
-	t32 := lit("_db_cache32")
-	want32 := Cache32()
-	if len(t32) != len(want32)*WordChars {
-		t.Fatalf("_db_cache32 has %d chars, want %d", len(t32), len(want32)*WordChars)
-	}
-	for i, e := range want32 {
-		if got := DecodeWord(t32[i*WordChars:]); got != e {
-			t.Fatalf("_db_cache32 k=%d: decoded %#016x, want %#016x", i+MinK32, got, e)
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("%s[%d] = %#016x, want %#016x", name, i, got[i], want[i])
 		}
 	}
 }
 
-// The tables must stay string literals: a Fern array literal is executable
-// code that would rebuild the table on every call.
-func TestTablesAreStringsNotArrays(t *testing.T) {
-	src, err := os.ReadFile(floatFern)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, fn := range []string{"_db_cache64", "_db_cache32"} {
-		i := strings.Index(string(src), "function "+fn+"(): string {")
-		if i < 0 {
-			t.Errorf("%s is not declared as `function %s(): string`", fn, fn)
-		}
-	}
+// Every word of the committed Dragonbox tables is the big.Int cache's.
+func TestCommittedTablesMatchCache(t *testing.T) {
+	checkTable(t, "DB_CACHE64", committedTable(t, floatFern, "DB_CACHE64"), flat(Cache64()))
+	checkTable(t, "DB_CACHE32", committedTable(t, floatFern, "DB_CACHE32"), Cache32())
 }
 
 func TestGenerateIsDeterministic(t *testing.T) {
@@ -234,31 +174,9 @@ func TestPow5RoundingConvention(t *testing.T) {
 	}
 }
 
-// Decode the Eisel-Lemire literal straight out of the committed string.fern
-// the same way the Fern `_el_word` decoder does, and check every entry.
-func TestCommittedPow5DecodesToTable(t *testing.T) {
-	src, err := os.ReadFile(stringFern)
-	if err != nil {
-		t.Fatal(err)
-	}
-	re := regexp.MustCompile(`(?s)function _el_pow5\(\): string \{\s*return "([^"]*)";`)
-	m := re.FindStringSubmatch(string(src))
-	if m == nil {
-		t.Fatalf("could not find the _el_pow5 table literal in %s", stringFern)
-	}
-	lit := m[1]
-	want := Pow5()
-	if len(lit) != len(want)*2*WordChars {
-		t.Fatalf("_el_pow5 has %d chars, want %d", len(lit), len(want)*2*WordChars)
-	}
-	for i, e := range want {
-		hi := DecodeWord(lit[i*2*WordChars:])
-		lo := DecodeWord(lit[i*2*WordChars+WordChars:])
-		if hi != e[0] || lo != e[1] {
-			t.Fatalf("_el_pow5 q=%d: decoded {%#016x,%#016x}, want {%#016x,%#016x}",
-				i+MinQ, hi, lo, e[0], e[1])
-		}
-	}
+// Every word of the committed Eisel-Lemire table is the big.Int table's.
+func TestCommittedPow5MatchesTable(t *testing.T) {
+	checkTable(t, "EL_POW5", committedTable(t, stringFern, "EL_POW5"), flat(Pow5()))
 }
 
 // The two tables must NOT be accidentally unified: they agree on their leading

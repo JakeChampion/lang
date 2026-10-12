@@ -205,12 +205,11 @@ Still deliberately unspecified:
 Dragonbox is a table lookup plus one wide multiply per call, so it is
 constant-work and allocates nothing beyond the result string. The tables
 are the cost: 619 128-bit entries for f64 and 78 64-bit entries for f32,
-~14 KB of static rodata, generated and verified against the upstream
+~10 KB of static data, generated and verified against the upstream
 dragonbox table by `cmd/floattablegen` (`go run ./cmd/floattablegen
-internal/stdlib/std/float.fern` regenerates them). They ship as Fern
-*string* literals rather than array literals, because a string literal is
-rodata while a Fern array literal is executable code that would rebuild
-the table on every call — the same encoding `std/unicode.fern` uses.
+internal/stdlib/std/float.fern internal/stdlib/std/string.fern` regenerates
+them and the Eisel-Lemire table). They ship as `const` u64 arrays, which
+every backend lays out as static data, so a lookup is one load.
 
 That replaced an exact-bignum digit generator which multiplied a growing
 bignum once per binary exponent — 1074 limb passes for a subnormal — and

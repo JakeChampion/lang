@@ -1466,6 +1466,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		fn.TypeParams = append(vars, fn.TypeParams...)
 	}
 
+	c.consts = map[string]*ast.ConstDecl{}
+	c.constTypes = map[string]ast.Type{}
+	c.constBusy = map[string]bool{}
+	for _, cd := range prog.Consts {
+		c.consts[cd.Name] = cd
+	}
+
 	// Now that the enum set is known, walk every type position in
 	// the program and rewrite StructType{Name: X} → EnumType when
 	// X resolves to an enum. The parser doesn't know which named
@@ -8736,6 +8743,12 @@ func (c *checker) typeImplementsDisplay(t ast.Type) bool {
 }
 
 type checker struct {
+	// consts are the program's const declarations by name, for a program
+	// checked before constfold substitutes them; constTypes caches each one's
+	// type and constBusy guards a const whose value names itself.
+	consts     map[string]*ast.ConstDecl
+	constTypes map[string]ast.Type
+	constBusy  map[string]bool
 	// traitNames is every declared trait, as a parameter type spells it; set
 	// by desugarTraitParams so E064 can say a misplaced trait is one.
 	traitNames map[string]bool
@@ -17766,6 +17779,28 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 	c.restampLitCaptures(fn.Captures, outer)
 }
 
+// constType is the type of a reference to const cd: its declared type, or
+// its value's when it declares none. constfold replaces the reference with
+// the value before code generation; the checker only needs the type.
+func (c *checker) constType(cd *ast.ConstDecl) ast.Type {
+	if t, ok := c.constTypes[cd.Name]; ok {
+		return t
+	}
+	if cd.Type != nil {
+		c.constTypes[cd.Name] = cd.Type
+		return cd.Type
+	}
+	if c.constBusy[cd.Name] {
+		c.errfCode(cd.P, "E001", "const %s is defined in terms of itself", cd.Name)
+		return nil
+	}
+	c.constBusy[cd.Name] = true
+	t := c.checkExpr(cd.Value, newScope(nil))
+	delete(c.constBusy, cd.Name)
+	c.constTypes[cd.Name] = t
+	return t
+}
+
 func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	switch n := e.(type) {
 	case *ast.NumberLit:
@@ -18175,6 +18210,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		if sig, ok := c.info.FuncSigs[n.Name]; ok {
 			return sig
+		}
+		if cd, ok := c.consts[n.Name]; ok {
+			return c.constType(cd)
 		}
 		// A bare name might be a payload-less enum variant.
 		// (Variants with payloads are constructed via Call and
