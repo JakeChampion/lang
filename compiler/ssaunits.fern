@@ -1,4 +1,5 @@
 // Abstract counted-unit planning and independent replay before physical RC.
+import "./ir";
 import "./ssa";
 import "./ssasem";
 import "./ssadeps";
@@ -1147,7 +1148,8 @@ function text_lens(f: ssasem.Func): i32[] {
 // narrow scalar constant, or an array's a 64-bit integer or f64 constant: "|"
 // and its words, which is a static box's whole content; "" for any other
 // value. An empty array literal is one whatever its element type. A field or element may also hold another such box, as the
-// word `@<value>`, or a string literal's static box, as `$<value>`. A static
+// word `@<value>`, a string literal's static box, as `$<value>`, or a
+// payloadless Option or Result's, as its packing in braces. A static
 // box's rc is immortal, so its releases and uniqueness tests leave it alone.
 //
 // A field's box can be defined in a block visited after the field's, so a pass
@@ -1214,6 +1216,9 @@ function box_words(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], out: strin
       w = literal_word(defs, ins.args[j]);
     }
     if (w == "") {
+      w = option_word(f, defs, ins.args[j]);
+    }
+    if (w == "") {
       let at: i32 = placed_box(f, defs, raw, ins.args[j]);
       if (at < 0 || out[at] == "") {
         return BoxWords { text: "", waiting: at >= 0 };
@@ -1238,16 +1243,28 @@ function literal_word(defs: ssa.SInst[], v: i32): string {
   if (v < 0) {
     return "";
   }
-  let d: ssa.SInst = defs[v];
-  let hops: i32 = 0;
-  while (d.kind_tag == 7 && d.args.len() == 1 && d.args[0] >= 0 && hops < 16) {
-    d = defs[d.args[0]];
-    hops = hops + 1;
-  }
+  let d: ssa.SInst = through_copies(defs, v);
   if (d.kind_tag != 5 || d.result < 0) {
     return "";
   }
   return "$" + util.i32_to_string(d.result);
+}
+
+// A payloadless Option or Result's static block (ir.op_const_option), read
+// through copies; "" for anything else.
+function option_word(f: ssasem.Func, defs: ssa.SInst[], v: i32): string {
+  if (v < 0) {
+    return "";
+  }
+  let d: ssa.SInst = through_copies(defs, v);
+  if (d.kind_tag != ssasem.variant_new() || d.args.len() != 0 || d.result < 0) {
+    return "";
+  }
+  let e: i32 = semrecords.find_enum(f.enums, f.values[d.result]);
+  if (e < 0 || f.enums[e].layout != semrecords.layout_option()) {
+    return "";
+  }
+  return ir.const_option_ref(semrecords.find_variant(f.enums[e], d.str));
 }
 
 // The construction a field's value is, read through copies, when it is one
@@ -1256,12 +1273,7 @@ function placed_box(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], v: i32): 
   if (v < 0) {
     return 0 - 1;
   }
-  let d: ssa.SInst = defs[v];
-  let hops: i32 = 0;
-  while (d.kind_tag == 7 && d.args.len() == 1 && d.args[0] >= 0 && hops < 16) {
-    d = defs[d.args[0]];
-    hops = hops + 1;
-  }
+  let d: ssa.SInst = through_copies(defs, v);
   if (d.result < 0 || raw[d.result] || !built_fields(f, d).ok) {
     return 0 - 1;
   }
@@ -1353,12 +1365,7 @@ function constant_word(defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
   if (!narrow_scalar(t)) {
     return "";
   }
-  let d: ssa.SInst = defs[v];
-  let hops: i32 = 0;
-  while (d.kind_tag == 7 && d.args.len() == 1 && d.args[0] >= 0 && hops < 16) {
-    d = defs[d.args[0]];
-    hops = hops + 1;
-  }
+  let d: ssa.SInst = through_copies(defs, v);
   if (d.kind_tag == 1 && d.str != "") {
     return small_decimal(d.str);
   }
