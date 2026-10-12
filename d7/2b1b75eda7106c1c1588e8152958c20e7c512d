@@ -278,3 +278,14 @@ aarch64/utf8_ingest_unchecked.text	14647
 aarch64/utf8_ingest_unchecked.ir	3925466
 aarch64/utf8_ingest_validated.text	14897
 aarch64/utf8_ingest_validated.ir	7510670
+
+# lane: bootstrap-arm64-darwin
+bootstrap/arm64-darwin/stage1.wall_s	27
+bootstrap/arm64-darwin/stage1.peak_rss_mb	1931
+bootstrap/arm64-darwin/stage1.size_bytes	12812097
+bootstrap/arm64-darwin/stage2.wall_s	26
+bootstrap/arm64-darwin/stage2.peak_rss_mb	2063
+bootstrap/arm64-darwin/stage2.size_bytes	12547297
+bootstrap/arm64-darwin/stage3.wall_s	26
+bootstrap/arm64-darwin/stage3.peak_rss_mb	2021
+bootstrap/arm64-darwin/stage3.size_bytes	12547297
