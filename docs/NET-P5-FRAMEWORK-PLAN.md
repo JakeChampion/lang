@@ -231,6 +231,15 @@ decides what wraps it.
 6. **Host seams as `Platform` methods.** The request deadline and cancel
    signal, background work that outlives the response (`wait_until`,
    bounded like Workers' 30 s), outbound HTTP gated by an allow-list.
+   The allow-list (landed): `fetch.allow` names hosts, `host:port`s,
+   `*.domain`s and bracketed IPv6 addresses, refusing an entry that names
+   none when it is built, and `Policy.allow` refuses any other host as
+   `Blocked` on every redirect hop before resolving it, wasi-http's route
+   included. A platform carries one (`Host.with_allow`,
+   `SimPlatform.with_allow`, `serve.Config { http_allow }`). Gate: the
+   allow-list cases in `tests/stdlib/sim_fetch_test.fern` and
+   `tests/stdlib/sim_platform_test.fern`; `TestHTTPAllowServeInterp` and
+   `TestHTTPAllowServeX86_64` through the real loop.
 7. **Observability.** The OTel HTTP semantic conventions, `traceparent`
    propagation through `plat.http`, a JSON-lines access log with the OTel
    log data model's fields, health and readiness helpers; `std/log`'s

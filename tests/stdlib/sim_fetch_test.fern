@@ -38,12 +38,12 @@ const PROXY: string = "10.0.0.9";
 
 // The route `fetch.send` takes, with no proxy to consult.
 function __open(): fetch.Policy {
-  return fetch.Policy { public_only: false, proxies: fetch.ProxyEnv { http_proxy: "", https_proxy: "", no_proxy: "" }, roots: None, jar: None };
+  return fetch.Policy { public_only: false, proxies: fetch.ProxyEnv { http_proxy: "", https_proxy: "", no_proxy: "" }, roots: None, jar: None, allow: None };
 }
 
 // The route `plat.http` takes: global addresses only.
 function __public(): fetch.Policy {
-  return fetch.Policy { public_only: true, proxies: fetch.ProxyEnv { http_proxy: "", https_proxy: "", no_proxy: "" }, roots: None, jar: None };
+  return fetch.Policy { public_only: true, proxies: fetch.ProxyEnv { http_proxy: "", https_proxy: "", no_proxy: "" }, roots: None, jar: None, allow: None };
 }
 
 // A network where `example.test` is one origin listening on port 80
@@ -308,6 +308,76 @@ function test_block_list(): test.TestOutcome {
   return test.assert_eq(__body(fetch.send_on(n, fetch.get("http://inside.test/"), __open())), "inside");
 }
 
+// The open route, reaching only what `entries` name.
+function __allowing(entries: string[]): fetch.Policy {
+  match (fetch.allow(entries)) {
+    Ok(a) => {
+      return fetch.Policy { ...__open(), allow: Some(a) };
+    },
+    Err(_) => {}
+  }
+  return __open();
+}
+
+// Hosts, host:ports, *.domains and bracketed IPv6 addresses are entries;
+// anything that names no host is refused, the entry named.
+function test_allow_list_entries(): test.TestOutcome {
+  let ok: string[] = ["api.example.test", "api.example.test:8443", "*.example.test", "10.0.0.7", "[2001:db8::1]:443", "Example.TEST."];
+  let bad: string[] = ["", "*", "*.", "*.*.test", "a b", "host:", "host:0", "host:080", "host:65536", "a:b:c", "[::1", "[::1]x", "[example.test]"];
+  let out: string = "";
+  for e in ok {
+    match (fetch.allow([e])) {
+      Ok(_) => {},
+      Err(why) => {
+        out = out + why + ";";
+      }
+    }
+  }
+  for e in bad {
+    match (fetch.allow(["fine.test", e])) {
+      Ok(_) => {
+        out = out + "allowed " + e + ";";
+      },
+      Err(_) => {}
+    }
+  }
+  match (fetch.allow(["fine.test", "a b"])) {
+    Ok(_) => {},
+    Err(why) => {
+      out = out + why;
+    }
+  }
+  return test.assert_eq(out, "allow-list entry \"a b\" is not a host, a host:port or a *.domain");
+}
+
+// A route with an allow-list reaches only what it names: a *.domain
+// covers the names below it and not the domain, an entry with a port only
+// that port. A refusal comes before any connection.
+function test_allow_list_route(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).host("api.example.test", [ORIGIN]).host("other.test", ["93.184.216.35"]).listen("93.184.216.35", 80, 5).listen("93.184.216.35", 8080, 5).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "api")]).route("93.184.216.35", 8080, "/", [sim_fetch.reply(200, "other")]);
+  let p: fetch.Policy = __allowing(["*.example.test", "other.test:8080"]);
+  let apex: string = __message(fetch.send_on(n, fetch.get("http://example.test/"), p));
+  let port: string = __message(fetch.send_on(n, fetch.get("http://other.test/"), p));
+  if (n.connects() != 0) {
+    return test.fail("a refused request connected");
+  }
+  let reached: string = __body(fetch.send_on(n, fetch.get("http://api.example.test/"), p)) + " " + __body(fetch.send_on(n, fetch.get("http://other.test:8080/"), p));
+  return test.assert_eq(apex + "|" + port + "|" + reached, "blocked: example.test:80 is not on the allow-list|blocked: other.test:80 is not on the allow-list|api other");
+}
+
+// A redirect is a hop like the first: one to a host off the list is
+// refused after the redirecting answer, and never sent.
+function test_allow_list_redirect(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).host("other.test", ["93.184.216.35"]).listen("93.184.216.35", 80, 5).route(ORIGIN, 80, "/", [sim_fetch.redirect(302, "http://other.test/x")]).route("93.184.216.35", 80, "/x", [sim_fetch.reply(200, "there")]);
+  let got: string = __message(fetch.send_on(n, fetch.get("http://example.test/"), __allowing(["example.test"])));
+  if (n.sent_count() != 1) {
+    return test.fail("sent " + n.sent_count().to_string() + " requests");
+  }
+  return test.assert_eq(got, "blocked: other.test:80 is not on the allow-list");
+}
+
 // `body` in a stored (uncompressed) gzip member: the header, one final
 // stored deflate block, then the CRC-32 and length of `body`.
 function __gzip_stored(body: string): u8[] {
@@ -541,7 +611,7 @@ function __via_proxy(public_only: boolean, no_proxy: string, cgi: boolean): fetc
     method = Some("GET");
   }
   let env: fetch.ProxyEnv = fetch.proxy_env_from(Some("http://u@" + PROXY + ":3128"), None, None, Some(no_proxy), None, method);
-  return fetch.Policy { public_only: public_only, proxies: env, roots: None, jar: None };
+  return fetch.Policy { public_only: public_only, proxies: env, roots: None, jar: None, allow: None };
 }
 
 // The proxy listening, answering absolute-form requests for `example.test`.
@@ -571,7 +641,7 @@ function test_proxied(): test.TestOutcome {
 
 // The route through the proxy `spec` names, as the environment gives it.
 function __proxy_spec(spec: string): fetch.Policy {
-  return fetch.Policy { public_only: false, proxies: fetch.proxy_env_from(Some(spec), None, None, None, None, None), roots: None, jar: None };
+  return fetch.Policy { public_only: false, proxies: fetch.proxy_env_from(Some(spec), None, None, None, None, None), roots: None, jar: None, allow: None };
 }
 
 // A proxy named with no scheme and no port is an http one on port 80.
@@ -774,6 +844,9 @@ function main(): i32 {
   r = r.it("retries an idempotent request the origin reset", test_reset_retried_when_idempotent);
   r = r.it("does not retry a POST the origin reset", test_reset_not_retried_when_not_idempotent);
   r = r.it("blocks a private address on the public route", test_block_list);
+  r = r.it("refuses an allow-list entry that names no host", test_allow_list_entries);
+  r = r.it("reaches only what the allow-list names", test_allow_list_route);
+  r = r.it("refuses a redirect off the allow-list", test_allow_list_redirect);
   r = r.it("decodes the gzip it asked for", test_gzip_decoded);
   r = r.it("caps what decoding produces", test_decoded_past_cap);
   r = r.it("caps the response body", test_body_past_cap);

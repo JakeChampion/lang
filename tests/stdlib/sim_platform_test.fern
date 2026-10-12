@@ -151,6 +151,22 @@ function test_http_reaches_global_addresses_only(): test.TestOutcome {
   return test.assert_eq(__message(p.http(fetch.get("http://internal.test/"))), "blocked: 10.0.0.1 is not a global address");
 }
 
+function test_http_reaches_only_the_allow_list(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).host("other.test", ["93.184.216.35"]).listen("93.184.216.35", 80, 1).route("93.184.216.35", 80, "/", [sim_fetch.reply(200, "other")]);
+  match (fetch.allow(["example.test"])) {
+    Ok(a) => {
+      let p: sim_platform.SimPlatform = sim_platform.new(d, n).with_allow(a);
+      let listed: string = __message(p.http(fetch.get("http://example.test/")));
+      return test.assert_eq(listed + "|" + __message(p.http(fetch.get("http://other.test/"))), "status 200|blocked: other.test:80 is not on the allow-list");
+    },
+    Err(why) => {
+      return test.fail(why);
+    }
+  }
+  return test.fail("unreachable");
+}
+
 function test_http_keeps_the_connection_for_the_next_request(): test.TestOutcome {
   let p: sim_platform.SimPlatform = __plat(1);
   p.http(fetch.get("http://example.test/"));
@@ -191,6 +207,7 @@ function main(): i32 {
   t = t.it("the clock is the simulation's", test_the_clock_is_the_simulations);
   t = t.it("randomness is the seed's", test_randomness_is_the_seeds);
   t = t.it("http reaches global addresses only", test_http_reaches_global_addresses_only);
+  t = t.it("http reaches only the allow-list", test_http_reaches_only_the_allow_list);
   t = t.it("http keeps the connection for the next request", test_http_keeps_the_connection_for_the_next_request);
   t = t.it("a secret is logged by name only", test_a_secret_is_logged_by_name_only);
   t = t.it("a handler runs over the simulation", test_a_handler_runs_over_the_simulation);
