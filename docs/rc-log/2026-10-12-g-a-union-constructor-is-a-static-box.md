@@ -43,6 +43,26 @@ splice was expensive:
 - The inner walk stops at `max_splices` too, since an in-place splice does not
   leave it.
 
+## Fixed on the way: a spliced update named the wrong base
+
+A record update names its base in `imm` (the base's value plus one), not as
+an operand. Both splice copies renumbered the operands and the result but
+left `imm` alone, and the result rename did the same. So an update in a
+spliced body pointed at whichever caller value carried the callee's base
+number. In `run` below, that was the array `ps`, where the element `p` was
+meant. Ownership and deadness read the base (`ownership.instruction_carried`,
+`semdead.reads`). The copies now go through `ssasem.mapped_inst`, and the
+renames through `swapped_inst`, which renames the base too.
+
+```
+function bump(p: P): P { return P { ...p, a: p.a + 1 }; }
+@noinline function run(ps: P[]): P[] { ... out = out.append(bump(p)); ... }
+```
+
+`TestSelfHostSplicedUpdateNamesItsBase` reads `run`'s graph after the pass
+(`FERN_SEM_DUMP`). It requires the update's base to be the record its kept
+fields are read from. Without the fix, the base was `v0`.
+
 ## Measured
 
 The whole compiler under callgrind. All three compilers were built from the

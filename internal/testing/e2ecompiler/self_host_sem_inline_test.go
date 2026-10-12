@@ -1,6 +1,12 @@
 package e2ecompiler
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"testing"
+)
 
 // A scalar leaf is spliced into its callers by the semantic lowering
 // (seminline, #10498), and a tuple it returns is read apart instead of
@@ -180,4 +186,52 @@ func TestSelfHostSemanticInlineOff(t *testing.T) {
 	t.Setenv("FERN_SEM_INLINE", "")
 	runSemanticProgram(t, "seminline-off", semInlineProgram, semInlineProduced,
 		semInlineWants("1950100\n1225100\n1845000\n1950100\n2343134\n5950100\n5950100\n900100\n"))
+}
+
+// A record update names its base in `imm`, not as an operand, so a splice
+// has to renumber it with the operands. bump is called once and spliced into
+// run; the update it brings must name the element its kept fields are read
+// from, not whatever caller value carries bump's own parameter number.
+const splicedUpdateProgram = `struct P { a: i32, b: i32, name: string }
+function bump(p: P): P { return P { ...p, a: p.a + 1 }; }
+@noinline function run(ps: P[]): P[] {
+    let out: P[] = [];
+    for p in ps { out = out.append(bump(p)); }
+    return out;
+}
+function main(): i32 {
+    let ps: P[] = [P { a: 1, b: 2, name: "n" }];
+    let qs: P[] = run(ps);
+    putchar(48 + qs[0].a);
+    print("");
+    return 0;
+}
+`
+
+var semDumpUpdate = regexp.MustCompile(`(?m)^\s*v\d+ = k-5 \[[0-9,]*\] imm=(\d+)\s*$`)
+var semDumpFieldRead = regexp.MustCompile(`(?m)^\s*v\d+ = k-6 \[(\d+),\] imm=\d+ (b|name)\s*$`)
+
+func TestSelfHostSplicedUpdateNamesItsBase(t *testing.T) {
+	c := buildSelfHostCLI(t)
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(splicedUpdateProgram), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := runX86_64Bin(c.runner, c.bin, "-target", "x86-64-linux", "-emit", "asm", "-o", filepath.Join(t.TempDir(), "out.s"), src, c.stdlib)
+	cmd.Env = append(os.Environ(), "FERN_SEM_DUMP=run")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("compile: %v\n%s", err, out)
+	}
+	updates := semDumpUpdate.FindAllSubmatch(out, -1)
+	reads := semDumpFieldRead.FindAllSubmatch(out, -1)
+	if len(updates) != 1 || len(reads) != 2 {
+		t.Fatalf("want one record update and two kept-field reads in run, got %d and %d:\n%s", len(updates), len(reads), out)
+	}
+	imm, _ := strconv.Atoi(string(updates[0][1]))
+	for _, r := range reads {
+		if want, _ := strconv.Atoi(string(r[1])); imm-1 != want {
+			t.Fatalf("the update's base is v%d, want v%d, the record its kept fields are read from:\n%s", imm-1, want, out)
+		}
+	}
 }

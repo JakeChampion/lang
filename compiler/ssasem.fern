@@ -5195,7 +5195,7 @@ function mapped_list(map: i32[], vs: i32[]): i32[] {
   return out;
 }
 
-function mapped_inst(map: i32[], ins: ssa.SInst): ssa.SInst {
+pub function mapped_inst(map: i32[], ins: ssa.SInst): ssa.SInst {
   let base: i32 = update_base(ins);
   if (base >= 0) {
     return ssa.SInst { ...ins, args: mapped_list(map, ins.args), imm: mapped(map, base) + 1 };

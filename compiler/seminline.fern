@@ -906,11 +906,7 @@ function splice(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Fu
       if (ins.kind_tag == ssasem.param()) {
         continue;
       }
-      let args: i32[] = [];
-      for a in ins.args {
-        args = args.append(mapped(vmap, a));
-      }
-      insts = insts.append(ssa.SInst { ...ins, result: mapped(vmap, ins.result), args: args });
+      insts = insts.append(ssa.SInst { ...ssasem.mapped_inst(vmap, ins), result: mapped(vmap, ins.result) });
     }
     let preds: i32[] = [];
     for p in cb.preds {
@@ -1019,11 +1015,7 @@ function splice_in_place(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): 
     if (ins.kind_tag == ssasem.param()) {
       continue;
     }
-    let args: i32[] = [];
-    for a in ins.args {
-      args = args.append(mapped(vmap, a));
-    }
-    insts = insts.append(ssa.SInst { ...ins, result: mapped(vmap, ins.result), args: args });
+    insts = insts.append(ssa.SInst { ...ssasem.mapped_inst(vmap, ins), result: mapped(vmap, ins.result) });
   }
   let ret_vals: i32[] = [];
   if (cb.term.value >= 0) {
@@ -1579,7 +1571,7 @@ function applied(f: ssasem.Func, e: Edits): ssasem.Func {
     let insts: ssa.SInst[] = [];
     for h in e.heads {
       if (h.block == bi) {
-        insts = insts.append(ssa.SInst { ...h.ins, args: swapped_all(e.swap, h.ins.args) });
+        insts = insts.append(swapped_inst(e.swap, h.ins));
       }
     }
     let entry: ssa.SInst[] = [];
@@ -1608,7 +1600,7 @@ function block_insts(b: ssa.SBlock, entry: ssa.SInst[], swap: i32[]): ssa.SInst[
     if (ins.result >= 0 && ins.result < swap.len() && swap[ins.result] >= 0) {
       insts = insts.append(ssa.SInst { kind_tag: 7, result: ins.result, args: [swapped(swap, ins.result)], imm: 0, str: "" });
     } else {
-      insts = insts.append(ssa.SInst { ...ins, args: swapped_all(swap, ins.args) });
+      insts = insts.append(swapped_inst(swap, ins));
     }
   }
   if (!placed) {
@@ -1652,12 +1644,21 @@ function swapped_blocks(blocks: ssa.SBlock[], swap: i32[]): ssa.SBlock[] {
   for b in blocks {
     let insts: ssa.SInst[] = [];
     for ins in b.insts {
-      insts = insts.append(ssa.SInst { ...ins, args: swapped_all(swap, ins.args) });
+      insts = insts.append(swapped_inst(swap, ins));
     }
     let t: ssa.STerm = b.term;
     out = out.append(ssa.SBlock { ...b, insts: insts, term: ssa.STerm { ...t, cond: swapped(swap, t.cond), value: swapped(swap, t.value) } });
   }
   return out;
+}
+
+// `ins` with its operands, and a record update's base, renamed through `swap`.
+function swapped_inst(swap: i32[], ins: ssa.SInst): ssa.SInst {
+  let base: i32 = ssasem.update_base(ins);
+  if (base >= 0) {
+    return ssa.SInst { ...ins, args: swapped_all(swap, ins.args), imm: swapped(swap, base) + 1 };
+  }
+  return ssa.SInst { ...ins, args: swapped_all(swap, ins.args) };
 }
 
 function swaps_any(swap: i32[], args: i32[]): boolean {
