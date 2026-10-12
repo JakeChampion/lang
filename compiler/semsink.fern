@@ -1,0 +1,276 @@
+// A block re-reads, at its start, the counted projections it uses that a
+// block dominating it read, when the projection's parent dies in it: each
+// from the same parent, so the re-read is the same value. Read where the
+// parent dies, a projection is one the plan takes out of the box rather than
+// borrows: a child handed on arrives with its one unit rather than two, and
+// a child taken that way can be the box a construction in the block builds
+// in. A nested pattern is the shape: it reads the payloads before the inner
+// test, where a failed test still needs the scrutinee for the arms after it,
+// and the arm that rebuilds the node lies below the test. A block's uses
+// include the phi operands its edges hand on, which is how a recursive
+// update that became a loop passes the child it descends into. A projection
+// whose parent is itself one read above is re-read from the parent's re-read.
+import "./ssa";
+import "./ssadeps";
+import "./ssalive";
+import "./ssasem";
+import "./typeinfo";
+import "./util";
+
+pub struct Sunk { f: ssasem.Func, reread: i32 }
+
+// Each counted projection's instruction and the position of its block, by
+// value, -1 for every other value; the dominator tree; which values are live
+// out of each block, counting only the uses that name them; and, by value,
+// the positions of the blocks that use it other than to read a projection of
+// it or test its variant.
+struct Reads { dom: ssadeps.Dom, def: ssa.SInst[], at: i32[], flow: ssalive.Flow, pos: i32[], spent: i32[][] }
+
+// A phi operand a block's edge hands on, rewritten to the block's re-read.
+struct PhiEdit { block: i32, phi: i32, slot: i32, value: i32 }
+
+pub function sink(f: ssasem.Func): Sunk {
+  let g: ssa.SFunc = f.graph;
+  if (!any_projection(g, f.values)) {
+    return Sunk { f: f, reread: 0 };
+  }
+  let rd: Reads = reads_of(g, f.values);
+  if (!rd.flow.ok) {
+    return Sunk { f: f, reread: 0 };
+  }
+  let values: typeinfo.Type[] = f.values;
+  let blocks: ssa.SBlock[] = [];
+  let edits: PhiEdit[] = [];
+  let reread: i32 = 0;
+  let bi: i32 = 0;
+  for b in g.blocks {
+    if (rd.dom.pre[bi] >= 0) {
+      let s: Sinking = sink_block(rd, g, bi, b, values);
+      values = s.values;
+      reread = reread + s.added;
+      blocks = blocks.append(s.b);
+      for e in s.edits {
+        edits = edits.append(e);
+      }
+    } else {
+      blocks = blocks.append(b);
+    }
+    bi = bi + 1;
+  }
+  if (reread == 0) {
+    return Sunk { f: f, reread: 0 };
+  }
+  for e in edits {
+    let b: ssa.SBlock = blocks[e.block];
+    let ins: ssa.SInst = b.insts[e.phi];
+    blocks = blocks.with(e.block, ssa.SBlock { ...b, insts: b.insts.with(e.phi, ssa.SInst { ...ins, args: ins.args.with(e.slot, e.value) }) });
+  }
+  let graph: ssa.SFunc = ssa.SFunc { ...g, nvals: values.len(), blocks: blocks };
+  return Sunk { f: ssasem.Func { ...f, graph: graph, values: values }, reread: reread };
+}
+
+function successors(t: ssa.STerm): i32[] {
+  let out: i32[] = [];
+  let k: i32 = 0;
+  let id: i32 = ssa.successor_id(t, k);
+  while (id >= 0) {
+    if (util.index_of_i32(out, id) < 0) {
+      out = out.append(id);
+    }
+    k = k + 1;
+    id = ssa.successor_id(t, k);
+  }
+  return out;
+}
+
+function projection(kind: i32): boolean {
+  return kind == ssasem.variant_get() || kind == ssasem.record_get() || kind == ssasem.tuple_get();
+}
+
+function reads_of(g: ssa.SFunc, values: typeinfo.Type[]): Reads {
+  let none: ssa.SInst = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  let def: ssa.SInst[] = [];
+  let at: i32[] = [];
+  let deps: i32[][] = [];
+  while (def.len() < values.len()) {
+    def = def.append(none);
+    at = at.append(0 - 1);
+    deps = deps.append([]);
+  }
+  let spent: i32[][] = deps;
+  let pos: i32[] = ssa.block_positions(g);
+  let bi: i32 = 0;
+  for b in g.blocks {
+    for ins in b.insts {
+      if (counted_projection(ins, values)) {
+        def = def.with(ins.result, ins);
+        at = at.with(ins.result, bi);
+      }
+      if (!projection(ins.kind_tag) && ins.kind_tag != ssasem.variant_is() && ins.kind_tag != 8) {
+        for a in ins.args {
+          spent = spend(spent, a, bi);
+        }
+      }
+    }
+    if (b.term.kind_tag == 1) {
+      spent = spend(spent, b.term.value, bi);
+    }
+    for sid in successors(b.term) {
+      let s: ssa.SBlock = g.blocks[pos[sid]];
+      let slot: i32 = util.index_of_i32(s.preds, b.id);
+      for phi in s.insts {
+        if (phi.kind_tag == 8 && slot >= 0 && slot < phi.args.len()) {
+          spent = spend(spent, phi.args[slot], bi);
+        }
+      }
+    }
+    bi = bi + 1;
+  }
+  return Reads { dom: ssadeps.dominates(g), def: def, at: at, flow: ssalive.compute(g, deps), pos: pos, spent: spent };
+}
+
+function spend(own spent: i32[][], v: i32, bi: i32): i32[][] {
+  if (v < 0 || v >= spent.len() || util.index_of_i32(spent[v], bi) >= 0) {
+    return spent;
+  }
+  return spent.with(v, spent[v].append(bi));
+}
+
+function counted_projection(ins: ssa.SInst, values: typeinfo.Type[]): boolean {
+  return projection(ins.kind_tag) && ins.args.len() == 1 && ins.result >= 0 && ins.result < values.len()
+    && ssasem.reference(values[ins.result]);
+}
+
+// Whether a counted projection exists: only then is there anything to
+// re-read, and the liveness and dominators are worth computing.
+function any_projection(g: ssa.SFunc, values: typeinfo.Type[]): boolean {
+  for b in g.blocks {
+    for ins in b.insts {
+      if (counted_projection(ins, values)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+struct Sinking { b: ssa.SBlock, values: typeinfo.Type[], added: i32, edits: PhiEdit[] }
+
+// The re-reads made in one block: `old[i]` stands as `fresh[i]` there.
+struct Rereads { old: i32[], fresh: i32[], insts: ssa.SInst[], values: typeinfo.Type[] }
+
+function sink_block(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock, values: typeinfo.Type[]): Sinking {
+  let r: Rereads = Rereads { old: [], fresh: [], insts: [], values: values };
+  let insts: ssa.SInst[] = [];
+  for ins in b.insts {
+    if (ins.kind_tag == 6 || ins.kind_tag == 8) {
+      insts = insts.append(ins);
+    } else {
+      let args: i32[] = [];
+      for a in ins.args {
+        r = reread(rd, bi, r, a);
+        args = args.append(standing(r, a));
+      }
+      insts = insts.append(ssa.SInst { ...ins, args: args });
+    }
+  }
+  let term: ssa.STerm = b.term;
+  if (b.term.kind_tag == 1) {
+    r = reread(rd, bi, r, b.term.value);
+    term = ssa.STerm { ...term, value: standing(r, b.term.value) };
+  }
+  let edits: PhiEdit[] = [];
+  for sid in successors(b.term) {
+    let si: i32 = rd.pos[sid];
+    let s: ssa.SBlock = g.blocks[si];
+    let k: i32 = 0;
+    while (k < s.insts.len()) {
+      let phi: ssa.SInst = s.insts[k];
+      if (phi.kind_tag == 8) {
+        let slot: i32 = 0;
+        while (slot < s.preds.len() && slot < phi.args.len()) {
+          if (s.preds[slot] == b.id) {
+            r = reread(rd, bi, r, phi.args[slot]);
+            let v: i32 = standing(r, phi.args[slot]);
+            if (v != phi.args[slot]) {
+              edits = edits.append(PhiEdit { block: si, phi: k, slot: slot, value: v });
+            }
+          }
+          slot = slot + 1;
+        }
+      }
+      k = k + 1;
+    }
+  }
+  if (r.insts.len() == 0) {
+    return Sinking { b: b, values: values, added: 0, edits: [] };
+  }
+  // The re-reads go ahead of everything but the block's parameters and phis.
+  let lead: i32 = 0;
+  while (lead < insts.len() && (insts[lead].kind_tag == 6 || insts[lead].kind_tag == 8)) {
+    lead = lead + 1;
+  }
+  let out: ssa.SInst[] = [];
+  let k: i32 = 0;
+  while (k < lead) {
+    out = out.append(insts[k]);
+    k = k + 1;
+  }
+  for ins in r.insts {
+    out = out.append(ins);
+  }
+  while (k < insts.len()) {
+    out = out.append(insts[k]);
+    k = k + 1;
+  }
+  return Sinking { b: ssa.SBlock { ...b, insts: out, term: term }, values: r.values, added: r.insts.len(), edits: edits };
+}
+
+// Whether `v` is a counted projection read in a block strictly dominating
+// the block at `bi`, of a parent that is not live out of it, where the
+// re-read keeps the parent no longer than the plan already must. The first
+// read borrowed: its parent lived on past its block, or can be re-read here
+// too. A read whose parent died with it took the child already, and a
+// re-read would hold the parent to here. Nor may anything spend the parent
+// while the child lives: a parent handed on, a record moved into a loop say,
+// would have to be kept for the re-read and copied by whoever it went to.
+function read_above(rd: Reads, bi: i32, v: i32): boolean {
+  if (v < 0 || v >= rd.at.len() || rd.at[v] < 0 || rd.at[v] == bi) {
+    return false;
+  }
+  let p: i32 = rd.def[v].args[0];
+  if (!ssadeps.dom_holds(rd.dom, bi, rd.at[v]) || ssalive.live_out_has(rd.flow, bi, p)) {
+    return false;
+  }
+  if (!ssalive.live_out_has(rd.flow, rd.at[v], p) && !read_above(rd, bi, p)) {
+    return false;
+  }
+  for s in rd.spent[p] {
+    if (s == rd.at[v] || ssalive.live_out_has(rd.flow, s, v)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// `r` with `v` re-read in the block when it is read above, its parent first
+// when that is too.
+function reread(rd: Reads, bi: i32, own r: Rereads, v: i32): Rereads {
+  if (!read_above(rd, bi, v) || util.index_of_i32(r.old, v) >= 0) {
+    return r;
+  }
+  let def: ssa.SInst = rd.def[v];
+  r = reread(rd, bi, r, def.args[0]);
+  let id: i32 = r.values.len();
+  let get: ssa.SInst = ssa.SInst { ...def, result: id, args: [standing(r, def.args[0])] };
+  return Rereads { old: r.old.append(v), fresh: r.fresh.append(id), insts: r.insts.append(get), values: r.values.append(r.values[v]) };
+}
+
+// The value standing for `v` in the block: its re-read, else itself.
+function standing(r: Rereads, v: i32): i32 {
+  let i: i32 = util.index_of_i32(r.old, v);
+  if (i >= 0) {
+    return r.fresh[i];
+  }
+  return v;
+}

@@ -93,7 +93,9 @@ The launcher selects `FERN_SELFHOST`, an installed sibling `fern-selfhost`, or
 a compiler built from its embedded sources by stage0, in that order. The target
 does not use Go lowering. `make bootstrap` also installs at `bin/fern-selfhost`;
 the benchmark scripts may reuse that binary based on source timestamps, so its
-path alone does not identify its producer or generation.
+path alone does not identify its producer or generation. While it is there,
+`bin/fern -target` compiles with it and never sees an edit to `compiler/`:
+delete it before testing a compiler change through `bin/fern`.
 
 To measure the effect of a lowering change on the compiler's own generated code,
 compile the same source with the base and changed compilers, then time those
