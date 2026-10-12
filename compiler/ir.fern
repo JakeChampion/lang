@@ -6979,9 +6979,16 @@ pub function derive_magic_s(d: i64, w: i32): MagicS {
 
 // derive_magic_u takes d zero-extended to u64; w is 32 or 64.
 pub function derive_magic_u(d: u64, w: i32): MagicU {
+  return derive_magic_u_below(d, w, 0);
+}
+
+// derive_magic_u_below is derive_magic_u for a dividend whose top `lz` bits
+// are clear, which can need a narrower magic.
+pub function derive_magic_u_below(d: u64, w: i32, lz: i32): MagicU {
   let mask: u64 = word_mask(w);
   let two: u64 = 1u64 << (w - 1) as u64;
-  let nc: u64 = mask - (0u64 - d & mask) % d;
+  let top: u64 = mask >> lz as u64;
+  let nc: u64 = top - (top + 1u64 - d & mask) % d;
   let p: i32 = w - 1;
   let q1: u64 = two / nc;
   let r1: u64 = two - q1 * nc;

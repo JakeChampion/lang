@@ -4602,12 +4602,27 @@ function ir_div_const_magic(r: DivRegs, uns: boolean, is_rem: boolean, k: i64): 
     d = (k as i32) as i64;
   }
   if (uns) {
-    let mu: ir.MagicU = ir.derive_magic_u(k as u64 & 0u64 - 1u64 >> (64 - r.bits) as u64, r.bits);
+    let du: u64 = k as u64 & 0u64 - 1u64 >> (64 - r.bits) as u64;
+    let mu: ir.MagicU = ir.derive_magic_u(du, r.bits);
+    // An even divisor whose magic needs the extra bit divides the dividend
+    // shifted right by its trailing zeros by what is left, which never does.
+    let pre: i32 = 0;
+    if (mu.add && (du & 1u64) == 0u64) {
+      while ((du >> pre as u64 & 1u64) == 0u64) {
+        pre = pre + 1;
+      }
+      mu = ir.derive_magic_u_below(du >> pre as u64, r.bits, pre);
+    }
     let m: i64 = mu.m as i64;
     if (r.bits == 32) {
       m = ((mu.m as u32) as i32) as i64;
     }
-    s = s + load + util.i64_to_string(m) + ", " + r.a + "\n    mul" + x + " " + r.c + "\n";
+    if (pre > 0) {
+      s = s + "    mov" + x + " " + r.c + ", " + r.d + "\n    shr" + x + " $" + util.i32_to_string(pre) + ", " + r.d + "\n";
+      s = s + load + util.i64_to_string(m) + ", " + r.a + "\n    mul" + x + " " + r.d + "\n";
+    } else {
+      s = s + load + util.i64_to_string(m) + ", " + r.a + "\n    mul" + x + " " + r.c + "\n";
+    }
     if (!mu.add) {
       s = s + "    shr" + x + " $" + util.i32_to_string(mu.s) + ", " + r.d + "\n    mov" + x + " " + r.d + ", " + r.a + "\n";
     } else {
