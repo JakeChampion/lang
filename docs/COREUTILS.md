@@ -803,7 +803,9 @@ The first run of the single-column bench over every workload: 661 rows over
 104 utilities, built by the self-hosted compiler at 394767a. Full table:
 `docs/COREUTILS-BENCH-2026-10-12.md`. Builds ran on the same 4-core machine
 for part of the run, so a ratio within about 10% of 1 is not a measured
-difference.
+difference. The GNU column is 9.4, below the 9.12 the bench is held to:
+the container that ran it could not fetch 9.12, so every ratio here is owed a
+re-run against 9.12.
 
 | | rows | faster than GNU | faster than uutils |
 |---|---|---|---|
