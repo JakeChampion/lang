@@ -3091,12 +3091,16 @@ function arm64_gas_sha256_reg(opcode: i32, i: i32, tok: string): i32 {
   return arm64_gas_vreg_any(tok);
 }
 
-// arm64_vectbl1 encodes `tbl Vd.<T>, {Vn.16b}, Vm.<T>` — the single-table
-// byte shuffle, pshufb's counterpart. The table is always .16b.
-//   0x0E000000 | Q<<30 | Rm<<16 | Rn<<5 | Rd
-function arm64_vectbl1(buf: i32[], rd: i32, rn: i32, rm: i32, q: boolean): i32[] {
-  let word: i64 = 0x0e000000 | (rm & 31) as i64 << 16
-    | (rn & 31) as i64 << 5 | (rd & 31) as i64;
+// arm64_vectbl encodes `tbl`/`tbx Vd.<T>, {Vn.16b-Vn+len.16b}, Vm.<T>` — the
+// byte shuffle over one to four table registers, pshufb's counterpart. An
+// index past the table zeroes the lane under tbl and leaves it under tbx.
+//   0x0E000000 | Q<<30 | Rm<<16 | len<<13 | tbx<<12 | Rn<<5 | Rd
+function arm64_vectbl(buf: i32[], rd: i32, list: i32, rm: i32, q: boolean, tbx: boolean): i32[] {
+  let word: i64 = 0x0e000000 | (rm & 31) as i64 << 16 | (list >> 5 & 3) as i64 << 13
+    | (list & 31) as i64 << 5 | (rd & 31) as i64;
+  if (tbx) {
+    word = word | 0x1000;
+  }
   if (q) {
     word = word | 0x40000000;
   }
@@ -3260,6 +3264,41 @@ function arm64_gas_vlist_one(tok: string): i32 {
     return 0 - 1;
   }
   return arm64_gas_vreg_any(slice_unchecked(t, 1, t.len() - 1) + "");
+}
+
+// arm64_gas_vlist_table decodes a tbl/tbx table: `{vN.16b}` or a range
+// `{vN.16b-vM.16b}` of two to four registers counting up from vN and wrapping
+// past v31, as (count - 1) * 32 + N, or -1.
+function arm64_gas_vlist_table(tok: string): i32 {
+  let t: string = arm64_gas_trim(tok);
+  if (t.len() < 3 || t[0] != b'{' || t[t.len() - 1] != b'}') {
+    return 0 - 1;
+  }
+  let inner: string = slice_unchecked(t, 1, t.len() - 1) + "";
+  let dash: i32 = 0 - 1;
+  let i: i32 = 0;
+  while (i < inner.len()) {
+    if (inner[i] == b'-') {
+      dash = i;
+    }
+    i = i + 1;
+  }
+  let first: string = inner;
+  let last: string = inner;
+  if (dash >= 0) {
+    first = slice_unchecked(inner, 0, dash) + "";
+    last = slice_unchecked(inner, dash + 1, inner.len()) + "";
+  }
+  let n: i32 = arm64_gas_vreg_any(first);
+  let m: i32 = arm64_gas_vreg_any(last);
+  if (n < 0 || m < 0 || arm64_gas_vreg_arrof(first) != 1 || arm64_gas_vreg_arrof(last) != 1) {
+    return 0 - 1;
+  }
+  let span: i32 = (m - n + 32) % 32;
+  if (span > 3 || dash >= 0 && span == 0) {
+    return 0 - 1;
+  }
+  return span * 32 + n;
 }
 
 function arm64_gas_vlist_one_arr(tok: string): i32 {
@@ -3509,14 +3548,14 @@ function arm64_gas_emit_vecgen(own a: Arm64Asm, mnem: string, ops: string[]): Ar
     arm64_push_arr(a.code, arm64_vecsha256([], arm64_gas_sha256_reg(sha, 0, ops[0]), arm64_gas_sha256_reg(sha, 1, ops[1]), rm, sha));
     return a;
   }
-  if (mnem == "tbl") {
+  if (mnem == "tbl" || mnem == "tbx") {
     if (ops.len() != 3) {
       return a;
     }
     let tc: i32 = arm64_gas_vreg_arrof(ops[0]);
-    arm64_push_arr(a.code, arm64_vectbl1(
-      [], arm64_gas_vreg_any(ops[0]), arm64_gas_vlist_one(ops[1]),
-      arm64_gas_vreg_any(ops[2]), arm64_gas_arr_q(tc),
+    arm64_push_arr(a.code, arm64_vectbl(
+      [], arm64_gas_vreg_any(ops[0]), arm64_gas_vlist_table(ops[1]),
+      arm64_gas_vreg_any(ops[2]), arm64_gas_arr_q(tc), mnem == "tbx",
     ));
     return a;
   }
@@ -4910,7 +4949,7 @@ function arm64_gas_bad_narrowwide(mnem: string, ops: string[]): string {
   let kind: i32 = arm64_gas_shll_kind(mnem);
   let is_xtn: boolean = mnem == "xtn" || mnem == "xtn2";
   let is_shrn: boolean = mnem == "shrn" || mnem == "shrn2";
-  if (kind < 0 && !is_xtn && !is_shrn && mnem != "ext" && mnem != "tbl") {
+  if (kind < 0 && !is_xtn && !is_shrn && mnem != "ext" && mnem != "tbl" && mnem != "tbx") {
     return "-";
   }
   if (mnem == "ext") {
@@ -4943,7 +4982,7 @@ function arm64_gas_bad_narrowwide(mnem: string, ops: string[]): string {
     }
     return "";
   }
-  if (mnem == "tbl") {
+  if (mnem == "tbl" || mnem == "tbx") {
     if (ops.len() != 3) {
       return mnem + ":arity";
     }
@@ -4951,9 +4990,9 @@ function arm64_gas_bad_narrowwide(mnem: string, ops: string[]): string {
     if (arm64_gas_vreg_any(ops[0]) < 0) {
       return arm64_gas_trim(ops[0]);
     }
-    // The table is a one-register list and always .16b; the destination
-    // and index share a byte arrangement.
-    if (arm64_gas_vlist_one(ops[1]) < 0 || arm64_gas_vlist_one_arr(ops[1]) != 1) {
+    // The table is one to four .16b registers; the destination and index
+    // share a byte arrangement.
+    if (arm64_gas_vlist_table(ops[1]) < 0) {
       return arm64_gas_trim(ops[1]);
     }
     if (arm64_gas_vreg_any(ops[2]) < 0) {
@@ -6012,6 +6051,9 @@ function arm64_gas_family_len3_t(mnem: string): i32 {
     return arm64_fam_logical2();
   }
   if (mnem == "tbl") {
+    return arm64_fam_vecext();
+  }
+  if (mnem == "tbx") {
     return arm64_fam_vecext();
   }
   return 0 - 1;

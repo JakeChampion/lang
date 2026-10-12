@@ -4362,7 +4362,8 @@ function x86_gas_is_vex_two(mnem: string): boolean {
 
 // x86_vex_three_op is the map and opcode of a three-operand VEX.66 form,
 // map * 256 + opcode, or -1: vpcmpeqb (0F 74), vmulpd (0F 59), vpand (0F DB),
-// vpor (0F EB), vpxor (0F EF) and vpshufb (0F38 00).
+// vpaddusb (0F DC), vpor (0F EB), vpxor (0F EF), vpsubb (0F F8) and vpshufb
+// (0F38 00).
 function x86_vex_three_op(mnem: string): i32 {
   match (mnem) {
     "vpcmpeqb" => {
@@ -4374,11 +4375,17 @@ function x86_vex_three_op(mnem: string): i32 {
     "vpand" => {
       return 256 + 219;
     },
+    "vpaddusb" => {
+      return 256 + 220;
+    },
     "vpor" => {
       return 256 + 235;
     },
     "vpxor" => {
       return 256 + 239;
+    },
+    "vpsubb" => {
+      return 256 + 248;
     },
     "vpshufb" => {
       return 512;

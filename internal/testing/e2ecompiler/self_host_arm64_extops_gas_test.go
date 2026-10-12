@@ -483,6 +483,10 @@ func TestSelfHostArm64VectorWidenAcrossGas(t *testing.T) {
 		{"ext v23.16b, v9.16b, v28.16b, #5", 0x6e1c2937},
 		{"ext v23.8b, v9.8b, v28.8b, #3", 0x2e1c1937},
 		{"tbl v23.16b, {v9.16b}, v28.16b", 0x4e1c0137},
+		{"tbx v23.16b, {v9.16b}, v28.16b", 0x4e1c1137},
+		{"tbl v23.16b, {v9.16b-v12.16b}, v28.16b", 0x4e1c6137},
+		{"tbx v23.8b, {v30.16b-v31.16b}, v28.8b", 0x0e1c33d7},
+		{"tbl v0.16b, {v31.16b-v1.16b}, v2.16b", 0x4e0243e0},
 
 		{"smaxv b23, v9.16b", 0x4e30a937},
 		{"sminv h23, v9.8h", 0x4e71a937},
@@ -542,10 +546,13 @@ func TestSelfHostArm64VectorWidenAcrossGas(t *testing.T) {
 		"ext v0.4s, v1.4s, v2.4s, #1",
 		"ext v0.8b, v1.8b, v2.8b, #8",
 		"ext v0.16b, v1.16b, v2.16b, #16",
-		// tbl's table is a one-register .16b list, braces included.
+		// A tbl or tbx table is one to four .16b registers, braces included.
 		"tbl v0.16b, v1.16b, v2.16b",
 		"tbl v0.16b, {v1.8b}, v2.16b",
 		"tbl v0.8b, {v1.16b}, v2.16b",
+		"tbx v0.16b, {v1.16b-v5.16b}, v2.16b",
+		"tbx v0.16b, {v1.16b-v1.16b}, v2.16b",
+		"tbl v0.16b, {v1.16b-v2.8b}, v2.16b",
 		// The across-lanes destination class follows the arrangement, one
 		// size up for the widening pair, and .2s/.2d have no such form.
 		"smaxv h23, v9.16b",

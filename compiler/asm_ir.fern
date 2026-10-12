@@ -1965,6 +1965,39 @@ function emit_buf_take_bytes(s: asmcore.EmitState, packed: boolean): asmcore.Emi
   return s;
 }
 
+// emit_buf_mapped_avx2 translates 32 bytes a round through a packed 256-entry
+// table, one vpshufb per 16-entry row: after h rows the bytes have dropped by
+// 16h, so only those that started in row h sit in 0..15, and a saturating add
+// of 0x70 sets bit 7 (vpshufb's zeroing bit) on every other byte.
+function emit_buf_mapped_avx2(s: asmcore.EmitState, lm: string): asmcore.EmitState {
+  s = s.write("    leaq -32(%r13), %r8\n");
+  s = s.write("    cmpq %r8, %rcx\n");
+  s = s.write("    jg " + lm + "_full\n");
+  s = s.write("    movl $16, %eax\n    movd %eax, %xmm4\n    vpbroadcastb %xmm4, %ymm4\n");
+  s = s.write("    movl $112, %eax\n    movd %eax, %xmm5\n    vpbroadcastb %xmm5, %ymm5\n");
+  s = s.write(lm + "_vec:\n");
+  s = s.write("    vmovdqu (%rsi,%rcx), %ymm0\n");
+  s = s.write("    vbroadcasti128 8(%r14), %ymm2\n");
+  s = s.write("    vpaddusb %ymm5, %ymm0, %ymm3\n");
+  s = s.write("    vpshufb %ymm3, %ymm2, %ymm1\n");
+  let h: i32 = 1;
+  while (h < 16) {
+    s = s.write("    vpsubb %ymm4, %ymm0, %ymm0\n");
+    s = s.write("    vbroadcasti128 " + util.i32_to_string(8 + h * 16) + "(%r14), %ymm2\n");
+    s = s.write("    vpaddusb %ymm5, %ymm0, %ymm3\n");
+    s = s.write("    vpshufb %ymm3, %ymm2, %ymm2\n");
+    s = s.write("    vpor %ymm2, %ymm1, %ymm1\n");
+    h = h + 1;
+  }
+  s = s.write("    vmovdqu %ymm1, (%rdx,%rcx)\n");
+  s = s.write("    addq $32, %rcx\n");
+  s = s.write("    cmpq %r8, %rcx\n");
+  s = s.write("    jle " + lm + "_vec\n");
+  s = s.write("    vzeroupper\n");
+  s = s.write("    cmpq %r13, %rcx\n");
+  return s.write("    jae " + lm + "_len\n");
+}
+
 // emit_buf_table_helpers emits the three buffer pushes that read a u8[]
 // table: a slot table holds entry i in the low byte of the 8-byte slot
 // 8 + i*8, a packed one (the `_u8` helpers) at byte 8 + i. An expanded
@@ -2032,6 +2065,9 @@ function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: bool
   s = s.write("    xorq %rcx, %rcx\n");
   s = s.write("    cmpq $256, %r9\n");
   s = s.write("    jb " + lm + "_short\n");
+  if (packed) {
+    s = emit_buf_mapped_avx2(s, lm);
+  }
   s = s.write(lm + "_full:\n");
   s = s.write("    movzbq (%rsi,%rcx" + srcscale + "), %rax\n");
   s = s.write("    movzbq 8(%r14,%rax" + sc + "), %rax\n");
