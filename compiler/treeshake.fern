@@ -660,10 +660,11 @@ function ts_grow(mod: parser.Module, rs0: RefSet, pending0: i32[]): TsGrown {
 
 // ts_reaches_map reports whether a map can reach the kept program: a map
 // constructor is reachable, a kept function or a lambda in one takes or
-// returns a map, a struct holds one, or a kept body names a variant of an enum
-// a variant of which holds one — the enum's drop walks that variant whichever
-// variant the program built, and a value of the enum exists only where one of
-// its variants is built.
+// returns a map, a struct holds one, or an enum a variant of which holds one is
+// live — the enum's drop walks that variant whichever variant the program
+// built. The enum is live when a kept body names one of its variants, or when
+// a kept signature names it (ts_sig_type_names), since the drop glue for a
+// parameter is emitted whether or not a value is ever built.
 function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
   if (refset_has(rs, "map_new") || refset_has(rs, ts_free_root("map_new"))
     || refset_has(rs, "__map_new_i32") || refset_has(rs, ts_free_root("__map_new_i32"))) {
@@ -693,7 +694,75 @@ function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
       return true;
     }
   }
+  if (owners.len() == 0) {
+    return false;
+  }
+  let live: string[] = ts_sig_type_names(mod, rs);
+  for o in owners {
+    if (util.index_of_str(live, o) >= 0) {
+      return true;
+    }
+  }
   return false;
+}
+
+// ts_sig_type_names are the type names a kept function's signature (or a
+// lambda's or nested function's in its body) names, closed over the fields
+// and variant payloads of those types. Each is a type whose drop the lowering
+// emits glue for, whether or not the program ever builds one: a nested
+// function nothing calls still releases its parameters.
+function ts_sig_type_names(mod: parser.Module, rs: RefSet): string[] {
+  let live: string[] = [];
+  for fd in mod.funcs {
+    if (ts_kept_name(fd, rs)) {
+      for t in ts_sig_types(fd) {
+        live = ts_add_type_words(live, t);
+      }
+    }
+  }
+  let grew: boolean = true;
+  while (grew) {
+    grew = false;
+    for st in mod.structs {
+      let key: string = st.name;
+      if (st.enum_owner.len() > 0) {
+        key = st.enum_owner;
+      }
+      if (util.index_of_str(live, key) < 0) {
+        continue;
+      }
+      for fl in st.fields {
+        let before: i32 = live.len();
+        live = ts_add_type_words(live, fl.type_name);
+        if (live.len() > before) {
+          grew = true;
+        }
+      }
+    }
+  }
+  return live;
+}
+
+// ts_add_type_words adds each identifier a type spelling names to `names`,
+// once.
+function ts_add_type_words(names: string[], t: string): string[] {
+  let i: i32 = 0;
+  while (i < t.len()) {
+    if (!lexer.is_alnum(t[i] as i32)) {
+      i = i + 1;
+      continue;
+    }
+    let j: i32 = i;
+    while (j < t.len() && lexer.is_alnum(t[j] as i32)) {
+      j = j + 1;
+    }
+    let w: string = slice_unchecked(t, i, j) + "";
+    if (util.index_of_str(names, w) < 0) {
+      names = names.append(w);
+    }
+    i = j;
+  }
+  return names;
 }
 
 function ts_holds_map(st: parser.StructDecl): boolean {
