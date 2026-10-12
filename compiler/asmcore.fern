@@ -8894,13 +8894,86 @@ pub function (s: EmitState) mark_heap(): EmitState {
   return s.need("heap");
 }
 
+// ScanShape is how a block scan_set classifies a byte: through the nibble
+// tables when `nibble`, else by testing it against `bytes`. With `range` the
+// first two are a range's low byte and width, `bytes[0] <= x <= bytes[0] +
+// bytes[1]` by subtracting and comparing unsigned, and each byte after them is
+// compared for equality; the tests are or-ed. `invert` says the members are
+// the bytes that FAIL them.
+pub struct ScanShape { nibble: boolean, invert: boolean, range: boolean, bytes: i32[] }
+
+// scan_set_shape picks the cheapest test for a membership (ir.op_scan_set):
+// for the members or their complement, a range and up to three other bytes, or
+// up to four bytes; otherwise the nibble tables.
+pub function scan_set_shape(members: string): ScanShape {
+  let inside: ScanShape = scan_shape_of(members, b'1', false);
+  let outside: ScanShape = scan_shape_of(members, b'0', true);
+  if (scan_shape_cost(outside) < scan_shape_cost(inside)) {
+    return outside;
+  }
+  return inside;
+}
+
+// scan_shape_cost is the vector operations a shape's test takes a block.
+pub function scan_shape_cost(sh: ScanShape): i32 {
+  if (sh.nibble) {
+    return 11;
+  }
+  if (sh.range) {
+    return 1 + 2 * (sh.bytes.len() - 1);
+  }
+  return 2 * sh.bytes.len() - 1;
+}
+
+// scan_shape_of tests for the bytes marked `mark`: their longest run as a
+// range when what is left is at most three bytes, else all of them when they
+// are at most four.
+function scan_shape_of(members: string, mark: u8, invert: boolean): ScanShape {
+  let marked: i32[] = [];
+  let lo: i32 = 0;
+  let span: i32 = 0 - 1;
+  let run: i32 = 0;
+  let b: i32 = 0;
+  while (b < 256) {
+    if (members[b] == mark) {
+      marked = marked.append(b);
+      run = run + 1;
+      if (run - 1 > span) {
+        lo = b - run + 1;
+        span = run - 1;
+      }
+    } else {
+      run = 0;
+    }
+    b = b + 1;
+  }
+  let n: i32 = marked.len();
+  let nibble: ScanShape = ScanShape { nibble: true, invert: false, range: false, bytes: [] };
+  if (n == 0 || n == 256) {
+    return nibble;
+  }
+  if (span >= 1 && n - span - 1 <= 3) {
+    let bytes: i32[] = [lo, span];
+    for m in marked {
+      if (m < lo || m > lo + span) {
+        bytes = bytes.append(m);
+      }
+    }
+    return ScanShape { nibble: false, invert: invert, range: true, bytes: bytes };
+  }
+  if (n <= 4) {
+    return ScanShape { nibble: false, invert: invert, range: false, bytes: marked };
+  }
+  return nibble;
+}
+
 // scan_set_tables lays out the constant tables a block scan_set reads, from
 // the op's membership (ir.op_scan_set): 16 bytes indexed by a byte's low
 // nibble whose bit h says the byte with high nibble h (0..7) is a member, the
 // same for high nibbles 8..15, the bit of each high nibble (twice, so a high
 // nibble indexes it directly), the masks 0x8f, 0x80 and 0x0f sixteen times
-// each, and then the 256 membership bytes for the scalar tail. The offsets are
-// 0, 16, 32, 48, 64, 80 and 96.
+// each, then the 256 membership bytes for the scalar tail, then the shape's
+// bytes (scan_set_shape). The offsets are 0, 16, 32, 48, 64, 80, 96 and 352.
 pub function scan_set_tables(members: string): string {
   let out: u8[] = [];
   let half: i32 = 0;
@@ -8940,6 +9013,9 @@ pub function scan_set_tables(members: string): string {
       out = out.append(0 as u8);
     }
     k = k + 1;
+  }
+  for c in scan_set_shape(members).bytes {
+    out = out.append(c as u8);
   }
   return string_from_bytes_unchecked(out);
 }

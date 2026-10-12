@@ -292,7 +292,9 @@ function set_entry_load(o: ir.Op, set: string, idx: string): string {
 // or-ing the two gives the row. cmtst leaves 0xff in a member's lane, and shrn narrows
 // that to the nibble mask memchr reads (rbit + clz, over four). The set
 // operand is popped and not read. x9 holds the tables, x5 the block cursor
-// against x8, the last address a whole block can start at.
+// against x8, the last address a whole block can start at. A set that is a
+// range or a few bytes skips the tables for a cheaper test
+// (asmcore.scan_set_shape).
 function emit_scan_set_blocks(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let names: string[] = [];
   while (names.len() < 8) {
@@ -321,12 +323,9 @@ function emit_scan_set_blocks(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState
   s = s.write(l_from_ok + ":\n    adrp x9, " + tables + "\n    add x9, x9, :lo12:" + tables + "\n");
   s = s.write("    add x5, x0, x1\n    add x6, x0, x3\n    sub x8, x6, #16\n");
   s = s.write("    cmp x5, x8\n    b.hi " + l_tail + "\n");
-  s = s.write("    ldp q20, q21, [x9]\n    ldr q22, [x9, #32]\n");
-  s = s.write("    movi v26.16b, #128\n    movi v27.16b, #143\n");
-  s = s.write(l_loop + ":\n    ldr q0, [x5]\n");
-  s = s.write("    and v1.16b, v0.16b, v27.16b\n    eor v2.16b, v0.16b, v26.16b\n    and v2.16b, v2.16b, v27.16b\n");
-  s = s.write("    tbl v1.16b, {v20.16b}, v1.16b\n    tbl v2.16b, {v21.16b}, v2.16b\n    orr v1.16b, v1.16b, v2.16b\n");
-  s = s.write("    ushr v2.16b, v0.16b, #4\n    tbl v2.16b, {v22.16b}, v2.16b\n    cmtst v1.16b, v1.16b, v2.16b\n");
+  let shape: asmcore.ScanShape = asmcore.scan_set_shape(o.str);
+  s = s.write(scan_set_setup(shape));
+  s = s.write(l_loop + ":\n    ldr q0, [x5]\n" + scan_set_classify(shape));
   s = s.write("    shrn v1.8b, v1.8h, #4\n    fmov x7, d1\n    cbnz x7, " + l_hit16 + "\n");
   s = s.write("    add x5, x5, #16\n    cmp x5, x8\n    b.ls " + l_loop + "\n");
   s = s.write("    sub x1, x5, x0\n    b " + l_tail + "\n");
@@ -340,6 +339,49 @@ function emit_scan_set_blocks(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState
   s = s.write(l_hit + ":\n    str x1, [sp, #-16]!\n    b " + l_done + "\n");
   s = s.write(l_end + ":\n    str x3, [sp, #-16]!\n");
   return s.write(l_done + ":\n");
+}
+
+// scan_set_setup loads what scan_set_classify reads for `shape` into v20
+// onwards: the nibble tables and their two masks, or each of the shape's bytes
+// in every lane.
+function scan_set_setup(shape: asmcore.ScanShape): string {
+  if (shape.nibble) {
+    return "    ldp q20, q21, [x9]\n    ldr q22, [x9, #32]\n    movi v26.16b, #128\n    movi v27.16b, #143\n";
+  }
+  let r: string = "";
+  let j: i32 = 0;
+  while (j < shape.bytes.len()) {
+    r = r + "    add x10, x9, #" + util.i32_to_string(352 + j) + "\n    ld1r {v" + util.i32_to_string(20 + j) + ".16b}, [x10]\n";
+    j = j + 1;
+  }
+  return r;
+}
+
+// scan_set_classify leaves 0xff in each lane of v1 whose byte in v0 is a
+// member, from what scan_set_setup loaded.
+function scan_set_classify(shape: asmcore.ScanShape): string {
+  let r: string = "";
+  if (shape.nibble) {
+    r = "    and v1.16b, v0.16b, v27.16b\n    eor v2.16b, v0.16b, v26.16b\n    and v2.16b, v2.16b, v27.16b\n"
+      + "    tbl v1.16b, {v20.16b}, v1.16b\n    tbl v2.16b, {v21.16b}, v2.16b\n    orr v1.16b, v1.16b, v2.16b\n"
+      + "    ushr v2.16b, v0.16b, #4\n    tbl v2.16b, {v22.16b}, v2.16b\n    cmtst v1.16b, v1.16b, v2.16b\n";
+    return r;
+  }
+  let j: i32 = 1;
+  if (shape.range) {
+    r = "    sub v1.16b, v0.16b, v20.16b\n    cmhs v1.16b, v21.16b, v1.16b\n";
+    j = 2;
+  } else {
+    r = "    cmeq v1.16b, v0.16b, v20.16b\n";
+  }
+  while (j < shape.bytes.len()) {
+    r = r + "    cmeq v2.16b, v0.16b, v" + util.i32_to_string(20 + j) + ".16b\n    orr v1.16b, v1.16b, v2.16b\n";
+    j = j + 1;
+  }
+  if (shape.invert) {
+    r = r + "    mvn v1.16b, v1.16b\n";
+  }
+  return r;
 }
 
 function set_entry_indexed(o: ir.Op): string {
