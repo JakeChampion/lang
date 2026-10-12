@@ -76,6 +76,13 @@ func TestSelfHostReservedTypeNamesMatchBuiltins(t *testing.T) {
 		if strings.Join(got, ",") != strings.Join(want, ",") {
 			t.Errorf("is_reserved_struct_name disagrees with builtinStructDecls()\n self-host: %v\n    native: %v\na name in native but not the self-host is a redeclaration the self-host accepts and native refuses", got, want)
 		}
+		// is_reserved_struct_name answers false before its list for a name
+		// not starting with an uppercase ASCII letter.
+		for _, name := range want {
+			if name == "" || name[0] < 'A' || name[0] > 'Z' {
+				t.Errorf("builtin struct %q does not start with A-Z, which is_reserved_struct_name's fast path assumes", name)
+			}
+		}
 	})
 
 	t.Run("struct-type-params", func(t *testing.T) {
