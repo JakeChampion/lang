@@ -74,6 +74,7 @@ func chgrpCases(t *testing.T) []invocation {
 
 	// ---- the walk --------------------------------------------------------
 	tree("recursive", "-R", "-v", "daemon", "d")
+	add(invocation{name: "recursive beyond PATH_MAX", args: []string{"-R", "-v", "daemon", "longpath"}, seedTree: chownLongTree})
 	tree("recursive quiet", "-R", "daemon", "d")
 	tree("recursive changes", "-R", "-c", "daemon", "d")
 	tree("recursive on a symlinked directory", "-R", "-v", "daemon", "symdir")

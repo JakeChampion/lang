@@ -4263,37 +4263,24 @@ still declared, since their getopt behaviour is observable either way.
 
 ## Open gaps
 
-**Four directory walks are still bounded by PATH_MAX.** The directory handle
-#9074 asked for exists (`open_dir` and `Dir`, #12024): a directory held open
-whose methods list, stat, open, chmod, chown and remove entries by name, the
-openat / fstatat / unlinkat family GNU's fts runs on. `du` and `rm` walk
-through it, so neither has a depth bound and the kernel resolves no ancestor
-path per entry (on a 60-level tree `du`'s system time fell from 4.5 ms to
-1.5 ms), and both remove or measure a tree 80 levels of 100 characters deep
-as GNU does. `chmod -R`, `chown -R`, `chgrp -R` and `ls -R` still concatenate
-a path per entry and stop with `File name too long` past 4096 bytes where GNU
-keeps going. Shallow ENAMETOOLONG is an ordinary error path both sides agree
-on.
+**`ls -R` is the one directory walk still bounded by PATH_MAX.** The
+directory handle #9074 asked for exists (`open_dir` and `Dir`, #12024): a
+directory held open whose methods list, stat, open, chmod, chown and remove
+entries by name, the openat / fstatat / unlinkat family GNU's fts runs on.
+`du`, `rm`, `chmod -R`, `chown -R` and `chgrp -R` walk through it. None of them
+has a depth bound: each handles a tree 45 to 80 levels of 100 characters deep
+as GNU does. The kernel resolves no ancestor path per entry; on a 60-level tree
+`du`'s system time fell from 4.5 ms to 1.5 ms.
 
-`chmod -R` is the first of the four, and there the gap costs more
-than depth. strace shows GNU descends fd-relative below the top level —
-`fchmodat(4, "sub", …)` against a held descriptor, then `openat(4, "sub",
-O_NOFOLLOW|O_DIRECTORY)` — so renaming an interior directory under a running
-walk cannot redirect a chmod at anything outside the tree. `chmod.fern`
-rebuilds the path per entry, so it can. Nothing in the corpus renames anything
-under a running chmod, and the 333 cases agree on stdout, stderr, exit status
-and the mode of every entry; what is missing is a safety property no case
-asserts, which is why it is recorded here rather than left to the depth
-sentence above.
+Below the top level they act fd-relative, as GNU does, opening each directory
+by name with `O_NOFOLLOW`. So a rename of an interior directory under a running
+walk cannot redirect a call outside the tree. A directory reached through a
+symlink that `-L` or `-H` follows is opened by its path, which is the one place
+a walk still forms one.
 
-`ls -R` is the last, and there the bound is only depth: it rebuilds the
-path per entry the way the other three do, and a tree deeper than PATH_MAX
-stops with `File name too long` where GNU keeps walking.
-
-`chown -R` and `chgrp -R` have the same shape: they
-rebuild the path per entry where GNU holds a descriptor, so a rename of an
-interior directory under a running walk can redirect a call outside the tree.
-Nothing in the corpus renames anything under a running chown.
+`ls -R` rebuilds the path per entry, so a tree deeper than PATH_MAX stops with
+`File name too long` where GNU keeps walking. Shallow ENAMETOOLONG is an
+ordinary error path both sides agree on.
 
 **`chown -v` on a dangling symlink it was told to FOLLOW is the one place the
 corpus deliberately does not compare stdout, and the reason is that GNU has no

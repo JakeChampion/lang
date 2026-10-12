@@ -2,7 +2,9 @@ package coreutils
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -74,6 +76,25 @@ func chownTree(t *testing.T, dir string) {
 	link("f", "lnk")
 	link("d", "symdir")
 	link("no-such-target", "broken")
+}
+
+// chownLongTree adds to chownTree a chain 45 directories of 100 characters
+// deep, past PATH_MAX, built by a shell that only ever `cd`s one level down so
+// no path to its leaf is formed. Its cases compare the walk's lines rather
+// than the tree, which the comparison would have to stat by the full path.
+func chownLongTree(t *testing.T, dir string) {
+	t.Helper()
+	chownTree(t, dir)
+	mk := exec.Command("/bin/sh", "-c", `set -e
+mkdir longpath && cd longpath
+i=0
+while [ $i -lt 45 ]; do mkdir `+strings.Repeat("d", 100)+` && cd -P `+strings.Repeat("d", 100)+`; i=$((i + 1)); done
+printf leaf > leaf
+`)
+	mk.Dir = dir
+	if out, err := mk.CombinedOutput(); err != nil {
+		t.Fatalf("building longpath: %v\n%s", err, out)
+	}
 }
 
 // chownSpecCases are the grammar and its diagnostics: they never reach a file,
@@ -267,6 +288,7 @@ func chownCases(t *testing.T) []invocation {
 	tree("L loses to nothing", "-R", "-L", "-h", "-v", ":daemon", "d")
 	tree("recursive on a plain file", "-R", "-v", ":daemon", "f")
 	tree("recursive on a name that is not there", "-R", "-v", ":daemon", "nope")
+	add(invocation{name: "recursive beyond PATH_MAX", args: []string{"-R", "-v", ":daemon", "longpath"}, seedTree: chownLongTree})
 
 	// ---- --reference -----------------------------------------------------
 	tree("reference", "--reference=d", "f")

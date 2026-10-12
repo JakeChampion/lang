@@ -424,6 +424,9 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "-R -L over a tree with links", args: []string{"-RLv", "0700", "t"}, seedTree: chmodTree},
 		{name: "-R -P over a tree with links", args: []string{"-RPv", "0700", "t"}, seedTree: chmodTree},
 		{name: "-R -h over a tree with links", args: []string{"-Rhv", "0700", "t"}, seedTree: chmodTree},
+		// chownLongTree's chain is past PATH_MAX, and the walk goes through
+		// each directory it holds rather than by the full path.
+		{name: "-R beyond PATH_MAX", args: []string{"-Rv", "0700", "longpath"}, seedTree: chownLongTree},
 		{name: "-R --dereference needs -H or -L", args: []string{"-R", "--dereference", "-P", "0700", "t"}, seedTree: chmodTree},
 		{name: "-R --dereference with -L is allowed", args: []string{"-R", "--dereference", "-L", "-v", "0700", "t"}, seedTree: chmodTree},
 		{name: "the last traversal option wins", args: []string{"-RLPHv", "0700", "dlink"}, seedTree: chmodLinks},
