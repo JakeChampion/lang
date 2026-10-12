@@ -105,6 +105,9 @@ func TestFernsmithShrinksAPlantedMiscompile(t *testing.T) {
 		}
 		step /= 2
 	}
+	if n == mutantCorpusBytes {
+		t.Errorf("no truncation of the %d-byte corpus still diverges", mutantCorpusBytes)
+	}
 	data = data[:n]
 	repro := fernsmith.GenMainBytes(data)
 	_, want, got := diverges(data)
