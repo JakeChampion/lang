@@ -196,6 +196,55 @@ function target_checks(target: string): void {
   require(extract.check(unreadable, d, r, helper.FlatChild { offset: 8 }).message == "undefined physical operand", 32);
 }
 
+// The unique arm's inline release of the sibling at `other`, edited four
+// ways the proof must refuse: freeing the parent with the sibling unspent,
+// releasing it a second time through the helper, loading it again after its
+// release, and a nonzero scalar joining the uniqueness token.
+function sibling_mutated(f: ssa.SFunc, other: i32, mode: i32, release: string): ssa.SFunc {
+  let load: i32 = -1;
+  let constant: i32 = -1;
+  for b in f.blocks {
+    for op in b.insts {
+      if (op.kind_tag == 40 && op.imm == other) {
+        load = op.result;
+      }
+      if (op.kind_tag == 8 && op.args.len() == 2 && op.args[0] == 0) {
+        constant = op.args[1];
+      }
+    }
+  }
+  require(load >= 0 && constant >= 0, 76);
+  let blocks: ssa.SBlock[] = [];
+  let hits: i32 = 0;
+  let nvals = f.nvals;
+  for b in f.blocks {
+    let insts: ssa.SInst[] = [];
+    for op in b.insts {
+      let sibling_release = op.kind_tag == 11 && op.str == "__fern_rc_dec" && op.args.len() == 1 && op.args[0] == load;
+      let parent_free = op.kind_tag == 11 && op.str == "__fern_rc_dec" && op.args.len() == 1 && op.args[0] == 0;
+      if (mode == 0 && sibling_release) {
+        insts = insts.append(ssa.SInst { kind_tag: 1, result: op.result, args: [], imm: 0, str: "" });
+        hits = hits + 1;
+      } else if (mode == 1 && parent_free) {
+        insts = insts.append(ssa.SInst { ...op, str: release });
+        hits = hits + 1;
+      } else if (mode == 2 && sibling_release) {
+        insts = insts.append(op).append(ssa.SInst { kind_tag: 40, result: nvals, args: [0], imm: other, str: "" });
+        nvals = nvals + 1;
+        hits = hits + 1;
+      } else if (mode == 3 && op.result == constant) {
+        insts = insts.append(ssa.SInst { ...op, imm: 1 });
+        hits = hits + 1;
+      } else {
+        insts = insts.append(op);
+      }
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
+  }
+  require(hits == 1, 77);
+  return ssa.SFunc { ...f, blocks: blocks, nvals: nvals };
+}
+
 function sibling_checks(target: string): void {
   let source = "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, marker: i32, right: Leaf }\n@noinline\nfunction left(own p: Parent): Leaf { return p.left; }\n@noinline\nfunction right(own p: Parent): Leaf { return p.right; }\nfunction main(): i32 { return 0; }\n";
   let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
@@ -223,6 +272,20 @@ function sibling_checks(target: string): void {
       let f = lift(body);
       let valid = extract.check_selected(f, d, r, layout, offset);
       require(valid.ok && valid.function_name == f.name, 61);
+      let other: i32 = 24;
+      if (offset == 24) {
+        other = 8;
+      }
+      let sibling_reasons: string[] = ["sibling slot left in a freed parent", "sibling released twice", "load from released sibling slot", "uniqueness token joins a nonzero value"];
+      let sm: i32 = 0;
+      while (sm < sibling_reasons.len()) {
+        let refused = extract.check_selected(sibling_mutated(f, other, sm, r.name), d, r, layout, offset);
+        if (refused.ok || refused.message != sibling_reasons[sm]) {
+          print(refused.message);
+          exit(78 + sm);
+        }
+        sm = sm + 1;
+      }
       require(!extract.check(f, d, r, helper.FlatChild { offset: offset }).ok, 62);
       // Inverting the uniqueness test sends the shared parent down the arm that
       // releases the sibling inline, which is refused before the free.
