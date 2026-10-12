@@ -806,18 +806,19 @@ ratio within about 10% of 1 is still not a measured difference: `mv a
 400-file tree` read 0.57x in the full run and 0.94x when `mv` was re-run
 alone. The two `yes` rows are from a later run, after `w.splice_forever` gave
 `yes` the vmsplice(2) path GNU 9.12's has, and the `ls` / `dir` / `vdir` rows
-from one after `ls` took each entry's type from its directory record.
+from one after `ls` took each entry's type from its directory record and
+stopped joining paths it does not use.
 
 | | rows | faster than GNU | faster than uutils |
 |---|---|---|---|
-| every workload | 669 | 510 (76%) | 562 of 623 |
+| every workload | 669 | 513 (77%) | 561 of 623 |
 
 The median row is 1.70x GNU and 3.28x uutils, and 66 of the 106 utilities
-beat GNU on every row. The 159 rows that lose to GNU fall into a few families:
+beat GNU on every row. The 156 rows that lose to GNU fall into a few families:
 
 | family | rows lost | worst | where the time goes |
 |---|---|---|---|
-| `ls` / `dir` / `vdir` | 38 | 0.62x | the 4000-name rows, where neither side stats more than the other: a path joined per entry, the sort's comparator called out of line, and the name quoting. `-F` and `-R` win now that `ls` stats only what GNU does |
+| `ls` / `dir` / `vdir` | 35 | 0.70x | the 4000-name rows, where neither side stats more than the other: the sort's comparator is called out of line and pays a full prologue for a two-load compare. `-F` and `-R` win now that `ls` stats only what GNU does |
 | the digests (`sha*sum`, `md5sum`, `b2sum`, `cksum -a`) | 32 | 0.51x | GNU calls OpenSSL's assembly: `sha256sum` of 8 MiB is 372 M instructions to its 235 M |
 | `base32` / `base64` / `basenc` | 10 | 0.51x | the 64 MiB rows only: encoding is 0.55x to 0.72x after #12159's word-at-a-time push, and `--base16 -d` and `base32 -d` lose too |
 | `stat` | 10 | 0.77x | formatting 4000 operands |
