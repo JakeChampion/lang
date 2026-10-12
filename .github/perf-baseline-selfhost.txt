@@ -143,9 +143,9 @@ selfhost/arm64-linux/closure_call.emit	993
 selfhost/arm64-linux/enum_match.emit	1144
 selfhost/arm64-linux/http_hello.emit	19352
 selfhost/arm64-linux/int_loop.emit	90
-selfhost/arm64-linux/map_int.emit	6324
-selfhost/arm64-linux/map_probe_chain.emit	6335
-selfhost/arm64-linux/map_string.emit	9219
+selfhost/arm64-linux/map_int.emit	6107
+selfhost/arm64-linux/map_probe_chain.emit	6118
+selfhost/arm64-linux/map_string.emit	9002
 selfhost/arm64-linux/ordmap_insert.emit	4694
 selfhost/arm64-linux/pmap_insert.emit	5017
 selfhost/arm64-linux/pvec_with.emit	3093
@@ -161,8 +161,8 @@ selfhost/arm64-linux/string_scan.emit	3346
 selfhost/arm64-linux/string_slice.emit	916
 selfhost/arm64-linux/struct_drop.emit	3516
 selfhost/arm64-linux/tokenize.emit	1172
-selfhost/arm64-linux/utf8_ingest_unchecked.emit	14809
-selfhost/arm64-linux/utf8_ingest_validated.emit	15059
+selfhost/arm64-linux/utf8_ingest_unchecked.emit	14575
+selfhost/arm64-linux/utf8_ingest_validated.emit	14825
 selfhost/wasm32-wasi/array_append.emit	446
 selfhost/wasm32-wasi/array_index.emit	452
 selfhost/wasm32-wasi/array_scale_f64.emit	2417
@@ -191,8 +191,8 @@ selfhost/wasm32-wasi/string_scan.emit	3137
 selfhost/wasm32-wasi/string_slice.emit	451
 selfhost/wasm32-wasi/struct_drop.emit	3303
 selfhost/wasm32-wasi/tokenize.emit	832
-selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	19314
-selfhost/wasm32-wasi/utf8_ingest_validated.emit	20051
+selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	19055
+selfhost/wasm32-wasi/utf8_ingest_validated.emit	19792
 selfhost/x86-64-linux/array_append.emit	912
 selfhost/x86-64-linux/array_index.emit	913
 selfhost/x86-64-linux/array_scale_f64.emit	2723
@@ -203,9 +203,9 @@ selfhost/x86-64-linux/closure_call.emit	814
 selfhost/x86-64-linux/enum_match.emit	999
 selfhost/x86-64-linux/http_hello.emit	18984
 selfhost/x86-64-linux/int_loop.emit	33
-selfhost/x86-64-linux/map_int.emit	6213
-selfhost/x86-64-linux/map_probe_chain.emit	6228
-selfhost/x86-64-linux/map_string.emit	9081
+selfhost/x86-64-linux/map_int.emit	5940
+selfhost/x86-64-linux/map_probe_chain.emit	5955
+selfhost/x86-64-linux/map_string.emit	8831
 selfhost/x86-64-linux/ordmap_insert.emit	4588
 selfhost/x86-64-linux/pmap_insert.emit	4947
 selfhost/x86-64-linux/pvec_with.emit	2890
@@ -221,8 +221,8 @@ selfhost/x86-64-linux/string_scan.emit	3196
 selfhost/x86-64-linux/string_slice.emit	751
 selfhost/x86-64-linux/struct_drop.emit	3384
 selfhost/x86-64-linux/tokenize.emit	985
-selfhost/x86-64-linux/utf8_ingest_unchecked.emit	14598
-selfhost/x86-64-linux/utf8_ingest_validated.emit	14842
+selfhost/x86-64-linux/utf8_ingest_unchecked.emit	14334
+selfhost/x86-64-linux/utf8_ingest_validated.emit	14578
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 selfhost/x86-64-linux/perceus_cfold.emit	2404

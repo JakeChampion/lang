@@ -760,7 +760,7 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 	// Each program calls core/map.
 	for _, c := range cases {
 		asm := routedMapAsm(t, selfHostBin, stdlibRoot, c.src)
-		if !strings.Contains(asm, "call __fn___map_set_") {
+		if !strings.Contains(asm, "call __fn___map_put_") {
 			t.Fatalf("the %s program's maps are not routed onto core/map", c.name)
 		}
 	}

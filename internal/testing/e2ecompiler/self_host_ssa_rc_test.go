@@ -1096,15 +1096,16 @@ function main(): i32 {
     if (!arrInsertPlan.ok) { eprint(arrInsertPlan.why); return 190; }
     let arrInsertLowered = ssarc.lower(arrInsert, [3, 3, 3], arrInsertPlan, irtables.struct_tab_empty(), ssaunits.no_grows(), util.name_index([]), ssaunits.no_view(), suspend.none());
     if (!arrInsertLowered.ok) { eprint(arrInsertLowered.why); return 191; }
-    let sawArrSet: boolean = false;
+    // The put hands back the box it supersedes, so the key is looked up once.
+    let sawArrPut: boolean = false;
     let sawOldRead: boolean = false;
     let sawOldRelease: boolean = false;
     for o in arrInsertLowered.ops {
-        if (o.kind_tag == 149 && o.str == "__map_set_impl") { sawArrSet = true; }
+        if (o.kind_tag == 149 && o.str == "__map_put_impl") { sawArrPut = true; }
         if (o.kind_tag == 149 && o.str == "__map_lookup_val") { sawOldRead = true; }
         if (o.kind_tag == 149 && o.str == releaseName) { sawOldRelease = true; }
     }
-    if (!sawArrSet || !sawOldRead || !sawOldRelease) { return 192; }
+    if (!sawArrPut || sawOldRead || !sawOldRelease) { return 192; }
     let intInsertGraph = ssa.SFunc { name: "int_insert", nparams: 3, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
             ssa.SInst { kind_tag: ssasem.map_insert(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(3) }] };
@@ -1113,14 +1114,13 @@ function main(): i32 {
     if (!intInsertPlan.ok) { eprint(intInsertPlan.why); return 174; }
     let intInsertLowered = ssarc.lower(intInsert, [3, 1, 1], intInsertPlan, irtables.struct_tab_empty(), ssaunits.no_grows(), util.name_index([]), ssaunits.no_view(), suspend.none());
     if (!intInsertLowered.ok) { eprint(intInsertLowered.why); return 175; }
-    // A routed insert calls core/map's set, whose own copy-on-write hands
-    // back a map the frame alone holds; when that is a copy, the receiver is
-    // released after the call. An owned receiver over scalar columns retains
-    // nothing.
+    // A routed insert makes the map the frame's alone with core/map's
+    // copy-on-write, releasing the receiver when that copied it, and then
+    // puts into it. An owned receiver over scalar columns retains nothing.
     let sawIntSet: boolean = false;
     let sawIntCopyRelease: boolean = false;
     for o in intInsertLowered.ops {
-        if (o.kind_tag == 149 && o.str == "__map_set_impl") { sawIntSet = true; }
+        if (o.kind_tag == 149 && o.str == "__map_put_impl") { sawIntSet = true; }
         if (o.str == "__fern_rc_dec") { sawIntCopyRelease = true; }
         if (o.str == "__fern_rc_inc") { return 176; }
     }
