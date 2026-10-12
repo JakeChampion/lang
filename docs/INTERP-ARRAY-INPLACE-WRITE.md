@@ -151,6 +151,20 @@ is never given back and an array that has ever been in one is copied by
 `with` from then on. That is the status quo for those arrays, and it is an
 over-count, which is free.
 
+The map rc's walk had that per-call shape of its own: `declare` retains its
+value, and `retain` walks every element of an array looking for maps, so
+binding an n-element `i32[]` to a parameter cost 2n visits a call. A
+binding whose declared type cannot reach a Map (`holdsNoMap`: numbers,
+booleans, strings, floats, and arrays, slices and tuples of them) skips
+the walk on the way in and out (`declareTyped`), since over such a value
+it changes only array path counts, which nothing below it reads.
+Parameters and annotated `let`s take that path when the value is an array
+or tuple; a scalar binds as before, since its walk is free and recording
+the skip would cost a map per call. `TestTypedBindingSkipsWalk` counts the
+visits. std/deflate's encoder hands two 32 768-entry hash
+chains to a helper for every input byte: 8 KB of noise took 8.0 s and
+takes 0.6 s.
+
 ## Why not a persistent vector
 
 The alternative (#7287 option B) is to drop the flat representation for a

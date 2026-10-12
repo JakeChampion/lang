@@ -1,0 +1,175 @@
+import "std/test";
+import "std/http";
+import "std/http/compress";
+import "std/deflate";
+import "std/headers";
+import "std/utf8";
+
+// tests/stdlib/http_compress_test.fern — std/http/compress: the coding
+// `Accept-Encoding` ranks highest among those offered, the identity
+// body when none is acceptable, `Vary` on every response whose coding
+// depends on the field, the ETag made weak and `Accept-Ranges` dropped
+// on a coded one, and each response left alone: a small body, a type
+// compression does not shrink, one already coded, `no-transform`, a 206,
+// a bodiless status, a file body, and a body coding would not shrink.
+
+function req(fields: string[]): HttpRequest {
+  let r: HttpRequest = http.request("GET", "/doc");
+  let i: i32 = 0;
+  while (i + 1 < fields.len()) {
+    r = HttpRequest { ...r, headers: r.headers.append(fields[i], fields[i + 1]) };
+    i = i + 2;
+  }
+  return r;
+}
+
+function page(): string {
+  return "<p>the quick brown fox jumps over the lazy dog</p>\n".repeat(40);
+}
+
+function html(): HttpResponse {
+  return http.ok(page()).with_content_type("text/html; charset=utf-8");
+}
+
+function field(r: HttpResponse, name: string): string {
+  match (r.headers.get(name)) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return "-";
+    }
+  }
+  return "-";
+}
+
+// `summary(r)` — the fields the module sets, and the body as it reads
+// once decoded: "same" when it is the page, its length otherwise.
+function summary(r: HttpResponse): string {
+  let body: u8[] = r.body_bytes();
+  if (field(r, "Content-Encoding") == "gzip") {
+    match (deflate.gunzip(body, 1048576)) {
+      Ok(out) => {
+        body = out;
+      },
+      Err(e) => {
+        return "bad gzip: " + e.message();
+      }
+    }
+  }
+  let text: string = utf8.from_bytes_lossy(body);
+  let read: string = body.len().to_string();
+  if (text == page()) {
+    read = "same";
+  }
+  return field(r, "Content-Encoding") + " " + field(r, "Vary") + " " + read;
+}
+
+function test_gzip_chosen(): test.TestOutcome {
+  let r: HttpResponse = compress.response(req(["Accept-Encoding", "br, gzip"]), html(), compress.options());
+  return test.assert_eq(summary(r) + " " + (r.body_len() < page().len()).to_string(), "gzip Accept-Encoding same true");
+}
+
+function test_identity(): test.TestOutcome {
+  let o: compress.Options = compress.options();
+  let none: string = summary(compress.response(req([]), html(), o));
+  let refused: string = summary(compress.response(req(["Accept-Encoding", "gzip;q=0"]), html(), o));
+  let ranked: string = summary(compress.response(req(["Accept-Encoding", "identity, gzip;q=0.5"]), html(), o));
+  let alias: string = summary(compress.response(req(["Accept-Encoding", "x-gzip"]), html(), o));
+  return test.assert_eq(none + " | " + refused + " | " + ranked + " | " + alias, "- Accept-Encoding same | - Accept-Encoding same | - Accept-Encoding same | gzip Accept-Encoding same");
+}
+
+// A coding the module does not write is passed over for one it does,
+// however the options rank them.
+function test_unwritten_coding(): test.TestOutcome {
+  let o: compress.Options = compress.Options { ...compress.options(), codings: ["br", "gzip"] };
+  return test.assert_eq(summary(compress.response(req(["Accept-Encoding", "br, gzip"]), html(), o)), "gzip Accept-Encoding same");
+}
+
+function test_vary_kept(): test.TestOutcome {
+  let r: HttpResponse = compress.response(req(["Accept-Encoding", "gzip"]), html().with_header("Vary", "Cookie"), compress.options());
+  return test.assert_eq(field(r, "Vary"), "Cookie, Accept-Encoding");
+}
+
+function test_validators(): test.TestOutcome {
+  let o: compress.Options = compress.options();
+  let a: HttpRequest = req(["Accept-Encoding", "gzip"]);
+  let strong: HttpResponse = compress.response(a, html().with_header("ETag", "\"v1\"").with_header("Accept-Ranges", "bytes"), o);
+  let weak: HttpResponse = compress.response(a, html().with_header("ETag", "W/\"v1\""), o);
+  return test.assert_eq(field(strong, "ETag") + " " + field(strong, "Accept-Ranges") + " " + field(weak, "ETag"), "W/\"v1\" - W/\"v1\"");
+}
+
+// Each response the module leaves as it is, field for field.
+function test_left_alone(): test.TestOutcome {
+  let o: compress.Options = compress.options();
+  let a: HttpRequest = req(["Accept-Encoding", "gzip"]);
+  let cases: HttpResponse[] = [
+    http.ok("short").with_content_type("text/plain"),
+    http.ok(page()).with_content_type("image/png"),
+    http.ok(page()),
+    html().with_header("Content-Encoding", "br"),
+    html().with_header("Cache-Control", "public, no-transform"),
+    HttpResponse { ...html(), status: 206 },
+    HttpResponse { ...html(), status: 304 },
+    HttpResponse { ...html(), body: BodyFile("/srv/page.html") },
+  ];
+  let out: string = "";
+  for c in cases {
+    let r: HttpResponse = compress.response(a, c, o);
+    out = out + field(r, "Content-Encoding") + field(r, "Vary") + " ";
+  }
+  return test.assert_eq(out, "-- -- -- br- -- -- -- -- ");
+}
+
+// A body coding would not shrink keeps the identity coding, under `Vary`
+// all the same.
+function test_incompressible(): test.TestOutcome {
+  let noise: u8[] = [];
+  let x: i32 = 7;
+  while (noise.len() < 4096) {
+    x = x * 1103515245 + 12345 & 2147483647;
+    noise = noise.append((x >> 16 & 255) as u8);
+  }
+  let resp: HttpResponse = HttpResponse { ...http.ok(""), body: BodyBytes(noise) }.with_content_type("application/octet-stream+json");
+  let r: HttpResponse = compress.response(req(["Accept-Encoding", "gzip"]), resp, compress.options());
+  return test.assert_eq(field(r, "Content-Encoding") + " " + field(r, "Vary") + " " + r.body_len().to_string(), "- Accept-Encoding 4096");
+}
+
+function test_min_size(): test.TestOutcome {
+  let o: compress.Options = compress.Options { ...compress.options(), min_size: 4096 };
+  let r: HttpResponse = compress.response(req(["Accept-Encoding", "gzip"]), html(), o);
+  return test.assert_eq(summary(r), "- - same");
+}
+
+function test_compressible(): test.TestOutcome {
+  let types: string[] = ["text/css", "Text/HTML; charset=utf-8", "application/json", "application/ld+json", "image/svg+xml", "application/wasm", "font/ttf", "image/png", "application/octet-stream", "font/woff2", "video/mp4"];
+  let out: string = "";
+  for t in types {
+    out = out + compress.compressible(t).to_string().slice_snap(0, 1);
+  }
+  return test.assert_eq(out, "tttttttffff");
+}
+
+function handler(req: HttpRequest): HttpResponse {
+  use req <- compress.compressed(req);
+  return html();
+}
+
+function test_middleware(): test.TestOutcome {
+  return test.assert_eq(summary(handler(req(["Accept-Encoding", "gzip"]))), "gzip Accept-Encoding same");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/http/compress");
+  r = r.it("gzip when the client accepts it", test_gzip_chosen);
+  r = r.it("identity when it does not", test_identity);
+  r = r.it("a coding it does not write passed over", test_unwritten_coding);
+  r = r.it("Vary keeps its other fields", test_vary_kept);
+  r = r.it("validators of a coded body", test_validators);
+  r = r.it("responses left alone", test_left_alone);
+  r = r.it("a body coding would not shrink", test_incompressible);
+  r = r.it("min_size", test_min_size);
+  r = r.it("compressible media types", test_compressible);
+  r = r.it("the middleware", test_middleware);
+  return r.finish();
+}
