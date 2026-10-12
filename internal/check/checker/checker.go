@@ -4342,6 +4342,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}}}, voidIoErr)
 	registerStructMethod("Reader", "set_extproc", []ast.Type{ast.BoolType{}}, voidIoErr)
 	registerStructMethod("Writer", "write", []ast.Type{ast.StringType{}}, optionIoErr)
+	// splice_forever(block) moves the block into the writer over and over,
+	// by vmsplice(2) where the kernel takes it, and returns only on a
+	// failure. Some(Unsupported) means nothing reached the writer, so the
+	// caller writes the block itself.
+	registerStructMethod("Writer", "splice_forever", []ast.Type{ast.StringType{}}, optionIoErr)
 	// write_some(s) is ONE write(2) and the count it returned: the write
 	// may land in full, in part, or not at all, and the caller loops.
 	// `write` above is the same syscall with the loop inside it, which

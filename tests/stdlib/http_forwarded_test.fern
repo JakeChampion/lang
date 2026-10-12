@@ -251,21 +251,25 @@ function bytes_of(xs: i32[]): u8[] {
 }
 
 // Version 1: TCP4, TCP6 and UNKNOWN, the length up to the CRLF, a header not
-// all here, and what is not a header or not a valid one.
+// all here, and what is not a header or not a valid one: either address
+// unreadable or of the other family, either port out of range or written
+// with a leading zero.
 function test_proxy_v1(): test.TestOutcome {
   let got: string = "";
-  for t in ["PROXY TCP4 192.0.2.1 198.51.100.2 56324 443\r\nGET /", "PROXY TCP6 2001:db8::1 2001:db8::2 4000 443\r\n", "PROXY UNKNOWN\r\n", "PROXY TCP4 192.0", "PRO", "GET / HTTP/1.1\r\n", "PROXY TCP4 192.0.2.1 198.51.100.2 99999 443\r\n", "PROXY TCP4 2001:db8::1 2001:db8::2 1 2\r\n", "PROXY TCP4 192.0.2.1 198.51.100.2 1\r\n"] {
+  for t in ["PROXY TCP4 192.0.2.1 198.51.100.2 56324 443\r\nGET /", "PROXY TCP6 2001:db8::1 2001:db8::2 4000 443\r\n", "PROXY UNKNOWN\r\n", "PROXY TCP4 192.0", "PRO", "GET / HTTP/1.1\r\n", "PROXY TCP4 192.0.2.1 198.51.100.2 99999 443\r\n", "PROXY TCP4 2001:db8::1 2001:db8::2 1 2\r\n", "PROXY TCP4 192.0.2.1 198.51.100.2 1\r\n", "PROXY TCP4 192.0.2.1 999.999.999.999 56324 443\r\n", "PROXY TCP4 192.0.2.1 2001:db8::2 56324 443\r\n", "PROXY TCP4 192.0.2.1 198.51.100.2 56324 99999\r\n", "PROXY TCP4 192.0.2.1 198.51.100.2 0080 443\r\n", "PROXY TCP4 192.0.2.1 198.51.100.2 0 443\r\n"] {
     got = got + proxied(t.bytes()) + " | ";
   }
   let long: string = "PROXY UNKNOWN ";
   while (long.len() < 120) {
     long = long + "x";
   }
-  return test.assert_eq(got + proxied(long.bytes()), "192.0.2.1:56324 45 | [2001:db8::1]:4000 45 | - 15 | short | short | bad | bad | bad | bad | bad");
+  return test.assert_eq(got + proxied(long.bytes()), "192.0.2.1:56324 45 | [2001:db8::1]:4000 45 | - 15 | short | short | bad | bad | bad | bad | bad | bad | bad | bad | 192.0.2.1:0 41 | bad");
 }
 
 // Version 2: PROXY over IPv4 and IPv6, a TLV after the addresses skipped,
-// LOCAL naming no source, a header not all here, and a bad version.
+// LOCAL naming no source, a header not all here, a bad version, a
+// transport other than stream, datagram or unspecified, and an
+// unspecified transport naming no source.
 function test_proxy_v2(): test.TestOutcome {
   let sig: i32[] = [13, 10, 13, 10, 0, 13, 10, 81, 85, 73, 84, 10];
   let v4: i32[] = sig.concat([33, 17, 0, 12, 192, 0, 2, 1, 198, 51, 100, 2, 220, 4, 1, 187]);
@@ -274,8 +278,10 @@ function test_proxy_v2(): test.TestOutcome {
   let local: i32[] = sig.concat([32, 0, 0, 0]);
   let short: i32[] = sig.concat([33, 17, 0, 12, 192, 0]);
   let bad: i32[] = sig.concat([17, 17, 0, 0]);
-  let got: string = proxied(bytes_of(v4)) + " | " + proxied(bytes_of(tlv)) + " | " + proxied(bytes_of(v6)) + " | " + proxied(bytes_of(local)) + " | " + proxied(bytes_of(short)) + " | " + proxied(bytes_of(bad));
-  return test.assert_eq(got, "192.0.2.1:56324 28 | 192.0.2.1:56324 31 | [2001:db8::1]:4000 52 | - 16 | short | bad");
+  let transport: i32[] = sig.concat([33, 31, 0, 12, 192, 0, 2, 1, 198, 51, 100, 2, 220, 4, 1, 187]);
+  let unspec: i32[] = sig.concat([33, 16, 0, 12, 192, 0, 2, 1, 198, 51, 100, 2, 220, 4, 1, 187]);
+  let got: string = proxied(bytes_of(v4)) + " | " + proxied(bytes_of(tlv)) + " | " + proxied(bytes_of(v6)) + " | " + proxied(bytes_of(local)) + " | " + proxied(bytes_of(short)) + " | " + proxied(bytes_of(bad)) + " | " + proxied(bytes_of(transport)) + " | " + proxied(bytes_of(unspec));
+  return test.assert_eq(got, "192.0.2.1:56324 28 | 192.0.2.1:56324 31 | [2001:db8::1]:4000 52 | - 16 | short | bad | bad | - 28");
 }
 
 function main(): i32 {

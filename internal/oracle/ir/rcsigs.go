@@ -301,6 +301,7 @@ var rcInertBuiltins = map[string]bool{
 	"__method_Writer_close":       true, "__method_Writer_stat": true,
 	"__method_Writer_truncate": true, "__method_Writer_write": true,
 	"__method_Writer_write_some":       true,
+	"__method_Writer_splice_forever":   true,
 	"__method_Writer_write_bytes":      true,
 	"__method_Writer_write_some_bytes": true,
 
@@ -531,6 +532,7 @@ var rcInert = map[string]bool{
 	"__fern_handle_isatty": true,
 	// write_some borrows the string it writes and hands back a count.
 	"__fern_writer_write_some":       true,
+	"__fern_writer_splice_forever":   true,
 	"__fern_writer_write_bytes":      true,
 	"__fern_writer_write_some_bytes": true,
 	"signal_default":                 true, "signal_ignore": true,
