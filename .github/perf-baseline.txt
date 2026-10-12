@@ -111,7 +111,7 @@ x86_64/tokenize.ir	36950039
 x86_64/utf8_ingest_unchecked.text	14482
 x86_64/utf8_ingest_unchecked.ir	3990676	3
 x86_64/utf8_ingest_validated.text	14726
-x86_64/utf8_ingest_validated.ir	7271282	3
+x86_64/utf8_ingest_validated.ir	7038098	3
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
