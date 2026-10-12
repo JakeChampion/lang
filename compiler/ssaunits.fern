@@ -3693,8 +3693,9 @@ pub function with_reuse(f: ssasem.Func, p: Plan): Plan {
   let uses: ssasem.Uses = p.analysis.uses;
   let pairs: ReusePairs[] = [];
   let keeps: Keeps[] = [];
+  let at: i32[] = ssa.block_positions(f.graph);
   for b in f.graph.blocks {
-    let pr: ReusePairs = reuse_pairs(f, p, idx, b, off, carry);
+    let pr: ReusePairs = reuse_pairs(f, p, idx, at, b, off, carry);
     keeps = keeps.append(block_keeps(f, p, idx, b, pr, uses));
     pairs = pairs.append(pr);
   }
@@ -3920,16 +3921,29 @@ function variant_slots(t: typeinfo.Type, name: string, f: ssasem.Func): i32 {
 // where the tag test chose its variant, so a block reading one holds a box of
 // that variant's count. That is the consuming match's shape: the arm takes the
 // payloads, the scrutinee dies, and the arm's construction builds in its box.
-function donor_slots(f: ssasem.Func, b: ssa.SBlock, d: i32): i32 {
+// The read may sit in any block on the chain of sole predecessors above `b`,
+// which every path to `b` runs through: a nested pattern reads the payloads
+// before its inner test and builds in the test's successor. `at` is the
+// blocks' positions by id.
+function donor_slots(f: ssasem.Func, at: i32[], b: ssa.SBlock, d: i32): i32 {
   let t: typeinfo.Type = f.values[d];
   let n: i32 = reuse_slots(t, f);
   if (n >= 0 || ssasem.has_finalizer(f, t)) {
     return n;
   }
-  for ins in b.insts {
-    if (ins.kind_tag == ssasem.variant_get() && ins.args[0] == d) {
-      return variant_slots(t, ins.str, f);
+  let blk: ssa.SBlock = b;
+  let up: i32 = 0;
+  while (up < f.graph.blocks.len()) {
+    for ins in blk.insts {
+      if (ins.kind_tag == ssasem.variant_get() && ins.args[0] == d) {
+        return variant_slots(t, ins.str, f);
+      }
     }
+    if (blk.preds.len() != 1 || blk.preds[0] < 0 || blk.preds[0] >= at.len() || at[blk.preds[0]] < 0) {
+      return 0 - 1;
+    }
+    blk = f.graph.blocks[at[blk.preds[0]]];
+    up = up + 1;
   }
   return 0 - 1;
 }
@@ -4202,7 +4216,7 @@ function split_preds(f: ssasem.Func, g: RouteGraph, sources: i32[], target: i32,
 function null_edge(f: ssasem.Func, g: RouteGraph, sources: i32[], id: i32, slots: i32, d: i32): boolean {
   let k: i32 = g.at[id];
   return util.index_of_i32(sources, id) < 0 && util.index_of_i32(g.dies[k], d) >= 0
-    && donor_slots(f, f.graph.blocks[k], d) != slots;
+    && donor_slots(f, g.at, f.graph.blocks[k], d) != slots;
 }
 
 // The values that die after position `claim` of `b`, and where each dies, in
@@ -4232,12 +4246,12 @@ function dying_after_claims(p: Plan, idx: i32[][], links: i32[], b: ssa.SBlock, 
 // the box on.
 struct Holds { blocks: i32[], at: i32[], slots: i32 }
 
-function holds_of(f: ssasem.Func, dying: Dying[], holding: boolean[], first: i32, d: i32, at0: i32, slots: i32): Holds {
+function holds_of(f: ssasem.Func, at: i32[], dying: Dying[], holding: boolean[], first: i32, d: i32, at0: i32, slots: i32): Holds {
   let h: Holds = Holds { blocks: [f.graph.blocks[first].id], at: [at0], slots: slots };
   let bj: i32 = first + 1;
   while (bj < dying.len()) {
     let j: i32 = util.index_of_i32(dying[bj].values, d);
-    if (!holding[bj] && j >= 0 && can_hold(f.graph.blocks[bj]) && donor_slots(f, f.graph.blocks[bj], d) == slots) {
+    if (!holding[bj] && j >= 0 && can_hold(f.graph.blocks[bj]) && donor_slots(f, at, f.graph.blocks[bj], d) == slots) {
       h = Holds { ...h, blocks: h.blocks.append(f.graph.blocks[bj].id), at: h.at.append(dying[bj].at[j]) };
     }
     bj = bj + 1;
@@ -4272,9 +4286,9 @@ function carried_pairs(f: ssasem.Func, p: Plan, idx: i32[][], links: i32[], off:
     let i: i32 = 0;
     while (!holding[bi] && can_hold(b) && i < dying[bi].values.len()) {
       let d: i32 = dying[bi].values[i];
-      let slots: i32 = donor_slots(f, b, d);
+      let slots: i32 = donor_slots(f, g.at, b, d);
       if (slots >= 0) {
-        let h: Holds = holds_of(f, dying, holding, bi, d, dying[bi].at[i], slots);
+        let h: Holds = holds_of(f, g.at, dying, holding, bi, d, dying[bi].at[i], slots);
         if (h.blocks.len() > 1 || util.index_of_i32(tried, slots) < 0) {
           tried = tried.append(slots);
           let found: Searched = carry_routes(f, g, h.blocks, marks, slots, d);
@@ -4400,7 +4414,7 @@ pub function carry_held(c: Carry, b: i32, pos: i32): i32 {
   return 0 - 1;
 }
 
-function reuse_pairs(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, off: boolean, carry: Carry): ReusePairs {
+function reuse_pairs(f: ssasem.Func, p: Plan, idx: i32[][], at: i32[], b: ssa.SBlock, off: boolean, carry: Carry): ReusePairs {
   let into: i32 = util.index_of_i32(carry.to, b.id);
   let tokens: i32[] = [];
   let builds: i32[] = [];
@@ -4423,7 +4437,7 @@ function reuse_pairs(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, off: 
         pending = 0 - 1;
       } else {
         if (claims >= 0 && pending >= 0
-          && claims == donor_slots(f, b, pending)
+          && claims == donor_slots(f, at, b, pending)
           && util.index_of_i32(ins.args, pending) < 0) {
           builds = builds.with(pos, pending);
           tokens = tokens.with(pending_at, pending);
@@ -4453,7 +4467,7 @@ function reuse_pairs(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, off: 
           // has already built into and is returning live.
           for d in step.drops {
             if (selfs[pos] < 0 && d != ins.result && !static_box(p, d)
-              && donor_slots(f, b, d) == claims
+              && donor_slots(f, at, b, d) == claims
               && util.index_of_i32(ins.args, d) < 0) {
               selfs = selfs.with(pos, d);
             }
@@ -4468,7 +4482,7 @@ function reuse_pairs(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, off: 
         // pairing, which spends it on the spot rather than saving it.
         if (pending < 0 && claims < 0) {
           for d in step.drops {
-            let sl: i32 = donor_slots(f, b, d);
+            let sl: i32 = donor_slots(f, at, b, d);
             if (pending < 0 && sl >= 0 && !static_box(p, d) && claimed_after(claims_tab, sl, pos)) {
               pending = d;
               pending_at = pos;
