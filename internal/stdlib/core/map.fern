@@ -912,6 +912,18 @@ pub function __map_set_impl(m: usize, k: usize, v: usize): usize {
   return __map_set_keyed_impl(m, k, v, __map_hash_str, __map_eq_str);
 }
 
+// __map_put_impl is __map_put_keyed for the builtin key kinds.
+pub function __map_put_impl(m: usize, k: usize, v: usize): usize {
+  let keyKind: i32 = __load_i32(__load_ptr(m) + 8);
+  if (keyKind == 0) {
+    return __map_put_keyed(m, k, v, __map_hash_scalar, __map_eq_scalar);
+  }
+  if (keyKind == 2) {
+    return __map_put_keyed(m, k, v, __map_hash_wide, __map_eq_wide);
+  }
+  return __map_put_keyed(m, k, v, __map_hash_str, __map_eq_str);
+}
+
 // Snapshot a scalar column (keys or values) into a fresh array.
 // `kvOffset` selects the column within each entry. Insertion order is
 // preserved up to any deletions (swap-with-last reorders past the deleted
@@ -1664,6 +1676,16 @@ function __map_grow_keyed(m: usize, hash_fn: (usize) => i32): usize {
 
 pub function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
   m = __map_cow_inplace(m);
+  __map_put_keyed(m, k, v, hash_fn, eq_fn);
+  return m;
+}
+
+// __map_put_keyed sets k to v in a map its caller has already made its own,
+// and answers the value the entry held before, or 0 for a new entry. A kind
+// __map_dec_value releases is already released by then; a box value is not, so
+// a caller that inserts boxes takes the old one from here instead of looking
+// the key up a second time first.
+pub function __map_put_keyed(m: usize, k: usize, v: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
   let buf: usize = __load_ptr(m);
   let cap: i32 = __load_i32(buf);
   let len_: i32 = __load_i32(buf + 4);
@@ -1697,9 +1719,10 @@ pub function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize)
   if (homeB == 0 - 1) {
     insertSlot = bucket;
   } else if (homeB >= 0 && eq_fn(__load_ptr(entriesBase + homeB * entryStride), k)) {
-    __map_dec_value(buf, __load_ptr(entriesBase + homeB * entryStride + ptrW));
+    let old: usize = __load_ptr(entriesBase + homeB * entryStride + ptrW);
+    __map_dec_value(buf, old);
     __store_ptr(entriesBase + homeB * entryStride + ptrW, v);
-    return m;
+    return old;
   }
   let lo: u64 = __map_swar_lo();
   let hi: u64 = __map_swar_hi();
@@ -1718,9 +1741,10 @@ pub function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize)
       let b: i32 = __load_i32(buf + __map_hdr(buf) + pos * 4);
       let entryK: usize = __load_ptr(entriesBase + b * entryStride);
       if (eq_fn(entryK, k)) {
-        __map_dec_value(buf, __load_ptr(entriesBase + b * entryStride + ptrW));
+        let old: usize = __load_ptr(entriesBase + b * entryStride + ptrW);
+        __map_dec_value(buf, old);
         __store_ptr(entriesBase + b * entryStride + ptrW, v);
-        return m;
+        return old;
       }
       hits = hits & hits - 1 as u64;
     }
@@ -1745,7 +1769,7 @@ pub function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize)
   __store_i32(buf + __map_hdr(buf) + insertSlot * 4, len_);
   __map_ctrl_set(ctrlBase, cap, insertSlot, h2);
   __store_i32(buf + 4, len_ + 1);
-  return m;
+  return 0;
 }
 
 pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): boolean {

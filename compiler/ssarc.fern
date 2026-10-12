@@ -3238,7 +3238,7 @@ function routed_cursor(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
 // overwrite keeps the equal key already in the column, so the entry count not
 // growing is what says the arriving unit is released. An overwrite of a box
 // likewise releases the box it supersedes, which core/map leaves to its
-// caller and which is read out before the set.
+// caller and which the put hands back.
 function routed_insert(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let t: typeinfo.Type = f.values[ins.args[0]];
   let res: i32 = scratch_base(f);
@@ -3258,14 +3258,11 @@ function routed_insert(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
     r = emit(r, ir.op_call_direct("__map_len_impl", 1));
     r = emit(r, ir.op_store_local(before));
   }
-  if (boxed_val) {
-    r = read_at_key(r, f, ins, res, "__map_lookup_val", old_val);
-  }
   r = emit(r, ir.op_load_local(res));
   r = key_operand(r, f, ins);
   r = routed_slot(r, ins.args[2], ssasem.map_value(t));
-  r = map_entry(r, f, ins, "__map_set_impl", "__map_set_keyed_impl", 3);
-  r = emit(r, ir.op_store_local(res));
+  r = map_entry(r, f, ins, "__map_put_impl", "__map_put_keyed", 3);
+  r = emit(r, ir.op_store_local(old_val));
   if (counted_key || cell_key || boxed_val) {
     r = emit(r, ir.op_load_local(res));
     r = emit(r, ir.op_call_direct("__map_len_impl", 1));

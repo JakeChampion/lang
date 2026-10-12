@@ -179,6 +179,10 @@ pub function table(): Table {
   // freed outside any count.
   rows = add(rows, ["__map_cell", "__map_cell_free"], inert(result_none()));
   rows = add(rows, ["__map_set_impl", "__map_set_keyed_impl"], sig_also(0, effect_move(), result_fresh(), [2], [1]));
+  // The set into a map the caller already holds alone: the map keeps the
+  // caller's unit, the value is consumed, and the answer is the box the entry
+  // held before, which the caller releases.
+  rows = add(rows, ["__map_put_impl", "__map_put_keyed"], sig_also(2, effect_release(), result_unknown(), [], [1]));
   rows = add(rows, ["__map_iter_impl"], sig(0, effect_move(), result_fresh()));
   rows = add(rows, ["__map_cow_inplace"], sig(0, effect_unsure(), result_fresh()));
   rows = add(rows, ["__map_get_or_impl", "__map_get_or_keyed_impl"], inert(result_marked()));
