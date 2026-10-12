@@ -240,6 +240,6 @@ aarch64/perceus_deriv.ir	113782904
 aarch64/perceus_nqueens.text	1600
 aarch64/perceus_nqueens.ir	132085204
 aarch64/perceus_rbtree.text	3581
-aarch64/perceus_rbtree.ir	113234678
+aarch64/perceus_rbtree.ir	110500918
 aarch64/perceus_rbtree_ck.text	3693
-aarch64/perceus_rbtree_ck.ir	123640690
+aarch64/perceus_rbtree_ck.ir	120906930
