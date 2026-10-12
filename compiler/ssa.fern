@@ -2020,8 +2020,9 @@ function index_of_reg(a: i32[], x: i32): i32 {
 // `hints.hint[v]`, its phi mate, before any other: when the slot is free, or
 // when the mate still holds it and `hints.take_over[v]` says the two were
 // found not to interfere. The edge between them then moves nothing. Failing
-// that it takes the slot of one of the values it reads (a phi's operands, or
-// the operands a two-address op computes over) when no value in that slot is
+// that it takes the slot of its mate or of one of the values it reads (a
+// phi's operands, or the operands a two-address op computes over), the mate
+// first, when no value in that slot is
 // live where it is defined, nor it where they are (path_slot), although their
 // intervals meet: an else-if chain inside a loop merges each arm's value with
 // the loop header's phi, whose interval covers the whole body when it is read
@@ -2042,9 +2043,17 @@ function assign_spill_slots(f: SFunc, shape: SlotShape, lo: i32[], hi: i32[], re
     if (hi[v] < 0 || reg_of[v] >= 0) {
       continue;
     }
-    let s: i32 = hinted_slot(slot_end, holder, reg_of, hints.hint[v], from[v], hints.take_over[v]);
+    let h: i32 = hints.hint[v];
+    let s: i32 = hinted_slot(slot_end, holder, reg_of, h, from[v], hints.take_over[v]);
     if (s < 0 && def_pos[v] >= 0) {
       let reads: i32[] = slot_operands(f, shape, reg_of, v);
+      if (h >= 0 && reg_of[h] < 0 - 1) {
+        let mate_first: i32[] = [h];
+        for r in reads {
+          mate_first = mate_first.append(r);
+        }
+        reads = mate_first;
+      }
       if (reads.len() > 0 && !built) {
         sites = read_sites(f, shape.at, shape.blk_start);
         built = true;
