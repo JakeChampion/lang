@@ -1,0 +1,186 @@
+import "std/test";
+import "std/headers";
+import "std/http/trace";
+import "std/option";
+import "std/i32";
+
+// tests/stdlib/http_trace_test.fern — std/http/trace: W3C Trace Context's
+// own `traceparent` example read and written back; the malformed forms
+// refused (uppercase, all-zero ids, version ff, a version-00 field with a
+// tail, a later version whose tail is not a field); `tracestate` kept when
+// well formed and dropped otherwise; a server's span continuing the
+// caller's trace, or starting one; ids drawn from the caller's randomness.
+
+const EXAMPLE: string = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+
+// A deterministic randomness: 1, 2, 3, ... per draw.
+function counter(): () => i32 {
+  let n: Cell[i32] = cell_new(0);
+  return (): i32 => {
+    n.set(n.get() + 1);
+    return n.get();
+  };
+}
+
+function fields(pairs: string[]): HeaderMap {
+  let h: HeaderMap = headers.header_map_new();
+  let i: i32 = 0;
+  while (i + 1 < pairs.len()) {
+    h = h.append(pairs[i], pairs[i + 1]);
+    i = i + 2;
+  }
+  return h;
+}
+
+function test_the_spec_example_round_trips(): test.TestOutcome {
+  match (trace.parse(EXAMPLE)) {
+    Some(c) => {
+      if (c.trace_id != "4bf92f3577b34da6a3ce929d0e0e4736" || c.span_id != "00f067aa0ba902b7" || !c.sampled()) {
+        return test.fail("parsed " + c.trace_id + " " + c.span_id);
+      }
+      return test.assert_eq(c.header(), EXAMPLE);
+    },
+    None => {
+      return test.fail("the spec's example did not parse");
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function refused(v: string): boolean {
+  match (trace.parse(v)) {
+    Some(c) => {
+      return false;
+    },
+    None => {
+      return true;
+    }
+  }
+  return true;
+}
+
+function test_malformed_traceparents_are_refused(): test.TestOutcome {
+  let bad: string[] = [
+    "00-4BF92F3577B34DA6A3CE929D0E0E4736-00f067aa0ba902b7-01",
+    "00-00000000000000000000000000000000-00f067aa0ba902b7-01",
+    "00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01",
+    "ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01-what",
+    "01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01x",
+    "00-4bf92f3577b34da6a3ce929d0e0e473-00f067aa0ba902b7-01",
+    "00_4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-0g",
+    "",
+  ];
+  for v in bad {
+    if (!refused(v)) {
+      return test.fail("accepted: " + v);
+    }
+  }
+  if (refused("01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01-later")) {
+    return test.fail("refused a later version with a further field");
+  }
+  return test.pass();
+}
+
+function test_tracestate_is_kept_only_when_well_formed(): test.TestOutcome {
+  let good: string = "";
+  match (trace.parse_state("congo=t61rcWkgMzE, ,rojo=00f067aa0ba902b7,tenant@vendor=x")) {
+    Some(s) => {
+      good = s;
+    },
+    None => {
+      return test.fail("a valid tracestate was refused");
+    }
+  }
+  if (good != "congo=t61rcWkgMzE,rojo=00f067aa0ba902b7,tenant@vendor=x") {
+    return test.fail("normalised to " + good);
+  }
+  let bad: string[] = ["Congo=1", "congo=1,congo=2", "congo", "congo=a,b", "congo="];
+  for v in bad {
+    match (trace.parse_state(v)) {
+      Some(s) => {
+        return test.fail("accepted: " + v);
+      },
+      None => {}
+    }
+  }
+  let many: string[] = [];
+  let i: i32 = 0;
+  while (i < 33) {
+    many = many.append("k" + i.to_string() + "=v");
+    i = i + 1;
+  }
+  match (trace.parse_state(many.join(","))) {
+    Some(s) => {
+      return test.fail("accepted 33 members");
+    },
+    None => {}
+  }
+  return test.pass();
+}
+
+function test_from_headers_reads_one_traceparent(): test.TestOutcome {
+  match (trace.from_headers(fields(["traceparent", EXAMPLE, "tracestate", "rojo=1", "tracestate", "congo=2"]))) {
+    Some(c) => {
+      if (c.state != "rojo=1,congo=2") {
+        return test.fail("state: " + c.state);
+      }
+    },
+    None => {
+      return test.fail("a valid pair was refused");
+    }
+  }
+  match (trace.from_headers(fields(["traceparent", EXAMPLE, "tracestate", "Bad=1"]))) {
+    Some(c) => {
+      if (c.state != "") {
+        return test.fail("a malformed tracestate was kept: " + c.state);
+      }
+    },
+    None => {
+      return test.fail("a malformed tracestate dropped the traceparent");
+    }
+  }
+  match (trace.from_headers(fields(["traceparent", EXAMPLE, "traceparent", EXAMPLE]))) {
+    Some(c) => {
+      return test.fail("two traceparent fields were read");
+    },
+    None => {}
+  }
+  return test.pass();
+}
+
+function test_a_server_continues_or_starts_the_trace(): test.TestOutcome {
+  let continued: trace.Context = trace.continue_from(fields(["traceparent", EXAMPLE, "tracestate", "rojo=1"]), counter());
+  if (continued.trace_id != "4bf92f3577b34da6a3ce929d0e0e4736" || continued.span_id != "0000000100000002" || continued.state != "rojo=1") {
+    return test.fail("continued: " + continued.header() + " " + continued.state);
+  }
+  let started: trace.Context = trace.continue_from(fields(["traceparent", "garbage"]), counter());
+  if (started.header() != "00-00000001000000020000000300000004-0000000500000006-03") {
+    return test.fail("started: " + started.header());
+  }
+  let zero: trace.Context = trace.start((): i32 => 0);
+  return test.assert_eq(zero.header(), "00-00000000000000000000000000000001-0000000000000001-03");
+}
+
+function test_inject_writes_the_span_onward(): test.TestOutcome {
+  let c: trace.Context = trace.Context { trace_id: "4bf92f3577b34da6a3ce929d0e0e4736", span_id: "00f067aa0ba902b7", flags: 1, state: "" };
+  let h: HeaderMap = c.inject(fields(["tracestate", "stale=1", "accept", "*/*"]));
+  let parent: string = h.get("traceparent").unwrap_or("");
+  if (parent != EXAMPLE || h.has("tracestate")) {
+    return test.fail("injected " + parent);
+  }
+  let with_state: HeaderMap = trace.Context { ...c, state: "rojo=1" }.inject(headers.header_map_new());
+  return test.assert_eq(with_state.get("tracestate").unwrap_or(""), "rojo=1");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/http/trace");
+  r = r.it("the spec's example round-trips", test_the_spec_example_round_trips);
+  r = r.it("malformed traceparents are refused", test_malformed_traceparents_are_refused);
+  r = r.it("tracestate is kept only when well formed", test_tracestate_is_kept_only_when_well_formed);
+  r = r.it("from_headers reads one traceparent", test_from_headers_reads_one_traceparent);
+  r = r.it("a server continues or starts the trace", test_a_server_continues_or_starts_the_trace);
+  r = r.it("inject writes the span onward", test_inject_writes_the_span_onward);
+  return r.finish();
+}

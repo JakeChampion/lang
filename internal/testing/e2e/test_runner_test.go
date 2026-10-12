@@ -1196,6 +1196,12 @@ func TestRunnerHTTPForwardedExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "http_forwarded", "std/http/forwarded", 14)
 }
 
+// `tests/stdlib/http_trace_test.fern` reads, writes and continues W3C Trace
+// Context's `traceparent` and `tracestate`, refusing the malformed forms.
+func TestRunnerHTTPTraceExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_trace", "std/http/trace", 6)
+}
+
 // `tests/stdlib/brotli_test.fern` decodes streams the reference brotli
 // wrote and one built by hand.
 func TestRunnerBrotliExamplePasses(t *testing.T) {
@@ -4191,7 +4197,8 @@ func TestRunnerHttpBodyExample(t *testing.T) {
 
 // `tests/stdlib/mock_platform_canned_test.fern` pins the mock's canned
 // answers (#9854): `env_set`, `now_set`, `random_set`, `http_set`,
-// `deadline_set` and `cancel` reach the handler through the bag, the fixed
+// `deadline_set`, `cancel` and `trace_set` reach the handler through the
+// bag, the fixed
 // values apply without them, a canned row is not a call and survives
 // `reset`, and a value with tabs and newlines round-trips.
 func TestRunnerMockPlatformCannedExample(t *testing.T) {
@@ -4201,7 +4208,7 @@ func TestRunnerMockPlatformCannedExample(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: mock_platform.MockPlatform canned answers", "# pass 10", "# fail 0", "1..10"} {
+	for _, w := range []string{"# Suite: mock_platform.MockPlatform canned answers", "# pass 11", "# fail 0", "1..11"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

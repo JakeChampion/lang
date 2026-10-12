@@ -7,6 +7,9 @@ import "std/mock_platform";
 import "std/fetch";
 import "std/http";
 import "std/time";
+import "std/http/trace";
+import "std/utf8";
+import "std/string";
 
 // tests/stdlib/sim_platform_test.fern — a handler's platform over the
 // simulation (#9855): the sim platform answers the clock, randomness,
@@ -221,6 +224,40 @@ function test_the_deadline_cancels_on_the_sims_clock(): test.TestOutcome {
   return test.assert_eq(__until_cancelled(__plat(1)), "100 steps, no deadline");
 }
 
+// The traceparent `plat.http` sent upstream, as the network saw it.
+function __sent_traceparent(n: sim_fetch.Net): string {
+  let text: string = "";
+  match (utf8.from_bytes(n.sent(n.sent_count() - 1))) {
+    Some(t) => {
+      text = t;
+    },
+    None => {
+      return "<not utf-8>";
+    }
+  }
+  for line in text.split("\r\n") {
+    if (line.to_lower().starts_with("traceparent:")) {
+      return line.drop(12).trim();
+    }
+  }
+  return "";
+}
+
+function test_http_carries_the_span_upstream(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d);
+  let span: trace.Context = trace.Context { trace_id: "4bf92f3577b34da6a3ce929d0e0e4736", span_id: "00f067aa0ba902b7", flags: 1, state: "" };
+  let p: sim_platform.SimPlatform = sim_platform.new(d, n).with_trace(span);
+  p.http(fetch.get("http://example.test/"));
+  let sent: string = __sent_traceparent(n);
+  if (!sent.starts_with("00-4bf92f3577b34da6a3ce929d0e0e4736-") || sent.ends_with("-00f067aa0ba902b7-01") || !sent.ends_with("-01")) {
+    return test.fail("sent " + sent);
+  }
+  let own: string = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+  p.http(fetch.get("http://example.test/").with_header("traceparent", own));
+  return test.assert_eq(__sent_traceparent(n), own);
+}
+
 function test_a_handler_runs_over_the_simulation(): test.TestOutcome {
   let p: sim_platform.SimPlatform = __plat(1);
   p.config_set("REGION", "eu-west");
@@ -240,5 +277,6 @@ function main(): i32 {
   t = t.it("a secret is logged by name only", test_a_secret_is_logged_by_name_only);
   t = t.it("a handler runs over the simulation", test_a_handler_runs_over_the_simulation);
   t = t.it("the deadline cancels on the sim's clock", test_the_deadline_cancels_on_the_sims_clock);
+  t = t.it("http carries the span upstream", test_http_carries_the_span_upstream);
   return t.finish();
 }

@@ -1,0 +1,271 @@
+// std/http/trace — W3C Trace Context: the `traceparent` and `tracestate`
+// fields that carry a distributed trace across HTTP hops, read, written and
+// continued.
+//
+//     import "std/http/trace";
+//
+//     let span: trace.Context = trace.continue_from(req.headers, () => plat.random_i32());
+//     let out: HeaderMap = span.child(() => plat.random_i32()).inject(headers);
+//
+// `traceparent` names the trace and the span that sent the request:
+// `00-<trace-id>-<parent-id>-<flags>`, 32 and 16 lowercase hex digits, and
+// two more for the flags, bit 0 saying the caller sampled the trace and bit
+// 1 (Level 2) that the trace id is random. A field that does not parse, an
+// id of all zeros, or a version of `ff` is ignored whole and the trace starts
+// afresh (§3.2.2); a later version is read by the version-00 layout, its
+// further fields after a `-`. `tracestate` is the vendors' list of
+// `key=value` members, read only beside a valid `traceparent`, refused whole
+// when a member is malformed, a key repeats, or there are more than 32.
+//
+// Ids come from the caller's randomness, a `() => i32` such as
+// `plat.random_i32`, so a simulated platform's seed decides them.
+
+import "std/headers";
+
+// `Context` — one span of a trace: the trace it belongs to, its own span
+// id, the flags it carries, and the vendors' `tracestate`, "" for none.
+pub struct Context { trace_id: string, span_id: string, flags: i32, state: string }
+
+// `sampled()` — whether the trace is recorded (flag bit 0).
+pub function (c: Context) sampled(): boolean {
+  return (c.flags & 1) != 0;
+}
+
+// `header()` — the `traceparent` value naming this span.
+pub function (c: Context) header(): string {
+  return "00-" + c.trace_id + "-" + c.span_id + "-" + __hex(c.flags, 2);
+}
+
+// `inject(h)` — `h` with this span's `traceparent`, and its `tracestate`
+// when there is one, replacing what `h` held.
+pub function (c: Context) inject(h: HeaderMap): HeaderMap {
+  let out: HeaderMap = h.set("traceparent", c.header());
+  if (c.state.len() == 0) {
+    return out.remove("tracestate");
+  }
+  return out.set("tracestate", c.state);
+}
+
+// `child(random)` — a new span of the same trace, sent on from this one:
+// the trace id, flags and `tracestate` kept, the span id fresh.
+pub function (c: Context) child(random: () => i32): Context {
+  return Context { ...c, span_id: __id(random, 2) };
+}
+
+// `start(random)` — the root span of a new trace, sampled, its random trace
+// id flagged so (Level 2).
+pub function start(random: () => i32): Context {
+  return Context { trace_id: __id(random, 4), span_id: __id(random, 2), flags: 3, state: "" };
+}
+
+// `continue_from(h, random)` — the span a server opens for a request whose
+// fields are `h`: a child of the caller's span when `h` carries a valid
+// `traceparent`, the root of a new trace otherwise.
+pub function continue_from(h: HeaderMap, random: () => i32): Context {
+  match (from_headers(h)) {
+    Some(caller) => {
+      return caller.child(random);
+    },
+    None => {
+      return start(random);
+    }
+  }
+  return start(random);
+}
+
+// `from_headers(h)` — the caller's span named by `h`: its one
+// `traceparent`, and the `tracestate` beside it when that is well formed.
+// None when there is no `traceparent`, more than one, or it does not parse.
+pub function from_headers(h: HeaderMap): Option[Context] {
+  let parents: string[] = h.get_all("traceparent");
+  if (parents.len() != 1) {
+    return None;
+  }
+  match (parse(parents[0])) {
+    Some(c) => {
+      match (parse_state(h.get_all("tracestate").join(","))) {
+        Some(s) => {
+          return Some(Context { ...c, state: s });
+        },
+        None => {
+          return Some(c);
+        }
+      }
+    },
+    None => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// `parse(v)` — the span a `traceparent` value names, None when it does not
+// parse (§3.2.2).
+pub function parse(v: string): Option[Context] {
+  let s: string = v.trim();
+  if (!__parent_shape(s)) {
+    return None;
+  }
+  let trace_id: string = s.drop(3).take(32);
+  let span_id: string = s.drop(36).take(16);
+  let flags: string = s.drop(53).take(2);
+  if (!__id_ok(trace_id) || !__id_ok(span_id) || !__lower_hex(flags)) {
+    return None;
+  }
+  return Some(Context { trace_id: trace_id, span_id: span_id, flags: __hex_value(flags), state: "" });
+}
+
+// __parent_shape(s) — whether `s` is laid out as a `traceparent`: its
+// dashes where the version-00 fields end, a version other than `ff`, and,
+// past those 55 characters, nothing for version 00 and a `-` before a later
+// version's further fields.
+function __parent_shape(s: string): boolean {
+  if (s.len() < 55 || s[2] != b'-' || s[35] != b'-' || s[52] != b'-') {
+    return false;
+  }
+  let version: string = s.take(2);
+  if (!__lower_hex(version) || version == "ff") {
+    return false;
+  }
+  return s.len() == 55 || version != "00" && s[55] == b'-';
+}
+
+// `parse_state(v)` — a `tracestate` value with its empty members dropped and
+// the rest joined by `,`, None when a member is malformed, a key repeats, or
+// there are more than 32 (§3.3.1).
+pub function parse_state(v: string): Option[string] {
+  let keys: string[] = [];
+  let members: string[] = [];
+  for raw in v.split(",") {
+    let m: string = raw.trim();
+    if (m.len() == 0) {
+      continue;
+    }
+    let eq: i32 = m.index_of("=");
+    if (eq <= 0 || !__state_key(m.take(eq)) || !__state_value(m.drop(eq + 1))) {
+      return None;
+    }
+    let key: string = m.take(eq);
+    for k in keys {
+      if (k == key) {
+        return None;
+      }
+    }
+    keys = keys.append(key);
+    members = members.append(m);
+  }
+  if (members.len() > 32) {
+    return None;
+  }
+  return Some(members.join(","));
+}
+
+// __state_key(k) — a simple key, `lcalpha` then up to 255 of `lcalpha`,
+// digits, `_ - * /`, or a multi-tenant key, `tenant@system`, the tenant up
+// to 241 such characters led by a letter or digit and the system up to 14
+// led by a letter.
+function __state_key(k: string): boolean {
+  let at: i32 = k.index_of("@");
+  if (at < 0) {
+    return k.len() <= 256 && __key_start(k[0], false) && __key_rest(k.drop(1));
+  }
+  return __tenant_key(k.take(at), k.drop(at + 1));
+}
+
+// __tenant_key(tenant, system) — the two halves of a multi-tenant key.
+function __tenant_key(tenant: string, system: string): boolean {
+  if (tenant.len() == 0 || tenant.len() > 241 || system.len() == 0 || system.len() > 14) {
+    return false;
+  }
+  return __key_start(tenant[0], true) && __key_rest(tenant.drop(1)) && __key_start(system[0], false) && __key_rest(system.drop(1));
+}
+
+function __key_start(b: u8, digit: boolean): boolean {
+  return b >= b'a' && b <= b'z' || digit && b >= b'0' && b <= b'9';
+}
+
+function __key_rest(s: string): boolean {
+  for b in s.bytes() {
+    let ok: boolean = b >= b'a' && b <= b'z' || b >= b'0' && b <= b'9' || b == b'_' || b == b'-' || b == b'*' || b == b'/';
+    if (!ok) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// __state_value(v) — 1 to 256 printable ASCII characters other than `,`
+// and `=`, the last not a space.
+function __state_value(v: string): boolean {
+  if (v.len() == 0 || v.len() > 256 || v[v.len() - 1] == b' ') {
+    return false;
+  }
+  for b in v.bytes() {
+    if (b < 0x20 as u8 || b > 0x7e as u8 || b == b',' || b == b'=') {
+      return false;
+    }
+  }
+  return true;
+}
+
+// __id_ok(s) — lowercase hex, not all zeros.
+function __id_ok(s: string): boolean {
+  if (!__lower_hex(s)) {
+    return false;
+  }
+  for b in s.bytes() {
+    if (b != b'0') {
+      return true;
+    }
+  }
+  return false;
+}
+
+function __lower_hex(s: string): boolean {
+  for b in s.bytes() {
+    if (!(b >= b'0' && b <= b'9' || b >= b'a' && b <= b'f')) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function __hex_value(s: string): i32 {
+  let n: i32 = 0;
+  for b in s.bytes() {
+    let d: i32 = (b - b'0') as i32;
+    if (b >= b'a') {
+      d = (b - b'a') as i32 + 10;
+    }
+    n = n * 16 + d;
+  }
+  return n;
+}
+
+// __id(random, words) — `words` draws as 8 hex digits each, the last digit
+// forced to 1 when every draw was zero, since an all-zero id is invalid.
+function __id(random: () => i32, words: i32): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < words) {
+    out = out + __hex(random(), 8);
+    i = i + 1;
+  }
+  if (!__id_ok(out)) {
+    return out.take(out.len() - 1) + "1";
+  }
+  return out;
+}
+
+// __hex(n, digits) — the low `digits` nibbles of `n`, lowercase.
+function __hex(n: i32, digits: i32): string {
+  let alphabet: string = "0123456789abcdef";
+  let out: string = "";
+  let i: i32 = digits - 1;
+  while (i >= 0) {
+    let nib: i32 = n >> i * 4 & 15;
+    out = out + alphabet.drop(nib).take(1);
+    i = i - 1;
+  }
+  return out;
+}

@@ -203,6 +203,28 @@ function __bound(plat: platform.Platform): string {
   return "";
 }
 
+function test_the_trace_answers_what_was_canned(): test.TestOutcome {
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  let before: boolean = __traced(m);
+  m.trace_set("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+  if (before || !__traced(m)) {
+    return test.fail("trace before and after trace_set");
+  }
+  return test.pass();
+}
+
+function __traced(plat: platform.Platform): boolean {
+  match (plat.trace()) {
+    Some(c) => {
+      return c.span_id == "00f067aa0ba902b7";
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
+}
+
 function test_the_deadline_and_cancellation_answer_what_was_canned(): test.TestOutcome {
   let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
   let before: string = __bound(m);
@@ -227,5 +249,6 @@ function main(): i32 {
   t = t.it("config and secret answer what was canned", test_config_and_secret_answer_what_was_canned);
   t = t.it("a secret is logged by name only", test_a_secret_is_logged_by_name_only);
   t = t.it("the deadline and cancellation answer what was canned", test_the_deadline_and_cancellation_answer_what_was_canned);
+  t = t.it("the trace answers what was canned", test_the_trace_answers_what_was_canned);
   return t.finish();
 }

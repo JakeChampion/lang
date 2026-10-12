@@ -2058,6 +2058,8 @@ serializer.
   `std/zstd` and `std/brotli` are the codecs.
 - **Client address:** `std/http/forwarded` — `Forwarded` (RFC 7239) read
   and written, and the client found past the proxies a deployment trusts.
+- **Tracing:** `std/http/trace` — W3C Trace Context's `traceparent` and
+  `tracestate` read, written and continued across hops.
 - **Static files:** `std/http/static` — a directory's files with their
   validators, byte ranges and precompressed siblings.
 - **Status / classifiers:** `http_status_text`,
@@ -2374,6 +2376,44 @@ match (forwarded.trust(["10.0.0.0/8"])) {
 `tests/stdlib/http_forwarded_test.fern` is the suite;
 `TestForwardedServeInterp` and `TestForwardedServeX86_64` run the client walk
 under the serve loop with the socket's own peer.
+
+### `std/http/trace`
+
+W3C Trace Context: the fields that carry a distributed trace across HTTP
+hops.
+
+```fern
+import "std/http/trace";
+
+let span: trace.Context = trace.continue_from(req.headers, () => plat.random_i32());
+let onward: HeaderMap = span.child(() => plat.random_i32()).inject(headers);
+```
+
+- `Context { trace_id, span_id, flags, state }` — one span: 32 and 16
+  lowercase hex digits, the flags (bit 0 sampled, bit 1 a random trace id,
+  Level 2), and the `tracestate` list, "" for none. `(c).header()` is its
+  `traceparent`, `(c).sampled()` reads bit 0, `(c).inject(h)` writes both
+  fields into a `HeaderMap`, and `(c).child(random)` is the next span of
+  the same trace.
+- `parse(v)` — a `traceparent`, None when it does not parse: anything
+  but lowercase hex, an id of all zeros, version `ff`, a version-00 field
+  with more after it, or a later version whose further fields do not
+  follow a `-` (§3.2.2). `parse_state(v)` — a `tracestate` with its empty
+  members dropped, None when a member is malformed, a key repeats or there
+  are more than 32.
+- `from_headers(h)` — the caller's span: one `traceparent` (two are none)
+  and the `tracestate` beside it when that parses. `continue_from(h,
+  random)` is the span a server opens: a child of the caller's, or the
+  root of a new trace, sampled and flagged random, when there is no valid
+  caller. `start(random)` opens a root directly.
+- Ids are drawn from the caller's `() => i32`, `plat.random_i32` on a
+  host, so a simulated platform's seed decides them.
+
+`serve.Config { trace: true }` opens a span per request, which the handler
+reads as `plat.trace()` and `plat.http` carries upstream as a child
+(`platform.traced`), leaving a `traceparent` the handler set alone.
+`tests/stdlib/http_trace_test.fern` holds the spec's example and malformed
+forms; `TestTraceServeInterp` and `TestTraceServeX86_64` run the loop.
 
 ### `std/http/cookie`
 
@@ -3013,7 +3053,9 @@ points that run a handler under it.
   cancelled, its waits answering `async.cancelled()` from then on, and a
   handler that has not answered by then is answered 503 in its place,
   as Go's `http.TimeoutHandler` answers. A handler that never waits cannot
-  be cut off, so work between waits asks `plat.cancelled()`.
+  be cut off, so work between waits asks `plat.cancelled()`. `trace`
+  (false) opens a span per request (std/http/trace), continuing the
+  caller's `traceparent` or starting a trace, read as `plat.trace()`.
   `background_deadline` (30 s, as Workers bound `waitUntil`; 0 for no
   bound) is how long a response's background work may run on, the loop
   cancelling it then. A shutdown's drain waits for background work too,
@@ -3684,6 +3726,10 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   answered by, an `Option[i64]`: std/serve sets it from
   `Config.handler_deadline` and answers 503 in place of a later response.
   None for no bound.
+- `(plat).trace()` — the span the request runs in (std/http/trace), when
+  the platform carries one (`Host.with_trace`, which std/serve applies under
+  `Config.trace`); `(plat).http` sends a child of it upstream unless the
+  request already names a `traceparent`.
 - `(plat).cancelled()` — whether nothing the handler does any more reaches
   the client: the client reset the connection while the handler waited,
   or the deadline passed. Its waits answer at once from then on
@@ -3753,7 +3799,8 @@ mock's: `calls()` and `reset()` read and clear the log, a secret logged by
 its name alone. `(p).with_jar(jar)` gives it a cookie jar as
 `platform.Host.with_jar` does, `(p).with_allow(a)` an allow-list, and
 `(p).with_deadline(at)` a deadline on the sim's clock, which `cancelled`
-reports passed once the clock reaches it.
+reports passed once the clock reaches it, and `(p).with_trace(span)` a
+span its `http` continues, the child ids drawn from the sim's PRNG.
 
 ```fern
 let d: sim.Sim = sim.new(1);
@@ -3780,8 +3827,8 @@ assert_eq(m.calls()[0].name, "log");
 Mocked capabilities answer what the test canned, else a fixed value — 0
 for `now_ms` / `elapsed_ns` / `random_i32`, `None` for `env` / `config` /
 `secret`, `Err(Connect(ConnectionRefused))` for `http`, `NotFound` for
-`stat`, None for `peer` and `deadline`, false for `cancelled`, and `log`
-swallows the line.
+`stat`, None for `peer`, `deadline` and `trace`, false for `cancelled`,
+and `log` swallows the line.
 
 - `mock_platform_new()`.
 - `(m).env_set(name, value)`, `(m).config_set(name, value)`,
@@ -3797,7 +3844,8 @@ swallows the line.
 - `(m).peer_set(addr)` — what `peer` answers, the `SocketAddr` `addr`
   spells (`192.0.2.7:51234`, `[2001:db8::1]:443`).
 - `(m).deadline_set(at)`, `(m).cancel()` — `deadline` answers `Some(at)`,
-  `cancelled` true.
+  `cancelled` true. `(m).trace_set(traceparent)` — `trace` answers the span
+  the value names.
 - `(m).file_set(path, content, mtime)`, `(m).dir_set(path)` — what
   `stat` answers for `path`; `(m).materialize(resp)` is `resp` with a
   `BodyFile` or `BodyFileRanges` naming a canned file read into its bytes,

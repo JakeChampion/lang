@@ -99,6 +99,7 @@
 import "std/async";
 import "std/platform";
 import "std/fetch";
+import "std/http/trace";
 import "std/http/cookie";
 import "std/http/forwarded";
 import "std/http";
@@ -169,7 +170,10 @@ function __recv_deadline_default(): Duration {
 // answered 503 in its place; and how long a response's background work
 // (`HttpResponse.background`, std/http's `with_background`) may run on
 // after it, the loop cancelling it then (`background_deadline`, 30 s as
-// Cloudflare Workers bound `waitUntil`; 0 for no bound).
+// Cloudflare Workers bound `waitUntil`; 0 for no bound); and whether each
+// request opens a span (`trace`, std/http/trace), continuing the caller's
+// trace from its `traceparent` or starting one, which the handler reads as
+// `plat.trace()` and `plat.http` carries upstream.
 pub struct Config {
   backlog: i32,
   reuse_port: boolean,
@@ -195,6 +199,7 @@ pub struct Config {
   http_allow: Option[fetch.Allow],
   handler_deadline: Duration,
   background_deadline: Duration,
+  trace: boolean,
   proxy_protocol: boolean,
 }
 
@@ -203,10 +208,10 @@ pub struct Config {
 // 1000 requests per connection, 1024 connections open and 100 of them per
 // client, 1024 handlers or chunk producers parked at once, a worker per
 // processing unit, no handler deadline, background work cut off after
-// 30 s, and
+// 30 s, no tracing, and
 // the parser's `http_limits()`, bodies read whole before the handler runs.
 pub function config(): Config {
-  return Config { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), background_deadline: time.duration_seconds(30 as i64), proxy_protocol: false };
+  return Config { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), background_deadline: time.duration_seconds(30 as i64), trace: false, proxy_protocol: false };
 }
 
 // (c).with_tls(cfg) — every connection speaks TLS 1.3 under `cfg`
@@ -2988,11 +2993,10 @@ function __serve_start(handler: (HttpRequest, platform.Host) => HttpResponse, pl
   if (__serve_not_ready(f, opts, stop)) {
     return HandlerDone(http.text(503, ""));
   }
-  let ends: i64 = __bound_ends(opts.handler_deadline, plat.elapsed_ns());
-  if (ends >= 0 as i64) {
-    plat = plat.with_deadline(ends);
-  }
   let req: HttpRequest = f.request;
+  let held: (platform.Host, i64) = __request_host(plat, req, opts);
+  plat = held.0;
+  let ends: i64 = held.1;
   match (async.call_start(handler, req, plat)) {
     Done(resp) => {
       return HandlerDone(__in_time(resp, ends, plat.elapsed_ns()));
@@ -3028,12 +3032,26 @@ function __in_time(resp: HttpResponse, ends: i64, now: i64): HttpResponse {
 // __serve_step(handler, st, req, plat, opts) — the stateful handler run for
 // the request under its deadline, as `__serve_start` runs `run`'s.
 function __serve_step[S](handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), st: S, req: HttpRequest, plat: platform.Host, opts: Config): (S, HttpResponse) {
+  let held: (platform.Host, i64) = __request_host(plat, req, opts);
+  let stepped: (S, HttpResponse) = handler(st, req, held.0);
+  return (stepped.0, __in_time(stepped.1, held.1, held.0.elapsed_ns()));
+}
+
+// __request_host(plat, req, opts) — the host a handler runs `req` under,
+// and the monotonic nanosecond it must answer by (-1 for none): the
+// connection's host with the request's deadline (`Config.handler_deadline`)
+// and, when `Config.trace` asks, the span the request opens, continuing the
+// caller's trace from its `traceparent`.
+function __request_host(plat: platform.Host, req: HttpRequest, opts: Config): (platform.Host, i64) {
   let ends: i64 = __bound_ends(opts.handler_deadline, plat.elapsed_ns());
   if (ends >= 0 as i64) {
     plat = plat.with_deadline(ends);
   }
-  let stepped: (S, HttpResponse) = handler(st, req, plat);
-  return (stepped.0, __in_time(stepped.1, ends, plat.elapsed_ns()));
+  if (opts.trace) {
+    let host: platform.Host = plat;
+    plat = plat.with_trace(trace.continue_from(req.headers, (): i32 => host.random_i32()));
+  }
+  return (plat, ends);
 }
 
 // __serve_park(drv, c, fls, at, fl, opts) — the connection at `at`

@@ -20,11 +20,12 @@
 // What a mocked capability RETURNS is what the test canned for it, or a
 // fixed value: `env_set`, `config_set`, `secret_set`, `now_set`,
 // `elapsed_set`, `random_set`, `http_set`, `file_set`, `dir_set`,
-// `peer_set`, `deadline_set` and `cancel` record
+// `peer_set`, `deadline_set`, `trace_set` and `cancel` record
 // an answer the mock gives from then on; otherwise `now_ms` and
 // `elapsed_ns` answer 0, `env`, `config` and `secret` answer None,
 // `random_i32` answers 0, `log` discards the line, `stat` answers
-// `NotFound`, `peer` and `deadline` answer None, `cancelled` answers false,
+// `NotFound`, `peer`, `deadline` and `trace` answer None, `cancelled`
+// answers false,
 // and `http` answers `Err(Connect(ConnectionRefused))` — what a
 // real request gives for a host that is not listening, so a handler that
 // already handles a failed request handles a mocked one. A canned answer is
@@ -36,6 +37,7 @@ import "std/platform";
 import "std/fetch";
 import "std/time";
 import "std/net";
+import "std/http/trace";
 import "std/http";
 import "core/int";
 
@@ -131,6 +133,19 @@ impl platform.Platform for MockPlatform {
     match (self.canned("deadline")) {
       Some(at) => {
         return Some(__canned_i64(self, "deadline", 0 as i64));
+      },
+      None => {
+        return None;
+      }
+    }
+    return None;
+  }
+
+  function trace(self: MockPlatform): Option[trace.Context] {
+    self.record("trace", "");
+    match (self.canned("trace")) {
+      Some(v) => {
+        return trace.parse(v);
       },
       None => {
         return None;
@@ -256,6 +271,12 @@ pub function (m: MockPlatform) peer_set(addr: string): void {
 // `Some(at)` from now on.
 pub function (m: MockPlatform) deadline_set(at: i64): void {
   m.can("deadline", at.to_string());
+}
+
+// `(m: MockPlatform).trace_set(traceparent)` — `plat.trace()` answers the
+// span the `traceparent` value names from now on.
+pub function (m: MockPlatform) trace_set(traceparent: string): void {
+  m.can("trace", traceparent);
 }
 
 // `(m: MockPlatform).cancel()` — `plat.cancelled()` answers true from now

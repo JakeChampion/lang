@@ -31,6 +31,7 @@ import "std/http/cookie";
 import "std/async";
 import "std/time";
 import "std/net";
+import "std/http/trace";
 
 pub trait Platform {
   // `.log(msg)` — write one diagnostic line to the platform's log sink.
@@ -113,6 +114,13 @@ pub trait Platform {
   // at once from then on (`plat.http` with `Cancelled`), so work between
   // waits asks here to stop early.
   function cancelled(self: Self): boolean;
+
+  // `.trace()` — the span this request runs in (std/http/trace), when the
+  // platform carries one: std/serve opens one per request when
+  // `Config.trace` asks, continuing the caller's trace from its
+  // `traceparent`. `.http` sends a child of it, so the trace follows the
+  // request upstream.
+  function trace(self: Self): Option[trace.Context];
 }
 
 // `Host` — the platform that performs its effects on the machine it runs
@@ -125,9 +133,9 @@ pub trait Platform {
 // browser's would, once `with_jar` gave it one; None sends and keeps none.
 // `allow` is the hosts its `http` may reach, once `with_allow` named them;
 // None reaches any global address. `peer` is the connection's peer, which
-// std/serve sets per connection, and `deadline` the request's, which it sets
-// per request.
-pub struct Host { reactor: i32, pool: fetch.Idle, jar: Option[cookie.Jar], allow: Option[fetch.Allow], peer: Option[net.SocketAddr], deadline: Option[i64] }
+// std/serve sets per connection, and `deadline` and `trace` the request's,
+// which it sets per request.
+pub struct Host { reactor: i32, pool: fetch.Idle, jar: Option[cookie.Jar], allow: Option[fetch.Allow], peer: Option[net.SocketAddr], deadline: Option[i64], trace: Option[trace.Context] }
 
 // `host()` — a host platform with no reactor and an empty pool, for code
 // that has to build one: a test driving a handler directly, or a caller of
@@ -141,7 +149,7 @@ pub function host(): Host {
 // `host_on(reactor)` — the host platform of the worker whose reactor is
 // `reactor`; std/serve builds one per worker loop.
 pub function host_on(reactor: i32): Host {
-  return Host { reactor: reactor, pool: fetch.idle(), jar: None, allow: None, peer: None, deadline: None };
+  return Host { reactor: reactor, pool: fetch.idle(), jar: None, allow: None, peer: None, deadline: None, trace: None };
 }
 
 // `(h).with_peer(addr)` — the host answering `peer()` with `addr`: what
@@ -171,6 +179,29 @@ pub function (h: Host) with_allow(a: fetch.Allow): Host {
 // `Config.handler_deadline` bounds it.
 pub function (h: Host) with_deadline(at: i64): Host {
   return Host { ...h, deadline: Some(at) };
+}
+
+// `(h).with_trace(span)` — the host whose request runs in `span`: what
+// std/serve hands a handler when `Config.trace` asks.
+pub function (h: Host) with_trace(span: trace.Context): Host {
+  return Host { ...h, trace: Some(span) };
+}
+
+// `traced(req, span, random)` — `req` sent as a child of `span`, a fresh
+// span id drawn from `random`, unless the caller set its own `traceparent`.
+pub function traced(req: fetch.Request, span: Option[trace.Context], random: () => i32): fetch.Request {
+  match (span) {
+    Some(c) => {
+      if (req.headers.has("traceparent")) {
+        return req;
+      }
+      return fetch.Request { ...req, headers: c.child(random).inject(req.headers) };
+    },
+    None => {
+      return req;
+    }
+  }
+  return req;
 }
 
 // `passed(deadline, now)` — whether `now` has reached `deadline`; never for
@@ -222,7 +253,7 @@ impl Platform for Host {
   }
 
   function http(self: Host, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
-    return fetch.send_on(fetch.sockets_with(self.pool), req, fetch.Policy { ...fetch.public_policy(), jar: self.jar, allow: self.allow });
+    return fetch.send_on(fetch.sockets_with(self.pool), traced(req, self.trace, (): i32 => random_i32()), fetch.Policy { ...fetch.public_policy(), jar: self.jar, allow: self.allow });
   }
 
   function stat(self: Host, path: string): Result[FileStat, IoError] {
@@ -239,5 +270,9 @@ impl Platform for Host {
 
   function cancelled(self: Host): boolean {
     return async.task_cancelled() || passed(self.deadline, monotonic_ns());
+  }
+
+  function trace(self: Host): Option[trace.Context] {
+    return self.trace;
   }
 }
