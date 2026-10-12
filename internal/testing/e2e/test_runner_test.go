@@ -4174,10 +4174,10 @@ func TestRunnerHttpBodyExample(t *testing.T) {
 }
 
 // `tests/stdlib/mock_platform_canned_test.fern` pins the mock's canned
-// answers (#9854): `env_set`, `now_set`, `random_set` and `http_set` reach
-// the handler through the bag, the fixed values apply without them, a
-// canned row is not a call and survives `reset`, and a value with tabs and
-// newlines round-trips.
+// answers (#9854): `env_set`, `now_set`, `random_set`, `http_set`,
+// `deadline_set` and `cancel` reach the handler through the bag, the fixed
+// values apply without them, a canned row is not a call and survives
+// `reset`, and a value with tabs and newlines round-trips.
 func TestRunnerMockPlatformCannedExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/mock_platform_canned_test.fern")
@@ -4185,7 +4185,7 @@ func TestRunnerMockPlatformCannedExample(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: mock_platform.MockPlatform canned answers", "# pass 9", "# fail 0", "1..9"} {
+	for _, w := range []string{"# Suite: mock_platform.MockPlatform canned answers", "# pass 10", "# fail 0", "1..10"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

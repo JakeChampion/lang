@@ -86,6 +86,7 @@ pub function provided_names(): string[] {
     "__fern_task_timeout",
     "__fern_task_set_ready",
     "__fern_task_set_cancelled",
+    "__fern_task_cancelled",
     "__fern_task_mode",
     "__fern_task_push_w",
     "__fern_task_pop_w",

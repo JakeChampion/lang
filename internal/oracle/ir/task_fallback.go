@@ -15,6 +15,7 @@ var taskPrimitiveFallback = map[string]int32{
 	"__task_timeout":       -1,
 	"__task_set_ready":     0,
 	"__task_set_cancelled": 0,
+	"__task_cancelled":     0,
 }
 
 // taskPrimitiveArray names the primitive whose result is an i32 array: an

@@ -2132,6 +2132,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		"__task_timeout":       {Params: []ast.Type{i32T}, Result: i32T},
 		"__task_set_ready":     {Params: []ast.Type{i32T, i32T}, Result: ast.VoidType{}},
 		"__task_set_cancelled": {Params: []ast.Type{i32T}, Result: ast.VoidType{}},
+		"__task_cancelled":     {Params: []ast.Type{}, Result: i32T},
 	} {
 		c.info.FuncSigs[name] = sig
 	}

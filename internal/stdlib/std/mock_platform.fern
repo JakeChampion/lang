@@ -19,12 +19,13 @@
 //
 // What a mocked capability RETURNS is what the test canned for it, or a
 // fixed value: `env_set`, `config_set`, `secret_set`, `now_set`,
-// `elapsed_set`, `random_set`, `http_set`, `file_set`, `dir_set` and
-// `peer_set` record
+// `elapsed_set`, `random_set`, `http_set`, `file_set`, `dir_set`,
+// `peer_set`, `deadline_set` and `cancel` record
 // an answer the mock gives from then on; otherwise `now_ms` and
 // `elapsed_ns` answer 0, `env`, `config` and `secret` answer None,
 // `random_i32` answers 0, `log` discards the line, `stat` answers
-// `NotFound`, `peer` answers None, and `http` answers `Err(Connect(ConnectionRefused))` — what a
+// `NotFound`, `peer` and `deadline` answer None, `cancelled` answers false,
+// and `http` answers `Err(Connect(ConnectionRefused))` — what a
 // real request gives for a host that is not listening, so a handler that
 // already handles a failed request handles a mocked one. A canned answer is
 // a row of the same log, `canned`, tab, the capability's key, tab, the
@@ -125,6 +126,32 @@ impl platform.Platform for MockPlatform {
     return Err(NotFound(path));
   }
 
+  function deadline(self: MockPlatform): Option[i64] {
+    self.record("deadline", "");
+    match (self.canned("deadline")) {
+      Some(at) => {
+        return Some(__canned_i64(self, "deadline", 0 as i64));
+      },
+      None => {
+        return None;
+      }
+    }
+    return None;
+  }
+
+  function cancelled(self: MockPlatform): boolean {
+    self.record("cancelled", "");
+    match (self.canned("cancelled")) {
+      Some(c) => {
+        return true;
+      },
+      None => {
+        return false;
+      }
+    }
+    return false;
+  }
+
   function peer(self: MockPlatform): Option[net.SocketAddr] {
     self.record("peer", "");
     match (self.canned("peer")) {
@@ -223,6 +250,18 @@ pub function (m: MockPlatform) file_set(path: string, content: string, mtime: i6
 // `addr` spells (`192.0.2.7:51234`, `[2001:db8::1]:443`) from now on.
 pub function (m: MockPlatform) peer_set(addr: string): void {
   m.can("peer", addr);
+}
+
+// `(m: MockPlatform).deadline_set(at)` — `plat.deadline()` answers
+// `Some(at)` from now on.
+pub function (m: MockPlatform) deadline_set(at: i64): void {
+  m.can("deadline", at.to_string());
+}
+
+// `(m: MockPlatform).cancel()` — `plat.cancelled()` answers true from now
+// on.
+pub function (m: MockPlatform) cancel(): void {
+  m.can("cancelled", "");
 }
 
 // `(m: MockPlatform).dir_set(path)` — `plat.stat(path)` answers a

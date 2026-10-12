@@ -614,6 +614,13 @@ pub function task_cancel[T](t: Task[T]): TaskStatus[T] {
   return Cancelled;
 }
 
+// `task_cancelled()` — whether the task running this code was cancelled:
+// every wait from then on answers `cancelled()`, so a caller that went on
+// after one swallowed the answer asks here. False outside any task.
+pub function task_cancelled(): boolean {
+  return __task_cancelled() != 0;
+}
+
 // `task_free(t)` — hand the task's record back once it is done.
 pub function task_free[T](t: Task[T]): void {
   __task_free(t.id);

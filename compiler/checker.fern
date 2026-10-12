@@ -763,6 +763,9 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && name == "__task_set_cancelled") {
     return t_void();
   }
+  if (argc == 0 && name == "__task_cancelled") {
+    return t_i32();
+  }
   if (argc == 0 && name == "__heap_mark") {
     return t_i64();
   }
@@ -1003,6 +1006,9 @@ function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
   }
   if (name == "__task_set_cancelled") {
     return ([t_i32()], true);
+  }
+  if (name == "__task_cancelled") {
+    return ([], true);
   }
   if (name == "__heap_mark") {
     return ([], true);
@@ -16512,7 +16518,7 @@ function e079_visit_stmt(st: ast.Stmt, own acc: util.Diag[]): util.Diag[] {
 // list entry for entry.
 function registered_intrinsics(): string[] {
   return [
-    "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_wait",
+    "__task_cancelled", "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_wait",
     "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
     "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
     "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",

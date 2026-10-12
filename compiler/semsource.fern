@@ -7929,6 +7929,7 @@ function memory_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__task_timeout", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "__task_set_ready", params: [t_i32(), t_i32()], modes: [v, v], result: t_void() },
     ssasem.Contract { name: "__task_set_cancelled", params: [t_i32()], modes: [v], result: t_void() },
+    ssasem.Contract { name: "__task_cancelled", params: [], modes: [], result: t_i32() },
     ssasem.Contract { name: "__memcpy", params: [t_usize(), t_usize(), t_i32()], modes: [v, v, v], result: t_void() },
     ssasem.Contract { name: "__memset", params: [t_usize(), t_i32(), t_i32()], modes: [v, v, v], result: t_void() },
   ];
