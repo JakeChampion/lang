@@ -3850,6 +3850,15 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"e051-last-use-match-expr-read-after", lastUsePrelude + "enum E { A, B }\nfunction f(e: E): i32 { let w: W = mkw(1); let r: i32 = match (e) { A => eat(w), B => 0 }; return r + w.n; }\n"},
 		{"e051-last-use-same-twice", lastUsePrelude + "function both(own a: W, own b: W): i32 { return a.n + b.n; }\nfunction f(): i32 { let x: W = mkw(1); return both(x, x); }\n"},
 		{"e051-last-use-for-in", lastUsePrelude + "function f(): i32 { let t: i32 = 0; for i in [1, 2] { let w: W = mkw(i); t = t + eat(w); } return t; }\n"},
+		// A local the innermost loop body declares before the call is bound anew
+		// on every pass (#12260); one declared outside it, or in an outer loop,
+		// or twice, is not.
+		{"e051-last-use-loop-local", lastUsePrelude + "function f(): i32 { let t: i32 = 0; while (t < 3) { let b: i32[] = mk(t); t = t + keep(b, 1); } return t; }\n"},
+		{"e051-last-use-loop-local-destructure", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction f(): i32 { let t: i32 = 0; while (t < 3) { let (x, k) = pw(t); t = t + eat(x) + k + 1; } return t; }\n"},
+		{"e051-last-use-loop-local-in-if", lastUsePrelude + "function f(c: boolean): i32 { let t: i32 = 0; while (t < 3) { if (c) { let b: i32[] = mk(t); t = t + keep(b, 1); } t = t + 1; } return t; }\n"},
+		{"e051-last-use-loop-local-read-after", lastUsePrelude + "function f(): i32 { let t: i32 = 0; while (t < 3) { let b: i32[] = mk(t); t = t + keep(b, 1) + b.len(); } return t; }\n"},
+		{"e051-last-use-loop-local-inner-loop", lastUsePrelude + "function f(): i32 { let t: i32 = 0; while (t < 3) { let b: i32[] = mk(t); while (t < 2) { t = t + keep(b, 1); } t = t + 1; } return t; }\n"},
+		{"e051-last-use-loop-local-declared-twice", lastUsePrelude + "function f(): i32 { let t: i32 = 0; while (t < 3) { let b: i32[] = mk(t); t = t + keep(b, 1); } while (t < 6) { let b: i32[] = mk(t); t = t + keep(b, 1); } return t; }\n"},
 	}
 
 	for _, tc := range progs {

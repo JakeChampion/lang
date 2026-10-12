@@ -45,6 +45,26 @@ function main(): i32 {
 }
 `
 
+// ownLastUseLoopLocalSrc hands a local the loop body declares to an `own`
+// parameter on every pass (#12260), straight and through a destructure.
+const ownLastUseLoopLocalSrc = `struct W { d: i32[], n: i32 }
+@noinline function eat(own w: W): i32 { return w.n + w.d.len(); }
+@noinline function mkw(n: i32): W { return W { d: [n, n], n: n }; }
+@noinline function pw(n: i32): (W, i32) { return (mkw(n), n); }
+function main(): i32 {
+    let total: i32 = 0;
+    let i: i32 = 0;
+    while (i < 4) {
+        let w: W = mkw(i);
+        let (x, k) = pw(i + 1);
+        total = total + eat(w) + eat(x) + k;
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return total;
+}
+`
+
 // TestSelfHostOwnLastUseLocalSanitized runs the same hand-overs, and a local
 // reassigned before its hand-over, under the sanitizer and the leak census.
 func TestSelfHostOwnLastUseLocalSanitized(t *testing.T) {
@@ -59,6 +79,7 @@ func TestSelfHostOwnLastUseLocalSanitized(t *testing.T) {
 	}{
 		{"conformance", string(prog), 33},
 		{"reassigned", ownLastUseReassignSrc, 15},
+		{"loop-local", ownLastUseLoopLocalSrc, 42},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			stderr, code := cli.exitOf(t, c.src, "x86-64-linux", "FERN_SANITIZE=1")
