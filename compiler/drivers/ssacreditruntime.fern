@@ -112,4 +112,5 @@ pub function run(src: string, exiting: boolean): void {
     require(at >= 0 && owned.bodies[at].name == "drop" && f.symbol == f.receiver + ".drop", 129);
   }
   require(selected.finalizers.len() == 0, 130);
+  state.release();
 }

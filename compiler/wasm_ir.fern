@@ -3971,16 +3971,12 @@ pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerRes
   );
 }
 
-// ir_route_ok is the wasm routing decision as a PROBE: the use_ir default is
-// on, the typed lowering `sub` passes the gate (ircore.gate), and
-// ir_route_final admits it.
+// ir_route_ok is the wasm routing decision as a PROBE: the typed lowering
+// `sub` passes the gate (ircore.gate), and ir_route_final admits it.
 // emit_module_mode_or_error_sub makes the same decision
 // inline because it goes on to emit from that lowering; a driver's `-decide`
 // asks here so the probe cannot drift from the emitter it describes.
 pub function ir_route_ok(lm: parser.Module, component: boolean, io: boolean, sub: ircore.Sub): boolean {
-  if (!asmcore.new_state().use_ir) {
-    return false;
-  }
   let g: ircore.Lowered = ircore.gate(ircore.with_records(lm, sub), sub);
   return g.ok && ir_route_final(g.cache, component, io, module_is_proxy(lm));
 }
@@ -4047,19 +4043,17 @@ pub function emit_core_or_error_sub(mod: parser.Module, component: boolean, io: 
   }
   // The gate (ir_route_ok's decision, inline so the bodies it judged feed the
   // emit directly).
-  if (asmcore.new_state().use_ir) {
-    let g: ircore.Lowered = ircore.gate(lm, sub);
-    let cache: irtables.LowerResult[] = g.cache;
-    if (g.ok && ir_route_final(cache, component, io, module_is_proxy(lm))) {
-      return EmittedCore { wat: emit_ir_module_mode(lm, cache, mode, sub.switches, g.physical), needs: needs_of(cache) };
-    }
-    // A module the lowering took whole but the component framing cannot
-    // import for is not an IR bail, so name the op rather than blame the IR.
-    if (g.ok && component && wasm_ir_deferrals_ok(cache)) {
-      eprint("error: " + component_refused_need(needs_of(cache), io, module_is_proxy(lm))
-        + " is not supported in a wasm component: the component framing has no import for it (build with -emit core-module for a preview1 module)");
-      exit(1);
-    }
+  let g: ircore.Lowered = ircore.gate(lm, sub);
+  let cache: irtables.LowerResult[] = g.cache;
+  if (g.ok && ir_route_final(cache, component, io, module_is_proxy(lm))) {
+    return EmittedCore { wat: emit_ir_module_mode(lm, cache, mode, sub.switches, g.physical), needs: needs_of(cache) };
+  }
+  // A module the lowering took whole but the component framing cannot
+  // import for is not an IR bail, so name the op rather than blame the IR.
+  if (g.ok && component && wasm_ir_deferrals_ok(cache)) {
+    eprint("error: " + component_refused_need(needs_of(cache), io, module_is_proxy(lm))
+      + " is not supported in a wasm component: the component framing has no import for it (build with -emit core-module for a preview1 module)");
+    exit(1);
   }
   ircore.eprint_ir_ineligible();
   exit(1);
