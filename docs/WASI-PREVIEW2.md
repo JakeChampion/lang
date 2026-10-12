@@ -199,9 +199,10 @@ Auto-injected struct shape:
   (`http_limits().body`, 1 MiB); a longer one is answered 413 before
   `handle` runs, as the socket server answers it.
 - `HttpResponse { status: number, body: string, headers: HeaderMap,
-  trailers: HeaderMap }` — `status` is the i32 HTTP status code; `body`
-  is written verbatim; `trailers` are not sent, the outgoing body being
-  finished with none.
+  trailers: HeaderMap, background: Option[() => void] }` — `status` is
+  the i32 HTTP status code; `body` is written verbatim; `trailers` are
+  not sent, the outgoing body being finished with none; `background`
+  runs once the outgoing body is finished, before `handle` returns.
 For the targeted use cases (Fastly-Compute-style edge handlers
 that mostly consume the body, route by path, and emit JSON or
 HTML), this surface is enough to ship real programs.

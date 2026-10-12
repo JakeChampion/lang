@@ -33,7 +33,7 @@ function serve__run_with[S](port: i32, opts: serve__Config, init: S, handler: (S
 function serve__run_with_shutdown[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
 function serve____port_from_env(name: string, def: i32): i32 { return def; }
 `
-	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }`
+	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None }`
 	const stateless = `function handle(req: HttpRequest, plat: platform__Host): HttpResponse { return ` + response + `; }`
 	const stateful = `function handle(state: i32, req: HttpRequest, plat: platform__Host): (i32, HttpResponse) { return (state, ` + response + `); }`
 	const missingState = "handler takes a state parameter, but no `init` produces the state to thread through it"
