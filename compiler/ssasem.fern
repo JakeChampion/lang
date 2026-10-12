@@ -658,7 +658,7 @@ pub function refused_analysis(why: string): Analysis {
 }
 
 function failed(why: string): Analysis {
-  return Analysis { ok: false, why: why, parents: [], dependencies: [], flow: ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], at: [], none: [] }, uses: Uses { start: [0], kinds: [], block: [], at: [], slot: [] }, anchored: Anchored { start: [0], at: [] } };
+  return Analysis { ok: false, why: why, parents: [], dependencies: [], flow: ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], slot: [], slot_value: [], at: [], none: [] }, uses: Uses { start: [0], kinds: [], block: [], at: [], slot: [] }, anchored: Anchored { start: [0], at: [] } };
 }
 
 function empty_dependencies(n: i32): i32[][] {
