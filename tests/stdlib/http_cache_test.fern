@@ -1,0 +1,284 @@
+import "std/test";
+import "std/http";
+import "std/http/cache";
+import "std/headers";
+import "std/time";
+
+// tests/stdlib/http_cache_test.fern — std/http/cache: entity tags written,
+// read and compared as RFC 9110 §8.8.3 does (its comparison table among
+// them); the preconditions of §13 in §13.2.2's order, each date field in
+// all three HTTP-date forms and ignored when invalid or repeated; If-Range;
+// the 304 and 412 a response becomes and the fields a 304 keeps;
+// Cache-Control written in its fixed order and read back with the first of
+// a repeated directive counting, quoted values, bad and oversized
+// delta-seconds; and Vary folded, deduplicated and absorbed by `*`.
+
+function at(sec: i64): Instant {
+  return time.instant_from_unix(sec);
+}
+
+// 1994-11-06T08:49:37Z, the RFC's example date.
+function changed(): Instant {
+  return at(784111777 as i64);
+}
+
+function now(): Instant {
+  return at(1791768000 as i64);
+}
+
+function current(): cache.Validators {
+  return cache.Validators { etag: Some(cache.strong("v1")), last_modified: Some(changed()) };
+}
+
+function req(method: string, fields: string[]): HttpRequest {
+  let r: HttpRequest = http.request(method, "/doc");
+  let i: i32 = 0;
+  while (i + 1 < fields.len()) {
+    r = HttpRequest { ...r, headers: r.headers.append(fields[i], fields[i + 1]) };
+    i = i + 2;
+  }
+  return r;
+}
+
+function shown(p: cache.Precondition): string {
+  match (p) {
+    Proceed => {
+      return "Proceed";
+    },
+    NotModified => {
+      return "NotModified";
+    },
+    PreconditionFailed => {
+      return "PreconditionFailed";
+    }
+  }
+}
+
+function eval(method: string, fields: string[]): string {
+  return shown(cache.evaluate(req(method, fields), current(), now()));
+}
+
+function opt(n: Option[i64]): string {
+  match (n) {
+    Some(v) => {
+      return v.to_string();
+    },
+    None => {
+      return "-";
+    }
+  }
+}
+
+function joined(xs: string[]): string {
+  let out: string = "";
+  for x in xs {
+    out = out + "[" + x + "]";
+  }
+  return out;
+}
+
+function field(r: HttpResponse, name: string): string {
+  match (r.headers.get(name)) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return "-";
+    }
+  }
+}
+
+function test_etag_written(): test.TestOutcome {
+  return test.assert_eq(cache.strong("v1").to_string() + " " + cache.weak("v1").to_string(), "\"v1\" W/\"v1\"");
+}
+
+function test_etag_read(): test.TestOutcome {
+  let out: string = "";
+  for s in ["\"xyzzy\"", " W/\"xyzzy\" ", "\"\"", "\"a,b\"", "xyzzy", "\"a b\"", "W/xyzzy", "\"a\"b\"", "w/\"x\""] {
+    match (cache.parse_etag(s)) {
+      Some(e) => {
+        out = out + "<" + e.to_string() + ">";
+      },
+      None => {
+        out = out + "<->";
+      }
+    }
+  }
+  return test.assert_eq(out, "<\"xyzzy\"><W/\"xyzzy\"><\"\"><\"a,b\"><-><-><-><-><->");
+}
+
+// RFC 9110 §8.8.3.2's table: strong, then weak.
+function test_etag_compared(): test.TestOutcome {
+  let w1: cache.ETag = cache.weak("1");
+  let w2: cache.ETag = cache.weak("2");
+  let s1: cache.ETag = cache.strong("1");
+  let rows: string = "";
+  rows = rows + w1.strong_eq(w1).to_string() + w1.weak_eq(w1).to_string() + " ";
+  rows = rows + w1.strong_eq(w2).to_string() + w1.weak_eq(w2).to_string() + " ";
+  rows = rows + w1.strong_eq(s1).to_string() + w1.weak_eq(s1).to_string() + " ";
+  rows = rows + s1.strong_eq(s1).to_string() + s1.weak_eq(s1).to_string();
+  return test.assert_eq(rows, "falsetrue falsefalse falsetrue truetrue");
+}
+
+// If-None-Match compares weakly; a match is a 304 for GET or HEAD and a
+// 412 otherwise; a comma inside a tag does not split it.
+function test_if_none_match(): test.TestOutcome {
+  let out: string = eval("GET", ["If-None-Match", "W/\"v1\""]) + " ";
+  out = out + eval("HEAD", ["If-None-Match", "\"x\", \"v1\""]) + " ";
+  out = out + eval("POST", ["If-None-Match", "\"v1\""]) + " ";
+  out = out + eval("GET", ["If-None-Match", "\"x\""]) + " ";
+  out = out + eval("GET", ["If-None-Match", "*"]) + " ";
+  out = out + eval("GET", ["If-None-Match", "\"v1,x\""]);
+  return test.assert_eq(out, "NotModified NotModified PreconditionFailed Proceed NotModified Proceed");
+}
+
+// If-Match compares strongly, `*` matches what exists, and nothing matches
+// a representation without a tag.
+function test_if_match(): test.TestOutcome {
+  let out: string = eval("PUT", ["If-Match", "\"v1\""]) + " ";
+  out = out + eval("PUT", ["If-Match", "W/\"v1\""]) + " ";
+  out = out + eval("PUT", ["If-Match", "*"]) + " ";
+  out = out + eval("PUT", ["If-Match", "\"x\""]) + " ";
+  let untagged: cache.Validators = cache.Validators { etag: None, last_modified: Some(changed()) };
+  out = out + shown(cache.evaluate(req("PUT", ["If-Match", "\"v1\""]), untagged, now()));
+  return test.assert_eq(out, "Proceed PreconditionFailed Proceed PreconditionFailed PreconditionFailed");
+}
+
+// If-Unmodified-Since holds while the representation is no newer than the
+// date, is ignored beside If-Match, and is ignored when not a date.
+function test_if_unmodified_since(): test.TestOutcome {
+  let out: string = eval("PUT", ["If-Unmodified-Since", "Sun, 06 Nov 1994 08:49:37 GMT"]) + " ";
+  out = out + eval("PUT", ["If-Unmodified-Since", "Sun, 06 Nov 1994 08:49:36 GMT"]) + " ";
+  out = out + eval("PUT", ["If-Match", "\"v1\"", "If-Unmodified-Since", "Sat, 01 Jan 1994 00:00:00 GMT"]) + " ";
+  out = out + eval("PUT", ["If-Unmodified-Since", "yesterday"]);
+  return test.assert_eq(out, "Proceed PreconditionFailed Proceed Proceed");
+}
+
+// If-Modified-Since: a 304 when unchanged since, in any HTTP-date form,
+// only for GET and HEAD, not beside If-None-Match, not when repeated, and
+// not when the modification time is unknown.
+function test_if_modified_since(): test.TestOutcome {
+  let out: string = eval("GET", ["If-Modified-Since", "Sun, 06 Nov 1994 08:49:37 GMT"]) + " ";
+  out = out + eval("GET", ["If-Modified-Since", "Sun, 06 Nov 1994 08:49:36 GMT"]) + " ";
+  out = out + eval("GET", ["If-Modified-Since", "Sun Nov  6 08:49:37 1994"]) + " ";
+  out = out + eval("GET", ["If-Modified-Since", "Sunday, 06-Nov-94 08:49:37 GMT"]) + " ";
+  out = out + eval("POST", ["If-Modified-Since", "Sun, 06 Nov 1994 08:49:37 GMT"]) + " ";
+  out = out + eval("GET", ["If-None-Match", "\"x\"", "If-Modified-Since", "Sun, 06 Nov 1994 08:49:37 GMT"]) + " ";
+  out = out + eval("GET", ["If-Modified-Since", "Sun, 06 Nov 1994 08:49:37 GMT", "If-Modified-Since", "Sun, 06 Nov 1994 08:49:37 GMT"]) + " ";
+  let untimed: cache.Validators = cache.Validators { etag: None, last_modified: None };
+  out = out + shown(cache.evaluate(req("GET", ["If-Modified-Since", "Sun, 06 Nov 1994 08:49:37 GMT"]), untimed, now()));
+  return test.assert_eq(out, "NotModified Proceed NotModified NotModified Proceed Proceed Proceed Proceed");
+}
+
+function test_evaluate_absent(): test.TestOutcome {
+  let a: string = shown(cache.evaluate_absent(req("PUT", ["If-Match", "*"])));
+  let b: string = shown(cache.evaluate_absent(req("PUT", ["If-None-Match", "*"])));
+  return test.assert_eq(a + " " + b, "PreconditionFailed Proceed");
+}
+
+// If-Range: a strong tag or the exact modification time keeps the range.
+function test_if_range(): test.TestOutcome {
+  let v: cache.Validators = current();
+  let n: Instant = now();
+  let out: string = cache.if_range(req("GET", ["Range", "bytes=0-1"]), v, n).to_string() + " ";
+  out = out + cache.if_range(req("GET", ["If-Range", "\"v1\""]), v, n).to_string() + " ";
+  out = out + cache.if_range(req("GET", ["If-Range", "W/\"v1\""]), v, n).to_string() + " ";
+  out = out + cache.if_range(req("GET", ["If-Range", "\"v2\""]), v, n).to_string() + " ";
+  out = out + cache.if_range(req("GET", ["If-Range", "Sun, 06 Nov 1994 08:49:37 GMT"]), v, n).to_string() + " ";
+  out = out + cache.if_range(req("GET", ["If-Range", "Sun, 06 Nov 1994 08:49:38 GMT"]), v, n).to_string();
+  return test.assert_eq(out, "true true false false true false");
+}
+
+function page(): HttpResponse {
+  return http.ok("body").with_content_type("text/plain").with_header("Cache-Control", "max-age=60").with_header("Vary", "Accept");
+}
+
+// The 304 keeps the fields a 304 repeats and drops the body and the rest;
+// Last-Modified only goes when there is no ETag.
+function test_respond_not_modified(): test.TestOutcome {
+  let r: HttpResponse = cache.respond(req("GET", ["If-None-Match", "\"v1\""]), current(), now(), page());
+  let out: string = r.status.to_string() + "|" + r.body_string() + "|" + field(r, "ETag") + "|" + field(r, "Cache-Control") + "|" + field(r, "Vary") + "|" + field(r, "Content-Type") + "|" + field(r, "Last-Modified");
+  let untagged: cache.Validators = cache.Validators { etag: None, last_modified: Some(changed()) };
+  let t: HttpResponse = cache.respond(req("GET", ["If-Modified-Since", "Sun, 06 Nov 1994 08:49:37 GMT"]), untagged, now(), page());
+  out = out + " " + t.status.to_string() + "|" + field(t, "Last-Modified");
+  return test.assert_eq(out, "304||\"v1\"|max-age=60|Accept|-|- 304|Sun, 06 Nov 1994 08:49:37 GMT");
+}
+
+// A failed precondition is a bodiless 412; a response that is not a 2xx
+// goes untouched; one that proceeds carries its validators, a modification
+// time in the future sent as now.
+function test_respond_otherwise(): test.TestOutcome {
+  let failed: HttpResponse = cache.respond(req("PUT", ["If-Match", "\"x\""]), current(), now(), page());
+  let missing: HttpResponse = cache.respond(req("GET", ["If-None-Match", "\"v1\""]), current(), now(), http.not_found());
+  let sent: HttpResponse = cache.respond(req("GET", []), current(), now(), page());
+  let ahead: cache.Validators = cache.Validators { etag: None, last_modified: Some(at(1791768999 as i64)) };
+  let clamped: HttpResponse = cache.respond(req("GET", []), ahead, now(), page());
+  let out: string = failed.status.to_string() + "|" + failed.body_string() + " ";
+  out = out + missing.status.to_string() + "|" + field(missing, "ETag") + " ";
+  out = out + sent.status.to_string() + "|" + sent.body_string() + "|" + field(sent, "ETag") + "|" + field(sent, "Last-Modified") + " ";
+  out = out + field(clamped, "Last-Modified");
+  return test.assert_eq(out, "412| 404|- 200|body|\"v1\"|Sun, 06 Nov 1994 08:49:37 GMT Mon, 12 Oct 2026 01:20:00 GMT");
+}
+
+function test_cache_control_written(): test.TestOutcome {
+  let a: cache.CacheControl = cache.CacheControl { ...cache.cache_control(), public: true, immutable: true, max_age: Some(31536000 as i64) };
+  let fields: string[] = ["Set-Cookie", "X-Id"];
+  let b: cache.CacheControl = cache.CacheControl { ...cache.cache_control(), no_cache: true, no_cache_fields: fields, private: true, must_revalidate: true };
+  let c: cache.CacheControl = cache.CacheControl { ...cache.cache_control(), max_stale: Some(cache.DELTA_MAX), min_fresh: Some(5 as i64), only_if_cached: true };
+  return test.assert_eq(a.to_string() + "|" + b.to_string() + "|" + c.to_string() + "|" + cache.cache_control().to_string(), "public, immutable, max-age=31536000|no-cache=\"Set-Cookie, X-Id\", private, must-revalidate|only-if-cached, max-stale, min-fresh=5|");
+}
+
+// Read across lines, names in any case, the first of a repeat counting, a
+// quoted value, a qualified no-cache whose list holds a comma, a bad
+// delta-seconds dropped and an oversized one capped, an extension ignored.
+function test_cache_control_read(): test.TestOutcome {
+  let h: HeaderMap = headers.header_map_new().append("Cache-Control", "Max-Age=60, PUBLIC").append("cache-control", "no-cache=\"set-cookie, x-id\", max-age=10, s-maxage=\"30\", min-fresh=1x, stale-if-error=99999999999, ext=\"a,b\", max-stale");
+  let c: cache.CacheControl = cache.parse_cache_control(h);
+  let out: string = opt(c.max_age) + " " + c.public.to_string() + " " + c.no_cache.to_string() + joined(c.no_cache_fields) + " " + opt(c.s_maxage) + " " + opt(c.min_fresh) + " " + opt(c.stale_if_error) + " " + opt(c.max_stale);
+  return test.assert_eq(out, "60 true true[set-cookie][x-id] 30 - 2147483648 2147483648");
+}
+
+function test_cache_control_round_trip(): test.TestOutcome {
+  let v: string = "no-store, private=\"Authorization\", must-understand, no-transform, max-age=0, stale-while-revalidate=30";
+  let h: HeaderMap = headers.header_map_new().append("Cache-Control", v);
+  return test.assert_eq(cache.parse_cache_control(h).to_string(), v);
+}
+
+function test_with_cache_control(): test.TestOutcome {
+  let none: HttpResponse = http.ok("x").with_cache_control(cache.cache_control());
+  let some: HttpResponse = http.ok("x").with_cache_control(cache.CacheControl { ...cache.cache_control(), no_store: true });
+  return test.assert_eq(field(none, "Cache-Control") + "|" + field(some, "Cache-Control"), "-|no-store");
+}
+
+// Vary folds its lines into one, names a field once whatever its case,
+// and `*` absorbs everything.
+function test_with_vary(): test.TestOutcome {
+  let r: HttpResponse = http.ok("x").with_appended_header("Vary", "Accept").with_appended_header("vary", "Origin");
+  let out: string = field(r.with_vary("Accept-Encoding"), "Vary") + "|";
+  out = out + field(r.with_vary("accept"), "Vary") + "|";
+  out = out + field(r.with_vary("*"), "Vary") + "|";
+  out = out + field(http.ok("x").with_header("Vary", "*").with_vary("Cookie"), "Vary") + "|";
+  out = out + field(http.ok("x").with_vary("Cookie"), "Vary");
+  return test.assert_eq(out, "Accept, Origin, Accept-Encoding|Accept|*|*|Cookie");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/http/cache");
+  r = r.it("writes entity tags", test_etag_written);
+  r = r.it("reads entity tags", test_etag_read);
+  r = r.it("compares entity tags as RFC 9110 tabulates", test_etag_compared);
+  r = r.it("evaluates If-None-Match", test_if_none_match);
+  r = r.it("evaluates If-Match", test_if_match);
+  r = r.it("evaluates If-Unmodified-Since", test_if_unmodified_since);
+  r = r.it("evaluates If-Modified-Since", test_if_modified_since);
+  r = r.it("evaluates without a representation", test_evaluate_absent);
+  r = r.it("evaluates If-Range", test_if_range);
+  r = r.it("answers 304 with the fields it repeats", test_respond_not_modified);
+  r = r.it("answers 412, passes non-2xx, sends validators", test_respond_otherwise);
+  r = r.it("writes Cache-Control", test_cache_control_written);
+  r = r.it("reads Cache-Control", test_cache_control_read);
+  r = r.it("round-trips Cache-Control", test_cache_control_round_trip);
+  r = r.it("sets Cache-Control when it has directives", test_with_cache_control);
+  r = r.it("adds to Vary", test_with_vary);
+  return r.finish();
+}
