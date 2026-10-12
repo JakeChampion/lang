@@ -101,6 +101,18 @@ pub trait Platform {
   // a proxy this is the proxy; std/http/forwarded finds the client past
   // the proxies a deployment trusts.
   function peer(self: Self): Option[net.SocketAddr];
+
+  // `.deadline()` — the `.elapsed_ns()` reading the request must be
+  // answered by, None for no bound. std/serve sets it from
+  // `Config.handler_deadline` and answers 503 in place of a response that
+  // comes later. A handler hands an upstream what is left of it.
+  function deadline(self: Self): Option[i64];
+
+  // `.cancelled()` — whether nothing the handler does any more reaches the
+  // client: the client went away, or the deadline passed. Every wait answers
+  // at once from then on (`plat.http` with `Cancelled`), so work between
+  // waits asks here to stop early.
+  function cancelled(self: Self): boolean;
 }
 
 // `Host` — the platform that performs its effects on the machine it runs
@@ -113,8 +125,9 @@ pub trait Platform {
 // browser's would, once `with_jar` gave it one; None sends and keeps none.
 // `allow` is the hosts its `http` may reach, once `with_allow` named them;
 // None reaches any global address. `peer` is the connection's peer, which
-// std/serve sets per connection.
-pub struct Host { reactor: i32, pool: fetch.Idle, jar: Option[cookie.Jar], allow: Option[fetch.Allow], peer: Option[net.SocketAddr] }
+// std/serve sets per connection, and `deadline` the request's, which it sets
+// per request.
+pub struct Host { reactor: i32, pool: fetch.Idle, jar: Option[cookie.Jar], allow: Option[fetch.Allow], peer: Option[net.SocketAddr], deadline: Option[i64] }
 
 // `host()` — a host platform with no reactor and an empty pool, for code
 // that has to build one: a test driving a handler directly, or a caller of
@@ -128,7 +141,7 @@ pub function host(): Host {
 // `host_on(reactor)` — the host platform of the worker whose reactor is
 // `reactor`; std/serve builds one per worker loop.
 pub function host_on(reactor: i32): Host {
-  return Host { reactor: reactor, pool: fetch.idle(), jar: None, allow: None, peer: None };
+  return Host { reactor: reactor, pool: fetch.idle(), jar: None, allow: None, peer: None, deadline: None };
 }
 
 // `(h).with_peer(addr)` — the host answering `peer()` with `addr`: what
@@ -151,6 +164,27 @@ pub function (h: Host) with_jar(jar: cookie.Jar): Host {
 // `serve.Config { http_allow }` gives each worker's host one.
 pub function (h: Host) with_allow(a: fetch.Allow): Host {
   return Host { ...h, allow: Some(a) };
+}
+
+// `(h).with_deadline(at)` — the host whose request is due by `at`, a
+// `monotonic_ns()` reading: what std/serve hands a handler when
+// `Config.handler_deadline` bounds it.
+pub function (h: Host) with_deadline(at: i64): Host {
+  return Host { ...h, deadline: Some(at) };
+}
+
+// `passed(deadline, now)` — whether `now` has reached `deadline`; never for
+// None.
+pub function passed(deadline: Option[i64], now: i64): boolean {
+  match (deadline) {
+    Some(at) => {
+      return now >= at;
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
 }
 
 impl Platform for Host {
@@ -197,5 +231,13 @@ impl Platform for Host {
 
   function peer(self: Host): Option[net.SocketAddr] {
     return self.peer;
+  }
+
+  function deadline(self: Host): Option[i64] {
+    return self.deadline;
+  }
+
+  function cancelled(self: Host): boolean {
+    return async.task_cancelled() || passed(self.deadline, monotonic_ns());
   }
 }

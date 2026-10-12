@@ -2925,10 +2925,8 @@ function cast_i32_value(v: Value): Value {
 // pressure over a threshold and tripped a layout-sensitive native-codegen
 // abort (the arm64 sibling of the #3425 x86 heap Heisenbug) — even though
 // the logic is correct in isolation. A separate function keeps eval_expr
-// small. Hex / binary literals keep i32 low-bits semantics via lit_to_i32
-// (digits_to_i32/i64 stop at the `x`/`b` and yield 0, #4341); decimal
-// literals parse as i64 so a value beyond i32 range survives, and box_i64
-// narrows it back to a compact VInt when it fits.
+// small. Decimal literals parse as i64 so a value beyond i32 range
+// survives, and box_i64 narrows it back to a compact VInt when it fits.
 function eval_number_literal(is_float: boolean, t: string, suffix: string): Value {
   return coerce_int_width(eval_unsuffixed_literal(is_float, t), suffix);
 }
@@ -2943,7 +2941,13 @@ function eval_unsuffixed_literal(is_float: boolean, t: string): Value {
   }
   let is_radix: boolean = t.len() > hs + 1 && t[hs] == b'0' && (t[hs + 1] == b'x' || t[hs + 1] == b'X' || t[hs + 1] == b'b' || t[hs + 1] == b'B');
   if (is_radix) {
-    return v_int(util.lit_to_i32(t));
+    // A pattern of at most 32 bits keeps its i32 reading (`0xffffffff` is -1);
+    // a wider one is a 64-bit pattern.
+    let n: i64 = util.lit_to_i64(t);
+    if (n >= 0 - 2147483648 && n <= 4294967295) {
+      return v_int(n as i32);
+    }
+    return box_i64(n);
   }
   return box_i64(util.digits_to_i64(t));
 }
@@ -5160,7 +5164,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     if (args.len() != 2 || !is_int_like(args[0]) || !is_int_like(args[1])) {
       return v_err(name + ": expected 2 integer args");
     }
-    return v_int64(interp_mulhi(vint_as_i64(args[0]) as u64, vint_as_i64(args[1]) as u64) as i64);
+    return v_uint64(interp_mulhi(vint_as_i64(args[0]) as u64, vint_as_i64(args[1]) as u64) as i64);
   }
   if (name == "__clz32" || name == "__ctz32" || name == "__popcount32" || name == "__clz64" || name == "__ctz64" || name == "__popcount64") {
     if (args.len() != 1) {

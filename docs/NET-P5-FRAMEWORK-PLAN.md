@@ -240,6 +240,19 @@ decides what wraps it.
    allow-list cases in `tests/stdlib/sim_fetch_test.fern` and
    `tests/stdlib/sim_platform_test.fern`; `TestHTTPAllowServeInterp` and
    `TestHTTPAllowServeX86_64` through the real loop.
+   The deadline and cancel signal (landed): `Config.handler_deadline`
+   bounds a handler from its start, the loop cancelling one parked when it
+   passes and answering 503 in place of any later response, as Go's
+   `http.TimeoutHandler` does. The handler reads it as `plat.deadline()`
+   and asks `plat.cancelled()`, true once the client reset the connection
+   (the task's cancel mark, `async.task_cancelled()`, over a new
+   `__task_cancelled` primitive) or the deadline passed, so work between
+   waits can stop. `SimPlatform.with_deadline` puts it on the sim's
+   clock; the mock cans both. Gate: the deadline cases in
+   `tests/stdlib/sim_platform_test.fern` and
+   `tests/stdlib/mock_platform_canned_test.fern`;
+   `TestHandlerDeadlineServeInterp` and `TestHandlerDeadlineServeX86_64`
+   through the real loop, the latter with a client that resets.
 7. **Observability.** The OTel HTTP semantic conventions, `traceparent`
    propagation through `plat.http`, a JSON-lines access log with the OTel
    log data model's fields, health and readiness helpers; `std/log`'s

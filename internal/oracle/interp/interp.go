@@ -1564,6 +1564,7 @@ func New() *Interp {
 	i.Builtins["__task_timeout"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(-1), nil }}
 	i.Builtins["__task_set_ready"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
 	i.Builtins["__task_set_cancelled"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
+	i.Builtins["__task_cancelled"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
 	i.Builtins["f32_bits"] = &Builtin{Fn: builtinF32Bits}
 	i.Builtins["f32_from_bits"] = &Builtin{Fn: builtinF32FromBits}
 	i.Builtins["f64_bits"] = &Builtin{Fn: builtinF64Bits}

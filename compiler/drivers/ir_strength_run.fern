@@ -815,6 +815,13 @@ function main(): i32 {
   out = out + "ds_frame: " + render(ir.eliminate_dead_stores(ds_frame)) + "\n";
   let ds_dyn: ir.Op[] = [ir.op_load_local(0), ir.op_store_local(2), ir.op_const_i32(9), ir.op_store_local(3), ir.op_dyn_dispatch(["A.f"], 2, 2), ir.op_return()];
   out = out + "ds_dyn: " + render(ir.eliminate_dead_stores(ds_dyn)) + "\n";
+  // c = b = a = 7, nothing reads c: each round's cancelled load leaves the
+  // slot before it unread.
+  let ds_copies: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(0), ir.op_load_local(0), ir.op_store_local(1), ir.op_load_local(1), ir.op_store_local(2), ir.op_const_i32(0), ir.op_return()];
+  out = out + "ds_copies: " + render(ir.eliminate_dead_stores(ds_copies)) + "\n";
+  // b = a, nothing reads b, a is returned: the cancelled load is not a's last.
+  let ds_read_again: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(0), ir.op_load_local(0), ir.op_store_local(1), ir.op_load_local(0), ir.op_return()];
+  out = out + "ds_read_again: " + render(ir.eliminate_dead_stores(ds_read_again)) + "\n";
 
   write(out);
 
