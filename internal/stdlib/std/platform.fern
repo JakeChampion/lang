@@ -111,8 +111,10 @@ pub trait Platform {
 // the platform and kept for as long as it lives: a worker loop's, in
 // std/serve. `jar` is the cookies its `http` carries and stores, as a
 // browser's would, once `with_jar` gave it one; None sends and keeps none.
-// `peer` is the connection's peer, which std/serve sets per connection.
-pub struct Host { reactor: i32, pool: fetch.Idle, jar: Option[cookie.Jar], peer: Option[net.SocketAddr] }
+// `allow` is the hosts its `http` may reach, once `with_allow` named them;
+// None reaches any global address. `peer` is the connection's peer, which
+// std/serve sets per connection.
+pub struct Host { reactor: i32, pool: fetch.Idle, jar: Option[cookie.Jar], allow: Option[fetch.Allow], peer: Option[net.SocketAddr] }
 
 // `host()` — a host platform with no reactor and an empty pool, for code
 // that has to build one: a test driving a handler directly, or a caller of
@@ -126,7 +128,7 @@ pub function host(): Host {
 // `host_on(reactor)` — the host platform of the worker whose reactor is
 // `reactor`; std/serve builds one per worker loop.
 pub function host_on(reactor: i32): Host {
-  return Host { reactor: reactor, pool: fetch.idle(), jar: None, peer: None };
+  return Host { reactor: reactor, pool: fetch.idle(), jar: None, allow: None, peer: None };
 }
 
 // `(h).with_peer(addr)` — the host answering `peer()` with `addr`: what
@@ -141,6 +143,14 @@ pub function (h: Host) with_peer(addr: Option[net.SocketAddr]): Host {
 // worker's host one.
 pub function (h: Host) with_jar(jar: cookie.Jar): Host {
   return Host { ...h, jar: Some(jar) };
+}
+
+// `(h).with_allow(a)` — the host whose `http` reaches only what `a`
+// (`fetch.allow`) names, every redirect hop included, refusing the rest as
+// `fetch.Blocked` before resolving or sending anything.
+// `serve.Config { http_allow }` gives each worker's host one.
+pub function (h: Host) with_allow(a: fetch.Allow): Host {
+  return Host { ...h, allow: Some(a) };
 }
 
 impl Platform for Host {
@@ -178,7 +188,7 @@ impl Platform for Host {
   }
 
   function http(self: Host, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
-    return fetch.send_on(fetch.sockets_with(self.pool), req, fetch.Policy { ...fetch.public_policy(), jar: self.jar });
+    return fetch.send_on(fetch.sockets_with(self.pool), req, fetch.Policy { ...fetch.public_policy(), jar: self.jar, allow: self.allow });
   }
 
   function stat(self: Host, path: string): Result[FileStat, IoError] {

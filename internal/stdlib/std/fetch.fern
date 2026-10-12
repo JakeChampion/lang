@@ -378,7 +378,7 @@ struct __Target { host: string, port: i32, target: string, host_field: string, p
 // straight to the origin.
 function __target_of(raw: string, policy: Policy): Result[__Target, FetchError] {
   let u: Url = __http_url(raw)?;
-  let port: i32 = __effective_port(u);
+  let port: i32 = __permitted(policy, u.host, __effective_port(u))?;
   let tls: boolean = u.scheme == "https";
   let host_field: string = __host_field(u.host, port, tls);
   let target: string = __request_target(u)?;
@@ -929,12 +929,149 @@ function __proxies(): ProxyEnv {
 // must reach, the machine's (`verify.system_roots()`) when None; `jar` is
 // the cookie jar (std/http/cookie) every hop reads its `Cookie` header
 // from and stores its `Set-Cookie` into, none when None.
-pub struct Policy { public_only: boolean, proxies: ProxyEnv, roots: Option[verify.Roots], jar: Option[cookie.Jar] }
+pub struct Policy { public_only: boolean, proxies: ProxyEnv, roots: Option[verify.Roots], jar: Option[cookie.Jar], allow: Option[Allow] }
 
 // `public_policy()` — the route `plat.http` takes: global addresses only,
-// the environment's proxies, the machine's roots, no jar.
+// the environment's proxies, the machine's roots, no jar, any host.
 pub function public_policy(): Policy {
-  return Policy { public_only: true, proxies: __proxies(), roots: None, jar: None };
+  return Policy { public_only: true, proxies: __proxies(), roots: None, jar: None, allow: None };
+}
+
+// `Allow` — the hosts a route may reach, built by `allow`. A `Policy`
+// with one refuses every other host as `Blocked`, on each redirect hop,
+// before anything is resolved or sent.
+pub struct Allow { rules: __AllowRule[] }
+
+// A rule names `host`, or with `sub` every name below it, at `port` or,
+// when that is -1, at any port.
+struct __AllowRule { host: string, sub: boolean, port: i32 }
+
+// `allow(entries)` — the allow-list `entries` name, or why the first that
+// names no host is refused: `api.example.com`, `api.example.com:8443`,
+// `*.example.com` (every name below example.com, not example.com itself),
+// `10.0.0.7` or `[2001:db8::1]:443`. Names compare without case or a
+// trailing dot, and an entry with no port allows every port.
+pub function allow(entries: string[]): Result[Allow, string] {
+  let rules: __AllowRule[] = [];
+  for e in entries {
+    match (__allow_rule(e.to_lower())) {
+      Some(r) => {
+        rules = rules.append(r);
+      },
+      None => {
+        return Err("allow-list entry \"" + e + "\" is not a host, a host:port or a *.domain");
+      }
+    }
+  }
+  return Ok(Allow { rules: rules });
+}
+
+// `__allow_rule(e)` — the rule a lowercased entry names, if it names one.
+function __allow_rule(e: string): Option[__AllowRule] {
+  match (__allow_parts(e)) {
+    Some(parts) => {
+      let (named, port) = parts;
+      let p: i32 = 0 - 1;
+      if (port.len() > 0) {
+        p = __allow_port(port);
+        if (p < 0) {
+          return None;
+        }
+      }
+      return __allow_host(named, e.starts_with("["), p);
+    },
+    None => {}
+  }
+  return None;
+}
+
+// `__allow_host(named, bracketed, port)` — the rule for an entry's host
+// part: `*.` makes it cover the names below, a trailing dot is dropped,
+// and a name is letters, digits, hyphens and dots.
+function __allow_host(named: string, bracketed: boolean, port: i32): Option[__AllowRule] {
+  let host: string = named;
+  let sub: boolean = !bracketed && host.starts_with("*.");
+  if (sub) {
+    host = host.drop(2);
+  }
+  if (host.ends_with(".")) {
+    host = host.take(host.len() - 1);
+  }
+  if (host.len() == 0 || !(bracketed || host.contains_only("abcdefghijklmnopqrstuvwxyz0123456789-."))) {
+    return None;
+  }
+  return Some(__AllowRule { host: host, sub: sub, port: port });
+}
+
+// `__allow_parts(e)` — an entry split into its host and its port text (""
+// for none), a bracketed host being an IPv6 address and nothing else.
+function __allow_parts(e: string): Option[(string, string)] {
+  if (e.ends_with(":")) {
+    return None;
+  }
+  if (!e.starts_with("[")) {
+    if (e.contains(":")) {
+      return Some((e.before(":"), e.after(":")));
+    }
+    return Some((e, ""));
+  }
+  let close: i32 = e.index_of("]");
+  if (close < 0) {
+    return None;
+  }
+  let host: string = e.take(close).drop(1);
+  let rest: string = e.drop(close + 1);
+  if (rest.len() > 0 && !rest.starts_with(":")) {
+    return None;
+  }
+  if (!host.contains(":") || !host.contains_only("0123456789abcdef:.")) {
+    return None;
+  }
+  return Some((host, rest.drop(1)));
+}
+
+// `__allow_port(s)` — `s` as a port, 1 to 65535 written without a leading
+// zero, or -1.
+function __allow_port(s: string): i32 {
+  if (s.len() == 0 || s.len() > 5 || s.starts_with("0") || !s.contains_only("0123456789")) {
+    return 0 - 1;
+  }
+  match (s.parse_int()) {
+    Some(n) => {
+      if (n <= 65535) {
+        return n;
+      }
+    },
+    None => {}
+  }
+  return 0 - 1;
+}
+
+// `__permitted(policy, host, port)` — the refusal of `host:port` when the
+// policy's allow-list names neither it nor a domain above it.
+function __permitted(policy: Policy, host: string, port: i32): Result[i32, FetchError] {
+  match (policy.allow) {
+    None => {
+      return Ok(port);
+    },
+    Some(a) => {
+      let h: string = host.to_lower();
+      if (h.ends_with(".")) {
+        h = h.take(h.len() - 1);
+      }
+      for r in a.rules {
+        let named: boolean = h == r.host;
+        if (r.sub) {
+          named = h.ends_with("." + r.host);
+        }
+        if (named && (r.port < 0 || r.port == port)) {
+          return Ok(port);
+        }
+      }
+      return Err(Blocked(host + ":" + int.int_to_string(port) + " is not on the allow-list"));
+    }
+  }
+  return Ok(port);
 }
 
 // `send_on(tr, req, policy)` — `send` over the transport `tr` under

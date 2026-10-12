@@ -58,7 +58,7 @@ function main(): i32 {
   // A held transport keeps the connection, so the origin sees both
   // requests from one source port.
   let kept: fetch.Sockets = fetch.sockets();
-  let open: fetch.Policy = fetch.Policy { public_only: false, proxies: fetch.proxy_env(), roots: None, jar: None };
+  let open: fetch.Policy = fetch.Policy { public_only: false, proxies: fetch.proxy_env(), roots: None, jar: None, allow: None };
   let first: string = line(fetch.send_on(kept, fetch.get(base() + "/port"), open));
   let second: string = line(fetch.send_on(kept, fetch.get(base() + "/port"), open));
   fetch.close_idle(kept);

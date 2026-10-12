@@ -1613,7 +1613,7 @@ module carries the list, about 220 KB.
 import "std/fetch";
 import "std/tls/mozilla";
 
-let policy: fetch.Policy = fetch.Policy { public_only: false, proxies: fetch.proxy_env(), roots: Some(mozilla.roots()), jar: None };
+let policy: fetch.Policy = fetch.Policy { public_only: false, proxies: fetch.proxy_env(), roots: Some(mozilla.roots()), jar: None, allow: None };
 let r: Result[HttpResponse, fetch.FetchError] = fetch.send_on(fetch.sockets(), fetch.get("https://example.com/"), policy);
 ```
 
@@ -2988,7 +2988,9 @@ points that run a handler under it.
   the session the producer runs (std/http/websocket); any other answer
   closes the connection after it. `cookie_jar` (false)
   gives each worker's platform a cookie jar (std/http/cookie), so its
-  `plat.http` sends and stores cookies as a browser would.
+  `plat.http` sends and stores cookies as a browser would, and
+  `http_allow` (None) the hosts that `plat.http` may reach
+  (`fetch.allow`), refusing the rest as `Blocked`.
   A listener it cannot bind is `serve: cannot listen on ADDR:PORT:` —
   `[::]` where the host has IPv6, `0.0.0.0` where it has not and on
   wasm — and the error's text on stderr, and the entry returns 98 (every
@@ -3192,6 +3194,14 @@ answer is `Result[HttpResponse, FetchError]`.
   owns the network, so its outbound policy (Spin's
   `allowed_outbound_hosts`, what `wasmtime serve` is run with) is the
   rule there, and a loopback or private address is the host's to refuse.
+  An allow-list holds on every route, wasi-http's included:
+  `fetch.allow(["api.example.com", "*.cdn.example.com", "10.0.0.7:8443",
+  "[2001:db8::1]"])` names hosts, `host:port`s, every name below a domain
+  and bracketed IPv6 addresses, without case or a trailing dot, and refuses
+  an entry that names none when it is built. A route given one
+  (`Policy.allow`, `Host.with_allow`, `SimPlatform.with_allow`,
+  `serve.Config { http_allow }`) refuses any other host as `Blocked` on
+  every redirect hop, before resolving it.
 - **Proxies:** both routes go through the forward proxy the environment
   names, read through `config_get` as `ProxyEnv` (`proxy_env()`,
   `proxy_env_from(...)` for the pure form): for `http` URLs the lowercase
@@ -3256,10 +3266,12 @@ answer is `Result[HttpResponse, FetchError]`.
   `trait Transport` (`now_ns`, `lookup`, `connect`, `write`, `read` under
   a wait answering `tcp.Recv`, `close`, and `idle`, its pool), and
   `send_on(tr, req, policy)` is
-  `send` over any transport under a `Policy { public_only, proxies, roots, jar }`,
+  `send` over any transport under a `Policy { public_only, proxies, roots, jar, allow }`,
   `roots` the store a server's chain must reach, the machine's when None,
   `jar` the cookie jar every hop carries and stores cookies through
-  (std/http/cookie), none when None; `public_policy()` is `plat.http`'s.
+  (std/http/cookie), none when None, `allow` the hosts every hop may
+  reach (`allow(entries)`), any when None; `public_policy()` is
+  `plat.http`'s.
   `sockets()` is the machine's (the system resolver, `dns.connect_race`,
   `tcp_recv_deadline`), which `send` and `plat.http` use; `std/sim_fetch`
   scripts one in virtual time.
