@@ -395,8 +395,49 @@ function emit(c: Conf, o: io_buffered.BufWriter, size: u64, tsec: i64, tnsec: i6
 // parent adds and which -c sums; `shown` is what this directory's own
 // line will print, which is the same number unless -S left the
 // subdirectories out of it. Each carries the newest stamp counted into
-// it, for --time.
-struct Frame { path: string, display: string, names: string[], idx: i32, depth: i32, dev: i64, ino: i64, full: u64, shown: u64, ftime: i64, fnsec: i64, stime: i64, snsec: i64 }
+// it, for --time. `dir` is the directory held open while its children are
+// statted by name, so the kernel resolves no path through its ancestors;
+// None when it could not be opened and its listing came back empty.
+struct Frame { path: string, display: string, dir: Option[Dir], names: string[], idx: i32, depth: i32, dev: i64, ino: i64, full: u64, shown: u64, ftime: i64, fnsec: i64, stime: i64, snsec: i64 }
+
+// `open_child(stack, sp, path, name, via_link)` — the directory to list:
+// opened by name inside its parent's handle, or by path for an operand and
+// for a directory a followed symlink reached, which a handle refuses.
+function open_child(stack: Frame[], sp: i32, path: string, name: string, via_link: boolean): Result[Dir, IoError] {
+  if (sp > 0 && !via_link) {
+    match (stack[sp - 1].dir) {
+      Some(d) => {
+        return d.open_dir(name);
+      },
+      None => {}
+    }
+  }
+  return open_dir(path);
+}
+
+// `lstat_child(top, path, name)` / `stat_child` — a child's status through
+// its directory's handle when there is one.
+function lstat_child(top: Frame, path: string, name: string): Result[FileStat, IoError] {
+  match (top.dir) {
+    Some(d) => {
+      return d.lstat(name);
+    },
+    None => {
+      return lstat(path);
+    }
+  }
+}
+
+function stat_child(top: Frame, path: string, name: string): Result[FileStat, IoError] {
+  match (top.dir) {
+    Some(d) => {
+      return d.stat(name);
+    },
+    None => {
+      return stat(path);
+    }
+  }
+}
 
 // `walk` — every operand, and everything under each of them.
 //
@@ -407,11 +448,9 @@ struct Frame { path: string, display: string, names: string[], idx: i32, depth: 
 // stack is explicit for the same reason, and it costs nothing that
 // matters — a deep tree is a longer array rather than a deeper frame.
 //
-// The one thing this cannot do is walk PAST `PATH_MAX`: every primitive
-// here takes a path, so a component 8 KiB down is `File name too long`
-// where GNU's fts, which opens each directory and reads it fd-relative,
-// keeps going (#9078). That tree reports what it could read and exits 1,
-// the same shape an unreadable directory has.
+// Each directory is held open while its children are listed and statted by
+// name (`Dir`), as GNU's fts does: the kernel resolves no path through the
+// ancestors, and a tree deeper than `PATH_MAX` walks like any other.
 //
 // Returns the exit status.
 function walk(c: Conf, names: string[], have_files0: boolean, list_name: string, from_stdin: boolean): i32 {
@@ -491,6 +530,8 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
     // child the stack's top frame hands over.
     let pending: boolean = true;
     let p_path: string = walk_base(arg);
+    let p_name: string = p_path;
+    let p_via_link: boolean = false;
     let p_display: string = display;
     let p_st: FileStat = st;
     let p_depth: i32 = 0;
@@ -584,7 +625,18 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
             continue;
           }
           let kids: string[] = [];
-          match (read_dir(p_path)) {
+          let held: Option[Dir] = None;
+          let listed: Result[string[], IoError] = Err(Unsupported);
+          match (open_child(stack, sp, p_path, p_name, p_via_link)) {
+            Ok(d) => {
+              listed = d.entries();
+              held = Some(d);
+            },
+            Err(e) => {
+              listed = Err(e);
+            }
+          }
+          match (listed) {
             Ok(es) => {
               kids = es;
             },
@@ -593,7 +645,7 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
               failed = true;
             }
           }
-          let pushed: Frame = Frame { path: p_path, display: p_display, names: kids, idx: 0, depth: p_depth, dev: p_st.dev, ino: p_st.ino, full: own, shown: own, ftime: stamp.0, fnsec: stamp.1, stime: stamp.0, snsec: stamp.1 };
+          let pushed: Frame = Frame { path: p_path, display: p_display, dir: held, names: kids, idx: 0, depth: p_depth, dev: p_st.dev, ino: p_st.ino, full: own, shown: own, ftime: stamp.0, fnsec: stamp.1, stime: stamp.0, snsec: stamp.1 };
           if (sp < stack.len()) {
             stack = stack.with(sp, pushed);
           } else {
@@ -617,6 +669,12 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
       if (top.idx >= top.names.len()) {
         // Post-order: the directory's own line follows its contents.
         sp = sp - 1;
+        match (top.dir) {
+          Some(d) => {
+            d.close();
+          },
+          None => {}
+        }
         if (wants_line(c, top.depth, true) && passes_threshold(c, top.shown)) {
           out = emit(c, out, top.shown, top.stime, top.snsec, top.display);
         }
@@ -636,7 +694,8 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
       }
       let cst: FileStat = zero_stat();
       let cgot: boolean = false;
-      match (lstat(cpath)) {
+      let clink: boolean = false;
+      match (lstat_child(top, cpath, nm)) {
         Ok(s) => {
           cst = s;
           cgot = true;
@@ -650,8 +709,9 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
         continue;
       }
       if (c.deref == deref_all() && is_symlink(cst)) {
+        clink = true;
         let cres: boolean = false;
-        match (stat(cpath)) {
+        match (stat_child(top, cpath, nm)) {
           Ok(s) => {
             cst = s;
             cres = true;
@@ -672,6 +732,8 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
         continue;
       }
       p_path = cpath;
+      p_name = nm;
+      p_via_link = clink;
       p_display = cname;
       p_st = cst;
       p_depth = top.depth + 1;
