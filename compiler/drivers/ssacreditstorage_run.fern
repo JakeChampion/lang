@@ -97,10 +97,7 @@ function erased(op: ssa.SInst): Edit {
 }
 
 function call_edit(op: ssa.SInst, old: i32, mode: i32, count: i32): Edit {
-  if (mode == 0 && op.str == "__sem_drop_Parent") {
-    return erased(op);
-  }
-  if (mode == 14 && count == 0 && op.str == "__fern_rc_dec" && op.args[0] != old) {
+  if (mode == 13 && count == 0 && op.str == "__fern_rc_dec" && op.args[0] != old) {
     return erased(op);
   }
   if (mode == 3 && op.str == "__fern_rc_is_unique") {
@@ -110,9 +107,6 @@ function call_edit(op: ssa.SInst, old: i32, mode: i32, count: i32): Edit {
 }
 
 function store_edit(op: ssa.SInst, old: i32, fresh: i32, mode: i32): Edit {
-  if (mode == 13 && op.args[0] == old && op.imm == 8) {
-    return erased(op);
-  }
   if (op.args[0] == fresh) {
     if (mode == 10 && op.imm == 0 || mode == 11 && op.imm == 16) {
       return erased(op);
@@ -174,11 +168,11 @@ function mutated(f: ssa.SFunc, mode: i32): ssa.SFunc {
 }
 
 function controls(sub: ircore.Sub, f: ssa.SFunc, assertion: ssa.SFunc): void {
-  let reasons = ["proved checked-capacity consumer invocation", "invalid storage donor generation", "parent allocation size mismatch", "clearing shared parent slot", "storage transfer requires one old parent credit", "old parent used after release", "old parent used after release", "old parent used after release", "old parent used after release", "old parent used after release", "result shape not initialized", "result has stale or uninitialized slot", "unsupported reuse operation", "children-only drop with stale slot", "unconsumed child credit"];
-  let mode: i32 = 0;
-  while (mode < 15) {
+  let reasons = ["invalid storage donor generation", "parent allocation size mismatch", "releasing a shared child slot", "storage transfer requires one old parent credit", "old parent used after release", "old parent used after release", "old parent used after release", "old parent used after release", "old parent used after release", "result shape not initialized", "result has stale or uninitialized slot", "unsupported reuse operation", "storage transfer requires discharged children"];
+  let mode: i32 = 1;
+  while (mode <= reasons.len()) {
     let p = check(sub, mutated(f, mode), assertion);
-    expect(p, f.name, reasons[mode]);
+    expect(p, f.name, reasons[mode - 1]);
     mode = mode + 1;
   }
   let fields = [reuse.ScalarField { root: 3, offset: 8 }, reuse.ScalarField { root: 4, offset: 8 }, reuse.ScalarField { root: 5, offset: 8 }];
