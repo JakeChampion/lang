@@ -200,7 +200,7 @@ aarch64/sort_inplace.ir	53111058
 aarch64/sort_ints.text	3564
 aarch64/sort_ints.ir	33088894
 aarch64/sort_strings.text	4439
-aarch64/sort_strings.ir	131492470
+aarch64/sort_strings.ir	107565568
 aarch64/string_build.text	3335
 aarch64/string_build.ir	95860138
 aarch64/string_count_byte.text	2950
