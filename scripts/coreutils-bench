@@ -449,7 +449,7 @@ hdr = (["utility", "workload"]
 print("| " + " | ".join(hdr) + " |")
 print("|" + "|".join("---" for _ in hdr) + "|")
 for util, label, by, inc, ref in rows:
-    cells = ([f"`{util}`", label]
+    cells = ([f"`{util}`", label.replace("|", "\\|")]
              + [ms(by, inc, ref, i) for i in impls]
              + [ratio(by, ref, a, b) for a, b in ratios])
     print("| " + " | ".join(cells) + " |")

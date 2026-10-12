@@ -797,6 +797,33 @@ to becoming the default.
 
 ## Performance
 
+### The whole catalogue, one compiler, 2026-10-12, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
+
+The first run of the single-column bench over every workload: 661 rows over
+104 utilities, built by the self-hosted compiler at 394767a. Full table:
+`docs/COREUTILS-BENCH-2026-10-12.md`. Builds ran on the same 4-core machine
+for part of the run, so a ratio within about 10% of 1 is not a measured
+difference.
+
+| | rows | faster than GNU | faster than uutils |
+|---|---|---|---|
+| every workload | 661 | 501 (76%) | 534 of 616 |
+
+The median row is 1.68x GNU and 3.09x uutils, and 66 of the 104 utilities
+beat GNU on every row. The 160 rows that lose to GNU fall into a few families:
+
+| family | rows lost | worst | where the time goes |
+|---|---|---|---|
+| `base32` / `base64` / `basenc` encoding | 11 | 0.12x | one character per builder push; `base64 -w0` of 8 MiB was 661 M instructions to GNU's 90 M |
+| the digests (`sha*sum`, `md5sum`, `b2sum`, `cksum -a`) | 33 | 0.50x | GNU calls OpenSSL's assembly: `sha256sum` of 8 MiB is 447 M instructions to its 235 M |
+| `ls` / `dir` / `vdir` | 31 | 0.66x | |
+| `dd` conversions | 9 | 0.43x | `conv=unblock`, `swab`, `block` |
+| `pr` | 9 | 0.53x | a builder allocated per line, and padding built as a string |
+| `du` | 9 | 0.61x | every row |
+| `fmt` | 9 | 0.66x | every row |
+| `shuf` | 6 | 0.29x | `-n 10` of a large file reads all of it |
+| `join`, `ptx`, `stat`, `cp`, `sort`, `numfmt`, `tac`, `split`, the rest | 43 | 0.53x | |
+
 ### Both compilers, 2026-09-17 — the self-host build does not meet requirement 2
 
 The first run of the two-compiler bench (`fern` = `bin/fern`'s build,
