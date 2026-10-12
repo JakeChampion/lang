@@ -86,6 +86,7 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 	"github.com/jakechampion/lang/internal/syntax/printer"
 	"github.com/jakechampion/lang/internal/tools/gates"
+	"github.com/jakechampion/lang/internal/tools/launcher"
 	"github.com/jakechampion/lang/internal/tools/literate"
 	"github.com/jakechampion/lang/internal/tools/tty"
 )
@@ -632,6 +633,7 @@ func main() {
 	tangleChunk := flag.String("chunk", "", "with -tangle, expand and print only the named chunk (e.g. -chunk 'the main loop') instead of the <<*>> root — for inspecting or extracting one chunk. Works on single- and multi-file documents.")
 	doDoctest := flag.Bool("doctest", false, "run the `test`-directive example blocks in a literate FILE.fern.md. Each ```fern test block is tangled (its `<<refs>>` expand against the document's chunks) into a standalone program, compiled, and run; exit 0 = pass. Results print as TAP; the command exits non-zero if any example fails.")
 	showVersion := flag.Bool("version", false, "print the commit this binary was built from (plus the Go version and platform) and exit — the nightly tag rolls, so this is how to say which build you have")
+	showSelfhostKey := flag.Bool("selfhost-key", false, "print the key of the compiler and stdlib sources this binary embeds and exit. `make selfhost-cli` and `make bootstrap` write it to bin/fern-selfhost.key, and a fern uses the bin/fern-selfhost beside it only when that key is its own.")
 	listTargets := flag.Bool("targets", false, "list the supported -target= values with their descriptions + capability surface, then exit. Surfaces the Platform-descriptor table (internal/pkg/platforms) as the canonical source of truth for what each target accepts.")
 	explain := flag.String("explain", "", "print the long-form explanation for an error code (e.g. -explain E001) and exit. Pass an empty string with no other args to list the available codes.")
 	colorMode := flag.String("color", "auto", "colourise diagnostics: auto (default — colour only when stderr is a terminal and NO_COLOR is unset), always, or never.")
@@ -682,6 +684,16 @@ func main() {
 
 	if *showVersion {
 		fmt.Println(versionString())
+		return
+	}
+
+	if *showSelfhostKey {
+		key, err := launcher.SourcesKey()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fern:", err)
+			os.Exit(1)
+		}
+		fmt.Println(key)
 		return
 	}
 

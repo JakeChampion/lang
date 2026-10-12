@@ -97,10 +97,11 @@ fern -repl                           # interactive session
 
 A `-target` compile runs the compiler, which assembles, links and
 (for Darwin) code-signs in-process with no external toolchain. `fern` uses
-`$FERN_SELFHOST` when set, else a `fern-selfhost` beside it (`make bootstrap`
-installs one), else it builds one on first use from the compiler sources it
-embeds, with the pinned stage0 compiler it downloads and verifies
-(`docs/BOOTSTRAP.md`). The result is cached. `fern -targets` lists every target with the
+`$FERN_SELFHOST` when set, else a `fern-selfhost` beside it that was built from
+the same sources (`make bootstrap` and `make selfhost-cli` install one, with its
+sources key in `fern-selfhost.key`), else it builds one on first use from the
+compiler sources it embeds, with the pinned stage0 compiler it downloads and
+verifies (`docs/BOOTSTRAP.md`). The result is cached. `fern -targets` lists every target with the
 capabilities its host provides; `fern -explain E030` explains an error
 code.
 

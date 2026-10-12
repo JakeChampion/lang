@@ -8,9 +8,9 @@ import (
 )
 
 // FernCLI builds cmd/fern into a temp dir with SelfHostCLI beside it as
-// fern-selfhost, the compiler the launcher finds there before it would build
-// its own, so a `-target` compile through it runs the tree's current
-// self-host.
+// fern-selfhost, stamped with the sources key the built fern embeds, so the
+// launcher compiles with it rather than building its own, and a `-target`
+// compile through it runs the tree's current self-host.
 func FernCLI(t testing.TB) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -18,7 +18,15 @@ func FernCLI(t testing.TB) string {
 	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
 		t.Fatalf("go build fern: %v\n%s", err, out)
 	}
-	if err := os.Symlink(SelfHostCLI(t), filepath.Join(dir, "fern-selfhost")); err != nil {
+	sib := filepath.Join(dir, "fern-selfhost")
+	if err := os.Symlink(SelfHostCLI(t), sib); err != nil {
+		t.Fatal(err)
+	}
+	key, err := exec.Command(bin, "-selfhost-key").Output()
+	if err != nil {
+		t.Fatalf("fern -selfhost-key: %v", err)
+	}
+	if err := os.WriteFile(sib+".key", key, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return bin
