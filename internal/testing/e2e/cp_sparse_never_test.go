@@ -70,9 +70,10 @@ func TestCpSparseNeverIsNotOffloaded(t *testing.T) {
 			t.Errorf("cp --sparse=never %s: copy differs from the source", c.src)
 		}
 	}
-	// The default does offload, so the same filter is an error there; that
-	// keeps this test honest about the filter reaching cp at all.
-	argv := append(e2eharness.RunX86_64Bin(runner, bin).Args, "dense", "dense.auto")
+	// The default sparse mode does offload, so the same filter is an error
+	// there; that keeps this test honest about the filter reaching cp at all.
+	// No clone, which a reflink-capable filesystem would answer first.
+	argv := append(e2eharness.RunX86_64Bin(runner, bin).Args, "--reflink=never", "dense", "dense.auto")
 	if out, err := underSeccompErrno(t, dir, syscall.EIO, []uintptr{nr}, argv...).CombinedOutput(); err == nil {
 		t.Errorf("cp with copy_file_range failing EIO succeeded:\n%s", out)
 	}
