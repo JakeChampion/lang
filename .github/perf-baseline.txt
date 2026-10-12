@@ -75,7 +75,7 @@ x86_64/map_probe_chain.text	5875
 x86_64/map_probe_chain.ir	389755986
 x86_64/map_string.text	8831
 x86_64/map_string.ir	66093136	2
-x86_64/ordmap_insert.text	5385
+x86_64/ordmap_insert.text	5276
 x86_64/ordmap_insert.ir	115466142
 x86_64/pmap_insert.text	4853
 x86_64/pmap_insert.ir	64758246
@@ -86,7 +86,7 @@ x86_64/record_update.text	1375
 x86_64/sort_inplace.text	2872
 x86_64/sort_inplace.ir	43380614
 x86_64/sort_ints.text	3398
-x86_64/sort_ints.ir	30711812
+x86_64/sort_ints.ir	29849660
 x86_64/sort_strings.text	4210
 x86_64/sort_strings.ir	107223962
 x86_64/string_build.text	3180
@@ -200,7 +200,7 @@ aarch64/map_probe_chain.text	6118
 aarch64/map_probe_chain.ir	393409282
 aarch64/map_string.text	9002
 aarch64/map_string.ir	66191654	2
-aarch64/ordmap_insert.text	5503
+aarch64/ordmap_insert.text	5441
 aarch64/ordmap_insert.ir	122175759
 aarch64/pmap_insert.text	4965
 aarch64/pmap_insert.ir	71272111
@@ -236,23 +236,23 @@ aarch64/utf8_ingest_validated.text	9813
 aarch64/utf8_ingest_validated.ir	6484480
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-x86_64/perceus_cfold.text	2436
-x86_64/perceus_cfold.ir	67135667
+x86_64/perceus_cfold.text	2344
+x86_64/perceus_cfold.ir	65868467
 x86_64/perceus_deriv.text	2708
-x86_64/perceus_deriv.ir	95830408
+x86_64/perceus_deriv.ir	92504008
 x86_64/perceus_nqueens.text	1448
 x86_64/perceus_nqueens.ir	105327536
-x86_64/perceus_rbtree.text	3431
-x86_64/perceus_rbtree.ir	74376129
-x86_64/perceus_rbtree_ck.text	3376
-x86_64/perceus_rbtree_ck.ir	82344687
-aarch64/perceus_cfold.text	2641
+x86_64/perceus_rbtree.text	2731
+x86_64/perceus_rbtree.ir	60273249
+x86_64/perceus_rbtree_ck.text	3003
+x86_64/perceus_rbtree_ck.ir	70784847
+aarch64/perceus_cfold.text	2564
 aarch64/perceus_cfold.ir	72820602
 aarch64/perceus_deriv.text	2935
 aarch64/perceus_deriv.ir	104893304
 aarch64/perceus_nqueens.text	1629
 aarch64/perceus_nqueens.ir	117887806
-aarch64/perceus_rbtree.text	3547
+aarch64/perceus_rbtree.text	2942
 aarch64/perceus_rbtree.ir	74951956
-aarch64/perceus_rbtree_ck.text	3549
+aarch64/perceus_rbtree_ck.text	3204
 aarch64/perceus_rbtree_ck.ir	85099728
