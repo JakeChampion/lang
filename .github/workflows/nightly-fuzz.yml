@@ -187,6 +187,34 @@ jobs:
   # ubuntu-latest, not an arm64 runner, for the reason the x86-64 leg gives:
   # the driver is x86-64 asm whatever it targets, so only its OUTPUT is arm64
   # and only that runs under qemu.
+  # The same window built under -sanitize: a leak, an rc over-release or a
+  # use of a freed block fails a seed whose answer is right.
+  differential-selfhost-sanitize:
+    needs: window
+    name: nightly-differential-selfhost-sanitize-shard${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
+      - name: go test (self-host -sanitize, seeds ${{ needs.window.outputs.base }}+, shard ${{ matrix.shard }}/4)
+        env:
+          FERN_SELFHOST_DIFF: "1"
+          DIFF_ORACLE_SEED_BASE: "${{ needs.window.outputs.base }}"
+          DIFF_ORACLE_SHARD: "${{ matrix.shard }}/4"
+          SELFHOST_DIFF_SEEDS: "${{ env.SEED_WINDOW }}"
+        run: |
+          gotestsum --format pkgname-and-test-fails -- -timeout=43m \
+            -run '^TestDifferential_SelfHostSanitizeX86_64$' ./internal/testing/e2e/
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+
   differential-selfhost-arm64:
     needs: window
     name: nightly-differential-selfhost-arm64-shard${{ matrix.shard }}
@@ -224,6 +252,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
+        with:
+          wasmtime: "true"
       - uses: ./.github/actions/selfhost-driver-cache
       - name: go test (self-host wasm, seeds ${{ needs.window.outputs.base }}+)
         env:
@@ -412,11 +442,42 @@ jobs:
       - name: scripts/fernsmith-mutant
         run: scripts/fernsmith-mutant
 
+  # The mutation score (docs/FUZZING.md): a fresh range of planted compiler
+  # faults each night, each judged on fernsmith programs under -sanitize. A
+  # measurement, not a gate — the report, with every surviving fault, is the
+  # artifact.
+  mutation-score:
+    if: github.repository == 'JakeChampion/lang'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
+      - name: go test (16 mutants from ${{ github.run_number }} x 16)
+        env:
+          FERN_MUTATION_SCORE: "16"
+          FERN_MUTATION_BASE: "${{ github.run_number }}"
+          FERN_MUTATION_SEEDS: "200"
+          FERN_MUTATION_REPORT: ${{ runner.temp }}/mutation-score.txt
+        run: |
+          FERN_MUTATION_BASE=$(( FERN_MUTATION_BASE * 16 ))
+          export FERN_MUTATION_BASE
+          go test ./internal/testing/e2e/ -run '^TestFernsmithMutationScore$' -count=1 -v -timeout 85m
+          cat "$FERN_MUTATION_REPORT" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: mutation-score
+          path: ${{ runner.temp }}/mutation-score.txt
+          retention-days: 90
+          if-no-files-found: ignore
+
   # A nightly nobody looks at is a nightly that does not exist. Failures
   # land on one long-lived issue rather than a fresh one per night, so a
   # week of the same break is a thread and not eight duplicates.
   report:
-    needs: [window, differential, differential-selfhost, differential-selfhost-arm64, differential-selfhost-wasm, fuzz, fuzz-selfhost-coverage, fernsmith-mutant]
+    needs: [window, differential, differential-selfhost, differential-selfhost-sanitize, differential-selfhost-arm64, differential-selfhost-wasm, fuzz, fuzz-selfhost-coverage, fernsmith-mutant]
     if: failure() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
