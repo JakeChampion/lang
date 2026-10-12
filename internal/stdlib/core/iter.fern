@@ -4,11 +4,11 @@
 // generic over the element type `T`, lowering on BOTH the native compiler and
 // the self-hosted compiler's IR path: parametrised-trait bounds parse on the
 // self-host (#3558) and the native checker recovers a bound-only type parameter
-// by bound-driven inference (#3596), so a fully-generic collector
-// `count[T, I: Iterator[T]]` / `to_array[T, I: Iterator[T]]: T[]` works on
-// every backend. The numeric reducers are bounded on std/num's operator
-// traits (`sum[T: Add + Zero]`, `product[T: Mul + One]`) and the comparing ones
-// on core/cmp's `Ord` / `Eq`, so they work for every element type.
+// by bound-driven inference (#3596), so a fully-generic free function such as
+// `skip[T, I: Iterator[T]]: T[]` works on every backend. The numeric reducers
+// are bounded on std/num's operator traits (`sum[T: Add + Zero]`,
+// `product[T: Mul + One]`) and the comparing ones on core/cmp's `Ord` / `Eq`,
+// so they work for every element type.
 //
 // Two iterators ship: `Range` over `[lo, hi)`, and `ArrayIter` over a `T[]`
 // (`iter.of(xs)`), the latter being the stdlib's first PARAMETRIC impl of a
@@ -265,7 +265,7 @@ impl Iterator[i32] for Range {
 // fold / take / …) usable on a plain array, and (via a map's `.keys()` /
 // `.values()` snapshot) on map keys and values too:
 //   iter.sum(iter.of(xs))
-//   iter.count(iter.of(m.keys()))
+//   iter.of(m.keys()).count()
 // Generic over the element type T, lowered through a parametric impl of the
 // generic Iterator trait.
 pub struct ArrayIter[T] { xs: T[], idx: i32 }
@@ -304,167 +304,11 @@ pub function sum[T: num.Add + num.Zero, I: Iterator[T]](it: I): T {
   return total;
 }
 
-// count consumes any iterator, returning how many values it yields. Generic
-// over the element type `T` (which appears only in the bound).
-pub function count[T, I: Iterator[T]](it: I): i32 {
-  let n = 0;
-  let cur = it;
-  let go = true;
-  while (go) {
-    match (cur.next()) {
-      Some(t) => {
-        n = n + 1;
-        cur = t.1;
-      },
-      None => {
-        go = false;
-      }
-    }
-  }
-  return n;
-}
-
-// to_array collects any iterator's values into a fresh `T[]`, in order. Generic
-// over the element type `T`.
-pub function to_array[T, I: Iterator[T]](it: I): T[] {
-  let out: T[] = [];
-  let cur = it;
-  let go = true;
-  while (go) {
-    match (cur.next()) {
-      Some(t) => {
-        out = out.append(t.0);
-        cur = t.1;
-      },
-      None => {
-        go = false;
-      }
-    }
-  }
-  return out;
-}
-
-// collect is the canonical terminal of an iterator chain — it drains the
-// iterator into a fresh `T[]`, in order (`xs.iter().map(f).filter(g).collect()`).
-// Semantically identical to `to_array`; `collect` is the name the chain-terminal
-// idiom reaches for, `to_array` the descriptive alias. Generic over the element
-// type `T`, so it lands a chain of any element type on the native backends AND
-// the self-host IR path (the same bounded-collector shape `to_array` already
-// proves). The `Map` sink for a `(K, V)`-yielding iterator is `to_map`.
-pub function collect[T, I: Iterator[T]](it: I): T[] {
-  let out: T[] = [];
-  let cur = it;
-  let go = true;
-  while (go) {
-    match (cur.next()) {
-      Some(t) => {
-        out = out.append(t.0);
-        cur = t.1;
-      },
-      None => {
-        go = false;
-      }
-    }
-  }
-  return out;
-}
-
 // (A `to_map` terminal for a `(K, V)`-yielding iterator — the keyed `Map` half
 // of #2709's FromIterator — is deferred: a fully-generic `Map[K, V]` built in a
 // generic body hits the same abstract-key `Map` dispatch gap as the generic
 // `Set[T]` in #2671, where the function's `K`/`V` don't unify with the `Map`
 // method's own type params. It lands once that compiler gap closes.)
-
-// fold is the fundamental left reduction: starting from `init`, it threads an
-// accumulator of type `A` through `f(acc, value)` for every value the iterator
-// yields, returning the final accumulator. `sum` is `fold(it, 0, +)`; `count`
-// is `fold(it, 0, \acc _ -> acc + 1)`. Generic over both the element type `T`
-// and the accumulator type `A` (so e.g. an i32 iterator can fold into a
-// string, or a count). The combining function is an ordinary closure value.
-pub function fold[T, A, I: Iterator[T]](it: I, init: A, f: (A, T) => A): A {
-  let acc = init;
-  let cur = it;
-  let go = true;
-  while (go) {
-    match (cur.next()) {
-      Some(t) => {
-        acc = f(acc, t.0);
-        cur = t.1;
-      },
-      None => {
-        go = false;
-      }
-    }
-  }
-  return acc;
-}
-
-// any reports whether the iterator yields a value for which `pred` is true. It
-// short-circuits on the first match. Empty iterator → false. The closure-taking
-// counterpart to the equality-only `contains`. Generic over the element type
-// `T`.
-pub function any[T, I: Iterator[T]](it: I, pred: (T) => boolean): boolean {
-  let cur = it;
-  let go = true;
-  while (go) {
-    match (cur.next()) {
-      Some(t) => {
-        if (pred(t.0)) {
-          return true;
-        }
-        cur = t.1;
-      },
-      None => {
-        go = false;
-      }
-    }
-  }
-  return false;
-}
-
-// all reports whether `pred` is true for EVERY value the iterator yields. It
-// short-circuits on the first failure. Empty iterator → true (vacuously).
-// Generic over the element type `T`.
-pub function all[T, I: Iterator[T]](it: I, pred: (T) => boolean): boolean {
-  let cur = it;
-  let go = true;
-  while (go) {
-    match (cur.next()) {
-      Some(t) => {
-        if (!pred(t.0)) {
-          return false;
-        }
-        cur = t.1;
-      },
-      None => {
-        go = false;
-      }
-    }
-  }
-  return true;
-}
-
-// find returns the first value for which `pred` is true, or `None` if no value
-// matches. The closure-taking counterpart to the equality-only `position`.
-// Generic over the element type `T`.
-pub function find[T, I: Iterator[T]](it: I, pred: (T) => boolean): Option[T] {
-  let cur = it;
-  let go = true;
-  while (go) {
-    match (cur.next()) {
-      Some(t) => {
-        if (pred(t.0)) {
-          return Some(t.0);
-        }
-        cur = t.1;
-      },
-      None => {
-        go = false;
-      }
-    }
-  }
-  return None;
-}
 
 // position_by returns the 0-based index of the first value for which `pred` is
 // true, or -1 if none matches. The closure-taking counterpart to `position`
@@ -513,29 +357,6 @@ pub function count_by[T, I: Iterator[T]](it: I, pred: (T) => boolean): i32 {
   return n;
 }
 
-// map eagerly applies `f` to every value the iterator yields, collecting the
-// results into a fresh `U[]` in order. The eager transform — `it.map(f)` of the
-// iterator world, returning an array rather than a lazy adapter (lazy fusion is
-// a later optimisation; see the module header). Generic over the element type
-// `T` and the result type `U`.
-pub function map[T, U, I: Iterator[T]](it: I, f: (T) => U): U[] {
-  let out: U[] = [];
-  let cur = it;
-  let go = true;
-  while (go) {
-    match (cur.next()) {
-      Some(t) => {
-        out = out.append(f(t.0));
-        cur = t.1;
-      },
-      None => {
-        go = false;
-      }
-    }
-  }
-  return out;
-}
-
 // flat_map applies `f` to every value (each producing a `U[]`) and concatenates
 // the results into one fresh `U[]`, in order — `map` followed by a flatten. The
 // "expand each element to zero-or-more" transform (return `[]` to drop a value,
@@ -556,109 +377,6 @@ pub function flat_map[T, U, I: Iterator[T]](it: I, f: (T) => U[]): U[] {
       },
       None => {
         go = false;
-      }
-    }
-  }
-  return out;
-}
-
-// filter eagerly collects the values for which `keep` is true into a fresh `T[]`,
-// preserving order. Generic over the element type `T`.
-pub function filter[T, I: Iterator[T]](it: I, keep: (T) => boolean): T[] {
-  let out: T[] = [];
-  let cur = it;
-  let go = true;
-  while (go) {
-    match (cur.next()) {
-      Some(t) => {
-        if (keep(t.0)) {
-          out = out.append(t.0);
-        }
-        cur = t.1;
-      },
-      None => {
-        go = false;
-      }
-    }
-  }
-  return out;
-}
-
-// enumerate pairs each value with its 0-based index, collecting `(index, value)`
-// tuples into a fresh `(i32, T)[]` in order — the eager form of "number the
-// elements". Generic over the element type `T`.
-pub function enumerate[T, I: Iterator[T]](it: I): (i32, T)[] {
-  let out: (i32, T)[] = [];
-  let cur = it;
-  let i = 0;
-  let go = true;
-  while (go) {
-    match (cur.next()) {
-      Some(t) => {
-        out = out.append((i, t.0));
-        cur = t.1;
-        i = i + 1;
-      },
-      None => {
-        go = false;
-      }
-    }
-  }
-  return out;
-}
-
-// zip walks two iterators in lockstep, collecting `(a, b)` pairs into a fresh
-// `(T, U)[]` until EITHER runs out (so the result length is the shorter of the
-// two). Generic over both element types `T` and `U`.
-pub function zip[T, U, I: Iterator[T], J: Iterator[U]](a: I, b: J): (T, U)[] {
-  let out: (T, U)[] = [];
-  let ca = a;
-  let cb = b;
-  let go = true;
-  while (go) {
-    match (ca.next()) {
-      Some(ta) => {
-        match (cb.next()) {
-          Some(tb) => {
-            out = out.append((ta.0, tb.0));
-            ca = ta.1;
-            cb = tb.1;
-          },
-          None => {
-            go = false;
-          }
-        }
-      },
-      None => {
-        go = false;
-      }
-    }
-  }
-  return out;
-}
-
-// take eagerly collects the first `n` values the iterator yields into a fresh
-// `T[]` (fewer if the iterator is shorter); `n <= 0` yields an empty array. The
-// bounded-prefix collector — `take(it, k)` is the eager form of "the first k
-// elements". Generic over the element type `T`.
-pub function take[T, I: Iterator[T]](it: I, n: i32): T[] {
-  let out: T[] = [];
-  let cur = it;
-  let k = n;
-  let go = true;
-  while (go) {
-    if (k <= 0) {
-      go = false;
-    } else {
-      match (cur.next()) {
-        Some(t) => {
-          out = out.append(t.0);
-          cur = t.1;
-          k = k - 1;
-        },
-        None => {
-          go = false;
-        }
       }
     }
   }

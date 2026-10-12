@@ -12,7 +12,7 @@ import (
 // the single-type-parameter trait-bound combinators over a concrete
 // iterator (iter.range -> iter.Range). These combinators —
 // sum/product/min/max/contains/count_value/position (all
-// `[I: Iterator[i32]]`) plus count (`[T, I: Iterator[T]]`) — are instantiated
+// `[I: Iterator[i32]]`) — are instantiated
 // with a module-mangled type argument (`iter__Range`, from the bundling loader)
 // that itself contains `__`. For a single type parameter the monomorphiser's
 // clone_bg must use the instantiation key verbatim rather than split it on
@@ -40,8 +40,8 @@ var iterSingleParamIRCases = []struct {
 	{"count-value", "import \"core/iter\";\nfunction main(): i32 { return iter.count_value(iter.range(0, 5), 3); }\n"},
 	// position of 13 in 10..20 -> index 3.
 	{"position", "import \"core/iter\";\nfunction main(): i32 { match (iter.position(iter.range(10, 20), 13)) { Some(p) => { return p; }, None => { return 99; }, } }\n"},
-	// count of 0..7 (two type params [T, I]) = 7.
-	{"count", "import \"core/iter\";\nfunction main(): i32 { return iter.count(iter.range(0, 7)); }\n"},
+	// count of 0..7 through the Iterator trait's count method = 7.
+	{"count", "import \"core/iter\";\nfunction main(): i32 { return iter.range(0, 7).count(); }\n"},
 }
 
 // TestSelfHostIterSingleParamIRX86_64 compiles real `import "core/iter"`
