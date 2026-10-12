@@ -805,18 +805,19 @@ nothing else running. Full table: `docs/COREUTILS-BENCH-2026-10-12.md`. A
 ratio within about 10% of 1 is still not a measured difference: `mv a
 400-file tree` read 0.57x in the full run and 0.94x when `mv` was re-run
 alone. The two `yes` rows are from a later run, after `w.splice_forever` gave
-`yes` the vmsplice(2) path GNU 9.12's has.
+`yes` the vmsplice(2) path GNU 9.12's has, and the `ls` / `dir` / `vdir` rows
+from one after `ls` took each entry's type from its directory record.
 
 | | rows | faster than GNU | faster than uutils |
 |---|---|---|---|
-| every workload | 669 | 504 (75%) | 562 of 623 |
+| every workload | 669 | 510 (76%) | 562 of 623 |
 
-The median row is 1.70x GNU and 3.26x uutils, and 66 of the 106 utilities
-beat GNU on every row. The 165 rows that lose to GNU fall into a few families:
+The median row is 1.70x GNU and 3.28x uutils, and 66 of the 106 utilities
+beat GNU on every row. The 159 rows that lose to GNU fall into a few families:
 
 | family | rows lost | worst | where the time goes |
 |---|---|---|---|
-| `ls` / `dir` / `vdir` | 44 | 0.67x | GNU 9.12's `ls` is about 9% faster than 9.4's at the median row; `-R` still walks full paths, and `DirEntry` carries no `d_type`, so `-F` stats every entry |
+| `ls` / `dir` / `vdir` | 38 | 0.62x | the 4000-name rows, where neither side stats more than the other: a path joined per entry, the sort's comparator called out of line, and the name quoting. `-F` and `-R` win now that `ls` stats only what GNU does |
 | the digests (`sha*sum`, `md5sum`, `b2sum`, `cksum -a`) | 32 | 0.51x | GNU calls OpenSSL's assembly: `sha256sum` of 8 MiB is 372 M instructions to its 235 M |
 | `base32` / `base64` / `basenc` | 10 | 0.51x | the 64 MiB rows only: encoding is 0.55x to 0.72x after #12159's word-at-a-time push, and `--base16 -d` and `base32 -d` lose too |
 | `stat` | 10 | 0.77x | formatting 4000 operands |
@@ -4266,7 +4267,7 @@ still declared, since their getopt behaviour is observable either way.
 
 ## Open gaps
 
-**`ls -R` is the one directory walk still bounded by PATH_MAX.** The
+**`ls -R` is the one directory walk bounded by PATH_MAX, as GNU's is.** The
 directory handle #9074 asked for exists (`open_dir` and `Dir`, #12024): a
 directory held open whose methods list, stat, open, chmod, chown and remove
 entries by name, the openat / fstatat / unlinkat family GNU's fts runs on.
@@ -4281,9 +4282,11 @@ walk cannot redirect a call outside the tree. A directory reached through a
 symlink that `-L` or `-H` follows is opened by its path, which is the one place
 a walk still forms one.
 
-`ls -R` rebuilds the path per entry, so a tree deeper than PATH_MAX stops with
-`File name too long` where GNU keeps walking. Shallow ENAMETOOLONG is an
-ordinary error path both sides agree on.
+`ls -R` opens each subdirectory by its full path, as GNU's does, and like
+GNU's it takes a directory's kind from its directory record rather than a stat.
+So on a tree deeper than PATH_MAX both list down to the same level and stop
+with one `cannot open directory` naming `File name too long`
+(`TestLsRecursivePastPathMax`).
 
 **`chown -v` on a dangling symlink it was told to FOLLOW is the one place the
 corpus deliberately does not compare stdout, and the reason is that GNU has no

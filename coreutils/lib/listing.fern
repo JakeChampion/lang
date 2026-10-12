@@ -965,14 +965,16 @@ function wrap_seq(p: Palette, code: string): string {
 // directory as a directory, and `ln=target` colours a link as its
 // referent. `target` is read only for the long format, the one that
 // prints it.
-struct Ent { name: string, path: string, st: FileStat, stated: boolean, followed: boolean, target: string, has_target: boolean, link_mode: u32, link_ok: boolean, owner: string, group: string, context: string }
+// `dkind` is the file type the directory record gave, as mode bits, 0 when
+// it gave none; an entry nothing stat'ed is judged by it.
+struct Ent { name: string, path: string, st: FileStat, stated: boolean, followed: boolean, target: string, has_target: boolean, link_mode: u32, link_ok: boolean, owner: string, group: string, context: string, dkind: u32 }
 
 function blank_stat(): FileStat {
   return FileStat { is_file: false, is_dir: false, size: 0 as i64, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0 as i64, rdev: 0 as i64, ino: 0 as i64, blksize: 0 as i64, blocks: 0 as i64, atime: 0 as i64, atime_nsec: 0 as i64, mtime: 0 as i64, mtime_nsec: 0 as i64, ctime: 0 as i64, ctime_nsec: 0 as i64, btime: 0 as i64, btime_nsec: 0 as i64 };
 }
 
 function ent_new(name: string, path: string): Ent {
-  return Ent { name: name, path: path, st: blank_stat(), stated: false, followed: false, target: "", has_target: false, link_mode: 0 as u32, link_ok: false, owner: "", group: "", context: "?" };
+  return Ent { name: name, path: path, st: blank_stat(), stated: false, followed: false, target: "", has_target: false, link_mode: 0 as u32, link_ok: false, owner: "", group: "", context: "?", dkind: 0 as u32 };
 }
 
 // Whether the listing needs a stat(2) per entry at all. A plain `ls`
@@ -985,7 +987,30 @@ function ent_new(name: string, path: string): Ent {
 // dangling link prints the name in silence while `ls -lL` reports that
 // it cannot access it.
 function needs_stat(c: Cfg): boolean {
-  return c.format == fmt_long() || c.inode || c.show_blocks || c.show_context || c.indicator != ind_none() || c.color || c.dirs_first || c.sort_key == sort_time() || c.sort_key == sort_size() || c.recursive;
+  return needs_record(c) || c.indicator != ind_none() || c.dirs_first || c.recursive;
+}
+
+// Whether every entry's whole record is printed or judged. The other
+// reasons for a stat need only the file type, which the directory record
+// already gave.
+function needs_record(c: Cfg): boolean {
+  return c.format == fmt_long() || c.inode || c.show_blocks || c.show_context || c.color || c.sort_key == sort_time() || c.sort_key == sort_size();
+}
+
+// Whether one listed entry is stat'ed, as GNU decides it: always when the
+// record is needed or the directory record gave no type; else a link
+// under `-L`, whose type is its target's, a regular file under `-F`,
+// whose `*` is its execute bit, and a link under
+// `--group-directories-first`, which counts a link to a directory as one.
+function stat_needed(c: Cfg, e: Ent): boolean {
+  if (needs_record(c) || e.dkind == 0 as u32) {
+    return true;
+  }
+  let link: boolean = filetype.is_link(e.dkind);
+  if (link && (c.deref == deref_all() || c.dirs_first)) {
+    return true;
+  }
+  return c.indicator == ind_classify() && filetype.is_reg(e.dkind);
 }
 
 // Whether the TARGET of a symlink has to be stat'ed. GNU avoids it
@@ -1125,12 +1150,16 @@ function no_birth(e: Ent): boolean {
 
 // The mode whose KIND is trusted even when the record is not: an entry
 // nothing could be stat'ed about still keeps the letter lstat gave, so
-// `ls -LF` marks a dangling link `@` after reporting it.
+// `ls -LF` marks a dangling link `@` after reporting it, and one nothing
+// stat'ed keeps the letter its directory record gave.
 function kind_mode(e: Ent): u32 {
   if (e.stated) {
     return e.st.mode;
   }
-  return e.link_mode;
+  if (e.link_mode != 0 as u32) {
+    return e.link_mode;
+  }
+  return e.dkind;
 }
 
 // The mode that decides an indicator or a colour: the referent's when
@@ -1259,7 +1288,7 @@ function key_before(c: Cfg, es: Ent[], a: i32, b: i32): boolean {
 // A symlink TO a directory counts as one here, unlike for `-F`, where
 // it earns `@` rather than `/`.
 function is_dir_entry(c: Cfg, e: Ent): boolean {
-  if (filetype.is_dir(e.st.mode)) {
+  if (filetype.is_dir(kind_mode(e))) {
     return true;
   }
   return e.link_ok && filetype.is_dir(e.link_mode);
@@ -2484,8 +2513,9 @@ function ignored(c: Cfg, name: string): boolean {
 
 // `dir_entries(c, o, path)` — the entries of one directory, stat'ed if
 // anything on the line needs it, with a diagnostic for each one that
-// could not be reached. A failed stat is not a skip: the entry is still
-// listed, with `?` where the record would be.
+// could not be reached, and whether the directory opened at all. A
+// failed stat is not a skip: the entry is still listed, with `?` where
+// the record would be.
 // gnulib's `attach`: the path of one entry of `dir`. A dirname of `.`
 // contributes NOTHING, which is why `ls -L` in a directory with a
 // dangling link says `cannot access 'link'` and not `'./link'` — while
@@ -2497,15 +2527,15 @@ function attach(dir: string, name: string): string {
   return gnu.join_path(dir, name);
 }
 
-function dir_entries(c: Cfg, o: Out, path: string, seed: pwdb.Names): (Ent[], Out, pwdb.Names) {
+function dir_entries(c: Cfg, o: Out, path: string, seed: pwdb.Names): (Ent[], Out, pwdb.Names, boolean) {
   let out: Out = o;
-  let names: string[] = [];
+  let read: DirEntry[] = [];
   let failed: boolean = false;
   let why: string = "";
   if (c.ignore_mode == ignore_minimal()) {
-    match (read_dir_all(path)) {
+    match (read_dir_ino_all(path)) {
       Ok(es) => {
-        names = es;
+        read = es;
       },
       Err(e) => {
         failed = true;
@@ -2513,9 +2543,9 @@ function dir_entries(c: Cfg, o: Out, path: string, seed: pwdb.Names): (Ent[], Ou
       }
     }
   } else {
-    match (read_dir(path)) {
+    match (read_dir_ino(path)) {
       Ok(es) => {
-        names = es;
+        read = es;
       },
       Err(e) => {
         failed = true;
@@ -2524,26 +2554,27 @@ function dir_entries(c: Cfg, o: Out, path: string, seed: pwdb.Names): (Ent[], Ou
     }
   }
   if (failed) {
-    return ([], fail(out, "cannot open directory " + gnu.quotea(path) + ": " + why, status_minor()), seed);
+    return ([], fail(out, "cannot open directory " + gnu.quotea(path) + ": " + why, status_minor()), seed, false);
   }
   let list: Ent[] = [];
-  let i: i32 = 0;
-  while (i < names.len()) {
-    let name: string = names[i];
-    if (hidden(c, name) || ignored(c, name)) {
-      i = i + 1;
+  for d in read {
+    if (hidden(c, d.name) || ignored(c, d.name)) {
       continue;
     }
-    list = list.append(ent_new(name, attach(path, name)));
-    i = i + 1;
+    list = list.append(Ent { ...ent_new(d.name, attach(path, d.name)), dkind: d.kind });
   }
   if (!needs_stat(c)) {
-    return (list, out, seed);
+    return (list, out, seed, true);
   }
   let ids: pwdb.Names = seed;
   let filled: Ent[] = [];
   let k: i32 = 0;
   while (k < list.len()) {
+    if (!stat_needed(c, list[k])) {
+      filled = filled.append(list[k]);
+      k = k + 1;
+      continue;
+    }
     let r: (Ent, boolean, string) = stat_entry(c, list[k], false);
     let e: Ent = r.0;
     if (!r.1) {
@@ -2563,7 +2594,7 @@ function dir_entries(c: Cfg, o: Out, path: string, seed: pwdb.Names): (Ent[], Ou
     ids = r2.1;
     k = k + 1;
   }
-  return (filled, out, ids);
+  return (filled, out, ids, true);
 }
 
 // ---- listing a directory ----------------------------------------------------
@@ -2575,14 +2606,17 @@ struct Pending { path: string }
 struct State { out: Out, paint: Paint, wrote: boolean, queue: Pending[], names: pwdb.Names }
 
 // One directory: its header, its `total` when the format asks for one,
-// and its entries. `-R` pushes each subdirectory it found, in the
-// sorted order, so the walk is depth first through the listing's own
-// order rather than readdir's.
+// and its entries; one that does not open gets only its diagnostic,
+// as GNU opens before it writes the header. `-R` pushes each
+// subdirectory it found, in the sorted order, so the walk is depth
+// first through the listing's own order rather than readdir's.
 function list_dir(c: Cfg, st: State, p: Pending, header: boolean): State {
-  let r: (Ent[], Out, pwdb.Names) = dir_entries(c, st.out, p.path, st.names);
+  let r: (Ent[], Out, pwdb.Names, boolean) = dir_entries(c, st.out, p.path, st.names);
   let es: Ent[] = r.0;
-  let out: Out = r.1;
-  let state: State = State { ...st, out: out, names: r.2 };
+  let state: State = State { ...st, out: r.1, names: r.2 };
+  if (!r.3) {
+    return state;
+  }
   if (header) {
     if (state.wrote) {
       state = State { ...state, out: put(state.out, "\n") };
@@ -2609,7 +2643,7 @@ function list_dir(c: Cfg, st: State, p: Pending, header: boolean): State {
   let i: i32 = 0;
   while (i < es.len()) {
     let ent: Ent = es[i];
-    if (filetype.is_dir(ent.st.mode) && ent.name != "." && ent.name != "..") {
+    if (filetype.is_dir(kind_mode(ent)) && ent.name != "." && ent.name != "..") {
       subs = subs.append(Pending { path: gnu.join_path(p.path, ent.name) });
     }
     i = i + 1;
