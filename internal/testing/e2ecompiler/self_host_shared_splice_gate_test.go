@@ -177,3 +177,53 @@ func TestSelfHostSharedSpliceSeesUpdateBaseX86_64(t *testing.T) {
 		t.Errorf("exit = %d, want 0", got)
 	}
 }
+
+// exhaustiveLeafSrc's `is_red` ends in the unreachable block an exhaustive
+// match leaves, and most of its blocks are the match lowering's empty jumps.
+// It is a leaf all the same, spliced at both of `probe`'s calls.
+const exhaustiveLeafSrc = `enum Color { Red, Black }
+enum Tree { Node(Color, Tree, i32, Tree), Leaf }
+
+function is_red(t: Tree): boolean {
+  match (t) {
+    Node(Red(), _, _, _) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+@noinline
+function probe(t: Tree): i32 {
+  match (t) {
+    Node(_, l, _, r) => {
+      if (is_red(l)) {
+        return 1;
+      }
+      if (is_red(r)) {
+        return 2;
+      }
+      return 3;
+    },
+    Leaf => {
+      return 0;
+    }
+  }
+}
+
+function main(): i32 {
+  return probe(Node(Black, Leaf, 1, Node(Red, Leaf, 2, Leaf))) + probe(Leaf);
+}`
+
+func TestSelfHostExhaustiveLeafSplicedX86_64(t *testing.T) {
+	emit, run := x86ShapeHarness(t)
+	asm := emit(t, exhaustiveLeafSrc)
+	if strings.Contains(asm, "call __fn_is_red") {
+		t.Errorf("is_red is still called: a leaf ending in an exhaustive match was not spliced")
+	}
+	if got := run(t, "exhaustive_leaf", asm); got != 2 {
+		t.Errorf("exit = %d, want 2", got)
+	}
+}

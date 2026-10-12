@@ -33,6 +33,18 @@ function max_leaf_blocks(): i32 {
   return 16;
 }
 
+// The blocks of `g` that emit anything: a block holding nothing but a jump is
+// a trampoline the match lowering leaves and the SSA backend threads away.
+function code_blocks(g: ssa.SFunc): i32 {
+  let n: i32 = 0;
+  for b in g.blocks {
+    if (b.term.kind_tag != 2 || b.insts.len() > 0) {
+      n = n + 1;
+    }
+  }
+  return n;
+}
+
 // A function called from one place is spliced there whatever it computes, as
 // long as it is no larger than this: the original goes once the splice leaves
 // it unreferenced (ircore.cull_spliced_leaves), so the program does not grow.
@@ -638,7 +650,7 @@ function constructor_leaves(funcs: ssasem.Func[], sp: Spliceable): boolean[] {
 }
 
 function constructor_body(f: ssasem.Func): boolean {
-  if (f.graph.takes_env || f.graph.blocks.len() > max_leaf_blocks() || lends_view(f)) {
+  if (f.graph.takes_env || code_blocks(f.graph) > max_leaf_blocks() || lends_view(f)) {
     return false;
   }
   if (f.graph.blocks[f.graph.entry].preds.len() > 0) {
@@ -773,7 +785,7 @@ function leaf_value_records(f: ssasem.Func, ignored: i32): i32 {
 }
 
 function leaf_body(f: ssasem.Func, ignored: i32): boolean {
-  if (f.graph.takes_env && ignored < 0 || f.graph.blocks.len() > max_leaf_blocks()) {
+  if (f.graph.takes_env && ignored < 0 || code_blocks(f.graph) > max_leaf_blocks()) {
     return false;
   }
   // The splice gives the entry one predecessor, the caller's block.
@@ -791,10 +803,14 @@ function leaf_body(f: ssasem.Func, ignored: i32): boolean {
   // counts mean every record is one of the two.
   let record_sources: i32 = 0;
   let n: i32 = 0;
+  // An exhaustive match ends in an unreachable block, which a splice copies
+  // as it stands; a body still needs a return to be a value.
+  let returns: boolean = false;
   for b in f.graph.blocks {
-    if (b.term.kind_tag < 1 || b.term.kind_tag > 3) {
+    if (b.term.kind_tag < 1 || b.term.kind_tag > 4) {
       return false;
     }
+    returns = returns || b.term.kind_tag == 1;
     for ins in b.insts {
       if (!leaf_kind(ins.kind_tag) && !(ins.kind_tag == ssasem.call() && ssasem.scalar_primitive(ins.str))) {
         return false;
@@ -814,7 +830,7 @@ function leaf_body(f: ssasem.Func, ignored: i32): boolean {
       }
     }
   }
-  return records == record_sources && n <= max_leaf_insts();
+  return returns && records == record_sources && n <= max_leaf_insts();
 }
 
 // The ready function a call instruction names, as an index into `funcs`, or -1.
