@@ -84,6 +84,13 @@ function main(): i32 { let xs: i32[] = [4, 5, 6, 7]; return sum3(xs, 0) + sum3(x
 function main(): i32 { let xs: u8[] = [1, 2, 3, 4]; return head(xs); }`},
 	{"grouped_negative_offset_in_range", `function around(xs: i32[], k: i32): i32 { return xs[k + 1] + xs[k + 0 - 1] * 3 + xs[k]; }
 function main(): i32 { return around([1, 2, 3], 1); }`},
+	{"grouped_string_reads", `function word(s: string, off: i32): i32 { return s[off] as i32 + s[off + 1] as i32 * 3 + s[off + 2] as i32 + s[off + 3] as i32 * 5; }
+function main(): i32 { return (word("abcde", 1) + word("abcde", 0)) % 101; }`},
+	{"grouped_string_word", `function word(s: string, o: i32): u32 { return s[o + 2] as u32 << 16 | s[o] as u32 | s[o + 3] as u32 << 24 | s[o + 1] as u32 << 8; }
+function wide(s: string, o: i32): u64 { return s[o] as u64 << 56 | s[o + 1] as u64 << 48 | s[o + 2] as u64 << 40 | s[o + 3] as u64 << 32 | s[o + 4] as u64 << 24 | s[o + 5] as u64 << 16 | s[o + 6] as u64 << 8 | s[o + 7] as u64; }
+function main(): i32 { let s: string = "the quick brown fox"; return ((word(s, 3) ^ word(s, 15) ^ (wide(s, 9) >> 21u64) as u32 ^ wide(slice_unchecked(s, 2, 12), 1) as u32) & 63u32) as i32; }`},
+	{"grouped_view_word", `function word(v: str, o: i32): u32 { return v[o] as u32 | v[o + 1] as u32 << 8 | v[o + 2] as u32 << 16 | v[o + 3] as u32 << 24; }
+function main(): i32 { let s: string = "the quick brown fox"; let v: str = slice_unchecked(s, 4, 15); return ((word(v, 2) ^ word(slice_unchecked(s, 1, 9), 3)) & 63u32) as i32; }`},
 }
 
 // guardBoundsTwins pairs each proven program with one whose guard proves
@@ -117,6 +124,9 @@ var guardBoundsTwins = []struct{ name, proven, unproven string }{
 	{"grouped_constant_reads",
 		`@noinline function head(xs: u8[], d: i32): i32 { return xs[3] as i32 + xs[1] as i32 + xs[2] as i32 + 10 / d; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4]; return head(xs, 5); }`,
 		`@noinline function head(xs: u8[], d: i32): i32 { return xs[3] as i32 + xs[1] as i32 / d + xs[2] as i32; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4]; return head(xs, 1) + 2; }`},
+	{"grouped_string_reads",
+		`function word(s: string, off: i32, d: i32): i32 { return s[off + 3] as i32 + s[off] as i32 + s[off + 2] as i32 + s[off + 1] as i32 + 10 / d; } function main(): i32 { return word("abcd", 0, 5); }`,
+		`function word(s: string, off: i32, d: i32): i32 { return s[off + 3] as i32 + s[off] as i32 / d + s[off + 2] as i32 / d + s[off + 1] as i32; } function main(): i32 { return word("abcd", 0, 1) + 2; }`},
 	{"grouped_reads",
 		`function word(bs: [u8], off: i32, d: i32): i32 { return bs[off] as i32 + bs[off + 1] as i32 + bs[off + 2] as i32 + bs[off + 3] as i32 + 10 / d; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4]; return word(xs, 0, 5); }`,
 		`function word(bs: [u8], off: i32, d: i32): i32 { return bs[off] as i32 + bs[off + 1] as i32 / d + bs[off + 2] as i32 / d + bs[off + 3] as i32; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4]; return word(xs, 0, 1) + 2; }`},
@@ -165,6 +175,20 @@ function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5]; return word(xs, 2) as i32
 function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5]; return word(xs, 0 - 1) as i32; }`},
 	{"grouped_word_constants_far_end", `function word(bs: u8[]): u32 { return bs[4] as u32 << 24 | bs[5] as u32 << 16 | bs[6] as u32 << 8 | bs[7] as u32; }
 function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5, 6, 7]; return word(xs) as i32; }`},
+	{"grouped_string_far_end", `function word(s: string, off: i32): i32 { return s[off] as i32 + s[off + 1] as i32 + s[off + 2] as i32 + s[off + 3] as i32; }
+function main(): i32 { return word("abcde", 2); }`},
+	{"grouped_string_negative_base", `function word(s: string, off: i32): i32 { return s[off + 2] as i32 + s[off] as i32 + s[off + 1] as i32; }
+function main(): i32 { return word("abcde", 0 - 1); }`},
+	{"grouped_string_word_far_end", `function word(s: string, o: i32): u32 { return s[o] as u32 | s[o + 1] as u32 << 8 | s[o + 2] as u32 << 16 | s[o + 3] as u32 << 24; }
+function main(): i32 { return word("abcdef", 3) as i32; }`},
+	{"grouped_string_word_negative_base", `function word(s: string, o: i32): u64 { return s[o] as u64 << 56 | s[o + 1] as u64 << 48 | s[o + 2] as u64 << 40 | s[o + 3] as u64 << 32 | s[o + 4] as u64 << 24 | s[o + 5] as u64 << 16 | s[o + 6] as u64 << 8 | s[o + 7] as u64; }
+function main(): i32 { return word("abcdefghij", 0 - 1) as i32; }`},
+	{"grouped_string_word_constants_far_end", `function word(s: string): u32 { return s[4] as u32 << 24 | s[5] as u32 << 16 | s[6] as u32 << 8 | s[7] as u32; }
+function main(): i32 { return word("abcdefg") as i32; }`},
+	{"grouped_string_word_of_slice_far_end", `function word(s: string, o: i32): u32 { return s[o] as u32 | s[o + 1] as u32 << 8 | s[o + 2] as u32 << 16 | s[o + 3] as u32 << 24; }
+function main(): i32 { let s: string = "abcdefghijkl"; return word(slice_unchecked(s, 2, 7), 2) as i32; }`},
+	{"grouped_view_word_far_end", `function word(v: str, o: i32): u32 { return v[o] as u32 | v[o + 1] as u32 << 8 | v[o + 2] as u32 << 16 | v[o + 3] as u32 << 24; }
+function main(): i32 { let s: string = "abcdefghijkl"; let v: str = slice_unchecked(s, 2, 7); return word(v, 2) as i32; }`},
 }
 
 func TestSelfHostGuardBoundsX86_64(t *testing.T) {

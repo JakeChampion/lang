@@ -7505,6 +7505,9 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     if (ins.imm != 1) {
       s = ssa_jump_sym(ssa_alu_rm(s, 7, 64, true, b, a, 8), "jae", "__fern_oob_abort");
     }
+    if (ins.imm == 2) {
+      return s;
+    }
     s = ssa_movzb_mi(ssa_mov_rm0(s, 64, true, "%rdx", a), 0, d, "%rdx", b, 0);
     return ssa_store(reg_of, ins.result, d, s);
   }
@@ -8338,28 +8341,36 @@ function ssa_view_off(fr: SsaFrame, v: i32): i32 {
 }
 
 // ssa_raw_inst selects the raw memory floor (52..55): unchecked 8-byte and
-// byte loads and stores at base + idx.
-function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+// byte loads and stores at base + idx, a byte's constant idx read as a
+// displacement.
+function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let k: i32 = ins.kind_tag;
   let a: string = ssa_src(reg_of, ins.args[0], "%r11");
   s = ssa_load(reg_of, ins.args[0], a, s);
-  let b: string = ssa_src(reg_of, ins.args[1], "%rcx");
-  s = ssa_load(reg_of, ins.args[1], b, s);
+  let at: string = util.i64_to_string(imm.value[ins.args[1]]) + "(" + a + ")";
+  if (!imm.is_imm[ins.args[1]]) {
+    let b: string = ssa_src(reg_of, ins.args[1], "%rcx");
+    s = ssa_load(reg_of, ins.args[1], b, s);
+    at = "(" + a + "," + b + ")";
+    if (k == 52 || k == 53) {
+      at = "(" + a + "," + b + ",8)";
+    }
+  }
   let d: string = ssa_dst(reg_of, ins.result);
   if (k == 52) {
-    s = s.write("    movq (" + a + "," + b + ",8), " + d + "\n");
+    s = s.write("    movq " + at + ", " + d + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
   if (k == 54) {
-    s = s.write("    movzbl (" + a + "," + b + "), " + ssa_r32(d) + "\n");
+    s = s.write("    movzbl " + at + ", " + ssa_r32(d) + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
   let c: string = ssa_src(reg_of, ins.args[2], "%rdx");
   s = ssa_load(reg_of, ins.args[2], c, s);
   if (k == 53) {
-    return s.write("    movq " + c + ", (" + a + "," + b + ",8)\n");
+    return s.write("    movq " + c + ", " + at + "\n");
   }
-  return s.write("    movb " + ssa_r8(c) + ", (" + a + "," + b + ")\n");
+  return s.write("    movb " + ssa_r8(c) + ", " + at + "\n");
 }
 
 // ssa_call_ind is the stack machine's call through a function value: the
@@ -8470,7 +8481,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     return ssa_sym_addr(ins, reg_of, s);
   }
   if (k >= 52 && k <= 55) {
-    return ssa_raw_inst(ins, reg_of, s);
+    return ssa_raw_inst(ins, reg_of, fr.imm, s);
   }
   if (k == 56) {
     return ssa_call_ind(ins, reg_of, s);

@@ -364,9 +364,9 @@ pub function array_get(): i32 {
   return 0 - 3;
 }
 
-// The `imm` of an `array_get` that only checks its index (ssabounds
-// grouped_reads): it reads no element, and nothing reads its result. 1 is an
-// unchecked read and 0 a checked one.
+// The `imm` of an `array_get` or `str_index` that only checks its index
+// (ssabounds grouped_reads): it reads no element, and nothing reads its
+// result. 1 is an unchecked read and 0 a checked one.
 pub function check_only(): i32 {
   return 2;
 }

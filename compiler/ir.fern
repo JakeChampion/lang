@@ -630,7 +630,8 @@ pub function op_str_cmp(): Op {
 // `str_index` pops [str, i] → the i32 byte value at index i (`s[i]`). Each
 // backend reads the byte from its own string layout (x86/arm64 16-byte box
 // [data@0,len@8] → byte at [data+i]; wasm data-section [len@0,bytes@4] → byte at
-// [s+4+i]). No bounds check (matches the AST path).
+// [s+4+i]). The index is checked against the length: i32_imm 1 skips the
+// check, and 2 (check_only) makes the check alone, pushing a zero.
 pub function op_str_index(): Op {
   return op0(101);
 }
