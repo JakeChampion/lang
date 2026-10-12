@@ -183,7 +183,7 @@ aarch64/closure_call.ir	120768083
 aarch64/enum_match.text	1137
 aarch64/enum_match.ir	41400056
 aarch64/http_hello.text	20511
-aarch64/http_hello.ir	31912723
+aarch64/http_hello.ir	31296723
 aarch64/int_loop.text	90
 aarch64/int_loop.ir	18000025
 aarch64/map_int.text	6107
@@ -193,13 +193,13 @@ aarch64/map_probe_chain.ir	393409282
 aarch64/map_string.text	9002
 aarch64/map_string.ir	66191654	2
 aarch64/ordmap_insert.text	5503
-aarch64/ordmap_insert.ir	172721607
+aarch64/ordmap_insert.ir	122175759
 aarch64/pmap_insert.text	5017
-aarch64/pmap_insert.ir	83592381
+aarch64/pmap_insert.ir	71272111
 aarch64/pvec_with.text	2975
-aarch64/pvec_with.ir	85888297
+aarch64/pvec_with.ir	63238555
 aarch64/record_update.text	1521
-aarch64/record_update.ir	129523944
+aarch64/record_update.ir	104947544
 aarch64/sort_inplace.text	2972
 aarch64/sort_inplace.ir	53111058
 aarch64/sort_ints.text	3564
@@ -223,9 +223,9 @@ aarch64/struct_drop.ir	428300325
 aarch64/tokenize.text	1170
 aarch64/tokenize.ir	38580038
 aarch64/utf8_ingest_unchecked.text	11226
-aarch64/utf8_ingest_unchecked.ir	3891266
+aarch64/utf8_ingest_unchecked.ir	3196476
 aarch64/utf8_ingest_validated.text	11469
-aarch64/utf8_ingest_validated.ir	7486486
+aarch64/utf8_ingest_validated.ir	6782680
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 x86_64/perceus_cfold.text	2436
@@ -239,12 +239,12 @@ x86_64/perceus_rbtree.ir	74376129
 x86_64/perceus_rbtree_ck.text	3376
 x86_64/perceus_rbtree_ck.ir	82344687
 aarch64/perceus_cfold.text	2641
-aarch64/perceus_cfold.ir	114309402
+aarch64/perceus_cfold.ir	72820602
 aarch64/perceus_deriv.text	2935
-aarch64/perceus_deriv.ir	113782904
+aarch64/perceus_deriv.ir	104893304
 aarch64/perceus_nqueens.text	1629
-aarch64/perceus_nqueens.ir	132085204
+aarch64/perceus_nqueens.ir	117887806
 aarch64/perceus_rbtree.text	3547
-aarch64/perceus_rbtree.ir	101192278
+aarch64/perceus_rbtree.ir	74951956
 aarch64/perceus_rbtree_ck.text	3549
-aarch64/perceus_rbtree_ck.ir	115221970
+aarch64/perceus_rbtree_ck.ir	85099728
