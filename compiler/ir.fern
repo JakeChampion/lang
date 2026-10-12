@@ -2795,6 +2795,11 @@ pub function op_const_option(tag: i32): Op {
   return op_const_struct("&opt", 0, util.i32_to_string(tag));
 }
 
+// The field word for op_const_option's block, in a static box that holds it.
+pub function const_option_ref(tag: i32): string {
+  return "{" + op_const_option(tag).str + "}";
+}
+
 pub function const_struct_is_option(packed: string): boolean {
   return const_struct_type(packed) == "&opt";
 }
