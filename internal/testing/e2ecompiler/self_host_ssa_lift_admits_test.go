@@ -45,10 +45,12 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	// computes them in Fern. mulhi_u (430) adds one admitted binary operation
 	// with two inputs and one result. The three strbuf kinds (117-119) are
 	// retired: the compiler writes its text through a buf_* builder.
+	// writer_splice_forever (431) adds one admitted kind with two inputs that
+	// pushes one Option.
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
-		"registered=376 declined=3\n"
+		"registered=377 declined=3\n"
 
 	cmd := runX86_64Bin(runner, bin)
 	out, err := cmd.Output()

@@ -62,6 +62,11 @@ function test_set_replaces_get_returns_new(): test.TestOutcome {
   return test.assert_is_some_eq_string(h.get("x"), "replaced");
 }
 
+function test_remove_drops_every_line(): test.TestOutcome {
+  let h: HeaderMap = headers.header_map_new().append("X", "1").append("Y", "y").append("x", "2").remove("X");
+  return test.assert_eq(h.len().to_string() + " " + h.names[0] + " " + h.has("x").to_string(), "1 Y false");
+}
+
 function test_set_on_absent_appends(): test.TestOutcome {
   let h: HeaderMap = headers.header_map_new();
   h = h.set("X-First", "1");
@@ -215,5 +220,6 @@ function main(): i32 {
   r = r.it("unquote undoes a quoted string", test_unquote);
   r = r.it("preferred_coding ranks Accept-Encoding", test_preferred_coding);
   r = r.it("weight reads a qvalue", test_weight);
+  r = r.it("remove drops every line of a name", test_remove_drops_every_line);
   return r.finish();
 }

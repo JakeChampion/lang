@@ -337,7 +337,7 @@ func TestRunnerDeflateExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/deflate", "# pass 16", "# fail 0", "1..16"} {
+	for _, w := range []string{"# Suite: std/deflate", "# pass 19", "# fail 0", "1..19"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -1178,6 +1178,12 @@ func TestRunnerHTTPCacheExamplePasses(t *testing.T) {
 // elements and walks the client back past trusted proxies.
 func TestRunnerHTTPForwardedExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "http_forwarded", "std/http/forwarded", 14)
+}
+
+// `tests/stdlib/http_compress_test.fern` codes response bodies by
+// `Accept-Encoding` and leaves alone the ones it must.
+func TestRunnerHTTPCompressExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_compress", "std/http/compress", 10)
 }
 
 // `tests/stdlib/http_static_test.fern` serves a mock platform's files:
@@ -4075,7 +4081,8 @@ func TestRunnerHeaderMapMigratedExample(t *testing.T) {
 		"ok 10 - names fold ASCII only",
 		"ok 13 - unquote undoes a quoted string",
 		"ok 15 - weight reads a qvalue",
-		"# pass 15",
+		"ok 16 - remove drops every line of a name",
+		"# pass 16",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {
