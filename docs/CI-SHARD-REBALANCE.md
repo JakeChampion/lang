@@ -3,33 +3,40 @@
 Status: successful held-out replays and a successful live comparison with
 identical test binaries. Current-head checks remain required before merge.
 
-## Refresh of 2026-10-02
+## Refresh of 2026-10-12
 
-The weights were refreshed from two green runs of the twelve-shard x86 lane
-in its post-#10970 shape, read from the `verify` job's "measured durations"
-group rather than the artifacts (docs/CI-WEIGHT-REFRESH.md): run
-[36950369759](https://github.com/JakeChampion/lang/actions/runs/36950369759)
-(head fbf3fc5, 2,981 measured tests) and run
-[36955214561](https://github.com/JakeChampion/lang/actions/runs/36955214561)
-(head 098da94, 2,969). `scripts/ci-test-weights refresh` over the two: 278
-weights raised, 98 lowered, 915 tests weighted for the first time (most of
-them 60-100 s driver builds that were partitioned as one second), 18 dropped
-to the one-second fallback. Both runs predate a45fbe06 and the merges after
-it, which deleted tests they had measured; `refresh` gives a test the tree no
-longer defines no row, since the file's lookup is exact and the testname gate
-rejects such a row.
+The weights were refreshed from two green runs of the twelve-shard x86 lane,
+read from the `verify` job's "measured durations" group rather than the
+artifacts (docs/CI-WEIGHT-REFRESH.md):
 
-Replay of the partition with `scripts/shard-tests` over the current 2,990-test
-list, summing each shard's observed seconds from each run:
+- run [38185968569](https://github.com/JakeChampion/lang/actions/runs/38185968569),
+  merging onto main at e7801485, with 3,483 measured tests;
+- run [38199867475](https://github.com/JakeChampion/lang/actions/runs/38199867475),
+  merging onto main at 209a7378, with 3,479 measured tests.
 
-| Weights | Run 36950369759, longest / shortest shard | Run 36955214561, longest / shortest shard |
+`scripts/ci-test-weights refresh` over the two raised 118 weights, lowered
+447, weighted 435 tests for the first time and dropped 392 to the one-second
+fallback. Two tests had grown far past their weights:
+
+- `TestSelfHostStdTestE2E` was weighted 217 s and now measures 1,157 s.
+- `TestSelfHostCryptoSuitesWasm` had no row, so it weighed 1 s, and measures 670 s.
+
+The partitioner put both in one shard with its full share of other work. That
+shard then ran into go test's 28-minute timeout on run 38199867475, and needed
+28 minutes on the re-run.
+
+Replay of the partition with `scripts/shard-tests` over the 3,479-test list,
+summing each shard's observed seconds from each run:
+
+| Weights | Run 38185968569, longest / shortest shard | Run 38199867475, longest / shortest shard |
 | --- | ---: | ---: |
-| previous file | 1211 s / 749 s | 1146 s / 732 s |
-| refreshed | 1037 s / 903 s | 999 s / 869 s |
+| previous file | 1969 s / 710 s | 1904 s / 716 s |
+| refreshed | 1243 s / 956 s | 1258 s / 970 s |
 
-About three minutes off the longest shard on either run, with the spread
-down from over 400 s to about 130 s. The audit (`check`) of the second run
-against the refreshed file reports no under-weighted or unweighted test.
+These are serial sums. A shard runs its tests in parallel, so its wall time is
+shorter, but the sums show how the work is split. The refreshed file takes
+about twelve minutes of work off the longest shard, and the spread falls from
+about 1,250 s to about 290 s.
 
 The old weights include terminal test durations that omit parallel children.
 The corrected collector measures each top-level test's full active lifetime.
