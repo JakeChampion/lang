@@ -2,6 +2,7 @@ package e2ecompiler
 
 import (
 	"bytes"
+	"fmt"
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 	"os"
 	"os/exec"
@@ -1475,6 +1476,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e082-owned-copy", "function f(sep: str): i32 { let owned: string = sep + \"\"; let g = (): i32 => owned.len(); return g(); }\nfunction main(): i32 { return f(\",\"); }\n", nil},
 		{"e082-view-without-a-closure", "function f(s: string, c: boolean): i32 { let v: str = slice_unchecked(s, 0, 1); let n: i32 = if (c) { v.len() } else { 0 }; return n; }\nfunction main(): i32 { return f(\"ab\", true); }\n", nil},
 		{"e082-parameter-shadows-a-view", "function f(s: string): i32 { let v: str = slice_unchecked(s, 0, 1); let g = (v: i32): i32 => v + 1; return g(v.len()); }\nfunction main(): i32 { return f(\"ab\"); }\n", nil},
+		{"e082-shared-struct-graph", e082SharedChain("i32"), nil},
+		{"e082-shared-struct-graph-view", e082SharedChain("str"), []string{"E082"}},
 		{"e082-recursive-viewless-enum", "enum L { Cons(i32, L), Nil }\nfunction f(): i32 { let l: L = Cons(1, Nil); let g = (): i32 => match (l) { Cons(x, r) => x, Nil => 0 }; return g(); }\nfunction main(): i32 { return f(); }\n", nil},
 		{"e065-callee-var-binding", "function mk(): string { return \"ab\"; }\nfunction idv(s: str): str { return s; }\nfunction f(): str { let s: string = mk(); let t: str = idv(slice_unchecked(s, 0, 1)); return t; }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		// `x.len()` in METHOD spelling. Both receivers resolve through a
@@ -3183,6 +3186,20 @@ var mainBodyRE = regexp.MustCompile(`(?s)function main\(\):\s*i32\s*\{(.*)\}\s*$
 // wrapMainBodyInLambda rewrites `function main(): i32 { BODY }` so BODY runs
 // inside a lambda main immediately calls. Returns "" when the row does not fit
 // the shape — a non-i32 main, or a body with no return to give the lambda.
+// e082SharedChain is a capture of a struct whose fields reach the same struct
+// twice, forty levels deep, ending in one field of type leaf. The walk that
+// decides E082 must enter each struct once, not once per path to it.
+func e082SharedChain(leaf string) string {
+	var b strings.Builder
+	const depth = 40
+	for i := 0; i < depth; i++ {
+		fmt.Fprintf(&b, "struct S%d { a: S%d, b: S%d }\n", i, i+1, i+1)
+	}
+	fmt.Fprintf(&b, "struct S%d { x: %s }\n", depth, leaf)
+	b.WriteString("function h(s: S0): i32 { return 0; }\nfunction f(s: S0): i32 { let g = (): i32 => h(s); return g(); }\nfunction main(): i32 { return 0; }\n")
+	return b.String()
+}
+
 func wrapMainBodyInLambda(src string) string {
 	m := mainBodyRE.FindStringSubmatchIndex(src)
 	if m == nil {

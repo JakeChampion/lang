@@ -14071,10 +14071,8 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
 // `a: i32` reads the literal at i32, where it truncates to 0 — native reports
 // the literal rather than widening the whole binary behind the committed
 // operand's back, and this is the rule that says so here (#8722).
-function binop_lit_range_diags(b: ast.ExprBinary, s: Scope): util.Diag[] {
+function binop_lit_range_diags(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type): util.Diag[] {
   let out: util.Diag[] = [];
-  let lt: typeinfo.Type = check_expr(b.left, s);
-  let rt: typeinfo.Type = check_expr(b.right, s);
   if (!is_integer(lt) || !is_integer(rt)) {
     return out;
   }
@@ -14093,13 +14091,13 @@ function binop_lit_range_diags(b: ast.ExprBinary, s: Scope): util.Diag[] {
 // and checked forms are integer-only. With the method, the operator means that
 // method in every instance. Equality is not the bound's question: it holds on
 // any type variable.
-function tvar_operator_diags(b: ast.ExprBinary, s: Scope): util.Diag[] {
+function tvar_operator_diags(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type, s: Scope): util.Diag[] {
   let method: string = tvar_operator_method(b.op);
   if (method == "-") {
     return [];
   }
-  for side in [b.left, b.right] {
-    let name: string = unmet_tvar(check_expr(side, s), method, s);
+  for side in [lt, rt] {
+    let name: string = unmet_tvar(side, method, s);
     if (name != "") {
       return [dg_at("E009", "operator \"" + b.op + "\" requires an integer type, got " + name, b.line, b.col)];
     }
@@ -14152,47 +14150,65 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
   if (b.op == "__named_arg") {
     return util.append_diags(out, call_diags(b.right, s));
   }
-  out = util.append_diags(call_diags(b.left, s), call_diags(b.right, s));
-  out = util.append_diags(out, binop_lit_range_diags(b, s));
-  out = util.append_diags(out, tvar_operator_diags(b, s));
+  let (diags, bt) = binary_diags_typed(b, s);
+  return diags;
+}
+
+// operand_diags_typed is call_diags of a binary operator's operand together
+// with its type. An operand that is itself an operator is walked by
+// binary_diags_typed, which types it from its own operands' types, so a chain
+// `a + b + c + ...` types each operand once rather than once per level above.
+function operand_diags_typed(e: ast.Expr, s: Scope): (util.Diag[], typeinfo.Type) {
+  if let ast.ExprBinary(b) = e {
+    if (b.op != "__named_arg") {
+      return binary_diags_typed(b, s);
+    }
+  }
+  return (call_diags(e, s), check_expr(e, s));
+}
+
+// binary_diags_typed is call_diags_binary for an operator other than the
+// named-argument marker, together with check_expr's type of `b`.
+function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo.Type) {
+  let (ldiags, blt) = operand_diags_typed(b.left, s);
+  let (rdiags, brt) = operand_diags_typed(b.right, s);
+  let out: util.Diag[] = util.append_diags(ldiags, rdiags);
+  out = util.append_diags(out, binop_lit_range_diags(b, blt, brt));
+  out = util.append_diags(out, tvar_operator_diags(b, blt, brt, s));
   // E009: `&&` / `||` require both operands to be boolean.
   if (b.op == "&&" || b.op == "||") {
-    let lt: typeinfo.Type = check_expr(b.left, s);
-    if (!is_unknown(lt) && !type_eq(lt, t_bool())) {
-      out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires boolean, got " + type_label(lt), b.line, b.col));
+    if (!is_unknown(blt) && !type_eq(blt, t_bool())) {
+      out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires boolean, got " + type_label(blt), b.line, b.col));
     }
-    let rt: typeinfo.Type = check_expr(b.right, s);
-    if (!is_unknown(rt) && !type_eq(rt, t_bool())) {
-      out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires boolean, got " + type_label(rt), b.line, b.col));
+    if (!is_unknown(brt) && !type_eq(brt, t_bool())) {
+      out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires boolean, got " + type_label(brt), b.line, b.col));
     }
   }
   // E041: `==` / `!=` require same-typed operands (the same rule
   // check_expr applies). Ordering ops on mismatched types are
   // E009 instead, so they're not handled here.
   if (b.op == "==" || b.op == "!=") {
-    let elt: typeinfo.Type = check_expr(b.left, s);
-    let ert: typeinfo.Type = check_expr(b.right, s);
     // An unsuffixed literal on either side is read at the other operand's
     // type, so `n == 3` holds for an `n` of any integer width and
     // `u32_valued == 4294967295` is not a u32/i64 mismatch. `settles_to` is
     // the same predicate an assignment reads it through, magnitude rule
     // included. Two DIFFERENTLY-typed integers are still E041, matching
     // native.
-    let eq_widths: boolean = type_eq(elt, ert)
-      || settles_to(b.left, ert, s) || settles_to(b.right, elt, s);
-    if (!is_unknown(elt) && !is_unknown(ert) && !eq_widths) {
-      out = out.append(dg_at("E041", "cannot compare " + type_label(elt) + " with " + type_label(ert) + ": both sides of \"" + b.op + "\" must have the same type", b.line, b.col));
-    } else if (!is_unknown(elt) && eq_widths && is_composite_type(elt)) {
+    let eq_widths: boolean = type_eq(blt, brt)
+      || settles_to(b.left, brt, s) || settles_to(b.right, blt, s);
+    if (!is_unknown(blt) && !is_unknown(brt) && !eq_widths) {
+      out = out.append(dg_at("E041", "cannot compare " + type_label(blt) + " with " + type_label(brt) + ": both sides of \"" + b.op + "\" must have the same type", b.line, b.col));
+    } else if (!is_unknown(blt) && eq_widths && is_composite_type(blt)) {
       // Composite `==` / `!=` is STRUCTURAL equality via the
       // type's `Eq` impl — it desugars to `a.eq(b)`, so a struct
       // or enum that HAS an `eq` is well-formed. Without one the
       // operator would mean heap-pointer identity; arrays and
       // tuples have no structural equality at all.
-      let eqrecv: string = cmp_method_receiver(elt);
+      let eqrecv: string = cmp_method_receiver(blt);
       if (eqrecv == "") {
-        out = out.append(dg_at("E041", "cannot compare values of type " + type_label(elt) + " with \"" + b.op + "\": structural equality for arrays / slices / tuples is not supported — compare elements individually", b.line, b.col));
+        out = out.append(dg_at("E041", "cannot compare values of type " + type_label(blt) + " with \"" + b.op + "\": structural equality for arrays / slices / tuples is not supported — compare elements individually", b.line, b.col));
       } else if (s.lookup_method("eq", eqrecv).name.len() == 0) {
-        out = out.append(dg_at("E041", "cannot compare values of type " + util.demangle(type_label(elt)) + " with \"" + b.op + "\": type does not implement `Eq` — " + util.derive_hint(eqrecv, "cmp.Eq", "cmp.Eq") + ", so `==` can use structural equality", b.line, b.col));
+        out = out.append(dg_at("E041", "cannot compare values of type " + util.demangle(type_label(blt)) + " with \"" + b.op + "\": type does not implement `Eq` — " + util.derive_hint(eqrecv, "cmp.Eq", "cmp.Eq") + ", so `==` can use structural equality", b.line, b.col));
       }
     }
   }
@@ -14202,7 +14218,7 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
   // check_expr applies, so this fires only where it already
   // rejects the operands (no new false positives).
   if (b.op == "+") {
-    let (pl, pr) = settled_operands(b, check_expr(b.left, s), check_expr(b.right, s));
+    let (pl, pr) = settled_operands(b, blt, brt);
     if (!is_unknown(pl) && !is_unknown(pr)) {
       let oks: boolean = type_eq(pl, t_string()) && type_eq(pr, t_string());
       let both_int: boolean = is_integer(pl) && is_integer(pr);
@@ -14223,7 +14239,7 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
     }
   }
   if (b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%") {
-    let (alt, art) = settled_operands(b, check_expr(b.left, s), check_expr(b.right, s));
+    let (alt, art) = settled_operands(b, blt, brt);
     if (!is_unknown(alt) && !is_unknown(art)) {
       let a_both_int: boolean = is_integer(alt) && is_integer(art);
       let oki: boolean = a_both_int && int_operands_agree(alt, art, b.left, b.right);
@@ -14242,30 +14258,26 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
   // integer-only — no string concat, no float form. Mirrors the Go
   // checker's dedicated requireInteger pair (#5542).
   if (b.op == "+|" || b.op == "-|" || b.op == "*|" || b.op == "<<|") {
-    let qlt: typeinfo.Type = check_expr(b.left, s);
-    let qrt: typeinfo.Type = check_expr(b.right, s);
-    if (!is_unknown(qlt) && !is_unknown(qrt)) {
-      if (!is_integer(qlt) || !is_integer(qrt)) {
-        out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching integer operands, got " + type_label(qlt) + " and " + type_label(qrt), b.line, b.col));
-      } else if (is_usize(qlt) || is_usize(qrt)) {
+    if (!is_unknown(blt) && !is_unknown(brt)) {
+      if (!is_integer(blt) || !is_integer(brt)) {
+        out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching integer operands, got " + type_label(blt) + " and " + type_label(brt), b.line, b.col));
+      } else if (is_usize(blt) || is_usize(brt)) {
         out = out.append(dg_at("E009", "saturating operator \"" + b.op + "\" is not supported on `usize` — its clamp bounds are target-width-dependent; cast to a fixed-width integer (`as u64`) first", b.line, b.col));
-      } else if (!int_operands_agree(qlt, qrt, b.left, b.right)) {
-        out = out.append(mixed_int_diag(b.op, qlt, qrt, b.line, b.col));
+      } else if (!int_operands_agree(blt, brt, b.left, b.right)) {
+        out = out.append(mixed_int_diag(b.op, blt, brt, b.line, b.col));
       }
     }
   }
   // E009: checked arithmetic (`+?` `-?` `*?`) is integer-only too —
   // it yields Option[T]. Same requireInteger pair as saturating (#5542).
   if (b.op == "+?" || b.op == "-?" || b.op == "*?" || b.op == "/?" || b.op == "%?" || b.op == "<<?" || b.op == ">>?") {
-    let klt: typeinfo.Type = check_expr(b.left, s);
-    let krt: typeinfo.Type = check_expr(b.right, s);
-    if (!is_unknown(klt) && !is_unknown(krt)) {
-      if (!is_integer(klt) || !is_integer(krt)) {
-        out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching integer operands, got " + type_label(klt) + " and " + type_label(krt), b.line, b.col));
-      } else if (is_usize(klt) || is_usize(krt)) {
+    if (!is_unknown(blt) && !is_unknown(brt)) {
+      if (!is_integer(blt) || !is_integer(brt)) {
+        out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching integer operands, got " + type_label(blt) + " and " + type_label(brt), b.line, b.col));
+      } else if (is_usize(blt) || is_usize(brt)) {
         out = out.append(dg_at("E009", "checked operator \"" + b.op + "\" is not supported on `usize` — its overflow bound is target-width-dependent; cast to a fixed-width integer (`as u64`) first", b.line, b.col));
-      } else if (!int_operands_agree(klt, krt, b.left, b.right)) {
-        out = out.append(mixed_int_diag(b.op, klt, krt, b.line, b.col));
+      } else if (!int_operands_agree(blt, brt, b.left, b.right)) {
+        out = out.append(mixed_int_diag(b.op, blt, brt, b.line, b.col));
       }
     }
   }
@@ -14274,17 +14286,15 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
   // for `case "%", "&", "|", "^", "<<", ">>"` (`%` is in the numeric
   // group above). `&&` / `||` are the logical ops, handled separately.
   if (b.op == "<<" || b.op == ">>" || b.op == "&" || b.op == "|" || b.op == "^") {
-    let slt: typeinfo.Type = check_expr(b.left, s);
-    let srt: typeinfo.Type = check_expr(b.right, s);
     // A composite carrying the operator's method is well-formed: `a & b` is
     // `a.bitand(b)`, as check_expr types it.
-    let sov: boolean = !is_unknown(s.binop_overload_ret(b.op, slt));
-    if (!sov && !is_unknown(slt) && !is_integer(slt)) {
-      out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires an integer type, got " + type_label(slt), b.line, b.col));
-    } else if (!sov && !is_unknown(srt) && !is_integer(srt)) {
-      out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires an integer type, got " + type_label(srt), b.line, b.col));
-    } else if (!sov && !is_unknown(slt) && !is_unknown(srt) && !int_operands_agree(slt, srt, b.left, b.right)) {
-      out = out.append(mixed_int_diag(b.op, slt, srt, b.line, b.col));
+    let sov: boolean = !is_unknown(s.binop_overload_ret(b.op, blt));
+    if (!sov && !is_unknown(blt) && !is_integer(blt)) {
+      out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires an integer type, got " + type_label(blt), b.line, b.col));
+    } else if (!sov && !is_unknown(brt) && !is_integer(brt)) {
+      out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires an integer type, got " + type_label(brt), b.line, b.col));
+    } else if (!sov && !is_unknown(blt) && !is_unknown(brt) && !int_operands_agree(blt, brt, b.left, b.right)) {
+      out = out.append(mixed_int_diag(b.op, blt, brt, b.line, b.col));
     }
   }
   // E009: ordering ops (`<` `>` `<=` `>=`) require both operands to be
@@ -14292,7 +14302,7 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
   // checker (requireInteger, or requireFloat when either side is
   // float). `==` / `!=` (equality, E041) are handled above.
   if (b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=") {
-    let (olt, ort) = settled_operands(b, check_expr(b.left, s), check_expr(b.right, s));
+    let (olt, ort) = settled_operands(b, blt, brt);
     if (!is_unknown(olt) && !is_unknown(ort)) {
       let o_both_int: boolean = is_integer(olt) && is_integer(ort);
       let oki_o: boolean = o_both_int && int_operands_agree(olt, ort, b.left, b.right);
@@ -14324,7 +14334,7 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
     }
   }
 
-  return out;
+  return (out, binary_result_type(b, blt, brt, s));
 }
 
 function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Diag[] {
@@ -14861,7 +14871,11 @@ function capture_view_diags(lm: ast.ExprLambda, s: Scope): util.Diag[] {
       continue;
     }
     seen = seen.append(name);
-    if (s.is_bound(name) && type_holds_view(s.lookup(name), s, [])) {
+    if (!s.is_bound(name)) {
+      continue;
+    }
+    let (holds, _) = type_holds_view(s.lookup(name), s, []);
+    if (holds) {
       out = out.append(dg_at("E082", "closure captures \"" + name + "\", which holds a borrowed view: a function value's environment cannot carry a view — copy it into an owned value before the closure (`.to_owned()` on a `str`)", lm.line, lm.col));
     }
   }
@@ -14870,11 +14884,11 @@ function capture_view_diags(lm: ast.ExprLambda, s: Scope): util.Diag[] {
 
 // type_holds_view mirrors native typeHoldsView: whether a value of `t` carries
 // a `str`, a `[T]` slice or a `MapIter` cursor, directly or through an element,
-// field, payload or type argument. `seen` breaks the recursion on a
-// self-referential struct or enum.
-function type_holds_view(t: typeinfo.Type, s: Scope, seen: string[]): boolean {
+// field, payload or type argument. `seen` names every struct and enum already
+// entered, across the whole walk as natively, and comes back grown.
+function type_holds_view(t: typeinfo.Type, s: Scope, seen: string[]): (boolean, string[]) {
   if (is_str_view(t) || is_arr_view(t)) {
-    return true;
+    return (true, seen);
   }
   if let typeinfo.TypeArray(a) = t {
     return type_holds_view(a.elem, s, seen);
@@ -14883,42 +14897,51 @@ function type_holds_view(t: typeinfo.Type, s: Scope, seen: string[]): boolean {
     return any_holds_view(tup.elements, s, seen);
   }
   if let typeinfo.TypeMap(m) = t {
-    return type_holds_view(m.key, s, seen) || type_holds_view(m.value, s, seen);
+    return any_holds_view([m.key, m.value], s, seen);
   }
   if let typeinfo.TypeStruct(st) = t {
     if (st.name == "MapIter") {
-      return true;
+      return (true, seen);
     }
     if (util.has_str(seen, st.name)) {
-      return false;
+      return (false, seen);
     }
-    let inner: string[] = seen.append(st.name);
-    return any_holds_view(st.args, s, inner) || any_holds_view(s.lookup_struct(st.name).field_types, s, inner);
+    let (in_args, after) = any_holds_view(st.args, s, seen.append(st.name));
+    if (in_args) {
+      return (true, after);
+    }
+    return any_holds_view(s.lookup_struct(st.name).field_types, s, after);
   }
   if let typeinfo.TypeUnion(u) = t {
     if (util.has_str(seen, u.name)) {
-      return false;
+      return (false, seen);
     }
-    let inner: string[] = seen.append(u.name);
-    if (any_holds_view(u.args, s, inner)) {
-      return true;
+    let (in_args, after) = any_holds_view(u.args, s, seen.append(u.name));
+    if (in_args) {
+      return (true, after);
     }
     for v in s.lookup_union(u.name).variants {
-      if (any_holds_view(variant_shape_sig(s, v, u.name).field_types, s, inner)) {
-        return true;
+      let (in_payload, next) = any_holds_view(variant_shape_sig(s, v, u.name).field_types, s, after);
+      if (in_payload) {
+        return (true, next);
       }
+      after = next;
     }
+    return (false, after);
   }
-  return false;
+  return (false, seen);
 }
 
-function any_holds_view(ts: typeinfo.Type[], s: Scope, seen: string[]): boolean {
+function any_holds_view(ts: typeinfo.Type[], s: Scope, seen: string[]): (boolean, string[]) {
+  let at: string[] = seen;
   for t in ts {
-    if (type_holds_view(t, s, seen)) {
-      return true;
+    let (found, next) = type_holds_view(t, s, at);
+    if (found) {
+      return (true, next);
     }
+    at = next;
   }
-  return false;
+  return (false, at);
 }
 
 function call_diags_ident(id: ast.ExprIdent, s: Scope, out: util.Diag[]): util.Diag[] {
