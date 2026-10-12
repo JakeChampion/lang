@@ -5909,7 +5909,15 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
       if (k >= 0) {
         r = keep_token(r, f, keeps.donors[k]);
       }
-      r = supplies(r, f, p, step, defer0, kept, late);
+      // Keeping a field in place stands in for the construction's retain of
+      // it alone: an earlier operation that takes a unit of the same value
+      // still needs its own.
+      let kb: i32 = util.index_of_i32(keeps.built, pos);
+      let built_kept: i32[] = [];
+      if (kb >= 0) {
+        built_kept = keeps.values[kb];
+      }
+      r = supplies(r, f, p, step, defer0, built_kept, late);
       r = bracket_take(r, f, held);
       // A box superseded by the construction at this same instruction is
       // taken BEFORE it, where an earlier drop's token was taken at the
@@ -5917,7 +5925,6 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
       // reads one token slot and the runtime decides. A kept donor's token
       // was taken at its first kept read, and its drop is the
       // construction's.
-      let kb: i32 = util.index_of_i32(keeps.built, pos);
       if (pairs.selfs[pos] >= 0 && kb < 0) {
         r = self_token(r, f, pairs.selfs[pos], ssaunits.carry_held_for(carry, b.id, pos));
       }
