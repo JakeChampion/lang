@@ -312,6 +312,7 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"http_router", langSrcAbs(t, "tests/stdlib/http_router_test.fern"), ""},
 		{"http_cache", langSrcAbs(t, "tests/stdlib/http_cache_test.fern"), ""},
 		{"http_static", langSrcAbs(t, "tests/stdlib/http_static_test.fern"), ""},
+		{"http_forwarded", langSrcAbs(t, "tests/stdlib/http_forwarded_test.fern"), ""},
 		{"http_cookie", langSrcAbs(t, "tests/stdlib/http_cookie_test.fern"), ""},
 		{"http_form", langSrcAbs(t, "tests/stdlib/http_form_test.fern"), ""},
 		{"http_multipart", langSrcAbs(t, "tests/stdlib/http_multipart_test.fern"), ""},

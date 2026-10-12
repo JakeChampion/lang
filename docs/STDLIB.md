@@ -1969,6 +1969,8 @@ serializer.
   `(resp).with_cookie(c)`, and the client's jar.
 - **Caching:** `std/http/cache` — validators and conditional requests
   (304, 412, `If-Range`), `Cache-Control` and `Vary`.
+- **Client address:** `std/http/forwarded` — `Forwarded` (RFC 7239) read
+  and written, and the client found past the proxies a deployment trusts.
 - **Static files:** `std/http/static` — a directory's files with their
   validators, byte ranges and precompressed siblings.
 - **Status / classifiers:** `http_status_text`,
@@ -2200,6 +2202,53 @@ is the suite; `TestStaticServeInterp` and `TestStaticServeX86_64` serve a
 real directory under the loop, and `TestStaticPreconditionsMatchGo` sends
 every combination of the precondition fields, `Range` and `If-Range` to it
 and to Go's `http.ServeContent`, which is the oracle.
+
+### `std/http/forwarded`
+
+Who a request came from, past the proxies in front of the server:
+
+```fern
+match (forwarded.trust(["10.0.0.0/8"])) {
+  Ok(t) => {
+    let c: forwarded.Client = forwarded.client(req, plat, t);
+    // c.ip(), c.proto, c.host
+  },
+  Err(bad) => { ... }
+}
+```
+
+- `hops(h)` reads every `Forwarded` element (RFC 7239 §4) as a `Hop`:
+  `from` (the `for` parameter, a keyword here), `by`, `host` and `proto`.
+  A node (§6) is an address (IPv6 bracketed), `unknown` or an obfuscated
+  `_name`, with an optional port, digits or obfuscated. A value is a token
+  or a quoted string; a parameter twice in one element, an unquoted IPv6
+  node, a bad scheme or port, and anything else outside the grammar make
+  the whole list None, since a list with a malformed element cannot say
+  which of its hops a proxy wrote. `parse_hop` and `node_parse` read one.
+- `client(req, plat, t)` starts at the connection's peer (`plat.peer()`).
+  While that node is in `t`'s proxies it steps to the element the proxy
+  appended and the node that names, from the last hop leftwards, stopping
+  at the first node it does not trust, or the first hop when every node is
+  trusted. The client is that node, with the `proto` and `host` its element
+  gives, the request's own `Host` otherwise. A peer that is not a proxy is
+  the client, whatever the field says, so a hop a client forges is never
+  believed; a malformed field leaves the peer as the client; a platform that
+  knows no peer trusts nothing. `(c).ip()` is the client's address when its
+  node is one.
+- `trust(blocks)` builds a `Trust` from address blocks (`net.prefix_parse`),
+  the first that does not parse as its error. `Trust.legacy` reads
+  `X-Forwarded-For` when no `Forwarded` field was sent, `X-Forwarded-Proto`
+  and `X-Forwarded-Host` paired with its members from the right, or a single
+  member given to every hop.
+- Writing: `(h).to_string()` writes an element, `for`, `by`, `host` and
+  `proto` in order, quoting a value that is not a token; `hop_of(req, plat,
+  proto)` is the element describing how `req` reached this server, and
+  `(req).with_hop(h)` appends it, as a proxy does before it forwards a
+  request on.
+
+`tests/stdlib/http_forwarded_test.fern` is the suite;
+`TestForwardedServeInterp` and `TestForwardedServeX86_64` run the client walk
+under the serve loop with the socket's own peer.
 
 ### `std/http/cookie`
 
@@ -2518,6 +2567,12 @@ local-use 64:ff9b:1::/48 is global only under every prefix length the
 operator may pick. `(a).embedded_v4(bits)` is the address a NAT64 address
 carries under a prefix of `bits` in RFC 6052's layout. `packed_v4()`
 bridges an `IpAddr` to the packed IPv4 argument `tcp_connect` takes.
+
+`Prefix` is an address block: `prefix_parse` reads `10.0.0.0/8`,
+`2001:db8::/32` or a bare address (the block of that one address), and
+refuses a length past the family's width or host bits set below it
+(`10.0.0.1/8`). `(p).contains(ip)` takes an IPv4 address carried in an IPv6
+one as the IPv4 address, so a dual-stack listener's peers match IPv4 blocks.
 
 `NetError` is a closed enum (`AddrInUse`, `ConnectionRefused`,
 `WouldBlock`, … and `Other(errno)`); `error_from_errno(n)` maps the errno a
@@ -3459,6 +3514,11 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   so this is the whole of its file-system reach; the `wasi-http` proxy
   world has no `fs`. The mock and the sim answer from the files the test
   set.
+- `(plat).peer()` — the address the request's connection came from, an
+  `Option[net.SocketAddr]`: std/serve sets the socket's peer on the host it
+  hands each connection's handlers; None where the host does not say (the
+  wasi-http proxy world). Behind a proxy this is the proxy;
+  std/http/forwarded finds the client past the proxies a deployment trusts.
 
 ### `std/sim_fetch`
 
@@ -3516,8 +3576,8 @@ the seeded PRNG of the `sim.Sim` `d` (`now_ms`, `elapsed_ns`,
 `random_i32`), sends `plat.http` over the `sim_fetch.Net` `n` by the
 host's public-only route with the network's pool keeping the connection
 (parking under `sim.run_tasks`, so handlers interleave in virtual time),
-and answers `env`, `config`, `secret` and `stat` with what the test set
-(`env_set`, `config_set`, `secret_set`, `file_set`, `dir_set`;
+and answers `env`, `config`, `secret`, `stat` and `peer` with what the test
+set (`env_set`, `config_set`, `secret_set`, `file_set`, `dir_set`, `peer_set`;
 `materialize(resp)` reads a file body back from them). Every call is recorded as a
 mock's: `calls()` and `reset()` read and clear the log, a secret logged by
 its name alone. `(p).with_jar(jar)` gives it a cookie jar as
@@ -3548,7 +3608,7 @@ assert_eq(m.calls()[0].name, "log");
 Mocked capabilities answer what the test canned, else a fixed value — 0
 for `now_ms` / `elapsed_ns` / `random_i32`, `None` for `env` / `config` /
 `secret`, `Err(Connect(ConnectionRefused))` for `http`, `NotFound` for
-`stat`, and `log` swallows the line.
+`stat`, None for `peer`, and `log` swallows the line.
 
 - `mock_platform_new()`.
 - `(m).env_set(name, value)`, `(m).config_set(name, value)`,
@@ -3561,6 +3621,8 @@ for `now_ms` / `elapsed_ns` / `random_i32`, `None` for `env` / `config` /
   own `(plat).can(key, value)` / `(plat).canned(key)` are what the
   setters and the capability methods use
   (`tests/stdlib/mock_platform_canned_test.fern`).
+- `(m).peer_set(addr)` — what `peer` answers, the `SocketAddr` `addr`
+  spells (`192.0.2.7:51234`, `[2001:db8::1]:443`).
 - `(m).file_set(path, content, mtime)`, `(m).dir_set(path)` — what
   `stat` answers for `path`; `(m).materialize(resp)` is `resp` with a
   `BodyFile` or `BodyFileRanges` naming a canned file read into its bytes,

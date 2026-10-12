@@ -196,8 +196,18 @@ decides what wraps it.
    loop; `TestStaticPreconditionsMatchGo`, every combination of the
    precondition fields, `Range` and `If-Range` against Go's
    `http.ServeContent`.
-   `std/http/forwarded`: `Forwarded` (RFC 7239) and the PROXY protocol v2
-   header the serve loop reads before the request.
+   `std/http/forwarded` (landed): `Forwarded` (RFC 7239) read and written,
+   and `client`, the walk from the connection's peer past the proxies a
+   deployment trusts (`net.Prefix` blocks), `X-Forwarded-*` on request. The
+   peer reaches the handler as `plat.peer()`: std/serve reads each
+   connection's peer at accept and hands that connection's handlers the host
+   carrying it, which is the per-request platform slice 6's deadline and
+   cancel signal ride on too. Gate: `tests/stdlib/http_forwarded_test.fern`
+   in the stdtest differential; `TestForwardedServeInterp` and
+   `TestForwardedServeX86_64` against the real loop.
+   PROXY protocol v1 and v2: the header a load balancer writes before the
+   request, read by the serve loop when `Config` asks for it, its source
+   address becoming the connection's peer.
    Compression: a gzip encoder over `std/deflate`, zstd both ways, brotli
    decode only, and `std/http/compress` negotiating `Accept-Encoding` for
    a response, off by default as every 2026 server has it.
