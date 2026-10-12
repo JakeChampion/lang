@@ -3450,7 +3450,8 @@ function compose_repl(a: i32[], b: i32[]): i32[] {
 pub function register_form(f: SFunc): Formed {
   let folded: Formed = prune_trivial_phis(f);
   let merged: Formed = merge_duplicates(folded.f);
-  let unwrapped: Formed = drop_low_wraps(prune_dead(fuse_rotates(merged.f)));
+  let shared: Formed = share_shape_loads(merged.f);
+  let unwrapped: Formed = drop_low_wraps(prune_dead(fuse_rotates(shared.f)));
   // prune_dead is idempotent, so a pass that changed nothing needs no prune
   // after it.
   let g: SFunc = unwrapped.f;
@@ -3470,7 +3471,102 @@ pub function register_form(f: SFunc): Formed {
   if (fw.changed) {
     g = prune_dead(g);
   }
-  return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), unwrapped.repl), bytes.repl) };
+  return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), shared.repl), unwrapped.repl), bytes.repl) };
+}
+
+// share_shape_loads maps a load of a box's word 0, its shape, onto an earlier
+// load of the same word that reaches it along a chain of blocks each entered
+// from one predecessor with nothing between them that may write memory: the
+// shape of a `match`'s chain of variant tests. A runtime call may update a box
+// in place (a map iterator's advance does), so a call ends what is shared. A
+// box whose word 0 or elements the function stores, and any function with a
+// raw store, is left alone.
+function share_shape_loads(f: SFunc): Formed {
+  let stored: boolean[] = __alloc_bool(f.nvals);
+  let loads: i32 = 0;
+  for blk in f.blocks {
+    for ins in blk.insts {
+      let k: i32 = ins.kind_tag;
+      if (k == 16 || k == 53 || k == 55) {
+        return Formed { f: f, repl: [] };
+      }
+      if ((k == 41 && ins.imm == 0 || k == 43) && ins.args.len() > 0 && ins.args[0] >= 0 && ins.args[0] < f.nvals) {
+        stored = stored.with(ins.args[0], true);
+      }
+      if (shape_load(ins, f.nvals)) {
+        loads = loads + 1;
+      }
+    }
+  }
+  if (loads < 2) {
+    return Formed { f: f, repl: [] };
+  }
+  let at: i32[] = block_positions(f);
+  let repl: i32[] = [];
+  let bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    let insts: SInst[] = f.blocks[bi].insts;
+    let k: i32 = 0;
+    while (k < insts.len()) {
+      let ins: SInst = insts[k];
+      if (shape_load(ins, f.nvals) && !stored[ins.args[0]]) {
+        let found: i32 = earlier_shape(f, at, bi, k, ins.args[0]);
+        if (found >= 0) {
+          if (repl.len() == 0) {
+            repl = identity_repl(f.nvals);
+          }
+          repl = repl.with(ins.result, repl[found]);
+        }
+      }
+      k = k + 1;
+    }
+    bi = bi + 1;
+  }
+  if (repl.len() == 0) {
+    return Formed { f: f, repl: [] };
+  }
+  return Formed { f: rewrite_through(f, repl), repl: repl };
+}
+
+// earlier_shape is the load of `box`'s word 0 that position `k` of block `bi`
+// reads its shape from: the nearest before it in the block, or up the chain of
+// blocks each entered from one earlier block, with nothing that may write
+// memory on the way. -1 when there is none.
+function earlier_shape(f: SFunc, at: i32[], bi: i32, k: i32, box: i32): i32 {
+  let b: i32 = bi;
+  let j: i32 = k - 1;
+  while (true) {
+    while (j >= 0) {
+      let ins: SInst = f.blocks[b].insts[j];
+      if (shape_load(ins, f.nvals) && ins.args[0] == box) {
+        return ins.result;
+      }
+      if (may_write(ins.kind_tag)) {
+        return 0 - 1;
+      }
+      j = j - 1;
+    }
+    if (f.blocks[b].preds.len() != 1) {
+      return 0 - 1;
+    }
+    let pb: i32 = position_of(at, f.blocks[b].preds[0]);
+    if (pb < 0 || pb >= b) {
+      return 0 - 1;
+    }
+    b = pb;
+    j = f.blocks[b].insts.len() - 1;
+  }
+  return 0 - 1;
+}
+
+// may_write is an instruction that may write memory: one with an effect other
+// than a line mark or a bounds-checked read, which can only abort.
+function may_write(k: i32): boolean {
+  return inst_has_effect(k) && k != 35 && k != 42 && k != 44;
+}
+
+function shape_load(ins: SInst, nvals: i32): boolean {
+  return ins.kind_tag == 40 && ins.imm == 0 && ins.args.len() == 1 && ins.args[0] >= 0 && ins.args[0] < nvals && ins.result >= 0 && ins.result < nvals && ins.str == "";
 }
 
 // fold_byte_access does two things for a byte. It replaces an extension,

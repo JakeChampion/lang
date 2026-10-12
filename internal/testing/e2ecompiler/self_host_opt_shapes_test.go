@@ -491,6 +491,26 @@ function main(): i32 { return sum([3, 5, 7]); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`\bmovslq %r\w+, %r\w+`}, "arm64-linux": {`\bsxtw x\d+, w\d+`}},
 		forbid: map[string][]string{"x86-64-linux": {`movq %r\w+, %r\w+\n\s+movslq`}, "arm64-linux": {`\bmov x\d+, x\d+\n\s+sxtw`}}},
+	// A match's variant tests read the box's shape word once: each later arm
+	// compares the shape the first test loaded rather than loading it again.
+	{name: "match_loads_the_shape_once", fn: "area", exit: 9, src: `
+enum Shape { Circle(i32), Square(i32), Tri(i32), Line(i32) }
+@noinline function area(s: Shape): i32 {
+    match (s) {
+        Circle(r) => { return r * 3; },
+        Square(w) => { return w * w; },
+        Tri(b) => { return b / 2; },
+        Line(l) => { return l; }
+    }
+}
+function main(): i32 { return area(Line(7)) + area(Tri(4)); }
+`,
+		want: map[string][]string{
+			"x86-64-linux": {`\.Lssa_area_\d+:\n\s+leaq \.S\d+\(%rip\), %r\w+\n\s+cmpq`},
+			"arm64-linux":  {`\.Lssa_area_\d+:\n\s+adrp x\d+, \.S\d+`}},
+		forbid: map[string][]string{
+			"x86-64-linux": {`(?s)movq 0\(%r\w+\), %r\w+\n\s+leaq \.S.*movq 0\(%r\w+\), %r\w+\n\s+leaq \.S`},
+			"arm64-linux":  {`(?s)ldr x\d+, \[x\d+, #0\]\n\s+adrp x\d+, \.S.*ldr x\d+, \[x\d+, #0\]\n\s+adrp x\d+, \.S`}}},
 }
 
 func TestSelfHostOptimisationShapes(t *testing.T) {
