@@ -77,6 +77,13 @@ var iifeFnArmCases = []struct {
 	// closure_ret_fns_of), and the first passes without it.
 	{"mixed-arms-array-element", "function main(): i32 { let v0: (i32) => i32 = ((a: i32) => 89); let xs: ((i32) => i32)[] = [v0, (if (true) { v0 } else { ((b: i32) => b) }), v0]; return xs[1i32](3i32); }", 89},
 	{"mixed-arms-var-called", "function main(): i32 { let v0: (i32) => i32 = ((a: i32) => 89); let n: i32 = 1; let w: (i32) => i32 = (if (n > 0) { v0 } else { ((b: i32) => b) }); return w(3); }", 89},
+	// An arm that READS a function out of a struct field or a function
+	// array is a box already, and used to make the rewrite give up on the
+	// whole value block, leaving the lambda arm a bare function address the
+	// typed lowering refused. Reduced from fernsmith seed 99.
+	{"mixed-arms-field-read-into-struct-field", "struct S { f: (i32) => i32 } function main(): i32 { let a: S = S { f: (x: i32) => 36 }; let s: S = S { f: if (false) { a.f } else { (y: i32) => y + 3 } }; return s.f(1); }", 4},
+	{"mixed-arms-field-read-in-nested-fn", "struct S { b: boolean, f: (i32) => i32 } function main(): i32 { let a: S = S { b: true, f: (x: i32) => 36 }; function lf(): S { return S { b: true, f: if (a.b) { a.f } else { (y: i32) => y } }; } return lf().f(1); }", 36},
+	{"mixed-arms-element-read-into-struct-field", "struct S { f: (i32) => i32 } function main(): i32 { let fs: ((i32) => i32)[] = [(x: i32) => 36]; let s: S = S { f: if (true) { fs[0] } else { (y: i32) => y } }; return s.f(1); }", 36},
 	{"mixed-arms-returned-then-called", "function gen(n: i32): (i32) => i32 { let v0: (i32) => i32 = ((a: i32) => 89); return (if (n > 0) { v0 } else { ((b: i32) => b) }); } function main(): i32 { let f: (i32) => i32 = gen(1); return f(3); }", 89},
 
 	// The arm lambda itself CAPTURES. The cases above hoist the IIFE and the
