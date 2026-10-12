@@ -313,6 +313,35 @@ function test_parse_error_byte_render(): test.TestOutcome {
   }
 }
 
+// RFC 8259 requires every C0 control escaped inside a string, so a raw one
+// fails where it stands; the escaped spelling still decodes (#12264).
+function test_parse_unescaped_control(): test.TestOutcome {
+  let raw: string[] = ["\"a\tb\"", "[\"x\", \"c\nd\"]", "{\"k\r\": 1}", "\"a\\n\tb\""];
+  let want: i32[] = [2, 8, 3, 4];
+  let i: i32 = 0;
+  while (i < raw.len()) {
+    match (json.json_parse_result(raw[i])) {
+      Ok(_) => {
+        return test.fail("accepted a raw control byte: case " + i.to_string());
+      },
+      Err(e) => {
+        if (e.offset != want[i] || e.message != "unexpected control byte in input") {
+          return test.fail("case " + i.to_string() + ": " + e.offset.to_string() + " " + e.message);
+        }
+      }
+    }
+    i = i + 1;
+  }
+  match (json.json_parse("\"a\\tb\"")) {
+    Some(v) => {
+      return test.assert_eq(json.json_encode(v), "\"a\\tb\"");
+    },
+    None => {
+      return test.fail("rejected an escaped tab");
+    }
+  }
+}
+
 // nest(n) builds n open brackets followed by n close brackets —
 // an n-deep JSON array `[[[…]]]`. Used by the recursion-depth tests.
 function nest(n: i32): string {
@@ -560,6 +589,7 @@ function main(): i32 {
   r = r.it("encode nested round trip", test_encode_nested_round_trip);
   r = r.it("parse invalid", test_parse_invalid);
   r = r.it("parse error byte render", test_parse_error_byte_render);
+  r = r.it("parse unescaped control", test_parse_unescaped_control);
   r = r.it("depth ok", test_depth_ok);
   r = r.it("depth limit", test_depth_limit);
   r = r.it("get_f64", test_get_f64);
