@@ -105,6 +105,31 @@ function test_fold_is_ascii_only(): test.TestOutcome {
   return test.assert_is_none_string(h.get("x-k"));
 }
 
+function joined(xs: string[]): string {
+  let out: string = "";
+  for x in xs {
+    out = out + "[" + x + "]";
+  }
+  return out;
+}
+
+// A comma inside a quoted string does not split, the whitespace around a
+// member goes, an empty member is dropped, and an escaped quote does not
+// end the string.
+function test_split_list(): test.TestOutcome {
+  return test.assert_eq(joined(headers.split_list(" a , \"b,c\",,  \"d\\\",e\" ,")), "[a][\"b,c\"][\"d\\\",e\"]");
+}
+
+// Every line's members, in order, whatever the name's case.
+function test_get_list(): test.TestOutcome {
+  let h: HeaderMap = headers.header_map_new().append("Vary", "Accept, Origin").append("vary", "Cookie");
+  return test.assert_eq(joined(h.get_list("VARY")), "[Accept][Origin][Cookie]");
+}
+
+function test_unquote(): test.TestOutcome {
+  return test.assert_eq(headers.unquote("\"a\\\"b\\\\c\"") + "|" + headers.unquote("token") + "|" + headers.unquote("\""), "a\"b\\c|token|\"");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("HeaderMap (migrated)");
   r = r.it(
@@ -147,5 +172,8 @@ function main(): i32 {
     "names fold ASCII only",
     test_fold_is_ascii_only,
   );
+  r = r.it("split_list respects quoted strings", test_split_list);
+  r = r.it("get_list reads every line", test_get_list);
+  r = r.it("unquote undoes a quoted string", test_unquote);
   return r.finish();
 }

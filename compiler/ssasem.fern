@@ -179,6 +179,53 @@ pub struct Analysis {
   dependencies: i32[][],
   flow: ssalive.Flow,
   uses: Uses,
+  anchored: Anchored,
+}
+
+// The dependency chains read backwards, the reads that borrow from each
+// value: the values anchored to `v` are `at[start[v] .. start[v + 1])`,
+// ascending. Built with the chains, so a query for one source walks its
+// anchored values rather than every value.
+pub struct Anchored { start: i32[], at: i32[] }
+
+pub function anchored_of(deps: i32[][], nvals: i32): Anchored {
+  let count: i32[] = __alloc_i32(nvals + 1);
+  // The chains run to the values the analysis saw; a refused analysis has
+  // none.
+  let known: i32 = deps.len();
+  if (known > nvals) {
+    known = nvals;
+  }
+  let w: i32 = 0;
+  while (w < known) {
+    for dep in deps[w] {
+      if (dep >= 0 && dep < nvals) {
+        count = count.with(dep, count[dep] + 1);
+      }
+    }
+    w = w + 1;
+  }
+  let start: i32[] = __alloc_i32(nvals + 1);
+  let total: i32 = 0;
+  let v: i32 = 0;
+  while (v < nvals) {
+    total = total + count[v];
+    start = start.with(v + 1, total);
+    v = v + 1;
+  }
+  let at: i32[] = __alloc_i32(total);
+  let fill: i32[] = start;
+  w = 0;
+  while (w < known) {
+    for dep in deps[w] {
+      if (dep >= 0 && dep < nvals) {
+        at = at.with(fill[dep], w);
+        fill = fill.with(dep, fill[dep] + 1);
+      }
+    }
+    w = w + 1;
+  }
+  return Anchored { start: start, at: at };
 }
 
 // What reads each value: for value v, one entry per operand naming it, the
@@ -570,7 +617,7 @@ pub function refused_analysis(why: string): Analysis {
 }
 
 function failed(why: string): Analysis {
-  return Analysis { ok: false, why: why, parents: [], dependencies: [], flow: ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], at: [], none: [] }, uses: Uses { start: [0], kinds: [] } };
+  return Analysis { ok: false, why: why, parents: [], dependencies: [], flow: ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], at: [], none: [] }, uses: Uses { start: [0], kinds: [] }, anchored: Anchored { start: [0], at: [] } };
 }
 
 function empty_dependencies(n: i32): i32[][] {
@@ -3915,7 +3962,7 @@ function analyze_parents(f: Func, parents: i32[][]): Analysis {
   if (!flow.ok) {
     return failed(flow.why);
   }
-  return Analysis { ok: true, why: "", parents: parents, dependencies: c.dependencies, flow: flow, uses: uses_of(f) };
+  return Analysis { ok: true, why: "", parents: parents, dependencies: c.dependencies, flow: flow, uses: uses_of(f), anchored: anchored_of(c.dependencies, f.graph.nvals) };
 }
 
 // The callee names this graph names in a call instruction.
