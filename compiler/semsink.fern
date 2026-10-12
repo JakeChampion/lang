@@ -29,6 +29,9 @@ struct PhiEdit { block: i32, phi: i32, slot: i32, value: i32 }
 
 pub function sink(f: ssasem.Func): Sunk {
   let g: ssa.SFunc = f.graph;
+  if (!any_projection(g, f.values)) {
+    return Sunk { f: f, reread: 0 };
+  }
   let rd: Reads = reads_of(g, f.values);
   if (!rd.flow.ok) {
     return Sunk { f: f, reread: 0 };
@@ -93,22 +96,34 @@ function reads_of(g: ssa.SFunc, values: typeinfo.Type[]): Reads {
     deps = deps.append([]);
   }
   let bi: i32 = 0;
-  let any: boolean = false;
   for b in g.blocks {
     for ins in b.insts {
-      if (projection(ins.kind_tag) && ins.args.len() == 1 && ins.result >= 0 && ins.result < values.len()
-        && ssasem.reference(values[ins.result])) {
+      if (counted_projection(ins, values)) {
         def = def.with(ins.result, ins);
         at = at.with(ins.result, bi);
-        any = true;
       }
     }
     bi = bi + 1;
   }
-  if (!any) {
-    return Reads { dom: ssadeps.Dom { pre: [], post: [], idom: [] }, def: def, at: at, flow: ssalive.Flow { ok: false, why: "", words: 0, live_in: [], live_out: [], at: [], none: [] }, pos: [] };
-  }
   return Reads { dom: ssadeps.dominates(g), def: def, at: at, flow: ssalive.compute(g, deps), pos: ssa.block_positions(g) };
+}
+
+function counted_projection(ins: ssa.SInst, values: typeinfo.Type[]): boolean {
+  return projection(ins.kind_tag) && ins.args.len() == 1 && ins.result >= 0 && ins.result < values.len()
+    && ssasem.reference(values[ins.result]);
+}
+
+// Whether a counted projection exists: only then is there anything to
+// re-read, and the liveness and dominators are worth computing.
+function any_projection(g: ssa.SFunc, values: typeinfo.Type[]): boolean {
+  for b in g.blocks {
+    for ins in b.insts {
+      if (counted_projection(ins, values)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 struct Sinking { b: ssa.SBlock, values: typeinfo.Type[], added: i32, edits: PhiEdit[] }
