@@ -1,8 +1,11 @@
 import "std/test";
 import "std/time" as time;
 
-// tests/stdlib/time_http_date_test.fern — RFC 9110 §5.6.7 IMF-fixdate
-// (`Sun, 06 Nov 1994 08:49:37 GMT`) formatting + parsing, plus the
+// tests/stdlib/time_http_date_test.fern — RFC 9110 §5.6.7 HTTP-dates:
+// IMF-fixdate (`Sun, 06 Nov 1994 08:49:37 GMT`) formatting + parsing, the
+// two obsolete forms a recipient must also accept (asctime, and RFC 850
+// with its two-digit year read against a given time), fields out of
+// range refused, plus the
 // weekday/month name tables added alongside it (#4388 item 5). This is
 // the HTTP `Date:` / `Expires:` / `If-Modified-Since` support an edge
 // handler needs. All values are computed from std/time's civil-date
@@ -133,6 +136,62 @@ function test_weekday_name(): test.TestOutcome {
   return test.assert_eq(time.date_make(1970, 1, 1).weekday_name(), "Thursday");
 }
 
+function show(o: Option[Instant]): string {
+  match (o) {
+    Some(i) => {
+      return i.format_http_date();
+    },
+    None => {
+      return "None";
+    }
+  }
+}
+
+function test_parse_asctime(): test.TestOutcome {
+  let a: string = show(time.http_date_parse("Sun Nov  6 08:49:37 1994"));
+  let b: string = show(time.http_date_parse("Sun Nov 06 08:49:37 1994"));
+  return test.assert_eq(a + "|" + b, "Sun, 06 Nov 1994 08:49:37 GMT|Sun, 06 Nov 1994 08:49:37 GMT");
+}
+
+// RFC 850's two-digit year is read against a time, so the parser without
+// one refuses the form and the one with one takes it.
+function test_parse_rfc850(): test.TestOutcome {
+  let now = time.instant_from_unix(1791768000 as i64);
+  let without: string = show(time.http_date_parse("Sunday, 06-Nov-94 08:49:37 GMT"));
+  let with_now: string = show(time.http_date_parse_at("Sunday, 06-Nov-94 08:49:37 GMT", now));
+  return test.assert_eq(without + "|" + with_now, "None|Sun, 06 Nov 1994 08:49:37 GMT");
+}
+
+// Against 2026, the latest year ending in the digits that is not more than
+// 50 years ahead: 76 is 2076, 77 is 1977, 26 is 2026.
+function test_rfc850_year_window(): test.TestOutcome {
+  let now = time.instant_from_unix(1791768000 as i64);
+  let a: string = show(time.http_date_parse_at("Friday, 01-Jan-76 00:00:00 GMT", now));
+  let b: string = show(time.http_date_parse_at("Saturday, 01-Jan-77 00:00:00 GMT", now));
+  let c: string = show(time.http_date_parse_at("Thursday, 01-Jan-26 00:00:00 GMT", now));
+  return test.assert_eq(a + "|" + b + "|" + c, "Wed, 01 Jan 2076 00:00:00 GMT|Sat, 01 Jan 1977 00:00:00 GMT|Thu, 01 Jan 2026 00:00:00 GMT");
+}
+
+function test_parse_at_imf(): test.TestOutcome {
+  let now = time.instant_from_unix(0 as i64);
+  return test.assert_eq(show(time.http_date_parse_at("Sun, 06 Nov 1994 08:49:37 GMT", now)), "Sun, 06 Nov 1994 08:49:37 GMT");
+}
+
+function test_parse_out_of_range(): test.TestOutcome {
+  let bad: string[] = ["Wed, 31 Apr 2024 00:00:00 GMT", "Sun, 06 Nov 1994 24:00:00 GMT", "Sun, 06 Nov 1994 08:60:00 GMT", "Sun, 06 Nov 1994 08:49:61 GMT", "Sun, 29 Feb 1993 00:00:00 GMT", "Sun, 00 Nov 1994 08:49:37 GMT", "Sun Nov 31 08:49:37 1994"];
+  for s in bad {
+    if (show(time.http_date_parse(s)) != "None") {
+      return test.fail("accepted " + s);
+    }
+  }
+  return test.assert_eq(show(time.http_date_parse("Thu, 29 Feb 1996 00:00:00 GMT")), "Thu, 29 Feb 1996 00:00:00 GMT");
+}
+
+// A leap second is a 60th second, the instant one past the 59th.
+function test_parse_leap_second(): test.TestOutcome {
+  return test.assert_eq(show(time.http_date_parse("Sat, 31 Dec 2016 23:59:60 GMT")), "Sun, 01 Jan 2017 00:00:00 GMT");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/time http-date");
   r = r.it("format canonical", test_format_canonical);
@@ -147,5 +206,11 @@ function main(): i32 {
   r = r.it("parse bad sep", test_parse_bad_sep);
   r = r.it("month_name", test_month_name);
   r = r.it("weekday_name", test_weekday_name);
+  r = r.it("parse asctime", test_parse_asctime);
+  r = r.it("parse rfc850 against a time", test_parse_rfc850);
+  r = r.it("rfc850 two-digit year window", test_rfc850_year_window);
+  r = r.it("parse_at takes IMF-fixdate", test_parse_at_imf);
+  r = r.it("parse refuses fields out of range", test_parse_out_of_range);
+  r = r.it("parse a leap second", test_parse_leap_second);
   return r.finish();
 }

@@ -1962,6 +1962,8 @@ serializer.
   (`respond_error_with(pair, plat)` for the state-threading pair).
 - **Cookies:** `std/http/cookie` — `(req).cookie(name)`, `SetCookie` and
   `(resp).with_cookie(c)`, and the client's jar.
+- **Caching:** `std/http/cache` — validators and conditional requests
+  (304, 412, `If-Range`), `Cache-Control` and `Vary`.
 - **Status / classifiers:** `http_status_text`,
   `is_valid_http_status`, and the RFC 9110 status-class predicates
   `http_is_informational` / `http_is_success` / `http_is_redirect` /
@@ -2073,6 +2075,67 @@ serializer.
   it with `tcp_send_buf(fd, b, from)` and empties it with `buf_clear(b)`,
   so a reply allocates nothing once the builder has grown. The loop adds
   a `Date`, formatted once per second, unless the handler set one.
+
+### `std/http/cache`
+
+A response's validators and the conditional requests they answer (RFC
+9110 §8.8, §13), and the `Cache-Control` and `Vary` fields a response
+carries for the caches in front of it (RFC 9111 §5.2, RFC 9110 §12.5.5).
+
+```fern
+import "std/http/cache";
+
+function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
+  let now: Instant = time.instant_from_unix(plat.now_ms() / 1000 as i64);
+  let v: cache.Validators = cache.Validators { etag: Some(cache.strong("v42")), last_modified: Some(changed) };
+  let cc: cache.CacheControl = cache.CacheControl { ...cache.cache_control(), max_age: Some(60 as i64) };
+  return cache.respond(req, v, now, http.ok(page())).with_cache_control(cc);
+}
+```
+
+- `ETag { weak, opaque }`: `strong(opaque)`, `weak(opaque)`,
+  `(e).to_string()` (`"v42"`, `W/"v42"`), `parse_etag(s)`, and the two
+  comparisons, `(a).strong_eq(b)` and `(a).weak_eq(b)`.
+- `Validators { etag, last_modified }`, each an `Option`;
+  `validators()` has neither.
+- `evaluate(req, v, now)` answers a `Precondition` — `Proceed`,
+  `NotModified` or `PreconditionFailed` — taking `If-Match` (strong
+  comparison) or else `If-Unmodified-Since`, then `If-None-Match` (weak
+  comparison; a match is a 304 for GET and HEAD, a 412 otherwise) or else
+  `If-Modified-Since` for GET and HEAD, in RFC 9110 §13.2.2's order. A
+  date field is read in any of the three HTTP-date forms and is ignored
+  when it is not one, when it appears twice, or when `v` has no
+  modification time. `evaluate_absent(req)` is the evaluation with no
+  current representation: any `If-Match` fails.
+- `if_range(req, v, now)` — whether to honour a `Range`: yes without
+  `If-Range`, else only for a strongly matching tag or the exact
+  modification time.
+- `respond(req, v, now, resp)` puts it together: a 412
+  (`precondition_failed()`), a 304 (`not_modified(resp)`: no body, and of
+  `resp`'s fields `Cache-Control`, `Content-Location`, `ETag`, `Expires`
+  and `Vary`, plus `Last-Modified` when there is no `ETag`), or `resp`
+  carrying `ETag` and `Last-Modified` (`(r).with_validators(v, now)`, which
+  never sends a modification time later than `now`). A `resp` that is not
+  a 2xx goes untouched. `now` is the caller's, from its platform: an RFC
+  850 date's two-digit year is read against it.
+- `CacheControl` holds the directives as `Option[i64]` delta-seconds
+  (`max_age`, `s_maxage`, `max_stale`, `min_fresh`,
+  `stale_while_revalidate`, `stale_if_error`), flags (`no_store`,
+  `no_cache`, `private`, `public`, `must_revalidate`, `proxy_revalidate`,
+  `must_understand`, `no_transform`, `immutable`, `only_if_cached`), and
+  the field names a qualified `no-cache` or `private` names.
+  `cache_control()` has none; `(c).to_string()` writes them in a fixed
+  order; `(r).with_cache_control(c)` sets the field (or leaves it off when
+  there are none). `parse_cache_control(headers)` reads every line: a
+  repeated directive's first occurrence counts, a delta-seconds that is
+  not digits drops its directive, one past `DELTA_MAX` (2^31) is
+  `DELTA_MAX`, and a bare `max-stale` is `DELTA_MAX` too.
+- `(r).with_vary(field)` adds a field to `Vary`, folding its lines into
+  one; a field already named (in any case) or a `Vary: *` leaves it as it
+  is, and `*` replaces it.
+
+`tests/stdlib/http_cache_test.fern` holds RFC 9110's comparison table, the
+evaluation order and each date form.
 
 ### `std/http/cookie`
 
@@ -3004,6 +3067,12 @@ entries, and insertion-ordered iteration. Backs `HttpRequest`'s
 - `(h).get(name): Option[string]` (first value) /
   `(h).get_all(name): string[]` (every value) / `(h).has(name)` /
   `(h).len()`.
+- `(h).get_list(name): string[]` — the members of the comma-separated
+  lists in every `name` line (RFC 9110 §5.6.1), in order, through
+  `split_list(value)`: a comma inside a quoted string does not split,
+  whitespace around a member goes, and an empty member is dropped.
+  `unquote(s)` is a quoted string's content, each `\`-escaped byte taken
+  as itself.
 
 ### `std/stream`
 
@@ -3096,6 +3165,14 @@ built-in `Instant`, `Date`, `Time`, `DateTime`, `Zoned`, `Span`,
   `duration_millis(ms)`, `(d: Duration).to_string()` — compact
   canonical form (`"1h30m45s"`, `"-500ms"`, `"0s"`; ms resolution),
   distinct from the space-separated millisecond `format_duration_ms`.
+- **HTTP-dates (RFC 9110 §5.6.7):** `(i: Instant).format_http_date()`
+  writes the IMF-fixdate (`Sun, 06 Nov 1994 08:49:37 GMT`).
+  `http_date_parse(s)` reads it and the obsolete asctime form
+  (`Sun Nov  6 08:49:37 1994`); `http_date_parse_at(s, now)` reads those
+  and the RFC 850 form (`Sunday, 06-Nov-94 08:49:37 GMT`), whose
+  two-digit year is the latest year ending in those digits that is not
+  more than 50 years after `now`'s. A field out of range is refused; a
+  60th second is a leap second's.
 - **Humanised relative time:** `(i: Instant).relative_to(now)` — the
   `fromNow` shape, e.g. `"5 minutes ago"`, `"in 2 days"`, `"just now"`
   (coarse units: month ≈ 30 days, year = 365 days).

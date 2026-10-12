@@ -891,7 +891,7 @@ func TestRunnerTimeHttpDateExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/time http-date", "# pass 12", "# fail 0", "1..12"} {
+	for _, w := range []string{"# Suite: std/time http-date", "# pass 18", "# fail 0", "1..18"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -1165,6 +1165,13 @@ func TestRunnerHTTPCookieExamplePasses(t *testing.T) {
 
 func TestRunnerHTTPFormExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "http_form", "std/http/form", 4)
+}
+
+// `tests/stdlib/http_cache_test.fern` writes, reads and compares entity
+// tags, evaluates conditional requests, and reads and writes Cache-Control
+// and Vary.
+func TestRunnerHTTPCacheExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_cache", "std/http/cache", 16)
 }
 
 // `tests/stdlib/http_sse_test.fern` encodes and decodes server-sent
@@ -4053,7 +4060,8 @@ func TestRunnerHeaderMapMigratedExample(t *testing.T) {
 		"ok 6 - get_all on missing name is empty",
 		"ok 8 - set takes the caller's spelling in place",
 		"ok 10 - names fold ASCII only",
-		"# pass 10",
+		"ok 13 - unquote undoes a quoted string",
+		"# pass 13",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {

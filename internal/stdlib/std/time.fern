@@ -913,52 +913,121 @@ function __month_from_short(s: string, start: i32): i32 {
   return -1;
 }
 
-// `http_date_parse(s)` — parse an RFC 9110 IMF-fixdate
-// (`Sun, 06 Nov 1994 08:49:37 GMT`) to an `Option[Instant]`.
-// Returns None on any structural deviation: the string must be
-// exactly 29 bytes with the fixed punctuation, a known
-// three-letter month, all-digit numeric fields, and the `GMT`
-// suffix. The leading weekday name is advisory (it's redundant
-// with the date) and is NOT validated — a wrong weekday still
-// parses, matching lenient recipient behaviour.
-//
-// The two obsolete HTTP-date forms RFC 9110 says recipients
-// SHOULD also accept — RFC 850 (`Sunday, 06-Nov-94 …`) and
-// asctime (`Sun Nov  6 …`) — are not handled here; senders MUST
-// emit IMF-fixdate, so it's the form that matters in practice.
+// `http_date_parse(s)` — an HTTP-date (RFC 9110 §5.6.7) as an
+// Instant: the IMF-fixdate senders generate
+// (`Sun, 06 Nov 1994 08:49:37 GMT`) or the obsolete asctime form
+// (`Sun Nov  6 08:49:37 1994`); None for anything else. The weekday
+// name is not checked against the date, and a field out of range (an
+// April 31st, a 25th hour) is refused. The third form, RFC 850's,
+// carries a two-digit year that is read against the current time, so
+// only `http_date_parse_at` takes it.
 pub function http_date_parse(s: string): Option[Instant] {
-  if (s.len() != 29) {
-    return None;
+  if (s.len() == 29) {
+    return __imf_fixdate(s);
   }
-  // Fixed punctuation: `Xxx, 00 Xxx 0000 00:00:00 GMT`.
-  if (s[3] != 44) {  // ',' = 44
-    return None;
+  if (s.len() == 24) {
+    return __asctime_date(s);
   }
-  if (s[4] != 32 || s[7] != 32 || s[11] != 32
-    || s[16] != 32 || s[25] != 32) {  // ' ' = 32
-    return None;
+  return None;
+}
+
+// `http_date_parse_at(s, now)` — as `http_date_parse`, and the RFC 850
+// form (`Sunday, 06-Nov-94 08:49:37 GMT`) as well: the three a recipient
+// must accept. A two-digit year is the latest year ending in those digits
+// that is not more than 50 years after `now`'s year.
+pub function http_date_parse_at(s: string, now: Instant): Option[Instant] {
+  match (http_date_parse(s)) {
+    Some(i) => {
+      return Some(i);
+    },
+    None => {}
   }
-  if (s[19] != 58 || s[22] != 58) {  // ':' = 58
-    return None;
-  }
-  // Trailing "GMT" — the only zone IMF-fixdate permits.
-  if (s[26] != 71 || s[27] != 77 || s[28] != 84) {  // 'G''M''T'
-    return None;
-  }
-  let day: i32 = __parse_digits(s, 5, 7);
-  let mo: i32 = __month_from_short(s, 8);
-  let year: i32 = __parse_digits(s, 12, 16);
-  let h: i32 = __parse_digits(s, 17, 19);
-  let mn: i32 = __parse_digits(s, 20, 22);
-  let sc: i32 = __parse_digits(s, 23, 25);
-  if (day < 0 || mo < 0 || year < 0 || h < 0 || mn < 0 || sc < 0) {
+  return __rfc850_date(s, now);
+}
+
+// `__http_instant(year, mo, day, h, mn, sc)` — the instant of a parsed
+// HTTP-date's fields, None when any is missing (negative) or out of range;
+// a 60th second is a leap second's.
+function __http_instant(year: i32, mo: i32, day: i32, h: i32, mn: i32, sc: i32): Option[Instant] {
+  if (year < 0 || mo < 1 || day < 1 || day > days_in_month(year, mo) || !__time_of_day_ok(h, mn, sc)) {
     return None;
   }
   let days: i32 = __days_from_civil(year, mo, day);
-  let spd: i64 = 86400 as i64;
-  let sec: i64 = days as i64 * spd
-    + (h * 3600 + mn * 60 + sc) as i64;
+  let sec: i64 = days as i64 * (86400 as i64) + (h * 3600 + mn * 60 + sc) as i64;
   return Some(Instant { sec: sec, nsec: 0 });
+}
+
+// `__asctime_date(s)` — `Sun Nov  6 08:49:37 1994`, its day either two
+// digits or a space and one.
+function __asctime_date(s: string): Option[Instant] {
+  if (s[3] != 32 || s[7] != 32 || s[10] != 32 || s[19] != 32 || s[13] != 58 || s[16] != 58) {
+    return None;
+  }
+  let day_from: i32 = 8;
+  if (s[8] == 32) {
+    day_from = 9;
+  }
+  return __http_instant(__parse_digits(s, 20, 24), __month_from_short(s, 4), __parse_digits(s, day_from, 10), __parse_digits(s, 11, 13), __parse_digits(s, 14, 16), __parse_digits(s, 17, 19));
+}
+
+// `__rfc850_date(s, now)` — `Sunday, 06-Nov-94 08:49:37 GMT`: a weekday
+// name, then 24 bytes from its comma.
+function __rfc850_date(s: string, now: Instant): Option[Instant] {
+  let c: i32 = s.index_of(",");
+  if (c < 6 || s.len() != c + 24 || !__rfc850_punctuation(s, c)) {
+    return None;
+  }
+  let yy: i32 = __parse_digits(s, c + 9, c + 11);
+  if (yy < 0) {
+    return None;
+  }
+  return __http_instant(__rfc850_year(yy, now), __month_from_short(s, c + 5), __parse_digits(s, c + 2, c + 4), __parse_digits(s, c + 12, c + 14), __parse_digits(s, c + 15, c + 17), __parse_digits(s, c + 18, c + 20));
+}
+
+function __rfc850_punctuation(s: string, c: i32): boolean {
+  if (s[c + 1] != 32 || s[c + 4] != 45 || s[c + 8] != 45 || s[c + 11] != 32) {
+    return false;
+  }
+  return s[c + 14] == 58 && s[c + 17] == 58 && s[c + 20] == 32 && s.slice_snap(c + 21, c + 24) == "GMT";
+}
+
+// `__rfc850_year(yy, now)` — the latest year ending in `yy` that is not
+// more than 50 years after `now`'s (RFC 9110 §5.6.7), judged by year.
+function __rfc850_year(yy: i32, now: Instant): i32 {
+  let days: i64 = now.sec / (86400 as i64);
+  if (now.sec < 0 as i64 && days * (86400 as i64) != now.sec) {
+    days = days - 1 as i64;
+  }
+  let now_year: i32 = __civil_from_days(days as i32).year;
+  let y: i32 = now_year - now_year % 100 + yy;
+  if (y > now_year + 50) {
+    return y - 100;
+  }
+  if (y + 100 <= now_year + 50) {
+    return y + 100;
+  }
+  return y;
+}
+
+function __time_of_day_ok(h: i32, mn: i32, sc: i32): boolean {
+  return h >= 0 && h <= 23 && mn >= 0 && mn <= 59 && sc >= 0 && sc <= 60;
+}
+
+// `__imf_fixdate(s)` — `Sun, 06 Nov 1994 08:49:37 GMT`, 29 bytes.
+function __imf_fixdate(s: string): Option[Instant] {
+  if (!__imf_punctuation(s)) {
+    return None;
+  }
+  return __http_instant(__parse_digits(s, 12, 16), __month_from_short(s, 8), __parse_digits(s, 5, 7), __parse_digits(s, 17, 19), __parse_digits(s, 20, 22), __parse_digits(s, 23, 25));
+}
+
+// `__imf_punctuation(s)` — `Xxx, 00 Xxx 0000 00:00:00 GMT`'s fixed
+// bytes, the zone `GMT` being the only one it permits.
+function __imf_punctuation(s: string): boolean {
+  if (s[3] != 44 || s[4] != 32 || s[7] != 32 || s[11] != 32 || s[16] != 32 || s[25] != 32) {
+    return false;
+  }
+  return s[19] == 58 && s[22] == 58 && s.slice_snap(26, 29) == "GMT";
 }
 
 // ============================================================
