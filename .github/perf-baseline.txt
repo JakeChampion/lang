@@ -61,20 +61,20 @@ x86_64/ascii_scan.text	2996
 x86_64/ascii_scan.ir	37119510
 x86_64/call_overhead.text	91
 x86_64/call_overhead.ir	8550862
-x86_64/closure_call.text	814
-x86_64/closure_call.ir	103908097
+x86_64/closure_call.text	812
+x86_64/closure_call.ir	94308097
 x86_64/enum_match.text	999
 x86_64/enum_match.ir	53775055
-x86_64/http_hello.text	20236
+x86_64/http_hello.text	20386
 x86_64/http_hello.ir	29336671
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
-x86_64/map_int.text	5860
-x86_64/map_int.ir	41907080
-x86_64/map_probe_chain.text	5875
-x86_64/map_probe_chain.ir	389755986
-x86_64/map_string.text	8831
-x86_64/map_string.ir	66093136	2
+x86_64/map_int.text	5839
+x86_64/map_int.ir	41320232
+x86_64/map_probe_chain.text	5854
+x86_64/map_probe_chain.ir	385170066
+x86_64/map_string.text	8751
+x86_64/map_string.ir	65315551	2
 x86_64/ordmap_insert.text	5385
 x86_64/ordmap_insert.ir	115466142
 x86_64/pmap_insert.text	4896
@@ -234,10 +234,10 @@ x86_64/perceus_deriv.text	2708
 x86_64/perceus_deriv.ir	95830408
 x86_64/perceus_nqueens.text	1448
 x86_64/perceus_nqueens.ir	105327536
-x86_64/perceus_rbtree.text	3431
-x86_64/perceus_rbtree.ir	74376129
-x86_64/perceus_rbtree_ck.text	3376
-x86_64/perceus_rbtree_ck.ir	82344687
+x86_64/perceus_rbtree.text	3406
+x86_64/perceus_rbtree.ir	74293889
+x86_64/perceus_rbtree_ck.text	3374
+x86_64/perceus_rbtree_ck.ir	82262447
 aarch64/perceus_cfold.text	2641
 aarch64/perceus_cfold.ir	72820602
 aarch64/perceus_deriv.text	2935

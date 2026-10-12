@@ -178,6 +178,17 @@ function main(): i32 {
 `,
 		want:   map[string][]string{"x86-64-linux": {`_uq\d+:`, `cmpl \$1, -8\(%\w+\)`}, "arm64-linux": {`_uq\d+:`}},
 		forbid: map[string][]string{"x86-64-linux": {`_rcuniq\d+:`, `testq %r11, %r11`, `movl -8\(%\w+\), %edx`}, "arm64-linux": {`_rcuniq\d+:`, `mov x6, #1`}}},
+	// A call through a function value reads the body's address from slot 0 of
+	// the closure box without a bounds check: every box has that slot.
+	{name: "closure_call_unchecked", fn: "apply", exit: 8, src: `
+@noinline function apply(f: (i32) => i32, x: i32): i32 { return f(x) + 1; }
+function main(): i32 {
+    let k: i32 = 4;
+    return apply((y: i32) => y + k, 3);
+}
+`,
+		want:   map[string][]string{"x86-64-linux": {`call \*%\w+`}, "arm64-linux": {`blr x\d+`}},
+		forbid: map[string][]string{"x86-64-linux": {`__fern_oob_abort`}, "arm64-linux": {`__fern_oob_abort`}}},
 	// An inline retain tests and bumps the count in memory rather than
 	// round-tripping it through %ecx.
 	{name: "rc_inc_in_memory", fn: "twice", exit: 5, src: `
