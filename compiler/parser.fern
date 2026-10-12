@@ -10176,17 +10176,20 @@ function name_declared(structs: StructDecl[], name: string): boolean {
   return false;
 }
 
-// add_builtin_variant appends a synthesized enum-variant struct (a
-// payload variant carries the marker field "__ev"; a no-payload variant
-// has zero fields — same lowering as parse_enum_decl) unless a struct of
-// that name is already declared.
-function add_builtin_variant(acc: StructDecl[], name: string, payload_type: string, enum_name: string): StructDecl[] {
-  if (struct_declared(acc, name)) {
+// add_builtin_variant appends a synthesized enum-variant struct unless the
+// name is already a struct or an enum. The payloads become the fields
+// `__ev`, `__ev1`, …, the same lowering as parse_enum_decl.
+function add_builtin_variant(acc: StructDecl[], name: string, payload_types: string[], enum_name: string): StructDecl[] {
+  if (name_declared(acc, name)) {
     return acc;
   }
   let fields: StructFieldDecl[] = [];
-  if (payload_type.len() > 0) {
-    fields = fields.append(StructFieldDecl { name: "__ev", type_name: payload_type, fn_ret: "", fn_param_types: "" });
+  for t in payload_types {
+    let field: string = "__ev";
+    if (fields.len() > 0) {
+      field = "__ev" + dl_itoa(fields.len());
+    }
+    fields = fields.append(StructFieldDecl { name: field, type_name: t, fn_ret: "", fn_param_types: "" });
   }
   return acc.append(StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
 }
@@ -10346,33 +10349,26 @@ pub function is_builtin_function(name: string): boolean {
 // declaration. Option / Result are handled separately (Some/Ok/None/Err
 // are special-cased in the emitter).
 pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
-  structs = add_builtin_variant(structs, "JNull", "", "JsonValue");
-  structs = add_builtin_variant(structs, "JBool", "boolean", "JsonValue");
-  structs = add_builtin_variant(structs, "JNumber", "string", "JsonValue");
-  structs = add_builtin_variant(structs, "JString", "string", "JsonValue");
-  structs = add_builtin_variant(structs, "JArray", "JsonValue[]", "JsonValue");
-  structs = add_builtin_variant(structs, "JObject", "Map[string, JsonValue]", "JsonValue");
-  structs = add_builtin_variant(structs, "NotFound", "string", "IoError");
-  structs = add_builtin_variant(structs, "PermissionDenied", "string", "IoError");
-  structs = add_builtin_variant(structs, "AlreadyExists", "string", "IoError");
-  structs = add_builtin_variant(structs, "InvalidUtf8", "string", "IoError");
-  structs = add_builtin_variant(structs, "Interrupted", "", "IoError");
-  structs = add_builtin_variant(structs, "Unsupported", "", "IoError");
-  structs = add_builtin_variant(structs, "BodyText", "string", "Body");
-  structs = add_builtin_variant(structs, "BodyBytes", "u8[]", "Body");
-  structs = add_builtin_variant(structs, "BodyStream", "Stream", "Body");
-  structs = add_builtin_variant(structs, "BodyFile", "string", "Body");
-  structs = add_builtin_variant(structs, "BodyChunks", "ChunkProducer", "Body");
-  // Other carries THREE payloads (path, message, Linux errno) — open-coded
-  // because add_builtin_variant takes one payload. Field naming matches the
-  // user-enum desugar: `__ev`, `__ev1`, `__ev2`.
-  if (!name_declared(structs, "Other")) {
-    let otf: StructFieldDecl[] = [];
-    otf = otf.append(StructFieldDecl { name: "__ev", type_name: "string", fn_ret: "", fn_param_types: "" });
-    otf = otf.append(StructFieldDecl { name: "__ev1", type_name: "string", fn_ret: "", fn_param_types: "" });
-    otf = otf.append(StructFieldDecl { name: "__ev2", type_name: "i32", fn_ret: "", fn_param_types: "" });
-    structs = structs.append(StructDecl { name: "Other", fields: otf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "IoError", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
-  }
+  let none: string[] = [];
+  structs = add_builtin_variant(structs, "JNull", none, "JsonValue");
+  structs = add_builtin_variant(structs, "JBool", ["boolean"], "JsonValue");
+  structs = add_builtin_variant(structs, "JNumber", ["string"], "JsonValue");
+  structs = add_builtin_variant(structs, "JString", ["string"], "JsonValue");
+  structs = add_builtin_variant(structs, "JArray", ["JsonValue[]"], "JsonValue");
+  structs = add_builtin_variant(structs, "JObject", ["Map[string, JsonValue]"], "JsonValue");
+  structs = add_builtin_variant(structs, "NotFound", ["string"], "IoError");
+  structs = add_builtin_variant(structs, "PermissionDenied", ["string"], "IoError");
+  structs = add_builtin_variant(structs, "AlreadyExists", ["string"], "IoError");
+  structs = add_builtin_variant(structs, "InvalidUtf8", ["string"], "IoError");
+  structs = add_builtin_variant(structs, "Interrupted", none, "IoError");
+  structs = add_builtin_variant(structs, "Unsupported", none, "IoError");
+  structs = add_builtin_variant(structs, "BodyText", ["string"], "Body");
+  structs = add_builtin_variant(structs, "BodyBytes", ["u8[]"], "Body");
+  structs = add_builtin_variant(structs, "BodyStream", ["Stream"], "Body");
+  structs = add_builtin_variant(structs, "BodyFile", ["string"], "Body");
+  structs = add_builtin_variant(structs, "BodyChunks", ["ChunkProducer"], "Body");
+  structs = add_builtin_variant(structs, "BodyFileRanges", ["string", "i64[]", "u8[][]"], "Body");
+  structs = add_builtin_variant(structs, "Other", ["string", "string", "i32"], "IoError");
   // FileStat: the builtin struct returned by stat(path). Injected so
   // the emitter knows its field layout ([shape, then one 8-byte slot
   // per field in declaration order]) — the __fern_stat runtime helper

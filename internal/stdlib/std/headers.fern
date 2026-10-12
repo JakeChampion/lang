@@ -146,6 +146,109 @@ pub function unquote(s: string): string {
   return out + s.slice_snap(from, end);
 }
 
+// `.preferred_coding(offers)` — which of `offers`, the content codings a
+// representation is available in with the most preferred first, the
+// `Accept-Encoding` fields rank highest (RFC 9110 §12.5.3). None means the
+// identity coding: no field was sent, none of `offers` is acceptable, or
+// `identity` ranks above them. A tie goes to the earlier offer.
+pub function (h: HeaderMap) preferred_coding(offers: string[]): Option[string] {
+  let members: string[] = h.get_list("Accept-Encoding");
+  let floor: i32 = __coding_weight(members, "identity");
+  let best: Option[string] = None;
+  let best_q: i32 = 0;
+  for o in offers {
+    let q: i32 = __coding_weight(members, o);
+    if (q > best_q && q >= floor) {
+      best = Some(o);
+      best_q = q;
+    }
+  }
+  return best;
+}
+
+// `__coding_weight(members, coding)` — the weight in thousandths that the
+// `Accept-Encoding` members give `coding`: its own member's, else `*`'s,
+// else -1 for a coding the field does not mention. `x-gzip` is `gzip`
+// (§8.4.1.3).
+function __coding_weight(members: string[], coding: string): i32 {
+  let star: i32 = -1;
+  for m in members {
+    let name: string = __member_token(m);
+    if (__same_coding(name, coding)) {
+      return weight(m);
+    }
+    if (name == "*") {
+      star = weight(m);
+    }
+  }
+  return star;
+}
+
+// `__member_token(m)` — a list member's value before its parameters.
+function __member_token(m: string): string {
+  let semi: i32 = m.index_of(";");
+  if (semi < 0) {
+    return m;
+  }
+  return m.slice_snap(0, semi).trim();
+}
+
+function __same_coding(name: string, coding: string): boolean {
+  if (name.eq_ignore_ascii_case(coding)) {
+    return true;
+  }
+  return name.eq_ignore_ascii_case("x-gzip") && coding.eq_ignore_ascii_case("gzip");
+}
+
+// `weight(member)` — a list member's `q` parameter (RFC 9110 §12.4.2) in
+// thousandths, 0 to 1000: 1000 when it has none, and 0 for a malformed one,
+// so a member nobody can read is never preferred.
+pub function weight(member: string): i32 {
+  let params: string[] = member.split(";");
+  let i: i32 = 1;
+  while (i < params.len()) {
+    let p: string = params[i].trim();
+    if (p.len() >= 2 && (p[0] == 113 as u8 || p[0] == 81 as u8) && p[1] == 61 as u8) {
+      return __qvalue(p.slice_snap(2, p.len()));
+    }
+    i = i + 1;
+  }
+  return 1000;
+}
+
+// `__qvalue(s)` — `0`, `0.5`, `1.000` and the like as thousandths; 0 for
+// anything outside the grammar.
+function __qvalue(s: string): i32 {
+  if (s.len() == 0 || s.len() > 5 || s[0] != 48 as u8 && s[0] != 49 as u8) {
+    return 0;
+  }
+  if (s.len() > 1 && s[1] != 46 as u8) {
+    return 0;
+  }
+  let q: i32 = (s[0] - 48 as u8) as i32 * 1000 + __thousandths(s);
+  if (q > 1000) {
+    return 0;
+  }
+  return q;
+}
+
+// `__thousandths(s)` — the digits after `s`'s point as thousandths, or 1001
+// when one is not a digit, so the qvalue reads as out of range.
+function __thousandths(s: string): i32 {
+  let q: i32 = 0;
+  let scale: i32 = 100;
+  let i: i32 = 2;
+  while (i < s.len()) {
+    if (s[i] < 48 as u8 || s[i] > 57 as u8) {
+      return 1001;
+    }
+    q = q + (s[i] - 48 as u8) as i32 * scale;
+    scale = scale / 10;
+    i = i + 1;
+  }
+  return q;
+}
+
 // `.append(name, value)` — add an entry without replacing
 // existing entries with the same name. The canonical "I want
 // duplicate-safe insertion" call (`headers.append("Set-Cookie",

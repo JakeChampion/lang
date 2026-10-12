@@ -19,10 +19,11 @@
 //
 // What a mocked capability RETURNS is what the test canned for it, or a
 // fixed value: `env_set`, `config_set`, `secret_set`, `now_set`,
-// `elapsed_set`, `random_set` and `http_set` record an answer the mock gives
-// from then on; otherwise `now_ms` and `elapsed_ns` answer 0, `env`,
-// `config` and `secret` answer None, `random_i32` answers 0, `log` discards
-// the line, and `http` answers `Err(Connect(ConnectionRefused))` — what a
+// `elapsed_set`, `random_set`, `http_set`, `file_set` and `dir_set` record
+// an answer the mock gives from then on; otherwise `now_ms` and
+// `elapsed_ns` answer 0, `env`, `config` and `secret` answer None,
+// `random_i32` answers 0, `log` discards the line, `stat` answers
+// `NotFound`, and `http` answers `Err(Connect(ConnectionRefused))` — what a
 // real request gives for a host that is not listening, so a handler that
 // already handles a failed request handles a mocked one. A canned answer is
 // a row of the same log, `canned`, tab, the capability's key, tab, the
@@ -103,6 +104,25 @@ impl platform.Platform for MockPlatform {
     }
     return Err(fetch.Connect(net.ConnectionRefused));
   }
+
+  // A mock holds no file system: `stat` answers from the files and
+  // directories the test canned (`file_set`, `dir_set`).
+  function stat(self: MockPlatform, path: string): Result[FileStat, IoError] {
+    self.record("stat", path);
+    match (self.canned("file " + path)) {
+      Some(content) => {
+        return Ok(__file_stat(false, content.len() as i64, __canned_i64(self, "mtime " + path, 0 as i64)));
+      },
+      None => {}
+    }
+    match (self.canned("dir " + path)) {
+      Some(d) => {
+        return Ok(__file_stat(true, 0 as i64, 0 as i64));
+      },
+      None => {}
+    }
+    return Err(NotFound(path));
+  }
 }
 
 // `(m: MockPlatform).record(name, args)` — append an entry to the log; each
@@ -175,6 +195,20 @@ pub function (m: MockPlatform) random_set(v: i32): void {
 // `Err(Connect(ConnectionRefused))`.
 pub function (m: MockPlatform) http_set(method: string, url: string, status: i32, body: string): void {
   m.can("http " + method + " " + url, status.to_string() + " " + body);
+}
+
+// `(m: MockPlatform).file_set(path, content, mtime)` — `plat.stat(path)`
+// answers a file of `content`'s size last modified at `mtime` (Unix
+// seconds), and `materialize` reads `content` for a file body naming it.
+pub function (m: MockPlatform) file_set(path: string, content: string, mtime: i64): void {
+  m.can("file " + path, content);
+  m.can("mtime " + path, mtime.to_string());
+}
+
+// `(m: MockPlatform).dir_set(path)` — `plat.stat(path)` answers a
+// directory.
+pub function (m: MockPlatform) dir_set(path: string): void {
+  m.can("dir " + path, "");
 }
 
 // `(m: MockPlatform).calls()` — the recorded calls, in order; the canned
@@ -328,6 +362,71 @@ function __parse_i64(s: string): i64 {
     return 0 as i64 - n;
   }
   return n;
+}
+
+// `(m: MockPlatform).materialize(resp)` — `resp` with a file body read from
+// the files the test canned, as `http.http_materialize` reads one from the
+// disk: a `BodyFile` or `BodyFileRanges` naming a canned file becomes its
+// bytes, and one naming no file, or a range the file does not hold, a 404.
+pub function (m: MockPlatform) materialize(resp: HttpResponse): HttpResponse {
+  match (resp.body) {
+    BodyFile(path) => {
+      match (m.canned("file " + path)) {
+        Some(content) => {
+          return HttpResponse { ...resp, body: BodyBytes(content.bytes()) };
+        },
+        None => {
+          return http.not_found();
+        }
+      }
+      return http.not_found();
+    },
+    BodyFileRanges(path, ranges, seams) => {
+      return __materialized(m, resp, path, ranges, seams);
+    },
+    _ => {
+      return resp;
+    }
+  }
+  return resp;
+}
+
+function __materialized(m: MockPlatform, resp: HttpResponse, path: string, ranges: i64[], seams: u8[][]): HttpResponse {
+  let content: string = "";
+  match (m.canned("file " + path)) {
+    Some(c) => {
+      content = c;
+    },
+    None => {
+      return http.not_found();
+    }
+  }
+  match (http.file_ranges_bytes(ranges, seams, (offset: i64, len: i64): Option[u8[]] => __canned_range(content, offset, len))) {
+    Some(bs) => {
+      return HttpResponse { ...resp, body: BodyBytes(bs) };
+    },
+    None => {
+      return http.not_found();
+    }
+  }
+  return http.not_found();
+}
+
+// `__canned_range(content, offset, len)` — `len` bytes of `content` from
+// `offset`, None where it ends before them.
+function __canned_range(content: string, offset: i64, len: i64): Option[u8[]] {
+  if (offset + len > content.len() as i64) {
+    return None;
+  }
+  return Some((slice_unchecked(content, offset as i32, (offset + len) as i32) + "").bytes());
+}
+
+// `__file_stat(is_dir, size, mtime)` — what `stat` reports for a canned
+// entry; the fields a mock has no answer for read 0.
+function __file_stat(is_dir: boolean, size: i64, mtime: i64): FileStat {
+  let z: i64 = 0 as i64;
+  let u: u32 = 0 as u32;
+  return FileStat { is_file: !is_dir, is_dir: is_dir, size: size, mode: u, nlink: 1 as u32, uid: u, gid: u, dev: z, rdev: z, ino: z, blksize: z, blocks: z, atime: mtime, atime_nsec: z, mtime: mtime, mtime_nsec: z, ctime: mtime, ctime_nsec: z, btime: mtime, btime_nsec: z };
 }
 
 // `__canned_response(v)` — the canned `STATUS BODY` as a response, 200

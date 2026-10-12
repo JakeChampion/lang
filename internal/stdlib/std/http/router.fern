@@ -17,12 +17,12 @@
 // hand.
 
 import "std/http";
-import "std/url";
 import "std/string";
 import "core/int";
 
-// Params — the path parameters a pattern bound, percent-decoded, in the
-// pattern's order.
+// Params — the path parameters a pattern bound, in the pattern's order, as
+// the request's path holds them: decoded once already, by the serve loop or
+// the wasi-http entry that read the request-target.
 pub struct Params { names: string[], values: string[] }
 
 // no_params is what a handler called outside the router gets.
@@ -259,7 +259,7 @@ function __bind(segs: Segment[], req: string[]): Params {
     match (segs[i]) {
       PathParam(n) => {
         names = names.append(n);
-        values = values.append(url.url_decode(req[i]));
+        values = values.append(req[i]);
       },
       PathRest(n) => {
         if (n != "") {
@@ -274,12 +274,12 @@ function __bind(segs: Segment[], req: string[]): Params {
   return Params { names: names, values: values };
 }
 
-// __rest joins the request's segments from `from`, each decoded.
+// __rest joins the request's segments from `from`.
 function __rest(req: string[], from: i32): string {
   let parts: string[] = [];
   let i: i32 = from;
   while (i < req.len()) {
-    parts = parts.append(url.url_decode(req[i]));
+    parts = parts.append(req[i]);
     i = i + 1;
   }
   return parts.join("/");

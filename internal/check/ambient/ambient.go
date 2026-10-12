@@ -63,6 +63,7 @@ var bagMethods = map[string]string{
 	"random_i32":   "random_i32",
 	"sleep_ms":     "sleep",
 	"sleep_ns":     "sleep",
+	"stat":         "stat",
 }
 
 // BagMethods returns the builtin-to-method table the rule suggests

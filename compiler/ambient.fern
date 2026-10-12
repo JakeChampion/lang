@@ -237,6 +237,9 @@ pub function bag_method(builtin: string): string {
   if (builtin == "sleep_ms" || builtin == "sleep_ns") {
     return "sleep";
   }
+  if (builtin == "stat") {
+    return "stat";
+  }
   return "";
 }
 

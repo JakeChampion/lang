@@ -1829,7 +1829,12 @@ serializer.
   detail)` for an RFC 9457 problem document
 - **Bodies:** `HttpResponse.body` is a `Body`: `BodyText(string)`,
   `BodyBytes(u8[])`, `BodyStream(Stream)` (the stream's remainder),
-  `BodyFile(string)` (a path) or `BodyChunks((i32) => Option[u8[]])` (a
+  `BodyFile(string)` (a path), `BodyFileRanges(string, i64[], u8[][])`
+  (ranges of a file, start and length pairs, with the bytes of the seams
+  written before, between and after them: the body `std/http/static`
+  answers a range or a `multipart/byteranges` with, each range moved by
+  `sendfile(2)` after a seek; `http.file_ranges_len`, `file_ranges_ok` and
+  `file_ranges_bytes` read one) or `BodyChunks((i32) => Option[u8[]])` (a
   producer asked for chunk 0, 1, 2, … until it answers None; the serve
   loop asks as a task, so a producer that waits for its next chunk parks
   the connection and the worker serves its other connections meanwhile).
@@ -1964,6 +1969,8 @@ serializer.
   `(resp).with_cookie(c)`, and the client's jar.
 - **Caching:** `std/http/cache` — validators and conditional requests
   (304, 412, `If-Range`), `Cache-Control` and `Vary`.
+- **Static files:** `std/http/static` — a directory's files with their
+  validators, byte ranges and precompressed siblings.
 - **Status / classifiers:** `http_status_text`,
   `is_valid_http_status`, and the RFC 9110 status-class predicates
   `http_is_informational` / `http_is_success` / `http_is_redirect` /
@@ -2137,6 +2144,63 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
 `tests/stdlib/http_cache_test.fern` holds RFC 9110's comparison table, the
 evaluation order and each date form.
 
+### `std/http/static`
+
+The files of a directory, answered as RFC 9110 has a server answer for a
+selected representation:
+
+```fern
+function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
+  return static.serve(req, static.dir("public"), plat);
+}
+```
+
+- `dir(root)` serves `root` with `options()`; `Dir { root, options }` and
+  `Options { index, dotfiles, precompressed, cache_control, max_ranges }`
+  change it:
+  `index` is the file a path ending in `/` answers with (`index.html`; ""
+  for none, and never a listing), `dotfiles` serves names beginning with
+  `.` (off), `precompressed` is the codings whose siblings are looked for,
+  most preferred first (`br` as `.br`, `zstd` as `.zst`, `gzip` as `.gz`),
+  `cache_control` rides on every file and its 304, and `max_ranges` (200,
+  Apache's `MaxRanges`) bounds the parts of a multipart answer.
+- `serve(req, d, plat)` answers the request's path, as the serve loop hands
+  it over (decoded once, dot segments resolved); `serve_path(req, d, rel,
+  plat)` answers `rel`, a router's rest parameter.
+- GET and HEAD only (405 with `Allow` otherwise). A `..` segment, a NUL and
+  a dotfile are 404s, so no request names a file outside the directory; a
+  directory without its `/` is a 301 to the path with it; a stat that is
+  refused is a 403.
+- The file's validators are a strong `ETag` from its modification time,
+  size and coding, and `Last-Modified`; `std/http/cache` evaluates the
+  preconditions before anything else, so a current copy is a 304 whatever
+  its `Range` says.
+- A GET's `Range` is a 206: one satisfiable range under `Content-Range`,
+  several as `multipart/byteranges` (RFC 9110 §14.6), in the order asked,
+  each part under the file's media type and its own `Content-Range`, a
+  random boundary from `plat.random_i32`, and `Content-Encoding` kept,
+  since the ranges are of the coded representation. Ranges past the end
+  are dropped; none left is a 416 with `bytes */size`; `If-Range` is
+  honoured. Another unit, a field that does not parse, more than
+  `max_ranges` ranges, and ranges adding up to more than the file (heavy
+  overlap) are answered whole, as §14.2 allows.
+  `byte_range(value, size, max)` is that reading on its own.
+- The sibling `(req.headers).preferred_coding` ranks highest is sent with
+  its `Content-Encoding` and its own tag; `Vary: Accept-Encoding` goes on
+  every response once `precompressed` names a coding.
+- `content_type(path)` is the media type by extension, `charset=utf-8` on
+  the text types.
+
+The handler reads no file: it asks `plat.stat` what is at a path and
+answers with a `BodyFileRanges` the serve loop sends once the handler has
+returned, by `sendfile(2)` where the target has it. A mock or simulated
+platform answers `stat` from `file_set` / `dir_set`, and its
+`materialize(resp)` reads the body back. `tests/stdlib/http_static_test.fern`
+is the suite; `TestStaticServeInterp` and `TestStaticServeX86_64` serve a
+real directory under the loop, and `TestStaticPreconditionsMatchGo` sends
+every combination of the precondition fields, `Range` and `If-Range` to it
+and to Go's `http.ServeContent`, which is the oracle.
+
 ### `std/http/cookie`
 
 Cookies as draft-ietf-httpbis-rfc6265bis has them: the `Set-Cookie` a
@@ -2293,7 +2357,9 @@ function routes(): Result[router.Router[platform.Host], router.RouteError] {
   other methods, 404 when none matches it. `handler()` is the closure
   `serve.run` takes. A route handler is `(req, params, plat)`; `Router[P]`
   is generic over the platform type.
-- `Params` holds the values a pattern bound, percent-decoded, in its order:
+- `Params` holds the values a pattern bound, in its order, as the
+  request's path holds them (decoded once already, by the serve loop or
+  the wasi-http entry):
   `get(name)` is the value when bound; `param(name)` answers a 500
   `HttpError` for a name the pattern does not bind, `int(name)` a 400 for a
   value that is not an integer, so a handler writes `params.int("id")?` and
@@ -3073,6 +3139,12 @@ entries, and insertion-ordered iteration. Backs `HttpRequest`'s
   whitespace around a member goes, and an empty member is dropped.
   `unquote(s)` is a quoted string's content, each `\`-escaped byte taken
   as itself.
+- `(h).preferred_coding(offers): Option[string]` — which of `offers` (the
+  content codings a representation exists in, most preferred first) the
+  `Accept-Encoding` fields rank highest (RFC 9110 §12.5.3), `*` standing
+  for what they do not name and `x-gzip` for `gzip`; None means identity,
+  which wins only when it ranks strictly higher. `weight(member)` is a
+  member's `q` in thousandths (1000 without one, 0 when malformed).
 
 ### `std/stream`
 
@@ -3381,6 +3453,12 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   so a handler reaches global addresses only, and a connection the peer
   kept open carries the platform's next request to the same place — for
   the life of the worker loop under std/serve.
+- `(plat).stat(path)` — what the file system holds at `path` (`fs`): a
+  `FileStat` with its kind, size and modification time. A handler answers
+  with a file's bytes without reading them (`http.file`, `BodyFileRanges`),
+  so this is the whole of its file-system reach; the `wasi-http` proxy
+  world has no `fs`. The mock and the sim answer from the files the test
+  set.
 
 ### `std/sim_fetch`
 
@@ -3438,8 +3516,9 @@ the seeded PRNG of the `sim.Sim` `d` (`now_ms`, `elapsed_ns`,
 `random_i32`), sends `plat.http` over the `sim_fetch.Net` `n` by the
 host's public-only route with the network's pool keeping the connection
 (parking under `sim.run_tasks`, so handlers interleave in virtual time),
-and answers `env`, `config` and `secret` with what the test set
-(`env_set`, `config_set`, `secret_set`). Every call is recorded as a
+and answers `env`, `config`, `secret` and `stat` with what the test set
+(`env_set`, `config_set`, `secret_set`, `file_set`, `dir_set`;
+`materialize(resp)` reads a file body back from them). Every call is recorded as a
 mock's: `calls()` and `reset()` read and clear the log, a secret logged by
 its name alone. `(p).with_jar(jar)` gives it a cookie jar as
 `platform.Host.with_jar` does.
@@ -3468,8 +3547,8 @@ assert_eq(m.calls()[0].name, "log");
 
 Mocked capabilities answer what the test canned, else a fixed value — 0
 for `now_ms` / `elapsed_ns` / `random_i32`, `None` for `env` / `config` /
-`secret`, `Err(Connect(ConnectionRefused))` for `http`, and `log`
-swallows the line.
+`secret`, `Err(Connect(ConnectionRefused))` for `http`, `NotFound` for
+`stat`, and `log` swallows the line.
 
 - `mock_platform_new()`.
 - `(m).env_set(name, value)`, `(m).config_set(name, value)`,
@@ -3482,6 +3561,11 @@ swallows the line.
   own `(plat).can(key, value)` / `(plat).canned(key)` are what the
   setters and the capability methods use
   (`tests/stdlib/mock_platform_canned_test.fern`).
+- `(m).file_set(path, content, mtime)`, `(m).dir_set(path)` — what
+  `stat` answers for `path`; `(m).materialize(resp)` is `resp` with a
+  `BodyFile` or `BodyFileRanges` naming a canned file read into its bytes,
+  as `http.http_materialize` reads one from the disk (404 for a file it
+  was not given or a range the file does not hold).
 - `(m).record(name, args)`, `(m).reset()` — mutate through the shared cell,
   so a bag already handed to a handler writes to the same log.
 - `(m).calls()`, `(m).call_count()`, `(m).has_call(name)`,

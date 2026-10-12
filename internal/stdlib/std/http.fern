@@ -2657,7 +2657,7 @@ function __declared_length(h: HeaderMap): i32 {
 // are the program's own bytes and this reader has no error channel, so
 // an ill-formed sequence reads as U+FFFD; `body_bytes` is the body as
 // it is.
-// A `BodyFile` answers "" here: the file is streamed by the serve loop
+// A `BodyFile` or a `BodyFileRanges` answers "" here: the file is streamed by the serve loop
 // as the response is written, never read by code a handler reaches,
 // since a handler's host effects go through its platform (E080).
 // The response-side twin of the HttpRequest readers above.
@@ -2676,6 +2676,9 @@ pub function (r: HttpResponse) body_string(): string {
     BodyFile(path) => {
       return "";
     },
+    BodyFileRanges(path, ranges, seams) => {
+      return "";
+    },
     BodyChunks(producer) => {
       let joined: u8[] = __chunks_joined(producer);
       return utf8.from_bytes_lossy(joined);
@@ -2691,7 +2694,7 @@ pub function (r: HttpResponse) body_bytes(): u8[] {
 }
 
 // `(b: Body).bytes()` — the bytes a `Body` holds, read as `body_bytes`
-// reads them: a `BodyFile` answers none, since the file is streamed by
+// reads them: a file body answers none, since the file is streamed by
 // the serve loop and never read by code a handler reaches.
 pub function (b: Body) bytes(): u8[] {
   match (b) {
@@ -2706,6 +2709,10 @@ pub function (b: Body) bytes(): u8[] {
       return rest.0;
     },
     BodyFile(path) => {
+      let none: u8[] = [];
+      return none;
+    },
+    BodyFileRanges(path, ranges, seams) => {
       let none: u8[] = [];
       return none;
     },
@@ -2739,7 +2746,8 @@ function __chunks_joined(producer: ChunkProducer): u8[] {
 
 // `(r: HttpResponse).body_len()` — the body's length in bytes: the
 // text's or the bytes' length, the Stream's remainder, the chunks'
-// total, 0 for a file the loop has not opened yet.
+// total, the length of a file's ranges and the bytes between them, 0 for
+// a whole file the loop has not opened yet.
 pub function (r: HttpResponse) body_len(): i32 {
   match (r.body) {
     BodyText(s) => {
@@ -2754,6 +2762,9 @@ pub function (r: HttpResponse) body_len(): i32 {
     BodyFile(path) => {
       return 0;
     },
+    BodyFileRanges(path, ranges, seams) => {
+      return file_ranges_len(ranges, seams) as i32;
+    },
     BodyChunks(producer) => {
       return __chunks_joined(producer).len();
     }
@@ -2761,8 +2772,9 @@ pub function (r: HttpResponse) body_len(): i32 {
   return 0;
 }
 
-// `http_materialize(r)` — the response with a `BodyFile` read into a
-// `BodyBytes`, or a 404 when the file cannot be read; any other body
+// `http_materialize(r)` — the response with a `BodyFile` or a
+// `BodyFileRanges` read into a `BodyBytes`, or a 404 when the file cannot be
+// read or no longer holds the ranges; any other body
 // as it was. For a test that wants the bytes a served file body would
 // carry: the serve loop itself streams the file from a `Reader` as the
 // socket takes it, after the handler has answered, on the loop's own
@@ -2781,11 +2793,117 @@ pub function http_materialize(r: HttpResponse): HttpResponse {
       }
       return not_found();
     },
+    BodyFileRanges(path, ranges, seams) => {
+      match (__file_ranges_read(path, ranges, seams)) {
+        Some(bs) => {
+          return HttpResponse { ...r, body: BodyBytes(bs) };
+        },
+        None => {
+          return not_found();
+        }
+      }
+      return not_found();
+    },
     _ => {
       return r;
     }
   }
   return r;
+}
+
+function __file_ranges_read(path: string, ranges: i64[], seams: u8[][]): Option[u8[]] {
+  match (open_reader(path)) {
+    Ok(r) => {
+      let got: Option[u8[]] = file_ranges_bytes(ranges, seams, (offset: i64, len: i64): Option[u8[]] => __read_span(r, offset, len));
+      let closed: Option[IoError] = r.close();
+      return got;
+    },
+    Err(e) => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// `file_ranges_ok(ranges, seams)` — whether a `BodyFileRanges` is well
+// formed: start and length pairs, none negative, and one seam more than
+// there are ranges.
+pub function file_ranges_ok(ranges: i64[], seams: u8[][]): boolean {
+  if (ranges.len() % 2 != 0 || seams.len() != ranges.len() / 2 + 1) {
+    return false;
+  }
+  for n in ranges {
+    if (n < 0 as i64) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// `file_ranges_len(ranges, seams)` — the bytes a `BodyFileRanges` carries:
+// its ranges' lengths and its seams.
+pub function file_ranges_len(ranges: i64[], seams: u8[][]): i64 {
+  let n: i64 = 0 as i64;
+  let i: i32 = 1;
+  while (i < ranges.len()) {
+    n = n + ranges[i];
+    i = i + 2;
+  }
+  for s in seams {
+    n = n + s.len() as i64;
+  }
+  return n;
+}
+
+// `file_ranges_bytes(ranges, seams, read)` — the bytes a `BodyFileRanges`
+// carries, each range as `read(start, len)` gives it, between its seams;
+// None for a body that is not well formed or a range `read` cannot give.
+pub function file_ranges_bytes(ranges: i64[], seams: u8[][], read: (i64, i64) => Option[u8[]]): Option[u8[]] {
+  if (!file_ranges_ok(ranges, seams)) {
+    return None;
+  }
+  let out: u8[] = seams[0];
+  let i: i32 = 0;
+  while (i < ranges.len()) {
+    match (read(ranges[i], ranges[i + 1])) {
+      Some(bs) => {
+        out = out.concat(bs).concat(seams[i / 2 + 1]);
+      },
+      None => {
+        return None;
+      }
+    }
+    i = i + 2;
+  }
+  return Some(out);
+}
+
+function __read_span(r: Reader, offset: i64, len: i64): Option[u8[]] {
+  match (r.seek(offset, 0)) {
+    Err(e) => {
+      return None;
+    },
+    Ok(at) => {}
+  }
+  let out: u8[] = [];
+  while (out.len() as i64 < len) {
+    let want: i64 = len - out.len() as i64;
+    if (want > 65536 as i64) {
+      want = 65536 as i64;
+    }
+    match (r.read_chunk_bytes(want as i32)) {
+      Ok(piece) => {
+        if (piece.len() == 0) {
+          return None;
+        }
+        out = out.concat(piece);
+      },
+      Err(e) => {
+        return None;
+      }
+    }
+  }
+  return Some(out);
 }
 
 // `bytes(status, bs)` — a response whose body is

@@ -6,8 +6,8 @@
 // in virtual time: `plat.now_ms()` is the sim's clock, `plat.random_i32()`
 // its seeded PRNG, `plat.http(req)` the public-only route over the scripted
 // network, with the network's pool keeping a connection for the next
-// request as the host platform's does. `env`, `config` and `secret`
-// answer what the test set, and every call is recorded, as a mock
+// request as the host platform's does. `env`, `config`, `secret` and
+// `stat` answer what the test set, and every call is recorded, as a mock
 // platform's is: the table and the log are a `mock_platform.MockPlatform`
 // the sim platform carries, so `calls()` reads back what the handler did.
 //
@@ -87,6 +87,10 @@ impl platform.Platform for SimPlatform {
     self.mock.record("http", req.method + " " + req.url);
     return fetch.send_on(self.net, req, fetch.Policy { ...fetch.public_policy(), jar: self.jar });
   }
+
+  function stat(self: SimPlatform, path: string): Result[FileStat, IoError] {
+    return self.mock.stat(path);
+  }
 }
 
 // `(p: SimPlatform).env_set(name, value)` — `plat.env(name)` answers
@@ -105,6 +109,24 @@ pub function (p: SimPlatform) config_set(name: string, value: string): void {
 // `Some(value)` from now on; the log holds the name alone.
 pub function (p: SimPlatform) secret_set(name: string, value: string): void {
   p.mock.secret_set(name, value);
+}
+
+// `(p: SimPlatform).file_set(path, content, mtime)` — `plat.stat(path)`
+// answers a file holding `content`, last modified at `mtime` (Unix
+// seconds), and `materialize` reads it.
+pub function (p: SimPlatform) file_set(path: string, content: string, mtime: i64): void {
+  p.mock.file_set(path, content, mtime);
+}
+
+// `(p: SimPlatform).dir_set(path)` — `plat.stat(path)` answers a directory.
+pub function (p: SimPlatform) dir_set(path: string): void {
+  p.mock.dir_set(path);
+}
+
+// `(p: SimPlatform).materialize(resp)` — `resp` with a file body read from
+// the files the test set, as a mock's `materialize` reads it.
+pub function (p: SimPlatform) materialize(resp: HttpResponse): HttpResponse {
+  return p.mock.materialize(resp);
 }
 
 // `(p: SimPlatform).calls()` — the recorded calls, in order, as a mock's.

@@ -10382,7 +10382,7 @@ function mx_builtin_enum_of(name: string): string {
   if (name == "NotFound" || name == "PermissionDenied" || name == "AlreadyExists" || name == "InvalidUtf8" || name == "Interrupted" || name == "Unsupported" || name == "Other") {
     return "IoError";
   }
-  if (name == "BodyText" || name == "BodyBytes" || name == "BodyStream" || name == "BodyFile" || name == "BodyChunks") {
+  if (name == "BodyText" || name == "BodyBytes" || name == "BodyStream" || name == "BodyFile" || name == "BodyChunks" || name == "BodyFileRanges") {
     return "Body";
   }
   return "";

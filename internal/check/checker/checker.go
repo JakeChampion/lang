@@ -496,6 +496,7 @@ func builtinEnumDecls() []*ast.EnumDecl {
 				{Name: "BodyStream", Payloads: []ast.Type{ast.StructType{Name: "Stream"}}},
 				{Name: "BodyFile", Payloads: []ast.Type{ast.StringType{}}},
 				{Name: "BodyChunks", Payloads: []ast.Type{ast.StructType{Name: "ChunkProducer"}}},
+				{Name: "BodyFileRanges", Payloads: []ast.Type{ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}}, ast.ArrayType{Elem: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}},
 			},
 		},
 		// JsonValue — recursive AST representation for JSON
