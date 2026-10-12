@@ -6679,6 +6679,10 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = emit_wasm_call_indirect(o, parts);
   } else if (o.kind_tag == 430) {  // mulhi_u
     parts = parts.append("    call $__fern_mulhi_u64\n");
+  } else if (o.kind_tag >= 421 && o.kind_tag <= 427) {  // a Dir method
+    // A Dir comes only from open_dir, which E066 refuses on wasm (fsdir), so
+    // no run reaches a method on one; the trap leaves a polymorphic stack.
+    parts = parts.append("    unreachable\n");
   } else {
     parts = parts.append("    " + wasm_binop_w(o.kind_tag, o.width) + "\n");
   }

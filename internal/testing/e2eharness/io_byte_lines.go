@@ -92,6 +92,37 @@ func IOByteLineCases() []IOByteLineCase {
 		checkIOByteLineOutput(t, command(), []byte{'a', '\n', 255, 0, 128, 'b', '\n', 'c'},
 			bytes.Repeat([]byte("2:a\n\n2:\xff\x00\n3:\x80b\n\n1:c\n"), 2), census)
 	}})
+	// skip_line passes records without returning them, across chunk
+	// boundaries and over an unterminated last record.
+	cases = append(cases, IOByteLineCase{Name: "skip", Source: ioByteLinePrelude + `function main(): i32 {
+    let r: Reader = stdin();
+    let lr: io.ByteLineReader = io.byte_line_reader_new(r, 10, 4);
+    let n: i32 = 0;
+    while (true) {
+        if (n % 2 == 1) {
+            let sk: (boolean, io.ByteLineReader) = lr.skip_line();
+            lr = sk.1;
+            if (!sk.0) { break; }
+            write("skip\n");
+        } else {
+            let next: (Option[u8[]], io.ByteLineReader) = lr.next_line_bytes();
+            lr = next.1;
+            match (next.0) {
+                Some(line) => { if (emit(line) != 0) { return 1; } },
+                None => { break; },
+            }
+        }
+        n = n + 1;
+    }
+    let again: (boolean, io.ByteLineReader) = lr.skip_line();
+    if (again.0) { return 2; }
+    match (again.1.error()) { Some(_) => { return 3; }, None => {} }
+    match (r.close()) { Some(_) => { return 4; }, None => {} }
+    return 0;
+}`, Check: func(t *testing.T, command func() *exec.Cmd, census bool) {
+		checkIOByteLineOutput(t, command(), []byte("a\nbbbbbbbbb\nccc\ndddddddddd"),
+			[]byte("2:a\n\nskip\n4:ccc\n\nskip\n"), census)
+	}})
 	for _, closed := range []bool{false, true} {
 		name, chunk := "negative size", -1
 		if closed {

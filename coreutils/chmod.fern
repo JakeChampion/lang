@@ -364,8 +364,9 @@ function target_mode(t: Target, old: i32, is_dir: boolean): (i32, i32, boolean) 
 // command-line link is followed by the walk whatever the change lands
 // on, so `-hv` on one prints the referent's old mode on Darwin, as GNU's
 // fts entry does.
-function change_one(st0: St, s: Settings, t: Target, path: string, info: FileStat, link: Option[FileStat], follows: boolean): St {
+function change_one(st0: St, s: Settings, t: Target, ent: Ent, info: FileStat, link: Option[FileStat], follows: boolean): St {
   let st: St = st0;
+  let path: string = ent.path;
   let on_link: boolean = false;
   match (link) {
     Some(_) => {
@@ -379,7 +380,7 @@ function change_one(st0: St, s: Settings, t: Target, path: string, info: FileSta
   let is_dir: boolean = filetype.is_dir(info.mode);
   let r: (i32, i32, boolean) = target_mode(t, old, is_dir);
   let wanted: i32 = r.0;
-  match (chmod_at(path, wanted, !on_link)) {
+  match (ent_chmod(ent, wanted, !on_link)) {
     Ok(_) => {
       if (s.verbosity == v_all() || s.verbosity == v_changes() && wanted != old) {
         st = St { ...st, out: st.out.fwrite(describe(path, old, wanted)) };
@@ -417,22 +418,81 @@ function describe(path: string, old: i32, wanted: i32): string {
 }
 
 // ---- the walk --------------------------------------------------------------
+// `Ent` — where an entry is: its full path, which every message names it by,
+// and below an operand the directory holding it and its name there, which
+// every call reaches it through, as GNU's fts does. A path is resolved from
+// the root once per operand rather than once per entry, and a tree deeper
+// than PATH_MAX is walked like any other.
+struct Ent { path: string, dir: Option[Dir], name: string }
+
+function operand(path: string): Ent {
+  return Ent { path: path, dir: None, name: path };
+}
+
+function ent_lstat(e: Ent): Result[FileStat, IoError] {
+  match (e.dir) {
+    Some(d) => {
+      return d.lstat(e.name);
+    },
+    None => {
+      return lstat(e.path);
+    }
+  }
+}
+
+function ent_stat(e: Ent): Result[FileStat, IoError] {
+  match (e.dir) {
+    Some(d) => {
+      return d.stat(e.name);
+    },
+    None => {
+      return stat(e.path);
+    }
+  }
+}
+
+function ent_chmod(e: Ent, m: i32, follow: boolean): Result[void, IoError] {
+  match (e.dir) {
+    Some(d) => {
+      return d.chmod(e.name, m, follow);
+    },
+    None => {
+      return chmod_at(e.path, m, follow);
+    }
+  }
+}
+
+// A directory reached through a symlink is opened by its path: opening one
+// by name inside its parent refuses to follow the link.
+function ent_open(e: Ent, via_link: boolean): Result[Dir, IoError] {
+  match (e.dir) {
+    Some(d) => {
+      if (!via_link) {
+        return d.open_dir(e.name);
+      }
+    },
+    None => {}
+  }
+  return open_dir(e.path);
+}
+
 // Two independent questions, and 9.5 named the second one. -H / -L / -P
 // decide which symbolic links the WALK follows, which is what makes an
 // entry a directory to descend into; --dereference / -h decide whether
 // the CHANGE lands on the link or on what it points at. `top` marks a
 // command-line operand, which is the level -H follows at and the only
 // one the root failsafe is asked about.
-function process(st0: St, s: Settings, t: Target, path: string, top: boolean): St {
+function process(st0: St, s: Settings, t: Target, ent: Ent, top: boolean): St {
   let st: St = st0;
+  let path: string = ent.path;
   // What the walk sees: the target's type when this link is one it
   // follows, and the link itself otherwise.
   let followed: boolean = s.traverse == trav_logical() || top && s.traverse != trav_physical();
   let lands: boolean = s.deref == 1 || s.deref == deref_unset() && top;
   if (followed) {
-    match (stat(path)) {
+    match (ent_stat(ent)) {
       Ok(info) => {
-        return visit(st, s, t, path, info, link_stat(path), lands, top);
+        return visit(st, s, t, ent, info, link_stat(ent), lands, top);
       },
       Err(e) => {
         // A symlink whose target is not there is its own wording; every other
@@ -440,10 +500,10 @@ function process(st0: St, s: Settings, t: Target, path: string, top: boolean): S
         // directory — is the plain one. `-h` has nothing to dereference, so
         // the change lands on the dangling link itself.
         if (errno.of(e) == errno.ENOENT) {
-          match (link_stat(path)) {
+          match (link_stat(ent)) {
             Some(l) => {
               if (s.deref == 0) {
-                return visit(st, s, t, path, l, Some(l), false, top);
+                return visit(st, s, t, ent, l, Some(l), false, top);
               }
               return unreachable(st, s, path, "cannot operate on dangling symlink " + gnu.quotea(path));
             },
@@ -454,24 +514,24 @@ function process(st0: St, s: Settings, t: Target, path: string, top: boolean): S
       }
     }
   }
-  match (lstat(path)) {
+  match (ent_lstat(ent)) {
     Ok(info) => {
       if (!filetype.is_link(info.mode)) {
-        return visit(st, s, t, path, info, None, lands, top);
+        return visit(st, s, t, ent, info, None, lands, top);
       }
       if (s.deref == 1) {
         // The walk did not follow it but the change does, so the mode
         // reported is the referent's.
-        match (stat(path)) {
+        match (ent_stat(ent)) {
           Ok(target) => {
-            return visit(st, s, t, path, target, Some(info), true, top);
+            return visit(st, s, t, ent, target, Some(info), true, top);
           },
           Err(e) => {
             return unreachable(st, s, path, "cannot dereference " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
           }
         }
       }
-      return visit(st, s, t, path, info, Some(info), lands, top);
+      return visit(st, s, t, ent, info, Some(info), lands, top);
     },
     Err(e) => {
       return unreachable(st, s, path, "cannot access " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
@@ -479,10 +539,10 @@ function process(st0: St, s: Settings, t: Target, path: string, top: boolean): S
   }
 }
 
-// The link's own stat when `path` names a symbolic link, which is what a
+// The link's own stat when `ent` names a symbolic link, which is what a
 // change that does not follow it lands on.
-function link_stat(path: string): Option[FileStat] {
-  match (lstat(path)) {
+function link_stat(ent: Ent): Option[FileStat] {
+  match (ent_lstat(ent)) {
     Ok(info) => {
       if (filetype.is_link(info.mode)) {
         return Some(info);
@@ -499,26 +559,42 @@ function link_stat(path: string): Option[FileStat] {
 // stat when it followed the link — and `link` the link's own when the name
 // is one. The directory is chmod'ed BEFORE its children are read, which is
 // the order GNU's pre-order walk imposes.
-function visit(st0: St, s: Settings, t: Target, path: string, info: FileStat, link: Option[FileStat], follows: boolean, top: boolean): St {
+function visit(st0: St, s: Settings, t: Target, ent: Ent, info: FileStat, link: Option[FileStat], follows: boolean, top: boolean): St {
   let st: St = st0;
+  let path: string = ent.path;
   if (top && s.recursive && s.preserve_root && filetype.is_dir(info.mode) && is_root_dir(info)) {
     return refuse_root(st, path);
   }
-  st = change_one(st, s, t, path, info, link, follows);
+  st = change_one(st, s, t, ent, info, link, follows);
   if (!s.recursive || !filetype.is_dir(info.mode)) {
     return st;
   }
-  match (read_dir(path)) {
-    Ok(names) => {
-      let i: i32 = 0;
-      while (i < names.len()) {
-        st = process(st, s, t, fts.child_path(path, names[i]), false);
-        i = i + 1;
+  // A directory whose children cannot be listed has its own wording, where
+  // an entry that could not be STATTED is `cannot access`.
+  let via_link: boolean = false;
+  match (link) {
+    Some(_) => {
+      via_link = true;
+    },
+    None => {}
+  }
+  match (ent_open(ent, via_link)) {
+    Ok(d) => {
+      match (d.entries()) {
+        Ok(names) => {
+          let i: i32 = 0;
+          while (i < names.len()) {
+            st = process(st, s, t, Ent { path: fts.child_path(path, names[i]), dir: Some(d), name: names[i] }, false);
+            i = i + 1;
+          }
+        },
+        Err(e) => {
+          st = unreachable(st, s, path, "cannot read directory " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+        }
       }
+      d.close();
     },
     Err(e) => {
-      // A directory whose children cannot be listed has its own wording,
-      // where an entry that could not be STATTED is `cannot access`.
       st = unreachable(st, s, path, "cannot read directory " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
     }
   }
@@ -593,7 +669,7 @@ pub function main(): i32 {
   }
   let i: i32 = 0;
   while (i < files.len()) {
-    st = process(st, s, t, fts.trim(files[i]), true);
+    st = process(st, s, t, operand(fts.trim(files[i])), true);
     i = i + 1;
   }
   st.out.close_stdout();

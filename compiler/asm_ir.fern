@@ -3817,34 +3817,29 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    leaq 1(%rax), %rcx\n");
     s = s.write("    jmp .Lbufbyte_fits\n");
     // __fern_buf_push_u64(%rdi = H, %rsi = v): append the eight bytes of
-    // v, least significant first.
+    // v, least significant first, with no frame unless the buffer grows.
     s = s.write("__fern_buf_push_u64:\n");
-    s = s.write("    pushq %rbp\n");
-    s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    pushq %rbx\n");
-    s = s.write("    pushq %r12\n");
-    s = s.write("    movq %rdi, %rbx\n");
-    s = s.write("    movq %rsi, %r12\n");
-    s = s.write("    movq 8(%rbx), %rax\n");
-    s = s.write("    addq $8, %rax\n");
-    s = s.write("    movq 16(%rbx), %rcx\n");
-    s = s.write("    cmpq %rcx, %rax\n");
-    s = s.write("    jbe .Lbufu64_fits\n");
-    s = s.write("    movq %rbx, %rdi\n");
-    s = s.write("    movq %rax, %rsi\n");
-    s = s.write("    call __fern_buf_reserve\n");
+    s = s.write("    movq 8(%rdi), %rax\n");
+    s = s.write("    leaq 8(%rax), %rcx\n");
+    s = s.write("    cmpq 16(%rdi), %rcx\n");
+    s = s.write("    ja .Lbufu64_grow\n");
     s = s.write(".Lbufu64_fits:\n");
-    s = s.write("    movq (%rbx), %rdx\n");
-    s = s.write("    movq 8(%rbx), %rcx\n");
-    s = s.write("    addq %rcx, %rdx\n");
-    s = s.write("    movq %r12, (%rdx)\n");
-    s = s.write("    movq 8(%rbx), %rax\n");
-    s = s.write("    addq $8, %rax\n");
-    s = s.write("    movq %rax, 8(%rbx)\n");
-    s = s.write("    popq %r12\n");
-    s = s.write("    popq %rbx\n");
-    s = s.write("    popq %rbp\n");
+    s = s.write("    movq (%rdi), %rdx\n");
+    s = s.write("    movq %rsi, (%rdx,%rax)\n");
+    s = s.write("    movq %rcx, 8(%rdi)\n");
     s = s.write("    ret\n");
+    s = s.write(".Lbufu64_grow:\n");
+    s = s.write("    pushq %rdi\n");
+    s = s.write("    pushq %rsi\n");
+    s = s.write("    subq $8, %rsp\n");
+    s = s.write("    movq %rcx, %rsi\n");
+    s = s.write("    call __fern_buf_reserve\n");
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write("    popq %rsi\n");
+    s = s.write("    popq %rdi\n");
+    s = s.write("    movq 8(%rdi), %rax\n");
+    s = s.write("    leaq 8(%rax), %rcx\n");
+    s = s.write("    jmp .Lbufu64_fits\n");
     // __fern_buf_len(%rdi = H) -> %rax = len.
     s = s.write("__fern_buf_len:\n");
     s = s.write("    movq 8(%rdi), %rax\n");
@@ -4607,12 +4602,27 @@ function ir_div_const_magic(r: DivRegs, uns: boolean, is_rem: boolean, k: i64): 
     d = (k as i32) as i64;
   }
   if (uns) {
-    let mu: ir.MagicU = ir.derive_magic_u(k as u64 & 0u64 - 1u64 >> (64 - r.bits) as u64, r.bits);
+    let du: u64 = k as u64 & 0u64 - 1u64 >> (64 - r.bits) as u64;
+    let mu: ir.MagicU = ir.derive_magic_u(du, r.bits);
+    // An even divisor whose magic needs the extra bit divides the dividend
+    // shifted right by its trailing zeros by what is left, which never does.
+    let pre: i32 = 0;
+    if (mu.add && (du & 1u64) == 0u64) {
+      while ((du >> pre as u64 & 1u64) == 0u64) {
+        pre = pre + 1;
+      }
+      mu = ir.derive_magic_u_below(du >> pre as u64, r.bits, pre);
+    }
     let m: i64 = mu.m as i64;
     if (r.bits == 32) {
       m = ((mu.m as u32) as i32) as i64;
     }
-    s = s + load + util.i64_to_string(m) + ", " + r.a + "\n    mul" + x + " " + r.c + "\n";
+    if (pre > 0) {
+      s = s + "    mov" + x + " " + r.c + ", " + r.d + "\n    shr" + x + " $" + util.i32_to_string(pre) + ", " + r.d + "\n";
+      s = s + load + util.i64_to_string(m) + ", " + r.a + "\n    mul" + x + " " + r.d + "\n";
+    } else {
+      s = s + load + util.i64_to_string(m) + ", " + r.a + "\n    mul" + x + " " + r.c + "\n";
+    }
     if (!mu.add) {
       s = s + "    shr" + x + " $" + util.i32_to_string(mu.s) + ", " + r.d + "\n    mov" + x + " " + r.d + ", " + r.a + "\n";
     } else {
@@ -6838,10 +6848,21 @@ function ssa_unary_asm(what: string, unsigned: boolean, lb: string, d: string): 
   return "";
 }
 
-// ssa_unary_from selects a width op or bit count that reads its operand from
+// ssa_unary_from selects a width op, bit count or rotate that reads its operand from
 // register `src` and writes `d`, so an operand outside `d` needs no copy into
-// it first; "" for an op whose only form works in place.
+// it first; "" for an op whose only form works in place. A rotate also takes
+// a frame slot for `src`.
 function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string): string {
+  if (util.str_has_prefix(what, "rotr:")) {
+    let n: string = util.i32_to_string(ssa.rotr_count(what));
+    if (ssa.rotr_width(what) == 64) {
+      return "    rorxq $" + n + ", " + src + ", " + d + "\n";
+    }
+    if (src[0] == b'%') {
+      src = ssa_r32(src);
+    }
+    return "    rorxl $" + n + ", " + src + ", " + ssa_r32(d) + "\n";
+  }
   if (what == "load_i32") {
     return "    movslq (" + src + "), " + d + "\n";
   }
@@ -8406,6 +8427,8 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     let src: string = "";
     if (ssa_in_x(reg_of, ins.args[0]) && ssa_reg(reg_of[ins.args[0]]) != d) {
       src = ssa_reg(reg_of[ins.args[0]]);
+    } else if (reg_of[ins.args[0]] < 0 && util.str_has_prefix(ins.str, "rotr:")) {
+      src = ssa_slot(ssa.spill_slot(reg_of[ins.args[0]]), s.ssa_save);
     }
     let from: string = "";
     if (src != "") {

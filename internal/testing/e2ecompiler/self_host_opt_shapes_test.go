@@ -301,7 +301,8 @@ function main(): i32 {
 		want:   map[string][]string{"x86-64-linux": {`shrq \$25,`, `shlq \$7,`}, "arm64-linux": {`lsr \w+, \w+, #25`, `lsl \w+, \w+, #7`}},
 		forbid: map[string][]string{"x86-64-linux": {`\bror`}, "arm64-linux": {`\bror\b`}}},
 	// A u32 sum that only a 32-bit rotate and an exclusive-or read keeps no
-	// zero extension between its adds.
+	// zero extension between its adds. The sum stays live for the second
+	// rotate, so the first is a rorx from its register.
 	{name: "u32_wraps_nothing_reads_dropped", fn: "mix32", exit: 10, src: `
 @noinline function mix32(a: u32, b: u32, c: u32): u32 {
     let s: u32 = a + b + c;
@@ -309,7 +310,7 @@ function main(): i32 {
 }
 function main(): i32 { return (mix32(4000000000u32, 3000000000u32, 123456789u32) % 101u32) as i32; }
 `,
-		want:   map[string][]string{"x86-64-linux": {`rorl \$7,`}, "arm64-linux": {`ror w\d+, w\d+, #7\b`}},
+		want:   map[string][]string{"x86-64-linux": {`rorxl \$7, %e\w+, %e\w+`}, "arm64-linux": {`ror w\d+, w\d+, #7\b`}},
 		forbid: map[string][]string{"x86-64-linux": {`movl %(e\w+), %e\w+\n\s+(?:add|ror)`}, "arm64-linux": {`\bmov w\d+, w\d+\n\s+(?:add|ror)`, `\bmov x\d+, x\d+\n\s+ror`}}},
 	// Spilled values whose lifetimes do not meet share a frame slot: the
 	// second phase's spills reuse the first phase's slots.

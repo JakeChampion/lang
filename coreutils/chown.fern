@@ -436,8 +436,9 @@ function from_matches(t: Target, uid: i64, gid: i64): boolean {
   return true;
 }
 
-function change_one(st0: St, s: Settings, t: Target, path: string, uid: i64, gid: i64): St {
+function change_one(st0: St, s: Settings, t: Target, ent: Ent, uid: i64, gid: i64): St {
   let st: St = st0;
+  let path: string = ent.path;
   if (!from_matches(t, uid, gid)) {
     if (s.verbosity == v_all()) {
       return St { ...st, out: st.out.fwrite(describe(t, s, path, uid, gid, true, false, false)) };
@@ -456,7 +457,7 @@ function change_one(st0: St, s: Settings, t: Target, path: string, uid: i64, gid
     }
     return st;
   }
-  match (chown_at(path, want_uid as i32, want_gid as i32, follows(s))) {
+  match (ent_chown(ent, want_uid as i32, want_gid as i32, follows(s))) {
     Ok(_) => {
       if (s.verbosity == v_all() || s.verbosity == v_changes() && changed) {
         st = St { ...st, out: st.out.fwrite(describe(t, s, path, uid, gid, true, changed, false)) };
@@ -482,6 +483,64 @@ function unreachable(st0: St, s: Settings, t: Target, path: string, msg: string)
 }
 
 // ---- the walk --------------------------------------------------------------
+// `Ent` — where an entry is: its full path, which every message names it by,
+// and below an operand the directory holding it and its name there, which
+// every call reaches it through, as GNU's fts does. A path is resolved from
+// the root once per operand rather than once per entry, and a tree deeper
+// than PATH_MAX is walked like any other.
+struct Ent { path: string, dir: Option[Dir], name: string }
+
+function operand(path: string): Ent {
+  return Ent { path: path, dir: None, name: path };
+}
+
+function ent_lstat(e: Ent): Result[FileStat, IoError] {
+  match (e.dir) {
+    Some(d) => {
+      return d.lstat(e.name);
+    },
+    None => {
+      return lstat(e.path);
+    }
+  }
+}
+
+function ent_stat(e: Ent): Result[FileStat, IoError] {
+  match (e.dir) {
+    Some(d) => {
+      return d.stat(e.name);
+    },
+    None => {
+      return stat(e.path);
+    }
+  }
+}
+
+function ent_chown(e: Ent, uid: i32, gid: i32, follow: boolean): Result[void, IoError] {
+  match (e.dir) {
+    Some(d) => {
+      return d.chown(e.name, uid, gid, follow);
+    },
+    None => {
+      return chown_at(e.path, uid, gid, follow);
+    }
+  }
+}
+
+// A directory reached through a symlink is opened by its path: opening one
+// by name inside its parent refuses to follow the link.
+function ent_open(e: Ent, via_link: boolean): Result[Dir, IoError] {
+  match (e.dir) {
+    Some(d) => {
+      if (!via_link) {
+        return d.open_dir(e.name);
+      }
+    },
+    None => {}
+  }
+  return open_dir(e.path);
+}
+
 struct Seen { ok: boolean, uid: i64, gid: i64, is_dir: boolean, is_link: boolean }
 
 // What the walk needs to know about an entry: the ownership the call will
@@ -491,14 +550,15 @@ struct Seen { ok: boolean, uid: i64, gid: i64, is_dir: boolean, is_link: boolean
 // can disagree in a way that matters: under `-L` a symlink's target decides
 // both, and a BROKEN one has no answer at all — that is the `cannot
 // dereference` path rather than `cannot access`.
-function look(s: Settings, path: string, top: boolean): (Seen, string) {
+function look(s: Settings, ent: Ent, top: boolean): (Seen, string) {
+  let path: string = ent.path;
   let want_target: boolean = follows(s) || descends_links(s, top);
-  match (lstat(path)) {
+  match (ent_lstat(ent)) {
     Ok(li) => {
       if (!want_target || !filetype.is_link(li.mode)) {
         return (Seen { ok: true, uid: li.uid as i64, gid: li.gid as i64, is_dir: filetype.is_dir(li.mode), is_link: filetype.is_link(li.mode) }, "");
       }
-      match (stat(path)) {
+      match (ent_stat(ent)) {
         Ok(ti) => {
           let dir: boolean = filetype.is_dir(ti.mode) && descends_links(s, top);
           let uid: i64 = ti.uid as i64;
@@ -522,9 +582,10 @@ function look(s: Settings, path: string, top: boolean): (Seen, string) {
 
 // One entry, and everything under it. The children are visited BEFORE the
 // entry itself: fts hands chown its post-order visit.
-function process(st0: St, s: Settings, t: Target, path: string, top: boolean): St {
+function process(st0: St, s: Settings, t: Target, ent: Ent, top: boolean): St {
   let st: St = st0;
-  let r: (Seen, string) = look(s, path, top);
+  let path: string = ent.path;
+  let r: (Seen, string) = look(s, ent, top);
   let seen: Seen = r.0;
   if (!seen.ok) {
     return unreachable(st, s, t, path, r.1);
@@ -533,23 +594,31 @@ function process(st0: St, s: Settings, t: Target, path: string, top: boolean): S
     return refuse_root(st, path);
   }
   if (s.recursive && seen.is_dir) {
-    match (read_dir(path)) {
-      Ok(names) => {
-        let i: i32 = 0;
-        while (i < names.len()) {
-          st = process(st, s, t, child_path(path, names[i]), false);
-          i = i + 1;
+    // A directory whose children cannot be listed has its own wording,
+    // where an entry that could not be STATTED is `cannot access`. The
+    // directory itself is still chowned afterwards.
+    match (ent_open(ent, seen.is_link)) {
+      Ok(d) => {
+        match (d.entries()) {
+          Ok(names) => {
+            let i: i32 = 0;
+            while (i < names.len()) {
+              st = process(st, s, t, Ent { path: child_path(path, names[i]), dir: Some(d), name: names[i] }, false);
+              i = i + 1;
+            }
+          },
+          Err(e) => {
+            st = fail_quiet(st, s, "cannot read directory " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+          }
         }
+        d.close();
       },
       Err(e) => {
-        // A directory whose children cannot be listed has its own wording,
-        // where an entry that could not be STATTED is `cannot access`. The
-        // directory itself is still chowned afterwards.
         st = fail_quiet(st, s, "cannot read directory " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
       }
     }
   }
-  return change_one(st, s, t, path, seen.uid, seen.gid);
+  return change_one(st, s, t, ent, seen.uid, seen.gid);
 }
 
 function is_root(path: string): boolean {
@@ -641,7 +710,7 @@ pub function run(argv: string[], chgrp_mode: boolean, name: string): i32 {
 
   let i: i32 = 0;
   while (i < files.len()) {
-    st = process(st, s, t, fts_trim(files[i]), true);
+    st = process(st, s, t, operand(fts_trim(files[i])), true);
     i = i + 1;
   }
   st.out.close_stdout();

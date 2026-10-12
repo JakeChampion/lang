@@ -1,0 +1,146 @@
+// shared_quotients lets a remainder and a division by the same constant share
+// one division. Where a block computes both `x / c` and `x % c` for an integer
+// constant `c` whose magnitude is not 0, 1 or a power of two, the first of
+// them computes `q = x / c`, the remainder becomes `x - q * c`, and a later
+// division becomes a copy of `q`. A division by such a constant is a
+// multiply-high and shifts, so the remainder no longer repeats them. The
+// identity holds for every `x` under the wrapping arithmetic every target
+// computes in, since `c` is neither 0 nor -1.
+import "./ssa";
+import "./ssasem";
+import "./typeinfo";
+import "./util";
+
+pub function shared_quotients(f: ssasem.Func): ssasem.Func {
+  let divisor: Divisors = shared_divisors(f);
+  if (!divisor.any) {
+    return f;
+  }
+  let values: typeinfo.Type[] = f.values;
+  let blocks: ssa.SBlock[] = [];
+  for blk in f.graph.blocks {
+    let pairs: i64[] = pairs_in(f, divisor, blk.insts);
+    if (pairs.len() == 0) {
+      blocks = blocks.append(blk);
+      continue;
+    }
+    // quotient[k] is the value holding the quotient of pair k once its first
+    // member has been rewritten, or -1 before.
+    let quotient: i32[] = util.minus_ones(pairs.len() / 2);
+    let insts: ssa.SInst[] = [];
+    for ins in blk.insts {
+      let k: i32 = pair_of(f, divisor, pairs, ins);
+      if (k < 0) {
+        insts = insts.append(ins);
+        continue;
+      }
+      let q: i32 = quotient[k];
+      if (ins.str == "/") {
+        if (q < 0) {
+          quotient = quotient.with(k, ins.result);
+          insts = insts.append(ins);
+        } else {
+          insts = insts.append(ssa.SInst { kind_tag: 7, result: ins.result, args: [q], imm: 0, str: "" });
+        }
+        continue;
+      }
+      let t: typeinfo.Type = f.values[ins.result];
+      if (q < 0) {
+        q = values.len();
+        values = values.append(t);
+        quotient = quotient.with(k, q);
+        insts = insts.append(ssa.SInst { kind_tag: 9, result: q, args: ins.args, imm: 0, str: "/" });
+      }
+      let product: i32 = values.len();
+      values = values.append(t);
+      insts = insts.append(ssa.SInst { kind_tag: 9, result: product, args: [q, ins.args[1]], imm: 0, str: "*" });
+      insts = insts.append(ssa.SInst { kind_tag: 9, result: ins.result, args: [ins.args[0], product], imm: 0, str: "-" });
+    }
+    blocks = blocks.append(ssa.SBlock { ...blk, insts: insts });
+  }
+  return ssasem.Func { ...f, values: values, graph: ssa.SFunc { ...f.graph, blocks: blocks, nvals: values.len() } };
+}
+
+// Divisors marks the integer constants a division or remainder could share a
+// quotient by, magnitude neither 0, 1 nor a power of two, with their values. A
+// cast of a non-negative constant its target type holds, `100 as u64`, counts
+// as the constant.
+struct Divisors { shared: boolean[], value: i64[], any: boolean }
+
+function shared_divisors(f: ssasem.Func): Divisors {
+  let known: boolean[] = __alloc_bool(f.values.len());
+  let value: i64[] = __alloc_i64(f.values.len());
+  for blk in f.graph.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == 1 && ins.result >= 0 && ins.result < known.len() && ssasem.is_integer(f.values[ins.result])) {
+        let c: i64 = ins.imm as i64;
+        if (ins.str != "") {
+          c = util.lit_to_i64(ins.str);
+        }
+        known = known.with(ins.result, true);
+        value = value.with(ins.result, c);
+      }
+    }
+  }
+  let out: Divisors = Divisors { shared: __alloc_bool(f.values.len()), value: value, any: false };
+  for blk in f.graph.blocks {
+    for ins in blk.insts {
+      if (ins.result < 0 || ins.result >= known.len() || !ssasem.is_integer(f.values[ins.result])) {
+        continue;
+      }
+      let c: i64 = value[ins.result];
+      let ok: boolean = known[ins.result];
+      if (ins.kind_tag == ssasem.cast() && ins.args.len() == 1 && known[ins.args[0]]) {
+        c = value[ins.args[0]];
+        ok = c >= 0i64 && c <= 2147483647i64 && (!ssasem.is_u8(f.values[ins.result]) || c <= 255i64);
+      }
+      let mag: i64 = c;
+      if (mag < 0i64) {
+        mag = 0i64 - mag;
+      }
+      if (ok && mag > 1i64 && (mag & mag - 1i64) != 0i64) {
+        out = Divisors { shared: out.shared.with(ins.result, true), value: out.value.with(ins.result, c), any: true };
+      }
+    }
+  }
+  return out;
+}
+
+function divides(f: ssasem.Func, divisor: Divisors, ins: ssa.SInst): boolean {
+  return ins.kind_tag == 9 && (ins.str == "/" || ins.str == "%") && ins.args.len() == 2 && ins.result >= 0
+    && ssasem.is_integer(f.values[ins.result]) && divisor.shared[ins.args[1]];
+}
+
+// pairs_in lists, as dividend and divisor value, each pair the block both
+// divides and takes the remainder of.
+function pairs_in(f: ssasem.Func, divisor: Divisors, insts: ssa.SInst[]): i64[] {
+  let out: i64[] = [];
+  for a in insts {
+    if (a.str == "%" && divides(f, divisor, a) && pair_of(f, divisor, out, a) < 0) {
+      let c: i64 = divisor.value[a.args[1]];
+      let found: boolean = false;
+      for b in insts {
+        if (!found && b.str == "/" && divides(f, divisor, b) && b.args[0] == a.args[0] && divisor.value[b.args[1]] == c) {
+          out = out.append(a.args[0] as i64).append(c);
+          found = true;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// pair_of is the index of the pair a division or remainder computes, or -1.
+function pair_of(f: ssasem.Func, divisor: Divisors, pairs: i64[], ins: ssa.SInst): i32 {
+  if (!divides(f, divisor, ins)) {
+    return 0 - 1;
+  }
+  let k: i32 = 0;
+  while (k < pairs.len()) {
+    if (pairs[k] == ins.args[0] as i64 && pairs[k + 1] == divisor.value[ins.args[1]]) {
+      return k / 2;
+    }
+    k = k + 2;
+  }
+  return 0 - 1;
+}

@@ -690,42 +690,41 @@ function swab_new(): Swab {
 
 // The output length is exact: one byte is carried over when the bytes
 // available — the record plus whatever was held — are an odd number and
-// this is not the last call.
+// this is not the last call. Eight bytes are swapped at a time, as one
+// word whose byte lanes trade places.
 function apply_swab(sw: Swab, data: u8[], last: boolean): (Swab, u8[]) {
   let n: i32 = data.len();
-  let avail: i32 = n;
-  if (sw.held) {
-    avail = avail + 1;
-  }
-  let outlen: i32 = avail;
-  if (!last && avail - avail / 2 * 2 == 1) {
-    outlen = outlen - 1;
-  }
-  let buf: u8[] = __alloc_u8(outlen);
+  let b: usize = buf_new(n + 1);
   let out: Swab = sw;
   let i: i32 = 0;
-  let j: i32 = 0;
   if (out.held && n > 0) {
-    buf = buf.with(0, data[0]);
-    buf = buf.with(1, out.byte);
+    buf_push_byte(b, data[0] as i32);
+    buf_push_byte(b, out.byte as i32);
     out = Swab { held: false, byte: 0 as u8 };
     i = 1;
-    j = 2;
+  }
+  let lanes: u64 = 0x00ff00ff00ff00ff;
+  while (i + 8 <= n) {
+    let w: u64 = data[i] as u64 | data[i + 1] as u64 << 8 | data[i + 2] as u64 << 16 | data[i + 3] as u64 << 24
+      | data[i + 4] as u64 << 32 | data[i + 5] as u64 << 40 | data[i + 6] as u64 << 48 | data[i + 7] as u64 << 56;
+    buf_push_u64(b, w >> 8 & lanes | (w & lanes) << 8);
+    i = i + 8;
   }
   while (i + 1 < n) {
-    buf = buf.with(j, data[i + 1]);
-    buf = buf.with(j + 1, data[i]);
+    buf_push_byte(b, data[i + 1] as i32);
+    buf_push_byte(b, data[i] as i32);
     i = i + 2;
-    j = j + 2;
   }
   if (i < n) {
     out = Swab { held: true, byte: data[i] };
   }
   if (last && out.held) {
-    buf = buf.with(j, out.byte);
+    buf_push_byte(b, out.byte as i32);
     out = Swab { held: false, byte: 0 as u8 };
   }
-  return (out, buf);
+  let bytes: u8[] = buf_take_bytes(b);
+  buf_free(b);
+  return (out, bytes);
 }
 
 // conv=sync pads a short read out to `ibs`, with NULs normally and with
@@ -884,8 +883,12 @@ function sink_direct(k: Sink, data: u8[]): Sink {
 }
 
 // `sink_push` is the assembling path: hold the bytes, and write every
-// time a whole `obs` block has accumulated.
+// time a whole `obs` block has accumulated. A whole block arriving with
+// nothing held is written as it came.
 function sink_push(k: Sink, data: u8[]): Sink {
+  if (k.held == 0 && data.len() == k.obs) {
+    return write_full(k, data, false);
+  }
   let out: Sink = k;
   let off: i32 = 0;
   while (off < data.len()) {
@@ -1309,7 +1312,7 @@ function convert_record(sw: Swab, tab: u8[], data: u8[], s: Settings, last: bool
 //
 // Both run after the translation, so under `ebcdic` and `ibm` a line ends
 // at the EBCDIC newline and is padded with the EBCDIC space.
-struct Rec { pend: io_buffered.BufBlock, len: i32, drop: boolean, cbs: i32, trunc: i64, nl: u8, sp: u8 }
+struct Rec { pend: io_buffered.BufBlock, len: i32, drop: boolean, cbs: i32, trunc: i64, nl: u8, sp: u8, pad: u8[] }
 
 function rec_new(cbs: i32, conv: i32): Rec {
   let nl: u8 = b'\n';
@@ -1319,38 +1322,57 @@ function rec_new(cbs: i32, conv: i32): Rec {
     nl = cs[10];
     sp = cs[32];
   }
-  return Rec { pend: io_buffered.BufBlock { h: buf_new(cbs + 1) }, len: 0, drop: false, cbs: cbs, trunc: 0 as i64, nl: nl, sp: sp };
+  let pad: u8[] = [];
+  if ((conv & conv_block()) != 0) {
+    pad = __alloc_u8(cbs);
+  }
+  let i: i32 = 0;
+  while (i < pad.len()) {
+    pad = pad.with(i, sp);
+    i = i + 1;
+  }
+  return Rec { pend: io_buffered.BufBlock { h: buf_new(cbs + 1) }, len: 0, drop: false, cbs: cbs, trunc: 0 as i64, nl: nl, sp: sp, pad: pad };
 }
 
 // One line out: the bytes held, padded with spaces to `cbs`.
 function rec_emit_block(st: Rec, out: usize): Rec {
   let line: u8[] = buf_take_bytes(st.pend.h);
   buf_push_bytes_range(out, line, 0, line.len());
-  let pad: i32 = st.cbs - line.len();
-  let i: i32 = 0;
-  while (i < pad) {
-    buf_push_byte(out, st.sp as i32);
-    i = i + 1;
-  }
+  buf_push_bytes_range(out, st.pad, 0, st.cbs - line.len());
   return Rec { ...st, len: 0, drop: false };
 }
 
+// A line that starts and ends inside `data` and fits a record goes straight
+// out; the rest is held in `pend` until its newline arrives.
 function conv_block_apply(rc: Rec, data: u8[], last: boolean): (Rec, u8[]) {
   let out: usize = buf_new(data.len() + rc.cbs + 1);
   let st: Rec = rc;
+  let n: i32 = data.len();
   let i: i32 = 0;
-  while (i < data.len()) {
-    if (data[i] == st.nl) {
-      st = rec_emit_block(st, out);
-    } else if (st.drop) {
-      st = st;
-    } else if (st.len == st.cbs) {
-      st = Rec { ...st, drop: true, trunc: st.trunc + 1 as i64 };
-    } else {
-      buf_push_byte(st.pend.h, data[i] as i32);
-      st = Rec { ...st, len: st.len + 1 };
+  while (i < n) {
+    let nl: i32 = __memchr_bytes(data, st.nl as i32, i);
+    let end: i32 = n;
+    if (nl >= 0) {
+      end = nl;
     }
-    i = i + 1;
+    if (st.len == 0 && !st.drop && nl >= 0 && end - i <= st.cbs) {
+      buf_push_bytes_range(out, data, i, end);
+      buf_push_bytes_range(out, st.pad, 0, st.cbs - (end - i));
+    } else {
+      if (!st.drop) {
+        let take: i32 = end - i;
+        if (take > st.cbs - st.len) {
+          take = st.cbs - st.len;
+          st = Rec { ...st, drop: true, trunc: st.trunc + 1 as i64 };
+        }
+        buf_push_bytes_range(st.pend.h, data, i, i + take);
+        st = Rec { ...st, len: st.len + take };
+      }
+      if (nl >= 0) {
+        st = rec_emit_block(st, out);
+      }
+    }
+    i = end + 1;
   }
   if (last && (st.len > 0 || st.drop)) {
     st = rec_emit_block(st, out);
@@ -1373,17 +1395,33 @@ function rec_emit_unblock(st: Rec, out: usize): Rec {
   return Rec { ...st, len: 0 };
 }
 
+// A whole record inside `data` goes straight out; a record split across
+// reads is held in `pend` until it is complete.
 function conv_unblock_apply(rc: Rec, data: u8[], last: boolean): (Rec, u8[]) {
-  let out: usize = buf_new(data.len() + rc.cbs + 1);
+  let out: usize = buf_new(data.len() + data.len() / rc.cbs + rc.cbs + 1);
   let st: Rec = rc;
+  let n: i32 = data.len();
   let i: i32 = 0;
-  while (i < data.len()) {
-    buf_push_byte(st.pend.h, data[i] as i32);
-    st = Rec { ...st, len: st.len + 1 };
-    if (st.len == st.cbs) {
-      st = rec_emit_unblock(st, out);
+  while (i < n) {
+    let take: i32 = st.cbs - st.len;
+    if (take > n - i) {
+      take = n - i;
     }
-    i = i + 1;
+    if (st.len == 0 && take == st.cbs) {
+      let end: i32 = i + take;
+      while (end > i && data[end - 1] == st.sp) {
+        end = end - 1;
+      }
+      buf_push_bytes_range(out, data, i, end);
+      buf_push_byte(out, st.nl as i32);
+    } else {
+      buf_push_bytes_range(st.pend.h, data, i, i + take);
+      st = Rec { ...st, len: st.len + take };
+      if (st.len == st.cbs) {
+        st = rec_emit_unblock(st, out);
+      }
+    }
+    i = i + take;
   }
   if (last && st.len > 0) {
     st = rec_emit_unblock(st, out);

@@ -4353,6 +4353,53 @@ function x86_gas_vex_three(own a: X86Asm, mnem: string, rest: string): X86Asm {
   return x86_gas_vex_rm(a, mnem, 1, 1, y1, op, yd, ops[0]);
 }
 
+// x86_gas_rorx: BMI2's `rorx $imm8, r/m, %reg` (VEX.LZ.F2.0F3A.W0/W1 F0
+// /r ib), a rotate right by a constant that leaves its source alone.
+function x86_gas_rorx(own a: X86Asm, mnem: string, size: i32, rest: string): X86Asm {
+  let ops: string[] = x86_gas_split_ops(rest);
+  if (ops.len() != 3 || ops[0].len() == 0 || ops[0][0] != b'$') {
+    return x86_gas_bad(a, mnem + " " + rest);
+  }
+  let imm: i32 = x86_gas_atoi(ops[0]);
+  let rd: i32 = x86_gas_reg_w(ops[2], size);
+  if (rd < 0) {
+    return x86_gas_bad(a, mnem + " " + rest);
+  }
+  if (x86_gas_has_paren(ops[1])) {
+    let m: GasMem = x86_gas_parse_mem(ops[1]);
+    if (!x86_gas_mem_ok(m)) {
+      return x86_gas_bad(a, mnem + " " + ops[1]);
+    }
+    let ix: boolean = false;
+    let bs: boolean = false;
+    if (!m.is_rip) {
+      if (m.has_index) {
+        ix = m.index >= 8;
+      }
+      bs = m.base >= 8;
+    }
+    x86_push_arr(a.code, x86_vex([], rd >= 8, ix, bs, 3, size == 64, 0, false, 3));
+    buf_push_byte(a.code, 240);
+    a = x86_gas_membytes(a, rd, m, 1);
+    buf_push_byte(a.code, imm & 255);
+    return a;
+  }
+  let rs: i32 = x86_gas_reg_w(ops[1], size);
+  if (rs < 0) {
+    return x86_gas_bad(a, mnem + " " + rest);
+  }
+  x86_push_arr(a.code, x86_rec_rorx_rr(size, rd, rs, imm));
+  return a;
+}
+
+// x86_rec_rorx_rr is `rorx $n, src, dst` between registers.
+pub function x86_rec_rorx_rr(size: i32, dst: i32, src: i32, n: i32): i32[] {
+  let b: i32[] = x86_vex([], dst >= 8, false, src >= 8, 3, size == 64, 0, false, 3);
+  b = b.append(240);
+  b = b.append(x86_modrm(3, dst, src));
+  return b.append(n & 255);
+}
+
 // ---- fixed-byte mnemonics ----
 
 function x86_pack1(b0: i32): i32 {
@@ -5892,6 +5939,9 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   if (k == GK_VEX_THREE) {
     return x86_gas_vex_three(a, mnem, rest);
   }
+  if (k == GK_RORX) {
+    return x86_gas_rorx(a, mnem, l.ext, rest);
+  }
   // no-operand mnemonics (incl. the AT&T string ops) — fixed byte lists.
   if (k == GK_FIXED) {
     return x86_gas_emit_packed(a, l.ext);
@@ -6955,6 +7005,7 @@ function x86_put(own xs: i32[], i: i32, v: i32): i32[] {
 //   GK_VSHIFT     the vector shift op
 //   GK_SSE        the packed SSE op
 //   GK_SSE38      the 66 0F 38 opcode
+//   GK_RORX       the operand size
 // GK_NONE is a directive or a bare label, with nothing to emit; GK_UNKNOWN1
 // and GK_UNKNOWN2 are a one- and a two-operand mnemonic no arm takes, which
 // the emit records as unknown.
@@ -7049,6 +7100,8 @@ const GK_SSE38: i32 = 43;
 const GK_MOVSXD: i32 = 44;
 
 const GK_UNKNOWN2: i32 = 45;
+
+const GK_RORX: i32 = 46;
 
 // The kinds of a prepared op (GasText.ops), each three i32s: the kind and
 // two operands.
@@ -7283,6 +7336,12 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   let v: MnemVerdict = MnemVerdict { vz: mnem == "vzeroupper", fixed: x86_gas_fixed_op(mnem), a_kind: GK_NONE, a_ext: 0 - 1, a_sfx: 0, sfx: 0, b_kind: GK_NONE, b_ext: 0 - 1, vshift: x86_gas_vshift_op(mnem), c_kind: GK_NONE, c_ext: 0 - 1 };
   if (mnem == "vpcmpeqb" || mnem == "vmulpd") {
     return MnemVerdict { ...v, a_kind: GK_VEX_THREE };
+  }
+  if (mnem == "rorxl") {
+    return MnemVerdict { ...v, a_kind: GK_RORX, a_ext: 32 };
+  }
+  if (mnem == "rorxq") {
+    return MnemVerdict { ...v, a_kind: GK_RORX, a_ext: 64 };
   }
   let rpfx: i32 = x86_gas_rep_pfx(mnem);
   if (rpfx >= 0) {
