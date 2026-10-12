@@ -2098,7 +2098,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"shadow-option", "enum Option { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
 		{"shadow-result", "enum Result { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
 		{"shadow-ioerror", "enum IoError { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
-		{"shadow-jsonvalue", "enum JsonValue { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
+		// std/json declares JsonValue, so the name is not reserved.
+		{"jsonvalue-not-reserved", "enum JsonValue { A, B }\nfunction main(): i32 { return 0; }\n", nil},
 		// A value if's literal arm widens to the width another literal arm needs,
 		// and a typed arm pins it, so the literal must fit (#10859).
 		{"value-if-literal-arms-widen", "function main(): i32 {\n  let r: i64 = 5;\n  let p = if (r > 0) { (2, 4611686018427387905) } else { (3, 4) };\n  let q = if (r > 0) { 4 } else { 4611686018427387905 };\n  return p.0;\n}\n", nil},
@@ -2332,10 +2333,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"generic-fn-as-value", "function id[T](a: T): T { return a; }\nfunction main(): i32 { let f = id; return 0; }\n", []string{"E040"}},
 		{"module-const-in-call-bracket", "const T: i32 = 2;\nfunction id[T](a: T): T { return a; }\nfunction pass[T](a: T): T { return id[T](a); }\nfunction main(): i32 { return pass(3); }\n", []string{"E040"}},
 		// An injected enum's variant payload is checked like a declared one:
-		// JsonValue and IoError have no union declaration to find it by.
-		{"injected-variant-payload-json", "function main(): i32 { let j: JsonValue = JNumber(1.0); return 0; }\n", []string{"E036"}},
+		// IoError has no union declaration to find it by.
 		{"injected-variant-payload-ioerror", "function main(): i32 { let e: IoError = NotFound(3); return 0; }\n", []string{"E036"}},
-		{"injected-variant-payload-ok", "function main(): i32 { let j: JsonValue = JNumber(\"1.0\"); let e: IoError = NotFound(\"p\"); return 0; }\n", nil},
+		{"injected-variant-payload-ok", "function main(): i32 { let e: IoError = NotFound(\"p\"); return 0; }\n", nil},
 		// IoError.Other is (path, message, errno), the errno an i32 (#11296).
 		{"injected-other-three-payloads", "function main(): i32 { let e: IoError = Other(\"p\", \"m\", 21); match (e) { Other(p, m, n) => { return n; }, _ => { return 0; } } }\n", nil},
 		{"injected-other-two-arguments", "function main(): i32 { let e: IoError = Other(\"p\", \"m\"); return 0; }\n", []string{"E036"}},

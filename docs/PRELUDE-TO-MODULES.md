@@ -49,7 +49,7 @@ function main(): i32 {
 }
 ```
 
-Built-in **types** (`Option`, `Result`, `IoError`, `JsonValue`,
+Built-in **types** (`Option`, `Result`, `IoError`, `Body`,
 `Reader`, `Writer`, `Map`, `MapIter`, `HttpRequest`, `HttpResponse`,
 `Url`) stay auto-available — they're language primitives, not
 stdlib helpers. The user shouldn't need `import "core/option";`

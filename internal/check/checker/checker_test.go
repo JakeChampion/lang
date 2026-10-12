@@ -1988,8 +1988,6 @@ func TestReservedBuiltinNamesCannotBeShadowed(t *testing.T) {
 			function main(): i32 { return 0; }`},
 		{"IoError", `enum IoError { Whatever }
 			function main(): i32 { return 0; }`},
-		{"JsonValue", `enum JsonValue { JNull }
-			function main(): i32 { return 0; }`},
 		{"Reader", `struct Reader { fd: i32 }
 			function main(): i32 { return 0; }`},
 		{"Writer", `struct Writer { fd: i32 }
@@ -2033,6 +2031,14 @@ func TestReservedBuiltinNamesCannotBeShadowed(t *testing.T) {
 		if IsReservedName(name) {
 			t.Errorf("IsReservedName(%q) returned true for a user-name", name)
 		}
+	}
+}
+
+// std/json declares JsonValue, so a program's own enum may take the name.
+func TestJsonValueIsNotReserved(t *testing.T) {
+	if err := checkSource(t, `enum JsonValue { JNull }
+function main(): i32 { let v: JsonValue = JNull; return 0; }`); err != nil {
+		t.Fatalf("check: %v", err)
 	}
 }
 
@@ -4652,7 +4658,7 @@ function serve____port_from_env(name: string, def: i32): i32 { return def; }
 // A target without processes (wasm32-wasi) gets the single-process entries
 // of the same arity; the hosted targets and an unnamed one the supervisor.
 func TestSynthesisedHandleMainFollowsTargetProcesses(t *testing.T) {
-	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }`
+	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None }`
 	cases := []struct{ name, src, target, entry string }{
 		{"stateless on wasi", serveStubDecls + `function handle(req: HttpRequest, plat: platform__Host): HttpResponse { return ` + response + `; }`, "wasm32-wasi", "serve__run"},
 		{"stateful hook on wasi", serveStubDecls + `function init(): i32 { return 7; }
@@ -4731,7 +4737,7 @@ func TestConfigGetFollowsTheTargetsEnvironment(t *testing.T) {
 func TestSynthesisedHandleMainRunsInitFirst(t *testing.T) {
 	prog, err := parser.Parse(serveStubDecls + `function init(): void { print("starting"); }
 function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
-    return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } };
+    return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None };
 }`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -4771,7 +4777,7 @@ function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
 // single-stmt synth main (just the serve return).
 func TestSynthesisedHandleMainNoInitElidesPrepend(t *testing.T) {
 	prog, err := parser.Parse(serveStubDecls + `function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
-    return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } };
+    return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None };
 }`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -4802,7 +4808,7 @@ func TestSynthesisedHandleMainNoInitElidesPrepend(t *testing.T) {
 func TestSynthesisedHandleMainThreadsInitState(t *testing.T) {
 	prog, err := parser.Parse(serveStubDecls + `function init(): i32 { return 7; }
 function handle(hits: i32, req: HttpRequest, plat: platform__Host): (i32, HttpResponse) {
-    return (hits + 1, HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } });
+    return (hits + 1, HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None });
 }`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -4852,7 +4858,7 @@ function handle(hits: i32, req: HttpRequest, plat: platform__Host): (i32, HttpRe
 // state (#9854): the synthesised main hands it `__init_platform()`,
 // destructures the pair, and serves with both.
 func TestSynthesisedHandleMainTakesInitOptions(t *testing.T) {
-	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }`
+	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None }`
 	t.Run("options beside the state", func(t *testing.T) {
 		prog, err := parser.Parse(serveStubDecls + `function init(plat: platform__Host): (serve__Config, i32) { return (serve__config(), 7); }
 function handle(hits: i32, req: HttpRequest, plat: platform__Host): (i32, HttpResponse) { return (hits + 1, ` + response + `); }
@@ -4979,7 +4985,7 @@ function handle(hits: i32, req: HttpRequest, plat: platform__Host): (i32, HttpRe
 // disagrees with the handler's is E075.
 func TestSynthesisedHandleMainWiresShutdown(t *testing.T) {
 	const decls = serveStubDecls
-	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }`
+	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None }`
 	cases := []struct{ name, src, entry, message string }{
 		{"stateless", decls + `function handle(req: HttpRequest, plat: platform__Host): HttpResponse { return ` + response + `; }
 function shutdown(reason: string): void { print(reason); }`, "serve__supervise_shutdown", ""},
@@ -5033,7 +5039,7 @@ function shutdown(reason: string): void { print(reason); }`, "", "`shutdown` tak
 // plain shape every consumer calls, and the wrapper hands the user's answer
 // to std/http's `respond` (or `respond_with` with state).
 func TestResultHandlerIsAdapted(t *testing.T) {
-	const decls = serveStubDecls + `function respond(r: Result[HttpResponse, string]): HttpResponse { return HttpResponse { status: 500, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }; }
+	const decls = serveStubDecls + `function respond(r: Result[HttpResponse, string]): HttpResponse { return HttpResponse { status: 500, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None }; }
 function respond_with(pair: (i32, Result[HttpResponse, string])): (i32, HttpResponse) { return (pair.0, respond(pair.1)); }
 `
 	// The dyn cases load std/error as a program does, so the trait reaches
@@ -5041,14 +5047,14 @@ function respond_with(pair: (i32, Result[HttpResponse, string])): (i32, HttpResp
 	// `trait Error` pin the two spellings that must not match it.
 	const dynDecls = serveStubDecls + `struct Oops { why: string }
 impl err.Error for Oops { function message(self: Self): string { return self.why; } }
-function respond_error(r: Result[HttpResponse, dyn err.Error], plat: platform__Host): HttpResponse { return HttpResponse { status: 500, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }; }
+function respond_error(r: Result[HttpResponse, dyn err.Error], plat: platform__Host): HttpResponse { return HttpResponse { status: 500, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None }; }
 function respond_error_with(pair: (i32, Result[HttpResponse, dyn err.Error]), plat: platform__Host): (i32, HttpResponse) { return (pair.0, respond_error(pair.1, plat)); }
 `
 	const ownErrorDecls = serveStubDecls + `trait Error { function message(self: Self): string; }
 struct Oops { why: string }
 impl Error for Oops { function message(self: Self): string { return self.why; } }
-function respond(r: Result[HttpResponse, dyn Error]): HttpResponse { return HttpResponse { status: 500, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }; }
-function respond_error(r: Result[HttpResponse, dyn Error], plat: platform__Host): HttpResponse { return HttpResponse { status: 418, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }; }
+function respond(r: Result[HttpResponse, dyn Error]): HttpResponse { return HttpResponse { status: 500, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None }; }
+function respond_error(r: Result[HttpResponse, dyn Error], plat: platform__Host): HttpResponse { return HttpResponse { status: 418, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None }; }
 `
 	cases := []struct {
 		name, src, adapter string
@@ -5123,15 +5129,15 @@ func TestHandlerInitStateMismatchIsRejected(t *testing.T) {
 	const decls = serveStubDecls
 	cases := map[string]string{
 		"handler takes state nobody produces": decls + `function handle(hits: i32, req: HttpRequest, plat: platform__Host): (i32, HttpResponse) {
-    return (hits + 1, HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } });
+    return (hits + 1, HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None });
 }`,
 		"void init produces no state": decls + `function init(): void { print("starting"); }
 function handle(hits: i32, req: HttpRequest, plat: platform__Host): (i32, HttpResponse) {
-    return (hits + 1, HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } });
+    return (hits + 1, HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None });
 }`,
 		"init produces state nobody takes": decls + `function init(): i32 { return 7; }
 function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
-    return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } };
+    return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None };
 }`,
 	}
 	for name, src := range cases {
@@ -5153,7 +5159,7 @@ function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
 func TestHandlerInitStateMismatchAllowedUnderUserMain(t *testing.T) {
 	err := checkSource(t, hostStubDecls+`function init(): i32 { return 7; }
 function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
-    return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } };
+    return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None };
 }
 function main(): i32 { return init(); }`)
 	if err != nil {
@@ -5169,7 +5175,7 @@ function main(): i32 { return init(); }`)
 func TestWasiHandleIsSynthesisedForHandlers(t *testing.T) {
 	const decls = serveStubDecls
 	const handler = `function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
-    return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } };
+    return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None };
 }`
 	cases := map[string]struct {
 		src  string
@@ -5213,7 +5219,7 @@ func TestWasiHandleIsSynthesisedForHandlers(t *testing.T) {
 func TestWasiHandleNotSynthesisedOverUserDefinition(t *testing.T) {
 	prog, err := parser.Parse(serveStubDecls + `function __fern_wasi_handle(req: HttpRequest): HttpResponse { return handle(req, platform__Host { reactor: 7 }); }
 function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
-    return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } };
+    return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None };
 }`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -5248,7 +5254,7 @@ func funcNamesOf(prog *ast.Program) []string {
 func TestUserDefinedMainSkipsSynthEvenWithInit(t *testing.T) {
 	prog, err := parser.Parse(hostStubDecls + `function init(): void { print("starting"); }
 function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
-    return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } };
+    return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None };
 }
 function main(): i32 { return 0; }`)
 	if err != nil {
@@ -6532,7 +6538,8 @@ function main(): i32 { return 0; }`
 // @derive(FromJson)'s decoder is std/json's: the checker refuses it, on a
 // struct or an enum, without std/json in the program.
 func TestDeriveFromJson(t *testing.T) {
-	const fromJsonTrait = `trait FromJson { function from_json_value(v: JsonValue): Result[Self, string]; }
+	const fromJsonTrait = `enum JsonValue { JNull }
+trait FromJson { function from_json_value(v: JsonValue): Result[Self, string]; }
 `
 	cases := []struct{ src, want string }{
 		{fromJsonTrait + `@derive(FromJson) enum E { A, B }
@@ -10062,7 +10069,7 @@ function main(): i32 { let b: Box = Box { m: map_new(4), tag: 2 }; return b.tag;
 // the handler, and no serve loop is synthesised there, which reached stdlib
 // code the proxy world cannot run; a stateless handler still checks (#11856).
 func TestWasiHTTPStatefulHandlerIsE075(t *testing.T) {
-	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }`
+	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None }`
 	check := func(src string) (*Info, error) {
 		prog, err := parser.Parse(serveStubDecls + src)
 		if err != nil {

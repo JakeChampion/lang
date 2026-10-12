@@ -867,7 +867,7 @@ function union_name(t: typeinfo.Type): string {
 }
 
 // The variant names of a union: a written enum or struct-union takes them from
-// its declaration, an INJECTED enum (IoError, JsonValue) from the struct
+// its declaration, an INJECTED enum (IoError, Body) from the struct
 // table's enum owner, since the front end injects those variants with no enum
 // declaration to list them.
 function union_variants(s: State, name: string): string[] {

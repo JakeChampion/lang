@@ -335,7 +335,7 @@ Unsupported constructs refuse the whole function with a reason.
   by its enum alone and never by an instantiation.
 
   An enum the front end INJECTS rather than the source writing it
-  (`IoError`, `JsonValue`) has variant declarations and no enum declaration,
+  (`IoError`, `Body`) has variant declarations and no enum declaration,
   so its variant list is read off the struct table's enum owner
   (`checker.owned_variant_names`). That is what gives a failed read's Err
   arm a schema.

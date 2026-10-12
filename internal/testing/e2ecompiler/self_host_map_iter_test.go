@@ -7,8 +7,7 @@ import (
 
 // mapIterCases exercise the self-host Map iteration API: m.iter() →
 // MapIter[K,V], then has_next() / key() / value() / advance() over the
-// parallel keys[]/values[] arrays. Needed by std/json's json_encode
-// (which walks a JObject's Map). Exit codes cross-checked vs the Go
+// parallel keys[]/values[] arrays. Exit codes cross-checked vs the Go
 // backend.
 var mapIterCases = []struct {
 	name string

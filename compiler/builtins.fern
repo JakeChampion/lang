@@ -3,7 +3,7 @@
 // parser.inject_builtin_enums / add_builtin_variant.
 //
 // Historically the self-host compiler synthesised these decls in code: a
-// loop of `add_builtin_variant(structs, "JString", ["string"], "JsonValue")`
+// loop of `add_builtin_variant(structs, "NotFound", ["string"], "IoError")`
 // calls plus open-coded StructDecl literals for FileStat / ProcessResult /
 // HeaderMap / HttpRequest / HttpResponse. That "synthesise the AST by
 // hand" approach is exactly the `.wants/.needs`-style boilerplate we want
@@ -27,17 +27,6 @@
 // Option / Result are NOT here: Some/None/Ok/Err are special-cased in the
 // emitter, never synthesised as variant structs.
 
-// JsonValue — the std/json document model. `JString(x)` / `match … JObject(m) …`
-// resolve against these variants.
-enum JsonValue {
-  JNull,
-  JBool(boolean),
-  JNumber(string),
-  JString(string),
-  JArray(JsonValue[]),
-  JObject(Map[string, JsonValue]),
-}
-
 // IoError — the error arm of filesystem / io Results.
 enum IoError {
   NotFound(string),
@@ -54,9 +43,7 @@ enum IoError {
 // ChunkProducer — the producer a `BodyChunks` carries: asked for chunk 0,
 // 1, 2, … until it answers None, and the filler the serve loop writes
 // whenever the producer has been waiting `idle_ms` for its next chunk (0
-// for none). A record rather than the bare function because a closure is
-// released as a struct member and only leaks as an enum payload on the
-// native backends.
+// for none).
 struct ChunkProducer { next: (i32) => Option[u8[]], idle_ms: i32, filler: u8[] }
 
 // Body — what an HttpResponse carries (std/http): text or bytes held
@@ -108,4 +95,6 @@ struct Stream { data: u8[], pos: i32, source: Option[BodySource] }
 
 struct HttpRequest { method: string, path: string, body: Stream, headers: HeaderMap, trailers: HeaderMap }
 
-struct HttpResponse { status: i32, body: Body, headers: HeaderMap, trailers: HeaderMap }
+// `background` is work that outlives the response (std/http's
+// `with_background`), run once the response is written.
+struct HttpResponse { status: i32, body: Body, headers: HeaderMap, trailers: HeaderMap, background: Option[() => void] }

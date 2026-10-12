@@ -9,16 +9,13 @@
 # given commit EXCEPT the rows that hash string keys: core/map draws a
 # per-process string-hash seed (#6194), which moves probe lengths, so a
 # benchmark that builds a string-keyed map counts differently every run. That
-# is `map_string.ir`, which does so directly, AND both `utf8_ingest_*.ir`
-# rows, which do so through json_parse's `Map[string, JsonValue]` — the
-# indirect case, and the one that went unclassified until a CI run happened to
-# straddle the tolerance. Measured spreads over 15 runs of one binary:
-# map_string 0.541%, utf8_ingest_unchecked 0.738%, utf8_ingest_validated
-# 0.468%. map_string.ir keeps the 2% it was given for a 0.51% spread; the
-# utf8_ingest rows carry 3% on the same reasoning at their larger spread, on
-# BOTH arches, since the seed is drawn per process and not per ISA. A range
-# grows with sample count, so these are floors, not ceilings — do not tighten
-# a tolerance here against a handful of runs. Absolute endpoints are
+# is `map_string.ir`, measured at a 0.541% spread over 15 runs of one binary;
+# it keeps the 2% it was given for a 0.51% spread, on BOTH arches, since the
+# seed is drawn per process and not per ISA. A range grows with sample count,
+# so this is a floor, not a ceiling — do not tighten a tolerance here against a
+# handful of runs. The `utf8_ingest_*.ir` rows hashed their keys the same way
+# through json_parse until an object stopped being a Map; its objects are under
+# the size that builds a key index, so they are exact now. Absolute endpoints are
 # deliberately NOT quoted: they go stale the next time a line is re-banked for
 # an unrelated reason, and a stale range reads as a real one. `map_int.ir` is
 # exact — the seed is consulted for string keys only — and is deliberately
@@ -68,8 +65,8 @@ x86_64/closure_call.text	814
 x86_64/closure_call.ir	103908097
 x86_64/enum_match.text	999
 x86_64/enum_match.ir	53775055
-x86_64/http_hello.text	19503
-x86_64/http_hello.ir	29288671
+x86_64/http_hello.text	20236
+x86_64/http_hello.ir	29964671
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
 x86_64/map_int.text	5860
@@ -108,10 +105,10 @@ x86_64/struct_drop.text	3384
 x86_64/struct_drop.ir	358420237
 x86_64/tokenize.text	984
 x86_64/tokenize.ir	36950039
-x86_64/utf8_ingest_unchecked.text	14482
-x86_64/utf8_ingest_unchecked.ir	3990676	3
-x86_64/utf8_ingest_validated.text	14726
-x86_64/utf8_ingest_validated.ir	7038098	3
+x86_64/utf8_ingest_unchecked.text	11070
+x86_64/utf8_ingest_unchecked.ir	3331077
+x86_64/utf8_ingest_validated.text	11309
+x86_64/utf8_ingest_validated.ir	6413083
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -120,9 +117,9 @@ x86_64/utf8_ingest_validated.ir	7038098	3
 # is host-independent, so a cross-compile from the dev container reproduces the
 # runner's figure on EVERY row in this corpus and that is how the `.text` half
 # is kept current. perf-aarch64 runs natively on ubuntu-24.04-arm, so the two
-# are directly comparable. The three seeded rows — map_string.ir and both
-# utf8_ingest_*.ir — carry the same tolerances their x86_64 twins do, for the
-# same per-process hash seed, which is drawn per process rather than per ISA.
+# are directly comparable. The seeded row, map_string.ir, carries the same
+# tolerance its x86_64 twin does, for the same per-process hash seed, which is
+# drawn per process rather than per ISA.
 #
 # Re-pinned 2026-09-04 (#7397) on the x86_64 `.text` half only, after the #4873
 # containment bracket gained three field- and path-granular deaths: the three
@@ -155,6 +152,14 @@ x86_64/utf8_ingest_validated.ir	7038098	3
 # `.text` grew 0.7-1.7% for the scan's tables and run helpers. Both figures
 # for both arches are this branch's own measurement.
 #
+# Re-pinned 2026-10-12 (#12105 slice 4) on the four utf8_ingest rows of each
+# arch, whose json_parse builds an object as two arrays instead of a Map
+# (x86_64 `.ir` -16.5% unchecked, -8.9% validated; `.text` -23%), and on
+# http_hello.text (+3.8%): std/http imports std/json, and the tree shaker keeps
+# a method by bare name where a call's receiver is untyped, so JsonObject's
+# `get` / `len` and its seeded key hash are kept. The aarch64 `.text` rows are
+# cross-compiled readings; its `.ir` rows come from the perf-aarch64 lane.
+#
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
 # (utf8_ingest_unchecked) — one ISA emitting fewer instructions than the other
@@ -177,7 +182,7 @@ aarch64/closure_call.text	993
 aarch64/closure_call.ir	120768083
 aarch64/enum_match.text	1137
 aarch64/enum_match.ir	41400056
-aarch64/http_hello.text	19632
+aarch64/http_hello.text	20511
 aarch64/http_hello.ir	31912723
 aarch64/int_loop.text	90
 aarch64/int_loop.ir	18000025
@@ -217,10 +222,10 @@ aarch64/struct_drop.text	3516
 aarch64/struct_drop.ir	428300325
 aarch64/tokenize.text	1170
 aarch64/tokenize.ir	38580038
-aarch64/utf8_ingest_unchecked.text	14575
-aarch64/utf8_ingest_unchecked.ir	3891266	3
-aarch64/utf8_ingest_validated.text	14825
-aarch64/utf8_ingest_validated.ir	7486486	3
+aarch64/utf8_ingest_unchecked.text	11226
+aarch64/utf8_ingest_unchecked.ir	3891266
+aarch64/utf8_ingest_validated.text	11469
+aarch64/utf8_ingest_validated.ir	7486486
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 x86_64/perceus_cfold.text	2436

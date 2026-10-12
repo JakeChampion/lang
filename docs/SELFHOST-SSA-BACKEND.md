@@ -332,8 +332,9 @@ a loop-carried operand's interval ends at that edge. Empty blocks holding
 only a branch are skipped by every edge into them and dropped, a phi loses
 its slot for a dropped predecessor (`ssa.thread_forwarding`), and a branch
 whose false target is the next block falls through into it. Division,
-the shifts and the table shared with the stack machine still go through
-x0/x1 (`%rax`/`%rcx`), as does every call result. The phis of one edge are
+a shift by a register count and the table shared with the stack machine
+still go through x0/x1 (`%rax`/`%rcx`), as does every call result; a shift
+by a constant works in its result's home, which may be its dying operand's. The phis of one edge are
 parallel moves between homes (`ssa_parallel_moves`): one instruction per
 move, a cycle broken by parking one location in the scratch, and no move at
 all for a phi whose operand already sits in its home. On the compiler

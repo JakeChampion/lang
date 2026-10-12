@@ -46,7 +46,7 @@ impl Greet for Dog { function hi(self: Self): i32 { return 7; } }
 		{"option", `function main(): i32 { let o: Option[i32] = Some(3); return match (o) { Some(n) => n, None => 0 }; }`, 0},
 		{"result", `function main(): i32 { let r: Result[i32, string] = Ok(3); return match (r) { Ok(n) => n, Err(_) => 0 }; }`, 0},
 		// A match STATEMENT on a built-in enum: Option's and Result's variants
-		// have no struct sig, and JsonValue is in no union table.
+		// have no struct sig.
 		{"option-match-stmt", `function f(o: Option[i32]): i32 { match (o) { Some(n) => { return n; }, None => { return 0; } } } function main(): i32 { return f(Some(3)); }`, 0},
 		{"result-match-stmt", `function f(r: Result[i32, string]): i32 { match (r) { Ok(n) => { return n; }, Err(e) => { return e.len(); } } } function main(): i32 { return f(Ok(3)); }`, 0},
 		// A user generic enum's payload is its spelling with the enum's
@@ -57,7 +57,7 @@ impl Greet for Dog { function hi(self: Self): i32 { return 7; } }
 		// generic body like any other (#11776).
 		{"derived-on-generic-struct", `import "core/cmp"; @derive(cmp.Eq, cmp.Hash, cmp.Display) struct Pair[T] { a: T, b: T } function main(): i32 { let p: Pair[i32] = Pair[i32] { a: 1, b: 2 }; if (!p.eq(Pair[i32] { a: 1, b: 2 })) { return 1; } return p.hash() - p.hash() + p.to_string().len() - 18; }`, 0},
 		{"derived-on-generic-enum", `import "core/cmp"; @derive(cmp.Eq, cmp.Hash, cmp.Display) enum Tag[T] { One(T), Two(T, T), Empty } function main(): i32 { let a: Tag[i32] = Tag.Two(1, 2); if (!a.eq(Tag.Two(1, 2))) { return 1; } return a.hash() - a.hash() + a.to_string().len() - 9; }`, 0},
-		{"json-value-match-stmt", `function f(v: JsonValue): i32 { match (v) { JNull => { return 1; }, JBool(b) => { return 2; }, _ => { return 0; } } } function main(): i32 { return f(JNull); }`, 0},
+		{"json-value-match-stmt", `import "std/json"; function f(v: json.JsonValue): i32 { match (v) { JNull => { return 1; }, JBool(b) => { return 2; }, _ => { return 0; } } } function main(): i32 { return f(JNull); }`, 0},
 		{"map-iter-cursor", `import "core/map"; function f(m: Map[string, i32]): i32 { let it: MapIter[string, i32] = m.iter(); let n: i32 = 0; while (it.has_next()) { n = n + it.key().len() + it.value(); it.advance(); } return n; } function main(): i32 { return 0; }`, 0},
 		{"option-literal-scrutinee", `function main(): i32 { match (Some(4)) { Some(v) => { return v + 1; }, None => { return 0; } } }`, 0},
 		{"option-inferred-local", `function main(): i32 { let o = Some("ab"); match (o) { Some(v) => { return v.len(); }, None => { return 0; } } }`, 0},

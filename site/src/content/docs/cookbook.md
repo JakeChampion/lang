@@ -228,18 +228,16 @@ function main(): i32 {
 
 ## Build JSON
 
-`JsonValue` is a built-in enum, so a document is an ordinary value.
+std/json's `json.JsonValue` is an ordinary enum, so a document is an ordinary value.
 
 ```fern
 import "std/json";
-import "core/map";
 
 function main(): i32 {
-    let doc: JsonValue = JObject(Map {
-        "name": JString("fern"),
-        "stars": JNumber("42"),
-        "tags": JArray([JString("cli"), JString("wasm")]),
-    });
+    let doc: json.JsonValue = JObject(json.object()
+        .insert("name", JString("fern"))
+        .insert("stars", JNumber("42"))
+        .insert("tags", JArray([JString("cli"), JString("wasm")])));
     print(json.json_encode(doc));
     return 0;
 }

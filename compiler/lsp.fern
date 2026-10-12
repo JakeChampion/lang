@@ -114,7 +114,7 @@ function lower_ascii(s: string): string {
 
 // Message is one decoded JSON-RPC message. `id` is a request's id as JSON
 // text, echoed back verbatim in the response, and empty on a notification.
-pub struct Message { method: string, id: string, params: JsonValue }
+pub struct Message { method: string, id: string, params: json.JsonValue }
 
 // parse_message decodes a frame body, or None when it is not JSON or has no
 // method: a message without one is a response, and this server sends no
@@ -143,7 +143,7 @@ pub function parse_message(body: string): Option[Message] {
 }
 
 // get_value is v's member `key`, or null when v has none.
-pub function get_value(v: JsonValue, key: string): JsonValue {
+pub function get_value(v: json.JsonValue, key: string): json.JsonValue {
   match (json.json_get(v, key)) {
     Some(m) => {
       return m;
@@ -156,7 +156,7 @@ pub function get_value(v: JsonValue, key: string): JsonValue {
 }
 
 // get_string is v's string member `key`, or "" when v has none.
-pub function get_string(v: JsonValue, key: string): string {
+pub function get_string(v: json.JsonValue, key: string): string {
   match (json.json_get_string(v, key)) {
     Some(s) => {
       return s;
@@ -170,13 +170,13 @@ pub function get_string(v: JsonValue, key: string): string {
 
 // document_uri is the `textDocument.uri` every document request and
 // notification names.
-pub function document_uri(params: JsonValue): string {
+pub function document_uri(params: json.JsonValue): string {
   return get_string(get_value(params, "textDocument"), "uri");
 }
 
 // changed_text is a didChange's new document text: the last content change,
 // which under full sync is the whole document. None when there is none.
-pub function changed_text(params: JsonValue): Option[string] {
+pub function changed_text(params: json.JsonValue): Option[string] {
   match (json.json_get_array(params, "contentChanges")) {
     Some(cs) => {
       if (cs.len() == 0) {

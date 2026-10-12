@@ -660,76 +660,55 @@ function ts_grow(mod: parser.Module, rs0: RefSet, pending0: i32[]): TsGrown {
 
 // ts_reaches_map reports whether a map can reach the kept program: a map
 // constructor is reachable, a kept function or a lambda in one takes or
-// returns a map, a struct or variant holds one, or a kept body names a
-// builtin enum a variant of which holds one — the enum's drop walks that
-// variant whichever variant the program built.
+// returns a map, a struct holds one, or a kept body names a variant of an enum
+// a variant of which holds one — the enum's drop walks that variant whichever
+// variant the program built, and a value of the enum exists only where one of
+// its variants is built.
 function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
   if (refset_has(rs, "map_new") || refset_has(rs, ts_free_root("map_new"))
     || refset_has(rs, "__map_new_i32") || refset_has(rs, ts_free_root("__map_new_i32"))) {
     return true;
   }
-  let map_types: string[] = ts_map_types(mod.structs);
   for fd in mod.funcs {
-    if (ts_kept_name(fd, rs) && ts_mentions_any(ts_sig_types(fd), map_types)) {
+    if (ts_kept_name(fd, rs) && ts_mentions_map(ts_sig_types(fd))) {
       return true;
     }
   }
+  let owners: string[] = [];
   for st in mod.structs {
-    for fl in st.fields {
-      if (ts_mentions_any([fl.type_name], map_types)) {
+    if (ts_holds_map(st)) {
+      if (st.enum_owner.len() == 0) {
         return true;
+      }
+      if (util.index_of_str(owners, st.enum_owner) < 0) {
+        owners = owners.append(st.enum_owner);
       }
     }
   }
-  let all: parser.StructDecl[] = parser.inject_builtin_enums(mod.structs);
-  let bi: i32 = mod.structs.len();
-  while (bi < all.len()) {
-    let variant: parser.StructDecl = all[bi];
-    bi = bi + 1;
-    let owner: string = variant.enum_owner;
-    if (owner.len() == 0) {
-      owner = variant.name;
-    }
-    if (util.index_of_str(map_types, owner) < 0) {
-      continue;
-    }
-    if (refset_has(rs, variant.name) || refset_has(rs, ts_free_root(variant.name))
-      || refset_has(rs, owner) || refset_has(rs, ts_free_root(owner))) {
+  for st in mod.structs {
+    let owner: string = st.enum_owner;
+    let named: boolean = refset_has(rs, st.name) || refset_has(rs, ts_free_root(st.name))
+      || refset_has(rs, owner) || refset_has(rs, ts_free_root(owner));
+    if (owner.len() > 0 && util.index_of_str(owners, owner) >= 0 && named) {
       return true;
     }
   }
   return false;
 }
 
-// ts_map_types are the spellings that name a map: `Map[`, and each builtin
-// enum a variant of which holds one. Those variants are injected after this
-// pass (parser.inject_builtin_enums), so `mod.structs` does not show them.
-function ts_map_types(declared: parser.StructDecl[]): string[] {
-  let out: string[] = ["Map["];
-  let all: parser.StructDecl[] = parser.inject_builtin_enums(declared);
-  let i: i32 = declared.len();
-  while (i < all.len()) {
-    let st: parser.StructDecl = all[i];
-    i = i + 1;
-    let owner: string = st.enum_owner;
-    if (owner.len() == 0) {
-      owner = st.name;
-    }
-    for fl in st.fields {
-      if (util.contains(fl.type_name, "Map[") && util.index_of_str(out, owner) < 0) {
-        out = out.append(owner);
-      }
+function ts_holds_map(st: parser.StructDecl): boolean {
+  for fl in st.fields {
+    if (util.contains(fl.type_name, "Map[")) {
+      return true;
     }
   }
-  return out;
+  return false;
 }
 
-function ts_mentions_any(types: string[], names: string[]): boolean {
+function ts_mentions_map(types: string[]): boolean {
   for t in types {
-    for n in names {
-      if (util.contains(t, n)) {
-        return true;
-      }
+    if (util.contains(t, "Map[")) {
+      return true;
     }
   }
   return false;

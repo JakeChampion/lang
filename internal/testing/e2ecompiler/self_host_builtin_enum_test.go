@@ -10,8 +10,7 @@ import (
 // builtinEnumCases construct and match the auto-injected IoError enum
 // WITHOUT a local `enum IoError { … }` declaration — exercising the
 // self-host emitter's builtin-enum injection (parser.inject_builtin_enums),
-// the analogue of the Go checker's builtinEnumDecls. JsonValue injection
-// is covered separately by self_host_json_test.go. Exit codes
+// the analogue of the Go checker's builtinEnumDecls. Exit codes
 // cross-checked vs the Go backend.
 var builtinEnumCases = []struct {
 	name string

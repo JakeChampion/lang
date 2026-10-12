@@ -1,0 +1,159 @@
+import "std/test";
+import "std/json";
+import "std/i32";
+import "std/option";
+
+// tests/stdlib/json_object_test.fern — std/json's JsonObject: members in
+// document order, one per key, searched linearly up to JSON_LINEAR_MAX (8)
+// members and through the hash index beyond. Each lookup case runs on both
+// sides of that line.
+
+function parsed(text: string): json.JsonObject {
+  match (json.json_parse(text)) {
+    Some(v) => {
+      match (v) {
+        JObject(o) => {
+          return o;
+        },
+        _ => {
+          return json.object();
+        }
+      }
+    },
+    None => {
+      return json.object();
+    }
+  }
+}
+
+// keyed is an object of `n` members k0..k(n-1), each bound to its index.
+function keyed(n: i32): json.JsonObject {
+  let o: json.JsonObject = json.object();
+  let i: i32 = 0;
+  while (i < n) {
+    o = o.insert("k" + i.to_string(), JNumber(i.to_string()));
+    i = i + 1;
+  }
+  return o;
+}
+
+function num(v: Option[json.JsonValue]): string {
+  match (v) {
+    Some(x) => {
+      match (x) {
+        JNumber(s) => {
+          return s;
+        },
+        _ => {
+          return "<not a number>";
+        }
+      }
+    },
+    None => {
+      return "<none>";
+    }
+  }
+}
+
+function test_lookup_linear(): test.TestOutcome {
+  let o: json.JsonObject = keyed(8);
+  if (o.index.len() != 0) {
+    return test.fail("an 8-member object carries an index");
+  }
+  if (num(o.get("k0")) != "0" || num(o.get("k7")) != "7") {
+    return test.fail("get");
+  }
+  if (o.has("k8") || o.position("k3") != 3) {
+    return test.fail("has / position");
+  }
+  return test.assert_eq(num(o.get("missing")), "<none>");
+}
+
+function test_lookup_indexed(): test.TestOutcome {
+  let o: json.JsonObject = keyed(40);
+  if (o.index.len() == 0) {
+    return test.fail("a 40-member object carries no index");
+  }
+  let i: i32 = 0;
+  while (i < 40) {
+    if (o.position("k" + i.to_string()) != i) {
+      return test.fail("position of k" + i.to_string());
+    }
+    i = i + 1;
+  }
+  if (o.has("k40") || o.has("")) {
+    return test.fail("has a missing key");
+  }
+  return test.assert_eq(num(o.get("k39")), "39");
+}
+
+function test_insert_replaces_in_place(): test.TestOutcome {
+  let small: json.JsonObject = keyed(3).insert("k1", JNumber("100"));
+  let large: json.JsonObject = keyed(20).insert("k11", JNumber("100"));
+  if (small.len() != 3 || small.keys[1] != "k1" || num(small.get("k1")) != "100") {
+    return test.fail("small");
+  }
+  if (large.len() != 20 || large.keys[11] != "k11" || num(large.get("k11")) != "100") {
+    return test.fail("large");
+  }
+  return test.assert_eq(json.json_encode(JObject(small)), "{\"k0\":0,\"k1\":100,\"k2\":2}");
+}
+
+// The ninth insert builds the index; the ones after it extend or regrow it.
+function test_insert_across_the_index_threshold(): test.TestOutcome {
+  let o: json.JsonObject = keyed(8);
+  o = o.insert("k8", JNumber("8"));
+  if (o.index.len() == 0) {
+    return test.fail("no index after the ninth member");
+  }
+  o = keyed(100);
+  return test.assert_eq(num(o.get("k0")) + " " + num(o.get("k57")) + " " + num(o.get("k99")), "0 57 99");
+}
+
+function test_get_or(): test.TestOutcome {
+  let o: json.JsonObject = keyed(2);
+  match (o.get_or("zz", JNull)) {
+    JNull => {},
+    _ => {
+      return test.fail("missing key does not fall back");
+    }
+  }
+  return test.assert_eq(num(Some(o.get_or("k1", JNull))), "1");
+}
+
+// A repeated key keeps its first position and takes its last value, in a
+// small object and an indexed one alike.
+function test_parse_repeated_keys(): test.TestOutcome {
+  let small: json.JsonObject = parsed("{\"a\":1,\"b\":2,\"a\":3}");
+  if (json.json_encode(JObject(small)) != "{\"a\":3,\"b\":2}") {
+    return test.fail("small: " + json.json_encode(JObject(small)));
+  }
+  let large: json.JsonObject = parsed("{\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"e\":5,\"f\":6,\"g\":7,\"h\":8,\"i\":9,\"b\":20,\"j\":10}");
+  if (large.len() != 10 || large.index.len() == 0) {
+    return test.fail("large: " + large.len().to_string() + " members");
+  }
+  return test.assert_eq(num(large.get("b")) + " " + large.keys[1] + " " + large.keys[9], "20 b j");
+}
+
+function test_object_of(): test.TestOutcome {
+  let o: json.JsonObject = json.object_of(["x", "y", "x"], [JNumber("1"), JNumber("2"), JNumber("3")]);
+  return test.assert_eq(json.json_encode(JObject(o)), "{\"x\":3,\"y\":2}");
+}
+
+function test_document_order(): test.TestOutcome {
+  let text: string = "{\"z\":1,\"a\":2,\"m\":{\"q\":[],\"b\":{}}}";
+  return test.assert_eq(json.json_encode(json.json_parse(text).unwrap_or(JNull)), text);
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/json object");
+  r = r.it("lookup, linear", test_lookup_linear);
+  r = r.it("lookup, indexed", test_lookup_indexed);
+  r = r.it("insert replaces in place", test_insert_replaces_in_place);
+  r = r.it("insert across the index threshold", test_insert_across_the_index_threshold);
+  r = r.it("get_or", test_get_or);
+  r = r.it("parse repeated keys", test_parse_repeated_keys);
+  r = r.it("object_of", test_object_of);
+  r = r.it("document order", test_document_order);
+  return r.finish();
+}

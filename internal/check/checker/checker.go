@@ -486,9 +486,9 @@ func builtinEnumDecls() []*ast.EnumDecl {
 			// bytes held whole, a Stream drained to the wire, or a
 			// file the serve loop reads. Constructed through std/http's
 			// `http.ok` / `http.text` builders in ordinary code. The
-			// variants carry the enum's name, as JsonValue's do, since
-			// a builtin variant is in every module's scope and a bare
-			// `Text` would ambiguate any user enum's.
+			// variants carry the enum's name since a builtin variant
+			// is in every module's scope and a bare `Text` would
+			// ambiguate any user enum's.
 			Name: "Body",
 			Variants: []ast.EnumVariant{
 				{Name: "BodyText", Payloads: []ast.Type{ast.StringType{}}},
@@ -497,37 +497,6 @@ func builtinEnumDecls() []*ast.EnumDecl {
 				{Name: "BodyFile", Payloads: []ast.Type{ast.StringType{}}},
 				{Name: "BodyChunks", Payloads: []ast.Type{ast.StructType{Name: "ChunkProducer"}}},
 				{Name: "BodyFileRanges", Payloads: []ast.Type{ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}}, ast.ArrayType{Elem: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}},
-			},
-		},
-		// JsonValue — recursive AST representation for JSON
-		// documents. Numbers carry their textual representation
-		// (the JSON spec doesn't fix precision); callers that
-		// want a numeric type call `s.parse_int()` /
-		// `s.parse_float()` on the payload. Self-referential
-		// variants (JArray → JsonValue[], JObject →
-		// Map[string, JsonValue]) work because enum payloads
-		// are heap-allocated, breaking the size cycle. Pairs
-		// with the `json_encode(v)` builtin (and the future
-		// `json_parse(s) -> Option[JsonValue]`).
-		{
-			Name: "JsonValue",
-			Variants: []ast.EnumVariant{
-				{Name: "JNull"},
-				{Name: "JBool", Payloads: []ast.Type{ast.BoolType{}}},
-				{Name: "JNumber", Payloads: []ast.Type{ast.StringType{}}},
-				{Name: "JString", Payloads: []ast.Type{ast.StringType{}}},
-				{Name: "JArray", Payloads: []ast.Type{
-					ast.ArrayType{Elem: ast.EnumType{Name: "JsonValue"}},
-				}},
-				{Name: "JObject", Payloads: []ast.Type{
-					ast.StructType{
-						Name: "Map",
-						Args: []ast.Type{
-							ast.StringType{},
-							ast.EnumType{Name: "JsonValue"},
-						},
-					},
-				}},
 			},
 		},
 	}
@@ -615,6 +584,11 @@ func builtinStructDecls() []*ast.StructDecl {
 				// nowhere to carry them, and the wasi-http wrapper
 				// finishes the outgoing body without them.
 				{Name: "trailers", Type: ast.StructType{Name: "HeaderMap"}},
+				// `background` is work that outlives the response
+				// (std/http's `with_background`): the serve loop runs it
+				// once the response is written, the wasi-http wrapper
+				// once the body is finished.
+				{Name: "background", Type: ast.EnumType{Name: "Option", Args: []ast.Type{&ast.FuncType{Params: []ast.Type{}, Result: ast.VoidType{}}}}},
 			},
 		},
 		// HeaderMap — case-insensitive, multi-valued, insertion-
@@ -1130,15 +1104,9 @@ func wasiHTTPHandlerShape(n int) string {
 func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, error) {
 	supervised := targetSupervises(target)
 	wasiHTTP := target == "wasm32-wasi-http"
-	// Prepend the built-in Option / Result / IoError /
-	// JsonValue enums so user code (and the stdlib)
-	// can reference them without an explicit declaration.
-	// Each is injected individually if the user hasn't
-	// already declared the same name — earlier the
-	// "auto-inject only when prog.Enums[0].Name != Option"
-	// heuristic skipped EVERY builtin if the user declared
-	// their own Option, which broke the stdlib's json_encode
-	// (uses JsonValue).
+	// Prepend the built-in Option / Result / IoError / Body
+	// enums so user code (and the stdlib) can reference them
+	// without an explicit declaration.
 	//
 	// Builtin names are RESERVED: if the user declared one
 	// with the same name, we drop the builtin (so the user's
@@ -8257,7 +8225,7 @@ func synthFromJsonValue(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
 	return &ast.FuncDecl{
 		Name:       "from_json_value",
 		AssocType:  recv.Name,
-		Params:     []ast.Param{{Name: "v", Type: ast.EnumType{Name: "JsonValue"}}},
+		Params:     []ast.Param{{Name: "v", Type: ast.EnumType{Name: "json__JsonValue"}}},
 		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StringType{}}},
 		Body:       body,
 	}
@@ -8307,7 +8275,7 @@ func synthEnumFromJsonValue(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
 	return &ast.FuncDecl{
 		Name:       "from_json_value",
 		AssocType:  recv.Name,
-		Params:     []ast.Param{{Name: "v", Type: ast.EnumType{Name: "JsonValue"}}},
+		Params:     []ast.Param{{Name: "v", Type: ast.EnumType{Name: "json__JsonValue"}}},
 		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StringType{}}},
 		Body:       body,
 	}
@@ -9825,7 +9793,7 @@ type variantRef struct {
 // modules (#8189).
 //
 // A built-in enum's SourceModule is "", treated as universal, so
-// Option / Result / IoError / JsonValue stay candidates everywhere by
+// Option / Result / IoError / Body stay candidates everywhere by
 // construction.
 func (c *checker) visibleVariants(name string) []variantRef {
 	all := c.variantOf[name]
@@ -18942,8 +18910,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// Treated as if Array were a one-type-param
 				// generic struct so the receiver-TypeArgs
 				// substitution path applies — `string[].push(v)`
-				// checks `v` as string, `JsonValue[].push(v)` as
-				// JsonValue.
+				// checks `v` as string, `Duration[].push(v)` as
+				// Duration.
 				_ = t
 				typeName = "Array"
 			case ast.SliceType:

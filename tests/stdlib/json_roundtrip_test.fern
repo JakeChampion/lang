@@ -459,7 +459,7 @@ function test_pretty_scalars_and_empties(): test.TestOutcome {
   if (json.json_encode_pretty(JNull, 2) != "null") {
     return test.fail("null");
   }
-  let empty: JsonValue[] = [];
+  let empty: json.JsonValue[] = [];
   if (json.json_encode_pretty(JArray(empty), 2) != "[]") {
     return test.fail("empty array");
   }

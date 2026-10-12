@@ -3,7 +3,7 @@ import "std/json";
 import "std/option";
 
 // tests/stdlib/json_pointer_test.fern — RFC 6901 JSON Pointer
-// resolution over the built-in JsonValue tree (#4416). Docs are built
+// resolution over a JsonValue tree (#4416). Docs are built
 // with json_parse and navigated with json_pointer; leaf values are
 // asserted by matching the resolved JsonValue's payload. Exercises
 // object descent, array indexing, the ~1/~0 key escapes, the empty
@@ -11,7 +11,7 @@ import "std/option";
 
 // Extract a JNumber's raw payload string, or "" if the value isn't a
 // JNumber — lets a test assert a resolved leaf without json_get_i32.
-function num_of(v: JsonValue): string {
+function num_of(v: json.JsonValue): string {
   match (v) {
     JNumber(s) => {
       return s;
@@ -22,7 +22,7 @@ function num_of(v: JsonValue): string {
   }
 }
 
-function str_of(v: JsonValue): string {
+function str_of(v: json.JsonValue): string {
   match (v) {
     JString(s) => {
       return s;
@@ -35,7 +35,7 @@ function str_of(v: JsonValue): string {
 
 // Resolve `ptr` against `doc` and return the JNumber payload, or a
 // sentinel ("<none>" / "<not-num>") describing why it didn't.
-function ptr_num(doc: JsonValue, ptr: string): string {
+function ptr_num(doc: json.JsonValue, ptr: string): string {
   match (json.json_pointer(doc, ptr)) {
     Some(v) => {
       return num_of(v);
@@ -46,7 +46,7 @@ function ptr_num(doc: JsonValue, ptr: string): string {
   }
 }
 
-function ptr_str(doc: JsonValue, ptr: string): string {
+function ptr_str(doc: json.JsonValue, ptr: string): string {
   match (json.json_pointer(doc, ptr)) {
     Some(v) => {
       return str_of(v);
@@ -57,7 +57,7 @@ function ptr_str(doc: JsonValue, ptr: string): string {
   }
 }
 
-function doc_main(): JsonValue {
+function doc_main(): json.JsonValue {
   return json.json_parse("{\"user\":{\"id\":42,\"tags\":[\"a\",\"b\",\"c\"]}}").unwrap_or(JNull);
 }
 
@@ -85,7 +85,7 @@ function test_nested_object(): test.TestOutcome {
 }
 
 function test_array_index(): test.TestOutcome {
-  let d: JsonValue = doc_main();
+  let d: json.JsonValue = doc_main();
   if (ptr_str(d, "/user/tags/0") != "a") {
     return test.fail("index 0");
   }
@@ -109,7 +109,7 @@ function test_descend_into_scalar(): test.TestOutcome {
 }
 
 function test_bad_array_index(): test.TestOutcome {
-  let d: JsonValue = doc_main();
+  let d: json.JsonValue = doc_main();
   if (ptr_str(d, "/user/tags/x") != "<none>") {
     return test.fail("non-numeric index");
   }
@@ -123,7 +123,7 @@ function test_must_start_with_slash(): test.TestOutcome {
 
 function test_escaped_keys(): test.TestOutcome {
   // Key "a/b" is written "/a~1b"; key "m~n" is "/m~0n".
-  let d: JsonValue = json.json_parse("{\"a/b\":1,\"m~n\":2}").unwrap_or(JNull);
+  let d: json.JsonValue = json.json_parse("{\"a/b\":1,\"m~n\":2}").unwrap_or(JNull);
   if (ptr_num(d, "/a~1b") != "1") {
     return test.fail("~1 (slash) escape");
   }
@@ -132,14 +132,14 @@ function test_escaped_keys(): test.TestOutcome {
 
 function test_empty_key(): test.TestOutcome {
   // "/" refers to the value at the empty-string key.
-  let d: JsonValue = json.json_parse("{\"\":7}").unwrap_or(JNull);
+  let d: json.JsonValue = json.json_parse("{\"\":7}").unwrap_or(JNull);
   return test.assert_eq(ptr_num(d, "/"), "7");
 }
 
 function test_multibyte_key_with_escape(): test.TestOutcome {
   // Multibyte bytes around a ~1 escape pass through the byte-level
   // unescape intact: token "é~1ü" decodes to the key "é/ü".
-  let d: JsonValue = json.json_parse("{\"é/ü\":3}").unwrap_or(JNull);
+  let d: json.JsonValue = json.json_parse("{\"é/ü\":3}").unwrap_or(JNull);
   return test.assert_eq(ptr_num(d, "/é~1ü"), "3");
 }
 

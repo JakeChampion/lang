@@ -89,7 +89,7 @@ function test_problem_without_detail(): test.TestOutcome {
 }
 
 function decode(text: string): Result[HttpResponse, json.JsonError] {
-  let v: JsonValue = json.json_parse_result(text)?;
+  let v: json.JsonValue = json.json_parse_result(text)?;
   return Ok(http.ok("parsed"));
 }
 
@@ -254,6 +254,31 @@ function test_fetch_bad_url_answers_502(): test.TestOutcome {
   return test.assert_status(http.respond(proxied(fetch.InvalidUrl("no scheme"))), 502);
 }
 
+// Background work rides on the response untouched until whoever sends it
+// runs it, each piece after the ones added before it.
+function test_background_work_runs_in_the_order_added(): test.TestOutcome {
+  let log: Cell[string] = cell_new("");
+  let resp: HttpResponse = http.ok("sent").with_background(() => log.set(log.get() + "a")).with_background(() => log.set(log.get() + "b"));
+  if (log.get() != "") {
+    return test.fail("ran when the response was built: " + log.get());
+  }
+  match (resp.background) {
+    Some(work) => {
+      work();
+    },
+    None => {
+      return test.fail("no background work");
+    }
+  }
+  match (http.ok("plain").background) {
+    Some(work) => {
+      return test.fail("a plain response carries work");
+    },
+    None => {}
+  }
+  return test.assert_eq(log.get(), "ab");
+}
+
 function main(): i32 {
   let t: test.TestRunner = test.test_new("HTTP respond");
   t = t.it("an Ok response passes through", test_ok_passes_through);
@@ -270,5 +295,6 @@ function main(): i32 {
   t = t.it("a failed fetch answers 502 without the message", test_fetch_failure_answers_502_without_the_message);
   t = t.it("a fetch the handler built wrong answers 500", test_fetch_bad_request_answers_500);
   t = t.it("a fetch of a URL that does not parse answers 502", test_fetch_bad_url_answers_502);
+  t = t.it("background work runs in the order added", test_background_work_runs_in_the_order_added);
   return t.finish();
 }

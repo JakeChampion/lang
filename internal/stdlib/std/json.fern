@@ -1,5 +1,5 @@
-// std/json — JSON encode / decode over the built-in
-// `JsonValue` enum.
+// std/json — JSON encode / decode over the `JsonValue` enum,
+// which an importer names `json.JsonValue`.
 //
 // `json_encode(v)` walks the `JsonValue` tree and produces
 // canonical JSON text. `json_parse(s)` is the inverse —
@@ -24,11 +24,7 @@
 // payload string verbatim — the responsibility for valid
 // numeric formatting sits with the caller.
 
-// json_encode walks Map[string, JsonValue] for JObject values
-// via `.iter()` / `.has_next()` / `.key()` / `.value()`;
-// json_parse builds one with `map_new` / `.insert(...)`. Declare
-// core/map so the receiver methods register under no-prelude
-// and the Map runtime helpers link cleanly.
+// A large object's index hashes its keys as Map does.
 import "core/map";
 // String / byte methods inside the encoder / parser bodies.
 import "std/string";
@@ -39,6 +35,175 @@ import "std/u32";
 import "std/u64";
 // Float `to_string` for the `impl Json for f32 / f64` serialisers.
 import "std/float";
+
+// JsonValue is a JSON document. A number keeps its text, since JSON fixes no
+// precision; `s.parse_int()` / `s.parse_float()` read it.
+pub enum JsonValue {
+  JNull,
+  JBool(boolean),
+  JNumber(string),
+  JString(string),
+  JArray(JsonValue[]),
+  JObject(JsonObject),
+}
+
+// JsonObject is a JSON object's members in document order, one per key. One
+// of more than JSON_LINEAR_MAX members also carries `index`, a power-of-two
+// open-addressed table of member position + 1 (0 is empty) by seeded key
+// hash, sized for half load; a smaller one is searched linearly.
+pub struct JsonObject { keys: string[], values: JsonValue[], index: i32[] }
+
+const JSON_LINEAR_MAX: i32 = 8;
+
+// object is the empty JSON object.
+pub function object(): JsonObject {
+  return JsonObject { keys: [], values: [], index: [] };
+}
+
+// object_of is the object of parallel `keys` and `values`. A repeated key keeps
+// its first position and takes its last value, as repeated `insert`s would.
+pub function object_of(keys: string[], values: JsonValue[]): JsonObject {
+  let n: i32 = keys.len();
+  if (n <= JSON_LINEAR_MAX) {
+    let i: i32 = 1;
+    while (i < n) {
+      if (__json_linear_find(keys, i, keys[i]) >= 0) {
+        return __json_dedupe(keys, values);
+      }
+      i = i + 1;
+    }
+    return JsonObject { keys: keys, values: values, index: [] };
+  }
+  let index: i32[] = __json_index_new(n);
+  let seed: i32 = __map_hash_seed();
+  let i: i32 = 0;
+  while (i < n) {
+    let slot: i32 = __json_index_slot(index, keys, keys[i], seed);
+    if (index[slot] != 0) {
+      return __json_dedupe(keys, values);
+    }
+    index = index.with(slot, i + 1);
+    i = i + 1;
+  }
+  return JsonObject { keys: keys, values: values, index: index };
+}
+
+// __json_dedupe rebuilds an object whose keys repeat by inserting each member.
+function __json_dedupe(keys: string[], values: JsonValue[]): JsonObject {
+  let o: JsonObject = object();
+  let i: i32 = 0;
+  while (i < keys.len()) {
+    o = o.insert(keys[i], values[i]);
+    i = i + 1;
+  }
+  return o;
+}
+
+// __json_linear_find is the position of `key` among `keys[0..n)`, or -1.
+function __json_linear_find(keys: string[], n: i32, key: string): i32 {
+  let i: i32 = 0;
+  while (i < n) {
+    if (keys[i] == key) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
+// __json_index_new is an empty index for `n` members: the least power of two
+// of at least 2n slots.
+function __json_index_new(n: i32): i32[] {
+  let cap: i32 = 16;
+  while (cap < 2 * n) {
+    cap = cap * 2;
+  }
+  let index: i32[] = [];
+  while (index.len() < cap) {
+    index = index.append(0);
+  }
+  return index;
+}
+
+// __json_index_slot is the slot of `index` that holds `key`, or the empty slot
+// it would take.
+function __json_index_slot(index: i32[], keys: string[], key: string, seed: i32): i32 {
+  let mask: i32 = index.len() - 1;
+  let h: i32 = __map_fnv_str_seeded(key, seed) & mask;
+  while (true) {
+    let at: i32 = index[h];
+    if (at == 0 || keys[at - 1] == key) {
+      return h;
+    }
+    h = h + 1 & mask;
+  }
+  return h;
+}
+
+// __json_index_of is `keys[0..n)` indexed.
+function __json_index_of(keys: string[], n: i32): i32[] {
+  let index: i32[] = __json_index_new(n);
+  let seed: i32 = __map_hash_seed();
+  let i: i32 = 0;
+  while (i < n) {
+    index = index.with(__json_index_slot(index, keys, keys[i], seed), i + 1);
+    i = i + 1;
+  }
+  return index;
+}
+
+// position is where `key` is among the object's members, or -1.
+pub function (o: JsonObject) position(key: string): i32 {
+  if (o.index.len() == 0) {
+    return __json_linear_find(o.keys, o.keys.len(), key);
+  }
+  return o.index[__json_index_slot(o.index, o.keys, key, __map_hash_seed())] - 1;
+}
+
+pub function (o: JsonObject) len(): i32 {
+  return o.keys.len();
+}
+
+pub function (o: JsonObject) has(key: string): boolean {
+  return o.position(key) >= 0;
+}
+
+pub function (o: JsonObject) get(key: string): Option[JsonValue] {
+  let at: i32 = o.position(key);
+  if (at < 0) {
+    return None;
+  }
+  return Some(o.values[at]);
+}
+
+pub function (o: JsonObject) get_or(key: string, fallback: JsonValue): JsonValue {
+  let at: i32 = o.position(key);
+  if (at < 0) {
+    return fallback;
+  }
+  return o.values[at];
+}
+
+// insert is the object with `key` bound to `value`: in place of its value when
+// the key is present, as a new last member otherwise.
+pub function (own o: JsonObject) insert(key: string, value: JsonValue): JsonObject {
+  let at: i32 = o.position(key);
+  if (at >= 0) {
+    return JsonObject { ...o, values: o.values.with(at, value) };
+  }
+  let n: i32 = o.keys.len();
+  let keys: string[] = o.keys.append(key);
+  let values: JsonValue[] = o.values.append(value);
+  let index: i32[] = o.index;
+  if (n + 1 > JSON_LINEAR_MAX) {
+    if (2 * (n + 1) > index.len()) {
+      index = __json_index_of(keys, n + 1);
+    } else {
+      index = index.with(__json_index_slot(index, keys, key, __map_hash_seed()), n + 1);
+    }
+  }
+  return JsonObject { keys: keys, values: values, index: index };
+}
 
 function __json_hex_lower(d: i32): i32 {
   if (d < 10) {  // '0' + d
@@ -182,27 +347,17 @@ pub function json_encode(v: JsonValue): string {
       buf = buf.append(93 as u8);  // ']'
       return string_from_bytes_unchecked(buf);
     },
-    JObject(m) => {
-      // Keys are emitted straight off the map's iteration
-      // cursor, which is INSERTION order for a map built by
-      // inserts alone — so a decode→encode round-trip
-      // preserves key order. A map that has had a key
-      // `delete`d iterates in the swap-with-last order
-      // instead (see core/map's "Iteration order" contract,
-      // #4388); JSON object member order is not semantically
-      // significant, so this only affects byte-exactness.
+    JObject(o) => {
       // Same local-u8[] accumulation as JArray (#4379): the old
       // `out = out + …` recopied the growing object text on every member.
       buf = buf.append(123 as u8);  // '{'
-      let first: boolean = true;
-      let iter: MapIter[string, JsonValue] = m.iter();
-      while (iter.has_next()) {
-        if (!first) {  // ','
+      let mi: i32 = 0;
+      while (mi < o.keys.len()) {
+        if (mi > 0) {  // ','
           buf = buf.append(44 as u8);
         }
-        first = false;
         buf = buf.append(34 as u8);  // '"'
-        let ek: string = json_escape(iter.key());
+        let ek: string = json_escape(o.keys[mi]);
         let ekl: i32 = ek.len();
         let kk: i32 = 0;
         while (kk < ekl) {
@@ -211,14 +366,14 @@ pub function json_encode(v: JsonValue): string {
         }
         buf = buf.append(34 as u8);  // '"'
         buf = buf.append(58 as u8);  // ':'
-        let ev: string = json_encode(iter.value());
+        let ev: string = json_encode(o.values[mi]);
         let evl: i32 = ev.len();
         let vk: i32 = 0;
         while (vk < evl) {
           buf = buf.append(ev[vk] as u8);
           vk = vk + 1;
         }
-        iter.advance();
+        mi = mi + 1;
       }
       buf = buf.append(125 as u8);  // '}'
       return string_from_bytes_unchecked(buf);
@@ -300,8 +455,8 @@ function __json_pretty(v: JsonValue, indent: i32, depth: i32): string {
       buf = buf.append(93 as u8);  // ']'
       return string_from_bytes_unchecked(buf);
     },
-    JObject(m) => {
-      if (m.len() == 0) {
+    JObject(o) => {
+      if (o.len() == 0) {
         return "{}";
       }
       let inner: string = __json_spaces((depth + 1) * indent);
@@ -309,20 +464,18 @@ function __json_pretty(v: JsonValue, indent: i32, depth: i32): string {
       let buf: u8[] = [];
       buf = buf.append(123 as u8);  // '{'
       buf = __json_append_str(buf, "\n");
-      let first: boolean = true;
-      let iter: MapIter[string, JsonValue] = m.iter();
-      while (iter.has_next()) {
-        if (!first) {
+      let mi: i32 = 0;
+      while (mi < o.keys.len()) {
+        if (mi > 0) {
           buf = __json_append_str(buf, ",\n");
         }
-        first = false;
         buf = __json_append_str(buf, inner);
         buf = buf.append(34 as u8);  // '"'
-        buf = __json_append_str(buf, json_escape(iter.key()));
+        buf = __json_append_str(buf, json_escape(o.keys[mi]));
         buf = buf.append(34 as u8);  // '"'
         buf = __json_append_str(buf, ": ");
-        buf = __json_append_str(buf, __json_pretty(iter.value(), indent, depth + 1));
-        iter.advance();
+        buf = __json_append_str(buf, __json_pretty(o.values[mi], indent, depth + 1));
+        mi = mi + 1;
       }
       buf = __json_append_str(buf, "\n");
       buf = __json_append_str(buf, close);
@@ -741,10 +894,11 @@ function __json_p_array(p: __JsonParser): (JsonValue, __JsonParser) {
 function __json_p_object(p: __JsonParser): (JsonValue, __JsonParser) {
   p = __JsonParser { ...p, pos: p.pos + 1 };  // consume '{'
   p = __json_p_skip_ws(p);
-  let m: Map[string, JsonValue] = map_new(8);
+  let keys: string[] = [];
+  let values: JsonValue[] = [];
   if (__json_p_byte(p) == 125) {  // '}'
     p = __JsonParser { ...p, pos: p.pos + 1 };
-    return (JObject(m), p);
+    return (JObject(object()), p);
   }
   while (true) {
     let (key, pk) = __json_p_string(p);
@@ -762,7 +916,8 @@ function __json_p_object(p: __JsonParser): (JsonValue, __JsonParser) {
     if (p.error != 0) {
       return (JNull, p);
     }
-    m = m.insert(key, val);
+    keys = keys.append(key);
+    values = values.append(val);
     p = __json_p_skip_ws(p);
     let b: i32 = __json_p_byte(p);
     if (b == 44) {  // ','
@@ -772,7 +927,7 @@ function __json_p_object(p: __JsonParser): (JsonValue, __JsonParser) {
     }
     if (b == 125) {  // '}'
       p = __JsonParser { ...p, pos: p.pos + 1 };
-      return (JObject(m), p);
+      return (JObject(object_of(keys, values)), p);
     }
     return (JNull, __json_fail(p));
   }
@@ -1273,7 +1428,7 @@ pub function json_get_array(obj: JsonValue, key: string): Option[JsonValue[]] {
 
 // `json_get_object(obj, key)` — typed-extract a JObject as
 // a JsonValue (chain extracts through nested objects).
-// Doesn't unwrap to Map[string, JsonValue] — the JsonValue
+// Doesn't unwrap to the JsonObject — the JsonValue
 // shape composes with the other json_get_* helpers, so
 // chains read more naturally as:
 //
@@ -1913,8 +2068,7 @@ pub function from_json_variant(v: JsonValue): Result[string, string] {
       if (m.len() != 1) {
         return Err("expected an object with one key, got " + m.len().to_string());
       }
-      let it: MapIter[string, JsonValue] = m.iter();
-      return Ok(it.key());
+      return Ok(m.keys[0]);
     },
     _ => {
       return Err("expected a variant name or a one-key object, got " + json_kind(v));
@@ -1927,8 +2081,7 @@ pub function from_json_payload(v: JsonValue): JsonValue {
   match (v) {
     JObject(m) => {
       if (m.len() == 1) {
-        let it: MapIter[string, JsonValue] = m.iter();
-        return it.value();
+        return m.values[0];
       }
     },
     _ => {}

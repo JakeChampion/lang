@@ -2544,7 +2544,7 @@ function bind_names(s: Scope, name: string): Scope {
 }
 
 // is_builtin_variant reports whether `name` is a variant of an enum the
-// front-end auto-injects (Option / Result, plus JsonValue / IoError via
+// front-end auto-injects (Option / Result, plus IoError / Body via
 // parser.inject_builtin_enums) — these can be referenced bare (e.g.
 // `return None;`) without a local declaration, so E001 must not flag them.
 // Derived from the single variant→enum table in mx_builtin_enum_of so the
@@ -8027,7 +8027,7 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
     return t_map(type_from_ref_names(r.args[0], tn), type_from_spelling(v_name, tn));
   }
   // Builtin generic enums (#4346 piece 2): `Option[T]` / `Result[T, E]` (and
-  // the bare `JsonValue` / `IoError`) resolve to a NAME-ONLY union — the
+  // the bare `IoError` / `Body`) resolve to a NAME-ONLY union — the
   // generic arguments are dropped, exactly as user enums are name-only in
   // this partial type system. Keyed off r.base (the pre-bracket name), so
   // both `Option` and `Option[i32]` land here. Without this the full
@@ -10337,7 +10337,7 @@ function lret_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.Diag[
 // NOT unify (Go reports E031). The self-host types BOTH as `t_struct(name)`,
 // so the names are mapped back to their family via the user `enum` decls
 // (`mx_enum_of`) and the built-in enums (`mx_builtin_enum_of`, Option /
-// Result / JsonValue / IoError) — but NOT via union aliases, so union
+// Result / IoError / Body) — but NOT via union aliases, so union
 // members correctly stay incompatible. Bare no-payload variants (`None`,
 // `Empty`) resolve to `unknown` in the self-host and so are handled by the
 // unknown-skip below (matching Go, which sees them as the compatible enum
@@ -10361,7 +10361,7 @@ function mx_is_numeric(t: typeinfo.Type): boolean {
 }
 
 // mx_builtin_enum_of returns the built-in enum a variant name belongs to
-// (Option / Result / JsonValue / IoError / Body), or "" if it isn't a built-in
+// (Option / Result / IoError / Body), or "" if it isn't a built-in
 // variant. Two struct arms in the same non-empty family unify.
 // builtin_union_sig is the variant list of a built-in Option or Result,
 // neither of which is in the union table, so a match on one is held to E014
@@ -10382,9 +10382,6 @@ function mx_builtin_enum_of(name: string): string {
   }
   if (name == "Ok" || name == "Err") {
     return "Result";
-  }
-  if (name == "JNull" || name == "JBool" || name == "JNumber" || name == "JString" || name == "JArray" || name == "JObject") {
-    return "JsonValue";
   }
   if (name == "NotFound" || name == "PermissionDenied" || name == "AlreadyExists" || name == "InvalidUtf8" || name == "Interrupted" || name == "Unsupported" || name == "Other") {
     return "IoError";
@@ -12687,7 +12684,7 @@ function settles_or_nested(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean 
 function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag[] {
   let vname: string = variant_pattern_name(qname);
   let out: util.Diag[] = [];
-  // An injected enum (JsonValue, IoError) has no union declaration; its
+  // An injected enum (IoError, Body) has no union declaration; its
   // variants are known by their owner in the struct table.
   if (union_of_variant(vname, s.unions).len() == 0 && find_variant_sig(s.structs, qname).enum_owner.len() == 0) {
     return out;
@@ -15745,7 +15742,7 @@ function ambiguous_variants(enums: parser.EnumDecl[]): string[] {
         }
       }
       // Ambiguous if the name is declared in 2+ USER enums, OR in a user
-      // enum AND a BUILT-IN enum (Option / Result / JsonValue / IoError):
+      // enum AND a BUILT-IN enum (Option / Result / IoError / Body):
       // e.g. `enum O { Some(i32), None }` collides with Option's
       // Some / None, so a bare `None` must be qualified. Mirrors the Go
       // checker, which carries the built-in enums in the same variant
@@ -23468,9 +23465,11 @@ pub struct ModuleEnv { sigs: SigTable, structs: StructTable, unions: UnionTable,
 function module_env(mod: parser.Module): ModuleEnv {
   // The struct sigs resolve against the union NAMES, so a struct field typed
   // as a union resolves rather than going unknown; the full union sigs, with
-  // their variants, come after, and func sigs read both.
+  // their variants, come after, and func sigs read both. The built-in structs
+  // are in it whether or not the module was prepared, so a pass that types a
+  // module lowering hands it (annotate_module) reads a built-in's fields too.
   let rnames: string[] = resource_names(mod);
-  let structs: StructSig[] = collect_struct_sigs(mod.structs, declared_union_names(mod), rnames);
+  let structs: StructSig[] = collect_struct_sigs(parser.inject_builtin_enums(mod.structs), declared_union_names(mod), rnames);
   let struct_names: string[] = [];
   for sd in structs {
     struct_names = struct_names.append(sd.name);
@@ -23592,7 +23591,7 @@ pub function union_sig(s: Scope, name: string): UnionSig {
 
 // owned_variant_names lists the variants `owner` owns, in declaration order,
 // read off the struct table rather than off an enum declaration. The front end
-// INJECTS IoError and JsonValue as variant structs with no enum declaration to
+// INJECTS IoError and Body as variant structs with no enum declaration to
 // list them (parser.inject_builtin_enums), so there is no UnionSig to ask.
 pub function owned_variant_names(s: Scope, owner: string): string[] {
   let out: string[] = [];
@@ -26171,7 +26170,7 @@ function rescope_pattern(p: ast.Pattern, whole: typeinfo.Type, s: Scope): ast.Pa
 }
 
 // enum_members is the variant names of enum `name`: its union signature's, or
-// for a built-in enum outside the table (IoError, JsonValue, Body) the
+// for a built-in enum outside the table (IoError, Body) the
 // injected variant declarations it owns. The built-ins are read only for a
 // module-prefixed `variant`, the one spelling that can name another enum's.
 function enum_members(s: Scope, name: string, variant: string): string[] {

@@ -10342,20 +10342,13 @@ pub function is_builtin_function(name: string): boolean {
 }
 
 // inject_builtin_enums adds the variant structs for the enums the
-// reference front-end auto-injects — JsonValue and IoError — unless the
+// reference front-end auto-injects — IoError and Body — unless the
 // program already declares them. This is the self-host analogue of the
-// checker's builtinEnumDecls: it lets programs use `std/json`
-// (JString(x), match … JObject(m) …) and IoError without a local enum
-// declaration. Option / Result are handled separately (Some/Ok/None/Err
+// checker's builtinEnumDecls: it lets programs use IoError without a local
+// enum declaration. Option / Result are handled separately (Some/Ok/None/Err
 // are special-cased in the emitter).
 pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
   let none: string[] = [];
-  structs = add_builtin_variant(structs, "JNull", none, "JsonValue");
-  structs = add_builtin_variant(structs, "JBool", ["boolean"], "JsonValue");
-  structs = add_builtin_variant(structs, "JNumber", ["string"], "JsonValue");
-  structs = add_builtin_variant(structs, "JString", ["string"], "JsonValue");
-  structs = add_builtin_variant(structs, "JArray", ["JsonValue[]"], "JsonValue");
-  structs = add_builtin_variant(structs, "JObject", ["Map[string, JsonValue]"], "JsonValue");
   structs = add_builtin_variant(structs, "NotFound", ["string"], "IoError");
   structs = add_builtin_variant(structs, "PermissionDenied", ["string"], "IoError");
   structs = add_builtin_variant(structs, "AlreadyExists", ["string"], "IoError");
@@ -10515,6 +10508,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     hsf = hsf.append(StructFieldDecl { name: "body", type_name: "Body", fn_ret: "", fn_param_types: "" });
     hsf = hsf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
     hsf = hsf.append(StructFieldDecl { name: "trailers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
+    hsf = hsf.append(StructFieldDecl { name: "background", type_name: "Option[() => void]", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
   }
   // std/time's seven date/time types are compiler built-ins (registered in
@@ -10631,7 +10625,7 @@ function add_builtin_struct2(structs: StructDecl[], name: string, f0: string, t0
 }
 
 // module_with_builtins returns `mod` with the auto-injected builtin
-// enum variants (JsonValue / IoError) merged into its struct table.
+// enum variants (IoError / Body) merged into its struct table.
 // Compilation drivers call this before emit; emit_module itself stays
 // pure so the asm self-test (which calls emit_module directly and is
 // compiled to native code) doesn't carry the injection path.
@@ -21410,7 +21404,7 @@ function handle_resource_of(type_name: string, resources: ResourceDecl[]): strin
 // front-end injects as built-ins (see checker.go's builtinEnumDecls). A
 // user `enum` declaration shadowing one of these is E010.
 pub function is_reserved_enum_name(name: string): boolean {
-  return name == "Option" || name == "Result" || name == "IoError" || name == "JsonValue" || name == "Body";
+  return name == "Option" || name == "Result" || name == "IoError" || name == "Body";
 }
 
 // reserved_enum_tparams is the type parameters of the built-in enum `name`,
@@ -26186,7 +26180,7 @@ function synth_from_json_value(sd: StructDecl): FuncDecl {
     body = [s_match(fj_call(getter, [e_ident("v"), e_string(fname)]), outer_arms)];
     fi = fi - 1;
   }
-  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "v", type_name: "JsonValue", own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
+  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "v", type_name: "json.JsonValue", own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
   let notp: string[] = [];
   return FuncDecl { stdlib: "", no_inline: false, name: "from_json_value", receiver_name: "", receiver_type: sd.name, receiver_own: false, type_params: notp, params: params, ret_type: "Result[" + sd.name + ", string]", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "FromJson", dyn_traits: [], streams: [] };
 }
@@ -26263,7 +26257,7 @@ function synth_enum_from_json_value(ename: string, self_ty: string, variants: St
   stmts = stmts.append(s_return(e_call(e_ident("Err"), [fj_call("from_json_unknown_variant", [e_ident("__fj_tag")])])));
   let arms: ast.MatchArm[] = [fj_arm("Ok", "__fj_tag", stmts), fj_arm("Err", "__fj_e", [s_return(e_call(e_ident("Err"), [e_ident("__fj_e")]))])];
   let body: ast.Stmt[] = [s_match(fj_call("from_json_variant", [e_ident("v")]), arms), s_return(e_call(e_ident("Err"), [e_string("")]))];
-  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "v", type_name: "JsonValue", own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
+  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "v", type_name: "json.JsonValue", own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
   let notp: string[] = [];
   return FuncDecl { stdlib: "", no_inline: false, name: "from_json_value", receiver_name: "", receiver_type: ename, receiver_own: false, type_params: notp, params: params, ret_type: "Result[" + ename + ", string]", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "FromJson", dyn_traits: [], streams: [] };
 }

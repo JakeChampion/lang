@@ -226,16 +226,43 @@ function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): O
     saved = block;
   }
   let file_pos: i64 = size - saved;
-  let rb: (Out, u8[], boolean) = read_block(src, name, file_pos, block, out);
-  out = rb.0;
-  if (!rb.2) {
-    return out;
+  let w: u8[] = src.held;
+  if (!src.seekable && !s.regex) {
+    // Only a regular expression sees the windows' boundaries, so a plain
+    // separator searches the held stream whole.
+    file_pos = 0 as i64;
+  } else {
+    let rb: (Out, u8[], boolean) = read_block(src, name, file_pos, block, out);
+    out = rb.0;
+    if (!rb.2) {
+      return out;
+    }
+    w = rb.1;
   }
-  let w: u8[] = rb.1;
   let past_end: i32 = w.len();
   let bound: i32 = past_end;
   let first_time: boolean = true;
+  // A one-byte separator after it: each record that fits the builder is
+  // found and pushed here, and anything else goes round the loop below.
+  let plain: boolean = !s.regex && !s.before && s.sep.len() == 1;
+  let sepb: i32 = 0;
+  if (plain) {
+    sepb = s.sep[0] as i32;
+  }
   while (true) {
+    if (plain && !first_time && bound > 0) {
+      let j: i32 = __rmemchr_bytes(w, sepb, bound - 1);
+      while (j >= 0 && past_end - j - 1 < write_size() - buf_len(h)) {
+        buf_push_bytes_range(h, w, j + 1, past_end);
+        past_end = j + 1;
+        bound = j;
+        if (j == 0) {
+          j = 0 - 1;
+        } else {
+          j = __rmemchr_bytes(w, sepb, j - 1);
+        }
+      }
+    }
     let m0: i32 = 0;
     let m1: i32 = 0;
     if (s.regex) {
@@ -323,13 +350,13 @@ function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): O
 // needs a file created EXCLUSIVELY at a chosen path — `open_writer`
 // truncates whatever the name reaches, so a temporary in a shared
 // directory would be a name an attacker can plant (#8776). What the
-// record scan sees is the same either way: the held bytes are handed
-// back in the same 8 KiB windows the temporary file would be read in,
-// so a regular expression meets the same buffer boundaries.
+// record scan sees is the same either way: a regular expression is
+// handed the held bytes in the same 8 KiB windows the temporary file
+// would be read in, so it meets the same buffer boundaries.
 function hold_stream(r: Reader, name: string, o: Out): (Out, u8[], boolean) {
-  let h: usize = buf_new(8192);
+  let h: usize = buf_new(65536);
   while (true) {
-    match (r.read_chunk_bytes(8192)) {
+    match (r.read_chunk_bytes(65536)) {
       Ok(c) => {
         if (c.len() == 0) {
           break;

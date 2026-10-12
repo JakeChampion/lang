@@ -949,6 +949,22 @@ func TestRunnerJsonPointerExamplePasses(t *testing.T) {
 	}
 }
 
+// `tests/stdlib/json_object_test.fern` covers std/json's JsonObject: lookups
+// on both sides of the index threshold, insert, and repeated keys.
+func TestRunnerJsonObjectExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/json_object_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/json object", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `tests/stdlib/utf8_test.fern` covers std/utf8 — UTF-8 codepoint
 // decode (1..4-byte, plus the stray-continuation / truncated / overlong
 // / surrogate rejections), encode (widths + U+FFFD substitution),
@@ -4196,7 +4212,8 @@ func TestRunnerMockPlatformCannedExample(t *testing.T) {
 // (#9854): helpers that fail with `?` over `HttpError`, `http.respond`
 // answering the failure as an RFC 9457 problem, `http.problem`'s body,
 // the `ToResponse` impls for `JsonError`, `string` and `fetch.FetchError`,
-// and `respond_with` keeping the state beside the answer.
+// `respond_with` keeping the state beside the answer, and background work
+// riding on the response in the order it was added.
 func TestRunnerHttpRespondExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/http_respond_test.fern")
@@ -4204,7 +4221,7 @@ func TestRunnerHttpRespondExample(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: HTTP respond", "# pass 14", "# fail 0", "1..14"} {
+	for _, w := range []string{"# Suite: HTTP respond", "# pass 15", "# fail 0", "1..15"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

@@ -92,6 +92,25 @@ function put_at(own xs: i32[], d: i32, v: i32): i32[] {
   return xs.append(v);
 }
 
+// scope_edges lists a scope's edges in the order they were recorded, from its
+// latest, `last`, back along `link`.
+function scope_edges(link: i32[], last: i32): i32[] {
+  let n: i32 = 0;
+  let e: i32 = last;
+  while (e >= 0) {
+    n = n + 1;
+    e = link[e];
+  }
+  let out: i32[] = __alloc_i32(n);
+  e = last;
+  while (e >= 0) {
+    n = n - 1;
+    out = out.with(n, e);
+    e = link[e];
+  }
+  return out;
+}
+
 function put_at_s(own xs: string[], d: i32, v: string): string[] {
   if (d < xs.len()) {
     return xs.with(d, v);
@@ -1129,16 +1148,15 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
   // Per-scope (one entry each): kind, uid (edge ownership), target block id
   // (if->merge, block->exit, loop->header), and the if-only bookkeeping.
   let sc_kind: string[] = [];
-  let sc_uid: i32[] = [];
   let sc_target: i32[] = [];
   let sc_else: i32[] = [];
   let sc_seen_else: i32[] = [];
   let sc_then_blk: i32[] = [];
   let sc_then_reaches: i32[] = [];
   let sc_parent: i32[] = [];
-  // sc_edge_from: the edge count when the scope opened; its edges are the
-  // ones recorded from there on, so an exit scans those rather than all.
-  let sc_edge_from: i32[] = [];
+  // sc_edge_last: the scope's latest edge, -1 for none. `edge_link` chains
+  // each edge to the one recorded before it for the same scope.
+  let sc_edge_last: i32[] = [];
   // loop: the block count when it opened; its header is appended after.
   let sc_blk_from: i32[] = [];
   // Where the scope's entries start in the three stacks below.
@@ -1149,7 +1167,6 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
   // slot's last read may sit and still run again (`read_horizon`).
   let sc_op: i32[] = [];
   let sc_n: i32 = 0;
-  let next_uid: i32 = 1;
 
   // ---- slot writes, tracked per scope ----------------------------------
   // slot_mark[s] is the deepest open scope slot s has been written in (-1:
@@ -1185,14 +1202,14 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
   let lp_pre: i32[] = [];
   let lp_n: i32 = 0;
 
-  // ---- branch edges (global, tagged by owner scope uid) ----------------
+  // ---- branch edges (global, chained per target scope) -----------------
   // Each br/brif records the predecessor block and, in ep_* from
   // edge_from, the value of every slot written since the target scope
   // opened that no longer holds what it held at the open; a slot not
   // listed holds that value. The target
   // scope consumes its edges at `end` (loop -> header phis; block -> exit
   // merge). A loop's entry edge lists nothing: its values are lp_pre.
-  let edge_owner: i32[] = [];
+  let edge_link: i32[] = [];
   let edge_block: i32[] = [];
   let edge_from: i32[] = [];
   let ep_slot: i32[] = [];
@@ -1403,15 +1420,13 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         // push an if-scope
         sc_kind = put_at_s(sc_kind, sc_n, "if");
         sc_op = put_at(sc_op, sc_n, i);
-        sc_uid = put_at(sc_uid, sc_n, next_uid);
-        next_uid = next_uid + 1;
         sc_target = put_at(sc_target, sc_n, merge_id);
         sc_else = put_at(sc_else, sc_n, else_id);
         sc_seen_else = put_at(sc_seen_else, sc_n, 0);
         sc_then_blk = put_at(sc_then_blk, sc_n, 0 - 1);
         sc_then_reaches = put_at(sc_then_reaches, sc_n, 0);
         sc_parent = put_at(sc_parent, sc_n, parent_id);
-        sc_edge_from = put_at(sc_edge_from, sc_n, edge_owner.len());
+        sc_edge_last = put_at(sc_edge_last, sc_n, 0 - 1);
         sc_blk_from = put_at(sc_blk_from, sc_n, 0);
         sc_dl_from = put_at(sc_dl_from, sc_n, dl_n);
         sc_tl_from = put_at(sc_tl_from, sc_n, tl_n);
@@ -1473,15 +1488,13 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       next_blk = next_blk + 1;
       sc_kind = put_at_s(sc_kind, sc_n, "block");
       sc_op = put_at(sc_op, sc_n, i);
-      sc_uid = put_at(sc_uid, sc_n, next_uid);
-      next_uid = next_uid + 1;
       sc_target = put_at(sc_target, sc_n, exit_id);
       sc_else = put_at(sc_else, sc_n, 0);
       sc_seen_else = put_at(sc_seen_else, sc_n, 0);
       sc_then_blk = put_at(sc_then_blk, sc_n, 0);
       sc_then_reaches = put_at(sc_then_reaches, sc_n, 0);
       sc_parent = put_at(sc_parent, sc_n, 0);
-      sc_edge_from = put_at(sc_edge_from, sc_n, edge_owner.len());
+      sc_edge_last = put_at(sc_edge_last, sc_n, 0 - 1);
       sc_blk_from = put_at(sc_blk_from, sc_n, 0);
       sc_dl_from = put_at(sc_dl_from, sc_n, dl_n);
       sc_tl_from = put_at(sc_tl_from, sc_n, tl_n);
@@ -1491,12 +1504,10 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       let hdr_id: i32 = next_blk;
       next_blk = next_blk + 1;
       let entry_blk: i32 = cur_id;
-      let luid: i32 = next_uid;
-      next_uid = next_uid + 1;
       // close the entry block with a br to the header; record the entry edge.
       cur_term = STerm_br(hdr_id);
       blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
-      edge_owner = edge_owner.append(luid);
+      edge_link = edge_link.append(0 - 1);
       edge_block = edge_block.append(entry_blk);
       edge_from = edge_from.append(ep_slot.len());
       // header block: a placeholder phi per slot the body writes (args
@@ -1525,14 +1536,13 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       }
       sc_kind = put_at_s(sc_kind, sc_n, "loop");
       sc_op = put_at(sc_op, sc_n, i);
-      sc_uid = put_at(sc_uid, sc_n, luid);
       sc_target = put_at(sc_target, sc_n, hdr_id);
       sc_else = put_at(sc_else, sc_n, 0);
       sc_seen_else = put_at(sc_seen_else, sc_n, 0);
       sc_then_blk = put_at(sc_then_blk, sc_n, 0);
       sc_then_reaches = put_at(sc_then_reaches, sc_n, 0);
       sc_parent = put_at(sc_parent, sc_n, entry_blk);
-      sc_edge_from = put_at(sc_edge_from, sc_n, edge_owner.len() - 1);
+      sc_edge_last = put_at(sc_edge_last, sc_n, edge_link.len() - 1);
       sc_blk_from = put_at(sc_blk_from, sc_n, blocks.len());
       sc_dl_from = put_at(sc_dl_from, sc_n, dl_n);
       sc_tl_from = put_at(sc_tl_from, sc_n, tl_n);
@@ -1563,10 +1573,10 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           ok = false;
         } else {
           let tgt: i32 = sc_target[pos];
-          let owner: i32 = sc_uid[pos];
           let obid: i32 = cur_id;
           // record this out-edge for the target scope's merge.
-          edge_owner = edge_owner.append(owner);
+          edge_link = edge_link.append(sc_edge_last[pos]);
+          sc_edge_last = sc_edge_last.with(pos, edge_link.len() - 1);
           edge_block = edge_block.append(obid);
           edge_from = edge_from.append(ep_slot.len());
           let jv: i32 = sc_dl_from[pos];
@@ -1802,17 +1812,9 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           cur_term = STerm_br(lf.cont);
         }
         blocks = loop_tail_appended(blocks, cur_dead, cur_id, cur_insts, cur_term, cur_preds);
-        let luid2: i32 = sc_uid[t2];
         let hid: i32 = sc_target[t2];
-        // collect this loop's incoming edges (entry + back-edges).
-        let eidx: i32[] = [];
-        let j: i32 = sc_edge_from[t2];
-        while (j < edge_owner.len()) {
-          if (edge_owner[j] == luid2) {
-            eidx = eidx.append(j);
-          }
-          j = j + 1;
-        }
+        // this loop's incoming edges (entry + back-edges).
+        let eidx: i32[] = scope_edges(edge_link, sc_edge_last[t2]);
         let lpreds: i32[] = [];
         let q: i32 = 0;
         while (q < eidx.len()) {
@@ -1937,16 +1939,8 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       } else {
         // block: open the exit, merging all br/brif-out edges (+ a
         // fall-through edge if the current block reaches `end` live).
-        let buid: i32 = sc_uid[t2];
         let eid: i32 = sc_target[t2];
-        let bidx: i32[] = [];
-        let jb2: i32 = sc_edge_from[t2];
-        while (jb2 < edge_owner.len()) {
-          if (edge_owner[jb2] == buid) {
-            bidx = bidx.append(jb2);
-          }
-          jb2 = jb2 + 1;
-        }
+        let bidx: i32[] = scope_edges(edge_link, sc_edge_last[t2]);
         let falls_through: boolean = !cur_dead && cur_term.kind_tag == 0;
         let fcur: i32 = cur_id;
         // A LIVE current block is always emitted: with a synthesized

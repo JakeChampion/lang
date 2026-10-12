@@ -87,7 +87,7 @@ func runDocumentSymbols(state *docState, uri string) []documentSymbol {
 		if ed == nil || !keep(ed.SourceModule) {
 			continue
 		}
-		// Skip builtin Option / Result / IoError / JsonValue;
+		// Skip builtin Option / Result / IoError / Body;
 		// the checker injects them with P==Position{} which is
 		// the cheap discriminator the checker itself uses.
 		if ed.P == (ast.Position{}) {

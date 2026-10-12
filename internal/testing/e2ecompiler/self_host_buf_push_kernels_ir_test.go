@@ -19,7 +19,9 @@ import (
 // The table's length lives in the array header and its bytes in the
 // backend's element slots, eight bytes on the register backends and four on
 // wasm, so the sweep holds a full table, a short one and an empty one, over
-// every length up to 40 and pushes that outgrow the builder.
+// every length up to 40 and pushes that outgrow the builder. A full table
+// takes a vector loop on the native targets, so a scrambled one maps every
+// byte value, from a string and from a u8[], at every length up to 300.
 
 // bufPushKernelsIRProg is SELF-CHECKING: it maps each string through a Fern
 // reference and compares the builder's bytes against it. A failure returns a
@@ -105,6 +107,14 @@ function check(b: usize, held: string, s: string, table: u8[]): boolean {
     buf_push_mapped(b, s, table);
     return same_bytes(buf_take_bytes(b), held, ref(s, table));
 }
+function check_bytes(b: usize, src: u8[], table: u8[]): boolean {
+    buf_push_bytes_mapped(b, src, table);
+    let out: u8[] = buf_take_bytes(b);
+    if (out.len() != src.len()) { return false; }
+    let i: i32 = 0;
+    while (i < src.len()) { if (out[i] != table[src[i] as i32]) { return false; } i = i + 1; }
+    return true;
+}
 function same_bytes(actual: u8[], held: string, tail: u8[]): boolean {
     if (actual.len() != held.len() + tail.len()) { return false; }
     let i: i32 = 0;
@@ -147,6 +157,17 @@ function main(): i32 {
     k = 0;
     while (k < 384) { every = every + string_from_bytes_unchecked([(k % 128) as u8]); k = k + 1; }
     if (!check_expanded(b, "gh", every, ex)) { return 15; }
+    let scram: u8[] = __alloc_u8(256);
+    k = 0;
+    while (k < 256) { scram = scram.with(k, ((k * 167 + 29) % 256) as u8); k = k + 1; }
+    let src: u8[] = [];
+    k = 0;
+    while (k <= 300) {
+        if (!check_bytes(b, src, scram)) { return 16; }
+        if (!check(b, "", string_from_bytes_unchecked(src), scram)) { return 17; }
+        src = src.append(((k * 131 + 7) % 256) as u8);
+        k = k + 1;
+    }
     buf_free(b);
     return 42;
 }
