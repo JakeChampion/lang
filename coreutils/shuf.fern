@@ -221,11 +221,13 @@ function dense_limit(): u64 {
   return 2147483647 as u64;
 }
 
+// Below 128 Ki entries, or with a draw for one in 32 or more, filling
+// the array costs less than the table's probes.
 function use_dense(n: u64, h: u64): boolean {
   if (n > dense_limit()) {
     return false;
   }
-  return n <= 8388608 as u64 || n / (4 as u64) <= h;
+  return n < 131072 as u64 || n / (32 as u64) < h;
 }
 
 function mix64(k: u64): u64 {
