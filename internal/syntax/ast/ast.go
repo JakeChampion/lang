@@ -4171,6 +4171,11 @@ type TraitMethod struct {
 	// checker's synthesizeTraitDefaults and docs/TRAITS.md. nil = an
 	// abstract signature every impl must provide.
 	Body *Block
+	// TypeParams are a default method's own type parameters (`map[U]`),
+	// beside the trait's, with their bounds. Only a default may have them.
+	TypeParams []string
+	Bounds     map[string][]string
+	BoundArgs  map[string][][]Type
 }
 
 // ImplDecl is a top-level `impl Trait for Type { <function>… }`. The
@@ -4207,6 +4212,9 @@ type ImplDecl struct {
 	// checker synthesises later — a trait's default method inherited by
 	// a parametric impl (synthesizeTraitDefaults). Nil for a plain impl.
 	Bounds map[string][]string
+	// BoundArgs carries each bound's type arguments (`impl[I: Iter[T], T]`),
+	// parallel to Bounds as FuncDecl.BoundArgs is.
+	BoundArgs map[string][][]Type
 	// AssocTypeBindings maps each of the trait's associated-type names to
 	// the concrete type this impl binds it to (`type Item = i32;`). The
 	// conformance check requires one entry per trait associated type; the

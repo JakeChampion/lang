@@ -10775,6 +10775,9 @@ pub struct MFns {
   // rather than "", for the bound-comparison rewrite, which reads a template.
   // Instantiation leaves it off: a clone keyed on a variable names nothing.
   keep_vars: boolean,
+  // The generic-struct methods monomorphize_structs clones only for a call,
+  // as `Base.method`: see wraps_receiver.
+  on_call: string[],
 }
 
 // mfns_buckets is the bucket count of the generic index. Prime, and far larger
@@ -10831,7 +10834,7 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
     ghead = ghead.with(bk, k);
     k = k - 1;
   }
-  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, array_concrete: array_concrete, structs: structs, enums: enums, impls: impls, keep_vars: false };
+  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, array_concrete: array_concrete, structs: structs, enums: enums, impls: impls, keep_vars: false, on_call: [] };
 }
 
 // bg_find returns the position in `fns.decls` of the bounded-generic function
@@ -11467,6 +11470,9 @@ function group_tokens(tokens: string[], at0: i32, n: i32, spare0: i32, structs: 
 // the first that names a declared struct or enum, with that type's arguments
 // grouped after it where it is generic; else the one token.
 function take_piece(tokens: string[], at: i32, spare: i32, structs: StructDecl[], enums: EnumDecl[]): Grouped {
+  if (tokens[at] == "tup") {
+    return take_tuple(tokens, at, structs, enums);
+  }
   let k: i32 = spare;
   while (k >= 0) {
     let end: i32 = at + k + 1;
@@ -11484,6 +11490,34 @@ function take_piece(tokens: string[], at: i32, spare: i32, structs: StructDecl[]
     k = k - 1;
   }
   return Grouped { pieces: [tokens[at]], at: at + 1 };
+}
+
+// A tuple argument from its `tup` token to the matching `put`, each element
+// grouped as an argument is.
+function take_tuple(tokens: string[], at: i32, structs: StructDecl[], enums: EnumDecl[]): Grouped {
+  let close: i32 = at + 1;
+  let depth: i32 = 1;
+  while (close < tokens.len() && depth > 0) {
+    if (tokens[close] == "tup") {
+      depth = depth + 1;
+    } else if (tokens[close] == "put") {
+      depth = depth - 1;
+    }
+    if (depth > 0) {
+      close = close + 1;
+    }
+  }
+  let elems: string = "";
+  let j: i32 = at + 1;
+  while (j < close) {
+    let e: Grouped = take_piece(tokens, j, close - j - 1, structs, enums);
+    if (elems.len() > 0) {
+      elems = elems + ", ";
+    }
+    elems = elems + e.pieces[0];
+    j = e.at;
+  }
+  return Grouped { pieces: ["(" + elems + ")"], at: close + 1 };
 }
 
 // How many type parameters the declared struct or enum `name` takes, or -1
@@ -11523,7 +11557,9 @@ function join_dunder(xs: string[], from: i32, to: i32): string {
 // that is already bracket-free (every existing case — a primitive, a bare
 // struct, or a nested struct clone like `Box__i32`) passes through unchanged, so
 // this is a no-op on the pre-existing instantiations and only reshapes the
-// generic-struct-of-generic-enum combo (#3694). The raw bracketed key is kept
+// generic-struct-of-generic-enum combo (#3694). A tuple argument is bracketed
+// by `tup` and `put` tokens (`(i32, i64)` → `tup__i32__i64__put`), which
+// take_piece reads back as one argument. The raw bracketed key is kept
 // for field-type SUBSTITUTION (so the enum pass still sees `Opt[i32]` to clone);
 // only the emitted NAME is sanitized.
 pub function sanitize_key(s: string): string {
@@ -11533,6 +11569,10 @@ pub function sanitize_key(s: string): string {
     let ch: u8 = s[i];
     if (ch == b'[') {
       out = out + "__";
+    } else if (ch == b'(') {
+      out = out + "tup__";
+    } else if (ch == b')') {
+      out = out + "__put";
     } else if (ch == b']') {} else if (ch == b',') {
       out = out + "__";
     } else if (ch == b';') {  // the multi-param key separator
@@ -12768,6 +12808,9 @@ function recv_method_ret_of(cfa: ast.ExprFieldAccess, args: ast.Expr[], env: MEn
   if (mrt.len() == 0) {
     mrt = generic_recv_ret_of(funcs.decls, rvt, cfa.field);
   }
+  if (mrt.len() == 0) {
+    mrt = clone_recv_ret_of(funcs, rvt, cfa.field);
+  }
   if (looks_type_var(mrt)) {
     return "";
   }
@@ -12803,6 +12846,70 @@ function generic_recv_ret_of(funcs: FuncDecl[], tyname: string, method: string):
       return subst_ty(funcs[i].ret_type, n2, t2);
     }
     i = i + 1;
+  }
+  return "";
+}
+
+// The same return, for a receiver already spelled as a struct clone
+// (`ArrIt__i64`) while monomorphize_structs is still generating that clone's
+// methods: the template's return read through the clone's type arguments, in
+// the clone spelling the rest of that pass's types carry.
+function clone_recv_ret_of(funcs: MFns, tyname: string, method: string): string {
+  let generic: StructDecl[] = [];
+  for sd in funcs.structs {
+    if (sd.type_params.len() > 0) {
+      generic = generic.append(sd);
+    }
+  }
+  for sd in generic {
+    if (is_clone_of(tyname, sd.name)) {
+      let key: string = slice_unchecked(tyname, sd.name.len() + 2, tyname.len()) + "";
+      let args: string[] = split_key(key, sd.type_params.len(), funcs.structs, funcs.enums);
+      if (args.len() != sd.type_params.len()) {
+        return "";
+      }
+      let spelled: string = sd.name + "[";
+      let k: i32 = 0;
+      while (k < args.len()) {
+        if (k > 0) {
+          spelled = spelled + ", ";
+        }
+        spelled = spelled + args[k];
+        k = k + 1;
+      }
+      let ret: string = generic_recv_ret_of(funcs.decls, spelled + "]", method);
+      if (ret.len() == 0) {
+        return "";
+      }
+      return mg_ty(ret, generic, Insts { inames: [], itypes: [], iargs: [] }).ty;
+    }
+  }
+  return "";
+}
+
+// fold_base names the struct a `__smm_` fold of `method` is keyed by for a
+// receiver of type `t`: the generic struct `t` instantiates, or a plain struct
+// whose `method` was folded. "" for none.
+function fold_base(t: string, method: string, funcs: MFns): string {
+  let g: string = generic_base(t, funcs);
+  if (g.len() > 0 || first_bracket(t) >= 0 || t.len() == 0) {
+    return g;
+  }
+  if (bg_find(funcs, smm_name(t, method)) >= 0) {
+    return t;
+  }
+  return "";
+}
+
+// generic_base names the generic struct an instantiated spelling (`Box[i32]`)
+// or its clone (`Box__i32`) is of, or "".
+function generic_base(t: string, funcs: MFns): string {
+  if (first_bracket(t) > 0 && slice_unchecked(t, t.len() - 1, t.len()) == "]") {
+    return strip_struct_base(t);
+  }
+  let owner: InstStruct = inst_struct(t, funcs.structs, funcs.enums);
+  if (owner.at >= 0 && funcs.structs[owner.at].type_params.len() > 0) {
+    return funcs.structs[owner.at].name;
   }
   return "";
 }
@@ -13063,8 +13170,8 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           if (smm_any(funcs, cfa.field)) {
             srt = mono_infer(cfa.obj, env, funcs);
           }
-          if (first_bracket(srt) > 0 && slice_unchecked(srt, srt.len() - 1, srt.len()) == "]") {
-            let sgi: i32 = bg_find(funcs, smm_name(strip_struct_base(srt), cfa.field));
+          if (fold_base(srt, cfa.field, funcs).len() > 0) {
+            let sgi: i32 = bg_find(funcs, smm_name(fold_base(srt, cfa.field, funcs), cfa.field));
             if (sgi >= 0) {
               let sargs: ast.Expr[] = [cfa.obj];
               let sk: i32 = 0;
@@ -13364,14 +13471,15 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
           // register_struct_method_generics. The receiver pins the
           // struct's vars and the arguments pin the method's own, so
           // folding the receiver into arg0 gives the worklist a fully
-          // concrete key. Struct mono runs AFTER this pass, so the
-          // receiver still reads as the generic `Box[i32]` spelling here.
+          // concrete key. The receiver reads as the generic `Box[i32]`
+          // spelling, or as the clone `Box__i32` in a method the struct
+          // pass is cloning.
           let srty: string = "";
           if (smm_any(funcs, fac.field)) {
             srty = mono_infer(fac.obj, env, funcs);
           }
-          if (first_bracket(srty) > 0 && slice_unchecked(srty, srty.len() - 1, srty.len()) == "]") {
-            let smn: string = smm_name(strip_struct_base(srty), fac.field);
+          if (fold_base(srty, fac.field, funcs).len() > 0) {
+            let smn: string = smm_name(fold_base(srty, fac.field, funcs), fac.field);
             let smg: i32 = bg_find(funcs, smn);
             if (smg >= 0) {
               let sraw: ast.Expr[] = [fac.obj];
@@ -13763,10 +13871,19 @@ function struct_field_ty_inst(ot: string, fname: string, structs: StructDecl[], 
   }
   for f in structs[owner.at].fields {
     if (f.name == fname) {
-      return subst_ty(f.type_name, structs[owner.at].type_params, owner.cts);
+      return subst_ty(field_spelling(f), structs[owner.at].type_params, owner.cts);
     }
   }
   return "";
+}
+
+// field_spelling is a field's full type spelling: a function-typed one's `fn`
+// tag expanded from its sidecars, as param_spelling does for a parameter.
+function field_spelling(f: StructFieldDecl): string {
+  if (f.type_name == "fn") {
+    return "(" + f.fn_param_types + ") => " + f.fn_ret;
+  }
+  return f.type_name;
 }
 
 // The declaration an instantiated struct spelling names (`Box[i32]`, or the
@@ -15039,7 +15156,8 @@ function smm_own_typevars(fd: FuncDecl, recv_vars: string[]): string[] {
 
 // is_generic_method_own_tps gates the fold: a method whose receiver is
 // `Base[<vars>]` for a generic struct or enum declared in this module, which
-// introduces at least one type var of its own.
+// introduces at least one type var of its own, or a plain receiver's method
+// with a type parameter the parser keeps (is_plain_method_tps).
 //
 // Unlike the array fold, a type param the RECEIVER does not fix is allowed:
 // the fold binds it from the call's arguments, and the clone substitutes it
@@ -15054,7 +15172,7 @@ function is_generic_method_own_tps(fd: FuncDecl, structs: StructDecl[], enums: E
   }
   let recv_vars: string[] = struct_receiver_typevars(fd.receiver_type);
   if (recv_vars.len() == 0) {
-    return false;
+    return is_plain_method_tps(fd, structs, enums);
   }
   let base: string = strip_struct_base(fd.receiver_type);
   let si: i32 = 0;
@@ -15087,6 +15205,48 @@ function is_generic_method_own_tps(fd: FuncDecl, structs: StructDecl[], enums: E
   return own.len() > 0;
 }
 
+// is_plain_method_tps gates the fold for a method of a plain struct or enum
+// whose own type parameters the parser keeps, as it keeps a free function's: a
+// bounded one, or an unbounded one promoted because it is a type argument in
+// the signature (`wrap[U](u: U): Box[U]`). Its instances then come from the
+// bounded-generic worklist, as a free function's do. So the struct it returns
+// is the clone at the call's types (`Box__i32`), the one a binding or
+// parameter written `Box[i32]` names, and a variable only a bound pins (`U` of
+// `first_of[U, J: It[U]](j: J): Option[U]`) is read off the impl the bound
+// resolves to. A method whose parameters are all erased stays with the typed
+// lowering.
+function is_plain_method_tps(fd: FuncDecl, structs: StructDecl[], enums: EnumDecl[]): boolean {
+  if (fd.type_params.len() == 0 || first_bracket(fd.receiver_type) >= 0) {
+    return false;
+  }
+  if (!is_plain_decl(fd.receiver_type, structs, enums)) {
+    return false;
+  }
+  let own: string[] = smm_own_typevars(fd, []);
+  for tp in fd.type_params {
+    if (!str_in(own, tp)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// is_plain_decl reports whether `name` is a declared struct or enum with no
+// type parameters.
+function is_plain_decl(name: string, structs: StructDecl[], enums: EnumDecl[]): boolean {
+  for sd in structs {
+    if (sd.name == name && sd.type_params.len() == 0) {
+      return true;
+    }
+  }
+  for ed in enums {
+    if (ed.name == name && ed.type_params.len() == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // smm_name is the folded free generic's name: `__smm_<Base>_<method>`. The
 // base is part of the name because two generic structs may both declare a
 // `map` — unlike the array / map folds, whose receiver is a single built-in.
@@ -15113,12 +15273,13 @@ function smm_any(fns: MFns, field: string): boolean {
   return false;
 }
 
-// register_struct_method_generics folds each generic-struct or generic-enum
-// method that has its own type params into a free generic (receiver as arg0,
-// receiver vars + own vars as the type params) and drops the original. A
+// register_struct_method_generics folds each method is_generic_method_own_tps
+// admits into a free generic (receiver as arg0, receiver vars + own vars as
+// the type params) and drops the original. A
 // no-op when none is present — the stdlib's only generic structs are `Set[T]`
 // and `iter.ArrayIter[T]`, neither of which declares a method var the
-// receiver does not fix, and its generic enums declare no methods, so the
+// receiver does not fix, its generic enums declare no methods, and no plain
+// receiver's method declares a type parameter of its own, so the
 // byte-identical bootstrap fixpoint is preserved. Runs before
 // monomorphize_module so the folded body's own generic calls rewrite too, and
 // before monomorphize_structs / monomorphize_enums so the clones it leaves
@@ -15924,7 +16085,7 @@ function infer_lit_key(gd: StructDecl, fnames: string[], fvals: ast.Expr[], env:
       if (fnames[vi] == fname) {
         let ct: string = mono_infer(fvals[vi], env, funcs);
         if (ct.len() > 0) {
-          binds = bind_unify(gd.fields[fi].type_name, ct, gd.type_params, binds, funcs);
+          binds = bind_unify(field_spelling(gd.fields[fi]), ct, gd.type_params, binds, funcs);
         }
       }
       vi = vi + 1;
@@ -15945,6 +16106,25 @@ function infer_lit_key(gd: StructDecl, fnames: string[], fvals: ast.Expr[], env:
     k = k + 1;
   }
   return key;
+}
+
+// on_call_request records a call to (or a value of) a method cloned only for
+// a call, under the clone its receiver names.
+function on_call_request(fa: ast.ExprFieldAccess, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts): Insts {
+  if (funcs.on_call.len() == 0) {
+    return ins;
+  }
+  let sfx: string = "." + fa.field;
+  for name in funcs.on_call {
+    if (util.str_has_suffix(name, sfx)) {
+      let base: string = slice_unchecked(name, 0, name.len() - sfx.len()) + "";
+      let rt: TyIns = mg_ty(mono_infer(fa.obj, env, funcs), gstructs, ins);
+      if (is_clone_of(rt.ty, base)) {
+        return rt.mins.iadd(name, slice_unchecked(rt.ty, base.len() + 2, rt.ty.len()) + "");
+      }
+    }
+  }
+  return ins;
 }
 
 // ms_expr rewrites a struct literal of a generic struct to its mangled
@@ -16010,7 +16190,7 @@ function ms_expr(e: ast.Expr, env: MEnv, gstructs: StructDecl[], funcs: MFns, in
     },
     ast.ExprFieldAccess(fa) => {
       let o: RExpr = ms_expr(fa.obj, env, gstructs, funcs, ins);
-      return RExpr { rexpr: ast.ExprFieldAccess { obj: o.rexpr, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, rins: o.rins };
+      return RExpr { rexpr: ast.ExprFieldAccess { obj: o.rexpr, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, rins: on_call_request(fa, env, gstructs, funcs, o.rins) };
     },
     ast.ExprIdent(id) => {
       // A type parameter substituted into an associated call's object
@@ -16836,6 +17016,66 @@ function struct_named(structs: StructDecl[], name: string): boolean {
   return false;
 }
 
+// A method of a generic struct clone, its body rewritten against the clone.
+function ms_clone_method(mm: FuncDecl, key: string, gstructs: StructDecl[], mod: Module, sfns: MFns, ins: Insts): FRes {
+  let cr: FRes = clone_struct_method(mm, strip_struct_base(mm.receiver_type), key, gstructs, mod.structs, mod.enums, ins);
+  let clm: FuncDecl = cr.ffn;
+  let menv: MEnv = env_from_decl(clm);
+  let mr: RStmts = mono_stmts(clm.body, menv, sfns, cr.fins, fn_tag_spelling(clm.ret_type, clm.ret_fn_ret, clm.ret_fn_param_types));
+  let br2: RStmts = ms_stmts(mr.rstmts, menv, gstructs, sfns, mr.rins3, clm.ret_type);
+  return FRes { ffn: FuncDecl { ...clm, body: br2.rstmts }, fins: br2.rins3 };
+}
+
+// wrapping_methods names, as `Base.method`, each generic-struct method whose
+// result holds its own receiver inside another instance, as a lazy adapter
+// does (`filter` on `FilterIt[I, T]` answering `FilterIt[FilterIt[I, T], T]`).
+// Cloning one for every instance would make each clone's result a new,
+// larger instance with the same method, so it is cloned only for a call.
+function wrapping_methods(funcs: FuncDecl[], gstructs: StructDecl[]): string[] {
+  let out: string[] = [];
+  for fd in funcs {
+    let base: string = strip_struct_base(fd.receiver_type);
+    if (fd.receiver_type.len() > 0 && gstruct_index(gstructs, base) >= 0 && wraps(parse_type_ref(fd.ret_type), fd.receiver_type, gstructs)) {
+      out = out.append(base + "." + fd.name);
+    }
+  }
+  return out;
+}
+
+// wraps says `t` holds `recv` as an argument of a generic struct instance.
+function wraps(t: TypeRef, recv: string, gstructs: StructDecl[]): boolean {
+  let generic: boolean = !t.is_tuple && !t.is_fn && gstruct_index(gstructs, t.base) >= 0;
+  for a in t.args {
+    if (generic && util.contains(render_type_ref(a), recv) || wraps(a, recv, gstructs)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function on_call_template(funcs: FuncDecl[], name: string): FuncDecl {
+  let at: i32 = 0;
+  while (strip_struct_base(funcs[at].receiver_type) + "." + funcs[at].name != name) {
+    at = at + 1;
+  }
+  return funcs[at];
+}
+
+// ms_clone_methods appends to `fns` a clone of every method of the generic
+// struct `base` at `key`, except those cloned only when a call reaches them.
+struct MsClones { fns: FuncDecl[], ins: Insts }
+
+function ms_clone_methods(fns: FuncDecl[], mod: Module, base: string, key: string, gstructs: StructDecl[], sfns: MFns, ins: Insts): MsClones {
+  let out: MsClones = MsClones { fns: fns, ins: ins };
+  for mm in mod.funcs {
+    if (mm.receiver_type.len() > 0 && strip_struct_base(mm.receiver_type) == base && util.index_of_str(sfns.on_call, base + "." + mm.name) < 0) {
+      let cm: FRes = ms_clone_method(mm, key, gstructs, mod, sfns, out.ins);
+      out = MsClones { fns: out.fns.append(cm.ffn), ins: cm.fins };
+    }
+  }
+  return out;
+}
+
 function ms_module(mod: Module): Module {
   let gstructs: StructDecl[] = [];
   let gi: i32 = 0;
@@ -16855,7 +17095,7 @@ function ms_module(mod: Module): Module {
   let keep: boolean = deferred.len() > 0;
 
   let ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
-  let sfns: MFns = mfns_of(mod.funcs, mod.structs, mod.enums, mod.impls);
+  let sfns: MFns = MFns { ...mfns_of(mod.funcs, mod.structs, mod.enums, mod.impls), on_call: wrapping_methods(mod.funcs, gstructs) };
 
   // Phase 1: rewrite all references; drop the generic decls unless a
   // deferred enum's templates still name them.
@@ -16920,6 +17160,13 @@ function ms_module(mod: Module): Module {
       continue;
     }
     done = done.iadd(base, key);
+    if (util.index_of_str(sfns.on_call, base) >= 0) {
+      let cm: FRes = ms_clone_method(on_call_template(mod.funcs, base), key, gstructs, mod, sfns, ins);
+      ins = cm.fins;
+      nfuncs = nfuncs.append(cm.ffn);
+      wi = wi + 1;
+      continue;
+    }
     let idx: i32 = gstruct_index(gstructs, base);
     if (idx < 0) {
       let bgi: i32 = bg_find(sfns, base);
@@ -16952,22 +17199,9 @@ function ms_module(mod: Module): Module {
         cfi = cfi + 1;
       }
       nstructs = nstructs.append(StructDecl { name: mang, fields: cf, type_params: [], derives: gd.derives, line: gd.line, col: gd.col, enum_owner: gd.enum_owner, must_consume: gd.must_consume, variant_field_names: gd.variant_field_names, is_pub: true, is_package: false });
-      let mi: i32 = 0;
-      while (mi < mod.funcs.len()) {
-        let mm: FuncDecl = mod.funcs[mi];
-        if (mm.receiver_type.len() > 0 && strip_struct_base(mm.receiver_type) == base) {
-          let cr: FRes = clone_struct_method(mm, base, key, gstructs, mod.structs, mod.enums, ins);
-          ins = cr.fins;
-          let clm: FuncDecl = cr.ffn;
-          let menv: MEnv = env_from_decl(clm);
-          let mr: RStmts = mono_stmts(clm.body, menv, sfns, ins, fn_tag_spelling(clm.ret_type, clm.ret_fn_ret, clm.ret_fn_param_types));
-          ins = mr.rins3;
-          let br2: RStmts = ms_stmts(mr.rstmts, menv, gstructs, sfns, ins, clm.ret_type);
-          ins = br2.rins3;
-          nfuncs = nfuncs.append(FuncDecl { ...clm, body: br2.rstmts });
-        }
-        mi = mi + 1;
-      }
+      let cms: MsClones = ms_clone_methods(nfuncs, mod, base, key, gstructs, sfns, ins);
+      ins = cms.ins;
+      nfuncs = cms.fns;
     }
     wi = wi + 1;
   }
@@ -17531,7 +17765,7 @@ function struct_lit_spelling(sl: ast.ExprStructLit, env: MEnv, funcs: MFns): str
       if (f.name == sl.field_names[k]) {
         let at: string = mono_infer(sl.field_values[k], env, funcs);
         if (at.len() > 0) {
-          binds = bind_unify(f.type_name, at, sd.type_params, binds, funcs);
+          binds = bind_unify(field_spelling(f), at, sd.type_params, binds, funcs);
         }
       }
     }
@@ -24895,7 +25129,19 @@ function respell_type_vars_module(mod: Module, written: boolean): Module {
     let ivars: string[] = add_tvars(add_tvars(none, im.all_type_params), im.type_params);
     impls = impls.append(rename_impl_type_vars(im, ivars, tvar_respellings(ivars, written)));
   }
-  return Module { ...mod, funcs: funcs, structs: structs, enums: enums, impls: impls };
+  // A trait's default method is copied onto each impl, in a later module when
+  // the impl is another module's, so it is respelled with the functions: its
+  // own variables and the trait's.
+  let traits: TraitDecl[] = [];
+  for td in mod.trait_decls {
+    let methods: FuncDecl[] = [];
+    for m in td.methods {
+      let mvars: string[] = add_tvars(fn_type_vars(m, mod, written), td.type_params);
+      methods = methods.append(rename_fn_type_vars(m, mvars, tvar_respellings(mvars, written), mvals));
+    }
+    traits = traits.append(TraitDecl { ...td, type_params: tvar_respellings(td.type_params, written), methods: methods });
+  }
+  return Module { ...mod, funcs: funcs, structs: structs, enums: enums, impls: impls, trait_decls: traits };
 }
 
 // module_value_names is every module-level name the checker resolves as a
@@ -25333,7 +25579,7 @@ function rename_tv_annot(st: ast.Stmt, vars: string[], cts: string[]): ast.Stmt 
 // name; `method` is the parsed method (params[0] = self for a receiver
 // method, `Self` still spelled in its types). An impl of the trait that
 // omits the method inherits a copy via finalize_impl_method.
-pub struct TraitDefault { trait_name: string, method: FuncDecl }
+pub struct TraitDefault { trait_name: string, trait_params: string[], method: FuncDecl }
 
 // ImplInfo is the per-impl metadata parse_module retains so it can
 // synthesise inherited defaults after the full module is parsed (a trait
@@ -27630,7 +27876,57 @@ pub function subst_self(ty: string, impl_type: string): string {
   return out;
 }
 
-pub function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[], impl_tbs: string[]): FuncDecl {
+// inherit_default is the copy of a trait's default method an impl that omits
+// it receives: the trait's type parameters read as the impl's trait
+// arguments (`T` is `i32` for `impl Holder[i32]`), and the method's own type
+// parameters renamed apart from the impl's, so `map[U]` inherited by an
+// `impl[I, T, U]` does not take the impl's `U` for its own.
+function renamed_list(xs: string[], from: string[], to: string[]): string[] {
+  let out: string[] = [];
+  for x in xs {
+    let at: i32 = util.index_of_str(from, x);
+    if (at >= 0) {
+      out = out.append(to[at]);
+    } else {
+      out = out.append(x);
+    }
+  }
+  return out;
+}
+
+pub function inherit_default(m: FuncDecl, trait_params: string[], im: ImplInfo): FuncDecl {
+  let args: string[] = type_args_of(im.trait_ref);
+  let from: string[] = [];
+  let to: string[] = [];
+  for v in m.all_type_params {
+    let fresh: string = v;
+    let n: i32 = 1;
+    while (str_in(im.all_type_params, fresh) || str_in(args, fresh) || fresh != v && str_in(m.all_type_params, fresh)) {
+      fresh = v + util.i32_to_string(n);
+      n = n + 1;
+    }
+    if (fresh != v) {
+      from = from.append(v);
+      to = to.append(fresh);
+    }
+  }
+  if (args.len() == trait_params.len()) {
+    from = util.append_all(from, trait_params);
+    to = util.append_all(to, args);
+  }
+  // `Self` in the body is the impl type too: a default with type parameters
+  // of its own is hoisted to a free generic, where no receiver supplies it.
+  from = from.append("Self");
+  to = to.append(im.impl_type);
+  let params: ast.ParamDecl[] = [];
+  for pd in m.params {
+    params = params.append(ast.ParamDecl { ...pd, type_name: subst_ty(pd.type_name, from, to), fn_ret: subst_ty(pd.fn_ret, from, to), fn_param_types: subst_ty_list(pd.fn_param_types, from, to) });
+  }
+  let sub: FuncDecl = FuncDecl { ...m, type_params: renamed_list(m.type_params, from, to), all_type_params: renamed_list(m.all_type_params, from, to), params: params, ret_type: subst_ty(m.ret_type, from, to), ret_fn_ret: subst_ty(m.ret_fn_ret, from, to), ret_fn_param_types: subst_ty_list(m.ret_fn_param_types, from, to), body: subst_stmts(m.body, from, to) };
+  return finalize_impl_method(sub, im.impl_type, im.type_params, im.bounds);
+}
+
+function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[], impl_tbs: string[]): FuncDecl {
   let rt: string = subst_self(m.ret_type, impl_type);
   let mtps: string[] = m.type_params;
   // bound_traits is allowed to run short of type_params — a promoted unbounded
@@ -27693,6 +27989,16 @@ pub function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: stri
 // method parses with the ordinary parse_func_decl machinery (no receiver
 // clause; its first parameter is `self: Self`); an abstract one ends at
 // `;` and so comes back with an empty body, which we skip.
+// required_own_tps reports a required trait method that declares type
+// parameters of its own: an impl method cannot declare them, so it could never
+// be provided.
+function required_own_tps(bad: ast.Stmt[], at: Par, fd: FuncDecl): ast.Stmt[] {
+  if (fd.body.len() == 0 && fd.all_type_params.len() > 0) {
+    return bad.append(decl_sentinel(at, "trait method \"" + fd.name + "\" declares its own type parameters, so it must have a default body"));
+  }
+  return bad;
+}
+
 function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stmt[], Par) {
   let defaults: TraitDefault[] = [];
   let trait_bad: ast.Stmt[] = [];
@@ -27785,8 +28091,10 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
         continue;
       }
       if (p.peek_keyword() == "function") {
+        let fn_at: Par = p;
         let (fr_func, fr_p) = parse_func_decl(p);
         p = fr_p;
+        trait_bad = required_own_tps(trait_bad, fn_at, fr_func);
         // check_decl_names reports the nameless method; the rest of its
         // signature is skipped so it does not read as stray tokens.
         if (fr_func.name.len() == 0) {
@@ -27801,7 +28109,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
         // body is indistinguishable from an abstract `;` here and
         // is treated as abstract — it would synthesise a no-op.)
         if (fr_func.body.len() > 0) {
-          defaults = defaults.append(TraitDefault { trait_name: simple, method: fr_func });
+          defaults = defaults.append(TraitDefault { trait_name: simple, trait_params: trait_tps.tnames, method: fr_func });
           default_sigs = default_sigs.append(FuncDecl { ...fr_func, body: [] });
         } else {
           // Abstract (body-less) signature: a REQUIRED method every
@@ -29195,7 +29503,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
       let td: TraitDefault = trait_defaults[ddi];
       if (td.trait_name == info.trait_name) {
         if (!str_list_contains(info.method_names, td.method.name)) {
-          let td_cl: MethodClaim = claim_method_name(finalize_impl_method(td.method, info.impl_type, info.type_params, info.bounds), info.trait_name, mth_keys, mth_traits);
+          let td_cl: MethodClaim = claim_method_name(inherit_default(td.method, td.trait_params, info), info.trait_name, mth_keys, mth_traits);
           mth_keys = td_cl.keys;
           mth_traits = td_cl.traits;
           funcs = funcs.append(td_cl.fn);

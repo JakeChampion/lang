@@ -17,28 +17,19 @@
 #                       the nix store. Optional — the column is dropped when
 #                       there is none, and the header names what was found.
 #   FERN_TARGET         the -target to build for. Default: the host.
-#   FERN_BENCH_COMPILERS  which Fern compiler builds the utilities: `both`
-#                       (default), `native` (bin/fern alone) or `selfhost`
-#                       (bin/fern-selfhost alone).
 #   FERN_BENCH_PROBE_TIMEOUT  seconds one trial of a workload may take before
 #                       the row records that the build did not finish.
 #                       Default: 60.
 #
-# TWO FERN COLUMNS, because there are two Fern compilers and the project is
-# moving to the self-hosted one by default (CLAUDE.md). `fern` is the native
-# compiler's build and `fern-sh` the self-hosted compiler's build of the SAME
-# source, so the pair answers the two questions separately: whether Fern beats
-# GNU and uutils, and whether it still does once the default compiler changes.
-# Measuring only the native build would have let the self-host leg regress
-# against GNU unobserved, which is what #9077 (accumulation is quadratic under
-# the self-host) and #8688 (a field-place `.with` clones the buffer) cost
-# today.
+# ONE FERN COLUMN, built by bin/fern-selfhost: the native backends are
+# retired (docs/NATIVE-RETIREMENT.md), so the self-hosted compiler is the only
+# one that emits code, and `bin/fern -target` itself delegates to it.
 #
-# A BOUND ON ONE TRIAL, because a self-host build can be slower by a factor
-# that turns a benchmark into a hang: #8688 has `seq` ~400x slower and growing
-# to 11 GB. Each Fern build therefore runs the workload once under `timeout`
-# before hyperfine sees it, and a build that does not finish is REPORTED in
-# its cell rather than dropped. The bound is time and not memory on purpose:
+# A BOUND ON ONE TRIAL, because a compiler regression can be slower by a
+# factor that turns a benchmark into a hang: #8688 had `seq` ~400x slower and
+# growing to 11 GB. Each Fern build therefore runs the workload once under
+# `timeout` before hyperfine sees it, and a build that does not finish is
+# REPORTED in its cell rather than dropped. The bound is time and not memory on purpose:
 # the arena is a 16 GiB MAP_NORESERVE reservation (docs/LOCAL-DEV-LOOP.md), so
 # `ulimit -v` and `ulimit -d` would refuse every Fern binary at startup.
 #
@@ -117,6 +108,9 @@ if [ -n "$path_gnu" ]; then
     *":$path_gnu:"*) ;;
     *) gnu_dirs="${gnu_dirs:+$gnu_dirs:}$path_gnu" ;;
   esac
+  # Distributions install chroot in the sibling sbin.
+  path_sbin="$(dirname "$path_gnu")/sbin"
+  [ -d "$path_sbin" ] && gnu_dirs="$gnu_dirs:$path_sbin"
   [ -n "$gnu" ] || gnu="$path_gnu"
 fi
 [ -n "$gnu" ] && is_gnu "$gnu" || {
@@ -246,16 +240,6 @@ if [ -z "$target" ]; then
   esac
 fi
 
-# WHICH FERN COMPILER BUILDS THE UTILITIES. `both` is the default: the
-# self-hosted compiler is becoming the default one, so a row measured under
-# the native build alone stops describing what a user gets.
-compilers="${FERN_BENCH_COMPILERS:-both}"
-case "$compilers" in
-  both)     want_native=y;  want_selfhost=y  ;;
-  native)   want_native=y;  want_selfhost="" ;;
-  selfhost) want_native=""; want_selfhost=y  ;;
-  *) echo "coreutils-bench: FERN_BENCH_COMPILERS must be both, native or selfhost (got '$compilers')" >&2; exit 2 ;;
-esac
 probe_timeout="${FERN_BENCH_PROBE_TIMEOUT:-60}"
 
 # `timeout` is itself a GNU coreutils program, and on macOS the system ships
@@ -268,24 +252,16 @@ else
     echo "coreutils-bench: no timeout(1) on PATH or in $gnu_dirs" >&2; exit 1; }
 fi
 
-go build -o bin/fern ./cmd/fern
-
 # bin/fern-selfhost is rebuilt when MISSING OR STALE. A binary left over from
 # an earlier commit compiles the same sources into different code, and the
 # column would then name a compiler nobody can identify. It is built for the
 # HOST, because it has to run here; the utilities it emits are built for
-# $target like the native leg's.
-#
-# Staleness is judged against the SOURCES of both compilers, never against
-# bin/fern: `go build -o` rewrites its output whether or not anything changed,
-# so `bin/fern -nt bin/fern-selfhost` is true on every run after the build
-# above and would rebuild the self-host CLI every time.
-if [ -n "$want_selfhost" ]; then
-  if [ ! -x bin/fern-selfhost ] || [ -n "$(find compiler cmd internal \
-       \( -name '*.fern' -o -name '*.go' \) -newer bin/fern-selfhost -print -quit 2>/dev/null)" ]; then
-    echo "coreutils-bench: building bin/fern-selfhost (missing or stale)" >&2
-    make selfhost-cli >&2
-  fi
+# $target. Staleness is judged against the compiler's and the launcher's
+# sources.
+if [ ! -x bin/fern-selfhost ] || [ -n "$(find compiler cmd internal \
+     \( -name '*.fern' -o -name '*.go' \) -newer bin/fern-selfhost -print -quit 2>/dev/null)" ]; then
+  echo "coreutils-bench: building bin/fern-selfhost (missing or stale)" >&2
+  make selfhost-cli >&2
 fi
 
 out=$(mktemp -d)
@@ -294,7 +270,7 @@ if [ -n "$uu_multicall" ]; then
   mkdir -p "$uu"
 fi
 trap 'rm -rf "$out"' EXIT
-mkdir -p "$out/fern" "$out/selfhost"
+mkdir -p "$out/fern"
 
 if [ $# -eq 0 ]; then
   utils=()
@@ -303,16 +279,11 @@ if [ $# -eq 0 ]; then
 fi
 for u in "$@"; do
   [ -f "coreutils/$u.fern" ] || { echo "coreutils-bench: no coreutils/$u.fern" >&2; exit 1; }
-  if [ -n "$want_native" ]; then
-    ./bin/fern -O -target "$target" -o "$out/fern/$u" "coreutils/$u.fern"
-  fi
   # The self-host CLI takes the stdlib root as a second operand and needs
   # ABSOLUTE paths: a relative one is unopenable from an arm64-darwin binary
   # (AT_FDCWD is -2 on XNU), and every other harness passes absolute for it.
-  if [ -n "$want_selfhost" ]; then
-    ./bin/fern-selfhost -O -target "$target" -o "$out/selfhost/$u" \
-      "$PWD/coreutils/$u.fern" "$PWD/internal/stdlib"
-  fi
+  ./bin/fern-selfhost -O -target "$target" -o "$out/fern/$u" \
+    "$PWD/coreutils/$u.fern" "$PWD/internal/stdlib"
 done
 
 # probe_completes CMD — run one trial of CMD under a time bound, so a build
@@ -355,27 +326,30 @@ workloads() {
 
 # --- measure ----------------------------------------------------------------
 
+# A utility with no GNU reference is skipped and named in the header rather
+# than ending the run, which would discard every row measured before it.
 jsons=()
+no_gnu=()
 for u in "$@"; do
+  gnub=$(gnu_bin "$u") || { no_gnu+=("$u"); continue; }
   uub=$(uutils_bin "$u")
   while IFS=$'\t' read -r label shell template; do
     cmds=()
     incomplete=()
     slowest_ms=0
-    for impl in fern selfhost gnu uutils; do
+    for impl in fern gnu uutils; do
       case "$impl" in
-        fern)     [ -n "$want_native" ] || continue; bin="$out/fern/$u" ;;
-        selfhost) [ -n "$want_selfhost" ] || continue; bin="$out/selfhost/$u" ;;
-        gnu)      bin=$(gnu_bin "$u") || exit 1 ;;
-        uutils)   bin="$uub"; [ -n "$bin" ] || continue ;;
+        fern)   bin="$out/fern/$u" ;;
+        gnu)    bin=$gnub ;;
+        uutils) bin="$uub"; [ -n "$bin" ] || continue ;;
       esac
       cmd=${template//\{gnu\}/$gnu}
       cmd=${cmd//\{\}/$bin}
-      # Only the Fern builds are probed. The references are the binaries the
+      # Only the Fern build is probed. The references are the binaries the
       # workload was sized against, so a GNU that did not finish would be the
       # finding rather than something to route around.
       case "$impl" in
-        fern|selfhost)
+        fern)
           if ! probe_completes "$cmd"; then
             echo "coreutils-bench: $u: $label: $impl did not finish in ${probe_timeout}s" >&2
             incomplete+=("$impl")
@@ -390,8 +364,8 @@ for u in "$@"; do
     [ "$shell" = y ] && shellopt=(--shell=sh)
     # A SLOW ROW IS CAPPED at roughly a minute per implementation. 20 runs plus
     # 3 warmups of a workload one trial of which takes 50 s is 20 minutes for
-    # one row, and the self-host leg produces exactly that: a build slow enough
-    # to matter but not slow enough to trip the probe. The cap keeps the run
+    # one row, and a compiler regression produces exactly that: a build slow
+    # enough to matter but not slow enough to trip the probe. The cap keeps the run
     # bounded, the count never drops below 3 so a sigma still means something,
     # and the report prints the count wherever it is under 20 rather than
     # letting the header's "at least 20" cover a row that had five.
@@ -435,11 +409,8 @@ done
 table=$(python3 - "${jsons[@]}" <<'PY'
 import json, sys
 
-# `fern` is the native compiler's build, `fern-sh` the self-hosted compiler's
-# build of the same source. Columns appear only for the implementations this
-# run actually measured.
-DISPLAY = {"fern": "fern", "selfhost": "fern-sh", "gnu": "gnu", "uutils": "uutils"}
-ORDER = ["fern", "selfhost", "gnu", "uutils"]
+# Columns appear only for the implementations this run actually measured.
+ORDER = ["fern", "gnu", "uutils"]
 
 rows = []
 present = set()
@@ -454,15 +425,7 @@ for path in sys.argv[1:]:
 impls = [i for i in ORDER if i in present]
 
 # A ratio cell is mean(first) / mean(second), so above 1 the SECOND is faster.
-# Each Fern build is ranked against each reference, then the two Fern builds
-# against each other — which is the column that says what changing the default
-# compiler costs.
-ratios = []
-for fern in ("fern", "selfhost"):
-    if fern in impls:
-        ratios += [(ref, fern) for ref in ("gnu", "uutils") if ref in impls]
-if "fern" in impls and "selfhost" in impls:
-    ratios.append(("fern", "selfhost"))
+ratios = [(ref, "fern") for ref in ("gnu", "uutils") if ref in impls and "fern" in impls]
 
 def ms(by, inc, ref, impl):
     if impl in inc:
@@ -481,8 +444,8 @@ def ratio(by, ref, a, b):
     return f'{ra["mean"]/rb["mean"]:.2f}×' if ra and rb and a not in ref and b not in ref else "—"
 
 hdr = (["utility", "workload"]
-       + [f"{DISPLAY[i]} (ms)" for i in impls]
-       + [f"{DISPLAY[a]} / {DISPLAY[b]}" for a, b in ratios])
+       + [f"{i} (ms)" for i in impls]
+       + [f"{a} / {b}" for a, b in ratios])
 print("| " + " | ".join(hdr) + " |")
 print("|" + "|".join("---" for _ in hdr) + "|")
 for util, label, by, inc, ref in rows:
@@ -498,15 +461,8 @@ header="coreutils-bench: $(date -u +%Y-%m-%d) $(uname -s)/$(uname -m), fern $(gi
 # scratch path; name the implementation instead.
 [ -n "$uu" ] && header="$header, uutils $("$(uutils_bin yes)" --version | head -1 | awk '{print $NF}')"
 header="$header. mean ± σ over ≥20 runs, except where a cell names a smaller count because one trial of that row took over 3 s."
-# Name the compiler behind each Fern column: two builds of one source are two
-# different programs, and a table that does not say which is which cannot be
-# read a month later.
-if [ -n "$want_native" ] && [ -n "$want_selfhost" ]; then
-  header="$header \`fern\` is the native compiler's build, \`fern-sh\` the self-hosted compiler's build of the same source."
-elif [ -n "$want_selfhost" ]; then
-  header="$header \`fern-sh\` is the self-hosted compiler's build."
-fi
-header="$header A ratio is mean(first) / mean(second), so above 1 the second-named build is faster — in a \`gnu / …\` or \`uutils / …\` column, above 1 means Fern is faster."
+header="$header A ratio is mean(first) / mean(second), so above 1 Fern is faster."
+[ ${#no_gnu[@]} -eq 0 ] || header="$header Not measured, no GNU reference found: ${no_gnu[*]}."
 
 printf '%s\n\n%s\n' "$header" "$table"
 if [ -n "$report" ]; then

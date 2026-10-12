@@ -185,6 +185,19 @@ inside* a default body is treated the same as inside a hand-written impl
 method. The self-hosted compiler has matching support (same-module) —
 see §7a, self-host slice 10.
 
+A default may declare type parameters of its own, written after its name
+as on a function: `function fold[A](self: Self, init: A, f: (A, T) => A): A
+{ … }`. Each call binds them, as a generic function's call does. A required
+method may not, because an impl method cannot declare type parameters of its
+own, so nothing could provide it.
+
+A default of a generic trait reads the trait's type parameters as the
+impl's trait arguments: `Holder[T]`'s default inherited by
+`impl Holder[i32] for IntBox` takes and returns `i32`, and by
+`impl[A, B] Holder[B] for Pair[A, B]` takes and returns `B`. A type
+parameter the default declares for itself is renamed apart from the
+impl's, so the two never meet.
+
 A default body's free names resolve in the module that **declares the
 trait**, not the one that writes the `impl`: modload mangles the body as
 part of the declaring module, so it reaches that module's helpers —
