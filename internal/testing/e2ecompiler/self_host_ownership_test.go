@@ -256,6 +256,14 @@ func TestSelfHostOwnershipInference(t *testing.T) {
 	t.Run("modes-in-the-emitted-code", func(t *testing.T) {
 		assertInferredModes(t, cli.runner, cli.bin, cli.stdlib)
 	})
+	t.Run("modes-program-runs", func(t *testing.T) {
+		stderr, exit := cli.exitOf(t, inferredModesProgram, "x86-64-linux",
+			"FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+		if exit != 0 {
+			t.Fatalf("exit = %d, want 0\n%s", exit, stderr)
+		}
+		censusWithin(t, "modes-program", stderr, 6)
+	})
 }
 
 // A reader's mode is not census-observable: a parameter the callee only reads
@@ -267,7 +275,8 @@ func TestSelfHostOwnershipInference(t *testing.T) {
 // its drop function is called inside the callee; a borrowed one is not.
 //
 // Both directions are asserted from ONE compilation, so the marker is proven
-// present before its absence is read as an answer: `hands_back` returns its
+// present before its absence is read as an answer, and `modes-program-runs`
+// runs the program's own checks: `hands_back` returns its
 // parameter and must drop, `reads_only` must not. The same pair for a record:
 // `keep_or_new` hands its parameter back on one arm and drops it on the other,
 // and `lends_to_builtin` only lends a field to a builtin's lent slot, which

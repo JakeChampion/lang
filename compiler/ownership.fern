@@ -275,19 +275,19 @@ pub function cycles(succ: i32[][]): i32[] {
 // A dyn call has no row, and needs none: semsource admits one only where
 // every implementation lends every operand, and those keep the modes they
 // declared (`semsource.dyn_arms`).
-function call_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index, me: i32): boolean[] {
+function call_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index, fr: Frame): boolean[] {
   if (ssasem.is_dyn_call(ins.str)) {
     return out;
   }
   let row: i32 = find(rows, ix, ins.str);
-  if (same_cycle(rows, me, row)) {
+  if (same_cycle(rows, fr.me, row)) {
     return out;
   }
   let i: i32 = 0;
   while (i < ins.args.len()) {
     // Passing the same parameter to the same slot supplies no independent
     // reason to consume it. Any other escaping use still carries it.
-    let unchanged: boolean = ins.str == f.graph.name && unchanged_slot(f, ins.args[i], i);
+    let unchanged: boolean = ins.str == f.graph.name && unchanged_slot(fr, ins.args[i], i);
     if (!unchanged && ssasem.reference(f.values[ins.args[i]]) && consumed_at(rows, row, i)) {
       out = carry(out, a, ins.args[i]);
     }
@@ -299,23 +299,34 @@ function call_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, in
 // Tail recursion replaces parameters with named phis even when another
 // recursive call remains in the body. A phi fed only by its parameter and
 // itself still forwards exactly that parameter, without advancing through it.
-function unchanged_slot(f: ssasem.Func, value: i32, slot: i32): boolean {
-  if (value == slot) {
-    return true;
-  }
+function unchanged_slot(fr: Frame, value: i32, slot: i32): boolean {
+  return value == slot || value >= 0 && value < fr.forwards.len() && fr.forwards[value] == slot;
+}
+
+// Frame is what one function's instructions are read against: its own row
+// (-1 for none) and, per value, the parameter slot it forwards unchanged
+// (`forwarded`), -1 for none. The table is empty until a self call needs it.
+struct Frame { me: i32, forwards: i32[] }
+
+function forwarded(f: ssasem.Func): i32[] {
+  let out: i32[] = util.minus_ones(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
-      if (ins.result == value && slot_phi(ins) && ins.str == f.graph.name && ins.imm == slot) {
-        for arg in ins.args {
-          if (arg != value && arg != slot) {
-            return false;
-          }
-        }
-        return true;
+      if (slot_phi(ins) && ins.str == f.graph.name && ins.result >= 0 && ins.result < out.len() && only_forwards(ins)) {
+        out = out.with(ins.result, ins.imm);
       }
     }
   }
-  return false;
+  return out;
+}
+
+function only_forwards(ins: ssa.SInst): boolean {
+  for arg in ins.args {
+    if (arg != ins.result && arg != ins.imm) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // A call THROUGH a function value consumes only at the slots its type spells
@@ -339,9 +350,9 @@ function indirect_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis
 // parameter itself, which whatever carries the phi carries too (`continued`).
 // Read as a plain loop instead, a walk that rebuilds its input would never
 // consume it.
-function slot_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index, me: i32): boolean[] {
+function slot_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index, fr: Frame): boolean[] {
   let row: i32 = find(rows, ix, ins.str);
-  if (same_cycle(rows, me, row) || !consumed_at(rows, row, ins.imm)) {
+  if (same_cycle(rows, fr.me, row) || !consumed_at(rows, row, ins.imm)) {
     return out;
   }
   let i: i32 = 1;
@@ -393,13 +404,12 @@ function continued(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis): bool
   return out;
 }
 
-// `me` is this function's own row, -1 for none.
-function instruction_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index, me: i32): boolean[] {
+function instruction_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index, fr: Frame): boolean[] {
   if (ins.kind_tag == ssasem.call()) {
-    return call_carried(out, f, a, ins, rows, ix, me);
+    return call_carried(out, f, a, ins, rows, ix, fr);
   }
   if (slot_phi(ins)) {
-    return slot_carried(out, f, a, ins, rows, ix, me);
+    return slot_carried(out, f, a, ins, rows, ix, fr);
   }
   if (ins.kind_tag == ssasem.call_value()) {
     return indirect_carried(out, f, a, ins);
@@ -500,10 +510,13 @@ pub function lends(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Inde
 // root without taking a unit at all.
 function carried_values(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
-  let me: i32 = find(rows, ix, f.graph.name);
+  let fr: Frame = Frame { me: find(rows, ix, f.graph.name), forwards: [] };
   for b in f.graph.blocks {
     for ins in b.insts {
-      out = instruction_carried(out, f, a, ins, rows, ix, me);
+      if (fr.forwards.len() == 0 && ins.kind_tag == ssasem.call() && ins.str == f.graph.name) {
+        fr = Frame { ...fr, forwards: forwarded(f) };
+      }
+      out = instruction_carried(out, f, a, ins, rows, ix, fr);
     }
     if (b.term.kind_tag == 1 && b.term.value >= 0) {
       out = out.with(b.term.value, true);
