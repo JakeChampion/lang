@@ -203,7 +203,12 @@ pub function (s: Stream) read_n(n: i32): (u8[], Stream) {
       out = out.append(cur.data[pos]);
       pos = pos + 1;
     }
-    cur = __fill(Stream { ...cur, pos: pos });
+    cur = Stream { ...cur, pos: pos };
+    // The source is asked only for bytes still owed: a pull waits for
+    // the peer, and a read satisfied by what arrived must not.
+    if (out.len() < n) {
+      cur = __fill(cur);
+    }
   }
   return (out, cur);
 }

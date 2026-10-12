@@ -337,7 +337,7 @@ func TestRunnerDeflateExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/deflate", "# pass 14", "# fail 0", "1..14"} {
+	for _, w := range []string{"# Suite: std/deflate", "# pass 16", "# fail 0", "1..16"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -1171,6 +1171,12 @@ func TestRunnerHTTPFormExamplePasses(t *testing.T) {
 // events and streams them as a response.
 func TestRunnerHTTPSSEExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "http_sse", "std/http/sse", 12)
+}
+
+// `tests/stdlib/http_websocket_test.fern` runs the WebSocket handshake
+// and a session over a scripted connection.
+func TestRunnerHTTPWebSocketExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_websocket", "std/http/websocket", 19)
 }
 
 func TestRunnerPublicSuffixExamplePasses(t *testing.T) {
@@ -4285,8 +4291,9 @@ func TestRunnerHttpRequestBodyStreamExample(t *testing.T) {
 		"ok 7 - body_string ignores a partial walk",
 		"ok 10 - a bodyless request reads empty",
 		"ok 13 - read_line spans a chunk boundary",
-		"ok 18 - a fault is EndedEarly with its status",
-		"# pass 20",
+		"ok 15 - read_n pulls only what it owes",
+		"ok 19 - a fault is EndedEarly with its status",
+		"# pass 21",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {

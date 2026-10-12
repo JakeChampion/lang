@@ -47,6 +47,11 @@ name: Net nightly
 # and every exclusion and its reason in scripts/net-tls-fuzz.d/cases
 # (#9858). It passes or fails; tlsfuzzer and its venv are cached on the
 # script's hash, which holds the pins.
+#
+# The `autobahn` job runs scripts/net-autobahn: the Autobahn WebSocket
+# test suite's fuzzing client, from its Docker image pinned by digest in
+# the script, against the Fern echo server with permessage-deflate on
+# (#9859). Every case passes or the job fails.
 
 on:
   schedule:
@@ -201,3 +206,20 @@ jobs:
           key: tls-fuzz-${{ runner.os }}-${{ hashFiles('scripts/net-tls-fuzz', 'scripts/net-tls-fuzz.d/requirements.txt') }}
       - name: Run tlsfuzzer's TLS 1.3 scripts against the server
         run: scripts/net-tls-fuzz
+
+  autobahn:
+    name: net-autobahn-x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - name: Run the Autobahn suite against the server
+        run: scripts/net-autobahn "${{ runner.temp }}/autobahn-report.txt"
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: autobahn-report-x86_64
+          path: ${{ runner.temp }}/autobahn-report.txt
+          if-no-files-found: warn

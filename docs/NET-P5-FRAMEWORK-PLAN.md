@@ -132,9 +132,39 @@ decides what wraps it.
    `tests/stdlib/http_sse_test.fern` in the stdtest differential;
    `TestSelfHostServeSSE` (x86-64, arm64) streaming while another
    connection is answered, `TestServeSSESequentialInterp` its twin.
-   WebSocket (RFC 6455) with cork, the `Sent` / `Backpressure` /
-   `Dropped` send result and drain event from P1, and the shared compressor
-   mode, next. Gate: the Autobahn suite on the `net-nightly` lane.
+   `std/http/websocket` (landed): the handshake and the session as
+   callbacks (`open`, `message`, `drain`, `close`), what a callback sends
+   corked into one write when it returns, with `Sent` / `Backpressure` /
+   `Dropped` from the cork's size against `Options` and `drain` once a
+   cork past the soft bound has gone out. The serve loop's part: an
+   upgrade request's body is streamed as the connection's bytes after
+   the head (the lent pull of `stream_bodies`, raw framing, bounded by
+   `keep_alive_idle`), `BodySource` gained `send` as the write side of
+   that connection, and a handler answering 101 with a producer keeps
+   the connection for the session, the producer running it as a parked
+   flight that carries the lent body (TLS writes go through the lent
+   session). Gate: `tests/stdlib/http_websocket_test.fern` in the stdtest
+   differential; `TestSelfHostServeWebSocket` (x86-64, arm64) and
+   `TestServeWebSocketSequentialInterp`. permessage-deflate (RFC 7692)
+   in its shared-compressor mode: `Options.compression` takes the
+   client's offer with no context takeover on either side, so no
+   connection holds a window; `std/deflate` gained the encoder it needs
+   (`deflate`, `deflate_flushed`: fixed Huffman codes over LZ77, the
+   sync flush a continuing stream ends on), a compressed message is
+   inflated whole under `max_message`, and the echo's replies go out
+   compressed. The Autobahn suite's fuzzing client runs the conformance
+   sections (1-8, 10) against `scripts/net-autobahn.d/server.fern` on the
+   `net-nightly` lane (`scripts/net-autobahn`, the image pinned by
+   digest), each case passing or the job failing; these gate framing,
+   fragmentation, UTF-8 and close, not compression — the client offers
+   permessage-deflate only in the compression sections (12 and 13), so the
+   compressor is exercised only when one of those is run on demand. The
+   performance and compression-volume sections (9,
+   12, 13) are left out of the default set: each case passes in seconds
+   in isolation, but any high-frame-count case late in the full suite
+   stalls once a few hundred connections precede it, an accumulation
+   tracked in issue #12136; the wstest run is bounded by a timeout and
+   `net-autobahn - "13.*"` runs an excluded section by hand.
 5. **Static files, compression, proxies, caching.** ETag, `Range` and
    precompressed variants; response compression (gzip and zstd; brotli
    decode only) off by default as every 2026 server has it; PROXY protocol

@@ -407,8 +407,11 @@ function __recv_scratch(): u8[] {
 // back before the event is done with the connection. `parked` is the
 // flights a chunk producer's park staged during the event, for the loop
 // to take (`__parked_taken`) once the event's work hands the
-// connections back.
-struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], tails: __Tail[], tls: __Tls[], last: http.HttpFramed, out: usize, lent: i32, parked: __Flight[] }
+// connections back. `bodies` is each connection's streamed body while a
+// pull owns the read side (`__serve_stream`), None otherwise: what the
+// loop writes through when the session is lent (`__serve_send`), and
+// what an upgraded connection's producer flight carries.
+struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], tails: __Tail[], tls: __Tls[], bodies: Option[__Body][], last: http.HttpFramed, out: usize, lent: i32, parked: __Flight[] }
 
 // __Tls — a connection's TLS: none; its session, through which every
 // byte read and written passes; or lent to the handler pulling a streamed
@@ -467,7 +470,9 @@ function __clock_tick(clk: __Clock): __Clock {
 // (`__tail_keeps`), so nothing is built to carry the two together.
 // A response with a header or trailer that cannot be written as one field
 // line is answered 500 in its place, so no handler-supplied byte can end a
-// line or start another response.
+// line or start another response. A 101 whose body is a producer is an
+// upgrade (std/http/websocket): its chunks go on the wire as they are,
+// close-delimited, the producer running the session on the connection.
 function __serve_wire(out: usize, method: string, version: string, answer: HttpResponse, keep_alive: boolean, clk: __Clock): __Tail {
   if (!http.http_fields_ok(answer.headers) || !http.http_fields_ok(answer.trailers)) {
     return __serve_wire(out, method, version, http.internal_error(""), keep_alive, clk);
@@ -482,6 +487,10 @@ function __serve_wire(out: usize, method: string, version: string, answer: HttpR
       return __wire_file(out, method, version, answer, path, headless, keep_alive, clk, date);
     },
     BodyChunks(producer) => {
+      if (answer.status == 101) {
+        http.http_serialize_response_head_into(out, answer, false, date);
+        return ChunkTail(producer, 0, "");
+      }
       return __wire_chunks(out, version, answer, producer, headless, keep_alive, date);
     },
     _ => {
@@ -749,12 +758,18 @@ function __flight_filler[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], f
 // the connections for the loop to take, the tail marked parked, and the
 // connection watched for reads only (a hang-up ends the flight; its
 // bytes are the next request's) under no deadline, since nothing is
-// owed until the chunk comes.
+// owed until the chunk comes. On an upgraded connection the flight
+// carries the lent body instead, the read side being the session's.
 function __tail_park[D: async.Driver](drv: D, c: __Conns, at: i32, producer: ChunkProducer, index: i32, end: string, t: async.Task[Option[u8[]]], w: async.Wait): __Conns {
   let none: i32[] = [];
   let now: i64 = monotonic_ns();
-  let fl: __Flight = __flight_watch(drv, __Flight { job: Producer(t), wait: w, fd: c.fds[at], set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: None, idle: __idle_due(producer, now) }, now);
-  drv.watch(c.fds[at], 1);
+  let fl: __Flight = __flight_watch(drv, __Flight { job: Producer(t), wait: w, fd: c.fds[at], set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: c.bodies[at], idle: __idle_due(producer, now) }, now);
+  match (c.bodies[at]) {
+    Some(b) => {},
+    None => {
+      drv.watch(c.fds[at], 1);
+    }
+  }
   return __Conns { ...c, tails: c.tails.with(at, ParkedTail(producer, index, end)), deadlines: c.deadlines.with(at, __held_deadline()), parked: c.parked.append(fl) };
 }
 
@@ -833,7 +848,7 @@ function __conns_add(c: __Conns, fd: i32, deadline: i64, peer: i32, tls: __Tls):
     },
     _ => {}
   }
-  return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), keep: c.keep.append(keep), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), tails: c.tails.append(NoTail), tls: c.tls.append(tls), last: c.last, out: c.out, lent: c.lent, parked: c.parked };
+  return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), keep: c.keep.append(keep), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), tails: c.tails.append(NoTail), tls: c.tls.append(tls), bodies: c.bodies.append(None), last: c.last, out: c.out, lent: c.lent, parked: c.parked };
 }
 
 // __conns_from_peer(c, peer) — how many open connections the peer holds.
@@ -864,6 +879,7 @@ function __conns_remove(c: __Conns, at: i32): __Conns {
   let peers: i32[] = [];
   let tails: __Tail[] = [];
   let tls: __Tls[] = [];
+  let bodies: Option[__Body][] = [];
   let i: i32 = 0;
   while (i < c.fds.len()) {
     if (i != at) {
@@ -883,10 +899,11 @@ function __conns_remove(c: __Conns, at: i32): __Conns {
       peers = peers.append(c.peers[i]);
       tails = tails.append(c.tails[i]);
       tls = tls.append(c.tls[i]);
+      bodies = bodies.append(c.bodies[i]);
     }
     i = i + 1;
   }
-  return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base, send_since: send_since, send_base: send_base, peers: peers, tails: tails, tls: tls, last: c.last, out: c.out, lent: 0 - 1, parked: c.parked };
+  return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base, send_since: send_since, send_base: send_base, peers: peers, tails: tails, tls: tls, bodies: bodies, last: c.last, out: c.out, lent: 0 - 1, parked: c.parked };
 }
 
 // __conns_timeout(c, now) — the wait's timeout: the milliseconds until the
@@ -978,7 +995,10 @@ function __serve_close[D: async.Driver](drv: D, c: __Conns, at: i32): __Conns {
         tcp_send_bytes(c.fds[at], step.output);
       }
     },
-    _ => {}
+    Lent => {
+      __lent_closed(c, at);
+    },
+    Plain => {}
   }
   tcp_close(c.fds[at]);
   return __conns_remove(__tail_drop(c, at), at);
@@ -1626,9 +1646,69 @@ function __serve_send[D: async.Driver](drv: D, c: __Conns, at: i32, payload: u8[
         }
       }
     },
-    _ => {}
+    Lent => {
+      match (__lent_sealed(c, at, payload)) {
+        Some(sealed) => {
+          return __serve_send_raw(drv, c, at, sealed, opts);
+        },
+        None => {
+          return (c, Failed);
+        }
+      }
+    },
+    Plain => {}
   }
   return __serve_send_raw(drv, c, at, payload, opts);
+}
+
+// __lent_closed(c, at) — the close alert of the session a pull holds for
+// the connection at `at`, written as the connection closes.
+function __lent_closed(c: __Conns, at: i32): void {
+  match (c.bodies[at]) {
+    Some(body) => {
+      match (body.tls.get()) {
+        Some(sess) => {
+          body.tls.set(None);
+          if let Ok(step) = sess.close() {
+            tcp_send_bytes(c.fds[at], step.output);
+          }
+        },
+        None => {}
+      }
+    },
+    None => {}
+  }
+}
+
+// __lent_sealed(c, at, payload) — `payload` sealed by the session a pull
+// holds for the connection at `at` (`__Body.tls`), the session moved on
+// in its cell; None when the session refuses it, or the connection has
+// no body to hold one.
+function __lent_sealed(c: __Conns, at: i32, payload: u8[]): Option[u8[]] {
+  match (c.bodies[at]) {
+    Some(body) => {
+      match (body.tls.get()) {
+        Some(sess) => {
+          match (sess.write(payload)) {
+            Ok(step) => {
+              body.tls.set(Some(step.session));
+              return Some(step.output);
+            },
+            Err(_) => {
+              return None;
+            }
+          }
+        },
+        None => {
+          return Some(payload);
+        }
+      }
+    },
+    None => {
+      return Some(payload);
+    }
+  }
+  return None;
 }
 
 // __serve_send_raw(drv, c, at, payload, opts) — `__serve_send` for bytes
@@ -2078,7 +2158,66 @@ function __body_source(fd: i32, head: http.HttpHead, initial: u8[], opts: Config
   }
   let empty: u8[] = [];
   let p: __Pull = __Pull { fd: fd, left: cell_new(head.length), dstate: cell_new(0), dheld: cell_new(empty), dleft: cell_new(0), dbudget: cell_new(opts.limits.header_bytes), droom: cell_new(opts.limits.body), pending: cell_new(initial), since: cell_new(0 as i64), got: cell_new(0), continue_owed: cell_new(owed), opts: opts, body: body, fault: fault };
-  return BodySource { next: (): Option[u8[]] => __body_next(p), fault: fault };
+  return BodySource { next: (): Option[u8[]] => __body_next(p), fault: fault, send: (bytes: u8[]): i32 => __pull_write(p, bytes) };
+}
+
+// __pull_write(p, bytes) — `bytes` written to the connection the pull
+// reads, through its session on a TLS one, as far as the socket takes
+// them and then the rest once it is writable again, the wait bounded as
+// the raw read is: the bytes written, or a negative errno when the peer
+// is gone, the session refused them, the wait ran out (-ETIMEDOUT) or
+// the task was cancelled (-ECANCELED). The write side of an upgraded
+// connection (std/http/websocket).
+function __pull_write(p: __Pull, bytes: u8[]): i32 {
+  let wire: u8[] = bytes;
+  match (p.body.tls.get()) {
+    Some(sess) => {
+      match (sess.write(bytes)) {
+        Ok(step) => {
+          p.body.tls.set(Some(step.session));
+          wire = step.output;
+        },
+        Err(_) => {
+          return 0 - 71;
+        }
+      }
+    },
+    None => {}
+  }
+  let at: i32 = 0;
+  while (at < wire.len()) {
+    let n: i32 = tcp_send_bytes(p.fd, __bytes_from(wire, at));
+    if (n > 0) {
+      at = at + n;
+      continue;
+    }
+    if (n != 0 - __eagain()) {
+      return n;
+    }
+    let set: i32[] = [p.fd, 2];
+    let woke: i32 = async.wait_any(set, __idle_ms(p.opts));
+    if (woke == async.cancelled()) {
+      return 0 - 125;
+    }
+    if (woke < 0) {
+      return 0 - 110;
+    }
+  }
+  return bytes.len();
+}
+
+// __idle_ms(opts) — the bound on a raw read or write: `keep_alive_idle`,
+// how long an upgraded connection may be quiet, as a persistent one may
+// between requests.
+function __idle_ms(opts: Config): i32 {
+  let ms: i64 = opts.keep_alive_idle.as_millis();
+  if (ms > 2147483647 as i64) {
+    return 2147483647;
+  }
+  if (ms <= 0 as i64) {
+    return 1;
+  }
+  return ms as i32;
 }
 
 // __body_next(p) — the body's next bytes: what was handed over first,
@@ -2224,8 +2363,13 @@ function __pull_send(p: __Pull, bytes: u8[]): void {
 // __body_wait_ms(p) — how long the pull may wait for the next bytes: what
 // the body has earned under `Config.min_data_rate` from its first wait,
 // the grace plus what its bytes since buy, as `__body_deadline` counts it
-// for a body the loop reads; 0 once that has passed.
+// for a body the loop reads; 0 once that has passed. An upgraded
+// connection's bytes come when the peer has something to say, so its
+// bound is the idle span instead.
 function __body_wait_ms(p: __Pull): i32 {
+  if (p.left.get() == 0 - 2) {
+    return __idle_ms(p.opts);
+  }
   let now: i64 = monotonic_ns();
   if (p.since.get() == 0 as i64) {
     p.since.set(now);
@@ -2257,10 +2401,14 @@ function __body_recv_size(p: __Pull): i32 {
 
 // __body_decode(p, bytes) — the raw bytes decoded under the framing: a
 // Content-Length body passed on to its length, what lies past it kept
-// for the loop; a chunked body through the decoder. The body's state
-// moves to 1 at its end, 2 on a refusal.
+// for the loop; a chunked body through the decoder; an upgraded
+// connection's (`left` -2) as they are, until the peer closes. The
+// body's state moves to 1 at its end, 2 on a refusal.
 function __body_decode(p: __Pull, bytes: u8[]): u8[] {
   let left: i32 = p.left.get();
+  if (left == 0 - 2) {
+    return bytes;
+  }
   if (left < 0) {
     return __body_decode_chunked(p, bytes);
   }
@@ -2328,7 +2476,7 @@ function __body_live(fl: __Flight): boolean {
 // again, and a connection whose body was not read whole does not persist,
 // since what is left of the body would be read as the next request.
 function __body_settled[D: async.Driver](drv: D, c: __Conns, at: i32, body: __Body): __Conns {
-  c = __tls_back(c, at, body);
+  c = __tls_back(__Conns { ...c, bodies: c.bodies.with(at, None) }, at, body);
   let rest: u8[] = body.rest.get();
   if (rest.len() > 0) {
     c = __Conns { ...c, bufs: c.bufs.with(at, rest.concat(__bytes_from(c.bufs[at], c.offs[at]))), offs: c.offs.with(at, 0) };
@@ -2397,13 +2545,25 @@ function __serve_unframed[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], 
   return (c, fls, false, Idle, c.last);
 }
 
+// __upgrade_head(f) — the framed upgrade request as a head whose body is
+// the connection's bytes after it, until the session ends (`length` -2,
+// `__body_source`'s raw framing). Its keep-alive is the request's, so an
+// upgrade the handler declines (a response that is not a 101) is answered
+// and the connection persists as any HTTP/1.1 request's would (RFC 9110
+// §7.8 lets a server ignore an Upgrade it cannot honour); the 101 path
+// passes keep-alive false itself, taking the connection for the session.
+function __upgrade_head(f: http.HttpFramed): http.HttpHead {
+  return http.HttpHead { request: f.request, len: f.len, keep_alive: f.keep_alive, version: f.version, length: 0 - 2, expects_continue: false };
+}
+
 // __serve_stream(drv, c, fls, at, h, start, …) — the handler started on
 // the request head `h` through `start` (the loop's `__serve_start` with
 // its handler and platform bound), its body streamed: the body bytes buffered so far are the
 // pull's, the buffer is taken as answered, and the handler runs until it
 // answers or parks. A handler that answers at once is responded to with
-// the connection taken back; one that parks becomes a flight carrying its
-// body's state.
+// the connection taken back, unless its answer upgrades the connection
+// (`__upgrading`), when the body stays the session's; one that parks
+// becomes a flight carrying its body's state.
 function __serve_stream[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32, h: http.HttpHead, start: (http.HttpFramed, boolean, __Stop) => __Started, opts: Config, stop: __Stop, count: i32, clk: __Clock): (__Conns, __Flight[], boolean, __Behind, http.HttpFramed) {
   let fd: i32 = c.fds[at];
   let buf: u8[] = c.bufs[at];
@@ -2420,11 +2580,18 @@ function __serve_stream[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at
   let req: HttpRequest = HttpRequest { ...h.request, body: stream.stream_from_source(src) };
   let served: i32 = c.served[at] + 1;
   let keep: boolean = h.keep_alive && served < opts.keep_alive_requests && !__serve_stopping(stop);
-  c = __Conns { ...c, offs: c.offs.with(at, buf.len()), served: c.served.with(at, served), backlog: c.backlog.with(at, false), continued: c.continued.with(at, false), keep: c.keep.with(at, keep) };
+  c = __Conns { ...c, offs: c.offs.with(at, buf.len()), served: c.served.with(at, served), backlog: c.backlog.with(at, false), continued: c.continued.with(at, false), keep: c.keep.with(at, keep), bodies: c.bodies.with(at, Some(body)) };
   let f: http.HttpFramed = http.HttpFramed { request: req, len: 0, keep_alive: keep, version: h.version };
   match (start(f, keep, stop)) {
     HandlerDone(resp) => {
+      if (__upgrading(resp)) {
+        let upgraded: (__Conns, boolean) = __serve_respond(drv, c, at, h.request.method, h.version, resp, false, opts, count + 1, Idle, clk);
+        return (upgraded.0, fls, false, Idle, c.last);
+      }
       c = __body_settled(drv, c, at, body);
+      if (h.length == 0 - 2) {
+        c = __Conns { ...c, keep: c.keep.with(at, keep) };
+      }
       let parsed: (__Behind, http.HttpFramed) = __serve_behind(http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits, c.last), c.last);
       let answered: (__Conns, boolean) = __serve_respond(drv, c, at, h.request.method, h.version, resp, c.keep[at], opts, count + 1, parsed.0, clk);
       return (answered.0, fls, answered.1, parsed.0, parsed.1);
@@ -2637,6 +2804,9 @@ function __serve_answer[D: async.Driver](drv: D, c: __Conns, fl: __Flight, resp:
   let behind: __Behind = fl.behind;
   match (fl.body) {
     Some(b) => {
+      if (__upgrading(resp)) {
+        return __serve_respond(drv, c, at, fl.method, fl.version, resp, false, opts, __pipeline_burst(), Idle, clk).0;
+      }
       c = __body_settled(drv, c, at, b);
       behind = __serve_behind(http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits, c.last), c.last).0;
     },
@@ -2644,6 +2814,47 @@ function __serve_answer[D: async.Driver](drv: D, c: __Conns, fl: __Flight, resp:
   }
   let answered: (__Conns, boolean) = __serve_respond(drv, c, at, fl.method, fl.version, resp, fl.kept && c.keep[at], opts, __pipeline_burst(), behind, clk);
   return __serve_finish(drv, answered.0, fl.fd, false, opts, clk);
+}
+
+// __upgrading(resp) — whether the response takes the connection over: a
+// 101 whose body is the producer that runs the session.
+function __upgrading(resp: HttpResponse): boolean {
+  if (resp.status != 101) {
+    return false;
+  }
+  match (resp.body) {
+    BodyChunks(p) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// __upgrade_request(req) — whether the request is a WebSocket handshake
+// (RFC 6455 §4.1: `Sec-WebSocket-Key`, `Upgrade`, and `upgrade` among the
+// `Connection` tokens), the one upgrade the loop lends the connection for.
+// Its body is the connection's bytes after the head, the session's once
+// the handler answers 101, so it is streamed to the handler whatever
+// `stream_bodies` says. An upgrade the loop cannot serve — no
+// `Sec-WebSocket-Key` — is not matched here, so it reaches the handler as
+// an ordinary request and the connection persists as any request's would;
+// a matched handshake the handler declines (a response that is not a 101)
+// is answered and its connection kept, as `__upgrade_head` says.
+function __upgrade_request(req: HttpRequest): boolean {
+  if (!req.headers.has("sec-websocket-key") || !req.headers.has("upgrade")) {
+    return false;
+  }
+  for v in req.headers.get_all("connection") {
+    for tok in v.split(",") {
+      if (tok.trim().eq_ignore_ascii_case("upgrade")) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 // __serve_abandon(drv, c, fd) — the connection `fd` closed, when it is
@@ -2866,7 +3077,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
   let accepting: boolean = true;
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts);
-  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [], tls: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [] };
+  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [], tls: [], bodies: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [] };
   let flights: __Flight[] = [];
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, line: "" };
@@ -2934,6 +3145,13 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
         match (behind) {
           Pipelined => {
             let f: http.HttpFramed = framed;
+            if (__upgrade_request(f.request)) {
+              let upgraded: (__Conns, __Flight[], boolean, __Behind, http.HttpFramed) = __serve_stream(drv, conns, flights, at, __upgrade_head(f), start, opts, stop, count, clk);
+              conns = upgraded.0;
+              flights = upgraded.1;
+              more = false;
+              continue;
+            }
             let took: (__Conns, boolean, __Behind, http.HttpFramed) = __serve_took(conns, at, f, opts, ev.2, stop);
             conns = took.0;
             count = count + 1;
@@ -3030,7 +3248,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
   let accepting: boolean = true;
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts);
-  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [], tls: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [] };
+  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [], tls: [], bodies: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [] };
   let flights: __Flight[] = [];
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, line: "" };

@@ -4388,6 +4388,14 @@ function ret(r: ast.StmtReturn, s: State): State {
     }
     return terminate(s, t_ret(0 - 1));
   }
+  if (is_void(s.result)) {
+    // `return f();` in a void body: the call for its effect, then the exit.
+    s = discard(r.value, s);
+    if (!s.ok) {
+      return s;
+    }
+    return terminate(s, t_ret(0 - 1));
+  }
   let value: Value = expr(r.value, s, s.result);
   s = value.s;
   if (!s.ok) {

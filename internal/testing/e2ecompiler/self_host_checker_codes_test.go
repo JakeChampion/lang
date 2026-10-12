@@ -538,6 +538,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// value return and each `?` must agree, and a bare `return;` beside a
 		// value is E012.
 		{"lambda-exits-conflict", "function main(): i32 { let k: i32 = 3; let h = (b: boolean) => { if (b) { return k; } return true; }; return 0; }\n", []string{"E002"}},
+		// A lambda declared `: void` takes the void route: a bare `return;`
+		// is its exit, a returned value is E002.
+		{"void-lambda-bare-return", "function main(): i32 { let f: (i32) => void = (n: i32): void => { if (n > 0) { return; } print(\"zero\"); }; f(1); return 0; }\n", nil},
+		{"void-lambda-returns-value", "function main(): i32 { let f: (i32) => void = (n: i32): void => { return n; }; f(1); return 0; }\n", []string{"E002"}},
+		// A void body may return a void call: an expression-bodied void
+		// lambda is one, and so is `return f();` in a void function.
+		{"void-lambda-returns-void-call", "function f(n: i32): void { if (n < 0) { return; } }\nfunction main(): i32 { let h: (i32) => void = (n: i32): void => f(n); h(1); return 0; }\n", nil},
+		{"void-function-returns-void-call", "function f(n: i32): void { if (n < 0) { return; } }\nfunction g(): void { return f(1); }\nfunction main(): i32 { g(); return 0; }\n", nil},
 		{"lambda-try-exit-conflict", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction main(): i32 { let h = (x: i32) => { let y: i32 = g(x)?; return y; }; return 0; }\n", []string{"E002"}},
 		{"lambda-try-exit-clean", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction main(): i32 { let h = (x: i32) => { let y: i32 = g(x)?; if (y > 5) { return None; } return Some(y); }; let r: Option[i32] = h(1); return 0; }\n", nil},
 		// Two exits of one union conflict when their arguments differ, and a

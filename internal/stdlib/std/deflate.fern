@@ -6,8 +6,8 @@
 // Every decoder takes `max_out`, the most bytes it will produce, and fails
 // with `OutputLimit` past it: a compressed body is a caller-controlled
 // expansion, so the bound is part of the call, not an afterthought.
-// Compression (deflate) is not here; a server that wants to compress
-// what it serves is a later module.
+// Encoding is the fixed-Huffman LZ77 of `deflate` at the end: what a
+// message framing (std/http/websocket) and a served body compress with.
 
 import "std/hash";
 import "core/int";
@@ -655,4 +655,211 @@ pub function adler32(bs: u8[]): u32 {
     i = i + 1;
   }
   return b << 16 | a;
+}
+
+// ---------------------------------------------------------------------------
+// The encoder
+
+// `deflate(input)` — `input` as a raw DEFLATE stream: fixed-Huffman blocks
+// over LZ77 matches found through a 32 KiB window, ending the stream. Any
+// inflater reads it; a stream a size-conscious encoder makes is smaller,
+// since the fixed code fits no data in particular.
+pub function deflate(input: u8[]): u8[] {
+  return __deflated(input, 15, true);
+}
+
+// `deflate_flushed(input, window_bits)` — `deflate` with matches found
+// through a window of 2^`window_bits` bytes (8 to 15) and the stream
+// left open: the data's blocks, then an empty stored block, so the
+// output ends in the four bytes `00 00 ff ff` and an inflater that reads
+// it has everything the data holds. The shape a message framing uses
+// (RFC 7692's permessage-deflate drops those four bytes).
+pub function deflate_flushed(input: u8[], window_bits: i32): u8[] {
+  return __deflated(input, window_bits, false);
+}
+
+// __Bits — the bit writer: the bytes so far, and the bits accumulated
+// toward the next, least significant first as DEFLATE writes them.
+struct __Bits { out: u8[], acc: i32, n: i32 }
+
+function __put(w: __Bits, value: i32, bits: i32): __Bits {
+  let acc: i32 = w.acc | value << w.n;
+  let n: i32 = w.n + bits;
+  let out: u8[] = w.out;
+  while (n >= 8) {
+    out = out.append((acc & 255) as u8);
+    acc = acc >> 8;
+    n = n - 8;
+  }
+  return __Bits { out: out, acc: acc, n: n };
+}
+
+// A Huffman code goes most significant bit first, so it is reversed into
+// the stream.
+function __put_code(w: __Bits, code: i32, bits: i32): __Bits {
+  let rev: i32 = 0;
+  let i: i32 = 0;
+  while (i < bits) {
+    rev = rev << 1 | code >> i & 1;
+    i = i + 1;
+  }
+  return __put(w, rev, bits);
+}
+
+function __flush_byte(w: __Bits): __Bits {
+  if (w.n == 0) {
+    return w;
+  }
+  return __Bits { out: w.out.append((w.acc & 255) as u8), acc: 0, n: 0 };
+}
+
+// The fixed literal/length code (RFC 1951 §3.2.6).
+function __put_literal(w: __Bits, sym: i32): __Bits {
+  if (sym < 144) {
+    return __put_code(w, 48 + sym, 8);
+  }
+  if (sym < 256) {
+    return __put_code(w, 400 + sym - 144, 9);
+  }
+  if (sym < 280) {
+    return __put_code(w, sym - 256, 7);
+  }
+  return __put_code(w, 192 + sym - 280, 8);
+}
+
+// __put_match(w, length, distance) — a back-reference: the length's code
+// and extra bits, then the distance's.
+function __put_match(w: __Bits, length: i32, distance: i32): __Bits {
+  let lb: i32[] = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
+  let le: i32[] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+  let li: i32 = __code_index(lb, length);
+  w = __put_literal(w, 257 + li);
+  w = __put(w, length - lb[li], le[li]);
+  let db: i32[] = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
+  let de: i32[] = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+  let di: i32 = __code_index(db, distance);
+  w = __put_code(w, di, 5);
+  return __put(w, distance - db[di], de[di]);
+}
+
+// The index of the last base at or below `v`.
+function __code_index(bases: i32[], v: i32): i32 {
+  let i: i32 = bases.len() - 1;
+  while (i > 0 && bases[i] > v) {
+    i = i - 1;
+  }
+  return i;
+}
+
+// __deflated(input, window_bits, final) — the stream: one fixed-Huffman
+// block of the whole input (a fixed block has no length limit), ended
+// as `final` says, an empty stored block after it otherwise.
+function __deflated(input: u8[], window_bits: i32, final: boolean): u8[] {
+  let empty: u8[] = [];
+  let w: __Bits = __Bits { out: empty, acc: 0, n: 0 };
+  let fin: i32 = 0;
+  if (final) {
+    fin = 1;
+  }
+  w = __put(w, fin, 1);
+  w = __put(w, 1, 2);
+  w = __lz77(w, input, 1 << window_bits);
+  w = __put_literal(w, 256);
+  if (final) {
+    return __flush_byte(w).out;
+  }
+  w = __put(w, 0, 3);
+  w = __flush_byte(w);
+  return w.out.append(0 as u8).append(0 as u8).append(255 as u8).append(255 as u8);
+}
+
+// __lz77(w, input, window) — the input as literals and matches: each
+// position is hashed on its three bytes, the chain of earlier positions
+// with that hash searched (32 deep) within the window for the longest
+// match of 3 to 258 bytes, and taken greedily.
+function __lz77(w: __Bits, input: u8[], window: i32): __Bits {
+  let n: i32 = input.len();
+  let head: i32[] = __filled(32768, 0 - 1);
+  let prev: i32[] = __filled(window, 0 - 1);
+  let pos: i32 = 0;
+  while (pos < n) {
+    let best: (i32, i32) = (0, 0);
+    if (pos + 2 < n) {
+      best = __longest(input, pos, head[__hash3(input, pos)], prev, window);
+    }
+    if (best.0 >= 3) {
+      w = __put_match(w, best.0, best.1);
+      let end: i32 = pos + best.0;
+      while (pos < end) {
+        let kept: (i32[], i32[]) = __remember(input, pos, head, prev, window);
+        head = kept.0;
+        prev = kept.1;
+        pos = pos + 1;
+      }
+    } else {
+      w = __put_literal(w, input[pos] as i32);
+      let kept: (i32[], i32[]) = __remember(input, pos, head, prev, window);
+      head = kept.0;
+      prev = kept.1;
+      pos = pos + 1;
+    }
+  }
+  return w;
+}
+
+function __filled(n: i32, v: i32): i32[] {
+  let out: i32[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(v);
+    i = i + 1;
+  }
+  return out;
+}
+
+function __hash3(input: u8[], pos: i32): i32 {
+  if (pos + 2 >= input.len()) {
+    return 0;
+  }
+  let h: i32 = input[pos] as i32 << 10 ^ input[pos + 1] as i32 << 5 ^ input[pos + 2] as i32;
+  return h * 2057 & 32767;
+}
+
+// __remember(input, pos, head, prev, window) — position `pos` put at the
+// head of its hash's chain: the tables after it, owned so the update is
+// in place.
+function __remember(input: u8[], pos: i32, own head: i32[], own prev: i32[], window: i32): (i32[], i32[]) {
+  if (pos + 2 >= input.len()) {
+    return (head, prev);
+  }
+  let h: i32 = __hash3(input, pos);
+  prev = prev.with(pos & window - 1, head[h]);
+  head = head.with(h, pos);
+  return (head, prev);
+}
+
+// __longest(input, pos, cand, prev, window) — the longest match at
+// `pos` among the chain starting at `cand`: `(length, distance)`, length
+// 0 for none.
+function __longest(input: u8[], pos: i32, cand: i32, prev: i32[], window: i32): (i32, i32) {
+  let n: i32 = input.len();
+  let best_len: i32 = 0;
+  let best_dist: i32 = 0;
+  let depth: i32 = 0;
+  while (cand >= 0 && pos - cand < window && depth < 32) {
+    let len: i32 = 0;
+    while (len < 258 && pos + len < n && input[cand + len] == input[pos + len]) {
+      len = len + 1;
+    }
+    if (len > best_len) {
+      best_len = len;
+      best_dist = pos - cand;
+    }
+    if (len == 258) {
+      return (best_len, best_dist);
+    }
+    cand = prev[cand & window - 1];
+    depth = depth + 1;
+  }
+  return (best_len, best_dist);
 }

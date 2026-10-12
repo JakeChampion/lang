@@ -939,10 +939,11 @@ RFC 4648 base32 (standard `A–Z 2–7` alphabet, `=` padding).
 
 ### `std/deflate`
 
-DEFLATE decoding (RFC 1951) with the zlib (RFC 1950) and gzip (RFC 1952)
-framings, pure Fern. Every decoder takes `max_out`, the most bytes it
-will produce, and answers `OutputLimit` past it: a compressed body is a
-caller-controlled expansion, so the bound is part of the call.
+DEFLATE (RFC 1951) with the zlib (RFC 1950) and gzip (RFC 1952)
+framings, pure Fern: a full decoder and a fixed-Huffman encoder. Every
+decoder takes `max_out`, the most bytes it will produce, and answers
+`OutputLimit` past it: a compressed body is a caller-controlled
+expansion, so the bound is part of the call.
 
 - `inflate(input, max_out): Result[Inflated, InflateError]` and
   `inflate_from(input, from, max_out)` decode a raw stream;
@@ -954,7 +955,17 @@ caller-controlled expansion, so the bound is part of the call.
   public). A preset dictionary is not supported.
 - `InflateError`: `Truncated`, `Malformed(what)`, `OutputLimit`,
   `BadChecksum`, `BadHeader(what)`; `(e).message()`.
-- No encoder yet.
+- `deflate(input): u8[]` encodes a raw stream as one final block of
+  fixed Huffman codes over LZ77 matches (a 32 KiB window, a hash chain
+  of bounded depth), which every inflater reads and which beats a stored
+  block on any text; `deflate_flushed(input, window_bits)` encodes a
+  non-final block ended by an empty stored block (the `00 00 ff ff`
+  sync flush of a stream that goes on), matches kept within `2 ^
+  window_bits` as a peer that announced that window needs. Neither
+  computes dynamic Huffman tables, so the output runs longer than
+  zlib's at a level above 1; what it is for is a protocol that must
+  compress (WebSocket's permessage-deflate, `std/http/websocket`), not
+  the smallest file.
 
 ### `std/hex`
 
@@ -2280,6 +2291,84 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
   `TestServeSSESequentialInterp` is the Go compiler's twin, where the
   blocking fallback naps the worker through the producer's sleep.
 
+### `std/http/websocket`
+
+The WebSocket protocol (RFC 6455) on the server: the opening handshake,
+and the session on the upgraded connection.
+
+```fern
+import "std/http/websocket";
+
+function echo(c: websocket.Conn, m: websocket.Message): void {
+  match (m) {
+    Text(s) => { let r: websocket.SendResult = c.send_text(s); },
+    Binary(b) => { let r: websocket.SendResult = c.send_binary(b); }
+  }
+}
+
+function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
+  return http.respond(websocket.accept(req, websocket.options(), websocket.handlers(echo)));
+}
+```
+
+- `accept(req, opts, h): Result[HttpResponse, UpgradeError]` checks the
+  handshake (`GET`, `Upgrade: websocket` under `Connection: upgrade`,
+  version 13, a 16-byte key) and answers the 101 whose body runs the
+  session; `UpgradeError` (`NotWebSocket`, `WrongVersion`, `KeyMissing`)
+  is `ToResponse`, a 426 naming the upgrade or a 400. `Options {
+  max_message, backpressure, max_backpressure, protocols, compression }`:
+  the largest message taken whole (1 MiB), the corked bytes past which a
+  send answers `Backpressure` (64 KiB) and past which it drops (1 MiB),
+  the subprotocols spoken, the first of the client's offers among
+  them chosen (`Conn.protocol`), and whether a `permessage-deflate`
+  offer (RFC 7692) is taken, off by default.
+- `Handlers { open, message, drain, close }`, `handlers(message)` for one
+  with the rest empty: `message` gets each `Message` (`Text(string)`,
+  `Binary(u8[])`), `drain` runs once a cork that was past the soft bound
+  has gone out, `close` gets the code and reason the session ended with
+  (the peer's, the handler's, 1005 for a close with none, 1006 when the
+  bytes ended without one).
+- `Conn`: `send_text`, `send_binary`, `ping` answer `SendResult` (`Sent`,
+  `Backpressure`, `Dropped`); `close(code, reason)` corks the close,
+  after which nothing more is sent and the session ends once the peer's
+  close or the end of its bytes arrives; `is_open()`. What a callback
+  sends is corked and leaves in one write when it returns.
+- The session is strict as the protocol asks (a reserved bit, an unknown
+  opcode, an unmasked frame, a bad fragment sequence, a fragmented or
+  oversized control frame close 1002; text that is not UTF-8, checked as
+  the fragments arrive, 1007; a message past the cap 1009; a bad close
+  frame 1002 or 1007), answers a ping with its pong at once, echoes the
+  peer's close, and is closed as an idle persistent connection is after
+  `serve.Config.keep_alive_idle` of quiet. With `compression` the
+  extension is negotiated in its shared-compressor mode, no context
+  carried from one message to the next on either side
+  (`server_no_context_takeover; client_no_context_takeover`, the
+  client's `server_max_window_bits` honoured), so a connection costs no
+  window of its own; a compressed message is inflated whole under
+  `max_message` once its last fragment arrives (1009 past it, 1007 for a
+  stream that does not inflate or text that is not UTF-8 once it does),
+  and every data message the handler sends goes out compressed under
+  RSV1 (`Conn.window` is the window bits, 0 without the extension). `accept_key(key)` and
+  `frame(fin, opcode, payload, mask)` are the handshake's and the codec's
+  pieces for a client or a test (`tests/stdlib/http_websocket_test.fern`,
+  a session over a scripted connection). The Autobahn suite's
+  conformance cases (sections 1-8, 10) run against the echo in
+  `scripts/net-autobahn.d/server.fern` on the `net-nightly` lane; they
+  gate framing, fragmentation, UTF-8 and close, not compression — the
+  client offers permessage-deflate only in the compression sections (12
+  and 13). Those, with the performance section (9), are deferred to #12136
+  and run on demand (`net-autobahn - "13.*"`), the only run that exercises
+  the compressor.
+- Under std/serve an upgrade request's body is the connection's bytes
+  after the head, streamed as `stream_bodies` streams one whatever the
+  setting says, and a handler that answers 101 with a producer keeps the
+  connection for the session, which reads frames through the request's
+  stream (parked between them, so the worker serves its other
+  connections) and writes through its source's `send`; the stateful
+  loop (`run_with`) does not upgrade. Gate: `TestSelfHostServeWebSocket`
+  (x86-64, arm64) with an idle session beside another connection, and
+  `TestServeWebSocketSequentialInterp`.
+
 ### `std/net`
 
 IP addresses, socket addresses, and the typed error every networking
@@ -2600,7 +2689,12 @@ points that run a handler under it.
   invites the body, and a connection whose body the handler did not read
   whole closes after the response. A `Stream` that ended early faults
   (`(s).fault()`); `body_string()` reports it as `EndedEarly`. The stateful
-  loop (`run_with`) reads bodies whole either way. `cookie_jar` (false)
+  loop (`run_with`) reads bodies whole either way. An upgrade request
+  (`Connection: upgrade` naming an `Upgrade`) is streamed whatever the
+  setting says, its body the connection's bytes after the head, and a
+  handler that answers it 101 with a producer keeps the connection for
+  the session the producer runs (std/http/websocket); any other answer
+  closes the connection after it. `cookie_jar` (false)
   gives each worker's platform a cookie jar (std/http/cookie), so its
   `plat.http` sends and stores cookies as a browser would.
   A listener it cannot bind is `serve: cannot listen on ADDR:PORT:` —
@@ -2917,9 +3011,14 @@ Byte-stream value backing `HttpRequest.body: Stream`: a `data: u8[]`
 buffer with a `pos` cursor, and for a body that arrives as it is read a
 `BodySource` the reads pull the next chunk from once the buffer is
 exhausted (docs/NET-P3-SUSPENSION-PLAN.md §3.9), so the whole is never
-held. `BodySource { next: () => Option[u8[]], fault: Cell[i32] }`:
-`next` answers None at the end and on every call after, `fault` why the
-stream ended early (an HTTP status, or `async.cancelled()`).
+held. `BodySource { next: () => Option[u8[]], fault: Cell[i32], send:
+(u8[]) => i32 }`: `next` answers None at the end and on every call
+after, `fault` why the stream ended early (an HTTP status, or
+`async.cancelled()`), and `send` writes to the peer behind the body
+where there is one (an upgraded connection's, std/http/websocket),
+answering the bytes written or a negative errno, -ENOTSUP for a body
+with no peer. A read asks the source only for bytes still owed, since a
+pull waits for the peer.
 
 - Constructors: `stream_from_bytes(bs)`, `stream_from_string(s)`,
   `stream_empty()`, `stream_from_source(src)`.
