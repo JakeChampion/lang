@@ -35,6 +35,8 @@ function site(): mock_platform.MockPlatform {
   m.dir_set("www/docs");
   m.file_set("www/docs/index.html", "<h1>docs</h1>", changed());
   m.dir_set("www/empty");
+  m.dir_set("www/My Docs");
+  m.dir_set("www/a\rb:c");
   return m;
 }
 
@@ -106,12 +108,15 @@ function test_paths_cleaned(): test.TestOutcome {
 }
 
 // A directory without its `/` is a 301 to the path with it, the query
-// kept; with it, its index; with no index, or no index file, a 404.
+// kept and the segment encoded again, since the path arrives decoded; with
+// it, its index; with no index, or no index file, a 404.
 function test_directories(): test.TestOutcome {
   let moved: HttpResponse = fetch("GET", "/docs?lang=en", []);
   let none: static.Dir = static.Dir { ...static.dir("www"), options: static.Options { ...static.options(), index: "" } };
   let got: string = moved.status.to_string() + " " + field(moved, "Location") + " | " + shown(fetch("GET", "/docs/", []), ["Content-Type"]);
-  return test.assert_eq(got + " | " + fetch("GET", "/empty/", []).status.to_string() + " " + fetch_with(none, "GET", "/docs/", []).status.to_string(), "301 docs/?lang=en | 200 | text/html; charset=utf-8 | <h1>docs</h1> | 404 404");
+  got = got + " | " + fetch("GET", "/empty/", []).status.to_string() + " " + fetch_with(none, "GET", "/docs/", []).status.to_string();
+  got = got + " | " + field(fetch("GET", "/My Docs", []), "Location") + " " + field(fetch("GET", "/a\rb:c?x", []), "Location");
+  return test.assert_eq(got, "301 docs/?lang=en | 200 | text/html; charset=utf-8 | <h1>docs</h1> | 404 404 | My%20Docs/ a%0Db%3Ac/?x");
 }
 
 // The preconditions come first: a current copy is a 304 carrying the
