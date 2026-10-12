@@ -483,6 +483,34 @@ pub function (lr: ByteLineReader) next_line_bytes(): (Option[u8[]], ByteLineRead
   return (None, s);
 }
 
+// `(lr).skip_line()` — next_line_bytes without the line: true when there
+// was one to pass, and nothing is allocated for it.
+pub function (lr: ByteLineReader) skip_line(): (boolean, ByteLineReader) {
+  let s: ByteLineReader = lr;
+  let partial: boolean = false;
+  while (true) {
+    let end: i32 = byte_line_end(s.chunk, s.pos, s.term);
+    if (end < s.chunk.len()) {
+      return (true, ByteLineReader { ...s, pos: end + 1 });
+    }
+    if (s.pos < s.chunk.len()) {
+      partial = true;
+    }
+    if (s.eof) {
+      return (partial, ByteLineReader { ...s, chunk: [], pos: 0 });
+    }
+    match (s.r.read_chunk_bytes(s.chunk_size)) {
+      Ok(chunk) => {
+        s = ByteLineReader { ...s, chunk: chunk, pos: 0, eof: chunk.len() == 0 };
+      },
+      Err(e) => {
+        s = ByteLineReader { ...s, chunk: [], pos: 0, eof: true, err: Some(e) };
+      }
+    }
+  }
+  return (false, s);
+}
+
 // Switch from records to raw chunks without discarding the unread suffix.
 pub function (lr: ByteLineReader) next_chunk_bytes(): (Option[u8[]], ByteLineReader) {
   let s: ByteLineReader = lr;

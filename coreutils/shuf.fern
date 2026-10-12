@@ -682,17 +682,24 @@ function reservoir_sample(rs0: Rand, r: Reader, term: i32, k: i32): (u8[][], Ran
     if (rs.dead) {
       break;
     }
-    let nx2: (Option[u8[]], io_buffered.ByteLineReader) = lr.next_line_bytes();
-    lr = nx2.1;
-    match (nx2.0) {
-      Some(line) => {
-        if (got.0 < k as u64) {
+    if (got.0 < k as u64) {
+      let nx2: (Option[u8[]], io_buffered.ByteLineReader) = lr.next_line_bytes();
+      lr = nx2.1;
+      match (nx2.0) {
+        Some(line) => {
           held = held.with(got.0 as i32, line);
+          seen = seen + 1 as u64;
+        },
+        None => {
+          filled = false;
         }
+      }
+    } else {
+      let sk: (boolean, io_buffered.ByteLineReader) = lr.skip_line();
+      lr = sk.1;
+      filled = sk.0;
+      if (filled) {
         seen = seen + 1 as u64;
-      },
-      None => {
-        filled = false;
       }
     }
   }
