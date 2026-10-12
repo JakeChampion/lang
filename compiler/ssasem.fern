@@ -3633,37 +3633,49 @@ function settled(f: Func, value: i32, bi: i32, g: Guards): Known {
 // each value's twin (`twins`).
 struct Guards { dom: ssadeps.Dom, at: i32[], defs: ssa.SInst[], tests: i32[], same: i32[] }
 
-// Each value's twin: the earliest value read by the same projection of the
-// same box, else itself. A value never changes, so two reads of one slot of
-// one box are one value, and a test of either settles both: semsink re-reads
-// a projection where its parent dies, below the test of the first read.
+// Each value's twin: one value standing for every read of the same
+// projection of the same box, else itself. A value never changes, so two
+// reads of one slot of one box are one value, and a test of either settles
+// both: semsink re-reads a projection where its parent dies, below the test
+// of the first read. The reads it rewrites name the re-read, so a child can
+// have a lower id than its parent.
 function twins(defs: ssa.SInst[]): i32[] {
-  let same: i32[] = [];
-  let kids: i32[][] = [];
+  let t: Twins = Twins { same: [], kids: [] };
   let v: i32 = 0;
   while (v < defs.len()) {
-    same = same.append(v);
-    kids = kids.append([]);
+    t = Twins { same: t.same.append(0 - 1), kids: t.kids.append([]) };
     v = v + 1;
   }
   v = 0;
   while (v < defs.len()) {
-    let d: ssa.SInst = defs[v];
-    if (d.result == v && d.args.len() == 1 && d.args[0] >= 0 && d.args[0] < defs.len()
-      && (d.kind_tag == variant_get() || d.kind_tag == record_get() || d.kind_tag == tuple_get())) {
-      let p: i32 = same[d.args[0]];
-      for k in kids[p] {
-        if (same[v] == v && defs[k].kind_tag == d.kind_tag && defs[k].imm == d.imm && defs[k].str == d.str) {
-          same = same.with(v, same[k]);
-        }
-      }
-      if (same[v] == v) {
-        kids = kids.with(p, kids[p].append(v));
-      }
-    }
+    t = twin_into(defs, t, v);
     v = v + 1;
   }
-  return same;
+  return t.same;
+}
+
+// Each value's twin so far, -1 for one not reached, and each twin's
+// projections that are their own twins.
+struct Twins { same: i32[], kids: i32[][] }
+
+// `t` with `v`'s twin settled, its parent's first.
+function twin_into(defs: ssa.SInst[], own t: Twins, v: i32): Twins {
+  if (t.same[v] >= 0) {
+    return t;
+  }
+  let d: ssa.SInst = defs[v];
+  if (d.result != v || d.args.len() != 1 || d.args[0] < 0 || d.args[0] >= defs.len()
+    || d.kind_tag != variant_get() && d.kind_tag != record_get() && d.kind_tag != tuple_get()) {
+    return Twins { ...t, same: t.same.with(v, v) };
+  }
+  t = twin_into(defs, t, d.args[0]);
+  let p: i32 = t.same[d.args[0]];
+  for k in t.kids[p] {
+    if (defs[k].kind_tag == d.kind_tag && defs[k].imm == d.imm && defs[k].str == d.str) {
+      return Twins { ...t, same: t.same.with(v, k) };
+    }
+  }
+  return Twins { same: t.same.with(v, v), kids: t.kids.with(p, t.kids[p].append(v)) };
 }
 
 function twin_of(g: Guards, v: i32): i32 {

@@ -28,7 +28,9 @@ runs tail recursion modulo cons. It is a graph-to-graph pass; the stages
 below never see what it removed. Two more run last: `semsink.fern` re-reads,
 in a block where a projection's parent dies, the counted projections the
 block uses that a dominating block read, so the plan takes them instead of
-borrowing them; and `semdead.fern` drops constructions nothing reads.
+borrowing them. It re-reads only a read that borrowed, of a parent nothing
+spends while the child lives, so a re-read never holds a parent longer than
+the plan already does. Last, `semdead.fern` drops constructions nothing reads.
 `ssasem`'s guard check treats two reads of one slot of one box as one value,
 so a test of the first read settles the re-read.
 
