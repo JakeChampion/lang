@@ -271,8 +271,21 @@ function (l: Line) ws(n: i32, c: Cfg): Line {
   if (c.tabify) {
     return Line { ...l, pos: l.pos + n, pend: l.pend + n };
   }
-  buf_push(l.buf, " ".repeat(n));
+  push_spaces(l.buf, n);
   return Line { ...l, pos: l.pos + n };
+}
+
+// `push_spaces(h, n)` — `n` spaces, pushed from a constant run.
+function push_spaces(h: usize, n: i32): void {
+  let left: i32 = n;
+  while (left > 0) {
+    let k: i32 = left;
+    if (k > 64) {
+      k = 64;
+    }
+    buf_push_range(h, "                                                                ", 0, k);
+    left = left - k;
+  }
 }
 
 // `(l).to(target, c)` — generated whitespace up to column `target`.
@@ -307,9 +320,7 @@ function (l: Line) flush(c: Cfg): Line {
       rem = rem - h;
     }
   }
-  if (rem > 0) {
-    buf_push(l.buf, " ".repeat(rem));
-  }
+  push_spaces(l.buf, rem);
   return Line { ...l, pend: 0 };
 }
 
@@ -687,9 +698,9 @@ function header_text(c: Cfg, name: string, t: i64, nsec: i64, page: u64): u8[] {
   }
   let h: usize = buf_new(date.len() + nm.len() + tail.len() + lhs + rhs);
   append_bytes(h, date);
-  buf_push(h, " ".repeat(lhs));
+  push_spaces(h, lhs);
   buf_push(h, nm);
-  buf_push(h, " ".repeat(rhs));
+  push_spaces(h, rhs);
   buf_push(h, tail);
   return take_bytes(h);
 }
@@ -767,12 +778,40 @@ function put_tab(l0: Line, c: Cfg, cs: i32, span: i32, b: i32): (Line, i32) {
 // a byte but a move to the next eighth column of the COLUMN, which is
 // where `num_width` comes from.
 function put_number(l0: Line, c: Cfg, cs: i32, n: i64): Line {
-  let s: string = n.to_string();
-  if (s.len() > c.num_digits) {
-    s = slice_unchecked(s, s.len() - c.num_digits, s.len()) + "";
+  let l: Line = l0;
+  let d: i32 = c.num_digits;
+  if (n >= 0 as i64 && d >= 1 && d <= 18) {
+    // A counter wider than the field keeps its last `d` digits, zeros
+    // included.
+    let v: u64 = n as u64;
+    let len: i32 = io_buffered.buf_u64_len(v);
+    let zeros: i32 = 0;
+    if (len > d) {
+      let p: u64 = 1 as u64;
+      let k: i32 = 0;
+      while (k < d) {
+        p = p * (10 as u64);
+        k = k + 1;
+      }
+      v = v % p;
+      zeros = d - io_buffered.buf_u64_len(v);
+      len = d;
+    }
+    let f: Line = l.to(cs + d - len, c).flush(c);
+    while (zeros > 0) {
+      buf_push_byte(f.buf, 48);
+      zeros = zeros - 1;
+    }
+    io_buffered.buf_push_u64(f.buf, v);
+    l = Line { ...f, pos: f.pos + len };
+  } else {
+    let s: string = n.to_string();
+    if (s.len() > c.num_digits) {
+      s = slice_unchecked(s, s.len() - c.num_digits, s.len()) + "";
+    }
+    l = l.to(cs + c.num_digits - s.len(), c);
+    l = l.put(s, s.len(), c);
   }
-  let l: Line = l0.to(cs + c.num_digits - s.len(), c);
-  l = l.put(s, s.len(), c);
   if (c.num_sep == 9) {
     let target: i32 = cs + c.num_width;
     if (c.columns > 1 && !c.tab_literal) {
