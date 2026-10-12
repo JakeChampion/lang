@@ -56,6 +56,13 @@ function max_shared_insts(): i32 {
   return 100;
 }
 
+// A shared callee up to this large is still spliced where the caller takes
+// apart a box of the type it returns: the box can die where the callee's
+// construction is built, and be reused for it.
+function max_reuse_shared_insts(): i32 {
+  return 500;
+}
+
 function max_splices(): i32 {
   return 64;
 }
@@ -95,7 +102,7 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
     once = once.append(is_shared || !is_leaf && inlinable[i] && unnamed[i] && once_spliceable(funcs0[i], calls[i]));
     i = i + 1;
   }
-  let sp: Spliceable = Spliceable { ix: ix, leaves: leaves, once: once, shared: shared, inlinable: inlinable };
+  let sp: Spliceable = Spliceable { ix: ix, leaves: leaves, once: once, shared: shared, inlinable: inlinable, calls: calls, unnamed: unnamed };
   let rounds: Inlined = splice_rounds(funcs0, rewrite, sp);
   sp = grown_leaves(rounds, sp);
   let ctors: boolean[] = constructor_leaves(rounds.funcs, sp);
@@ -144,25 +151,52 @@ function once_spliceable(f: ssasem.Func, calls: i32): boolean {
 // each: a few callers, a body under the shared budget, a construction at every
 // return, and at one of them a box the pair return keeps.
 function shared_spliceable(f: ssasem.Func, calls: i32): boolean {
-  return calls > 1 && calls <= max_shared_callers() && !lends_view(f) && spliceable(f, max_shared_insts()) && returns_boxes(f);
+  return calls > 1 && calls <= max_shared_callers() && !lends_view(f) && spliceable(f, max_reuse_shared_insts()) && returns_boxes(f);
 }
 
-// Whether every return of `f` returns a construction, and one of them a box
-// sempair would not return apart: a record, a tuple of other than two, or a
-// construction holding another.
+// Whether every return of `f` returns a construction, through copies and
+// the phis that join one per arm, and one of them a box: a record, a tuple
+// of other than two or a construction holding another, which sempair would
+// not return apart, or a variant with payloads, whose box the caller can
+// build in one that dies there.
 function returns_boxes(f: ssasem.Func): boolean {
   let defs: Defs = defs_of(f.graph);
   let boxed: boolean = false;
   for b in f.graph.blocks {
     if (b.term.kind_tag == 1) {
-      let d: ssa.SInst = def_inst(defs, through_copies(defs, b.term.value));
-      if (!construction_kind(d.kind_tag)) {
+      let r: Returned = returned(defs, b.term.value, 0);
+      if (!r.ok) {
         return false;
       }
-      boxed = boxed || d.kind_tag == ssasem.record_new() || d.kind_tag == ssasem.tuple_new() && d.args.len() != 2 || holds_construction(defs, d);
+      boxed = boxed || r.boxed;
     }
   }
   return boxed;
+}
+
+struct Returned { ok: boolean, boxed: boolean }
+
+// What `v` is when it is returned: every construction it can be, `depth`
+// phis deep, and whether one of them is a box.
+function returned(defs: Defs, v: i32, depth: i32): Returned {
+  let d: ssa.SInst = def_inst(defs, through_copies(defs, v));
+  if (d.kind_tag == 8 && depth < 8) {
+    let boxed: boolean = false;
+    for a in d.args {
+      let r: Returned = returned(defs, a, depth + 1);
+      if (!r.ok) {
+        return r;
+      }
+      boxed = boxed || r.boxed;
+    }
+    return Returned { ok: true, boxed: boxed };
+  }
+  if (!construction_kind(d.kind_tag)) {
+    return Returned { ok: false, boxed: false };
+  }
+  let boxed: boolean = d.kind_tag == ssasem.record_new() || d.kind_tag == ssasem.tuple_new() && d.args.len() != 2
+    || d.kind_tag == ssasem.variant_new() && d.args.len() > 0 || holds_construction(defs, d);
+  return Returned { ok: true, boxed: boxed };
 }
 
 // Whether an operand of the construction `d` is a construction.
@@ -195,8 +229,9 @@ function spliced_away(sp: Spliceable, ctors: boolean[], calls: i32[], left: i32[
 // constructor leaves, read off the bodies as each round leaves them (a
 // function called once spliced into one can make it a constructor), at the
 // calls whose arguments are all literals. `inlinable` is what may be spliced
-// at all.
-struct Spliceable { ix: util.NameIndex, leaves: boolean[], once: boolean[], shared: boolean[], inlinable: boolean[] }
+// at all. `calls` counts each function's call sites and `unnamed` says that
+// nothing outside the bodies names it.
+struct Spliceable { ix: util.NameIndex, leaves: boolean[], once: boolean[], shared: boolean[], inlinable: boolean[], calls: i32[], unnamed: boolean[] }
 
 // A function called once is spliced only after the ones it calls once are in
 // it, so a chain of them folds from the bottom up. The shared ones wait for
@@ -220,6 +255,10 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], sp: Spliceable
   let s: Spliceable = sp;
   while (more && round < 16) {
     s = grown_leaves(out, s);
+    if (folded) {
+      s = grown_shared(out, s);
+      once = s.once;
+    }
     let ctors: boolean[] = constructor_leaves(out.funcs, s);
     let ready: boolean[] = [];
     let j: i32 = 0;
@@ -255,6 +294,24 @@ function grown_leaves(sofar: Inlined, sp: Spliceable): Spliceable {
     i = i + 1;
   }
   return Spliceable { ...sp, leaves: leaves };
+}
+
+// A function the splices so far turned into a shared one is shared from the
+// next round: `__om_balance` returns its rotations' calls until the rotations,
+// each called once, are spliced into it, and every return is a construction
+// after.
+function grown_shared(sofar: Inlined, sp: Spliceable): Spliceable {
+  let shared: boolean[] = sp.shared;
+  let once: boolean[] = sp.once;
+  let i: i32 = 0;
+  while (i < sofar.funcs.len()) {
+    if (!shared[i] && !sp.leaves[i] && sofar.rewritten[i] && sp.inlinable[i] && sp.unnamed[i] && shared_spliceable(sofar.funcs[i], sp.calls[i])) {
+      shared = shared.with(i, true);
+      once = once.with(i, true);
+    }
+    i = i + 1;
+  }
+  return Spliceable { ...sp, shared: shared, once: once };
 }
 
 // `sizes` is each body's count_insts and `callees` the functions it calls
@@ -806,7 +863,9 @@ function splice_calls(f0: ssasem.Func, size: i32, funcs: ssasem.Func[], sizes: i
       if (at >= 0 && shared[at]) {
         f = renamed(f, swap);
         swap = [];
-        if (whole_at(sempair.whole_values(f, ix, shared, false), f.graph.blocks[bi].insts[k].result)) {
+        let r: i32 = f.graph.blocks[bi].insts[k].result;
+        let apart: boolean = sizes[at] <= max_shared_insts() && !whole_at(sempair.whole_values(f, ix, shared, false), r);
+        if (!apart && !(returned_only(f, r) && takes_apart(f, r))) {
           at = 0 - 1;
         }
       }
@@ -840,6 +899,52 @@ function splice_calls(f0: ssasem.Func, size: i32, funcs: ssasem.Func[], sizes: i
     bi = bi + 1;
   }
   return Rewrite { f: renamed(f, swap), changed: done > 0 };
+}
+
+// Whether `f` returns `v` and does nothing else with it, through copies: the
+// callee's construction becomes the caller's result, rebuilding the box the
+// caller took apart.
+function returned_only(f: ssasem.Func, v: i32): boolean {
+  let names: i32[] = [v];
+  let returned: boolean = false;
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      for a in ins.args {
+        if (util.index_of_i32(names, a) >= 0) {
+          if (ins.kind_tag != 7) {
+            return false;
+          }
+          names = names.append(ins.result);
+        }
+      }
+    }
+  }
+  for b in f.graph.blocks {
+    if (b.term.kind_tag == 1 && util.index_of_i32(names, b.term.value) >= 0) {
+      returned = true;
+    } else if (b.term.kind_tag == 3 && util.index_of_i32(names, b.term.cond) >= 0) {
+      return false;
+    }
+  }
+  return returned;
+}
+
+// Whether `f` reads a payload or field of a box of `v`'s type: a box it takes
+// apart can die where a spliced construction of that type is built, and the
+// construction build in it, though `v` itself is kept whole.
+function takes_apart(f: ssasem.Func, v: i32): boolean {
+  if (v < 0 || v >= f.values.len()) {
+    return false;
+  }
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if ((ins.kind_tag == ssasem.variant_get() || ins.kind_tag == ssasem.record_get()) && ins.args.len() == 1
+        && ins.args[0] >= 0 && semtypes.equal(f.values[ins.args[0]], f.values[v])) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function whole_at(whole: boolean[], v: i32): boolean {
