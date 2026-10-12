@@ -3,8 +3,8 @@
 //
 // `json_encode(v)` walks the `JsonValue` tree and produces
 // canonical JSON text. `json_parse(s)` is the inverse —
-// recursive descent over a `__JsonParser` state struct,
-// returning `Option[JsonValue]` (None on any malformed input).
+// recursive descent returning `Option[JsonValue]` (None on any
+// malformed input).
 //
 // Numbers are stored verbatim as `JNumber`'s string payload;
 // the responsibility for valid numeric formatting sits with
@@ -493,35 +493,17 @@ pub function json_encode_pretty(v: JsonValue, indent: i32): string {
 // === JSON parsing ===
 //
 // `json_parse(s)` is the inverse of `json_encode`. Returns
-// `Option[JsonValue]`; `None` on any malformed input.
-// Recursive descent over a `__JsonParser` state struct
-// (s + pos + error). Numbers are stored verbatim as
-// `JNumber`'s string payload. String escapes are decoded
-// (`\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`,
-// `\uXXXX` for BMP code points). Surrogate pairs aren't
-// combined yet.
-
-struct __JsonParser {
-  s: string,
-  pos: i32,
-  error: i32,
-  // Offset of the FIRST failure, or -1 while the parse has not failed.
-  // The cursor already threaded `pos`, so the position of a syntax
-  // error was known at the point of failure and thrown away by
-  // json_parse returning None — a malformed document reported that it
-  // was malformed and nothing else. Recording it here is what lets
-  // json_parse_result say where.
-  errpos: i32,
-  // Current container-nesting depth, threaded through every
-  // cursor so the recursive descent can bound how deep it
-  // will go. A hostile `[[[[…` / `{"a":{"a":{…` body would
-  // otherwise recurse without limit and overflow the stack
-  // (a DoS on an untrusted request body). The cap is 128 (see
-  // __json_p_value), matching serde_json's default recursion
-  // limit — well clear of any realistic document, well short of
-  // a stack overflow.
-  depth: i32,
-}
+// `Option[JsonValue]`; `None` on any malformed input. Recursive descent
+// over `s`: each parser starts at the offset in a shared `Cell[i32]` and
+// leaves it just past what it consumed. A failure stores `-1 - offset`
+// there instead, so a negative cell is a failed parse, and the first
+// failure — the innermost, which describes the document — is never
+// overwritten. Numbers are stored verbatim as `JNumber`'s string payload.
+// String escapes are decoded (`\"`, `\\`, `\/`, `\b`, `\f`, `\n`,
+// `\r`, `\t`, and `\uXXXX`, surrogate pairs combined).
+//
+// Nesting is bounded at 128 containers, serde_json's default limit, so a
+// hostile `[[[[…` body cannot recurse until the stack overflows.
 
 // JSON_NOT_WS marks every byte but the four JSON whitespace bytes, so a scan
 // over it finds the end of a whitespace run.
@@ -544,25 +526,30 @@ const JSON_NOT_WS: u8[] = [
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
 ];
 
-// __json_p_skip_ws advances past leading whitespace and returns
-// the advanced cursor. Advance-only: no value to surface, so it
-// returns just the new __JsonParser (rebind: `p = __json_p_skip_ws(p);`).
-function __json_p_skip_ws(p: __JsonParser): __JsonParser {
-  if (p.pos >= p.s.len()) {
-    return p;
+// __json_ws is the first offset at or after `i` that is not JSON whitespace.
+function __json_ws(s: string, i: i32): i32 {
+  if (i < s.len()) {
+    let b: i32 = s[i] as i32;
+    if (b == 32 || b == 9 || b == 10 || b == 13) {
+      return __scan_set(s, i + 1, JSON_NOT_WS);
+    }
   }
-  let b: i32 = p.s[p.pos] as i32;
-  if (b != 32 && b != 9 && b != 10 && b != 13) {
-    return p;
-  }
-  return __JsonParser { ...p, pos: __scan_set(p.s, p.pos + 1, JSON_NOT_WS) };
+  return i;
 }
 
-function __json_p_byte(p: __JsonParser): i32 {
-  if (p.pos >= p.s.len()) {
+// __json_byte is the byte at `i`, or 0 past the end.
+function __json_byte(s: string, i: i32): i32 {
+  if (i >= s.len()) {
     return 0;
   }
-  return p.s[p.pos] as i32;
+  return s[i] as i32;
+}
+
+// __json_fail records a failure at `pos` unless one is already recorded.
+function __json_fail(at: Cell[i32], pos: i32): void {
+  if (at.get() >= 0) {
+    at.set(-1 - pos);
+  }
 }
 
 function __json_hex_value(c: i32): i32 {
@@ -578,16 +565,10 @@ function __json_hex_value(c: i32): i32 {
   return -1;
 }
 
-// __json_p_number consumes a JSON number and returns the
-// decoded JNumber plus the advanced cursor: `(JsonValue,
-// __JsonParser)`. On a malformed number it threads back a
-// cursor with `error: 1` and a JNull placeholder.
-//
-// Each digit run is one scan, and the cursor is rebuilt once per number.
-function __json_p_number(p: __JsonParser): (JsonValue, __JsonParser) {
-  let s: string = p.s;
+// __json_p_number reads the number starting at `start`. Each digit run is
+// one scan.
+function __json_p_number(s: string, start: i32, at: Cell[i32]): JsonValue {
   let n: i32 = s.len();
-  let start: i32 = p.pos;
   let i: i32 = start;
   if (i < n && s[i] == 45) {  // '-'
     i = i + 1;
@@ -597,17 +578,20 @@ function __json_p_number(p: __JsonParser): (JsonValue, __JsonParser) {
   let intStart: i32 = i;
   i = __scan_set(s, i, JSON_NOT_DIGIT);
   if (i == intStart) {
-    return (JNull, __json_fail(__JsonParser { ...p, pos: i }));
+    __json_fail(at, i);
+    return JNull;
   }
   if (s[intStart] == 48 && i - intStart > 1) {
-    return (JNull, __json_fail(__JsonParser { ...p, pos: intStart + 1 }));
+    __json_fail(at, intStart + 1);
+    return JNull;
   }
   // `frac` is `"." 1*DIGIT`.
   if (i < n && s[i] == 46) {
     let fracStart: i32 = i + 1;
     i = __scan_set(s, fracStart, JSON_NOT_DIGIT);
     if (i == fracStart) {
-      return (JNull, __json_fail(__JsonParser { ...p, pos: i }));
+      __json_fail(at, i);
+      return JNull;
     }
   }
   // `exp` is `[eE][+-]?1*DIGIT`.
@@ -619,10 +603,12 @@ function __json_p_number(p: __JsonParser): (JsonValue, __JsonParser) {
     let expStart: i32 = i;
     i = __scan_set(s, expStart, JSON_NOT_DIGIT);
     if (i == expStart) {
-      return (JNull, __json_fail(__JsonParser { ...p, pos: i }));
+      __json_fail(at, i);
+      return JNull;
     }
   }
-  return (JNumber(slice_unchecked(s, start, i) + ""), __JsonParser { ...p, pos: i });
+  at.set(i);
+  return JNumber(slice_unchecked(s, start, i) + "");
 }
 
 // JSON_NOT_DIGIT marks every byte but `0`-`9`, so a scan over it finds the
@@ -679,76 +665,72 @@ function __json_cp_bytes(cp: i32): u8[] {
   ];
 }
 
-// __json_p_uhex parses 4 hex digits at p.pos (without
-// consuming the leading `\u`) and returns the decoded value.
-// Sets p.error and returns 0 on any non-hex digit or
-// past-end-of-input. Does NOT consume the hex digits past
-// what it reads — it advances p.pos by 4 on success.
-function __json_p_uhex(p: __JsonParser): (i32, __JsonParser) {
-  if (p.pos + 4 > p.s.len()) {
-    return (0, __json_fail(p));
+// __json_p_uhex is the value of the 4 hex digits at `i`, or -1 after
+// recording a failure at the first that is missing or not hex.
+function __json_p_uhex(s: string, i: i32, at: Cell[i32]): i32 {
+  if (i + 4 > s.len()) {
+    __json_fail(at, i);
+    return -1;
   }
   let u: i32 = 0;
-  let i: i32 = 0;
-  while (i < 4) {
-    let hv: i32 = __json_hex_value(p.s[p.pos] as i32);
+  let k: i32 = 0;
+  while (k < 4) {
+    let hv: i32 = __json_hex_value(s[i + k] as i32);
     if (hv < 0) {
-      return (0, __json_fail(p));
+      __json_fail(at, i + k);
+      return -1;
     }
     u = u << 4 | hv;
-    p = __JsonParser { ...p, pos: p.pos + 1 };
-    i = i + 1;
+    k = k + 1;
   }
-  return (u, p);
+  return u;
 }
 
-// __json_p_string consumes a quoted JSON string and returns the
-// decoded value plus the advanced cursor: `(string,
-// __JsonParser)`. Error paths thread back a cursor with
-// `error: 1` and an empty-string placeholder.
-function __json_p_string(p: __JsonParser): (string, __JsonParser) {
-  if (__json_p_byte(p) != 34) {
-    return ("", __json_fail(p));
+// __json_p_string reads the string whose opening quote is at `start`.
+function __json_p_string(s: string, start: i32, at: Cell[i32]): string {
+  if (__json_byte(s, start) != 34) {
+    __json_fail(at, start);
+    return "";
   }
-  p = __JsonParser { ...p, pos: p.pos + 1 };
+  let i: i32 = start + 1;
   // A string with no escape is one slice of the input.
-  let plain: i32 = __scan_set(p.s, p.pos, JSON_STRING_STOPS);
-  if (plain < p.s.len() && p.s[plain] == 34) {
-    return (slice_unchecked(p.s, p.pos, plain) + "", __JsonParser { ...p, pos: plain + 1 });
+  let plain: i32 = __scan_set(s, i, JSON_STRING_STOPS);
+  if (plain < s.len() && s[plain] == 34) {
+    at.set(plain + 1);
+    return slice_unchecked(s, i, plain) + "";
   }
-  // Accumulate the decoded value in a LOCAL growable u8[] (#4379): the old
-  // `out = out + p.s[p.pos:p.pos+1]` appended one byte at a time onto an
-  // immutable string -- O(value²), recopying the whole decoded prefix per
-  // character on the hot request-body parse path. Every append targets the
-  // local `out`, so it grows in place (amortized O(1)); codepoint escapes emit
-  // their 1-4 UTF-8 bytes (from the pure __json_cp_bytes) through the hoisted
-  // `cb` / `ci` cursor. Byte-for-byte identical decoding.
+  // The decoded value accumulates in a local u8[], which grows in place
+  // (#4379); codepoint escapes append their 1-4 UTF-8 bytes from the pure
+  // __json_cp_bytes.
   let out: u8[] = [];
-  let n: i32 = p.s.len();
+  let n: i32 = s.len();
   let b: i32 = 0;
   let cb: u8[] = [];
   let ci: i32 = 0;
   while (true) {
-    b = __json_p_byte(p);
+    b = __json_byte(s, i);
     if (b == 0) {
-      return ("", __json_fail(p));
+      __json_fail(at, i);
+      return "";
     }
     if (b == 34) {
-      return (string_from_bytes_unchecked(out), __JsonParser { ...p, pos: p.pos + 1 });
+      at.set(i + 1);
+      return string_from_bytes_unchecked(out);
     }
     if (b == 92) {  // '\\'
-      p = __JsonParser { ...p, pos: p.pos + 1 };
-      let esc: i32 = __json_p_byte(p);
+      i = i + 1;
+      let esc: i32 = __json_byte(s, i);
       if (esc == 0) {
-        return ("", __json_fail(p));
+        __json_fail(at, i);
+        return "";
       }
       if (esc == 117) {  // 'u' — \uXXXX
-        p = __JsonParser { ...p, pos: p.pos + 1 };
-        let (u, pu) = __json_p_uhex(p);
-        p = pu;
-        if (p.error != 0) {
-          return ("", p);
+        i = i + 1;
+        let u: i32 = __json_p_uhex(s, i, at);
+        if (u < 0) {
+          return "";
         }
+        i = i + 4;
         // High surrogate (D800..DBFF): combine with
         // the following low surrogate (DC00..DFFF) to
         // form a single astral code point. Lone or
@@ -760,17 +742,17 @@ function __json_p_string(p: __JsonParser): (string, __JsonParser) {
         let cp1: i32 = 65533;
         let cp2: i32 = -1;
         if (u >= 55296 && u <= 56319) {
-          if (p.pos + 6 > n
-            || p.s[p.pos] != 92
-            || p.s[p.pos + 1] != 117) {
+          if (i + 6 > n
+            || s[i] != 92
+            || s[i + 1] != 117) {
             cp1 = 65533;
           } else {
-            p = __JsonParser { ...p, pos: p.pos + 2 };
-            let (low, pl) = __json_p_uhex(p);
-            p = pl;
-            if (p.error != 0) {
-              return ("", p);
+            i = i + 2;
+            let low: i32 = __json_p_uhex(s, i, at);
+            if (low < 0) {
+              return "";
             }
+            i = i + 4;
             if (low < 56320 || low > 57343) {
               cp1 = 65533;
               cp2 = low;
@@ -814,18 +796,19 @@ function __json_p_string(p: __JsonParser): (string, __JsonParser) {
         } else if (esc == 102) {
           ch = 12;
         } else {
-          return ("", __json_fail(p));
+          __json_fail(at, i);
+          return "";
         }
         out = out.append(ch as u8);
-        p = __JsonParser { ...p, pos: p.pos + 1 };
+        i = i + 1;
       }
     } else {
-      let stop: i32 = __scan_set(p.s, p.pos, JSON_STRING_STOPS);
-      out = __json_append_run(out, p.s, p.pos, stop);
-      p = __JsonParser { ...p, pos: stop };
+      let stop: i32 = __scan_set(s, i, JSON_STRING_STOPS);
+      out = __json_append_run(out, s, i, stop);
+      i = stop;
     }
   }
-  return ("", p);  // unreachable
+  return "";  // unreachable
 }
 
 // JSON_STRING_STOPS marks where a string's plain run ends: `"`, `\`, and a NUL
@@ -850,176 +833,139 @@ function __json_append_run(out: u8[], s: string, from: i32, stop: i32): u8[] {
   return acc;
 }
 
-// __json_p_array consumes a JSON array and returns the decoded
-// JArray plus the advanced cursor: `(JsonValue, __JsonParser)`.
-// Recurses into __json_p_value for each element, threading the
-// cursor through. Error paths thread back `error: 1` + JNull.
-function __json_p_array(p: __JsonParser): (JsonValue, __JsonParser) {
-  p = __JsonParser { ...p, pos: p.pos + 1 };  // consume '['
-  p = __json_p_skip_ws(p);
-  if (__json_p_byte(p) == 93) {  // ']'
-    p = __JsonParser { ...p, pos: p.pos + 1 };
+// __json_p_array reads the array whose `[` is at `start`; `depth` counts
+// it.
+function __json_p_array(s: string, start: i32, at: Cell[i32], depth: i32): JsonValue {
+  let i: i32 = __json_ws(s, start + 1);
+  if (__json_byte(s, i) == 93) {  // ']'
+    at.set(i + 1);
     let empty: JsonValue[] = [];
-    return (JArray(empty), p);
+    return JArray(empty);
   }
   let arr: JsonValue[] = [];
+  at.set(i);
   while (true) {
-    let (elem, pe) = __json_p_value(p);
-    p = pe;
-    if (p.error != 0) {
-      return (JNull, p);
+    let elem: JsonValue = __json_p_value(s, at, depth);
+    i = at.get();
+    if (i < 0) {
+      return JNull;
     }
     arr = arr.append(elem);
-    p = __json_p_skip_ws(p);
-    let b: i32 = __json_p_byte(p);
+    i = __json_ws(s, i);
+    let b: i32 = __json_byte(s, i);
     if (b == 44) {  // ','
-      p = __JsonParser { ...p, pos: p.pos + 1 };
-      p = __json_p_skip_ws(p);
+      at.set(i + 1);
       continue;
     }
     if (b == 93) {  // ']'
-      p = __JsonParser { ...p, pos: p.pos + 1 };
-      return (JArray(arr), p);
+      at.set(i + 1);
+      return JArray(arr);
     }
-    return (JNull, __json_fail(p));
+    __json_fail(at, i);
+    return JNull;
   }
-  return (JNull, p);  // unreachable
+  return JNull;  // unreachable
 }
 
-// __json_p_object consumes a JSON object and returns the decoded
-// JObject plus the advanced cursor: `(JsonValue, __JsonParser)`.
-// Recurses into __json_p_string (keys) and __json_p_value
-// (values), threading the cursor through. Error paths thread
-// back `error: 1` + JNull.
-function __json_p_object(p: __JsonParser): (JsonValue, __JsonParser) {
-  p = __JsonParser { ...p, pos: p.pos + 1 };  // consume '{'
-  p = __json_p_skip_ws(p);
+// __json_p_object reads the object whose `{` is at `start`; `depth` counts
+// it.
+function __json_p_object(s: string, start: i32, at: Cell[i32], depth: i32): JsonValue {
+  let i: i32 = __json_ws(s, start + 1);
+  if (__json_byte(s, i) == 125) {  // '}'
+    at.set(i + 1);
+    return JObject(object());
+  }
   let keys: string[] = [];
   let values: JsonValue[] = [];
-  if (__json_p_byte(p) == 125) {  // '}'
-    p = __JsonParser { ...p, pos: p.pos + 1 };
-    return (JObject(object()), p);
-  }
   while (true) {
-    let (key, pk) = __json_p_string(p);
-    p = pk;
-    if (p.error != 0) {
-      return (JNull, p);
+    let key: string = __json_p_string(s, i, at);
+    i = at.get();
+    if (i < 0) {
+      return JNull;
     }
-    p = __json_p_skip_ws(p);
-    if (__json_p_byte(p) != 58) {  // ':'
-      return (JNull, __json_fail(p));
+    i = __json_ws(s, i);
+    if (__json_byte(s, i) != 58) {  // ':'
+      __json_fail(at, i);
+      return JNull;
     }
-    p = __JsonParser { ...p, pos: p.pos + 1 };
-    let (val, pv) = __json_p_value(p);
-    p = pv;
-    if (p.error != 0) {
-      return (JNull, p);
+    at.set(i + 1);
+    let val: JsonValue = __json_p_value(s, at, depth);
+    i = at.get();
+    if (i < 0) {
+      return JNull;
     }
     keys = keys.append(key);
     values = values.append(val);
-    p = __json_p_skip_ws(p);
-    let b: i32 = __json_p_byte(p);
+    i = __json_ws(s, i);
+    let b: i32 = __json_byte(s, i);
     if (b == 44) {  // ','
-      p = __JsonParser { ...p, pos: p.pos + 1 };
-      p = __json_p_skip_ws(p);
+      i = __json_ws(s, i + 1);
       continue;
     }
     if (b == 125) {  // '}'
-      p = __JsonParser { ...p, pos: p.pos + 1 };
-      return (JObject(object_of(keys, values)), p);
+      at.set(i + 1);
+      return JObject(object_of(keys, values));
     }
-    return (JNull, __json_fail(p));
+    __json_fail(at, i);
+    return JNull;
   }
-  return (JNull, p);  // unreachable
+  return JNull;  // unreachable
 }
 
-// __json_p_value is the recursive-descent dispatch: it skips
-// leading whitespace, peeks the next byte, and delegates to the
-// number / string / array / object parsers. Returns the decoded
-// value plus the advanced cursor: `(JsonValue, __JsonParser)`.
-// Error paths thread back `error: 1` + JNull.
-function __json_p_value(p: __JsonParser): (JsonValue, __JsonParser) {
-  p = __json_p_skip_ws(p);
-  let b: i32 = __json_p_byte(p);
-  if (b == 0) {
-    return (JNull, __json_fail(p));
-  }
-  if (b == 110) {  // 'n' — null
-    if (p.pos + 4 > p.s.len()) {
-      return (JNull, __json_fail(p));
-    }
-    if (p.s[p.pos + 1] != 117 || p.s[p.pos + 2] != 108 || p.s[p.pos + 3] != 108) {
-      return (JNull, __json_fail(p));
-    }
-    return (JNull, __JsonParser { ...p, pos: p.pos + 4 });
-  }
-  if (b == 116) {  // 't' — true
-    if (p.pos + 4 > p.s.len()) {
-      return (JNull, __json_fail(p));
-    }
-    if (p.s[p.pos + 1] != 114 || p.s[p.pos + 2] != 117 || p.s[p.pos + 3] != 101) {
-      return (JNull, __json_fail(p));
-    }
-    return (JBool(true), __JsonParser { ...p, pos: p.pos + 4 });
-  }
-  if (b == 102) {  // 'f' — false
-    if (p.pos + 5 > p.s.len()) {
-      return (JNull, __json_fail(p));
-    }
-    if (p.s[p.pos + 1] != 97 || p.s[p.pos + 2] != 108
-      || p.s[p.pos + 3] != 115 || p.s[p.pos + 4] != 101) {
-      return (JNull, __json_fail(p));
-    }
-    return (JBool(false), __JsonParser { ...p, pos: p.pos + 5 });
-  }
+// __json_p_value reads the value at or after the offset in `at`, past any
+// leading whitespace, inside `depth` containers.
+function __json_p_value(s: string, at: Cell[i32], depth: i32): JsonValue {
+  let i: i32 = __json_ws(s, at.get());
+  let b: i32 = __json_byte(s, i);
   if (b == 34) {  // '"' — string
-    let (s, ps) = __json_p_string(p);
-    p = ps;
-    if (p.error != 0) {
-      return (JNull, p);
+    let str: string = __json_p_string(s, i, at);
+    if (at.get() < 0) {
+      return JNull;
     }
-    return (JString(s), p);
-  }
-  if (b == 91) {  // '['
-    // Bound the recursion: a value nested past 128 containers
-    // (serde_json's default limit) is rejected before descending
-    // another level, so a hostile deeply-nested body can't
-    // overflow the stack.
-    if (p.depth >= 128) {
-      return (JNull, __json_fail(p));
-    }
-    let savedA: i32 = p.depth;
-    p = __JsonParser { ...p, depth: p.depth + 1 };
-    let (av, pa) = __json_p_array(p);
-    // Restore the caller's depth on the way out so siblings at
-    // this level see the correct nesting, not an inflated one.
-    return (av, __JsonParser { ...pa, depth: savedA });
-  }
-  if (b == 123) {  // '{'
-    if (p.depth >= 128) {
-      return (JNull, __json_fail(p));
-    }
-    let savedO: i32 = p.depth;
-    p = __JsonParser { ...p, depth: p.depth + 1 };
-    let (ov, po) = __json_p_object(p);
-    return (ov, __JsonParser { ...po, depth: savedO });
+    return JString(str);
   }
   if (b == 45 || b >= 48 && b <= 57) {  // '-' or digit
-    return __json_p_number(p);
+    return __json_p_number(s, i, at);
   }
-  return (JNull, __json_fail(p));
+  if (b == 91 || b == 123) {  // '[' or '{'
+    if (depth >= 128) {
+      __json_fail(at, i);
+      return JNull;
+    }
+    if (b == 91) {
+      return __json_p_array(s, i, at, depth + 1);
+    }
+    return __json_p_object(s, i, at, depth + 1);
+  }
+  if (b == 110 && __json_word(s, i, "null")) {
+    at.set(i + 4);
+    return JNull;
+  }
+  if (b == 116 && __json_word(s, i, "true")) {
+    at.set(i + 4);
+    return JBool(true);
+  }
+  if (b == 102 && __json_word(s, i, "false")) {
+    at.set(i + 5);
+    return JBool(false);
+  }
+  __json_fail(at, i);
+  return JNull;
 }
 
-// __json_fail marks the cursor failed, remembering the offset of the FIRST
-// failure. Later sites must not overwrite it: recursive descent unwinds
-// through every enclosing container, and the innermost position is the one
-// that describes the document.
-function __json_fail(p: __JsonParser): __JsonParser {
-  if (p.error != 0) {
-    return p;
+// __json_word reports whether `word` is spelled at `i`.
+function __json_word(s: string, i: i32, word: string): boolean {
+  if (i + word.len() > s.len()) {
+    return false;
   }
-  return __JsonParser { ...p, error: 1, errpos: p.pos };
+  let k: i32 = 1;
+  while (k < word.len()) {
+    if (s[i + k] != word[k]) {
+      return false;
+    }
+    k = k + 1;
+  }
+  return true;
 }
 
 // __json_line_col converts a byte offset into 1-based (line, column),
@@ -1081,15 +1027,11 @@ function __json_message(s: string, off: i32): string {
 // Prefer it wherever the input can be malformed and a human will read the
 // result: a config file, a request body, anything hand-edited.
 pub function json_parse_result(s: string): Result[JsonValue, JsonError] {
-  let p: __JsonParser = __JsonParser { s: s, pos: 0, error: 0, depth: 0, errpos: -1 };
-  let (v, pv) = __json_p_value(p);
-  p = pv;
-  p = __json_p_skip_ws(p);
-  if (p.error != 0) {
-    let off: i32 = p.errpos;
-    if (off < 0) {
-      off = p.pos;
-    }
+  let at: Cell[i32] = cell_new(0);
+  let v: JsonValue = __json_p_value(s, at, 0);
+  let end: i32 = at.get();
+  if (end < 0) {
+    let off: i32 = -1 - end;
     let (ln, cl) = __json_line_col(s, off);
     return Err(JsonError {
       message: __json_message(s, off),
@@ -1098,11 +1040,12 @@ pub function json_parse_result(s: string): Result[JsonValue, JsonError] {
       col: cl,
     });
   }
-  if (p.pos < s.len()) {
-    let (ln2, cl2) = __json_line_col(s, p.pos);
+  end = __json_ws(s, end);
+  if (end < s.len()) {
+    let (ln2, cl2) = __json_line_col(s, end);
     return Err(JsonError {
       message: "trailing content after the top-level value",
-      offset: p.pos,
+      offset: end,
       line: ln2,
       col: cl2,
     });
