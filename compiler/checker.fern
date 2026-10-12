@@ -15697,11 +15697,18 @@ function cover_arg_types(t: typeinfo.Type, ctor: string, arity: i32, s: Scope): 
   return out;
 }
 
+// Whether a written pattern's constructor is `ctor`. The arms ride on the
+// chain as written, so a variant of an enum another module declares is named
+// bare there while the type lists it mangled (`rbtree__Node`).
+function names_ctor(written: string, ctor: string): boolean {
+  return written == ctor || written.len() > 0 && util.str_has_suffix(ctor, "__" + written);
+}
+
 // The payload count rows naming `ctor` give it.
 function cover_arity(rows: CoverPat[][], ctor: string): i32 {
   let n: i32 = 0;
   for r in rows {
-    if (!r[0].opaque && r[0].ctor == ctor && r[0].args.len() > n) {
+    if (!r[0].opaque && names_ctor(r[0].ctor, ctor) && r[0].args.len() > n) {
       n = r[0].args.len();
     }
   }
@@ -15714,7 +15721,7 @@ function cover_split(rows: CoverPat[][], ctor: string, arity: i32): CoverPat[][]
   let out: CoverPat[][] = [];
   for r in rows {
     let head: CoverPat = r[0];
-    if (head.opaque || head.ctor.len() > 0 && head.ctor != ctor) {
+    if (head.opaque || head.ctor.len() > 0 && !names_ctor(head.ctor, ctor)) {
       continue;
     }
     let row: CoverPat[] = [];
@@ -15782,7 +15789,7 @@ function cover_useful(rows: CoverPat[][], types: typeinfo.Type[], s: Scope): boo
 
 function cover_names(rows: CoverPat[][], ctor: string): boolean {
   for r in rows {
-    if (!r[0].opaque && r[0].ctor == ctor) {
+    if (!r[0].opaque && names_ctor(r[0].ctor, ctor)) {
       return true;
     }
   }
