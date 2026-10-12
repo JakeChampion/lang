@@ -203,7 +203,9 @@ func checkProxyTLS(t *testing.T, addr string, pool *x509.CertPool) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(15 * time.Second))
+	// The handshake's signature and key exchange run interpreted, so this
+	// takes the 60 s tls_server_test.go gives the interpreter.
+	conn.SetDeadline(time.Now().Add(60 * time.Second))
 	if _, err := conn.Write([]byte("PROXY TCP4 203.0.113.8 192.0.2.1 5555 443\r\n")); err != nil {
 		t.Fatal(err)
 	}

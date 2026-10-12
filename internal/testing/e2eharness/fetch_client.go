@@ -3,6 +3,7 @@ package e2eharness
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"math/rand"
@@ -176,8 +177,16 @@ func (up *FetchUpstream) serve(c net.Conn) {
 		// ratio, so the whole-response verdict shows at depth 2.
 		z := gzipped(gzipped(make([]byte, 100000)))
 		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip, gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
-	case target == "/br":
-		resp = []byte("HTTP/1.1 200 OK\r\nContent-Encoding: br\r\nContent-Length: 3\r\n\r\nraw")
+	case target == "/compress":
+		resp = []byte("HTTP/1.1 200 OK\r\nContent-Encoding: compress\r\nContent-Length: 3\r\n\r\nraw")
+	case target == "/zstd":
+		// "hello zstd" in zstd, as the reference encoder writes it.
+		z, _ := hex.DecodeString("28b52ffd200a51000068656c6c6f207a737464")
+		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: zstd\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
+	case target == "/brotli":
+		// "hello brotli" in brotli, as the reference encoder writes it.
+		z, _ := hex.DecodeString("8b058068656c6c6f2062726f746c6903")
+		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: br\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
 	case target == "/truncated":
 		resp = []byte("HTTP/1.1 200 OK\r\nContent-Length: 50\r\n\r\nonly a little")
 	case strings.HasPrefix(target, "http://"):
@@ -427,8 +436,9 @@ func headerValue(head, name string) string {
 // floor admitted and one past the ratio refused), a
 // caller's own `Accept-Encoding` and `Decoding { depth: 0 }` each leaving
 // the body as it came, a coding the client never asks for left alone,
-// and the `Accept-Encoding: gzip` the client writes (every echo line
-// carries it; `noencoding` carries the caller's).
+// zstd and brotli bodies decoded, and the `Accept-Encoding: gzip, zstd,
+// br` the client writes (every echo line carries it; `noencoding`
+// carries the caller's).
 // `closedPort` is a port nothing listens on.
 func FetchClientSource(port, closedPort int) string {
 	return fmt.Sprintf(`import "std/fetch";
@@ -536,7 +546,9 @@ function main(): i32 {
     show("gzipdeepbomb", fetch.send(fetch.get(base() + "/gzip-double-bomb").with_decoding(fetch.Decoding { depth: 2, ratio: 100 })));
     show("gzipidentity", fetch.send(fetch.get(base() + "/gzip").with_header("Accept-Encoding", "identity")));
     show("gzipoff", fetch.send(fetch.get(base() + "/gzip").with_decoding(fetch.Decoding { depth: 0, ratio: 100 })));
-    show("br", fetch.send(fetch.get(base() + "/br")));
+    show("zstd", fetch.send(fetch.get(base() + "/zstd")));
+    show("brotli", fetch.send(fetch.get(base() + "/brotli")));
+    show("compress", fetch.send(fetch.get(base() + "/compress")));
     show("noencoding", fetch.send(fetch.request("POST", base() + "/echo").with_header("Accept-Encoding", "identity").with_text("x")));
     show("refused", fetch.send(fetch.get("http://127.0.0.1:%d/")));
     show("badurl", fetch.send(fetch.get("not a url")));
@@ -682,7 +694,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     out = out + line("gzipdeep", plat.http(fetch.get(base() + "/gzip-double").with_decoding(fetch.Decoding { depth: 2, ratio: 100 })));
     out = out + line("gzipidentity", plat.http(fetch.get(base() + "/gzip").with_header("Accept-Encoding", "identity")));
     out = out + line("gzipoff", plat.http(fetch.get(base() + "/gzip").with_decoding(fetch.Decoding { depth: 0, ratio: 100 })));
-    out = out + line("br", plat.http(fetch.get(base() + "/br")));
+    out = out + line("zstd", plat.http(fetch.get(base() + "/zstd")));
+    out = out + line("brotli", plat.http(fetch.get(base() + "/brotli")));
+    out = out + line("compress", plat.http(fetch.get(base() + "/compress")));
     out = out + line("noencoding", plat.http(fetch.request("POST", base() + "/echo").with_header("Accept-Encoding", "identity").with_text("x")));
     out = out + line("refused", plat.http(fetch.get("http://127.0.0.1:%d/")));
     out = out + line("badurl", plat.http(fetch.get("not a url")));
@@ -741,7 +755,9 @@ gzipdouble: error decode: content codings past the depth of 1
 gzipdeep: 200 [twice] headers: trailers:
 gzipidentity: 200 [<not utf-8>] headers: content-encoding=gzip content-length=GZLEN x-up=1 trailers:
 gzipoff: 200 [<not utf-8>] headers: content-encoding=gzip content-length=GZLEN x-up=1 trailers:
-br: 200 [raw] headers: content-encoding=br content-length=3 trailers:
+zstd: 200 [hello zstd] headers: trailers:
+brotli: 200 [hello brotli] headers: trailers:
+compress: 200 [raw] headers: content-encoding=compress content-length=3 trailers:
 noencoding: 201 [NOENC] headers: content-length=NOENCLEN trailers:
 refused: error connect: Connection refused
 badurl: error invalid URL: no scheme in not a url
@@ -777,12 +793,12 @@ func CheckFetchHosted(t *testing.T, up *FetchUpstream, body string) {
 	want = strings.ReplaceAll(want, "GZLEN", strconv.Itoa(len(gzipped([]byte("hello gzip")))))
 	want = strings.ReplaceAll(want, "ONEBOMB", strconv.Itoa(len(gzipped(make([]byte, 200000)))))
 	for name, line := range map[string]string{
-		"ECHO":       echoLine("POST", "/echo?q=1", host, "payload", "t1", "", "", "gzip"),
-		"PUT":        echoLine("PUT", "/echo", host, "raw", "", "", "", "gzip"),
-		"POST303":    echoLine("GET", "/echo", host, "", "", "", "", "gzip"),
-		"POST307":    echoLine("POST", "/echo", host, "payload", "", "", "", "gzip"),
-		"XORIGIN":    echoLine("GET", "/echo", host2, "", "kept", "", "", "gzip"),
-		"SAMEORIGIN": echoLine("GET", "/echo", host, "", "", "Bearer t", "a=1", "gzip"),
+		"ECHO":       echoLine("POST", "/echo?q=1", host, "payload", "t1", "", "", "gzip, zstd, br"),
+		"PUT":        echoLine("PUT", "/echo", host, "raw", "", "", "", "gzip, zstd, br"),
+		"POST303":    echoLine("GET", "/echo", host, "", "", "", "", "gzip, zstd, br"),
+		"POST307":    echoLine("POST", "/echo", host, "payload", "", "", "", "gzip, zstd, br"),
+		"XORIGIN":    echoLine("GET", "/echo", host2, "", "kept", "", "", "gzip, zstd, br"),
+		"SAMEORIGIN": echoLine("GET", "/echo", host, "", "", "Bearer t", "a=1", "gzip, zstd, br"),
 		"NOENC":      echoLine("POST", "/echo", host, "x", "", "", "", "identity"),
 	} {
 		want = strings.ReplaceAll(want, "["+name+"]", "["+line+"]")
@@ -837,7 +853,9 @@ gzipdeepwide: 100000
 gzipdeepbomb: error decode: a body of 100000 bytes from TWOBOMB encoded, past the 65536 allowed
 gzipidentity: 200 [<not utf-8>] headers: Content-Encoding=gzip Content-Length=GZLEN X-Up=1 trailers:
 gzipoff: 200 [<not utf-8>] headers: Content-Encoding=gzip Content-Length=GZLEN X-Up=1 trailers:
-br: 200 [raw] headers: Content-Encoding=br Content-Length=3 trailers:
+zstd: 200 [hello zstd] headers: trailers:
+brotli: 200 [hello brotli] headers: trailers:
+compress: 200 [raw] headers: Content-Encoding=compress Content-Length=3 trailers:
 noencoding: 201 [NOENC] headers: Content-Length=NOENCLEN trailers:
 refused: error connect: Connection refused
 badurl: error invalid URL: no scheme in not a url
@@ -879,15 +897,15 @@ func CheckFetchClient(t *testing.T, up *FetchUpstream, stdout string, exit int) 
 	want = strings.ReplaceAll(want, "ONEBOMB", strconv.Itoa(len(gzipped(make([]byte, 200000)))))
 	want = strings.ReplaceAll(want, "TWOBOMB", strconv.Itoa(len(gzipped(gzipped(make([]byte, 100000))))))
 	for name, line := range map[string]string{
-		"ECHO":       echoLine("POST", "/echo?q=1", host, "payload", "t1", "", "", "gzip"),
-		"PUT":        echoLine("PUT", "/echo", host, "raw", "", "", "", "gzip"),
+		"ECHO":       echoLine("POST", "/echo?q=1", host, "payload", "t1", "", "", "gzip, zstd, br"),
+		"PUT":        echoLine("PUT", "/echo", host, "raw", "", "", "", "gzip, zstd, br"),
 		"VIAPOST":    proxyLine("POST", "http://origin.invalid:81/via?x=1", "origin.invalid:81", "body", "p1", "Basic dTo="),
 		"VIAGET":     proxyLine("GET", "http://8.8.8.8/via", "8.8.8.8", "", "", "Basic dTo="),
-		"POST303":    echoLine("GET", "/echo", host, "", "", "", "", "gzip"),
-		"POST302":    echoLine("GET", "/echo", host, "", "", "", "", "gzip"),
-		"POST307":    echoLine("POST", "/echo", host, "payload", "", "", "", "gzip"),
-		"XORIGIN":    echoLine("GET", "/echo", host2, "", "kept", "", "", "gzip"),
-		"SAMEORIGIN": echoLine("GET", "/echo", host, "", "", "Bearer t", "a=1", "gzip"),
+		"POST303":    echoLine("GET", "/echo", host, "", "", "", "", "gzip, zstd, br"),
+		"POST302":    echoLine("GET", "/echo", host, "", "", "", "", "gzip, zstd, br"),
+		"POST307":    echoLine("POST", "/echo", host, "payload", "", "", "", "gzip, zstd, br"),
+		"XORIGIN":    echoLine("GET", "/echo", host2, "", "kept", "", "", "gzip, zstd, br"),
+		"SAMEORIGIN": echoLine("GET", "/echo", host, "", "", "Bearer t", "a=1", "gzip, zstd, br"),
 		"NOENC":      echoLine("POST", "/echo", host, "x", "", "", "", "identity"),
 	} {
 		want = strings.ReplaceAll(want, "["+name+"]", "["+line+"]")

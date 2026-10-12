@@ -2,11 +2,12 @@ import "std/test";
 import "std/http";
 import "std/http/compress";
 import "std/deflate";
+import "std/zstd";
 import "std/headers";
 import "std/utf8";
 
 // tests/stdlib/http_compress_test.fern — std/http/compress: the coding
-// `Accept-Encoding` ranks highest among those offered, the identity
+// `Accept-Encoding` ranks highest among those offered (zstd on a tie), the identity
 // body when none is acceptable, `Vary` on every response whose coding
 // depends on the field, the ETag made weak and `Accept-Ranges` dropped
 // on a coded one, and each response left alone: a small body, a type
@@ -57,6 +58,16 @@ function summary(r: HttpResponse): string {
       }
     }
   }
+  if (field(r, "Content-Encoding") == "zstd") {
+    match (zstd.decompress(body, 1048576)) {
+      Ok(out) => {
+        body = out;
+      },
+      Err(e) => {
+        return "bad zstd: " + e.message();
+      }
+    }
+  }
   let text: string = utf8.from_bytes_lossy(body);
   let read: string = body.len().to_string();
   if (text == page()) {
@@ -68,6 +79,15 @@ function summary(r: HttpResponse): string {
 function test_gzip_chosen(): test.TestOutcome {
   let r: HttpResponse = compress.response(req(["Accept-Encoding", "br, gzip"]), html(), compress.options());
   return test.assert_eq(summary(r) + " " + (r.body_len() < page().len()).to_string(), "gzip Accept-Encoding same true");
+}
+
+// zstd where the client takes it, ahead of gzip when it ranks them alike,
+// behind gzip when it ranks gzip higher.
+function test_zstd(): test.TestOutcome {
+  let o: compress.Options = compress.options();
+  let both: string = summary(compress.response(req(["Accept-Encoding", "gzip, deflate, br, zstd"]), html(), o));
+  let ranked: string = summary(compress.response(req(["Accept-Encoding", "zstd;q=0.5, gzip"]), html(), o));
+  return test.assert_eq(both + " | " + ranked, "zstd Accept-Encoding same | gzip Accept-Encoding same");
 }
 
 function test_identity(): test.TestOutcome {
@@ -162,6 +182,7 @@ function test_middleware(): test.TestOutcome {
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/http/compress");
   r = r.it("gzip when the client accepts it", test_gzip_chosen);
+  r = r.it("zstd preferred on a tie", test_zstd);
   r = r.it("identity when it does not", test_identity);
   r = r.it("a coding it does not write passed over", test_unwritten_coding);
   r = r.it("Vary keeps its other fields", test_vary_kept);

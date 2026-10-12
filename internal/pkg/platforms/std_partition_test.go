@@ -57,6 +57,7 @@ var stdModuleReach = map[string]string{
 	"std/base32":        "",
 	"std/base64":        "",
 	"std/bench":         "now",
+	"std/brotli":        "",
 	"std/cli":           "env",
 	"std/convert":       "",
 	"std/crypto":        "",
@@ -124,6 +125,7 @@ var stdModuleReach = map[string]string{
 	"std/utf8":          "",
 	"std/uuid":          "now,random",
 	"std/wasi_http":     "config,env,fs,host,log,now,random,reactor,tcp,unix",
+	"std/zstd":          "",
 }
 
 // TestStdPartitionIsDerivedNotAsserted computes each `std/` module's host
