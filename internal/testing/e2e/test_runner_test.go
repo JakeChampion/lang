@@ -1174,6 +1174,12 @@ func TestRunnerHTTPCacheExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "http_cache", "std/http/cache", 16)
 }
 
+// `tests/stdlib/http_forwarded_test.fern` reads and writes Forwarded
+// elements and walks the client back past trusted proxies.
+func TestRunnerHTTPForwardedExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_forwarded", "std/http/forwarded", 12)
+}
+
 // `tests/stdlib/http_static_test.fern` serves a mock platform's files:
 // validators, preconditions, ranges, precompressed siblings and the paths
 // refused.

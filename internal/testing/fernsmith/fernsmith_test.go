@@ -1342,3 +1342,78 @@ func TestGenDeferBodyHasNoTry(t *testing.T) {
 		t.Fatal("no seed generated a defer, so the sweep checked nothing")
 	}
 }
+
+// Every structural move ShrinkMainBytes makes, deleting a helper or a
+// statement or hoisting an expression, leaves a corpus whose program still
+// type-checks. A corpus offers hundreds of moves; eight spread across them
+// are checked.
+func TestMainBytesReductionsAreValid(t *testing.T) {
+	checked := 0
+	for seed := uint64(0); seed < sweepN(t, 8); seed++ {
+		r := rand.New(rand.NewPCG(seed, 0x5bad))
+		corpus := randBytes(r, 2048)
+		dels := fernsmith.MainBytesReductions(corpus)
+		for i := 0; i < len(dels); i += len(dels)/8 + 1 {
+			checked++
+			src := fernsmith.GenMainBytes(dels[i])
+			if _, err := astNodeCount(t, src); err != nil {
+				t.Fatalf("seed %d move %d does not type-check:\n%s\nerr: %v", seed, i, src, err)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no corpus offered a move")
+	}
+}
+
+// A failure only main's last statements show is out of truncation's reach,
+// since the helpers ahead of main hold the bytes main reads; ShrinkMainBytes
+// deletes the helpers and the statements before it as well.
+func TestShrinkMainBytesReachesPastTruncation(t *testing.T) {
+	mainOf := func(src string) string { return src[strings.Index(src, "\nfunction main"):] }
+	fails := func(data []byte) bool { return strings.Contains(mainOf(fernsmith.GenMainBytes(data)), "while (") }
+	truncate := func(data []byte) []byte {
+		n := len(data)
+		for step := n / 2; step >= 1; {
+			if step < n && fails(data[:n-step]) {
+				n -= step
+				continue
+			}
+			step /= 2
+		}
+		return data[:n]
+	}
+	shrunk, beat := 0, 0
+	for seed := uint64(0); seed < 64 && shrunk < 4; seed++ {
+		corpus := randBytes(rand.New(rand.NewPCG(seed, 0x5bad)), 8192)
+		if !fails(corpus) {
+			continue
+		}
+		shrunk++
+		trunc := fernsmith.GenMainBytes(truncate(corpus))
+		data := fernsmith.ShrinkMainBytes(corpus, fails)
+		src := fernsmith.GenMainBytes(data)
+		if !fails(data) {
+			t.Fatalf("seed %d: the shrunk corpus no longer fails:\n%s", seed, src)
+		}
+		if _, err := astNodeCount(t, src); err != nil {
+			t.Fatalf("seed %d: the shrunk program does not type-check:\n%s\nerr: %v", seed, src, err)
+		}
+		if strings.Contains(src, "\nfunction gen_f") {
+			t.Errorf("seed %d: a helper survived the shrink:\n%s", seed, src)
+		}
+		if len(src) > len(trunc) {
+			t.Errorf("seed %d: shrunk program %d bytes, truncation alone %d", seed, len(src), len(trunc))
+		}
+		if len(src) < len(trunc) {
+			beat++
+		}
+		t.Logf("seed %d: program %d bytes; truncation %d; shrink %d", seed, len(fernsmith.GenMainBytes(corpus)), len(trunc), len(src))
+	}
+	if shrunk == 0 {
+		t.Fatal("no corpus in 64 put a while loop in main")
+	}
+	if beat == 0 {
+		t.Errorf("deleting elements beat truncation on none of %d corpora", shrunk)
+	}
+}

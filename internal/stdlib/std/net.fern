@@ -580,6 +580,129 @@ impl cmp.Eq for SocketAddr {}
 
 impl cmp.Display for SocketAddr {}
 
+// `Prefix` — an address block, `ip/bits` (RFC 4632 for IPv4, RFC 4291
+// §2.3 for IPv6): the addresses whose first `bits` bits are `ip`'s.
+pub struct Prefix {
+  ip: IpAddr,
+  bits: i32,
+}
+
+// `prefix_parse(s)` — `10.0.0.0/8`, `2001:db8::/32`, or a bare address as
+// the block of that one address; None for a length past the family's
+// width, or host bits set below it (`10.0.0.1/8`), which is a typo for one
+// of two different blocks. An IPv4-mapped block of 96 bits or more is the
+// IPv4 block it maps (`::ffff:10.0.0.0/104` is `10.0.0.0/8`).
+pub function prefix_parse(s: string): Option[Prefix] {
+  let slash: i32 = s.index_of("/");
+  let text: string = s;
+  if (slash >= 0) {
+    text = s.slice_snap(0, slash);
+  }
+  match (ip_parse(text)) {
+    Some(ip) => {
+      let width: i32 = ip.bytes().len() * 8;
+      let bits: i32 = width;
+      if (slash >= 0) {
+        bits = __prefix_bits(s.slice_snap(slash + 1, s.len()), width);
+      }
+      if (bits < 0 || !__host_bits_clear(ip.bytes(), bits)) {
+        return None;
+      }
+      if (ip.is_v4_mapped() && bits >= 96) {
+        return Some(Prefix { ip: ip.to_canonical(), bits: bits - 96 });
+      }
+      return Some(Prefix { ip: ip, bits: bits });
+    },
+    None => {
+      return None;
+    }
+  }
+}
+
+// `__prefix_bits(s, width)` — a prefix length of one to three digits, at
+// most `width`; -1 otherwise.
+function __prefix_bits(s: string, width: i32): i32 {
+  if (s.len() == 0 || s.len() > 3) {
+    return 0 - 1;
+  }
+  let n: i32 = 0;
+  for b in s.bytes() {
+    if (b < 48 as u8 || b > 57 as u8) {
+      return 0 - 1;
+    }
+    n = n * 10 + (b - 48 as u8) as i32;
+  }
+  if (n > width) {
+    return 0 - 1;
+  }
+  return n;
+}
+
+function __host_bits_clear(b: u8[], bits: i32): boolean {
+  let i: i32 = 0;
+  while (i < b.len()) {
+    let keep: i32 = bits - i * 8;
+    if (keep < 8 && (b[i] as i32 & __low_mask(keep)) != 0) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// `__low_mask(keep)` — the bits of a byte past its first `keep`.
+function __low_mask(keep: i32): i32 {
+  if (keep <= 0) {
+    return 255;
+  }
+  return 255 >> keep;
+}
+
+// `(p).contains(ip)` — whether `ip` is in the block, read in the block's
+// family: against an IPv4 block an IPv4-mapped address is its IPv4 one, so
+// a dual-stack listener's peers match IPv4 blocks, and against an IPv6
+// block an IPv4 address is its mapped form. An IPv6 address that maps no
+// IPv4 one is in no IPv4 block.
+pub function (p: Prefix) contains(ip: IpAddr): boolean {
+  let a: u8[] = p.ip.bytes();
+  let b: u8[] = __in_family(ip, a.len() == 4);
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i * 8 < p.bits && i < a.len()) {
+    let keep: i32 = p.bits - i * 8;
+    let mask: i32 = 255 ^ __low_mask(keep);
+    if ((a[i] as i32 & mask) != (b[i] as i32 & mask)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// `__in_family(ip, v4)` — `ip`'s bytes as an IPv4 address (canonical, so
+// still 16 bytes when it maps none) or as an IPv6 one (an IPv4 address
+// mapped, `::ffff:a.b.c.d`).
+function __in_family(ip: IpAddr, v4: boolean): u8[] {
+  if (v4) {
+    return ip.to_canonical().bytes();
+  }
+  match (ip) {
+    V4(b) => {
+      return [0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 255 as u8, 255 as u8, b[0], b[1], b[2], b[3]];
+    },
+    V6(b) => {
+      return b;
+    }
+  }
+}
+
+// `(p).to_string()` — `ip/bits`.
+pub function (p: Prefix) to_string(): string {
+  return p.ip.to_string() + "/" + p.bits.to_string();
+}
+
 // ---------------------------------------------------------------------------
 // Parsing
 
