@@ -64,3 +64,17 @@ func TestHoldsNoMap(t *testing.T) {
 		}
 	}
 }
+
+// A scalar has no walk to skip, so binding one allocates no bookkeeping:
+// every call with an i32 parameter would otherwise pay for a map.
+func TestTypedScalarBindingAllocatesNothing(t *testing.T) {
+	e := newEnv(nil)
+	e.declareTyped("n", Number(1), ast.NumberType{Width: 32, Signed: true})
+	if e.unwalked != nil {
+		t.Errorf("binding an i32 allocated unwalked: %v", e.unwalked)
+	}
+	e.declareTyped("a", newArray(2), ast.ArrayType{Elem: ast.NumberType{Width: 32, Signed: true}})
+	if !e.unwalked["a"] {
+		t.Errorf("binding an i32[] did not skip its walk")
+	}
+}

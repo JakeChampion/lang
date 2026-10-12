@@ -6869,9 +6869,10 @@ func (e *env) declare(name string, v Value) {
 // can reach a Map, the walk retain and release make over it changes only
 // array path counts, which nothing reads below an array of such values,
 // so the binding skips it on the way in and out: passing a large `i32[]`
-// to a function costs O(1) rather than O(len).
+// to a function costs O(1) rather than O(len). Only an array (or tuple)
+// has a walk worth skipping; anything else binds as declare does.
 func (e *env) declareTyped(name string, v Value, t ast.Type) {
-	if !holdsNoMap(t) {
+	if _, isArray := v.(Array); !isArray || !holdsNoMap(t) {
 		e.declare(name, v)
 		return
 	}
