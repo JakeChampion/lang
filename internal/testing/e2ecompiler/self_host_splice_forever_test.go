@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +51,9 @@ func spliceForeverWant(long bool, n int) []byte {
 }
 
 func TestSelfHostSpliceForever(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("vmsplice is Linux's; Darwin answers Unsupported (TestArm64DarwinSpliceForeverUnsupported)")
+	}
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "sf.fern")

@@ -4,9 +4,10 @@ The full table behind `docs/COREUTILS.md`'s "The whole catalogue, one
 compiler, 2026-10-12" entry: every workload in `scripts/coreutils-bench.d`,
 built by the self-hosted compiler at b506237 with `-O` for x86-64-linux,
 against GNU coreutils 9.12 and uutils 0.0.24 on a 4-core container with
-nothing else running. A ratio within about 10% of 1 is still not a measured
-difference. `chcon` and `runcon` are compared against the system's GNU 9.4,
-because the 9.12 tree is built without SELinux and has neither.
+nothing else running; the two `yes` rows were re-run after
+`w.splice_forever` landed. A ratio within about 10% of 1 is still not a
+measured difference. `chcon` and `runcon` are compared against the system's
+GNU 9.4, because the 9.12 tree is built without SELinux and has neither.
 
 | utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
 |---|---|---|---|---|---|---|
@@ -677,5 +678,5 @@ because the 9.12 tree is built without SELinux and has neither.
 | `who` | who -a of 4000 logins | 19.82 ± 3.85 | 29.60 ± 5.99 | 78.98 ± 13.64 | 1.49× | 3.99× |
 | `who` | who -q of 4000 logins | 5.69 ± 1.34 | 12.98 ± 2.94 | 13.43 ± 2.50 | 2.28× | 2.36× |
 | `whoami` | whoami | 0.37 ± 0.15 | 1.83 ± 0.49 | 3.17 ± 0.66 | 4.89× | 8.50× |
-| `yes` | yes \| head -c 1G | 469.54 ± 112.84 | 301.12 ± 65.49 | 467.01 ± 91.49 | 0.64× | 0.99× |
-| `yes` | yes 70000-byte line \| head -c 1G | 1064.21 ± 57.10 | 302.00 ± 54.24 | 519.78 ± 29.02 | 0.28× | 0.49× |
+| `yes` | yes \| head -c 1G | 307.97 ± 61.88 | 380.42 ± 112.16 | 462.31 ± 66.68 | 1.24× | 1.50× |
+| `yes` | yes 70000-byte line \| head -c 1G | 333.84 ± 74.10 | 351.21 ± 63.57 | 533.46 ± 90.87 | 1.05× | 1.60× |
