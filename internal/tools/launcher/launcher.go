@@ -19,9 +19,9 @@ import (
 const EnvCompiler = "FERN_SELFHOST"
 
 // Compiler is the self-host compiler binary: $FERN_SELFHOST when set, else
-// `fern-selfhost` beside the running `fern`, where `make bootstrap` installs
-// it next to `go build -o bin/fern`, else the one this `fern` builds from its
-// embedded sources (built).
+// `fern-selfhost` beside the running `fern` when it was built from the sources
+// this `fern` embeds (current), else the one this `fern` builds from them
+// (built).
 func Compiler() (string, error) {
 	if p := os.Getenv(EnvCompiler); p != "" {
 		if _, err := os.Stat(p); err != nil {
@@ -32,7 +32,7 @@ func Compiler() (string, error) {
 	exe, err := os.Executable()
 	if err == nil {
 		sib := filepath.Join(filepath.Dir(exe), "fern-selfhost")
-		if _, err := os.Stat(sib); err == nil {
+		if current(sib) {
 			return sib, nil
 		}
 	}

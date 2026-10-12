@@ -54,6 +54,39 @@ func TestCompilerPrefersTheEnvironment(t *testing.T) {
 	}
 }
 
+// A self-host compiler beside fern is used only when the key written beside it
+// names the sources this fern embeds.
+func TestSiblingIsCurrentOnlyWithItsSourcesKey(t *testing.T) {
+	key, err := SourcesKey()
+	if err != nil {
+		t.Skipf("no sources key on this host: %v", err)
+	}
+	p := filepath.Join(t.TempDir(), "fern-selfhost")
+	if current(p) {
+		t.Errorf("a missing compiler is current")
+	}
+	if err := os.WriteFile(p, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if current(p) {
+		t.Errorf("a compiler with no key is current")
+	}
+	for _, stamp := range []string{"0123", key[:len(key)-1] + "x"} {
+		if err := os.WriteFile(p+KeySuffix, []byte(stamp+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if current(p) {
+			t.Errorf("a compiler keyed %q is current; this fern's key is %q", stamp, key)
+		}
+	}
+	if err := os.WriteFile(p+KeySuffix, []byte(key+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !current(p) {
+		t.Errorf("a compiler keyed with this fern's own sources key is not current")
+	}
+}
+
 // TestDownloadRetriesOnlyTransientFailures: a 503 is retried and the next 200
 // is returned, while a 404 is final after one request.
 func TestDownloadRetriesOnlyTransientFailures(t *testing.T) {

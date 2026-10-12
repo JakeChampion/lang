@@ -14,15 +14,16 @@ all: build test
 
 build: bin/fern
 
-# The stdlib sources are baked in with go:embed (internal/stdlib/stdlib.go), so
-# they are inputs to the binary just as the .go files are. Leaving them out made
-# an edit to std/*.fern silently test against the previously embedded copy.
+# The stdlib, the compiler's own sources and the stage0 pin are baked in with
+# go:embed (internal/stdlib/stdlib.go, compiler/sources.go, bootstrap/lock.go),
+# so they are inputs to the binary just as the .go files are. Leaving one out
+# made an edit to it silently run against the previously embedded copy.
 #
 # .claude/worktrees holds whole git worktrees of this repository, so a find over
 # the tree makes every OTHER checkout's sources dependencies of this one's
 # binary — and a scratch file deleted there between the find and the build stops
 # make with "No rule to make target".
-bin/fern: $(shell find . -name '*.go' -not -path './build/*' -not -path './.claude/*') $(shell find internal/stdlib -name '*.fern')
+bin/fern: $(shell find . -name '*.go' -not -path './build/*' -not -path './.claude/*') $(shell find internal/stdlib -name '*.fern') $(wildcard compiler/*.fern) bootstrap/stage0.lock
 	@mkdir -p bin
 	go build -o $@ ./cmd/fern
 
@@ -171,6 +172,7 @@ selfhost-cli: bin/fern
 	@mkdir -p bin
 	./bin/fern -target $(SELFHOST_TARGET) -o bin/fern-selfhost compiler/fern.fern
 	@chmod +x bin/fern-selfhost
+	./bin/fern -selfhost-key > bin/fern-selfhost.key
 	@echo "built bin/fern-selfhost ($(SELFHOST_TARGET)) — see the Makefile comment for the loop"
 
 # Build the same bin/fern-selfhost with NO Go toolchain and NO native backend:
