@@ -112,3 +112,14 @@ selfhost/wasm32-wasi/utf8_ingest_validated.emit	19644
 # lane: selfhost-alloc-x86_64
 x86_64/checker.allocs	23303942
 x86_64/checker.frees	23303942
+
+# lane: bootstrap-arm64-darwin
+bootstrap/arm64-darwin/stage1.wall_s	30
+bootstrap/arm64-darwin/stage1.peak_rss_mb	1906
+bootstrap/arm64-darwin/stage1.size_bytes	12878625
+bootstrap/arm64-darwin/stage2.wall_s	31
+bootstrap/arm64-darwin/stage2.peak_rss_mb	2034
+bootstrap/arm64-darwin/stage2.size_bytes	12666129
+bootstrap/arm64-darwin/stage3.wall_s	22
+bootstrap/arm64-darwin/stage3.peak_rss_mb	2024
+bootstrap/arm64-darwin/stage3.size_bytes	12666129
