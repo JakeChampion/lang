@@ -27,11 +27,12 @@ node's box was freed. Every insert that rebalanced allocated.
 ## The rule
 
 `spliceable` admits an `unreachable` terminator, and `splice` copies it as
-it stands. A body still needs one return: a `todo` stub is nothing but an
-unreachable block, and spliced it would leave the call's result undefined. It has no successors to renumber, and the unreachable block is
-as unreachable in the caller. `balance_left` and `balance_right` are each
-called once and are 57 instructions, so they splice into `ins`, and the
-rotations build in the boxes that die there.
+it stands: it has no successors to renumber, and the unreachable block is
+as unreachable in the caller. A body still needs one return: a `todo` stub
+is nothing but an unreachable block, and spliced it would leave the call's
+result undefined. `balance_left` and `balance_right` are each called once
+and are 57 instructions, so they splice into `ins`, and the rotations build
+in the boxes that die there.
 
 ## A carried token beside held ones
 
