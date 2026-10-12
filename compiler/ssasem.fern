@@ -320,6 +320,15 @@ pub function call(): i32 {
   return 0 - 7;
 }
 
+// The builtins each of which is one machine operation on scalars, with no
+// effect (semsource's bit-count, high-multiply and float primitive contracts):
+// a body calling one computes as if it used an operator.
+pub function scalar_primitive(name: string): boolean {
+  return name == "__mulhi_u64" || name == "__clz32" || name == "__ctz32" || name == "__popcount32" || name == "__clz64"
+    || name == "__ctz64" || name == "__popcount64" || name == "__sqrt_f64" || name == "__floor_f64" || name == "__ceil_f64"
+    || name == "__round_f64" || name == "__trunc_f64" || name == "__abs_f64";
+}
+
 pub function variant_new(): i32 {
   return 0 - 8;
 }

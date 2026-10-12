@@ -2,7 +2,7 @@
 //
 // A leaf here computes only on scalars and tuples of them, reading a record
 // parameter's scalar fields and a variant's position and payload at most,
-// and calls nothing. Splicing it moves no count: every value it makes is a
+// and calls nothing but a scalar primitive such as `__mulhi_u64`. Splicing it moves no count: every value it makes is a
 // word or a fresh tuple or variant the splice then takes apart, and a field
 // or payload read is planned in the caller like any other. A tuple,
 // record or variant built and only read, which is what a spliced `(ok, value)`
@@ -716,7 +716,7 @@ function leaf_body(f: ssasem.Func, ignored: i32): boolean {
       return false;
     }
     for ins in b.insts {
-      if (!leaf_kind(ins.kind_tag)) {
+      if (!leaf_kind(ins.kind_tag) && !(ins.kind_tag == ssasem.call() && ssasem.scalar_primitive(ins.str))) {
         return false;
       }
       if (ins.kind_tag == ssasem.record_get() && !scalar(f.values[ins.result])) {
