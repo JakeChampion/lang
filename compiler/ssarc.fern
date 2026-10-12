@@ -3743,6 +3743,7 @@ function instruction(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
   // statement op pushes, so the store below takes either.
   if (ins.kind_tag == ssasem.call()) {
     r = call_site(r, f, ins);
+    r = scan_set_members(r, f, p, ins);
     r = mark_reference_result(r, f, ins, !paired_op(ins.str));
   }
   // A verified copy already has its single operand on the stack.
@@ -3759,6 +3760,47 @@ function instruction(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
     r = took_payload(r, f, p, ins);
   }
   return held(r, p, ins);
+}
+
+// A byte-set scan over a constant table carries the table's membership on
+// its op (ir.op_scan_set), so a backend can classify a block of bytes at once
+// rather than read the table a byte at a time.
+function scan_set_members(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
+  if (!constant_set_scan(r, f, p, ins)) {
+    return r;
+  }
+  let at: i32 = r.ops.len() - 1;
+  let members: string = membership(ir.const_struct_values(p.constants[ins.args[2]]));
+  return irtables.LowerResult { ...r, ops: r.ops.with(at, ir.Op { ...r.ops[at], str: members }) };
+}
+
+// constant_set_scan: `ins` is a byte-set scan whose set is a constant table,
+// and the op it just lowered to is the scan.
+function constant_set_scan(r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): boolean {
+  if (ins.str != "__scan_set" && ins.str != "__scan_set_bytes" || ins.args.len() != 3) {
+    return false;
+  }
+  let set: i32 = ins.args[2];
+  if (set >= p.constants.len() || p.constants[set] == "" || static_name(f, p.defs[set]) != "&bytes") {
+    return false;
+  }
+  let at: i32 = r.ops.len() - 1;
+  return at >= 0 && (r.ops[at].kind_tag == ir.kind_id("scan_set") || r.ops[at].kind_tag == ir.kind_id("scan_set_bytes"));
+}
+
+// membership spells a table's entries for bytes 0..255 as `1` (nonzero) or `0`.
+function membership(vals: string[]): string {
+  let members: string = "";
+  let b: i32 = 0;
+  while (b < 256) {
+    if (b < vals.len() && vals[b] != "0") {
+      members = members + "1";
+    } else {
+      members = members + "0";
+    }
+    b = b + 1;
+  }
+  return members;
 }
 
 // An element read the plan HOLDS retains what it read: the unit is the frame's

@@ -8840,6 +8840,56 @@ pub function (s: EmitState) mark_heap(): EmitState {
   return s.need("heap");
 }
 
+// scan_set_tables lays out the constant tables a block scan_set reads, from
+// the op's membership (ir.op_scan_set): 16 bytes indexed by a byte's low
+// nibble whose bit h says the byte with high nibble h (0..7) is a member, the
+// same for high nibbles 8..15, the bit of each high nibble (twice, so a high
+// nibble indexes it directly), the masks 0x8f, 0x80 and 0x0f sixteen times
+// each, and then the 256 membership bytes for the scalar tail. The offsets are
+// 0, 16, 32, 48, 64, 80 and 96.
+pub function scan_set_tables(members: string): string {
+  let out: u8[] = [];
+  let half: i32 = 0;
+  while (half < 2) {
+    let lo: i32 = 0;
+    while (lo < 16) {
+      let bits: i32 = 0;
+      let h: i32 = 0;
+      while (h < 8) {
+        if (members[(half * 8 + h) * 16 + lo] == b'1') {
+          bits = bits | 1 << h;
+        }
+        h = h + 1;
+      }
+      out = out.append(bits as u8);
+      lo = lo + 1;
+    }
+    half = half + 1;
+  }
+  let k: i32 = 0;
+  while (k < 16) {
+    out = out.append((1 << (k & 7)) as u8);
+    k = k + 1;
+  }
+  for m in [143, 128, 15] {
+    k = 0;
+    while (k < 16) {
+      out = out.append(m as u8);
+      k = k + 1;
+    }
+  }
+  k = 0;
+  while (k < 256) {
+    if (members[k] == b'1') {
+      out = out.append(1 as u8);
+    } else {
+      out = out.append(0 as u8);
+    }
+    k = k + 1;
+  }
+  return string_from_bytes_unchecked(out);
+}
+
 pub function escape_for_ascii(s: string): string {
   // Local growable u8[] accumulation (#4379): the old `out = out + …` appended
   // each escape onto an immutable string, recopying the whole escaped prefix

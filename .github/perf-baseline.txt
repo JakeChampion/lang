@@ -69,7 +69,7 @@ x86_64/closure_call.ir	103908097
 x86_64/enum_match.text	999
 x86_64/enum_match.ir	53775055
 x86_64/http_hello.text	19252
-x86_64/http_hello.ir	30524779
+x86_64/http_hello.ir	29964671
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
 x86_64/map_int.text	5940
@@ -108,9 +108,9 @@ x86_64/struct_drop.text	3384
 x86_64/struct_drop.ir	358420237
 x86_64/tokenize.text	984
 x86_64/tokenize.ir	36950039
-x86_64/utf8_ingest_unchecked.text	14334
-x86_64/utf8_ingest_unchecked.ir	4150876	3
-x86_64/utf8_ingest_validated.text	14578
+x86_64/utf8_ingest_unchecked.text	14482
+x86_64/utf8_ingest_unchecked.ir	3990676	3
+x86_64/utf8_ingest_validated.text	14726
 x86_64/utf8_ingest_validated.ir	7271282	3
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
@@ -178,7 +178,7 @@ aarch64/closure_call.ir	120768083
 aarch64/enum_match.text	1137
 aarch64/enum_match.ir	41400056
 aarch64/http_hello.text	19632
-aarch64/http_hello.ir	32796819
+aarch64/http_hello.ir	31912723
 aarch64/int_loop.text	90
 aarch64/int_loop.ir	18000025
 aarch64/map_int.text	6107
@@ -218,7 +218,7 @@ aarch64/struct_drop.ir	428300325
 aarch64/tokenize.text	1170
 aarch64/tokenize.ir	38580038
 aarch64/utf8_ingest_unchecked.text	14575
-aarch64/utf8_ingest_unchecked.ir	4070866	3
+aarch64/utf8_ingest_unchecked.ir	3891266	3
 aarch64/utf8_ingest_validated.text	14825
 aarch64/utf8_ingest_validated.ir	7719270	3
 
