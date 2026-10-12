@@ -429,13 +429,7 @@ function __json_hex_value(c: i32): i32 {
 // decoded JNumber plus the advanced cursor: `(JsonValue,
 // __JsonParser)`. On a malformed number it threads back a
 // cursor with `error: 1` and a JNull placeholder.
-function __json_p_number(p0: __JsonParser): (JsonValue, __JsonParser) {
-  // Copy the borrowed parameter into a local before threading it
-  // through struct-updates. Reassigning the *parameter* in a loop
-  // and returning it trips an RC over-release in the current
-  // struct-update lowering (a separate codegen bug); the local
-  // copy — the same shape __json_p_skip_ws uses — sidesteps it.
-  let p: __JsonParser = p0;
+function __json_p_number(p: __JsonParser): (JsonValue, __JsonParser) {
   let start: i32 = p.pos;
   let n: i32 = p.s.len();
   let b: i32 = 0;
@@ -541,10 +535,7 @@ function __json_cp_bytes(cp: i32): u8[] {
 // Sets p.error and returns 0 on any non-hex digit or
 // past-end-of-input. Does NOT consume the hex digits past
 // what it reads — it advances p.pos by 4 on success.
-function __json_p_uhex(p0: __JsonParser): (i32, __JsonParser) {
-  // See __json_p_number: thread a local copy of the param, not the
-  // param itself, to avoid the struct-update RC over-release.
-  let p: __JsonParser = p0;
+function __json_p_uhex(p: __JsonParser): (i32, __JsonParser) {
   if (p.pos + 4 > p.s.len()) {
     return (0, __json_fail(p));
   }
@@ -566,9 +557,7 @@ function __json_p_uhex(p0: __JsonParser): (i32, __JsonParser) {
 // decoded value plus the advanced cursor: `(string,
 // __JsonParser)`. Error paths thread back a cursor with
 // `error: 1` and an empty-string placeholder.
-function __json_p_string(p0: __JsonParser): (string, __JsonParser) {
-  // See __json_p_number: thread a local copy of the param.
-  let p: __JsonParser = p0;
+function __json_p_string(p: __JsonParser): (string, __JsonParser) {
   if (__json_p_byte(p) != 34) {
     return ("", __json_fail(p));
   }
@@ -716,9 +705,7 @@ function __json_append_run(out: u8[], s: string, from: i32, stop: i32): u8[] {
 // JArray plus the advanced cursor: `(JsonValue, __JsonParser)`.
 // Recurses into __json_p_value for each element, threading the
 // cursor through. Error paths thread back `error: 1` + JNull.
-function __json_p_array(p0: __JsonParser): (JsonValue, __JsonParser) {
-  // See __json_p_number: thread a local copy of the param.
-  let p: __JsonParser = p0;
+function __json_p_array(p: __JsonParser): (JsonValue, __JsonParser) {
   p = __JsonParser { ...p, pos: p.pos + 1 };  // consume '['
   p = __json_p_skip_ws(p);
   if (__json_p_byte(p) == 93) {  // ']'
@@ -755,9 +742,7 @@ function __json_p_array(p0: __JsonParser): (JsonValue, __JsonParser) {
 // Recurses into __json_p_string (keys) and __json_p_value
 // (values), threading the cursor through. Error paths thread
 // back `error: 1` + JNull.
-function __json_p_object(p0: __JsonParser): (JsonValue, __JsonParser) {
-  // See __json_p_number: thread a local copy of the param.
-  let p: __JsonParser = p0;
+function __json_p_object(p: __JsonParser): (JsonValue, __JsonParser) {
   p = __JsonParser { ...p, pos: p.pos + 1 };  // consume '{'
   p = __json_p_skip_ws(p);
   let m: Map[string, JsonValue] = map_new(8);
@@ -803,9 +788,7 @@ function __json_p_object(p0: __JsonParser): (JsonValue, __JsonParser) {
 // number / string / array / object parsers. Returns the decoded
 // value plus the advanced cursor: `(JsonValue, __JsonParser)`.
 // Error paths thread back `error: 1` + JNull.
-function __json_p_value(p0: __JsonParser): (JsonValue, __JsonParser) {
-  // See __json_p_number: thread a local copy of the param.
-  let p: __JsonParser = p0;
+function __json_p_value(p: __JsonParser): (JsonValue, __JsonParser) {
   p = __json_p_skip_ws(p);
   let b: i32 = __json_p_byte(p);
   if (b == 0) {
