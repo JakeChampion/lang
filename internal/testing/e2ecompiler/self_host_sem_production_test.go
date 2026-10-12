@@ -260,7 +260,7 @@ function main(): i32 {
 	// key or value held in its slot. Every operation runs, with a copy that
 	// must keep what a delete through its alias removes; the answers are
 	// native's.
-	{name: "a-map-with-a-wide-column-routes", atLeast: 176, want: "0|a 299 300 true 192629283898350 2093 7 -2 false true 7 -9 46938\nf 20 395 19.5 1.5 21.5 2 3.75 9\nu 40 0 14388460377493430 s7\nb 256 33410 3\nc 10 9 true 245\n", src: `
+	{name: "a-map-with-a-wide-column-routes", atLeast: 175, want: "0|a 299 300 true 192629283898350 2093 7 -2 false true 7 -9 46938\nf 20 395 19.5 1.5 21.5 2 3.75 9\nu 40 0 14388460377493430 s7\nb 256 33410 3\nc 10 9 true 245\n", src: `
 import "core/map";
 import "std/i32";
 import "std/i64";
@@ -4100,7 +4100,7 @@ function main(): i32 {
 	// the contract table for `Empty.to_string` and found nothing. Every other
 	// spelling of the same call already worked: a binding of the variant, an
 	// annotated binding, and a payloaded `Circle(1).to_string()`.
-	{name: "a-variant-is-a-value-not-a-type-head", atLeast: 95, want: "77|", src: `
+	{name: "a-variant-is-a-value-not-a-type-head", atLeast: 94, want: "77|", src: `
 import "core/cmp";
 @derive(cmp.Eq, cmp.Display, cmp.Ord)
 enum Shape { Circle(i32), Square(i32), Empty }

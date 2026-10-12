@@ -190,10 +190,12 @@ pub function cfg_new(): Cfg {
 // with everything else, the exit status so one failed operand costs the
 // status and not the run, the hard-link table `--preserve=links` fills in,
 // and the device `-x` holds the walk to.
-pub struct State { out: io_buffered.BufWriter, status: i32, link_dev: i64[], link_ino: i64[], link_dest: string[], root_dev: i64, made_dev: i64[], made_ino: i64[], top_src: string, top_dest: string, aborted: boolean }
+// `unclonable` lists the source devices a clone into this operand's
+// destination has already failed from.
+pub struct State { out: io_buffered.BufWriter, status: i32, link_dev: i64[], link_ino: i64[], link_dest: string[], root_dev: i64, made_dev: i64[], made_ino: i64[], top_src: string, top_dest: string, aborted: boolean, unclonable: i64[] }
 
 pub function state_new(o: io_buffered.BufWriter): State {
-  return State { out: o, status: 0, link_dev: [], link_ino: [], link_dest: [], root_dev: 0 - 1, made_dev: [], made_ino: [], top_src: "", top_dest: "", aborted: false };
+  return State { out: o, status: 0, link_dev: [], link_ino: [], link_dest: [], root_dev: 0 - 1, made_dev: [], made_ino: [], top_src: "", top_dest: "", aborted: false, unclonable: [] };
 }
 
 function fail(s: State, msg: string): State {
@@ -894,14 +896,16 @@ function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
   // A destination that is a symlink to something that does not exist is
   // refused OUTRIGHT, before the open: writing through it would create the
   // target, which is not what the operand named. Measured — GNU says so in
-  // its own words, and `-f` does NOT override it.
-  if (dangling_symlink(dest)) {
+  // its own words, and `-f` does NOT override it. One the caller's lstat
+  // did not find is not there to be a link.
+  if (existed && dangling_symlink(dest)) {
     return fail(st, "not writing through dangling symlink " + gnu.quotea(dest));
   }
   let cl: Cloned = try_clone(cfg, st, src_path, dest, src, existed, want_mode);
   if (cl.done) {
     return cl.st;
   }
+  st = cl.st;
   match (open_reader(src_path)) {
     Err(e2) => {
       return fail(st, "cannot open " + gnu.quotea(src_path) + " for reading: " + gnu.io_error_text(e2));
@@ -966,10 +970,18 @@ function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
 // times to now unless they are preserved; any other destination reaches its
 // FICLONE stand-in, which answers ENOTSUP. Linux clones into the destination
 // either way. `done` is false when the copy goes on to the bytes.
+//
+// Whether a clone works is the two filesystems' answer, so under `auto`,
+// where a refusal only means copying the bytes, one refusal from a source
+// device stands for the rest of the operand's tree: the attempt costs a
+// create, an unlink and the opens around them.
 struct Cloned { done: boolean, st: State }
 
 function try_clone(cfg: Cfg, s: State, src_path: string, dest: string, src: Info, existed: boolean, want_mode: i32): Cloned {
   if (cfg.reflink == reflink_never()) {
+    return Cloned { done: false, st: s };
+  }
+  if (cfg.reflink == reflink_auto() && has_dev(s.unclonable, src.dev)) {
     return Cloned { done: false, st: s };
   }
   if (target_os() == "darwin") {
@@ -981,7 +993,7 @@ function try_clone(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
   }
   match (clone_file(src_path, dest)) {
     Err(e) => {
-      return clone_refused(cfg, s, src_path, dest, gnu.io_error_text(e));
+      return clone_refused(cfg, State { ...s, unclonable: s.unclonable.append(src.dev) }, src_path, dest, gnu.io_error_text(e));
     },
     Ok(_) => {}
   }
@@ -1001,6 +1013,15 @@ function try_clone(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
     st = apply_attrs(cfg, st, src, dest, want_mode);
   }
   return Cloned { done: true, st: st };
+}
+
+function has_dev(devs: i64[], dev: i64): boolean {
+  for d in devs {
+    if (d == dev) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // A clone that did not happen ends the file only under `--reflink=always`.
@@ -1204,7 +1225,7 @@ function copy_dir(cfg: Cfg, s: State, src_path: string, dest: string, src: Info,
     // Each command-line operand gets its own set: the abort below ends
     // the operand, not the run, and the diagnostic names this operand's
     // pair however deep in the walk the destination turns up.
-    st = State { ...st, made_dev: [], made_ino: [], top_src: src_path, top_dest: dest, aborted: false };
+    st = State { ...st, made_dev: [], made_ino: [], top_src: src_path, top_dest: dest, aborted: false, unclonable: [] };
   }
   // The destination is created BEFORE the entry list is read, and that
   // order is load-bearing rather than tidy. When the destination lies
