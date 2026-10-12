@@ -40,11 +40,11 @@
 // network only through `Transport`: `send` and `plat.http` use the
 // machine's (`sockets()`), and `send_on(tr, req, policy)` any other, which
 // is how std/sim_fetch runs this client in virtual time.
-// The client asks for `gzip` unless the caller wrote an `Accept-Encoding`
-// of their own, and undoes the coding it asked for, so a caller sees the
-// bytes the origin meant: the body cap bounds what the decoder may
-// produce, and `Decoding`'s depth and ratio refuse a response that
-// stacks codings or grew implausibly.
+// The client asks for `gzip`, `zstd` and `br` unless the caller wrote an
+// `Accept-Encoding` of their own, and undoes the codings it asked for, so
+// a caller sees the bytes the origin meant: the body cap bounds what each
+// decoder may produce, and `Decoding`'s depth and ratio refuse a response
+// that stacks codings or grew implausibly.
 //
 // The two routes differ in what they may reach. `plat.http` refuses a
 // host that resolves to an address `net.is_global` does not admit
@@ -82,7 +82,9 @@ import "std/url";
 import "std/dns";
 import "std/net";
 import "std/base64";
+import "std/brotli";
 import "std/deflate";
+import "std/zstd";
 // std/wasi_http — the host's client a `wasm32-wasi-http` build sends
 // through, the one target with no sockets of its own.
 import "std/wasi_http";
@@ -534,15 +536,15 @@ function __head(req: Request, t: __Target, body_len: i32): string {
 // beyond `Host`: the caller's end-to-end ones (`Host` and
 // `Content-Length` are the client's to write), then the ones the client
 // decides: the body's length (always for a method that usually carries
-// one), the `Accept-Encoding: gzip` it undoes itself, and the proxy's
+// one), the `Accept-Encoding` it undoes itself, and the proxy's
 // credentials when the caller wrote none.
 function __sent_fields(req: Request, t: __Target, body_len: i32): HeaderMap {
   let out: HeaderMap = __without(http.http_end_to_end(req.headers), ["host", "content-length"]);
   if (body_len > 0 || req.method == "POST" || req.method == "PUT" || req.method == "PATCH") {
     out = out.append("Content-Length", int.int_to_string(body_len));
   }
-  if (__asks_gzip(req)) {
-    out = out.append("Accept-Encoding", "gzip");
+  if (__asks_codings(req)) {
+    out = out.append("Accept-Encoding", "gzip, zstd, br");
   }
   if (t.proxy_auth.len() > 0 && !t.tls && !__holds(req.headers.names, "proxy-authorization")) {
     out = out.append("Proxy-Authorization", t.proxy_auth);
@@ -550,10 +552,11 @@ function __sent_fields(req: Request, t: __Target, body_len: i32): HeaderMap {
   return out;
 }
 
-// `__asks_gzip(req)` — whether the client writes `Accept-Encoding: gzip`
-// for `req`, and so undoes the coding: a depth above 0 and no
-// `Accept-Encoding` of the caller's own, whose codings are theirs to undo.
-function __asks_gzip(req: Request): boolean {
+// `__asks_codings(req)` — whether the client writes its own
+// `Accept-Encoding` for `req`, and so undoes the codings: a depth above 0
+// and no `Accept-Encoding` of the caller's own, whose codings are theirs
+// to undo.
+function __asks_codings(req: Request): boolean {
   return req.decoding.depth > 0 && !__holds(req.headers.names, "accept-encoding");
 }
 
@@ -1792,8 +1795,8 @@ function __closed_early(got: i32): FetchError {
 
 // `__decoded(resp, req)` — `resp` with its content codings undone when
 // the client asked for them: a `Content-Encoding` of `gzip` (or
-// `x-gzip`) codings, each undone in turn from the last applied, each
-// under `req.limits.body`, their number under `req.decoding.depth` and
+// `x-gzip`), `zstd` and `br` codings, each undone in turn from the last
+// applied, each under `req.limits.body`, their number under `req.decoding.depth` and
 // the whole under `req.decoding.ratio`; the `Content-Encoding` and
 // `Content-Length` fields then dropped since neither describes the body
 // any more. A body with no coding, an empty one (a HEAD or 204 answer may
@@ -1802,7 +1805,7 @@ function __closed_early(got: i32): FetchError {
 function __decoded(resp: HttpResponse, req: Request): Result[HttpResponse, FetchError] {
   let codings: string[] = __codings(resp.headers);
   let body: u8[] = resp.body_bytes();
-  if (!__asks_gzip(req) || codings.len() == 0 || body.len() == 0 || !__all_gzip(codings)) {
+  if (!__asks_codings(req) || codings.len() == 0 || body.len() == 0 || !__all_asked(codings)) {
     return Ok(resp);
   }
   if (codings.len() > req.decoding.depth) {
@@ -1811,8 +1814,8 @@ function __decoded(resp: HttpResponse, req: Request): Result[HttpResponse, Fetch
   let encoded: i32 = body.len();
   let left: i32 = codings.len();
   while (left > 0) {
-    body = __gunzipped(body, req.limits.body)?;
     left = left - 1;
+    body = __undone(codings[left], body, req.limits.body)?;
   }
   let allowed: i64 = __allowed(encoded, req.decoding.ratio);
   if (body.len() as i64 > allowed) {
@@ -1848,43 +1851,81 @@ function __codings(h: HeaderMap): string[] {
   return out;
 }
 
-// `__all_gzip(codings)` — whether every coding is one the client asked
+// `__all_asked(codings)` — whether every coding is one the client asked
 // for.
-function __all_gzip(codings: string[]): boolean {
+function __all_asked(codings: string[]): boolean {
   for c in codings {
-    if (c != "gzip" && c != "x-gzip") {
+    if (c != "gzip" && c != "x-gzip" && c != "zstd" && c != "br") {
       return false;
     }
   }
   return true;
 }
 
-// `__gunzipped(body, max_out)` — one gzip coding undone, the decoder
-// producing at most `max_out` bytes.
-function __gunzipped(body: u8[], max_out: i32): Result[u8[], FetchError] {
+// `__undone(coding, body, max_out)` — one coding undone, the decoder
+// producing at most `max_out` bytes: past it is the body cap, any other
+// refusal a `Decode`.
+function __undone(coding: string, body: u8[], max_out: i32): Result[u8[], FetchError] {
+  if (coding == "zstd") {
+    return __unzstd(body, max_out);
+  }
+  if (coding == "br") {
+    return __unbrotli(body, max_out);
+  }
   match (deflate.gunzip(body, max_out)) {
     Ok(out) => {
       return Ok(out);
     },
     Err(e) => {
-      return Err(__undecodable(e));
+      match (e) {
+        deflate.OutputLimit => {
+          return Err(BodyLimit);
+        },
+        _ => {
+          return Err(Decode("a gzip body that does not decode: " + e.message()));
+        }
+      }
     }
   }
   return Ok(body);
 }
 
-// `__undecodable(e)` — the decoder's refusal as a `FetchError`: the
-// output cap is the body cap, anything else is a `Decode`.
-function __undecodable(e: deflate.InflateError): FetchError {
-  match (e) {
-    deflate.OutputLimit => {
-      return BodyLimit;
+function __unzstd(body: u8[], max_out: i32): Result[u8[], FetchError] {
+  match (zstd.decompress(body, max_out)) {
+    Ok(out) => {
+      return Ok(out);
     },
-    _ => {
-      return Decode("a gzip body that does not decode: " + e.message());
+    Err(e) => {
+      match (e) {
+        zstd.ZstdTooLarge => {
+          return Err(BodyLimit);
+        },
+        _ => {
+          return Err(Decode("a zstd body that does not decode: " + e.message()));
+        }
+      }
     }
   }
-  return BodyLimit;
+  return Ok(body);
+}
+
+function __unbrotli(body: u8[], max_out: i32): Result[u8[], FetchError] {
+  match (brotli.decompress(body, max_out)) {
+    Ok(out) => {
+      return Ok(out);
+    },
+    Err(e) => {
+      match (e) {
+        brotli.BrotliTooLarge => {
+          return Err(BodyLimit);
+        },
+        _ => {
+          return Err(Decode("a br body that does not decode: " + e.message()));
+        }
+      }
+    }
+  }
+  return Ok(body);
 }
 
 // `__after_interim(framed, from, limits)` — where the response behind an

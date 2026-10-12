@@ -1180,6 +1180,12 @@ func TestRunnerHTTPForwardedExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "http_forwarded", "std/http/forwarded", 14)
 }
 
+// `tests/stdlib/brotli_test.fern` decodes streams the reference brotli
+// wrote and one built by hand.
+func TestRunnerBrotliExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "brotli", "std/brotli", 7)
+}
+
 // `tests/stdlib/zstd_test.fern` decodes frames the reference zstd wrote
 // and reads back the encoder's.
 func TestRunnerZstdExamplePasses(t *testing.T) {
