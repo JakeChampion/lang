@@ -946,6 +946,17 @@ pub function (s: EmitState) named(b: i32[], name: string): EmitState {
   return s.mark("\x07", name);
 }
 
+// named_abs is `named` for an instruction whose last four bytes are the
+// absolute address of `name` as a sign-extended imm32: the \x08 record,
+// patched once the image's load address is known.
+pub function (s: EmitState) named_abs(b: i32[], name: string): EmitState {
+  buf_push_byte(s.recs, b.len());
+  for x in b {
+    buf_push_byte(s.recs, x);
+  }
+  return s.mark("\x08", name);
+}
+
 // branch hands over a branch word with no displacement, and the label it goes
 // to, which the assembler resolves as it would the text's.
 pub function (s: EmitState) branch(w: i64, label: string): EmitState {
@@ -8698,17 +8709,27 @@ function slit_empty_buckets(): i32[] {
   return util.minus_ones(slit_buckets());
 }
 
-pub function add_string_lit(own s: EmitState, v: string): StringLitOut {
-  // Dedup: required for shape-pointer dispatch in
-  // ExprFieldAccess + StmtMatch. See asm.fern for rationale.
-  let b: i32 = util.hash_bucket(v, s.slit_head.len());
-  let i: i32 = s.slit_head[b];
+// string_lit_index is the index of literal `v` in the table, -1 before it is
+// added.
+pub function string_lit_index(s: EmitState, v: string): i32 {
+  let i: i32 = s.slit_head[util.hash_bucket(v, s.slit_head.len())];
   while (i >= 0) {
     if (s.string_lits[i] == v) {
-      return StringLitOut { state: s, idx: i };
+      return i;
     }
     i = s.slit_next[i];
   }
+  return 0 - 1;
+}
+
+pub function add_string_lit(own s: EmitState, v: string): StringLitOut {
+  // Dedup: required for shape-pointer dispatch in
+  // ExprFieldAccess + StmtMatch. See asm.fern for rationale.
+  let at: i32 = string_lit_index(s, v);
+  if (at >= 0) {
+    return StringLitOut { state: s, idx: at };
+  }
+  let b: i32 = util.hash_bucket(v, s.slit_head.len());
   let idx: i32 = s.string_lits.len();
   let ns: EmitState = EmitState { ...s, string_lits: s.string_lits.append(v), slit_next: s.slit_next.append(s.slit_head[b]), slit_head: s.slit_head.with(b, idx) };
   return StringLitOut { state: ns, idx: idx };
@@ -10931,6 +10952,20 @@ pub function shape_ref(own s: EmitState, name: string): ShapeRefOut {
     return ShapeRefOut { state: lo.state, label: str_lit_label(lo.state, lo.idx) };
   }
   return ShapeRefOut { state: add_shape_lit(s, name), label: shape_sym(name) };
+}
+
+// intern_shape and shape_label are shape_ref in two steps, for a caller that
+// threads the state through a rebind: the first adds the shape's literal,
+// the second is the label it has once added.
+pub function intern_shape(own s: EmitState, name: string): EmitState {
+  return shape_ref(s, name).state;
+}
+
+pub function shape_label(s: EmitState, name: string): string {
+  if (s.str_ns.len() == 0) {
+    return str_lit_label(s, string_lit_index(s, name));
+  }
+  return shape_sym(name);
 }
 
 // emit_runtime_globls exports the shared `__fern_*` / `__fn___fern_*` runtime

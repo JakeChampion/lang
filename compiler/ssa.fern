@@ -2393,7 +2393,22 @@ function free_slot(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: i32
 // constant at all and `value[v]` is its value, whether or not it is an
 // immediate, for an arm that specialises on a constant it still reads from a
 // register (the x86-64 literal-divisor forms).
-pub struct Imms { is_imm: boolean[], konst: boolean[], value: i64[] }
+// is_imm says a value is read as an immediate and never materialised; konst
+// and value hold the integer constants (kinds 1 and 3). A symbolic immediate,
+// an address a backend compares as a sign-extended imm32, has sym_at[v] > 0
+// and its label at syms[sym_at[v] - 1]; imm_sym reads it.
+pub struct Imms { is_imm: boolean[], konst: boolean[], value: i64[], sym_at: i32[], syms: string[] }
+
+pub function imm_sym(imm: Imms, v: i32): string {
+  let k: i32 = imm.sym_at[v];
+  return if (k > 0) { imm.syms[k - 1] } else { "" };
+}
+
+// with_sym marks v an immediate spelt as the label `sym`.
+pub function with_sym(own imm: Imms, v: i32, sym: string): Imms {
+  let syms: string[] = imm.syms.append(sym);
+  return Imms { ...imm, is_imm: imm.is_imm.with(v, true), sym_at: imm.sym_at.with(v, syms.len()), syms: syms };
+}
 
 pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: string[]): Imms {
   let is_imm: boolean[] = __alloc_bool(f.nvals);
@@ -2432,7 +2447,7 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
       is_imm = is_imm.with(t.cond, false);
     }
   }
-  return Imms { is_imm: is_imm, konst: konst, value: value };
+  return Imms { is_imm: is_imm, konst: konst, value: value, sym_at: __alloc_i32(f.nvals), syms: [] };
 }
 
 function imm_use(ins: SInst, a: i32, konst: boolean[], right: string[], left: string[]): boolean {
