@@ -616,15 +616,17 @@ remainder splits three ways:
 - **The stdout/stderr leaves** — `print_str`, `print_int`, `putchar`,
   `eprint_str` — **have since moved**, on all three native targets at once. They
   are the cheapest family in the whole migration: one `write(2)` each, whose
-  number is the only per-target constant. `sysno` already carried it for the
-  original `tcp_send` implementation. Socket sends now use `sendto` with
-  `MSG_NOSIGNAL`; stdout and stderr still use `write`.
+  number is the only per-target constant, and for `eprint_str` one `writev(2)`
+  over the line and its newline, so a line of up to `PIPE_BUF` bytes reaches a
+  shared pipe whole. `sysno` already carried `write` for the original
+  `tcp_send` implementation. Socket sends now use `sendto` with
+  `MSG_NOSIGNAL`; stdout uses `write` and stderr `writev`.
 
-  The two that need a scratch byte (`putchar`'s character, `eprint_str`'s
-  trailing newline) take it from the static `__fern_scratch` rather than the
-  stack, since a Fern helper has no way to name a stack slot. That is the whole
-  cost of the move, and it retires the `strb w1, [sp, #-16]!` hazard of #6083
-  along with the hand-asm that carried it.
+  The two that need scratch bytes (`putchar`'s character, `eprint_str`'s
+  iovec pair and trailing newline) take them from the static `__fern_scratch`
+  rather than the stack, since a Fern helper has no way to name a stack slot.
+  That is the whole cost of the move, and it retires the `strb w1, [sp, #-16]!`
+  hazard of #6083 along with the hand-asm that carried it.
 
   `print_int` was the only one with real content, and migrating it fixed two
   bugs the hand-asm had on **both** register backends. INT64_MIN printed
