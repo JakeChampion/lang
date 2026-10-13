@@ -1,0 +1,118 @@
+// The server scripts/net-httplint reads: one response of each shape
+// std/http and its middleware produce, so httplint's notes cover a routed
+// text and JSON API, a redirect, a problem, a 405 with its Allow, an
+// upload echoed back, a compressed body, a static file with its
+// validators and a response that says how long it may be cached.
+import "std/http";
+import "std/http/router";
+import "std/http/static";
+import "std/http/compress";
+import "std/serve";
+import "std/platform";
+import "core/int";
+
+function hello(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+  return http.ok("hello");
+}
+
+function user(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+  return http.json("{\"id\":" + params.values[0] + "}");
+}
+
+function moved(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+  return http.redirect("/hello");
+}
+
+function missing(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+  return http.problem(404, "Not Found", "there is no " + req.path);
+}
+
+function echo(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+  match (req.body_string()) {
+    Ok(body) => {
+      return http.text(200, body);
+    },
+    Err(e) => {
+      return http.text(400, "the body did not arrive");
+    }
+  }
+  return http.text(400, "the body did not arrive");
+}
+
+// A body past the compressor's minimum, so `Accept-Encoding: gzip` gets a
+// coded one.
+function essay(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+  use req2 <- compress.compressed(req);
+  let text: string = "";
+  let i: i32 = 0;
+  while (i < 40) {
+    text = text + "Line " + int.int_to_string(i) + ": the quick brown fox jumps over the lazy dog.\n";
+    i = i + 1;
+  }
+  return http.text(200, text).with_header("Content-Type", "text/plain; charset=utf-8");
+}
+
+function files(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+  return static.serve(req, static.dir(www(plat)), plat);
+}
+
+function fresh(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+  return http.ok("fresh for a minute").with_header("Cache-Control", "max-age=60");
+}
+
+function www(plat: platform.Host): string {
+  match (plat.env("WWW")) {
+    Some(dir) => {
+      return dir;
+    },
+    None => {
+      return "www";
+    }
+  }
+  return "www";
+}
+
+function port(): i32 {
+  match (env("PORT")) {
+    Some(p) => {
+      match (int.parse_int_radix(p, 10)) {
+        Some(n) => {
+          return n;
+        },
+        None => {
+          return 8080;
+        }
+      }
+    },
+    None => {
+      return 8080;
+    }
+  }
+  return 8080;
+}
+
+function routes(): Result[router.Router[platform.Host], router.RouteError] {
+  let r: router.Router[platform.Host] = router.new();
+  r = r.get("/hello", hello)?;
+  r = r.get("/users/{id}", user)?;
+  r = r.get("/moved", moved)?;
+  r = r.get("/missing", missing)?;
+  r = r.post("/echo", echo)?;
+  r = r.get("/essay", essay)?;
+  r = r.get("/files/{path...}", files)?;
+  r = r.get("/fresh", fresh)?;
+  return Ok(r);
+}
+
+function main(): i32 {
+  match (routes()) {
+    Ok(r) => {
+      return serve.run(port(), serve.config(), r.handler());
+    },
+    Err(e) => {
+      eprint(e.message());
+      return 1;
+    }
+  }
+  return 1;
+}

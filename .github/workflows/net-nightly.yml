@@ -52,6 +52,16 @@ name: Net nightly
 # test suite's fuzzing client, from its Docker image pinned by digest in
 # the script, against the Fern echo server with permessage-deflate on
 # (#9859). Every case passes or the job fails.
+#
+# The `httplint` job runs scripts/net-httplint: one response of each shape
+# std/http and its middleware produce (a routed text and JSON API, a
+# redirect, a problem, a 405, an upload echoed, a compressed body, a static
+# file with its validators, a conditional 304, a range, a cacheable
+# response), fetched with curl and read by httplint, REDbot's checks as a
+# library, at the version scripts/net-httplint.d/requirements.txt pins
+# (#9859). A note it rates BAD fails the job; the count of BAD and WARN
+# notes per case is recorded like the bench's, and every note is in the
+# log.
 
 on:
   schedule:
@@ -222,4 +232,29 @@ jobs:
         with:
           name: autobahn-report-x86_64
           path: ${{ runner.temp }}/autobahn-report.txt
+          if-no-files-found: warn
+
+  httplint:
+    name: net-httplint-x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - name: Restore httplint's venv
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/fern-httplint
+          key: httplint-${{ runner.os }}-${{ hashFiles('scripts/net-httplint.d/requirements.txt') }}
+      - name: Lint the server's responses
+        run: scripts/net-httplint "${{ runner.temp }}/httplint-report.txt"
+      - name: Record the report in refs/notes/perf
+        if: github.ref == 'refs/heads/main'
+        run: scripts/perf-history record net-httplint "${{ runner.temp }}/httplint-report.txt"
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: httplint-report-x86_64
+          path: ${{ runner.temp }}/httplint-report.txt
           if-no-files-found: warn

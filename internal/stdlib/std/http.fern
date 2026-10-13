@@ -40,20 +40,20 @@ import "std/error";
 import "std/platform";
 import "std/utf8" as utf8;
 
-// `http_status_text(code)` — IANA reason phrase for the
-// common HTTP status codes (RFC 9110). Returns "" for
-// unknown codes — callers should fall back to a generic
-// phrase rather than emitting nothing.
+// `http_status_text(code)` — the IANA reason phrase for every status
+// code RFC 9110 defines, plus the registered ones the standard library
+// sends (418, 422, 428, 429, 431, 511). Returns "" for an unknown code;
+// a caller falls back to a generic phrase rather than emitting nothing.
 pub function http_status_text(code: i32): string {
   let codes: i32[] = [
-    100, 101, 200, 201, 204, 301, 302, 304, 307, 308,
-    400, 401, 403, 404, 405, 408, 409, 410, 413, 414, 415, 417, 418, 422, 429, 431,
-    500, 501, 502, 503, 504, 505,
+    100, 101, 200, 201, 202, 203, 204, 205, 206, 300, 301, 302, 303, 304, 305, 307, 308,
+    400, 401, 402, 403, 404, 405, 406, 407, 408, 409, 410, 411, 412, 413, 414, 415, 416, 417, 418, 421, 422, 426, 428, 429, 431,
+    500, 501, 502, 503, 504, 505, 511,
   ];
   let phrases: string[] = [
-    "Continue", "Switching Protocols", "OK", "Created", "No Content", "Moved Permanently", "Found", "Not Modified", "Temporary Redirect", "Permanent Redirect",
-    "Bad Request", "Unauthorized", "Forbidden", "Not Found", "Method Not Allowed", "Request Timeout", "Conflict", "Gone", "Payload Too Large", "URI Too Long", "Unsupported Media Type", "Expectation Failed", "I'm a teapot", "Unprocessable Entity", "Too Many Requests", "Request Header Fields Too Large",
-    "Internal Server Error", "Not Implemented", "Bad Gateway", "Service Unavailable", "Gateway Timeout", "HTTP Version Not Supported",
+    "Continue", "Switching Protocols", "OK", "Created", "Accepted", "Non-Authoritative Information", "No Content", "Reset Content", "Partial Content", "Multiple Choices", "Moved Permanently", "Found", "See Other", "Not Modified", "Use Proxy", "Temporary Redirect", "Permanent Redirect",
+    "Bad Request", "Unauthorized", "Payment Required", "Forbidden", "Not Found", "Method Not Allowed", "Not Acceptable", "Proxy Authentication Required", "Request Timeout", "Conflict", "Gone", "Length Required", "Precondition Failed", "Payload Too Large", "URI Too Long", "Unsupported Media Type", "Range Not Satisfiable", "Expectation Failed", "I'm a teapot", "Misdirected Request", "Unprocessable Entity", "Upgrade Required", "Precondition Required", "Too Many Requests", "Request Header Fields Too Large",
+    "Internal Server Error", "Not Implemented", "Bad Gateway", "Service Unavailable", "Gateway Timeout", "HTTP Version Not Supported", "Network Authentication Required",
   ];
   let i: i32 = 0;
   while (i < codes.len()) {
