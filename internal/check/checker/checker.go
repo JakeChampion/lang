@@ -18740,7 +18740,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// resolves after the type-param rewrite.
 					isPrim := isPrimitiveTypeName(tid.Name)
 					if isStruct || isEnum || isPrim {
-						if mangled, _, tied, ok := c.info.ResolveMethodFrom(c.currentModule(), tid.Name, fa.Field, nil); ok {
+						// A monomorphised `T.f()` keeps the bound's trait,
+						// as the bounded-method path below does.
+						var prefer []string
+						if n.Method != nil && n.Method.Assoc && n.Method.OwnerTrait != "" {
+							prefer = []string{n.Method.OwnerTrait}
+						}
+						if mangled, _, tied, ok := c.info.ResolveMethodFrom(c.currentModule(), tid.Name, fa.Field, prefer); ok {
 							if len(tied) > 0 {
 								c.errAmbiguousMethod(fa.FieldPos, tid.Name, fa.Field, c.info.methodCands(tid.Name, fa.Field, tied))
 							}

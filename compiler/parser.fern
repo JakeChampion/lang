@@ -77,8 +77,9 @@ struct ParamDestr { names: string, marker: string, synth: string, line: i32, col
 // impl_trait is the simple name of the trait a method was written for: an impl
 // method or inherited default (claim_method_name), or a derived method; "" for a
 // free function and an inherent method. dyn_traits is every trait, by simple
-// name, whose `dyn` dispatch on this method's receiver type calls this method
-// (resolve_dyn_traits); dyn_arm_matches selects arms by it. streams lists the
+// name, whose `dyn` dispatch or bounded call on this method's receiver type
+// reaches this method or associated function (resolve_dyn_traits);
+// dyn_arm_matches and trait_provider_name select by it. streams lists the
 // slots of an async import that were `stream[T]` before
 // lower_stream_signatures rewrote them to `T[]`: -1 for the result, else a
 // parameter index. stdlib is the canonical standard-library import supplied
@@ -10770,8 +10771,8 @@ pub struct MFns {
   // The generic-struct methods monomorphize_structs clones only for a call,
   // as `Base.method`: see wraps_receiver.
   on_call: string[],
-  // The receiver types with a method a claim renamed (`P.B.scale`): only a
-  // bounded variable taken at one of these can call a renamed method.
+  // The receiver types with a method or associated function a claim renamed
+  // (`P.B.scale`): only a bounded variable taken at one of these can call one.
   renamed: string[],
 }
 
@@ -10843,7 +10844,7 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
 function renamed_receivers(decls: FuncDecl[]): string[] {
   let out: string[] = [];
   for fd in decls {
-    if (fd.receiver_name.len() > 0 && derive_simple_name(fd.name) != fd.name) {
+    if (fd.receiver_type.len() > 0 && derive_simple_name(fd.name) != fd.name) {
       let base: string = util.base_type_name(fd.receiver_type);
       if (!util.has_str(out, base)) {
         out = out.append(base);
@@ -14598,12 +14599,13 @@ function clone_bg(fd: FuncDecl, key: string, impls: ImplInfo[], reqs: TraitReq[]
 // read as the variable. A variable taken at a type whose native operators
 // agree with its impl keeps the native comparison, which is one instruction.
 //
-// A method called on a value of a bounded variable is the bound's method. The
-// clone spells the receiver at its concrete type, where `v.scale()` names the
-// type's plain `P.scale`. When another trait claimed that name first, the
-// bound's provider was renamed (claim_method_name, flatten's
-// disambiguate_methods), so the call is respelled to it, picked as a dyn
-// dispatch picks its arm.
+// A method called on a value of a bounded variable is the bound's method, and
+// an associated function called through the variable (`T.zero()`) the bound's
+// associated function. The clone spells the receiver at its concrete type,
+// where `v.scale()` names the type's plain `P.scale`. When another trait
+// claimed that name first, the bound's provider was renamed
+// (claim_method_name, flatten's disambiguate_methods), so the call is
+// respelled to it, picked as a dyn dispatch picks its arm.
 
 // `routed` are the variables whose concrete type has a renamed method, with
 // that type's base in `bases` and the variable's bound entries in `traits`.
@@ -14674,14 +14676,26 @@ function bound_routes(fd: FuncDecl, cts: string[], funcs: MFns): (string[], stri
   return (routed, bases, traits);
 }
 
-// bound_method is the method a receiver spelled `ty` calls for `m`: the bound's
-// provider when `ty` is a routed variable, else `m`.
-function bound_method(ty: string, m: string, ctx: BoundUse): string {
+// bound_method is what a call of `m` through `ty` reaches: the bound's provider
+// when `ty` is a routed variable, else `m`. `receiver` says whether `m` is
+// called on a value of `ty` or, as an associated function, on `ty` itself.
+function bound_method(ty: string, m: string, receiver: boolean, ctx: BoundUse): string {
   let k: i32 = util.index_of_str(ctx.routed, ty);
   if (k < 0) {
     return m;
   }
-  return dyn_provider_name(ctx.funcs.decls, ctx.bases[k], ctx.traits[k], m);
+  return trait_provider_name(ctx.funcs.decls, ctx.bases[k], ctx.traits[k], m, receiver);
+}
+
+// bound_field is the field a routed call `fa(...)` names: `fa.obj` is a type
+// variable when it is an identifier no local binds.
+function bound_field(fa: ast.ExprFieldAccess, ctx: BoundUse): string {
+  if let ast.ExprIdent(id) = fa.obj {
+    if (!util.has_str(ctx.env.mnames, id.name)) {
+      return bound_method(id.name, fa.field, false, ctx);
+    }
+  }
+  return bound_method(mono_infer(fa.obj, ctx.env, ctx.funcs), fa.field, true, ctx);
 }
 
 // bound_supplies reports whether a `+`-joined bound, its supertraits
@@ -14776,7 +14790,7 @@ function bc_stmt(st: ast.Stmt, ctx: BoundUse): (ast.Stmt, BoundUse, boolean) {
 }
 
 // bc_expr spells a comparison of two values of a rewritten variable as the
-// bound's method, and a routed variable's method call as the bound's provider,
+// bound's method, and a call through a routed variable as the bound's provider,
 // after their operands, and walks a lambda with its parameters bound.
 function bc_expr(e: ast.Expr, ctx: BoundUse): (ast.Expr, BoundUse, boolean) {
   match (e) {
@@ -14807,13 +14821,13 @@ function bc_binary(b: ast.ExprBinary, ctx: BoundUse): ast.Expr {
   }
   if (util.has_str(["<", "<=", ">", ">="], b.op) && str_list_contains(ctx.ord, lt)) {
     let zero: ast.Expr = ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: b.line, col: b.col };
-    return ast.ExprBinary { ...b, left: dv_call1(left, bound_method(lt, "cmp", ctx), right), right: zero };
+    return ast.ExprBinary { ...b, left: dv_call1(left, bound_method(lt, "cmp", true, ctx), right), right: zero };
   }
   if (b.op == "==" && str_list_contains(ctx.eq, lt)) {
-    return dv_call1(left, bound_method(lt, "eq", ctx), right);
+    return dv_call1(left, bound_method(lt, "eq", true, ctx), right);
   }
   if (b.op == "!=" && str_list_contains(ctx.eq, lt)) {
-    return ast.ExprUnary { op: "!", operand: dv_call1(left, bound_method(lt, "eq", ctx), right), line: b.line, col: b.col, ty: "" };
+    return ast.ExprUnary { op: "!", operand: dv_call1(left, bound_method(lt, "eq", true, ctx), right), line: b.line, col: b.col, ty: "" };
   }
   return ast.ExprBinary { ...b, left: left, right: right };
 }
@@ -14826,7 +14840,7 @@ function bc_call(c: ast.ExprCall, ctx: BoundUse): ast.Expr {
   if let ast.ExprFieldAccess(fa) = c.callee {
     let field: string = fa.field;
     if (ctx.routed.len() > 0) {
-      field = bound_method(mono_infer(fa.obj, ctx.env, ctx.funcs), field, ctx);
+      field = bound_field(fa, ctx);
     }
     let callee: ast.Expr = ast.ExprFieldAccess { ...fa, obj: bc_rewrite(fa.obj, ctx), field: field };
     return ast.ExprCall { ...c, callee: callee, args: args };
@@ -25847,7 +25861,7 @@ pub function resolve_dyn_traits(mod: Module): Module {
   for fd in mod.funcs {
     let own: string[] = [];
     let base: string = "";
-    if (fd.receiver_name.len() > 0 && !ends_with_array_brackets(fd.receiver_type)) {
+    if (fd.receiver_type.len() > 0 && !ends_with_array_brackets(fd.receiver_type)) {
       base = receiver_base(fd.receiver_type);
       if (fd.impl_trait.len() > 0) {
         own = own.append(fd.impl_trait);
@@ -25994,9 +26008,12 @@ pub function dyn_trait_set(ty: string): string[] {
 // only leaves receiver_name empty, so the receiver NAME is what excludes it
 // (#7398).
 pub function dyn_arm_matches(fd: FuncDecl, traits: string[], method: string): boolean {
-  if (fd.receiver_name.len() == 0) {
-    return false;
-  }
+  return fd.receiver_name.len() > 0 && answers_traits(fd, traits, method);
+}
+
+// answers_traits is dyn_arm_matches without the receiver test, so it also
+// selects the associated function a bounded `T.f()` reaches.
+function answers_traits(fd: FuncDecl, traits: string[], method: string): boolean {
   if (traits.len() == 0) {
     return fd.name == method;
   }
@@ -26015,6 +26032,12 @@ pub function dyn_arm_matches(fd: FuncDecl, traits: string[], method: string): bo
 // with when it is reached through a trait object spanning `traits`, and `method`
 // itself when no definition matches.
 pub function dyn_provider_name(funcs: FuncDecl[], recv_type: string, traits: string[], method: string): string {
+  return trait_provider_name(funcs, recv_type, traits, method, true);
+}
+
+// trait_provider_name is dyn_provider_name for a receiver method when
+// `receiver`, else for an associated function of `recv_type`.
+function trait_provider_name(funcs: FuncDecl[], recv_type: string, traits: string[], method: string, receiver: boolean): string {
   if (recv_type.len() == 0) {
     return method;
   }
@@ -26022,7 +26045,8 @@ pub function dyn_provider_name(funcs: FuncDecl[], recv_type: string, traits: str
   while (i < funcs.len()) {
     let fd: FuncDecl = funcs[i];
     if (util.base_type_name(fd.receiver_type) == recv_type
-      && dyn_arm_matches(fd, traits, method)) {
+      && fd.receiver_name.len() > 0 == receiver
+      && answers_traits(fd, traits, method)) {
       return fd.name;
     }
     i = i + 1;
