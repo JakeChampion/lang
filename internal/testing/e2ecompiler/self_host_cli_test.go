@@ -287,6 +287,8 @@ function main(): i32 {
 		if err != nil {
 			t.Fatalf("abs stdlib root: %v", err)
 		}
+		// Each provider calls a @noinline helper, so neither is inlined away
+		// and both symbols stay in the emit to be counted.
 		src := `import "std/i32";
 
 struct P { x: i32 }
@@ -294,14 +296,18 @@ struct P { x: i32 }
 trait A { function scale(self: Self): i32; }
 trait B { function scale(self: Self): i32; }
 
-impl A for P { function scale(self: Self): i32 { return self.x; } }
-impl B for P { function scale(self: Self): i32 { return 100; } }
+@noinline function kept(x: i32): i32 { return x; }
+
+impl A for P { function scale(self: Self): i32 { return kept(self.x); } }
+impl B for P { function scale(self: Self): i32 { return kept(100); } }
 
 function twice[T: A](v: T): i32 { return v.scale() + v.scale(); }
 
+function once[T: B](v: T): i32 { return v.scale(); }
+
 function main(): i32 {
     let v: P = P { x: 5 };
-    return twice(v);
+    return twice(v) + once(v);
 }
 `
 		srcPath := filepath.Join(dir, "two_traits_one_method.fern")
@@ -315,8 +321,8 @@ function main(): i32 {
 		if got := bytes.Count(wat, []byte("(func $P.scale ")); got != 1 {
 			t.Errorf("emitted WAT defines $P.scale %d times, want exactly 1", got)
 		}
-		if !bytes.Contains(wat, []byte("(func $P.B.scale ")) {
-			t.Error("B's provider was not interposed with its trait; expected a $P.B.scale definition")
+		if got := bytes.Count(wat, []byte("(func $P.B.scale ")); got != 1 {
+			t.Errorf("emitted WAT defines $P.B.scale %d times, want exactly 1 (B's provider interposed with its trait)", got)
 		}
 		watPath := filepath.Join(dir, "two_traits_one_method.wat")
 		if err := os.WriteFile(watPath, wat, 0o644); err != nil {
@@ -324,10 +330,10 @@ function main(): i32 {
 		}
 		cmd := exec.Command("wasmtime", "run", watPath)
 		out, _ := cmd.CombinedOutput()
-		// A's `scale` is `self.x`, so 5 + 5. Native resolves the call through
-		// the `T: A` bound to the same answer.
-		if got := cmd.ProcessState.ExitCode(); got != 10 {
-			t.Errorf("twice(P{x:5}) on wasm exited %d, want 10\n%s", got, out)
+		// Each generic reaches its bound's provider (#12277): A's `scale` is
+		// `self.x`, so twice gives 5 + 5, and once reaches B's renamed 100.
+		if got := cmd.ProcessState.ExitCode(); got != 110 {
+			t.Errorf("twice(P{x:5}) + once(P{x:5}) on wasm exited %d, want 110\n%s", got, out)
 		}
 	})
 
@@ -345,14 +351,19 @@ function main(): i32 {
 		if err != nil {
 			t.Fatalf("abs stdlib root: %v", err)
 		}
+		// MyAdd's provider calls a @noinline helper, so its symbol stays in
+		// the emit to be counted.
 		src := `import "std/num";
 
 trait MyAdd { function add(self: Self, o: Self): Self; }
-impl MyAdd for i32 { function add(self: Self, o: Self): Self { return self + o + 1; } }
+@noinline function kept(x: i32): i32 { return x; }
+
+impl MyAdd for i32 { function add(self: Self, o: Self): Self { return kept(self + o + 1); } }
 
 function sum[T: num.Add](a: T, b: T): T { return a.add(b); }
+function mine[T: MyAdd](a: T, b: T): T { return a.add(b); }
 
-function main(): i32 { return sum(2, 3); }
+function main(): i32 { return sum(2, 3) * 10 + mine(2, 3); }
 `
 		srcPath := filepath.Join(dir, "cross_module_add.fern")
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -362,11 +373,12 @@ function main(): i32 { return sum(2, 3); }
 		if code != 0 {
 			t.Fatalf("-target wasm emit exited %d, want 0", code)
 		}
-		if got := bytes.Count(wat, []byte("(func $i32.add ")); got != 1 {
-			t.Errorf("emitted WAT defines $i32.add %d times, want exactly 1", got)
+		// std/num's tiny `add` is inlined at its call, so it may leave no symbol.
+		if got := bytes.Count(wat, []byte("(func $i32.add ")); got > 1 {
+			t.Errorf("emitted WAT defines $i32.add %d times, want at most 1", got)
 		}
-		if !bytes.Contains(wat, []byte("(func $i32.__entry.add ")) {
-			t.Error("the entry's colliding provider was not interposed with its namespace")
+		if got := bytes.Count(wat, []byte("(func $i32.__entry.add ")); got != 1 {
+			t.Errorf("emitted WAT defines $i32.__entry.add %d times, want exactly 1 (the entry's provider interposed with its namespace)", got)
 		}
 		watPath := filepath.Join(dir, "cross_module_add.wat")
 		if err := os.WriteFile(watPath, wat, 0o644); err != nil {
@@ -375,9 +387,10 @@ function main(): i32 { return sum(2, 3); }
 		cmd := exec.Command("wasmtime", "run", watPath)
 		out, _ := cmd.CombinedOutput()
 		// std/num is bundled before the entry, so its `Add` claims `i32.add`
-		// and `sum`'s `a.add(b)` reaches it: 2 + 3.
-		if got := cmd.ProcessState.ExitCode(); got != 5 {
-			t.Errorf("sum(2, 3) on wasm exited %d, want 5\n%s", got, out)
+		// and `sum`'s `a.add(b)` reaches it: 2 + 3. `mine` is bounded by
+		// MyAdd, so it reaches the interposed provider: 2 + 3 + 1 (#12277).
+		if got := cmd.ProcessState.ExitCode(); got != 56 {
+			t.Errorf("sum(2, 3) * 10 + mine(2, 3) on wasm exited %d, want 56\n%s", got, out)
 		}
 	})
 
