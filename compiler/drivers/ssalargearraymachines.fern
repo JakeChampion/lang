@@ -101,7 +101,7 @@ pub function run(output: string): void {
   arithmetic(output);
   calls(output);
   identities(output);
-  mutation(output, "testl %ecx, %ecx", "testl %edx, %edx", false);
+  mutation(output, "cmpl $1, %ecx", "cmpl $1, %edx", false);
   mutation(output, "    ret\n", "unknown_instruction\nret\n", false);
   mutation(output, "    ret\n", "jmp .Larrdec_ret\n", false);
   require(!machine.check(".set alias, __fern_large_push\n" + output), "closed namespace");

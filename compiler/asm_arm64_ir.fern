@@ -7429,6 +7429,11 @@ function freelist_push(s: asmcore.EmitState, ptr: string, words: string, base: s
   s = s.write("    bl __fern_capw\n");
   s = s.write("    ldp " + words + ", x30, [sp], #16\n");
   s = s.write(l.name + ":\n");
+  return freelist_push_classed(s, ptr, words, base, tmp);
+}
+
+// freelist_push_classed is the push itself, `words` already a class.
+function freelist_push_classed(s: asmcore.EmitState, ptr: string, words: string, base: string, tmp: string): asmcore.EmitState {
   s = s.write("    adrp " + base + ", __fern_freelist\n");
   s = s.write("    add " + base + ", " + base + ", :lo12:__fern_freelist\n");
   s = s.write("    ldr " + tmp + ", [" + base + ", " + words + ", lsl #3]\n");
@@ -9151,6 +9156,10 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lrawfree_done:\n");
   s = s.write("    ldp x29, x30, [sp], #16\n");
   s = s.write("    ret\n");
+  // The sole owner's release is nearly every call, so it is the fall-through:
+  // one compare against 1 sends the shared, immortal and double-freed box
+  // aside, and a block over 256 words takes the large-tier test with the
+  // class call it already pays.
   s = s.write("__fn___fern_arr_dec:\n");
   s = s.write("    ldr x0, [sp]\n");
   s = s.write("__fn___fern_arr_dec.r:\n");
@@ -9158,35 +9167,48 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    blo .Larrdec_ret\n");
   s = s.write("    ldur w1, [x0, #-8]\n");  // rc
   s = s.write(san_poison_check("w1", "w9", ".Larrdec_live", s.rc_free_debug));
-  s = s.write("    tbnz w1, #31, .Larrdec_ret\n");  // static sentinel
   s = s.write("    cmp w1, #1\n");
-  s = s.write("    beq .Larrdec_free\n");
-  s = s.write("    bgt .Larrdec_dec\n");  // rc > 1
-  s = s.write("    adrp x2, __fern_rc_underflow\n");  // rc <= 0
+  s = s.write("    bne .Larrdec_shared\n");
+  s = s.write(quarantine_rc("[x0, #-8]", "w9", s.rc_free_debug));  // release the rc word
+  s = s.write("    ldur x1, [x0, #-16]\n");  // cap
+  s = s.write("    add x1, x1, #3\n");  // idx = cap + 3
+  s = s.write("    sub x2, x0, #16\n");  // base = data - 16
+  s = s.write("    cmp x1, #256\n");
+  s = s.write("    b.hi .Larrdec_big\n");
+  s = lc_bump_free_words(s, "x1", "x3", "x9");
+  if (!s.rc_free_debug) {
+    s = s.write(".Larrdec_push:\n");
+    s = freelist_push_classed(s, "x2", "x1", "x3", "x9");
+  }
+  s = s.write(".Larrdec_ret:\n");
+  s = s.write("    ret\n");
+  s = s.write(".Larrdec_shared:\n");
+  s = s.write("    tbnz w1, #31, .Larrdec_ret\n");  // static sentinel
+  s = s.write("    bgt .Larrdec_dec\n");  // rc > 1, the compare's flags still standing
+  s = s.write("    adrp x2, __fern_rc_underflow\n");  // rc == 0
   s = s.write("    add x2, x2, :lo12:__fern_rc_underflow\n");
   s = s.write("    ldr w3, [x2]\n");
   s = s.write("    add w3, w3, #1\n");
   s = s.write("    str w3, [x2]\n");
   s = s.write(san_underflow_abort(s));
-  s = s.write("    b .Larrdec_ret\n");
+  s = s.write("    ret\n");
   s = s.write(".Larrdec_dec:\n");
   s = s.write("    sub w1, w1, #1\n");
   s = s.write("    stur w1, [x0, #-8]\n");
-  s = s.write("    b .Larrdec_ret\n");
-  s = s.write(".Larrdec_free:\n");
-  s = s.write(quarantine_rc("[x0, #-8]", "w9", s.rc_free_debug));  // release the rc word
-  s = s.write("    ldur x1, [x0, #-16]\n");  // cap
-  s = s.write("    add x1, x1, #3\n");  // idx = cap + 3
+  s = s.write("    ret\n");
+  s = s.write(".Larrdec_big:\n");
   s = s.write("    mov x9, #0x10000\n");  // freelist class cap (65536)
   s = s.write("    cmp x1, x9\n");
   s = s.write("    bhs .Larrdec_large\n");
-  s = s.write("    sub x2, x0, #16\n");  // base = data - 16
   s = lc_bump_free_words(s, "x1", "x3", "x9");
   if (!s.rc_free_debug) {
-    s = freelist_push(s, "x2", "x1", "x3", "x9");
+    s = s.write("    stp x1, x30, [sp, #-16]!\n");
+    s = s.write("    bl __fern_capw\n");
+    s = s.write("    ldp x1, x30, [sp], #16\n");
+    s = s.write("    b .Larrdec_push\n");
+  } else {
+    s = s.write("    ret\n");
   }
-  s = s.write(".Larrdec_ret:\n");
-  s = s.write("    ret\n");
   // Large tier (#3425): recycle the >=512 KiB array block (base=data-16, bytes
   // =idx*8) via __fern_large_push instead of leaking. Tail-branch (b): the
   // helper's ret returns to arr_dec's caller, x30 flows through untouched.
@@ -9216,10 +9238,8 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   // rather than corrupting the heap. w4 holds rc across the free (x1/x2 = data/len).
   s = s.write("    ldur w4, [x0, #-8]\n");  // rc
   s = s.write(san_poison_check("w4", "w10", ".Lstrfree_live", s.rc_free_debug));
-  s = s.write("    tbnz w4, #31, .Lstrfree_ret\n");  // negative = immortal -> skip
   s = s.write("    cmp w4, #1\n");
-  s = s.write("    bgt .Lstrfree_dec\n");  // rc>1 -> dec, keep
-  s = s.write("    blt .Lstrfree_uf\n");  // rc==0 -> underflow (double free)
+  s = s.write("    bne .Lstrfree_shared\n");  // immortal, shared or double-freed
   // rc==1, FUSED box (#7351): data lives inside this block, so there is one
   // 24+len-byte allocation to return, not a box and a buffer. x2 is reloaded with
   // len on both arms.
@@ -9290,23 +9310,39 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    add x2, x2, #3\n");
   s = s.write(quarantine_rc("[x0, #-8]", "w10", s.rc_free_debug));  // release the rc word
   s = s.write("    sub x1, x0, #8\n");  // base = box-8
+  // Over 256 words the block takes the large-tier test beside the class call.
+  s = s.write("    cmp x2, #256\n");
+  s = s.write("    b.hi .Lstrfree_fused_big\n");
+  s = lc_bump_free_words(s, "x2", "x3", "x10");
+  if (!s.rc_free_debug) {
+    s = s.write(".Lstrfree_fused_push:\n");
+    s = freelist_push_classed(s, "x1", "x2", "x3", "x10");
+  }
+  s = s.write("    b .Lstrfree_ret\n");
+  s = s.write(".Lstrfree_fused_big:\n");
   s = s.write("    cmp x2, x9\n");  // large tier (>=65536 words)
   s = s.write("    bhs .Lstrfree_fused_large\n");
   s = lc_bump_free_words(s, "x2", "x3", "x10");
   if (!s.rc_free_debug) {
-    s = freelist_push(s, "x1", "x2", "x3", "x10");
+    s = s.write("    stp x2, x30, [sp, #-16]!\n");
+    s = s.write("    bl __fern_capw\n");
+    s = s.write("    ldp x2, x30, [sp], #16\n");
+    s = s.write("    b .Lstrfree_fused_push\n");
+  } else {
+    s = s.write("    b .Lstrfree_ret\n");
   }
-  s = s.write("    b .Lstrfree_ret\n");
   // Tail-branch to __fern_large_push (x1 = base, x2 = bytes), as .Larrdec_large
   // does: x30 flows through, and the census bump lives INSIDE that helper, so
   // this arm must not emit its own.
   s = s.write(".Lstrfree_fused_large:\n");
   s = s.write("    lsl x2, x2, #3\n");  // bytes = words * 8
   s = s.write("    b __fern_large_push\n");
-  s = s.write(".Lstrfree_dec:\n");
-  s = s.write("    sub w4, w4, #1\n");
+  s = s.write(".Lstrfree_shared:\n");
+  s = s.write("    tbnz w4, #31, .Lstrfree_ret\n");  // negative = immortal -> skip
+  s = s.write("    blt .Lstrfree_uf\n");  // rc==0 -> underflow, the compare's flags still standing
+  s = s.write("    sub w4, w4, #1\n");  // rc>1 -> dec, keep
   s = s.write("    stur w4, [x0, #-8]\n");
-  s = s.write("    b .Lstrfree_ret\n");
+  s = s.write("    ret\n");
   s = s.write(".Lstrfree_uf:\n");
   s = s.write("    adrp x2, __fern_rc_underflow\n");
   s = s.write("    add x2, x2, :lo12:__fern_rc_underflow\n");

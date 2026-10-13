@@ -67,14 +67,14 @@ function calls(s: string): void {
   mutation(s, "popq %rcx", "popq %rdx", false);
   mutation(s, "popq %rcx", "popq %rsp", false);
   mutation(s, "popq %rcx", "movl (%rsp), %ecx\nleaq 8(%rsp), %rsp", true);
-  mutation(s, "jbe .L4", "", false);
-  mutation(s, call, call + "\nje .L4", false);
+  mutation(s, "ja .Larrdec_big", "", false);
+  mutation(s, call, call + "\nje .Larrdec_push", false);
   mutation(s, "popq %rcx", "popq %rcx\nmovq %rax, -16(%rsp)", false);
   // All ten scratch halves matter, including upper halves and the inner RET.
   for offset in ["-40", "-36", "-32", "-28", "-24", "-20", "-16", "-12", "-8", "-4"] {
     mutation(s, "popq %rcx", "popq %rcx\nmovl $7, " + offset + "(%rsp)", false);
   }
-  mutation(s, "jbe .L4", "movq %rax, -40(%rsp)\njbe .L4", false);
+  mutation(s, "ja .Larrdec_big", "movq %rax, -40(%rsp)\nja .Larrdec_big", false);
   // Mutate only the dependency body, preserving the caller instruction stream.
   let parts = s.split("__fern_capw:\n");
   require(parts.len() == 2, "unique capw fixture");
@@ -115,10 +115,10 @@ pub function run(output: string): void {
   mutation(output, "    ret\n", "jmp .Larrdec_ret\n", false);
   mutation(output, "cmpq $256, %rcx", "cmpq $255, %rcx", false);
   mutation(output, "cmpq $65536, %rcx", "cmpq $65535, %rcx", false);
-  mutation(output, "testl %ecx, %ecx", "testl %edx, %edx", false);
-  mutation(output, "jbe .L4", "jna .L4", true);
-  mutation(output, "jbe .L4", "jo .L4", false);
-  mutation(output, "jbe .L4", "addq $0, %rcx\njbe .L4", false);
+  mutation(output, "cmpl $1, %ecx", "cmpl $1, %edx", false);
+  mutation(output, "ja .Larrdec_big", "jnbe .Larrdec_big", true);
+  mutation(output, "ja .Larrdec_big", "jo .Larrdec_big", false);
+  mutation(output, "ja .Larrdec_big", "addq $0, %rcx\nja .Larrdec_big", false);
   require(!machine.check(".set alias, __fern_capw\n" + output), "closed namespace");
   require(!machine.check(".text\n__fn___fern_arr_dec:\n__fn___fern_arr_dec.r:\nret\n"), "missing dependency and effects");
 }

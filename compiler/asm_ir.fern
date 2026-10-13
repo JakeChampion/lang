@@ -564,7 +564,11 @@ function arr_deep_free_call(target: string): string {
 // the capacity __fern_capw rounds it to, which is the size __fern_alloc bumped
 // the block at; `tmp` is scratch, and %r8 is clobbered.
 function freelist_push(s: asmcore.EmitState, ptr: string, words: string, tmp: string): asmcore.EmitState {
-  s = capw_class(s, words);
+  return freelist_push_classed(capw_class(s, words), ptr, words, tmp);
+}
+
+// freelist_push_classed is the push itself, `words` already a class.
+function freelist_push_classed(s: asmcore.EmitState, ptr: string, words: string, tmp: string): asmcore.EmitState {
   s = s.write("    leaq __fern_freelist(%rip), %r8\n");
   s = s.write("    movq (%r8," + words + ",8), " + tmp + "\n");
   s = s.write("    movq " + tmp + ", (" + ptr + ")\n");
@@ -2934,6 +2938,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq %rdi, %r8\n");
   s = s.write("    call __fern_large_push\n");
   s = s.write("    ret\n");
+  // The sole owner's release is nearly every call, so it is the fall-through:
+  // one compare against 1 sends the shared, immortal and double-freed box
+  // aside, and a block over 256 words takes the large-tier test with the
+  // class call it already pays.
   s = s.write("__fn___fern_arr_dec:\n");
   s = s.write("    movq 8(%rsp), %rax\n");
   s = s.write("__fn___fern_arr_dec.r:\n");
@@ -2941,10 +2949,24 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jb .Larrdec_ret\n");
   s = s.write("    movl -8(%rax), %ecx\n");
   s = s.write(san_poison_check("%ecx", s.rc_free_debug));
+  s = s.write("    cmpl $1, %ecx\n");
+  s = s.write("    jne .Larrdec_shared\n");
+  s = s.write(quarantine_rc("-8(%rax)", s.rc_free_debug));
+  s = s.write("    movl -16(%rax), %ecx\n");
+  s = s.write("    addq $3, %rcx\n");
+  s = s.write("    leaq -16(%rax), %rdx\n");
+  s = s.write("    cmpq $256, %rcx\n");
+  s = s.write("    ja .Larrdec_big\n");
+  s = hev_free(s, "%rdx", "%rcx");
+  if (!s.rc_free_debug) {
+    s = s.write(".Larrdec_push:\n");
+    s = freelist_push_classed(s, "%rdx", "%rcx", "%rdi");
+  }
+  s = s.write(".Larrdec_ret:\n");
+  s = s.write("    ret\n");
+  s = s.write(".Larrdec_shared:\n");
   s = s.write("    testl %ecx, %ecx\n");
   s = s.write("    js .Larrdec_ret\n");
-  s = s.write("    cmpl $1, %ecx\n");
-  s = s.write("    je .Larrdec_free\n");
   s = s.write("    jg .Larrdec_dec\n");
   s = s.write("    incl __fern_rc_underflow(%rip)\n");
   s = s.write(san_underflow_abort(s));
@@ -2952,20 +2974,19 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Larrdec_dec:\n");
   s = s.write("    subl $1, %ecx\n");
   s = s.write("    movl %ecx, -8(%rax)\n");
-  s = s.write("    jmp .Larrdec_ret\n");
-  s = s.write(".Larrdec_free:\n");
-  s = s.write(quarantine_rc("-8(%rax)", s.rc_free_debug));
-  s = s.write("    movl -16(%rax), %ecx\n");
-  s = s.write("    addq $3, %rcx\n");
+  s = s.write("    ret\n");
+  s = s.write(".Larrdec_big:\n");
   s = s.write("    cmpq $65536, %rcx\n");
   s = s.write("    jae .Larrdec_large\n");
-  s = s.write("    leaq -16(%rax), %rdx\n");
   s = hev_free(s, "%rdx", "%rcx");
   if (!s.rc_free_debug) {
-    s = freelist_push(s, "%rdx", "%rcx", "%rdi");
+    s = s.write("    pushq %rcx\n");
+    s = s.write("    call __fern_capw\n");
+    s = s.write("    popq %rcx\n");
+    s = s.write("    jmp .Larrdec_push\n");
+  } else {
+    s = s.write("    ret\n");
   }
-  s = s.write(".Larrdec_ret:\n");
-  s = s.write("    ret\n");
   // Large tier (#3425): return the >=512 KiB array block (base = arr-16, bytes =
   // words*8) to the large freelist instead of leaking it.
   s = s.write(".Larrdec_large:\n");
@@ -3003,11 +3024,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // underflow counter (matching __fn___fern_arr_dec) rather than corrupting the heap.
   s = s.write("    movl -8(%rax), %ecx\n");  // rc
   s = s.write(san_poison_check("%ecx", s.rc_free_debug));
-  s = s.write("    testl %ecx, %ecx\n");
-  s = s.write("    js .Lstrfree_ret\n");  // negative = immortal -> skip
   s = s.write("    cmpl $1, %ecx\n");
-  s = s.write("    jg .Lstrfree_dec\n");  // rc>1 -> dec, keep
-  s = s.write("    jl .Lstrfree_uf\n");  // rc==0 -> underflow (double free)
+  s = s.write("    jne .Lstrfree_shared\n");  // immortal, shared or double-freed
   // rc==1, FUSED box (#7351): data lives inside this block, so there is one
   // 24+len-byte allocation to return, not a box and a buffer.
   s = s.write("    movl -4(%rax), %edx\n");  // fused marker @ box-4
@@ -3076,26 +3094,42 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    shrq $3, %rdx\n");
   s = s.write("    addq $3, %rdx\n");
   s = s.write("    leaq -8(%rax), %rcx\n");  // base = box-8
-  s = s.write("    cmpq $65536, %rdx\n");  // large tier -> __fern_large_push
-  s = s.write("    jae .Lstrfree_fused_large\n");
   s = s.write(quarantine_rc("-8(%rax)", s.rc_free_debug));
+  // Over 256 words the block takes the large-tier test beside the class call.
+  s = s.write("    cmpq $256, %rdx\n");
+  s = s.write("    ja .Lstrfree_fused_big\n");
   s = hev_free(s, "%rcx", "%rdx");
   if (!s.rc_free_debug) {
-    s = freelist_push(s, "%rcx", "%rdx", "%rsi");
+    s = s.write(".Lstrfree_fused_push:\n");
+    s = freelist_push_classed(s, "%rcx", "%rdx", "%rsi");
   }
   s = s.write("    jmp .Lstrfree_ret\n");
+  s = s.write(".Lstrfree_fused_big:\n");
+  s = s.write("    cmpq $65536, %rdx\n");  // large tier -> __fern_large_push
+  s = s.write("    jae .Lstrfree_fused_large\n");
+  s = hev_free(s, "%rcx", "%rdx");
+  if (!s.rc_free_debug) {
+    s = s.write("    pushq %rdx\n");
+    s = s.write("    call __fern_capw\n");
+    s = s.write("    popq %rdx\n");
+    s = s.write("    jmp .Lstrfree_fused_push\n");
+  } else {
+    s = s.write("    jmp .Lstrfree_ret\n");
+  }
   // The large tier's own free hook lives inside __fern_large_push, so this arm
   // must NOT emit its own — .Lstrfree_large above is silent for the same reason.
   s = s.write(".Lstrfree_fused_large:\n");
-  s = s.write(quarantine_rc("-8(%rax)", s.rc_free_debug));
   s = s.write("    movq %rcx, %r8\n");  // base
   s = s.write("    leaq 0(,%rdx,8), %rsi\n");  // bytes = words*8
   s = s.write("    call __fern_large_push\n");
   s = s.write("    jmp .Lstrfree_ret\n");
-  s = s.write(".Lstrfree_dec:\n");
-  s = s.write("    subl $1, %ecx\n");
+  s = s.write(".Lstrfree_shared:\n");
+  s = s.write("    testl %ecx, %ecx\n");
+  s = s.write("    js .Lstrfree_ret\n");  // negative = immortal -> skip
+  s = s.write("    je .Lstrfree_uf\n");  // rc==0 -> underflow (double free)
+  s = s.write("    subl $1, %ecx\n");  // rc>1 -> dec, keep
   s = s.write("    movl %ecx, -8(%rax)\n");
-  s = s.write("    jmp .Lstrfree_ret\n");
+  s = s.write("    ret\n");
   s = s.write(".Lstrfree_uf:\n");
   s = s.write("    incl __fern_rc_underflow(%rip)\n");
   s = s.write(san_underflow_abort(s));

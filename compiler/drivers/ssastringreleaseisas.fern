@@ -136,7 +136,7 @@ function actual_branch(op: isa.Op, p: isa.ArrayProgram, body: text.Body, i: i32)
 function actual(output: string): void {
   let body = text.select(output, "__fn___fern_str_free");
   let p = isa.string_program(output);
-  let kinds = [3, 1, 26, 17, 16, 17, 3, 23, 17, 16, 17, 17, 3, 16, 17, 16, 17, 3, 3, 29, 28, 17, 30, 17, 27, 17, 10, 21, 16, 17, 16, 17, 6, 25, 7, 1, 19, 3, 4, 4, 1, 22, 15, 19, 3, 4, 4, 17, 1, 2, 15, 6, 25, 7, 17, 1, 3, 10, 21, 10, 15, 16, 17, 22, 16, 17, 6, 25, 7, 1, 19, 3, 4, 4, 17, 1, 22, 2, 15, 25, 17, 1, 9, 4, 17, 1, 24, 1, 18];
+  let kinds = [3, 1, 26, 17, 16, 17, 3, 16, 17, 3, 16, 17, 16, 17, 3, 3, 29, 28, 17, 30, 17, 27, 17, 10, 21, 16, 17, 16, 17, 6, 25, 7, 1, 19, 3, 4, 4, 1, 22, 15, 19, 3, 4, 4, 17, 1, 2, 15, 6, 25, 7, 17, 1, 3, 10, 21, 10, 15, 22, 16, 17, 1, 19, 3, 4, 4, 17, 1, 16, 17, 6, 25, 7, 17, 1, 2, 15, 25, 17, 1, 23, 17, 17, 9, 4, 18, 1, 24, 1, 18];
   require(p.error == "" && body.error == "" && p.ops.len() == kinds.len() && p.ops.len() == body.lines.len(), "actual length");
   require(p.register_entry == body.register_entry && p.register_entry == 1, "actual dual entry");
   let i = 0;
@@ -145,8 +145,8 @@ function actual(output: string): void {
     actual_branch(op, p, body, i);
     i = i + 1;
   }
-  require(p.ops[19].symbol == "__fern_heap_base" && p.ops[22].symbol == "__fern_heap_end", "actual heap bounds");
-  require(p.ops[33].symbol == "__fern_capw" && p.ops[52].symbol == "__fern_large_push" && p.ops[67].symbol == "__fern_capw" && p.ops[79].symbol == "__fern_large_push", "actual dependencies");
+  require(p.ops[16].symbol == "__fern_heap_base" && p.ops[19].symbol == "__fern_heap_end", "actual heap bounds");
+  require(p.ops[30].symbol == "__fern_capw" && p.ops[49].symbol == "__fern_large_push" && p.ops[71].symbol == "__fern_capw" && p.ops[77].symbol == "__fern_large_push", "actual dependencies");
 }
 
 pub function run(output: string): void {
