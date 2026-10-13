@@ -2280,6 +2280,17 @@ function ssa_read_rhs(fr: SsaFrame, reg_of: i32[], v: i32, scratch: string, s: a
   return ssa_read(reg_of, v, scratch, s);
 }
 
+// ssa_rhs_scratch is the scratch a spilled right operand is read through: x4
+// when it still holds the value, so the read is no load, else x5. The left
+// operand is read into x4 first, so x4 holds the right one only when the two
+// are the same value.
+function ssa_rhs_scratch(reg_of: i32[], v: i32, s: asmcore.EmitState): string {
+  if (!ssa_in_x(reg_of, v) && s.ssa_x0 == v) {
+    return "x4";
+  }
+  return "x5";
+}
+
 // ssa_bin_in_place emits a three-operand integer op into the result's home,
 // each operand read from its own or as an immediate; a spilled operand is
 // read through x4 or x5. A constant on the left is only ever one the op can
@@ -2295,28 +2306,30 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
   }
   let dh: string = ssa_dst(reg_of, ins.result);
   s = ssa_read(reg_of, a, "x4", s);
-  s = ssa_read_rhs(fr, reg_of, b, "x5", s);
+  let bx: string = ssa_rhs_scratch(reg_of, b, s);
+  s = ssa_read_rhs(fr, reg_of, b, bx, s);
   if (ssa_shift_tag(tag) && fr.imm.is_imm[b]) {
     s = s.write(shift_imm_asm(tag, ins.imm, fr.imm.value[b], dh, ssa_src(reg_of, a, "x4")));
     return ssa_store(reg_of, ins.result, dh, s);
   }
   if (s.records() && (tag == 21 || tag == 22)) {
-    let w: i64 = ssa_addsub_word(tag == 22, dh, ssa_src(reg_of, a, "x4"), fr, reg_of, b);
+    let w: i64 = ssa_addsub_word(tag == 22, dh, ssa_src(reg_of, a, "x4"), fr, reg_of, b, bx);
     if (w >= 0) {
       return ssa_store(reg_of, ins.result, dh, s.word(w));
     }
   }
-  s = s.write(ssa_bin3_asm(tag, dh, ssa_src(reg_of, a, "x4"), ssa_rhs(fr, reg_of, b, "x5")));
+  s = s.write(ssa_bin3_asm(tag, dh, ssa_src(reg_of, a, "x4"), ssa_rhs(fr, reg_of, b, bx)));
   return ssa_store(reg_of, ins.result, dh, s);
 }
 
 // ssa_addsub_word is the record of `add|sub d, a, b`, or with d "" of
-// `cmp a, b`, b read as ssa_rhs reads it; -1 outside the record forms.
-function ssa_addsub_word(is_sub: boolean, d: string, a: string, fr: SsaFrame, reg_of: i32[], b: i32): i64 {
+// `cmp a, b`, b read as ssa_rhs reads it through `bx`; -1 outside the record
+// forms.
+function ssa_addsub_word(is_sub: boolean, d: string, a: string, fr: SsaFrame, reg_of: i32[], b: i32, bx: string): i64 {
   if (fr.imm.is_imm[b]) {
     return arm64_native.arm64_rec_addsub_imm(is_sub, d == "", d, a, fr.imm.value[b]);
   }
-  return arm64_native.arm64_rec_addsub_reg(is_sub, d == "", d, a, ssa_src(reg_of, b, "x5"));
+  return arm64_native.arm64_rec_addsub_reg(is_sub, d == "", d, a, ssa_src(reg_of, b, bx));
 }
 
 // ssa_wreg is the 32-bit name of an x register.
@@ -4091,14 +4104,15 @@ function ssa_fused_test_emit(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: str
     return s.write("    fcmp " + ssa_fsrc(reg_of, fu.a, "d0") + ", " + ssa_fsrc(reg_of, fu.b, "d1") + "\n");
   }
   s = ssa_read(reg_of, fu.a, "x4", s);
-  s = ssa_read_rhs(fr, reg_of, fu.b, "x5", s);
+  let bx: string = ssa_rhs_scratch(reg_of, fu.b, s);
+  s = ssa_read_rhs(fr, reg_of, fu.b, bx, s);
   if (s.records()) {
-    let w: i64 = ssa_addsub_word(true, "", ssa_src(reg_of, fu.a, "x4"), fr, reg_of, fu.b);
+    let w: i64 = ssa_addsub_word(true, "", ssa_src(reg_of, fu.a, "x4"), fr, reg_of, fu.b, bx);
     if (w >= 0) {
       return s.word(w);
     }
   }
-  return s.write("    cmp " + ssa_src(reg_of, fu.a, "x4") + ", " + ssa_rhs(fr, reg_of, fu.b, "x5") + "\n");
+  return s.write("    cmp " + ssa_src(reg_of, fu.a, "x4") + ", " + ssa_rhs(fr, reg_of, fu.b, bx) + "\n");
 }
 
 // ssa_unique_flags is ssa_rc_prim's uniqueness test as flags: Z is set only
