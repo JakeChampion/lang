@@ -343,8 +343,14 @@ decides what wraps it.
    `sim_fetch.taped` / `send_taped` record a client's exchanges as JSON
    lines and `Net.replay(cassette)` answers them in order, `https`
    replayed as plain `http` since the simulated network carries no TLS
-   (`tests/stdlib/sim_fetch_test.fern`, the cassette cases). The load tool
-   and the httplint job are still open.
+   (`tests/stdlib/sim_fetch_test.fern`, the cassette cases). httplint
+   (landed): `scripts/net-httplint` on `net-nightly.yml` fetches fourteen
+   responses from a router program (`scripts/net-httplint.d/server.fern`:
+   text, JSON, HEAD, 405, 302, problem, upload, compressed, static file,
+   304, 206, `Cache-Control`) and fails on a note httplint rates BAD; the
+   first run found the status line of a 206 and a 412 going out as
+   "Status", so `http_status_text` now names every RFC 9110 code. The
+   load tool is still open.
 9. **The exit criteria.** The tutorial's routed JSON API with logging
    middleware and graceful shutdown under 40 lines, its deterministic
    simulation with fault injection under `examples/tests/` under 20, both
