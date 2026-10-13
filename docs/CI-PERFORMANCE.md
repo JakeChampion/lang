@@ -327,7 +327,10 @@ What changed, in the order it matters:
   lane over: the test jobs were created at 6.7 and 10.8 min for ~30 s of
   compile.
 - **`test-e2e-other` runs two workers per shard.** Its aarch64 leg was a single
-  15-minute serial process, the longest job outside the self-host lane.
+  15-minute serial process, the longest job outside the self-host lane. Its
+  x86_64 leg is three shards: at two, each worker ran 24-25 of its 25 minutes,
+  and the interpreter's `tls_verify` suite (over three minutes alone) tipped
+  one over.
 - **The seven `diff-selfhost-*` jobs are three**, one per target, each running
   the AST and the semantic leg. Four of the seven were 0.6-3 minute jobs paying
   ~40 s of setup each.
