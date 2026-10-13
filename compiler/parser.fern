@@ -17188,9 +17188,12 @@ function ms_deferred_owner(sd_owner: string, receiver_type: string, deferred: st
   return receiver_type.len() > 0 && str_in(deferred, strip_struct_base(receiver_type));
 }
 
-function struct_named(structs: StructDecl[], name: string): boolean {
+// plain_struct_named reports whether a struct declared on its own carries
+// `name`: a generic enum clone's variant struct shares the clone's spelling
+// (`Leaf__i32` owned by `Tree__i32`) and is not the record it wraps.
+function plain_struct_named(structs: StructDecl[], name: string): boolean {
   for sd in structs {
-    if (sd.name == name) {
+    if (sd.name == name && sd.enum_owner.len() == 0) {
       return true;
     }
   }
@@ -17361,7 +17364,7 @@ function ms_module(mod: Module): Module {
       }
     }
     // monomorphize_structs already cloned what it saw.
-    if (idx >= 0 && struct_named(mod.structs, base + "__" + sanitize_key(key))) {
+    if (idx >= 0 && plain_struct_named(mod.structs, base + "__" + sanitize_key(key))) {
       idx = 0 - 1;
     }
     if (idx >= 0) {

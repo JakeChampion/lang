@@ -6538,7 +6538,7 @@ function env_entry(t: typeinfo.Type, views: string[], impls: parser.ImplInfo[], 
 function record_entry(t: typeinfo.Type, r: typeinfo.TypeStruct, s: State, out: Schemas): Schemas {
   let sig: checker.StructSig = record_sig(t, s);
   if (sig.name.len() == 0) {
-    return Schemas { ...out, ok: false, why: "unsupported record type" };
+    return Schemas { ...out, ok: false, why: "unsupported record type " + typeinfo.spelling(t) };
   }
   if (!fields_resolved(sig)) {
     return Schemas { ...out, ok: false, why: "unresolved record field type" };
