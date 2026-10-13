@@ -2292,6 +2292,22 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{}}, ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
+	// The io_uring readiness set (#9861): ring_new(entries) is the reactor
+	// floor's contract over a ring whose handle is an i64, or -errno
+	// (ENOSYS where the target has no io_uring); ring_ctl and ring_wait take
+	// that handle where reactor_ctl and reactor_wait take the reactor's.
+	c.info.FuncSigs["ring_new"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	c.info.FuncSigs["ring_ctl"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["ring_wait"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.ArrayType{Elem: ast.NumberType{}}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
 	// tcp_recv_into(fd, buf): number — one read into the caller's buffer,
 	// up to its length: the byte count, 0 at EOF, or -errno.
 	c.info.FuncSigs["tcp_recv_into"] = &ast.FuncType{

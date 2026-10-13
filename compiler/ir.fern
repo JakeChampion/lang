@@ -1708,6 +1708,21 @@ pub function op_reactor_wait(): Op {
   return op0(343);
 }
 
+// The io_uring readiness set (#9861): `ring_new(entries)`, `ring_ctl(ring,
+// op, fd, arg)` and `ring_wait(ring, events, timeout_ms)`, the reactor floor's
+// contract over a ring whose handle is an i64.
+pub function op_ring_new(): Op {
+  return op0(434);
+}
+
+pub function op_ring_ctl(): Op {
+  return op0(435);
+}
+
+pub function op_ring_wait(): Op {
+  return op0(436);
+}
+
 pub function op_tcp_recv_into(): Op {
   return op0(344);
 }
@@ -3933,6 +3948,12 @@ function kind_id_len8_r(name: string): i32 {
   if (name == "ret_word") {
     return 384;
   }
+  if (name == "ring_new") {
+    return 434;
+  }
+  if (name == "ring_ctl") {
+    return 435;
+  }
   if (name == "read_dir") {
     return 171;
   }
@@ -4095,6 +4116,9 @@ function kind_id_len9_p(name: string): i32 {
 function kind_id_len9_r(name: string): i32 {
   if (name == "raw_alloc") {
     return 81;
+  }
+  if (name == "ring_wait") {
+    return 436;
   }
   if (name == "raw_load8") {
     return 83;
@@ -5776,6 +5800,15 @@ pub function kind_name(id: i32): string {
   if (id == 433) {
     return "utf8_blocks";
   }
+  if (id == 434) {
+    return "ring_new";
+  }
+  if (id == 435) {
+    return "ring_ctl";
+  }
+  if (id == 436) {
+    return "ring_wait";
+  }
   if (id == 408) {
     return "pipe";
   }
@@ -6046,6 +6079,7 @@ function pops1_io(t: i32): boolean {
   // operand, `return` the function's result).
   return t == 154 || t == 158 || t == 159 || t == 160  // if, brif, drop, return
     || t == 384  // ret_word
+    || t == 434  // ring_new (entries)
     || t == 163 || t == 164 || t == 165 || t == 166  // print_str, eprint_str, putchar, exit
     || t == 169 || t == 233 || t == 171 || t == 172 || t == 173  // read_file, read_file_bytes, read_dir, remove_dir_all, remove_file
     || t == 340  // unix_connect (path)
@@ -6135,7 +6169,7 @@ function pops3(t: i32): boolean {
     || t == 346  // tcp_sendfile (fd, file, max)
     || t == 387  // tcp_send_buf (fd, handle, from)
     || t == 354  // udp_send_bytes (host, port, data)
-    || t == 343  // reactor_wait (r, events, timeout_ms)
+    || t == 343 || t == 436  // reactor_wait / ring_wait (r, events, timeout_ms)
     || t == 242  // reader_seek (fd, offset, whence)
     || t == 330  // reader_splice (fd, out_fd, max)
     || t == 407  // reader_copy_range (fd, out_fd, max)
@@ -6284,7 +6318,7 @@ function kind_pops(t: i32): i32 {
   if (t == 336 || t == 355) {  // udp_sendto / udp_sendto_bytes: fd + addr + port + data
     return 4;
   }
-  if (t == 342) {  // reactor_ctl: r + op + fd + arg
+  if (t == 342 || t == 435) {  // reactor_ctl / ring_ctl: r + op + fd + arg
     return 4;
   }
   if (t == 206) {  // syscall4

@@ -214,6 +214,18 @@ Driver seam wraps the floor as `watch`, `unwatch`, `wait`, `watch_signal`,
 `unwatch_signal`, `watch_parent` and `close` (std/async), std/sim scripts readiness for
 its leg with `ready_at`, and the serve loops run on it.
 
+`ring_new(entries)`, `ring_ctl(ring, op, fd, arg)` and `ring_wait(ring,
+events, timeout_ms)` are the same floor over an io_uring
+(docs/NET-P7-IO-URING-PLAN.md): the ops, readiness bits and pairs are the
+reactor's, plus op 7, the ring's own descriptor, and the handle is an `i64`,
+the address of the state the Linux body maps. A watch is a single-shot
+`POLL_ADD` re-armed as its completion is read, so readiness is
+level-triggered as epoll's is. Only Linux has a body; Darwin, wasm and the
+interpreter answer ENOSYS, as a kernel without io_uring or under a seccomp
+profile refusing it does, and `async.real_driver_io_uring()` keeps the
+reactor there. qemu-user implements no io_uring, so an arm64 binary under
+qemu takes the reactor too.
+
 Per target, every socket primitive is provided as follows. "Fern body" is
 the one body in `asmcore.fern` over the syscall floor, the same on
 x86-64-linux and arm64-linux and on arm64-darwin with its sockaddr length
@@ -234,6 +246,7 @@ of these at check time there.
 | `udp_bind`, `udp_connect`, `udp_sendto`, `udp_recvfrom` (byte address) | Fern body | Fern body; `EISCONN` for a named address on a connected socket | wasi:sockets/udp bodies (`wasm_ir.fern`); `recvfrom` blocks on the incoming pollable | E066 | raw descriptors, the kernel's errnos |
 | `unix_listen`, `unix_connect` | Fern body | Fern body, `sun_len` head | E066: no `unix` | E066 | net package |
 | `reactor_new`, `reactor_ctl`, `reactor_wait` | Fern body, epoll | Fern body, kqueue | a table of wasi:io pollables; signals `-ENOTSUP` | E066: no `reactor` | an epoll or kqueue set over the handles; signals through a pipe |
+| `ring_new`, `ring_ctl`, `ring_wait` | Fern body, io_uring (kernel 6.1 setup flags), `-ENOSYS` or `-EPERM` where the kernel refuses it | `-ENOSYS` | `-ENOSYS` | E066: no `reactor` | `-ENOSYS` |
 
 On arm64-darwin `poll(fds, timeout_ms)` reaches `kqueue`/`kevent`
 (`asmcore.fern`'s `rt_src_poll_kqueue`). It ignores negative fds and failed

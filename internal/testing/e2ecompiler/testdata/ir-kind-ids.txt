@@ -377,3 +377,6 @@ mulhi_u=430
 writer_splice_forever=431
 read_dir_ino_all=432
 utf8_blocks=433
+ring_new=434
+ring_ctl=435
+ring_wait=436

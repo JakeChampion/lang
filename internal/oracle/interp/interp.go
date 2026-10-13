@@ -1718,6 +1718,9 @@ func New() *Interp {
 	i.Builtins["reactor_new"] = &Builtin{Fn: builtinReactorNew}
 	i.Builtins["reactor_ctl"] = &Builtin{Fn: builtinReactorCtl}
 	i.Builtins["reactor_wait"] = &Builtin{Fn: builtinReactorWait}
+	i.Builtins["ring_new"] = &Builtin{Fn: builtinRingUnsupported}
+	i.Builtins["ring_ctl"] = &Builtin{Fn: builtinRingUnsupported}
+	i.Builtins["ring_wait"] = &Builtin{Fn: builtinRingUnsupported}
 	i.Builtins["tcp_recv_into"] = &Builtin{Fn: builtinTcpRecvInto}
 	i.Builtins["udp_bind"] = &Builtin{Fn: builtinUdpBind}
 	i.Builtins["udp_connect"] = &Builtin{Fn: builtinUdpConnect}

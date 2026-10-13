@@ -1182,6 +1182,15 @@ function sysno_x86_64(name: string): string {
   if (name == "epoll_pwait") {
     return "281";
   }
+  if (name == "io_uring_setup") {
+    return "425";
+  }
+  if (name == "io_uring_enter") {
+    return "426";
+  }
+  if (name == "prlimit64") {
+    return "302";
+  }
   if (name == "signalfd4") {
     return "289";
   }
@@ -1796,6 +1805,15 @@ function sysno_arm64_linux(name: string): string {
   }
   if (name == "epoll_pwait") {
     return "22";
+  }
+  if (name == "io_uring_setup") {
+    return "425";
+  }
+  if (name == "io_uring_enter") {
+    return "426";
+  }
+  if (name == "prlimit64") {
+    return "261";
   }
   if (name == "signalfd4") {
     return "74";
@@ -3760,6 +3778,36 @@ pub function rt_src_reactor_wait(t: string): string {
     wait = epoll_wait_src(t);
   }
   return "function __fern_reactor_wait(r_fd: i32, events: i32[], timeout_ms: i32): i32 { let cap: i32 = events.len() / 2; if (cap <= 0) { return 0 - 22; } " + wait + " }";
+}
+
+// The io_uring readiness set (#9861, docs/NET-P7-IO-URING-PLAN.md slice 1):
+// ring_new, ring_ctl and ring_wait answer what the reactor builtins do, over
+// single-shot POLL_ADDs re-armed as their completions are read, since a
+// multishot poll reports a socket that stays readable only once. The handle
+// is the address of a block the helper maps: the ring's descriptor and its
+// three mappings' addresses and offsets in the first page (byte offsets 0 to
+// 160), then the descriptors read by the last wait and owed a re-arm, then a
+// four-byte entry per descriptor below RLIMIT_NOFILE (interest, armed,
+// generation, signal). A poll's user data is its descriptor and generation,
+// so a completion of a poll since removed or replaced is told apart and
+// dropped. Under SINGLE_ISSUER and DEFER_TASKRUN the kernel writes the
+// completion ring only inside this process's io_uring_enter, so plain loads
+// and stores around it are ordered. Darwin has no io_uring: ENOSYS there.
+pub function rt_src_ring(t: string): string {
+  if (t == "arm64-darwin") {
+    return "function __fern_ring_new(entries: i32): i64 { return (0 - 78) as i64; } function __fern_ring_ctl(ring: i64, op: i32, fd: i32, arg: i32): i32 { return 0 - 78; } function __fern_ring_wait(ring: i64, events: i32[], timeout_ms: i32): i32 { return 0 - 78; }";
+  }
+  let o: string = "function __fern_ring_flush(blk: usize): i32 { let queued: i32 = __load_i32(blk + 76); if (queued == 0) { return 0; } __store_i32(blk + 76, 0); return __syscall6(" + sysno(t, "io_uring_enter") + ", __load_i32(blk) as i64, queued as i64, 0, 0, 0, 0) as i32; }";
+  o = o + " " + "function __fern_ring_push(blk: usize, op: i32, fd: i32, events: i32, ud: i64, target: i64): i32 { let sq: usize = __load_i64(blk + 8) as usize; let headp: usize = sq + (__load_i32(blk + 32) as usize); let tailp: usize = sq + (__load_i32(blk + 36) as usize); let mask: i64 = __load_i32(blk + 40) as i64; let n: i64 = __load_i32(blk + 64) as i64; let tail: i64 = (__load_i32(tailp) as i64) & (4294967295 as i64); if (((tail - ((__load_i32(headp) as i64) & (4294967295 as i64))) & (4294967295 as i64)) >= n) { let flushed: i32 = __fern_ring_flush(blk); if (flushed < 0) { return flushed; } if (((tail - ((__load_i32(headp) as i64) & (4294967295 as i64))) & (4294967295 as i64)) >= n) { return 0 - 16; } } let idx: i64 = tail & mask; let e: usize = (__load_i64(blk + 24) as usize) + (idx as usize) * 64; let z: i32 = 0; while (z < 8) { __store_i64(e + (z as usize) * 8, 0); z = z + 1; } __raw_store8(e, 0, op); __store_i32(e + 4, fd); __store_i64(e + 16, target); __store_i32(e + 28, events); __store_i64(e + 32, ud); __store_i32(sq + (__load_i32(blk + 44) as usize) + (idx as usize) * 4, idx as i32); __store_i32(tailp, (tail + 1) as i32); __store_i32(blk + 76, __load_i32(blk + 76) + 1); return 0; }";
+  o = o + " " + "function __fern_ring_entry(blk: usize, fd: i32): usize { return blk + 4096 + (__load_i32(blk + 112) as usize) * 4 + (fd as usize) * 4; }";
+  o = o + " " + "function __fern_ring_ud(fd: i32, gen: i32): i64 { return ((gen as i64) << 32) | ((fd as i64) & (4294967295 as i64)); }";
+  o = o + " " + "function __fern_ring_arm(blk: usize, ent: usize, fd: i32): i32 { let interest: i32 = __raw_load8(ent, 0); let m: i32 = 0; if ((interest & 1) != 0) { m = m | 1; } if ((interest & 2) != 0) { m = m | 4; } let r: i32 = __fern_ring_push(blk, 6, fd, m, __fern_ring_ud(fd, __raw_load8(ent, 2)), 0); if (r < 0) { return r; } __raw_store8(ent, 1, 1); return 0; }";
+  o = o + " " + "function __fern_ring_unarm(blk: usize, ent: usize, fd: i32): i32 { if (__raw_load8(ent, 1) != 0) { let r: i32 = __fern_ring_push(blk, 7, 0 - 1, 0, (4611686018427387904 as i64), __fern_ring_ud(fd, __raw_load8(ent, 2))); if (r < 0) { return r; } } __raw_store8(ent, 1, 0); __raw_store8(ent, 2, (__raw_load8(ent, 2) + 1) & 255); return 0; }";
+  o = o + " " + "function __fern_ring_watch(blk: usize, fd: i32, interest: i32, sig: i32): i32 { if (fd < 0 || fd >= __load_i32(blk + 68)) { return 0 - 9; } let ent: usize = __fern_ring_entry(blk, fd); if (interest == 0) { let un: i32 = __fern_ring_unarm(blk, ent, fd); __raw_store8(ent, 0, 0); __raw_store8(ent, 3, 0); return un; } if (__raw_load8(ent, 0) == interest && __raw_load8(ent, 1) != 0) { return 0; } let un2: i32 = __fern_ring_unarm(blk, ent, fd); if (un2 < 0) { return un2; } __raw_store8(ent, 0, interest); __raw_store8(ent, 3, sig); return __fern_ring_arm(blk, ent, fd); }";
+  o = o + " " + "function __fern_ring_new(entries: i32): i64 { if (entries <= 0 || entries > 32768) { return 0 - 22; } let p: usize = __raw_scratch(128); let z: i32 = 0; while (z < 16) { __store_i64(p + (z as usize) * 8, 0); z = z + 1; } __store_i32(p + 8, 12288); let rfd: i64 = __syscall3(" + sysno(t, "io_uring_setup") + ", entries as i64, p as i64, 0); if (rfd < (0 as i64)) { return rfd; } let sqn: i64 = __load_i32(p) as i64; let cqn: i64 = __load_i32(p + 4) as i64; let sq_head: i32 = __load_i32(p + 40); let sq_tail: i32 = __load_i32(p + 44); let sq_mask: i32 = __load_i32(p + 48); let sq_array: i32 = __load_i32(p + 64); let cq_head: i32 = __load_i32(p + 80); let cq_tail: i32 = __load_i32(p + 84); let cq_mask: i32 = __load_i32(p + 88); let cq_cqes: i32 = __load_i32(p + 100); let sq_len: i64 = (sq_array as i64) + sqn * (4 as i64); let cq_len: i64 = (cq_cqes as i64) + cqn * (16 as i64); let sqe_len: i64 = sqn * (64 as i64); let sq: i64 = __syscall6(" + sysno(t, "mmap") + ", 0, sq_len, 3, 32769, rfd, 0); if (sq < (0 as i64)) { __syscall3(" + sysno(t, "close") + ", rfd, 0, 0); return sq; } let cq: i64 = __syscall6(" + sysno(t, "mmap") + ", 0, cq_len, 3, 32769, rfd, 134217728); if (cq < (0 as i64)) { __syscall3(" + sysno(t, "munmap") + ", sq, sq_len, 0); __syscall3(" + sysno(t, "close") + ", rfd, 0, 0); return cq; } let sqes: i64 = __syscall6(" + sysno(t, "mmap") + ", 0, sqe_len, 3, 32769, rfd, 268435456); if (sqes < (0 as i64)) { __syscall3(" + sysno(t, "munmap") + ", cq, cq_len, 0); __syscall3(" + sysno(t, "munmap") + ", sq, sq_len, 0); __syscall3(" + sysno(t, "close") + ", rfd, 0, 0); return sqes; } let lim: usize = __raw_scratch(16); let nfds: i64 = 65536 as i64; if (__syscall4(" + sysno(t, "prlimit64") + ", 0, 7, 0, lim as i64) == (0 as i64)) { nfds = __load_i64(lim); } if (nfds < (1024 as i64)) { nfds = 1024 as i64; } if (nfds > (1048576 as i64)) { nfds = 1048576 as i64; } let size: i64 = (((4096 as i64) + cqn * (4 as i64) + nfds * (4 as i64) + (4095 as i64)) / (4096 as i64)) * (4096 as i64); let blk: i64 = __syscall6(" + sysno(t, "mmap") + ", 0, size, 3, 34, (0 - 1) as i64, 0); if (blk < (0 as i64)) { __syscall3(" + sysno(t, "munmap") + ", sqes, sqe_len, 0); __syscall3(" + sysno(t, "munmap") + ", cq, cq_len, 0); __syscall3(" + sysno(t, "munmap") + ", sq, sq_len, 0); __syscall3(" + sysno(t, "close") + ", rfd, 0, 0); return blk; } let b: usize = blk as usize; __store_i32(b, rfd as i32); __store_i64(b + 8, sq); __store_i64(b + 16, cq); __store_i64(b + 24, sqes); __store_i32(b + 32, sq_head); __store_i32(b + 36, sq_tail); __store_i32(b + 40, __load_i32((sq as usize) + (sq_mask as usize))); __store_i32(b + 44, sq_array); __store_i32(b + 48, cq_head); __store_i32(b + 52, cq_tail); __store_i32(b + 56, __load_i32((cq as usize) + (cq_mask as usize))); __store_i32(b + 60, cq_cqes); __store_i32(b + 64, sqn as i32); __store_i32(b + 68, nfds as i32); __store_i64(b + 80, sq_len); __store_i64(b + 88, cq_len); __store_i64(b + 96, sqe_len); __store_i64(b + 104, size); __store_i32(b + 112, cqn as i32); return blk; }";
+  o = o + " " + "function __fern_ring_ctl(ring: i64, op: i32, fd: i32, arg: i32): i32 { if (ring < (0 as i64)) { return 0 - 9; } let blk: usize = ring as usize; if (op == 1) { return __fern_ring_watch(blk, fd, arg & 7, 0); } if (op == 2) { return __fern_ring_watch(blk, fd, 0, 0); } if (op == 3) { let rfd: i64 = __load_i32(blk) as i64; __syscall3(" + sysno(t, "munmap") + ", __load_i64(blk + 24), __load_i64(blk + 96), 0); __syscall3(" + sysno(t, "munmap") + ", __load_i64(blk + 16), __load_i64(blk + 88), 0); __syscall3(" + sysno(t, "munmap") + ", __load_i64(blk + 8), __load_i64(blk + 80), 0); __syscall3(" + sysno(t, "close") + ", rfd, 0, 0); return __syscall3(" + sysno(t, "munmap") + ", ring, __load_i64(blk + 104), 0) as i32; } if (op == 4 || op == 5) { if (fd <= 0 || fd > 64) { return 0 - 22; } let set: usize = __raw_scratch(8); __store_i64(set, 0); let bit: i32 = fd - 1; let bit_off: i32 = 0; if (fd > 32) { bit = fd - 33; bit_off = 4; } __raw_store8(set, bit_off + bit / 8, 1 << (bit % 8)); if (op == 4) { let blocked: i32 = __syscall4(" + sysno(t, "rt_sigprocmask") + ", 0, set as i64, 0, 8) as i32; if (blocked < 0) { return blocked; } let sfd: i32 = __syscall4(" + sysno(t, "signalfd4") + ", 0 - 1, set as i64, 8, 526336) as i32; if (sfd < 0) { return sfd; } let watched: i32 = __fern_ring_watch(blk, sfd, 1, fd); if (watched < 0) { __syscall3(" + sysno(t, "close") + ", sfd as i64, 0, 0); return watched; } return sfd; } __fern_ring_watch(blk, arg, 0, 0); __syscall3(" + sysno(t, "close") + ", arg as i64, 0, 0); return __syscall4(" + sysno(t, "rt_sigprocmask") + ", 1, set as i64, 0, 8) as i32; } if (op == 6) { let pdeath: i32 = __syscall3(" + sysno(t, "prctl") + ", 1, 15, 0) as i32; if (pdeath < 0) { return pdeath; } if ((__syscall3(" + sysno(t, "getppid") + ", 0, 0, 0) as i32) == 1) { return 0 - 3; } return 0; } if (op == 7) { return __load_i32(blk); } return 0 - 22; }";
+  o = o + " " + "function __fern_ring_wait(ring: i64, events: i32[], timeout_ms: i32): i32 { let cap: i32 = events.len() / 2; if (cap <= 0 || ring < (0 as i64)) { return 0 - 22; } let blk: usize = ring as usize; let cqn: i32 = __load_i32(blk + 112); let nfds: i32 = __load_i32(blk + 68); let pend: usize = blk + 4096; let np: i32 = __load_i32(blk + 72); let k: i32 = 0; while (k < np) { let pfd: i32 = __load_i32(pend + (k as usize) * 4); let pent: usize = __fern_ring_entry(blk, pfd); if (__raw_load8(pent, 0) != 0 && __raw_load8(pent, 1) == 0) { let armed: i32 = __fern_ring_arm(blk, pent, pfd); if (armed < 0) { return armed; } } k = k + 1; } __store_i32(blk + 72, 0); let min: i64 = 1 as i64; if (timeout_ms == 0) { min = 0 as i64; } let ts: usize = blk + 120; let arg: usize = blk + 136; __store_i64(arg, 0); __store_i64(arg + 8, 0); __store_i64(arg + 16, 0); if (timeout_ms > 0) { __store_i64(ts, (timeout_ms / 1000) as i64); __store_i64(ts + 8, ((timeout_ms % 1000) as i64) * (1000000 as i64)); __store_i64(arg + 16, ts as i64); } let queued: i32 = __load_i32(blk + 76); __store_i32(blk + 76, 0); let r: i32 = __syscall6(" + sysno(t, "io_uring_enter") + ", __load_i32(blk) as i64, queued as i64, min, 9, arg as i64, 24) as i32; let cq: usize = __load_i64(blk + 16) as usize; let headp: usize = cq + (__load_i32(blk + 48) as usize); let tailp: usize = cq + (__load_i32(blk + 52) as usize); let cmask: i64 = __load_i32(blk + 56) as i64; let cqes: usize = cq + (__load_i32(blk + 60) as usize); let head: i64 = (__load_i32(headp) as i64) & (4294967295 as i64); let tail: i64 = (__load_i32(tailp) as i64) & (4294967295 as i64); let b: usize = __raw_arr_ptr(events); let n: i32 = 0; let np2: i32 = 0; while (head != tail && n < cap && np2 < cqn) { let c: usize = cqes + ((head & cmask) as usize) * 16; let ud: i64 = __load_i64(c); let res: i32 = __load_i32(c + 8); head = (head + 1) & (4294967295 as i64); let fd: i32 = (ud & (4294967295 as i64)) as i32; if (ud >= (0 as i64) && ud < (4611686018427387904 as i64) && fd >= 0 && fd < nfds) { let ent: usize = __fern_ring_entry(blk, fd); if (__raw_load8(ent, 2) == (((ud >> 32) & (255 as i64)) as i32) && __raw_load8(ent, 1) != 0) { __raw_store8(ent, 1, 0); if (__raw_load8(ent, 0) != 0) { __store_i32(pend + (np2 as usize) * 4, fd); np2 = np2 + 1; let ready: i32 = 4; if (res >= 0) { ready = 0; if ((res & 1) != 0) { ready = ready | 1; } if ((res & 4) != 0) { ready = ready | 2; } if ((res & 24) != 0) { ready = ready | 4; } } let sig: i32 = __raw_load8(ent, 3); let rfd: i32 = fd; if (sig != 0) { let drain: usize = __raw_scratch(128); __syscall3(" + sysno(t, "read") + ", fd as i64, drain as i64, 128); rfd = 0 - sig; ready = 1; } __raw_store_ptr(b, n * 2 + 1, rfd as usize); __raw_store_ptr(b, n * 2 + 2, ready as usize); n = n + 1; } } } } __store_i32(headp, head as i32); __store_i32(blk + 72, np2); if (n == 0 && r < 0 && r != 0 - 62) { return r; } return n; }";
+  return o;
 }
 
 // One read into the caller's slot array, spread one byte per slot like
@@ -7719,6 +7767,9 @@ function builtin_i32_names(): string[] {
     "reactor_new",
     "reactor_ctl",
     "reactor_wait",
+    "ring_new",
+    "ring_ctl",
+    "ring_wait",
     "tcp_recv_into",
     "tcp_send",
     "tcp_send_bytes",
