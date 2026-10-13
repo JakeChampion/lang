@@ -117,6 +117,19 @@ function declined(why: string): irtables.LowerResult {
   };
 }
 
+// The entry for a declaration with no body of its own (an `@import` extern,
+// or a template whose instances stand for it): no ops, and the emit skips it
+// (irtables.LowerResult.superseded). The AST lowering of an erased template
+// body would otherwise decline, on wasm, a module nothing in it calls that
+// body from (#9838).
+function superseded(): irtables.LowerResult {
+  return irtables.LowerResult {
+    ok: true, why: "", ops: [], n_locals: 0, n_params: 0,
+    erased_wide: false, superseded: true, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [],
+    name: "", result_kind: irtables.result_from_decl(), dbg_slots: [], dbg_names: [], dbg_types: [],
+  };
+}
+
 // produced_plan plans one function's units. A refusal at either stage yields a
 // plan that is not ok.
 function produced_plan(p: semsource.Produced, view: ssaunits.SchemaView): ssaunits.Plan {
@@ -565,7 +578,7 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, debug
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
     if (built.decls[i].dropped) {
-      bodies = bodies.append(irtables.superseded_body());
+      bodies = bodies.append(superseded());
       n = n + 1;
     } else if (r.keep[i]) {
       helpers = ssarc.with_drop_helpers(helpers, built.decls[i].func);
@@ -580,7 +593,7 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, debug
     } else if (built.decls[i].bodyless) {
       // An `@import` extern has no body: the bridge emits it from its
       // declaration. Not a refusal.
-      bodies = bodies.append(irtables.superseded_body());
+      bodies = bodies.append(superseded());
       n = n + 1;
     } else {
       bodies = bodies.append(declined(r.why[i]));
@@ -618,7 +631,7 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, debug
   let i2: i32 = 0;
   while (i2 < mod.funcs.len()) {
     if (!bodies[i2].ok && built.decls[i2].template) {
-      bodies = bodies.with(i2, irtables.superseded_body());
+      bodies = bodies.with(i2, superseded());
     }
     i2 = i2 + 1;
   }

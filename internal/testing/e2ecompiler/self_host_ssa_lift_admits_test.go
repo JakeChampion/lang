@@ -48,10 +48,12 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	// writer_splice_forever (431) adds one admitted kind with two inputs that
 	// pushes one Option.
 	// read_dir_ino_all (432) adds one with one input that pushes a Result.
+	// utf8_blocks (433) adds one with three inputs that pushes the checked
+	// offset.
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
-		"registered=378 declined=3\n"
+		"registered=379 declined=3\n"
 
 	cmd := runX86_64Bin(runner, bin)
 	out, err := cmd.Output()

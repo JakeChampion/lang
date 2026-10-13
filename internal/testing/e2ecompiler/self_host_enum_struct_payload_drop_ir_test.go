@@ -16,8 +16,8 @@ import (
 // The leak/reclaim signal is heap exhaustion: a long fall-through churn that leaks
 // the payload's array buffer (and box) each iteration exhausts the bump heap and is
 // SIGKILLed (137); with the deep-drop reclaiming them the churn stays bounded (0).
-// Each items array goes through id so the payload is built on the heap rather than
-// placed as a constant. Variant constructors are UNQUALIFIED (`Full(..)`, not
+// The variant is built and consumed behind @noinline calls, so the optimiser
+// cannot fold the construction away and leave nothing to reclaim. Variant constructors are UNQUALIFIED (`Full(..)`, not
 // `Box.Full(..)`).
 func TestSelfHostEnumStructPayloadDropIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -57,17 +57,18 @@ func TestSelfHostEnumStructPayloadDropIRX86_64(t *testing.T) {
 	run(t, `struct Inner { items: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 enum Box { Full(Inner), Empty }
-function mk(): i32 {
-    let b: Box = Full(Inner { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) });
+@noinline function make(): Box {
+    return Full(Inner { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) });
+}
+@noinline function eat(b: Box): i32 {
     match (b) {
-        Full(_) => {},
-        Empty => {},
+        Full(_) => { return 5; },
+        Empty => { return 0; },
     }
-    return 5;
 }
 function main(): i32 {
     let s: i32 = 0; let f: i32 = 0;
-    while (f < 40000000) { s = mk(); f = f + 1; }
+    while (f < 40000000) { s = eat(make()); f = f + 1; }
     return s - 5;
 }`, "enum_struct_payload_churn", 0)
 
@@ -77,8 +78,11 @@ function main(): i32 {
 	run(t, `struct Inner { items: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 enum Box { Full(Inner), Empty }
-function f(): i32 {
-    let b: Box = Full(Inner { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) });
+@noinline function make(): Box {
+    return Full(Inner { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) });
+}
+@noinline function f(): i32 {
+    let b: Box = make();
     let r: i32 = 0;
     match (b) {
         Full(inner) => { r = inner.items[0] + inner.items[15]; },

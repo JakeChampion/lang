@@ -491,21 +491,21 @@
 # 2026-10-13: asm_pathprobe_run 4460528 -> 4684360 (+5.0%), main's growth
 # since the 10-11 refresh; the other rows grow 0.8-4.6% and stay inside 5%.
 # Number from driver-sizes' report on run 38334192751.
-# 2026-10-13: asm_modload_run 7865840 -> 8272160 (+5.2%), asm_ir_run
-# 7574936 -> 7975728 (+5.3%), asm_run 6845880 -> 7237744 (+5.7%), wasm_ir_run
-# 7159672 -> 7535768 (+5.3%), wasm_run 7161448 -> 7532616 (+5.2%): main's
-# growth since the refresh above; a build of main merged with #12290 measures
-# within 0.1% of main alone. Numbers from driver-sizes' report on run
-# 38344716597.
+
+# 2026-10-13 — asm_modload_run, asm_ir_run, asm_run, wasm_ir_run and
+# wasm_run grow 5.2-5.7% with the semthread pass (compiler/semthread.fern) in
+# every driver that links semsource, on top of the exhaustiveness check
+# #12263 added to checker.fern. Numbers from driver-sizes' report on run
+# 38341082199.
 
 fern.fern/stage2 11181568
 fern.fern 11289824
 drivers/asm_load_run.fern 9225920
-drivers/asm_modload_run.fern 8272160
-drivers/asm_ir_run.fern 7975728
-drivers/asm_run.fern 7237744
-drivers/wasm_ir_run.fern 7535768
-drivers/wasm_run.fern 7532616
+drivers/asm_modload_run.fern 8271632
+drivers/asm_ir_run.fern 7975200
+drivers/asm_run.fern 7237248
+drivers/wasm_ir_run.fern 7533704
+drivers/wasm_run.fern 7530568
 drivers/wasm_runio_run.fern 7190992
 drivers/asm_pathprobe_run.fern 4684360
 drivers/checker_modload_run.fern 2544640
