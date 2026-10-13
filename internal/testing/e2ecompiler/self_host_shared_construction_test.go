@@ -159,11 +159,13 @@ func TestSelfHostSharedConstructionsOff(t *testing.T) {
 
 // A caller past the once budget (seminline.max_caller_insts) still splices
 // a shared callee it reads apart, when the callee is within the reuse
-// budget: the splice saves the box on every call and leaves the caller
-// holding parts it held already. apart_long reads span's record apart in a
-// loop whose body runs to some 2,400 instructions, and its rounds allocate
-// nothing, as apart_rounds's do. long_chain is the value the loop's filler
-// computes, so nothing folds it away. recur has span's shape but calls
+// budget, and a callee called once that returns a box, when it is within
+// the once budget: either splice saves the box on every call and leaves the
+// caller holding parts it held already. apart_long reads span's record and
+// span_once's apart in a loop whose body runs to some 2,400 instructions,
+// and its rounds allocate nothing, as apart_rounds's do. long_chain is the
+// value the loop's filler computes, so nothing folds it away. recur has
+// span's shape but calls
 // itself (not in tail position, which would be a loop by the time the
 // inliner runs), so it is never shared: a copy spliced would bring a call
 // to it for the next round to splice again, and before the caller budget
@@ -178,6 +180,12 @@ function span(lo: i32, n: i32, name: string): Range {
     let hi: i32 = lo;
     let i: i32 = 0;
     while (i < n) { hi = hi + 2; i = i + 1; }
+    return Range { lo: lo, hi: hi, name: name };
+}
+function span_once(lo: i32, n: i32, name: string): Range {
+    let hi: i32 = lo;
+    let i: i32 = 0;
+    while (i < n) { hi = hi + 3; i = i + 1; }
     return Range { lo: lo, hi: hi, name: name };
 }
 @noinline function apart_rounds(): i32 {
@@ -213,7 +221,8 @@ function recur(lo: i32, n: i32, name: string): Range {
     let i: i32 = 0;
     while (i < 100) {
         let s: Range = span(i, 3, "ab");
-        t = t + s.hi - s.lo + s.name.len();
+        let o: Range = span_once(i, 2, "ab");
+        t = t + s.hi - s.lo + s.name.len() + o.hi - o.lo + o.name.len();
 `)
 	for i := 0; i < lines; i++ {
 		b.WriteString("        k = (k * 3 + i + 1) % 9973;\n")
@@ -245,12 +254,12 @@ function main(): i32 {
 	return b.String(), chain
 }
 
-var sharedBudgetProduced = []string{"span", "apart_rounds", "apart_long", "recur", "apart_recur", "apart_recur_again"}
+var sharedBudgetProduced = []string{"span", "span_once", "apart_rounds", "apart_long", "recur", "apart_recur", "apart_recur_again"}
 
 func TestSelfHostSharedSplicePastCallerBudget(t *testing.T) {
 	program, chain := sharedBudgetProgram()
 	runSemanticProgram(t, "sharedbudget", program, sharedBudgetProduced,
-		semInlineWants(fmt.Sprintf("800000\n800000\n%d\n1100100\n950100\n", chain)), "recur")
+		semInlineWants(fmt.Sprintf("800000\n1600000\n%d\n1100100\n950100\n", chain)), "recur")
 }
 
 // With the pass off, every round builds its record.
@@ -258,5 +267,5 @@ func TestSelfHostSharedSplicePastCallerBudgetOff(t *testing.T) {
 	t.Setenv("FERN_SEM_INLINE", "")
 	program, chain := sharedBudgetProgram()
 	runSemanticProgram(t, "sharedbudget-off", program, sharedBudgetProduced,
-		semInlineWants(fmt.Sprintf("800100\n800100\n%d\n1100100\n950100\n", chain)), "recur")
+		semInlineWants(fmt.Sprintf("800100\n1600200\n%d\n1100100\n950100\n", chain)), "recur")
 }

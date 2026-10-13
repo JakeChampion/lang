@@ -80,8 +80,8 @@ function max_splices(): i32 {
 }
 
 // A caller already this large gains little from a splice and pays for it in
-// register pressure across the whole body. A shared callee it reads apart is
-// the exception (splice_calls): that splice removes a box, not just a call.
+// register pressure across the whole body. A splice that saves a box is the
+// exception (saves_box): it removes a box, not just a call.
 function max_caller_insts(): i32 {
   return 1500;
 }
@@ -353,7 +353,7 @@ function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rew
   let i: i32 = 0;
   while (i < funcs.len()) {
     // A body that calls no ready function has nothing to splice.
-    if (rewrite[i] && (sizes[i] <= max_caller_insts() || any_shared(callees[i], ready, shared)) && any_ready(callees[i], ready)) {
+    if (rewrite[i] && (sizes[i] <= max_caller_insts() || any_box_saving(funcs, sizes, callees[i], ready, shared)) && any_ready(callees[i], ready)) {
       let spliced: Rewrite = splice_calls(funcs[i], sizes[i], funcs, sizes, ix, ready, ctors, shared, small, false);
       if (spliced.changed) {
         sizes = sizes.with(i, count_insts(spliced.f.graph));
@@ -907,14 +907,10 @@ function splice_calls(f0: ssasem.Func, size: i32, funcs: ssasem.Func[], sizes: i
         }
       }
       // A module const's body becomes one static box wherever it lands, so
-      // it costs the caller nothing the budget measures. A shared callee
-      // reaching here is spliced where its box dies, which saves an
-      // allocation on every call and leaves the caller holding the box's
-      // parts, values it held already, so the caller's size does not gate
-      // it while the callee is within the reuse budget: one grown past it
-      // by its own splices is held to the caller's budget as any other.
+      // it costs the caller nothing the budget measures, and a splice that
+      // saves a box (saves_box) is not gated by the caller's size either.
       if (at >= 0 && funcs[at].graph.name != f.graph.name
-        && (fsize + sizes[at] <= max_caller_insts() || ctors[at] && funcs[at].params.len() == 0 || shared[at] && sizes[at] <= max_reuse_shared_insts())) {
+        && (fsize + sizes[at] <= max_caller_insts() || ctors[at] && funcs[at].params.len() == 0 || saves_box(funcs, sizes, at, shared))) {
         done = done + 1;
         // A straight callee's body now stands at k, and is walked in turn.
         if (straight(funcs[at])) {
@@ -1886,11 +1882,28 @@ function callees_of_all(funcs: ssasem.Func[], ix: util.NameIndex): i32[][] {
   return out;
 }
 
-// Whether a body calls a shared function it may splice: such a splice is
-// not gated by the body's size, so a body past the budget is still walked.
-function any_shared(callees: i32[], ready: boolean[], shared: boolean[]): boolean {
+// Whether the splice of `funcs[at]` saves a box, which leaves the caller
+// holding the box's parts, values it held already, so the caller's size
+// does not gate it: a shared callee within the reuse budget, spliced where
+// its box dies, or any other ready callee within the once budget whose every
+// return is a construction, one of them a box. Leaves return words, so that
+// is a function called once, whose construction the caller then reads
+// apart, or a constructor leaf called with literals, whose box goes static.
+// A callee grown past its budget by its own splices is held to the
+// caller's as any other.
+function saves_box(funcs: ssasem.Func[], sizes: i32[], at: i32, shared: boolean[]): boolean {
+  if (shared[at]) {
+    return sizes[at] <= max_reuse_shared_insts();
+  }
+  return sizes[at] <= max_once_insts() && returns_boxes(funcs[at]);
+}
+
+// Whether a body calls a ready function whose splice saves a box: such a
+// splice is not gated by the body's size, so a body past the budget is
+// still walked.
+function any_box_saving(funcs: ssasem.Func[], sizes: i32[], callees: i32[], ready: boolean[], shared: boolean[]): boolean {
   for j in callees {
-    if (ready[j] && shared[j]) {
+    if (ready[j] && saves_box(funcs, sizes, j, shared)) {
       return true;
     }
   }
