@@ -130,8 +130,38 @@ Wall time of the compiler compiling itself on the 4-core container, x86-64:
 | warm memo | 21.0 s | 19.6 s |
 
 The second round's rules (`carries` per base, the escape fixpoint, the
-construction as an event) add about 6 s to the cold compile; it is not
-yet broken down by phase. In the first round the walks were about 9 s of
+construction as an event) add about 6 s to the cold compile. Callgrind
+put most of it in the escape search and in `carries`: each load's search
+read every instruction of every block it reached, and asked of every phi
+whether it carries the load's box. Two indexes, built once a walk, take
+that out without changing a verdict:
+
+- `firsts` lists, per root, the blocks holding an instruction whose first
+  operand has that root. Every event a slot's search looks for is such an
+  instruction, or the box's definition, so a block with none is passed
+  over unread (`slot_blocks`).
+- `carried` lists, per box, the phis that carry it. A phi can carry only
+  the boxes along its first non-null input (`carry_candidates`), so each
+  phi is asked about those alone.
+
+Compiling the compiler at a1bf5934 with the compiler binary run directly
+(no `fern` launcher), on the same container, the median of three runs
+except the one before the indexes, which is a single run:
+
+| | wall |
+|---|---:|
+| certifier off | 17.4 s |
+| cold memo, before the indexes | 30.6 s |
+| cold memo, with them | 26.7 s |
+| warm memo | 17.3 s |
+
+Callgrind on `compiler/drivers/checker_modload_run.fern` counts 16.5 G
+instructions with the certifier off, 27.7 G with it before the indexes
+and 25.5 G after. The census over the compiler, 36 coreutils, 42
+standard-library test programs and the HTTP handler program is line for
+line the same. What is left
+is the walks' own dataflow: `settle` and `live_of` are about 4.8 G of
+the 9.0 G. In the first round the walks were about 9 s of
 the 10 s over the certifier off: 4,673 walks over 1,905 functions. Timed
 per phase inside `walk_assuming`, `walk_of` was
 3.9 s (its null-store took 1.2 s and origins 1.7 s), `settle` 2.4 s,
