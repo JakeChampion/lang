@@ -249,7 +249,7 @@ x86_64/perceus_rbtree_ck.ir	82262447
 aarch64/perceus_cfold.text	2641
 aarch64/perceus_cfold.ir	72820602
 aarch64/perceus_deriv.text	2935
-aarch64/perceus_deriv.ir	104893304
+aarch64/perceus_deriv.ir	102238904
 aarch64/perceus_nqueens.text	1629
 aarch64/perceus_nqueens.ir	117887806
 aarch64/perceus_rbtree.text	3547
