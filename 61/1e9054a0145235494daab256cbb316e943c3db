@@ -256,3 +256,15 @@ aarch64/utf8_ingest_unchecked.text	9507
 aarch64/utf8_ingest_unchecked.ir	2864073
 aarch64/utf8_ingest_validated.text	9772
 aarch64/utf8_ingest_validated.ir	6450680
+
+# lane: net-tls-interop
+tls/client/openssl.bulk_mbytes_per_s	79.9
+tls/client/openssl.handshakes_per_s	54.5
+tls/client/go.bulk_mbytes_per_s	79.9
+tls/client/go.handshakes_per_s	54.1
+tls/client/rustls.handshakes_per_s	54.6
+tls/client/bssl.handshakes_per_s	55.1
+tls/server/go.bulk_mbytes_per_s	143.4
+tls/server/curl.bulk_mbytes_per_s	126.6
+tls/server/handshakes_per_s	210.5
+tls/server/resumed_handshakes_per_s	232.2
