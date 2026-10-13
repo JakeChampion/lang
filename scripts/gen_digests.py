@@ -496,15 +496,11 @@ def emit_blake2b(p):
     for i in range(8):
         p(f"    let h{i}: u64 = st.h{i};")
     for i in range(16):
-        p(f"    let m{i}: u64 = 0 as u64;")
-    for i in range(16):
         p(f"    let v{i}: u64 = 0 as u64;")
     p("    let counter: u64 = t;")
     p("    let off: i32 = from;")
     p("    let blk: i32 = 0;")
     p("    while (blk < nblocks) {")
-    for i in range(16):
-        p(f"        m{i} = {load_word(i, 8, False, 'u64', 64)};")
     for i in range(8):
         p(f"        v{i} = h{i};")
     for i in range(8):
@@ -515,7 +511,7 @@ def emit_blake2b(p):
         s = BLAKE2B_SIGMA[r % 10]
         for gi, (a, b, c, d) in enumerate([(0, 4, 8, 12), (1, 5, 9, 13), (2, 6, 10, 14), (3, 7, 11, 15),
                                            (0, 5, 10, 15), (1, 6, 11, 12), (2, 7, 8, 13), (3, 4, 9, 14)]):
-            x, y = f"m{s[2 * gi]}", f"m{s[2 * gi + 1]}"
+            x, y = f"({load_word(s[2 * gi], 8, False, 'u64', 64)})", f"({load_word(s[2 * gi + 1], 8, False, 'u64', 64)})"
             va, vb, vc, vd = f"v{a}", f"v{b}", f"v{c}", f"v{d}"
             p(f"        {va} = {va} + {vb} + {x};")
             p(f"        {vd} = {rotr(f'({vd} ^ {va})', 32, 64)};")
