@@ -2152,7 +2152,24 @@ function display_len(c: Cfg, w: Widths, e: Ent): i32 {
   if (w.pad && !wears_quotes(text)) {
     pad = 1;
   }
-  return frills(c, w, e).len() + pad + printable_width(text) + indicator(c, e).len();
+  // GNU excludes unknown inode/block question marks from the layout width.
+  let prefix: i32 = 0;
+  if (c.inode) {
+    prefix = prefix + w.inode + 1;
+    if (!e.stated) {
+      prefix = prefix - 1;
+    }
+  }
+  if (c.show_blocks) {
+    prefix = prefix + w.blocks + 1;
+    if (!e.stated) {
+      prefix = prefix - 1;
+    }
+  }
+  if (c.show_context && c.format != fmt_long()) {
+    prefix = prefix + w.context + 1;
+  }
+  return prefix + pad + printable_width(text) + indicator(c, e).len();
 }
 
 function printable_width(s: string): i32 {
