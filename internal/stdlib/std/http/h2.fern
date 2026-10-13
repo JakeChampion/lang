@@ -338,12 +338,34 @@ function __frame_rest(r: __Run, f: frame.Frame): __Run {
     frame.Continuation(stream, end, block) => {
       return __fail(r, frame.PROTOCOL_ERROR, "CONTINUATION with no header block open");
     },
+    frame.PriorityFrame(stream, p) => {
+      // Read and ignored (§5.3.2), except a stream depending on itself
+      // (§5.3.1), which is a stream error.
+      if (p.dependency == stream) {
+        return __reset_stream(__Run { ...r, conn: Conn { ...r.conn, last_stream: __max(r.conn.last_stream, stream) } }, stream, frame.PROTOCOL_ERROR);
+      }
+      return r;
+    },
     _ => {
-      // PRIORITY (§5.3.2, ignored) and a frame of an unknown type (§4.1).
+      // A frame of an unknown type (§4.1).
       return r;
     }
   }
   return r;
+}
+
+// __self_dependent is whether a HEADERS frame's priority names its own
+// stream as the one it depends on (§5.3.1).
+function __self_dependent(priority: Option[frame.Priority], stream: i32): boolean {
+  match (priority) {
+    Some(p) => {
+      return p.dependency == stream;
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
 }
 
 function __first_frame(r: __Run, f: frame.Frame): __Run {
@@ -399,6 +421,9 @@ function __block_part(r: __Run, part: u8[], end_headers: boolean): __Run {
 // __headers starts a request, or its trailers, on a stream.
 function __headers(r: __Run, h: frame.HeadersFrame): __Run {
   let c: Conn = r.conn;
+  if (__self_dependent(h.priority, h.stream)) {
+    return __reset_stream(__Run { ...r, conn: Conn { ...c, last_stream: __max(c.last_stream, h.stream) } }, h.stream, frame.PROTOCOL_ERROR);
+  }
   let opened: __Run = __Run { ...r, conn: Conn { ...c, block_stream: h.stream, block: [], block_end: h.end_stream, block_frames: 0 } };
   return __block_part(opened, h.block, h.end_headers);
 }
@@ -707,6 +732,9 @@ function __window_update(r: __Run, stream: i32, increment: i32): __Run {
   }
   let at: i32 = __stream_at(c, stream);
   if (at < 0) {
+    if (stream > c.last_stream) {
+      return __fail(r, frame.PROTOCOL_ERROR, "WINDOW_UPDATE on an idle stream");
+    }
     return r;
   }
   let s: __Stream = c.streams[at];
@@ -721,6 +749,9 @@ function __window_update(r: __Run, stream: i32, increment: i32): __Run {
 // the reset counts.
 function __rst_stream(r: __Run, stream: i32, code: i32): __Run {
   let c: Conn = r.conn;
+  if (stream > c.last_stream) {
+    return __fail(r, frame.PROTOCOL_ERROR, "RST_STREAM on an idle stream");
+  }
   let budgeted: __Run = __reset_counted(r);
   if (budgeted.conn.phase == CLOSED) {
     return budgeted;
@@ -986,6 +1017,13 @@ function __without(streams: __Stream[], at: i32): __Stream[] {
     i = i + 1;
   }
   return out;
+}
+
+function __max(a: i32, b: i32): i32 {
+  if (a > b) {
+    return a;
+  }
+  return b;
 }
 
 function __min(a: i32, b: i32): i32 {
