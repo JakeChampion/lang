@@ -430,6 +430,11 @@ struct Walk {
   // phis a region uses but does not define (carries).
   phis: i32[],
   outer: Outer,
+  // Per root, the blocks holding an instruction whose first operand has
+  // that root: the only blocks a slot's events and releases can be in.
+  firsts: i32[][],
+  // Per box, the phis that carry it (carries).
+  carried: i32[][],
   // The roots whose children the frame owns outright (children_boxes), and
   // the null stores' takes (takes_of).
   children: boolean[],
@@ -1009,7 +1014,7 @@ function shell_taken(w: Walk, sh: Shells, dom: ssadeps.Dom, bi: i32, pos: i32, l
   let any: boolean = false;
   let k: i32 = 0;
   while (k < sh.base.len() && !any) {
-    any = sh.base[k] == base || sh.phi[k] >= 0 && carries(w, sh.phi[k], base);
+    any = sh.base[k] == base || sh.phi[k] >= 0 && util.index_of_i32(w.carried[base], sh.phi[k]) >= 0;
     k = k + 1;
   }
   if (!any) {
@@ -1488,7 +1493,8 @@ function overwritten(w: Walk, st: Stores, dom: ssadeps.Dom, bi: i32, pos: i32, l
 function escapes(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32): boolean {
   let none: boolean[] = [];
   if (mode != 2) {
-    return escape_paths(w, ld, lb, lp, mode, none).escapes;
+    let no_phis: i32[] = [];
+    return escape_paths(w, ld, lb, lp, mode, none, slot_blocks(w, w.root[ld.args[0]], no_phis)).escapes;
   }
   return escape_fixpoint(w, ld, lb, lp).escapes;
 }
@@ -1504,33 +1510,80 @@ struct Escape { escapes: boolean, boxed: boolean[] }
 // is.
 function escape_fixpoint(w: Walk, ld: ssa.SInst, lb: i32, lp: i32): Escape {
   let base: i32 = w.root[ld.args[0]];
-  let boxed: boolean[] = token_phis_of(w, base);
+  let cands: i32[] = token_phis_of(w, base);
+  let boxed: boolean[] = __alloc_bool(w.f.nvals);
+  for p in cands {
+    boxed = boxed.with(p, true);
+  }
+  // The candidates only shrink, so the blocks they mark at the start hold
+  // every event a later round can find.
+  let marks: boolean[] = slot_blocks(w, base, cands);
   let again: boolean = true;
   while (again) {
-    let r: Paths = escape_paths(w, ld, lb, lp, 2, boxed);
+    let r: Paths = escape_paths(w, ld, lb, lp, 2, boxed, marks);
     if (r.escapes) {
       return Escape { escapes: true, boxed: boxed };
     }
     again = false;
-    let p: i32 = 0;
-    while (p < boxed.len()) {
+    for p in cands {
       if (boxed[p] && !box_on_edges(w, p, base, boxed, r.edge)) {
         boxed = boxed.with(p, false);
         again = true;
       }
-      p = p + 1;
     }
   }
   return Escape { escapes: false, boxed: boxed };
+}
+
+// firsts_of indexes, per root, the blocks holding an instruction whose
+// first operand has that root.
+function firsts_of(f: ssa.SFunc, root: i32[]): i32[][] {
+  let out: i32[][] = [];
+  while (out.len() < f.nvals) {
+    out = out.append([]);
+  }
+  let bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    for ins in f.blocks[bi].insts {
+      if (ins.args.len() > 0 && ins.args[0] >= 0 && ins.args[0] < root.len()) {
+        let r: i32 = root[ins.args[0]];
+        let n: i32 = out[r].len();
+        if (n == 0 || out[r][n - 1] != bi) {
+          out = out.with(r, out[r].append(bi));
+        }
+      }
+    }
+    bi = bi + 1;
+  }
+  return out;
+}
+
+// slot_blocks marks the blocks that can hold an event for a load off
+// `base` (event_in, settles_in): an instruction whose first operand is
+// rooted at `base` or at a phi in `phis`, or the definition of `base`.
+function slot_blocks(w: Walk, base: i32, phis: i32[]): boolean[] {
+  let out: boolean[] = __alloc_bool(w.f.blocks.len());
+  for b in w.firsts[base] {
+    out = out.with(b, true);
+  }
+  for p in phis {
+    for b in w.firsts[p] {
+      out = out.with(b, true);
+    }
+  }
+  if (base < w.defs.block.len() && w.defs.block[base] >= 0) {
+    out = out.with(w.defs.block[base], true);
+  }
+  return out;
 }
 
 // Paths is what escape_paths walked: whether a path returned, and the
 // edges it took (block index times two, plus the successor).
 struct Paths { escapes: boolean, edge: boolean[] }
 
-function escape_paths(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32, boxed: boolean[]): Paths {
+function escape_paths(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32, boxed: boolean[], marks: boolean[]): Paths {
   let edge: boolean[] = __alloc_bool(w.f.blocks.len() * 2);
-  if (settles_in(w, ld, lb, lp + 1, w.f.blocks[lb].insts.len(), mode, boxed)) {
+  if (marks[lb] && settles_in(w, ld, lb, lp + 1, w.f.blocks[lb].insts.len(), mode, boxed)) {
     return Paths { escapes: false, edge: edge };
   }
   if (w.f.blocks[lb].term.kind_tag == 1) {
@@ -1557,7 +1610,7 @@ function escape_paths(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32, boxed
       }
       if (si >= 0 && !seen[si]) {
         seen = seen.with(si, true);
-        if (!settles_in(w, ld, si, 0, w.f.blocks[si].insts.len(), mode, boxed)) {
+        if (!(marks[si] && settles_in(w, ld, si, 0, w.f.blocks[si].insts.len(), mode, boxed))) {
           if (w.f.blocks[si].term.kind_tag == 1) {
             return Paths { escapes: true, edge: edge };
           }
@@ -1571,22 +1624,76 @@ function escape_paths(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32, boxed
   return Paths { escapes: false, edge: edge };
 }
 
-// token_phis_of: the phis that carry `base` where they are not null.
-function token_phis_of(w: Walk, base: i32): boolean[] {
-  let out: boolean[] = __alloc_bool(w.f.nvals);
+// carried_of indexes, per box, the phis that carry it where they are not
+// null: the walk's own phis and the base walk's the region uses.
+function carried_of(w: Walk): i32[][] {
+  let out: i32[][] = [];
+  while (out.len() < w.f.nvals) {
+    out = out.append([]);
+  }
   for p in w.phis {
-    if (carries(w, p, base)) {
-      out = out.with(p, true);
-    }
+    out = carried_into(out, w, p);
   }
   if (w.outer.on) {
     for p in w.outer.phis {
-      if (p < out.len() && outside(w.f, w.defs, p) && carries(w, p, base)) {
-        out = out.with(p, true);
+      if (p < w.f.nvals && outside(w.f, w.defs, p)) {
+        out = carried_into(out, w, p);
       }
     }
   }
   return out;
+}
+
+function carried_into(own out: i32[][], w: Walk, p: i32): i32[][] {
+  for c in carry_candidates(w, p) {
+    if (c < out.len() && util.index_of_i32(out[c], p) < 0 && carries(w, p, c)) {
+      out = out.with(c, out[c].append(p));
+    }
+  }
+  return out;
+}
+
+// carry_candidates: the boxes phi `p` can carry. carries holds only of a
+// box every input past null leads to, so of one along the first such
+// input, followed through phis as carries_at follows them.
+function carry_candidates(w: Walk, p: i32): i32[] {
+  let out: i32[] = [];
+  let path: i32[] = [];
+  let cur: i32 = p;
+  let outer: boolean = false;
+  while (path.len() < 8) {
+    let f: ssa.SFunc = w.f;
+    let defs: Defs = w.defs;
+    let root: i32[] = w.root;
+    if (outer) {
+      f = w.outer.f;
+      defs = w.outer.defs;
+      root = w.outer.root;
+    }
+    let ins: ssa.SInst = def_of(f, defs, cur);
+    if (ins.kind_tag != 8) {
+      return out;
+    }
+    let next: i32 = -1;
+    for a in ins.args {
+      if (next < 0 && a >= 0 && !is_zero(f, defs, a) && root[a] != cur && util.index_of_i32(path, root[a]) < 0) {
+        next = root[a];
+      }
+    }
+    if (next < 0) {
+      return out;
+    }
+    out = out.append(next);
+    path = path.append(cur);
+    outer = outer || w.outer.on && outside(w.f, w.defs, next);
+    cur = next;
+  }
+  return out;
+}
+
+// token_phis_of: the phis that carry `base` where they are not null.
+function token_phis_of(w: Walk, base: i32): i32[] {
+  return w.carried[base];
 }
 
 // box_on_edges: the paths took an edge into phi `p`'s block, and every
@@ -1669,14 +1776,16 @@ function store_key(w: Walk, st: ssa.SInst): i32 {
 // block entered from above included, says the store replaces what `ld`
 // read.
 function between(w: Walk, dom: ssadeps.Dom, ld: ssa.SInst, lb: i32, lp: i32, sb: i32, sp: i32): boolean {
+  let no_phis: i32[] = [];
+  let marks: boolean[] = slot_blocks(w, w.root[ld.args[0]], no_phis);
   // A position before the load in its own block is reached round a loop.
-  if (lb == sb && sp > lp && !event_in(w, ld, lb, lp + 1, sp)) {
+  if (lb == sb && sp > lp && !(marks[lb] && event_in(w, ld, lb, lp + 1, sp))) {
     return false;
   }
   let seen: boolean[] = __alloc_bool(w.f.blocks.len());
   let stack: i32[] = [];
   let top: i32 = 0;
-  if (!event_in(w, ld, lb, lp + 1, w.f.blocks[lb].insts.len())) {
+  if (!(marks[lb] && event_in(w, ld, lb, lp + 1, w.f.blocks[lb].insts.len()))) {
     stack = stack.append(lb);
     top = 1;
   }
@@ -1691,12 +1800,12 @@ function between(w: Walk, dom: ssadeps.Dom, ld: ssa.SInst, lb: i32, lp: i32, sb:
         si = w.at[sid];
       }
       if (si == sb) {
-        if (!event_in(w, ld, sb, 0, sp)) {
+        if (!(marks[sb] && event_in(w, ld, sb, 0, sp))) {
           return false;
         }
       } else if (si >= 0 && !seen[si]) {
         seen = seen.with(si, true);
-        if (!event_in(w, ld, si, 0, w.f.blocks[si].insts.len())) {
+        if (!(marks[si] && event_in(w, ld, si, 0, w.f.blocks[si].insts.len()))) {
           stack = pushed(stack, top, si);
           top = top + 1;
         }
@@ -3261,10 +3370,11 @@ function resumes(f: ssa.SFunc): boolean {
 function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: rcsigs.Table, ops: rcsigs.OpTable, at: i32[], dom: ssadeps.Dom, reach: boolean[], hold: Hold, base: Base): Walk {
   let defs: Defs = definitions(f);
   let rt: Roots = roots_over(f, defs, sigs, inherited_roots(own_roots(f.nvals), f, defs, base));
-  let w: Walk = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: returns_pair(f) || base.paired, why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [], uses: use_counts(f), dom: dom, regions: [], openers: [], held: hold.box, reused: hold.reused, phis: phis_of(f), outer: outer_of(base), children: [], takes: no_takes(), params_at_entry: !base.on, debt: [], kept: [] };
+  let w: Walk = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: returns_pair(f) || base.paired, why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [], uses: use_counts(f), dom: dom, regions: [], openers: [], held: hold.box, reused: hold.reused, phis: phis_of(f), outer: outer_of(base), firsts: firsts_of(f, rt.root), carried: [], children: [], takes: no_takes(), params_at_entry: !base.on, debt: [], kept: [] };
   if (base.on) {
     w = Walk { ...w, uses: base.uses };
   }
+  w = Walk { ...w, carried: carried_of(w) };
   let rg: Regions = inherited_regions(unique_regions(w, dom, reach), f, reach, base);
   let own_children: boolean[] = children_boxes(w, rg.roots);
   let children: boolean[] = inherited_children(own_children, f, defs, base);
