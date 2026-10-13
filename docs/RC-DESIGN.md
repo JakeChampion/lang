@@ -236,8 +236,13 @@ locals sit above `nvals`. It emits:
 - **takes and steals** as a uniqueness test, a slot store of zero and the
   value in its local (`steal`); a kept or classified donor's takes read the
   token slot instead, and on its unique arm leave the slot as it is: its
-  death releases only the fields nothing took (`keep_release`,
-  `classified_death`);
+  death releases only the fields nothing took (`reuse_construct`,
+  `classified_death`). The retains a run of such takes owes the shared arm
+  wait over reads (`Owed`, `settles_later`) and are settled in one test of
+  the token, the donor's death's or its construction's own where nothing
+  between can consume them; a child taken and dropped before its classified
+  donor dies is given back to the box, which releases it with its other
+  fields;
 - **reuse**, as the plan's tables say (`Plan.reuse`): where a token is taken,
   `__fern_rc_is_unique(d)` selects the box or null (`reuse_token`); where it
   is spent, `__fern_alloc_reuse(token, slots)` hands back the box or a fresh

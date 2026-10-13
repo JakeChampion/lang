@@ -1,6 +1,7 @@
 package e2ecompiler
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -8,8 +9,10 @@ import (
 // classifiedShapeSrc's `ins` takes both children of a node it rebuilds in a
 // later block, and `bump` rebuilds the node's own variant in the block that
 // takes them. Each reads its donor's uniqueness once: before, every take
-// tested the donor again and its death a third time. main runs both on a
-// unique tree and on one a snapshot holds.
+// tested the donor again and its death a third time. `ins` also tests the
+// token that answer leaves once: its takes' retains wait for its death's
+// test rather than each testing it. main runs both on a unique tree and on
+// one a snapshot holds.
 const classifiedShapeSrc = `enum Tree { Leaf, Node(Tree, i32, Tree) }
 
 @noinline
@@ -110,6 +113,10 @@ func fnText(t *testing.T, asm, name string) string {
 	}
 }
 
+// tokenTestRe matches a test of a register against zero, which in `ins` is
+// only ever its token.
+var tokenTestRe = regexp.MustCompile(`(?m)^\s+cmpq \$0, %r\w+$`)
+
 func TestSelfHostClassifiedTakeShapeX86_64(t *testing.T) {
 	emit, run := x86ShapeHarness(t)
 	asm := emit(t, classifiedShapeSrc)
@@ -117,6 +124,9 @@ func TestSelfHostClassifiedTakeShapeX86_64(t *testing.T) {
 		if got := rcIsUniqueSites(fnText(t, asm, fn)); got != 1 {
 			t.Errorf("%s: %d uniqueness tests, want 1: a take or the donor's death tested the donor again", fn, got)
 		}
+	}
+	if got := len(tokenTestRe.FindAllString(fnText(t, asm, "ins"), -1)); got != 1 {
+		t.Errorf("ins: %d tests of its token, want 1: a take's retain or the donor's death tested it again", got)
 	}
 	if got := run(t, "classified", asm); got != 0 {
 		t.Errorf("exit = %d, want 0 (bit 1: insert, 2: bump of a shared tree, 4: bump of a unique one)", got)

@@ -50,7 +50,7 @@ function mutate(r: irtables.LowerResult, mode: i32): irtables.LowerResult {
     } else if (mode == 2 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__sem_release_Parent") {
       ops = ops.append(ir.op_load_local(0)).append(op).append(ir.op_drop()).append(op);
       hits = hits + 1;
-    } else if (mode == 3 && op.kind_tag == ir.kind_id("const_i32") && i + 1 < r.ops.len() && r.ops[i + 1].kind_tag == ir.kind_id("eq")) {
+    } else if (mode == 3 && op.kind_tag == ir.kind_id("const_i32") && i + 1 < r.ops.len() && (r.ops[i + 1].kind_tag == ir.kind_id("eq") || r.ops[i + 1].kind_tag == ir.kind_id("ne"))) {
       ops = ops.append(ir.op_const_i32(1));
       hits = hits + 1;
     } else if (mode == 4 && op.kind_tag == ir.kind_id("struct_get") && hits == 0) {

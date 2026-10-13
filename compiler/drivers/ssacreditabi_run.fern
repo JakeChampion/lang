@@ -638,9 +638,9 @@ function selected_checks(target: string): void {
       selected_expect(sub, "extract_left", -1, false, "invalid selected", 138);
       selected_expect(sub, "extract_left", 1, false, "missing or unrepresentable", 139);
       selected_expect(sub, "extract_left", 2147483647, false, "missing or unrepresentable", 140);
-      // With the right slot selected, the left child is a sibling, which the
-      // shared arm may not retain as the result.
-      selected_expect(sub, "extract_left", 2, false, "unsupported containment call", 141);
+      // With the right slot selected, the unique arm releases the left child
+      // as though the frame held it.
+      selected_expect(sub, "extract_left", 2, false, "child release without local credit", 141);
       selected_body_controls(sub);
       selected_sibling_release_control(sub);
       selected_expect(sub, "extract_left", 0, true, "proved guarded", 149);
