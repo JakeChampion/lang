@@ -8519,7 +8519,7 @@ function builtin_row(c: ssasem.Contract): ownership.Escapes {
   for m in c.modes {
     bits = bits.append(m == ssaunits.counted_mode());
   }
-  return ownership.Escapes { name: c.name, bits: bits, lends: reference(c.result), cycle: 0 - 1 };
+  return ownership.Escapes { name: c.name, bits: bits, lends: reference(c.result), cycle: 0 - 1, quiet: [] };
 }
 
 // with_analyses gives each row a plan reads the analysis of its graph as it
@@ -8559,22 +8559,27 @@ function row_analysis(p: Produced): ssasem.Analysis {
   }
 }
 
-// Each produced row's quiet cycle (`ownership.cycles`): its edges are the
-// direct calls between functions whose results hold no reference, including
-// the named parameter phis left when tail recursion became a loop.
+// Each produced row's quiet slots (`quiet_slots`) and quiet cycle
+// (`ownership.cycles`): its edges are the direct calls between functions with
+// a quiet slot, including the named parameter phis left when tail recursion
+// became a loop.
 function quiet_cycles(rows: ownership.Escapes[], ix: ownership.Index, all: Produced[], names: string[]): ownership.Escapes[] {
   let quiet: boolean[] = __alloc_bool(rows.len());
+  let slots: boolean[][] = [];
   let succ: i32[][] = [];
   let i: i32 = 0;
   while (i < rows.len()) {
     succ = succ.append([]);
+    slots = slots.append([]);
     i = i + 1;
   }
   i = 0;
   while (i < all.len() && i < names.len()) {
     let at: i32 = ownership.find(rows, ix, names[i]);
-    if (at >= 0 && !reference(all[i].func.result)) {
-      quiet = quiet.with(at, true);
+    if (at >= 0) {
+      let qs: boolean[] = quiet_slots(all[i].func);
+      slots = slots.with(at, qs);
+      quiet = quiet.with(at, !reference(all[i].func.result) || any_true(qs));
     }
     i = i + 1;
   }
@@ -8601,10 +8606,31 @@ function quiet_cycles(rows: ownership.Escapes[], ix: ownership.Index, all: Produ
   let out_rows: ownership.Escapes[] = [];
   let k: i32 = 0;
   while (k < rows.len()) {
-    out_rows = out_rows.append(ownership.Escapes { ...rows[k], cycle: comp[k] });
+    out_rows = out_rows.append(ownership.Escapes { ...rows[k], cycle: comp[k], quiet: slots[k] });
     k = k + 1;
   }
   return out_rows;
+}
+
+// quiet_slots says, per reference parameter of `f`, that its result cannot
+// hold the parameter's type, so a take from it cannot leave the frame. Every
+// such slot of a function whose result holds no reference is quiet.
+function quiet_slots(f: ssasem.Func): boolean[] {
+  let out: boolean[] = [];
+  let holds: boolean = reference(f.result);
+  for t in f.params {
+    out = out.append(reference(t) && (!holds || !ssasem.can_hold(f, f.result, t)));
+  }
+  return out;
+}
+
+function any_true(xs: boolean[]): boolean {
+  for x in xs {
+    if (x) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function infer_rows(all: Produced[], names: string[], pinned: string[]): ownership.Escapes[] {
@@ -8621,7 +8647,7 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
   let i: i32 = 0;
   while (i < all.len() && i < names.len()) {
     if (all[i].ok && !all[i].template && !closure_body_produced(all[i]) && !ownership.names_has(taken, names[i])) {
-      rows = rows.append(ownership.Escapes { name: names[i], bits: seed_bits(all[i].func.params.len()), lends: false, cycle: 0 - 1 });
+      rows = rows.append(ownership.Escapes { name: names[i], bits: seed_bits(all[i].func.params.len()), lends: false, cycle: 0 - 1, quiet: [] });
       analyses = analyses.append(row_analysis(all[i]));
     } else {
       analyses = analyses.append(ssasem.refused_analysis("not produced"));
