@@ -1641,10 +1641,11 @@ function carried_into(own out: i32[][], w: Walk, p: i32): i32[][] {
 }
 
 // carry_candidates: the boxes phi `p` can carry. carries holds only of a
-// box every input past null leads to, so of one along the first such
-// input, followed through phis as carries_at follows them.
+// box every input past null leads to, so of `p` itself, a phi only it and
+// null feed, or of one along the first such input, followed through phis
+// as carries_at follows them.
 function carry_candidates(w: Walk, p: i32): i32[] {
-  let out: i32[] = [];
+  let out: i32[] = [p];
   let path: i32[] = [];
   let cur: i32 = p;
   let outer: boolean = false;
