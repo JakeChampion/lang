@@ -5486,6 +5486,13 @@ pub function route_normalized(mod: parser.Module): parser.Module {
   return lift_lambdas(ircore.script_normalized(ircore.scale_f64_maps_module(mod)));
 }
 
+// reached_view is the module the emit of `mod` writes from, keeping only the
+// declarations it reaches (ircore.reached_module): what a host-needs
+// classification reads, so a framing asks for the imports the core makes.
+function reached_view(mod: parser.Module, sub: ircore.Sub): parser.Module {
+  return ircore.reached_module(ircore.with_records(route_normalized(mod), sub), sub);
+}
+
 // lift_lambdas re-exports lift's lambda-lift pre-pass (closures slice 2a) so
 // the wasm dispatch sites can hoist no-capture lambda arguments before the
 // eligibility check + emit. A lambda-free module is returned unchanged.
@@ -17083,13 +17090,13 @@ function wait_builtins(): string[] {
 // component_needs_host reports whether a program reaches its WASI host at
 // all: false is the no-I/O component core, whose only imports are the
 // program's own externs.
-pub function component_needs_host(mod: parser.Module, sw: asmcore.Switches): boolean {
-  let n: HostNeeds = host_needs(mod, census_on(sw));
+pub function component_needs_host(mod: parser.Module, sub: ircore.Sub): boolean {
+  let n: HostNeeds = host_needs(reached_view(mod, sub), census_on(sub.switches));
   return n.io || n.rd || n.wr || n.env || n.args || n.rnd || n.clkw || n.clkm || n.clkres || n.ep || n.ex || n.net || n.fs || n.wait;
 }
 
-pub function component_shape(mod: parser.Module, sw: asmcore.Switches): i32 {
-  let n: HostNeeds = host_needs(mod, census_on(sw));
+pub function component_shape(mod: parser.Module, sub: ircore.Sub): i32 {
+  let n: HostNeeds = host_needs(reached_view(mod, sub), census_on(sub.switches));
   let io: boolean = n.io;
   let rd: boolean = n.rd;
   let wr: boolean = n.wr;

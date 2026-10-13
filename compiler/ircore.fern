@@ -911,8 +911,15 @@ pub struct Lowered {
 // typed lowering `sub` for `mod`: each declaration's produced body, then a
 // call_direct / const_func scan whose only rejections are USER function names
 // nothing defines (RC-inserted __fern_* helper calls all pass is_fern_helper).
-// The cache it returns is the one the emit reads.
+// The cache it returns is the one the emit reads, without the bodies nothing
+// reachable names (reach_pruned).
 pub function gate(mod: parser.Module, sub: Sub): Lowered {
+  return reach_pruned(mod, sub, gate_whole(mod, sub));
+}
+
+// gate_whole is gate's cache before the reachability prune: every produced
+// body, the declarations' then the tail's.
+function gate_whole(mod: parser.Module, sub: Sub): Lowered {
   let cache: irtables.LowerResult[] = [];
   let origins: physicalbody.Origin[] = [];
   let freg: irtables.SigReg = defined_reg(mod, sub.extra);
@@ -952,6 +959,220 @@ pub function gate(mod: parser.Module, sub: Sub): Lowered {
     i = i + 1;
   }
   return Lowered { ok: true, cache: cache, physical: physicalbody.Collection { producers: sub.physical_origins.producers, rows: origins } };
+}
+
+// reach_pruned is `low` without the bodies nothing reachable from the
+// program's roots names (#12241): a call the tree shake cannot pin to one
+// receiver type keeps every method of its name, and the instances and drop
+// helpers made from what it kept follow. A declaration's body is superseded
+// in place, so indices into `mod.funcs` hold; a tail body leaves with its
+// physical row. The roots are `main`, the exports, the async entries and
+// the `fip` / `fbip` claims, which check_fip_claims verifies whether reached
+// or not. A body reaches what its call_direct and const_func ops name, the
+// bodies its constant closures hold, and every arm of its dyn dispatches. A
+// module with no root, and a shared library, whose roots are its exported
+// symbols, are left whole.
+function reach_pruned(mod: parser.Module, sub: Sub, low: Lowered): Lowered {
+  if (!low.ok) {
+    return low;
+  }
+  let live: boolean[] = reached(mod, sub, low);
+  if (live.len() == 0) {
+    return low;
+  }
+  return kept_reached(mod, low, live);
+}
+
+// reached marks the bodies of `low` reachable from the program's roots, or
+// is empty for a program pruned of nothing: a shared library, or a module
+// with no root.
+function reached(mod: parser.Module, sub: Sub, low: Lowered): boolean[] {
+  let live: boolean[] = reach_roots(mod, low.cache.len());
+  if (sub.switches.shared || live.len() == 0) {
+    let none: boolean[] = [];
+    return none;
+  }
+  let names: BodyNames = body_names(mod, low.cache);
+  let work: i32[] = live_indices(live);
+  let next: i32 = 0;
+  while (next < work.len()) {
+    let at: i32 = work[next];
+    next = next + 1;
+    for name in named_by(low.cache[at].ops) {
+      for row in irtables.sig_reg_rows(names.reg, name) {
+        let k: i32 = names.owner[row];
+        if (!live[k]) {
+          live = live.with(k, true);
+          work = work.append(k);
+        }
+      }
+    }
+  }
+  return live;
+}
+
+// reached_module is `mod` keeping the declarations its emit writes: the ones
+// reach_pruned keeps, and those whose body was already superseded, since an
+// instance written in their place reads their body. A decision made over the
+// source, such as which host interfaces a wasm core imports, reads this so
+// it agrees with the bodies the emit writes.
+pub function reached_module(mod: parser.Module, sub: Sub): parser.Module {
+  let low: Lowered = gate_whole(mod, sub);
+  if (!low.ok) {
+    return mod;
+  }
+  let live: boolean[] = reached(mod, sub, low);
+  if (live.len() == 0) {
+    return mod;
+  }
+  let funcs: parser.FuncDecl[] = [];
+  let i: i32 = 0;
+  while (i < mod.funcs.len()) {
+    if (live[i] || low.cache[i].superseded) {
+      funcs = funcs.append(mod.funcs[i]);
+    }
+    i = i + 1;
+  }
+  return parser.Module { ...mod, funcs: funcs };
+}
+
+// BodyNames indexes the symbols a cache's bodies define: row k of `reg`
+// is a name and owner[k] the body defining it. A declaration answers to its
+// own name and, for a method, to its dispatch label.
+struct BodyNames { reg: irtables.SigReg, owner: i32[] }
+
+function body_names(mod: parser.Module, cache: irtables.LowerResult[]): BodyNames {
+  let rows: string[] = [];
+  let owner: i32[] = [];
+  let i: i32 = 0;
+  while (i < cache.len()) {
+    if (i < mod.funcs.len()) {
+      let fd: parser.FuncDecl = mod.funcs[i];
+      rows = rows.append(fd.name);
+      owner = owner.append(i);
+      if (fd.receiver_type.len() > 0) {
+        rows = rows.append(parser.decl_key(fd)).append(util.base_type_name(fd.receiver_type) + "." + fd.name);
+        owner = owner.append(i).append(i);
+      }
+    } else {
+      rows = rows.append(cache[i].name);
+      owner = owner.append(i);
+    }
+    i = i + 1;
+  }
+  return BodyNames { reg: irtables.sig_reg_of(rows), owner: owner };
+}
+
+// reach_roots marks the declarations a program starts from: `main`, the
+// exports, the async entries and the `fip` / `fbip` claims. None when there
+// is none of them.
+function reach_roots(mod: parser.Module, n: i32): boolean[] {
+  let live: boolean[] = [];
+  let any: boolean = false;
+  let i: i32 = 0;
+  while (i < n) {
+    let root: boolean = i < mod.funcs.len() && is_root(mod, mod.funcs[i]);
+    any = any || root;
+    live = live.append(root);
+    i = i + 1;
+  }
+  if (!any) {
+    let none: boolean[] = [];
+    return none;
+  }
+  return live;
+}
+
+function is_root(mod: parser.Module, fd: parser.FuncDecl): boolean {
+  if (fd.name == "main" && fd.receiver_type.len() == 0 || fd.fip || fd.fbip) {
+    return true;
+  }
+  return fd.async && fd.import_iface.len() == 0 || is_exported(mod, fd.name);
+}
+
+function is_exported(mod: parser.Module, name: string): boolean {
+  for e in mod.exports {
+    if (e.func_name == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function live_indices(live: boolean[]): i32[] {
+  let out: i32[] = [];
+  let i: i32 = 0;
+  while (i < live.len()) {
+    if (live[i]) {
+      out = out.append(i);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// named_by is every symbol `ops` names: call_direct and const_func targets,
+// the bodies constant closures hold (nested aggregates included), and every
+// arm of a dyn dispatch.
+function named_by(ops: ir.Op[]): string[] {
+  let out: string[] = [];
+  for o in ops {
+    if (o.kind_tag == 149 || o.kind_tag == 6) {  // call_direct, const_func
+      out = out.append(o.str);
+    } else if (o.kind_tag == 147) {  // dyn_dispatch
+      for arm in ir.dyn_dispatch_arms(o.str) {
+        out = out.append(arm);
+      }
+    } else if (o.kind_tag == 218) {  // const_struct
+      for body in closure_bodies(o.str) {
+        out = out.append(body);
+      }
+    }
+  }
+  return out;
+}
+
+// closure_bodies is every `&fn:<body>` a packed constant names, at any depth.
+function closure_bodies(packed: string): string[] {
+  let out: string[] = [];
+  let i: i32 = 0;
+  while (i + 4 <= packed.len()) {
+    if (packed[i] == b'&' && slice_unchecked(packed, i, i + 4) == "&fn:") {
+      let end: i32 = i + 4;
+      while (end < packed.len() && packed[end] != b'|') {
+        end = end + 1;
+      }
+      out = out.append(slice_unchecked(packed, i + 4, end) + "");
+      i = end;
+    } else {
+      i = i + 1;
+    }
+  }
+  return out;
+}
+
+// kept_reached is `low` keeping the reached bodies: an unreached
+// declaration's body superseded, an unreached tail body dropped with its
+// physical row.
+function kept_reached(mod: parser.Module, low: Lowered, live: boolean[]): Lowered {
+  let cache: irtables.LowerResult[] = [];
+  let rows: physicalbody.Origin[] = [];
+  let i: i32 = 0;
+  while (i < low.cache.len()) {
+    if (i < mod.funcs.len()) {
+      if (live[i] || low.cache[i].superseded) {
+        cache = cache.append(low.cache[i]);
+      } else {
+        cache = cache.append(irtables.superseded_body());
+      }
+      rows = rows.append(low.physical.rows[i]);
+    } else if (live[i]) {
+      cache = cache.append(low.cache[i]);
+      rows = rows.append(low.physical.rows[i]);
+    }
+    i = i + 1;
+  }
+  return Lowered { ok: true, cache: cache, physical: physicalbody.Collection { ...low.physical, rows: rows } };
 }
 
 // Gated is the whole program a register backend emits: the module it gates,
