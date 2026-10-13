@@ -2466,6 +2466,60 @@ function users_show(req: HttpRequest, params: router.Params, plat: platform.Host
 canned clock, span and peer; `TestAccessLogServeInterp` and
 `TestAccessLogServeX86_64` decode the loop's line with Go's JSON reader.
 
+### `std/metrics`
+
+Counters, gauges and fixed-bucket histograms, their Prometheus text
+exposition (format 0.0.4, what every scraper reads), the merge of several
+processes' expositions into one, and an exporter answering scrapes on a
+port of its own. A metric's number lives in a `Cell`, so every copy of the
+value counts into the same cell: a handler's closure holds the counter, the
+registry holds it too, and `render` reads what the handler counted.
+
+- `counter(name, help)` / `gauge(name, help)` /
+  `histogram(name, help, bounds)` — a metric at 0; `.with_labels(labels)` a
+  fresh one of the same name under a label set, counting on its own.
+  `counter.inc()` / `.add(n)` / `.get()`; `gauge.set(v)` / `.inc()` /
+  `.dec()`; `histogram.observe(x)` / `.count()` / `.sum()`.
+  `duration_buckets()` is OpenTelemetry's bucket set for a latency in
+  seconds.
+- `label(name, value)` — one label, `name="value"`, the value escaped;
+  `labels(parts)` joins several.
+- `registry().with_counter(c).with_gauge(g).with_histogram(h)` — the
+  metrics a program exposes; `.render()` is the exposition, `# HELP` and
+  `# TYPE` once per metric name, a histogram as its cumulative `_bucket`
+  lines (`+Inf` last), `_sum` and `_count`.
+- `server_metrics()` — what std/serve's loop records on its own:
+  `http_server_request_duration_seconds` by `http_request_method` and
+  `http_response_status_code` (`.request(method, status, ns)`),
+  `http_server_connections_accepted_total` and
+  `http_server_open_connections`.
+- `merge(parts)` — one exposition summing several: each metric name's
+  HELP and TYPE as first seen, each sample key's values added (integers as
+  integers, anything else as a float), in the order first seen. `EOF` is
+  the line a snapshot ends with; `frames(buf)` splits a stream of them.
+- `listen(drv, port)` — an `Exporter` on `port`, watched on the reactor;
+  `.owns(fd)` and `.wake(drv, fd, answer)` act on its readiness events,
+  reading each connection's request as it arrives and answering
+  `answer(path)` with `Connection: close`; `.close(drv)`.
+  `scrape(path, body, ready)` is the answer for the probe paths:
+  `/metrics` is `body()` under the exposition content type, `/healthz`
+  200, `/readyz` 200 while `ready` and 503 once a shutdown has begun,
+  anything else 404.
+- std/serve: `serve.Config { metrics, metrics_port }`. Each worker
+  renders its server metrics and the program's registry once a second and
+  ships the text down a pipe to the supervisor, which sums the workers'
+  latest snapshots and answers `/metrics`, `/healthz` and `/readyz` on the
+  metrics port, so a scrape never touches a worker; `run`, and
+  `supervise` where there is no fork, answer them from the loop itself. A
+  worker that dies takes its counts with it until its replacement counts
+  anew, the reset a scraper's rate functions expect of a restart.
+
+`tests/stdlib/metrics_test.fern` pins the exposition, the merge and the
+scrape answers; `TestMetricsServeInterp` and
+`TestMetricsSupervisedServeX86_64` read the loop's counts and the handler's
+counter back off the metrics port, the latter from two workers through the
+supervisor.
+
 ### `std/http/cookie`
 
 Cookies as draft-ietf-httpbis-rfc6265bis has them: the `Set-Cookie` a
