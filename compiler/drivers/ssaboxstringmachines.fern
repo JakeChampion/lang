@@ -67,7 +67,7 @@ function reads(s: string): void {
 }
 
 function paths(s: string): void {
-  for pair in [["jnz .Lstrfree_ret", "jz .Lstrfree_ret"], ["jb .Lstrfree_ret", "jae .Lstrfree_ret"], ["js .Lstrfree_ret", "jns .Lstrfree_ret"], ["jg .Lstrfree_dec", "jge .Lstrfree_dec"], ["jl .Lstrfree_uf", "jle .Lstrfree_uf"], ["je .Lstrfree_fused", "jne .Lstrfree_fused"], ["je .Lstrfree_box", "jne .Lstrfree_box"]] {
+  for pair in [["jnz .Lstrfree_ret", "jz .Lstrfree_ret"], ["jb .Lstrfree_ret", "jae .Lstrfree_ret"], ["jne .Lstrfree_shared", "je .Lstrfree_shared"], ["je .Lstrfree_fused", "jne .Lstrfree_fused"], ["je .Lstrfree_box", "jne .Lstrfree_box"]] {
     mutation(s, pair[0], pair[1], false);
   }
   mutation(s, "testb $1, %al", "testb $7, %al", true);
@@ -76,12 +76,12 @@ function paths(s: string): void {
   mutation(s, "cmpq $0x10000, %rax", "cmpl $0x10000, %eax", false);
   mutation(s, "jb .Lstrfree_ret", "je .Lstrfree_ret", false);
   mutation(s, "jb .Lstrfree_ret", "jo .Lstrfree_ret", false);
-  mutation(s, "testl %ecx, %ecx", "testq %rcx, %rcx", true);
-  mutation(s, "testl %ecx, %ecx", "testl %ebx, %ebx", false);
+  mutation(s, "cmpl $1, %ecx", "cmpl $1, %ecx\nmovl %ecx, %ecx", true);
+  mutation(s, "cmpl $1, %ecx", "cmpl $1, %ebx", false);
   mutation(s, "cmpl $1112494674, %edx", "cmpl $1112494675, %edx", false);
   mutation(s, "cmpl $1934589965, %edx", "cmpl $1112494674, %edx", false);
-  mutation(s, "jg .Lstrfree_dec", "movq %rax, %rax\njg .Lstrfree_dec", true);
-  mutation(s, "jg .Lstrfree_dec", "addq $0, %rcx\njg .Lstrfree_dec", false);
+  mutation(s, "jne .Lstrfree_shared", "movq %rax, %rax\njne .Lstrfree_shared", true);
+  mutation(s, "jne .Lstrfree_shared", "addq $0, %rcx\njne .Lstrfree_shared", false);
 }
 
 function identities(s: string): void {

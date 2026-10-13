@@ -376,8 +376,10 @@ function expected_register(r: value.Interval, reg: i32): Word {
   if (reg == 1) {
     return if (class >= 0) { identity(8, 0) } else { numeric(r, words(r)) };
   }
-  if (reg == 2 && class >= 0) {
-    return identity(7, 0);
+  if (reg == 2) {
+    // The block base the small path also leaves there; the recycling push
+    // overwrites it with the large freelist's.
+    return if (class >= 0) { identity(7, 0) } else { identity(6, -16) };
   }
   if (reg == 4) {
     return identity(3, 0);

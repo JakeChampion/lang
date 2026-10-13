@@ -98,9 +98,9 @@ function counter_flags(s: string, entry: string): void {
   }
   // CMP 0,1 sets CF; INC must preserve it. TEST zero clears CF, which INC
   // must also preserve. A taken branch safely bypasses an unknown opcode.
-  check(increment(s, entry, inc + "\njb .Lzero_skip\nunknown_instruction\n.Lzero_skip:"), entry, true);
+  check(increment(s, entry, "cmpl $1, %ecx\n" + inc + "\njb .Lzero_skip\nunknown_instruction\n.Lzero_skip:"), entry, true);
   check(increment(s, entry, "testl %ecx, %ecx\n" + inc + "\njae .Lzero_skip\nunknown_instruction\n.Lzero_skip:"), entry, true);
-  check(increment(s, entry, inc + "\njae .Lzero_skip\nunknown_instruction\n.Lzero_skip:"), entry, false);
+  check(increment(s, entry, "cmpl $1, %ecx\n" + inc + "\njae .Lzero_skip\nunknown_instruction\n.Lzero_skip:"), entry, false);
   check(increment(s, entry, "testl %edx, %edx\n" + inc + "\njb .Lzero_skip\n.Lzero_skip:"), entry, false);
 }
 

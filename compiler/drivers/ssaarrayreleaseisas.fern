@@ -129,7 +129,7 @@ function actual_branch(op: isa.Op, p: isa.ArrayProgram, body: text.Body, i: i32)
 pub function run(output: string): void {
   let body = text.select(output, "__fn___fern_arr_dec");
   let p = isa.array_program(output);
-  let kinds = [3, 1, 16, 17, 3, 23, 17, 16, 17, 17, 24, 17, 1, 9, 4, 17, 1, 22, 3, 10, 16, 17, 15, 16, 17, 6, 25, 7, 1, 19, 3, 4, 4, 1, 18, 1, 15, 15, 25, 18];
+  let kinds = [3, 1, 16, 17, 3, 16, 17, 22, 3, 10, 15, 16, 17, 1, 19, 3, 4, 4, 1, 18, 1, 23, 17, 17, 24, 17, 1, 9, 4, 18, 1, 16, 17, 6, 25, 7, 17, 1, 15, 15, 25, 18];
   require(p.error == "" && body.error == "" && p.ops.len() == kinds.len() && p.ops.len() == body.lines.len(), "actual length");
   require(p.register_entry == body.register_entry && p.register_entry == 1, "actual dual entry");
   let i = 0;
@@ -138,8 +138,8 @@ pub function run(output: string): void {
     actual_branch(op, p, body, i);
     i = i + 1;
   }
-  require(p.ops[26].symbol == "__fern_capw" && p.ops[38].symbol == "__fern_large_push", "actual calls");
-  require(p.ops[37].base == -1 && p.ops[37].index == 1 && p.ops[37].scale == 8 && p.ops[37].destination == 6, "actual byte argument");
+  require(p.ops[34].symbol == "__fern_capw" && p.ops[40].symbol == "__fern_large_push", "actual calls");
+  require(p.ops[39].base == -1 && p.ops[39].index == 1 && p.ops[39].scale == 8 && p.ops[39].destination == 6, "actual byte argument");
   symbols();
   immediate_stores();
   index_lea();

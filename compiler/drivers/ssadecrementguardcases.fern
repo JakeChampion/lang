@@ -57,7 +57,7 @@ function guards(s: string, string_entry: boolean): void {
   mutation(s, string_entry, "    ret\n", "movq -8(%rax), %rcx\nret\n", false);
   mutation(s, string_entry, "    ret\n", "movq %rax, -8(%rax)\nret\n", false);
   mutation(s, string_entry, "    ret\n", "call __fern_capw\nret\n", false);
-  mutation(s, string_entry, "    ret\n", "testb $128, %al\njs " + prefix + "_dec\nret\n", false);
+  mutation(s, string_entry, "    ret\n", "testb $128, %al\njs " + prefix + "_shared\nret\n", false);
   mutation(s, string_entry, "    ret\n", "unknown_instruction\nret\n", false);
   mutation(s, string_entry, "    ret\n", "jmp " + prefix + "_ret\n", false);
   mutation(s, string_entry, "    ret\n", "cmpq $65536, %rbx\nje " + prefix + "_ret\nret\n", false);
