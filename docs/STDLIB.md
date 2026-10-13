@@ -3412,7 +3412,7 @@ points that run a handler under it.
   every connection then speaks TLS 1.3, the handshake running on the
   connection's own reads and writes before its first request, each
   response sealed as it is written, and a file body read and sealed
-  rather than moved by sendfile; the protocol offered by ALPN is
+  rather than moved by sendfile unless `ktls` is set; the protocol offered by ALPN is
   `http/1.1`. A client that does not speak TLS, or whose handshake the
   server refuses, is sent the alert and closed, and the read deadline
   bounds the handshake as it bounds a request. Under `supervise` the
@@ -3445,6 +3445,16 @@ points that run a handler under it.
   than epoll where the host allows one (Linux 6.1 or later, outside a
   seccomp profile that refuses it) and on epoll elsewhere, decided as the
   loop starts (docs/NET-P7-IO-URING-PLAN.md). A handler sees no difference.
+  `ktls` (false), set by `(c).with_ktls()` or by `FERN_KTLS=1` in the
+  environment, hands each TLS connection's records to Linux's record layer
+  once its handshake is done (`std/tls/ktls`): responses are written as
+  plain bytes for the kernel to seal, a file body goes out by sendfile,
+  and the records that are not application data (close_notify, a
+  KeyUpdate) still pass through the session. A connection keeps sealing its
+  own where the kernel has no `tls` module, on Darwin and wasm, or when its
+  handshake ended mid-record or with its answer not yet written. A record
+  other than application data arriving while a handler pulls a streamed
+  body ends that body (`TestX86_64KtlsServe`).
   `proxy_protocol` (false) reads a PROXY protocol header, version 1 or 2,
   at the start of every connection, before TLS when both are set
   (`forwarded.proxy_header`): its source address becomes the connection's

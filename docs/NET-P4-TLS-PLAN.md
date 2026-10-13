@@ -311,5 +311,10 @@ the three suites round-trip both ways against the record layer, and Go's
 crypto/tls drives both ends, with the rekey both ways on 6.17 and refused
 on 6.8. The x86-64 e2e lane loads the `tls` module and runs
 `TestX86_64KtlsRecords` and `TestX86_64KtlsAgainstGo`, which elsewhere
-skip. Left for the next slice: `std/serve` offloading its TLS connections
-(and sending files over them by sendfile), and `std/fetch`.
+skip. `std/serve` offloads its TLS connections under `Config.ktls`,
+right after the read that completes the handshake: its plain read path
+then serves them, an EIO from it is the next control record for the
+session, and a file body goes out by sendfile. Go's net/http client
+drives the serve TLS world with it (`TestX86_64KtlsServe`; in the VM on
+both kernels, two connections per run taken by the kernel both ways).
+Left for the next slice: `std/fetch`.

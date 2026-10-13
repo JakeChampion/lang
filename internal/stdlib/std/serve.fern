@@ -114,6 +114,7 @@ import "std/net";
 import "std/time";
 import "std/metrics";
 import "std/tls/server";
+import "std/tls/ktls";
 import "std/i64";
 // core/int — int_to_string for the supervisor's worker-death log
 // lines (the raw exit code, straight to stderr).
@@ -226,6 +227,10 @@ pub struct Config {
   // (docs/NET-P7-IO-URING-PLAN.md); where the ring cannot be had the loop
   // keeps epoll, decided once as it starts.
   io_uring: boolean,
+  // Whether a TLS connection's records are handed to the kernel once its
+  // handshake is done (std/tls/ktls); where the kernel has no TLS record
+  // layer the connection keeps sealing its own.
+  ktls: boolean,
 }
 
 // config() — the defaults: a backlog of 128, the port held
@@ -236,14 +241,14 @@ pub struct Config {
 // 30 s, no tracing, and
 // the parser's `http_limits()`, bodies read whole before the handler runs.
 pub function config(): Config {
-  return Config { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), background_deadline: time.duration_seconds(30 as i64), trace: false, proxy_protocol: false, metrics: metrics.registry(), metrics_port: 0, h2: false, io_uring: false };
+  return Config { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), background_deadline: time.duration_seconds(30 as i64), trace: false, proxy_protocol: false, metrics: metrics.registry(), metrics_port: 0, h2: false, io_uring: false, ktls: false };
 }
 
 // (c).with_tls(cfg) — every connection speaks TLS 1.3 under `cfg`
 // (std/tls/server): the handshake runs on the connection's own reads and
 // writes before its first request, responses are sealed as they are
 // written, and a file body is read and sealed rather than moved by
-// sendfile. The protocol offered by ALPN is `http/1.1`, whatever `cfg`
+// sendfile, unless the connection is offloaded (`with_ktls`). The protocol offered by ALPN is `http/1.1`, whatever `cfg`
 // named. A client that does not speak TLS, or whose handshake the server
 // refuses, is sent the alert and closed; the read deadline bounds the
 // handshake as it bounds a request.
@@ -260,6 +265,28 @@ pub function (c: Config) with_tls(cfg: server.Config): Config {
 // stateful loop runs each stream's request with the state in order.
 pub function (c: Config) with_h2(): Config {
   return Config { ...c, h2: true };
+}
+
+// (c).with_ktls() — a TLS connection's records go to Linux's TLS record
+// layer once its handshake is done (std/tls/ktls), so a response is
+// written as plain bytes for the kernel to seal and a file body goes out
+// by sendfile. Where the kernel has no `tls` module, on Darwin and wasm,
+// or when the handshake ends inside a record or with its answer still
+// pending, the connection keeps sealing its own. `FERN_KTLS=1` in the
+// environment asks for it as this does.
+pub function (c: Config) with_ktls(): Config {
+  return Config { ...c, ktls: true };
+}
+
+// __ktls_asked(opts) — whether the loop offloads its TLS connections.
+function __ktls_asked(opts: Config): boolean {
+  match (env("FERN_KTLS")) {
+    Some(v) => {
+      return opts.ktls || v == "1";
+    },
+    None => {}
+  }
+  return opts.ktls;
 }
 
 // (c).with_io_uring() — each worker's loop waits on an io_uring where the
@@ -506,9 +533,12 @@ struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: u8[][], deadlin
 // __Tls — a connection's TLS: none; its session, through which every
 // byte read and written passes; lent to the handler pulling a streamed
 // body (`__Body.tls`), which reads the connection itself until the body
-// ends; or awaiting the PROXY protocol header (`Config.proxy_protocol`),
-// with the session to run once it has come and its bytes so far.
-enum __Tls { Plain, Secured(server.Session), Lent, Awaiting(Option[server.Session], u8[]) }
+// ends; awaiting the PROXY protocol header (`Config.proxy_protocol`),
+// with the session to run once it has come and its bytes so far; or
+// offloaded to the kernel's record layer (`Config.ktls`), the connection
+// then read and written as plain bytes and the session kept for the
+// records that are not application data.
+enum __Tls { Plain, Secured(server.Session), Lent, Awaiting(Option[server.Session], u8[]), InKernel(server.Session) }
 
 // __Framing — what the loop reads a connection's bytes as: HTTP/1.1
 // requests; an HTTP/1.1 request whose streamed body a pull owns the read
@@ -1358,6 +1388,11 @@ function __serve_close[D: async.Driver](drv: D, c: __Conns, at: i32): __Conns {
         tcp_send_bytes(c.fds[at], step.output);
       }
     },
+    InKernel(sess) => {
+      if let Ok(step) = sess.close() {
+        ktls.send_records(c.fds[at], step.output);
+      }
+    },
     Lent => {
       __lent_closed(c, at);
     },
@@ -1480,8 +1515,10 @@ function __serve_read_plain(c: __Conns, at: i32, scratch: u8[], opts: Config): (
     if (n == 0 - __eagain()) {
       more = false;
     } else if (n <= 0) {
-      more = false;
-      done = true;
+      let stopped: (__Conns, boolean) = __plain_stopped(c, at, n);
+      c = stopped.0;
+      done = stopped.1;
+      more = !done;
     } else {
       __arr_set_len(scratch, n);
       if (buf.len() == 0) {
@@ -1547,6 +1584,9 @@ function __serve_read_tls[D: async.Driver](drv: D, c: __Conns, at: i32, sess: se
     }
   }
   c = __Conns { ...c, bufs: c.bufs.with(at, buf), tls: c.tls.with(at, Secured(s)) };
+  let off: (__Conns, boolean) = __serve_handshook(c, at, sess.connected(), s, done, opts);
+  c = off.0;
+  done = off.1;
   if (done) {
     return (c, true);
   }
@@ -1556,6 +1596,94 @@ function __serve_read_tls[D: async.Driver](drv: D, c: __Conns, at: i32, sess: se
   }
   c = __Conns { ...c, deadlines: c.deadlines.with(at, deadline) };
   return (__body_deadline(c, at, opts, monotonic_ns()), false);
+}
+
+// __serve_handshook(c, at, was, sess, done, opts) — a TLS read's `(conns,
+// done)`, the connection offloaded (`__serve_offload`) when the read
+// completed its handshake, `was` saying whether it had been complete
+// before, and the loop asks for kTLS.
+function __serve_handshook(c: __Conns, at: i32, was: boolean, sess: server.Session, done: boolean, opts: Config): (__Conns, boolean) {
+  if (done || was || !sess.connected() || !__ktls_asked(opts)) {
+    return (c, done);
+  }
+  return __serve_offload(c, at, sess);
+}
+
+// __serve_offload(c, at, sess) — the connection at `at`, its handshake just
+// done, handed to the kernel's record layer: `(conns, done)`. Nothing the
+// session answered may still be pending, since it is sealed under the
+// keys the kernel takes over; a connection the kernel took one direction
+// of and refused the other is finished.
+function __serve_offload(c: __Conns, at: i32, sess: server.Session): (__Conns, boolean) {
+  if (c.pending[at].len() != 0) {
+    return (c, false);
+  }
+  if let Some(o) = sess.offload() {
+    match (ktls.attach(c.fds[at], o.keys)) {
+      ktls.Kernel => {
+        return (__Conns { ...c, tls: c.tls.with(at, InKernel(o.session)) }, false);
+      },
+      ktls.Unchanged => {},
+      ktls.Broken(_) => {
+        return (c, true);
+      }
+    }
+  }
+  return (c, false);
+}
+
+// __plain_stopped(c, at, n) — a plain read that came back `n <= 0`:
+// `(conns, done)`. On an offloaded connection EIO is a record other than
+// application data, which `__kernel_record` takes; anything else ends the
+// connection.
+function __plain_stopped(c: __Conns, at: i32, n: i32): (__Conns, boolean) {
+  if (n == 0 - 5) {
+    if let InKernel(_) = c.tls[at] {
+      return __kernel_record(c, at);
+    }
+  }
+  return (c, true);
+}
+
+// __kernel_record(c, at) — a record other than application data off an
+// offloaded connection, which a plain read stops at with EIO, given to the
+// session: `(conns, done)`. Its answer goes out through the kernel and a
+// KeyUpdate's keys to it; close_notify, a record the kernel could not open
+// and keys it refused finish the connection.
+function __kernel_record(c: __Conns, at: i32): (__Conns, boolean) {
+  let fd: i32 = c.fds[at];
+  if let InKernel(sess) = c.tls[at] {
+    match (ktls.read_now(fd)) {
+      ktls.Opened(t, content) => {
+        match (sess.read(ktls.framed(t, content))) {
+          Ok(step) => {
+            let c2: __Conns = __Conns { ...c, tls: c.tls.with(at, InKernel(step.session)) };
+            if (ktls.send_records(fd, step.output) < 0 || ktls.install(fd, step.rekeyed) < 0) {
+              return (c2, true);
+            }
+            return (c2, step.closed);
+          },
+          Err(f) => {
+            ktls.send_records(fd, f.alert);
+            return (c, true);
+          }
+        }
+      },
+      ktls.NothingYet => {
+        return (c, false);
+      },
+      ktls.ReadFailed(e) => {
+        if (e == 74) {
+          ktls.alert(fd, 20);
+        }
+        return (c, true);
+      },
+      _ => {
+        return (c, true);
+      }
+    }
+  }
+  return (c, true);
 }
 
 // __tls_taken(drv, c, at, sess, raw, opts) — raw bytes off a TLS
@@ -2006,6 +2134,9 @@ function __h2_mode(c: __Conns, at: i32, opts: Config): i32 {
 function __alpn_h2(c: __Conns, at: i32): boolean {
   match (c.tls[at]) {
     Secured(sess) => {
+      return sess.alpn() == "h2";
+    },
+    InKernel(sess) => {
       return sess.alpn() == "h2";
     },
     _ => {

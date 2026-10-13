@@ -555,3 +555,49 @@ function main(): i32 {
   return serve(count);
 }
 `
+
+// tlsStat is one of the kernel's TLS counters in /proc/net/tls_stat.
+func tlsStat(t *testing.T, name string) int {
+	t.Helper()
+	data, err := os.ReadFile("/proc/net/tls_stat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		f := strings.Fields(line)
+		if len(f) == 2 && f[0] == name {
+			n, err := strconv.Atoi(f[1])
+			if err != nil {
+				t.Fatalf("tls_stat %q", line)
+			}
+			return n
+		}
+	}
+	t.Fatalf("no %s in /proc/net/tls_stat:\n%s", name, data)
+	return 0
+}
+
+// TestX86_64KtlsServe runs std/serve's TLS world (TestServeTLSAgainstGo)
+// with FERN_KTLS=1, so each connection's records go to the kernel once its
+// handshake is done: kept connections, an upload, a response of many
+// records, a file body moved by sendfile, a streamed body behind
+// 100-continue, a plaintext client refused and a resumed session. The
+// kernel's counters show the connections were offloaded both ways.
+func TestX86_64KtlsServe(t *testing.T) {
+	requireKtls(t)
+	bin := buildFernCLI(t)
+	w := newServeTLSWorld(t)
+	out := filepath.Join(w.dir, "serve_ktls.bin")
+	if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", out, w.src).CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, o)
+	}
+	for _, stream := range []bool{false, true} {
+		tx, rx := tlsStat(t, "TlsTxSw"), tlsStat(t, "TlsRxSw")
+		cmd := exec.Command(out)
+		cmd.Env = append(os.Environ(), "FERN_KTLS=1")
+		w.drive(t, cmd, stream)
+		if dtx, drx := tlsStat(t, "TlsTxSw")-tx, tlsStat(t, "TlsRxSw")-rx; dtx < 2 || drx < 2 {
+			t.Fatalf("stream=%v: the kernel took %d transmit and %d receive directions, want both of at least the kept and the resumed connection", stream, dtx, drx)
+		}
+	}
+}
