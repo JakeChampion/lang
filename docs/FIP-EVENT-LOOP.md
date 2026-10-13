@@ -165,7 +165,8 @@ so every step had to write back to the owned parameter itself
 (`s = s.with(0, 1i64); return bump(s);`). E051 now admits a local at the
 position where it dies, by the same analysis the IR moves it by
 (`checker.CallArgDeaths`), and both spellings compile. A local still read after
-the call, or handed over inside a loop, stays E051.
+the call stays E051, and so does one handed over inside a loop unless that loop's
+body declares it, binding it anew on every pass (#12260).
 
 ### Reading an array field inside the update that rewrites it cost a full copy (#9605 — FIXED)
 
