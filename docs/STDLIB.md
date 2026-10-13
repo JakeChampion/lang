@@ -2761,6 +2761,18 @@ trailers last; `conn.reset(stream, code)` ends a stream unanswered,
 A handler written for HTTP/1.1 serves it unchanged: the request's
 `:authority` is its `host`, its `:path` the path.
 
+With `Config.stream_bodies` a request is handed over at its header block
+as `Streamed(stream, req)`, its body following as `StreamData(stream,
+bytes)` and its end as `StreamEnd(stream, trailers)`; the windows charged
+for the body are replenished by `conn.consumed(stream, n)` once the bytes
+are taken, so a slow reader holds the client to what it has not taken. A
+response can be written in parts: `conn.respond_head(stream, resp)` sends
+the status and headers, `conn.write(stream, bytes)` queues body bytes sent
+as the windows allow (`conn.pending(stream)` is how much waits on them),
+and `conn.end(stream, trailers)` finishes it. A request and its response
+may be in flight at once, as a gRPC bidirectional call is; the serve loop
+builds both on these (`std/serve`).
+
 ```fern
 let step: h2.Step = h2.server(h2.config());   // step.output: the server's SETTINGS
 step = step.conn.read(received);               // step.events: Request(1, req), ...
@@ -3300,7 +3312,14 @@ points that run a handler under it.
   suspends parks on its stream while the connection's other streams are
   served, requests count in the metrics as HTTP/1.1's do, and the
   connection's bounds (RFC 9113 §10 and the four attack classes) are
-  `std/http/h2`'s. `run_with`'s stateful loop serves it too, each stream's
+  `std/http/h2`'s. With `stream_bodies` a request is handed over at its
+  header block and its body read as it arrives (the handler's pull parks on
+  the connection, which the loop reads first), the client's windows
+  replenished as the handler takes the bytes; a `BodyChunks` response is
+  written as its producer answers and the windows allow, each chunk a
+  task that may park, so a request and its response flow at once
+  (`TestServeH2X86_64`'s ping-pong). Under the interpreter, which cannot
+  park a task, a body is handed over whole as before. `run_with`'s stateful loop serves it too, each stream's
   request run with the state in order (`TestServeH2Interp`,
   `TestServeH2X86_64`).
   `proxy_protocol` (false) reads a PROXY protocol header, version 1 or 2,
@@ -3644,9 +3663,12 @@ pull waits for the peer.
 
 - Constructors: `stream_from_bytes(bs)`, `stream_from_string(s)`,
   `stream_empty()`, `stream_from_source(src)`.
-- Readers: `(s).read_byte()`, `(s).read_n(n)`, `(s).read_line()`,
-  `(s).read_all()`, `(s).read_all_string()`. `read_line` reads an
-  ill-formed sequence as U+FFFD, since its `None` means end of input.
+- Readers: `(s).read_byte()`, `(s).read_n(n)`, `(s).read_some()`,
+  `(s).read_line()`, `(s).read_all()`, `(s).read_all_string()`.
+  `read_line` reads an ill-formed sequence as U+FFFD, since its `None`
+  means end of input. `read_some` answers what the stream has, the buffer
+  past the cursor or one chunk from the source, where `read_n` waits for
+  its count: how a reader answers a peer's bytes as they come.
 - `read_all_string(): (Option[string], Stream)` validates only the unread
   bytes. It returns `Some(text)` for valid UTF-8 and `None` for malformed
   bytes, advancing the returned cursor to EOF either way. EOF yields
@@ -3820,6 +3842,9 @@ old `concurrent { … }` / `await` keyword surface.
   `task_start` runs its entry to completion. `cancelled()` is what a
   cancelled task's waits answer from then on, and `task_cancelled()`
   whether the task running the caller was cancelled (false outside one).
+  `parks()` is whether a task's wait parks it at all, a probe a loop asks
+  before handing a task a body it must park for: false under the
+  interpreter, which runs every task to its end.
 - `gather_tasks(entries, on_incomplete)`, `race_tasks(entries, none_val)`
   and `with_deadline_tasks(deadline, entries)` — the task combinators: each
   runs its `() => T` entries as tasks of the calling task and parks on the

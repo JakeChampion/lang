@@ -351,6 +351,31 @@ function test_in_memory_stream_has_no_fault(): test.TestOutcome {
   return test.assert_eq(rest.fault(), 0);
 }
 
+// `read_some` hands back what the source yields, one chunk at a time, and
+// nothing at the end, where `read_n` would wait for its count.
+function test_read_some_answers_each_chunk(): test.TestOutcome {
+  let served: Cell[i32] = cell_new(0);
+  let src: BodySource = BodySource {
+    next: (): Option[u8[]] => {
+      let n: i32 = served.get();
+      served.set(n + 1);
+      if (n == 0) {
+        return Some("ab".bytes());
+      }
+      if (n == 1) {
+        return Some("cde".bytes());
+      }
+      return None;
+    },
+    fault: cell_new(0), send: (bytes: u8[]): i32 => 0,
+  };
+  let s: Stream = stream.stream_from_source(src);
+  let (first, s1) = s.read_some();
+  let (second, s2) = s1.read_some();
+  let (third, s3) = s2.read_some();
+  return test.assert_eq(string_from_bytes_unchecked(first) + "|" + string_from_bytes_unchecked(second) + "|" + string_from_bytes_unchecked(third) + "|" + served.get().to_string(), "ab|cde||3");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("HttpRequest.body as a Stream");
   r = r.it("body_stream carries the body", test_body_stream_carries_the_body);
@@ -374,5 +399,6 @@ function main(): i32 {
   r = r.it("a fault is EndedEarly with its status", test_sourced_fault_is_ended_early);
   r = r.it("EndedEarly answers the fault's status", test_ended_early_to_response);
   r = r.it("an in-memory stream has no fault", test_in_memory_stream_has_no_fault);
+  r = r.it("read_some answers each chunk as it comes", test_read_some_answers_each_chunk);
   return r.finish();
 }

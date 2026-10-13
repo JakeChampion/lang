@@ -599,6 +599,26 @@ pub function task_start[T](t: Task[T]): TaskStatus[T] {
   return run_task(t, 0);
 }
 
+// `parks()` — whether a wait inside a task parks the task for its
+// scheduler to resume, or blocks in place: the interpreter runs every task
+// to its end (the blocking fallback above), so a loop that would hand a
+// task a body it must park for asks this first. A probe: a task that
+// reports whether it ran as a task.
+pub function parks(): boolean {
+  let t: Task[boolean] = task_new((): boolean => __task_cur() != 0);
+  match (task_start(t)) {
+    Done(ran) => {
+      task_free(t);
+      return ran;
+    },
+    _ => {
+      task_free(t);
+      return true;
+    }
+  }
+  return false;
+}
+
 // `task_resume(t, ready)` — the parked task runs on, its `suspend`
 // answering `ready`.
 pub function task_resume[T](t: Task[T], ready: i32): TaskStatus[T] {

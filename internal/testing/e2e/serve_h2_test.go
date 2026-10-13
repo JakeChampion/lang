@@ -29,6 +29,7 @@ import (
 )
 
 const serveH2Source = `import "std/fetch";
+import "std/headers";
 import "std/http";
 import "std/platform";
 import "std/serve";
@@ -39,6 +40,28 @@ import "std/tls/server";
 function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
   if (req.path == "/echo") {
     return http.bytes(200, req.body_bytes());
+  }
+  if (req.path == "/pingpong") {
+    let source: Option[BodySource] = req.body.source;
+    let producer: ChunkProducer = ChunkProducer { next: (i: i32): Option[u8[]] => {
+      match (source) {
+        Some(src) => {
+          match (src.next()) {
+            Some(chunk) => {
+              return Some("echo:".bytes().concat(chunk));
+            },
+            None => {
+              return None;
+            }
+          }
+        },
+        None => {
+          return None;
+        }
+      }
+      return None;
+    }, idle_ms: 0, filler: [] };
+    return HttpResponse { status: 200, body: BodyChunks(producer), headers: headers.header_map_new().append("Content-Type", "application/grpc"), trailers: headers.header_map_new().append("Grpc-Status", "0"), background: None };
   }
   if (req.path == "/park") {
     let parked: fetch.Timeouts = fetch.Timeouts { ...fetch.timeouts(), inactivity: time.duration_seconds(300 as i64), total: time.duration_seconds(600 as i64) };
@@ -62,7 +85,7 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
 }
 
 function main(): i32 {
-  let cfg: serve.Config = serve.config().with_h2();
+  let cfg: serve.Config = serve.Config { ...serve.config().with_h2(), stream_bodies: true };
   match (env("H2_CERT")) {
     Some(cert_path) => {
       let cert: string = "";
@@ -173,6 +196,7 @@ func TestServeH2X86_64(t *testing.T) {
 	w.driveH2C(t, runX86Bin(qemu, out))
 	w.driveTLS(t, runX86Bin(qemu, out))
 	w.driveParked(t, runX86Bin(qemu, out))
+	w.driveDuplex(t, runX86Bin(qemu, out))
 	stateOut := filepath.Join(w.dir, "serve_h2_state.bin")
 	if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", stateOut, w.stateSrc).CombinedOutput(); err != nil {
 		t.Fatalf("build failed: %v\n%s", err, o)
@@ -205,6 +229,58 @@ func (w *serveH2World) driveH2C(t *testing.T, cmd *exec.Cmd) {
 	}
 	if got, want := run("--data-binary", "payload bytes", base+"/echo"), "payload bytes\n2 200\n"; got != want {
 		t.Fatalf("curl POST over h2c:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// driveDuplex streams a request body in three parts over one TLS HTTP/2
+// stream and reads each part echoed back before sending the next: the
+// handler's producer reads the body as it arrives and answers as it reads
+// (`stream_bodies`), so a request and its response flow at once, as a
+// gRPC ping-pong does. The native build only: the interpreter hands a body
+// over whole.
+func (w *serveH2World) driveDuplex(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	cmd.Env = append(cmd.Environ(), "H2_CERT="+w.cert, "H2_KEY="+w.key)
+	addr, stderrPath := e2eharness.StartInheritedServer(t, cmd)
+	tr := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: w.pool, ServerName: "localhost", MinVersion: tls.VersionTLS13}, ForceAttemptHTTP2: true}
+	client := &http.Client{Transport: tr, Timeout: 60 * time.Second}
+	pr, pw := io.Pipe()
+	req, err := http.NewRequest("POST", "https://"+addr+"/pingpong", pr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/grpc")
+	resp, err := client.Do(req)
+	if err != nil {
+		stderr, _ := os.ReadFile(stderrPath)
+		t.Fatalf("POST /pingpong: %v\nserver stderr:\n%s", err, stderr)
+	}
+	defer resp.Body.Close()
+	if resp.ProtoMajor != 2 || resp.StatusCode != 200 {
+		t.Fatalf("POST /pingpong: HTTP/%d %d, want HTTP/2 200", resp.ProtoMajor, resp.StatusCode)
+	}
+	for i := 1; i <= 3; i++ {
+		msg := fmt.Sprintf("ping %d", i)
+		if _, err := io.WriteString(pw, msg); err != nil {
+			t.Fatalf("write %q: %v", msg, err)
+		}
+		want := "echo:" + msg
+		got := make([]byte, len(want))
+		if _, err := io.ReadFull(resp.Body, got); err != nil {
+			stderr, _ := os.ReadFile(stderrPath)
+			t.Fatalf("reading the echo of %q: %v\nserver stderr:\n%s", msg, err, stderr)
+		}
+		if string(got) != want {
+			t.Fatalf("echo of %q: %q", msg, got)
+		}
+	}
+	pw.Close()
+	rest, err := io.ReadAll(resp.Body)
+	if err != nil || len(rest) != 0 {
+		t.Fatalf("after the request body ended: %q, %v", rest, err)
+	}
+	if got := resp.Trailer.Get("Grpc-Status"); got != "0" {
+		t.Fatalf("trailer grpc-status %q, want \"0\"; trailers %v", got, resp.Trailer)
 	}
 }
 

@@ -143,6 +143,21 @@ without ACK within the timeout closes the connection.
    `empty_unary`, `large_unary`, `client_streaming`, `server_streaming`,
    `ping_pong` and `timeout_on_sleeping_server` against a Fern server with
    the suite's certificates.
+   Streaming both ways (landed): `h2.Config.stream_bodies` hands a request
+   over at its header block (`Streamed`), its body as `StreamData` and
+   `StreamEnd` events with the windows replenished by `consumed` as the
+   handler takes the bytes; `respond_head`, `write`, `end` and `pending`
+   write a response in parts under the windows. `std/serve` under
+   `stream_bodies` gives the handler a body Stream whose pull parks on the
+   connection (the loop reads the frames first, then wakes the pulls
+   parked on it, each once), and drives a `BodyChunks` producer per stream
+   as a task that may park, asking for more only while the pending bytes
+   are under 64 KiB. `TestServeH2X86_64` streams a request body in three
+   parts and reads each echoed back before sending the next, with a
+   trailer at the end; the interpreter, which cannot park a task
+   (`async.parks()`), hands a body over whole. `read_some` on `std/stream`
+   is the reader a duplex handler needs. Still to do here: `grpc-timeout`
+   onto the deadline and the interop lane itself.
 7. **The client.** `std/fetch` over HTTP/2 to an origin that offers it,
    one connection per origin, so a handler's upstream calls multiplex.
 8. **Exit.** Per-stream bump bytes bounded and recorded on the perf lane;
