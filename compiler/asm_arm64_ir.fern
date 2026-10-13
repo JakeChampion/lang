@@ -989,6 +989,11 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    add x5, x0, x2, lsl #3\n    ldrb w6, [x5]\n    add w1, w1, w6\n    add x2, x2, #1\n    b " + loop_label.name + "\n");
     return s.write(done_label.name + ":\n    sxtw x1, w1\n    str x1, [sp, #-16]!\n");
   }
+  if (o.kind_tag == 433) {  // utf8_blocks
+    s = s.need("utf8_blocks");
+    s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_utf8_blocks\n");
+    return s.write("    str x0, [sp, #-16]!\n");
+  }
   if (o.kind_tag == 253 || o.kind_tag == 368) {  // sum_bytes / sum_bytes_array
     // operand stack [box] -> every byte of the string added into a
     // 32-bit accumulator that wraps. A call to the NEON helper, emitted
@@ -10084,6 +10089,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("sum_bytes")) {
     s = emit_rt_sum_bytes(s);
   }
+  if (s.has_need("utf8_blocks")) {
+    s = emit_rt_utf8_blocks(s);
+  }
 
   // Command-line args. Mirror of asm.fern.
   if (s.has_need("args")) {
@@ -11102,6 +11110,36 @@ function emit_rt_signal_flags(s: asmcore.EmitState, darwin: boolean): asmcore.Em
     s = s.write("    sub w1, w0, #1\n    cmp w1, #63\n    b.hi .Lsig_taken_none\n    adrp x1, __fern_sig_flags\n    add x1, x1, :lo12:__fern_sig_flags\n    sxtw x0, w0\n    add x1, x1, x0\n");
     s = s.write("    mov w2, #0\n    swpalb w2, w0, [x1]\n    ret\n.Lsig_taken_none:\n    mov w0, #0\n    ret\n");
   }
+  return s;
+}
+
+// __fern_utf8_blocks(buf, start, n) -> the character boundary the check reached,
+// or -1: the arm64 mirror of the x86-64 helper, sixteen bytes a turn, x0, x1
+// and x2 in, x0 out. A cmhs against 0xe0 and 0xf0 finds the bytes after a
+// three- and a four-byte lead where x86 subtracts with saturation. v16 onwards
+// only, which no caller keeps a value in.
+function emit_rt_utf8_blocks(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write(asmcore.utf8_tables("__fern_utf8_tables"));
+  s = s.write("    .text\n    .global __fern_utf8_blocks\n    .type __fern_utf8_blocks, %function\n__fern_utf8_blocks:\n");
+  s = s.write("    adrp x9, __fern_utf8_tables\n    add x9, x9, :lo12:__fern_utf8_tables\n");
+  s = s.write("    ldp q16, q17, [x9]\n    ldp q18, q19, [x9, #32]\n");
+  s = s.write("    movi v20.16b, #224\n    movi v21.16b, #240\n    movi v22.16b, #128\n    movi v23.16b, #0\n");
+  s = s.write("    mov x3, x1\n    sub x4, x2, #16\n");
+  s = s.write(".Lutf8_loop:\n    cmp x3, x4\n    b.gt .Lutf8_done\n    add x5, x0, x3\n");
+  s = s.write("    ldr q0, [x5]\n    ldur q3, [x5, #-3]\n    orr v4.16b, v0.16b, v3.16b\n");
+  s = s.write("    umaxv b4, v4.16b\n    umov w6, v4.b[0]\n    cmp w6, #128\n    b.lo .Lutf8_next\n");
+  s = s.write("    ldur q1, [x5, #-1]\n    ldur q2, [x5, #-2]\n");
+  s = s.write("    ushr v4.16b, v1.16b, #4\n    tbl v4.16b, {v16.16b}, v4.16b\n");
+  s = s.write("    and v5.16b, v1.16b, v19.16b\n    tbl v5.16b, {v17.16b}, v5.16b\n    and v4.16b, v4.16b, v5.16b\n");
+  s = s.write("    ushr v5.16b, v0.16b, #4\n    tbl v5.16b, {v18.16b}, v5.16b\n    and v4.16b, v4.16b, v5.16b\n");
+  s = s.write("    cmhs v5.16b, v2.16b, v20.16b\n    cmhs v6.16b, v3.16b, v21.16b\n    orr v5.16b, v5.16b, v6.16b\n");
+  s = s.write("    and v5.16b, v5.16b, v22.16b\n    eor v4.16b, v4.16b, v5.16b\n    orr v23.16b, v23.16b, v4.16b\n");
+  s = s.write(".Lutf8_next:\n    add x3, x3, #16\n    b .Lutf8_loop\n");
+  s = s.write(".Lutf8_done:\n    umaxv b23, v23.16b\n    umov w6, v23.b[0]\n    cbnz w6, .Lutf8_bad\n");
+  // Back over continuation bytes, then over the lead they follow.
+  s = s.write(".Lutf8_back:\n    cmp x3, x1\n    b.le .Lutf8_ret\n    add x5, x0, x3\n    ldurb w6, [x5, #-1]\n");
+  s = s.write("    cmp w6, #128\n    b.lo .Lutf8_ret\n    sub x3, x3, #1\n    cmp w6, #192\n    b.hs .Lutf8_ret\n    b .Lutf8_back\n");
+  s = s.write(".Lutf8_bad:\n    mov x3, #-1\n.Lutf8_ret:\n    mov x0, x3\n    ret\n    .size __fern_utf8_blocks, .-__fern_utf8_blocks\n");
   return s;
 }
 

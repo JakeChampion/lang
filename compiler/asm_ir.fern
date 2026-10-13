@@ -1434,6 +1434,40 @@ function emit_rt_signal_flags(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+// __fern_utf8_blocks(buf, start, n) -> the character boundary the check reached,
+// or -1 (ir.op_utf8_blocks): %rdi, %rsi and %rdx in, %rax out. Thirty-two
+// bytes a turn while a whole block fits; a block whose thirty-five bytes from
+// three before it are ASCII is valid as it stands. The three bytes before a
+// block are read at offsets -1..-3 rather than shifted across lanes. At the end
+// it backs off a character the last block may have cut, which the caller's
+// scalar walk then checks whole.
+function emit_rt_utf8_blocks(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write(asmcore.utf8_tables("__fern_utf8_tables"));
+  s = s.write("    .section .text\n    .globl __fern_utf8_blocks\n    .type __fern_utf8_blocks, @function\n__fern_utf8_blocks:\n");
+  s = s.write("    leaq __fern_utf8_tables(%rip), %r11\n");
+  s = s.write("    vbroadcasti128 (%r11), %ymm8\n    vbroadcasti128 16(%r11), %ymm9\n    vbroadcasti128 32(%r11), %ymm10\n");
+  s = s.write("    vbroadcasti128 48(%r11), %ymm11\n    vbroadcasti128 64(%r11), %ymm12\n    vbroadcasti128 80(%r11), %ymm13\n");
+  s = s.write("    vbroadcasti128 96(%r11), %ymm14\n    vpxor %ymm15, %ymm15, %ymm15\n");
+  s = s.write("    movq %rsi, %rax\n    leaq -32(%rdx), %rcx\n");
+  s = s.write(".Lutf8_loop:\n    cmpq %rcx, %rax\n    jg .Lutf8_done\n");
+  s = s.write("    vmovdqu (%rdi,%rax), %ymm0\n    vmovdqu -3(%rdi,%rax), %ymm3\n    vpor %ymm3, %ymm0, %ymm4\n");
+  s = s.write("    vpmovmskb %ymm4, %r8d\n    testl %r8d, %r8d\n    jz .Lutf8_next\n");
+  s = s.write("    vmovdqu -1(%rdi,%rax), %ymm1\n    vmovdqu -2(%rdi,%rax), %ymm2\n");
+  s = s.write("    vpsrlw $4, %ymm1, %ymm4\n    vpand %ymm11, %ymm4, %ymm4\n    vpshufb %ymm4, %ymm8, %ymm4\n");
+  s = s.write("    vpand %ymm11, %ymm1, %ymm5\n    vpshufb %ymm5, %ymm9, %ymm5\n    vpand %ymm5, %ymm4, %ymm4\n");
+  s = s.write("    vpsrlw $4, %ymm0, %ymm5\n    vpand %ymm11, %ymm5, %ymm5\n    vpshufb %ymm5, %ymm10, %ymm5\n    vpand %ymm5, %ymm4, %ymm4\n");
+  s = s.write("    vpsubusb %ymm12, %ymm2, %ymm5\n    vpsubusb %ymm13, %ymm3, %ymm6\n    vpor %ymm6, %ymm5, %ymm5\n");
+  s = s.write("    vpand %ymm14, %ymm5, %ymm5\n    vpxor %ymm5, %ymm4, %ymm4\n    vpor %ymm4, %ymm15, %ymm15\n");
+  s = s.write(".Lutf8_next:\n    addq $32, %rax\n    jmp .Lutf8_loop\n");
+  s = s.write(".Lutf8_done:\n    vpxor %ymm4, %ymm4, %ymm4\n    vpcmpeqb %ymm4, %ymm15, %ymm15\n    vpmovmskb %ymm15, %r8d\n    vzeroupper\n");
+  s = s.write("    cmpl $-1, %r8d\n    jne .Lutf8_bad\n");
+  // Back over continuation bytes, then over the lead they follow.
+  s = s.write(".Lutf8_back:\n    cmpq %rsi, %rax\n    jle .Lutf8_ret\n    movzbl -1(%rdi,%rax), %r8d\n    cmpl $128, %r8d\n    jb .Lutf8_ret\n");
+  s = s.write("    subq $1, %rax\n    cmpl $192, %r8d\n    jae .Lutf8_ret\n    jmp .Lutf8_back\n");
+  s = s.write(".Lutf8_bad:\n    movq $-1, %rax\n.Lutf8_ret:\n    ret\n    .size __fern_utf8_blocks, .-__fern_utf8_blocks\n");
+  return s;
+}
+
 // __fern_sum_bytes(box) -> i32: every byte of the string added into a 32-bit
 // sum that wraps, the kernel native's emitSumBytesRuntime runs. psadbw against
 // a zero register sums each 8-byte half of a 16-byte block into a 64-bit lane
@@ -5606,6 +5640,10 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(loop_label.name + ":\n    cmpq %rcx, %rdx\n    jae " + done_label.name + "\n");
     s = s.write("    movzbl (%rdi,%rdx,8), %r8d\n    addl %r8d, %eax\n    addq $1, %rdx\n    jmp " + loop_label.name + "\n");
     return s.write(done_label.name + ":\n    movslq %eax, %rax\n    pushq %rax\n");
+  }
+  if (o.kind_tag == 433) {  // utf8_blocks
+    s = s.need("utf8_blocks");
+    return s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    call __fern_utf8_blocks\n    pushq %rax\n");
   }
   if (o.kind_tag == 253 || o.kind_tag == 368) {  // sum_bytes / sum_bytes_array
     // operand stack [box] -> every byte of the string added into a
@@ -11129,6 +11167,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.has_need("sum_bytes")) {
     s = emit_rt_sum_bytes(s);
+  }
+  if (s.has_need("utf8_blocks")) {
+    s = emit_rt_utf8_blocks(s);
   }
   // Heap-event diagnostics (#6068): the __fern_hev_* hooks the runtime above
   // calls, plus the leakcheck counters and exit-time report. Deliberately NOT
