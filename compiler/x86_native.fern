@@ -4282,7 +4282,7 @@ function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: 
 // v/m, %v` (VEX.F3.0F 6F /r) and its store `vmovdqu %v, m` (VEX.F3.0F 7F
 // /r) at either width, `vmovupd ymm/m256, %ymm` (VEX.256.66.0F 10 /r) and its
 // store (VEX.256.66.0F 11 /r), `vpbroadcastb %xmm, %ymm` (VEX.256.66.0F38 78
-// /r), `vbroadcastsd %xmm, %ymm` (VEX.256.66.0F38 19 /r), `vbroadcasti128
+// /r) and its m8 form, `vbroadcastsd %xmm, %ymm` (VEX.256.66.0F38 19 /r), `vbroadcasti128
 // m128, %ymm` (VEX.256.66.0F38 5A /r) and `vpmovmskb %v, %r32` (VEX.66.0F D7
 // /r). A 64-bit vpmovmskb destination is not a form the kernels use, so it is
 // refused.
@@ -4296,6 +4296,13 @@ function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string):
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
     return x86_gas_vex_rm(a, mnem, 2, 1, 0, 90, id, src, true);
+  }
+  if (mnem == "vpbroadcastb" && x86_gas_has_paren(src)) {
+    let md: i32 = x86_gas_ymm(dst);
+    if (md < 0) {
+      return x86_gas_bad(a, mnem + " " + src + ", " + dst);
+    }
+    return x86_gas_vex_rm(a, mnem, 2, 1, 0, 120, md, src, true);
   }
   if (mnem == "vpbroadcastb" || mnem == "vbroadcastsd") {
     let bd: i32 = x86_gas_ymm(dst);
@@ -4361,9 +4368,9 @@ function x86_gas_is_vex_two(mnem: string): boolean {
 }
 
 // x86_vex_three_op is the map and opcode of a three-operand VEX.66 form,
-// map * 256 + opcode, or -1: vpcmpeqb (0F 74), vmulpd (0F 59), vpand (0F DB),
-// vpaddusb (0F DC), vpor (0F EB), vpxor (0F EF), vpsubb (0F F8) and vpshufb
-// (0F38 00).
+// map * 256 + opcode, or -1: vpcmpeqb (0F 74), vmulpd (0F 59), vpminub (0F
+// DA), vpand (0F DB), vpaddusb (0F DC), vpor (0F EB), vpxor (0F EF), vpsubb
+// (0F F8) and vpshufb (0F38 00).
 function x86_vex_three_op(mnem: string): i32 {
   match (mnem) {
     "vpcmpeqb" => {
@@ -4371,6 +4378,9 @@ function x86_vex_three_op(mnem: string): i32 {
     },
     "vmulpd" => {
       return 256 + 89;
+    },
+    "vpminub" => {
+      return 256 + 218;
     },
     "vpand" => {
       return 256 + 219;

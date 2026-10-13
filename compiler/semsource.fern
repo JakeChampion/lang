@@ -8673,26 +8673,69 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
     own_row = own_row.append(ownership.find(rows, ix, names[i]));
     i = i + 1;
   }
-  let changed: boolean = true;
-  let round: i32 = 0;
-  while (changed && round <= all.len() + 1) {
-    changed = false;
-    i = 0;
-    while (i < own_row.len()) {
-      let at: i32 = own_row[i];
-      if (all[i].ok && !all[i].template && at >= 0 && !closure_body_produced(all[i])) {
-        let next: boolean[] = ownership.escaping(all[i].func, analyses[i], rows, ix);
-        let lends: boolean = rows[at].lends || ownership.lends(all[i].func, analyses[i], rows, ix);
-        if (!same_bits(rows[at].bits, next) || lends != rows[at].lends) {
-          rows = rows.with(at, ownership.Escapes { ...rows[at], bits: next, lends: lends });
-          changed = true;
+  // A row's answer reads only the rows its body names, so when one changes
+  // only the functions naming it are read again. Bits only fall and `lends`
+  // only rises, so the order the work is taken in does not change the answer.
+  let readers: i32[][] = row_readers(all, own_row, rows, ix);
+  let work: i32[] = [];
+  let queued: boolean[] = __alloc_bool(own_row.len());
+  i = 0;
+  while (i < own_row.len()) {
+    work = work.append(i);
+    queued = queued.with(i, true);
+    i = i + 1;
+  }
+  // The rounds this replaces stopped after all.len() + 2 passes.
+  let cap: i32 = (all.len() + 2) * own_row.len();
+  let wi: i32 = 0;
+  while (wi < work.len() && wi <= cap) {
+    i = work[wi];
+    wi = wi + 1;
+    queued = queued.with(i, false);
+    let at: i32 = own_row[i];
+    if (all[i].ok && !all[i].template && at >= 0 && !closure_body_produced(all[i])) {
+      let next: boolean[] = ownership.escaping(all[i].func, analyses[i], rows, ix);
+      let lends: boolean = rows[at].lends || ownership.lends(all[i].func, analyses[i], rows, ix);
+      if (!same_bits(rows[at].bits, next) || lends != rows[at].lends) {
+        rows = rows.with(at, ownership.Escapes { ...rows[at], bits: next, lends: lends });
+        for j in readers[at] {
+          if (!queued[j]) {
+            work = work.append(j);
+            queued = queued.with(j, true);
+          }
         }
       }
-      i = i + 1;
     }
-    round = round + 1;
   }
   return rows;
+}
+
+// row_readers lists, per row, the functions whose instructions name it: the
+// ones whose answer reads that row.
+function row_readers(all: Produced[], own_row: i32[], rows: ownership.Escapes[], ix: ownership.Index): i32[][] {
+  let out: i32[][] = [];
+  let last: i32[] = util.minus_ones(rows.len());
+  while (out.len() < rows.len()) {
+    out = out.append([]);
+  }
+  let i: i32 = 0;
+  while (i < own_row.len()) {
+    if (own_row[i] >= 0) {
+      for b in all[i].func.graph.blocks {
+        for ins in b.insts {
+          if (ins.str != "") {
+            let at: i32 = ownership.find(rows, ix, ins.str);
+            if (at >= 0 && last[at] != i) {
+              out = out.with(at, out[at].append(i));
+              last = last.with(at, i);
+            }
+          }
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return out;
 }
 
 function infer_ownership(all: Produced[], names: string[], table: ssasem.Contracts, pinned: string[]): Inferred {
