@@ -1196,6 +1196,14 @@ func TestRunnerHTTPHpackExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "http_hpack", "std/http/hpack", 9)
 }
 
+// `tests/stdlib/http_h2_frame_test.fern` writes and reads back every HTTP/2
+// frame type, takes padding and priority off DATA and HEADERS, reads a
+// frame as it arrives in pieces, and answers each malformed shape RFC 9113
+// §6 names with its error.
+func TestRunnerHTTPH2FrameExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_h2_frame", "std/http/h2/frame", 5)
+}
+
 // `tests/stdlib/http_form_test.fern` reads a urlencoded body as its fields
 // and refuses another media type and a body that is not UTF-8.
 func TestRunnerHTTPCookieExamplePasses(t *testing.T) {

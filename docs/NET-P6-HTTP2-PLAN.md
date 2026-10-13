@@ -20,10 +20,10 @@ server's memory.
 Modules, each importable standalone and each under the 4,000-line cap:
 
 - `std/http/hpack` — RFC 7541 (slice 1, landed).
-- `std/http/h2/frame` — the nine frame types of RFC 9113 §6 read and
-  written over bytes, with SETTINGS_MAX_FRAME_SIZE enforced on both
-  sides, unknown types skipped, and the per-connection header budget that
-  closes a CONTINUATION flood.
+- `std/http/h2/frame` — the frame types of RFC 9113 §6 read and written
+  over bytes (slice 2, landed), with the frame size enforced on reading,
+  unknown types kept for skipping, and every malformed shape §6 names an
+  error with its code and stream.
 - `std/http/h2` — the connection: the preface, settings, streams and
   their states (§5.1), flow-control windows at both levels (§5.2), PING,
   GOAWAY, RST_STREAM, the request assembled from a stream's HEADERS and
@@ -80,10 +80,13 @@ without ACK within the timeout closes the connection.
    RFC 7541's Appendix C both ways, byte for byte, with the table sizes
    and evictions it shows, and each refusal; the interpreter and the
    self-host compiler both run it.
-2. **Frames.** `std/http/h2/frame`: each frame type as a value read from
-   and written to bytes, padding, flags, the frame size settings, and
-   the header budget. Gate: the suite, with every frame of RFC 9113's
-   examples and every malformed shape §6 names.
+2. **Frames (landed).** `std/http/h2/frame`: each frame type as a value
+   read from and written to bytes, padding and priority taken off, the
+   flags, each setting checked, and a frame read in pieces as it
+   arrives. `tests/stdlib/http_h2_frame_test.fern` writes and reads back
+   every type byte for byte and answers every malformed shape §6 names;
+   the per-connection header budget against a CONTINUATION flood needs
+   the connection's state and is slice 3's.
 3. **The connection.** `std/http/h2`: the state machine over frames and
    HPACK, sans-IO, with streams, both flow-control windows, settings
    exchange, PING, GOAWAY and the four bounds above. Gate: the suite

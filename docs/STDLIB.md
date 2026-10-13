@@ -2743,6 +2743,22 @@ the table to `n` and makes the next block start with the size update §4.2
 asks for. `tests/stdlib/http_hpack_test.fern` runs RFC 7541's Appendix C
 both ways, byte for byte, with the table sizes and evictions it shows.
 
+### `std/http/h2/frame`
+
+The frames of HTTP/2 (RFC 9113 §4 and §6) as values read from and written
+to bytes, with no state: `read(buf, from, max_frame)` takes the next frame
+off a buffer as `Whole(frame, len)`, `Partial` when the buffer does not
+yet hold it, or the `FrameError` the frame is (its `code`, the `stream` it
+is on, 0 for a connection error, and why), and `encode(frame)` is a
+frame's bytes. `Frame` has a variant per type (`Data`, `Headers`,
+`PriorityFrame`, `RstStream`, `Settings`, `PushPromise`, `Ping`, `GoAway`,
+`WindowUpdate`, `Continuation`) and `Unknown` for a type to skip; padding
+comes off DATA and HEADERS with its size kept for flow control, a priority
+comes off HEADERS, each setting is checked as §6.5.2 asks, and the frame
+and error codes, the settings identifiers and the frame-size bounds are
+constants. The connection's state (settings, windows, a header block over
+CONTINUATION frames) is `std/http/h2`'s.
+
 ### `std/http/sse`
 
 Server-sent events, the `text/event-stream` of the WHATWG HTML standard:
