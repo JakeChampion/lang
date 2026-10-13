@@ -250,9 +250,10 @@ pub function (c: Config) with_tls(cfg: server.Config): Config {
 // (c).with_h2() — HTTP/2 served beside HTTP/1.1 (std/http/h2): a connection
 // that opens with the HTTP/2 connection preface is served over it, and under
 // TLS the protocols offered by ALPN are `h2` and `http/1.1`. The handler is
-// the same; a request's `:authority` arrives as its `host`. Each stream's
-// handler runs to its answer on the loop; `run_with`'s stateful loop serves
-// HTTP/1.1 only.
+// the same; a request's `:authority` arrives as its `host`. A stream's
+// handler may park, on its upstream calls or under `stream_bodies` on its
+// body, while the loop serves the connection's other streams; `run_with`'s
+// stateful loop runs each stream's request with the state in order.
 pub function (c: Config) with_h2(): Config {
   return Config { ...c, h2: true };
 }
