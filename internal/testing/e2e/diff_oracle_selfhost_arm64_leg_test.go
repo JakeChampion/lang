@@ -3,7 +3,6 @@ package e2e
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -48,7 +47,7 @@ func TestDifferential_SelfHostArm64(t *testing.T) {
 		// Cannot exec the x86-64 driver, so there is no compiler to run.
 		t.Skip("the self-host CLI driver runs only natively (x86-64 asm, argv paths)")
 	}
-	selfHostArm64Sweep(t, gcc, selfHostArm64DiffKnownFile, nil)
+	selfHostArm64Sweep(t, gcc, selfHostArm64DiffKnownFile, nil, selfHostPassConfig)
 }
 
 // TestDifferential_SelfHostSanitizeArm64 is the arm64 sweep with every seed
@@ -62,7 +61,7 @@ func TestDifferential_SelfHostSanitizeArm64(t *testing.T) {
 	if len(runner) != 0 {
 		t.Skip("the self-host CLI driver runs only natively (x86-64 asm, argv paths)")
 	}
-	selfHostArm64Sweep(t, gcc, selfHostArm64SanitizeKnownFile, []string{"-sanitize"})
+	selfHostArm64Sweep(t, gcc, selfHostArm64SanitizeKnownFile, []string{"-sanitize"}, nil)
 }
 
 // selfHostArm64SanitizeKnownFile is TestDifferential_SelfHostSanitizeArm64's
@@ -71,8 +70,9 @@ const selfHostArm64SanitizeKnownFile = "selfhost-diff-sanitize-arm64-known-diver
 
 // selfHostArm64Sweep runs the fernsmith window through the self-host arm64
 // CLI with the extra compile flags given, against the interpreter. A
-// -sanitize build is also failed on any sanitizer report.
-func selfHostArm64Sweep(t *testing.T, gcc, knownFile string, flags []string) {
+// -sanitize build is also failed on any sanitizer report. A non-nil passes
+// names the compiler switches each seed is compiled under.
+func selfHostArm64Sweep(t *testing.T, gcc, knownFile string, flags []string, passes func(uint64) []string) {
 	t.Helper()
 	// Reused for its qemu discovery and clean skip; the gcc it returns is
 	// unused because the target assembles and links in-process.
@@ -109,7 +109,9 @@ func selfHostArm64Sweep(t *testing.T, gcc, knownFile string, flags []string) {
 				t.Errorf(format, args...)
 			}
 
-			r, gap := runSelfHostArm64Seed(t, fernBin, stdlibRoot, qemu, src, flags)
+			env := passEnv(passes, seed)
+			logPassConfig(t, env)
+			r, gap := runSelfHostArm64Seed(t, fernBin, stdlibRoot, qemu, src, flags, env)
 			if gap != "" {
 				if semRefused(gap) {
 					t.Errorf("the typed lowering refused this seed:\n%s", gap)
@@ -161,7 +163,7 @@ func selfHostArm64Sweep(t *testing.T, gcc, knownFile string, flags []string) {
 // No link step and so no link failure to report: the self-host assembles and
 // links this target itself, which folds what would be the x86-64 leg's link
 // error into the compile failure, naming the unsupported mnemonic.
-func runSelfHostArm64Seed(t *testing.T, fernBin, stdlibRoot, qemu, src string, flags []string) (*selfHostRun, string) {
+func runSelfHostArm64Seed(t *testing.T, fernBin, stdlibRoot, qemu, src string, flags, env []string) (*selfHostRun, string) {
 	t.Helper()
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
@@ -171,10 +173,10 @@ func runSelfHostArm64Seed(t *testing.T, fernBin, stdlibRoot, qemu, src string, f
 	binPath := filepath.Join(dir, "prog")
 	args := append([]string{"-target", "arm64-linux"}, flags...)
 	args = append(args, "-o", binPath, srcPath, stdlibRoot)
-	out, err := exec.Command(fernBin, args...).CombinedOutput()
+	out, err := selfHostCompileCmd(fernBin, env, args...).CombinedOutput()
 	if err != nil {
 		return nil, fmt.Sprintf("%v\n%s%s", err, out,
-			strictIRBailSite(fernBin, "arm64-linux", flags, srcPath, stdlibRoot, out))
+			strictIRBailSite(fernBin, "arm64-linux", flags, env, srcPath, stdlibRoot, out))
 	}
 	// write_file does not set the exec bit (the Makefile chmods
 	// bin/fern-selfhost for the same reason).

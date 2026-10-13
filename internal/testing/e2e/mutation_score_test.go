@@ -75,7 +75,7 @@ func TestFernsmithMutationScore(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		r, gap := runSelfHostSeed(t, good, stdlibRoot, src, sanitize, quiet)
+		r, gap := runSelfHostSeed(t, good, stdlibRoot, src, sanitize, nil, quiet)
 		if gap != "" || r == nil || !r.exited || r.exit != want || strings.Contains(r.stderr, "fern-sanitizer:") {
 			continue
 		}
@@ -141,12 +141,12 @@ func mutantVerdict(t *testing.T, bin, stdlibRoot string, progs []string, wants [
 	t.Helper()
 	sanitize := []string{"-sanitize"}
 	quiet := func(string, ...any) {}
-	r, gap := runSelfHostSeed(t, bin, stdlibRoot, "function main(): i32 { return 7; }\n", sanitize, quiet)
+	r, gap := runSelfHostSeed(t, bin, stdlibRoot, "function main(): i32 { return 7; }\n", sanitize, nil, quiet)
 	if gap != "" || r == nil || !r.exited || r.exit != 7 {
 		return "smoke"
 	}
 	for i, src := range progs {
-		r, gap := runSelfHostSeed(t, bin, stdlibRoot, src, sanitize, quiet)
+		r, gap := runSelfHostSeed(t, bin, stdlibRoot, src, sanitize, nil, quiet)
 		switch {
 		case gap != "" || r == nil:
 			return fmt.Sprintf("killed@%d (no binary)", i)
