@@ -69,6 +69,15 @@ name: Net nightly
 # made for the run (#9860). Every case passes or the job fails; the
 # counts are recorded like the bench's.
 #
+# The `io-uring` job runs the serve suites with `FERN_IO_URING=1`, so every
+# server they start waits on an io_uring where it would wait on epoll
+# (docs/NET-P7-IO-URING-PLAN.md, #9861): the self-host serve tests
+# (shutdown, supervision, limits, streaming, SSE, WebSocket, the fetch
+# client) and the x86-64 serve tests (HTTP/2, TLS, the middleware), then
+# h2spec. The per-PR lanes run epoll only, plus the ring's own gates. A
+# runner that cannot set up a ring fails TestRingDriverX86_64 here rather
+# than testing epoll twice.
+#
 # The `httplint` job runs scripts/net-httplint: one response of each shape
 # std/http and its middleware produce (a routed text and JSON API, a
 # redirect, a problem, a 405, an upload echoed, a compressed body, a static
@@ -249,6 +258,33 @@ jobs:
           name: autobahn-report-x86_64
           path: ${{ runner.temp }}/autobahn-report.txt
           if-no-files-found: warn
+
+  io-uring:
+    name: net-io-uring-x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      FERN_IO_URING: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
+      - name: The self-host serve tests on the ring
+        run: >-
+          go test -timeout 80m -count=1 ./internal/testing/e2ecompiler/
+          -run '^TestSelfHost(Serve|SupervisedServe|HttpHandlerServes|Fetch|Reactor|HeldConnections|VCLProxy)'
+          -skip 'Arm64|Wasm|Darwin'
+      - name: The x86-64 serve tests on the ring
+        run: >-
+          go test -timeout 60m -count=1 ./internal/testing/e2e/
+          -run '^(TestRingDriverX86_64|TestAccessLogServeX86_64|TestBackgroundServeX86_64|TestBackgroundShutdownX86_64|TestCompressServeX86_64|TestForwardedServeX86_64|TestHandlerDeadlineServeX86_64|TestHTTPAllowServeX86_64|TestMetricsSupervisedServeX86_64|TestProxyProtocolServeX86_64|TestPollDrivenTcpServerX86_64|TestRouterServeX86_64|TestServeH2X86_64|TestServeTLSAgainstGoX86_64|TestStaticServeX86_64|TestTraceServeX86_64|TestUploadServeX86_64)$'
+      - name: Restore h2spec
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/fern-h2spec
+          key: h2spec-${{ runner.os }}-${{ hashFiles('scripts/net-h2spec') }}
+      - name: h2spec against the server on the ring
+        run: scripts/net-h2spec
 
   httplint:
     name: net-httplint-x86_64

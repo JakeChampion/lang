@@ -3391,6 +3391,11 @@ points that run a handler under it.
   (`std/http/grpc`) where an HTTP request gets 503. `run_with`'s stateful loop serves it too, each stream's
   request run with the state in order (`TestServeH2Interp`,
   `TestServeH2X86_64`).
+  `io_uring` (false), set by `(c).with_io_uring()` or by `FERN_IO_URING=1`
+  in the environment, has each worker's loop wait on an io_uring rather
+  than epoll where the host allows one (Linux 6.1 or later, outside a
+  seccomp profile that refuses it) and on epoll elsewhere, decided as the
+  loop starts (docs/NET-P7-IO-URING-PLAN.md). A handler sees no difference.
   `proxy_protocol` (false) reads a PROXY protocol header, version 1 or 2,
   at the start of every connection, before TLS when both are set
   (`forwarded.proxy_header`): its source address becomes the connection's
@@ -3901,7 +3906,10 @@ old `concurrent { … }` / `await` keyword surface.
   (interest and readiness bits 1 readable, 2 writable, readiness 4 an
   error or hang-up; `wait` is the (fd, readiness) pairs of up to `max`
   ready descriptors, empty on the timeout). The real driver's reactor is
-  the `reactor_*` floor, made on the first watch; `std/sim`'s answers from
+  the `reactor_*` floor, made on the first watch, and
+  `real_driver_io_uring()`'s is an io_uring (`ring_*`) where the host has
+  one, the reactor where it does not (`.io_uring()` says which, decided as
+  the driver is made); `std/sim`'s answers from
   the readiness a test scripts with `ready_at(fd, at_ms, bits)`, its
   virtual clock advancing to the earliest one an interest selects. A host
   may report readiness spuriously, so a reader reads until -EAGAIN, and a
