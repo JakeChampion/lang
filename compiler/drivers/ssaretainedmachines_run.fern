@@ -1,0 +1,60 @@
+// The x86-64 text machines over the retained runtime helpers. They run apart
+// from ssaretained_run because the sanitizer keeps every freed block, and the
+// two together outgrow a 16 GB runner.
+import "./ssaretainedprogram" as retained;
+import "./ssadecrementtexts" as decrementtexts;
+import "./ssadecrementisas" as decrementisas;
+import "./ssadecrementmachines" as decrementmachines;
+import "./ssadecrementdata" as decrementdata;
+import "./ssadecrementzeros" as decrementzeros;
+import "./ssadecrementdependencies" as decrementdependencies;
+import "./ssacapacityisas" as capacityisas;
+import "./ssacapacitymachines" as capacitymachines;
+import "./ssalargepushisas" as largepushisas;
+import "./ssalargepushmachines" as largepushmachines;
+import "./ssaarrayreleaseisas" as arrayreleaseisas;
+import "./ssasmallarraymachines" as smallarraymachines;
+import "./ssalargearraymachines" as largearraymachines;
+import "./ssastringreleaseisas" as stringreleaseisas;
+import "./ssaboxstringmachines" as boxstringmachines;
+import "./ssastringvalues" as stringvalues;
+import "./ssafusedstringmachines" as fusedstringmachines;
+import "./ssaseparatestringmachines" as separatestringmachines;
+import "./ssadecrementguardcases" as decrementguardcases;
+import "./ssareleasestorage" as releasestorage;
+import "./ssaarrayreleases" as arrayreleases;
+import "./ssastringreleases" as stringreleases;
+import "./ssaarrayboxmachines" as arrayboxmachines;
+
+function main(): i32 {
+  let g = retained.program();
+  if (!g.ok) {
+    return 1;
+  }
+  let text = retained.emit(g, g.cache, g.physical, false, true, true, 0, -1).text;
+  decrementtexts.run(text);
+  decrementisas.run(text);
+  decrementmachines.run(text);
+  decrementdata.run(text);
+  decrementzeros.run(text);
+  decrementdependencies.run(text);
+  capacityisas.run(text);
+  capacitymachines.run(text);
+  largepushisas.run(text);
+  arrayreleaseisas.run(text);
+  smallarraymachines.run(text);
+  largearraymachines.run(text);
+  stringreleaseisas.run(text);
+  boxstringmachines.run(text);
+  stringvalues.run();
+  fusedstringmachines.run(text);
+  separatestringmachines.run(text);
+  decrementguardcases.run(text);
+  releasestorage.run(text);
+  arrayreleases.run(text);
+  stringreleases.run(text);
+  arrayboxmachines.run(text);
+  largepushmachines.run(text);
+  print("retained native text machines passed");
+  return 0;
+}
