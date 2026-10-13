@@ -16,7 +16,10 @@ import (
 // allocator's growth the second batch cost must be under 1 KiB per
 // connection. "accepted" holds connections that never send a request;
 // "kept" holds connections each left on keep-alive after one served
-// request, each shape on a server of its own.
+// request, each shape on a server of its own. "suspended" holds
+// connections each with a handler parked on the fetch upstream, and
+// "streams" parks the same handlers on the streams of one HTTP/2
+// connection, so the growth is a parked stream's.
 func TestSelfHostHeldConnectionsHeapBoundX86_64(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires the Linux x86-64 native target")
@@ -65,6 +68,21 @@ func TestSelfHostHeldConnectionsHeapBoundX86_64(t *testing.T) {
 		if per >= e2eharness.HeldSuspendedBytesPerHandler {
 			t.Fatalf("holding %d more suspended handlers grew the heap by %d bytes per handler, want under %d",
 				e2eharness.HeldConnectionsBatch, per, e2eharness.HeldSuspendedBytesPerHandler)
+		}
+	})
+	// The P6 shape (docs/NET-P6-HTTP2-PLAN.md slice 8): the same parked
+	// handlers, each on a stream of one HTTP/2 connection, so the growth is
+	// a stream's slot and its flight, with no connection of its own.
+	t.Run("streams", func(t *testing.T) {
+		up := e2eharness.StartFetchUpstream(t)
+		e2eharness.SetFetchProxy(t, up)
+		addr := startHeldConnectionsServer(t, runner, driver, stdlib, e2eharness.HeldStreamsServerSource)
+		per, first, second := e2eharness.MeasureHeldStreams(t, addr, up)
+		t.Logf("parked streams: first batch of %d grew the heap by %d bytes, second by %d (%d per stream)",
+			e2eharness.HeldConnectionsBatch, first, second, per)
+		if per >= e2eharness.HeldStreamsBytesPerStream {
+			t.Fatalf("parking %d more streams grew the heap by %d bytes per stream, want under %d",
+				e2eharness.HeldConnectionsBatch, per, e2eharness.HeldStreamsBytesPerStream)
 		}
 	})
 }

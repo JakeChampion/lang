@@ -59,6 +59,39 @@ function area(s: Shape): i32 {
 }
 function main(): i32 { return area(Circle(3)) + area(Rect(2, 5)); }`,
 
+	// shared_variant_name: two enums with a variant of the same name, one
+	// carrying a record and one an i32. Whether rest's frame parameter
+	// escapes turns on the payload type of the constructor it builds, so the
+	// escape analysis must read that from the construction the checker
+	// resolved, not from a table keyed by the bare name, which held whichever
+	// enum a range over the checker's enums visited last. step's frame is
+	// moved into rest or lent to it on that verdict. std/http/h2's
+	// frame.GoAway and Event.GoAway lowered both ways at random.
+	"shared_variant_name": `
+struct Notice { code: i32, debug: string }
+enum Wire { GoAway(Notice), Ping(i32) }
+enum Event { GoAway(i32), Quiet }
+struct Run { events: Event[], kept: Wire[] }
+function rest(r: Run, w: Wire): Run {
+	match (w) {
+		Wire.GoAway(g) => { return Run { ...r, events: r.events.append(Event.GoAway(g.code)) }; },
+		_ => { return r; }
+	}
+	return r;
+}
+function step(r: Run, w: Wire): Run {
+	if (r.events.len() > 3) {
+		return Run { ...r, kept: r.kept.append(w) };
+	}
+	return rest(r, w);
+}
+function main(): i32 {
+	let r: Run = Run { events: [], kept: [] };
+	r = step(r, Wire.GoAway(Notice { code: 7, debug: "bye" }));
+	r = step(r, Wire.Ping(1));
+	return r.events.len();
+}`,
+
 	"closures": `
 function adder(n: i32): (i32) => i32 {
 	return (x: i32): i32 => { return x + n; };

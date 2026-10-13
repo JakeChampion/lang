@@ -1193,7 +1193,7 @@ func TestRunnerHTTPRouterExamplePasses(t *testing.T) {
 // std/http/hpack both ways, with the table sizes and evictions the RFC
 // shows, and holds a decoder to its list, field and table-size bounds.
 func TestRunnerHTTPHpackExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_hpack", "std/http/hpack", 9)
+	runnerSuitePasses(t, "http_hpack", "std/http/hpack", 10)
 }
 
 // `tests/stdlib/http_h2_frame_test.fern` writes and reads back every HTTP/2
@@ -1210,7 +1210,7 @@ func TestRunnerHTTPH2FrameExamplePasses(t *testing.T) {
 // refused, malformed requests reset and malformed connections closed, and
 // the control frames.
 func TestRunnerHTTPH2ExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_h2", "std/http/h2", 12)
+	runnerSuitePasses(t, "http_h2", "std/http/h2", 15)
 }
 
 // `tests/stdlib/http_grpc_test.fern` reads the gRPC message framing back
@@ -4307,8 +4307,9 @@ func TestRunnerMockPlatformCannedExample(t *testing.T) {
 // (#9854): helpers that fail with `?` over `HttpError`, `http.respond`
 // answering the failure as an RFC 9457 problem, `http.problem`'s body,
 // the `ToResponse` impls for `JsonError`, `string` and `fetch.FetchError`,
-// `respond_with` keeping the state beside the answer, and background work
-// riding on the response in the order it was added.
+// `respond_with` keeping the state beside the answer, background work
+// riding on the response in the order it was added, and a produced body's
+// trailers asked once the body has ended.
 func TestRunnerHttpRespondExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/http_respond_test.fern")
@@ -4316,7 +4317,7 @@ func TestRunnerHttpRespondExample(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: HTTP respond", "# pass 15", "# fail 0", "1..15"} {
+	for _, w := range []string{"# Suite: HTTP respond", "# pass 17", "# fail 0", "1..17"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

@@ -33,9 +33,9 @@
 # hello. The report's header names the versions. oha holds N connections
 # closed-loop for the duration and the report keeps its throughput and
 # its p50 / p99 latency per server and N, plus, on x86-64, the
-# bump-allocator growth one held idle connection and one suspended
-# handler cost the Fern loop (the numbers
-# TestSelfHostHeldConnectionsHeapBoundX86_64 bounds). Closed-loop,
+# bump-allocator growth one held idle connection, one suspended handler
+# and one stream parked on an HTTP/2 connection cost the Fern loop (the
+# numbers TestSelfHostHeldConnectionsHeapBoundX86_64 bounds). Closed-loop,
 # without `-q`, because these are throughput ceilings: oha's latency
 # correction only applies under a fixed rate, and the p99 here says how
 # the server queues at saturation, not what a client at a given rate
@@ -58,6 +58,7 @@
 #                               of the run
 #   net/fern/held.bytes_per_connection          (x86-64 only)
 #   net/fern/held.bytes_per_suspended_handler   (x86-64 only)
+#   net/fern/held.bytes_per_stream              (x86-64 only)
 
 set -euo pipefail
 
@@ -171,12 +172,14 @@ PY
     }
     per="$(sed -n 's/.*(\([0-9]*\) per connection).*/\1/p' "$work/held.log" | head -1)"
     suspended="$(sed -n 's/.*(\([0-9]*\) per handler).*/\1/p' "$work/held.log" | head -1)"
-    if [ -z "$per" ] || [ -z "$suspended" ]; then
-      echo "net-bench: no per-connection or per-handler figure in the held-connections log" >&2
+    stream="$(sed -n 's/.*(\([0-9]*\) per stream).*/\1/p' "$work/held.log" | head -1)"
+    if [ -z "$per" ] || [ -z "$suspended" ] || [ -z "$stream" ]; then
+      echo "net-bench: no per-connection, per-handler or per-stream figure in the held-connections log" >&2
       exit 1
     fi
     printf 'net/fern/held.bytes_per_connection\t%s\n' "$per"
     printf 'net/fern/held.bytes_per_suspended_handler\t%s\n' "$suspended"
+    printf 'net/fern/held.bytes_per_stream\t%s\n' "$stream"
   fi
 } > "$work/report"
 

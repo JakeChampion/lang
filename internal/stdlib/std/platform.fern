@@ -152,6 +152,13 @@ pub function host_on(reactor: i32): Host {
   return Host { reactor: reactor, pool: fetch.idle(), jar: None, allow: None, peer: None, deadline: None, trace: None };
 }
 
+// `(h).with_pool(pool)` — the host whose `http` keeps its connections in
+// `pool`: std/serve hands its loop one that shares HTTP/2 connections
+// among the handlers it runs (`fetch.idle_shared`).
+pub function (h: Host) with_pool(pool: fetch.Idle): Host {
+  return Host { ...h, pool: pool };
+}
+
 // `(h).with_peer(addr)` — the host answering `peer()` with `addr`: what
 // std/serve hands the handlers of one connection.
 pub function (h: Host) with_peer(addr: Option[net.SocketAddr]): Host {

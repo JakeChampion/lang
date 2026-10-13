@@ -649,9 +649,10 @@ func builtinStructDecls() []*ast.StructDecl {
 			},
 		},
 		// ChunkProducer — the producer a `BodyChunks` carries: asked for
-		// chunk 0, 1, 2, … until it answers None, and the filler the serve
+		// chunk 0, 1, 2, … until it answers None; the filler the serve
 		// loop writes whenever the producer has been waiting `idle_ms` for
-		// its next chunk (0 for none). A record rather than the bare
+		// its next chunk (0 for none); and the trailers it adds to the
+		// response's once the body has ended. A record rather than the bare
 		// function because a closure is released as a struct member and
 		// only leaks as an enum payload (rc_insert.go's variant drop).
 		{
@@ -663,6 +664,7 @@ func builtinStructDecls() []*ast.StructDecl {
 				}},
 				{Name: "idle_ms", Type: ast.NumberType{}},
 				{Name: "filler", Type: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+				{Name: "trailers", Type: &ast.FuncType{Params: []ast.Type{}, Result: ast.StructType{Name: "HeaderMap"}}},
 			},
 		},
 		// BytesWriter — in-memory buffered writer

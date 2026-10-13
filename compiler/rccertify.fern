@@ -549,14 +549,26 @@ function is_zero_const(ins: ssa.SInst): boolean {
 }
 
 function roots(f: ssa.SFunc, defs: Defs, sigs: rcsigs.Table): Roots {
-  let derived: boolean[] = __alloc_bool(f.nvals);
-  let root: i32[] = __alloc_i32(f.nvals);
-  let zero: i32 = -1;
+  return roots_over(f, defs, sigs, own_roots(f.nvals));
+}
+
+// own_roots is every value its own root, derived from nothing.
+function own_roots(n: i32): Roots {
+  let root: i32[] = __alloc_i32(n);
   let v: i32 = 0;
-  while (v < f.nvals) {
+  while (v < n) {
     root = root.with(v, v);
     v = v + 1;
   }
+  return Roots { root: root, derived: __alloc_bool(n) };
+}
+
+// roots_over resolves each alias `f` defines through `start`, which gives
+// the values `f` does not define their roots.
+function roots_over(f: ssa.SFunc, defs: Defs, sigs: rcsigs.Table, start: Roots): Roots {
+  let derived: boolean[] = start.derived;
+  let root: i32[] = start.root;
+  let zero: i32 = -1;
   for b in f.blocks {
     for ins in b.insts {
       if (ins.result < 0 || ins.result >= f.nvals) {
@@ -898,7 +910,8 @@ function is_reuse(ins: ssa.SInst): boolean {
 
 // carries: phi `p` is `base` where it is not null: each input is the box,
 // null, or such a phi, and one is the box. A phi the region uses but does
-// not define is read off the base walk's tables.
+// not define is read off the base walk's tables, and so is a null it does
+// not define: the null an arm outside the region gives the token.
 function carries(w: Walk, p: i32, base: i32): boolean {
   let path: i32[] = [];
   return carries_at(w, p, base, path, false);
@@ -924,7 +937,7 @@ function carries_at(w: Walk, p: i32, base: i32, path: i32[], outer: boolean): bo
     if (a < 0) {
       return false;
     }
-    if (!is_zero(f, defs, a)) {
+    if (!is_zero(f, defs, a) && !(!outer && w.outer.on && outside(w.f, w.defs, a) && is_zero(w.outer.f, w.outer.defs, a))) {
       let r: i32 = root[a];
       if (r == base && !derived[a]) {
         any = true;
@@ -3357,7 +3370,7 @@ function resumes(f: ssa.SFunc): boolean {
 // walked does not define.
 function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: rcsigs.Table, ops: rcsigs.OpTable, at: i32[], dom: ssadeps.Dom, reach: boolean[], hold: Hold, base: Base): Walk {
   let defs: Defs = definitions(f);
-  let rt: Roots = inherited_roots(roots(f, defs, sigs), f, defs, base);
+  let rt: Roots = roots_over(f, defs, sigs, inherited_roots(own_roots(f.nvals), f, defs, base));
   let w: Walk = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: returns_pair(f) || base.paired, why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [], uses: use_counts(f), dom: dom, regions: [], openers: [], held: hold.box, reused: hold.reused, phis: phis_of(f), outer: outer_of(base), firsts: firsts_of(f, rt.root), carried: [], children: [], takes: no_takes(), params_at_entry: !base.on, debt: [], kept: [] };
   if (base.on) {
     w = Walk { ...w, uses: base.uses };
@@ -3421,6 +3434,8 @@ function outside(f: ssa.SFunc, defs: Defs, v: i32): boolean {
   return v >= f.nparams && v < defs.block.len() && defs.block[v] < 0;
 }
 
+// inherited_roots gives each value the region uses but does not define the
+// base's root; the region's own copies of it are resolved through that after.
 function inherited_roots(own rt: Roots, f: ssa.SFunc, defs: Defs, base: Base): Roots {
   if (!base.on) {
     return rt;

@@ -3893,7 +3893,7 @@ func exprRefsTainted(e ast.Expr, tainted map[string]bool) bool {
 // `slot` can place a TAINTED (parameter-derived) heap value into that slot — the
 // inverse of exprNoParamEscape, specialized to a concrete taint set and aware of
 // per-callee escape facts.
-func taintedReachesSlot(e ast.Expr, slot ast.Type, tainted map[string]bool, info *checker.Info, variantPayloads map[string][]ast.Type, escapes *summaryTable[[]bool]) bool {
+func taintedReachesSlot(e ast.Expr, slot ast.Type, tainted map[string]bool, info *checker.Info, escapes *summaryTable[[]bool]) bool {
 	if isDefinitelyScalar(slot) {
 		return false // a scalar slot cannot carry a heap pointer
 	}
@@ -3905,11 +3905,11 @@ func taintedReachesSlot(e ast.Expr, slot ast.Type, tainted map[string]bool, info
 	case *ast.Index:
 		return exprRefsTainted(x.Array, tainted)
 	case *ast.IfExpr:
-		return taintedReachesSlot(x.Then, slot, tainted, info, variantPayloads, escapes) ||
-			taintedReachesSlot(x.Else, slot, tainted, info, variantPayloads, escapes)
+		return taintedReachesSlot(x.Then, slot, tainted, info, escapes) ||
+			taintedReachesSlot(x.Else, slot, tainted, info, escapes)
 	case *ast.MatchExpr:
 		for _, arm := range x.Arms {
-			if taintedReachesSlot(arm.Body, slot, tainted, info, variantPayloads, escapes) {
+			if taintedReachesSlot(arm.Body, slot, tainted, info, escapes) {
 				return true
 			}
 		}
@@ -3921,14 +3921,14 @@ func taintedReachesSlot(e ast.Expr, slot ast.Type, tainted map[string]bool, info
 			if ok && i < len(tt.Elems) {
 				es = tt.Elems[i]
 			}
-			if taintedReachesSlot(el, es, tainted, info, variantPayloads, escapes) {
+			if taintedReachesSlot(el, es, tainted, info, escapes) {
 				return true
 			}
 		}
 		return false
 	case *ast.ArrayLit:
 		for _, el := range x.Elems {
-			if taintedReachesSlot(el, x.ElemType, tainted, info, variantPayloads, escapes) {
+			if taintedReachesSlot(el, x.ElemType, tainted, info, escapes) {
 				return true
 			}
 		}
@@ -3946,7 +3946,7 @@ func taintedReachesSlot(e ast.Expr, slot ast.Type, tainted map[string]bool, info
 			ft[f.Name] = f.Type
 		}
 		for _, fi := range x.Fields {
-			if taintedReachesSlot(fi.Value, ft[fi.Name], tainted, info, variantPayloads, escapes) {
+			if taintedReachesSlot(fi.Value, ft[fi.Name], tainted, info, escapes) {
 				return true
 			}
 		}
@@ -3957,13 +3957,13 @@ func taintedReachesSlot(e ast.Expr, slot ast.Type, tainted map[string]bool, info
 			return exprRefsTainted(e, tainted)
 		}
 		// Variant constructor: the result embeds its payloads.
-		if pls, isVariant := variantPayloads[id.Name]; isVariant {
+		if con, isVariant := info.EnumConstructions[x]; isVariant {
 			for i, a := range x.Args {
 				var pt ast.Type
-				if i < len(pls) {
-					pt = pls[i]
+				if i < len(con.Payloads) {
+					pt = con.Payloads[i]
 				}
-				if taintedReachesSlot(a, pt, tainted, info, variantPayloads, escapes) {
+				if taintedReachesSlot(a, pt, tainted, info, escapes) {
 					return true
 				}
 			}
@@ -3974,8 +3974,8 @@ func taintedReachesSlot(e ast.Expr, slot ast.Type, tainted map[string]bool, info
 		// element slot: a byte read out of a tainted string does not.
 		if at, isArr := slot.(ast.ArrayType); isArr && len(x.Args) >= 2 &&
 			(id.Name == "__method_Array_set" || id.Name == "__method_Array_push") {
-			return taintedReachesSlot(x.Args[0], slot, tainted, info, variantPayloads, escapes) ||
-				taintedReachesSlot(x.Args[len(x.Args)-1], at.Elem, tainted, info, variantPayloads, escapes)
+			return taintedReachesSlot(x.Args[0], slot, tainted, info, escapes) ||
+				taintedReachesSlot(x.Args[len(x.Args)-1], at.Elem, tainted, info, escapes)
 		}
 		if freshResultBuiltin(id.Name) {
 			return false
@@ -3995,7 +3995,7 @@ func taintedReachesSlot(e ast.Expr, slot ast.Type, tainted map[string]bool, info
 			if i < len(params) {
 				pt = params[i]
 			}
-			if !taintedReachesSlot(a, pt, tainted, info, variantPayloads, escapes) {
+			if !taintedReachesSlot(a, pt, tainted, info, escapes) {
 				continue
 			}
 			if !known || (i < len(ce) && ce[i]) {
@@ -4049,7 +4049,7 @@ func returnedCountedProjection(e ast.Expr, tainted map[string]bool, retained boo
 // returns, and tainted whole-value arguments passed to a retain sink or an
 // escaping `own` position. `retained` is returnedAliasIsRetained for `fn`, which
 // excuses a returned projection (returnedCountedProjection).
-func paramEscapesInFn(fn *ast.FuncDecl, pname string, info *checker.Info, variantPayloads map[string][]ast.Type, escapes *summaryTable[[]bool], retained bool) bool {
+func paramEscapesInFn(fn *ast.FuncDecl, pname string, info *checker.Info, escapes *summaryTable[[]bool], retained bool) bool {
 	tainted := map[string]bool{pname: true}
 	// Declared types of the slots an assignment can write, for the same
 	// slot-typed reachability test a `let` initialiser gets: `x = f(p)`
@@ -4078,7 +4078,7 @@ func paramEscapesInFn(fn *ast.FuncDecl, pname string, info *checker.Info, varian
 			switch x := n.(type) {
 			case *ast.Var:
 				if x.Init != nil && !tainted[x.Name] &&
-					taintedReachesSlot(x.Init, x.Type, tainted, info, variantPayloads, escapes) {
+					taintedReachesSlot(x.Init, x.Type, tainted, info, escapes) {
 					tainted[x.Name] = true
 					grew = true
 				}
@@ -4088,7 +4088,7 @@ func paramEscapesInFn(fn *ast.FuncDecl, pname string, info *checker.Info, varian
 					if !known {
 						st = nil
 					}
-					if taintedReachesSlot(x.Value, st, tainted, info, variantPayloads, escapes) {
+					if taintedReachesSlot(x.Value, st, tainted, info, escapes) {
 						tainted[id.Name] = true
 						grew = true
 					}
@@ -4113,7 +4113,7 @@ func paramEscapesInFn(fn *ast.FuncDecl, pname string, info *checker.Info, varian
 		switch x := n.(type) {
 		case *ast.Return:
 			if x.Value != nil && !returnedCountedProjection(x.Value, tainted, retained) &&
-				taintedReachesSlot(x.Value, fn.ReturnType, tainted, info, variantPayloads, escapes) {
+				taintedReachesSlot(x.Value, fn.ReturnType, tainted, info, escapes) {
 				escaped = true
 			}
 		case *ast.Call:
@@ -4159,7 +4159,7 @@ func paramEscapesInFn(fn *ast.FuncDecl, pname string, info *checker.Info, varian
 // disqualifies the local. What remains is born fresh and only ever read on the
 // way out — its value can never come to alias a parameter. Fields being
 // immutable after construction (E048) means no `r.f = param` backdoor either.
-func computeFreshLocals(fn *ast.FuncDecl, info *checker.Info, variantPayloads map[string][]ast.Type, q *summaryTable[bool]) map[string]bool {
+func computeFreshLocals(fn *ast.FuncDecl, info *checker.Info, q *summaryTable[bool]) map[string]bool {
 	if fn.Body == nil {
 		return nil
 	}
@@ -4274,7 +4274,7 @@ func computeFreshLocals(fn *ast.FuncDecl, info *checker.Info, variantPayloads ma
 			// freshLocals set is passed (empty map) — an argument that is
 			// itself a fresh local is conservatively rejected rather than
 			// entangling this collection with the fixpoint below.
-			if !exprNoParamEscape(call.Args[i+1], slot, info, variantPayloads, q, nil) {
+			if !exprNoParamEscape(call.Args[i+1], slot, info, q, nil) {
 				return true
 			}
 		}
@@ -4345,7 +4345,7 @@ func computeFreshLocals(fn *ast.FuncDecl, info *checker.Info, variantPayloads ma
 		if !ok {
 			return true
 		}
-		if !exprNoParamEscape(call.Args[1], slots[0], info, variantPayloads, q, nil) {
+		if !exprNoParamEscape(call.Args[1], slots[0], info, q, nil) {
 			return true
 		}
 		// A `let x = …` declaration contributes no Ident node for x (Var.Name
@@ -4397,7 +4397,7 @@ func computeFreshLocals(fn *ast.FuncDecl, info *checker.Info, variantPayloads ma
 		changed := false
 		for name := range fresh {
 			v := decls[name]
-			if !exprNoParamEscape(v.Init, v.Type, info, variantPayloads, q, fresh) {
+			if !exprNoParamEscape(v.Init, v.Type, info, q, fresh) {
 				delete(fresh, name)
 				changed = true
 			}
@@ -4421,7 +4421,7 @@ func isDefinitelyScalar(t ast.Type) bool {
 // `slot` can never place a parameter's heap value into that slot. `q` is the
 // in-progress greatest-fixpoint set from findReturnsNoParamEscape. Any shape it
 // can't prove safe returns false (conservative — preserves the prior safe-leak).
-func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPayloads map[string][]ast.Type, q *summaryTable[bool], freshLocals map[string]bool) bool {
+func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, q *summaryTable[bool], freshLocals map[string]bool) bool {
 	// A definitely-scalar destination cannot hold a heap pointer at all, so
 	// whatever fills it carries no param heap. (Generic / unknown slot types are
 	// NOT assumed scalar — they fall through and must be proven structurally.)
@@ -4436,7 +4436,7 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 		// a fresh init, used only in return positions, so never mutated to embed
 		// a param) is likewise param-free. Any other bare pointer-typed ident (a
 		// parameter or a projection binding) is conservatively an escape.
-		if pls, isVariant := variantPayloads[x.Name]; isVariant && len(pls) == 0 {
+		if con, isVariant := info.EnumConstructions[x]; isVariant && len(con.Payloads) == 0 {
 			return true
 		}
 		return freshLocals[x.Name]
@@ -4463,11 +4463,11 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 		// source and stay rejected.
 		return x.IsString
 	case *ast.IfExpr:
-		return exprNoParamEscape(x.Then, slot, info, variantPayloads, q, freshLocals) &&
-			exprNoParamEscape(x.Else, slot, info, variantPayloads, q, freshLocals)
+		return exprNoParamEscape(x.Then, slot, info, q, freshLocals) &&
+			exprNoParamEscape(x.Else, slot, info, q, freshLocals)
 	case *ast.MatchExpr:
 		for _, arm := range x.Arms {
-			if !exprNoParamEscape(arm.Body, slot, info, variantPayloads, q, freshLocals) {
+			if !exprNoParamEscape(arm.Body, slot, info, q, freshLocals) {
 				return false
 			}
 		}
@@ -4478,7 +4478,7 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 			return false
 		}
 		for i, el := range x.Elems {
-			if !exprNoParamEscape(el, tt.Elems[i], info, variantPayloads, q, freshLocals) {
+			if !exprNoParamEscape(el, tt.Elems[i], info, q, freshLocals) {
 				return false
 			}
 		}
@@ -4486,15 +4486,15 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 	case *ast.MapLit:
 		// A fresh map_new filled by one insert per entry.
 		for _, en := range x.Entries {
-			if !exprNoParamEscape(en.Key, x.KeyType, info, variantPayloads, q, freshLocals) ||
-				!exprNoParamEscape(en.Value, x.ValueType, info, variantPayloads, q, freshLocals) {
+			if !exprNoParamEscape(en.Key, x.KeyType, info, q, freshLocals) ||
+				!exprNoParamEscape(en.Value, x.ValueType, info, q, freshLocals) {
 				return false
 			}
 		}
 		return true
 	case *ast.ArrayLit:
 		for _, el := range x.Elems {
-			if !exprNoParamEscape(el, x.ElemType, info, variantPayloads, q, freshLocals) {
+			if !exprNoParamEscape(el, x.ElemType, info, q, freshLocals) {
 				return false
 			}
 		}
@@ -4513,7 +4513,7 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 		}
 		for _, fi := range x.Fields {
 			ft, ok := ftype[fi.Name]
-			if !ok || !exprNoParamEscape(fi.Value, ft, info, variantPayloads, q, freshLocals) {
+			if !ok || !exprNoParamEscape(fi.Value, ft, info, q, freshLocals) {
 				return false
 			}
 		}
@@ -4526,15 +4526,17 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 		// Variant constructor: the result EMBEDS its payload args, so each
 		// pointer-typed payload slot must itself be filled escape-free.
 		//
-		// `variantPayloads` holds the DECLARED payload types, so a generic
-		// enum's are still `ParamType{T}`. Bind them against the destination's
+		// The construction's payload types (checker.EnumConstructions) name a
+		// generic enum's parameters wherever the checker left them open, as
+		// `ParamType{T}`. Bind them against the destination's
 		// type arguments — `Some((n, n))` filling an `Option[(i32, i32)]` needs
 		// the payload slot to read as that tuple, not as `T`. The TupleLit case
 		// is the one that notices: it matches on the slot being a TupleType and
 		// declines anything else, where StructLit / ArrayLit carry their own
 		// type and never consult it. That asymmetry is why a tuple payload
 		// leaked where the same shape in a struct did not (#6409).
-		if pls, isVariant := variantPayloads[id.Name]; isVariant {
+		if con, isVariant := info.EnumConstructions[x]; isVariant {
+			pls := con.Payloads
 			if et, isEnum := slot.(ast.EnumType); isEnum && len(et.Args) > 0 {
 				if ed, known := info.Enums[et.Name]; known && len(ed.TypeParams) == len(et.Args) {
 					sub := make([]ast.Type, len(pls))
@@ -4549,7 +4551,7 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 				if i < len(pls) {
 					pt = pls[i]
 				}
-				if !exprNoParamEscape(a, pt, info, variantPayloads, q, freshLocals) {
+				if !exprNoParamEscape(a, pt, info, q, freshLocals) {
 					return false
 				}
 			}
@@ -4578,14 +4580,14 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 			if at, isArr := slot.(ast.ArrayType); isArr {
 				elem = at.Elem
 			}
-			return exprNoParamEscape(x.Args[0], slot, info, variantPayloads, q, freshLocals) &&
-				exprNoParamEscape(x.Args[1], elem, info, variantPayloads, q, freshLocals)
+			return exprNoParamEscape(x.Args[0], slot, info, q, freshLocals) &&
+				exprNoParamEscape(x.Args[1], elem, info, q, freshLocals)
 		}
 		// `m.insert(k, v)` / `m.cleared()` are push's map siblings: the
 		// receiver's own handle or a fresh copy of it, holding whatever key
 		// and value it was handed.
 		if (id.Name == "__method_Map_set" && len(x.Args) == 3) || (id.Name == "__method_Map_clear" && len(x.Args) == 1) {
-			if !exprNoParamEscape(x.Args[0], slot, info, variantPayloads, q, freshLocals) {
+			if !exprNoParamEscape(x.Args[0], slot, info, q, freshLocals) {
 				return false
 			}
 			if len(x.Args) == 1 {
@@ -4595,8 +4597,8 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 			if len(x.TypeArgs) >= 2 {
 				kt, vt = x.TypeArgs[0], x.TypeArgs[1]
 			}
-			return exprNoParamEscape(x.Args[1], kt, info, variantPayloads, q, freshLocals) &&
-				exprNoParamEscape(x.Args[2], vt, info, variantPayloads, q, freshLocals)
+			return exprNoParamEscape(x.Args[1], kt, info, q, freshLocals) &&
+				exprNoParamEscape(x.Args[2], vt, info, q, freshLocals)
 		}
 		// User function / method call: its result can't contain OUR args iff the
 		// callee itself never lets a param escape. Builtins / locals / unknowns

@@ -873,13 +873,6 @@ func allocatesFreshBox(e ast.Expr) bool {
 }
 
 func findReturnsNoParamEscape(prog *ast.Program, info *checker.Info) map[string]bool {
-	// Variant-constructor name -> payload types, for the construction recursion.
-	variantPayloads := map[string][]ast.Type{}
-	for _, en := range info.Enums {
-		for _, v := range en.Variants {
-			variantPayloads[v.Name] = v.Payloads
-		}
-	}
 	q := newSummaryTable[bool](len(prog.Funcs))
 	for _, fn := range prog.Funcs {
 		q.vals[fn.Name] = true
@@ -888,11 +881,11 @@ func findReturnsNoParamEscape(prog *ast.Program, info *checker.Info) map[string]
 		if !q.at(fn.Name) || fn.Body == nil {
 			return false
 		}
-		freshLocals := computeFreshLocals(fn, info, variantPayloads, q)
+		freshLocals := computeFreshLocals(fn, info, q)
 		ok := true
 		ast.Walk(fn.Body, func(n ast.Node) bool {
 			if r, isRet := n.(*ast.Return); isRet && r.Value != nil {
-				if !exprNoParamEscape(r.Value, fn.ReturnType, info, variantPayloads, q, freshLocals) {
+				if !exprNoParamEscape(r.Value, fn.ReturnType, info, q, freshLocals) {
 					ok = false
 				}
 			}
@@ -972,12 +965,6 @@ func findReturnsParamProjection(prog *ast.Program) map[string]bool {
 // with the function's own array type, which the Return lowering hands back with
 // the transfer inc. resultIsCountedParamAlias reads it.
 func findReturnedArrayParams(prog *ast.Program, info *checker.Info, returnsNoParamEscape map[string]bool) map[string][]bool {
-	variantPayloads := map[string][]ast.Type{}
-	for _, en := range info.Enums {
-		for _, v := range en.Variants {
-			variantPayloads[v.Name] = v.Payloads
-		}
-	}
 	q := newSummaryTable[bool](len(returnsNoParamEscape))
 	for name, v := range returnsNoParamEscape {
 		q.vals[name] = v
@@ -995,7 +982,7 @@ func findReturnedArrayParams(prog *ast.Program, info *checker.Info, returnsNoPar
 				index[p.Name] = i
 			}
 		}
-		freshLocals := computeFreshLocals(fn, info, variantPayloads, q)
+		freshLocals := computeFreshLocals(fn, info, q)
 		bare := make([]bool, len(fn.Params))
 		ok := true
 		ast.Walk(fn.Body, func(n ast.Node) bool {
@@ -1009,7 +996,7 @@ func findReturnedArrayParams(prog *ast.Program, info *checker.Info, returnsNoPar
 					return true
 				}
 			}
-			ok = exprNoParamEscape(r.Value, fn.ReturnType, info, variantPayloads, q, freshLocals)
+			ok = exprNoParamEscape(r.Value, fn.ReturnType, info, q, freshLocals)
 			return ok
 		})
 		if ok {
@@ -1020,12 +1007,6 @@ func findReturnedArrayParams(prog *ast.Program, info *checker.Info, returnsNoPar
 }
 
 func inferParamEscapes(prog *ast.Program, info *checker.Info, pairForm, trmcFuncs map[string]bool) map[string][]bool {
-	variantPayloads := map[string][]ast.Type{}
-	for _, en := range info.Enums {
-		for _, v := range en.Variants {
-			variantPayloads[v.Name] = v.Payloads
-		}
-	}
 	escapes := newSummaryTable[[]bool](len(prog.Funcs))
 	for _, fn := range prog.Funcs {
 		escapes.vals[fn.Name] = make([]bool, len(fn.Params))
@@ -1040,7 +1021,7 @@ func inferParamEscapes(prog *ast.Program, info *checker.Info, pairForm, trmcFunc
 			if own[i] || !ast.IsPointerType(p.Type) {
 				continue
 			}
-			if paramEscapesInFn(fn, p.Name, info, variantPayloads, escapes,
+			if paramEscapesInFn(fn, p.Name, info, escapes,
 				returnedAliasIsRetained(fn, pairForm, trmcFuncs)) {
 				own[i] = true
 				changed = true

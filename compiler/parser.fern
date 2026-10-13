@@ -10506,6 +10506,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     cpf = cpf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "i32" });
     cpf = cpf.append(StructFieldDecl { name: "idle_ms", type_name: "i32", fn_ret: "", fn_param_types: "" });
     cpf = cpf.append(StructFieldDecl { name: "filler", type_name: "u8[]", fn_ret: "", fn_param_types: "" });
+    cpf = cpf.append(StructFieldDecl { name: "trailers", type_name: "fn", fn_ret: "HeaderMap", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "ChunkProducer", fields: cpf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
   }
   if (!name_declared(structs, "HttpRequest")) {
@@ -10579,6 +10580,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     cpf = cpf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "i32" });
     cpf = cpf.append(StructFieldDecl { name: "idle_ms", type_name: "i32", fn_ret: "", fn_param_types: "" });
     cpf = cpf.append(StructFieldDecl { name: "filler", type_name: "u8[]", fn_ret: "", fn_param_types: "" });
+    cpf = cpf.append(StructFieldDecl { name: "trailers", type_name: "fn", fn_ret: "HeaderMap", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "ChunkProducer", fields: cpf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
   }
   if (!name_declared(structs, "BytesWriter")) {

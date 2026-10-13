@@ -261,7 +261,7 @@ pub function node_parse(s: string): Option[NodeId] {
 // `__nodename(s)` — `unknown`, an obfuscated name, or an IPv4 address.
 function __nodename(s: string): Option[Node] {
   if (s.eq_ignore_ascii_case("unknown")) {
-    return Some(Unknown);
+    return Some(Node.Unknown);
   }
   if (__obfuscated(s)) {
     return Some(Obfuscated(s));
@@ -525,7 +525,7 @@ pub function (n: NodeId) to_string(): string {
     Obfuscated(s) => {
       name = s;
     },
-    Unknown => {}
+    Node.Unknown => {}
   }
   if (n.port.len() == 0) {
     return name;

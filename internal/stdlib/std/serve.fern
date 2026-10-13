@@ -250,9 +250,10 @@ pub function (c: Config) with_tls(cfg: server.Config): Config {
 // (c).with_h2() — HTTP/2 served beside HTTP/1.1 (std/http/h2): a connection
 // that opens with the HTTP/2 connection preface is served over it, and under
 // TLS the protocols offered by ALPN are `h2` and `http/1.1`. The handler is
-// the same; a request's `:authority` arrives as its `host`. Each stream's
-// handler runs to its answer on the loop; `run_with`'s stateful loop serves
-// HTTP/1.1 only.
+// the same; a request's `:authority` arrives as its `host`. A stream's
+// handler may park, on its upstream calls or under `stream_bodies` on its
+// body, while the loop serves the connection's other streams; `run_with`'s
+// stateful loop runs each stream's request with the state in order.
 pub function (c: Config) with_h2(): Config {
   return Config { ...c, h2: true };
 }
@@ -725,7 +726,7 @@ function __wire_chunks(out: usize, version: string, resp: HttpResponse, producer
     framing = framing + "Trailer: " + resp.trailers.names.join(", ") + "\r\n";
   }
   http.http_serialize_response_head_into(out, resp, keep_alive, framing);
-  return ChunkTail(producer, 0, "0\r\n" + http.http_serialize_fields(resp.trailers) + "\r\n");
+  return ChunkTail(producer, 0, http.http_serialize_fields(resp.trailers) + "\r\n");
 }
 
 // __in_flight(c, at) — whether a response is still going out on the
@@ -884,9 +885,9 @@ function __chunk_piece[D: async.Driver](drv: D, c: __Conns, at: i32, producer: C
 // __chunk_step(producer, index, end, chunk) — the tail after the producer
 // answered `chunk` for `index`, the piece that goes on the wire for it
 // (under its hexadecimal size and CRLF when the tail is chunk-coded,
-// `end` holding what ends it; as it is when close-delimited), and
-// whether there is one: an empty chunk writes nothing, and the next is
-// asked for.
+// `end` holding the response's trailers and the CRLF that ends the body;
+// as it is when close-delimited, `end` empty), and whether there is one:
+// an empty chunk writes nothing, and the next is asked for.
 function __chunk_step(producer: ChunkProducer, index: i32, end: string, chunk: Option[u8[]]): (__Tail, u8[], boolean) {
   match (chunk) {
     Some(bytes) => {
@@ -897,10 +898,20 @@ function __chunk_step(producer: ChunkProducer, index: i32, end: string, chunk: O
       return (tail, __chunk_framed(bytes, end), true);
     },
     None => {
-      return (NoTail, end.bytes(), true);
+      return (NoTail, __chunk_end(producer, end), true);
     }
   }
-  return (NoTail, end.bytes(), true);
+  return (NoTail, __chunk_end(producer, end), true);
+}
+
+// __chunk_end(producer, end) — what ends a chunk-coded body: the last
+// chunk, the trailers the producer adds now the body has ended, then the
+// response's own and the CRLF (`end`); nothing when close-delimited.
+function __chunk_end(producer: ChunkProducer, end: string): u8[] {
+  if (end.len() == 0) {
+    return [];
+  }
+  return ("0\r\n" + http.http_serialize_fields(producer.trailers()) + end).bytes();
 }
 
 // __chunk_framed(bytes, end) — the chunk as it goes on the wire: under
@@ -1025,10 +1036,15 @@ function __producer_done[D: async.Driver](drv: D, c: __Conns, fd: i32, chunk: Op
 // once it is done: the flights a producer's park staged, and the
 // background work of the responses it wrote, each started as a task, one
 // that parks held as a flight under `Config.background_deadline`.
-function __staged_taken[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: Config): (__Conns, __Flight[]) {
+function __staged_taken[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: Config, pool: fetch.Idle): (__Conns, __Flight[]) {
   let taken: (__Conns, __Flight[]) = __parked_taken(c, fls);
   c = taken.0;
   fls = taken.1;
+  if (__upstream_busy(pool)) {
+    let upstreams: (__Conns, __Flight[]) = __shared_turn(drv, pool, c, fls, opts);
+    c = upstreams.0;
+    fls = upstreams.1;
+  }
   if (c.later.len() == 0) {
     return (c, fls);
   }
@@ -2139,6 +2155,9 @@ function __h2_taken(c: __Conns, at: i32): __Conns {
 // threads from one request to the next.
 function __h2_turn_with[D: async.Driver, S](drv: D, c: __Conns, at: i32, st: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), opts: Config, stop: __Stop, eof: boolean, mode: i32): (__Conns, S) {
   if (mode != H2_SERVED) {
+    if (eof) {
+      return (__serve_close(drv, c, at), st);
+    }
     return (c, st);
   }
   c = __h2_opened(drv, c, at, opts, false);
@@ -2232,6 +2251,9 @@ function __h2_turn[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32
   if (mode == H2_SERVED) {
     return __serve_h2(drv, c, fls, at, handler, opts, stop, eof);
   }
+  if (eof) {
+    return __h2_close(drv, c, fls, at);
+  }
   return (c, fls);
 }
 
@@ -2258,17 +2280,21 @@ function __h2_framed(c: __Conns, fd: i32): boolean {
 // on, or an HTTP/1.1 connection with a flight parked, which is held
 // (`__serve_held_event`); the work staged by either is taken. False when
 // the event is neither's.
-function __flight_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fd: i32, readiness: i32, scratch: u8[], opts: Config, clk: __Clock): (__Conns, __Flight[], boolean) {
+function __flight_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fd: i32, readiness: i32, scratch: u8[], opts: Config, clk: __Clock, pool: fetch.Idle): (__Conns, __Flight[], boolean) {
+  if (__upstream_owned(pool, fd)) {
+    let upstream: (__Conns, __Flight[]) = __shared_event(drv, pool, c, fls, fd, readiness, opts);
+    return (upstream.0, upstream.1, true);
+  }
   let fi: i32 = __flight_index(fls, fd);
   if (fi >= 0) {
     let woke: (__Conns, __Flight[]) = __flight_wake(drv, c, fls, fi, __flight_pair(fls[fi], fd), opts, clk);
-    let taken: (__Conns, __Flight[]) = __staged_taken(drv, woke.0, woke.1, opts);
+    let taken: (__Conns, __Flight[]) = __staged_taken(drv, woke.0, woke.1, opts, pool);
     return (taken.0, taken.1, true);
   }
   let busy: i32 = __flight_at(fls, fd);
   if (busy >= 0) {
     let held: (__Conns, __Flight[]) = __serve_held_event(drv, c, fls, busy, fd, readiness, scratch, opts);
-    let taken: (__Conns, __Flight[]) = __staged_taken(drv, held.0, held.1, opts);
+    let taken: (__Conns, __Flight[]) = __staged_taken(drv, held.0, held.1, opts, pool);
     return (taken.0, taken.1, true);
   }
   return (c, fls, false);
@@ -2577,12 +2603,22 @@ function __h2_chunk(a: __H2Answered, at: i32, pi: i32, chunk: Option[u8[]]): (__
       return (__H2Answered { ...a, conn: step.conn, conns: __Conns { ...a.conns, producers: a.conns.producers.with(pi, advanced) }, out: a.out.concat(step.output) }, false);
     },
     None => {
-      let step: h2.Step = a.conn.end(p.stream, p.trailers);
+      let step: h2.Step = a.conn.end(p.stream, __trailers_joined(p.trailers, p.producer.trailers()));
       let conns: __Conns = __Conns { ...a.conns, producers: __producer_removed(a.conns.producers, pi) };
       return (__h2_responded(__H2Answered { ...a, conn: step.conn, conns: conns, out: a.out.concat(step.output) }, at, p.stream), true);
     }
   }
   return (a, true);
+}
+
+// __trailers_joined(a, b) — the fields of `a` then those of `b`.
+function __trailers_joined(a: HeaderMap, b: HeaderMap): HeaderMap {
+  let i: i32 = 0;
+  while (i < b.names.len()) {
+    a = a.append(b.names[i], b.values[i]);
+    i = i + 1;
+  }
+  return a;
 }
 
 // __h2_producer_failed(a, at, pi) — a producer's task was cancelled: the
@@ -4280,7 +4316,7 @@ function __flight_watch[D: async.Driver](drv: D, fl: __Flight, now: i64): __Flig
   let w: async.Wait = fl.wait;
   let i: i32 = 0;
   while (i + 1 < w.set.len()) {
-    if (!__own_connection(fl, w.set[i])) {
+    if (!__own_connection(fl, w.set[i]) && w.set[i + 1] != fetch.MAIL_INTEREST) {
       let watched: i32 = drv.watch(w.set[i], w.set[i + 1]);
     }
     i = i + 2;
@@ -4297,7 +4333,7 @@ function __flight_watch[D: async.Driver](drv: D, fl: __Flight, now: i64): __Flig
 function __flight_unwatch[D: async.Driver](drv: D, fl: __Flight): void {
   let i: i32 = 0;
   while (i + 1 < fl.set.len()) {
-    if (!__own_connection(fl, fl.set[i])) {
+    if (!__own_connection(fl, fl.set[i]) && fl.set[i + 1] != fetch.MAIL_INTEREST) {
       let unwatched: i32 = drv.unwatch(fl.set[i]);
     }
     i = i + 2;
@@ -4307,7 +4343,9 @@ function __flight_unwatch[D: async.Driver](drv: D, fl: __Flight): void {
 // __own_connection(fl, fd) — whether `fd` in the flight's wait set is the
 // HTTP/2 connection the flight belongs to: a pull parked on its connection
 // waits for the frames the loop reads, so the loop's watch on the
-// connection stands, neither added to nor removed with the flight's.
+// connection stands, neither added to nor removed with the flight's. A
+// pair with `fetch.MAIL_INTEREST` is a slot the loop answers itself
+// (`__shared_woken`), so no reactor sees it either.
 function __own_connection(fl: __Flight, fd: i32): boolean {
   return fl.stream > 0 && fd == fl.fd;
 }
@@ -4486,10 +4524,13 @@ function __flight_overdue[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], 
 // host over the worker's reactor, 0 where the target has none, with this
 // worker's cookie jar when the configuration asks for one. Built once per
 // loop rather than per request, since no request can change it.
-function __host_platform(reactor: i32, opts: Config): platform.Host {
+function __host_platform(reactor: i32, opts: Config, shared: boolean): platform.Host {
   let host: platform.Host = platform.host();
   if (reactor >= 0) {
     host = platform.host_on(reactor);
+  }
+  if (shared && async.parks()) {
+    host = host.with_pool(fetch.idle_shared());
   }
   match (opts.http_allow) {
     Some(a) => {
@@ -4501,6 +4542,117 @@ function __host_platform(reactor: i32, opts: Config): platform.Host {
     return host.with_jar(cookie.jar());
   }
   return host;
+}
+
+// __shared_event(drv, pool, c, fls, fd, readiness, opts) — a readiness event on
+// a driven upstream connection: its frames read and each stream's answer
+// put in its slot, a connection that ended closed, and the flights whose
+// slots have an answer woken.
+function __shared_event[D: async.Driver](drv: D, pool: fetch.Idle, c: __Conns, fls: __Flight[], fd: i32, readiness: i32, opts: Config): (__Conns, __Flight[]) {
+  let s: fetch.Shared = fetch.shared_of(pool);
+  match (s.event(fd, (readiness & 1) != 0)) {
+    Some(dead) => {
+      let unwatched: i32 = drv.unwatch(dead);
+      tcp_close(dead);
+    },
+    None => {}
+  }
+  return __shared_woken(drv, s, c, fls, opts);
+}
+
+// __clock_none() — a clock a wake outside the pass's events runs under:
+// a woken flight that answers reformats the Date itself, as a late pass
+// would.
+function __clock_none(): __Clock {
+  return __Clock { sec: 0 as i64, line: "" };
+}
+
+// __shared_woken(drv, s, c, fls, opts) — every flight parked on a slot whose
+// answer has come run on, with the slot's pair as the word.
+function __shared_woken[D: async.Driver](drv: D, s: fetch.Shared, c: __Conns, fls: __Flight[], opts: Config): (__Conns, __Flight[]) {
+  for id in s.answered() {
+    let fi: i32 = __flight_index(fls, id);
+    if (fi >= 0) {
+      let woke: (__Conns, __Flight[]) = __flight_wake(drv, c, fls, fi, __flight_pair(fls[fi], id), opts, __clock_none());
+      c = woke.0;
+      fls = woke.1;
+    }
+  }
+  return (c, fls);
+}
+
+// __upstream_busy(pool) — whether the pool's shared table has an
+// upstream connection driven, waited for or being opened: what makes a
+// turn worth taking. A test apart from the turn, so the table's record
+// never binds beside the loop's.
+function __upstream_busy(pool: fetch.Idle): boolean {
+  match (pool.shared) {
+    Some(sh) => {
+      return !sh.quiet();
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// __upstream_owned(pool, fd) — whether `fd` is an upstream connection the
+// loop drives (`fetch.Shared`).
+function __upstream_owned(pool: fetch.Idle, fd: i32): boolean {
+  match (pool.shared) {
+    Some(sh) => {
+      return !sh.quiet() && sh.owns(fd);
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// __shared_turn(drv, pool, c, fls, opts) — the driven upstream
+// connections' turn (the pool's `fetch.Shared`, the HTTP/2 connections the
+// loop drives for its handlers): the flights with answers woken (what they
+// submit goes out below), the sockets adopted since the last turn watched,
+// every connection's queued frames written and the sockets with bytes left
+// watched for writing, and the connections idle past the pool's bound or
+// going away with no stream in flight closed.
+function __shared_turn[D: async.Driver](drv: D, pool: fetch.Idle, c: __Conns, fls: __Flight[], opts: Config): (__Conns, __Flight[]) {
+  let s: fetch.Shared = fetch.shared_of(pool);
+  let idle: i64 = pool.idle.as_nanos();
+  let woken: (__Conns, __Flight[]) = __shared_woken(drv, s, c, fls, opts);
+  c = woken.0;
+  fls = woken.1;
+  for fd in s.unwatched() {
+    let watched: i32 = drv.watch(fd, 1);
+  }
+  let (writing, drained) = s.flush();
+  for fd in writing {
+    let watched: i32 = drv.watch(fd, 3);
+  }
+  for fd in drained {
+    let watched: i32 = drv.watch(fd, 1);
+  }
+  for fd in s.expired(monotonic_ns(), idle) {
+    let unwatched: i32 = drv.unwatch(fd);
+    tcp_close(fd);
+  }
+  return (c, fls);
+}
+
+// __shared_close(drv, s) — every driven upstream connection closed, as
+// the loop ends.
+function __shared_close[D: async.Driver](drv: D, pool: fetch.Idle): void {
+  match (pool.shared) {
+    Some(s) => {
+      for fd in s.sockets() {
+        let unwatched: i32 = drv.unwatch(fd);
+        tcp_close(fd);
+      }
+    },
+    None => {}
+  }
 }
 
 // __init_platform() — the platform a handler program's `init(plat)` is
@@ -4528,7 +4680,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
   }
   let accepting: boolean = true;
   let stop: __Stop = __serve_stop_sources(drv, opts);
-  let plat: platform.Host = __host_platform(drv.handle(), opts);
+  let plat: platform.Host = __host_platform(drv.handle(), opts, true);
   let host_for: (Option[net.SocketAddr]) => platform.Host = (peer: Option[net.SocketAddr]): platform.Host => plat.with_peer(peer);
   let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [] };
   let flights: __Flight[] = [];
@@ -4576,7 +4728,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
         flights = turned.1;
         continue;
       }
-      let flown: (__Conns, __Flight[], boolean) = __flight_event(drv, conns, flights, fd, readiness, scratch, opts, clk);
+      let flown: (__Conns, __Flight[], boolean) = __flight_event(drv, conns, flights, fd, readiness, scratch, opts, clk, plat.pool);
       conns = flown.0;
       flights = flown.1;
       if (flown.2) {
@@ -4663,14 +4815,14 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
         framed = next_framed;
       }
       conns = __serve_settle(drv, conns, flights, fd, ev.2, opts, clk);
-      let taken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts);
+      let taken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts, plat.pool);
       conns = taken.0;
       flights = taken.1;
     }
     let due: (__Conns, __Flight[]) = __flights_expire(drv, conns, flights, opts, clk);
     conns = due.0;
     flights = due.1;
-    let woken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts);
+    let woken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts, plat.pool);
     conns = woken.0;
     flights = woken.1;
     let ended: (__Conns, __Stop, boolean, boolean) = __serve_pass_end(drv, listener, conns, opts, stop, accepting, flights.len());
@@ -4679,6 +4831,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
     accepting = ended.2;
     if (ended.3) {
       __flights_cancel(drv, flights);
+      __shared_close(drv, plat.pool);
       __exporter_close(drv, ex);
       drv.close();
       buf_free(conns.out);
@@ -4691,6 +4844,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
   if (accepting) {
     drv.unwatch(listener);
   }
+  __shared_close(drv, plat.pool);
   __exporter_close(drv, ex);
   drv.close();
   buf_free(conns.out);
@@ -4710,7 +4864,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
   }
   let accepting: boolean = true;
   let stop: __Stop = __serve_stop_sources(drv, opts);
-  let plat: platform.Host = __host_platform(drv.handle(), opts);
+  let plat: platform.Host = __host_platform(drv.handle(), opts, false);
   let host_for: (Option[net.SocketAddr]) => platform.Host = (peer: Option[net.SocketAddr]): platform.Host => plat.with_peer(peer);
   let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [] };
   let flights: __Flight[] = [];
@@ -4745,7 +4899,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
         conns = __serve_accept(drv, listener, conns, opts, host_for);
         continue;
       }
-      let flown: (__Conns, __Flight[], boolean) = __flight_event(drv, conns, flights, fd, readiness, scratch, opts, clk);
+      let flown: (__Conns, __Flight[], boolean) = __flight_event(drv, conns, flights, fd, readiness, scratch, opts, clk, plat.pool);
       conns = flown.0;
       flights = flown.1;
       if (flown.2) {
@@ -4806,14 +4960,14 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
         framed = next_framed;
       }
       conns = __serve_finish(drv, conns, fd, ev.2, opts, clk);
-      let taken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts);
+      let taken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts, plat.pool);
       conns = taken.0;
       flights = taken.1;
     }
     let due: (__Conns, __Flight[]) = __flights_expire(drv, conns, flights, opts, clk);
     conns = due.0;
     flights = due.1;
-    let woken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts);
+    let woken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts, plat.pool);
     conns = woken.0;
     flights = woken.1;
     let ended: (__Conns, __Stop, boolean, boolean) = __serve_pass_end(drv, listener, conns, opts, stop, accepting, flights.len());
