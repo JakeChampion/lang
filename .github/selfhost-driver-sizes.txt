@@ -488,6 +488,9 @@
 # time; the serve loop's hello request goes from 3 allocations to 1
 # (docs/NET-P0-MESSAGE-LAYER-PLAN.md §6.2, slice 10). Measured with the
 # self-built compiler compiling its own source, the stage2 method.
+# 2026-10-13: asm_pathprobe_run 4460528 -> 4684360 (+5.0%), main's growth
+# since the 10-11 refresh; the other rows grow 0.8-4.6% and stay inside 5%.
+# Number from driver-sizes' report on run 38334192751.
 
 fern.fern/stage2 11181568
 fern.fern 11289824
@@ -498,5 +501,5 @@ drivers/asm_run.fern 6845880
 drivers/wasm_ir_run.fern 7159672
 drivers/wasm_run.fern 7161448
 drivers/wasm_runio_run.fern 7190992
-drivers/asm_pathprobe_run.fern 4460528
+drivers/asm_pathprobe_run.fern 4684360
 drivers/checker_modload_run.fern 2544640
