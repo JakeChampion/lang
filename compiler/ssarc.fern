@@ -1443,6 +1443,7 @@ function reuse_construct(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.S
   if (ins.kind_tag == ssasem.variant_new()) {
     let owner: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, f.values[ins.result])];
     fields = owner.variants[variant_tag(f, f.values[ins.result], ins.str)].fields;
+    shape = ssasem.variant_key(variant_union(f, ins), ins.str);
   } else {
     fields = record_fields(f.values[ins.result], f);
     shape = record_name(f.values[ins.result]);
