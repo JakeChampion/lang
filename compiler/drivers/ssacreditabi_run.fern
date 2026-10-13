@@ -149,21 +149,22 @@ function selected_body_controls(sub: ircore.Sub): void {
     for b in sub.bodies {
       if (b.name == "extract_left") {
         let ops: ir.Op[] = [];
+        let i: i32 = 0;
         for op in b.ops {
-          if (mutation == 0 && op.kind_tag == ir.kind_id("struct_set")) {
-            ops = ops.append(ir.op_drop()).append(ir.op_drop());
+          if (mutation == 0 && i > 0 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec" && b.ops[i - 1].kind_tag == ir.kind_id("load_local") && b.ops[i - 1].i32_imm == 0) {
             hits = hits + 1;
           } else if (mutation == 1 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
             hits = hits + 1;
           } else if (mutation == 2 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__sem_release_Parent") {
             ops = ops.append(ir.op_load_local(0)).append(op).append(ir.op_drop()).append(op);
             hits = hits + 1;
-          } else if (mutation == 3 && op.kind_tag == ir.kind_id("struct_set")) {
-            ops = ops.append(ir.Op { ...op, i32_imm: 2 });
+          } else if (mutation == 3 && op.kind_tag == ir.kind_id("struct_get") && hits == 0) {
+            ops = ops.append(ir.Op { ...op, i32_imm: 1 });
             hits = hits + 1;
           } else {
             ops = ops.append(op);
           }
+          i = i + 1;
         }
         bodies = bodies.append(irtables.LowerResult { ...b, ops: ops });
       } else {
@@ -637,7 +638,9 @@ function selected_checks(target: string): void {
       selected_expect(sub, "extract_left", -1, false, "invalid selected", 138);
       selected_expect(sub, "extract_left", 1, false, "missing or unrepresentable", 139);
       selected_expect(sub, "extract_left", 2147483647, false, "missing or unrepresentable", 140);
-      selected_expect(sub, "extract_left", 2, false, "unsupported containment operation", 141);
+      // With the right slot selected, the left child is a sibling, which the
+      // shared arm may not retain as the result.
+      selected_expect(sub, "extract_left", 2, false, "unsupported containment call", 141);
       selected_body_controls(sub);
       selected_sibling_release_control(sub);
       selected_expect(sub, "extract_left", 0, true, "proved guarded", 149);

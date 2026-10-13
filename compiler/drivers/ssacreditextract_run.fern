@@ -35,14 +35,15 @@ function expect(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, ok: boolean, 
 
 // Start every mutation with the normal lowering's emitted stack operations.
 // Keep the stack balanced so the independent credit proof, not a parse error,
-// rejects missing clear/retain and duplicate releases.
+// rejects a missing free or retain, a duplicate release, a token compared
+// with anything but zero, a load from a scalar slot, a released result and a
+// free of a shared parent.
 function mutate(r: irtables.LowerResult, mode: i32): irtables.LowerResult {
   let ops: ir.Op[] = [];
   let hits: i32 = 0;
   let i: i32 = 0;
   for op in r.ops {
-    if (mode == 0 && op.kind_tag == ir.kind_id("struct_set")) {
-      ops = ops.append(ir.op_drop()).append(ir.op_drop());
+    if (mode == 0 && freed_parent(r.ops, i)) {
       hits = hits + 1;
     } else if (mode == 1 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
       hits = hits + 1;
@@ -52,7 +53,7 @@ function mutate(r: irtables.LowerResult, mode: i32): irtables.LowerResult {
     } else if (mode == 3 && op.kind_tag == ir.kind_id("const_i32") && i + 1 < r.ops.len() && r.ops[i + 1].kind_tag == ir.kind_id("eq")) {
       ops = ops.append(ir.op_const_i32(1));
       hits = hits + 1;
-    } else if (mode == 4 && op.kind_tag == ir.kind_id("struct_set")) {
+    } else if (mode == 4 && op.kind_tag == ir.kind_id("struct_get") && hits == 0) {
       ops = ops.append(ir.Op { ...op, i32_imm: 1 });
       hits = hits + 1;
     } else if (mode == 5 && op.kind_tag == ir.kind_id("return")) {
@@ -68,6 +69,13 @@ function mutate(r: irtables.LowerResult, mode: i32): irtables.LowerResult {
   }
   require(hits == 1, 3);
   return irtables.LowerResult { ...r, ops: ops };
+}
+
+// Whether ops[i] frees the parent itself: `__fern_rc_dec` of local 0, which
+// the unique arm uses in place of the release helper once the slots are spent.
+function freed_parent(ops: ir.Op[], i: i32): boolean {
+  let op = ops[i];
+  return i > 0 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec" && ops[i - 1].kind_tag == ir.kind_id("load_local") && ops[i - 1].i32_imm == 0;
 }
 
 function target_checks(target: string): void {
@@ -97,7 +105,7 @@ function target_checks(target: string): void {
   expect(f, d, r, true, 10);
   let absent = extract.check_selected(f, d, r, helper.FlatChildren { offsets: [8] }, 16);
   require(!absent.ok && absent.function_name == f.name && absent.message == "selected child slot absent from layout", 33);
-  let reasons: string[] = ["return without child credit", "return without child credit", "parent used after release", "return without child credit", "unsupported containment operation", "return without child credit", "clearing a shared parent"];
+  let reasons: string[] = ["return without child credit", "return without child credit", "parent used after release", "uniqueness token compared with a nonzero value", "unsupported containment operation", "return without child credit", "freeing a shared parent"];
   let mode: i32 = 0;
   while (mode < 7) {
     let mutated = lift(mutate(body, mode));
@@ -132,15 +140,14 @@ function target_checks(target: string): void {
   expect(ssa.SFunc { ...f, nvals: 2147483647 }, d, r, false, 20);
   expect(ssa.SFunc { ...f, nparams: 2 }, d, r, false, 21);
   // Releasing the parent before the shared-path child retain is valid: the
-  // external shared parent still supplies the child's borrowed anchor. The
-  // unique path already transferred its child credit before the release.
+  // external shared parent still supplies the child's borrowed anchor.
   let early: ir.Op[] = [];
   let inserted: i32 = 0;
   let removed: i32 = 0;
   i = 0;
   while (i < body.ops.len()) {
     let op = body.ops[i];
-    if (op.kind_tag == ir.kind_id("load_local") && op.i32_imm == 3) {
+    if (op.kind_tag == ir.kind_id("load_local") && i + 1 < body.ops.len() && body.ops[i + 1].kind_tag == ir.kind_id("call_direct") && body.ops[i + 1].str == "__fern_rc_inc") {
       early = early.append(ir.op_load_local(0)).append(ir.op_call_direct(r.name, 1)).append(ir.op_drop());
       inserted = inserted + 1;
     }
@@ -168,20 +175,74 @@ function target_checks(target: string): void {
   require(!reserved_release.ok && reserved_release.function_name == "__fern_rc_dec", 29);
   let reserved_drop = extract.check(f, ssa.SFunc { ...d, name: "__fern_rc_dec" }, r, helper.FlatChild { offset: 8 });
   require(!reserved_drop.ok && reserved_drop.function_name == "__fern_rc_dec", 30);
-  let store_use: ssa.SBlock[] = [];
+  // Freeing the parent has no readable result. Reading it must not invent a
+  // scalar zero that a later condition could use to discard a feasible path.
+  let free_use: ssa.SBlock[] = [];
+  let frees: i32 = 0;
   for b in f.blocks {
     let ops: ssa.SInst[] = [];
     for op in b.insts {
       ops = ops.append(op);
-      if (op.kind_tag == 41) {
+      if (op.kind_tag == 11 && op.str == "__fern_rc_dec" && op.args.len() == 1 && op.args[0] == 0) {
         ops = ops.append(ssa.SInst { kind_tag: 7, result: f.nvals, args: [op.result], imm: 0, str: "" });
+        frees = frees + 1;
       }
     }
-    store_use = store_use.append(ssa.SBlock { ...b, insts: ops });
+    free_use = free_use.append(ssa.SBlock { ...b, insts: ops });
   }
-  let unreadable = ssa.SFunc { ...f, nvals: f.nvals + 1, blocks: store_use };
+  require(frees == 1, 34);
+  let unreadable = ssa.SFunc { ...f, nvals: f.nvals + 1, blocks: free_use };
   expect(unreadable, d, r, false, 31);
   require(extract.check(unreadable, d, r, helper.FlatChild { offset: 8 }).message == "undefined physical operand", 32);
+}
+
+// The unique arm's inline release of the sibling at `other`, edited four
+// ways the proof must refuse: freeing the parent with the sibling unspent,
+// releasing it a second time through the helper, loading it again after its
+// release, and a nonzero scalar joining the uniqueness token.
+function sibling_mutated(f: ssa.SFunc, other: i32, mode: i32, release: string): ssa.SFunc {
+  let load: i32 = -1;
+  let constant: i32 = -1;
+  for b in f.blocks {
+    for op in b.insts {
+      if (op.kind_tag == 40 && op.imm == other) {
+        load = op.result;
+      }
+      if (op.kind_tag == 8 && op.args.len() == 2 && op.args[0] == 0) {
+        constant = op.args[1];
+      }
+    }
+  }
+  require(load >= 0 && constant >= 0, 76);
+  let blocks: ssa.SBlock[] = [];
+  let hits: i32 = 0;
+  let nvals = f.nvals;
+  for b in f.blocks {
+    let insts: ssa.SInst[] = [];
+    for op in b.insts {
+      let sibling_release = op.kind_tag == 11 && op.str == "__fern_rc_dec" && op.args.len() == 1 && op.args[0] == load;
+      let parent_free = op.kind_tag == 11 && op.str == "__fern_rc_dec" && op.args.len() == 1 && op.args[0] == 0;
+      if (mode == 0 && sibling_release) {
+        insts = insts.append(ssa.SInst { kind_tag: 1, result: op.result, args: [], imm: 0, str: "" });
+        hits = hits + 1;
+      } else if (mode == 1 && parent_free) {
+        insts = insts.append(ssa.SInst { ...op, str: release });
+        hits = hits + 1;
+      } else if (mode == 2 && sibling_release) {
+        insts = insts.append(op).append(ssa.SInst { kind_tag: 40, result: nvals, args: [0], imm: other, str: "" });
+        nvals = nvals + 1;
+        hits = hits + 1;
+      } else if (mode == 3 && op.result == constant) {
+        insts = insts.append(ssa.SInst { ...op, imm: 1 });
+        hits = hits + 1;
+      } else {
+        insts = insts.append(op);
+      }
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
+  }
+  require(hits == 1, 77);
+  return ssa.SFunc { ...f, blocks: blocks, nvals: nvals };
 }
 
 function sibling_checks(target: string): void {
@@ -211,34 +272,54 @@ function sibling_checks(target: string): void {
       let f = lift(body);
       let valid = extract.check_selected(f, d, r, layout, offset);
       require(valid.ok && valid.function_name == f.name, 61);
+      let other: i32 = 24;
+      if (offset == 24) {
+        other = 8;
+      }
+      let sibling_reasons: string[] = ["sibling slot left in a freed parent", "sibling released twice", "load from released sibling slot", "uniqueness token joins a nonzero value"];
+      let sm: i32 = 0;
+      while (sm < sibling_reasons.len()) {
+        let refused = extract.check_selected(sibling_mutated(f, other, sm, r.name), d, r, layout, offset);
+        if (refused.ok || refused.message != sibling_reasons[sm]) {
+          print(refused.message);
+          exit(78 + sm);
+        }
+        sm = sm + 1;
+      }
       require(!extract.check(f, d, r, helper.FlatChild { offset: offset }).ok, 62);
-      let reasons: string[] = ["return without child credit", "return without child credit", "parent used after release", "return without child credit", "unsupported containment operation", "return without child credit", "clearing a shared parent"];
+      // Inverting the uniqueness test sends the shared parent down the arm that
+      // releases the sibling inline, which is refused before the free.
+      let reasons: string[] = ["return without child credit", "return without child credit", "parent used after release", "uniqueness token compared with a nonzero value", "unsupported containment operation", "return without child credit", "releasing a shared parent's child"];
       let mode: i32 = 0;
       while (mode < 7) {
         let result = extract.check_selected(lift(mutate(body, mode)), d, r, layout, offset);
         require(!result.ok && result.function_name == f.name && result.message == reasons[mode], 63 + mode);
         mode = mode + 1;
       }
-      // Clearing the other reference slot must not discharge the selected
-      // slot's credit, even though runtime child pointers may be equal.
+      // Releasing the selected slot in the sibling's place must not discharge
+      // the sibling's credit, even though runtime child pointers may be equal.
       let changed: ir.Op[] = [];
-      let hits: i32 = 0;
+      let loads: i32 = 0;
       for op in body.ops {
-        if (op.kind_tag == ir.kind_id("struct_set")) {
-          changed = changed.append(ir.Op { ...op, i32_imm: 2 - op.i32_imm });
-          hits = hits + 1;
+        if (op.kind_tag == ir.kind_id("struct_get")) {
+          if (loads == 1) {
+            changed = changed.append(ir.Op { ...op, i32_imm: 2 - op.i32_imm });
+          } else {
+            changed = changed.append(op);
+          }
+          loads = loads + 1;
         } else {
           changed = changed.append(op);
         }
       }
-      require(hits == 1, 70);
+      require(loads == 2, 70);
       let wrong = extract.check_selected(lift(irtables.LowerResult { ...body, ops: changed }), d, r, layout, offset);
-      require(!wrong.ok && wrong.function_name == f.name && wrong.message == "unsupported containment operation", 71);
+      require(!wrong.ok && wrong.function_name == f.name && wrong.message == "child release without local credit", 71);
       // Corrupt only the sibling's actual release; its obligation cannot be
       // ignored just because the other child is the function's result.
       let ops: ir.Op[] = [];
       let slot: i32 = -1;
-      hits = 0;
+      let hits: i32 = 0;
       for op in drops[0].ops {
         if (op.kind_tag == ir.kind_id("struct_get")) {
           slot = (op.i32_imm + 1) * 8;

@@ -4511,7 +4511,9 @@ groups are the order of work. Each sub-issue names its group.
   by SEEK_DATA / SEEK_HOLE, as GNU's lseek_copy does, so zeros that were
   written stay written under `--sparse=auto`; `--sparse=always` and a
   source that cannot be asked (WASI) fall back to punching zero blocks
-  at st_blksize granularity. A recursive copy walks a directory's entries in
+  at st_blksize granularity. `--sparse=never` walks a sparse source the
+  same way and writes each hole as zeros without reading it, and is never
+  offloaded to copy_file_range, which could keep a hole. A recursive copy walks a directory's entries in
   ascending INODE order — measured, and neither readdir order nor the
   names sorted nor directories first — and takes each entry's number
   from `read_dir_ino` (#9317), the `d_ino` readdir returned with the name,
