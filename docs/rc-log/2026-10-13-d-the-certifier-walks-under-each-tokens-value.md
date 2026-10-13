@@ -166,3 +166,20 @@ test, and a loop's box copied under its null token. `TestSelfHostRcCertifyMemo`,
 `TestSelfHostRcCertifyMemoKey`, `TestSelfHostRcCertifyInPlaceScale`, the
 physical-RC driver's `certifier-refuses-missing-retain`, and the lint
 ratchet.
+
+## A box copied before its test
+
+The walk under a token's value took the roots of the values its region
+uses but does not define from the base walk, but only after it had
+resolved the region's own copies, so a copy in the region of such a value
+kept that value as its root instead of the base's. A generated program
+(`TestDifferential_PrintableStdout`, seed 365) reached a record's box
+through a copy made before its uniqueness test: under the token holding
+the box, the token phi became a copy of that copy, its root missed the
+box, and the unit the base had moved into the phi on the unique edge was
+not handed back to the box. The box's shell release then found no unit,
+a refusal of a program whose binary is balanced under `FERN_LEAKCHECK`
+and the sanitizer. `roots_over` now resolves the region's aliases through
+the base's roots of the values outside it, and `rcmemo.version` is 6.
+`TestSelfHostRcCertifyCases` gains `token-box-copied-before-its-test`,
+which made exactly this finding before the change.
