@@ -7046,7 +7046,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo,
   // it checks, and before anything downstream plans ownership over it (#9692).
   f = ssasem.tail_recursion(f, name);
   f = ssabounds.word_loads(ssabounds.grouped_reads(ssabounds.proven_indices(f)), word_load_contracts(), [ssabytes.word_name(4), ssabytes.word_name(8)], [ssabytes.swap_name(4), ssabytes.swap_name(8)]);
-  f = ssaquotient.shared_quotients(f);
+  f = ssaquotient.shared_quotients(ssabounds.nonneg_quotients(f));
   return Made { p: Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: s.requests, bodyless: false, analysis: None, view_escape: 0, dropped: false }, memo: table.memo };
 }
 
