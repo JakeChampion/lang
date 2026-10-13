@@ -381,7 +381,11 @@ provider renamed (`P.B.scale` by `parser.claim_method_name`, `i32.__entry.add`
 across modules by `flatten.disambiguate_methods`), so its monomorphiser
 respells a bounded call on the template, before substituting, to the bound's
 provider, chosen as a `dyn` dispatch chooses its arm (`parser.bound_rewritten`
-for a bounded generic's clone and a bounded impl's method alike; #12277).
+for a bounded generic's clone and a bounded impl's method alike; #12277). An
+associated call through the variable (`T.zero()`) is respelled the same way, to
+the bound's associated function, and the Go re-check of the clone's
+`P.zero()` keeps the trait the first check stamped on it rather than reporting
+the two providers as ambiguous (#12281).
 
 A parameter typed by a trait (`f(d: Driver)`) is shorthand for a bounded type
 parameter, desugared before type checking into `f[T_d: Driver](d: T_d)`: one
