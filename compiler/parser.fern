@@ -11471,7 +11471,16 @@ function group_tokens(tokens: string[], at0: i32, n: i32, spare0: i32, structs: 
 // grouped after it where it is generic; else the one token.
 function take_piece(tokens: string[], at: i32, spare: i32, structs: StructDecl[], enums: EnumDecl[]): Grouped {
   if (tokens[at] == "tup") {
-    return take_tuple(tokens, at, structs, enums);
+    let tup: Grouped = take_tuple(tokens, at, structs, enums);
+    if (tup.at + 1 < tokens.len() && tokens[tup.at] == "fto") {
+      let rest: i32 = spare - (tup.at + 1 - at);
+      if (rest < 0) {
+        rest = 0;
+      }
+      let ret: Grouped = take_piece(tokens, tup.at + 1, rest, structs, enums);
+      return Grouped { pieces: [tup.pieces[0] + " => " + ret.pieces[0]], at: ret.at };
+    }
+    return tup;
   }
   let k: i32 = spare;
   while (k >= 0) {
@@ -11558,8 +11567,9 @@ function join_dunder(xs: string[], from: i32, to: i32): string {
 // struct, or a nested struct clone like `Box__i32`) passes through unchanged, so
 // this is a no-op on the pre-existing instantiations and only reshapes the
 // generic-struct-of-generic-enum combo (#3694). A tuple argument is bracketed
-// by `tup` and `put` tokens (`(i32, i64)` → `tup__i32__i64__put`), which
-// take_piece reads back as one argument. The raw bracketed key is kept
+// by `tup` and `put` tokens (`(i32, i64)` → `tup__i32__i64__put`), and a
+// function type's arrow is an `fto` token (`(i32) => i32` →
+// `tup__i32__put__fto__i32`); take_piece reads either back as one argument. The raw bracketed key is kept
 // for field-type SUBSTITUTION (so the enum pass still sees `Opt[i32]` to clone);
 // only the emitted NAME is sanitized.
 pub function sanitize_key(s: string): string {
@@ -11573,6 +11583,9 @@ pub function sanitize_key(s: string): string {
       out = out + "tup__";
     } else if (ch == b')') {
       out = out + "__put";
+    } else if (ch == b'=' && i + 1 < s.len() && s[i + 1] == b'>') {
+      out = out + "__fto__";
+      i = i + 1;
     } else if (ch == b']') {} else if (ch == b',') {
       out = out + "__";
     } else if (ch == b';') {  // the multi-param key separator

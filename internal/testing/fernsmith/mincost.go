@@ -46,12 +46,16 @@ func pathCost(p string) int {
 
 // cheapestCall is the helper returning t whose call is smallest when every
 // argument is itself a smallest expression, and that size. A recursive
-// helper's own self-call is not a candidate: it is budgeted, and a leaf is
-// not the place to spend it.
+// helper's own self-call is a candidate wherever emitCall would place one:
+// with a byte to spare its body may open with that call and return it, so
+// a spent stream must be able to return it directly.
 func (g *Generator) cheapestCall(sc *scope, t gtype) (*helperSig, int) {
 	var best *helperSig
 	cost := 0
 	cands := append(append([]helperSig{}, g.helpers...), g.localHelpers...)
+	if g.self != nil && g.selfCalls > 0 && g.loopDepth == 0 && g.inClosure == 0 {
+		cands = append(cands, *g.self)
+	}
 	for i := range cands {
 		if cands[i].retType != t {
 			continue
@@ -67,7 +71,10 @@ func (g *Generator) cheapestCall(sc *scope, t gtype) (*helperSig, int) {
 // expression.
 func (g *Generator) callCost(sc *scope, h helperSig) int {
 	c := 2 // the call and its callee
-	if h.fueled {
+	switch {
+	case g.self != nil && h.name == g.self.name:
+		c += 3 // (__fuel - 1i32)
+	case h.fueled:
 		c++
 	}
 	for _, p := range h.params {

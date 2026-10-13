@@ -1424,7 +1424,8 @@ func TestShrinkMainBytesReachesPastTruncation(t *testing.T) {
 // of a program-declared array type, a projection through a nested value, a
 // functional update, the ownership cluster and its reassignment of a shared
 // value, a fuel-bounded recursive helper and its self-call, the state fold,
-// the closure cluster, and the user trait's impls, calls and dyn cluster.
+// the closure cluster, the user trait's impls, calls and dyn cluster, and the
+// generic struct and enum cluster.
 // Each floor is about half the rate measured over
 // 1024 seeds (in parentheses), so a change that leaves a shape technically
 // reachable but rare fails here rather than quietly thinning what the oracles
@@ -1452,6 +1453,8 @@ func TestGenReachesOwnershipShapes(t *testing.T) {
 		{"bounded generic call (22%)", 0.10, regexp.MustCompile(`tg0\(`)},
 		{"call through a dyn parameter (21%)", 0.10, regexp.MustCompile(`(\(|, |\|> |= |return )dg0\(`)},
 		{"trait cluster: a dyn array and a reassigned dyn local (15%)", 0.07, regexp.MustCompile(`let __dyn_a\d+: dyn Tr0\[\] = `)},
+		{"generic struct and enum cluster (12%)", 0.06, regexp.MustCompile(`let __gen_a\d+: G0\[`)},
+		{"generic instance over a boxed type (9%)", 0.04, regexp.MustCompile(`let __gen_a\d+: G0\[(string|i32\[\]|i64\[\]|boolean\[\]|Pair|Xyz|Map|Option|Result|\(|S\d|E\d)`)},
 	}
 	hits := make([]int, len(landmarks))
 	for seed := uint64(0); seed < seeds; seed++ {
