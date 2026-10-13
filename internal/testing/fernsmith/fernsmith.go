@@ -397,8 +397,10 @@ type Generator struct {
 	// nested boxes reaches the corpus.
 	arrShapes   map[gtype]gtype
 	nextNominal gtype
-	// ownCounter names the vars an ownership cluster declares.
+	// ownCounter and cloCounter name the vars an ownership cluster and a
+	// closure cluster declare.
 	ownCounter int
+	cloCounter int
 	// self is the recursive helper whose body is being emitted, and
 	// selfCalls how many more calls to it that body may make; see funcDecl.
 	self      *helperSig
@@ -872,7 +874,7 @@ func (g *Generator) MainProgram() string {
 // mainStmt emits main's i-th statement.
 func (g *Generator) mainStmt(b *strings.Builder, sc *scope, i int) {
 	if g.maybeEmitWhile(b, sc) || g.maybeEmitForEach(b, sc) || g.maybeEmitLocalFn(b, sc) ||
-		g.maybeEmitArrayAliasCow(b, sc) || g.maybeEmitLoopReadBeforeWith(b, sc) || g.maybeEmitOwnershipCluster(b, sc) ||
+		g.maybeEmitArrayAliasCow(b, sc) || g.maybeEmitLoopReadBeforeWith(b, sc) || g.maybeEmitOwnershipCluster(b, sc) || g.maybeEmitClosureCluster(b, sc) ||
 		g.maybeEmitControlStmt(b, sc, tI32) {
 		return
 	}
@@ -939,6 +941,9 @@ func (g *Generator) MainPrintableProgram() string {
 			continue
 		}
 		if g.maybeEmitOwnershipCluster(&b, sc) {
+			continue
+		}
+		if g.maybeEmitClosureCluster(&b, sc) {
 			continue
 		}
 		if g.maybeEmitControlStmt(&b, sc, tI32) {
@@ -1523,7 +1528,7 @@ func (g *Generator) body(b *strings.Builder, sc *scope, retT gtype) {
 // bodyStmt emits a function body's i-th statement.
 func (g *Generator) bodyStmt(b *strings.Builder, sc *scope, retT gtype, i int) {
 	if g.maybeEmitWhile(b, sc) || g.maybeEmitForEach(b, sc) || g.maybeEmitLocalFn(b, sc) ||
-		g.maybeEmitArrayAliasCow(b, sc) || g.maybeEmitLoopReadBeforeWith(b, sc) || g.maybeEmitOwnershipCluster(b, sc) ||
+		g.maybeEmitArrayAliasCow(b, sc) || g.maybeEmitLoopReadBeforeWith(b, sc) || g.maybeEmitOwnershipCluster(b, sc) || g.maybeEmitClosureCluster(b, sc) ||
 		g.maybeEmitControlStmt(b, sc, retT) {
 		return
 	}

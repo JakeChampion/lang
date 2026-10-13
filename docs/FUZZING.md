@@ -43,6 +43,12 @@ What a program can contain:
   functionally update it while shared (`S { ...v, f: e }`), project a boxed
   field out, and reassign the original while the alias still holds it — the
   shapes Perceus reuse and nested retain/release have to get right.
+- **Closure environments** (the closure cluster in `ownership.go`): a lambda
+  whose parameter and first capture share a type, combined so that swapping
+  them changes the result, called directly or through an array — the
+  environment/argument mix-up the #5001 / #5007 / #5009 / #5026 cluster was
+  made of. With it the planted closure swap is caught at corpus 18; at random
+  it took 418.
 - **Control**: bounded `while`, `for` over arrays and maps, labelled
   break/continue, defer, match with guards and `@` bindings, if-let, let-else,
   the `?` operator, local functions and lambdas.

@@ -31,6 +31,7 @@ const (
 	featNominals
 	featNested
 	featRecursion
+	featClosure
 	numFeatures
 )
 

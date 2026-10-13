@@ -192,3 +192,65 @@ func (g *Generator) foldTerms(sc *scope) []string {
 	}
 	return out
 }
+
+// maybeEmitClosureCluster writes a closure whose parameter and first capture
+// share a type, under an operator that tells them apart, and calls it:
+//
+//	let __clo_c0: i32 = <expr>;
+//	let __clo_f0: (i32) => i32 = ((__lam_x5: i32) => ((__lam_x5 - __clo_c0) <op> <expr>));
+//	let __clo_r0: i32 = __clo_f0(<expr>);                  // the lifted, call-only path
+//	let __clo_r0: i32 = [__clo_f0, ...][0i32](<expr>);     // or the boxed one
+//
+// A lowering that hands the closure its capture where the argument belongs,
+// or its argument where the capture belongs — the environment/argument mix-up
+// the #5001 / #5007 / #5009 / #5026 cluster was made of — changes __clo_r0,
+// which the state fold reads. Random generation reaches this shape too, but
+// at a rate where a planted swap could go uncaught for a thousand programs.
+func (g *Generator) maybeEmitClosureCluster(b *strings.Builder, sc *scope) bool {
+	if !g.on(featClosure) {
+		return false
+	}
+	// Exhaustion convention: `true` here = no cluster, and every choice is
+	// drawn before anything is written, as in the ownership cluster.
+	if g.flip(0.85) {
+		return false
+	}
+	op := []string{"+", "*", "^"}[g.ch.intN(3)]
+	escaping := !g.flip(0.5)
+	if g.ch.exhausted() {
+		return false
+	}
+	idx := g.cloCounter
+	g.cloCounter++
+	c := fmt.Sprintf("__clo_c%d", idx)
+	f := fmt.Sprintf("__clo_f%d", idx)
+	r := fmt.Sprintf("__clo_r%d", idx)
+	x := fmt.Sprintf("__lam_x%d", g.lambdaCounter)
+	g.lambdaCounter++
+
+	fmt.Fprintf(b, "let %s: i32 = ", c)
+	g.expr(b, sc, tI32, 1)
+	b.WriteString("; ")
+	sc.declare(tI32, c)
+	inner := newScope(sc)
+	inner.declare(tI32, x)
+	fmt.Fprintf(b, "let %s: (i32) => i32 = ((%s: i32) => ((%s - %s) %s ", f, x, x, c, op)
+	prevRet := g.currentReturnType
+	g.currentReturnType = tI32
+	g.inClosure++
+	g.expr(b, inner, tI32, 1)
+	g.inClosure--
+	g.currentReturnType = prevRet
+	b.WriteString(")); ")
+	sc.declare(tFnI32I32, f)
+	fmt.Fprintf(b, "let %s: i32 = ", r)
+	if escaping {
+		fmt.Fprintf(b, "[%s][0i32](", f)
+	} else {
+		fmt.Fprintf(b, "%s(", f)
+	}
+	g.expr(b, sc, tI32, 1)
+	b.WriteString("); ")
+	sc.declare(tI32, r)
+	return true
+}

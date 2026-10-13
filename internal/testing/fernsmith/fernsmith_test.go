@@ -1423,10 +1423,11 @@ func TestShrinkMainBytesReachesPastTruncation(t *testing.T) {
 // added for the rc and layout paths: a struct field that owns a box, a local
 // of a program-declared array type, a projection through a nested value, a
 // functional update, the ownership cluster and its reassignment of a shared
-// value, a fuel-bounded recursive helper and its self-call, and the state
-// fold. Each floor is about half the rate measured over 1024 seeds (in
-// parentheses), so a change that leaves a shape technically reachable but
-// rare fails here rather than quietly thinning what the oracles judge.
+// value, a fuel-bounded recursive helper and its self-call, the state fold,
+// and the closure cluster. Each floor is about half the rate measured over
+// 1024 seeds (in parentheses), so a change that leaves a shape technically
+// reachable but rare fails here rather than quietly thinning what the oracles
+// judge.
 func TestGenReachesOwnershipShapes(t *testing.T) {
 	const seeds = 1024
 	landmarks := []struct {
@@ -1443,6 +1444,7 @@ func TestGenReachesOwnershipShapes(t *testing.T) {
 		{"fuel-bounded recursive helper (20%)", 0.10, regexp.MustCompile(`__fuel: i32`)},
 		{"recursive self-call (14%)", 0.06, regexp.MustCompile(`\(__fuel - 1i32\)`)},
 		{"state fold in main's return (57%)", 0.30, regexp.MustCompile(`\* 31i32 \+`)},
+		{"closure cluster: parameter and capture of one type (23%)", 0.10, regexp.MustCompile(`let __clo_r\d+: i32 = `)},
 	}
 	hits := make([]int, len(landmarks))
 	for seed := uint64(0); seed < seeds; seed++ {
