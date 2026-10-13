@@ -49,9 +49,9 @@
 # past the join tested it once. Values are the perf-x86_64 and perf-aarch64
 # lanes' measurements of the branch.
 
-x86_64/array_append.text	936
+x86_64/array_append.text	954
 x86_64/array_append.ir	13383897
-x86_64/array_index.text	937
+x86_64/array_index.text	947
 x86_64/array_index.ir	16455548
 x86_64/array_scale_f64.text	2759
 x86_64/array_scale_f64.ir	21337821
@@ -59,54 +59,54 @@ x86_64/array_with.ir	37762183
 x86_64/array_with.text	1088
 x86_64/ascii_scan.text	3038
 x86_64/ascii_scan.ir	37119510
-x86_64/call_overhead.text	91
-x86_64/call_overhead.ir	8550862
-x86_64/closure_call.text	824
+x86_64/call_overhead.text	88
+x86_64/call_overhead.ir	8250759
+x86_64/closure_call.text	848
 x86_64/closure_call.ir	94308097
-x86_64/enum_match.text	999
+x86_64/enum_match.text	1009
 x86_64/enum_match.ir	53775055
 x86_64/http_hello.text	19770
-x86_64/http_hello.ir	28140835
+x86_64/http_hello.ir	27552835
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
-x86_64/map_int.text	5839
-x86_64/map_int.ir	41320232
-x86_64/map_probe_chain.text	5854
-x86_64/map_probe_chain.ir	385170066
-x86_64/map_string.text	8751
-x86_64/map_string.ir	65377896	2
+x86_64/map_int.text	5717
+x86_64/map_int.ir	40650096
+x86_64/map_probe_chain.text	5724
+x86_64/map_probe_chain.ir	378133473
+x86_64/map_string.text	8631
+x86_64/map_string.ir	63795595	2
 x86_64/ordmap_insert.text	5191
 x86_64/ordmap_insert.ir	112624390
 x86_64/pmap_insert.text	4854
 x86_64/pmap_insert.ir	62362284
 x86_64/pvec_with.text	2769
 x86_64/pvec_with.ir	60166754
-x86_64/record_update.ir	118043874
-x86_64/record_update.text	1392
+x86_64/record_update.ir	109849111
+x86_64/record_update.text	1412
 x86_64/sort_inplace.text	2918
 x86_64/sort_inplace.ir	43380614
 x86_64/sort_ints.text	3398
 x86_64/sort_ints.ir	29849660
-x86_64/sort_strings.text	4210
+x86_64/sort_strings.text	4254
 x86_64/sort_strings.ir	105692600
-x86_64/string_build.text	3221
-x86_64/string_build.ir	93130927
+x86_64/string_build.text	3258
+x86_64/string_build.ir	91870927
 x86_64/string_count_byte.text	2923
 x86_64/string_count_byte.ir	135589612
 x86_64/string_find_byte.text	3307
 x86_64/string_find_byte.ir	43567682
 x86_64/string_rfind_byte.text	3359
 x86_64/string_rfind_byte.ir	43582563
-x86_64/string_scan.text	3237
-x86_64/string_scan.ir	53501893
-x86_64/string_slice.text	763
+x86_64/string_scan.text	3274
+x86_64/string_scan.ir	52966728
+x86_64/string_slice.text	773
 x86_64/string_slice.ir	38700038
 x86_64/struct_drop.text	3425
-x86_64/struct_drop.ir	317740547
-x86_64/tokenize.text	997
+x86_64/struct_drop.ir	310900547
+x86_64/tokenize.text	1007
 x86_64/tokenize.ir	36950039
 x86_64/utf8_ingest_unchecked.text	9286
-x86_64/utf8_ingest_unchecked.ir	2906083
+x86_64/utf8_ingest_unchecked.ir	2870412
 x86_64/utf8_ingest_validated.text	9532
 x86_64/utf8_ingest_validated.ir	5988691
 
@@ -252,15 +252,15 @@ aarch64/utf8_ingest_validated.ir	6347933
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 x86_64/perceus_cfold.text	2343
-x86_64/perceus_cfold.ir	59945221
+x86_64/perceus_cfold.ir	57965216
 x86_64/perceus_deriv.text	2647
-x86_64/perceus_deriv.ir	79864650
+x86_64/perceus_deriv.ir	74248648
 x86_64/perceus_nqueens.text	1448
-x86_64/perceus_nqueens.ir	98458828
+x86_64/perceus_nqueens.ir	94653628
 x86_64/perceus_rbtree.text	2729
-x86_64/perceus_rbtree.ir	58188449
+x86_64/perceus_rbtree.ir	57231727
 x86_64/perceus_rbtree_ck.text	3001
-x86_64/perceus_rbtree_ck.ir	67478521
+x86_64/perceus_rbtree_ck.ir	66352281
 aarch64/perceus_cfold.text	2563
 aarch64/perceus_cfold.ir	65049710
 aarch64/perceus_deriv.text	2912
