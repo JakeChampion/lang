@@ -118,6 +118,7 @@ import "std/i64";
 // core/int — int_to_string for the supervisor's worker-death log
 // lines (the raw exit code, straight to stderr).
 import "core/int";
+import "std/http/grpc";
 import "std/http/h2";
 import "std/http/h2/frame";
 
@@ -968,7 +969,7 @@ function __flight_filler[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], f
 function __tail_park[D: async.Driver](drv: D, c: __Conns, at: i32, producer: ChunkProducer, index: i32, end: string, t: async.Task[Option[u8[]]], w: async.Wait): __Conns {
   let none: i32[] = [];
   let now: i64 = monotonic_ns();
-  let fl: __Flight = __flight_watch(drv, __Flight { job: Producer(t), wait: w, fd: c.fds[at], set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: __pulling(c, at), idle: __idle_due(producer, now), ends: 0 - 1 as i64, stream: 0, since: 0 - 1 as i64 }, now);
+  let fl: __Flight = __flight_watch(drv, __Flight { job: Producer(t), wait: w, fd: c.fds[at], set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: __pulling(c, at), idle: __idle_due(producer, now), ends: 0 - 1 as i64, stream: 0, since: 0 - 1 as i64, grpc: false }, now);
   match (c.framing[at]) {
     Pulling(b) => {},
     _ => {
@@ -1049,7 +1050,7 @@ function __background_start[D: async.Driver](drv: D, fls: __Flight[], work: () =
     Suspended(w) => {
       let none: i32[] = [];
       let now: i64 = monotonic_ns();
-      return fls.append(__flight_watch(drv, __Flight { job: Background(t), wait: w, fd: 0 - 1, set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: None, idle: 0 - 1 as i64, ends: __bound_ends(opts.background_deadline, now), stream: 0, since: 0 - 1 as i64 }, now));
+      return fls.append(__flight_watch(drv, __Flight { job: Background(t), wait: w, fd: 0 - 1, set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: None, idle: 0 - 1 as i64, ends: __bound_ends(opts.background_deadline, now), stream: 0, since: 0 - 1 as i64, grpc: false }, now));
     },
     _ => {
       async.task_free(t);
@@ -2521,7 +2522,7 @@ function __h2_produce[D: async.Driver](drv: D, a: __H2Answered, at: i32, sid: i3
         let running: __H2Producer = __H2Producer { ...p, running: true };
         let conns: __Conns = __Conns { ...a.conns, producers: a.conns.producers.with(pi, running) };
         let none: i32[] = [];
-        let fl: __Flight = __Flight { job: Producer(t), wait: w, fd: fd, set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: None, idle: 0 - 1 as i64, ends: 0 - 1 as i64, stream: sid, since: 0 - 1 as i64 };
+        let fl: __Flight = __Flight { job: Producer(t), wait: w, fd: fd, set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: None, idle: 0 - 1 as i64, ends: 0 - 1 as i64, stream: sid, since: 0 - 1 as i64, grpc: false };
         return __H2Answered { ...a, conns: conns, fls: a.fls.append(__flight_watch(drv, fl, monotonic_ns())) };
       },
       Cancelled => {
@@ -3838,8 +3839,9 @@ function __serve_stream[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at
 // whose connection takes no other request while the flight is parked;
 // an HTTP/2 connection serves its other streams meanwhile, so `since`
 // keeps the request's clock (`rate_since`) as the flight parked, what its
-// answer is counted from.
-struct __Flight { job: __Job, wait: async.Wait, fd: i32, set: i32[], due: i64, method: string, version: string, kept: boolean, behind: __Behind, body: Option[__Body], idle: i64, ends: i64, stream: i32, since: i64 }
+// answer is counted from. `grpc` is whether the request is a gRPC call,
+// which a missed deadline answers with the call's status rather than 503.
+struct __Flight { job: __Job, wait: async.Wait, fd: i32, set: i32[], due: i64, method: string, version: string, kept: boolean, behind: __Behind, body: Option[__Body], idle: i64, ends: i64, stream: i32, since: i64, grpc: boolean }
 
 // __Job — the task a flight runs: a handler, whose response the flight
 // answers, a response's chunk producer (`__tail_park`), whose chunk
@@ -3879,11 +3881,11 @@ function __serve_start(handler: (HttpRequest, platform.Host) => HttpResponse, pl
   let ends: i64 = held.1;
   match (async.call_start(handler, req, plat)) {
     Done(resp) => {
-      return HandlerDone(__in_time(resp, ends, plat.elapsed_ns()));
+      return HandlerDone(__in_time(resp, ends, plat.elapsed_ns(), grpc.is_grpc(req)));
     },
     Suspended(w) => {
       let none: i32[] = [];
-      return HandlerParked(__Flight { job: Handler(async.call_of(w, handler, req, plat)), wait: w, fd: 0, set: none, due: 0 - 1 as i64, method: req.method, version: f.version, kept: kept, behind: behind, body: None, idle: 0 - 1 as i64, ends: ends, stream: 0, since: 0 - 1 as i64 });
+      return HandlerParked(__Flight { job: Handler(async.call_of(w, handler, req, plat)), wait: w, fd: 0, set: none, due: 0 - 1 as i64, method: req.method, version: f.version, kept: kept, behind: behind, body: None, idle: 0 - 1 as i64, ends: ends, stream: 0, since: 0 - 1 as i64, grpc: grpc.is_grpc(req) });
     },
     Cancelled => {}
   }
@@ -3902,11 +3904,20 @@ function __bound_ends(bound: Duration, now: i64): i64 {
 
 // __in_time(resp, ends, now) — the handler's response, or 503 in its place
 // when it came after `ends`.
-function __in_time(resp: HttpResponse, ends: i64, now: i64): HttpResponse {
+function __in_time(resp: HttpResponse, ends: i64, now: i64, is_grpc: boolean): HttpResponse {
   if (ends >= 0 as i64 && now >= ends) {
-    return http.text(503, "");
+    return __late(is_grpc);
   }
   return resp;
+}
+
+// __late(is_grpc) — the answer to a request past its deadline: 503, or
+// for a gRPC call its DEADLINE_EXCEEDED status, as its client expects.
+function __late(is_grpc: boolean): HttpResponse {
+  if (is_grpc) {
+    return grpc.error(grpc.DEADLINE_EXCEEDED, "deadline exceeded");
+  }
+  return http.text(503, "");
 }
 
 // __serve_step(handler, st, req, plat, opts) — the stateful handler run for
@@ -3914,7 +3925,7 @@ function __in_time(resp: HttpResponse, ends: i64, now: i64): HttpResponse {
 function __serve_step[S](handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), st: S, req: HttpRequest, plat: platform.Host, opts: Config): (S, HttpResponse) {
   let held: (platform.Host, i64) = __request_host(plat, req, opts);
   let stepped: (S, HttpResponse) = handler(st, req, held.0);
-  return (stepped.0, __in_time(stepped.1, held.1, held.0.elapsed_ns()));
+  return (stepped.0, __in_time(stepped.1, held.1, held.0.elapsed_ns(), grpc.is_grpc(req)));
 }
 
 // __serve_started(c, at) — the connection at `at` with its request's clock
@@ -3928,13 +3939,34 @@ function __serve_started(c: __Conns, at: i32): __Conns {
   return __Conns { ...c, rate_since: c.rate_since.with(at, monotonic_ns()), rate_base: c.rate_base.with(at, c.bufs[at].len()) };
 }
 
+// __request_ends(req, opts, now) — the monotonic nanosecond the request
+// must be answered by, -1 for none: `Config.handler_deadline` from now, or
+// the request's own `grpc-timeout` when it is sooner (a gRPC call's
+// deadline, PROTOCOL-HTTP2.md), one of 0 due at once.
+function __request_ends(req: HttpRequest, opts: Config, now: i64): i64 {
+  let ends: i64 = __bound_ends(opts.handler_deadline, now);
+  match (grpc.timeout(req.headers)) {
+    Some(d) => {
+      let own: i64 = now + d.as_nanos();
+      if (ends < 0 as i64 || own < ends) {
+        return own;
+      }
+      return ends;
+    },
+    None => {
+      return ends;
+    }
+  }
+  return ends;
+}
+
 // __request_host(plat, req, opts) — the host a handler runs `req` under,
 // and the monotonic nanosecond it must answer by (-1 for none): the
-// connection's host with the request's deadline (`Config.handler_deadline`)
-// and, when `Config.trace` asks, the span the request opens, continuing the
+// connection's host with the request's deadline (`__request_ends`) and,
+// when `Config.trace` asks, the span the request opens, continuing the
 // caller's trace from its `traceparent`.
 function __request_host(plat: platform.Host, req: HttpRequest, opts: Config): (platform.Host, i64) {
-  let ends: i64 = __bound_ends(opts.handler_deadline, plat.elapsed_ns());
+  let ends: i64 = __request_ends(req, opts, plat.elapsed_ns());
   if (ends >= 0 as i64) {
     plat = plat.with_deadline(ends);
   }
@@ -4074,7 +4106,7 @@ function __handler_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fl
   match (async.call_resume(call, ready)) {
     Done(resp) => {
       async.call_free(call);
-      return __serve_answer(drv, c, fls, fl, __in_time(resp, fl.ends, monotonic_ns()), opts, clk);
+      return __serve_answer(drv, c, fls, fl, __in_time(resp, fl.ends, monotonic_ns(), fl.grpc), opts, clk);
     },
     Suspended(w) => {
       return (c, fls.append(__flight_watch(drv, __Flight { ...fl, wait: w }, monotonic_ns())));
@@ -4370,7 +4402,7 @@ function __flight_overdue[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], 
   fls = __flights_remove(fls, i);
   match (late.job) {
     Handler(call) => {
-      return __serve_answer(drv, c, fls, late, http.text(503, ""), opts, clk);
+      return __serve_answer(drv, c, fls, late, __late(late.grpc), opts, clk);
     },
     _ => {}
   }
@@ -4640,24 +4672,10 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
         conns = __serve_accept(drv, listener, conns, opts, host_for);
         continue;
       }
-      let fi: i32 = __flight_index(flights, fd);
-      if (fi >= 0) {
-        let woke: (__Conns, __Flight[]) = __flight_wake(drv, conns, flights, fi, __flight_pair(flights[fi], fd), opts, clk);
-        conns = woke.0;
-        flights = woke.1;
-        let taken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts);
-        conns = taken.0;
-        flights = taken.1;
-        continue;
-      }
-      let busy: i32 = __flight_at(flights, fd);
-      if (busy >= 0) {
-        let held: (__Conns, __Flight[]) = __serve_held_event(drv, conns, flights, busy, fd, readiness, scratch, opts);
-        conns = held.0;
-        flights = held.1;
-        let taken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts);
-        conns = taken.0;
-        flights = taken.1;
+      let flown: (__Conns, __Flight[], boolean) = __flight_event(drv, conns, flights, fd, readiness, scratch, opts, clk);
+      conns = flown.0;
+      flights = flown.1;
+      if (flown.2) {
         continue;
       }
       let ev: (__Conns, i32, boolean) = __serve_event(drv, conns, fd, scratch, opts, clk);

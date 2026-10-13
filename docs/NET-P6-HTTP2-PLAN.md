@@ -156,8 +156,15 @@ without ACK within the timeout closes the connection.
    parts and reads each echoed back before sending the next, with a
    trailer at the end; the interpreter, which cannot park a task
    (`async.parks()`), hands a body over whole. `read_some` on `std/stream`
-   is the reader a duplex handler needs. Still to do here: `grpc-timeout`
-   onto the deadline and the interop lane itself.
+   is the reader a duplex handler needs. The wire (landed): `std/protobuf`
+   reads and writes the wire format with no schema, `std/http/grpc` the
+   message framing, the status trailers, `is_grpc` and `grpc-timeout`, and
+   the serve loop puts a request's `grpc-timeout` on its deadline, the
+   sooner of it and `handler_deadline`, answering a call past it with
+   `grpc-status: 4` where an HTTP request gets 503 (`TestServeH2X86_64`
+   parks a timed call on the held upstream and reads the status back
+   while the upstream still holds). Still to do here: the interop lane
+   itself.
 7. **The client.** `std/fetch` over HTTP/2 to an origin that offers it,
    one connection per origin, so a handler's upstream calls multiplex.
 8. **Exit.** Per-stream bump bytes bounded and recorded on the perf lane;

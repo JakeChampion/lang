@@ -1213,6 +1213,19 @@ func TestRunnerHTTPH2ExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "http_h2", "std/http/h2", 12)
 }
 
+// `tests/stdlib/http_grpc_test.fern` reads the gRPC message framing back
+// whole and in parts, parses grpc-timeout's units, tells a gRPC request
+// from another and builds the status trailers.
+func TestRunnerHTTPGRPCExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_grpc", "std/http/grpc", 5)
+}
+
+// `tests/stdlib/protobuf_test.fern` reads and writes the protobuf wire
+// format against the encoding guide's examples and refuses each fault.
+func TestRunnerProtobufExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "protobuf", "std/protobuf", 5)
+}
+
 // `tests/stdlib/http_form_test.fern` reads a urlencoded body as its fields
 // and refuses another media type and a body that is not UTF-8.
 func TestRunnerHTTPCookieExamplePasses(t *testing.T) {

@@ -433,6 +433,31 @@ func (w *serveH2World) driveParked(t *testing.T, cmd *exec.Cmd) {
 		t.Fatalf("a parked handler answered before the upstream released it: %q %v", a.body, a.err)
 	default:
 	}
+	// A gRPC call with a 50 ms grpc-timeout parks on the same upstream and
+	// is answered with DEADLINE_EXCEEDED when the deadline passes, as a
+	// trailers-only response, the upstream still holding.
+	timed, err := http.NewRequest("POST", base+"/park", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	timed.Header.Set("Content-Type", "application/grpc")
+	timed.Header.Set("Grpc-Timeout", "50m")
+	started := time.Now()
+	late, err := client.Do(timed)
+	if err != nil {
+		t.Fatalf("gRPC call with grpc-timeout: %v", err)
+	}
+	io.Copy(io.Discard, late.Body)
+	late.Body.Close()
+	if late.StatusCode != 200 || late.Trailer.Get("Grpc-Status") != "4" {
+		t.Fatalf("gRPC call past its deadline: %d, trailers %v, want 200 with grpc-status 4", late.StatusCode, late.Trailer)
+	}
+	if took := time.Since(started); took > 10*time.Second {
+		t.Fatalf("the deadline took %v to be answered", took)
+	}
+	if up.Held() != parked+1 {
+		t.Fatalf("%d handlers parked on the upstream, want %d", up.Held(), parked+1)
+	}
 	up.Release()
 	for i := 0; i < parked; i++ {
 		select {

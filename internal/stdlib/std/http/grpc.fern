@@ -1,0 +1,209 @@
+// std/http/grpc — the gRPC wire protocol over HTTP/2
+// (github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md), the parts a
+// server written on std/serve needs: the length-prefixed message framing
+// of a request or response body, the status codes and the trailers that
+// carry one, the `grpc-timeout` a request arrives with, and what makes a
+// request gRPC's. Messages are bytes here; std/protobuf reads and writes
+// them.
+
+import "std/headers";
+import "std/http";
+import "std/string";
+import "std/time";
+
+// Status codes (PROTOCOL-HTTP2 §Status codes, statuscodes.md).
+pub const OK: i32 = 0;
+
+pub const CANCELLED: i32 = 1;
+
+pub const UNKNOWN: i32 = 2;
+
+pub const INVALID_ARGUMENT: i32 = 3;
+
+pub const DEADLINE_EXCEEDED: i32 = 4;
+
+pub const NOT_FOUND: i32 = 5;
+
+pub const ALREADY_EXISTS: i32 = 6;
+
+pub const PERMISSION_DENIED: i32 = 7;
+
+pub const RESOURCE_EXHAUSTED: i32 = 8;
+
+pub const FAILED_PRECONDITION: i32 = 9;
+
+pub const ABORTED: i32 = 10;
+
+pub const OUT_OF_RANGE: i32 = 11;
+
+pub const UNIMPLEMENTED: i32 = 12;
+
+pub const INTERNAL: i32 = 13;
+
+pub const UNAVAILABLE: i32 = 14;
+
+pub const DATA_LOSS: i32 = 15;
+
+pub const UNAUTHENTICATED: i32 = 16;
+
+// `is_grpc(req)` — whether the request is a gRPC call: its content-type is
+// `application/grpc`, alone or with a `+proto` style suffix or parameters.
+pub function is_grpc(req: HttpRequest): boolean {
+  match (req.headers.get("content-type")) {
+    Some(ct) => {
+      let lower: string = ct.to_lower();
+      if (lower == "application/grpc") {
+        return true;
+      }
+      return lower.starts_with("application/grpc+") || lower.starts_with("application/grpc;");
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// `timeout(headers)` — the request's `grpc-timeout`, a count of at most
+// eight digits and a unit (H hours, M minutes, S seconds, m milliseconds,
+// u microseconds, n nanoseconds) as a Duration; None without one, or for
+// one that is not of that shape.
+pub function timeout(h: HeaderMap): Option[Duration] {
+  match (h.get("grpc-timeout")) {
+    Some(v) => {
+      let b: u8[] = v.bytes();
+      if (b.len() < 2 || b.len() > 9) {
+        return None;
+      }
+      let n: i64 = 0 as i64;
+      let i: i32 = 0;
+      while (i < b.len() - 1) {
+        let d: i32 = b[i] as i32;
+        if (d < 48 || d > 57) {
+          return None;
+        }
+        n = n * (10 as i64) + (d - 48) as i64;
+        i = i + 1;
+      }
+      return __unit(b[b.len() - 1] as i32, n);
+    },
+    None => {
+      return None;
+    }
+  }
+  return None;
+}
+
+function __unit(unit: i32, n: i64): Option[Duration] {
+  if (unit == 72) {
+    return Some(time.duration_nanos(n * (3600000000000 as i64)));
+  }
+  if (unit == 77) {
+    return Some(time.duration_nanos(n * (60000000000 as i64)));
+  }
+  if (unit == 83) {
+    return Some(time.duration_nanos(n * (1000000000 as i64)));
+  }
+  if (unit == 109) {
+    return Some(time.duration_nanos(n * (1000000 as i64)));
+  }
+  if (unit == 117) {
+    return Some(time.duration_nanos(n * (1000 as i64)));
+  }
+  if (unit == 110) {
+    return Some(time.duration_nanos(n));
+  }
+  return None;
+}
+
+// `frame(message)` — a message as the body carries it: a compressed flag
+// of 0, its length as four big-endian bytes, then the message.
+pub function frame(message: u8[]): u8[] {
+  let n: i32 = message.len();
+  let head: u8[] = [0 as u8, (n >> 24 & 255) as u8, (n >> 16 & 255) as u8, (n >> 8 & 255) as u8, (n & 255) as u8];
+  return head.concat(message);
+}
+
+// `next_message(buffered)` — the first whole message in the bytes buffered
+// from a body and what follows it, `Some((message, rest))`; None while the
+// buffer holds no whole message yet. Err for a message marked compressed,
+// which this server does not take (answer UNIMPLEMENTED), or a length past
+// the four bytes' sign bit.
+pub function next_message(buffered: u8[]): Result[Option[(u8[], u8[])], string] {
+  if (buffered.len() < 5) {
+    return Ok(None);
+  }
+  if (buffered[0] != 0 as u8) {
+    return Err("compressed message");
+  }
+  if (buffered[1] as i32 >= 128) {
+    return Err("message length past 2 GiB");
+  }
+  let n: i32 = buffered[1] as i32 << 24 | buffered[2] as i32 << 16 | buffered[3] as i32 << 8 | buffered[4] as i32;
+  if (buffered.len() < 5 + n) {
+    return Ok(None);
+  }
+  let message: u8[] = [];
+  let i: i32 = 5;
+  while (i < 5 + n) {
+    message = message.append(buffered[i]);
+    i = i + 1;
+  }
+  let rest: u8[] = [];
+  while (i < buffered.len()) {
+    rest = rest.append(buffered[i]);
+    i = i + 1;
+  }
+  return Ok(Some((message, rest)));
+}
+
+// `headers()` — the headers every gRPC response carries: a 200 with
+// `content-type: application/grpc`.
+pub function headers(): HeaderMap {
+  return headers.header_map_new().append("Content-Type", "application/grpc");
+}
+
+// `status(code, message)` — the trailers that end a call: `grpc-status`
+// and, for a message, `grpc-message` percent-encoded as the protocol
+// asks (spaces and printable ASCII kept, the rest as %XX of the UTF-8).
+pub function status(code: i32, message: string): HeaderMap {
+  let out: HeaderMap = headers.header_map_new().append("Grpc-Status", code.to_string());
+  if (message.len() == 0) {
+    return out;
+  }
+  return out.append("Grpc-Message", __percent(message));
+}
+
+function __percent(message: string): string {
+  let out: string = "";
+  for b in message.bytes() {
+    let c: i32 = b as i32;
+    if (c == 37 || c < 32 || c > 126) {
+      out = out + "%" + __hex_byte(c);
+    } else {
+      out = out + string_from_bytes_unchecked([b]);
+    }
+  }
+  return out;
+}
+
+function __hex_byte(c: i32): string {
+  let digits: string = "0123456789ABCDEF";
+  return string_from_bytes_unchecked([digits.bytes()[c >> 4 & 15], digits.bytes()[c & 15]]);
+}
+
+// `response(messages, code, message)` — a whole response: the messages
+// framed in order as the body, the headers above and the status as
+// trailers; `error(code, message)` answers a call with no message, the
+// status alone, which the protocol allows as a trailers-only response.
+pub function response(messages: u8[][], code: i32, message: string): HttpResponse {
+  let body: u8[] = [];
+  for m in messages {
+    body = body.concat(frame(m));
+  }
+  return HttpResponse { status: 200, body: BodyBytes(body), headers: headers(), trailers: status(code, message), background: None };
+}
+
+pub function error(code: i32, message: string): HttpResponse {
+  return response([], code, message);
+}

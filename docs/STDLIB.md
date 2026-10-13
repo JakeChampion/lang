@@ -1927,6 +1927,20 @@ Percent-encoding, URL parsing, query parsing.
   escaper — the `JsonValue` encoder, `@derive(json.Json)`, and
   `std/log`'s JSON-lines mode all route through it.
 
+### `std/protobuf`
+
+The protocol buffers wire format (protobuf.dev's encoding guide), with no
+schema: `decode(bytes)` is a message's fields in order (`Field { number,
+wire, word, bytes }`, a varint or fixed word in `word`, length-delimited
+bytes in `bytes`; Err for a varint cut short or over ten bytes, a length
+past the end, a field number of 0, or a group), and `varint(fields, n)`,
+`bytes(fields, n)` and `repeated(fields, n)` read the last, or every,
+field `n` carries. `varint_field(n, v)`, `bytes_field(n, bytes)`,
+`string_field(n, s)` and `encode_varint(v)` write them, and `zigzag` and
+`unzigzag` are the sint coding. Enough for a server of a small service to
+read the fields it knows and write its replies; `std/http/grpc` carries
+the messages.
+
 ### `std/http`
 
 HTTP/1.1 request parsing, response builders, wire-format
@@ -2812,6 +2826,25 @@ and error codes, the settings identifiers and the frame-size bounds are
 constants. The connection's state (settings, windows, a header block over
 CONTINUATION frames) is `std/http/h2`'s.
 
+### `std/http/grpc`
+
+The gRPC wire protocol over HTTP/2 (PROTOCOL-HTTP2.md), the parts a server
+on `std/serve` needs. `frame(message)` is a message as a body carries it
+(a compressed flag of 0, four big-endian length bytes, the message) and
+`next_message(buffered)` reads the first whole one back with what follows
+(`Ok(None)` while the buffer holds no whole message; Err for a compressed
+message, which no server here takes, or a length past 2 GiB), so a handler
+reading a streamed body (`stream_bodies`) can answer each message as it
+comes. `is_grpc(req)` is whether a request's content-type is
+`application/grpc` or a variant of it; `timeout(headers)` the request's
+`grpc-timeout` as a Duration, which the serve loop puts on the request's
+deadline, answering a late call with status 4. `headers()` is the 200 and
+content-type a response starts with, `status(code, message)` the trailers
+that end it (`grpc-message` percent-encoded), `response(messages, code,
+message)` a whole response and `error(code, message)` a trailers-only one;
+the status codes are constants (`OK`, `DEADLINE_EXCEEDED`, `UNIMPLEMENTED`,
+…). Messages are bytes here: `std/protobuf` reads and writes them.
+
 ### `std/http/sse`
 
 Server-sent events, the `text/event-stream` of the WHATWG HTML standard:
@@ -3319,7 +3352,10 @@ points that run a handler under it.
   written as its producer answers and the windows allow, each chunk a
   task that may park, so a request and its response flow at once
   (`TestServeH2X86_64`'s ping-pong). Under the interpreter, which cannot
-  park a task, a body is handed over whole as before. `run_with`'s stateful loop serves it too, each stream's
+  park a task, a body is handed over whole as before. A gRPC call's
+  `grpc-timeout` bounds its handler as `handler_deadline` does, the sooner
+  of the two, and a call past it is answered with `grpc-status: 4`
+  (`std/http/grpc`) where an HTTP request gets 503. `run_with`'s stateful loop serves it too, each stream's
   request run with the state in order (`TestServeH2Interp`,
   `TestServeH2X86_64`).
   `proxy_protocol` (false) reads a PROXY protocol header, version 1 or 2,
