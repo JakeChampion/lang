@@ -2308,6 +2308,15 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.ArrayType{Elem: ast.NumberType{}}, ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
+	// tcp_ktls(fd, op, arg, data): number — the kernel TLS record layer on a
+	// connected socket (#9858): attach it, install a direction's keys, send
+	// a record of type arg, or read one record's content into data,
+	// answering the byte count plus the record type shifted left 24. -errno
+	// on failure, ENOSYS where the target has none.
+	c.info.FuncSigs["tcp_ktls"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.NumberType{},
+	}
 	// tcp_recv_into(fd, buf): number — one read into the caller's buffer,
 	// up to its length: the byte count, 0 at EOF, or -errno.
 	c.info.FuncSigs["tcp_recv_into"] = &ast.FuncType{

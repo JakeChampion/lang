@@ -68,6 +68,7 @@ var BuiltinCaps = map[string]string{
 	"unix_listen":      "net",
 	"unix_connect":     "net",
 	"tcp_recv_into":    "net",
+	"tcp_ktls":         "net",
 
 	"read_file":        "fs",
 	"read_file_bytes":  "fs",
