@@ -85,6 +85,26 @@ func TestFernsmithMutationScore(t *testing.T) {
 
 	var stillborn, smoke, killed, survived int
 	var report []string
+	summary := func() string {
+		s := fmt.Sprintf("mutation score: %d of %d non-trivial mutants killed by fernsmith (%d more killed by a trivial program, %d stillborn)",
+			killed, killed+survived, smoke, stillborn)
+		if killed+survived > 0 {
+			s += fmt.Sprintf(" — %.0f%%", 100*float64(killed)/float64(killed+survived))
+		}
+		if len(report) < n {
+			s += fmt.Sprintf(" — partial, %d of %d mutants", len(report), n)
+		}
+		return s + "\n" + strings.Join(report, "\n")
+	}
+	// The report is rewritten after every mutant, so a run the go test
+	// timeout cuts short still leaves the mutants it finished.
+	flush := func() {
+		if path := os.Getenv("FERN_MUTATION_REPORT"); path != "" {
+			if err := os.WriteFile(path, []byte(summary()+"\n"), 0o644); err != nil {
+				t.Fatalf("write %s: %v", path, err)
+			}
+		}
+	}
 	for id := base; id < base+n; id++ {
 		m := pickMutation(sites, id)
 		mdir := writeSelfHostAsmProject(t)
@@ -97,6 +117,7 @@ func TestFernsmithMutationScore(t *testing.T) {
 			filepath.Join(mdir, "fern.fern"), bin, e2eharness.DriverBuildWeightMB("fern.fern")); err != nil {
 			stillborn++
 			report = append(report, fmt.Sprintf("mutant %d stillborn  %s", id, m))
+			flush()
 			continue
 		}
 		verdict := mutantVerdict(t, bin, stdlibRoot, progs, wants)
@@ -109,19 +130,9 @@ func TestFernsmithMutationScore(t *testing.T) {
 			survived++
 		}
 		report = append(report, fmt.Sprintf("mutant %d %-9s %s", id, verdict, m))
+		flush()
 	}
-	scored := smoke + killed + survived
-	summary := fmt.Sprintf("mutation score: %d of %d non-trivial mutants killed by fernsmith (%d more killed by a trivial program, %d stillborn)",
-		killed, killed+survived, smoke, stillborn)
-	if scored > 0 && killed+survived > 0 {
-		summary += fmt.Sprintf(" — %.0f%%", 100*float64(killed)/float64(killed+survived))
-	}
-	t.Log(summary + "\n" + strings.Join(report, "\n"))
-	if path := os.Getenv("FERN_MUTATION_REPORT"); path != "" {
-		if err := os.WriteFile(path, []byte(summary+"\n"+strings.Join(report, "\n")+"\n"), 0o644); err != nil {
-			t.Fatalf("write %s: %v", path, err)
-		}
-	}
+	t.Log(summary())
 }
 
 // mutantVerdict is "smoke" when the mutant cannot build and run a trivial

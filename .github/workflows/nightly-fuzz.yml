@@ -464,7 +464,11 @@ jobs:
           FERN_MUTATION_BASE=$(( FERN_MUTATION_BASE * 16 ))
           export FERN_MUTATION_BASE
           go test ./internal/testing/e2e/ -run '^TestFernsmithMutationScore$' -count=1 -v -timeout 85m
-          cat "$FERN_MUTATION_REPORT" >> "$GITHUB_STEP_SUMMARY"
+      - name: report to the step summary
+        if: always()
+        run: |
+          report="${{ runner.temp }}/mutation-score.txt"
+          if [ -f "$report" ]; then cat "$report" >> "$GITHUB_STEP_SUMMARY"; fi
       - uses: actions/upload-artifact@v7
         if: always()
         with:
