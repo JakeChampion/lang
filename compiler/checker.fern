@@ -14013,7 +14013,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
                 if (fldi < 0) {
                   out = out.append(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + mfa.field + "\"", mfa.line, mfa.col));
                 } else {
-                  let fldt: typeinfo.Type = fsig.field_types[fldi];
+                  let fldt: typeinfo.Type = field_access_result_type(mfa, sn, s);
                   let fld_is_fn: boolean = false;
                   match (fldt) {
                     typeinfo.TypeFunc(_) => {
