@@ -1187,7 +1187,7 @@ function known_fields(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock, d: i32): 
     return none;
   }
   let e: i32 = semrecords.find_enum(f.enums, f.values[d]);
-  if (e < 0 || f.enums[e].layout != semrecords.layout_variant()) {
+  if (e < 0 || f.enums[e].layout == semrecords.layout_option()) {
     return none;
   }
   let v: i32 = semrecords.find_variant(f.enums[e], name);

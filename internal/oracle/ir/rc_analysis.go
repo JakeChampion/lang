@@ -9387,12 +9387,12 @@ func (b *builder) computeFieldOwnMoves() map[*ast.FieldAccess]bool {
 			if !ok {
 				return true
 			}
-			if sl, isLit := st.Value.(*ast.StructLit); isLit {
+			if sl := checker.FieldMoveLiteral(st.Value); sl != nil {
 				claim(sl, t, false)
 			}
 		case *ast.Return:
-			sl, isLit := st.Value.(*ast.StructLit)
-			if !isLit || sl.Base == nil {
+			sl := checker.FieldMoveLiteral(st.Value)
+			if sl == nil || sl.Base == nil {
 				return true
 			}
 			if bid, ok := sl.Base.(*ast.Ident); ok {

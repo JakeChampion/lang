@@ -318,7 +318,7 @@ function equal(g: Graph, a: i32, b: i32, steps: i32): boolean {
 }
 
 function projection(kind: i32): boolean {
-  return kind == ssasem.record_get() || kind == ssasem.tuple_get() || kind == ssasem.length() || kind == ssasem.array_get();
+  return kind == ssasem.record_get() || kind == ssasem.variant_get() || kind == ssasem.tuple_get() || kind == ssasem.length() || kind == ssasem.array_get();
 }
 
 function def_of(g: Graph, v: i32): ssa.SInst {
