@@ -245,6 +245,28 @@ function pick(name: string): Case {
         let b5: ssa.SBlock = block(5, [3, 4], [call(7, "take", [4]), const_int(8, 2), call(9, "__fern_alloc_reuse", [2, 8]), fresh_box(11), store(9, 8, 11)], ret(9));
         return Case { f: func(1, 12, [b0, b1, b2, b3, b4, b5]), modes: [counted], returns_unit: true };
     }
+    if (name == "token-reuse-puts-back-and-stores-elsewhere" || name == "token-reuse-puts-back-and-stores-elsewhere-unretained") {
+        // A field read off the token's box is stored back into its own slot
+        // of the reused box and into a second slot: the first store keeps
+        // the slot's unit, the second needs the retain.
+        let second: ssa.SInst[] = [call(8, "__fern_rc_inc", [4]), inst(9, 9, [3, 5], 0, "eq")];
+        if (name == "token-reuse-puts-back-and-stores-elsewhere-unretained") {
+            second = [inst(9, 9, [3, 5], 0, "eq")];
+        }
+        let b0: ssa.SBlock = block(0, [], [param(0), call(1, "__fern_rc_is_unique", [0])], brif(1, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [], br(3));
+        let b2: ssa.SBlock = block(2, [0], [const_int(2, 0)], br(3));
+        let b3: ssa.SBlock = block(3, [1, 2], [inst(8, 3, [0, 2], 0, ""), counted_load(4, 0, 8), const_int(5, 0), inst(9, 6, [3, 5], 0, "eq")], brif(6, 4, 5));
+        let b4: ssa.SBlock = block(4, [3], [call(7, "__fern_rc_inc", [4])], br(5));
+        let b5: ssa.SBlock = block(5, [3, 4], second, brif(9, 6, 7));
+        let b6: ssa.SBlock = block(6, [5], [const_int(10, 3), call(11, "__fern_alloc_reuse", [3, 10])], br(8));
+        let b7: ssa.SBlock = block(7, [5], [], br(8));
+        let b8: ssa.SBlock = block(8, [6, 7], [inst(8, 12, [11, 3], 0, ""), inst(9, 13, [3, 5], 0, "ne")], brif(13, 9, 10));
+        let b9: ssa.SBlock = block(9, [8], [counted_load(14, 0, 16), call(15, "__fern_rc_dec", [14])], br(11));
+        let b10: ssa.SBlock = block(10, [8], [call(16, "__sem_release_T", [0])], br(11));
+        let b11: ssa.SBlock = block(11, [9, 10], [store(12, 8, 4), store(12, 16, 4)], ret(12));
+        return Case { f: func(1, 17, [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11]), modes: [counted], returns_unit: true };
+    }
     if (name == "reuse-of-a-loop-box-through-its-token") {
         // #12326: the box is a loop's phi (the message read each time round),
         // its token is tested, the field read off it is moved, and the box
@@ -404,6 +426,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		// so they stay unproved.
 		{"reuse-through-a-carried-token-writes-the-slot", nil, 2, ""},
 		{"token-reuse-writes-the-slot-read", nil, 0, ""},
+		{"token-reuse-puts-back-and-stores-elsewhere", nil, 0, ""},
+		{"token-reuse-puts-back-and-stores-elsewhere-unretained", []string{"spent without a unit of v4"}, 0, ""},
 		// The reuse's phi meets the other arm, which no tested token
 		// decides.
 		{"token-reuse-through-a-phi-an-outside-arm-nulls", nil, 1, ""},
