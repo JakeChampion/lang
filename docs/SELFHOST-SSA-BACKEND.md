@@ -297,9 +297,15 @@ constant those ops alone read is an immediate operand and is never
 materialised (`ssa.imm_operands`: any i32 on x86-64, 0 to 4,095 on arm64
 for add, sub and the compares; a constant on the left swaps or flips the
 same way, and an op whose operands are both constants keeps them in
-registers). A constant a phi merges or a block returns is an immediate
-too: the edge's moves load it into the phi's home after the copies, and a
-return loads it into the result register. A value defined by a phi, one of those ops or a unary takes
+registers). On x86-64 a shape address (`variant_is` / `struct_set_shape`'s
+kind 46) read only by equality compares is an immediate too: the executable
+loads at a fixed address under 2^31, so `cmpq $<shape>, %reg` takes the
+address sign-extended and nothing loads it first (`ssa_shape_plan`; the
+assembler patches the imm32 with the data relocations, and a shared object,
+which moves with its load base, keeps the rip-relative lea). A constant a
+phi merges or a block returns is an immediate too: the edge's moves load it
+into the phi's home after the copies, and a return loads it into the result
+register. A value defined by a phi, one of those ops or a unary takes
 the register of its phi mate or of an operand of its definition when that
 register is free or its holder dies at the definition, and a loop-carried
 operand takes its phi's register whenever no use of the phi is reachable

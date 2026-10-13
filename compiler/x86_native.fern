@@ -291,6 +291,16 @@ function x86_imm_wide(own buf: i32[], size: i32, imm: i32): i32[] {
 // The accumulator has its own one-byte-shorter opcodes, 04+8*ext for AL and
 // 05+8*ext for AX/EAX/RAX, which carry no ModR/M. They only pay past the 83
 // form, which is shorter still for an immediate that fits signed 8 bits.
+// x86_grp1_imm32_r is x86_grp1_imm_r in the `81 /ext id` form whatever the
+// value, so the immediate is the instruction's last four bytes and a fixup
+// can patch it. 32- and 64-bit operands only.
+function x86_grp1_imm32_r(own buf: i32[], size: i32, ext: i32, reg: i32, imm: i32): i32[] {
+  buf = x86_rex_r(buf, size, reg);
+  buf = buf.append(129);
+  buf = buf.append(x86_modrm(3, ext, reg));
+  return x86_le32(buf, imm);
+}
+
 function x86_grp1_imm_r(own buf: i32[], size: i32, ext: i32, reg: i32, imm: i32): i32[] {
   buf = x86_osz(buf, size);
   buf = x86_rex_r(buf, size, reg);
@@ -1281,6 +1291,13 @@ pub struct X86Asm {
   dfix_offs: i32[],
   dfix_names: string[],
   dfix_idx: i32[],
+  // Absolute 4-byte code relocations: an instruction whose imm32 is a
+  // symbol's address, sign-extended. They need the load address as the data
+  // ones do, so x86_resolve_data patches them; relaxation moves them as it
+  // moves the fixup tails.
+  afix_offs: i32[],
+  afix_names: string[],
+  afix_idx: i32[],
   lab_names: string[],
   lab_secs: i32[],
   lab_offs: i32[],
@@ -1405,7 +1422,7 @@ function x86_empty_buckets(): i32[] {
 // x86_asm_new returns an empty assembler state for the raw encoder API,
 // which emits every branch rel32 and never relaxes.
 function x86_asm_new(): X86Asm {
-  return X86Asm { code: buf_new(4096), text: [], rodata: [], bss_size: 0, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: false, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
+  return X86Asm { code: buf_new(4096), text: [], rodata: [], bss_size: 0, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: false, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
 }
 
 // x86_asm_new_prepared is the state for the round over text whose labels
@@ -1414,7 +1431,7 @@ function x86_asm_new(): X86Asm {
 // round reaches its definition.
 function x86_asm_new_prepared(labs: GasLabels): X86Asm {
   let n: i32 = labs.names.len() + labs.nids;
-  return X86Asm { code: buf_new(4096), text: [], rodata: [], bss_size: 0, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
+  return X86Asm { code: buf_new(4096), text: [], rodata: [], bss_size: 0, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
 }
 
 // x86_filled is n copies of v.
@@ -1653,6 +1670,13 @@ function x86_queue_rel32_at(own a: X86Asm, name: string, idx: i32): X86Asm {
   return x86_queue_fixup_at(a, at, 4, name, idx);
 }
 
+// x86_queue_abs32_at records the imm32 the code just ended with as the
+// absolute address of `name`, which x86_resolve_data patches.
+function x86_queue_abs32_at(own a: X86Asm, name: string, idx: i32): X86Asm {
+  let at: i32 = buf_len(a.code) - 4;
+  return X86Asm { ...a, afix_offs: a.afix_offs.append(at), afix_names: a.afix_names.append(name), afix_idx: a.afix_idx.append(idx) };
+}
+
 // x86_queue_fixup records one displacement to patch at resolve: `width`
 // bytes starting at `at`, reaching `name`.
 function x86_queue_fixup(own a: X86Asm, at: i32, width: i32, name: string): X86Asm {
@@ -1884,12 +1908,14 @@ pub function x86_symbol_addr(a: X86Asm, name: string, text_vaddr: i32): i32 {
   return text_vaddr + off;
 }
 
-// x86_resolve_data patches the absolute `.quad <label>` relocations, which
-// x86_resolve cannot: a rel32 branch needs only body offsets, an absolute
-// pointer needs the virtual address the image loads at. Call after
-// x86_resolve with the .text vaddr; body offsets map linearly onto virtual
-// addresses from there, because .text and the data blob share one PT_LOAD.
-// An unresolvable name is recorded, not patched as 0.
+// x86_resolve_data patches the absolute relocations, which x86_resolve
+// cannot: a rel32 branch needs only body offsets, an absolute pointer needs
+// the virtual address the image loads at. They are the `.quad <label>` words
+// in .rodata and the imm32 code operands that hold a symbol's address, which
+// the address must fit as a sign-extended 32-bit value. Call after x86_resolve
+// with the .text vaddr; body offsets map linearly onto virtual addresses from
+// there, because .text and the data blob share one PT_LOAD. An unresolvable
+// name is recorded, not patched as 0.
 pub function x86_resolve_data(own a: X86Asm, text_vaddr: i32): X86Asm {
   let padded_text: i32 = x86_data_base(a, a.text.len());
   let bss_base: i32 = padded_text + a.rodata.len();
@@ -1912,7 +1938,21 @@ pub function x86_resolve_data(own a: X86Asm, text_vaddr: i32): X86Asm {
     }
     i = i + 1;
   }
-  return X86Asm { ...a, rodata: rodata };
+  let text: u8[] = a.text;
+  a = X86Asm { ...a, text: [] };
+  i = 0;
+  while (i < a.afix_offs.len()) {
+    let name: string = a.afix_names[i];
+    let target: i32 = x86_final_target(a, name, a.afix_idx[i], padded_text, bss_base);
+    let abs: i64 = text_vaddr as i64 + target as i64;
+    if (target < 0 || abs > 2147483647i64) {
+      a = X86Asm { ...a, unknown: a.unknown.append("imm32 address of " + name) };
+    } else {
+      text = x86_patch_rel32_bytes(text, a.afix_offs[i], abs as i32);
+    }
+    i = i + 1;
+  }
+  return X86Asm { ...a, rodata: rodata, text: text };
 }
 
 // x86_resolve patches every queued fixup (forward branches and all
@@ -3676,6 +3716,17 @@ pub function x86_rec_alu_ir(ext: i32, size: i32, imm: i32, dst: i32): i32[] {
   return x86_grp1_imm_r([], size, ext, dst, imm);
 }
 
+// x86_rec_alu_ia is the group-1 op `ext` from an imm32 the assembler fills
+// with a symbol's absolute address: the bytes of a named_abs record.
+pub function x86_rec_alu_ia(ext: i32, size: i32, dst: i32): i32[] {
+  return x86_grp1_imm32_r([], size, ext, dst, 0);
+}
+
+// x86_rec_alu_ima is x86_rec_alu_ia into memory at `disp` off `base`.
+pub function x86_rec_alu_ima(ext: i32, size: i32, base: i32, disp: i32): i32[] {
+  return x86_le32(x86_mem_op_bytes([], size, false, 129, ext, x86_mem_at(base, disp), false), 0);
+}
+
 pub function x86_rec_alu_im(ext: i32, size: i32, imm: i32, base: i32, disp: i32): i32[] {
   if (size == 8 || x86_imm_fits8(imm)) {
     let opi: i32 = 131;  // 83 /ext ib
@@ -4754,6 +4805,29 @@ function x86_gas_emit_packed(own a: X86Asm, packed: i32): X86Asm {
 // reg/reg, memory source, memory destination, and the immediate forms with
 // the 83 short-immediate selection — mirroring the native alu().
 function x86_gas_alu_family(own a: X86Asm, mnem: string, ext: i32, size: i32, src: string, dst: string): X86Asm {
+  if (src.len() > 1 && src[0] == b'$' && x86_gas_is_symbol(slice_unchecked(src, 1, src.len()) + "")) {
+    // `op $sym, %reg` or `op $sym, disp(%base)`: the symbol's absolute
+    // address as a sign-extended imm32, patched once the load address is
+    // known.
+    let name: string = slice_unchecked(src, 1, src.len()) + "";
+    if (size != 64 && size != 32) {
+      return x86_gas_bad(a, mnem + " " + src + ", " + dst);
+    }
+    if (x86_gas_has_paren(dst)) {
+      let mi: GasMem = x86_gas_parse_mem(dst);
+      if (!x86_gas_mem_ok(mi) || mi.is_rip) {
+        return x86_gas_bad(a, mnem + " " + src + ", " + dst);
+      }
+      x86_push_arr(a.code, x86_le32(x86_mem_op_bytes([], size, false, 129, ext, mi, false), 0));
+      return x86_queue_abs32_at(a, name, 0 - 1);
+    }
+    let rd: i32 = x86_gas_reg_w(dst, size);
+    if (rd < 0) {
+      return x86_gas_bad(a, mnem + " " + src + ", " + dst);
+    }
+    x86_push_arr(a.code, x86_grp1_imm32_r([], size, ext, rd, 0));
+    return x86_queue_abs32_at(a, name, 0 - 1);
+  }
   let b: i32[] = x86_rec_alu(ext, size, src, dst);
   if (b.len() > 0) {
     x86_push_arr(a.code, b);
@@ -6632,7 +6706,8 @@ pub function x86_gas_assemble(src: string): X86Asm {
 // .cfi_* directive, its kind and register in the low four of the next eight
 // and its offset in the high four (cfi_record); \x07 takes the next record
 // as an instruction whose last four bytes are a rel32 to the symbol the
-// line names, patched as a call's is.
+// line names, patched as a call's is, and \x08 one whose last four bytes
+// are that symbol's absolute address, patched by x86_resolve_data.
 pub function x86_gas_assemble_words(src: string, words: u8[]): X86Asm {
   let prog: GasText = x86_gas_prepare(src, words);
   // Every reference reads its target through the label index rather than
@@ -6892,6 +6967,14 @@ function x86_relax_apply(own a: X86Asm, p: RelaxPlan): X86Asm {
     }
     tails = tails.append(t + x86_relax_shift(st, j));
   }
+  let abs_offs: i32[] = [];
+  j = 0;
+  for t in a.afix_offs {
+    while (j < n && l.start[j] < t) {
+      j = j + 1;
+    }
+    abs_offs = abs_offs.append(t + x86_relax_shift(st, j));
+  }
   // A .text label moves past every event that starts before it, and one a
   // pad directly precedes to that pad's far edge.
   let offs: i32[] = a.lab_offs;
@@ -6919,7 +7002,7 @@ function x86_relax_apply(own a: X86Asm, p: RelaxPlan): X86Asm {
     fde_end: x86_relax_moved(cfi.fde_end, l, st, a.pad_marks, 3),
   };
   let locs: i32[] = x86_relax_moved(a.loc_offs, l, st, a.pad_marks, 0);
-  return X86Asm { ...a, text: code, fixes: fixes, fix_tail_offs: tails, lab_offs: offs, loc_offs: locs, cfi: moved };
+  return X86Asm { ...a, text: code, fixes: fixes, fix_tail_offs: tails, afix_offs: abs_offs, lab_offs: offs, loc_offs: locs, cfi: moved };
 }
 
 // x86_events_near is x86_events_before for an offset near the one that gave
@@ -7196,6 +7279,8 @@ const GK_RORX: i32 = 46;
 //             bytes cfi_record reads
 //   GP_NAMED  a named record (\x07): its start in the words and the index in
 //             `named` of the symbol its last four bytes reach
+//   GP_NAMED_ABS  a named record (\x08) whose last four bytes are the
+//             symbol's absolute address, with the same two operands
 const GP_TEXT: i32 = 0;
 
 const GP_BYTES: i32 = 1;
@@ -7207,6 +7292,8 @@ const GP_JUMP: i32 = 3;
 const GP_CFI: i32 = 4;
 
 const GP_NAMED: i32 = 5;
+
+const GP_NAMED_ABS: i32 = 6;
 
 // One source line with everything that does not depend on byte offsets
 // already worked out: the label, the mnemonic and operand split, and the
@@ -7677,15 +7764,16 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
       pos = pos + 2;
       continue;
     }
-    if (pos < n && src[pos] == 7) {
+    if (pos < n && (src[pos] == 7 || src[pos] == 8)) {
       // A named record: the next record of the words, whose last four bytes
-      // are a rel32 to the symbol the line names.
+      // are a rel32 (\x07) or the absolute imm32 (\x08) of the symbol the
+      // line names.
       let nl7: i32 = __memchr(src, 10, pos);
       if (nl7 < 0) {
         nl7 = n;
       }
       if (wi < words.len() && wi + 1 + words[wi] as i32 <= words.len()) {
-        ops = ops.append(GP_NAMED).append(wi).append(named.len());
+        ops = ops.append(if (src[pos] == 7) { GP_NAMED } else { GP_NAMED_ABS }).append(wi).append(named.len());
         named = named.append(slice_unchecked(src, pos + 1, nl7) + "");
         wi = wi + 1 + words[wi] as i32;
       } else {
@@ -7889,6 +7977,12 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
       let name: string = prog.named[oy];
       a = x86_gas_bytes(a, words, ox, ox + 1 + words[ox] as i32);
       a = x86_queue_rel32_at(a, name, x86_gas_label_lookup(labs, name));
+      continue;
+    }
+    if (op == GP_NAMED_ABS) {
+      let name: string = prog.named[oy];
+      a = x86_gas_bytes(a, words, ox, ox + 1 + words[ox] as i32);
+      a = x86_queue_abs32_at(a, name, x86_gas_label_lookup(labs, name));
       continue;
     }
     if (op == GP_CFI) {

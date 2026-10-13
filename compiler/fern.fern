@@ -762,6 +762,10 @@ function x86_elf_shared(asm: string, words: u8[], names: string[], soname: strin
   let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words(asm, words);
   let tv: i32 = elf.elf_text_off_so(false);
   a = x86_native.x86_resolve_data(a, tv);
+  // A shared object moves with its load base, which no imm32 can follow.
+  if (a.afix_offs.len() > 0 && a.unknown.len() == 0) {
+    a = x86_native.X86Asm { ...a, unknown: ["an absolute code address in a shared object: " + a.afix_names[0]] };
+  }
   if (a.unknown.len() > 0) {
     eprint("fern: -target x86-64: in-process assembler could not encode: " + a.unknown[0]);
     return "";

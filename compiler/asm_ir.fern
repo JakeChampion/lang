@@ -6578,6 +6578,29 @@ function ssa_alu_ir(s: asmcore.EmitState, ext: i32, size: i32, imm: i64, dst: st
   return s.write("    " + ssa_alu_text(ext, size) + " $" + util.i64_to_string(imm) + ", " + ssa_wreg(size, dst) + "\n");
 }
 
+// ssa_alu_is writes the group-1 op `ext` from a symbol's address, the
+// sign-extended imm32 the assembler fills in, into a register.
+function ssa_alu_is(s: asmcore.EmitState, ext: i32, size: i32, sym: string, dst: string): asmcore.EmitState {
+  if (s.records()) {
+    let d: i32 = ssa_xreg(dst);
+    if (d >= 0) {
+      return s.named_abs(x86_native.x86_rec_alu_ia(ext, size, d), sym);
+    }
+  }
+  return s.write("    " + ssa_alu_text(ext, size) + " $" + sym + ", " + ssa_wreg(size, dst) + "\n");
+}
+
+// ssa_alu_ims is ssa_alu_is into memory at `disp` off `base`.
+function ssa_alu_ims(s: asmcore.EmitState, ext: i32, size: i32, sym: string, base: string, disp: i32): asmcore.EmitState {
+  if (s.records()) {
+    let b: i32 = ssa_xreg(base);
+    if (b >= 0) {
+      return s.named_abs(x86_native.x86_rec_alu_ima(ext, size, b, disp), sym);
+    }
+  }
+  return s.write("    " + ssa_alu_text(ext, size) + " $" + sym + ", " + ssa_mem(base, disp, false) + "\n");
+}
+
 // ssa_alu_im writes the group-1 op `ext` from an immediate into memory at
 // `disp` off `base`; ssa_alu_im0 at `(base)`, spelt without a displacement.
 function ssa_alu_im(s: asmcore.EmitState, ext: i32, size: i32, imm: i32, base: string, disp: i32): asmcore.EmitState {
@@ -6662,6 +6685,10 @@ function ssa_mem_i(base: string, index: string, scale: i32, disp: i32): string {
 // reads it, into the register `dst`.
 function ssa_alu_rhs(s: asmcore.EmitState, ext: i32, size: i32, fr: SsaFrame, reg_of: i32[], v: i32, dst: string): asmcore.EmitState {
   if (fr.imm.is_imm[v]) {
+    let sym: string = ssa.imm_sym(fr.imm, v);
+    if (sym != "") {
+      return ssa_alu_is(s, ext, size, sym, dst);
+    }
     return ssa_alu_ir(s, ext, size, fr.imm.value[v], dst);
   }
   if (reg_of[v] >= 0) {
@@ -6798,6 +6825,10 @@ function ssa_imm_left(): string[] {
 // operand read before the instruction writes %r11 may take it from there.
 function ssa_rhs(fr: SsaFrame, reg_of: i32[], v: i32, s: asmcore.EmitState): string {
   if (fr.imm.is_imm[v]) {
+    let sym: string = ssa.imm_sym(fr.imm, v);
+    if (sym != "") {
+      return "$" + sym;
+    }
     return "$" + util.i64_to_string(fr.imm.value[v]);
   }
   if (reg_of[v] >= 0) {
@@ -8605,6 +8636,10 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   if (k >= 40 && k <= 44) {
     return ssa_mem_inst(ins, reg_of, s);
   }
+  if (k == 46 && fr.imm.is_imm[ins.result]) {
+    // A shape address the compares read as an immediate; interned already.
+    return s;
+  }
   if (k >= 45 && k <= 48) {
     return ssa_addr_inst(ins, reg_of, s);
   }
@@ -8928,6 +8963,10 @@ function ssa_fused_test_emit(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: str
   if (reg_of[fu.a] < 0 && s.ssa_x0 != fu.a && !b_in_slot) {
     let disp: i32 = ssa_slot_disp(ssa.spill_slot(reg_of[fu.a]), s.ssa_save);
     if (fr.imm.is_imm[fu.b]) {
+      let sym: string = ssa.imm_sym(fr.imm, fu.b);
+      if (sym != "") {
+        return ssa_alu_ims(s, 7, 64, sym, "%rbp", disp);
+      }
       let v: i64 = fr.imm.value[fu.b];
       if (v >= -2147483648i64 && v <= 2147483647i64) {
         return ssa_alu_im(s, 7, 64, v as i32, "%rbp", disp);
@@ -8990,7 +9029,7 @@ function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
   let n: i32 = 0;
   for ins in h.insts {
     // A constant the test reads as an immediate is never materialised.
-    let imm: boolean = (ins.kind_tag == 1 || ins.kind_tag == 3) && fr.imm.is_imm[ins.result];
+    let imm: boolean = (ins.kind_tag == 1 || ins.kind_tag == 3 || ins.kind_tag == 46) && fr.imm.is_imm[ins.result];
     if (ins.kind_tag != 8 && !imm) {
       n = n + 1;
     }
@@ -9137,6 +9176,68 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
   return pref;
 }
 
+// ShapePlan is the shape addresses (kind 46) a function reads only in
+// equality compares: the values and the shapes they name, in definition order.
+struct ShapePlan { vals: i32[], names: string[] }
+
+// ssa_shape_plan finds the shape addresses the compares can take as
+// immediates. The executable loads at a fixed address under 2^31, so a
+// compare takes the address as a sign-extended imm32 and nothing loads it
+// first. A shared object moves with its load base, so there every shape
+// address stays a rip-relative lea.
+function ssa_shape_plan(f: ssa.SFunc, imm: ssa.Imms, shared: boolean): ShapePlan {
+  let plan: ShapePlan = ShapePlan { vals: [], names: [] };
+  if (shared) {
+    return plan;
+  }
+  let shape: boolean[] = __alloc_bool(f.nvals);
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == 46) {
+        shape = shape.with(ins.result, true);
+      }
+    }
+  }
+  for blk in f.blocks {
+    for ins in blk.insts {
+      let a: i32 = 0;
+      while (a < ins.args.len()) {
+        let v: i32 = ins.args[a];
+        if (v >= 0 && v < shape.len() && shape[v] && !ssa_shape_compare(ins, 1 - a, imm, shape)) {
+          shape = shape.with(v, false);
+        }
+        a = a + 1;
+      }
+    }
+    let t: ssa.STerm = blk.term;
+    if (t.kind_tag == 1 && t.value >= 0 && t.value < shape.len()) {
+      shape = shape.with(t.value, false);
+    }
+    if (t.kind_tag == 3 && t.cond >= 0 && t.cond < shape.len()) {
+      shape = shape.with(t.cond, false);
+    }
+  }
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == 46 && shape[ins.result]) {
+        plan = ShapePlan { vals: plan.vals.append(ins.result), names: plan.names.append(ins.str) };
+      }
+    }
+  }
+  return plan;
+}
+
+// ssa_shape_compare is whether `ins` reads a shape address as the immediate
+// of an equality test: an eq or ne whose other operand, at `o`, is neither a
+// constant nor a shape, so one side stays a register.
+function ssa_shape_compare(ins: ssa.SInst, o: i32, imm: ssa.Imms, shape: boolean[]): boolean {
+  if (ins.kind_tag != 9 || ins.args.len() != 2 || ins.str != "eq" && ins.str != "ne") {
+    return false;
+  }
+  let other: i32 = ins.args[o];
+  return other >= 0 && other < shape.len() && !imm.konst[other] && !shape[other];
+}
+
 // Allocate and emit the prepared register form, retaining its original lowering
 // for target entry paths and its lift mappings for debug locations.
 function emit_ssa_function_x86(prepared: ssaprepare.Body, label_name: string, entry: ssaprepare.ReleaseEntry, context: Option[ssaprepare.Context], s: asmcore.EmitState): asmcore.EmitState {
@@ -9156,6 +9257,13 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let formed: ssa.Formed = prepared.formed;
   let f: ssa.SFunc = formed.f;
   let imm: ssa.Imms = ssa.imm_operands(f, 0i64 - 2147483648i64, 2147483647i64, ssa_imm_right(), ssa_imm_left());
+  let shapes: ShapePlan = ssa_shape_plan(f, imm, s.shared);
+  let si: i32 = 0;
+  while (si < shapes.vals.len()) {
+    s = asmcore.intern_shape(s, shapes.names[si]);
+    imm = ssa.with_sym(imm, shapes.vals[si], asmcore.shape_label(s, shapes.names[si]));
+    si = si + 1;
+  }
   let alloc: ssa.Alloc = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, ssa_arg_prefs(f, s), ssa.float_values(f, [], false), ssa_nfregs(), 0);
   let reg_of: i32[] = alloc.reg_of;
   let lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
