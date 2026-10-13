@@ -3,8 +3,8 @@
 Plan item **D2** of `docs/NICHE-BORROWS-PLAN.md` (Erlang's
 crash-only philosophy from `NICHE-LANGUAGE-RESEARCH.md`): isolate
 handler failures at the request/worker boundary so *the service*
-survives what *one invocation* does. This doc fixes the design;
-implementation is a separate slice (D2').
+survives what *one invocation* does. The supervisor and its prefork worker
+pool are implemented in `std/serve`.
 
 ## Blast radius today
 
@@ -134,7 +134,7 @@ under `-interp` the supervised path degrades to single-process
 serving rather than being untestable; the e2e suite covers both
 the native supervised path and the interp fallback.
 
-## Deliberately deferred
+## Worker model and boundaries
 
 - fork-per-request — needs a real workload to justify. Prefork
   workers exist (#9854): `serve.supervise` forks
@@ -154,15 +154,26 @@ the native supervised path and the interp fallback.
   and the idlest 2 to 8 percent on the Go compiler's build, since the
   worker a wake-up reaches keeps accepting from a queue that never
   empties while the rest sleep. Every worker serves, which is what the
-  default needs; per-worker `SO_REUSEPORT` listeners, the opt-in for a
-  kernel-balanced spread, are not built.
+  default needs. `serve.Config.reuse_port` opts into a listener per
+  worker instead: each child binds its own socket, and the kernel spreads
+  connections across the `SO_REUSEPORT` group. On Linux the group is
+  steered by the CPU on which a connection arrives. A listener supplied
+  through `LISTEN_FDS` stays shared even when `reuse_port` is true.
+  A dead worker's unaccepted connections are lost unless the kernel
+  migrates them (`net.ipv4.tcp_migrate_req`); the shared-listener default
+  preserves its backlog for the replacement worker.
 - Graceful drain exists (#9854): SIGTERM is a readiness event on the
   reactor, the supervisor forwards it to its workers and waits for them,
   and each worker keeps accepting for a grace, fails its readiness path,
   closes the listener, ends keep-alive and drains what is in flight
   under a deadline, exiting 1 when it cut a request off.
 - Windows — no native Windows target exists.
-- Self-host compiler support for `proc_fork`/`proc_waitpid` —
-  native serve supervision is a native-target runtime feature and
-  the self-host compiler doesn't compile std/serve servers in its
-  test corpus; wire it when (if) that changes.
+
+## Coverage
+
+The self-host compiler supports native supervision. Its worker pool,
+per-worker `SO_REUSEPORT` listeners, handler-trap recovery and bounded
+crash-loop backoff are exercised by `TestSelfHostSupervisedServe*` in
+`internal/testing/e2ecompiler/self_host_serve_test.go`. In particular,
+`TestSelfHostSupervisedServeReusePortWorkers` verifies that workers bind
+their own listeners and keep serving after a handler traps.
