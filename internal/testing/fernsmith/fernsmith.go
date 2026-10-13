@@ -2574,7 +2574,20 @@ func (g *Generator) emitCall(b *strings.Builder, sc *scope, t gtype, depth int) 
 	if len(cands) == 0 {
 		return false
 	}
-	g.emitCallTo(b, sc, cands[g.ch.intN(len(cands))], depth)
+	// A spent stream takes the cheapest call rather than index 0, so which
+	// helper comes first in the list cannot make truncation grow a program.
+	var pick helperSig
+	if g.ch.exhausted() {
+		pick = cands[0]
+		for _, h := range cands[1:] {
+			if g.callCost(sc, h) < g.callCost(sc, pick) {
+				pick = h
+			}
+		}
+	} else {
+		pick = cands[g.ch.intN(len(cands))]
+	}
+	g.emitCallTo(b, sc, pick, depth)
 	return true
 }
 

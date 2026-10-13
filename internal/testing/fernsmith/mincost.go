@@ -55,22 +55,27 @@ func (g *Generator) cheapestCall(sc *scope, t gtype) (*helperSig, int) {
 	cost := 0
 	cands := append(append([]helperSig{}, g.helpers...), g.localHelpers...)
 	for i := range cands {
-		h := cands[i]
-		if h.retType != t {
+		if cands[i].retType != t {
 			continue
 		}
-		c := 2 // the call and its callee
-		if h.fueled {
-			c++
-		}
-		for _, p := range h.params {
-			c += g.minCost(sc, p, 1)
-		}
-		if best == nil || c < cost {
+		if c := g.callCost(sc, cands[i]); best == nil || c < cost {
 			best, cost = &cands[i], c
 		}
 	}
 	return best, cost
+}
+
+// callCost is the size of a call to h whose arguments are each a smallest
+// expression.
+func (g *Generator) callCost(sc *scope, h helperSig) int {
+	c := 2 // the call and its callee
+	if h.fueled {
+		c++
+	}
+	for _, p := range h.params {
+		c += g.minCost(sc, p, 1)
+	}
+	return c
 }
 
 // minCost is the size of the smallest expression of type t at a leaf.
