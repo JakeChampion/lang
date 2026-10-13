@@ -2290,6 +2290,23 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cap-assign-param", "function g(s: string): i32 { let f = (): i32 => { s = \"y\"; return 0; }; return f(); }\nfunction main(): i32 { return 0; }\n", []string{"E049"}},
 		{"cap-assign-scalar-ok", "function main(): i32 { let n: i32 = 1; let f = (): i32 => { n = 2; return n; }; return f(); }\n", nil},
 		{"cap-read-ref-ok", "function main(): i32 { let s: string = \"x\"; let f = (): i32 => { return s.len(); }; return f(); }\n", nil},
+		// An `if` / `match` expression desugars to a value block, a
+		// zero-argument lambda, and E049 used to read it as a closure: its
+		// reads as captures and its assignments as write-backs. Found by
+		// fernsmith's ownership cluster.
+		{"value-block-read-not-capture-ok", "function main(): i32 { let f: (i32) => i32 = (x: i32) => x; f = f; return if (true) { f(1) } else { 0 }; }\n", nil},
+		{"value-block-match-read-not-capture-ok", "function main(): i32 { let f: (i32) => i32 = (x: i32) => x; f = f; let y: i32 = match (1) { 1 => f(0), _ => 0 }; return y; }\n", nil},
+		{"value-block-assign-not-write-back-ok", "function main(): i32 { let s: string = \"a\"; let y: i32 = if (true) { s = \"b\"; 1 } else { 0 }; return y; }\n", nil},
+		{"value-block-assign-in-closure", "function main(): i32 { let s: string = \"a\"; let g = (): i32 => { let y: i32 = if (true) { s = \"b\"; 1 } else { 0 }; return y; }; return g(); }\n", []string{"E049"}},
+		{"value-block-store-to-captured", "function main(): i32 { let f: (i32) => i32 = (x: i32) => x; let g = (): i32 => f(1); let h: (i32) => i32 = (x: i32) => x + 1; let y: i32 = if (true) { f = h; 1 } else { 0 }; return y + g(); }\n", []string{"E049"}},
+		{"value-block-closure-captures", "function main(): i32 { let f: (i32) => i32 = (x: i32) => x; let h: (i32) => i32 = (x: i32) => x + 1; let y: i32 = if (true) { let g = (): i32 => f(1); g() } else { 0 }; f = h; return y; }\n", []string{"E049"}},
+		// E049 reads a generic declaration at its arguments: Some's payload in
+		// Option[i32] reaches no function, in Option[() => i32] it does. The Go
+		// checker used to treat the unsubstituted parameter as a function.
+		{"e049-generic-arg-scalar-ok", "struct S { o: Option[i32] }\nfunction main(): i32 { let s: S = S { o: Some(1) }; let f = (): i32 => match (s.o) { Some(v) => v, None => 0 }; s = S { o: None }; return f(); }\n", nil},
+		{"e049-generic-struct-arg-scalar-ok", "struct Box[T] { v: T }\nfunction main(): i32 { let b: Box[i32] = Box { v: 1 }; let f = (): i32 => b.v; b = Box { v: 2 }; return f(); }\n", nil},
+		{"e049-generic-arg-closure", "function main(): i32 { let o: Option[() => i32] = None; let f = (): i32 => match (o) { Some(_) => 1, None => 0 }; o = Some(f); return 0; }\n", []string{"E049"}},
+		{"value-block-local-captured", "function main(): i32 { let y: i32 = if (true) { let s: string = \"a\"; let g = (): i32 => { s = \"b\"; return 1; }; g() } else { 0 }; return y; }\n", []string{"E049"}},
 		// #2673: an arrow lambda with a BLOCK body infers its return type.
 		// The two checkers disagreed here — the self-host accepted it and
 		// native reported E002, because the arrow desugar wraps the body in a
@@ -3850,6 +3867,15 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"e051-last-use-match-expr-read-after", lastUsePrelude + "enum E { A, B }\nfunction f(e: E): i32 { let w: W = mkw(1); let r: i32 = match (e) { A => eat(w), B => 0 }; return r + w.n; }\n"},
 		{"e051-last-use-same-twice", lastUsePrelude + "function both(own a: W, own b: W): i32 { return a.n + b.n; }\nfunction f(): i32 { let x: W = mkw(1); return both(x, x); }\n"},
 		{"e051-last-use-for-in", lastUsePrelude + "function f(): i32 { let t: i32 = 0; for i in [1, 2] { let w: W = mkw(i); t = t + eat(w); } return t; }\n"},
+		// A local the innermost loop body declares before the call is bound anew
+		// on every pass (#12260); one declared outside it, or in an outer loop,
+		// or twice, is not.
+		{"e051-last-use-loop-local", lastUsePrelude + "function f(): i32 { let t: i32 = 0; while (t < 3) { let b: i32[] = mk(t); t = t + keep(b, 1); } return t; }\n"},
+		{"e051-last-use-loop-local-destructure", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction f(): i32 { let t: i32 = 0; while (t < 3) { let (x, k) = pw(t); t = t + eat(x) + k + 1; } return t; }\n"},
+		{"e051-last-use-loop-local-in-if", lastUsePrelude + "function f(c: boolean): i32 { let t: i32 = 0; while (t < 3) { if (c) { let b: i32[] = mk(t); t = t + keep(b, 1); } t = t + 1; } return t; }\n"},
+		{"e051-last-use-loop-local-read-after", lastUsePrelude + "function f(): i32 { let t: i32 = 0; while (t < 3) { let b: i32[] = mk(t); t = t + keep(b, 1) + b.len(); } return t; }\n"},
+		{"e051-last-use-loop-local-inner-loop", lastUsePrelude + "function f(): i32 { let t: i32 = 0; while (t < 3) { let b: i32[] = mk(t); while (t < 2) { t = t + keep(b, 1); } t = t + 1; } return t; }\n"},
+		{"e051-last-use-loop-local-declared-twice", lastUsePrelude + "function f(): i32 { let t: i32 = 0; while (t < 3) { let b: i32[] = mk(t); t = t + keep(b, 1); } while (t < 6) { let b: i32[] = mk(t); t = t + keep(b, 1); } return t; }\n"},
 	}
 
 	for _, tc := range progs {

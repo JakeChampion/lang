@@ -17738,11 +17738,11 @@ struct LuFacts { occ: LuOcc[], vars: LuVar[], escaping: string[], sels: LuSel[] 
 struct LuFn { facts: LuFacts, params: string[], ofuncs: OwnFuncs }
 
 // LuSite is the statement a call sits in: its innermost statement list, its
-// index there, whether a loop re-runs it, and whether that list is the body of
-// a parser-synthesised IIFE — a match / if expression or value block, which
-// native keeps as an expression, so a `return` there does not leave the
-// function.
-struct LuSite { stmts: ast.Stmt[], idx: i32, in_loop: boolean, in_iife: boolean }
+// index there, whether a loop re-runs it, the locals the innermost loop body
+// declares before it, and whether that list is the body of a parser-synthesised
+// IIFE — a match / if expression or value block, which native keeps as an
+// expression, so a `return` there does not leave the function.
+struct LuSite { stmts: ast.Stmt[], idx: i32, in_loop: boolean, fresh: string[], in_iife: boolean }
 
 function lu_key(line: i32, col: i32): string {
   return util.i32_to_string(line) + ":" + util.i32_to_string(col);
@@ -18090,7 +18090,10 @@ function lu_dies(fx: LuFn, call: ast.Expr, arr: boolean, aid: ast.ExprIdent, out
   if (lu_rebind_site(site, name)) {
     return true;
   }
-  if (site.in_loop || !once || !lu_admitted(fx, name)) {
+  // A local the innermost loop body declares before the call is bound anew on
+  // every pass, so the loop re-reads no value it moved (#12260).
+  let repeats: boolean = site.in_loop && !(util.has_str(site.fresh, name) && lu_decl_count(fx, name) == 1);
+  if (repeats || !once || !lu_admitted(fx, name)) {
     return false;
   }
   if (lu_is_last(fx, aid)) {
@@ -18332,7 +18335,7 @@ function lu_expr(e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite,
       if (lm.origin.len() == 0 || c.args.len() > 0) {
         return acc;
       }
-      return lu_stmts(lm.body, site.in_loop, true, outer, has_outer, fx, acc);
+      return lu_stmts(lm.body, site.in_loop, site.fresh, true, outer, has_outer, fx, acc);
     }
     acc = lu_call(c, e, outer, has_outer, site, fx, acc);
     if (!ho) {
@@ -18355,13 +18358,15 @@ function lu_root(e: ast.Expr, site: LuSite, outer: ast.Expr, has_outer: boolean,
   return lu_expr(e, e, false, site, fx, acc);
 }
 
-function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, in_iife: boolean, outer: ast.Expr, has_outer: boolean, fx: LuFn, own acc: string[]): string[] {
+function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, fresh0: string[], in_iife: boolean, outer: ast.Expr, has_outer: boolean, fx: LuFn, own acc: string[]): string[] {
+  let fresh: string[] = fresh0;
   let i: i32 = 0;
   while (i < stmts.len()) {
-    let site: LuSite = LuSite { stmts: stmts, idx: i, in_loop: in_loop, in_iife: in_iife };
+    let site: LuSite = LuSite { stmts: stmts, idx: i, in_loop: in_loop, fresh: fresh, in_iife: in_iife };
     match (stmts[i]) {
       ast.StmtVar(v) => {
         acc = lu_root(v.init, site, outer, has_outer, fx, acc);
+        fresh = lu_declared(stmts[i], fresh);
       },
       ast.StmtAssign(a) => {
         acc = lu_root(a.value, site, outer, has_outer, fx, acc);
@@ -18374,16 +18379,16 @@ function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, in_iife: boolean, outer: 
       },
       ast.StmtIf(f) => {
         acc = lu_root(f.cond, site, outer, has_outer, fx, acc);
-        acc = lu_stmts(f.then_body, in_loop, in_iife, outer, has_outer, fx, acc);
-        acc = lu_stmts(f.else_body, in_loop, in_iife, outer, has_outer, fx, acc);
+        acc = lu_stmts(f.then_body, in_loop, fresh, in_iife, outer, has_outer, fx, acc);
+        acc = lu_stmts(f.else_body, in_loop, fresh, in_iife, outer, has_outer, fx, acc);
       },
       ast.StmtWhile(w) => {
-        acc = lu_root(w.cond, LuSite { ...site, in_loop: true }, outer, has_outer, fx, acc);
-        acc = lu_stmts(w.body, true, in_iife, outer, has_outer, fx, acc);
+        acc = lu_root(w.cond, LuSite { ...site, in_loop: true, fresh: [] }, outer, has_outer, fx, acc);
+        acc = lu_stmts(w.body, true, [], in_iife, outer, has_outer, fx, acc);
       },
       ast.StmtFor(fo) => {
-        acc = lu_root(fo.iter, LuSite { ...site, in_loop: true }, outer, has_outer, fx, acc);
-        acc = lu_stmts(fo.body, true, in_iife, outer, has_outer, fx, acc);
+        acc = lu_root(fo.iter, LuSite { ...site, in_loop: true, fresh: [] }, outer, has_outer, fx, acc);
+        acc = lu_stmts(fo.body, true, [], in_iife, outer, has_outer, fx, acc);
       },
       ast.StmtMatch(m) => {
         acc = lu_root(m.scrutinee, site, outer, has_outer, fx, acc);
@@ -18391,7 +18396,7 @@ function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, in_iife: boolean, outer: 
           if (arm.has_guard) {
             acc = lu_root(arm.guard, site, outer, has_outer, fx, acc);
           }
-          acc = lu_stmts(arm.body, in_loop, in_iife, outer, has_outer, fx, acc);
+          acc = lu_stmts(arm.body, in_loop, fresh, in_iife, outer, has_outer, fx, acc);
         }
       },
       _ => {}
@@ -18399,6 +18404,15 @@ function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, in_iife: boolean, outer: 
     i = i + 1;
   }
   return acc;
+}
+
+// lu_declared appends the names `st` declares to `names`.
+function lu_declared(st: ast.Stmt, own names: string[]): string[] {
+  let facts: LuFacts = lu_fact_stmt(st, LuFacts { occ: [], vars: [], escaping: [], sels: [] });
+  for d in facts.vars {
+    names = names.append(d.name);
+  }
+  return names;
 }
 
 // lu_last_use_args is the E051 admission for `fn`: the keys of the local
@@ -18413,7 +18427,7 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs): string[] {
   }
   let fx: LuFn = LuFn { facts: facts, params: ow_param_names(fn), ofuncs: ofuncs };
   let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
-  let out: string[] = lu_stmts(fn.body, false, false, none, false, fx, []);
+  let out: string[] = lu_stmts(fn.body, false, [], false, none, false, fx, []);
   for lm in nested {
     out = util.append_all(out, lu_last_use_args(parser.FuncDecl { ...fn, params: lm.params, body: lm.body }, ofuncs));
   }
@@ -19859,6 +19873,9 @@ function e049_init_ref_ty(init: ast.Expr): string {
 function e049_scope(stmts: ast.Stmt[]): NameTy[] {
   let out: NameTy[] = [];
   for stmt in stmts {
+    for vb in e049_value_blocks(stmt) {
+      out = e049_append_nt(out, e049_scope(vb.body));
+    }
     match (stmt) {
       ast.StmtVar(v) => {
         let vty: string = v.type_name;
@@ -19890,6 +19907,32 @@ function e049_scope(stmts: ast.Stmt[]): NameTy[] {
     }
   }
   return out;
+}
+
+// e049_value_blocks lists the value blocks — the zero-argument lambdas an `if`
+// or `match` expression, a `{ … }` block or a comprehension desugars to — in a
+// statement's own expressions. A value block is not a closure: its body runs in
+// place, so its locals belong to the enclosing body and its assignments are
+// that body's own. A value block nested in one is reached through its body.
+function e049_value_blocks(st: ast.Stmt): ast.ExprLambda[] {
+  let none: ast.ExprLambda[] = [];
+  return astwalk.fold_stmt_own_pruned(st, none, e049_value_block_at, e049_into_no_lambda);
+}
+
+function e049_value_block_at(n: ast.Expr, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
+  if let ast.ExprLambda(lm) = n {
+    if (parser.is_value_block_origin(lm.origin)) {
+      return acc.append(lm);
+    }
+  }
+  return acc;
+}
+
+function e049_into_no_lambda(n: ast.Expr): boolean {
+  if let ast.ExprLambda(_) = n {
+    return false;
+  }
+  return true;
 }
 
 // e049_lambda_locals_nt collects a lambda's own bound names WITH their types —
@@ -19929,12 +19972,19 @@ function e049_nt_names(nts: NameTy[]): string[] {
 //
 // One level, pruned at ExprLambda: e049_check_assigns walks the child blocks
 // itself, and each lambda body is handed on with that lambda's own locals, so
-// every lambda is reached exactly once however deep it nests.
-function e049_stmt_own_lambdas(st: ast.Stmt, enclosing: NameTy[]): util.Diag[] {
+// every lambda is reached exactly once however deep it nests. A lambda NESTED
+// in this body captures this body's own names as well as what this body
+// captured, so its enclosing set is both; a value block is this body's own and
+// keeps the two sets as they are.
+function e049_stmt_own_lambdas(st: ast.Stmt, enclosing: NameTy[], locals: NameTy[]): util.Diag[] {
+  let nested_encl: NameTy[] = e049_append_nt(enclosing, locals);
   function at_lambda(n: ast.Expr, own acc: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprLambda(lm) => {
-        return util.append_diags(acc, e049_check_assigns(lm.body, enclosing, e049_lambda_locals_nt(lm)));
+        if (parser.is_value_block_origin(lm.origin)) {
+          return util.append_diags(acc, e049_check_assigns(lm.body, enclosing, locals));
+        }
+        return util.append_diags(acc, e049_check_assigns(lm.body, nested_encl, e049_lambda_locals_nt(lm)));
       },
       _ => {
         return acc;
@@ -19956,12 +20006,6 @@ function e049_stmt_own_lambdas(st: ast.Stmt, enclosing: NameTy[]): util.Diag[] {
 
 function e049_check_assigns(stmts: ast.Stmt[], enclosing: NameTy[], locals: NameTy[]): util.Diag[] {
   let out: util.Diag[] = [];
-  // A lambda NESTED in this body captures this body's own names as well as
-  // what this body captured, so the enclosing set grows as the walk descends.
-  // Passing the enclosing FUNCTION's set all the way down leaves a variable
-  // declared in an intervening lambda in neither set — neither enclosing nor
-  // local — and nothing flags an assignment to it.
-  let nested_encl: NameTy[] = e049_append_nt(enclosing, locals);
   let local_names: string[] = e049_nt_names(locals);
   for stmt in stmts {
     match (stmt) {
@@ -19991,7 +20035,7 @@ function e049_check_assigns(stmts: ast.Stmt[], enclosing: NameTy[], locals: Name
       },
       _ => {}
     }
-    out = util.append_diags(out, e049_stmt_own_lambdas(stmt, nested_encl));
+    out = util.append_diags(out, e049_stmt_own_lambdas(stmt, enclosing, locals));
   }
   return out;
 }
@@ -20006,6 +20050,9 @@ function e049_expr_lambdas(e: ast.Expr, enclosing: NameTy[]): util.Diag[] {
   function at_lambda(n: ast.Expr, own acc: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprLambda(lm) => {
+        if (parser.is_value_block_origin(lm.origin)) {
+          return util.append_diags(acc, e049_find(lm.body, enclosing));
+        }
         return util.append_diags(acc, e049_check_assigns(lm.body, enclosing, e049_lambda_locals_nt(lm)));
       },
       _ => {
@@ -20129,7 +20176,9 @@ function e049_body_stores(fn: parser.FuncDecl, mod: parser.Module, env: ModuleEn
 
 function e049_lambda_at(n: ast.Expr, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
   if let ast.ExprLambda(lm) = n {
-    return acc.append(lm);
+    if (!parser.is_value_block_origin(lm.origin)) {
+      return acc.append(lm);
+    }
   }
   return acc;
 }
@@ -20175,14 +20224,16 @@ function e049_nested_stmt_captures(st: ast.Stmt, acc: string[]): string[] {
 
 function e049_lambda_captures(n: ast.Expr, own acc: string[]): string[] {
   if let ast.ExprLambda(lm) = n {
-    return astwalk.collect_lambda_idents(lm, acc);
+    if (!parser.is_value_block_origin(lm.origin)) {
+      return astwalk.collect_lambda_idents(lm, acc);
+    }
   }
   return acc;
 }
 
 function e049_not_into_lambda(n: ast.Expr): boolean {
-  if let ast.ExprLambda(_) = n {
-    return false;
+  if let ast.ExprLambda(lm) = n {
+    return parser.is_value_block_origin(lm.origin);
   }
   return true;
 }
@@ -20237,6 +20288,9 @@ function e049_lambda_init_names(stmts: ast.Stmt[]): string[] {
 
 function e049_store_walk(stmts: ast.Stmt[], sc: Scope, vars: NameTy[], captured: string[], tparams: string[], mod: parser.Module, own out: util.Diag[]): util.Diag[] {
   for st in stmts {
+    for vb in e049_value_blocks(st) {
+      out = e049_store_walk(vb.body, sc, vars, captured, tparams, mod, out);
+    }
     match (st) {
       ast.StmtAssign(a) => {
         let ty: string = e049_var_type(vars, a.target);

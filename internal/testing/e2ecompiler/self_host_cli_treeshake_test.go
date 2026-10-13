@@ -488,3 +488,48 @@ function main(): i32 {
 		t.Errorf("program exited %d, want 6", code)
 	}
 }
+
+// TestSelfHostTreeshakeKeepsMapDropForSignatureEnumX86_64 pins the map
+// runtime to an enum a kept SIGNATURE names. A nested function nothing calls
+// still releases its parameters, so the drop of an enum with a map-holding
+// variant is emitted for it and calls __map_drop_impl — while no variant is
+// built anywhere, which was the only thing that kept the map runtime. The
+// program then failed to link. Found by fernsmith.
+func TestSelfHostTreeshakeKeepsMapDropForSignatureEnumX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("file-loading CLI test runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	stdlib, err := filepath.Abs(filepath.Join("..", "..", "stdlib"))
+	if err != nil {
+		t.Fatalf("stdlib path: %v", err)
+	}
+	const src = `import "core/map";
+enum E { A, B(Map[i32, i32]) }
+function main(): i32 {
+    function g(e: E): i32 { return 1; }
+    return 3;
+}
+`
+	prog := filepath.Join(dir, "ts_map_enum_prog.fern")
+	if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
+		t.Fatalf("write program: %v", err)
+	}
+	asmPath := filepath.Join(dir, "ts_map_enum_prog.s")
+	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, prog, stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("self-host compile failed: %v\n%s", err, out)
+	}
+	asm, err := os.ReadFile(asmPath)
+	if err != nil {
+		t.Fatalf("read asm: %v", err)
+	}
+	bin := buildBin(t, gcc, dir, "ts_map_enum_prog", string(asm))
+	run := exec.Command(bin)
+	_ = run.Run()
+	if code := run.ProcessState.ExitCode(); code != 3 {
+		t.Errorf("program exited %d, want 3", code)
+	}
+}

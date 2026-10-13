@@ -26,11 +26,13 @@
 // the parameter out is the recursive call whose own slot is counted only if
 // the parameter is — the cycle never starts from below. That is right for a
 // walk that rebuilds (`std/pvec`'s `__pv_with_in` takes its child out of a
-// unique node), and wrong for one whose result holds no reference: nothing a
-// take frees can leave such a frame, so its own recursive call carries nothing
-// (#10352). The same holds of a cycle of such functions: `semtypes.equal` and
-// `equal_list` call each other, and each kept the other's parameters counted
-// until a call inside a quiet cycle stopped carrying (#10941).
+// unique node), and wrong for a parameter whose type the result cannot hold:
+// nothing a take frees from it can leave the frame, so its own recursive call
+// carries nothing at that slot (#10352). The same holds across a cycle:
+// `semtypes.equal` and `equal_list` call each other, and each kept the other's
+// parameters counted until a call inside a quiet cycle stopped carrying
+// (#10941). A walk folding a tree into a list of strings is quiet at the tree
+// and counted at the list.
 import "./ssa";
 import "./ssasem";
 import "./typeinfo";
@@ -40,8 +42,10 @@ import "./util";
 // `lends` says a slot the row leaves uncounted may still be kept as a borrow in
 // what the callee returns (lent_values); a builtin whose result holds no
 // reference cannot keep one, and a produced function's is inferred (`lends`). `cycle` is the row's quiet cycle (`cycles`), -1
-// on none.
-pub struct Escapes { name: string, bits: boolean[], lends: boolean, cycle: i32 }
+// on none. `quiet` says, per parameter, that a call to the row from inside its
+// cycle carries nothing at that slot: the row's result cannot hold the
+// parameter's type.
+pub struct Escapes { name: string, bits: boolean[], lends: boolean, cycle: i32, quiet: boolean[] }
 
 // Rows by name, chained per hash bucket in ascending row order. A round
 // rewrites a row's bits and never its name, so one index built over the
@@ -168,10 +172,13 @@ function carry(own out: boolean[], a: ssasem.Analysis, v: i32): boolean[] {
 }
 
 // Whether the rows `caller` and `callee` (-1 for none) lie on one quiet
-// cycle: a call graph's cycle whose functions all return no reference, so
-// nothing a take frees can leave it and a call inside it carries nothing.
+// cycle, where a call carries nothing at the callee's quiet slots.
 function same_cycle(rows: Escapes[], caller: i32, callee: i32): boolean {
   return caller >= 0 && callee >= 0 && rows[caller].cycle >= 0 && rows[caller].cycle == rows[callee].cycle;
+}
+
+function quiet_slot(rows: Escapes[], row: i32, slot: i32): boolean {
+  return slot >= 0 && slot < rows[row].quiet.len() && rows[row].quiet[slot];
 }
 
 // The strongly connected components of `succ` that hold a cycle, numbered from
@@ -280,14 +287,12 @@ function call_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, in
     return out;
   }
   let row: i32 = find(rows, ix, ins.str);
-  if (same_cycle(rows, fr.me, row)) {
-    return out;
-  }
+  let cycle: boolean = same_cycle(rows, fr.me, row);
   let i: i32 = 0;
   while (i < ins.args.len()) {
     // Passing the same parameter to the same slot supplies no independent
     // reason to consume it. Any other escaping use still carries it.
-    let unchanged: boolean = ins.str == f.graph.name && unchanged_slot(fr, ins.args[i], i);
+    let unchanged: boolean = ins.str == f.graph.name && unchanged_slot(fr, ins.args[i], i) || cycle && quiet_slot(rows, row, i);
     if (!unchanged && ssasem.reference(f.values[ins.args[i]]) && consumed_at(rows, row, i)) {
       out = carry(out, a, ins.args[i]);
     }
@@ -352,7 +357,7 @@ function indirect_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis
 // consume it.
 function slot_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index, fr: Frame): boolean[] {
   let row: i32 = find(rows, ix, ins.str);
-  if (same_cycle(rows, fr.me, row) || !consumed_at(rows, row, ins.imm)) {
+  if (same_cycle(rows, fr.me, row) && quiet_slot(rows, row, ins.imm) || !consumed_at(rows, row, ins.imm)) {
     return out;
   }
   let i: i32 = 1;

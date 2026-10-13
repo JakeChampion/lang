@@ -1296,6 +1296,17 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
     pos = pos + 1;
     bi = bi + 1;
   }
+  // A parameter has no defining instruction: it arrives at entry. Every
+  // referenced one is live from position 0, so two parameters whose first
+  // reads are apart still interfere, and the entry's moves cannot write one
+  // into a home another is still arriving in.
+  i = 0;
+  while (i < f.nparams && i < f.nvals) {
+    if (hi[i] >= 0) {
+      lo = lo.with(i, 0);
+    }
+    i = i + 1;
+  }
   let total_pos: i32 = pos;
   let at: i32[] = block_positions(f);
   // A phi reads its operand on the edge from the predecessor, at that

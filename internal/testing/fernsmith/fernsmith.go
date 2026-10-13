@@ -122,14 +122,6 @@ func GenPrintableMainBytes(data []byte) string {
 	return newByteGen(data, DefaultConfig()).MainPrintableProgram()
 }
 
-// New constructs a generator with default limits, drawing from rng.
-func New(rng *rand.Rand) *Generator { return NewWithConfig(rng, DefaultConfig()) }
-
-// NewWithConfig is New with a caller-supplied tuning.
-func NewWithConfig(rng *rand.Rand, cfg Config) *Generator {
-	return &Generator{ch: &randChooser{rng: rng}, cfg: cfg}
-}
-
 // newRandGen builds a *Generator backed by a PCG seeded from a
 // single uint64, hiding the splitmix-stream constant.
 func newRandGen(seed uint64, cfg Config) *Generator {
@@ -400,7 +392,26 @@ type Generator struct {
 	// code.
 	structShapes map[gtype]*structShape
 	enumShapes   map[gtype]*enumShape
-	nextNominal  gtype
+	// arrShapes maps a program-declared array type to its element: `S0[]`
+	// over a dynamic struct or enum, the one way a box whose elements own
+	// nested boxes reaches the corpus.
+	arrShapes   map[gtype]gtype
+	nextNominal gtype
+	// ownCounter and cloCounter name the vars an ownership cluster and a
+	// closure cluster declare.
+	ownCounter int
+	cloCounter int
+	// self is the recursive helper whose body is being emitted, and
+	// selfCalls how many more calls to it that body may make; see funcDecl.
+	self      *helperSig
+	selfCalls int
+	// inClosure counts the lambda and local-function bodies being emitted,
+	// where a self-call is not placed: such a body can run any number of
+	// times per invocation of the function around it.
+	inClosure int
+	// feats and types are this program's swarm mask; see swarm.go.
+	feats uint64
+	types uint64
 }
 
 // structShape is the runtime-allocated form of a struct decl.
@@ -440,6 +451,9 @@ type helperSig struct {
 	name    string
 	params  []gtype
 	retType gtype
+	// fueled marks a recursive helper, whose hidden first parameter is
+	// the `__fuel` bound; a call site passes it before params.
+	fueled bool
 }
 
 // gtype is the generator's internal enum of Lang types. Each kind
@@ -692,13 +706,21 @@ func (g *Generator) typeName(t gtype) string {
 	if sh, ok := g.enumShapes[t]; ok {
 		return sh.name
 	}
+	if elem, ok := g.arrShapes[t]; ok {
+		return g.typeName(elem) + "[]"
+	}
 	return fmt.Sprintf("?gtype%d", int(t))
 }
 
 // arrayTypeFor returns the array gtype whose element is t, plus a
 // success flag. Used to decide whether an in-scope array can be
 // indexed to produce a value of type t.
-func arrayTypeFor(t gtype) (gtype, bool) {
+func (g *Generator) arrayTypeFor(t gtype) (gtype, bool) {
+	for _, at := range sortedKeys(g.arrShapes) {
+		if g.arrShapes[at] == t {
+			return at, true
+		}
+	}
 	switch t {
 	case tI32:
 		return tArrI32, true
@@ -718,7 +740,10 @@ func arrayTypeFor(t gtype) (gtype, bool) {
 
 // arrayElemOf returns the element gtype of an array gtype, plus a
 // success flag.
-func arrayElemOf(t gtype) (gtype, bool) {
+func (g *Generator) arrayElemOf(t gtype) (gtype, bool) {
+	if elem, ok := g.arrShapes[t]; ok {
+		return elem, true
+	}
 	switch t {
 	case tArrI32:
 		return tI32, true
@@ -797,28 +822,13 @@ func GenMain(seed uint64) string {
 // site in main exercises one more chunk of the calling
 // convention / parameter-passing path that single-function
 // programs miss. Helpers can themselves call any *earlier*
-// helper (forward refs only — sidesteps self- and mutual-
-// recursion without a static check). Sets the generator's
-// profile to ProfileRunnable for the duration so nested
-// productions can't introduce f32 through boolean comparisons.
+// helper (forward refs only, plus a recursive helper's fuel-bounded
+// self-call — see funcDecl). Runs under ProfileRunnable,
+// so nested productions can't introduce f32 through boolean
+// comparisons.
 func (g *Generator) MainProgram() string {
-	prevProfile := g.profile
-	prevHelpers := g.helpers
-	prevStructShapes := g.structShapes
-	prevEnumShapes := g.enumShapes
-	prevNextNominal := g.nextNominal
 	g.profile = ProfileRunnable
-	g.helpers = nil
-	g.structShapes = nil
-	g.enumShapes = nil
-	g.nextNominal = 0
-	defer func() {
-		g.profile = prevProfile
-		g.helpers = prevHelpers
-		g.structShapes = prevStructShapes
-		g.enumShapes = prevEnumShapes
-		g.nextNominal = prevNextNominal
-	}()
+	g.drawSwarm()
 
 	var b strings.Builder
 	g.preludeDecls(&b)
@@ -831,7 +841,10 @@ func (g *Generator) MainProgram() string {
 	// expression, but non-i32 helpers still get
 	// exercised: any helper can call any earlier helper of
 	// matching arg/return types.
-	nHelpers, helpersAt := g.listCount(maxInt(g.cfg.MaxFuncs, 1))
+	nHelpers, helpersAt := 0, 0
+	if g.on(featHelpers) {
+		nHelpers, helpersAt = g.listCount(maxInt(g.cfg.MaxFuncs, 1))
+	}
 	for i := 0; i < nHelpers; i++ {
 		start := g.pos()
 		g.funcDecl(&b, i)
@@ -840,12 +853,7 @@ func (g *Generator) MainProgram() string {
 
 	sc := newScope(nil)
 	b.WriteString("function main(): i32 { ")
-	prevRet := g.currentReturnType
 	g.currentReturnType = tI32
-	defer func() { g.currentReturnType = prevRet }()
-	prevLocals := g.localHelpers
-	g.localHelpers = nil
-	defer func() { g.localHelpers = prevLocals }()
 	n, stmtsAt := g.listCount(maxInt(g.cfg.MaxStmts, 0) + 1)
 	for i := 0; i < n; i++ {
 		start := g.pos()
@@ -854,6 +862,11 @@ func (g *Generator) MainProgram() string {
 	}
 	b.WriteString("return (")
 	g.expr(&b, sc, tI32, 0)
+	// A spent corpus skips the fold, so truncation never adds it.
+	if !g.ch.exhausted() {
+		b.WriteString(" + ")
+		g.emitStateFold(&b, sc)
+	}
 	b.WriteString(" & 255i32); }\n")
 	return b.String()
 }
@@ -861,7 +874,8 @@ func (g *Generator) MainProgram() string {
 // mainStmt emits main's i-th statement.
 func (g *Generator) mainStmt(b *strings.Builder, sc *scope, i int) {
 	if g.maybeEmitWhile(b, sc) || g.maybeEmitForEach(b, sc) || g.maybeEmitLocalFn(b, sc) ||
-		g.maybeEmitArrayAliasCow(b, sc) || g.maybeEmitLoopReadBeforeWith(b, sc) || g.maybeEmitControlStmt(b, sc, tI32) {
+		g.maybeEmitArrayAliasCow(b, sc) || g.maybeEmitLoopReadBeforeWith(b, sc) || g.maybeEmitOwnershipCluster(b, sc) || g.maybeEmitClosureCluster(b, sc) ||
+		g.maybeEmitControlStmt(b, sc, tI32) {
 		return
 	}
 	// Main's vars are drawn from the deterministic-across-
@@ -889,40 +903,23 @@ func (g *Generator) mainStmt(b *strings.Builder, sc *scope, i int) {
 // covers the unordered-comparison codegen the return-byte path
 // can't, and a float-aggregate read of every slot of one aggregate.
 func (g *Generator) MainPrintableProgram() string {
-	prevProfile := g.profile
-	prevHelpers := g.helpers
-	prevStructShapes := g.structShapes
-	prevEnumShapes := g.enumShapes
-	prevNextNominal := g.nextNominal
 	g.profile = ProfilePrintable
-	g.helpers = nil
-	g.structShapes = nil
-	g.enumShapes = nil
-	g.nextNominal = 0
-	defer func() {
-		g.profile = prevProfile
-		g.helpers = prevHelpers
-		g.structShapes = prevStructShapes
-		g.enumShapes = prevEnumShapes
-		g.nextNominal = prevNextNominal
-	}()
+	g.drawSwarm()
 
 	var b strings.Builder
 	g.preludeDecls(&b)
 
-	nHelpers := g.ch.intN(maxInt(g.cfg.MaxFuncs, 1))
+	nHelpers := 0
+	if g.on(featHelpers) {
+		nHelpers = g.ch.intN(maxInt(g.cfg.MaxFuncs, 1))
+	}
 	for i := 0; i < nHelpers; i++ {
 		g.funcDecl(&b, i)
 	}
 
 	sc := newScope(nil)
 	b.WriteString("function main(): i32 { ")
-	prevRet := g.currentReturnType
 	g.currentReturnType = tI32
-	defer func() { g.currentReturnType = prevRet }()
-	prevLocals := g.localHelpers
-	g.localHelpers = nil
-	defer func() { g.localHelpers = prevLocals }()
 
 	// Runtime float 0.0 / 1.0 for the special-value (NaN / Inf)
 	// comparison observation. Runtime vars (not literals) so
@@ -941,6 +938,12 @@ func (g *Generator) MainPrintableProgram() string {
 			continue
 		}
 		if g.maybeEmitLoopReadBeforeWith(&b, sc) {
+			continue
+		}
+		if g.maybeEmitOwnershipCluster(&b, sc) {
+			continue
+		}
+		if g.maybeEmitClosureCluster(&b, sc) {
 			continue
 		}
 		if g.maybeEmitControlStmt(&b, sc, tI32) {
@@ -966,6 +969,11 @@ func (g *Generator) MainPrintableProgram() string {
 		g.emitPrintObservation(&b, sc)
 	}
 
+	if !g.ch.exhausted() {
+		b.WriteString("print((")
+		g.emitStateFold(&b, sc)
+		b.WriteString(").to_string()); ")
+	}
 	b.WriteString("return 0; }\n")
 	return b.String()
 }
@@ -1130,7 +1138,7 @@ func (g *Generator) emitFloatAggregateObservation(b *strings.Builder, sc *scope)
 // emitFloatArrayObservation declares a float array of
 // floatAggArrayLen elements and prints each one.
 func (g *Generator) emitFloatArrayObservation(b *strings.Builder, sc *scope, name string, arrT gtype, depth int) {
-	elem, _ := arrayElemOf(arrT)
+	elem, _ := g.arrayElemOf(arrT)
 	fmt.Fprintf(b, "let %s: %s = [", name, g.typeName(arrT))
 	for i := 0; i < floatAggArrayLen; i++ {
 		if i > 0 {
@@ -1347,6 +1355,12 @@ func (g *Generator) declareDynamicNominals(b *strings.Builder) {
 	if g.enumShapes == nil {
 		g.enumShapes = map[gtype]*enumShape{}
 	}
+	if g.arrShapes == nil {
+		g.arrShapes = map[gtype]gtype{}
+	}
+	if !g.on(featNominals) {
+		return
+	}
 	if g.nextNominal < numTypes {
 		g.nextNominal = numTypes
 	}
@@ -1365,7 +1379,7 @@ func (g *Generator) declareDynamicNominals(b *strings.Builder) {
 			ft := g.pickFieldType()
 			fname := fmt.Sprintf("f%d", j)
 			fields[j] = structField{name: fname, t: ft}
-			fmt.Fprintf(b, "%s: %s", fname, ft)
+			fmt.Fprintf(b, "%s: %s", fname, g.typeName(ft))
 		}
 		b.WriteString(" }\n")
 		gt := g.nextNominal
@@ -1411,23 +1425,22 @@ func (g *Generator) declareDynamicNominals(b *strings.Builder) {
 		g.nextNominal++
 		g.enumShapes[gt] = &enumShape{name: name, variants: variants}
 	}
+	// An array over each declared nominal, sometimes. Exhaustion
+	// convention: `true` is no array type, so a spent corpus adds none.
+	for _, elem := range append(sortedKeys(g.structShapes), sortedKeys(g.enumShapes)...) {
+		if !g.on(featNested) || g.flip(0.6) {
+			continue
+		}
+		g.arrShapes[g.nextNominal] = elem
+		g.nextNominal++
+	}
 }
 
 // Program emits a complete program: prelude type decls followed
 // by N top-level function declarations. Helpers can call any
 // earlier helper (forward refs only — see funcDecl).
 func (g *Generator) Program() string {
-	prevStructShapes := g.structShapes
-	prevEnumShapes := g.enumShapes
-	prevNextNominal := g.nextNominal
-	g.structShapes = nil
-	g.enumShapes = nil
-	g.nextNominal = 0
-	defer func() {
-		g.structShapes = prevStructShapes
-		g.enumShapes = prevEnumShapes
-		g.nextNominal = prevNextNominal
-	}()
+	g.drawSwarm()
 	var b strings.Builder
 	g.preludeDecls(&b)
 	n := 1 + g.ch.intN(maxInt(g.cfg.MaxFuncs, 1))
@@ -1439,12 +1452,18 @@ func (g *Generator) Program() string {
 
 func (g *Generator) funcDecl(b *strings.Builder, idx int) {
 	sc := newScope(nil)
+	// Exhaustion convention: `true` here = not recursive, the smaller form.
+	fueled := g.on(featRecursion) && !g.flip(0.5)
 	nParams := g.ch.intN(maxInt(g.cfg.MaxParams, 0) + 1)
 	name := fmt.Sprintf("gen_f%d", idx)
 	params := make([]gtype, nParams)
 	fmt.Fprintf(b, "function %s(", name)
+	if fueled {
+		b.WriteString("__fuel: i32")
+		sc.declare(tI32, "__fuel")
+	}
 	for i := 0; i < nParams; i++ {
-		if i > 0 {
+		if i > 0 || fueled {
 			b.WriteString(", ")
 		}
 		pt := g.pickType()
@@ -1458,12 +1477,32 @@ func (g *Generator) funcDecl(b *strings.Builder, idx int) {
 	fmt.Fprintf(b, ": %s { ", g.typeName(ret))
 	prevRet := g.currentReturnType
 	g.currentReturnType = ret
+	sig := helperSig{name: name, params: params, retType: ret, fueled: fueled}
+	if fueled {
+		// A recursive helper is bounded by its fuel: the base case returns
+		// before any self-call can run, every self-call passes one less, and
+		// the body makes at most two of them outside loops and closures, so
+		// a call with fuel n costs at most 2^(n+1) invocations.
+		b.WriteString("if (__fuel <= 0i32) { return ")
+		g.expr(b, sc, ret, 1)
+		b.WriteString("; } ")
+		g.self, g.selfCalls = &sig, 2
+		// Exhaustion convention: `true` here = no leading self-call.
+		if !g.flip(0.5) {
+			fmt.Fprintf(b, "let __rec: %s = ", g.typeName(ret))
+			g.emitCallTo(b, sc, sig, 1)
+			b.WriteString("; ")
+			sc.declare(ret, "__rec")
+		}
+	}
 	g.body(b, sc, ret)
+	g.self = nil
 	g.currentReturnType = prevRet
 	b.WriteString("}\n")
-	// Register AFTER the body emit so this decl can't accidentally
-	// recurse into itself. Only forward calls are visible.
-	g.helpers = append(g.helpers, helperSig{name: name, params: params, retType: ret})
+	// Registered after the body, so a function reaches itself only
+	// through the fuelled self-call. Only forward calls are visible
+	// otherwise, which rules out mutual recursion.
+	g.helpers = append(g.helpers, sig)
 }
 
 // body emits a sequence of `let` declarations / while-loops
@@ -1489,7 +1528,8 @@ func (g *Generator) body(b *strings.Builder, sc *scope, retT gtype) {
 // bodyStmt emits a function body's i-th statement.
 func (g *Generator) bodyStmt(b *strings.Builder, sc *scope, retT gtype, i int) {
 	if g.maybeEmitWhile(b, sc) || g.maybeEmitForEach(b, sc) || g.maybeEmitLocalFn(b, sc) ||
-		g.maybeEmitArrayAliasCow(b, sc) || g.maybeEmitLoopReadBeforeWith(b, sc) || g.maybeEmitControlStmt(b, sc, retT) {
+		g.maybeEmitArrayAliasCow(b, sc) || g.maybeEmitLoopReadBeforeWith(b, sc) || g.maybeEmitOwnershipCluster(b, sc) || g.maybeEmitClosureCluster(b, sc) ||
+		g.maybeEmitControlStmt(b, sc, retT) {
 		return
 	}
 	vt := g.pickType()
@@ -1519,6 +1559,9 @@ func (g *Generator) bodyStmt(b *strings.Builder, sc *scope, retT gtype, i int) {
 // increment does — so termination after at most K iterations is
 // statically obvious.
 func (g *Generator) maybeEmitWhile(b *strings.Builder, sc *scope) bool {
+	if !g.on(featWhile) {
+		return false
+	}
 	if g.loopDepth >= maxInt(g.cfg.MaxLoopDepth, 0) {
 		return false
 	}
@@ -1581,6 +1624,9 @@ func (g *Generator) emitWhileLoop(b *strings.Builder, sc *scope) {
 // scoped to the enclosing function — save+restore around
 // each body keeps cross-function state clean.
 func (g *Generator) maybeEmitLocalFn(b *strings.Builder, sc *scope) bool {
+	if !g.on(featLocalFn) {
+		return false
+	}
 	if g.flip(0.88) {
 		return false
 	}
@@ -1610,7 +1656,9 @@ func (g *Generator) maybeEmitLocalFn(b *strings.Builder, sc *scope) bool {
 	// on hot paths the diff oracle hasn't proved out yet.
 	prevReturnType := g.currentReturnType
 	g.currentReturnType = ret
+	g.inClosure++
 	g.expr(b, inner, ret, 0)
+	g.inClosure--
 	g.currentReturnType = prevReturnType
 	b.WriteString("; } ")
 	g.localHelpers = append(g.localHelpers, helperSig{name: name, params: params, retType: ret})
@@ -1631,6 +1679,9 @@ func (g *Generator) maybeEmitLocalFn(b *strings.Builder, sc *scope) bool {
 // The body lives in an inner scope so the loop variable's name
 // can't leak out. Same loop-depth budget as the while loop.
 func (g *Generator) maybeEmitForEach(b *strings.Builder, sc *scope) bool {
+	if !g.on(featForEach) {
+		return false
+	}
 	if g.loopDepth >= maxInt(g.cfg.MaxLoopDepth, 0) {
 		return false
 	}
@@ -1638,11 +1689,11 @@ func (g *Generator) maybeEmitForEach(b *strings.Builder, sc *scope) bool {
 	// available, skip.
 	var arrayVar string
 	var elemType gtype
-	for _, at := range []gtype{tArrI32, tArrI64, tArrBool, tArrFnI32I32, tArrF32, tArrF64} {
+	for _, at := range append([]gtype{tArrI32, tArrI64, tArrBool, tArrFnI32I32, tArrF32, tArrF64}, sortedKeys(g.arrShapes)...) {
 		vars := sc.inScope(at)
 		if len(vars) > 0 {
 			arrayVar = vars[g.ch.intN(len(vars))]
-			elemType, _ = arrayElemOf(at)
+			elemType, _ = g.arrayElemOf(at)
 			break
 		}
 	}
@@ -1748,6 +1799,9 @@ var cowFloatArrayTypes = []gtype{tArrF32, tArrF64}
 // enclosing return or print observation can pick them up — the
 // read-back is the value that carries the divergence.
 func (g *Generator) maybeEmitArrayAliasCow(b *strings.Builder, sc *scope) bool {
+	if !g.on(featCow) {
+		return false
+	}
 	// Exhaustion convention: `true` here = no cluster, which is the
 	// smaller output (the caller falls through to a single var-decl).
 	// Bias to ~15% emission per statement slot when bytes are flowing.
@@ -1759,7 +1813,7 @@ func (g *Generator) maybeEmitArrayAliasCow(b *strings.Builder, sc *scope) bool {
 		pool = append(append([]gtype{}, pool...), cowFloatArrayTypes...)
 	}
 	arrT := pool[g.ch.intN(len(pool))]
-	elem, _ := arrayElemOf(arrT)
+	elem, _ := g.arrayElemOf(arrT)
 	arrName := g.typeName(arrT)
 
 	idx := g.cowCounter
@@ -1797,6 +1851,9 @@ func (g *Generator) maybeEmitArrayAliasCow(b *strings.Builder, sc *scope) bool {
 // i32[] only. The read has to reach the return value to be observed at all,
 // and an i32 accumulator is the one element type that adds up without a cast.
 func (g *Generator) maybeEmitLoopReadBeforeWith(b *strings.Builder, sc *scope) bool {
+	if !g.on(featCow) {
+		return false
+	}
 	if g.loopDepth >= maxInt(g.cfg.MaxLoopDepth, 0) {
 		return false
 	}
@@ -1906,7 +1963,7 @@ func (g *Generator) production(b *strings.Builder, sc *scope, t gtype, depth int
 	// Helper call. Skipped when no helper returns t, or when the
 	// generator rolls "small branch" — exhaustion convention
 	// keeps generation terminating.
-	if !g.flip(0.7) {
+	if g.on(featCall) && !g.flip(0.7) {
 		if g.emitCall(b, sc, t, depth) {
 			return
 		}
@@ -1916,7 +1973,7 @@ func (g *Generator) production(b *strings.Builder, sc *scope, t gtype, depth int
 	// produce a value of type t. Bails out (returns false)
 	// when no in-scope composite supplies t; caller falls
 	// through to the per-type composite path below.
-	if !g.flip(0.75) {
+	if g.on(featProjection) && !g.flip(0.75) {
 		if g.tryCompositeProduction(b, sc, t, depth) {
 			return
 		}
@@ -1924,7 +1981,7 @@ func (g *Generator) production(b *strings.Builder, sc *scope, t gtype, depth int
 	// If-expression. The Lang `if (cond) { then } else { else }`
 	// in expression position requires both arms to share a type;
 	// recursing with the same t on both arms preserves that.
-	if !g.flip(0.8) {
+	if g.on(featIfExpr) && !g.flip(0.8) {
 		g.emitIfExpr(b, sc, t, depth)
 		return
 	}
@@ -1935,7 +1992,7 @@ func (g *Generator) production(b *strings.Builder, sc *scope, t gtype, depth int
 	// instantiation. Wiring them here for any t exercises that
 	// inference + monomorph path across the type universe.
 	//
-	if !g.flip(0.85) {
+	if g.on(featGeneric) && !g.flip(0.85) {
 		// `id` is the simpler call — single arg of type t,
 		// returns t. Exhaustion convention: `true` => skip the
 		// generic call (smaller output, no extra clone for
@@ -1945,7 +2002,7 @@ func (g *Generator) production(b *strings.Builder, sc *scope, t gtype, depth int
 		b.WriteString(")")
 		return
 	}
-	if !g.flip(0.9) {
+	if g.on(featGeneric) && !g.flip(0.9) {
 		// `pick` is the three-arg variant. Both `a` and `b`
 		// recurse at type t so the checker's pairwise
 		// unification produces a single T. Use genericArg so
@@ -2040,7 +2097,7 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 	// needing to track per-array lengths. The generator emits
 	// every array literal with length >= 1, so [0] is in-
 	// bounds by construction.
-	if arrT, ok := arrayTypeFor(t); ok {
+	if arrT, ok := g.arrayTypeFor(t); ok {
 		arrs := sc.inScope(arrT)
 		if len(arrs) > 0 {
 			name := arrs[g.ch.intN(len(arrs))]
@@ -2102,7 +2159,7 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 	// be in bounds for an array reached through a var or a helper
 	// return. maybeEmitArrayAliasCow draws a wider index because it
 	// emits the receiver's literal itself and knows its length.
-	if elem, ok := arrayElemOf(t); ok {
+	if elem, ok := g.arrayElemOf(t); ok {
 		arrs := sc.inScope(t)
 		if len(arrs) > 0 && !g.flip(0.7) {
 			name := arrs[g.ch.intN(len(arrs))]
@@ -2347,49 +2404,15 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
-	// Dynamic-struct field access. For each declared struct
-	// shape, see if any field's type matches t and there's a
-	// var in scope of that struct's type. Iterate in
-	// deterministic gtype-ascending order so the same seed
-	// produces the same output (Go's `range map` is
-	// randomised — see sortedDynamicTypes for the same fix
-	// applied to pickType / pickMainVarType).
-	structKeys := make([]gtype, 0, len(g.structShapes))
-	for k := range g.structShapes {
-		structKeys = append(structKeys, k)
-	}
-	sort.Slice(structKeys, func(i, j int) bool { return structKeys[i] < structKeys[j] })
-	for _, st := range structKeys {
-		sh := g.structShapes[st]
-		vars := sc.inScope(st)
-		if len(vars) == 0 {
-			continue
-		}
-		// Collect matching field names. Random pick among them.
-		var matching []string
-		for _, f := range sh.fields {
-			if f.t == t {
-				matching = append(matching, f.name)
-			}
-		}
-		if len(matching) == 0 {
-			continue
-		}
-		vname := vars[g.ch.intN(len(vars))]
-		fname := matching[g.ch.intN(len(matching))]
-		fmt.Fprintf(b, "%s.%s", vname, fname)
+	if paths := g.accessPaths(sc, t); len(paths) > 0 {
+		b.WriteString(paths[g.ch.intN(len(paths))])
 		return true
 	}
 	// Dynamic-enum match. Route an in-scope dynamic enum into
 	// any non-same-enum t via an exhaustive match. Each variant
 	// arm recurses on t. Same determinism requirement as the
 	// struct iteration above.
-	enumKeys := make([]gtype, 0, len(g.enumShapes))
-	for k := range g.enumShapes {
-		enumKeys = append(enumKeys, k)
-	}
-	sort.Slice(enumKeys, func(i, j int) bool { return enumKeys[i] < enumKeys[j] })
-	for _, et := range enumKeys {
+	for _, et := range sortedKeys(g.enumShapes) {
 		if et == t {
 			continue
 		}
@@ -2430,6 +2453,89 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 	return false
 }
 
+// maxPathSteps bounds how many projections accessPaths chains onto a var.
+const maxPathSteps = 3
+
+// accessPaths lists every projection chain of type t rooted at an in-scope
+// var: field reads, tuple element reads and `[0i32]` element reads, up to
+// maxPathSteps deep, shortest first so an exhausted corpus takes the
+// shortest. A value nested inside a value is only ever reached this way —
+// `s.f0.fst`, `arr[0i32].f1` — and reading through the parent while it is
+// still live is what the nested retain and release paths have to get right.
+//
+// Index 0 is in bounds for every array the generator produces: literals
+// have at least one element and `.with` keeps the length.
+func (g *Generator) accessPaths(sc *scope, t gtype) []string {
+	type node struct {
+		path string
+		t    gtype
+	}
+	var frontier []node
+	for _, vt := range g.projectable() {
+		for _, name := range sc.inScope(vt) {
+			frontier = append(frontier, node{name, vt})
+		}
+	}
+	var out []string
+	for step := 0; step < maxPathSteps && len(frontier) > 0; step++ {
+		var next []node
+		for _, n := range frontier {
+			for _, m := range g.members(n.t) {
+				child := node{n.path + m.suffix, m.t}
+				if child.t == t {
+					out = append(out, child.path)
+				}
+				next = append(next, child)
+			}
+		}
+		frontier = next
+	}
+	return out
+}
+
+// member is one projection out of a value: the source text appended to
+// reach it and the type it yields.
+type member struct {
+	suffix string
+	t      gtype
+}
+
+// projectable is every type members can project out of, in a fixed order.
+func (g *Generator) projectable() []gtype {
+	out := []gtype{tPair, tXyz, tTupI32I64, tArrI32, tArrI64, tArrBool, tArrFnI32I32}
+	if g.profile.floatsAllowed() {
+		out = append(out, tVec2, tTupF32F64, tArrF32, tArrF64)
+	}
+	return append(out, append(sortedKeys(g.structShapes), sortedKeys(g.arrShapes)...)...)
+}
+
+// members lists the one-step projections out of a value of type t.
+func (g *Generator) members(t gtype) []member {
+	if sh, ok := g.structShapes[t]; ok {
+		out := make([]member, len(sh.fields))
+		for i, f := range sh.fields {
+			out[i] = member{"." + f.name, f.t}
+		}
+		return out
+	}
+	if elem, ok := g.arrayElemOf(t); ok {
+		return []member{{"[0i32]", elem}}
+	}
+	switch t {
+	case tPair:
+		return []member{{".fst", tI32}, {".snd", tI32}}
+	case tXyz:
+		return []member{{".n", tI32}, {".valid", tBool}}
+	case tTupI32I64:
+		return []member{{".0", tI32}, {".1", tI64}}
+	case tVec2:
+		return []member{{".x", tF32}, {".y", tF32}}
+	case tTupF32F64:
+		return []member{{".0", tF32}, {".1", tF64}}
+	}
+	return nil
+}
+
 // emitCall picks a previously-registered helper whose return type
 // is t and emits a typed call to it. Half the time, when the
 // helper has at least one parameter, emits the pipe form
@@ -2455,38 +2561,66 @@ func (g *Generator) emitCall(b *strings.Builder, sc *scope, t gtype, depth int) 
 			cands = append(cands, h)
 		}
 	}
+	if g.self != nil && g.self.retType == t && g.selfCalls > 0 && g.loopDepth == 0 && g.inClosure == 0 {
+		cands = append(cands, *g.self)
+	}
 	if len(cands) == 0 {
 		return false
 	}
-	h := cands[g.ch.intN(len(cands))]
+	g.emitCallTo(b, sc, cands[g.ch.intN(len(cands))], depth)
+	return true
+}
+
+// emitCallTo writes a call to h with type-correct arguments, as a prefix
+// call or, sometimes, in the pipe form.
+func (g *Generator) emitCallTo(b *strings.Builder, sc *scope, h helperSig, depth int) {
+	fuel := ""
+	if h.fueled {
+		if g.self != nil && h.name == g.self.name {
+			g.selfCalls--
+			fuel = "(__fuel - 1i32)"
+		} else {
+			fuel = fmt.Sprintf("%di32", g.ch.intN(4))
+		}
+	}
 	// Pipe form: smaller-output choice is "no pipe" (exhaustion
 	// returns true here = no pipe = prefix form).
-	if len(h.params) >= 1 && !g.flip(0.6) {
+	if (len(h.params) >= 1 || fuel != "") && !g.flip(0.6) {
 		// Outer parens so the `|>` precedence (which sits
 		// between assignment and ternary) doesn't clash with
 		// whatever expression slot the caller drops this into.
 		b.WriteByte('(')
-		g.expr(b, sc, h.params[0], depth+1)
+		if fuel != "" {
+			b.WriteString(fuel)
+		} else {
+			g.expr(b, sc, h.params[0], depth+1)
+		}
 		fmt.Fprintf(b, " |> %s(", h.name)
-		for i, pt := range h.params[1:] {
+		rest := h.params
+		if fuel == "" {
+			rest = h.params[1:]
+		}
+		for i, pt := range rest {
 			if i > 0 {
 				b.WriteString(", ")
 			}
 			g.expr(b, sc, pt, depth+1)
 		}
 		b.WriteString("))")
-		return true
+		return
 	}
 	b.WriteString(h.name)
 	b.WriteByte('(')
+	if fuel != "" {
+		b.WriteString(fuel)
+	}
 	for i, pt := range h.params {
-		if i > 0 {
+		if i > 0 || fuel != "" {
 			b.WriteString(", ")
 		}
 		g.expr(b, sc, pt, depth+1)
 	}
 	b.WriteByte(')')
-	return true
 }
 
 // genericArg emits an expression of type t for a generic-call
@@ -2583,9 +2717,10 @@ func (g *Generator) leaf(b *strings.Builder, sc *scope, t gtype, depth int) {
 	// three. A spent corpus must not take the larger one: the
 	// production it would otherwise have reached (tryCompositeProduction's
 	// array index) is smaller, so truncating a byte here GREW the
-	// program and the shrinker could walk uphill. tFnI32I32 is the only
-	// type with a non-var production smaller than its own literal;
-	// every other literal is already the minimum available.
+	// program and the shrinker could walk uphill. Among the builtin
+	// types tFnI32I32 is the only one with a non-var production smaller
+	// than its own literal; a program-declared type's literal spells
+	// every field, so leafMin weighs it against the alternatives.
 	//
 	// Gated on exhausted() so a corpus with bytes left is untouched —
 	// the predicate consumes nothing, so random generation and every
@@ -2595,6 +2730,10 @@ func (g *Generator) leaf(b *strings.Builder, sc *scope, t gtype, depth int) {
 			fmt.Fprintf(b, "%s[0i32]", arrs[g.ch.intN(len(arrs))])
 			return
 		}
+	}
+	if t >= numTypes && g.ch.exhausted() {
+		g.leafMin(b, sc, t, depth)
+		return
 	}
 	g.literal(b, sc, t, depth)
 }
@@ -2981,7 +3120,7 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 	case tString:
 		b.WriteString(g.stringLiteral())
 	case tArrI32, tArrI64, tArrBool, tArrFnI32I32, tArrF32, tArrF64:
-		elem, _ := arrayElemOf(t)
+		elem, _ := g.arrayElemOf(t)
 		g.arrayLiteral(b, sc, elem, depth)
 	case tFnI32I32:
 		g.lambdaLiteral(b, sc, depth)
@@ -3071,11 +3210,15 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 		// Dynamic nominal types — struct lit or enum-variant
 		// pick based on which sidecar map t belongs to.
 		if sh, ok := g.structShapes[t]; ok {
-			g.dynStructLiteral(b, sc, sh, depth)
+			g.dynStructLiteral(b, sc, t, sh, depth)
 			return
 		}
 		if sh, ok := g.enumShapes[t]; ok {
 			g.dynEnumLiteral(b, sc, sh, depth)
+			return
+		}
+		if elem, ok := g.arrShapes[t]; ok {
+			g.arrayLiteral(b, sc, elem, depth)
 			return
 		}
 		panic(fmt.Sprintf("literal: unknown gtype %d", int(t)))
@@ -3086,7 +3229,19 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 // for a dynamic struct shape declared in declareDynamicNominals.
 // Outer parens match the pairLiteral / Xyz pattern for arm-block
 // disambiguation.
-func (g *Generator) dynStructLiteral(b *strings.Builder, sc *scope, sh *structShape, depth int) {
+func (g *Generator) dynStructLiteral(b *strings.Builder, sc *scope, t gtype, sh *structShape, depth int) {
+	// Functional update, `S { ...v, fK: e }`: a copy of a live value with
+	// one field replaced, the shape a reuse token is built for. Exhausted,
+	// it is the smaller form — one field expression, not one per field —
+	// so it is taken whenever a source is in scope.
+	if srcs := sc.inScope(t); len(srcs) > 0 && (g.ch.exhausted() || !g.flip(0.7)) {
+		src := srcs[g.ch.intN(len(srcs))]
+		f := sh.fields[g.ch.intN(len(sh.fields))]
+		fmt.Fprintf(b, "(%s { ...%s, %s: ", sh.name, src, f.name)
+		g.expr(b, sc, f.t, depth+1)
+		b.WriteString(" })")
+		return
+	}
 	fmt.Fprintf(b, "(%s { ", sh.name)
 	for i, f := range sh.fields {
 		if i > 0 {
@@ -3208,7 +3363,9 @@ func (g *Generator) lambdaLiteral(b *strings.Builder, sc *scope, depth int) {
 	// always done this; the lambda producer has to as well.
 	prevReturnType := g.currentReturnType
 	g.currentReturnType = tI32
+	g.inClosure++
 	g.expr(b, inner, tI32, depth+1)
+	g.inClosure--
 	g.currentReturnType = prevReturnType
 	b.WriteByte(')')
 }
@@ -3267,7 +3424,7 @@ func (g *Generator) pickMainVarType() gtype {
 	if g.profile.floatsAllowed() {
 		pool = append(pool, floatVarTypes...)
 	}
-	pool = append(pool, g.sortedDynamicTypes()...)
+	pool = append(g.swarmed(pool), g.sortedDynamicTypes()...)
 	return pool[g.ch.intN(len(pool))]
 }
 
@@ -3288,8 +3445,7 @@ func (g *Generator) typePool() []gtype {
 	} else {
 		pool = append(pool, allTypes[:]...)
 	}
-	pool = append(pool, g.sortedDynamicTypes()...)
-	return pool
+	return append(g.swarmed(pool), g.sortedDynamicTypes()...)
 }
 
 // sortedDynamicTypes returns the dynamic struct + enum gtypes
@@ -3299,11 +3455,18 @@ func (g *Generator) typePool() []gtype {
 // the type pool makes pickType non-deterministic and breaks
 // TestGenIsDeterministic for the same seed.
 func (g *Generator) sortedDynamicTypes() []gtype {
-	out := make([]gtype, 0, len(g.structShapes)+len(g.enumShapes))
-	for t := range g.structShapes {
-		out = append(out, t)
-	}
-	for t := range g.enumShapes {
+	out := append(sortedKeys(g.structShapes), sortedKeys(g.enumShapes)...)
+	out = append(out, sortedKeys(g.arrShapes)...)
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+// sortedKeys returns m's keys in ascending order. Go randomises `range map`,
+// so anything a draw is taken from has to be ordered first or the same seed
+// stops producing the same program.
+func sortedKeys[V any](m map[gtype]V) []gtype {
+	out := make([]gtype, 0, len(m))
+	for t := range m {
 		out = append(out, t)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
@@ -3318,10 +3481,30 @@ func (g *Generator) sortedDynamicTypes() []gtype {
 //
 // Exhaustion convention: option 0 is tI32, the narrowest.
 func (g *Generator) pickFieldType() gtype {
-	if g.profile.floatsAllowed() {
-		return []gtype{tI32, tI64, tBool, tString, tF32, tF64}[g.ch.intN(6)]
+	// A field that owns a box: the nested-release, nested-retain and
+	// reuse shapes live here, and a scalar-only field cannot reach them.
+	// Earlier-declared nominals join the pool, so declarations form a DAG
+	// and every literal is finite.
+	nested := g.swarmed(nestedFieldTypes)
+	nested = append(nested, sortedKeys(g.structShapes)...)
+	nested = append(nested, sortedKeys(g.enumShapes)...)
+	// Exhaustion convention: `true` is the scalar pool.
+	if len(nested) == 0 || !g.on(featNested) || g.flip(0.6) {
+		scalars := []gtype{tI32, tI64, tBool, tString}
+		if g.profile.floatsAllowed() {
+			scalars = append(scalars, tF32, tF64)
+		}
+		scalars = g.swarmed(scalars)
+		return scalars[g.ch.intN(len(scalars))]
 	}
-	return []gtype{tI32, tI64, tBool, tString}[g.ch.intN(4)]
+	return nested[g.ch.intN(len(nested))]
+}
+
+// nestedFieldTypes are the builtin boxed types a struct field or an enum
+// payload slot may hold. All are float-free, so every profile admits them.
+var nestedFieldTypes = []gtype{
+	tArrI32, tOptI32, tResI32I32, tTupI32I64, tPair, tFnI32I32,
+	tMapI32I32, tArrBool, tArrI64, tArrFnI32I32, tXyz, tColor,
 }
 
 // pickNumeric draws from the numeric types only, honouring
@@ -3357,6 +3540,9 @@ func maxInt(a, b int) int {
 // `while`. The shrink property (TestGenBytesShrinkIsMonotonicAndValid)
 // is what holds that, not this comment.
 func (g *Generator) maybeEmitControlStmt(b *strings.Builder, sc *scope, retT gtype) bool {
+	if !g.on(featControl) {
+		return false
+	}
 	if g.maybeEmitLoopBreak(b, sc) {
 		return true
 	}

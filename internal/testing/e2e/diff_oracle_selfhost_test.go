@@ -135,6 +135,36 @@ func TestDifferential_SelfHostX86_64(t *testing.T) {
 		// fern.fern test (see TestSelfHostCLIX86_64).
 		t.Skip("self-host CLI driver runs only natively (argv paths)")
 	}
+	selfHostX86Sweep(t, gcc, selfHostDiffKnownFile, nil)
+}
+
+// TestDifferential_SelfHostSanitizeX86_64 is the same sweep with every seed
+// built under -sanitize (docs/SANITIZER.md): besides agreeing with the
+// interpreter, the binary must report no rc over-release, no use of a freed
+// block and no leak. The exit-byte oracle cannot see any of the three — a
+// leak, or a double free into a block nothing reads again, leaves the answer
+// right — and they are the class Perceus's inc / dec placement gets wrong.
+// fernsmith's ownership cluster and nested aggregates generate the shapes
+// (an aliased nested value updated, projected and dropped), and this is the
+// oracle that judges them.
+func TestDifferential_SelfHostSanitizeX86_64(t *testing.T) {
+	requireSelfHostDiffLeg(t)
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("self-host CLI driver runs only natively (argv paths)")
+	}
+	selfHostX86Sweep(t, gcc, selfHostSanitizeKnownFile, []string{"-sanitize"})
+}
+
+// selfHostSanitizeKnownFile is TestDifferential_SelfHostSanitizeX86_64's
+// known-divergences file, on the contract selfHostDiffKnownFile describes.
+const selfHostSanitizeKnownFile = "selfhost-diff-sanitize-known-divergences.txt"
+
+// selfHostX86Sweep runs the fernsmith window through the self-host x86-64
+// CLI with the extra compile flags given, against the interpreter. A
+// -sanitize build is also failed on any sanitizer report.
+func selfHostX86Sweep(t *testing.T, gcc, knownFile string, flags []string) {
+	t.Helper()
 	stdlibRoot, err := filepath.Abs("../../stdlib")
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)
@@ -143,7 +173,6 @@ func TestDifferential_SelfHostX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
-	knownFile := selfHostDiffKnownFile
 	known := loadKnownDivergences(t, knownFile)
 
 	var sampled, ran int64
@@ -166,7 +195,7 @@ func TestDifferential_SelfHostX86_64(t *testing.T) {
 				}
 				t.Errorf(format, args...)
 			}
-			r, gap := runSelfHostSeed(t, fernBin, stdlibRoot, src, failf)
+			r, gap := runSelfHostSeed(t, fernBin, stdlibRoot, src, flags, failf)
 			if gap != "" {
 				if semRefused(gap) {
 					t.Errorf("the typed lowering refused this seed:\n%s", gap)
@@ -189,6 +218,9 @@ func TestDifferential_SelfHostX86_64(t *testing.T) {
 			if r != nil {
 				atomic.AddInt64(&ran, 1)
 				checkSelfHostSeedExit(*r, want, src, failf)
+				if strings.Contains(r.stderr, "fern-sanitizer:") {
+					failf("the sanitizer reported on the self-host-compiled binary:\n%s\nsrc:\n%s", r.stderr, src)
+				}
 			}
 			if isKnown && !diverged {
 				t.Errorf("seed %d is listed in testdata/%s (%s) but it AGREES now — delete the entry",
@@ -236,7 +268,7 @@ func semRefused(out string) bool {
 // selfHostRunTimeout and reported as such, rather than spending the lane's
 // budget. That matters more here than on the fixture legs: these programs are
 // generated, so nobody has ever eyeballed one to know it should terminate.
-func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, failf failFunc) (*selfHostRun, string) {
+func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, flags []string, failf failFunc) (*selfHostRun, string) {
 	t.Helper()
 	// Absolute paths throughout: a relative one was unopenable from an
 	// arm64-darwin binary until #6002, and absolute is what every other
@@ -247,11 +279,12 @@ func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, failf failFu
 		t.Fatalf("write src: %v", err)
 	}
 	asmPath := filepath.Join(dir, "prog.s")
-	compile := exec.Command(fernBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, srcPath, stdlibRoot)
-	out, err := compile.CombinedOutput()
+	args := append([]string{"-target", "x86-64-linux"}, flags...)
+	args = append(args, "-emit", "asm", "-o", asmPath, srcPath, stdlibRoot)
+	out, err := exec.Command(fernBin, args...).CombinedOutput()
 	if err != nil {
 		return nil, fmt.Sprintf("%v\n%s%s", err, out,
-			strictIRBailSite(fernBin, "x86-64-linux", []string{"-emit", "asm"}, srcPath, stdlibRoot, out))
+			strictIRBailSite(fernBin, "x86-64-linux", append(flags, "-emit", "asm"), srcPath, stdlibRoot, out))
 	}
 	binPath := filepath.Join(dir, "prog")
 	// The flags every other self-host x86 link uses (linkSelfHostAsm's small
