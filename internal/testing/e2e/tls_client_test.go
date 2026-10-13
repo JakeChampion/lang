@@ -84,8 +84,8 @@ func TestTLSClientAgainstGoInterp(t *testing.T) {
 type tlsWorld struct {
 	caFile, clientCert, clientKey       string
 	main, retry, rsa, ed, bad, echo, px int
-	mtls                                int
-	mainConns                           atomic.Int64
+	mtls, h2                            int
+	mainConns, h2Conns                  atomic.Int64
 	mu                                  sync.Mutex
 	tunnels                             []string
 }
@@ -107,6 +107,11 @@ func startTLSWorld(t *testing.T) *tlsWorld {
 		}
 	})
 	w.retry = serveTLS(t, ecLeaf, []tls.CurveID{tls.X25519}, nil)
+	w.h2 = serveTLSH2(t, ecLeaf, func(c net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			w.h2Conns.Add(1)
+		}
+	})
 	w.rsa = serveTLS(t, ca.leaf(t, mustKey(t, "rsa"), []string{"localhost"}, false), nil, nil)
 	w.ed = serveTLS(t, ca.leaf(t, mustKey(t, "ed25519"), []string{"localhost"}, false), nil, nil)
 	w.bad = serveTLS(t, other.leaf(t, mustKey(t, "p256"), names, true), nil, nil)
@@ -145,7 +150,7 @@ func (w *tlsWorld) source() string {
 	return strings.NewReplacer(
 		"@MAIN@", strconv.Itoa(w.main), "@RETRY@", strconv.Itoa(w.retry), "@RSA@", strconv.Itoa(w.rsa),
 		"@ED@", strconv.Itoa(w.ed), "@BAD@", strconv.Itoa(w.bad), "@ECHO@", strconv.Itoa(w.echo), "@PROXY@", strconv.Itoa(w.px),
-		"@MTLS@", strconv.Itoa(w.mtls), "@CLIENT_CERT@", w.clientCert, "@CLIENT_KEY@", w.clientKey,
+		"@MTLS@", strconv.Itoa(w.mtls), "@CLIENT_CERT@", w.clientCert, "@CLIENT_KEY@", w.clientKey, "@H2@", strconv.Itoa(w.h2),
 	).Replace(tlsClientSource)
 }
 
@@ -320,6 +325,10 @@ function main(): i32 {
   show("untrusted", fetch.send(fetch.get("https://localhost:@BAD@/")));
   show("wrongname", fetch.send(fetch.get("https://127.0.0.1:@RSA@/")));
   show("tunnel", fetch.send_on(fetch.sockets(), fetch.get("https://tls.test:@MAIN@/g"), proxies("http://127.0.0.1:@PROXY@")));
+  let over_h2: fetch.Sockets = fetch.sockets();
+  show("h2", fetch.send_on(over_h2, fetch.get("https://localhost:@H2@/k").with_header("X-Fern", "yes"), proxies("")));
+  show("h2 again", fetch.send_on(over_h2, fetch.get("https://localhost:@H2@/l").with_body(BodyText("body-bytes")), proxies("")));
+  fetch.close_idle(over_h2);
   match (verify.system_roots()) {
     Some(roots) => {
       let held: fetch.Sockets = fetch.sockets();
@@ -353,6 +362,8 @@ func (w *tlsWorld) check(t *testing.T, got string, mainConns int64) {
 		"untrusted: error TLS: the server's certificate is not trusted: tls verify: no path from the certificate reaches a trusted root",
 		"wrongname: error TLS: the server's certificate is not trusted: tls verify: the certificate is not valid for 127.0.0.1",
 		"tunnel: " + ok("/g", "X25519MLKEM768"),
+		"h2: 200 /k HTTP/2.0 h2 body=0 x-fern=yes",
+		"h2 again: 200 /l HTTP/2.0 h2 body=10 x-fern=-",
 		"given: " + ok("/h", "X25519MLKEM768"),
 		"none: error TLS: the server's certificate is not trusted: tls verify: no path from the certificate reaches a trusted root",
 		"given again: " + ok("/j", "X25519MLKEM768"),
@@ -365,6 +376,10 @@ func (w *tlsWorld) check(t *testing.T, got string, mainConns int64) {
 	// first and again share one connection; address and tunnel open their own.
 	if mainConns != 3 {
 		t.Errorf("the main server took %d connections, want 3", mainConns)
+	}
+	// h2 and h2 again share one HTTP/2 connection.
+	if n := w.h2Conns.Swap(0); n != 1 {
+		t.Errorf("the HTTP/2 server took %d connections, want 1", n)
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -380,6 +395,27 @@ func serveTLS(t *testing.T, cert tls.Certificate, curves []tls.CurveID, state fu
 		fmt.Fprintf(rw, "%s %s %s %s", r.URL.Path, r.Proto, r.TLS.NegotiatedProtocol, r.TLS.CurveID)
 	}))
 	s.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13, CurvePreferences: curves, NextProtos: []string{"http/1.1"}}
+	s.Config.ConnState = state
+	s.StartTLS()
+	t.Cleanup(s.Close)
+	return s.Listener.Addr().(*net.TCPAddr).Port
+}
+
+// serveTLSH2 is serveTLS offering h2 by ALPN, Go's HTTP/2 server behind
+// it: the handler names the path, the protocol spoken, the ALPN protocol,
+// the request body's length and the X-Fern header's value.
+func serveTLSH2(t *testing.T, cert tls.Certificate, state func(net.Conn, http.ConnState)) int {
+	t.Helper()
+	s := httptest.NewUnstartedServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		fern := r.Header.Get("X-Fern")
+		if fern == "" {
+			fern = "-"
+		}
+		fmt.Fprintf(rw, "%s %s %s body=%d x-fern=%s", r.URL.Path, r.Proto, r.TLS.NegotiatedProtocol, len(body), fern)
+	}))
+	s.EnableHTTP2 = true
+	s.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13, NextProtos: []string{"h2", "http/1.1"}}
 	s.Config.ConnState = state
 	s.StartTLS()
 	t.Cleanup(s.Close)

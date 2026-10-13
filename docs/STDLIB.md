@@ -3654,16 +3654,25 @@ answer is `Result[HttpResponse, FetchError]`.
   `sockets()` is the machine's (the system resolver, `dns.connect_race`,
   `tcp_recv_deadline`), which `send` and `plat.http` use; `std/sim_fetch`
   scripts one in virtual time.
+- **HTTP/2:** an `https` origin that chooses `h2` by ALPN is spoken to
+  over HTTP/2 (`std/http/h2`'s client side): the request on a stream of
+  its own, the response read whole, the connection kept for the next
+  request until the server sends GOAWAY. One request at a time goes over a
+  connection; a second request to the same origin while one is in flight
+  dials another, as it does over HTTP/1.1. An origin offering only
+  `http/1.1`, and every `http` origin, is spoken to as before.
 - **Pool:** a connection whose response was framed (a length or chunked,
   not ended by the close), that the peer did not ask to close, and that
   nothing followed is kept in the transport's `Idle` pool under its host,
   port and route (the open route's connections are never handed to the
-  guarded one). The next idempotent request to the same place takes the
-  connection kept last; a POST always dials, since a kept connection the
-  peer has closed shows itself only after the request is written, and an
-  idempotent request that finds it closed is sent once more on a new one.
-  `idle()` keeps up to 64 connections for 90 s each, `idle_limited(max,
-  idle)` sets both, the second a `Duration`, and `sockets_with(pool)` dials with a given pool.
+  guarded one), as a `Kept` row with its TLS session and, over HTTP/2,
+  the connection's state. The next idempotent request to the same place
+  takes the connection kept last; a POST always dials, since a kept
+  connection the peer has closed shows itself only after the request is
+  written, and an idempotent request that finds it closed is sent once
+  more on a new one. `idle()` keeps up to 64 connections for 90 s each,
+  `idle_limited(max, idle)` sets both, the second a `Duration`, and
+  `sockets_with(pool)` dials with a given pool.
   `send` keeps a pool for the one call (so a redirect back to the same
   origin is followed on its connection) and closes it after; a caller that
   holds a `Sockets` across `send_on` calls reuses across them and closes

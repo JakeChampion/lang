@@ -225,7 +225,26 @@ pub function (c: Conn) request(out: Outgoing): (Step, i32) {
     return (Step { conn: c, output: [], events: [] }, 0 - 1);
   }
   let stream: i32 = c.next_stream;
-  let en: hpack.Encoding = c.encoder.begin().put(":method", out.method, false).put(":scheme", out.scheme, false).put(":authority", out.authority, false).put(":path", out.path, false);
+  let enc: hpack.Encoded = __request_block(c.encoder, out);
+  let last: boolean = out.body.len() == 0 && out.trailers.len() == 0;
+  let state: i32 = OPEN;
+  if (last) {
+    state = HALF_LOCAL;
+  }
+  let s: __Stream = __Stream { id: stream, state: state, send_window: c.peer_initial_window, recv_window: c.config.initial_window, method: out.method, scheme: out.scheme, authority: out.authority, path: out.path, fields: headers.header_map_new(), body: [], length: 0 - 1, handling: false, reset: false, pending: out.body, trailers: out.trailers, owes_end: !last, streaming: false, received: 0, producing: false, status: 0 };
+  c = Conn { ...c, encoder: enc.encoder, streams: c.streams.append(s), last_stream: stream, next_stream: stream + 2 };
+  let r: __Run = __header_frames(__run(c), stream, enc.bytes, last);
+  if (!last) {
+    r = __flushed(r);
+  }
+  return (__step(r), stream);
+}
+
+// __request_block is a request's header block: the pseudo-header fields,
+// then the fields with `host` and the connection-specific ones left out,
+// and a content-length for a body that has none.
+function __request_block(e: hpack.Encoder, out: Outgoing): hpack.Encoded {
+  let en: hpack.Encoding = e.begin().put(":method", out.method, false).put(":scheme", out.scheme, false).put(":authority", out.authority, false).put(":path", out.path, false);
   let has_length: boolean = false;
   let i: i32 = 0;
   while (i < out.headers.names.len()) {
@@ -241,19 +260,7 @@ pub function (c: Conn) request(out: Outgoing): (Step, i32) {
   if (!has_length && out.body.len() > 0) {
     en = en.put("content-length", int.int_to_string(out.body.len()), false);
   }
-  let enc: hpack.Encoded = en.finish();
-  let last: boolean = out.body.len() == 0 && out.trailers.len() == 0;
-  let state: i32 = OPEN;
-  if (last) {
-    state = HALF_LOCAL;
-  }
-  let s: __Stream = __Stream { id: stream, state: state, send_window: c.peer_initial_window, recv_window: c.config.initial_window, method: out.method, scheme: out.scheme, authority: out.authority, path: out.path, fields: headers.header_map_new(), body: [], length: 0 - 1, handling: false, reset: false, pending: out.body, trailers: out.trailers, owes_end: !last, streaming: false, received: 0, producing: false, status: 0 };
-  c = Conn { ...c, encoder: enc.encoder, streams: c.streams.append(s), last_stream: stream, next_stream: stream + 2 };
-  let r: __Run = __header_frames(__run(c), stream, enc.bytes, last);
-  if (!last) {
-    r = __flushed(r);
-  }
-  return (__step(r), stream);
+  return en.finish();
 }
 
 // going_away is whether the peer sent GOAWAY: the open streams finish,
@@ -643,45 +650,61 @@ function __parsed_response(s: __Stream, fields: hpack.Field[]): Result[__Stream,
       return Err("empty field name");
     }
     if (f.name.bytes()[0] == 58 as u8) {
-      if (regular || status != 0 || f.name != ":status" || f.value.len() != 3) {
-        return Err("pseudo-header " + f.name);
-      }
-      match (int.parse_int_radix(f.value, 10)) {
-        Some(n) => {
-          if (n < 100 || n > 999) {
-            return Err(":status " + f.value);
-          }
-          status = n;
-        },
-        None => {
-          return Err(":status " + f.value);
-        }
-      }
+      status = __status_of(f, regular || status != 0)?;
     } else {
       regular = true;
-      if (f.name.to_lower() != f.name || !http.http_field_name_ok(f.name) || !http.http_field_value_ok(f.value) || __connection_specific(f.name)) {
-        return Err("field " + f.name);
-      }
-      if (f.name == "content-length") {
-        match (int.parse_int_radix(f.value, 10)) {
-          Some(n) => {
-            if (n < 0 || length >= 0 && length != n) {
-              return Err("content-length");
-            }
-            length = n;
-          },
-          None => {
-            return Err("content-length");
-          }
-        }
-      }
-      out = out.append(f.name, f.value);
+      length = __response_length(f, length)?;
+      out = __response_regular(out, f)?;
     }
   }
   if (status == 0) {
     return Err("no :status");
   }
   return Ok(__Stream { ...s, status: status, fields: out, length: length });
+}
+
+// __status_of is the status a `:status` field carries: the one pseudo-header
+// a response has, first and once (`late` says a field came before it).
+function __status_of(f: hpack.Field, late: boolean): Result[i32, string] {
+  if (late || f.name != ":status" || f.value.len() != 3) {
+    return Err("pseudo-header " + f.name);
+  }
+  match (int.parse_int_radix(f.value, 10)) {
+    Some(n) => {
+      if (n >= 100 && n <= 999) {
+        return Ok(n);
+      }
+    },
+    None => {}
+  }
+  return Err(":status " + f.value);
+}
+
+// __response_regular is `out` with a response's regular field appended,
+// the field checked as a request's is.
+function __response_regular(out: HeaderMap, f: hpack.Field): Result[HeaderMap, string] {
+  if (f.name.to_lower() != f.name || !http.http_field_name_ok(f.name) || !http.http_field_value_ok(f.value) || __connection_specific(f.name)) {
+    return Err("field " + f.name);
+  }
+  return Ok(out.append(f.name, f.value));
+}
+
+// __response_length is the body length a response's content-length field
+// declares, `length` as it was for any other field, and an error for one
+// that is not a length or disagrees with an earlier one.
+function __response_length(f: hpack.Field, length: i32): Result[i32, string] {
+  if (f.name != "content-length") {
+    return Ok(length);
+  }
+  match (int.parse_int_radix(f.value, 10)) {
+    Some(n) => {
+      if (n >= 0 && (length < 0 || length == n)) {
+        return Ok(n);
+      }
+    },
+    None => {}
+  }
+  return Err("content-length");
 }
 
 // __answered hands a client's response over whole, the stream done with.

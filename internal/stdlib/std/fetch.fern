@@ -91,7 +91,7 @@ import "std/wasi_http";
 import "std/tls/client";
 import "std/tls/verify";
 import "std/crypto";
-import "std/hex";
+import "std/http/h2";
 import "core/int";
 
 // ipv4(a, b, c, d) — pack a dotted-quad into the network-byte-order
@@ -591,9 +591,14 @@ pub trait Transport {
 
 // `Idle` — the connections a transport keeps for the next request to the
 // same place: at most `max` of them, none reused once idle past `idle`.
-// `rows` shares the table through Cell[string]: one connection per line,
-// with its key, number and the nanosecond it went idle.
-pub struct Idle { rows: Cell[string], max: i32, idle: Duration }
+// `kept` shares the table through a Cell.
+pub struct Idle { kept: Cell[Kept[]], max: i32, idle: Duration }
+
+// `Kept` — a connection the pool holds: where it reaches (`key`), the
+// transport's number for it, the nanosecond it went idle, its TLS session
+// for `https`, and the HTTP/2 connection's state when the origin chose
+// `h2`.
+pub struct Kept { key: string, fd: i32, since: i64, tls: Option[client.Session], h2: Option[h2.Conn] }
 
 // `idle()` — an empty pool keeping up to 64 connections, each for 90 s
 // (Go's `IdleConnTimeout`).
@@ -604,16 +609,18 @@ pub function idle(): Idle {
 // `idle_limited(max, idle)` — an empty pool keeping up to `max`
 // connections, each for `idle`; a `max` of 0 keeps none.
 pub function idle_limited(max: i32, idle: Duration): Idle {
-  return Idle { rows: cell_new(""), max: max, idle: idle };
+  let none: Kept[] = [];
+  return Idle { kept: cell_new(none), max: max, idle: idle };
 }
 
 // `close_idle(tr)` — every connection `tr` keeps for reuse closed.
 pub function close_idle[T: Transport](tr: T): void {
   let pool: Idle = tr.idle();
-  for row in __idle_rows(pool) {
-    __close(tr, __idle_restored(row));
+  for k in pool.kept.get() {
+    __close(tr, __kept_conn(k));
   }
-  pool.rows.set("");
+  let none: Kept[] = [];
+  pool.kept.set(none);
 }
 
 // `__pool_key(t, guard, roots)` — where a connection reaches: the host and
@@ -656,11 +663,11 @@ function __roots_key(roots: Option[verify.Roots]): string {
 // of the pool, or one numbered -1; any connection idle past the pool's
 // bound is closed on the way.
 function __take_idle[T: Transport](tr: T, key: string): __Conn {
-  let rows: string[] = __live_rows(tr);
+  let rows: Kept[] = __live_kept(tr);
   let pick: i32 = 0 - 1;
   let i: i32 = 0;
   while (i < rows.len()) {
-    if (__idle_key(rows[i]) == key) {
+    if (rows[i].key == key) {
       pick = i;
     }
     i = i + 1;
@@ -668,140 +675,67 @@ function __take_idle[T: Transport](tr: T, key: string): __Conn {
   if (pick < 0) {
     return __no_conn();
   }
-  tr.idle().rows.set(__idle_joined(rows, pick));
-  let conn: __Conn = __idle_restored(rows[pick]);
-  if (__idle_saved(rows[pick]).len() > 0 && !__has_tls(conn)) {
-    tr.close(conn.fd);
-    return __no_conn();
-  }
+  let conn: __Conn = __kept_conn(rows[pick]);
+  tr.idle().kept.set(__kept_without(rows, pick));
   return conn;
 }
 
 // `__park(tr, key, conn)` — `conn` kept for the next request to `key`, the
 // longest-idle connections closed while the pool holds more than its
-// `max`. A TLS session is kept as its saved bytes, since the pool's table
-// holds only text.
+// `max`.
 function __park[T: Transport](tr: T, key: string, conn: __Conn): void {
-  let saved: string = "";
-  if let Some(s) = conn.tls {
-    match (s.save()) {
-      Ok(b) => {
-        saved = hex.hex_encode(b);
-      },
-      Err(_) => {
-        __close(tr, conn);
-        return;
-      }
-    }
-  }
-  let rows: string[] = __live_rows(tr).append(key + "\t" + int.int_to_string(conn.fd) + "\t" + tr.now_ns().to_string() + "\t" + saved);
+  let rows: Kept[] = __live_kept(tr).append(Kept { key: key, fd: conn.fd, since: tr.now_ns(), tls: conn.tls, h2: conn.h2 });
   let from: i32 = 0;
   while (rows.len() - from > tr.idle().max) {
-    __close(tr, __idle_restored(rows[from]));
+    __close(tr, __kept_conn(rows[from]));
     from = from + 1;
   }
-  let kept: string[] = [];
-  while (from < rows.len()) {
-    kept = kept.append(rows[from]);
-    from = from + 1;
-  }
-  tr.idle().rows.set(__idle_joined(kept, 0 - 1));
+  tr.idle().kept.set(__kept_from(rows, from));
 }
 
-// `__live_rows(tr)` — the pool's connections still inside its idle bound,
+// `__live_kept(tr)` — the pool's connections still inside its idle bound,
 // oldest first; the rest closed and dropped from the pool.
-function __live_rows[T: Transport](tr: T): string[] {
+function __live_kept[T: Transport](tr: T): Kept[] {
   let pool: Idle = tr.idle();
   let now: i64 = tr.now_ns();
   let bound: i64 = pool.idle.as_nanos();
-  let out: string[] = [];
-  for row in __idle_rows(pool) {
-    if (now - __idle_since(row) > bound) {
-      __close(tr, __idle_restored(row));
+  let out: Kept[] = [];
+  for k in pool.kept.get() {
+    if (now - k.since > bound) {
+      __close(tr, __kept_conn(k));
     } else {
-      out = out.append(row);
+      out = out.append(k);
     }
   }
-  pool.rows.set(__idle_joined(out, 0 - 1));
+  pool.kept.set(out);
   return out;
 }
 
-function __idle_rows(pool: Idle): string[] {
-  let out: string[] = [];
-  for row in pool.rows.get().split("\n") {
-    if (row.len() > 0) {
-      out = out.append(row);
-    }
-  }
-  return out;
+function __kept_conn(k: Kept): __Conn {
+  return __Conn { fd: k.fd, tls: k.tls, closed: false, h2: k.h2 };
 }
 
-// `__idle_joined(rows, skip)` — `rows` as the pool's table, row `skip`
-// left out.
-function __idle_joined(rows: string[], skip: i32): string {
-  let out: string = "";
+// `__kept_without(rows, skip)` — `rows` without row `skip`.
+function __kept_without(rows: Kept[], skip: i32): Kept[] {
+  let out: Kept[] = [];
   let i: i32 = 0;
   while (i < rows.len()) {
     if (i != skip) {
-      out = out + rows[i] + "\n";
+      out = out.append(rows[i]);
     }
     i = i + 1;
   }
   return out;
 }
 
-function __idle_key(row: string): string {
-  return row.split("\t")[0];
-}
-
-function __idle_conn(row: string): i32 {
-  match (int.parse_int_radix(row.split("\t")[1], 10)) {
-    Some(n) => {
-      return n;
-    },
-    None => {
-      return 0 - 1;
-    }
+// `__kept_from(rows, from)` — `rows` from row `from` on.
+function __kept_from(rows: Kept[], from: i32): Kept[] {
+  let out: Kept[] = [];
+  while (from < rows.len()) {
+    out = out.append(rows[from]);
+    from = from + 1;
   }
-  return 0 - 1;
-}
-
-// `__idle_saved(row)` — the saved TLS session a row keeps, empty for a
-// plain connection.
-function __idle_saved(row: string): string {
-  let fields: string[] = row.split("\t");
-  if (fields.len() < 4) {
-    return "";
-  }
-  return fields[3];
-}
-
-// `__idle_restored(row)` — the connection a row keeps, its TLS session
-// restored; a session that does not restore leaves it without one, which
-// `__take_idle` refuses to hand out.
-function __idle_restored(row: string): __Conn {
-  let conn: __Conn = __Conn { fd: __idle_conn(row), tls: None, closed: false };
-  let saved: string = __idle_saved(row);
-  if (saved.len() == 0) {
-    return conn;
-  }
-  match (client.restore(hex.hex_decode(saved))) {
-    Ok(s) => {
-      return __Conn { ...conn, tls: Some(s) };
-    },
-    Err(_) => {
-      return conn;
-    }
-  }
-  return conn;
-}
-
-function __idle_since(row: string): i64 {
-  let v: i64 = 0;
-  for b in row.split("\t")[2].bytes() {
-    v = v * 10 + (b as i64 - 48);
-  }
-  return v;
+  return out;
 }
 
 // `Lookup` — a name's addresses: `dial` the ones to connect to, and, when
@@ -1337,6 +1271,15 @@ function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64,
   if (conn.fd < 0) {
     conn = __connect(tr, t, req.timeouts, guard, roots)?;
   }
+  if let Some(hc) = conn.h2 {
+    return __attempt_h2(tr, req, t, started, key, conn, hc);
+  }
+  return __attempt_h1(tr, req, t, started, key, conn);
+}
+
+// `__attempt_h1(tr, req, t, started, key, conn)` — `__attempt` on a
+// connection speaking HTTP/1.1: the request written, the response read.
+function __attempt_h1[T: Transport](tr: T, req: Request, t: __Target, started: i64, key: string, conn: __Conn): Result[HttpResponse, FetchError] {
   let body: u8[] = req.body.bytes();
   match (__send_all(tr, conn, __head(req, t, body.len()).bytes().concat(body))) {
     Ok(c) => {
@@ -1364,10 +1307,97 @@ function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64,
   return Err(Protocol("unreachable"));
 }
 
+// `__attempt_h2(tr, req, t, started, key, conn, hc)` — `__attempt` on a
+// connection speaking HTTP/2: the request on a stream of its own, the
+// frames read and fed to the state machine until the stream's response
+// comes back whole, and the connection kept for the next request unless
+// the server is going away. A connection that takes no stream is one the
+// server has since closed, reported as a reset so an idempotent request is
+// sent again on a new one.
+function __attempt_h2[T: Transport](tr: T, req: Request, t: __Target, started: i64, key: string, conn: __Conn, hc: h2.Conn): Result[HttpResponse, FetchError] {
+  let body: u8[] = req.body.bytes();
+  let (sent, stream) = hc.request(h2.Outgoing { method: req.method, scheme: "https", authority: t.host_field, path: t.target, headers: __sent_fields(req, t, body.len()), body: body, trailers: headers.header_map_new() });
+  if (stream < 0) {
+    tr.close(conn.fd);
+    return Err(Io(net.ConnectionReset));
+  }
+  match (__h2_answered(tr, req, started, __H2Call { conn: conn, h2: sent.conn, out: sent.output }, stream)) {
+    Ok(done) => {
+      if (done.0.h2.closed() || done.0.h2.going_away()) {
+        __close(tr, done.0.conn);
+      } else {
+        __park(tr, key, __Conn { ...done.0.conn, h2: Some(done.0.h2) });
+      }
+      return __decoded(HttpResponse { ...done.1, headers: http.http_end_to_end(done.1.headers) }, req);
+    },
+    Err(e) => {
+      tr.close(conn.fd);
+      return Err(e);
+    }
+  }
+  return Err(Protocol("unreachable"));
+}
+
+// `__H2Call` — a request in flight over HTTP/2: the connection, its state
+// machine, and the bytes it has to send.
+struct __H2Call { conn: __Conn, h2: h2.Conn, out: u8[] }
+
+// `__h2_answered(tr, req, started, call, stream)` — the call driven until
+// `stream` has its response: what the state machine says sent, the
+// frames read under the request's bounds and fed to it, until the
+// response comes back whole or the stream or connection ends.
+function __h2_answered[T: Transport](tr: T, req: Request, started: i64, call: __H2Call, stream: i32): Result[(__H2Call, HttpResponse), FetchError] {
+  while (true) {
+    let conn: __Conn = __send_all(tr, call.conn, call.out)?;
+    let got: __Got = __recv_bounded(tr, conn, req.timeouts, started)?;
+    if (got.bytes.len() == 0) {
+      return Err(__closed_early(0));
+    }
+    let step: h2.Step = call.h2.read(got.bytes);
+    call = __H2Call { conn: got.conn, h2: step.conn, out: step.output };
+    match (__h2_answer(step.events, stream)) {
+      Some(answer) => {
+        let resp: HttpResponse = answer?;
+        return Ok((__H2Call { ...call, conn: __send_all(tr, call.conn, call.out)?, out: [] }, resp));
+      },
+      None => {}
+    }
+    if (call.h2.closed()) {
+      return Err(Protocol("HTTP/2: the connection closed before the response ended"));
+    }
+  }
+  return Err(Protocol("unreachable"));
+}
+
+// `__h2_answer(events, stream)` — what a step says about `stream`: its
+// response, the error that ended it or the connection, or nothing yet.
+function __h2_answer(events: h2.Event[], stream: i32): Option[Result[HttpResponse, FetchError]] {
+  for e in events {
+    match (e) {
+      h2.Answered(sid, resp) => {
+        if (sid == stream) {
+          return Some(Ok(resp));
+        }
+      },
+      h2.Reset(sid, code) => {
+        if (sid == stream) {
+          return Some(Err(Protocol("HTTP/2: the server reset the stream with code " + int.int_to_string(code))));
+        }
+      },
+      h2.Closed(code, reason) => {
+        return Some(Err(Protocol("HTTP/2: " + reason)));
+      },
+      _ => {}
+    }
+  }
+  return None;
+}
+
 // `__Conn` — a connection this client opened: the transport's number for
-// it, the TLS session over it for `https`, and whether that session has
-// read the peer's close_notify.
-struct __Conn { fd: i32, tls: Option[client.Session], closed: boolean }
+// it, the TLS session over it for `https`, whether that session has read
+// the peer's close_notify, and the HTTP/2 connection's state when the
+// origin chose `h2` by ALPN.
+struct __Conn { fd: i32, tls: Option[client.Session], closed: boolean, h2: Option[h2.Conn] }
 
 function __has_tls(conn: __Conn): boolean {
   match (conn.tls) {
@@ -1382,7 +1412,7 @@ function __has_tls(conn: __Conn): boolean {
 }
 
 function __no_conn(): __Conn {
-  return __Conn { fd: 0 - 1, tls: None, closed: false };
+  return __Conn { fd: 0 - 1, tls: None, closed: false, h2: None };
 }
 
 // `__close(tr, conn)` — `conn` closed, after a close_notify when it speaks
@@ -1406,11 +1436,14 @@ function __connect[T: Transport](tr: T, t: __Target, timeouts: Timeouts, guard: 
   match (tr.connect(addrs, t.port, __connect_bound(timeouts).as_millis() as i32)) {
     Ok(fd) => {
       if (!t.tls) {
-        return Ok(__Conn { fd: fd, tls: None, closed: false });
+        return Ok(__Conn { fd: fd, tls: None, closed: false, h2: None });
       }
       match (__secured(tr, fd, t, begun + __connect_bound(timeouts).as_nanos(), roots)) {
         Ok(s) => {
-          return Ok(__Conn { fd: fd, tls: Some(s), closed: false });
+          if (s.alpn() != "h2") {
+            return Ok(__Conn { fd: fd, tls: Some(s), closed: false, h2: None });
+          }
+          return __h2_opened(tr, fd, s);
         },
         Err(e) => {
           tr.close(fd);
@@ -1429,6 +1462,23 @@ function __connect[T: Transport](tr: T, t: __Target, timeouts: Timeouts, guard: 
     }
   }
   return Err(Timeout(Connecting));
+}
+
+// `__h2_opened(tr, fd, s)` — the connection on `fd` opened as HTTP/2 over
+// the session `s`, the origin having chosen `h2`: the preface and the
+// client's SETTINGS sent, the socket closed when they cannot be.
+function __h2_opened[T: Transport](tr: T, fd: i32, s: client.Session): Result[__Conn, FetchError] {
+  let start: h2.Step = h2.client(h2.config());
+  match (__send_all(tr, __Conn { fd: fd, tls: Some(s), closed: false, h2: Some(start.conn) }, start.output)) {
+    Ok(c) => {
+      return Ok(c);
+    },
+    Err(e) => {
+      tr.close(fd);
+      return Err(e);
+    }
+  }
+  return Err(Protocol("unreachable"));
 }
 
 // `__secured(tr, fd, t, deadline, roots)` — a TLS session with the origin
@@ -1512,7 +1562,7 @@ function __tunnel_status(head: string): Result[void, FetchError] {
 // chain checked against `roots`, the system's when none are given.
 function __tls_handshake[T: Transport](tr: T, fd: i32, host: string, deadline: i64, given: Option[verify.Roots]): Result[client.Session, FetchError] {
   let roots: verify.Roots = __roots(given)?;
-  let step: client.Step = __tls(client.start(client.config(__tls_name(host), roots).with_alpn(["http/1.1"])))?;
+  let step: client.Step = __tls(client.start(client.config(__tls_name(host), roots).with_alpn(["h2", "http/1.1"])))?;
   __write_all(tr, fd, step.output)?;
   let s: client.Session = step.session;
   while (!s.connected()) {

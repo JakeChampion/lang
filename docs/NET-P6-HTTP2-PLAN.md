@@ -198,6 +198,23 @@ without ACK within the timeout closes the connection.
    trailers back over both.
 7. **The client.** `std/fetch` over HTTP/2 to an origin that offers it,
    one connection per origin, so a handler's upstream calls multiplex.
+   The connection (landed): the state machine opens from the client's
+   side too (`h2.client`, `conn.request`, `Answered`), frames, flow
+   control, settings, resets and GOAWAY the one code for both sides, and
+   `tests/stdlib/http_h2_test.fern` drives a client connection against a
+   server connection in process. `std/fetch` offers `h2` beside
+   `http/1.1` by ALPN and speaks HTTP/2 to an origin that chooses it: the
+   request on a stream of its own, the response read whole, the
+   connection kept in the pool, which now holds its rows as `Kept` values
+   (the TLS session and the HTTP/2 state as they are, where the text
+   table it replaced had to save and restore a session per park) until
+   the server sends GOAWAY. `TestTLSClientAgainstGo` and its interpreter
+   twin fetch twice from Go's HTTP/2 server over one connection and read
+   the protocol back. Open: one request at a time per connection; the
+   multiplexing of a handler's parked upstream calls over one connection
+   needs the serve loop to own the outbound connection and route each
+   stream's answer to the flight waiting on it, the way it routes inbound
+   streams, which is the next slice here.
 8. **Exit.** Per-stream bump bytes bounded and recorded on the perf lane;
    `internal/e2eselfhost` twins for the connection tests; #9860 closed.
    The bound (landed): `TestSelfHostHeldConnectionsHeapBoundX86_64`'s
