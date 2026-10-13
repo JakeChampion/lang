@@ -21,7 +21,6 @@
 
 diag_e033
 diag_e073
-diag_e074
 
 parse:diag_p001
 parse:diag_p002
