@@ -17,7 +17,9 @@ import (
 // a_i @ (24+8i)(%rbp)) — and marshals fn into %r11 + a0..a{n-1} into the
 // System V arg registers, 16-aligns %rsp, and `call *%r11`s the pointer.
 // TestSharedLibX86CCallFFI runs real C callbacks through the primitive; this
-// pins the self-host emission + that every arity assembles + links.
+// pins the self-host emission + that every arity assembles + links. main
+// reaches each runN, which the reachability prune would otherwise drop with
+// its shim; no program here is run.
 func TestSelfHostCCallIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -35,7 +37,7 @@ function run1(cb: usize, x: usize): i32 { return __c_call1(cb, x) as i32; }
 function run2(cb: usize, a: usize, b: usize): i32 { return __c_call2(cb, a, b) as i32; }
 function run3(cb: usize, a: usize, b: usize, c: usize): i32 { return __c_call3(cb, a, b, c) as i32; }
 function run4(cb: usize, a: usize, b: usize, c: usize, d: usize): i32 { return __c_call4(cb, a, b, c, d) as i32; }
-function main(): i32 { return 0; }`
+function main(): i32 { return run0(0 as usize) + run1(0 as usize, 1 as usize) + run2(0 as usize, 1 as usize, 2 as usize) + run3(0 as usize, 1 as usize, 2 as usize, 3 as usize) + run4(0 as usize, 1 as usize, 2 as usize, 3 as usize, 4 as usize); }`
 	asm := string(runCapture(t, gcc, runner, driverBin, []byte(prog)))
 	if len(asm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes")
@@ -109,7 +111,7 @@ func TestSelfHostCCallIRArm64(t *testing.T) {
 	prog := `function run0(cb: usize): i32 { return __c_call0(cb) as i32; }
 function run1(cb: usize, x: usize): i32 { return __c_call1(cb, x) as i32; }
 function run4(cb: usize, a: usize, b: usize, c: usize, d: usize): i32 { return __c_call4(cb, a, b, c, d) as i32; }
-function main(): i32 { return 0; }`
+function main(): i32 { return run0(0 as usize) + run1(0 as usize, 1 as usize) + run4(0 as usize, 1 as usize, 2 as usize, 3 as usize, 4 as usize); }`
 	var cmd *exec.Cmd
 	if len(x86runner) == 0 {
 		cmd = exec.Command(driverBin, "-target", "arm64-linux")
