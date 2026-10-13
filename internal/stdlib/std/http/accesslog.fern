@@ -1,0 +1,127 @@
+// std/http/accesslog — one JSON line per request, in the OpenTelemetry log
+// data model's shape, written to the platform's log.
+//
+//     import "std/http/accesslog";
+//
+//     function users_show(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+//       use req <- accesslog.logged(req, plat);
+//       return http.respond(show(params));
+//     }
+//
+// A middleware by std/http/router's convention: `logged` runs `next`, then
+// writes the record of the request and its response through `plat.log`.
+// The record is a log record by the OTel data model, spelled as OTLP/JSON
+// spells it:
+//
+//     {"timeUnixNano":"1700000000123000000","severityNumber":9,
+//      "severityText":"INFO","body":"GET /users/7 200",
+//      "traceId":"4bf9…","spanId":"00f0…",
+//      "attributes":{"http.request.method":"GET","url.path":"/users/7",
+//       "http.response.status_code":200,
+//       "http.server.request.duration":0.000412,
+//       "client.address":"192.0.2.7","user_agent.original":"curl/8.9",
+//       "http.response.body.size":17}}
+//
+// on one line. The attributes are the HTTP semantic conventions' names; the
+// severity is INFO (9), or ERROR (17) for a 5xx; `traceId` and `spanId` are
+// the request's span when the platform carries one (std/http/trace); an
+// attribute the request does not have is left out, as is the body size of
+// a response streamed from a producer, a stream or a whole file, which the
+// record does not read to count.
+
+import "std/http";
+import "std/json";
+import "std/platform";
+import "std/net";
+import "std/headers";
+import "std/i32";
+import "std/i64";
+
+// `logged(req, plat, next)` — `next` run for `req`, its response returned
+// once its record is written through `plat.log`.
+pub function logged[P: platform.Platform](req: HttpRequest, plat: P, next: (HttpRequest) => HttpResponse): HttpResponse {
+  let started: i64 = plat.elapsed_ns();
+  let resp: HttpResponse = next(req);
+  plat.log(record(req, resp, plat, plat.elapsed_ns() - started));
+  return resp;
+}
+
+// `record(req, resp, plat, took_ns)` — the JSON line for `req` answered by
+// `resp` after `took_ns` nanoseconds, stamped with `plat`'s clock, span and
+// peer.
+pub function record[P: platform.Platform](req: HttpRequest, resp: HttpResponse, plat: P, took_ns: i64): string {
+  let at: i64 = plat.now_ms() * (1000000 as i64);
+  let out: string = "{\"timeUnixNano\":\"" + at.to_string() + "\"," + __severity(resp.status) + ",\"body\":" + __quoted(req.method + " " + req.path + " " + resp.status.to_string());
+  match (plat.trace()) {
+    Some(span) => {
+      out = out + ",\"traceId\":\"" + span.trace_id + "\",\"spanId\":\"" + span.span_id + "\"";
+    },
+    None => {}
+  }
+  return out + ",\"attributes\":{" + __attributes(req, resp, plat, took_ns) + "}}";
+}
+
+// __severity(status) — INFO for an answer the server stands behind, ERROR
+// for a 5xx.
+function __severity(status: i32): string {
+  if (status >= 500) {
+    return "\"severityNumber\":17,\"severityText\":\"ERROR\"";
+  }
+  return "\"severityNumber\":9,\"severityText\":\"INFO\"";
+}
+
+function __attributes[P: platform.Platform](req: HttpRequest, resp: HttpResponse, plat: P, took_ns: i64): string {
+  let out: string = "\"http.request.method\":" + __quoted(req.method) + ",\"url.path\":" + __quoted(req.path) + ",\"http.response.status_code\":" + resp.status.to_string() + ",\"http.server.request.duration\":" + __seconds(took_ns);
+  match (plat.peer()) {
+    Some(addr) => {
+      out = out + ",\"client.address\":" + __quoted(addr.ip.to_string());
+    },
+    None => {}
+  }
+  match (req.headers.get("user-agent")) {
+    Some(ua) => {
+      out = out + ",\"user_agent.original\":" + __quoted(ua);
+    },
+    None => {}
+  }
+  let size: i64 = __body_size(resp.body);
+  if (size >= 0 as i64) {
+    out = out + ",\"http.response.body.size\":" + size.to_string();
+  }
+  return out;
+}
+
+// __body_size(body) — the bytes a body holds, when that is known without
+// reading it: -1 for a producer, a stream or a whole file.
+function __body_size(body: Body): i64 {
+  match (body) {
+    BodyText(s) => {
+      return s.len() as i64;
+    },
+    BodyBytes(bs) => {
+      return bs.len() as i64;
+    },
+    BodyFileRanges(path, ranges, seams) => {
+      return http.file_ranges_len(ranges, seams);
+    },
+    _ => {
+      return 0 - 1 as i64;
+    }
+  }
+  return 0 - 1 as i64;
+}
+
+// __seconds(ns) — `ns` as seconds with six decimals, the unit the HTTP
+// semantic conventions' durations are in.
+function __seconds(ns: i64): string {
+  let us: i64 = ns / (1000 as i64);
+  let frac: string = (us % (1000000 as i64)).to_string();
+  while (frac.len() < 6) {
+    frac = "0" + frac;
+  }
+  return (us / (1000000 as i64)).to_string() + "." + frac;
+}
+
+function __quoted(s: string): string {
+  return "\"" + json.json_escape(s) + "\"";
+}

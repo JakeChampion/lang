@@ -1202,6 +1202,12 @@ func TestRunnerHTTPTraceExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "http_trace", "std/http/trace", 6)
 }
 
+// `tests/stdlib/http_accesslog_test.fern` pins the access log's record in
+// the OTel log data model's OTLP/JSON spelling.
+func TestRunnerHTTPAccessLogExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_accesslog", "std/http/accesslog", 4)
+}
+
 // `tests/stdlib/brotli_test.fern` decodes streams the reference brotli
 // wrote and one built by hand.
 func TestRunnerBrotliExamplePasses(t *testing.T) {
