@@ -1864,8 +1864,10 @@ function shift_count(op: string, count: i32, s: State, value: typeinfo.Type): Va
   return define(s, ssasem.cast(), [count], 0, "", value);
 }
 
-// Negation keeps its operand's type, so a destination width reaches the
-// operand through it; a cast names its own destination and passes none on.
+// Negation keeps its operand's type, so a numeric destination's width, or a
+// type with its own `neg`, reaches the operand through it. A coercion
+// destination such as `dyn Tr` does not: the operand is produced at its own
+// type and coerced after. A cast names its own destination and passes none on.
 function unary(e: ast.Expr, u: ast.ExprUnary, s: State, expected: typeinfo.Type): Value {
   if (u.op == "try_") {
     return try_expr(u, s, expected);
@@ -1877,7 +1879,7 @@ function unary(e: ast.Expr, u: ast.ExprUnary, s: State, expected: typeinfo.Type)
     return cast(e, u, s);
   }
   let want: typeinfo.Type = typeinfo.unchecked();
-  if (u.op == "-") {
+  if (u.op == "-" && (operand_type(expected) || nominal_method_key("neg", expected, s) != "")) {
     want = expected;
   }
   let operand: Value = expr(u.operand, s, want);
