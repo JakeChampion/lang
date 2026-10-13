@@ -9749,7 +9749,11 @@ function parse_field_type(p: Par, name: string): (StructFieldDecl, Par) {
 // parse_decl_tparams reads a declaration's optional type-parameter list
 // (`[T, U]`) after its name, consuming the brackets; the names are the
 // bracket's top-level identifiers.
-function parse_decl_tparams(p: Par): (string[], Par) {
+// parse_decl_tparams reads the `[A, B]` type-parameter list of the struct,
+// enum or union alias `kind name`: names only. A bound belongs on an impl
+// (docs/TRAITS.md), so `[T: B]` is P001 naming where it goes, as the Go
+// parser reports it.
+function parse_decl_tparams(p: Par, kind: string, name: string): (string[], Par) {
   let tparams: string[] = [];
   if (p.peek_punct() != "[") {
     return (tparams, p);
@@ -9772,6 +9776,11 @@ function parse_decl_tparams(p: Par): (string[], Par) {
       let tpn: string = p.peek_ident();
       if (tpn.len() > 0) {
         tparams = tparams.append(tpn);
+        p = p.advance();
+        if (p.peek_punct() == ":") {
+          p = Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:" + kind + " " + name + ": a bound on type parameter " + tpn + " belongs on an impl (impl[" + tpn + ": Trait] Trait for " + name + "[" + tpn + "]), not on the declaration")) };
+        }
+        continue;
       }
     }
     p = p.advance();
@@ -9805,7 +9814,7 @@ function parse_struct_decl(p: Par): (StructDecl, i32[], Par) {
   // so the monomorphiser can clone a concrete struct per instantiation
   // (the field layout is uniform, but the per-instantiation field
   // TYPES drive primitive/string method dispatch).
-  let (tparams, tp_p) = parse_decl_tparams(p);
+  let (tparams, tp_p) = parse_decl_tparams(p, "struct", name);
   p = tp_p;
   if (p.peek_punct() != "{") {
     let empty: StructFieldDecl[] = [];
@@ -9855,7 +9864,7 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
     return (TypeAlias { name: "", variants: [], variant_args: [], variant_lines: [], type_params: [], line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
   }
   p = p.advance();
-  let (tparams, tp_p) = parse_decl_tparams(p);
+  let (tparams, tp_p) = parse_decl_tparams(p, "type", name);
   p = tp_p;
   if (p.peek_punct() != "=") {
     return (TypeAlias { name: name, variants: [], variant_args: [], variant_lines: [], type_params: tparams, line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
@@ -9922,7 +9931,7 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
   // monomorphiser can clone a concrete enum per instantiation (the variant
   // payload TYPES are substituted, like a generic struct's fields). Mirrors
   // the `struct Box[T]` parse above.
-  let (tparams, tp_p) = parse_decl_tparams(p);
+  let (tparams, tp_p) = parse_decl_tparams(p, "enum", name);
   p = tp_p;
   if (p.peek_punct() != "{") {
     return (name, out, tparams, vlines, p);

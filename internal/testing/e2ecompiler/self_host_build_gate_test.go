@@ -190,6 +190,24 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			wantDiag: "",
 		},
 		{
+			// #12282, #12297: a bound on a declaration's type parameter belongs
+			// on an impl, so it is P001 naming that in both front ends. The
+			// self-host used to read the bound as a second type parameter.
+			name:     "struct-type-param-bound-P001",
+			src:      "trait B { function b(self: Self): i32; }\nstruct W[T: B] { v: T }\nfunction main(): i32 { return 0; }\n",
+			wantDiag: "error[P001]: at top level: struct W: a bound on type parameter T belongs on an impl",
+		},
+		{
+			name:     "enum-type-param-bound-P001",
+			src:      "trait B { function b(self: Self): i32; }\nenum E[T: B] { A(T), N }\nfunction main(): i32 { return 0; }\n",
+			wantDiag: "error[P001]: at top level: enum E: a bound on type parameter T belongs on an impl",
+		},
+		{
+			name:     "union-alias-type-param-bound-P001",
+			src:      "trait B { function b(self: Self): i32; }\nstruct L[T] { v: T }\nstruct Q { n: i32 }\ntype V[T: B] = L[T] | Q;\nfunction main(): i32 { return 0; }\n",
+			wantDiag: "error[P001]: at top level: type V: a bound on type parameter T belongs on an impl",
+		},
+		{
 			// #10085: a type position whose token starts no type is P001, as
 			// native's parseType reports it: an empty element of a tuple or
 			// parameter list, a missing annotation, a literal. The last row is
