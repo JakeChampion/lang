@@ -1926,6 +1926,9 @@ function __h2_mode(c: __Conns, at: i32, opts: Config): i32 {
   if (!opts.h2 || c.served[at] > 0) {
     return H2_NOT;
   }
+  if (__alpn_h2(c, at)) {
+    return H2_SERVED;
+  }
   let buf: u8[] = c.bufs[at];
   let from: i32 = c.offs[at];
   let want: u8[] = h2.preface();
@@ -1940,6 +1943,21 @@ function __h2_mode(c: __Conns, at: i32, opts: Config): i32 {
     return H2_AWAITED;
   }
   return H2_SERVED;
+}
+
+// __alpn_h2(c, at) — whether a TLS client chose h2 by ALPN: it is HTTP/2's
+// whatever it sends first, so a bad preface is answered with GOAWAY, not
+// as HTTP/1.1.
+function __alpn_h2(c: __Conns, at: i32): boolean {
+  match (c.tls[at]) {
+    Secured(sess) => {
+      return sess.alpn() == "h2";
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
 }
 
 // __h2_config(opts) — the HTTP/2 connection's bounds from the loop's.

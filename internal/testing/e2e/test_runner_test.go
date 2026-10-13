@@ -1210,7 +1210,7 @@ func TestRunnerHTTPH2FrameExamplePasses(t *testing.T) {
 // refused, malformed requests reset and malformed connections closed, and
 // the control frames.
 func TestRunnerHTTPH2ExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_h2", "std/http/h2", 10)
+	runnerSuitePasses(t, "http_h2", "std/http/h2", 11)
 }
 
 // `tests/stdlib/http_form_test.fern` reads a urlencoded body as its fields
