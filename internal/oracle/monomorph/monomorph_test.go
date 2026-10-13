@@ -1307,6 +1307,64 @@ function main(): i32 { return same(3, 3) + same("a", "b"); }`},
 	}
 }
 
+// An associated call through a bounded type parameter, `T.zero()`, keeps the
+// bound's provider when the re-check reads it at the concrete type (#12281).
+// Two traits each provide `zero` for P, so the clone's `P.zero()` alone is
+// ambiguous; spelled at P in the source it still is.
+func TestRunRoutesBoundedAssocCallToTheBound(t *testing.T) {
+	const traits = `struct P { x: i32 }
+trait A { function zero(): Self; }
+trait B { function zero(): Self; }
+impl A for P { function zero(): Self { return P { x: 1 }; } }
+impl B for P { function zero(): Self { return P { x: 2 }; } }
+`
+	prog, _, err := modload.LoadSource(traits + `function via_a[T: A](): T { return T.zero(); }
+function via_b[T: B](): T { return T.zero(); }
+function main(): i32 { return via_a[P]().x + via_b[P]().x; }`)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	want := map[string]string{"via_a": info.TraitMethods["A.P.zero"], "via_b": info.TraitMethods["B.P.zero"]}
+	for _, fn := range prog.Funcs {
+		for prefix, provider := range want {
+			if !strings.HasPrefix(fn.Name, prefix) || len(fn.TypeParams) > 0 {
+				continue
+			}
+			var called []string
+			ast.WalkProgram(&ast.Program{Funcs: []*ast.FuncDecl{fn}}, func(n ast.Node) bool {
+				if call, ok := n.(*ast.Call); ok {
+					if id, ok := call.Callee.(*ast.Ident); ok {
+						called = append(called, id.Name)
+					}
+				}
+				return true
+			})
+			if len(called) != 1 || called[0] != provider {
+				t.Errorf("%s calls %v, want [%s]", fn.Name, called, provider)
+			}
+			delete(want, prefix)
+		}
+	}
+	if len(want) > 0 {
+		t.Errorf("no clone of %v", want)
+	}
+
+	prog, _, err = modload.LoadSource(traits + `function main(): i32 { return P.zero().x; }`)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, err := checker.Check(prog); err == nil || !strings.Contains(err.Error(), `ambiguous method "zero" on P`) {
+		t.Errorf("a concrete P.zero() wants E074, got %v", err)
+	}
+}
+
 // A generic enum the monomorphizer keeps generic keeps its parametric impls
 // through the re-check. Dropping them left the re-check with no Eq or Hash
 // for `Slot[i32]`, so a map keyed by it was refused as E045 after the first
