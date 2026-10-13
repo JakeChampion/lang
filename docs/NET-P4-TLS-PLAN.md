@@ -280,3 +280,15 @@ TLS itself is `std/tls/keyschedule`, `keyshare`, `message`, `record`,
 kTLS and the QUIC secret hooks come after slice 11. The handshake
 interface in slice 8 keeps the secrets and handshake messages separable,
 so HTTP/3 can be a package.
+
+The QUIC hooks (landed): `std/tls/handshake` runs under QUIC when the
+config says so. Handshake bytes come in by encryption level through
+`read_crypto` and go out as `Crypto` events for CRYPTO frames; every
+traffic secret is reported as a `Secret` event as it is set, by level and
+direction, so QUIC's packet protection derives its keys from it under the
+negotiated suite; the transport parameters ride as the extensions the
+config adds and `peer_extensions()` answers, and RFC 9001's terms hold
+(transport parameters and ALPN on both sides, no KeyUpdate, no
+application data, no alert record, no compatibility CCS). An HTTP/3
+package owns the packets, frames, flow control and recovery; nothing in
+`std/tls` changes for the record-layer client and server.

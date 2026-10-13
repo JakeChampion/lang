@@ -16,6 +16,16 @@
 // One full handshake per connection, with a HelloRetryRequest when the
 // client's key share is in a group the server does not take: no PSK and no
 // early data.
+//
+// Under QUIC (RFC 9001) there are no records: a config with `quic` set
+// takes handshake bytes by encryption level through `read_crypto` and
+// hands them out as `Crypto` events to carry in CRYPTO frames, reports
+// each traffic secret as a `Secret` event for QUIC's packet protection to
+// derive its keys from, carries the transport parameters as the
+// `extensions` the config adds and `peer_extensions` answers, and refuses
+// application data, KeyUpdate and the alert record, which are QUIC's own
+// (an error's `alert()` is the code for CONNECTION_CLOSE). A QUIC
+// handshake needs ALPN and the transport parameters on both sides.
 
 import "core/int";
 import "std/crypto";
@@ -36,6 +46,9 @@ pub enum HandshakeError {
   OutOfOrder(i32),
   // A record of this content type where it is not allowed.
   UnexpectedRecord(i32),
+  // QUIC: handshake bytes at this encryption level, which is not the one
+  // being read.
+  Level(i32),
   Illegal(string),
   MissingExtension(string),
   UnsupportedExtension(i32),
@@ -111,6 +124,9 @@ pub function (e: HandshakeError) alert(): i32 {
     KeyShare(k) => {
       return 47;
     },
+    Level(l) => {
+      return 10;
+    },
     OutOfOrder(t) => {
       return 10;
     },
@@ -172,6 +188,9 @@ pub function (e: HandshakeError) message(): string {
     },
     KeyShare(k) => {
       return k.message();
+    },
+    Level(l) => {
+      return "tls handshake: handshake bytes at encryption level " + int.int_to_string(l) + " out of turn";
     },
     OutOfOrder(t) => {
       return "tls handshake: unexpected handshake message " + int.int_to_string(t);
@@ -243,7 +262,21 @@ pub enum Event {
   // The client offers tickets for resumption under the suite chosen: look
   // one up, then call `resume` with it or with None for a full handshake.
   ResumeOffered(Offer),
+  // QUIC: handshake bytes to carry in CRYPTO frames at an encryption level.
+  Crypto(CryptoFlight),
+  // QUIC: a traffic secret for the packet protection at a level; one event
+  // for each direction as it is set.
+  Secret(TrafficSecret),
 }
+
+// CryptoFlight — handshake bytes at an encryption level: 0 Initial, 1
+// Handshake, 2 1-RTT (RFC 9001 §4.1.3).
+pub struct CryptoFlight { level: i32, bytes: u8[] }
+
+// TrafficSecret — the secret the packet protection at `level` derives its
+// keys from under `cipher_suite()`, for what this side writes when `write`
+// and for what it reads otherwise.
+pub struct TrafficSecret { level: i32, write: boolean, secret: u8[] }
 
 // Offer — the identities a client offers, the suite the server chose,
 // whose hash a usable PSK must have been derived under, and the name the
@@ -348,6 +381,10 @@ function __without(exts: message.Extension[], kind: i32): message.Extension[] {
 // yet a whole message, the transcript, and each direction's protection,
 // with how far it has got (0 plaintext, 1 handshake keys, 2 application
 // keys) and its traffic secret, which a KeyUpdate advances.
+//
+// Under QUIC (`quic`) nothing is framed or sealed here: the handshake bytes
+// written and the secrets set wait in `crypto` and `secrets` until the step
+// hands them out as events.
 struct Conn {
   held: record.Record[],
   inbox: u8[],
@@ -360,11 +397,18 @@ struct Conn {
   writing: i32,
   read_secret: u8[],
   write_secret: u8[],
+  quic: boolean,
+  crypto: CryptoFlight[],
+  secrets: TrafficSecret[],
 }
 
 function __conn(): Conn {
   let none: record.Protection = record.Protection { suite: keyschedule.Aes128GcmSha256, key: [], iv: [], seq: 0 as u64 };
-  return Conn { held: [], inbox: [], pending: [], transcript: [], suite: keyschedule.Aes128GcmSha256, read: none, write: none, reading: 0, writing: 0, read_secret: [], write_secret: [] };
+  return Conn { held: [], inbox: [], pending: [], transcript: [], suite: keyschedule.Aes128GcmSha256, read: none, write: none, reading: 0, writing: 0, read_secret: [], write_secret: [], quic: false, crypto: [], secrets: [] };
+}
+
+function __conn_for(quic: boolean): Conn {
+  return Conn { ...__conn(), quic: quic };
 }
 
 function __hash(c: Conn): u8[] {
@@ -372,11 +416,46 @@ function __hash(c: Conn): u8[] {
 }
 
 function __with_read(c: Conn, secret: u8[], level: i32): Conn {
-  return Conn { ...c, read: record.protection(c.suite, secret), reading: level, read_secret: secret };
+  let next: Conn = Conn { ...c, read: record.protection(c.suite, secret), reading: level, read_secret: secret };
+  if (c.quic) {
+    return Conn { ...next, secrets: next.secrets.append(TrafficSecret { level: level, write: false, secret: secret }) };
+  }
+  return next;
 }
 
 function __with_write(c: Conn, secret: u8[], level: i32): Conn {
-  return Conn { ...c, write: record.protection(c.suite, secret), writing: level, write_secret: secret };
+  let next: Conn = Conn { ...c, write: record.protection(c.suite, secret), writing: level, write_secret: secret };
+  if (c.quic) {
+    return Conn { ...next, secrets: next.secrets.append(TrafficSecret { level: level, write: true, secret: secret }) };
+  }
+  return next;
+}
+
+// __flushed moves what a QUIC connection gathered into the step's events:
+// the secrets set, then the handshake bytes written.
+function __flushed(c: Conn, out: Out): Flushed {
+  if (!c.quic) {
+    return Flushed { conn: c, out: out };
+  }
+  let events: Event[] = out.events;
+  for t in c.secrets {
+    events = events.append(Secret(t));
+  }
+  for k in c.crypto {
+    events = events.append(Crypto(k));
+  }
+  return Flushed { conn: Conn { ...c, crypto: [], secrets: [] }, out: Out { ...out, events: events } };
+}
+
+struct Flushed { conn: Conn, out: Out }
+
+// __plain_out frames handshake bytes sent before any key: a record of
+// `version`, or under QUIC a flight at the level being written.
+function __plain_out(c: Conn, version: i32, bytes: u8[]): Wrote {
+  if (c.quic) {
+    return Wrote { conn: Conn { ...c, crypto: c.crypto.append(CryptoFlight { level: c.writing, bytes: bytes }) }, bytes: [] };
+  }
+  return Wrote { conn: c, bytes: record.frame(record.Handshake, version, bytes) };
 }
 
 // Out — what a step has gathered so far.
@@ -389,8 +468,14 @@ function __out(): Out {
 struct Wrote { conn: Conn, bytes: u8[] }
 
 // __write frames content as records of type t: plaintext before the write
-// keys are set, sealed after, at most 2^14 bytes each.
+// keys are set, sealed after, at most 2^14 bytes each. Under QUIC handshake
+// bytes become a flight at the level being written, an alert is nothing
+// (the error's code goes in QUIC's CONNECTION_CLOSE), and application data
+// is refused: QUIC carries and protects it itself.
 function __write(c: Conn, t: record.ContentType, content: [u8]): Result[Wrote, HandshakeError] {
+  if (c.quic) {
+    return __write_quic(c, t, content);
+  }
   if (c.writing == 0) {
     return Ok(Wrote { conn: c, bytes: record.frame(t, 0x0303, content) });
   }
@@ -417,6 +502,16 @@ function __write(c: Conn, t: record.ContentType, content: [u8]): Result[Wrote, H
     }
   }
   return Ok(Wrote { conn: Conn { ...c, write: p }, bytes: out });
+}
+
+function __write_quic(c: Conn, t: record.ContentType, content: [u8]): Result[Wrote, HandshakeError] {
+  if (t.code() == 22) {
+    return Ok(Wrote { conn: Conn { ...c, crypto: c.crypto.append(CryptoFlight { level: c.writing, bytes: __copy(content) }) }, bytes: [] });
+  }
+  if (t.code() == 21) {
+    return Ok(Wrote { conn: c, bytes: [] });
+  }
+  return Err(Misuse("application data under QUIC"));
 }
 
 struct Absorbed { conn: Conn, out: Out }
@@ -521,6 +616,9 @@ function __at_key_change(c: Conn): Result[boolean, HandshakeError] {
 // secret, and a request is answered with a KeyUpdate before the write side
 // moves too (§4.6.3).
 function __key_update(c: Conn, request: boolean, out: Out): Result[Absorbed, HandshakeError] {
+  if (c.quic) {
+    return Err(Illegal("KeyUpdate under QUIC"));
+  }
   __at_key_change(c)?;
   let h: keyschedule.Hash = c.suite.hash();
   let conn: Conn = __with_read(c, keyschedule.next_traffic_secret(h, c.read_secret), 2);
@@ -573,7 +671,7 @@ function __has_string(v: string[], x: string): boolean {
 
 // ClientConfig — what the client offers. The first group gets a key share;
 // the rest are named as supported.
-pub struct ClientConfig { server_name: string, alpn: string[], suites: keyschedule.CipherSuite[], groups: keyshare.Group[], schemes: i32[], resume: Option[Resumption], chain: u8[][], sign_schemes: i32[] }
+pub struct ClientConfig { server_name: string, alpn: string[], suites: keyschedule.CipherSuite[], groups: keyshare.Group[], schemes: i32[], resume: Option[Resumption], chain: u8[][], sign_schemes: i32[], quic: boolean, extensions: message.Extension[] }
 
 // client_config offers every suite, X25519MLKEM768 with X25519, secp256r1
 // and SecP256r1MLKEM768 named as fallbacks, the signature schemes
@@ -581,7 +679,7 @@ pub struct ClientConfig { server_name: string, alpn: string[], suites: keyschedu
 // certificate of its own: `chain` (leaf first) and `sign_schemes` (what
 // its key can make, in preference order) are sent when a server asks.
 pub function client_config(server_name: string): ClientConfig {
-  return ClientConfig { server_name: server_name, alpn: [], suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519, keyshare.Secp256r1, keyshare.Secp256r1MlKem768], schemes: [0x0403, 0x0503, 0x0807, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601], resume: None, chain: [], sign_schemes: [] };
+  return ClientConfig { server_name: server_name, alpn: [], suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519, keyshare.Secp256r1, keyshare.Secp256r1MlKem768], schemes: [0x0403, 0x0503, 0x0807, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601], resume: None, chain: [], sign_schemes: [], quic: false, extensions: [] };
 }
 
 const C_WAIT_SERVER_HELLO: i32 = 0;
@@ -633,11 +731,17 @@ pub struct Client {
   flight: u8[],
   client_ap: u8[],
   server_ap: u8[],
+  peer_extensions: message.Extension[],
 }
 
 // ClientStep — the client after a call, the bytes to send, the application
 // data read and what happened.
 pub struct ClientStep { client: Client, output: u8[], data: u8[], events: Event[] }
+
+function __client_step(c: Client, out: Out): ClientStep {
+  let f: Flushed = __flushed(c.conn, out);
+  return ClientStep { client: Client { ...c, conn: f.conn }, output: f.out.output, data: f.out.data, events: f.out.events };
+}
 
 function __offers(config: ClientConfig): i32[] {
   let out: i32[] = [];
@@ -696,6 +800,9 @@ pub function client_start(config: ClientConfig, entropy: [u8]): Result[ClientSte
         exts = exts.append(message.ext_alpn(config.alpn));
       }
       exts = exts.append(message.ext_psk_modes([1]));
+      for extra in config.extensions {
+        exts = exts.append(extra);
+      }
       let hello: message.ClientHello = message.ClientHello { random: __copy(entropy[0:32]), session_id: [], cipher_suites: __offers(config), extensions: exts };
       return __client_from_hello(__offering(hello, config.resume)?, share, entropy[first:entropy.len()], config);
     },
@@ -761,10 +868,10 @@ function __client_from_hello(hello: message.ClientHello, share: keyshare.ClientS
     }
   }
   let bytes: u8[] = message.encode(message.ClientHelloMsg(hello));
-  let conn: Conn = Conn { ...__conn(), transcript: bytes };
+  let w: Wrote = __plain_out(Conn { ...__conn_for(config.quic), transcript: bytes }, 0x0301, bytes);
   let hs: keyschedule.HandshakeSecret = keyschedule.HandshakeSecret { hash: keyschedule.Sha256, secret: [] };
-  let c: Client = Client { conn: conn, state: C_WAIT_SERVER_HELLO, hello: hello, alpn_offered: alpn, share: share, spare: __copy(spare), retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: "", requested: false, request_context: [], resume: config.resume, resumed: false, res_master: [], own_chain: config.chain, sign_schemes: config.sign_schemes, request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [] };
-  return Ok(ClientStep { client: c, output: record.frame(record.Handshake, 0x0301, bytes), data: [], events: [] });
+  let c: Client = Client { conn: w.conn, state: C_WAIT_SERVER_HELLO, hello: hello, alpn_offered: alpn, share: share, spare: __copy(spare), retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: "", requested: false, request_context: [], resume: config.resume, resumed: false, res_master: [], own_chain: config.chain, sign_schemes: config.sign_schemes, request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [], peer_extensions: [] };
+  return Ok(__client_step(c, Out { ...__out(), output: w.bytes }));
 }
 
 struct ClientRun { client: Client, out: Out }
@@ -881,8 +988,9 @@ function __hello_retry(c: Client, raw: message.Raw, h: message.ServerHello, out:
   let ch2: u8[] = message.encode(message.ClientHelloMsg(hello));
   let transcript: u8[] = __cat(before, ch2);
   __at_key_change(c.conn)?;
-  let next: Client = Client { ...c, conn: Conn { ...c.conn, transcript: transcript }, hello: hello, share: share, spare: [], retry_suite: h.cipher_suite, resume: resume };
-  return Ok(ClientRun { client: next, out: Out { ...out, output: __join(out.output, record.frame(record.Handshake, 0x0303, ch2)) } });
+  let w: Wrote = __plain_out(Conn { ...c.conn, transcript: transcript }, 0x0303, ch2);
+  let next: Client = Client { ...c, conn: w.conn, hello: hello, share: share, spare: [], retry_suite: h.cipher_suite, resume: resume };
+  return Ok(ClientRun { client: next, out: Out { ...out, output: __join(out.output, w.bytes) } });
 }
 
 // __retry_share makes the share a HelloRetryRequest asks for: in a group the
@@ -1046,10 +1154,29 @@ function __encrypted_extensions(c: Client, exts: message.Extension[]): Result[Cl
     }
     i = i + 1;
   }
-  if (c.resumed) {
-    return Ok(Client { ...c, alpn: alpn, state: C_WAIT_FINISHED });
+  if (c.conn.quic) {
+    __quic_terms(exts, alpn)?;
   }
-  return Ok(Client { ...c, alpn: alpn, state: C_WAIT_CERTIFICATE_OR_REQUEST });
+  if (c.resumed) {
+    return Ok(Client { ...c, alpn: alpn, peer_extensions: exts, state: C_WAIT_FINISHED });
+  }
+  return Ok(Client { ...c, alpn: alpn, peer_extensions: exts, state: C_WAIT_CERTIFICATE_OR_REQUEST });
+}
+
+// __quic_terms is what RFC 9001 requires of the peer's hello or
+// EncryptedExtensions: the transport parameters (§8.2) and an application
+// protocol (§8.1).
+function __quic_terms(exts: message.Extension[], alpn: string): Result[boolean, HandshakeError] {
+  match (message.find(exts, message.EXT_QUIC_TRANSPORT_PARAMETERS)) {
+    Some(d) => {},
+    None => {
+      return Err(MissingExtension("quic_transport_parameters"));
+    }
+  }
+  if (alpn.len() == 0) {
+    return Err(NoApplicationProtocol);
+  }
+  return Ok(true);
 }
 
 // The server's ALPN answer is one protocol the client offered.
@@ -1300,7 +1427,7 @@ function __client_run(c: Client, out: Out): Result[ClientStep, HandshakeError] {
     i = i + 1;
   }
   let client: Client = Client { ...r.client, conn: Conn { ...r.client.conn, held: __rest(records, i) } };
-  return Ok(ClientStep { client: client, output: r.out.output, data: r.out.data, events: r.out.events });
+  return Ok(__client_step(client, r.out));
 }
 
 function __rest(records: record.Record[], from: i32): record.Record[] {
@@ -1336,7 +1463,31 @@ pub function (c: Client) read(input: [u8]): Result[ClientStep, HandshakeError] {
   if (c.state == C_CLOSED) {
     return Err(Misuse("read after close"));
   }
+  if (c.conn.quic) {
+    return Err(Misuse("read under QUIC"));
+  }
   return __client_run(Client { ...c, conn: __deframe(c.conn, input)? }, __out());
+}
+
+// read_crypto takes the server's handshake bytes QUIC carried in CRYPTO
+// frames at `level`, which must be the level being read.
+pub function (c: Client) read_crypto(level: i32, bytes: [u8]): Result[ClientStep, HandshakeError] {
+  if (c.state == C_CLOSED) {
+    return Err(Misuse("read_crypto after close"));
+  }
+  if (!c.conn.quic) {
+    return Err(Misuse("read_crypto"));
+  }
+  if (level != c.conn.reading) {
+    return Err(Level(level));
+  }
+  return __client_run(Client { ...c, conn: Conn { ...c.conn, pending: __join(c.conn.pending, bytes) } }, __out());
+}
+
+// peer_extensions is what the server's EncryptedExtensions carried, QUIC's
+// transport parameters among them; empty before it arrives.
+pub function (c: Client) peer_extensions(): message.Extension[] {
+  return c.peer_extensions;
 }
 
 // verdict answers a VerifyServer event: whether the chain is trusted for the
@@ -1369,13 +1520,14 @@ pub function (c: Client) write(data: [u8]): Result[ClientStep, HandshakeError] {
     return Err(Misuse("write"));
   }
   let w: Wrote = __write(c.conn, record.ApplicationData, data)?;
-  return Ok(ClientStep { client: Client { ...c, conn: w.conn }, output: w.bytes, data: [], events: [] });
+  return Ok(__client_step(Client { ...c, conn: w.conn }, Out { ...__out(), output: w.bytes }));
 }
 
-// close sends close_notify; nothing more may be written.
+// close sends close_notify; nothing more may be written. Under QUIC there
+// is nothing to send: the connection close is QUIC's.
 pub function (c: Client) close(): Result[ClientStep, HandshakeError] {
   let w: Wrote = __write(c.conn, record.Alert, [1 as u8, 0 as u8])?;
-  return Ok(ClientStep { client: Client { ...c, conn: w.conn, state: C_CLOSED }, output: w.bytes, data: [], events: [] });
+  return Ok(__client_step(Client { ...c, conn: w.conn, state: C_CLOSED }, Out { ...__out(), output: w.bytes }));
 }
 
 // alert is the record that reports e to the server, empty when e is the
@@ -1416,6 +1568,9 @@ pub function (c: Client) resumption_psk(nonce: [u8]): Result[u8[], HandshakeErro
 // connection where only bytes can go; client_restore makes it again. It
 // holds the traffic secrets, so it is as secret as the connection.
 pub function (c: Client) save(): Result[u8[], HandshakeError] {
+  if (c.conn.quic) {
+    return Err(Misuse("save under QUIC"));
+  }
   if (c.state != C_CONNECTED || c.conn.held.len() > 0) {
     return Err(Misuse("save"));
   }
@@ -1458,7 +1613,7 @@ pub function client_restore(saved: [u8]): Result[Client, HandshakeError] {
       return Err(Misuse("client_restore"));
     }
   }
-  return Ok(Client { conn: conn, state: C_CONNECTED, hello: none, alpn_offered: [], share: share, spare: [], retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: alpn, requested: false, request_context: [], resume: None, resumed: false, res_master: [], own_chain: [], sign_schemes: [], request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [] });
+  return Ok(Client { conn: conn, state: C_CONNECTED, hello: none, alpn_offered: [], share: share, spare: [], retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: alpn, requested: false, request_context: [], resume: None, resumed: false, res_master: [], own_chain: [], sign_schemes: [], request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [], peer_extensions: [] });
 }
 
 function __u32_to(own out: u8[], v: i32): u8[] {
@@ -1519,12 +1674,12 @@ function __saved_fields(saved: [u8], from: i32): Result[u8[][], HandshakeError] 
 // ServerConfig — the certificate chain, leaf first; the signature schemes its
 // key can make, in preference order; and what the server accepts, in
 // preference order.
-pub struct ServerConfig { chain: u8[][], schemes: i32[], suites: keyschedule.CipherSuite[], groups: keyshare.Group[], alpn: string[], request_client_certificate: boolean }
+pub struct ServerConfig { chain: u8[][], schemes: i32[], suites: keyschedule.CipherSuite[], groups: keyshare.Group[], alpn: string[], request_client_certificate: boolean, quic: boolean, extensions: message.Extension[] }
 
 // server_config takes every suite and group, no protocol, and asks the
 // client for no certificate.
 pub function server_config(chain: u8[][], schemes: i32[]): ServerConfig {
-  return ServerConfig { chain: chain, schemes: schemes, suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519, keyshare.Secp256r1, keyshare.Secp256r1MlKem768], alpn: [], request_client_certificate: false };
+  return ServerConfig { chain: chain, schemes: schemes, suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519, keyshare.Secp256r1, keyshare.Secp256r1MlKem768], alpn: [], request_client_certificate: false, quic: false, extensions: [] };
 }
 
 // The schemes a CertificateRequest names: those std/tls/verify checks.
@@ -1583,9 +1738,15 @@ pub struct Server {
   res_master: u8[],
   finished_hash: u8[],
   client_chain: u8[][],
+  peer_extensions: message.Extension[],
 }
 
 pub struct ServerStep { server: Server, output: u8[], data: u8[], events: Event[] }
+
+function __server_step(s: Server, out: Out): ServerStep {
+  let f: Flushed = __flushed(s.conn, out);
+  return ServerStep { server: Server { ...s, conn: f.conn }, output: f.out.output, data: f.out.data, events: f.out.events };
+}
 
 // server_new waits for a ClientHello, holding 96 bytes of entropy: the
 // ServerHello's random, then its key share's.
@@ -1597,7 +1758,7 @@ pub function server_new(config: ServerConfig, entropy: [u8]): Result[Server, Han
     return Err(Entropy(entropy.len(), server_entropy(config)));
   }
   let hs: keyschedule.HandshakeSecret = keyschedule.HandshakeSecret { hash: keyschedule.Sha256, secret: [] };
-  return Ok(Server { conn: __conn(), state: S_WAIT_CLIENT_HELLO, config: config, entropy: __copy(entropy), retry_group: 0, retry_suite: 0, scheme: 0, hs: hs, client_hs: [], server_hs: [], flight: [], server_name: "", alpn: "", parked: message.Raw { kind: 0, bytes: [] }, resumed: false, res_master: [], finished_hash: [], client_chain: [] });
+  return Ok(Server { conn: __conn_for(config.quic), state: S_WAIT_CLIENT_HELLO, config: config, entropy: __copy(entropy), retry_group: 0, retry_suite: 0, scheme: 0, hs: hs, client_hs: [], server_hs: [], flight: [], server_name: "", alpn: "", parked: message.Raw { kind: 0, bytes: [] }, resumed: false, res_master: [], finished_hash: [], client_chain: [], peer_extensions: [] });
 }
 
 struct ServerRun { server: Server, out: Out }
@@ -1790,11 +1951,15 @@ function __answer_share(s: Server, choice: Choice): Result[keyshare.ServerShare,
   return Err(HandshakeFailure("key share"));
 }
 
-// __encrypted_extensions_msg carries the protocol chosen, if any.
-function __encrypted_extensions_msg(alpn: string): u8[] {
+// __encrypted_extensions_msg carries the protocol chosen, if any, and the
+// extensions the config adds: QUIC's transport parameters.
+function __encrypted_extensions_msg(s: Server, alpn: string): u8[] {
   let ee: message.Extension[] = [];
   if (alpn.len() > 0) {
     ee = ee.append(message.ext_alpn([alpn]));
+  }
+  for extra in s.config.extensions {
+    ee = ee.append(extra);
   }
   return message.encode(message.EncryptedExtensions(ee));
 }
@@ -1803,7 +1968,7 @@ function __encrypted_extensions_msg(alpn: string): u8[] {
 // config asks for one, and Certificate, which the CertificateVerify and
 // Finished follow once the signature is made.
 function __server_flight(s: Server, alpn: string): u8[] {
-  let out: u8[] = __encrypted_extensions_msg(alpn);
+  let out: u8[] = __encrypted_extensions_msg(s, alpn);
   if (s.config.request_client_certificate) {
     out = __cat(out, message.encode(message.CertificateRequestMsg(message.CertificateRequest { context: [], extensions: [message.ext_signature_algorithms(VERIFY_SCHEMES)] })));
   }
@@ -1824,12 +1989,23 @@ function __negotiate(s: Server, h: message.ClientHello): Result[Negotiated, Hand
   return Ok(Negotiated { suite: __pick_suite(s, h)?, scheme: __pick_scheme(s, h)?, choice: __choose_share(s, h)?, alpn: __choose_alpn(s, h)?, name: __server_name(h)? });
 }
 
+// __negotiated_terms is what the server chose from a ClientHello, which
+// under QUIC must carry the transport parameters and name a protocol.
+function __negotiated_terms(s: Server, h: message.ClientHello): Result[Negotiated, HandshakeError] {
+  let n: Negotiated = __negotiate(s, h)?;
+  if (s.conn.quic) {
+    __quic_terms(h.extensions, n.alpn)?;
+  }
+  return Ok(n);
+}
+
 // __client_hello answers a ClientHello: with a HelloRetryRequest when it
 // has no share the server takes; by asking the caller about the tickets it
 // offers; else with the ServerHello and the server's flight.
-function __client_hello(s: Server, raw: message.Raw, out: Out): Result[ServerRun, HandshakeError] {
+function __client_hello(first: Server, raw: message.Raw, out: Out): Result[ServerRun, HandshakeError] {
   let h: message.ClientHello = __as_client_hello(raw)?;
-  let n: Negotiated = __negotiate(s, h)?;
+  let s: Server = Server { ...first, peer_extensions: h.extensions };
+  let n: Negotiated = __negotiated_terms(s, h)?;
   if (s.retry_group != 0) {
     __check_second_hello(s, n)?;
   } else if (n.choice.retry) {
@@ -1887,8 +2063,10 @@ function __serve_hello(s: Server, raw: message.Raw, h: message.ClientHello, n: N
   let sh_bytes: u8[] = message.encode(message.ServerHelloMsg(sh));
   let conn: Conn = Conn { ...s.conn, suite: suite, transcript: __cat(__cat(__copy(s.conn.transcript), raw.bytes), sh_bytes) };
   __at_key_change(conn)?;
-  let output: u8[] = __join(out.output, record.frame(record.Handshake, 0x0303, sh_bytes));
-  if (s.retry_group == 0) {
+  let plain: Wrote = __plain_out(conn, 0x0303, sh_bytes);
+  conn = plain.conn;
+  let output: u8[] = __join(out.output, plain.bytes);
+  if (s.retry_group == 0 && !conn.quic) {
     output = __compat_ccs(output, h);
   }
   let hs: keyschedule.HandshakeSecret = keyschedule.early_secret(suite.hash(), psk).handshake_secret(share.shared_secret);
@@ -1899,7 +2077,7 @@ function __serve_hello(s: Server, raw: message.Raw, h: message.ClientHello, n: N
   let next: Server = Server { ...s, conn: conn, scheme: n.scheme, hs: hs, client_hs: client_hs, server_hs: server_hs, server_name: n.name, alpn: n.alpn, resumed: psk.len() > 0 };
   let sent: Out = Out { ...out, output: output };
   if (psk.len() > 0) {
-    return __send_finished(next, [], __encrypted_extensions_msg(n.alpn), sent);
+    return __send_finished(next, [], __encrypted_extensions_msg(next, n.alpn), sent);
   }
   let flight: u8[] = __server_flight(s, n.alpn);
   conn = Conn { ...conn, transcript: __join(conn.transcript, flight) };
@@ -1965,8 +2143,12 @@ function __retry_request(s: Server, raw: message.Raw, h: message.ClientHello, n:
   let digest: u8[] = n.suite.hash().digest(raw.bytes);
   let conn: Conn = Conn { ...s.conn, transcript: __cat(__cat([254 as u8, 0 as u8, 0 as u8, digest.len() as u8], digest), hrr_bytes) };
   __at_key_change(conn)?;
-  let output: u8[] = __compat_ccs(__join(out.output, record.frame(record.Handshake, 0x0303, hrr_bytes)), h);
-  return Ok(ServerRun { server: Server { ...s, conn: conn, retry_group: n.choice.group.code(), retry_suite: n.suite.code() }, out: Out { ...out, output: output } });
+  let plain: Wrote = __plain_out(conn, 0x0303, hrr_bytes);
+  let output: u8[] = __join(out.output, plain.bytes);
+  if (!conn.quic) {
+    output = __compat_ccs(output, h);
+  }
+  return Ok(ServerRun { server: Server { ...s, conn: plain.conn, retry_group: n.choice.group.code(), retry_suite: n.suite.code() }, out: Out { ...out, output: output } });
 }
 
 // The second ClientHello must carry a share in the group asked for and keep
@@ -2111,7 +2293,7 @@ function __server_run(s: Server, out: Out): Result[ServerStep, HandshakeError] {
     i = i + 1;
   }
   let server: Server = Server { ...r.server, conn: Conn { ...r.server.conn, held: __rest(records, i) } };
-  return Ok(ServerStep { server: server, output: r.out.output, data: r.out.data, events: r.out.events });
+  return Ok(__server_step(server, r.out));
 }
 
 // read takes bytes from the client.
@@ -2119,7 +2301,31 @@ pub function (s: Server) read(input: [u8]): Result[ServerStep, HandshakeError] {
   if (s.state == S_CLOSED) {
     return Err(Misuse("read after close"));
   }
+  if (s.conn.quic) {
+    return Err(Misuse("read under QUIC"));
+  }
   return __server_run(Server { ...s, conn: __deframe(s.conn, input)? }, __out());
+}
+
+// read_crypto takes the client's handshake bytes QUIC carried in CRYPTO
+// frames at `level`, which must be the level being read.
+pub function (s: Server) read_crypto(level: i32, bytes: [u8]): Result[ServerStep, HandshakeError] {
+  if (s.state == S_CLOSED) {
+    return Err(Misuse("read_crypto after close"));
+  }
+  if (!s.conn.quic) {
+    return Err(Misuse("read_crypto"));
+  }
+  if (level != s.conn.reading) {
+    return Err(Level(level));
+  }
+  return __server_run(Server { ...s, conn: Conn { ...s.conn, pending: __join(s.conn.pending, bytes) } }, __out());
+}
+
+// peer_extensions is what the client's hello carried, QUIC's transport
+// parameters among them; empty before it arrives.
+pub function (s: Server) peer_extensions(): message.Extension[] {
+  return s.peer_extensions;
 }
 
 // signature answers a SignNeeded event with the signature over its content,
@@ -2181,7 +2387,7 @@ pub function (s: Server) ticket(t: message.NewSessionTicket): Result[ServerStep,
     return Err(Misuse("ticket"));
   }
   let w: Wrote = __write(s.conn, record.Handshake, message.encode(message.NewSessionTicketMsg(t)))?;
-  return Ok(ServerStep { server: Server { ...s, conn: w.conn }, output: w.bytes, data: [], events: [] });
+  return Ok(__server_step(Server { ...s, conn: w.conn }, Out { ...__out(), output: w.bytes }));
 }
 
 // Whether the handshake resumed from a ticket.
@@ -2208,12 +2414,12 @@ pub function (s: Server) write(data: [u8]): Result[ServerStep, HandshakeError] {
     return Err(Misuse("write"));
   }
   let w: Wrote = __write(s.conn, record.ApplicationData, data)?;
-  return Ok(ServerStep { server: Server { ...s, conn: w.conn }, output: w.bytes, data: [], events: [] });
+  return Ok(__server_step(Server { ...s, conn: w.conn }, Out { ...__out(), output: w.bytes }));
 }
 
 pub function (s: Server) close(): Result[ServerStep, HandshakeError] {
   let w: Wrote = __write(s.conn, record.Alert, [1 as u8, 0 as u8])?;
-  return Ok(ServerStep { server: Server { ...s, conn: w.conn, state: S_CLOSED }, output: w.bytes, data: [], events: [] });
+  return Ok(__server_step(Server { ...s, conn: w.conn, state: S_CLOSED }, Out { ...__out(), output: w.bytes }));
 }
 
 pub function (s: Server) alert(e: HandshakeError): u8[] {
