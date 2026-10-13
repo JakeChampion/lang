@@ -821,8 +821,195 @@ function test_raw_write_journal(): test.TestOutcome {
   return test.pass();
 }
 
+// A served handler's view of a request: its method, path and body.
+function __echo(req: HttpRequest): HttpResponse {
+  match (req.body_string()) {
+    Ok(body) => {
+      return http.text(200, req.method + " " + req.path + " " + body);
+    },
+    Err(e) => {
+      return http.text(500, "body");
+    }
+  }
+  return http.text(500, "body");
+}
+
+// A handler served in memory answers each request the client writes,
+// framed as a serve loop frames it: two GETs ride one kept connection, a
+// POST dials its own, and every request reached the handler whole.
+function test_served_in_memory(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]).serve(ORIGIN, 80, __echo);
+  let first: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/a"), __open());
+  let second: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/b?x=1"), __open());
+  if (__body(first) != "GET /a " || __body(second) != "GET /b?x=1 ") {
+    return test.fail(__body(first) + " then " + __body(second));
+  }
+  if (n.connects() != 1) {
+    return test.fail("connects " + n.connects().to_string());
+  }
+  let third: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.request("POST", "http://example.test/c").with_text("hello"), __open());
+  if (__body(third) != "POST /c hello") {
+    return test.fail(__body(third));
+  }
+  return test.assert_eq(n.connects(), 2);
+}
+
+// A route on the served address answers first; bytes that are not one
+// whole request are answered 400 on a connection the server closes.
+function test_served_route_first_and_refuses_malformed(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]).serve(ORIGIN, 80, __echo).route(ORIGIN, 80, "/scripted", [sim_fetch.reply(200, "scripted")]);
+  let routed: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/scripted"), __open());
+  if (__body(routed) != "scripted") {
+    return test.fail(__body(routed));
+  }
+  let Ok(found) = n.lookup("example.test", false) else {
+    return test.fail("lookup");
+  };
+  let Ok(conn) = n.connect(found.dial, 80, 100) else {
+    return test.fail("connect");
+  };
+  let garbage: u8[] = "GET / HTTP/1.1\r\nContent-Length: 10\r\n\r\nshort".bytes();
+  if (n.write(conn, garbage) != garbage.len()) {
+    return test.fail("write");
+  }
+  match (n.read(conn, 4096, 100)) {
+    Chunk(bytes) => {
+      let Some(text) = utf8.from_bytes(bytes) else {
+        return test.fail("not utf-8");
+      };
+      if (!text.starts_with("HTTP/1.1 400 ") || !text.contains("Connection: close")) {
+        return test.fail(text);
+      }
+    },
+    Elapsed => {
+      return test.fail("elapsed");
+    },
+    Abandoned => {
+      return test.fail("abandoned");
+    }
+  }
+  match (n.read(conn, 4096, 100)) {
+    Chunk(bytes) => {
+      return test.assert_eq(bytes.len(), 0);
+    },
+    Elapsed => {
+      return test.fail("the connection stayed open");
+    },
+    Abandoned => {
+      return test.fail("abandoned");
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// A scripted origin whose first two answers to /a differ, and whose /b is
+// gone.
+function __origin_to_tape(d: sim.Sim): sim_fetch.Net {
+  return __net(d).route(ORIGIN, 80, "/a", [sim_fetch.raw("HTTP/1.1 200 Status\r\nContent-Type: text/plain\r\nX-Id: 1\r\nContent-Length: 3\r\nConnection: close\r\n\r\none"), sim_fetch.reply(200, "two")]).route(ORIGIN, 80, "/b?v=2", [sim_fetch.reply(404, "gone")]);
+}
+
+// What a client sent through `send_taped` replays on a fresh network: the
+// same answers in the same order, the last repeating, with the fields the
+// resource carried and none of the wire's.
+function test_cassette_round_trip(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __origin_to_tape(d);
+  let tape: Cell[string] = cell_new("");
+  let a1: Result[HttpResponse, fetch.FetchError] = sim_fetch.send_taped(n, tape, fetch.get("http://example.test/a"), __open());
+  let a2: Result[HttpResponse, fetch.FetchError] = sim_fetch.send_taped(n, tape, fetch.get("http://example.test/a"), __open());
+  let b: Result[HttpResponse, fetch.FetchError] = sim_fetch.send_taped(n, tape, fetch.get("http://example.test/b?v=2"), __open());
+  if (__body(a1) != "one" || __body(a2) != "two" || __body(b) != "gone") {
+    return test.fail(__body(a1) + "|" + __body(a2) + "|" + __body(b));
+  }
+  let lines: string[] = tape.get().split("\n");
+  if (lines.len() != 4 || lines[0] != "{\"method\":\"GET\",\"url\":\"http://example.test/a\",\"status\":200,\"headers\":[[\"content-type\",\"text/plain\"],[\"x-id\",\"1\"]],\"body\":\"one\"}") {
+    return test.fail(tape.get());
+  }
+  let d2: sim.Sim = sim.new(2);
+  let Ok(replayed) = sim_fetch.net(d2).replay(tape.get()) else {
+    return test.fail("replay refused");
+  };
+  let r1: Result[HttpResponse, fetch.FetchError] = fetch.send_on(replayed, fetch.get("http://example.test/a"), __open());
+  let r2: Result[HttpResponse, fetch.FetchError] = fetch.send_on(replayed, fetch.get("http://example.test/a"), __open());
+  let r3: Result[HttpResponse, fetch.FetchError] = fetch.send_on(replayed, fetch.get("http://example.test/a"), __open());
+  let rb: Result[HttpResponse, fetch.FetchError] = fetch.send_on(replayed, fetch.get("http://example.test/b?v=2"), __open());
+  if (__body(r1) != "one" || __body(r2) != "two" || __body(r3) != "two" || __body(rb) != "gone" || __message(rb) != "status 404") {
+    return test.fail(__body(r1) + "|" + __body(r2) + "|" + __body(r3) + "|" + __message(rb) + " " + __body(rb));
+  }
+  let Ok(first) = r1 else {
+    return test.fail("first");
+  };
+  match (first.headers.get("x-id")) {
+    Some(id) => {
+      return test.assert_eq(id, "1");
+    },
+    None => {
+      return test.fail("x-id lost");
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// A body that is not UTF-8 is taped as hex and replays byte for byte.
+function test_cassette_binary_body(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let payload: u8[] = [255 as u8, 0 as u8, 254 as u8];
+  let wire: u8[] = "HTTP/1.1 200 Status\r\nContent-Length: 3\r\nConnection: close\r\n\r\n".bytes().concat(payload);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/bin", [sim_fetch.raw_bytes(wire)]);
+  let tape: Cell[string] = cell_new("");
+  let got: Result[HttpResponse, fetch.FetchError] = sim_fetch.send_taped(n, tape, fetch.get("http://example.test/bin"), __open());
+  if (__message(got) != "status 200" || !tape.get().contains("\"body_hex\":\"ff00fe\"")) {
+    return test.fail(__message(got) + " " + tape.get());
+  }
+  let Ok(replayed) = sim_fetch.net(sim.new(2)).replay(tape.get()) else {
+    return test.fail("replay refused");
+  };
+  match (fetch.send_on(replayed, fetch.get("http://example.test/bin"), __open())) {
+    Ok(resp) => {
+      if (!resp.body_bytes().equal(payload)) {
+        return test.fail("bytes changed");
+      }
+      return test.pass();
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// An https exchange replays as plain http on port 80, a blank line is
+// skipped, and a line that is not an exchange names its number.
+function test_cassette_https_and_refusal(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let cassette: string = "{\"method\":\"GET\",\"url\":\"https://api.test/x\",\"status\":201,\"headers\":[],\"body\":\"made\"}\n\n";
+  let Ok(replayed) = sim_fetch.net(d).replay(cassette) else {
+    return test.fail("replay refused");
+  };
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(replayed, fetch.get("http://api.test/x"), __public());
+  if (__message(got) != "status 201" || __body(got) != "made") {
+    return test.fail(__message(got) + " " + __body(got));
+  }
+  match (sim_fetch.net(d).replay(cassette + "[1,2]\n")) {
+    Ok(_) => {
+      return test.fail("an array is not an exchange");
+    },
+    Err(e) => {
+      return test.assert_eq(e, "sim_fetch: cassette line 3 is not an exchange");
+    }
+  }
+  return test.fail("unreachable");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/sim_fetch");
+  r = r.it("records a cassette and replays it", test_cassette_round_trip);
+  r = r.it("tapes a binary body as hex", test_cassette_binary_body);
+  r = r.it("replays https as http and refuses a line that is not an exchange", test_cassette_https_and_refusal);
+  r = r.it("serves a handler in memory", test_served_in_memory);
+  r = r.it("answers a route before the server and refuses malformed bytes", test_served_route_first_and_refuses_malformed);
   r = r.it("captures binary writes as owned bytes", test_binary_sent_snapshot);
   r = r.it("keeps binary response bodies unchanged", test_kept_binary_answer);
   r = r.it("journals empty and invalid-target writes", test_raw_write_journal);

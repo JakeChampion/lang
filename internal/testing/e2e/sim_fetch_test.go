@@ -16,7 +16,7 @@ import (
 
 const simFetchSuite = "tests/stdlib/sim_fetch_test.fern"
 
-var simFetchWant = []string{"# Suite: std/sim_fetch", "# pass 47", "# fail 0", "1..47"}
+var simFetchWant = []string{"# Suite: std/sim_fetch", "# pass 52", "# fail 0", "1..52"}
 
 func checkSimFetchOutput(t *testing.T, leg, out string) {
 	t.Helper()

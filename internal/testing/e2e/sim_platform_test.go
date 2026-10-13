@@ -15,7 +15,7 @@ import (
 
 const simPlatformSuite = "tests/stdlib/sim_platform_test.fern"
 
-var simPlatformWant = []string{"# Suite: std/sim_platform", "# pass 11", "# fail 0", "1..11"}
+var simPlatformWant = []string{"# Suite: std/sim_platform", "# pass 12", "# fail 0", "1..12"}
 
 func checkSimPlatformOutput(t *testing.T, leg, out string) {
 	t.Helper()

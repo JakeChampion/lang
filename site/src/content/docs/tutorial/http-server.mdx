@@ -293,6 +293,91 @@ curl http://localhost:8080/
 # → {"type":"about:blank","title":"Bad Request","status":400,"detail":"send an x-name header"}
 ```
 
+## A routed API, logged, simulated
+
+The pieces above compose into a small service. `examples/api.fern` in the
+repository is the whole of it: a router with two routes, the access log as
+a middleware in front of the handler, a lookup at an upstream directory
+through `plat.http`, and a server that drains its requests when it is sent
+SIGTERM, then reports why it stopped.
+
+```fern
+import "std/http";
+import "std/http/router";
+import "std/http/accesslog";
+import "std/serve";
+import "std/platform";
+import "std/fetch";
+import "std/result";
+
+pub function routes[P: platform.Platform](): Result[router.Router[P], router.RouteError] {
+  let r: router.Router[P] = router.new();
+  r = r.get("/users/{id}", user)?;
+  return Ok(r.get("/healthz", (req: HttpRequest, params: router.Params, plat: P): HttpResponse => http.ok("ok"))?);
+}
+
+function user[P: platform.Platform](req: HttpRequest, params: router.Params, plat: P): HttpResponse {
+  use logged <- accesslog.logged(req, plat);
+  return http.respond(lookup(params, plat));
+}
+
+function lookup[P: platform.Platform](params: router.Params, plat: P): Result[HttpResponse, http.HttpError] {
+  let id: string = params.param("id")?;
+  let resp: HttpResponse = plat.http(fetch.get("http://directory.internal/users/" + id)).map_err((e: fetch.FetchError): http.HttpError => http.fail(502, "the directory did not answer"))?;
+  return Ok(http.json_status(resp.status, resp.body_string()));
+}
+
+function main(): i32 {
+  match (routes[platform.Host]()) {
+    Ok(r) => {
+      return serve.supervise_shutdown(8080, serve.config(), r.handler(), (reason: string): void => eprint("api: stopped, " + reason));
+    },
+    Err(e) => {
+      eprint(e.message());
+      return 1;
+    }
+  }
+}
+```
+
+`routes` is generic over the platform, so the same router serves the
+native loop and a test. A route pattern that could never be reached is a
+`RouteError` at startup, never a surprise at the request. The middleware
+is an ordinary function whose last parameter is the handler it wraps,
+composed with `use`; every request leaves one JSON line through `plat.log`.
+
+Because the handler reaches the directory only through `plat`, it runs
+unchanged on a simulated platform, where the network is scripted and the
+clock and randomness come from a seed. `examples/tests/api_sim.fern` makes
+the directory reset twice: the client retries an idempotent GET once, so
+the first lookup still surfaces as a 502 and the next is a 200. The run is
+the same on every machine and every target, so a seed that fails is a seed
+you replay.
+
+```fern
+import "std/sim";
+import "std/sim_fetch";
+import "std/sim_platform";
+import "std/http";
+import "../api";
+
+function main(): i32 {
+  let d: sim.Sim = sim.new(7);
+  let n: sim_fetch.Net = sim_fetch.net(d).host("directory.internal", ["93.184.216.34"]).listen("93.184.216.34", 80, 5).route("93.184.216.34", 80, "/users/7", [sim_fetch.reset(), sim_fetch.reset(), sim_fetch.reply(200, "{\"id\":7}")]);
+  let plat: sim_platform.SimPlatform = sim_platform.new(d, n);
+  if let Ok(r) = api.routes[sim_platform.SimPlatform]() {
+    let first: i32 = r.handle(http.request("GET", "/users/7"), plat).status;
+    if (first == 502 && r.handle(http.request("GET", "/users/7"), plat).status == 200) {
+      return 0;
+    }
+  }
+  return 1;
+}
+```
+
+Both programs are compiled for every native target by the repository's
+examples lane, and the simulation is run there too.
+
 ## Compile and serve
 
 The same file builds two ways. As a WASI HTTP component:

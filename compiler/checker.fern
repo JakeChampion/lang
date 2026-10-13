@@ -42,6 +42,7 @@ import "./parser";
 import "./astwalk";
 import "./typeinfo";
 import "./decltypes";
+import "./semtypes";
 
 // =================== TYPE SYSTEM ====================
 // Semantic type definitions live in typeinfo, shared with typed consumers.
@@ -7066,6 +7067,12 @@ function check_field_access_expr(fa: ast.ExprFieldAccess, s: Scope): typeinfo.Ty
 // field_access_result_type is check_field_access_expr over the object's
 // checked type, for a read that is not a qualified unit variant.
 function field_access_result_type(fa: ast.ExprFieldAccess, ot: typeinfo.Type, s: Scope): typeinfo.Type {
+  // `r.fd` on a stream handle (Reader, Writer, Dir): the descriptor, an
+  // i32, as the Go checker's builtin declarations and the lowering have it.
+  // The handles are declared nowhere in the self-host's struct table.
+  if (fa.field == "fd" && semtypes.is_fd_handle(ot)) {
+    return t_i32();
+  }
   match (ot) {
     typeinfo.TypeStruct(sn) => {
       let fsig: StructSig = s.lookup_struct(sn.name);
@@ -8261,6 +8268,74 @@ function tvar_name(t: typeinfo.Type): string {
   return "";
 }
 
+// is_type_variable reports whether `t` is a bare type variable: one erased to
+// the unknown naming it, or an erased column.
+function is_type_variable(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeErased(_) = t {
+    return true;
+  }
+  return tvar_name(t).len() > 0;
+}
+
+// unknown_beyond_tvars is type_contains_unknown with a type variable of the
+// enclosing generic counted as known: a binding to one is the instantiation's
+// to substitute, as the Go checker's instantiateFuncValue leaves it.
+function unknown_beyond_tvars(t: typeinfo.Type): boolean {
+  if (is_type_variable(t)) {
+    return false;
+  }
+  match (t) {
+    typeinfo.TypeUnknown(_) => {
+      return !unbound_enum_argument(t);
+    },
+    typeinfo.TypeArray(ae) => {
+      return unknown_beyond_tvars(ae.elem);
+    },
+    typeinfo.TypeTuple(tt) => {
+      for element in tt.elements {
+        if (unknown_beyond_tvars(element)) {
+          return true;
+        }
+      }
+      return false;
+    },
+    typeinfo.TypeMap(m) => {
+      return unknown_beyond_tvars(m.key) || unknown_beyond_tvars(m.value);
+    },
+    typeinfo.TypeStruct(sn) => {
+      for arg in sn.args {
+        if (unknown_beyond_tvars(arg)) {
+          return true;
+        }
+      }
+      return false;
+    },
+    typeinfo.TypeUnion(u) => {
+      for arg in u.args {
+        if (unknown_beyond_tvars(arg)) {
+          return true;
+        }
+      }
+      return false;
+    },
+    typeinfo.TypeFunc(f) => {
+      if (unknown_beyond_tvars(f.ret_type)) {
+        return true;
+      }
+      for param_type in f.param_types {
+        if (unknown_beyond_tvars(param_type)) {
+          return true;
+        }
+      }
+      return false;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
 // tvar_meets_concrete reports whether a value of a bare type variable reaches a
 // destination that names a concrete type. The variable stands for every type,
 // so it meets no concrete one; a `dyn` destination is the bounds' question.
@@ -8387,11 +8462,16 @@ function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], 
     }
     return (ns, ts);
   }
-  if (r.args.len() == 0 && !is_unknown(at) && !elemless_array(at) && gc_is_typevar_name(r.base, tparams, tn)) {
+  // A bare variable binds to the argument's type, or to a type variable of
+  // the enclosing generic (`apply(twice, x)` under `run[T](x: T)` binds
+  // apply's T to run's), which a later concrete argument replaces.
+  if (r.args.len() == 0 && (!is_unknown(at) || is_type_variable(at)) && !elemless_array(at) && gc_is_typevar_name(r.base, tparams, tn)) {
     let index: i32 = util.index_of_str(ns, r.base);
     if (index < 0) {
       ns = ns.append(r.base);
       ts = ts.append(at);
+    } else if (is_type_variable(ts[index]) && !is_unknown(at)) {
+      ts = ts.with(index, at);
     } else if let typeinfo.TypeUnion(prior) = ts[index] {
       if let typeinfo.TypeUnion(actual) = at {
         let joined: typeinfo.Type = join_enum_arguments(prior, actual);
@@ -15009,14 +15089,15 @@ function fn_value_binds(sig: FuncSig, dest: typeinfo.TypeFunc, s: Scope): (strin
 }
 
 // fn_value_settles reports whether the callable `want` binds every type
-// parameter of the generic function `e` names, to a known type.
+// parameter of the generic function `e` names, to a known type or to a type
+// variable of the enclosing generic.
 function fn_value_settles(e: ast.Expr, want: typeinfo.TypeFunc, s: Scope): boolean {
   if let ast.ExprIdent(id) = e {
     let sig: FuncSig = s.lookup_sig(id.name);
     let (bn, bt) = fn_value_binds(sig, want, s);
     for tp in sig.all_type_params {
       let at: i32 = util.index_of_str(bn, tp);
-      if (at < 0 || type_contains_unknown(bt[at])) {
+      if (at < 0 || unknown_beyond_tvars(bt[at])) {
         return false;
       }
     }

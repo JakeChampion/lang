@@ -1520,6 +1520,33 @@ func (p *parser) maybeQualify(first string) string {
 	return first
 }
 
+// parseDeclTypeParams parses the rest of a struct, enum or union alias
+// declaration's `[A, B]` type-parameter list after its `[`: names only. A
+// bound belongs on an impl (docs/TRAITS.md), so `[T: B]` is P001 naming
+// where it goes.
+func (p *parser) parseDeclTypeParams(kind, name string) ([]string, error) {
+	var typeParams []string
+	for {
+		pname, err := p.expect(lexer.Ident, "")
+		if err != nil {
+			return nil, err
+		}
+		typeParams = append(typeParams, pname.Text)
+		if t := p.peek(); t.Kind == lexer.Punct && t.Text == ":" {
+			return nil, p.errorfCode(t.Pos, "P001", "%s %s: a bound on type parameter %s belongs on an impl (impl[%s: Trait] Trait for %s[%s]), not on the declaration",
+				kind, name, pname.Text, pname.Text, name, pname.Text)
+		}
+		if p.moreElems("]") {
+			continue
+		}
+		break
+	}
+	if _, err := p.expect(lexer.Punct, "]"); err != nil {
+		return nil, err
+	}
+	return typeParams, nil
+}
+
 // parseTypeParamList parses a `[T, U: Bound + Other, …]` type-
 // parameter list (the `[` is at the current position) and returns
 // the parameter names plus an optional name→bounds map. Shared by
@@ -1918,20 +1945,9 @@ func (p *parser) parseStructDecl() (*ast.StructDecl, error) {
 	// Optional type parameters: `struct Pair[A, B] { … }`. Same
 	// bracket form generic enums + functions use.
 	var typeParams []string
-	if p.match(lexer.Punct, "[") {
-		p.advance()
-		for {
-			pname, err := p.expect(lexer.Ident, "")
-			if err != nil {
-				return nil, err
-			}
-			typeParams = append(typeParams, pname.Text)
-			if p.moreElems("]") {
-				continue
-			}
-			break
-		}
-		if _, err := p.expect(lexer.Punct, "]"); err != nil {
+	if _, ok := p.accept(lexer.Punct, "["); ok {
+		typeParams, err = p.parseDeclTypeParams("struct", name.Text)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -2021,18 +2037,8 @@ func (p *parser) parseEnumDecl() (*ast.EnumDecl, error) {
 	// parser uses.
 	var typeParams []string
 	if _, ok := p.accept(lexer.Punct, "["); ok {
-		for {
-			pname, err := p.expect(lexer.Ident, "")
-			if err != nil {
-				return nil, err
-			}
-			typeParams = append(typeParams, pname.Text)
-			if p.moreElems("]") {
-				continue
-			}
-			break
-		}
-		if _, err := p.expect(lexer.Punct, "]"); err != nil {
+		typeParams, err = p.parseDeclTypeParams("enum", name.Text)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -2144,8 +2150,8 @@ func (p *parser) parseUnionDecl() (*ast.UnionDecl, error) {
 		return nil, err
 	}
 	var typeParams []string
-	if p.match(lexer.Punct, "[") {
-		typeParams, _, err = p.parseTypeParamList()
+	if _, ok := p.accept(lexer.Punct, "["); ok {
+		typeParams, err = p.parseDeclTypeParams("type", name.Text)
 		if err != nil {
 			return nil, err
 		}

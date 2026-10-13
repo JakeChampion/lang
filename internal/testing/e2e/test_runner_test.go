@@ -3288,6 +3288,32 @@ func TestRunnerLogExample(t *testing.T) {
 	}
 }
 
+// `tests/stdlib/metrics_test.fern` exercises std/metrics: counters, gauges
+// and histograms rendered in the Prometheus text format, the merge of
+// several expositions, snapshot frames and the scrape answers. It also
+// runs through the self-host stdtest gate (TestSelfHostStdTestE2E case
+// "metrics").
+func TestRunnerMetricsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/metrics_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 4 - histogram buckets are cumulative",
+		"ok 7 - server metrics by method and status",
+		"ok 8 - merge sums samples",
+		"ok 11 - scrape answers",
+		"# pass 11",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `tests/stdlib/map_verbs_test.fern` exercises the higher-level
 // Map verbs added to core/map (#2685): `entries`, `merge` / `extend`,
 // `from`, `get_or_insert`, `update`, and `contains_value`, over both i32

@@ -15,6 +15,10 @@
 # Values are the program's own `main` result truncated to 8 bits, and are
 # identical on x86-64 and arm64. To add an example, add its row; the gate in
 # internal/testing/sourcelint fails when one is missing rather than skipping it.
+# `norun` marks a server the lanes build and link but never execute; the
+# programs under examples/tests/ exercise such an example in simulation and run.
+api norun
+api_sim 0
 array 100
 factorial 208
 fizzbuzz 0

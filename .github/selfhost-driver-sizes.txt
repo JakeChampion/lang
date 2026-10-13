@@ -497,15 +497,22 @@
 # every driver that links semsource, on top of the exhaustiveness check
 # #12263 added to checker.fern. Numbers from driver-sizes' report on run
 # 38341082199.
+# 2026-10-13 — fern.fern 11289824 -> 11715024 (+3.8%), asm_load_run
+# 9225920 -> 9642480 (+4.5%) and wasm_runio_run 7190992 -> 7540984 (+4.9%):
+# the semthread growth the entry above re-baselined five drivers for reached
+# these three as well (each links semsource), and main's commits since left
+# wasm_runio_run 17 KB under the line, so #12316's 2 KB took it over. Numbers
+# from TestSelfHostWarmStockDriver on main at d9e3c3b7; the other rows stay
+# inside 2%.
 
 fern.fern/stage2 11181568
-fern.fern 11289824
-drivers/asm_load_run.fern 9225920
+fern.fern 11715024
+drivers/asm_load_run.fern 9642480
 drivers/asm_modload_run.fern 8271632
 drivers/asm_ir_run.fern 7975200
 drivers/asm_run.fern 7237248
 drivers/wasm_ir_run.fern 7533704
 drivers/wasm_run.fern 7530568
-drivers/wasm_runio_run.fern 7190992
+drivers/wasm_runio_run.fern 7540984
 drivers/asm_pathprobe_run.fern 4684360
 drivers/checker_modload_run.fern 2544640
