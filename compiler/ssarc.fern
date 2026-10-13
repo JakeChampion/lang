@@ -787,13 +787,34 @@ function inserted_record(recs: semrecords.Record[], at: i32, rec: semrecords.Rec
 // in this frame — that is the point of matching on the body address rather
 // than on what the frame knows it made.
 function drop_captures(own r: irtables.LowerResult, slot: i32, fn_ty: typeinfo.Type, f: ssasem.Func): irtables.LowerResult {
+  let open: i32 = 0;
   for rec in env_records(f, fn_ty) {
+    r = else_if_open(r, open);
     r = body_address(r, slot);
     r = emit(r, ir.op_const_func(0, semtypes.env_body(rec.ty)));
     r = emit(r, ir.op_bin("eq", 0, false));
     r = emit(r, ir.op_if(0));
     r = helper(r, slot, drop_helper_name(rec.ty));
+    open = open + 1;
+  }
+  return close_ifs(r, open);
+}
+
+// else_if_open and close_ifs chain tests that exclude one another: each test
+// after the first sits in the previous one's else, so the first that holds
+// ends the chain.
+function else_if_open(own r: irtables.LowerResult, open: i32): irtables.LowerResult {
+  if (open > 0) {
+    return emit(r, ir.op_else());
+  }
+  return r;
+}
+
+function close_ifs(own r: irtables.LowerResult, open: i32): irtables.LowerResult {
+  let k: i32 = 0;
+  while (k < open) {
     r = emit(r, ir.op_end());
+    k = k + 1;
   }
   return r;
 }
@@ -949,16 +970,18 @@ function drop_variant_fields(own r: irtables.LowerResult, slot: i32, t: typeinfo
   if (e.layout == semrecords.layout_option()) {
     return drop_payload(r, slot, e, scratch, f);
   }
+  let open: i32 = 0;
   for v in e.variants {
     if (semrecords.inhabited(v) && fields_have_children(v.fields)) {
+      r = else_if_open(r, open);
       r = emit(r, ir.op_load_local(slot));
       r = emit(r, ir.op_variant_is(ssasem.variant_key(t, v.name)));
       r = emit(r, ir.op_if(0));
       r = drop_record_fields(r, slot, v.fields, scratch, f, false);
-      r = emit(r, ir.op_end());
+      open = open + 1;
     }
   }
-  return r;
+  return close_ifs(r, open);
 }
 
 // self_tail_field: the index of the variant's last field of the enum's own
@@ -1009,11 +1032,13 @@ function drop_variant_chain(own r: irtables.LowerResult, t: typeinfo.Type, f: ss
   r = emit(r, ir.op_loop(0));
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_store_local(next));
+  let open: i32 = 0;
   for v in e.variants {
     if (!semrecords.inhabited(v) || !fields_have_children(v.fields)) {
       continue;
     }
     let tail: i32 = self_tail_field(v, t);
+    r = else_if_open(r, open);
     r = emit(r, ir.op_load_local(node));
     r = emit(r, ir.op_variant_is(ssasem.variant_key(t, v.name)));
     r = emit(r, ir.op_if(0));
@@ -1031,8 +1056,9 @@ function drop_variant_chain(own r: irtables.LowerResult, t: typeinfo.Type, f: ss
       }
       i = i + 1;
     }
-    r = emit(r, ir.op_end());
+    open = open + 1;
   }
+  r = close_ifs(r, open);
   r = emit(r, ir.op_load_local(first));
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_bin("eq", 0, false));

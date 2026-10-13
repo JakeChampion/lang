@@ -65,8 +65,8 @@ x86_64/closure_call.text	812
 x86_64/closure_call.ir	94308097
 x86_64/enum_match.text	999
 x86_64/enum_match.ir	53775055
-x86_64/http_hello.text	20386
-x86_64/http_hello.ir	29336671
+x86_64/http_hello.text	20389
+x86_64/http_hello.ir	29260671
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
 x86_64/map_int.text	5839
@@ -74,13 +74,13 @@ x86_64/map_int.ir	41320232
 x86_64/map_probe_chain.text	5854
 x86_64/map_probe_chain.ir	385170066
 x86_64/map_string.text	8751
-x86_64/map_string.ir	65315551	2
+x86_64/map_string.ir	65478926	2
 x86_64/ordmap_insert.text	5385
 x86_64/ordmap_insert.ir	115466142
 x86_64/pmap_insert.text	4896
 x86_64/pmap_insert.ir	64758246
 x86_64/pvec_with.text	2769
-x86_64/pvec_with.ir	60818474
+x86_64/pvec_with.ir	60818097
 x86_64/record_update.ir	118043874
 x86_64/record_update.text	1375
 x86_64/sort_inplace.text	2872
@@ -105,10 +105,10 @@ x86_64/struct_drop.text	3384
 x86_64/struct_drop.ir	358420237
 x86_64/tokenize.text	984
 x86_64/tokenize.ir	36950039
-x86_64/utf8_ingest_unchecked.text	11070
-x86_64/utf8_ingest_unchecked.ir	3331077
-x86_64/utf8_ingest_validated.text	11309
-x86_64/utf8_ingest_validated.ir	6413083
+x86_64/utf8_ingest_unchecked.text	11035
+x86_64/utf8_ingest_unchecked.ir	3317477
+x86_64/utf8_ingest_validated.text	11274
+x86_64/utf8_ingest_validated.ir	6399483
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -228,10 +228,10 @@ aarch64/utf8_ingest_validated.text	11469
 aarch64/utf8_ingest_validated.ir	6782680
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-x86_64/perceus_cfold.text	2436
-x86_64/perceus_cfold.ir	67135667
-x86_64/perceus_deriv.text	2708
-x86_64/perceus_deriv.ir	95830408
+x86_64/perceus_cfold.text	2435
+x86_64/perceus_cfold.ir	66958067
+x86_64/perceus_deriv.text	2707
+x86_64/perceus_deriv.ir	93528808
 x86_64/perceus_nqueens.text	1448
 x86_64/perceus_nqueens.ir	105327536
 x86_64/perceus_rbtree.text	3406

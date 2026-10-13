@@ -189,6 +189,28 @@ function main(): i32 {
 `,
 		want:   map[string][]string{"x86-64-linux": {`call \*%\w+`}, "arm64-linux": {`blr x\d+`}},
 		forbid: map[string][]string{"x86-64-linux": {`__fern_oob_abort`}, "arm64-linux": {`__fern_oob_abort`}}},
+	// A variant box's drop tests its variants as one chain: the first that
+	// matches ends it, so the shape is loaded once and compared until a
+	// variant holds.
+	{name: "drop_variants_chained", fn: "__sem_drop_Tok", exit: 4, src: `
+enum Tok { Word(string), Num(string, i32), Punct(string), Gap(string, string) }
+@noinline function make(i: i32): Tok {
+    if (i == 0) { return Word("w"); }
+    if (i == 1) { return Num("n", 1); }
+    if (i == 2) { return Punct("p"); }
+    return Gap("a", "b");
+}
+function main(): i32 {
+    let n: i32 = 0;
+    let i: i32 = 0;
+    while (i < 4) { let t: Tok = make(i); n = n + 1; i = i + 1; }
+    return n;
+}
+`,
+		want: map[string][]string{"x86-64-linux": {`movq 0\(%r\w+\), %r\w+`}, "arm64-linux": {`ldr x\d+, \[x\d+, #0\]`}},
+		forbid: map[string][]string{
+			"x86-64-linux": {`(?s)movq 0\(%r\w+\), %r\w+.*movq 0\(%r\w+\), %r\w+`},
+			"arm64-linux":  {`(?s)ldr x\d+, \[x\d+, #0\].*ldr x\d+, \[x\d+, #0\]`}}},
 	// An inline retain tests and bumps the count in memory rather than
 	// round-tripping it through %ecx.
 	{name: "rc_inc_in_memory", fn: "twice", exit: 5, src: `
