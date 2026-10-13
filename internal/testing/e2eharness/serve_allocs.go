@@ -30,9 +30,11 @@ const ServeAllocsRoundsEmulated = 10000
 const serveAllocsWarm = 2000
 
 // serveAllocsH2Drift is how far under its ceiling the HTTP/2 mean may sit
-// before the ceiling is lowered: three runs of the same build read 99.0 to
-// 100.0, so a ceiling tracks the mean to within a few allocations.
-const serveAllocsH2Drift = 4
+// before the ceiling is lowered. Runs of one build on one machine agree to
+// within one allocation, but the mean moves with how the client's frames
+// coalesce into the server's reads, and so with the machine: a build that
+// read 98.7 to 99.3 here read 95.4 on the CI runner.
+const serveAllocsH2Drift = 8
 
 // serveAllocsSlackPerSecond is how far the total may sit from a whole
 // number per request, per second the rounds took and two more: the loop

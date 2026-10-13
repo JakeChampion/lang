@@ -124,8 +124,9 @@ without ACK within the timeout closes the connection.
    with the blocks the connection's frames, header blocks, stream slots
    and the connection record rebuilt per frame take and give back, and
    with how the client's frames coalesce into reads; the gate holds the
-   mean under a ceiling of 102 as a ratchet, lowered when the mean falls
-   four under it. Taking it towards zero is slice 8's, with the
+   mean under a ceiling (101, the table owned through a request having
+   taken 107 to 99, 95.4 on the CI runner) as a ratchet, lowered when
+   the mean falls eight under it. Taking it towards zero is slice 8's, with the
    per-stream bump budget.
 5. **h2spec nightly (landed).** `scripts/net-h2spec` on `net-nightly.yml`:
    h2spec 2.6.0 strict over h2c against `scripts/net-h2spec.d/server.fern`,
