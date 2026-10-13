@@ -9261,7 +9261,8 @@ struct ShapePlan { vals: i32[], names: string[] }
 // immediates. The executable loads at a fixed address under 2^31, so a
 // compare takes the address as a sign-extended imm32 and nothing loads it
 // first. A shared object moves with its load base, so there every shape
-// address stays a rip-relative lea.
+// address stays a rip-relative lea. Every x86-64 executable links
+// -static -no-pie; a PIE target would have to take the shared path too.
 function ssa_shape_plan(f: ssa.SFunc, imm: ssa.Imms, shared: boolean): ShapePlan {
   let plan: ShapePlan = ShapePlan { vals: [], names: [] };
   if (shared) {
