@@ -2073,7 +2073,9 @@ func builtinTcpListenWith(i *Interp, args []Value) (Value, error) {
 // builtinTcpConnectWith is `tcp_connect_with(addr, port, nonblocking)`.
 // The interpreter has no non-blocking dial: it connects before answering,
 // so control op 5 reports the result at once and a refused dial is
-// reported here rather than there.
+// reported here rather than there. The socket a non-blocking dial answers
+// is non-blocking from then on, as the native one is, so its reads answer
+// -EAGAIN rather than waiting.
 func builtinTcpConnectWith(i *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("tcp_connect_with: expected 3 args, got %d", len(args))
@@ -2089,7 +2091,21 @@ func builtinTcpConnectWith(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("tcp_connect_with: expected number port arg, got %T", args[1])
 	}
-	return i.dialTcp(ip, int(port))
+	nonblocking, ok := args[2].(Bool)
+	if !ok {
+		return nil, fmt.Errorf("tcp_connect_with: expected boolean nonblocking arg, got %T", args[2])
+	}
+	got, err := i.dialTcp(ip, int(port))
+	if err != nil {
+		return nil, err
+	}
+	if id, ok := got.(Number); ok && id >= 0 && bool(nonblocking) {
+		if i.tcpNonblocking == nil {
+			i.tcpNonblocking = map[int64]bool{}
+		}
+		i.tcpNonblocking[int64(id)] = true
+	}
+	return got, nil
 }
 
 // ipArg reads a socket builtin's address argument: the u8[] of four or
