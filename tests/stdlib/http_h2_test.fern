@@ -174,6 +174,9 @@ function events_text(events: h2.Event[]): string {
       },
       h2.Closed(code, reason) => {
         out = out + "closed " + int.int_to_string(code) + " " + reason + "\n";
+      },
+      h2.Answered(stream, resp) => {
+        out = out + "answered " + int.int_to_string(stream) + " " + int.int_to_string(resp.status) + " content-type=" + header_or(resp.headers, "content-type") + " body=" + string_from_bytes_unchecked(resp.body_bytes()) + " trailer=" + header_or(resp.trailers, "checksum") + "\n";
       }
     }
   }
@@ -412,7 +415,7 @@ function test_malformed(): test.TestOutcome {
     let seen: h2.Step = o2.conn.read(r3.concat(closer));
     got = got + events_text(seen.events);
   }
-  return test.assert_eq(got, "RST_STREAM 1 1\nRST_STREAM 3 1\nRST_STREAM 5 1\nRST_STREAM 7 1\nRST_STREAM 9 1\nopen 0\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 DATA on an idle stream\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 stream 2 is not a new client stream\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 PUSH_PROMISE from the client\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 CONTINUATION with no header block open\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 a frame inside a header block\n");
+  return test.assert_eq(got, "RST_STREAM 1 1\nRST_STREAM 3 1\nRST_STREAM 5 1\nRST_STREAM 7 1\nRST_STREAM 9 1\nopen 0\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 DATA on an idle stream\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 stream 2 is not a new client stream\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 PUSH_PROMISE with push disabled\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 CONTINUATION with no header block open\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 a frame inside a header block\n");
 }
 
 // A frame on an idle stream the client never opened is a connection
@@ -494,6 +497,113 @@ function test_streamed_bodies(): test.TestOutcome {
   return test.assert_eq(got, "streamed 1 POST /upload host=example.test\ndata 1 hel\nWINDOW_UPDATE 0 +3\nWINDOW_UPDATE 1 +3\nHEADERS 1 END_HEADERS :status=200 content-type=application/grpc\nDATA 1 pa\npending 0\ndata 1 lo\nend 1 trailer=-\nHEADERS 1 END_STREAM END_HEADERS grpc-status=0\nopen 0\nstreamed 3 POST /upload host=example.test\ndata 3 hi\nRST_STREAM 3 1\nstreamed 5 POST /upload host=example.test\ndata 5 hi\nend 5 trailer=abc\nopen 2 handling 2\nstreamed 7 POST /upload host=example.test\ndata 7 hi\nWINDOW_UPDATE 0 +5\nWINDOW_UPDATE 7 +5\n");
 }
 
+// Pair — a client connection and a server connection speaking to each
+// other, what each has just said handed to the other by `exchanged`.
+struct Pair { client: h2.Conn, server: h2.Conn, events: h2.Event[] }
+
+// paired opens both sides and runs them through their prefaces and
+// settings, until neither has anything to say.
+function paired(): Pair {
+  let cs: h2.Step = h2.client(h2.config());
+  let ss: h2.Step = h2.server(h2.config());
+  return exchanged(Pair { client: cs.conn, server: ss.conn, events: [] }, cs.output, ss.output);
+}
+
+// exchanged hands `to_server` to the server and `to_client` to the client,
+// then what each answered to the other, until both are quiet; the events
+// gathered are the client's then the server's, in order.
+function exchanged(p: Pair, to_server: u8[], to_client: u8[]): Pair {
+  let client: h2.Conn = p.client;
+  let server: h2.Conn = p.server;
+  let events: h2.Event[] = p.events;
+  let a: u8[] = to_server;
+  let b: u8[] = to_client;
+  let rounds: i32 = 0;
+  while ((a.len() > 0 || b.len() > 0) && rounds < 8) {
+    let ss: h2.Step = server.read(a);
+    server = ss.conn;
+    let cs: h2.Step = client.read(b);
+    client = cs.conn;
+    events = events.concat(cs.events).concat(ss.events);
+    a = cs.output;
+    b = ss.output;
+    rounds = rounds + 1;
+  }
+  return Pair { client: client, server: server, events: events };
+}
+
+function outgoing(method: string, path: string, body: string, trailers: HeaderMap): h2.Outgoing {
+  return h2.Outgoing { method: method, scheme: "https", authority: "example.test", path: path, headers: headers.header_map_new().append("Accept", "text/plain").append("Host", "wrong.test").append("Connection", "close"), body: body.bytes(), trailers: trailers };
+}
+
+// A client connection opens a stream for a request, the server reads it
+// as it reads any other (the authority as its host, the connection-specific
+// field and the Host left out), and the response comes back whole as
+// Answered, the stream gone from both sides.
+function test_client_round_trip(): test.TestOutcome {
+  let p: Pair = paired();
+  if (!p.client.settings_acked() || !p.server.settings_acked() || p.events.len() != 0) {
+    return test.fail("settings " + __bool(p.client.settings_acked()).to_string() + " " + __bool(p.server.settings_acked()).to_string() + " " + events_text(p.events));
+  }
+  let (sent, stream) = p.client.request(outgoing("GET", "/hello?x=1", "", headers.header_map_new()));
+  p = exchanged(Pair { ...p, client: sent.conn, events: [] }, sent.output, []);
+  let got: string = "stream " + int.int_to_string(stream) + "\n" + events_text(p.events);
+  let answered: h2.Step = p.server.respond(stream, http.ok("hi").with_header("Content-Type", "text/plain"));
+  p = exchanged(Pair { ...p, server: answered.conn, events: [] }, [], answered.output);
+  got = got + events_text(p.events) + "open " + int.int_to_string(p.client.streams_open()) + " " + int.int_to_string(p.server.streams_open());
+  return test.assert_eq(got, "stream 1\nrequest 1 GET /hello?x=1 host=example.test body= trailer=-\nanswered 1 200 content-type=text/plain body=hi trailer=-\nopen 0 0");
+}
+
+// A request's body goes as DATA under the windows with its trailers
+// after it; a 1xx before the final response is stepped over; a response
+// carrying trailers answers with them; the next request takes the next
+// odd stream.
+function test_client_body_and_interim(): test.TestOutcome {
+  let p: Pair = paired();
+  let (sent, stream) = p.client.request(outgoing("POST", "/up", "abc", headers.header_map_new().append("Checksum", "9")));
+  p = exchanged(Pair { ...p, client: sent.conn, events: [] }, sent.output, []);
+  let got: string = events_text(p.events);
+  let interim: hpack.Encoded = hpack.encoder(4096).encode([hpack.field(":status", "100")]);
+  let early: u8[] = frame.encode(frame.Headers(frame.HeadersFrame { stream: stream, end_stream: false, end_headers: true, priority: None, block: interim.bytes, padding: 0 }));
+  let stepped: h2.Step = p.client.read(early);
+  got = got + "interim events=" + int.int_to_string(stepped.events.len()) + " open=" + int.int_to_string(stepped.conn.streams_open()) + "\n";
+  let answered: h2.Step = p.server.respond(stream, HttpResponse { ...http.ok("ok"), trailers: headers.header_map_new().append("Checksum", "7") });
+  p = exchanged(Pair { ...p, client: stepped.conn, server: answered.conn, events: [] }, [], answered.output);
+  got = got + events_text(p.events);
+  let (again, next) = p.client.request(outgoing("GET", "/again", "", headers.header_map_new()));
+  return test.assert_eq(got + "next " + int.int_to_string(next), "request 1 POST /up host=example.test body=abc trailer=9\ninterim events=0 open=1\nanswered 1 200 content-type=- body=ok trailer=7\nnext 3");
+}
+
+// GOAWAY from the server leaves the open stream to finish and refuses a
+// new one; a PUSH_PROMISE closes the connection, push being disabled; a
+// server's RST_STREAM is a Reset.
+function test_client_goaway_and_push(): test.TestOutcome {
+  let p: Pair = paired();
+  let (sent, stream) = p.client.request(outgoing("GET", "/one", "", headers.header_map_new()));
+  p = exchanged(Pair { ...p, client: sent.conn, events: [] }, sent.output, []);
+  let gone: h2.Step = p.server.goaway(frame.NO_ERROR);
+  p = exchanged(Pair { ...p, server: gone.conn, events: [] }, [], gone.output);
+  let got: string = events_text(p.events) + "going_away " + __bool(p.client.going_away()).to_string() + "\n";
+  let (refused, none) = p.client.request(outgoing("GET", "/two", "", headers.header_map_new()));
+  got = got + "refused " + int.int_to_string(none) + "\n";
+  let answered: h2.Step = p.server.respond(stream, http.ok("late"));
+  p = exchanged(Pair { ...p, client: refused.conn, server: answered.conn, events: [] }, [], answered.output);
+  got = got + events_text(p.events);
+  let q: Pair = paired();
+  let (opened, s2) = q.client.request(outgoing("GET", "/three", "", headers.header_map_new()));
+  let pushed: u8[] = frame.encode(frame.PushPromise(frame.PushPromiseFrame { stream: s2, promised: 2, end_headers: true, block: [] }));
+  let closed: h2.Step = opened.conn.read(pushed);
+  got = got + events_text(closed.events) + "closed " + __bool(closed.conn.closed()).to_string() + "\n";
+  let r: Pair = paired();
+  let (asked, s3) = r.client.request(outgoing("GET", "/four", "", headers.header_map_new()));
+  r = exchanged(Pair { ...r, client: asked.conn, events: [] }, asked.output, []);
+  got = got + events_text(r.events);
+  let reset: h2.Step = r.server.reset(s3, frame.CANCEL);
+  r = exchanged(Pair { ...r, server: reset.conn, events: [] }, [], reset.output);
+  got = got + events_text(r.events) + "open " + int.int_to_string(r.client.streams_open());
+  return test.assert_eq(got, "goaway 0\ngoing_away 1\nrefused -1\nanswered 1 200 content-type=- body=late trailer=-\nclosed 1 PUSH_PROMISE with push disabled\nclosed 1\nrequest 1 GET /four host=example.test body= trailer=-\nreset 1 8\nopen 0");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/http/h2");
   r = r.it("the preface and settings", test_preface_and_settings);
@@ -508,5 +618,8 @@ function main(): i32 {
   r = r.it("idle streams and self-dependency", test_idle_and_self_dependency);
   r = r.it("control frames", test_control_frames);
   r = r.it("streamed bodies and produced responses", test_streamed_bodies);
+  r = r.it("a client's request and its answer", test_client_round_trip);
+  r = r.it("a client's body, trailers and an interim response", test_client_body_and_interim);
+  r = r.it("a client under GOAWAY, PUSH_PROMISE and RST_STREAM", test_client_goaway_and_push);
   return r.finish();
 }

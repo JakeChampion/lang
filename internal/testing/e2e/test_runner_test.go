@@ -1210,7 +1210,7 @@ func TestRunnerHTTPH2FrameExamplePasses(t *testing.T) {
 // refused, malformed requests reset and malformed connections closed, and
 // the control frames.
 func TestRunnerHTTPH2ExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_h2", "std/http/h2", 12)
+	runnerSuitePasses(t, "http_h2", "std/http/h2", 15)
 }
 
 // `tests/stdlib/http_grpc_test.fern` reads the gRPC message framing back

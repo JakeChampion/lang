@@ -92,6 +92,9 @@ pub enum Event {
   // The server closed the connection with this error code, after GOAWAY;
   // the reason is for the log.
   Closed(i32, string),
+  // On a client connection: the response to the request this client sent
+  // on the stream, whole, its trailers in `resp.trailers`.
+  Answered(i32, HttpResponse),
 }
 
 // Step — the connection after a call, the bytes to send and what happened.
@@ -132,6 +135,8 @@ struct __Stream {
   streaming: boolean,
   received: i32,
   producing: boolean,
+  // On a client connection: the response's status once its head has come.
+  status: i32,
 }
 
 const AWAITING_PREFACE: i32 = 0;
@@ -168,11 +173,34 @@ pub struct Conn {
   empty_data: i32,
   frames: i32,
   peer_going_away: boolean,
+  // Whether this side opened the connection (`client`), and the stream it
+  // opens next, odd for a client (§5.1.1).
+  client: boolean,
+  next_stream: i32,
 }
 
 // server is a new connection and the SETTINGS it opens with (§3.4).
 pub function server(cfg: Config): Step {
-  let c: Conn = Conn { config: cfg, phase: AWAITING_PREFACE, inbox: [], decoder: hpack.decoder(cfg.header_table_size, cfg.max_header_list), encoder: hpack.encoder(4096), peer_max_frame: frame.MIN_FRAME_SIZE, peer_initial_window: 65535, settings_acked: false, send_window: 65535, recv_window: 65535, streams: [], last_stream: 0, handling: 0, block_stream: 0, block: [], block_end: false, block_frames: 0, resets: 0, empty_data: 0, frames: 0, peer_going_away: false };
+  return __opened(cfg, false);
+}
+
+// client is a new connection from the client's side: the connection
+// preface and the SETTINGS it opens with (§3.4), the server's SETTINGS
+// expected first. `request` opens a stream on it; the response comes back
+// as `Answered`. The connection sets ENABLE_PUSH to 0, so a PUSH_PROMISE
+// closes it.
+pub function client(cfg: Config): Step {
+  let start: Step = __opened(cfg, true);
+  return Step { ...start, output: frame.preface().concat(start.output) };
+}
+
+// __opened is a new connection for either side and the SETTINGS it sends.
+function __opened(cfg: Config, client: boolean): Step {
+  let phase: i32 = AWAITING_PREFACE;
+  if (client) {
+    phase = AWAITING_SETTINGS;
+  }
+  let c: Conn = Conn { config: cfg, phase: phase, inbox: [], decoder: hpack.decoder(cfg.header_table_size, cfg.max_header_list), encoder: hpack.encoder(4096), peer_max_frame: frame.MIN_FRAME_SIZE, peer_initial_window: 65535, settings_acked: false, send_window: 65535, recv_window: 65535, streams: [], last_stream: 0, handling: 0, block_stream: 0, block: [], block_end: false, block_frames: 0, resets: 0, empty_data: 0, frames: 0, peer_going_away: false, client: client, next_stream: 1 };
   let settings: frame.Setting[] = [frame.Setting { id: frame.SETTINGS_HEADER_TABLE_SIZE, value: cfg.header_table_size }, frame.Setting { id: frame.SETTINGS_ENABLE_PUSH, value: 0 }, frame.Setting { id: frame.SETTINGS_MAX_CONCURRENT_STREAMS, value: cfg.max_concurrent_streams }, frame.Setting { id: frame.SETTINGS_INITIAL_WINDOW_SIZE, value: cfg.initial_window }, frame.Setting { id: frame.SETTINGS_MAX_FRAME_SIZE, value: cfg.max_frame_size }, frame.Setting { id: frame.SETTINGS_MAX_HEADER_LIST_SIZE, value: cfg.max_header_list }];
   let out: u8[] = frame.encode(frame.Settings(false, settings));
   if (cfg.initial_window > 65535) {
@@ -180,6 +208,58 @@ pub function server(cfg: Config): Step {
     return Step { conn: Conn { ...c, recv_window: cfg.initial_window }, output: out, events: [] };
   }
   return Step { conn: c, output: out, events: [] };
+}
+
+// Outgoing — a request a client sends: the method, scheme, authority and
+// path that become the pseudo-header fields, the fields (`host` and the
+// connection-specific ones left out, the rest lowered), the whole body
+// and the trailers sent after it.
+pub struct Outgoing { method: string, scheme: string, authority: string, path: string, headers: HeaderMap, body: u8[], trailers: HeaderMap }
+
+// request opens a stream for `out` on a client connection: HEADERS with
+// the pseudo-header fields first, the body as DATA under the windows and
+// the trailers after it; the stream's id is answered beside the step,
+// -1 when the connection is closed or going away and takes no more.
+pub function (c: Conn) request(out: Outgoing): (Step, i32) {
+  if (c.phase == CLOSED || c.peer_going_away || !c.client) {
+    return (Step { conn: c, output: [], events: [] }, 0 - 1);
+  }
+  let stream: i32 = c.next_stream;
+  let en: hpack.Encoding = c.encoder.begin().put(":method", out.method, false).put(":scheme", out.scheme, false).put(":authority", out.authority, false).put(":path", out.path, false);
+  let has_length: boolean = false;
+  let i: i32 = 0;
+  while (i < out.headers.names.len()) {
+    let name: string = __lowered(out.headers.names[i]);
+    if (name == "content-length") {
+      has_length = true;
+    }
+    if (!__connection_specific(name) && name != "host") {
+      en = en.put(name, out.headers.values[i], __sensitive(name));
+    }
+    i = i + 1;
+  }
+  if (!has_length && out.body.len() > 0) {
+    en = en.put("content-length", int.int_to_string(out.body.len()), false);
+  }
+  let enc: hpack.Encoded = en.finish();
+  let last: boolean = out.body.len() == 0 && out.trailers.len() == 0;
+  let state: i32 = OPEN;
+  if (last) {
+    state = HALF_LOCAL;
+  }
+  let s: __Stream = __Stream { id: stream, state: state, send_window: c.peer_initial_window, recv_window: c.config.initial_window, method: out.method, scheme: out.scheme, authority: out.authority, path: out.path, fields: headers.header_map_new(), body: [], length: 0 - 1, handling: false, reset: false, pending: out.body, trailers: out.trailers, owes_end: !last, streaming: false, received: 0, producing: false, status: 0 };
+  c = Conn { ...c, encoder: enc.encoder, streams: c.streams.append(s), last_stream: stream, next_stream: stream + 2 };
+  let r: __Run = __header_frames(__run(c), stream, enc.bytes, last);
+  if (!last) {
+    r = __flushed(r);
+  }
+  return (__step(r), stream);
+}
+
+// going_away is whether the peer sent GOAWAY: the open streams finish,
+// no new one may be opened.
+pub function (c: Conn) going_away(): boolean {
+  return c.peer_going_away;
 }
 
 // preface is what a client sends first (§3.4), by which a loop knows a
@@ -374,7 +454,7 @@ function __frame_rest(r: __Run, f: frame.Frame): __Run {
       return __Run { ...r, conn: Conn { ...r.conn, peer_going_away: true }, events: r.events.append(Event.GoAway(g.code)) };
     },
     frame.PushPromise(p) => {
-      return __fail(r, frame.PROTOCOL_ERROR, "PUSH_PROMISE from the client");
+      return __fail(r, frame.PROTOCOL_ERROR, "PUSH_PROMISE with push disabled");
     },
     frame.Continuation(stream, end, block) => {
       return __fail(r, frame.PROTOCOL_ERROR, "CONTINUATION with no header block open");
@@ -486,6 +566,9 @@ function __block_done(r: __Run, stream: i32, block: u8[], end_stream: boolean): 
       let c: Conn = r.conn;
       c = Conn { ...c, decoder: got.decoder };
       let at: i32 = __stream_at(c, stream);
+      if (c.client) {
+        return __client_block(__Run { conn: c, out: out, events: events }, stream, at, got.fields, end_stream);
+      }
       if (at >= 0) {
         return __trailers(__Run { conn: c, out: out, events: events }, at, got.fields, end_stream);
       }
@@ -496,6 +579,123 @@ function __block_done(r: __Run, stream: i32, block: u8[], end_stream: boolean): 
     }
   }
   return r;
+}
+
+// __client_block takes a header block on a client connection: the
+// response's head on a stream this client opened and has no status for
+// yet (an informational one stepped over), else its trailers; a block on
+// a stream the server would open is a protocol error, push being
+// disabled, and one on a stream that has closed a stream error.
+function __client_block(r: __Run, stream: i32, at: i32, fields: hpack.Field[], end_stream: boolean): __Run {
+  if (at < 0) {
+    if (stream % 2 == 0) {
+      return __fail(r, frame.PROTOCOL_ERROR, "HEADERS on a stream the server opened");
+    }
+    if (stream > r.conn.last_stream) {
+      return __fail(r, frame.PROTOCOL_ERROR, "HEADERS on an idle stream");
+    }
+    return __reset_stream(r, stream, frame.STREAM_CLOSED);
+  }
+  if (r.conn.streams[at].status != 0) {
+    return __trailers(r, at, fields, end_stream);
+  }
+  return __response_head(r, at, fields, end_stream);
+}
+
+// __response_head reads a response's header block (§8.3.2): `:status`
+// first and alone among the pseudo-header fields, the rest regular. A 1xx
+// other than 101 is stepped over, the final response still to come.
+function __response_head(r: __Run, at: i32, fields: hpack.Field[], end_stream: boolean): __Run {
+  let s: __Stream = r.conn.streams[at];
+  match (__parsed_response(s, fields)) {
+    Ok(headed) => {
+      if (headed.status >= 100 && headed.status < 200 && headed.status != 101) {
+        if (end_stream) {
+          return __reset_stream(r, s.id, frame.PROTOCOL_ERROR);
+        }
+        return r;
+      }
+      let out: u8[] = r.out;
+      let events: Event[] = r.events;
+      let c: Conn = r.conn;
+      c = Conn { ...c, streams: c.streams.with(at, headed) };
+      if (end_stream) {
+        return __answered(__Run { conn: c, out: out, events: events }, at, headers.header_map_new());
+      }
+      return __Run { conn: c, out: out, events: events };
+    },
+    Err(why) => {
+      return __reset_stream(r, s.id, frame.PROTOCOL_ERROR);
+    }
+  }
+  return r;
+}
+
+// __parsed_response is the stream with the response's status and fields
+// read off its header block, or why the block is malformed.
+function __parsed_response(s: __Stream, fields: hpack.Field[]): Result[__Stream, string] {
+  let status: i32 = 0;
+  let out: HeaderMap = headers.header_map_new();
+  let length: i32 = 0 - 1;
+  let regular: boolean = false;
+  for f in fields {
+    if (f.name.len() == 0) {
+      return Err("empty field name");
+    }
+    if (f.name.bytes()[0] == 58 as u8) {
+      if (regular || status != 0 || f.name != ":status" || f.value.len() != 3) {
+        return Err("pseudo-header " + f.name);
+      }
+      match (int.parse_int_radix(f.value, 10)) {
+        Some(n) => {
+          if (n < 100 || n > 999) {
+            return Err(":status " + f.value);
+          }
+          status = n;
+        },
+        None => {
+          return Err(":status " + f.value);
+        }
+      }
+    } else {
+      regular = true;
+      if (f.name.to_lower() != f.name || !http.http_field_name_ok(f.name) || !http.http_field_value_ok(f.value) || __connection_specific(f.name)) {
+        return Err("field " + f.name);
+      }
+      if (f.name == "content-length") {
+        match (int.parse_int_radix(f.value, 10)) {
+          Some(n) => {
+            if (n < 0 || length >= 0 && length != n) {
+              return Err("content-length");
+            }
+            length = n;
+          },
+          None => {
+            return Err("content-length");
+          }
+        }
+      }
+      out = out.append(f.name, f.value);
+    }
+  }
+  if (status == 0) {
+    return Err("no :status");
+  }
+  return Ok(__Stream { ...s, status: status, fields: out, length: length });
+}
+
+// __answered hands a client's response over whole, the stream done with.
+function __answered(r: __Run, at: i32, trailers: HeaderMap): __Run {
+  let s: __Stream = r.conn.streams[at];
+  if (s.length >= 0 && s.length != s.body.len()) {
+    return __reset_stream(r, s.id, frame.PROTOCOL_ERROR);
+  }
+  let out: u8[] = r.out;
+  let events: Event[] = r.events;
+  let c: Conn = r.conn;
+  let resp: HttpResponse = HttpResponse { status: s.status, body: BodyBytes(s.body), headers: s.fields, trailers: trailers, background: None };
+  c = Conn { ...c, streams: __without(c.streams, at) };
+  return __Run { conn: c, out: out, events: events.append(Answered(s.id, resp)) };
 }
 
 // __trailers ends a request with its trailers (§8.1): they must carry
@@ -575,7 +775,7 @@ function __waiting(c: Conn): i32 {
 // aside), names in lower case, no connection-specific field and `te` only
 // `trailers`; content-length is remembered to check the body against.
 function __parsed(fields: hpack.Field[], id: i32, send_window: i32, recv_window: i32): Result[__Stream, string] {
-  let s: __Stream = __Stream { id: id, state: OPEN, send_window: send_window, recv_window: recv_window, method: "", scheme: "", authority: "", path: "", fields: headers.header_map_new(), body: [], length: 0 - 1, handling: false, reset: false, pending: [], trailers: headers.header_map_new(), owes_end: false, streaming: false, received: 0, producing: false };
+  let s: __Stream = __Stream { id: id, state: OPEN, send_window: send_window, recv_window: recv_window, method: "", scheme: "", authority: "", path: "", fields: headers.header_map_new(), body: [], length: 0 - 1, handling: false, reset: false, pending: [], trailers: headers.header_map_new(), owes_end: false, streaming: false, received: 0, producing: false, status: 0 };
   let regular: boolean = false;
   for f in fields {
     if (f.name.len() == 0) {
@@ -788,6 +988,9 @@ function __replenished(r: __Run, at: i32): __Run {
 // __finished hands a stream's request over once the client's END_STREAM
 // has come: the body must be what content-length said.
 function __finished(r: __Run, at: i32, trailers: HeaderMap): __Run {
+  if (r.conn.client) {
+    return __answered(r, at, trailers);
+  }
   let s: __Stream = r.conn.streams[at];
   if (s.length >= 0 && s.length != s.body.len()) {
     return __reset_stream(r, s.id, frame.PROTOCOL_ERROR);

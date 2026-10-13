@@ -2803,6 +2803,23 @@ step = step.conn.read(received);               // step.events: Request(1, req), 
 step = step.conn.respond(1, http.ok("hi"));    // step.output: HEADERS, DATA END_STREAM
 ```
 
+The client's side is the same state machine: `h2.client(config)` is a new
+connection and the preface and SETTINGS it opens with, `conn.request(out)`
+opens a stream for an `Outgoing` (method, scheme, authority and path as
+the pseudo-header fields, the fields with `host` and the connection-specific
+ones left out, the whole body as DATA under the windows, the trailers after
+it) and answers the stream's id beside the step, -1 once the server has
+sent GOAWAY (`conn.going_away()`), and the response comes back whole as
+`Answered(stream, resp)` with its trailers in `resp.trailers`, a 1xx
+before it stepped over. Push is disabled, so a PUSH_PROMISE closes the
+connection. `std/fetch` speaks it to an origin that chooses `h2` by ALPN.
+
+```fern
+let step: h2.Step = h2.client(h2.config());       // step.output: preface and SETTINGS
+let (sent, stream) = step.conn.request(h2.Outgoing { method: "GET", scheme: "https", authority: "example.test", path: "/", headers: headers.header_map_new(), body: [], trailers: headers.header_map_new() });
+step = sent.conn.read(received);                  // step.events: Answered(stream, resp)
+```
+
 `Config` holds what the server allows and advertises: `max_concurrent_streams`
 (100), `initial_window` (65535), `max_frame_size` (16384),
 `max_header_list` (65536), `header_table_size` (4096), `max_body`
