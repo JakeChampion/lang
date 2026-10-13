@@ -267,6 +267,41 @@ function import_graph(imports: LoadedModule[], ids: string[], pfxs: string[]): I
   return ImportGraph { starts: starts, edges: edges };
 }
 
+// importers_of is the modules that import `imports[target]` directly, by
+// prefix, with "" for the entry when it does; every stdlib module when the
+// target is one, since the stdlib's own import graph has the cycles modload
+// breaks by clearing stamps rather than recording an edge (the Go checker's
+// traitInScope rule).
+function importers_of(target: i32, imports: LoadedModule[], g: ImportGraph, pfxs: string[], entry: parser.Module): string[] {
+  let out: string[] = [];
+  let std: boolean = is_stdlib_ident(imports[target].ident);
+  let k: i32 = 0;
+  while (k < imports.len()) {
+    let direct: boolean = false;
+    let e: i32 = g.starts[k];
+    while (e < g.starts[k + 1]) {
+      if (g.edges[e] == target) {
+        direct = true;
+      }
+      e = e + 1;
+    }
+    if (k != target && (direct || std && is_stdlib_ident(imports[k].ident))) {
+      out = out.append(pfxs[k]);
+    }
+    k = k + 1;
+  }
+  if (index_of_str(pfxs[target], import_prefixes(entry, module_ids(imports), pfxs)) >= 0) {
+    out = out.append("");
+  }
+  return out;
+}
+
+// is_stdlib_ident reports whether a loaded module's identity is a standard
+// library path (`std/…`, `core/…`).
+function is_stdlib_ident(ident: string): boolean {
+  return util.str_has_prefix(ident, "std/") || util.str_has_prefix(ident, "core/") || util.index_of_sub(ident, "/std/") >= 0 || util.index_of_sub(ident, "/core/") >= 0;
+}
+
 // import_cycle returns the index in `imports` of the first module the
 // entry's imports reach again while it is still being loaded — an import
 // cycle, which native refuses — or -1 when there is none. A cycle inside the
@@ -1989,7 +2024,7 @@ pub function bundle(entry0: parser.Module, imports0: LoadedModule[], target: str
     }
     let mti: i32 = 0;
     while (mti < m.trait_reqs.len()) {
-      trait_reqs = trait_reqs.append(parser.TraitReq { ...m.trait_reqs[mti], module: pfx });
+      trait_reqs = trait_reqs.append(parser.TraitReq { ...m.trait_reqs[mti], module: pfx, visible_from: importers_of(i, imports, graph, pfxs, entry) });
       mti = mti + 1;
     }
     let mdi: i32 = 0;
@@ -2078,7 +2113,7 @@ pub function bundle(entry0: parser.Module, imports0: LoadedModule[], target: str
     inferred_consts: inferred,
     todo_sites: e.todo_sites,
   };
-  return parser.lower_stream_signatures(parser.resolve_dyn_traits(parser.settle_module(parser.substitute_const_refs(merged, merged_const_table(funcs, inferred)))));
+  return parser.lower_stream_signatures(parser.route_inherited_defaults(parser.resolve_dyn_traits(parser.settle_module(parser.substitute_const_refs(merged, merged_const_table(funcs, inferred))))));
 }
 
 // mangled_inferred_consts names every const written without a type, across
