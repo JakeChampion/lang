@@ -3296,11 +3296,12 @@ points that run a handler under it.
   (`std/http/h2`): a connection that opens with the HTTP/2 connection
   preface is served over it (prior-knowledge h2c), and under `tls` the
   protocols offered by ALPN are `h2` and `http/1.1`. The handler is the
-  same, a request's `:authority` arriving as its `host`; each stream's
-  handler runs to its answer on the loop, requests count in the metrics as
-  HTTP/1.1's do, and the connection's bounds (RFC 9113 §10 and the four
-  attack classes) are `std/http/h2`'s. `run_with`'s stateful loop serves
-  HTTP/1.1 only (`TestServeH2Interp`, `TestServeH2X86_64`).
+  same, a request's `:authority` arriving as its `host`; a handler that
+  suspends parks on its stream while the connection's other streams are
+  served, requests count in the metrics as HTTP/1.1's do, and the
+  connection's bounds (RFC 9113 §10 and the four attack classes) are
+  `std/http/h2`'s. `run_with`'s stateful loop serves HTTP/1.1 only
+  (`TestServeH2Interp`, `TestServeH2X86_64`).
   `proxy_protocol` (false) reads a PROXY protocol header, version 1 or 2,
   at the start of every connection, before TLS when both are set
   (`forwarded.proxy_header`): its source address becomes the connection's

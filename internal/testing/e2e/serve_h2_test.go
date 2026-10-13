@@ -3,7 +3,9 @@
 // making several requests on one connection, with bodies each way, against
 // the interpreter and the native x86-64 build. The handler is the one an
 // HTTP/1.1 server runs; the loop hands a connection that opens with the
-// HTTP/2 preface to std/http/h2.
+// HTTP/2 preface to std/http/h2. A handler that suspends on an upstream
+// parks per stream: the connection's other streams are answered while it
+// waits, and its answer comes on its stream when the upstream does.
 package e2e
 
 import (
@@ -26,15 +28,28 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-const serveH2Source = `import "std/http";
+const serveH2Source = `import "std/fetch";
+import "std/http";
 import "std/platform";
 import "std/serve";
+import "std/time";
 import "std/tls/identity";
 import "std/tls/server";
 
 function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
   if (req.path == "/echo") {
     return http.bytes(200, req.body_bytes());
+  }
+  if (req.path == "/park") {
+    let parked: fetch.Timeouts = fetch.Timeouts { ...fetch.timeouts(), inactivity: time.duration_seconds(300 as i64), total: time.duration_seconds(600 as i64) };
+    match (plat.http(fetch.get("http://8.8.8.8/hold").with_timeouts(parked))) {
+      Ok(resp) => {
+        return http.ok("held " + resp.status.to_string());
+      },
+      Err(e) => {
+        return http.ok("held err " + e.message());
+      }
+    }
   }
   let host: string = "";
   match (req.headers.get("host")) {
@@ -135,6 +150,7 @@ func TestServeH2X86_64(t *testing.T) {
 	}
 	w.driveH2C(t, runX86Bin(qemu, out))
 	w.driveTLS(t, runX86Bin(qemu, out))
+	w.driveParked(t, runX86Bin(qemu, out))
 }
 
 // driveH2C sends prior-knowledge HTTP/2 with curl: two GETs and a POST on
@@ -166,7 +182,10 @@ func (w *serveH2World) driveH2C(t *testing.T, cmd *exec.Cmd) {
 }
 
 // driveTLS negotiates h2 by ALPN with Go's client and runs eight requests
-// at once on the one connection it opens, then an upload.
+// at once on the one connection it opens, then an upload. The connection
+// is opened by a first request on its own: with none open, Go's transport
+// dials one per queued request, and eight handshakes at once outrun the
+// read deadline under the interpreter.
 func (w *serveH2World) driveTLS(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
 	cmd.Env = append(cmd.Environ(), "H2_CERT="+w.cert, "H2_KEY="+w.key)
@@ -174,6 +193,16 @@ func (w *serveH2World) driveTLS(t *testing.T, cmd *exec.Cmd) {
 	tr := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: w.pool, ServerName: "localhost", MinVersion: tls.VersionTLS13}, ForceAttemptHTTP2: true}
 	client := &http.Client{Transport: tr, Timeout: 60 * time.Second}
 	base := "https://" + addr
+	first, err := client.Get(base + "/first")
+	if err != nil {
+		stderr, _ := os.ReadFile(stderrPath)
+		t.Fatalf("GET /first: %v\nserver stderr:\n%s", err, stderr)
+	}
+	io.Copy(io.Discard, first.Body)
+	first.Body.Close()
+	if first.ProtoMajor != 2 {
+		t.Fatalf("GET /first: HTTP/%d.%d, want HTTP/2", first.ProtoMajor, first.ProtoMinor)
+	}
 	var wg sync.WaitGroup
 	errs := make(chan error, 8)
 	for i := 0; i < 8; i++ {
@@ -215,5 +244,85 @@ func (w *serveH2World) driveTLS(t *testing.T, cmd *exec.Cmd) {
 	}
 	if !strings.Contains(resp.Header.Get("Content-Length"), fmt.Sprint(len(payload))) {
 		t.Fatalf("content-length %q, want %d", resp.Header.Get("Content-Length"), len(payload))
+	}
+}
+
+// driveParked parks four handlers on the upstream's /hold target over one
+// HTTP/2 connection, has a fifth request on the same connection answered
+// while they wait, then releases the upstream and reads the four answers
+// back on their streams. The native build only: the interpreter runs a
+// handler's wait as a blocking call (docs/NET-P3-SUSPENSION-PLAN.md, the
+// interp fallback), so nothing parks there.
+func (w *serveH2World) driveParked(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	up := e2eharness.StartFetchUpstream(t)
+	e2eharness.SetFetchProxy(t, up)
+	cmd.Env = append(cmd.Environ(), "H2_CERT="+w.cert, "H2_KEY="+w.key)
+	addr, stderrPath := e2eharness.StartInheritedServer(t, cmd)
+	tr := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: w.pool, ServerName: "localhost", MinVersion: tls.VersionTLS13}, ForceAttemptHTTP2: true}
+	client := &http.Client{Transport: tr, Timeout: 60 * time.Second}
+	base := "https://" + addr
+	first, err := client.Get(base + "/first")
+	if err != nil {
+		t.Fatalf("GET /first: %v", err)
+	}
+	io.Copy(io.Discard, first.Body)
+	first.Body.Close()
+	const parked = 4
+	type answer struct {
+		body string
+		err  error
+	}
+	answers := make(chan answer, parked)
+	for i := 0; i < parked; i++ {
+		go func() {
+			resp, err := client.Get(base + "/park")
+			if err != nil {
+				answers <- answer{err: err}
+				return
+			}
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.ProtoMajor != 2 {
+				answers <- answer{err: fmt.Errorf("GET /park: HTTP/%d, want HTTP/2", resp.ProtoMajor)}
+				return
+			}
+			answers <- answer{body: string(body)}
+		}()
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for up.Held() < parked {
+		if time.Now().After(deadline) {
+			stderr, _ := os.ReadFile(stderrPath)
+			t.Fatalf("%d handlers parked on the upstream after 30s, want %d\nserver stderr:\n%s", up.Held(), parked, stderr)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	// The connection's other streams are served while the four wait.
+	resp, err := client.Get(base + "/meanwhile")
+	if err != nil {
+		t.Fatalf("GET /meanwhile while four handlers are parked: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if want := "hello GET /meanwhile " + addr; resp.ProtoMajor != 2 || string(body) != want {
+		t.Fatalf("GET /meanwhile over HTTP/%d: %q, want %q", resp.ProtoMajor, body, want)
+	}
+	select {
+	case a := <-answers:
+		t.Fatalf("a parked handler answered before the upstream released it: %q %v", a.body, a.err)
+	default:
+	}
+	up.Release()
+	for i := 0; i < parked; i++ {
+		select {
+		case a := <-answers:
+			if a.err != nil || a.body != "held 200" {
+				stderr, _ := os.ReadFile(stderrPath)
+				t.Fatalf("parked handler %d: %q %v\nserver stderr:\n%s", i+1, a.body, a.err, stderr)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatalf("parked handler %d never answered after the upstream released", i+1)
+		}
 	}
 }

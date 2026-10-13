@@ -98,17 +98,24 @@ without ACK within the timeout closes the connection.
    drives whole connections from bytes as a client does: each attack class
    refused, each malformed request reset and each malformed connection
    closed, flow control at both levels, and the control frames.
-4. **Serving (landed, first half).** `std/serve` under `with_h2()` hands a
+4. **Serving (landed, most of it).** `std/serve` under `with_h2()` hands a
    prior-knowledge h2c connection and an ALPN `h2` TLS connection to the
    state machine: the loop's read and write paths carry the connection's
-   bytes, pending writes and all, and each stream's handler runs to its
-   answer on the loop and is counted in the metrics. `TestServeH2Interp`
-   and `TestServeH2X86_64` drive the server with curl over h2c (two GETs on
-   one connection, a POST echoed) and with Go's client over TLS (h2 by
-   ALPN, eight requests at once, a 50 KB upload echoed). Still open here:
-   a handler that suspends (P3) parking per stream rather than running to
-   its answer, `run_with`'s stateful loop over HTTP/2, and the
-   allocations-per-request reading for the HTTP/2 path.
+   bytes, pending writes and all, and each stream's handler starts as an
+   HTTP/1.1 request's does and is counted in the metrics. A handler that
+   suspends (P3) parks as a flight on the connection and its stream: the
+   loop keeps reading the connection and answers its other streams, and
+   the flight's answer goes out on its stream when it wakes, counted from
+   the clock the flight kept. The HTTP/2 connection lives in the table's
+   framing column beside HTTP/1.1's pulled body, so a held connection
+   stays at 992 bytes under the 1 KiB bound. `TestServeH2Interp` and
+   `TestServeH2X86_64` drive the server with curl over h2c (two GETs on
+   one connection, a POST echoed), with Go's client over TLS (h2 by ALPN,
+   eight requests at once, a 50 KB upload echoed), and with four handlers
+   parked on an upstream while a fifth request on the same connection is
+   answered, the four answering once the upstream does. Still open here:
+   `run_with`'s stateful loop over HTTP/2, and the allocations-per-request
+   reading for the HTTP/2 path.
 5. **h2spec nightly (landed).** `scripts/net-h2spec` on `net-nightly.yml`:
    h2spec 2.6.0 strict over h2c against `scripts/net-h2spec.d/server.fern`,
    146 cases, every one green or the job fails, the counts recorded under
