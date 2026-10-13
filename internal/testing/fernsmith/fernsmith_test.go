@@ -1424,7 +1424,8 @@ func TestShrinkMainBytesReachesPastTruncation(t *testing.T) {
 // of a program-declared array type, a projection through a nested value, a
 // functional update, the ownership cluster and its reassignment of a shared
 // value, a fuel-bounded recursive helper and its self-call, the state fold,
-// and the closure cluster. Each floor is about half the rate measured over
+// the closure cluster, and the user trait's impls, calls and dyn cluster.
+// Each floor is about half the rate measured over
 // 1024 seeds (in parentheses), so a change that leaves a shape technically
 // reachable but rare fails here rather than quietly thinning what the oracles
 // judge.
@@ -1445,6 +1446,12 @@ func TestGenReachesOwnershipShapes(t *testing.T) {
 		{"recursive self-call (14%)", 0.06, regexp.MustCompile(`\(__fuel - 1i32\)`)},
 		{"state fold in main's return (57%)", 0.30, regexp.MustCompile(`\* 31i32 \+`)},
 		{"closure cluster: parameter and capture of one type (23%)", 0.10, regexp.MustCompile(`let __clo_r\d+: i32 = `)},
+		{"user trait with an impl (38%)", 0.18, regexp.MustCompile(`impl Tr0 for `)},
+		{"two implementers of the trait (13%)", 0.06, regexp.MustCompile(`impl Tr0 for [^\n]*\nimpl Tr0 for `)},
+		{"impl overriding the default method (20%)", 0.10, regexp.MustCompile(`; \} function t0_d\(self: Self\)`)},
+		{"bounded generic call (22%)", 0.10, regexp.MustCompile(`tg0\(`)},
+		{"call through a dyn parameter (21%)", 0.10, regexp.MustCompile(`(\(|, |\|> |= |return )dg0\(`)},
+		{"trait cluster: a dyn array and a reassigned dyn local (15%)", 0.07, regexp.MustCompile(`let __dyn_a\d+: dyn Tr0\[\] = `)},
 	}
 	hits := make([]int, len(landmarks))
 	for seed := uint64(0); seed < seeds; seed++ {

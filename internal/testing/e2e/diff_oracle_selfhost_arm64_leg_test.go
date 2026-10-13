@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -47,6 +48,32 @@ func TestDifferential_SelfHostArm64(t *testing.T) {
 		// Cannot exec the x86-64 driver, so there is no compiler to run.
 		t.Skip("the self-host CLI driver runs only natively (x86-64 asm, argv paths)")
 	}
+	selfHostArm64Sweep(t, gcc, selfHostArm64DiffKnownFile, nil)
+}
+
+// TestDifferential_SelfHostSanitizeArm64 is the arm64 sweep with every seed
+// built under -sanitize, TestDifferential_SelfHostSanitizeX86_64's sibling:
+// the rc ops and the over-release and freed-block checks are emitted per
+// backend (asm_arm64_ir.fern has its own), so the x86-64 leg says nothing
+// about this one's.
+func TestDifferential_SelfHostSanitizeArm64(t *testing.T) {
+	requireSelfHostDiffLeg(t)
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("the self-host CLI driver runs only natively (x86-64 asm, argv paths)")
+	}
+	selfHostArm64Sweep(t, gcc, selfHostArm64SanitizeKnownFile, []string{"-sanitize"})
+}
+
+// selfHostArm64SanitizeKnownFile is TestDifferential_SelfHostSanitizeArm64's
+// known-divergences file, on the same contract.
+const selfHostArm64SanitizeKnownFile = "selfhost-diff-sanitize-arm64-known-divergences.txt"
+
+// selfHostArm64Sweep runs the fernsmith window through the self-host arm64
+// CLI with the extra compile flags given, against the interpreter. A
+// -sanitize build is also failed on any sanitizer report.
+func selfHostArm64Sweep(t *testing.T, gcc, knownFile string, flags []string) {
+	t.Helper()
 	// Reused for its qemu discovery and clean skip; the gcc it returns is
 	// unused because the target assembles and links in-process.
 	_, qemu := arm64Tooling(t)
@@ -59,7 +86,6 @@ func TestDifferential_SelfHostArm64(t *testing.T) {
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
-	knownFile := selfHostArm64DiffKnownFile
 	known := loadKnownDivergences(t, knownFile)
 
 	var sampled, ran int64
@@ -83,7 +109,7 @@ func TestDifferential_SelfHostArm64(t *testing.T) {
 				t.Errorf(format, args...)
 			}
 
-			r, gap := runSelfHostArm64Seed(t, fernBin, stdlibRoot, qemu, src)
+			r, gap := runSelfHostArm64Seed(t, fernBin, stdlibRoot, qemu, src, flags)
 			if gap != "" {
 				if semRefused(gap) {
 					t.Errorf("the typed lowering refused this seed:\n%s", gap)
@@ -104,6 +130,9 @@ func TestDifferential_SelfHostArm64(t *testing.T) {
 			if r != nil {
 				atomic.AddInt64(&ran, 1)
 				checkSelfHostSeedExit(*r, want, src, failf)
+				if strings.Contains(r.stderr, "fern-sanitizer:") {
+					failf("the sanitizer reported on the self-host-compiled binary:\n%s\nsrc:\n%s", r.stderr, src)
+				}
 			}
 			if isKnown && !diverged {
 				t.Errorf("seed %d is listed in testdata/%s (%s) but it AGREES now — delete the entry",
@@ -132,7 +161,7 @@ func TestDifferential_SelfHostArm64(t *testing.T) {
 // No link step and so no link failure to report: the self-host assembles and
 // links this target itself, which folds what would be the x86-64 leg's link
 // error into the compile failure, naming the unsupported mnemonic.
-func runSelfHostArm64Seed(t *testing.T, fernBin, stdlibRoot, qemu, src string) (*selfHostRun, string) {
+func runSelfHostArm64Seed(t *testing.T, fernBin, stdlibRoot, qemu, src string, flags []string) (*selfHostRun, string) {
 	t.Helper()
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
@@ -140,11 +169,12 @@ func runSelfHostArm64Seed(t *testing.T, fernBin, stdlibRoot, qemu, src string) (
 		t.Fatalf("write src: %v", err)
 	}
 	binPath := filepath.Join(dir, "prog")
-	compile := exec.Command(fernBin, "-target", "arm64-linux", "-o", binPath, srcPath, stdlibRoot)
-	out, err := compile.CombinedOutput()
+	args := append([]string{"-target", "arm64-linux"}, flags...)
+	args = append(args, "-o", binPath, srcPath, stdlibRoot)
+	out, err := exec.Command(fernBin, args...).CombinedOutput()
 	if err != nil {
 		return nil, fmt.Sprintf("%v\n%s%s", err, out,
-			strictIRBailSite(fernBin, "arm64-linux", nil, srcPath, stdlibRoot, out))
+			strictIRBailSite(fernBin, "arm64-linux", flags, srcPath, stdlibRoot, out))
 	}
 	// write_file does not set the exec bit (the Makefile chmods
 	// bin/fern-selfhost for the same reason).

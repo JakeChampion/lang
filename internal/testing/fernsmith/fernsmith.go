@@ -412,6 +412,10 @@ type Generator struct {
 	// feats and types are this program's swarm mask; see swarm.go.
 	feats uint64
 	types uint64
+	// trait is the program's user trait, nil when it declares none, and
+	// dynCounter names the vars a trait cluster declares; see traits.go.
+	trait      *traitShape
+	dynCounter int
 }
 
 // structShape is the runtime-allocated form of a struct decl.
@@ -875,6 +879,7 @@ func (g *Generator) MainProgram() string {
 func (g *Generator) mainStmt(b *strings.Builder, sc *scope, i int) {
 	if g.maybeEmitWhile(b, sc) || g.maybeEmitForEach(b, sc) || g.maybeEmitLocalFn(b, sc) ||
 		g.maybeEmitArrayAliasCow(b, sc) || g.maybeEmitLoopReadBeforeWith(b, sc) || g.maybeEmitOwnershipCluster(b, sc) || g.maybeEmitClosureCluster(b, sc) ||
+		g.maybeEmitTraitCluster(b, sc) ||
 		g.maybeEmitControlStmt(b, sc, tI32) {
 		return
 	}
@@ -1330,6 +1335,7 @@ func (g *Generator) preludeDecls(b *strings.Builder) {
 	// shapes. See declareDynamicNominals for the field /
 	// variant generation rules.
 	g.declareDynamicNominals(b)
+	g.declareTrait(b)
 }
 
 // declareDynamicNominals emits 0..3 additional struct decls and
@@ -1529,6 +1535,7 @@ func (g *Generator) body(b *strings.Builder, sc *scope, retT gtype) {
 func (g *Generator) bodyStmt(b *strings.Builder, sc *scope, retT gtype, i int) {
 	if g.maybeEmitWhile(b, sc) || g.maybeEmitForEach(b, sc) || g.maybeEmitLocalFn(b, sc) ||
 		g.maybeEmitArrayAliasCow(b, sc) || g.maybeEmitLoopReadBeforeWith(b, sc) || g.maybeEmitOwnershipCluster(b, sc) || g.maybeEmitClosureCluster(b, sc) ||
+		g.maybeEmitTraitCluster(b, sc) ||
 		g.maybeEmitControlStmt(b, sc, retT) {
 		return
 	}
@@ -2567,7 +2574,20 @@ func (g *Generator) emitCall(b *strings.Builder, sc *scope, t gtype, depth int) 
 	if len(cands) == 0 {
 		return false
 	}
-	g.emitCallTo(b, sc, cands[g.ch.intN(len(cands))], depth)
+	// A spent stream takes the cheapest call rather than index 0, so which
+	// helper comes first in the list cannot make truncation grow a program.
+	var pick helperSig
+	if g.ch.exhausted() {
+		pick = cands[0]
+		for _, h := range cands[1:] {
+			if g.callCost(sc, h) < g.callCost(sc, pick) {
+				pick = h
+			}
+		}
+	} else {
+		pick = cands[g.ch.intN(len(cands))]
+	}
+	g.emitCallTo(b, sc, pick, depth)
 	return true
 }
 
@@ -2711,27 +2731,13 @@ func (g *Generator) leaf(b *strings.Builder, sc *scope, t gtype, depth int) {
 		b.WriteString(vars[g.ch.intN(len(vars))])
 		return
 	}
-	// With no in-scope var of type t the literal is the fall-through,
-	// and for a FUNCTION type that literal is a lambda — four AST
-	// nodes, where an element read out of an in-scope closure array is
-	// three. A spent corpus must not take the larger one: the
-	// production it would otherwise have reached (tryCompositeProduction's
-	// array index) is smaller, so truncating a byte here GREW the
-	// program and the shrinker could walk uphill. Among the builtin
-	// types tFnI32I32 is the only one with a non-var production smaller
-	// than its own literal; a program-declared type's literal spells
-	// every field, so leafMin weighs it against the alternatives.
-	//
-	// Gated on exhausted() so a corpus with bytes left is untouched —
-	// the predicate consumes nothing, so random generation and every
-	// byte-driven decision are bit-identical to before.
-	if t == tFnI32I32 && g.ch.exhausted() {
-		if arrs := sc.inScope(tArrFnI32I32); len(arrs) > 0 {
-			fmt.Fprintf(b, "%s[0i32]", arrs[g.ch.intN(len(arrs))])
-			return
-		}
-	}
-	if t >= numTypes && g.ch.exhausted() {
+	// A spent corpus takes the smallest expression of t, which is not
+	// always its literal: a projection out of an in-scope value
+	// (`v0.f1`, `fs[0i32]`) or a call can be smaller, and taking the
+	// literal there let truncating a byte GROW the program. Gated on
+	// exhausted(), which consumes nothing, so a corpus with bytes left
+	// generates exactly as before.
+	if g.ch.exhausted() {
 		g.leafMin(b, sc, t, depth)
 		return
 	}

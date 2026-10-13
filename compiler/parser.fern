@@ -14038,6 +14038,10 @@ function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: str
       }
       return RStmtOne { rstmt: ast.StmtMatch { ...m, scrutinee: sv.rexpr, arms: arms }, renv: env, rins2: cur };
     },
+    ast.StmtDefer(d) => {
+      let act: RStmtOne = mono_stmt(d.action, env, funcs, ins, ret_ty);
+      return RStmtOne { rstmt: ast.StmtDefer { ...d, action: act.rstmt }, renv: env, rins2: act.rins2 };
+    },
     _ => {
       return RStmtOne { rstmt: st, renv: env, rins2: ins };
     }
@@ -16859,6 +16863,10 @@ function ms_stmt(st: ast.Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, i
       }
       return RStmtOne { rstmt: ast.StmtMatch { ...m, scrutinee: sv.rexpr, arms: arms }, renv: env, rins2: cur };
     },
+    ast.StmtDefer(d) => {
+      let act: RStmtOne = ms_stmt(d.action, env, gstructs, funcs, ins, ret_ty);
+      return RStmtOne { rstmt: ast.StmtDefer { ...d, action: act.rstmt }, renv: env, rins2: act.rins2 };
+    },
     _ => {
       return RStmtOne { rstmt: st, renv: env, rins2: ins };
     }
@@ -18631,6 +18639,10 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
         i = i + 1;
       }
       return RStmtOne { rstmt: ast.StmtMatch { ...m, scrutinee: sv.rexpr, arms: arms }, renv: env, rins2: cur };
+    },
+    ast.StmtDefer(d) => {
+      let act: RStmtOne = me_stmt(d.action, env, ret_ty, enums, structs, funcs, ins);
+      return RStmtOne { rstmt: ast.StmtDefer { ...d, action: act.rstmt }, renv: env, rins2: act.rins2 };
     },
     _ => {
       return RStmtOne { rstmt: st, renv: env, rins2: ins };
