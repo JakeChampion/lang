@@ -412,6 +412,10 @@ type Generator struct {
 	// feats and types are this program's swarm mask; see swarm.go.
 	feats uint64
 	types uint64
+	// trait is the program's user trait, nil when it declares none, and
+	// dynCounter names the vars a trait cluster declares; see traits.go.
+	trait      *traitShape
+	dynCounter int
 }
 
 // structShape is the runtime-allocated form of a struct decl.
@@ -875,6 +879,7 @@ func (g *Generator) MainProgram() string {
 func (g *Generator) mainStmt(b *strings.Builder, sc *scope, i int) {
 	if g.maybeEmitWhile(b, sc) || g.maybeEmitForEach(b, sc) || g.maybeEmitLocalFn(b, sc) ||
 		g.maybeEmitArrayAliasCow(b, sc) || g.maybeEmitLoopReadBeforeWith(b, sc) || g.maybeEmitOwnershipCluster(b, sc) || g.maybeEmitClosureCluster(b, sc) ||
+		g.maybeEmitTraitCluster(b, sc) ||
 		g.maybeEmitControlStmt(b, sc, tI32) {
 		return
 	}
@@ -1330,6 +1335,7 @@ func (g *Generator) preludeDecls(b *strings.Builder) {
 	// shapes. See declareDynamicNominals for the field /
 	// variant generation rules.
 	g.declareDynamicNominals(b)
+	g.declareTrait(b)
 }
 
 // declareDynamicNominals emits 0..3 additional struct decls and
@@ -1529,6 +1535,7 @@ func (g *Generator) body(b *strings.Builder, sc *scope, retT gtype) {
 func (g *Generator) bodyStmt(b *strings.Builder, sc *scope, retT gtype, i int) {
 	if g.maybeEmitWhile(b, sc) || g.maybeEmitForEach(b, sc) || g.maybeEmitLocalFn(b, sc) ||
 		g.maybeEmitArrayAliasCow(b, sc) || g.maybeEmitLoopReadBeforeWith(b, sc) || g.maybeEmitOwnershipCluster(b, sc) || g.maybeEmitClosureCluster(b, sc) ||
+		g.maybeEmitTraitCluster(b, sc) ||
 		g.maybeEmitControlStmt(b, sc, retT) {
 		return
 	}

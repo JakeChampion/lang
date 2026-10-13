@@ -56,6 +56,15 @@ What a program can contain:
   it runs out, and call itself with one less at most twice outside loops and
   closures, so a call costs at most 2^(fuel+1) invocations.
 - **Generics and methods**: the prelude's `id[T]` / `pick[T]` and Pair methods.
+- **Traits and `dyn`** (`traits.go`): a user trait with a required method and
+  a default method that calls it, implemented by up to three of the program's
+  structs and `i32`, each impl's body a generated expression and some impls
+  overriding the default. A bounded generic (`tg0[T: Tr0]`) dispatches
+  statically and is monomorphised per implementer; `dg0(d: dyn Tr0)` and
+  `da0(ds: dyn Tr0[])` dispatch through the vtable. Concrete values reach
+  them by coercion at the call site, and a cluster in a body builds a `dyn`
+  array of mixed implementers and reassigns a `dyn` local from one
+  implementer to another, dropping the first object.
 
 **Swarm testing** (`swarm.go`; Groce et al., ISSTA 2012) draws a per-program
 mask over productions and types from the first bytes of the stream. A program
@@ -190,6 +199,8 @@ In order:
 2. Pass-configuration differential + chaos fuel.
 3. Differential oracle inside the coverage-guided loop.
 4. Type-erasure / type-overwrite checker fuzzing, run against both checkers.
-5. User-written generics, traits, `impl` and `dyn` in fernsmith — the largest
-   part of the language it does not generate yet.
+5. The rest of the trait and generics surface in fernsmith: user-written
+   generic structs and enums, generic and associated-type traits,
+   associated functions, consuming (`own`) receivers, `as?` downcasts, and
+   `dyn` in struct fields and tuples.
 6. Signature-based nightly triage.
