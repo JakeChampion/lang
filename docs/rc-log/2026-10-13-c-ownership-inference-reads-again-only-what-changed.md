@@ -31,9 +31,12 @@ tree and compiling the same frozen copy of main, each on a warm memo.
 |---|--:|
 | main at fef3701 | 69.956 G |
 | a worklist | 69.445 G (−0.73%) |
+| main at fdc1f5d | 68.517 G |
+| a worklist | 68.027 G (−0.72%) |
 
 `semlower.inferred_rows`, into which the inference is spliced, falls by
-288 M and the `ownership` module by 138 M.
+288 M on fef3701, and the `ownership` module by 138 M. On fdc1f5d per-slot
+quiet cycles are in, and the gain holds.
 
 The changed compiler compiles `fern.fern` to the same bytes as main's for
 x86-64 and arm64, and `checker.fern` for wasm. It also rebuilds itself byte
