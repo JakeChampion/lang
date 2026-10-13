@@ -313,10 +313,11 @@ function score(l: L): i32 { let acc: i32 = 0; let cur: L = l; let go: boolean = 
 function main(): i32 { let xs: L = A(1, Z(5, B(A(3, Nil)))); if (score(step(xs)) != 9) { return 1; } return __rc_underflow_count(); }`
 }
 
-// countSelfCalls counts `call __fn_<name>` sites in emitted x86-64 asm. A TRMC'd
-// function keeps only its callers' call sites; the recursive ones are gone.
+// countSelfCalls counts the sites calling __fn_<name> in emitted x86-64 asm,
+// a tail call's `jmp` to the register entry among them. A TRMC'd function
+// keeps only its callers' call sites; the recursive ones are gone.
 func countSelfCalls(asm, name string) int {
-	return strings.Count(asm, "call __fn_"+name+"\n") + strings.Count(asm, "call __fn_"+name+".r\n")
+	return strings.Count(asm, "call __fn_"+name+"\n") + strings.Count(asm, "call __fn_"+name+".r\n") + strings.Count(asm, "jmp __fn_"+name+".r\n")
 }
 
 // TestSelfHostTrmcWasmIR: the wasm sibling through the wasm_ir_run driver.
