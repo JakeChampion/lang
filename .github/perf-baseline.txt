@@ -75,7 +75,7 @@ x86_64/map_probe_chain.text	3289
 x86_64/map_probe_chain.ir	385170066
 x86_64/map_string.text	4041
 x86_64/map_string.ir	65377896	2
-x86_64/ordmap_insert.text	3040
+x86_64/ordmap_insert.text	2979
 x86_64/ordmap_insert.ir	115466142
 x86_64/pmap_insert.text	2653
 x86_64/pmap_insert.ir	64758246
@@ -85,9 +85,9 @@ x86_64/record_update.ir	118043874
 x86_64/record_update.text	1375
 x86_64/sort_inplace.text	1168
 x86_64/sort_inplace.ir	43380614
-x86_64/sort_ints.text	1694
-x86_64/sort_ints.ir	30711812
-x86_64/sort_strings.text	2565
+x86_64/sort_ints.text	1662
+x86_64/sort_ints.ir	29849660
+x86_64/sort_strings.text	2533
 x86_64/sort_strings.ir	107223962
 x86_64/string_build.text	1326
 x86_64/string_build.ir	98161013
@@ -200,8 +200,8 @@ aarch64/map_probe_chain.text	3502
 aarch64/map_probe_chain.ir	382212817
 aarch64/map_string.text	4299
 aarch64/map_string.ir	66191654	2
-aarch64/ordmap_insert.text	3290
-aarch64/ordmap_insert.ir	122175759
+aarch64/ordmap_insert.text	3238
+aarch64/ordmap_insert.ir	124791436
 aarch64/pmap_insert.text	2867
 aarch64/pmap_insert.ir	71272111
 aarch64/pvec_with.text	2968
@@ -210,9 +210,9 @@ aarch64/record_update.text	1521
 aarch64/record_update.ir	104947544
 aarch64/sort_inplace.text	1331
 aarch64/sort_inplace.ir	53111058
-aarch64/sort_ints.text	1923
-aarch64/sort_ints.ir	33088894
-aarch64/sort_strings.text	2840
+aarch64/sort_ints.text	1894
+aarch64/sort_ints.ir	32514646
+aarch64/sort_strings.text	2811
 aarch64/sort_strings.ir	107565568
 aarch64/string_build.text	1583
 aarch64/string_build.ir	95860138
@@ -236,23 +236,23 @@ aarch64/utf8_ingest_validated.text	7238
 aarch64/utf8_ingest_validated.ir	6484480
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-x86_64/perceus_cfold.text	2229
-x86_64/perceus_cfold.ir	66958067
+x86_64/perceus_cfold.text	2137
+x86_64/perceus_cfold.ir	65690867
 x86_64/perceus_deriv.text	2707
-x86_64/perceus_deriv.ir	93528808
+x86_64/perceus_deriv.ir	90202408
 x86_64/perceus_nqueens.text	1247
 x86_64/perceus_nqueens.ir	105327536
-x86_64/perceus_rbtree.text	3276
-x86_64/perceus_rbtree.ir	74293889
-x86_64/perceus_rbtree_ck.text	3154
-x86_64/perceus_rbtree_ck.ir	82262447
-aarch64/perceus_cfold.text	2428
-aarch64/perceus_cfold.ir	72820602
+x86_64/perceus_rbtree.text	2599
+x86_64/perceus_rbtree.ir	60191009
+x86_64/perceus_rbtree_ck.text	2808
+x86_64/perceus_rbtree_ck.ir	70702607
+aarch64/perceus_cfold.text	2351
+aarch64/perceus_cfold.ir	71776202
 aarch64/perceus_deriv.text	2930
-aarch64/perceus_deriv.ir	102238904
+aarch64/perceus_deriv.ir	99754904
 aarch64/perceus_nqueens.text	1421
 aarch64/perceus_nqueens.ir	117887806
-aarch64/perceus_rbtree.text	3442
-aarch64/perceus_rbtree.ir	74951956
-aarch64/perceus_rbtree_ck.text	3340
-aarch64/perceus_rbtree_ck.ir	85099728
+aarch64/perceus_rbtree.text	2816
+aarch64/perceus_rbtree.ir	63706676
+aarch64/perceus_rbtree_ck.text	3020
+aarch64/perceus_rbtree_ck.ir	76180368
