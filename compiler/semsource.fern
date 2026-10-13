@@ -132,6 +132,8 @@ struct State {
   // Emit a source-position marker ahead of each statement (line_mark), the
   // `-g` build's line table.
   debug_lines: boolean,
+  // The struct-union pattern bindings of this body (`narrowed`).
+  narrowings: Narrowing[],
   // Under debug_lines, every value a source variable is bound to, in binding
   // order, and that variable's name: the record a debugger's view of a local
   // is built from (#11410).
@@ -140,6 +142,10 @@ struct State {
 }
 
 struct Value { s: State, id: i32 }
+
+// A struct-union pattern's binding: value `id` is the scrutinee `scrut`
+// narrowed to member `member`, and a field read of it reads the scrutinee.
+struct Narrowing { id: i32, scrut: i32, member: string }
 
 function t_i32(): typeinfo.Type {
   return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
@@ -1394,7 +1400,7 @@ function record_field(fa: ast.ExprFieldAccess, s: State): Value {
   if (at < 0 || !semtypes.concrete(sig.field_types[at], false)) {
     return refused(s, "record projection contract");
   }
-  return define(s, ssasem.record_get(), [container.id], at, fa.field, sig.field_types[at]);
+  return field_read(s, container.id, at, fa.field, sig.field_types[at]);
 }
 
 // The values a literal wrote, in written order, with the schema slot each one
@@ -1446,7 +1452,7 @@ function place_fields(w: Written, sig: checker.StructSig, base: i32): Written {
     if (found >= 0) {
       ids = ids.append(w.ids[found]);
     } else {
-      let got: Value = define(s, ssasem.record_get(), [base], d, sig.field_names[d], sig.field_types[d]);
+      let got: Value = field_read(s, base, d, sig.field_names[d], sig.field_types[d]);
       s = got.s;
       if (!s.ok) {
         return Written { s: s, ids: [], at: [] };
@@ -2717,7 +2723,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   if (fsig.name.len() > 0) {
     let fat: i32 = record_field_index(fsig, fa.field);
     if (fat >= 0 && ssasem.is_func(fsig.field_types[fat])) {
-      let fv: Value = define(s, ssasem.record_get(), [recv], fat, fa.field, fsig.field_types[fat]);
+      let fv: Value = field_read(s, recv, fat, fa.field, fsig.field_types[fat]);
       if (!fv.s.ok) {
         return fv;
       }
@@ -4149,7 +4155,7 @@ function destructure_record(encoded: string, tag: string, whole: i32, s: State, 
     if (at < 0 || !semtypes.concrete(sig.field_types[at], false)) {
       return fail(s, "record projection contract");
     }
-    let part: Value = define(s, ssasem.record_get(), [whole], at, fields[i], sig.field_types[at]);
+    let part: Value = field_read(s, whole, at, fields[i], sig.field_types[at]);
     s = bind_projection(part.s, names[i], part.id, after);
     if (!s.ok) {
       return s;
@@ -4571,10 +4577,25 @@ function narrowed(pv: ast.PatVariant, scrut: i32, s: State): State {
   }
   let bound: boolean = util.index_of_str(s.names, pv.binding) >= 0;
   let v: Value = define(s, ssasem.variant_as(), [scrut], 0, pv.type_name, member_type(pv));
+  s = State { ...v.s, narrowings: v.s.narrowings.append(Narrowing { id: v.id, scrut: scrut, member: pv.type_name }) };
   if (bound) {
-    return replace(v.s, pv.binding, v.id);
+    return replace(s, pv.binding, v.id);
   }
-  return bind(v.s, pv.binding, v.id);
+  return bind(s, pv.binding, v.id);
+}
+
+// A read of field `at` of record value `base`. A base bound by a struct-union
+// pattern is the scrutinee's box, so the read is a payload read of the
+// scrutinee itself: the box then has one reader for the ownership walk to see,
+// which lets an arm that consumes the scrutinee take the field or rebuild the
+// value in its box.
+function field_read(s: State, base: i32, at: i32, field: string, ty: typeinfo.Type): Value {
+  for n in s.narrowings {
+    if (n.id == base) {
+      return define(s, ssasem.variant_get(), [n.scrut], at, n.member, ty);
+    }
+  }
+  return define(s, ssasem.record_get(), [base], at, field, ty);
 }
 
 function member_type(pv: ast.PatVariant): typeinfo.Type {
@@ -5879,7 +5900,14 @@ function parameters(fd: parser.FuncDecl, s: State): State {
       return fail(s, "unresolved parameter type");
     }
     let m: i32 = decl_param_mode(fd, at, ty);
-    let p: Value = define(s, 6, [], at, "", ty);
+    // A parameter declared `own` says so on its definition: its callers hand
+    // over a fresh value, another owned one or a local at its last use
+    // (E051), which the inferred modes do not promise (`ssaunits.likely_unique`).
+    let spelled: string = "";
+    if (m == ssaunits.counted_mode()) {
+      spelled = "own";
+    }
+    let p: Value = define(s, 6, [], at, spelled, ty);
     let id: i32 = p.id;
     s = p.s;
     s = bind(State { ...s, modes: s.modes.append(m) }, names[at], id);
@@ -5900,7 +5928,7 @@ function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Co
     names: [], vals: [], scope: scope, result: result_type(fd, scope, binding, contracts.list), loops: [], contracts: contracts, calls: [],
     template: generic_decl(fd), binding: binding, requests: [], foreign: [], handers: handers, shadows: shadows, views: views,
     name: name, modes: [], funcs: funcs, impls: impls, try_cleanup: try_cleanup(fd.body), replaying: false, armed: 0, escaping: escaping_bindings(fd.body), learned: [], learned_types: [],
-    debug_lines: debug_lines, dbg_vals: [], dbg_names: [],
+    narrowings: [], debug_lines: debug_lines, dbg_vals: [], dbg_names: [],
   };
 }
 

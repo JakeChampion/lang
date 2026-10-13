@@ -1511,13 +1511,13 @@ func node_size {
     brif v1 b2 b3
   b2:
     v2 = variant_as Leaf v0
-    v3 = record_get 0 v2
+    v3 = variant_get 0 Leaf v0
     ret v3
   b3:
     br b4
   b4:
     v4 = variant_as Twig v0
-    v5 = record_get 0 v4
+    v5 = variant_get 0 Twig v0
     v6 = const_int 1
     v7 = array_get v5 v6
     ret v7
@@ -1532,13 +1532,13 @@ func recursive_union {
     brif v1 b2 b3
   b2:
     v2 = variant_as Tip v0
-    v3 = record_get 0 v2
+    v3 = variant_get 0 Tip v0
     ret v3
   b3:
     br b4
   b4:
     v4 = variant_as Nest v0
-    v5 = record_get 1 v4
+    v5 = variant_get 1 Nest v0
     ret v5
 }
 

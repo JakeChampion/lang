@@ -153,6 +153,12 @@ function event_names(events: handshake.Event[]): string {
       },
       handshake.VerifyClient(v) => {
         out = out + " client";
+      },
+      handshake.Crypto(k) => {
+        out = out + " crypto" + int.int_to_string(k.level);
+      },
+      handshake.Secret(t) => {
+        out = out + " secret" + int.int_to_string(t.level);
       }
     }
     i = i + 1;
@@ -1112,6 +1118,218 @@ function test_client_certificate_resumed(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
+// crypto_at is every CRYPTO flight at `level` among the events, joined.
+function crypto_at(events: handshake.Event[], level: i32): u8[] {
+  let out: u8[] = [];
+  for e in events {
+    match (e) {
+      handshake.Crypto(k) => {
+        if (k.level == level) {
+          out = cat(out, k.bytes);
+        }
+      },
+      _ => {}
+    }
+  }
+  return out;
+}
+
+// secret_at is the traffic secret reported for `level` in one direction,
+// empty when none was.
+function secret_at(events: handshake.Event[], level: i32, write: boolean): u8[] {
+  for e in events {
+    match (e) {
+      handshake.Secret(t) => {
+        if (t.level == level && t.write == write) {
+          return t.secret;
+        }
+      },
+      _ => {}
+    }
+  }
+  return [];
+}
+
+function extension_data(exts: message.Extension[], kind: i32): u8[] {
+  match (message.find(exts, kind)) {
+    Some(d) => {
+      return d;
+    },
+    None => {
+      return [];
+    }
+  }
+  return [];
+}
+
+function quic_client(alpn: string[], exts: message.Extension[]): handshake.ClientConfig {
+  return handshake.ClientConfig { ...handshake.client_config("example.com"), alpn: alpn, quic: true, extensions: exts };
+}
+
+function quic_server(alpn: string[], exts: message.Extension[]): handshake.ServerConfig {
+  return handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), alpn: alpn, quic: true, extensions: exts };
+}
+
+function transport_parameters(data: u8[]): message.Extension {
+  return message.Extension { kind: message.EXT_QUIC_TRANSPORT_PARAMETERS, data: data };
+}
+
+// QuicPair — the two sides connected under QUIC, with what each saw.
+struct QuicPair { client: handshake.Client, server: handshake.Server, client_events: handshake.Event[], server_events: handshake.Event[], output: i32 }
+
+// quic_between runs the handshake as QUIC carries it: handshake bytes by
+// level each way, the signature and the verdict answered as over TCP.
+function quic_between(cc: handshake.ClientConfig, sc: handshake.ServerConfig): Result[QuicPair, handshake.HandshakeError] {
+  let start: handshake.ClientStep = handshake.client_start(cc, pattern(1, handshake.client_entropy(cc)))?;
+  let server: handshake.Server = handshake.server_new(sc, pattern(2, handshake.server_entropy(sc)))?;
+  let s1: handshake.ServerStep = server.read_crypto(0, crypto_at(start.events, 0))?;
+  let sg: handshake.Signing = signing(s1.events);
+  let sig: u8[] = [];
+  match (ed25519.sign(seed(), sg.signed)) {
+    Ok(b) => {
+      sig = b;
+    },
+    Err(e) => {
+      return Err(handshake.Misuse("sign"));
+    }
+  }
+  let s2: handshake.ServerStep = s1.server.signature(sig)?;
+  let c1: handshake.ClientStep = start.client.read_crypto(0, crypto_at(s1.events, 0))?;
+  let c2: handshake.ClientStep = c1.client.read_crypto(1, cat(crypto_at(s1.events, 1), crypto_at(s2.events, 1)))?;
+  let v: handshake.Verification = verification(c2.events);
+  let c3: handshake.ClientStep = c2.client.verdict(v.chain.len() == 1 && ed25519.verify(v.chain[0], v.signed, v.signature))?;
+  let s3: handshake.ServerStep = s2.server.read_crypto(1, crypto_at(c3.events, 1))?;
+  if (!c3.client.connected() || !s3.server.connected()) {
+    return Err(handshake.Misuse("not connected"));
+  }
+  let output: i32 = start.output.len() + s1.output.len() + s2.output.len() + c1.output.len() + c2.output.len() + c3.output.len() + s3.output.len();
+  let ce: handshake.Event[] = cat_events(cat_events(start.events, c1.events), cat_events(c2.events, c3.events));
+  let se: handshake.Event[] = cat_events(cat_events(s1.events, s2.events), s3.events);
+  return Ok(QuicPair { client: c3.client, server: s3.server, client_events: ce, server_events: se, output: output });
+}
+
+function cat_events(a: handshake.Event[], b: handshake.Event[]): handshake.Event[] {
+  let out: handshake.Event[] = a;
+  for e in b {
+    out = out.append(e);
+  }
+  return out;
+}
+
+// Under QUIC no record goes out: the handshake rides CRYPTO flights by
+// level, each side reports its secrets as they are set and they match the
+// other side's crosswise, the transport parameters cross both ways, and
+// the protocol is negotiated.
+function test_quic_handshake(): test.TestOutcome {
+  match (quic_between(quic_client(["h3"], [transport_parameters([1 as u8, 2 as u8])]), quic_server(["h3"], [transport_parameters([9 as u8])]))) {
+    Ok(p) => {
+      if (p.output != 0) {
+        return test.fail("bytes went out as records: " + int.int_to_string(p.output));
+      }
+      if (p.client.alpn() != "h3" || p.server.alpn != "h3") {
+        return test.fail("alpn: " + p.client.alpn() + " " + p.server.alpn);
+      }
+      if (!extension_data(p.client.peer_extensions(), message.EXT_QUIC_TRANSPORT_PARAMETERS).equal([9 as u8]) || !extension_data(p.server.peer_extensions(), message.EXT_QUIC_TRANSPORT_PARAMETERS).equal([1 as u8, 2 as u8])) {
+        return test.fail("transport parameters did not cross");
+      }
+      let levels: i32[] = [1, 2];
+      for level in levels {
+        let cw: u8[] = secret_at(p.client_events, level, true);
+        let cr: u8[] = secret_at(p.client_events, level, false);
+        if (cw.len() == 0 || cr.len() == 0 || !cw.equal(secret_at(p.server_events, level, false)) || !cr.equal(secret_at(p.server_events, level, true))) {
+          return test.fail("secrets at level " + int.int_to_string(level) + " do not match crosswise");
+        }
+      }
+      if (secret_at(p.client_events, 0, true).len() != 0 || crypto_at(p.client_events, 2).len() != 0 || crypto_at(p.server_events, 2).len() != 0) {
+        return test.fail("a level 0 secret or a level 2 flight");
+      }
+      return test.assert_eq(event_names(p.server_events) + " |" + event_names(p.client_events), " sign secret1 secret1 crypto0 secret2 crypto1 connected secret2 | crypto0 secret1 secret1 verify connected secret2 secret2 crypto1");
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// Under QUIC: records, application data and saving are refused, a flight
+// at the wrong level is an error with unexpected_message's code, a hello
+// without transport parameters or without a protocol is refused, and a
+// close sends nothing.
+function test_quic_refusals(): test.TestOutcome {
+  let tp: message.Extension = transport_parameters([7 as u8]);
+  match (quic_between(quic_client(["h3"], [tp]), quic_server(["h3"], [tp]))) {
+    Ok(p) => {
+      let got: string = refused_step(p.client.read([1 as u8])) + "|" + refused_step(p.client.write("x".bytes())) + "|" + refused_step(p.client.read_crypto(0, [1 as u8])) + "|" + refused_server(p.server.read_crypto(1, [1 as u8]));
+      match (p.client.save()) {
+        Ok(_) => {
+          got = got + "|saved";
+        },
+        Err(e) => {
+          got = got + "|" + e.message();
+        }
+      }
+      match (p.client.close()) {
+        Ok(step) => {
+          got = got + "|closed " + int.int_to_string(step.output.len()) + " " + int.int_to_string(step.events.len());
+        },
+        Err(e) => {
+          got = got + "|" + e.message();
+        }
+      }
+      if (got != "tls handshake: read under QUIC called out of turn|tls handshake: application data under QUIC called out of turn|10 tls handshake: handshake bytes at encryption level 0 out of turn|10 tls handshake: handshake bytes at encryption level 1 out of turn|tls handshake: save under QUIC called out of turn|closed 0 0") {
+        return test.fail(got);
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  let no_params: string = refused_quic(quic_client(["h3"], []), quic_server(["h3"], [tp]));
+  let server_no_params: string = refused_quic(quic_client(["h3"], [tp]), quic_server(["h3"], []));
+  let no_alpn: string = refused_quic(quic_client([], [tp]), quic_server([], [tp]));
+  return test.assert_eq(no_params + "|" + server_no_params + "|" + no_alpn, "109 tls handshake: missing quic_transport_parameters|109 tls handshake: missing quic_transport_parameters|120 tls handshake: no application protocol in common");
+}
+
+function refused_quic(cc: handshake.ClientConfig, sc: handshake.ServerConfig): string {
+  match (quic_between(cc, sc)) {
+    Ok(p) => {
+      return "connected";
+    },
+    Err(e) => {
+      return int.int_to_string(e.alert()) + " " + e.message();
+    }
+  }
+  return "";
+}
+
+function refused_step(r: Result[handshake.ClientStep, handshake.HandshakeError]): string {
+  match (r) {
+    Ok(step) => {
+      return "accepted";
+    },
+    Err(e) => {
+      if (e.alert() == 10) {
+        return "10 " + e.message();
+      }
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function refused_server(r: Result[handshake.ServerStep, handshake.HandshakeError]): string {
+  match (r) {
+    Ok(step) => {
+      return "accepted";
+    },
+    Err(e) => {
+      return int.int_to_string(e.alert()) + " " + e.message();
+    }
+  }
+  return "";
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/tls/handshake");
   r = r.it("the client's side of RFC 8448", test_client_trace);
@@ -1131,5 +1349,7 @@ function main(): i32 {
   r = r.it("resumption refusals", test_resumption_refusals);
   r = r.it("client certificate", test_client_certificate);
   r = r.it("client certificate and resumption", test_client_certificate_resumed);
+  r = r.it("the handshake under QUIC", test_quic_handshake);
+  r = r.it("QUIC refusals", test_quic_refusals);
   return r.finish();
 }
