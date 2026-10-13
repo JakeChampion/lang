@@ -30,7 +30,7 @@
 //   - `x` is `length(b) - c` with a fact putting `length(b)` at `c` or more;
 //   - `x` is a phi whose operands are all at least zero, assuming the phi is;
 //   - `x` is `y & c` for a constant `c` at least zero;
-//   - `x` is what a byte-set scan returns, which is never negative.
+//   - `x` is what a byte-set scan or a bit count returns, never negative.
 import "./ssa";
 import "./ssadeps";
 import "./ssasem";
@@ -443,7 +443,7 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
     return true;
   }
   let d: ssa.SInst = g.defs[x];
-  if (d.kind_tag == ssasem.call() && (d.str == "__scan_set" || d.str == "__scan_set_bytes")) {
+  if (d.kind_tag == ssasem.call() && nonneg_call(d.str)) {
     return true;
   }
   let at: i32 = g.home[x];
@@ -503,6 +503,11 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
   return false;
 }
 
+function nonneg_call(name: string): boolean {
+  return name == "__scan_set" || name == "__scan_set_bytes" || name == "__clz32" || name == "__ctz32" || name == "__popcount32"
+    || name == "__clz64" || name == "__ctz64" || name == "__popcount64";
+}
+
 // below_a_length reports whether a fact at block b puts `y` strictly below
 // some length, which caps `y + 1` at the largest i32.
 function below_a_length(g: Graph, b: i32, y: i32): boolean {
@@ -550,6 +555,82 @@ function at_least(g: Graph, b: i32, y: i32, n: i32): boolean {
     c = g.above[c];
   }
   return false;
+}
+
+// nonneg_quotients turns a signed i32 `x / 2^k` into `x >> k`, and `x % 2^k`
+// into `x & (2^k - 1)`, where `x` is at least zero. Rounding toward zero and
+// toward negative infinity agree there, so the division needs none of the
+// sign fixup a signed one by a power of two otherwise costs.
+pub function nonneg_quotients(f: ssasem.Func): ssasem.Func {
+  if (!any_pow2_quotient(f)) {
+    return f;
+  }
+  let g: Graph = graph_of(f);
+  let values: typeinfo.Type[] = f.values;
+  let blocks: ssa.SBlock[] = [];
+  let changed: boolean = false;
+  let b: i32 = 0;
+  while (b < f.graph.blocks.len()) {
+    let blk: ssa.SBlock = f.graph.blocks[b];
+    let insts: ssa.SInst[] = [];
+    let marked: boolean = false;
+    for ins in blk.insts {
+      let k: i32 = pow2_divisor(g, ins);
+      if (k > 0 && g.i32s[ins.result] && nonneg(g, b, ins.args[0], [], depth())) {
+        let c: i32 = values.len();
+        values = values.append(f.values[ins.result]);
+        if (ins.str == "/") {
+          insts = insts.append(ssa.SInst { kind_tag: 1, result: c, args: [], imm: k, str: "" });
+          insts = insts.append(ssa.SInst { ...ins, args: [ins.args[0], c], str: ">>" });
+        } else {
+          insts = insts.append(ssa.SInst { kind_tag: 1, result: c, args: [], imm: (1 << k) - 1, str: "" });
+          insts = insts.append(ssa.SInst { ...ins, args: [ins.args[0], c], str: "&" });
+        }
+        marked = true;
+      } else {
+        insts = insts.append(ins);
+      }
+    }
+    if (marked) {
+      blk = ssa.SBlock { ...blk, insts: insts };
+      changed = true;
+    }
+    blocks = blocks.append(blk);
+    b = b + 1;
+  }
+  if (!changed) {
+    return f;
+  }
+  return ssasem.Func { ...f, values: values, graph: ssa.SFunc { ...f.graph, blocks: blocks, nvals: values.len() } };
+}
+
+function any_pow2_quotient(f: ssasem.Func): boolean {
+  for blk in f.graph.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == 9 && (ins.str == "/" || ins.str == "%") && ins.args.len() == 2) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// pow2_divisor is k when `ins` is `x / 2^k` or `x % 2^k` for a constant
+// divisor 2^k with k at least 1, and 0 otherwise.
+function pow2_divisor(g: Graph, ins: ssa.SInst): i32 {
+  if (!binary(ins, "/") && !binary(ins, "%") || !is_const(g, ins.args[1])) {
+    return 0;
+  }
+  let d: i32 = const_value(g, ins.args[1]);
+  if (d < 2 || (d & d - 1) != 0) {
+    return 0;
+  }
+  let k: i32 = 0;
+  while (d > 1) {
+    d = d >> 1;
+    k = k + 1;
+  }
+  return k;
 }
 
 // grouped_reads checks a run of reads of one array or string at one index
