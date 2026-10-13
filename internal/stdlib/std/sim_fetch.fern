@@ -32,9 +32,12 @@
 // written on a connection picks its route by address, port and request
 // target (`*` matches any target), and the n-th request a route takes is
 // answered with its n-th `Answer`, the last repeating; a request no route
-// takes is answered 404. A connection answers one request unless its
-// answer is `kept()`, when it stays open for the next one; the `Net`'s
-// `Idle` pool is where the client keeps it in between.
+// takes is answered 404, unless a handler `serve`s the address and port:
+// then the request is parsed and answered in memory, the way a serve loop
+// answers it. A connection answers one request unless its
+// answer is `kept()`, or the served request keeps the connection, when it
+// stays open for the next one; the `Net`'s `Idle` pool is where the client
+// keeps it in between.
 //
 // The module is std/sim's sibling rather than part of it so that std/sim,
 // which reaches nothing but the clock and randomness, does not import the
@@ -42,6 +45,7 @@
 
 import "std/sim";
 import "std/fetch";
+import "std/http";
 import "std/net";
 import "std/dns";
 import "std/tcp";
@@ -49,6 +53,9 @@ import "std/i64";
 import "core/int";
 import "std/hex";
 import "std/utf8";
+import "std/url";
+import "std/json";
+import "std/headers";
 
 // `Answer` — one scripted response: `bytes` on the wire, the first of
 // them `first_ms` after the request was written, then `chunk` bytes at a
@@ -136,11 +143,16 @@ pub struct Listener { addr: string, port: i32, connect_ms: i64 }
 // the order requests reach it.
 pub struct Route { addr: string, port: i32, path: string, answers: Answer[] }
 
+// `Server` — a handler answering in memory every request `addr:port`
+// takes that no route answers; `n.serve` adds one.
+pub struct Server { addr: string, port: i32, handler: (HttpRequest) => HttpResponse }
+
 // `Net` — the scripted network, on `drv`'s clock. The builders return a
 // new `Net` sharing the same state cells, so a value built once and
 // handed to the client records what the client did: the connections
-// table, how many requests each route took, and every request written.
-pub struct Net { drv: sim.Sim, names: Name[], listeners: Listener[], routes: Route[], conns: Cell[string], hits: Cell[string], sent: Cell[string], next: Cell[i32], pool: fetch.Idle }
+// table, how many requests each route took, every request written, and
+// every response a server made.
+pub struct Net { drv: sim.Sim, names: Name[], listeners: Listener[], routes: Route[], servers: Server[], conns: Cell[string], hits: Cell[string], sent: Cell[string], made: Cell[string], next: Cell[i32], pool: fetch.Idle }
 
 // `net(drv)` — an empty network on `drv`'s clock: every name unknown and
 // every address refusing.
@@ -148,7 +160,8 @@ pub function net(drv: sim.Sim): Net {
   let names: Name[] = [];
   let listeners: Listener[] = [];
   let routes: Route[] = [];
-  return Net { drv: drv, names: names, listeners: listeners, routes: routes, conns: cell_new(""), hits: cell_new(""), sent: cell_new(""), next: cell_new(1), pool: fetch.idle() };
+  let servers: Server[] = [];
+  return Net { drv: drv, names: names, listeners: listeners, routes: routes, servers: servers, conns: cell_new(""), hits: cell_new(""), sent: cell_new(""), made: cell_new(""), next: cell_new(1), pool: fetch.idle() };
 }
 
 // `n.pooling(pool)` — `n` keeping the client's idle connections in `pool`
@@ -172,6 +185,21 @@ pub function (n: Net) listen(addr: string, port: i32, connect_ms: i64): Net {
 // requests for `path` (`*` for any).
 pub function (n: Net) route(addr: string, port: i32, path: string, answers: Answer[]): Net {
   return Net { ...n, routes: n.routes.append(Route { addr: __canon(addr), port: port, path: path, answers: answers }) };
+}
+
+// `n.serve(addr, port, handler)` — `addr:port` accepting at once and
+// answering each request it takes with `handler`, the way a serve loop
+// answers it: the request parsed out of the bytes the client wrote, the
+// response framed for the request's method, and the connection kept when
+// the request keeps it; bytes that are not one whole request are
+// answered 400 and the connection closed. A route on the same address
+// and port is consulted first. A test runs its routes and middleware
+// under the client with no socket:
+//
+//   n.serve(ORIGIN, 80, (req: HttpRequest): HttpResponse => r.handle(req, plat))
+pub function (n: Net) serve(addr: string, port: i32, handler: (HttpRequest) => HttpResponse): Net {
+  let listening: Net = n.listen(addr, port, 0);
+  return Net { ...listening, servers: listening.servers.append(Server { addr: __canon(addr), port: port, handler: handler }) };
 }
 
 // `n.connects()` — how many connections the client opened.
@@ -287,6 +315,9 @@ impl fetch.Transport for Net {
       }
       i = i + 1;
     }
+    if (route == 0 - 2) {
+      route = __served(self, row[1], port, bytes);
+    }
     let first_ms: i64 = 0;
     if (route >= 0) {
       first_ms = __answer(self, route, answer).first_ms;
@@ -344,6 +375,263 @@ impl fetch.Transport for Net {
   function idle(self: Net): fetch.Idle {
     return self.pool;
   }
+}
+
+// === a cassette: recording and replay ====================================
+//
+// A cassette holds the exchanges a client made, one per line, as a JSON
+// object: the request's method and URL, the response's status, its
+// headers as [name, value] pairs, and its body as text (`body`), or as
+// hex (`body_hex`) when it is not UTF-8. The response is the one the
+// client returned, decoded, so `Content-Encoding`, `Content-Length`,
+// `Transfer-Encoding` and `Connection` are the wire's and are not kept.
+//
+//   {"method":"GET","url":"http://api.test/users/7","status":200,"headers":[["content-type","application/json"]],"body":"{\"id\":7}"}
+//
+// A run against the real upstream records one with `send_taped`; a test
+// replays it with `n.replay(cassette)`, which answers each recorded
+// request target in recorded order.
+
+// `taped(req, resp)` — the cassette line for one exchange, newline included.
+pub function taped(req: fetch.Request, resp: HttpResponse): string {
+  let pairs: json.JsonValue[] = [];
+  let i: i32 = 0;
+  while (i < resp.headers.names.len()) {
+    let name: string = resp.headers.names[i].to_lower();
+    if (!__wire_only(name)) {
+      pairs = pairs.append(json.JArray([json.JString(name), json.JString(resp.headers.values[i])]));
+    }
+    i = i + 1;
+  }
+  let keys: string[] = ["method", "url", "status", "headers"];
+  let values: json.JsonValue[] = [json.JString(req.method), json.JString(req.url), json.JNumber(int.int_to_string(resp.status)), json.JArray(pairs)];
+  let body: u8[] = resp.body_bytes();
+  match (utf8.from_bytes(body)) {
+    Some(text) => {
+      keys = keys.append("body");
+      values = values.append(json.JString(text));
+    },
+    None => {
+      keys = keys.append("body_hex");
+      values = values.append(json.JString(hex.hex_encode(body)));
+    }
+  }
+  return json.json_encode(json.JObject(json.object_of(keys, values))) + "\n";
+}
+
+// `__wire_only(name)` — a response field that frames the wire rather than
+// describing the resource, which a replay frames afresh.
+function __wire_only(name: string): boolean {
+  return name == "content-length" || name == "content-encoding" || name == "transfer-encoding" || name == "connection";
+}
+
+// `send_taped(tr, tape, req, policy)` — `fetch.send_on`, appending the
+// exchange to `tape` when it answers with a response.
+pub function send_taped[T: fetch.Transport](tr: T, tape: Cell[string], req: fetch.Request, policy: fetch.Policy): Result[HttpResponse, fetch.FetchError] {
+  match (fetch.send_on(tr, req, policy)) {
+    Ok(resp) => {
+      tape.set(tape.get() + taped(req, resp));
+      return Ok(resp);
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
+}
+
+// `n.replay(cassette)` — `n` answering the exchanges `cassette` holds: each
+// URL's host resolves to an address of the replay's own (an IP literal to
+// itself, any other host to the first of `93.184.216.34` upward that no
+// name has), listening at once on the URL's port, and the route for each
+// request target answers in recorded order, the last answer repeating.
+// The simulated network carries no TLS, so an `https` exchange replays as
+// plain `http` on port 80: a program replaying one fetches `http://` for
+// the same host. A line that is not an exchange is the error, with the
+// line's number from 1.
+pub function (n: Net) replay(cassette: string): Result[Net, string] {
+  let out: Net = n;
+  let line_no: i32 = 0;
+  for line in cassette.split("\n") {
+    line_no = line_no + 1;
+    if (line.len() > 0) {
+      match (__exchange(line)) {
+        Some(e) => {
+          out = __replayed(out, e);
+        },
+        None => {
+          return Err("sim_fetch: cassette line " + int.int_to_string(line_no) + " is not an exchange");
+        }
+      }
+    }
+  }
+  return Ok(out);
+}
+
+// `__Exchange` — one cassette line parsed: where the request went, and
+// the answer the replay gives it.
+struct __Exchange { host: string, port: i32, target: string, answer: Answer }
+
+function __exchange(line: string): Option[__Exchange] {
+  match (json.json_parse(line)) {
+    Some(v) => {
+      match (v) {
+        json.JObject(o) => {
+          return __exchange_of(o);
+        },
+        _ => {
+          return None;
+        }
+      }
+    },
+    None => {
+      return None;
+    }
+  }
+  return None;
+}
+
+function __exchange_of(o: json.JsonObject): Option[__Exchange] {
+  let method: string = __string_member(o, "method");
+  let status: i32 = __int(__string_member(o, "status"));
+  let Some(u) = url.url_parse(__string_member(o, "url")) else {
+    return None;
+  };
+  if (method.len() == 0 || status <= 0 || u.host.len() == 0) {
+    return None;
+  }
+  let port: i32 = u.port;
+  if (port == 0 || u.scheme == "https") {
+    port = 80;
+  }
+  let target: string = u.path;
+  if (target.len() == 0) {
+    target = "/";
+  }
+  if (u.query.len() > 0) {
+    target = target + "?" + u.query;
+  }
+  let resp: HttpResponse = HttpResponse { status: status, body: BodyBytes(__body_member(o)), headers: __headers_member(o), trailers: headers.header_map_new(), background: None };
+  return Some(__Exchange { host: u.host, port: port, target: target, answer: raw_bytes(http.http_serialize_response_to_bytes(method, resp, false)) });
+}
+
+// `__string_member(o, key)` — `o`'s `key` as text: a string's text, a
+// number's digits, "" for anything else.
+function __string_member(o: json.JsonObject, key: string): string {
+  match (o.get(key)) {
+    Some(v) => {
+      match (v) {
+        json.JString(s) => {
+          return s;
+        },
+        json.JNumber(digits) => {
+          return digits;
+        },
+        _ => {
+          return "";
+        }
+      }
+    },
+    None => {
+      return "";
+    }
+  }
+  return "";
+}
+
+function __headers_member(o: json.JsonObject): HeaderMap {
+  let out: HeaderMap = headers.header_map_new();
+  match (o.get("headers")) {
+    Some(v) => {
+      match (v) {
+        json.JArray(pairs) => {
+          for p in pairs {
+            match (p) {
+              json.JArray(kv) => {
+                if (kv.len() == 2) {
+                  out = out.append(__text(kv[0]), __text(kv[1]));
+                }
+              },
+              _ => {}
+            }
+          }
+        },
+        _ => {}
+      }
+    },
+    None => {}
+  }
+  return out;
+}
+
+function __text(v: json.JsonValue): string {
+  match (v) {
+    json.JString(s) => {
+      return s;
+    },
+    _ => {
+      return "";
+    }
+  }
+  return "";
+}
+
+function __body_member(o: json.JsonObject): u8[] {
+  if (o.has("body_hex")) {
+    return hex.hex_decode(__string_member(o, "body_hex"));
+  }
+  return __string_member(o, "body").bytes();
+}
+
+// `__replayed(n, e)` — `n` with `e`'s answer appended to the route its
+// target takes, the host named and the port listening when they are not.
+function __replayed(n: Net, e: __Exchange): Net {
+  let out: Net = n;
+  let addr: string = __replay_addr(out, e.host);
+  if (__addrs_of(out, e.host).len() == 0) {
+    out = out.host(e.host, [addr]);
+  }
+  if (__connect_ms(out, addr, e.port) < 0) {
+    out = out.listen(addr, e.port, 0);
+  }
+  let i: i32 = 0;
+  while (i < out.routes.len()) {
+    let r: Route = out.routes[i];
+    if (r.addr == addr && r.port == e.port && r.path == e.target) {
+      return Net { ...out, routes: out.routes.with(i, Route { ...r, answers: r.answers.append(e.answer) }) };
+    }
+    i = i + 1;
+  }
+  return out.route(addr, e.port, e.target, [e.answer]);
+}
+
+// `__replay_addr(n, host)` — the address `host` has on `n`: itself when a
+// literal, the first it is named to, else the first of `93.184.216.34`
+// upward that no name on `n` has.
+function __replay_addr(n: Net, host: string): string {
+  let known: net.IpAddr[] = __addrs_of(n, host);
+  if (known.len() > 0) {
+    return known[0].to_string();
+  }
+  let last: i32 = 34;
+  while (last < 255) {
+    let candidate: string = "93.184.216." + int.int_to_string(last);
+    if (!__addr_named(n, candidate)) {
+      return candidate;
+    }
+    last = last + 1;
+  }
+  return "93.184.216.255";
+}
+
+function __addr_named(n: Net, addr: string): boolean {
+  for name in n.names {
+    for a in name.addrs {
+      if (a == addr) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 // `__busy(n, row)` — whether the connection `row` is still answering a
@@ -491,9 +779,60 @@ function __took(n: Net, route: i32): i32 {
   return before;
 }
 
+// `__served(n, addr, port, bytes)` — the request in `bytes` answered by
+// the server on `addr:port`, its response journaled in `made` and named
+// by the route -3 - k; -2 when no server listens there.
+function __served(n: Net, addr: string, port: i32, bytes: u8[]): i32 {
+  for s in n.servers {
+    if (s.addr == addr && s.port == port) {
+      let k: i32 = __journal_all(n.made.get()).len();
+      let entry: string = __response_entry(s, bytes);
+      n.made.set(n.made.get() + int.int_to_string(entry.len()) + ":" + entry);
+      return 0 - 3 - k;
+    }
+  }
+  return 0 - 2;
+}
+
+// `__response_entry(s, bytes)` — what `s` writes for the request in
+// `bytes`, as ASCII hex behind one byte saying whether the connection
+// stays open (`k`) or closes with the response (`c`).
+function __response_entry(s: Server, bytes: u8[]): string {
+  match (http.http_parse_request_framed(bytes)) {
+    http.Framed(f) => {
+      let h: (HttpRequest) => HttpResponse = s.handler;
+      let resp: HttpResponse = h(f.request);
+      let flag: string = "c";
+      if (f.keep_alive) {
+        flag = "k";
+      }
+      return flag + hex.hex_encode(http.http_serialize_response_to_bytes(f.request.method, resp, f.keep_alive));
+    },
+    http.Incomplete => {
+      return __refused_entry();
+    },
+    http.Continue => {
+      return __refused_entry();
+    },
+    http.Malformed(_) => {
+      return __refused_entry();
+    }
+  }
+  return __refused_entry();
+}
+
+function __refused_entry(): string {
+  return "c" + hex.hex_encode(http.http_serialize_response_conn_bytes(http.text(400, "bad request"), false));
+}
+
 // `__answer(n, route, i)` — the answer to `route`'s `i`-th request, the
-// last repeating; a 404 when no route took the request.
+// last repeating; a server's response when a server made one (a route
+// of -3 - k); a 404 when nothing took the request.
 function __answer(n: Net, route: i32, i: i32): Answer {
+  if (route <= 0 - 3) {
+    let entry: string = __journal_all(n.made.get())[0 - 3 - route];
+    return Answer { bytes: hex.hex_decode(slice_unchecked(entry, 1, entry.len()).to_owned()), first_ms: 0, chunk_ms: 0, chunk: 0, close: entry.bytes()[0] == 99 as u8 };
+  }
   if (route < 0) {
     return reply(404, "");
   }
@@ -585,7 +924,11 @@ function __field64(row: string[], i: i32): i64 {
 // Every write encoded as ASCII hex. The journal frames the encoded text
 // with its length and ':', so empty writes remain distinct entries.
 function __sent_all(n: Net): string[] {
-  let log: string = n.sent.get();
+  return __journal_all(n.sent.get());
+}
+
+// `__journal_all(log)` — the entries of a journal of `len:text` frames.
+function __journal_all(log: string): string[] {
   let bs: u8[] = log.bytes();
   let out: string[] = [];
   let at: i32 = 0;

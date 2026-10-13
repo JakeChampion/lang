@@ -3885,7 +3885,31 @@ close`, and the connection takes the next request). `reply` and
 net's own, `fetch.idle()` unless `.pooling(pool)` gives another. The net
 records what the client
 did: `connects()`, `open()`, `sent_count()` and `sent(i)`, the i-th request
-as written. A sibling of `std/sim` rather than part of it, so `std/sim`
+as written.
+
+`serve(addr, port, handler)` puts a handler behind an address and port
+with no socket: each request the client writes there is parsed as a serve
+loop parses it, answered by `handler`, framed for its method as the loop
+frames it, and the connection kept when the request keeps it; a route on
+the same address and port answers first, and bytes that are not one whole
+request are a 400 and a close. A test runs its router and middleware under
+the whole client this way,
+`n.serve(ORIGIN, 80, (req: HttpRequest): HttpResponse => h(req, plat))`
+with `h` the router's `handler()` and `plat` the server side's
+`sim_platform.SimPlatform`, whose `calls()` then holds what the middleware
+did.
+
+A cassette records what a client got and replays it. `taped(req, resp)` is
+one exchange as a JSON line (method, URL, status, the resource's headers
+as pairs, the body as text or as `body_hex`), `send_taped(tr, tape, req,
+policy)` is `fetch.send_on` appending each exchange to the `Cell[string]`
+`tape`, and `n.replay(cassette)` answers each recorded target in recorded
+order, the last answer repeating, naming each host to an address of the
+replay's own from `93.184.216.34` upward. The network carries no TLS, so
+an `https` exchange replays as plain `http` on port 80; a line that is not
+an exchange is the `Err`, numbered.
+
+A sibling of `std/sim` rather than part of it, so `std/sim`
 keeps the clock and randomness alone; `tests/stdlib/sim_fetch_test.fern`
 is the client's parity suite.
 
