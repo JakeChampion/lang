@@ -33,6 +33,7 @@ const (
 	featRecursion
 	featClosure
 	featTraits
+	featGenericDecl
 	numFeatures
 )
 

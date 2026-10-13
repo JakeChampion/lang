@@ -65,6 +65,11 @@ What a program can contain:
   them by coercion at the call site, and a cluster in a body builds a `dyn`
   array of mixed implementers and reassigns a `dyn` local from one
   implementer to another, dropping the first object.
+- **Generic structs and enums** (`generics.go`): `G0[T]` and `GO0[T]` with
+  methods, a functional update of the generic receiver inside a method, and a
+  generic constructor, instantiated at a type drawn from main's pool, boxed
+  ones and function types included. The variant is built from a method's
+  return, so a dead receiver's box is reused for it.
 
 **Swarm testing** (`swarm.go`; Groce et al., ISSTA 2012) draws a per-program
 mask over productions and types from the first bytes of the stream. A program
@@ -136,6 +141,15 @@ regression test where the bug lived:
   home register and the entry's moves overwrote one with the other: a
   segfault on x86-64 and arm64. Found when the planted-mutant check's shrunk
   repro crashed the unplanted compiler too. `TestSelfHostSSAParamInterval*`.
+- **Generics inside `defer` refused** (#12276). The monomorphisers' statement
+  walkers had no `defer` arm, so a bounded generic call or a generic struct
+  literal in one kept its unmangled name. `TestSelfHostMonoDefer`.
+- **A reused box tagged with the bare variant name** (#12288), a wrong answer
+  and a leak. A generic enum's variant built in a dead box took the
+  unqualified shape word, so a method's match took the other arm and the
+  payload was never released. `TestSelfHostGenericReuseTag`.
+- **A function type in a symbol** (#12289). `G0[(i32) => i32]` put `=>` into
+  instance labels GNU as rejects. `TestSelfHostFnTypeArgMangle`.
 - **A generator bug**: the ownership cluster reassigned a variable whose type
   can reach a function while a later closure captured it (E049 by the
   language's own rule). The generator now asks `reachesFn` first.
@@ -199,8 +213,8 @@ In order:
 2. Pass-configuration differential + chaos fuel.
 3. Differential oracle inside the coverage-guided loop.
 4. Type-erasure / type-overwrite checker fuzzing, run against both checkers.
-5. The rest of the trait and generics surface in fernsmith: user-written
-   generic structs and enums, generic and associated-type traits,
+5. The rest of the trait and generics surface in fernsmith: generic and
+   associated-type traits,
    associated functions, consuming (`own`) receivers, `as?` downcasts, and
    `dyn` in struct fields and tuples.
 6. Signature-based nightly triage.
