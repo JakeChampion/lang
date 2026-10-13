@@ -66,7 +66,7 @@ x86_64/closure_call.ir	94308097
 x86_64/enum_match.text	999
 x86_64/enum_match.ir	53775055
 x86_64/http_hello.text	19770
-x86_64/http_hello.ir	28612787
+x86_64/http_hello.ir	28140835
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
 x86_64/map_int.text	5839
@@ -178,6 +178,11 @@ x86_64/utf8_ingest_validated.ir	5988691
 # branch's own measurement, the aarch64 one cross-compiled and equal to the
 # perf-aarch64 lane's reading.
 #
+# Re-pinned 2026-10-13 (#12344) on http_hello.ir (x86_64 -1.65%, aarch64
+# -1.57%): the inliner splices a once-called callee that returns a box into
+# a caller past its budget, so the serve loop no longer builds
+# `__serve_pass_end`'s tuple on every pass. Both figures are the perf lanes'.
+#
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
 # (utf8_ingest_unchecked) — one ISA emitting fewer instructions than the other
@@ -201,7 +206,7 @@ aarch64/closure_call.ir	106368083
 aarch64/enum_match.text	1166
 aarch64/enum_match.ir	41400056
 aarch64/http_hello.text	20147
-aarch64/http_hello.ir	30120925
+aarch64/http_hello.ir	29648969
 aarch64/int_loop.text	90
 aarch64/int_loop.ir	18000025
 aarch64/map_int.text	6044
