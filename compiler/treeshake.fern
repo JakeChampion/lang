@@ -262,8 +262,8 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
 // A method whose receiver carries a stamped named type contributes the
 // qualified root instead, so `q.to_string()` — the call the checker's Display
 // rewrite spells for `print(q)` — keeps Q's method and not every type's. A
-// receiver with no stamp, a composite one (`dyn Display`, `Map[…]`) or an
-// array, whose methods are the helpers above, stays bare.
+// receiver with no stamp, a `dyn` one (`dyn Display`) or an array, whose
+// methods are the helpers above, stays bare.
 function ts_called_method(fa: ast.ExprFieldAccess, own acc: string[]): string[] {
   let tag: string = ts_recv_tag(fa.obj);
   let ft: string = util.base_type_name(tag);
