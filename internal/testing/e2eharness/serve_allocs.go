@@ -29,6 +29,13 @@ const ServeAllocsRoundsEmulated = 10000
 // connection's buffers and the loop's tables have reached their size.
 const serveAllocsWarm = 2000
 
+// serveAllocsH2Drift is how far under its ceiling the HTTP/2 mean may sit
+// before the ceiling is lowered. Runs of one build on one machine agree to
+// within one allocation, but the mean moves with how the client's frames
+// coalesce into the server's reads, and so with the machine: a build that
+// read 98.7 to 99.3 here read 95.4 on the CI runner.
+const serveAllocsH2Drift = 8
+
 // serveAllocsSlackPerSecond is how far the total may sit from a whole
 // number per request, per second the rounds took and two more: the loop
 // reformats its Date once a second, about thirty allocations each time.
@@ -39,6 +46,16 @@ const serveAllocsSlackPerSecond = 40
 // listener it inherits, or `port` where it inherits none, for `rounds`
 // requests and the warm-up on one connection.
 func ServeAllocsServerSource(port, rounds int) string {
+	return serveAllocsSource(port, rounds, "serve.config()")
+}
+
+// ServeAllocsH2ServerSource is ServeAllocsServerSource under `with_h2()`,
+// for the requests to arrive on one HTTP/2 connection.
+func ServeAllocsH2ServerSource(port, rounds int) string {
+	return serveAllocsSource(port, rounds, "serve.config().with_h2()")
+}
+
+func serveAllocsSource(port, rounds int, config string) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/platform";
@@ -49,9 +66,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("hello");
 }
 function main(): i32 {
-    return serve.run(%d, serve.Config { ...serve.config(), keep_alive_requests: %d }, handle);
+    return serve.run(%d, serve.Config { ...%s, keep_alive_requests: %d }, handle);
 }
-`, port, serveAllocsWarm+rounds+8)
+`, port, config, serveAllocsWarm+rounds+8)
 }
 
 // CheckServeAllocs drives ServeAllocsServerSource at addr for rounds hello
@@ -84,6 +101,56 @@ func CheckServeAllocs(t *testing.T, addr string, want int64, rounds int) {
 		}
 		return string(body)
 	}
+	total, seconds := serveAllocsRounds(t, get, rounds)
+	got := int64(math.Round(float64(total) / float64(rounds)))
+	if d := total - got*int64(rounds); d < -serveAllocsSlackPerSecond*seconds || d > serveAllocsSlackPerSecond*seconds {
+		t.Fatalf("%d allocations over %d requests is %d from a whole number per request", total, rounds, d)
+	}
+	if got != want {
+		t.Errorf("the serve loop allocates %d times per hello request; pinned %d.\n"+
+			"Above the pin is a regression. Below it, lower the pin in the same change.", got, want)
+	}
+}
+
+// CheckServeAllocsH2 is CheckServeAllocs over one prior-knowledge HTTP/2
+// connection (H2CClient), against ServeAllocsH2ServerSource. The count
+// per request varies there, with the blocks the connection's frames,
+// header blocks and stream slots take and give back and with how the
+// client's frames coalesce into reads, so `ceiling` bounds the mean: above
+// it is a regression, and a mean serveAllocsH2Drift or more under it
+// lowers the ceiling.
+func CheckServeAllocsH2(t *testing.T, addr string, ceiling int64, rounds int) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	client, err := DialH2C(addr, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	client.SetDeadline(time.Now().Add(5 * time.Minute))
+	get := func(path string) string {
+		body, err := client.Get(path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		return body
+	}
+	total, seconds := serveAllocsRounds(t, get, rounds)
+	mean := float64(total) / float64(rounds)
+	if total > ceiling*int64(rounds)+serveAllocsSlackPerSecond*seconds {
+		t.Errorf("the serve loop allocates %.2f times per HTTP/2 hello request; the ceiling is %d. Above it is a regression.", mean, ceiling)
+	}
+	if total < (ceiling-serveAllocsH2Drift)*int64(rounds) {
+		t.Errorf("the serve loop allocates %.2f times per HTTP/2 hello request, %d or more under the ceiling of %d: lower the ceiling in the same change.", mean, serveAllocsH2Drift, ceiling)
+	}
+}
+
+// serveAllocsRounds warms the connection `get` speaks over and counts
+// around `rounds` hello requests: the allocations they cost, with what the
+// count requests themselves cost taken off, and the seconds they took plus
+// two, the loop's Date reformatting about thirty allocations once a second.
+func serveAllocsRounds(t *testing.T, get func(path string) string, rounds int) (total, seconds int64) {
+	t.Helper()
 	count := func() int64 {
 		n, err := strconv.ParseInt(get("/count"), 10, 64)
 		if err != nil {
@@ -103,15 +170,8 @@ func CheckServeAllocs(t *testing.T, addr string, want int64, rounds int) {
 		get("/")
 	}
 	c2 := count()
-	seconds := int64(time.Since(started)/time.Second) + 2
-	total := c2 - c1 - (c1 - c0)
+	seconds = int64(time.Since(started)/time.Second) + 2
+	total = c2 - c1 - (c1 - c0)
 	t.Logf("counts %d, %d, %d: %d allocations over %d requests in %d s", c0, c1, c2, total, rounds, seconds-2)
-	got := int64(math.Round(float64(total) / float64(rounds)))
-	if d := total - got*int64(rounds); d < -serveAllocsSlackPerSecond*seconds || d > serveAllocsSlackPerSecond*seconds {
-		t.Fatalf("%d allocations over %d requests is %d from a whole number per request", total, rounds, d)
-	}
-	if got != want {
-		t.Errorf("the serve loop allocates %d times per hello request; pinned %d.\n"+
-			"Above the pin is a regression. Below it, lower the pin in the same change.", got, want)
-	}
+	return total, seconds
 }

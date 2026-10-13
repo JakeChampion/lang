@@ -1210,7 +1210,20 @@ func TestRunnerHTTPH2FrameExamplePasses(t *testing.T) {
 // refused, malformed requests reset and malformed connections closed, and
 // the control frames.
 func TestRunnerHTTPH2ExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_h2", "std/http/h2", 11)
+	runnerSuitePasses(t, "http_h2", "std/http/h2", 12)
+}
+
+// `tests/stdlib/http_grpc_test.fern` reads the gRPC message framing back
+// whole and in parts, parses grpc-timeout's units, tells a gRPC request
+// from another and builds the status trailers.
+func TestRunnerHTTPGRPCExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_grpc", "std/http/grpc", 5)
+}
+
+// `tests/stdlib/protobuf_test.fern` reads and writes the protobuf wire
+// format against the encoding guide's examples and refuses each fault.
+func TestRunnerProtobufExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "protobuf", "std/protobuf", 5)
 }
 
 // `tests/stdlib/http_form_test.fern` reads a urlencoded body as its fields
@@ -1742,8 +1755,8 @@ func TestRunnerAsyncCombinatorsExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	if !strings.Contains(out, "# pass 5") || !strings.Contains(out, "# fail 0") {
-		t.Errorf("expected 5 passes, 0 fails\noutput:\n%s", out)
+	if !strings.Contains(out, "# pass 6") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 6 passes, 0 fails\noutput:\n%s", out)
 	}
 }
 
@@ -4429,7 +4442,7 @@ func TestRunnerHttpRequestBodyStreamExample(t *testing.T) {
 		"ok 13 - read_line spans a chunk boundary",
 		"ok 15 - read_n pulls only what it owes",
 		"ok 19 - a fault is EndedEarly with its status",
-		"# pass 21",
+		"# pass 22",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {

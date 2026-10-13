@@ -1927,6 +1927,20 @@ Percent-encoding, URL parsing, query parsing.
   escaper — the `JsonValue` encoder, `@derive(json.Json)`, and
   `std/log`'s JSON-lines mode all route through it.
 
+### `std/protobuf`
+
+The protocol buffers wire format (protobuf.dev's encoding guide), with no
+schema: `decode(bytes)` is a message's fields in order (`Field { number,
+wire, word, bytes }`, a varint or fixed word in `word`, length-delimited
+bytes in `bytes`; Err for a varint cut short or over ten bytes, a length
+past the end, a field number of 0, or a group), and `varint(fields, n)`,
+`bytes(fields, n)` and `repeated(fields, n)` read the last, or every,
+field `n` carries. `varint_field(n, v)`, `bytes_field(n, bytes)`,
+`string_field(n, s)` and `encode_varint(v)` write them, and `zigzag` and
+`unzigzag` are the sint coding. Enough for a server of a small service to
+read the fields it knows and write its replies; `std/http/grpc` carries
+the messages.
+
 ### `std/http`
 
 HTTP/1.1 request parsing, response builders, wire-format
@@ -2761,6 +2775,18 @@ trailers last; `conn.reset(stream, code)` ends a stream unanswered,
 A handler written for HTTP/1.1 serves it unchanged: the request's
 `:authority` is its `host`, its `:path` the path.
 
+With `Config.stream_bodies` a request is handed over at its header block
+as `Streamed(stream, req)`, its body following as `StreamData(stream,
+bytes)` and its end as `StreamEnd(stream, trailers)`; the windows charged
+for the body are replenished by `conn.consumed(stream, n)` once the bytes
+are taken, so a slow reader holds the client to what it has not taken. A
+response can be written in parts: `conn.respond_head(stream, resp)` sends
+the status and headers, `conn.write(stream, bytes)` queues body bytes sent
+as the windows allow (`conn.pending(stream)` is how much waits on them),
+and `conn.end(stream, trailers)` finishes it. A request and its response
+may be in flight at once, as a gRPC bidirectional call is; the serve loop
+builds both on these (`std/serve`).
+
 ```fern
 let step: h2.Step = h2.server(h2.config());   // step.output: the server's SETTINGS
 step = step.conn.read(received);               // step.events: Request(1, req), ...
@@ -2799,6 +2825,25 @@ comes off HEADERS, each setting is checked as §6.5.2 asks, and the frame
 and error codes, the settings identifiers and the frame-size bounds are
 constants. The connection's state (settings, windows, a header block over
 CONTINUATION frames) is `std/http/h2`'s.
+
+### `std/http/grpc`
+
+The gRPC wire protocol over HTTP/2 (PROTOCOL-HTTP2.md), the parts a server
+on `std/serve` needs. `frame(message)` is a message as a body carries it
+(a compressed flag of 0, four big-endian length bytes, the message) and
+`next_message(buffered)` reads the first whole one back with what follows
+(`Ok(None)` while the buffer holds no whole message; Err for a compressed
+message, which no server here takes, or a length past 2 GiB), so a handler
+reading a streamed body (`stream_bodies`) can answer each message as it
+comes. `is_grpc(req)` is whether a request's content-type is
+`application/grpc` or a variant of it; `timeout(headers)` the request's
+`grpc-timeout` as a Duration, which the serve loop puts on the request's
+deadline, answering a late call with status 4. `headers()` is the 200 and
+content-type a response starts with, `status(code, message)` the trailers
+that end it (`grpc-message` percent-encoded), `response(messages, code,
+message)` a whole response and `error(code, message)` a trailers-only one;
+the status codes are constants (`OK`, `DEADLINE_EXCEEDED`, `UNIMPLEMENTED`,
+…). Messages are bytes here: `std/protobuf` reads and writes them.
 
 ### `std/http/sse`
 
@@ -3252,8 +3297,10 @@ points that run a handler under it.
   answered when the handler first reads, so a handler that refuses never
   invites the body, and a connection whose body the handler did not read
   whole closes after the response. A `Stream` that ended early faults
-  (`(s).fault()`); `body_string()` reports it as `EndedEarly`. The stateful
-  loop (`run_with`) reads bodies whole either way. An upgrade request
+  (`(s).fault()`); `body_string()` reports it as `EndedEarly`. A streamed
+  request's trailers are not delivered: the handler was handed its request
+  before they came, so `req.trailers` is empty and the body ends without
+  them. The stateful loop (`run_with`) reads bodies whole either way. An upgrade request
   (`Connection: upgrade` naming an `Upgrade`) is streamed whatever the
   setting says, its body the connection's bytes after the head, and a
   handler that answers it 101 with a producer keeps the connection for
@@ -3300,8 +3347,19 @@ points that run a handler under it.
   suspends parks on its stream while the connection's other streams are
   served, requests count in the metrics as HTTP/1.1's do, and the
   connection's bounds (RFC 9113 §10 and the four attack classes) are
-  `std/http/h2`'s. `run_with`'s stateful loop serves HTTP/1.1 only
-  (`TestServeH2Interp`, `TestServeH2X86_64`).
+  `std/http/h2`'s. With `stream_bodies` a request is handed over at its
+  header block and its body read as it arrives (the handler's pull parks on
+  the connection, which the loop reads first), the client's windows
+  replenished as the handler takes the bytes; a `BodyChunks` response is
+  written as its producer answers and the windows allow, each chunk a
+  task that may park, so a request and its response flow at once
+  (`TestServeH2X86_64`'s ping-pong). Under the interpreter, which cannot
+  park a task, a body is handed over whole as before. A gRPC call's
+  `grpc-timeout` bounds its handler as `handler_deadline` does, the sooner
+  of the two, and a call past it is answered with `grpc-status: 4`
+  (`std/http/grpc`) where an HTTP request gets 503. `run_with`'s stateful loop serves it too, each stream's
+  request run with the state in order (`TestServeH2Interp`,
+  `TestServeH2X86_64`).
   `proxy_protocol` (false) reads a PROXY protocol header, version 1 or 2,
   at the start of every connection, before TLS when both are set
   (`forwarded.proxy_header`): its source address becomes the connection's
@@ -3643,9 +3701,12 @@ pull waits for the peer.
 
 - Constructors: `stream_from_bytes(bs)`, `stream_from_string(s)`,
   `stream_empty()`, `stream_from_source(src)`.
-- Readers: `(s).read_byte()`, `(s).read_n(n)`, `(s).read_line()`,
-  `(s).read_all()`, `(s).read_all_string()`. `read_line` reads an
-  ill-formed sequence as U+FFFD, since its `None` means end of input.
+- Readers: `(s).read_byte()`, `(s).read_n(n)`, `(s).read_some()`,
+  `(s).read_line()`, `(s).read_all()`, `(s).read_all_string()`.
+  `read_line` reads an ill-formed sequence as U+FFFD, since its `None`
+  means end of input. `read_some` answers what the stream has, the buffer
+  past the cursor or one chunk from the source, where `read_n` waits for
+  its count: how a reader answers a peer's bytes as they come.
 - `read_all_string(): (Option[string], Stream)` validates only the unread
   bytes. It returns `Some(text)` for valid UTF-8 and `None` for malformed
   bytes, advancing the returned cursor to EOF either way. EOF yields
@@ -3819,6 +3880,9 @@ old `concurrent { … }` / `await` keyword surface.
   `task_start` runs its entry to completion. `cancelled()` is what a
   cancelled task's waits answer from then on, and `task_cancelled()`
   whether the task running the caller was cancelled (false outside one).
+  `parks()` is whether a task's wait parks it at all, a probe a loop asks
+  before handing a task a body it must park for: false under the
+  interpreter, which runs every task to its end.
 - `gather_tasks(entries, on_incomplete)`, `race_tasks(entries, none_val)`
   and `with_deadline_tasks(deadline, entries)` — the task combinators: each
   runs its `() => T` entries as tasks of the calling task and parks on the

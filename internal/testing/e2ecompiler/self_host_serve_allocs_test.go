@@ -64,3 +64,24 @@ func TestSelfHostServeAllocsPerRequestWasm(t *testing.T) {
 	})
 	e2eharness.CheckServeAllocs(t, fmt.Sprintf("127.0.0.1:%d", port), 0, e2eharness.ServeAllocsRoundsEmulated)
 }
+
+// ServeAllocsH2Ceiling bounds what the loop allocates per hello request
+// on one HTTP/2 connection (docs/NET-P6-HTTP2-PLAN.md slice 4), a ratchet
+// like the HTTP/1.1 zero above, as a ceiling on the mean since the count
+// varies from request to request: the frames of a request and its
+// response, the HPACK blocks, the stream's slot and the connection record
+// rebuilt per frame. The first readings were 99.0 to 100.0 on x86-64;
+// with the loop's table owned through a request, 98.7 to 99.3 here and 95.4 on
+// the CI runner.
+const ServeAllocsH2Ceiling = 101
+
+func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(e2eharness.ServeAllocsH2ServerSource(0, e2eharness.ServeAllocsRounds)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := cli.x86Binary(t, src, "FERN_STRICT_IR=1")
+	addr, _ := e2eharness.StartInheritedServer(t, runX86_64Bin(cli.runner, bin))
+	e2eharness.CheckServeAllocsH2(t, addr, ServeAllocsH2Ceiling, e2eharness.ServeAllocsRounds)
+}
