@@ -26278,7 +26278,7 @@ pub function route_inherited_defaults(mod: Module): Module {
   let i: i32 = 0;
   while (i < funcs.len()) {
     let fd: FuncDecl = funcs[i];
-    if (fd.impl_trait.len() > 0 && fd.receiver_name.len() > 0 && is_inherited_default(mod.impls, mod.trait_reqs, fd)) {
+    if (fd.impl_trait.len() > 0 && is_inherited_default(mod.impls, mod.trait_reqs, fd)) {
       let base: string = util.base_type_name(fd.receiver_type);
       let ctx: BoundUse = BoundUse { env: env_from_decl(fd), funcs: mf, ord: [], eq: [], routed: [fd.receiver_type], bases: [base], traits: [[fd.impl_trait]], by_trait: false };
       let (body, after) = bc_body(fd.body, ctx);

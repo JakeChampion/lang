@@ -1963,7 +1963,7 @@ pub struct Scope {
   fn_module: string,
   // default_trait / default_recv name the trait and the impl type when the
   // enclosing body is a default the type inherited from that trait: inside
-  // it the receiver is known only as the trait's, so the trait's own method
+  // it the impl type is known only as the trait's, so the trait's own method
   // outranks another trait's of the same name on that type
   // (ambiguous_call_diags, #12282). Empty on every other scope.
   default_trait: string,
@@ -8693,7 +8693,7 @@ function validate_union_sigs(unions: UnionSig[], struct_names: string[]): boolea
 // coded-diagnostic walks so they bind names identically.
 function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[], impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   let s: Scope = Scope { ...new_scope_full(st, structs, unions.seen_from(fd), methods, imports, impls, trait_reqs), fn_module: fd.module };
-  if (fd.impl_trait.len() > 0 && fd.receiver_name.len() > 0 && parser.is_inherited_default(impls, trait_reqs, fd)) {
+  if (fd.impl_trait.len() > 0 && parser.is_inherited_default(impls, trait_reqs, fd)) {
     s = Scope { ...s, default_trait: fd.impl_trait, default_recv: util.base_type_name(fd.receiver_type) };
   }
   let tps: string[] = func_scope_tparams(fd);
