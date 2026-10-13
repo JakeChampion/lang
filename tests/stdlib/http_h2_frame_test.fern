@@ -17,10 +17,10 @@ function read_at(buf: u8[], from: i32, max_frame: i32): string {
   match (frame.read(buf, from, max_frame)) {
     Ok(r) => {
       match (r) {
-        frame.Whole(f, n) => {
+        frame.Got(f, n) => {
           return describe(f) + " [" + int.int_to_string(n) + "]";
         },
-        frame.Partial => {
+        frame.More => {
           return "partial";
         }
       }

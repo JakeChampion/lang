@@ -1,8 +1,8 @@
 // std/http/h2/frame — the frames of HTTP/2 (RFC 9113 §4 and §6), read from
 // and written to bytes.
 //
-// `read(buf, from, max_frame)` takes the next frame off a buffer: `Whole`
-// with the frame and the bytes it occupied, `Partial` when the buffer does
+// `read(buf, from, max_frame)` takes the next frame off a buffer: `Got`
+// with the frame and the bytes it occupied, `More` when the buffer does
 // not yet hold it, or the error the frame is (§6's rules on its length,
 // its stream and its padding, and §6.5.2's on each setting), as the
 // connection or stream error RFC 9113 names. `encode(frame)` is the
@@ -147,14 +147,14 @@ function __connection(code: i32, reason: string): FrameError {
 }
 
 // Read — what `read` found: a whole frame and the bytes it took off the
-// buffer, or not enough bytes yet.
-pub enum Read { Whole(Frame, i32), Partial }
+// buffer, or that more bytes are needed.
+pub enum Read { Got(Frame, i32), More }
 
 // read takes the frame at `from` in `buf`, under the frame size the local
 // SETTINGS_MAX_FRAME_SIZE allows.
 pub function read(buf: u8[], from: i32, max_frame: i32): Result[Read, FrameError] {
   if (buf.len() - from < HEADER_LEN) {
-    return Ok(Partial);
+    return Ok(More);
   }
   let len: i32 = __be24(buf, from);
   let kind: i32 = buf[from + 3] as i32;
@@ -164,10 +164,10 @@ pub function read(buf: u8[], from: i32, max_frame: i32): Result[Read, FrameError
     return Err(__connection(FRAME_SIZE_ERROR, "frame of " + int.int_to_string(len) + " bytes over the " + int.int_to_string(max_frame) + " allowed"));
   }
   if (buf.len() - from - HEADER_LEN < len) {
-    return Ok(Partial);
+    return Ok(More);
   }
   let payload: u8[] = __slice(buf, from + HEADER_LEN, from + HEADER_LEN + len);
-  return Ok(Whole(__frame(kind, flags, stream, payload)?, HEADER_LEN + len));
+  return Ok(Got(__frame(kind, flags, stream, payload)?, HEADER_LEN + len));
 }
 
 // __frame reads a payload as the frame its type says.
