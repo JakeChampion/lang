@@ -1,0 +1,169 @@
+import "std/test";
+import "std/http/h2/frame";
+import "std/hex";
+import "core/int";
+
+// tests/stdlib/http_h2_frame_test.fern — std/http/h2/frame: each frame
+// type written and read back byte for byte, padding and priority taken
+// off HEADERS and DATA, a frame read in pieces as it arrives, and every
+// malformed shape RFC 9113 §6 names answered with its error.
+
+// shown is a frame read from hex, as text.
+function shown(block: string): string {
+  return read_at(hex.hex_decode(block), 0, frame.MIN_FRAME_SIZE);
+}
+
+function read_at(buf: u8[], from: i32, max_frame: i32): string {
+  match (frame.read(buf, from, max_frame)) {
+    Ok(r) => {
+      match (r) {
+        frame.Got(f, n) => {
+          return describe(f) + " [" + int.int_to_string(n) + "]";
+        },
+        frame.More => {
+          return "partial";
+        }
+      }
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function flag(on: boolean, name: string): string {
+  if (on) {
+    return " " + name;
+  }
+  return "";
+}
+
+function describe(f: frame.Frame): string {
+  match (f) {
+    frame.Data(d) => {
+      return "DATA " + int.int_to_string(d.stream) + flag(d.end_stream, "END_STREAM") + " " + hex.hex_encode(d.data) + " pad " + int.int_to_string(d.padding);
+    },
+    frame.Headers(h) => {
+      let p: string = "";
+      match (h.priority) {
+        Some(pr) => {
+          p = " dep " + int.int_to_string(pr.dependency) + " w " + int.int_to_string(pr.weight) + flag(pr.exclusive, "exclusive");
+        },
+        None => {}
+      }
+      return "HEADERS " + int.int_to_string(h.stream) + flag(h.end_stream, "END_STREAM") + flag(h.end_headers, "END_HEADERS") + p + " " + hex.hex_encode(h.block) + " pad " + int.int_to_string(h.padding);
+    },
+    frame.PriorityFrame(stream, pr) => {
+      return "PRIORITY " + int.int_to_string(stream) + " dep " + int.int_to_string(pr.dependency) + " w " + int.int_to_string(pr.weight) + flag(pr.exclusive, "exclusive");
+    },
+    frame.RstStream(stream, code) => {
+      return "RST_STREAM " + int.int_to_string(stream) + " " + int.int_to_string(code);
+    },
+    frame.Settings(ack, settings) => {
+      let out: string = "SETTINGS" + flag(ack, "ACK");
+      for s in settings {
+        out = out + " " + int.int_to_string(s.id) + "=" + int.int_to_string(s.value);
+      }
+      return out;
+    },
+    frame.PushPromise(p) => {
+      return "PUSH_PROMISE " + int.int_to_string(p.stream) + " promised " + int.int_to_string(p.promised) + flag(p.end_headers, "END_HEADERS") + " " + hex.hex_encode(p.block);
+    },
+    frame.Ping(ack, data) => {
+      return "PING" + flag(ack, "ACK") + " " + hex.hex_encode(data);
+    },
+    frame.GoAway(g) => {
+      return "GOAWAY last " + int.int_to_string(g.last_stream) + " " + int.int_to_string(g.code) + " " + hex.hex_encode(g.debug);
+    },
+    frame.WindowUpdate(stream, increment) => {
+      return "WINDOW_UPDATE " + int.int_to_string(stream) + " +" + int.int_to_string(increment);
+    },
+    frame.Continuation(stream, end_headers, block) => {
+      return "CONTINUATION " + int.int_to_string(stream) + flag(end_headers, "END_HEADERS") + " " + hex.hex_encode(block);
+    },
+    frame.Unknown(u) => {
+      return "UNKNOWN " + int.int_to_string(u.kind) + " flags " + int.int_to_string(u.flags) + " stream " + int.int_to_string(u.stream) + " " + hex.hex_encode(u.payload);
+    }
+  }
+  return "";
+}
+
+// round is a frame encoded, then read back: its bytes and what was read.
+function round(f: frame.Frame): string {
+  let bytes: u8[] = frame.encode(f);
+  return hex.hex_encode(bytes) + " -> " + read_at(bytes, 0, frame.MAX_FRAME_SIZE);
+}
+
+function test_preface(): test.TestOutcome {
+  return test.assert_eq(hex.hex_encode(frame.preface()), "505249202a20485454502f322e300d0a0d0a534d0d0a0d0a");
+}
+
+// Every type encodes to the bytes §6 lays out and reads back as itself.
+function test_round_trips(): test.TestOutcome {
+  let got: string = round(frame.Data(frame.DataFrame { stream: 1, end_stream: true, data: "hi".bytes(), padding: 0 })) + "\n";
+  got = got + round(frame.Headers(frame.HeadersFrame { stream: 3, end_stream: false, end_headers: true, priority: None, block: [130 as u8, 134 as u8], padding: 0 })) + "\n";
+  got = got + round(frame.Headers(frame.HeadersFrame { stream: 3, end_stream: true, end_headers: true, priority: Some(frame.Priority { exclusive: true, dependency: 1, weight: 16 }), block: [130 as u8], padding: 0 })) + "\n";
+  got = got + round(frame.PriorityFrame(5, frame.Priority { exclusive: false, dependency: 3, weight: 256 })) + "\n";
+  got = got + round(frame.RstStream(5, frame.CANCEL)) + "\n";
+  got = got + round(frame.Settings(false, [frame.Setting { id: frame.SETTINGS_MAX_CONCURRENT_STREAMS, value: 100 }, frame.Setting { id: frame.SETTINGS_INITIAL_WINDOW_SIZE, value: 65535 }])) + "\n";
+  got = got + round(frame.Settings(true, [])) + "\n";
+  got = got + round(frame.PushPromise(frame.PushPromiseFrame { stream: 1, promised: 2, end_headers: true, block: [130 as u8] })) + "\n";
+  got = got + round(frame.Ping(true, [1 as u8, 2 as u8, 3 as u8, 4 as u8, 5 as u8, 6 as u8, 7 as u8, 8 as u8])) + "\n";
+  got = got + round(frame.GoAway(frame.GoAwayFrame { last_stream: 7, code: frame.ENHANCE_YOUR_CALM, debug: "calm".bytes() })) + "\n";
+  got = got + round(frame.WindowUpdate(0, 65535)) + "\n";
+  got = got + round(frame.Continuation(3, true, [134 as u8])) + "\n";
+  got = got + round(frame.Unknown(frame.UnknownFrame { kind: 11, flags: 3, stream: 0, payload: [9 as u8] }));
+  return test.assert_eq(got, "000002000100000001" + "6869" + " -> DATA 1 END_STREAM 6869 pad 0 [11]\n" + "000002010400000003" + "8286" + " -> HEADERS 3 END_HEADERS 8286 pad 0 [11]\n" + "000006012500000003" + "800000010f82" + " -> HEADERS 3 END_STREAM END_HEADERS dep 1 w 16 exclusive 82 pad 0 [15]\n" + "000005020000000005" + "00000003ff" + " -> PRIORITY 5 dep 3 w 256 [14]\n" + "000004030000000005" + "00000008" + " -> RST_STREAM 5 8 [13]\n" + "00000c040000000000" + "000300000064" + "00040000ffff" + " -> SETTINGS 3=100 4=65535 [21]\n" + "000000040100000000" + " -> SETTINGS ACK [9]\n" + "000005050400000001" + "0000000282" + " -> PUSH_PROMISE 1 promised 2 END_HEADERS 82 [14]\n" + "000008060100000000" + "0102030405060708" + " -> PING ACK 0102030405060708 [17]\n" + "00000c070000000000" + "000000070000000b" + "63616c6d" + " -> GOAWAY last 7 11 63616c6d [21]\n" + "000004080000000000" + "0000ffff" + " -> WINDOW_UPDATE 0 +65535 [13]\n" + "000001090400000003" + "86" + " -> CONTINUATION 3 END_HEADERS 86 [10]\n" + "0000010b0300000000" + "09" + " -> UNKNOWN 11 flags 3 stream 0 09 [10]");
+}
+
+// Padding comes off DATA and HEADERS and is counted; a priority on
+// HEADERS is read before the block; the reserved bit on a stream id and
+// a dependency is ignored.
+function test_padding_and_priority(): test.TestOutcome {
+  let got: string = shown("000006000900000001" + "02" + "686921" + "0000") + "|" + shown("000009012c80000003" + "01" + "80000001" + "0f" + "8286" + "00") + "|" + shown("000005020000000005" + "8000000300");
+  return test.assert_eq(got, "DATA 1 END_STREAM 686921 pad 3 [15]|HEADERS 3 END_HEADERS dep 1 w 16 exclusive 8286 pad 2 [18]|PRIORITY 5 dep 3 w 1 exclusive [14]");
+}
+
+// A frame arrives in pieces: nothing until its header is whole, nothing
+// until its payload is, then the frame and what it took.
+function test_partial(): test.TestOutcome {
+  let whole: u8[] = hex.hex_decode("000004080000000000" + "0000ffff" + "000000040100000000");
+  let got: string = read_at(hex.hex_decode("0000040800"), 0, frame.MIN_FRAME_SIZE) + "|" + read_at(hex.hex_decode("000004080000000000" + "0000"), 0, frame.MIN_FRAME_SIZE) + "|" + read_at(whole, 0, frame.MIN_FRAME_SIZE) + "|" + read_at(whole, 13, frame.MIN_FRAME_SIZE) + "|" + read_at(whole, 22, frame.MIN_FRAME_SIZE);
+  return test.assert_eq(got, "partial|partial|WINDOW_UPDATE 0 +65535 [13]|SETTINGS ACK [9]|partial");
+}
+
+// What §6 refuses, with the code and the stream of each error.
+function test_malformed(): test.TestOutcome {
+  let got: string = shown("000002000100000000" + "6869") + "\n";
+  got = got + shown("000003000800000001" + "036869") + "\n";
+  got = got + shown("000000000800000001") + "\n";
+  got = got + shown("000003012000000003" + "000000") + "\n";
+  got = got + shown("000004020000000005" + "00000003") + "\n";
+  got = got + shown("000003030000000005" + "000008") + "\n";
+  got = got + shown("000000040000000001") + "\n";
+  got = got + shown("000001040100000000" + "00") + "\n";
+  got = got + shown("000005040000000000" + "0003000000") + "\n";
+  got = got + shown("000006040000000000" + "000200000002") + "\n";
+  got = got + shown("000006040000000000" + "000480000000") + "\n";
+  got = got + shown("000006040000000000" + "000500001000") + "\n";
+  got = got + shown("000006040000000000" + "000501000000") + "\n";
+  got = got + shown("000007060000000000" + "01020304050607") + "\n";
+  got = got + shown("000008060000000001" + "0102030405060708") + "\n";
+  got = got + shown("000004070000000000" + "00000007") + "\n";
+  got = got + shown("000003080000000000" + "0000ff") + "\n";
+  got = got + shown("000004080000000005" + "00000000") + "\n";
+  got = got + shown("000001090400000000" + "86") + "\n";
+  got = got + read_at(hex.hex_decode("004001000100000001"), 0, frame.MIN_FRAME_SIZE);
+  return test.assert_eq(got, "h2 frame: connection error 1: DATA on stream 0\nh2 frame: connection error 1: padding of 3 bytes in a payload of 3\nh2 frame: connection error 1: a PADDED frame with no pad length\nh2 frame: connection error 6: HEADERS with PRIORITY shorter than its priority\nh2 frame: stream 5 error 6: PRIORITY of 4 bytes\nh2 frame: connection error 6: RST_STREAM of 3 bytes\nh2 frame: connection error 1: SETTINGS on stream 1\nh2 frame: connection error 6: SETTINGS ACK with a payload\nh2 frame: connection error 6: SETTINGS of 5 bytes\nh2 frame: connection error 1: SETTINGS_ENABLE_PUSH of 2\nh2 frame: connection error 3: SETTINGS_INITIAL_WINDOW_SIZE over 2^31-1\nh2 frame: connection error 1: SETTINGS_MAX_FRAME_SIZE of 4096\nh2 frame: connection error 1: SETTINGS_MAX_FRAME_SIZE of 16777216\nh2 frame: connection error 6: PING of 7 bytes\nh2 frame: connection error 1: PING on stream 1\nh2 frame: connection error 6: GOAWAY of 4 bytes\nh2 frame: connection error 6: WINDOW_UPDATE of 3 bytes\nh2 frame: stream 5 error 1: WINDOW_UPDATE of 0\nh2 frame: connection error 1: CONTINUATION on stream 0\nh2 frame: connection error 6: frame of 16385 bytes over the 16384 allowed");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/http/h2/frame");
+  r = r.it("the client preface", test_preface);
+  r = r.it("every frame type round-trips", test_round_trips);
+  r = r.it("padding and priority", test_padding_and_priority);
+  r = r.it("a frame in pieces", test_partial);
+  r = r.it("malformed frames", test_malformed);
+  return r.finish();
+}

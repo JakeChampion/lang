@@ -1,0 +1,493 @@
+// std/http/h2/frame — the frames of HTTP/2 (RFC 9113 §4 and §6), read from
+// and written to bytes.
+//
+// `read(buf, from, max_frame)` takes the next frame off a buffer: `Got`
+// with the frame and the bytes it occupied, `More` when the buffer does
+// not yet hold it, or the error the frame is (§6's rules on its length,
+// its stream and its padding, and §6.5.2's on each setting), as the
+// connection or stream error RFC 9113 names. `encode(frame)` is the
+// frame's bytes. Neither keeps state: what a connection must remember across
+// frames (its settings, its windows, a header block spread over
+// CONTINUATION frames) is std/http/h2's.
+//
+// A frame of a type this module does not know comes back as `Unknown`,
+// for the connection to skip (§4.1); its payload is kept so an extension
+// can read it.
+
+import "core/int";
+import "std/array";
+import "std/string";
+
+// The frame types (§6).
+pub const DATA: i32 = 0;
+
+pub const HEADERS: i32 = 1;
+
+pub const PRIORITY: i32 = 2;
+
+pub const RST_STREAM: i32 = 3;
+
+pub const SETTINGS: i32 = 4;
+
+pub const PUSH_PROMISE: i32 = 5;
+
+pub const PING: i32 = 6;
+
+pub const GOAWAY: i32 = 7;
+
+pub const WINDOW_UPDATE: i32 = 8;
+
+pub const CONTINUATION: i32 = 9;
+
+// The error codes (§7).
+pub const NO_ERROR: i32 = 0;
+
+pub const PROTOCOL_ERROR: i32 = 1;
+
+pub const INTERNAL_ERROR: i32 = 2;
+
+pub const FLOW_CONTROL_ERROR: i32 = 3;
+
+pub const SETTINGS_TIMEOUT: i32 = 4;
+
+pub const STREAM_CLOSED: i32 = 5;
+
+pub const FRAME_SIZE_ERROR: i32 = 6;
+
+pub const REFUSED_STREAM: i32 = 7;
+
+pub const CANCEL: i32 = 8;
+
+pub const COMPRESSION_ERROR: i32 = 9;
+
+pub const CONNECT_ERROR: i32 = 10;
+
+pub const ENHANCE_YOUR_CALM: i32 = 11;
+
+pub const INADEQUATE_SECURITY: i32 = 12;
+
+pub const HTTP_1_1_REQUIRED: i32 = 13;
+
+// The settings (§6.5.2).
+pub const SETTINGS_HEADER_TABLE_SIZE: i32 = 1;
+
+pub const SETTINGS_ENABLE_PUSH: i32 = 2;
+
+pub const SETTINGS_MAX_CONCURRENT_STREAMS: i32 = 3;
+
+pub const SETTINGS_INITIAL_WINDOW_SIZE: i32 = 4;
+
+pub const SETTINGS_MAX_FRAME_SIZE: i32 = 5;
+
+pub const SETTINGS_MAX_HEADER_LIST_SIZE: i32 = 6;
+
+// The smallest and largest SETTINGS_MAX_FRAME_SIZE (§4.2), and the
+// initial one.
+pub const MIN_FRAME_SIZE: i32 = 16384;
+
+pub const MAX_FRAME_SIZE: i32 = 16777215;
+
+// The largest flow-control window (§6.9.1).
+pub const MAX_WINDOW: i32 = 2147483647;
+
+// HEADER_LEN is the bytes of every frame's header (§4.1).
+pub const HEADER_LEN: i32 = 9;
+
+// preface is what a client sends first (§3.4).
+pub function preface(): u8[] {
+  return "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".bytes();
+}
+
+// Priority — a stream's dependency (§5.3.1), read and ignored.
+pub struct Priority { exclusive: boolean, dependency: i32, weight: i32 }
+
+// Setting — one identifier and its value; a value is at most 2^31-1 here,
+// since none RFC 9113 defines is larger and a larger one is refused.
+pub struct Setting { id: i32, value: i32 }
+
+// Frame — one frame as a value. `padding` on DATA and HEADERS is the bytes
+// the padding took, pad length included, which flow control counts.
+pub enum Frame {
+  Data(DataFrame),
+  Headers(HeadersFrame),
+  PriorityFrame(i32, Priority),
+  RstStream(i32, i32),
+  Settings(boolean, Setting[]),
+  PushPromise(PushPromiseFrame),
+  Ping(boolean, u8[]),
+  GoAway(GoAwayFrame),
+  WindowUpdate(i32, i32),
+  Continuation(i32, boolean, u8[]),
+  Unknown(UnknownFrame),
+}
+
+pub struct DataFrame { stream: i32, end_stream: boolean, data: u8[], padding: i32 }
+
+pub struct HeadersFrame { stream: i32, end_stream: boolean, end_headers: boolean, priority: Option[Priority], block: u8[], padding: i32 }
+
+pub struct PushPromiseFrame { stream: i32, promised: i32, end_headers: boolean, block: u8[] }
+
+pub struct GoAwayFrame { last_stream: i32, code: i32, debug: u8[] }
+
+pub struct UnknownFrame { kind: i32, flags: i32, stream: i32, payload: u8[] }
+
+// FrameError — what a frame did wrong: the error code to answer with, the
+// stream the error is on (0 for a connection error), and why.
+pub struct FrameError { code: i32, stream: i32, reason: string }
+
+pub function (e: FrameError) message(): string {
+  if (e.stream == 0) {
+    return "h2 frame: connection error " + int.int_to_string(e.code) + ": " + e.reason;
+  }
+  return "h2 frame: stream " + int.int_to_string(e.stream) + " error " + int.int_to_string(e.code) + ": " + e.reason;
+}
+
+function __connection(code: i32, reason: string): FrameError {
+  return FrameError { code: code, stream: 0, reason: reason };
+}
+
+// Read — what `read` found: a whole frame and the bytes it took off the
+// buffer, or that more bytes are needed.
+pub enum Read { Got(Frame, i32), More }
+
+// read takes the frame at `from` in `buf`, under the frame size the local
+// SETTINGS_MAX_FRAME_SIZE allows.
+pub function read(buf: u8[], from: i32, max_frame: i32): Result[Read, FrameError] {
+  if (buf.len() - from < HEADER_LEN) {
+    return Ok(More);
+  }
+  let len: i32 = __be24(buf, from);
+  let kind: i32 = buf[from + 3] as i32;
+  let flags: i32 = buf[from + 4] as i32;
+  let stream: i32 = __be32(buf, from + 5) & MAX_WINDOW;
+  if (len > max_frame) {
+    return Err(__connection(FRAME_SIZE_ERROR, "frame of " + int.int_to_string(len) + " bytes over the " + int.int_to_string(max_frame) + " allowed"));
+  }
+  if (buf.len() - from - HEADER_LEN < len) {
+    return Ok(More);
+  }
+  let payload: u8[] = __slice(buf, from + HEADER_LEN, from + HEADER_LEN + len);
+  return Ok(Got(__frame(kind, flags, stream, payload)?, HEADER_LEN + len));
+}
+
+// __frame reads a payload as the frame its type says.
+function __frame(kind: i32, flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameError] {
+  if (kind == DATA) {
+    return __data(flags, stream, payload);
+  }
+  if (kind == HEADERS) {
+    return __headers(flags, stream, payload);
+  }
+  if (kind == PRIORITY) {
+    return __priority_frame(stream, payload);
+  }
+  if (kind == RST_STREAM) {
+    return __rst_stream(stream, payload);
+  }
+  if (kind == SETTINGS) {
+    return __settings(flags, stream, payload);
+  }
+  return __frame_rest(kind, flags, stream, payload);
+}
+
+function __frame_rest(kind: i32, flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameError] {
+  if (kind == PUSH_PROMISE) {
+    return __push_promise(flags, stream, payload);
+  }
+  if (kind == PING) {
+    return __ping(flags, stream, payload);
+  }
+  if (kind == GOAWAY) {
+    return __goaway(stream, payload);
+  }
+  if (kind == WINDOW_UPDATE) {
+    return __window_update(stream, payload);
+  }
+  if (kind == CONTINUATION) {
+    return __continuation(flags, stream, payload);
+  }
+  return Ok(Unknown(UnknownFrame { kind: kind, flags: flags, stream: stream, payload: payload }));
+}
+
+// Padded — a payload with its padding removed (§6.1), and how many bytes
+// the padding took.
+struct Padded { body: u8[], padding: i32 }
+
+// __unpadded strips the padding the PADDED flag announces: the pad length
+// byte, and that many bytes at the end, which must fit.
+function __unpadded(flags: i32, stream: i32, payload: u8[]): Result[Padded, FrameError] {
+  if ((flags & 8) == 0) {
+    return Ok(Padded { body: payload, padding: 0 });
+  }
+  if (payload.len() == 0) {
+    return Err(__connection(PROTOCOL_ERROR, "a PADDED frame with no pad length"));
+  }
+  let pad: i32 = payload[0] as i32;
+  if (pad >= payload.len()) {
+    return Err(__connection(PROTOCOL_ERROR, "padding of " + int.int_to_string(pad) + " bytes in a payload of " + int.int_to_string(payload.len())));
+  }
+  return Ok(Padded { body: __slice(payload, 1, payload.len() - pad), padding: pad + 1 });
+}
+
+function __data(flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameError] {
+  if (stream == 0) {
+    return Err(__connection(PROTOCOL_ERROR, "DATA on stream 0"));
+  }
+  let p: Padded = __unpadded(flags, stream, payload)?;
+  return Ok(Data(DataFrame { stream: stream, end_stream: (flags & 1) != 0, data: p.body, padding: p.padding }));
+}
+
+function __headers(flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameError] {
+  if (stream == 0) {
+    return Err(__connection(PROTOCOL_ERROR, "HEADERS on stream 0"));
+  }
+  let p: Padded = __unpadded(flags, stream, payload)?;
+  let block: u8[] = p.body;
+  let priority: Option[Priority] = None;
+  if ((flags & 32) != 0) {
+    if (block.len() < 5) {
+      return Err(__connection(FRAME_SIZE_ERROR, "HEADERS with PRIORITY shorter than its priority"));
+    }
+    priority = Some(__priority(block, 0));
+    block = __slice(block, 5, block.len());
+  }
+  return Ok(Headers(HeadersFrame { stream: stream, end_stream: (flags & 1) != 0, end_headers: (flags & 4) != 0, priority: priority, block: block, padding: p.padding }));
+}
+
+// __priority reads the five bytes of a dependency (§6.3).
+function __priority(payload: u8[], at: i32): Priority {
+  let word: i32 = __be32(payload, at);
+  return Priority { exclusive: word < 0, dependency: word & MAX_WINDOW, weight: payload[at + 4] as i32 + 1 };
+}
+
+function __priority_frame(stream: i32, payload: u8[]): Result[Frame, FrameError] {
+  if (stream == 0) {
+    return Err(__connection(PROTOCOL_ERROR, "PRIORITY on stream 0"));
+  }
+  if (payload.len() != 5) {
+    return Err(FrameError { code: FRAME_SIZE_ERROR, stream: stream, reason: "PRIORITY of " + int.int_to_string(payload.len()) + " bytes" });
+  }
+  return Ok(PriorityFrame(stream, __priority(payload, 0)));
+}
+
+function __rst_stream(stream: i32, payload: u8[]): Result[Frame, FrameError] {
+  if (stream == 0) {
+    return Err(__connection(PROTOCOL_ERROR, "RST_STREAM on stream 0"));
+  }
+  if (payload.len() != 4) {
+    return Err(__connection(FRAME_SIZE_ERROR, "RST_STREAM of " + int.int_to_string(payload.len()) + " bytes"));
+  }
+  return Ok(RstStream(stream, __be32(payload, 0)));
+}
+
+function __settings(flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameError] {
+  if (stream != 0) {
+    return Err(__connection(PROTOCOL_ERROR, "SETTINGS on stream " + int.int_to_string(stream)));
+  }
+  let ack: boolean = (flags & 1) != 0;
+  if (ack && payload.len() != 0) {
+    return Err(__connection(FRAME_SIZE_ERROR, "SETTINGS ACK with a payload"));
+  }
+  if (payload.len() % 6 != 0) {
+    return Err(__connection(FRAME_SIZE_ERROR, "SETTINGS of " + int.int_to_string(payload.len()) + " bytes"));
+  }
+  let settings: Setting[] = [];
+  let at: i32 = 0;
+  while (at < payload.len()) {
+    settings = settings.append(__setting(payload[at] as i32 << 8 | payload[at + 1] as i32, __be32(payload, at + 2))?);
+    at = at + 6;
+  }
+  return Ok(Settings(ack, settings));
+}
+
+// __setting checks a setting's value as §6.5.2 asks; an unknown setting
+// is kept for the connection to ignore.
+function __setting(id: i32, value: i32): Result[Setting, FrameError] {
+  if (id == SETTINGS_ENABLE_PUSH && value != 0 && value != 1) {
+    return Err(__connection(PROTOCOL_ERROR, "SETTINGS_ENABLE_PUSH of " + int.int_to_string(value)));
+  }
+  if (id == SETTINGS_INITIAL_WINDOW_SIZE && value < 0) {
+    return Err(__connection(FLOW_CONTROL_ERROR, "SETTINGS_INITIAL_WINDOW_SIZE over 2^31-1"));
+  }
+  if (id == SETTINGS_MAX_FRAME_SIZE && (value < MIN_FRAME_SIZE || value > MAX_FRAME_SIZE)) {
+    return Err(__connection(PROTOCOL_ERROR, "SETTINGS_MAX_FRAME_SIZE of " + int.int_to_string(value)));
+  }
+  if (value < 0) {
+    return Err(__connection(PROTOCOL_ERROR, "setting " + int.int_to_string(id) + " over 2^31-1"));
+  }
+  return Ok(Setting { id: id, value: value });
+}
+
+function __push_promise(flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameError] {
+  if (stream == 0) {
+    return Err(__connection(PROTOCOL_ERROR, "PUSH_PROMISE on stream 0"));
+  }
+  let p: Padded = __unpadded(flags, stream, payload)?;
+  if (p.body.len() < 4) {
+    return Err(__connection(FRAME_SIZE_ERROR, "PUSH_PROMISE shorter than its promised stream"));
+  }
+  return Ok(PushPromise(PushPromiseFrame { stream: stream, promised: __be32(p.body, 0) & MAX_WINDOW, end_headers: (flags & 4) != 0, block: __slice(p.body, 4, p.body.len()) }));
+}
+
+function __ping(flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameError] {
+  if (stream != 0) {
+    return Err(__connection(PROTOCOL_ERROR, "PING on stream " + int.int_to_string(stream)));
+  }
+  if (payload.len() != 8) {
+    return Err(__connection(FRAME_SIZE_ERROR, "PING of " + int.int_to_string(payload.len()) + " bytes"));
+  }
+  return Ok(Ping((flags & 1) != 0, payload));
+}
+
+function __goaway(stream: i32, payload: u8[]): Result[Frame, FrameError] {
+  if (stream != 0) {
+    return Err(__connection(PROTOCOL_ERROR, "GOAWAY on stream " + int.int_to_string(stream)));
+  }
+  if (payload.len() < 8) {
+    return Err(__connection(FRAME_SIZE_ERROR, "GOAWAY of " + int.int_to_string(payload.len()) + " bytes"));
+  }
+  return Ok(GoAway(GoAwayFrame { last_stream: __be32(payload, 0) & MAX_WINDOW, code: __be32(payload, 4), debug: __slice(payload, 8, payload.len()) }));
+}
+
+function __window_update(stream: i32, payload: u8[]): Result[Frame, FrameError] {
+  if (payload.len() != 4) {
+    return Err(__connection(FRAME_SIZE_ERROR, "WINDOW_UPDATE of " + int.int_to_string(payload.len()) + " bytes"));
+  }
+  let increment: i32 = __be32(payload, 0) & MAX_WINDOW;
+  if (increment == 0) {
+    return Err(FrameError { code: PROTOCOL_ERROR, stream: stream, reason: "WINDOW_UPDATE of 0" });
+  }
+  return Ok(WindowUpdate(stream, increment));
+}
+
+function __continuation(flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameError] {
+  if (stream == 0) {
+    return Err(__connection(PROTOCOL_ERROR, "CONTINUATION on stream 0"));
+  }
+  return Ok(Continuation(stream, (flags & 4) != 0, payload));
+}
+
+// === writing ===============================================================
+
+// encode is `f` as its bytes. A DATA or HEADERS frame is written without
+// padding; the connection splits a payload over the peer's
+// SETTINGS_MAX_FRAME_SIZE before it writes.
+pub function encode(f: Frame): u8[] {
+  match (f) {
+    Data(d) => {
+      return __framed(DATA, __flag(d.end_stream, 1), d.stream, d.data);
+    },
+    Headers(h) => {
+      return __encode_headers(h);
+    },
+    PriorityFrame(stream, p) => {
+      return __framed(PRIORITY, 0, stream, __priority_bytes(p));
+    },
+    RstStream(stream, code) => {
+      return __framed(RST_STREAM, 0, stream, __be32_bytes([], code));
+    },
+    Settings(ack, settings) => {
+      return __framed(SETTINGS, __flag(ack, 1), 0, __settings_bytes(settings));
+    },
+    _ => {
+      return __encode_rest(f);
+    }
+  }
+  return [];
+}
+
+function __encode_rest(f: Frame): u8[] {
+  match (f) {
+    PushPromise(p) => {
+      return __framed(PUSH_PROMISE, __flag(p.end_headers, 4), p.stream, __be32_bytes([], p.promised).concat(p.block));
+    },
+    Ping(ack, data) => {
+      return __framed(PING, __flag(ack, 1), 0, data);
+    },
+    GoAway(g) => {
+      return __framed(GOAWAY, 0, 0, __be32_bytes(__be32_bytes([], g.last_stream), g.code).concat(g.debug));
+    },
+    WindowUpdate(stream, increment) => {
+      return __framed(WINDOW_UPDATE, 0, stream, __be32_bytes([], increment));
+    },
+    Continuation(stream, end_headers, block) => {
+      return __framed(CONTINUATION, __flag(end_headers, 4), stream, block);
+    },
+    Unknown(u) => {
+      return __framed(u.kind, u.flags, u.stream, u.payload);
+    },
+    _ => {
+      return [];
+    }
+  }
+  return [];
+}
+
+function __encode_headers(h: HeadersFrame): u8[] {
+  let flags: i32 = __flag(h.end_stream, 1) | __flag(h.end_headers, 4);
+  match (h.priority) {
+    Some(p) => {
+      return __framed(HEADERS, flags | 32, h.stream, __priority_bytes(p).concat(h.block));
+    },
+    None => {
+      return __framed(HEADERS, flags, h.stream, h.block);
+    }
+  }
+  return [];
+}
+
+function __flag(on: boolean, bit: i32): i32 {
+  if (on) {
+    return bit;
+  }
+  return 0;
+}
+
+// __framed is the frame header (§4.1) and the payload.
+function __framed(kind: i32, flags: i32, stream: i32, payload: u8[]): u8[] {
+  let n: i32 = payload.len();
+  let head: u8[] = [(n >> 16 & 255) as u8, (n >> 8 & 255) as u8, (n & 255) as u8, kind as u8, flags as u8];
+  return __be32_bytes(head, stream).concat(payload);
+}
+
+function __priority_bytes(p: Priority): u8[] {
+  let word: i32 = p.dependency & MAX_WINDOW;
+  let out: u8[] = __be32_bytes([], word);
+  if (p.exclusive) {
+    out = out.with(0, (out[0] as i32 | 128) as u8);
+  }
+  return out.append((p.weight - 1) as u8);
+}
+
+function __settings_bytes(settings: Setting[]): u8[] {
+  let out: u8[] = [];
+  for s in settings {
+    out = __be32_bytes(out.append((s.id >> 8 & 255) as u8).append((s.id & 255) as u8), s.value);
+  }
+  return out;
+}
+
+// === bytes =================================================================
+
+function __be24(buf: u8[], at: i32): i32 {
+  return buf[at] as i32 << 16 | buf[at + 1] as i32 << 8 | buf[at + 2] as i32;
+}
+
+// __be32 is the big-endian word at `at`, negative when its top bit is set.
+function __be32(buf: u8[], at: i32): i32 {
+  return buf[at] as i32 << 24 | buf[at + 1] as i32 << 16 | buf[at + 2] as i32 << 8 | buf[at + 3] as i32;
+}
+
+function __be32_bytes(out: u8[], v: i32): u8[] {
+  return out.append((v >> 24 & 255) as u8).append((v >> 16 & 255) as u8).append((v >> 8 & 255) as u8).append((v & 255) as u8);
+}
+
+function __slice(buf: u8[], from: i32, to: i32): u8[] {
+  let out: u8[] = __alloc_u8(to - from);
+  let i: i32 = 0;
+  while (from + i < to) {
+    out = out.with(i, buf[from + i]);
+    i = i + 1;
+  }
+  return out;
+}

@@ -1189,6 +1189,30 @@ func TestRunnerHTTPRouterExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "http_router", "std/http/router", 8)
 }
 
+// `tests/stdlib/http_hpack_test.fern` runs RFC 7541's Appendix C through
+// std/http/hpack both ways, with the table sizes and evictions the RFC
+// shows, and holds a decoder to its list, field and table-size bounds.
+func TestRunnerHTTPHpackExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_hpack", "std/http/hpack", 9)
+}
+
+// `tests/stdlib/http_h2_frame_test.fern` writes and reads back every HTTP/2
+// frame type, takes padding and priority off DATA and HEADERS, reads a
+// frame as it arrives in pieces, and answers each malformed shape RFC 9113
+// §6 names with its error.
+func TestRunnerHTTPH2FrameExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_h2_frame", "std/http/h2/frame", 5)
+}
+
+// `tests/stdlib/http_h2_test.fern` drives the server's HTTP/2 connection as
+// a client does: the preface and settings, a request answered, bodies and
+// trailers each way, flow control at both levels, the four attack classes
+// refused, malformed requests reset and malformed connections closed, and
+// the control frames.
+func TestRunnerHTTPH2ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_h2", "std/http/h2", 11)
+}
+
 // `tests/stdlib/http_form_test.fern` reads a urlencoded body as its fields
 // and refuses another media type and a body that is not UTF-8.
 func TestRunnerHTTPCookieExamplePasses(t *testing.T) {

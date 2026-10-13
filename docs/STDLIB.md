@@ -2707,6 +2707,99 @@ function routes(): Result[router.Router[platform.Host], router.RouteError] {
   that produces a value gives it to `next`, and the handler behind it takes
   it as a parameter (`tests/stdlib/http_router_test.fern`).
 
+### `std/http/hpack`
+
+HPACK, the header compression of HTTP/2 (RFC 7541), as two values a
+connection threads through its frames: a `Decoder` turns a header block
+into `Field`s and an `Encoder` turns fields into one, each keeping the
+dynamic table the other side mirrors.
+
+```fern
+let d: hpack.Decoder = hpack.decoder(4096, 65536);
+let got: hpack.Decoded = d.decode(block)?;         // got.fields, got.decoder
+let e: hpack.Encoder = hpack.encoder(4096);
+let out: hpack.Encoded = e.encode([hpack.field(":status", "200"), hpack.sensitive("set-cookie", "s=1")]);
+```
+
+`decoder(max_table, max_list)` takes the table size the local
+SETTINGS_HEADER_TABLE_SIZE allows the peer and the bytes one block may
+decode to, counted as SETTINGS_MAX_HEADER_LIST_SIZE counts them (name,
+value and 32 per field); `with_max_fields(n)` caps the count (256 by
+default) and `with_max_table(n)` follows a settings change. A block is
+refused (`HpackError`: `Truncated`, `BadIndex`, `BadInteger`,
+`BadHuffman`, `BadSizeUpdate`, `TooLarge`, `TooMany`) when it ends inside
+a field, indexes past the tables, carries a size update after a field or
+above the settings, or would decode past the caps: a Huffman string is
+counted as it decodes, so a block that would expand past the cap stops
+before it has (the header-bomb class). The error is the connection's;
+HTTP/2 answers COMPRESSION_ERROR.
+
+`encoder(max_table)` indexes a field the static or dynamic table holds,
+names one whose name it holds, adds a literal to the table unless it is
+`sensitive(name, value)` (never indexed, so a value cannot be probed from
+the table), and Huffman-codes a string when the coding is no longer than
+the bytes (`without_huffman()` turns that off). `with_max_table(n)` holds
+the table to `n` and makes the next block start with the size update §4.2
+asks for. `tests/stdlib/http_hpack_test.fern` runs RFC 7541's Appendix C
+both ways, byte for byte, with the table sizes and evictions it shows.
+
+### `std/http/h2`
+
+An HTTP/2 connection (RFC 9113), the server's side, as a sans-IO state
+machine: bytes in, bytes out, requests as events, a response given back
+per stream. `server(config)` is a new connection and the SETTINGS it opens
+with; `conn.read(bytes)` takes the client's bytes and returns a `Step` (the
+connection, the bytes to send, and `Event`s: `Request(stream, req)` once a
+stream's request is whole with its trailers, `Reset(stream, code)` when the
+client reset one, `GoAway(code)` for the client's GOAWAY, and
+`Closed(code, reason)` when the server closed the connection with that
+error after GOAWAY); `conn.respond(stream, resp)` writes the response as
+HEADERS (and CONTINUATION past the peer's frame size), DATA as both
+flow-control windows allow with the rest held for a WINDOW_UPDATE, and
+trailers last; `conn.reset(stream, code)` ends a stream unanswered,
+`conn.goaway(code)` stops new streams, `conn.ping(data)` probes the client.
+A handler written for HTTP/1.1 serves it unchanged: the request's
+`:authority` is its `host`, its `:path` the path.
+
+```fern
+let step: h2.Step = h2.server(h2.config());   // step.output: the server's SETTINGS
+step = step.conn.read(received);               // step.events: Request(1, req), ...
+step = step.conn.respond(1, http.ok("hi"));    // step.output: HEADERS, DATA END_STREAM
+```
+
+`Config` holds what the server allows and advertises: `max_concurrent_streams`
+(100), `initial_window` (65535), `max_frame_size` (16384),
+`max_header_list` (65536), `header_table_size` (4096), `max_body`
+(`http_limits().body`), and the budgets. The four attack classes are
+bounds the connection keeps: a handler runs for a stream only while the
+stream counts against the concurrency limit, and a stream the client
+resets keeps its slot until the handler answers (Rapid Reset); a header
+block is bounded in frames (`header_frames_max`) and bytes as it is
+assembled, and HPACK bounds what it decodes to (CONTINUATION flood, the
+header bomb); every RST_STREAM either side sends counts against
+`reset_budget` per `budget_frames` frames (MadeYouReset), and empty DATA
+frames against `empty_data_budget`; past any of these the connection
+closes with ENHANCE_YOUR_CALM. Priorities are read and ignored; push is
+not offered. `tests/stdlib/http_h2_test.fern` drives a connection through
+each of these as a client would, and `scripts/net-h2spec` runs h2spec's
+strict cases against a served connection nightly (`docs/TEST-GATES.md`).
+
+### `std/http/h2/frame`
+
+The frames of HTTP/2 (RFC 9113 §4 and §6) as values read from and written
+to bytes, with no state: `read(buf, from, max_frame)` takes the next frame
+off a buffer as `Got(frame, len)`, `More` when the buffer does not
+yet hold it, or the `FrameError` the frame is (its `code`, the `stream` it
+is on, 0 for a connection error, and why), and `encode(frame)` is a
+frame's bytes. `Frame` has a variant per type (`Data`, `Headers`,
+`PriorityFrame`, `RstStream`, `Settings`, `PushPromise`, `Ping`, `GoAway`,
+`WindowUpdate`, `Continuation`) and `Unknown` for a type to skip; padding
+comes off DATA and HEADERS with its size kept for flow control, a priority
+comes off HEADERS, each setting is checked as §6.5.2 asks, and the frame
+and error codes, the settings identifiers and the frame-size bounds are
+constants. The connection's state (settings, windows, a header block over
+CONTINUATION frames) is `std/http/h2`'s.
+
 ### `std/http/sse`
 
 Server-sent events, the `text/event-stream` of the WHATWG HTML standard:
@@ -3199,6 +3292,16 @@ points that run a handler under it.
   workers share the config's ticket key, so a session resumes at any of
   them; a handler pulling a streamed body reads it through the session
   (`TestServeTLSAgainstGo`).
+  `h2` (false), set by `(c).with_h2()`, serves HTTP/2 beside HTTP/1.1
+  (`std/http/h2`): a connection that opens with the HTTP/2 connection
+  preface is served over it (prior-knowledge h2c), and under `tls` the
+  protocols offered by ALPN are `h2` and `http/1.1`. The handler is the
+  same, a request's `:authority` arriving as its `host`; a handler that
+  suspends parks on its stream while the connection's other streams are
+  served, requests count in the metrics as HTTP/1.1's do, and the
+  connection's bounds (RFC 9113 §10 and the four attack classes) are
+  `std/http/h2`'s. `run_with`'s stateful loop serves HTTP/1.1 only
+  (`TestServeH2Interp`, `TestServeH2X86_64`).
   `proxy_protocol` (false) reads a PROXY protocol header, version 1 or 2,
   at the start of every connection, before TLS when both are set
   (`forwarded.proxy_header`): its source address becomes the connection's
