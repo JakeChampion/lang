@@ -13,7 +13,8 @@ import (
 // into its block prove `0 <= i < len`: a guard on both bounds, the length minus
 // a constant, a loop index stepped by one under its guard or stepped down under
 // `i >= 0`, the same field read twice from one value, and a constant or a
-// masked index into an array literal shorter than neither. Each case reads in
+// masked index into an array literal shorter than neither, and a byte-set
+// scan's result under `< len`. Each case reads in
 // range on every path the program takes, so it must answer what the
 // interpreter answers on every backend.
 var guardBoundsCases = []struct {
@@ -74,6 +75,13 @@ function main(): i32 { return total([1, 2, 3, 4, 5]); }`},
 function main(): i32 { return coef(2); }`},
 	{"masked_into_literal", `@noinline function look(k: i32): i32 { let c: i32[] = [2, 3, 5, 7]; return c[k & 3]; }
 function main(): i32 { return look(6) + look(0 - 1) * 10; }`},
+	{"scan_set_result", `@noinline function after(s: string, i: i32): i32 {
+    let tabs: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8];
+    let j: i32 = __scan_set(s, i, tabs);
+    if (j < s.len()) { return s[j] as i32; }
+    return 7;
+}
+function main(): i32 { return after("ab\tc", 0) + after("abc", 1) * 2 + after("x", 5) * 3 + after("\t", 0 - 4); }`},
 	// grouped_reads: a run at one index plus constants, or at constants, is
 	// checked once.
 	{"grouped_view_reads", `function word(bs: [u8], off: i32): i32 { return bs[off] as i32 + bs[off + 1] as i32 + bs[off + 2] as i32 + bs[off + 3] as i32; }
@@ -116,6 +124,9 @@ var guardBoundsTwins = []struct{ name, proven, unproven string }{
 	{"constant_into_literal",
 		`@noinline function coef(k: i32): i32 { let c: i32[] = [2, 3, 5, 7]; return c[3] * k; } function main(): i32 { return coef(2); }`,
 		`@noinline function coef(k: i32): i32 { let c: i32[] = [2, 3, 5, 7]; return c[k + 1] * k; } function main(): i32 { return coef(2); }`},
+	{"scan_set_result",
+		`@noinline function after(s: string, i: i32): i32 { let tabs: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8]; let j: i32 = __scan_set(s, i, tabs); if (j < s.len()) { return s[j] as i32; } return 7; } function main(): i32 { return after("ab\tc", 0); }`,
+		`@noinline function after(s: string, i: i32): i32 { let j: i32 = i + 2; if (j < s.len()) { return s[j] as i32; } return 7; } function main(): i32 { return after("ab\tc", 0); }`},
 	// A division between the reads could abort first, so the twin keeps
 	// every read's check.
 	{"grouped_scrambled_reads",

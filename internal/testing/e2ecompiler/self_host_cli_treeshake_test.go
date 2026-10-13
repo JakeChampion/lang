@@ -231,14 +231,9 @@ function main(): i32 {
 		}
 	}
 
-	requireCallsDefined(t, asm)
-}
-
-// requireCallsDefined fails when the artifact calls a function it does not
-// define. This is the property the wasm leg enforces by rejecting the module,
-// stated directly on the x86-64 text so a failure names the symbol.
-func requireCallsDefined(t *testing.T, asm string) {
-	t.Helper()
+	// Every function the artifact calls must be one it defines. This is the
+	// property the wasm leg enforces by rejecting the module, stated directly
+	// on the x86-64 text so a failure names the symbol.
 	callRe := regexp.MustCompile(`(?m)^[ \t]+call[ \t]+(__fn_[A-Za-z_0-9]+|__method_[A-Za-z_0-9]+)\b`)
 	defined := map[string]bool{}
 	for _, l := range fnLabels(asm) {
@@ -319,10 +314,12 @@ function main(): i32 {
 
 	// Kept: the overload the program invokes, and the scalar impl its own body
 	// reaches. A user impl is the case most at risk — the receiver has to
-	// resolve against the tag a struct carries, which is its nominal name. A
-	// body inlined at every call leaves no symbol, so what is checked is that
-	// nothing the artifact calls is missing, and the answer below.
-	requireCallsDefined(t, asm)
+	// resolve against the tag a struct carries, which is its nominal name.
+	for _, live := range []string{"__fn_V__add", "__fn_V__neg", "__fn_i32__add"} {
+		if !strings.Contains(asm, "\n"+live+":") {
+			t.Errorf("%s is NOT emitted, but the program reaches it — the qualified root dropped a live impl", live)
+		}
+	}
 	// Dropped: every other type's `add`, which a bare root would have kept.
 	for _, dead := range []string{
 		"__fn_bigint__BigInt__add",
@@ -481,7 +478,9 @@ function main(): i32 {
 	if strings.Contains(labels, "probe") {
 		t.Errorf("Dialer.probe is emitted, but the program only reads the field `probe`:\n%s", labels)
 	}
-	requireCallsDefined(t, string(asmBytes))
+	if !strings.Contains(labels, "ping") {
+		t.Errorf("Pinger.ping is NOT emitted, but main calls it:\n%s", labels)
+	}
 	bin := buildBin(t, gcc, dir, "ts_field_read", string(asmBytes))
 	run := exec.Command(bin)
 	_ = run.Run()
