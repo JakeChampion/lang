@@ -60,8 +60,39 @@ go test ./internal/testing/sourcelint -count=1
 go vet ./internal/testing/coreutils
 ```
 
-This repairs functionality and incurs the necessary procfs/cgroup file reads.
-It is not a speed claim; release wall-time comparisons are deferred until the
-concurrently running ownership full suite completes. Other baseline `pr`/`who`
-timezone discrepancies and environment-specific fixture limitations remain
-separate validation blockers for that ownership work.
+## Controlled contender timings
+
+After the interrupted suite stopped, the idle x86-64 host ran Hyperfine 2.0.0
+with 5 warmups and 100 measurements per eligible implementation, without a
+shell or concurrent heavy tests/profiles. Every contender first matched GNU's
+stdout, stderr and exit status under `LC_ALL=C`, `LANG=C`, `TZ=UTC`. Versions
+and contender build configurations are those in the listing report: GNU 9.12,
+uutils 0.12.0, BusyBox 1.38.0 and Toybox 0.8.15.
+
+Means ± standard deviations in microseconds, including process startup:
+
+| Invocation | Fern | GNU | uutils | BusyBox | Toybox |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| default, available CPUs | 214.6 ± 120.9 | 664.1 ± 65.7 | 784.1 ± 167.5 | differs | differs |
+| `--all`, installed CPUs | 141.3 ± 57.3 | 597.8 ± 70.0 | 654.7 ± 55.0 | 708.1 ± 45.2 | 758.5 ± 262.7 |
+
+The default reference answer is four, and `--all` is five. BusyBox and Toybox
+answer five by default here, ignoring the quota, so their default timings are
+excluded rather than credited for different behavior. Both match `--all`, but
+neither beats GNU or uutils on that row. These two local rows are not a global
+coreutils ranking or isolated algorithm latencies; the short runs have real
+startup noise. No before/after speed comparison is made against Fern's wrong
+default answer.
+
+The measured Fern source is #12335's fix at `922f7762b`, compiled with
+`-O -target x86-64-linux` by the frozen same-producer baseline compiler
+SHA-256 `2284ebaea9001502884865aeaeca76045cf879ba72bfa745cc59fea404900d0b`.
+Executable size: 65152 bytes; executable SHA-256:
+`95aec6dc0970ee7381c446810e6095936b315bba6ae4321154da9d4bac9fc5f4`.
+Compressed raw exports and the eligibility summary are in
+`docs/benchmarks/nproc-2026-10-13/`.
+
+This repairs functionality and incurs necessary procfs/cgroup reads. Remaining
+host-specific `pr`/`who` ABI/zone-data discrepancies are recorded separately;
+they were not removed by selecting an older GNU release. The ownership suite
+uses a disposable filesystem and a GNU 9.12 build against CI's Ubuntu/glibc ABI.

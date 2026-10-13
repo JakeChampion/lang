@@ -55,9 +55,10 @@ The targeted `-isC` improvement is 9.9%; its mean ± deviation is
 3,604,480 bytes on both. The unrelated `-l`/`-F` changes are small compared
 with their deviations and are not claimed as wins. The table is a local
 measurement, not proof of being the fastest implementation worldwide. GNU
-still wins the numeric-column rows. BusyBox and Toybox did not beat GNU or
-uutils on these matched workloads; they remain useful contenders for other
-utilities, not replacements for the GNU behavioral oracle. POSIX-focused
+still wins the numeric-column rows. BusyBox and Toybox do not beat GNU on
+these matched workloads, but both beat uutils on `-F`; Toybox also beats
+uutils on `-R`. They remain useful contenders, not replacements for the GNU
+behavioral oracle. POSIX-focused
 sbase and posixutils-rs and experimental assembly utilities were also
 surveyed; no evidence established a faster GNU-compatible listing workload
 there, so no speed claim is made about them.
