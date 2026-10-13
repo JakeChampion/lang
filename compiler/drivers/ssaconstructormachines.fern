@@ -147,7 +147,7 @@ function control(output: ssaprepare.Output, capacity: string): void {
   altered(output, "call __fern_arr_box", "jne .Lmachine_forward\n.Lmachine_forward:\ncall __fern_arr_box", false);
   altered(output, "call __fern_arr_box", "jmp absent\ncall __fern_arr_box", false);
   require(!machine.check(ssaprepare.Output { ...output, text: change(output.text, "__fern_arr_box:", "__fern_missing_box:") }, "parent"), "missing same-output helper");
-  require(!machine.check(ssaprepare.Output { ...output, text: change(output.text, "addq $3, %rdi", "addq $2, %rdi") }, "parent"), "wrong helper request");
+  require(!machine.check(ssaprepare.Output { ...output, text: change(output.text, "leaq 24(,%rdi,8), %rdi", "leaq 16(,%rdi,8), %rdi") }, "parent"), "wrong helper request");
   require(!machine.check(ssaprepare.Output { ...output, text: change(output.text, ".ascii \"Parent\"", ".ascii \"Other\"") }, "parent"), "wrong shape");
   require(!machine.check(ssaprepare.Output { ...output, bodies: [] }, "parent"), "missing retained graph");
 }

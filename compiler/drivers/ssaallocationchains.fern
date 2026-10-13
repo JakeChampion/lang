@@ -27,13 +27,13 @@ function dependency(output: ssaprepare.Output, from: string, to: string): void {
 
 function allocator_paths(output: ssaprepare.Output): void {
   dependency(output, "__fern_alloc:", "__absent_alloc:");
-  dependency(output, "popq (%rdi)", "popq (%rax)");
+  dependency(output, "popq (%rdi)\n    ret", "popq (%rax)\n    ret");
   dependency(output, "movq %rdi, __fern_heap_ptr(%rip)", "movq %rax, __fern_heap_ptr(%rip)");
   dependency(output, "movl $9, %eax", "movl $8, %eax");
   dependency(output, "movq %rcx, __fern_heap_end(%rip)", "movq %rax, __fern_heap_end(%rip)");
   let bad_first = change(output.text, "movl $9, %eax", "movl $8, %eax");
   require(initialized.check(bad_first) && !first.check(bad_first), "initialized alone cannot certify first mapping");
-  let bad_fast = change(output.text, "popq (%rdi)", "popq (%rax)");
+  let bad_fast = change(output.text, "popq (%rdi)\n    ret", "popq (%rax)\n    ret");
   require(first.check(bad_fast) && !initialized.check(bad_fast), "first mapping alone cannot certify free list");
 }
 
@@ -59,7 +59,7 @@ function frames(output: ssaprepare.Output): void {
 }
 
 function caller_dependencies(output: ssaprepare.Output): void {
-  let bad_box = change(output.text, "addq $3, %rdi", "addq $2, %rdi");
+  let bad_box = change(output.text, "leaq 24(,%rdi,8), %rdi", "leaq 16(,%rdi,8), %rdi");
   require(chain.allocator(bad_box) && !chain.array_box(bad_box), "allocator cannot certify helper request");
   require(!chain.record(ssaprepare.Output { ...output, text: bad_box }, "parent"), "constructor binds helper");
   let bad_store = coherent(output, "movq %rsi, 0(%rax)", "");

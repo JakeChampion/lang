@@ -175,7 +175,7 @@ function selection(): void {
 function isolation(): void {
   for line in ["pushq (%rax)", "popq (%rdi)", "movq __fern_heap_ptr(%rip), %rax", "movq %rax, __fern_heap_end(%rip)"] {
     let old = isa.array_box_program(".text\n__fern_arr_box:\n" + line + "\nret\n");
-    require(old.error == "" && old.ops[0].kind == 0, "array-box syntax unchanged");
+    require(old.error == "" && old.ops[0].kind == 0 == line.contains("__fern_heap"), "array-box syntax reads the stack and not the heap");
     let capacity = isa.program(".text\n__fern_capw:\n" + line + "\nret\n");
     require(capacity.error == "" && capacity.ops[0].kind == 0, "capacity syntax unchanged");
     let release = isa.string_program(".text\n__fn___fern_str_free:\n__fn___fern_str_free.r:\n" + line + "\nret\n");

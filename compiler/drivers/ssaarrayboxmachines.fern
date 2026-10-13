@@ -26,20 +26,57 @@ function altered(body: string, from: string, to: string, expected: boolean): voi
 }
 
 function sizes(body: string): void {
-  for to in ["addq $2, %rdi", "addq $4, %rdi", "movq $6, %rdi", "addq $3, %rsi"] {
-    altered(body, "addq $3, %rdi", to, false);
-  }
-  for to in ["shlq $2, %rdi", "shlq $4, %rdi", "shrq $3, %rdi", "shlq $255, %rdi"] {
-    altered(body, "shlq $3, %rdi", to, false);
+  let request = "leaq 24(,%rdi,8), %rdi";
+  for to in ["leaq 16(,%rdi,8), %rdi", "leaq 32(,%rdi,8), %rdi", "leaq 24(,%rdi,4), %rdi", "leaq 24(,%rsi,8), %rdi", "leaq 24(%rdi,%rdi,8), %rdi", "movq $48, %rdi"] {
+    altered(body, request, to, false);
   }
   // Both concrete record capacities fit32 bits; these are semantic positives.
-  altered(body, "addq $3, %rdi", "addl $3, %edi", true);
-  altered(body, "shlq $3, %rdi", "shll $3, %edi", true);
-  altered(body, "shlq $3, %rdi", "shlq $67, %rdi", true);
-  altered(body, "shlq $3, %rdi", "shlq $3, %rdi\nshlq $64, %rdi", true);
+  altered(body, request, "addq $3, %rdi\nshlq $3, %rdi", true);
+  altered(body, request, "addl $3, %edi\nshll $3, %edi", true);
+  altered(body, request, request + "\nshlq $64, %rdi", true);
   altered(body, "addq $16, %rax", "leaq 16(%rax), %rax", true);
   for to in ["addq $8, %rax", "addq $24, %rax", "addl $16, %eax"] {
     altered(body, "addq $16, %rax", to, false);
+  }
+}
+
+function pops(body: string): void {
+  // A class the small list does not hold, or a stale flag, must take the call;
+  // the recycled block's next head must reach the slot, and nothing else may.
+  for to in ["cmpq $40, %rdi", "cmpq $32, %rdi", "cmpq $2048, %rax", ""] {
+    altered(body, "cmpq $2048, %rdi", to, false);
+  }
+  // Only the two concrete capacities are certified, so a bound they both
+  // clear, or a condition they never take, is a semantic positive.
+  for to in ["cmpq $48, %rdi", "cmpl $2048, %edi"] {
+    altered(body, "cmpq $2048, %rdi", to, true);
+  }
+  for to in ["jb .Larrbox_alloc", "jbe .Larrbox_alloc", "jne .Larrbox_alloc", "js .Larrbox_alloc", "jmp .Larrbox_alloc"] {
+    altered(body, "ja .Larrbox_alloc", to, false);
+  }
+  for to in ["jae .Larrbox_alloc", "je .Larrbox_alloc", "ja .Larrbox_miss"] {
+    altered(body, "ja .Larrbox_alloc", to, true);
+  }
+  for to in ["jnz .Larrbox_miss", "jz .Larrbox_alloc", "jz .Larrbox_hdr", "jb .Larrbox_miss", "", "jmp .Larrbox_miss"] {
+    altered(body, "jz .Larrbox_miss", to, false);
+  }
+  altered(body, "jz .Larrbox_miss", "je .Larrbox_miss", true);
+  for to in ["testq %rdi, %rdi", "testl %eax, %eax", "cmpq $1, %rax", "", "testq %rax, %rax\naddq $0, %rdi"] {
+    altered(body, "testq %rax, %rax", to, false);
+  }
+  altered(body, "testq %rax, %rax", "cmpq $0, %rax", true);
+  altered(body, "addq %rax, %rdi", "addq %rdi, %rax\nmovq %rax, %rdi", false);
+  altered(body, "addq %rax, %rdi", "leaq (%rax,%rdi), %rdi", false);
+  altered(body, "subq %rax, %rdi", "", false);
+  altered(body, "subq %rax, %rdi", "subq %rdi, %rax", false);
+  for to in ["", "pushq (%rax)", "popq (%rdi)", "pushq (%rax)\npopq (%rax)", "pushq (%rdi)\npopq (%rdi)", "pushq 8(%rax)\npopq (%rdi)", "pushq (%rax)\npopq 8(%rdi)", "pushq (%rax)\npopq (%rdi)\npushq (%rax)\npopq (%rdi)", "movq (%rax), %rcx\nmovq %rcx, (%rdi)", "movq (%rax), %rdi"] {
+    altered(body, "pushq (%rax)\npopq (%rdi)", to, false);
+  }
+  // The next head stays at S-16 after the pop, as the slot holds it.
+  altered(body, "pushq (%rax)\npopq (%rdi)", "pushq (%rax)\npopq (%rdi)\nmovq (%rdi), %rdi\nmovq -8(%rsp), %rdi", true);
+  altered(body, "pushq (%rax)\npopq (%rdi)", "pushq (%rax)\npopq (%rdi)\nmovq -8(%rsp), %rdi\nmovq %rdi, (%rdi)", false);
+  for to in ["leaq __fern_large_freelist(%rip), %rax", "leaq __fern_freelist+8(%rip), %rax", "movq __fern_freelist(%rip), %rax", "leaq __fern_freelist(%rip), %rcx"] {
+    altered(body, "leaq __fern_freelist(%rip), %rax\naddq", to + "\naddq", false);
   }
 }
 
@@ -127,6 +164,7 @@ pub function run(output: string): void {
   require(!fixture(body).contains("__fern_alloc:") && machine.check(fixture(body)), "conditional premise, not linkage");
   require(!machine.check("") && !machine.check(fixture("ret")), "missing effects");
   sizes(body);
+  pops(body);
   memory(body);
   calls_and_stack(body);
   identities(body);
