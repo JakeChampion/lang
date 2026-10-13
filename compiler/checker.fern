@@ -19083,6 +19083,8 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         actx = OwnCtx { ...actx, scope: annotate_arm_scope(arm, ctx.scope, whole) };
         if (scrut_owned) {
           actx = ow_arm_payload_ctx(actx, arm.pattern);
+        } else {
+          actx = ow_arm_lent_ctx(actx, arm.pattern);
         }
         let ra: OwnWalk = ow_stmts(arm.body, rs.moved, actx);
         d = util.append_diags(d, ra.diags);
@@ -19171,7 +19173,30 @@ function ow_bind_ctx(ctx: OwnCtx, name: string): OwnCtx {
 
 // ow_arm_payload_ctx layers a match arm's pointer-typed payload bindings onto
 // the owned set. The payload types come from the variant's synthesised struct
-// decl (`__ev`, `__ev1`, …), which is where the self-host records them.
+// decl (`__ev`, `__ev1`, …), which is where the self-host records them. A
+// struct-union member's binding is the member's box itself, a pointer.
+//
+// ow_arm_lent_ctx is its counterpart for a BORROWED scrutinee: the same
+// bindings read the caller's box, so a field moved out of one would be read
+// back, as out of a borrowed parameter.
+// Every binding is marked, a scalar's included: `borrowed` only gates what
+// a field move may read through, which a scalar has no part in.
+function ow_arm_lent_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
+  if let ast.PatVariant(pv) = pat {
+    let borrowed: string[] = ctx.borrowed;
+    if (pv.binding.len() > 0 && pv.binding != "_" && !util.has_str(borrowed, pv.binding)) {
+      borrowed = borrowed.append(pv.binding);
+    }
+    for extra in pv.extra_bindings {
+      if (extra.len() > 0 && extra != "_" && !util.has_str(borrowed, extra)) {
+        borrowed = borrowed.append(extra);
+      }
+    }
+    return OwnCtx { ...ctx, borrowed: borrowed };
+  }
+  return ctx;
+}
+
 // ow_unmove drops the move of `name` a walk recorded on top of `before`.
 function ow_unmove(after: MovedEntry[], before: MovedEntry[], name: string): MovedEntry[] {
   let out: MovedEntry[] = [];
@@ -19226,10 +19251,14 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
     }
     let names: string[] = ctx.owned;
     for sd in ctx.structs {
-      if (sd.name == vname && sd.enum_owner.len() > 0) {
+      if (sd.name == vname && sd.enum_owner.len() == 0) {
+        if (binds[0] != "_" && !util.has_str(names, binds[0])) {
+          names = names.append(binds[0]);
+        }
+      } else if (sd.name == vname && sd.enum_owner.len() > 0) {
         let i: i32 = 0;
         while (i < binds.len() && i < sd.fields.len()) {
-          if (binds[i].len() > 0 && ow_type_is_pointer_name(sd.fields[i].type_name, ctx.ofuncs)
+          if (binds[i].len() > 0 && binds[i] != "_" && ow_type_is_pointer_name(sd.fields[i].type_name, ctx.ofuncs)
             && !util.has_str(names, binds[i])) {
             names = names.append(binds[i]);
           }

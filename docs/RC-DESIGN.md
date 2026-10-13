@@ -49,6 +49,13 @@ whose kinds are semantic (`record_get`, `tuple_new`, `append`, `with`,
 `append` and `with` answer a new container, and the physical question of
 whether that container is the old buffer written in place is the plan's.
 
+A struct-union's member IS its box, so a match arm's binding is the scrutinee
+narrowed (`variant_as`), and a field read of that binding is lowered as a
+payload read of the scrutinee (`variant_get`), the shape a declared enum's arm
+has. The narrowed value itself appears only where the arm uses the member
+whole. That is what lets the plan below take a member's fields out of an owned
+scrutinee and rebuild the member in the scrutinee's box.
+
 `ssasem.analyze` derives from the graph, and never accepts as a sidecar, the
 **dependencies** between values: a projection (`record_get`, `tuple_get`,
 `array_get`) is anchored to the container it reads, a value that gathers views
@@ -189,8 +196,9 @@ for every plan ownership inference tries):
   blocks holding it, the constructions it is handed to, the edges leaving
   its ways that free it, and the edges on which it arrives null because the
   donor died there as a box of another count. A construction that reads a
-  field back from its donor at the same slot, a record's or a declared
-  variant's, **keeps** the field in place (`Keeps`), and every other take
+  field back from its donor at the same slot, a record's, a declared
+  variant's or a struct-union member's, **keeps** the field in place
+  (`Keeps`), and every other take
   from that donor follows the one uniqueness read the keep makes. A donor
   whose payloads a block takes and which dies in the block with no such
   construction is **classified** (a keep with no construction, `built` -1):

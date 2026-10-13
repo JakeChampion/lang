@@ -77,7 +77,7 @@ pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops
 // derives its own.
 // `fresh_seeded` says `unique_receivers` counted a fresh row's result
 // (`with_fresh`), so a plan reused under another module's rows is proved again.
-pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis, defs: ssa.SInst[], modes: i32[], unit_analysis: ssasem.Analysis, unique_receivers: boolean[], fresh_seeded: boolean, checked_writes: boolean[], links: i32[], reuse: Reuse }
+pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], likely: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis, defs: ssa.SInst[], modes: i32[], unit_analysis: ssasem.Analysis, unique_receivers: boolean[], fresh_seeded: boolean, checked_writes: boolean[], links: i32[], reuse: Reuse }
 
 struct Ledger { ok: boolean, why: string, bits: boolean[] }
 
@@ -389,7 +389,7 @@ function plan_callers(kix: util.NameIndex, funcs: ssasem.Func[], plans: Plan[]):
 }
 
 function bad(why: string): Plan {
-  return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], analysis: ssasem.refused_analysis(why), defs: [], modes: [], unit_analysis: ssasem.refused_analysis(why), unique_receivers: [], fresh_seeded: false, checked_writes: [], links: [], reuse: no_reuse() };
+  return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], likely: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], analysis: ssasem.refused_analysis(why), defs: [], modes: [], unit_analysis: ssasem.refused_analysis(why), unique_receivers: [], fresh_seeded: false, checked_writes: [], links: [], reuse: no_reuse() };
 }
 
 pub function refused(why: string): Plan {
@@ -1724,7 +1724,7 @@ function tuple_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs:
 // `reflow` marks a take whose box is released alone (`shell_root`), or whose
 // box was live out of the read's block only as the taken value's anchor: that
 // box has to die at the read, which the flow derived before the take cannot say.
-struct Units { owned: boolean[], parents: i32[][], deps: i32[][], takes: i32[], held: boolean[], payloads: boolean[], reflow: boolean }
+struct Units { owned: boolean[], parents: i32[][], deps: i32[][], takes: i32[], held: boolean[], payloads: boolean[], reflow: boolean, likely: boolean[] }
 
 // The payload takes are derived FIRST and folded into ownership before the
 // other two run: a taken payload is a unit of this frame's own, and the tuple
@@ -1736,6 +1736,7 @@ struct Units { owned: boolean[], parents: i32[][], deps: i32[][], takes: i32[], 
 function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa.SInst[]): Units {
   let pt: PayloadTakes = payload_takes(f, a, base, defs);
   let payloads: boolean[] = pt.taken;
+  let likely: boolean[] = pt.likely;
   let owned: boolean[] = base;
   let i: i32 = 0;
   while (i < payloads.len()) {
@@ -1787,7 +1788,7 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
   if (reflow) {
     deps = through_takes(parents, deps, takes, held, payloads);
   }
-  return Units { owned: owned, parents: parents, deps: deps, takes: takes, held: held, payloads: payloads, reflow: reflow };
+  return Units { owned: owned, parents: parents, deps: deps, takes: takes, held: held, payloads: payloads, reflow: reflow, likely: likely };
 }
 
 // A value read through one that became a unit of its own reaches the storage
@@ -2078,7 +2079,7 @@ function other_payload_get(ins: ssa.SInst, root: i32, slot: i32): boolean {
 // The builtin Option layout is refused: its box is a tag word and one payload
 // word the physical lowering reads with `op_opt_payload`, which has no store
 // form to null the slot with.
-function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32): i32 {
+function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], spec: boolean[], defs: ssa.SInst[], bi: i32, pos: i32): i32 {
   let none: i32 = 0 - 1;
   let ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
   let field: boolean = ins.kind_tag == ssasem.record_get();
@@ -2098,6 +2099,12 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs
   }
   let root: i32 = ins.args[0];
   if (root < 0 || root >= f.graph.nvals || root >= owned.len() || root >= defs.len()) {
+    return none;
+  }
+  // A struct-union's members live in the arrays and records that hold a
+  // program's tokens, nodes and types, so a member read out of one is shared
+  // with its holder; its take would test the box and retain every time.
+  if (ins.kind_tag == ssasem.variant_get() && !spec[root] && member_union(f, f.values[root])) {
     return none;
   }
   // A tuple this frame built is `tuple_take_field`'s, which nulls without
@@ -2430,12 +2437,13 @@ function option_layout(f: ssasem.Func, t: typeinfo.Type): boolean {
 // flow derived before the take — the taken value leaves the block, and the box
 // stayed live only as its anchor — so the flow has to be derived again for the
 // box to die at the read.
-struct PayloadTakes { taken: boolean[], crossing: boolean }
+struct PayloadTakes { taken: boolean[], crossing: boolean, likely: boolean[] }
 
 function payload_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[]): PayloadTakes {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
   let crossing: boolean = false;
   let own: boolean[] = owned;
+  let spec: boolean[] = likely_unique(f, defs);
   let grown: boolean = true;
   while (grown) {
     grown = false;
@@ -2445,10 +2453,11 @@ function payload_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], def
       while (pos < f.graph.blocks[bi].insts.len()) {
         let v: i32 = f.graph.blocks[bi].insts[pos].result;
         if (v >= 0 && v < out.len() && !out[v]) {
-          let root: i32 = payload_root(f, a, own, defs, bi, pos);
+          let root: i32 = payload_root(f, a, own, spec, defs, bi, pos);
           if (root >= 0) {
             out = out.with(v, true);
             own = own.with(v, true);
+            spec = spec.with(v, true);
             crossing = crossing || ssalive.live_out_has(a.flow, bi, root);
             grown = true;
           }
@@ -2458,7 +2467,61 @@ function payload_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], def
       bi = bi + 1;
     }
   }
-  return PayloadTakes { taken: out, crossing: crossing };
+  return PayloadTakes { taken: out, crossing: crossing, likely: spec };
+}
+
+// Whether `t` is a struct-union: a union whose variants are its members' own
+// boxes.
+function member_union(f: ssasem.Func, t: typeinfo.Type): boolean {
+  let e: i32 = semrecords.find_enum(f.enums, t);
+  return e >= 0 && f.enums[e].layout == semrecords.layout_member();
+}
+
+// Whether each value's box is plausibly this frame's alone where it is read: a
+// parameter declared `own`, whose callers hand over a fresh value, another
+// owned one or a local at its last use (E051), a construction, or a phi or
+// copy of such values alone. A projection read holds a retained reference
+// out of a container that still holds its own, so its box is shared where it
+// is read, until a payload take makes it the frame's; a call's result may be
+// one the callee handed out of its own holder; and a parameter the ownership
+// inference made owned is fed by whatever its callers last read, a retained
+// field as often as not. A speculation on a box shared by construction — a
+// payload take, a reuse pairing, an inline drop of a known variant — pays its
+// uniqueness test and loses it every time, and carries the code of the arm it
+// never takes: over the compiler's own sources that cost 2.4% of a compile.
+function likely_unique(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
+  let out: boolean[] = __alloc_bool(f.graph.nvals);
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      let k: i32 = ins.kind_tag;
+      if (ins.result >= 0 && ins.result < out.len()) {
+        let yes: boolean = k == 7 || k == 8;
+        if (k == 6) {
+          yes = ins.str == "own";
+        } else if (!yes && k < 0) {
+          yes = construction(k);
+        }
+        out = out.with(ins.result, yes);
+      }
+    }
+  }
+  let changed: boolean = true;
+  while (changed) {
+    changed = false;
+    for b in f.graph.blocks {
+      for ins in b.insts {
+        if ((ins.kind_tag == 7 || ins.kind_tag == 8) && ins.result >= 0 && ins.result < out.len() && out[ins.result]) {
+          for arg in ins.args {
+            if (arg >= 0 && arg < out.len() && !out[arg] && out[ins.result]) {
+              out = out.with(ins.result, false);
+              changed = true;
+            }
+          }
+        }
+      }
+    }
+  }
+  return out;
 }
 
 // The record whose field buffer the append, with or string append at (`bi`,
@@ -2735,7 +2798,7 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
     return bad(why);
   }
   let consts: string[] = constants(f, defs);
-  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: unique_receivers(f, steps, consts, no_fresh()), fresh_seeded: false, checked_writes: checked_writes(f), links: [], reuse: no_reuse() };
+  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, likely: units.likely, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: unique_receivers(f, steps, consts, no_fresh()), fresh_seeded: false, checked_writes: checked_writes(f), links: [], reuse: no_reuse() };
 }
 
 // without_constant_drops is `p` less its drops of static boxes, whose count is
@@ -3663,7 +3726,7 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
 pub struct Reuse { pairs: ReusePairs[], keeps: Keeps[], carry: Carry, reads: VariantReads }
 
 pub function no_reuse(): Reuse {
-  return Reuse { pairs: [], keeps: [], carry: no_carry(), reads: VariantReads { at: [], dom: ssadeps.Dom { pre: [], post: [], idom: [], by_clock: [] }, sites: [], names: [] } };
+  return Reuse { pairs: [], keeps: [], carry: no_carry(), reads: VariantReads { at: [], dom: ssadeps.Dom { pre: [], post: [], idom: [], by_clock: [] }, sites: [], names: [], shared: [] } };
 }
 
 // reuse_layer_disabled: the #4350 §6.5 differential switch. When
@@ -3696,7 +3759,7 @@ pub function with_reuse(f: ssasem.Func, p: Plan): Plan {
   let idx: i32[][] = step_index(p);
   let links: i32[] = links_of(f, p, idx);
   let off: boolean = reuse_layer_disabled();
-  let vr: VariantReads = variant_reads(f);
+  let vr: VariantReads = variant_reads(f, p);
   let carry: Carry = carried_pairs(f, p, idx, links, off, vr);
   let uses: ssasem.Uses = p.analysis.uses;
   let pairs: ReusePairs[] = [];
@@ -3910,11 +3973,12 @@ function union_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
   return n + 1;
 }
 
-// The slots one variant of a declared enum builds: its shape word and one per
-// field, as `struct_make` allocates them. -1 for any other layout.
+// The slots one variant of a declared enum, or one member of a struct-union,
+// builds: its shape word and one per field, as `struct_make` allocates them.
+// -1 for the builtin Option layout.
 function variant_slots(t: typeinfo.Type, name: string, f: ssasem.Func): i32 {
   let at: i32 = semrecords.find_enum(f.enums, t);
-  if (at < 0 || f.enums[at].layout != semrecords.layout_variant()) {
+  if (at < 0 || f.enums[at].layout == semrecords.layout_option()) {
     return 0 - 1;
   }
   let v: i32 = semrecords.find_variant(f.enums[at], name);
@@ -3950,6 +4014,9 @@ pub function known_variant(vr: VariantReads, b: ssa.SBlock, d: i32): string {
   if (d < 0 || d >= vr.sites.len() || b.id < 0 || b.id >= vr.at.len() || vr.at[b.id] < 0) {
     return "";
   }
+  if (d < vr.shared.len() && vr.shared[d]) {
+    return "";
+  }
   let bp: i32 = vr.at[b.id];
   let k: i32 = 0;
   while (k < vr.sites[d].len()) {
@@ -3963,12 +4030,15 @@ pub function known_variant(vr: VariantReads, b: ssa.SBlock, d: i32): string {
 
 // Where each value's payloads are read: the blocks' positions by id, the
 // dominator tree, and per value the positions of the blocks reading one of
-// its payloads and the variant each read names.
-pub struct VariantReads { at: i32[], dom: ssadeps.Dom, sites: i32[][], names: string[][] }
+// its payloads and the variant each read names. `shared` marks a struct-union
+// value whose box is shared where it is read (`likely_unique`): its variant is
+// not reported, so nothing speculates on its box.
+pub struct VariantReads { at: i32[], dom: ssadeps.Dom, sites: i32[][], names: string[][], shared: boolean[] }
 
-function variant_reads(f: ssasem.Func): VariantReads {
+function variant_reads(f: ssasem.Func, p: Plan): VariantReads {
   let sites: i32[][] = [];
   let names: string[][] = [];
+  let shared: boolean[] = __alloc_bool(f.values.len());
   while (sites.len() < f.values.len()) {
     sites = sites.append([]);
     names = names.append([]);
@@ -3978,13 +4048,16 @@ function variant_reads(f: ssasem.Func): VariantReads {
     for ins in b.insts {
       if (ins.kind_tag == ssasem.variant_get() && ins.args.len() == 1 && ins.args[0] >= 0 && ins.args[0] < sites.len()) {
         let v: i32 = ins.args[0];
+        if (sites[v].len() == 0 && !(v < p.likely.len() && p.likely[v]) && !(v < p.payloads.len() && p.payloads[v]) && member_union(f, f.values[v])) {
+          shared = shared.with(v, true);
+        }
         sites = sites.with(v, sites[v].append(bi));
         names = names.with(v, names[v].append(ins.str));
       }
     }
     bi = bi + 1;
   }
-  return VariantReads { at: ssa.block_positions(f.graph), dom: ssadeps.dominates(f.graph), sites: sites, names: names };
+  return VariantReads { at: ssa.block_positions(f.graph), dom: ssadeps.dominates(f.graph), sites: sites, names: names, shared: shared };
 }
 
 // The slots a construction claims, or -1 where it is not one a token can be
@@ -4619,7 +4692,7 @@ function keep_slots(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, ins: s
     // A counted read keeps exactly one unit: one taken AND retained at the
     // construction holds two, and keeping in place stands in for one. A
     // scalar read has no unit and is kept as it stands.
-    let read: boolean = rebuilt_read(ins, get, donor);
+    let read: boolean = rebuilt_read(f, ins, get, donor);
     let counted: boolean = read && ssasem.reference(f.values[get.result]);
     let kept: boolean = false;
     if (read && (!counted || payload_taken(f, p, get) != util.index_of_i32(retained, get.result) >= 0)) {
@@ -4670,8 +4743,12 @@ pub function no_keeps(): Keeps {
 }
 
 // A construction that can be built in its donor's box as it stands: a record
-// of the donor's type, or a variant of a declared enum.
+// of the donor's type, a variant of a declared enum, or a member of the
+// struct-union the donor is.
 function rebuilds(f: ssasem.Func, ins: ssa.SInst, donor: i32): boolean {
+  if (ins.kind_tag == ssasem.record_new() && member_of(f, ins, donor) != "") {
+    return true;
+  }
   if (!semtypes.equal(f.values[ins.result], f.values[donor])) {
     return false;
   }
@@ -4682,12 +4759,31 @@ function rebuilds(f: ssasem.Func, ins: ssa.SInst, donor: i32): boolean {
   return ins.kind_tag == ssasem.variant_new() && e >= 0 && f.enums[e].layout == semrecords.layout_variant();
 }
 
+// The member a record construction builds of the struct-union `donor` is, or
+// "". A member's box is the union's, so the construction lays its fields out
+// as a payload read of the union names them.
+function member_of(f: ssasem.Func, ins: ssa.SInst, donor: i32): string {
+  let e: i32 = semrecords.find_enum(f.enums, f.values[donor]);
+  if (e < 0 || f.enums[e].layout != semrecords.layout_member()) {
+    return "";
+  }
+  if let typeinfo.TypeStruct(r) = f.values[ins.result] {
+    if (r.args.len() == 0 && semrecords.find_variant(f.enums[e], r.name) >= 0) {
+      return r.name;
+    }
+  }
+  return "";
+}
+
 // A read of one of the donor's fields as the construction lays them out.
-function rebuilt_read(ins: ssa.SInst, get: ssa.SInst, donor: i32): boolean {
+function rebuilt_read(f: ssasem.Func, ins: ssa.SInst, get: ssa.SInst, donor: i32): boolean {
   if (get.args.len() != 1 || get.args[0] != donor) {
     return false;
   }
   if (ins.kind_tag == ssasem.record_new()) {
+    if (get.kind_tag == ssasem.variant_get()) {
+      return get.str == member_of(f, ins, donor);
+    }
     return get.kind_tag == ssasem.record_get();
   }
   return get.kind_tag == ssasem.variant_get() && get.str == ins.str;

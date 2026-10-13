@@ -14223,6 +14223,22 @@ func (c *checker) selfReassignOwnMoveArg(asn *ast.Assign) *ast.Ident {
 	return selfReassignOwnMoveArgWith(asn, c.callOwnFlags[call])
 }
 
+// FieldMoveLiteral is the struct literal a store or return of `e` writes, for
+// the superseded-field move: `e` itself, or the one argument of the variant
+// call a member literal is wrapped in when it is stored or returned as its
+// struct-union (maybeWrapForUnion). Nil for any other value.
+func FieldMoveLiteral(e ast.Expr) *ast.StructLit {
+	if sl, ok := e.(*ast.StructLit); ok {
+		return sl
+	}
+	if call, ok := e.(*ast.Call); ok && call.IsVariantCall && len(call.Args) == 1 {
+		if sl, ok := call.Args[0].(*ast.StructLit); ok {
+			return sl
+		}
+	}
+	return nil
+}
+
 // SupersededFieldOwnMoveArgs recognizes the #8186 field-move shape on a
 // struct self-update whose base is `target` — `target = S { ...target, f:
 // g(.., target.f, ..) }`, or the same literal returned — and returns every
@@ -14750,7 +14766,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				// g(..., x.f, ...) }` with x an `own` param or a local. The
 				// store supersedes the field the call consumes.
 				if id, ok := asn.Target.(*ast.Ident); ok && !borrowedParam[id.Name] {
-					if sl, isLit := asn.Value.(*ast.StructLit); isLit {
+					if sl := FieldMoveLiteral(asn.Value); sl != nil {
 						for _, arg := range SupersededFieldOwnMoveArgs(sl, id.Name, c.ownFuncs) {
 							selfMoveArgs[arg] = true
 						}
@@ -14768,7 +14784,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		case *ast.Return:
 			// The return form of the superseded-field move (#8186): nothing
 			// runs after the return, so the field cannot be read back.
-			if sl, isLit := x.Value.(*ast.StructLit); isLit && sl.Base != nil {
+			if sl := FieldMoveLiteral(x.Value); sl != nil && sl.Base != nil {
 				if bid, ok := sl.Base.(*ast.Ident); ok && !borrowedParam[bid.Name] {
 					for _, arg := range SupersededFieldOwnMoveArgs(sl, bid.Name, c.ownFuncs) {
 						selfMoveArgs[arg] = true
@@ -14821,18 +14837,30 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 			for _, arm := range x.Arms {
 				armMoved := cloneMoved(moved)
-				var added []string
-				if scrutOwned {
-					for i, bname := range arm.Bindings {
-						if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil &&
-							ast.IsPointerType(arm.BindingTypes[i]) && !owned[bname] {
+				var added, lent []string
+				for i, bname := range arm.Bindings {
+					if bname == "" || bname == "_" || i >= len(arm.BindingTypes) || arm.BindingTypes[i] == nil ||
+						!ast.IsPointerType(arm.BindingTypes[i]) {
+						continue
+					}
+					if scrutOwned {
+						if !owned[bname] {
 							owned[bname] = true
 							added = append(added, bname)
 						}
+					} else if !borrowedParam[bname] {
+						// A pointer binding of a BORROWED scrutinee reads the
+						// caller's box: a field moved out of it would be read
+						// back, as out of a borrowed parameter.
+						borrowedParam[bname] = true
+						lent = append(lent, bname)
 					}
 				}
 				if arm.Body != nil {
 					walkStmts(arm.Body.Stmts, armMoved)
+				}
+				for _, bname := range lent {
+					delete(borrowedParam, bname)
 				}
 				for _, bname := range added {
 					delete(owned, bname)

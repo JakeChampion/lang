@@ -1039,3 +1039,69 @@ function take(own flags: boolean[]): i32 { return flags.len(); }
     return n + k + flags.len();
 }`)
 }
+
+// A struct-union member's binding is the scrutinee's own box: owned on an
+// owned scrutinee, bare or through the superseded-field move, and lent on a
+// borrowed one. A member literal returned or stored as its union is wrapped
+// in the member's variant call, and is still the move's literal.
+const memberUnionPrelude = `struct Node { xs: i32[], tag: i32 }
+struct Leaf { v: i32 }
+type Tree = Leaf | Node;
+function grow(own xs: i32[]): i32[] { return xs.append(1); }
+function consume(own n: Node): i32 { return n.xs.len(); }
+`
+
+func TestOwnGuardMemberBindingOfOwnedScrutinee(t *testing.T) {
+	wantOK(t, "member-field-move", memberUnionPrelude+`
+function bump(own t: Tree): Tree {
+    match (t) {
+        Leaf(l) => { return Leaf { ...l, v: l.v + 1 }; },
+        Node(n) => { return Node { ...n, xs: grow(n.xs) }; }
+    }
+}`)
+	wantOK(t, "member-bare", memberUnionPrelude+`
+function bump(own t: Tree): i32 {
+    match (t) {
+        Leaf(l) => { return l.v; },
+        Node(n) => { return consume(n); }
+    }
+}`)
+	wantOK(t, "member-literal-returned-as-union", memberUnionPrelude+`
+function bump(own n: Node): Tree { return Node { ...n, xs: grow(n.xs) }; }`)
+	// A store's literal must have the store's target as its base for the
+	// store to supersede the moved field; a member stored as its union has
+	// another name as its target, so its base is not superseded and the
+	// move stays refused.
+	wantE051(t, "member-literal-stored-under-another-name", memberUnionPrelude+`
+function bump(own n: Node): Tree {
+    let t: Tree = Leaf { v: 0 };
+    t = Node { ...n, xs: grow(n.xs) };
+    return t;
+}`)
+}
+
+func TestOwnGuardMemberBindingOfBorrowedScrutinee(t *testing.T) {
+	wantE051(t, "member-field-move", memberUnionPrelude+`
+function bump(t: Tree): Tree {
+    match (t) {
+        Leaf(l) => { return Leaf { ...l, v: l.v + 1 }; },
+        Node(n) => { return Node { ...n, xs: grow(n.xs) }; }
+    }
+}`)
+	wantE051(t, "member-bare", memberUnionPrelude+`
+function bump(t: Tree): i32 {
+    match (t) {
+        Leaf(l) => { return l.v; },
+        Node(n) => { return consume(n); }
+    }
+}`)
+	wantE051(t, "payload-field-move", `struct Cfi { rules: i32[] }
+enum Box { Full(Cfi), Empty }
+function grow(own xs: i32[]): i32[] { return xs.append(1); }
+function bump(b: Box): Box {
+    match (b) {
+        Full(c) => { return Full(Cfi { ...c, rules: grow(c.rules) }); },
+        Empty => { return Empty; }
+    }
+}`)
+}

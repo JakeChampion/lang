@@ -597,6 +597,13 @@ function leaf_word(f: ssasem.Func, t: typeinfo.Type): boolean {
   return ssasem.reference(t) && !ssasem.holds_view(f, t);
 }
 
+// A payload read of a struct-union member is a field read of the member's
+// record, which `leaf_body` holds to a record field read's rule.
+function member_read(f: ssasem.Func, ins: ssa.SInst): boolean {
+  let e: i32 = semrecords.find_enum(f.enums, f.values[ins.args[0]]);
+  return e >= 0 && f.enums[e].layout == semrecords.layout_member();
+}
+
 function leaf_kind(k: i32): boolean {
   return k >= 1 && k <= 10 && k != 5 || k == ssasem.cast() || k == ssasem.tuple_new() || k == ssasem.tuple_get()
     || k == ssasem.record_get() || k == ssasem.variant_is() || k == ssasem.variant_get() || k == ssasem.variant_new()
@@ -822,7 +829,7 @@ function leaf_body(f: ssasem.Func, ignored: i32): boolean {
       if (!leaf_kind(ins.kind_tag) && !(ins.kind_tag == ssasem.call() && ssasem.scalar_primitive(ins.str))) {
         return false;
       }
-      if (ins.kind_tag == ssasem.record_get() && !scalar(f.values[ins.result])) {
+      if ((ins.kind_tag == ssasem.record_get() || ins.kind_tag == ssasem.variant_get() && member_read(f, ins)) && !scalar(f.values[ins.result])) {
         return false;
       }
       if (ins.kind_tag == ssasem.param()) {
