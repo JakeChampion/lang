@@ -96,6 +96,7 @@ var stdModuleReach = map[string]string{
 	"std/peg":           "",
 	"std/platform":      "config,env,fs,host,log,now,random,reactor,tcp,unix",
 	"std/pmap":          "",
+	"std/protobuf":      "",
 	"std/pset":          "",
 	"std/pvec":          "",
 	"std/publicsuffix":  "",

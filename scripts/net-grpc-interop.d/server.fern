@@ -1,0 +1,424 @@
+// The server the gRPC interop suite drives (grpc/grpc's
+// doc/interop-test-descriptions.md): grpc.testing.TestService on std/serve
+// with HTTP/2 and streamed bodies, the messages read and written with
+// std/protobuf and framed with std/http/grpc. Unary and server-streaming
+// calls answer from the whole request; a client-streaming call sums the
+// payloads it is sent; the full-duplex call answers each request message
+// as it arrives through a producer reading the body stream, which is how
+// ping_pong flows. An unknown method or service is UNIMPLEMENTED, and a
+// request's EchoStatus is echoed as the call's status.
+import "std/headers";
+import "std/http";
+import "std/http/grpc";
+import "std/platform";
+import "std/protobuf";
+import "std/serve";
+import "std/tls/identity";
+import "std/tls/server";
+import "core/int";
+
+// A Payload of `size` zero bytes of type COMPRESSABLE (0), as a message's
+// bytes.
+function payload(size: i32): u8[] {
+  let body: u8[] = __alloc_u8(size);
+  __arr_set_len(body, size);
+  return protobuf.varint_field(1, 0 as i64).concat(protobuf.bytes_field(2, body));
+}
+
+// payload_size is the size of the Payload a message carries in field
+// `number`, 0 for none.
+function payload_size(fields: protobuf.Field[], number: i32): i32 {
+  match (protobuf.bytes(fields, number)) {
+    Some(bs) => {
+      match (protobuf.decode(bs)) {
+        Ok(inner) => {
+          match (protobuf.bytes(inner, 2)) {
+            Some(body) => {
+              return body.len();
+            },
+            None => {
+              return 0;
+            }
+          }
+        },
+        Err(e) => {
+          return 0;
+        }
+      }
+    },
+    None => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+// echo_status is the EchoStatus a request asks the call to end with
+// (field 7: code 1, message 2), None for none.
+function echo_status(fields: protobuf.Field[]): Option[(i32, string)] {
+  match (protobuf.bytes(fields, 7)) {
+    Some(bs) => {
+      match (protobuf.decode(bs)) {
+        Ok(inner) => {
+          let code: i32 = 0;
+          match (protobuf.varint(inner, 1)) {
+            Some(c) => {
+              code = c as i32;
+            },
+            None => {}
+          }
+          let message: string = "";
+          match (protobuf.bytes(inner, 2)) {
+            Some(m) => {
+              message = string_from_bytes_unchecked(m);
+            },
+            None => {}
+          }
+          return Some((code, message));
+        },
+        Err(e) => {
+          return None;
+        }
+      }
+    },
+    None => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// messages is every framed message in a whole body.
+function messages(body: u8[]): u8[][] {
+  let out: u8[][] = [];
+  let rest: u8[] = body;
+  while (true) {
+    match (grpc.next_message(rest)) {
+      Ok(got) => {
+        match (got) {
+          Some(m) => {
+            out = out.append(m.0);
+            rest = m.1;
+          },
+          None => {
+            return out;
+          }
+        }
+      },
+      Err(e) => {
+        return out;
+      }
+    }
+  }
+  return out;
+}
+
+function first_message(body: u8[]): u8[] {
+  let all: u8[][] = messages(body);
+  if (all.len() == 0) {
+    return [];
+  }
+  return all[0];
+}
+
+// unary answers UnaryCall: a SimpleResponse whose payload has the size the
+// request asked for, or the status its EchoStatus asked for.
+function unary(body: u8[]): HttpResponse {
+  match (protobuf.decode(first_message(body))) {
+    Ok(fields) => {
+      match (echo_status(fields)) {
+        Some(st) => {
+          return grpc.error(st.0, st.1);
+        },
+        None => {}
+      }
+      let size: i32 = 0;
+      match (protobuf.varint(fields, 2)) {
+        Some(n) => {
+          size = n as i32;
+        },
+        None => {}
+      }
+      return grpc.response([protobuf.bytes_field(1, payload(size))], grpc.OK, "");
+    },
+    Err(e) => {
+      return grpc.error(grpc.INVALID_ARGUMENT, e);
+    }
+  }
+  return grpc.error(grpc.INTERNAL, "");
+}
+
+// input_stream answers StreamingInputCall: the payload sizes summed.
+function input_stream(body: u8[]): HttpResponse {
+  let total: i32 = 0;
+  for m in messages(body) {
+    match (protobuf.decode(m)) {
+      Ok(fields) => {
+        total = total + payload_size(fields, 1);
+      },
+      Err(e) => {}
+    }
+  }
+  return grpc.response([protobuf.varint_field(1, total as i64)], grpc.OK, "");
+}
+
+// output_responses is the StreamingOutputCallResponses a request's
+// response_parameters ask for, one per entry with its size.
+function output_responses(fields: protobuf.Field[]): u8[][] {
+  let out: u8[][] = [];
+  for p in protobuf.repeated(fields, 2) {
+    match (protobuf.decode(p)) {
+      Ok(param) => {
+        let size: i32 = 0;
+        match (protobuf.varint(param, 1)) {
+          Some(n) => {
+            size = n as i32;
+          },
+          None => {}
+        }
+        out = out.append(protobuf.bytes_field(1, payload(size)));
+      },
+      Err(e) => {}
+    }
+  }
+  return out;
+}
+
+// output_stream answers StreamingOutputCall from the whole request.
+function output_stream(body: u8[]): HttpResponse {
+  match (protobuf.decode(first_message(body))) {
+    Ok(fields) => {
+      match (echo_status(fields)) {
+        Some(st) => {
+          return grpc.error(st.0, st.1);
+        },
+        None => {}
+      }
+      return grpc.response(output_responses(fields), grpc.OK, "");
+    },
+    Err(e) => {
+      return grpc.error(grpc.INVALID_ARGUMENT, e);
+    }
+  }
+  return grpc.error(grpc.INTERNAL, "");
+}
+
+// duplex answers FullDuplexCall as the requests arrive. The first request
+// message is read before the response is built, since it may carry the
+// EchoStatus the call ends with and the trailers are fixed when the
+// response is; the rest are answered by a producer over the body stream,
+// each message's responses framed as it comes, the body ending when the
+// request's does. The handler parks reading the first message, as its
+// producer parks reading the rest.
+function duplex(req: HttpRequest): HttpResponse {
+  let source: Option[BodySource] = req.body.source;
+  let empty: u8[] = [];
+  let carry: Cell[u8[]] = cell_new(empty);
+  let status: Cell[i32] = cell_new(grpc.OK);
+  let message: Cell[string] = cell_new("");
+  let first: Option[u8[]] = duplex_next(source, carry, status, message);
+  let producer: ChunkProducer = ChunkProducer { next: (i: i32): Option[u8[]] => duplex_step(i, first, source, carry, status, message), idle_ms: 0, filler: [] };
+  return HttpResponse { status: 200, body: BodyChunks(producer), headers: grpc.headers(), trailers: grpc.status(status.get(), message.get()), background: None };
+}
+
+// duplex_step is the producer's chunk `i`: the first message's responses,
+// read before the response was built, then each message after it.
+function duplex_step(i: i32, first: Option[u8[]], source: Option[BodySource], carry: Cell[u8[]], status: Cell[i32], message: Cell[string]): Option[u8[]] {
+  if (i == 0) {
+    return first;
+  }
+  return duplex_next(source, carry, status, message);
+}
+
+// duplex_next is the producer's step: the next whole request message
+// answered, more body read when none is whole yet, None at the end.
+function duplex_next(source: Option[BodySource], carry: Cell[u8[]], status: Cell[i32], message: Cell[string]): Option[u8[]] {
+  while (true) {
+    match (grpc.next_message(carry.get())) {
+      Ok(got) => {
+        match (got) {
+          Some(m) => {
+            carry.set(m.1);
+            return Some(duplex_reply(m.0, status, message));
+          },
+          None => {
+            match (source) {
+              Some(src) => {
+                match (src.next()) {
+                  Some(chunk) => {
+                    carry.set(carry.get().concat(chunk));
+                  },
+                  None => {
+                    return None;
+                  }
+                }
+              },
+              None => {
+                return None;
+              }
+            }
+          }
+        }
+      },
+      Err(e) => {
+        status.set(grpc.UNIMPLEMENTED);
+        message.set(e);
+        return None;
+      }
+    }
+  }
+  return None;
+}
+
+// duplex_reply is the framed responses one request message asks for.
+function duplex_reply(m: u8[], status: Cell[i32], message: Cell[string]): u8[] {
+  match (protobuf.decode(m)) {
+    Ok(fields) => {
+      match (echo_status(fields)) {
+        Some(st) => {
+          status.set(st.0);
+          message.set(st.1);
+        },
+        None => {}
+      }
+      let out: u8[] = [];
+      for r in output_responses(fields) {
+        out = out.concat(grpc.frame(r));
+      }
+      return out;
+    },
+    Err(e) => {
+      status.set(grpc.INVALID_ARGUMENT);
+      message.set(e);
+      return [];
+    }
+  }
+  return [];
+}
+
+// echoed adds the metadata the custom_metadata case asks the server to
+// echo: `x-grpc-test-echo-initial` as a response header and
+// `x-grpc-test-echo-trailing-bin` as a trailer.
+function echoed(req: HttpRequest, resp: HttpResponse): HttpResponse {
+  let out: HttpResponse = resp;
+  match (req.headers.get("x-grpc-test-echo-initial")) {
+    Some(v) => {
+      out = HttpResponse { ...out, headers: out.headers.append("x-grpc-test-echo-initial", v) };
+    },
+    None => {}
+  }
+  match (req.headers.get("x-grpc-test-echo-trailing-bin")) {
+    Some(v) => {
+      out = HttpResponse { ...out, trailers: out.trailers.append("x-grpc-test-echo-trailing-bin", v) };
+    },
+    None => {}
+  }
+  return out;
+}
+
+function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
+  if (!grpc.is_grpc(req)) {
+    return http.text(415, "gRPC only");
+  }
+  return echoed(req, answer(req));
+}
+
+function answer(req: HttpRequest): HttpResponse {
+  if (req.path == "/grpc.testing.TestService/EmptyCall") {
+    return grpc.response([[]], grpc.OK, "");
+  }
+  if (req.path == "/grpc.testing.TestService/UnaryCall") {
+    return unary(req.body_bytes());
+  }
+  if (req.path == "/grpc.testing.TestService/StreamingInputCall") {
+    return input_stream(req.body_bytes());
+  }
+  if (req.path == "/grpc.testing.TestService/StreamingOutputCall") {
+    return output_stream(req.body_bytes());
+  }
+  if (req.path == "/grpc.testing.TestService/FullDuplexCall") {
+    return duplex(req);
+  }
+  if (req.path.starts_with("/grpc.testing.TestService/")) {
+    return grpc.error(grpc.UNIMPLEMENTED, "method not implemented");
+  }
+  return grpc.error(grpc.UNIMPLEMENTED, "unknown service");
+}
+
+function port(): i32 {
+  match (env("PORT")) {
+    Some(p) => {
+      match (int.parse_int_radix(p, 10)) {
+        Some(n) => {
+          return n;
+        },
+        None => {
+          return 8080;
+        }
+      }
+    },
+    None => {
+      return 8080;
+    }
+  }
+  return 8080;
+}
+
+// tls_config is the TLS the server speaks when TLS_CERT and TLS_KEY name
+// a certificate and its key.
+function tls_config(cfg: serve.Config): Result[serve.Config, string] {
+  match (env("TLS_CERT")) {
+    Some(cert_path) => {
+      match (env("TLS_KEY")) {
+        Some(key_path) => {
+          let cert: string = "";
+          match (read_file(cert_path)) {
+            Ok(t) => {
+              cert = t;
+            },
+            Err(e) => {
+              return Err("TLS_CERT could not be read");
+            }
+          }
+          let key: string = "";
+          match (read_file(key_path)) {
+            Ok(t) => {
+              key = t;
+            },
+            Err(e) => {
+              return Err("TLS_KEY could not be read");
+            }
+          }
+          match (identity.from_pem(cert, key)) {
+            Ok(id) => {
+              return Ok(cfg.with_tls(server.config(id)));
+            },
+            Err(e) => {
+              return Err(e.message());
+            }
+          }
+        },
+        None => {
+          return Err("TLS_CERT without TLS_KEY");
+        }
+      }
+    },
+    None => {
+      return Ok(cfg);
+    }
+  }
+  return Ok(cfg);
+}
+
+function main(): i32 {
+  match (tls_config(serve.Config { ...serve.config().with_h2(), stream_bodies: true })) {
+    Ok(cfg) => {
+      return serve.run(port(), cfg, handle);
+    },
+    Err(message) => {
+      eprint(message);
+      return 2;
+    }
+  }
+  return 2;
+}

@@ -59,16 +59,31 @@ pub struct Config {
   budget_frames: i32,
   // The most frames one header block may span.
   header_frames_max: i32,
+  // Whether a request is handed over as soon as its header block is
+  // complete (`Streamed`), its body following as `StreamData` events and
+  // its end as `StreamEnd`, with the windows replenished as the handler
+  // consumes (`consumed`); off, a request is handed over whole at its
+  // END_STREAM.
+  stream_bodies: boolean,
 }
 
 pub function config(): Config {
-  return Config { max_concurrent_streams: 100, initial_window: 65535, max_frame_size: frame.MIN_FRAME_SIZE, max_header_list: 65536, header_table_size: 4096, max_body: http.http_limits().body, reset_budget: 1000, empty_data_budget: 1000, budget_frames: 10000, header_frames_max: 32 };
+  return Config { max_concurrent_streams: 100, initial_window: 65535, max_frame_size: frame.MIN_FRAME_SIZE, max_header_list: 65536, header_table_size: 4096, max_body: http.http_limits().body, reset_budget: 1000, empty_data_budget: 1000, budget_frames: 10000, header_frames_max: 32, stream_bodies: false };
 }
 
 // Event — what a step reports.
 pub enum Event {
   // A whole request on a stream: answer it with `respond(stream, resp)`.
   Request(i32, HttpRequest),
+  // A request handed over at its header block (`Config.stream_bodies`),
+  // its body still to come as `StreamData` and `StreamEnd`; answer it
+  // with `respond`, or with `respond_head`, `write` and `end`.
+  Streamed(i32, HttpRequest),
+  // Body bytes of a streamed request; `consumed(stream, n)` once taken,
+  // so the client's windows are replenished.
+  StreamData(i32, u8[]),
+  // The end of a streamed request's body, with its trailers.
+  StreamEnd(i32, HeaderMap),
   // The client reset a stream with this code. Its handler, if one runs,
   // still answers with `respond` or `reset`, which frees its slot.
   Reset(i32, i32),
@@ -111,6 +126,12 @@ struct __Stream {
   pending: u8[],
   trailers: HeaderMap,
   owes_end: boolean,
+  // Whether the request was handed over at its header block, its body
+  // reported as it comes (`received` counts it against content-length),
+  // and whether the response's body is being written in parts.
+  streaming: boolean,
+  received: i32,
+  producing: boolean,
 }
 
 const AWAITING_PREFACE: i32 = 0;
@@ -451,7 +472,7 @@ function __block_done(r: __Run, stream: i32, block: u8[], end_stream: boolean): 
 // END_STREAM and no pseudo-header.
 function __trailers(r: __Run, at: i32, fields: hpack.Field[], end_stream: boolean): __Run {
   let s: __Stream = r.conn.streams[at];
-  if (!end_stream || s.state != OPEN) {
+  if (!end_stream || s.state != OPEN && s.state != HALF_LOCAL) {
     return __reset_stream(r, s.id, frame.PROTOCOL_ERROR);
   }
   let trailers: HeaderMap = headers.header_map_new();
@@ -460,6 +481,9 @@ function __trailers(r: __Run, at: i32, fields: hpack.Field[], end_stream: boolea
       return __reset_stream(r, s.id, frame.PROTOCOL_ERROR);
     }
     trailers = trailers.append(f.name, f.value);
+  }
+  if (s.streaming) {
+    return __stream_ended(r, at, trailers);
   }
   return __finished(r, at, trailers);
 }
@@ -485,6 +509,9 @@ function __request(r: __Run, stream: i32, fields: hpack.Field[], end_stream: boo
       let with: Conn = Conn { ...opened.conn, streams: opened.conn.streams.append(s) };
       if (end_stream) {
         return __finished(__Run { ...opened, conn: with }, with.streams.len() - 1, headers.header_map_new());
+      }
+      if (c.config.stream_bodies) {
+        return __streamed(__Run { ...opened, conn: with }, with.streams.len() - 1);
       }
       return __Run { ...opened, conn: with };
     },
@@ -513,7 +540,7 @@ function __waiting(c: Conn): i32 {
 // aside), names in lower case, no connection-specific field and `te` only
 // `trailers`; content-length is remembered to check the body against.
 function __parsed(fields: hpack.Field[]): Result[__Stream, string] {
-  let s: __Stream = __Stream { id: 0, state: OPEN, send_window: 0, recv_window: 0, method: "", scheme: "", authority: "", path: "", fields: headers.header_map_new(), body: [], length: 0 - 1, handling: false, reset: false, pending: [], trailers: headers.header_map_new(), owes_end: false };
+  let s: __Stream = __Stream { id: 0, state: OPEN, send_window: 0, recv_window: 0, method: "", scheme: "", authority: "", path: "", fields: headers.header_map_new(), body: [], length: 0 - 1, handling: false, reset: false, pending: [], trailers: headers.header_map_new(), owes_end: false, streaming: false, received: 0, producing: false };
   let regular: boolean = false;
   for f in fields {
     if (f.name.len() == 0) {
@@ -610,7 +637,7 @@ function __data(r: __Run, d: frame.DataFrame): __Run {
     return __reset_stream(r, d.stream, frame.STREAM_CLOSED);
   }
   let s: __Stream = c.streams[at];
-  if (s.state != OPEN) {
+  if (s.state != OPEN && s.state != HALF_LOCAL) {
     return __reset_stream(r, s.id, frame.STREAM_CLOSED);
   }
   let took: i32 = d.data.len() + d.padding;
@@ -634,6 +661,9 @@ function __data(r: __Run, d: frame.DataFrame): __Run {
 function __body_grown(r: __Run, at: i32, d: frame.DataFrame, took: i32): __Run {
   let c: Conn = r.conn;
   let s: __Stream = c.streams[at];
+  if (s.streaming) {
+    return __body_reported(r, at, d, took);
+  }
   if (s.body.len() + d.data.len() > c.config.max_body) {
     return __reset_stream(r, s.id, frame.REFUSED_STREAM);
   }
@@ -643,6 +673,59 @@ function __body_grown(r: __Run, at: i32, d: frame.DataFrame, took: i32): __Run {
     return __finished(next, at, headers.header_map_new());
   }
   return next;
+}
+
+// __body_reported hands a streamed request's DATA on as it comes: the
+// windows are charged and left for `consumed` to replenish, so a handler
+// that reads slowly holds the client to what it has not taken yet. The
+// padding, which no handler can take, is credited back at once.
+function __body_reported(r: __Run, at: i32, d: frame.DataFrame, took: i32): __Run {
+  let c: Conn = r.conn;
+  let s: __Stream = c.streams[at];
+  let grown: __Stream = __Stream { ...s, received: s.received + d.data.len(), recv_window: s.recv_window - took };
+  let next: __Run = __Run { ...r, conn: Conn { ...c, recv_window: c.recv_window - took, streams: c.streams.with(at, grown) } };
+  if (d.padding > 0) {
+    next = __credited(next, at, d.padding, !d.end_stream);
+  }
+  if (d.data.len() > 0) {
+    next = __Run { ...next, events: next.events.append(StreamData(s.id, d.data)) };
+  }
+  if (d.end_stream) {
+    return __stream_ended(next, at, headers.header_map_new());
+  }
+  return next;
+}
+
+// __streamed hands a request over at its header block
+// (`Config.stream_bodies`): the handler runs while the body arrives.
+function __streamed(r: __Run, at: i32): __Run {
+  let c: Conn = r.conn;
+  let s: __Stream = c.streams[at];
+  let fields: HeaderMap = s.fields;
+  if (s.authority.len() > 0 && !fields.has("host")) {
+    fields = fields.append("host", s.authority);
+  }
+  let empty: u8[] = [];
+  let req: HttpRequest = HttpRequest { method: s.method, path: s.path, body: Stream { data: empty, pos: 0, source: None }, headers: fields, trailers: headers.header_map_new() };
+  let handed: __Stream = __Stream { ...s, handling: true, streaming: true };
+  let next: Conn = Conn { ...c, streams: c.streams.with(at, handed), handling: c.handling + 1 };
+  return __Run { ...r, conn: next, events: r.events.append(Streamed(s.id, req)) };
+}
+
+// __stream_ended ends a streamed request's body: what came must be what
+// content-length said; the stream closes when the response has already
+// gone, and awaits it otherwise.
+function __stream_ended(r: __Run, at: i32, trailers: HeaderMap): __Run {
+  let c: Conn = r.conn;
+  let s: __Stream = c.streams[at];
+  if (s.length >= 0 && s.length != s.received) {
+    return __reset_stream(r, s.id, frame.PROTOCOL_ERROR);
+  }
+  let ended: __Run = __Run { ...r, events: r.events.append(StreamEnd(s.id, trailers)) };
+  if (s.state == HALF_LOCAL) {
+    return __Run { ...ended, conn: Conn { ...c, streams: __without(c.streams, at) } };
+  }
+  return __Run { ...ended, conn: Conn { ...c, streams: c.streams.with(at, __Stream { ...s, state: HALF_REMOTE }) } };
 }
 
 // __replenished sends WINDOW_UPDATE for the connection and the stream
@@ -830,7 +913,11 @@ pub function (c: Conn) respond(stream: i32, resp: HttpResponse): Step {
   if (http.http_bodiless(resp.status)) {
     body = [];
   }
-  let enc: hpack.Encoded = freed.encoder.encode(__response_fields(resp, body.len(), resp.trailers.len() > 0));
+  let length: i32 = body.len();
+  if (resp.trailers.len() > 0) {
+    length = 0 - 1;
+  }
+  let enc: hpack.Encoded = freed.encoder.encode(__response_fields(resp, length));
   let last: boolean = body.len() == 0 && resp.trailers.len() == 0;
   let r: __Run = __header_frames(__run(Conn { ...freed, encoder: enc.encoder }), stream, enc.bytes, last);
   let owed: __Stream = __Stream { ...s, handling: false, pending: body, trailers: resp.trailers, owes_end: !last };
@@ -841,10 +928,95 @@ pub function (c: Conn) respond(stream: i32, resp: HttpResponse): Step {
   return __step(__flushed(queued));
 }
 
+// respond_head begins answering the request on `stream` with the
+// response's status and headers, its body to follow through `write` and
+// `end`: for a body produced in parts, under the windows as they open.
+// `resp.body` is ignored, and the stream takes no response until `end`.
+pub function (c: Conn) respond_head(stream: i32, resp: HttpResponse): Step {
+  let at: i32 = __stream_at(c, stream);
+  if (at < 0 || c.phase == CLOSED) {
+    return Step { conn: c, output: [], events: [] };
+  }
+  let s: __Stream = c.streams[at];
+  if (!s.handling) {
+    return Step { conn: c, output: [], events: [] };
+  }
+  let freed: Conn = Conn { ...c, handling: c.handling - 1 };
+  if (s.reset) {
+    return Step { conn: Conn { ...freed, streams: __without(freed.streams, at) }, output: [], events: [] };
+  }
+  let enc: hpack.Encoded = freed.encoder.encode(__response_fields(resp, 0 - 1));
+  let r: __Run = __header_frames(__run(Conn { ...freed, encoder: enc.encoder }), stream, enc.bytes, false);
+  let owed: __Stream = __Stream { ...s, handling: false, pending: [], trailers: headers.header_map_new(), owes_end: true, producing: true };
+  return __step(__Run { ...r, conn: Conn { ...r.conn, streams: r.conn.streams.with(at, owed) } });
+}
+
+// write adds `bytes` to the body a `respond_head` began, sent as the
+// windows allow; `pending(stream)` is how much waits on them.
+pub function (c: Conn) write(stream: i32, bytes: u8[]): Step {
+  let at: i32 = __stream_at(c, stream);
+  if (at < 0 || c.phase == CLOSED || !c.streams[at].producing) {
+    return Step { conn: c, output: [], events: [] };
+  }
+  let s: __Stream = c.streams[at];
+  let grown: __Stream = __Stream { ...s, pending: s.pending.concat(bytes) };
+  return __step(__flushed(__run(Conn { ...c, streams: c.streams.with(at, grown) })));
+}
+
+// end finishes the body a `respond_head` began: what is pending goes as
+// the windows allow, then `trailers` if any and END_STREAM.
+pub function (c: Conn) end(stream: i32, trailers: HeaderMap): Step {
+  let at: i32 = __stream_at(c, stream);
+  if (at < 0 || c.phase == CLOSED || !c.streams[at].producing) {
+    return Step { conn: c, output: [], events: [] };
+  }
+  let s: __Stream = c.streams[at];
+  let ending: __Stream = __Stream { ...s, trailers: trailers, producing: false };
+  return __step(__flushed(__run(Conn { ...c, streams: c.streams.with(at, ending) })));
+}
+
+// pending is how many body bytes `write` has queued on `stream` that the
+// windows have not yet let out, for a producer to pace itself by; 0 for a
+// stream that is not being written.
+pub function (c: Conn) pending(stream: i32): i32 {
+  let at: i32 = __stream_at(c, stream);
+  if (at < 0) {
+    return 0;
+  }
+  return c.streams[at].pending.len();
+}
+
+// consumed replenishes the windows for `n` bytes of a streamed request's
+// body the handler has taken (`StreamData`): the connection's, and the
+// stream's while the client may still send on it.
+pub function (c: Conn) consumed(stream: i32, n: i32): Step {
+  if (c.phase == CLOSED || n <= 0) {
+    return Step { conn: c, output: [], events: [] };
+  }
+  return __step(__credited(__run(c), __stream_at(c, stream), n, true));
+}
+
+// __credited replenishes the windows for `n` bytes: the connection's, and
+// the stream's at `at` when asked and while the client may still send on
+// it.
+function __credited(r: __Run, at: i32, n: i32, stream_too: boolean): __Run {
+  let out: __Run = __send(__Run { ...r, conn: Conn { ...r.conn, recv_window: r.conn.recv_window + n } }, frame.WindowUpdate(0, n));
+  if (!stream_too || at < 0) {
+    return out;
+  }
+  let s: __Stream = out.conn.streams[at];
+  if (s.state != OPEN && s.state != HALF_LOCAL) {
+    return out;
+  }
+  let filled: __Stream = __Stream { ...s, recv_window: s.recv_window + n };
+  return __send(__Run { ...out, conn: Conn { ...out.conn, streams: out.conn.streams.with(at, filled) } }, frame.WindowUpdate(s.id, n));
+}
+
 // __response_fields is the response's header list: `:status` first, then
 // each field in lower case, connection-specific ones dropped (§8.2.2),
-// cookies never indexed, and the body's length when it is known.
-function __response_fields(resp: HttpResponse, body_len: i32, trailers: boolean): hpack.Field[] {
+// cookies never indexed, and the body's length when it is known (`length`
+// below 0 when it is not: trailers follow, or the body comes in parts).
+function __response_fields(resp: HttpResponse, length: i32): hpack.Field[] {
   let out: hpack.Field[] = [hpack.field(":status", int.int_to_string(resp.status))];
   let i: i32 = 0;
   let has_length: boolean = false;
@@ -858,8 +1030,8 @@ function __response_fields(resp: HttpResponse, body_len: i32, trailers: boolean)
     }
     i = i + 1;
   }
-  if (!has_length && !trailers && !http.http_bodiless(resp.status)) {
-    out = out.append(hpack.field("content-length", int.int_to_string(body_len)));
+  if (!has_length && length >= 0 && !http.http_bodiless(resp.status)) {
+    out = out.append(hpack.field("content-length", int.int_to_string(length)));
   }
   return out;
 }
@@ -910,7 +1082,8 @@ function __flushed(r: __Run): __Run {
 }
 
 // __flush_stream sends the stream at `at` as much of its body as both
-// windows and the frame size allow, then its end when the body is gone.
+// windows and the frame size allow, then its end when the body is gone
+// and no more is being written (`producing`).
 function __flush_stream(r: __Run, at: i32): __Run {
   let out: __Run = r;
   while (true) {
@@ -920,13 +1093,16 @@ function __flush_stream(r: __Run, at: i32): __Run {
       return out;
     }
     if (s.pending.len() == 0) {
+      if (s.producing) {
+        return out;
+      }
       return __ended(out, at);
     }
     let n: i32 = __min(__min(s.pending.len(), c.peer_max_frame), __min(s.send_window, c.send_window));
     if (n <= 0) {
       return out;
     }
-    let final: boolean = n == s.pending.len() && s.trailers.len() == 0;
+    let final: boolean = n == s.pending.len() && s.trailers.len() == 0 && !s.producing;
     let sent: __Stream = __Stream { ...s, pending: __rest(s.pending, n), send_window: s.send_window - n };
     out = __send(__Run { ...out, conn: Conn { ...c, send_window: c.send_window - n, streams: c.streams.with(at, sent) } }, frame.Data(frame.DataFrame { stream: s.id, end_stream: final, data: __slice(s.pending, 0, n), padding: 0 }));
     if (final) {

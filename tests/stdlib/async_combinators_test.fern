@@ -71,6 +71,34 @@ function test_gather_empty(): test.TestOutcome {
   return test.assert_eq(got.len(), 0);
 }
 
+// `parks()` says what a task that waits on a descriptor nothing writes to
+// does: parks (Suspended) under a scheduler, returns at its bound (Done)
+// under the blocking fallback.
+function test_parks_agrees(): test.TestOutcome {
+  match (pipe()) {
+    Ok(q) => {
+      let fd: i32 = q.r.fd;
+      let t: async.Task[i32] = async.task_new((): i32 => async.wait_any([fd, 1], 0));
+      let parked: boolean = false;
+      match (async.task_start(t)) {
+        Suspended(w) => {
+          parked = true;
+          let st: async.TaskStatus[i32] = async.task_cancel(t);
+        },
+        _ => {}
+      }
+      async.task_free(t);
+      q.r.close();
+      q.w.close();
+      return test.assert_eq(async.parks(), parked);
+    },
+    Err(e) => {
+      return test.fail("pipe failed");
+    }
+  }
+  return test.fail("unreachable");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("async combinators");
   r = r.it("gather all", test_gather_all);
@@ -78,5 +106,6 @@ function main(): i32 {
   r = r.it("race first ready", test_race_first_ready);
   r = r.it("with_deadline all ready", test_deadline_all_ready);
   r = r.it("gather empty", test_gather_empty);
+  r = r.it("parks agrees with a parked task", test_parks_agrees);
   return r.finish();
 }

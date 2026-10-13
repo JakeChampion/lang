@@ -118,7 +118,9 @@ import "std/i64";
 // core/int — int_to_string for the supervisor's worker-death log
 // lines (the raw exit code, straight to stderr).
 import "core/int";
+import "std/http/grpc";
 import "std/http/h2";
+import "std/http/h2/frame";
 
 // __recv_deadline_default() — default per-request read deadline for the
 // serve loops (10 s): the whole request (headers + body) must arrive
@@ -467,7 +469,10 @@ function __recv_scratch(): u8[] {
 // loop reads each connection's bytes as (`__Framing`). `metrics` is what
 // the loop counts about itself (std/metrics `ServerMetrics`): its cells are
 // shared by every copy of the value, so a count never needs the table back.
-struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], hosts: platform.Host[], tails: __Tail[], tls: __Tls[], framing: __Framing[], last: http.HttpFramed, out: usize, lent: i32, parked: __Flight[], later: (() => void)[], metrics: metrics.ServerMetrics }
+// `pulls` are the streamed HTTP/2 request bodies handlers are reading and
+// `producers` the HTTP/2 response bodies being produced, by connection and
+// stream (`__H2Pull`, `__H2Producer`).
+struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], hosts: platform.Host[], tails: __Tail[], tls: __Tls[], framing: __Framing[], last: http.HttpFramed, out: usize, lent: i32, parked: __Flight[], later: (() => void)[], metrics: metrics.ServerMetrics, pulls: __H2Pull[], producers: __H2Producer[] }
 
 // __Tls — a connection's TLS: none; its session, through which every
 // byte read and written passes; lent to the handler pulling a streamed
@@ -964,7 +969,7 @@ function __flight_filler[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], f
 function __tail_park[D: async.Driver](drv: D, c: __Conns, at: i32, producer: ChunkProducer, index: i32, end: string, t: async.Task[Option[u8[]]], w: async.Wait): __Conns {
   let none: i32[] = [];
   let now: i64 = monotonic_ns();
-  let fl: __Flight = __flight_watch(drv, __Flight { job: Producer(t), wait: w, fd: c.fds[at], set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: __pulling(c, at), idle: __idle_due(producer, now), ends: 0 - 1 as i64, stream: 0, since: 0 - 1 as i64 }, now);
+  let fl: __Flight = __flight_watch(drv, __Flight { job: Producer(t), wait: w, fd: c.fds[at], set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: __pulling(c, at), idle: __idle_due(producer, now), ends: 0 - 1 as i64, stream: 0, since: 0 - 1 as i64, grpc: false }, now);
   match (c.framing[at]) {
     Pulling(b) => {},
     _ => {
@@ -1045,7 +1050,7 @@ function __background_start[D: async.Driver](drv: D, fls: __Flight[], work: () =
     Suspended(w) => {
       let none: i32[] = [];
       let now: i64 = monotonic_ns();
-      return fls.append(__flight_watch(drv, __Flight { job: Background(t), wait: w, fd: 0 - 1, set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: None, idle: 0 - 1 as i64, ends: __bound_ends(opts.background_deadline, now), stream: 0, since: 0 - 1 as i64 }, now));
+      return fls.append(__flight_watch(drv, __Flight { job: Background(t), wait: w, fd: 0 - 1, set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: None, idle: 0 - 1 as i64, ends: __bound_ends(opts.background_deadline, now), stream: 0, since: 0 - 1 as i64, grpc: false }, now));
     },
     _ => {
       async.task_free(t);
@@ -1134,7 +1139,7 @@ function __conns_add(c: __Conns, fd: i32, deadline: i64, peer: i32, host: platfo
     },
     _ => {}
   }
-  return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), keep: c.keep.append(keep), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), hosts: c.hosts.append(host), tails: c.tails.append(NoTail), tls: c.tls.append(tls), framing: c.framing.append(Http1), last: c.last, out: c.out, lent: c.lent, parked: c.parked, later: c.later, metrics: c.metrics };
+  return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), keep: c.keep.append(keep), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), hosts: c.hosts.append(host), tails: c.tails.append(NoTail), tls: c.tls.append(tls), framing: c.framing.append(Http1), last: c.last, out: c.out, lent: c.lent, parked: c.parked, later: c.later, metrics: c.metrics, pulls: c.pulls, producers: c.producers };
 }
 
 // __conns_from_peer(c, peer) — how many open connections the peer holds.
@@ -1191,7 +1196,7 @@ function __conns_remove(c: __Conns, at: i32): __Conns {
     }
     i = i + 1;
   }
-  return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base, send_since: send_since, send_base: send_base, peers: peers, hosts: hosts, tails: tails, tls: tls, framing: framing, last: c.last, out: c.out, lent: 0 - 1, parked: c.parked, later: c.later, metrics: c.metrics };
+  return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base, send_since: send_since, send_base: send_base, peers: peers, hosts: hosts, tails: tails, tls: tls, framing: framing, last: c.last, out: c.out, lent: 0 - 1, parked: c.parked, later: c.later, metrics: c.metrics, pulls: __pulls_without(c.pulls, c.fds[at]), producers: __producers_without(c.producers, c.fds[at]) };
 }
 
 // __conns_timeout(c, now) — the wait's timeout: the milliseconds until the
@@ -1967,8 +1972,16 @@ function __alpn_h2(c: __Conns, at: i32): boolean {
 }
 
 // __h2_config(opts) — the HTTP/2 connection's bounds from the loop's.
-function __h2_config(opts: Config): h2.Config {
-  return h2.Config { ...h2.config(), max_header_list: opts.limits.header_bytes, max_body: opts.limits.body, max_concurrent_streams: opts.max_in_flight };
+function __h2_config(opts: Config, streaming: boolean): h2.Config {
+  return h2.Config { ...h2.config(), max_header_list: opts.limits.header_bytes, max_body: opts.limits.body, max_concurrent_streams: opts.max_in_flight, stream_bodies: streaming };
+}
+
+// __h2_streaming(opts) — whether an HTTP/2 request is handed over at its
+// header block for its handler to read as it arrives: `Config.stream_bodies`,
+// where a handler's pull can park (`async.parks`); the interpreter runs a
+// handler to its end, so there the body is handed over whole.
+function __h2_streaming(opts: Config): boolean {
+  return opts.stream_bodies && async.parks();
 }
 
 // __serve_h2(drv, c, fls, at, handler, opts, stop, eof) — an HTTP/2
@@ -1981,19 +1994,189 @@ function __h2_config(opts: Config): h2.Config {
 // all. The connection closes once the state machine has closed it, or the
 // peer has finished.
 function __serve_h2[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32, handler: (HttpRequest, platform.Host) => HttpResponse, opts: Config, stop: __Stop, eof: boolean): (__Conns, __Flight[]) {
-  let opened: h2.Step = __h2_opened(c, at, opts);
-  let conn: h2.Conn = opened.conn;
+  c = __h2_opened(drv, c, at, opts, true);
+  let step: h2.Step = __h2_fed(c, at);
+  c = __h2_taken(c, at);
+  let answered: __H2Answered = __h2_more(drv, __h2_answered(drv, __H2Answered { conn: step.conn, conns: c, fls: fls, out: step.output }, step.events, at, handler, opts, stop), at);
+  let conn: h2.Conn = answered.conn;
+  let out: u8[] = answered.out;
+  let flights: __Flight[] = answered.fls;
+  let closing: boolean = conn.closed() || eof;
+  c = answered.conns;
+  c = __Conns { ...c, framing: c.framing.with(at, Http2(conn)), keep: c.keep.with(at, !closing) };
+  return __h2_flushed(drv, c, flights, at, out, opts, closing);
+}
+
+// __h2_settled(drv, a, at, opts) — the connection at `at` with the turn's
+// state machine kept and its bytes sent (`__h2_flushed`).
+function __h2_settled[D: async.Driver](drv: D, a: __H2Answered, at: i32, opts: Config): (__Conns, __Flight[]) {
+  let c: __Conns = __Conns { ...a.conns, framing: a.conns.framing.with(at, Http2(a.conn)) };
+  return __h2_flushed(drv, c, a.fls, at, a.out, opts, a.conn.closed());
+}
+
+// __h2_event(drv, c, fls, fd, scratch, handler, opts, stop, clk) — a
+// readiness event on a connection served over HTTP/2: what it brought is
+// read and served, then, when a flight is parked on the connection, the
+// pulls parked on it are woken, each once, and what they took replenishes
+// the client's windows. The order matters: a pull parks on the connection's
+// own descriptor, and the frames its bytes come in must be read before it
+// looks. A connection with nothing parked pays for none of it.
+function __h2_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fd: i32, scratch: u8[], handler: (HttpRequest, platform.Host) => HttpResponse, opts: Config, stop: __Stop, clk: __Clock): (__Conns, __Flight[]) {
+  let ev: (__Conns, i32, boolean) = __serve_event(drv, c, fd, scratch, opts, clk);
+  c = ev.0;
+  if (ev.1 < 0) {
+    return (c, fls);
+  }
+  let served: (__Conns, __Flight[]) = __serve_h2(drv, c, fls, ev.1, handler, opts, stop, ev.2);
+  if (__flight_at(served.1, fd) < 0) {
+    return served;
+  }
+  let woken: (__Conns, __Flight[]) = __h2_pulls_woken(drv, served.0, served.1, fd, opts, clk);
+  return __h2_after_pulls(drv, woken.0, woken.1, fd, opts);
+}
+
+// __h2_pulls_woken(drv, c, fls, fd, opts, clk) — every flight parked on
+// connection `fd` run on, each once: the ones found now, by stream and
+// kind, since a flight that parks again joins the list at its end.
+function __h2_pulls_woken[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fd: i32, opts: Config, clk: __Clock): (__Conns, __Flight[]) {
+  let streams: i32[] = [];
+  let producers: boolean[] = [];
+  for fl in fls {
+    if (fl.stream > 0 && __flight_pair(fl, fd) >= 0) {
+      streams = streams.append(fl.stream);
+      producers = producers.append(__is_producer(fl));
+    }
+  }
+  let i: i32 = 0;
+  while (i < streams.len()) {
+    let fi: i32 = __flight_on_stream(fls, fd, streams[i], producers[i]);
+    if (fi >= 0) {
+      let woke: (__Conns, __Flight[]) = __flight_wake(drv, c, fls, fi, __flight_pair(fls[fi], fd), opts, clk);
+      c = woke.0;
+      fls = woke.1;
+    }
+    i = i + 1;
+  }
+  return (c, fls);
+}
+
+function __is_producer(fl: __Flight): boolean {
+  match (fl.job) {
+    Producer(t) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// __flight_on_stream(fls, fd, stream, producer) — the flight of `stream`
+// on connection `fd`, a producer's or a handler's, -1 for none.
+function __flight_on_stream(fls: __Flight[], fd: i32, stream: i32, producer: boolean): i32 {
+  let i: i32 = 0;
+  while (i < fls.len()) {
+    if (fls[i].fd == fd && fls[i].stream == stream && __is_producer(fls[i]) == producer) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
+// __h2_after_pulls(drv, c, fls, fd, opts) — the windows replenished for
+// what the woken pulls took and the producers run on where the windows
+// opened, the frames sent.
+function __h2_after_pulls[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fd: i32, opts: Config): (__Conns, __Flight[]) {
+  let at: i32 = __conns_index(c, fd);
+  if (at < 0 || c.pulls.len() == 0 && c.producers.len() == 0) {
+    return (c, fls);
+  }
+  match (c.framing[at]) {
+    Http2(conn) => {
+      let a: __H2Answered = __h2_more(drv, __h2_consumed(__H2Answered { conn: conn, conns: c, fls: fls, out: [] }, at), at);
+      if (a.out.len() == 0) {
+        return (__Conns { ...a.conns, framing: a.conns.framing.with(at, Http2(a.conn)) }, a.fls);
+      }
+      return __h2_settled(drv, a, at, opts);
+    },
+    _ => {
+      return (c, fls);
+    }
+  }
+  return (c, fls);
+}
+
+// __h2_fed(c, at) — the bytes buffered on the connection at `at` fed to
+// its HTTP/2 state machine (`__h2_opened` first): the step, its output
+// what the connection has to say.
+function __h2_fed(c: __Conns, at: i32): h2.Step {
   let bytes: u8[] = __bytes_from(c.bufs[at], c.offs[at]);
+  match (c.framing[at]) {
+    Http2(conn) => {
+      return conn.read(bytes);
+    },
+    _ => {}
+  }
+  return h2.Step { conn: h2.server(h2.config()).conn, output: [], events: [] };
+}
+
+// __h2_taken(c, at) — the connection's buffer emptied once its bytes have
+// been fed, and the scratch handed back when it was lent.
+function __h2_taken(c: __Conns, at: i32): __Conns {
   let lent: i32 = c.lent;
   if (lent == at) {
     lent = 0 - 1;
   }
-  c = __Conns { ...c, bufs: c.bufs.with(at, []), offs: c.offs.with(at, 0), lent: lent };
-  let step: h2.Step = conn.read(bytes);
-  let answered: __H2Answered = __h2_answered(drv, __H2Answered { conn: step.conn, conns: c, fls: fls, out: opened.output.concat(step.output) }, step.events, at, handler, opts, stop);
-  conn = answered.conn;
-  c = __Conns { ...answered.conns, framing: answered.conns.framing.with(at, Http2(conn)), keep: answered.conns.keep.with(at, !conn.closed() && !eof) };
-  return __h2_flushed(drv, c, answered.fls, at, answered.out, opts, conn.closed() || eof);
+  return __Conns { ...c, bufs: c.bufs.with(at, []), offs: c.offs.with(at, 0), lent: lent };
+}
+
+// __h2_turn_with(drv, c, at, st, handler, opts, stop, eof, mode) —
+// `__h2_turn` for the stateful loop: each request the step hands over
+// runs the handler with the state, in order, to its answer, as the
+// HTTP/1.1 path runs it (`__serve_step`); nothing parks, since the state
+// threads from one request to the next.
+function __h2_turn_with[D: async.Driver, S](drv: D, c: __Conns, at: i32, st: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), opts: Config, stop: __Stop, eof: boolean, mode: i32): (__Conns, S) {
+  if (mode != H2_SERVED) {
+    return (c, st);
+  }
+  c = __h2_opened(drv, c, at, opts, false);
+  let step: h2.Step = __h2_fed(c, at);
+  c = __h2_taken(c, at);
+  let conn: h2.Conn = step.conn;
+  let out: u8[] = step.output;
+  for e in step.events {
+    match (e) {
+      h2.Request(stream, req) => {
+        let stepped: (__Conns, h2.Conn, S, u8[]) = __h2_step_with(c, at, conn, stream, req, st, handler, opts, stop);
+        c = stepped.0;
+        conn = stepped.1;
+        st = stepped.2;
+        out = out.concat(stepped.3);
+      },
+      _ => {}
+    }
+  }
+  c = __Conns { ...c, framing: c.framing.with(at, Http2(conn)), keep: c.keep.with(at, !conn.closed() && !eof) };
+  let flushed: (__Conns, __Flight[]) = __h2_flushed(drv, c, [], at, out, opts, conn.closed() || eof);
+  return (flushed.0, st);
+}
+
+// __h2_step_with(c, at, conn, stream, req, st, handler, opts, stop) — the
+// request on `stream` answered by the stateful handler (503 for a
+// stopping loop's readiness probe), counted, and written on the stream:
+// the table, the connection, the state and the bytes to send.
+function __h2_step_with[S](c: __Conns, at: i32, conn: h2.Conn, stream: i32, req: HttpRequest, st: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), opts: Config, stop: __Stop): (__Conns, h2.Conn, S, u8[]) {
+  c = __serve_started(c, at);
+  let f: http.HttpFramed = http.HttpFramed { request: req, len: 0, keep_alive: true, version: "HTTP/2" };
+  let stepped: (S, HttpResponse) = (st, http.text(503, ""));
+  if (!__serve_not_ready(f, opts, stop)) {
+    stepped = __serve_step(handler, st, req, c.hosts[at], opts);
+  }
+  c = __serve_count(c, at, req.method, stepped.1.status);
+  let r: h2.Step = conn.respond(stream, stepped.1);
+  return (c, r.conn, stepped.0, r.output);
 }
 
 // __h2_flushed(drv, c, fls, at, out, opts, closing) — `out` sent on the
@@ -2052,43 +2235,60 @@ function __h2_turn[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32
   return (c, fls);
 }
 
-// __http1_parked(c, fls, fd) — the flight parked on connection `fd` while
-// it is HTTP/1.1's, which takes no other request until the flight
-// answers, -1 for none; an HTTP/2 connection's flights park per stream, so
-// an event on it is read as any other and this is -1 for it too.
-function __http1_parked(c: __Conns, fls: __Flight[], fd: i32): i32 {
-  let busy: i32 = __flight_at(fls, fd);
-  if (busy < 0) {
-    return busy;
-  }
+// __h2_framed(c, fd) — whether connection `fd` is served over HTTP/2: its
+// events are read first and its flights woken after (`__h2_event`).
+function __h2_framed(c: __Conns, fd: i32): boolean {
   let at: i32 = __conns_index(c, fd);
   if (at < 0) {
-    return busy;
+    return false;
   }
   match (c.framing[at]) {
     Http2(conn) => {
-      return -1;
+      return true;
     },
     _ => {
-      return busy;
+      return false;
     }
   }
-  return busy;
+  return false;
 }
 
-// __h2_opened(c, at, opts) — the connection's HTTP/2 state machine, or a
-// new one with the SETTINGS it opens with for a connection that just sent
-// the preface.
-function __h2_opened(c: __Conns, at: i32, opts: Config): h2.Step {
+// __flight_event(drv, c, fls, fd, readiness, scratch, opts, clk) — an
+// event that is a flight's: `fd` is one a flight waits on, which is run
+// on, or an HTTP/1.1 connection with a flight parked, which is held
+// (`__serve_held_event`); the work staged by either is taken. False when
+// the event is neither's.
+function __flight_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fd: i32, readiness: i32, scratch: u8[], opts: Config, clk: __Clock): (__Conns, __Flight[], boolean) {
+  let fi: i32 = __flight_index(fls, fd);
+  if (fi >= 0) {
+    let woke: (__Conns, __Flight[]) = __flight_wake(drv, c, fls, fi, __flight_pair(fls[fi], fd), opts, clk);
+    let taken: (__Conns, __Flight[]) = __staged_taken(drv, woke.0, woke.1, opts);
+    return (taken.0, taken.1, true);
+  }
+  let busy: i32 = __flight_at(fls, fd);
+  if (busy >= 0) {
+    let held: (__Conns, __Flight[]) = __serve_held_event(drv, c, fls, busy, fd, readiness, scratch, opts);
+    let taken: (__Conns, __Flight[]) = __staged_taken(drv, held.0, held.1, opts);
+    return (taken.0, taken.1, true);
+  }
+  return (c, fls, false);
+}
+
+// __h2_opened(drv, c, at, opts, streamable) — the connection at `at` with
+// its HTTP/2 state machine: as it is, or a new one for a connection that
+// just sent the preface, whose SETTINGS go out now, its bodies streamed
+// when the loop can take them so (`streamable`, the stateless loop's) and
+// `__h2_streaming` says.
+function __h2_opened[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Config, streamable: boolean): __Conns {
   match (c.framing[at]) {
     Http2(open) => {
-      return h2.Step { conn: open, output: [], events: [] };
+      return c;
     },
-    _ => {
-      return h2.server(__h2_config(opts));
-    }
+    _ => {}
   }
-  return h2.server(__h2_config(opts));
+  let start: h2.Step = h2.server(__h2_config(opts, streamable && __h2_streaming(opts)));
+  c = __Conns { ...c, framing: c.framing.with(at, Http2(start.conn)) };
+  return __serve_send(drv, c, at, start.output, opts).0;
 }
 
 // __H2Answered — an HTTP/2 connection as its requests are answered: the
@@ -2096,13 +2296,403 @@ function __h2_opened(c: __Conns, at: i32, opts: Config): h2.Step {
 // with the handlers that parked, and the bytes to send.
 struct __H2Answered { conn: h2.Conn, conns: __Conns, fls: __Flight[], out: u8[] }
 
+// __H2Body — what the loop and a handler's pull share about a streamed
+// HTTP/2 request body (`h2.Streamed`): the bytes arrived and not yet
+// taken; how it ended, 0 while arriving, 1 ended, 2 reset by the client;
+// the bytes taken since the loop last replenished the windows; the fault a
+// reset leaves for the stream's reader; and whether the response is done,
+// so the loop knows when both sides are finished with it.
+struct __H2Body { data: Cell[u8[]], ended: Cell[i32], consumed: Cell[i32], fault: Cell[i32], done: Cell[boolean] }
+
+// __H2Pull — a streamed body by its connection and stream.
+struct __H2Pull { fd: i32, stream: i32, body: __H2Body }
+
+// __H2Producer — a response body being produced on a stream
+// (`BodyChunks`): the producer, the index of its next chunk, the trailers
+// to end with, and whether a task is running it now.
+struct __H2Producer { fd: i32, stream: i32, producer: ChunkProducer, index: i32, trailers: HeaderMap, running: boolean }
+
+// The pending bytes past which a producer is not asked for more until the
+// windows let some out.
+function __h2_pending_max(): i32 {
+  return 65536;
+}
+
+function __pull_at(c: __Conns, fd: i32, stream: i32): i32 {
+  let i: i32 = 0;
+  while (i < c.pulls.len()) {
+    if (c.pulls[i].fd == fd && c.pulls[i].stream == stream) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
+function __producer_at(c: __Conns, fd: i32, stream: i32): i32 {
+  let i: i32 = 0;
+  while (i < c.producers.len()) {
+    if (c.producers[i].fd == fd && c.producers[i].stream == stream) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
+function __pulls_without(pulls: __H2Pull[], fd: i32): __H2Pull[] {
+  let out: __H2Pull[] = [];
+  for p in pulls {
+    if (p.fd != fd) {
+      out = out.append(p);
+    }
+  }
+  return out;
+}
+
+function __producers_without(ps: __H2Producer[], fd: i32): __H2Producer[] {
+  let out: __H2Producer[] = [];
+  for p in ps {
+    if (p.fd != fd) {
+      out = out.append(p);
+    }
+  }
+  return out;
+}
+
+// __pull_removed / __producer_removed — the list without its entry at `at`.
+function __pull_removed(pulls: __H2Pull[], at: i32): __H2Pull[] {
+  let out: __H2Pull[] = [];
+  let i: i32 = 0;
+  while (i < pulls.len()) {
+    if (i != at) {
+      out = out.append(pulls[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function __producer_removed(ps: __H2Producer[], at: i32): __H2Producer[] {
+  let out: __H2Producer[] = [];
+  let i: i32 = 0;
+  while (i < ps.len()) {
+    if (i != at) {
+      out = out.append(ps[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// __h2_body_source(body, fd) — the source behind a streamed request body's
+// Stream: a pull takes what has arrived, and parks on the connection until
+// more does (`__h2_event` reads the frames first, then wakes it).
+function __h2_body_source(body: __H2Body, fd: i32): BodySource {
+  return BodySource { next: (): Option[u8[]] => __h2_body_next(body, fd), fault: body.fault, send: (bytes: u8[]): i32 => 0 - 1 };
+}
+
+function __h2_body_next(body: __H2Body, fd: i32): Option[u8[]] {
+  while (true) {
+    let d: u8[] = body.data.get();
+    if (d.len() > 0) {
+      let empty: u8[] = [];
+      body.data.set(empty);
+      body.consumed.set(body.consumed.get() + d.len());
+      return Some(d);
+    }
+    if (body.ended.get() != 0) {
+      return None;
+    }
+    let set: i32[] = [fd, 1];
+    async.wait_any(set, 0 - 1);
+  }
+  return None;
+}
+
+// __h2_arrived(c, fd, sid, bytes) — a streamed body's bytes kept for its
+// pull.
+function __h2_arrived(c: __Conns, fd: i32, sid: i32, bytes: u8[]): __Conns {
+  let pi: i32 = __pull_at(c, fd, sid);
+  if (pi < 0) {
+    return c;
+  }
+  let body: __H2Body = c.pulls[pi].body;
+  body.data.set(body.data.get().concat(bytes));
+  return c;
+}
+
+// __h2_body_ended(c, fd, sid) — a streamed body ended; the pull leaves
+// once the response is done too. The request's trailers end with it,
+// unseen: a request handed over at its head has none to hand.
+function __h2_body_ended(c: __Conns, fd: i32, sid: i32): __Conns {
+  let pi: i32 = __pull_at(c, fd, sid);
+  if (pi < 0) {
+    return c;
+  }
+  c.pulls[pi].body.ended.set(1);
+  return __pull_tidied(c, pi);
+}
+
+// __pull_tidied(c, pi) — the pull at `pi` removed once its body has ended
+// and its response is done.
+function __pull_tidied(c: __Conns, pi: i32): __Conns {
+  let body: __H2Body = c.pulls[pi].body;
+  if (body.ended.get() != 0 && body.done.get()) {
+    return __Conns { ...c, pulls: __pull_removed(c.pulls, pi) };
+  }
+  return c;
+}
+
+// __h2_responded(a, at, sid) — the response on `sid` is complete: its
+// pull, if the body streamed, is done on the response's side.
+function __h2_responded(a: __H2Answered, at: i32, sid: i32): __H2Answered {
+  let pi: i32 = __pull_at(a.conns, a.conns.fds[at], sid);
+  if (pi < 0) {
+    return a;
+  }
+  a.conns.pulls[pi].body.done.set(true);
+  return __H2Answered { ...a, conns: __pull_tidied(a.conns, pi) };
+}
+
+// __h2_stream_reset(c, fd, sid) — the client reset `sid`: its body, if
+// streamed, ends with a fault, and its producer, if one runs, is dropped;
+// a task running the producer answers later into nothing.
+function __h2_stream_reset(c: __Conns, fd: i32, sid: i32): __Conns {
+  let pi: i32 = __pull_at(c, fd, sid);
+  if (pi >= 0) {
+    let body: __H2Body = c.pulls[pi].body;
+    body.ended.set(2);
+    body.fault.set(400);
+    c = __Conns { ...c, pulls: __pull_removed(c.pulls, pi) };
+  }
+  let pr: i32 = __producer_at(c, fd, sid);
+  if (pr >= 0) {
+    c = __Conns { ...c, producers: __producer_removed(c.producers, pr) };
+  }
+  return c;
+}
+
+// __h2_streamed(drv, a, at, sid, req, handler, opts, stop) — a request
+// handed over at its header block: its body a Stream over the bytes the
+// connection reports (`__h2_body_source`), the handler started as for a
+// whole request.
+function __h2_streamed[D: async.Driver](drv: D, a: __H2Answered, at: i32, sid: i32, req: HttpRequest, handler: (HttpRequest, platform.Host) => HttpResponse, opts: Config, stop: __Stop): __H2Answered {
+  let empty: u8[] = [];
+  let body: __H2Body = __H2Body { data: cell_new(empty), ended: cell_new(0), consumed: cell_new(0), fault: cell_new(0), done: cell_new(false) };
+  let fd: i32 = a.conns.fds[at];
+  let conns: __Conns = __Conns { ...a.conns, pulls: a.conns.pulls.append(__H2Pull { fd: fd, stream: sid, body: body }) };
+  let streamed: HttpRequest = HttpRequest { ...req, body: stream.stream_from_source(__h2_body_source(body, fd)) };
+  return __h2_request(drv, __H2Answered { ...a, conns: conns }, at, sid, streamed, handler, opts, stop);
+}
+
+// __joined(a, b) — the bytes of `a` then `b`, either one as it is when the
+// other is empty.
+function __joined(a: u8[], b: u8[]): u8[] {
+  if (a.len() == 0) {
+    return b;
+  }
+  if (b.len() == 0) {
+    return a;
+  }
+  return a.concat(b);
+}
+
+// __h2_respond(drv, a, at, sid, resp) — the response written on `sid`:
+// whole, as `respond` writes it; or, for a body produced in parts
+// (`BodyChunks`), its head now and its chunks as the producer answers and
+// the windows allow (`__h2_produce`).
+function __h2_respond[D: async.Driver](drv: D, a: __H2Answered, at: i32, sid: i32, resp: HttpResponse): __H2Answered {
+  let conn: h2.Conn = a.conn;
+  let conns: __Conns = a.conns;
+  let fls: __Flight[] = a.fls;
+  let out: u8[] = a.out;
+  match (resp.body) {
+    BodyChunks(producer) => {
+      let step: h2.Step = conn.respond_head(sid, resp);
+      let fd: i32 = conns.fds[at];
+      conns = __Conns { ...conns, producers: conns.producers.append(__H2Producer { fd: fd, stream: sid, producer: producer, index: 0, trailers: resp.trailers, running: false }) };
+      return __h2_produce(drv, __H2Answered { conn: step.conn, conns: conns, fls: fls, out: __joined(out, step.output) }, at, sid);
+    },
+    _ => {
+      let step: h2.Step = conn.respond(sid, resp);
+      return __h2_responded(__H2Answered { conn: step.conn, conns: conns, fls: fls, out: __joined(out, step.output) }, at, sid);
+    }
+  }
+  return a;
+}
+
+// __h2_produce(drv, a, at, sid) — the producer on `sid` asked for chunks,
+// each run as a task, until it ends the body, parks (a flight on the
+// connection and the stream), or the pending bytes reach the cap the
+// windows must let out first.
+function __h2_produce[D: async.Driver](drv: D, a: __H2Answered, at: i32, sid: i32): __H2Answered {
+  while (true) {
+    let fd: i32 = a.conns.fds[at];
+    let pi: i32 = __producer_at(a.conns, fd, sid);
+    if (pi < 0) {
+      return a;
+    }
+    let p: __H2Producer = a.conns.producers[pi];
+    if (p.running || a.conn.pending(sid) >= __h2_pending_max()) {
+      return a;
+    }
+    let next: (i32) => Option[u8[]] = p.producer.next;
+    let i: i32 = p.index;
+    let t: async.Task[Option[u8[]]] = async.task_new((): Option[u8[]] => next(i));
+    match (async.task_start(t)) {
+      Done(chunk) => {
+        async.task_free(t);
+        let stepped: (__H2Answered, boolean) = __h2_chunk(a, at, pi, chunk);
+        a = stepped.0;
+        if (stepped.1) {
+          return a;
+        }
+      },
+      Suspended(w) => {
+        let running: __H2Producer = __H2Producer { ...p, running: true };
+        let conns: __Conns = __Conns { ...a.conns, producers: a.conns.producers.with(pi, running) };
+        let none: i32[] = [];
+        let fl: __Flight = __Flight { job: Producer(t), wait: w, fd: fd, set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: None, idle: 0 - 1 as i64, ends: 0 - 1 as i64, stream: sid, since: 0 - 1 as i64, grpc: false };
+        return __H2Answered { ...a, conns: conns, fls: a.fls.append(__flight_watch(drv, fl, monotonic_ns())) };
+      },
+      Cancelled => {
+        async.task_free(t);
+        return __h2_producer_failed(a, at, pi);
+      }
+    }
+  }
+  return a;
+}
+
+// __h2_chunk(a, at, pi, chunk) — a producer's answer on its stream: bytes
+// written, or the body ended with the trailers, which is the response
+// done (true).
+function __h2_chunk(a: __H2Answered, at: i32, pi: i32, chunk: Option[u8[]]): (__H2Answered, boolean) {
+  let p: __H2Producer = a.conns.producers[pi];
+  match (chunk) {
+    Some(bytes) => {
+      let step: h2.Step = a.conn.write(p.stream, bytes);
+      let advanced: __H2Producer = __H2Producer { ...p, index: p.index + 1, running: false };
+      return (__H2Answered { ...a, conn: step.conn, conns: __Conns { ...a.conns, producers: a.conns.producers.with(pi, advanced) }, out: a.out.concat(step.output) }, false);
+    },
+    None => {
+      let step: h2.Step = a.conn.end(p.stream, p.trailers);
+      let conns: __Conns = __Conns { ...a.conns, producers: __producer_removed(a.conns.producers, pi) };
+      return (__h2_responded(__H2Answered { ...a, conn: step.conn, conns: conns, out: a.out.concat(step.output) }, at, p.stream), true);
+    }
+  }
+  return (a, true);
+}
+
+// __h2_producer_failed(a, at, pi) — a producer's task was cancelled: the
+// stream is reset with CANCEL, since its body cannot be finished.
+function __h2_producer_failed(a: __H2Answered, at: i32, pi: i32): __H2Answered {
+  let p: __H2Producer = a.conns.producers[pi];
+  let step: h2.Step = a.conn.reset(p.stream, frame.CANCEL);
+  let conns: __Conns = __Conns { ...a.conns, producers: __producer_removed(a.conns.producers, pi) };
+  return __h2_responded(__H2Answered { ...a, conn: step.conn, conns: conns, out: a.out.concat(step.output) }, at, p.stream);
+}
+
+// __h2_producer_wake(drv, c, fls, fl, t, ready, opts) — a producer flight
+// of an HTTP/2 stream run on with `ready`: its chunk written and the
+// producer asked on, its wait watched again, or the stream reset when it
+// was cancelled; a producer whose stream or connection went away is
+// cancelled rather than run on.
+function __h2_producer_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fl: __Flight, t: async.Task[Option[u8[]]], ready: i32, opts: Config): (__Conns, __Flight[]) {
+  let at: i32 = __conns_index(c, fl.fd);
+  let pi: i32 = __producer_at(c, fl.fd, fl.stream);
+  if (at < 0 || pi < 0) {
+    let gone: async.TaskStatus[Option[u8[]]] = async.task_cancel(t);
+    async.task_free(t);
+    return (c, fls);
+  }
+  match (c.framing[at]) {
+    Http2(conn) => {
+      let a: __H2Answered = __H2Answered { conn: conn, conns: c, fls: fls, out: [] };
+      match (async.task_resume(t, ready)) {
+        Done(chunk) => {
+          async.task_free(t);
+          let stepped: (__H2Answered, boolean) = __h2_chunk(a, at, pi, chunk);
+          a = stepped.0;
+          if (!stepped.1) {
+            a = __h2_produce(drv, a, at, fl.stream);
+          }
+          return __h2_settled(drv, a, at, opts);
+        },
+        Suspended(w) => {
+          return (c, fls.append(__flight_watch(drv, __Flight { ...fl, wait: w }, monotonic_ns())));
+        },
+        Cancelled => {
+          async.task_free(t);
+          return __h2_settled(drv, __h2_producer_failed(a, at, pi), at, opts);
+        }
+      }
+    },
+    _ => {}
+  }
+  let dropped: async.TaskStatus[Option[u8[]]] = async.task_cancel(t);
+  async.task_free(t);
+  return (c, fls);
+}
+
+// __h2_consumed(a, at) — the windows replenished for the bytes the pulls
+// on the connection at `at` have taken since last time.
+function __h2_consumed(a: __H2Answered, at: i32): __H2Answered {
+  let fd: i32 = a.conns.fds[at];
+  for p in a.conns.pulls {
+    if (p.fd == fd) {
+      let n: i32 = p.body.consumed.get();
+      if (n > 0) {
+        p.body.consumed.set(0);
+        let step: h2.Step = a.conn.consumed(p.stream, n);
+        a = __H2Answered { ...a, conn: step.conn, out: a.out.concat(step.output) };
+      }
+    }
+  }
+  return a;
+}
+
+// __h2_more(drv, a, at) — every producer on the connection at `at` that
+// is not running asked on, where the windows have let its pending bytes
+// out.
+function __h2_more[D: async.Driver](drv: D, a: __H2Answered, at: i32): __H2Answered {
+  if (a.conns.producers.len() == 0) {
+    return a;
+  }
+  let fd: i32 = a.conns.fds[at];
+  let streams: i32[] = [];
+  for p in a.conns.producers {
+    if (p.fd == fd && !p.running) {
+      streams = streams.append(p.stream);
+    }
+  }
+  for sid in streams {
+    a = __h2_produce(drv, a, at, sid);
+  }
+  return a;
+}
+
 // __h2_answered(drv, a, events, at, handler, opts, stop) — every request
 // the step handed over started through the handler (`__h2_request`).
 function __h2_answered[D: async.Driver](drv: D, a: __H2Answered, events: h2.Event[], at: i32, handler: (HttpRequest, platform.Host) => HttpResponse, opts: Config, stop: __Stop): __H2Answered {
+  let fd: i32 = a.conns.fds[at];
   for e in events {
     match (e) {
-      h2.Request(stream, req) => {
-        a = __h2_request(drv, a, at, stream, req, handler, opts, stop);
+      h2.Request(sid, req) => {
+        a = __h2_request(drv, a, at, sid, req, handler, opts, stop);
+      },
+      h2.Streamed(sid, req) => {
+        a = __h2_streamed(drv, a, at, sid, req, handler, opts, stop);
+      },
+      h2.StreamData(sid, bytes) => {
+        a = __H2Answered { ...a, conns: __h2_arrived(a.conns, fd, sid, bytes) };
+      },
+      h2.StreamEnd(sid, trailers) => {
+        a = __H2Answered { ...a, conns: __h2_body_ended(a.conns, fd, sid) };
+      },
+      h2.Reset(sid, code) => {
+        a = __H2Answered { ...a, conns: __h2_stream_reset(a.conns, fd, sid) };
       },
       _ => {}
     }
@@ -2117,20 +2707,23 @@ function __h2_answered[D: async.Driver](drv: D, a: __H2Answered, events: h2.Even
 // returns; the flight parked on the connection and the stream when it
 // suspends, to answer when it wakes (`__h2_answer`).
 function __h2_request[D: async.Driver](drv: D, a: __H2Answered, at: i32, stream: i32, req: HttpRequest, handler: (HttpRequest, platform.Host) => HttpResponse, opts: Config, stop: __Stop): __H2Answered {
-  let conns: __Conns = __serve_started(a.conns, at);
+  let conn: h2.Conn = a.conn;
+  let fls: __Flight[] = a.fls;
+  let out: u8[] = a.out;
+  let conns: __Conns = a.conns;
+  conns = __serve_started(conns, at);
   let f: http.HttpFramed = http.HttpFramed { request: req, len: 0, keep_alive: true, version: "HTTP/2" };
   match (__serve_start(handler, conns.hosts[at], f, true, Idle, opts, stop)) {
     HandlerDone(resp) => {
       conns = __serve_count(conns, at, req.method, resp.status);
-      let step: h2.Step = a.conn.respond(stream, resp);
-      return __H2Answered { conn: step.conn, conns: conns, fls: a.fls, out: a.out.concat(step.output) };
+      return __h2_respond(drv, __H2Answered { conn: conn, conns: conns, fls: fls, out: out }, at, stream, resp);
     },
     HandlerParked(fl) => {
       let parked: __Flight = __Flight { ...fl, fd: conns.fds[at], stream: stream, since: conns.rate_since[at] };
-      return __H2Answered { ...a, conns: conns, fls: a.fls.append(__flight_watch(drv, parked, monotonic_ns())) };
+      return __H2Answered { conn: conn, conns: conns, fls: fls.append(__flight_watch(drv, parked, monotonic_ns())), out: out };
     }
   }
-  return __H2Answered { ...a, conns: conns };
+  return __H2Answered { conn: conn, conns: conns, fls: fls, out: out };
 }
 
 // __h2_answer(drv, c, fls, at, fl, resp, opts) — a woken flight's response
@@ -2140,10 +2733,8 @@ function __h2_request[D: async.Driver](drv: D, a: __H2Answered, at: i32, stream:
 function __h2_answer[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32, fl: __Flight, resp: HttpResponse, opts: Config): (__Conns, __Flight[]) {
   match (c.framing[at]) {
     Http2(conn) => {
-      let step: h2.Step = conn.respond(fl.stream, resp);
       c = __serve_count_from(c, fl.method, resp.status, fl.since);
-      c = __Conns { ...c, framing: c.framing.with(at, Http2(step.conn)) };
-      return __h2_flushed(drv, c, fls, at, step.output, opts, step.conn.closed());
+      return __h2_settled(drv, __h2_respond(drv, __H2Answered { conn: conn, conns: c, fls: fls, out: [] }, at, fl.stream, resp), at, opts);
     },
     _ => {
       return (c, fls);
@@ -2183,7 +2774,8 @@ function __holds_request(buf: u8[]): boolean {
 // event ends with nothing to answer (an unknown descriptor, a response still
 // draining, a connection closed once it drained, a readiness whose read
 // brought no bytes and no backlog to answer), and `eof` when the peer has
-// finished sending.
+// finished sending. An HTTP/2 connection reads on after draining: the
+// client's WINDOW_UPDATEs are what its pending bytes wait on.
 function __serve_event[D: async.Driver](drv: D, c: __Conns, fd: i32, scratch: u8[], opts: Config, clk: __Clock): (__Conns, i32, boolean) {
   let at: i32 = __conns_index(c, fd);
   if (at < 0) {
@@ -2191,7 +2783,11 @@ function __serve_event[D: async.Driver](drv: D, c: __Conns, fd: i32, scratch: u8
   }
   if (__in_flight(c, at)) {
     let drained: (__Conns, i32) = __serve_drain(drv, c, at, opts, clk);
-    return (drained.0, drained.1, false);
+    if (!__h2_framed(drained.0, fd)) {
+      return (drained.0, drained.1, false);
+    }
+    c = drained.0;
+    at = __conns_index(c, fd);
   }
   let had: i32 = c.bufs[at].len();
   let backlog: boolean = c.backlog[at];
@@ -2387,11 +2983,29 @@ function __serve_send_out[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Co
   return (__serve_pend(drv, c, at, rest, opts), Partial);
 }
 
+// __pending_interest(c, at) — what a connection with bytes pending is
+// watched for: writability alone for HTTP/1.1, which takes no request
+// until its response has gone; readability too for HTTP/2, whose client
+// sends the WINDOW_UPDATEs the pending bytes wait on, and other streams'
+// frames, meanwhile.
+function __pending_interest(c: __Conns, at: i32): i32 {
+  match (c.framing[at]) {
+    Http2(conn) => {
+      return 3;
+    },
+    _ => {
+      return 2;
+    }
+  }
+  return 2;
+}
+
 // __serve_pend(drv, c, at, rest, opts) — `rest`, what a short write left,
 // kept as the connection's pending bytes, the connection watched for
-// writability instead of reads and given what `__drain_deadline` allows.
+// writability instead of reads (and reads too over HTTP/2) and given what
+// `__drain_deadline` allows.
 function __serve_pend[D: async.Driver](drv: D, c: __Conns, at: i32, rest: u8[], opts: Config): __Conns {
-  drv.watch(c.fds[at], 2);
+  drv.watch(c.fds[at], __pending_interest(c, at));
   let first: boolean = c.pending[at].len() == 0;
   return __drain_deadline(__Conns { ...c, pending: c.pending.with(at, rest) }, at, opts, first);
 }
@@ -2434,7 +3048,7 @@ function __serve_produce[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Con
   if (!__in_flight(c, at)) {
     return (c, Whole);
   }
-  drv.watch(c.fds[at], 2);
+  drv.watch(c.fds[at], __pending_interest(c, at));
   return (c, Partial);
 }
 
@@ -2478,7 +3092,7 @@ function __file_tail_send[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Co
         return (c, Whole, false);
       }
       if (n == 0 - __eagain()) {
-        drv.watch(c.fds[at], 2);
+        drv.watch(c.fds[at], __pending_interest(c, at));
         return (__drain_deadline(c, at, opts, true), Partial, true);
       }
       if (n <= 0) {
@@ -2488,7 +3102,7 @@ function __file_tail_send[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Co
       if (rest <= 0 as i64) {
         return __sent_range(drv, c, at, __after_range(r, after));
       }
-      drv.watch(c.fds[at], 2);
+      drv.watch(c.fds[at], __pending_interest(c, at));
       return (__Conns { ...c, tails: c.tails.with(at, FileTail(r, rest, after)) }, Partial, true);
     },
     _ => {
@@ -2511,7 +3125,7 @@ function __sent_range[D: async.Driver](drv: D, c: __Conns, at: i32, next: Option
           return (moved, Whole, true);
         },
         _ => {
-          drv.watch(c.fds[at], 2);
+          drv.watch(c.fds[at], __pending_interest(c, at));
           return (moved, Partial, true);
         }
       }
@@ -3286,8 +3900,9 @@ function __serve_stream[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at
 // whose connection takes no other request while the flight is parked;
 // an HTTP/2 connection serves its other streams meanwhile, so `since`
 // keeps the request's clock (`rate_since`) as the flight parked, what its
-// answer is counted from.
-struct __Flight { job: __Job, wait: async.Wait, fd: i32, set: i32[], due: i64, method: string, version: string, kept: boolean, behind: __Behind, body: Option[__Body], idle: i64, ends: i64, stream: i32, since: i64 }
+// answer is counted from. `grpc` is whether the request is a gRPC call,
+// which a missed deadline answers with the call's status rather than 503.
+struct __Flight { job: __Job, wait: async.Wait, fd: i32, set: i32[], due: i64, method: string, version: string, kept: boolean, behind: __Behind, body: Option[__Body], idle: i64, ends: i64, stream: i32, since: i64, grpc: boolean }
 
 // __Job — the task a flight runs: a handler, whose response the flight
 // answers, a response's chunk producer (`__tail_park`), whose chunk
@@ -3327,11 +3942,11 @@ function __serve_start(handler: (HttpRequest, platform.Host) => HttpResponse, pl
   let ends: i64 = held.1;
   match (async.call_start(handler, req, plat)) {
     Done(resp) => {
-      return HandlerDone(__in_time(resp, ends, plat.elapsed_ns()));
+      return HandlerDone(__in_time(resp, ends, plat.elapsed_ns(), grpc.is_grpc(req)));
     },
     Suspended(w) => {
       let none: i32[] = [];
-      return HandlerParked(__Flight { job: Handler(async.call_of(w, handler, req, plat)), wait: w, fd: 0, set: none, due: 0 - 1 as i64, method: req.method, version: f.version, kept: kept, behind: behind, body: None, idle: 0 - 1 as i64, ends: ends, stream: 0, since: 0 - 1 as i64 });
+      return HandlerParked(__Flight { job: Handler(async.call_of(w, handler, req, plat)), wait: w, fd: 0, set: none, due: 0 - 1 as i64, method: req.method, version: f.version, kept: kept, behind: behind, body: None, idle: 0 - 1 as i64, ends: ends, stream: 0, since: 0 - 1 as i64, grpc: grpc.is_grpc(req) });
     },
     Cancelled => {}
   }
@@ -3350,11 +3965,20 @@ function __bound_ends(bound: Duration, now: i64): i64 {
 
 // __in_time(resp, ends, now) — the handler's response, or 503 in its place
 // when it came after `ends`.
-function __in_time(resp: HttpResponse, ends: i64, now: i64): HttpResponse {
+function __in_time(resp: HttpResponse, ends: i64, now: i64, is_grpc: boolean): HttpResponse {
   if (ends >= 0 as i64 && now >= ends) {
-    return http.text(503, "");
+    return __late(is_grpc);
   }
   return resp;
+}
+
+// __late(is_grpc) — the answer to a request past its deadline: 503, or
+// for a gRPC call its DEADLINE_EXCEEDED status, as its client expects.
+function __late(is_grpc: boolean): HttpResponse {
+  if (is_grpc) {
+    return grpc.error(grpc.DEADLINE_EXCEEDED, "deadline exceeded");
+  }
+  return http.text(503, "");
 }
 
 // __serve_step(handler, st, req, plat, opts) — the stateful handler run for
@@ -3362,7 +3986,7 @@ function __in_time(resp: HttpResponse, ends: i64, now: i64): HttpResponse {
 function __serve_step[S](handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), st: S, req: HttpRequest, plat: platform.Host, opts: Config): (S, HttpResponse) {
   let held: (platform.Host, i64) = __request_host(plat, req, opts);
   let stepped: (S, HttpResponse) = handler(st, req, held.0);
-  return (stepped.0, __in_time(stepped.1, held.1, held.0.elapsed_ns()));
+  return (stepped.0, __in_time(stepped.1, held.1, held.0.elapsed_ns(), grpc.is_grpc(req)));
 }
 
 // __serve_started(c, at) — the connection at `at` with its request's clock
@@ -3376,13 +4000,34 @@ function __serve_started(c: __Conns, at: i32): __Conns {
   return __Conns { ...c, rate_since: c.rate_since.with(at, monotonic_ns()), rate_base: c.rate_base.with(at, c.bufs[at].len()) };
 }
 
+// __request_ends(req, opts, now) — the monotonic nanosecond the request
+// must be answered by, -1 for none: `Config.handler_deadline` from now, or
+// the request's own `grpc-timeout` when it is sooner (a gRPC call's
+// deadline, PROTOCOL-HTTP2.md), one of 0 due at once.
+function __request_ends(req: HttpRequest, opts: Config, now: i64): i64 {
+  let ends: i64 = __bound_ends(opts.handler_deadline, now);
+  match (grpc.timeout(req.headers)) {
+    Some(d) => {
+      let own: i64 = now + d.as_nanos();
+      if (ends < 0 as i64 || own < ends) {
+        return own;
+      }
+      return ends;
+    },
+    None => {
+      return ends;
+    }
+  }
+  return ends;
+}
+
 // __request_host(plat, req, opts) — the host a handler runs `req` under,
 // and the monotonic nanosecond it must answer by (-1 for none): the
-// connection's host with the request's deadline (`Config.handler_deadline`)
-// and, when `Config.trace` asks, the span the request opens, continuing the
+// connection's host with the request's deadline (`__request_ends`) and,
+// when `Config.trace` asks, the span the request opens, continuing the
 // caller's trace from its `traceparent`.
 function __request_host(plat: platform.Host, req: HttpRequest, opts: Config): (platform.Host, i64) {
-  let ends: i64 = __bound_ends(opts.handler_deadline, plat.elapsed_ns());
+  let ends: i64 = __request_ends(req, opts, plat.elapsed_ns());
   if (ends >= 0 as i64) {
     plat = plat.with_deadline(ends);
   }
@@ -3485,6 +4130,9 @@ function __flight_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fi:
       return __handler_wake(drv, c, fls, fl, call, ready, opts, clk);
     },
     Producer(t) => {
+      if (fl.stream > 0) {
+        return __h2_producer_wake(drv, c, fls, fl, t, ready, opts);
+      }
       if (__conns_index(c, fl.fd) < 0) {
         let gone: async.TaskStatus[Option[u8[]]] = async.task_cancel(t);
         async.task_free(t);
@@ -3519,7 +4167,7 @@ function __handler_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fl
   match (async.call_resume(call, ready)) {
     Done(resp) => {
       async.call_free(call);
-      return __serve_answer(drv, c, fls, fl, __in_time(resp, fl.ends, monotonic_ns()), opts, clk);
+      return __serve_answer(drv, c, fls, fl, __in_time(resp, fl.ends, monotonic_ns(), fl.grpc), opts, clk);
     },
     Suspended(w) => {
       return (c, fls.append(__flight_watch(drv, __Flight { ...fl, wait: w }, monotonic_ns())));
@@ -3632,7 +4280,9 @@ function __flight_watch[D: async.Driver](drv: D, fl: __Flight, now: i64): __Flig
   let w: async.Wait = fl.wait;
   let i: i32 = 0;
   while (i + 1 < w.set.len()) {
-    let watched: i32 = drv.watch(w.set[i], w.set[i + 1]);
+    if (!__own_connection(fl, w.set[i])) {
+      let watched: i32 = drv.watch(w.set[i], w.set[i + 1]);
+    }
     i = i + 2;
   }
   let due: i64 = 0 - 1 as i64;
@@ -3647,9 +4297,19 @@ function __flight_watch[D: async.Driver](drv: D, fl: __Flight, now: i64): __Flig
 function __flight_unwatch[D: async.Driver](drv: D, fl: __Flight): void {
   let i: i32 = 0;
   while (i + 1 < fl.set.len()) {
-    let unwatched: i32 = drv.unwatch(fl.set[i]);
+    if (!__own_connection(fl, fl.set[i])) {
+      let unwatched: i32 = drv.unwatch(fl.set[i]);
+    }
     i = i + 2;
   }
+}
+
+// __own_connection(fl, fd) — whether `fd` in the flight's wait set is the
+// HTTP/2 connection the flight belongs to: a pull parked on its connection
+// waits for the frames the loop reads, so the loop's watch on the
+// connection stands, neither added to nor removed with the flight's.
+function __own_connection(fl: __Flight, fd: i32): boolean {
+  return fl.stream > 0 && fd == fl.fd;
 }
 
 // __flight_cancel(drv, fl) — the flight run on to its end with every wait
@@ -3815,7 +4475,7 @@ function __flight_overdue[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], 
   fls = __flights_remove(fls, i);
   match (late.job) {
     Handler(call) => {
-      return __serve_answer(drv, c, fls, late, http.text(503, ""), opts, clk);
+      return __serve_answer(drv, c, fls, late, __late(late.grpc), opts, clk);
     },
     _ => {}
   }
@@ -3870,7 +4530,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts);
   let host_for: (Option[net.SocketAddr]) => platform.Host = (peer: Option[net.SocketAddr]): platform.Host => plat.with_peer(peer);
-  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics() };
+  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [] };
   let flights: __Flight[] = [];
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, line: "" };
@@ -3910,24 +4570,16 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
         conns = __serve_accept(drv, listener, conns, opts, host_for);
         continue;
       }
-      let fi: i32 = __flight_index(flights, fd);
-      if (fi >= 0) {
-        let woke: (__Conns, __Flight[]) = __flight_wake(drv, conns, flights, fi, __flight_pair(flights[fi], fd), opts, clk);
-        conns = woke.0;
-        flights = woke.1;
-        let taken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts);
-        conns = taken.0;
-        flights = taken.1;
+      if (__h2_framed(conns, fd)) {
+        let turned: (__Conns, __Flight[]) = __h2_event(drv, conns, flights, fd, scratch, handler, opts, stop, clk);
+        conns = turned.0;
+        flights = turned.1;
         continue;
       }
-      let busy: i32 = __http1_parked(conns, flights, fd);
-      if (busy >= 0) {
-        let held: (__Conns, __Flight[]) = __serve_held_event(drv, conns, flights, busy, fd, readiness, scratch, opts);
-        conns = held.0;
-        flights = held.1;
-        let taken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts);
-        conns = taken.0;
-        flights = taken.1;
+      let flown: (__Conns, __Flight[], boolean) = __flight_event(drv, conns, flights, fd, readiness, scratch, opts, clk);
+      conns = flown.0;
+      flights = flown.1;
+      if (flown.2) {
         continue;
       }
       let ev: (__Conns, i32, boolean) = __serve_event(drv, conns, fd, scratch, opts, clk);
@@ -4060,7 +4712,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts);
   let host_for: (Option[net.SocketAddr]) => platform.Host = (peer: Option[net.SocketAddr]): platform.Host => plat.with_peer(peer);
-  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics() };
+  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [] };
   let flights: __Flight[] = [];
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, line: "" };
@@ -4093,30 +4745,23 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
         conns = __serve_accept(drv, listener, conns, opts, host_for);
         continue;
       }
-      let fi: i32 = __flight_index(flights, fd);
-      if (fi >= 0) {
-        let woke: (__Conns, __Flight[]) = __flight_wake(drv, conns, flights, fi, __flight_pair(flights[fi], fd), opts, clk);
-        conns = woke.0;
-        flights = woke.1;
-        let taken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts);
-        conns = taken.0;
-        flights = taken.1;
-        continue;
-      }
-      let busy: i32 = __flight_at(flights, fd);
-      if (busy >= 0) {
-        let held: (__Conns, __Flight[]) = __serve_held_event(drv, conns, flights, busy, fd, readiness, scratch, opts);
-        conns = held.0;
-        flights = held.1;
-        let taken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts);
-        conns = taken.0;
-        flights = taken.1;
+      let flown: (__Conns, __Flight[], boolean) = __flight_event(drv, conns, flights, fd, readiness, scratch, opts, clk);
+      conns = flown.0;
+      flights = flown.1;
+      if (flown.2) {
         continue;
       }
       let ev: (__Conns, i32, boolean) = __serve_event(drv, conns, fd, scratch, opts, clk);
       conns = ev.0;
       let at: i32 = ev.1;
       if (at < 0) {
+        continue;
+      }
+      let mode: i32 = __h2_mode(conns, at, opts);
+      if (mode != H2_NOT) {
+        let served: (__Conns, S) = __h2_turn_with(drv, conns, at, st, handler, opts, stop, ev.2, mode);
+        conns = served.0;
+        st = served.1;
         continue;
       }
       let more: boolean = true;

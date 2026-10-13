@@ -213,6 +213,22 @@ pub function (s: Stream) read_n(n: i32): (u8[], Stream) {
   return (out, cur);
 }
 
+// `(s: Stream).read_some()` — the next bytes the stream has: what its
+// buffer holds past the cursor, or one chunk from its source when the
+// buffer is spent, returning `(bytes, advancedStream)`; empty at the end.
+// Where `read_n` waits for the count it was asked, this answers what has
+// arrived, so a reader can answer a peer's bytes as they come.
+pub function (s: Stream) read_some(): (u8[], Stream) {
+  let out: u8[] = [];
+  let cur: Stream = __fill(s);
+  let pos: i32 = cur.pos;
+  while (pos < cur.data.len()) {
+    out = out.append(cur.data[pos]);
+    pos = pos + 1;
+  }
+  return (out, Stream { ...cur, pos: pos });
+}
+
 // `(s: Stream).read_line()` — read up to and including the
 // next `\n`, returning `(Option[string], advancedStream)`.
 // The line excludes the trailing newline; a trailing `\r`

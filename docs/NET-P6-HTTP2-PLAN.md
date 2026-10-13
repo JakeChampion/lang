@@ -113,9 +113,21 @@ without ACK within the timeout closes the connection.
    one connection, a POST echoed), with Go's client over TLS (h2 by ALPN,
    eight requests at once, a 50 KB upload echoed), and with four handlers
    parked on an upstream while a fifth request on the same connection is
-   answered, the four answering once the upstream does. Still open here:
-   `run_with`'s stateful loop over HTTP/2, and the allocations-per-request
-   reading for the HTTP/2 path.
+   answered, the four answering once the upstream does. `run_with`'s
+   stateful loop serves HTTP/2 the same way, each stream's request run
+   with the state in order and nothing parked, since the state threads
+   from one request to the next. The allocations-per-request reading:
+   `TestSelfHostServeAllocsPerRequestH2` drives 100,000 hello requests
+   over one h2c connection (`e2eharness.H2CClient`, the least client the
+   gate needs) and read 99.0 to 100.0 allocations per request on x86-64
+   against HTTP/1.1's zero, varying from 85 to 400 request to request
+   with the blocks the connection's frames, header blocks, stream slots
+   and the connection record rebuilt per frame take and give back, and
+   with how the client's frames coalesce into reads; the gate holds the
+   mean under a ceiling (101, the table owned through a request having
+   taken 107 to 99, 95.4 on the CI runner) as a ratchet, lowered when
+   the mean falls eight under it. Taking it towards zero is slice 8's, with the
+   per-stream bump budget.
 5. **h2spec nightly (landed).** `scripts/net-h2spec` on `net-nightly.yml`:
    h2spec 2.6.0 strict over h2c against `scripts/net-h2spec.d/server.fern`,
    146 cases, every one green or the job fails, the counts recorded under
@@ -132,6 +144,42 @@ without ACK within the timeout closes the connection.
    `empty_unary`, `large_unary`, `client_streaming`, `server_streaming`,
    `ping_pong` and `timeout_on_sleeping_server` against a Fern server with
    the suite's certificates.
+   Streaming both ways (landed): `h2.Config.stream_bodies` hands a request
+   over at its header block (`Streamed`), its body as `StreamData` and
+   `StreamEnd` events with the windows replenished by `consumed` as the
+   handler takes the bytes; `respond_head`, `write`, `end` and `pending`
+   write a response in parts under the windows. `std/serve` under
+   `stream_bodies` gives the handler a body Stream whose pull parks on the
+   connection (the loop reads the frames first, then wakes the pulls
+   parked on it, each once), and drives a `BodyChunks` producer per stream
+   as a task that may park, asking for more only while the pending bytes
+   are under 64 KiB. `TestServeH2X86_64` streams a request body in three
+   parts and reads each echoed back before sending the next, with a
+   trailer at the end; the interpreter, which cannot park a task
+   (`async.parks()`), hands a body over whole. `read_some` on `std/stream`
+   is the reader a duplex handler needs. The wire (landed): `std/protobuf`
+   reads and writes the wire format with no schema, `std/http/grpc` the
+   message framing, the status trailers, `is_grpc` and `grpc-timeout`, and
+   the serve loop puts a request's `grpc-timeout` on its deadline, the
+   sooner of it and `handler_deadline`, answering a call past it with
+   `grpc-status: 4` where an HTTP request gets 503 (`TestServeH2X86_64`
+   parks a timed call on the held upstream and reads the status back
+   while the upstream still holds). The lane (landed): `scripts/net-grpc-interop`
+   on `net-nightly.yml` builds grpc-go's interop client at a pinned release
+   and runs `empty_unary`, `large_unary`, `client_streaming`,
+   `server_streaming`, `ping_pong`, `timeout_on_sleeping_server`,
+   `status_code_and_message`, `special_status_message`, `custom_metadata`,
+   `unimplemented_method` and `unimplemented_service` over TLS against
+   `scripts/net-grpc-interop.d/server.fern`, grpc.testing.TestService in
+   a few hundred lines of Fern on `std/serve`, `std/http/grpc` and
+   `std/protobuf`; every case green or the job fails. Writing it found
+   two loop faults: a flight parked on its own HTTP/2 connection unwatched
+   the connection when it woke, and a connection draining a large
+   response was watched for writes alone, so the client's WINDOW_UPDATEs
+   went unread; both fixed. Open: a producer cannot set the trailers a
+   call ends with, since `HttpResponse.trailers` is fixed when the
+   response is built, so the interop server reads a duplex call's first
+   message before building its response.
 7. **The client.** `std/fetch` over HTTP/2 to an origin that offers it,
    one connection per origin, so a handler's upstream calls multiplex.
 8. **Exit.** Per-stream bump bytes bounded and recorded on the perf lane;
