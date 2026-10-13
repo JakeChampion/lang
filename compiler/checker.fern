@@ -1181,6 +1181,8 @@ pub function raw_floor_sigs(): RawFloorSig[] {
     // valgrind's client request over the six-word block at the address,
     // answering its result word, 0 outside valgrind.
     RawFloorSig { name: "__raw_vg_request", params: [p], result: w },
+    // The vector UTF-8 check read_file runs on buf[start..n) (ir.op_utf8_blocks).
+    RawFloorSig { name: "__raw_utf8_blocks", params: [p, n, n], result: n },
   ];
 }
 
