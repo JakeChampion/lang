@@ -95,6 +95,7 @@ the language.
 | Parse + check | generator bugs, checker crashes | `FuzzGenerate_ParseRoundTrips`, `FuzzParse`, `FuzzCheck` |
 | Interpreter vs compiled exit byte | miscompiles reaching the return value; crashes (signal), hangs (20 s), arena exhaustion (125) | `TestDifferential_SelfHost{X86_64,Arm64,Wasm}` |
 | Interpreter vs compiled stdout | miscompiles of printed values, floats via portable channels | `TestDifferential_PrintableStdout`, `FuzzGenerate_StdoutAgrees` |
+| Pass configuration | an optimisation whose off switch changes the answer, or a bug only the unoptimised path has | the non-sanitize `TestDifferential_SelfHost{X86_64,Arm64,Wasm}` legs compile half the seeds with a seed-chosen subset of `selfHostPassSwitches` (reuse, unit-plan replay, inlining, array fusion, the ndarray kernels) off |
 | **Sanitizer** | rc over-release, use of a freed block, leaks — wrong memory with a right answer | `TestDifferential_SelfHostSanitize{X86_64,Arm64,Wasm}`; wasm carries the leak census only |
 | Go checker vs self-host checker | a program one checker accepts and the other rejects | the self-host legs: a seed the self-host refuses to compile fails or skips by cause |
 | Coverage feedback | not an oracle: steers mutation toward new self-host compiler paths | `TestSelfHostCoverageGuidedFuzz` |
@@ -166,9 +167,9 @@ built. Citations are to the paper that introduced the technique.
 
 1. **Memory-management oracles on every generated program.** No published
    compiler fuzzer checks refcount correctness; Fern has the sanitizer, the
-   rc certifier and the leak census already. Done for x86-64 (the sanitizer
-   leg); next is running the certifier in report mode and adding
-   reuse-off/reuse-on as a metamorphic pair.
+   rc certifier and the leak census already. Done on all three targets (the
+   sanitizer legs), and reuse off is one of the pass configurations below;
+   next is running the certifier in report mode.
 2. **State hashing** (Csmith, PLDI 2011; rustlantis, OOPSLA 2024; DUMPLING,
    NDSS 2025). Done as the state fold.
 3. **Swarm configuration and generation policies** (Groce et al., ISSTA 2012:
@@ -178,9 +179,9 @@ built. Citations are to the paper that introduced the technique.
 4. **Pass-configuration differential with a fuel-bisectable chaos mode**
    (Cranelift's `cranelift-control`, LLVM's opt-bisect-limit). The compiler has
    switches (`FERN_SELFHOST_NO_REUSE`, `FERN_SEM_INLINE`,
-   `FERN_NO_ARRAY_FUSION`, ...) that only hand-written tests flip; flipping them
-   per generated program, and adding a fuel counter so a failure bisects to the
-   one decision that caused it, is the next oracle.
+   `FERN_NO_ARRAY_FUSION`, ...). Done: the differential legs flip them per
+   generated program. Next is a fuel counter, so a failure bisects to the one
+   decision that caused it.
 5. **Component fuzzers with symbolic checkers** (regalloc2's checker,
    cranelift-fuzzgen, CLIR): generate SSA directly and check the register
    allocator and the rc plan replay in isolation.
@@ -210,7 +211,8 @@ In order:
 
 1. Mutation-score floor in CI once the score is measured over enough mutants
    to be stable, and the survivors worked down.
-2. Pass-configuration differential + chaos fuel.
+2. Chaos fuel: a decision counter in the compiler, so a pass-configuration
+   failure bisects to one decision.
 3. Differential oracle inside the coverage-guided loop.
 4. Type-erasure / type-overwrite checker fuzzing, run against both checkers.
 5. The rest of the trait and generics surface in fernsmith: generic and
