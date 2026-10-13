@@ -4,7 +4,9 @@ import "./ssaproofnames" as names;
 import "./util";
 import "std/string";
 
-pub struct Body { lines: string[], register_entry: i32, error: string }
+// register_entry and unguarded_entry are the positions of the `.r` and `.u`
+// entries in lines, or -1 where the selection has none.
+pub struct Body { lines: string[], register_entry: i32, unguarded_entry: i32, error: string }
 
 // Declaration bytes only, not linked contents, permissions or shape identity.
 pub struct Literal { bytes: u8[], error: string }
@@ -13,7 +15,7 @@ pub struct Literal { bytes: u8[], error: string }
 struct Scan { lines: string[], sections: i32[], error: string }
 
 function failure(message: string): Body {
-  return Body { lines: [], register_entry: -1, error: message };
+  return Body { lines: [], register_entry: -1, unguarded_entry: -1, error: message };
 }
 
 function symbol_byte(c: u8): boolean {
@@ -243,7 +245,7 @@ function scan_mode(text: string, native: boolean): Scan {
 
 function ends_body(line: string, name: string, entry: string): boolean {
   if (name != "") {
-    return (entry == "" || name != entry + ".r") && !util.str_has_prefix(name, ".L");
+    return (entry == "" || name != entry + ".r" && name != entry + ".u") && !util.str_has_prefix(name, ".L");
   }
   return one_of(line, [".text", ".data", ".bss"]) || util.str_has_prefix(line, ".section");
 }
@@ -259,10 +261,11 @@ function body_error(s: Scan, ix: names.Names, at: i32, name: string): string {
   return "";
 }
 
-function body(s: Scan, ix: names.Names, start: i32, register: i32, entry: string): Body {
+function body(s: Scan, ix: names.Names, start: i32, register: i32, unguarded: i32, entry: string): Body {
   let code: string[] = [];
   let at = start + 1;
   let reg = -1;
+  let ung = -1;
   while (at < s.lines.len()) {
     let line = s.lines[at];
     let name = definition(line);
@@ -278,13 +281,16 @@ function body(s: Scan, ix: names.Names, start: i32, register: i32, entry: string
     if (at == register) {
       reg = code.len();
     }
+    if (at == unguarded) {
+      ung = code.len();
+    }
     code = code.append(line);
     at = at + 1;
   }
-  if (register >= 0 && reg < 0) {
-    return failure("decrement register entry outside body");
+  if (register >= 0 && reg < 0 || unguarded >= 0 && ung < 0) {
+    return failure("decrement entry outside body");
   }
-  return Body { lines: code, register_entry: reg, error: "" };
+  return Body { lines: code, register_entry: reg, unguarded_entry: ung, error: "" };
 }
 
 function exact_entry(s: Scan, at: i32, name: string): boolean {
@@ -511,13 +517,14 @@ pub function select(text: string, entry: string): Body {
   let ix = definition_index(s.lines);
   let start = names.unique_position(ix, entry);
   let register = names.unique_position(ix, entry + ".r");
-  if (start < 0 || register < 0) {
+  let unguarded = names.unique_position(ix, entry + ".u");
+  if (start < 0 || register < 0 || unguarded < 0) {
     return failure("missing or ambiguous decrement entry");
   }
-  if (!exact_entry(s, start, entry) || !exact_entry(s, register, entry + ".r")) {
+  if (!exact_entry(s, start, entry) || !exact_entry(s, register, entry + ".r") || !exact_entry(s, unguarded, entry + ".u")) {
     return failure("decrement entry is not an exact executable definition");
   }
-  return body(s, ix, start, register, entry);
+  return body(s, ix, start, register, unguarded, entry);
 }
 
 // Single-entry dependencies share the complete-output namespace policy.
@@ -536,7 +543,7 @@ pub function dependency(text: string, entry: string): Body {
     return failure("missing or ambiguous executable decrement dependency");
   }
   // No second nonlocal entry is part of a dependency body.
-  return body(s, ix, start, -1, "");
+  return body(s, ix, start, -1, -1, "");
 }
 
 // Fixed normal array-box boundary. Native static pools are declaration data;
@@ -564,13 +571,14 @@ pub function native_array_release(text: string): Body {
   let entry = "__fn___fern_arr_dec";
   let start = names.unique_position(ix, entry);
   let register = names.unique_position(ix, entry + ".r");
-  if (ix.duplicate >= 0 || start < 0 || register < 0) {
+  let unguarded = names.unique_position(ix, entry + ".u");
+  if (ix.duplicate >= 0 || start < 0 || register < 0 || unguarded < 0) {
     return failure("missing or ambiguous native array release");
   }
-  if (!exact_entry(s, start, entry) || !exact_entry(s, register, entry + ".r")) {
+  if (!exact_entry(s, start, entry) || !exact_entry(s, register, entry + ".r") || !exact_entry(s, unguarded, entry + ".u")) {
     return failure("native array release is not executable");
   }
-  return body(s, ix, start, register, entry);
+  return body(s, ix, start, register, unguarded, entry);
 }
 
 function native_dependency(text: string, entry: string): Body {
@@ -583,7 +591,7 @@ function native_dependency(text: string, entry: string): Body {
   if (ix.duplicate >= 0 || start < 0 || !exact_entry(s, start, entry)) {
     return failure(if (entry == "__fern_arr_box") { "missing or ambiguous array-box definition" } else { "missing or ambiguous allocator definition" });
   }
-  return body(s, ix, start, -1, "");
+  return body(s, ix, start, -1, -1, "");
 }
 
 function retained_line_error(line: string, name: string, section: i32, position: i32, ended: boolean): string {
@@ -633,7 +641,7 @@ function retained_lines(s: Scan, start: i32, entry: string): Body {
   if (!ended || code.len() < 3 || code[1] != ".cfi_startproc") {
     return failure("missing retained function frame");
   }
-  return Body { lines: code, register_entry: reg, error: "" };
+  return Body { lines: code, register_entry: reg, unguarded_entry: -1, error: "" };
 }
 
 // Extract an ordinary x86 text-mode retained function from the complete unit.

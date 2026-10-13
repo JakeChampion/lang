@@ -227,8 +227,32 @@ function in_program(pc: i32, length: i32): boolean {
   return pc >= 0 && pc < length;
 }
 
+function same_value(a: Value, b: Value): boolean {
+  return a.kind == b.kind && a.identity == b.identity && a.rc.family == b.rc.family && a.rc.delta == b.rc.delta;
+}
+
+// The `.u` entry is reached on the register path with the entry state, apart
+// from the flags of the floor test it skips and RCX, which the body may
+// clobber. RCX goes back to its entry value and the flags are forgotten, so
+// the rest of the walk is the walk from `.u`, which the caller enters having
+// tested the floor, and proves the body for every value a prefix could leave
+// in RCX.
+function unguarded(s: State, original: State): State {
+  let i = 0;
+  while (i < s.regs.len()) {
+    if (i != 1 && !same_value(s.regs[i], original.regs[i])) {
+      return State { ...s, ok: false };
+    }
+    i = i + 1;
+  }
+  let regs = if (same_value(s.regs[1], original.regs[1])) { s.regs } else { s.regs.with(1, original.regs[1]) };
+  let same_heap = s.heap.shared == original.heap.shared && s.heap.stored.family == original.heap.stored.family && s.heap.stored.delta == original.heap.stored.delta;
+  return State { ...s, regs: regs, flags: unknown_flags(), ok: s.ok && same_heap && s.increments == 0 };
+}
+
 function path(p: isa.Program, shared: boolean, register_entry: boolean, zero: boolean): boolean {
   let s = initial(shared, register_entry, zero);
+  let original = s;
   let visited: boolean[] = [];
   for op in p.ops {
     visited = visited.append(false);
@@ -239,9 +263,12 @@ function path(p: isa.Program, shared: boolean, register_entry: boolean, zero: bo
       return false;
     }
     visited = visited.with(pc, true);
+    if (register_entry && pc == p.unguarded_entry) {
+      s = unguarded(s, original);
+    }
     let op = p.ops[pc];
     if (op.kind == 11) {
-      return finished(s);
+      return s.ok && (!register_entry || visited[p.unguarded_entry]) && finished(s);
     }
     if (op.kind == 10) {
       let taken = branch(s.flags, op.condition);

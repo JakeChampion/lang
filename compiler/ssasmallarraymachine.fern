@@ -466,8 +466,37 @@ function in_program(p: isa.ArrayProgram, pc: i32): boolean {
   return pc >= 0 && pc < p.ops.len();
 }
 
+// The `.u` entry is reached on the register path with the entry state, apart
+// from the flags of the floor test it skips and the scratch registers the
+// body may clobber, the argument excepted. Those go back to their entry
+// values and the flags are forgotten, so the rest of the walk is the walk
+// from `.u`, which the caller enters having tested the floor, and proves the
+// body for every value a prefix could leave in a scratch register.
+function unguarded(s: State, original: State, r: value.Interval): State {
+  let regs = s.regs;
+  let i = 0;
+  while (i < regs.len()) {
+    if (!same_word(regs[i], original.regs[i])) {
+      if (i == 0 || same_word(expected_register(r, i), identity(2, i))) {
+        return State { ...s, ok: false };
+      }
+      regs = regs.with(i, original.regs[i]);
+    }
+    i = i + 1;
+  }
+  i = 0;
+  while (i < s.cells.len()) {
+    if (!same_half(s.cells[i], original.cells[i])) {
+      return State { ...s, ok: false };
+    }
+    i = i + 1;
+  }
+  return State { ...s, regs: regs, flags: unknown_flags(), ok: s.ok && s.zeros == 0 && s.links == 0 && s.slots == 0 && s.call_return == -1 };
+}
+
 function path(p: isa.ArrayProgram, r: value.Interval, register_entry: boolean): boolean {
   let s = initial(r, register_entry);
+  let original = s;
   let visited: boolean[] = [];
   for op in p.ops {
     visited = visited.append(false);
@@ -478,9 +507,12 @@ function path(p: isa.ArrayProgram, r: value.Interval, register_entry: boolean): 
       return false;
     }
     visited = visited.with(pc, true);
+    if (register_entry && pc == p.unguarded_entry) {
+      s = unguarded(s, original, r);
+    }
     let op = p.ops[pc];
     if (op.kind == 18) {
-      return finished(s, r, register_entry);
+      return s.ok && (!register_entry || visited[p.unguarded_entry]) && finished(s, r, register_entry);
     }
     if (op.kind == 17) {
       let taken = branch(s.flags, op.condition);
@@ -507,7 +539,7 @@ function path(p: isa.ArrayProgram, r: value.Interval, register_entry: boolean): 
 // credits and linked code identity are NOT established by this scoped API.
 pub function check(output: string): boolean {
   let p = isa.array_program(output);
-  if (p.error != "" || p.register_entry < 0 || !capacity.check(output)) {
+  if (p.error != "" || p.register_entry < 0 || p.unguarded_entry < 0 || !capacity.check(output)) {
     return false;
   }
   for row in value.intervals() {
@@ -525,7 +557,7 @@ pub function check(output: string): boolean {
 // No public decoded program or dependency-success flag is accepted.
 pub function check_native_record(output: string): boolean {
   let p = isa.native_array_program(output);
-  if (p.error != "" || p.register_entry < 0) {
+  if (p.error != "" || p.register_entry < 0 || p.unguarded_entry < 0) {
     return false;
   }
   for n in [5, 6] {

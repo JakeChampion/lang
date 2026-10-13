@@ -15,9 +15,13 @@ function prefix(): string {
   return ".text\n__fn___fern_str_free:\n__fn___fern_str_free.r:\n";
 }
 
+function suffix(): string {
+  return "\nret\n__fn___fern_str_free.u:\n";
+}
+
 function sample(line: string): isa.Op {
-  let p = isa.string_program(prefix() + line + "\nret\n");
-  require(p.error == "" && p.ops.len() == 3 && p.ops[0].kind == 1 && p.ops[2].kind == 18, "sample " + line);
+  let p = isa.string_program(prefix() + line + suffix());
+  require(p.error == "" && p.ops.len() == 4 && p.ops[0].kind == 1 && p.ops[2].kind == 18 && p.ops[3].kind == 1, "sample " + line);
   return p.ops[1];
 }
 
@@ -105,7 +109,7 @@ function isolation(): void {
   for line in ["testb $1, %al", "testq %rdx, %rdx", "cmpq %rsi, %rcx", "cmpl %esi, %ecx", "movq __fern_heap_base(%rip), %rsi", "cmpq __fern_heap_end(%rip), %rcx"] {
     let cap = isa.program(".text\n__fern_capw:\n" + line + "\nret\n");
     let large = isa.large_program(".text\n__fern_large_push:\n" + line + "\nret\n");
-    let array = isa.array_program(".text\n__fn___fern_arr_dec:\n__fn___fern_arr_dec.r:\n" + line + "\nret\n");
+    let array = isa.array_program(".text\n__fn___fern_arr_dec:\n__fn___fern_arr_dec.r:\n" + line + "\nret\n__fn___fern_arr_dec.u:\n");
     require(cap.error == "" && cap.ops[0].kind == 0 && large.error == "" && large.ops[0].kind == 0, "helper isolation " + line);
     require(array.error == "" && array.ops[1].kind == 0, "array isolation " + line);
   }
@@ -118,10 +122,11 @@ function boundaries(): void {
   require(isa.string_program(prefix() + ".Ldup:\nret\n__other:\n.Ldup:\nret\n").error != "", "duplicate local");
   require(isa.string_program(".set alias, __fern_heap_base\n" + prefix() + "ret\n").error != "", "namespace alias");
   require(isa.string_program(".text\n__fn___fern_str_free:\nret\n").error != "", "missing register entry");
-  let cycle = isa.string_program(prefix() + ".Lcycle:\njmp .Lcycle\n");
-  require(cycle.error == "" && cycle.ops[2].target == 1, "cycles are data");
-  let empty = isa.string_program(prefix() + "__next:\nret\n");
-  require(empty.error == "" && empty.ops.len() == 1, "empty entry is data");
+  require(isa.string_program(prefix() + "ret\n").error != "", "missing unguarded entry");
+  let cycle = isa.string_program(prefix() + ".Lcycle:\njmp .Lcycle\n__fn___fern_str_free.u:\n");
+  require(cycle.error == "" && cycle.ops[2].target == 1 && cycle.unguarded_entry == 3, "cycles are data");
+  let empty = isa.string_program(prefix() + "__fn___fern_str_free.u:\n__next:\nret\n");
+  require(empty.error == "" && empty.ops.len() == 2, "empty entry is data");
   // These syntax samples deliberately lack global and dependency definitions.
   require(sample("call __fern_capw").kind == 25 && sample("call __fern_large_push").kind == 25, "calls are data");
 }
@@ -136,17 +141,18 @@ function actual_branch(op: isa.Op, p: isa.ArrayProgram, body: text.Body, i: i32)
 function actual(output: string): void {
   let body = text.select(output, "__fn___fern_str_free");
   let p = isa.string_program(output);
-  let kinds = [3, 1, 26, 17, 16, 17, 3, 16, 17, 3, 16, 17, 16, 17, 3, 3, 29, 28, 17, 30, 17, 27, 17, 10, 21, 16, 17, 16, 17, 6, 25, 7, 1, 19, 3, 4, 4, 1, 22, 15, 19, 3, 4, 4, 17, 1, 2, 15, 6, 25, 7, 17, 1, 3, 10, 21, 10, 15, 22, 16, 17, 1, 19, 3, 4, 4, 17, 1, 16, 17, 6, 25, 7, 17, 1, 2, 15, 25, 17, 1, 23, 17, 17, 9, 4, 18, 1, 24, 1, 18];
+  let kinds = [3, 1, 26, 17, 16, 17, 1, 3, 16, 17, 3, 16, 17, 16, 17, 3, 3, 29, 28, 17, 30, 17, 27, 17, 10, 21, 16, 17, 16, 17, 6, 25, 7, 1, 19, 3, 4, 4, 1, 22, 15, 19, 3, 4, 4, 17, 1, 2, 15, 6, 25, 7, 17, 1, 3, 10, 21, 10, 15, 22, 16, 17, 1, 19, 3, 4, 4, 17, 1, 16, 17, 6, 25, 7, 17, 1, 2, 15, 25, 17, 1, 23, 17, 17, 9, 4, 18, 1, 24, 1, 18];
   require(p.error == "" && body.error == "" && p.ops.len() == kinds.len() && p.ops.len() == body.lines.len(), "actual length");
   require(p.register_entry == body.register_entry && p.register_entry == 1, "actual dual entry");
+  require(p.unguarded_entry == body.unguarded_entry && p.unguarded_entry == 6, "actual unguarded entry past the tag and floor tests");
   let i = 0;
   for op in p.ops {
     require(op.kind == kinds[i], "actual kind " + i.to_string());
     actual_branch(op, p, body, i);
     i = i + 1;
   }
-  require(p.ops[16].symbol == "__fern_heap_base" && p.ops[19].symbol == "__fern_heap_end", "actual heap bounds");
-  require(p.ops[30].symbol == "__fern_capw" && p.ops[49].symbol == "__fern_large_push" && p.ops[71].symbol == "__fern_capw" && p.ops[77].symbol == "__fern_large_push", "actual dependencies");
+  require(p.ops[17].symbol == "__fern_heap_base" && p.ops[20].symbol == "__fern_heap_end", "actual heap bounds");
+  require(p.ops[31].symbol == "__fern_capw" && p.ops[50].symbol == "__fern_large_push" && p.ops[72].symbol == "__fern_capw" && p.ops[78].symbol == "__fern_large_push", "actual dependencies");
 }
 
 pub function run(output: string): void {

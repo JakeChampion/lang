@@ -12,8 +12,8 @@ function require(ok: boolean): void {
 
 function sample(line: string): isa.Op {
   let entry = "__fn___fern_arr_dec";
-  let p = isa.program(".text\n" + entry + ":\n" + line + "\n" + entry + ".r:\nret\n", entry);
-  require(p.error == "" && p.ops.len() == 3 && p.register_entry == 1);
+  let p = isa.program(".text\n" + entry + ":\n" + line + "\n" + entry + ".r:\nret\n" + entry + ".u:\n", entry);
+  require(p.error == "" && p.ops.len() == 4 && p.register_entry == 1 && p.unguarded_entry == 3);
   return p.ops[0];
 }
 
@@ -66,17 +66,19 @@ function flags(): void {
 function branches(): void {
   let entry = "__fn___fern_arr_dec";
   let prefix = ".text\n" + entry + ":\n" + entry + ".r:\n";
+  let suffix = entry + ".u:\n";
   for condition in ["jmp", "je", "jz", "jne", "jnz", "js", "jns", "jb", "jc", "jnae", "jae", "jnb", "jnc", "jl", "jnge", "jge", "jnl", "jg", "jnle", "jle", "jng", "jo", "jno"] {
-    let p = isa.program(prefix + condition + " .Lreturn\n.Lreturn:\nret\n", entry);
+    let p = isa.program(prefix + condition + " .Lreturn\n.Lreturn:\nret\n" + suffix, entry);
     require(p.error == "" && p.ops[1].kind == 10 && p.ops[1].condition == condition && p.ops[1].target == 2 && p.ops[3].kind == 11);
   }
   require(isa.program(prefix + "jmp .Lmissing\n", entry).error != "");
   require(isa.program(prefix + "jmp .Loutside\n__other:\n.Loutside:\nret\n", entry).error != "");
   require(isa.program(prefix + "jmp .Lreturn\n.Lreturn:\nret\n.data\n.Lreturn: .quad 0\n", entry).error != "");
   // Cycles and unknown operations are represented, not certified or erased.
-  let cycle = isa.program(prefix + "jmp " + entry + ".r\n", entry);
+  let cycle = isa.program(prefix + "jmp " + entry + ".r\n" + suffix, entry);
   require(cycle.error == "" && cycle.ops[1].target == 0);
-  require(isa.program(prefix + "ret\nunknown_instruction\n", entry).ops[2].kind == 0);
+  require(isa.program(prefix + "ret\nunknown_instruction\n" + suffix, entry).ops[2].kind == 0);
+  require(isa.program(prefix + "ret\n", entry).error != "");
 }
 
 function actual_store(op: isa.Op): void {
@@ -84,7 +86,7 @@ function actual_store(op: isa.Op): void {
 }
 
 function actual_entry(p: isa.Program, body: text.Body): void {
-  require(p.error == "" && p.ops.len() == body.lines.len() && p.register_entry == body.register_entry);
+  require(p.error == "" && p.ops.len() == body.lines.len() && p.register_entry == body.register_entry && p.unguarded_entry == body.unguarded_entry && p.unguarded_entry > p.register_entry);
   require(p.ops[0].kind == 3 && p.ops[0].base == 4 && p.ops[0].offset == 8 && p.ops[0].width == 64 && p.ops[0].destination == 0);
 }
 

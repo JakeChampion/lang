@@ -178,7 +178,7 @@ function isolation(): void {
     require(old.error == "" && old.ops[0].kind == 0 == line.contains("__fern_heap"), "array-box syntax reads the stack and not the heap");
     let capacity = isa.program(".text\n__fern_capw:\n" + line + "\nret\n");
     require(capacity.error == "" && capacity.ops[0].kind == 0, "capacity syntax unchanged");
-    let release = isa.string_program(".text\n__fn___fern_str_free:\n__fn___fern_str_free.r:\n" + line + "\nret\n");
+    let release = isa.string_program(".text\n__fn___fern_str_free:\n__fn___fern_str_free.r:\n" + line + "\nret\n__fn___fern_str_free.u:\n");
     require(release.error == "" && release.ops[1].kind == 0, "string syntax unchanged");
   }
   require(text.dependency(fixture("ret"), "__fern_alloc").error != "", "old entry set unchanged");

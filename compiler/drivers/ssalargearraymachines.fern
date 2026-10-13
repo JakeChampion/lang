@@ -105,5 +105,5 @@ pub function run(output: string): void {
   mutation(output, "    ret\n", "unknown_instruction\nret\n", false);
   mutation(output, "    ret\n", "jmp .Larrdec_ret\n", false);
   require(!machine.check(".set alias, __fern_large_push\n" + output), "closed namespace");
-  require(!machine.check(".text\n__fn___fern_arr_dec:\n__fn___fern_arr_dec.r:\nret\n"), "missing dependency and effects");
+  require(!machine.check(".text\n__fn___fern_arr_dec:\n__fn___fern_arr_dec.r:\n__fn___fern_arr_dec.u:\nret\n"), "missing dependency and effects");
 }
