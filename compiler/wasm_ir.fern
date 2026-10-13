@@ -125,8 +125,9 @@ function nested_strs(vals: string[], packed: string): string[] {
 // reason (#6229; these are disjoint, and now unspellably so).
 //
 // The block below arr_push_shared_addr is the WASI print/IO scratch, still
-// written as bare literals at its ~20 use sites: fd_write iovec at 0/4/8, the
-// newline byte at 12, and the WASI out-parameter slot at 16 (path_open writes
+// written as bare literals at its ~20 use sites: fd_write iovec at 0/4/8 (two
+// iovecs at 0/4 and 8/12 for $__fern_eprint_str, whose newline byte is
+// eprint_nl_addr), and the WASI out-parameter slot at 16 (path_open writes
 // the opened fd there, fd_readdir / fd_write their counts). 20 is the first
 // word past it, and is where the derived chain starts.
 
@@ -220,6 +221,14 @@ pub function io_ret_addr(): i32 {
   return ip_box2_addr() + 16;
 }
 
+// eprint_nl_addr is the one byte $__fern_eprint_str writes the newline into,
+// the second iovec of the single fd_write that carries a line out whole.
+// Its own slot rather than a byte of the fd_write scratch at 0..16, which the
+// two iovecs now fill.
+pub function eprint_nl_addr(): i32 {
+  return io_ret_addr() + 16;
+}
+
 // str_region_base is where a unit's string-literal region starts: the low
 // scratch sits below it, rounded up to 8 so the i64 slots in that scratch stay
 // aligned. Named rather than inlined because const_str emits offsets RELATIVE
@@ -227,7 +236,7 @@ pub function io_ret_addr(): i32 {
 // every slot added below moves it, which every literal offset and both
 // derived bases (fl_base / heap_base) follow automatically.
 pub function str_region_base(): i32 {
-  return (io_ret_addr() + 16 + 7) / 8 * 8;
+  return (eprint_nl_addr() + 1 + 7) / 8 * 8;
 }
 
 // fn_table_base is where a unit's funcref-table region starts. The elem
@@ -9805,18 +9814,20 @@ pub function print_str_helper(): string {
 
 // eprint_str_helper is print_str_helper to STDERR (fd 2): the IR path's eprint.
 // `eprint` is the stderr line-printer — it appends a trailing newline (mirroring
-// `print` and the Go-backend / interp / AST-path `eprint`). The newline byte is
-// materialised at scratch addr 12 and flushed as a second 1-byte fd_write.
+// `print` and the interpreter's `eprint`). One fd_write over two iovecs, the
+// string's bytes then the newline byte at eprint_nl_addr, so a line reaches a
+// shared pipe whole rather than as a payload write and a newline write another
+// process can land between; the count goes to the out-parameter slot at 16.
 pub function eprint_str_helper(): string {
+  let nl: string = util.i32_to_string(eprint_nl_addr());
   let o: string = "";
   o = o + "  (func $__fern_eprint_str (param $p i32)\n";
   o = o + "    (i32.store (i32.const 0) (i32.add (local.get $p) (i32.const 4)))\n";
   o = o + "    (i32.store (i32.const 4) (i32.load (local.get $p)))\n";
-  o = o + "    (drop (call $__fern_fd_write (i32.const 2) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
-  o = o + "    (i32.store8 (i32.const 12) (i32.const 10))\n";
-  o = o + "    (i32.store (i32.const 0) (i32.const 12))\n";
-  o = o + "    (i32.store (i32.const 4) (i32.const 1))\n";
-  o = o + "    (drop (call $__fern_fd_write (i32.const 2) (i32.const 0) (i32.const 1) (i32.const 8))))\n";
+  o = o + "    (i32.store8 (i32.const " + nl + ") (i32.const 10))\n";
+  o = o + "    (i32.store (i32.const 8) (i32.const " + nl + "))\n";
+  o = o + "    (i32.store (i32.const 12) (i32.const 1))\n";
+  o = o + "    (drop (call $__fern_fd_write (i32.const 2) (i32.const 0) (i32.const 2) (i32.const 16))))\n";
   return o;
 }
 

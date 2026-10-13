@@ -6784,8 +6784,8 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_repeat(), s);
   }
   // __fern_eprint_str is a Fern runtime function (#2649): asmcore.rt_src_eprint_str,
-  // emitted with the clocks in emit_rt_clock_and_print. Its newline byte comes from
-  // the static __fern_scratch rather than a stack slot — which also retires the
+  // emitted with the clocks in emit_rt_clock_and_print. Its iovec pair and newline
+  // byte come from the static __fern_scratch rather than a stack slot — which also retires the
   // `strb w1, [sp, #-16]!` hazard of #6083: the in-process assembler has no
   // byte-store encoder for that pre-index writeback, so it dropped the `!`, left sp
   // unchanged, and the paired `add sp, sp, #16` then raised sp by 16.

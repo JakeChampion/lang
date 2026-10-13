@@ -113,6 +113,15 @@ the helper closes each temporary kqueue. It runs under the macOS lane's
 `TestSelfHostArm64Darwin.*` selector. This is the compatibility `poll` helper;
 the persistent reactor has its own gates below.
 
+`TestX86_64EprintWholeLines`, `TestArm64EprintWholeLines` and
+`TestArm64DarwinEprintWholeLines` pin that `eprint`, and so `plat.log` on
+the host platform, writes a line and its newline in one `writev(2)`: four
+forked workers each print a thousand lines to one inherited stderr pipe and
+every line reads back whole with every worker's count exact. Two writes per
+line, the payload then the newline, let another worker's line land between
+them, which is what the supervisor's workers logging to a shared stderr
+would show as spliced JSON lines.
+
 ### The bag boundary (E080)
 
 `internal/check/ambient` refuses a function handed a `platform.Platform` that reaches a host

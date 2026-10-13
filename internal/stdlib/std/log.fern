@@ -8,18 +8,22 @@
 //
 //   2. A leveled `Logger` value (#2683) with a min-level threshold,
 //      the five levels TRACE..ERROR, optional structured key/value
-//      fields (via a `LogEntry` builder), and a JSON-line output mode
-//      for machine-parseable logs.
+//      fields (via a `LogEntry` builder), a JSON-line output mode
+//      for machine-parseable logs, and a sink: where each record goes.
 //
 // The threshold lives ON the `Logger` value (passed where it's needed)
-// rather than in a mutable global, because the language has no
-// process-lifetime mutable state yet (#2679). Construct one logger and
-// thread it through; `new_logger(level_info())` is the common case.
+// rather than in a mutable global. Construct one logger and thread it
+// through; `new_logger(level_info())` is the common case.
 //
-// Output goes to stderr so it interleaves with diagnostics rather than
-// the program's stdout. Formatting is separated from emission: `render`
-// builds the line (or "" when filtered) and is pure/testable; the
-// `emit` method is `eprint(render(...))`.
+// A record goes to the logger's sink, one line at a time without its
+// newline, the way `eprint` and `plat.log` take a line. The default sink
+// is stderr, so records interleave with diagnostics rather than the
+// program's stdout; a handler builds its logger over the platform it was
+// handed, `new_json_logger(level_info()).to((line: string): void => plat.log(line))`,
+// which is the one route to a host effect the ambient-effect rule (E080)
+// allows it, and which a mock or simulated platform records.
+// Formatting is separated from emission: `render` builds the line (or ""
+// when filtered) and is pure/testable; `emit` hands it to the sink.
 
 // No prelude: a program now `import "std/log";` explicitly to
 // call `log_info(msg)` / etc. (docs/PRELUDE-TO-MODULES.md,
@@ -89,25 +93,39 @@ pub function level_name(n: i32): string {
   return "ERROR";
 }
 
-// A `Logger` carries the minimum level it will emit and whether it
+// A `Logger` carries the minimum level it will emit, whether it
 // formats records as JSON lines (`{"level":..,"msg":..,<fields>}`) or
-// as plain text (`[LEVEL] msg key=value …`).
+// as plain text (`[LEVEL] msg key=value …`), and the sink each record
+// is written through: a function taking one line without its newline.
 pub struct Logger {
   min_level: i32,
   json: boolean,
+  sink: (string) => void,
 }
 
 // `new_logger(min_level)` — a plain-text logger that emits records at
-// `min_level` and above.
+// `min_level` and above, to stderr.
 pub function new_logger(min_level: i32): Logger {
-  return Logger { min_level: min_level, json: false };
+  return Logger { min_level: min_level, json: false, sink: __to_stderr };
 }
 
 // `new_json_logger(min_level)` — like `new_logger`, but each record is
 // a single JSON object on its own line (JSON-lines / NDJSON), suited to
 // machine ingestion.
 pub function new_json_logger(min_level: i32): Logger {
-  return Logger { min_level: min_level, json: true };
+  return Logger { min_level: min_level, json: true, sink: __to_stderr };
+}
+
+// `logger.to(sink)` — the same logger writing each record through `sink`
+// instead: `plat.log` for a handler, a collector in a test.
+pub function (lg: Logger) to(sink: (string) => void): Logger {
+  return Logger { min_level: lg.min_level, json: lg.json, sink: sink };
+}
+
+// The default sink. `eprint` writes the line and its newline in one
+// write, so lines from several processes sharing a stderr stay whole.
+function __to_stderr(line: string): void {
+  eprint(line);
 }
 
 // A `LogEntry` is a pending record: a level plus accumulated structured
@@ -126,11 +144,12 @@ pub struct LogEntry {
   level: i32,
   text: string,
   json: string,
+  sink: (string) => void,
 }
 
 // `logger.at(level)` — begin a record at an explicit level.
 pub function (lg: Logger) at(level: i32): LogEntry {
-  return LogEntry { min_level: lg.min_level, is_json: lg.json, level: level, text: "", json: "" };
+  return LogEntry { min_level: lg.min_level, is_json: lg.json, level: level, text: "", json: "", sink: lg.sink };
 }
 
 // Level shortcuts that begin a record: `logger.trace_()…logger.error_()`.
@@ -161,7 +180,7 @@ pub function (lg: Logger) error_(): LogEntry {
 pub function (e: LogEntry) str(key: string, val: string): LogEntry {
   let t: string = e.text + " " + key + "=" + val;
   let j: string = e.json + ",\"" + json.json_escape(key) + "\":\"" + json.json_escape(val) + "\"";
-  return LogEntry { min_level: e.min_level, is_json: e.is_json, level: e.level, text: t, json: j };
+  return LogEntry { min_level: e.min_level, is_json: e.is_json, level: e.level, text: t, json: j, sink: e.sink };
 }
 
 // `entry.int(key, val)` — attach an integer-valued field (bare number
@@ -169,7 +188,7 @@ pub function (e: LogEntry) str(key: string, val: string): LogEntry {
 pub function (e: LogEntry) int(key: string, val: i32): LogEntry {
   let t: string = e.text + " " + key + "=" + val.to_string();
   let j: string = e.json + ",\"" + json.json_escape(key) + "\":" + val.to_string();
-  return LogEntry { min_level: e.min_level, is_json: e.is_json, level: e.level, text: t, json: j };
+  return LogEntry { min_level: e.min_level, is_json: e.is_json, level: e.level, text: t, json: j, sink: e.sink };
 }
 
 // `entry.bool(key, val)` — attach a boolean-valued field.
@@ -180,7 +199,7 @@ pub function (e: LogEntry) bool(key: string, val: boolean): LogEntry {
   }
   let t: string = e.text + " " + key + "=" + vs;
   let j: string = e.json + ",\"" + json.json_escape(key) + "\":" + vs;
-  return LogEntry { min_level: e.min_level, is_json: e.is_json, level: e.level, text: t, json: j };
+  return LogEntry { min_level: e.min_level, is_json: e.is_json, level: e.level, text: t, json: j, sink: e.sink };
 }
 
 // `entry.render(msg)` — the formatted record line (with trailing
@@ -190,17 +209,23 @@ pub function (e: LogEntry) render(msg: string): string {
   if (e.level < e.min_level) {
     return "";
   }
-  if (e.is_json) {
-    return "{\"level\":\"" + level_name(e.level) + "\",\"msg\":\"" + json.json_escape(msg) + "\"" + e.json + "}\n";
-  }
-  return "[" + level_name(e.level) + "] " + msg + e.text + "\n";
+  return __line(e, msg) + "\n";
 }
 
-// `entry.emit(msg)` — render and write to stderr (nothing when
-// filtered out by the threshold).
+// `entry.emit(msg)` — the record line, without its newline, to the
+// logger's sink (nothing when filtered out by the threshold).
 pub function (e: LogEntry) emit(msg: string): void {
-  let line: string = e.render(msg);
-  if (line.len() > 0) {
-    eprint(line);
+  if (e.level < e.min_level) {
+    return;
   }
+  let sink: (string) => void = e.sink;
+  sink(__line(e, msg));
+}
+
+// __line(e, msg) — the record without its newline.
+function __line(e: LogEntry, msg: string): string {
+  if (e.is_json) {
+    return "{\"level\":\"" + level_name(e.level) + "\",\"msg\":\"" + json.json_escape(msg) + "\"" + e.json + "}";
+  }
+  return "[" + level_name(e.level) + "] " + msg + e.text;
 }
