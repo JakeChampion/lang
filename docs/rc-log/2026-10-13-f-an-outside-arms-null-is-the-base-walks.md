@@ -51,3 +51,17 @@ arm, which no tested token decides). On main without the fix it reports
 `spent without a unit of v5 (borrow ld_at) in b9`, the same finding.
 `TestWASMBoxPreciseDrop` passes again, and the compiler reproduces itself
 with the certifier on.
+
+## Every null test a walk makes
+
+The fix read the outside null in `carries_at` alone. `carry_candidates`,
+which finds the boxes a phi can carry for the per-walk index, follows
+the first input that is not null, and asked the region's function too,
+so with the phi's inputs the other way round, the other arm's null
+first, it stopped at the null and the index missed the box. The same
+refusal followed. `zero_at` now answers every null test a walk makes:
+`carries_at`, `carry_candidates`, `box_on_edges`, `tested`,
+`unique_word`, `token_inputs`, `is_take`, `apply_store` and `stores_of`.
+`TestSelfHostRcCertifyCases` gains `reuse-past-a-join-null-first`, which
+reports `spent without a unit of v5 (borrow ld_at) in b10` with the
+`carries_at` fix alone and nothing with `zero_at`.

@@ -346,6 +346,15 @@ function is_zero(f: ssa.SFunc, d: Defs, v: i32): boolean {
   return ins.kind_tag == 1 && ins.imm == 0;
 }
 
+// zero_at: `v` is null in the walk's function, or, where the region uses it
+// but does not define it, in the base walk's.
+function zero_at(w: Walk, v: i32): boolean {
+  if (is_zero(w.f, w.defs, v)) {
+    return true;
+  }
+  return w.outer.on && outside(w.f, w.defs, v) && is_zero(w.outer.f, w.outer.defs, v);
+}
+
 // marked_result: the lowering marked this runtime call's or flat op's
 // result a counted reference (ir.counted): a runtime call carries it in
 // `imm`, a flat op on the op its `imm` indexes.
@@ -632,7 +641,7 @@ function unique_word(w: Walk, v: i32, depth: i32): Unique {
     if (a < 0) {
       return no_unique();
     }
-    if (!is_zero(w.f, w.defs, a) && w.root[a] != root) {
+    if (!zero_at(w, a) && w.root[a] != root) {
       out = unique_input(w, root, i, a, depth, out);
       if (out.root < 0) {
         return no_unique();
@@ -709,7 +718,7 @@ function token_inputs(w: Walk, regions: i32[][], ins: ssa.SInst, preds: i32[], p
     if (a < 0) {
       return -1;
     }
-    if (!is_zero(w.f, w.defs, a)) {
+    if (!zero_at(w, a)) {
       found = token_merge(found, token_input(w, regions, a, w.at[preds[i]], path));
       if (found == -1) {
         return -1;
@@ -756,9 +765,9 @@ function tested(w: Walk, cond: i32): Tested {
     return Tested { word: cond, on_true: true };
   }
   let word: i32 = -1;
-  if (is_zero(w.f, w.defs, ins.args[1])) {
+  if (zero_at(w, ins.args[1])) {
     word = ins.args[0];
-  } else if (is_zero(w.f, w.defs, ins.args[0])) {
+  } else if (zero_at(w, ins.args[0])) {
     word = ins.args[1];
   }
   return Tested { word: word, on_true: ins.str == "ne" };
@@ -937,7 +946,7 @@ function carries_at(w: Walk, p: i32, base: i32, path: i32[], outer: boolean): bo
     if (a < 0) {
       return false;
     }
-    if (!is_zero(f, defs, a) && !(!outer && w.outer.on && outside(w.f, w.defs, a) && is_zero(w.outer.f, w.outer.defs, a))) {
+    if (!(is_zero(f, defs, a) || !outer && zero_at(w, a))) {
       let r: i32 = root[a];
       if (r == base && !derived[a]) {
         any = true;
@@ -1415,7 +1424,7 @@ function stores_of(w: Walk): Stores {
         let n: i32 = out.base.len();
         out = Stores {
           base: out.base.append(base), key: out.key.append(key), block: out.block.append(bi), at: out.at.append(i),
-          zero: out.zero.append(is_zero(f, w.defs, st.args[st.args.len() - 1])),
+          zero: out.zero.append(zero_at(w, st.args[st.args.len() - 1])),
           by_base: out.by_base.with(base, out.by_base[base].append(n)),
         };
       }
@@ -1677,7 +1686,7 @@ function carry_candidates(w: Walk, p: i32): i32[] {
     }
     let next: i32 = -1;
     for a in ins.args {
-      if (next < 0 && a >= 0 && !is_zero(f, defs, a) && root[a] != cur && util.index_of_i32(path, root[a]) < 0) {
+      if (next < 0 && a >= 0 && !(is_zero(f, defs, a) || !outer && zero_at(w, a)) && root[a] != cur && util.index_of_i32(path, root[a]) < 0) {
         next = root[a];
       }
     }
@@ -1715,7 +1724,7 @@ function box_on_edges(w: Walk, p: i32, base: i32, boxed: boolean[], edge: boolea
     if (pb >= 0 && edge_taken(w, edge, pb, b.id)) {
       any = true;
       let a: i32 = ins.args[i];
-      if (a < 0 || is_zero(w.f, w.defs, a)) {
+      if (a < 0 || zero_at(w, a)) {
         return false;
       }
       let r: i32 = w.root[a];
@@ -1981,7 +1990,7 @@ function null_takes(w: Walk, takes: Takes): boolean[] {
 // is_take: `st` stores null into a slot of a box the frame reads, not into
 // the box it reused as a construction's block (Hold.reused).
 function is_take(w: Walk, st: ssa.SInst): boolean {
-  return (st.kind_tag == 41 || st.kind_tag == 43) && st.args.len() >= 2 && is_zero(w.f, w.defs, st.args[st.args.len() - 1])
+  return (st.kind_tag == 41 || st.kind_tag == 43) && st.args.len() >= 2 && zero_at(w, st.args[st.args.len() - 1])
     && !(st.args[0] >= 0 && st.args[0] < w.reused.len() && w.reused[st.args[0]]);
 }
 
@@ -2721,7 +2730,7 @@ function apply_store(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken
   if (w.held >= 0 && put_back(w, ins, val)) {
     return p;
   }
-  if (is_zero(w.f, w.defs, val)) {
+  if (zero_at(w, val)) {
     for r in taken {
       let k: i32 = w.idx[r];
       if (k >= 0 && p.state[k] != maybe()) {
@@ -3804,7 +3813,7 @@ function fixed_phi(w: Walk, pr: Pruned, reach: boolean[], out: i32[], b: ssa.SBl
     let pb: i32 = w.at[b.preds[i]];
     if (a >= 0 && a != ins.result && pb >= 0 && reach[pb] && pr.dropped[pb] != b.id) {
       let fx: i32 = -1;
-      if (is_zero(w.f, w.defs, a)) {
+      if (zero_at(w, a)) {
         fx = 0;
       } else if (w.root[a] == box && !w.derived[a]) {
         fx = 1;
@@ -3909,7 +3918,7 @@ function drop_phi_edges(w: Walk, own pr: Pruned, phi: i32, box: i32, hold: boole
     let a: i32 = ins.args[i];
     let pb: i32 = w.at[b.preds[i]];
     if (a >= 0 && pb >= 0) {
-      let zero: boolean = is_zero(w.f, w.defs, a);
+      let zero: boolean = zero_at(w, a);
       if (zero == hold) {
         pr = drop_arm(w, pr, pb, b.id, box, zero);
       } else if (!zero && w.root[a] != w.root[phi] && w.root[a] != box && token_root(w, w.regions, a) == box) {
