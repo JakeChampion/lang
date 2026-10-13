@@ -346,13 +346,18 @@ function is_zero(f: ssa.SFunc, d: Defs, v: i32): boolean {
   return ins.kind_tag == 1 && ins.imm == 0;
 }
 
-// zero_at: `v` is null in the walk's function, or, where the region uses it
-// but does not define it, in the base walk's.
-function zero_at(w: Walk, v: i32): boolean {
-  if (is_zero(w.f, w.defs, v)) {
-    return true;
+// def_at: `v`'s definition in the walk's function, or, where the region
+// uses it but does not define it, in the base walk's.
+function def_at(w: Walk, v: i32): ssa.SInst {
+  if (w.outer.on && outside(w.f, w.defs, v)) {
+    return def_of(w.outer.f, w.outer.defs, v);
   }
-  return w.outer.on && outside(w.f, w.defs, v) && is_zero(w.outer.f, w.outer.defs, v);
+  return def_of(w.f, w.defs, v);
+}
+
+function zero_at(w: Walk, v: i32): boolean {
+  let ins: ssa.SInst = def_at(w, v);
+  return ins.kind_tag == 1 && ins.imm == 0;
 }
 
 // marked_result: the lowering marked this runtime call's or flat op's
@@ -965,10 +970,7 @@ function carries_at(w: Walk, p: i32, base: i32, path: i32[], outer: boolean): bo
 
 // phi_valued: `v` is a phi, here or in the base walk's function.
 function phi_valued(w: Walk, v: i32): boolean {
-  if (def_of(w.f, w.defs, v).kind_tag == 8) {
-    return true;
-  }
-  return w.outer.on && outside(w.f, w.defs, v) && def_of(w.outer.f, w.outer.defs, v).kind_tag == 8;
+  return def_at(w, v).kind_tag == 8;
 }
 
 function is_shell(w: Walk, ins: ssa.SInst): boolean {
@@ -2971,11 +2973,11 @@ struct Tag { word: i32, c: i32, equal: boolean }
 // compared reads `x == c` / `x != c` against a constant: the word and the
 // constant, word -1 when neither side is one.
 function compared(w: Walk, ins: ssa.SInst): Tag {
-  let a: ssa.SInst = def_of(w.f, w.defs, ins.args[1]);
+  let a: ssa.SInst = def_at(w, ins.args[1]);
   if (a.kind_tag == 1) {
     return Tag { word: ins.args[0], c: a.imm, equal: true };
   }
-  let b: ssa.SInst = def_of(w.f, w.defs, ins.args[0]);
+  let b: ssa.SInst = def_at(w, ins.args[0]);
   if (b.kind_tag == 1) {
     return Tag { word: ins.args[1], c: b.imm, equal: true };
   }
