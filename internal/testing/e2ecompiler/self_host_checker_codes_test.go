@@ -267,6 +267,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"dyn-undefined-method", "trait Speak { function say(self: Self): i32; }\nimpl Speak for i32 { function say(self: Self): i32 { return self + 100; } }\nfunction f(s: dyn Speak): i32 { return s.nope(); }\nfunction main(): i32 { return f(1); }\n", []string{"E021"}},
 		{"dyn-supertrait-method-not-named", "trait Base { function tag(self: Self): i32; }\ntrait Derived : Base { function base(self: Self): i32; }\nimpl Base for i32 { function tag(self: Self): i32 { return 9; } }\nimpl Derived for i32 { function base(self: Self): i32 { return self; } }\nfunction f(d: dyn Derived): i32 { return d.tag(); }\nfunction main(): i32 { return f(1); }\n", []string{"E021"}},
 		{"dyn-supertrait-method-named", "trait Base { function tag(self: Self): i32; }\ntrait Derived : Base { function base(self: Self): i32 { return 4; } }\nimpl Base for i32 { function tag(self: Self): i32 { return 9; } }\nimpl Derived for i32 { }\nfunction f(d: dyn Derived + Base): i32 { return d.tag() + d.base(); }\nfunction main(): i32 { return f(1); }\n", nil},
+		// `r.fd` on a stream handle is the descriptor, an i32: the handles are
+		// declared in no struct table the self-host reads, so the projection
+		// typed unknown and the handle's fd could not be passed to a function
+		// or a method (#12318).
+		{"stream-handle-fd-is-an-i32", "function take(fd: i32): i32 { return fd; }\nfunction main(): i32 { let r: Reader = stdin(); let w: Writer = stdout(); match (pipe()) { Ok(q) => { return take(r.fd) + take(w.fd) + take(q.r.fd); }, Err(e) => { return 1; } } return 0; }\n", nil},
+		{"stream-handle-fd-is-not-a-string", "function main(): i32 { let r: Reader = stdin(); let s: string = r.fd; return s.len(); }\n", []string{"E003"}},
 		{"dyn-method-result-accepted", "trait Speak { function say(self: Self): i32; }\nimpl Speak for i32 { function say(self: Self): i32 { return self + 100; } }\nfunction f(s: dyn Speak): i32 { let x: i32 = s.say(); return x; }\nfunction main(): i32 { return f(7); }\n", nil},
 		// A `{ …; tail }` block is typed by its tail with the leading
 		// statements bound (#10438). The self-host typed it as nothing, so a
