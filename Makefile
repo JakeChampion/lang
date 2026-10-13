@@ -1,7 +1,7 @@
 AARCH64_GCC ?= aarch64-linux-gnu-gcc
 QEMU        ?= qemu-aarch64
 
-EXAMPLES := $(basename $(notdir $(wildcard examples/*.fern)))
+EXAMPLES := $(basename $(notdir $(wildcard examples/*.fern examples/tests/*.fern)))
 ASMS     := $(addprefix build/,$(addsuffix .s,$(EXAMPLES)))
 BINS     := $(addprefix build/,$(EXAMPLES))
 # Every tracked .fern source but the conformance fixtures, whose expected
@@ -203,6 +203,10 @@ distcheck:
 examples: $(BINS)
 
 build/%.s: examples/%.fern bin/fern
+	@mkdir -p build
+	./bin/fern -target arm64-linux $< > $@
+
+build/%.s: examples/tests/%.fern bin/fern
 	@mkdir -p build
 	./bin/fern -target arm64-linux $< > $@
 

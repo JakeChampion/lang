@@ -16,6 +16,9 @@
 # computed value at or above 128 (factorial is 6! mod 256), so the range rule
 # would fail correct programs. Comparing against the expected value also
 # catches a wrong answer, not just a crash.
+#
+# A row whose value is `norun` names a program the lanes compile and link but
+# never execute: a server, which would hold the lane open on its listener.
 set -uo pipefail
 
 name="${1:?usage: ci-run-example NAME BINARY}"
@@ -26,6 +29,11 @@ want="$(awk -v n="$name" '!/^#/ && $1 == n { print $2; found=1 } END { if (!foun
   echo "ci-run-example: $name has no row in ${table#*/../}; add one (its exit status is unchecked otherwise)" >&2
   exit 1
 }
+
+if [ "$want" = norun ]; then
+  echo "$name: built, not run (a server)"
+  exit 0
+fi
 
 "$bin"
 got=$?

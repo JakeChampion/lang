@@ -1,0 +1,19 @@
+// api_sim.fern — the API under a directory that resets twice: the first lookup is a 502 (the client retried once), the next a 200.
+import "std/sim";
+import "std/sim_fetch";
+import "std/sim_platform";
+import "std/http";
+import "../api";
+
+function main(): i32 {
+  let d: sim.Sim = sim.new(7);
+  let n: sim_fetch.Net = sim_fetch.net(d).host("directory.internal", ["93.184.216.34"]).listen("93.184.216.34", 80, 5).route("93.184.216.34", 80, "/users/7", [sim_fetch.reset(), sim_fetch.reset(), sim_fetch.reply(200, "{\"id\":7}")]);
+  let plat: sim_platform.SimPlatform = sim_platform.new(d, n);
+  if let Ok(r) = api.routes[sim_platform.SimPlatform]() {
+    let first: i32 = r.handle(http.request("GET", "/users/7"), plat).status;
+    if (first == 502 && r.handle(http.request("GET", "/users/7"), plat).status == 200) {
+      return 0;
+    }
+  }
+  return 1;
+}

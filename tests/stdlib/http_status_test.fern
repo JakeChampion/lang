@@ -17,6 +17,11 @@ function test_status_text(): test.TestOutcome {
   if (http.http_status_text(418) != "I'm a teapot") {
     return test.fail("418");
   }
+  // The codes the static and cache modules send had no phrase, so a range
+  // or a failed precondition went out as "206 Status".
+  if (http.http_status_text(206) != "Partial Content" || http.http_status_text(412) != "Precondition Failed" || http.http_status_text(416) != "Range Not Satisfiable") {
+    return test.fail("206, 412, 416");
+  }
   // Unknown codes return the empty string.
   return test.assert_eq(http.http_status_text(299), "");
 }

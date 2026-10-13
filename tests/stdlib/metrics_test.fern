@@ -1,0 +1,167 @@
+import "std/metrics";
+import "std/test";
+import "std/string";
+
+// tests/stdlib/metrics_test.fern — std/metrics: a counter, a gauge and a
+// histogram rendered in the Prometheus text exposition format, the
+// histogram's cumulative buckets and `+Inf`, label values escaped, HELP and
+// TYPE written once per name, two expositions merged by summing their
+// samples (integers as integers, a float sum as a float), snapshot frames
+// split at the EOF line, and the scrape answers for the probe paths.
+
+function test_counter_renders(): test.TestOutcome {
+  let c: metrics.Counter = metrics.counter("jobs_total", "Jobs taken.");
+  c.inc();
+  c.add(2 as i64);
+  let reg: metrics.Registry = metrics.registry().with_counter(c);
+  return test.assert_eq(reg.render(), "# HELP jobs_total Jobs taken.\n# TYPE jobs_total counter\njobs_total 3\n");
+}
+
+function test_copies_share_the_count(): test.TestOutcome {
+  let c: metrics.Counter = metrics.counter("x_total", "x");
+  let reg: metrics.Registry = metrics.registry().with_counter(c);
+  let again: metrics.Counter = c;
+  again.inc();
+  c.inc();
+  if (c.get() != 2 as i64) {
+    return test.fail("the copy counts into the same cell");
+  }
+  return test.assert_eq(reg.render(), "# HELP x_total x\n# TYPE x_total counter\nx_total 2\n");
+}
+
+function test_gauge_goes_both_ways(): test.TestOutcome {
+  let g: metrics.Gauge = metrics.gauge("open", "Open things.");
+  g.inc();
+  g.inc();
+  g.dec();
+  g.set(g.get() + 10 as i64);
+  return test.assert_eq(metrics.registry().with_gauge(g).render(), "# HELP open Open things.\n# TYPE open gauge\nopen 11\n");
+}
+
+function test_histogram_buckets_are_cumulative(): test.TestOutcome {
+  let h: metrics.Histogram = metrics.histogram("took_seconds", "How long.", [0.1, 1.0]);
+  h.observe(0.05);
+  h.observe(0.5);
+  h.observe(0.1);
+  h.observe(7.0);
+  let want: string = "# HELP took_seconds How long.\n# TYPE took_seconds histogram\n"
+    + "took_seconds_bucket{le=\"0.1\"} 2\n"
+    + "took_seconds_bucket{le=\"1\"} 3\n"
+    + "took_seconds_bucket{le=\"+Inf\"} 4\n"
+    + "took_seconds_sum 7.65\n"
+    + "took_seconds_count 4\n";
+  return test.assert_eq(metrics.registry().with_histogram(h).render(), want);
+}
+
+function test_labels_and_escaping(): test.TestOutcome {
+  let c: metrics.Counter = metrics.counter("hits_total", "Line one\nline \"two\" \\ back.").with_labels(metrics.labels([metrics.label("path", "/a\"b\\c\nd"), metrics.label("code", "200")]));
+  c.inc();
+  let want: string = "# HELP hits_total Line one\\nline \"two\" \\\\ back.\n# TYPE hits_total counter\nhits_total{path=\"/a\\\"b\\\\c\\nd\",code=\"200\"} 1\n";
+  return test.assert_eq(metrics.registry().with_counter(c).render(), want);
+}
+
+function test_head_once_per_name(): test.TestOutcome {
+  let a: metrics.Counter = metrics.counter("hits_total", "Hits.").with_labels(metrics.label("code", "200"));
+  let b: metrics.Counter = a.with_labels(metrics.label("code", "404"));
+  a.inc();
+  b.inc();
+  b.inc();
+  let h: metrics.Histogram = metrics.histogram("d_seconds", "D.", [1.0]).with_labels(metrics.label("m", "GET"));
+  h.observe(0.5);
+  let want: string = "# HELP hits_total Hits.\n# TYPE hits_total counter\nhits_total{code=\"200\"} 1\nhits_total{code=\"404\"} 2\n"
+    + "# HELP d_seconds D.\n# TYPE d_seconds histogram\nd_seconds_bucket{m=\"GET\",le=\"1\"} 1\nd_seconds_bucket{m=\"GET\",le=\"+Inf\"} 1\nd_seconds_sum{m=\"GET\"} 0.5\nd_seconds_count{m=\"GET\"} 1\n";
+  return test.assert_eq(metrics.registry().with_counter(a).with_counter(b).with_histogram(h).render(), want);
+}
+
+function test_server_metrics_by_method_and_status(): test.TestOutcome {
+  let m: metrics.ServerMetrics = metrics.server_metrics();
+  m = m.request("GET", 200, 4000000 as i64);
+  m = m.request("GET", 200, 300000000 as i64);
+  m = m.request("POST", 404, 1 as i64);
+  m.accepted.inc();
+  m.open.inc();
+  m.open.dec();
+  let text: string = m.render();
+  if (!text.contains("http_server_request_duration_seconds_bucket{http_request_method=\"GET\",http_response_status_code=\"200\",le=\"0.005\"} 1\n")) {
+    return test.fail("the 4 ms request is in the 5 ms bucket: " + text);
+  }
+  if (!text.contains("http_server_request_duration_seconds_bucket{http_request_method=\"GET\",http_response_status_code=\"200\",le=\"0.5\"} 2\n")) {
+    return test.fail("the 300 ms request is in the 500 ms bucket: " + text);
+  }
+  if (!text.contains("http_server_request_duration_seconds_count{http_request_method=\"POST\",http_response_status_code=\"404\"} 1\n")) {
+    return test.fail("the POST has its own series: " + text);
+  }
+  if (!text.contains("http_server_connections_accepted_total 1\n") || !text.contains("http_server_open_connections 0\n")) {
+    return test.fail("connection counts: " + text);
+  }
+  return test.assert_eq(text.split("# TYPE http_server_request_duration_seconds histogram").len(), 2);
+}
+
+function test_merge_sums_samples(): test.TestOutcome {
+  let a: string = "# HELP hits_total Hits.\n# TYPE hits_total counter\nhits_total{code=\"200\"} 3\n# HELP d_seconds D.\n# TYPE d_seconds histogram\nd_seconds_bucket{le=\"+Inf\"} 2\nd_seconds_sum 0.25\nd_seconds_count 2\n";
+  let b: string = "# HELP d_seconds D.\n# TYPE d_seconds histogram\nd_seconds_bucket{le=\"+Inf\"} 1\nd_seconds_sum 1\nd_seconds_count 1\n# HELP hits_total Hits.\n# TYPE hits_total counter\nhits_total{code=\"200\"} 4\nhits_total{code=\"500\"} 1\n";
+  let want: string = "# HELP hits_total Hits.\n# TYPE hits_total counter\nhits_total{code=\"200\"} 7\nhits_total{code=\"500\"} 1\n# HELP d_seconds D.\n# TYPE d_seconds histogram\nd_seconds_bucket{le=\"+Inf\"} 3\nd_seconds_sum 1.25\nd_seconds_count 3\n";
+  return test.assert_eq(metrics.merge([a, b]), want);
+}
+
+function test_merge_of_one_is_itself(): test.TestOutcome {
+  let h: metrics.Histogram = metrics.histogram("took_seconds", "How long.", [0.1, 1.0]);
+  h.observe(0.05);
+  h.observe(7.0);
+  let c: metrics.Counter = metrics.counter("jobs_total", "Jobs.");
+  c.inc();
+  let text: string = metrics.registry().with_counter(c).with_histogram(h).render();
+  if (metrics.merge([text]) != text) {
+    return test.fail("merged alone:\n" + metrics.merge([text]) + "\nwant:\n" + text);
+  }
+  return test.assert_eq(metrics.merge([]), "");
+}
+
+function test_frames_split_at_eof(): test.TestOutcome {
+  let fr: (string[], string) = metrics.frames("a 1\n" + metrics.EOF + "a 2\n" + metrics.EOF + "a 3\n");
+  if (fr.0.len() != 2 || fr.0[0] != "a 1\n" || fr.0[1] != "a 2\n") {
+    return test.fail("frames: " + fr.0.len().to_string());
+  }
+  return test.assert_eq(fr.1, "a 3\n");
+}
+
+function test_scrape_answers(): test.TestOutcome {
+  let body: () => string = (): string => "x 1\n";
+  let m: HttpResponse = metrics.scrape("/metrics", body, true);
+  if (m.status != 200 || m.body_string() != "x 1\n") {
+    return test.fail("/metrics");
+  }
+  match (m.headers.get("content-type")) {
+    Some(ct) => {
+      if (ct != "text/plain; version=0.0.4; charset=utf-8") {
+        return test.fail("content type " + ct);
+      }
+    },
+    None => {
+      return test.fail("no content type");
+    }
+  }
+  if (metrics.scrape("/healthz", body, false).status != 200) {
+    return test.fail("/healthz answers while the process does");
+  }
+  if (metrics.scrape("/readyz", body, true).status != 200 || metrics.scrape("/readyz", body, false).status != 503) {
+    return test.fail("/readyz follows readiness");
+  }
+  return test.assert_eq(metrics.scrape("/other", body, true).status, 404);
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/metrics");
+  r = r.it("counter renders", test_counter_renders);
+  r = r.it("copies share the count", test_copies_share_the_count);
+  r = r.it("gauge goes both ways", test_gauge_goes_both_ways);
+  r = r.it("histogram buckets are cumulative", test_histogram_buckets_are_cumulative);
+  r = r.it("labels and escaping", test_labels_and_escaping);
+  r = r.it("head once per name", test_head_once_per_name);
+  r = r.it("server metrics by method and status", test_server_metrics_by_method_and_status);
+  r = r.it("merge sums samples", test_merge_sums_samples);
+  r = r.it("merge of one is itself", test_merge_of_one_is_itself);
+  r = r.it("frames split at eof", test_frames_split_at_eof);
+  r = r.it("scrape answers", test_scrape_answers);
+  return r.finish();
+}

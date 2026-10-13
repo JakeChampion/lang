@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# net-httplint — httplint's response checks against the Fern server
+# (docs/NET-P5-FRAMEWORK-PLAN.md §8, #9859): each response of
+# scripts/net-httplint.d/server.fern, built by bin/fern for the host, is
+# fetched with curl and read by httplint, the library behind REDbot, whose
+# checks cover status semantics, framing, caching and every header field
+# it knows.
+#
+# Usage: net-httplint [REPORT]
+#
+#   REPORT  where the `metric<TAB>value` rows go ("-" or nothing for
+#           stdout), the format scripts/perf-history records:
+#           httplint/<case>.bad and httplint/<case>.warn, the notes of
+#           each level the case drew.
+#
+# A note httplint rates BAD fails the run; WARN and INFO notes are listed
+# so a new one is read, not counted. httplint and its dependencies are
+# pinned in scripts/net-httplint.d/requirements.txt and installed in a
+# venv under $FERN_HTTPLINT_TOOLS (default ~/.cache/fern-httplint), keyed
+# by the pins' hash so a changed pin builds a fresh one.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+for tool in curl python3; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "net-httplint: $tool not found" >&2
+    exit 2
+  fi
+done
+. scripts/net-lib
+
+report="${1:--}"
+tools="${FERN_HTTPLINT_TOOLS:-$HOME/.cache/fern-httplint}"
+venv="$tools/venv-$(sha256sum scripts/net-httplint.d/requirements.txt | cut -c1-16)"
+if [ ! -x "$venv/bin/python" ]; then
+  echo "net-httplint: installing httplint and its dependencies" >&2
+  mkdir -p "$tools"
+  python3 -m venv "$venv"
+  "$venv/bin/pip" install --quiet --require-virtualenv -r scripts/net-httplint.d/requirements.txt
+fi
+
+mkdir -p "$work/www/files"
+printf 'hello from a file\n' > "$work/www/files/hello.txt"
+port="$(free_port)"
+bin/fern -target "$TARGET" -o "$work/server" scripts/net-httplint.d/server.fern
+PORT="$port" WWW="$work/www" start_server "$work/server.log" "$work/server"
+await_server fern "$port" "$work/server.log"
+url="http://127.0.0.1:$port"
+
+# fetch NAME CURL-ARGS... — the response's head and body, as sent (no
+# decoding, no redirect followed), to $work/NAME.head and $work/NAME.body;
+# NAME joins the case list.
+cases=()
+fetch() {
+  local name="$1"
+  shift
+  # curl leaves no file for a response with no body, a 304's.
+  : > "$work/$name.body"
+  curl -s --http1.1 --raw -D "$work/$name.head" -o "$work/$name.body" "$@"
+  cases+=("$name")
+}
+fetch hello "$url/hello"
+fetch head -I "$url/hello"
+fetch method -X POST --data-binary 'x' "$url/hello"
+fetch user "$url/users/7"
+fetch redirect "$url/moved"
+fetch problem "$url/missing"
+fetch unrouted "$url/nope"
+fetch echo --data-binary 'name=fern' -H 'Content-Type: application/x-www-form-urlencoded' "$url/echo"
+fetch compressed -H 'Accept-Encoding: gzip' "$url/essay"
+fetch identity "$url/essay"
+fetch file --etag-save "$work/file.etag" "$url/files/hello.txt"
+fetch conditional --etag-compare "$work/file.etag" "$url/files/hello.txt"
+fetch range -H 'Range: bytes=0-4' "$url/files/hello.txt"
+fetch fresh "$url/fresh"
+stop_server
+
+echo "== httplint $("$venv/bin/python" -c 'import httplint; print(httplint.__version__)'), $ARCH, ${#cases[@]} cases on port $port"
+"$venv/bin/python" - "$work" "$report" "${cases[@]}" <<'PY'
+import sys
+from httplint import HttpResponseLinter, levels
+
+work, report, cases = sys.argv[1], sys.argv[2], sys.argv[3:]
+rows = []
+failed = False
+for name in cases:
+    head = open(f"{work}/{name}.head", "rb").read()
+    body = open(f"{work}/{name}.body", "rb").read()
+    lines = head.rstrip(b"\r\n").split(b"\r\n")
+    version, code, *phrase = lines[0].split(b" ", 2)
+    fields = []
+    for line in lines[1:]:
+        if b":" in line:
+            k, v = line.split(b":", 1)
+            fields.append((k.strip(), v.strip()))
+    # curl -I writes the head where the body would go; a HEAD response has
+    # none to read.
+    head_only = name == "head"
+    linter = HttpResponseLinter(no_content=head_only)
+    linter.is_head_response = head_only
+    linter.process_response_topline(version, code, phrase[0] if phrase else None)
+    linter.process_headers(fields)
+    if not head_only:
+        linter.feed_content(body)
+    linter.finish_content(True)
+    counts = {level: 0 for level in levels}
+    print(f"-- {name}: {lines[0].decode()}")
+    print("   " + "; ".join(f"{k.decode()}: {v.decode()}" for k, v in fields))
+    for note in linter.notes:
+        counts[note.level] += 1
+        try:
+            summary = note.summary
+        except TypeError:
+            summary = type(note).__name__
+        print(f"   {note.level.value:8} {note.category.value:16} {summary}")
+    bad = counts[levels.BAD]
+    warn = counts[levels.WARN]
+    rows.append(f"httplint/{name}.bad\t{bad}")
+    rows.append(f"httplint/{name}.warn\t{warn}")
+    if bad:
+        failed = True
+out = sys.stdout if report in ("-", "") else open(report, "w")
+out.write("\n".join(rows) + "\n")
+if failed:
+    print("net-httplint: a response drew a BAD note", file=sys.stderr)
+    sys.exit(1)
+PY

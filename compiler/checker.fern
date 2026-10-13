@@ -42,6 +42,7 @@ import "./parser";
 import "./astwalk";
 import "./typeinfo";
 import "./decltypes";
+import "./semtypes";
 
 // =================== TYPE SYSTEM ====================
 // Semantic type definitions live in typeinfo, shared with typed consumers.
@@ -7208,6 +7209,12 @@ function check_field_access_expr(fa: ast.ExprFieldAccess, s: Scope): typeinfo.Ty
 // field_access_result_type is check_field_access_expr over the object's
 // checked type, for a read that is not a qualified unit variant.
 function field_access_result_type(fa: ast.ExprFieldAccess, ot: typeinfo.Type, s: Scope): typeinfo.Type {
+  // `r.fd` on a stream handle (Reader, Writer, Dir): the descriptor, an
+  // i32, as the Go checker's builtin declarations and the lowering have it.
+  // The handles are declared nowhere in the self-host's struct table.
+  if (fa.field == "fd" && semtypes.is_fd_handle(ot)) {
+    return t_i32();
+  }
   match (ot) {
     typeinfo.TypeStruct(sn) => {
       let fsig: StructSig = s.lookup_struct(sn.name);

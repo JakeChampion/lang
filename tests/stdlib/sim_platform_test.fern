@@ -10,6 +10,8 @@ import "std/time";
 import "std/http/trace";
 import "std/utf8";
 import "std/string";
+import "std/http/router";
+import "std/http/accesslog";
 
 // tests/stdlib/sim_platform_test.fern — a handler's platform over the
 // simulation (#9855): the sim platform answers the clock, randomness,
@@ -265,8 +267,61 @@ function test_a_handler_runs_over_the_simulation(): test.TestOutcome {
   return test.assert_body(resp, "eu-west 25 status 200");
 }
 
+// The served side of a route: the user's id, under the access log.
+function __user(req: HttpRequest, params: router.Params, plat: sim_platform.SimPlatform): HttpResponse {
+  use logged <- accesslog.logged(req, plat);
+  return http.ok("user " + params.values[0]);
+}
+
+// A router with its middleware served in memory on the simulated network:
+// the client side's `plat.http` reaches it through the whole client, the
+// server side's platform records the access log line the middleware wrote
+// for the route it ran on (the router's own 404 runs no middleware), and
+// no socket is opened.
+function test_router_served_in_memory(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let server_plat: sim_platform.SimPlatform = sim_platform.new(d, sim_fetch.net(d));
+  let Ok(r) = router.new[sim_platform.SimPlatform]().get("/users/{id}", __user) else {
+    return test.fail("route");
+  };
+  let h: (HttpRequest, sim_platform.SimPlatform) => HttpResponse = r.handler();
+  let n: sim_fetch.Net = sim_fetch.net(d).host("api.test", [ORIGIN]).serve(ORIGIN, 80, (req: HttpRequest): HttpResponse => h(req, server_plat));
+  let plat: sim_platform.SimPlatform = sim_platform.new(d, n);
+  match (plat.http(fetch.get("http://api.test/users/7"))) {
+    Ok(resp) => {
+      if (resp.status != 200 || resp.body_string() != "user 7") {
+        return test.fail(resp.status.to_string() + " " + resp.body_string());
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  match (plat.http(fetch.get("http://api.test/nope"))) {
+    Ok(resp) => {
+      if (resp.status != 404) {
+        return test.fail("status " + resp.status.to_string());
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  let lines: string = "";
+  for c in server_plat.calls() {
+    if (c.name == "log") {
+      lines = lines + c.args + "\n";
+    }
+  }
+  if (!lines.contains("\"body\":\"GET /users/7 200\"") || lines.contains("/nope")) {
+    return test.fail("access log: " + lines);
+  }
+  return test.assert_eq(n.connects(), 1);
+}
+
 function main(): i32 {
   let t: test.TestRunner = test.test_new("std/sim_platform");
+  t = t.it("serves a router in memory", test_router_served_in_memory);
   t = t.it("config and secret answer what was set", test_config_and_secret_answer_what_was_set);
   t = t.it("env answers what was set", test_env_answers_what_was_set);
   t = t.it("the clock is the simulation's", test_the_clock_is_the_simulations);

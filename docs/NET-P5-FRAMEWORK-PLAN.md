@@ -308,13 +308,81 @@ decides what wraps it.
    differential; `TestX86_64EprintWholeLines`, `TestArm64EprintWholeLines`
    and `TestArm64DarwinEprintWholeLines`, four forked workers logging a
    thousand lines each to one pipe, every line read back whole.
+   Metrics (landed): `std/metrics` has counters, gauges and fixed-bucket
+   histograms whose numbers live in cells, so a handler's copy and the
+   registry's count the same thing, their Prometheus text exposition
+   (format 0.0.4), `merge` summing several expositions, and an `Exporter`
+   answering scrapes on a port of its own from the caller's reactor. The
+   serve loop records `http_server_request_duration_seconds` by method
+   and status (OpenTelemetry's buckets, the request timed from its header
+   block's arrival, the clock the body deadline already keeps),
+   connections accepted and open, into a
+   `ServerMetrics` kept on its connection table, and renders it with the
+   program's `Config.metrics` registry. Under `supervise` each worker
+   ships that text, ended by the `# EOF` line, down a non-blocking pipe
+   to the supervisor once a second (a snapshot the pipe has no room for
+   is dropped, never a stall), and the supervisor sums the workers'
+   latest snapshots and answers `/metrics`, `/healthz` and `/readyz` on
+   `Config.metrics_port`, so a scrape never touches a worker; `run`, and
+   `supervise` where there is no fork, answer them from the loop. There
+   is no per-worker state to share, so a dead worker's counts leave with
+   it: the reset a scraper's rate functions expect of a restart. Gate:
+   `tests/stdlib/metrics_test.fern` in the stdtest differential;
+   `TestMetricsServeInterp` (one process) and
+   `TestMetricsSupervisedServeX86_64` (two workers through the
+   supervisor) read the counts back off the metrics port.
 8. **The developer loop.** In-memory serving through the full router and
    middleware stack on the simulated `Platform`; recording and replay of
    upstream traffic; a rate-driven load tool in `tools/` with latency
    correction; httplint's response checks on the `net-nightly` lane.
+   In-memory serving and record/replay (landed): `sim_fetch.Net.serve(addr,
+   port, handler)` answers the client's requests from a handler with the
+   serve loop's parsing and framing and no socket, so a router with its
+   middleware runs under `plat.http` on a `SimPlatform`
+   (`tests/stdlib/sim_platform_test.fern`, "serves a router in memory");
+   `sim_fetch.taped` / `send_taped` record a client's exchanges as JSON
+   lines and `Net.replay(cassette)` answers them in order, `https`
+   replayed as plain `http` since the simulated network carries no TLS
+   (`tests/stdlib/sim_fetch_test.fern`, the cassette cases). httplint
+   (landed): `scripts/net-httplint` on `net-nightly.yml` fetches fourteen
+   responses from a router program (`scripts/net-httplint.d/server.fern`:
+   text, JSON, HEAD, 405, 302, problem, upload, compressed, static file,
+   304, 206, `Cache-Control`) and fails on a note httplint rates BAD; the
+   first run found the status line of a 206 and a 412 going out as
+   "Status", so `http_status_text` now names every RFC 9110 code. The
+   load tool (landed): `tools/fernload/fernload.fern` sends at a fixed
+   rate over kept connections, open-loop, and measures each request's
+   latency from the moment the rate said it was due, so a stalled server
+   shows the queueing a real client would see (wrk2's correction for
+   coordinated omission); the raw latency from the send is reported beside
+   it, as `metric<TAB>value` rows `scripts/perf-history` can record.
+   `TestFernloadX86_64` and `TestFernloadInterp` run it against a
+   `std/serve` hello and check every scheduled request was sent and
+   answered. Writing it found the interpreter's `connect_start` answering a
+   blocking socket where the native one is non-blocking; it is
+   non-blocking on both now.
 9. **The exit criteria.** The tutorial's routed JSON API with logging
    middleware and graceful shutdown under 40 lines, its deterministic
    simulation with fault injection under `examples/tests/` under 20, both
    compiled in the examples lane; Autobahn and httplint green nightly;
    `internal/e2eselfhost` twins for the router, middleware, multipart and
    WebSocket tests.
+   The two programs (landed): `examples/api.fern`, 38 lines, a router
+   generic over the platform with the access log as middleware, a lookup
+   at an upstream directory through `plat.http`, and
+   `serve.supervise_shutdown` reporting why it stopped; and
+   `examples/tests/api_sim.fern`, 19 lines, the same routes on a
+   `SimPlatform` whose directory resets twice, so the first lookup is a 502
+   past the client's one retry and the next a 200. The examples lanes
+   (`examples.yml`, `macos.yml`, `make examples`) compile
+   `examples/tests/*.fern` beside `examples/*.fern`; a `norun` row in
+   `.github/examples-expected-exits.txt` marks the server as built and not
+   run. The tutorial (`site/src/content/docs/tutorial/http-server.mdx`)
+   carries both. Writing them found the self-host refusing a generic named
+   as a value inside another generic (#12313, fixed on main first) and
+   not instantiating a generic call from a method argument's expected type
+   (#12314, open). The router, middleware, multipart and WebSocket gates
+   already run through the self-host compiler: every `…X86_64` test in
+   `internal/testing/e2e` builds its server with `bin/fern -target
+   x86-64-linux`, which is the self-host compiler, and
+   `TestSelfHostServeWebSocket` sits in `internal/testing/e2ecompiler`.
