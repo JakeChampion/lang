@@ -60,6 +60,15 @@ name: Net nightly
 # (#9860). Every case passes or the job fails; the counts are recorded like
 # the bench's.
 #
+# The `grpc` job runs scripts/net-grpc-interop: grpc-go's interop client
+# at the release the script pins runs its cases (unary, client, server
+# and bidirectional streaming, deadlines, status codes and messages,
+# metadata, unimplemented methods) against
+# scripts/net-grpc-interop.d/server.fern, grpc.testing.TestService on
+# std/serve with HTTP/2 and streamed bodies, over TLS with a certificate
+# made for the run (#9860). Every case passes or the job fails; the
+# counts are recorded like the bench's.
+#
 # The `httplint` job runs scripts/net-httplint: one response of each shape
 # std/http and its middleware produce (a routed text and JSON API, a
 # redirect, a problem, a 405, an upload echoed, a compressed body, a static
@@ -289,4 +298,29 @@ jobs:
         with:
           name: h2spec-report-x86_64
           path: ${{ runner.temp }}/h2spec-report.txt
+          if-no-files-found: warn
+
+  grpc:
+    name: net-grpc-interop-x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - name: Restore the interop client
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/fern-grpc-interop
+          key: grpc-interop-${{ runner.os }}-${{ hashFiles('scripts/net-grpc-interop') }}
+      - name: Run the interop cases against the server
+        run: scripts/net-grpc-interop "${{ runner.temp }}/grpc-report.txt"
+      - name: Record the report in refs/notes/perf
+        if: github.ref == 'refs/heads/main'
+        run: scripts/perf-history record net-grpc-interop "${{ runner.temp }}/grpc-report.txt"
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: grpc-report-x86_64
+          path: ${{ runner.temp }}/grpc-report.txt
           if-no-files-found: warn

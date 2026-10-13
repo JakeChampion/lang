@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# net-grpc-interop — the gRPC interop suite against a Fern server
+# (docs/NET-P6-HTTP2-PLAN.md §6, #9860): grpc-go's interop client at the
+# release pinned below runs its cases against
+# scripts/net-grpc-interop.d/server.fern, grpc.testing.TestService on
+# std/serve with HTTP/2 and streamed bodies, over TLS with a certificate
+# made here, built by bin/fern for the host.
+#
+# Usage: net-grpc-interop [REPORT]
+#
+#   REPORT  where the `metric<TAB>value` rows go ("-" or nothing for
+#           stdout), the format scripts/perf-history records:
+#           grpc/<case> as 1 for a case that passed and 0 for one that did
+#           not, and grpc/passed and grpc/failed.
+#
+# The client is built once with `go install` into $FERN_GRPC_INTEROP_TOOLS
+# (default ~/.cache/fern-grpc-interop). Any failed case fails the script.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+for tool in go openssl; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "net-grpc-interop: $tool not found" >&2
+    exit 2
+  fi
+done
+. scripts/net-lib
+
+GRPC_GO_VERSION=v1.78.0
+CASES="empty_unary large_unary client_streaming server_streaming ping_pong timeout_on_sleeping_server status_code_and_message special_status_message custom_metadata unimplemented_method unimplemented_service"
+
+report="${1:--}"
+tools="${FERN_GRPC_INTEROP_TOOLS:-$HOME/.cache/fern-grpc-interop}"
+client="$tools/interop-client-$GRPC_GO_VERSION"
+if [ ! -x "$client" ]; then
+  echo "net-grpc-interop: building grpc-go's interop client $GRPC_GO_VERSION" >&2
+  mkdir -p "$tools"
+  GOBIN="$tools" go install "google.golang.org/grpc/interop/client@$GRPC_GO_VERSION"
+  mv "$tools/client" "$client"
+fi
+
+certs="$work/certs"
+mkdir -p "$certs"
+tls_certificate ca P-384 '/CN=Fern gRPC interop CA' ''
+tls_certificate leaf P-256 '/CN=localhost' ca 'subjectAltName=DNS:localhost,IP:127.0.0.1' 'extendedKeyUsage=serverAuth' 'keyUsage=digitalSignature' 'basicConstraints=CA:FALSE'
+
+port="$(free_port)"
+bin/fern -target "$TARGET" -o "$work/server" scripts/net-grpc-interop.d/server.fern
+TLS_CERT="$certs/leaf.pem" TLS_KEY="$certs/leaf.key" PORT="$port" start_server "$work/server.log" "$work/server"
+await_port fern "$port" "$work/server.log"
+
+echo "== grpc-go interop client $GRPC_GO_VERSION, $ARCH, TLS, port $port"
+passed=0
+failed=0
+rows=""
+for case in $CASES; do
+  if "$client" --server_host=127.0.0.1 --server_port="$port" --use_tls=true --use_test_ca=true --ca_file="$certs/ca.pem" --server_host_override=localhost --test_case="$case" > "$work/$case.log" 2>&1; then
+    echo "ok   $case"
+    passed=$((passed + 1))
+    rows="$rows
+grpc/$case	1"
+  else
+    echo "FAIL $case"
+    cat "$work/$case.log"
+    failed=$((failed + 1))
+    rows="$rows
+grpc/$case	0"
+  fi
+done
+rows="grpc/passed	$passed
+grpc/failed	$failed$rows"
+if [ "$report" = "-" ]; then
+  echo "$rows"
+else
+  echo "$rows" > "$report"
+fi
+if [ "$failed" -ne 0 ]; then
+  echo "net-grpc-interop: $failed case(s) failed" >&2
+  cat "$work/server.log" >&2
+  exit 1
+fi

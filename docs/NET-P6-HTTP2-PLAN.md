@@ -163,8 +163,22 @@ without ACK within the timeout closes the connection.
    sooner of it and `handler_deadline`, answering a call past it with
    `grpc-status: 4` where an HTTP request gets 503 (`TestServeH2X86_64`
    parks a timed call on the held upstream and reads the status back
-   while the upstream still holds). Still to do here: the interop lane
-   itself.
+   while the upstream still holds). The lane (landed): `scripts/net-grpc-interop`
+   on `net-nightly.yml` builds grpc-go's interop client at a pinned release
+   and runs `empty_unary`, `large_unary`, `client_streaming`,
+   `server_streaming`, `ping_pong`, `timeout_on_sleeping_server`,
+   `status_code_and_message`, `special_status_message`, `custom_metadata`,
+   `unimplemented_method` and `unimplemented_service` over TLS against
+   `scripts/net-grpc-interop.d/server.fern`, grpc.testing.TestService in
+   a few hundred lines of Fern on `std/serve`, `std/http/grpc` and
+   `std/protobuf`; every case green or the job fails. Writing it found
+   two loop faults: a flight parked on its own HTTP/2 connection unwatched
+   the connection when it woke, and a connection draining a large
+   response was watched for writes alone, so the client's WINDOW_UPDATEs
+   went unread; both fixed. Open: a producer cannot set the trailers a
+   call ends with, since `HttpResponse.trailers` is fixed when the
+   response is built, so the interop server reads a duplex call's first
+   message before building its response.
 7. **The client.** `std/fetch` over HTTP/2 to an origin that offers it,
    one connection per origin, so a handler's upstream calls multiplex.
 8. **Exit.** Per-stream bump bytes bounded and recorded on the perf lane;
