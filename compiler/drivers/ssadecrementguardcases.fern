@@ -70,7 +70,7 @@ pub function run(output: string): void {
     guards(output, string_entry);
     require(!machine.check(".set alias, __fn___fern_arr_dec\n" + output, string_entry), "closed namespace");
     let name = if (string_entry) { "__fn___fern_str_free" } else { "__fn___fern_arr_dec" };
-    let minimal = ".text\n" + name + ":\nmovq 8(%rsp), %rax\n" + name + ".r:\nret\n";
+    let minimal = ".text\n" + name + ":\nmovq 8(%rsp), %rax\n" + name + ".r:\n" + name + ".u:\nret\n";
     require(machine.check(minimal, string_entry), "guard-only return needs no heap/dependency certificate");
   }
   mutation(output, true, "testb $1, %al", "testb $0, %al", false);

@@ -95,7 +95,7 @@ pub function run(): void {
   namespace(output, row);
   correspondence(output, row);
   // New declaration support must not broaden the old runtime/storage APIs.
-  let minimal = ".text\n__fn___fern_arr_dec:\nmovq 8(%rsp), %rax\n__fn___fern_arr_dec.r:\nret\n";
+  let minimal = ".text\n__fn___fern_arr_dec:\nmovq 8(%rsp), %rax\n__fn___fern_arr_dec.r:\n__fn___fern_arr_dec.u:\nret\n";
   require(text.select(minimal, "__fn___fern_arr_dec").error == "", "old selector control");
   for data in [".data\n.quad -1\n", ".data\n.quad .S0\n"] {
     require(text.select(minimal + data, "__fn___fern_arr_dec").error != "", "old declaration policy retained");

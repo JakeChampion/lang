@@ -29,7 +29,7 @@ pub struct Op { kind: i32, width: i32, source: i32, destination: i32, base: i32,
 
 pub struct Program { ops: Op[], error: string }
 
-pub struct ArrayProgram { ops: Op[], register_entry: i32, error: string }
+pub struct ArrayProgram { ops: Op[], register_entry: i32, unguarded_entry: i32, error: string }
 
 struct Address { base: i32, index: i32, scale: i32, offset: i32 }
 
@@ -282,14 +282,14 @@ pub function large_program(output: string): Program {
 pub function array_program(output: string): ArrayProgram {
   let body = text.select(output, "__fn___fern_arr_dec");
   let p = selected_program(body, 2);
-  return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, error: p.error };
+  return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, unguarded_entry: if (p.error == "") { body.unguarded_entry } else { -1 }, error: p.error };
 }
 
 // Same instruction grammar, separate complete-native declaration boundary.
 pub function native_array_program(output: string): ArrayProgram {
   let body = text.native_array_release(output);
   let p = selected_program(body, 2);
-  return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, error: p.error };
+  return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, unguarded_entry: if (p.error == "") { body.unguarded_entry } else { -1 }, error: p.error };
 }
 
 // Both string entries come from this same closed-namespace text selection.
@@ -297,7 +297,7 @@ pub function native_array_program(output: string): ArrayProgram {
 pub function string_program(output: string): ArrayProgram {
   let body = text.select(output, "__fn___fern_str_free");
   let p = selected_program(body, 3);
-  return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, error: p.error };
+  return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, unguarded_entry: if (p.error == "") { body.unguarded_entry } else { -1 }, error: p.error };
 }
 
 // Ordinary retained constructor syntax, not a constructor effect certificate.
@@ -306,7 +306,7 @@ pub function string_program(output: string): ArrayProgram {
 pub function constructor_program(output: string, entry: string): ArrayProgram {
   let body = text.native_body(output, entry);
   let p = selected_program(body, 4);
-  return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, error: p.error };
+  return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, unguarded_entry: if (p.error == "") { body.unguarded_entry } else { -1 }, error: p.error };
 }
 
 // Complete ordinary caller syntax, including its inline RC guards. This is
@@ -315,7 +315,7 @@ pub function constructor_program(output: string, entry: string): ArrayProgram {
 pub function caller_program(output: string, entry: string): ArrayProgram {
   let body = text.native_body(output, entry);
   let p = selected_program(body, 7);
-  return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, error: p.error };
+  return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, unguarded_entry: if (p.error == "") { body.unguarded_entry } else { -1 }, error: p.error };
 }
 
 // Fixed helper syntax only. A call names the allocator without proving it.

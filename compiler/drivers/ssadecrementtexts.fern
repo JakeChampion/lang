@@ -23,8 +23,10 @@ function check(s: string, entry: string, ok: boolean): void {
   if (ok) {
     require(p.register_entry >= 0 && p.register_entry < p.lines.len());
     require(p.lines[p.register_entry] == entry + ".r:");
+    require(p.unguarded_entry > p.register_entry && p.unguarded_entry < p.lines.len());
+    require(p.lines[p.unguarded_entry] == entry + ".u:");
   } else {
-    require(p.lines.len() == 0 && p.register_entry == -1);
+    require(p.lines.len() == 0 && p.register_entry == -1 && p.unguarded_entry == -1);
   }
 }
 
@@ -60,6 +62,13 @@ function entries(s: string, entry: string, local: string): void {
   check(change(s, entry + ".r:", "__unrelated:\n" + entry + ".r:"), entry, false);
   check(change(s, entry + ".r:", "__renamed_register:"), entry, false);
   check(change(s, entry + ".r:", entry + ".r:; ret"), entry, false);
+  // The unguarded entry is held to the same rules as the register entry.
+  check(s + "\n.data\n" + entry + ".u: .quad 0\n", entry, false);
+  check(change(s, entry + ".u:", entry + ".u: ret"), entry, false);
+  check(change(s, entry + ".u:", ".data\n" + entry + ".u:"), entry, false);
+  check(change(s, entry + ".u:", "__unrelated:\n" + entry + ".u:"), entry, false);
+  check(change(s, entry + ".u:", "__renamed_unguarded:"), entry, false);
+  check(change(s, entry + ".u:\n", ""), entry, false);
 }
 
 function control_bytes(s: string, entry: string): void {

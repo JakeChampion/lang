@@ -11108,8 +11108,10 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     // FuncDecl spreads take the inline per-field path and never call out.
     "__fn___fern_struct_copy",
     // The register entries of the helpers that have one (ssa_reg_helper),
-    // called from every unit like the stack entries they sit beside.
+    // called from every unit like the stack entries they sit beside, and
+    // the two entries past the floor test the inline release guard enters.
     "__fn___fern_arr_dec.r", "__fn___fern_str_free.r",
+    "__fn___fern_arr_dec.u", "__fn___fern_str_free.u",
     "__fn___fern_str_eq.r", "__fn___fern_arr_inc_elems.r", "__fn___fern_alloc_reuse.r",
   ];
   let i: i32 = 0;

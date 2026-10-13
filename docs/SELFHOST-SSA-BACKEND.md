@@ -161,7 +161,10 @@ and began by loading their one argument into `%rax` / x0, so each has a
 `.r` entry after that load (`ssa_reg_helper`): `checker.fern` falls to
 449,708 static instructions (x86-64, -6.2% on the stack ABI), and the
 stage-2 compiler to 3,912 M Ir compiling `ssa.fern` (-3.0%) and 10,444,920
-bytes (-3.9%). The rest of the track, in order:
+bytes (-3.9%). Both also have a `.u` entry just past their floor test (and
+the string's tag test), where the count is read: the inline release guard
+(`ssa_rc_dec`) and the generated release helpers' heads have tested the
+floor already and enter there. The rest of the track, in order:
 
 1. The other hand-written helpers with arguments (`str_concat`,
    `alloc_reuse`), each by its own argument order. `str_eq` and

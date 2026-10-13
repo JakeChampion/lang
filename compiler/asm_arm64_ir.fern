@@ -2840,6 +2840,13 @@ function ssa_rc_guard(s: asmcore.EmitState, p: string, done: asmcore.Lab, strip:
 
 // ssa_helper_call calls a runtime helper through its register entry.
 function ssa_helper_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  return ssa_helper_entry(ins, reg_of, ".r", s);
+}
+
+// ssa_helper_entry calls a runtime helper through the entry `suffix` names:
+// `.r` takes the arguments in registers, `.u` is a release whose caller has
+// already tested the floor, and the tag of a string.
+function ssa_helper_entry(ins: ssa.SInst, reg_of: i32[], suffix: string, s: asmcore.EmitState): asmcore.EmitState {
   s = helper_call_needs(ins.str, s);
   let hsrc: i32[] = [];
   let hdst: i32[] = [];
@@ -2850,7 +2857,7 @@ function ssa_helper_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): a
     ha = ha + 1;
   }
   s = ssa_parallel_moves(hsrc, hdst, s);
-  s = ssa_bl_sym(s, ircore.ir_helper_symbol(ins.str) + ".r");
+  s = ssa_bl_sym(s, ircore.ir_helper_symbol(ins.str) + suffix);
   return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
 
@@ -2881,7 +2888,7 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitSt
   s = ssa_cmp_imm(s, "w5", 1);
   s = ssa_bcond(s, CC_GT, dec);
   s = ssa_tbz(s, true, "w5", 31, kept);
-  s = ssa_helper_call(ins, reg_of, s);
+  s = ssa_helper_entry(ins, reg_of, ".u", s);
   s = ssa_b(s, done);
   s = s.lab_def(dec);
   s = ssa_addsub_imm(s, true, "w5", "w5", 1);
@@ -9197,6 +9204,9 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fn___fern_arr_dec.r:\n");
   s = s.write("    cmp x0, #16, lsl #12\n");
   s = s.write("    blo .Larrdec_ret\n");
+  // The `.u` entry is for a caller that has tested the floor and seen a
+  // count of one or zero: the inline release guard and the release helpers.
+  s = s.write("__fn___fern_arr_dec.u:\n");
   s = s.write("    ldur w1, [x0, #-8]\n");  // rc
   s = s.write(san_poison_check("w1", "w9", ".Larrdec_live", s.rc_free_debug));
   s = s.write("    cmp w1, #1\n");
@@ -9260,10 +9270,10 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ldr x0, [sp]\n");  // box
   s = s.write("__fn___fern_str_free.r:\n");
   s = s.write("    tbnz x0, #0, .Lstrfree_ret\n");  // tagged / SSO sentinel (defensive)
-  // x9 is both the heap floor here and the freelist class cap below.
-  s = s.write("    mov x9, #0x10000\n");
-  s = s.write("    cmp x0, x9\n");
+  s = s.write("    cmp x0, #16, lsl #12\n");
   s = s.write("    blo .Lstrfree_ret\n");  // low-addr guard
+  s = s.write("__fn___fern_str_free.u:\n");  // past the tag and floor tests, as the inline guard is
+  s = s.write("    mov x9, #0x10000\n");  // the freelist class cap below
   // rc word @ box-8 (#2649 Option A A1b rc-headered box): negative = immortal
   // sentinel (skip); rc>1 decrements; rc==1 frees the box and any owned data;
   // rc==0 is a double-free, caught by __fern_rc_underflow (matching arr_dec)

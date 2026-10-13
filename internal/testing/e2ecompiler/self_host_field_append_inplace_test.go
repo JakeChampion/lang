@@ -1055,7 +1055,7 @@ function main(): i32 {
 			continue
 		}
 		re := pushRe
-		if strings.Contains(ln, "call __fn___fern_arr_dec.r") {
+		if strings.Contains(ln, "call __fn___fern_arr_dec.r") || strings.Contains(ln, "call __fn___fern_arr_dec.u") {
 			re = regArgRe
 		}
 		m := re.FindStringSubmatch(lines[i-1])

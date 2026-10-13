@@ -14,7 +14,7 @@ import "std/string";
 // use the independent ISA table; offsets are signed byte displacements.
 pub struct Op { kind: i32, width: i32, source: i32, destination: i32, base: i32, offset: i32, immediate: i32, condition: string, target: i32 }
 
-pub struct Program { ops: Op[], register_entry: i32, error: string }
+pub struct Program { ops: Op[], register_entry: i32, unguarded_entry: i32, error: string }
 
 struct Address { base: i32, offset: i32 }
 
@@ -144,7 +144,7 @@ function decode(line: string, labels: names.Names): Op {
 }
 
 function failure(error: string): Program {
-  return Program { ops: [], register_entry: -1, error: error };
+  return Program { ops: [], register_entry: -1, unguarded_entry: -1, error: error };
 }
 
 // Instruction positions correspond exactly to selected lines, including
@@ -169,5 +169,5 @@ pub function program(output: string, entry: string): Program {
     }
     ops = ops.append(op);
   }
-  return Program { ops: ops, register_entry: body.register_entry, error: "" };
+  return Program { ops: ops, register_entry: body.register_entry, unguarded_entry: body.unguarded_entry, error: "" };
 }

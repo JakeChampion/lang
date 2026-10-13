@@ -116,8 +116,9 @@ function release_entry(row: ssaprepare.Emitted, drop: ssaprepare.Emitted): Bindi
   // RC>1 skips Drop and decrements once. These are exactly the proved body's
   // shared paths. RC==0 enters that SAME body and retains runtime underflow.
   // ARM RC==1 also enters it. The x86 shortcut must invoke the SAME proved
-  // Drop, then __fern_rc_dec (mapped to __fn___fern_arr_dec.r), on the saved
-  // parent pointer and return zero, matching the body's unique path.
+  // Drop, then __fern_rc_dec (mapped to __fn___fern_arr_dec.u, past the floor
+  // test the shortcut already made), on the saved parent pointer and return
+  // zero, matching the body's unique path.
   let entry = row.release_entry;
   if (entry.unique_drop != "" && entry.unique_drop != drop.label_name) {
     return Binding { rows: [], error: "mismatched proved release entry Drop" };

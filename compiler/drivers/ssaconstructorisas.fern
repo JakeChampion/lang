@@ -136,7 +136,7 @@ function unsupported(): void {
   for line in ["call __fern_arr_box", "leaq .S0(%rip), %rax"] {
     let old = isa.program(".text\n__fern_capw:\n" + line + "\nret\n");
     require(old.error == "" && old.ops[0].kind == 0, "capacity policy isolated");
-    let release = isa.array_program(".text\n__fn___fern_arr_dec:\n__fn___fern_arr_dec.r:\n" + line + "\nret\n");
+    let release = isa.array_program(".text\n__fn___fern_arr_dec:\n__fn___fern_arr_dec.r:\n" + line + "\nret\n__fn___fern_arr_dec.u:\n");
     require(release.error == "" && release.ops[1].kind == 0, "array policy isolated");
   }
 }
