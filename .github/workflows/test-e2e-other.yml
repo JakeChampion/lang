@@ -66,8 +66,12 @@ jobs:
         include:
           # The aarch64 leg was one shard of 9.9-12.2 minutes in two workers,
           # the longest job outside the self-host lane (docs/CI-PERFORMANCE.md).
-          - { runner: ubuntu-latest,    host: x86_64,  nshard: 2, shard: 0 }
-          - { runner: ubuntu-latest,    host: x86_64,  nshard: 2, shard: 1 }
+          # x86_64 is three shards: at two, each worker of a shard ran 24-25
+          # of its 25 minutes, and the interpreter's tls_verify suite (over
+          # three minutes alone) tipped one over.
+          - { runner: ubuntu-latest,    host: x86_64,  nshard: 3, shard: 0 }
+          - { runner: ubuntu-latest,    host: x86_64,  nshard: 3, shard: 1 }
+          - { runner: ubuntu-latest,    host: x86_64,  nshard: 3, shard: 2 }
           - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 0 }
           - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 1 }
     name: test-e2e-other-${{ matrix.host }}-shard${{ matrix.shard }}
