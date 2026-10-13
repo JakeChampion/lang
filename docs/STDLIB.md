@@ -1439,6 +1439,23 @@ step = step.client.read(received)?;   // step.output, step.data, step.events
   signature, or an empty chain when it sent none: judge them, then call
   `verdict(ok)`), `Connected`, `PeerClosed` and `Ticket`. No private key, no
   ticket key and no trust decision enter the module.
+- QUIC (RFC 9001): a config with `quic` set runs the same handshake with no
+  record layer. Handshake bytes come in through `read_crypto(level, bytes)`
+  (0 Initial, 1 Handshake, 2 1-RTT; a level other than the one being read
+  is the `Level` error, unexpected_message's code) and go out as `Crypto`
+  events, `CryptoFlight { level, bytes }` for QUIC's CRYPTO frames; each
+  traffic secret is reported as it is set as a `Secret` event,
+  `TrafficSecret { level, write, secret }`, for the packet protection at
+  that level to derive its keys from under `cipher_suite()`. The config's
+  `extensions` go in the ClientHello or EncryptedExtensions and the peer's
+  are `peer_extensions()`: QUIC's transport parameters
+  (`message.EXT_QUIC_TRANSPORT_PARAMETERS`), which both sides must carry,
+  as both must negotiate a protocol by ALPN. `read`, `write`, `save`, a
+  KeyUpdate from the peer and the alert record are refused or empty under
+  QUIC, whose own frames carry application data, key updates and the
+  close; an error's `alert()` is the code for CONNECTION_CLOSE. The two
+  QUIC cases in `tests/stdlib/tls_handshake_test.fern` run the handshake
+  by flights and check the secrets match crosswise.
 - Client certificates (§4.4.2): `ServerConfig.request_client_certificate`
   sends a CertificateRequest naming the schemes `std/tls/verify` checks,
   except on a resumed handshake. A client with `ClientConfig.chain` and a
