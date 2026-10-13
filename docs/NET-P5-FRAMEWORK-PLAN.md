@@ -335,6 +335,16 @@ decides what wraps it.
    middleware stack on the simulated `Platform`; recording and replay of
    upstream traffic; a rate-driven load tool in `tools/` with latency
    correction; httplint's response checks on the `net-nightly` lane.
+   In-memory serving and record/replay (landed): `sim_fetch.Net.serve(addr,
+   port, handler)` answers the client's requests from a handler with the
+   serve loop's parsing and framing and no socket, so a router with its
+   middleware runs under `plat.http` on a `SimPlatform`
+   (`tests/stdlib/sim_platform_test.fern`, "serves a router in memory");
+   `sim_fetch.taped` / `send_taped` record a client's exchanges as JSON
+   lines and `Net.replay(cassette)` answers them in order, `https`
+   replayed as plain `http` since the simulated network carries no TLS
+   (`tests/stdlib/sim_fetch_test.fern`, the cassette cases). The load tool
+   and the httplint job are still open.
 9. **The exit criteria.** The tutorial's routed JSON API with logging
    middleware and graceful shutdown under 40 lines, its deterministic
    simulation with fault injection under `examples/tests/` under 20, both
