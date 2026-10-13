@@ -12,8 +12,10 @@ import (
 	"testing"
 )
 
-// ringDriverProbe prints, over loopback: the listener reported on a
-// connect; an accepted socket reported while its bytes stay unread and not
+// ringDriverProbe prints, over loopback: a listener watched exclusively
+// reported on a connect, and a second exclusive watch of it refused as
+// epoll refuses one; the listener reported on a connect when watched
+// plainly; an accepted socket reported while its bytes stay unread and not
 // once they are read, as level-triggered epoll reports it; writable once
 // asked for; nothing after an unwatch, and readable again once watched
 // anew, with a completion of the poll the unwatch removed not reported; a
@@ -33,6 +35,13 @@ function main(): i32 {
   let any: u8[] = [0u8, 0u8, 0u8, 0u8];
   let ln: i32 = tcp_listen_with(any, 0, 64, false);
   let port: i32 = tcp_local_port(ln);
+  d.watch(ln, 5);
+  let c0: i32 = tcp_connect(16777343, port);
+  let ex: i32[] = pairs(d, 2000);
+  print("exclusive listener " + (ex.len() == 2 && ex[0] == ln && ex[1] == 1).to_string());
+  print("exclusive again " + d.watch(ln, 5).to_string());
+  tcp_close(tcp_accept(ln));
+  tcp_close(c0);
   d.watch(ln, 1);
   let c: i32 = tcp_connect(16777343, port);
   let got: i32[] = pairs(d, 2000);
@@ -113,7 +122,7 @@ function main(): i32 {
 }
 `
 
-const ringDriverRest = "listener true\nreadable true\nunread reported again true\nread 5 then 0\nwritable true\nunwatched 0\nwatched anew true\ndrained 0\nhalf-closed readable, not hung up true\nend of stream 0\nforty 40\nclose 0\n"
+const ringDriverRest = "exclusive listener true\nexclusive again -22\nlistener true\nreadable true\nunread reported again true\nread 5 then 0\nwritable true\nunwatched 0\nwatched anew true\ndrained 0\nhalf-closed readable, not hung up true\nend of stream 0\nforty 40\nclose 0\n"
 
 func writeRingDriverProbe(t *testing.T) string {
 	t.Helper()

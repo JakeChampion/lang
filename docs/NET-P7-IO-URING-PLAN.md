@@ -60,6 +60,20 @@ since each fact decides a design point below:
   half-closed connection whose handler is parked still owes its response.
   The ring reports hang-up for `POLLHUP` and `POLLERR` alone, as the
   reactor does for `EPOLLHUP` and `EPOLLERR`.
+- **A pending poll keeps its file open past the process.** A poll the
+  ring holds references the descriptor's file, and when the process dies
+  the ring is torn down asynchronously, a few milliseconds later. A
+  worker's own listener (`reuse_port`) polled by the ring therefore stays
+  in the port's group after its worker has exited, and the connections the
+  kernel steers to it in that window are reset when it finally closes:
+  `TestSelfHostSupervisedServeReusePortWorkers` lost its post-crash request
+  in 4 of 10 runs under load, against none under epoll, the packet capture
+  showing the handshake answered and reset 5 to 8 ms after the crash.
+  epoll's registration holds no reference. The ring therefore keeps an
+  exclusive watch (interest 4) in an epoll set of its own, polled by the
+  ring, and the serve loop watches its listener exclusively, shared or not,
+  which also gives the ring epoll's one wake-up per connection where
+  workers share a listener.
 - **The ring cannot be mapped at an address the program chooses.**
   `mmap` of the ring descriptor with `MAP_FIXED`, `MAP_FIXED_NOREPLACE`
   or a bare hint address fails with EINVAL. The ring's state (the
@@ -87,8 +101,8 @@ fallback; the native arm64 runner exercises the ring.
    reactor floor: `ring_new(entries): i64` (the handle, or -errno),
    `ring_ctl(ring, op, fd, arg): i32` and `ring_wait(ring, events,
    timeout_ms): i32`, with the reactor's ops and contract: op 1 watches
-   `fd` for `arg`'s interest bits (1 readable, 2 writable; 4, which asks
-   epoll for `EPOLLEXCLUSIVE`, means nothing to a ring of one process),
+   `fd` for `arg`'s interest bits (1 readable, 2 writable, 4 exclusive,
+   which the ring keeps in an epoll set of its own; see below),
    op 2 unwatches it, op 3 closes the ring, ops 4 to 6 the signal and
    parent watches, and a wait writes (fd, readiness) pairs into the
    caller's array and answers how many. Runtime helpers in

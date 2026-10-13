@@ -3363,15 +3363,13 @@ function __drain_deadline(c: __Conns, at: i32, opts: Config, first: boolean): __
   return __Conns { ...c, deadlines: c.deadlines.with(at, deadline), send_since: c.send_since.with(at, since), send_base: c.send_base.with(at, base) };
 }
 
-// __listener_interest(opts) — how a loop watches its listener: for reads,
-// and exclusively when other workers watch the same listener, so a
-// connection wakes one of them rather than all.
-function __listener_interest(opts: Config): i32 {
-  if (opts.workers > 1) {
-    return 5;
-  }
-  return 1;
-}
+// LISTENER_INTEREST — how a loop watches its listener: for reads, and
+// exclusively, so where workers share it a connection wakes one of them
+// rather than all. A listener no other process watches loses nothing by
+// it, and the io_uring driver keeps an exclusive watch in an epoll set,
+// whose registration does not keep the listener open after its worker
+// dies the way a pending poll on the ring does.
+const LISTENER_INTEREST: i32 = 5;
 
 // __stop_begin(stop, sig) — the shutdown `sig` started, once: a second
 // signal changes nothing.
@@ -3558,7 +3556,7 @@ function __serve_gate[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: 
     return false;
   }
   if (!accepting && !full) {
-    return drv.watch(listener, __listener_interest(opts)) >= 0;
+    return drv.watch(listener, LISTENER_INTEREST) >= 0;
   }
   return accepting;
 }
@@ -4833,7 +4831,7 @@ function __init_platform(): platform.Host {
 // persistence.
 function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => HttpResponse, opts: Config, on_stop: (string) => void, snap: Option[Writer]): i32 {
   let drv: async.RealDriver = __loop_driver(opts);
-  let watched: i32 = drv.watch(listener, __listener_interest(opts));
+  let watched: i32 = drv.watch(listener, LISTENER_INTEREST);
   if (watched < 0) {
     return watched;
   }
@@ -5017,7 +5015,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
 function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), opts: Config, on_stop: (string, S) => void, snap: Option[Writer]): i32 {
   let st: S = init;
   let drv: async.RealDriver = __loop_driver(opts);
-  let watched: i32 = drv.watch(listener, __listener_interest(opts));
+  let watched: i32 = drv.watch(listener, LISTENER_INTEREST);
   if (watched < 0) {
     return watched;
   }
