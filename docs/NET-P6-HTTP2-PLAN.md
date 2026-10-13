@@ -68,8 +68,10 @@ sends the attack and reads the connection refusing it:
 And the small ones: an empty DATA frame counts against a per-connection
 budget, SETTINGS_MAX_FRAME_SIZE under 16,384 or over 16,777,215 is a
 protocol error, an unknown frame type is skipped whole, a frame on a
-stream after GOAWAY's last stream id is ignored, and a SETTINGS frame
-without ACK within the timeout closes the connection.
+stream after GOAWAY's last stream id is ignored, and an incomplete
+connection preface at EOF closes the connection rather than leaving it
+readable at EOF for the loop to read again every pass (RFC 9113 §6.5.3's
+SETTINGS timeout is optional and not enforced).
 
 ## Slices
 
@@ -130,7 +132,10 @@ without ACK within the timeout closes the connection.
    under this one). Taking it towards zero is slice 8's, with the
    per-stream bump budget: the first round took it from 99 to 72.4 under
    a ceiling of 74 (the table owned through a request, in the slice
-   above, had taken 107 to 99),
+   above, had taken 107 to 99), and closing an incomplete preface at EOF,
+   an arm that hands the table on, took it to 60.0 under 62 with the
+   loop's splices unchanged: the table through the HTTP/2 turn is no
+   longer copied,
    the state machine updating its connection in place (a step's run
    taken apart before the connection is rebuilt, so the planner moves
    the record instead of copying it), the HPACK decode threaded through

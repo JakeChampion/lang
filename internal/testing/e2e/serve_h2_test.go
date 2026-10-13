@@ -228,6 +228,8 @@ func TestServeH2Interp(t *testing.T) {
 	w.driveH2C(t, exec.Command(bin, "-interp", w.src))
 	w.driveTLS(t, exec.Command(bin, "-interp", w.src))
 	w.driveState(t, exec.Command(bin, "-interp", w.stateSrc))
+	w.drivePrefix(t, exec.Command(bin, "-interp", w.src))
+	w.drivePrefix(t, exec.Command(bin, "-interp", w.stateSrc))
 }
 
 func TestServeH2X86_64(t *testing.T) {
@@ -248,6 +250,37 @@ func TestServeH2X86_64(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, o)
 	}
 	w.driveState(t, runX86Bin(qemu, stateOut))
+	w.drivePrefix(t, runX86Bin(qemu, out))
+	w.drivePrefix(t, runX86Bin(qemu, stateOut))
+}
+
+// drivePrefix sends a strict prefix of the HTTP/2 connection preface and
+// half-closes: the loop awaits the rest while the bytes are a prefix, and
+// at EOF it closes the connection, which the client reads as its own EOF
+// within the deadline; a request after it is answered.
+func (w *serveH2World) drivePrefix(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	addr, stderrPath := e2eharness.StartInheritedServer(t, cmd)
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Write([]byte("PRI * HT")); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.(*net.TCPConn).CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	got, err := io.ReadAll(conn)
+	conn.Close()
+	if err != nil || len(got) != 0 {
+		stderr, _ := os.ReadFile(stderrPath)
+		t.Fatalf("after a preface prefix and EOF: read %q, %v (want the server's EOF and nothing)\nserver stderr:\n%s", got, err, stderr)
+	}
+	if resp := e2eharness.HTTPRoundTrip(t, addr, "/one", 3*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
+		t.Fatalf("the request after the prefix: %q", resp)
+	}
 }
 
 // driveH2C sends prior-knowledge HTTP/2 with curl: two GETs and a POST on

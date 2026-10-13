@@ -133,6 +133,9 @@ struct __Stream {
   // reported as it comes (`received` counts it against content-length),
   // and whether the response's body is being written in parts.
   streaming: boolean,
+  // Which pseudo-headers the header block carried: 1 :method, 2 :scheme,
+  // 4 :path, 8 :authority.
+  seen: i32,
   received: i32,
   producing: boolean,
   // On a client connection: the response's status once its head has come.
@@ -231,7 +234,7 @@ pub function (c: Conn) request(out: Outgoing): (Step, i32) {
   if (last) {
     state = HALF_LOCAL;
   }
-  let s: __Stream = __Stream { id: stream, state: state, send_window: c.peer_initial_window, recv_window: c.config.initial_window, method: out.method, scheme: out.scheme, authority: out.authority, path: out.path, fields: headers.header_map_new(), body: [], length: 0 - 1, handling: false, reset: false, pending: out.body, trailers: out.trailers, owes_end: !last, streaming: false, received: 0, producing: false, status: 0 };
+  let s: __Stream = __Stream { id: stream, state: state, send_window: c.peer_initial_window, recv_window: c.config.initial_window, method: out.method, scheme: out.scheme, authority: out.authority, path: out.path, fields: headers.header_map_new(), body: [], length: 0 - 1, handling: false, reset: false, pending: out.body, trailers: out.trailers, owes_end: !last, streaming: false, received: 0, producing: false, status: 0, seen: 0 };
   c = Conn { ...c, encoder: enc.encoder, streams: c.streams.append(s), last_stream: stream, next_stream: stream + 2 };
   let r: __Run = __header_frames(__run(c), stream, enc.bytes, last);
   if (!last) {
@@ -288,9 +291,9 @@ pub function (c: Conn) streams_open(): i32 {
   return c.streams.len();
 }
 
-// settings_acked is whether the client acknowledged the server's SETTINGS;
-// a connection whose client has not within its timeout is closed with
-// SETTINGS_TIMEOUT by the loop.
+// settings_acked is whether the peer acknowledged this side's SETTINGS.
+// Nothing times the acknowledgement out (RFC 9113 §6.5.3 leaves that
+// optional); the suites read it to see a handshake through.
 pub function (c: Conn) settings_acked(): boolean {
   return c.settings_acked;
 }
@@ -798,7 +801,7 @@ function __waiting(c: Conn): i32 {
 // aside), names in lower case, no connection-specific field and `te` only
 // `trailers`; content-length is remembered to check the body against.
 function __parsed(fields: hpack.Field[], id: i32, send_window: i32, recv_window: i32): Result[__Stream, string] {
-  let s: __Stream = __Stream { id: id, state: OPEN, send_window: send_window, recv_window: recv_window, method: "", scheme: "", authority: "", path: "", fields: headers.header_map_new(), body: [], length: 0 - 1, handling: false, reset: false, pending: [], trailers: headers.header_map_new(), owes_end: false, streaming: false, received: 0, producing: false, status: 0 };
+  let s: __Stream = __Stream { id: id, state: OPEN, send_window: send_window, recv_window: recv_window, method: "", scheme: "", authority: "", path: "", fields: headers.header_map_new(), body: [], length: 0 - 1, handling: false, reset: false, pending: [], trailers: headers.header_map_new(), owes_end: false, streaming: false, received: 0, producing: false, status: 0, seen: 0 };
   let regular: boolean = false;
   for f in fields {
     if (f.name.len() == 0) {
@@ -832,18 +835,20 @@ function __complete(s: __Stream): Result[__Stream, string] {
   return Ok(s);
 }
 
+// Each pseudo-header once (§8.3.1), seen or not by `seen`'s bits, since
+// an empty first value would otherwise let a second through.
 function __pseudo(s: __Stream, name: string, value: string): Result[__Stream, string] {
-  if (name == ":method" && s.method.len() == 0) {
-    return Ok(__Stream { ...s, method: value });
+  if (name == ":method" && (s.seen & 1) == 0) {
+    return Ok(__Stream { ...s, method: value, seen: s.seen | 1 });
   }
-  if (name == ":scheme" && s.scheme.len() == 0) {
-    return Ok(__Stream { ...s, scheme: value });
+  if (name == ":scheme" && (s.seen & 2) == 0) {
+    return Ok(__Stream { ...s, scheme: value, seen: s.seen | 2 });
   }
-  if (name == ":path" && s.path.len() == 0 && value.len() > 0) {
-    return Ok(__Stream { ...s, path: value });
+  if (name == ":path" && (s.seen & 4) == 0 && value.len() > 0) {
+    return Ok(__Stream { ...s, path: value, seen: s.seen | 4 });
   }
-  if (name == ":authority" && s.authority.len() == 0) {
-    return Ok(__Stream { ...s, authority: value });
+  if (name == ":authority" && (s.seen & 8) == 0) {
+    return Ok(__Stream { ...s, authority: value, seen: s.seen | 8 });
   }
   return Err("pseudo-header " + name);
 }

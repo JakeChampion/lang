@@ -2154,6 +2154,9 @@ function __h2_taken(c: __Conns, at: i32): __Conns {
 // threads from one request to the next.
 function __h2_turn_with[D: async.Driver, S](drv: D, c: __Conns, at: i32, st: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), opts: Config, stop: __Stop, eof: boolean, mode: i32): (__Conns, S) {
   if (mode != H2_SERVED) {
+    if (eof) {
+      return (__serve_close(drv, c, at), st);
+    }
     return (c, st);
   }
   c = __h2_opened(drv, c, at, opts, false);
@@ -2246,6 +2249,9 @@ function __h2_close[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i3
 function __h2_turn[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32, handler: (HttpRequest, platform.Host) => HttpResponse, opts: Config, stop: __Stop, eof: boolean, mode: i32): (__Conns, __Flight[]) {
   if (mode == H2_SERVED) {
     return __serve_h2(drv, c, fls, at, handler, opts, stop, eof);
+  }
+  if (eof) {
+    return __h2_close(drv, c, fls, at);
   }
   return (c, fls);
 }

@@ -73,9 +73,12 @@ func TestSelfHostServeAllocsPerRequestWasm(t *testing.T) {
 // over. The first readings were 99.0 to 100.0 on x86-64; with the state
 // machine updating its connection in place, the HPACK decode threaded
 // through one record and a response's fields written straight into the
-// encoder, 72.0 to 72.4 here; the CI runner reads a few lower, as the
-// note on serveAllocsH2Drift says.
-const ServeAllocsH2Ceiling = 74
+// encoder, 72.0 to 72.4 here; with the loop closing an incomplete
+// preface at EOF, an arm that hands the table on, 60.0 (the loop's
+// splices unchanged, so the plan's doing: the table through the HTTP/2
+// turn no longer copied); the CI runner reads a few lower, as the note on
+// serveAllocsH2Drift says.
+const ServeAllocsH2Ceiling = 62
 
 func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
 	cli := buildSelfHostCLI(t)
