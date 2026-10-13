@@ -4389,9 +4389,9 @@ function with_field(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
 }
 
 // A with writes a box of its receiver's length, so an index the plan saw
-// checked against the receiver needs no second check.
+// checked against the receiver, or one ssabounds proved, needs no check.
 function with_set_op(p: ssaunits.Plan, ins: ssa.SInst, elem: typeinfo.Type): ir.Op {
-  if (p.checked_writes[ins.result]) {
+  if (ins.imm == 1 || p.checked_writes[ins.result]) {
     return ir.in_bounds(arr_set_op(elem));
   }
   return arr_set_op(elem);

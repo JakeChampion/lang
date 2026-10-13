@@ -1,15 +1,21 @@
-// Index reads a dominating guard proves in range: an `array_get` or
-// `str_index` whose index the branches into its block show to be at least zero
-// and below the length of what it reads is marked unchecked (`imm` 1), the flag
-// the parser's len-bounded loop pass already sets and every backend honours.
-// It runs on the typed semantic graphs every backend lowers from.
-// `grouped_reads` then checks a run of reads at one index plus constants once
-// instead of at every read.
+// Index reads and writes a dominating guard proves in range: an `array_get`,
+// `str_index` or `with` whose index the branches into its block show to be at
+// least zero and below the length of what it reads is marked unchecked (`imm`
+// 1), the flag the parser's len-bounded loop pass already sets and every
+// backend honours. It runs on the typed semantic graphs every backend lowers
+// from. `grouped_reads` then checks a run of reads at one index plus constants
+// once instead of at every read.
 //
 // A block learns a compare when its only predecessor ends in a two-way `brif`
 // on it: true on the `t` edge, false on the `f` edge. Every block it dominates
 // learns it too. Only compares of two i32 values count, each as `lo < hi` or
 // `lo <= hi`.
+//
+// `length(b)` is a `length` read of `b`, or the size `b` was built at: the
+// argument of the `__alloc_*` call `b` is, carried through each `with`, which
+// writes one element of an array of that size, and through a phi whose
+// operands all carry it, the phi assumed to as a loop carries the array it
+// writes.
 //
 // An index `x` is below `length(b)` when
 //   - a fact says `x < y` and `y` is `length(b)`, or `y` is below it;
@@ -25,8 +31,8 @@
 //   - it is a constant at least zero, or a `length`;
 //   - a fact says `c <= x` or `c < x` for a constant `c` that settles it, or
 //     `y <= x` or `y < x` with `y` at least zero;
-//   - `x` is `y + 1` with `y` at least zero and, where `x` is computed, below a
-//     length, so the addition cannot wrap;
+//   - `x` is `y + 1` with `y` at least zero and, where `x` is computed, below
+//     some i32, so the addition cannot wrap;
 //   - `x` is `length(b) - c` with a fact putting `length(b)` at `c` or more;
 //   - `x` is a phi whose operands are all at least zero, assuming the phi is;
 //   - `x` is `y & c` for a constant `c` at least zero;
@@ -59,7 +65,7 @@ pub function proven_indices(f: ssasem.Func): ssasem.Func {
     let insts: ssa.SInst[] = [];
     let marked: boolean = false;
     for ins in blk.insts {
-      if (checked_index(ins) && g.i32s[ins.args[1]] && proven(g, b, ins.args[1], ins.args[0])) {
+      if ((checked_index(ins) || checked_write(ins)) && g.i32s[ins.args[1]] && proven(g, b, ins.args[1], ins.args[0])) {
         insts = insts.append(ssa.SInst { ...ins, imm: 1 });
         marked = true;
       } else {
@@ -88,10 +94,16 @@ function checked_index(ins: ssa.SInst): boolean {
   return index_read(ins) && ins.imm == 0;
 }
 
+// checked_write is an element write `b.with(i, v)` whose index is still
+// checked.
+function checked_write(ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssasem.with() && ins.args.len() == 3 && ins.imm == 0;
+}
+
 function any_checked_index(f: ssasem.Func): boolean {
   for blk in f.graph.blocks {
     for ins in blk.insts {
-      if (checked_index(ins)) {
+      if (checked_index(ins) || checked_write(ins)) {
         return true;
       }
     }
@@ -328,7 +340,64 @@ function is_length(g: Graph, v: i32): boolean {
 
 function is_length_of(g: Graph, v: i32, base: i32): boolean {
   let d: ssa.SInst = def_of(g, v);
-  return d.kind_tag == ssasem.length() && d.args.len() == 1 && same(g, d.args[0], base);
+  if (d.kind_tag == ssasem.length() && d.args.len() == 1 && same(g, d.args[0], base)) {
+    return true;
+  }
+  let n: i32 = built_len(g, base, [], 24);
+  return n >= 0 && same(g, v, n);
+}
+
+// built_len is the value `base` was sized by when it was built, or -1: the
+// argument of the `__alloc_*` call it is, through the `with`s that replace an
+// element of it, and through a phi whose operands all carry one value. -2 is
+// an operand that comes back to a phi already assumed, which carries whatever
+// the rest of its operands do.
+function built_len(g: Graph, base: i32, assume: i32[], steps: i32): i32 {
+  if (steps <= 0) {
+    return 0 - 1;
+  }
+  base = root(g, base);
+  if (base < 0 || base >= g.defs.len()) {
+    return 0 - 1;
+  }
+  let d: ssa.SInst = g.defs[base];
+  if (d.kind_tag == ssasem.call() && d.args.len() == 1 && sized_alloc(d.str)) {
+    return d.args[0];
+  }
+  if (d.kind_tag == ssasem.with() && d.args.len() == 3) {
+    return built_len(g, d.args[0], assume, steps - 1);
+  }
+  if (d.kind_tag != 8 || d.args.len() == 0) {
+    return 0 - 1;
+  }
+  if (assumed(assume, base)) {
+    return 0 - 2;
+  }
+  let inner: i32[] = assume.append(base);
+  let n: i32 = 0 - 1;
+  let back: boolean = false;
+  for o in d.args {
+    let m: i32 = built_len(g, o, inner, steps - 1);
+    if (m == 0 - 2) {
+      back = true;
+    } else if (m < 0) {
+      return 0 - 1;
+    } else if (n < 0) {
+      n = m;
+    } else if (!same(g, n, m)) {
+      return 0 - 1;
+    }
+  }
+  if (n < 0 && back && assume.len() > 0) {
+    return 0 - 2;
+  }
+  return n;
+}
+
+// sized_alloc names the runtime allocations whose one argument is the length
+// of the array they return: each aborts on a negative size.
+function sized_alloc(name: string): boolean {
+  return name == "__alloc_u8" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_bool";
 }
 
 function binary(d: ssa.SInst, op: string): boolean {
@@ -509,7 +578,7 @@ function nonneg_call(name: string): boolean {
 }
 
 // below_a_length reports whether a fact at block b puts `y` strictly below
-// some length, which caps `y + 1` at the largest i32.
+// some i32, which caps `y + 1` at the largest i32.
 function below_a_length(g: Graph, b: i32, y: i32): boolean {
   if (b < 0) {
     return false;
@@ -520,7 +589,7 @@ function below_a_length(g: Graph, b: i32, y: i32): boolean {
     let k: i32 = g.first[c];
     while (k < g.first[c] + g.count[c]) {
       let r: Rel = g.rels[k];
-      if (r.strict && same(g, r.lo, y) && is_length(g, r.hi)) {
+      if (r.strict && same(g, r.lo, y)) {
         return true;
       }
       k = k + 1;
