@@ -10264,3 +10264,27 @@ function main(): i32 {
 		t.Errorf("a tuple trait argument should read the impl's parameters: %v", err)
 	}
 }
+
+// A struct-union member two unions share is E036 at the variable's
+// initialiser, once: the wrap into the annotated union re-checks the member
+// and reports it, and the variable's own E003 stands down rather than
+// printing the nil type the failed wrap handed back.
+func TestAmbiguousUnionMemberVarInitReportsOnce(t *testing.T) {
+	src := `struct Hold { v: i32 }
+	struct Blank { w: i32 }
+	type Slot = Hold | Blank;
+	type Wrap = Hold | Blank;
+	function main(): i32 {
+		let f: Slot = Hold { v: 30 };
+		return 0;
+	}`
+	err := checkSource(t, src)
+	var errs diag.Errors
+	if !errors.As(err, &errs) || len(errs) != 1 {
+		t.Fatalf("want exactly one diagnostic, got: %v", err)
+	}
+	var ce *Error
+	if !errors.As(errs[0], &ce) || ce.Code() != "E036" || !strings.Contains(ce.Msg, "declared in multiple enums") {
+		t.Fatalf("want E036 naming both unions, got: %v", errs[0])
+	}
+}
