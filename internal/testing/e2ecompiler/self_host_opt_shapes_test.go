@@ -568,10 +568,10 @@ enum Shape { Circle(i32), Square(i32), Tri(i32), Line(i32) }
 function main(): i32 { return area(Line(7)) + area(Tri(4)); }
 `,
 		want: map[string][]string{
-			"x86-64-linux": {`\.Lssa_area_\d+:\n\s+leaq \.S\d+\(%rip\), %r\w+\n\s+cmpq`},
+			"x86-64-linux": {`\.Lssa_area_\d+:\n\s+cmpq \$\.S\d+, %r\w+`},
 			"arm64-linux":  {`\.Lssa_area_\d+:\n\s+adrp x\d+, \.S\d+`}},
 		forbid: map[string][]string{
-			"x86-64-linux": {`(?s)movq 0\(%r\w+\), %r\w+\n\s+leaq \.S.*movq 0\(%r\w+\), %r\w+\n\s+leaq \.S`},
+			"x86-64-linux": {`(?s)movq 0\(%r\w+\), %r\w+\n\s+cmpq \$\.S.*movq 0\(%r\w+\), %r\w+\n\s+cmpq \$\.S`, `leaq \.S\d+\(%rip\)`},
 			"arm64-linux":  {`(?s)ldr x\d+, \[x\d+, #0\]\n\s+adrp x\d+, \.S.*ldr x\d+, \[x\d+, #0\]\n\s+adrp x\d+, \.S`}}},
 }
 
