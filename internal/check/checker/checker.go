@@ -15414,7 +15414,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			}
 		} else if got != nil {
 			got = c.maybeWrapForUnion(n.Type, &n.Init, got, s)
-			if !c.assignable(n.Type, got) {
+			if got != nil && !c.assignable(n.Type, got) {
 				c.errfCode(n.P, "E003", "variable %q: expected %s, got %s%s", n.Name, n.Type, got, assignHint(n.Type, got))
 			}
 		}
