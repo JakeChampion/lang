@@ -677,12 +677,16 @@ function __body_grown(r: __Run, at: i32, d: frame.DataFrame, took: i32): __Run {
 
 // __body_reported hands a streamed request's DATA on as it comes: the
 // windows are charged and left for `consumed` to replenish, so a handler
-// that reads slowly holds the client to what it has not taken yet.
+// that reads slowly holds the client to what it has not taken yet. The
+// padding, which no handler can take, is credited back at once.
 function __body_reported(r: __Run, at: i32, d: frame.DataFrame, took: i32): __Run {
   let c: Conn = r.conn;
   let s: __Stream = c.streams[at];
   let grown: __Stream = __Stream { ...s, received: s.received + d.data.len(), recv_window: s.recv_window - took };
   let next: __Run = __Run { ...r, conn: Conn { ...c, recv_window: c.recv_window - took, streams: c.streams.with(at, grown) } };
+  if (d.padding > 0) {
+    next = __credited(next, at, d.padding, !d.end_stream);
+  }
   if (d.data.len() > 0) {
     next = __Run { ...next, events: next.events.append(StreamData(s.id, d.data)) };
   }
@@ -989,17 +993,23 @@ pub function (c: Conn) consumed(stream: i32, n: i32): Step {
   if (c.phase == CLOSED || n <= 0) {
     return Step { conn: c, output: [], events: [] };
   }
-  let out: __Run = __send(__run(Conn { ...c, recv_window: c.recv_window + n }), frame.WindowUpdate(0, n));
-  let at: i32 = __stream_at(out.conn, stream);
-  if (at < 0) {
-    return __step(out);
+  return __step(__credited(__run(c), __stream_at(c, stream), n, true));
+}
+
+// __credited replenishes the windows for `n` bytes: the connection's, and
+// the stream's at `at` when asked and while the client may still send on
+// it.
+function __credited(r: __Run, at: i32, n: i32, stream_too: boolean): __Run {
+  let out: __Run = __send(__Run { ...r, conn: Conn { ...r.conn, recv_window: r.conn.recv_window + n } }, frame.WindowUpdate(0, n));
+  if (!stream_too || at < 0) {
+    return out;
   }
   let s: __Stream = out.conn.streams[at];
   if (s.state != OPEN && s.state != HALF_LOCAL) {
-    return __step(out);
+    return out;
   }
   let filled: __Stream = __Stream { ...s, recv_window: s.recv_window + n };
-  return __step(__send(__Run { ...out, conn: Conn { ...out.conn, streams: out.conn.streams.with(at, filled) } }, frame.WindowUpdate(s.id, n)));
+  return __send(__Run { ...out, conn: Conn { ...out.conn, streams: out.conn.streams.with(at, filled) } }, frame.WindowUpdate(s.id, n));
 }
 
 // __response_fields is the response's header list: `:status` first, then

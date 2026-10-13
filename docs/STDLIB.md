@@ -3297,8 +3297,10 @@ points that run a handler under it.
   answered when the handler first reads, so a handler that refuses never
   invites the body, and a connection whose body the handler did not read
   whole closes after the response. A `Stream` that ended early faults
-  (`(s).fault()`); `body_string()` reports it as `EndedEarly`. The stateful
-  loop (`run_with`) reads bodies whole either way. An upgrade request
+  (`(s).fault()`); `body_string()` reports it as `EndedEarly`. A streamed
+  request's trailers are not delivered: the handler was handed its request
+  before they came, so `req.trailers` is empty and the body ends without
+  them. The stateful loop (`run_with`) reads bodies whole either way. An upgrade request
   (`Connection: upgrade` naming an `Upgrade`) is streamed whatever the
   setting says, its body the connection's bytes after the head, and a
   handler that answers it 101 with a producer keeps the connection for

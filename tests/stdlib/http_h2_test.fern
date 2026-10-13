@@ -52,6 +52,14 @@ function data(stream: i32, body: string, end_stream: boolean): u8[] {
   return frame.encode(frame.Data(frame.DataFrame { stream: stream, end_stream: end_stream, data: body.bytes(), padding: 0 }));
 }
 
+// padded_data is a DATA frame with `pad` bytes of padding after `body`,
+// which the encoder never writes.
+function padded_data(stream: i32, body: string, pad: i32): u8[] {
+  let n: i32 = 1 + body.len() + pad;
+  let out: u8[] = [(n >> 16) as u8, (n >> 8) as u8, n as u8, 0 as u8, 8 as u8, (stream >> 24) as u8, (stream >> 16) as u8, (stream >> 8) as u8, stream as u8, pad as u8];
+  return out.concat(body.bytes()).concat(__alloc_u8(pad));
+}
+
 // Shown — the server's output read back as frames described in text, the
 // client's decoder having read each header block.
 struct Shown { client: Client, text: string }
@@ -454,8 +462,9 @@ function __bool(b: boolean): i32 {
 // body reported as it comes and the windows replenished as it is
 // consumed; a response begun with `respond_head`, written in parts and
 // ended with trailers while the request's body is still arriving; a
-// streamed body short of its content-length reset; and trailers ending a
-// streamed body.
+// streamed body short of its content-length reset; trailers ending a
+// streamed body; and a padded DATA frame's padding credited back at once,
+// since no handler can take it.
 function test_streamed_bodies(): test.TestOutcome {
   let o: Opened = opened(h2.Config { ...h2.config(), stream_bodies: true });
   let (cl, head) = request(o.client, 1, post("/upload", "5"), false);
@@ -478,8 +487,11 @@ function test_streamed_bodies(): test.TestOutcome {
   let (cl5, more) = request(cl3, 5, post("/upload", "2"), false);
   let trailers: hpack.Encoded = cl5.enc.encode([hpack.field("checksum", "abc")]);
   let trailed: h2.Step = wrong.conn.read(more.concat(data(5, "hi", false)).concat(frame.encode(frame.Headers(frame.HeadersFrame { stream: 5, end_stream: true, end_headers: true, priority: None, block: trailers.bytes, padding: 0 }))));
-  got = got + events_text(trailed.events) + "open " + int.int_to_string(trailed.conn.streams_open()) + " handling " + int.int_to_string(trailed.conn.handling());
-  return test.assert_eq(got, "streamed 1 POST /upload host=example.test\ndata 1 hel\nWINDOW_UPDATE 0 +3\nWINDOW_UPDATE 1 +3\nHEADERS 1 END_HEADERS :status=200 content-type=application/grpc\nDATA 1 pa\npending 0\ndata 1 lo\nend 1 trailer=-\nHEADERS 1 END_STREAM END_HEADERS grpc-status=0\nopen 0\nstreamed 3 POST /upload host=example.test\ndata 3 hi\nRST_STREAM 3 1\nstreamed 5 POST /upload host=example.test\ndata 5 hi\nend 5 trailer=abc\nopen 2 handling 2");
+  got = got + events_text(trailed.events) + "open " + int.int_to_string(trailed.conn.streams_open()) + " handling " + int.int_to_string(trailed.conn.handling()) + "\n";
+  let (cl7, padded) = request(Client { ...cl5, enc: trailers.encoder }, 7, post("/upload", "2"), false);
+  let credited: h2.Step = trailed.conn.read(padded.concat(padded_data(7, "hi", 4)));
+  got = got + events_text(credited.events) + shown(cl7, credited.output).text;
+  return test.assert_eq(got, "streamed 1 POST /upload host=example.test\ndata 1 hel\nWINDOW_UPDATE 0 +3\nWINDOW_UPDATE 1 +3\nHEADERS 1 END_HEADERS :status=200 content-type=application/grpc\nDATA 1 pa\npending 0\ndata 1 lo\nend 1 trailer=-\nHEADERS 1 END_STREAM END_HEADERS grpc-status=0\nopen 0\nstreamed 3 POST /upload host=example.test\ndata 3 hi\nRST_STREAM 3 1\nstreamed 5 POST /upload host=example.test\ndata 5 hi\nend 5 trailer=abc\nopen 2 handling 2\nstreamed 7 POST /upload host=example.test\ndata 7 hi\nWINDOW_UPDATE 0 +5\nWINDOW_UPDATE 7 +5\n");
 }
 
 function main(): i32 {

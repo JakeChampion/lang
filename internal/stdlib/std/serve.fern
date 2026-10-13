@@ -2422,19 +2422,15 @@ function __h2_arrived(c: __Conns, fd: i32, sid: i32, bytes: u8[]): __Conns {
   return c;
 }
 
-// __h2_body_ended(c, fd, sid, how) — a streamed body ended (1) or reset
-// (2, a 400 fault for its reader); the pull leaves once the response is
-// done too.
-function __h2_body_ended(c: __Conns, fd: i32, sid: i32, how: i32): __Conns {
+// __h2_body_ended(c, fd, sid) — a streamed body ended; the pull leaves
+// once the response is done too. The request's trailers end with it,
+// unseen: a request handed over at its head has none to hand.
+function __h2_body_ended(c: __Conns, fd: i32, sid: i32): __Conns {
   let pi: i32 = __pull_at(c, fd, sid);
   if (pi < 0) {
     return c;
   }
-  let body: __H2Body = c.pulls[pi].body;
-  body.ended.set(how);
-  if (how == 2) {
-    body.fault.set(400);
-  }
+  c.pulls[pi].body.ended.set(1);
   return __pull_tidied(c, pi);
 }
 
@@ -2693,7 +2689,7 @@ function __h2_answered[D: async.Driver](drv: D, a: __H2Answered, events: h2.Even
         a = __H2Answered { ...a, conns: __h2_arrived(a.conns, fd, sid, bytes) };
       },
       h2.StreamEnd(sid, trailers) => {
-        a = __H2Answered { ...a, conns: __h2_body_ended(a.conns, fd, sid, 1) };
+        a = __H2Answered { ...a, conns: __h2_body_ended(a.conns, fd, sid) };
       },
       h2.Reset(sid, code) => {
         a = __H2Answered { ...a, conns: __h2_stream_reset(a.conns, fd, sid) };
