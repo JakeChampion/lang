@@ -292,3 +292,24 @@ config adds and `peer_extensions()` answers, and RFC 9001's terms hold
 application data, no alert record, no compatibility CCS). An HTTP/3
 package owns the packets, frames, flow control and recovery; nothing in
 `std/tls` changes for the record-layer client and server.
+
+kTLS (landed for the socket connections): an offloaded session hands its
+record layer to Linux's (`std/tls/ktls`). The handshake runs in userspace
+as before; `offload()` then gives the kernel each direction's key, IV and
+next sequence number in its own structure
+(`record.Protection.kernel_info`), only at a record boundary with nothing
+read but unprocessed, since the kernel takes the stream from the next
+record. Afterwards application data is plain bytes on the socket, and the
+other records still pass through the session, which frames what it writes
+in the clear and takes what the kernel opened framed as it arrived: an
+alert, a ticket, and a KeyUpdate, whose new secret comes back in the step's
+`rekeyed` for `install`. A kernel before 6.14 refuses a second key in a
+direction, so there a KeyUpdate ends the connection with `KeysRefused`.
+`update_keys(request)` sends a KeyUpdate from either side, offloaded or
+not. Measured in a qemu VM before CI, on Ubuntu's 6.8 and 6.17 kernels:
+the three suites round-trip both ways against the record layer, and Go's
+crypto/tls drives both ends, with the rekey both ways on 6.17 and refused
+on 6.8. The x86-64 e2e lane loads the `tls` module and runs
+`TestX86_64KtlsRecords` and `TestX86_64KtlsAgainstGo`, which elsewhere
+skip. Left for the next slice: `std/serve` offloading its TLS connections
+(and sending files over them by sendfile), and `std/fetch`.

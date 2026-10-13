@@ -265,7 +265,8 @@ pub enum Event {
   // QUIC: handshake bytes to carry in CRYPTO frames at an encryption level.
   Crypto(CryptoFlight),
   // QUIC: a traffic secret for the packet protection at a level; one event
-  // for each direction as it is set.
+  // for each direction as it is set. Offloaded to the kernel: the secret a
+  // KeyUpdate set, whose keys the kernel needs next.
   Secret(TrafficSecret),
 }
 
@@ -384,7 +385,10 @@ function __without(exts: message.Extension[], kind: i32): message.Extension[] {
 //
 // Under QUIC (`quic`) nothing is framed or sealed here: the handshake bytes
 // written and the secrets set wait in `crypto` and `secrets` until the step
-// hands them out as events.
+// hands them out as events. Once offloaded to the kernel's record layer
+// (`kernel`), records are framed in the clear for the kernel to seal, the
+// records read arrive opened, and a secret a KeyUpdate sets waits in
+// `secrets` as QUIC's do.
 struct Conn {
   held: record.Record[],
   inbox: u8[],
@@ -398,13 +402,14 @@ struct Conn {
   read_secret: u8[],
   write_secret: u8[],
   quic: boolean,
+  kernel: boolean,
   crypto: CryptoFlight[],
   secrets: TrafficSecret[],
 }
 
 function __conn(): Conn {
   let none: record.Protection = record.Protection { suite: keyschedule.Aes128GcmSha256, key: [], iv: [], seq: 0 as u64 };
-  return Conn { held: [], inbox: [], pending: [], transcript: [], suite: keyschedule.Aes128GcmSha256, read: none, write: none, reading: 0, writing: 0, read_secret: [], write_secret: [], quic: false, crypto: [], secrets: [] };
+  return Conn { held: [], inbox: [], pending: [], transcript: [], suite: keyschedule.Aes128GcmSha256, read: none, write: none, reading: 0, writing: 0, read_secret: [], write_secret: [], quic: false, kernel: false, crypto: [], secrets: [] };
 }
 
 function __conn_for(quic: boolean): Conn {
@@ -417,7 +422,7 @@ function __hash(c: Conn): u8[] {
 
 function __with_read(c: Conn, secret: u8[], level: i32): Conn {
   let next: Conn = Conn { ...c, read: record.protection(c.suite, secret), reading: level, read_secret: secret };
-  if (c.quic) {
+  if (c.quic || c.kernel) {
     return Conn { ...next, secrets: next.secrets.append(TrafficSecret { level: level, write: false, secret: secret }) };
   }
   return next;
@@ -425,16 +430,16 @@ function __with_read(c: Conn, secret: u8[], level: i32): Conn {
 
 function __with_write(c: Conn, secret: u8[], level: i32): Conn {
   let next: Conn = Conn { ...c, write: record.protection(c.suite, secret), writing: level, write_secret: secret };
-  if (c.quic) {
+  if (c.quic || c.kernel) {
     return Conn { ...next, secrets: next.secrets.append(TrafficSecret { level: level, write: true, secret: secret }) };
   }
   return next;
 }
 
-// __flushed moves what a QUIC connection gathered into the step's events:
-// the secrets set, then the handshake bytes written.
+// __flushed moves what a QUIC or offloaded connection gathered into the
+// step's events: the secrets set, then the handshake bytes written.
 function __flushed(c: Conn, out: Out): Flushed {
-  if (!c.quic) {
+  if (!c.quic && !c.kernel) {
     return Flushed { conn: c, out: out };
   }
   let events: Event[] = out.events;
@@ -467,16 +472,17 @@ function __out(): Out {
 
 struct Wrote { conn: Conn, bytes: u8[] }
 
-// __write frames content as records of type t: plaintext before the write
-// keys are set, sealed after, at most 2^14 bytes each. Under QUIC handshake
-// bytes become a flight at the level being written, an alert is nothing
-// (the error's code goes in QUIC's CONNECTION_CLOSE), and application data
-// is refused: QUIC carries and protects it itself.
+// __write frames content as records of type t, at most 2^14 bytes each:
+// plaintext before the write keys are set and once the kernel seals them,
+// sealed in between. Under QUIC handshake bytes become a flight at the
+// level being written, an alert is nothing (the error's code goes in QUIC's
+// CONNECTION_CLOSE), and application data is refused: QUIC carries and
+// protects it itself.
 function __write(c: Conn, t: record.ContentType, content: [u8]): Result[Wrote, HandshakeError] {
   if (c.quic) {
     return __write_quic(c, t, content);
   }
-  if (c.writing == 0) {
+  if (c.writing == 0 || c.kernel) {
     return Ok(Wrote { conn: c, bytes: record.frame(t, 0x0303, content) });
   }
   let out: u8[] = [];
@@ -527,7 +533,7 @@ function __absorb(c: Conn, r: record.Record, ccs: boolean, app: boolean, out: Ou
     }
     return Err(UnexpectedRecord(20));
   }
-  if (c.reading == 0) {
+  if (c.reading == 0 || c.kernel) {
     return __content(c, r.content_type.code(), r.fragment, app, out);
   }
   if (r.content_type.code() != 23) {
@@ -625,9 +631,66 @@ function __key_update(c: Conn, request: boolean, out: Out): Result[Absorbed, Han
   if (!request) {
     return Ok(Absorbed { conn: conn, out: out });
   }
-  let w: Wrote = __write(conn, record.Handshake, message.encode(message.KeyUpdate(false)))?;
-  let next: Conn = __with_write(w.conn, keyschedule.next_traffic_secret(h, w.conn.write_secret), 2);
-  return Ok(Absorbed { conn: next, out: Out { ...out, output: __join(out.output, w.bytes) } });
+  let w: Wrote = __update(conn, false)?;
+  return Ok(Absorbed { conn: w.conn, out: Out { ...out, output: __join(out.output, w.bytes) } });
+}
+
+// __update sends a KeyUpdate and moves the write side to the next secret;
+// `request` asks the peer to update its own (§4.6.3).
+function __update(c: Conn, request: boolean): Result[Wrote, HandshakeError] {
+  if (c.quic) {
+    return Err(Illegal("KeyUpdate under QUIC"));
+  }
+  let w: Wrote = __write(c, record.Handshake, message.encode(message.KeyUpdate(request)))?;
+  let h: keyschedule.Hash = c.suite.hash();
+  return Ok(Wrote { conn: __with_write(w.conn, keyschedule.next_traffic_secret(h, w.conn.write_secret), 2), bytes: w.bytes });
+}
+
+// KernelKeys — the protection in force in each direction as an offload
+// leaves it, in the form Linux's TLS record layer takes
+// (`record.Protection.kernel_info`).
+pub struct KernelKeys { transmit: u8[], receive: u8[] }
+
+// __offload hands the record layer to the kernel: only at a record boundary
+// with nothing read but unprocessed, since the kernel takes the stream from
+// the next record on.
+function __offload(c: Conn): Option[Offloaded] {
+  if (c.quic || c.kernel || c.reading != 2 || c.writing != 2 || c.held.len() != 0 || c.inbox.len() != 0 || c.pending.len() != 0) {
+    return None;
+  }
+  return Some(Offloaded { conn: Conn { ...c, kernel: true }, keys: KernelKeys { transmit: c.write.kernel_info(), receive: c.read.kernel_info() } });
+}
+
+struct Offloaded { conn: Conn, keys: KernelKeys }
+
+// rekeyed is the kernel keys the secrets among an offloaded connection's
+// `events` set: empty in a direction no KeyUpdate moved, the last secret in
+// one that did.
+pub function rekeyed(suite: keyschedule.CipherSuite, events: Event[]): KernelKeys {
+  let keys: KernelKeys = KernelKeys { transmit: [], receive: [] };
+  for e in events {
+    if let Secret(t) = e {
+      let info: u8[] = record.protection(suite, t.secret).kernel_info();
+      if (t.write) {
+        keys = KernelKeys { ...keys, transmit: info };
+      } else {
+        keys = KernelKeys { ...keys, receive: info };
+      }
+    }
+  }
+  return keys;
+}
+
+// The keys of `later` where it has them, else `earlier`'s.
+pub function (earlier: KernelKeys) then(later: KernelKeys): KernelKeys {
+  let keys: KernelKeys = earlier;
+  if (later.transmit.len() > 0) {
+    keys = KernelKeys { ...keys, transmit: later.transmit };
+  }
+  if (later.receive.len() > 0) {
+    keys = KernelKeys { ...keys, receive: later.receive };
+  }
+  return keys;
 }
 
 function __alert_record(c: Conn, e: HandshakeError): u8[] {
@@ -1540,6 +1603,44 @@ pub function (c: Client) connected(): boolean {
   return c.state == C_CONNECTED;
 }
 
+// update_keys sends a KeyUpdate and moves the write side to the next
+// traffic secret; `request` asks the server to update its own.
+pub function (c: Client) update_keys(request: boolean): Result[ClientStep, HandshakeError] {
+  if (c.state != C_CONNECTED) {
+    return Err(Misuse("update_keys"));
+  }
+  let w: Wrote = __update(c.conn, request)?;
+  return Ok(__client_step(Client { ...c, conn: w.conn }, Out { ...__out(), output: w.bytes }));
+}
+
+// Whether the kernel seals and opens the client's records (`offload`).
+pub function (c: Client) offloaded(): boolean {
+  return c.conn.kernel;
+}
+
+// ClientOffload — a client whose records the kernel now seals and opens,
+// and the keys to give it.
+pub struct ClientOffload { client: Client, keys: KernelKeys }
+
+// offload hands the record layer to the kernel, or None while the client is
+// not connected or holds bytes of a record not yet processed. Afterwards
+// `write`, `close` and an alert are records framed in the clear for the
+// kernel to seal, `read` takes records the kernel opened, framed as they
+// arrived, and a KeyUpdate either way reports the new secret as a `Secret`
+// event.
+pub function (c: Client) offload(): Option[ClientOffload] {
+  if (c.state != C_CONNECTED) {
+    return None;
+  }
+  match (__offload(c.conn)) {
+    Some(o) => {
+      return Some(ClientOffload { client: Client { ...c, conn: o.conn }, keys: o.keys });
+    },
+    None => {}
+  }
+  return None;
+}
+
 // The protocol the server chose by ALPN, empty when none was.
 pub function (c: Client) alpn(): string {
   return c.alpn;
@@ -1570,6 +1671,10 @@ pub function (c: Client) resumption_psk(nonce: [u8]): Result[u8[], HandshakeErro
 pub function (c: Client) save(): Result[u8[], HandshakeError] {
   if (c.conn.quic) {
     return Err(Misuse("save under QUIC"));
+  }
+  // The kernel holds an offloaded connection's sequence numbers.
+  if (c.conn.kernel) {
+    return Err(Misuse("save once offloaded"));
   }
   if (c.state != C_CONNECTED || c.conn.held.len() > 0) {
     return Err(Misuse("save"));
@@ -2428,4 +2533,37 @@ pub function (s: Server) alert(e: HandshakeError): u8[] {
 
 pub function (s: Server) connected(): boolean {
   return s.state == S_CONNECTED;
+}
+
+// update_keys sends a KeyUpdate and moves the write side to the next
+// traffic secret; `request` asks the client to update its own.
+pub function (s: Server) update_keys(request: boolean): Result[ServerStep, HandshakeError] {
+  if (s.state != S_CONNECTED) {
+    return Err(Misuse("update_keys"));
+  }
+  let w: Wrote = __update(s.conn, request)?;
+  return Ok(__server_step(Server { ...s, conn: w.conn }, Out { ...__out(), output: w.bytes }));
+}
+
+// Whether the kernel seals and opens the server's records (`offload`).
+pub function (s: Server) offloaded(): boolean {
+  return s.conn.kernel;
+}
+
+// ServerOffload — a server whose records the kernel now seals and opens,
+// and the keys to give it.
+pub struct ServerOffload { server: Server, keys: KernelKeys }
+
+// offload hands the record layer to the kernel, as Client.offload does.
+pub function (s: Server) offload(): Option[ServerOffload] {
+  if (s.state != S_CONNECTED) {
+    return None;
+  }
+  match (__offload(s.conn)) {
+    Some(o) => {
+      return Some(ServerOffload { server: Server { ...s, conn: o.conn }, keys: o.keys });
+    },
+    None => {}
+  }
+  return None;
 }
