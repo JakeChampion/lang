@@ -61,7 +61,7 @@ func TestDifferential_SelfHostWasm(t *testing.T) {
 		// Cannot exec the x86-64 driver, so there is no compiler to run.
 		t.Skip("the self-host CLI driver runs only natively (x86-64 asm, argv paths)")
 	}
-	selfHostWasmSweep(t, gcc, selfHostWasmDiffKnownFile, nil)
+	selfHostWasmSweep(t, gcc, selfHostWasmDiffKnownFile, nil, selfHostPassConfig)
 }
 
 // TestDifferential_SelfHostSanitizeWasm is the wasm sweep with every seed
@@ -74,7 +74,7 @@ func TestDifferential_SelfHostSanitizeWasm(t *testing.T) {
 	if len(runner) != 0 {
 		t.Skip("the self-host CLI driver runs only natively (x86-64 asm, argv paths)")
 	}
-	selfHostWasmSweep(t, gcc, selfHostWasmSanitizeKnownFile, []string{"-sanitize"})
+	selfHostWasmSweep(t, gcc, selfHostWasmSanitizeKnownFile, []string{"-sanitize"}, nil)
 }
 
 // selfHostWasmSanitizeKnownFile is TestDifferential_SelfHostSanitizeWasm's
@@ -85,7 +85,7 @@ const selfHostWasmSanitizeKnownFile = "selfhost-diff-sanitize-wasm-known-diverge
 // with the extra compile flags given, against the interpreter. A -sanitize
 // build is also failed on any sanitizer report, including on a seed whose
 // answer the exit clamp hides.
-func selfHostWasmSweep(t *testing.T, gcc, knownFile string, flags []string) {
+func selfHostWasmSweep(t *testing.T, gcc, knownFile string, flags []string, passes func(uint64) []string) {
 	t.Helper()
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping the self-host wasm differential leg")
@@ -121,7 +121,9 @@ func selfHostWasmSweep(t *testing.T, gcc, knownFile string, flags []string) {
 				t.Errorf(format, args...)
 			}
 
-			out, exit, gap := runSelfHostWasmSeed(t, fernBin, stdlibRoot, src, flags)
+			env := passEnv(passes, seed)
+			logPassConfig(t, env)
+			out, exit, gap := runSelfHostWasmSeed(t, fernBin, stdlibRoot, src, flags, env)
 			if gap != "" {
 				if semRefused(gap) {
 					t.Errorf("the typed lowering refused this seed:\n%s", gap)
@@ -191,7 +193,7 @@ func selfHostWasmSweep(t *testing.T, gcc, knownFile string, flags []string) {
 // runSelfHostWasmSeed compiles src for wasm32-wasi with the self-host CLI and
 // runs the module under wasmtime. Returns (combined output, exit, "") when it
 // ran and ("", 0, gap) when the compiler bailed.
-func runSelfHostWasmSeed(t *testing.T, fernBin, stdlibRoot, src string, flags []string) (string, int, string) {
+func runSelfHostWasmSeed(t *testing.T, fernBin, stdlibRoot, src string, flags, env []string) (string, int, string) {
 	t.Helper()
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
@@ -202,10 +204,10 @@ func runSelfHostWasmSeed(t *testing.T, fernBin, stdlibRoot, src string, flags []
 	emit := append(append([]string{}, flags...), "-emit", "asm")
 	args := append([]string{"-target", "wasm32-wasi"}, emit...)
 	args = append(args, "-o", watPath, srcPath, stdlibRoot)
-	out, err := exec.Command(fernBin, args...).CombinedOutput()
+	out, err := selfHostCompileCmd(fernBin, env, args...).CombinedOutput()
 	if err != nil {
 		return "", 0, fmt.Sprintf("%v\n%s%s", err, out,
-			strictIRBailSite(fernBin, "wasm32-wasi", emit, srcPath, stdlibRoot, out))
+			strictIRBailSite(fernBin, "wasm32-wasi", emit, env, srcPath, stdlibRoot, out))
 	}
 	run := runSelfHostBin(exec.Command("wasmtime", "run", watPath), "")
 	return run.stdout + run.stderr, run.exit, ""
