@@ -139,8 +139,9 @@ pub function end_pairs(own events: i32[], n: i32): i32[] {
 // made on the first watch so a driver that only polls costs nothing.
 // `signals` is the watched signals as rows `sig:descriptor;`, the
 // descriptor being what the floor answered for the watch and wants back
-// for the unwatch.
-pub struct RealDriver { reactor: Cell[i32], signals: Cell[string] }
+// for the unwatch. `ring` is the io_uring set (`ring_*`) a driver asked for
+// it uses in the reactor's place, -1 when it has none.
+pub struct RealDriver { reactor: Cell[i32], signals: Cell[string], ring: Cell[i64] }
 
 // __eintr() — the errno a wait a signal interrupted fails with.
 function __eintr(): i32 {
@@ -152,7 +153,49 @@ function __eintr(): i32 {
 
 // real_driver() — the Driver the public combinators run on.
 pub function real_driver(): RealDriver {
-  return RealDriver { reactor: cell_new(-1), signals: cell_new("") };
+  return RealDriver { reactor: cell_new(-1), signals: cell_new(""), ring: cell_new(-(1 as i64)) };
+}
+
+// real_driver_io_uring() — a driver whose readiness set is an io_uring
+// (docs/NET-P7-IO-URING-PLAN.md), made now: where the ring cannot be had
+// (a kernel without one or without the 6.1 setup flags, a seccomp profile
+// refusing it, Darwin, wasm, the interpreter) it is `real_driver()` for
+// the whole of its life.
+pub function real_driver_io_uring(): RealDriver {
+  let d: RealDriver = real_driver();
+  let ring: i64 = ring_new(1024);
+  if (ring >= 0 as i64) {
+    d.ring.set(ring);
+  }
+  return d;
+}
+
+// `.io_uring()` — whether the driver waits on an io_uring.
+pub function (d: RealDriver) io_uring(): boolean {
+  return d.ring.get() >= 0 as i64;
+}
+
+// __real_ctl(d, op, fd, arg) — the floor's control op on the driver's set,
+// the reactor made on first use when there is no ring.
+function __real_ctl(d: RealDriver, op: i32, fd: i32, arg: i32): i32 {
+  let ring: i64 = d.ring.get();
+  if (ring >= 0 as i64) {
+    return ring_ctl(ring, op, fd, arg);
+  }
+  let r: i32 = __real_reactor(d);
+  if (r < 0) {
+    return r;
+  }
+  return reactor_ctl(r, op, fd, arg);
+}
+
+// __real_wait(d, events, timeout_ms) — one wait on the driver's set.
+function __real_wait(d: RealDriver, events: i32[], timeout_ms: i32): i32 {
+  let ring: i64 = d.ring.get();
+  if (ring >= 0 as i64) {
+    return ring_wait(ring, events, timeout_ms);
+  }
+  return reactor_wait(__real_reactor(d), events, timeout_ms);
 }
 
 // The descriptor a watched signal's row holds, -1 when it is not watched.
@@ -189,6 +232,10 @@ function __real_reactor(d: RealDriver): i32 {
 // carries (`handle`), made on first use like `watch` makes it; negative
 // when the target has no reactor.
 pub function (d: RealDriver) handle(): i32 {
+  let ring: i64 = d.ring.get();
+  if (ring >= 0 as i64) {
+    return ring_ctl(ring, 7, 0, 0);
+  }
   return __real_reactor(d);
 }
 
@@ -211,29 +258,23 @@ impl Driver for RealDriver {
     return wasm_pollable_drop(tok);
   }
   function watch(self: RealDriver, fd: i32, interest: i32): i32 {
-    let r: i32 = __real_reactor(self);
-    if (r < 0) {
-      return r;
-    }
-    return reactor_ctl(r, 1, fd, interest);
+    return __real_ctl(self, 1, fd, interest);
   }
   function unwatch(self: RealDriver, fd: i32): i32 {
-    let r: i32 = self.reactor.get();
-    if (r < 0) {
+    if (self.ring.get() < 0 as i64 && self.reactor.get() < 0) {
       return 0;
     }
-    return reactor_ctl(r, 2, fd, 0);
+    return __real_ctl(self, 2, fd, 0);
   }
   function wait_into(self: RealDriver, own events: i32[], timeout_ms: i32): i32[] {
-    let r: i32 = __real_reactor(self);
-    if (r < 0 || events.len() < 2) {
+    if (self.ring.get() < 0 as i64 && __real_reactor(self) < 0 || events.len() < 2) {
       return end_pairs(events, 0);
     }
     // A wait a signal interrupted is waited again for what is left of the
     // timeout: epoll_wait fails with EINTR after a stop and continue even
     // with no handler installed.
     let deadline: i64 = monotonic_ns() + timeout_ms as i64 * (1000000 as i64);
-    let n: i32 = reactor_wait(r, events, timeout_ms);
+    let n: i32 = __real_wait(self, events, timeout_ms);
     while (n == 0 - __eintr()) {
       let wait_ms: i32 = timeout_ms;
       if (timeout_ms >= 0) {
@@ -243,7 +284,7 @@ impl Driver for RealDriver {
         }
         wait_ms = ((ns + 999999 as i64) / (1000000 as i64)) as i32;
       }
-      n = reactor_wait(r, events, wait_ms);
+      n = __real_wait(self, events, wait_ms);
     }
     if (n <= 0) {
       return end_pairs(events, 0);
@@ -254,11 +295,7 @@ impl Driver for RealDriver {
     if (__real_signal_fd(self, sig) >= 0) {
       return 0;
     }
-    let r: i32 = __real_reactor(self);
-    if (r < 0) {
-      return r;
-    }
-    let sfd: i32 = reactor_ctl(r, 4, sig, 0);
+    let sfd: i32 = __real_ctl(self, 4, sig, 0);
     if (sfd < 0) {
       return sfd;
     }
@@ -277,22 +314,27 @@ impl Driver for RealDriver {
       }
     }
     self.signals.set(kept);
-    return reactor_ctl(self.reactor.get(), 5, sig, sfd);
+    return __real_ctl(self, 5, sig, sfd);
   }
   function watch_parent(self: RealDriver): i32 {
     let watched: i32 = self.watch_signal(15);
     if (watched < 0) {
       return watched;
     }
-    return reactor_ctl(__real_reactor(self), 6, 0, 0);
+    return __real_ctl(self, 6, 0, 0);
   }
   function close(self: RealDriver): i32 {
+    let ring: i64 = self.ring.get();
+    self.signals.set("");
+    if (ring >= 0 as i64) {
+      self.ring.set(-(1 as i64));
+      return ring_ctl(ring, 3, 0, 0);
+    }
     let r: i32 = self.reactor.get();
     if (r < 0) {
       return 0;
     }
     self.reactor.set(-1);
-    self.signals.set("");
     return reactor_ctl(r, 3, 0, 0);
   }
 }

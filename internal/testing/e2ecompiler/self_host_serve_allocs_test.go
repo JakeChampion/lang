@@ -28,6 +28,22 @@ func TestSelfHostServeAllocsPerRequest(t *testing.T) {
 	e2eharness.CheckServeAllocs(t, addr, 0, e2eharness.ServeAllocsRounds)
 }
 
+// The same zero with the loop waiting on an io_uring (`FERN_IO_URING=1`,
+// docs/NET-P7-IO-URING-PLAN.md): a wait re-arms its polls in the ring the
+// driver mapped when it was made, so a request costs the ring nothing.
+func TestSelfHostServeAllocsPerRequestRing(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(e2eharness.ServeAllocsServerSource(0, e2eharness.ServeAllocsRounds)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := cli.x86Binary(t, src, "FERN_STRICT_IR=1")
+	cmd := runX86_64Bin(cli.runner, bin)
+	cmd.Env = append(os.Environ(), "FERN_IO_URING=1")
+	addr, _ := e2eharness.StartInheritedServer(t, cmd)
+	e2eharness.CheckServeAllocs(t, addr, 0, e2eharness.ServeAllocsRounds)
+}
+
 func TestSelfHostServeAllocsPerRequestArm64(t *testing.T) {
 	_, qemu := arm64Tooling(t)
 	cli := buildSelfHostCLI(t)

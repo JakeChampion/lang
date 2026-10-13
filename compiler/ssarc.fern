@@ -5571,6 +5571,15 @@ function os_floor_process_site(own r: irtables.LowerResult, ins: ssa.SInst): Low
   if (ins.str == "reactor_wait") {
     return Lowered { found: true, r: emit(r, ir.op_reactor_wait()) };
   }
+  if (ins.str == "ring_new") {
+    return Lowered { found: true, r: emit(r, ir.op_ring_new()) };
+  }
+  if (ins.str == "ring_ctl") {
+    return Lowered { found: true, r: emit(r, ir.op_ring_ctl()) };
+  }
+  if (ins.str == "ring_wait") {
+    return Lowered { found: true, r: emit(r, ir.op_ring_wait()) };
+  }
   if (ins.str == "tcp_recv_into") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_tcp_recv_into())) };
   }

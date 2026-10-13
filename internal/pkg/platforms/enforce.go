@@ -184,6 +184,9 @@ var gatedBuiltins = map[string]string{
 	"reactor_new":   "reactor",
 	"reactor_ctl":   "reactor",
 	"reactor_wait":  "reactor",
+	"ring_new":      "reactor",
+	"ring_ctl":      "reactor",
+	"ring_wait":     "reactor",
 	"tcp_recv_into": "tcp",
 
 	// Filesystem.

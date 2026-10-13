@@ -122,6 +122,13 @@ func errnoOf(err error) int64 {
 	return -int64(syscall.EIO)
 }
 
+// builtinRingUnsupported answers ring_new, ring_ctl and ring_wait: the
+// interpreter keeps every wait on the reactor, so a driver asking for the
+// io_uring set falls back to it as it does on a kernel without one.
+func builtinRingUnsupported(_ *Interp, _ []Value) (Value, error) {
+	return Number(errnoOf(syscall.ENOSYS)), nil
+}
+
 // rawFd is the descriptor behind a socket handle of any kind.
 func (i *Interp) rawFd(handle int64) (int, bool) {
 	var sc syscall.Conn

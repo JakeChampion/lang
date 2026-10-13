@@ -16,10 +16,13 @@ import (
 // allocator's growth the second batch cost must be under 1 KiB per
 // connection. "accepted" holds connections that never send a request;
 // "kept" holds connections each left on keep-alive after one served
-// request, each shape on a server of its own. "suspended" holds
-// connections each with a handler parked on the fetch upstream, and
-// "streams" parks the same handlers on the streams of one HTTP/2
-// connection, so the growth is a parked stream's.
+// request, each shape on a server of its own, and each again on a loop
+// waiting on an io_uring (`FERN_IO_URING=1`, docs/NET-P7-IO-URING-PLAN.md),
+// whose per-descriptor state is mapped once with the ring and so adds
+// nothing per connection. "suspended" holds connections each with a
+// handler parked on the fetch upstream, and "streams" parks the same
+// handlers on the streams of one HTTP/2 connection, so the growth is a
+// parked stream's.
 func TestSelfHostHeldConnectionsHeapBoundX86_64(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires the Linux x86-64 native target")
@@ -42,8 +45,12 @@ func TestSelfHostHeldConnectionsHeapBoundX86_64(t *testing.T) {
 	for _, shape := range []struct {
 		name   string
 		served bool
-	}{{"accepted", false}, {"kept", true}} {
+		ring   bool
+	}{{"accepted", false, false}, {"kept", true, false}, {"accepted-io_uring", false, true}, {"kept-io_uring", true, true}} {
 		t.Run(shape.name, func(t *testing.T) {
+			if shape.ring {
+				t.Setenv("FERN_IO_URING", "1")
+			}
 			addr := startHeldConnectionsServer(t, runner, driver, stdlib, e2eharness.HeldConnectionsServerSource)
 			per, first, second := e2eharness.MeasureHeldConnections(t, addr, shape.served)
 			t.Logf("%s connections: first batch of %d grew the heap by %d bytes, second by %d (%d per connection)",

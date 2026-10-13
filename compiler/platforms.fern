@@ -347,6 +347,9 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "reactor_new", capability: "reactor" },
     Gate { builtin: "reactor_ctl", capability: "reactor" },
     Gate { builtin: "reactor_wait", capability: "reactor" },
+    Gate { builtin: "ring_new", capability: "reactor" },
+    Gate { builtin: "ring_ctl", capability: "reactor" },
+    Gate { builtin: "ring_wait", capability: "reactor" },
     Gate { builtin: "tcp_recv_into", capability: "tcp" },
     // Filesystem.
     Gate { builtin: "read_file", capability: "fs" },

@@ -1,0 +1,167 @@
+# Net P7: io_uring — the plan
+
+How #9861 is built, in the order it lands. One PR per slice. Each slice
+names its gate. The backend is opt-in and Linux-only, and it is kept only
+if it wins on the measurements of slice 5. A backend that does not win is
+deleted, not left in as a second path to maintain.
+
+## Where it sits
+
+The serve loop runs on `async.Driver`, a readiness interface: `watch(fd,
+interest)`, `unwatch(fd)`, and `wait_into(events, timeout)` answering
+(fd, readiness) pairs. Behind it, `RealDriver` keeps one reactor per loop
+through three builtins, `reactor_new`, `reactor_ctl` and `reactor_wait`:
+epoll on Linux, kqueue on Darwin, a table of wasi:io pollables on wasm.
+The loop then calls `tcp_accept`, `tcp_recv_into` and `tcp_send_buf`
+itself on a ready descriptor.
+
+io_uring is a completion interface: the program queues operations on a
+submission ring and reads their results off a completion ring, and one
+`io_uring_enter` both submits and waits. Its advantage over epoll for a
+server is fewer system calls per request, not a faster single call:
+multishot accept and multishot receive leave an operation armed across
+many completions, and the received bytes land in buffers the program
+handed the kernel beforehand (provided buffer rings), so a readable
+connection costs no `recv` call. Research report 1 puts a naive swap at
+1.06 to 1.10 times epoll and engineered use (batching, provided buffers,
+zero-copy send) at up to 2.3 times. That is why the slices below are
+ordered by the system calls each removes, and why the first slice alone
+is expected to measure level with epoll.
+
+The backend stays behind the Driver. `serve.Config.io_uring` (false, set
+by `with_io_uring()` or by `FERN_IO_URING=1` in the environment, as libuv
+takes `UV_USE_IO_URING`) asks for it; the loop's driver tries the ring when
+it is created and falls back to epoll for the whole loop when the ring
+cannot be had
+(`io_uring_setup` refused by seccomp with EPERM, absent with ENOSYS, or a
+kernel without the 6.1 setup flags with EINVAL). It is decided once, at
+the driver's creation, never per call. Darwin keeps kqueue and wasm keeps
+wasi:sockets; there the ring builtins answer ENOSYS and the fallback is
+the only path.
+
+## What the kernel was measured to do
+
+Measured on this repository's container (kernel 6.18) before any code,
+since each fact decides a design point below:
+
+- **A multishot poll is edge-triggered.** `IORING_OP_POLL_ADD` with
+  `IORING_POLL_ADD_MULTI` on a socket with ten unread bytes posts one
+  completion and then none while the bytes stay unread, none after a
+  partial read, and one at the peer's EOF that is not repeated. The loop
+  is written against level-triggered epoll: it accepts one connection
+  per listener event and leaves a connection whose response is pending
+  readable for the next pass. The ring therefore uses single-shot polls,
+  each re-armed as its completion is read, which reports a descriptor
+  that is still ready at once, as epoll does.
+- **Every poll reports a peer's half-close.** io_uring adds `POLLRDHUP`
+  to the events of every `POLL_ADD`, asked for or not, so a peer that has
+  shut down its writing side completes a poll with `POLLIN | POLLRDHUP`.
+  epoll reports `EPOLLRDHUP` only when asked, and the loop never asks: a
+  half-closed connection whose handler is parked still owes its response.
+  The ring reports hang-up for `POLLHUP` and `POLLERR` alone, as the
+  reactor does for `EPOLLHUP` and `EPOLLERR`.
+- **The ring cannot be mapped at an address the program chooses.**
+  `mmap` of the ring descriptor with `MAP_FIXED`, `MAP_FIXED_NOREPLACE`
+  or a bare hint address fails with EINVAL. The ring's state (the
+  descriptor, the three mapped regions and their offsets) lives in a
+  block the runtime allocates when the ring is made, and the driver
+  holds its address as an opaque `i64` handle the stdlib never reads
+  through. Nothing is kept in a runtime global.
+- **`IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN` is
+  accepted.** Under `DEFER_TASKRUN` the kernel posts completions only
+  inside the issuing task's own `io_uring_enter`, so the ring's head and
+  tail words are never written while the program reads them, and plain
+  loads and stores around the system call are ordered by it. The runtime
+  helpers need no atomic operations.
+
+The feature floor is the one #9861 names: kernel 6.1 for the setup
+flags, with multishot accept and buffer rings from 5.19 and multishot
+receive from 6.0. GitHub's hosted runners run 6.8 or later on both
+x86-64 and arm64. qemu-user implements no io_uring (`ring_new` under
+qemu-aarch64 answers ENOSYS), so the arm64 legs under qemu exercise the
+fallback; the native arm64 runner exercises the ring.
+
+## Slices
+
+1. **The ring as the readiness set (landed).** Three builtins mirroring the
+   reactor floor: `ring_new(entries): i64` (the handle, or -errno),
+   `ring_ctl(ring, op, fd, arg): i32` and `ring_wait(ring, events,
+   timeout_ms): i32`, with the reactor's ops and contract: op 1 watches
+   `fd` for `arg`'s interest bits (1 readable, 2 writable; 4, which asks
+   epoll for `EPOLLEXCLUSIVE`, means nothing to a ring of one process),
+   op 2 unwatches it, op 3 closes the ring, ops 4 to 6 the signal and
+   parent watches, and a wait writes (fd, readiness) pairs into the
+   caller's array and answers how many. Runtime helpers in
+   `compiler/asmcore.fern` for x86-64 and arm64 Linux over `__syscall6`
+   and `mmap`; the ENOSYS bodies for Darwin and wasm; the interpreter
+   answers ENOSYS. A watch queues a single-shot `POLL_ADD` keyed by the
+   descriptor; an interest change queues a `POLL_REMOVE` and a fresh
+   `POLL_ADD`; a wait submits everything queued and the re-arms of the
+   completions it read in one `io_uring_enter` with a timeout
+   (`IORING_ENTER_EXT_ARG`). `RealDriver` gains the ring beside the
+   reactor, `async.real_driver_io_uring()` makes one that asks for it and
+   `.io_uring()` says whether it got it; the serve loop asks under
+   `Config.io_uring`. Each new builtin is four classifications
+   (`docs/FREESTANDING-CORE.md`'s target half and `internal/pkg/caps`'
+   package half, each mirrored in the compiler). Gates:
+   `TestRingDriverX86_64` drives one probe through the ring (the listener
+   on a connect, a socket reported while its bytes stay unread and not
+   after, writable on request, nothing after an unwatch and readable again
+   when watched anew, forty connections at once), and its interpreter and
+   qemu-aarch64 twins read the same through the fallback; the
+   zero-allocation gate and the accepted and kept held-connection shapes
+   run again under the ring (`TestSelfHostServeAllocsPerRequestRing`, the
+   `-io_uring` shapes); and the whole x86-64 serve suite was run with
+   `FERN_IO_URING=1` before landing, as the nightly lane runs it.
+2. **Multishot accept.** The listener's poll becomes one
+   `IORING_OP_ACCEPT` with `IORING_ACCEPT_MULTISHOT`; the accepted
+   descriptors are queued in the ring's state block as their completions
+   are read, and the wait reports the listener readable while the queue
+   holds one. The loop accepts through `drv.accept(listener)`, which the
+   ring answers from its queue and epoll with `tcp_accept`; this is the
+   one change above `std/net` this slice needs. Gate: the accept storm
+   (`TestSelfHostHeldConnectionsHeapBoundX86_64`'s batches) and the
+   per-IP cap under both backends.
+3. **Provided buffers and multishot receive.** One buffer ring per ring,
+   registered with `IORING_REGISTER_PBUF_RING`, of fixed-size buffers
+   the size of the loop's scratch; a watched connection's readable poll
+   becomes a multishot `IORING_OP_RECV` selecting from it. Completions
+   carry the buffer's index and length and are queued per connection;
+   `drv.recv_into(fd, scratch)` copies one into the loop's scratch and
+   hands the buffer back to the kernel, and answers EAGAIN when the
+   connection's queue is empty, as `tcp_recv_into` does. The copy is the
+   one `recv` made; the system call is what goes. A receive the kernel
+   ends for want of buffers (ENOBUFS) is re-armed once buffers return.
+   Gate: the serve suites under both backends, the zero-allocation gate,
+   and a pipelined burst larger than the buffer ring.
+4. **Zero-copy send above the crossover.** A response body at or past
+   `Config.io_uring_zc_bytes` (3,072 by default, the kernel's measured
+   crossover) is written with `IORING_OP_SEND_ZC`; the loop keeps the
+   bytes until the notification completion says the kernel is done with
+   them. Loopback always copies, so this slice is measured only on the
+   fixed host. Gate: the large-response and sendfile serve tests under
+   both backends.
+5. **Measured, and kept only if it wins.** The HttpArena profiles #9861
+   names (baseline at 4,096 connections, pipelined at 4,096, and the
+   async profile at 32,000) on the fixed host, epoll against the ring
+   after each of slices 1 to 4: throughput, p99 and bump bytes per
+   connection, recorded in `docs/benchmarks/`. The `net-nightly` lane
+   runs the serve suites and `scripts/net-bench` under both backends;
+   the per-PR lanes run epoll only, plus the slice gates above. If the
+   ring does not win, it is deleted with this plan's record of why.
+
+## What is not here
+
+- `SQPOLL`. A kernel thread polling the submission ring spends a core to
+  save the submit call; on a share-nothing worker per core it competes
+  with the workers, and libuv turned it off by default for that reason.
+- Zero-copy receive (`IORING_OP_RECV_ZC`, 6.15). It needs NIC header and
+  data split and a flow steered to a dedicated queue, which no target
+  host here has.
+- Files. `std/fs` stays on blocking calls; the loop's only file I/O is
+  `sendfile`, which slice 4 leaves alone.
+- A completion-shaped Driver. Slices 2 and 3 add `accept` and
+  `recv_into` to the Driver rather than recasting it around completions:
+  the loop's structure, its parser's lent buffer and its zero-allocation
+  path stay as they are, and epoll implements the two by the calls the
+  loop makes today.

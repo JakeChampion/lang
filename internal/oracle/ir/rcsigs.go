@@ -328,7 +328,7 @@ var rcInertBuiltins = map[string]bool{
 	"unix_listen": true, "unix_connect": true,
 	// The reactor floor and the owned-buffer read: scalars and a borrowed
 	// array the callee writes through, nothing kept.
-	"reactor_new": true, "reactor_ctl": true, "reactor_wait": true, "tcp_recv_into": true, "tcp_sendfile": true,
+	"reactor_new": true, "reactor_ctl": true, "reactor_wait": true, "ring_new": true, "ring_ctl": true, "ring_wait": true, "tcp_recv_into": true, "tcp_sendfile": true,
 	"sleep_ms": true, "sleep_ns": true, "subprocess": true, "timer_fd": true,
 	// (pid) → boolean. A scalar in, a scalar out. Native-only — E066
 	// refuses it on both wasm worlds, which have no process table — so
@@ -614,7 +614,7 @@ var rcInert = map[string]bool{
 	"__fern_tcp_close": true, "__fern_tcp_connect": true,
 	"__fern_tcp_listen": true, "__fern_tcp_local_port": true,
 	"__fern_tcp_listen_with": true, "__fern_tcp_socket_ctl": true, "__fern_tcp_connect_with": true, "__fern_ip_flat": true,
-	"__fern_reactor_new": true, "__fern_reactor_ctl": true, "__fern_reactor_wait": true, "__fern_tcp_recv_into": true, "__fern_tcp_sendfile": true,
+	"__fern_reactor_new": true, "__fern_reactor_ctl": true, "__fern_reactor_wait": true, "__fern_ring_new": true, "__fern_ring_ctl": true, "__fern_ring_wait": true, "__fern_tcp_recv_into": true, "__fern_tcp_sendfile": true,
 	"__fern_tcp_pollable": true,
 	"__fern_tcp_recv":     true, "__fern_tcp_send": true, "__fern_temp_dir": true,
 	"__fern_tcp_send_bytes": true,
