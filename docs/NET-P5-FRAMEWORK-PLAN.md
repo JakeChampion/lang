@@ -299,9 +299,11 @@ decides what wraps it.
    its siblings is already told to use `plat.log`: the ambient rule
    reports the `eprint` under them with the chain through `log_info`. And
    `eprint`, so `plat.log` on the host platform, writes a line and its
-   newline in one write (`writev(2)` on the native targets, one
-   `fd_write` over two iovecs on wasm), so workers sharing a stderr never
-   land a write inside each other's line of up to `PIPE_BUF` bytes.
+   newline in one `writev(2)` on the native targets, so workers sharing a
+   stderr never land a write inside each other's line of up to `PIPE_BUF`
+   bytes. On wasm the two stay separate writes: wasmtime's preview1
+   `fd_write` writes only the first non-empty iovec, and a wasm program
+   has no fork and no shared pipe for the guarantee to matter.
    Gate: the sink cases in `tests/stdlib/log_test.fern` in the stdtest
    differential; `TestX86_64EprintWholeLines`, `TestArm64EprintWholeLines`
    and `TestArm64DarwinEprintWholeLines`, four forked workers logging a
