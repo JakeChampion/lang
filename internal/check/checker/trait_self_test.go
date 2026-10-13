@@ -37,6 +37,26 @@ function main(): i32 { let p: P = P { v: 3 }; return p.twice(); }`
 	if !errors.As(errs[0], &ce) || ce.Code() != "E074" {
 		t.Fatalf("want E074, got %v", errs[0])
 	}
+	// An associated default sees the impl type as its trait's too, on a
+	// parameter of that type; on another type the call is a tie.
+	assoc := traits + `impl B for P { function scale(self: Self): i32 { return self.v + 1; } }
+trait C { function scale(self: Self): i32; function half(other: Self): i32 { return other.scale() / 2; } }
+impl C for P { function scale(self: Self): i32 { return self.v; } }
+function main(): i32 { let p: P = P { v: 3 }; return P.half(p); }`
+	if err := checkSource(t, assoc); err != nil {
+		t.Errorf("an associated default's own method should resolve: %v", err)
+	}
+	other := traits + `impl B for P { function scale(self: Self): i32 { return self.v + 1; } }
+struct Q { v: i32 }
+impl A for Q { function scale(self: Self): i32 { return self.v; } }
+impl B for Q { function scale(self: Self): i32 { return self.v + 1; } }
+trait C { function half(other: Q): i32 { return other.scale() / 2; } }
+impl C for P {}
+function main(): i32 { return P.half(Q { v: 3 }); }`
+	err = checkSource(t, other)
+	if !errors.As(err, &errs) || len(errs) != 1 || !errors.As(errs[0], &ce) || ce.Code() != "E074" {
+		t.Fatalf("an associated default on another type sees both traits: want one E074, got %v", err)
+	}
 }
 
 // `Self.f()` inside an impl method or a trait default is the associated

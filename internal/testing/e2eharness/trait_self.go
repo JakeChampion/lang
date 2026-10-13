@@ -8,14 +8,16 @@ import (
 
 // TraitSelfProgram pins two trait rules both checkers agree on (#12282,
 // #12296): inside trait B's default body, `self.scale()` is B's `scale`
-// even though trait A gives P one too; and `Self.f()` inside an impl method
-// or a trait default is the associated call on the impl type. main answers
-// 0 when every call dispatched where the rules say, and the sum it got
-// otherwise.
+// even though trait A gives P one too, and so is `other.scale()` in B's
+// associated default, whose parameter is the impl type; and `Self.f()`
+// inside an impl method or a trait default is the associated call on the
+// impl type. main answers 0 when every call dispatched where the rules
+// say, and the sum it got otherwise.
 const TraitSelfProgram = `trait A { function scale(self: Self): i32; }
 trait B {
     function scale(self: Self): i32;
     function twice(self: Self): i32 { return self.scale() * 2; }
+    function thrice(other: Self): i32 { return other.scale() * 3; }
 }
 struct P { v: i32 }
 impl A for P { function scale(self: Self): i32 { return self.v; } }
@@ -35,9 +37,9 @@ impl Mk for Q {
 function main(): i32 {
     let p: P = P { v: 3 };
     let q: Q = Q { v: 9 };
-    // 8 + 6 + 5
-    let n: i32 = p.twice() + q.one() + q.base();
-    if (n == 19) {
+    // 8 + 12 + 6 + 5
+    let n: i32 = p.twice() + P.thrice(p) + q.one() + q.base();
+    if (n == 31) {
         return 0;
     }
     return n;
