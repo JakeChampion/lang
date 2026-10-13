@@ -264,7 +264,7 @@ function main(): i32 { return "a,b,c".split(",").len(); }`,
 		},
 		{
 			// eprint_str — fd 2 plus the trailing newline that is part of eprint's
-			// contract, as two writes rather than a buffer build.
+			// contract, as one writev over two iovecs rather than a buffer build.
 			"eprint_str",
 			`function main(): i32 { eprint("x"); return 0; }`,
 			"__fn___fern_eprint_str",

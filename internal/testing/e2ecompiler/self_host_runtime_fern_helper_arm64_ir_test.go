@@ -401,24 +401,31 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	// which is in fact what caught the 16384 bug, after this emission test had
 	// been green on it.
 
-	// The three stdout/stderr leaves (#2649) all trap through write(2), Darwin
-	// number 4. That number cannot join the table above: 4 is an ordinary literal
-	// this emit already holds fifteen of, so a file-wide search would pass whatever
-	// asmcore.sysno said. Scope it to each helper's own body instead. Like every
-	// migrated number it reaches the trap as a pushed operand rather than the
-	// `mov x8, #N` darwinize rewrites, so a wrong row is invisible everywhere else —
-	// Linux's 64 would simply be issued against the BSD vector.
-	for _, sym := range []string{"__fn___fern_print_str", "__fn___fern_putchar", "__fn___fern_eprint_str"} {
+	// The three stdout/stderr leaves (#2649) trap through write(2), Darwin
+	// number 4, except eprint, which writes its line and newline in one
+	// writev(2), Darwin number 121. Those numbers cannot join the table above: 4
+	// is an ordinary literal this emit already holds fifteen of, so a file-wide
+	// search would pass whatever asmcore.sysno said. Scope each to its helper's
+	// own body instead. Like every migrated number they reach the trap as a
+	// pushed operand rather than the `mov x8, #N` darwinize rewrites, so a wrong
+	// row is invisible everywhere else — Linux's 64 or 66 would simply be issued
+	// against the BSD vector.
+	for _, leaf := range []struct{ sym, call, darwin, linux string }{
+		{"__fn___fern_print_str", "write", "4", "64"},
+		{"__fn___fern_putchar", "write", "4", "64"},
+		{"__fn___fern_eprint_str", "writev", "121", "66"},
+	} {
+		sym := leaf.sym
 		body := extractFuncBody(asm, sym)
 		if body == "" {
 			t.Errorf("%s not defined — the Fern helper did not lower for Darwin", sym)
 			continue
 		}
-		if !matchShape(body, pushedImm("4")) {
-			t.Errorf("%s does not push Darwin's write number (4)", sym)
+		if !matchShape(body, pushedImm(leaf.darwin)) {
+			t.Errorf("%s does not push Darwin's %s number (%s)", sym, leaf.call, leaf.darwin)
 		}
-		if matchShape(body, pushedImm("64")) {
-			t.Errorf("%s pushes Linux's write number (64) in Mach-O output", sym)
+		if matchShape(body, pushedImm(leaf.linux)) {
+			t.Errorf("%s pushes Linux's %s number (%s) in Mach-O output", sym, leaf.call, leaf.linux)
 		}
 		if strings.Contains(asm, "\n"+strings.TrimPrefix(sym, "__fn_")+":") {
 			t.Errorf("the register-ABI hand-asm %s is back", strings.TrimPrefix(sym, "__fn_"))
