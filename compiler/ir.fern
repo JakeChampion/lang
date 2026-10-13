@@ -8773,7 +8773,8 @@ pub function call_needs_heap(name: string): boolean {
     return true;
   }
   if (name == "__fern_arr_inc_elems" || name == "__fern_arr_own_elems" || name == "__fern_str_own" || name == "__fern_str_borrow"
-    || name == "__fern_str_grow" || name == "__fern_str_grow_range") {
+    || name == "__fern_str_grow" || name == "__fern_str_grow_range"
+    || name == "__fern_str_grow_fresh" || name == "__fern_str_grow_fresh_range") {
     return true;
   }
   if (name == "__fern_rc_underflow_count" || name == "__fern_rc_underflow_get") {

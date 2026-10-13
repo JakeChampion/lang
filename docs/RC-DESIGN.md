@@ -307,7 +307,9 @@ pointer that flows through the program points past the header.
   per element and no shape word; a declared **enum variant** is laid out as a
   record, its shape word naming the variant. A **string** box is a data
   pointer and a length, released through `__fern_str_free`; a fused string
-  carries its bytes behind the same block.
+  carries its bytes behind the same block, and a grown one (the
+  self-append's fallback, `__fern_str_grow_fresh`) records the block's
+  capacity in the word ahead of its count and is freed at that capacity.
 - The count word is a signed 32-bit integer. A count below zero marks an
   **immortal** box (a literal, a static empty array, a `.rodata` closure
   cell): every retain, release and uniqueness test skips it, so a reuse never

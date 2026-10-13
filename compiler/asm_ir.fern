@@ -386,6 +386,15 @@ function borrowed_marker(): i32 {
   return 1112494674;  // 0x424F5252, BORR
 }
 
+// A fused box whose block carries its capacity, in words, in the word ahead
+// of the count: base = box - 16, and the block is freed at that capacity
+// rather than at its length. The self-append's fallback builds one with
+// headroom (__fern_str_grow_fresh), so an accumulator re-copies its prefix
+// once per doubling rather than once per allocator class.
+function grown_marker(): i32 {
+  return 1196576599;  // 0x47524F57, GROW
+}
+
 // rc_poison is the decimal of ast.RcPoison (0x7EEDFACE), the marker a
 // quarantined block carries in its rc word. Never hand-write the literal at a
 // use site: the self-host cannot import the Go constant, so the quarantine
@@ -3060,6 +3069,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movl -4(%rax), %edx\n");  // fused marker @ box-4
   s = s.write("    cmpl $" + util.i32_to_string(fused_marker()) + ", %edx\n");
   s = s.write("    je .Lstrfree_fused\n");
+  s = s.write("    cmpl $" + util.i32_to_string(grown_marker()) + ", %edx\n");
+  s = s.write("    je .Lstrfree_grown\n");
   s = s.write("    cmpl $" + util.i32_to_string(borrowed_marker()) + ", %edx\n");
   s = s.write("    je .Lstrfree_box\n");
   // rc==1: sole owner -> free data buffer (heap-guarded) then the 24-byte box.
@@ -3117,12 +3128,19 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // producer that over-allocated hands the freelist a block bigger than the class it lands in, which wastes the
   // slack but never overruns — the same trade the separate-buffer path above has
   // always made when it freed at ceil(len/8).
+  // A grown box's block is its capacity, read from the word ahead of the
+  // count, under a 32-byte header.
+  s = s.write(".Lstrfree_grown:\n");
+  s = s.write("    movq -16(%rax), %rdx\n");  // words = the capacity
+  s = s.write("    leaq -16(%rax), %rcx\n");  // base = box-16
+  s = s.write("    jmp .Lstrfree_block\n");
   s = s.write(".Lstrfree_fused:\n");
   s = s.write("    movq 8(%rax), %rdx\n");  // len = box[8]
   s = s.write("    addq $7, %rdx\n");  // words = ceil(len/8) + 3
   s = s.write("    shrq $3, %rdx\n");
   s = s.write("    addq $3, %rdx\n");
   s = s.write("    leaq -8(%rax), %rcx\n");  // base = box-8
+  s = s.write(".Lstrfree_block:\n");
   s = s.write(quarantine_rc("-8(%rax)", s.rc_free_debug));
   // Over 256 words the block takes the large-tier test beside the class call.
   s = s.write("    cmpq $256, %rdx\n");
@@ -3386,12 +3404,22 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(san_poison_check("%ecx", s.rc_free_debug));
     s = s.write("    cmpl $1, %ecx\n");
     s = s.write("    jne .Lsg_ret\n");
-    s = s.write("    cmpl $" + util.i32_to_string(fused_marker()) + ", -4(%r8)\n");
-    s = s.write("    jne .Lsg_ret\n");
     s = s.write("    movq 8(%r8), %rcx\n");  // la
     s = s.write("    leaq (%rcx,%rsi), %rdi\n");  // grown length
     s = s.write("    cmpq $0x7fffffff, %rdi\n");
     s = s.write("    ja .Lsg_ret\n");
+    // A grown box takes the bytes while its capacity holds them; its block
+    // does not move, so neither the trace nor the census sees anything.
+    s = s.write("    cmpl $" + util.i32_to_string(grown_marker()) + ", -4(%r8)\n");
+    s = s.write("    jne .Lsg_fused\n");
+    s = s.write("    leaq 39(%rdi), %r10\n");
+    s = s.write("    shrq $3, %r10\n");  // words grown, under the 32-byte header
+    s = s.write("    cmpq -16(%r8), %r10\n");
+    s = s.write("    ja .Lsg_ret\n");
+    s = s.write("    jmp .Lsg_copy\n");
+    s = s.write(".Lsg_fused:\n");
+    s = s.write("    cmpl $" + util.i32_to_string(fused_marker()) + ", -4(%r8)\n");
+    s = s.write("    jne .Lsg_ret\n");
     s = s.write("    leaq 31(%rcx), %r9\n");
     s = s.write("    shrq $3, %r9\n");  // words now
     s = s.write("    leaq 31(%rdi), %r10\n");
@@ -3441,6 +3469,86 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    rep movsb\n");
     s = s.write("    movl $1, %eax\n");
     s = s.write(".Lsg_ret:\n");
+    s = s.write("    ret\n");
+    // __fern_str_grow_fresh(a@16(%rsp), b@8(%rsp)) -> a grown box of a then
+    // b: the self-append's path when a's block cannot take b. The block is
+    // sized at twice a's length in words or the grown string's, whichever is
+    // more, rounded to its class, so an accumulator re-copies its prefix once
+    // per doubling; a's capacity is not the measure, since a shared a is
+    // copied on every append. a is read, not released; the caller releases its unit.
+    // __fern_str_grow_fresh_range(a@32, s@24, lo@16, hi@8) appends s's bytes
+    // [lo, hi) the same way and traps on a range outside s, as the slice the
+    // concatenation built would have. Both entries hand the body the source
+    // bytes in %rdx and their count in %rsi.
+    s = s.write("__fn___fern_str_grow_fresh:\n");
+    s = hev_shim_site(s, "sgf");
+    s = s.write("    movq 16(%rsp), %r8\n");  // a
+    s = s.write("    movq 8(%rsp), %rdx\n");  // b
+    s = s.write("    movq 8(%rdx), %rsi\n");  // lb
+    s = s.write("    movq (%rdx), %rdx\n");  // b's data
+    s = s.write("    jmp .Lsgf_body\n");
+    s = s.write("__fn___fern_str_grow_fresh_range:\n");
+    s = hev_shim_site(s, "sgfr");
+    s = s.write("    movq 32(%rsp), %r8\n");  // a
+    s = s.write("    movslq 16(%rsp), %rax\n");  // lo
+    s = s.write("    movslq 8(%rsp), %rsi\n");  // hi
+    s = s.write("    movq 24(%rsp), %rdx\n");  // s
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    js __fern_slice_abort\n");
+    s = s.write("    cmpq 8(%rdx), %rsi\n");
+    s = s.write("    jg __fern_slice_abort\n");
+    s = s.write("    subq %rax, %rsi\n");  // lb
+    s = s.write("    js __fern_slice_abort\n");
+    s = s.write("    movq (%rdx), %rdx\n");
+    s = s.write("    addq %rax, %rdx\n");  // s's data + lo
+    s = s.write(".Lsgf_body:\n");
+    s = s.write("    movq 8(%r8), %rcx\n");  // la
+    s = s.write("    leaq (%rcx,%rsi), %rdi\n");  // grown length
+    s = s.write("    cmpq $0x7fffffff, %rdi\n");
+    s = s.write("    ja __fern_alloc_size_abort\n");
+    s = s.write("    leaq 39(%rdi), %r9\n");
+    s = s.write("    shrq $3, %r9\n");  // words the grown string needs
+    s = s.write("    leaq 31(%rcx), %r10\n");
+    s = s.write("    shrq $3, %r10\n");  // a's words as a fused box
+    s = s.write("    addq %r10, %r10\n");
+    s = s.write("    cmpq %r9, %r10\n");
+    s = s.write("    jae .Lsgf_class\n");
+    s = s.write("    movq %r9, %r10\n");
+    s = s.write(".Lsgf_class:\n");
+    s = s.write("    cmpq $65536, %r10\n");
+    s = s.write("    jae .Lsgf_large\n");
+    s = s.write("    pushq %r10\n");
+    s = s.write("    call __fern_capw\n");
+    s = s.write("    popq %r10\n");  // the class's capacity, which the block is bumped at
+    s = s.write("    jmp .Lsgf_alloc\n");
+    s = s.write(".Lsgf_large:\n");
+    s = s.write("    cmpq $0x8000000, %r10\n");  // past 1 GiB the block is exact
+    s = s.write("    ja .Lsgf_alloc\n");
+    s = s.write("    leaq 0(,%r10,8), %rax\n");
+    s = s.write("    pushq %rcx\n");
+    s = s.write("    pushq %rdx\n");
+    s = large_class(s);
+    s = s.write("    popq %rdx\n");
+    s = s.write("    popq %rcx\n");
+    s = s.write("    shrq $3, %rax\n");
+    s = s.write("    movq %rax, %r10\n");
+    s = s.write(".Lsgf_alloc:\n");
+    s = s.write("    leaq 0(,%r10,8), %rdi\n");
+    s = s.write("    call __fern_alloc\n");  // %rax = base; %rcx, %rdx, %rsi, %r8, %r10 survive
+    s = s.write("    movq %r10, (%rax)\n");  // the capacity, in words
+    s = s.write("    movl $1, 8(%rax)\n");  // rc
+    s = s.write("    movl $" + util.i32_to_string(grown_marker()) + ", 12(%rax)\n");
+    s = s.write("    leaq 32(%rax), %rdi\n");  // data
+    s = s.write("    movq %rdi, 16(%rax)\n");
+    s = s.write("    leaq (%rcx,%rsi), %r9\n");
+    s = s.write("    movq %r9, 24(%rax)\n");  // len
+    s = s.write("    movq %rsi, %r9\n");  // lb
+    s = s.write("    movq (%r8), %rsi\n");  // a's bytes
+    s = s.write("    rep movsb\n");  // %rcx = la; %rdi ends past them
+    s = s.write("    movq %rdx, %rsi\n");
+    s = s.write("    movq %r9, %rcx\n");
+    s = s.write("    rep movsb\n");
+    s = s.write("    addq $16, %rax\n");  // box = base+16
     s = s.write("    ret\n");
   }
   // __fern_str_borrow(data@16(%rsp), len@8(%rsp)) -> a counted box over bytes
@@ -10790,7 +10898,7 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_str_borrow") {
     s = s.need("str_borrow");
   }
-  if (name == "__fern_str_grow" || name == "__fern_str_grow_range") {
+  if (name == "__fern_str_grow" || name == "__fern_str_grow_range" || name == "__fern_str_grow_fresh" || name == "__fern_str_grow_fresh_range") {
     s = s.need("str_grow");
   }
   if (name == "__fern_account_entry") {

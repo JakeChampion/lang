@@ -161,9 +161,12 @@ function is_rc_helper(name: string): boolean {
     || name == "__fern_str_borrow"
     // A string append's in-place arm: grows a sole-owned fused box when its
     // block has room and answers whether it did; the range form copies a
-    // range of a source string. Only ssarc emits them.
+    // range of a source string. The fresh forms are the append's other arm:
+    // a grown box with headroom holding both operands. Only ssarc emits them.
     || name == "__fern_str_grow"
     || name == "__fern_str_grow_range"
+    || name == "__fern_str_grow_fresh"
+    || name == "__fern_str_grow_fresh_range"
     // FBIP reuse-degrade primitive (#4350): hands a dead donor's block back
     // when its cap matches, else freelists it and allocs fresh — so a reuse
     // site guarded by __fern_rc_is_unique degrades instead of corrupting.

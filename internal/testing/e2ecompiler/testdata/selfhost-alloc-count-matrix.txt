@@ -18,4 +18,4 @@ bare_str_heap         1   one block per heap string
 str_field_heap        1   one string block: the struct is split into its fields
 capture_free_fn_value 0   none: the capture-free function value is a static cell (#9839) and the struct is split
 arr_and_str_heap      2   array buffer + one string block: the struct is split into its fields
-str_self_append_chain 6   eight `+` per round: the accumulator grows in place (__fern_str_grow, #10960), else a fresh __fern_str_concat box
+str_self_append_chain 2   eight `+` per round: the accumulator grows in place (__fern_str_grow, #10960), else into a grown box with headroom (__fern_str_grow_fresh, #8770), which the chain then grows in place

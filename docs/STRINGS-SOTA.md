@@ -469,12 +469,21 @@ copying it in (#8770): one memcpy where there were two and an allocation.
 8M appends of an 8-byte range go 183 ms to 101 ms, and `cat -E` drops 16%
 of its retired instructions.
 
-What that does **not** buy is amortised growth: the 8-byte `[rc][len]`
-header has no capacity slot, so the class step is the allocator's 16-byte
-granularity and a long accumulator still re-copies its prefix once per
-step — Θ(n²/16) bytes rather than Θ(n²).
+A self-append whose block has no room builds a **grown box** rather than
+an exact one (`__fern_str_grow_fresh`, #8770): a fused box under a 32-byte
+header whose first word records the block's capacity, sized at twice the
+accumulator's words or what the grown string needs, whichever is more, and
+rounded to its allocator class. `__fern_str_grow` takes the next appends in
+place while that capacity holds, and `__fern_str_free` returns the block at
+the recorded capacity. So an accumulator re-copies its prefix once per
+doubling: 3000 one-byte appends cost 26 blocks where the exact box cost one
+per allocator class step, a two-byte literal append retires 51 instructions
+where it retired 135, an 8-byte range append 78 where it retired 419, and
+`bench/string_build` retires 37% fewer. On wasm the block-size word every
+heap string already carries records the headroom. A plain `a + b` is still
+an exact box: only the shape that will append again carries slack.
 
-The **capacity-carrying builder** (#8773) closes that. A builder is a
+The **capacity-carrying builder** (#8773) is the other half. A builder is a
 `usize` — the address of a control block holding data, length, capacity and
 the reserve — so an append is a compare, a memcpy and a length store, with
 no refcount check (the buffer is uniquely owned by construction) and no

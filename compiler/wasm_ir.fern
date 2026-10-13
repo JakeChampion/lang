@@ -11811,6 +11811,40 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
   o = o + "    (memory.copy (i32.add (i32.add (local.get $a) (i32.const 4)) (local.get $la)) (local.get $src) (local.get $lb))\n";
   o = o + "    (i32.store (local.get $a) (i32.add (local.get $la) (local.get $lb)))\n";
   o = o + "    (i32.const 1))\n";
+  // $__fern_str_grow_fresh(a, b) -> a fresh block of a then b, the
+  // self-append's path when a's block cannot take b: its block is twice a's
+  // length's or what the grown string needs, whichever is more, rounded to
+  // its class (a's own block is not the measure: a shared a is copied on
+  // every append)
+  // and recorded as bsz, so the next $__fern_str_grow finds the room and
+  // $__fern_arr_dec frees it at that class. a is read, not released.
+  // $__fern_str_grow_fresh_range(a, s, lo, hi) appends s's bytes [lo, hi)
+  // the same way and traps on a range outside s.
+  o = o + "  (func $__fern_str_grow_fresh (param $a i32) (param $b i32) (result i32)\n";
+  o = o + "    (call $__fern_str_grow_fresh_bytes (local.get $a) (i32.add (local.get $b) (i32.const 4)) (i32.load (local.get $b))))\n";
+  o = o + "  (func $__fern_str_grow_fresh_range (param $a i32) (param $s i32) (param $lo i32) (param $hi i32) (result i32)\n";
+  o = o + "    (if (i32.or (i32.lt_s (local.get $lo) (i32.const 0)) (i32.or (i32.lt_s (local.get $hi) (local.get $lo)) (i32.gt_s (local.get $hi) (i32.load (local.get $s))))) (then (unreachable)))\n";
+  o = o + "    (call $__fern_str_grow_fresh_bytes (local.get $a) (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $lo)) (i32.sub (local.get $hi) (local.get $lo))))\n";
+  o = o + "  (func $__fern_str_grow_fresh_bytes (param $a i32) (param $src i32) (param $lb i32) (result i32)\n";
+  o = o + "    (local $la i32) (local $need i32) (local $n i32) (local $w i32) (local $base i32)\n";
+  o = o + "    (local.set $la (i32.load (local.get $a)))\n";
+  o = o + "    (if (i32.gt_u (i32.add (local.get $la) (local.get $lb)) (i32.const 1073741824)) (then (unreachable)))\n";
+  // The block the grown string needs: the 8-byte header, the length word
+  // and the bytes, rounded to 8.
+  o = o + "    (local.set $need (i32.and (i32.add (i32.add (local.get $la) (local.get $lb)) (i32.const 19)) (i32.const -8)))\n";
+  o = o + "    (local.set $n (i32.shl (i32.and (i32.add (local.get $la) (i32.const 19)) (i32.const -8)) (i32.const 1)))\n";
+  o = o + "    (if (i32.lt_u (local.get $n) (local.get $need)) (then (local.set $n (local.get $need))))\n";
+  o = o + "    (local.set $w (call $__fern_capw (i32.shr_u (local.get $n) (i32.const 3))))\n";
+  o = o + "    (if (i32.lt_u (local.get $w) (i32.const " + flc + "))\n";
+  o = o + "      (then (local.set $n (i32.shl (local.get $w) (i32.const 3))))\n";
+  o = o + "      (else (if (i32.le_u (local.get $n) (i32.const 1073741824)) (then (local.set $n (call $__fern_large_cap (local.get $n)))))))\n";
+  o = o + "    (local.set $base (call $__fern_alloc (local.get $n)))\n";
+  o = o + "    (i32.store (local.get $base) (i32.const 1))\n";
+  o = o + "    (i32.store (i32.add (local.get $base) (i32.const 4)) (local.get $n))\n";
+  o = o + "    (i32.store (i32.add (local.get $base) (i32.const 8)) (i32.add (local.get $la) (local.get $lb)))\n";
+  o = o + "    (memory.copy (i32.add (local.get $base) (i32.const 12)) (i32.add (local.get $a) (i32.const 4)) (local.get $la))\n";
+  o = o + "    (memory.copy (i32.add (i32.add (local.get $base) (i32.const 12)) (local.get $la)) (local.get $src) (local.get $lb))\n";
+  o = o + "    (i32.add (local.get $base) (i32.const 8)))\n";
   // $__fern_raw_free(base, bytes): the return path for a block $__fern_alloc
   // handed out raw, with no rc header — core/map's buffers, and whatever else
   // reaches the `__free` builtin. The successor is parked in the bsz slot at
