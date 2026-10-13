@@ -4387,6 +4387,17 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_arr_push_owned:\n");
     s = s.write(arr_push_fast(".Lapo_slow", s.rc_free_debug));
     s = s.write(".Lapo_slow:\n");
+    if (!s.rc_free_debug) {
+      // The first append to a static empty array leaves nothing to free, so
+      // it goes straight to the shared slow path and returns from there.
+      s = s.write("    cmpq $0, (%rdi)\n");
+      s = s.write("    jne .Lapo_grow\n");
+      s = s.write("    cmpq $0, -16(%rdi)\n");
+      s = s.write("    jne .Lapo_grow\n");
+      s = s.write("    cmpl $0, -8(%rdi)\n");
+      s = s.write("    js .Larr_push_slow\n");
+      s = s.write(".Lapo_grow:\n");
+    }
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
     s = s.write("    pushq %r12\n");

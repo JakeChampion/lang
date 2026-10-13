@@ -102,7 +102,7 @@ x86_64/string_scan.ir	52966728
 x86_64/string_slice.text	739
 x86_64/string_slice.ir	38700038
 x86_64/struct_drop.text	3425
-x86_64/struct_drop.ir	310900547
+x86_64/struct_drop.ir	302980547
 x86_64/tokenize.text	973
 x86_64/tokenize.ir	36950039
 x86_64/utf8_ingest_unchecked.text	9286

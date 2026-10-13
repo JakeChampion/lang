@@ -10425,6 +10425,18 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = s.write("__fern_arr_push_owned:\n");
     s = s.write(arr_push_fast(".Lapo_slow", s.rc_free_debug));
     s = s.write(".Lapo_slow:\n");
+    if (!s.rc_free_debug) {
+      // The first append to a static empty array leaves nothing to free, so
+      // it goes straight to the shared slow path and returns from there.
+      s = s.write("    ldr x2, [x0]\n");
+      s = s.write("    cbnz x2, .Lapo_grow\n");
+      s = s.write("    ldur x2, [x0, #-16]\n");
+      s = s.write("    cbnz x2, .Lapo_grow\n");
+      s = s.write("    ldur w2, [x0, #-8]\n");
+      s = s.write("    tbz w2, #31, .Lapo_grow\n");
+      s = s.write("    b .Larr_push_slow\n");
+      s = s.write(".Lapo_grow:\n");
+    }
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
     s = s.write("    stp x19, x20, [sp, #-16]!\n");
