@@ -745,10 +745,8 @@ function ts_grow(mod: parser.Module, rs0: RefSet, pending0: i32[]): TsGrown {
 // ts_reaches_map reports whether a map can reach the kept program: a map
 // constructor is reachable, a kept function or a lambda in one takes or
 // returns a map, a struct holds one, or an enum a variant of which holds one is
-// live — the enum's drop walks that variant whichever variant the program
-// built. The enum is live when a kept body names one of its variants, or when
-// a kept signature names it (ts_sig_type_names), since the drop glue for a
-// parameter is emitted whether or not a value is ever built.
+// live (ts_live_type_names) — the enum's drop walks that variant whichever
+// variant the program built.
 function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
   if (refset_has(rs, "map_new") || refset_has(rs, ts_free_root("map_new"))
     || refset_has(rs, "__map_new_i32") || refset_has(rs, ts_free_root("__map_new_i32"))) {
@@ -770,18 +768,10 @@ function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
       }
     }
   }
-  for st in mod.structs {
-    let owner: string = st.enum_owner;
-    let named: boolean = refset_has(rs, st.name) || refset_has(rs, ts_free_root(st.name))
-      || refset_has(rs, owner) || refset_has(rs, ts_free_root(owner));
-    if (owner.len() > 0 && util.index_of_str(owners, owner) >= 0 && named) {
-      return true;
-    }
-  }
   if (owners.len() == 0) {
     return false;
   }
-  let live: string[] = ts_sig_type_names(mod, rs);
+  let live: string[] = ts_live_type_names(mod, rs);
   for o in owners {
     if (util.index_of_str(live, o) >= 0) {
       return true;
@@ -790,18 +780,32 @@ function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
   return false;
 }
 
-// ts_sig_type_names are the type names a kept function's signature (or a
-// lambda's or nested function's in its body) names, closed over the fields
-// and variant payloads of those types. Each is a type whose drop the lowering
-// emits glue for, whether or not the program ever builds one: a nested
-// function nothing calls still releases its parameters.
-function ts_sig_type_names(mod: parser.Module, rs: RefSet): string[] {
+// ts_live_type_names are the types a kept body names (a struct, an enum, or
+// one of its variants) or a kept function's signature names (or a lambda's or
+// nested function's in its body), closed over the fields and variant payloads
+// of those types. Each is a type whose drop the lowering emits glue for,
+// whether or not the program ever builds one: a nested function nothing calls
+// still releases its parameters, and an enum's drop releases every variant's
+// payload.
+function ts_live_type_names(mod: parser.Module, rs: RefSet): string[] {
   let live: string[] = [];
   for fd in mod.funcs {
     if (ts_kept_name(fd, rs)) {
       for t in ts_sig_types(fd) {
         live = ts_add_type_words(live, t);
       }
+    }
+  }
+  for st in mod.structs {
+    let owner: string = st.enum_owner;
+    let key: string = st.name;
+    if (owner.len() > 0) {
+      key = owner;
+    }
+    let named: boolean = refset_has(rs, st.name) || refset_has(rs, ts_free_root(st.name))
+      || refset_has(rs, owner) || refset_has(rs, ts_free_root(owner));
+    if (named && util.index_of_str(live, key) < 0) {
+      live = live.append(key);
     }
   }
   let grew: boolean = true;
