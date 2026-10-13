@@ -212,12 +212,29 @@ pub function minus_ones(n: i32): i32[] {
 // NameIndex is a list of names with a bucket index over it: head[b] is the
 // first index in bucket b (-1 when empty) and next[i] chains to the next index
 // in the same bucket, ascending, so a walk meets a repeated name's first entry
-// first.
+// first. The bucket count is a power of two, so a name's bucket is its hash
+// masked rather than divided.
 pub struct NameIndex { names: string[], head: i32[], next: i32[] }
+
+// name_bucket is the bucket of `s` in a table of `mask + 1` buckets, a power
+// of two.
+pub function name_bucket(s: string, mask: i32): i32 {
+  return __str_hash(s, 0) & mask;
+}
+
+// bucket_count is the power of two above twice `n`, the load name_index
+// builds at.
+function bucket_count(n: i32): i32 {
+  let nb: i32 = 2;
+  while (nb <= n * 2) {
+    nb = nb * 2;
+  }
+  return nb;
+}
 
 // name_index indexes `names`, built backward so each chain ends up ascending.
 pub function name_index(names: string[]): NameIndex {
-  let nb: i32 = names.len() * 2 + 1;
+  let nb: i32 = bucket_count(names.len());
   let head: i32[] = [];
   while (head.len() < nb) {
     head = head.append(0 - 1);
@@ -228,7 +245,7 @@ pub function name_index(names: string[]): NameIndex {
   }
   let k: i32 = names.len() - 1;
   while (k >= 0) {
-    let b: i32 = hash_bucket(names[k], nb);
+    let b: i32 = name_bucket(names[k], nb - 1);
     next = next.with(k, head[b]);
     head = head.with(b, k);
     k = k - 1;
@@ -238,12 +255,12 @@ pub function name_index(names: string[]): NameIndex {
 
 // chain is the first index in `name`'s bucket, or -1; `next` walks on.
 pub function (ix: NameIndex) chain(name: string): i32 {
-  return ix.head[hash_bucket(name, ix.head.len())];
+  return ix.head[name_bucket(name, ix.head.len() - 1)];
 }
 
 // find is the first index of `name`, or -1.
 pub function (ix: NameIndex) find(name: string): i32 {
-  let i: i32 = ix.chain(name);
+  let i: i32 = ix.head[name_bucket(name, ix.head.len() - 1)];
   while (i >= 0) {
     if (ix.names[i] == name) {
       return i;
@@ -266,7 +283,7 @@ pub function (ix: NameIndex) added(name: string): NameIndex {
     return name_index(names);
   }
   let k: i32 = names.len() - 1;
-  let b: i32 = hash_bucket(name, ix.head.len());
+  let b: i32 = name_bucket(name, ix.head.len() - 1);
   let head: i32[] = ix.head;
   let next: i32[] = ix.next.append(0 - 1);
   if (head[b] < 0) {
