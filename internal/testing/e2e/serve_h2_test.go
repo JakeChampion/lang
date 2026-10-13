@@ -60,8 +60,19 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
         }
       }
       return None;
-    }, idle_ms: 0, filler: [] };
+    }, idle_ms: 0, filler: [], trailers: (): HeaderMap => headers.header_map_new() };
     return HttpResponse { status: 200, body: BodyChunks(producer), headers: headers.header_map_new().append("Content-Type", "application/grpc"), trailers: headers.header_map_new().append("Grpc-Status", "0"), background: None };
+  }
+  if (req.path == "/trailing") {
+    let parts: Cell[i32] = cell_new(0);
+    let resp: HttpResponse = http.chunks_with_trailers(200, (i: i32): Option[u8[]] => {
+      if (i >= 3) {
+        return None;
+      }
+      parts.set(parts.get() + 1);
+      return Some(("part" + i.to_string()).bytes());
+    }, (): HeaderMap => headers.header_map_new().append("x-parts", parts.get().to_string()));
+    return HttpResponse { ...resp, trailers: headers.header_map_new().append("x-static", "yes") };
   }
   if (req.path == "/park") {
     let parked: fetch.Timeouts = fetch.Timeouts { ...fetch.timeouts(), inactivity: time.duration_seconds(300 as i64), total: time.duration_seconds(600 as i64) };
@@ -234,6 +245,28 @@ func (w *serveH2World) driveH2C(t *testing.T, cmd *exec.Cmd) {
 	if got, want := run("--data-binary", "payload bytes", base+"/echo"), "payload bytes\n2 200\n"; got != want {
 		t.Fatalf("curl POST over h2c:\n%s\nwant:\n%s", got, want)
 	}
+	// The same port serves HTTP/1.1: a produced body's trailers go in the
+	// chunked body's trailer section, the producer's beside the response's.
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Get(base + "/trailing")
+	if err != nil {
+		t.Fatalf("GET /trailing over HTTP/1.1: %v", err)
+	}
+	checkTrailing(t, resp, 1)
+}
+
+// checkTrailing reads a /trailing response to its end and checks the body,
+// the producer's trailer (x-parts, the chunks it produced) and the
+// response's own (x-static), under the HTTP major version wanted.
+func checkTrailing(t *testing.T, resp *http.Response, major int) {
+	t.Helper()
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.ProtoMajor != major || resp.StatusCode != 200 || string(body) != "part0part1part2" {
+		t.Fatalf("GET /trailing: HTTP/%d %d %q, want HTTP/%d 200 \"part0part1part2\"", resp.ProtoMajor, resp.StatusCode, body, major)
+	}
+	if resp.Trailer.Get("X-Parts") != "3" || resp.Trailer.Get("X-Static") != "yes" {
+		t.Fatalf("GET /trailing over HTTP/%d: trailers %v, want x-parts 3 and x-static yes", major, resp.Trailer)
+	}
 }
 
 // driveDuplex streams a request body in three parts over one TLS HTTP/2
@@ -372,6 +405,11 @@ func (w *serveH2World) driveTLS(t *testing.T, cmd *exec.Cmd) {
 	if !strings.Contains(resp.Header.Get("Content-Length"), fmt.Sprint(len(payload))) {
 		t.Fatalf("content-length %q, want %d", resp.Header.Get("Content-Length"), len(payload))
 	}
+	trailing, err := client.Get(base + "/trailing")
+	if err != nil {
+		t.Fatalf("GET /trailing over HTTP/2: %v", err)
+	}
+	checkTrailing(t, trailing, 2)
 }
 
 // driveParked parks four handlers on the upstream's /hold target over one

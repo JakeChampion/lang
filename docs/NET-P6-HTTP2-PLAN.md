@@ -176,10 +176,13 @@ without ACK within the timeout closes the connection.
    two loop faults: a flight parked on its own HTTP/2 connection unwatched
    the connection when it woke, and a connection draining a large
    response was watched for writes alone, so the client's WINDOW_UPDATEs
-   went unread; both fixed. Open: a producer cannot set the trailers a
-   call ends with, since `HttpResponse.trailers` is fixed when the
-   response is built, so the interop server reads a duplex call's first
-   message before building its response.
+   went unread; both fixed. A producer sets the trailers a call ends
+   with (landed): `http.chunks_with_trailers` carries a function asked
+   once the body has ended, sent after the body beside the response's own
+   trailers under both HTTP/1.1 and HTTP/2, so the interop server's
+   duplex call frames its status from the messages it streamed.
+   `TestServeH2Interp` and `TestServeH2X86_64` read a produced body's
+   trailers back over both.
 7. **The client.** `std/fetch` over HTTP/2 to an origin that offers it,
    one connection per origin, so a handler's upstream calls multiplex.
 8. **Exit.** Per-stream bump bytes bounded and recorded on the perf lane;

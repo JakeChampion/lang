@@ -1960,16 +1960,22 @@ serializer.
   written before, between and after them: the body `std/http/static`
   answers a range or a `multipart/byteranges` with, each range moved by
   `sendfile(2)` after a seek; `http.file_ranges_len`, `file_ranges_ok` and
-  `file_ranges_bytes` read one) or `BodyChunks((i32) => Option[u8[]])` (a
-  producer asked for chunk 0, 1, 2, … until it answers None; the serve
-  loop asks as a task, so a producer that waits for its next chunk parks
-  the connection and the worker serves its other connections meanwhile).
-  `http.bytes(status, bytes)`, `http.stream(status, stream)`,
-  `http.file(path)` and `http.chunks(status, next)` build
-  the last four; `http.chunks_idle(status, next, idle, filler)` is
-  `chunks` with `filler` written as a chunk whenever the producer has
-  been waiting `idle` for its next chunk, the keep-alive of a quiet
-  stream. `(resp).body_string()` (an ill-formed sequence in a
+  `file_ranges_bytes` read one) or `BodyChunks(ChunkProducer)` (a
+  producer asked for chunk 0, 1, 2, … until it answers None, with the
+  filler that keeps a quiet stream alive and the trailers it adds once
+  the body has ended; the serve loop asks as a task, so a producer that
+  waits for its next chunk parks the connection and the worker serves its
+  other connections meanwhile). `http.bytes(status, bytes)`,
+  `http.stream(status, stream)`, `http.file(path)` and
+  `http.chunks(status, next)` build the last four;
+  `http.chunks_idle(status, next, idle, filler)` is `chunks` with `filler`
+  written as a chunk whenever the producer has been waiting `idle` for its
+  next chunk, the keep-alive of a quiet stream; and
+  `http.chunks_with_trailers(status, next, trailers)` is `chunks` with the
+  trailers `trailers` answers once `next` has answered None sent after the
+  body beside the response's own, in the chunked body's trailer section
+  under HTTP/1.1 and the stream's last HEADERS under HTTP/2, for a body
+  whose end decides its trailers (a gRPC call's status). `(resp).body_string()` (an ill-formed sequence in a
   byte-domain body reads as U+FFFD: unlike `(req).body_string()` it has no
   error arm, a response being the handler's own), `(resp).body_bytes()` and
   `(resp).body_len()` read whichever a response carries (`(body).bytes()`

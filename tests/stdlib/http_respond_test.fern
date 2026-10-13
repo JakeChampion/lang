@@ -6,6 +6,8 @@ import "std/error";
 import "std/fetch";
 import "std/net";
 import "std/platform";
+import "std/headers";
+import "std/time";
 
 // tests/stdlib/http_respond_test.fern — a handler that fails with `?`
 // (#9854): its helpers answer `Result[HttpResponse, http.HttpError]`, and
@@ -256,6 +258,55 @@ function test_fetch_bad_url_answers_502(): test.TestOutcome {
 
 // Background work rides on the response untouched until whoever sends it
 // runs it, each piece after the ones added before it.
+function test_produced_body_trailers(): test.TestOutcome {
+  let parts: Cell[i32] = cell_new(0);
+  let resp: HttpResponse = http.chunks_with_trailers(
+    200, (i: i32): Option[u8[]] => {
+      if (i >= 2) {
+        return None;
+      }
+      parts.set(parts.get() + 1);
+      return Some("ab".bytes());
+    },
+    (): HeaderMap => headers.header_map_new().append("x-parts", parts.get().to_string()),
+  );
+  if (resp.body_string() != "abab") {
+    return test.fail("body " + resp.body_string());
+  }
+  match (resp.body) {
+    BodyChunks(p) => {
+      match (p.trailers().get("x-parts")) {
+        Some(n) => {
+          return test.assert_eq(n, "2");
+        },
+        None => {
+          return test.fail("no x-parts trailer");
+        }
+      }
+    },
+    _ => {}
+  }
+  return test.fail("not a produced body");
+}
+
+function test_chunks_without_trailers(): test.TestOutcome {
+  let next: (i32) => Option[u8[]] = (i: i32): Option[u8[]] => None;
+  let both: HttpResponse[] = [http.chunks(200, next), http.chunks_idle(200, next, time.duration_seconds(1 as i64), "x".bytes())];
+  for resp in both {
+    match (resp.body) {
+      BodyChunks(p) => {
+        if (p.trailers().len() != 0) {
+          return test.fail("a producer with trailers");
+        }
+      },
+      _ => {
+        return test.fail("not a produced body");
+      }
+    }
+  }
+  return test.pass();
+}
+
 function test_background_work_runs_in_the_order_added(): test.TestOutcome {
   let log: Cell[string] = cell_new("");
   let resp: HttpResponse = http.ok("sent").with_background(() => log.set(log.get() + "a")).with_background(() => log.set(log.get() + "b"));
@@ -296,5 +347,7 @@ function main(): i32 {
   t = t.it("a fetch the handler built wrong answers 500", test_fetch_bad_request_answers_500);
   t = t.it("a fetch of a URL that does not parse answers 502", test_fetch_bad_url_answers_502);
   t = t.it("background work runs in the order added", test_background_work_runs_in_the_order_added);
+  t = t.it("a produced body's trailers are asked once the body has ended", test_produced_body_trailers);
+  t = t.it("chunks and chunks_idle produce no trailers", test_chunks_without_trailers);
   return t.finish();
 }

@@ -725,7 +725,7 @@ function __wire_chunks(out: usize, version: string, resp: HttpResponse, producer
     framing = framing + "Trailer: " + resp.trailers.names.join(", ") + "\r\n";
   }
   http.http_serialize_response_head_into(out, resp, keep_alive, framing);
-  return ChunkTail(producer, 0, "0\r\n" + http.http_serialize_fields(resp.trailers) + "\r\n");
+  return ChunkTail(producer, 0, http.http_serialize_fields(resp.trailers) + "\r\n");
 }
 
 // __in_flight(c, at) — whether a response is still going out on the
@@ -884,9 +884,9 @@ function __chunk_piece[D: async.Driver](drv: D, c: __Conns, at: i32, producer: C
 // __chunk_step(producer, index, end, chunk) — the tail after the producer
 // answered `chunk` for `index`, the piece that goes on the wire for it
 // (under its hexadecimal size and CRLF when the tail is chunk-coded,
-// `end` holding what ends it; as it is when close-delimited), and
-// whether there is one: an empty chunk writes nothing, and the next is
-// asked for.
+// `end` holding the response's trailers and the CRLF that ends the body;
+// as it is when close-delimited, `end` empty), and whether there is one:
+// an empty chunk writes nothing, and the next is asked for.
 function __chunk_step(producer: ChunkProducer, index: i32, end: string, chunk: Option[u8[]]): (__Tail, u8[], boolean) {
   match (chunk) {
     Some(bytes) => {
@@ -897,10 +897,20 @@ function __chunk_step(producer: ChunkProducer, index: i32, end: string, chunk: O
       return (tail, __chunk_framed(bytes, end), true);
     },
     None => {
-      return (NoTail, end.bytes(), true);
+      return (NoTail, __chunk_end(producer, end), true);
     }
   }
-  return (NoTail, end.bytes(), true);
+  return (NoTail, __chunk_end(producer, end), true);
+}
+
+// __chunk_end(producer, end) — what ends a chunk-coded body: the last
+// chunk, the trailers the producer adds now the body has ended, then the
+// response's own and the CRLF (`end`); nothing when close-delimited.
+function __chunk_end(producer: ChunkProducer, end: string): u8[] {
+  if (end.len() == 0) {
+    return [];
+  }
+  return ("0\r\n" + http.http_serialize_fields(producer.trailers()) + end).bytes();
 }
 
 // __chunk_framed(bytes, end) — the chunk as it goes on the wire: under
@@ -2577,12 +2587,22 @@ function __h2_chunk(a: __H2Answered, at: i32, pi: i32, chunk: Option[u8[]]): (__
       return (__H2Answered { ...a, conn: step.conn, conns: __Conns { ...a.conns, producers: a.conns.producers.with(pi, advanced) }, out: a.out.concat(step.output) }, false);
     },
     None => {
-      let step: h2.Step = a.conn.end(p.stream, p.trailers);
+      let step: h2.Step = a.conn.end(p.stream, __trailers_joined(p.trailers, p.producer.trailers()));
       let conns: __Conns = __Conns { ...a.conns, producers: __producer_removed(a.conns.producers, pi) };
       return (__h2_responded(__H2Answered { ...a, conn: step.conn, conns: conns, out: a.out.concat(step.output) }, at, p.stream), true);
     }
   }
   return (a, true);
+}
+
+// __trailers_joined(a, b) — the fields of `a` then those of `b`.
+function __trailers_joined(a: HeaderMap, b: HeaderMap): HeaderMap {
+  let i: i32 = 0;
+  while (i < b.names.len()) {
+    a = a.append(b.names[i], b.values[i]);
+    i = i + 1;
+  }
+  return a;
 }
 
 // __h2_producer_failed(a, at, pi) — a producer's task was cancelled: the
