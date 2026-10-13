@@ -213,6 +213,26 @@ function pick(name: string): Case {
         let b11: ssa.SBlock = block(11, [8, 9, 14], [inst(8, 16, [4, 4, 15], 0, ""), const_int(17, 2), call(18, "__fern_alloc_reuse", [16, 17]), fresh_box(19), store(18, 8, 19)], ret(18));
         return Case { f: func(2, 20, [b0, b1, b3, b4, b5, b6, b7, b8, b9, b2, b12, b13, b14, b11]), modes: [counted, value], returns_unit: true };
     }
+    if (name == "token-reuse-through-a-phi-an-outside-arm-nulls") {
+        // #12334: a match's arm reads the payload off the box under its
+        // token and the next construction reuses the box through a phi the
+        // other arm, outside the token's region, gives null. That null is
+        // the base walk's, and the phi still carries the box where the
+        // token holds, so the read was the frame's.
+        let b0: ssa.SBlock = block(0, [], [param(0), param(1)], brif(1, 1, 10));
+        let b1: ssa.SBlock = block(1, [0], [call(2, "__fern_rc_is_unique", [0]), const_int(3, 0)], brif(2, 2, 3));
+        let b2: ssa.SBlock = block(2, [1], [], br(4));
+        let b3: ssa.SBlock = block(3, [1], [], br(4));
+        let b4: ssa.SBlock = block(4, [2, 3], [inst(8, 4, [0, 3], 0, ""), counted_load(5, 0, 8), inst(9, 6, [4, 3], 0, "eq")], brif(6, 5, 6));
+        let b5: ssa.SBlock = block(5, [4], [call(7, "__fern_rc_inc", [5])], br(6));
+        let b6: ssa.SBlock = block(6, [4, 5], [inst(9, 8, [4, 3], 0, "ne")], brif(8, 7, 8));
+        let b7: ssa.SBlock = block(7, [6], [], br(9));
+        let b8: ssa.SBlock = block(8, [6], [call(9, "__sem_release_T", [0])], br(9));
+        let b9: ssa.SBlock = block(9, [7, 8], [inst(8, 10, [0, 3], 0, ""), call(11, "__fern_rc_dec", [5])], br(12));
+        let b10: ssa.SBlock = block(10, [0], [call(12, "__fern_rc_dec", [0]), const_int(13, 0)], br(12));
+        let b12: ssa.SBlock = block(12, [9, 10], [inst(8, 14, [10, 13], 0, ""), const_int(15, 2), call(16, "__fern_alloc_reuse", [14, 15]), fresh_box(17), store(16, 8, 17)], ret(16));
+        return Case { f: func(2, 18, [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b12]), modes: [counted, value], returns_unit: true };
+    }
     if (name == "token-reuse-writes-the-slot-read") {
         // token-retain-under-test-consumed-after-join with the construction
         // storing over the slot the field was read from: the field was the
@@ -349,6 +369,9 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		// so they stay unproved.
 		{"reuse-through-a-carried-token-writes-the-slot", nil, 2, ""},
 		{"token-reuse-writes-the-slot-read", nil, 0, ""},
+		// The reuse's phi meets the other arm, which no tested token
+		// decides.
+		{"token-reuse-through-a-phi-an-outside-arm-nulls", nil, 1, ""},
 		// The loop's phi meets the parameter and the reused box, which no
 		// test decides.
 		{"reuse-of-a-loop-box-through-its-token", nil, 1, ""},
