@@ -25,7 +25,13 @@ an earlier one.
 The seminline pass (`seminline.fern`) rewrites graphs before the plan: it
 inlines leaves, splits reads of known constructions into their parts, and
 runs tail recursion modulo cons. It is a graph-to-graph pass; the stages
-below never see what it removed. Two more run last: `semsink.fern` re-reads,
+below never see what it removed. Three more run last. `semthread.fern` sends
+a branch the path to it already decided straight to the side it takes: a
+branch on a constant (the done flag a nested pattern's arms test), and a
+variant test an earlier test on the same value, or the same payload of one,
+settled. A match whose first arm failed on a payload goes straight to the arm
+that payload picks, without testing the scrutinee's variant again.
+`semsink.fern` re-reads,
 in a block where a projection's parent dies, the counted projections the
 block uses that a dominating block read, so the plan takes them instead of
 borrowing them. It re-reads only a read that borrowed, of a parent nothing

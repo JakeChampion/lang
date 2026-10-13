@@ -11,9 +11,11 @@ import (
 )
 
 // readFileUTF8Cases are byte strings for read_file's well-formedness check,
-// which passes 32 ASCII bytes at a time as four words: multibyte sequences,
-// invalid bytes and truncated sequences on each side of a block boundary, and
-// a seeded run of mostly-ASCII strings.
+// which checks whole vector blocks past the first three bytes and walks the
+// rest, passing 32 ASCII bytes at a time as four words: multibyte sequences,
+// invalid bytes and truncated sequences on each side of a block boundary in
+// ASCII and in two-byte text, every lead byte against the second bytes that
+// bound its ranges, and seeded runs of mostly-ASCII and of multibyte strings.
 func readFileUTF8Cases() [][]byte {
 	ascii := func(n int) []byte { return []byte(strings.Repeat("a", n)) }
 	with := func(n, at int, b []byte) []byte {
@@ -36,7 +38,41 @@ func readFileUTF8Cases() [][]byte {
 			cases = append(cases, append(ascii(n), b...))
 		}
 	}
+	wide := func(n int) []byte { return []byte(strings.Repeat("é", n)) }
+	specials := [][]byte{
+		[]byte("é"), []byte("€"), []byte("🙂"), []byte("\u0800"), []byte("\U00010000"), []byte("\U0010ffff"),
+		{0xff}, {0x80}, {0xc0, 0x80}, {0xc1, 0xbf}, {0xe0, 0x9f, 0xbf}, {0xed, 0xa0, 0x80}, {0xf0, 0x8f, 0xbf, 0xbf},
+		{0xf4, 0x90, 0x80, 0x80}, {0xf5, 0x80, 0x80, 0x80},
+		{0xe2, 0x82}, {0xf0, 0x9f, 0x99}, {0xc3, 'a'}, {0xe2, 0x82, 0x82, 0x82},
+	}
+	for _, b := range specials {
+		for at := 0; at <= 100; at++ {
+			out := append(wide(at/2), []byte(strings.Repeat("a", at%2))...)
+			out = append(out, b...)
+			cases = append(cases, append(out, wide(60-at/2)...))
+		}
+	}
+	for lead := 0xc0; lead <= 0xff; lead++ {
+		for _, second := range []byte{0x7f, 0x80, 0x8f, 0x90, 0x9f, 0xa0, 0xbf, 0xc0} {
+			seq := []byte{byte(lead), second, 0x80, 0x80}
+			for _, n := range []int{2, 3, 4} {
+				out := append(wide(20), seq[:n]...)
+				cases = append(cases, append(out, wide(20)...))
+			}
+		}
+	}
 	rng := rand.New(rand.NewSource(12105))
+	runes := []rune{'a', 'é', '€', '日', '🙂', '\u07ff', '\uffff', '\U0010ffff'}
+	for k := 0; k < 300; k++ {
+		var b []byte
+		for len(b) < 300 && rng.Intn(150) != 0 {
+			b = utf8.AppendRune(b, runes[rng.Intn(len(runes))])
+		}
+		if len(b) > 0 && rng.Intn(3) != 0 {
+			b[rng.Intn(len(b))] = byte(rng.Intn(256))
+		}
+		cases = append(cases, b)
+	}
 	for k := 0; k < 300; k++ {
 		b := make([]byte, rng.Intn(100))
 		for i := range b {
