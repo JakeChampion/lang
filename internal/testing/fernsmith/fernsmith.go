@@ -2731,27 +2731,13 @@ func (g *Generator) leaf(b *strings.Builder, sc *scope, t gtype, depth int) {
 		b.WriteString(vars[g.ch.intN(len(vars))])
 		return
 	}
-	// With no in-scope var of type t the literal is the fall-through,
-	// and for a FUNCTION type that literal is a lambda — four AST
-	// nodes, where an element read out of an in-scope closure array is
-	// three. A spent corpus must not take the larger one: the
-	// production it would otherwise have reached (tryCompositeProduction's
-	// array index) is smaller, so truncating a byte here GREW the
-	// program and the shrinker could walk uphill. Among the builtin
-	// types tFnI32I32 is the only one with a non-var production smaller
-	// than its own literal; a program-declared type's literal spells
-	// every field, so leafMin weighs it against the alternatives.
-	//
-	// Gated on exhausted() so a corpus with bytes left is untouched —
-	// the predicate consumes nothing, so random generation and every
-	// byte-driven decision are bit-identical to before.
-	if t == tFnI32I32 && g.ch.exhausted() {
-		if arrs := sc.inScope(tArrFnI32I32); len(arrs) > 0 {
-			fmt.Fprintf(b, "%s[0i32]", arrs[g.ch.intN(len(arrs))])
-			return
-		}
-	}
-	if t >= numTypes && g.ch.exhausted() {
+	// A spent corpus takes the smallest expression of t, which is not
+	// always its literal: a projection out of an in-scope value
+	// (`v0.f1`, `fs[0i32]`) or a call can be smaller, and taking the
+	// literal there let truncating a byte GROW the program. Gated on
+	// exhausted(), which consumes nothing, so a corpus with bytes left
+	// generates exactly as before.
+	if g.ch.exhausted() {
 		g.leafMin(b, sc, t, depth)
 		return
 	}

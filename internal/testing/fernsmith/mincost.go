@@ -5,16 +5,14 @@ import (
 )
 
 // The exhaustion convention needs a spent corpus to take the SMALLEST
-// expression of a type, and for a builtin type the literal is it. A
-// program-declared type is different: its literal spells every field, which
-// can be larger than a projection out of a value already in scope or a call
-// to a helper with fewer parameters — so truncation could swap a two-argument
-// call for a four-field literal and grow the program. leafMin picks by size
-// instead. Sizes are in parsed AST nodes, what
+// expression of a type, and that is not always its literal: a projection out
+// of a value already in scope (`v0.f1`) or a call to a helper with few
+// parameters can be smaller, and a program-declared type's literal spells
+// every field. leafMin picks by size. Sizes are in parsed AST nodes, what
 // TestGenBytesShrinkIsMonotonicAndValid counts.
 
-// leafMin writes the smallest expression of the program-declared type t that
-// needs no var of type t in scope. Called only on an exhausted stream.
+// leafMin writes the smallest expression of type t that needs no var of type
+// t in scope. Called only on an exhausted stream.
 func (g *Generator) leafMin(b *strings.Builder, sc *scope, t gtype, depth int) {
 	lit := g.literalCost(t, 0)
 	path, pathCost := g.cheapestPath(sc, t)
@@ -118,8 +116,10 @@ func (g *Generator) literalCost(t gtype, depth int) int {
 		return 3
 	case tXyz:
 		return 3
-	case tOptI32, tResI32I32:
-		return 2
+	case tOptI32:
+		return 1 // None
+	case tResI32I32:
+		return 3 // Ok(0i32)
 	case tFnI32I32:
 		return 4
 	}
