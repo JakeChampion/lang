@@ -61,8 +61,9 @@ What a program can contain:
 mask over productions and types from the first bytes of the stream. A program
 that may use thirty types rarely holds two values of one type, so the
 productions that need a pair hardly fire; narrowing the pool per program is
-what lets them meet. Features are kept with probability 3/4 (several only fire
-together), types with 1/2.
+what lets them meet. Features and types are each kept with probability 3/4:
+several features only fire together, and at 1/2 their conjunction is too
+rare to matter.
 
 **State fold**: `main` folds every i32 and boolean reachable from an in-scope
 var into the value it returns (printed, in the printable profile), the way
@@ -80,7 +81,7 @@ the language.
 | Parse + check | generator bugs, checker crashes | `FuzzGenerate_ParseRoundTrips`, `FuzzParse`, `FuzzCheck` |
 | Interpreter vs compiled exit byte | miscompiles reaching the return value; crashes (signal), hangs (20 s), arena exhaustion (125) | `TestDifferential_SelfHost{X86_64,Arm64,Wasm}` |
 | Interpreter vs compiled stdout | miscompiles of printed values, floats via portable channels | `TestDifferential_PrintableStdout`, `FuzzGenerate_StdoutAgrees` |
-| **Sanitizer** | rc over-release, use of a freed block, leaks — wrong memory with a right answer | `TestDifferential_SelfHostSanitizeX86_64` |
+| **Sanitizer** | rc over-release, use of a freed block, leaks — wrong memory with a right answer | `TestDifferential_SelfHostSanitize{X86_64,Arm64,Wasm}`; wasm carries the leak census only |
 | Go checker vs self-host checker | a program one checker accepts and the other rejects | the self-host legs: a seed the self-host refuses to compile fails or skips by cause |
 | Coverage feedback | not an oracle: steers mutation toward new self-host compiler paths | `TestSelfHostCoverageGuidedFuzz` |
 
@@ -186,10 +187,9 @@ In order:
 
 1. Mutation-score floor in CI once the score is measured over enough mutants
    to be stable, and the survivors worked down.
-2. The sanitizer leg on arm64 (wasm has no sanitizer build).
-3. Pass-configuration differential + chaos fuel.
-4. Differential oracle inside the coverage-guided loop.
-5. Type-erasure / type-overwrite checker fuzzing, run against both checkers.
-6. User-written generics, traits, `impl` and `dyn` in fernsmith — the largest
+2. Pass-configuration differential + chaos fuel.
+3. Differential oracle inside the coverage-guided loop.
+4. Type-erasure / type-overwrite checker fuzzing, run against both checkers.
+5. User-written generics, traits, `impl` and `dyn` in fernsmith — the largest
    part of the language it does not generate yet.
-7. Signature-based nightly triage.
+6. Signature-based nightly triage.
