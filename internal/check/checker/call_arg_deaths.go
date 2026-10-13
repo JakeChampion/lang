@@ -1,6 +1,10 @@
 package checker
 
-import "github.com/jakechampion/lang/internal/syntax/ast"
+import (
+	"maps"
+
+	"github.com/jakechampion/lang/internal/syntax/ast"
+)
 
 // StmtReferencesName reports whether any *ast.Ident named `name` appears
 // anywhere in the subtree `st` — the shared occurrence predicate behind the
@@ -540,6 +544,13 @@ func CallArgDeathsOwning(fn *ast.FuncDecl, info *Info, owned map[string]bool) Ar
 		}
 		return true
 	})
+	fresh := loopFreshNames(body, declCount, isParam)
+	// repeats is the no-loop / no-lambda gate the last-occurrence shapes share,
+	// lifted for a name the innermost loop or lambda body declares before the
+	// call: every pass binds it anew before reaching the call (#12260).
+	repeats := func(c *ast.Call, name string) bool {
+		return repeating[c] && !fresh[c][name]
+	}
 	// Last-occurrence shape. Same no-loop / no-lambda gate as above, plus the
 	// defer-and-lambda exclusion (a capture is read when the closure runs, not
 	// where it is written) and markOnce's exactly-once-in-this-call rule, so a
@@ -548,12 +559,12 @@ func CallArgDeathsOwning(fn *ast.FuncDecl, info *Info, owned map[string]bool) Ar
 	order := IdentOrderOf(body)
 	ast.Walk(body, func(n ast.Node) bool {
 		c, ok := n.(*ast.Call)
-		if !ok || repeating[c] {
+		if !ok {
 			return true
 		}
 		for _, a := range c.Args {
 			aid, ok := a.(*ast.Ident)
-			if !ok || escaping[aid.Name] || !order.IsLast(aid) {
+			if !ok || repeats(c, aid.Name) || escaping[aid.Name] || !order.IsLast(aid) {
 				continue
 			}
 			if !admitted(aid.Name) {
@@ -580,12 +591,12 @@ func CallArgDeathsOwning(fn *ast.FuncDecl, info *Info, owned map[string]bool) Ar
 	stmtIdx := callBlockPositions(body)
 	ast.Walk(body, func(n ast.Node) bool {
 		c, ok := n.(*ast.Call)
-		if !ok || repeating[c] {
+		if !ok {
 			return true
 		}
 		for _, a := range c.Args {
 			aid, ok := a.(*ast.Ident)
-			if !ok || escaping[aid.Name] || order.IsLast(aid) {
+			if !ok || repeats(c, aid.Name) || escaping[aid.Name] || order.IsLast(aid) {
 				continue
 			}
 			if !admitted(aid.Name) {
@@ -985,4 +996,50 @@ func holdsTry(n ast.Node) bool {
 		return !found
 	})
 	return found
+}
+
+// loopFreshNames names, per call inside a loop or lambda body, the locals that
+// body declares before the call — not in a loop or lambda nested in it — when
+// the name is declared nowhere else and no parameter shares it.
+func loopFreshNames(body ast.Node, declCount map[string]int, isParam map[string]bool) map[*ast.Call]map[string]bool {
+	out := map[*ast.Call]map[string]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		if !repeatsBody(n) {
+			return true
+		}
+		declared := map[string]bool{}
+		declare := func(name string) {
+			if declCount[name] == 1 && !isParam[name] {
+				declared[name] = true
+			}
+		}
+		ast.Walk(n, func(m ast.Node) bool {
+			if m != n && repeatsBody(m) {
+				return false
+			}
+			switch x := m.(type) {
+			case *ast.Var:
+				declare(x.Name)
+			case *ast.Destructure:
+				for _, name := range x.Names {
+					declare(name)
+				}
+			case *ast.Call:
+				if len(declared) > 0 {
+					out[x] = maps.Clone(declared)
+				}
+			}
+			return true
+		})
+		return true
+	})
+	return out
+}
+
+func repeatsBody(n ast.Node) bool {
+	switch n.(type) {
+	case *ast.While, *ast.Loop, *ast.For, *ast.ForEach, *ast.Lambda:
+		return true
+	}
+	return false
 }
