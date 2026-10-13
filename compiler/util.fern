@@ -276,7 +276,7 @@ pub function (ix: NameIndex) has(name: string): boolean {
 
 // added is the index with `name` appended: chained at the tail of its bucket,
 // so chains stay ascending, and re-bucketed once the names outnumber the
-// buckets, which keeps a growing set at the load name_index builds.
+// buckets, so a growing set stays at a load of at most one.
 pub function (ix: NameIndex) added(name: string): NameIndex {
   let names: string[] = ix.names.append(name);
   if (names.len() > ix.head.len()) {

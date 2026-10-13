@@ -19,8 +19,8 @@ call of its own, `__str_hash` inline, a mask, and `% n` for a bucket count of
 
 The bucket count is the power of two above twice the names, the bucket is
 the hash masked, and `find` computes it in place instead of through `chain`
-and `hash_bucket`. The load factor stays at or below one half, and chains
-stay ascending. `hash_bucket` remains for the fixed-size tables and the
+and `hash_bucket`. A fresh index is at most half full, a grown one
+re-buckets once its names outnumber its buckets, and chains stay ascending. `hash_bucket` remains for the fixed-size tables and the
 module cache's checksum, whose values do not move.
 
 ## Measured
