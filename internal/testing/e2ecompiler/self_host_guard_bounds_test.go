@@ -9,14 +9,16 @@ import (
 	"testing"
 )
 
-// ssabounds.proven_indices marks an index read unchecked when the branches
-// into its block prove `0 <= i < len`: a guard on both bounds, the length minus
-// a constant, a loop index stepped by one under its guard or stepped down under
-// `i >= 0`, the same field read twice from one value, and a constant or a
-// masked index into an array literal shorter than neither, and a byte-set
-// scan's result under `< len`. Each case reads in
-// range on every path the program takes, so it must answer what the
-// interpreter answers on every backend.
+// ssabounds.proven_indices marks an index read, or a `with`'s index, unchecked
+// when the branches into its block prove `0 <= i < len`: a guard on both
+// bounds, the length minus a constant, a loop index stepped by one under its
+// guard or stepped down under `i >= 0`, the same field read twice from one
+// value, a constant or a masked index into an array literal shorter than
+// neither, a byte-set scan's result under `< len`, and a guard against the size
+// an `__alloc_*` call built the array at, carried through the `with`s that
+// write it and the phis that loop it. Each case reads in range on every path
+// the program takes, so it must answer what the interpreter answers on every
+// backend.
 var guardBoundsCases = []struct {
 	name string
 	src  string
@@ -82,6 +84,53 @@ function main(): i32 { return look(6) + look(0 - 1) * 10; }`},
     return 7;
 }
 function main(): i32 { return after("ab\tc", 0) + after("abc", 1) * 2 + after("x", 5) * 3 + after("\t", 0 - 4); }`},
+	// An array `__alloc_*` built at size n: a loop under `i < n` writes it
+	// with `with` and reads it back, through the loop's phis and the writes.
+	{"alloc_fill_and_sum", `function fill(n: i32): i32 {
+    let xs: i32[] = __alloc_i32(n);
+    let i: i32 = 0;
+    while (i < n) { xs = xs.with(i, i * 2); i = i + 1; }
+    let s: i32 = 0;
+    i = 0;
+    while (i < n) { s = s + xs[i]; i = i + 1; }
+    return s;
+}
+function main(): i32 { return fill(5) + fill(0); }`},
+	{"alloc_sized_by_field", `struct F { nvals: i32 }
+function fill(f: F): i32 {
+    let lo: i32[] = __alloc_i32(f.nvals);
+    let i: i32 = 0;
+    while (i < f.nvals) { lo = lo.with(i, 7); i = i + 1; }
+    i = 0;
+    let t: i32 = 0;
+    while (i < f.nvals) { t = t + lo[i]; i = i + 1; }
+    return t;
+}
+function main(): i32 { return fill(F { nvals: 4 }); }`},
+	{"alloc_nested_row", `function rows(nb: i32, words: i32): i32 {
+    let row: i64[] = __alloc_i64(words);
+    let bi: i32 = 0;
+    while (bi < nb) {
+        let w: i32 = 0;
+        while (w < words) { row = row.with(w, row[w] + 1i64); w = w + 1; }
+        bi = bi + 1;
+    }
+    let acc: i64 = 0;
+    let k: i32 = 0;
+    while (k < words) { acc = acc + row[k]; k = k + 1; }
+    return acc as i32;
+}
+function main(): i32 { return rows(2, 3) + rows(0, 2) + rows(3, 0); }`},
+	{"alloc_bool_marks", `function count(xs: i32[]): i32 {
+    let marks: boolean[] = __alloc_bool(xs.len());
+    let i: i32 = 0;
+    while (i < xs.len()) { marks = marks.with(i, xs[i] > 0); i = i + 1; }
+    let c: i32 = 0;
+    i = 0;
+    while (i < xs.len()) { if (marks[i]) { c = c + 1; } i = i + 1; }
+    return c;
+}
+function main(): i32 { return count([1, 0 - 1, 2, 5]); }`},
 	// grouped_reads: a run at one index plus constants, or at constants, is
 	// checked once.
 	{"grouped_view_reads", `function word(bs: [u8], off: i32): i32 { return bs[off] as i32 + bs[off + 1] as i32 + bs[off + 2] as i32 + bs[off + 3] as i32; }
@@ -127,6 +176,14 @@ var guardBoundsTwins = []struct{ name, proven, unproven string }{
 	{"scan_set_result",
 		`@noinline function after(s: string, i: i32): i32 { let tabs: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8]; let j: i32 = __scan_set(s, i, tabs); if (j < s.len()) { return s[j] as i32; } return 7; } function main(): i32 { return after("ab\tc", 0); }`,
 		`@noinline function after(s: string, i: i32): i32 { let j: i32 = i + 2; if (j < s.len()) { return s[j] as i32; } return 7; } function main(): i32 { return after("ab\tc", 0); }`},
+	{"alloc_fill_and_sum",
+		`@noinline function fill(n: i32): i32 { let xs: i32[] = __alloc_i32(n); let i: i32 = 0; while (i < n) { xs = xs.with(i, i * 2); i = i + 1; } let s: i32 = 0; i = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; } function main(): i32 { return fill(5); }`,
+		`@noinline function fill(n: i32): i32 { let xs: i32[] = __alloc_i32(n); let i: i32 = 0; while (i < 5) { xs = xs.with(i, i * 2); i = i + 1; } let s: i32 = 0; i = 0; while (i < 5) { s = s + xs[i]; i = i + 1; } return s; } function main(): i32 { return fill(5); }`},
+	// The array comes back from a call, whose result's length the pass does
+	// not know.
+	{"alloc_through_call",
+		`@noinline function touch(own xs: i64[]): i64[] { return xs; } @noinline function rows(nb: i32, words: i32): i32 { let row: i64[] = __alloc_i64(words); let bi: i32 = 0; while (bi < nb) { let w: i32 = 0; while (w < words) { row = row.with(w, row[w] + 1i64); w = w + 1; } bi = bi + 1; } return row.len(); } function main(): i32 { return rows(2, 3); }`,
+		`@noinline function touch(own xs: i64[]): i64[] { return xs; } @noinline function rows(nb: i32, words: i32): i32 { let row: i64[] = __alloc_i64(words); let bi: i32 = 0; while (bi < nb) { let w: i32 = 0; while (w < words) { row = row.with(w, row[w] + 1i64); w = w + 1; } row = touch(row); bi = bi + 1; } return row.len(); } function main(): i32 { return rows(2, 3); }`},
 	// A division between the reads could abort first, so the twin keeps
 	// every read's check.
 	{"grouped_scrambled_reads",
@@ -164,6 +221,18 @@ function main(): i32 { return total([1, 2, 3, 4]); }`},
 function main(): i32 { return past([1, 2, 3]); }`},
 	{"mask_past_literal", `@noinline function look(k: i32): i32 { let c: i32[] = [2, 3, 5, 7]; return c[k & 7]; }
 function main(): i32 { return look(6); }`},
+	{"alloc_write_at_size", `function fill(n: i32): i32 { let xs: i32[] = __alloc_i32(n); let i: i32 = 0; while (i <= n) { xs = xs.with(i, 1); i = i + 1; } return xs[0]; }
+function main(): i32 { return fill(3); }`},
+	{"alloc_read_first_of_empty", `@noinline function first(n: i32): i32 { let xs: i32[] = __alloc_i32(n); return xs[0]; }
+function main(): i32 { return first(0); }`},
+	{"alloc_guard_on_another_size", `@noinline function pick(n: i32, m: i32, k: i32): i32 { let xs: i32[] = __alloc_i32(n); let ys: i32[] = __alloc_i32(m); if (k >= 0 && k < n) { return ys[k]; } return 0; }
+function main(): i32 { return pick(4, 2, 3); }`},
+	{"alloc_replaced_by_shorter", `@noinline function pick(n: i32, m: i32, c: boolean): i32 { let xs: i32[] = __alloc_i32(n); if (c) { xs = __alloc_i32(m); } let i: i32 = 0; let t: i32 = 0; while (i < n) { t = t + xs[i]; i = i + 1; } return t; }
+function main(): i32 { return pick(4, 2, true); }`},
+	{"alloc_shrunk_by_call", `@noinline function shrink(own xs: i32[]): i32[] { return [1]; } @noinline function fill(n: i32): i32 { let xs: i32[] = __alloc_i32(n); let i: i32 = 0; while (i < n) { xs = shrink(xs); xs = xs.with(i, 1); i = i + 1; } return xs[0]; }
+function main(): i32 { return fill(3); }`},
+	{"alloc_appended_in_loop", `@noinline function fill(n: i32): i32 { let xs: i32[] = __alloc_i32(n); let i: i32 = 0; let t: i32 = 0; while (i < n) { t = t + xs[i + n]; xs = xs.append(1); i = i + 1; } return t; }
+function main(): i32 { return fill(3); }`},
 	{"constant_past_literal", `@noinline function look(k: i32): i32 { let c: i32[] = [2, 3, 5, 7]; return c[4] + k; }
 function main(): i32 { return look(1); }`},
 	{"grouped_far_end", `function word(bs: [u8], off: i32): i32 { return bs[off] as i32 + bs[off + 1] as i32 + bs[off + 2] as i32 + bs[off + 3] as i32; }
