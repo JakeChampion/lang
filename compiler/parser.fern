@@ -26217,6 +26217,57 @@ function trait_provider_name(funcs: FuncDecl[], recv_type: string, traits: strin
   return method;
 }
 
+// route_inherited_defaults respells, in each default a type inherits from a
+// trait, a call through a receiver of the impl type to that trait's provider
+// when another trait claimed the plain name on the type: inside the trait's
+// body the receiver is known only as the trait's, as the Go checker resolves
+// it (#12282). A method the impl wrote sees every provider and is left as
+// written. Runs on the bundle, after the renames are final and
+// resolve_dyn_traits has said which trait each method answers.
+pub function route_inherited_defaults(mod: Module): Module {
+  let funcs: FuncDecl[] = mod.funcs;
+  let mf: MFns = MFns { ...mfns_of(mod.funcs, mod.structs, mod.enums, mod.impls), keep_vars: true };
+  let i: i32 = 0;
+  while (i < funcs.len()) {
+    let fd: FuncDecl = funcs[i];
+    if (fd.impl_trait.len() > 0 && fd.receiver_name.len() > 0 && is_inherited_default(mod, fd)) {
+      let base: string = util.base_type_name(fd.receiver_type);
+      let ctx: BoundUse = BoundUse { env: env_from_decl(fd), funcs: mf, ord: [], eq: [], routed: [fd.receiver_type], bases: [base], traits: [[fd.impl_trait]] };
+      let (body, after) = bc_body(fd.body, ctx);
+      funcs = funcs.with(i, FuncDecl { ...fd, body: body });
+    }
+    i = i + 1;
+  }
+  return Module { ...mod, funcs: funcs };
+}
+
+// is_inherited_default reports whether `fd` is a trait default materialised
+// into an impl that did not write it: the impl of its trait for its receiver
+// type lists the methods the impl wrote, and the trait's requirement record
+// lists its defaults.
+function is_inherited_default(mod: Module, fd: FuncDecl): boolean {
+  let base: string = util.base_type_name(fd.receiver_type);
+  let name: string = derive_simple_name(fd.name);
+  for im in mod.impls {
+    if (im.trait_name == fd.impl_trait && util.base_type_name(im.impl_type) == base) {
+      if (str_list_contains(im.method_names, name)) {
+        return false;
+      }
+      for tr in mod.trait_reqs {
+        if (tr.trait_name == fd.impl_trait) {
+          for ds in tr.default_sigs {
+            if (ds.name == name) {
+              return true;
+            }
+          }
+        }
+      }
+      return false;
+    }
+  }
+  return false;
+}
+
 // str_list_contains reports whether `xs` holds `want`.
 function str_list_contains(xs: string[], want: string): boolean {
   let i: i32 = 0;
@@ -28287,7 +28338,10 @@ pub function inherit_default(m: FuncDecl, trait_params: string[], im: ImplInfo):
   return finalize_impl_method(sub, im.impl_type, im.type_params, im.bounds);
 }
 
-function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[], impl_tbs: string[]): FuncDecl {
+function finalize_impl_method(m0: FuncDecl, impl_type: string, impl_tps: string[], impl_tbs: string[]): FuncDecl {
+  // `Self` in the body is the impl type (`Self.zero()` is the impl type's
+  // associated function), as an inherited default already has it.
+  let m: FuncDecl = FuncDecl { ...m0, body: subst_stmts(m0.body, ["Self"], [impl_type]) };
   let rt: string = subst_self(m.ret_type, impl_type);
   let mtps: string[] = m.type_params;
   // bound_traits is allowed to run short of type_params — a promoted unbounded

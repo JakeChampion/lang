@@ -797,6 +797,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// E021 (#4347): an impl that omits a REQUIRED (abstract) trait method.
 		// A complete impl and a default-only trait (whose default is synthesised
 		// onto the omitting impl) stay clean, matching the Go oracle.
+		// #12282, #12296: inside a trait's default body the receiver is known
+		// only as that trait's, so its own method outranks another trait's of
+		// the same name; and `Self.f()` in an impl method or a default is the
+		// impl type's associated function. Both checkers accept all three.
+		{"trait-default-own-method", "trait A { function scale(self: Self): i32; }\ntrait B { function scale(self: Self): i32; function twice(self: Self): i32 { return self.scale() * 2; } }\nstruct P { v: i32 }\nimpl A for P { function scale(self: Self): i32 { return self.v; } }\nimpl B for P { function scale(self: Self): i32 { return self.v + 1; } }\nfunction main(): i32 { let p: P = P { v: 3 }; return p.twice() - 8; }\n", nil},
+		{"self-assoc-call-in-default", "trait Mk { function zero(): Self; function one(self: Self): i32 { let z: Self = Self.zero(); return 1; } }\nstruct P { v: i32 }\nimpl Mk for P { function zero(): Self { return P { v: 0 }; } }\nfunction main(): i32 { let p: P = P { v: 3 }; return p.one() - 1; }\n", nil},
+		{"self-value-outside-impl", "struct Q { v: i32 }\nfunction main(): i32 { let s = Self; return 0; }\n", []string{"E001"}},
+		{"self-assoc-call-in-impl", "trait Mk { function zero(): Self; function one(self: Self): i32; }\nstruct P { v: i32 }\nimpl Mk for P { function zero(): Self { return P { v: 0 }; } function one(self: Self): i32 { return Self.zero().v + 1; } }\nfunction main(): i32 { let p: P = P { v: 3 }; return p.one() - 1; }\n", nil},
 		// E074 (#11851): one method name from the type itself and from a trait
 		// impl, in either order. Two traits providing it is legal on its own.
 		{"e074-trait-then-inherent", "trait Show { function show(self: Self): i32; }\nstruct P { a: i32 }\nimpl Show for P { function show(self: Self): i32 { return 1; } }\nfunction (p: P) show(): i32 { return 2; }\nfunction main(): i32 { return 0; }\n", []string{"E074"}},
