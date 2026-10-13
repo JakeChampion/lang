@@ -12,8 +12,9 @@ import (
 )
 
 // Lazy core/iter chains fused into one loop (#6795). Each chain starts from
-// `iter.of(xs)` or `iter.range(lo, hi)`, runs `map`, `filter` and `take`
-// adapters, and ends in `fold` or `count`. It is compared with a hand-written
+// `iter.of(xs)` or `iter.range(lo, hi)`, runs `map`, `filter`, `take` and
+// `flat_map` adapters, and ends in `fold` or `count`; a `skip` chain runs
+// unfused beside them. It is compared with a hand-written
 // loop inside the program, with fusion on and off, and the leak checker
 // confirms nothing the unfused chains build is left behind.
 const iterFusionSrc = `import "core/iter";
@@ -111,6 +112,32 @@ function loop_range_count(lo: i32, hi: i32, k: i32): i32 {
 	return n;
 }
 
+function via_flat_map(xs: i64[]): i64 {
+	return iter.of(xs)
+		.flat_map((x: i64): i64[] => { if (x % (3 as i64) == (0 as i64)) { let none: i64[] = []; return none; } return [x, x * (2 as i64)]; })
+		.fold(0 as i64, (a: i64, b: i64): i64 => a * (3 as i64) + b);
+}
+function loop_flat_map(xs: i64[]): i64 {
+	let acc: i64 = 0 as i64;
+	let i: i32 = 0;
+	while (i < xs.len()) {
+		if (xs[i] % (3 as i64) != (0 as i64)) { acc = acc * (3 as i64) + xs[i]; acc = acc * (3 as i64) + xs[i] * (2 as i64); }
+		i = i + 1;
+	}
+	return acc;
+}
+
+function via_skip(xs: i64[], k: i32): i64 {
+	return iter.of(xs).skip(k).map((x: i64): i64 => x - (1 as i64)).fold(0 as i64, (a: i64, b: i64): i64 => a * (2 as i64) + b);
+}
+function loop_skip(xs: i64[], k: i32): i64 {
+	let acc: i64 = 0 as i64;
+	let i: i32 = k;
+	if (i < 0) { i = 0; }
+	while (i < xs.len()) { acc = acc * (2 as i64) + xs[i] - (1 as i64); i = i + 1; }
+	return acc;
+}
+
 function check(n: i32): i32 {
 	let xs: i64[] = build(n);
 	if (via_filter_map(xs) != loop_filter_map(xs)) { return 10; }
@@ -118,10 +145,12 @@ function check(n: i32): i32 {
 	if (via_bare(xs) != loop_bare(xs)) { return 12; }
 	if (via_count(xs) != loop_count(xs)) { return 13; }
 	if (via_range(0 - n, n) != loop_range(0 - n, n)) { return 14; }
+	if (via_flat_map(xs) != loop_flat_map(xs)) { return 17; }
 	let counts: i32[] = [0 - 1, 0, 1, 2, 100];
 	for k in counts {
 		if (via_take(xs, k) != loop_take(xs, k)) { return 15; }
 		if (via_range_count(0 - n, n, k) != loop_range_count(0 - n, n, k)) { return 16; }
+		if (via_skip(xs, k) != loop_skip(xs, k)) { return 18; }
 	}
 	return 0;
 }
@@ -139,7 +168,7 @@ function main(): i32 {
 }
 `
 
-// Exit 10..34 names the case that disagreed with its loop and the size it
+// Exit 10..54 names the case that disagreed with its loop and the size it
 // disagreed at: (case * 5 + size index) - 40. 99 is a refcount underflow.
 func TestSelfHostIterFusion(t *testing.T) {
 	for _, target := range selfHostFusionTargets {
@@ -237,13 +266,19 @@ function counted(n: i32): i32 {
 function numbered(xs: i64[]): i64 {
 	return iter.of(xs).enumerate().fold(0 as i64, (a: i64, p: (i32, i64)): i64 => a + p.1);
 }
+function fanned(xs: i64[]): i64 {
+	return iter.of(xs).flat_map((x: i64): i64[] => [x, x]).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
+}
+function skipped(xs: i64[]): i64 {
+	return iter.of(xs).skip(1).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
+}
 function shared(xs: i64[]): i64 {
 	let m = iter.of(xs).map((x: i64): i64 => x + (1 as i64));
 	return m.fold(0 as i64, (a: i64, b: i64): i64 => a + b) + m.fold(1 as i64, (a: i64, b: i64): i64 => a * b);
 }
 function main(): i32 {
 	let xs: i64[] = [1 as i64, 2 as i64, 3 as i64];
-	if (filtered(xs) + numbered(xs) + shared(xs) != (52 as i64) || counted(9) != 4) { return 1; }
+	if (filtered(xs) + numbered(xs) + fanned(xs) + skipped(xs) + shared(xs) != (69 as i64) || counted(9) != 4) { return 1; }
 	return 0;
 }
 `
@@ -263,6 +298,8 @@ func TestSelfHostIterFusionReport(t *testing.T) {
 		{"filtered", "of -> filter -> map -> fold; one traversal", "fused"},
 		{"counted", "range -> take -> count; one traversal", "fused"},
 		{"numbered", "enumerate; not fused", "operator-outside-algebra"},
+		{"fanned", "of -> flat_map -> fold; one traversal", "fused"},
+		{"skipped", "skip; not fused", "operator-outside-algebra"},
 		{"shared", "fold; not fused", "intermediate-shared"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

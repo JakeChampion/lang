@@ -1369,7 +1369,7 @@ function main(): i32 {
         + narrow_keys(a) + narrow_key_str_value(b);
 }`},
 	// A type variable that only a CONSTRAINT mentions. `nth[T, I: Iterator[T]]`
-	// and `last[T, I: Iterator[T]]` return `Option[T]`, and `skip` returns
+	// and `last[T, I: Iterator[T]]` return `Option[T]`, and the program's `rest` returns
 	// `T[]`, but no parameter spells T — it is the impl the bound resolved to
 	// that says what it is (`impl Iterator[i32] for Range`,
 	// `impl[T] Iterator[T] for ArrayIter[T]`). The parser dropped a bound's
@@ -1401,8 +1401,12 @@ function pick(n: i32): i32 {
     }
 }
 
+function rest[T, I: iter.Iterator[T]](it: I): T[] {
+    return it.collect();
+}
+
 function words(ws: string[]): i32 {
-    let out: string[] = iter.skip(iter.of(ws), 0);
+    let out: string[] = rest(iter.of(ws));
     let sum: i32 = 0;
     for w in out { sum = sum + w.len(); }
     return sum;

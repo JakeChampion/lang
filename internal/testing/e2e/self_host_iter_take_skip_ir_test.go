@@ -86,14 +86,14 @@ func TestNativeIterTakeSkipArm64(t *testing.T) {
 }
 
 // TestNativeIterTakeSkipModule exercises the shipped `import "core/iter"`
-// module's lazy `take` method and eager `skip` over real `range` iterators on
-// the native backends.
+// module's lazy `take` and `skip` methods over real `range` iterators on the
+// native backends.
 func TestNativeIterTakeSkipModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
     let a = iter.range(0, 100).take(4).collect();  // [0,1,2,3]
     let sa = 0; for v in a { sa = sa + v; }        // 6
-    let b = iter.skip(iter.range(0, 6), 4);        // [4,5]
+    let b = iter.range(0, 6).skip(4).collect();    // [4,5]
     let sb = 0; for v in b { sb = sb + v; }        // 9
     return sa + a.len() + sb + b.len();            // 6+4+9+2 = 21
 }

@@ -108,23 +108,25 @@ records what it fuses.
 ## The lazy surface
 
 `core/iter`'s `Iterator` trait carries the lazy adapters as default
-methods, `map`, `filter`, `take`, `enumerate` and `zip`, and the sinks
-`fold`, `count`, `collect`, `find`, `any` and `all`. `compiler/semfuse.fern`
-fuses a chain that:
+methods, `map`, `filter`, `take`, `skip`, `flat_map`, `enumerate` and
+`zip`, and the sinks `fold`, `count`, `collect`, `find`, `any` and `all`.
+No adapter returns an array; a chain ends in `collect` to build one.
+`compiler/semfuse.fern` fuses a chain that:
 
 - starts at `iter.of(xs)` or `iter.range(lo, hi)`;
-- runs `map`, `filter` and `take`;
+- runs `map`, `filter`, `take` and `flat_map`;
 - and ends in `fold` or `count`.
 
 The result is the single loop the eager surface gets. The iterator, the
 adapters, and the `Option` and tuple every `next` would return are all gone:
 `TestSelfHostIterFusionAllocatesNothing` asserts that a fused chain allocates
-nothing at all. A call counts as an adapter, root or sink only when its body
+nothing at all. A `flat_map` chain still allocates the arrays its function
+returns, as the eager stage does. A call counts as an adapter, root or sink only when its body
 came from core/iter, as the eager pass trusts only std/array's.
 
 These are not fused yet, and `FERN_ARRAY_REPORT` names each one (clause 4):
 
-- `enumerate` and `zip`;
+- `skip`, `enumerate` and `zip`;
 - the `collect`, `find`, `any` and `all` sinks;
 - `range_incl`, and any iterator other than the two roots;
 - a chain whose intermediate has a second use.

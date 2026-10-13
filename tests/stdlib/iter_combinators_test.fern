@@ -4,10 +4,9 @@ import "core/iter" as iter;
 // tests/stdlib/iter_combinators_test.fern — pure-Fern coverage of the
 // core/iter combinators NOT already in iter_test (which does sum / count / of /
 // product / nth / last / min / max / contains / count_value / fold / any / all /
-// map / filter): collect, take, skip, find, position, position_by, count_by.
-// The Go-side suite unit-tests these; this is the migration-shaped (pure-Fern,
-// std/test-driven, self-host-gated) companion. (flat_map is intentionally left
-// to a follow-up — the eager std/array flat_map hits a drop-at-exit gap.)
+// map / filter): collect, take, skip, flat_map, find, position, position_by,
+// count_by. The Go-side suite unit-tests these; this is the migration-shaped
+// (pure-Fern, std/test-driven, self-host-gated) companion.
 
 function test_collect(): test.TestOutcome {
   return test.assert_eq_array(iter.range(0, 4).collect(), [0, 1, 2, 3]);
@@ -20,7 +19,28 @@ function test_take(): test.TestOutcome {
 
 function test_skip(): test.TestOutcome {
   let xs: i32[] = [1, 2, 3, 4, 5];
-  return test.assert_eq_array(iter.skip(iter.of(xs), 2), [3, 4, 5]);
+  return test.assert_eq_array(iter.of(xs).skip(2).collect(), [3, 4, 5]);
+}
+
+function test_skip_past_end(): test.TestOutcome {
+  return test.assert_eq(iter.range(0, 3).skip(10).count(), 0);
+}
+
+function test_flat_map(): test.TestOutcome {
+  let words: string[] = ["ab", "", "c"];
+  let out: string[] = iter.of(words).flat_map((w: string): string[] => {
+    if (w.len() == 0) {
+      let none: string[] = [];
+      return none;
+    }
+    return [w, w + "!"];
+  }).collect();
+  return test.assert_eq_array(out, ["ab", "ab!", "c", "c!"]);
+}
+
+function test_flat_map_after_skip(): test.TestOutcome {
+  let fanned: i32[] = iter.range(0, 4).skip(1).flat_map((x: i32): i32[] => [x, x * 10]).take(5).collect();
+  return test.assert_eq_array(fanned, [1, 10, 2, 20, 3]);
 }
 
 function test_find(): test.TestOutcome {
@@ -71,6 +91,9 @@ function main(): i32 {
   r = r.it("collect", test_collect);
   r = r.it("take", test_take);
   r = r.it("skip", test_skip);
+  r = r.it("skip past the end", test_skip_past_end);
+  r = r.it("flat_map", test_flat_map);
+  r = r.it("flat_map after skip", test_flat_map_after_skip);
   r = r.it("find", test_find);
   r = r.it("find miss", test_find_miss);
   r = r.it("position", test_position);

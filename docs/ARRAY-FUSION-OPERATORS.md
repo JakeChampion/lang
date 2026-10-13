@@ -337,8 +337,10 @@ also pass the benchmark's prefix checks with both variants and fusion settings.
 ### The lazy surface's roots
 
 A core/iter chain reaches the same fragments through its adapters:
-`it.map(f)`, `it.filter(p)` and `it.take(n)` are the stages above, and
-`it.fold(z, h)` and `it.count()` the sinks. What it starts from sets the
+`it.map(f)`, `it.filter(p)`, `it.take(n)` and `it.flat_map(f)` are the
+stages above, and `it.fold(z, h)` and `it.count()` the sinks. `it.skip(n)`,
+like `it.enumerate()` and `it.zip(other)`, is outside the algebra: the
+chain runs unfused and the report says so. What it starts from sets the
 loop. `iter.of(xs)` is an array cursor exactly as the eager surface's
 input is. `iter.range(lo, hi)` runs the cursor from `lo` while it is below
 `hi` and hands the cursor itself to the first stage, with no fetch. Either

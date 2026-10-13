@@ -4214,24 +4214,24 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// result is i32[] / Option[i32]. A destination the arguments leave T
 		// open to binds it instead, and the impl then disagrees: E021, not the
 		// E003 the inferred type would give.
-		{"bound-infers-array-result", "import \"core/iter\";\nfunction main(): i32 { let xs = iter.skip(iter.range(0, 5), 0); let s: string = xs[0]; return 0; }\n"},
+		{"bound-infers-array-result", "import \"core/iter\";\nfunction rest[T, I: iter.Iterator[T]](it: I): T[] { return it.collect(); }\nfunction main(): i32 { let xs = rest(iter.range(0, 5)); let s: string = xs[0]; return 0; }\n"},
 		{"bound-infers-option-result", "import \"core/iter\";\nfunction main(): i32 { let r = iter.nth(iter.range(0, 5), 2); let x: string = r; return 0; }\n"},
-		{"bound-infers-generic-impl-ok", "import \"core/iter\";\nfunction main(): i32 { let xs: f64[] = [1.5]; let ys = iter.skip(iter.of(xs), 0); let z: f64 = ys[0]; let n: i32 = iter.skip(iter.range(0, 3), 0)[0]; return n; }\n"},
-		{"bound-infers-argument-e038", "import \"core/iter\";\nfunction take(xs: string[]): i32 { return 0; }\nfunction main(): i32 { return take(iter.skip(iter.range(0, 5), 0)); }\n"},
-		{"bound-infers-assignment-target", "import \"core/iter\";\nfunction main(): i32 { let xs: string[] = []; xs = iter.skip(iter.range(0, 5), 0); return 0; }\n"},
-		{"bound-dest-var-e021", "import \"core/iter\";\nfunction main(): i32 { let xs: string[] = iter.skip(iter.range(0, 5), 0); return 0; }\n"},
-		{"bound-dest-return-e021", "import \"core/iter\";\nfunction f(): string[] { return iter.skip(iter.range(0, 5), 0); }\nfunction main(): i32 { return 0; }\n"},
+		{"bound-infers-generic-impl-ok", "import \"core/iter\";\nfunction rest[T, I: iter.Iterator[T]](it: I): T[] { return it.collect(); }\nfunction main(): i32 { let xs: f64[] = [1.5]; let ys = rest(iter.of(xs)); let z: f64 = ys[0]; let n: i32 = rest(iter.range(0, 3))[0]; return n; }\n"},
+		{"bound-infers-argument-e038", "import \"core/iter\";\nfunction rest[T, I: iter.Iterator[T]](it: I): T[] { return it.collect(); }\nfunction take(xs: string[]): i32 { return 0; }\nfunction main(): i32 { return take(rest(iter.range(0, 5))); }\n"},
+		{"bound-infers-assignment-target", "import \"core/iter\";\nfunction rest[T, I: iter.Iterator[T]](it: I): T[] { return it.collect(); }\nfunction main(): i32 { let xs: string[] = []; xs = rest(iter.range(0, 5)); return 0; }\n"},
+		{"bound-dest-var-e021", "import \"core/iter\";\nfunction rest[T, I: iter.Iterator[T]](it: I): T[] { return it.collect(); }\nfunction main(): i32 { let xs: string[] = rest(iter.range(0, 5)); return 0; }\n"},
+		{"bound-dest-return-e021", "import \"core/iter\";\nfunction rest[T, I: iter.Iterator[T]](it: I): T[] { return it.collect(); }\nfunction f(): string[] { return rest(iter.range(0, 5)); }\nfunction main(): i32 { return 0; }\n"},
 		{"bound-dest-option-e021", "import \"core/iter\";\nfunction main(): i32 { let m: Option[string] = iter.nth(iter.range(0, 5), 1); return 0; }\n"},
-		{"bound-dest-generic-impl-e021", "import \"core/iter\";\nfunction main(): i32 { let xs: f64[] = [1.5]; let w: string[] = iter.skip(iter.of(xs), 0); return 0; }\n"},
+		{"bound-dest-generic-impl-e021", "import \"core/iter\";\nfunction rest[T, I: iter.Iterator[T]](it: I): T[] { return it.collect(); }\nfunction main(): i32 { let xs: f64[] = [1.5]; let w: string[] = rest(iter.of(xs)); return 0; }\n"},
 		{"bound-lambda-binds-e021", "import \"core/iter\";\nfunction main(): i32 { return iter.count_by(iter.range(0, 5), (x: string): boolean => true); }\n"},
 		{"bound-qualified-infers-e003", "import \"core/iter\";\nfunction grab[T, I: iter.Iterator[T]](it: I): Option[T] { return iter.nth(it, 0); }\nfunction main(): i32 { let r = grab(iter.range(0, 3)); let x: string = r; return 0; }\n"},
 		{"bound-qualified-dest-e021", "import \"core/iter\";\nfunction grab[T, I: iter.Iterator[T]](it: I): Option[T] { return iter.nth(it, 0); }\nfunction main(): i32 { let y: Option[string] = grab(iter.range(0, 3)); return 0; }\n"},
 		// A value-`if` or value-`match` arm is read at the destination too
 		// (#10264): the desugared IIFE's results each take it.
-		{"bound-dest-value-if-var-e021", "import \"core/iter\";\nfunction main(): i32 { let xs: string[] = if (true) { iter.skip(iter.range(0, 5), 0) } else { [] }; return 0; }\n"},
-		{"bound-dest-value-if-return-e021", "import \"core/iter\";\nfunction f(c: boolean): string[] { return if (c) { iter.skip(iter.range(0, 5), 0) } else { [] }; }\nfunction main(): i32 { return 0; }\n"},
-		{"bound-dest-value-match-e021", "import \"core/iter\";\nfunction g(k: i32): string[] { let xs: string[] = match (k) { 0 => iter.skip(iter.range(0, 5), 0), _ => [] }; return xs; }\nfunction main(): i32 { return 0; }\n"},
-		{"bound-dest-value-if-agrees-ok", "import \"core/iter\";\nfunction ok(c: boolean): i32[] { let xs: i32[] = if (c) { iter.skip(iter.range(0, 5), 0) } else { [] }; return xs; }\nfunction main(): i32 { return ok(true).len(); }\n"},
+		{"bound-dest-value-if-var-e021", "import \"core/iter\";\nfunction rest[T, I: iter.Iterator[T]](it: I): T[] { return it.collect(); }\nfunction main(): i32 { let xs: string[] = if (true) { rest(iter.range(0, 5)) } else { [] }; return 0; }\n"},
+		{"bound-dest-value-if-return-e021", "import \"core/iter\";\nfunction rest[T, I: iter.Iterator[T]](it: I): T[] { return it.collect(); }\nfunction f(c: boolean): string[] { return if (c) { rest(iter.range(0, 5)) } else { [] }; }\nfunction main(): i32 { return 0; }\n"},
+		{"bound-dest-value-match-e021", "import \"core/iter\";\nfunction rest[T, I: iter.Iterator[T]](it: I): T[] { return it.collect(); }\nfunction g(k: i32): string[] { let xs: string[] = match (k) { 0 => rest(iter.range(0, 5)), _ => [] }; return xs; }\nfunction main(): i32 { return 0; }\n"},
+		{"bound-dest-value-if-agrees-ok", "import \"core/iter\";\nfunction rest[T, I: iter.Iterator[T]](it: I): T[] { return it.collect(); }\nfunction ok(c: boolean): i32[] { let xs: i32[] = if (c) { rest(iter.range(0, 5)) } else { [] }; return xs; }\nfunction main(): i32 { return ok(true).len(); }\n"},
 		// A bound is judged on each type parameter, under what the arguments
 		// and the other bounds bind: T learned through I's impl is checked
 		// against T's own bound, and against a later bound that names it.
@@ -4244,10 +4244,10 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"bound-on-a-type-parameter-e021", "trait C[U] { function c(self: Self): U; }\ntrait D[T] { function d(self: Self): T; }\nstruct X { n: i32 }\nstruct Y { n: i32 }\nimpl C[string] for X { function c(self: Self): string { return \"x\"; } }\nimpl D[X] for Y { function d(self: Self): X { return X { n: 1 }; } }\nfunction f[U, T: C[U], I: D[T]](it: I, u: U): i32 { return 0; }\nfunction main(): i32 { return f(Y { n: 1 }, 5); }\n"},
 		{"bound-learned-through-another-bound-e021", "trait C[T] { function c(self: Self): T; }\ntrait A[T] { function a(self: Self): T; }\nstruct SC { n: i32 }\nstruct P { n: i32 }\nstruct V1 { n: i32 }\nimpl C[SC] for P { function c(self: Self): SC { return SC { n: 1 }; } }\nimpl A[string] for V1 { function a(self: Self): string { return \"v\"; } }\nfunction f[I: C[T], T, V: A[T]](i: I, v: V): i32 { return 0; }\nfunction main(): i32 { return f(P { n: 1 }, V1 { n: 2 }); }\n"},
 		// An array literal's element reads the element type (#10266).
-		{"bound-dest-array-element-e021", "import \"core/iter\";\nfunction main(): i32 { let xs: string[][] = [iter.skip(iter.range(0, 5), 0), iter.skip(iter.range(0, 2), 0)]; return 0; }\n"},
+		{"bound-dest-array-element-e021", "import \"core/iter\";\nfunction rest[T, I: iter.Iterator[T]](it: I): T[] { return it.collect(); }\nfunction main(): i32 { let xs: string[][] = [rest(iter.range(0, 5)), rest(iter.range(0, 2))]; return 0; }\n"},
 		{"bound-dest-array-element-ok", "trait C[T] { function c(self: Self): T; }\nstruct A { n: i32 }\nimpl C[i32] for A { function c(self: Self): i32 { return self.n; } }\nfunction f[T, I: C[T]](i: I): T { return i.c(); }\nfunction main(): i32 { let ys: i32[] = [f(A { n: 2 }), 3]; let zs: i32[][] = [iter_free()]; return ys[0]; }\nfunction iter_free(): i32[] { return [1]; }\n"},
 		{"bound-dest-array-element-scalar-e021", "trait C[T] { function c(self: Self): T; }\nstruct A { n: i32 }\nimpl C[i32] for A { function c(self: Self): i32 { return self.n; } }\nfunction f[T, I: C[T]](i: I): T { return i.c(); }\nfunction main(): i32 { let xs: string[] = [f(A { n: 1 })]; return 0; }\n"},
-		{"bound-dest-agrees-ok", "import \"core/iter\";\nfunction main(): i32 { let xs: i32[] = iter.skip(iter.range(0, 5), 0); let m: Option[i32] = iter.nth(iter.range(0, 5), 1); return xs[0]; }\n"},
+		{"bound-dest-agrees-ok", "import \"core/iter\";\nfunction rest[T, I: iter.Iterator[T]](it: I): T[] { return it.collect(); }\nfunction main(): i32 { let xs: i32[] = rest(iter.range(0, 5)); let m: Option[i32] = iter.nth(iter.range(0, 5), 1); return xs[0]; }\n"},
 		{"num-sum-assoc-tp-ok", "import \"std/num\";\nfunction main(): i32 { let xs: i32[] = [1, 2, 3]; return num.sum(xs); }\n"},
 		{"num-product-assoc-tp-ok", "import \"std/num\";\nfunction main(): i32 { let xs: i32[] = [2, 3]; return num.product(xs); }\n"},
 		// The same shape written by the USER, so the bound comes from the
