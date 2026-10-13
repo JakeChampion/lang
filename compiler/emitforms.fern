@@ -69,7 +69,7 @@ pub function http_refused(why: string): string {
 // wasi:http/types and wasi:io/streams, which is all the playground's browser
 // host implements.
 pub function wasm_http_core(full: parser.Module, sub: ircore.Sub): string {
-  return wasm_ir.emit_module_mode_or_error_sub(full, true, wasm_ir.component_needs_host(full, sub.switches), sub);
+  return wasm_ir.emit_module_mode_or_error_sub(full, true, wasm_ir.component_needs_host(full, sub), sub);
 }
 
 // wasm_http_component is the wasi:http/incoming-handler component for `full`
@@ -118,7 +118,7 @@ pub function wasm_component(full: parser.Module, sub: ircore.Sub): wit_compose.C
   if (ap.refused.len() > 0) {
     return wit_compose.Composed { bytes: [], refused: "fern: -target wasm32-wasi: " + ap.refused };
   }
-  let shape: i32 = wasm_ir.component_shape(full, sub.switches);
+  let shape: i32 = wasm_ir.component_shape(full, sub);
   let framed: boolean = shape >= 0 && !declares_extern(full) && ap.asy.lifts.len() == 0;
   if (framed && shape == 0) {
     return wit_compose.Composed { bytes: watbin.component_full(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, false, sub))), refused: "" };
