@@ -12195,21 +12195,42 @@ function has_free_decl(funcs: MFns, name: string): boolean {
 }
 
 // method_param_spellings is call_param_spellings for `recv.m(args)` on a
-// struct whose type the monomorphiser can read: the method's parameters with
-// the struct's type parameters substituted from the receiver's arguments and
-// the method's own from the call.
+// receiver whose type the monomorphiser can read: the method's parameters
+// with the receiver's type parameters substituted from its arguments and the
+// method's own from the call. A generic struct's clone name carries its
+// arguments through inst_struct; any other receiver, a generic enum's
+// included (`Result[T, E]`), binds the method's receiver spelling against
+// the receiver's type.
 function method_param_spellings(c: ast.ExprCall, fa: ast.ExprFieldAccess, env: MEnv, funcs: MFns): string[] {
   let none: string[] = [];
-  let owner: InstStruct = inst_struct(mono_infer(fa.obj, env, funcs), funcs);
-  if (owner.at < 0) {
+  let rt: string = mono_infer(fa.obj, env, funcs);
+  if (rt.len() == 0) {
     return none;
   }
-  let sd: StructDecl = funcs.structs[owner.at];
+  let base: string = strip_struct_base(rt);
+  let rvars: string[] = [];
+  let rcts: string[] = [];
+  let owner: InstStruct = inst_struct(rt, funcs);
+  if (owner.at >= 0) {
+    base = funcs.structs[owner.at].name;
+    rvars = funcs.structs[owner.at].type_params;
+    rcts = owner.cts;
+  }
   for fd in funcs.decls {
-    if (fd.name == fa.field && fd.receiver_name.len() > 0 && strip_struct_base(fd.receiver_type) == sd.name) {
+    if (fd.name == fa.field && fd.receiver_name.len() > 0 && strip_struct_base(fd.receiver_type) == base) {
+      if (owner.at < 0) {
+        rvars = type_str_vars(fd.receiver_type, []);
+        let rb: MEnv = bind_unify(fd.receiver_type, rt, rvars, MEnv { mnames: [], mtypes: [] }, funcs);
+        for v in rvars {
+          if (rb.elook(v).len() == 0) {
+            return none;
+          }
+          rcts = rcts.append(rb.elook(v));
+        }
+      }
       let out: string[] = [];
       for p in fd.params {
-        out = out.append(subst_ty(subst_ty(param_spelling(p), sd.type_params, owner.cts), fd.all_type_params, call_bound_vars(fd, c, env, funcs)));
+        out = out.append(subst_ty(subst_ty(param_spelling(p), rvars, rcts), fd.all_type_params, call_bound_vars(fd, c, env, funcs)));
       }
       return out;
     }
@@ -12217,20 +12238,27 @@ function method_param_spellings(c: ast.ExprCall, fa: ast.ExprFieldAccess, env: M
   return none;
 }
 
-// mono_call_args rewrites a call's arguments, cloning a generic function named
-// as a value at the callable spelling its parameter wants.
+// mono_call_args rewrites a call's arguments. One that names a generic
+// function as a value, or calls one whose type arguments only the result's
+// destination can supply (`apply(mk())` with `mk[T](): Box[T]`), is rewritten
+// at the spelling of the parameter it is passed to, as a `let` rewrites its
+// initialiser at the annotation. A spelling still in a type variable of the
+// enclosing template keys nothing: the clone's body comes back here with it
+// substituted.
 function mono_call_args(c: ast.ExprCall, env: MEnv, funcs: MFns, ins: Insts): (ast.Expr[], Insts) {
   let nargs: ast.Expr[] = [];
   let cur: Insts = ins;
   let pspell: string[] = [];
-  if (call_names_fn_value(c, env, funcs)) {
+  if (call_args_want_expected(c, env, funcs)) {
     pspell = call_param_spellings(c, env, funcs);
   }
   let i: i32 = 0;
   while (i < c.args.len()) {
-    let ra: RExpr = mono_expr(c.args[i], env, funcs, cur);
-    if (i < pspell.len() && generic_fn_value_name(c.args[i], env, funcs).len() > 0) {
-      ra = mono_fn_value(c.args[i], pspell[i], env, funcs, cur);
+    let ra: RExpr = RExpr { rexpr: c.args[i], rins: cur };
+    if (i < pspell.len() && arg_wants_expected(c.args[i], env, funcs) && type_str_vars(pspell[i], []).len() == 0) {
+      ra = mono_call_expected(c.args[i], pspell[i], env, funcs, cur);
+    } else {
+      ra = mono_expr(c.args[i], env, funcs, cur);
     }
     cur = ra.rins;
     nargs = nargs.append(ra.rexpr);
@@ -12239,12 +12267,32 @@ function mono_call_args(c: ast.ExprCall, env: MEnv, funcs: MFns, ins: Insts): (a
   return (nargs, cur);
 }
 
-// call_names_fn_value reports whether any argument names a generic function
-// as a value, the only case call_param_spellings is needed for.
-function call_names_fn_value(c: ast.ExprCall, env: MEnv, funcs: MFns): boolean {
+// call_args_want_expected reports whether any argument is one
+// arg_wants_expected accepts, the only case call_param_spellings is needed
+// for.
+function call_args_want_expected(c: ast.ExprCall, env: MEnv, funcs: MFns): boolean {
   for a in c.args {
-    if (generic_fn_value_name(a, env, funcs).len() > 0) {
+    if (arg_wants_expected(a, env, funcs)) {
       return true;
+    }
+  }
+  return false;
+}
+
+// arg_wants_expected: an argument naming a generic function as a value, or
+// calling a bounded generic, which its parameter's spelling may instantiate.
+function arg_wants_expected(a: ast.Expr, env: MEnv, funcs: MFns): boolean {
+  if (generic_fn_value_name(a, env, funcs).len() > 0) {
+    return true;
+  }
+  if let ast.ExprCall(ac) = a {
+    if let ast.ExprIdent(cid) = ac.callee {
+      return env.elook(cid.name).len() == 0 && bg_find(funcs, cid.name) >= 0;
+    }
+    if let ast.ExprFieldAccess(fa) = ac.callee {
+      if let ast.ExprIdent(m) = fa.obj {
+        return bg_find(funcs, m.name + "." + fa.field) >= 0;
+      }
     }
   }
   return false;
@@ -13640,10 +13688,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
         // un-instantiated template and mangled to a name nothing defines
         // (#7773). The generic-ENUM walk (me_expr) has always passed
         // me_field_type_of here; this is the function-generic twin.
-        let rv: RExpr = mono_call_expected(
-          s.field_values[i],
-          me_field_spelling_of(funcs.structs, s.type_name, s.field_names[i]), env, funcs, cur,
-        );
+        let rv: RExpr = mono_call_expected(s.field_values[i], lit_field_spelling(funcs, s.type_name, s.written, s.field_names[i]), env, funcs, cur);
         cur = rv.rins;
         vals = vals.append(rv.rexpr);
         i = i + 1;
@@ -18499,6 +18544,31 @@ function me_field_spelling_of(structs: StructDecl[], sname: string, fname: strin
     }
   }
   return "";
+}
+
+// lit_field_spelling is the declared spelling of field `fname` of the struct
+// literal `sname` names, with a generic struct's type parameters substituted
+// from the instantiation the literal spells (`Keep[i32] { b: mk() }` wants
+// `b` at `Box[i32]`); "" when a type variable is left, which keys no clone.
+function lit_field_spelling(funcs: MFns, sname: string, written: string, fname: string): string {
+  let spelling: string = me_field_spelling_of(funcs.structs, sname, fname);
+  if (spelling.len() == 0) {
+    return spelling;
+  }
+  let base: string = strip_struct_base(sname);
+  let args: string[] = type_args_of(written);
+  for sd in funcs.structs {
+    if (sd.name == base) {
+      if (sd.type_params.len() > 0 && args.len() == sd.type_params.len()) {
+        spelling = subst_ty(spelling, sd.type_params, args);
+      }
+      break;
+    }
+  }
+  if (type_str_vars(spelling, []).len() > 0) {
+    return "";
+  }
+  return spelling;
 }
 
 // me_fn_ret_spelling returns the return-type spelling of an encoded fn-value
