@@ -19859,6 +19859,9 @@ function e049_init_ref_ty(init: ast.Expr): string {
 function e049_scope(stmts: ast.Stmt[]): NameTy[] {
   let out: NameTy[] = [];
   for stmt in stmts {
+    for vb in e049_value_blocks(stmt) {
+      out = e049_append_nt(out, e049_scope(vb.body));
+    }
     match (stmt) {
       ast.StmtVar(v) => {
         let vty: string = v.type_name;
@@ -19890,6 +19893,32 @@ function e049_scope(stmts: ast.Stmt[]): NameTy[] {
     }
   }
   return out;
+}
+
+// e049_value_blocks lists the value blocks — the zero-argument lambdas an `if`
+// or `match` expression, a `{ … }` block or a comprehension desugars to — in a
+// statement's own expressions. A value block is not a closure: its body runs in
+// place, so its locals belong to the enclosing body and its assignments are
+// that body's own. A value block nested in one is reached through its body.
+function e049_value_blocks(st: ast.Stmt): ast.ExprLambda[] {
+  let none: ast.ExprLambda[] = [];
+  return astwalk.fold_stmt_own_pruned(st, none, e049_value_block_at, e049_into_no_lambda);
+}
+
+function e049_value_block_at(n: ast.Expr, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
+  if let ast.ExprLambda(lm) = n {
+    if (parser.is_value_block_origin(lm.origin)) {
+      return acc.append(lm);
+    }
+  }
+  return acc;
+}
+
+function e049_into_no_lambda(n: ast.Expr): boolean {
+  if let ast.ExprLambda(_) = n {
+    return false;
+  }
+  return true;
 }
 
 // e049_lambda_locals_nt collects a lambda's own bound names WITH their types —
@@ -19929,12 +19958,19 @@ function e049_nt_names(nts: NameTy[]): string[] {
 //
 // One level, pruned at ExprLambda: e049_check_assigns walks the child blocks
 // itself, and each lambda body is handed on with that lambda's own locals, so
-// every lambda is reached exactly once however deep it nests.
-function e049_stmt_own_lambdas(st: ast.Stmt, enclosing: NameTy[]): util.Diag[] {
+// every lambda is reached exactly once however deep it nests. A lambda NESTED
+// in this body captures this body's own names as well as what this body
+// captured, so its enclosing set is both; a value block is this body's own and
+// keeps the two sets as they are.
+function e049_stmt_own_lambdas(st: ast.Stmt, enclosing: NameTy[], locals: NameTy[]): util.Diag[] {
+  let nested_encl: NameTy[] = e049_append_nt(enclosing, locals);
   function at_lambda(n: ast.Expr, own acc: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprLambda(lm) => {
-        return util.append_diags(acc, e049_check_assigns(lm.body, enclosing, e049_lambda_locals_nt(lm)));
+        if (parser.is_value_block_origin(lm.origin)) {
+          return util.append_diags(acc, e049_check_assigns(lm.body, enclosing, locals));
+        }
+        return util.append_diags(acc, e049_check_assigns(lm.body, nested_encl, e049_lambda_locals_nt(lm)));
       },
       _ => {
         return acc;
@@ -19956,12 +19992,6 @@ function e049_stmt_own_lambdas(st: ast.Stmt, enclosing: NameTy[]): util.Diag[] {
 
 function e049_check_assigns(stmts: ast.Stmt[], enclosing: NameTy[], locals: NameTy[]): util.Diag[] {
   let out: util.Diag[] = [];
-  // A lambda NESTED in this body captures this body's own names as well as
-  // what this body captured, so the enclosing set grows as the walk descends.
-  // Passing the enclosing FUNCTION's set all the way down leaves a variable
-  // declared in an intervening lambda in neither set — neither enclosing nor
-  // local — and nothing flags an assignment to it.
-  let nested_encl: NameTy[] = e049_append_nt(enclosing, locals);
   let local_names: string[] = e049_nt_names(locals);
   for stmt in stmts {
     match (stmt) {
@@ -19991,7 +20021,7 @@ function e049_check_assigns(stmts: ast.Stmt[], enclosing: NameTy[], locals: Name
       },
       _ => {}
     }
-    out = util.append_diags(out, e049_stmt_own_lambdas(stmt, nested_encl));
+    out = util.append_diags(out, e049_stmt_own_lambdas(stmt, enclosing, locals));
   }
   return out;
 }
@@ -20006,6 +20036,9 @@ function e049_expr_lambdas(e: ast.Expr, enclosing: NameTy[]): util.Diag[] {
   function at_lambda(n: ast.Expr, own acc: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprLambda(lm) => {
+        if (parser.is_value_block_origin(lm.origin)) {
+          return util.append_diags(acc, e049_find(lm.body, enclosing));
+        }
         return util.append_diags(acc, e049_check_assigns(lm.body, enclosing, e049_lambda_locals_nt(lm)));
       },
       _ => {
@@ -20129,7 +20162,9 @@ function e049_body_stores(fn: parser.FuncDecl, mod: parser.Module, env: ModuleEn
 
 function e049_lambda_at(n: ast.Expr, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
   if let ast.ExprLambda(lm) = n {
-    return acc.append(lm);
+    if (!parser.is_value_block_origin(lm.origin)) {
+      return acc.append(lm);
+    }
   }
   return acc;
 }
@@ -20175,14 +20210,16 @@ function e049_nested_stmt_captures(st: ast.Stmt, acc: string[]): string[] {
 
 function e049_lambda_captures(n: ast.Expr, own acc: string[]): string[] {
   if let ast.ExprLambda(lm) = n {
-    return astwalk.collect_lambda_idents(lm, acc);
+    if (!parser.is_value_block_origin(lm.origin)) {
+      return astwalk.collect_lambda_idents(lm, acc);
+    }
   }
   return acc;
 }
 
 function e049_not_into_lambda(n: ast.Expr): boolean {
-  if let ast.ExprLambda(_) = n {
-    return false;
+  if let ast.ExprLambda(lm) = n {
+    return parser.is_value_block_origin(lm.origin);
   }
   return true;
 }
@@ -20237,6 +20274,9 @@ function e049_lambda_init_names(stmts: ast.Stmt[]): string[] {
 
 function e049_store_walk(stmts: ast.Stmt[], sc: Scope, vars: NameTy[], captured: string[], tparams: string[], mod: parser.Module, own out: util.Diag[]): util.Diag[] {
   for st in stmts {
+    for vb in e049_value_blocks(st) {
+      out = e049_store_walk(vb.body, sc, vars, captured, tparams, mod, out);
+    }
     match (st) {
       ast.StmtAssign(a) => {
         let ty: string = e049_var_type(vars, a.target);
