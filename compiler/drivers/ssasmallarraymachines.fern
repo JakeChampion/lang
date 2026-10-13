@@ -113,6 +113,14 @@ pub function run(output: string): void {
   identities(output);
   mutation(output, "    ret\n", "unknown_instruction\nret\n", false);
   mutation(output, "    ret\n", "jmp .Larrdec_ret\n", false);
+  // The `.u` entry is proved on the register walk: what precedes it may
+  // clobber a scratch register and nothing else, and the count is read after it.
+  mutation(output, "__fn___fern_arr_dec.r:\n", "__fn___fern_arr_dec.r:\nmovq %rax, %rcx\n", true);
+  mutation(output, "__fn___fern_arr_dec.r:\n", "__fn___fern_arr_dec.r:\nmovq %rcx, %rax\n", false);
+  mutation(output, "__fn___fern_arr_dec.r:\n", "__fn___fern_arr_dec.r:\nmovq %rax, %rbx\n", false);
+  mutation(output, "__fn___fern_arr_dec.r:\n", "__fn___fern_arr_dec.r:\nmovl $0, -8(%rax)\n", false);
+  mutation(output, "__fn___fern_arr_dec.u:\n    movl -8(%rax), %ecx\n", "    movl -8(%rax), %ecx\n__fn___fern_arr_dec.u:\n", false);
+  mutation(output, "__fn___fern_arr_dec.u:\n", "", false);
   mutation(output, "cmpq $256, %rcx", "cmpq $255, %rcx", false);
   mutation(output, "cmpq $65536, %rcx", "cmpq $65535, %rcx", false);
   mutation(output, "cmpl $1, %ecx", "cmpl $1, %edx", false);
@@ -120,5 +128,5 @@ pub function run(output: string): void {
   mutation(output, "ja .Larrdec_big", "jo .Larrdec_big", false);
   mutation(output, "ja .Larrdec_big", "addq $0, %rcx\nja .Larrdec_big", false);
   require(!machine.check(".set alias, __fern_capw\n" + output), "closed namespace");
-  require(!machine.check(".text\n__fn___fern_arr_dec:\n__fn___fern_arr_dec.r:\nret\n"), "missing dependency and effects");
+  require(!machine.check(".text\n__fn___fern_arr_dec:\n__fn___fern_arr_dec.r:\n__fn___fern_arr_dec.u:\nret\n"), "missing dependency and effects");
 }

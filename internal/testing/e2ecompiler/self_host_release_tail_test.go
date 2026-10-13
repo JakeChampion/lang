@@ -61,7 +61,7 @@ func TestSelfHostReleaseUniqueTail(t *testing.T) {
 	head := body[:frame]
 	guard := strings.Index(head, "cmpl $1, -8(%rax)\n    jne ")
 	drop := strings.Index(head, "call __fn___sem_drop_")
-	free := strings.Index(head, "call __fn___fern_arr_dec.r")
+	free := strings.Index(head, "call __fn___fern_arr_dec.u")
 	if drop < 0 || free < drop {
 		t.Errorf("P's release does not drop and then free a unique box before building a frame:\n%s", head)
 	}

@@ -68,9 +68,9 @@ function heaps(output: ssaprepare.Output, capacity: i32): void {
 function ghost(output: ssaprepare.Output): void {
   let original = retained.resolve(output, "caller").rows[0].assembly;
   let captured = first(original, "call __fn_parent.r", "call __fn_parent.r\nmovq %rax, %r11");
-  let parts = captured.split("call __fn___fern_arr_dec.r");
+  let parts = captured.split("call __fn___fern_arr_dec.u");
   require(parts.len() == 3, "two releases");
-  let stale = parts[0] + "call __fn___fern_arr_dec.r" + parts[1] + "movq %r11, %rax\ncall __fn___fern_arr_dec.r" + parts[2];
+  let stale = parts[0] + "call __fn___fern_arr_dec.u" + parts[1] + "movq %r11, %rax\ncall __fn___fern_arr_dec.u" + parts[2];
   require(machine.check(assembled(output, captured), "caller", "parent", initial()), "copied alias alone creates no credit");
   require(!machine.check(assembled(output, stale), "caller", "parent", initial()), "reused address cannot revive stale ghost alias");
 }
@@ -88,7 +88,8 @@ function flags(output: ssaprepare.Output): void {
 function frames(output: ssaprepare.Output, single: boolean): void {
   mutation(output, "call __fn_parent.r", "movq %rbx, -16(%rsp)\ncall __fn_parent.r\nmovq -16(%rsp), %rbx", false, "lower scratch is opaque");
   mutation(output, "call __fn_parent.r", "movq %rbx, -16(%rsp)\ncall __fn_parent.r\nmovq %rbx, -16(%rsp)\nmovq -16(%rsp), %rbx", true, "current scratch rewriting");
-  mutation(output, "call __fn___fern_arr_dec.r", "pushq %rax\ncall __fn___fern_arr_dec\naddq $8, %rsp", true, "ordinary release entry");
+  mutation(output, "call __fn___fern_arr_dec.u", "pushq %rax\ncall __fn___fern_arr_dec\naddq $8, %rsp", true, "ordinary release entry");
+  mutation(output, "call __fn___fern_arr_dec.u", "call __fn___fern_arr_dec.r", true, "guarded register release entry");
   if (single) {
     mutation(output, "subq $8, %rsp", "subq $16, %rsp", true, "alternate call frame");
     mutation(output, "call __fn_parent.r", "pushq %rax\ncall __fn_parent\naddq $8, %rsp", true, "ordinary constructor entry");
@@ -106,17 +107,17 @@ pub function run(output: ssaprepare.Output, single: boolean): void {
   mutation(output, "ret\n", "unknown_instruction\nret\n", false, "reachable unknown");
   mutation(output, "ret\n", "movq $0, %rax\nret\n", false, "wrong return");
   mutation(output, "call __fn_parent.r", "movq $0, %rax\ncall __fn_parent.r", false, "wrong constructor argument");
-  mutation(output, "call __fn___fern_arr_dec.r", "movq $0, %rax\ncall __fn___fern_arr_dec.r", false, "wrong released pointer");
-  mutation(output, "call __fn___fern_arr_dec.r", "", false, "missing release");
-  mutation(output, "call __fn___fern_arr_dec.r", "call __fn___fern_arr_dec.r\ncall __fn___fern_arr_dec.r", false, "repeated release");
+  mutation(output, "call __fn___fern_arr_dec.u", "movq $0, %rax\ncall __fn___fern_arr_dec.u", false, "wrong released pointer");
+  mutation(output, "call __fn___fern_arr_dec.u", "", false, "missing release");
+  mutation(output, "call __fn___fern_arr_dec.u", "call __fn___fern_arr_dec.u\ncall __fn___fern_arr_dec.u", false, "repeated release");
   mutation(output, "ret\n", "movq $0, %r12\nret\n", false, "callee saved register");
   mutation(output, "ret\n", "movq $0, 0(%rsp)\nret\n", false, "return memory");
   mutation(output, "cmpl $1, -8(%rax)", "cmpl $0, -8(%rax)", false, "shared branch becomes reachable");
   mutation(output, "cmpl $0, -8(%rax)", "cmpl $2, -8(%rax)", false, "release skipped");
   mutation(output, "ret\n", "movq %rax, %rax\nret\n", true, "equivalent full move");
   mutation(output, "ret\n", "movl %eax, %eax\nret\n", false, "unknown upper parameter half");
-  mutation(output, "call __fn___fern_arr_dec.r", "movl %eax, %eax\ncall __fn___fern_arr_dec.r", false, "pointer upper half lost");
-  mutation(output, "call __fn___fern_arr_dec.r", "call __fn___fern_arr_dec.r\nmovq 8(%rax), %r11", false, "field read after release");
+  mutation(output, "call __fn___fern_arr_dec.u", "movl %eax, %eax\ncall __fn___fern_arr_dec.u", false, "pointer upper half lost");
+  mutation(output, "call __fn___fern_arr_dec.u", "call __fn___fern_arr_dec.u\nmovq 8(%rax), %r11", false, "field read after release");
   mutation(output, "movq 8(%rax),", "movq 16(%rax),", false, "wrong ordered field");
   mutation(output, "movq 8(%rsp), %rax", "movq 16(%rsp), %rax", false, "ordinary entry parameter");
   mutation(output, "cmpl $1, -8(%rax)", "cmpq $1, -8(%rax)", false, "unsupported header width");

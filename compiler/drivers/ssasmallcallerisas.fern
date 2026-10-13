@@ -22,7 +22,7 @@ function sample(line: string): isa.Op {
 }
 
 function calls(): void {
-  for name in ["__fn_parent", "__fn_parent.r", "__fn___fern_arr_dec.r", ".Llocal", "arbitrary$callee"] {
+  for name in ["__fn_parent", "__fn_parent.r", "__fn___fern_arr_dec.r", "__fn___fern_arr_dec.u", ".Llocal", "arbitrary$callee"] {
     let op = sample("call " + name);
     require(op.kind == 25 && op.symbol == name, "direct symbol data");
     require(isa.constructor_program(fixture("call " + name), "__fn_caller").ops[3].kind == 0, "old constructor call policy");
@@ -94,7 +94,7 @@ function actual_ops(p: isa.ArrayProgram, crlf: isa.ArrayProgram, lines: string[]
   for op in p.ops {
     require(op.kind > 0 && same(op, crlf.ops[i]), "actual operation and every CRLF field: " + lines[i]);
     if (op.kind == 25) {
-      require(op.symbol == "__fn_parent.r" || op.symbol == "__fn___fern_arr_dec.r", "actual call names");
+      require(op.symbol == "__fn_parent.r" || op.symbol == "__fn___fern_arr_dec.u", "actual call names");
       calls = calls + 1;
     }
     if (op.kind == 39) {

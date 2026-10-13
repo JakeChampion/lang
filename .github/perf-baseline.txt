@@ -90,7 +90,7 @@ x86_64/sort_ints.ir	29849660
 x86_64/sort_strings.text	4210
 x86_64/sort_strings.ir	105692600
 x86_64/string_build.text	3221
-x86_64/string_build.ir	94524127
+x86_64/string_build.ir	93130927
 x86_64/string_count_byte.text	2923
 x86_64/string_count_byte.ir	135589612
 x86_64/string_find_byte.text	3307
@@ -102,7 +102,7 @@ x86_64/string_scan.ir	53501893
 x86_64/string_slice.text	763
 x86_64/string_slice.ir	38700038
 x86_64/struct_drop.text	3425
-x86_64/struct_drop.ir	327100547
+x86_64/struct_drop.ir	317740547
 x86_64/tokenize.text	997
 x86_64/tokenize.ir	36950039
 x86_64/utf8_ingest_unchecked.text	9286
@@ -230,7 +230,7 @@ aarch64/sort_ints.ir	32514646
 aarch64/sort_strings.text	4413
 aarch64/sort_strings.ir	106027235
 aarch64/string_build.text	3382
-aarch64/string_build.ir	90437666
+aarch64/string_build.ir	89302766
 aarch64/string_count_byte.text	2999
 aarch64/string_count_byte.ir	295398919
 aarch64/string_find_byte.text	3424
@@ -242,7 +242,7 @@ aarch64/string_scan.ir	60275834
 aarch64/string_slice.text	939
 aarch64/string_slice.ir	43620043
 aarch64/struct_drop.text	3563
-aarch64/struct_drop.ir	357740825
+aarch64/struct_drop.ir	349820825
 aarch64/tokenize.text	1195
 aarch64/tokenize.ir	38580038
 aarch64/utf8_ingest_unchecked.text	9534
@@ -252,7 +252,7 @@ aarch64/utf8_ingest_validated.ir	6347933
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 x86_64/perceus_cfold.text	2343
-x86_64/perceus_cfold.ir	60558021
+x86_64/perceus_cfold.ir	59945221
 x86_64/perceus_deriv.text	2647
 x86_64/perceus_deriv.ir	80714250
 x86_64/perceus_nqueens.text	1448

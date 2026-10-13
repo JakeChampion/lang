@@ -271,8 +271,8 @@ function call(s: State, r: flow.Relation, producer: string, pc: i32, op: isa.Op)
   if (op.symbol == producer || op.symbol == producer + ".r") {
     next = construct(entered, r, e, op.symbol == producer + ".r");
   }
-  if (op.symbol == "__fn___fern_arr_dec" || op.symbol == "__fn___fern_arr_dec.r") {
-    next = consume(entered, r, e, op.symbol == "__fn___fern_arr_dec.r");
+  if (op.symbol == "__fn___fern_arr_dec" || op.symbol == "__fn___fern_arr_dec.r" || op.symbol == "__fn___fern_arr_dec.u") {
+    next = consume(entered, r, e, op.symbol != "__fn___fern_arr_dec");
   }
   return State { ...next, event: s.event + 1, flags: unknown_flags() };
 }

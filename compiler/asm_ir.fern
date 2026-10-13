@@ -2972,6 +2972,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fn___fern_arr_dec.r:\n");
   s = s.write("    cmpq $0x10000, %rax\n");
   s = s.write("    jb .Larrdec_ret\n");
+  // The `.u` entry is for a caller that has tested the floor and seen a
+  // count of one or zero: the inline release guard and the release helpers.
+  s = s.write("__fn___fern_arr_dec.u:\n");
   s = s.write("    movl -8(%rax), %ecx\n");
   s = s.write(san_poison_check("%ecx", s.rc_free_debug));
   s = s.write("    cmpl $1, %ecx\n");
@@ -3042,6 +3045,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jnz .Lstrfree_ret\n");
   s = s.write("    cmpq $0x10000, %rax\n");  // low-addr guard
   s = s.write("    jb .Lstrfree_ret\n");
+  s = s.write("__fn___fern_str_free.u:\n");  // past the tag and floor tests, as the inline guard is
   // rc word @ box-8 (#2649 Option A rc-headered string box): a negative rc is the
   // immortal/sentinel marker (skip); rc>1 decrements without freeing (the box is
   // still shared — once inc-on-alias is wired in A2, an aliased string survives);
@@ -7573,6 +7577,13 @@ function ssa_rc_guard(s: asmcore.EmitState, p: string, done: asmcore.Lab, strip:
 
 // ssa_helper_call calls a runtime helper through its register entry.
 function ssa_helper_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  return ssa_helper_entry(ins, reg_of, ".r", s);
+}
+
+// ssa_helper_entry calls a runtime helper through the entry `suffix` names:
+// `.r` takes the arguments in registers, `.u` is a release whose caller has
+// already tested the floor, and the tag of a string.
+function ssa_helper_entry(ins: ssa.SInst, reg_of: i32[], suffix: string, s: asmcore.EmitState): asmcore.EmitState {
   s = helper_call_needs(ins.str, s);
   let hsrc: i32[] = [];
   let hdst: i32[] = [];
@@ -7583,7 +7594,7 @@ function ssa_helper_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): a
     ha = ha + 1;
   }
   s = ssa_parallel_moves(hsrc, hdst, s);
-  s = ssa_call_sym(s, ircore.ir_helper_symbol(ins.str) + ".r");
+  s = ssa_call_sym(s, ircore.ir_helper_symbol(ins.str) + suffix);
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
 }
 
@@ -7611,7 +7622,7 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitSt
   s = ssa_branch(ssa_cmp_floor(s, p), J_JB, kept);
   s = ssa_branch(ssa_alu_im(s, 7, 32, 1, p, 0 - 8), J_JG, dec);
   s = ssa_branch(ssa_alu_im(s, 7, 32, 0, p, 0 - 8), J_JS, kept);
-  s = ssa_helper_call(ins, reg_of, s);
+  s = ssa_helper_entry(ins, reg_of, ".u", s);
   s = ssa_branch(s, J_JMP, done).lab_def(dec);
   s = ssa_alu_im(s, 5, 32, 1, p, 0 - 8).lab_def(kept);
   s = ssa_store(reg_of, ins.result, p, s);
@@ -7708,7 +7719,7 @@ function ssa_release_entry(entry: ssaprepare.ReleaseEntry, lp: string, s: asmcor
   s = helper_call_needs("__fern_rc_dec", bn.state);
   s = ssa_branch(ssa_alu_im(s, 7, 32, 1, "%rax", 0 - 8), J_JNE, bn.lab);
   s = ssa_call_sym(ssa_push_r(s, "%rax"), "__fn_" + asmcore.sanitize_label(drop) + ".r");
-  s = ssa_call_sym(ssa_mov_rm0(s, 64, true, "%rax", "%rsp"), ircore.ir_helper_symbol("__fern_rc_dec") + ".r");
+  s = ssa_call_sym(ssa_mov_rm0(s, 64, true, "%rax", "%rsp"), ircore.ir_helper_symbol("__fern_rc_dec") + ".u");
   s = ssa_ret(ssa_zero(ssa_pop_r(s, "%rax"), "%rax"));
   return s.lab_def(bn.lab);
 }
