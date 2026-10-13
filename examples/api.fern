@@ -1,0 +1,38 @@
+// api.fern — a routed JSON API: a user looked up at an upstream directory,
+// every request logged, and the server draining its requests on SIGTERM.
+import "std/http";
+import "std/http/router";
+import "std/http/accesslog";
+import "std/serve";
+import "std/platform";
+import "std/fetch";
+import "std/result";
+
+pub function routes[P: platform.Platform](): Result[router.Router[P], router.RouteError] {
+  let r: router.Router[P] = router.new();
+  r = r.get("/users/{id}", user)?;
+  return Ok(r.get("/healthz", (req: HttpRequest, params: router.Params, plat: P): HttpResponse => http.ok("ok"))?);
+}
+
+function user[P: platform.Platform](req: HttpRequest, params: router.Params, plat: P): HttpResponse {
+  use logged <- accesslog.logged(req, plat);
+  return http.respond(lookup(params, plat));
+}
+
+function lookup[P: platform.Platform](params: router.Params, plat: P): Result[HttpResponse, http.HttpError] {
+  let id: string = params.param("id")?;
+  let resp: HttpResponse = plat.http(fetch.get("http://directory.internal/users/" + id)).map_err((e: fetch.FetchError): http.HttpError => http.fail(502, "the directory did not answer"))?;
+  return Ok(http.json_status(resp.status, resp.body_string()));
+}
+
+function main(): i32 {
+  match (routes[platform.Host]()) {
+    Ok(r) => {
+      return serve.supervise_shutdown(8080, serve.config(), r.handler(), (reason: string): void => eprint("api: stopped, " + reason));
+    },
+    Err(e) => {
+      eprint(e.message());
+      return 1;
+    }
+  }
+}

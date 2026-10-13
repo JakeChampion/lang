@@ -341,3 +341,22 @@ decides what wraps it.
    compiled in the examples lane; Autobahn and httplint green nightly;
    `internal/e2eselfhost` twins for the router, middleware, multipart and
    WebSocket tests.
+   The two programs (landed): `examples/api.fern`, 38 lines, a router
+   generic over the platform with the access log as middleware, a lookup
+   at an upstream directory through `plat.http`, and
+   `serve.supervise_shutdown` reporting why it stopped; and
+   `examples/tests/api_sim.fern`, 19 lines, the same routes on a
+   `SimPlatform` whose directory resets twice, so the first lookup is a 502
+   past the client's one retry and the next a 200. The examples lanes
+   (`examples.yml`, `macos.yml`, `make examples`) compile
+   `examples/tests/*.fern` beside `examples/*.fern`; a `norun` row in
+   `.github/examples-expected-exits.txt` marks the server as built and not
+   run. The tutorial (`site/src/content/docs/tutorial/http-server.mdx`)
+   carries both. Writing them found the self-host refusing a generic named
+   as a value inside another generic (#12313, fixed on main first) and
+   not instantiating a generic call from a method argument's expected type
+   (#12314, open). The router, middleware, multipart and WebSocket gates
+   already run through the self-host compiler: every `…X86_64` test in
+   `internal/testing/e2e` builds its server with `bin/fern -target
+   x86-64-linux`, which is the self-host compiler, and
+   `TestSelfHostServeWebSocket` sits in `internal/testing/e2ecompiler`.
