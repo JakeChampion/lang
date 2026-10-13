@@ -205,9 +205,9 @@ function semantic_names_symbol(id: i32): boolean {
 // The emitted-RC certifier's marks on a lifted instruction (ssa_lift): a
 // load's `rc` in `str` when it reads a counted reference, a call's 1 (its
 // result is a counted reference), 2 (a shell release) or 3 (a lent result)
-// in `imm`; a call's 4 is the emitters' alignment proof and stays. A pass
-// that reads an instruction's shape rather than its ownership reads it
-// through these.
+// in `imm`; a call's 4 (the emitters' alignment proof) and 5 (a sole
+// release) stay. A pass that reads an instruction's shape rather than its
+// ownership reads it through these.
 pub function plain_str(ins: SInst): string {
   if ((ins.kind_tag == 40 || ins.kind_tag == 42) && ins.str.len() >= 2 && slice_unchecked(ins.str, ins.str.len() - 2, ins.str.len()) == "rc") {
     return slice_unchecked(ins.str, 0, ins.str.len() - 2) + "";
