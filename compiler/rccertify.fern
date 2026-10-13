@@ -910,7 +910,8 @@ function is_reuse(ins: ssa.SInst): boolean {
 
 // carries: phi `p` is `base` where it is not null: each input is the box,
 // null, or such a phi, and one is the box. A phi the region uses but does
-// not define is read off the base walk's tables.
+// not define is read off the base walk's tables, and so is a null it does
+// not define: the null an arm outside the region gives the token.
 function carries(w: Walk, p: i32, base: i32): boolean {
   let path: i32[] = [];
   return carries_at(w, p, base, path, false);
@@ -936,7 +937,7 @@ function carries_at(w: Walk, p: i32, base: i32, path: i32[], outer: boolean): bo
     if (a < 0) {
       return false;
     }
-    if (!is_zero(f, defs, a)) {
+    if (!is_zero(f, defs, a) && !(!outer && w.outer.on && outside(w.f, w.defs, a) && is_zero(w.outer.f, w.outer.defs, a))) {
       let r: i32 = root[a];
       if (r == base && !derived[a]) {
         any = true;

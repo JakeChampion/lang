@@ -41,10 +41,11 @@ enum IoError {
 }
 
 // ChunkProducer — the producer a `BodyChunks` carries: asked for chunk 0,
-// 1, 2, … until it answers None, and the filler the serve loop writes
+// 1, 2, … until it answers None; the filler the serve loop writes
 // whenever the producer has been waiting `idle_ms` for its next chunk (0
-// for none).
-struct ChunkProducer { next: (i32) => Option[u8[]], idle_ms: i32, filler: u8[] }
+// for none); and the trailers it adds to the response's once the body has
+// ended, asked for then.
+struct ChunkProducer { next: (i32) => Option[u8[]], idle_ms: i32, filler: u8[], trailers: () => HeaderMap }
 
 // Body — what an HttpResponse carries (std/http): text or bytes held
 // whole, a Stream drained to the wire, a file the serve loop streams, or

@@ -604,6 +604,12 @@ pub function task_start[T](t: Task[T]): TaskStatus[T] {
 // to its end (the blocking fallback above), so a loop that would hand a
 // task a body it must park for asks this first. A probe: a task that
 // reports whether it ran as a task.
+// `in_task()` — whether a task is current: a wait here parks it, where a
+// wait outside any task blocks.
+pub function in_task(): boolean {
+  return __task_cur() != 0;
+}
+
 pub function parks(): boolean {
   let t: Task[boolean] = task_new((): boolean => __task_cur() != 0);
   match (task_start(t)) {

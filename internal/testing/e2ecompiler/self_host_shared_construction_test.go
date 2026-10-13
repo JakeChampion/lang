@@ -1,6 +1,10 @@
 package e2ecompiler
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
 
 // A function called from two places whose every return is a construction,
 // one of them a box the pair return keeps, is spliced into each caller that
@@ -151,4 +155,108 @@ func TestSelfHostSharedConstructionsOff(t *testing.T) {
 	t.Setenv("FERN_SEM_INLINE", "")
 	runSemanticProgram(t, "sharedctor-off", sharedConstructionProgram, sharedConstructionProduced,
 		semInlineWants("800100\n600100\n700100\n300100\n700100\n5350100\n25100\n719100\n"))
+}
+
+// A caller past the once budget (seminline.max_caller_insts) still splices
+// a shared callee it reads apart, when the callee is within the reuse
+// budget: the splice saves the box on every call and leaves the caller
+// holding parts it held already. apart_long reads span's record apart in a
+// loop whose body runs to some 2,400 instructions, and its rounds allocate
+// nothing, as apart_rounds's do. long_chain is the value the loop's filler
+// computes, so nothing folds it away. recur has span's shape but calls
+// itself (not in tail position, which would be a loop by the time the
+// inliner runs), so it is never shared: a copy spliced would bring a call
+// to it for the next round to splice again, and before the caller budget
+// bounded that unrolling at 1,500 instructions. It stays a call from
+// apart_recur and apart_recur_again, and each of their rounds builds the
+// record once, the levels above the first reusing it.
+func sharedBudgetProgram() (program string, chain int32) {
+	const lines = 600
+	var b strings.Builder
+	b.WriteString(`struct Range { lo: i32, hi: i32, name: string }
+function span(lo: i32, n: i32, name: string): Range {
+    let hi: i32 = lo;
+    let i: i32 = 0;
+    while (i < n) { hi = hi + 2; i = i + 1; }
+    return Range { lo: lo, hi: hi, name: name };
+}
+@noinline function apart_rounds(): i32 {
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) { let s: Range = span(i, 3, "ab"); t = t + s.hi - s.lo + s.name.len(); i = i + 1; }
+    return t * 1000 + ((__heap_alloc_count() - before) as i32);
+}
+function recur(lo: i32, n: i32, name: string): Range {
+    if (n == 0) { return Range { lo: lo, hi: lo + 6, name: name }; }
+    let r: Range = recur(lo, n - 1, name);
+    return Range { lo: r.lo, hi: r.hi + 1, name: r.name };
+}
+@noinline function apart_recur(): i32 {
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) { let s: Range = recur(i, 3, "ab"); t = t + s.hi - s.lo + s.name.len(); i = i + 1; }
+    return t * 1000 + ((__heap_alloc_count() - before) as i32);
+}
+@noinline function apart_recur_again(): i32 {
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) { let s: Range = recur(i, i % 4, "ab"); t = t + s.hi + s.name.len() - s.lo; i = i + 1; }
+    return t * 1000 + ((__heap_alloc_count() - before) as i32);
+}
+@noinline function apart_long(): (i32, i32) {
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let k: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) {
+        let s: Range = span(i, 3, "ab");
+        t = t + s.hi - s.lo + s.name.len();
+`)
+	for i := 0; i < lines; i++ {
+		b.WriteString("        k = (k * 3 + i + 1) % 9973;\n")
+	}
+	b.WriteString(`        i = i + 1;
+    }
+    return (t * 1000 + ((__heap_alloc_count() - before) as i32), k);
+}
+function print_int(n: i32): i32 {
+    if (n > 9) { print_int(n / 10); }
+    putchar(48 + n % 10);
+    return 0;
+}
+function main(): i32 {
+    print_int(apart_rounds()); print("");
+    let long: (i32, i32) = apart_long();
+    print_int(long.0); print("");
+    print_int(long.1); print("");
+    print_int(apart_recur()); print("");
+    print_int(apart_recur_again()); print("");
+    return 0;
+}
+`)
+	for i := int32(0); i < 100; i++ {
+		for j := 0; j < lines; j++ {
+			chain = (chain*3 + i + 1) % 9973
+		}
+	}
+	return b.String(), chain
+}
+
+var sharedBudgetProduced = []string{"span", "apart_rounds", "apart_long", "recur", "apart_recur", "apart_recur_again"}
+
+func TestSelfHostSharedSplicePastCallerBudget(t *testing.T) {
+	program, chain := sharedBudgetProgram()
+	runSemanticProgram(t, "sharedbudget", program, sharedBudgetProduced,
+		semInlineWants(fmt.Sprintf("800000\n800000\n%d\n1100100\n950100\n", chain)), "recur")
+}
+
+// With the pass off, every round builds its record.
+func TestSelfHostSharedSplicePastCallerBudgetOff(t *testing.T) {
+	t.Setenv("FERN_SEM_INLINE", "")
+	program, chain := sharedBudgetProgram()
+	runSemanticProgram(t, "sharedbudget-off", program, sharedBudgetProduced,
+		semInlineWants(fmt.Sprintf("800100\n800100\n%d\n1100100\n950100\n", chain)), "recur")
 }

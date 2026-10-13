@@ -19,7 +19,7 @@ function empty(): HeaderMap {
 
 function respond(next: (i32) => Option[u8[]], bg: Option[() => void]): HttpResponse {
   let filler: u8[] = [];
-  return HttpResponse { status: 200, body: BodyChunks(ChunkProducer { next: next, idle_ms: 0, filler: filler }), headers: empty(), trailers: empty(), background: bg };
+  return HttpResponse { status: 200, body: BodyChunks(ChunkProducer { next: next, idle_ms: 0, filler: filler, trailers: empty }), headers: empty(), trailers: empty(), background: bg };
 }
 
 function chunks(r: HttpResponse): (i32) => i32 {

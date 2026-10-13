@@ -80,7 +80,8 @@ function max_splices(): i32 {
 }
 
 // A caller already this large gains little from a splice and pays for it in
-// register pressure across the whole body.
+// register pressure across the whole body. A shared callee it reads apart is
+// the exception (splice_calls): that splice removes a box, not just a call.
 function max_caller_insts(): i32 {
   return 1500;
 }
@@ -109,7 +110,7 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
   let i: i32 = 0;
   while (i < funcs0.len()) {
     let is_leaf: boolean = inlinable[i] && leaf(funcs0[i]);
-    let is_shared: boolean = !is_leaf && inlinable[i] && unnamed[i] && shared_spliceable(funcs0[i], calls[i]);
+    let is_shared: boolean = !is_leaf && inlinable[i] && unnamed[i] && shared_spliceable(funcs0[i], calls[i], i, ix);
     small = small.append(is_shared && count_insts(funcs0[i].graph) <= max_shared_insts());
     leaves = leaves.append(is_leaf);
     shared = shared.append(is_shared);
@@ -164,9 +165,12 @@ function once_spliceable(f: ssasem.Func, calls: i32): boolean {
 
 // Whether `f`, called `calls` times from more than one place, is spliced into
 // each: a few callers, a body under the shared budget, a construction at every
-// return, and at one of them a box the pair return keeps.
-function shared_spliceable(f: ssasem.Func, calls: i32): boolean {
-  return calls > 1 && calls <= max_shared_callers() && !lends_view(f) && spliceable(f, max_reuse_shared_insts()) && returns_boxes(f);
+// return, and at one of them a box the pair return keeps. A function that
+// calls itself is never one: each copy spliced brings a call to it the next
+// round would splice again, and the box its recursion builds stays.
+function shared_spliceable(f: ssasem.Func, calls: i32, index: i32, ix: util.NameIndex): boolean {
+  return calls > 1 && calls <= max_shared_callers() && !lends_view(f) && spliceable(f, max_reuse_shared_insts()) && returns_boxes(f)
+    && util.index_of_i32(callees_of(f, ix), index) < 0;
 }
 
 // Whether every return of `f` returns a construction, through copies and
@@ -326,7 +330,7 @@ function grown_shared(sofar: Inlined, sp: Spliceable): Spliceable {
   let small: boolean[] = sp.small;
   let i: i32 = 0;
   while (i < sofar.funcs.len()) {
-    if (!shared[i] && !sp.leaves[i] && sofar.rewritten[i] && sp.inlinable[i] && sp.unnamed[i] && shared_spliceable(sofar.funcs[i], sp.calls[i])) {
+    if (!shared[i] && !sp.leaves[i] && sofar.rewritten[i] && sp.inlinable[i] && sp.unnamed[i] && shared_spliceable(sofar.funcs[i], sp.calls[i], i, sp.ix)) {
       shared = shared.with(i, true);
       once = once.with(i, true);
       small = small.with(i, count_insts(sofar.funcs[i].graph) <= max_shared_insts());
@@ -349,7 +353,7 @@ function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rew
   let i: i32 = 0;
   while (i < funcs.len()) {
     // A body that calls no ready function has nothing to splice.
-    if (rewrite[i] && sizes[i] <= max_caller_insts() && any_ready(callees[i], ready)) {
+    if (rewrite[i] && (sizes[i] <= max_caller_insts() || any_shared(callees[i], ready, shared)) && any_ready(callees[i], ready)) {
       let spliced: Rewrite = splice_calls(funcs[i], sizes[i], funcs, sizes, ix, ready, ctors, shared, small, false);
       if (spliced.changed) {
         sizes = sizes.with(i, count_insts(spliced.f.graph));
@@ -903,9 +907,14 @@ function splice_calls(f0: ssasem.Func, size: i32, funcs: ssasem.Func[], sizes: i
         }
       }
       // A module const's body becomes one static box wherever it lands, so
-      // it costs the caller nothing the budget measures.
+      // it costs the caller nothing the budget measures. A shared callee
+      // reaching here is spliced where its box dies, which saves an
+      // allocation on every call and leaves the caller holding the box's
+      // parts, values it held already, so the caller's size does not gate
+      // it while the callee is within the reuse budget: one grown past it
+      // by its own splices is held to the caller's budget as any other.
       if (at >= 0 && funcs[at].graph.name != f.graph.name
-        && (fsize + sizes[at] <= max_caller_insts() || ctors[at] && funcs[at].params.len() == 0)) {
+        && (fsize + sizes[at] <= max_caller_insts() || ctors[at] && funcs[at].params.len() == 0 || shared[at] && sizes[at] <= max_reuse_shared_insts())) {
         done = done + 1;
         // A straight callee's body now stands at k, and is walked in turn.
         if (straight(funcs[at])) {
@@ -1875,6 +1884,17 @@ function callees_of_all(funcs: ssasem.Func[], ix: util.NameIndex): i32[][] {
     out = out.append(callees_of(f, ix));
   }
   return out;
+}
+
+// Whether a body calls a shared function it may splice: such a splice is
+// not gated by the body's size, so a body past the budget is still walked.
+function any_shared(callees: i32[], ready: boolean[], shared: boolean[]): boolean {
+  for j in callees {
+    if (ready[j] && shared[j]) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function any_ready(callees: i32[], ready: boolean[]): boolean {

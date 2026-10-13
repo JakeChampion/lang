@@ -65,7 +65,7 @@ x86_64/closure_call.text	824
 x86_64/closure_call.ir	94308097
 x86_64/enum_match.text	999
 x86_64/enum_match.ir	53775055
-x86_64/http_hello.text	19071
+x86_64/http_hello.text	19770
 x86_64/http_hello.ir	28612787
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
@@ -168,6 +168,16 @@ x86_64/utf8_ingest_validated.ir	5988691
 # aarch64 `.text` rows are cross-compiled readings; its `.ir` rows come from
 # the perf-aarch64 lane.
 #
+# Re-pinned 2026-10-13 (#12331) on http_hello.text (x86_64 +3.7%, aarch64
+# +4.1%): a produced body's trailers (+65 on x86_64), std/fetch driving an
+# HTTP/2 connection (+163), and the inliner splicing a shared callee its
+# caller reads apart whatever the caller's size (+471, the four splices it
+# now admits: `__serve_event` twice, `__serve_park` and `fetch.idle` into the
+# serve loop, `__chunked_trailers` into the request parser), which is what
+# keeps the hello path at zero allocations. Both `.text` figures are this
+# branch's own measurement, the aarch64 one cross-compiled and equal to the
+# perf-aarch64 lane's reading.
+#
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
 # (utf8_ingest_unchecked) — one ISA emitting fewer instructions than the other
@@ -190,7 +200,7 @@ aarch64/closure_call.text	1009
 aarch64/closure_call.ir	106368083
 aarch64/enum_match.text	1166
 aarch64/enum_match.ir	41400056
-aarch64/http_hello.text	19351
+aarch64/http_hello.text	20147
 aarch64/http_hello.ir	30120925
 aarch64/int_loop.text	90
 aarch64/int_loop.ir	18000025

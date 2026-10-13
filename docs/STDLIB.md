@@ -1960,16 +1960,22 @@ serializer.
   written before, between and after them: the body `std/http/static`
   answers a range or a `multipart/byteranges` with, each range moved by
   `sendfile(2)` after a seek; `http.file_ranges_len`, `file_ranges_ok` and
-  `file_ranges_bytes` read one) or `BodyChunks((i32) => Option[u8[]])` (a
-  producer asked for chunk 0, 1, 2, … until it answers None; the serve
-  loop asks as a task, so a producer that waits for its next chunk parks
-  the connection and the worker serves its other connections meanwhile).
-  `http.bytes(status, bytes)`, `http.stream(status, stream)`,
-  `http.file(path)` and `http.chunks(status, next)` build
-  the last four; `http.chunks_idle(status, next, idle, filler)` is
-  `chunks` with `filler` written as a chunk whenever the producer has
-  been waiting `idle` for its next chunk, the keep-alive of a quiet
-  stream. `(resp).body_string()` (an ill-formed sequence in a
+  `file_ranges_bytes` read one) or `BodyChunks(ChunkProducer)` (a
+  producer asked for chunk 0, 1, 2, … until it answers None, with the
+  filler that keeps a quiet stream alive and the trailers it adds once
+  the body has ended; the serve loop asks as a task, so a producer that
+  waits for its next chunk parks the connection and the worker serves its
+  other connections meanwhile). `http.bytes(status, bytes)`,
+  `http.stream(status, stream)`, `http.file(path)` and
+  `http.chunks(status, next)` build the last four;
+  `http.chunks_idle(status, next, idle, filler)` is `chunks` with `filler`
+  written as a chunk whenever the producer has been waiting `idle` for its
+  next chunk, the keep-alive of a quiet stream; and
+  `http.chunks_with_trailers(status, next, trailers)` is `chunks` with the
+  trailers `trailers` answers once `next` has answered None sent after the
+  body beside the response's own, in the chunked body's trailer section
+  under HTTP/1.1 and the stream's last HEADERS under HTTP/2, for a body
+  whose end decides its trailers (a gRPC call's status). `(resp).body_string()` (an ill-formed sequence in a
   byte-domain body reads as U+FFFD: unlike `(req).body_string()` it has no
   error arm, a response being the handler's own), `(resp).body_bytes()` and
   `(resp).body_len()` read whichever a response carries (`(body).bytes()`
@@ -2754,7 +2760,11 @@ names one whose name it holds, adds a literal to the table unless it is
 the table), and Huffman-codes a string when the coding is no longer than
 the bytes (`without_huffman()` turns that off). `with_max_table(n)` holds
 the table to `n` and makes the next block start with the size update §4.2
-asks for. `tests/stdlib/http_hpack_test.fern` runs RFC 7541's Appendix C
+asks for. A block can be written field by field instead of from a `Field[]`:
+`e.begin()` starts one (the size update first), `(en).put(name, value,
+sensitive)` writes a field as `encode` would, and `(en).finish()` is the
+`Encoded`; what the serve loop uses, so a response's fields never exist as
+records. `tests/stdlib/http_hpack_test.fern` runs RFC 7541's Appendix C
 both ways, byte for byte, with the table sizes and evictions it shows.
 
 ### `std/http/h2`
@@ -2791,6 +2801,23 @@ builds both on these (`std/serve`).
 let step: h2.Step = h2.server(h2.config());   // step.output: the server's SETTINGS
 step = step.conn.read(received);               // step.events: Request(1, req), ...
 step = step.conn.respond(1, http.ok("hi"));    // step.output: HEADERS, DATA END_STREAM
+```
+
+The client's side is the same state machine: `h2.client(config)` is a new
+connection and the preface and SETTINGS it opens with, `conn.request(out)`
+opens a stream for an `Outgoing` (method, scheme, authority and path as
+the pseudo-header fields, the fields with `host` and the connection-specific
+ones left out, the whole body as DATA under the windows, the trailers after
+it) and answers the stream's id beside the step, -1 once the server has
+sent GOAWAY (`conn.going_away()`), and the response comes back whole as
+`Answered(stream, resp)` with its trailers in `resp.trailers`, a 1xx
+before it stepped over. Push is disabled, so a PUSH_PROMISE closes the
+connection. `std/fetch` speaks it to an origin that chooses `h2` by ALPN.
+
+```fern
+let step: h2.Step = h2.client(h2.config());       // step.output: preface and SETTINGS
+let (sent, stream) = step.conn.request(h2.Outgoing { method: "GET", scheme: "https", authority: "example.test", path: "/", headers: headers.header_map_new(), body: [], trailers: headers.header_map_new() });
+step = sent.conn.read(received);                  // step.events: Answered(stream, resp)
 ```
 
 `Config` holds what the server allows and advertises: `max_concurrent_streams`
@@ -3262,7 +3289,11 @@ points that run a handler under it.
   at once (`max_in_flight`: a handler whose `plat.http` waits on its
   upstream parks, as does a `BodyChunks` producer waiting for its next
   chunk, and the loop serves other connections meanwhile; at the cap the
-  listener is not read until one finishes), how
+  listener is not read until one finishes; the handlers' `plat.http`
+  calls to one `https` origin that chose `h2` share one upstream
+  connection the loop itself drives, each call a stream of its own, so a
+  worker reaches an origin over one connection however many handlers wait
+  on it), how
   many of them one client may hold (`max_connections_per_ip`, counted by
   the peer's address key, `net.peer_key`, and by each worker's loop
   alone: a connection past it is closed as it is accepted, without a
@@ -3627,16 +3658,33 @@ answer is `Result[HttpResponse, FetchError]`.
   `sockets()` is the machine's (the system resolver, `dns.connect_race`,
   `tcp_recv_deadline`), which `send` and `plat.http` use; `std/sim_fetch`
   scripts one in virtual time.
+- **HTTP/2:** an `https` origin that chooses `h2` by ALPN is spoken to
+  over HTTP/2 (`std/http/h2`'s client side): the request on a stream of
+  its own, the response read whole, the connection kept for the next
+  request until the server sends GOAWAY. On a transport of its own, one
+  request at a time goes over a connection and a second request to the
+  same origin while one is in flight dials another, as over HTTP/1.1.
+  Under a serve loop, whose pool carries a `Shared` table
+  (`idle_shared`), the handlers' requests to one origin go over one
+  connection at once: a request is a stream opened on the origin's
+  connection and a `Mail` slot the handler's task parks on, the loop reads
+  the connection's frames and wakes the task when its stream is answered,
+  the first task to an origin opens the connection while the others wait
+  for it, and a connection idle past the pool's bound or sent GOAWAY is
+  closed. An origin offering only `http/1.1`, and every `http` origin, is
+  spoken to as before.
 - **Pool:** a connection whose response was framed (a length or chunked,
   not ended by the close), that the peer did not ask to close, and that
   nothing followed is kept in the transport's `Idle` pool under its host,
   port and route (the open route's connections are never handed to the
-  guarded one). The next idempotent request to the same place takes the
-  connection kept last; a POST always dials, since a kept connection the
-  peer has closed shows itself only after the request is written, and an
-  idempotent request that finds it closed is sent once more on a new one.
-  `idle()` keeps up to 64 connections for 90 s each, `idle_limited(max,
-  idle)` sets both, the second a `Duration`, and `sockets_with(pool)` dials with a given pool.
+  guarded one), as a `Kept` row with its TLS session and, over HTTP/2,
+  the connection's state. The next idempotent request to the same place
+  takes the connection kept last; a POST always dials, since a kept
+  connection the peer has closed shows itself only after the request is
+  written, and an idempotent request that finds it closed is sent once
+  more on a new one. `idle()` keeps up to 64 connections for 90 s each,
+  `idle_limited(max, idle)` sets both, the second a `Duration`, and
+  `sockets_with(pool)` dials with a given pool.
   `send` keeps a pool for the one call (so a redirect back to the same
   origin is followed on its connection) and closes it after; a caller that
   holds a `Sockets` across `send_on` calls reuses across them and closes
