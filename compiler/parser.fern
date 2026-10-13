@@ -10764,12 +10764,15 @@ pub struct MFns {
   // projection on a type parameter (`H::Item`) resolves once substituted.
   impls: ImplInfo[],
   // keep_vars has mono_infer answer a type spelled with a type variable
-  // rather than "", for the bound-comparison rewrite, which reads a template.
+  // rather than "", for bound_rewritten, which reads a template.
   // Instantiation leaves it off: a clone keyed on a variable names nothing.
   keep_vars: boolean,
   // The generic-struct methods monomorphize_structs clones only for a call,
   // as `Base.method`: see wraps_receiver.
   on_call: string[],
+  // The receiver types with a method a claim renamed (`P.B.scale`): only a
+  // bounded variable taken at one of these can call a renamed method.
+  renamed: string[],
 }
 
 // mfns_buckets is the bucket count of the generic index. Prime, and far larger
@@ -10834,7 +10837,20 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
     ghead = ghead.with(bk, k);
     k = k - 1;
   }
-  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, array_concrete: array_concrete, structs: structs, snames: util.name_index(struct_names(structs)), enums: enums, impls: impls, keep_vars: false, on_call: [] };
+  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, array_concrete: array_concrete, structs: structs, snames: util.name_index(struct_names(structs)), enums: enums, impls: impls, keep_vars: false, on_call: [], renamed: renamed_receivers(decls) };
+}
+
+function renamed_receivers(decls: FuncDecl[]): string[] {
+  let out: string[] = [];
+  for fd in decls {
+    if (fd.receiver_name.len() > 0 && derive_simple_name(fd.name) != fd.name) {
+      let base: string = util.base_type_name(fd.receiver_type);
+      if (!util.has_str(out, base)) {
+        out = out.append(base);
+      }
+    }
+  }
+  return out;
 }
 
 // bg_find returns the position in `fns.decls` of the bounded-generic function
@@ -13730,7 +13746,7 @@ function mono_ty_mentions_var(t: string): boolean {
 // a payload that still mentions a type variable. A qualified pattern
 // (`Result.Ok`) is stripped to its bare variant name first.
 function mono_variant_payload_ty(sty: string, vname: string, fns: MFns): string {
-  if (mono_ty_mentions_var(sty)) {
+  if (hides_var(sty, fns)) {
     return "";
   }
   let bare: string = pat_variant_bare(vname);
@@ -13786,7 +13802,7 @@ function mono_arm_env(env: MEnv, pat: ast.Pattern, sty: string, funcs: MFns): ME
       }
       if (pv.at_binding.len() > 0) {
         let aty: string = sty;
-        if (mono_ty_mentions_var(aty)) {
+        if (hides_var(aty, funcs)) {
           aty = "";
         }
         aenv = aenv.ebind(pv.at_binding, aty);
@@ -13836,7 +13852,7 @@ function type_args_of(ty: string): string[] {
 // enum that owns `vname`.
 function mono_variant_field_tys(sty: string, vname: string, fns: MFns): string[] {
   let none: string[] = [];
-  if (sty.len() == 0 || mono_ty_mentions_var(sty)) {
+  if (sty.len() == 0 || hides_var(sty, fns)) {
     return none;
   }
   let base: string = strip_struct_base(sty);
@@ -14570,21 +14586,39 @@ function clone_bg(fd: FuncDecl, key: string, impls: ImplInfo[], reqs: TraitReq[]
   // Without it the clone keeps a `T` naming nothing, so its return resolves
   // to `Option[unknown]` and every reader downstream is left guessing.
   let (btp, bct) = bound_substitutions(fd, tparams, cts, impls);
-  let compared: FuncDecl = FuncDecl { ...fd, body: bound_compared(fd, cts, reqs, funcs) };
-  return instantiate_func(compared, fd.name + "__" + sanitize_key(key), btp, bct, impls);
+  let rewritten: FuncDecl = FuncDecl { ...fd, body: bound_rewritten(fd, cts, reqs, funcs) };
+  return instantiate_func(rewritten, fd.name + "__" + sanitize_key(key), btp, bct, impls);
 }
 
-// ---- comparisons through a bound ----------------------------------------
+// ---- calls and comparisons through a bound -------------------------------
 // `a < b` on two values of a type variable whose bound supplies `cmp` means
 // `a.cmp(b) < 0`, and `a == b` where it supplies `eq` means `a.eq(b)`, in every
 // instance: f64's total order and NaN-equal `eq` included, as the Go checker
 // desugars them. The rewrite is made on the template, where the operands still
 // read as the variable. A variable taken at a type whose native operators
 // agree with its impl keeps the native comparison, which is one instruction.
+//
+// A method called on a value of a bounded variable is the bound's method. The
+// clone spells the receiver at its concrete type, where `v.scale()` names the
+// type's plain `P.scale`. When another trait claimed that name first, the
+// bound's provider was renamed (claim_method_name, flatten's
+// disambiguate_methods), so the call is respelled to it, picked as a dyn
+// dispatch picks its arm.
 
-struct BoundCmp { env: MEnv, funcs: MFns, ord: string[], eq: string[] }
+// `routed` are the variables whose concrete type has a renamed method, with
+// that type's base in `bases` and the variable's bound entries in `traits`.
+struct BoundUse { env: MEnv, funcs: MFns, ord: string[], eq: string[], routed: string[], bases: string[], traits: string[][] }
 
-function bound_compared(fd: FuncDecl, cts: string[], reqs: TraitReq[], funcs: MFns): ast.Stmt[] {
+function bound_rewritten(fd: FuncDecl, cts: string[], reqs: TraitReq[], funcs: MFns): ast.Stmt[] {
+  let ctx: BoundUse = bound_use(fd, cts, reqs, funcs);
+  if (ctx.ord.len() == 0 && ctx.eq.len() == 0 && ctx.routed.len() == 0) {
+    return fd.body;
+  }
+  let (out, after) = bc_body(fd.body, ctx);
+  return out;
+}
+
+function bound_use(fd: FuncDecl, cts: string[], reqs: TraitReq[], funcs: MFns): BoundUse {
   let ord: string[] = [];
   let eq: string[] = [];
   let k: i32 = 0;
@@ -14597,11 +14631,57 @@ function bound_compared(fd: FuncDecl, cts: string[], reqs: TraitReq[], funcs: MF
     }
     k = k + 1;
   }
-  if (ord.len() == 0 && eq.len() == 0) {
-    return fd.body;
+  let (routed, bases, traits) = bound_routes(fd, cts, funcs);
+  return BoundUse { env: env_from_decl(fd), funcs: MFns { ...funcs, keep_vars: true }, ord: ord, eq: eq, routed: routed, bases: bases, traits: traits };
+}
+
+// method_bound_rewritten is bound_rewritten for a generic type's method, cloned
+// at `cts` in the order of `tparams`, the type's variables. Its bounded
+// parameters are the impl's (`impl[T: B] Show for Q[T]`).
+function method_bound_rewritten(m: FuncDecl, tparams: string[], cts: string[], reqs: TraitReq[], funcs: MFns): ast.Stmt[] {
+  let vars: string[] = [];
+  let bounds: string[] = [];
+  let at: string[] = [];
+  let k: i32 = 0;
+  while (k < m.type_params.len() && k < m.bound_traits.len()) {
+    let i: i32 = util.index_of_str(tparams, m.type_params[k]);
+    if (i >= 0 && i < cts.len()) {
+      vars = vars.append(m.type_params[k]);
+      bounds = bounds.append(m.bound_traits[k]);
+      at = at.append(cts[i]);
+    }
+    k = k + 1;
   }
-  let (out, ctx) = bc_body(fd.body, BoundCmp { env: env_from_decl(fd), funcs: MFns { ...funcs, keep_vars: true }, ord: ord, eq: eq });
-  return out;
+  return bound_rewritten(FuncDecl { ...m, type_params: vars, bound_traits: bounds }, at, reqs, funcs);
+}
+
+// bound_routes are the BoundUse routes: the bounded variables taken at a type
+// with a renamed method.
+function bound_routes(fd: FuncDecl, cts: string[], funcs: MFns): (string[], string[], string[][]) {
+  let routed: string[] = [];
+  let bases: string[] = [];
+  let traits: string[][] = [];
+  let k: i32 = 0;
+  while (k < fd.type_params.len() && k < fd.bound_traits.len() && k < cts.len()) {
+    let base: string = util.base_type_name(cts[k]);
+    if (fd.bound_traits[k].len() > 0 && util.has_str(funcs.renamed, base)) {
+      routed = routed.append(fd.type_params[k]);
+      bases = bases.append(base);
+      traits = traits.append(split_plus_bounds(fd.bound_traits[k]));
+    }
+    k = k + 1;
+  }
+  return (routed, bases, traits);
+}
+
+// bound_method is the method a receiver spelled `ty` calls for `m`: the bound's
+// provider when `ty` is a routed variable, else `m`.
+function bound_method(ty: string, m: string, ctx: BoundUse): string {
+  let k: i32 = util.index_of_str(ctx.routed, ty);
+  if (k < 0) {
+    return m;
+  }
+  return dyn_provider_name(ctx.funcs.decls, ctx.bases[k], ctx.traits[k], m);
 }
 
 // bound_supplies reports whether a `+`-joined bound, its supertraits
@@ -14628,9 +14708,9 @@ function native_eq_agrees(t: string): boolean {
 }
 
 // Each statement list owns its scope: a binding it makes is gone after it.
-function bc_body(stmts: ast.Stmt[], ctx: BoundCmp): (ast.Stmt[], BoundCmp) {
+function bc_body(stmts: ast.Stmt[], ctx: BoundUse): (ast.Stmt[], BoundUse) {
   let out: ast.Stmt[] = [];
-  let cur: BoundCmp = ctx;
+  let cur: BoundUse = ctx;
   for stmt in stmts {
     let (ns, na, nh) = astwalk.map_stmt_acc(stmt, cur, bc_stmt, bc_expr);
     out = out.append(ns);
@@ -14639,14 +14719,14 @@ function bc_body(stmts: ast.Stmt[], ctx: BoundCmp): (ast.Stmt[], BoundCmp) {
   return (out, ctx);
 }
 
-function bc_rewrite(e: ast.Expr, ctx: BoundCmp): ast.Expr {
+function bc_rewrite(e: ast.Expr, ctx: BoundUse): ast.Expr {
   let (out, a, h) = astwalk.map_expr_acc(e, ctx, bc_stmt, bc_expr);
   return out;
 }
 
 // bc_stmt binds what a statement declares the way mono_stmt does, with the
 // variable still spelled, and walks the blocks it opens in scopes of their own.
-function bc_stmt(st: ast.Stmt, ctx: BoundCmp): (ast.Stmt, BoundCmp, boolean) {
+function bc_stmt(st: ast.Stmt, ctx: BoundUse): (ast.Stmt, BoundUse, boolean) {
   match (st) {
     ast.StmtVar(v) => {
       let ty: string = fn_tag_spelling(v.type_name, v.fn_ret, v.fn_param_types);
@@ -14654,7 +14734,7 @@ function bc_stmt(st: ast.Stmt, ctx: BoundCmp): (ast.Stmt, BoundCmp, boolean) {
         ty = mono_infer(v.init, ctx.env, ctx.funcs);
       }
       let bound: MEnv = menv_bind_destructure(ctx.env.ebind(v.name, ty), v.name, ty);
-      return (ast.StmtVar { ...v, init: bc_rewrite(v.init, ctx) }, BoundCmp { ...ctx, env: bound }, true);
+      return (ast.StmtVar { ...v, init: bc_rewrite(v.init, ctx) }, BoundUse { ...ctx, env: bound }, true);
     },
     ast.StmtIf(f) => {
       let (tb, ta) = bc_body(f.then_body, ctx);
@@ -14671,14 +14751,14 @@ function bc_stmt(st: ast.Stmt, ctx: BoundCmp): (ast.Stmt, BoundCmp, boolean) {
       if (type_ends_arr(ity)) {
         ety = elem_spelling(ity);
       }
-      let (fb, fa) = bc_body(fr.body, BoundCmp { ...ctx, env: ctx.env.ebind(fr.var_name, ety) });
+      let (fb, fa) = bc_body(fr.body, BoundUse { ...ctx, env: ctx.env.ebind(fr.var_name, ety) });
       return (ast.StmtFor { ...fr, iter: bc_rewrite(fr.iter, ctx), body: fb }, ctx, true);
     },
     ast.StmtMatch(m) => {
       let sty: string = mono_infer(m.scrutinee, ctx.env, ctx.funcs);
       let arms: ast.MatchArm[] = [];
       for arm in m.arms {
-        let actx: BoundCmp = BoundCmp { ...ctx, env: mono_arm_env(ctx.env, arm.pattern, sty, ctx.funcs) };
+        let actx: BoundUse = BoundUse { ...ctx, env: mono_arm_env(ctx.env, arm.pattern, sty, ctx.funcs) };
         let (ab, aa) = bc_body(arm.body, actx);
         let g: ast.Expr = arm.guard;
         if (arm.has_guard) {
@@ -14696,16 +14776,19 @@ function bc_stmt(st: ast.Stmt, ctx: BoundCmp): (ast.Stmt, BoundCmp, boolean) {
 }
 
 // bc_expr spells a comparison of two values of a rewritten variable as the
-// bound's method, after its operands, and walks a lambda with its parameters
-// bound.
-function bc_expr(e: ast.Expr, ctx: BoundCmp): (ast.Expr, BoundCmp, boolean) {
+// bound's method, and a routed variable's method call as the bound's provider,
+// after their operands, and walks a lambda with its parameters bound.
+function bc_expr(e: ast.Expr, ctx: BoundUse): (ast.Expr, BoundUse, boolean) {
   match (e) {
     ast.ExprLambda(lm) => {
-      let (lb, la) = bc_body(lm.body, BoundCmp { ...ctx, env: bind_params(ctx.env, lm.params) });
+      let (lb, la) = bc_body(lm.body, BoundUse { ...ctx, env: bind_params(ctx.env, lm.params) });
       return (ast.ExprLambda { ...lm, body: lb }, ctx, true);
     },
     ast.ExprBinary(b) => {
       return (bc_binary(b, ctx), ctx, true);
+    },
+    ast.ExprCall(c) => {
+      return (bc_call(c, ctx), ctx, true);
     },
     _ => {
       return (e, ctx, false);
@@ -14714,7 +14797,7 @@ function bc_expr(e: ast.Expr, ctx: BoundCmp): (ast.Expr, BoundCmp, boolean) {
   return (e, ctx, false);
 }
 
-function bc_binary(b: ast.ExprBinary, ctx: BoundCmp): ast.Expr {
+function bc_binary(b: ast.ExprBinary, ctx: BoundUse): ast.Expr {
   let left: ast.Expr = bc_rewrite(b.left, ctx);
   let right: ast.Expr = bc_rewrite(b.right, ctx);
   // Both operands of a comparison have one type, so either side names it.
@@ -14724,15 +14807,31 @@ function bc_binary(b: ast.ExprBinary, ctx: BoundCmp): ast.Expr {
   }
   if (util.has_str(["<", "<=", ">", ">="], b.op) && str_list_contains(ctx.ord, lt)) {
     let zero: ast.Expr = ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: b.line, col: b.col };
-    return ast.ExprBinary { ...b, left: dv_call1(left, "cmp", right), right: zero };
+    return ast.ExprBinary { ...b, left: dv_call1(left, bound_method(lt, "cmp", ctx), right), right: zero };
   }
   if (b.op == "==" && str_list_contains(ctx.eq, lt)) {
-    return dv_call1(left, "eq", right);
+    return dv_call1(left, bound_method(lt, "eq", ctx), right);
   }
   if (b.op == "!=" && str_list_contains(ctx.eq, lt)) {
-    return ast.ExprUnary { op: "!", operand: dv_call1(left, "eq", right), line: b.line, col: b.col, ty: "" };
+    return ast.ExprUnary { op: "!", operand: dv_call1(left, bound_method(lt, "eq", ctx), right), line: b.line, col: b.col, ty: "" };
   }
   return ast.ExprBinary { ...b, left: left, right: right };
+}
+
+function bc_call(c: ast.ExprCall, ctx: BoundUse): ast.Expr {
+  let args: ast.Expr[] = [];
+  for a in c.args {
+    args = args.append(bc_rewrite(a, ctx));
+  }
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    let field: string = fa.field;
+    if (ctx.routed.len() > 0) {
+      field = bound_method(mono_infer(fa.obj, ctx.env, ctx.funcs), field, ctx);
+    }
+    let callee: ast.Expr = ast.ExprFieldAccess { ...fa, obj: bc_rewrite(fa.obj, ctx), field: field };
+    return ast.ExprCall { ...c, callee: callee, args: args };
+  }
+  return ast.ExprCall { ...c, callee: bc_rewrite(c.callee, ctx), args: args };
 }
 
 // instantiate_func is `fd` renamed to `name` with each of `tparams` replaced by
@@ -16956,10 +17055,11 @@ function ms_func(fn: FuncDecl, gstructs: StructDecl[], funcs: MFns, ins: Insts):
 // struct's method (a @derive-synthesised one with a bare `Box` receiver,
 // or a parametric-`impl` one with a `Box[T]` receiver + type params),
 // substituting the type variables and re-pointing receiver/params/return
-// at the mangled clone name. The body's `let T` annotations are
-// substituted; its literal display strings (baked from the original
-// struct's name at synth time) stay intact.
-function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: StructDecl[], structs: StructDecl[], enums: EnumDecl[], ins: Insts): FRes {
+// at the mangled clone name. The body reads through its impl's bounds
+// (method_bound_rewritten) and its `let T` annotations are substituted; its
+// literal display strings (baked from the original struct's name at synth
+// time) stay intact.
+function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: StructDecl[], mod: Module, funcs: MFns, ins: Insts): FRes {
   // The variables are the receiver's own spelling (`Pair[X, Y]`) when it has
   // one; a derived method's bare `Box` receiver falls back to the STRUCT's
   // (not the method's, which a synthesized default() leaves empty).
@@ -16968,7 +17068,7 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
   if (gsi >= 0) {
     tparams = gstructs[gsi].type_params;
   }
-  let cts: string[] = split_key(key, tparams.len(), structs, enums);
+  let cts: string[] = split_key(key, tparams.len(), mod.structs, mod.enums);
   let spelled: string[] = struct_receiver_typevars(m.receiver_type);
   if (spelled.len() == cts.len()) {
     tparams = spelled;
@@ -16996,7 +17096,7 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
   let rl: TyIns = to_concrete_struct_ty_list(subst_ty_list(m.ret_fn_param_types, tparams, cts), base, mang, gstructs, rr.mins);
   let notp: string[] = [];
   return FRes {
-    ffn: FuncDecl { ...m, receiver_type: mang, type_params: notp, all_type_params: [], params: nparams, ret_type: rt.ty, ret_fn_ret: rr.ty, ret_fn_param_types: rl.ty, body: subst_stmts(m.body, tparams, cts), bound_traits: [] },
+    ffn: FuncDecl { ...m, receiver_type: mang, type_params: notp, all_type_params: [], params: nparams, ret_type: rt.ty, ret_fn_ret: rr.ty, ret_fn_param_types: rl.ty, body: subst_stmts(method_bound_rewritten(m, tparams, cts, mod.trait_reqs, funcs), tparams, cts), bound_traits: [] },
     fins: rl.mins,
   };
 }
@@ -17085,7 +17185,7 @@ function struct_named(structs: StructDecl[], name: string): boolean {
 
 // A method of a generic struct clone, its body rewritten against the clone.
 function ms_clone_method(mm: FuncDecl, key: string, gstructs: StructDecl[], mod: Module, sfns: MFns, ins: Insts): FRes {
-  let cr: FRes = clone_struct_method(mm, strip_struct_base(mm.receiver_type), key, gstructs, mod.structs, mod.enums, ins);
+  let cr: FRes = clone_struct_method(mm, strip_struct_base(mm.receiver_type), key, gstructs, mod, sfns, ins);
   let clm: FuncDecl = cr.ffn;
   let menv: MEnv = env_from_decl(clm);
   let mr: RStmts = mono_stmts(clm.body, menv, sfns, cr.fins, fn_tag_spelling(clm.ret_type, clm.ret_fn_ret, clm.ret_fn_param_types));
@@ -18779,7 +18879,7 @@ function clone_enum_method(m: FuncDecl, ed: EnumDecl, cts: string[], mname: stri
   if (m.receiver_name.len() > 0) {
     menv = menv.ebind(m.receiver_name, recv);
   }
-  let mb: RStmts = mono_stmts(subst_stmts(m.body, tps, cts), menv, efns, cur, fn_tag_spelling(rt, rfr, rfps));
+  let mb: RStmts = mono_stmts(subst_stmts(method_bound_rewritten(m, tps, cts, mod.trait_reqs, efns), tps, cts), menv, efns, cur, fn_tag_spelling(rt, rfr, rfps));
   let rb: RStmts = me_stmts(mb.rstmts, env, rt, mod.enums, mod.structs, efns, mb.rins3);
   let notp: string[] = [];
   let fn: FuncDecl = FuncDecl {

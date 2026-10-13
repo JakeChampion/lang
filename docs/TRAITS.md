@@ -375,6 +375,14 @@ is the existing monomorphise-then-recheck loop, plus a first-pass rule
 that says "a method call on a trait-bound type param type-checks against
 the trait and is left for the recheck."
 
+Step 3 reaches the concrete type's plain method, which is the wrong one when
+two traits each provide that name for the type. The self-host emits the later
+provider renamed (`P.B.scale` by `parser.claim_method_name`, `i32.__entry.add`
+across modules by `flatten.disambiguate_methods`), so its monomorphiser
+respells a bounded call on the template, before substituting, to the bound's
+provider, chosen as a `dyn` dispatch chooses its arm (`parser.bound_rewritten`
+for a bounded generic's clone and a bounded impl's method alike; #12277).
+
 A parameter typed by a trait (`f(d: Driver)`) is shorthand for a bounded type
 parameter, desugared before type checking into `f[T_d: Driver](d: T_d)`: one
 fresh parameter per such parameter, named after it, bounded by the trait as
