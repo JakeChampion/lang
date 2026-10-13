@@ -2707,6 +2707,42 @@ function routes(): Result[router.Router[platform.Host], router.RouteError] {
   that produces a value gives it to `next`, and the handler behind it takes
   it as a parameter (`tests/stdlib/http_router_test.fern`).
 
+### `std/http/hpack`
+
+HPACK, the header compression of HTTP/2 (RFC 7541), as two values a
+connection threads through its frames: a `Decoder` turns a header block
+into `Field`s and an `Encoder` turns fields into one, each keeping the
+dynamic table the other side mirrors.
+
+```fern
+let d: hpack.Decoder = hpack.decoder(4096, 65536);
+let got: hpack.Decoded = d.decode(block)?;         // got.fields, got.decoder
+let e: hpack.Encoder = hpack.encoder(4096);
+let out: hpack.Encoded = e.encode([hpack.field(":status", "200"), hpack.sensitive("set-cookie", "s=1")]);
+```
+
+`decoder(max_table, max_list)` takes the table size the local
+SETTINGS_HEADER_TABLE_SIZE allows the peer and the bytes one block may
+decode to, counted as SETTINGS_MAX_HEADER_LIST_SIZE counts them (name,
+value and 32 per field); `with_max_fields(n)` caps the count (256 by
+default) and `with_max_table(n)` follows a settings change. A block is
+refused (`HpackError`: `Truncated`, `BadIndex`, `BadInteger`,
+`BadHuffman`, `BadSizeUpdate`, `TooLarge`, `TooMany`) when it ends inside
+a field, indexes past the tables, carries a size update after a field or
+above the settings, or would decode past the caps: a Huffman string is
+counted as it decodes, so a block that would expand past the cap stops
+before it has (the header-bomb class). The error is the connection's;
+HTTP/2 answers COMPRESSION_ERROR.
+
+`encoder(max_table)` indexes a field the static or dynamic table holds,
+names one whose name it holds, adds a literal to the table unless it is
+`sensitive(name, value)` (never indexed, so a value cannot be probed from
+the table), and Huffman-codes a string when the coding is no longer than
+the bytes (`without_huffman()` turns that off). `with_max_table(n)` holds
+the table to `n` and makes the next block start with the size update §4.2
+asks for. `tests/stdlib/http_hpack_test.fern` runs RFC 7541's Appendix C
+both ways, byte for byte, with the table sizes and evictions it shows.
+
 ### `std/http/sse`
 
 Server-sent events, the `text/event-stream` of the WHATWG HTML standard:

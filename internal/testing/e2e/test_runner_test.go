@@ -1189,6 +1189,13 @@ func TestRunnerHTTPRouterExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "http_router", "std/http/router", 8)
 }
 
+// `tests/stdlib/http_hpack_test.fern` runs RFC 7541's Appendix C through
+// std/http/hpack both ways, with the table sizes and evictions the RFC
+// shows, and holds a decoder to its list, field and table-size bounds.
+func TestRunnerHTTPHpackExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_hpack", "std/http/hpack", 9)
+}
+
 // `tests/stdlib/http_form_test.fern` reads a urlencoded body as its fields
 // and refuses another media type and a body that is not UTF-8.
 func TestRunnerHTTPCookieExamplePasses(t *testing.T) {
