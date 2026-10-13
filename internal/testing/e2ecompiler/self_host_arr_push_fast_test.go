@@ -12,8 +12,9 @@ import (
 // An append that fits and may mutate its receiver runs in __fern_arr_push's
 // frameless head; everything else (a full receiver, a shared one, and every
 // append under the sanitizer, which checks the count first) takes the framed
-// body, except an empty receiver with no capacity, which x86-64 grows to four
-// slots before building one. The program drives each path: appends to the
+// body, except an empty receiver with no capacity, which grows to four slots
+// before building one, popping the four-slot class itself and calling the box
+// shim only when that class is empty. The program drives each path: appends to the
 // immortal empty literal, in place and growing, to a literal that already
 // holds elements, and to an alias, which must copy and leave the original
 // alone.
@@ -95,10 +96,17 @@ func TestSelfHostArrPushFastPath(t *testing.T) {
 					t.Errorf("%s: %s's head does not append in place:\n%s", target, label, head)
 				}
 			}
-			if target == "x86-64-linux" && !san {
+			if !san {
+				pop := map[string]string{"x86-64-linux": "movq 56(%rcx), %rax", "arm64-linux": "ldr x3, [x2, #56]"}[target]
+				boxCall := map[string]string{"x86-64-linux": "call __fern_arr_box", "arm64-linux": "bl __fern_arr_box"}[target]
 				empty := arrPushHead(t, string(asm), ".Larr_push_slow")
-				if !strings.Contains(empty, "call __fern_arr_box") || strings.Contains(empty, "pushq %rbp") {
-					t.Errorf("%s: an empty receiver does not grow before the slow path's frame:\n%s", target, empty)
+				if !strings.Contains(empty, pop) || frame[target].MatchString(empty) || strings.Contains(empty, boxCall) {
+					t.Errorf("%s: an empty receiver does not pop its four-slot class before the slow path's frame:\n%s", target, empty)
+				}
+				slow := string(asm)[strings.Index(string(asm), ".Larr_push_slow:\n"):]
+				slow = slow[:strings.Index(slow, ".Larr_push_frame:")]
+				if !strings.Contains(slow, boxCall) {
+					t.Errorf("%s: an empty receiver has no box call for an empty class:\n%s", target, slow)
 				}
 			}
 		}
