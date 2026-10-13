@@ -215,7 +215,7 @@ aarch64/sort_ints.ir	32514646
 aarch64/sort_strings.text	4413
 aarch64/sort_strings.ir	106027235
 aarch64/string_build.text	3382
-aarch64/string_build.ir	90437666
+aarch64/string_build.ir	89302766
 aarch64/string_count_byte.text	2999
 aarch64/string_count_byte.ir	295398919
 aarch64/string_find_byte.text	3424
@@ -227,7 +227,7 @@ aarch64/string_scan.ir	60275834
 aarch64/string_slice.text	939
 aarch64/string_slice.ir	43620043
 aarch64/struct_drop.text	3563
-aarch64/struct_drop.ir	357740825
+aarch64/struct_drop.ir	349820825
 aarch64/tokenize.text	1195
 aarch64/tokenize.ir	38580038
 aarch64/utf8_ingest_unchecked.text	9534
