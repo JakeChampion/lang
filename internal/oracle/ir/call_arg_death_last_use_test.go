@@ -168,7 +168,8 @@ function in_loop_live(s: St, n: i32): i32 {
 // The two-statement self-reassign inside a loop. It is loop-safe for the same
 // reason the one-statement form is: the store at the end of the body means the
 // next iteration reads the value this one produced, never the buffer the
-// callee grew.
+// callee grew. a dies at its read too: the body binds it anew on every pass
+// (#12260).
 function in_loop(s: St, n: i32): St {
     let i: i32 = 0;
     while (i < n) {
@@ -252,7 +253,7 @@ function main(): i32 { return chain(mk(), 1).ctrl + param_last(mk()) + read_afte
 		"nested_twice":    "",
 		"in_loop_live":    "",
 		// The two-statement self-reassign, inside a loop and still admitted.
-		"in_loop":        "s",
+		"in_loop":        "a,s",
 		"twice_in_call":  "s",
 		"lambda_capture": "s",
 		// `s` still dies at its own call; `a` does not, because pair has

@@ -270,6 +270,16 @@ function f(): i32 {
     xs = ys;
     return xs.len();
 }`},
+		{"declared-in-the-loop-body", `
+function mk(n: i32): i32[] { return [n]; }
+function f(): i32 {
+    let n: i32 = 0;
+    while (n < 3) {
+        let xs: i32[] = mk(n);
+        n = n + consume(xs);
+    }
+    return n;
+}`},
 	} {
 		wantOK(t, tc.name, ownConsumer+tc.body)
 	}
@@ -291,6 +301,17 @@ function f(): i32 {
     let xs: i32[] = mk();
     let n: i32 = 0;
     while (n < 3) { n = n + consume(xs); }
+    return n;
+}`},
+		{"declared-in-an-outer-loop", `
+function mk(n: i32): i32[] { return [n]; }
+function f(): i32 {
+    let n: i32 = 0;
+    while (n < 3) {
+        let xs: i32[] = mk(n);
+        while (n < 2) { n = n + consume(xs); }
+        n = n + 1;
+    }
     return n;
 }`},
 		{"read-by-a-defer", `

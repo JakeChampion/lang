@@ -4854,7 +4854,8 @@ function ir_f2u_sat_rax(width: i32, lb: string, d: string): string {
 // the two rows gives the right row everywhere. vpshufb looks up within each
 // 128-bit lane, so every table is broadcast to both. The set operand is popped
 // and not read. %r11 holds the tables, %r9 the block cursor against %r10, the
-// last address a 16-byte block can start at.
+// last address a 16-byte block can start at. A set that is a range or a few
+// bytes skips the tables for a cheaper test (asmcore.scan_set_shape).
 function emit_scan_set_blocks(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let names: string[] = [];
   while (names.len() < 9) {
@@ -4884,14 +4885,20 @@ function emit_scan_set_blocks(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState
   s = s.write(l_from_ok + ":\n    leaq " + tables + "(%rip), %r11\n");
   s = s.write("    leaq (%rax,%rcx), %r9\n    leaq -16(%rax,%r8), %r10\n");
   s = s.write("    cmpq %r10, %r9\n    jg " + l_tail + "\n");
-  s = s.write("    vbroadcasti128 (%r11), %ymm2\n    vbroadcasti128 16(%r11), %ymm3\n    vbroadcasti128 32(%r11), %ymm4\n");
-  s = s.write("    vbroadcasti128 48(%r11), %ymm5\n    vbroadcasti128 64(%r11), %ymm6\n    vbroadcasti128 80(%r11), %ymm7\n");
+  let shape: asmcore.ScanShape = asmcore.scan_set_shape(o.str);
+  s = s.write(scan_set_setup(shape));
   s = s.write(l_loop + ":\n    leaq 16(%r9), %rdx\n    cmpq %r10, %rdx\n    jg " + l_half + "\n");
-  s = s.write("    vmovdqu (%r9), %ymm0\n" + scan_set_classify("ymm") + "    vpmovmskb %ymm1, %edx\n");
+  s = s.write("    vmovdqu (%r9), %ymm0\n" + scan_set_classify(shape, "ymm") + "    vpmovmskb %ymm1, %edx\n");
+  if (shape.invert) {
+    s = s.write("    notl %edx\n");
+  }
   s = s.write("    testl %edx, %edx\n    jnz " + l_hit16 + "\n");
   s = s.write("    addq $32, %r9\n    jmp " + l_loop + "\n");
   s = s.write(l_half + ":\n    cmpq %r10, %r9\n    jg " + l_rest + "\n");
-  s = s.write("    vmovdqu (%r9), %xmm0\n" + scan_set_classify("xmm") + "    vpmovmskb %xmm1, %edx\n");
+  s = s.write("    vmovdqu (%r9), %xmm0\n" + scan_set_classify(shape, "xmm") + "    vpmovmskb %xmm1, %edx\n");
+  if (shape.invert) {
+    s = s.write("    xorl $65535, %edx\n");
+  }
   s = s.write("    testl %edx, %edx\n    jnz " + l_hit16 + "\n    addq $16, %r9\n");
   s = s.write(l_rest + ":\n    vzeroupper\n    movq %r9, %rcx\n    subq %rax, %rcx\n    jmp " + l_tail + "\n");
   s = s.write(l_hit16 + ":\n    vzeroupper\n    bsfl %edx, %edx\n    subq %rax, %r9\n    addq %rdx, %r9\n");
@@ -4905,9 +4912,48 @@ function emit_scan_set_blocks(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState
   return s.write(l_done + ":\n");
 }
 
+// scan_set_setup loads what scan_set_classify reads for `shape` into
+// %ymm2 onwards: the six nibble tables, or each of the shape's bytes broadcast.
+function scan_set_setup(shape: asmcore.ScanShape): string {
+  if (shape.nibble) {
+    return "    vbroadcasti128 (%r11), %ymm2\n    vbroadcasti128 16(%r11), %ymm3\n    vbroadcasti128 32(%r11), %ymm4\n"
+      + "    vbroadcasti128 48(%r11), %ymm5\n    vbroadcasti128 64(%r11), %ymm6\n    vbroadcasti128 80(%r11), %ymm7\n";
+  }
+  let r: string = "";
+  let j: i32 = 0;
+  while (j < shape.bytes.len()) {
+    r = r + "    vpbroadcastb " + util.i32_to_string(352 + j) + "(%r11), %ymm" + util.i32_to_string(2 + j) + "\n";
+    j = j + 1;
+  }
+  return r;
+}
+
 // scan_set_classify sets each byte lane of %<w>1 to all-ones where the lane of
-// %<w>0 is a member, from the tables emit_scan_set_blocks loads into %<w>2-7.
-function scan_set_classify(w: string): string {
+// %<w>0 passes the shape's test, from what scan_set_setup loaded into %<w>2
+// onwards; an inverted shape's members are the lanes left zero.
+function scan_set_classify(shape: asmcore.ScanShape, w: string): string {
+  if (shape.nibble) {
+    return scan_set_classify_nibble(w);
+  }
+  let r: string = "";
+  let j: i32 = 0;
+  if (shape.range) {
+    r = "    vpsubb %" + w + "2, %" + w + "0, %" + w + "1\n    vpminub %" + w + "3, %" + w + "1, %" + w + "8\n"
+      + "    vpcmpeqb %" + w + "8, %" + w + "1, %" + w + "1\n";
+    j = 2;
+  } else {
+    r = "    vpcmpeqb %" + w + "2, %" + w + "0, %" + w + "1\n";
+    j = 1;
+  }
+  while (j < shape.bytes.len()) {
+    r = r + "    vpcmpeqb %" + w + util.i32_to_string(2 + j) + ", %" + w + "0, %" + w + "8\n    vpor %" + w + "8, %" + w + "1, %" + w + "1\n";
+    j = j + 1;
+  }
+  return r;
+}
+
+// scan_set_classify_nibble is the nibble-table test (asmcore.scan_set_tables).
+function scan_set_classify_nibble(w: string): string {
   let r: string = "    vpand %" + w + "5, %" + w + "0, %" + w + "1\n";
   r = r + "    vpxor %" + w + "6, %" + w + "0, %" + w + "8\n    vpand %" + w + "5, %" + w + "8, %" + w + "8\n";
   r = r + "    vpshufb %" + w + "1, %" + w + "2, %" + w + "9\n";
