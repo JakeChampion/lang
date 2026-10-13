@@ -107,7 +107,7 @@ x86_64/tokenize.text	984
 x86_64/tokenize.ir	36950039
 x86_64/utf8_ingest_unchecked.text	9286
 x86_64/utf8_ingest_unchecked.ir	2961675
-x86_64/utf8_ingest_validated.text	9630
+x86_64/utf8_ingest_validated.text	9532
 x86_64/utf8_ingest_validated.ir	6075683
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
