@@ -60,17 +60,17 @@ function main(): i32 {
 }`
 
 var shapeLabelRe = regexp.MustCompile(`(?m)^(\.S\d+): \.ascii "([^"]*)"`)
-var shapeLoadRe = regexp.MustCompile(`leaq (\.S\d+)\(%rip\)`)
+var shapeTestRe = regexp.MustCompile(`cmpq \$(\.S\d+), `)
 
-// variantTests counts, per variant name, the shape addresses `body` loads
-// to compare a box's shape against.
+// variantTests counts, per variant name, the shapes `body` compares a box's
+// shape word against.
 func variantTests(asm, body string) map[string]int {
 	names := map[string]string{}
 	for _, m := range shapeLabelRe.FindAllStringSubmatch(asm, -1) {
 		names[m[1]] = m[2]
 	}
 	out := map[string]int{}
-	for _, m := range shapeLoadRe.FindAllStringSubmatch(body, -1) {
+	for _, m := range shapeTestRe.FindAllStringSubmatch(body, -1) {
 		out[names[m[1]]]++
 	}
 	return out
