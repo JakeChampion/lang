@@ -49,17 +49,17 @@ function main(): i32 { let xs: i32[] = [1, 2, 3]; return iter.count_by(iter.of(x
 	// flat_map (named fn returning an array).
 	{"flat_map", `import "core/iter";
 function dup(x: i32): i32[] { return [x, x]; }
-function main(): i32 { let xs: i32[] = [1, 2]; let ys: i32[] = iter.flat_map(iter.of(xs), dup); return ys.len(); }`},
+function main(): i32 { let xs: i32[] = [1, 2]; let ys: i32[] = iter.of(xs).flat_map(dup).collect(); return ys.len(); }`},
 	// enumerate / zip → tuple-array collectors.
 	{"enumerate", `import "core/iter";
 function main(): i32 { let xs: i32[] = [5, 6, 7]; let ys: (i32, i32)[] = iter.of(xs).enumerate().collect(); return ys.len(); }`},
 	{"zip", `import "core/iter";
 function main(): i32 { let a: i32[] = [1, 2]; let b: i32[] = [3, 4]; let ys: (i32, i32)[] = iter.of(a).zip(iter.of(b)).collect(); return ys.len(); }`},
-	// take / skip → array collectors.
+	// take / skip, collected.
 	{"take", `import "core/iter";
 function main(): i32 { let xs: i32[] = [1, 2, 3, 4]; let ys: i32[] = iter.of(xs).take(2).collect(); return ys.len(); }`},
 	{"skip", `import "core/iter";
-function main(): i32 { let xs: i32[] = [1, 2, 3, 4]; let ys: i32[] = iter.skip(iter.of(xs), 2); return ys.len(); }`},
+function main(): i32 { let xs: i32[] = [1, 2, 3, 4]; let ys: i32[] = iter.of(xs).skip(2).collect(); return ys.len(); }`},
 	// nth / last → Option in match scrutinee (no fn-value, but match-scrutinee).
 	{"nth", `import "core/iter";
 function main(): i32 { let xs: i32[] = [1, 2, 3, 4]; match (iter.nth(iter.of(xs), 2)) { Some(v) => { return v; }, None => { return 0; } } }`},

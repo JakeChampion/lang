@@ -36,13 +36,15 @@ function main(): i32 { let xs: i32[] = [1, 2, 3, 4]; return iter.product(iter.of
 	// The Iterator trait's count method over ArrayIter[i32]; yields 5.
 	{"count", `import "core/iter";
 function main(): i32 { let xs: i32[] = [1, 2, 3, 4, 5]; return iter.of(xs).count(); }`},
-	// skip[T, I: Iterator[T]]: T erased, returns T[]; skipping none collects
+	// rest[T, I: Iterator[T]]: T only in the bound, returns T[]; it collects
 	// the whole array, len 3.
-	{"skip-len", `import "core/iter";
-function main(): i32 { let xs: i32[] = [9, 8, 7]; let ys: i32[] = iter.skip(iter.of(xs), 0); return ys.len(); }`},
-	// skip element fidelity: ys[1] == 8.
-	{"skip-elem", `import "core/iter";
-function main(): i32 { let xs: i32[] = [9, 8, 7]; let ys: i32[] = iter.skip(iter.of(xs), 0); return ys[1]; }`},
+	{"rest-len", `import "core/iter";
+function rest[T, I: iter.Iterator[T]](it: I): T[] { return it.collect(); }
+function main(): i32 { let xs: i32[] = [9, 8, 7]; let ys: i32[] = rest(iter.of(xs)); return ys.len(); }`},
+	// rest element fidelity: ys[1] == 8.
+	{"rest-elem", `import "core/iter";
+function rest[T, I: iter.Iterator[T]](it: I): T[] { return it.collect(); }
+function main(): i32 { let xs: i32[] = [9, 8, 7]; let ys: i32[] = rest(iter.of(xs)); return ys[1]; }`},
 	// sum over a Range iterator (the non-generic Iterator impl) still routes IR:
 	// 1+2+3+4 = 10.
 	{"range-sum", `import "core/iter";

@@ -5,7 +5,7 @@
 // the self-hosted compiler's IR path: parametrised-trait bounds parse on the
 // self-host (#3558) and the native checker recovers a bound-only type parameter
 // by bound-driven inference (#3596), so a fully-generic free function such as
-// `skip[T, I: Iterator[T]]: T[]` works on every backend. The numeric reducers
+// `nth[T, I: Iterator[T]]: Option[T]` works on every backend. The numeric reducers
 // are bounded on std/num's operator traits (`sum[T: Add + Zero]`,
 // `product[T: Mul + One]`) and the comparing ones on core/cmp's `Ord` / `Eq`,
 // so they work for every element type.
@@ -47,6 +47,13 @@ pub trait Iterator[T] {
   }
   function take(self: Self, n: i32): Taken[Self, T] {
     return Taken[Self, T] { it: self, left: n };
+  }
+  function skip(self: Self, n: i32): Skipped[Self, T] {
+    return Skipped[Self, T] { it: self, left: n };
+  }
+  function flat_map[U](self: Self, f: (T) => U[]): FlatMapped[Self, T, U] {
+    let none: U[] = [];
+    return FlatMapped[Self, T, U] { it: self, f: f, ys: none, at: 0 };
   }
   function enumerate(self: Self): Enumerated[Self, T] {
     return Enumerated[Self, T] { it: self, at: 0 };
@@ -189,6 +196,57 @@ impl[I: Iterator[T], T] Iterator[T] for Taken[I, T] {
         return None;
       }
     }
+  }
+}
+
+// Skipped yields the values of `it` past its first `left`; all of them when
+// `left` is at or below zero.
+pub struct Skipped[I, T] { it: I, left: i32 }
+
+impl[I: Iterator[T], T] Iterator[T] for Skipped[I, T] {
+  function next(self: Skipped[I, T]): Option[(T, Skipped[I, T])] {
+    let cur: I = self.it;
+    let left: i32 = self.left;
+    while (true) {
+      match (cur.next()) {
+        Some(t) => {
+          if (left <= 0) {
+            return Some((t.0, Skipped[I, T] { it: t.1, left: 0 }));
+          }
+          left = left - 1;
+          cur = t.1;
+        },
+        None => {
+          return None;
+        }
+      }
+    }
+    return None;
+  }
+}
+
+// FlatMapped yields, for each value `v` of `it`, the values of `f(v)` in
+// order: `ys` is the array being read and `at` the next index in it.
+pub struct FlatMapped[I, T, U] { it: I, f: (T) => U[], ys: U[], at: i32 }
+
+impl[I: Iterator[T], T, U] Iterator[U] for FlatMapped[I, T, U] {
+  function next(self: FlatMapped[I, T, U]): Option[(U, FlatMapped[I, T, U])] {
+    let cur: I = self.it;
+    let ys: U[] = self.ys;
+    let at: i32 = self.at;
+    while (at >= ys.len()) {
+      match (cur.next()) {
+        Some(t) => {
+          ys = self.f(t.0);
+          at = 0;
+          cur = t.1;
+        },
+        None => {
+          return None;
+        }
+      }
+    }
+    return Some((ys[at], FlatMapped[I, T, U] { it: cur, f: self.f, ys: ys, at: at + 1 }));
   }
 }
 
@@ -355,58 +413,6 @@ pub function count_by[T, I: Iterator[T]](it: I, pred: (T) => boolean): i32 {
     }
   }
   return n;
-}
-
-// flat_map applies `f` to every value (each producing a `U[]`) and concatenates
-// the results into one fresh `U[]`, in order — `map` followed by a flatten. The
-// "expand each element to zero-or-more" transform (return `[]` to drop a value,
-// a multi-element array to fan it out). Generic over the element type `T` and the
-// per-element result element type `U`.
-pub function flat_map[T, U, I: Iterator[T]](it: I, f: (T) => U[]): U[] {
-  let out: U[] = [];
-  let cur = it;
-  let go = true;
-  while (go) {
-    match (cur.next()) {
-      Some(t) => {
-        let ys = f(t.0);
-        for y in ys {
-          out = out.append(y);
-        }
-        cur = t.1;
-      },
-      None => {
-        go = false;
-      }
-    }
-  }
-  return out;
-}
-
-// skip discards the first `n` values the iterator yields and eagerly collects
-// the rest into a fresh `T[]`; `n <= 0` keeps everything, and skipping past the
-// end yields an empty array. Generic over the element type `T`.
-pub function skip[T, I: Iterator[T]](it: I, n: i32): T[] {
-  let out: T[] = [];
-  let cur = it;
-  let k = n;
-  let go = true;
-  while (go) {
-    match (cur.next()) {
-      Some(t) => {
-        if (k > 0) {
-          k = k - 1;
-        } else {
-          out = out.append(t.0);
-        }
-        cur = t.1;
-      },
-      None => {
-        go = false;
-      }
-    }
-  }
-  return out;
 }
 
 // nth returns the value at index `n` (0-based), or `None` if the iterator yields

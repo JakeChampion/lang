@@ -79,13 +79,13 @@ func TestNativeIterFlatMapArm64(t *testing.T) {
 }
 
 // TestNativeIterFlatMapModule exercises the shipped `import "core/iter"` module's
-// flat_map over real `range` iterators on the native backends.
+// lazy flat_map method over real `range` iterators on the native backends.
 func TestNativeIterFlatMapModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
-    let r = iter.flat_map(iter.range(1, 4), (x: i32): i32[] => { return [x, x * 10]; });  // [1,10,2,20,3,30]
+    let r = iter.range(1, 4).flat_map((x: i32): i32[] => { return [x, x * 10]; }).collect();  // [1,10,2,20,3,30]
     let s = 0; for v in r { s = s + v; }                                                          // 66
-    let o = iter.flat_map(iter.range(0, 6), (x: i32): i32[] => { if (x % 2 == 0) { return []; } return [x]; });  // [1,3,5]
+    let o = iter.range(0, 6).flat_map((x: i32): i32[] => { if (x % 2 == 0) { return []; } return [x]; }).collect();  // [1,3,5]
     let t = 0; for v in o { t = t + v; }                                                          // 9
     return s + r.len() + t + o.len();                                                             // 66+6+9+3 = 84
 }

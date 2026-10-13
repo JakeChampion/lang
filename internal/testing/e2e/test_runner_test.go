@@ -1676,7 +1676,7 @@ func TestRunnerArrayBatchExamplePasses(t *testing.T) {
 // `tests/stdlib/iter_combinators_test.fern` covers the core/iter
 // combinators NOT in iter_test (sum/count/of/product/nth/last/min/max/
 // contains/count_value/fold/any/all/map/filter): collect / take / skip /
-// find / position / position_by / count_by. Passing → exit 0.
+// flat_map / find / position / position_by / count_by. Passing → exit 0.
 func TestRunnerIterCombinatorsExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/iter_combinators_test.fern")
@@ -1684,7 +1684,7 @@ func TestRunnerIterCombinatorsExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: core/iter combinators", "# pass 8", "# fail 0", "1..8"} {
+	for _, w := range []string{"# Suite: core/iter combinators", "# pass 11", "# fail 0", "1..11"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
