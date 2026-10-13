@@ -2060,6 +2060,8 @@ serializer.
   and written, and the client found past the proxies a deployment trusts.
 - **Tracing:** `std/http/trace` — W3C Trace Context's `traceparent` and
   `tracestate` read, written and continued across hops.
+- **Access log:** `std/http/accesslog` — one JSON line per request in the
+  OTel log data model's shape, as middleware.
 - **Static files:** `std/http/static` — a directory's files with their
   validators, byte ranges and precompressed siblings.
 - **Status / classifiers:** `http_status_text`,
@@ -2414,6 +2416,36 @@ reads as `plat.trace()` and `plat.http` carries upstream as a child
 (`platform.traced`), leaving a `traceparent` the handler set alone.
 `tests/stdlib/http_trace_test.fern` holds the spec's example and malformed
 forms; `TestTraceServeInterp` and `TestTraceServeX86_64` run the loop.
+
+### `std/http/accesslog`
+
+One JSON line per request, in the OpenTelemetry log data model's shape as
+OTLP/JSON spells it, written through `plat.log`:
+
+```fern
+function users_show(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+  use req <- accesslog.logged(req, plat);
+  return http.respond(show(params));
+}
+```
+
+- `logged(req, plat, next)` — a middleware by std/http/router's
+  convention: `next` runs, its response is returned, and its record is
+  logged.
+- `record(req, resp, plat, took_ns)` — the line itself: `timeUnixNano`
+  from `plat.now_ms()`, `severityNumber` and `severityText` (INFO 9, or
+  ERROR 17 for a 5xx), `body` (`METHOD path status`), `traceId` and
+  `spanId` from `plat.trace()` when the request has a span, and
+  `attributes` under the HTTP semantic conventions' names:
+  `http.request.method`, `url.path`, `http.response.status_code`,
+  `http.server.request.duration` in seconds, `client.address` from
+  `plat.peer()`, `user_agent.original`, and `http.response.body.size` for
+  a body whose size is known without reading it (not a producer, a stream
+  or a whole file). An attribute the request lacks is left out.
+
+`tests/stdlib/http_accesslog_test.fern` pins the record against the mock's
+canned clock, span and peer; `TestAccessLogServeInterp` and
+`TestAccessLogServeX86_64` decode the loop's line with Go's JSON reader.
 
 ### `std/http/cookie`
 
