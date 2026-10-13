@@ -68,8 +68,10 @@ sends the attack and reads the connection refusing it:
 And the small ones: an empty DATA frame counts against a per-connection
 budget, SETTINGS_MAX_FRAME_SIZE under 16,384 or over 16,777,215 is a
 protocol error, an unknown frame type is skipped whole, a frame on a
-stream after GOAWAY's last stream id is ignored, and a SETTINGS frame
-without ACK within the timeout closes the connection.
+stream after GOAWAY's last stream id is ignored, and an incomplete
+connection preface at EOF closes the connection rather than leaving it
+readable at EOF for the loop to read again every pass (RFC 9113 §6.5.3's
+SETTINGS timeout is optional and not enforced).
 
 ## Slices
 
@@ -124,10 +126,26 @@ without ACK within the timeout closes the connection.
    with the blocks the connection's frames, header blocks, stream slots
    and the connection record rebuilt per frame take and give back, and
    with how the client's frames coalesce into reads; the gate holds the
-   mean under a ceiling (101, the table owned through a request having
-   taken 107 to 99, 95.4 on the CI runner) as a ratchet, lowered when
-   the mean falls eight under it. Taking it towards zero is slice 8's, with the
-   per-stream bump budget.
+   mean under a ceiling as a ratchet, lowered when the mean falls eight
+   under it, since the mean moves with how the client's frames coalesce
+   into reads and so with the machine (the CI runner reads about three
+   under this one). Taking it towards zero is slice 8's, with the
+   per-stream bump budget: the first round took it from 99 to 72.4 under
+   a ceiling of 74 (the table owned through a request, in the slice
+   above, had taken 107 to 99), and closing an incomplete preface at EOF,
+   an arm that hands the table on, took it to 60.0 under 62 with the
+   loop's splices unchanged: the table through the HTTP/2 turn is no
+   longer copied,
+   the state machine updating its connection in place (a step's run
+   taken apart before the connection is rebuilt, so the planner moves
+   the record instead of copying it), the HPACK decode threaded through
+   one record instead of a record per integer and string read, a
+   response's fields written straight into the encoder (`begin`, `put`,
+   `finish`) with no `Field[]` built, the common status texts as
+   literals, and a frame's header written in one allocation. What is
+   left is the request handed over (its record, header map and strings),
+   the stream's slot, the HPACK fields, the frame payloads and the
+   response body's bytes.
 5. **h2spec nightly (landed).** `scripts/net-h2spec` on `net-nightly.yml`:
    h2spec 2.6.0 strict over h2c against `scripts/net-h2spec.d/server.fern`,
    146 cases, every one green or the job fails, the counts recorded under
@@ -176,11 +194,51 @@ without ACK within the timeout closes the connection.
    two loop faults: a flight parked on its own HTTP/2 connection unwatched
    the connection when it woke, and a connection draining a large
    response was watched for writes alone, so the client's WINDOW_UPDATEs
-   went unread; both fixed. Open: a producer cannot set the trailers a
-   call ends with, since `HttpResponse.trailers` is fixed when the
-   response is built, so the interop server reads a duplex call's first
-   message before building its response.
+   went unread; both fixed. A producer sets the trailers a call ends
+   with (landed): `http.chunks_with_trailers` carries a function asked
+   once the body has ended, sent after the body beside the response's own
+   trailers under both HTTP/1.1 and HTTP/2, so the interop server's
+   duplex call frames its status from the messages it streamed.
+   `TestServeH2Interp` and `TestServeH2X86_64` read a produced body's
+   trailers back over both.
 7. **The client.** `std/fetch` over HTTP/2 to an origin that offers it,
    one connection per origin, so a handler's upstream calls multiplex.
+   The connection (landed): the state machine opens from the client's
+   side too (`h2.client`, `conn.request`, `Answered`), frames, flow
+   control, settings, resets and GOAWAY the one code for both sides, and
+   `tests/stdlib/http_h2_test.fern` drives a client connection against a
+   server connection in process. `std/fetch` offers `h2` beside
+   `http/1.1` by ALPN and speaks HTTP/2 to an origin that chooses it: the
+   request on a stream of its own, the response read whole, the
+   connection kept in the pool, which now holds its rows as `Kept` values
+   (the TLS session and the HTTP/2 state as they are, where the text
+   table it replaced had to save and restore a session per park) until
+   the server sends GOAWAY. `TestTLSClientAgainstGo` and its interpreter
+   twin fetch twice from Go's HTTP/2 server over one connection and read
+   the protocol back. The multiplexing (landed): under the serve loop the
+   handlers' requests to one origin go over one connection at once. The
+   loop's pool carries a `fetch.Shared` table; a handler's request is a
+   stream opened on the origin's driven connection and a `Mail` slot its
+   task parks on (a wait-set pair with `fetch.MAIL_INTEREST`, which the
+   loop keeps off its reactor and answers itself), the loop reads the
+   driven connections' frames at its own events, puts each stream's
+   answer in its slot and wakes the task waiting on it at the end of the
+   pass, the first task to an origin opens the connection while the
+   others wait for it, and a connection idle past the pool's bound or sent
+   GOAWAY is closed. `TestServeH2X86_64` parks six handlers on one
+   upstream HTTP/2 connection and reads every answer back after the
+   release.
 8. **Exit.** Per-stream bump bytes bounded and recorded on the perf lane;
    `internal/e2eselfhost` twins for the connection tests; #9860 closed.
+   The bound (landed): `TestSelfHostHeldConnectionsHeapBoundX86_64`'s
+   fourth shape parks 64 handlers, then 64 more, on the streams of one
+   h2c connection (`e2eharness.H2CClient` opening streams and awaiting
+   them apart) and holds the second batch's growth under 12 KiB per
+   stream; it reads about 8.0 KiB, the suspended handler's 7.0 KiB without
+   a connection plus about 2.5 KiB the state machine keeps per open
+   stream, and `scripts/net-bench` records it nightly as
+   `net/fern/held.bytes_per_stream`. The twins: the connection tests
+   (`http_hpack`, `http_h2_frame`, `http_h2`, `http_grpc`, `protobuf`)
+   run through the self-host compiler in `TestSelfHostStdTestE2E`, and
+   every `…X86_64` serve test builds its server with `bin/fern`, which is
+   the self-host compiler.

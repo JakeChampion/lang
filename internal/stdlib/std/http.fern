@@ -2939,7 +2939,23 @@ pub function file(path: string): HttpResponse {
 // `Content-Type` is the caller's to set.
 pub function chunks(status: i32, next: (i32) => Option[u8[]]): HttpResponse {
   let none: u8[] = [];
-  return HttpResponse { status: status, body: BodyChunks(ChunkProducer { next: next, idle_ms: 0, filler: none }), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
+  return HttpResponse { status: status, body: BodyChunks(ChunkProducer { next: next, idle_ms: 0, filler: none, trailers: __no_trailers }), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
+}
+
+// `chunks_with_trailers(status, next, trailers)` — `chunks`, with the
+// trailers `trailers` answers sent after the body, beside any the
+// response carries: what a body whose end decides its trailers needs, a
+// gRPC call whose status depends on the messages it streamed. `trailers`
+// is asked once, when `next` has answered None; under HTTP/1.1 they go in
+// the chunked body's trailer section, under HTTP/2 in the stream's last
+// HEADERS. An HTTP/1.0 client, whose body is close-delimited, gets none.
+pub function chunks_with_trailers(status: i32, next: (i32) => Option[u8[]], trailers: () => HeaderMap): HttpResponse {
+  let none: u8[] = [];
+  return HttpResponse { status: status, body: BodyChunks(ChunkProducer { next: next, idle_ms: 0, filler: none, trailers: trailers }), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
+}
+
+function __no_trailers(): HeaderMap {
+  return headers.header_map_new();
 }
 
 // `chunks_idle(status, next, idle, filler)` — `chunks`, with `filler`
@@ -2953,7 +2969,7 @@ pub function chunks_idle(status: i32, next: (i32) => Option[u8[]], idle: Duratio
   if (ms > 2147483647 as i64) {
     ms = 2147483647 as i64;
   }
-  return HttpResponse { status: status, body: BodyChunks(ChunkProducer { next: next, idle_ms: ms as i32, filler: filler }), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
+  return HttpResponse { status: status, body: BodyChunks(ChunkProducer { next: next, idle_ms: ms as i32, filler: filler, trailers: __no_trailers }), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
 }
 
 // ============================================================

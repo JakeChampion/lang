@@ -446,8 +446,22 @@ function __flag(on: boolean, bit: i32): i32 {
 // __framed is the frame header (§4.1) and the payload.
 function __framed(kind: i32, flags: i32, stream: i32, payload: u8[]): u8[] {
   let n: i32 = payload.len();
-  let head: u8[] = [(n >> 16 & 255) as u8, (n >> 8 & 255) as u8, (n & 255) as u8, kind as u8, flags as u8];
+  let head: u8[] = __alloc_u8(HEADER_LEN);
+  __arr_set_len(head, 0);
+  head = head.append((n >> 16 & 255) as u8).append((n >> 8 & 255) as u8).append((n & 255) as u8).append(kind as u8).append(flags as u8);
   return __be32_bytes(head, stream).concat(payload);
+}
+
+// headers_bytes is a HEADERS frame without priority on the wire, as
+// `encode(Headers(…))` writes it: the shape a server sends.
+pub function headers_bytes(stream: i32, end_stream: boolean, end_headers: boolean, block: u8[]): u8[] {
+  return __framed(HEADERS, __flag(end_stream, 1) | __flag(end_headers, 4), stream, block);
+}
+
+// data_bytes is an unpadded DATA frame on the wire, as `encode(Data(…))`
+// writes it.
+pub function data_bytes(stream: i32, end_stream: boolean, data: u8[]): u8[] {
+  return __framed(DATA, __flag(end_stream, 1), stream, data);
 }
 
 function __priority_bytes(p: Priority): u8[] {

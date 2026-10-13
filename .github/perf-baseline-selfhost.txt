@@ -138,6 +138,11 @@
 # that rebuild a node gain a reuse path on every target, perceus_rbtree
 # +26-27%, rbtree_ck +16-17%, cfold +5-6%, deriv +4-5%, and wasm http_hello
 # +2.3%, while rbtree retires 14% fewer instructions.
+#
+# 2026-10-13 — http_hello re-pinned on every target (#12331, +3.7% to +4.2%):
+# produced trailers, std/fetch over HTTP/2, and the shared splices the inliner
+# no longer holds to the caller's budget, as perf-baseline.txt's note says.
+# Only these three rows; the others' drift against this file is main's.
 
 selfhost/arm64-linux/array_append.emit	1052
 selfhost/arm64-linux/array_index.emit	1050
@@ -147,7 +152,7 @@ selfhost/arm64-linux/ascii_scan.emit	3113
 selfhost/arm64-linux/call_overhead.emit	148
 selfhost/arm64-linux/closure_call.emit	993
 selfhost/arm64-linux/enum_match.emit	1144
-selfhost/arm64-linux/http_hello.emit	19359
+selfhost/arm64-linux/http_hello.emit	20147
 selfhost/arm64-linux/int_loop.emit	90
 selfhost/arm64-linux/map_int.emit	6044
 selfhost/arm64-linux/map_probe_chain.emit	6055
@@ -177,7 +182,7 @@ selfhost/wasm32-wasi/ascii_scan.emit	3066
 selfhost/wasm32-wasi/call_overhead.emit	158
 selfhost/wasm32-wasi/closure_call.emit	480
 selfhost/wasm32-wasi/enum_match.emit	598
-selfhost/wasm32-wasi/http_hello.emit	21651
+selfhost/wasm32-wasi/http_hello.emit	22570
 selfhost/wasm32-wasi/int_loop.emit	110
 selfhost/wasm32-wasi/map_int.emit	7271
 selfhost/wasm32-wasi/map_probe_chain.emit	7296
@@ -207,7 +212,7 @@ selfhost/x86-64-linux/ascii_scan.emit	2996
 selfhost/x86-64-linux/call_overhead.emit	91
 selfhost/x86-64-linux/closure_call.emit	814
 selfhost/x86-64-linux/enum_match.emit	999
-selfhost/x86-64-linux/http_hello.emit	19061
+selfhost/x86-64-linux/http_hello.emit	19770
 selfhost/x86-64-linux/int_loop.emit	33
 selfhost/x86-64-linux/map_int.emit	5861
 selfhost/x86-64-linux/map_probe_chain.emit	5876

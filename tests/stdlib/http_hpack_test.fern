@@ -229,6 +229,23 @@ function test_round_trip(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
+// test_field_by_field: `begin`, `put` and `finish` write what `encode`
+// writes for the same fields, the size update a smaller table owes
+// included, and leave the encoder's table the same.
+function test_field_by_field(): test.TestOutcome {
+  let fields: hpack.Field[] = [hpack.field(":status", "200"), hpack.field("content-type", "text/plain"), hpack.sensitive("set-cookie", "s=1"), hpack.field("content-type", "text/plain")];
+  let whole: hpack.Encoded = hpack.encoder(4096).with_max_table(256).encode(fields);
+  let en: hpack.Encoding = hpack.encoder(4096).with_max_table(256).begin();
+  for f in fields {
+    en = en.put(f.name, f.value, f.sensitive);
+  }
+  let parts: hpack.Encoded = en.finish();
+  if (hex.hex_encode(parts.bytes) != hex.hex_encode(whole.bytes)) {
+    return test.fail("field by field " + hex.hex_encode(parts.bytes) + ", whole " + hex.hex_encode(whole.bytes));
+  }
+  return test.assert_eq(parts.encoder.table_size(), whole.encoder.table_size());
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/http/hpack");
   r = r.it("the literal representations", test_literals);
@@ -240,5 +257,6 @@ function main(): i32 {
   r = r.it("malformed blocks", test_malformed);
   r = r.it("the list and field caps", test_bounds);
   r = r.it("every byte round-trips", test_round_trip);
+  r = r.it("a block written field by field is the block encode writes", test_field_by_field);
   return r.finish();
 }

@@ -203,31 +203,19 @@ function output_stream(body: u8[]): HttpResponse {
   return grpc.error(grpc.INTERNAL, "");
 }
 
-// duplex answers FullDuplexCall as the requests arrive. The first request
-// message is read before the response is built, since it may carry the
-// EchoStatus the call ends with and the trailers are fixed when the
-// response is; the rest are answered by a producer over the body stream,
-// each message's responses framed as it comes, the body ending when the
-// request's does. The handler parks reading the first message, as its
-// producer parks reading the rest.
+// duplex answers FullDuplexCall as the requests arrive: a producer over
+// the body stream frames each message's responses as it comes, the body
+// ending when the request's does, and the status the call ends with (an
+// EchoStatus any message may carry) goes in the trailers the producer
+// adds then.
 function duplex(req: HttpRequest): HttpResponse {
   let source: Option[BodySource] = req.body.source;
   let empty: u8[] = [];
   let carry: Cell[u8[]] = cell_new(empty);
   let status: Cell[i32] = cell_new(grpc.OK);
   let message: Cell[string] = cell_new("");
-  let first: Option[u8[]] = duplex_next(source, carry, status, message);
-  let producer: ChunkProducer = ChunkProducer { next: (i: i32): Option[u8[]] => duplex_step(i, first, source, carry, status, message), idle_ms: 0, filler: [] };
-  return HttpResponse { status: 200, body: BodyChunks(producer), headers: grpc.headers(), trailers: grpc.status(status.get(), message.get()), background: None };
-}
-
-// duplex_step is the producer's chunk `i`: the first message's responses,
-// read before the response was built, then each message after it.
-function duplex_step(i: i32, first: Option[u8[]], source: Option[BodySource], carry: Cell[u8[]], status: Cell[i32], message: Cell[string]): Option[u8[]] {
-  if (i == 0) {
-    return first;
-  }
-  return duplex_next(source, carry, status, message);
+  let resp: HttpResponse = http.chunks_with_trailers(200, (i: i32): Option[u8[]] => duplex_next(source, carry, status, message), (): HeaderMap => grpc.status(status.get(), message.get()));
+  return HttpResponse { ...resp, headers: grpc.headers() };
 }
 
 // duplex_next is the producer's step: the next whole request message
