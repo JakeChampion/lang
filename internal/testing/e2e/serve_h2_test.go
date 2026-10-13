@@ -215,7 +215,7 @@ func (w *serveH2World) driveH2C(t *testing.T, cmd *exec.Cmd) {
 	base := "http://" + addr
 	run := func(args ...string) string {
 		t.Helper()
-		curl := exec.Command("curl", append([]string{"-s", "--http2-prior-knowledge", "-w", "\n%{http_version} %{http_code}\n"}, args...)...)
+		curl := exec.Command("curl", append([]string{"-s", "--noproxy", "*", "--http2-prior-knowledge", "-w", "\n%{http_version} %{http_code}\n"}, args...)...)
 		out, err := curl.CombinedOutput()
 		if err != nil {
 			stderr, _ := os.ReadFile(stderrPath)
@@ -285,12 +285,15 @@ func (w *serveH2World) driveDuplex(t *testing.T, cmd *exec.Cmd) {
 }
 
 // driveState sends prior-knowledge HTTP/2 with curl to the stateful loop:
-// three GETs on one connection, each answered with the count so far.
+// three GETs on one connection, each answered with the count so far. curl
+// is told to use no proxy: `driveParked` names the fetch upstream as the
+// process's `http_proxy` for the rest of the test, and curl, unlike Go's
+// client, would send loopback through it too.
 func (w *serveH2World) driveState(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
 	addr, stderrPath := e2eharness.StartInheritedServer(t, cmd)
 	base := "http://" + addr
-	curl := exec.Command("curl", "-s", "--http2-prior-knowledge", "-w", "\n%{http_version} %{http_code}\n", base+"/a", base+"/a", base+"/b")
+	curl := exec.Command("curl", "-s", "--noproxy", "*", "--http2-prior-knowledge", "-w", "\n%{http_version} %{http_code}\n", base+"/a", base+"/a", base+"/b")
 	out, err := curl.CombinedOutput()
 	if err != nil {
 		stderr, _ := os.ReadFile(stderrPath)
