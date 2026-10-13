@@ -113,9 +113,11 @@ without ACK within the timeout closes the connection.
    one connection, a POST echoed), with Go's client over TLS (h2 by ALPN,
    eight requests at once, a 50 KB upload echoed), and with four handlers
    parked on an upstream while a fifth request on the same connection is
-   answered, the four answering once the upstream does. Still open here:
-   `run_with`'s stateful loop over HTTP/2, and the allocations-per-request
-   reading for the HTTP/2 path.
+   answered, the four answering once the upstream does. `run_with`'s
+   stateful loop serves HTTP/2 the same way, each stream's request run
+   with the state in order and nothing parked, since the state threads
+   from one request to the next. Still open here: the
+   allocations-per-request reading for the HTTP/2 path.
 5. **h2spec nightly (landed).** `scripts/net-h2spec` on `net-nightly.yml`:
    h2spec 2.6.0 strict over h2c against `scripts/net-h2spec.d/server.fern`,
    146 cases, every one green or the job fails, the counts recorded under

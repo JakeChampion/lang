@@ -106,9 +106,26 @@ function main(): i32 {
 }
 `
 
+// serveH2StateSource is `run_with` under `with_h2()`: a request count
+// threaded through the handler, which only the stateful loop can carry
+// from one request to the next.
+const serveH2StateSource = `import "std/http";
+import "std/platform";
+import "std/serve";
+import "core/int";
+
+function handle(n: i32, req: HttpRequest, plat: platform.Host): (i32, HttpResponse) {
+  return (n + 1, http.ok(req.path + "=" + int.int_to_string(n + 1)));
+}
+
+function main(): i32 {
+  return serve.run_with(0, serve.config().with_h2(), 0, handle);
+}
+`
+
 type serveH2World struct {
-	dir, src, cert, key string
-	pool                *x509.CertPool
+	dir, src, stateSrc, cert, key string
+	pool                          *x509.CertPool
 }
 
 func newServeH2World(t *testing.T) *serveH2World {
@@ -130,6 +147,10 @@ func newServeH2World(t *testing.T) *serveH2World {
 	if err := os.WriteFile(w.src, []byte(serveH2Source), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	w.stateSrc = filepath.Join(w.dir, "serve_h2_state.fern")
+	if err := os.WriteFile(w.stateSrc, []byte(serveH2StateSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	return w
 }
 
@@ -138,6 +159,7 @@ func TestServeH2Interp(t *testing.T) {
 	w := newServeH2World(t)
 	w.driveH2C(t, exec.Command(bin, "-interp", w.src))
 	w.driveTLS(t, exec.Command(bin, "-interp", w.src))
+	w.driveState(t, exec.Command(bin, "-interp", w.stateSrc))
 }
 
 func TestServeH2X86_64(t *testing.T) {
@@ -151,6 +173,11 @@ func TestServeH2X86_64(t *testing.T) {
 	w.driveH2C(t, runX86Bin(qemu, out))
 	w.driveTLS(t, runX86Bin(qemu, out))
 	w.driveParked(t, runX86Bin(qemu, out))
+	stateOut := filepath.Join(w.dir, "serve_h2_state.bin")
+	if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", stateOut, w.stateSrc).CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, o)
+	}
+	w.driveState(t, runX86Bin(qemu, stateOut))
 }
 
 // driveH2C sends prior-knowledge HTTP/2 with curl: two GETs and a POST on
@@ -178,6 +205,23 @@ func (w *serveH2World) driveH2C(t *testing.T, cmd *exec.Cmd) {
 	}
 	if got, want := run("--data-binary", "payload bytes", base+"/echo"), "payload bytes\n2 200\n"; got != want {
 		t.Fatalf("curl POST over h2c:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// driveState sends prior-knowledge HTTP/2 with curl to the stateful loop:
+// three GETs on one connection, each answered with the count so far.
+func (w *serveH2World) driveState(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	addr, stderrPath := e2eharness.StartInheritedServer(t, cmd)
+	base := "http://" + addr
+	curl := exec.Command("curl", "-s", "--http2-prior-knowledge", "-w", "\n%{http_version} %{http_code}\n", base+"/a", base+"/a", base+"/b")
+	out, err := curl.CombinedOutput()
+	if err != nil {
+		stderr, _ := os.ReadFile(stderrPath)
+		t.Fatalf("curl: %v\n%s\nserver stderr:\n%s", err, out, stderr)
+	}
+	if got, want := string(out), "/a=1\n2 200\n/a=2\n2 200\n/b=3\n2 200\n"; got != want {
+		t.Fatalf("curl over h2c to the stateful loop:\n%s\nwant:\n%s", got, want)
 	}
 }
 

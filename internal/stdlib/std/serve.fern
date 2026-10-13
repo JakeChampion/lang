@@ -1981,19 +1981,75 @@ function __h2_config(opts: Config): h2.Config {
 // all. The connection closes once the state machine has closed it, or the
 // peer has finished.
 function __serve_h2[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32, handler: (HttpRequest, platform.Host) => HttpResponse, opts: Config, stop: __Stop, eof: boolean): (__Conns, __Flight[]) {
+  let fed: (__Conns, h2.Step) = __h2_fed(c, at, opts);
+  c = fed.0;
+  let step: h2.Step = fed.1;
+  let answered: __H2Answered = __h2_answered(drv, __H2Answered { conn: step.conn, conns: c, fls: fls, out: step.output }, step.events, at, handler, opts, stop);
+  let conn: h2.Conn = answered.conn;
+  c = __Conns { ...answered.conns, framing: answered.conns.framing.with(at, Http2(conn)), keep: answered.conns.keep.with(at, !conn.closed() && !eof) };
+  return __h2_flushed(drv, c, answered.fls, at, answered.out, opts, conn.closed() || eof);
+}
+
+// __h2_fed(c, at, opts) — the bytes buffered on the connection at `at` fed
+// to its HTTP/2 state machine (a new one for a connection that just sent
+// the preface, its SETTINGS first in the output), the buffer emptied and
+// the scratch handed back: the step, its output everything to send so far.
+function __h2_fed(c: __Conns, at: i32, opts: Config): (__Conns, h2.Step) {
   let opened: h2.Step = __h2_opened(c, at, opts);
-  let conn: h2.Conn = opened.conn;
   let bytes: u8[] = __bytes_from(c.bufs[at], c.offs[at]);
   let lent: i32 = c.lent;
   if (lent == at) {
     lent = 0 - 1;
   }
   c = __Conns { ...c, bufs: c.bufs.with(at, []), offs: c.offs.with(at, 0), lent: lent };
-  let step: h2.Step = conn.read(bytes);
-  let answered: __H2Answered = __h2_answered(drv, __H2Answered { conn: step.conn, conns: c, fls: fls, out: opened.output.concat(step.output) }, step.events, at, handler, opts, stop);
-  conn = answered.conn;
-  c = __Conns { ...answered.conns, framing: answered.conns.framing.with(at, Http2(conn)), keep: answered.conns.keep.with(at, !conn.closed() && !eof) };
-  return __h2_flushed(drv, c, answered.fls, at, answered.out, opts, conn.closed() || eof);
+  let step: h2.Step = opened.conn.read(bytes);
+  return (c, h2.Step { ...step, output: opened.output.concat(step.output) });
+}
+
+// __h2_turn_with(drv, c, at, st, handler, opts, stop, eof, mode) —
+// `__h2_turn` for the stateful loop: each request the step hands over
+// runs the handler with the state, in order, to its answer, as the
+// HTTP/1.1 path runs it (`__serve_step`); nothing parks, since the state
+// threads from one request to the next.
+function __h2_turn_with[D: async.Driver, S](drv: D, c: __Conns, at: i32, st: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), opts: Config, stop: __Stop, eof: boolean, mode: i32): (__Conns, S) {
+  if (mode != H2_SERVED) {
+    return (c, st);
+  }
+  let fed: (__Conns, h2.Step) = __h2_fed(c, at, opts);
+  c = fed.0;
+  let conn: h2.Conn = fed.1.conn;
+  let out: u8[] = fed.1.output;
+  for e in fed.1.events {
+    match (e) {
+      h2.Request(stream, req) => {
+        let stepped: (__Conns, h2.Conn, S, u8[]) = __h2_step_with(c, at, conn, stream, req, st, handler, opts, stop);
+        c = stepped.0;
+        conn = stepped.1;
+        st = stepped.2;
+        out = out.concat(stepped.3);
+      },
+      _ => {}
+    }
+  }
+  c = __Conns { ...c, framing: c.framing.with(at, Http2(conn)), keep: c.keep.with(at, !conn.closed() && !eof) };
+  let flushed: (__Conns, __Flight[]) = __h2_flushed(drv, c, [], at, out, opts, conn.closed() || eof);
+  return (flushed.0, st);
+}
+
+// __h2_step_with(c, at, conn, stream, req, st, handler, opts, stop) — the
+// request on `stream` answered by the stateful handler (503 for a
+// stopping loop's readiness probe), counted, and written on the stream:
+// the table, the connection, the state and the bytes to send.
+function __h2_step_with[S](c: __Conns, at: i32, conn: h2.Conn, stream: i32, req: HttpRequest, st: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), opts: Config, stop: __Stop): (__Conns, h2.Conn, S, u8[]) {
+  c = __serve_started(c, at);
+  let f: http.HttpFramed = http.HttpFramed { request: req, len: 0, keep_alive: true, version: "HTTP/2" };
+  let stepped: (S, HttpResponse) = (st, http.text(503, ""));
+  if (!__serve_not_ready(f, opts, stop)) {
+    stepped = __serve_step(handler, st, req, c.hosts[at], opts);
+  }
+  c = __serve_count(c, at, req.method, stepped.1.status);
+  let r: h2.Step = conn.respond(stream, stepped.1);
+  return (c, r.conn, stepped.0, r.output);
 }
 
 // __h2_flushed(drv, c, fls, at, out, opts, closing) — `out` sent on the
@@ -4117,6 +4173,13 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
       conns = ev.0;
       let at: i32 = ev.1;
       if (at < 0) {
+        continue;
+      }
+      let mode: i32 = __h2_mode(conns, at, opts);
+      if (mode != H2_NOT) {
+        let served: (__Conns, S) = __h2_turn_with(drv, conns, at, st, handler, opts, stop, ev.2, mode);
+        conns = served.0;
+        st = served.1;
         continue;
       }
       let more: boolean = true;

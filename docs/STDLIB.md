@@ -3300,8 +3300,9 @@ points that run a handler under it.
   suspends parks on its stream while the connection's other streams are
   served, requests count in the metrics as HTTP/1.1's do, and the
   connection's bounds (RFC 9113 §10 and the four attack classes) are
-  `std/http/h2`'s. `run_with`'s stateful loop serves HTTP/1.1 only
-  (`TestServeH2Interp`, `TestServeH2X86_64`).
+  `std/http/h2`'s. `run_with`'s stateful loop serves it too, each stream's
+  request run with the state in order (`TestServeH2Interp`,
+  `TestServeH2X86_64`).
   `proxy_protocol` (false) reads a PROXY protocol header, version 1 or 2,
   at the start of every connection, before TLS when both are set
   (`forwarded.proxy_header`): its source address becomes the connection's
