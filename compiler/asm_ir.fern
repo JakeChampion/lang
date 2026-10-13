@@ -4099,6 +4099,24 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
       s = s.write("    jne .Larr_push_frame\n");
       s = s.write("    cmpq $0, -16(%rdi)\n");
       s = s.write("    jne .Larr_push_frame\n");
+      if (!s.has_need("alloc_count")) {
+        // Four slots are a 56-byte block, class 7: a freed one is popped
+        // here, written as the box shim would, and only an empty class
+        // calls the shim. The counter's build keeps the call, which counts.
+        s = s.write("    leaq __fern_freelist(%rip), %rcx\n");
+        s = s.write("    movq 56(%rcx), %rax\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    jz .Larr_push_fresh\n");
+        s = s.write("    movq (%rax), %rdx\n");
+        s = s.write("    movq %rdx, 56(%rcx)\n");
+        s = s.write("    movq $4, (%rax)\n");
+        s = s.write("    movq $1, 8(%rax)\n");
+        s = s.write("    movq $1, 16(%rax)\n");
+        s = s.write("    movq %rsi, 24(%rax)\n");
+        s = s.write("    addq $16, %rax\n");
+        s = s.write("    ret\n");
+        s = s.write(".Larr_push_fresh:\n");
+      }
       s = s.write("    pushq %rsi\n");  // the value, and 16-byte alignment for the call
       s = s.write("    movl $4, %edi\n");
       s = s.write("    call __fern_arr_box\n");

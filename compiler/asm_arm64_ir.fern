@@ -10220,6 +10220,46 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = s.write("__fern_arr_push:\n");
     s = s.write(arr_push_fast(".Larr_push_slow", s.rc_free_debug));
     s = s.write(".Larr_push_slow:\n");
+    // An empty receiver with no capacity, the common first append, grows to
+    // four slots with nothing to copy, so it needs no frame: a four-slot box
+    // is a 56-byte block, class 7, popped here and written as the box shim
+    // would, and only an empty class calls the shim. A static literal can
+    // hold elements at cap 0, hence the length test too. The debug, census
+    // and counter builds keep the frame path, whose hooks count and check.
+    if (!s.rc_free_debug && !s.leak_check && !s.has_need("alloc_count")) {
+      s = s.write("    ldr x2, [x0]\n");
+      s = s.write("    cbnz x2, .Larr_push_frame\n");
+      s = s.write("    ldur x2, [x0, #-16]\n");
+      s = s.write("    cbnz x2, .Larr_push_frame\n");
+      s = s.write("    adrp x2, __fern_freelist\n");
+      s = s.write("    add x2, x2, :lo12:__fern_freelist\n");
+      s = s.write("    ldr x3, [x2, #56]\n");  // head of class 7
+      s = s.write("    cbz x3, .Larr_push_fresh\n");
+      s = s.write("    ldr x4, [x3]\n");  // next
+      s = s.write("    str x4, [x2, #56]\n");
+      s = s.write("    mov x2, #4\n");
+      s = s.write("    str x2, [x3]\n");  // cap
+      s = s.write("    mov w2, #1\n");
+      s = s.write("    str w2, [x3, #8]\n");  // rc = 1
+      s = s.write("    mov x2, #1\n");
+      s = s.write("    str x2, [x3, #16]\n");  // len = 1
+      s = s.write("    str x1, [x3, #24]\n");  // element 0
+      s = s.write("    add x0, x3, #16\n");  // data ptr
+      s = s.write("    ret\n");
+      s = s.write(".Larr_push_fresh:\n");
+      s = s.write("    stp x29, x30, [sp, #-16]!\n");
+      s = s.write("    mov x29, sp\n");
+      s = s.write("    str x1, [sp, #-16]!\n");  // the value
+      s = s.write("    mov x0, #4\n");
+      s = s.write("    bl __fern_arr_box\n");
+      s = s.write("    ldr x1, [sp], #16\n");
+      s = s.write("    mov x2, #1\n");
+      s = s.write("    str x2, [x0]\n");  // len = 1
+      s = s.write("    str x1, [x0, #8]\n");  // element 0
+      s = s.write("    ldp x29, x30, [sp], #16\n");
+      s = s.write("    ret\n");
+    }
+    s = s.write(".Larr_push_frame:\n");
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
     s = s.write("    stp x19, x20, [sp, #-16]!\n");
