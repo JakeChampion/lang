@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -750,6 +751,29 @@ func listingCases(t *testing.T, util string) []invocation {
 	add("err-dired-and-zero", "--dired", "--zero", "-l")
 	add("err-zero-and-dired", "--zero", "--dired", "-l")
 	add("err-no-option-after-dashdash", "--", "--all")
+
+	// readdir supplies inodes even when the directory denies entry lookup.
+	if os.Geteuid() != 0 {
+		namesOnly := t.TempDir()
+		if err := os.WriteFile(filepath.Join(namesOnly, "file"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("file", filepath.Join(namesOnly, "link")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(namesOnly, 0o400); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(namesOnly, 0o700) })
+		for _, flags := range [][]string{
+			{"-i"}, {"-iU"}, {"-ai"}, {"-iL"}, {"-li"},
+			{"-iC", "-w", "60"}, {"-ix", "-w", "60"},
+			{"-iC", "-T", "0", "-w", "60"}, {"-iC", "-T", "4", "-w", "60"},
+			{"-sC", "-w", "60"}, {"-siC", "-w", "60"},
+		} {
+			cases = append(cases, invocation{name: "inode-no-search-" + strings.Join(flags, ""), args: append(flags, namesOnly), dir: dir})
+		}
+	}
 
 	// --- the write paths -----------------------------------------------------------------
 	cases = append(cases,

@@ -146,6 +146,137 @@ function pick(name: string): Case {
     if (name == "pair-word-unreleased-on-a-payload-tag") {
         return Case { f: pair_word_case("pair7"), modes: [], returns_unit: false };
     }
+    if (name == "token-retain-under-test-consumed-after-join") {
+        // #12181: a field read off the token's box before any test of the
+        // token, retained where the token is null (where the box is released
+        // too), consumed after the join, and kept in place by the
+        // construction the box is reused for. Where the token holds, the
+        // frame holds no unit of it.
+        let b0: ssa.SBlock = block(0, [], [param(0), call(1, "__fern_rc_is_unique", [0]), const_int(3, 0)], brif(1, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [], br(3));
+        let b2: ssa.SBlock = block(2, [0], [], br(3));
+        let b3: ssa.SBlock = block(3, [1, 2], [inst(8, 2, [0, 3], 0, ""), counted_load(4, 0, 8), inst(9, 5, [2, 3], 0, "eq")], brif(5, 4, 5));
+        let b4: ssa.SBlock = block(4, [3], [call(6, "__fern_rc_inc", [4]), call(10, "__fern_rc_dec", [0])], br(5));
+        let b5: ssa.SBlock = block(5, [3, 4], [call(7, "take", [4]), const_int(8, 2), call(9, "__fern_alloc_reuse", [2, 8])], ret(9));
+        return Case { f: func(1, 11, [b0, b1, b2, b3, b4, b5]), modes: [counted], returns_unit: true };
+    }
+    if (name == "token-retain-under-test-released-under-test") {
+        // The same read, retained where the token is null and released
+        // where it is null again, the box released whole: balanced on both
+        // values of the token.
+        let b0: ssa.SBlock = block(0, [], [param(0), call(1, "__fern_rc_is_unique", [0]), const_int(3, 0)], brif(1, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [], br(3));
+        let b2: ssa.SBlock = block(2, [0], [], br(3));
+        let b3: ssa.SBlock = block(3, [1, 2], [inst(8, 2, [0, 3], 0, ""), counted_load(4, 0, 8), inst(9, 5, [2, 3], 0, "eq")], brif(5, 4, 5));
+        let b4: ssa.SBlock = block(4, [3], [call(6, "__fern_rc_inc", [4])], br(5));
+        let b5: ssa.SBlock = block(5, [3, 4], [inst(9, 7, [2, 3], 0, "eq")], brif(7, 6, 7));
+        let b6: ssa.SBlock = block(6, [5], [call(8, "__fern_rc_dec", [4])], br(7));
+        let b7: ssa.SBlock = block(7, [5, 6], [call(9, "__sem_release_T", [0]), const_int(10, 0)], ret(10));
+        return Case { f: func(1, 11, [b0, b1, b2, b3, b4, b5, b6, b7]), modes: [counted], returns_unit: false };
+    }
+    if (name == "derived-token-test-skips-the-shell") {
+        // #12181: the box's field read at the token's join and released
+        // after it; a second phi of the box, null where the token is, tests
+        // where the shell release sits. Where the token holds, that test
+        // holds too, so every path from the read frees the shell: the field
+        // was the frame's.
+        let b0: ssa.SBlock = block(0, [], [param(0), call(1, "__fern_rc_is_unique", [0]), const_int(3, 0)], brif(1, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [], br(3));
+        let b2: ssa.SBlock = block(2, [0], [], br(3));
+        let b3: ssa.SBlock = block(3, [1, 2], [inst(8, 2, [0, 3], 0, ""), counted_load(4, 0, 8), inst(9, 5, [2, 3], 0, "eq")], brif(5, 4, 5));
+        let b4: ssa.SBlock = block(4, [3], [call(6, "__fern_rc_inc", [4]), call(7, "__sem_release_T", [0])], br(6));
+        let b5: ssa.SBlock = block(5, [3], [], br(6));
+        let b6: ssa.SBlock = block(6, [4, 5], [inst(8, 8, [3, 0], 0, ""), inst(9, 9, [8, 3], 0, "ne")], brif(9, 7, 8));
+        let b7: ssa.SBlock = block(7, [6], [call(10, "__fern_rc_dec", [8])], br(8));
+        let b8: ssa.SBlock = block(8, [6, 7], [call(11, "__sem_release_U", [4]), const_int(12, 0)], ret(12));
+        return Case { f: func(1, 13, [b0, b1, b2, b3, b4, b5, b6, b7, b8]), modes: [counted], returns_unit: false };
+    }
+    if (name == "reuse-through-a-carried-token-writes-the-slot") {
+        // #12181: one arm reads a field off the box under its token and moves
+        // it; the other drops the box's children under a token of its own.
+        // The arms' tokens meet in a phi the construction reuses, writing the
+        // slot the field was read from. Where the first arm's token holds,
+        // the path from the read gives that phi the box.
+        let b0: ssa.SBlock = block(0, [], [param(0), param(1)], brif(1, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [call(2, "__fern_rc_is_unique", [0]), const_int(3, 0)], brif(2, 3, 4));
+        let b3: ssa.SBlock = block(3, [1], [], br(5));
+        let b4: ssa.SBlock = block(4, [1], [], br(5));
+        let b5: ssa.SBlock = block(5, [3, 4], [inst(8, 4, [0, 3], 0, ""), counted_load(5, 0, 8), inst(9, 6, [4, 3], 0, "eq")], brif(6, 6, 7));
+        let b6: ssa.SBlock = block(6, [5], [call(7, "__fern_rc_inc", [5])], br(7));
+        let b7: ssa.SBlock = block(7, [5, 6], [call(8, "take", [5]), inst(9, 9, [4, 3], 0, "ne")], brif(9, 8, 9));
+        let b8: ssa.SBlock = block(8, [7], [], br(11));
+        let b9: ssa.SBlock = block(9, [7], [call(10, "__sem_release_T", [0])], br(11));
+        let b2: ssa.SBlock = block(2, [0], [call(11, "__fern_rc_is_unique", [0]), const_int(12, 0)], brif(11, 12, 13));
+        let b12: ssa.SBlock = block(12, [2], [call(13, "__sem_drop_T", [0])], br(14));
+        let b13: ssa.SBlock = block(13, [2], [call(14, "__fern_rc_dec", [0])], br(14));
+        let b14: ssa.SBlock = block(14, [12, 13], [inst(8, 15, [0, 12], 0, "")], br(11));
+        let b11: ssa.SBlock = block(11, [8, 9, 14], [inst(8, 16, [4, 4, 15], 0, ""), const_int(17, 2), call(18, "__fern_alloc_reuse", [16, 17]), fresh_box(19), store(18, 8, 19)], ret(18));
+        return Case { f: func(2, 20, [b0, b1, b3, b4, b5, b6, b7, b8, b9, b2, b12, b13, b14, b11]), modes: [counted, value], returns_unit: true };
+    }
+    if (name == "token-reuse-writes-the-slot-read") {
+        // token-retain-under-test-consumed-after-join with the construction
+        // storing over the slot the field was read from: the field was the
+        // frame's where the token holds, and the move spent it.
+        let b0: ssa.SBlock = block(0, [], [param(0), call(1, "__fern_rc_is_unique", [0]), const_int(3, 0)], brif(1, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [], br(3));
+        let b2: ssa.SBlock = block(2, [0], [], br(3));
+        let b3: ssa.SBlock = block(3, [1, 2], [inst(8, 2, [0, 3], 0, ""), counted_load(4, 0, 8), inst(9, 5, [2, 3], 0, "eq")], brif(5, 4, 5));
+        let b4: ssa.SBlock = block(4, [3], [call(6, "__fern_rc_inc", [4]), call(10, "__fern_rc_dec", [0])], br(5));
+        let b5: ssa.SBlock = block(5, [3, 4], [call(7, "take", [4]), const_int(8, 2), call(9, "__fern_alloc_reuse", [2, 8]), fresh_box(11), store(9, 8, 11)], ret(9));
+        return Case { f: func(1, 12, [b0, b1, b2, b3, b4, b5]), modes: [counted], returns_unit: true };
+    }
+    if (name == "reuse-of-a-loop-box-through-its-token") {
+        // #12326: the box is a loop's phi (the message read each time round),
+        // its token is tested, the field read off it is moved, and the box
+        // is reused through a phi of the token for the next time round.
+        let b0: ssa.SBlock = block(0, [], [param(0), param(1)], br(1));
+        let b1: ssa.SBlock = block(1, [0, 9], [inst(8, 2, [0, 12], 0, ""), call(3, "__fern_rc_is_unique", [2]), const_int(4, 0)], brif(3, 2, 3));
+        let b2: ssa.SBlock = block(2, [1], [], br(4));
+        let b3: ssa.SBlock = block(3, [1], [], br(4));
+        let b4: ssa.SBlock = block(4, [2, 3], [inst(8, 5, [2, 4], 0, ""), counted_load(6, 2, 8), inst(9, 7, [5, 4], 0, "eq")], brif(7, 5, 6));
+        let b5: ssa.SBlock = block(5, [4], [call(8, "__fern_rc_inc", [6])], br(6));
+        let b6: ssa.SBlock = block(6, [4, 5], [call(9, "take", [6]), inst(9, 10, [5, 4], 0, "ne")], brif(10, 7, 8));
+        let b7: ssa.SBlock = block(7, [6], [], br(9));
+        let b8: ssa.SBlock = block(8, [6], [call(11, "__sem_release_T", [2])], br(9));
+        let b9: ssa.SBlock = block(9, [7, 8], [inst(8, 13, [2, 4], 0, ""), const_int(14, 2), call(12, "__fern_alloc_reuse", [13, 14]), fresh_box(15), store(12, 8, 15)], brif(1, 1, 10));
+        let b10: ssa.SBlock = block(10, [9], [], ret(12));
+        return Case { f: func(2, 16, [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10]), modes: [counted, value], returns_unit: true };
+    }
+    if (name == "pair-word-settled-past-its-token-test") {
+        // #12326: a paired call's second word, made before the token's
+        // block, is settled on the first word's tag inside the walk under
+        // the token's value: the walk reads the word's tag off the base.
+        let b0: ssa.SBlock = block(0, [], [param(0), call(1, "pair1", []), inst(59, 2, [], 0, "call_word"), call(3, "__fern_rc_is_unique", [0])], brif(3, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [], br(3));
+        let b2: ssa.SBlock = block(2, [0], [call(4, "__fern_rc_dec", [0]), const_int(5, 0)], br(3));
+        let b3: ssa.SBlock = block(3, [1, 2], [inst(8, 6, [0, 5], 0, ""), const_int(7, 0), inst(9, 8, [1, 7], 0, "eq")], brif(8, 4, 5));
+        let b4: ssa.SBlock = block(4, [3], [call(9, "__fern_rc_dec", [2])], br(6));
+        let b5: ssa.SBlock = block(5, [3], [], br(6));
+        let b6: ssa.SBlock = block(6, [4, 5], [inst(9, 10, [6, 7], 0, "ne")], brif(10, 7, 8));
+        let b7: ssa.SBlock = block(7, [6], [], br(9));
+        let b8: ssa.SBlock = block(8, [6], [], br(9));
+        let b9: ssa.SBlock = block(9, [7, 8], [const_int(11, 2), call(12, "__fern_alloc_reuse", [6, 11]), fresh_box(13), store(12, 8, 13)], ret(12));
+        return Case { f: func(1, 14, [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9]), modes: [counted], returns_unit: true };
+    }
+    if (name == "loop-box-copied-under-its-null-token") {
+        // #12326: a box made each time round a loop, tested unique, is
+        // reused in place through its token, or copied where the token is
+        // null: its fields are read and retained into the copy and its own
+        // unit released. The loop never leaves: round it the box is made
+        // again, and the construction's store of the field is not an
+        // overwrite of the slot the copy read.
+        let b0: ssa.SBlock = block(0, [], [param(0)], br(1));
+        let b1: ssa.SBlock = block(1, [0, 9], [fresh_box(1), fresh_box(2), store(1, 8, 2), call(3, "__fern_rc_is_unique", [1])], brif(3, 2, 3));
+        let b2: ssa.SBlock = block(2, [1], [], br(4));
+        let b3: ssa.SBlock = block(3, [1], [const_int(4, 0)], br(4));
+        let b4: ssa.SBlock = block(4, [2, 3], [inst(8, 5, [1, 4], 0, ""), const_int(6, 0), inst(9, 7, [5, 6], 0, "eq")], brif(7, 5, 6));
+        let b5: ssa.SBlock = block(5, [4], [const_int(8, 2), call(9, "__fern_alloc_reuse", [5, 8]), counted_load(10, 1, 8), call(11, "__fern_rc_inc", [10]), store(9, 8, 11)], br(7));
+        let b6: ssa.SBlock = block(6, [4], [], br(7));
+        let b7: ssa.SBlock = block(7, [5, 6], [inst(8, 12, [9, 5], 0, ""), inst(9, 13, [5, 6], 0, "ne")], brif(13, 9, 8));
+        let b8: ssa.SBlock = block(8, [7], [call(14, "__sem_release_T", [1])], br(9));
+        let b9: ssa.SBlock = block(9, [7, 8], [fresh_box(15), store(12, 16, 15), call(16, "take", [12])], br(1));
+        return Case { f: func(1, 17, [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9]), modes: [value], returns_unit: false };
+    }
     eprint("rccertify_cases: no case named " + name);
     exit(2);
     return Case { f: one_block(0, 0, [], ret(0 - 1)), modes: [], returns_unit: false };
@@ -154,9 +285,10 @@ function pick(name: string): Case {
 function main(): i32 {
     let av: string[] = args();
     let c: Case = pick(av[1]);
-    // pair3 and pair7 return a variant in two words whose payload is a
-    // reference under tags 0 and 1, and under every tag of 0..2.
-    let abis: rccertify.Abis = rccertify.abis_of(["case", "pair3", "pair7"], [c.modes, [], []], [c.returns_unit, false, false], [false, false, false], [0, 3, 7], [false, false, false]);
+    // pair1, pair3 and pair7 return a variant in two words whose payload is
+    // a reference under tag 0, under tags 0 and 1, and under every tag of
+    // 0..2.
+    let abis: rccertify.Abis = rccertify.abis_of(["case", "pair1", "pair3", "pair7", "take"], [c.modes, [], [], [], [rccertify.counted_mode()]], [c.returns_unit, false, false, false, false], [false, false, false, false, false], [0, 1, 3, 7, 0], [false, false, false, false, false]);
     let irops: ir.Op[] = [];
     let r: rccertify.Report = rccertify.certify(c.f, irops, abis.lookup("case"), abis, rcsigs.table(), rcsigs.op_table());
     for x in r.findings {
@@ -210,6 +342,22 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"resumed-frame-not-certified", nil, 0, "resumes from a task frame"},
 		{"pair-word-released-on-each-payload-tag", nil, 0, ""},
 		{"pair-word-unreleased-on-a-payload-tag", []string{"leaked where it dies of v1"}, 0, ""},
+		{"token-retain-under-test-consumed-after-join", []string{"spent without a unit of v4"}, 0, ""},
+		{"token-retain-under-test-released-under-test", nil, 0, ""},
+		{"derived-token-test-skips-the-shell", nil, 0, ""},
+		// The two joins the other arm's token reaches are tested by nothing,
+		// so they stay unproved.
+		{"reuse-through-a-carried-token-writes-the-slot", nil, 2, ""},
+		{"token-reuse-writes-the-slot-read", nil, 0, ""},
+		// The loop's phi meets the parameter and the reused box, which no
+		// test decides.
+		{"reuse-of-a-loop-box-through-its-token", nil, 1, ""},
+		// The word is made before the token's block, so the walk under the
+		// token's value inherits its tag.
+		{"pair-word-settled-past-its-token-test", nil, 0, ""},
+		// The copy's reads are of the box this time round; the construction
+		// next time round stores into another box.
+		{"loop-box-copied-under-its-null-token", nil, 0, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
