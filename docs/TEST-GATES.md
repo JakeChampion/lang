@@ -285,12 +285,19 @@ never used, connections kept alive after one served request, which is
 the exit criterion's idle keep-alive connection, and connections each with
 a request whose handler is parked on the fetch upstream's `/hold` target
 (P3's suspended handler, `docs/NET-P3-SUSPENSION-PLAN.md` §4 slice 5),
-released at the end so every parked handler is seen to answer. The
-self-host's loop costs about 560 and 590 bytes per connection for the
-first two, and about 4.7 KiB per suspended handler, under an 8 KiB bound:
-the connection's own cost plus the flight, the task's record and save
-area, and the fetch client's request, pooled connection and parked frames.
-The test compiles with the production driver:
+released at the end so every parked handler is seen to answer; and a
+fourth shape parks the same handlers on the streams of one prior-knowledge
+HTTP/2 connection (P6, `docs/NET-P6-HTTP2-PLAN.md` slice 8), so the growth
+is a parked stream's. The self-host's loop costs 992 bytes per connection
+for the first two, about 7.0 KiB per suspended handler under an 8 KiB
+bound (the connection's own cost plus the flight, the task's record and
+save area, and the fetch client's request, pooled connection and parked
+frames), and about 8.0 KiB per parked stream under a 12 KiB bound (the
+handler's cost without a connection, plus the stream's slot in the state
+machine and the request it handed over, about 2.5 KiB together).
+`scripts/net-bench` records all three figures nightly as
+`net/fern/held.bytes_per_connection`, `.bytes_per_suspended_handler` and
+`.bytes_per_stream`. The test compiles with the production driver:
 the per-module driver's older lowering keeps an array of arrays it cannot
 prove fresh, so the connection table it rebuilds per accept leaks there
 by that lowering's design, and a gate on it would measure the lowering

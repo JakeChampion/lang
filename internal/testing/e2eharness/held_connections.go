@@ -29,18 +29,19 @@ const HeldConnectionsBatch = 64
 // HeldConnectionsServerSource is a server whose handler answers
 // the bump allocator's high-water mark in bytes.
 func HeldConnectionsServerSource() string {
-	return heldConnectionsServer("", `function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+	return heldConnectionsServer("", "serve.config()", `function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok(__heap_bump_bytes().to_string());
 }`)
 }
 
 // heldConnectionsServer is the held-connection servers' shared shape:
-// `handler` serving under a read deadline long enough that an
-// idle held connection stays open while it is measured (a parked one
-// holds under the loop's own held deadline instead) and no per-client cap,
+// `handler` serving under `config` with a read deadline long enough that
+// an idle held connection stays open while it is measured (a parked one
+// holds under the loop's own held deadline instead), no per-client cap,
 // since both batches come from this host and the default cap would close
-// the second on accept.
-func heldConnectionsServer(imports, handler string) string {
+// the second on accept, and room in flight for both batches of streams on
+// one HTTP/2 connection.
+func heldConnectionsServer(imports, config, handler string) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/time";
 import "std/serve";
@@ -49,10 +50,10 @@ import "std/platform";
 %s
 
 function main(): i32 {
-    let opts: serve.Config = serve.Config { ...serve.config(), recv_deadline: time.duration_seconds(120 as i64), max_connections_per_ip: 0 };
+    let opts: serve.Config = serve.Config { ...%s, recv_deadline: time.duration_seconds(120 as i64), max_connections_per_ip: 0, max_in_flight: %d };
     return serve.run(0, opts, handle);
 }
-`, imports, handler)
+`, imports, handler, config, 4*HeldConnectionsBatch)
 }
 
 // HeldSuspendedBytesPerHandler is the bound on the bump-allocator growth
@@ -60,7 +61,7 @@ function main(): i32 {
 // each connection's handler is parked on its upstream: the connection's
 // own cost plus the flight, the task's record and save area, and the
 // fetch client's request, pooled connection and parked frames, which
-// save only their live locals. The self-host's loop costs about 4.7 KiB.
+// save only their live locals. The self-host's loop costs about 7.0 KiB.
 const HeldSuspendedBytesPerHandler = 8192
 
 // HeldSuspendedServerSource is HeldConnectionsServerSource with a handler
@@ -71,7 +72,10 @@ const HeldSuspendedBytesPerHandler = 8192
 // handler that answers early is the upstream's doing, never the client
 // giving up on the park.
 func HeldSuspendedServerSource() string {
-	return heldConnectionsServer(`import "std/fetch";`, `function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+	return heldConnectionsServer(`import "std/fetch";`, "serve.config()", heldSuspendedHandler)
+}
+
+const heldSuspendedHandler = `function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/heap") {
         return http.ok(__heap_bump_bytes().to_string());
     }
@@ -80,7 +84,73 @@ func HeldSuspendedServerSource() string {
         Ok(resp) => { return http.ok("held " + resp.status.to_string()); },
         Err(e) => { return http.ok("held err " + e.message()); }
     }
-}`)
+}`
+
+// HeldStreamsBytesPerStream is the bound on the bump-allocator growth the
+// second batch of streams parked on one HTTP/2 connection may cost, per
+// stream: the flight, task and fetch client a suspended handler costs,
+// without a connection of its own, plus the stream's slot in the state
+// machine and the request it handed over. The self-host's loop costs
+// about 8.0 KiB, of which the state machine's own share is about 2.5 KiB.
+const HeldStreamsBytesPerStream = 12288
+
+// HeldStreamsServerSource is HeldSuspendedServerSource under `with_h2()`,
+// so a prior-knowledge HTTP/2 client parks a handler per stream on one
+// connection.
+func HeldStreamsServerSource() string {
+	return heldConnectionsServer(`import "std/fetch";`, "serve.config().with_h2()", heldSuspendedHandler)
+}
+
+// MeasureHeldStreams opens one HTTP/2 connection to the server at addr
+// and parks two batches of streams on it, each a request whose handler
+// is parked on the upstream's /hold target, and answers the
+// bump-allocator growth the second batch cost, per stream. A batch
+// counts as held once the upstream has every handler's request parked.
+// The upstream is then released and every stream must answer, so the
+// parked handlers are shown to resume as well as to fit.
+func MeasureHeldStreams(t *testing.T, addr string, up *FetchUpstream) (perStream int64, first, second int64) {
+	t.Helper()
+	client, err := DialH2C(addr, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	client.SetDeadline(time.Now().Add(5 * time.Minute))
+	streams := make([]uint32, 0, 2*HeldConnectionsBatch)
+	hold := func() {
+		for i := 0; i < HeldConnectionsBatch; i++ {
+			stream, err := client.Open("/park")
+			if err != nil {
+				t.Fatalf("stream %d: %v", len(streams)+1, err)
+			}
+			streams = append(streams, stream)
+		}
+		deadline := time.Now().Add(30 * time.Second)
+		for up.Held() < len(streams) {
+			if time.Now().After(deadline) {
+				t.Fatalf("%d handlers parked on the upstream after 30s, want %d", up.Held(), len(streams))
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	before := heapBumpBytes(t, addr)
+	hold()
+	after1 := heapBumpBytes(t, addr)
+	hold()
+	after2 := heapBumpBytes(t, addr)
+	first = after1 - before
+	second = after2 - after1
+	up.Release()
+	for i, stream := range streams {
+		body, err := client.Await(stream)
+		if err != nil {
+			t.Fatalf("stream %d after release: %v", i+1, err)
+		}
+		if body != "held 200" {
+			t.Fatalf("stream %d answered %q after release, want \"held 200\"", i+1, body)
+		}
+	}
+	return second / HeldConnectionsBatch, first, second
 }
 
 // MeasureHeldSuspended holds two batches of connections to the server at

@@ -187,3 +187,15 @@ without ACK within the timeout closes the connection.
    one connection per origin, so a handler's upstream calls multiplex.
 8. **Exit.** Per-stream bump bytes bounded and recorded on the perf lane;
    `internal/e2eselfhost` twins for the connection tests; #9860 closed.
+   The bound (landed): `TestSelfHostHeldConnectionsHeapBoundX86_64`'s
+   fourth shape parks 64 handlers, then 64 more, on the streams of one
+   h2c connection (`e2eharness.H2CClient` opening streams and awaiting
+   them apart) and holds the second batch's growth under 12 KiB per
+   stream; it reads about 8.0 KiB, the suspended handler's 7.0 KiB without
+   a connection plus about 2.5 KiB the state machine keeps per open
+   stream, and `scripts/net-bench` records it nightly as
+   `net/fern/held.bytes_per_stream`. The twins: the connection tests
+   (`http_hpack`, `http_h2_frame`, `http_h2`, `http_grpc`, `protobuf`)
+   run through the self-host compiler in `TestSelfHostStdTestE2E`, and
+   every `…X86_64` serve test builds its server with `bin/fern`, which is
+   the self-host compiler.
