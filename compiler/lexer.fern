@@ -446,9 +446,10 @@ function comment_tok(line: i32, col: i32, text: string, trailing: boolean): Comm
 // parser stays grammar-only — same split as the Go lexer's Tokenize.
 pub struct LexResult { tokens: Token[], comments: Comment[] }
 
-struct TrivResult { lex: Lex, comments: Comment[] }
-
-struct Lex { src: string, i: i32, n: i32, line: i32, col: i32 }
+// The cursor, and the `//` comments seen so far when the caller keeps them.
+// It is threaded through the scan as an owned value, so each step writes its
+// one box in place rather than boxing a fresh cursor per token.
+struct Lex { src: string, i: i32, n: i32, line: i32, col: i32, comments: Comment[] }
 
 function (l: Lex) at_end(): boolean {
   return l.i >= l.n;
@@ -464,37 +465,36 @@ function (l: Lex) peek_byte(): i32 {
 // advance consumes one byte, updates line/col. Returns the new
 // Lex value — the language is value-semantics-by-default so the
 // caller threads the updated state back through.
-function (l: Lex) advance(): Lex {
+function (own l: Lex) advance(): Lex {
   if (l.i >= l.n) {
     return l;
   }
-  let b: i32 = l.src[l.i] as i32;
-  let new_line: i32 = l.line;
-  let new_col: i32 = l.col;
-  if (b == 10) {
-    new_line = new_line + 1;
-    new_col = 1;
-  } else {
-    new_col = new_col + 1;
+  if (l.src[l.i] == b'\n') {
+    return Lex { ...l, i: l.i + 1, line: l.line + 1, col: 1 };
   }
-  return Lex { src: l.src, i: l.i + 1, n: l.n, line: new_line, col: new_col };
+  return Lex { ...l, i: l.i + 1, col: l.col + 1 };
 }
 
 // advance_in_line consumes a run [l.i, end) that holds no newline, in one Lex:
 // the column moves by the run's length.
-function (l: Lex) advance_in_line(end: i32): Lex {
+function (own l: Lex) advance_in_line(end: i32): Lex {
   if (end <= l.i) {
     return l;
   }
-  return Lex { src: l.src, i: end, n: l.n, line: l.line, col: l.col + (end - l.i) };
+  return Lex { ...l, i: end, col: l.col + (end - l.i) };
+}
+
+// skip consumes k bytes of a run that holds no newline.
+function (own l: Lex) skip(k: i32): Lex {
+  return Lex { ...l, i: l.i + k, col: l.col + k };
 }
 
 // skip_trivia drops whitespace and, when `keep` is set, collects `//` line
-// comments onto `acc`. Mirrors the Go lexer's `skipTrivia`, except that the Go
-// lexer always accumulates: there, comments cost an append into a GC'd slice,
-// whereas here each one copies its text into an owned string, and the compile
-// path has no consumer for them.
-function skip_trivia(l: Lex, acc: Comment[], keep: boolean): TrivResult {
+// comments onto the cursor. Mirrors the Go lexer's `skipTrivia`, except that
+// the Go lexer always accumulates: there, comments cost an append into a GC'd
+// slice, whereas here each one copies its text into an owned string, and the
+// compile path has no consumer for them.
+function skip_trivia(own l: Lex, keep: boolean): Lex {
   let i: i32 = l.i;
   let line: i32 = l.line;
   let col: i32 = l.col;
@@ -516,7 +516,7 @@ function skip_trivia(l: Lex, acc: Comment[], keep: boolean): TrivResult {
         ce = ce + 1;
       }
       if (keep) {
-        acc = acc.append(comment_tok(line, col, slice_unchecked(l.src, i + 2, ce), code_before(l.src, i)));
+        l = Lex { ...l, comments: l.comments.append(comment_tok(line, col, slice_unchecked(l.src, i + 2, ce), code_before(l.src, i))) };
       }
       col = col + (ce - i);
       i = ce;
@@ -525,9 +525,9 @@ function skip_trivia(l: Lex, acc: Comment[], keep: boolean): TrivResult {
     }
   }
   if (i == l.i) {
-    return TrivResult { lex: l, comments: acc };
+    return l;
   }
-  return TrivResult { lex: Lex { src: l.src, i: i, n: l.n, line: line, col: col }, comments: acc };
+  return Lex { ...l, i: i, line: line, col: col };
 }
 
 // scan_number reads the digit run + optional fractional digits +
@@ -705,7 +705,7 @@ pub function has_error(toks: Token[]): boolean {
 // `t.1.0`, not a fractional / exponent continuation — so the float
 // upgrades below are suppressed. Mirrors the Go lexer's
 // `l.afterDot` guard.
-function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32): NumResult {
+function scan_number(own l: Lex, after_dot: boolean, start_line: i32, start_col: i32): NumResult {
   let begin: i32 = l.i;
   let is_hex: boolean = false;
   // `0x` / `0X` hex integer literal: consume hex digits, skip the
@@ -714,7 +714,7 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
   if (l.peek_byte() == 48 && l.i + 1 < l.n
     && (l.src[l.i + 1] == b'x' || l.src[l.i + 1] == b'X')) {
     is_hex = true;
-    l = l.advance_in_line(l.i + 2);  // '0' then 'x' / 'X'
+    l = l.skip(2);  // '0' then 'x' / 'X'
     let hex_start: i32 = l.i;
     let he: i32 = l.i;
     while (he < l.n && is_hex_digit(l.src[he] as i32)) {
@@ -726,7 +726,8 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
     }
   } else if (radix_prefix(l.src, l.i, l.n) != 0) {
     // `0o` octal / `0b` binary integer literal: no float upgrades either.
-    return scan_radix_number(l, radix_prefix(l.src, l.i, l.n), start_line, start_col);
+    let base: i32 = radix_prefix(l.src, l.i, l.n);
+    return scan_radix_number(l, base, start_line, start_col);
   } else {
     let de: i32 = l.i;
     while (de < l.n && is_digit(l.src[de] as i32)) {
@@ -739,7 +740,7 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
   // after a `.` (chained tuple index).
   if (!is_hex && !after_dot && l.i + 1 < l.n && l.src[l.i] == b'.' && is_digit(l.src[l.i + 1] as i32)) {
     is_float = true;
-    l = l.advance_in_line(l.i + 1);  // consume `.`
+    l = l.skip(1);  // consume `.`
     let fe: i32 = l.i;
     while (fe < l.n && is_digit(l.src[fe] as i32)) {
       fe = fe + 1;
@@ -758,9 +759,9 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
     }
     if (j < l.n && is_digit(l.src[j] as i32)) {
       is_float = true;
-      l = l.advance_in_line(l.i + 1);  // 'e' / 'E'
+      l = l.skip(1);  // 'e' / 'E'
       if (!l.at_end() && (l.peek_byte() == 43 || l.peek_byte() == 45)) {
-        l = l.advance_in_line(l.i + 1);  // sign
+        l = l.skip(1);  // sign
       }
       let ee: i32 = l.i;
       while (ee < l.n && is_digit(l.src[ee] as i32)) {
@@ -778,7 +779,7 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
   let suffix: string = "";
   if (!l.at_end() && is_suffix_start(l.peek_byte())) {
     let s_begin: i32 = l.i;
-    l = l.advance_in_line(l.i + 1);
+    l = l.skip(1);
     let se: i32 = l.i;
     while (se < l.n && is_digit(l.src[se] as i32)) {
       se = se + 1;
@@ -822,11 +823,11 @@ function radix_prefix(src: string, i: i32, n: i32): i32 {
 // text already reads hex, so the token's text is the value in hex and its
 // `raw` the spelling as written, suffix included, for the printer. A value
 // past 64 bits keeps growing the hex digits, so the range checks still see it.
-function scan_radix_number(l0: Lex, base: i32, start_line: i32, start_col: i32): NumResult {
+function scan_radix_number(own l0: Lex, base: i32, start_line: i32, start_col: i32): NumResult {
   let l: Lex = l0;
   let begin: i32 = l.i;
   let prefix: string = slice_unchecked(l.src, l.i, l.i + 2) + "";
-  l = l.advance_in_line(l.i + 2);
+  l = l.skip(2);
   let digits: i32[] = [];
   let e: i32 = l.i;
   while (e < l.n && is_digit(l.src[e] as i32) && l.src[e] as i32 - 48 < base) {
@@ -843,7 +844,7 @@ function scan_radix_number(l0: Lex, base: i32, start_line: i32, start_col: i32):
   let suffix: string = "";
   if (!l.at_end() && is_suffix_start(l.peek_byte())) {
     let s_begin: i32 = l.i;
-    l = l.advance_in_line(l.i + 1);
+    l = l.skip(1);
     let se: i32 = l.i;
     while (se < l.n && is_digit(l.src[se] as i32)) {
       se = se + 1;
@@ -908,7 +909,7 @@ function ident_or_keyword(name: string, start_line: i32, start_col: i32): Token 
 // while keeping their own literal-kind error messages (SH-043).
 struct EscResult { lex: Lex, frag: string, hexerr: boolean, unknown: boolean }
 
-function apply_escape(l: Lex, esc: i32): EscResult {
+function apply_escape(own l: Lex, esc: i32): EscResult {
   if (esc == 110) {
     return EscResult { lex: l, frag: "\n", hexerr: false, unknown: false };
   }
@@ -1012,7 +1013,7 @@ struct EscVal { lex: Lex, val: i32, err: string }
 // in a byte literal but stops at 0x7F in a character literal, where
 // anything above ASCII has two readings and `\u{...}` says which.
 // Mirrors the Go lexer's scanQuotedEscape.
-function quoted_escape(l: Lex, is_byte: boolean): EscVal {
+function quoted_escape(own l: Lex, is_byte: boolean): EscVal {
   l = l.advance();  // backslash
   if (l.at_end()) {
     return EscVal { lex: l, val: 0, err: "unterminated quoted literal" };
@@ -1107,7 +1108,7 @@ function closing_quote_ahead(l: Lex): boolean {
 // for the parser: an empty `''`, more than one scalar / byte, a
 // non-ASCII `b'é'`, and an unterminated one. Mirrors scanQuoted in
 // internal/syntax/lexer/lexer.go.
-function scan_quoted(l: Lex, is_byte: boolean, start_line: i32, start_col: i32): NumResult {
+function scan_quoted(own l: Lex, is_byte: boolean, start_line: i32, start_col: i32): NumResult {
   let begin: i32 = l.i;
   let kind_name: string = "character";
   let suffix: string = "char";
@@ -1148,7 +1149,7 @@ function scan_quoted(l: Lex, is_byte: boolean, start_line: i32, start_col: i32):
       return NumResult { lex: l, tok: error_tok("invalid UTF-8 byte in character literal", start_line, start_col) };
     }
     val = u.val;
-    l = l.advance_in_line(l.i + u.len);
+    l = l.skip(u.len);
   }
   if (l.at_end() || l.peek_byte() != 39) {
     if (closing_quote_ahead(l)) {
@@ -1157,7 +1158,8 @@ function scan_quoted(l: Lex, is_byte: boolean, start_line: i32, start_col: i32):
     return NumResult { lex: l, tok: error_tok("unterminated " + kind_name + " literal", start_line, start_col) };
   }
   l = l.advance();  // closing '
-  return NumResult { lex: l, tok: quoted_tok(dec_str(val), suffix, slice_unchecked(l.src, begin, l.i) + "", start_line, start_col) };
+  let raw: string = slice_unchecked(l.src, begin, l.i) + "";
+  return NumResult { lex: l, tok: quoted_tok(dec_str(val), suffix, raw, start_line, start_col) };
 }
 
 // scan_string reads `"…"` with C-style escapes. The Go lexer
@@ -1166,7 +1168,7 @@ function scan_quoted(l: Lex, is_byte: boolean, start_line: i32, start_col: i32):
 // inside string, unknown escape, unterminated) surface as a
 // TokError carrying a diagnostic message — matching the Go
 // lexer's error shapes.
-function scan_string(l: Lex, start_line: i32, start_col: i32): NumResult {
+function scan_string(own l: Lex, start_line: i32, start_col: i32): NumResult {
   l = l.advance();  // opening "
   let out: string = "";
   while (!l.at_end() && l.peek_byte() != 34) {
@@ -1224,7 +1226,7 @@ function scan_string(l: Lex, start_line: i32, start_col: i32): NumResult {
 // (with nested braces tracked and inner string literals skipped so
 // their quotes / braces don't break the boundary scan). All the
 // failure shapes surface a TokError.
-function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
+function scan_fstring(own l: Lex, start_line: i32, start_col: i32): NumResult {
   l = l.advance();  // opening "
   let lit: string = "";
   let have_lit: boolean = false;
@@ -1366,20 +1368,17 @@ pub function tokenize_full(src: string): LexResult {
 }
 
 function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
-  let l: Lex = Lex { src: src, i: 0, n: src.len(), line: first_line, col: 1 };
+  let l: Lex = Lex { src: src, i: 0, n: src.len(), line: first_line, col: 1, comments: [] };
   let out: Token[] = [];
-  let comments: Comment[] = [];
   // Tracks whether the previously-emitted token was a `.` punct,
   // so the number scanner can suppress the chained-tuple float
   // upgrade (`t.1.0`). Mirrors the Go lexer's `l.afterDot`.
   let after_dot: boolean = false;
   while (true) {
-    let tr: TrivResult = skip_trivia(l, comments, keep);
-    l = tr.lex;
-    comments = tr.comments;
+    l = skip_trivia(l, keep);
     if (l.at_end()) {
       out = out.append(TokEof { line: l.line, col: l.col });
-      return LexResult { tokens: out, comments: comments };
+      return LexResult { tokens: out, comments: l.comments };
     }
     let start_line: i32 = l.line;
     let start_col: i32 = l.col;
@@ -1393,7 +1392,7 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
       l = rf.lex;
       out = out.append(rf.tok);
       if (is_error_tok(rf.tok)) {
-        return LexResult { tokens: out, comments: comments };
+        return LexResult { tokens: out, comments: l.comments };
       }
       after_dot = false;
       continue;
@@ -1407,7 +1406,7 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
       l = rb.lex;
       out = out.append(rb.tok);
       if (is_error_tok(rb.tok)) {
-        return LexResult { tokens: out, comments: comments };
+        return LexResult { tokens: out, comments: l.comments };
       }
       after_dot = false;
       continue;
@@ -1417,7 +1416,7 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
       l = rc.lex;
       out = out.append(rc.tok);
       if (is_error_tok(rc.tok)) {
-        return LexResult { tokens: out, comments: comments };
+        return LexResult { tokens: out, comments: l.comments };
       }
       after_dot = false;
       continue;
@@ -1427,7 +1426,7 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
       l = rn.lex;
       out = out.append(rn.tok);
       if (is_error_tok(rn.tok)) {
-        return LexResult { tokens: out, comments: comments };
+        return LexResult { tokens: out, comments: l.comments };
       }
       after_dot = false;
       continue;
@@ -1445,7 +1444,7 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
       l = rs.lex;
       out = out.append(rs.tok);
       if (is_error_tok(rs.tok)) {
-        return LexResult { tokens: out, comments: comments };
+        return LexResult { tokens: out, comments: l.comments };
       }
       after_dot = false;
       continue;
@@ -1479,9 +1478,9 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
     // Unknown byte — surface a TokError and stop, matching the
     // Go lexer's `unexpected character` error.
     out = out.append(error_tok("unexpected character", start_line, start_col));
-    return LexResult { tokens: out, comments: comments };
+    return LexResult { tokens: out, comments: l.comments };
   }
-  return LexResult { tokens: out, comments: comments };
+  return LexResult { tokens: out, comments: l.comments };
 }
 
 // test_mixed feeds a mixed-token input through tokenize, walks the
