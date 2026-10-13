@@ -6628,6 +6628,9 @@ function ssa_alu_rhs(s: asmcore.EmitState, ext: i32, size: i32, fr: SsaFrame, re
   if (reg_of[v] >= 0) {
     return ssa_alu_rr(s, ext, size, ssa_reg(reg_of[v]), dst);
   }
+  if (s.ssa_x0 == v) {
+    return ssa_alu_rr(s, ext, size, "%r11", dst);
+  }
   return ssa_alu_rm(s, ext, size, true, dst, "%rbp", ssa_slot_disp(ssa.spill_slot(reg_of[v]), s.ssa_save));
 }
 
@@ -6751,16 +6754,20 @@ function ssa_imm_left(): string[] {
 }
 
 // ssa_rhs is a right operand as an ALU op or compare reads it: the immediate
-// for a constant that has none, the register home, or a spilled value's frame
-// slot, read in place.
-function ssa_rhs(fr: SsaFrame, reg_of: i32[], v: i32, save: i32): string {
+// for a constant that has none, the register home, %r11 for a spilled value
+// it still holds, or else the value's frame slot, read in place. Only an
+// operand read before the instruction writes %r11 may take it from there.
+function ssa_rhs(fr: SsaFrame, reg_of: i32[], v: i32, s: asmcore.EmitState): string {
   if (fr.imm.is_imm[v]) {
     return "$" + util.i64_to_string(fr.imm.value[v]);
   }
   if (reg_of[v] >= 0) {
     return ssa_reg(reg_of[v]);
   }
-  return ssa_slot(ssa.spill_slot(reg_of[v]), save);
+  if (s.ssa_x0 == v) {
+    return "%r11";
+  }
+  return ssa_slot(ssa.spill_slot(reg_of[v]), s.ssa_save);
 }
 
 // ssa_bin_in_place emits a two-operand integer op into the result's home,
@@ -6800,13 +6807,17 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
     s = s.write("    leaq " + lea + ", " + dh + "\n");
     return ssa_store(reg_of, ins.result, dh, s);
   }
-  s = ssa_load(reg_of, a, dh, s);
+  if (!ssa_in_x(reg_of, a) && s.ssa_x0 == a && dh != "%r11") {
+    s = ssa_mov_rr(s, dh, "%r11");
+  } else {
+    s = ssa_load(reg_of, a, dh, s);
+  }
   if (ssa_shift_tag(tag)) {
     s = s.write(shift_imm_asm(tag, ins.imm, fr.imm.value[b], dh));
   } else if (ssa_alu_ext(tag) >= 0) {
     s = ssa_alu_rhs(s, ssa_alu_ext(tag), 64, fr, reg_of, b, dh);
   } else {
-    s = s.write(ir_bin_asm(tag, ins.imm, dh, ssa_rhs(fr, reg_of, b, s.ssa_save)));
+    s = s.write(ir_bin_asm(tag, ins.imm, dh, ssa_rhs(fr, reg_of, b, s)));
   }
   return ssa_store(reg_of, ins.result, dh, s);
 }

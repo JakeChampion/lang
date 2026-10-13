@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/bits"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1994,6 +1995,111 @@ function main(): i32 { return count() as i32; }
 			if re.MatchString(fn) {
 				t.Errorf("%s: count still materialises %s:\n%s", c.target, re, fn)
 			}
+		}
+	}
+}
+
+// BLAKE2b's mixing step over sixteen live words and sixteen message words
+// keeps more values live than either pool holds, so results spill, and many
+// are read by the very next op. That op reads the value from the scratch it
+// was computed in, not back from the slot it was just stored to: a reload
+// there puts a store-to-load forward on the dependency chain, which cost
+// b2sum a fifth of its time. The run checks the value against Go's.
+func TestSelfHostSSASpilledResultIsReadFromScratch(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	type quad struct{ a, b, c, d int }
+	quads := []quad{{0, 4, 8, 12}, {1, 5, 9, 13}, {2, 6, 10, 14}, {3, 7, 11, 15}, {0, 5, 10, 15}, {1, 6, 11, 12}, {2, 7, 8, 13}, {3, 4, 9, 14}}
+	var b strings.Builder
+	b.WriteString("@noinline function mix(seed: u64, rounds: i32): u64 {\n")
+	for i := 0; i < 16; i++ {
+		fmt.Fprintf(&b, "    let v%d: u64 = seed * %d as u64;\n", i, 2*i+3)
+		fmt.Fprintf(&b, "    let m%d: u64 = seed ^ %d as u64;\n", i, 7*i+1)
+	}
+	b.WriteString("    let r: i32 = 0;\n    while (r < rounds) {\n")
+	rot := func(dst, x, y string, n int) {
+		fmt.Fprintf(&b, "        %s = (%s ^ %s) >> %d as u64 | (%s ^ %s) << %d as u64;\n", dst, x, y, n, x, y, 64-n)
+	}
+	for g, q := range quads {
+		va, vb, vc, vd := fmt.Sprintf("v%d", q.a), fmt.Sprintf("v%d", q.b), fmt.Sprintf("v%d", q.c), fmt.Sprintf("v%d", q.d)
+		fmt.Fprintf(&b, "        %s = %s + %s + m%d;\n", va, va, vb, 2*g)
+		rot(vd, vd, va, 32)
+		fmt.Fprintf(&b, "        %s = %s + %s;\n", vc, vc, vd)
+		rot(vb, vb, vc, 24)
+		fmt.Fprintf(&b, "        %s = %s + %s + m%d;\n", va, va, vb, 2*g+1)
+		rot(vd, vd, va, 16)
+		fmt.Fprintf(&b, "        %s = %s + %s;\n", vc, vc, vd)
+		rot(vb, vb, vc, 63)
+	}
+	b.WriteString("        r = r + 1;\n    }\n    return v0")
+	for i := 1; i < 16; i++ {
+		fmt.Fprintf(&b, " ^ v%d", i)
+	}
+	b.WriteString(";\n}\nfunction main(): i32 { return (mix(0x9e3779b97f4a7c15 as u64, 3) % (251 as u64)) as i32; }\n")
+	src := filepath.Join(dir, "mix.fern")
+	if err := os.WriteFile(src, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	seed := uint64(0x9e3779b97f4a7c15)
+	var v, m [16]uint64
+	for i := range v {
+		v[i], m[i] = seed*uint64(2*i+3), seed^uint64(7*i+1)
+	}
+	for r := 0; r < 3; r++ {
+		for g, q := range quads {
+			v[q.a] += v[q.b] + m[2*g]
+			v[q.d] = bits.RotateLeft64(v[q.d]^v[q.a], -32)
+			v[q.c] += v[q.d]
+			v[q.b] = bits.RotateLeft64(v[q.b]^v[q.c], -24)
+			v[q.a] += v[q.b] + m[2*g+1]
+			v[q.d] = bits.RotateLeft64(v[q.d]^v[q.a], -16)
+			v[q.c] += v[q.d]
+			v[q.b] = bits.RotateLeft64(v[q.b]^v[q.c], -63)
+		}
+	}
+	var want uint64
+	for _, x := range v {
+		want ^= x
+	}
+
+	// store matches a spill and gives the slot; reload matches the next line
+	// reading that slot back.
+	shapes := map[string]struct {
+		store  *regexp.Regexp
+		reload string
+	}{
+		"x86-64-linux": {regexp.MustCompile(`^movq %r11, (-?\d+\(%rbp\))$`), `^\S+ %s, %%\w+$`},
+		"arm64-linux":  {regexp.MustCompile(`^str x\d+, (\[sp, #\d+\])$`), `^ldr x\d+, %s$`},
+		"arm64-darwin": {regexp.MustCompile(`^str x\d+, (\[sp, #\d+\])$`), `^ldr x\d+, %s$`},
+	}
+	for _, tg := range h.targets {
+		shape := shapes[tg.target]
+		out := filepath.Join(dir, "mix-"+tg.target+".s")
+		h.compileWith(t, tg, src, out, "-emit", "asm")
+		asm, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fn := listingLines(functionListing(string(asm), "__fn_mix"))
+		spills := 0
+		for i := 0; i+1 < len(fn); i++ {
+			st := shape.store.FindStringSubmatch(fn[i])
+			if st == nil {
+				continue
+			}
+			spills++
+			if regexp.MustCompile(fmt.Sprintf(shape.reload, regexp.QuoteMeta(st[1]))).MatchString(fn[i+1]) {
+				t.Errorf("%s: mix reads %s back right after storing it:\n%s\n%s", tg.target, st[1], fn[i], fn[i+1])
+			}
+		}
+		if spills == 0 {
+			t.Fatalf("%s: mix spills nothing, so the shape is not exercised:\n%s", tg.target, strings.Join(fn, "\n"))
+		}
+		bin := filepath.Join(dir, "mix-"+tg.target)
+		h.compileWith(t, tg, src, bin)
+		if _, code := h.runProduced(t, tg, bin); code != int(want%251) {
+			t.Errorf("%s: mix exits %d, want %d", tg.target, code, want%251)
 		}
 	}
 }

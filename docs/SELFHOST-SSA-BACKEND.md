@@ -286,7 +286,11 @@ add, subtract, multiply, and, or, xor and the compares compute into the
 home with only a spilled operand passing through a scratch
 (`ssa_bin_in_place`; on x86-64 the operands swap, or a comparison flips,
 when the right one lives in the destination, and a spilled right operand
-is read from its frame slot rather than a scratch), and a compare read only
+is read from its frame slot rather than a scratch). A spilled operand the
+scratch still holds, because the op before computed it there and stored
+it, is read from the scratch (%r11, x4) instead of from the slot it was
+just stored to, which would put a store-to-load forward on the dependency
+chain. A compare read only
 by its block's branch is consumed as flags straight from the homes, a
 spilled operand on x86-64 straight from its slot (`ssa_fused_test`). A
 constant those ops alone read is an immediate operand and is never
