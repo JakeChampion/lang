@@ -27,8 +27,10 @@ lives for the whole scan.
 
 The stage-2 compile of `checker.fern` to a binary under callgrind, each
 compiler built from its own tree by itself, both compiling one frozen copy of
-main at 6fdb1671, warm certifier memo. The base is the first-append entry
-before this one.
+main at 6fdb1671, warm certifier memo. The base is the branch before this
+slice, which then also carried four runtime fast paths (the release helpers,
+the array box and the first append) that were later pulled from the PR to
+wait for their text-machine proofs; the delta is this slice's alone.
 
 | | Ir |
 |---|--:|
