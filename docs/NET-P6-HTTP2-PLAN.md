@@ -109,8 +109,17 @@ without ACK within the timeout closes the connection.
    a handler that suspends (P3) parking per stream rather than running to
    its answer, `run_with`'s stateful loop over HTTP/2, and the
    allocations-per-request reading for the HTTP/2 path.
-5. **h2spec nightly.** `scripts/net-h2spec` on `net-nightly.yml`: h2spec
-   strict against the server, every case green or the job fails.
+5. **h2spec nightly (landed).** `scripts/net-h2spec` on `net-nightly.yml`:
+   h2spec 2.6.0 strict over h2c against `scripts/net-h2spec.d/server.fern`,
+   146 cases, every one green or the job fails, the counts recorded under
+   `refs/notes/perf`. The one case not run is §3.5's invalid connection
+   preface: a port that serves HTTP/1.1 and h2c together answers bytes that
+   are not the preface as HTTP/1.1, where h2spec expects GOAWAY; under TLS
+   the ALPN choice decides instead, so a bad preface there is GOAWAY. The
+   run is h2c because h2spec's TLS client does not offer TLS 1.3. The
+   cases found two gaps in slice 3, fixed with their tests: RST_STREAM and
+   WINDOW_UPDATE on a stream never opened are a connection error, and a
+   stream that depends on itself in HEADERS or PRIORITY is reset.
 6. **gRPC interop.** Trailers both ways, `grpc-timeout` onto the request
    deadline, and `scripts/net-grpc-interop` running the interop suite's
    `empty_unary`, `large_unary`, `client_streaming`, `server_streaming`,

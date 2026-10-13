@@ -2781,13 +2781,14 @@ header bomb); every RST_STREAM either side sends counts against
 frames against `empty_data_budget`; past any of these the connection
 closes with ENHANCE_YOUR_CALM. Priorities are read and ignored; push is
 not offered. `tests/stdlib/http_h2_test.fern` drives a connection through
-each of these as a client would.
+each of these as a client would, and `scripts/net-h2spec` runs h2spec's
+strict cases against a served connection nightly (`docs/TEST-GATES.md`).
 
 ### `std/http/h2/frame`
 
 The frames of HTTP/2 (RFC 9113 §4 and §6) as values read from and written
 to bytes, with no state: `read(buf, from, max_frame)` takes the next frame
-off a buffer as `Whole(frame, len)`, `Partial` when the buffer does not
+off a buffer as `Got(frame, len)`, `More` when the buffer does not
 yet hold it, or the `FrameError` the frame is (its `code`, the `stream` it
 is on, 0 for a connection error, and why), and `encode(frame)` is a
 frame's bytes. `Frame` has a variant per type (`Data`, `Headers`,
