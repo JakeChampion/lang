@@ -75,12 +75,12 @@ x86_64/map_probe_chain.text	5854
 x86_64/map_probe_chain.ir	385170066
 x86_64/map_string.text	8751
 x86_64/map_string.ir	65377896	2
-x86_64/ordmap_insert.text	5276
-x86_64/ordmap_insert.ir	115466142
+x86_64/ordmap_insert.text	5191
+x86_64/ordmap_insert.ir	112624390
 x86_64/pmap_insert.text	4854
-x86_64/pmap_insert.ir	64758246
+x86_64/pmap_insert.ir	62362284
 x86_64/pvec_with.text	2769
-x86_64/pvec_with.ir	60818097
+x86_64/pvec_with.ir	60166754
 x86_64/record_update.ir	118043874
 x86_64/record_update.text	1375
 x86_64/sort_inplace.text	2872
@@ -237,15 +237,15 @@ aarch64/utf8_ingest_validated.ir	6484480
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 x86_64/perceus_cfold.text	2343
-x86_64/perceus_cfold.ir	65690867
-x86_64/perceus_deriv.text	2707
-x86_64/perceus_deriv.ir	90202408
+x86_64/perceus_cfold.ir	63308467
+x86_64/perceus_deriv.text	2647
+x86_64/perceus_deriv.ir	84212008
 x86_64/perceus_nqueens.text	1448
-x86_64/perceus_nqueens.ir	105327536
+x86_64/perceus_nqueens.ir	102286736
 x86_64/perceus_rbtree.text	2729
-x86_64/perceus_rbtree.ir	60191009
+x86_64/perceus_rbtree.ir	58188449
 x86_64/perceus_rbtree_ck.text	3001
-x86_64/perceus_rbtree_ck.ir	70702607
+x86_64/perceus_rbtree_ck.ir	68577967
 aarch64/perceus_cfold.text	2563
 aarch64/perceus_cfold.ir	71776202
 aarch64/perceus_deriv.text	2912
