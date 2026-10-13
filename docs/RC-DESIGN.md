@@ -277,8 +277,15 @@ release, a move into a callee or container and a return each spend one; at a
 join the counts are met per value, and a disagreement is unproved rather than
 a finding. A load inside the arm a box was proved unique in (the children
 release, a reuse token's non-null arm, a `__sem_drop_<T>` body) is the frame's
-to release. A finding is a definite violation: a unit spent that the frame
-does not hold, or a unit it holds when it returns. Every compile certifies
+to release. A join a reuse token the function branches on decides is walked
+again under each of the token's values: the function pruned to the paths
+that value selects, from the token's block on, with the token and every phi
+the pruning fixes as the box or null, the box's reuse as the box and its
+shallow release as a shell where it was unique, seeded with the rows the
+walk without an assumption settled; what both walks settle is proved, and
+either walk's finding is one. A finding is a definite violation: a unit
+spent that the frame does not hold, or a unit it holds when it returns.
+Every compile certifies
 every function it emits, through a memo keyed by the function's ops, contract
 and callee contracts (`rcmemo`, under the user's cache root), so a steady
 compile pays only for lowerings it has not seen. `FERN_RC_CERTIFY=0` leaves it
