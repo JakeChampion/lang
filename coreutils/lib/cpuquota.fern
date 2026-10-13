@@ -1,0 +1,54 @@
+// Linux cgroup v2 CPU bandwidth, as observed by GNU nproc 9.12.
+// Unknown, unlimited, or malformed data leaves the affinity count uncapped.
+import "std/string";
+import "std/u64";
+import "./gnu";
+
+pub function count(text: string): u64 {
+  let fields: string[] = text.fields();
+  if (fields.len() != 2 || fields[0] == "max") {
+    return 0 as u64;
+  }
+  let quota: (u64, i32) = gnu.parse_number(fields[0]);
+  let period: (u64, i32) = gnu.parse_number(fields[1]);
+  if (quota.1 != 0 || period.1 != 0 || quota.0 == 0 as u64 || period.0 == 0 as u64) {
+    return 0 as u64;
+  }
+  // GNU rounds to the nearest processor, halves up, with a floor of one.
+  // Quotient/remainder arithmetic avoids overflow from quota + period / 2.
+  let n: u64 = quota.0 / period.0;
+  if (quota.0 % period.0 >= period.0 / (2 as u64) + period.0 % (2 as u64)) {
+    n = n + 1 as u64;
+  }
+  if (n == 0 as u64) {
+    return 1 as u64;
+  }
+  return n;
+}
+
+pub function path(cgroups: string): string {
+  for line in cgroups.lines() {
+    if (line.starts_with("0::/")) {
+      return "/sys/fs/cgroup" + slice_unchecked(line, 3, line.len()) + "/cpu.max";
+    }
+  }
+  return "";
+}
+
+pub function current(): u64 {
+  match (read_file("/proc/self/cgroup")) {
+    Ok(groups) => {
+      let file: string = path(groups);
+      if (file != "") {
+        match (read_file(file)) {
+          Ok(text) => {
+            return count(text);
+          },
+          Err(_) => {}
+        }
+      }
+    },
+    Err(_) => {}
+  }
+  return 0 as u64;
+}
