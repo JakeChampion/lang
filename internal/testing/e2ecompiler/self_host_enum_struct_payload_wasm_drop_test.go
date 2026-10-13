@@ -15,8 +15,9 @@ import (
 // consume-by-match churn over a fresh `Full(Inner{items:[..]})` stays bounded under a
 // tight max-memory-size cap with trap-on-grow-failure (the payload buffer + boxes are
 // reclaimed onto the freelist and reused); a regression to the leak exceeds the cap
-// and traps. The WAT assertion pins that $__sem_drop_Inner is emitted. items goes
-// through id so the payload is built on the heap rather than placed as a constant.
+// and traps. The WAT assertion pins that $__sem_drop_Inner is emitted. The variant
+// is built and consumed behind @noinline calls, so the optimiser cannot fold the
+// construction away and leave nothing to reclaim.
 func TestSelfHostEnumStructPayloadDropWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm enum-struct-payload e2e")
@@ -30,17 +31,18 @@ func TestSelfHostEnumStructPayloadDropWasm(t *testing.T) {
 	prog := `struct Inner { items: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 enum Box { Full(Inner), Empty }
-function mk(): i32 {
-    let b: Box = Full(Inner { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) });
+@noinline function make(): Box {
+    return Full(Inner { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) });
+}
+@noinline function eat(b: Box): i32 {
     match (b) {
-        Full(_) => {},
-        Empty => {},
+        Full(_) => { return 5; },
+        Empty => { return 0; },
     }
-    return 5;
 }
 function main(): i32 {
     let s: i32 = 0; let k: i32 = 0;
-    while (k < 400000) { s = mk(); k = k + 1; }
+    while (k < 400000) { s = eat(make()); k = k + 1; }
     return s - 5;
 }`
 	wat := runCapture(t, gcc, runner, driverBin, []byte(prog))
