@@ -3228,13 +3228,15 @@ function sockaddr_v4(t: string, buf: string): string {
 // rt_src_tcp_listen backs `tcp_listen(port)` (#2649, syscall-leaf) → a listening
 // socket fd bound to INADDR_ANY:port, or -errno from whichever step failed.
 //
-// Three syscalls, all three-argument: socket, bind, listen. The sockaddr_in is
+// socket, setsockopt SO_REUSEADDR, bind, listen: without SO_REUSEADDR a
+// connection the server closed first holds the port in TIME_WAIT, and a
+// restarted server cannot bind it. The sockaddr_in is
 // built a byte at a time in __fern_scratch because the floor has no 16- or
 // 32-bit store — and the port has to go in big-endian regardless of the host,
 // which is what `htons` means and why it is two explicit byte stores rather
 // than an endianness-dependent word write.
 pub function rt_src_tcp_listen(t: string): string {
-  return "function __fern_tcp_listen(port: i32): i32 { let fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 1, 0) as i32; if (fd < 0) { return fd; } let sa: usize = __raw_scratch(16); " + sockaddr_head(t, "sa") + " __raw_store8(sa, 2, (port >> 8) & 255); __raw_store8(sa, 3, port & 255); let z: i32 = 4; while (z < 16) { __raw_store8(sa, z, 0); z = z + 1; } let rb: i32 = __syscall3(" + sysno(t, "bind") + ", fd as i64, sa as i64, 16) as i32; if (rb < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return rb; } let rl: i32 = __syscall3(" + sysno(t, "listen") + ", fd as i64, 128, 0) as i32; if (rl < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return rl; } return fd; }";
+  return "function __fern_tcp_listen(port: i32): i32 { let fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 1, 0) as i32; if (fd < 0) { return fd; } let sa: usize = __raw_scratch(20); __raw_store8(sa, 16, 1); __raw_store8(sa, 17, 0); __raw_store8(sa, 18, 0); __raw_store8(sa, 19, 0); let ro: i32 = __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_reuseaddr") + ", (sa + 16) as i64, 4) as i32; if (ro < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return ro; } " + sockaddr_head(t, "sa") + " __raw_store8(sa, 2, (port >> 8) & 255); __raw_store8(sa, 3, port & 255); let z: i32 = 4; while (z < 16) { __raw_store8(sa, z, 0); z = z + 1; } let rb: i32 = __syscall3(" + sysno(t, "bind") + ", fd as i64, sa as i64, 16) as i32; if (rb < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return rb; } let rl: i32 = __syscall3(" + sysno(t, "listen") + ", fd as i64, 128, 0) as i32; if (rl < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return rl; } return fd; }";
 }
 
 // rt_src_tcp_connect backs `tcp_connect(host_be, port)` (#2649, syscall-leaf) →
@@ -3289,12 +3291,15 @@ pub function rt_src_tcp_connect_with(t: string, packed: boolean): string {
 // #7740: a hostname reported success and sent to the address its letters
 // happened to make, and a fifth group stored past the 16-byte sockaddr.
 // sockopt is a socket-option constant as the target numbers it: the
-// socket level, the two SOL_SOCKET options the primitives set, and the
+// socket level, the SOL_SOCKET options the primitives set, and the
 // O_NONBLOCK flag. XNU numbers all four differently from Linux.
 function sockopt(t: string, name: string): string {
   if (t == "arm64-darwin") {
     if (name == "sol_socket") {
       return "65535";
+    }
+    if (name == "so_reuseaddr") {
+      return "4";
     }
     if (name == "so_reuseport") {
       return "512";
@@ -3324,6 +3329,9 @@ function sockopt(t: string, name: string): string {
   }
   if (name == "sol_socket") {
     return "1";
+  }
+  if (name == "so_reuseaddr") {
+    return "2";
   }
   if (name == "so_reuseport") {
     return "15";
@@ -3379,11 +3387,12 @@ function sockaddr_of(t: string, buf: string, packed: boolean): string {
 // rt_src_tcp_listen_with backs `tcp_listen_with(addr, port, backlog,
 // reuse_port)` (#9853): rt_src_tcp_listen bound to addr:port, with the
 // accept queue chosen by the caller, IPV6_V6ONLY cleared on an IPv6
-// socket so `::` takes both families whatever the host's default, and
-// SO_REUSEPORT set before the bind when asked. The option values sit in
+// socket so `::` takes both families whatever the host's default,
+// SO_REUSEADDR set as rt_src_tcp_listen sets it, and SO_REUSEPORT set
+// before the bind when asked. The option values sit in
 // the same scratch block as the sockaddr, after it.
 pub function rt_src_tcp_listen_with(t: string, packed: boolean): string {
-  return "function __fern_tcp_listen_with" + packed_suffix(packed) + "(addr: i32[], port: i32, backlog: i32, reuse_port: boolean): i32 { " + af_of_addr(t) + " let fd: i32 = __syscall3(" + sysno(t, "socket") + ", af as i64, 1, 0) as i32; if (fd < 0) { return fd; } let sa: usize = __raw_scratch(32); let r: i32 = 0; if (af == " + sockopt(t, "af_inet6") + ") { __raw_store8(sa, 28, 0); __raw_store8(sa, 29, 0); __raw_store8(sa, 30, 0); __raw_store8(sa, 31, 0); r = __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, 41, " + sockopt(t, "ipv6_v6only") + ", (sa + 28) as i64, 4) as i32; } if (r >= 0 && reuse_port) { __raw_store8(sa, 28, 1); __raw_store8(sa, 29, 0); __raw_store8(sa, 30, 0); __raw_store8(sa, 31, 0); r = __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_reuseport") + ", (sa + 28) as i64, 4) as i32; } " + sockaddr_of(t, "sa", packed) + " if (r >= 0) { r = __syscall3(" + sysno(t, "bind") + ", fd as i64, sa as i64, salen as i64) as i32; } if (r >= 0) { r = __syscall3(" + sysno(t, "listen") + ", fd as i64, backlog as i64, 0) as i32; } if (r < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return r; } return fd; }";
+  return "function __fern_tcp_listen_with" + packed_suffix(packed) + "(addr: i32[], port: i32, backlog: i32, reuse_port: boolean): i32 { " + af_of_addr(t) + " let fd: i32 = __syscall3(" + sysno(t, "socket") + ", af as i64, 1, 0) as i32; if (fd < 0) { return fd; } let sa: usize = __raw_scratch(32); let r: i32 = 0; if (af == " + sockopt(t, "af_inet6") + ") { __raw_store8(sa, 28, 0); __raw_store8(sa, 29, 0); __raw_store8(sa, 30, 0); __raw_store8(sa, 31, 0); r = __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, 41, " + sockopt(t, "ipv6_v6only") + ", (sa + 28) as i64, 4) as i32; } if (r >= 0) { __raw_store8(sa, 28, 1); __raw_store8(sa, 29, 0); __raw_store8(sa, 30, 0); __raw_store8(sa, 31, 0); r = __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_reuseaddr") + ", (sa + 28) as i64, 4) as i32; } if (r >= 0 && reuse_port) { r = __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_reuseport") + ", (sa + 28) as i64, 4) as i32; } " + sockaddr_of(t, "sa", packed) + " if (r >= 0) { r = __syscall3(" + sysno(t, "bind") + ", fd as i64, sa as i64, salen as i64) as i32; } if (r >= 0) { r = __syscall3(" + sysno(t, "listen") + ", fd as i64, backlog as i64, 0) as i32; } if (r < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return r; } return fd; }";
 }
 
 // name_group is the `tcp_socket_ctl` arm for `op`: a socket's own address
