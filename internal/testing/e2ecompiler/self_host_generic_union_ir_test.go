@@ -8,16 +8,23 @@ import "testing"
 // into the generic enum the Go checker desugars every union into, and the
 // enum monomorphiser clones one `Tree` per instantiation. The program is
 // `TestX86_64GenericUnions` with a second instantiation and a member of a
-// non-generic union written with arguments.
+// non-generic union written with arguments. `Wrap[boolean]` is held in a
+// local and never built from its generic member (#12298): the clone's variant
+// struct shares the member clone's name, and the struct monomorphiser took it
+// for the record it wraps, so `Slab__boolean` was never cloned and the typed
+// lowering refused the function.
 const genericUnionSrc = `import "std/i32";
 struct Leaf[T] { v: T }
 struct Pair[T] { a: T, b: T }
 struct Lit { v: i32 }
 struct Hold[T] { v: T }
 struct Blank { w: i32 }
+struct Slab[T] { v: T }
+struct Gap { w: i32 }
 
 type Tree[T] = Leaf[T] | Pair[T] | Lit;
 type Slot = Hold[i32] | Blank;
+type Wrap[T] = Slab[T] | Gap;
 
 function leafOf(t: Tree[i32]): i32 {
     match (t) {
@@ -50,7 +57,13 @@ function main(): i32 {
     let e: Tree[string] = Tree.Pair(Pair[string] { a: "pa", b: "ir" });
     let f: Slot = Hold[i32] { v: 30 };
     let g: Slot = Blank { w: 12 };
-    print((leafOf(a) + leafOf(b) + leafOf(c)).to_string() + ":" + label(d) + ":" + label(e) + ":" + (held(f) + held(g)).to_string());
+    let h: Wrap[boolean] = Gap { w: 3 };
+    let hw: i32 = 0;
+    match (h) {
+        Slab(x) => { hw = 100; },
+        Gap(b) => { hw = b.w; },
+    }
+    print((leafOf(a) + leafOf(b) + leafOf(c)).to_string() + ":" + label(d) + ":" + label(e) + ":" + (held(f) + held(g)).to_string() + ":" + hw.to_string());
     return 0;
 }
 `
