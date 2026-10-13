@@ -2743,6 +2743,46 @@ the table to `n` and makes the next block start with the size update §4.2
 asks for. `tests/stdlib/http_hpack_test.fern` runs RFC 7541's Appendix C
 both ways, byte for byte, with the table sizes and evictions it shows.
 
+### `std/http/h2`
+
+An HTTP/2 connection (RFC 9113), the server's side, as a sans-IO state
+machine: bytes in, bytes out, requests as events, a response given back
+per stream. `server(config)` is a new connection and the SETTINGS it opens
+with; `conn.read(bytes)` takes the client's bytes and returns a `Step` (the
+connection, the bytes to send, and `Event`s: `Request(stream, req)` once a
+stream's request is whole with its trailers, `Reset(stream, code)` when the
+client reset one, `GoAway(code)` for the client's GOAWAY, and
+`Closed(code, reason)` when the server closed the connection with that
+error after GOAWAY); `conn.respond(stream, resp)` writes the response as
+HEADERS (and CONTINUATION past the peer's frame size), DATA as both
+flow-control windows allow with the rest held for a WINDOW_UPDATE, and
+trailers last; `conn.reset(stream, code)` ends a stream unanswered,
+`conn.goaway(code)` stops new streams, `conn.ping(data)` probes the client.
+A handler written for HTTP/1.1 serves it unchanged: the request's
+`:authority` is its `host`, its `:path` the path.
+
+```fern
+let step: h2.Step = h2.server(h2.config());   // step.output: the server's SETTINGS
+step = step.conn.read(received);               // step.events: Request(1, req), ...
+step = step.conn.respond(1, http.ok("hi"));    // step.output: HEADERS, DATA END_STREAM
+```
+
+`Config` holds what the server allows and advertises: `max_concurrent_streams`
+(100), `initial_window` (65535), `max_frame_size` (16384),
+`max_header_list` (65536), `header_table_size` (4096), `max_body`
+(`http_limits().body`), and the budgets. The four attack classes are
+bounds the connection keeps: a handler runs for a stream only while the
+stream counts against the concurrency limit, and a stream the client
+resets keeps its slot until the handler answers (Rapid Reset); a header
+block is bounded in frames (`header_frames_max`) and bytes as it is
+assembled, and HPACK bounds what it decodes to (CONTINUATION flood, the
+header bomb); every RST_STREAM either side sends counts against
+`reset_budget` per `budget_frames` frames (MadeYouReset), and empty DATA
+frames against `empty_data_budget`; past any of these the connection
+closes with ENHANCE_YOUR_CALM. Priorities are read and ignored; push is
+not offered. `tests/stdlib/http_h2_test.fern` drives a connection through
+each of these as a client would.
+
 ### `std/http/h2/frame`
 
 The frames of HTTP/2 (RFC 9113 §4 and §6) as values read from and written

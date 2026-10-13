@@ -24,12 +24,13 @@ Modules, each importable standalone and each under the 4,000-line cap:
   over bytes (slice 2, landed), with the frame size enforced on reading,
   unknown types kept for skipping, and every malformed shape §6 names an
   error with its code and stream.
-- `std/http/h2` — the connection: the preface, settings, streams and
-  their states (§5.1), flow-control windows at both levels (§5.2), PING,
-  GOAWAY, RST_STREAM, the request assembled from a stream's HEADERS and
-  DATA and the response written back, priorities read and ignored (§5.3
-  as RFC 9113 leaves it). Sans-IO: bytes in, bytes out, no socket, so it
-  runs under `std/sim` like the TLS handshake does.
+- `std/http/h2` — the connection (slice 3, landed): the preface,
+  settings, streams and their states (§5.1), flow-control windows at both
+  levels (§5.2), PING, GOAWAY, RST_STREAM, the request assembled from a
+  stream's HEADERS, CONTINUATION and DATA and the response written back,
+  priorities read and ignored (§5.3 as RFC 9113 leaves it). Sans-IO:
+  bytes in, bytes out, no socket, so it runs under `std/sim` like the TLS
+  handshake does.
 - `std/serve` — a connection whose first bytes are the client preface
   (prior-knowledge h2c), or whose TLS handshake chose `h2` by ALPN, is
   handed to the HTTP/2 state machine; everything else stays HTTP/1.1. The
@@ -87,10 +88,15 @@ without ACK within the timeout closes the connection.
    every type byte for byte and answers every malformed shape §6 names;
    the per-connection header budget against a CONTINUATION flood needs
    the connection's state and is slice 3's.
-3. **The connection.** `std/http/h2`: the state machine over frames and
-   HPACK, sans-IO, with streams, both flow-control windows, settings
-   exchange, PING, GOAWAY and the four bounds above. Gate: the suite
-   drives whole connections from bytes, including each attack.
+3. **The connection (landed).** `std/http/h2`: the state machine over
+   frames and HPACK, sans-IO, with streams, both flow-control windows,
+   settings exchange, PING, GOAWAY and the four bounds above. A request
+   is handed over whole at its END_STREAM, with its trailers; a response
+   is split by the peer's frame size and both windows, the rest held for
+   WINDOW_UPDATE, and its trailers go last. `tests/stdlib/http_h2_test.fern`
+   drives whole connections from bytes as a client does: each attack class
+   refused, each malformed request reset and each malformed connection
+   closed, flow control at both levels, and the control frames.
 4. **Serving.** `std/serve` hands a prior-knowledge h2c connection and an
    ALPN `h2` TLS connection to the state machine; handlers run per stream
    under the concurrency limit, suspended handlers (P3) park per stream.

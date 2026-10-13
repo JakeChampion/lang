@@ -1204,6 +1204,15 @@ func TestRunnerHTTPH2FrameExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "http_h2_frame", "std/http/h2/frame", 5)
 }
 
+// `tests/stdlib/http_h2_test.fern` drives the server's HTTP/2 connection as
+// a client does: the preface and settings, a request answered, bodies and
+// trailers each way, flow control at both levels, the four attack classes
+// refused, malformed requests reset and malformed connections closed, and
+// the control frames.
+func TestRunnerHTTPH2ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_h2", "std/http/h2", 10)
+}
+
 // `tests/stdlib/http_form_test.fern` reads a urlencoded body as its fields
 // and refuses another media type and a body that is not UTF-8.
 func TestRunnerHTTPCookieExamplePasses(t *testing.T) {

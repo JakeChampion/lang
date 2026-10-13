@@ -1,0 +1,1004 @@
+// std/http/h2 — an HTTP/2 connection (RFC 9113), the server's side, as a
+// sans-IO state machine: bytes in, bytes out, requests as events, and a
+// response given back for each stream.
+//
+//   let step: h2.Step = h2.server(h2.config());        // step.output: the server's SETTINGS
+//   step = step.conn.read(received);                    // step.events: Request(stream, req), ...
+//   step = step.conn.respond(stream, resp);             // step.output: HEADERS, DATA, ...
+//
+// A connection holds the streams the client opened, each with its request
+// as it is assembled from HEADERS, CONTINUATION and DATA frames, both
+// flow-control windows at both levels, the settings each side sent, and
+// one HPACK decoder and encoder. A request is handed over whole once its
+// stream's END_STREAM arrives, with its trailers; a response is written as
+// HEADERS (and CONTINUATION, past the peer's frame size), DATA as the
+// windows allow, the rest held until a WINDOW_UPDATE, and trailers last.
+//
+// The bounds RFC 9113 §10 and the attack record ask for are held here:
+//   - a handler runs for a stream only while the stream counts against
+//     max_concurrent_streams, and a stream the client resets keeps counting
+//     until the handler answers (`respond` or `reset`), so a reset does not
+//     free a slot (Rapid Reset); a stream past the limit is refused;
+//   - a header block is bounded in frames and bytes as it is assembled,
+//     and the HPACK decoder bounds what it decodes to, so a CONTINUATION
+//     flood or a header bomb closes the connection before the memory goes;
+//   - every RST_STREAM, the client's and the server's own, counts against
+//     one reset budget per span of frames (MadeYouReset), and empty DATA
+//     frames against another; past either the connection is closed with
+//     ENHANCE_YOUR_CALM.
+// A connection error is answered with GOAWAY and reported as `Closed`; a
+// stream error with RST_STREAM. Priorities are read and ignored (§5.3).
+// Push is not offered, and a PUSH_PROMISE from the client is an error.
+
+import "core/int";
+import "std/array";
+import "std/string";
+import "std/http";
+import "std/headers";
+import "std/http/hpack";
+import "std/http/h2/frame";
+
+// Config — what the server allows and advertises.
+pub struct Config {
+  // Streams whose handler may run at once; the rest are refused.
+  max_concurrent_streams: i32,
+  // The receive window each stream starts with, and the connection's.
+  initial_window: i32,
+  // The largest frame the server reads.
+  max_frame_size: i32,
+  // The most a header block may decode to, name, value and 32 per field.
+  max_header_list: i32,
+  // The dynamic table the client's encoder may use.
+  header_table_size: i32,
+  // The most body bytes one request may carry.
+  max_body: i32,
+  // Resets either side sends, and empty DATA frames, allowed per
+  // `budget_frames` frames received.
+  reset_budget: i32,
+  empty_data_budget: i32,
+  budget_frames: i32,
+  // The most frames one header block may span.
+  header_frames_max: i32,
+}
+
+pub function config(): Config {
+  return Config { max_concurrent_streams: 100, initial_window: 65535, max_frame_size: frame.MIN_FRAME_SIZE, max_header_list: 65536, header_table_size: 4096, max_body: http.http_limits().body, reset_budget: 1000, empty_data_budget: 1000, budget_frames: 10000, header_frames_max: 32 };
+}
+
+// Event — what a step reports.
+pub enum Event {
+  // A whole request on a stream: answer it with `respond(stream, resp)`.
+  Request(i32, HttpRequest),
+  // The client reset a stream with this code. Its handler, if one runs,
+  // still answers with `respond` or `reset`, which frees its slot.
+  Reset(i32, i32),
+  // The client's GOAWAY: no new streams will come; the open ones finish.
+  GoAway(i32),
+  // The server closed the connection with this error code, after GOAWAY;
+  // the reason is for the log.
+  Closed(i32, string),
+}
+
+// Step — the connection after a call, the bytes to send and what happened.
+pub struct Step { conn: Conn, output: u8[], events: Event[] }
+
+const OPEN: i32 = 0;
+
+// The client has sent END_STREAM; the response is owed.
+const HALF_REMOTE: i32 = 1;
+
+// The response is sent; the client's END_STREAM is awaited.
+const HALF_LOCAL: i32 = 2;
+
+// __Stream — one stream and its request as it is assembled, its windows,
+// and the response bytes still owed to it.
+struct __Stream {
+  id: i32,
+  state: i32,
+  send_window: i32,
+  recv_window: i32,
+  method: string,
+  scheme: string,
+  authority: string,
+  path: string,
+  fields: HeaderMap,
+  body: u8[],
+  length: i32,
+  // Whether the request has been handed over and its handler counts.
+  handling: boolean,
+  // Whether the client reset it while its handler ran.
+  reset: boolean,
+  pending: u8[],
+  trailers: HeaderMap,
+  owes_end: boolean,
+}
+
+const AWAITING_PREFACE: i32 = 0;
+
+const AWAITING_SETTINGS: i32 = 1;
+
+const RUNNING: i32 = 2;
+
+const CLOSED: i32 = 3;
+
+// Conn — the connection.
+pub struct Conn {
+  config: Config,
+  phase: i32,
+  inbox: u8[],
+  decoder: hpack.Decoder,
+  encoder: hpack.Encoder,
+  peer_max_frame: i32,
+  peer_initial_window: i32,
+  settings_acked: boolean,
+  send_window: i32,
+  recv_window: i32,
+  streams: __Stream[],
+  last_stream: i32,
+  handling: i32,
+  // A header block being assembled: its stream (0 for none), the bytes so
+  // far, whether END_STREAM came with it, and the frames it has spanned.
+  block_stream: i32,
+  block: u8[],
+  block_end: boolean,
+  block_frames: i32,
+  // The budgets' counters and the frames since they were last reset.
+  resets: i32,
+  empty_data: i32,
+  frames: i32,
+  peer_going_away: boolean,
+}
+
+// server is a new connection and the SETTINGS it opens with (§3.4).
+pub function server(cfg: Config): Step {
+  let c: Conn = Conn { config: cfg, phase: AWAITING_PREFACE, inbox: [], decoder: hpack.decoder(cfg.header_table_size, cfg.max_header_list), encoder: hpack.encoder(4096), peer_max_frame: frame.MIN_FRAME_SIZE, peer_initial_window: 65535, settings_acked: false, send_window: 65535, recv_window: 65535, streams: [], last_stream: 0, handling: 0, block_stream: 0, block: [], block_end: false, block_frames: 0, resets: 0, empty_data: 0, frames: 0, peer_going_away: false };
+  let settings: frame.Setting[] = [frame.Setting { id: frame.SETTINGS_HEADER_TABLE_SIZE, value: cfg.header_table_size }, frame.Setting { id: frame.SETTINGS_ENABLE_PUSH, value: 0 }, frame.Setting { id: frame.SETTINGS_MAX_CONCURRENT_STREAMS, value: cfg.max_concurrent_streams }, frame.Setting { id: frame.SETTINGS_INITIAL_WINDOW_SIZE, value: cfg.initial_window }, frame.Setting { id: frame.SETTINGS_MAX_FRAME_SIZE, value: cfg.max_frame_size }, frame.Setting { id: frame.SETTINGS_MAX_HEADER_LIST_SIZE, value: cfg.max_header_list }];
+  let out: u8[] = frame.encode(frame.Settings(false, settings));
+  if (cfg.initial_window > 65535) {
+    out = out.concat(frame.encode(frame.WindowUpdate(0, cfg.initial_window - 65535)));
+    return Step { conn: Conn { ...c, recv_window: cfg.initial_window }, output: out, events: [] };
+  }
+  return Step { conn: c, output: out, events: [] };
+}
+
+pub function (c: Conn) closed(): boolean {
+  return c.phase == CLOSED;
+}
+
+// handling is how many streams' handlers count against the limit.
+pub function (c: Conn) handling(): i32 {
+  return c.handling;
+}
+
+pub function (c: Conn) streams_open(): i32 {
+  return c.streams.len();
+}
+
+// settings_acked is whether the client acknowledged the server's SETTINGS;
+// a connection whose client has not within its timeout is closed with
+// SETTINGS_TIMEOUT by the loop.
+pub function (c: Conn) settings_acked(): boolean {
+  return c.settings_acked;
+}
+
+// __Run — a read in progress: the connection, the bytes gathered to send
+// and the events so far.
+struct __Run { conn: Conn, out: u8[], events: Event[] }
+
+function __run(c: Conn): __Run {
+  return __Run { conn: c, out: [], events: [] };
+}
+
+function __step(r: __Run): Step {
+  return Step { conn: r.conn, output: r.out, events: r.events };
+}
+
+function __send(r: __Run, f: frame.Frame): __Run {
+  return __Run { ...r, out: r.out.concat(frame.encode(f)) };
+}
+
+// === reading ===============================================================
+
+// read takes bytes from the client: the frames they complete are acted
+// on, the rest kept for the next call. Nothing is read after a close.
+pub function (c: Conn) read(bytes: u8[]): Step {
+  if (c.phase == CLOSED) {
+    return Step { conn: c, output: [], events: [] };
+  }
+  let r: __Run = __run(Conn { ...c, inbox: c.inbox.concat(bytes) });
+  if (r.conn.phase == AWAITING_PREFACE) {
+    r = __preface(r);
+  }
+  while (r.conn.phase == AWAITING_SETTINGS || r.conn.phase == RUNNING) {
+    let before: i32 = r.conn.inbox.len();
+    r = __next_frame(r);
+    if (r.conn.inbox.len() == before) {
+      break;
+    }
+  }
+  return __step(r);
+}
+
+// __preface checks the 24 bytes a client opens with (§3.4), once they
+// are all here.
+function __preface(r: __Run): __Run {
+  let want: u8[] = frame.preface();
+  let have: u8[] = r.conn.inbox;
+  let n: i32 = have.len();
+  if (n > want.len()) {
+    n = want.len();
+  }
+  let i: i32 = 0;
+  while (i < n) {
+    if (have[i] != want[i]) {
+      return __fail(r, frame.PROTOCOL_ERROR, "not the HTTP/2 connection preface");
+    }
+    i = i + 1;
+  }
+  if (have.len() < want.len()) {
+    return r;
+  }
+  return __Run { ...r, conn: Conn { ...r.conn, phase: AWAITING_SETTINGS, inbox: __rest(have, want.len()) } };
+}
+
+// __next_frame takes one frame off the inbox and acts on it; with no
+// whole frame there, the inbox is left as it is.
+function __next_frame(r: __Run): __Run {
+  match (frame.read(r.conn.inbox, 0, r.conn.config.max_frame_size)) {
+    Ok(got) => {
+      match (got) {
+        frame.Whole(f, n) => {
+          let next: __Run = __Run { ...r, conn: __counted(Conn { ...r.conn, inbox: __rest(r.conn.inbox, n) }) };
+          return __frame(next, f);
+        },
+        frame.Partial => {
+          return r;
+        }
+      }
+    },
+    Err(e) => {
+      if (e.stream == 0) {
+        return __fail(r, e.code, e.reason);
+      }
+      // A stream error in a frame's shape: the frame is dropped whole.
+      let dropped: __Run = __Run { ...r, conn: Conn { ...r.conn, inbox: __drop_frame(r.conn.inbox) } };
+      return __reset_stream(dropped, e.stream, e.code);
+    }
+  }
+  return r;
+}
+
+// __drop_frame removes the frame at the head of the inbox by its header.
+function __drop_frame(inbox: u8[]): u8[] {
+  let len: i32 = inbox[0] as i32 << 16 | inbox[1] as i32 << 8 | inbox[2] as i32;
+  return __rest(inbox, frame.HEADER_LEN + len);
+}
+
+// __counted counts a frame against the budgets' span, resetting them
+// when the span is over.
+function __counted(c: Conn): Conn {
+  if (c.frames + 1 >= c.config.budget_frames) {
+    return Conn { ...c, frames: 0, resets: 0, empty_data: 0 };
+  }
+  return Conn { ...c, frames: c.frames + 1 };
+}
+
+// __frame acts on one frame. A header block in progress takes only its
+// CONTINUATION frames (§6.2); the first frame must be SETTINGS (§3.4).
+function __frame(r: __Run, f: frame.Frame): __Run {
+  if (r.conn.block_stream != 0) {
+    return __in_block(r, f);
+  }
+  if (r.conn.phase == AWAITING_SETTINGS) {
+    return __first_frame(r, f);
+  }
+  match (f) {
+    frame.Data(d) => {
+      return __data(r, d);
+    },
+    frame.Headers(h) => {
+      return __headers(r, h);
+    },
+    frame.Settings(ack, settings) => {
+      return __settings(r, ack, settings);
+    },
+    frame.WindowUpdate(stream, increment) => {
+      return __window_update(r, stream, increment);
+    },
+    frame.RstStream(stream, code) => {
+      return __rst_stream(r, stream, code);
+    },
+    _ => {
+      return __frame_rest(r, f);
+    }
+  }
+  return r;
+}
+
+function __frame_rest(r: __Run, f: frame.Frame): __Run {
+  match (f) {
+    frame.Ping(ack, data) => {
+      if (ack) {
+        return r;
+      }
+      return __send(r, frame.Ping(true, data));
+    },
+    frame.GoAway(g) => {
+      return __Run { ...r, conn: Conn { ...r.conn, peer_going_away: true }, events: r.events.append(Event.GoAway(g.code)) };
+    },
+    frame.PushPromise(p) => {
+      return __fail(r, frame.PROTOCOL_ERROR, "PUSH_PROMISE from the client");
+    },
+    frame.Continuation(stream, end, block) => {
+      return __fail(r, frame.PROTOCOL_ERROR, "CONTINUATION with no header block open");
+    },
+    _ => {
+      // PRIORITY (§5.3.2, ignored) and a frame of an unknown type (§4.1).
+      return r;
+    }
+  }
+  return r;
+}
+
+function __first_frame(r: __Run, f: frame.Frame): __Run {
+  match (f) {
+    frame.Settings(ack, settings) => {
+      if (ack) {
+        return __fail(r, frame.PROTOCOL_ERROR, "the first frame is a SETTINGS ACK");
+      }
+      return __settings(__Run { ...r, conn: Conn { ...r.conn, phase: RUNNING } }, false, settings);
+    },
+    _ => {
+      return __fail(r, frame.PROTOCOL_ERROR, "the first frame is not SETTINGS");
+    }
+  }
+  return r;
+}
+
+// __in_block takes the next frame of a header block: a CONTINUATION on
+// the block's stream, within the frame and byte budgets.
+function __in_block(r: __Run, f: frame.Frame): __Run {
+  match (f) {
+    frame.Continuation(stream, end_headers, block) => {
+      if (stream != r.conn.block_stream) {
+        return __fail(r, frame.PROTOCOL_ERROR, "CONTINUATION on another stream");
+      }
+      return __block_part(r, block, end_headers);
+    },
+    _ => {
+      return __fail(r, frame.PROTOCOL_ERROR, "a frame inside a header block");
+    }
+  }
+  return r;
+}
+
+// __block_part adds a fragment to the block in progress and, at
+// END_HEADERS, decodes it. The block may span header_frames_max frames
+// and, raw, the list cap plus a frame (a Huffman-coded block decodes to
+// more, never less than four-fifths): past either the connection closes.
+function __block_part(r: __Run, part: u8[], end_headers: boolean): __Run {
+  let c: Conn = r.conn;
+  let block: u8[] = c.block.concat(part);
+  if (c.block_frames + 1 > c.config.header_frames_max || block.len() > c.config.max_header_list + c.config.max_frame_size) {
+    return __fail(r, frame.ENHANCE_YOUR_CALM, "header block over the budget");
+  }
+  let next: __Run = __Run { ...r, conn: Conn { ...c, block: block, block_frames: c.block_frames + 1 } };
+  if (!end_headers) {
+    return next;
+  }
+  let whole: Conn = Conn { ...next.conn, block_stream: 0, block: [], block_frames: 0 };
+  return __block_done(__Run { ...next, conn: whole }, c.block_stream, block, c.block_end);
+}
+
+// __headers starts a request, or its trailers, on a stream.
+function __headers(r: __Run, h: frame.HeadersFrame): __Run {
+  let c: Conn = r.conn;
+  let opened: __Run = __Run { ...r, conn: Conn { ...c, block_stream: h.stream, block: [], block_end: h.end_stream, block_frames: 0 } };
+  return __block_part(opened, h.block, h.end_headers);
+}
+
+// __block_done decodes a whole header block: a request's headers on a
+// new stream, or trailers on one whose body is arriving.
+function __block_done(r: __Run, stream: i32, block: u8[], end_stream: boolean): __Run {
+  match (r.conn.decoder.decode(block)) {
+    Ok(got) => {
+      let c: Conn = Conn { ...r.conn, decoder: got.decoder };
+      let at: i32 = __stream_at(c, stream);
+      if (at >= 0) {
+        return __trailers(__Run { ...r, conn: c }, at, got.fields, end_stream);
+      }
+      return __request(__Run { ...r, conn: c }, stream, got.fields, end_stream);
+    },
+    Err(e) => {
+      return __fail(r, frame.COMPRESSION_ERROR, e.message());
+    }
+  }
+  return r;
+}
+
+// __trailers ends a request with its trailers (§8.1): they must carry
+// END_STREAM and no pseudo-header.
+function __trailers(r: __Run, at: i32, fields: hpack.Field[], end_stream: boolean): __Run {
+  let s: __Stream = r.conn.streams[at];
+  if (!end_stream || s.state != OPEN) {
+    return __reset_stream(r, s.id, frame.PROTOCOL_ERROR);
+  }
+  let trailers: HeaderMap = headers.header_map_new();
+  for f in fields {
+    if (f.name.len() > 0 && f.name.bytes()[0] == 58 as u8) {
+      return __reset_stream(r, s.id, frame.PROTOCOL_ERROR);
+    }
+    trailers = trailers.append(f.name, f.value);
+  }
+  return __finished(r, at, trailers);
+}
+
+// __request opens a stream for a request's headers (§5.1.1, §8.3.1): an
+// odd id above every one before it, under the concurrency limit, with
+// the pseudo-headers a request needs and none it may not have.
+function __request(r: __Run, stream: i32, fields: hpack.Field[], end_stream: boolean): __Run {
+  let c: Conn = r.conn;
+  if (stream % 2 == 0 || stream <= c.last_stream) {
+    return __fail(r, frame.PROTOCOL_ERROR, "stream " + int.int_to_string(stream) + " is not a new client stream");
+  }
+  let opened: __Run = __Run { ...r, conn: Conn { ...c, last_stream: stream } };
+  if (c.peer_going_away) {
+    return opened;
+  }
+  if (c.handling + __waiting(c) >= c.config.max_concurrent_streams) {
+    return __reset_stream(opened, stream, frame.REFUSED_STREAM);
+  }
+  match (__parsed(fields)) {
+    Ok(s0) => {
+      let s: __Stream = __Stream { ...s0, id: stream, send_window: c.peer_initial_window, recv_window: c.config.initial_window };
+      let with: Conn = Conn { ...opened.conn, streams: opened.conn.streams.append(s) };
+      if (end_stream) {
+        return __finished(__Run { ...opened, conn: with }, with.streams.len() - 1, headers.header_map_new());
+      }
+      return __Run { ...opened, conn: with };
+    },
+    Err(why) => {
+      return __reset_stream(opened, stream, frame.PROTOCOL_ERROR);
+    }
+  }
+  return opened;
+}
+
+// __waiting is how many streams have a request still arriving: they take
+// a slot before their handler runs, so a client cannot hold a thousand
+// half-sent requests.
+function __waiting(c: Conn): i32 {
+  let n: i32 = 0;
+  for s in c.streams {
+    if (!s.handling && !s.reset) {
+      n = n + 1;
+    }
+  }
+  return n;
+}
+
+// __parsed reads a request's header fields (§8.3): the pseudo-headers
+// first, each once, `:method`, `:scheme` and `:path` present (CONNECT
+// aside), names in lower case, no connection-specific field and `te` only
+// `trailers`; content-length is remembered to check the body against.
+function __parsed(fields: hpack.Field[]): Result[__Stream, string] {
+  let s: __Stream = __Stream { id: 0, state: OPEN, send_window: 0, recv_window: 0, method: "", scheme: "", authority: "", path: "", fields: headers.header_map_new(), body: [], length: 0 - 1, handling: false, reset: false, pending: [], trailers: headers.header_map_new(), owes_end: false };
+  let regular: boolean = false;
+  for f in fields {
+    if (f.name.len() == 0) {
+      return Err("empty field name");
+    }
+    if (f.name.bytes()[0] == 58 as u8) {
+      if (regular) {
+        return Err("pseudo-header after a regular field");
+      }
+      s = __pseudo(s, f.name, f.value)?;
+    } else {
+      regular = true;
+      s = __regular(s, f.name, f.value)?;
+    }
+  }
+  return __complete(s);
+}
+
+// __complete checks the pseudo-headers a request must have (§8.3.1).
+function __complete(s: __Stream): Result[__Stream, string] {
+  if (s.method.len() == 0) {
+    return Err("no :method");
+  }
+  if (s.method != "CONNECT" && (s.scheme.len() == 0 || s.path.len() == 0)) {
+    return Err("no :scheme or :path");
+  }
+  return Ok(s);
+}
+
+function __pseudo(s: __Stream, name: string, value: string): Result[__Stream, string] {
+  if (name == ":method" && s.method.len() == 0) {
+    return Ok(__Stream { ...s, method: value });
+  }
+  if (name == ":scheme" && s.scheme.len() == 0) {
+    return Ok(__Stream { ...s, scheme: value });
+  }
+  if (name == ":path" && s.path.len() == 0 && value.len() > 0) {
+    return Ok(__Stream { ...s, path: value });
+  }
+  if (name == ":authority" && s.authority.len() == 0) {
+    return Ok(__Stream { ...s, authority: value });
+  }
+  return Err("pseudo-header " + name);
+}
+
+function __regular(s: __Stream, name: string, value: string): Result[__Stream, string] {
+  if (name.to_lower() != name || !http.http_field_name_ok(name) || !http.http_field_value_ok(value)) {
+    return Err("field " + name);
+  }
+  if (__connection_specific(name)) {
+    return Err("connection-specific field " + name);
+  }
+  if (name == "te" && value != "trailers") {
+    return Err("te other than trailers");
+  }
+  if (name == "content-length") {
+    return __with_length(s, value);
+  }
+  return Ok(__Stream { ...s, fields: s.fields.append(name, value) });
+}
+
+// __connection_specific names the fields HTTP/2 has no place for (§8.2.2).
+function __connection_specific(name: string): boolean {
+  return name == "connection" || name == "keep-alive" || name == "proxy-connection" || name == "transfer-encoding" || name == "upgrade";
+}
+
+// __with_length remembers a content-length, which must be a number and
+// agree with any other.
+function __with_length(s: __Stream, value: string): Result[__Stream, string] {
+  match (int.parse_int_radix(value, 10)) {
+    Some(n) => {
+      if (n < 0 || s.length >= 0 && s.length != n) {
+        return Err("content-length");
+      }
+      return Ok(__Stream { ...s, length: n, fields: s.fields.append("content-length", value) });
+    },
+    None => {
+      return Err("content-length");
+    }
+  }
+  return Err("content-length");
+}
+
+// __data takes a DATA frame on an open stream: within both receive
+// windows, within the body cap, counted when empty, and the request
+// finished at END_STREAM.
+function __data(r: __Run, d: frame.DataFrame): __Run {
+  let c: Conn = r.conn;
+  let at: i32 = __stream_at(c, d.stream);
+  if (at < 0) {
+    if (d.stream > c.last_stream) {
+      return __fail(r, frame.PROTOCOL_ERROR, "DATA on an idle stream");
+    }
+    return __reset_stream(r, d.stream, frame.STREAM_CLOSED);
+  }
+  let s: __Stream = c.streams[at];
+  if (s.state != OPEN) {
+    return __reset_stream(r, s.id, frame.STREAM_CLOSED);
+  }
+  let took: i32 = d.data.len() + d.padding;
+  if (took > c.recv_window) {
+    return __fail(r, frame.FLOW_CONTROL_ERROR, "DATA past the connection window");
+  }
+  if (took > s.recv_window) {
+    return __reset_stream(r, s.id, frame.FLOW_CONTROL_ERROR);
+  }
+  if (d.data.len() == 0 && !d.end_stream) {
+    if (c.empty_data + 1 > c.config.empty_data_budget) {
+      return __fail(r, frame.ENHANCE_YOUR_CALM, "empty DATA frames over the budget");
+    }
+    c = Conn { ...c, empty_data: c.empty_data + 1 };
+  }
+  return __body_grown(__Run { ...r, conn: c }, at, d, took);
+}
+
+// __body_grown takes a DATA frame's bytes into the body, under the cap,
+// and finishes the request at END_STREAM.
+function __body_grown(r: __Run, at: i32, d: frame.DataFrame, took: i32): __Run {
+  let c: Conn = r.conn;
+  let s: __Stream = c.streams[at];
+  if (s.body.len() + d.data.len() > c.config.max_body) {
+    return __reset_stream(r, s.id, frame.REFUSED_STREAM);
+  }
+  let grown: __Stream = __Stream { ...s, body: s.body.concat(d.data), recv_window: s.recv_window - took };
+  let next: __Run = __replenished(__Run { ...r, conn: Conn { ...c, recv_window: c.recv_window - took, streams: c.streams.with(at, grown) } }, at);
+  if (d.end_stream) {
+    return __finished(next, at, headers.header_map_new());
+  }
+  return next;
+}
+
+// __replenished sends WINDOW_UPDATE for the connection and the stream
+// once either window has fallen to half, since the body is held here and
+// the client may keep sending.
+function __replenished(r: __Run, at: i32): __Run {
+  let c: Conn = r.conn;
+  let out: __Run = r;
+  let half: i32 = c.config.initial_window / 2;
+  if (c.recv_window <= half) {
+    out = __send(__Run { ...out, conn: Conn { ...out.conn, recv_window: c.config.initial_window } }, frame.WindowUpdate(0, c.config.initial_window - c.recv_window));
+  }
+  let s: __Stream = out.conn.streams[at];
+  if (s.recv_window <= half && s.state == OPEN) {
+    let filled: __Stream = __Stream { ...s, recv_window: c.config.initial_window };
+    out = __send(__Run { ...out, conn: Conn { ...out.conn, streams: out.conn.streams.with(at, filled) } }, frame.WindowUpdate(s.id, c.config.initial_window - s.recv_window));
+  }
+  return out;
+}
+
+// __finished hands a stream's request over once the client's END_STREAM
+// has come: the body must be what content-length said.
+function __finished(r: __Run, at: i32, trailers: HeaderMap): __Run {
+  let c: Conn = r.conn;
+  let s: __Stream = c.streams[at];
+  if (s.length >= 0 && s.length != s.body.len()) {
+    return __reset_stream(r, s.id, frame.PROTOCOL_ERROR);
+  }
+  let fields: HeaderMap = s.fields;
+  if (s.authority.len() > 0 && !fields.has("host")) {
+    fields = fields.append("host", s.authority);
+  }
+  let req: HttpRequest = HttpRequest { method: s.method, path: s.path, body: Stream { data: s.body, pos: 0, source: None }, headers: fields, trailers: trailers };
+  let handed: __Stream = __Stream { ...s, state: HALF_REMOTE, body: [], handling: true };
+  let next: Conn = Conn { ...c, streams: c.streams.with(at, handed), handling: c.handling + 1 };
+  return __Run { ...r, conn: next, events: r.events.append(Request(s.id, req)) };
+}
+
+// __settings applies the client's settings and acknowledges them (§6.5).
+function __settings(r: __Run, ack: boolean, settings: frame.Setting[]): __Run {
+  if (ack) {
+    return __Run { ...r, conn: Conn { ...r.conn, settings_acked: true } };
+  }
+  let out: __Run = r;
+  for s in settings {
+    if (s.id == frame.SETTINGS_INITIAL_WINDOW_SIZE) {
+      out = __windows_moved(out, s.value);
+    }
+    if (s.id == frame.SETTINGS_MAX_FRAME_SIZE) {
+      out = __Run { ...out, conn: Conn { ...out.conn, peer_max_frame: s.value } };
+    }
+    if (s.id == frame.SETTINGS_HEADER_TABLE_SIZE) {
+      out = __Run { ...out, conn: Conn { ...out.conn, encoder: out.conn.encoder.with_max_table(__min(s.value, 4096)) } };
+    }
+    if (out.conn.phase == CLOSED) {
+      return out;
+    }
+  }
+  return __send(out, frame.Settings(true, []));
+}
+
+// __windows_moved moves every stream's send window by the change in the
+// client's initial window (§6.9.2); past 2^31-1 is a connection error.
+function __windows_moved(r: __Run, initial: i32): __Run {
+  let c: Conn = r.conn;
+  let delta: i32 = initial - c.peer_initial_window;
+  let streams: __Stream[] = [];
+  for s in c.streams {
+    let moved: i32 = s.send_window + delta;
+    if (moved < 0 && delta > 0) {
+      return __fail(r, frame.FLOW_CONTROL_ERROR, "a stream's window past 2^31-1");
+    }
+    streams = streams.append(__Stream { ...s, send_window: moved });
+  }
+  return __flushed(__Run { ...r, conn: Conn { ...c, peer_initial_window: initial, streams: streams } });
+}
+
+// __window_update widens the connection's or a stream's send window
+// (§6.9), then sends what the width allows.
+function __window_update(r: __Run, stream: i32, increment: i32): __Run {
+  let c: Conn = r.conn;
+  if (stream == 0) {
+    if (c.send_window + increment < 0) {
+      return __fail(r, frame.FLOW_CONTROL_ERROR, "the connection window past 2^31-1");
+    }
+    return __flushed(__Run { ...r, conn: Conn { ...c, send_window: c.send_window + increment } });
+  }
+  let at: i32 = __stream_at(c, stream);
+  if (at < 0) {
+    return r;
+  }
+  let s: __Stream = c.streams[at];
+  if (s.send_window + increment < 0) {
+    return __reset_stream(r, s.id, frame.FLOW_CONTROL_ERROR);
+  }
+  return __flushed(__Run { ...r, conn: Conn { ...c, streams: c.streams.with(at, __Stream { ...s, send_window: s.send_window + increment }) } });
+}
+
+// __rst_stream takes the client's RST_STREAM: the stream goes, its
+// handler (if one runs) is told and keeps its slot until it answers, and
+// the reset counts.
+function __rst_stream(r: __Run, stream: i32, code: i32): __Run {
+  let c: Conn = r.conn;
+  let budgeted: __Run = __reset_counted(r);
+  if (budgeted.conn.phase == CLOSED) {
+    return budgeted;
+  }
+  let at: i32 = __stream_at(c, stream);
+  if (at < 0) {
+    return budgeted;
+  }
+  let s: __Stream = c.streams[at];
+  let next: Conn = budgeted.conn;
+  if (s.handling) {
+    next = Conn { ...next, streams: next.streams.with(at, __Stream { ...s, reset: true, pending: [], owes_end: false }) };
+  } else {
+    next = Conn { ...next, streams: __without(next.streams, at) };
+  }
+  return __Run { ...budgeted, conn: next, events: budgeted.events.append(Reset(stream, code)) };
+}
+
+// __reset_counted counts one reset, either side's, against the budget.
+function __reset_counted(r: __Run): __Run {
+  let c: Conn = r.conn;
+  if (c.resets + 1 > c.config.reset_budget) {
+    return __fail(r, frame.ENHANCE_YOUR_CALM, "resets over the budget");
+  }
+  return __Run { ...r, conn: Conn { ...c, resets: c.resets + 1 } };
+}
+
+// __reset_stream is a stream error (§5.4.2): RST_STREAM sent, the stream
+// dropped, the reset counted.
+function __reset_stream(r: __Run, stream: i32, code: i32): __Run {
+  let budgeted: __Run = __reset_counted(r);
+  if (budgeted.conn.phase == CLOSED) {
+    return budgeted;
+  }
+  let c: Conn = budgeted.conn;
+  let at: i32 = __stream_at(c, stream);
+  if (at >= 0) {
+    let s: __Stream = c.streams[at];
+    if (s.handling) {
+      c = Conn { ...c, streams: c.streams.with(at, __Stream { ...s, reset: true, pending: [], owes_end: false }) };
+    } else {
+      c = Conn { ...c, streams: __without(c.streams, at) };
+    }
+  }
+  return __send(__Run { ...budgeted, conn: c }, frame.RstStream(stream, code));
+}
+
+// __fail is a connection error (§5.4.1): GOAWAY with the last stream
+// taken, the connection closed, and the reason reported.
+function __fail(r: __Run, code: i32, reason: string): __Run {
+  let c: Conn = r.conn;
+  let out: __Run = __send(r, frame.GoAway(frame.GoAwayFrame { last_stream: c.last_stream, code: code, debug: reason.bytes() }));
+  return __Run { ...out, conn: Conn { ...c, phase: CLOSED, streams: [], handling: 0, inbox: [] }, events: out.events.append(Closed(code, reason)) };
+}
+
+// === responding ============================================================
+
+// respond answers the request on `stream`: its handler's slot is freed,
+// the headers go now, the body as the windows allow, and the trailers
+// last. A stream the client reset, or one the server never opened,
+// takes no response.
+pub function (c: Conn) respond(stream: i32, resp: HttpResponse): Step {
+  let at: i32 = __stream_at(c, stream);
+  if (at < 0 || c.phase == CLOSED) {
+    return Step { conn: c, output: [], events: [] };
+  }
+  let s: __Stream = c.streams[at];
+  if (!s.handling) {
+    return Step { conn: c, output: [], events: [] };
+  }
+  let freed: Conn = Conn { ...c, handling: c.handling - 1 };
+  if (s.reset) {
+    return Step { conn: Conn { ...freed, streams: __without(freed.streams, at) }, output: [], events: [] };
+  }
+  let body: u8[] = resp.body_bytes();
+  if (http.http_bodiless(resp.status)) {
+    body = [];
+  }
+  let enc: hpack.Encoded = freed.encoder.encode(__response_fields(resp, body.len(), resp.trailers.len() > 0));
+  let last: boolean = body.len() == 0 && resp.trailers.len() == 0;
+  let r: __Run = __header_frames(__run(Conn { ...freed, encoder: enc.encoder }), stream, enc.bytes, last);
+  let owed: __Stream = __Stream { ...s, handling: false, pending: body, trailers: resp.trailers, owes_end: !last };
+  let queued: __Run = __Run { ...r, conn: Conn { ...r.conn, streams: r.conn.streams.with(at, owed) } };
+  if (last) {
+    return __step(__ended(queued, at));
+  }
+  return __step(__flushed(queued));
+}
+
+// __response_fields is the response's header list: `:status` first, then
+// each field in lower case, connection-specific ones dropped (§8.2.2),
+// cookies never indexed, and the body's length when it is known.
+function __response_fields(resp: HttpResponse, body_len: i32, trailers: boolean): hpack.Field[] {
+  let out: hpack.Field[] = [hpack.field(":status", int.int_to_string(resp.status))];
+  let i: i32 = 0;
+  let has_length: boolean = false;
+  while (i < resp.headers.names.len()) {
+    let name: string = resp.headers.names[i].to_lower();
+    if (name == "content-length") {
+      has_length = true;
+    }
+    if (!__connection_specific(name)) {
+      out = out.append(__response_field(name, resp.headers.values[i]));
+    }
+    i = i + 1;
+  }
+  if (!has_length && !trailers && !http.http_bodiless(resp.status)) {
+    out = out.append(hpack.field("content-length", int.int_to_string(body_len)));
+  }
+  return out;
+}
+
+// __response_field never indexes a cookie or a credential, so the client's
+// table cannot be probed for it.
+function __response_field(name: string, value: string): hpack.Field {
+  if (name == "set-cookie" || name == "authorization" || name == "proxy-authenticate") {
+    return hpack.sensitive(name, value);
+  }
+  return hpack.field(name, value);
+}
+
+// __header_frames writes a header block as HEADERS and, past the peer's
+// frame size, CONTINUATION frames (§6.2).
+function __header_frames(r: __Run, stream: i32, block: u8[], end_stream: boolean): __Run {
+  let max: i32 = r.conn.peer_max_frame;
+  let first: i32 = block.len();
+  if (first > max) {
+    first = max;
+  }
+  let out: __Run = __send(r, frame.Headers(frame.HeadersFrame { stream: stream, end_stream: end_stream, end_headers: first == block.len(), priority: None, block: __slice(block, 0, first), padding: 0 }));
+  let at: i32 = first;
+  while (at < block.len()) {
+    let to: i32 = at + max;
+    if (to > block.len()) {
+      to = block.len();
+    }
+    out = __send(out, frame.Continuation(stream, to == block.len(), __slice(block, at, to)));
+    at = to;
+  }
+  return out;
+}
+
+// __flushed sends what every stream's pending body the windows allow,
+// and the trailers and END_STREAM of each body that is all sent.
+function __flushed(r: __Run): __Run {
+  let out: __Run = r;
+  let i: i32 = 0;
+  while (i < out.conn.streams.len()) {
+    let before: i32 = out.conn.streams.len();
+    out = __flush_stream(out, i);
+    if (out.conn.streams.len() == before) {
+      i = i + 1;
+    }
+  }
+  return out;
+}
+
+// __flush_stream sends the stream at `at` as much of its body as both
+// windows and the frame size allow, then its end when the body is gone.
+function __flush_stream(r: __Run, at: i32): __Run {
+  let out: __Run = r;
+  while (true) {
+    let c: Conn = out.conn;
+    let s: __Stream = c.streams[at];
+    if (!s.owes_end) {
+      return out;
+    }
+    if (s.pending.len() == 0) {
+      return __ended(out, at);
+    }
+    let n: i32 = __min(__min(s.pending.len(), c.peer_max_frame), __min(s.send_window, c.send_window));
+    if (n <= 0) {
+      return out;
+    }
+    let final: boolean = n == s.pending.len() && s.trailers.len() == 0;
+    let sent: __Stream = __Stream { ...s, pending: __rest(s.pending, n), send_window: s.send_window - n };
+    out = __send(__Run { ...out, conn: Conn { ...c, send_window: c.send_window - n, streams: c.streams.with(at, sent) } }, frame.Data(frame.DataFrame { stream: s.id, end_stream: final, data: __slice(s.pending, 0, n), padding: 0 }));
+    if (final) {
+      return __ended(out, at);
+    }
+  }
+  return out;
+}
+
+// __ended closes the server's side of a stream: trailers if any are owed
+// (as a HEADERS with END_STREAM), then the stream closes, or waits for the
+// client's END_STREAM.
+function __ended(r: __Run, at: i32): __Run {
+  let c: Conn = r.conn;
+  let s: __Stream = c.streams[at];
+  let out: __Run = r;
+  if (s.trailers.len() > 0) {
+    let fields: hpack.Field[] = [];
+    let i: i32 = 0;
+    while (i < s.trailers.names.len()) {
+      fields = fields.append(hpack.field(s.trailers.names[i].to_lower(), s.trailers.values[i]));
+      i = i + 1;
+    }
+    let enc: hpack.Encoded = c.encoder.encode(fields);
+    out = __header_frames(__Run { ...r, conn: Conn { ...c, encoder: enc.encoder } }, s.id, enc.bytes, true);
+  }
+  let done: __Stream = __Stream { ...s, pending: [], trailers: headers.header_map_new(), owes_end: false };
+  if (s.state == HALF_REMOTE) {
+    return __Run { ...out, conn: Conn { ...out.conn, streams: __without(out.conn.streams, at) } };
+  }
+  return __Run { ...out, conn: Conn { ...out.conn, streams: out.conn.streams.with(at, __Stream { ...done, state: HALF_LOCAL }) } };
+}
+
+// reset ends a stream the server will not answer: RST_STREAM with `code`,
+// its handler's slot freed. The reset counts against the budget as the
+// client's do.
+pub function (c: Conn) reset(stream: i32, code: i32): Step {
+  let at: i32 = __stream_at(c, stream);
+  if (at < 0 || c.phase == CLOSED) {
+    return Step { conn: c, output: [], events: [] };
+  }
+  let s: __Stream = c.streams[at];
+  let freed: Conn = c;
+  if (s.handling) {
+    freed = Conn { ...c, handling: c.handling - 1, streams: c.streams.with(at, __Stream { ...s, handling: false }) };
+  }
+  if (s.reset) {
+    return Step { conn: Conn { ...freed, streams: __without(freed.streams, at) }, output: [], events: [] };
+  }
+  return __step(__reset_stream(__run(freed), stream, code));
+}
+
+// goaway tells the client no new streams will be taken (§6.8): the open
+// ones finish, and the loop closes the socket once they have.
+pub function (c: Conn) goaway(code: i32): Step {
+  if (c.phase == CLOSED) {
+    return Step { conn: c, output: [], events: [] };
+  }
+  return __step(__send(__run(Conn { ...c, peer_going_away: true }), frame.GoAway(frame.GoAwayFrame { last_stream: c.last_stream, code: code, debug: [] })));
+}
+
+// ping sends a PING the client answers, which the loop uses to find a
+// dead connection.
+pub function (c: Conn) ping(data: u8[]): Step {
+  return __step(__send(__run(c), frame.Ping(false, data)));
+}
+
+// === helpers ===============================================================
+
+function __stream_at(c: Conn, id: i32): i32 {
+  let i: i32 = 0;
+  while (i < c.streams.len()) {
+    if (c.streams[i].id == id) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+function __without(streams: __Stream[], at: i32): __Stream[] {
+  let out: __Stream[] = [];
+  let i: i32 = 0;
+  while (i < streams.len()) {
+    if (i != at) {
+      out = out.append(streams[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function __min(a: i32, b: i32): i32 {
+  if (a < b) {
+    return a;
+  }
+  return b;
+}
+
+function __slice(buf: u8[], from: i32, to: i32): u8[] {
+  let out: u8[] = __alloc_u8(to - from);
+  let i: i32 = 0;
+  while (from + i < to) {
+    out = out.with(i, buf[from + i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+function __rest(buf: u8[], from: i32): u8[] {
+  return __slice(buf, from, buf.len());
+}
