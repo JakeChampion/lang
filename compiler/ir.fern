@@ -373,7 +373,7 @@ pub function is_counted(op: Op): boolean {
 // shell marks a release call of a box whose counted payload the frame has
 // already taken out without emptying the slot: the box is freed shallowly
 // and the payload is the frame's to release. The certifier reads the mark;
-// no backend does. Distinct from the alignment proof (4) the rc calls carry.
+// no backend does. Distinct from the proofs (4, 5) the rc calls carry.
 pub function shell(op: Op): Op {
   return Op { ...op, i64_imm: 2 };
 }

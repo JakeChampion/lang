@@ -97,7 +97,7 @@ pub function check(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape_name
       let subject = values[op.args[0]];
       if (op.str == release.name && subject == 1 && op.imm == 0) {
         old_credit = old_credit - 1;
-      } else if (op.str == "__fern_rc_inc" && subject == 2 && (op.imm == 0 || op.imm == 4)) {
+      } else if (op.str == "__fern_rc_inc" && subject == 2 && (op.imm == 0 || ssa.aligned_mark(op.imm))) {
         child_credit = child_credit + 1;
         kind = 2;
       } else if (op.str == "__fern_rc_dec" && subject == 2 && op.imm == 0 && child_credit > 0) {

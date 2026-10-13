@@ -456,7 +456,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
     identity = out.temp;
   } else if (op.kind_tag == 11 && op.args.len() == 1) {
     let v = out.values[op.args[0]];
-    if (op.str == "__fern_rc_is_unique" && (op.imm == 0 || op.imm == 4)) {
+    if (op.str == "__fern_rc_is_unique" && (op.imm == 0 || ssa.aligned_mark(op.imm))) {
       out = parent(out, v);
       out = equal(out, out.state.path, v.identity, 1, "only old-parent uniqueness admitted");
       kind = 0;
@@ -487,7 +487,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
       // is only an alias: it creates no local parent or child credit.
       kind = 1;
       identity = v.identity;
-    } else if (op.str == "__fern_rc_inc" && (op.imm == 0 || op.imm == 4) || op.str == "__fern_rc_dec" && op.imm == 0) {
+    } else if (op.str == "__fern_rc_inc" && (op.imm == 0 || ssa.aligned_mark(op.imm)) || op.str == "__fern_rc_dec" && op.imm == 0) {
       out = child(out, v);
       kind = 1;
       identity = v.identity;

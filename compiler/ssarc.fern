@@ -6635,15 +6635,66 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irta
   return irtables.LowerResult { ...e.r, ops: optimized.ops, n_locals: optimized.n_locals };
 }
 
+// A record or an enum value is a box, never tagged: every payloadless variant
+// is a static box, as is a record with no counted field. It is null only where
+// the lowering made it so: a zero, or a phi, copy or retag one reaches.
+function proven_box(f: ssasem.Func, nulls: boolean[], v: i32): boolean {
+  let t: typeinfo.Type = f.values[v];
+  if (nulls[v] || semtypes.is_handle(t)) {
+    return false;
+  }
+  if let typeinfo.TypeStruct(_) = t {
+    return semrecords.find(f.records, t) >= 0;
+  }
+  if let typeinfo.TypeUnion(_) = t {
+    return semrecords.find_enum(f.enums, t) >= 0;
+  }
+  return false;
+}
+
+function nullable(f: ssasem.Func): boolean[] {
+  let out: boolean[] = __alloc_bool(f.values.len());
+  let changed: boolean = true;
+  while (changed) {
+    changed = false;
+    for b in f.graph.blocks {
+      for ins in b.insts {
+        if (ins.result >= 0 && ins.result < out.len() && !out[ins.result] && null_source(ins, out)) {
+          out = out.with(ins.result, true);
+          changed = true;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function null_source(ins: ssa.SInst, nulls: boolean[]): boolean {
+  if (ins.kind_tag == ssasem.zero()) {
+    return true;
+  }
+  let k: i32 = ins.kind_tag;
+  if (k != 7 && k != 8 && k != ssasem.variant_up() && k != ssasem.variant_as() && k != ssasem.cast()) {
+    return false;
+  }
+  for a in ins.args {
+    if (a >= 0 && a < nulls.len() && nulls[a]) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // A typed reference other than [u8] cannot carry its descriptor tag. Keep
 // that proof on direct value loads so native RC need not mask every ordinary
 // string, array and record. Raw pointers and scratch slots remain generic.
-// i64_imm == 4 on these two calls is an optional alignment proof; consumers
-// that do not use it retain the fully general runtime behavior.
+// i64_imm on these two calls is an optional proof, 4 for an aligned box and 5
+// for a proven one; consumers that do not use it keep the general behaviour.
 function aligned_rc(own r: irtables.LowerResult, f: ssasem.Func): irtables.LowerResult {
   let call_direct: i32 = ir.K_CALL_DIRECT;
   let load_local: i32 = ir.K_LOAD_LOCAL;
   let ops: ir.Op[] = r.ops;
+  let nulls: boolean[] = nullable(f);
   let i: i32 = 1;
   while (i < ops.len()) {
     let op: ir.Op = ops[i];
@@ -6652,7 +6703,9 @@ function aligned_rc(own r: irtables.LowerResult, f: ssasem.Func): irtables.Lower
       && (op.str == "__fern_rc_inc" || op.str == "__fern_rc_is_unique")
       && before.kind_tag == load_local && before.i32_imm < f.values.len()) {
       let t: typeinfo.Type = f.values[before.i32_imm];
-      if (ssasem.reference(t) && !byte_view(t)) {
+      if (proven_box(f, nulls, before.i32_imm)) {
+        ops = ops.with(i, ir.Op { ...op, i64_imm: 5 });
+      } else if (ssasem.reference(t) && !byte_view(t)) {
         ops = ops.with(i, ir.Op { ...op, i64_imm: 4 });
       }
     }

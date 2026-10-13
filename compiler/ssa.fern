@@ -215,6 +215,16 @@ pub function plain_str(ins: SInst): string {
   return ins.str;
 }
 
+// An rc call's `imm` proves its operand has no byte-view tag at 4 and is a box
+// (never null or tagged) at 5, so 5 is aligned too.
+pub function aligned_mark(imm: i32): boolean {
+  return imm == 4 || imm == 5;
+}
+
+pub function boxed_mark(imm: i32): boolean {
+  return imm == 5;
+}
+
 pub function plain_imm(ins: SInst): i32 {
   if (ins.kind_tag == 11 && ins.imm >= 1 && ins.imm <= 3) {
     return 0;

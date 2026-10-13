@@ -301,7 +301,12 @@ pointer that flows through the program points past the header.
   cell): every retain, release and uniqueness test skips it, so a reuse never
   hands back read-only memory. `__fern_rc_is_unique(p)` is 1 only for a live
   heap box with count exactly 1; null and anything below the low-address
-  guard answer 0, so it is safe on a slot that may hold a scalar.
+  guard answer 0, so it is safe on a slot that may hold a scalar. A record's
+  or an enum's value is never tagged, and null only where the lowering zeroed
+  it (a payloadless variant and a record with nothing counted are immortal
+  boxes). The lowering marks a retain or uniqueness test of one no zero
+  reaches (`proven_box`, `i64_imm` 5), and the native emitters read its count
+  with neither guard.
 - Releases free at the last count through a size-classed freelist
   (`__fern_arr_dec`, `__fern_rc_dec`); `__fern_alloc_reuse(token, slots)`
   hands a dead box of the right class back as the new allocation and files a
