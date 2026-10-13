@@ -5,6 +5,128 @@ import (
 	"testing"
 )
 
+// soleReleaseSrc's `depth` takes both children of a node it does not rebuild,
+// so the donor dies by its release. On the arm its one uniqueness test read as
+// unique the release is the free alone (`__fn___fern_arr_dec.u`): the count
+// read at the first take still holds there, so the death reads no count
+// (#11944). main runs it on a tree a snapshot shares, on the snapshot at its
+// last use, and on a fresh tree.
+const soleReleaseSrc = `enum Tree { Leaf, Node(Tree, i32, Tree) }
+
+@noinline
+function ins(t: Tree, x: i32): Tree {
+  match (t) {
+    Node(l, k, r) => {
+      if (x < k) {
+        return Node(ins(l, x), k, r);
+      }
+      if (x > k) {
+        return Node(l, k, ins(r, x));
+      }
+      return Node(l, x, r);
+    },
+    Leaf => {
+      return Node(Leaf, x, Leaf);
+    }
+  }
+}
+
+@noinline
+function depth(own t: Tree): i32 {
+  match (t) {
+    Node(l, _, r) => {
+      let a: i32 = depth(l);
+      let b: i32 = depth(r);
+      if (a > b) {
+        return a + 1;
+      }
+      return b + 1;
+    },
+    Leaf => {
+      return 0;
+    }
+  }
+}
+
+@noinline
+function build(n: i32): Tree {
+  let t: Tree = Leaf;
+  let i: i32 = 0;
+  while (i < n) {
+    t = ins(t, (i * 37) % 101);
+    i = i + 1;
+  }
+  return t;
+}
+
+function main(): i32 {
+  let kept: Tree = build(100);
+  let bad: i32 = 0;
+  if (depth(ins(kept, 1000)) != 10) {
+    bad = bad + 1;
+  }
+  if (depth(kept) != 10) {
+    bad = bad + 2;
+  }
+  if (depth(ins(ins(Leaf, 2), 1)) != 2) {
+    bad = bad + 4;
+  }
+  return bad;
+}`
+
+// soleReleaseShape checks depth's emitted text: the donor is classified once,
+// its sole death is the helper's free entry, and no release ladder reads its
+// count (`_rcdecd<N>` is the ladder's decrement label on both register
+// backends).
+func soleReleaseShape(t *testing.T, body, call string) {
+	t.Helper()
+	if got := rcIsUniqueSites(body); got != 1 {
+		t.Errorf("depth: %d uniqueness tests, want 1", got)
+	}
+	if got := strings.Count(body, call+" __fn___fern_arr_dec.u"); got != 1 {
+		t.Errorf("depth: %d sole frees, want 1:\n%s", got, body)
+	}
+	if strings.Contains(body, "_rcdecd") {
+		t.Errorf("depth: a release ladder reads the count the take already read:\n%s", body)
+	}
+}
+
+func TestSelfHostSoleReleaseShapeX86_64(t *testing.T) {
+	emit, run := x86ShapeHarness(t)
+	asm := emit(t, soleReleaseSrc)
+	soleReleaseShape(t, fnText(t, asm, "depth"), "call")
+	if got := run(t, "sole", asm); got != 0 {
+		t.Errorf("exit = %d, want 0 (bit 1: shared children, 2: snapshot at its last use, 4: fresh tree)", got)
+	}
+	cli := newStrictCLI(t)
+	bin := buildBin(t, cli.gcc, t.TempDir(), "census", cli.emit(t, "x86-64-linux", soleReleaseSrc, "FERN_LEAKCHECK=1"))
+	stderr, exit := runWithStdin(t, cli.runner, bin, nil)
+	if exit != 0 {
+		t.Fatalf("census run: exit %d, want 0\n%s", exit, stderr)
+	}
+	assertBalancedCensus(t, stderr)
+	quarantine := buildBin(t, cli.gcc, t.TempDir(), "quarantine", cli.emit(t, "x86-64-linux", soleReleaseSrc, "FERN_RC_FREE_DEBUG=1"))
+	if stderr, exit := runWithStdin(t, cli.runner, quarantine, nil); exit != 0 {
+		t.Fatalf("quarantine run: exit %d, want 0\n%s", exit, stderr)
+	}
+}
+
+func TestSelfHostSoleReleaseShapeArm64(t *testing.T) {
+	emit, run := arm64ShapeHarness(t)
+	asm := emit(t, soleReleaseSrc)
+	soleReleaseShape(t, fnText(t, asm, "depth"), "bl")
+	if got := run(t, "sole", asm); got != 0 {
+		t.Errorf("exit = %d, want 0 (bit 1: shared children, 2: snapshot at its last use, 4: fresh tree)", got)
+	}
+}
+
+func TestSelfHostSoleReleaseWasm(t *testing.T) {
+	cli := newStrictCLI(t)
+	if code, out := runWasm(t, cli.emit(t, "wasm32-wasi", soleReleaseSrc)); code != 0 {
+		t.Fatalf("wasm: exit %d, stdout %q; want 0", code, out)
+	}
+}
+
 // classifiedShapeSrc's `ins` takes both children of a node it rebuilds in a
 // later block, and `bump` rebuilds the node's own variant in the block that
 // takes them. Each reads its donor's uniqueness once: before, every take

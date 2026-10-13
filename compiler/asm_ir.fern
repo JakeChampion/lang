@@ -7618,8 +7618,13 @@ function ssa_helper_entry(ins: ssa.SInst, reg_of: i32[], suffix: string, s: asmc
 // a static box's negative count, and a count above one, which is decremented
 // in memory. A count of one (the free) or zero (the underflow the helper
 // reports) calls the helper. Either way the pointer is the result, as the
-// helper leaves it in %rax.
+// helper leaves it in %rax. A release the lowering proved sole (mark 5)
+// calls the helper's `.u` entry with no guard in front: its box is a heap
+// box whose count is one.
 function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+  if (ins.imm == 5) {
+    return ssa_helper_entry(ins, reg_of, ".u", s);
+  }
   s = helper_call_needs(ins.str, s);
   s = ssa_read(reg_of, ins.args[0], "%r11", s);
   let p: string = ssa_src(reg_of, ins.args[0], "%r11");
