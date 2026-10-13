@@ -11,11 +11,14 @@
 // caps it, both parsed the lenient way OpenMP specifies — leading and
 // trailing blanks allowed, and a nested-level list accepted for its
 // first element, since nothing here can tell which level it names.
+// Without OMP_NUM_THREADS, Linux cgroup v2 CPU quotas also cap the
+// affinity count. --all does not consult that quota.
 //
 // `--ignore=N` subtracts, with a floor of 1: asking to leave more units
 // free than exist still leaves one.
 import "std/u64";
 import "./lib/gnu";
+import "./lib/cpuquota";
 
 function help_text(): string {
   let out: string = "";
@@ -269,7 +272,8 @@ function parse_ignore(v: string): u64 {
 
 // The count before `--ignore` applies. `--all` asks the machine and
 // stops there; the default asks the affinity mask and lets the two
-// OpenMP variables override and cap it — which is why the limit is read
+// OpenMP variables override and cap it, with CPU bandwidth quotas applied
+// when no thread-count override is set — which is why the limit is read
 // only on this side.
 function count_for(all: boolean): u64 {
   if (all) {
@@ -283,5 +287,10 @@ function count_for(all: boolean): u64 {
   if (threads != 0 as u64) {
     return min_u64(threads, limit);
   }
-  return min_u64(available_count(), limit);
+  let n: u64 = available_count();
+  let quota: u64 = cpuquota.current();
+  if (quota > 0 as u64) {
+    n = min_u64(n, quota);
+  }
+  return min_u64(n, limit);
 }
