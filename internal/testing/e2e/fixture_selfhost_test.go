@@ -250,7 +250,7 @@ func runSelfHostFixtureLegX86_64(t *testing.T, env []string) {
 			if err != nil {
 				// Includes the in-process assembler's own refusal ("could not
 				// encode: …"), which names the mnemonic or operand shape.
-				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "x86-64-linux", nil, f.mainPath, stdlibRoot, out))
+				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "x86-64-linux", nil, nil, f.mainPath, stdlibRoot, out))
 				return
 			}
 			// write_file does not set the exec bit (the Makefile chmods
@@ -308,7 +308,7 @@ func TestFernFixturesSelfHostArm64(t *testing.T) {
 				// instruction it does not yet support: …"), which names the
 				// mnemonic — a different and more actionable failure than the
 				// x86 leg's link error.
-				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "arm64-linux", nil, f.mainPath, stdlibRoot, out))
+				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "arm64-linux", nil, nil, f.mainPath, stdlibRoot, out))
 				return
 			}
 			// write_file does not set the exec bit (the Makefile chmods
@@ -444,13 +444,13 @@ func fixtureCompile(fernBin string, args ...string) *exec.Cmd {
 // means the CI log carries the answer instead of an instruction, which is the
 // difference between triaging from a log and having to reproduce first. Costs one
 // extra ~1.3s compile, and only on a fixture that already failed.
-func strictIRBailSite(fernBin, target string, emit []string, mainPath, stdlibRoot string, firstOut []byte) string {
+func strictIRBailSite(fernBin, target string, emit, env []string, mainPath, stdlibRoot string, firstOut []byte) string {
 	if !strings.Contains(string(firstOut), "not IR-eligible") {
 		return ""
 	}
 	args := append([]string{"-target", target}, emit...)
 	cmd := exec.Command(fernBin, append(args, "-o", os.DevNull, mainPath, stdlibRoot)...)
-	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
+	cmd.Env = append(append(os.Environ(), env...), "FERN_STRICT_IR=1")
 	out, _ := cmd.CombinedOutput()
 	return "\n--- FERN_STRICT_IR=1 ---\n" + string(out)
 }
