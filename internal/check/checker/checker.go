@@ -15590,78 +15590,201 @@ func (c *checker) checkStructDestructure(n *ast.Destructure, got ast.Type, s *sc
 	}
 }
 
-// checkMatch type-checks a `match` statement. The scrutinee must
-// be an enum value; each arm's pattern variant must belong to
-// that enum and supply the right number of binding names; the
-// arm list must cover every variant of the enum (or end in a
-// patsCoverOneField reports whether a run of refutable sibling arms is
-// exhaustive by covering every variant of one enum-typed position.
+// payloadsExhaustive reports whether the unguarded arms among `arms`, all of
+// one variant or one struct, leave no value of their payloads unmatched. It
+// is the usefulness check over the arms' payload patterns, one row per arm
+// and one column per payload: a column whose every variant some row names is
+// split per variant, each split checked in turn; any other column needs a
+// row that matches anything there. So `V(Ok2(a))` beside `V(Er2(a))` covers
+// `V`, as do sub-patterns in different payloads or nested at any depth.
 //
-// Before arms were flat, this question did not arise: the merge desugar
-// hoisted the sub-pattern into an inner match, so the outer arm was
-// irrefutable and the inner match answered exhaustiveness. Flat arms put the
-// question back where it belongs — `V(Ok2(a))` beside `V(Er2(a))` covers `V`
-// exactly when those two are all of the payload's variants.
-//
-// Deliberately narrow: it answers only when every refutable position across
-// the arms is the SAME index and holds a variant pattern. An arm that nests
-// deeper (`V(Ok2(0))`) still discriminates there, so it does not disqualify
-// the group — it simply does not contribute a covered variant, which is right:
-// it does not cover `Ok2` on its own. Anything the rule cannot answer falls
-// back to requiring an irrefutable arm, which is a diagnostic rather than a
-// miscompile.
-func (c *checker) patsCoverOneField(arms []structArmPat) bool {
-	field := -1
+// A guard can fall through, so a guarded arm covers nothing. A literal or a
+// range covers only its own values, except that `true` and `false` together
+// cover a boolean.
+func (c *checker) payloadsExhaustive(arms []structArmPat) bool {
+	var types []ast.Type
+	var rows [][]coverPat
 	for _, a := range arms {
-		for k, el := range a.payloads {
-			if el == nil || !patElemRefutable(*el) {
-				continue
-			}
-			if el.VariantName == "" || el.Nested != nil {
-				return false
-			}
-			if field == -1 {
-				field = k
-			} else if field != k {
-				return false
+		for len(types) < len(a.types) {
+			types = append(types, nil)
+		}
+		for k, t := range a.types {
+			if types[k] == nil {
+				types[k] = t
 			}
 		}
 	}
-	if field == -1 {
-		return false
-	}
-	var ed *ast.EnumDecl
-	covered := map[string]bool{}
 	for _, a := range arms {
-		if field >= len(a.payloads) || a.payloads[field] == nil || field >= len(a.types) {
+		if a.guarded {
 			continue
 		}
-		et, isEnum := a.types[field].(ast.EnumType)
-		if !isEnum {
-			return false
+		row := make([]coverPat, len(types))
+		for k := range row {
+			if k < len(a.payloads) {
+				row[k] = c.coverPatOf(a.payloads[k])
+			}
 		}
-		d, known := c.info.Enums[et.Name]
-		if !known {
-			return false
+		rows = append(rows, row)
+	}
+	return !c.coverUseful(rows, types)
+}
+
+// coverPat is one payload pattern as the exhaustiveness check sees it: a
+// constructor with its own payload patterns and their types, a pattern that
+// matches anything (ctor ""), or a test it cannot split on (opaque), which
+// matches too few values to cover anything.
+type coverPat struct {
+	ctor     string
+	opaque   bool
+	args     []coverPat
+	argTypes []ast.Type
+}
+
+func (c *checker) coverPatOf(el *ast.TuplePatElem) coverPat {
+	switch {
+	case el == nil:
+		return coverPat{}
+	case el.IsStruct:
+		if patElemRefutable(*el) {
+			return coverPat{opaque: true}
 		}
-		ed = d
-		el := a.payloads[field]
-		// Only an UNGUARDED arm whose sub-pattern is a plain variant covers
-		// it: a guard can fall through, and a deeper pattern (`Ok2(0)`) tests
-		// more than the variant.
-		if !a.guarded && !armPayloadsRefutable(el.VariantPayloads) {
-			covered[el.VariantName] = true
+		return coverPat{}
+	case el.Literal != nil:
+		if b, ok := el.Literal.(*ast.BoolLit); ok && el.RangeHi == nil {
+			return coverPat{ctor: strconv.FormatBool(b.Value)}
+		}
+		return coverPat{opaque: true}
+	case el.VariantName != "":
+		args := make([]coverPat, len(el.VariantBindings))
+		for k := range args {
+			if k < len(el.VariantPayloads) {
+				args[k] = c.coverPatOf(el.VariantPayloads[k])
+			}
+		}
+		return coverPat{ctor: el.VariantName, args: args, argTypes: el.VariantBindingTypes}
+	case el.Nested != nil:
+		args := make([]coverPat, len(el.Nested))
+		for k := range el.Nested {
+			args[k] = c.coverPatOf(&el.Nested[k])
+		}
+		return coverPat{ctor: "()", args: args, argTypes: el.NestedTypes}
+	}
+	return coverPat{}
+}
+
+// coverCtor is one constructor of a column's type and its arity.
+type coverCtor struct {
+	name  string
+	arity int
+}
+
+// coverCtors lists every constructor of t when it has finitely many: an
+// enum's variants, a tuple's one shape, a boolean's two values. Nil for any
+// other type, which only a pattern that matches anything covers.
+func (c *checker) coverCtors(t ast.Type) []coverCtor {
+	switch tt := t.(type) {
+	case ast.EnumType:
+		ed, ok := c.info.Enums[tt.Name]
+		if !ok {
+			return nil
+		}
+		out := make([]coverCtor, len(ed.Variants))
+		for i, v := range ed.Variants {
+			out[i] = coverCtor{name: v.Name, arity: len(v.Payloads)}
+		}
+		return out
+	case ast.TupleType:
+		return []coverCtor{{name: "()", arity: len(tt.Elems)}}
+	case ast.BoolType:
+		return []coverCtor{{name: "false"}, {name: "true"}}
+	}
+	return nil
+}
+
+// coverUseful reports whether some value of `types` escapes every row.
+func (c *checker) coverUseful(rows [][]coverPat, types []ast.Type) bool {
+	if len(types) == 0 {
+		return len(rows) == 0
+	}
+	ctors := c.coverCtors(types[0])
+	named := map[string]bool{}
+	for _, r := range rows {
+		if r[0].ctor != "" && !r[0].opaque {
+			named[r[0].ctor] = true
 		}
 	}
-	if ed == nil {
-		return false
-	}
-	for _, v := range ed.Variants {
-		if !covered[v.Name] {
-			return false
+	complete := len(ctors) > 0
+	for _, k := range ctors {
+		if !named[k.name] {
+			complete = false
 		}
 	}
-	return true
+	if !complete {
+		var rest [][]coverPat
+		for _, r := range rows {
+			if r[0].ctor == "" && !r[0].opaque {
+				rest = append(rest, r[1:])
+			}
+		}
+		return c.coverUseful(rest, types[1:])
+	}
+	for _, k := range ctors {
+		argTypes := make([]ast.Type, k.arity)
+		var split [][]coverPat
+		for _, r := range rows {
+			if r[0].opaque || r[0].ctor != "" && r[0].ctor != k.name {
+				continue
+			}
+			args := r[0].args
+			if r[0].ctor == "" || len(args) != k.arity {
+				args = make([]coverPat, k.arity)
+			}
+			for i := range argTypes {
+				if argTypes[i] == nil && i < len(r[0].argTypes) {
+					argTypes[i] = r[0].argTypes[i]
+				}
+			}
+			split = append(split, append(append([]coverPat{}, args...), r[1:]...))
+		}
+		if c.coverUseful(split, append(argTypes, types[1:]...)) {
+			return true
+		}
+	}
+	return false
+}
+
+// structArmPatOf is a struct arm's field patterns in the struct's declared
+// field order, whatever order the arm wrote them in, so a column is one field
+// across every arm. A field the arm does not name matches anything.
+func structArmPatOf(sd *ast.StructDecl, bindings, fieldNames []string, payloads []*ast.TuplePatElem, types []ast.Type, guarded bool) structArmPat {
+	out := structArmPat{payloads: make([]*ast.TuplePatElem, len(sd.Fields)), types: make([]ast.Type, len(sd.Fields)), guarded: guarded}
+	for k, b := range bindings {
+		field := b
+		if k < len(fieldNames) && fieldNames[k] != "" {
+			field = fieldNames[k]
+		}
+		for i, f := range sd.Fields {
+			if f.Name != field {
+				continue
+			}
+			if k < len(payloads) {
+				out.payloads[i] = payloads[k]
+			}
+			if k < len(types) {
+				out.types[i] = types[k]
+			}
+		}
+	}
+	return out
+}
+
+// tupleArmPat is a tuple arm's elements as payloadsExhaustive reads them.
+func tupleArmPat(elems []ast.TuplePatElem, guarded bool, tup ast.TupleType) structArmPat {
+	payloads := make([]*ast.TuplePatElem, len(elems))
+	for k := range elems {
+		payloads[k] = &elems[k]
+	}
+	return structArmPat{payloads: payloads, types: tup.Elems, guarded: guarded}
 }
 
 // structArmPat is the pattern half of a struct arm, as structArmsCoverField
@@ -16094,7 +16217,7 @@ func bindsVariantPattern(n *ast.Match) bool {
 //
 // Deliberately narrower than the E030 proof beside it. That proof also
 // admits a variant covered JOINTLY by a group of refutable arms
-// (`patsCoverOneField`); this does not, because a group's members each
+// (`payloadsExhaustive`); this does not, because a group's members each
 // test a sub-pattern and "reaches this arm" then stops being a statement
 // about tags alone. A match that is exhaustive by the wider rule simply
 // keeps its tag test, which is the conservative direction.
@@ -16197,6 +16320,10 @@ func stampRemainderExprArms(arms []*ast.MatchExprArm, ed *ast.EnumDecl) {
 	stampRemainderArm(wrapped, ed)
 }
 
+// checkMatch type-checks a `match` statement. The scrutinee must be an enum
+// value; each arm's pattern variant must belong to that enum and supply the
+// right number of binding names; the arm list must cover every variant of
+// the enum (or end in a `_` arm).
 func (c *checker) checkMatch(n *ast.Match, s *scope) {
 	// A `let … else` binds for the rest of its block — the desugar's
 	// success arm — so the else branch (the synthesised trailing wildcard)
@@ -16345,7 +16472,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		}
 		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, variant, arm.Bindings, arm.NamedFields, sub)
 		// A refutable arm may still complete its variant's coverage together
-		// with its siblings — see patsCoverOneField, applied per variant once
+		// with its siblings — see payloadsExhaustive, applied per variant once
 		// every arm is in. Snapshotted AFTER resolveVariantBindings, which is
 		// what fills BindingTypes.
 		refutableByVariant[arm.VariantName] = append(refutableByVariant[arm.VariantName],
@@ -16378,7 +16505,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 	}
 	if !sawWildcard {
 		for name, group := range refutableByVariant {
-			if !covered[name] && c.patsCoverOneField(group) {
+			if !covered[name] && c.payloadsExhaustive(group) {
 				covered[name] = true
 			}
 		}
@@ -16567,6 +16694,7 @@ func literalMatchNotExhaustive(tagT ast.Type) string {
 // is unreachable (E026-family), and a match with neither is E030.
 func (c *checker) checkTupleMatch(n *ast.Match, tup ast.TupleType, s *scope) {
 	sawIrrefutable := false
+	var tupleArms []structArmPat
 	for i, arm := range n.Arms {
 		if sawIrrefutable && !syntheticElseArm(n, i) {
 			c.errfCode(arm.P, "E026", "arm is unreachable — a preceding arm matches every value")
@@ -16607,6 +16735,7 @@ func (c *checker) checkTupleMatch(n *ast.Match, tup ast.TupleType, s *scope) {
 				irrefutable = false
 			}
 		}
+		tupleArms = append(tupleArms, tupleArmPat(arm.TupleElems, arm.Guard != nil, tup))
 		if arm.Guard != nil {
 			irrefutable = false
 			gt := c.checkExpr(arm.Guard, armScope)
@@ -16619,7 +16748,7 @@ func (c *checker) checkTupleMatch(n *ast.Match, tup ast.TupleType, s *scope) {
 		}
 		c.checkBlock(arm.Body, armScope)
 	}
-	if !sawIrrefutable {
+	if !sawIrrefutable && !c.payloadsExhaustive(tupleArms) {
 		c.errfCode(n.P, "E030", "match on tuple is not exhaustive — add an unguarded `_` or all-binder arm")
 	}
 }
@@ -16734,7 +16863,7 @@ func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
 			seen[b] = true
 			armScope.names[b] = ft
 		}
-		structArms = append(structArms, structArmPat{payloads: arm.Payloads, types: arm.BindingTypes, guarded: arm.Guard != nil})
+		structArms = append(structArms, structArmPatOf(sd, arm.Bindings, arm.FieldNames, arm.Payloads, arm.BindingTypes, arm.Guard != nil))
 		irrefutable := !armPayloadsRefutable(arm.Payloads)
 		if arm.Guard != nil {
 			irrefutable = false
@@ -16748,7 +16877,7 @@ func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
 		}
 		c.checkBlock(arm.Body, armScope)
 	}
-	if !sawIrrefutable && !c.patsCoverOneField(structArms) {
+	if !sawIrrefutable && !c.payloadsExhaustive(structArms) {
 		c.errfCode(n.P, "E030", "match on struct is not exhaustive — add an unguarded struct-pattern or `_` arm")
 	}
 }
@@ -16873,6 +17002,7 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 // the unified type).
 func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *scope) ast.Type {
 	sawIrrefutable := false
+	var tupleArms []structArmPat
 	var result ast.Type
 	unify := func(armT ast.Type, p ast.Position) {
 		if armT == nil {
@@ -16944,6 +17074,7 @@ func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *sc
 				irrefutable = false
 			}
 		}
+		tupleArms = append(tupleArms, tupleArmPat(arm.TupleElems, arm.Guard != nil, tup))
 		if arm.Guard != nil {
 			irrefutable = false
 			gt := c.checkExpr(arm.Guard, armScope)
@@ -16956,7 +17087,7 @@ func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *sc
 		}
 		unify(c.checkExpr(arm.Body, armScope), arm.P)
 	}
-	if !sawIrrefutable {
+	if !sawIrrefutable && !c.payloadsExhaustive(tupleArms) {
 		c.errfCode(n.P, "E030", "match on tuple is not exhaustive — add an unguarded `_` or all-binder arm")
 	}
 	return result
@@ -17090,7 +17221,7 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 			seen[b] = true
 			armScope.names[b] = ft
 		}
-		structArms = append(structArms, structArmPat{payloads: arm.Payloads, types: arm.BindingTypes, guarded: arm.Guard != nil})
+		structArms = append(structArms, structArmPatOf(sd, arm.Bindings, arm.FieldNames, arm.Payloads, arm.BindingTypes, arm.Guard != nil))
 		irrefutable := !armPayloadsRefutable(arm.Payloads)
 		if arm.Guard != nil {
 			irrefutable = false
@@ -17104,7 +17235,7 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 		}
 		unify(c.checkExpr(arm.Body, armScope), arm.P)
 	}
-	if !sawIrrefutable && !c.patsCoverOneField(structArms) {
+	if !sawIrrefutable && !c.payloadsExhaustive(structArms) {
 		c.errfCode(n.P, "E030", "match on struct is not exhaustive — add an unguarded struct-pattern or `_` arm")
 	}
 	if isFloat(result) {
@@ -17244,7 +17375,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 		}
 		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, variant, arm.Bindings, arm.NamedFields, sub)
 		// A refutable arm may still complete its variant's coverage together
-		// with its siblings — see patsCoverOneField, applied per variant once
+		// with its siblings — see payloadsExhaustive, applied per variant once
 		// every arm is in. Snapshotted AFTER resolveVariantBindings, which is
 		// what fills BindingTypes.
 		refutableByVariant[arm.VariantName] = append(refutableByVariant[arm.VariantName],
@@ -17274,7 +17405,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 	}
 	if !sawWildcard {
 		for name, group := range refutableByVariant {
-			if !covered[name] && c.patsCoverOneField(group) {
+			if !covered[name] && c.payloadsExhaustive(group) {
 				covered[name] = true
 			}
 		}

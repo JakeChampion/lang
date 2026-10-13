@@ -133,7 +133,7 @@ function f(xs: List): i32 {
 
 // The deliberate narrowing. This match IS exhaustive — the checker
 // proves V covered by the GROUP of its two refutable arms
-// (patsCoverOneField) — but the stamp does not use that rule, because a
+// (payloadsExhaustive) — but the stamp does not use that rule, because a
 // group's members each test a sub-pattern and "what reaches this arm"
 // stops being a statement about tags alone. It keeps its tag test.
 func TestCoversRemainderDoesNotUseTheGroupCoverageRule(t *testing.T) {
