@@ -7322,6 +7322,7 @@ func (c *checker) synthesizeTraitDefaults(prog *ast.Program) {
 				SourceModule:   impl.SourceModule,
 				DefiningModule: td.SourceModule,
 				ImplTrait:      impl.Trait,
+				TraitDefault:   impl.Trait,
 			}
 			if m.Assoc {
 				// Associated default (no `self`): hoists to
@@ -18732,6 +18733,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// which would otherwise claim every `Enum.x(...)` shape.
 		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
 			if tid, ok := fa.Target.(*ast.Ident); ok {
+				// `Self.f()` inside an impl method or a trait default is the
+				// associated call on the impl type (#12296); the ident is
+				// respelled so every later pass reads the concrete type.
+				if tid.Name == "Self" && c.current != nil && c.current.MethodRecv != "" {
+					tid.Name = c.current.MethodRecv
+				}
 				if _, shadowed := c.identValueBinding(tid.Name, s); !shadowed {
 					// Generic associated dispatch: `T.f(args)` where `T` is
 					// a bounded type parameter of the current function whose
@@ -19129,6 +19136,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				var prefer []string
 				if n.Method != nil && n.Method.OwnerTrait != "" {
 					prefer = []string{n.Method.OwnerTrait}
+				}
+				// Inside a trait's default body the receiver is known only as
+				// that trait's, so its own method outranks another trait's of
+				// the same name on the implementing type (#12282).
+				if prefer == nil && c.current != nil && c.current.TraitDefault != "" && typeName == c.current.MethodRecv {
+					prefer = []string{c.current.TraitDefault}
 				}
 				if mangled, ownerTrait, tied, ok := c.info.ResolveMethodFrom(c.currentModule(), typeName, fa.Field, prefer); ok && (c.methodVisibleHere(mangled) || c.methodImplementsTrait(typeName, fa.Field)) {
 					if len(tied) > 0 {

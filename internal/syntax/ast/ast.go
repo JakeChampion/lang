@@ -3743,6 +3743,12 @@ type FuncDecl struct {
 	// Info.MethodOwners so two traits offering the same method name for
 	// one type stay distinguishable.
 	ImplTrait string
+	// TraitDefault names the (mangled) trait whose default body this
+	// method materialises, for an impl that did not write it. Empty for a
+	// method the program wrote. Inside such a body `self` is known only as
+	// that trait's, so a method the trait provides outranks another
+	// trait's of the same name.
+	TraitDefault string
 	// AssocType, when non-empty, marks this as an associated function
 	// of that (mangled) type name — a receiver-less `impl` method like
 	// `function origin(): Self` in `impl … for Point`. Receiver stays

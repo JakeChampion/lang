@@ -243,7 +243,12 @@ pub function with_stdlib_origin(mod: Module, path: string): Module {
 // `module` is the bundle prefix of the module that declared the trait, "" for
 // the program's own module; it is what a qualified `@derive(cmp.Eq)` resolves
 // against, since `trait_name` is simplified past any qualifier.
-pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[], supertraits: string[], assoc_sigs: FuncDecl[], provided: string[], assoc_types: string[], module: string, default_sigs: FuncDecl[] }
+// `visible_from` is the modules that import the trait's module directly, by
+// prefix ("" for the entry), which flatten fills on the bundle: a call site
+// in one of them can name the trait, so its method outranks another
+// trait's of the same name (the Go checker's traitInScope). Empty, with
+// `module` empty, for a trait the entry declares, which every module sees.
+pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[], supertraits: string[], assoc_sigs: FuncDecl[], provided: string[], assoc_types: string[], module: string, default_sigs: FuncDecl[], visible_from: string[] }
 
 // TraitDecl is the `trait` block as WRITTEN, retained for the formatter
 // (#6773) and, since it is the only record of a trait's TYPE PARAMETERS, for
@@ -14703,7 +14708,11 @@ function clone_bg(fd: FuncDecl, key: string, impls: ImplInfo[], reqs: TraitReq[]
 
 // `routed` are the variables whose concrete type has a renamed method, with
 // that type's base in `bases` and the variable's bound entries in `traits`.
-struct BoundUse { env: MEnv, funcs: MFns, ord: string[], eq: string[], routed: string[], bases: string[], traits: string[][] }
+// `by_trait` spells a routed method call as `Trait.m`, the provider's trait
+// and the name as written, rather than as the provider's own name: the
+// checker's instantiation reads that spelling as the bound's answer
+// (lookup_method), where the monomorphiser's clone needs the symbol.
+struct BoundUse { env: MEnv, funcs: MFns, ord: string[], eq: string[], routed: string[], bases: string[], traits: string[][], by_trait: boolean }
 
 function bound_rewritten(fd: FuncDecl, cts: string[], reqs: TraitReq[], funcs: MFns): ast.Stmt[] {
   let ctx: BoundUse = bound_use(fd, cts, reqs, funcs);
@@ -14728,7 +14737,25 @@ function bound_use(fd: FuncDecl, cts: string[], reqs: TraitReq[], funcs: MFns): 
     k = k + 1;
   }
   let (routed, bases, traits) = bound_routes(fd, cts, funcs);
-  return BoundUse { env: env_from_decl(fd), funcs: MFns { ...funcs, keep_vars: true }, ord: ord, eq: eq, routed: routed, bases: bases, traits: traits };
+  return BoundUse { env: env_from_decl(fd), funcs: MFns { ...funcs, keep_vars: true }, ord: ord, eq: eq, routed: routed, bases: bases, traits: traits, by_trait: false };
+}
+
+// route_bound_calls is the call half of bound_rewritten, for the checker's
+// own instantiation of `fd` at `cts`: a method called through a bounded
+// variable taken at a type with a renamed method is respelled `Trait.m`,
+// naming the bound's provider by its trait, so the clone's check reads the
+// bound's answer rather than an ambiguity (ambiguous_call_diags), as the Go
+// checker re-checks a clone with the trait the template's check resolved
+// each call to. The comparison rewrite is left to the monomorphiser: the
+// template's operators were checked as written.
+pub function route_bound_calls(fd: FuncDecl, cts: string[], funcs: MFns): ast.Stmt[] {
+  let (routed, bases, traits) = bound_routes(fd, cts, funcs);
+  if (routed.len() == 0) {
+    return fd.body;
+  }
+  let ctx: BoundUse = BoundUse { env: env_from_decl(fd), funcs: MFns { ...funcs, keep_vars: true }, ord: [], eq: [], routed: routed, bases: bases, traits: traits, by_trait: true };
+  let (out, after) = bc_body(fd.body, ctx);
+  return out;
 }
 
 // method_bound_rewritten is bound_rewritten for a generic type's method, cloned
@@ -14778,7 +14805,15 @@ function bound_method(ty: string, m: string, receiver: boolean, ctx: BoundUse): 
   if (k < 0) {
     return m;
   }
-  return trait_provider_name(ctx.funcs.decls, ctx.bases[k], ctx.traits[k], m, receiver);
+  let at: i32 = trait_provider_index(ctx.funcs.decls, ctx.bases[k], ctx.traits[k], m, receiver);
+  if (at < 0) {
+    return m;
+  }
+  let fd: FuncDecl = ctx.funcs.decls[at];
+  if (ctx.by_trait && receiver && fd.impl_trait.len() > 0) {
+    return fd.impl_trait + "." + derive_simple_name(fd.name);
+  }
+  return fd.name;
 }
 
 // bound_field is the field a routed call `fa(...)` names: `fa.obj` is a type
@@ -26201,8 +26236,18 @@ pub function dyn_provider_name(funcs: FuncDecl[], recv_type: string, traits: str
 // trait_provider_name is dyn_provider_name for a receiver method when
 // `receiver`, else for an associated function of `recv_type`.
 function trait_provider_name(funcs: FuncDecl[], recv_type: string, traits: string[], method: string, receiver: boolean): string {
-  if (recv_type.len() == 0) {
+  let at: i32 = trait_provider_index(funcs, recv_type, traits, method, receiver);
+  if (at < 0) {
     return method;
+  }
+  return funcs[at].name;
+}
+
+// trait_provider_index is the index in `funcs` of the method trait_provider_name
+// names, or -1 when none answers.
+function trait_provider_index(funcs: FuncDecl[], recv_type: string, traits: string[], method: string, receiver: boolean): i32 {
+  if (recv_type.len() == 0) {
+    return -1;
   }
   let i: i32 = 0;
   while (i < funcs.len()) {
@@ -26210,11 +26255,65 @@ function trait_provider_name(funcs: FuncDecl[], recv_type: string, traits: strin
     if (util.base_type_name(fd.receiver_type) == recv_type
       && fd.receiver_name.len() > 0 == receiver
       && answers_traits(fd, traits, method)) {
-      return fd.name;
+      return i;
     }
     i = i + 1;
   }
-  return method;
+  return -1;
+}
+
+// route_inherited_defaults respells, in each default a type inherits from a
+// trait, a call through a receiver of the impl type to that trait's provider
+// when another trait claimed the plain name on the type: inside the trait's
+// body the receiver is known only as the trait's, as the Go checker resolves
+// it (#12282). A method the impl wrote sees every provider and is left as
+// written. Runs after the renames are final and resolve_dyn_traits has said
+// which trait each method answers: on each parsed module for the defaults
+// of its own traits, and on the bundle for the cross-module ones. A call
+// already routed names its provider and is left alone, so the second run
+// changes nothing.
+pub function route_inherited_defaults(mod: Module): Module {
+  let funcs: FuncDecl[] = mod.funcs;
+  let mf: MFns = MFns { ...mfns_of(mod.funcs, mod.structs, mod.enums, mod.impls), keep_vars: true };
+  let i: i32 = 0;
+  while (i < funcs.len()) {
+    let fd: FuncDecl = funcs[i];
+    if (fd.impl_trait.len() > 0 && fd.receiver_name.len() > 0 && is_inherited_default(mod.impls, mod.trait_reqs, fd)) {
+      let base: string = util.base_type_name(fd.receiver_type);
+      let ctx: BoundUse = BoundUse { env: env_from_decl(fd), funcs: mf, ord: [], eq: [], routed: [fd.receiver_type], bases: [base], traits: [[fd.impl_trait]], by_trait: false };
+      let (body, after) = bc_body(fd.body, ctx);
+      funcs = funcs.with(i, FuncDecl { ...fd, body: body });
+    }
+    i = i + 1;
+  }
+  return Module { ...mod, funcs: funcs };
+}
+
+// is_inherited_default reports whether `fd` is a trait default materialised
+// into an impl that did not write it: the impl of its trait for its receiver
+// type lists the methods the impl wrote, and the trait's requirement record
+// lists its defaults.
+pub function is_inherited_default(impls: ImplInfo[], reqs: TraitReq[], fd: FuncDecl): boolean {
+  let base: string = util.base_type_name(fd.receiver_type);
+  let name: string = derive_simple_name(fd.name);
+  for im in impls {
+    if (im.trait_name == fd.impl_trait && util.base_type_name(im.impl_type) == base) {
+      if (str_list_contains(im.method_names, name)) {
+        return false;
+      }
+      for tr in reqs {
+        if (tr.trait_name == fd.impl_trait) {
+          for ds in tr.default_sigs {
+            if (ds.name == name) {
+              return true;
+            }
+          }
+        }
+      }
+      return false;
+    }
+  }
+  return false;
 }
 
 // str_list_contains reports whether `xs` holds `want`.
@@ -28287,7 +28386,10 @@ pub function inherit_default(m: FuncDecl, trait_params: string[], im: ImplInfo):
   return finalize_impl_method(sub, im.impl_type, im.type_params, im.bounds);
 }
 
-function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[], impl_tbs: string[]): FuncDecl {
+function finalize_impl_method(m0: FuncDecl, impl_type: string, impl_tps: string[], impl_tbs: string[]): FuncDecl {
+  // `Self` in the body is the impl type (`Self.zero()` is the impl type's
+  // associated function), as an inherited default already has it.
+  let m: FuncDecl = FuncDecl { ...m0, body: subst_stmts(m0.body, ["Self"], [impl_type]) };
   let rt: string = subst_self(m.ret_type, impl_type);
   let mtps: string[] = m.type_params;
   // bound_traits is allowed to run short of type_params — a promoted unbounded
@@ -28490,7 +28592,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
       p = p.advance();
     }
   }
-  return (defaults, TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs, supertraits: supertraits, assoc_sigs: assoc_sigs, provided: provided, assoc_types: assoc_types, module: "", default_sigs: default_sigs }, TraitDecl { name: tname, type_params: trait_tps.tnames, supertraits: decl_supers, methods: decl_methods, line: tline, col: tcol, is_pub: false, assoc_types: assoc_types, is_package: false }, trait_bad, p);
+  return (defaults, TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs, supertraits: supertraits, assoc_sigs: assoc_sigs, provided: provided, assoc_types: assoc_types, module: "", default_sigs: default_sigs, visible_from: [] }, TraitDecl { name: tname, type_params: trait_tps.tnames, supertraits: decl_supers, methods: decl_methods, line: tline, col: tcol, is_pub: false, assoc_types: assoc_types, is_package: false }, trait_bad, p);
 }
 
 // skip_decl_modifier consumes a contextual declaration modifier `name`
@@ -29904,7 +30006,9 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
   }
   let settled: Module = settle_module(resolve_variant_fields_module(resolve_labels_module(resolve_assoc_projections(parsed))));
   if (!verbatim) {
-    settled = resolve_dyn_traits(rename_type_vars_module(settled));
+    // A default inherited from a trait this module declares is routed here,
+    // where its renames are final; the bundle routes the cross-module ones.
+    settled = route_inherited_defaults(resolve_dyn_traits(rename_type_vars_module(settled)));
   }
   return (settled, traits, impl_decls, flines, inline_hints);
 }
