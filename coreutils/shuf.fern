@@ -238,23 +238,26 @@ function mix64(k: u64): u64 {
 }
 
 // The first `h` values of the permutation of [0, n) GNU's randperm
-// draws. The array is at least `h` long and may be longer — the dense
-// form hands back the whole vector, whose first h entries are already
-// the answer — so the caller reads `h` of it and not `len()`. A source
-// that ran out leaves `dead` set and the array short; every caller
-// reports that rather than reading it.
-function permutation(rs0: Rand, n: u64, h: u64): (u64[], Rand) {
+// draws, or of `items` taken in that order when it is not empty, which
+// is `items` itself shuffled by the same swaps. The array is at least `h`
+// long and may be longer — the dense form hands back the whole vector,
+// whose first h entries are already the answer — so the caller reads `h`
+// of it and not `len()`. A source that ran out leaves `dead` set and the
+// array short; every caller reports that rather than reading it.
+function permutation(rs0: Rand, n: u64, h: u64, items: u64[]): (u64[], Rand) {
   let rs: Rand = rs0;
   let out: u64[] = [];
   if (h == 0 as u64) {
     return (out, rs);
   }
   if (use_dense(n, h)) {
-    let v: u64[] = [];
-    let k: u64 = 0 as u64;
-    while (k < n) {
-      v = v.append(k);
-      k = k + 1 as u64;
+    let v: u64[] = items;
+    if (v.len() == 0) {
+      let k: u64 = 0 as u64;
+      while (k < n) {
+        v = v.append(k);
+        k = k + 1 as u64;
+      }
     }
     let i: u64 = 0 as u64;
     while (i < h) {
@@ -323,6 +326,9 @@ function permutation(rs0: Rand, n: u64, h: u64): (u64[], Rand) {
     keys = keys.with(sj, j);
     vals = vals.with(sj, vi);
     live = live.with(sj, 1);
+    if (items.len() > 0) {
+      vj = items[vj as i32];
+    }
     out = out.append(vj);
     i2 = i2 + 1 as u64;
   }
@@ -513,22 +519,22 @@ function slurp(r: Reader, size: i64): u8[] {
   return bytes;
 }
 
-function pack_line(start: i32, len: i32): i64 {
-  return start as i64 << 32 as i64 | len as i64;
+function pack_line(start: i32, len: i32): u64 {
+  return start as u64 << 32 as u64 | len as u64;
 }
 
-function line_start(v: i64): i32 {
-  return (v >> 32 as i64) as i32;
+function line_start(v: u64): i32 {
+  return (v >> 32 as u64) as i32;
 }
 
-function line_len(v: i64): i32 {
-  return (v & 4294967295 as i64) as i32;
+function line_len(v: u64): i32 {
+  return (v & 4294967295 as u64) as i32;
 }
 
 // The records of `bytes`, the terminator excluded and a missing final
 // one supplied by the output rather than recorded here.
-function split_lines(bytes: u8[], term: i32): i64[] {
-  let lines: i64[] = [];
+function split_lines(bytes: u8[], term: i32): u64[] {
+  let lines: u64[] = [];
   let start: i32 = 0;
   while (start < bytes.len()) {
     let end: i32 = __memchr_bytes(bytes, term, start);
@@ -540,6 +546,18 @@ function split_lines(bytes: u8[], term: i32): i64[] {
     start = end + 1;
   }
   return lines;
+}
+
+// The line `v` spans, with its terminator: the one that follows it in
+// `bytes`, or `term` for a last line that has none.
+function push_line(h: usize, bytes: u8[], v: u64, term: string): void {
+  let end: i32 = line_start(v) + line_len(v);
+  if (end < bytes.len()) {
+    push_bytes(h, bytes, line_start(v), end + 1);
+    return;
+  }
+  push_bytes(h, bytes, line_start(v), end);
+  buf_push(h, term);
 }
 
 // Retain the cursor's owned record; omit its delimiter only when writing.
@@ -646,10 +664,10 @@ function source_for(a: Args): Rand {
 // The lines a run draws from. Exactly one shape is filled: `held` for
 // a reservoir, whose records own their bytes; `spans` into `bytes` for an
 // input read whole; `echo` for text operands. The -i mode needs no storage.
-struct Lines { bytes: u8[], spans: i64[], held: u8[][], echo: string[], n: u64, boxed: boolean }
+struct Lines { bytes: u8[], spans: u64[], held: u8[][], echo: string[], n: u64, boxed: boolean }
 
 function lines_empty(): Lines {
-  let spans: i64[] = [];
+  let spans: u64[] = [];
   let held: u8[][] = [];
   return Lines { bytes: [], spans: spans, held: held, echo: [], n: 0 as u64, boxed: false };
 }
@@ -736,7 +754,7 @@ function read_input(a: Args, path: string, rs0: Rand): (Lines, Rand) {
     out = Lines { ...out, held: got.0, n: got.0.len() as u64, boxed: true };
   } else {
     let bytes: u8[] = slurp(r, size);
-    let spans: i64[] = split_lines(bytes, a.term);
+    let spans: u64[] = split_lines(bytes, a.term);
     out = Lines { ...out, bytes: bytes, spans: spans, n: spans.len() as u64 };
   }
   if (path != "-") {
@@ -784,9 +802,7 @@ function emit(o0: io_buffered.BufWriter, a: Args, src: Lines, perm: u64[], head:
     }
   } else {
     while (i as u64 < head) {
-      let v: i64 = src.spans[perm[i] as i32];
-      push_bytes(h, src.bytes, line_start(v), line_start(v) + line_len(v));
-      buf_push(h, term);
+      push_line(h, src.bytes, perm[i], term);
       o = gnu.settle(o);
       i = i + 1;
     }
@@ -813,15 +829,16 @@ function run_repeat(o0: io_buffered.BufWriter, rs0: Rand, a: Args, src: Lines): 
     let j: u64 = got.0;
     if (a.range) {
       io_buffered.buf_push_u64(h, a.lo + j);
+      buf_push(h, term);
     } else if (a.echo) {
       buf_push(h, src.echo[j as i32]);
+      buf_push(h, term);
     } else if (src.boxed) {
       push_record(h, src.held[j as i32], a.term);
+      buf_push(h, term);
     } else {
-      let v: i64 = src.spans[j as i32];
-      push_bytes(h, src.bytes, line_start(v), line_start(v) + line_len(v));
+      push_line(h, src.bytes, src.spans[j as i32], term);
     }
-    buf_push(h, term);
     o = gnu.settle(o);
     written = written + 1 as u64;
   }
@@ -891,7 +908,12 @@ pub function main(): i32 {
     return 0;
   }
 
-  let pr: (u64[], Rand) = permutation(rs, src.n, head);
+  // An input read whole is shuffled as its spans, so the output walks
+  // them in order rather than through a permutation of their indices.
+  // `src` lets go of them first, so the swaps are made in place.
+  let spans: u64[] = src.spans;
+  src = Lines { ...src, spans: [] };
+  let pr: (u64[], Rand) = permutation(rs, src.n, head, spans);
   rs = pr.1;
   if (rs.dead) {
     rand_die(rs);

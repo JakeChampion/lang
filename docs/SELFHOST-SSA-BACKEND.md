@@ -189,12 +189,12 @@ The suspend pass keeps that read in a site's group with the call and its
 store, ahead of the mode test it adds after a call that may park
 (`suspend.group_end`), so a function that may suspend returns in two words
 like any other.
-A function whose result is a tuple of two values that each fit a word
-returns the same way: the first element is its result and the
-second the word. A caller rebuilds the pair from the two, and split reads
+A function whose result is a tuple of two values returns the same way when
+the second fits a word: the first element is its result, which may be as
+wide as any result (an i64, a u64, a float), and the second the word. A caller rebuilds the pair from the two, and split reads
 its projections off the construction, so the pair is never built; a return
 that is not a construction (a join of two, a parameter) is projected in the
-callee. A triple, or a pair with an element wider than a word, stays boxed. `TestSelfHostPairReturn` covers both shapes on the three targets, a pair and a Result returned across a park among them.
+callee. A triple, or a pair whose second element is wider than a word, stays boxed. Wasm spells a paired function's result from its lowered body, not its declaration. `TestSelfHostPairReturn` covers both shapes on the three targets, a pair and a Result returned across a park among them.
 
 `sempair`, which `seminline` runs once nothing more is spliced, chooses the
 functions: nothing outside the bodies names one and every body that names

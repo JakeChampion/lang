@@ -150,6 +150,16 @@ func shufCases(t *testing.T) []invocation {
 	bigEq := shufFile(t, dir, "big.eq", bigEqBytes)
 	bigGt := shufFile(t, dir, "big.gt", bigGtBytes)
 
+	// Enough lines that a small head count is drawn by the sparse table
+	// rather than the dense vector, in a file read whole; the last line
+	// has no delimiter.
+	var manyLines strings.Builder
+	for i := 0; i < 200000; i++ {
+		manyLines.WriteString("\nline " + strconv.Itoa(i))
+	}
+	many := shufFile(t, dir, "many", []byte(manyLines.String()[1:]))
+	lcgBig := shufSource(t, dir, "s.lcg-big", shufLCG(1<<20))
+
 	seed := func(t *testing.T, wd string) {
 		if err := os.WriteFile(filepath.Join(wd, "in"), []byte("a\nb\nc\nd\ne\n"), 0o644); err != nil {
 			t.Fatal(err)
@@ -299,6 +309,8 @@ func shufCases(t *testing.T) []invocation {
 		{name: "eight mib without a head count", args: []string{lcg, bigEq}},
 		{name: "one byte more without a head count", args: []string{lcg, bigGt}},
 		{name: "repeat turns the reservoir off", args: []string{"-r", "-n", "3", lcg, bigGt}},
+		{name: "a head count of many lines read whole", args: []string{"-n", "40", lcg, many}},
+		{name: "every one of many lines read whole", args: []string{lcgBig, many}},
 
 		// ---- -r ------------------------------------------------------
 		{name: "repeat", args: []string{"-r", "-n", "6", in5, count}},

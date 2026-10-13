@@ -123,6 +123,8 @@ function main(): i32 {
 	// bodies, and this pins that the modload path keeps doing so.
 	{"map-insert-get", "import \"core/map\";\nfunction main(): i32 {\n  let m: Map[string, i32] = map_new(8);\n  m = m.insert(\"a\", 1);\n  m = m.insert(\"b\", 2);\n  m = m.insert(\"a\", 3);\n  let total: i32 = m.get_or(\"a\", 0) + m.get_or(\"b\", 0);\n  if (m.len() == 2 && total == 5) { return 7; }\n  return 1;\n}\n"},
 	{"map-keys", "import \"core/map\";\nfunction main(): i32 {\n  let m: Map[i32, i32] = map_new(4);\n  let i: i32 = 0;\n  while (i < 5) { m = m.insert(i, i * i); i = i + 1; }\n  let sum: i32 = 0;\n  let ks: i32[] = m.keys();\n  let j: i32 = 0;\n  while (j < ks.len()) { sum = sum + m.get_or(ks[j], 0); j = j + 1; }\n  if (sum == 30 && m.len() == 5) { return 7; }\n  return 1;\n}\n"},
+	// An imported module's enum, constructed and matched by its bare variants.
+	{"imported-enum", "import \"std/json\";\nfunction main(): i32 {\n  let v: json.JsonValue = JNumber(\"42\");\n  match (v) {\n    JNumber(s) => { if (s == \"42\") { return 7; } return 1; },\n    JNull => { return 2; },\n    _ => { return 3; }\n  }\n}\n"},
 	// The intrinsics called directly, without a stdlib body in between.
 	{"alloc-fill-pack", "function main(): i32 {\n  let buf: u8[] = __alloc_u8(3);\n  buf = buf.with(0, 102 as u8);\n  buf = buf.with(1, 111 as u8);\n  buf = buf.with(2, 111 as u8);\n  if (string_from_bytes_unchecked(buf) == \"foo\") { return 7; }\n  return 1;\n}\n"},
 	{"memchr-ascii-run", "function main(): i32 {\n  if (__memchr(\"abcb\", 98, 2) != 3) { return 1; }\n  if (__memchr(\"abc\", 122, 0) != 0 - 1) { return 2; }\n  if (__ascii_run(\"abé\", 0) != 2) { return 3; }\n  return 7;\n}\n"},

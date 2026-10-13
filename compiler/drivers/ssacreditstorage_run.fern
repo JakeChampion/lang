@@ -97,7 +97,7 @@ function erased(op: ssa.SInst): Edit {
 }
 
 function call_edit(op: ssa.SInst, old: i32, mode: i32, count: i32): Edit {
-  if (mode == 14 && count == 0 && op.str == "__fern_rc_dec" && op.args[0] != old) {
+  if (mode == 13 && count == 0 && op.str == "__fern_rc_dec" && op.args[0] != old) {
     return erased(op);
   }
   if (mode == 3 && op.str == "__fern_rc_is_unique") {
@@ -168,15 +168,12 @@ function mutated(f: ssa.SFunc, mode: i32): ssa.SFunc {
 }
 
 function controls(sub: ircore.Sub, f: ssa.SFunc, assertion: ssa.SFunc): void {
-  // The parent dies classified: its uniqueness is read once and its fields
-  // are released in place, so there is no drop-helper call or cleared parent
-  // slot to plant a bug in.
-  let modes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14];
   let reasons = ["invalid storage donor generation", "parent allocation size mismatch", "releasing a shared child slot", "storage transfer requires one old parent credit", "old parent used after release", "old parent used after release", "old parent used after release", "old parent used after release", "old parent used after release", "result shape not initialized", "result has stale or uninitialized slot", "unsupported reuse operation", "storage transfer requires discharged children"];
-  let k: i32 = 0;
-  while (k < modes.len()) {
-    expect(check(sub, mutated(f, modes[k]), assertion), f.name, reasons[k]);
-    k = k + 1;
+  let mode: i32 = 1;
+  while (mode <= reasons.len()) {
+    let p = check(sub, mutated(f, mode), assertion);
+    expect(p, f.name, reasons[mode - 1]);
+    mode = mode + 1;
   }
   let fields = [reuse.ScalarField { root: 3, offset: 8 }, reuse.ScalarField { root: 4, offset: 8 }, reuse.ScalarField { root: 5, offset: 8 }];
   expect(reuse.check_calls(f, body(sub, "__sem_drop_Parent"), body(sub, "__sem_release_Parent"), "Other", fields, [assertion]), "replace", "nonnull reuse donor unsupported");
