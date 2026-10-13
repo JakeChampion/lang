@@ -210,11 +210,19 @@ without ACK within the timeout closes the connection.
    table it replaced had to save and restore a session per park) until
    the server sends GOAWAY. `TestTLSClientAgainstGo` and its interpreter
    twin fetch twice from Go's HTTP/2 server over one connection and read
-   the protocol back. Open: one request at a time per connection; the
-   multiplexing of a handler's parked upstream calls over one connection
-   needs the serve loop to own the outbound connection and route each
-   stream's answer to the flight waiting on it, the way it routes inbound
-   streams, which is the next slice here.
+   the protocol back. The multiplexing (landed): under the serve loop the
+   handlers' requests to one origin go over one connection at once. The
+   loop's pool carries a `fetch.Shared` table; a handler's request is a
+   stream opened on the origin's driven connection and a `Mail` slot its
+   task parks on (a wait-set pair with `fetch.MAIL_INTEREST`, which the
+   loop keeps off its reactor and answers itself), the loop reads the
+   driven connections' frames at its own events, puts each stream's
+   answer in its slot and wakes the task waiting on it at the end of the
+   pass, the first task to an origin opens the connection while the
+   others wait for it, and a connection idle past the pool's bound or sent
+   GOAWAY is closed. `TestServeH2X86_64` parks six handlers on one
+   upstream HTTP/2 connection and reads every answer back after the
+   release.
 8. **Exit.** Per-stream bump bytes bounded and recorded on the perf lane;
    `internal/e2eselfhost` twins for the connection tests; #9860 closed.
    The bound (landed): `TestSelfHostHeldConnectionsHeapBoundX86_64`'s

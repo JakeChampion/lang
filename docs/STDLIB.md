@@ -3289,7 +3289,11 @@ points that run a handler under it.
   at once (`max_in_flight`: a handler whose `plat.http` waits on its
   upstream parks, as does a `BodyChunks` producer waiting for its next
   chunk, and the loop serves other connections meanwhile; at the cap the
-  listener is not read until one finishes), how
+  listener is not read until one finishes; the handlers' `plat.http`
+  calls to one `https` origin that chose `h2` share one upstream
+  connection the loop itself drives, each call a stream of its own, so a
+  worker reaches an origin over one connection however many handlers wait
+  on it), how
   many of them one client may hold (`max_connections_per_ip`, counted by
   the peer's address key, `net.peer_key`, and by each worker's loop
   alone: a connection past it is closed as it is accepted, without a
@@ -3657,10 +3661,18 @@ answer is `Result[HttpResponse, FetchError]`.
 - **HTTP/2:** an `https` origin that chooses `h2` by ALPN is spoken to
   over HTTP/2 (`std/http/h2`'s client side): the request on a stream of
   its own, the response read whole, the connection kept for the next
-  request until the server sends GOAWAY. One request at a time goes over a
-  connection; a second request to the same origin while one is in flight
-  dials another, as it does over HTTP/1.1. An origin offering only
-  `http/1.1`, and every `http` origin, is spoken to as before.
+  request until the server sends GOAWAY. On a transport of its own, one
+  request at a time goes over a connection and a second request to the
+  same origin while one is in flight dials another, as over HTTP/1.1.
+  Under a serve loop, whose pool carries a `Shared` table
+  (`idle_shared`), the handlers' requests to one origin go over one
+  connection at once: a request is a stream opened on the origin's
+  connection and a `Mail` slot the handler's task parks on, the loop reads
+  the connection's frames and wakes the task when its stream is answered,
+  the first task to an origin opens the connection while the others wait
+  for it, and a connection idle past the pool's bound or sent GOAWAY is
+  closed. An origin offering only `http/1.1`, and every `http` origin, is
+  spoken to as before.
 - **Pool:** a connection whose response was framed (a length or chunked,
   not ended by the close), that the peer did not ask to close, and that
   nothing followed is kept in the transport's `Idle` pool under its host,

@@ -591,8 +591,10 @@ pub trait Transport {
 
 // `Idle` — the connections a transport keeps for the next request to the
 // same place: at most `max` of them, none reused once idle past `idle`.
-// `kept` shares the table through a Cell.
-pub struct Idle { kept: Cell[Kept[]], max: i32, idle: Duration }
+// `kept` shares the table through a Cell. `shared`, under a serve loop,
+// is the HTTP/2 connections the loop drives for the handlers it runs, so
+// their requests to one origin go over one connection at once.
+pub struct Idle { kept: Cell[Kept[]], max: i32, idle: Duration, shared: Option[Shared] }
 
 // `Kept` — a connection the pool holds: where it reaches (`key`), the
 // transport's number for it, the nanosecond it went idle, its TLS session
@@ -610,7 +612,468 @@ pub function idle(): Idle {
 // connections, each for `idle`; a `max` of 0 keeps none.
 pub function idle_limited(max: i32, idle: Duration): Idle {
   let none: Kept[] = [];
-  return Idle { kept: cell_new(none), max: max, idle: idle };
+  return Idle { kept: cell_new(none), max: max, idle: idle, shared: None };
+}
+
+// `idle_shared()` — `idle()` with a `Shared` table beside it, for a loop
+// that drives its handlers' HTTP/2 connections (std/serve).
+pub function idle_shared(): Idle {
+  let rows: Driven[] = [];
+  let mail: Mail[] = [];
+  let dialing: string[] = [];
+  return Idle { ...idle(), shared: Some(Shared { rows: cell_new(rows), mail: cell_new(mail), next: cell_new(3), dialing: cell_new(dialing) }) };
+}
+
+// `shared_of(pool)` — the pool's `Shared` table, or an empty one that
+// stays empty for a pool without, so a loop holds one either way.
+pub function shared_of(pool: Idle): Shared {
+  match (pool.shared) {
+    Some(sh) => {
+      return sh;
+    },
+    None => {
+      let rows: Driven[] = [];
+      let mail: Mail[] = [];
+      let dialing: string[] = [];
+      return Shared { rows: cell_new(rows), mail: cell_new(mail), next: cell_new(3), dialing: cell_new(dialing) };
+    }
+  }
+  return shared_of(pool);
+}
+
+// `Shared` — HTTP/2 connections a serve loop drives on behalf of the
+// handlers it runs: a request from a handler's task is a stream opened
+// on the origin's connection and a `Mail` slot the task parks on
+// (`async.wait_any` on the slot's id with interest MAIL_INTEREST, which
+// no reactor sees); the loop reads the connections' frames, puts each
+// stream's answer in its slot and wakes the task waiting on it. The ids
+// are -3 and below, so none is a descriptor. `dialing` names the origins
+// a task is opening a connection to, so the others asking for one wait
+// for it rather than each opening its own.
+pub struct Shared { rows: Cell[Driven[]], mail: Cell[Mail[]], next: Cell[i32], dialing: Cell[string[]] }
+
+// `Driven` — one connection the loop drives: where it reaches, its
+// socket, its TLS session and HTTP/2 state, the bytes the state machine
+// has to send (`out`, before the session seals them) and the sealed bytes
+// the socket has not taken yet (`wire`), the streams in flight, the
+// nanosecond the last one ended, and whether the loop watches the socket.
+pub struct Driven { key: string, fd: i32, tls: client.Session, h2: h2.Conn, out: u8[], wire: u8[], streams: i32, since: i64, watched: boolean, writing: boolean }
+
+// `Mail` — a stream's slot: the id a task waits on, the connection and
+// stream, and the answer once it has come; or, with `fd` -1, a task's
+// wait for the connection another is opening to `key`, answered with a
+// status of 0 once it is open or has failed to.
+pub struct Mail { id: i32, fd: i32, stream: i32, key: string, answer: Option[Result[Answer, FetchError]] }
+
+// `Answer` — a response as a slot holds it: its parts, since a cell may
+// not hold a response (whose body may be a producer).
+pub struct Answer { status: i32, headers: HeaderMap, body: u8[], trailers: HeaderMap }
+
+// MAIL_INTEREST marks a wait-set pair as a `Mail` slot rather than a
+// descriptor; a loop skips it on its reactor and answers it itself.
+pub const MAIL_INTEREST: i32 = 4;
+
+// SHARED_STREAMS is how many streams a shared connection carries at once
+// before the next request to its origin dials another.
+pub const SHARED_STREAMS: i32 = 100;
+
+// `(sh).quiet()` — whether nothing is driven, waited for or being opened,
+// so a loop's pass has nothing to do here.
+pub function (sh: Shared) quiet(): boolean {
+  return sh.rows.get().len() == 0 && sh.mail.get().len() == 0 && sh.dialing.get().len() == 0;
+}
+
+// `(sh).owns(fd)` — whether the loop drives `fd`.
+pub function (sh: Shared) owns(fd: i32): boolean {
+  return __driven_at(sh.rows.get(), fd) >= 0;
+}
+
+// `(sh).adopt(key, fd, tls, hc, now)` — a connection a handler's task
+// opened handed to the loop to drive from now on.
+pub function (sh: Shared) adopt(key: string, fd: i32, tls: client.Session, hc: h2.Conn, now: i64): void {
+  sh.rows.set(sh.rows.get().append(Driven { key: key, fd: fd, tls: tls, h2: hc, out: [], wire: [], streams: 0, since: now, watched: false, writing: false }));
+}
+
+// `(sh).pick(key)` — the socket of a driven connection to `key` with room
+// for a stream, -1 for none.
+pub function (sh: Shared) pick(key: string): i32 {
+  for d in sh.rows.get() {
+    if (d.key == key && d.streams < SHARED_STREAMS && !d.h2.closed() && !d.h2.going_away()) {
+      return d.fd;
+    }
+  }
+  return 0 - 1;
+}
+
+// `(sh).submit(fd, out)` — a request opened as a stream on the connection
+// at `fd`, its frames queued to send: the slot's id to wait on, 0 when the
+// connection takes no stream any more.
+pub function (sh: Shared) submit(fd: i32, out: h2.Outgoing): i32 {
+  let rows: Driven[] = sh.rows.get();
+  let at: i32 = __driven_at(rows, fd);
+  if (at < 0) {
+    return 0;
+  }
+  let d: Driven = rows[at];
+  let (sent, stream) = d.h2.request(out);
+  if (stream < 0) {
+    return 0;
+  }
+  sh.rows.set(rows.with(at, Driven { ...d, h2: sent.conn, out: d.out.concat(sent.output), streams: d.streams + 1 }));
+  let id: i32 = 0 - sh.next.get();
+  sh.next.set(sh.next.get() + 1);
+  sh.mail.set(sh.mail.get().append(Mail { id: id, fd: fd, stream: stream, key: "", answer: None }));
+  return id;
+}
+
+// `(sh).dialing(key)` — whether this task is the one to open a connection
+// to `key`: true once, until `dialed`; false while another task is at it.
+pub function (sh: Shared) dialing(key: string): boolean {
+  for k in sh.dialing.get() {
+    if (k == key) {
+      return false;
+    }
+  }
+  sh.dialing.set(sh.dialing.get().append(key));
+  return true;
+}
+
+// `(sh).dialed(key)` — the connection to `key` opened or given up on: the
+// tasks waiting for it woken to look again.
+pub function (sh: Shared) dialed(key: string): void {
+  let kept: string[] = [];
+  for k in sh.dialing.get() {
+    if (k != key) {
+      kept = kept.append(k);
+    }
+  }
+  sh.dialing.set(kept);
+  let mail: Mail[] = sh.mail.get();
+  let i: i32 = 0;
+  while (i < mail.len()) {
+    if (mail[i].fd < 0 && mail[i].key == key) {
+      mail = mail.with(i, Mail { ...mail[i], answer: Some(Ok(Answer { status: 0, headers: headers.header_map_new(), body: [], trailers: headers.header_map_new() })) });
+    }
+    i = i + 1;
+  }
+  sh.mail.set(mail);
+}
+
+// `(sh).await_connection(key)` — a slot answered once the connection
+// another task is opening to `key` is there, or is not coming.
+pub function (sh: Shared) await_connection(key: string): i32 {
+  let id: i32 = 0 - sh.next.get();
+  sh.next.set(sh.next.get() + 1);
+  sh.mail.set(sh.mail.get().append(Mail { id: id, fd: 0 - 1, stream: 0, key: key, answer: None }));
+  return id;
+}
+
+// `(sh).take(id)` — the slot's answer, taken with the slot, once it has
+// come.
+pub function (sh: Shared) take(id: i32): Option[Result[Answer, FetchError]] {
+  let mail: Mail[] = sh.mail.get();
+  let at: i32 = __mail_at(mail, id);
+  if (at < 0) {
+    return Some(Err(Protocol("HTTP/2: the stream's slot is gone")));
+  }
+  match (mail[at].answer) {
+    Some(a) => {
+      sh.mail.set(__mail_without(mail, at));
+      return Some(a);
+    },
+    None => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// `(sh).abandon(id)` — a slot given up on (its wait timed out or its task
+// was cancelled): the stream reset, the slot dropped.
+pub function (sh: Shared) abandon(id: i32): void {
+  let mail: Mail[] = sh.mail.get();
+  let at: i32 = __mail_at(mail, id);
+  if (at < 0) {
+    return;
+  }
+  let m: Mail = mail[at];
+  sh.mail.set(__mail_without(mail, at));
+  if (m.fd < 0) {
+    return;
+  }
+  let rows: Driven[] = sh.rows.get();
+  let row: i32 = __driven_at(rows, m.fd);
+  if (row < 0) {
+    return;
+  }
+  let d: Driven = rows[row];
+  let step: h2.Step = d.h2.reset(m.stream, 8);
+  sh.rows.set(rows.with(row, Driven { ...d, h2: step.conn, out: d.out.concat(step.output), streams: d.streams - 1, since: monotonic_ns() }));
+}
+
+// `(sh).answered()` — the ids of the slots whose answer has come and whose
+// task has not taken it: the ones a loop wakes.
+pub function (sh: Shared) answered(): i32[] {
+  let out: i32[] = [];
+  for m in sh.mail.get() {
+    match (m.answer) {
+      Some(_) => {
+        out = out.append(m.id);
+      },
+      None => {}
+    }
+  }
+  return out;
+}
+
+// `(sh).unwatched()` — the sockets adopted since the loop last asked,
+// now its to watch for reading.
+pub function (sh: Shared) unwatched(): i32[] {
+  let rows: Driven[] = sh.rows.get();
+  let out: i32[] = [];
+  let i: i32 = 0;
+  while (i < rows.len()) {
+    if (!rows[i].watched) {
+      out = out.append(rows[i].fd);
+      rows = rows.with(i, Driven { ...rows[i], watched: true });
+    }
+    i = i + 1;
+  }
+  sh.rows.set(rows);
+  return out;
+}
+
+// `(sh).flush()` — every connection's queued frames sealed and written as
+// far as the socket takes them: the sockets now left with sealed bytes
+// waiting, for the loop to watch for writing too, and the ones that were
+// and have none left, for the loop to watch for reading alone. A socket
+// that refuses the write is dropped with every slot on it failed.
+pub function (sh: Shared) flush(): (i32[], i32[]) {
+  let rows: Driven[] = sh.rows.get();
+  let now_waiting: i32[] = [];
+  let drained: i32[] = [];
+  let i: i32 = 0;
+  while (i < rows.len()) {
+    let d: Driven = __sealed(rows[i]);
+    if (d.wire.len() > 0) {
+      let n: i32 = tcp_send_bytes(d.fd, d.wire);
+      if (n < 0 && 0 - n != 11) {
+        sh.rows.set(rows);
+        __driven_failed(sh, d.fd, Io(net.error_from_errno(0 - n)));
+        return sh.flush();
+      }
+      if (n > 0) {
+        d = Driven { ...d, wire: __from(d.wire, n) };
+      }
+    }
+    let waits: boolean = d.wire.len() > 0;
+    if (waits && !d.writing) {
+      now_waiting = now_waiting.append(d.fd);
+    }
+    if (!waits && d.writing) {
+      drained = drained.append(d.fd);
+    }
+    rows = rows.with(i, Driven { ...d, writing: waits });
+    i = i + 1;
+  }
+  sh.rows.set(rows);
+  return (now_waiting, drained);
+}
+
+// `(sh).sockets()` — every driven connection's socket, for a loop that
+// stops to close.
+pub function (sh: Shared) sockets(): i32[] {
+  let out: i32[] = [];
+  for d in sh.rows.get() {
+    out = out.append(d.fd);
+  }
+  return out;
+}
+
+// `__sealed(d)` — the connection's queued frames sealed by its session
+// onto the wire bytes.
+function __sealed(d: Driven): Driven {
+  if (d.out.len() == 0) {
+    return d;
+  }
+  match (d.tls.write(d.out)) {
+    Ok(step) => {
+      return Driven { ...d, tls: step.session, out: [], wire: d.wire.concat(step.output) };
+    },
+    Err(e) => {
+      return Driven { ...d, out: [] };
+    }
+  }
+  return d;
+}
+
+// `(sh).event(fd, readable)` — a readiness event on a driven connection:
+// what the socket has is unsealed and fed to the state machine, each
+// stream's answer put in its slot; a connection the peer closed, or that
+// closed itself, fails every slot on it and is dropped. The socket is
+// closed by the loop, which unwatches it first, when `event` answers it.
+pub function (sh: Shared) event(fd: i32, readable: boolean): Option[i32] {
+  if (!readable) {
+    return None;
+  }
+  let rows: Driven[] = sh.rows.get();
+  let at: i32 = __driven_at(rows, fd);
+  if (at < 0) {
+    return None;
+  }
+  let bytes: u8[] = tcp_recv(fd, 65536);
+  if (bytes.len() == 0) {
+    __driven_failed(sh, fd, __closed_early(0));
+    return Some(fd);
+  }
+  let d: Driven = rows[at];
+  match (d.tls.read(bytes)) {
+    Ok(step) => {
+      let fed: h2.Step = d.h2.read(step.data);
+      let streams: i32 = __mail_answered(sh, fd, fed.events, d.streams);
+      sh.rows.set(sh.rows.get().with(at, Driven { ...d, tls: step.session, h2: fed.conn, out: d.out.concat(step.output).concat(fed.output), streams: streams, since: monotonic_ns() }));
+      if (fed.conn.closed() || step.closed) {
+        __driven_failed(sh, fd, Protocol("HTTP/2: the connection closed before the response ended"));
+        return Some(fd);
+      }
+      return None;
+    },
+    Err(f) => {
+      let sent: i32 = tcp_send_bytes(fd, f.alert);
+      __driven_failed(sh, fd, Tls(f.message()));
+      return Some(fd);
+    }
+  }
+  return None;
+}
+
+// `(sh).expired(now, bound)` — the driven connections idle past `bound`
+// with no stream in flight, or going away with none, dropped: their
+// sockets, for the loop to unwatch and close.
+pub function (sh: Shared) expired(now: i64, bound: i64): i32[] {
+  let rows: Driven[] = sh.rows.get();
+  let kept: Driven[] = [];
+  let gone: i32[] = [];
+  for d in rows {
+    if (d.streams == 0 && (now - d.since > bound || d.h2.going_away() || d.h2.closed())) {
+      gone = gone.append(d.fd);
+    } else {
+      kept = kept.append(d);
+    }
+  }
+  sh.rows.set(kept);
+  return gone;
+}
+
+// `__mail_answered(sh, fd, events, streams)` — each stream's answer among
+// a step's events put in its slot; the streams still in flight.
+function __mail_answered(sh: Shared, fd: i32, events: h2.Event[], streams: i32): i32 {
+  for e in events {
+    match (e) {
+      h2.Answered(sid, resp) => {
+        streams = streams - __mail_deliver(sh, fd, sid, Ok(Answer { status: resp.status, headers: http.http_end_to_end(resp.headers), body: resp.body_bytes(), trailers: resp.trailers }));
+      },
+      h2.Reset(sid, code) => {
+        streams = streams - __mail_deliver(sh, fd, sid, Err(Protocol("HTTP/2: the server reset the stream with code " + int.int_to_string(code))));
+      },
+      _ => {}
+    }
+  }
+  return streams;
+}
+
+// `__mail_deliver(sh, fd, stream, answer)` — `answer` put in the slot of
+// `stream` on `fd`: 1 when a slot took it, 0 when none waits for it.
+function __mail_deliver(sh: Shared, fd: i32, stream: i32, answer: Result[Answer, FetchError]): i32 {
+  let mail: Mail[] = sh.mail.get();
+  let i: i32 = 0;
+  while (i < mail.len()) {
+    if (mail[i].fd == fd && mail[i].stream == stream) {
+      sh.mail.set(mail.with(i, Mail { ...mail[i], answer: Some(answer) }));
+      return 1;
+    }
+    i = i + 1;
+  }
+  return 0;
+}
+
+// `__driven_failed(sh, fd, e)` — the connection at `fd` dropped from the
+// table with `e` in every slot waiting on it.
+function __driven_failed(sh: Shared, fd: i32, e: FetchError): void {
+  let rows: Driven[] = sh.rows.get();
+  let at: i32 = __driven_at(rows, fd);
+  if (at >= 0) {
+    sh.rows.set(__driven_without(rows, at));
+  }
+  let mail: Mail[] = sh.mail.get();
+  let i: i32 = 0;
+  while (i < mail.len()) {
+    if (mail[i].fd == fd) {
+      match (mail[i].answer) {
+        Some(_) => {},
+        None => {
+          mail = mail.with(i, Mail { ...mail[i], answer: Some(Err(e)) });
+        }
+      }
+    }
+    i = i + 1;
+  }
+  sh.mail.set(mail);
+}
+
+function __driven_at(rows: Driven[], fd: i32): i32 {
+  let i: i32 = 0;
+  while (i < rows.len()) {
+    if (rows[i].fd == fd) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+function __driven_without(rows: Driven[], skip: i32): Driven[] {
+  let out: Driven[] = [];
+  let i: i32 = 0;
+  while (i < rows.len()) {
+    if (i != skip) {
+      out = out.append(rows[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function __mail_at(mail: Mail[], id: i32): i32 {
+  let i: i32 = 0;
+  while (i < mail.len()) {
+    if (mail[i].id == id) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+function __mail_without(mail: Mail[], skip: i32): Mail[] {
+  let out: Mail[] = [];
+  let i: i32 = 0;
+  while (i < mail.len()) {
+    if (i != skip) {
+      out = out.append(mail[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// `__from(bytes, at)` — `bytes` from `at` on.
+function __from(bytes: u8[], at: i32): u8[] {
+  let b: usize = buf_new(bytes.len() - at);
+  buf_push_bytes_range(b, bytes, at, bytes.len());
+  let out: u8[] = buf_take_bytes(b);
+  buf_free(b);
+  return out;
 }
 
 // `close_idle(tr)` — every connection `tr` keeps for reuse closed.
@@ -1269,12 +1732,149 @@ function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64,
     conn = __take_idle(tr, key);
   }
   if (conn.fd < 0) {
+    if (t.tls && async.in_task()) {
+      match (tr.idle().shared) {
+        Some(sh) => {
+          return __attempt_shared(tr, req, t, started, key, guard, roots, sh);
+        },
+        None => {}
+      }
+    }
     conn = __connect(tr, t, req.timeouts, guard, roots)?;
   }
+  return __attempt_opened(tr, req, t, started, key, conn);
+}
+
+// `__attempt_opened(tr, req, t, started, key, conn)` — `__attempt` on a
+// connection this task opened and speaks to itself, by the protocol the
+// origin chose.
+function __attempt_opened[T: Transport](tr: T, req: Request, t: __Target, started: i64, key: string, conn: __Conn): Result[HttpResponse, FetchError] {
   if let Some(hc) = conn.h2 {
     return __attempt_h2(tr, req, t, started, key, conn, hc);
   }
   return __attempt_h1(tr, req, t, started, key, conn);
+}
+
+// `__attempt_shared(tr, req, t, started, key, guard, roots, sh)` — the
+// request over a connection the loop drives: the origin's, when one has
+// room for a stream, else one opened here and handed to the loop (an
+// origin that chose `http/1.1` is spoken to as before, on this task).
+// The task parks on the stream's slot until the loop puts the answer in
+// it, under the request's bounds; a wait that passes resets the stream.
+function __attempt_shared[T: Transport](tr: T, req: Request, t: __Target, started: i64, key: string, guard: boolean, roots: Option[verify.Roots], sh: Shared): Result[HttpResponse, FetchError] {
+  let fd: i32 = 0 - 1;
+  match (__shared_socket(tr, req, t, started, key, guard, roots, sh)?) {
+    OnLoop(socket) => {
+      fd = socket;
+    },
+    OnTask(conn) => {
+      return __attempt_opened(tr, req, t, started, key, conn);
+    }
+  }
+  let body: u8[] = req.body.bytes();
+  let id: i32 = sh.submit(fd, h2.Outgoing { method: req.method, scheme: "https", authority: t.host_field, path: t.target, headers: __sent_fields(req, t, body.len()), body: body, trailers: headers.header_map_new() });
+  if (id == 0) {
+    return Err(Io(net.ConnectionReset));
+  }
+  let a: Answer = __shared_wait(tr, req, started, sh, id)?;
+  return __decoded(HttpResponse { status: a.status, body: BodyBytes(a.body), headers: a.headers, trailers: a.trailers, background: None }, req);
+}
+
+// `__SharedPick` — the connection a shared request goes over: one the
+// loop drives, by its socket, or one this task opened and speaks to
+// itself, the origin not having chosen HTTP/2.
+enum __SharedPick { OnLoop(i32), OnTask(__Conn) }
+
+// `__shared_socket(tr, req, t, started, key, guard, roots, sh)` — the
+// connection to `key` a shared request goes over: a driven one with room
+// for a stream; else one opened here when no other task is opening one,
+// handed to the loop and the tasks waiting for it woken; else, while
+// another task opens it, a wait for that connection, under the request's
+// bounds, then the look again.
+function __shared_socket[T: Transport](tr: T, req: Request, t: __Target, started: i64, key: string, guard: boolean, roots: Option[verify.Roots], sh: Shared): Result[__SharedPick, FetchError] {
+  while (true) {
+    let fd: i32 = sh.pick(key);
+    if (fd >= 0) {
+      return Ok(OnLoop(fd));
+    }
+    if (sh.dialing(key)) {
+      match (__connect(tr, t, req.timeouts, guard, roots)) {
+        Ok(conn) => {
+          let adopted: i32 = __shared_adopted(sh, key, conn, tr.now_ns());
+          sh.dialed(key);
+          if (adopted < 0) {
+            return Ok(OnTask(conn));
+          }
+          return Ok(OnLoop(adopted));
+        },
+        Err(e) => {
+          sh.dialed(key);
+          return Err(e);
+        }
+      }
+    }
+    let woke: Answer = __shared_wait(tr, req, started, sh, sh.await_connection(key))?;
+  }
+  return Err(Protocol("unreachable"));
+}
+
+// `__shared_adopted(sh, key, conn, now)` — a connection just opened handed
+// to the loop when it speaks HTTP/2 over TLS: its socket, or -1 for one
+// this task speaks to itself.
+function __shared_adopted(sh: Shared, key: string, conn: __Conn, now: i64): i32 {
+  match (conn.h2) {
+    Some(hc) => {
+      match (conn.tls) {
+        Some(s) => {
+          sh.adopt(key, conn.fd, s, hc, now);
+          return conn.fd;
+        },
+        None => {
+          return 0 - 1;
+        }
+      }
+    },
+    None => {
+      return 0 - 1;
+    }
+  }
+  return 0 - 1;
+}
+
+// `__shared_wait(tr, req, started, sh, id)` — the task parked on the slot
+// `id` until the loop puts the stream's answer in it, under the request's
+// inactivity and total bounds; a wait that passes, or a cancelled task,
+// gives the slot up with its stream reset.
+function __shared_wait[T: Transport](tr: T, req: Request, started: i64, sh: Shared, id: i32): Result[Answer, FetchError] {
+  while (true) {
+    let left_ms: i64 = req.timeouts.total.as_millis() - (tr.now_ns() - started) / 1000000;
+    let wait_ms: i64 = req.timeouts.inactivity.as_millis();
+    let bound: Phase = Inactivity;
+    if (left_ms < wait_ms) {
+      wait_ms = left_ms;
+      bound = Total;
+    }
+    if (wait_ms <= 0) {
+      sh.abandon(id);
+      return Err(Timeout(bound));
+    }
+    let woke: i32 = async.wait_any([id, MAIL_INTEREST], wait_ms as i32);
+    if (woke == async.cancelled()) {
+      sh.abandon(id);
+      return Err(FetchError.Cancelled);
+    }
+    if (woke != 0) {
+      sh.abandon(id);
+      return Err(Timeout(bound));
+    }
+    match (sh.take(id)) {
+      Some(answer) => {
+        return answer;
+      },
+      None => {}
+    }
+  }
+  return Err(Protocol("unreachable"));
 }
 
 // `__attempt_h1(tr, req, t, started, key, conn)` — `__attempt` on a
