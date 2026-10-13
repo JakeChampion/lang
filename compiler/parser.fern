@@ -14044,9 +14044,11 @@ function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: str
       let cur: Insts = sv.rins;
       let i: i32 = 0;
       while (i < m.arms.len()) {
-        let ab: RStmts = mono_stmts(m.arms[i].body, mono_arm_env(env, m.arms[i].pattern, sty, funcs), funcs, cur, ret_ty);
+        let armenv: MEnv = mono_arm_env(env, m.arms[i].pattern, sty, funcs);
+        let gv: RExpr = mono_expr(m.arms[i].guard, armenv, funcs, cur);
+        let ab: RStmts = mono_stmts(m.arms[i].body, armenv, funcs, gv.rins, ret_ty);
         cur = ab.rins3;
-        arms = arms.append(ast.MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard, alt_cont: false });
+        arms = arms.append(ast.MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: gv.rexpr, has_guard: m.arms[i].has_guard, alt_cont: false });
         i = i + 1;
       }
       return RStmtOne { rstmt: ast.StmtMatch { ...m, scrutinee: sv.rexpr, arms: arms }, renv: env, rins2: cur };
@@ -16869,9 +16871,11 @@ function ms_stmt(st: ast.Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, i
       let i: i32 = 0;
       let sty: string = mono_infer(sv.rexpr, env, funcs);
       while (i < m.arms.len()) {
-        let ab: RStmts = ms_stmts(m.arms[i].body, mono_arm_env(env, m.arms[i].pattern, sty, funcs), gstructs, funcs, cur, ret_ty);
+        let armenv: MEnv = mono_arm_env(env, m.arms[i].pattern, sty, funcs);
+        let gv: RExpr = ms_expr(m.arms[i].guard, armenv, gstructs, funcs, cur);
+        let ab: RStmts = ms_stmts(m.arms[i].body, armenv, gstructs, funcs, gv.rins, ret_ty);
         cur = ab.rins3;
-        arms = arms.append(ast.MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard, alt_cont: false });
+        arms = arms.append(ast.MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: gv.rexpr, has_guard: m.arms[i].has_guard, alt_cont: false });
         i = i + 1;
       }
       return RStmtOne { rstmt: ast.StmtMatch { ...m, scrutinee: sv.rexpr, arms: arms }, renv: env, rins2: cur };
