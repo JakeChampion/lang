@@ -71,3 +71,11 @@ graph's `thread_bool_joins`, which moves every arm of a boolean join and
 branches on a comparison arm directly. Taking only the constant arms here,
 as a first version did, left the join one comparison operand that was
 materialised and tested again: nqueens' `safe` ran 20% longer.
+
+On arm64 `ordmap_insert` retires 2.1% more (122.2M to 124.8M) although
+`om_insert`, the only function that changes, is 52 instructions shorter. The
+linear-scan allocator hands the callee-saved register that held the left
+child across the recursive call to another value, so the child is spilled
+at its read and reloaded at the call. x86-64 allocates it as before and its
+count is flat. The other aarch64 entries: rbtree −15%, rbtree_ck −10.5%,
+deriv −4.9%, sort_ints −1.7%, cfold −1.4%.

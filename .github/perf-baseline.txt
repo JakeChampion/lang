@@ -201,7 +201,7 @@ aarch64/map_probe_chain.ir	382212817
 aarch64/map_string.text	9002
 aarch64/map_string.ir	66191654	2
 aarch64/ordmap_insert.text	5441
-aarch64/ordmap_insert.ir	122175759
+aarch64/ordmap_insert.ir	124791436
 aarch64/pmap_insert.text	4965
 aarch64/pmap_insert.ir	71272111
 aarch64/pvec_with.text	2975
@@ -211,7 +211,7 @@ aarch64/record_update.ir	104947544
 aarch64/sort_inplace.text	2972
 aarch64/sort_inplace.ir	53111058
 aarch64/sort_ints.text	3564
-aarch64/sort_ints.ir	33088894
+aarch64/sort_ints.ir	32514646
 aarch64/sort_strings.text	4439
 aarch64/sort_strings.ir	107565568
 aarch64/string_build.text	3335
@@ -247,12 +247,12 @@ x86_64/perceus_rbtree.ir	60191009
 x86_64/perceus_rbtree_ck.text	3001
 x86_64/perceus_rbtree_ck.ir	70702607
 aarch64/perceus_cfold.text	2563
-aarch64/perceus_cfold.ir	72820602
+aarch64/perceus_cfold.ir	71776202
 aarch64/perceus_deriv.text	2935
-aarch64/perceus_deriv.ir	104893304
+aarch64/perceus_deriv.ir	99754904
 aarch64/perceus_nqueens.text	1629
 aarch64/perceus_nqueens.ir	117887806
 aarch64/perceus_rbtree.text	2938
-aarch64/perceus_rbtree.ir	74951956
+aarch64/perceus_rbtree.ir	63706676
 aarch64/perceus_rbtree_ck.text	3200
-aarch64/perceus_rbtree_ck.ir	85099728
+aarch64/perceus_rbtree_ck.ir	76180368
