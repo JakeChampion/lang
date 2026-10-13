@@ -8190,11 +8190,43 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   // x0/x1/x2 — exactly what __fern_alloc already clobbers — so it
   // is a drop-in at every call site.
   s = s.write("__fern_arr_box:\n");
-  s = s.write("    stp x29, x30, [sp, #-16]!\n");
-  s = s.write("    mov x29, sp\n");
-  s = s.write("    str x0, [sp, #-16]!\n");  // save cap (16B aligned)
-  s = s.write("    add x0, x0, #3\n");  // cap + 3 header words (cap, rc, len)
-  s = s.write("    lsl x0, x0, #3\n");  // * 8 bytes
+  if (!s.leak_check && !s.has_need("alloc_count")) {
+    // The allocator's small-class pop, with no frame: the byte count is
+    // already a multiple of 8, so it indexes the freelist as it is. A miss
+    // or a block over 256 words takes the call below. x3 is free here: every
+    // caller sets or reloads it after the call.
+    s = s.write("    add x1, x0, #3\n");  // cap + 3 header words (cap, rc, len)
+    s = s.write("    lsl x1, x1, #3\n");  // * 8 bytes
+    s = s.write("    cmp x1, #2048\n");
+    s = s.write("    b.hi .Larrbox_alloc\n");
+    s = s.write("    adrp x2, __fern_freelist\n");
+    s = s.write("    add x2, x2, :lo12:__fern_freelist\n");
+    s = s.write("    add x1, x2, x1\n");  // the class's slot
+    s = s.write("    ldr x2, [x1]\n");  // head
+    s = s.write("    cbz x2, .Larrbox_miss\n");
+    s = s.write("    ldr x3, [x2]\n");  // next
+    s = s.write("    str x3, [x1]\n");
+    s = s.write("    str x0, [x2]\n");  // cap at base+0 (= data-16)
+    s = s.write("    mov w3, #1\n");
+    s = s.write("    str w3, [x2, #8]\n");  // rc = 1 at base+8 (= data-8)
+    s = s.write("    str x0, [x2, #16]\n");  // len = cap at base+16 (= data)
+    s = s.write("    add x0, x2, #16\n");  // data ptr = base+16
+    s = s.write("    ret\n");
+    s = s.write(".Larrbox_miss:\n");
+    s = s.write("    add x1, x0, #3\n");
+    s = s.write("    lsl x1, x1, #3\n");
+    s = s.write(".Larrbox_alloc:\n");
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    mov x29, sp\n");
+    s = s.write("    str x0, [sp, #-16]!\n");  // save cap (16B aligned)
+    s = s.write("    mov x0, x1\n");
+  } else {
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    mov x29, sp\n");
+    s = s.write("    str x0, [sp, #-16]!\n");  // save cap (16B aligned)
+    s = s.write("    add x0, x0, #3\n");  // cap + 3 header words (cap, rc, len)
+    s = s.write("    lsl x0, x0, #3\n");  // * 8 bytes
+  }
   s = s.write("    bl __fern_alloc\n");  // base in x0
   s = s.write("    ldr x1, [sp]\n");  // reload cap
   s = s.write("    str x1, [x0]\n");  // cap at base+0   (= data-16)

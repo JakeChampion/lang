@@ -2728,9 +2728,26 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rsp, %rbp\n");
   }
   s = s.write("    pushq %rdi\n");
-  s = s.write("    addq $3, %rdi\n");
-  s = s.write("    shlq $3, %rdi\n");
-  s = s.write("    call __fern_alloc\n");
+  if (!hev_on(s) && !s.has_need("alloc_count")) {
+    // The allocator's small-class pop, in the two registers this shim may
+    // touch: the byte count is already a multiple of 8, so it indexes the
+    // freelist as it is. A miss or a block over 256 words takes the call.
+    s = s.write("    leaq 24(,%rdi,8), %rdi\n");
+    s = s.write("    cmpq $2048, %rdi\n");
+    s = s.write("    ja .Larrbox_alloc\n");
+    s = s.write("    leaq __fern_freelist(%rip), %rax\n");
+    s = s.write("    addq %rax, %rdi\n");
+    s = s.write("    movq (%rdi), %rax\n");
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz .Larrbox_miss\n");
+    s = s.write("    pushq (%rax)\n");
+    s = s.write("    popq (%rdi)\n");
+    s = s.write(".Larrbox_hdr:\n");
+  } else {
+    s = s.write("    addq $3, %rdi\n");
+    s = s.write("    shlq $3, %rdi\n");
+    s = s.write("    call __fern_alloc\n");
+  }
   s = s.write("    popq %rdi\n");
   s = s.write("    movq %rdi, (%rax)\n");
   s = s.write("    movq $1, 8(%rax)\n");
@@ -2740,6 +2757,14 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    leave\n");
   }
   s = s.write("    ret\n");
+  if (!hev_on(s) && !s.has_need("alloc_count")) {
+    s = s.write(".Larrbox_miss:\n");
+    s = s.write("    leaq __fern_freelist(%rip), %rax\n");
+    s = s.write("    subq %rax, %rdi\n");
+    s = s.write(".Larrbox_alloc:\n");
+    s = s.write("    call __fern_alloc\n");
+    s = s.write("    jmp .Larrbox_hdr\n");
+  }
   // __fn___fern_struct_copy(%rdi = src box data, %rsi = nf) -> %rax = fresh box that is
   // a shallow word-for-word copy of src (shape@0 + nf field slots). Allocates via
   // __fern_arr_box(cap = nf+1) so the copy has a fresh rc=1 header + the same free
