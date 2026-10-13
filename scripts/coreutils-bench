@@ -390,6 +390,17 @@ for u in "$@"; do
 import json, sys
 path, util, label = sys.argv[1:4]
 d = json.load(open(path))
+if d.get("schema_version") == 2:
+    for r in d["results"]:
+        wall = r["summary"]["time_wall_clock"]
+        if wall["unit"] != "second":
+            raise ValueError(f'unsupported wall-time unit: {wall["unit"]}')
+        r["command_line"], r["command"] = r["command"], r["name"]
+        r["mean"], r["stddev"] = wall["mean"], wall["stddev"]
+        r["times"] = [m["time_wall_clock"]["value"] for m in r["measurements"]]
+        r["exit_codes"] = [m["exit_code"] for m in r["measurements"]]
+elif "schema_version" in d:
+    raise ValueError(f'unsupported hyperfine schema: {d["schema_version"]}')
 d["util"], d["label"], d["incomplete"] = util, label, sys.argv[4:]
 codes = {r["command"]: sorted(set(r.get("exit_codes") or [])) for r in d["results"]}
 refused = {}
