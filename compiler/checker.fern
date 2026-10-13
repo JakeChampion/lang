@@ -1888,7 +1888,10 @@ pub struct StructSig { name: string, field_names: string[], field_types: typeinf
 // is implicit at the call site (`obj.name(a, b)`) so it's
 // stored separately from param_types. Plain functions live
 // in the FuncSig table; the two tables don't overlap.
-pub struct MethodSig { name: string, receiver_type: string, param_types: typeinfo.Type[], ret_type: typeinfo.Type, ret_type_name: string, param_type_names: string[], all_type_params: string[], type_params: string[], type_bounds: string[], module: string }
+// `impl_trait` is the trait an impl provided the method through ("" for an
+// inherent one), and `line`, `col` and `file` where it was declared, as an
+// ambiguity report names it (ambiguous_call_diag).
+pub struct MethodSig { name: string, receiver_type: string, param_types: typeinfo.Type[], ret_type: typeinfo.Type, ret_type_name: string, param_type_names: string[], all_type_params: string[], type_params: string[], type_bounds: string[], module: string, impl_trait: string, line: i32, col: i32, file: string }
 
 // UnionSig: nominal handle for a declared type alias —
 // `pub type Shape = Circle | Square`. Variants are captured
@@ -1953,6 +1956,10 @@ pub struct Scope {
   // must implement.
   impls: parser.ImplInfo[],
   trait_reqs: parser.TraitReq[],
+  // fn_module is the module the enclosing function was written in, by
+  // prefix ("" for the entry): what a call site may name directly is read
+  // against it (trait_visible_from).
+  fn_module: string,
   // tparams / tbounds are the enclosing function's declared type
   // parameters and their `+`-joined trait bounds, running parallel
   // (parser.parse_type_param_list). Populated by build_func_scope; they let
@@ -2293,6 +2300,11 @@ pub struct MethodTable {
   // chains to the next index in the same bucket, ascending.
   head: i32[],
   next: i32[],
+  // The same chains over the method's SIMPLE name, so a trait's method
+  // renamed `Trait.m` when another trait claimed `m` first still answers
+  // for `m` (trait_providers).
+  shead: i32[],
+  snext: i32[],
 }
 
 // method_table indexes `methods` by name. Built backward so each chain ends up
@@ -2301,14 +2313,97 @@ pub struct MethodTable {
 function method_table(methods: MethodSig[]): MethodTable {
   let head: i32[] = util.minus_ones(sig_buckets());
   let next: i32[] = util.minus_ones(methods.len());
+  let shead: i32[] = util.minus_ones(sig_buckets());
+  let snext: i32[] = util.minus_ones(methods.len());
   let k: i32 = methods.len() - 1;
   while (k >= 0) {
     let bk: i32 = sig_name_bucket(methods[k].name);
     next = next.with(k, head[bk]);
     head = head.with(bk, k);
+    let sb: i32 = sig_name_bucket(method_simple_name(methods[k].name));
+    snext = snext.with(k, shead[sb]);
+    shead = shead.with(sb, k);
     k = k - 1;
   }
-  return MethodTable { methods: methods, head: head, next: next };
+  return MethodTable { methods: methods, head: head, next: next, shead: shead, snext: snext };
+}
+
+// trait_providers is every trait-provided method `name` on receiver type
+// `recv_type`, renamed or not, in declaration order: the candidates a call
+// written at the concrete type ranks between (ambiguous_call_diags).
+function (s: Scope) trait_providers(name: string, recv_type: string): MethodSig[] {
+  let out: MethodSig[] = [];
+  let i: i32 = s.methods.shead[sig_name_bucket(name)];
+  while (i >= 0) {
+    let m: MethodSig = s.methods.methods[i];
+    if (m.impl_trait.len() > 0 && method_simple_name(m.name) == name && (m.receiver_type == recv_type || parser.parse_type_ref(m.receiver_type).base == recv_type)) {
+      out = out.append(m);
+    }
+    i = s.methods.snext[i];
+  }
+  return out;
+}
+
+// trait_visible_from reports whether a call site in module `from` ("" for
+// the entry) can name trait `trait` directly: the trait is the entry's, the
+// module's own, or one the module imports (TraitReq.visible_from).
+function trait_visible_from(s: Scope, tname: string, from: string): boolean {
+  for tr in s.trait_reqs {
+    if (tr.trait_name == tname || method_simple_name(tr.trait_name) == method_simple_name(tname)) {
+      return tr.module.len() == 0 || tr.module == from || util.has_str(tr.visible_from, from);
+    }
+  }
+  return true;
+}
+
+// ambiguous_call_diags is E074 for `recv.m(...)` written at a concrete type
+// that takes `m` from two traits, when nothing separates them: the traits
+// the call's module can name outrank the rest, and exactly one at the best
+// rank resolves, as the Go checker's ResolveMethodFrom ranks them. A call
+// already respelled to its provider (`Trait.m`, the bound rewrite and an
+// inherited default's routing) names one trait and is never ambiguous.
+function ambiguous_call_diags(fa: ast.ExprFieldAccess, recv_type: string, s: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  if (util.index_of_sub(fa.field, ".") >= 0) {
+    return out;
+  }
+  let cands: MethodSig[] = s.trait_providers(fa.field, recv_type);
+  if (cands.len() < 2) {
+    return out;
+  }
+  let best: MethodSig[] = [];
+  for m in cands {
+    if (trait_visible_from(s, m.impl_trait, s.fn_module)) {
+      best = best.append(m);
+    }
+  }
+  if (best.len() == 0) {
+    best = cands;
+  }
+  if (best.len() < 2) {
+    return out;
+  }
+  let msg: string = "ambiguous method \"" + fa.field + "\" on " + util.demangle(recv_type) + ": provided by " + sig_provider(best[0]) + " and " + sig_provider(best[1]);
+  return out.append(dg_at("E074", msg, fa.line, fa.col));
+}
+
+// sig_provider names a candidate as native's E074 does: the trait and where
+// its method was declared.
+function sig_provider(m: MethodSig): string {
+  return "trait " + util.demangle(m.impl_trait) + " (declared at " + m.file + util.i32_to_string(util.pos_line(m.line)) + ":" + util.i32_to_string(m.col) + ")";
+}
+
+// decl_file_label is the file a diagnostic names a declaration's position
+// with: a stdlib module's file, a module's, or nothing for the entry, which
+// the checker is not told the file name of.
+function decl_file_label(fd: parser.FuncDecl): string {
+  if (fd.stdlib.len() > 0) {
+    return fd.stdlib + ".fern:";
+  }
+  if (fd.module.len() > 0) {
+    return fd.module + ".fern:";
+  }
+  return "";
 }
 
 function new_scope(): Scope {
@@ -2318,7 +2413,7 @@ function new_scope(): Scope {
   let ss: StructSig[] = [];
   let us: UnionSig[] = [];
   let ms: MethodSig[] = [];
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: struct_table(ss, [], no_spellings()), unions: union_table(us), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [], tpvars: [], tpvar_tps: [], fn_tvars: [] };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: struct_table(ss, [], no_spellings()), unions: union_table(us), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", tparams: [], tbounds: [], tpvars: [], tpvar_tps: [], fn_tvars: [] };
 }
 
 // new_scope_full is a module's scope. The impl table rides on every one:
@@ -2327,7 +2422,7 @@ function new_scope(): Scope {
 function new_scope_full(st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[], impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   let ns: string[] = [];
   let ts: typeinfo.Type[] = [];
-  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, tparams: [], tbounds: [], tpvars: [], tpvar_tps: [], fn_tvars: [] };
+  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", tparams: [], tbounds: [], tpvars: [], tpvar_tps: [], fn_tvars: [] };
 }
 
 function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
@@ -3229,7 +3324,7 @@ function (s: Scope) array_recv_method(field: string, view: boolean): MethodSig {
     i = s.methods.next[i];
   }
   let empty_pt: typeinfo.Type[] = [];
-  return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such array method"), ret_type_name: "", param_type_names: [], all_type_params: [], type_params: [], type_bounds: [], module: "" };
+  return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such array method"), ret_type_name: "", param_type_names: [], all_type_params: [], type_params: [], type_bounds: [], module: "", impl_trait: "", line: 0, col: 0, file: "" };
 }
 
 // has_array_method reports whether an auto-discovered std/array method
@@ -3714,7 +3809,7 @@ function (s: Scope) lookup_method(name: string, recv_type: string): MethodSig {
     i = s.methods.next[i];
   }
   let empty_pt: typeinfo.Type[] = [];
-  return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such method"), ret_type_name: "", param_type_names: [], all_type_params: [], type_params: [], type_bounds: [], module: "" };
+  return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such method"), ret_type_name: "", param_type_names: [], all_type_params: [], type_params: [], type_bounds: [], module: "", impl_trait: "", line: 0, col: 0, file: "" };
 }
 
 // has_method answers lookup_method's question without building the sentinel
@@ -7806,7 +7901,7 @@ function collect_method_sigs(funcs: parser.FuncDecl[], tn: TypeNames): MethodSig
         pts = pts.append(param_decl_type(param, fd.type_params, tn));
         ptn = ptn.append(param.type_name);
       }
-      out = out.append(MethodSig { name: fd.name, receiver_type: receiver_namespace(fd.receiver_type), param_types: pts, ret_type: func_ret_type(fd, tn), ret_type_name: fd.ret_type, param_type_names: ptn, all_type_params: fd.all_type_params, type_params: fd.type_params, type_bounds: fd.bound_traits, module: fd.module });
+      out = out.append(MethodSig { name: fd.name, receiver_type: receiver_namespace(fd.receiver_type), param_types: pts, ret_type: func_ret_type(fd, tn), ret_type_name: fd.ret_type, param_type_names: ptn, all_type_params: fd.all_type_params, type_params: fd.type_params, type_bounds: fd.bound_traits, module: fd.module, impl_trait: fd.impl_trait, line: fd.line, col: fd.col, file: decl_file_label(fd) });
     }
   }
   return out;
@@ -8543,7 +8638,7 @@ function validate_union_sigs(unions: UnionSig[], struct_names: string[]): boolea
 // methods), then the parameters. Shared by check_func_body and the
 // coded-diagnostic walks so they bind names identically.
 function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[], impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
-  let s: Scope = new_scope_full(st, structs, unions.seen_from(fd), methods, imports, impls, trait_reqs);
+  let s: Scope = Scope { ...new_scope_full(st, structs, unions.seen_from(fd), methods, imports, impls, trait_reqs), fn_module: fd.module };
   let tps: string[] = func_scope_tparams(fd);
   // A DERIVED associated function spells its receiver BARE (`Pair`, never
   // `Pair[T]`) so the struct-method monomorphiser keys on the plain name —
@@ -14026,6 +14121,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           if (is_cell_type(recv)) {
             out = util.append_diags(out, cell_call_diags(c, mfa, recv, s));
           } else {
+            out = util.append_diags(out, ambiguous_call_diags(mfa, sn.name, s));
             let msig: MethodSig = s.lookup_method(mfa.field, sn.name);
             if (msig.name.len() > 0) {
               if (c.args.len() != msig.param_types.len()) {
@@ -14105,6 +14201,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           }
         },
         typeinfo.TypeUnion(un) => {
+          out = util.append_diags(out, ambiguous_call_diags(mfa, un.name, s));
           let umsig: MethodSig = s.lookup_method(mfa.field, un.name);
           if (umsig.name.len() > 0 && c.args.len() == umsig.param_types.len()) {
             out = util.append_diags(out, method_type_arg_diags(c, mfa.field, umsig, un.args, s));
@@ -23484,6 +23581,7 @@ function instantiated_clones(mod: parser.Module, env: ModuleEnv): parser.FuncDec
     return clones;
   }
   let msc: Scope = new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
+  let mf: parser.MFns = parser.mfns_of(mod.funcs, mod.structs, mod.enums, mod.impls);
   let pending: Inst[] = [];
   for fd in mod.funcs {
     if (fd.all_type_params.len() == 0) {
@@ -23511,7 +23609,8 @@ function instantiated_clones(mod: parser.Module, env: ModuleEnv): parser.FuncDec
     }
     keys = keys.append(key);
     let g: parser.FuncDecl = gens[template_index(gens, inst.name)];
-    let cl: parser.FuncDecl = parser.instantiate_func(g, key, g.all_type_params, inst.cts, mod.impls);
+    let routed: parser.FuncDecl = parser.FuncDecl { ...g, body: parser.route_bound_calls(g, inst.cts, mf) };
+    let cl: parser.FuncDecl = parser.instantiate_func(routed, key, g.all_type_params, inst.cts, mod.impls);
     clones = clones.append(cl);
     pending = body_insts(cl, env, msc, gens, inst.depth + 1, pending);
   }
