@@ -21,8 +21,9 @@ retired the op: `.chars()` is std/string's codepoint decoder, not a builtin.
 > **Status update (2026-08, the stdout/stderr leaves.)** `print_str`,
 > `putchar` and `eprint_str` are Fern on all three native targets
 > (`asmcore.rt_src_print_str` / `rt_src_putchar` / `rt_src_eprint_str`). They needed no floor addition at all: each is a `write(2)`
-> whose number `sysno` already carried for `tcp_send`, and the two that need a
-> scratch byte — `putchar`'s character, `eprint_str`'s newline — take it from the
+> whose number `sysno` already carried for `tcp_send` (`eprint_str` a `writev(2)`
+> over the line and its newline, one row more), and the two that need
+> scratch bytes — `putchar`'s character, `eprint_str`'s iovecs and newline — take them from the
 > `__raw_scratch` buffer the clocks added, which is why they join its gate.
 >
 > `print_int`, `eprint_int` and `read_int` were retired rather than migrated

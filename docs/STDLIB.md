@@ -823,12 +823,18 @@ Zero-config stderr wrappers plus a leveled logger (#2683).
 - `log_info(msg)`, `log_warn(msg)`, `log_error(msg)` — thin stderr
   wrappers with a level prefix.
 - `new_logger(min_level)` / `new_json_logger(min_level)` — a `Logger`
-  value carrying a min-level threshold (`level_trace()`..`level_error()`)
-  and a plain-text vs JSON-lines output mode.
+  value carrying a min-level threshold (`level_trace()`..`level_error()`),
+  a plain-text vs JSON-lines output mode, and a sink, stderr by default.
+- `logger.to(sink)` — the same logger writing each record through `sink`,
+  a function taking one line without its newline: a handler logs through
+  the platform it was handed with
+  `log.new_json_logger(log.level_info()).to((line: string): void => plat.log(line))`,
+  the route the ambient-effect rule (E080) allows it, and one a mock or
+  simulated platform records.
 - `logger.at(level)` / `logger.info_()` … begin a `LogEntry`; chain
   `.str(k, v)` / `.int(k, v)` / `.bool(k, v)` to attach structured
-  fields, then `.render(msg)` (pure → string, "" if below threshold)
-  or `.emit(msg)` (writes to stderr).
+  fields, then `.render(msg)` (pure → string with its newline, "" if
+  below threshold) or `.emit(msg)` (the line to the sink).
 
 ### `std/io`
 

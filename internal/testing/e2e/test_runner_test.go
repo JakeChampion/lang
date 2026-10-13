@@ -3257,10 +3257,11 @@ func TestRunnerArrayStructuralVerbsExample(t *testing.T) {
 
 // `tests/stdlib/log_test.fern` exercises the leveled `Logger`
 // added to std/log (#2683): min-level threshold filtering, the five
-// levels TRACE..ERROR, structured key/value fields, and the JSON-line
-// output mode. Assertions target the pure `render(msg)` output. The
-// logger is structs + strings only, so it also runs through the
-// self-host stdtest gate (TestSelfHostStdTestE2E case "log").
+// levels TRACE..ERROR, structured key/value fields, the JSON-line
+// output mode, and the sink `emit` writes each record through.
+// Assertions target the pure `render(msg)` output and a collecting
+// sink. It also runs through the self-host stdtest gate
+// (TestSelfHostStdTestE2E case "log").
 func TestRunnerLogExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/log_test.fern")
@@ -3276,7 +3277,9 @@ func TestRunnerLogExample(t *testing.T) {
 		"ok 9 - at explicit level",
 		"ok 10 - json escaping whitespace",
 		"ok 11 - json escaping control",
-		"# pass 11",
+		"ok 12 - sink receives each line",
+		"ok 13 - sink keeps level and mode",
+		"# pass 13",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {

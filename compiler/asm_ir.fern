@@ -3719,9 +3719,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   // __fern_eprint_str and __fern_putchar are Fern runtime functions (#2649):
   // asmcore.rt_src_eprint_str / rt_src_putchar, lowered through the IR pipeline
-  // via emit_ir_runtime_fern_fn in the entry block. Both write their one scratch
-  // byte — the newline, the character — into the static __fern_scratch, which is
-  // why they join its gate; a Fern helper has no way to name a stack slot.
+  // via emit_ir_runtime_fern_fn in the entry block. Both build what the kernel
+  // reads — eprint's iovec pair and newline, putchar's one byte — in the static
+  // __fern_scratch, which is why they join its gate; a Fern helper has no way to
+  // name a stack slot.
   if (s.has_need("buf")) {
     s = emit_runtime_memcpy(s);
   }

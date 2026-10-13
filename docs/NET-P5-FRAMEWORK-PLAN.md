@@ -291,6 +291,23 @@ decides what wraps it.
    than a loop hook, so a wasi-http handler logs the same way. Gate:
    `tests/stdlib/http_accesslog_test.fern`; `TestAccessLogServeInterp` and
    `TestAccessLogServeX86_64`.
+   The logger's sink (landed): `std/log`'s `Logger` carries the function
+   each record goes through, stderr unless `logger.to(sink)` names
+   another, so a handler builds one over `plat.log` and a test over a
+   collector; `emit` hands the sink the line without its newline, as
+   `plat.log` and `eprint` take one. A handler that calls `log_info` and
+   its siblings is already told to use `plat.log`: the ambient rule
+   reports the `eprint` under them with the chain through `log_info`. And
+   `eprint`, so `plat.log` on the host platform, writes a line and its
+   newline in one `writev(2)` on the native targets, so workers sharing a
+   stderr never land a write inside each other's line of up to `PIPE_BUF`
+   bytes. On wasm the two stay separate writes: wasmtime's preview1
+   `fd_write` writes only the first non-empty iovec, and a wasm program
+   has no fork and no shared pipe for the guarantee to matter.
+   Gate: the sink cases in `tests/stdlib/log_test.fern` in the stdtest
+   differential; `TestX86_64EprintWholeLines`, `TestArm64EprintWholeLines`
+   and `TestArm64DarwinEprintWholeLines`, four forked workers logging a
+   thousand lines each to one pipe, every line read back whole.
 8. **The developer loop.** In-memory serving through the full router and
    middleware stack on the simulated `Platform`; recording and replay of
    upstream traffic; a rate-driven load tool in `tools/` with latency

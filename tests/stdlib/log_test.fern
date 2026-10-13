@@ -4,12 +4,10 @@ import "std/string";
 
 // tests/stdlib/log_test.fern — the leveled `Logger` added to
 // std/log (#2683): min-level threshold filtering, the five levels
-// TRACE..ERROR, structured key/value fields, and the JSON-line output
-// mode. Assertions target the pure `render(msg)` (the exact formatted
-// line, or "" when filtered), so no stderr capture is needed.
-//
-// The logger is structs + strings only (no Option / tuples / closures),
-// so it compiles on the self-host backends too — this suite runs
+// TRACE..ERROR, structured key/value fields, the JSON-line output
+// mode, and the sink `emit` writes through. Assertions target the pure
+// `render(msg)` (the exact formatted line, or "" when filtered) and a
+// collecting sink, so no stderr capture is needed. This suite runs
 // through the self-host stdtest gate as well as the interpreter.
 
 function test_text_basic(): test.TestOutcome {
@@ -99,6 +97,30 @@ function test_at_explicit_level(): test.TestOutcome {
   return test.assert_eq(lg.at(log.level_debug()).render("x"), "[DEBUG] x\n");
 }
 
+// `emit` hands the sink each record once, without its newline, and
+// nothing for a record under the threshold.
+function test_sink_receives_each_line(): test.TestOutcome {
+  let seen: Cell[string] = cell_new("");
+  let lg: log.Logger = log.new_json_logger(log.level_info()).to((line: string): void => { seen.set(seen.get() + line + "|"); });
+  lg.info_().emit("a");
+  lg.debug_().emit("dropped");
+  lg.warn_().str("k", "v").emit("b");
+  return test.assert_eq(seen.get(), "{\"level\":\"INFO\",\"msg\":\"a\"}|{\"level\":\"WARN\",\"msg\":\"b\",\"k\":\"v\"}|");
+}
+
+// `to` keeps the threshold and the mode; the plain-text line reaches the
+// sink without the newline `render` ends it with.
+function test_sink_keeps_level_and_mode(): test.TestOutcome {
+  let seen: Cell[string] = cell_new("");
+  let lg: log.Logger = log.new_logger(log.level_warn()).to((line: string): void => { seen.set(seen.get() + "<" + line + ">"); });
+  lg.info_().emit("quiet");
+  lg.error_().int("n", 3).emit("loud");
+  if (lg.error_().int("n", 3).render("loud") != "[ERROR] loud n=3\n") {
+    return test.fail("render keeps its newline");
+  }
+  return test.assert_eq(seen.get(), "<[ERROR] loud n=3>");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("leveled logger");
   r = r.it("text basic", test_text_basic);
@@ -112,5 +134,7 @@ function main(): i32 {
   r = r.it("at explicit level", test_at_explicit_level);
   r = r.it("json escaping whitespace", test_json_escaping_whitespace);
   r = r.it("json escaping control", test_json_escaping_control);
+  r = r.it("sink receives each line", test_sink_receives_each_line);
+  r = r.it("sink keeps level and mode", test_sink_keeps_level_and_mode);
   return r.finish();
 }

@@ -1102,6 +1102,9 @@ function sysno_x86_64(name: string): string {
   if (name == "write") {
     return "1";
   }
+  if (name == "writev") {
+    return "20";
+  }
   if (name == "close") {
     return "3";
   }
@@ -1405,6 +1408,9 @@ function sysno_arm64_darwin(name: string): string {
   }
   if (name == "write") {
     return "4";
+  }
+  if (name == "writev") {
+    return "121";
   }
   if (name == "close") {
     return "6";
@@ -1710,6 +1716,9 @@ function sysno_arm64_linux(name: string): string {
   }
   if (name == "write") {
     return "64";
+  }
+  if (name == "writev") {
+    return "66";
   }
   if (name == "close") {
     return "57";
@@ -3839,11 +3848,14 @@ pub function rt_src_print_str(t: string): string {
 
 // rt_src_eprint_str backs `eprint(s)` → the string's bytes on fd 2 followed by a
 // '\n'. eprint is the stderr LINE printer, so the trailing newline is part of the
-// contract (native and the interpreter both append it). Two writes rather than one
-// buffer build: the payload goes straight out of the caller's box, and the newline
-// is one byte of the shared static scratch, so the helper allocates nothing.
+// contract (native and the interpreter both append it). One writev(2) over two
+// iovecs rather than two writes: a line of up to PIPE_BUF bytes then reaches a
+// shared pipe whole, so forked workers logging to one stderr never interleave
+// inside a line. The payload goes straight out of the caller's box and the iovec
+// pair plus the newline byte live in the shared static scratch, so the helper
+// allocates nothing.
 pub function rt_src_eprint_str(t: string): string {
-  return "function __fern_eprint_str(s: string): i32 { __syscall3(" + sysno(t, "write") + ", 2, __raw_data(s) as i64, s.len() as i64); let p: usize = __raw_scratch(1); __raw_store8(p, 0, 10); return __syscall3(" + sysno(t, "write") + ", 2, p as i64, 1) as i32; }";
+  return "function __fern_eprint_str(s: string): i32 { let iov: usize = __raw_scratch(33); __raw_store8(iov, 32, 10); __raw_store_ptr(iov, 0, __raw_data(s)); __raw_store_ptr(iov, 1, s.len() as usize); __raw_store_ptr(iov, 2, iov + 32); __raw_store_ptr(iov, 3, 1 as usize); return __syscall3(" + sysno(t, "writev") + ", 2, iov as i64, 2) as i32; }";
 }
 
 // rt_src_putchar backs `putchar(c)` → c's low byte on fd 1, the byte-level twin of
