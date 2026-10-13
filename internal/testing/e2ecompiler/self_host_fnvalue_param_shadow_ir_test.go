@@ -13,7 +13,7 @@ import (
 // taking `p: SomeStruct` bound a closure slot: the struct type was lost and
 // every later `cur.field` bailed the whole module.
 //
-// std/json's `__json_p_skip_ws(p: __JsonParser)` is the shape it was found on —
+// It was found on std/json's whitespace skip, which then took `p: __JsonParser`:
 // a user program declaring any function named `p` and importing std/test (which
 // pulls std/json in) could not be compiled at all, on a function it never
 // reaches. The same guard already exists for fn-typed struct FIELDS (#6191).

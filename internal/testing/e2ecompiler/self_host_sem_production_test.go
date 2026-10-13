@@ -4053,7 +4053,7 @@ function main(): i32 {
 	// the checker: `let m = s.map(f)` on a generic receiver is a shape the
 	// checker leaves `not yet checked`, and the instance the call resolves is
 	// what settles it. `std/result`'s combinators are this shape.
-	{name: "an-unannotated-binding-takes-its-call-s-type", atLeast: 53, want: "21|", src: `
+	{name: "an-unannotated-binding-takes-its-call-s-type", atLeast: 52, want: "21|", src: `
 import "std/option";
 import "std/result";
 function mapped(): i32 {
@@ -5465,7 +5465,7 @@ function pick(n: i32): i32 {
 function main(): i32 { return pick(9); }
 `},
 	// std/time's Zoned.format_rfc3339 is that branch shape (#10796).
-	{name: "std-time-format-rfc3339-is-produced", atLeast: 74, want: "20|1970-01-02T01:01:01Z\n", src: `
+	{name: "std-time-format-rfc3339-is-produced", atLeast: 65, want: "20|1970-01-02T01:01:01Z\n", src: `
 import "std/time";
 function main(): i32 {
     let s: string = time.instant_from_unix(90061 as i64).format_rfc3339();

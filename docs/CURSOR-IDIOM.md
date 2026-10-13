@@ -1,6 +1,7 @@
 # The cursor idiom — immutable read-and-advance
 
-Date: 2026-06-01. Status: decided; json.fern + stream.fern migrate to it.
+Date: 2026-06-01. Status: decided; stream.fern uses it. std/json's parser used
+it too until #12262 moved it to one shared position cell (below).
 
 ## Problem
 
@@ -8,10 +9,9 @@ Two stdlib parsers/readers were built on a **mutable cursor**: a method
 both *returns a value* and *advances a position* by mutating a struct
 field in place.
 
-- `std/json.fern` — `__JsonParser { s, pos, error }` threaded through 8
-  mutually-recursive functions (`__json_p_skip_ws`, `_byte`, `_number`,
-  `_uhex`, `_string`, `_array`, `_object`, `_value`); 32 `p.pos = …` /
-  `p.error = …` mutations.
+- `std/json.fern` — a parser struct `{ s, pos, error }` threaded through
+  eight mutually-recursive functions, with 32 `p.pos = …` / `p.error = …`
+  mutations.
 - `std/stream.fern` — `Stream { data, pos }`; `read_byte` / `read_n` /
   `read_line` return a value and bump `s.pos`.
 
@@ -46,8 +46,8 @@ function stream_read_byte(s: Stream): (Option[i32], Stream) {
 ```
 
 Pure predicates that only *read* the cursor without advancing it
-(`__json_p_byte`, peek-style helpers) keep returning a bare value and
-take the cursor by value — no pair needed.
+(peek-style helpers) keep returning a bare value and take the cursor by
+value — no pair needed.
 
 ### Why this shape (vs. alternatives)
 
@@ -64,27 +64,18 @@ tuple return + `let (v, c) =` destructure, including through recursion
 with `Cur { ...c, pos: … }` struct-update threading. (See the
 feasibility probes in the session that produced this doc.)
 
-## Error handling
+## std/json: one shared position cell
 
-The json parser used a sticky `p.error` flag. Under the idiom, fold the
-error into the cursor (`Cur { s, pos, error }` stays — `error` is part of
-the threaded state, set via struct-update like `pos`) OR surface it in
-the result type. Keep `error` in the cursor for json: it's read after the
-top-level parse to decide `Some`/`None`, and threading it in the cursor
-avoids changing every helper's result type to `Result`.
+std/json's parser threaded `(value, cursor)` pairs through its recursive
+descent, with the sticky error flag carried in the cursor. #12262 replaced
+that with one `Cell[i32]` the whole parse shares: each function reads the
+position from it and writes back where it stopped, and a failure stores
+`-1 - offset`, which the first failure wins. A recursive descent that
+returns a value at every level has no pair to build, so the cell is the
+lighter shape there; a reader whose caller holds the cursor between calls,
+as stream.fern's does, keeps the idiom above.
 
-## Migration shape (json.fern)
-
-- The 8 `__json_p_*(p)` functions become `__json_p_*(p) -> (T, __JsonParser)`
-  (value-producing) or `(__JsonParser)` (advance-only, e.g. skip_ws),
-  with `__json_p_byte` staying a pure read.
-- Every internal call site rebinds: `let (v, p) = __json_p_value(p);`.
-- `json_parse` destructures the final `(value, p)` and inspects `p.error`.
-- Mutual recursion (`value`→`array`/`object`→`value`) threads the cursor
-  through each pair return — the recursion probe above confirms this
-  works.
-
-## Gating (both files are validated paths)
+## Gating
 
 - `json.fern` is **self-compiled** (`internal/testing/e2e/self_host_json_test.go`)
   → the byte-identical self-host fixpoint gate must stay green.
@@ -94,9 +85,8 @@ avoids changing every helper's result type to `Result`.
 
 ## Follow-ups
 
-- After both migrate, the cursor idiom is the documented pattern for any
-  future reader/parser; the convention-based Reader/Writer polymorphism
-  note in stream.fern should reference this doc.
+- The convention-based Reader/Writer polymorphism note in stream.fern
+  should reference this doc.
 - A `let (a, b, c) = ` arity>2 form isn't needed here (all returns are
   2-tuples), but if a parser ever needs `(value, cursor, extra)` the
   destructure already supports N≥2.
@@ -107,7 +97,7 @@ avoids changing every helper's result type to `Result`.
 - The self-host parser adopted the idiom wholesale (#4406): all 22 of
   parser.fern's one-off `*Result { par: Par, … }` structs are gone —
   every `parse_*` returns `(value…, Par)` and call sites destructure
-  `let (v, p2) = parse_x(p); p = p2;` (the json.fern shape). Multi-value
+  `let (v, p2) = parse_x(p); p = p2;`. Multi-value
   results are N-tuples with the cursor last. The two mutable-accumulator
   loops (the precedence climber, the chained-assign collector) keep a
   plain mutable value local instead of rebuilding a result struct.

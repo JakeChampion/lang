@@ -1752,6 +1752,19 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"match-range-with-wildcard-ok", "function main(): i32 { let n: i32 = 1; match (n) { 0..3 => { return 5; }, _ => { return 6; } } }\n", nil},
 		{"match-wildcard-not-last", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { let o: Opt = Nil; match (o) { _ => { return 0; }, Has(n) => { return n; } } }\n", []string{"E026"}},
 		{"match-variant-twice", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { let o: Opt = Nil; match (o) { Has(n) => { return n; }, Has(m) => { return m; }, Nil => { return 0; } } }\n", []string{"E028"}},
+		// A match the parser desugars to a done-flag chain is held to E030 over
+		// its arms as written (#12257): nested variant sub-patterns, a tuple and
+		// a struct scrutinee, each covered jointly by refutable arms or not.
+		{"match-nested-variant-missing", "enum C { R, B }\nenum T { N(C, i32), L }\nfunction main(): i32 { let t: T = L; match (t) { N(R(), k) => { return k; }, L => { return 0; } } }\n", []string{"E030"}},
+		{"match-nested-variant-two-slots-ok", "enum C { R, B }\nenum T { N(C, T), L }\nfunction main(): i32 { let t: T = L; match (t) { N(R(), _) => { return 1; }, N(B(), N(R(), _)) => { return 2; }, N(B(), _) => { return 3; }, L => { return 0; } } }\n", nil},
+		{"match-nested-variant-deeper-gap", "enum C { R, B }\nenum T { N(C, T), L }\nfunction main(): i32 { let t: T = L; match (t) { N(R(), _) => { return 1; }, N(B(), N(R(), _)) => { return 2; }, L => { return 0; } } }\n", []string{"E030"}},
+		{"match-tuple-split-ok", "enum C { R, B }\nfunction main(): i32 { let a: C = R; let b: C = B; match ((a, b)) { (R(), _) => { return 1; }, (B(), R()) => { return 2; }, (B(), B()) => { return 3; } } }\n", nil},
+		{"match-tuple-split-missing", "enum C { R, B }\nfunction main(): i32 { let a: C = R; let b: C = B; match ((a, b)) { (R(), _) => { return 1; }, (B(), R()) => { return 2; } } return 0; }\n", []string{"E030"}},
+		{"match-struct-bool-fields-ok", "struct L { on: boolean, n: i32 }\nfunction main(): i32 { let l: L = L { on: true, n: 2 }; match (l) { L { on: true, n } => { return n; }, L { on: false, n } => { return 0; } } }\n", nil},
+		{"match-variant-bool-literal-payloads-ok", "enum S { P(i32, boolean), B }\nfunction main(): i32 { let s: S = B; match (s) { P(_, true) => { return 1; }, P(_, false) => { return 2; }, B => { return 0; } } }\n", nil},
+		{"match-variant-bool-literal-payload-missing", "enum S { P(i32, boolean), B }\nfunction main(): i32 { let s: S = B; match (s) { P(_, true) => { return 1; }, B => { return 0; } } return 3; }\n", []string{"E030"}},
+		{"match-struct-fields-permuted-ok", "struct Q { x: boolean, y: boolean }\nfunction main(): i32 { let q: Q = Q { x: true, y: false }; match (q) { Q { x: true, y: true } => { return 1; }, Q { x: true, y: false } => { return 2; }, Q { y: false, x: false } => { return 3; }, Q { y: true, x: false } => { return 4; } } }\n", nil},
+		{"match-struct-literal-missing", "struct L { on: boolean, n: i32 }\nfunction main(): i32 { let l: L = L { on: true, n: 2 }; match (l) { L { on: true, n } => { return n; } } return 0; }\n", []string{"E030"}},
 		{"match-clean-ok", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { let o: Opt = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
 		{"match-wildcard-last-ok", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { let o: Opt = Nil; match (o) { Has(n) => { return n; }, _ => { return 0; } } }\n", nil},
 		// E026 on a LITERAL match (i32 / string scrutinee), where the
