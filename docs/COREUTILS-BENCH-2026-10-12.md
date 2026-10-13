@@ -9,7 +9,8 @@ nothing else running; the two `yes` rows were re-run after
 each entry's type from its directory record and stopped joining paths it does
 not use. The `base32`, `base64`, `basenc`, `cksum`, `cp`, `md5sum`, `pr`,
 `ptx`, `sha1sum`, `shuf`, `stat`, `tac` and `tr` rows were re-run at 61a9a6b,
-after #12225 and #12232 changed those utilities and the kernels under them.
+after #12225 and #12232 changed those utilities and the kernels under them,
+and the `cp` and `shuf` rows again at cfc42a3, after #12258.
 A ratio within about 10% of 1 is still not a measured difference.
 `chcon` and `runcon` are compared against the system's GNU 9.4, because the
 9.12 tree is built without SELinux and has neither.
@@ -106,17 +107,17 @@ A ratio within about 10% of 1 is still not a measured difference.
 | `comm` | comm --total over 2M + 1M sorted lines | 111.73 ± 16.02 | 162.53 ± 15.92 | 447.99 ± 25.36 | 1.45× | 4.01× |
 | `comm` | comm of a 2M-line file with itself | 96.37 ± 21.54 | 190.96 ± 23.46 | 491.59 ± 29.91 | 1.98× | 5.10× |
 | `comm` | comm -123 of a 2M-line file with itself | 65.57 ± 9.95 | 112.61 ± 6.47 | 96.26 ± 10.13 | 1.72× | 1.47× |
-| `cp` | cp one file | 0.80 ± 0.69 | 2.03 ± 0.86 | 3.89 ± 0.87 | 2.53× | 4.84× |
-| `cp` | cp 200 files | 66.18 ± 6.09 | 341.43 ± 19.18 | 679.01 ± 43.58 | 5.16× | 10.26× |
-| `cp` | cp 200 files into a directory | 14.65 ± 2.93 | 24.03 ± 4.74 | 31.04 ± 6.86 | 1.64× | 2.12× |
-| `cp` | cp 200 over existing files | 72.47 ± 8.89 | 342.31 ± 21.19 | 680.48 ± 49.12 | 4.72× | 9.39× |
-| `cp` | cp 64 MiB | 110.75 ± 10.59 | 109.74 ± 7.91 | 116.07 ± 10.52 | 0.99× | 1.05× |
-| `cp` | cp 64 MiB sparse | 4.59 ± 1.31 | 6.59 ± 1.45 | 65.05 ± 7.03 | 1.44× | 14.17× |
-| `cp` | cp 64 MiB sparse --sparse=never | 61.74 ± 6.18 | 49.58 ± 5.17 | 59.96 ± 5.51 | 0.80× | 0.97× |
-| `cp` | cp -p 200 files | 74.85 ± 5.81 | 334.91 ± 21.72 | 716.25 ± 50.93 | 4.47× | 9.57× |
-| `cp` | cp -l 200 files | 69.18 ± 6.08 | 357.17 ± 20.97 | 695.03 ± 48.33 | 5.16× | 10.05× |
-| `cp` | cp -r a 400-file tree | 88.75 ± 46.33 | 148.30 ± 22.88 | 162.41 ± 20.21 | 1.67× | 1.83× |
-| `cp` | cp -a a 400-file tree | 312.05 ± 54.20 | 306.03 ± 29.27 | 332.10 ± 43.59 | 0.98× | 1.06× |
+| `cp` | cp one file | 0.48 ± 0.51 | 1.91 ± 0.70 | 3.57 ± 1.04 | 4.01× | 7.50× |
+| `cp` | cp 200 files | 69.14 ± 8.16 | 328.48 ± 20.62 | 648.76 ± 38.58 | 4.75× | 9.38× |
+| `cp` | cp 200 files into a directory | 14.90 ± 3.84 | 23.06 ± 5.06 | 29.13 ± 5.52 | 1.55× | 1.96× |
+| `cp` | cp 200 over existing files | 69.05 ± 6.35 | 326.63 ± 17.56 | 638.92 ± 33.34 | 4.73× | 9.25× |
+| `cp` | cp 64 MiB | 114.62 ± 66.96 | 116.97 ± 41.52 | 106.38 ± 22.00 | 1.02× | 0.93× |
+| `cp` | cp 64 MiB sparse | 4.10 ± 1.18 | 5.61 ± 1.43 | 54.05 ± 4.46 | 1.37× | 13.18× |
+| `cp` | cp 64 MiB sparse --sparse=never | 55.56 ± 46.74 | 47.04 ± 4.57 | 57.64 ± 6.63 | 0.85× | 1.04× |
+| `cp` | cp -p 200 files | 67.32 ± 7.41 | 316.47 ± 12.20 | 603.61 ± 32.89 | 4.70× | 8.97× |
+| `cp` | cp -l 200 files | 64.45 ± 5.23 | 324.07 ± 17.32 | 586.71 ± 39.05 | 5.03× | 9.10× |
+| `cp` | cp -r a 400-file tree | 31.48 ± 6.19 | 45.35 ± 11.13 | 64.63 ± 13.16 | 1.44× | 2.05× |
+| `cp` | cp -a a 400-file tree | 103.09 ± 17.80 | 145.68 ± 22.06 | 204.61 ± 38.95 | 1.41× | 1.98× |
 | `csplit` | csplit at line 4000000 of a 62 MiB file | 101.61 ± 6.37 | 295.74 ± 21.88 | 410.81 ± 27.65 | 2.91× | 4.04× |
 | `csplit` | csplit at /4000000/ of a 62 MiB file | 197.54 ± 30.86 | 636.85 ± 31.48 | 470.73 ± 47.07 | 3.22× | 2.38× |
 | `csplit` | csplit at /^4000000$/ of a 62 MiB file | 165.83 ± 12.54 | 641.66 ± 45.41 | 511.04 ± 66.79 | 3.87× | 3.08× |
@@ -503,14 +504,14 @@ A ratio within about 10% of 1 is still not a measured difference.
 | `shred` | shred -u 200 small files | 629.72 ± 31.44 | 862.56 ± 56.38 | 887.03 ± 44.58 | 1.37× | 1.41× |
 | `shred` | shred -n 0 -u 200 small files | 429.99 ± 30.74 | 674.05 ± 29.85 | 709.03 ± 39.14 | 1.57× | 1.65× |
 | `shred` | shred -s 4096 of a 4MiB file | 9.66 ± 1.15 | 10.27 ± 1.24 | 12.38 ± 1.47 | 1.06× | 1.28× |
-| `shuf` | shuf -i 1-1000000 | 129.33 ± 16.37 | 72.59 ± 15.93 | 165.82 ± 28.75 | 0.56× | 1.28× |
-| `shuf` | shuf a 62 MiB file | 2648.37 ± 204.28 | 1832.38 ± 84.23 | 805.75 ± 36.50 | 0.69× | 0.30× |
-| `shuf` | shuf a 62 MiB file from a pipe | 2498.97 ± 158.74 | 1921.80 ± 135.67 | 874.15 ± 87.24 | 0.77× | 0.35× |
-| `shuf` | shuf -n 10 of a 62 MiB file | 430.31 ± 77.10 | 272.30 ± 47.12 | 198.53 ± 26.75 | 0.63× | 0.46× |
-| `shuf` | shuf -n 1000000 of a 62 MiB file | 1775.03 ± 131.52 | 1360.10 ± 152.24 | 270.89 ± 26.93 | 0.77× | 0.15× |
-| `shuf` | shuf -r -n 1000000 of a 62 MiB file | 678.13 ± 51.74 | 465.96 ± 88.13 | 299.94 ± 31.51 | 0.69× | 0.44× |
-| `shuf` | shuf -n 10 -i 1-1000000000 | 0.77 ± 0.33 | 1.86 ± 0.44 | exit 134 | 2.43× | — |
-| `shuf` | shuf -e 200 operands | 0.83 ± 0.26 | 1.86 ± 0.45 | 3.76 ± 0.81 | 2.24× | 4.54× |
+| `shuf` | shuf -i 1-1000000 | 140.06 ± 42.35 | 69.11 ± 17.29 | 208.34 ± 116.26 | 0.49× | 1.49× |
+| `shuf` | shuf a 62 MiB file | 1683.77 ± 171.69 | 1866.20 ± 211.85 | 761.09 ± 122.43 | 1.11× | 0.45× |
+| `shuf` | shuf a 62 MiB file from a pipe | 1776.08 ± 208.57 | 1840.93 ± 173.46 | 840.09 ± 145.22 | 1.04× | 0.47× |
+| `shuf` | shuf -n 10 of a 62 MiB file | 344.72 ± 66.94 | 251.66 ± 47.09 | 196.79 ± 78.22 | 0.73× | 0.57× |
+| `shuf` | shuf -n 1000000 of a 62 MiB file | 1496.92 ± 75.28 | 1203.72 ± 137.97 | 245.53 ± 61.02 | 0.80× | 0.16× |
+| `shuf` | shuf -r -n 1000000 of a 62 MiB file | 479.16 ± 45.69 | 397.55 ± 36.69 | 280.32 ± 21.50 | 0.83× | 0.59× |
+| `shuf` | shuf -n 10 -i 1-1000000000 | 0.71 ± 0.27 | 1.72 ± 0.30 | exit 134 | 2.43× | — |
+| `shuf` | shuf -e 200 operands | 0.80 ± 0.26 | 1.81 ± 0.55 | 3.41 ± 0.87 | 2.28× | 4.29× |
 | `sleep` | sleep 0 | 0.34 ± 0.24 | 2.23 ± 3.96 | 2.98 ± 0.54 | 6.52× | 8.71× |
 | `sleep` | sleep 0 four operands | 0.32 ± 0.12 | 1.73 ± 0.37 | 3.00 ± 0.60 | 5.45× | 9.47× |
 | `sort` | sort 500k lines | 91.50 ± 16.61 | 131.06 ± 20.84 | 122.76 ± 10.31 | 1.43× | 1.34× |
