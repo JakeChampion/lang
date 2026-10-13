@@ -6158,8 +6158,17 @@ function ssa_epilogue_for(saved: i32[]): string {
 // records, or as its text for a buffered leaf body, whose mark its frame
 // replaces once chosen.
 function ssa_emit_epilogue(fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
+  return ssa_emit_exit(fr, s, "");
+}
+
+// ssa_emit_exit is ssa_emit_epilogue leaving through a jump to `tail` where
+// the return would be, or returning when `tail` is empty.
+function ssa_emit_exit(fr: SsaFrame, s: asmcore.EmitState, tail: string): asmcore.EmitState {
+  if (fr.leaf && tail != "") {
+    return s.write(ssa_tail_mark(tail));
+  }
   if (fr.leaf || !s.records()) {
-    return s.write(fr.epilogue);
+    return s.write(ssa_tail_epilogue(fr.epilogue, tail));
   }
   s = ssa_cfi(s, 7, "", 0);
   if (fr.saved.len() == 0) {
@@ -6173,7 +6182,13 @@ function ssa_emit_epilogue(fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitStat
     }
     s = ssa_pop_r(s, "%rbp");
   }
-  return ssa_cfi(ssa_ret(ssa_cfi(s, 5, "%rsp", 8)), 8, "", 0);
+  s = ssa_cfi(s, 5, "%rsp", 8);
+  if (tail == "") {
+    s = ssa_ret(s);
+  } else {
+    s = ssa_jump_sym(s, "jmp", tail);
+  }
+  return ssa_cfi(s, 8, "", 0);
 }
 
 // ssa_load puts value v in `reg`; ssa_store writes `reg` to value v's home.
@@ -9367,10 +9382,11 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let dbg: asmcore.DbgVars = dbg_out.dbg;
   let views: i32[] = ssa_view_slots(f);
   let nspill: i32 = ssa.spill_count(reg_of);
-  // A function with no frame slots that might make no call is emitted into a
-  // buffer first, behind a placeholder for its epilogue; its text decides
-  // whether it needs %rbp at all.
-  let leaf: boolean = nspill == 0 && ssa_view_count(views) == 0 && !hev_on(s) && !ssa.calls_out(f);
+  let tails: boolean = r.dbg_slots.len() == 0 && !ssa_source_lines(f);
+  // A function with no frame slots that might make no call but a tail call is
+  // emitted into a buffer first, behind placeholders for its exits; its text
+  // decides whether it needs %rbp at all.
+  let leaf: boolean = nspill == 0 && ssa_view_count(views) == 0 && !hev_on(s) && !ssa_calls_besides_tails(f, s, tails);
   let epilogue: string = ssa_epilogue_for(saved);
   if (leaf) {
     epilogue = ssa_epilogue_mark();
@@ -9413,10 +9429,14 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
     let fu: SsaFuse = ssa_fuse(fr, blk);
     fusions = ssa_retain_fusion(fusions, fu, s.retain_prepared);
     let ii: i32 = 0;
+    let tailed: boolean = false;
     while (ii < blk.insts.len() - fu.n) {
       s = asmcore.dbg_label(s, dbg, fn_label, pos + ii);
       let ins: ssa.SInst = blk.insts[ii];
-      if (ins.kind_tag != 6 && ins.kind_tag != 8) {
+      if (ii == blk.insts.len() - 1 && ssa_tail_call(blk, ins, s, tails)) {
+        s = ssa_emit_tail_call(ins, reg_of, fr, s);
+        tailed = true;
+      } else if (ins.kind_tag != 6 && ins.kind_tag != 8) {
         s = ssa_inst(ins, reg_of, lp, fr, r, s);
       }
       ii = ii + 1;
@@ -9424,7 +9444,9 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
     s = asmcore.dbg_labels(s, dbg, fn_label, pos + ii, pos + blk.insts.len());
     s = ssa_fused_test(fr, reg_of, fu, ssa_join(lp, blk.id), s);
     s = asmcore.dbg_label(s, dbg, fn_label, pos + blk.insts.len());
-    s = ssa_term(f, fr, blk, reg_of, lp, next, fu, s);
+    if (!tailed) {
+      s = ssa_term(f, fr, blk, reg_of, lp, next, fu, s);
+    }
     pos = pos + blk.insts.len() + 1;
     bi = bi + 1;
   }
@@ -9436,11 +9458,11 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
     if (ssa_needs_frame(text)) {
       framed = true;
       s = ssa_frame(s, saved, frame);
-      s = s.write(ssa_replace_all(text, ssa_epilogue_mark(), ssa_epilogue_for(saved)));
+      s = s.write(ssa_resolve_tails(ssa_replace_all(text, ssa_epilogue_mark(), ssa_epilogue_for(saved)), ssa_epilogue_for(saved)));
     } else {
       s = ssa_leaf_save(s, saved);
       let leaf_text: string = ssa_replace_all(text, " __fern_oob_abort\n", " __fern_oob_abort.l" + util.i32_to_string(saved.len()) + "\n");
-      s = s.write(ssa_replace_all(leaf_text, ssa_epilogue_mark(), ssa_leaf_epilogue(saved)));
+      s = s.write(ssa_resolve_tails(ssa_replace_all(leaf_text, ssa_epilogue_mark(), ssa_leaf_epilogue(saved)), ssa_leaf_epilogue(saved)));
     }
   }
   s = asmcore.EmitState { ...s, ssa_save: 0 };
@@ -9507,6 +9529,101 @@ function ssa_frame_asm(saved: i32[], frame: i32): string {
 // frame is chosen.
 function ssa_epilogue_mark(): string {
   return "    .ssa_epilogue\n";
+}
+
+// ssa_tail_mark stands where a buffered body leaves through a jump to
+// `target`; ssa_resolve_tails replaces it once the frame is chosen.
+function ssa_tail_mark(target: string): string {
+  return "    .ssa_tail " + target + "\n";
+}
+
+// ssa_tail_epilogue is `epilogue` leaving through a jump to `tail` where it
+// returns, or `epilogue` itself when `tail` is empty.
+function ssa_tail_epilogue(epilogue: string, tail: string): string {
+  if (tail == "") {
+    return epilogue;
+  }
+  return ssa_replace_all(epilogue, "    ret\n", "    jmp " + tail + "\n");
+}
+
+// ssa_resolve_tails replaces each tail mark of `text` with `epilogue`
+// leaving through a jump to the mark's target.
+function ssa_resolve_tails(text: string, epilogue: string): string {
+  let prefix: string = "    .ssa_tail ";
+  let at: i32 = util.index_of_sub(text, prefix);
+  if (at < 0) {
+    return text;
+  }
+  let out: string = "";
+  let from: i32 = 0;
+  while (at >= 0) {
+    let end: i32 = at + prefix.len();
+    while (end < text.len() && text[end] != 10) {
+      end = end + 1;
+    }
+    let target: string = slice_unchecked(text, at + prefix.len(), end) + "";
+    out = out + slice_unchecked(text, from, at) + ssa_tail_epilogue(epilogue, target);
+    from = end + 1;
+    let rest: i32 = util.index_of_sub(slice_unchecked(text, from, text.len()) + "", prefix);
+    if (rest < 0) {
+      at = 0 - 1;
+    } else {
+      at = from + rest;
+    }
+  }
+  return out + slice_unchecked(text, from, text.len());
+}
+
+// ssa_tail_call reports the call `ins` at the end of `blk` that it returns
+// as it is, through a register entry: the function can leave through a jump
+// to it, which returns to this function's caller. A `-g` build keeps every
+// frame, so it takes none.
+function ssa_tail_call(blk: ssa.SBlock, ins: ssa.SInst, s: asmcore.EmitState, tails: boolean): boolean {
+  return tails && blk.insts.len() > 0 && ssa.returns_call(blk, blk.insts.len() - 1) && blk.insts[blk.insts.len() - 1].result == ins.result && ssa_reg_call(ins, s);
+}
+
+// A debug build carries source positions even where no variable has a
+// debugger type, so an empty dbg_slots list does not let a tail call discard
+// the frame.
+function ssa_source_lines(f: ssa.SFunc): boolean {
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == 35) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// ssa_calls_besides_tails reports a call in `f` that is not a tail call.
+function ssa_calls_besides_tails(f: ssa.SFunc, s: asmcore.EmitState, tails: boolean): boolean {
+  for blk in f.blocks {
+    let k: i32 = 0;
+    while (k < blk.insts.len()) {
+      let ins: ssa.SInst = blk.insts[k];
+      if (ssa.calls(ins) && !(k == blk.insts.len() - 1 && ssa_tail_call(blk, ins, s, tails))) {
+        return true;
+      }
+      k = k + 1;
+    }
+  }
+  return false;
+}
+
+// ssa_emit_tail_call moves a tail call's arguments into the register entry's
+// registers and leaves through a jump to it.
+function ssa_emit_tail_call(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
+  let srcs: i32[] = [];
+  let dsts: i32[] = [];
+  let a: i32 = 0;
+  while (a < ins.args.len()) {
+    srcs = srcs.append(reg_of[ins.args[a]]);
+    dsts = dsts.append(a);
+    a = a + 1;
+  }
+  s = ssa_parallel_moves(srcs, dsts, ssa_x0_forget(s));
+  return ssa_emit_exit(fr, s, "__fn_" + asmcore.sanitize_label(ins.str) + ".r");
 }
 
 // ssa_needs_frame reports a buffered body with an instruction that calls,
