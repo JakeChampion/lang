@@ -1960,6 +1960,13 @@ pub struct Scope {
   // prefix ("" for the entry): what a call site may name directly is read
   // against it (trait_visible_from).
   fn_module: string,
+  // default_trait / default_recv name the trait and the impl type when the
+  // enclosing body is a default the type inherited from that trait: inside
+  // it the receiver is known only as the trait's, so the trait's own method
+  // outranks another trait's of the same name on that type
+  // (ambiguous_call_diags, #12282). Empty on every other scope.
+  default_trait: string,
+  default_recv: string,
   // tparams / tbounds are the enclosing function's declared type
   // parameters and their `+`-joined trait bounds, running parallel
   // (parser.parse_type_param_list). Populated by build_func_scope; they let
@@ -2357,11 +2364,14 @@ function trait_visible_from(s: Scope, tname: string, from: string): boolean {
 }
 
 // ambiguous_call_diags is E074 for `recv.m(...)` written at a concrete type
-// that takes `m` from two traits, when nothing separates them: the traits
-// the call's module can name outrank the rest, and exactly one at the best
-// rank resolves, as the Go checker's ResolveMethodFrom ranks them. A call
-// already respelled to its provider (`Trait.m`, the bound rewrite and an
-// inherited default's routing) names one trait and is never ambiguous.
+// that takes `m` from two traits, when nothing separates them: a trait the
+// call site is bound to answer (the inherited default's own trait on its
+// impl type, as the Go checker's `prefer`) wins outright; otherwise the
+// traits the call's module can name outrank the rest, and exactly one at
+// the best rank resolves, as the Go checker's ResolveMethodFrom ranks them.
+// A call already respelled to its provider (`Trait.m`, the bound rewrite
+// and an inherited default's routing) names one trait and is never
+// ambiguous.
 function ambiguous_call_diags(fa: ast.ExprFieldAccess, recv_type: string, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   if (util.index_of_sub(fa.field, ".") >= 0) {
@@ -2370,6 +2380,13 @@ function ambiguous_call_diags(fa: ast.ExprFieldAccess, recv_type: string, s: Sco
   let cands: MethodSig[] = s.trait_providers(fa.field, recv_type);
   if (cands.len() < 2) {
     return out;
+  }
+  if (s.default_trait.len() > 0 && recv_type == s.default_recv) {
+    for m in cands {
+      if (method_simple_name(m.impl_trait) == s.default_trait) {
+        return out;
+      }
+    }
   }
   let best: MethodSig[] = [];
   for m in cands {
@@ -2413,7 +2430,7 @@ function new_scope(): Scope {
   let ss: StructSig[] = [];
   let us: UnionSig[] = [];
   let ms: MethodSig[] = [];
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: struct_table(ss, [], no_spellings()), unions: union_table(us), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", tparams: [], tbounds: [], tpvars: [], tpvar_tps: [], fn_tvars: [] };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: struct_table(ss, [], no_spellings()), unions: union_table(us), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], tpvars: [], tpvar_tps: [], fn_tvars: [] };
 }
 
 // new_scope_full is a module's scope. The impl table rides on every one:
@@ -2422,7 +2439,7 @@ function new_scope(): Scope {
 function new_scope_full(st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[], impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   let ns: string[] = [];
   let ts: typeinfo.Type[] = [];
-  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", tparams: [], tbounds: [], tpvars: [], tpvar_tps: [], fn_tvars: [] };
+  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], tpvars: [], tpvar_tps: [], fn_tvars: [] };
 }
 
 function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
@@ -3808,8 +3825,38 @@ function (s: Scope) lookup_method(name: string, recv_type: string): MethodSig {
     }
     i = s.methods.next[i];
   }
+  let at: i32 = s.trait_spelled_method(name, recv_type);
+  if (at >= 0) {
+    return s.methods.methods[at];
+  }
   let empty_pt: typeinfo.Type[] = [];
   return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such method"), ret_type_name: "", param_type_names: [], all_type_params: [], type_params: [], type_bounds: [], module: "", impl_trait: "", line: 0, col: 0, file: "" };
+}
+
+// trait_spelled_method is the method a call spelled `Trait.m` on `recv_type`
+// names when no method bears that name: the trait's provider of `m` for the
+// type, whatever that method was named (the bound routing spells a call so,
+// parser.route_bound_calls). -1 when the spelling has no trait or no
+// provider answers.
+function (s: Scope) trait_spelled_method(name: string, recv_type: string): i32 {
+  let dot: i32 = name.len() - 1;
+  while (dot >= 0 && name[dot] != b'.') {
+    dot = dot - 1;
+  }
+  if (dot <= 0) {
+    return -1;
+  }
+  let tname: string = method_simple_name(slice_unchecked(name, 0, dot) + "");
+  let simple: string = slice_unchecked(name, dot + 1, name.len()) + "";
+  let i: i32 = s.methods.shead[sig_name_bucket(simple)];
+  while (i >= 0) {
+    let m: MethodSig = s.methods.methods[i];
+    if (method_simple_name(m.impl_trait) == tname && method_simple_name(m.name) == simple && (m.receiver_type == recv_type || parser.parse_type_ref(m.receiver_type).base == recv_type)) {
+      return i;
+    }
+    i = s.methods.snext[i];
+  }
+  return -1;
 }
 
 // has_method answers lookup_method's question without building the sentinel
@@ -3837,7 +3884,7 @@ function (s: Scope) has_method(name: string, recv_type: string): boolean {
     }
     i = s.methods.next[i];
   }
-  return false;
+  return s.trait_spelled_method(name, recv_type) >= 0;
 }
 
 // has_sig is lookup_sig's predicate form. lookup_sig's miss still builds a
@@ -8639,6 +8686,9 @@ function validate_union_sigs(unions: UnionSig[], struct_names: string[]): boolea
 // coded-diagnostic walks so they bind names identically.
 function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[], impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   let s: Scope = Scope { ...new_scope_full(st, structs, unions.seen_from(fd), methods, imports, impls, trait_reqs), fn_module: fd.module };
+  if (fd.impl_trait.len() > 0 && fd.receiver_name.len() > 0 && parser.is_inherited_default(impls, trait_reqs, fd)) {
+    s = Scope { ...s, default_trait: fd.impl_trait, default_recv: util.base_type_name(fd.receiver_type) };
+  }
   let tps: string[] = func_scope_tparams(fd);
   // A DERIVED associated function spells its receiver BARE (`Pair`, never
   // `Pair[T]`) so the struct-method monomorphiser keys on the plain name —
