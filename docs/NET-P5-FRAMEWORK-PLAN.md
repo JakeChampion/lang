@@ -308,6 +308,29 @@ decides what wraps it.
    differential; `TestX86_64EprintWholeLines`, `TestArm64EprintWholeLines`
    and `TestArm64DarwinEprintWholeLines`, four forked workers logging a
    thousand lines each to one pipe, every line read back whole.
+   Metrics (landed): `std/metrics` has counters, gauges and fixed-bucket
+   histograms whose numbers live in cells, so a handler's copy and the
+   registry's count the same thing, their Prometheus text exposition
+   (format 0.0.4), `merge` summing several expositions, and an `Exporter`
+   answering scrapes on a port of its own from the caller's reactor. The
+   serve loop records `http_server_request_duration_seconds` by method
+   and status (OpenTelemetry's buckets, the request timed from its header
+   block's arrival, the clock the body deadline already keeps),
+   connections accepted and open, into a
+   `ServerMetrics` kept on its connection table, and renders it with the
+   program's `Config.metrics` registry. Under `supervise` each worker
+   ships that text, ended by the `# EOF` line, down a non-blocking pipe
+   to the supervisor once a second (a snapshot the pipe has no room for
+   is dropped, never a stall), and the supervisor sums the workers'
+   latest snapshots and answers `/metrics`, `/healthz` and `/readyz` on
+   `Config.metrics_port`, so a scrape never touches a worker; `run`, and
+   `supervise` where there is no fork, answer them from the loop. There
+   is no per-worker state to share, so a dead worker's counts leave with
+   it: the reset a scraper's rate functions expect of a restart. Gate:
+   `tests/stdlib/metrics_test.fern` in the stdtest differential;
+   `TestMetricsServeInterp` (one process) and
+   `TestMetricsSupervisedServeX86_64` (two workers through the
+   supervisor) read the counts back off the metrics port.
 8. **The developer loop.** In-memory serving through the full router and
    middleware stack on the simulated `Platform`; recording and replay of
    upstream traffic; a rate-driven load tool in `tools/` with latency

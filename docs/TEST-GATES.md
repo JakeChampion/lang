@@ -122,6 +122,16 @@ line, the payload then the newline, let another worker's line land between
 them, which is what the supervisor's workers logging to a shared stderr
 would show as spliced JSON lines.
 
+`TestMetricsServeInterp` and `TestMetricsSupervisedServeX86_64` pin
+`serve.Config { metrics, metrics_port }`: the loop's request-duration
+histogram by method and status, its connection counts and the handler's own
+counter read back off the metrics port, together with `/healthz`, `/readyz`
+and the 404 for anything else; the x86-64 leg runs two forked workers, so
+the counts it reads are the supervisor's sum of the snapshots the workers
+shipped down their pipes, and it proves no scrape reached a worker only in
+that the sum arrives whole. `tests/stdlib/metrics_test.fern` in the stdtest
+differential pins the exposition text, the merge and the scrape answers.
+
 ### The bag boundary (E080)
 
 `internal/check/ambient` refuses a function handed a `platform.Platform` that reaches a host
