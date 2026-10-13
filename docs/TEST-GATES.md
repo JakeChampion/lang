@@ -132,6 +132,15 @@ shipped down their pipes, and it proves no scrape reached a worker only in
 that the sum arrives whole. `tests/stdlib/metrics_test.fern` in the stdtest
 differential pins the exposition text, the merge and the scrape answers.
 
+The examples lanes (`examples.yml` on arm64 Linux, `macos.yml` on Apple
+Silicon, `make examples` locally) compile `examples/*.fern` and
+`examples/tests/*.fern` and run each binary through `scripts/ci-run-example`
+against `.github/examples-expected-exits.txt`; a `norun` row (the
+`examples/api.fern` server) is built and linked but not run, and
+`examples/tests/api_sim.fern` runs the same routes against a simulated
+directory and must exit 0. `TestEveryExampleHasAnExpectedExit` keeps the
+table and both directories in step.
+
 ### The bag boundary (E080)
 
 `internal/check/ambient` refuses a function handed a `platform.Platform` that reaches a host

@@ -40,7 +40,7 @@ jobs:
         run: |
           go build -o bin/fern ./cmd/fern
           mkdir -p build
-          for f in examples/*.fern; do
+          for f in examples/*.fern examples/tests/*.fern; do
             name=$(basename "$f" .fern)
             ./bin/fern -target arm64-linux "$f" > "build/$name.s"
             gcc -static -nostdlib "build/$name.s" -o "build/$name"

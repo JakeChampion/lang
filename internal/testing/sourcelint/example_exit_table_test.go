@@ -45,10 +45,17 @@ func TestEveryExampleHasAnExpectedExit(t *testing.T) {
 		listed[f[0]] = true
 	}
 
+	// The lanes compile examples/*.fern and examples/tests/*.fern, the
+	// programs that exercise an example in simulation.
 	srcs, err := filepath.Glob(filepath.Join(root, "examples", "*.fern"))
 	if err != nil {
 		t.Fatalf("glob examples: %v", err)
 	}
+	tests, err := filepath.Glob(filepath.Join(root, "examples", "tests", "*.fern"))
+	if err != nil {
+		t.Fatalf("glob examples/tests: %v", err)
+	}
+	srcs = append(srcs, tests...)
 	if len(srcs) == 0 {
 		t.Fatal("no examples/*.fern found — the glob this gate shares with the workflows stopped matching")
 	}
