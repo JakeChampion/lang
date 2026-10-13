@@ -69,11 +69,13 @@ func TestSelfHostServeAllocsPerRequestWasm(t *testing.T) {
 // on one HTTP/2 connection (docs/NET-P6-HTTP2-PLAN.md slice 4), a ratchet
 // like the HTTP/1.1 zero above, as a ceiling on the mean since the count
 // varies from request to request: the frames of a request and its
-// response, the HPACK blocks, the stream's slot and the connection record
-// rebuilt per frame. The first readings were 99.0 to 100.0 on x86-64;
-// with the loop's table owned through a request, 98.7 to 99.3 here and 95.4 on
-// the CI runner.
-const ServeAllocsH2Ceiling = 101
+// response, the HPACK blocks, the stream's slot and the request handed
+// over. The first readings were 99.0 to 100.0 on x86-64; with the state
+// machine updating its connection in place, the HPACK decode threaded
+// through one record and a response's fields written straight into the
+// encoder, 72.0 to 72.4 here; the CI runner reads a few lower, as the
+// note on serveAllocsH2Drift says.
+const ServeAllocsH2Ceiling = 74
 
 func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
 	cli := buildSelfHostCLI(t)

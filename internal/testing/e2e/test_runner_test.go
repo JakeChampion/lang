@@ -1193,7 +1193,7 @@ func TestRunnerHTTPRouterExamplePasses(t *testing.T) {
 // std/http/hpack both ways, with the table sizes and evictions the RFC
 // shows, and holds a decoder to its list, field and table-size bounds.
 func TestRunnerHTTPHpackExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_hpack", "std/http/hpack", 9)
+	runnerSuitePasses(t, "http_hpack", "std/http/hpack", 10)
 }
 
 // `tests/stdlib/http_h2_frame_test.fern` writes and reads back every HTTP/2

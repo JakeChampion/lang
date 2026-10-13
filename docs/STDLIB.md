@@ -2760,7 +2760,11 @@ names one whose name it holds, adds a literal to the table unless it is
 the table), and Huffman-codes a string when the coding is no longer than
 the bytes (`without_huffman()` turns that off). `with_max_table(n)` holds
 the table to `n` and makes the next block start with the size update §4.2
-asks for. `tests/stdlib/http_hpack_test.fern` runs RFC 7541's Appendix C
+asks for. A block can be written field by field instead of from a `Field[]`:
+`e.begin()` starts one (the size update first), `(en).put(name, value,
+sensitive)` writes a field as `encode` would, and `(en).finish()` is the
+`Encoded`; what the serve loop uses, so a response's fields never exist as
+records. `tests/stdlib/http_hpack_test.fern` runs RFC 7541's Appendix C
 both ways, byte for byte, with the table sizes and evictions it shows.
 
 ### `std/http/h2`

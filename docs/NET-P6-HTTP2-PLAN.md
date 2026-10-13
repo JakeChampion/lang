@@ -124,10 +124,23 @@ without ACK within the timeout closes the connection.
    with the blocks the connection's frames, header blocks, stream slots
    and the connection record rebuilt per frame take and give back, and
    with how the client's frames coalesce into reads; the gate holds the
-   mean under a ceiling (101, the table owned through a request having
-   taken 107 to 99, 95.4 on the CI runner) as a ratchet, lowered when
-   the mean falls eight under it. Taking it towards zero is slice 8's, with the
-   per-stream bump budget.
+   mean under a ceiling as a ratchet, lowered when the mean falls eight
+   under it, since the mean moves with how the client's frames coalesce
+   into reads and so with the machine (the CI runner reads about three
+   under this one). Taking it towards zero is slice 8's, with the
+   per-stream bump budget: the first round took it from 99 to 72.4 under
+   a ceiling of 74 (the table owned through a request, in the slice
+   above, had taken 107 to 99),
+   the state machine updating its connection in place (a step's run
+   taken apart before the connection is rebuilt, so the planner moves
+   the record instead of copying it), the HPACK decode threaded through
+   one record instead of a record per integer and string read, a
+   response's fields written straight into the encoder (`begin`, `put`,
+   `finish`) with no `Field[]` built, the common status texts as
+   literals, and a frame's header written in one allocation. What is
+   left is the request handed over (its record, header map and strings),
+   the stream's slot, the HPACK fields, the frame payloads and the
+   response body's bytes.
 5. **h2spec nightly (landed).** `scripts/net-h2spec` on `net-nightly.yml`:
    h2spec 2.6.0 strict over h2c against `scripts/net-h2spec.d/server.fern`,
    146 cases, every one green or the job fails, the counts recorded under
