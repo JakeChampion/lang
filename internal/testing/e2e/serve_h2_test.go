@@ -85,7 +85,7 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
 }
 
 function main(): i32 {
-  let cfg: serve.Config = serve.Config { ...serve.config().with_h2(), stream_bodies: true };
+  let cfg: serve.Config = serve.Config { ...serve.config().with_h2(), stream_bodies: true, recv_deadline: time.duration_seconds(60 as i64) };
   match (env("H2_CERT")) {
     Some(cert_path) => {
       let cert: string = "";
@@ -131,10 +131,14 @@ function main(): i32 {
 
 // serveH2StateSource is `run_with` under `with_h2()`: a request count
 // threaded through the handler, which only the stateful loop can carry
-// from one request to the next.
+// from one request to the next. Both programs read with a 60 s deadline:
+// under the interpreter on a loaded runner a TLS handshake and its first
+// request have outrun the default 10 s, and the loop closed the
+// connection under the client.
 const serveH2StateSource = `import "std/http";
 import "std/platform";
 import "std/serve";
+import "std/time";
 import "core/int";
 
 function handle(n: i32, req: HttpRequest, plat: platform.Host): (i32, HttpResponse) {
@@ -142,7 +146,7 @@ function handle(n: i32, req: HttpRequest, plat: platform.Host): (i32, HttpRespon
 }
 
 function main(): i32 {
-  return serve.run_with(0, serve.config().with_h2(), 0, handle);
+  return serve.run_with(0, serve.Config { ...serve.config().with_h2(), recv_deadline: time.duration_seconds(60 as i64) }, 0, handle);
 }
 `
 
