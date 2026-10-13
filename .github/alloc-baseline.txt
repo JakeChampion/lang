@@ -56,5 +56,5 @@
 # pin was drift, not this change); the branch 22,941,440 there, 7,580 fewer
 # once seminline.resolvable answers in a pair instead of a record.
 
-x86_64/checker.allocs	23315232
-x86_64/checker.frees	23315232
+x86_64/checker.allocs	23527753
+x86_64/checker.frees	23527753

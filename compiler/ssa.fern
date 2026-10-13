@@ -3102,7 +3102,7 @@ function has_phi(b: SBlock): boolean {
 // phis from the edges as they now are. A block with phis keeps its list,
 // whose order the phis' operands follow, less the entries no edge backs any
 // more: a dropped block, or a folded branch that no longer comes this way.
-function refreshed_preds(f: SFunc): SBlock[] {
+pub function refreshed_preds(f: SFunc): SBlock[] {
   let at: i32[] = block_positions(f);
   let preds: i32[][] = [];
   let i: i32 = 0;
