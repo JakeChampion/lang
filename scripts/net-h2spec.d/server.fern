@@ -1,0 +1,94 @@
+// The server h2spec drives: std/serve with HTTP/2 on, answering every
+// request with a small body, so each conformance case sees a server that
+// takes the request it sends and answers the frames it checks.
+import "std/http";
+import "std/platform";
+import "std/serve";
+import "std/tls/identity";
+import "std/tls/server";
+import "core/int";
+
+function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
+  if (req.method == "POST") {
+    return http.text(200, "took " + int.int_to_string(req.body_bytes().len()) + " bytes");
+  }
+  return http.ok("hello");
+}
+
+function port(): i32 {
+  match (env("PORT")) {
+    Some(p) => {
+      match (int.parse_int_radix(p, 10)) {
+        Some(n) => {
+          return n;
+        },
+        None => {
+          return 8080;
+        }
+      }
+    },
+    None => {
+      return 8080;
+    }
+  }
+  return 8080;
+}
+
+// tls_config is the TLS the server speaks when TLS_CERT and TLS_KEY name
+// a certificate and its key, so h2spec can negotiate h2 by ALPN.
+function tls_config(cfg: serve.Config): Result[serve.Config, string] {
+  match (env("TLS_CERT")) {
+    Some(cert_path) => {
+      match (env("TLS_KEY")) {
+        Some(key_path) => {
+          let cert: string = "";
+          match (read_file(cert_path)) {
+            Ok(t) => {
+              cert = t;
+            },
+            Err(e) => {
+              return Err("TLS_CERT could not be read");
+            }
+          }
+          let key: string = "";
+          match (read_file(key_path)) {
+            Ok(t) => {
+              key = t;
+            },
+            Err(e) => {
+              return Err("TLS_KEY could not be read");
+            }
+          }
+          match (identity.from_pem(cert, key)) {
+            Ok(id) => {
+              return Ok(cfg.with_tls(server.config(id)));
+            },
+            Err(e) => {
+              return Err(e.message());
+            }
+          }
+        },
+        None => {
+          return Err("TLS_CERT without TLS_KEY");
+        }
+      }
+    },
+    None => {
+      return Ok(cfg);
+    }
+  }
+  return Ok(cfg);
+}
+
+function main(): i32 {
+  match (tls_config(serve.config().with_h2())) {
+    Ok(cfg) => {
+      return serve.run(port(), cfg, handle);
+    },
+    Err(message) => {
+      eprint(message);
+      return 2;
+    }
+  }
+  return 2;
+}

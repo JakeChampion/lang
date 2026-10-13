@@ -53,6 +53,13 @@ name: Net nightly
 # the script, against the Fern echo server with permessage-deflate on
 # (#9859). Every case passes or the job fails.
 #
+# The `h2spec` job runs scripts/net-h2spec: h2spec's strict conformance
+# cases (its generic set, HPACK, the valid connection preface and RFC 9113
+# §4 to §8) over prior-knowledge h2c against scripts/net-h2spec.d/server.fern,
+# std/serve with HTTP/2 on, h2spec at the release the script pins by hash
+# (#9860). Every case passes or the job fails; the counts are recorded like
+# the bench's.
+#
 # The `httplint` job runs scripts/net-httplint: one response of each shape
 # std/http and its middleware produce (a routed text and JSON API, a
 # redirect, a problem, a 405, an upload echoed, a compressed body, a static
@@ -257,4 +264,29 @@ jobs:
         with:
           name: httplint-report-x86_64
           path: ${{ runner.temp }}/httplint-report.txt
+          if-no-files-found: warn
+
+  h2spec:
+    name: net-h2spec-x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - name: Restore h2spec
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/fern-h2spec
+          key: h2spec-${{ runner.os }}-${{ hashFiles('scripts/net-h2spec') }}
+      - name: Run h2spec against the server
+        run: scripts/net-h2spec "${{ runner.temp }}/h2spec-report.txt"
+      - name: Record the report in refs/notes/perf
+        if: github.ref == 'refs/heads/main'
+        run: scripts/perf-history record net-h2spec "${{ runner.temp }}/h2spec-report.txt"
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: h2spec-report-x86_64
+          path: ${{ runner.temp }}/h2spec-report.txt
           if-no-files-found: warn

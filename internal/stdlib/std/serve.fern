@@ -118,6 +118,7 @@ import "std/i64";
 // core/int — int_to_string for the supervisor's worker-death log
 // lines (the raw exit code, straight to stderr).
 import "core/int";
+import "std/http/h2";
 
 // __recv_deadline_default() — default per-request read deadline for the
 // serve loops (10 s): the whole request (headers + body) must arrive
@@ -216,6 +217,9 @@ pub struct Config {
   proxy_protocol: boolean,
   metrics: metrics.Registry,
   metrics_port: i32,
+  // Whether a connection that opens with HTTP/2's preface (prior-knowledge
+  // h2c), or negotiates `h2` by ALPN under TLS, is served over HTTP/2.
+  h2: boolean,
 }
 
 // config() — the defaults: a backlog of 128, the port held
@@ -226,7 +230,7 @@ pub struct Config {
 // 30 s, no tracing, and
 // the parser's `http_limits()`, bodies read whole before the handler runs.
 pub function config(): Config {
-  return Config { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), background_deadline: time.duration_seconds(30 as i64), trace: false, proxy_protocol: false, metrics: metrics.registry(), metrics_port: 0 };
+  return Config { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), background_deadline: time.duration_seconds(30 as i64), trace: false, proxy_protocol: false, metrics: metrics.registry(), metrics_port: 0, h2: false };
 }
 
 // (c).with_tls(cfg) — every connection speaks TLS 1.3 under `cfg`
@@ -239,6 +243,16 @@ pub function config(): Config {
 // handshake as it bounds a request.
 pub function (c: Config) with_tls(cfg: server.Config): Config {
   return Config { ...c, tls: Some(cfg.with_alpn(["http/1.1"])) };
+}
+
+// (c).with_h2() — HTTP/2 served beside HTTP/1.1 (std/http/h2): a connection
+// that opens with the HTTP/2 connection preface is served over it, and under
+// TLS the protocols offered by ALPN are `h2` and `http/1.1`. The handler is
+// the same; a request's `:authority` arrives as its `host`. Each stream's
+// handler runs to its answer on the loop; `run_with`'s stateful loop serves
+// HTTP/1.1 only.
+pub function (c: Config) with_h2(): Config {
+  return Config { ...c, h2: true };
 }
 
 // run(port, opts, handler) — serve `handler` on `port` in this process,
@@ -449,13 +463,11 @@ function __recv_scratch(): u8[] {
 // flights a chunk producer's park staged during the event, and `later`
 // the background work of the responses it wrote
 // (`HttpResponse.background`), for the loop to take (`__staged_taken`)
-// once the event's work hands the connections back. `bodies` is each connection's streamed body while a
-// pull owns the read side (`__serve_stream`), None otherwise: what the
-// loop writes through when the session is lent (`__serve_send`), and
-// what an upgraded connection's producer flight carries. `metrics` is what
+// once the event's work hands the connections back. `framing` is what the
+// loop reads each connection's bytes as (`__Framing`). `metrics` is what
 // the loop counts about itself (std/metrics `ServerMetrics`): its cells are
 // shared by every copy of the value, so a count never needs the table back.
-struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], hosts: platform.Host[], tails: __Tail[], tls: __Tls[], bodies: Option[__Body][], last: http.HttpFramed, out: usize, lent: i32, parked: __Flight[], later: (() => void)[], metrics: metrics.ServerMetrics }
+struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], hosts: platform.Host[], tails: __Tail[], tls: __Tls[], framing: __Framing[], last: http.HttpFramed, out: usize, lent: i32, parked: __Flight[], later: (() => void)[], metrics: metrics.ServerMetrics }
 
 // __Tls — a connection's TLS: none; its session, through which every
 // byte read and written passes; lent to the handler pulling a streamed
@@ -463,6 +475,27 @@ struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: u8[][], deadlin
 // ends; or awaiting the PROXY protocol header (`Config.proxy_protocol`),
 // with the session to run once it has come and its bytes so far.
 enum __Tls { Plain, Secured(server.Session), Lent, Awaiting(Option[server.Session], u8[]) }
+
+// __Framing — what the loop reads a connection's bytes as: HTTP/1.1
+// requests; an HTTP/1.1 request whose streamed body a pull owns the read
+// side of (`__serve_stream`), the body the loop writes through when the
+// session is lent (`__serve_send`) and an upgraded connection's producer
+// flight carries; or HTTP/2 frames into the connection's state.
+enum __Framing { Http1, Pulling(__Body), Http2(h2.Conn) }
+
+// __pulling(c, at) — the streamed body a pull owns on the connection at
+// `at`, None when none does.
+function __pulling(c: __Conns, at: i32): Option[__Body] {
+  match (c.framing[at]) {
+    Pulling(body) => {
+      return Some(body);
+    },
+    _ => {
+      return None;
+    }
+  }
+  return None;
+}
 
 // __Tail — what of a response is still to be produced once its head and
 // the bytes pending have gone: nothing; a range of a file the loop reads
@@ -931,10 +964,10 @@ function __flight_filler[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], f
 function __tail_park[D: async.Driver](drv: D, c: __Conns, at: i32, producer: ChunkProducer, index: i32, end: string, t: async.Task[Option[u8[]]], w: async.Wait): __Conns {
   let none: i32[] = [];
   let now: i64 = monotonic_ns();
-  let fl: __Flight = __flight_watch(drv, __Flight { job: Producer(t), wait: w, fd: c.fds[at], set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: c.bodies[at], idle: __idle_due(producer, now), ends: 0 - 1 as i64 }, now);
-  match (c.bodies[at]) {
-    Some(b) => {},
-    None => {
+  let fl: __Flight = __flight_watch(drv, __Flight { job: Producer(t), wait: w, fd: c.fds[at], set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: __pulling(c, at), idle: __idle_due(producer, now), ends: 0 - 1 as i64, stream: 0, since: 0 - 1 as i64 }, now);
+  match (c.framing[at]) {
+    Pulling(b) => {},
+    _ => {
       drv.watch(c.fds[at], 1);
     }
   }
@@ -1012,7 +1045,7 @@ function __background_start[D: async.Driver](drv: D, fls: __Flight[], work: () =
     Suspended(w) => {
       let none: i32[] = [];
       let now: i64 = monotonic_ns();
-      return fls.append(__flight_watch(drv, __Flight { job: Background(t), wait: w, fd: 0 - 1, set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: None, idle: 0 - 1 as i64, ends: __bound_ends(opts.background_deadline, now) }, now));
+      return fls.append(__flight_watch(drv, __Flight { job: Background(t), wait: w, fd: 0 - 1, set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: None, idle: 0 - 1 as i64, ends: __bound_ends(opts.background_deadline, now), stream: 0, since: 0 - 1 as i64 }, now));
     },
     _ => {
       async.task_free(t);
@@ -1032,8 +1065,14 @@ function __background_run(work: () => void): i32 {
 // method and status. The metrics' cells take the count in place; the table
 // is only rebuilt when a method and status pair is seen for the first time.
 function __serve_count(c: __Conns, at: i32, method: string, status: i32): __Conns {
+  return __serve_count_from(c, method, status, c.rate_since[at]);
+}
+
+// __serve_count_from(c, method, status, since) — __serve_count from the
+// clock `since`, a parked flight's own (`__Flight.since`).
+function __serve_count_from(c: __Conns, method: string, status: i32, since: i64): __Conns {
   let m: metrics.ServerMetrics = c.metrics;
-  let grown: metrics.ServerMetrics = m.request(method, status, monotonic_ns() - c.rate_since[at]);
+  let grown: metrics.ServerMetrics = m.request(method, status, monotonic_ns() - since);
   if (grown.methods.len() == m.methods.len()) {
     return c;
   }
@@ -1095,7 +1134,7 @@ function __conns_add(c: __Conns, fd: i32, deadline: i64, peer: i32, host: platfo
     },
     _ => {}
   }
-  return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), keep: c.keep.append(keep), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), hosts: c.hosts.append(host), tails: c.tails.append(NoTail), tls: c.tls.append(tls), bodies: c.bodies.append(None), last: c.last, out: c.out, lent: c.lent, parked: c.parked, later: c.later, metrics: c.metrics };
+  return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), keep: c.keep.append(keep), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), hosts: c.hosts.append(host), tails: c.tails.append(NoTail), tls: c.tls.append(tls), framing: c.framing.append(Http1), last: c.last, out: c.out, lent: c.lent, parked: c.parked, later: c.later, metrics: c.metrics };
 }
 
 // __conns_from_peer(c, peer) — how many open connections the peer holds.
@@ -1127,7 +1166,7 @@ function __conns_remove(c: __Conns, at: i32): __Conns {
   let hosts: platform.Host[] = [];
   let tails: __Tail[] = [];
   let tls: __Tls[] = [];
-  let bodies: Option[__Body][] = [];
+  let framing: __Framing[] = [];
   let i: i32 = 0;
   while (i < c.fds.len()) {
     if (i != at) {
@@ -1148,11 +1187,11 @@ function __conns_remove(c: __Conns, at: i32): __Conns {
       hosts = hosts.append(c.hosts[i]);
       tails = tails.append(c.tails[i]);
       tls = tls.append(c.tls[i]);
-      bodies = bodies.append(c.bodies[i]);
+      framing = framing.append(c.framing[i]);
     }
     i = i + 1;
   }
-  return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base, send_since: send_since, send_base: send_base, peers: peers, hosts: hosts, tails: tails, tls: tls, bodies: bodies, last: c.last, out: c.out, lent: 0 - 1, parked: c.parked, later: c.later, metrics: c.metrics };
+  return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base, send_since: send_since, send_base: send_base, peers: peers, hosts: hosts, tails: tails, tls: tls, framing: framing, last: c.last, out: c.out, lent: 0 - 1, parked: c.parked, later: c.later, metrics: c.metrics };
 }
 
 // __conns_timeout(c, now) — the wait's timeout: the milliseconds until the
@@ -1245,7 +1284,11 @@ function __peer_of(fd: i32): Option[net.SocketAddr] {
 function __tls_session(opts: Config): Result[__Tls, server.TlsError] {
   match (opts.tls) {
     Some(cfg) => {
-      let sess: server.Session = server.start(cfg)?;
+      let offered: server.Config = cfg;
+      if (opts.h2) {
+        offered = cfg.with_alpn(["h2", "http/1.1"]);
+      }
+      let sess: server.Session = server.start(offered)?;
       return Ok(Secured(sess));
     },
     None => {
@@ -1867,6 +1910,248 @@ function __serve_drain[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Confi
   return (ready.0, at);
 }
 
+// === HTTP/2 ================================================================
+
+const H2_NOT: i32 = 0;
+
+const H2_SERVED: i32 = 1;
+
+const H2_AWAITED: i32 = 2;
+
+// __h2_mode(c, at, opts) — whether the connection at `at` is served over
+// HTTP/2: it already is; or, with `Config.h2`, a fresh connection whose
+// first bytes are the connection preface (RFC 9113 §3.4), which is awaited
+// while the bytes so far are a prefix of it.
+function __h2_mode(c: __Conns, at: i32, opts: Config): i32 {
+  match (c.framing[at]) {
+    Http2(conn) => {
+      return H2_SERVED;
+    },
+    _ => {}
+  }
+  if (!opts.h2 || c.served[at] > 0) {
+    return H2_NOT;
+  }
+  if (__alpn_h2(c, at)) {
+    return H2_SERVED;
+  }
+  let buf: u8[] = c.bufs[at];
+  let from: i32 = c.offs[at];
+  let want: u8[] = h2.preface();
+  let i: i32 = 0;
+  while (i < want.len() && from + i < buf.len()) {
+    if (buf[from + i] != want[i]) {
+      return H2_NOT;
+    }
+    i = i + 1;
+  }
+  if (buf.len() - from < want.len()) {
+    return H2_AWAITED;
+  }
+  return H2_SERVED;
+}
+
+// __alpn_h2(c, at) — whether a TLS client chose h2 by ALPN: it is HTTP/2's
+// whatever it sends first, so a bad preface is answered with GOAWAY, not
+// as HTTP/1.1.
+function __alpn_h2(c: __Conns, at: i32): boolean {
+  match (c.tls[at]) {
+    Secured(sess) => {
+      return sess.alpn() == "h2";
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// __h2_config(opts) — the HTTP/2 connection's bounds from the loop's.
+function __h2_config(opts: Config): h2.Config {
+  return h2.Config { ...h2.config(), max_header_list: opts.limits.header_bytes, max_body: opts.limits.body, max_concurrent_streams: opts.max_in_flight };
+}
+
+// __serve_h2(drv, c, fls, at, handler, opts, stop, eof) — an HTTP/2
+// connection's turn: the bytes read go into its state machine (a new one
+// for a connection that just sent the preface, with the server's SETTINGS
+// first), each request it hands over starts the handler as HTTP/1.1's path
+// does, answered on its stream when it returns and parked as a flight on
+// the connection and the stream when it suspends, and what the connection
+// has to say goes out through the loop's write path, pending bytes and
+// all. The connection closes once the state machine has closed it, or the
+// peer has finished.
+function __serve_h2[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32, handler: (HttpRequest, platform.Host) => HttpResponse, opts: Config, stop: __Stop, eof: boolean): (__Conns, __Flight[]) {
+  let opened: h2.Step = __h2_opened(c, at, opts);
+  let conn: h2.Conn = opened.conn;
+  let bytes: u8[] = __bytes_from(c.bufs[at], c.offs[at]);
+  let lent: i32 = c.lent;
+  if (lent == at) {
+    lent = 0 - 1;
+  }
+  c = __Conns { ...c, bufs: c.bufs.with(at, []), offs: c.offs.with(at, 0), lent: lent };
+  let step: h2.Step = conn.read(bytes);
+  let answered: __H2Answered = __h2_answered(drv, __H2Answered { conn: step.conn, conns: c, fls: fls, out: opened.output.concat(step.output) }, step.events, at, handler, opts, stop);
+  conn = answered.conn;
+  c = __Conns { ...answered.conns, framing: answered.conns.framing.with(at, Http2(conn)), keep: answered.conns.keep.with(at, !conn.closed() && !eof) };
+  return __h2_flushed(drv, c, answered.fls, at, answered.out, opts, conn.closed() || eof);
+}
+
+// __h2_flushed(drv, c, fls, at, out, opts, closing) — `out` sent on the
+// HTTP/2 connection at `at`; the connection closed, its flights with it,
+// when `closing` or the write failed; a short write left pending for a
+// later wait; otherwise the connection's next state, its deadline held
+// while a flight is parked on one of its streams.
+function __h2_flushed[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32, out: u8[], opts: Config, closing: boolean): (__Conns, __Flight[]) {
+  if (out.len() > 0) {
+    let sent: (__Conns, __Sent) = __serve_send(drv, c, at, out, opts);
+    c = sent.0;
+    match (sent.1) {
+      Partial => {
+        return (c, fls);
+      },
+      Failed => {
+        return __h2_close(drv, c, fls, at);
+      },
+      Whole => {}
+    }
+  }
+  if (closing) {
+    return __h2_close(drv, c, fls, at);
+  }
+  c = __serve_next(c, at, opts);
+  if (__flight_at(fls, c.fds[at]) >= 0) {
+    c = __Conns { ...c, deadlines: c.deadlines.with(at, __held_deadline()) };
+  }
+  return (c, fls);
+}
+
+// __h2_close(drv, c, fls, at) — the HTTP/2 connection at `at` closed and
+// the flights parked on its streams cancelled: their answers have nowhere
+// to go.
+function __h2_close[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32): (__Conns, __Flight[]) {
+  let fd: i32 = c.fds[at];
+  let kept: __Flight[] = [];
+  for fl in fls {
+    if (fl.fd == fd) {
+      __flight_cancel(drv, fl);
+    } else {
+      kept = kept.append(fl);
+    }
+  }
+  return (__serve_close(drv, c, at), kept);
+}
+
+// __h2_turn(drv, c, fls, at, handler, opts, stop, eof, mode) — the
+// connection's turn when it is not HTTP/1.1's: served over HTTP/2
+// (`__serve_h2`), or left as it is while its first bytes are still a
+// prefix of the preface.
+function __h2_turn[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32, handler: (HttpRequest, platform.Host) => HttpResponse, opts: Config, stop: __Stop, eof: boolean, mode: i32): (__Conns, __Flight[]) {
+  if (mode == H2_SERVED) {
+    return __serve_h2(drv, c, fls, at, handler, opts, stop, eof);
+  }
+  return (c, fls);
+}
+
+// __http1_parked(c, fls, fd) — the flight parked on connection `fd` while
+// it is HTTP/1.1's, which takes no other request until the flight
+// answers, -1 for none; an HTTP/2 connection's flights park per stream, so
+// an event on it is read as any other and this is -1 for it too.
+function __http1_parked(c: __Conns, fls: __Flight[], fd: i32): i32 {
+  let busy: i32 = __flight_at(fls, fd);
+  if (busy < 0) {
+    return busy;
+  }
+  let at: i32 = __conns_index(c, fd);
+  if (at < 0) {
+    return busy;
+  }
+  match (c.framing[at]) {
+    Http2(conn) => {
+      return -1;
+    },
+    _ => {
+      return busy;
+    }
+  }
+  return busy;
+}
+
+// __h2_opened(c, at, opts) — the connection's HTTP/2 state machine, or a
+// new one with the SETTINGS it opens with for a connection that just sent
+// the preface.
+function __h2_opened(c: __Conns, at: i32, opts: Config): h2.Step {
+  match (c.framing[at]) {
+    Http2(open) => {
+      return h2.Step { conn: open, output: [], events: [] };
+    },
+    _ => {
+      return h2.server(__h2_config(opts));
+    }
+  }
+  return h2.server(__h2_config(opts));
+}
+
+// __H2Answered — an HTTP/2 connection as its requests are answered: the
+// state machine, the loop's table with the requests counted, the flights
+// with the handlers that parked, and the bytes to send.
+struct __H2Answered { conn: h2.Conn, conns: __Conns, fls: __Flight[], out: u8[] }
+
+// __h2_answered(drv, a, events, at, handler, opts, stop) — every request
+// the step handed over started through the handler (`__h2_request`).
+function __h2_answered[D: async.Driver](drv: D, a: __H2Answered, events: h2.Event[], at: i32, handler: (HttpRequest, platform.Host) => HttpResponse, opts: Config, stop: __Stop): __H2Answered {
+  for e in events {
+    match (e) {
+      h2.Request(stream, req) => {
+        a = __h2_request(drv, a, at, stream, req, handler, opts, stop);
+      },
+      _ => {}
+    }
+  }
+  return a;
+}
+
+// __h2_request(drv, a, at, stream, req, handler, opts, stop) — the request
+// on `stream` started as `__serve_start` starts HTTP/1.1's (a stopping
+// loop's readiness probe answered 503, the request's host and deadline
+// set): its response written on the stream and counted when the handler
+// returns; the flight parked on the connection and the stream when it
+// suspends, to answer when it wakes (`__h2_answer`).
+function __h2_request[D: async.Driver](drv: D, a: __H2Answered, at: i32, stream: i32, req: HttpRequest, handler: (HttpRequest, platform.Host) => HttpResponse, opts: Config, stop: __Stop): __H2Answered {
+  let conns: __Conns = __serve_started(a.conns, at);
+  let f: http.HttpFramed = http.HttpFramed { request: req, len: 0, keep_alive: true, version: "HTTP/2" };
+  match (__serve_start(handler, conns.hosts[at], f, true, Idle, opts, stop)) {
+    HandlerDone(resp) => {
+      conns = __serve_count(conns, at, req.method, resp.status);
+      let step: h2.Step = a.conn.respond(stream, resp);
+      return __H2Answered { conn: step.conn, conns: conns, fls: a.fls, out: a.out.concat(step.output) };
+    },
+    HandlerParked(fl) => {
+      let parked: __Flight = __Flight { ...fl, fd: conns.fds[at], stream: stream, since: conns.rate_since[at] };
+      return __H2Answered { ...a, conns: conns, fls: a.fls.append(__flight_watch(drv, parked, monotonic_ns())) };
+    }
+  }
+  return __H2Answered { ...a, conns: conns };
+}
+
+// __h2_answer(drv, c, fls, at, fl, resp, opts) — a woken flight's response
+// written on its stream of the HTTP/2 connection at `at` and counted from
+// the clock the flight kept; dropped when the connection is no longer
+// HTTP/2's, its descriptor reused.
+function __h2_answer[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32, fl: __Flight, resp: HttpResponse, opts: Config): (__Conns, __Flight[]) {
+  match (c.framing[at]) {
+    Http2(conn) => {
+      let step: h2.Step = conn.respond(fl.stream, resp);
+      c = __serve_count_from(c, fl.method, resp.status, fl.since);
+      c = __Conns { ...c, framing: c.framing.with(at, Http2(step.conn)) };
+      return __h2_flushed(drv, c, fls, at, step.output, opts, step.conn.closed());
+    },
+    _ => {
+      return (c, fls);
+    }
+  }
+  return (c, fls);
+}
+
 // __serve_eof(drv, c, at, opts, clk) — the peer has finished sending: a
 // response still draining goes out and then closes the connection; a
 // request the peer left incomplete is answered 400 and closed; anything
@@ -2009,8 +2294,8 @@ function __serve_send[D: async.Driver](drv: D, c: __Conns, at: i32, payload: u8[
 // __lent_closed(c, at) — the close alert of the session a pull holds for
 // the connection at `at`, written as the connection closes.
 function __lent_closed(c: __Conns, at: i32): void {
-  match (c.bodies[at]) {
-    Some(body) => {
+  match (c.framing[at]) {
+    Pulling(body) => {
       match (body.tls.get()) {
         Some(sess) => {
           body.tls.set(None);
@@ -2021,7 +2306,7 @@ function __lent_closed(c: __Conns, at: i32): void {
         None => {}
       }
     },
-    None => {}
+    _ => {}
   }
 }
 
@@ -2030,8 +2315,8 @@ function __lent_closed(c: __Conns, at: i32): void {
 // in its cell; None when the session refuses it, or the connection has
 // no body to hold one.
 function __lent_sealed(c: __Conns, at: i32, payload: u8[]): Option[u8[]] {
-  match (c.bodies[at]) {
-    Some(body) => {
+  match (c.framing[at]) {
+    Pulling(body) => {
       match (body.tls.get()) {
         Some(sess) => {
           match (sess.write(payload)) {
@@ -2049,7 +2334,7 @@ function __lent_sealed(c: __Conns, at: i32, payload: u8[]): Option[u8[]] {
         }
       }
     },
-    None => {
+    _ => {
       return Some(payload);
     }
   }
@@ -2854,7 +3139,7 @@ function __body_live(fl: __Flight): boolean {
 // again, and a connection whose body was not read whole does not persist,
 // since what is left of the body would be read as the next request.
 function __body_settled[D: async.Driver](drv: D, c: __Conns, at: i32, body: __Body): __Conns {
-  c = __tls_back(__Conns { ...c, bodies: c.bodies.with(at, None) }, at, body);
+  c = __tls_back(__Conns { ...c, framing: c.framing.with(at, Http1) }, at, body);
   let rest: u8[] = body.rest.get();
   if (rest.len() > 0) {
     c = __Conns { ...c, bufs: c.bufs.with(at, rest.concat(__bytes_from(c.bufs[at], c.offs[at]))), offs: c.offs.with(at, 0) };
@@ -2958,7 +3243,7 @@ function __serve_stream[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at
   let req: HttpRequest = HttpRequest { ...h.request, body: stream.stream_from_source(src) };
   let served: i32 = c.served[at] + 1;
   let keep: boolean = h.keep_alive && served < opts.keep_alive_requests && !__serve_stopping(stop);
-  c = __Conns { ...c, offs: c.offs.with(at, buf.len()), served: c.served.with(at, served), backlog: c.backlog.with(at, false), continued: c.continued.with(at, false), keep: c.keep.with(at, keep), bodies: c.bodies.with(at, Some(body)) };
+  c = __Conns { ...c, offs: c.offs.with(at, buf.len()), served: c.served.with(at, served), backlog: c.backlog.with(at, false), continued: c.continued.with(at, false), keep: c.keep.with(at, keep), framing: c.framing.with(at, Pulling(body)) };
   let f: http.HttpFramed = http.HttpFramed { request: req, len: 0, keep_alive: keep, version: h.version };
   c = __serve_started(c, at);
   match (start(f, keep, stop, c.hosts[at])) {
@@ -2997,7 +3282,12 @@ function __serve_stream[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at
 // read. `idle` is the monotonic nanosecond a parked producer's filler is
 // next due at (`ChunkProducer.idle_ms`), -1 for none, and `ends` the one
 // a handler's request is due by (`Config.handler_deadline`), -1 for none.
-struct __Flight { job: __Job, wait: async.Wait, fd: i32, set: i32[], due: i64, method: string, version: string, kept: boolean, behind: __Behind, body: Option[__Body], idle: i64, ends: i64 }
+// `stream` is the HTTP/2 stream the request came on, 0 for HTTP/1.1's,
+// whose connection takes no other request while the flight is parked;
+// an HTTP/2 connection serves its other streams meanwhile, so `since`
+// keeps the request's clock (`rate_since`) as the flight parked, what its
+// answer is counted from.
+struct __Flight { job: __Job, wait: async.Wait, fd: i32, set: i32[], due: i64, method: string, version: string, kept: boolean, behind: __Behind, body: Option[__Body], idle: i64, ends: i64, stream: i32, since: i64 }
 
 // __Job — the task a flight runs: a handler, whose response the flight
 // answers, a response's chunk producer (`__tail_park`), whose chunk
@@ -3041,7 +3331,7 @@ function __serve_start(handler: (HttpRequest, platform.Host) => HttpResponse, pl
     },
     Suspended(w) => {
       let none: i32[] = [];
-      return HandlerParked(__Flight { job: Handler(async.call_of(w, handler, req, plat)), wait: w, fd: 0, set: none, due: 0 - 1 as i64, method: req.method, version: f.version, kept: kept, behind: behind, body: None, idle: 0 - 1 as i64, ends: ends });
+      return HandlerParked(__Flight { job: Handler(async.call_of(w, handler, req, plat)), wait: w, fd: 0, set: none, due: 0 - 1 as i64, method: req.method, version: f.version, kept: kept, behind: behind, body: None, idle: 0 - 1 as i64, ends: ends, stream: 0, since: 0 - 1 as i64 });
     },
     Cancelled => {}
   }
@@ -3121,7 +3411,7 @@ function __serve_park[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: 
       _ => {}
     }
   }
-  return (__Conns { ...c, deadlines: c.deadlines.with(at, __held_deadline()) }, fls.append(__Flight { ...fl, fd: fd }));
+  return (__Conns { ...c, deadlines: c.deadlines.with(at, __held_deadline()) }, fls.append(__Flight { ...fl, fd: fd, since: c.rate_since[at] }));
 }
 
 // __held_deadline() — the read deadline of a connection whose handler is
@@ -3229,7 +3519,7 @@ function __handler_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fl
   match (async.call_resume(call, ready)) {
     Done(resp) => {
       async.call_free(call);
-      return (__serve_answer(drv, c, fl, __in_time(resp, fl.ends, monotonic_ns()), opts, clk), fls);
+      return __serve_answer(drv, c, fls, fl, __in_time(resp, fl.ends, monotonic_ns()), opts, clk);
     },
     Suspended(w) => {
       return (c, fls.append(__flight_watch(drv, __Flight { ...fl, wait: w }, monotonic_ns())));
@@ -3256,21 +3546,25 @@ function __background_wake[D: async.Driver](drv: D, fls: __Flight[], fl: __Fligh
   return fls;
 }
 
-// __serve_answer(drv, c, fl, resp, opts, clk) — the flight's response
+// __serve_answer(drv, c, fls, fl, resp, opts, clk) — the flight's response
 // written on its connection, outside any burst (so it is never corked),
 // and the request behind it, if one is framed, left as the connection's
-// backlog for the next pass. A connection that went away meanwhile drops
-// the response.
-function __serve_answer[D: async.Driver](drv: D, c: __Conns, fl: __Flight, resp: HttpResponse, opts: Config, clk: __Clock): __Conns {
+// backlog for the next pass; on its stream of an HTTP/2 connection
+// (`__h2_answer`). A connection that went away meanwhile drops the
+// response.
+function __serve_answer[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fl: __Flight, resp: HttpResponse, opts: Config, clk: __Clock): (__Conns, __Flight[]) {
   let at: i32 = __conns_index(c, fl.fd);
   if (at < 0) {
-    return c;
+    return (c, fls);
+  }
+  if (fl.stream > 0) {
+    return __h2_answer(drv, c, fls, at, fl, resp, opts);
   }
   let behind: __Behind = fl.behind;
   match (fl.body) {
     Some(b) => {
       if (__upgrading(resp)) {
-        return __serve_respond(drv, c, at, fl.method, fl.version, resp, false, opts, __pipeline_burst(), Idle, clk).0;
+        return (__serve_respond(drv, c, at, fl.method, fl.version, resp, false, opts, __pipeline_burst(), Idle, clk).0, fls);
       }
       c = __body_settled(drv, c, at, b);
       behind = __serve_behind(http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits, c.last), c.last).0;
@@ -3278,7 +3572,7 @@ function __serve_answer[D: async.Driver](drv: D, c: __Conns, fl: __Flight, resp:
     None => {}
   }
   let answered: (__Conns, boolean) = __serve_respond(drv, c, at, fl.method, fl.version, resp, fl.kept && c.keep[at], opts, __pipeline_burst(), behind, clk);
-  return __serve_finish(drv, answered.0, fl.fd, false, opts, clk);
+  return (__serve_finish(drv, answered.0, fl.fd, false, opts, clk), fls);
 }
 
 // __upgrading(resp) — whether the response takes the connection over: a
@@ -3521,7 +3815,7 @@ function __flight_overdue[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], 
   fls = __flights_remove(fls, i);
   match (late.job) {
     Handler(call) => {
-      return (__serve_answer(drv, c, late, http.text(503, ""), opts, clk), fls);
+      return __serve_answer(drv, c, fls, late, http.text(503, ""), opts, clk);
     },
     _ => {}
   }
@@ -3576,7 +3870,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts);
   let host_for: (Option[net.SocketAddr]) => platform.Host = (peer: Option[net.SocketAddr]): platform.Host => plat.with_peer(peer);
-  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], bodies: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics() };
+  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics() };
   let flights: __Flight[] = [];
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, line: "" };
@@ -3626,7 +3920,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
         flights = taken.1;
         continue;
       }
-      let busy: i32 = __flight_at(flights, fd);
+      let busy: i32 = __http1_parked(conns, flights, fd);
       if (busy >= 0) {
         let held: (__Conns, __Flight[]) = __serve_held_event(drv, conns, flights, busy, fd, readiness, scratch, opts);
         conns = held.0;
@@ -3640,6 +3934,13 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
       conns = ev.0;
       let at: i32 = ev.1;
       if (at < 0) {
+        continue;
+      }
+      let mode: i32 = __h2_mode(conns, at, opts);
+      if (mode != H2_NOT) {
+        let served: (__Conns, __Flight[]) = __h2_turn(drv, conns, flights, at, handler, opts, stop, ev.2, mode);
+        conns = served.0;
+        flights = served.1;
         continue;
       }
       let more: boolean = true;
@@ -3759,7 +4060,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts);
   let host_for: (Option[net.SocketAddr]) => platform.Host = (peer: Option[net.SocketAddr]): platform.Host => plat.with_peer(peer);
-  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], bodies: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics() };
+  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics() };
   let flights: __Flight[] = [];
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, line: "" };

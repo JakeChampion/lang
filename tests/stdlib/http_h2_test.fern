@@ -1,0 +1,458 @@
+import "std/test";
+import "std/http";
+import "std/http/h2";
+import "std/http/h2/frame";
+import "std/http/hpack";
+import "std/headers";
+import "std/hex";
+import "core/int";
+
+// tests/stdlib/http_h2_test.fern — std/http/h2, the server's HTTP/2
+// connection, driven as a client drives it: the preface and settings, a
+// request answered, a body and trailers each way, flow control at both
+// levels, the four attack classes refused, every malformed request reset
+// and every malformed connection closed, and the control frames.
+
+// Client — the test's client: the HPACK encoder its blocks come from and
+// the decoder the server's blocks go through.
+struct Client { enc: hpack.Encoder, dec: hpack.Decoder }
+
+function client(): Client {
+  return Client { enc: hpack.encoder(4096), dec: hpack.decoder(4096, 65536) };
+}
+
+// Opened — a connection past its preface and settings, the client beside
+// it, and what the server said so far.
+struct Opened { conn: h2.Conn, client: Client, output: u8[], events: h2.Event[] }
+
+// opened runs the server through the client's preface and empty SETTINGS,
+// and returns both sides.
+function opened(cfg: h2.Config): Opened {
+  let start: h2.Step = h2.server(cfg);
+  let step: h2.Step = start.conn.read(frame.preface().concat(frame.encode(frame.Settings(false, []))));
+  return Opened { conn: step.conn, client: client(), output: start.output.concat(step.output), events: step.events };
+}
+
+// request is a request's HEADERS frame, END_HEADERS set and END_STREAM as
+// asked, with its block from the client's encoder.
+function request(c: Client, stream: i32, fields: hpack.Field[], end_stream: boolean): (Client, u8[]) {
+  let enc: hpack.Encoded = c.enc.encode(fields);
+  return (Client { ...c, enc: enc.encoder }, frame.encode(frame.Headers(frame.HeadersFrame { stream: stream, end_stream: end_stream, end_headers: true, priority: None, block: enc.bytes, padding: 0 })));
+}
+
+function get(path: string): hpack.Field[] {
+  return [hpack.field(":method", "GET"), hpack.field(":scheme", "http"), hpack.field(":path", path), hpack.field(":authority", "example.test")];
+}
+
+function post(path: string, length: string): hpack.Field[] {
+  return [hpack.field(":method", "POST"), hpack.field(":scheme", "http"), hpack.field(":path", path), hpack.field(":authority", "example.test"), hpack.field("content-length", length)];
+}
+
+function data(stream: i32, body: string, end_stream: boolean): u8[] {
+  return frame.encode(frame.Data(frame.DataFrame { stream: stream, end_stream: end_stream, data: body.bytes(), padding: 0 }));
+}
+
+// Shown — the server's output read back as frames described in text, the
+// client's decoder having read each header block.
+struct Shown { client: Client, text: string }
+
+function shown(c: Client, output: u8[]): Shown {
+  let cl: Client = c;
+  let text: string = "";
+  let at: i32 = 0;
+  while (at < output.len()) {
+    match (frame.read(output, at, frame.MAX_FRAME_SIZE)) {
+      Ok(got) => {
+        match (got) {
+          frame.Got(f, n) => {
+            let d: Shown = describe(cl, f);
+            cl = d.client;
+            text = text + d.text + "\n";
+            at = at + n;
+          },
+          frame.More => {
+            return Shown { client: cl, text: text + "partial\n" };
+          }
+        }
+      },
+      Err(e) => {
+        return Shown { client: cl, text: text + e.message() + "\n" };
+      }
+    }
+  }
+  return Shown { client: cl, text: text };
+}
+
+function flag(on: boolean, name: string): string {
+  if (on) {
+    return " " + name;
+  }
+  return "";
+}
+
+function fields_text(fs: hpack.Field[]): string {
+  let out: string = "";
+  for f in fs {
+    out = out + " " + f.name + "=" + f.value;
+  }
+  return out;
+}
+
+function describe(c: Client, f: frame.Frame): Shown {
+  match (f) {
+    frame.Data(d) => {
+      return Shown { client: c, text: "DATA " + int.int_to_string(d.stream) + flag(d.end_stream, "END_STREAM") + " " + string_from_bytes_unchecked(d.data) };
+    },
+    frame.Headers(h) => {
+      match (c.dec.decode(h.block)) {
+        Ok(got) => {
+          return Shown { client: Client { ...c, dec: got.decoder }, text: "HEADERS " + int.int_to_string(h.stream) + flag(h.end_stream, "END_STREAM") + flag(h.end_headers, "END_HEADERS") + fields_text(got.fields) };
+        },
+        Err(e) => {
+          return Shown { client: c, text: "HEADERS " + int.int_to_string(h.stream) + " " + e.message() };
+        }
+      }
+    },
+    frame.Continuation(stream, end_headers, block) => {
+      return Shown { client: c, text: "CONTINUATION " + int.int_to_string(stream) + flag(end_headers, "END_HEADERS") + " " + int.int_to_string(block.len()) + " bytes" };
+    },
+    frame.RstStream(stream, code) => {
+      return Shown { client: c, text: "RST_STREAM " + int.int_to_string(stream) + " " + int.int_to_string(code) };
+    },
+    frame.Settings(ack, settings) => {
+      let out: string = "SETTINGS" + flag(ack, "ACK");
+      for s in settings {
+        out = out + " " + int.int_to_string(s.id) + "=" + int.int_to_string(s.value);
+      }
+      return Shown { client: c, text: out };
+    },
+    frame.Ping(ack, bytes) => {
+      return Shown { client: c, text: "PING" + flag(ack, "ACK") + " " + hex.hex_encode(bytes) };
+    },
+    frame.GoAway(g) => {
+      return Shown { client: c, text: "GOAWAY last " + int.int_to_string(g.last_stream) + " " + int.int_to_string(g.code) + " " + string_from_bytes_unchecked(g.debug) };
+    },
+    frame.WindowUpdate(stream, increment) => {
+      return Shown { client: c, text: "WINDOW_UPDATE " + int.int_to_string(stream) + " +" + int.int_to_string(increment) };
+    },
+    _ => {
+      return Shown { client: c, text: "OTHER" };
+    }
+  }
+  return Shown { client: c, text: "" };
+}
+
+function events_text(events: h2.Event[]): string {
+  let out: string = "";
+  for e in events {
+    match (e) {
+      h2.Request(stream, req) => {
+        out = out + "request " + int.int_to_string(stream) + " " + req.method + " " + req.path + " host=" + header_or(req.headers, "host") + " body=" + string_from_bytes_unchecked(req.body_bytes()) + " trailer=" + header_or(req.trailers, "checksum") + "\n";
+      },
+      h2.Reset(stream, code) => {
+        out = out + "reset " + int.int_to_string(stream) + " " + int.int_to_string(code) + "\n";
+      },
+      h2.GoAway(code) => {
+        out = out + "goaway " + int.int_to_string(code) + "\n";
+      },
+      h2.Closed(code, reason) => {
+        out = out + "closed " + int.int_to_string(code) + " " + reason + "\n";
+      }
+    }
+  }
+  return out;
+}
+
+function header_or(h: HeaderMap, name: string): string {
+  match (h.get(name)) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return "-";
+    }
+  }
+  return "-";
+}
+
+// The server opens with its settings; a client's preface and settings are
+// acknowledged; anything but the preface, or a first frame that is not
+// SETTINGS, closes the connection.
+function test_preface_and_settings(): test.TestOutcome {
+  let o: Opened = opened(h2.config());
+  let got: string = shown(o.client, o.output).text + events_text(o.events);
+  if (got != "SETTINGS 1=4096 2=0 3=100 4=65535 5=16384 6=65536\nSETTINGS ACK\n") {
+    return test.fail(got);
+  }
+  let bad: h2.Step = h2.server(h2.config()).conn.read("GET / HTTP/1.1\r\n".bytes());
+  let no_settings: h2.Step = h2.server(h2.config()).conn.read(frame.preface().concat(frame.encode(frame.Ping(false, [0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8]))));
+  got = shown(client(), bad.output).text + events_text(bad.events) + shown(client(), no_settings.output).text + events_text(no_settings.events);
+  return test.assert_eq(got, "GOAWAY last 0 1 not the HTTP/2 connection preface\nclosed 1 not the HTTP/2 connection preface\nGOAWAY last 0 1 the first frame is not SETTINGS\nclosed 1 the first frame is not SETTINGS\n");
+}
+
+// A GET becomes a request with the authority as its host; the response
+// goes as HEADERS and one DATA with END_STREAM, and the stream is gone.
+function test_request_and_response(): test.TestOutcome {
+  let o: Opened = opened(h2.config());
+  let (cl, bytes) = request(o.client, 1, get("/hello?x=1"), true);
+  let step: h2.Step = o.conn.read(bytes);
+  let got: string = events_text(step.events) + "handling " + int.int_to_string(step.conn.handling()) + "\n";
+  let answered: h2.Step = step.conn.respond(1, http.ok("hi").with_header("Content-Type", "text/plain").with_header("Connection", "close"));
+  let s: Shown = shown(cl, step.output.concat(answered.output));
+  got = got + s.text + "open " + int.int_to_string(answered.conn.streams_open()) + " handling " + int.int_to_string(answered.conn.handling());
+  return test.assert_eq(got, "request 1 GET /hello?x=1 host=example.test body= trailer=-\nhandling 1\nHEADERS 1 END_HEADERS :status=200 content-type=text/plain content-length=2\nDATA 1 END_STREAM hi\nopen 0 handling 0");
+}
+
+// A POST's body arrives in DATA frames and ends with trailers; a body
+// that is not its content-length is a stream error; a response carrying
+// trailers ends with a HEADERS frame.
+function test_bodies_and_trailers(): test.TestOutcome {
+  let o: Opened = opened(h2.config());
+  let (cl, head) = request(o.client, 1, post("/upload", "5"), false);
+  let trailers: hpack.Encoded = cl.enc.encode([hpack.field("checksum", "abc")]);
+  let cl2: Client = Client { ...cl, enc: trailers.encoder };
+  let bytes: u8[] = head.concat(data(1, "hel", false)).concat(data(1, "lo", false)).concat(frame.encode(frame.Headers(frame.HeadersFrame { stream: 1, end_stream: true, end_headers: true, priority: None, block: trailers.bytes, padding: 0 })));
+  let step: h2.Step = o.conn.read(bytes);
+  let got: string = events_text(step.events);
+  let resp: HttpResponse = HttpResponse { status: 200, body: BodyText("done"), headers: headers.header_map_new(), trailers: headers.header_map_new().append("Grpc-Status", "0"), background: None };
+  let answered: h2.Step = step.conn.respond(1, resp);
+  let s: Shown = shown(cl2, step.output.concat(answered.output));
+  got = got + s.text;
+  let (cl3, short) = request(cl2, 3, post("/upload", "5"), false);
+  let wrong: h2.Step = answered.conn.read(short.concat(data(3, "hi", true)));
+  got = got + shown(cl3, wrong.output).text + events_text(wrong.events) + "open " + int.int_to_string(wrong.conn.streams_open());
+  return test.assert_eq(got, "request 1 POST /upload host=example.test body=hello trailer=abc\nHEADERS 1 END_HEADERS :status=200\nDATA 1 done\nHEADERS 1 END_STREAM END_HEADERS grpc-status=0\nRST_STREAM 3 1\nopen 0");
+}
+
+// The client's initial window bounds each DATA frame; a WINDOW_UPDATE on
+// the stream lets the rest go; the connection window bounds all streams
+// together; a header block past the peer's frame size spans CONTINUATION
+// frames.
+function test_flow_control(): test.TestOutcome {
+  let o: Opened = opened(h2.config());
+  let narrowed: h2.Step = o.conn.read(frame.encode(frame.Settings(false, [frame.Setting { id: frame.SETTINGS_INITIAL_WINDOW_SIZE, value: 4 }])));
+  let (cl, bytes) = request(o.client, 1, get("/"), true);
+  let step: h2.Step = narrowed.conn.read(bytes);
+  let answered: h2.Step = step.conn.respond(1, http.ok("hello world"));
+  let widened: h2.Step = answered.conn.read(frame.encode(frame.WindowUpdate(1, 3)));
+  let rest: h2.Step = widened.conn.read(frame.encode(frame.WindowUpdate(1, 100)));
+  let s: Shown = shown(cl, narrowed.output.concat(answered.output).concat(widened.output).concat(rest.output));
+  let got: string = s.text + "open " + int.int_to_string(rest.conn.streams_open()) + "\n";
+  // The connection window: 65535 shared, so a second response past it
+  // waits on a connection-level WINDOW_UPDATE.
+  let big: u8[] = __alloc_u8(65535);
+  let (cl2, b3) = request(s.client, 3, get("/big"), true);
+  let (cl3, b5) = request(cl2, 5, get("/small"), true);
+  let two: h2.Step = rest.conn.read(frame.encode(frame.Settings(false, [frame.Setting { id: frame.SETTINGS_INITIAL_WINDOW_SIZE, value: 65535 }])).concat(b3).concat(b5));
+  let first: h2.Step = two.conn.respond(3, http.ok(string_from_bytes_unchecked(big)));
+  let second: h2.Step = first.conn.respond(5, http.ok("tail"));
+  // The connection window is 11 bytes short after the first response, so
+  // the big body stops 11 short, the small stream waits behind it, and
+  // each connection-level WINDOW_UPDATE lets the next bytes go in order.
+  let freed: h2.Step = second.conn.read(frame.encode(frame.WindowUpdate(0, 10)));
+  let freed_more: h2.Step = freed.conn.read(frame.encode(frame.WindowUpdate(0, 100)));
+  let s2: Shown = shown(cl3, two.output.concat(first.output).concat(second.output).concat(freed.output).concat(freed_more.output));
+  got = got + s2.text + "open " + int.int_to_string(freed_more.conn.streams_open());
+  let zeros: string = string_from_bytes_unchecked(__alloc_u8(16384));
+  return test.assert_eq(got, "SETTINGS ACK\nHEADERS 1 END_HEADERS :status=200 content-length=11\nDATA 1 hell\nDATA 1 o w\nDATA 1 END_STREAM orld\nopen 0\nSETTINGS ACK\nHEADERS 3 END_HEADERS :status=200 content-length=65535\nDATA 3 " + zeros + "\nDATA 3 " + zeros + "\nDATA 3 " + zeros + "\nDATA 3 " + string_from_bytes_unchecked(__alloc_u8(16372)) + "\nHEADERS 5 END_HEADERS :status=200 content-length=4\nDATA 3 " + string_from_bytes_unchecked(__alloc_u8(10)) + "\nDATA 3 END_STREAM " + string_from_bytes_unchecked(__alloc_u8(1)) + "\nDATA 5 END_STREAM tail\nopen 0");
+}
+
+// A response header block past the frame size spans CONTINUATION frames,
+// and the client reads it whole.
+function test_continuation_out(): test.TestOutcome {
+  let o: Opened = opened(h2.config());
+  let (cl, bytes) = request(o.client, 1, get("/"), true);
+  let step: h2.Step = o.conn.read(bytes);
+  let long: string = string_from_bytes_unchecked(__alloc_u8(20000).with(0, 97 as u8));
+  let answered: h2.Step = step.conn.respond(1, http.ok("").with_header("x-long", long));
+  let count: i32 = 0;
+  let at: i32 = 0;
+  let kinds: string = "";
+  while (at < answered.output.len()) {
+    match (frame.read(answered.output, at, frame.MAX_FRAME_SIZE)) {
+      Ok(got) => {
+        match (got) {
+          frame.Got(f, n) => {
+            match (f) {
+              frame.Headers(h) => {
+                kinds = kinds + "H" + int.int_to_string(h.block.len()) + flag(h.end_headers, "end");
+              },
+              frame.Continuation(stream, end, block) => {
+                kinds = kinds + " C" + int.int_to_string(block.len()) + flag(end, "end");
+              },
+              _ => {
+                kinds = kinds + " ?";
+              }
+            }
+            at = at + n;
+          },
+          frame.More => {
+            at = answered.output.len();
+          }
+        }
+      },
+      Err(e) => {
+        return test.fail(e.message());
+      }
+    }
+  }
+  return test.assert_eq(kinds, "H16384 C3631 end");
+}
+
+// Rapid Reset: streams past the concurrency limit are refused, a reset
+// stream keeps its slot until its handler answers, and the answer to a
+// reset stream goes nowhere.
+function test_rapid_reset(): test.TestOutcome {
+  let cfg: h2.Config = h2.Config { ...h2.config(), max_concurrent_streams: 2 };
+  let o: Opened = opened(cfg);
+  let (c1, r1) = request(o.client, 1, get("/a"), true);
+  let (c2, r3) = request(c1, 3, get("/b"), true);
+  let (c3, r5) = request(c2, 5, get("/c"), true);
+  let step: h2.Step = o.conn.read(r1.concat(r3).concat(r5));
+  let got: string = events_text(step.events) + shown(c3, step.output).text;
+  let reset: h2.Step = step.conn.read(frame.encode(frame.RstStream(1, frame.CANCEL)));
+  let (c4, r7) = request(c3, 7, get("/d"), true);
+  let still: h2.Step = reset.conn.read(r7);
+  got = got + events_text(reset.events) + events_text(still.events) + shown(c4, still.output).text;
+  let answered: h2.Step = still.conn.respond(1, http.ok("late"));
+  let (c5, r9) = request(c4, 9, get("/e"), true);
+  let now: h2.Step = answered.conn.read(r9);
+  got = got + "late output " + int.int_to_string(answered.output.len()) + " handling " + int.int_to_string(answered.conn.handling()) + "\n" + events_text(now.events);
+  return test.assert_eq(got, "request 1 GET /a host=example.test body= trailer=-\nrequest 3 GET /b host=example.test body= trailer=-\nRST_STREAM 5 7\nreset 1 8\nRST_STREAM 7 7\nlate output 0 handling 1\nrequest 9 GET /e host=example.test body= trailer=-\n");
+}
+
+// A CONTINUATION flood and a header bomb close the connection before
+// they cost it; a block indexing past the table is a COMPRESSION_ERROR.
+function test_header_floods(): test.TestOutcome {
+  let cfg: h2.Config = h2.Config { ...h2.config(), header_frames_max: 3 };
+  let o: Opened = opened(cfg);
+  let open_block: u8[] = frame.encode(frame.Headers(frame.HeadersFrame { stream: 1, end_stream: false, end_headers: false, priority: None, block: [130 as u8], padding: 0 }));
+  let more: u8[] = frame.encode(frame.Continuation(1, false, [134 as u8]));
+  let flood: h2.Step = o.conn.read(open_block.concat(more).concat(more).concat(more));
+  let got: string = shown(o.client, flood.output).text + events_text(flood.events);
+  let o2: Opened = opened(h2.config());
+  let many: hpack.Field[] = [];
+  let i: i32 = 0;
+  while (i < 300) {
+    many = many.append(hpack.field("x-" + int.int_to_string(i), "v"));
+    i = i + 1;
+  }
+  let (cl, bomb) = request(o2.client, 1, get("/").concat(many), true);
+  let bombed: h2.Step = o2.conn.read(bomb);
+  got = got + shown(cl, bombed.output).text + events_text(bombed.events);
+  let o3: Opened = opened(h2.config());
+  let bad_index: h2.Step = o3.conn.read(frame.encode(frame.Headers(frame.HeadersFrame { stream: 1, end_stream: true, end_headers: true, priority: None, block: [255 as u8, 1 as u8], padding: 0 })));
+  got = got + events_text(bad_index.events);
+  return test.assert_eq(got, "GOAWAY last 0 11 header block over the budget\nclosed 11 header block over the budget\nGOAWAY last 0 9 hpack: more than 256 header fields\nclosed 9 hpack: more than 256 header fields\nclosed 9 hpack: no table entry 128\n");
+}
+
+// MadeYouReset: the resets the server is made to send count with the
+// client's own against one budget, and empty DATA frames against another.
+function test_reset_budgets(): test.TestOutcome {
+  let cfg: h2.Config = h2.Config { ...h2.config(), reset_budget: 3, empty_data_budget: 2 };
+  let o: Opened = opened(cfg);
+  let cl: Client = o.client;
+  let bytes: u8[] = [];
+  let stream: i32 = 1;
+  while (stream <= 7) {
+    let (c, r) = request(cl, stream, get("/").append(hpack.field("Bad-Case", "x")), true);
+    cl = c;
+    bytes = bytes.concat(r);
+    stream = stream + 2;
+  }
+  let made: h2.Step = o.conn.read(bytes);
+  let got: string = shown(cl, made.output).text + events_text(made.events);
+  let o2: Opened = opened(cfg);
+  let (c2, r7) = request(o2.client, 7, get("/"), true);
+  let own: h2.Step = o2.conn.read(r7.concat(frame.encode(frame.RstStream(1, frame.CANCEL))).concat(frame.encode(frame.RstStream(3, frame.CANCEL))).concat(frame.encode(frame.RstStream(5, frame.CANCEL))).concat(frame.encode(frame.RstStream(7, frame.CANCEL))));
+  got = got + shown(c2, own.output).text;
+  let o3: Opened = opened(cfg);
+  let (c3, r1) = request(o3.client, 1, post("/", "1"), false);
+  let empties: h2.Step = o3.conn.read(r1.concat(data(1, "", false)).concat(data(1, "", false)).concat(data(1, "", false)));
+  got = got + shown(c3, empties.output).text;
+  return test.assert_eq(got, "RST_STREAM 1 1\nRST_STREAM 3 1\nRST_STREAM 5 1\nGOAWAY last 7 11 resets over the budget\nclosed 11 resets over the budget\nGOAWAY last 7 11 resets over the budget\nGOAWAY last 1 11 empty DATA frames over the budget\n");
+}
+
+// A malformed request is a stream error; a malformed connection is closed.
+function test_malformed(): test.TestOutcome {
+  let o: Opened = opened(h2.config());
+  let cl: Client = o.client;
+  let shapes: hpack.Field[][] = [get("/").append(hpack.field("connection", "close")), [hpack.field(":method", "GET"), hpack.field(":scheme", "http")], [hpack.field(":method", "GET"), hpack.field("x", "y"), hpack.field(":path", "/")], get("/").append(hpack.field("te", "gzip")), get("/").append(hpack.field(":method", "POST"))];
+  let bytes: u8[] = [];
+  let i: i32 = 0;
+  while (i < shapes.len()) {
+    let (c, r) = request(cl, 1 + 2 * i, shapes[i], true);
+    cl = c;
+    bytes = bytes.concat(r);
+    i = i + 1;
+  }
+  let step: h2.Step = o.conn.read(bytes);
+  let got: string = shown(cl, step.output).text + "open " + int.int_to_string(step.conn.streams_open()) + "\n";
+  let closers: u8[][] = [data(9, "x", true), frame.encode(frame.Headers(frame.HeadersFrame { stream: 2, end_stream: true, end_headers: true, priority: None, block: [], padding: 0 })), frame.encode(frame.PushPromise(frame.PushPromiseFrame { stream: 1, promised: 2, end_headers: true, block: [] })), frame.encode(frame.Continuation(1, true, [])), frame.encode(frame.Headers(frame.HeadersFrame { stream: 11, end_stream: false, end_headers: false, priority: None, block: [], padding: 0 })).concat(frame.encode(frame.Ping(false, __alloc_u8(8))))];
+  for closer in closers {
+    let o2: Opened = opened(h2.config());
+    let (c2, r3) = request(o2.client, 3, get("/"), true);
+    let seen: h2.Step = o2.conn.read(r3.concat(closer));
+    got = got + events_text(seen.events);
+  }
+  return test.assert_eq(got, "RST_STREAM 1 1\nRST_STREAM 3 1\nRST_STREAM 5 1\nRST_STREAM 7 1\nRST_STREAM 9 1\nopen 0\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 DATA on an idle stream\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 stream 2 is not a new client stream\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 PUSH_PROMISE from the client\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 CONTINUATION with no header block open\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 a frame inside a header block\n");
+}
+
+// A frame on an idle stream the client never opened is a connection
+// error, and a stream depending on itself a stream error (§5.1, §5.3.1).
+function test_idle_and_self_dependency(): test.TestOutcome {
+  let o: Opened = opened(h2.config());
+  let idle_reset: h2.Step = o.conn.read(frame.encode(frame.RstStream(5, frame.CANCEL)));
+  let o2: Opened = opened(h2.config());
+  let idle_update: h2.Step = o2.conn.read(frame.encode(frame.WindowUpdate(5, 10)));
+  let o3: Opened = opened(h2.config());
+  let (cl, r1) = request(o3.client, 1, get("/"), true);
+  let self_headers: u8[] = frame.encode(frame.Headers(frame.HeadersFrame { stream: 3, end_stream: true, end_headers: true, priority: Some(frame.Priority { exclusive: false, dependency: 3, weight: 16 }), block: [130 as u8], padding: 0 }));
+  let self_priority: u8[] = frame.encode(frame.PriorityFrame(5, frame.Priority { exclusive: false, dependency: 5, weight: 16 }));
+  let dependent: h2.Step = o3.conn.read(r1.concat(self_headers).concat(self_priority));
+  let got: string = events_text(idle_reset.events) + events_text(idle_update.events) + shown(cl, dependent.output).text + events_text(dependent.events);
+  return test.assert_eq(got, "closed 1 RST_STREAM on an idle stream\nclosed 1 WINDOW_UPDATE on an idle stream\nRST_STREAM 3 1\nRST_STREAM 5 1\nrequest 1 GET / host=example.test body= trailer=-\n");
+}
+
+// PING is answered, an unknown frame and PRIORITY are skipped, the
+// client's GOAWAY is reported and stops new streams, the server's GOAWAY
+// goes out, and a SETTINGS ACK is noted.
+function test_control_frames(): test.TestOutcome {
+  let o: Opened = opened(h2.config());
+  let ping: u8[] = frame.encode(frame.Ping(false, [1 as u8, 2 as u8, 3 as u8, 4 as u8, 5 as u8, 6 as u8, 7 as u8, 8 as u8]));
+  let unknown: u8[] = frame.encode(frame.Unknown(frame.UnknownFrame { kind: 12, flags: 0, stream: 0, payload: [1 as u8] }));
+  let priority: u8[] = frame.encode(frame.PriorityFrame(1, frame.Priority { exclusive: false, dependency: 0, weight: 16 }));
+  let ack: u8[] = frame.encode(frame.Settings(true, []));
+  let step: h2.Step = o.conn.read(ping.concat(unknown).concat(priority).concat(ack));
+  let got: string = shown(o.client, step.output).text + "acked " + int.int_to_string(__bool(step.conn.settings_acked())) + "\n";
+  let away: h2.Step = step.conn.read(frame.encode(frame.GoAway(frame.GoAwayFrame { last_stream: 0, code: frame.NO_ERROR, debug: [] })));
+  let (cl, r1) = request(o.client, 1, get("/"), true);
+  let after: h2.Step = away.conn.read(r1);
+  got = got + events_text(away.events) + events_text(after.events) + "output " + int.int_to_string(after.output.len()) + "\n";
+  let ours: h2.Step = after.conn.goaway(frame.NO_ERROR);
+  got = got + shown(cl, ours.output).text + "closed " + int.int_to_string(__bool(ours.conn.closed()));
+  return test.assert_eq(got, "PING ACK 0102030405060708\nacked 1\ngoaway 0\noutput 0\nGOAWAY last 1 0 \nclosed 0");
+}
+
+function __bool(b: boolean): i32 {
+  if (b) {
+    return 1;
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/http/h2");
+  r = r.it("the preface and settings", test_preface_and_settings);
+  r = r.it("a request and its response", test_request_and_response);
+  r = r.it("bodies and trailers", test_bodies_and_trailers);
+  r = r.it("flow control", test_flow_control);
+  r = r.it("a header block over CONTINUATION frames", test_continuation_out);
+  r = r.it("rapid reset", test_rapid_reset);
+  r = r.it("header floods", test_header_floods);
+  r = r.it("the reset and empty-DATA budgets", test_reset_budgets);
+  r = r.it("malformed requests and connections", test_malformed);
+  r = r.it("idle streams and self-dependency", test_idle_and_self_dependency);
+  r = r.it("control frames", test_control_frames);
+  return r.finish();
+}
