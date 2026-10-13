@@ -42,6 +42,18 @@
 // the body of a children-only drop helper (`__sem_drop_<T>`), whose parameter
 // its caller proved unique. Elsewhere a load is a borrow, and releasing one
 // is the finding this exists for.
+//
+// # The paths a token decides
+//
+// The lowering pairs a retain under one test of a reuse token with a
+// consume under a later test of the same token, so the join between them
+// is where the paths disagree and the count met there is unproved. A token
+// is one value on every path through its tests, so when the walk leaves a
+// count unproved it walks the function again under each value of each
+// tested token, on a copy with the edges that value rules out removed
+// (`prune_token`): there the token's box is unique wherever the token
+// holds, a finding is on a real path, and a count both walks settle is
+// settled.
 
 import "./ir";
 import "./ssa";
@@ -270,6 +282,13 @@ function maybe(): i32 {
   return -1;
 }
 
+// owed: a unit of a payload read off the box a token holds was spent ahead
+// of the null store that takes it (Walk.debt); the store settles it, and a
+// death before the store is the spend without a unit it looked like.
+function owed(): i32 {
+  return -3;
+}
+
 // Counts above the cap are unproved rather than tracked: a retain repeated
 // round a loop with no release is a leak the fixpoint would otherwise climb
 // forever on.
@@ -396,6 +415,33 @@ struct Walk {
   // How many instructions and terminators read each value.
   uses: i32[],
   dom: ssadeps.Dom,
+  // Per block, the boxes proved unique there (Regions.roots), and the
+  // block whose branch opened each (Regions.openers).
+  regions: i32[][],
+  openers: i32[][],
+  // The box a token holds (walk_assuming), -1 in the walk without an
+  // assumption and the one where the token is null; and, per root, whether
+  // it is a payload read off that box where the hold is a fact whose slot
+  // the frame then empties: nothing else reaches the box, so the lowering
+  // may spend the payload before the store that takes it (owed).
+  held: i32,
+  reused: boolean[],
+  // The phis the function defines, and the base walk's tables for the
+  // phis a region uses but does not define (carries).
+  phis: i32[],
+  outer: Outer,
+  // The roots whose children the frame owns outright (children_boxes), and
+  // the null stores' takes (takes_of).
+  children: boolean[],
+  takes: Takes,
+  // The walk defines the parameters at its entry; a region's walk starts
+  // from the counts the base handed in (seeded) instead.
+  params_at_entry: boolean,
+  debt: boolean[],
+  // Per value, whether every store of it is back into the slot of the held
+  // box it was read from, with the slot's unit still in place: such a store
+  // keeps the slot's unit and spends nothing (apply_store).
+  kept: boolean[],
 }
 
 // returns_pair: the body sets a second return word, so it is a paired
@@ -810,18 +856,29 @@ function child_load(w: Walk, regions: i32[][], bi: i32, ins: ssa.SInst, children
 
 // Shells is every shell release (ir.shell): the box released shallowly
 // after the frame took its payload, by root, with where the release sits.
-struct Shells { base: i32[], block: i32[], at: i32[] }
+struct Shells { base: i32[], phi: i32[], block: i32[], at: i32[] }
 
 function shells_of(w: Walk): Shells {
-  let out: Shells = Shells { base: [], block: [], at: [] };
+  let out: Shells = Shells { base: [], phi: [], block: [], at: [] };
   let bi: i32 = 0;
   while (bi < w.f.blocks.len()) {
     let insts: ssa.SInst[] = w.f.blocks[bi].insts;
     let i: i32 = 0;
     while (i < insts.len()) {
       let ins: ssa.SInst = insts[i];
-      if (ins.kind_tag == 11 && ins.imm == 2 && ins.args.len() > 0) {
-        out = Shells { base: out.base.append(w.root[ins.args[0]]), block: out.block.append(bi), at: out.at.append(i) };
+      let base: i32 = -1;
+      let phi: i32 = -1;
+      if (is_shell(w, ins) || ins.kind_tag == 7 && ins.result >= 0 && ins.result < w.reused.len() && w.reused[ins.result]) {
+        base = w.root[ins.args[0]];
+      } else if (is_reuse(ins)) {
+        base = w.root[ins.args[0]];
+        if (phi_valued(w, base)) {
+          phi = base;
+          base = -1;
+        }
+      }
+      if (base >= 0 || phi >= 0) {
+        out = Shells { base: out.base.append(base), phi: out.phi.append(phi), block: out.block.append(bi), at: out.at.append(i) };
       }
       i = i + 1;
     }
@@ -830,19 +887,142 @@ function shells_of(w: Walk): Shells {
   return out;
 }
 
+function is_reuse(ins: ssa.SInst): boolean {
+  return ins.kind_tag == 11 && ins.str == "__fern_alloc_reuse" && ins.args.len() > 0;
+}
+
+// carries: phi `p` is `base` where it is not null: each input is the box,
+// null, or such a phi, and one is the box. A phi the region uses but does
+// not define is read off the base walk's tables.
+function carries(w: Walk, p: i32, base: i32): boolean {
+  let path: i32[] = [];
+  return carries_at(w, p, base, path, false);
+}
+
+function carries_at(w: Walk, p: i32, base: i32, path: i32[], outer: boolean): boolean {
+  let f: ssa.SFunc = w.f;
+  let defs: Defs = w.defs;
+  let root: i32[] = w.root;
+  let derived: boolean[] = w.derived;
+  if (outer) {
+    f = w.outer.f;
+    defs = w.outer.defs;
+    root = w.outer.root;
+    derived = w.outer.derived;
+  }
+  let ins: ssa.SInst = def_of(f, defs, p);
+  if (ins.kind_tag != 8 || path.len() >= 8) {
+    return false;
+  }
+  let any: boolean = false;
+  for a in ins.args {
+    if (a < 0) {
+      return false;
+    }
+    if (!is_zero(f, defs, a)) {
+      let r: i32 = root[a];
+      if (r == base && !derived[a]) {
+        any = true;
+      } else if (r != p && util.index_of_i32(path, r) < 0) {
+        let via_outer: boolean = outer || w.outer.on && outside(w.f, w.defs, r);
+        if (!carries_at(w, r, base, path.append(p), via_outer)) {
+          return false;
+        }
+        any = true;
+      }
+    }
+  }
+  return any;
+}
+
+// phi_valued: `v` is a phi, here or in the base walk's function.
+function phi_valued(w: Walk, v: i32): boolean {
+  if (def_of(w.f, w.defs, v).kind_tag == 8) {
+    return true;
+  }
+  return w.outer.on && outside(w.f, w.defs, v) && def_of(w.outer.f, w.outer.defs, v).kind_tag == 8;
+}
+
+function is_shell(w: Walk, ins: ssa.SInst): boolean {
+  return ins.kind_tag == 11 && ins.imm == 2 && ins.args.len() > 0;
+}
+
+// reuses: `ins` hands the box `base`, or a phi in `boxed`, on as a
+// construction's block: the call, or the copy box_ops made of it.
+function reuses(w: Walk, ins: ssa.SInst, base: i32, boxed: boolean[]): boolean {
+  if (ins.args.len() == 0 || ins.result < 0) {
+    return false;
+  }
+  let on_box: boolean = ins.kind_tag == 7 && ins.result < w.reused.len() && w.reused[ins.result] || is_reuse(ins);
+  if (!on_box) {
+    return false;
+  }
+  let r: i32 = w.root[ins.args[0]];
+  return r == base || r < boxed.len() && boxed[r];
+}
+
+// writes_slot: the construction built in `r`, reused at position `i` of
+// block `mb`, stores into the slot `ld` read before reading it again, so
+// the payload `ld` read was the frame's: released, or stored back by that
+// store, which spends it. A slot the construction keeps stays the box's.
+function writes_slot(w: Walk, mb: i32, i: i32, r: i32, ld: ssa.SInst): boolean {
+  let insts: ssa.SInst[] = w.f.blocks[mb].insts;
+  let key: i32 = load_key(w, ld);
+  let j: i32 = i + 1;
+  while (j < insts.len()) {
+    let d: ssa.SInst = insts[j];
+    if (d.args.len() > 0 && w.root[d.args[0]] == w.root[r]) {
+      if (is_load(d) && load_key(w, d) == key && d.kind_tag == 40 == (ld.kind_tag == 40)) {
+        return false;
+      }
+      if ((d.kind_tag == 41 || d.kind_tag == 43) && d.args.len() >= 2 && store_key(w, d) == key && d.kind_tag == 41 == (ld.kind_tag == 40)) {
+        return true;
+      }
+    }
+    j = j + 1;
+  }
+  return false;
+}
+
 // shell_taken: `ld` reads a box the frame releases as a shell after it, so
 // the payload it read is the frame's, unless a later read of the same slot
-// comes before the release: that read is the one the release follows, and
-// `ld` only borrowed.
+// or a children-only drop of the box comes first on every path (between),
+// or a path from the load returns without the release (escapes).
 function shell_taken(w: Walk, sh: Shells, dom: ssadeps.Dom, bi: i32, pos: i32, ld: ssa.SInst): boolean {
   if (ld.args.len() == 0) {
     return false;
   }
   let base: i32 = w.root[ld.args[0]];
+  let any: boolean = false;
   let k: i32 = 0;
+  while (k < sh.base.len() && !any) {
+    any = sh.base[k] == base || sh.phi[k] >= 0 && carries(w, sh.phi[k], base);
+    k = k + 1;
+  }
+  if (!any) {
+    return false;
+  }
+  // The paths from the load, once: whether one returns without the box's
+  // release, and which phis of the box they give the box, so a reuse
+  // through a phi counts only where the paths say it is the box's.
+  let es: Escape = escape_fixpoint(w, ld, bi, pos);
+  if (es.escapes) {
+    return false;
+  }
+  let reach: boolean[] = [];
+  k = 0;
   while (k < sh.base.len()) {
-    if (sh.base[k] == base && before(dom, bi, pos, sh.block[k], sh.at[k]) && !reread_between(w, dom, ld, bi, pos, sh.block[k], sh.at[k])) {
-      return true;
+    if (sh.base[k] == base || sh.phi[k] >= 0 && sh.phi[k] < es.boxed.len() && es.boxed[sh.phi[k]]) {
+      let after: boolean = before(dom, bi, pos, sh.block[k], sh.at[k]);
+      if (!after) {
+        if (reach.len() == 0) {
+          reach = reached_in(w.f, w.at, bi, -1);
+        }
+        after = reach[sh.block[k]];
+      }
+      if (after && !between(w, dom, ld, bi, pos, sh.block[k], sh.at[k])) {
+        return true;
+      }
     }
     k = k + 1;
   }
@@ -856,25 +1036,6 @@ function before(dom: ssadeps.Dom, bi: i32, pos: i32, sb: i32, at: i32): boolean 
     return at > pos;
   }
   return ssadeps.dom_holds(dom, sb, bi);
-}
-
-// Whether another marked load of the slot `ld` reads sits after `ld` (block
-// `bi`, `pos`) and before the release at `at` of block `sb`.
-function reread_between(w: Walk, dom: ssadeps.Dom, ld: ssa.SInst, bi: i32, pos: i32, sb: i32, at: i32): boolean {
-  let ob: i32 = 0;
-  while (ob < w.f.blocks.len()) {
-    let insts: ssa.SInst[] = w.f.blocks[ob].insts;
-    let i: i32 = 0;
-    while (i < insts.len()) {
-      let o: ssa.SInst = insts[i];
-      if (same_slot_load(w, o, ld) && before(dom, bi, pos, ob, i) && before(dom, ob, i, sb, at)) {
-        return true;
-      }
-      i = i + 1;
-    }
-    ob = ob + 1;
-  }
-  return false;
 }
 
 // children_boxes marks the roots whose children the frame owns outright: a
@@ -1291,39 +1452,188 @@ function overwritten(w: Walk, st: Stores, dom: ssadeps.Dom, bi: i32, pos: i32, l
   }
   let base: i32 = w.root[ld.args[0]];
   for k in st.by_base[base] {
-    if (st.zero[k] || !same_slot(w, st, k, ld)) {
+    if (st.zero[k] || !same_slot(w, st, k, ld) || stores_back(w, st, k, ld)) {
       continue;
     }
     if (st.block[k] == bi) {
-      if (st.at[k] > pos && !reloaded(w, dom, ld, bi, pos, st.block[k], st.at[k])) {
-        return true;
+      if (st.at[k] > pos && !between(w, dom, ld, bi, pos, st.block[k], st.at[k])) {
+        return !escapes(w, ld, bi, pos, 1);
       }
-    } else if (ssadeps.dom_holds(dom, st.block[k], bi) && !reloaded(w, dom, ld, bi, pos, st.block[k], st.at[k])) {
-      return true;
+    } else if (ssadeps.dom_holds(dom, st.block[k], bi) && !between(w, dom, ld, bi, pos, st.block[k], st.at[k])) {
+      return !escapes(w, ld, bi, pos, 1);
     }
   }
   return false;
 }
 
-// reloaded: another load of `ld`'s slot sits between `ld` (at lb, lp) and
-// the store (at sb, sp), on the path from the one to the other: after `ld`
-// in its block, before the store in its, or in a block the load's dominates
-// that dominates the store's. The one the frame releases is the nearest.
-// same_slot_load: `other` reads the slot `ld` reads, as a different value.
-function same_slot_load(w: Walk, other: ssa.SInst, ld: ssa.SInst): boolean {
-  return other.result != ld.result && is_load(other) && other.kind_tag == ld.kind_tag
-    && other.args.len() > 0 && w.root[other.args[0]] == w.root[ld.args[0]] && load_key(w, other) == load_key(w, ld);
+// escapes: a path from `ld` (block `lb`, `lp`) reaches a return without
+// passing what settles the slot: another read of it, a drop of the box, and
+// by `mode` a store into the slot (1) or a shell release of the box (2);
+// or comes back to the load's own block to read the slot again. On such a
+// path the slot keeps the payload, so the frame does not own what `ld`
+// read.
+function escapes(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32): boolean {
+  let none: boolean[] = [];
+  if (mode != 2) {
+    return escape_paths(w, ld, lb, lp, mode, none).escapes;
+  }
+  return escape_fixpoint(w, ld, lb, lp).escapes;
 }
 
-// reloaded_in: block `mb` holds a later load of the same slot between the
-// load at (lb, lp) and the store at (sb, sp).
-function reloaded_in(w: Walk, ld: ssa.SInst, mb: i32, lb: i32, lp: i32, sb: i32, sp: i32): boolean {
-  let insts: ssa.SInst[] = w.f.blocks[mb].insts;
+// Escape is escape_fixpoint's answer: whether a path from the load returns
+// without the box's release, and the phis of the box the paths give the
+// box.
+struct Escape { escapes: boolean, boxed: boolean[] }
+
+// escape_fixpoint: a reuse through a token phi of the box is the box's
+// where every edge the paths take into the phi gives it the box: assumed
+// of every token phi, and withdrawn from each the paths refute until none
+// is.
+function escape_fixpoint(w: Walk, ld: ssa.SInst, lb: i32, lp: i32): Escape {
+  let base: i32 = w.root[ld.args[0]];
+  let boxed: boolean[] = token_phis_of(w, base);
+  let again: boolean = true;
+  while (again) {
+    let r: Paths = escape_paths(w, ld, lb, lp, 2, boxed);
+    if (r.escapes) {
+      return Escape { escapes: true, boxed: boxed };
+    }
+    again = false;
+    let p: i32 = 0;
+    while (p < boxed.len()) {
+      if (boxed[p] && !box_on_edges(w, p, base, boxed, r.edge)) {
+        boxed = boxed.with(p, false);
+        again = true;
+      }
+      p = p + 1;
+    }
+  }
+  return Escape { escapes: false, boxed: boxed };
+}
+
+// Paths is what escape_paths walked: whether a path returned, and the
+// edges it took (block index times two, plus the successor).
+struct Paths { escapes: boolean, edge: boolean[] }
+
+function escape_paths(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32, boxed: boolean[]): Paths {
+  let edge: boolean[] = __alloc_bool(w.f.blocks.len() * 2);
+  if (settles_in(w, ld, lb, lp + 1, w.f.blocks[lb].insts.len(), mode, boxed)) {
+    return Paths { escapes: false, edge: edge };
+  }
+  if (w.f.blocks[lb].term.kind_tag == 1) {
+    return Paths { escapes: true, edge: edge };
+  }
+  let seen: boolean[] = __alloc_bool(w.f.blocks.len());
+  let stack: i32[] = [lb];
+  let top: i32 = 1;
+  while (top > 0) {
+    top = top - 1;
+    let b: i32 = stack[top];
+    let e: i32 = 0;
+    while (e < 2) {
+      let sid: i32 = ssa.successor_id(w.f.blocks[b].term, e);
+      let si: i32 = -1;
+      if (sid >= 0 && sid < w.at.len()) {
+        si = w.at[sid];
+      }
+      if (si >= 0) {
+        edge = edge.with(b * 2 + e, true);
+      }
+      if (si == lb) {
+        return Paths { escapes: true, edge: edge };
+      }
+      if (si >= 0 && !seen[si]) {
+        seen = seen.with(si, true);
+        if (!settles_in(w, ld, si, 0, w.f.blocks[si].insts.len(), mode, boxed)) {
+          if (w.f.blocks[si].term.kind_tag == 1) {
+            return Paths { escapes: true, edge: edge };
+          }
+          stack = pushed(stack, top, si);
+          top = top + 1;
+        }
+      }
+      e = e + 1;
+    }
+  }
+  return Paths { escapes: false, edge: edge };
+}
+
+// token_phis_of: the phis that carry `base` where they are not null.
+function token_phis_of(w: Walk, base: i32): boolean[] {
+  let out: boolean[] = __alloc_bool(w.f.nvals);
+  for p in w.phis {
+    if (carries(w, p, base)) {
+      out = out.with(p, true);
+    }
+  }
+  if (w.outer.on) {
+    for p in w.outer.phis {
+      if (p < out.len() && outside(w.f, w.defs, p) && carries(w, p, base)) {
+        out = out.with(p, true);
+      }
+    }
+  }
+  return out;
+}
+
+// box_on_edges: the paths took an edge into phi `p`'s block, and every
+// edge they took gives it the box, or a phi still assumed the box. A phi
+// the paths never enter was given its value before the load, which may be
+// null: it is not the box.
+function box_on_edges(w: Walk, p: i32, base: i32, boxed: boolean[], edge: boolean[]): boolean {
+  let bi: i32 = w.defs.block[p];
+  if (bi < 0) {
+    return false;
+  }
+  let ins: ssa.SInst = def_of(w.f, w.defs, p);
+  let b: ssa.SBlock = w.f.blocks[bi];
+  let any: boolean = false;
   let i: i32 = 0;
-  while (i < insts.len()) {
-    let after_load: boolean = mb != lb || i > lp;
-    let before_store: boolean = mb != sb || i < sp;
-    if (after_load && before_store && same_slot_load(w, insts[i], ld)) {
+  while (i < ins.args.len() && i < b.preds.len()) {
+    let pb: i32 = w.at[b.preds[i]];
+    if (pb >= 0 && edge_taken(w, edge, pb, b.id)) {
+      any = true;
+      let a: i32 = ins.args[i];
+      if (a < 0 || is_zero(w.f, w.defs, a)) {
+        return false;
+      }
+      let r: i32 = w.root[a];
+      if (!(r == base && !w.derived[a] || boxed[r])) {
+        return false;
+      }
+    }
+    i = i + 1;
+  }
+  return any;
+}
+
+function edge_taken(w: Walk, edge: boolean[], pb: i32, sid: i32): boolean {
+  let e: i32 = 0;
+  while (e < 2) {
+    if (ssa.successor_id(w.f.blocks[pb].term, e) == sid && edge[pb * 2 + e]) {
+      return true;
+    }
+    e = e + 1;
+  }
+  return false;
+}
+
+// settles_in: positions `from` up to `to` of block `mb` hold an event of
+// event_in, or by `mode` a store into `ld`'s slot (1) or a shell release of
+// its box (2).
+function settles_in(w: Walk, ld: ssa.SInst, mb: i32, from: i32, to: i32, mode: i32, boxed: boolean[]): boolean {
+  if (event_in(w, ld, mb, from, to)) {
+    return true;
+  }
+  let insts: ssa.SInst[] = w.f.blocks[mb].insts;
+  let base: i32 = w.root[ld.args[0]];
+  let i: i32 = from;
+  while (i < to && i < insts.len()) {
+    let d: ssa.SInst = insts[i];
+    if (mode == 1 && (d.kind_tag == 41 || d.kind_tag == 43) && d.args.len() >= 2 && w.root[d.args[0]] == base && store_key(w, d) == load_key(w, ld) && d.kind_tag == 41 == (ld.kind_tag == 40)) {
+      return true;
+    }
+    if (mode == 2 && (is_shell(w, d) && w.root[d.args[0]] == base || reuses(w, d, base, boxed) && writes_slot(w, mb, i, d.result, ld))) {
       return true;
     }
     i = i + 1;
@@ -1331,16 +1641,88 @@ function reloaded_in(w: Walk, ld: ssa.SInst, mb: i32, lb: i32, lp: i32, sb: i32,
   return false;
 }
 
-function reloaded(w: Walk, dom: ssadeps.Dom, ld: ssa.SInst, lb: i32, lp: i32, sb: i32, sp: i32): boolean {
-  let mb: i32 = 0;
-  while (mb < w.f.blocks.len()) {
-    let on_path: boolean = mb == lb || mb == sb || ssadeps.dom_holds(dom, mb, lb) && ssadeps.dom_holds(dom, sb, mb);
-    if (on_path && reloaded_in(w, ld, mb, lb, lp, sb, sp)) {
+// store_key is load_key for a store: the field offset or the index key.
+function store_key(w: Walk, st: ssa.SInst): i32 {
+  if (st.kind_tag == 41) {
+    return st.imm;
+  }
+  return index_key(w, st.args[1]);
+}
+
+// between: on every path from `ld` (block `lb`, `lp`) to the store (block
+// `sb`, `sp`) sits another load of its slot, which is the read the store
+// follows, or a children-only drop of its box, which released the payload;
+// `ld` only borrowed then. A path around every such event, the store's own
+// block entered from above included, says the store replaces what `ld`
+// read.
+function between(w: Walk, dom: ssadeps.Dom, ld: ssa.SInst, lb: i32, lp: i32, sb: i32, sp: i32): boolean {
+  // A position before the load in its own block is reached round a loop.
+  if (lb == sb && sp > lp && !event_in(w, ld, lb, lp + 1, sp)) {
+    return false;
+  }
+  let seen: boolean[] = __alloc_bool(w.f.blocks.len());
+  let stack: i32[] = [];
+  let top: i32 = 0;
+  if (!event_in(w, ld, lb, lp + 1, w.f.blocks[lb].insts.len())) {
+    stack = stack.append(lb);
+    top = 1;
+  }
+  while (top > 0) {
+    top = top - 1;
+    let b: i32 = stack[top];
+    let e: i32 = 0;
+    while (e < 2) {
+      let sid: i32 = ssa.successor_id(w.f.blocks[b].term, e);
+      let si: i32 = -1;
+      if (sid >= 0) {
+        si = w.at[sid];
+      }
+      if (si == sb) {
+        if (!event_in(w, ld, sb, 0, sp)) {
+          return false;
+        }
+      } else if (si >= 0 && !seen[si]) {
+        seen = seen.with(si, true);
+        if (!event_in(w, ld, si, 0, w.f.blocks[si].insts.len())) {
+          stack = pushed(stack, top, si);
+          top = top + 1;
+        }
+      }
+      e = e + 1;
+    }
+  }
+  return true;
+}
+
+// event_in: positions `from` up to `to` of block `mb` hold another load of
+// `ld`'s slot, a children-only drop of its box, or the box's own
+// construction: reached again round a loop, it makes another box, whose
+// slots are not the one `ld` read.
+function event_in(w: Walk, ld: ssa.SInst, mb: i32, from: i32, to: i32): boolean {
+  let insts: ssa.SInst[] = w.f.blocks[mb].insts;
+  let base: i32 = w.root[ld.args[0]];
+  let i: i32 = from;
+  while (i < to && i < insts.len()) {
+    let d: ssa.SInst = insts[i];
+    if (same_slot_load(w, d, ld) || d.result == base || d.kind_tag == 11 && util.str_has_prefix(d.str, "__sem_drop_") && d.args.len() > 0 && w.root[d.args[0]] == base) {
       return true;
     }
-    mb = mb + 1;
+    i = i + 1;
   }
   return false;
+}
+
+// stores_back: store `k` writes the value `ld` read back where it read it,
+// which replaces nothing (a slot a reused box keeps, box_ops).
+function stores_back(w: Walk, st: Stores, k: i32, ld: ssa.SInst): boolean {
+  let s: ssa.SInst = w.f.blocks[st.block[k]].insts[st.at[k]];
+  return ld.result >= 0 && w.root[s.args[s.args.len() - 1]] == w.root[ld.result];
+}
+
+// same_slot_load: `other` reads the slot `ld` reads, as a different value.
+function same_slot_load(w: Walk, other: ssa.SInst, ld: ssa.SInst): boolean {
+  return other.result != ld.result && is_load(other) && other.kind_tag == ld.kind_tag
+    && other.args.len() > 0 && w.root[other.args[0]] == w.root[ld.args[0]] && load_key(w, other) == load_key(w, ld);
 }
 
 // ---- which roots the walk tracks --------------------------------------------
@@ -1463,23 +1845,21 @@ function touches(w: Walk, null_taken: boolean[]): boolean[] {
 // taken the unit the slot held, so the loaded value holds it from the store
 // on. A load qualifies when it reads the same slot of the same box before
 // the store, in a block that dominates the store's.
-function null_takes(w: Walk, dom: ssadeps.Dom): boolean[] {
-  let f: ssa.SFunc = w.f;
-  let out: boolean[] = __alloc_bool(f.nvals);
-  let sb: i32 = 0;
-  while (sb < f.blocks.len()) {
-    let insts: ssa.SInst[] = f.blocks[sb].insts;
-    let si: i32 = 0;
-    while (si < insts.len()) {
-      let st: ssa.SInst = insts[si];
-      if ((st.kind_tag == 41 || st.kind_tag == 43) && st.args.len() >= 2 && is_zero(f, w.defs, st.args[st.args.len() - 1])) {
-        out = mark_taken_loads(w, dom, out, sb, si, st);
-      }
-      si = si + 1;
+function null_takes(w: Walk, takes: Takes): boolean[] {
+  let out: boolean[] = __alloc_bool(w.f.nvals);
+  for rs in takes.roots {
+    for r in rs {
+      out = out.with(r, true);
     }
-    sb = sb + 1;
   }
   return out;
+}
+
+// is_take: `st` stores null into a slot of a box the frame reads, not into
+// the box it reused as a construction's block (Hold.reused).
+function is_take(w: Walk, st: ssa.SInst): boolean {
+  return (st.kind_tag == 41 || st.kind_tag == 43) && st.args.len() >= 2 && is_zero(w.f, w.defs, st.args[st.args.len() - 1])
+    && !(st.args[0] >= 0 && st.args[0] < w.reused.len() && w.reused[st.args[0]]);
 }
 
 // The load `st` empties: same kind of read, same box, same offset or index.
@@ -1522,12 +1902,21 @@ function mark_taken_loads(w: Walk, dom: ssadeps.Dom, own out: boolean[], sb: i32
 // nearest at all, -1 for none yet.
 struct Picked { used: i32, any: i32 }
 
-function pick_loads(w: Walk, dom: ssadeps.Dom, after: boolean[], own pick: Picked, lb: i32, stop: i32, sb: i32, si: i32, st: ssa.SInst): Picked {
+// A read reached from the store only by way of the load's own block reads
+// the load's next value, so `after` (the blocks reached from the store)
+// leaves that block out where a path from the store comes back to it.
+function pick_loads(w: Walk, dom: ssadeps.Dom, after0: boolean[], own pick: Picked, lb: i32, stop: i32, sb: i32, si: i32, st: ssa.SInst): Picked {
+  let after: boolean[] = after0;
+  let avoided: boolean = !after0[lb];
   let li: i32 = 0;
   while (li < stop) {
     let ld: ssa.SInst = w.f.blocks[lb].insts[li];
     if (is_load(ld) && ld.result >= 0 && ld.result < w.f.nvals && matches_store(w, ld, st)) {
       pick = Picked { ...pick, any: nearer(w, dom, sb, pick.any, ld.result) };
+      if (!avoided) {
+        after = reached_avoiding(w, sb, lb);
+        avoided = true;
+      }
       if (used_after(w, after, w.root[ld.result], sb, si)) {
         pick = Picked { ...pick, used: nearer(w, dom, sb, pick.used, ld.result) };
       }
@@ -1596,18 +1985,27 @@ function reads_root(w: Walk, bi: i32, from: i32, root: i32): boolean {
 // reached_from marks the blocks a path leaves block `sb` into, `sb` itself
 // only round a loop.
 function reached_from(w: Walk, sb: i32): boolean[] {
-  let n: i32 = w.f.blocks.len();
+  return reached_in(w.f, w.at, sb, -1);
+}
+
+// reached_avoiding is reached_from with no path through block `avoid`.
+function reached_avoiding(w: Walk, sb: i32, avoid: i32): boolean[] {
+  return reached_in(w.f, w.at, sb, avoid);
+}
+
+function reached_in(f: ssa.SFunc, at: i32[], sb: i32, avoid: i32): boolean[] {
+  let n: i32 = f.blocks.len();
   let seen: boolean[] = __alloc_bool(n);
   let work: i32[] = [sb];
   let i: i32 = 0;
   while (i < work.len()) {
-    let t: ssa.STerm = w.f.blocks[work[i]].term;
+    let t: ssa.STerm = f.blocks[work[i]].term;
     let e: i32 = 0;
     while (e < 2) {
       let sid: i32 = ssa.successor_id(t, e);
-      if (sid >= 0 && w.at[sid] >= 0 && !seen[w.at[sid]]) {
-        seen = seen.with(w.at[sid], true);
-        work = work.append(w.at[sid]);
+      if (sid >= 0 && at[sid] >= 0 && at[sid] != avoid && !seen[at[sid]]) {
+        seen = seen.with(at[sid], true);
+        work = work.append(at[sid]);
       }
       e = e + 1;
     }
@@ -1880,8 +2278,41 @@ function live_edges(w: Walk, own lv: Live): Live {
   return Live { ...lv, slots: dies.slots, die_at: dies.at, die_n: dies.n, out_at: out_at, nout: nout };
 }
 
+// debt_deps keeps a payload in debt live to the null store that takes it:
+// the store's null word depends on the load, where the load comes first.
+function debt_deps(w: Walk, takes: Takes, own deps: i32[][]): i32[][] {
+  if (w.debt.len() == 0) {
+    return deps;
+  }
+  let k: i32 = 0;
+  while (k < takes.block.len()) {
+    let st: ssa.SInst = w.f.blocks[takes.block[k]].insts[takes.at[k]];
+    let zero: i32 = st.args[st.args.len() - 1];
+    for r in takes.roots[k] {
+      if (in_debt(w, r) && zero >= 0 && zero < deps.len() && defined_before(w, r, zero)) {
+        deps = deps.with(zero, deps[zero].append(r));
+      }
+    }
+    k = k + 1;
+  }
+  return deps;
+}
+
+// defined_before: `a`'s definition comes before `b`'s on every path to it.
+function defined_before(w: Walk, a: i32, b: i32): boolean {
+  let ab: i32 = w.defs.block[a];
+  let bb: i32 = w.defs.block[b];
+  if (ab < 0 || bb < 0) {
+    return false;
+  }
+  if (ab == bb) {
+    return w.defs.at[a] < w.defs.at[b];
+  }
+  return ssadeps.dom_holds(w.dom, bb, ab);
+}
+
 function live_of(w: Walk, takes: Takes): Live {
-  let fl: ssalive.Flow = ssalive.compute(w.f, alias_deps(w));
+  let fl: ssalive.Flow = ssalive.compute(w.f, debt_deps(w, takes, alias_deps(w)));
   if (!fl.ok) {
     return no_live(fl.why);
   }
@@ -1895,7 +2326,9 @@ function live_of(w: Walk, takes: Takes): Live {
 // inputs, those of phi `v` from `phi_at[v]`; `state` is one row of every
 // tracked slot, reused block by block and cleared of a block's slots when
 // its round ends, so only the slots in the block's row are ever read.
-struct Progress { out: i32[], done: boolean[], phi_at: i32[], phin: i32[], state: i32[], findings: Finding[], opaque: string[], unproved: boolean[] }
+// `maybe_at` is, per slot, the block whose entry first met the slot's
+// count to maybe, -1 for none: the join a token's walks may settle.
+struct Progress { out: i32[], done: boolean[], phi_at: i32[], phin: i32[], state: i32[], findings: Finding[], opaque: string[], unproved: boolean[], maybe_at: i32[] }
 
 function filled(n: i32, v: i32): i32[] {
   let out: i32[] = __alloc_i32(n);
@@ -1952,7 +2385,10 @@ function spend(own p: Progress, w: Walk, v: i32, block: i32, what: string): Prog
   if (s == absent()) {
     return Progress { ...p, state: p.state.with(k, maybe()) };
   }
-  if (s == 0) {
+  if (s == 0 && in_debt(w, r)) {
+    return Progress { ...p, state: p.state.with(k, owed()) };
+  }
+  if (s == 0 || s == owed()) {
     return found(p, w, "spent without a unit", r, block, what);
   }
   return Progress { ...p, state: p.state.with(k, s - 1) };
@@ -2000,6 +2436,9 @@ function retain(own p: Progress, w: Walk, v: i32, result: i32): Progress {
   let s: i32 = p.state[k];
   if (s == maybe()) {
     return p;
+  }
+  if (s == owed()) {
+    return Progress { ...p, state: p.state.with(k, 0) };
   }
   if (s == absent() || s + 1 > cap()) {
     return Progress { ...p, state: p.state.with(k, maybe()) };
@@ -2151,15 +2590,22 @@ function apply_named_op(own p: Progress, w: Walk, ins: ssa.SInst, block: i32): P
 
 // apply_store: the stored value's unit passes into the container. A null
 // store empties a slot the frame took the unit of: the loads it matched were
-// marked at the definition, and the count moves at the store.
+// marked at the definition, and the count moves at the store. Under a
+// token's value a reused box is the box itself, so a value read out of a
+// slot and stored back into it is kept, not spent (put_back).
 function apply_store(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken: i32[]): Progress {
   let val: i32 = ins.args[ins.args.len() - 1];
+  if (w.held >= 0 && put_back(w, ins, val)) {
+    return p;
+  }
   if (is_zero(w.f, w.defs, val)) {
     for r in taken {
       let k: i32 = w.idx[r];
       if (k >= 0 && p.state[k] != maybe()) {
         let s: i32 = p.state[k];
-        if (s == absent() || s + 1 > cap()) {
+        if (s == owed()) {
+          p = Progress { ...p, state: p.state.with(k, 0) };
+        } else if (s == absent() || s + 1 > cap()) {
           p = Progress { ...p, state: p.state.with(k, maybe()) };
         } else {
           p = Progress { ...p, state: p.state.with(k, s + 1) };
@@ -2169,6 +2615,41 @@ function apply_store(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken
     return p;
   }
   return spend(p, w, val, block, "stored into a box");
+}
+
+// put_back: `st` stores `val` back where it was read (Walk.kept).
+function put_back(w: Walk, st: ssa.SInst, val: i32): boolean {
+  return st.kind_tag == 41 && val >= 0 && val < w.kept.len() && w.kept[w.root[val]] && st.args.len() >= 2 && w.root[st.args[0]] == w.held;
+}
+
+// put_backs marks the borrows read off the held box whose every field store
+// is back into the slot they were read from, with no reload of the slot and
+// no children-only drop of the box between: the slot's unit is still the
+// value's, and the store keeps it there. A reload between released the
+// slot's unit (an overwritten slot's child), so the store spends one; and a
+// child's unit is the frame's, which the store hands back to the slot.
+function put_backs(w: Walk, dom: ssadeps.Dom): boolean[] {
+  if (w.held < 0) {
+    return [];
+  }
+  let out: boolean[] = __alloc_bool(w.f.nvals);
+  let st: Stores = stores_of(w);
+  let k: i32 = 0;
+  while (k < st.base.len()) {
+    let ins: ssa.SInst = w.f.blocks[st.block[k]].insts[st.at[k]];
+    if (st.base[k] == w.held && ins.kind_tag == 41 && !st.zero[k]) {
+      let val: i32 = w.root[ins.args[ins.args.len() - 1]];
+      let ld: ssa.SInst = def_of(w.f, w.defs, val);
+      let lb: i32 = w.defs.block[val];
+      if (ld.kind_tag == 40 && ld.args.len() > 0 && ld.imm == ins.imm && w.root[ld.args[0]] == w.held && lb >= 0 && w.origin[val] == org_borrowed()
+        && (lb == st.block[k] && w.defs.at[val] < st.at[k] || ssadeps.dom_holds(dom, st.block[k], lb))
+        && !between(w, dom, ld, lb, w.defs.at[val], st.block[k], st.at[k])) {
+        out = out.with(val, true);
+      }
+    }
+    k = k + 1;
+  }
+  return out;
 }
 
 function apply(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken: i32[]): Progress {
@@ -2193,6 +2674,10 @@ function apply(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken: i32[
 // Computed once per store position rather than per round.
 struct Takes { block: i32[], at: i32[], roots: i32[][], first: i32[] }
 
+function no_takes(): Takes {
+  return Takes { block: [], at: [], roots: [], first: [] };
+}
+
 function takes_of(w: Walk, dom: ssadeps.Dom): Takes {
   let f: ssa.SFunc = w.f;
   let out: Takes = Takes { block: [], at: [], roots: [], first: util.minus_ones(f.blocks.len()) };
@@ -2202,7 +2687,7 @@ function takes_of(w: Walk, dom: ssadeps.Dom): Takes {
     let si: i32 = 0;
     while (si < insts.len()) {
       let st: ssa.SInst = insts[si];
-      if ((st.kind_tag == 41 || st.kind_tag == 43) && st.args.len() >= 2 && is_zero(f, w.defs, st.args[st.args.len() - 1])) {
+      if (is_take(w, st)) {
         let marks: boolean[] = mark_taken_loads(w, dom, __alloc_bool(f.nvals), sb, si, st);
         let rs: i32[] = [];
         let v: i32 = 0;
@@ -2269,7 +2754,11 @@ function entry_row(own p: Progress, w: Walk, lv: Live, bi: i32): Progress {
     for base in bases {
       s = meet(s, p.out[base + j]);
     }
-    p = Progress { ...p, state: p.state.with(lv.slots[lv.in_at[bi] + j], s) };
+    let k: i32 = lv.slots[lv.in_at[bi] + j];
+    if (s == maybe() && p.maybe_at[k] < 0) {
+      p = Progress { ...p, maybe_at: p.maybe_at.with(k, bi) };
+    }
+    p = Progress { ...p, state: p.state.with(k, s) };
     j = j + 1;
   }
   return p;
@@ -2304,6 +2793,9 @@ function enter_phis(own p: Progress, w: Walk, bi: i32): Progress {
     while (i < b.preds.len()) {
       s = meet(s, p.phin[at + i]);
       i = i + 1;
+    }
+    if (s == maybe() && p.maybe_at[k] < 0) {
+      p = Progress { ...p, maybe_at: p.maybe_at.with(k, bi) };
     }
     if (s == absent()) {
       s = maybe();
@@ -2449,7 +2941,7 @@ function phi_input(own p: Progress, w: Walk, a: i32): Fed {
     return Fed { p: p, input: 0 };
   }
   let st: i32 = p.state[k];
-  if (st == maybe() || st == absent()) {
+  if (st == maybe() || st == absent() || st == owed()) {
     return Fed { p: p, input: maybe() };
   }
   if (st > 0) {
@@ -2515,6 +3007,8 @@ function retire(own p: Progress, w: Walk, lv: Live, at: i32, n: i32, block: i32,
     let held: i32 = p.state[k];
     if (held > 0) {
       p = found(p, w, kind, root_at(w, k), block, util.i32_to_string(held) + " unit(s) still held");
+    } else if (held == owed()) {
+      p = found(p, w, "spent without a unit", root_at(w, k), block, "its slot was not emptied on this path");
     } else if (held == maybe()) {
       p = Progress { ...p, unproved: p.unproved.with(k, true) };
     }
@@ -2622,7 +3116,7 @@ function block_round(own p: Progress, w: Walk, lv: Live, bi: i32, takes: Takes):
 function apply_block(own p: Progress, w: Walk, bi: i32, takes: Takes): Progress {
   let f: ssa.SFunc = w.f;
   let b: ssa.SBlock = f.blocks[bi];
-  if (bi == w.at[f.entry]) {
+  if (w.params_at_entry && bi == w.at[f.entry]) {
     let v: i32 = 0;
     while (v < f.nparams) {
       p = define(p, w, v, b.id);
@@ -2660,10 +3154,11 @@ function rpo(f: ssa.SFunc, at: i32[]): i32[] {
   let seen: boolean[] = __alloc_bool(n);
   let order: i32[] = [];
   let stack: i32[] = [entry];
+  let sp: i32 = 1;
   let cursor: i32[] = util.minus_ones(n);
   seen = seen.with(entry, true);
-  while (stack.len() > 0) {
-    let bi: i32 = stack[stack.len() - 1];
+  while (sp > 0) {
+    let bi: i32 = stack[sp - 1];
     let k: i32 = cursor[bi] + 1;
     let id: i32 = ssa.successor_id(f.blocks[bi].term, k);
     while (id >= 0 && (at[id] < 0 || seen[at[id]])) {
@@ -2673,10 +3168,11 @@ function rpo(f: ssa.SFunc, at: i32[]): i32[] {
     cursor = cursor.with(bi, k);
     if (id >= 0) {
       seen = seen.with(at[id], true);
-      stack = stack.append(at[id]);
+      stack = pushed(stack, sp, at[id]);
+      sp = sp + 1;
     } else {
       order = order.append(bi);
-      stack = drop_last(stack);
+      sp = sp - 1;
     }
   }
   let out: i32[] = [];
@@ -2688,14 +3184,14 @@ function rpo(f: ssa.SFunc, at: i32[]): i32[] {
   return out;
 }
 
-function drop_last(a: i32[]): i32[] {
-  let out: i32[] = [];
-  let i: i32 = 0;
-  while (i < a.len() - 1) {
-    out = out.append(a[i]);
-    i = i + 1;
+// pushed writes `v` at `sp` of a stack whose live part is `stack[0..sp]`,
+// growing it when `sp` is at its end: a pop is `sp - 1`, with nothing to
+// copy.
+function pushed(own stack: i32[], sp: i32, v: i32): i32[] {
+  if (sp < stack.len()) {
+    return stack.with(sp, v);
   }
-  return out;
+  return stack.append(v);
 }
 
 // The round limit is a safety net, not a bound the lattice needs: counts
@@ -2746,15 +3242,24 @@ function resumes(f: ssa.SFunc): boolean {
 
 // walk_of builds the walk's tables over `f`: roots, origins, the tracked
 // slots.
-function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: rcsigs.Table, ops: rcsigs.OpTable, at: i32[], dom: ssadeps.Dom, reach: boolean[]): Walk {
+// `hold` is what a walk under a token's value holds (walk_assuming), and
+// `base` the walk without one, whose tables stand in for what the region
+// walked does not define.
+function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: rcsigs.Table, ops: rcsigs.OpTable, at: i32[], dom: ssadeps.Dom, reach: boolean[], hold: Hold, base: Base): Walk {
   let defs: Defs = definitions(f);
-  let rt: Roots = roots(f, defs, sigs);
-  let w: Walk = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: returns_pair(f), why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [], uses: use_counts(f), dom: dom };
-  let rg: Regions = unique_regions(w, dom, reach);
-  let o: Origins = origins(w, rg.roots, rg.openers, children_boxes(w, rg.roots), dom);
-  w = Walk { ...w, origin: o.origin, why: o.why, opened: o.opened, pair_tag: o.pair_tag, pair_mask: o.pair_mask, pair_words: o.pair_words };
-  let taken: boolean[] = null_takes(w, dom);
-  w = Walk { ...w, idx: indexes(w, touches(w, taken)) };
+  let rt: Roots = inherited_roots(roots(f, defs, sigs), f, defs, base);
+  let w: Walk = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: returns_pair(f) || base.paired, why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [], uses: use_counts(f), dom: dom, regions: [], openers: [], held: hold.box, reused: hold.reused, phis: phis_of(f), outer: outer_of(base), children: [], takes: no_takes(), params_at_entry: !base.on, debt: [], kept: [] };
+  if (base.on) {
+    w = Walk { ...w, uses: base.uses };
+  }
+  let rg: Regions = inherited_regions(unique_regions(w, dom, reach), f, reach, base);
+  let own_children: boolean[] = children_boxes(w, rg.roots);
+  let children: boolean[] = inherited_children(own_children, f, defs, base);
+  let o: Origins = inherited_origins(origins(w, rg.roots, rg.openers, children, dom), f, defs, base);
+  w = Walk { ...w, origin: o.origin, why: o.why, opened: o.opened, pair_tag: o.pair_tag, pair_mask: o.pair_mask, pair_words: o.pair_words, regions: rg.roots, openers: rg.openers, children: children };
+  let takes: Takes = inherited_takes(takes_of(w, dom), w, base);
+  let taken: boolean[] = null_takes(w, takes);
+  w = Walk { ...w, takes: takes, debt: debts(w, taken, hold.from), kept: put_backs(w, dom), idx: indexes(w, touches(w, taken)) };
   let tracked: i32 = 0;
   for k in w.idx {
     if (k >= 0) {
@@ -2762,6 +3267,170 @@ function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: 
     }
   }
   return Walk { ...w, tracked: tracked };
+}
+
+// Base is the walk without an assumption, as a walk under one reads it
+// (walk_assuming): the tables of the values the region's blocks use but do
+// not define, the regions its tests opened, and its null stores' takes.
+// `at` maps a block id to its position in it. `on` is false for the walk
+// without an assumption itself.
+struct Base { on: boolean, at: i32[], root: i32[], derived: boolean[], origin: i32[], why: i32[], opened: i32[], pair_tag: i32[], pair_mask: i32[], children: boolean[], regions: i32[][], openers: i32[][], uses: i32[], paired: boolean, takes: Takes, defs: Defs, f: ssa.SFunc, phis: i32[] }
+
+function no_base(): Base {
+  return Base { on: false, at: [], root: [], derived: [], origin: [], why: [], opened: [], pair_tag: [], pair_mask: [], children: [], regions: [], openers: [], uses: [], paired: false, takes: no_takes(), defs: Defs { block: [], at: [] }, f: ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false }, phis: [] };
+}
+
+function base_of(w: Walk): Base {
+  return Base { on: true, at: w.at, root: w.root, derived: w.derived, origin: w.origin, why: w.why, opened: w.opened, pair_tag: w.pair_tag, pair_mask: w.pair_mask, children: w.children, regions: w.regions, openers: w.openers, uses: w.uses, paired: w.paired, takes: w.takes, defs: w.defs, f: w.f, phis: w.phis };
+}
+
+// Outer is the base walk's tables as a walk under an assumption reads a
+// phi its region uses but does not define (carries).
+struct Outer { on: boolean, f: ssa.SFunc, defs: Defs, root: i32[], derived: boolean[], phis: i32[] }
+
+function outer_of(base: Base): Outer {
+  return Outer { on: base.on, f: base.f, defs: base.defs, root: base.root, derived: base.derived, phis: base.phis };
+}
+
+function phis_of(f: ssa.SFunc): i32[] {
+  let out: i32[] = [];
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == 8 && ins.result >= 0) {
+        out = out.append(ins.result);
+      }
+    }
+  }
+  return out;
+}
+
+// outside: value `v` is one the walked region uses but does not define: a
+// base's table answers for it.
+function outside(f: ssa.SFunc, defs: Defs, v: i32): boolean {
+  return v >= f.nparams && v < defs.block.len() && defs.block[v] < 0;
+}
+
+function inherited_roots(own rt: Roots, f: ssa.SFunc, defs: Defs, base: Base): Roots {
+  if (!base.on) {
+    return rt;
+  }
+  let v: i32 = 0;
+  while (v < f.nvals && v < base.root.len()) {
+    if (outside(f, defs, v)) {
+      rt = Roots { root: rt.root.with(v, base.root[v]), derived: rt.derived.with(v, base.derived[v]) };
+    }
+    v = v + 1;
+  }
+  return rt;
+}
+
+// inherited_regions adds the base's regions to the region walk's: the
+// pruning only removes edges, so a block an arm dominated it still
+// dominates, and the token's own tests, jumps now, opened some of them.
+function inherited_regions(own rg: Regions, f: ssa.SFunc, reach: boolean[], base: Base): Regions {
+  if (!base.on) {
+    return rg;
+  }
+  let bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    let bb: i32 = base.at[f.blocks[bi].id];
+    if (reach[bi] && bb >= 0) {
+      let k: i32 = 0;
+      while (k < base.regions[bb].len()) {
+        let r: i32 = base.regions[bb][k];
+        if (util.index_of_i32(rg.roots[bi], r) < 0 && k < base.openers[bb].len()) {
+          rg = Regions { roots: rg.roots.with(bi, rg.roots[bi].append(r)), openers: rg.openers.with(bi, rg.openers[bi].append(base.openers[bb][k])) };
+        }
+        k = k + 1;
+      }
+    }
+    bi = bi + 1;
+  }
+  return rg;
+}
+
+function inherited_children(own out: boolean[], f: ssa.SFunc, defs: Defs, base: Base): boolean[] {
+  if (!base.on) {
+    return out;
+  }
+  let v: i32 = 0;
+  while (v < out.len() && v < base.children.len()) {
+    if (outside(f, defs, v) && base.children[v]) {
+      out = out.with(v, true);
+    }
+    v = v + 1;
+  }
+  return out;
+}
+
+function inherited_origins(own o: Origins, f: ssa.SFunc, defs: Defs, base: Base): Origins {
+  if (!base.on) {
+    return o;
+  }
+  let v: i32 = 0;
+  while (v < o.origin.len() && v < base.origin.len()) {
+    if (outside(f, defs, v)) {
+      o = Origins { ...o, origin: o.origin.with(v, base.origin[v]), why: o.why.with(v, base.why[v]), opened: o.opened.with(v, base.opened[v]) };
+      if (v < base.pair_tag.len() && base.pair_tag[v] >= 0) {
+        o = Origins { ...o, pair_tag: o.pair_tag.with(v, base.pair_tag[v]), pair_mask: o.pair_mask.with(v, base.pair_mask[v]), pair_words: o.pair_words.append(v) };
+      }
+    }
+    v = v + 1;
+  }
+  return o;
+}
+
+// inherited_takes gives a null store in the region the load the base
+// walk found for it where that load is outside the region, which the
+// region's own search cannot reach.
+function inherited_takes(own t: Takes, w: Walk, base: Base): Takes {
+  if (!base.on) {
+    return t;
+  }
+  let k: i32 = 0;
+  while (k < t.block.len()) {
+    let id: i32 = w.f.blocks[t.block[k]].id;
+    let bb: i32 = base.at[id];
+    let j: i32 = 0;
+    while (j < base.takes.block.len()) {
+      if (base.takes.block[j] == bb && base.takes.at[j] == t.at[k]) {
+        let rs: i32[] = base.takes.roots[j];
+        if (rs.len() > 0 && outside(w.f, w.defs, rs[0])) {
+          t = Takes { ...t, roots: t.roots.with(k, rs) };
+        }
+      }
+      j = j + 1;
+    }
+    k = k + 1;
+  }
+  return t;
+}
+
+// debts marks the loads a null store takes the slot's unit for (`taken`)
+// that read the box the walk's token holds, in a block the token's (id
+// `from_id`) dominates, where the hold is a fact. Empty in a walk that
+// holds nothing.
+function debts(w: Walk, taken: boolean[], from_id: i32): boolean[] {
+  if (w.held < 0 || from_id < 0 || from_id >= w.at.len() || w.at[from_id] < 0) {
+    return [];
+  }
+  let from: i32 = w.at[from_id];
+  let out: boolean[] = __alloc_bool(w.f.nvals);
+  let v: i32 = 0;
+  while (v < taken.len()) {
+    if (taken[v] && w.defs.block[v] >= 0 && ssadeps.dom_holds(w.dom, w.defs.block[v], from)) {
+      let d: ssa.SInst = def_of(w.f, w.defs, v);
+      if (is_load(d) && d.args.len() > 0 && w.root[d.args[0]] == w.held) {
+        out = out.with(v, true);
+      }
+    }
+    v = v + 1;
+  }
+  return out;
+}
+
+function in_debt(w: Walk, r: i32): boolean {
+  return r >= 0 && r < w.debt.len() && w.debt[r];
 }
 
 // progress_of lays out the out rows and the phi input rows, all absent.
@@ -2777,7 +3446,7 @@ function progress_of(w: Walk, lv: Live): Progress {
       }
     }
   }
-  return Progress { out: filled(lv.nout, absent()), done: __alloc_bool(f.blocks.len()), phi_at: phi_at, phin: filled(nphin, absent()), state: filled(w.tracked, absent()), findings: [], opaque: [], unproved: __alloc_bool(w.tracked) };
+  return Progress { out: filled(lv.nout, absent()), done: __alloc_bool(f.blocks.len()), phi_at: phi_at, phin: filled(nphin, absent()), state: filled(w.tracked, absent()), findings: [], opaque: [], unproved: __alloc_bool(w.tracked), maybe_at: util.minus_ones(w.tracked) };
 }
 
 // Settled is the walk's progress once no row changes, or `changed` still
@@ -2792,7 +3461,7 @@ function settle(own p: Progress, w: Walk, lv: Live, order: i32[], reach: boolean
     changed = false;
     // Findings and the census accumulate across rounds; only the final
     // round's are kept, since an earlier round reads rows not yet settled.
-    p = Progress { ...p, findings: [], opaque: [], unproved: __alloc_bool(w.tracked) };
+    p = Progress { ...p, findings: [], opaque: [], unproved: __alloc_bool(w.tracked), maybe_at: util.minus_ones(w.tracked) };
     for bi in order {
       if (reach[bi]) {
         let r: RoundResult = block_round(p, w, lv, bi, takes);
@@ -2835,6 +3504,700 @@ function acyclic(w: Walk, order: i32[]): boolean {
   return true;
 }
 
+// token_word is the rename root of the reuse token a branch tests, -1 for
+// a branch on anything else.
+function token_word(w: Walk, t: ssa.STerm): i32 {
+  if (t.kind_tag != 3 || t.t == t.f) {
+    return -1;
+  }
+  let ts: Tested = tested(w, t.cond);
+  if (ts.word < 0 || token_root(w, w.regions, ts.word) < 0) {
+    return -1;
+  }
+  return w.root[ts.word];
+}
+
+// tested_tokens lists the reuse tokens the function branches on, each
+// once. A token defined in a loop is a value per time round; a walk under
+// one value takes it every time round, which is a path the lowering has to
+// balance like any other.
+function tested_tokens(w: Walk, reach: boolean[]): i32[] {
+  let out: i32[] = [];
+  let bi: i32 = 0;
+  while (bi < w.f.blocks.len()) {
+    if (reach[bi]) {
+      let tok: i32 = token_word(w, w.f.blocks[bi].term);
+      if (tok >= 0 && util.index_of_i32(out, tok) < 0) {
+        out = out.append(tok);
+      }
+    }
+    bi = bi + 1;
+  }
+  return out;
+}
+
+// Pruned is a function copy under construction: per block, the successor
+// whose edge is dropped (-1 for none; a block losing every successor is
+// dropped from its own predecessors), the terminators as rewritten, and the
+// token phis to rewrite as the token's value.
+struct Pruned { dropped: i32[], terms: ssa.STerm[], phis: i32[] }
+
+// prune_token is the function with every branch on token `tok` taking the
+// arm its value selects, and every edge that would give the token the other
+// value removed: the token's phi takes its null inputs only where the token
+// is null and its box inputs only where it holds. A branch losing an arm
+// becomes a jump; a jump losing its target loses its block, which loses its
+// own incoming edges in turn. Each dropped edge takes the predecessor and
+// the phi inputs it brought out of its successor. The token's phi, and the
+// token phis it is built from, become the value the token has: a copy of the
+// box where it holds, so a spend through the token is a spend of the box's
+// unit and the box keeps its unit through the phi, and null otherwise.
+struct PrunedFunc { f: ssa.SFunc, phis: i32[], hold: Hold }
+
+// Hold is what a walk under a token's value holds: the box, -1 for none,
+// the block the token is defined in, and, per value, whether it is the
+// box reused as a construction's block (box_ops): a null store into it
+// sets a slot, it takes nothing out of one.
+// `from` is the id of the block the token is defined in.
+struct Hold { box: i32, from: i32, reused: boolean[] }
+
+function no_hold(): Hold {
+  return Hold { box: -1, from: -1, reused: [] };
+}
+
+// Where the token holds the box's release is a shell, since the box was
+// unique and the release frees its block alone, so a payload the frame read
+// before and did not read again is the frame's; and a reuse the box is
+// handed to is the box, so a slot the construction keeps stays the box's
+// and one it replaces was the frame's to release first.
+function prune_token(w: Walk, tok: i32, hold: boolean): PrunedFunc {
+  let f: ssa.SFunc = w.f;
+  let pr: Pruned = Pruned { dropped: util.minus_ones(f.blocks.len()), terms: [], phis: [] };
+  for b in f.blocks {
+    pr = Pruned { ...pr, terms: pr.terms.append(b.term) };
+  }
+  let box: i32 = token_root(w, w.regions, tok);
+  pr = drop_phi_edges(w, pr, tok, box, hold, 0);
+  // A phi the pruning leaves the box, or null, is tested the way the token
+  // is, and dropping its other arm can fix another.
+  let reach: boolean[] = reached_over(w, pr.terms);
+  let fixed: i32[] = fixed_phis(w, pr, reach, box);
+  let changed: boolean = true;
+  while (changed) {
+    changed = false;
+    let bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+      let t: ssa.STerm = pr.terms[bi];
+      if (reach[bi] && t.kind_tag == 3 && t.t != t.f) {
+        let ts: Tested = tested(w, t.cond);
+        let fx: i32 = -1;
+        if (ts.word >= 0) {
+          fx = fixed[w.root[ts.word]];
+        }
+        if (fx >= 0) {
+          let other: i32 = t.t;
+          if (ts.on_true == (fx == 1)) {
+            other = t.f;
+          }
+          pr = drop_edge(w, pr, bi, other);
+          changed = true;
+        }
+      }
+      bi = bi + 1;
+    }
+    if (changed) {
+      reach = reached_over(w, pr.terms);
+      fixed = fixed_phis(w, pr, reach, box);
+    }
+  }
+  let rew: i32[] = pr.phis;
+  let want: i32 = 0;
+  if (hold) {
+    want = 1;
+  }
+  let v: i32 = 0;
+  while (v < fixed.len()) {
+    if (fixed[v] == want && util.index_of_i32(rew, v) < 0) {
+      rew = rew.append(v);
+    }
+    v = v + 1;
+  }
+  let out: ssa.SBlock[] = [];
+  let bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    let term: ssa.STerm = pr.terms[bi];
+    if (!reach[bi]) {
+      // Unreached, so no edge of its own: its successors do not list it.
+      term = ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: -1 };
+    }
+    let b: ssa.SBlock = ssa.SBlock { ...f.blocks[bi], term: term };
+    out = out.append(token_phis(without_dropped_preds(w, b, pr.dropped, reach), rew, box, hold));
+    bi = bi + 1;
+  }
+  let fa: ssa.SFunc = ssa.SFunc { ...f, blocks: out };
+  if (!hold) {
+    return PrunedFunc { f: fa, phis: pr.phis, hold: no_hold() };
+  }
+  let ops: BoxOps = box_ops(w, fa, box);
+  return PrunedFunc { f: ops.f, phis: pr.phis, hold: Hold { box: box, from: f.blocks[w.defs.block[tok]].id, reused: ops.reused } };
+}
+
+// fixed_phis: what the pruning leaves each reached phi, through phis of
+// each other: the box (1), null (0), or undecided (-1). An input round a
+// loop to the phi itself decides nothing.
+function fixed_phis(w: Walk, pr: Pruned, reach: boolean[], box: i32): i32[] {
+  let out: i32[] = util.minus_ones(w.f.nvals);
+  let changed: boolean = true;
+  while (changed) {
+    changed = false;
+    let bi: i32 = 0;
+    while (bi < w.f.blocks.len()) {
+      if (reach[bi]) {
+        let b: ssa.SBlock = w.f.blocks[bi];
+        for ins in b.insts {
+          if (ins.kind_tag == 8 && ins.result >= 0 && out[ins.result] < 0) {
+            let fx: i32 = fixed_phi(w, pr, reach, out, b, ins, box);
+            if (fx >= 0) {
+              out = out.with(ins.result, fx);
+              changed = true;
+            }
+          }
+        }
+      }
+      bi = bi + 1;
+    }
+  }
+  return out;
+}
+
+function fixed_phi(w: Walk, pr: Pruned, reach: boolean[], out: i32[], b: ssa.SBlock, ins: ssa.SInst, box: i32): i32 {
+  let found: i32 = -1;
+  let i: i32 = 0;
+  while (i < ins.args.len() && i < b.preds.len()) {
+    let a: i32 = ins.args[i];
+    let pb: i32 = w.at[b.preds[i]];
+    if (a >= 0 && a != ins.result && pb >= 0 && reach[pb] && pr.dropped[pb] != b.id) {
+      let fx: i32 = -1;
+      if (is_zero(w.f, w.defs, a)) {
+        fx = 0;
+      } else if (w.root[a] == box && !w.derived[a]) {
+        fx = 1;
+      } else {
+        fx = out[w.root[a]];
+      }
+      if (fx < 0 || found >= 0 && found != fx) {
+        return -1;
+      }
+      found = fx;
+    }
+    i = i + 1;
+  }
+  return found;
+}
+
+// BoxOps is box_ops' answer: the function, and the values that are the box
+// reused.
+struct BoxOps { f: ssa.SFunc, reused: boolean[] }
+
+// token_phis rewrites the token phis in block `b` as the token's value: a
+// copy of the box where it holds, null otherwise.
+function token_phis(b: ssa.SBlock, phis: i32[], box: i32, hold: boolean): ssa.SBlock {
+  let insts: ssa.SInst[] = [];
+  let any: boolean = false;
+  for ins in b.insts {
+    if (ins.kind_tag == 8 && ins.result >= 0 && util.index_of_i32(phis, ins.result) >= 0) {
+      any = true;
+      if (hold) {
+        insts = insts.append(ssa.SInst { kind_tag: 7, result: ins.result, args: [box], imm: 0, str: "" });
+      } else {
+        insts = insts.append(ssa.SInst { kind_tag: 1, result: ins.result, args: [], imm: 0, str: "" });
+      }
+    } else {
+      insts = insts.append(ins);
+    }
+  }
+  if (!any) {
+    return b;
+  }
+  return ssa.SBlock { ...b, insts: insts };
+}
+
+// box_ops rewrites the held box's reuse as the box itself, reading the box
+// through the pruned function's own aliases (a phi of the box and null past
+// the test is a copy of the box there), and its shallow
+// release as a shell where the box was proved unique: elsewhere a call may
+// have kept a unit of it, and the release is the decrement the lowering
+// emitted for that. A payload read before the box's children-only drop is
+// not the shell's (shell_taken): the drop released it.
+function box_ops(w: Walk, f: ssa.SFunc, box: i32): BoxOps {
+  let root: i32[] = roots(f, definitions(f), w.sigs).root;
+  let ops: BoxOps = BoxOps { f: f, reused: __alloc_bool(f.nvals) };
+  let bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    ops = box_ops_in(ops, bi, root, box, util.index_of_i32(w.regions[bi], box) >= 0);
+    bi = bi + 1;
+  }
+  return ops;
+}
+
+function box_ops_in(own ops: BoxOps, bi: i32, root: i32[], box: i32, unique: boolean): BoxOps {
+  let b: ssa.SBlock = ops.f.blocks[bi];
+  let insts: ssa.SInst[] = [];
+  let any: boolean = false;
+  for ins in b.insts {
+    let on_box: boolean = ins.kind_tag == 11 && ins.args.len() > 0 && ins.args[0] >= 0 && root[ins.args[0]] == box;
+    if (on_box && unique && ins.str == "__fern_rc_dec") {
+      any = true;
+      insts = insts.append(ssa.SInst { ...ins, imm: 2 });
+    } else if (on_box && ins.str == "__fern_alloc_reuse" && ins.result >= 0) {
+      // The box is handed on as the construction's block: its unit goes
+      // with it, and its slots stay its own until a store replaces them.
+      any = true;
+      insts = insts.append(ssa.SInst { kind_tag: 7, result: ins.result, args: [box], imm: 0, str: "" });
+      ops = BoxOps { ...ops, reused: ops.reused.with(ins.result, true) };
+    } else {
+      insts = insts.append(ins);
+    }
+  }
+  if (!any) {
+    return ops;
+  }
+  return BoxOps { ...ops, f: ssa.SFunc { ...ops.f, blocks: ops.f.blocks.with(bi, ssa.SBlock { ...b, insts: insts }) } };
+}
+
+// drop_phi_edges drops the edges into the token's phi that would give it
+// the other value, through the token phis of the same box it is built from.
+// A box input that comes from the box's unique region is dropped at the
+// branch that opened the region, the test the token reads, so the whole arm
+// goes rather than its last edge, which would leave the arm a dead end.
+function drop_phi_edges(w: Walk, own pr: Pruned, phi: i32, box: i32, hold: boolean, depth: i32): Pruned {
+  let ins: ssa.SInst = def_of(w.f, w.defs, phi);
+  let bi: i32 = w.defs.block[phi];
+  if (ins.kind_tag != 8 || bi < 0 || depth >= 8 || util.index_of_i32(pr.phis, phi) >= 0) {
+    return pr;
+  }
+  pr = Pruned { ...pr, phis: pr.phis.append(phi) };
+  let b: ssa.SBlock = w.f.blocks[bi];
+  let i: i32 = 0;
+  while (i < ins.args.len() && i < b.preds.len()) {
+    let a: i32 = ins.args[i];
+    let pb: i32 = w.at[b.preds[i]];
+    if (a >= 0 && pb >= 0) {
+      let zero: boolean = is_zero(w.f, w.defs, a);
+      if (zero == hold) {
+        pr = drop_arm(w, pr, pb, b.id, box, zero);
+      } else if (!zero && w.root[a] != w.root[phi] && w.root[a] != box && token_root(w, w.regions, a) == box) {
+        pr = drop_phi_edges(w, pr, w.root[a], box, hold, depth + 1);
+      }
+    }
+    i = i + 1;
+  }
+  return pr;
+}
+
+// drop_arm drops the edge from `pb` to `sid`, or, for a box input out of
+// the box's unique region, the opener's edge into that region's arm.
+function drop_arm(w: Walk, own pr: Pruned, pb: i32, sid: i32, box: i32, zero: boolean): Pruned {
+  if (!zero) {
+    let at: i32 = util.index_of_i32(w.regions[pb], box);
+    if (at >= 0 && at < w.openers[pb].len() && w.at[w.openers[pb][at]] >= 0) {
+      let ob: i32 = w.at[w.openers[pb][at]];
+      let t: ssa.STerm = w.f.blocks[ob].term;
+      let c: Cond = cond_of(w, w.regions, t.cond, true);
+      if (t.kind_tag == 3 && c.root == box) {
+        let arm: i32 = t.f;
+        if (c.on_true) {
+          arm = t.t;
+        }
+        return drop_edge(w, pr, ob, arm);
+      }
+    }
+  }
+  return drop_edge(w, pr, pb, sid);
+}
+
+// drop_edge removes the edge from block `pb` to the block `sid`: a branch
+// keeps its other arm as a jump, and a jump's block, left with no way on,
+// loses its own incoming edges.
+function drop_edge(w: Walk, own pr: Pruned, pb: i32, sid: i32): Pruned {
+  if (pr.dropped[pb] == sid) {
+    return pr;
+  }
+  let t: ssa.STerm = pr.terms[pb];
+  if (t.kind_tag == 3 && t.t != t.f && (t.t == sid || t.f == sid)) {
+    let other: i32 = t.f;
+    if (t.f == sid) {
+      other = t.t;
+    }
+    pr = Pruned { ...pr, dropped: pr.dropped.with(pb, sid), terms: pr.terms.with(pb, ssa.STerm { kind_tag: 2, cond: 0, target: other, t: 0, f: 0, value: -1 }) };
+    return pr;
+  }
+  if (ssa.successor_id(t, 0) != sid) {
+    return pr;
+  }
+  // The block has no way on: it ends, and loses its own incoming edges.
+  let end: ssa.STerm = ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: -1 };
+  pr = Pruned { ...pr, dropped: pr.dropped.with(pb, sid), terms: pr.terms.with(pb, end) };
+  for pid in w.f.blocks[pb].preds {
+    let pp: i32 = w.at[pid];
+    if (pp >= 0) {
+      pr = drop_edge(w, pr, pp, w.f.blocks[pb].id);
+    }
+  }
+  return pr;
+}
+
+// reached_over is the blocks reached from the entry over the terminators
+// `terms`.
+function reached_over(w: Walk, terms: ssa.STerm[]): boolean[] {
+  let out: boolean[] = __alloc_bool(terms.len());
+  let entry: i32 = w.at[w.f.entry];
+  out = out.with(entry, true);
+  let stack: i32[] = [entry];
+  let sp: i32 = 1;
+  while (sp > 0) {
+    sp = sp - 1;
+    let bi: i32 = stack[sp];
+    let e: i32 = 0;
+    while (e < 2) {
+      let sid: i32 = ssa.successor_id(terms[bi], e);
+      if (sid >= 0 && w.at[sid] >= 0 && !out[w.at[sid]]) {
+        out = out.with(w.at[sid], true);
+        stack = pushed(stack, sp, w.at[sid]);
+        sp = sp + 1;
+      }
+      e = e + 1;
+    }
+  }
+  return out;
+}
+
+// without_dropped_preds removes from block `b` each predecessor whose edge
+// to it was dropped or that is no longer reached, with every phi's input on
+// that edge. A phi left with one input is that input: a copy, which aliases
+// it, so a box that reaches the join by one edge is the same box past it.
+function without_dropped_preds(w: Walk, b: ssa.SBlock, dropped: i32[], reach: boolean[]): ssa.SBlock {
+  let keep: boolean[] = [];
+  let any: boolean = false;
+  for pid in b.preds {
+    let pb: i32 = w.at[pid];
+    let k: boolean = pb < 0 || dropped[pb] != b.id && reach[pb];
+    keep = keep.append(k);
+    if (!k) {
+      any = true;
+    }
+  }
+  if (!any) {
+    return b;
+  }
+  let preds: i32[] = [];
+  let i: i32 = 0;
+  while (i < b.preds.len()) {
+    if (keep[i]) {
+      preds = preds.append(b.preds[i]);
+    }
+    i = i + 1;
+  }
+  let insts: ssa.SInst[] = [];
+  for ins in b.insts {
+    if (ins.kind_tag == 8) {
+      let args: i32[] = [];
+      let j: i32 = 0;
+      while (j < ins.args.len()) {
+        if (j >= keep.len() || keep[j]) {
+          args = args.append(ins.args[j]);
+        }
+        j = j + 1;
+      }
+      if (args.len() == 1 && ins.args.len() > 1 && args[0] >= 0) {
+        insts = insts.append(ssa.SInst { kind_tag: 7, result: ins.result, args: args, imm: 0, str: "" });
+      } else {
+        insts = insts.append(ssa.SInst { ...ins, args: args });
+      }
+    } else {
+      insts = insts.append(ins);
+    }
+  }
+  return ssa.SBlock { ...b, preds: preds, insts: insts };
+}
+
+// Assumed is one walk under a token's value: its tables, and its progress
+// once settled. `ok` is false where the walk could not be run or did not
+// settle, and nothing is read from it then.
+struct Assumed { ok: boolean, w: Walk, p: Progress }
+
+// walk_assuming walks the token's region of the pruned function, the
+// blocks its definition reaches, which is where its value decides a path,
+// as a function of its own (extracted): the region's blocks and a stub for
+// each block outside it that enters it. An edge in from a stub carries the
+// row the walk without an assumption settled for it (seeded), so the region
+// starts from the counts the function holds there, and the tables of the
+// values it uses but does not define are the base's (walk_of). A token
+// whose block the value leaves unreached decides no path, and the walk is
+// empty.
+function walk_assuming(w: Walk, lv: Live, p0: Progress, tok: i32, hold: boolean): Assumed {
+  let pf: PrunedFunc = prune_token(w, tok, hold);
+  let from: i32 = w.defs.block[tok];
+  if (!ssadeps.reachable_blocks(pf.f)[from]) {
+    return Assumed { ok: true, w: w, p: progress_of(w, lv) };
+  }
+  let sub: ssa.SFunc = extracted(pf.f, w.at, from);
+  let at: i32[] = ssa.block_positions(sub);
+  let reach: boolean[] = ssadeps.reachable_blocks(sub);
+  let dom: ssadeps.Dom = ssadeps.dominates(sub);
+  let wa: Walk = walk_of(sub, w.irops, w.self_abi, w.abis, w.sigs, w.ops, at, dom, reach, pf.hold, base_of(w));
+  let lva: Live = live_of(wa, wa.takes);
+  if (!lva.ok) {
+    return Assumed { ok: false, w: wa, p: progress_of(wa, lva) };
+  }
+  let pa: Progress = seeded(progress_of(wa, lva), wa, lva, reach, w, lv, p0);
+  let done: Settled = settle(pa, wa, lva, rpo(sub, at), reach, wa.takes);
+  return Assumed { ok: !done.changed, w: wa, p: done.p };
+}
+
+// extracted is the function of the blocks `from` reaches in `f`, `from`
+// first as the entry, and a stub for each other block that enters one of
+// them: the stub keeps the block's id and terminator and has no
+// instructions and no predecessors, so the edge exists and nothing runs
+// in it. Block ids and value numbers are `f`'s.
+function extracted(f: ssa.SFunc, at: i32[], from: i32): ssa.SFunc {
+  let region: boolean[] = reached_in(f, at, from, -1).with(from, true);
+  let blocks: ssa.SBlock[] = [];
+  let stubbed: boolean[] = __alloc_bool(f.blocks.len());
+  let bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    if (region[bi]) {
+      blocks = blocks.append(f.blocks[bi]);
+    }
+    bi = bi + 1;
+  }
+  bi = 0;
+  while (bi < f.blocks.len()) {
+    if (region[bi]) {
+      for pid in f.blocks[bi].preds {
+        let pb: i32 = at[pid];
+        if (pb >= 0 && !region[pb] && !stubbed[pb]) {
+          stubbed = stubbed.with(pb, true);
+          blocks = blocks.append(ssa.SBlock { id: pid, insts: [], term: into_region(f.blocks[pb].term, at, region), preds: [] });
+        }
+      }
+    }
+    bi = bi + 1;
+  }
+  return ssa.SFunc { ...f, blocks: blocks, entry: f.blocks[from].id };
+}
+
+// into_region is a stub's terminator with the arm that leaves the region
+// dropped, so the function names no block it does not hold.
+function into_region(t: ssa.STerm, at: i32[], region: boolean[]): ssa.STerm {
+  if (t.kind_tag != 3 || t.t == t.f) {
+    return t;
+  }
+  if (!region[at[t.f]]) {
+    return ssa.STerm { kind_tag: 2, cond: 0, target: t.t, t: 0, f: 0, value: -1 };
+  }
+  if (!region[at[t.t]]) {
+    return ssa.STerm { kind_tag: 2, cond: 0, target: t.f, t: 0, f: 0, value: -1 };
+  }
+  return t;
+}
+
+// seeded fills, for each edge into a walked block from a stub, the row and
+// the phi inputs the walk without an assumption settled there, and marks
+// the stub done. A phi the pruning made a copy of the box adds the unit the
+// base handed it on the edge to the box's count: under the token's value
+// they are one object.
+function seeded(own pa: Progress, wa: Walk, lva: Live, region: boolean[], w: Walk, lv: Live, p0: Progress): Progress {
+  let roots: i32[] = slot_roots(wa);
+  let bi: i32 = 0;
+  while (bi < wa.f.blocks.len()) {
+    if (region[bi]) {
+      let b: ssa.SBlock = wa.f.blocks[bi];
+      let pi: i32 = 0;
+      while (pi < b.preds.len()) {
+        let pb: i32 = wa.at[b.preds[pi]];
+        if (pb >= 0 && !region[pb]) {
+          pa = Progress { ...pa, done: pa.done.with(pb, true) };
+          pa = seed_edge(pa, wa, lva, roots, bi, pi, w, lv, p0);
+        }
+        pi = pi + 1;
+      }
+    }
+    bi = bi + 1;
+  }
+  return pa;
+}
+
+function seed_edge(own pa: Progress, wa: Walk, lva: Live, roots: i32[], bi: i32, pi: i32, w: Walk, lv: Live, p0: Progress): Progress {
+  let b: ssa.SBlock = wa.f.blocks[bi];
+  let pid: i32 = b.preds[pi];
+  let pb: i32 = wa.at[pid];
+  let bb: i32 = w.at[b.id];
+  let pb0: i32 = util.index_of_i32(w.f.blocks[bb].preds, pid);
+  let base0: i32 = edge_base(w, lv, w.at[pid], b.id);
+  // The phi inputs first: a phi the base tracked hands its input on; one it
+  // did not is maybe. The copies' inputs are added to the box below.
+  for ins in b.insts {
+    if (ins.kind_tag == 8 && ins.result >= 0 && wa.idx[ins.result] >= 0) {
+      let v: i32 = maybe();
+      if (w.idx[ins.result] >= 0 && pb0 >= 0) {
+        v = p0.phin[p0.phi_at[ins.result] + pb0];
+      }
+      pa = Progress { ...pa, phin: pa.phin.with(pa.phi_at[ins.result] + pi, v) };
+    }
+  }
+  let base: i32 = edge_base(wa, lva, pb, b.id);
+  if (base < 0) {
+    return pa;
+  }
+  let j: i32 = 0;
+  while (j < lva.in_n[bi]) {
+    let k: i32 = lva.slots[lva.in_at[bi] + j];
+    let r: i32 = roots[k];
+    let v: i32 = base_count(w, lv, p0, base0, bb, r);
+    for ins in b.insts {
+      if (ins.kind_tag == 7 && ins.result >= 0 && ins.args.len() == 1 && wa.root[ins.result] == r && w.idx[ins.result] >= 0 && pb0 >= 0 && is_phi(w, ins.result)) {
+        v = add_counts(v, p0.phin[p0.phi_at[ins.result] + pb0]);
+      }
+    }
+    pa = Progress { ...pa, out: pa.out.with(base + j, v) };
+    j = j + 1;
+  }
+  return pa;
+}
+
+function is_phi(w: Walk, v: i32): boolean {
+  return def_of(w.f, w.defs, v).kind_tag == 8;
+}
+
+// base_count is root `r`'s count on the base walk's row for the edge at
+// `base0` into block `bi`: the row's entry when the base tracks `r` there, 0
+// for a borrow it did not track, absent otherwise.
+function base_count(w: Walk, lv: Live, p0: Progress, base0: i32, bi: i32, r: i32): i32 {
+  let kb: i32 = -1;
+  if (r >= 0 && r < w.idx.len()) {
+    kb = w.idx[r];
+  }
+  if (kb < 0) {
+    if (r >= 0 && r < w.origin.len() && (w.origin[r] == org_borrowed() || w.origin[r] == org_none())) {
+      return 0;
+    }
+    return absent();
+  }
+  if (base0 < 0) {
+    return absent();
+  }
+  let j: i32 = 0;
+  while (j < lv.in_n[bi]) {
+    if (lv.slots[lv.in_at[bi] + j] == kb) {
+      return p0.out[base0 + j];
+    }
+    j = j + 1;
+  }
+  return absent();
+}
+
+// add_counts sums two counts: absent adds nothing, maybe is maybe.
+function add_counts(a: i32, b: i32): i32 {
+  if (a == absent()) {
+    return b;
+  }
+  if (b == absent()) {
+    return a;
+  }
+  if (a == maybe() || b == maybe() || a == owed() || b == owed()) {
+    return maybe();
+  }
+  if (a + b > cap()) {
+    return maybe();
+  }
+  return a + b;
+}
+
+// with_findings adds the findings of a walk under an assumption that the
+// walks before it did not already report.
+function with_findings(own out: Finding[], more: Finding[]): Finding[] {
+  for x in more {
+    let seen: boolean = false;
+    let j: i32 = 0;
+    while (j < out.len()) {
+      let y: Finding = out[j];
+      if (y.kind == x.kind && y.value == x.value && y.block == x.block) {
+        seen = true;
+      }
+      j = j + 1;
+    }
+    if (!seen) {
+      out = out.append(x);
+    }
+  }
+  return out;
+}
+
+// slot_roots is each tracked slot's root value.
+function slot_roots(w: Walk): i32[] {
+  let out: i32[] = util.minus_ones(w.tracked);
+  let v: i32 = 0;
+  while (v < w.idx.len()) {
+    if (w.idx[v] >= 0) {
+      out = out.with(w.idx[v], v);
+    }
+    v = v + 1;
+  }
+  return out;
+}
+
+// unproved_under reads whether the walk under an assumption left root `v`
+// unproved: a root it did not track is on no path it walked.
+function unproved_under(a: Assumed, v: i32): boolean {
+  let k: i32 = a.w.idx[v];
+  return k >= 0 && a.p.unproved[k];
+}
+
+// still_unproved keeps a slot the token decides unproved only where one of
+// the two walks under its values left it so: a count both settled is
+// settled, and a join one walk pruned away is on no path under that value.
+function still_unproved(own flags: boolean[], decides: boolean[], roots: i32[], a: Assumed, b: Assumed): boolean[] {
+  let k: i32 = 0;
+  while (k < flags.len()) {
+    if (flags[k] && decides[k] && !unproved_under(a, roots[k]) && !unproved_under(b, roots[k])) {
+      flags = flags.with(k, false);
+    }
+    k = k + 1;
+  }
+  return flags;
+}
+
+// decided_by marks the slots still unproved that met their count to maybe
+// at a join the token's value can decide, one at or after the token's
+// definition. A walk under the token's values settles nothing else.
+function decided_by(w: Walk, tok: i32, unproved: boolean[], maybe_at: i32[]): boolean[] {
+  let out: boolean[] = __alloc_bool(unproved.len());
+  let from: i32 = w.defs.block[tok];
+  if (from < 0) {
+    return out;
+  }
+  let infl: boolean[] = reached_from(w, from);
+  let k: i32 = 0;
+  while (k < unproved.len()) {
+    if (unproved[k] && maybe_at[k] >= 0 && (maybe_at[k] == from || infl[maybe_at[k]])) {
+      out = out.with(k, true);
+    }
+    k = k + 1;
+  }
+  return out;
+}
+
+function count_true(flags: boolean[]): i32 {
+  let n: i32 = 0;
+  for u in flags {
+    if (u) {
+      n = n + 1;
+    }
+  }
+  return n;
+}
+
 pub function certify(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: rcsigs.Table, ops: rcsigs.OpTable): Report {
   if (f.blocks.len() == 0) {
     return skipped("no blocks");
@@ -2848,21 +4211,32 @@ pub function certify(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, si
   }
   let reach: boolean[] = ssadeps.reachable_blocks(f);
   let dom: ssadeps.Dom = ssadeps.dominates(f);
-  let w: Walk = walk_of(f, irops, self_abi, abis, sigs, ops, at, dom, reach);
-  let takes: Takes = takes_of(w, dom);
-  let lv: Live = live_of(w, takes);
+  let w: Walk = walk_of(f, irops, self_abi, abis, sigs, ops, at, dom, reach, no_hold(), no_base());
+  let lv: Live = live_of(w, w.takes);
   if (!lv.ok) {
     return skipped("liveness: " + lv.why);
   }
-  let done: Settled = settle(progress_of(w, lv), w, lv, rpo(f, at), reach, takes);
+  let done: Settled = settle(progress_of(w, lv), w, lv, rpo(f, at), reach, w.takes);
   if (done.changed) {
     return skipped("did not settle in " + util.i32_to_string(round_limit()) + " rounds");
   }
-  let unproved: i32 = 0;
-  for u in done.p.unproved {
-    if (u) {
-      unproved = unproved + 1;
+  let findings: Finding[] = done.p.findings;
+  let unproved: boolean[] = done.p.unproved;
+  if (count_true(unproved) > 0) {
+    let roots: i32[] = slot_roots(w);
+    for tok in tested_tokens(w, reach) {
+      let decides: boolean[] = decided_by(w, tok, unproved, done.p.maybe_at);
+      if (count_true(decides) == 0) {
+        continue;
+      }
+      let held: Assumed = walk_assuming(w, lv, done.p, tok, true);
+      let null_tok: Assumed = walk_assuming(w, lv, done.p, tok, false);
+      if (held.ok && null_tok.ok) {
+        findings = with_findings(findings, held.p.findings);
+        findings = with_findings(findings, null_tok.p.findings);
+        unproved = still_unproved(unproved, decides, roots, held, null_tok);
+      }
     }
   }
-  return Report { findings: done.p.findings, tracked: w.tracked, unproved: unproved, opaque: done.p.opaque, skipped: "" };
+  return Report { findings: findings, tracked: w.tracked, unproved: count_true(unproved), opaque: done.p.opaque, skipped: "" };
 }
