@@ -262,7 +262,7 @@ func TestSelfHostOwnershipInference(t *testing.T) {
 		if exit != 0 {
 			t.Fatalf("exit = %d, want 0\n%s", exit, stderr)
 		}
-		censusWithin(t, "modes-program", stderr, 6)
+		censusWithin(t, "modes-program", stderr, 7)
 	})
 }
 
@@ -283,7 +283,9 @@ func TestSelfHostOwnershipInference(t *testing.T) {
 // takes no unit. For a recursive enum: `pick` hands back one tree and drops the
 // other, `depth` walks its tree and must not drop it, and neither may
 // `visit_depth`, which also hands each node to a function value that lends it;
-// `hand_to` gives its tree to a function value's `own` slot. And for a receiver:
+// `hand_to` gives its tree to a function value's `own` slot. `names_of` folds
+// a tree into a list of strings through its own recursive call: its result
+// holds references but never a tree, so it lends the tree too. And for a receiver:
 // `advance` builds a new cursor out of its parameter and must drop it, `peek`
 // returns an element of its token array and must not. For a user callee's lends:
 // `checked_keep` reads its record only through a function whose result holds
@@ -309,6 +311,10 @@ function visit_depth(t: Tree, f: (Tree) => i32): i32 {
     match (t) { Tip(_) => { return f(t); }, Fork(l, r) => { return f(t) + visit_depth(l, f) + visit_depth(r, f); } }
 }
 function one_node(t: Tree): i32 { return 1; }
+@noinline
+function names_of(t: Tree, own acc: string[]): string[] {
+    match (t) { Tip(_) => { return acc.append("tip"); }, Fork(l, r) => { return names_of(r, names_of(l, acc)); } }
+}
 @noinline
 function hand_to(t: Tree, f: (own Tree) => Tree): Tree { return f(t); }
 function keep_tree(own t: Tree): Tree { return t; }
@@ -375,6 +381,7 @@ function main(): i32 {
     t = pick(t, Tip(9), 1);
     if (depth(t) != 5) { return 5; }
     if (visit_depth(t, one_node) != 5) { return 8; }
+    if (names_of(t, []).len() != 3) { return 10; }
     t = hand_to(t, keep_tree);
     if (depth(t) != 5) { return 9; }
     let c: Cursor = Cursor { toks: [Leaf(2), Label("xy" + "")], pos: 0 };
@@ -492,6 +499,13 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 	}
 	if strings.Contains(visit, treeDrop) {
 		t.Errorf("visit_depth calls %s: a parameter lent to a function value's borrowing slot was inferred COUNTED", treeDrop)
+	}
+	names, ok := asmWholeFunc(string(asm), "names_of")
+	if !ok {
+		t.Fatal("no __fn_names_of in the emitted code")
+	}
+	if strings.Contains(names, treeDrop) {
+		t.Errorf("names_of calls %s: a recursive walk whose result cannot hold the tree was inferred COUNTED through its own recursive call", treeDrop)
 	}
 	const cursorDrop = "__sem_release_Cursor"
 	step, ok := asmWholeFunc(string(asm), "Cursor__advance")

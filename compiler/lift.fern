@@ -1525,7 +1525,12 @@ function iife_arm_values_boxable(stmts: ast.Stmt[], seen: i32, fd: parser.FuncDe
             }
             n = n + 1;
           },
+          ast.ExprFieldAccess(_) => {},
+          ast.ExprIndex(_) => {},
           ast.ExprCall(rc) => {
+            // A function read out of a struct field or a function array is
+            // already a box: nothing to wrap, and no reason to keep the other
+            // arms from being boxed.
             match (rc.callee) {
               ast.ExprLambda(ril) => {
                 if (rc.args.len() != 0 || ril.params.len() != 0) {
@@ -1745,7 +1750,12 @@ function iife_arms_all_marked(stmts: ast.Stmt[], mfuncs: MFuncs): boolean {
               return false;
             }
           },
+          ast.ExprFieldAccess(_) => {},
+          ast.ExprIndex(_) => {},
           _ => {
+            // A function read out of a struct field or a function array is a
+            // box already: field values are boxed where the struct is built
+            // (#3445), elements where the array is.
             return false;
           }
         }

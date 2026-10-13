@@ -45,7 +45,7 @@ func TestFernsmithShrinksAPlantedMiscompile(t *testing.T) {
 
 	quiet := func(string, ...any) {}
 	verdict := func(compiler, src string) string {
-		r, gap := runSelfHostSeed(t, compiler, stdlibRoot, src, quiet)
+		r, gap := runSelfHostSeed(t, compiler, stdlibRoot, src, nil, quiet)
 		switch {
 		case gap != "" || r == nil:
 			return "no binary"

@@ -877,6 +877,118 @@ pub function is_char(t: typeinfo.Type): boolean {
   return false;
 }
 
+// can_hold says a value of type `outer` may hold, anywhere inside it, a value
+// of type `inner`. A union and its members name the same box, since a match
+// binds a member to the union's own box. A function value or a dyn value may
+// hold anything, and so may a type the schema does not describe.
+pub function can_hold(f: Func, outer: typeinfo.Type, inner: typeinfo.Type): boolean {
+  let names: string[] = box_names(f, inner);
+  let key: string = type_key(inner);
+  let seen: string[] = [];
+  let work: typeinfo.Type[] = [outer];
+  let wi: i32 = 0;
+  while (wi < work.len()) {
+    let t: typeinfo.Type = work[wi];
+    wi = wi + 1;
+    let k: string = type_key(t);
+    if (k == key) {
+      return true;
+    }
+    if (util.index_of_str(seen, k) >= 0) {
+      continue;
+    }
+    seen = seen.append(k);
+    if (semtypes.is_cell(t)) {
+      work = work.append(semtypes.cell_elem(t));
+      continue;
+    }
+    match (t) {
+      typeinfo.TypeArray(a) => {
+        work = work.append(a.elem);
+      },
+      typeinfo.TypeTuple(tup) => {
+        for e in tup.elements {
+          work = work.append(e);
+        }
+      },
+      typeinfo.TypeMap(m) => {
+        work = work.append(m.key).append(m.value);
+      },
+      typeinfo.TypeStruct(r) => {
+        if (util.index_of_str(names, r.name) >= 0) {
+          return true;
+        }
+        let at: i32 = semrecords.find(f.records, t);
+        if (at < 0) {
+          return true;
+        }
+        for field in f.records.list[at].fields {
+          work = work.append(field.ty);
+        }
+      },
+      typeinfo.TypeUnion(u) => {
+        if (util.index_of_str(names, u.name) >= 0) {
+          return true;
+        }
+        let at: i32 = semrecords.find_enum(f.enums, t);
+        if (at < 0) {
+          return true;
+        }
+        for v in f.enums[at].variants {
+          if (util.index_of_str(names, v.name) >= 0) {
+            return true;
+          }
+          for field in v.fields {
+            work = work.append(field.ty);
+          }
+        }
+      },
+      typeinfo.TypeFunc(_) => {
+        return true;
+      },
+      typeinfo.TypeDyn(_) => {
+        return true;
+      },
+      typeinfo.TypeUnknown(_) => {
+        return true;
+      },
+      typeinfo.TypeErased(_) => {
+        return true;
+      },
+      _ => {}
+    }
+  }
+  return false;
+}
+
+// box_names are the nominal names a box of type `t` is known by: a union's
+// own and its members', or a record's own and every union it is a member of.
+function box_names(f: Func, t: typeinfo.Type): string[] {
+  let out: string[] = [];
+  if let typeinfo.TypeUnion(u) = t {
+    out = out.append(u.name);
+    let at: i32 = semrecords.find_enum(f.enums, t);
+    if (at >= 0) {
+      for v in f.enums[at].variants {
+        out = out.append(v.name);
+      }
+    }
+  }
+  if let typeinfo.TypeStruct(r) = t {
+    out = out.append(r.name);
+    for e in f.enums {
+      for v in e.variants {
+        if (v.name == r.name) {
+          if let typeinfo.TypeUnion(u) = e.ty {
+            out = out.append(u.name);
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
 // A function value: the env box a closure is carried in.
 pub function is_dyn(t: typeinfo.Type): boolean {
   if let typeinfo.TypeDyn(_) = t {

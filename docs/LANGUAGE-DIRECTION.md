@@ -309,12 +309,16 @@ Tuples (follow-up status):
   `(a, (b, c))`, which applies every one of these rules again one
   level down, to any depth. A bare `A` stays a binder,
   so naming a payload-less variant there is E015 (write `A()`); a
-  variant element is refutable, so it never satisfies
-  exhaustiveness on its own. Guards run with the arm's binders in
+  variant element is refutable, so one arm testing it covers only
+  that variant. Guards run with the arm's binders in
   scope. Arity is checked
   per arm (E035), element literals type-check against the
   scrutinee's element types (E035), and exhaustiveness requires
-  an unguarded `_` or an unguarded all-binder arm (E030); an arm
+  that the unguarded arms together leave no value unmatched
+  (E030): `(A(), _)` beside `(B(), _)` covers a tuple whose first
+  element is an enum of `A` and `B`, as `true` beside `false`
+  covers a boolean element, and the same holds for variant and
+  struct sub-patterns at any depth (#12257); an arm
   after an irrefutable arm is unreachable (E026) — a nested tuple
   is refutable exactly when one of its own elements is. The
   native compiler lowers them directly (checker + interp + a
