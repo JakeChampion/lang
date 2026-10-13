@@ -277,6 +277,22 @@ function pick(name: string): Case {
         let b9: ssa.SBlock = block(9, [7, 8], [fresh_box(15), store(12, 16, 15), call(16, "take", [12])], br(1));
         return Case { f: func(1, 17, [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9]), modes: [value], returns_unit: false };
     }
+    if (name == "token-box-copied-before-its-test") {
+        // The box is reached through a copy made before its test, and the
+        // token's walk inherits the copy: under the token holding the box,
+        // the token phi is that copy, so the unit the base moved into the
+        // phi is the box's again and the shell release spends it.
+        let b0: ssa.SBlock = block(0, [], [fresh_box(0), fresh_box(1), store(0, 8, 1), inst(7, 2, [0], 0, ""), call(3, "__fern_rc_is_unique", [2])], brif(3, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [], br(3));
+        let b2: ssa.SBlock = block(2, [0], [const_int(4, 0)], br(3));
+        let b3: ssa.SBlock = block(3, [1, 2], [inst(8, 5, [2, 4], 0, ""), counted_load(6, 2, 8), const_int(7, 0), inst(9, 8, [5, 7], 0, "eq")], brif(8, 4, 5));
+        let b4: ssa.SBlock = block(4, [3], [call(9, "__fern_rc_inc", [6])], br(5));
+        let b5: ssa.SBlock = block(5, [3, 4], [inst(9, 10, [5, 7], 0, "ne")], brif(10, 6, 7));
+        let b6: ssa.SBlock = block(6, [5], [call(11, "__fern_rc_dec", [2])], br(8));
+        let b7: ssa.SBlock = block(7, [5], [call(12, "__sem_release_T", [2])], br(8));
+        let b8: ssa.SBlock = block(8, [6, 7], [call(13, "__fern_rc_dec", [6]), const_int(14, 0)], ret(14));
+        return Case { f: func(0, 15, [b0, b1, b2, b3, b4, b5, b6, b7, b8]), modes: [], returns_unit: false };
+    }
     eprint("rccertify_cases: no case named " + name);
     exit(2);
     return Case { f: one_block(0, 0, [], ret(0 - 1)), modes: [], returns_unit: false };
@@ -358,6 +374,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		// The copy's reads are of the box this time round; the construction
 		// next time round stores into another box.
 		{"loop-box-copied-under-its-null-token", nil, 0, ""},
+		// The token phi's input is a copy of the box made before the test.
+		{"token-box-copied-before-its-test", nil, 0, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
