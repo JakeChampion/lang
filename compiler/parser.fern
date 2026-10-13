@@ -14031,9 +14031,16 @@ function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: str
       let cur: Insts = sv.rins;
       let i: i32 = 0;
       while (i < m.arms.len()) {
-        let ab: RStmts = mono_stmts(m.arms[i].body, mono_arm_env(env, m.arms[i].pattern, sty, funcs), funcs, cur, ret_ty);
+        let aenv: MEnv = mono_arm_env(env, m.arms[i].pattern, sty, funcs);
+        let guard: ast.Expr = m.arms[i].guard;
+        if (m.arms[i].has_guard) {
+          let g: RExpr = mono_expr(guard, aenv, funcs, cur);
+          guard = g.rexpr;
+          cur = g.rins;
+        }
+        let ab: RStmts = mono_stmts(m.arms[i].body, aenv, funcs, cur, ret_ty);
         cur = ab.rins3;
-        arms = arms.append(ast.MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard, alt_cont: false });
+        arms = arms.append(ast.MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: guard, has_guard: m.arms[i].has_guard, alt_cont: false });
         i = i + 1;
       }
       return RStmtOne { rstmt: ast.StmtMatch { ...m, scrutinee: sv.rexpr, arms: arms }, renv: env, rins2: cur };
