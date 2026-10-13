@@ -51,7 +51,12 @@ main at 6fdb1671, each on a warm certifier memo:
 `regalloc_linear`, `prune_dead`, `register_form`, `region_order` and
 `compute_checked` each a few million. The pass itself costs 0.6 M more.
 
-WHOLE_COMPILER_ROW
+The whole compiler (`fern.fern`) under the same conditions:
+
+| | Ir |
+|---|--:|
+| main | 68.712 G |
+| alloc-sized proofs | 68.486 G (−0.33%) |
 
 What is left runs on indexes the program's own invariants keep in range and
 nothing syntactic does: value ids into per-value tables (`def_blk[a]`,
