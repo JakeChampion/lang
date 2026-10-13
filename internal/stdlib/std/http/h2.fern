@@ -161,6 +161,12 @@ pub function server(cfg: Config): Step {
   return Step { conn: c, output: out, events: [] };
 }
 
+// preface is what a client sends first (§3.4), by which a loop knows a
+// connection is HTTP/2's.
+pub function preface(): u8[] {
+  return frame.preface();
+}
+
 pub function (c: Conn) closed(): boolean {
   return c.phase == CLOSED;
 }
@@ -247,11 +253,11 @@ function __next_frame(r: __Run): __Run {
   match (frame.read(r.conn.inbox, 0, r.conn.config.max_frame_size)) {
     Ok(got) => {
       match (got) {
-        frame.Whole(f, n) => {
+        frame.Got(f, n) => {
           let next: __Run = __Run { ...r, conn: __counted(Conn { ...r.conn, inbox: __rest(r.conn.inbox, n) }) };
           return __frame(next, f);
         },
-        frame.Partial => {
+        frame.More => {
           return r;
         }
       }

@@ -31,10 +31,11 @@ Modules, each importable standalone and each under the 4,000-line cap:
   priorities read and ignored (§5.3 as RFC 9113 leaves it). Sans-IO:
   bytes in, bytes out, no socket, so it runs under `std/sim` like the TLS
   handshake does.
-- `std/serve` — a connection whose first bytes are the client preface
-  (prior-knowledge h2c), or whose TLS handshake chose `h2` by ALPN, is
-  handed to the HTTP/2 state machine; everything else stays HTTP/1.1. The
-  `Upgrade: h2c` path is not implemented: RFC 9113 deprecates it.
+- `std/serve` — with `Config.with_h2()` (slice 4, landed), a connection
+  whose first bytes are the client preface (prior-knowledge h2c), or whose
+  TLS handshake chose `h2` by ALPN, is handed to the HTTP/2 state machine;
+  everything else stays HTTP/1.1. The `Upgrade: h2c` path is not
+  implemented: RFC 9113 deprecates it.
 - `std/fetch` — the client side later: one connection per origin carrying
   many requests, so `plat.http` from a handler multiplexes its upstream
   calls.
@@ -97,12 +98,17 @@ without ACK within the timeout closes the connection.
    drives whole connections from bytes as a client does: each attack class
    refused, each malformed request reset and each malformed connection
    closed, flow control at both levels, and the control frames.
-4. **Serving.** `std/serve` hands a prior-knowledge h2c connection and an
-   ALPN `h2` TLS connection to the state machine; handlers run per stream
-   under the concurrency limit, suspended handlers (P3) park per stream.
-   Gate: Go e2e tests with a real HTTP/2 client (Go's net/http) against
-   the Fern server, h2c and over TLS; the handler census and the
-   allocations-per-request gate for the HTTP/2 path.
+4. **Serving (landed, first half).** `std/serve` under `with_h2()` hands a
+   prior-knowledge h2c connection and an ALPN `h2` TLS connection to the
+   state machine: the loop's read and write paths carry the connection's
+   bytes, pending writes and all, and each stream's handler runs to its
+   answer on the loop and is counted in the metrics. `TestServeH2Interp`
+   and `TestServeH2X86_64` drive the server with curl over h2c (two GETs on
+   one connection, a POST echoed) and with Go's client over TLS (h2 by
+   ALPN, eight requests at once, a 50 KB upload echoed). Still open here:
+   a handler that suspends (P3) parking per stream rather than running to
+   its answer, `run_with`'s stateful loop over HTTP/2, and the
+   allocations-per-request reading for the HTTP/2 path.
 5. **h2spec nightly.** `scripts/net-h2spec` on `net-nightly.yml`: h2spec
    strict against the server, every case green or the job fails.
 6. **gRPC interop.** Trailers both ways, `grpc-timeout` onto the request

@@ -64,13 +64,13 @@ function shown(c: Client, output: u8[]): Shown {
     match (frame.read(output, at, frame.MAX_FRAME_SIZE)) {
       Ok(got) => {
         match (got) {
-          frame.Whole(f, n) => {
+          frame.Got(f, n) => {
             let d: Shown = describe(cl, f);
             cl = d.client;
             text = text + d.text + "\n";
             at = at + n;
           },
-          frame.Partial => {
+          frame.More => {
             return Shown { client: cl, text: text + "partial\n" };
           }
         }
@@ -272,7 +272,7 @@ function test_continuation_out(): test.TestOutcome {
     match (frame.read(answered.output, at, frame.MAX_FRAME_SIZE)) {
       Ok(got) => {
         match (got) {
-          frame.Whole(f, n) => {
+          frame.Got(f, n) => {
             match (f) {
               frame.Headers(h) => {
                 kinds = kinds + "H" + int.int_to_string(h.block.len()) + flag(h.end_headers, "end");
@@ -286,7 +286,7 @@ function test_continuation_out(): test.TestOutcome {
             }
             at = at + n;
           },
-          frame.Partial => {
+          frame.More => {
             at = answered.output.len();
           }
         }
