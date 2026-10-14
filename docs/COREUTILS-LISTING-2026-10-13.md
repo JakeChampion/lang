@@ -63,6 +63,47 @@ sbase and posixutils-rs and experimental assembly utilities were also
 surveyed; no evidence established a faster GNU-compatible listing workload
 there, so no speed claim is made about them.
 
+## 2026-10-14 sbase follow-up
+
+Sbase `c546c3a5724c81cee9a11d816a38ccdf17472129`, built with
+`-O3 -march=x86-64-v3` against glibc 2.41, matches this fixture's plain-name
+and `-F` output/status. Its column options fail and its long/recursive output
+differs, so those modes are excluded. The same frozen Fern binaries and GNU
+9.12/uutils 0.12.0/BusyBox 1.38.0/Toybox 0.8.15 references are retained; this
+does not measure the later ownership pilot or current-main compiler changes.
+
+Two idle-host rounds use five warmups and 100 samples per binary: first the
+original command order, then reversed order for the two sbase-eligible modes.
+Means in milliseconds:
+
+| Workload / order | Fern changed | GNU 9.12 | uutils 0.12.0 | sbase |
+| --- | ---: | ---: | ---: | ---: |
+| names / original | 3.067 | 2.862 | 6.015 | 2.861 |
+| names / reversed | 3.418 | 2.872 | 5.708 | 3.529 |
+| `-F` / original | 1.692 | 1.880 | 3.441 | 2.361 |
+| `-F` / reversed | 1.743 | 1.789 | 3.081 | 2.450 |
+
+Sbase beats uutils on both eligible modes in both orders. It does **not**
+establish a win over GNU: the first names means are effectively tied, and
+the reversal loses. Order sensitivity and reference variance also prevent
+using this rerun to strengthen earlier Fern/GNU speed claims. The numeric
+controls are explicitly order-sensitive too:
+
+| Workload / order | Fern base | Fern changed | GNU 9.12 |
+| --- | ---: | ---: | ---: |
+| `-sC` / original | 10.772 | 11.592 | 10.330 |
+| `-sC` / reversed | 11.897 | 10.325 | 7.812 |
+| `-isC` / original | 11.655 | 13.705 | 9.357 |
+| `-isC` / reversed | 11.629 | 10.665 | 9.900 |
+
+The changed binary loses to the base in one order and wins in the other;
+GNU wins both numeric rows in both orders. The earlier observed 9.9% result
+is therefore not a uniformly reproducible wall-time claim across sessions
+and orders. The separately recorded allocation/instruction reductions do
+not override these runtime results. No baseline is changed to hide them.
+Raw samples, exclusions,
+commands and binary identities are in `docs/benchmarks/ls-sbase-2026-10-14/`.
+
 ## Separate instrumentation
 
 Same `-isC -w 200` workload, separate runs from wall-time measurements:

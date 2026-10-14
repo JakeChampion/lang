@@ -1,0 +1,43 @@
+// Release timing fixture: no allocation or reference-count instrumentation.
+import "std/array";
+
+function values(n: i32): i32[] {
+  let xs: i32[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    xs = xs.append(i);
+    i = i + 1;
+  }
+  return xs;
+}
+
+function run(n: i32, shared: boolean): i32 {
+  let xs: i32[] = values(n);
+  let i: i32 = 0;
+  while (i < 2000) {
+    if (shared) {
+      let old: i32[] = xs;
+      xs = array.reverse(xs);
+      if (old[0] != xs[n - 1]) {
+        return 1;
+      }
+    } else {
+      xs = array.reverse(xs);
+    }
+    i = i + 1;
+  }
+  if (xs.len() != n || xs[0] != 0 || xs[n - 1] != n - 1) {
+    return 2;
+  }
+  return 0;
+}
+
+pub function main(): i32 {
+  let argv: string[] = args();
+  let small: boolean = argv.len() > 1 && argv[1] == "small";
+  let shared: boolean = argv.len() > 2 && argv[2] == "shared";
+  if (small) {
+    return run(32, shared);
+  }
+  return run(10000, shared);
+}
