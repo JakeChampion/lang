@@ -4,8 +4,10 @@ import "testing"
 
 // An unannotated local whose init joins an integer literal with a float is an
 // f64, the integer arm included: `let x = if (c) { 1 } else { 2.5 }` read back
-// as an integer made `x > 0.5` a runtime error. A value block arm, an array
-// literal's elements and a generic call's arguments are the same.
+// as an integer made `x > 0.5` a runtime error. A value block arm, an
+// arithmetic arm, an array literal's elements, a tuple's float element, a
+// variant payload and a generic call's arguments are the same; a tuple's
+// integer element stays an integer.
 func TestUntypedFloatJoinSettlesIntegerArm(t *testing.T) {
 	v := evalProgramValue(t, `function pick[T](a: T, b: T): T { return a; }
 function main(): i32 {
@@ -17,7 +19,12 @@ function main(): i32 {
 	let q = if (c) { ({ let t = 0; 2 }) } else { 2.5 };
 	let a = [1, 2.5];
 	let g = if (c) { pick(3, 4) } else { 2.5 };
-	if (x > 0.5 && m > 1.5 && n > 3.0 && p > 0.5 && q > 1.5 && a[0] > 0.5 && g > 2.5) { return 1; }
+	let b = if (c) { 1 + 1 } else { 2.5 };
+	let t = if (c) { (1, 2) } else { (3.5, 4) };
+	let o = if (c) { Some(1) } else { Some(2.5) };
+	let ov: f64 = 0.0;
+	match (o) { Some(v) => { ov = v; }, None => {} }
+	if (x > 0.5 && m > 1.5 && n > 3.0 && p > 0.5 && q > 1.5 && a[0] > 0.5 && g > 2.5 && b > 1.5 && t.0 > 0.5 && t.1 == 2 && ov > 0.5) { return 1; }
 	return 0;
 }`)
 	if n, ok := v.(Number); !ok || n != 1 {

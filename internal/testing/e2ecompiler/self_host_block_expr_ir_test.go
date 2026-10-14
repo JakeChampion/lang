@@ -1,6 +1,9 @@
 package e2ecompiler
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // blockExprIRCases exercise multi-statement BLOCK-EXPRESSION value branches
 // through the self-host IR path on x86-64 + wasm (block-expressions slice 1 in
@@ -89,6 +92,9 @@ function main(): i32 { return f(3) + f(0 - 1); }`},
 	{"nested-block-tail-arms", `enum E { A, B }
 function pick(e: E): i32 { return match (e) { E.A => { { 10 } }, E.B => { let t = 2; { { t + 20 } } } }; }
 function main(): i32 { let f = (n: i32): i32 => { { n + 1 } }; return pick(E.A) + pick(E.B) + f(4); }`},
+	// #12388: a chain of nested value blocks is read once per level, not once
+	// per level per enclosing level. 64 deep around 7.
+	{"nested-block-tail-deep", "function main(): i32 { let x: i32 = if (true) " + strings.Repeat("{ ", 64) + "7" + strings.Repeat(" }", 64) + " else { 2 }; return x; }"},
 	// #12388: a nested block more statements follow is still a statement.
 	// The inner t shadows nothing outside it: 5 + 1 = 6.
 	{"nested-block-statement", `function main(): i32 { let t: i32 = 1; let x: i32 = if (t > 0) { { let t = 9; } 5 + t } else { 0 }; return x; }`},
