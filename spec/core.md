@@ -459,6 +459,7 @@ is the number of slots it leaves.
 | `ring_new` | 434 | 1 | 1 |
 | `ring_ctl` | 435 | 4 | 1 |
 | `ring_wait` | 436 | 3 | 1 |
+| `tcp_ktls` | 437 | 4 | 1 |
 <!-- END ir_effects_run -->
 
 ## How this is kept true
