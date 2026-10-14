@@ -4690,11 +4690,10 @@ function unqualified(pv: ast.PatVariant, owner: string): ast.PatVariant {
   return ast.PatVariant { ...pv, type_name: slice_unchecked(pv.type_name, dot + 1, pv.type_name.len()) + "" };
 }
 
-function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean, ty: typeinfo.Type): Arms {
+function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: string, layout: i32, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean, ty: typeinfo.Type): Arms {
   let g: Gathered = parts(arms);
   let s: State = arms.s;
   pv = unqualified(pv, owner);
-  let layout: i32 = union_layout(s, owner);
   let shape: Payloads = arm_payloads(s, s.values[scrut], pv.type_name, layout);
   let why: string = pattern_error(a, pv, shape, layout);
   if (why != "") {
@@ -4762,13 +4761,13 @@ function wildcard_arm(a: ast.MatchArm, arms: Arms, entry: i32[], join: i32, coun
   return collect(g, done);
 }
 
-function match_arm(a: ast.MatchArm, scrut: i32, owner: string, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean, ty: typeinfo.Type): Arms {
+function match_arm(a: ast.MatchArm, scrut: i32, owner: string, layout: i32, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean, ty: typeinfo.Type): Arms {
   match (a.pattern) {
     ast.PatWildcard(_) => {
       return wildcard_arm(a, arms, entry, join, count, scope, ty);
     },
     ast.PatVariant(pv) => {
-      return variant_arm(a, pv, scrut, owner, arms, entry, join, count, scope, closing, ty);
+      return variant_arm(a, pv, scrut, owner, layout, arms, entry, join, count, scope, closing, ty);
     }
   }
   return Arms { ...arms, s: fail(arms.s, "unsupported pattern") };
@@ -4777,8 +4776,12 @@ function match_arm(a: ast.MatchArm, scrut: i32, owner: string, arms: Arms, entry
 // The variant names a union declares: a builtin union's are its instantiation's
 // two, a declared one's come from the declarations.
 function variant_names(s: State, whole: typeinfo.Type, layout: i32): string[] {
+  return inhabited_names(typed_variants(s, whole));
+}
+
+function inhabited_names(variants: semrecords.Variant[]): string[] {
   let out: string[] = [];
-  for v in typed_variants(s, whole) {
+  for v in variants {
     if (semrecords.inhabited(v)) {
       out = out.append(v.name);
     }
@@ -4802,8 +4805,8 @@ function arm_variant_name(a: ast.MatchArm, owner: string): string {
 // coverage: its false edge reaches the arms after it, and an unguarded arm
 // for the same variant catches what the guard let through. Nothing can then
 // reach the fall-through, so the last arm needs no test.
-function total_match(s: State, m: ast.StmtMatch, whole: typeinfo.Type, layout: i32): boolean {
-  let declared: string[] = variant_names(s, whole, layout);
+function total_match(m: ast.StmtMatch, whole: typeinfo.Type, variants: semrecords.Variant[]): boolean {
+  let declared: string[] = inhabited_names(variants);
   if (declared.len() == 0 || m.arms.len() == 0 || m.arms[m.arms.len() - 1].has_guard) {
     return false;
   }
@@ -4848,11 +4851,10 @@ function match_stmt(m: ast.StmtMatch, s: State): State {
 struct Chain { arms: Arms, join: i32, count: i32 }
 
 // Record the payload type of each escaping binding this match's arms bind.
-function learn_escaping(m: ast.StmtMatch, s: State, whole: typeinfo.Type, owner: string): State {
+function learn_escaping(m: ast.StmtMatch, s: State, whole: typeinfo.Type, owner: string, layout: i32): State {
   if (s.escaping.len() == s.learned.len()) {
     return s;
   }
-  let layout: i32 = union_layout(s, owner);
   for a in m.arms {
     if let ast.PatVariant(raw) = a.pattern {
       let pv: ast.PatVariant = unqualified(raw, owner);
@@ -4906,16 +4908,19 @@ function match_chain(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Chain {
   if (!s.ok) {
     return no_chain(s);
   }
-  let owner: string = union_name(s.values[scrut]);
-  m = inhabited_arms(m, s.values[scrut], s);
-  if ((owner == "" || union_layout(s, owner) == 0) && !only_wildcards(m)) {
+  let whole: typeinfo.Type = s.values[scrut];
+  let owner: string = union_name(whole);
+  let layout: i32 = union_layout(s, owner);
+  let variants: semrecords.Variant[] = laid_variants(s, whole, layout);
+  m = inhabited_arms(m, whole, variants);
+  if ((owner == "" || layout == 0) && !only_wildcards(m)) {
     return no_chain(fail(s, "unsupported match scrutinee"));
   }
   let closes: i32 = 0 - 1;
-  if (total_match(s, m, s.values[scrut], union_layout(s, owner))) {
+  if (total_match(m, whole, variants)) {
     closes = m.arms.len() - 1;
   }
-  s = learn_escaping(m, s, s.values[scrut], owner);
+  s = learn_escaping(m, s, whole, owner, layout);
   let join: i32 = s.next_block;
   s = State { ...s, next_block: join + 1 };
   let count: i32 = s.names.len();
@@ -4924,7 +4929,7 @@ function match_chain(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Chain {
   let arms: Arms = Arms { s: s, preds: [], envs: [], values: [] };
   let i: i32 = 0;
   while (i < m.arms.len() && arms.s.ok && arms.s.live) {
-    arms = match_arm(m.arms[i], scrut, owner, arms, entry, join, count, scope, i == closes, ty);
+    arms = match_arm(m.arms[i], scrut, owner, layout, arms, entry, join, count, scope, i == closes, ty);
     i = i + 1;
   }
   return Chain { arms: arms, join: join, count: count };
@@ -4932,9 +4937,9 @@ function match_chain(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Chain {
 
 // A closed enum instantiation can prove an arm unreachable. This is a
 // type fact, not a guess about the constructor an expression happens to use.
-function inhabited_arms(m: ast.StmtMatch, whole: typeinfo.Type, s: State): ast.StmtMatch {
+function inhabited_arms(m: ast.StmtMatch, whole: typeinfo.Type, variants: semrecords.Variant[]): ast.StmtMatch {
   let absent: string[] = [];
-  for v in typed_variants(s, whole) {
+  for v in variants {
     if (!semrecords.inhabited(v)) {
       absent = absent.append(v.name);
     }
@@ -6600,7 +6605,12 @@ function enum_entry(t: typeinfo.Type, u: typeinfo.TypeUnion, s: State, out: Sche
 }
 
 function typed_variants(s: State, whole: typeinfo.Type): semrecords.Variant[] {
-  if (union_layout(s, union_name(whole)) == semrecords.layout_option()) {
+  return laid_variants(s, whole, union_layout(s, union_name(whole)));
+}
+
+// laid_variants is typed_variants for a union whose `layout` is in hand.
+function laid_variants(s: State, whole: typeinfo.Type, layout: i32): semrecords.Variant[] {
+  if (layout == semrecords.layout_option()) {
     return builtin_variants(whole);
   }
   let variants: semrecords.Variant[] = [];
