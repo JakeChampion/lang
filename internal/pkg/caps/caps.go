@@ -361,6 +361,7 @@ var Ungated = map[string]bool{
 	"ring_new":                    true,
 	"ring_ctl":                    true,
 	"ring_wait":                   true,
+	"ring_recv":                   true,
 	"wasm_block":                  true,
 	"wasm_poll":                   true,
 	"wasm_pollable_drop":          true,

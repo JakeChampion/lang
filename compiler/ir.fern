@@ -1732,6 +1732,12 @@ pub function op_ring_wait(): Op {
   return op0(436);
 }
 
+// `ring_recv(ring, fd, buf)`: what the ring holds of `fd`'s bytes, then the
+// socket's, into `buf` (asmcore.rt_src_ring).
+pub function op_ring_recv(): Op {
+  return op0(438);
+}
+
 pub function op_tcp_recv_into(): Op {
   return op0(344);
 }
@@ -4134,6 +4140,9 @@ function kind_id_len9_r(name: string): i32 {
   if (name == "raw_alloc") {
     return 81;
   }
+  if (name == "ring_recv") {
+    return 438;
+  }
   if (name == "ring_wait") {
     return 436;
   }
@@ -5829,6 +5838,9 @@ pub function kind_name(id: i32): string {
   if (id == 437) {
     return "tcp_ktls";
   }
+  if (id == 438) {
+    return "ring_recv";
+  }
   if (id == 408) {
     return "pipe";
   }
@@ -6189,6 +6201,7 @@ function pops3(t: i32): boolean {
     || t == 387  // tcp_send_buf (fd, handle, from)
     || t == 354  // udp_send_bytes (host, port, data)
     || t == 343 || t == 436  // reactor_wait / ring_wait (r, events, timeout_ms)
+    || t == 438  // ring_recv (r, fd, buf)
     || t == 242  // reader_seek (fd, offset, whence)
     || t == 330  // reader_splice (fd, out_fd, max)
     || t == 407  // reader_copy_range (fd, out_fd, max)

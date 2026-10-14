@@ -2302,6 +2302,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.ArrayType{Elem: ast.NumberType{}}, ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
+	// ring_recv(ring, fd, buf): number — a read of fd into buf, from what
+	// the ring has received for it before the socket: the byte count, 0 at
+	// EOF, or -errno.
+	c.info.FuncSigs["ring_recv"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.NumberType{},
+	}
 	// tcp_ktls(fd, op, arg, data): number — the kernel TLS record layer on a
 	// connected socket (#9858): attach it, install a direction's keys, send
 	// a record of type arg, or read one record's content into data,

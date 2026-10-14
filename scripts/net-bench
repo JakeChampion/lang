@@ -49,13 +49,22 @@
 # net/fern/c64.rps` is the trend.
 #
 #   net/<server>/c<N>.rps       requests per second, whole; <server> is
-#                               fern, go, hyper, h2o, fern-twofetch or
+#                               fern, fern-ring (the same server waiting
+#                               on an io_uring, FERN_IO_URING=1), go,
+#                               hyper, h2o, fern-twofetch or
 #                               hyper-twofetch
 #   net/<server>/c<N>.p50_us    median latency, microseconds
 #   net/<server>/c<N>.p99_us    99th-percentile latency, microseconds
 #   net/<server>/c<N>.failed    responses that were not 200, plus errors
 #                               other than the requests cut off by the end
 #                               of the run
+#   net/<server>/p<N>.rps       the pipelined profile: N connections each
+#                               sending 16 requests in one write and
+#                               reading the answers before the next batch
+#                               (scripts/net-bench.d/pipeload), responses
+#                               per second
+#   net/<server>/p<N>.failed    connections that failed under it, other
+#                               than closed by the server between answers
 #   net/fern/held.bytes_per_connection          (x86-64 only)
 #   net/fern/held.bytes_per_suspended_handler   (x86-64 only)
 #   net/fern/held.bytes_per_stream              (x86-64 only)
@@ -90,6 +99,7 @@ ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
 
 bin/fern -target "$TARGET" -o "$work/fern-hello" scripts/net-bench.d/hello.fern
 go build -o "$work/go-hello" ./scripts/net-bench.d/gohello
+go build -o "$work/pipeload" ./scripts/net-bench.d/pipeload
 cargo build --release --locked --quiet --manifest-path scripts/net-bench.d/hyperhello/Cargo.toml --target-dir "$work/hyper-target"
 cp "$work/hyper-target/release/hyperhello" "$work/hyper-hello"
 cp "$work/hyper-target/release/twofetch" "$work/hyper-twofetch"
@@ -103,6 +113,8 @@ start() {
   if [ "$1" = h2o ]; then
     h2o_config "$2"
     start_server "$work/server.log" h2o -c "$work/h2o.conf"
+  elif [ "$1" = fern-ring ]; then
+    FERN_IO_URING=1 PORT="$2" start_server "$work/server.log" "$work/fern-hello"
   else
     PORT="$2" start_server "$work/server.log" "$work/$1-hello"
   fi
@@ -141,12 +153,14 @@ PY
 {
   echo "# scripts/net-bench report — arch $ARCH, target $TARGET, $(nproc) cpus"
   echo "# ${SECONDS_PER}s per load, connections: $CONNECTIONS, $("$OHA" --version), $(go version | cut -d' ' -f3), hyper $hyper_version ($(rustc --version | cut -d' ' -f2)), h2o $h2o_version"
-  for server in fern go hyper h2o; do
+  for server in fern fern-ring go hyper h2o; do
     port="$(free_port)"
     start "$server" "$port"
     for n in $CONNECTIONS; do
       "$OHA" -z "${SECONDS_PER}s" -c "$n" --no-tui --output-format json "http://127.0.0.1:$port/" > "$work/$server-c$n.json"
       rows "$server" "$n" "$work/$server-c$n.json"
+      "$work/pipeload" -addr "127.0.0.1:$port" -c "$n" -depth 16 -d "${SECONDS_PER}s" |
+        awk -v s="$server" -v n="$n" '{ printf "net/%s/p%s.rps\t%s\nnet/%s/p%s.failed\t%s\n", s, n, $2, s, n, $4 }'
     done
     stop_server
   done

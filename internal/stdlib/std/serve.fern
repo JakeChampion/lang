@@ -34,7 +34,9 @@
 //      does not. At `max_connections` open the listener is left
 //      unwatched, so further connections wait in the accept queue until
 //      one closes.
-//   2. when it is readable, tcp_recv_into the loop's one 4 KiB buffer
+//   2. when it is readable, read it through the driver (`recv_into`,
+//      which takes what an io_uring has already received for it before
+//      the socket) into the loop's one 4 KiB buffer
 //      until a read comes back short, lending the buffer to a connection
 //      with nothing buffered and appending to one with a partial request
 //      (at most the parser's header and body caps unread).
@@ -527,8 +529,9 @@ function __recv_scratch(): u8[] {
 // shared by every copy of the value, so a count never needs the table back.
 // `pulls` are the streamed HTTP/2 request bodies handlers are reading and
 // `producers` the HTTP/2 response bodies being produced, by connection and
-// stream (`__H2Pull`, `__H2Producer`).
-struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], hosts: platform.Host[], tails: __Tail[], tls: __Tls[], framing: __Framing[], last: http.HttpFramed, out: usize, lent: i32, parked: __Flight[], later: (() => void)[], metrics: metrics.ServerMetrics, pulls: __H2Pull[], producers: __H2Producer[] }
+// stream (`__H2Pull`, `__H2Producer`). `tls_reads` is how a TLS
+// connection is watched for reads (`__read_interest`).
+struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], hosts: platform.Host[], tails: __Tail[], tls: __Tls[], framing: __Framing[], last: http.HttpFramed, out: usize, lent: i32, parked: __Flight[], later: (() => void)[], metrics: metrics.ServerMetrics, pulls: __H2Pull[], producers: __H2Producer[], tls_reads: i32 }
 
 // __Tls — a connection's TLS: none; its session, through which every
 // byte read and written passes; lent to the handler pulling a streamed
@@ -1042,7 +1045,7 @@ function __tail_park[D: async.Driver](drv: D, c: __Conns, at: i32, producer: Chu
   match (c.framing[at]) {
     Pulling(b) => {},
     _ => {
-      drv.watch(c.fds[at], 1);
+      drv.watch(c.fds[at], __read_interest(c, c.tls[at]));
     }
   }
   return __Conns { ...c, tails: c.tails.with(at, ParkedTail(producer, index, end)), deadlines: c.deadlines.with(at, __held_deadline()), parked: c.parked.append(fl) };
@@ -1213,7 +1216,7 @@ function __conns_add(c: __Conns, fd: i32, deadline: i64, peer: i32, host: platfo
     },
     _ => {}
   }
-  return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), keep: c.keep.append(keep), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), hosts: c.hosts.append(host), tails: c.tails.append(NoTail), tls: c.tls.append(tls), framing: c.framing.append(Http1), last: c.last, out: c.out, lent: c.lent, parked: c.parked, later: c.later, metrics: c.metrics, pulls: c.pulls, producers: c.producers };
+  return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), keep: c.keep.append(keep), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), hosts: c.hosts.append(host), tails: c.tails.append(NoTail), tls: c.tls.append(tls), framing: c.framing.append(Http1), last: c.last, out: c.out, lent: c.lent, parked: c.parked, later: c.later, metrics: c.metrics, pulls: c.pulls, producers: c.producers, tls_reads: c.tls_reads };
 }
 
 // __conns_from_peer(c, peer) — how many open connections the peer holds.
@@ -1270,7 +1273,7 @@ function __conns_remove(c: __Conns, at: i32): __Conns {
     }
     i = i + 1;
   }
-  return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base, send_since: send_since, send_base: send_base, peers: peers, hosts: hosts, tails: tails, tls: tls, framing: framing, last: c.last, out: c.out, lent: 0 - 1, parked: c.parked, later: c.later, metrics: c.metrics, pulls: __pulls_without(c.pulls, c.fds[at]), producers: __producers_without(c.producers, c.fds[at]) };
+  return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base, send_since: send_since, send_base: send_base, peers: peers, hosts: hosts, tails: tails, tls: tls, framing: framing, last: c.last, out: c.out, lent: 0 - 1, parked: c.parked, later: c.later, metrics: c.metrics, pulls: __pulls_without(c.pulls, c.fds[at]), producers: __producers_without(c.producers, c.fds[at]), tls_reads: c.tls_reads };
 }
 
 // __conns_timeout(c, now) — the wait's timeout: the milliseconds until the
@@ -1335,7 +1338,7 @@ function __serve_accept[D: async.Driver](drv: D, listener: i32, c: __Conns, opts
   if (opts.proxy_protocol) {
     tls = __awaiting(tls);
   }
-  if (drv.watch(fd, 1) < 0) {
+  if (drv.watch(fd, __read_interest(c, tls)) < 0) {
     tcp_close(fd);
     return c;
   }
@@ -1424,10 +1427,10 @@ function __serve_read[D: async.Driver](drv: D, c: __Conns, at: i32, scratch: u8[
       return __serve_read_proxy(drv, c, at, next, head, scratch, opts);
     },
     _ => {
-      return __serve_read_plain(c, at, scratch, opts);
+      return __serve_read_plain(drv, c, at, scratch, opts);
     }
   }
-  return __serve_read_plain(c, at, scratch, opts);
+  return __serve_read_plain(drv, c, at, scratch, opts);
 }
 
 // __awaiting(t) — the TLS state `t` once a PROXY protocol header has come.
@@ -1453,7 +1456,7 @@ function __awaiting(t: __Tls): __Tls {
 // finished with nothing to answer.
 function __serve_read_proxy[D: async.Driver](drv: D, c: __Conns, at: i32, next: Option[server.Session], head: u8[], scratch: u8[], opts: Config): (__Conns, boolean) {
   let deadline: i64 = c.deadlines[at];
-  let read: (__Conns, boolean) = __serve_read_plain(c, at, scratch, opts);
+  let read: (__Conns, boolean) = __serve_read_plain(drv, c, at, scratch, opts);
   let bytes: u8[] = head.concat(read.0.bufs[at]);
   let empty: u8[] = [];
   let lent: i32 = read.0.lent;
@@ -1497,9 +1500,9 @@ function __proxied[D: async.Driver](drv: D, c: __Conns, at: i32, next: Option[se
   return (c, done);
 }
 
-// __serve_read_plain(c, at, scratch, opts) — `__serve_read` on the socket's
+// __serve_read_plain(drv, c, at, scratch, opts) — `__serve_read` on the socket's
 // own bytes.
-function __serve_read_plain(c: __Conns, at: i32, scratch: u8[], opts: Config): (__Conns, boolean) {
+function __serve_read_plain[D: async.Driver](drv: D, c: __Conns, at: i32, scratch: u8[], opts: Config): (__Conns, boolean) {
   let buf: u8[] = c.bufs[at];
   let was_idle: boolean = buf.len() == 0;
   let lent: i32 = c.lent;
@@ -1511,7 +1514,7 @@ function __serve_read_plain(c: __Conns, at: i32, scratch: u8[], opts: Config): (
       lent = 0 - 1;
     }
     __arr_set_len(scratch, __recv_room());
-    let n: i32 = tcp_recv_into(c.fds[at], scratch);
+    let n: i32 = drv.recv_into(c.fds[at], scratch);
     if (n == 0 - __eagain()) {
       more = false;
     } else if (n <= 0) {
@@ -1565,7 +1568,7 @@ function __serve_read_tls[D: async.Driver](drv: D, c: __Conns, at: i32, sess: se
   let more: boolean = true;
   while (more) {
     __arr_set_len(scratch, __recv_room());
-    let n: i32 = tcp_recv_into(c.fds[at], scratch);
+    let n: i32 = drv.recv_into(c.fds[at], scratch);
     if (n == 0 - __eagain()) {
       more = false;
     } else if (n <= 0) {
@@ -2076,7 +2079,7 @@ function __serve_drain[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Confi
   if (!c.keep[at]) {
     return (__serve_close(drv, c, at), -1);
   }
-  if (drv.watch(c.fds[at], 1) < 0) {
+  if (drv.watch(c.fds[at], __read_interest(c, c.tls[at])) < 0) {
     return (__serve_close(drv, c, at), -1);
   }
   let parsed: (__Behind, http.HttpFramed) = __serve_behind(http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits, c.last), c.last);
@@ -3186,13 +3189,33 @@ function __serve_send_out[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Co
 function __pending_interest(c: __Conns, at: i32): i32 {
   match (c.framing[at]) {
     Http2(conn) => {
-      return 3;
+      return __read_interest(c, c.tls[at]) | 2;
     },
     _ => {
       return 2;
     }
   }
   return 2;
+}
+
+// __read_interest(c, tls) — how the loop watches a connection it reads
+// itself, `tls` its TLS state: readable, with its reads through the driver
+// (`recv_into`), unless the connection may go to the kernel's TLS record
+// layer, which reads the socket itself.
+function __read_interest(c: __Conns, tls: __Tls): i32 {
+  if let Plain = tls {
+    return 9;
+  }
+  return c.tls_reads;
+}
+
+// __tls_reads(opts) — `__read_interest` for a TLS connection of a loop
+// under `opts`.
+function __tls_reads(opts: Config): i32 {
+  if (__ktls_asked(opts)) {
+    return 1;
+  }
+  return 9;
 }
 
 // __serve_pend(drv, c, at, rest, opts) — `rest`, what a short write left,
@@ -3363,15 +3386,13 @@ function __drain_deadline(c: __Conns, at: i32, opts: Config, first: boolean): __
   return __Conns { ...c, deadlines: c.deadlines.with(at, deadline), send_since: c.send_since.with(at, since), send_base: c.send_base.with(at, base) };
 }
 
-// __listener_interest(opts) — how a loop watches its listener: for reads,
-// and exclusively when other workers watch the same listener, so a
-// connection wakes one of them rather than all.
-function __listener_interest(opts: Config): i32 {
-  if (opts.workers > 1) {
-    return 5;
-  }
-  return 1;
-}
+// LISTENER_INTEREST — how a loop watches its listener: for reads, and
+// exclusively, so where workers share it a connection wakes one of them
+// rather than all. A listener no other process watches loses nothing by
+// it, and the io_uring driver keeps an exclusive watch in an epoll set,
+// whose registration does not keep the listener open after its worker
+// dies the way a pending poll on the ring does.
+const LISTENER_INTEREST: i32 = 5;
 
 // __stop_begin(stop, sig) — the shutdown `sig` started, once: a second
 // signal changes nothing.
@@ -3558,7 +3579,7 @@ function __serve_gate[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: 
     return false;
   }
   if (!accepting && !full) {
-    return drv.watch(listener, __listener_interest(opts)) >= 0;
+    return drv.watch(listener, LISTENER_INTEREST) >= 0;
   }
   return accepting;
 }
@@ -3953,7 +3974,7 @@ function __body_settled[D: async.Driver](drv: D, c: __Conns, at: i32, body: __Bo
   if (rest.len() > 0) {
     c = __Conns { ...c, bufs: c.bufs.with(at, rest.concat(__bytes_from(c.bufs[at], c.offs[at]))), offs: c.offs.with(at, 0) };
   }
-  drv.watch(c.fds[at], 1);
+  drv.watch(c.fds[at], __read_interest(c, c.tls[at]));
   if (body.state.get() != 1) {
     return __Conns { ...c, keep: c.keep.with(at, false) };
   }
@@ -4833,7 +4854,7 @@ function __init_platform(): platform.Host {
 // persistence.
 function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => HttpResponse, opts: Config, on_stop: (string) => void, snap: Option[Writer]): i32 {
   let drv: async.RealDriver = __loop_driver(opts);
-  let watched: i32 = drv.watch(listener, __listener_interest(opts));
+  let watched: i32 = drv.watch(listener, LISTENER_INTEREST);
   if (watched < 0) {
     return watched;
   }
@@ -4841,7 +4862,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts, true);
   let host_for: (Option[net.SocketAddr]) => platform.Host = (peer: Option[net.SocketAddr]): platform.Host => plat.with_peer(peer);
-  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [] };
+  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts) };
   let flights: __Flight[] = [];
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, line: "" };
@@ -5017,7 +5038,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
 function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), opts: Config, on_stop: (string, S) => void, snap: Option[Writer]): i32 {
   let st: S = init;
   let drv: async.RealDriver = __loop_driver(opts);
-  let watched: i32 = drv.watch(listener, __listener_interest(opts));
+  let watched: i32 = drv.watch(listener, LISTENER_INTEREST);
   if (watched < 0) {
     return watched;
   }
@@ -5025,7 +5046,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts, false);
   let host_for: (Option[net.SocketAddr]) => platform.Host = (peer: Option[net.SocketAddr]): platform.Host => plat.with_peer(peer);
-  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [] };
+  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts) };
   let flights: __Flight[] = [];
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, line: "" };

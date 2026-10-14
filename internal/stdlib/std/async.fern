@@ -63,8 +63,10 @@ pub enum Future[T] {
 // wait. `watch(fd, interest)` registers a descriptor for the interest bits
 // (1 readable, 2 writable; 4 exclusive, so that of several processes
 // watching one descriptor a readiness wakes one rather than all, epoll's
-// EPOLLEXCLUSIVE, and nothing elsewhere) or changes them, `unwatch(fd)`
-// drops it, and
+// EPOLLEXCLUSIVE, and nothing elsewhere; 8 with 1, read through
+// `recv_into`, which lets an io_uring receive into buffers of its own ahead
+// of the reads, and nothing elsewhere) or changes them, `unwatch(fd)`
+// drops it, with what the driver received for it and nobody read, and
 // `wait(max, timeout_ms)` is the (fd, readiness) pairs of up to `max`
 // ready descriptors, readiness 1 readable, 2 writable and 4 an error or
 // hang-up: empty on the timeout (-1 waits without one) and on an error.
@@ -85,6 +87,10 @@ pub enum Future[T] {
 // (PR_SET_PDEATHSIG), Darwin as kqueue's EVFILT_PROC. A parent that dies
 // before the call is caught by finding the process reparented to init, so a
 // subreaper other than init hides that early death on Linux.
+// `recv_into(fd, buf)` reads `fd` into `buf` as `tcp_recv_into` does, the
+// driver's received bytes first: every read of a descriptor watched with
+// interest 8 goes through it, until a short read, before the descriptor is
+// unwatched.
 // `close()` releases the set.
 pub trait Driver {
   function poll_ready(self: Self, toks: i32[], timeout_ms: i32): i32;
@@ -101,6 +107,9 @@ pub trait Driver {
   function watch_signal(self: Self, sig: i32): i32;
   function unwatch_signal(self: Self, sig: i32): i32;
   function watch_parent(self: Self): i32;
+  function recv_into(self: Self, fd: i32, buf: u8[]): i32 {
+    return tcp_recv_into(fd, buf);
+  }
   function close(self: Self): i32;
 }
 
@@ -322,6 +331,13 @@ impl Driver for RealDriver {
       return watched;
     }
     return __real_ctl(self, 6, 0, 0);
+  }
+  function recv_into(self: RealDriver, fd: i32, buf: u8[]): i32 {
+    let ring: i64 = self.ring.get();
+    if (ring >= 0 as i64) {
+      return ring_recv(ring, fd, buf);
+    }
+    return tcp_recv_into(fd, buf);
   }
   function close(self: RealDriver): i32 {
     let ring: i64 = self.ring.get();
