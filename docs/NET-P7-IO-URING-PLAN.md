@@ -171,9 +171,12 @@ fallback; the native arm64 runner exercises the ring.
    `Config.io_uring_zc_bytes` (3,072 by default, the kernel's measured
    crossover) is written with `IORING_OP_SEND_ZC`; the loop keeps the
    bytes until the notification completion says the kernel is done with
-   them. Loopback always copies, so this slice is measured only on the
-   fixed host. Gate: the large-response and sendfile serve tests under
-   both backends.
+   them. Loopback always copies, so this slice can be measured only
+   between two machines with a real NIC. No such host is available: every
+   lane runs on one shared GitHub runner, where the generator and the
+   server talk over loopback. The slice waits for one, rather than landing
+   a send path nothing here can show is worth its code. Gate: the
+   large-response and sendfile serve tests under both backends.
 5. **Measured, and kept only if it wins.** The HttpArena profiles #9861
    names (baseline at 4,096 connections, pipelined at 4,096, and the
    async profile at 32,000) on the fixed host, epoll against the ring
@@ -182,6 +185,20 @@ fallback; the native arm64 runner exercises the ring.
    runs the serve suites and `scripts/net-bench` under both backends;
    the per-PR lanes run epoll only, plus the slice gates above. If the
    ring does not win, it is deleted with this plan's record of why.
+   Recorded so far: `scripts/net-bench` loads the same hello binary
+   under both backends (`net/fern-ring/*` beside `net/fern/*`), so the
+   nightly trend holds the comparison. `docs/benchmarks/net-ring-2026-10-14.md`
+   is the first comparison, from the development container. The
+   backends serve the same at 64 connections. At 4,096 the ring serves 5
+   to 7% fewer requests at a 13% lower 99th percentile, and slice 3
+   moves it 1 to 2%. In the pipelined profile (`pipeload`, 16 requests
+   per batch, also recorded nightly as `net/<server>/p<N>.rps`) the three
+   are within 5% of each other, the runs' own spread. In the async
+   profile (`twofetch`, two upstream fetches per request) the ring serves
+   8% more at 4,096 connections, about the runs' spread. On this box the
+   ring has not won by a margin the measurements can tell from noise.
+   Whether to keep it is to be decided from the nightly trend on the
+   runner.
 
 ## What is not here
 
