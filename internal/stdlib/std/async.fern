@@ -91,6 +91,14 @@ pub enum Future[T] {
 // driver's received bytes first: every read of a descriptor watched with
 // interest 8 goes through it, until a short read, before the descriptor is
 // unwatched.
+// `send_zc(fd, data, from)` writes `data[from:]` to `fd` without copying
+// it into the kernel: a slot, or -EOPNOTSUPP where the driver has no
+// zero-copy send (every driver but an io_uring's), -EAGAIN when it has none
+// free. The write completes later. The descriptor is reported writable once
+// `zc_result(slot)` answers the bytes written or -errno; it is -EINPROGRESS
+// until then. `data` must stay alive and unchanged until
+// `zc_notified(slot)`, when the kernel is done with its pages, and
+// `zc_release(slot)` then frees the slot.
 // `close()` releases the set.
 pub trait Driver {
   function poll_ready(self: Self, toks: i32[], timeout_ms: i32): i32;
@@ -109,6 +117,18 @@ pub trait Driver {
   function watch_parent(self: Self): i32;
   function recv_into(self: Self, fd: i32, buf: u8[]): i32 {
     return tcp_recv_into(fd, buf);
+  }
+  function send_zc(self: Self, fd: i32, data: u8[], from: i32): i32 {
+    return 0 - 95;
+  }
+  function zc_result(self: Self, slot: i32): i32 {
+    return 0 - 2;
+  }
+  function zc_notified(self: Self, slot: i32): boolean {
+    return true;
+  }
+  function zc_release(self: Self, slot: i32): i32 {
+    return 0;
   }
   function close(self: Self): i32;
 }
@@ -338,6 +358,22 @@ impl Driver for RealDriver {
       return ring_recv(ring, fd, buf);
     }
     return tcp_recv_into(fd, buf);
+  }
+  function send_zc(self: RealDriver, fd: i32, data: u8[], from: i32): i32 {
+    let ring: i64 = self.ring.get();
+    if (ring >= 0 as i64) {
+      return ring_send_zc(ring, fd, data, from);
+    }
+    return 0 - 95;
+  }
+  function zc_result(self: RealDriver, slot: i32): i32 {
+    return ring_ctl(self.ring.get(), 8, slot, 0);
+  }
+  function zc_notified(self: RealDriver, slot: i32): boolean {
+    return ring_ctl(self.ring.get(), 9, slot, 0) != 0;
+  }
+  function zc_release(self: RealDriver, slot: i32): i32 {
+    return ring_ctl(self.ring.get(), 10, slot, 0);
   }
   function close(self: RealDriver): i32 {
     let ring: i64 = self.ring.get();

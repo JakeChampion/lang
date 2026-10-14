@@ -39,15 +39,14 @@ func CheckWorkersPerCPU(t *testing.T, cmd *exec.Cmd, addr string) {
 	WaitServerReady(t, addr, 10*time.Second)
 	want := runtime.NumCPU()
 	pid := cmd.Process.Pid
-	path := fmt.Sprintf("/proc/%d/task/%d/children", pid, pid)
 	limit := time.Now().Add(10 * time.Second)
 	var got int
 	for {
-		b, err := os.ReadFile(path)
+		kids, err := ChildPIDs(pid)
 		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
+			t.Fatalf("the supervisor's children: %v", err)
 		}
-		got = len(strings.Fields(string(b)))
+		got = len(kids)
 		if got == want || time.Now().After(limit) {
 			break
 		}
@@ -126,14 +125,13 @@ func CheckWorkersStopWithSupervisor(t *testing.T, cmd *exec.Cmd, addr string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
 	pid := cmd.Process.Pid
-	path := fmt.Sprintf("/proc/%d/task/%d/children", pid, pid)
 	var workers []string
 	for limit := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
-		b, err := os.ReadFile(path)
+		kids, err := ChildPIDs(pid)
 		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
+			t.Fatalf("the supervisor's children: %v", err)
 		}
-		workers = strings.Fields(string(b))
+		workers = kids
 		if len(workers) == 2 || time.Now().After(limit) {
 			break
 		}

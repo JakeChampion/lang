@@ -210,12 +210,12 @@ func waitExit(t *testing.T, cmd *exec.Cmd, within time.Duration) int {
 // childrenState names each child the process still has, with the kernel
 // function it waits in, for the report of a shutdown that hung.
 func childrenState(pid int) string {
-	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/task/%d/children", pid, pid))
+	kids, err := ChildPIDs(pid)
 	if err != nil {
 		return err.Error()
 	}
 	var out []string
-	for _, child := range strings.Fields(string(b)) {
+	for _, child := range kids {
 		wchan, _ := os.ReadFile("/proc/" + child + "/wchan")
 		status, _ := os.ReadFile("/proc/" + child + "/status")
 		state := ""

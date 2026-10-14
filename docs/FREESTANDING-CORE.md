@@ -71,7 +71,7 @@ costs a silent failure on the first target that lacks it.
 | `cabi` | `__c_call0..4` (+ `_f32` / `_f64`) | a C calling convention to call a function pointer through |
 | `tcp` | `tcp_*`, `udp_*` | a network stack |
 | `unix` | `unix_listen`, `unix_connect` | Unix-domain sockets: a filesystem namespace for socket endpoints, which no WASI world has |
-| `reactor` | `reactor_new`, `reactor_ctl`, `reactor_wait`, `ring_new`, `ring_ctl`, `ring_wait`, `ring_recv` | a readiness set the host keeps between waits: epoll, kqueue, an io_uring on Linux when asked for, or on wasm a table of wasi:io pollables |
+| `reactor` | `reactor_new`, `reactor_ctl`, `reactor_wait`, `ring_new`, `ring_ctl`, `ring_wait`, `ring_recv`, `ring_send_zc` | a readiness set the host keeps between waits: epoll, kqueue, an io_uring on Linux when asked for, or on wasm a table of wasi:io pollables |
 | `proc` | `proc_fork`, `proc_exec`, `proc_exec_as`, `pipe`, `proc_waitpid`, `proc_waitpid_nohang`, `proc_waitpid_status`, `process_alive`, `signal_send`, `set_process_group` | processes |
 | `rlimit` | `rlimit_nofile`, `disable_core_dumps` | a kernel that enforces ceilings on this process's resources |
 | `sched` | `priority`, `set_priority` | a scheduler knob: a nice value this process competes for the CPU by |

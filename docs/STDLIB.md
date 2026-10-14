@@ -3445,6 +3445,10 @@ points that run a handler under it.
   than epoll where the host allows one (Linux 6.1 or later, outside a
   seccomp profile that refuses it) and on epoll elsewhere, decided as the
   loop starts (docs/NET-P7-IO-URING-PLAN.md). A handler sees no difference.
+  `io_uring_zc_bytes` (3072): under the ring, a bytes body at least this
+  long on a plain HTTP/1.1 connection is written without a copy into the
+  kernel (`IORING_OP_SEND_ZC`), the body held until the kernel is done
+  with it; 0, or a driver without the send, copies every body.
   `ktls` (false), set by `(c).with_ktls()` or by `FERN_KTLS=1` in the
   environment, hands each TLS connection's records to Linux's record layer
   once its handshake is done (`std/tls/ktls`): responses are written as
@@ -3729,7 +3733,8 @@ answer is `Result[HttpResponse, FetchError]`.
   `jar` the cookie jar every hop carries and stores cookies through
   (std/http/cookie), none when None, `allow` the hosts every hop may
   reach (`allow(entries)`), any when None; `public_policy()` is
-  `plat.http`'s.
+  `plat.http`'s, and `public_policy_via(proxies)` the same route through
+  `proxies` in place of the environment's.
   `sockets()` is the machine's (the system resolver, `dns.connect_race`,
   `tcp_recv_deadline`), which `send` and `plat.http` use; `std/sim_fetch`
   scripts one in virtual time.
@@ -4230,7 +4235,8 @@ on the host, in virtual time. `sim_platform.new(d, n)` reads the clock and
 the seeded PRNG of the `sim.Sim` `d` (`now_ms`, `elapsed_ns`,
 `random_i32`), sends `plat.http` over the `sim_fetch.Net` `n` by the
 host's public-only route with the network's pool keeping the connection
-(parking under `sim.run_tasks`, so handlers interleave in virtual time),
+(parking under `sim.run_tasks`, so handlers interleave in virtual time)
+and through the proxies its `env` names, never the machine's,
 and answers `env`, `config`, `secret`, `stat` and `peer` with what the test
 set (`env_set`, `config_set`, `secret_set`, `file_set`, `dir_set`, `peer_set`;
 `materialize(resp)` reads a file body back from them). Every call is recorded as a

@@ -2309,6 +2309,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.NumberType{},
 	}
+	// ring_send_zc(ring, fd, data, from): number — data[from:] written to fd
+	// without a copy: the slot whose completion ring_ctl ops 8 to 10 read,
+	// or -errno (-EOPNOTSUPP where the kernel has no zero-copy send).
+	c.info.FuncSigs["ring_send_zc"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
 	// tcp_ktls(fd, op, arg, data): number — the kernel TLS record layer on a
 	// connected socket (#9858): attach it, install a direction's keys, send
 	// a record of type arg, or read one record's content into data,

@@ -1738,6 +1738,13 @@ pub function op_ring_recv(): Op {
   return op0(438);
 }
 
+// `ring_send_zc(ring, fd, data, from)`: data[from:] written to fd without a
+// copy (IORING_OP_SEND_ZC), the slot its completion is read from
+// (asmcore.rt_src_ring).
+pub function op_ring_send_zc(): Op {
+  return op0(439);
+}
+
 pub function op_tcp_recv_into(): Op {
   return op0(344);
 }
@@ -4502,6 +4509,9 @@ function kind_id_len12(name: string): i32 {
 }
 
 function kind_id_len12_r(name: string): i32 {
+  if (name == "ring_send_zc") {
+    return 439;
+  }
   if (name == "raw_load_ptr") {
     return 85;
   }
@@ -5841,6 +5851,9 @@ pub function kind_name(id: i32): string {
   if (id == 438) {
     return "ring_recv";
   }
+  if (id == 439) {
+    return "ring_send_zc";
+  }
   if (id == 408) {
     return "pipe";
   }
@@ -6350,7 +6363,7 @@ function kind_pops(t: i32): i32 {
   if (t == 336 || t == 355) {  // udp_sendto / udp_sendto_bytes: fd + addr + port + data
     return 4;
   }
-  if (t == 342 || t == 435 || t == 437) {  // reactor_ctl / ring_ctl: r + op + fd + arg; tcp_ktls: fd + op + arg + data
+  if (t == 342 || t == 435 || t == 437 || t == 439) {  // reactor_ctl / ring_ctl: r + op + fd + arg; tcp_ktls: fd + op + arg + data; ring_send_zc: r + fd + data + from
     return 4;
   }
   if (t == 206) {  // syscall4
