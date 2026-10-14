@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#
+# scripts/fern-embed-stage DIR — lay out the directory the shipped `fern`
+# (compiler/fern_main.fern) is built with `-embed DIR` from: the stdlib's
+# modules at their import paths, the diagnostic explanations under
+# explanations/, and VERSION, the commit this tree was built from.
+set -euo pipefail
+
+out="${1:?usage: scripts/fern-embed-stage DIR}"
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
+
+rm -rf "$out"
+mkdir -p "$out/explanations"
+out="$(cd "$out" && pwd)"
+(cd internal/stdlib && find . -name '*.fern' | LC_ALL=C sort | tar -cf - -T -) | (cd "$out" && tar -xf -)
+cp internal/syntax/diag/explanations/*.md "$out/explanations/"
+version="$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+  version="$version-dirty"
+fi
+printf '%s\n' "$version" > "$out/VERSION"

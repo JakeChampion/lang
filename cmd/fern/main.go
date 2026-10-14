@@ -361,191 +361,6 @@ func warnUnusedChunks(srcPath string, doc *literate.Document) {
 	}
 }
 
-// runDoctests tangles and runs every `test` block in a literate
-// document, reporting TAP. Each example is a standalone program (its
-// `<<refs>>` expanded against the document's chunks); it passes when it
-// compiles and main returns 0. Diagnostics in a failing example are
-// remapped back onto the `.fern.md`. Exits non-zero if any example fails.
-func runDoctests(srcPath string) (int, error) {
-	srcBytes, err := os.ReadFile(srcPath)
-	if err != nil {
-		return 1, err
-	}
-	src := string(srcBytes)
-	doc := literate.Parse(src)
-	tests, err := doc.Doctests()
-	if err != nil {
-		return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
-	}
-	fmt.Printf("1..%d\n", len(tests))
-	if len(tests) == 0 {
-		fmt.Fprintf(os.Stderr, "%s: no `test` blocks found\n", srcPath)
-		return 0, nil
-	}
-	failed := 0
-	for i, tc := range tests {
-		if err := runDoctestCase(srcPath, src, tc); err != nil {
-			failed++
-			fmt.Printf("not ok %d - %s\n", i+1, tc.Name)
-			for _, line := range strings.Split(strings.TrimRight(err.Error(), "\n"), "\n") {
-				fmt.Printf("# %s\n", line)
-			}
-		} else {
-			fmt.Printf("ok %d - %s\n", i+1, tc.Name)
-		}
-	}
-	if failed > 0 {
-		return 1, nil
-	}
-	return 0, nil
-}
-
-// runDoctestCase compiles and runs one tangled example through the
-// interpreter. A virtual entry in the document's directory lets the
-// example resolve disk-relative imports (and stdlib); compile errors are
-// remapped onto the document.
-func runDoctestCase(srcPath, src string, tc literate.Doctest) error {
-	remap := remapFor(tc.LineMap)
-	fmtErr := func(e error) error {
-		return fmt.Errorf("%s", diag.FormatRemapped(srcPath, src, remap, e))
-	}
-	entry := filepath.Join(filepath.Dir(srcPath), "__doctest__.fern")
-	prog, _, err := modload.LoadWith(entry, map[string]string{absPath(entry): tc.Code})
-	if err != nil {
-		return fmtErr(err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		return fmtErr(err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		return fmtErr(err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		return fmtErr(err)
-	}
-	ip := interp.New()
-	ip.SetDynCoercions(info.DynCoercions)
-	for _, ed := range prog.Enums {
-		ip.RegisterEnum(ed)
-	}
-	for _, fn := range prog.Funcs {
-		ip.Register(fn)
-	}
-	if _, ok := ip.Funcs["main"]; !ok {
-		return fmt.Errorf("doctest has no `main` function to run")
-	}
-	v, err := ip.CallByName("main", nil)
-	if err != nil {
-		return err
-	}
-	if n, ok := v.(interp.Number); ok && int(n) != 0 {
-		return fmt.Errorf("example failed: main returned %d (expected 0)", int(n))
-	}
-	return nil
-}
-
-// runLiterateTool implements the `-tangle` / `-weave` literate
-// subcommands: parse the `.fern.md` document and write either the
-// tangled Fern source or the woven Markdown. With `outPath` empty the
-// result goes to stdout; otherwise it is written to disk — for a
-// multi-file tangle `outPath` is a directory that receives one file per
-// `file=` module (subdirectories created as needed), and for everything
-// else it is a single output file.
-func runLiterateTool(srcPath string, tangle bool, outPath, chunk string, html bool) (int, error) {
-	srcBytes, err := os.ReadFile(srcPath)
-	if err != nil {
-		return 1, err
-	}
-	src := string(srcBytes)
-	doc := literate.Parse(src)
-	warnUnusedChunks(srcPath, doc)
-	if tangle {
-		// -chunk NAME extracts just that chunk's expansion (shared across
-		// single- and multi-file documents), bypassing the root / file roots.
-		if chunk != "" {
-			code, _, err := doc.TangleChunk(chunk)
-			if err != nil {
-				return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
-			}
-			if outPath != "" {
-				if err := writeGeneratedFile(outPath, code+"\n"); err != nil {
-					return 1, err
-				}
-				fmt.Fprintf(os.Stderr, "wrote %s\n", outPath)
-				return 0, nil
-			}
-			_, werr := os.Stdout.WriteString(code + "\n")
-			return 0, werr
-		}
-		// A multi-file document (`file=PATH` blocks) tangles to several
-		// modules. To stdout they print under `// ==> path <==` banners;
-		// with -o DIR each is written to its own file under DIR.
-		if doc.HasFiles() {
-			results, err := doc.TangleFiles()
-			if err != nil {
-				return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
-			}
-			if outPath != "" {
-				for _, r := range results {
-					dest := filepath.Join(outPath, filepath.FromSlash(r.Path))
-					if err := writeGeneratedFile(dest, r.Code); err != nil {
-						return 1, err
-					}
-					fmt.Fprintf(os.Stderr, "wrote %s\n", dest)
-				}
-				return 0, nil
-			}
-			var b strings.Builder
-			for i, r := range results {
-				if i > 0 {
-					b.WriteString("\n")
-				}
-				fmt.Fprintf(&b, "// ==> %s <==\n%s\n", r.Path, r.Code)
-			}
-			_, werr := os.Stdout.WriteString(b.String())
-			return 0, werr
-		}
-		code, _, err := doc.Tangle()
-		if err != nil {
-			return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
-		}
-		if outPath != "" {
-			if err := writeGeneratedFile(outPath, code+"\n"); err != nil {
-				return 1, err
-			}
-			fmt.Fprintf(os.Stderr, "wrote %s\n", outPath)
-			return 0, nil
-		}
-		_, werr := os.Stdout.WriteString(code + "\n")
-		return 0, werr
-	}
-	woven := doc.Weave()
-	if html {
-		woven = doc.WeaveHTML()
-	}
-	if outPath != "" {
-		if err := writeGeneratedFile(outPath, woven); err != nil {
-			return 1, err
-		}
-		fmt.Fprintf(os.Stderr, "wrote %s\n", outPath)
-		return 0, nil
-	}
-	_, werr := os.Stdout.WriteString(woven)
-	return 0, werr
-}
-
-// writeGeneratedFile writes content to path, creating any missing
-// parent directories (so a multi-file tangle can emit `sub/util.fern`).
-func writeGeneratedFile(path, content string) error {
-	if dir := filepath.Dir(path); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
-	}
-	return os.WriteFile(path, []byte(content), 0o644)
-}
-
 // repeatedString collects a flag that may be passed multiple times (e.g.
 // `-lint-set a=warn -lint-set b=deny`).
 type repeatedString []string
@@ -721,11 +536,7 @@ func main() {
 	}
 
 	if *repl {
-		if err := interp.REPL(os.Stdin, os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		return
+		os.Exit(runREPL())
 	}
 
 	if *doInterp {
@@ -798,8 +609,7 @@ func main() {
 	}
 
 	if *listLintRulesFlag {
-		listLintRules(os.Stdout)
-		return
+		os.Exit(listLintRules(os.Stdout))
 	}
 
 	if *doLint {
@@ -807,7 +617,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "usage: fern -lint PATH... (a .fern file or a directory of them)")
 			os.Exit(2)
 		}
-		if code := runLint(flag.Args(), lintSets, lintOpts, os.Stdout); code != 0 {
+		if code := runLint(flag.Args(), lintSets, lintOpts, *colorMode, os.Stdout); code != 0 {
 			os.Exit(code)
 		}
 		return
@@ -830,11 +640,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "usage: fern -effects FILE.fern")
 			os.Exit(2)
 		}
-		if err := runEffects(flag.Arg(0), os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		return
+		os.Exit(runEffects(flag.Arg(0)))
 	}
 
 	if *doFetch {
@@ -894,22 +700,14 @@ func main() {
 		os.Exit(2)
 	}
 
-	if (*doTangle || *doWeave) && flag.NArg() >= 1 {
-		code, err := runLiterateTool(flag.Arg(0), *doTangle, *out, *tangleChunk, *weaveHTML)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+	if (*doTangle || *doWeave || *doDoctest) && flag.NArg() >= 1 {
+		mode := "-tangle"
+		if *doWeave {
+			mode = "-weave"
+		} else if *doDoctest {
+			mode = "-doctest"
 		}
-		os.Exit(code)
-	}
-
-	if *doDoctest && flag.NArg() >= 1 {
-		code, err := runDoctests(flag.Arg(0))
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		os.Exit(code)
+		os.Exit(runLiterate(flag.Arg(0), mode, *out, *tangleChunk, *weaveHTML))
 	}
 
 	if flag.NArg() < 1 {

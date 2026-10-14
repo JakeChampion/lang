@@ -303,19 +303,18 @@ entry, or import a specific generated `.fern` instead).
 
 ## Implementation map
 
-The engine is `internal/tools/literate`: `Parse` → `Document`; `(*Document).Tangle`
-expands the root chunk `<<*>>` and returns generated Fern source plus a per-line
-provenance map; `(*Document).Weave` renders the cross-referenced Markdown.
+The engine is `compiler/literate.fern`. `parse` splits a document into blocks
+(prose, display-only, chunk, `file=` root, `test` example); `tangle` expands
+the root chunk `<<*>>` into Fern source plus a per-line provenance map,
+`tangle_files` does the same per `file=` root, `entry_file` picks the compile
+entry, and `doctests` tangles each example on its own. `compiler/weave.fern`
+renders the blocks for `-weave`: Markdown, or with `-html` a page whose prose
+goes through its small Markdown renderer. `-tangle`, `-weave` and `-doctest`
+are `run_tangle` and `run_doctests` in `compiler/fern.fern`; doctests are
+loaded, gated and interpreted as `-interp` runs a program.
 
-Multi-module documents live in `internal/tools/literate/tanglefiles.go`: `TangleFiles`
-returns one `FileResult{Path, Code, LineMap, IsEntry}` per output path, and
-`EntryFile` resolves the compile entry. `expandBody` / `expandChunk` are the
-shared recursion behind both `Tangle` (root chunk) and `TangleFiles` (file-root
-bodies).
-
-The compiler does the same for every `-target` compile, and for its own
-`-check` / `-interp`: `compiler/literate.fern` is the engine's port (tangle,
-`file=` roots, the line map, the entry pick, unused-chunk warnings);
+The compiler tangles for every `-target` compile, and for its own
+`-check` / `-interp`:
 `entry_sources` in `compiler/fern.fern` tangles a `.fern.md` entry to its
 module, or to every `file=` module with the entry first; `modloader.read_module`
 falls back to a `.fern.md` sibling for an import; and each module's
@@ -324,7 +323,10 @@ falls back to a `.fern.md` sibling for an import; and each module's
 because the compiler orders and identifies expressions by position, and a chunk
 can be expanded twice.
 
-On the Go side (`cmd/fern/main.go`): `loadEntry` tangles a `.fern.md` entry in
+The Go front end keeps a tangle of its own in `internal/tools/literate`, which the
+oracle's loader and the Go language server read documents through; `cmd/fern`'s
+`-tangle`, `-weave` and `-doctest` run the compiler's. On the Go side
+(`cmd/fern/main.go`): `loadEntry` tangles a `.fern.md` entry in
 memory before the `-check` / `-interp` pipeline, and
 `loadMultiFileEntry` feeds every generated module to `modload.LoadWith` as
 virtual-file overrides (keyed by path relative to the document dir), loading from
@@ -340,10 +342,13 @@ literate-only sibling of `diag.Format`.
 
 ## Maintaining this
 
-Coverage lives in `internal/tools/literate/*_test.go` (including
-`tanglefiles_test.go`), the `diag` `FormatRemapped` tests, and
-`internal/testing/e2e/literate_test.go` + `literate_multifile_test.go` (interp + tangle
-+ weave, plus the single- and multi-file diagnostic-remap contracts). Examples:
+Coverage lives in `compiler/literate.fern`'s own `main` (run by
+`TestSelfHostLiterate*`), `internal/testing/e2ecompiler/self_host_literate_cli_test.go`
+(`-tangle`, `-doctest`, and `-weave` against the goldens in `testdata/weave/`),
+`internal/tools/literate/*_test.go` for the Go tangle, the `diag`
+`FormatRemapped` tests, and `internal/testing/e2e/literate_test.go` +
+`literate_multifile_test.go` (the single- and multi-file diagnostic-remap
+contracts). Examples:
 `examples/literate/fizzbuzz.fern.md` (single root) and `multi_module.fern.md`
 (multi-file).
 

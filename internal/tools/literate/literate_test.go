@@ -200,26 +200,3 @@ func TestTangleFenceVariants(t *testing.T) {
 		t.Errorf("tangled = %q, want %q", code, "fn main() {}")
 	}
 }
-
-func TestDefinedChunksOrder(t *testing.T) {
-	src := strings.Join([]string{
-		"```fern",
-		"<<*>>=",
-		"<<alpha>>",
-		"<<beta>>",
-		"```",
-		"```fern",
-		"<<beta>>=",
-		"b",
-		"```",
-		"```fern",
-		"<<alpha>>=",
-		"a",
-		"```",
-	}, "\n")
-	got := Parse(src).DefinedChunks()
-	want := []string{"*", "beta", "alpha"} // first-definition order
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Errorf("DefinedChunks = %v, want %v", got, want)
-	}
-}

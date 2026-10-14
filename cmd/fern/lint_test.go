@@ -33,7 +33,7 @@ func writeFile(t *testing.T, dir, name, src string) string {
 func runLintTest(t *testing.T, paths, sets, opts []string) (int, string) {
 	t.Helper()
 	var out bytes.Buffer
-	code := runLint(paths, sets, opts, &out)
+	code := runLint(paths, sets, opts, "never", &out)
 	return code, out.String()
 }
 
@@ -170,7 +170,9 @@ func TestLintRejectsBadManifest(t *testing.T) {
 
 func TestListLintRules(t *testing.T) {
 	var out bytes.Buffer
-	listLintRules(&out)
+	if code := listLintRules(&out); code != 0 {
+		t.Fatalf("-lint-rules exit = %d", code)
+	}
 	got := out.String()
 	for _, want := range []string{"cyclomatic-complexity", "[warn]", "option cyclomatic-complexity.max ="} {
 		if !strings.Contains(got, want) {

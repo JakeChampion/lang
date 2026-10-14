@@ -1430,7 +1430,6 @@ TestSelfHostTCPSendBytesFaults 13
 TestSelfHostTZifUTF8 8
 TestSelfHostTabsBytes 4
 TestSelfHostTacBytes 5
-TestSelfHostTangleDifferentialX86_64 2
 TestSelfHostTargetCapabilityDifferentialX86_64 2
 TestSelfHostTaskCombinators 2
 TestSelfHostTaskFrame 2

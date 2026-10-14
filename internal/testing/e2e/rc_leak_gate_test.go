@@ -34,7 +34,7 @@ import (
 //   - a pinned case that leaks MORE fails.
 //   - a pinned case that leaks LESS fails too, asking for the number to
 //     be banked, so a fix cannot silently leave the table stale. Same
-//     discipline as the complexity ratchet in internal/tools/lint.
+//     discipline as the complexity ratchet (self_host_lint_ratchet_test.go).
 //
 // Deliberately NOT a total byte budget: one number over the whole corpus
 // hides a new leak behind a fixed one, and the point of the leg is that

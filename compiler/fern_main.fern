@@ -1,0 +1,117 @@
+// compiler/fern_main.fern — the shipped `fern`: fern.fern's CLI carrying its
+// own stdlib, so it needs nothing beside the binary.
+//
+//     scripts/fern-embed-stage build/fern-embed
+//     fern -target <host> -embed build/fern-embed -o fern compiler/fern_main.fern internal/stdlib
+//
+// The stdlib, the diagnostic explanations and VERSION travel as `-embed`
+// assets and are written once, under a directory named by their digest, to
+// the user cache directory. That directory is the stdlib root every compile
+// reads, so the loader, diagnostics and the language server see ordinary
+// files, and `-explain` / `-version` read theirs beside the modules.
+// fern.fern stays the entry for builds that pass their stdlib root on the
+// command line (the bootstrap chain and the tests).
+
+import "./fern";
+import "./util";
+import "std/crypto";
+
+function main(): i32 {
+  let root: string = stdlib_root();
+  if (root.len() == 0) {
+    return 1;
+  }
+  return util.arr_push_cliff_report("fern", fern.run_with(args(), root));
+}
+
+// cache_base is $FERN_CACHE_DIR, else $XDG_CACHE_HOME/fern, else
+// $HOME/.cache/fern — the directories the package store and the certifier
+// memo use.
+function cache_base(): string {
+  match (env("FERN_CACHE_DIR")) {
+    Some(d) => {
+      return d;
+    },
+    None => {}
+  }
+  match (env("XDG_CACHE_HOME")) {
+    Some(x) => {
+      return x + "/fern";
+    },
+    None => {}
+  }
+  match (env("HOME")) {
+    Some(h) => {
+      return h + "/.cache/fern";
+    },
+    None => {}
+  }
+  return "";
+}
+
+// stdlib_digest names the embedded tree by the SHA-256 of every asset's name
+// and contents, so a `fern` carrying a different one gets its own directory
+// and two binaries never share a stale one.
+function stdlib_digest(): string {
+  let h: crypto.Sha256 = crypto.sha256_new();
+  for a in __fern_assets() {
+    h = h.update(a.0).update("\n").update(util.i32_to_string(a.1.len())).update("\n").update(a.1);
+  }
+  return slice_unchecked(h.final_hex(), 0, 16) + "";
+}
+
+// stdlib_root returns the directory holding the embedded tree, writing it
+// first when this digest has none. The files are written to a private
+// directory and renamed into place, so a reader never sees a partial tree;
+// losing that rename to a concurrent `fern` leaves the winner's identical tree.
+function stdlib_root(): string {
+  let base: string = cache_base();
+  if (base.len() == 0) {
+    eprint("fern: no cache directory for the stdlib: set FERN_CACHE_DIR, XDG_CACHE_HOME or HOME");
+    return "";
+  }
+  let root: string = base + "/stdlib-" + stdlib_digest();
+  match (read_file(root + "/std/io.fern")) {
+    Ok(_) => {
+      return root;
+    },
+    Err(_) => {}
+  }
+  let suffix: string = "";
+  for b in random_bytes(6) {
+    suffix = suffix + util.i32_to_string(b as i32);
+  }
+  let tmp: string = root + ".tmp-" + suffix;
+  for a in __fern_assets() {
+    let path: string = tmp + "/" + a.0;
+    match (create_dir_all(util.dir_of(path))) {
+      Ok(_) => {},
+      Err(e) => {
+        eprint("fern: cannot create " + util.dir_of(path) + ": " + util.io_error_reason(e));
+        return "";
+      }
+    }
+    match (write_file(path, a.1)) {
+      Ok(_) => {},
+      Err(e) => {
+        eprint("fern: cannot write " + path + ": " + util.io_error_reason(e));
+        return "";
+      }
+    }
+  }
+  match (rename(tmp, root)) {
+    Ok(_) => {
+      return root;
+    },
+    Err(e) => {
+      match (read_file(root + "/std/io.fern")) {
+        Ok(_) => {
+          return root;
+        },
+        Err(_) => {}
+      }
+      eprint("fern: cannot install the stdlib at " + root + ": " + util.io_error_reason(e));
+      return "";
+    }
+  }
+}

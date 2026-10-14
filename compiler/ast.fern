@@ -533,7 +533,9 @@ pub struct StmtIf { cond: Expr, then_body: Stmt[], else_body: Stmt[], line: i32,
 // repeatedly as long as cond evaluates to a true VBool; an
 // in-body `return` short-circuits the loop the same way it
 // short-circuits an if-branch.
-pub struct StmtWhile { cond: Expr, body: Stmt[], label: string, line: i32, is_loop: boolean }
+// todo marks the `while (true) { eprint(…); exit(101); }` a `todo` stub
+// desugars to, so the printer reprints `todo` and the linter scores no loop.
+pub struct StmtWhile { cond: Expr, body: Stmt[], label: string, line: i32, is_loop: boolean, todo: boolean }
 
 // StmtAssign models a re-assignment to an existing var: `x = expr;`.
 // The target is an ident name — full lvalue syntax (field /

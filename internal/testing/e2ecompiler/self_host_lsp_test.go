@@ -538,7 +538,8 @@ func expectedFromCheck(t *testing.T, path, src, out string) []lspDiag {
 	lines := strings.Split(strings.ReplaceAll(src, "\r\n", "\n"), "\n")
 	want := []lspDiag{}
 	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
-		if line == "" {
+		// An indented line is the source line or caret under a diagnostic.
+		if line == "" || strings.HasPrefix(line, " ") {
 			continue
 		}
 		d := lspDiag{Severity: 1, Source: "fern"}

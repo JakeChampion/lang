@@ -1,0 +1,593 @@
+// compiler/lint.fern — `fern -lint`: checks that flag code which compiles but
+// reads badly. Lints work off the parse tree, before type-checking, so a file
+// with a type error still lints and a large tree costs a parse per file.
+//
+// A rule has a stable kebab-case name and a default severity. Severity is
+// overridable three ways, innermost wins: the rule's default, a [lint] table
+// in the governing fern.toml, and `-lint-set NAME=SEVERITY`; options are
+// `<rule>.<key>`, in [lint.options] or `-lint-opt`. A `// fern-lint: allow
+// RULE` comment silences one site and `// fern-lint: allow-file RULE` a file.
+
+import "./ast";
+import "./lexer";
+import "./parser";
+import "./printer";
+import "./util";
+
+pub const COMPLEXITY: string = "cyclomatic-complexity";
+
+// DIRECTIVE names the findings about `fern-lint:` comments themselves.
+pub const DIRECTIVE: string = "lint-directive";
+
+const DEFAULT_MAX: i32 = 10;
+
+// Severity: 0 allow (the rule does not run), 1 warn (printed, exit status
+// unchanged), 2 deny (printed, the run fails).
+pub const ALLOW: i32 = 0;
+
+pub const WARN: i32 = 1;
+
+pub const DENY: i32 = 2;
+
+pub struct Finding {
+  rule: string,
+  severity: i32,
+  file: string,
+  line: i32,
+  col: i32,
+  msg: string,
+  help: string,
+  // value is the measurement behind the finding — a complexity score — or 0.
+  value: i32,
+}
+
+// Config is a run's resolved configuration: the complexity rule's severity
+// and threshold, the only rule there is.
+pub struct Config {
+  complexity: i32,
+  max: i32,
+}
+
+pub function default_config(): Config {
+  return Config { complexity: WARN, max: DEFAULT_MAX };
+}
+
+pub function known_rules(): string {
+  return "known rules: " + COMPLEXITY;
+}
+
+function parse_severity(v: string): i32 {
+  if (v == "allow") {
+    return ALLOW;
+  }
+  if (v == "warn") {
+    return WARN;
+  }
+  if (v == "deny") {
+    return DENY;
+  }
+  return 0 - 1;
+}
+
+function severity_name(sev: i32): string {
+  if (sev == DENY) {
+    return "deny";
+  }
+  if (sev == ALLOW) {
+    return "allow";
+  }
+  return "warn";
+}
+
+// set_option applies `<rule>.<key> = value`, or says why it cannot.
+pub function set_option(c: Config, dotted: string, value: string): (Config, string) {
+  let dot: i32 = util.index_of_sub(dotted, ".");
+  if (dot < 0) {
+    return (c, "lint option \"" + dotted + "\" must be spelled <rule>.<key>");
+  }
+  let rule: string = slice_unchecked(dotted, 0, dot) + "";
+  let key: string = slice_unchecked(dotted, dot + 1, dotted.len()) + "";
+  if (rule != COMPLEXITY) {
+    return (c, "unknown lint rule \"" + rule + "\" (" + known_rules() + ")");
+  }
+  if (key != "max") {
+    return (c, "lint option " + dotted + ": unknown option \"" + key + "\" (want max)");
+  }
+  if (value.len() == 0 || value.len() > 9 || !util.is_decimal_i32(value)) {
+    return (c, "lint option " + dotted + ": max: \"" + value + "\" is not a number");
+  }
+  let n: i32 = util.digits_to_i32(value);
+  if (n < 1) {
+    return (c, "lint option " + dotted + ": max: must be at least 1, got " + value);
+  }
+  return (Config { ...c, max: n }, "");
+}
+
+// set_pair applies one `key = value` from a [lint] table or -lint-set: a
+// dotted key is an option, anything else a severity.
+pub function set_pair(c: Config, key: string, value: string): (Config, string) {
+  if (util.index_of_sub(key, ".") >= 0) {
+    return set_option(c, key, value);
+  }
+  let sev: i32 = parse_severity(value);
+  if (sev < 0) {
+    return (c, "lint rule " + key + ": unknown severity \"" + value + "\" (want allow, warn, or deny)");
+  }
+  if (key != COMPLEXITY) {
+    return (c, "unknown lint rule \"" + key + "\" (" + known_rules() + ")");
+  }
+  return (Config { ...c, complexity: sev }, "");
+}
+
+// rules_listing is `fern -lint-rules`.
+pub function rules_listing(): string {
+  return COMPLEXITY + "  [warn]\n"
+    + "    function has more independent control-flow paths than the configured limit\n"
+    + "    option " + COMPLEXITY + ".max = " + util.i32_to_string(DEFAULT_MAX) + " (default)\n";
+}
+
+// score is a function's cyclomatic complexity: 1 for the entry path plus one
+// per fork — `if` (an `else if` nests a second one), `while` / `for` / `loop`,
+// each match arm that can fail to match plus each guard, `&&` / `||`, and `?`.
+// `assert` and `todo` add nothing, and a lambda's body counts into the
+// function that holds it.
+pub function score(fd: parser.FuncDecl): i32 {
+  return 1 + stmts_forks(fd.body);
+}
+
+function stmts_forks(sts: ast.Stmt[]): i32 {
+  let n: i32 = 0;
+  for st in sts {
+    n = n + stmt_forks(st);
+  }
+  return n;
+}
+
+function arm_forks(arms: ast.MatchArm[]): i32 {
+  let n: i32 = 0;
+  for a in arms {
+    n = n + arm_fork(is_wild(a.pattern), a.has_guard, a.guard, a.body);
+  }
+  return n;
+}
+
+// arm_fork is what one written arm adds: one when its pattern can fail to
+// match, and its guard as a second test.
+function arm_fork(wild: boolean, has_guard: boolean, guard: ast.Expr, body: ast.Stmt[]): i32 {
+  let n: i32 = stmts_forks(body);
+  if (!wild) {
+    n = n + 1;
+  }
+  if (has_guard) {
+    n = n + 1 + expr_forks(guard);
+  }
+  return n;
+}
+
+function is_wild(p: ast.Pattern): boolean {
+  match (p) {
+    ast.PatWildcard(_) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// sugar_forks scores a match the parser lowered to an `if` chain (a tuple,
+// struct, literal or nested-variant pattern) by the arms as written, so the
+// score is the source's and not the chain's.
+function sugar_forks(sg: ast.MatchSugar): i32 {
+  let n: i32 = expr_forks(sg.scrut);
+  for a in sg.tup {
+    n = n + arm_fork(a.is_wild, a.has_guard, a.guard, a.body);
+  }
+  for a in sg.strct {
+    n = n + arm_fork(a.is_wild, a.has_guard, a.guard, a.body);
+  }
+  for a in sg.lits {
+    n = n + arm_fork(a.is_wild, a.has_guard, a.guard, a.body);
+  }
+  for a in sg.arms {
+    n = n + arm_fork(is_wild(a.pattern), a.has_guard, a.guard, a.body);
+  }
+  return n;
+}
+
+function has_sugar(sg: ast.MatchSugar): boolean {
+  return sg.tup.len() > 0 || sg.strct.len() > 0 || sg.lits.len() > 0 || sg.arms.len() > 0;
+}
+
+function stmt_forks(st: ast.Stmt): i32 {
+  match (st) {
+    ast.StmtIf(i) => {
+      if (has_sugar(i.sugar)) {
+        return sugar_forks(i.sugar);
+      }
+      // A C-style `for` desugars to an `if (true)` around a flagged loop;
+      // it is one loop, scored as written.
+      let cf: printer.ForCSugar = printer.as_c_for(i);
+      if (cf.ok) {
+        return 1 + stmts_forks(cf.init) + expr_forks(cf.cond) + stmts_forks(cf.step) + stmts_forks(cf.body);
+      }
+      let own_fork: i32 = 1;
+      if (i.origin == "block" || i.origin == "chain_assign" || i.origin == parser.ORIGIN_ASSERT) {
+        own_fork = 0;
+      }
+      return own_fork + expr_forks(i.cond) + stmts_forks(i.then_body) + stmts_forks(i.else_body);
+    },
+    ast.StmtWhile(w) => {
+      if (w.todo) {
+        return 0;
+      }
+      return 1 + expr_forks(w.cond) + stmts_forks(w.body);
+    },
+    ast.StmtFor(f) => {
+      return 1 + expr_forks(f.iter) + stmts_forks(f.body);
+    },
+    ast.StmtMatch(m) => {
+      if (m.sugar.len() > 0) {
+        return expr_forks(m.scrutinee) + arm_forks(m.sugar);
+      }
+      return expr_forks(m.scrutinee) + arm_forks(m.arms);
+    },
+    ast.StmtVar(v) => {
+      return expr_forks(v.init);
+    },
+    ast.StmtReturn(r) => {
+      return expr_forks(r.value);
+    },
+    ast.StmtExpr(e) => {
+      return expr_forks(e.value);
+    },
+    ast.StmtAssign(a) => {
+      return expr_forks(a.value);
+    },
+    ast.StmtDefer(d) => {
+      return stmt_forks(d.action);
+    },
+    _ => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+function exprs_forks(es: ast.Expr[]): i32 {
+  let n: i32 = 0;
+  for e in es {
+    n = n + expr_forks(e);
+  }
+  return n;
+}
+
+function expr_forks(e: ast.Expr): i32 {
+  match (e) {
+    ast.ExprBinary(b) => {
+      let own_fork: i32 = 0;
+      if (b.op == "&&" || b.op == "||") {
+        own_fork = 1;
+      }
+      return own_fork + expr_forks(b.left) + expr_forks(b.right);
+    },
+    ast.ExprUnary(u) => {
+      let own_fork: i32 = 0;
+      if (u.op == "try_") {
+        own_fork = 1;
+      }
+      return own_fork + expr_forks(u.operand);
+    },
+    ast.ExprCall(c) => {
+      return expr_forks(c.callee) + exprs_forks(c.args);
+    },
+    ast.ExprArray(a) => {
+      return exprs_forks(a.elements);
+    },
+    ast.ExprMapLit(ml) => {
+      return exprs_forks(ml.keys) + exprs_forks(ml.vals);
+    },
+    ast.ExprFString(fs) => {
+      let n: i32 = 0;
+      let i: i32 = 0;
+      while (i < fs.exprs.len()) {
+        if (fs.is_expr[i]) {
+          n = n + expr_forks(fs.exprs[i]);
+        }
+        i = i + 1;
+      }
+      return n;
+    },
+    ast.ExprTuple(t) => {
+      return exprs_forks(t.elements);
+    },
+    ast.ExprIndex(x) => {
+      return expr_forks(x.array) + expr_forks(x.index);
+    },
+    ast.ExprSlice(sl) => {
+      return expr_forks(sl.array) + expr_forks(sl.start) + expr_forks(sl.end);
+    },
+    ast.ExprStructLit(sl) => {
+      let n: i32 = exprs_forks(sl.field_values);
+      if (sl.has_base) {
+        n = n + expr_forks(sl.base);
+      }
+      return n;
+    },
+    ast.ExprFieldAccess(fa) => {
+      return expr_forks(fa.obj);
+    },
+    ast.ExprLambda(lm) => {
+      return stmts_forks(lm.body);
+    },
+    _ => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+// display_name is how a finding names a function: `Type.method` for a method
+// on a named, non-generic type, the plain name otherwise — a primitive or a
+// generic instance receiver reads as the bare method name.
+pub function display_name(fd: parser.FuncDecl): string {
+  let t: string = fd.receiver_type;
+  if (t.len() == 0 || util.index_of_sub(t, "[") >= 0 || util.has_str(PRIMITIVES, t)) {
+    return fd.name;
+  }
+  return t + "." + fd.name;
+}
+
+const PRIMITIVES: string[] = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "isize", "usize", "f32", "f64", "boolean", "char", "string", "str"];
+
+// Suppressions are a file's `fern-lint:` directives: the rules silenced for
+// the whole file, the (line, rule) pairs silenced at one site, and findings
+// for the malformed ones.
+struct Suppressions {
+  file_rules: string[],
+  lines: i32[],
+  rules: string[],
+  bad: Finding[],
+}
+
+function is_blank(line: string): boolean {
+  return util.trim(line).len() == 0;
+}
+
+// split_src is src's lines, split on "\n" as the line numbers count them.
+function split_src(src: string): string[] {
+  let out: string[] = [];
+  let start: i32 = 0;
+  let i: i32 = 0;
+  while (i <= src.len()) {
+    if (i == src.len() || src[i] == b'\n') {
+      out = out.append(slice_unchecked(src, start, i) + "");
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function comment_only(lines: string[], c: lexer.Comment): boolean {
+  if (c.line < 1 || c.line > lines.len()) {
+    return false;
+  }
+  let text: string = lines[c.line - 1];
+  let before: i32 = c.col - 1;
+  return before >= 0 && before <= text.len() && util.trim(slice_unchecked(text, 0, before)).len() == 0;
+}
+
+// target_line is the line an `allow` directive covers: its own line when code
+// precedes it there, else the next line holding code, or 0 when none does.
+function target_line(lines: string[], comments: lexer.Comment[], c: lexer.Comment): i32 {
+  if (!comment_only(lines, c)) {
+    return c.line;
+  }
+  let ln: i32 = c.line + 1;
+  while (ln <= lines.len()) {
+    let skip: boolean = is_blank(lines[ln - 1]);
+    if (!skip) {
+      for o in comments {
+        if (o.line == ln && comment_only(lines, o)) {
+          skip = true;
+          break;
+        }
+      }
+    }
+    if (!skip) {
+      return ln;
+    }
+    ln = ln + 1;
+  }
+  return 0;
+}
+
+function directive_finding(c: lexer.Comment, msg: string, help: string): Finding {
+  return Finding { rule: DIRECTIVE, severity: WARN, file: "", line: c.line, col: c.col, msg: msg, help: help, value: 0 };
+}
+
+function comment_body(text: string): string {
+  let t: string = util.trim(text);
+  if (util.str_has_prefix(t, "//")) {
+    t = util.trim(slice_unchecked(t, 2, t.len()) + "");
+  }
+  return t;
+}
+
+function collect_suppressions(src: string, comments: lexer.Comment[]): Suppressions {
+  let lines: string[] = split_src(src);
+  let sup: Suppressions = Suppressions { file_rules: [], lines: [], rules: [], bad: [] };
+  for c in comments {
+    let text: string = comment_body(c.text);
+    if (!util.str_has_prefix(text, "fern-lint:")) {
+      continue;
+    }
+    let body: string = util.trim(slice_unchecked(text, 10, text.len()) + "");
+    let sp: i32 = util.index_of_sub(body, " ");
+    let verb: string = body;
+    let rest: string = "";
+    if (sp >= 0) {
+      verb = slice_unchecked(body, 0, sp) + "";
+      rest = slice_unchecked(body, sp + 1, body.len()) + "";
+    }
+    if (verb != "allow" && verb != "allow-file") {
+      sup = Suppressions { ...sup, bad: sup.bad.append(directive_finding(c, "unknown lint directive \"" + verb + "\" (want `fern-lint: allow RULE` or `fern-lint: allow-file RULE`)", "")) };
+      continue;
+    }
+    let names: string[] = [];
+    let start: i32 = 0;
+    let i: i32 = 0;
+    while (i <= rest.len()) {
+      if (i == rest.len() || rest[i] == b',') {
+        let r: string = util.trim(slice_unchecked(rest, start, i) + "");
+        if (r.len() > 0) {
+          names = names.append(r);
+        }
+        start = i + 1;
+      }
+      i = i + 1;
+    }
+    if (names.len() == 0) {
+      sup = Suppressions { ...sup, bad: sup.bad.append(directive_finding(c, "lint directive `" + verb + "` names no rule", "")) };
+      continue;
+    }
+    for r in names {
+      if (r != COMPLEXITY) {
+        sup = Suppressions { ...sup, bad: sup.bad.append(directive_finding(c, "`allow` names no such lint rule: \"" + r + "\"", known_rules())) };
+        continue;
+      }
+      if (verb == "allow-file") {
+        sup = Suppressions { ...sup, file_rules: sup.file_rules.append(r) };
+        continue;
+      }
+      let target: i32 = target_line(lines, comments, c);
+      if (target == 0) {
+        sup = Suppressions { ...sup, bad: sup.bad.append(directive_finding(c, "`allow " + r + "` covers no code — nothing follows this comment", "use `fern-lint: allow-file` to silence the rule for the whole file")) };
+        continue;
+      }
+      sup = Suppressions { ...sup, lines: sup.lines.append(target), rules: sup.rules.append(r) };
+    }
+  }
+  return sup;
+}
+
+function allows(sup: Suppressions, rule: string, line: i32): boolean {
+  if (util.has_str(sup.file_rules, rule)) {
+    return true;
+  }
+  let i: i32 = 0;
+  while (i < sup.lines.len()) {
+    if (sup.lines[i] == line && sup.rules[i] == rule) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+function before(a: Finding, b: Finding): boolean {
+  if (a.line != b.line) {
+    return a.line < b.line;
+  }
+  if (a.col != b.col) {
+    return a.col < b.col;
+  }
+  return util.str_less(a.rule, b.rule);
+}
+
+// scored reports whether `fd` is a function the source wrote with a body: not
+// a `const`, a declaration the parser synthesised (a derive, line 0), a trait
+// default materialised into an impl that did not write it, or a body-less WIT
+// import binding.
+pub function scored(m: parser.Module, fd: parser.FuncDecl): boolean {
+  if (fd.is_const || fd.line == 0 || fd.body.len() == 0 && fd.import_wit.len() > 0) {
+    return false;
+  }
+  return fd.impl_trait.len() == 0 || !parser.is_inherited_default(m.impls, m.trait_reqs, fd);
+}
+
+// lint_file runs every enabled rule over one parsed file and returns the
+// findings in source order, the directive findings among them.
+pub function lint_file(c: Config, file: string, src: string, m: parser.Module, comments: lexer.Comment[]): Finding[] {
+  let sup: Suppressions = collect_suppressions(src, comments);
+  let out: Finding[] = [];
+  for b in sup.bad {
+    out = out.append(Finding { ...b, file: file });
+  }
+  if (c.complexity != ALLOW) {
+    for fd in m.funcs {
+      if (!scored(m, fd)) {
+        continue;
+      }
+      let sc: i32 = score(fd);
+      if (sc <= c.max || allows(sup, COMPLEXITY, fd.line)) {
+        continue;
+      }
+      out = out.append(Finding {
+        rule: COMPLEXITY, severity: c.complexity, file: file, line: fd.line, col: fd.col,
+        msg: "function `" + display_name(fd) + "` has a cyclomatic complexity of " + util.i32_to_string(sc)
+          + ", over the limit of " + util.i32_to_string(c.max),
+        help: "split out the branch-heavy part, or raise the limit for this site with `// fern-lint: allow cyclomatic-complexity`",
+        value: sc,
+      });
+    }
+  }
+  // Insertion sort, stable: findings arrive nearly in order.
+  let i: i32 = 1;
+  while (i < out.len()) {
+    let f: Finding = out[i];
+    let j: i32 = i - 1;
+    while (j >= 0 && before(f, out[j])) {
+      out = out.with(j + 1, out[j]);
+      j = j - 1;
+    }
+    out = out.with(j + 1, f);
+    i = i + 1;
+  }
+  return out;
+}
+
+pub function failed(fs: Finding[]): boolean {
+  for f in fs {
+    if (f.severity == DENY) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function plural(n: i32, word: string): string {
+  if (n == 1) {
+    return "1 " + word;
+  }
+  return util.i32_to_string(n) + " " + word + "s";
+}
+
+// summary is the closing "N errors and M warnings generated" line, or "".
+pub function summary(fs: Finding[]): string {
+  let warns: i32 = 0;
+  let denies: i32 = 0;
+  for f in fs {
+    if (f.severity == DENY) {
+      denies = denies + 1;
+    } else if (f.severity == WARN) {
+      warns = warns + 1;
+    }
+  }
+  let out: string = "";
+  if (denies > 0) {
+    out = plural(denies, "error");
+  }
+  if (warns > 0) {
+    if (out.len() > 0) {
+      out = out + " and ";
+    }
+    out = out + plural(warns, "warning");
+  }
+  if (out.len() == 0) {
+    return "";
+  }
+  return out + " generated";
+}

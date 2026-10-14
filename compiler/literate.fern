@@ -1,5 +1,5 @@
-// compiler/literate.fern — a port of internal/tools/literate
-// (the Knuth-style tangle engine) into Fern itself.
+// compiler/literate.fern — the Knuth-style literate engine: a document's
+// blocks, tangle, and the examples `-doctest` runs.
 //
 // A literate Fern program is a Markdown document whose `fern` code
 // chunks (`<<name>>=`) are reassembled — *tangled* — from the root
@@ -11,15 +11,9 @@
 // entry or import (fern.fern entry_sources, modloader.read_module):
 // tangling slots in ahead of `lexer.tokenize`, and the line map it
 // returns moves a diagnostic back onto the document (util.doc_diag).
-// The Go implementation lives in internal/tools/literate; this is its
-// parity port.
-//
-// Parity with the Go engine covers: out-of-order chunk references,
-// same-name concatenation, indentation-preserving expansion,
-// display-only (headerless) `fern` fences, escaped `\<<name>>` markers,
-// the three structured errors — missing root, undefined reference,
-// cyclic reference — and the per-line provenance map that remaps
-// tangled positions back onto the document. Deferred: Weave.
+// The document's block model (`parse`) is what weave.fern renders. The Go
+// front end keeps its own tangle in internal/tools/literate, for the
+// oracle; the two tangle every document to the same bytes.
 //
 // Data model note: the document's chunk bodies are kept as a single
 // FLAT array of tagged Piece lines (chunk name + text + line), not as
@@ -96,7 +90,7 @@ function contains(s: string, sub: string): boolean {
 }
 
 // trim strips leading and trailing horizontal whitespace.
-function trim(s: string): string {
+pub function trim(s: string): string {
   let a: i32 = 0;
   let b: i32 = s.len();
   while (a < b && is_hspace(s[a] as i32)) {
@@ -110,7 +104,7 @@ function trim(s: string): string {
 
 // leading_ws returns the run of leading spaces/tabs (the indentation
 // prepended to a chunk reference's expansion).
-function leading_ws(s: string): string {
+pub function leading_ws(s: string): string {
   let k: i32 = 0;
   let n: i32 = s.len();
   while (k < n && (s[k] == b' ' || s[k] == b'\t')) {
@@ -122,7 +116,7 @@ function leading_ws(s: string): string {
 // split_lines splits on '\n', mirroring Go's strings.Split: a trailing
 // newline yields a trailing empty line, so 1-based line numbers line up
 // with the source.
-function split_lines(src: string): string[] {
+pub function split_lines(src: string): string[] {
   let lines: string[] = [];
   let start: i32 = 0;
   let i: i32 = 0;
@@ -186,7 +180,21 @@ function fence_lang(line: string): string {
   while (j < m && info[j] != b' ' && info[j] != b'\t') {
     j = j + 1;
   }
-  return slice_unchecked(info, 0, j) + "";
+  return ascii_lower(slice_unchecked(info, 0, j) + "");
+}
+
+function ascii_lower(s: string): string {
+  let buf: u8[] = [];
+  let i: i32 = 0;
+  while (i < s.len()) {
+    let c: u8 = s[i];
+    if (c >= b'A' && c <= b'Z') {
+      c = c + 32;
+    }
+    buf = buf.append(c);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(buf);
 }
 
 // fence_info returns the trimmed info string after a fence's backtick
@@ -221,32 +229,38 @@ function split_ws(s: string): string[] {
   return words;
 }
 
-// fence_file returns the `file=PATH` directive value of a fence opener,
-// or "" when the fence has no `file=` directive.
-function fence_file(line: string): string {
-  let words: string[] = split_ws(fence_info(line));
-  let i: i32 = 0;
-  while (i < words.len()) {
-    if (starts_with(words[i], "file=")) {
-      return slice_unchecked(words[i], 5, words[i].len()) + "";
+// Directives is what a fence's info string declares past its language:
+// `file=PATH` (a file root, `entry` marking the compile entry), `test` (an
+// example `-doctest` runs) and its `name=NAME`. Quotes around a value are
+// dropped.
+struct Directives { file: string, name: string, entry: boolean, test: boolean }
+
+function directives(line: string): Directives {
+  let d: Directives = Directives { file: "", name: "", entry: false, test: false };
+  for w in split_ws(fence_info(line)) {
+    if (starts_with(w, "file=")) {
+      d = Directives { ...d, file: trim_quotes(slice_unchecked(w, 5, w.len()) + "") };
+    } else if (starts_with(w, "name=")) {
+      d = Directives { ...d, name: trim_quotes(slice_unchecked(w, 5, w.len()) + "") };
+    } else if (w == "entry") {
+      d = Directives { ...d, entry: true };
+    } else if (w == "test") {
+      d = Directives { ...d, test: true };
     }
-    i = i + 1;
   }
-  return "";
+  return d;
 }
 
-// fence_is_entry reports whether a fence opener carries a bare `entry`
-// directive, marking its file-root as the compile entry.
-function fence_is_entry(line: string): boolean {
-  let words: string[] = split_ws(fence_info(line));
-  let i: i32 = 0;
-  while (i < words.len()) {
-    if (words[i] == "entry") {
-      return true;
-    }
-    i = i + 1;
+function trim_quotes(s: string): string {
+  let a: i32 = 0;
+  let b: i32 = s.len();
+  while (a < b && s[a] == b'"') {
+    a = a + 1;
   }
-  return false;
+  while (b > a && s[b - 1] == b'"') {
+    b = b - 1;
+  }
+  return slice_unchecked(s, a, b) + "";
 }
 
 // is_fence_close reports whether `line` closes a block opened with a
@@ -287,7 +301,7 @@ function header_name(t: string): string {
 
 // is_ref reports whether a trimmed line is a chunk reference `<<NAME>>`.
 // A header ends in `>>=` (not `>>`), so headers are excluded here.
-function is_ref(t: string): boolean {
+pub function is_ref(t: string): boolean {
   if (!starts_with(t, "<<") || !ends_with(t, ">>")) {
     return false;
   }
@@ -301,14 +315,14 @@ function is_ref(t: string): boolean {
   return true;
 }
 
-function ref_name(t: string): string {
+pub function ref_name(t: string): string {
   return trim(slice_unchecked(t, 2, t.len() - 2));
 }
 
 // de_escape strips the backslash from an escaped marker line — `\<<name>>`
 // tangles to the literal `<<name>>` — keeping its indentation. Any other
 // line is returned unchanged.
-function de_escape(text: string): string {
+pub function de_escape(text: string): string {
   let ws: string = leading_ws(text);
   if (starts_with(slice_unchecked(text, ws.len(), text.len()) + "", "\\<<")) {
     return ws + slice_unchecked(text, ws.len() + 1, text.len());
@@ -325,13 +339,37 @@ function de_escape(text: string): string {
 // concatenation fall out for free.
 pub struct Piece { chunk: string, text: string, line: i32 }
 
-// header_index returns the index of the `<<NAME>>=` header within a
-// fern block's body lines (skipping leading blanks), or -1 when the
-// first non-blank line isn't a header (a display-only block).
-function header_index(body: string[]): i32 {
+// ─── block model ───────────────────────────────────────────────────
+
+// A document is a sequence of blocks: a run of prose up to the next fence,
+// or one fenced block. A fence in another language is prose too.
+pub const PROSE: i32 = 0;
+
+// DISPLAY is a `fern` fence with no header and no directive: shown, never
+// tangled.
+pub const DISPLAY: i32 = 1;
+
+pub const CHUNK: i32 = 2;
+
+pub const FILE: i32 = 3;
+
+pub const TEST: i32 = 4;
+
+// Block is one block of a document: its kind; the chunk, file path or test
+// name; its text, fences included; the document line it starts on; and for a
+// CHUNK, FILE or TEST block, its body as `count` document lines from index
+// `first` of Doc.lines — for a chunk, the lines after its header.
+pub struct Block { kind: i32, name: string, raw: string, line: i32, is_entry: boolean, first: i32, count: i32 }
+
+pub struct Doc { blocks: Block[], lines: string[] }
+
+// header_index returns the offset of the `<<NAME>>=` header within the
+// `count` lines from `first` (skipping leading blanks), or -1 when the first
+// non-blank line isn't a header (a display-only block).
+function header_index(lines: string[], first: i32, count: i32): i32 {
   let i: i32 = 0;
-  while (i < body.len()) {
-    let t: string = trim(body[i]);
+  while (i < count) {
+    let t: string = trim(lines[first + i]);
     if (t.len() == 0) {
       i = i + 1;
     } else {
@@ -344,49 +382,104 @@ function header_index(body: string[]): i32 {
   return 0 - 1;
 }
 
-// parse_pieces walks the document and collects every chunk-body line as
-// a tagged Piece. Prose, non-`fern` fences, and headerless `fern`
-// blocks contribute nothing to the tangle.
-pub function parse_pieces(src: string): Piece[] {
-  let pieces: Piece[] = [];
+function join_range(lines: string[], from: i32, to: i32): string {
+  let s: string = "";
+  let i: i32 = from;
+  while (i < to) {
+    if (i > from) {
+      s = s + "\n";
+    }
+    s = s + lines[i];
+    i = i + 1;
+  }
+  return s;
+}
+
+// fence_block classifies the fenced block opening at line index `open`,
+// whose body is the `count` lines after it.
+function fence_block(lines: string[], open: i32, count: i32, raw: string): Block {
+  let b: Block = Block { kind: PROSE, name: "", raw: raw, line: open + 1, is_entry: false, first: open + 1, count: count };
+  if (fence_lang(lines[open]) != "fern") {
+    return b;
+  }
+  let d: Directives = directives(lines[open]);
+  if (d.file.len() > 0) {
+    return Block { ...b, kind: FILE, name: d.file, is_entry: d.entry };
+  }
+  if (d.test) {
+    return Block { ...b, kind: TEST, name: d.name };
+  }
+  let h: i32 = header_index(lines, open + 1, count);
+  if (h < 0) {
+    return Block { ...b, kind: DISPLAY };
+  }
+  return Block { ...b, kind: CHUNK, name: header_name(trim(lines[open + 1 + h])), first: open + 2 + h, count: count - h - 1 };
+}
+
+// parse splits a document into its blocks. A fence left open runs to the end
+// of the document, less the empty line a final newline leaves.
+pub function parse(src: string): Doc {
   let lines: string[] = split_lines(src);
   let n: i32 = lines.len();
+  let ends_nl: boolean = n > 1 && lines[n - 1].len() == 0;
+  let blocks: Block[] = [];
   let i: i32 = 0;
   while (i < n) {
+    let start: i32 = i;
     let open_len: i32 = fence_open_len(lines[i]);
     if (open_len > 0) {
-      let lang: string = fence_lang(lines[i]);
-      // Gather the block's body lines (and their document line
-      // numbers) up to the closing fence.
-      let body: string[] = [];
-      let body_lines: i32[] = [];
-      let i2: i32 = i + 1;
-      while (i2 < n && !is_fence_close(lines[i2], open_len)) {
-        body = body.append(lines[i2]);
-        body_lines = body_lines.append(i2 + 1);
-        i2 = i2 + 1;
-      }
-      if (lang == "fern") {
-        let hidx: i32 = header_index(body);
-        if (hidx >= 0) {
-          let name: string = header_name(trim(body[hidx]));
-          let k: i32 = hidx + 1;
-          while (k < body.len()) {
-            pieces = pieces.append(Piece { chunk: name, text: body[k], line: body_lines[k] });
-            k = k + 1;
-          }
-        }
-      }
-      if (i2 < n) {
-        i = i2 + 1;
-      } else {
-        i = i2;
-      }
-    } else {
       i = i + 1;
+      while (i < n && !is_fence_close(lines[i], open_len)) {
+        i = i + 1;
+      }
+      let count: i32 = i - start - 1;
+      if (i < n) {
+        i = i + 1;
+      } else if (ends_nl && count > 0) {
+        count = count - 1;
+      }
+      blocks = blocks.append(fence_block(lines, start, count, join_range(lines, start, i)));
+    } else {
+      while (i < n && fence_open_len(lines[i]) == 0) {
+        i = i + 1;
+      }
+      blocks = blocks.append(Block { kind: PROSE, name: "", raw: join_range(lines, start, i), line: start + 1, is_entry: false, first: 0, count: 0 });
+    }
+  }
+  return Doc { blocks: blocks, lines: lines };
+}
+
+// pieces_of flattens a document's chunk definitions into Pieces.
+function pieces_of(d: Doc): Piece[] {
+  let pieces: Piece[] = [];
+  for b in d.blocks {
+    if (b.kind == CHUNK) {
+      let k: i32 = b.first;
+      while (k < b.first + b.count) {
+        pieces = pieces.append(Piece { chunk: b.name, text: d.lines[k], line: k + 1 });
+        k = k + 1;
+      }
     }
   }
   return pieces;
+}
+
+// parse_pieces collects every chunk-body line as a tagged Piece. Prose,
+// non-`fern` fences, display-only blocks, file roots and examples contribute
+// nothing.
+pub function parse_pieces(src: string): Piece[] {
+  return pieces_of(parse(src));
+}
+
+// defined_chunks names every chunk in first-definition order.
+pub function defined_chunks(d: Doc): string[] {
+  let names: string[] = [];
+  for b in d.blocks {
+    if (b.kind == CHUNK && !stack_has(names, b.name)) {
+      names = names.append(b.name);
+    }
+  }
+  return names;
 }
 
 function chunk_defined(pieces: Piece[], name: string): boolean {
@@ -597,7 +690,7 @@ pub function unused_chunks(src: string): string[] {
 }
 
 // insert_sorted inserts `s` into the byte-ordered `xs`.
-function insert_sorted(xs: string[], s: string): string[] {
+pub function insert_sorted(xs: string[], s: string): string[] {
   let out: string[] = [];
   let placed: boolean = false;
   let i: i32 = 0;
@@ -643,33 +736,25 @@ pub struct FilePiece { path: string, text: string, line: i32, is_entry: boolean 
 // tagged FilePieces. Non-`fern` and directive-less fences contribute
 // nothing here (they go through parse_pieces as chunks / display-only).
 pub function parse_file_pieces(src: string): FilePiece[] {
+  let d: Doc = parse(src);
   let pieces: FilePiece[] = [];
-  let lines: string[] = split_lines(src);
-  let n: i32 = lines.len();
-  let i: i32 = 0;
-  while (i < n) {
-    let open_len: i32 = fence_open_len(lines[i]);
-    if (open_len > 0) {
-      let lang: string = fence_lang(lines[i]);
-      let path: string = fence_file(lines[i]);
-      let ent: boolean = fence_is_entry(lines[i]);
-      let i2: i32 = i + 1;
-      while (i2 < n && !is_fence_close(lines[i2], open_len)) {
-        if (lang == "fern" && path.len() > 0) {
-          pieces = pieces.append(FilePiece { path: path, text: lines[i2], line: i2 + 1, is_entry: ent });
-        }
-        i2 = i2 + 1;
-      }
-      if (i2 < n) {
-        i = i2 + 1;
-      } else {
-        i = i2;
-      }
-    } else {
-      i = i + 1;
+  for b in d.blocks {
+    if (b.kind == FILE) {
+      pieces = append_body(pieces, d, b);
     }
   }
   return pieces;
+}
+
+// append_body appends block `b`'s body lines as FilePieces under its name.
+function append_body(pieces: FilePiece[], d: Doc, b: Block): FilePiece[] {
+  let out: FilePiece[] = pieces;
+  let k: i32 = b.first;
+  while (k < b.first + b.count) {
+    out = out.append(FilePiece { path: b.name, text: d.lines[k], line: k + 1, is_entry: b.is_entry });
+    k = k + 1;
+  }
+  return out;
 }
 
 // file_paths returns the distinct output paths in first-definition order.
@@ -685,22 +770,19 @@ function file_paths(fp: FilePiece[]): string[] {
   return paths;
 }
 
-// path_is_entry reports whether any block contributing to `path` carried
-// the `entry` marker.
 // fence_line is the document line of the fence opening `src`'s first
-// `file=PATH` block: the line above its first body line.
+// `file=PATH` block.
 pub function fence_line(src: string, path: string): i32 {
-  let fp: FilePiece[] = parse_file_pieces(src);
-  let i: i32 = 0;
-  while (i < fp.len()) {
-    if (fp[i].path == path) {
-      return fp[i].line - 1;
+  for b in parse(src).blocks {
+    if (b.kind == FILE && b.name == path) {
+      return b.line;
     }
-    i = i + 1;
   }
   return 1;
 }
 
+// path_is_entry reports whether any block contributing to `path` carried
+// the `entry` marker.
 function path_is_entry(fp: FilePiece[], path: string): boolean {
   let i: i32 = 0;
   while (i < fp.len()) {
@@ -783,6 +865,40 @@ pub function tangle_files(src: string): FileTangleResult {
     i = i + 1;
   }
   return FileTangleOk { files: results };
+}
+
+// ─── doctests ──────────────────────────────────────────────────────
+// A ```fern test block is an example: tangled on its own, its `<<refs>>`
+// expanded against the document's chunks, into a program `-doctest` runs.
+
+// Doctest is one tangled example: its `name=` (empty when it has none), the
+// line its fence opens on, and its code with the provenance TangleOk carries.
+pub struct Doctest { name: string, line: i32, code: string, lits: i32[], shifts: i32[] }
+
+pub struct DoctestsOk { tests: Doctest[] }
+
+pub struct DoctestsErr { msg: string, line: i32, col: i32 }
+
+pub type DoctestsResult = DoctestsOk | DoctestsErr;
+
+pub function doctests(src: string): DoctestsResult {
+  let d: Doc = parse(src);
+  let chunks: Piece[] = pieces_of(d);
+  let tests: Doctest[] = [];
+  for b in d.blocks {
+    if (b.kind == TEST) {
+      let body: FilePiece[] = [];
+      match (expand_file(append_body(body, d, b), chunks, b.name)) {
+        ExpandOk(o) => {
+          tests = tests.append(Doctest { name: b.name, line: b.line, code: join_lines(o.lines), lits: o.lits, shifts: o.shifts });
+        },
+        ExpandErr(e) => {
+          return DoctestsErr { msg: e.msg, line: e.line, col: e.col };
+        }
+      }
+    }
+  }
+  return DoctestsOk { tests: tests };
 }
 
 // entry_file picks the compile entry among tangled modules: the one file
@@ -944,7 +1060,9 @@ function file_code(files: FileResult[], path: string): string {
   return "";
 }
 
-function main(): i32 {
+// check_chunks — Chunks: expansion, concatenation, indentation, display-only blocks and
+// the three refusals.
+function check_chunks(): i32 {
   // 1. Root chunk only.
   let s1: string = "# Title\n\nProse.\n\n```fern\n<<*>>=\nfn main() {}\n```\n";
   if (tangle_code(s1) != "fn main() {}") {
@@ -1011,7 +1129,11 @@ function main(): i32 {
   if (tangle_code(s9) != "fn main() {}") {
     return 11;
   }
+  return 0;
+}
 
+// check_files — File roots and the entry pick.
+function check_files(): i32 {
   // 10. Multi-file: a `file=` document tangles to two modules, with a
   // chunk shared across them. The entry module references the helper.
   let m1: string = "```fern file=main.fern entry\nimport \"./u\";\n<<g>>\n```\n"
@@ -1074,7 +1196,16 @@ function main(): i32 {
       }
     }
   }
+  return 0;
+}
 
+// check_maps — Line maps, escapes, the entry rule's edges and unused chunks.
+function check_maps(): i32 {
+  let s4: string = "```fern\n<<*>>=\nfn main() {\n    <<body>>\n}\n```\n"
+    + "```fern\n<<body>>=\nreturn 7;\n```\n";
+  let m1: string = "```fern file=main.fern entry\nimport \"./u\";\n<<g>>\n```\n"
+    + "```fern file=u.fern\n<<g>>\n```\n"
+    + "```fern\n<<g>>=\npub fn g() {}\n```\n";
   // 16. Each tangled line records its document line and the indentation
   // its reference prepended.
   let p4: TangleOk = tangled(s4);
@@ -1118,6 +1249,84 @@ function main(): i32 {
   if (un.len() != 2 || un[0] != "c" || un[1] != "zed") {
     return 28;
   }
+  return 0;
+}
+
+// check_blocks — The block model: fence forms, examples and open fences.
+function check_blocks(): i32 {
+  // 22. The fence language is case-insensitive, and a quoted `file=` path
+  // loses its quotes.
+  if (tangle_code("```FERN\n<<*>>=\nx\n```\n") != "x") {
+    return 29;
+  }
+  let f22: FileResult[] = tf_files("```fern file=\"q.fern\"\nx\n```\n");
+  if (f22.len() != 1 || f22[0].path != "q.fern") {
+    return 30;
+  }
+
+  // 23. An example or a file root that opens with a header is not a chunk.
+  if (tangle_code("```fern test\n<<*>>=\nbad\n```\n```fern file=f.fern\n<<*>>=\nworse\n```\n```fern\n<<*>>=\ngood\n```\n") != "good") {
+    return 31;
+  }
+
+  // 24. A fence left open at the end does not take the final newline's
+  // empty line into its body.
+  if (tangle_code("```fern\n<<*>>=\nx\n") != "x") {
+    return 32;
+  }
+
+  // 25. Blocks: prose runs up to a fence, a fence in another language is
+  // prose, and the text after the last fence is a block of its own.
+  let d25: Doc = parse("# T\n\n```go\nx\n```\n```fern\nshow\n```\n");
+  if (d25.blocks.len() != 4 || d25.blocks[0].raw != "# T\n" || d25.blocks[1].kind != PROSE || d25.blocks[1].raw != "```go\nx\n```"
+    || d25.blocks[2].kind != DISPLAY || d25.blocks[2].line != 6 || d25.blocks[3].raw != "") {
+    return 33;
+  }
 
   return 0;
+}
+
+// check_doctests — examples tangled against the document's chunks.
+function check_doctests(): i32 {
+  // 26. Examples tangle on their own against the document's chunks.
+  let s26: string = "```fern\n<<h>>=\nfn h() {}\n```\n```fern test name=\"adds\"\n<<h>>\nfn main() {}\n```\n```fern test\nfn main() {}\n```\n";
+  match (doctests(s26)) {
+    DoctestsOk(o) => {
+      if (o.tests.len() != 2 || o.tests[0].name != "adds" || o.tests[0].code != "fn h() {}\nfn main() {}" || !lines_are(o.tests[0].lits, [3, 7])
+        || o.tests[1].name != "" || o.tests[1].line != 9) {
+        return 34;
+      }
+    },
+    DoctestsErr(e) => {
+      return 35;
+    }
+  }
+  match (doctests("```fern test\n<<nope>>\n```\n")) {
+    DoctestsOk(o) => {
+      return 36;
+    },
+    DoctestsErr(e) => {
+      if (e.line != 2 || e.col != 1) {
+        return 37;
+      }
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let rc: i32 = check_chunks();
+  if (rc == 0) {
+    rc = check_files();
+  }
+  if (rc == 0) {
+    rc = check_maps();
+  }
+  if (rc == 0) {
+    rc = check_blocks();
+  }
+  if (rc == 0) {
+    rc = check_doctests();
+  }
+  return rc;
 }

@@ -90,14 +90,6 @@ type Manifest struct {
 	// Only the TOP-LEVEL manifest's excludes apply during `fern -resolve`
 	// (a dependency's [exclude] is ignored), preserving determinism.
 	Excludes map[string][]string
-	// Lint is the [lint] / [lint.options] tables as raw `key = value`
-	// pairs — a severity per rule name, and a `<rule>.<key>` entry per
-	// tuned option. The names are NOT validated here: which rules exist
-	// is internal/tools/lint's to know, and a manifest parser that had to
-	// import the linter would drag it into every build that reads a
-	// dependency's fern.toml. `fern -lint` feeds these to
-	// lint.Config.SetPair, which rejects an unknown rule or option.
-	Lint map[string]string
 }
 
 // VersionDeps returns the names→min-version of this manifest's versioned
@@ -275,22 +267,16 @@ func Parse(src string) (*Manifest, error) {
 			}
 			m.Members = ms
 		case "lint", "lint.options":
-			// A severity is a quoted string; an option value may be a
-			// bare number, so accept either scalar spelling. Under
-			// [lint.options] the key is `<rule>.<key>`; under [lint] a
-			// dotted key is the same thing written inline, so both
-			// tables merge into one map and the dot decides.
-			v, err := parseScalar(val)
-			if err != nil {
+			// The linter (compiler/lint.fern) reads these tables; the
+			// manifest is rejected here only for what it rejects too: a
+			// value that is neither a quoted string nor a number, and an
+			// undotted [lint.options] key.
+			if _, err := parseScalar(val); err != nil {
 				return nil, fmt.Errorf("line %d: [%s] %s: %w", ln+1, section, key, err)
 			}
 			if section == "lint.options" && !strings.Contains(key, ".") {
 				return nil, fmt.Errorf("line %d: [lint.options] key %q must be spelled <rule>.<option>", ln+1, key)
 			}
-			if m.Lint == nil {
-				m.Lint = map[string]string{}
-			}
-			m.Lint[key] = v
 		case "exclude":
 			if !validDepName(key) {
 				return nil, fmt.Errorf("line %d: invalid [exclude] package name %q (letters, digits, `_`, `-`; must not start with a digit)", ln+1, key)

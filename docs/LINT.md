@@ -5,12 +5,12 @@ than it should. It is not the checker: the checker rejects programs that
 cannot run, a lint names a program that runs badly. That split decides
 everything else about the design.
 
-Engine: `internal/tools/lint`. CLI: `cmd/fern/lint.go`.
+Engine: `compiler/lint.fern`. CLI: `run_lint` in `compiler/fern.fern`.
 
 ## Why it runs on the parse tree
 
-A lint sees `parser.Parse` output and nothing else — no type-check, no
-import resolution, no constant folding.
+A lint sees `parser.parse_module` output and nothing else — no type-check,
+no import resolution, no constant folding.
 
 That buys three things worth more than type information would be:
 
@@ -32,26 +32,31 @@ checker, as a warning.
 
 ## Rules
 
-A rule implements `lint.Rule`: a stable kebab-case `Name()`, a one-line
-`Doc()`, a `DefaultSeverity()`, and `Check(*Pass)`. `register()` in the
-rule file's `init` adds a constructor to the registry. `Rules()` hands back
-a FRESH instance per call, because `SetOption` mutates the rule value.
+A rule has a stable kebab-case name, a one-line description, a default
+severity and, optionally, `<rule>.<key>` options. There is one rule today, so
+`lint.Config` holds its severity and threshold directly; a second rule adds its
+fields there, an arm to `set_pair` / `set_option`, its run to `lint_file`, and
+its entry to `rules_listing` and `known_rules`. An unknown key or an unusable
+value must error: linting at a default the user did not ask for is worse than
+refusing.
 
-Add options by also implementing `lint.Configurable` — `SetOption(key,
-value)` and `Options()`. An unknown key or an unusable value must error:
-linting at a default the user did not ask for is worse than refusing.
-
-`Pass.Report` handles suppression, so no rule knows suppression exists.
+`lint_file` applies the `fern-lint:` suppressions, so no rule knows they
+exist.
 
 ### cyclomatic-complexity
 
 Default: `warn`, `max = 10` (McCabe's own recommendation).
 
-`lint.Score` is one for the entry path plus one per fork. The scoring model
-is the whole content of the metric, so `complexity.go` writes it down as one
-table and `TestScoreModel` pins every entry — a traversal change that
-quietly starts or stops counting one of them moves every number in the repo
-gate below.
+`lint.score` is one for the entry path plus one per fork. The scoring model
+is the whole content of the metric, so `TestSelfHostLintScoreModel` pins every
+entry below — a traversal change that quietly starts or stops counting one of
+them moves every number in the repo gate.
+
+The parser has desugared some forms by the time the linter sees them, and the
+score is of the source, not the desugar: a tuple, struct, literal or nested
+pattern match is scored by the arms recorded as written (the `sugar` the
+printer reprints from), a C-style `for` by the loop `printer.as_c_for`
+recovers, and the loop a `todo` lowers to not at all.
 
 | Construct | Adds |
 |---|---|
@@ -63,7 +68,7 @@ gate below.
 | `&&`, `\|\|` | 1 each — short-circuiting is a branch |
 | `?` | 1 — an early return on the error path |
 | `assert(…)` | 0 — a precondition, not a second path, and `-O` deletes it |
-| `todo` | 0 — its `loop { … }` is a stub marker |
+| `todo` | 0 — its loop is a stub marker |
 | `break`, `continue`, `return` | 0 — the fork that created the path already counted |
 
 A lambda's body counts INTO the function that spells it. An inline closure
@@ -105,7 +110,7 @@ valuable refactor available as a regression, and blocks it.
 Summed distance calls the same split what it is: **462 down to 300**. It
 keeps falling as the pieces get simpler, all the way to zero, so it is
 monotone in the direction the campaign actually moves.
-`TestSplittingImprovesExcessButNotCount` pins that, and fails if anyone
+`TestSelfHostLintSplittingImprovesExcess` pins that, and fails if anyone
 switches the gate back to counting.
 
 The ceiling covers what summed distance is weak at — it stops one new
@@ -121,11 +126,13 @@ from the CEILING, because "this one may exceed the limit" is not "this one
 may be worse than anything here has ever been". So a new 500-fork function
 fails the gate however it is annotated.
 
-The excess comes from `lint.File` rather than from `lint.Score` directly, so
-an `allow` comment in a Fern source exempts a function from the gate exactly
-as it does from the command line — one suppression mechanism, not a second
-one only the gate honours. Each finding carries its score in `Finding.Value`,
-so the gate compares numbers instead of parsing them back out of prose.
+The gate is `TestSelfHostRepoComplexityRatchet`, which runs
+`compiler/drivers/lint_ratchet_run.fern` over each tree. Its excess comes from
+`lint.lint_file` rather than from `lint.score` directly, so an `allow` comment
+in a Fern source exempts a function from the gate exactly as it does from the
+command line — one suppression mechanism, not a second one only the gate
+honours. Each finding carries its score in `Finding.value`, so the gate
+compares numbers instead of parsing them back out of prose.
 
 ## Not here yet
 
@@ -133,6 +140,3 @@ so the gate compares numbers instead of parsing them back out of prose.
   parsing markdown as Fern. Wiring it up means routing findings through the
   generated-line → document-line remap, which `docs/LITERATE.md` names as
   the most regression-prone surface in that engine — worth its own change.
-- **The self-host mirror.** The linter is native-only tooling, like
-  `internal/syntax/printer`; nothing in the bootstrap path needs it. See
-  `docs/NATIVE-CONVERGENCE.md` for when that stops being free.

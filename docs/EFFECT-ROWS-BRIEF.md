@@ -349,11 +349,16 @@ checker has already produced.
 
 | Piece | Path |
 | --- | --- |
-| Call graph, solver, witness chains, report | `internal/check/effects/` |
-| Builtin-name predicate the graph needs | `internal/check/checker/builtinnames.go` |
-| Report command | `cmd/fern/effects.go` (`fern -effects`) |
+| Call graph, solver, witness chains, for E070 and the ambient rule | `internal/check/effects/` |
+| Report command, with its own graph, solver and witness chains | `compiler/effects.fern` (`fern -effects`) |
 | The shipped enforcement of the same reachability, per package | `internal/pkg/caps` (E070) |
 | …and per target | `internal/pkg/platforms` (E066) |
+
+The numbers in §4 were measured with the report's first, Go implementation.
+Its graph charged a call to an enum constructor (`Some(x)`) or a comparison of
+generic values as a call through a function value, which is most of what §4.2
+counts there; `compiler/effects.fern` resolves both, so it reports fewer
+functions reaching an effect only through a function value.
 
 `internal/pkg/caps` now builds its per-package report on `internal/check/effects`'
 graph rather than walking the call graph a second time; that is the one
