@@ -242,7 +242,7 @@ aarch64/string_scan.ir	60275834
 aarch64/string_slice.text	939
 aarch64/string_slice.ir	43620043
 aarch64/struct_drop.text	3563
-aarch64/struct_drop.ir	349820825
+aarch64/struct_drop.ir	344060825
 aarch64/tokenize.text	1195
 aarch64/tokenize.ir	38580038
 aarch64/utf8_ingest_unchecked.text	9534
