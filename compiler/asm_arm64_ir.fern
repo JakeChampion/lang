@@ -3690,7 +3690,7 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 // function-value box the lowering folded whole (ir.const_struct_* /
 // ir.const_closure), interned as the flat arm interns it.
 function ssa_agg_lit(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState): asmcore.EmitState {
-  let pk: asmcore.ConstAggPack = asmcore.const_agg_pack(s, ins.str);
+  let pk: asmcore.ConstAggPack = asmcore.const_agg_pack(s, ins.str, "");
   s = pk.state;
   let kout: asmcore.ConstAggOut = asmcore.add_const_agg(s, pk.text);
   s = kout.state;
