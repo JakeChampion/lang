@@ -127,15 +127,16 @@ fallback; the native arm64 runner exercises the ring.
    run again under the ring (`TestSelfHostServeAllocsPerRequestRing`, the
    `-io_uring` shapes); and the whole x86-64 serve suite was run with
    `FERN_IO_URING=1` before landing, as the nightly lane runs it.
-2. **Multishot accept.** The listener's poll becomes one
-   `IORING_OP_ACCEPT` with `IORING_ACCEPT_MULTISHOT`; the accepted
-   descriptors are queued in the ring's state block as their completions
-   are read, and the wait reports the listener readable while the queue
-   holds one. The loop accepts through `drv.accept(listener)`, which the
-   ring answers from its queue and epoll with `tcp_accept`; this is the
-   one change above `std/net` this slice needs. Gate: the accept storm
-   (`TestSelfHostHeldConnectionsHeapBoundX86_64`'s batches) and the
-   per-IP cap under both backends.
+2. **Multishot accept (dropped).** A multishot `IORING_OP_ACCEPT` on the
+   listener is a pending request that holds the listener's file, as a
+   pending poll does (above), and a ring torn down after its worker dies
+   may still complete it. A worker's `reuse_port` listener would then stay
+   in the port's group past the crash, the window
+   `TestSelfHostSupervisedServeReusePortWorkers` measured resetting
+   connections, and a shared listener could hand a connection to a ring
+   with no process left to serve it. What it saves is one `accept4` per
+   connection. The listener stays in the ring's epoll set and is accepted
+   with `tcp_accept`.
 3. **Provided buffers and multishot receive.** One buffer ring per ring,
    registered with `IORING_REGISTER_PBUF_RING`, of fixed-size buffers
    the size of the loop's scratch; a watched connection's readable poll
@@ -158,7 +159,7 @@ fallback; the native arm64 runner exercises the ring.
 5. **Measured, and kept only if it wins.** The HttpArena profiles #9861
    names (baseline at 4,096 connections, pipelined at 4,096, and the
    async profile at 32,000) on the fixed host, epoll against the ring
-   after each of slices 1 to 4: throughput, p99 and bump bytes per
+   after each of slices 1, 3 and 4: throughput, p99 and bump bytes per
    connection, recorded in `docs/benchmarks/`. The `net-nightly` lane
    runs the serve suites and `scripts/net-bench` under both backends;
    the per-PR lanes run epoll only, plus the slice gates above. If the
@@ -174,8 +175,8 @@ fallback; the native arm64 runner exercises the ring.
   host here has.
 - Files. `std/fs` stays on blocking calls; the loop's only file I/O is
   `sendfile`, which slice 4 leaves alone.
-- A completion-shaped Driver. Slices 2 and 3 add `accept` and
-  `recv_into` to the Driver rather than recasting it around completions:
+- A completion-shaped Driver. Slice 3 adds `recv_into` to the Driver
+  rather than recasting it around completions:
   the loop's structure, its parser's lent buffer and its zero-allocation
-  path stay as they are, and epoll implements the two by the calls the
+  path stay as they are, and epoll implements it by the call the
   loop makes today.
