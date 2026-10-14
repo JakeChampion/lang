@@ -11243,8 +11243,26 @@ func unifyIfArms(a, b ast.Type) ast.Type {
 			return ast.TupleType{Elems: out}
 		}
 	}
+	// Two non-empty arrays (or slices) unify element-wise like tuples, so
+	// `if c { [big as u64] } else { [1] }` is a u64[] and `[1]` settles there.
+	if aa, aok := a.(ast.ArrayType); aok && aa.Elem != nil {
+		if ba, bok := b.(ast.ArrayType); bok && ba.Elem != nil {
+			if u := unifyIfArms(aa.Elem, ba.Elem); u != nil {
+				return ast.ArrayType{Elem: u}
+			}
+			return nil
+		}
+	}
+	if as_, aok := a.(ast.SliceType); aok && as_.Elem != nil {
+		if bs, bok := b.(ast.SliceType); bok && bs.Elem != nil {
+			if u := unifyIfArms(as_.Elem, bs.Elem); u != nil {
+				return ast.SliceType{Elem: u}
+			}
+			return nil
+		}
+	}
 	// Equal compares default widths, not whether a width is committed. Select
-	// concrete numeric arms (recursively for tuples) before this shortcut, or
+	// concrete numeric arms (recursively for tuples and arrays) before this shortcut, or
 	// an initial literal can erase a concrete i32/f64 constraint and allow a
 	// later, incompatible concrete arm.
 	if ast.Equal(a, b) {

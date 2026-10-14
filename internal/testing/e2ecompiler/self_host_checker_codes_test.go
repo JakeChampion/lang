@@ -2579,11 +2579,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e031-option-payload-f64-literal", "function main(): i32 { let o: Option[i32] = Some(1); let x = match (o) { Some(v) => v, None => 2.5 }; return 0; }\n", []string{"E031"}},
 		{"e031-diverging-arm-skipped", "function main(): i32 { let k: i32 = 3; let n: i32 = 1; let x = match (k) { 1 => n, 2 => { return 3; }, _ => 2.5 }; return 0; }\n", []string{"E031"}},
 		{"e031-tuple-typed-elem", "function main(): i32 { let n: i32 = 1; let t = if (true) { (n, 1) } else { (2.5, 1) }; return 0; }\n", []string{"E031"}},
-		{"e031-array-literal-elems-differ", "function main(): i32 { let x = if (true) { [1] } else { [2.5] }; return 0; }\n", []string{"E031"}},
-		{"e031-array-literal-vs-i64", "function main(): i32 { let a: i64 = 1; let x = if (true) { [a] } else { [2] }; return 0; }\n", []string{"E031"}},
-		{"e031-array-poly-f64-vs-f32", "function main(): i32 { let x = if (true) { [2.5] } else { [1.0f32] }; return 0; }\n", []string{"E031"}},
-		{"e031-enum-match-array-vs-i64", "enum E { A, B }\nfunction main(): i32 { let e: E = E.A; let a: i64 = 2; let x = match (e) { E.A => [a], E.B => [3] }; return 0; }\n", []string{"E031"}},
-		{"e031-literal-match-array-vs-f64", "function main(): i32 { let k: i32 = 1; let d: f64 = 2.0; let x = match (k) { 1 => [d], _ => [3] }; return 0; }\n", []string{"E031"}},
+		// Array arms join element by element, so an unsettled element takes a
+		// typed sibling's numeric type as a scalar arm does.
+		{"e031-array-literal-at-float-ok", "function main(): i32 { let x = if (true) { [1] } else { [2.5] }; return 0; }\n", nil},
+		{"e031-array-literal-at-i64-ok", "function main(): i32 { let a: i64 = 1; let x = if (true) { [a] } else { [2] }; return 0; }\n", nil},
+		{"e031-array-poly-f64-at-f32-ok", "function main(): i32 { let x = if (true) { [2.5] } else { [1.0f32] }; return 0; }\n", nil},
+		{"e031-enum-match-array-at-i64-ok", "enum E { A, B }\nfunction main(): i32 { let e: E = E.A; let a: i64 = 2; let x = match (e) { E.A => [a], E.B => [3] }; return 0; }\n", nil},
+		{"e031-literal-match-array-at-f64-ok", "function main(): i32 { let k: i32 = 1; let d: f64 = 2.0; let x = match (k) { 1 => [d], _ => [3] }; return 0; }\n", nil},
 		// Past an E031 the block takes the arms joined before the failing one.
 		{"e031-then-annotation", "function main(): i32 { let n: i32 = 1; let x: f64 = if (true) { n } else { 2.5 }; return 0; }\n", []string{"E003", "E031"}},
 		{"e031-then-return", "function g(): f64 { let n: i32 = 1; return if (true) { n } else { 2.5 }; }\nfunction main(): i32 { return 0; }\n", []string{"E002", "E031"}},
@@ -2641,6 +2643,17 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e002-generic-enum-block-literal-payloads-at-i64-ok", "enum Bx[T] { Full(T), Empty }\nfunction g(c: boolean): Bx[i64] { return if (c) { Full(1) } else { Full(2) }; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e003-generic-enum-block-i32-local-payload-at-i64", "enum Bx[T] { Full(T), Empty }\nfunction main(): i32 { let c: boolean = true; let n: i32 = 1; let b: Bx[i64] = if (c) { Full(n) } else { Full(2) }; return 0; }\n", []string{"E003"}},
 		{"e002-generic-enum-block-i32-local-payload-at-i64", "enum Bx[T] { Full(T), Empty }\nfunction g(c: boolean, n: i32): Bx[i64] { return if (c) { Full(n) } else { Full(2) }; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"e003-generic-enum-block-literal-first-i32-payload-at-i64", "enum Bx[T] { Full(T), Empty }\nfunction main(): i32 { let c: boolean = true; let n: i32 = 1; let b: Bx[i64] = if (c) { Full(2) } else { Full(n) }; return 0; }\n", []string{"E003"}},
+		{"e038-generic-enum-block-i32-payload-argument", "enum Bx[T] { Full(T), Empty }\nfunction get(b: Bx[i64]): i32 { return 0; }\nfunction f(c: boolean, n: i32): i32 { return get(if (c) { Full(1) } else { Full(n) }) + get(if (c) { Full(n) } else { Full(1) }); }\nfunction main(): i32 { return 0; }\n", []string{"E038"}},
+		{"e038-option-block-i32-payload-argument", "function get(o: Option[i64]): i32 { return 0; }\nfunction f(c: boolean, n: i32): i32 { return get(if (c) { Some(1) } else { Some(n) }); }\nfunction main(): i32 { return 0; }\n", []string{"E038"}},
+		// Two array arms join element by element, so an unsettled literal
+		// element settles at a typed sibling's, and typed elements must agree.
+		{"e031-array-arms-literal-settles-at-u64-ok", "function f(c: boolean, big: i32): i32 { let w: u64[] = if (c) { [big as u64] } else { [1] }; let v = if (c) { [1, 2] } else { [big as u64] }; return w.len() + v.len(); }\nfunction main(): i32 { return f(true, 3); }\n", nil},
+		{"e031-array-arms-literal-settles-at-float-ok", "function f(c: boolean): i32 { let v = if (c) { [1.5] } else { [1] }; let u = if (c) { [[1]] } else { [[2.5]] }; return v.len() + u.len(); }\nfunction main(): i32 { return f(true); }\n", nil},
+		{"e031-array-match-arms-literal-settles-ok", "function f(k: i32, big: i32): i32 { let w: i64[] = match (k) { 0 => [-(big as i64)], _ => [2] }; return w.len(); }\nfunction main(): i32 { return f(0, 3); }\n", nil},
+		{"e031-array-arms-enum-payload-settles-at-float-ok", "function f(c: boolean): i32 { let a = if (c) { [Some(1)] } else { [Some(2.5)] }; return a.len(); }\nfunction main(): i32 { return f(true); }\n", nil},
+		{"e031-array-arms-typed-elements-differ", "function f(c: boolean, big: i32): i32 { let w = if (c) { [big as u64] } else { [big] }; return w.len(); }\nfunction main(): i32 { return f(true, 3); }\n", []string{"E031"}},
+		{"e031-array-match-arms-literal-then-typed-differ", "function f(k: i32, n: i32, m: i64): i32 { let w = match (k) { 0 => [1], 1 => [n], _ => [m] }; return w.len(); }\nfunction main(): i32 { return f(0, 1, 2i64); }\n", []string{"E031"}},
 		// E045: a map literal's first key fixes the key type, which must be
 		// i32 or string (the only key kinds the runtime hash/compare
 		// supports). Map programs need `import "core/map";` (Go reports E001

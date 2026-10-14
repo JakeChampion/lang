@@ -60,6 +60,12 @@ var valueBlockFloatArmCases = []struct {
 	{"some-generic-enum-block-at-destination", `enum Bx[T] { Full(T), Empty } function main(): i32 { let c: boolean = true; let o: Option[Bx[i64]] = if (c) { Some(Full(1)) } else { Some(Full(2)) }; match (o) { Some(b) => { match (b) { Full(v) => { if (v == 1) { return 87; } }, Empty => {} } }, None => {} } return 88; }`, 87},
 	{"generic-enum-block-in-some-at-destination", `enum Bx[T] { Full(T), Empty } function main(): i32 { let c: boolean = true; let o: Option[Bx[i64]] = Some(if (c) { Full(1) } else { Full(2) }); match (o) { Some(b) => { match (b) { Full(v) => { if (v == 1) { return 89; } }, Empty => {} } }, None => {} } return 90; }`, 89},
 	{"generic-enum-block-field-and-element", `enum Bx[T] { Full(T), Empty } struct S { b: Bx[i64] } function main(): i32 { let c: boolean = false; let s: S = S { b: if (c) { Full(1) } else { Full(2) } }; let xs: Bx[i64][] = [if (c) { Full(3) } else { Full(4) }, Empty]; match (s.b) { Full(v) => { match (xs[0]) { Full(w) => { if (v == 2 && w == 4) { return 91; } }, Empty => {} } }, Empty => {} } return 92; }`, 91},
+	// An array literal arm's unsettled elements settle at a typed sibling's
+	// element type, with or without a destination.
+	{"array-arm-literal-at-u64", `function f(c: boolean, big: i32): u64 { let w: u64[] = if (c) { [big as u64] } else { [1] }; let v = if (c) { [1, 2] } else { [big as u64] }; return w[0] + v[0]; } function main(): i32 { if (f(false, 3) == 4 && f(true, 7) == 8) { return 93; } return 94; }`, 93},
+	{"array-arm-literal-match-at-i64", `function f(k: i32, big: i32): i64 { let w = match (k) { 0 => [-(big as i64)], _ => [2] }; return w[0]; } function main(): i32 { if (f(0, 3) == -3 && f(1, 3) == 2) { return 95; } return 96; }`, 95},
+	{"array-arm-literal-at-float", `function f(c: boolean): f64 { let v = if (c) { [1.5] } else { [1] }; let u = if (c) { [[1]] } else { [[2.5]] }; return v[0] + u[0][0]; } function main(): i32 { if (f(false) == 3.5 && f(true) == 2.5) { return 97; } return 98; }`, 97},
+	{"array-arm-enum-payload-at-float", `function f(c: boolean): f64 { let a = if (c) { [Some(1)] } else { [Some(2.5)] }; match (a[0]) { Some(v) => { return v; }, None => { return 0.0; } } } function main(): i32 { if (f(true) == 1.0 && f(false) == 2.5) { return 99; } return 100; }`, 99},
 }
 
 // TestSelfHostValueBlockFloatArmX86_64 runs each case as a self-host x86-64

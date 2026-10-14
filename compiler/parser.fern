@@ -3310,7 +3310,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
           let minner: ast.Expr = e_call(e_lambda_origin(mno_params, mc.rt, mlam_body, ORIGIN_MATCH_EXPR), mno_args);
           mlam_body = [mc.scrut_bind[0], s_return(minner)];
         }
-        let miife: ast.Expr = e_call(e_lambda_origin(mno_params, mc.rt, mlam_body, ORIGIN_MATCH_EXPR), mno_args);
+        let miife: ast.Expr = e_call_at(e_lambda_origin(mno_params, mc.rt, mlam_body, ORIGIN_MATCH_EXPR), mno_args, x.line, x.col);
         return parse_postfix(mc.par, miife);
       }
       if (x.name == "if") {
@@ -3321,7 +3321,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
         let no_params: ast.ParamDecl[] = [];
         let lam_body: ast.Stmt[] = [ic.stmt];
         let no_args: ast.Expr[] = [];
-        let iife: ast.Expr = e_call(e_lambda_origin(no_params, ic.rt, lam_body, ORIGIN_IF_EXPR), no_args);
+        let iife: ast.Expr = e_call_at(e_lambda_origin(no_params, ic.rt, lam_body, ORIGIN_IF_EXPR), no_args, x.line, x.col);
         return parse_postfix(ic.par, iife);
       }
       // A TYPE keyword used as a MODULE name: `string.repeat_char(…)`
@@ -3487,7 +3487,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
         let (bb_body, bb_rt, bb_p) = parse_branch_body(p);
         let bx_params: ast.ParamDecl[] = [];
         let bx_args: ast.Expr[] = [];
-        let iife: ast.Expr = e_call(e_lambda_origin(bx_params, bb_rt, bb_body, ORIGIN_BLOCK), bx_args);
+        let iife: ast.Expr = e_call_at(e_lambda_origin(bx_params, bb_rt, bb_body, ORIGIN_BLOCK), bx_args, x.line, x.col);
         return parse_postfix(bb_p, iife);
       }
       if (x.text == "-" || x.text == "!") {

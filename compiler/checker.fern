@@ -10943,9 +10943,9 @@ function mx_same_enum_family(an: string, bn: string, enums: parser.EnumDecl[]): 
 // mx_arm_compatible reports whether two arm results may coexist, mirroring
 // the Go checker's unifyIfArms (see the section header). An arm's expression
 // says whether it is an unsettled integer, which its type alone does not.
-// Array and map elements (`elem`) do not settle at each other: unifyIfArms
-// compares them at their default widths, and only a match that unifies under
-// assignability (`assigns`) settles an unsettled element at a sibling's.
+// Map keys (`elem`) do not settle at each other: unifyIfArms compares them at
+// their default widths, and only a match that unifies under assignability
+// (`assigns`) settles an unsettled key at a sibling's.
 function mx_arm_compatible(a: VbStore, b: VbStore, elem: boolean, assigns: boolean, unions: UnionSig[], enums: parser.EnumDecl[]): boolean {
   if (elem && !assigns && (arm_unsettled(a) || arm_unsettled(b))) {
     return mx_arm_compatible(mx_default_width(a), mx_default_width(b), elem, assigns, unions, enums);
@@ -11024,7 +11024,7 @@ function mx_parts_compatible(a: VbStore, b: VbStore, elem: boolean, assigns: boo
     typeinfo.TypeArray(aa) => {
       match (b.t) {
         typeinfo.TypeArray(ba) => {
-          return mx_arm_compatible(mx_elem_store(a.e, aa.elem), mx_elem_store(b.e, ba.elem), true, assigns, unions, enums);
+          return mx_arm_compatible(mx_elem_store(a.e, aa.elem), mx_elem_store(b.e, ba.elem), false, assigns, unions, enums);
         },
         _ => {
           return false;
@@ -11157,10 +11157,16 @@ function mx_arm_join(a: VbStore, b: VbStore): VbStore {
       }
     }
   }
+  if let typeinfo.TypeArray(aa) = a.t {
+    if let typeinfo.TypeArray(ba) = b.t {
+      let el: VbStore = mx_arm_join(mx_elem_store(a.e, aa.elem), mx_elem_store(b.e, ba.elem));
+      return VbStore { t: t_array(el.t), e: mx_joined_literal(el, a.e) };
+    }
+  }
   if let typeinfo.TypeMap(am) = a.t {
     if let typeinfo.TypeMap(bm) = b.t {
       let v: VbStore = mx_arm_join(mx_map_value_store(a.e, am.value), mx_map_value_store(b.e, bm.value));
-      return VbStore { t: t_map(am.key, v.t), e: a.e };
+      return VbStore { t: t_map(am.key, v.t), e: mx_joined_literal(v, a.e) };
     }
   }
   if (arm_unsettled(b)) {
@@ -11174,6 +11180,15 @@ function mx_arm_join(a: VbStore, b: VbStore): VbStore {
     return a;
   }
   return VbStore { t: t, e: a.e };
+}
+
+// mx_joined_literal is the expression a joined array or map arm carries on:
+// the literal `e` while its elements, joined as `el`, are still unsettled.
+function mx_joined_literal(el: VbStore, e: ast.Expr): ast.Expr {
+  if (arm_unsettled(el)) {
+    return e;
+  }
+  return ast.ExprUnknown { kind: "", line: 0, col: 0 };
 }
 
 // MxFold is a value if's or match's arms joined in order: `ok` until an arm,
@@ -27037,6 +27052,15 @@ function vb_join(a: VbStore, b: VbStore): VbStore {
         i = i + 1;
       }
       return VbStore { t: t_tuple(elems), e: ast.ExprTuple { elements: es, line: 0, col: 0 } };
+    }
+  }
+  if let typeinfo.TypeArray(aa) = a.t {
+    if let typeinfo.TypeArray(ba) = b.t {
+      let j: VbStore = vb_join(mx_elem_store(a.e, aa.elem), mx_elem_store(b.e, ba.elem));
+      if let ast.ExprUnknown(_) = j.e {
+        return VbStore { t: t_array(j.t), e: none };
+      }
+      return VbStore { t: t_array(j.t), e: a.e };
     }
   }
   let t: typeinfo.Type = join_result_types(a.t, b.t);
