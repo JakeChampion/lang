@@ -7,10 +7,11 @@ import (
 
 // Branches the path to them already decided (compiler/semthread.fern): the
 // done flag a nested pattern's arms test, a variant an earlier arm tested,
-// a variant the others ruled out, a test under `!`, and an arm that joins
-// its siblings' values in a phi. Every shape runs over each variant, inside
-// a loop and out of one, and main's result names the shape that came back
-// wrong.
+// a variant the others ruled out, a test under `!`, an arm that joins
+// its siblings' values in a phi, and a projection two tests guard on
+// different ways into its block once a decided branch skips the join
+// between them (#12376). Every shape runs over each variant, inside a loop
+// and out of one, and main's result names the shape that came back wrong.
 const decidedBranchSrc = `enum Color { Red, Black }
 enum Shade { Light, Mid, Dark }
 
@@ -27,6 +28,17 @@ enum Swatch {
 enum Chain {
   Link(Color, i32, Chain),
   End,
+}
+
+enum Pick {
+  Plain,
+  Flagged(boolean, i32),
+}
+
+struct Rec { n: i64, res: Result[i32, i32], ok: boolean }
+
+function same[T](x: T): T {
+  return x;
 }
 
 function is_red(t: Tree): boolean {
@@ -157,6 +169,23 @@ function reds(c: Chain, acc: i32): i32 {
   }
 }
 
+@noinline
+function rejoined(v: Pick): i32 {
+  let r: Rec = if (match (v) { Plain => if (false) { false } else { match (v) { Plain => false, Flagged(_, _) => true } }, Flagged(_, _) => true }) {
+    Rec {
+      n: match (v) { Plain => if (true) { 885i64 } else { 967i64 }, Flagged(_, _) => same(940i64) },
+      res: if (if (true) { true } else { false }) { Err(680) } else { match (v) { Plain => Ok(361), Flagged(_, k) => Err(k) } },
+      ok: match (v) { Plain => false, Flagged(flag, _) => flag && flag },
+    }
+  } else {
+    match (v) { Plain => Rec { n: 1i64, res: Ok(815), ok: true }, Flagged(_, k) => Rec { n: 2i64, res: Err(k), ok: false } }
+  };
+  if (r.ok) {
+    return 1;
+  }
+  return 2;
+}
+
 function main(): i32 {
   let red: Tree = Node(Red, Leaf, 3, Leaf);
   let black: Tree = Node(Black, red, 9, Leaf);
@@ -195,6 +224,9 @@ function main(): i32 {
   if (reds(c, 0) != 27 - 18) {
     bad = bad + 64;
   }
+  if (rejoined(Flagged(true, 5)) != 1 || rejoined(Plain) != 1 || rejoined(Flagged(false, 6)) != 2) {
+    bad = bad + 128;
+  }
   return bad;
 }
 `
@@ -212,7 +244,7 @@ func checkDecidedBranch(t *testing.T, run censusRun) {
 	t.Helper()
 	stdout, stderr, exit := run(t, decidedBranchSrc)
 	if exit != 0 || stdout != "" && stdout != "0\n" {
-		t.Fatalf("exit %d, stdout %q, want 0 (bits 1..64 name the shape that came back wrong); stderr: %s", exit, stdout, stderr)
+		t.Fatalf("exit %d, stdout %q, want 0 (bits 1..128 name the shape that came back wrong); stderr: %s", exit, stdout, stderr)
 	}
 	if strings.Contains(stderr, "fern-sanitizer:") {
 		t.Errorf("sanitizer report:\n%s", stderr)
