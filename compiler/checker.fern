@@ -1929,6 +1929,8 @@ pub struct Scope {
   // The module's union/enum-alias table, variant-name-indexed and shared by
   // every scope in the module exactly as `sigs` is.
   unions: UnionTable,
+  // The type-name tables of `structs` and `unions`, for resolving a spelling.
+  names_of_types: TypeNames,
   // The module's receiver-method table, name-indexed and shared the same way.
   methods: MethodTable,
   // The module's own `import` paths, as written ("std/string"). Shared by
@@ -2431,7 +2433,9 @@ function new_scope(): Scope {
   let ss: StructSig[] = [];
   let us: UnionSig[] = [];
   let ms: MethodSig[] = [];
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: struct_table(ss, [], no_spellings()), unions: union_table(us), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], tpvars: [], tpvar_tps: [], fn_tvars: [] };
+  let structs: StructTable = struct_table(ss, [], no_spellings());
+  let unions: UnionTable = union_table(us);
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], tpvars: [], tpvar_tps: [], fn_tvars: [] };
 }
 
 // new_scope_full is a module's scope. The impl table rides on every one:
@@ -2440,7 +2444,7 @@ function new_scope(): Scope {
 function new_scope_full(st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[], impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   let ns: string[] = [];
   let ts: typeinfo.Type[] = [];
-  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], tpvars: [], tpvar_tps: [], fn_tvars: [] };
+  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], tpvars: [], tpvar_tps: [], fn_tvars: [] };
 }
 
 function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
@@ -2462,7 +2466,11 @@ function (s: Scope) with_tparams(tparams: string[], tbounds: string[]): Scope {
 // a cast — so a type parameter cannot be captured by a same-named declared type
 // at one of them.
 function (s: Scope) type_names(): TypeNames {
-  return TypeNames { structs: s.structs.index, unions: s.unions.index, resources: s.structs.resources, spellings: s.structs.spellings };
+  return s.names_of_types;
+}
+
+function type_names_of(structs: StructTable, unions: UnionTable): TypeNames {
+  return TypeNames { structs: structs.index, unions: unions.index, resources: structs.resources, spellings: structs.spellings };
 }
 
 function (s: Scope) resolve_type(name: string): typeinfo.Type {
