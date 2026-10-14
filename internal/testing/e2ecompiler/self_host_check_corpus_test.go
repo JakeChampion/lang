@@ -60,9 +60,6 @@ func checkCorpus(t *testing.T) []string {
 			if err != nil {
 				return err
 			}
-			if top == "examples" && d.IsDir() && p != e2eharness.RepoPath(top) {
-				return filepath.SkipDir
-			}
 			if !d.IsDir() && strings.HasSuffix(p, ".fern") {
 				rel, _ := filepath.Rel(e2eharness.RepoPath(), p)
 				out = append(out, rel)
