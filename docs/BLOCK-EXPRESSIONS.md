@@ -42,9 +42,9 @@ not sugar over a function call or a desugar to anything else.
 
 ## Scope
 
-Where block-expressions may appear (unchanged since slice 1):
+Where block-expressions may appear:
 
-- **Only `if` / `match` *expression* branches** parse a block-with-tail.
+- **`if` / `match` *expression* branches** parse a block-with-tail.
   Concretely: the `{ … }` after `if (cond)`, after `else`, and after a
   `match`-arm `=>` may be a `{ stmts; tail }` block.
 - A branch that is a **single expression with no leading statements**
@@ -53,8 +53,12 @@ Where block-expressions may appear (unchanged since slice 1):
 - **Statement-position `if`/`match`** (function bodies, loop bodies,
   general statement blocks) are **untouched**. Only the if/match
   *expression*-branch parse path changed.
-- **General value-position `{ … }`** elsewhere is NOT a block-expression
-  yet (it collides with struct-literal syntax — a later slice).
+- **Any value position** (`let n = { … };`, a call argument) parses a
+  `{ … }` as a block-expression (`#4521`).
+- **A nested `{ … }` at the end of a block-with-tail** is that block's
+  value when it yields one: `{ let k = 1; { k + 1 } }` is `k + 1` in a
+  scope of its own (#12388). A nested block that yields nothing, or that
+  more statements follow, is a statement block.
 
 Backend support:
 
