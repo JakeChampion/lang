@@ -63,6 +63,10 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	// A binding's annotation types a lambda that writes no return type; the
+	// compile parse stamps the return type onto the lambda, and -fmt must print
+	// the lambda as written (#12359).
+	{"lambda-return-as-written", fmtLambdaAsWrittenSrc},
 	{"if-expression-written-branches", `function branches(n: i32): string {
   let chain = if (n == 0) { "zero" } else if (n == 1) { "one" } else { "other" };
   let leading = if (n == 0) { let a = "a"; a } else { let b = "b"; b };
@@ -2090,6 +2094,38 @@ func TestSelfHostFmtKeepsCStyleFor(t *testing.T) {
 	// that happens to compute the same thing is still a rewritten loop.
 	if got != src {
 		t.Errorf("already-formatted source was rewritten:\n--- in ---\n%s\n--- out ---\n%s", src, got)
+	}
+}
+
+const fmtLambdaAsWrittenSrc = `function main(): i32 {
+  let inc: (i32) => i32 = (x: i32) => x + 1;
+  let three: () => i32 = (): i32 => 3;
+  let fs: (() => i32)[] = [() => 1, (): i32 => 2];
+  return inc(1) + three() + fs[0]() + fs[1]();
+}
+`
+
+// TestSelfHostFmtKeepsLambdaAsWritten states #12359's property without
+// native: a lambda the binding's annotation types is printed with the return
+// type it was written with, none where it wrote none.
+func TestSelfHostFmtKeepsLambdaAsWritten(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("CLI driver test runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	path := filepath.Join(dir, "lambda_as_written.fern")
+	if err := os.WriteFile(path, []byte(fmtLambdaAsWrittenSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(fernBin, "-fmt", path).Output()
+	if err != nil {
+		t.Fatalf("self-host -fmt: %v", err)
+	}
+	if got := string(out); got != fmtLambdaAsWrittenSrc {
+		t.Errorf("already-formatted source was rewritten:\n--- in ---\n%s\n--- out ---\n%s", fmtLambdaAsWrittenSrc, got)
 	}
 }
 
