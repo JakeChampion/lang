@@ -1,8 +1,7 @@
 # Self-Host Implementation — Code-Quality Audit
 
 > **Tracked in GitHub:** the open items below are mirrored as a checklist in
-> [#2849](https://github.com/JakeChampion/lang/issues/2849); the confirmed
-> SH-057 miscompile has its own issue [#2850](https://github.com/JakeChampion/lang/issues/2850).
+> [#2849](https://github.com/JakeChampion/lang/issues/2849).
 > This doc stays the detailed reference (file:line, repro, fix sketch).
 
 Audit of the self-hosted Fern compiler under `compiler/` (189,543 lines
@@ -44,11 +43,9 @@ themes:
    and is now down to **1** (SH-027); **278 in `ssa_arm64` and 259 in
    `ssa_x86`** remain, though most of those are a fixed prologue rather than a
    per-op path — see SH-027 for the breakdown.
-3. **Parallel-maintained twins and god-structs.** `asm_ir.fern` ↔
-   `asm_arm64_ir.fern` keep two `emit_runtime` surfaces whose `has_need` key
-   sets have **drifted apart by 7 keys**; `irlower.fern:409 LowerState` carries
-   **31 fields, 20 of them arrays**; `wasm_ir.fern:8027` takes 13 positional
-   params carrying 8 parallel arrays.
+3. **Parallel-maintained twins.** `asm_ir.fern` ↔ `asm_arm64_ir.fern` keep
+   two `emit_runtime` surfaces whose `has_need` key sets have **drifted apart
+   by 7 keys**.
 4. **A stringly-typed type system** carried as raw strings and re-parsed with
    magic ASCII byte constants (`91`=`[`, `44`=`,`, `93`=`]`, `46`=`.`). Largely
    migrated onto `parse_type_ref` (SH-021); the endgame — the parser storing
@@ -67,9 +64,8 @@ resolved**: see SH-020 for what is left and what is deliberately kept.
 | Frontend | `lexer`, `parser` | B− | Capable; no AST visitor in the rewrite passes, positionless `StmtUnknown`, types-as-strings. |
 | Checker / shared frontend | `checker`, `asmcore` | C+ | Real `Type`/`Diag` model, but 15 duplicated walkers and `build_func_scope` rebuilt 9× per function. |
 | Tree-walker | `interp` | C+ | Ambitious + tested; five parallel arrays as an environment, scoping by length-trim. |
-| IR lowering | `irlower` | C | 59k lines; a 31-field `LowerState` and a 1,704-line `lower_call_method`. |
 | Native IR emitters | `asm_ir`, `asm_arm64_ir` | C | Two `emit_runtime` surfaces hand-maintained in parallel, key sets already drifted. |
-| WASM path | `wasm_ir`, `watbin` | C | 13-param unbundled entry point; `emit_function_ir` (1,257 lines) and the 701 left-folds are resolved. |
+| WASM path | `wasm_ir`, `watbin` | C | The 13-param entry point (SH-054), `emit_function_ir` (1,257 lines) and the 701 left-folds are resolved. |
 | Driver / glue | `*_run`, `fern` | C− | 56 `main()`s / 45 `*_run.fern`; import resolver duplicated and already drifted. |
 
 ---
@@ -1145,19 +1141,10 @@ appendix §6.)
   `test-arm64-darwin` leg. Sequence it as its own PR with the fixture legs as
   the gate. A partial conversion that leaves some rewrites in text and some at
   emit time is worse than either end state.
-- [ ] **SH-053 — `irlower.fern:409 LowerState` is a 31-field god-struct, 20 of
-  them arrays.** `ops`, `locals`, `loop_blk`, `closure_locals`,
-  `closure_opt_rets`, `structs`, `reclaimable_names`, `aliased_names`,
-  `borrowed_names`, `xblock_pending`, `try_cleanup`, `defer_slots`,
-  `grow_exempt`, `append_inplace`, `grow_sole`, `own_params`, `optret_pending`,
-  `moved_names`, `moved_elided`, `move_sites` — a dozen of which are `string[]`
-  sets hand-modelling ownership facts about named locals. `asmcore.fern:73-132
-  EmitState` is the same shape one size down (16 fields, 10 arrays).
-  _Fix:_ group the ownership sets behind a `LocalFacts` keyed by name (the
-  `locals: LocalInfo[]` array is already the right shape to hang them off), so
-  adding an ownership fact is one field on one struct rather than a new parallel
-  array threaded through every lowering function. (`wasm_ir.fern` declares zero
-  structs, so its state is instead spread across positional params — SH-054.)
+- [x] **SH-053 — `irlower.fern`'s `LowerState` was a 31-field god-struct.**
+  _Closed by deletion:_ the AST lowering and its name-keyed ownership sets are
+  gone (`docs/SELFHOST-SEMANTIC-SOURCE.md`, "Retiring the AST lowering"); the
+  typed lowering reads ownership off the semantic graph (`docs/RC-DESIGN.md`).
 - [x] **SH-054 — the wasm emitter's positional-parameter pileup.** _Done:_
   `emit_ir_module_units_mode` no longer exists. The surviving
   `emit_ir_module_units` (`wasm_ir.fern:8107`) takes **6** params — `units`,
@@ -1328,9 +1315,8 @@ or variant to the AST means touching all of them; a missed arm is a silent bug.
 - **`collect_idents_stmt` does NOT fully converge.** The wasm collector's
   `StmtAssign` arm collects the assign **target** name, which astwalk's does not.
   For a lambda that *writes* an outer var without reading it (`{ x = 5; }`), wasm
-  captures `x` and the others do not. That divergence is the confirmed bug
-  SH-057 below, not a merge hazard to route around — the wasm behaviour is the
-  correct one.
+  captured `x` and the others did not. That divergence was SH-057, fixed under
+  #2850; the wasm behaviour was the correct one.
 
 **Status:** `astwalk.fern` holds the canonical (non-deduping, full-coverage)
 `collect_idents_expr` (`:466`) / `collect_idents_stmt` (`:517`) /
@@ -1368,52 +1354,12 @@ better than a mutating visitor.
 
 ---
 
-## SH-057 — self-host miscompiles a lambda that *writes* a captured outer let (confirmed bug)
+## SH-057 — a lambda that *writes* a captured outer scalar (fixed)
 
-**Repro:** `function main(): i32 { let x = 1; let f = function (): i32 { x = 42; return 7; }; let r = f(); return r + x; }`
-
-| engine | result | |
-|---|---|---|
-| Go reference (`fern -interp`) | **49** ✓ correct | `x` mutated to 42 → by-reference scalar capture; `7 + 42` |
-| self-host interp | **8** (bug) | captured **by value** → the write doesn't propagate → `7 + 1` |
-
-**Root cause:** the free-variable collector's `collect_idents_stmt` `StmtAssign`
-arm (`astwalk.fern:517`) collects only `a.value`, **not** the assign target
-`a.target`. So a lambda that assigns to an outer var *without reading it* never
-lists that var as a free reference → `lambda_captures` doesn't capture it. The
-wasm collector is the only one that collects `a.target`, so the wasm path is the
-lone correct backend here.
-
-**Why CI misses it:** the cross-validation suite's closure cases capture vars they
-*read*; none assign a captured let write-only.
-
-**Confirmed semantics (from the authoritative Go reference).** The language has a
-principled, deliberate split — not an undecided one:
-- **Scalar captures (`i32`/`bool`/`f64`) are mutable, by-reference.** A closure may
-  read *and* write a captured scalar and the writes persist/propagate — closures-as-
-  counters are a supported feature. Verified: `let x = 0; let inc = function (): i32
-  { x = x + 1; return x; }; inc(); inc(); return x;` → **2** under the Go reference,
-  and `fern -check` accepts it (exit 0). The repro above is **49** (by-ref) in the
-  reference.
-- **Reference captures (`string`/array/struct) are read-only — E049.** Writing one
-  back could close an RC reference cycle (Perceus), so it's a compile error. This is
-  why E049 (`checker.go:7067`, `checker.fern`) is intentionally
-  *reference-typed only*.
-
-So **E049 must stay reference-only — do _not_ extend it to scalars** (that would
-reject the intentionally-supported mutable-scalar-capture feature).
-
-**The actual bug:** the self-host doesn't implement mutable scalar captures
-correctly. The reference says the repro is 49 (and the counter is 2); the self-host
-interp gives **8** — captured by value, so the write is lost. The self-host stores
-captures by value, so this is an unimplemented-semantics gap, not a missing checker
-rule.
-
-**Fix (deferred — substantial, multi-PR; scope before starting):** make self-host
-scalar captures by-reference/mutable to match the reference. That means: (1) the
-collector must capture write-assigned scalars (collect `a.target` in
-`astwalk.collect_idents_stmt`), and (2) the capture *codegen* must make scalar
-captures writable-and-shared rather than by-value snapshots — across interp's env
-and the native/wasm closure boxes — with a cross-engine test that the repro → 49
-and the counter → 2 on x86/arm64/wasm. The wasm collector already collects
-`a.target`, so its capture analysis is ahead of the others here.
+`let x = 1; let f = (): i32 => { x = 42; return 7; }; return f() + x;` is 49 and
+the two-call counter is 2 on the interpreter, x86-64, arm64 and wasm: scalar
+captures are by reference, and reference-typed captures stay read-only (E049).
+Closed under #2850 and pinned by
+`internal/testing/e2ecompiler/testdata/parity/mut_capture_write_only.fern`,
+`self_host_mutable_capture_interp_test.go` and
+`self_host_outer_write_capture_ir_test.go`.

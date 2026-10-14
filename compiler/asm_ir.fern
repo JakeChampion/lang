@@ -3330,9 +3330,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // its Some-payload buffer (tag 0; None/Err skip), then the box itself is
   // arr_dec'd (rc-guarded — a shared box just decs, leaving its payload to
   // the surviving owner), then the outer buffer is freed exactly like
-  // __fn___fern_arrarr_free. Called ONLY on compile-time-proven fresh,
-  // non-escaping Option-array locals (slot_is_reclaimable_optaarr). Same
-  // need-gating rationale as the arrarr bodies above.
+  // __fn___fern_arrarr_free. Called ONLY on a fresh, non-escaping
+  // Option array. Same need-gating rationale as the arrarr bodies above.
   if (s.has_need("optarrarr_free")) {
     s = emit_ir_arr_deep_free_variant(s, "optarrarr_free", "oaf", optarrarr_elem());
   }

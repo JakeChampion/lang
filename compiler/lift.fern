@@ -15,59 +15,6 @@ import "./callsubst";
 import "./capturebox";
 import "./irtables";
 
-// RECLAIM CREDITS ARE KEYED ON THE BINDING SITE, NOT THE NAME (#7253).
-//
-// There used to be a `reclaim_slot_name` here: a slot's source name with any
-// "!retired!" prefix stripped, so a credit collected from the AST could be
-// looked up per slot. Every family now resolves `reclaim_site_key` instead
-// (`slot_credit_at`), the key being "name@line:col" recorded on the slot by
-// whichever path bound it, so it survives retire_locals' rename by itself and
-// two same-named bindings never share a verdict. The function is gone because
-// nothing reads it.
-//
-// Why the name key had to go, since the answer is not tidiness. It handed a
-// credited local's verdict to any same-named sibling — and, because a lookup
-// only compares spellings, to any BINDER that shared the spelling without being
-// a declaration at all (a for-in element, a match payload, a destructure key).
-// The severity of that is not a property of the class: it depends on whether the
-// aliased source has another owner. Where the class also LEAKS, the stray
-// release lands on a box nothing else claimed, no counter reports it, and the
-// census reads better than the correct program's — so the class looks benign
-// and becomes a double free the moment someone fixes the leak. Where the source
-// is released elsewhere it faults immediately. Both halves were measured across
-// the struct (#7349) and Option (#7356) families.
-//
-// What that history is worth keeping. Each class was admitted to the sweep on
-// its own probe rather than by a blanket flip, because switching one on turns on
-// an exit-sweep release that had never run for those slots; the byte counts each
-// flip closed were ARRARR / ARRARRS 7200, OPTAARR 12000, TUPRC / TUPRCS 8000,
-// SARR 4800, STRUCTARR(A) 9600. "TUPRC:" needed BOTH its credits switched —
-// "TUPRC:" drives the rebind and "TUPRCS:" (#6251) the exit sweep — and flipping
-// only the first left the shape at exactly its unfixed 8000.
-//
-// Three disjointness rules outlived the migration and are enforced at the
-// predicates rather than here:
-//
-//   - "OPTARR:"'s consuming-match analysis is per-block (#4357) and frees the
-//     value before the block ends, so a sweep claim on that half would be a
-//     second release. The no-match half is what carries the sweep credit.
-//   - "RCENUM:" is the same case one type over: the match-consumed half must
-//     not be swept, so #6606 credited the no-match half separately as
-//     "RCENUMS:" instead of widening "RCENUM:". The two are appended against ONE
-//     entry, so they cannot end up keyed differently; the exact-vs-retired
-//     distinction between them is written out in slot_is_reclaimable_rcenum.
-//   - "SCENUMS:" is held disjoint from the dyn credit at the predicate, because
-//     `let d: dyn Show = Add(41)` satisfies both classifiers and letting both
-//     claim it was an over-release rather than a leak.
-//
-// One warning survives in full. The bare-name struct credit
-// (slot_is_reclaimable_struct) feeds the deep field drop, the precise drop and
-// the reuse-donor paths, not just the exit sweep, and granting it for
-// block-scoped slots SEGFAULTS the gen1 self-compile — a failure
-// `internal/testing/e2ecompiler` cannot reach and the per-module fixpoint can. That is
-// why its retirement refusal is spelled out explicitly rather than inherited
-// from a lookup that happened to miss.
-
 // split_type_list splits a comma-separated list of type spellings at DEPTH-ZERO
 // commas only, so a tuple or generic argument list keeps its own — `(i32,i32),T`
 // is two types, not three. split_commas next door is the flat version and would
