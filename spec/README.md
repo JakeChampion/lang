@@ -7,7 +7,7 @@ Status: normative, and partial.
 | `grammar.ebnf` | The syntactic grammar. Gated by `internal/syntax/grammar`. |
 | `diagnostics.md` | The index of every rejection the front-end can report, and which conformance case pins it. Gated by `TestDiagnosticsIndexIsAccurate`. |
 | `semantics.md` | The index of the behavioural rules the policy docs below state, and which conformance case pins each. Gated by `TestSemanticsIndexIsAccurate`. |
-| `core.md` | Fern Core's instruction set: every `internal/oracle/ir` op, its operand-stack effect and its immediates. Gated by `TestCoreOpsIndexIsAccurate` and `TestCoreOpEffectsMatchTheModel`. |
+| `core.md` | Fern Core's instruction set: every op kind of the self-host IR (`compiler/ir.fern`), its stable id and its operand-stack effect. Gated by `TestSelfHostCoreSpecMatchesTheIR`. |
 
 See `docs/SPECIFICATION-RESEARCH.md` for the staged shape these are
 layers of, and §"What is not specified" below for what a reader must

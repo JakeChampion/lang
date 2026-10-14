@@ -3,11 +3,11 @@
 // `reduce` or `scan` becomes one loop, with an inner loop per `flat_map`.
 // Intermediate arrays are never built; scan reserves its output once. A lazy
 // core/iter chain (#6795) fuses the same way: `iter.of(xs)` or
-// `iter.range(lo, hi)`, then `map`, `filter` and `take` adapters, ending in
-// `fold` or `count`. Its adapter calls take the place of stages, and its root
-// is replaced by the array or the integers the loop runs over. This
-// extends internal/oracle/ir/array_fusion.go on the typed semantic graphs every
-// backend lowers from, before ownership planning accounts for the output.
+// `iter.range(lo, hi)`, then `map`, `filter`, `take` and `flat_map` adapters,
+// ending in `fold` or `count`. Its adapter calls take the place of stages, and
+// its root is replaced by the array or the integers the loop runs over. This
+// runs on the typed semantic graphs every backend lowers from, before
+// ownership planning accounts for the output.
 //
 // docs/ARRAY-FUSION-OPERATORS.md is the contract: each stage contributes a
 // step (pass through, rebind, skip, stop, or loop over many), the fused body
@@ -154,7 +154,7 @@ function verb_of(name: string): string {
 // is folded to `__smm_<Recv>_<verb>`, and a type name is never a lower-case
 // verb, so the first `_<verb>` there that a suffix or the end follows is it.
 function iter_verb_of(name: string): string {
-  let verbs: string[] = ["map", "filter", "take", "enumerate", "zip", "fold", "count", "collect", "find", "any", "all"];
+  let verbs: string[] = ["map", "filter", "take", "flat_map", "skip", "enumerate", "zip", "fold", "count", "collect", "find", "any", "all"];
   let n: string = slice_unchecked(name, 0, dollar_at(name)) + "";
   if (n == "iter__range") {
     return "range";

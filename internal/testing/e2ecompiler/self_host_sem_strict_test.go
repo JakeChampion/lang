@@ -299,7 +299,9 @@ func TestSelfHostSemIRRuntimeHelperRefusal(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
-	const prog = "@noinline function ids(s: string): string { return s; } function main(): i32 { let s: string = ids(\"a\") + \"b\"; return s.len(); }\n"
+	// A literal on the left keeps the exact concatenation, which the broken
+	// helper builds; a consumed left operand would take the grow instead.
+	const prog = "@noinline function ids(s: string): string { return s; } function main(): i32 { let s: string = \"b\" + ids(\"a\"); return s.len(); }\n"
 	emit := func() (string, int) {
 		var cmd *exec.Cmd
 		if len(runner) == 0 {

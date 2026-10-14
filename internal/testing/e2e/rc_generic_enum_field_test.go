@@ -10,12 +10,11 @@ import (
 //
 // Generic enums are not monomorphised: `Option[i32]` and `Option[string]`
 // share one EnumDecl whose payloads are the type parameter, and the concrete
-// types live in EnumType.Args. rc_caps.go's capability walks read that decl
+// types live in EnumType.Args. The capability walks read that decl
 // without substituting, met a ParamType, and answered "deep drop not wired"
 // for every Option and Result in the language — which took every struct
-// holding one out of owned-by-default and cost it every reuse path. The
-// classification is pinned in internal/oracle/ir/rc_caps_test.go; these pin what
-// the emitted runtime does.
+// holding one out of owned-by-default and cost it every reuse path. These pin
+// what the emitted runtime does.
 //
 // std/io_buffered's BufWriter is the shape that surfaced it: its `err:
 // Option[IoError]` field alone put the writer's `buf: b.buf + s` back on a

@@ -1,0 +1,36 @@
+// The program and emission both retained-body drivers share.
+import "../asmcore";
+import "../asm_ir";
+import "../asm_arm64_ir";
+import "../ircore";
+import "../irtables";
+import "../lexer";
+import "../parser";
+import "../physicalbody";
+import "../semlower";
+import "../ssaprepare";
+
+// This controlled producer adds a need during the first runtime trial.
+// The final str_cmp record must therefore have heap in its BEFORE context.
+pub function runtime(src: string): physicalbody.Lowered {
+  if (src == asmcore.rt_src_str_cmp()) {
+    return semlower.runtime_lowering("function __fern_str_cmp(a: string, b: string): i32 { let p = __raw_alloc(1); let text = __raw_string(p, 1); return text.len(); }");
+  }
+  return semlower.runtime_lowering(src);
+}
+
+pub function emit(g: ircore.Gated, cache: irtables.LowerResult[], physical: physicalbody.Collection, arm: boolean, retain: boolean, entry: boolean, lo: i32, hi: i32): ssaprepare.Output {
+  let sw = asmcore.Switches { backtrace: false, sanitize: false, var_rows: false, shared: false };
+  if (arm) {
+    return asm_arm64_ir.emit_module_ir_unit_arm64_prepared(g.im, entry, false, "", ["str_cmp"], g.im.funcs, g.stab, lo, hi, cache, physical, runtime, sw, retain);
+  }
+  return asm_ir.emit_module_ir_unit_prepared(g.im, entry, false, "", ["str_cmp"], g.im.funcs, g.stab, lo, hi, cache, physical, runtime, 0 as usize, sw, retain);
+}
+
+pub function module(): parser.Module {
+  return parser.parse_module(lexer.tokenize("@noinline function first(): i32 { return 7; } @noinline function second(): i32 { return first(); } function main(): i32 { return second(); }"));
+}
+
+pub function program(mod: parser.Module): ircore.Gated {
+  return semlower.program(semlower.driven(mod, "x86-64-linux"));
+}

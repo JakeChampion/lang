@@ -1,66 +1,48 @@
 package main
 
 import (
+	"bytes"
+	"errors"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 
-	"github.com/jakechampion/lang/internal/check/checker"
-	"github.com/jakechampion/lang/internal/check/constfold"
-	"github.com/jakechampion/lang/internal/oracle/ir"
-	"github.com/jakechampion/lang/internal/oracle/monomorph"
-	"github.com/jakechampion/lang/internal/oracle/treeshake"
+	"github.com/jakechampion/lang/internal/tools/launcher"
 )
 
-// runArrayReport implements `fern -array-report FILE.fern`: load and
-// type-check the entry exactly as a compile would, lower it to IR, and print
-// the std/array combinator pipelines the IR recognises (#9730).
-//
-// This is the retained Go analysis, not the primary compiler's build plan.
-// It reads the RAW lowering rather than the optimised one, like
-// `-append-report` beside it: the battery inlines std/array's one-line method
-// delegates, so running it first would change which spelling of each call the
-// report describes without changing what the program does.
+// runArrayReport implements `fern -array-report FILE.fern`: compile the entry
+// with the self-host compiler under FERN_ARRAY_REPORT=1 and print the array
+// decisions its rewriting passes report — every std/array chain's fusion
+// verdict, the map storage and ndarray kernel decisions, each with its closed
+// reason tag (docs/ARRAY-ALGEBRA.md). The compile targets arm64-linux, the
+// default target, and its output is discarded.
 func runArrayReport(srcPath string, w io.Writer) error {
-	e, err := loadEntry(srcPath)
+	compiler, err := launcher.Compiler()
 	if err != nil {
 		return err
 	}
-	prog := e.prog
-	if err := constfold.FoldWith(prog, constfold.Inputs{TargetOS: "linux", TargetArch: "arm64"}); err != nil {
-		return e.format(err)
-	}
-	info, err := checker.Check(prog)
+	stdlib, err := launcher.StdlibRoot()
 	if err != nil {
-		return e.format(err)
-	}
-	// monomorph because a combinator call on a generic receiver is an
-	// indirect call until it resolves, and the recogniser keys on the
-	// monomorphised name; the shake keeps the report to what a binary carries.
-	if err := monomorph.Run(prog, info); err != nil {
-		return e.format(err)
-	}
-	treeshake.Run(prog, info, treeshake.DropImplMethods(info)...)
-	irProg, err := ir.LowerWith(prog, info, 8)
-	if err != nil {
-		return e.format(err)
-	}
-	if _, err := io.WriteString(w, ir.FormatArrayPipelines(irProg)); err != nil {
 		return err
 	}
-	if _, err := io.WriteString(w, "array report: retained Go analysis (not the primary Fern compiler's emitted plan)\n"); err != nil {
+	dir, err := os.MkdirTemp("", "fern-array-report-")
+	if err != nil {
 		return err
 	}
-	// FERN_ARRAY_REPORT adds the histogram, whose value is that the refusals
-	// are countable: the set of reasons a pipeline stopped IS the coverage
-	// checklist for the fusion pass (#9732), the same property
-	// FERN_SSA_REPORT has for the SSA backend.
-	//
-	// It is read here rather than on every compile path deliberately: a
-	// per-build hook would cost a print in five backends for a number most
-	// builds do not want.
-	if os.Getenv("FERN_ARRAY_REPORT") == "" {
-		return nil
+	defer os.RemoveAll(dir)
+	cmd := exec.Command(compiler, "-target", "arm64-linux", "-o", filepath.Join(dir, "prog"), srcPath, stdlib)
+	cmd.Env = append(os.Environ(), "FERN_ARRAY_REPORT=1")
+	var report bytes.Buffer
+	cmd.Stderr = &report
+	if err := cmd.Run(); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return fmt.Errorf("%s", bytes.TrimRight(report.Bytes(), "\n"))
+		}
+		return err
 	}
-	_, err = io.WriteString(w, "\n"+ir.FormatArrayPipelineHistogram(irProg))
+	_, err = w.Write(report.Bytes())
 	return err
 }

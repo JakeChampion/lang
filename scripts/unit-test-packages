@@ -39,12 +39,11 @@ set -euo pipefail
 
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
 
-# FERN_CI_UNIT_PACKAGE_GROUP splits the set across two CI jobs: `heavy` is the
-# packages whose tests run 350-390 s each and cannot t.Parallel (internal/oracle/ir
-# writes the ast package globals; printer is alike), `rest` is
-# everything else. Unset, every package, which is what the lane-coverage gate
+# FERN_CI_UNIT_PACKAGE_GROUP splits the set across two CI jobs: `heavy` is
+# internal/syntax/printer, whose tests run 350-390 s and cannot t.Parallel (they
+# write the ast package globals), `rest` is everything else. Unset, every package, which is what the lane-coverage gate
 # and a local run read.
-heavy='/internal/(oracle/ir|syntax/printer)(/|$)'
+heavy='/internal/syntax/printer(/|$)'
 go list ./... |
   grep -vE '/internal/testing/(e2e|e2ecompiler|fernsmith|coreutils)(/|$)' |
   case "${FERN_CI_UNIT_PACKAGE_GROUP:-}" in

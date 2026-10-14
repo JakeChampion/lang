@@ -41,13 +41,9 @@ package e2e
 // misses, deletes and re-inserts to catch that.
 
 import (
-	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
 // Full map semantics with string keys under a live seed: 300 inserts (several
@@ -288,36 +284,4 @@ func TestMapHashSeedVariesPerProcessArm64(t *testing.T) {
 		}
 		return out
 	})
-}
-
-// The kv-buffer header size is spelled twice — once in Go as
-// ast.MapHeaderBytes (which the generated __drop_map_* column walks use) and once in Fern as __map_hdr_bytes (which
-// allocates and indexes the buffer). They must agree exactly.
-//
-// This is not hypothetical: while the header was being widened for the seed,
-// the Fern side moved to 24 while three Go sites still said 16. The symptom
-// was a SEGV in the drop path on arm64 — whose 16-byte entry stride puts the
-// misread furthest out — with nothing in the failure resembling a layout bug.
-// A mismatch is worth catching as a one-line diff instead.
-func TestMapHeaderBytesMatchesStdlib(t *testing.T) {
-	src, err := os.ReadFile("../../stdlib/core/map.fern")
-	if err != nil {
-		t.Fatalf("read core/map.fern: %v", err)
-	}
-	re := regexp.MustCompile(`(?s)function __map_hdr_bytes\(keyKind: i32\): i32 \{\s*return (\d+);`)
-	m := re.FindSubmatch(src)
-	if m == nil {
-		t.Fatal("could not find __map_hdr_bytes's return value in core/map.fern — " +
-			"if its shape changed, update this test rather than dropping it")
-	}
-	fern, err := strconv.Atoi(string(m[1]))
-	if err != nil {
-		t.Fatalf("__map_hdr_bytes returns a non-integer %q", m[1])
-	}
-	if fern != ast.MapHeaderBytes {
-		t.Fatalf("map kv header disagrees: core/map.fern says %d, ast.MapHeaderBytes says %d. "+
-			"Both spellings must change together — the Fern side allocates and indexes "+
-			"the buffer, the Go side frees it and walks its entry column.",
-			fern, ast.MapHeaderBytes)
-	}
 }

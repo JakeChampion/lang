@@ -15,8 +15,5 @@ internal/oracle/interp:Builtin.String
 # in internal/ so they have no external importers today, but they are the
 # documented/public-shaped surface of their packages and are kept as
 # deliberate API rather than deleted.
-internal/oracle/ir:Lower
-internal/testing/fernsmith:New
-internal/testing/fernsmith:NewWithConfig
 internal/wasm/encode:PutBytes
 internal/wasm/component:PutTypeSectionOneInstanceOneFuncNoResultExport

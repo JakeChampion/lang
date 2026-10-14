@@ -8801,11 +8801,12 @@ pub struct ConstAggPack { state: EmitState, text: string }
 // of scalars packs as `0|` and its elements, and its length is written into
 // word 0 where the block is emitted. A field holding another static box or a
 // string literal is that box's label (const_agg_word). Shared by both register backends and by
-// each one's flat and register arms, so no copy of it can drift from another.
-pub function const_agg_pack(own s: EmitState, packed: string): ConstAggPack {
+// each one's flat and register arms, so no copy of it can drift from another;
+// `entry` is the suffix of the entry a backend's function values name.
+pub function const_agg_pack(own s: EmitState, packed: string, entry: string): ConstAggPack {
   let body: string = ir.const_struct_fn_body(packed);
   if (body.len() > 0) {
-    return ConstAggPack { state: s, text: "1|__fn_" + sanitize_label(body) };
+    return ConstAggPack { state: s, text: "1|__fn_" + sanitize_label(body) + entry };
   }
   let shp: ShapeRefOut = const_agg_shape(s, packed);
   s = shp.state;
@@ -8816,7 +8817,7 @@ pub function const_agg_pack(own s: EmitState, packed: string): ConstAggPack {
     if (i > 0) {
       text = text + ",";
     }
-    let w: ConstAggPack = const_agg_word(s, vals[i]);
+    let w: ConstAggPack = const_agg_word(s, vals[i], entry);
     s = w.state;
     text = text + w.text;
     i = i + 1;
@@ -8826,7 +8827,7 @@ pub function const_agg_pack(own s: EmitState, packed: string): ConstAggPack {
 
 // One field word as the block writes it: a number as it is, another static
 // box as its label, interned here, and a string literal as its static box.
-function const_agg_word(own s: EmitState, word: string): ConstAggPack {
+function const_agg_word(own s: EmitState, word: string, entry: string): ConstAggPack {
   let inner: string = ir.const_struct_ref(word);
   if (inner.len() == 0) {
     return ConstAggPack { state: s, text: word };
@@ -8835,7 +8836,7 @@ function const_agg_word(own s: EmitState, word: string): ConstAggPack {
     let lit: StringLitOut = add_string_lit(s, ir.const_str_text(inner));
     return ConstAggPack { state: lit.state, text: str_box_label(lit.state, lit.idx) };
   }
-  let pk: ConstAggPack = const_agg_pack(s, inner);
+  let pk: ConstAggPack = const_agg_pack(s, inner, entry);
   let kout: ConstAggOut = add_const_agg(pk.state, pk.text);
   return ConstAggPack { state: kout.state, text: const_agg_label(kout.state, kout.idx) };
 }
@@ -11237,7 +11238,8 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_open_res", "__fn___fern_writer_write",
     "__fern_now_unix_ms", "__fn___fern_sleep_ms", "__fn___fern_sleep_ns",
     "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique", "__fn___fern_arr_inc_elems", "__fn___fern_arr_own_elems",
-    "__fn___fern_str_own", "__fn___fern_str_borrow", "__fn___fern_str_grow", "__fn___fern_str_grow_range", "__fn___fern_account_entry",
+    "__fn___fern_str_own", "__fn___fern_str_borrow", "__fn___fern_str_grow", "__fn___fern_str_grow_range",
+    "__fn___fern_str_grow_fresh", "__fn___fern_str_grow_fresh_range", "__fn___fern_account_entry",
     "__fn___fern_set_args",
     "__fn___fern_alloc_reuse",
     "__fn___fern_rc_underflow_count", "__fn___fern_i32_to_string", "__fn___fern_u32_to_string",

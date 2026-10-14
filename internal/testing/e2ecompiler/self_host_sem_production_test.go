@@ -1369,7 +1369,7 @@ function main(): i32 {
         + narrow_keys(a) + narrow_key_str_value(b);
 }`},
 	// A type variable that only a CONSTRAINT mentions. `nth[T, I: Iterator[T]]`
-	// and `last[T, I: Iterator[T]]` return `Option[T]`, and `skip` returns
+	// and `last[T, I: Iterator[T]]` return `Option[T]`, and the program's `rest` returns
 	// `T[]`, but no parameter spells T — it is the impl the bound resolved to
 	// that says what it is (`impl Iterator[i32] for Range`,
 	// `impl[T] Iterator[T] for ArrayIter[T]`). The parser dropped a bound's
@@ -1401,8 +1401,12 @@ function pick(n: i32): i32 {
     }
 }
 
+function rest[T, I: iter.Iterator[T]](it: I): T[] {
+    return it.collect();
+}
+
 function words(ws: string[]): i32 {
-    let out: string[] = iter.skip(iter.of(ws), 0);
+    let out: string[] = rest(iter.of(ws));
     let sum: i32 = 0;
     for w in out { sum = sum + w.len(); }
     return sum;
@@ -7836,12 +7840,13 @@ func TestSelfHostSemanticAllocationCounts(t *testing.T) {
 		allocs int64
 		src    string
 	}{
-		{"element-read-outlives-the-array-write", 6, semHeldElementSource},
+		// The joined output's appends grow into one box's headroom (#8770).
+		{"element-read-outlives-the-array-write", 3, semHeldElementSource},
 		// 51 while the saved field pinned the record across each call.
 		{"field-read-outlives-the-record-move", 13, semHeldFieldSource},
 		{"an-element-handed-beside-its-dying-array", 46, semElementBesideArraySource},
 		// A view merged past a source that dominates the join stays a view.
-		{"a-view-of-a-dominating-source-is-not-copied", 29, semDominatingViewSource},
+		{"a-view-of-a-dominating-source-is-not-copied", 28, semDominatingViewSource},
 		// A struct taken out of a returned tuple is updated in place while the
 		// tuple's scalar is still to be read: the 3 it is built from, the tuple
 		// split into its parts (#11203; 33 when the tuple kept the struct shared,

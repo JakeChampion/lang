@@ -85,12 +85,6 @@ type Info struct {
 	// Structs maps a struct name to its declaration (which carries the
 	// ordered field list — codegen looks up field offsets here).
 	Structs map[string]*ast.StructDecl
-	// IRTypeMemo caches the per-type verdicts the IR derives by walking the
-	// struct and enum field graph (whether a type's deep drop is fully wired,
-	// whether an enum transitively holds a Map). The answer depends only on
-	// this Info and the type's spelling, and the IR asks it once per call
-	// argument lowered. Filled lazily by internal/oracle/ir; nil until then.
-	IRTypeMemo map[string]bool
 	// Enums maps an enum name to its declaration. The variant list +
 	// payload types live there; codegen looks up the runtime tag
 	// (the variant's index in the variant slice) and the payload
@@ -4530,8 +4524,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// `arr.push(v)` is the one Array method that DOESN'T have a
 	// stdlib function declaration — the IR intercepts the
 	// rewritten `__method_Array_push(arr, v)` call and emits the
-	// alloc + memcpy + width-correct tail store inline (see
-	// `emitArrayPush` in `internal/oracle/ir/ir.go`). One codepath covers
+	// alloc + memcpy + width-correct tail store inline. One codepath covers
 	// every stride class — no per-stride mangled names, no
 	// per-stride stdlib functions. Because there's no source-
 	// level decl, the auto-discovery loop below can't see push:

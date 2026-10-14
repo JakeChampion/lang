@@ -139,11 +139,10 @@ to reassociate would produce a different result from one that did not,
 and the portability claim would be false. The claim already forbids
 this; §3 only names the consequence for reductions.
 
-The tree agrees in practice: `internal/oracle/ir/fold.go` leaves floats
-untouched — "there's no portable way to round-trip every f32 bit-pattern
-through the IR's float ops without surprising the user" — and its
-integer reassociation is narrow and guarded (`OpAdd OpMul OpAnd OpOr
-OpXor`, same kind and width, never shifts). There is no fast-math
+The tree agrees in practice: the compiler's constant folders —
+`compiler/constfold.fern` on the tree and `fold_const_binaries` in
+`compiler/ir.fern` — evaluate integer constants only, leave every float
+operation to run time, and reassociate nothing. There is no fast-math
 surface anywhere in the tree, and this document does not add one.
 
 **The opt-in, when it is wanted, is named per operation rather than per
@@ -298,10 +297,8 @@ nothing about whether the wrapper belongs to the algebra.
 ## 7. Diagnostics
 
 **Normative.** Whether a pipeline fused, and if not which operator or
-position declined it, is reportable on demand. The shape is
-`-append-report`'s, which already "print[s] every `.append` site … and
-whether the retained Go IR grows the array in place or copies it, **with
-the rule that decided**".
+position declined it, is reportable on demand: each site is printed
+**with the rule that decided** it.
 
 That last clause is the requirement. A report that says "did not fuse"
 is not the answer; the answer names the rule — not statically resolved
@@ -383,130 +380,12 @@ of that planner's static requirements and the switch prevents its rewrite.
 An unsupported operation, unknown layout or unresolved element function
 therefore keeps the same reason with the pass enabled or disabled.
 
-**Retained Go analysis.** `fern -array-report FILE.fern` prints the older Go
-IR analysis and labels it explicitly. It does not describe code emitted by
-the primary Fern compiler. Its interface below remains useful for comparing
-the two implementations. It prints, per pipeline, the
-recognized plan, whether it fused, how many of its stages materialize an
-array, and — where a chain stopped — which rule stopped it:
+`fern -array-report FILE.fern` prints the same report: it compiles the file
+with `FERN_ARRAY_REPORT=1` and discards the compiled output.
 
-```
-run:3:26  map(n->n)
-            not fused: one stage is not a chain, and its result is the value; 1 stage(s) materialize unfused
-            chain ends here: the intermediate is read again, so this is not one traversal
-            map        elementwise  __closure_lambda_1
-```
-
-A refusal that belongs to one stage names it, and names the element
-function when the reason is about that:
-
-```
-run:4:44  map(n->n) -> map(n->n) -> scan(n->n) -> fold(n->1)
-            not fused at stage 3 (scan): neither map nor filter; 3 stage(s) materialize unfused
-```
-
-Naming the stage is the point. "Neither map nor filter" on a four-stage
-chain sends the reader back to count stages themselves, which is the work
-the report exists to save. A refusal no single stage owns — the array is
-not held in a local, say — names none rather than blaming the first.
-
-Each stage also says where its buffer came from, which is #9732's second
-question:
-
-```
-map        elementwise  __closure_lambda_1
-  fresh buffer: the combinator borrows its array, so there is no donor to reuse
-fold       reduction    __closure_lambda_2
-  no buffer: a reduction produces a value
-```
-
-The verdicts come from the planner that performs R7's in-place rewrite
-(`docs/REUSE-CONTRACT.md`, #9733), so `reused` is printed exactly where the
-pass writes through the `own` parameter and every refusal names the taint
-that declined it — `receiver-not-own-param`, `element-fn-captures`,
-`shape-change`, and the rest of the closed set in
-`internal/oracle/ir/array_storage.go`. A hardcoded sentence would go on being
-printed after the fact it describes stopped being true, which is what the
-report did about `map` for the day between R7 landing and its verdicts
-being read here. `internal/oracle/ir/array_storage_test.go` pins one verdict per
-taint.
-
-```
-map        elementwise  __closure_lambda_1
-  donated buffer: written through the `own` parameter (R7)
-```
-
-The same verdict is what E068 reports when a `fip` / `fbip` function's
-`map` is declined, so "why did this allocate under my space claim" and
-"why did this allocate" have one answer.
-
-A stage the SCALE KERNEL took says so instead (#9735). It is a buffer
-the kernel wrote rather than the scalar loop, so it is a storage verdict
-like the others rather than a section of its own:
-
-```
-map        elementwise  __closure_lambda_1
-  fresh buffer: __fern_scale_f64 replaced the map, so the kernel wrote it
-  rather than the scalar loop (#9735)
-```
-
-The two planners take disjoint stages today, so the report never has to
-choose between them: R7 only takes 8-byte integer elements, and the
-kernel only takes f64, so no site can earn both verdicts. The report
-still asks R7 first and keeps `reused` when it answers — the battery runs
-R7 first, and a donated buffer is the stronger answer, since it allocates
-nothing where the kernel allocates one — but that gate decides nothing
-that is reachable. `TestR7AndTheScaleKernelTakeDisjointStages` pins the
-disjointness from both sides; if either planner widens, it fails, and the
-ordering has to be read again for real. Both verdicts come from the
-planner that performs the rewrite — `scaleF64Verdict` here, as
-`inPlaceVerdict` above — so neither can claim a rewrite the pass did not
-perform, and a test holds the count of stages reported as the kernel's to
-the number of sites the pass rewrites.
-
-The same report lists `std/ndarray`'s algebra — `ARRAY-SHAPES.md` §7's
-eight operations, the ones handed a function — as recognized shapes
-(`ARRAY-SHAPES.md` §6): one line per site with the element functions it
-was handed and, for `reduce_axis`, `scan_axis` and `map_rank`, the axis
-or cell rank it was given, under a heading that says the lowering is
-still the scalar loop. Each element function carries what a kernel could
-do with it — the primitive it is, or the closed refusal that says why it
-is not one — and each line ends with whether the whole site is a kernel
-candidate (`ARRAY-SHAPES.md` §6 has both tables). Nothing about them
-fuses; the section is the worklist for the kernels of #9735.
-
-`FERN_ARRAY_REPORT=1` adds a histogram, in five sections: why each chain
-was not FUSED (#9731), where each stage's BUFFER came from (#9732),
-where each chain STOPPED being one chain (#9730), what a kernel could do
-with each `std/ndarray` ELEMENT FUNCTION, and whether a planner could
-take each `std/ndarray` SITE (#9735 for both). The last two are printed
-only when the program has such a site. Every set is **closed** with stable tags, for the reason
-`FERN_SSA_REPORT` is: the set of things declined is the coverage checklist
-for widening the algebra, and a tally of free-text strings cannot be
-counted. Every reason prints a row even at zero, so a reason that stops
-firing shows as a zero rather than as a line nobody notices went missing.
-
-```
-array pipelines: 4 (4 with more than one stage), 8 stages, 4 materializing
-fused: 0 (#9731)
-  single-stage               0
-  sink-not-a-reduction       0
-  stage-not-elementwise      1
-  element-fn-unresolved      0
-  element-fn-effectful       1
-  receiver-not-a-slot        1
-  element-width-unsupported  1
-  ...
-chains stopped by (#9730):
-  complete                   4
-  ...
-```
-
-The verdict comes from the fusion planner itself (#9731), not from a
-constant: a report that claimed a fusion the backend did not perform would
-be worse than no report. The histogram is read from the report mode rather
-than from every compile, because a per-build hook would cost a print in
-five backends for a number most builds do not want.
+Every verdict comes from the planner that performs the rewrite, not from a
+constant: a report that claimed a fusion the compiler did not perform would
+be worse than no report.
 
 ## The claims
 
@@ -521,8 +400,8 @@ The rules in §1, §2, §5, §6 and §7 are still **not** index claims, and
 #9731 building the pass did not change that — for a reason worth stating
 rather than leaving as an omission.
 
-§1 is now enforced and tested (`internal/oracle/ir/array_fusion_test.go`), but it
-is enforced as a *refusal*: a chain with an effectful element function is
+§1 is now enforced and tested (`TestSelfHostArrayReportMatchesEmission`,
+`TestSelfHostArrayFusionKeepsEffectOrder`), but it is enforced as a *refusal*: a chain with an effectful element function is
 left unfused. So §1 and §2 together make the fused and unfused programs
 indistinguishable, which is the point — and a conformance case can only
 observe a difference. There is nothing for one to assert that a compiler

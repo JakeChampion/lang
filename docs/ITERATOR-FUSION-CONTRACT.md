@@ -52,16 +52,15 @@ Adopting lazy iterator chains requires ALL of:
 
 ## Where it lives
 
-An `internal/oracle/ir` pass over the existing cursor-iterator protocol
-(`core/iter`'s `has_next`/`value`/`advance` shape and the
-`Iterator` trait), NOT a source-level rewrite: the IR is the
-target-agnostic layer, so all three backends inherit fusion, and
-the pass can consult the same liveness/uniqueness facts the RC
-analyses already compute (a fused loop that reuses its
+`compiler/semfuse.fern`, a pass over the typed semantic graphs every
+backend lowers from, reading the cursor-iterator protocol (`core/iter`'s
+`Iterator` trait) rather than rewriting source: that layer is
+target-agnostic, so all three backends inherit fusion, and the pass runs
+ahead of the ownership planning the RC analyses compute (a fused loop that reuses its
 accumulator in place composes with `REUSE-CONTRACT.md` R-shapes).
 strymonas achieves its guarantee via multi-stage programming —
 if Fern ever grows a comptime (see `COMPTIME-BRIEF.md`), fusion-
-as-a-library becomes an alternative host; until then the IR pass
+as-a-library becomes an alternative host; until then the graph pass
 is the path.
 
 ## The per-operator proof
@@ -74,21 +73,17 @@ nothing yields a loop that allocates nothing. It is written for the
 EAGER `std/array` combinators of #9731, and the argument does not depend
 on which of the two surfaces the operators came from.
 
-That eager pass is **built** — `internal/oracle/ir/array_fusion.go`, covering
-`map` and `filter` as stages and `fold` and `reduce` as sinks. It
-discharges clause 1 for those operators on the eager surface: the
-intermediates are gone and, because fusion runs before
-`Defunctionalise`, every per-element call is resolved to a statically
-named target. So "no unspecialised call per element" holds. Whether the
-call is then removed is `Inline`'s ordinary decision: a leaf element
-function is absorbed, one that calls something else stays a direct call.
-"No per-element closure call" therefore holds for some chains and not
-others, which is weaker than clause 1 reads at first. Clause 3's runtime half is met too: against a hand-written loop calling
-the same element functions, the fused chains measure 1.000x and 0.841x
-on retired instructions. Clause 2's harder operators (`take`,
-`flat_map`, `zip`) are not in it. None of that
-flips the posture on LAZY chains, which is what this document governs —
-it removes one of the two reasons the posture existed.
+That eager pass is **built** — `compiler/semfuse.fern`, fusing `map`,
+`filter`, `take`, `take_while` and `flat_map` stages into `fold`,
+`reduce` and `scan` sinks. It discharges clause 1's first half for those
+operators on the eager surface: the intermediates are gone, and a
+`flat_map` is an inner loop rather than an array per element. Whether a
+per-element call is then removed is the inliner's ordinary decision: a
+leaf element function is absorbed, one that calls something else stays a
+direct call, so "no per-element closure call" holds for some chains and
+not others. `zip` is not in it. None of that flips the posture on LAZY
+chains, which is what this document governs — it removes one of the two
+reasons the posture existed.
 
 ## Trigger conditions
 
@@ -108,23 +103,25 @@ records what it fuses.
 ## The lazy surface
 
 `core/iter`'s `Iterator` trait carries the lazy adapters as default
-methods, `map`, `filter`, `take`, `enumerate` and `zip`, and the sinks
-`fold`, `count`, `collect`, `find`, `any` and `all`. `compiler/semfuse.fern`
-fuses a chain that:
+methods, `map`, `filter`, `take`, `skip`, `flat_map`, `enumerate` and
+`zip`, and the sinks `fold`, `count`, `collect`, `find`, `any` and `all`.
+No adapter returns an array; a chain ends in `collect` to build one.
+`compiler/semfuse.fern` fuses a chain that:
 
 - starts at `iter.of(xs)` or `iter.range(lo, hi)`;
-- runs `map`, `filter` and `take`;
+- runs `map`, `filter`, `take` and `flat_map`;
 - and ends in `fold` or `count`.
 
 The result is the single loop the eager surface gets. The iterator, the
 adapters, and the `Option` and tuple every `next` would return are all gone:
 `TestSelfHostIterFusionAllocatesNothing` asserts that a fused chain allocates
-nothing at all. A call counts as an adapter, root or sink only when its body
+nothing at all. A `flat_map` chain still allocates the arrays its function
+returns, as the eager stage does. A call counts as an adapter, root or sink only when its body
 came from core/iter, as the eager pass trusts only std/array's.
 
 These are not fused yet, and `FERN_ARRAY_REPORT` names each one (clause 4):
 
-- `enumerate` and `zip`;
+- `skip`, `enumerate` and `zip`;
 - the `collect`, `find`, `any` and `all` sinks;
 - `range_incl`, and any iterator other than the two roots;
 - a chain whose intermediate has a second use.

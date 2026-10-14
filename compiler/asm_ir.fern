@@ -386,6 +386,15 @@ function borrowed_marker(): i32 {
   return 1112494674;  // 0x424F5252, BORR
 }
 
+// A fused box whose block carries its capacity, in words, in the word ahead
+// of the count: base = box - 16, and the block is freed at that capacity
+// rather than at its length. The self-append's fallback builds one with
+// headroom (__fern_str_grow_fresh), so an accumulator re-copies its prefix
+// once per doubling rather than once per allocator class.
+function grown_marker(): i32 {
+  return 1196576599;  // 0x47524F57, GROW
+}
+
 // rc_poison is the decimal of ast.RcPoison (0x7EEDFACE), the marker a
 // quarantined block carries in its rc word. Never hand-write the literal at a
 // use site: the self-host cannot import the Go constant, so the quarantine
@@ -1289,7 +1298,7 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
 // unconditionally, so a set is always followed by exactly one consume.
 // Single-threaded by construction, like the rest of the runtime.
 //
-// That unconditionality is why the claim is limited to these three. A helper
+// That unconditionality is why the claim is limited to these five. A helper
 // that allocates only SOMETIMES — __fern_arr_push, whose grow path allocates
 // and whose in-place path does not — cannot claim at its entry without
 // leaving a stale site behind on the fast path, to be consumed by the next
@@ -1302,7 +1311,7 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
 // `__fern_arr_push`, and the construction sites — where a leak is actually
 // created — report user code.
 //
-// %rax is the scratch: it is dead at the entry of all three shims (each
+// %rax is the scratch: it is dead at the entry of all five shims (each
 // RETURNS in %rax and reads nothing from it), and the prologue sits ahead of
 // every push so `(%rsp)` is still the return address.
 function hev_shim_site(s: asmcore.EmitState, tag: string): asmcore.EmitState {
@@ -3132,6 +3141,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movl -4(%rax), %edx\n");  // fused marker @ box-4
   s = s.write("    cmpl $" + util.i32_to_string(fused_marker()) + ", %edx\n");
   s = s.write("    je .Lstrfree_fused\n");
+  s = s.write("    cmpl $" + util.i32_to_string(grown_marker()) + ", %edx\n");
+  s = s.write("    je .Lstrfree_grown\n");
   s = s.write("    cmpl $" + util.i32_to_string(borrowed_marker()) + ", %edx\n");
   s = s.write("    je .Lstrfree_box\n");
   // rc==1: sole owner -> free data buffer (heap-guarded) then the 24-byte box.
@@ -3189,12 +3200,19 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // producer that over-allocated hands the freelist a block bigger than the class it lands in, which wastes the
   // slack but never overruns — the same trade the separate-buffer path above has
   // always made when it freed at ceil(len/8).
+  // A grown box's block is its capacity, read from the word ahead of the
+  // count, under a 32-byte header.
+  s = s.write(".Lstrfree_grown:\n");
+  s = s.write("    movq -16(%rax), %rdx\n");  // words = the capacity
+  s = s.write("    leaq -16(%rax), %rcx\n");  // base = box-16
+  s = s.write("    jmp .Lstrfree_block\n");
   s = s.write(".Lstrfree_fused:\n");
   s = s.write("    movq 8(%rax), %rdx\n");  // len = box[8]
   s = s.write("    addq $7, %rdx\n");  // words = ceil(len/8) + 3
   s = s.write("    shrq $3, %rdx\n");
   s = s.write("    addq $3, %rdx\n");
   s = s.write("    leaq -8(%rax), %rcx\n");  // base = box-8
+  s = s.write(".Lstrfree_block:\n");
   s = s.write(quarantine_rc("-8(%rax)", s.rc_free_debug));
   // Over 256 words the block takes the large-tier test beside the class call.
   s = s.write("    cmpq $256, %rdx\n");
@@ -3458,12 +3476,22 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(san_poison_check("%ecx", s.rc_free_debug));
     s = s.write("    cmpl $1, %ecx\n");
     s = s.write("    jne .Lsg_ret\n");
-    s = s.write("    cmpl $" + util.i32_to_string(fused_marker()) + ", -4(%r8)\n");
-    s = s.write("    jne .Lsg_ret\n");
     s = s.write("    movq 8(%r8), %rcx\n");  // la
     s = s.write("    leaq (%rcx,%rsi), %rdi\n");  // grown length
     s = s.write("    cmpq $0x7fffffff, %rdi\n");
     s = s.write("    ja .Lsg_ret\n");
+    // A grown box takes the bytes while its capacity holds them; its block
+    // does not move, so neither the trace nor the census sees anything.
+    s = s.write("    cmpl $" + util.i32_to_string(grown_marker()) + ", -4(%r8)\n");
+    s = s.write("    jne .Lsg_fused\n");
+    s = s.write("    leaq 39(%rdi), %r10\n");
+    s = s.write("    shrq $3, %r10\n");  // words grown, under the 32-byte header
+    s = s.write("    cmpq -16(%r8), %r10\n");
+    s = s.write("    ja .Lsg_ret\n");
+    s = s.write("    jmp .Lsg_copy\n");
+    s = s.write(".Lsg_fused:\n");
+    s = s.write("    cmpl $" + util.i32_to_string(fused_marker()) + ", -4(%r8)\n");
+    s = s.write("    jne .Lsg_ret\n");
     s = s.write("    leaq 31(%rcx), %r9\n");
     s = s.write("    shrq $3, %r9\n");  // words now
     s = s.write("    leaq 31(%rdi), %r10\n");
@@ -3513,6 +3541,86 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    rep movsb\n");
     s = s.write("    movl $1, %eax\n");
     s = s.write(".Lsg_ret:\n");
+    s = s.write("    ret\n");
+    // __fern_str_grow_fresh(a@16(%rsp), b@8(%rsp)) -> a grown box of a then
+    // b: the self-append's path when a's block cannot take b. The block is
+    // sized at twice a's length in words or the grown string's, whichever is
+    // more, rounded to its class, so an accumulator re-copies its prefix once
+    // per doubling; a's capacity is not the measure, since a shared a is
+    // copied on every append. a is read, not released; the caller releases its unit.
+    // __fern_str_grow_fresh_range(a@32, s@24, lo@16, hi@8) appends s's bytes
+    // [lo, hi) the same way and traps on a range outside s, as the slice the
+    // concatenation built would have. Both entries hand the body the source
+    // bytes in %rdx and their count in %rsi.
+    s = s.write("__fn___fern_str_grow_fresh:\n");
+    s = hev_shim_site(s, "sgf");
+    s = s.write("    movq 16(%rsp), %r8\n");  // a
+    s = s.write("    movq 8(%rsp), %rdx\n");  // b
+    s = s.write("    movq 8(%rdx), %rsi\n");  // lb
+    s = s.write("    movq (%rdx), %rdx\n");  // b's data
+    s = s.write("    jmp .Lsgf_body\n");
+    s = s.write("__fn___fern_str_grow_fresh_range:\n");
+    s = hev_shim_site(s, "sgfr");
+    s = s.write("    movq 32(%rsp), %r8\n");  // a
+    s = s.write("    movslq 16(%rsp), %rax\n");  // lo
+    s = s.write("    movslq 8(%rsp), %rsi\n");  // hi
+    s = s.write("    movq 24(%rsp), %rdx\n");  // s
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    js __fern_slice_abort\n");
+    s = s.write("    cmpq 8(%rdx), %rsi\n");
+    s = s.write("    jg __fern_slice_abort\n");
+    s = s.write("    subq %rax, %rsi\n");  // lb
+    s = s.write("    js __fern_slice_abort\n");
+    s = s.write("    movq (%rdx), %rdx\n");
+    s = s.write("    addq %rax, %rdx\n");  // s's data + lo
+    s = s.write(".Lsgf_body:\n");
+    s = s.write("    movq 8(%r8), %rcx\n");  // la
+    s = s.write("    leaq (%rcx,%rsi), %rdi\n");  // grown length
+    s = s.write("    cmpq $0x7fffffff, %rdi\n");
+    s = s.write("    ja __fern_alloc_size_abort\n");
+    s = s.write("    leaq 39(%rdi), %r9\n");
+    s = s.write("    shrq $3, %r9\n");  // words the grown string needs
+    s = s.write("    leaq 31(%rcx), %r10\n");
+    s = s.write("    shrq $3, %r10\n");  // a's words as a fused box
+    s = s.write("    addq %r10, %r10\n");
+    s = s.write("    cmpq %r9, %r10\n");
+    s = s.write("    jae .Lsgf_class\n");
+    s = s.write("    movq %r9, %r10\n");
+    s = s.write(".Lsgf_class:\n");
+    s = s.write("    cmpq $65536, %r10\n");
+    s = s.write("    jae .Lsgf_large\n");
+    s = s.write("    pushq %r10\n");
+    s = s.write("    call __fern_capw\n");
+    s = s.write("    popq %r10\n");  // the class's capacity, which the block is bumped at
+    s = s.write("    jmp .Lsgf_alloc\n");
+    s = s.write(".Lsgf_large:\n");
+    s = s.write("    cmpq $0x8000000, %r10\n");  // past 1 GiB the block is exact
+    s = s.write("    ja .Lsgf_alloc\n");
+    s = s.write("    leaq 0(,%r10,8), %rax\n");
+    s = s.write("    pushq %rcx\n");
+    s = s.write("    pushq %rdx\n");
+    s = large_class(s);
+    s = s.write("    popq %rdx\n");
+    s = s.write("    popq %rcx\n");
+    s = s.write("    shrq $3, %rax\n");
+    s = s.write("    movq %rax, %r10\n");
+    s = s.write(".Lsgf_alloc:\n");
+    s = s.write("    leaq 0(,%r10,8), %rdi\n");
+    s = s.write("    call __fern_alloc\n");  // %rax = base; %rcx, %rdx, %rsi, %r8, %r10 survive
+    s = s.write("    movq %r10, (%rax)\n");  // the capacity, in words
+    s = s.write("    movl $1, 8(%rax)\n");  // rc
+    s = s.write("    movl $" + util.i32_to_string(grown_marker()) + ", 12(%rax)\n");
+    s = s.write("    leaq 32(%rax), %rdi\n");  // data
+    s = s.write("    movq %rdi, 16(%rax)\n");
+    s = s.write("    leaq (%rcx,%rsi), %r9\n");
+    s = s.write("    movq %r9, 24(%rax)\n");  // len
+    s = s.write("    movq %rsi, %r9\n");  // lb
+    s = s.write("    movq (%r8), %rsi\n");  // a's bytes
+    s = s.write("    rep movsb\n");  // %rcx = la; %rdi ends past them
+    s = s.write("    movq %rdx, %rsi\n");
+    s = s.write("    movq %r9, %rcx\n");
+    s = s.write("    rep movsb\n");
+    s = s.write("    addq $16, %rax\n");  // box = base+16
     s = s.write("    ret\n");
   }
   // __fern_str_borrow(data@16(%rsp), len@8(%rsp)) -> a counted box over bytes
@@ -4387,6 +4495,17 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_arr_push_owned:\n");
     s = s.write(arr_push_fast(".Lapo_slow", s.rc_free_debug));
     s = s.write(".Lapo_slow:\n");
+    if (!s.rc_free_debug) {
+      // The first append to a static empty array leaves nothing to free, so
+      // it goes straight to the shared slow path and returns from there.
+      s = s.write("    cmpq $0, (%rdi)\n");
+      s = s.write("    jne .Lapo_grow\n");
+      s = s.write("    cmpq $0, -16(%rdi)\n");
+      s = s.write("    jne .Lapo_grow\n");
+      s = s.write("    cmpl $0, -8(%rdi)\n");
+      s = s.write("    js .Larr_push_slow\n");
+      s = s.write(".Lapo_grow:\n");
+    }
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
     s = s.write("    pushq %r12\n");
@@ -8743,20 +8862,32 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   return s.write("    movb " + ssa_r8(c) + ", " + at + "\n");
 }
 
-// ssa_call_ind is the stack machine's call through a function value: the
-// arguments pushed with the first on top, the target in %r11, which nothing
-// live can occupy at a call.
+// ssa_call_ind is a call through a function value, which names the callee's
+// `.r` entry: the first ssa_nregs() arguments in the pool registers, as a
+// register call passes them, and when there are more, every argument pushed
+// as well, with the first on top, where `.r` reads the rest. The target is
+// read into %rdx first, which is neither a pool register nor a scratch the
+// argument moves use.
 function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   let argc: i32 = ins.args.len() - 1;
+  s = ssa_load(reg_of, ins.args[0], "%rdx", s);
   let i: i32 = argc;
-  while (i >= 1) {
+  while (argc > ssa_nregs() && i >= 1) {
     s = ssa_push_operand(reg_of, ins.args[i], s);
     i = i - 1;
   }
-  s = ssa_load(reg_of, ins.args[0], "%r11", s);
-  s = s.write("    call *%r11\n");
-  if (argc > 0) {
+  let srcs: i32[] = [];
+  let dsts: i32[] = [];
+  let a: i32 = 0;
+  while (a < argc && a < ssa_nregs()) {
+    srcs = srcs.append(reg_of[ins.args[a + 1]]);
+    dsts = dsts.append(a);
+    a = a + 1;
+  }
+  s = ssa_parallel_moves(srcs, dsts, s);
+  s = s.write("    call *%rdx\n");
+  if (argc > ssa_nregs()) {
     s = ssa_alu_ir(s, 0, 64, (argc * 8) as i64, "%rsp");
   }
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
@@ -8766,7 +8897,7 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 // function-value box the lowering folded whole (ir.const_struct_* /
 // ir.const_closure), interned as the flat arm interns it.
 function ssa_agg_lit(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState): asmcore.EmitState {
-  let pk: asmcore.ConstAggPack = asmcore.const_agg_pack(s, ins.str);
+  let pk: asmcore.ConstAggPack = asmcore.const_agg_pack(s, ins.str, ".r");
   s = pk.state;
   let kout: asmcore.ConstAggOut = asmcore.add_const_agg(s, pk.text);
   s = kout.state;
@@ -8781,7 +8912,7 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
   let k: i32 = ins.kind_tag;
   let label: string = "";
   if (k == 45) {
-    label = "__fn_" + asmcore.sanitize_label(ins.str);
+    label = "__fn_" + asmcore.sanitize_label(ins.str) + ".r";
   } else if (k == 46) {
     let sh: asmcore.ShapeRefOut = asmcore.shape_ref(s, ins.str);
     s = sh.state;
@@ -9301,12 +9432,10 @@ function ssa_reg_params(f: ssa.SFunc): i32 {
 // entry every caller outside this unit's direct calls uses, loads the first
 // ssa_reg_params() arguments from the caller's stack into the pool registers
 // and falls through into `__fn_<name>.r`, where a register-ABI caller enters
-// with them already there. A function with no parameters has one entry.
+// with them already there. A function with no parameters has both labels at
+// one address, since a function value always names the `.r` entry.
 function ssa_entry_shim(f: ssa.SFunc, name: string, s: asmcore.EmitState): asmcore.EmitState {
   let k: i32 = ssa_reg_params(f);
-  if (k == 0) {
-    return s;
-  }
   let p: i32 = 0;
   while (p < k) {
     s = ssa_mov_rm(s, 64, true, ssa_reg(p), "%rsp", 8 + 8 * p);
@@ -9908,7 +10037,7 @@ function emit_function_via_ir_pre(r: irtables.LowerResult, selected: physicalbod
 // one.
 function emit_function_via_ir_named(r: irtables.LowerResult, selected: physicalbody.Selected, label_name: string, weak: boolean, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   if (weak) {
-    s = s.write(".weak __fn_" + asmcore.sanitize_label(label_name) + "\n");
+    s = s.write(".weak __fn_" + asmcore.sanitize_label(label_name) + "\n.weak __fn_" + asmcore.sanitize_label(label_name) + ".r\n");
   }
   ircore.lower_failed_refuse(label_name, r);
   // Runtime-need detection is marked off the ops of this one lowering; the
@@ -10927,7 +11056,7 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_str_borrow") {
     s = s.need("str_borrow");
   }
-  if (name == "__fern_str_grow" || name == "__fern_str_grow_range") {
+  if (name == "__fern_str_grow" || name == "__fern_str_grow_range" || name == "__fern_str_grow_fresh" || name == "__fern_str_grow_fresh_range") {
     s = s.need("str_grow");
   }
   if (name == "__fern_account_entry") {
@@ -11210,7 +11339,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
       if (mod.funcs[fi].receiver_type.len() > 0) {
         gname = util.base_type_name(mod.funcs[fi].receiver_type) + "." + mod.funcs[fi].name;
       }
-      s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
+      s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n.globl __fn_" + asmcore.sanitize_label(gname) + ".r\n");
     }
     s = emit_function_via_ir_pre(r, physicalbody.select(physical, fi), mod.funcs[fi], s, vgate);
     fi = fi + 1;

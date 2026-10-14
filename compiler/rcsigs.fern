@@ -159,6 +159,7 @@ pub function table(): Table {
   // it implies is spelled by the lowering around it, in the moves it emits
   // on each answer, so the call itself touches nothing.
   rows = add(rows, ["__fern_str_grow", "__fern_str_grow_range"], inert(result_none()));
+  rows = add(rows, ["__fern_str_grow_fresh", "__fern_str_grow_fresh_range"], inert(result_fresh()));
   // The element retains walk the array's elements and leave the array's own
   // count alone.
   rows = add(rows, ["__fern_arr_inc_elems", "__fern_arr_own_elems", "__fern_set_args"], inert(result_none()));
@@ -200,8 +201,6 @@ pub function table(): Table {
 // The runtime's releases: each takes the object as argument 0 and the
 // caller's unit on it ends there. `__fern_box_free` and `__free` take the
 // block and its size; the `__map_*` rows are core/map's, written in Fern.
-// TestSelfHostRcSigsReleaseSetCoversOracle pins this list and the two below
-// against internal/oracle/ir/rcsigs.go.
 function release_helpers(): string[] {
   return [
     "__fern_rc_dec", "__fern_arr_dec", "__fern_arr_share_dec", "__fern_str_free", "__fern_str_dec", "__fern_str_rc_dec",

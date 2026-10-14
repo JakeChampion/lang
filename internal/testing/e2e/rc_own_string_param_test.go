@@ -21,22 +21,21 @@ import (
 //
 //   - `__rc_underflow_count() == 0`. The pre-fix arm64 / wasm builds reach 1
 //     at three appends and die at five hundred.
-//   - fresh heap bytes do not scale with the round count. The eligibility
-//     entry the fix restores is also selfStrAppendLocalSpine's gate, so the
-//     accumulator grows in place instead of allocating a fresh buffer per
-//     append.
+//   - fresh heap bytes stay within a small multiple of what the accumulator
+//     holds. The eligibility entry the fix restores is also
+//     selfStrAppendLocalSpine's gate, so the accumulator grows in place, and
+//     past its capacity into a block twice its length (#8770), instead of
+//     allocating a fresh buffer per append.
 //
-// The 2x bound is a wide fence around a settled measurement, not a guess.
-// The two SEGMENT deltas the check compares — b1-b0 over 200 rounds, then
-// b2-b1 over 800, four times the appends — came out at 73 968 / 83 040 on
-// x86-64, 145 792 / 164 464 on arm64 and 73 440 / 81 424 on wasm: a ratio
-// of 1.11x to 1.13x everywhere, because an in-place append costs bytes only
-// when it crosses a size class. Pre-fix x86-64 was 164 800 / 2 801 632 —
-// 17.0x — so the fence sits an order of magnitude clear of the failure it
-// is there to catch, with room for allocator noise it must not trip on.
+// The 8x bound is a wide fence around a settled measurement. 200 rounds
+// (1600 bytes) took 2 560 fresh bytes and 800 rounds (6400 bytes) 15 360 on
+// x86-64 and arm64, 2 048 and 12 288 on wasm: 1.6x to 2.4x, since the
+// blocks a doubling accumulator leaves behind sum to at most twice its last.
+// Pre-fix x86-64 took 2 801 632 bytes for the 800 rounds, 437x, so the fence
+// sits fifty times clear of the failure it is there to catch.
 //
-// Self-checking: 0 == both hold, 97 == a wrong length, 98 == the bytes scale,
-// 99 == over-release.
+// Self-checking: 0 == both hold, 97 == a wrong length, 98 == the bytes
+// outgrow the string, 99 == over-release.
 const ownStringParamSrc = `import "std/i64";
 function grow(own a: string, s: string): string { a = a + s; return a; }
 function rounds(n: i32): i32 {
@@ -53,24 +52,24 @@ function main(): i32 {
     if (rounds(800) != 6400) { return 97; }        // 4x the appends
     let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
-    if (b2 - b1 > (b1 - b0) * 2) { return 98; }    // see the margin above
+    if (b1 - b0 > 8 * 1600 || b2 - b1 > 8 * 6400) { return 98; }    // see the margin above
     return 0;
 }`
 
 func TestX86_64OwnStringParamBalanced(t *testing.T) {
 	if _, code := compileAndRunX86_64FreeOn(t, ownStringParamSrc); code != 0 {
-		t.Errorf("own string param: got %d, want 0 (97=length, 98=bytes scale with rounds, 99=over-release)", code)
+		t.Errorf("own string param: got %d, want 0 (97=length, 98=bytes outgrow the string, 99=over-release)", code)
 	}
 }
 
 func TestArm64OwnStringParamBalanced(t *testing.T) {
 	if _, code := compileAndRunArm64FreeOn(t, ownStringParamSrc); code != 0 {
-		t.Errorf("own string param: got %d, want 0 (97=length, 98=bytes scale with rounds, 99=over-release)", code)
+		t.Errorf("own string param: got %d, want 0 (97=length, 98=bytes outgrow the string, 99=over-release)", code)
 	}
 }
 
 func TestWASMOwnStringParamBalanced(t *testing.T) {
 	if got := runWasm(t, ownStringParamSrc); got != 0 {
-		t.Errorf("own string param: got %d, want 0 (97=length, 98=bytes scale with rounds, 99=over-release)", got)
+		t.Errorf("own string param: got %d, want 0 (97=length, 98=bytes outgrow the string, 99=over-release)", got)
 	}
 }

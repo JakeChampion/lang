@@ -2594,17 +2594,17 @@ function operand_width(f: ssasem.Func, ins: ssa.SInst): i32 {
 
 // A string append handed the left operand's unit: the runtime grows that
 // buffer in place when the block has room, and the result IS the operand;
-// otherwise the concatenation builds a fresh box and the operand's unit is
-// released.
+// otherwise it builds a fresh box with headroom for both and the operand's
+// unit is released.
 function grow_or_concat(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let res: i32 = scratch_base(f);
   r = reserve(r, res + 1);
-  r = grow_call(r, ins);
+  r = grow_call(r, ins, "");
   r = emit(r, ir.op_if(0));
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_store_local(res));
   r = emit(r, ir.op_else());
-  r = concatenation(r, ins, res + 1);
+  r = grow_call(r, ins, "_fresh");
   r = emit(r, ir.op_store_local(res));
   r = release(r, ins.args[0], f.values[ins.args[0]], f);
   r = emit(r, ir.op_end());
@@ -2615,8 +2615,8 @@ function grow_or_concat(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SI
 // further through that field (ssaunits.field_grow_root). A sole-owned record
 // lets the runtime grow the field's buffer in place, and the field is then
 // nulled so the record's release skips the buffer the result now owns; a
-// shared record, or a buffer that cannot grow, takes a plain concatenation and
-// leaves the field for the record's release.
+// shared record, or a buffer that cannot grow, takes a fresh box and leaves
+// the field for the record's release.
 function grow_field_or_concat(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
   let root: i32 = p.grows[ins.result];
   let grown: i32 = scratch_base(f);
@@ -2627,7 +2627,7 @@ function grow_field_or_concat(own r: irtables.LowerResult, f: ssasem.Func, p: ss
   r = emit(r, ir.op_load_local(root));
   r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
   r = emit(r, ir.op_if(0));
-  r = grow_call(r, ins);
+  r = grow_call(r, ins, "");
   r = emit(r, ir.op_store_local(grown));
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_load_local(grown));
@@ -2638,34 +2638,32 @@ function grow_field_or_concat(own r: irtables.LowerResult, f: ssasem.Func, p: ss
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_struct_set(p.grow_fields[ins.result], 0));
   r = emit(r, ir.op_else());
-  r = concatenation(r, ins, res + 1);
+  r = grow_call(r, ins, "_fresh");
   r = emit(r, ir.op_store_local(res));
   r = emit(r, ir.op_end());
   return emit(r, ir.op_load_local(res));
 }
 
-// grow_call answers whether the runtime appended the right operand onto the
-// left one's block in place. A range append hands over the source and its
-// bounds, so the bytes go straight from the source into the block.
-function grow_call(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
+// grow_call is the append's runtime call: with `form` "" it answers whether
+// the right operand went onto the left one's block in place, and with
+// "_fresh" it leaves a grown box of both on the stack, taking nothing. A
+// range append hands over the source and its bounds, so the bytes go
+// straight from the source into the block either way.
+function grow_call(own r: irtables.LowerResult, ins: ssa.SInst, form: string): irtables.LowerResult {
   for arg in ins.args {
     r = emit(r, ir.op_load_local(arg));
   }
   if (ins.kind_tag == ssasem.append_range()) {
-    return emit(r, ir.op_call_direct("__fern_str_grow_range", 4));
+    return emit(r, ir.op_call_direct("__fern_str_grow" + form + "_range", 4));
   }
-  return emit(r, ir.op_call_direct("__fern_str_grow", 2));
+  return emit(r, ir.op_call_direct("__fern_str_grow" + form, 2));
 }
 
-// concatenation leaves a fresh box of both operands on the stack and takes
-// nothing. A range append's window is built in the frame, in `view`, only on
-// this path, and released once the bytes are copied out of it.
+// concatenation leaves a fresh box of a range append's operands on the
+// stack and takes nothing: the exact-size join of a string the frame keeps.
+// The range's window is built in the frame, in `view`, and released once
+// the bytes are copied out of it.
 function concatenation(own r: irtables.LowerResult, ins: ssa.SInst, view: i32): irtables.LowerResult {
-  if (ins.kind_tag != ssasem.append_range()) {
-    r = emit(r, ir.op_load_local(ins.args[0]));
-    r = emit(r, ir.op_load_local(ins.args[1]));
-    return emit(r, ir.op_str_concat());
-  }
   r = reserve(r, view + 1);
   r = emit(r, ir.op_load_local(ins.args[1]));
   r = emit(r, ir.op_load_local(ins.args[2]));

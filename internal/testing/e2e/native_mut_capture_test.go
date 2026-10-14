@@ -2,8 +2,7 @@ package e2e
 
 import "testing"
 
-// TestNativeMutScalarCapture proves the NATIVE compiled pipeline
-// (internal/oracle/closureconv → internal/oracle/ir → codegen) implements MUTABLE SCALAR
+// TestNativeMutScalarCapture proves the compiled pipeline implements MUTABLE SCALAR
 // CAPTURES by reference (#2896): a captured outer i32/bool/f64 is ONE shared
 // cell, so writes are visible symmetrically in BOTH directions — a closure's
 // write escapes to the enclosing scope, AND an enclosing-scope write is seen by

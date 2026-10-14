@@ -8,7 +8,8 @@ import "./ssalargepushmachine" as large;
 // Half kinds: invalid, numeric, original GPR, S+offset, outer return,
 // arbitrary original cell, P+offset, small freelist, old head, inner return,
 // large freelist, buffer, heap base, heap end, negative length, remainder shape.
-// The private remainder shape is any unsigned32 value except BOX and FUSED.
+// The private remainder shape is any unsigned32 value except BOX, FUSED and
+// GROW.
 struct Half { kind: i32, identity: i32, part: i32, number: value.Value }
 
 struct Word { low: Half, high: Half }
@@ -292,7 +293,7 @@ function shape_comparison(r: value.Interval, w: Word, op: isa.Op): Flags {
   if (op.width != 32 && !same_half(w.high, zero(r))) {
     return unknown_flags();
   }
-  if (op.immediate != 1112494674 && op.immediate != 1934589965) {
+  if (op.immediate != 1112494674 && op.immediate != 1934589965 && op.immediate != 1196576599) {
     return unknown_flags();
   }
   // Tag inequality proves only ZF=0. The remainder spans both sides of each
@@ -651,7 +652,8 @@ function path(p: isa.ArrayProgram, r: value.Interval, register_entry: boolean, f
 // Preconditions: canonical aligned disjoint descriptor P-8..P+15, stack
 // S-40..S+15, ordered heap-bound globals, small slot3, and derived buffer slot.
 // The W=3 small buffer slot aliases slot3 exactly; all other slots are disjoint.
-// P>=65536, RC1 and any32-bit shape except BOX1112494674/FUSED1934589965.
+// P>=65536, RC1 and any32-bit shape except BOX1112494674/FUSED1934589965/
+// GROW1196576599.
 // Buffer B is writable/aligned/disjoint only for inside-heap
 // positive signed lengths; other families grant no buffer access. Descriptor
 // metadata, outer RET/argument and heap globals are read-only. Header, scratch,

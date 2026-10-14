@@ -1,10 +1,9 @@
 # The per-operator fusion proof
 
-Status: `internal/oracle/ir/array_fusion.go` (#9731) and the primary compiler's
-`compiler/semfuse.fern` (#11072) implement the `map`/`filter` stages
-and `fold`/`reduce` sinks below. The primary compiler also implements `scan`
-as a materializing sink, `take` and `take_while` as stages that stop the
-loop, and `flat_map` as a stage that opens an inner loop. This document
+Status: `compiler/semfuse.fern` (#11072) implements the `map`/`filter`
+stages and `fold`/`reduce` sinks below, `scan` as a materializing sink,
+`take` and `take_while` as stages that stop the loop, and `flat_map` as a
+stage that opens an inner loop. This document
 states what each operator contributes to a fused loop, and why composing
 those contributions gives the guarantee `docs/ITERATOR-FUSION-CONTRACT.md`
 clause 1 asks for.
@@ -25,7 +24,7 @@ benchmarks passing.
 Upstream: `docs/ITERATOR-FUSION-CONTRACT.md` (the contract),
 `docs/ARRAY-ALGEBRA.md` (what fusion may and may not do),
 `docs/ARRAY-PIPELINE-BASELINE-2026-09.md` (what it is worth). Recognition
-of the pipelines this operates on is `internal/oracle/ir/array_pipeline.go`
+of the pipelines this operates on is in `compiler/semfuse.fern` as well
 (#9730).
 
 ## The shape of a fused pipeline
@@ -338,8 +337,10 @@ also pass the benchmark's prefix checks with both variants and fusion settings.
 ### The lazy surface's roots
 
 A core/iter chain reaches the same fragments through its adapters:
-`it.map(f)`, `it.filter(p)` and `it.take(n)` are the stages above, and
-`it.fold(z, h)` and `it.count()` the sinks. What it starts from sets the
+`it.map(f)`, `it.filter(p)`, `it.take(n)` and `it.flat_map(f)` are the
+stages above, and `it.fold(z, h)` and `it.count()` the sinks. `it.skip(n)`,
+like `it.enumerate()` and `it.zip(other)`, is outside the algebra: the
+chain runs unfused and the report says so. What it starts from sets the
 loop. `iter.of(xs)` is an array cursor exactly as the eager surface's
 input is. `iter.range(lo, hi)` runs the cursor from `lo` while it is below
 `hi` and hands the cursor itself to the first stage, with no fetch. Either
@@ -387,29 +388,27 @@ preconditions of the argument:
    vectorizer, not on this pass.
 
 A pipeline failing any of these does not fuse, and says so with the
-closed refusal set of `internal/oracle/ir/array_pipeline.go` (#9732) rather
+closed refusal set of `compiler/semarrayreport.fern` (#9732) rather
 than silently allocating per stage — clause 4.
 
 ## What the first slice reaches
 
-`map` and `filter` as stages, `fold` and `reduce` as sinks, over 8-byte
-elements. The pass is `internal/oracle/ir/array_fusion.go`; `FERN_NO_ARRAY_FUSION=1`
-turns it off, which is how a miscompilation suspected here is ruled out in
-one run rather than by rebuilding the compiler.
+`map` and `filter` as stages, `fold` and `reduce` as sinks. The pass is
+`compiler/semfuse.fern`; `FERN_NO_ARRAY_FUSION=1` turns it off, which is how
+a miscompilation suspected here is ruled out in one run rather than by
+rebuilding the compiler.
 
-The self-host's pass, `compiler/semfuse.fern`, fuses the same
-stages and sinks on the typed semantic graphs `semsource` produces, before
-ownership is planned, so every self-host backend gains it and the loop is
-counted like any other body. It takes any scalar element rather than only
-8-byte ones, and a `map` may change the element type, since each value in the
-graph carries its own. Its refusals are native's — an element function that is
-not a closure built in the same body, or whose body reaches an effect; an
-intermediate read by anything but the next stage — plus one native does not
-need: the stages and the sink sit in one block with nothing between them that
-calls anything. `FERN_NO_ARRAY_FUSION=1` turns it off too.
-`FERN_ARRAY_REPORT=1` on a compile prints this pass's actual fusion decisions
-and the final R7 map storage decisions; `-array-report` remains the separately
-labelled Go analysis. See `ARRAY-ALGEBRA.md` for the closed refusal tags.
+It fuses on the typed semantic graphs `semsource` produces, before
+ownership is planned, so every backend gains it and the loop is
+counted like any other body. It takes any scalar element, and a `map` may
+change the element type, since each value in the graph carries its own. It
+refuses an element function that is not a closure built in the same body, or
+whose body reaches an effect; an intermediate read by anything but the next
+stage; and stages and a sink that do not sit in one block with nothing between
+them that calls anything.
+`fern -array-report`, or `FERN_ARRAY_REPORT=1` on a compile, prints this
+pass's fusion decisions and the final R7 map storage decisions. See
+`ARRAY-ALGEBRA.md` for the closed refusal tags.
 The primary fusion report recognizes `map`, `filter`, `fold`, `reduce`,
 `scan`, `zip`, `take`, `take_while`, `drop`, `drop_while`, `flat_map`,
 `flatten`, `chunks`, `chunks_exact`, `windows`, `partition`, `enumerate`
@@ -619,11 +618,9 @@ stage plus the sink. Their `call_loop` control makes the same three, which is
 how the measurement below separates the cost of calling from the cost of
 reaching the callee through a closure.
 
-An earlier version of this section said the element functions were "inlined
-outright". That was read off a count of `OpCallIndirect` and `OpCallDirect`
-which never looked at `OpCallClosureDirect`, the kind they are dispatched
-through when they are not inlined. Both shapes are now pinned in
-`internal/oracle/ir/array_fusion_test.go`.
+`TestSelfHostArrayFusionUsesKnownCallbackBodies` pins the compiler's
+answer: no fused element function is called indirectly, and a small
+capture-free one is not called through its wrapper.
 
 Running fusion after `Inline` instead would have left the chain
 unrecognisable, since `Inline` rewrites std/array's one-line method

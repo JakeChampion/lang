@@ -14,10 +14,8 @@
 //   with_borrowed  the same loop over a BORROWED parameter, which is what
 //                  `.with` costs when the receiver is not uniquely owned
 //
-// The answer is now yes: #9733 rewrites `map_own` to write through the
-// donor's buffer, and it reaches with_own's zero. `FERN_NO_ARRAY_INPLACE=1`
-// reproduces what this measured before that — which is what the gate uses, so
-// the gap the experiment found stays visible alongside what closed it.
+// The answer is yes: #9733 rewrites `map_own` to write through the donor's
+// buffer, and it reaches with_own's zero.
 //
 // with_borrowed is the control. Without it "with_own allocates nothing" is
 // satisfiable by a `.with` that never copies for anyone, and the reuse would
@@ -25,10 +23,7 @@
 //
 // `with_own` is annotated `fip`, so the E068 pass is asserting the space claim
 // at compile time rather than the measurement asserting it after the fact.
-// `map_own` is NOT annotated, though it could be on either compiler
-// (internal/testing/e2e/array_inplace_fip_test.go is that program): the gate also
-// builds this file with `FERN_NO_ARRAY_INPLACE=1`, and under that switch the
-// claim is false and E068 would refuse it.
+// internal/testing/e2e/array_inplace_fip_test.go is `map_own` annotated `fip`.
 import "core/cmp";
 import "std/bench";
 import "std/string";

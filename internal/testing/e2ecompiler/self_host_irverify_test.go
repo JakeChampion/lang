@@ -7,17 +7,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/oracle/ir"
 )
 
 // TestSelfHostIRVerifyStructure exercises the self-host IR structure verifier
-// (compiler/irverify.fern, #6639 slice 1) — the port of native's
-// internal/oracle/ir/verify.go.
+// (compiler/irverify.fern, #6639 slice 1).
 //
 // The driver asserts each check class in BOTH directions: a malformed op
 // stream the pass must report, and a well-formed one it must stay silent on.
@@ -52,8 +48,7 @@ func TestSelfHostIRVerifyStructure(t *testing.T) {
 }
 
 // TestSelfHostIRVerifyStack exercises the operand-stack verifier
-// (compiler/irverifystack.fern, #6639 slice 2) — the port of
-// native's internal/oracle/ir/verifystack.go.
+// (compiler/irverifystack.fern, #6639 slice 2).
 //
 // Same driver, same both-directions discipline as the structure pass above,
 // and the same reason for it: this one models an arity per op kind, so a
@@ -88,8 +83,7 @@ func TestSelfHostIRVerifyStack(t *testing.T) {
 }
 
 // TestSelfHostIRVerifyFip exercises the `fip` / `fbip` allocation-budget
-// verifier (compiler/irfipverify.fern, #6639 slice 3) — the port of
-// native's internal/oracle/ir/fip_verify.go.
+// verifier (compiler/irfipverify.fern, #6639 slice 3).
 //
 // Same driver and the same both-directions discipline as the two passes above.
 // The direction that carries the weight here is the silent one for a
@@ -122,8 +116,7 @@ func TestSelfHostIRVerifyFip(t *testing.T) {
 }
 
 // TestSelfHostIRVerifyProvided exercises the callee-resolution verifier
-// (compiler/drivers/irverifyprovided.fern, #6639 slice 4) — the port of
-// internal/oracle/ir/verifyprovided.go.
+// (compiler/drivers/irverifyprovided.fern, #6639 slice 4).
 //
 // Same driver and the same both-directions discipline as the passes above.
 // The silent half is the essential one here too, and for a sharper reason
@@ -417,8 +410,7 @@ func stageProvidedFixture(t *testing.T, stdRoot, caseDir string) string {
 }
 
 // TestSelfHostIRVerifyRc exercises the self-host IR ownership verifier
-// (compiler/irverifyrc.fern, #7791) — the mirror of native's
-// internal/oracle/ir/verifyrc.go.
+// (compiler/irverifyrc.fern, #7791).
 //
 // It checks the one invariant the reuse protocol rests on: the local whose
 // uniqueness was tested, the local whose box becomes the allocation token,
@@ -453,161 +445,5 @@ func TestSelfHostIRVerifyRc(t *testing.T) {
 	}
 	if want := "irverifyrc: all reuse-donor checks agree"; !strings.Contains(string(out), want) {
 		t.Errorf("irverify_run stdout = %q, want it to contain %q", out, want)
-	}
-}
-
-// skipReasonRe pulls the argument out of a skip-reason call on either side:
-// native records one with c.cov.skip("..."), the self-host with
-// site_skip("...").
-var skipReasonRe = regexp.MustCompile(`(?:cov\.skip|site_skip)\("([^"]+)"\)`)
-
-func skipReasons(t *testing.T, path string) map[string]bool {
-	t.Helper()
-	src, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	out := map[string]bool{}
-	for _, m := range skipReasonRe.FindAllStringSubmatch(string(src), -1) {
-		out[m[1]] = true
-	}
-	if len(out) == 0 {
-		t.Fatalf("%s: found no skip reasons — the extraction regexp has gone stale, "+
-			"which would make this test pass vacuously", path)
-	}
-	return out
-}
-
-// TestSelfHostIRVerifyRcSkipReasonsMatchNative pins the two ownership
-// verifiers' coverage vocabulary against each other.
-//
-// Both passes are fail-soft: a reuse shape they cannot model is skipped and
-// counted rather than reported, and the count is what the corpus gates hold a
-// floor under. That only means something if the two implementations recognise
-// the same set of shapes. A reason on one side and not the other is either a
-// recogniser that has drifted or a shape one of them silently stopped
-// modelling — both of which read as coverage on one side and nothing on the
-// other.
-//
-// Needs no toolchain: it is a property of the two sources.
-func TestSelfHostIRVerifyRcSkipReasonsMatchNative(t *testing.T) {
-	native := skipReasons(t, filepath.Join("..", "..", "oracle", "ir", "verifyrc.go"))
-	selfHost := skipReasons(t, filepath.Join("..", "..", "..", "compiler", "irverifyrc.fern"))
-
-	var onlyNative, onlySelfHost []string
-	for r := range native {
-		if !selfHost[r] {
-			onlyNative = append(onlyNative, r)
-		}
-	}
-	for r := range selfHost {
-		if !native[r] {
-			onlySelfHost = append(onlySelfHost, r)
-		}
-	}
-	sort.Strings(onlyNative)
-	sort.Strings(onlySelfHost)
-	if len(onlyNative) > 0 {
-		t.Errorf("verifyrc.go skips for %d reason(s) irverifyrc.fern does not: %s",
-			len(onlyNative), strings.Join(onlyNative, "; "))
-	}
-	if len(onlySelfHost) > 0 {
-		t.Errorf("irverifyrc.fern skips for %d reason(s) verifyrc.go does not: %s",
-			len(onlySelfHost), strings.Join(onlySelfHost, "; "))
-	}
-}
-
-// fernStringListRe pulls the elements of one `return [...]` string-array
-// literal out of a named Fern function, so the parity test below reads
-// the self-host's tables from its source rather than from a rebuild.
-func fernStringList(t *testing.T, src, fn string) []string {
-	t.Helper()
-	at := strings.Index(src, "function "+fn+"(")
-	if at < 0 {
-		t.Fatalf("rcsigs.fern no longer defines %s — this test is no longer comparing anything", fn)
-	}
-	body := src[at:]
-	lo := strings.Index(body, "return [")
-	if lo < 0 {
-		t.Fatalf("%s: no `return [` list found", fn)
-	}
-	body = body[lo:]
-	hi := strings.Index(body, "]")
-	if hi < 0 {
-		t.Fatalf("%s: unterminated list", fn)
-	}
-	out := regexp.MustCompile(`"([^"]+)"`).FindAllStringSubmatch(body[:hi], -1)
-	var names []string
-	for _, m := range out {
-		names = append(names, m[1])
-	}
-	if len(names) == 0 {
-		t.Fatalf("%s: extracted no names — the list shape has changed", fn)
-	}
-	return names
-}
-
-// TestSelfHostRcSigsReleaseSetCoversOracle pins the self-host's idea of what
-// a release IS against the oracle's.
-//
-// compiler/rcsigs.fern is the one table the self-host reads a callee's
-// ownership effect from — the emitted-RC certifier (rccertify.fern) and the
-// reuse-site verifier (irverifyrc.fern) both decide "this call consumes its
-// operand" from it. internal/oracle/ir/rcsigs.go is the oracle's record of
-// the same helpers. A name the oracle counts as a release that the self-host
-// does not is a silent divergence: one side reads a release the other skips.
-// The self-host's list is the wider one — it names the helpers its own
-// runtime defines, and core/map's drops written in Fern — so the pin is
-// one-directional on the names and exact on the prefixes.
-func TestSelfHostRcSigsReleaseSetCoversOracle(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "compiler", "rcsigs.fern")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	src := string(raw)
-	selfHost := map[string]bool{}
-	for _, fn := range []string{"release_helpers", "move_helpers", "release_names"} {
-		for _, n := range fernStringList(t, src, fn) {
-			selfHost[n] = true
-		}
-	}
-	var missing []string
-	for _, n := range append(ir.RcReleaseNames(), ir.RcGeneratedDropNames()...) {
-		if !selfHost[n] {
-			missing = append(missing, n)
-		}
-	}
-	sort.Strings(missing)
-	if len(missing) > 0 {
-		t.Errorf("internal/oracle/ir/rcsigs.go releases %d name(s) rcsigs.fern does not: %s", len(missing), strings.Join(missing, ", "))
-	}
-
-	prefixes := map[string]bool{}
-	for _, n := range fernStringList(t, src, "release_prefixes") {
-		prefixes[n] = true
-	}
-	native := map[string]bool{}
-	for _, n := range ir.RcGeneratedDropPrefixes() {
-		native[n] = true
-	}
-	var onlyNative, onlySelfHost []string
-	for n := range native {
-		if !prefixes[n] {
-			onlyNative = append(onlyNative, n)
-		}
-	}
-	for n := range prefixes {
-		if !native[n] {
-			onlySelfHost = append(onlySelfHost, n)
-		}
-	}
-	sort.Strings(onlyNative)
-	sort.Strings(onlySelfHost)
-	if len(onlyNative) > 0 {
-		t.Errorf("release_prefixes: internal/oracle/ir/rcsigs.go has %d prefix(es) rcsigs.fern does not: %s", len(onlyNative), strings.Join(onlyNative, ", "))
-	}
-	if len(onlySelfHost) > 0 {
-		t.Errorf("release_prefixes: rcsigs.fern has %d prefix(es) internal/oracle/ir/rcsigs.go does not: %s", len(onlySelfHost), strings.Join(onlySelfHost, ", "))
 	}
 }

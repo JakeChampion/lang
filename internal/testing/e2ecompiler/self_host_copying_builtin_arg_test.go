@@ -22,8 +22,9 @@ import (
 //
 // Every row is balanced: print writes the payload and a "\n" literal without
 // joining them, and a match over `w.write(...)` releases the Option[IoError]
-// box it consumed (#8410), so each case allocates only the accumulator's three
-// concats per round and frees all of them.
+// box it consumed (#8410), so each case allocates only the accumulator per
+// round, two blocks once its later appends grow into headroom (#8770), and
+// frees all of them.
 
 const copyingBuiltinProlog = `function round(n: i32): i32 {
     let out: string = "";
@@ -107,8 +108,8 @@ func TestSelfHostCopyingBuiltinArgX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			// 50 rounds, three concats each: every accumulator block is freed.
-			if frees < 150 {
+			// 50 rounds, two blocks each: every accumulator block is freed.
+			if frees < 100 {
 				t.Errorf("%s: %s — the accumulator's blocks were not freed; the credit did not reach `out`", tc.name, summary)
 			}
 			if allocs != frees || live != 0 {

@@ -1,0 +1,44 @@
+// compiler/drivers/ir_effects_run.fern — prints the operand-stack effect of
+// every registered op kind, one `| `name` | id | pops | pushes |` row per
+// kind in id order: the instruction table of spec/core.md, read from the
+// tables the verifier and the backends use (ir.op_pops / ir.op_pushes).
+//
+// pops is a count, `n` / `n+1` for a variadic op (the count is its i32
+// immediate), or `—` for an op the stack model does not cover.
+// internal/testing/e2ecompiler/self_host_core_spec_test.go diffs this output
+// against the table in spec/core.md.
+
+import "../ir";
+import "../util";
+
+function op_of(id: i32, imm: i32): ir.Op {
+  return ir.Op { kind_tag: id, i32_imm: imm, i64_imm: 0 as i64, f64_imm: 0.0, width: 0, unsigned: false, str: "", decl: 0 - 1 };
+}
+
+function pops_cell(id: i32): string {
+  let p0: i32 = ir.op_pops(op_of(id, 0));
+  let p1: i32 = ir.op_pops(op_of(id, 1));
+  if (p0 < 0) {
+    return "—";
+  }
+  if (p1 != p0) {
+    if (p0 == 0) {
+      return "n";
+    }
+    return "n+" + util.i32_to_string(p0);
+  }
+  return util.i32_to_string(p0);
+}
+
+function main(): i32 {
+  let id: i32 = 1;
+  while (id < 1024) {
+    let name: string = ir.kind_name(id);
+    if (name != "invalid") {
+      write("| `" + name + "` | " + util.i32_to_string(id) + " | " + pops_cell(id) + " | "
+        + util.i32_to_string(ir.op_pushes(op_of(id, 0))) + " |\n");
+    }
+    id = id + 1;
+  }
+  return 0;
+}
