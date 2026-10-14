@@ -409,10 +409,10 @@ it.
   + expected both quoted) is the runner's most regression-prone surface. Migration
   audit: `docs/TEST-RUNNER-MIGRATION.md`.
 - **Linter** (`fern -lint`, cyclomatic complexity, `[lint]` config, `// fern-lint:
-  allow` suppression) — `docs/LINT.md`. Engine: `internal/tools/lint`. It runs on the
+  allow` suppression) — `docs/LINT.md`. Engine: `compiler/lint.fern`. It runs on the
   PARSE tree, so a rule needing types belongs in the checker instead. This
   repository's own Fern sources are held to a complexity RATCHET
-  (`internal/tools/lint/repo_gate_test.go`): its two numbers per tree may not move in
+  (`internal/testing/e2ecompiler/self_host_lint_ratchet_test.go`): its two numbers per tree may not move in
   either direction, and a per-function exception is an `allow` comment on the
   function, never a row in that table.
 - **Bootstrap** (`make bootstrap`, `bootstrap/stage0.lock`, `make distcheck`) —

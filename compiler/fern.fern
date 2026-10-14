@@ -69,6 +69,7 @@ import "./constfold";
 import "./embed";
 import "./platforms";
 import "./coverreport";
+import "./lint";
 import "./caps";
 import "./modloader";
 import "./visibility";
@@ -1317,7 +1318,7 @@ function read_manifest(dir_slash: string): fern_toml.Manifest {
   let no_excl: string[] = [];
   return fern_toml.Manifest {
     name: "", lib: "lib.fern", index: "", deps: no_deps, members: no_members,
-    excl_pkg: no_excl, excl_ver: no_excl,
+    excl_pkg: no_excl, excl_ver: no_excl, lint_keys: no_excl, lint_vals: no_excl, lint_err: "",
   };
 }
 
@@ -3419,12 +3420,17 @@ struct ToolFlags {
   lcov: boolean,
   color_mode: string,
   ascii: boolean,
+  lint: boolean,
+  lint_rules: boolean,
+  lint_sets: string[],
+  lint_opts: string[],
 }
 
 function tool_flag(a: string): boolean {
   return a == "-run" || a == "--run" || a == "-qemu" || a == "-version" || a == "-explain"
     || util.str_has_prefix(a, "-explain=") || a == "-cover-report" || a == "-lcov"
-    || a == "-color" || util.str_has_prefix(a, "-color=") || a == "-ascii";
+    || a == "-color" || util.str_has_prefix(a, "-color=") || a == "-ascii"
+    || a == "-lint" || a == "-lint-rules" || a == "-lint-set" || a == "-lint-opt";
 }
 
 // parse_tool_flag applies the tool flag at av[i], returning the flags, the
@@ -3447,6 +3453,21 @@ function parse_tool_flag(tf: ToolFlags, av: string[], i: i32): (ToolFlags, i32, 
   }
   if (a == "-ascii") {
     return (ToolFlags { ...tf, ascii: true }, i, 0);
+  }
+  if (a == "-lint") {
+    return (ToolFlags { ...tf, lint: true }, i, 0);
+  }
+  if (a == "-lint-rules") {
+    return (ToolFlags { ...tf, lint_rules: true }, i, 0);
+  }
+  if (a == "-lint-set" || a == "-lint-opt") {
+    if (!has_next) {
+      return (tf, i, usage());
+    }
+    if (a == "-lint-set") {
+      return (ToolFlags { ...tf, lint_sets: tf.lint_sets.append(av[i + 1]) }, i + 1, 0);
+    }
+    return (ToolFlags { ...tf, lint_opts: tf.lint_opts.append(av[i + 1]) }, i + 1, 0);
   }
   if (a == "-qemu") {
     if (!has_next) {
@@ -3533,6 +3554,260 @@ function run_and_clean(target: string, out: string, dir: string, prog_args: stri
   return status;
 }
 
+// lint_targets is every .fern file the -lint paths name, a directory
+// contributing each .fern beneath it, sorted; the error is set for a path that
+// is neither.
+function lint_targets(paths: string[]): (string[], string) {
+  let out: string[] = [];
+  let todo: string[] = paths;
+  while (todo.len() > 0) {
+    let p: string = todo[0];
+    let rest: string[] = [];
+    let k: i32 = 1;
+    while (k < todo.len()) {
+      rest = rest.append(todo[k]);
+      k = k + 1;
+    }
+    todo = rest;
+    if (util.is_dir(p)) {
+      if let Ok(names) = read_dir(p) {
+        for n in names {
+          let child: string = p + "/" + n;
+          if (util.is_dir(child) || util.str_has_suffix(n, ".fern")) {
+            todo = todo.append(child);
+          }
+        }
+      }
+      continue;
+    }
+    if (util.str_has_suffix(p, ".fern.md")) {
+      let no: string[] = [];
+      return (no, p + ": linting a literate document is not supported yet — tangle it first (`fern -tangle " + p + "`)");
+    }
+    if (!util.str_has_suffix(p, ".fern")) {
+      if let Err(e) = read_file(p) {
+        let no: string[] = [];
+        return (no, p + ": " + util.io_error_reason(e));
+      }
+      let no: string[] = [];
+      return (no, p + ": not a .fern source");
+    }
+    if (!util.has_str(out, p)) {
+      out = out.append(p);
+    }
+  }
+  let i: i32 = 1;
+  while (i < out.len()) {
+    let f: string = out[i];
+    let j: i32 = i - 1;
+    while (j >= 0 && util.str_less(f, out[j])) {
+      out = out.with(j + 1, out[j]);
+      j = j - 1;
+    }
+    out = out.with(j + 1, f);
+    i = i + 1;
+  }
+  return (out, "");
+}
+
+// lint_config resolves the run's configuration: the [lint] tables of the
+// fern.toml governing the first file, in key order, then -lint-set, then
+// -lint-opt.
+function lint_config(first: string, sets: string[], opts: string[]): (lint.Config, string) {
+  let c: lint.Config = lint.default_config();
+  let dir: string = util.dir_of(first);
+  if (dir.len() > 0) {
+    dir = dir + "/";
+  }
+  let g: Governed = governing_manifest(dir);
+  let mpath: string = g.dir + "fern.toml";
+  if (g.man.lint_err.len() > 0) {
+    return (c, mpath + ": " + g.man.lint_err);
+  }
+  let keys: string[] = [];
+  let vals: string[] = [];
+  let i: i32 = 0;
+  while (i < g.man.lint_keys.len()) {
+    let k: string = g.man.lint_keys[i];
+    let at: i32 = keys.len();
+    while (at > 0 && util.str_less(k, keys[at - 1])) {
+      at = at - 1;
+    }
+    let nk: string[] = [];
+    let nv: string[] = [];
+    let j: i32 = 0;
+    while (j < keys.len()) {
+      if (j == at) {
+        nk = nk.append(k);
+        nv = nv.append(g.man.lint_vals[i]);
+      }
+      nk = nk.append(keys[j]);
+      nv = nv.append(vals[j]);
+      j = j + 1;
+    }
+    if (at == keys.len()) {
+      nk = nk.append(k);
+      nv = nv.append(g.man.lint_vals[i]);
+    }
+    keys = nk;
+    vals = nv;
+    i = i + 1;
+  }
+  i = 0;
+  while (i < keys.len()) {
+    let (nc, err) = lint.set_pair(c, keys[i], vals[i]);
+    if (err.len() > 0) {
+      return (c, mpath + ": " + err);
+    }
+    c = nc;
+    i = i + 1;
+  }
+  for sv in sets {
+    let eq: i32 = util.index_of_sub(sv, "=");
+    if (eq < 0) {
+      return (c, "-lint-set \"" + sv + "\" must be spelled RULE=SEVERITY");
+    }
+    let (nc, err) = lint.set_pair(c, slice_unchecked(sv, 0, eq) + "", slice_unchecked(sv, eq + 1, sv.len()) + "");
+    if (err.len() > 0) {
+      return (c, err);
+    }
+    c = nc;
+  }
+  for o in opts {
+    let eq: i32 = util.index_of_sub(o, "=");
+    if (eq < 0) {
+      return (c, "-lint-opt \"" + o + "\" must be spelled RULE.OPTION=VALUE");
+    }
+    let (nc, err) = lint.set_option(c, slice_unchecked(o, 0, eq) + "", slice_unchecked(o, eq + 1, o.len()) + "");
+    if (err.len() > 0) {
+      return (c, err);
+    }
+    c = nc;
+  }
+  return (c, "");
+}
+
+// lint_text renders one finding: its header, the source line with a caret,
+// and the rule's advice.
+function lint_text(st: DiagStyle, f: lint.Finding, src: string): string {
+  let label: string = "warning";
+  let sgr: string = "1;33";
+  if (f.severity == lint.DENY) {
+    label = "error";
+    sgr = "1;31";
+  }
+  let out: string = f.file + ":" + util.i32_to_string(f.line) + ":" + util.i32_to_string(f.col) + ": "
+    + paint(st, sgr, label + "[" + f.rule + "]") + ": " + f.msg;
+  let lines: string[] = [];
+  let start: i32 = 0;
+  let i: i32 = 0;
+  while (i <= src.len()) {
+    if (i == src.len() || src[i] == b'\n') {
+      lines = lines.append(slice_unchecked(src, start, i) + "");
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  let line: string = "";
+  if (f.line >= 1 && f.line <= lines.len()) {
+    line = lines[f.line - 1];
+    if (util.str_has_suffix(line, "\r")) {
+      line = slice_unchecked(line, 0, line.len() - 1) + "";
+    }
+  }
+  if (line.len() > 0) {
+    let pad: string = "";
+    let w: i32 = f.col - 1;
+    if (w > line.len()) {
+      w = line.len();
+    }
+    while (w > 0) {
+      pad = pad + " ";
+      w = w - 1;
+    }
+    out = out + "\n    " + line + "\n    " + pad + paint(st, sgr, "^");
+  }
+  if (f.help.len() > 0) {
+    out = out + "\n    " + paint(st, "34", "help:") + " " + f.help;
+  }
+  return out;
+}
+
+// run_lint is `fern -lint PATH...`: exit 1 when a rule set to deny fires, 2
+// for a usage or configuration error.
+function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]): i32 {
+  if (paths.len() == 0) {
+    eprint("usage: fern -lint PATH... (a .fern file or a directory of them)");
+    return 2;
+  }
+  let (files, terr) = lint_targets(paths);
+  if (terr.len() > 0) {
+    eprint("fern: " + terr);
+    return 2;
+  }
+  if (files.len() == 0) {
+    let joined: string = "";
+    for p in paths {
+      if (joined.len() > 0) {
+        joined = joined + ", ";
+      }
+      joined = joined + p;
+    }
+    eprint("fern: no .fern files under " + joined);
+    return 2;
+  }
+  let (cfg, cerr) = lint_config(files[0], sets, opts);
+  if (cerr.len() > 0) {
+    eprint("fern: " + cerr);
+    return 2;
+  }
+  let all: lint.Finding[] = [];
+  let srcs: string[] = [];
+  let out: string = "";
+  for f in files {
+    let src: string = "";
+    match (read_file(f)) {
+      Ok(t) => {
+        src = t;
+      },
+      Err(e) => {
+        eprint("fern: " + f + ": " + util.io_error_reason(e));
+        return 2;
+      }
+    }
+    let lx: lexer.LexResult = lexer.tokenize_full(src);
+    let m: parser.Module = parser.parse_module(lx.tokens);
+    // A parse error skips the file; a rule the parser happens to report but
+    // the checker owns (a coded E finding) does not.
+    let perrs: Finding[] = [];
+    for pf in parse_findings(m) {
+      if (pf.diag.code.len() == 0 || pf.diag.code[0] == b'P') {
+        perrs = perrs.append(pf);
+      }
+    }
+    let no_files: string[] = [];
+    if (eprint_findings(st, perrs, f, no_files, [util.no_line_map()])) {
+      continue;
+    }
+    for fd in lint.lint_file(cfg, f, src, m, lx.comments) {
+      if (all.len() > 0) {
+        out = out + "\n";
+      }
+      out = out + lint_text(st, fd, src) + "\n";
+      all = all.append(fd);
+    }
+  }
+  let sum: string = lint.summary(all);
+  if (sum.len() > 0) {
+    out = out + sum + "\n";
+  }
+  write(out);
+  if (lint.failed(all)) {
+    return 1;
+  }
+  return 0;
+}
+
 function run(): i32 {
   return run_with(args(), "");
 }
@@ -3557,7 +3832,8 @@ pub function run_with(av: string[], embedded_root: string): i32 {
   let mode_interp: boolean = false;
   // `-run`: build to a temporary binary (or -o) and execute it with the
   // program's arguments; `-qemu` names the emulator for a foreign ISA.
-  let tf: ToolFlags = ToolFlags { run_it: false, qemu: "qemu-aarch64", version: false, explain: false, explain_code: "", cover_report: false, lcov: false, color_mode: "auto", ascii: false };
+  let no_strs: string[] = [];
+  let tf: ToolFlags = ToolFlags { run_it: false, qemu: "qemu-aarch64", version: false, explain: false, explain_code: "", cover_report: false, lcov: false, color_mode: "auto", ascii: false, lint: false, lint_rules: false, lint_sets: no_strs, lint_opts: no_strs };
   let mode_fmt: boolean = false;
   // `-fmt` output destination, mirroring native: stdout by default, the input
   // file under `-w`, a unified diff (exit 1 when it is non-empty) under `-d`.
@@ -3775,6 +4051,13 @@ pub function run_with(av: string[], embedded_root: string): i32 {
   }
   if (tf.cover_report) {
     return cover_report(entry_path, have_entry, tf.lcov);
+  }
+  if (tf.lint_rules) {
+    write(lint.rules_listing());
+    return 0;
+  }
+  if (tf.lint) {
+    return run_lint(st, pos, tf.lint_sets, tf.lint_opts);
   }
 
   // `-resolve` takes a directory (or any file inside the package), not an

@@ -798,8 +798,7 @@ func main() {
 	}
 
 	if *listLintRulesFlag {
-		listLintRules(os.Stdout)
-		return
+		os.Exit(listLintRules(os.Stdout))
 	}
 
 	if *doLint {
@@ -807,7 +806,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "usage: fern -lint PATH... (a .fern file or a directory of them)")
 			os.Exit(2)
 		}
-		if code := runLint(flag.Args(), lintSets, lintOpts, os.Stdout); code != 0 {
+		if code := runLint(flag.Args(), lintSets, lintOpts, *colorMode, os.Stdout); code != 0 {
 			os.Exit(code)
 		}
 		return

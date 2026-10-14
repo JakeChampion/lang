@@ -1269,7 +1269,7 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
       };
     },
     ast.StmtWhile(w) => {
-      return ast.StmtWhile { cond: rewrite_expr(w.cond, ctx), body: rewrite_block(w.body, ctx), label: w.label, line: w.line, is_loop: w.is_loop };
+      return ast.StmtWhile { cond: rewrite_expr(w.cond, ctx), body: rewrite_block(w.body, ctx), label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo };
     },
     ast.StmtFor(f) => {
       return ast.StmtFor {

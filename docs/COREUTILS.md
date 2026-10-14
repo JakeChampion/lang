@@ -359,7 +359,7 @@ floor only when the catalogue shrinks on purpose; raising it to clear a failure
 is the same mistake in a new place.
 
 A name on the list that PASSED is a `::warning::`, not an error. That is a
-deliberate deviation from the two-way ratchet in `internal/tools/lint`, where a
+deliberate deviation from the two-way complexity ratchet, where a
 number moving in either direction fails: `ptx` failed on one round and passed
 on two, so erroring in that direction would make the lane flaky on a utility
 nobody had changed. The warning is still the prompt to delete the line.

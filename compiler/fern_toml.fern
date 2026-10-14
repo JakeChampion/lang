@@ -62,6 +62,12 @@ pub struct Manifest {
   members: string[],
   excl_pkg: string[],
   excl_ver: string[],
+  // lint_keys / lint_vals are the [lint] and [lint.options] tables as raw
+  // `key = value` pairs, in file order; a dotted key is a rule option.
+  // lint_err names the first malformed one.
+  lint_keys: string[],
+  lint_vals: string[],
+  lint_err: string,
 }
 
 // index_of returns the first index of the single-char needle `c` in `s`
@@ -138,6 +144,22 @@ pub function line_content(raw: string): string {
   return util.trim(raw);
 }
 
+// is_integer_text reports whether `s` is decimal digits, after an optional
+// leading `-`.
+function is_integer_text(s: string): boolean {
+  let i: i32 = 0;
+  if (s.len() > 1 && s[0] == b'-') {
+    i = 1;
+  }
+  while (i < s.len()) {
+    if (s[i] < b'0' || s[i] > b'9') {
+      return false;
+    }
+    i = i + 1;
+  }
+  return s.len() > 0;
+}
+
 // parse reads a fern.toml source into a Manifest: the [package] lib key
 // and every [dependencies] `name = { path = "..." }` entry. Non-path
 // dependency forms (url/workspace/version) are skipped here — the loader
@@ -150,6 +172,9 @@ pub function parse(src: string): Manifest {
   let members: string[] = [];
   let excl_pkg: string[] = [];
   let excl_ver: string[] = [];
+  let lint_keys: string[] = [];
+  let lint_vals: string[] = [];
+  let lint_err: string = "";
   let section: string = "";
   let lines: string[] = split_lines(src);
   let li: i32 = 0;
@@ -218,10 +243,37 @@ pub function parse(src: string): Manifest {
     if (section == "dependencies") {
       deps = deps.append(parse_dep(key, val));
     }
+    if (section == "lint" || section == "lint.options") {
+      // A severity is a quoted string and an option value may be a bare
+      // number; under [lint.options] the key is `<rule>.<option>`.
+      let v: string = val;
+      let bad: string = "";
+      if (val.len() > 0 && val[0] == b'"') {
+        match (quoted_value(val, 0)) {
+          Some(q) => {
+            v = q;
+          },
+          None => {}
+        }
+      } else if (val.len() == 0) {
+        bad = "expected a quoted string or a number, got an empty value";
+      } else if (!is_integer_text(val)) {
+        bad = "expected a quoted string or a number, got \"" + val + "\"";
+      }
+      if (bad.len() > 0 && lint_err.len() == 0) {
+        lint_err = "line " + util.i32_to_string(li) + ": [" + section + "] " + key + ": " + bad;
+      }
+      if (section == "lint.options" && index_of(key, b'.', 0) < 0 && lint_err.len() == 0) {
+        lint_err = "line " + util.i32_to_string(li) + ": [lint.options] key \"" + key + "\" must be spelled <rule>.<option>";
+      }
+      lint_keys = lint_keys.append(key);
+      lint_vals = lint_vals.append(v);
+    }
   }
   return Manifest {
     name: name, lib: lib, index: index, deps: deps, members: members,
     excl_pkg: excl_pkg, excl_ver: excl_ver,
+    lint_keys: lint_keys, lint_vals: lint_vals, lint_err: lint_err,
   };
 }
 

@@ -213,3 +213,19 @@ func TestSelfHostCLIDiagnosticSnippet(t *testing.T) {
 		t.Errorf("NO_COLOR: %q", got)
 	}
 }
+
+// -fmt reprints a `todo` stub, with or without its message, and a boolean
+// match whose `false` arm closes the domain, as written: neither the loop a
+// `todo` lowers to nor the `_` the closing arm is treated as.
+func TestSelfHostFmtKeepsTodoAndClosedBooleanArms(t *testing.T) {
+	cli := e2eharness.SelfHostCLI(t)
+	src := "function g(n: i32): i32 {\n  todo;\n}\n\n" +
+		"function h(): i32 {\n  todo(\"later\");\n}\n\n" +
+		"function pick(b: boolean): i32 {\n  match (b) {\n    true => {\n      return 7;\n    },\n    false => {\n      return 3;\n    }\n  }\n}\n\n" +
+		"function name(b: boolean): string {\n  return match (b) { false => \"no\", true => \"yes\" };\n}\n"
+	path := writeShippedSrc(t, t.TempDir(), "t.fern", src)
+	out, err := exec.Command(cli, "-fmt", path).CombinedOutput()
+	if err != nil || string(out) != src {
+		t.Errorf("-fmt: %v\n--- got ---\n%s--- want ---\n%s", err, out, src)
+	}
+}

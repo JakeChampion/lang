@@ -2305,6 +2305,24 @@ function print_assert(ifs: ast.StmtIf, depth: i32, f: Fmt): (string, Fmt) {
   return (out + ");", g);
 }
 
+// print_todo reprints a `todo` desugar as the `todo;` or `todo(msg);` it was
+// written as: a message is the right side of the eprint's `"todo: " + msg`.
+function print_todo(w: ast.StmtWhile, depth: i32, f: Fmt): (string, Fmt) {
+  if (w.body.len() > 0) {
+    if let ast.StmtExpr(se) = w.body[0] {
+      if let ast.ExprCall(c) = se.value {
+        if (c.args.len() > 0) {
+          if let ast.ExprBinary(b) = c.args[0] {
+            let (ms, mf) = print_expr_c(b.right, prec_lowest(), depth, f);
+            return ("todo(" + ms + ");", mf);
+          }
+        }
+      }
+    }
+  }
+  return ("todo;", f);
+}
+
 function print_chain_assign(stmts: ast.Stmt[], depth: i32): string {
   let out: string = "";
   let i: i32 = stmts.len() - 1;
@@ -2381,7 +2399,7 @@ function print_stmt_inline(st: ast.Stmt, depth: i32): string {
 // form keeps no record of which of the two was written.
 // `label` is the loop label the source wrote, which with_loop_label parks on
 // the desugar's inner while — there is no other loop in the shape to carry it.
-struct ForCSugar { init: ast.Stmt[], cond: ast.Expr, step: ast.Stmt[], body: ast.Stmt[], label: string, ok: boolean }
+pub struct ForCSugar { init: ast.Stmt[], cond: ast.Expr, step: ast.Stmt[], body: ast.Stmt[], label: string, ok: boolean }
 
 function no_c_for(): ForCSugar {
   let none: ast.Stmt[] = [];
@@ -2403,7 +2421,7 @@ function no_c_for(): ForCSugar {
 //         if (!(COND)) { break; }
 //         BODY…
 //     } }
-function as_c_for(ifs: ast.StmtIf): ForCSugar {
+pub function as_c_for(ifs: ast.StmtIf): ForCSugar {
   if (!expr_is_true(ifs.cond) || ifs.else_body.len() != 0) {
     return no_c_for();
   }
@@ -3065,6 +3083,9 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
       return print_if_chain(ifs, depth, f);
     },
     ast.StmtWhile(w) => {
+      if (w.todo) {
+        return print_todo(w, depth, f);
+      }
       if (w.is_loop) {
         let (lb, lg) = print_block(w.body, depth, f);
         return (loop_label(w.label) + "loop " + lb, lg);

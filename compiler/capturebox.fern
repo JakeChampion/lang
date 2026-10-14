@@ -201,7 +201,7 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
       return ast.StmtIf { ...f, cond: box_rewrite_expr(f.cond, boxed, btypes, bsites, bound), then_body: box_rewrite_stmts(f.then_body, boxed, btypes, bsites, bound), else_body: box_rewrite_stmts(f.else_body, boxed, btypes, bsites, bound) };
     },
     ast.StmtWhile(w) => {
-      return ast.StmtWhile { cond: box_rewrite_expr(w.cond, boxed, btypes, bsites, bound), body: box_rewrite_stmts(w.body, boxed, btypes, bsites, bound), label: w.label, line: w.line, is_loop: w.is_loop };
+      return ast.StmtWhile { cond: box_rewrite_expr(w.cond, boxed, btypes, bsites, bound), body: box_rewrite_stmts(w.body, boxed, btypes, bsites, bound), label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo };
     },
     ast.StmtFor(fr) => {
       // The loop BINDER shadows: `for n in xs` inside a function with a

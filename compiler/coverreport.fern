@@ -72,17 +72,6 @@ function bad(lineno: i32, text: string, why: string): Folded {
   return Folded { files: none, err: "line " + util.i32_to_string(lineno) + ": \"" + text + "\": " + why };
 }
 
-function file_index(files: File[], names: Map[string, i32], name: string): i32 {
-  match (names.get(name)) {
-    Some(i) => {
-      return i;
-    },
-    None => {
-      return 0 - 1;
-    }
-  }
-}
-
 function new_file(name: string): File {
   let ni: i32[] = [];
   let nl: i64[] = [];
@@ -92,10 +81,14 @@ function new_file(name: string): File {
 // fold reads the stream and folds every prefixed row.
 function fold(text: string): Folded {
   let files: File[] = [];
-  let names: Map[string, i32] = map_new(16);
-  // (file index, line) and (file index, line, col) to the row's slot.
-  let line_slot: Map[string, i32] = map_new(256);
-  let branch_slot: Map[string, i32] = map_new(64);
+  let none: string[] = [];
+  // The file names, in File order; the `file:line` and `file:line:col` keys
+  // seen, with the row's slot in its file parallel to each.
+  let names: util.NameIndex = util.name_index(none);
+  let line_keys: util.NameIndex = util.name_index(none);
+  let line_slots: i32[] = [];
+  let branch_keys: util.NameIndex = util.name_index(none);
+  let branch_slots: i32[] = [];
   let lineno: i32 = 0;
   let start: i32 = 0;
   let i: i32 = 0;
@@ -155,25 +148,24 @@ function fold(text: string): Folded {
     }
     let src_line: i32 = util.digits_to_i32(sub(site, ls + 1, site.len()));
     let name: string = sub(site, 0, ls);
-    let fi: i32 = file_index(files, names, name);
+    let fi: i32 = names.find(name);
     if (fi < 0) {
       fi = files.len();
       files = files.append(new_file(name));
-      names = names.insert(name, fi);
+      names = names.added(name);
     }
     let f: File = files[fi];
     if (is_branch) {
       let key: string = util.i32_to_string(fi) + ":" + util.i32_to_string(src_line) + ":" + util.i32_to_string(col);
       let slot: i32 = 0 - 1;
-      match (branch_slot.get(key)) {
-        Some(s) => {
-          slot = s;
-        },
-        None => {
-          slot = f.bline.len();
-          branch_slot = branch_slot.insert(key, slot);
-          f = File { ...f, bline: f.bline.append(src_line), bcol: f.bcol.append(col), beval: f.beval.append(0 as i64), btaken: f.btaken.append(0 as i64) };
-        }
+      let at: i32 = branch_keys.find(key);
+      if (at >= 0) {
+        slot = branch_slots[at];
+      } else {
+        slot = f.bline.len();
+        branch_keys = branch_keys.added(key);
+        branch_slots = branch_slots.append(slot);
+        f = File { ...f, bline: f.bline.append(src_line), bcol: f.bcol.append(col), beval: f.beval.append(0 as i64), btaken: f.btaken.append(0 as i64) };
       }
       if (edge == "E") {
         f = File { ...f, beval: f.beval.with(slot, f.beval[slot] + count) };
@@ -182,14 +174,14 @@ function fold(text: string): Folded {
       }
     } else {
       let key: string = util.i32_to_string(fi) + ":" + util.i32_to_string(src_line);
-      match (line_slot.get(key)) {
-        Some(s) => {
-          f = File { ...f, hits: f.hits.with(s, f.hits[s] + count) };
-        },
-        None => {
-          line_slot = line_slot.insert(key, f.lines.len());
-          f = File { ...f, lines: f.lines.append(src_line), hits: f.hits.append(count) };
-        }
+      let at: i32 = line_keys.find(key);
+      if (at >= 0) {
+        let s: i32 = line_slots[at];
+        f = File { ...f, hits: f.hits.with(s, f.hits[s] + count) };
+      } else {
+        line_keys = line_keys.added(key);
+        line_slots = line_slots.append(f.lines.len());
+        f = File { ...f, lines: f.lines.append(src_line), hits: f.hits.append(count) };
       }
     }
     files = files.with(fi, f);
