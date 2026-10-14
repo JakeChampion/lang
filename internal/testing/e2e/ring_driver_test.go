@@ -390,3 +390,131 @@ func runRingRecvProbe(t *testing.T, leg string) {
 func TestRingRecvX86_64(t *testing.T) { runRingRecvProbe(t, "x86-64-linux") }
 func TestRingRecvInterp(t *testing.T) { runRingRecvProbe(t, "interp") }
 func TestRingRecvArm64(t *testing.T)  { runRingRecvProbe(t, "arm64-linux") }
+
+// ringZcProbe prints what send_zc does (slice 4): a write of 32 KiB from
+// offset 0 and one of its second half from offset 16,384, each reported
+// writable once done, its result the bytes written, the peer reading them
+// in order, and its slot notified and released. Every driver but an
+// io_uring's answers -EOPNOTSUPP.
+const ringZcProbe = `import "std/async";
+import "std/i32";
+
+function pattern(n: i32): u8[] {
+  let out: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.with(i, (i % 251) as u8);
+    i = i + 1;
+  }
+  return out;
+}
+
+function read_back(c: i32, n: i32, from: i32): boolean {
+  let buf: u8[] = __alloc_u8(n);
+  let got: i32 = 0;
+  while (got < n) {
+    let piece: u8[] = __alloc_u8(n - got);
+    let r: i32 = tcp_recv_into(c, piece);
+    if (r <= 0) {
+      return false;
+    }
+    let i: i32 = 0;
+    while (i < r) {
+      if (piece[i] != ((from + got + i) % 251) as u8) {
+        return false;
+      }
+      i = i + 1;
+    }
+    got = got + r;
+  }
+  return true;
+}
+
+function send(d: async.RealDriver, a: i32, c: i32, data: u8[], from: i32): string {
+  let s: i32 = d.send_zc(a, data, from);
+  if (s < 0) {
+    return "refused " + s.to_string();
+  }
+  let ev: i32[] = d.wait(64, 2000);
+  let reported: boolean = ev.len() == 2 && ev[0] == a && (ev[1] & 2) == 2;
+  let r: i32 = d.zc_result(s);
+  let ok: boolean = read_back(c, r, from);
+  let tries: i32 = 0;
+  while (!d.zc_notified(s) && tries < 50) {
+    d.wait(64, 100);
+    tries = tries + 1;
+  }
+  return "reported " + reported.to_string() + " wrote " + r.to_string() + " read " + ok.to_string() + " notified " + d.zc_notified(s).to_string() + " released " + d.zc_release(s).to_string();
+}
+
+function main(): i32 {
+  let d: async.RealDriver = async.real_driver_io_uring();
+  print("ring " + d.io_uring().to_string());
+  let any: u8[] = [0u8, 0u8, 0u8, 0u8];
+  let ln: i32 = tcp_listen_with(any, 0, 64, false);
+  let c: i32 = tcp_connect(16777343, tcp_local_port(ln));
+  let a: i32 = tcp_accept(ln);
+  let tries: i32 = 0;
+  while (a < 0 && tries < 200) {
+    sleep_ms(5 as i64);
+    a = tcp_accept(ln);
+    tries = tries + 1;
+  }
+  tcp_socket_ctl(a, 3, 1);
+  d.watch(a, 8);
+  let data: u8[] = pattern(32768);
+  print("whole " + send(d, a, c, data, 0));
+  print("half " + send(d, a, c, data, 16384));
+  d.unwatch(a);
+  tcp_close(a);
+  tcp_close(c);
+  tcp_close(ln);
+  print("close " + d.close().to_string());
+  return 0;
+}
+`
+
+func runRingZcProbe(t *testing.T, leg string) {
+	t.Helper()
+	src := filepath.Join(t.TempDir(), "ring_zc.fern")
+	if err := os.WriteFile(src, []byte(ringZcProbe), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var cmd *exec.Cmd
+	ring := false
+	switch leg {
+	case "interp":
+		cmd = exec.Command(buildLangBinForInterp(t), "-interp", src)
+	case "x86-64-linux":
+		if x86QemuOrEmpty(t) != "" {
+			t.Skip("qemu-user has no io_uring; the x86-64 leg needs a native host")
+		}
+		out := filepath.Join(filepath.Dir(src), "ring_zc.bin")
+		if o, err := exec.Command(buildFernCLI(t), "-target", leg, "-o", out, src).CombinedOutput(); err != nil {
+			t.Fatalf("build failed: %v\n%s", err, o)
+		}
+		cmd, ring = exec.Command(out), true
+	case "arm64-linux":
+		qemu := arm64QemuOrEmpty(t)
+		out := filepath.Join(filepath.Dir(src), "ring_zc.arm64")
+		if o, err := exec.Command(buildFernCLI(t), "-target", leg, "-o", out, src).CombinedOutput(); err != nil {
+			t.Fatalf("build failed: %v\n%s", err, o)
+		}
+		cmd, ring = exec.Command(out), qemu == ""
+		if qemu != "" {
+			cmd = exec.Command(qemu, out)
+		}
+	}
+	got, err := cmd.CombinedOutput()
+	want := "ring false\nwhole refused -95\nhalf refused -95\nclose 0\n"
+	if ring {
+		want = "ring true\nwhole reported true wrote 32768 read true notified true released 0\nhalf reported true wrote 16384 read true notified true released 0\nclose 0\n"
+	}
+	if err != nil || string(got) != want {
+		t.Fatalf("probe: %v\n%s\nwant:\n%s", err, got, want)
+	}
+}
+
+func TestRingZcX86_64(t *testing.T) { runRingZcProbe(t, "x86-64-linux") }
+func TestRingZcInterp(t *testing.T) { runRingZcProbe(t, "interp") }
+func TestRingZcArm64(t *testing.T)  { runRingZcProbe(t, "arm64-linux") }

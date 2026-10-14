@@ -3445,6 +3445,10 @@ points that run a handler under it.
   than epoll where the host allows one (Linux 6.1 or later, outside a
   seccomp profile that refuses it) and on epoll elsewhere, decided as the
   loop starts (docs/NET-P7-IO-URING-PLAN.md). A handler sees no difference.
+  `io_uring_zc_bytes` (3072): under the ring, a bytes body at least this
+  long on a plain HTTP/1.1 connection is written without a copy into the
+  kernel (`IORING_OP_SEND_ZC`), the body held until the kernel is done
+  with it; 0, or a driver without the send, copies every body.
   `ktls` (false), set by `(c).with_ktls()` or by `FERN_KTLS=1` in the
   environment, hands each TLS connection's records to Linux's record layer
   once its handshake is done (`std/tls/ktls`): responses are written as

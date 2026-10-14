@@ -122,7 +122,7 @@ func errnoOf(err error) int64 {
 	return -int64(syscall.EIO)
 }
 
-// builtinRingUnsupported answers ring_new, ring_ctl, ring_wait and ring_recv: the
+// builtinRingUnsupported answers ring_new, ring_ctl, ring_wait, ring_recv and ring_send_zc: the
 // interpreter keeps every wait on the reactor, so a driver asking for the
 // io_uring set falls back to it as it does on a kernel without one.
 func builtinRingUnsupported(_ *Interp, _ []Value) (Value, error) {

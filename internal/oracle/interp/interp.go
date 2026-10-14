@@ -1722,6 +1722,7 @@ func New() *Interp {
 	i.Builtins["ring_ctl"] = &Builtin{Fn: builtinRingUnsupported}
 	i.Builtins["ring_wait"] = &Builtin{Fn: builtinRingUnsupported}
 	i.Builtins["ring_recv"] = &Builtin{Fn: builtinRingUnsupported}
+	i.Builtins["ring_send_zc"] = &Builtin{Fn: builtinRingUnsupported}
 	i.Builtins["tcp_recv_into"] = &Builtin{Fn: builtinTcpRecvInto}
 	i.Builtins["tcp_ktls"] = &Builtin{Fn: builtinKtlsUnsupported}
 	i.Builtins["udp_bind"] = &Builtin{Fn: builtinUdpBind}

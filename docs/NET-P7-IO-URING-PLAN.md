@@ -167,16 +167,29 @@ fallback; the native arm64 runner exercises the ring.
    backends; `TestSelfHostServePipelinedBurst` and its `Ring` twin, 64,000
    pipelined requests over four connections, some 2.3 MB, answered in
    order; and the x86-64 serve suite under `FERN_IO_URING=1`.
-4. **Zero-copy send above the crossover.** A response body at or past
-   `Config.io_uring_zc_bytes` (3,072 by default, the kernel's measured
-   crossover) is written with `IORING_OP_SEND_ZC`; the loop keeps the
-   bytes until the notification completion says the kernel is done with
-   them. Loopback always copies, so this slice can be measured only
-   between two machines with a real NIC. No such host is available: every
-   lane runs on one shared GitHub runner, where the generator and the
-   server talk over loopback. The slice waits for one, rather than landing
-   a send path nothing here can show is worth its code. Gate: the
-   large-response and sendfile serve tests under both backends.
+4. **Zero-copy send above the crossover (landed).** A bytes body of at
+   least `Config.io_uring_zc_bytes` (3,072 by default, about the kernel's
+   measured crossover) on a plain HTTP/1.1 connection leaves the loop's
+   builder: the head goes out as before and the body becomes a tail
+   (`ZcTail`) written by `IORING_OP_SEND_ZC`, through `ring_send_zc(ring,
+   fd, data, from)` and `drv.send_zc`. The SQE takes the body's address and
+   no unit of it. The loop holds the body (`__Conns.zc_held`) until the
+   kernel's notification, so it stays alive and unchanged however the
+   response ends, and frees the slot then (`ring_ctl` ops 8 to 10: the
+   write's result, whether it was notified, release). The connection is
+   watched for nothing but the write's completion, which the wait reports
+   as writable; a short write sends the rest from where it stopped. A
+   driver without the send (epoll, a kernel that refuses it) answers
+   -EOPNOTSUPP and the loop copies from then on. Loopback copies, so on
+   every host here the kernel sends a copy behind the same completions,
+   and what this slice saves is measured only between two machines with a
+   real NIC; the gates are correctness. Gates: `TestRingZcX86_64` and its
+   interpreter and qemu-aarch64 twins (a write from the start and one from
+   an offset, each reported, read back whole, notified and released, and
+   -EOPNOTSUPP on the fallback); `TestSelfHostServeZeroCopy` and its
+   `Ring` twin (bodies from 1,000 bytes to 8 MiB, kept, closing, HTTP/1.0,
+   HEAD and sixteen clients at once, every body whole); the
+   zero-allocation gate; and the x86-64 serve suite under both backends.
 5. **Measured, and kept only if it wins.** The HttpArena profiles #9861
    names (baseline at 4,096 connections, pipelined at 4,096, and the
    async profile at 32,000) on the fixed host, epoll against the ring

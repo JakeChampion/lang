@@ -2407,15 +2407,12 @@ pub function http_serialize_response_to_bytes(method: string, resp: HttpResponse
 // `tcp_send_buf`, so a reply costs no allocation once the builder has
 // grown to hold one.
 pub function http_serialize_response_into(b: usize, method: string, resp: HttpResponse, keep_alive: boolean, fields: string): void {
-  __push_head(b, resp);
-  buf_push(b, fields);
   if (http_bodiless(resp.status)) {
-    __push_conn(b, resp, keep_alive);
+    http_serialize_response_head_into(b, resp, keep_alive, fields);
     return;
   }
   if (method == "HEAD") {
-    __push_length(b, resp.body_len());
-    __push_close(b, keep_alive);
+    http_serialize_response_head_sized_into(b, resp, keep_alive, fields, resp.body_len());
     return;
   }
   let text: string = "";
@@ -2429,8 +2426,7 @@ pub function http_serialize_response_into(b: usize, method: string, resp: HttpRe
     }
   }
   let len: i32 = text.len() + body.len();
-  __push_length(b, len);
-  __push_close(b, keep_alive);
+  http_serialize_response_head_sized_into(b, resp, keep_alive, fields, len);
   assert(len <= 2147483647 - buf_len(b));
   buf_push(b, text);
   buf_push_bytes_range(b, body, 0, body.len());
@@ -2462,6 +2458,16 @@ pub function http_serialize_fields(fields: HeaderMap): string {
 // none for a close-delimited or bodiless response) and `keep_alive`
 // decide; a 101's `Connection` names the upgrade, whatever `keep_alive`
 // says. The serve loop writes a streamed body behind this head.
+// `http_serialize_response_head_sized_into(b, resp, keep_alive, fields,
+// len)` — the head `http_serialize_response_into` writes for a body of
+// `len` bytes, without the body, which the caller writes after it.
+pub function http_serialize_response_head_sized_into(b: usize, resp: HttpResponse, keep_alive: boolean, fields: string, len: i32): void {
+  __push_head(b, resp);
+  buf_push(b, fields);
+  __push_length(b, len);
+  __push_close(b, keep_alive);
+}
+
 pub function http_serialize_response_head_into(b: usize, resp: HttpResponse, keep_alive: boolean, fields: string): void {
   __push_head(b, resp);
   buf_push(b, fields);
