@@ -2931,7 +2931,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// A CONSTRUCTOR is not an E053 shape violation in any tier (#9602):
 		// the checker cannot tell a rebuild that reuses a dead donor's box
 		// from one that allocates a fresh box, so E068 at the IR decides and
-		// both checkers stay quiet here. internal/oracle/ir/fip_verify_test.go owns
+		// both checkers stay quiet here. compiler/irfipverify.fern enforces
 		// the budget half; this file pins only that the two CHECKERS agree.
 		{"e053-fip-array-lit", "fip function mk(): i32 {\n    let a = [1, 2];\n    return a[0];\n}\nfunction main(): i32 { return mk(); }\n", []string{"E053"}},
 		{"e053-fip-struct-lit-ok", "struct P { x: i32 }\nfip function mk(a: i32): i32 {\n    let p = P { x: a };\n    return p.x;\n}\nfunction main(): i32 { return mk(1); }\n", nil},

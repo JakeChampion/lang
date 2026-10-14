@@ -5,7 +5,7 @@ name: Test coreutils
 #
 # It is one package, and it was the critical path of the whole suite: 14m40s
 # of a 15m07s units job, with every other package in that lane finishing
-# inside its shadow (internal/oracle/ir, the next largest, is 4m38s). Measurements
+# inside its shadow. Measurements
 # and the shard arithmetic are in docs/CI-PERFORMANCE.md.
 #
 # Its own lane rather than a matrix inside the units lane, because that is

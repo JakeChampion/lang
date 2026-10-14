@@ -1,6 +1,5 @@
-// Runtime contract for the struct-update spread `p = T{ ...p, f: v }` now
-// that it reuses p's box in place (internal/oracle/ir/struct_update_reuse_test.go
-// pins the lowering). Reuse is gated on a runtime is_unique check, so the
+// Runtime contract for the struct-update spread `p = T{ ...p, f: v }`,
+// which reuses p's box in place. Reuse is gated on a runtime is_unique check, so the
 // two branches are BOTH live and each needs its own proof:
 //
 //   - unique p (rc==1): the box is repurposed. The un-listed fields are

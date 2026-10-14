@@ -214,9 +214,7 @@ function main(): i32 {
 		// wrongly-borrowed return goes uncounted through move-on-return and
 		// the caller's may-alias-result conservatism degrades its container
 		// drops to FLAT decs — a leak, which this corpus reads as 0 by
-		// design. The failing-mode net for these guards is the IR layer:
-		// internal/oracle/ir/forin_elem_borrow_test.go, whose returned case DOES
-		// fail with the guard removed.
+		// design.
 		name: "forin_elem_escape_return_keeps_retain",
 		src: `
 struct S { name: string, fields: string[] }

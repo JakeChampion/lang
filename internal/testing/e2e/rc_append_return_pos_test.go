@@ -6,9 +6,7 @@
 // reclaims. That quadratic regime pushed the self-host per-module emits
 // past the 8 GiB bump-arena ceiling (exit 137), and the recursive
 // split-and-retry on top of it OOM-killed the 16 GB CI runners (exit 143)
-// on every PR. inPlacePushes (internal/oracle/ir) is the exemption under test;
-// TestAppendForcedCopyExemptions pins it at the IR layer, this pins the
-// end-to-end heap behaviour.
+// on every PR. This pins that exemption's end-to-end heap behaviour.
 package e2e
 
 import (

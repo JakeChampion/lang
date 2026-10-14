@@ -5,7 +5,7 @@ import (
 )
 
 // E2' — `fbip` verify-and-enable, end to end (docs/NICHE-BORROWS-PLAN.md;
-// IR side in internal/oracle/ir/fip_verify.go). The canonical fbip function — a
+// IR side in compiler/irfipverify.fern). The canonical fbip function — a
 // consuming map over an `own` list, the R4 shape of docs/REUSE-CONTRACT.md —
 // passes the checker's relaxed E053 walk AND the IR's E068 verification
 // (every Cons construction is reuse-paired with the consumed scrutinee box),

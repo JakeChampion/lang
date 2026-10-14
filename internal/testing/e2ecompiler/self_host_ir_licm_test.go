@@ -11,14 +11,12 @@ import (
 )
 
 // TestSelfHostIRLICM pins the self-hosted stack IR's loop-invariant code motion
-// (compiler/ir.fern's hoist_loop_invariants — the op-list port of
-// internal/oracle/ir/licm.go, #8245) and the slot growth it depends on (#8247).
+// (compiler/ir.fern's hoist_loop_invariants, #8245) and the slot growth it
+// depends on (#8247).
 //
 // The ir_licm_run driver builds the op list the lowering emits for each `while`
-// shape, runs the pass, and prints the ops AND the frame count. The lines
-// mirror the cases in internal/oracle/ir/licm_test.go, except the typed-lowering
-// rows: the Go pass's header still stops at `block`, so licm_typed_block_header
-// is a hoist it does not perform. The refusals are the essential half, since
+// shape, runs the pass, and prints the ops AND the frame count. The refusals
+// are the essential half, since
 // each one is a read the original program would not have made.
 func TestSelfHostIRLICM(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -81,7 +79,7 @@ func TestSelfHostIRLICM(t *testing.T) {
 	}
 }
 
-// licmPrograms are the fixtures of internal/oracle/ir/licm_test.go with a main, so
+// licmPrograms are the hoisting fixtures as whole programs with a main, so
 // the same source is emitted and run. `outside` / `inside` count the
 // string-length reads the pass leaves outside any loop and inside one; the
 // runtime value is what every backend must still compute.

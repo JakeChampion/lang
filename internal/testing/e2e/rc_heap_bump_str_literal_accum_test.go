@@ -11,9 +11,8 @@ import (
 // and tainted the local forever — every reassignment leaked the prior buffer
 // (linear bump growth; O(n²) bytes on the growing `s = s + p` edge-handler
 // pattern). A Binary init (`let s = "a" + ""`) reclaimed fine, so only the
-// literal-init shape was broken. The IR-layer guard (that the overwrite dec is
-// emitted, at both pointer widths) lives in internal/oracle/ir; this pins the
-// end-to-end heap benefit on wasm.
+// literal-init shape was broken. This pins the end-to-end heap benefit on
+// wasm.
 //
 // The probe uses a CONSTANT-size overwrite (`s = p + "!"`, p a fixed 20-char
 // string) and measures the bump allocator's high-water via __heap_bump_bytes().

@@ -21,9 +21,8 @@ package modload_test
 // every body); comparing it across repeated loads is a faithful
 // witness.
 //
-// This sits one layer earlier than the IR determinism guard
-// (internal/oracle/ir/determinism_test.go): if loading is deterministic
-// here, the IR / codegen / interpreter downstream guards are
+// This sits one layer earlier than the IR determinism guards: if loading is
+// deterministic here, the IR / codegen / interpreter downstream guards are
 // testing only their own steps, not noise inherited from modload.
 
 import (

@@ -30,7 +30,7 @@ import (
 //
 // (This also guards the struct spread-update self-overwrite miscompile the
 // flip surfaced: `p = T { ...p, f: v }` of a parameter mis-lowered in the
-// shared internal/oracle/ir FBIP-reuse fast path. It was originally worked around
+// shared IR FBIP-reuse fast path. It was originally worked around
 // with per-function local copies in arm64_native; those are gone now that the
 // IR bug is fixed (slice 3r / TestStructUpdateParamSpreadReuse), and this test
 // would surface a regression of that fix when arm64_native is compiled by the
