@@ -39,8 +39,12 @@ box it copies doubled the capacity each time, out of memory within a few
 dozen appends. The gate's program shares its accumulator every seventh
 round to hold that.
 
-The exact concatenation stays for a range join of a string the frame keeps
-(`ssarc.concatenation`): only the shape that appends again carries slack.
+Every `+` that consumes a non-literal left operand takes the grow, so a
+one-shot `c = a + b` whose `a` has no room gets the headroom too, at most
+the length again, as does a field the `+` writes back to
+(`grow_field_or_concat`). The exact concatenation stays for a literal on
+the left, any other left operand the frame keeps, and a range join of a
+string the frame keeps (`ssarc.concatenation`).
 `rcsigs` reads the new helpers as inert with a fresh result, as the
 concatenation was.
 

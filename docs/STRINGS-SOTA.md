@@ -480,8 +480,12 @@ doubling: 3000 one-byte appends cost 26 blocks where the exact box cost one
 per allocator class step, a two-byte literal append retires 51 instructions
 where it retired 135, an 8-byte range append 78 where it retired 419, and
 `bench/string_build` retires 37% fewer. On wasm the block-size word every
-heap string already carries records the headroom. A plain `a + b` is still
-an exact box: only the shape that will append again carries slack.
+heap string already carries records the headroom. Any `+` that consumes a
+non-literal left operand takes this path, a one-shot `c = a + b` included,
+as Rust's `String + &str` grows the buffer it consumes: the slack is at most
+the length again and leaves with the string. A literal on the left, or a
+left operand the frame keeps other than a field the `+` writes back to,
+still builds an exact box.
 
 The **capacity-carrying builder** (#8773) is the other half. A builder is a
 `usize` — the address of a control block holding data, length, capacity and

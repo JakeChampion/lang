@@ -1298,7 +1298,7 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
 // unconditionally, so a set is always followed by exactly one consume.
 // Single-threaded by construction, like the rest of the runtime.
 //
-// That unconditionality is why the claim is limited to these three. A helper
+// That unconditionality is why the claim is limited to these five. A helper
 // that allocates only SOMETIMES — __fern_arr_push, whose grow path allocates
 // and whose in-place path does not — cannot claim at its entry without
 // leaving a stale site behind on the fast path, to be consumed by the next
@@ -1311,7 +1311,7 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
 // `__fern_arr_push`, and the construction sites — where a leak is actually
 // created — report user code.
 //
-// %rax is the scratch: it is dead at the entry of all three shims (each
+// %rax is the scratch: it is dead at the entry of all five shims (each
 // RETURNS in %rax and reads nothing from it), and the prologue sits ahead of
 // every push so `(%rsp)` is still the return address.
 function hev_shim_site(s: asmcore.EmitState, tag: string): asmcore.EmitState {
