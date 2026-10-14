@@ -1734,6 +1734,11 @@ function (s: Scope) has_ord_cmp(t: typeinfo.Type): boolean {
   return recv != "" && s.lookup_method("cmp", recv).name.len() > 0;
 }
 
+// orders_alike: two values of one struct or enum that has `cmp`.
+function (s: Scope) orders_alike(a: typeinfo.Type, b: typeinfo.Type): boolean {
+  return type_eq(a, b) && s.has_ord_cmp(a);
+}
+
 // binop_overload_ret returns the DECLARED return type of the overload that `lt`
 // dispatches `op` through — unknown when the operator has no overload form, the
 // operand is not a nominal type, or that type does not define the method.
@@ -4766,13 +4771,8 @@ function call_through_fn_value(c: ast.ExprCall, s: Scope): typeinfo.Type {
   // the mixed-arm form draws. Reading the lambda's own return type here would
   // answer where that arm chose not to. A lambda the program wrote is typed by
   // what it declares, like any other function value.
-  match (c.callee) {
-    ast.ExprLambda(lm) => {
-      if (!parser.is_written_lambda_origin(lm.origin)) {
-        return t_unknown("immediately-invoked lambda: typed from its branches, not its value");
-      }
-    },
-    _ => {}
+  if (desugared_lambda(c.callee)) {
+    return t_unknown("immediately-invoked lambda: typed from its branches, not its value");
   }
   let ct: typeinfo.Type = check_expr(c.callee, s);
   match (ct) {
@@ -4796,6 +4796,15 @@ function call_through_fn_value(c: ast.ExprCall, s: Scope): typeinfo.Type {
     _ => {}
   }
   return t_unknown("call target is not a function value");
+}
+
+// desugared_lambda says whether `e` is a lambda the parser built rather than
+// one the program wrote.
+function desugared_lambda(e: ast.Expr): boolean {
+  if let ast.ExprLambda(lm) = e {
+    return !parser.is_written_lambda_origin(lm.origin);
+  }
+  return false;
 }
 
 // ret_typevar_arg_type: the concrete type a generic call's bare-typevar return
@@ -6229,20 +6238,26 @@ function dest_bound_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag
       if (dn.len() == bn.len()) {
         return none;
       }
-      let out: util.Diag[] = [];
-      let di: i32 = bn.len();
-      while (di < dn.len()) {
-        let ti: i32 = util.index_of_str(sig.type_params, dn[di]);
-        if (ti >= 0 && ti < sig.type_bounds.len() && sig.type_bounds[ti].len() > 0) {
-          out = util.append_diags(out, e021_bound_call_diag(sig.type_bounds[ti], dt[di], s, c.line, c.col));
-        }
-        di = di + 1;
-      }
       let (fn_, ft) = bound_bindings(sig, s, dn, dt);
-      return util.append_diags(out, bound_arg_diags(sig, c, fn_, ft, s));
+      return util.append_diags(dest_bound_e021(sig, c, dn, dt, bn.len(), s), bound_arg_diags(sig, c, fn_, ft, s));
     }
   }
   return none;
+}
+
+// dest_bound_e021 is E021 for each of `sig`'s variables only the destination
+// binds (dn[from..], at dt[from..]) whose bound that type does not meet.
+function dest_bound_e021(sig: FuncSig, c: ast.ExprCall, dn: string[], dt: typeinfo.Type[], from: i32, s: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  let di: i32 = from;
+  while (di < dn.len()) {
+    let ti: i32 = util.index_of_str(sig.type_params, dn[di]);
+    if (ti >= 0 && ti < sig.type_bounds.len() && sig.type_bounds[ti].len() > 0) {
+      out = util.append_diags(out, e021_bound_call_diag(sig.type_bounds[ti], dt[di], s, c.line, c.col));
+    }
+    di = di + 1;
+  }
+  return out;
 }
 
 // dest_bound_result reports whether `e` is a generic call whose result is a
@@ -6978,7 +6993,7 @@ function operator_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo
       return t_bool();
     }
     // Two values of one struct or enum order through its `Ord` impl.
-    if (type_eq(lt, rt) && s.has_ord_cmp(lt)) {
+    if (s.orders_alike(lt, rt)) {
       return t_bool();
     }
     return t_unknown("comparison op `" + b.op + "` requires matching i32, f64, string or `Ord` operands");
@@ -9043,50 +9058,16 @@ function type_label(t: typeinfo.Type): string {
       return float_label(f);
     },
     typeinfo.TypeArray(a) => {
-      if (a.view) {
-        return "[" + type_label(a.elem) + "]";
-      }
-      if let typeinfo.TypeFunc(ef) = a.elem {
-        if (ef.params_known) {
-          return "(" + type_label(a.elem) + ")[]";
-        }
-      }
-      return type_label(a.elem) + "[]";
+      return array_label(a);
     },
     typeinfo.TypeStruct(sd) => {
       return name_with_args_label(sd.name, sd.args);
     },
     typeinfo.TypeTuple(tp) => {
-      let tout: string = "(";
-      let ti: i32 = 0;
-      while (ti < tp.elements.len()) {
-        if (ti > 0) {
-          tout = tout + ", ";
-        }
-        tout = tout + type_label(tp.elements[ti]);
-        ti = ti + 1;
-      }
-      return tout + ")";
+      return "(" + labels_joined(tp.elements) + ")";
     },
     typeinfo.TypeFunc(f) => {
-      // The opaque callable records no parameter list, so an arrow rendering
-      // would state an arity nothing ever supplied.
-      if (!f.params_known) {
-        return "fn";
-      }
-      let fout: string = "(";
-      let fi: i32 = 0;
-      while (fi < f.param_types.len()) {
-        if (fi > 0) {
-          fout = fout + ", ";
-        }
-        if (typeinfo.fn_own_at(f, fi)) {
-          fout = fout + "own ";
-        }
-        fout = fout + type_label(f.param_types[fi]);
-        fi = fi + 1;
-      }
-      return fout + ") => " + type_label(f.ret_type);
+      return func_label(f);
     },
     typeinfo.TypeMap(m) => {
       return "Map[" + type_label(m.key) + ", " + type_label(m.value) + "]";
@@ -9114,6 +9095,55 @@ function type_label(t: typeinfo.Type): string {
     }
   }
   return "unknown";
+}
+
+// array_label spells an array or view type; an array of known callables is
+// bracketed, as `((i32) => i32)[]`.
+function array_label(a: typeinfo.TypeArray): string {
+  if (a.view) {
+    return "[" + type_label(a.elem) + "]";
+  }
+  if let typeinfo.TypeFunc(ef) = a.elem {
+    if (ef.params_known) {
+      return "(" + type_label(a.elem) + ")[]";
+    }
+  }
+  return type_label(a.elem) + "[]";
+}
+
+// labels_joined is each type's label, comma-separated.
+function labels_joined(ts: typeinfo.Type[]): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < ts.len()) {
+    if (i > 0) {
+      out = out + ", ";
+    }
+    out = out + type_label(ts[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// func_label spells a callable's signature. The opaque callable records no
+// parameter list, so an arrow rendering would state an arity nothing supplied.
+function func_label(f: typeinfo.TypeFunc): string {
+  if (!f.params_known) {
+    return "fn";
+  }
+  let out: string = "(";
+  let i: i32 = 0;
+  while (i < f.param_types.len()) {
+    if (i > 0) {
+      out = out + ", ";
+    }
+    if (typeinfo.fn_own_at(f, i)) {
+      out = out + "own ";
+    }
+    out = out + type_label(f.param_types[i]);
+    i = i + 1;
+  }
+  return out + ") => " + type_label(f.ret_type);
 }
 
 // keep_code filters a diagnostic list to one code.
@@ -14889,14 +14919,9 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
       out = out.append(dg_at("E009", "operator \"-\" requires a numeric type, got " + type_label(nt), u.line, u.col));
     }
   }
-  // E033: an invalid `as` cast. `x as T` desugars to the
-  // unary op `as_<T>` (operand = x). Between scalars
-  // (`as_cast_allowed`) identity, numeric↔numeric and string↔i32
-  // are accepted. Otherwise the cast is a pointer hop
-  // (`cast_pointer_shaped`) or a type ascription the value must be
-  // coercible to; a side that does not resolve is left alone.
-  // Positioned at the `as` keyword to match the Go checker (whose
-  // CastExpr position is the `as` token).
+  // E033 / E069: an invalid `as` cast. `x as T` desugars to the
+  // unary op `as_<T>` (operand = x). Positioned at the `as` keyword to
+  // match the Go checker (whose CastExpr position is the `as` token).
   if (u.op.len() > 3 && slice_unchecked(u.op, 0, 3) == "as_") {
     // E071 (#5629 slice 5): a LITERAL cast to `char` must name a
     // Unicode scalar value. Keyed on the op text, not the target
@@ -14921,28 +14946,7 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
     if let ast.ExprNumber(_) = u.operand {
       out = util.append_diags(out, int_dest_range_diags(u.operand, tgt));
     }
-    let cot: typeinfo.Type = check_expr(u.operand, s);
-    if (is_primitive_type(tgt) && is_primitive_type(cot)) {
-      // E069 (#5053): reinterpreting a 32-bit-only value (i32 /
-      // u32) as `string` via `as` truncates a pointer — the high
-      // 32 bits were lost when the value became i32, so this
-      // recovers a corrupt pointer once the heap exceeds 4 GiB
-      // (arm64-darwin). A `usize` source is pointer-width and
-      // stays allowed. The array / struct targets are the hop below.
-      if (type_eq(tgt, t_string()) && cast_pointer_int(cot) && !is_usize(cot)) {
-        out = out.append(dg_at("E069", "reinterpreting a 32-bit " + type_label(cot) + " value as the pointer-shaped type string via `as` truncates the address; carry pointer-shaped values in a usize local/param instead", u.line, u.col));
-      } else if (!as_cast_allowed(cot, tgt)) {
-        out = out.append(dg_at("E033", "cannot cast " + type_label(cot) + " to " + type_label(tgt) + ": `as` converts only between numeric types", u.line, u.col));
-      }
-    } else if (!type_contains_unknown(tgt) && !type_contains_unknown(cot)) {
-      if (cast_pointer_int(cot) && cast_pointer_shaped(tgt, false)) {
-        if (!is_usize(cot)) {
-          out = out.append(dg_at("E069", "reinterpreting a 32-bit " + type_label(cot) + " value as the pointer-shaped type " + type_label(tgt) + " via `as` truncates the address; carry pointer-shaped values in a usize local/param instead", u.line, u.col));
-        }
-      } else if (!(cast_pointer_int(tgt) && cast_pointer_shaped(cot, true)) && !coercible(cot, tgt, s)) {
-        out = out.append(dg_at("E033", "cannot cast " + type_label(cot) + " to " + type_label(tgt) + ": `as` converts only between numeric types", u.line, u.col));
-      }
-    }
+    out = util.append_diags(out, cast_diags(u, tgt, check_expr(u.operand, s), s));
   }
   // E059: an `as?` downcast (`x as? T`, parsed as the unary op
   // `as?_<T>`) requires a `dyn Trait` value on the left. The self-
@@ -15012,6 +15016,48 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
   }
 
   return out;
+}
+
+// cast_diags are the E069 / E033 refusals of `u`, a cast of a `cot` value to
+// `tgt`. Between scalars (`as_cast_allowed`) identity, numeric↔numeric and
+// string↔i32 are accepted. Otherwise the cast is a pointer hop
+// (`cast_pointer_shaped`) or a type ascription the value must be coercible
+// to; a side that does not resolve is left alone.
+function cast_diags(u: ast.ExprUnary, tgt: typeinfo.Type, cot: typeinfo.Type, s: Scope): util.Diag[] {
+  let none: util.Diag[] = [];
+  if (is_primitive_type(tgt) && is_primitive_type(cot)) {
+    // E069 (#5053): reinterpreting a 32-bit-only value (i32 / u32) as
+    // `string` via `as` truncates a pointer once the heap exceeds 4 GiB. A
+    // `usize` source is pointer-width and stays allowed.
+    if (type_eq(tgt, t_string()) && cast_pointer_int(cot) && !is_usize(cot)) {
+      return [e069_cast(u, cot, tgt)];
+    }
+    if (!as_cast_allowed(cot, tgt)) {
+      return [e033_cast(u, cot, tgt)];
+    }
+    return none;
+  }
+  if (type_contains_unknown(tgt) || type_contains_unknown(cot)) {
+    return none;
+  }
+  if (cast_pointer_int(cot) && cast_pointer_shaped(tgt, false)) {
+    if (!is_usize(cot)) {
+      return [e069_cast(u, cot, tgt)];
+    }
+    return none;
+  }
+  if (!(cast_pointer_int(tgt) && cast_pointer_shaped(cot, true)) && !coercible(cot, tgt, s)) {
+    return [e033_cast(u, cot, tgt)];
+  }
+  return none;
+}
+
+function e069_cast(u: ast.ExprUnary, cot: typeinfo.Type, tgt: typeinfo.Type): util.Diag {
+  return dg_at("E069", "reinterpreting a 32-bit " + type_label(cot) + " value as the pointer-shaped type " + type_label(tgt) + " via `as` truncates the address; carry pointer-shaped values in a usize local/param instead", u.line, u.col);
+}
+
+function e033_cast(u: ast.ExprUnary, cot: typeinfo.Type, tgt: typeinfo.Type): util.Diag {
+  return dg_at("E033", "cannot cast " + type_label(cot) + " to " + type_label(tgt) + ": `as` converts only between numeric types", u.line, u.col);
 }
 
 // try_residual_diags: E042 for a `?` on a Result whose error type is not the
