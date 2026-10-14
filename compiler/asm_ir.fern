@@ -2368,12 +2368,14 @@ function emit_runtime_memcpy(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    ret\n");
 }
 
-// ssa_oob_trap is the array-bounds trap the function being emitted branches to.
-function ssa_oob_trap(s: asmcore.EmitState): string {
-  if (s.ssa_oob == "") {
-    return "__fern_oob_abort";
-  }
-  return s.ssa_oob;
+// ssa_trap is the entry to `trap` the function being emitted branches to.
+function ssa_trap(s: asmcore.EmitState, trap: string): string {
+  return trap + s.ssa_trap_suffix;
+}
+
+// ssa_jumped_traps are the aborts a body reaches by a jump.
+function ssa_jumped_traps(): string[] {
+  return ["__fern_oob_abort", "__fern_str_oob_abort", "__fern_alloc_size_abort"];
 }
 
 // ssa_called_traps are the aborts a body reaches by a call rather than a jump.
@@ -2381,10 +2383,10 @@ function ssa_called_traps(): string[] {
   return ["__fern_oob_abort", "__fern_slice_abort"];
 }
 
-// oob_leaf_trap is the array-bounds trap a function with no %rbp frame and n
+// leaf_trap is the suffix of the traps a function with no %rbp frame and n
 // words pushed above its return address branches to.
-function oob_leaf_trap(n: i32): string {
-  return "__fern_oob_abort.l" + util.i32_to_string(n);
+function leaf_trap(n: i32): string {
+  return ".l" + util.i32_to_string(n);
 }
 
 // abort_trap emits the trap `label`: it points %rsi / %rdx at the cause line
@@ -2712,29 +2714,31 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // helper's `la + lb` looks once it wraps past 2 GiB. Texts and statuses
   // match the native backends'.
   s = abort_trap(s, "__fern_oob_abort", ".Lmsg_arr_oob", asmcore.msg_arr_oob(), 134);
-  // A leaf with no frame (ssa_needs_frame) traps with %rbp still its caller's
-  // frame and its own return address at 8 * n(%rsp), above the n callee-saved
-  // registers it pushed, so the walk would start a frame too far out and lose
-  // the caller. Its trap goes through the stub for its n, which builds the
-  // frame the leaf did not: the return address copied under a fresh %rbp link.
-  let n: i32 = 0;
-  while (n <= ssa_nsaved() + 1) {
-    s = s.write(oob_leaf_trap(n) + ":\n");
-    s = s.write("    pushq " + util.i32_to_string(8 * n) + "(%rsp)\n");
-    s = s.write("    pushq %rbp\n");
-    s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    jmp __fern_oob_abort\n");
-    n = n + 1;
-  }
   s = abort_trap(s, "__fern_str_oob_abort", ".Lmsg_str_oob", asmcore.msg_str_oob(), 134);
   s = abort_trap(s, "__fern_slice_abort", ".Lmsg_slice", asmcore.msg_slice_range(), 134);
+  s = abort_trap(s, "__fern_alloc_size_abort", ".Lmsg_alloc_size", asmcore.msg_alloc_size(), 134);
+  // A function with no frame traps with %rbp still its caller's frame and
+  // its own return address at 8 * n(%rsp), above the n words it pushed, so
+  // the walk would start a frame too far out and lose the function. A jump
+  // to a trap goes through the stub for its n, which builds the frame the
+  // function did not: the return address copied under a fresh %rbp link.
+  for trap in ssa_jumped_traps() {
+    let n: i32 = 0;
+    while (n <= ssa_nsaved() + 1) {
+      s = s.write(trap + leaf_trap(n) + ":\n");
+      s = s.write("    pushq " + util.i32_to_string(8 * n) + "(%rsp)\n");
+      s = s.write("    pushq %rbp\n");
+      s = s.write("    movq %rsp, %rbp\n");
+      s = s.write("    jmp " + trap + "\n");
+      n = n + 1;
+    }
+  }
   // A function that keeps no %rbp calls a trap through its `.c` stub, which
   // makes the frame record the walk starts from: the call's return address
   // under a fresh %rbp link.
   for trap in ssa_called_traps() {
     s = s.write(trap + ".c:\n    pushq %rbp\n    movq %rsp, %rbp\n    jmp " + trap + "\n");
   }
-  s = abort_trap(s, "__fern_alloc_size_abort", ".Lmsg_alloc_size", asmcore.msg_alloc_size(), 134);
   // __fern_arr_box(%rdi = cap element count) -> %rax = data ptr (base+16).
   // base = [cap, rc=1, len=cap, e0..]; element i at data+(i+1)*8.
   s = s.write("__fern_arr_box:\n");
@@ -7685,7 +7689,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
   if ((ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug) {
     return ssa_rc_dec(ins, reg_of, lp, s);
   }
-  if (s.ssa_oob != "" && ins.args.len() == 0 && util.has_str(ssa_called_traps(), ins.str)) {
+  if (s.ssa_trap_suffix != "" && ins.args.len() == 0 && util.has_str(ssa_called_traps(), ins.str)) {
     return ssa_call_sym(helper_call_needs(ins.str, s), ins.str + ".c");
   }
   if (ircore.is_fern_helper(ins.str) && ssa_reg_helper(ircore.ir_helper_symbol(ins.str), ins.args.len())) {
@@ -7798,7 +7802,7 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   if (k == 42) {
     s = s.need("heap");
     if (ins.imm != 1) {
-      s = ssa_jump_sym(ssa_alu_rm0(s, 7, 64, true, b, a), "jae", ssa_oob_trap(s));
+      s = ssa_jump_sym(ssa_alu_rm0(s, 7, 64, true, b, a), "jae", ssa_trap(s, "__fern_oob_abort"));
     }
     if (ins.imm == 2) {
       return s;
@@ -7813,7 +7817,7 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   if (k == 44) {
     s = s.need("heap");
     if (ins.imm != 1) {
-      s = ssa_jump_sym(ssa_alu_rm(s, 7, 64, true, b, a, 8), "jae", ssa_oob_trap(s));
+      s = ssa_jump_sym(ssa_alu_rm(s, 7, 64, true, b, a, 8), "jae", ssa_trap(s, "__fern_oob_abort"));
     }
     if (ins.imm == 2) {
       return s;
@@ -7825,7 +7829,7 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   s = ssa_load(reg_of, ins.args[2], c, s);
   s = s.need("heap");
   if (ins.imm != 1) {
-    s = ssa_jump_sym(ssa_alu_rm0(s, 7, 64, true, b, a), "jae", ssa_oob_trap(s));
+    s = ssa_jump_sym(ssa_alu_rm0(s, 7, 64, true, b, a), "jae", ssa_trap(s, "__fern_oob_abort"));
   }
   if (ins.str == "u8") {
     return ssa_mov_rmi(s, 8, false, c, a, b, 1, 8);
@@ -8404,7 +8408,7 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
   // raw_alloc asks for 24 bytes more and hands back the pointer past them,
   // the string box header a buffer may later grow (#7351).
   if (ins.str == "raw_alloc") {
-    s = s.write("    testl %edi, %edi\n    js __fern_alloc_size_abort\n");
+    s = s.write("    testl %edi, %edi\n    js " + ssa_trap(s, "__fern_alloc_size_abort") + "\n");
     s = s.write("    addq $24, %rdi\n");
   }
   if (ins.str == "alloc" && s.leak_check && s.rt_owned_allocs) {
@@ -8550,7 +8554,8 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
   s = ssa_load(reg_of, ins.args[0], "%rdx", s);
   s = ssa_load(reg_of, ins.args[1], "%rcx", s);
   s = ssa_load(reg_of, ins.args[2], "%rax", s);
-  s = s.write("    cmpq 8(%rdx), %rax\n    ja __fern_str_oob_abort\n    cmpq %rax, %rcx\n    ja __fern_str_oob_abort\n");
+  let trap: string = ssa_trap(s, "__fern_str_oob_abort");
+  s = s.write("    cmpq 8(%rdx), %rax\n    ja " + trap + "\n    cmpq %rax, %rcx\n    ja " + trap + "\n");
   s = s.write("    subq %rcx, %rax\n    addq (%rdx), %rcx\n");
   if (ins.imm == 1) {
     s = s.write("    leaq " + util.i32_to_string(base_off) + "(%rbp), %rdx\n");
@@ -9453,7 +9458,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
     body = buf_new(4096);
     s = asmcore.EmitState { ...s, capture: body };
   } else if (bare) {
-    s = asmcore.EmitState { ...ssa_bare_frame(s, saved, pad), ssa_oob: oob_leaf_trap(saved.len() + pad / 8) };
+    s = asmcore.EmitState { ...ssa_bare_frame(s, saved, pad), ssa_trap_suffix: leaf_trap(saved.len() + pad / 8) };
   } else {
     s = ssa_frame(s, saved, frame);
   }
@@ -9506,11 +9511,14 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
       s = s.write(ssa_resolve_tails(ssa_replace_all(text, ssa_epilogue_mark(), ssa_epilogue_for(saved)), ssa_epilogue_for(saved)));
     } else {
       s = ssa_leaf_save(s, saved);
-      let leaf_text: string = ssa_replace_all(text, " __fern_oob_abort\n", " __fern_oob_abort.l" + util.i32_to_string(saved.len()) + "\n");
+      let leaf_text: string = text;
+      for trap in ssa_jumped_traps() {
+        leaf_text = ssa_replace_all(leaf_text, " " + trap + "\n", " " + trap + leaf_trap(saved.len()) + "\n");
+      }
       s = s.write(ssa_resolve_tails(ssa_replace_all(leaf_text, ssa_epilogue_mark(), ssa_leaf_epilogue(saved)), ssa_leaf_epilogue(saved)));
     }
   }
-  s = asmcore.EmitState { ...s, ssa_save: 0, ssa_oob: "" };
+  s = asmcore.EmitState { ...s, ssa_save: 0, ssa_trap_suffix: "" };
   s = asmcore.dbg_rows(ssa_cfi(s, 2, "", 0), dbg);
   return ssa_retain_allocation(s, prepared, label_name, context, entry, alloc, fr, frame, framed, fusions);
 }
@@ -11283,11 +11291,13 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
   // library modules can link their `call __fern_*` externs against them.
   if (is_entry && globl_defs) {
     s = asmcore.emit_runtime_globls(s);
-    // The frameless leaves' bounds traps, x86-64's alone.
-    let n: i32 = 0;
-    while (n <= ssa_nsaved() + 1) {
-      s = s.write(".globl " + oob_leaf_trap(n) + "\n");
-      n = n + 1;
+    // The frameless functions' traps, x86-64's alone.
+    for trap in ssa_jumped_traps() {
+      let n: i32 = 0;
+      while (n <= ssa_nsaved() + 1) {
+        s = s.write(".globl " + trap + leaf_trap(n) + "\n");
+        n = n + 1;
+      }
     }
     for trap in ssa_called_traps() {
       s = s.write(".globl " + trap + ".c\n");

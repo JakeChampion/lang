@@ -1,8 +1,9 @@
 # 2026-10-13 — a function with no slot keeps no frame pointer
 
 x86-64 only. `asm_ir.emit_ssa_allocated_x86` (`bare`), `ssa_bare_frame`,
-`ssa_bare_epilogue`, `ssa_emit_exit`; `EmitState.ssa_oob`,
-`ssa_oob_trap`, `oob_leaf_trap`, `ssa_called_traps` and their `.c` stubs.
+`ssa_bare_epilogue`, `ssa_emit_exit`; `EmitState.ssa_trap_suffix`,
+`ssa_trap`, `leaf_trap`, `ssa_jumped_traps` and `ssa_called_traps` with
+their stubs.
 Refs #8171.
 
 ## The shape
@@ -31,12 +32,15 @@ use) is now emitted without a frame pointer:
   pop, as a frameless leaf does.
 - A `-g` build keeps every frame.
 
-The backtrace still names the function a bounds or slice trap fires in:
+The backtrace still names the function a trap fires in:
 
-- An inline bounds check in such a function jumps to the leaf trap stub for
-  its pushed words, `__fern_oob_abort.l<saved + pad>`. The stub builds a
-  frame record from the return address, as it does for a leaf. The stubs now
-  run to `nsaved + 1`, to cover the pad.
+- A trap such a function reaches by a jump goes through the stub for its
+  pushed words, `<trap>.l<saved + pad>`. These are the array bounds check,
+  the string view's bounds check and the negative allocation size. The stub
+  builds a frame record from the return address, as the bounds stub already
+  did for a leaf. The stubs exist for all three traps now, and run to
+  `nsaved + 1` to cover the pad. A frameless leaf's jumps to the string and
+  allocation traps go through them as well.
 - A trap the body calls, `__fern_oob_abort` or `__fern_slice_abort`, goes
   through its `.c` stub: `pushq %rbp; movq %rsp, %rbp; jmp <trap>`. The
   call's return address heads the walk.
@@ -68,9 +72,9 @@ The stage-2 compiler recompiles itself byte for byte.
 
 `perceus_deriv`, `perceus_nqueens`, `record_update`, `string_build`,
 `struct_drop` and the other `.ir` rows fall as well. The `.text` rows of the
-smallest programs rise by up to 3%. That is the three trap stubs every
-runtime now carries (two `.c` stubs and the sixth `.l` stub), a fixed dozen
-instructions per binary.
+smallest programs rise. That is the trap stubs every runtime now
+carries: two `.c` stubs and six `.l` stubs for each of the three jumped
+traps, a fixed 80 instructions per binary.
 
 ## The machines
 
