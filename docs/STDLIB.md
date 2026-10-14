@@ -3729,7 +3729,8 @@ answer is `Result[HttpResponse, FetchError]`.
   `jar` the cookie jar every hop carries and stores cookies through
   (std/http/cookie), none when None, `allow` the hosts every hop may
   reach (`allow(entries)`), any when None; `public_policy()` is
-  `plat.http`'s.
+  `plat.http`'s, and `public_policy_via(proxies)` the same route through
+  `proxies` in place of the environment's.
   `sockets()` is the machine's (the system resolver, `dns.connect_race`,
   `tcp_recv_deadline`), which `send` and `plat.http` use; `std/sim_fetch`
   scripts one in virtual time.
@@ -4230,7 +4231,8 @@ on the host, in virtual time. `sim_platform.new(d, n)` reads the clock and
 the seeded PRNG of the `sim.Sim` `d` (`now_ms`, `elapsed_ns`,
 `random_i32`), sends `plat.http` over the `sim_fetch.Net` `n` by the
 host's public-only route with the network's pool keeping the connection
-(parking under `sim.run_tasks`, so handlers interleave in virtual time),
+(parking under `sim.run_tasks`, so handlers interleave in virtual time)
+and through the proxies its `env` names, never the machine's,
 and answers `env`, `config`, `secret`, `stat` and `peer` with what the test
 set (`env_set`, `config_set`, `secret_set`, `file_set`, `dir_set`, `peer_set`;
 `materialize(resp)` reads a file body back from them). Every call is recorded as a
