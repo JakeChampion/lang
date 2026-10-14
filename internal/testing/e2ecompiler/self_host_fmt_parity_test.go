@@ -67,6 +67,20 @@ var fmtParityCases = []struct {
 	// compile parse stamps the return type onto the lambda, and -fmt must print
 	// the lambda as written (#12359).
 	{"lambda-return-as-written", fmtLambdaAsWrittenSrc},
+	// A value block whose statements span lines prints one per line (#12393).
+	{"value-block-statements-span-lines", `function g(c: boolean, n: i32): i32 {
+  let total: i32 = 0;
+  while (total < n) {
+    let step: i32 = if (c) { let k = 1; while (k < 3) { k = k + 1; } k } else { 1 };
+    let w: i32 = { let a = 2; if (a > 1) { a = a + step; } a };
+    let z: i32 = if (c) { let q = if (!c) { 0 } else { let m = 2; for (let j = 0; j < 2; j = j + 1) { m = m + j; } m }; q } else { 0 };
+    total = total + w + z;
+  }
+  let d: i32 = if (c) { 4 } else { if (n > 0) { return 9; } 5 };
+  return total + d;
+}
+function main(): i32 { return g(true, 20); }
+`},
 	{"if-expression-written-branches", `function branches(n: i32): string {
   let chain = if (n == 0) { "zero" } else if (n == 1) { "one" } else { "other" };
   let leading = if (n == 0) { let a = "a"; a } else { let b = "b"; b };
