@@ -1713,14 +1713,16 @@ function keep_flag(e: ast.Expr, own acc: boolean): boolean {
 // starts no type (native's P001 "expected a type"); parse_module_flagged reports
 // them with the top-level statements.
 // todos is the position of every `todo` stub parsed so far (Module.todo_sites).
-struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32, structnames: string[], verbatim: boolean, depth: i32, type_errs: ast.Stmt[], todos: TodoSite[] }
+// tail_at and tail_is remember nested_block_tail's answer per token position,
+// so a chain of nested value blocks is read once rather than once per level.
+struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32, structnames: string[], verbatim: boolean, depth: i32, type_errs: ast.Stmt[], todos: TodoSite[], tail_at: i32[], tail_is: boolean[] }
 
 // scan_struct_names walks the token stream for `struct N` / `pub struct N`
 // declarations and returns the names. A shape scan, not a parse: `struct` is a
 // keyword, so the ident that follows one is always a declared struct name.
 function scan_struct_names(toks: lexer.Token[]): string[] {
   let out: string[] = [];
-  let q: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: out, verbatim: false, depth: 0, type_errs: [], todos: [] };
+  let q: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: out, verbatim: false, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [] };
   while (!q.at_end()) {
     if (q.peek_keyword() != "struct") {
       q = q.advance();
@@ -1825,7 +1827,7 @@ function (p: Par) peek_col(): i32 {
 }
 
 function (p: Par) advance(): Par {
-  return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos };
+  return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is };
 }
 
 // with_no_struct returns a cursor with the struct-literal-suppression
@@ -1863,11 +1865,11 @@ function (p: Par) end_of(e: ast.Expr): Par {
 }
 
 function (p: Par) with_no_struct(v: boolean): Par {
-  return Par { toks: p.toks, pos: p.pos, no_struct: v, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos };
+  return Par { toks: p.toks, pos: p.pos, no_struct: v, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is };
 }
 
 function (p: Par) with_map_kind(v: i32): Par {
-  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: v, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos };
+  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: v, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is };
 }
 
 // MAX_NEST_DEPTH bounds recursive descent. Past it the parse stops with a
@@ -1893,7 +1895,7 @@ const MAX_NEST_DEPTH: i32 = 5000;
 const BLOCK_NEST_UNITS: i32 = 8;
 
 function (p: Par) with_depth(v: i32): Par {
-  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: v, type_errs: p.type_errs, todos: p.todos };
+  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: v, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is };
 }
 
 // too_deep reports whether entering one more recursive-descent level would
@@ -1916,7 +1918,7 @@ function (p: Par) bail(): Par {
   if (last < p.pos) {
     last = p.pos;
   }
-  return Par { toks: p.toks, pos: last, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos };
+  return Par { toks: p.toks, pos: last, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is };
 }
 
 // Token-shape queries: each returns "" when the token isn't of
@@ -3209,7 +3211,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
 // before parsing and every node the parse produces names the file.
 function parse_expr_from_text(text: string, base_line: i32, base_col: i32): ast.Expr {
   let toks: lexer.Token[] = lexer.rebase_tokens(lexer.tokenize(text), base_line, base_col);
-  let sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false, depth: 0, type_errs: [], todos: [] };
+  let sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [] };
   let (r_expr, r_p) = parse_expr(sub);
   return r_expr;
 }
@@ -4790,7 +4792,8 @@ function parse_struct_match_arms(p: Par, expr_form: boolean): (ast.StructArm[], 
 // branch_stmt_start reports whether the next token begins a STATEMENT
 // inside an if/match value-branch body (block-expressions slice 1). These
 // are the keyword-led statements parse_stmt handles directly (each
-// consumes its own terminator) plus a nested `{`-block. `if` / `match`
+// consumes its own terminator) plus a nested `{`-block, unless
+// nested_block_tail makes it the trailing value. `if` / `match`
 // are deliberately EXCLUDED: they stand as the trailing value expression
 // (`{ …; if (c) { a } else { b } }`) and the single-expr branch form
 // `else { if (c) { … } else { … } }` relies on the inner if/match parsing
@@ -4924,7 +4927,8 @@ function branch_dead_tail(stmts: ast.Stmt[]): ast.Expr {
 //     a final value-producing statement).
 //
 // A keyword-led item (var/let/while/… or a nested `{`-block) parses as a
-// statement via parse_stmt. A non-keyword item parses as an expression:
+// statement via parse_stmt, except a nested block that is the trailing
+// value (nested_block_tail). A non-keyword item parses as an expression:
 // an ExprStmt if a `;` follows, otherwise the trailing TAIL (which must
 // be followed by `}`). The `rt` tag is derived from the TAIL expression
 // (the value), not a leading statement, so the desugared IIFE / value-
@@ -4943,7 +4947,9 @@ function parse_block_items(p: Par): (ast.Stmt[], boolean, ast.Expr, boolean, Par
   }
   p = p.advance();  // consume `{`
   while (p.peek_punct() != "}" && !p.at_end()) {
-    if (branch_stmt_start(p)) {
+    let (is_stmt, ip) = item_is_stmt(p);
+    p = ip;
+    if (is_stmt) {
       let (sr_stmt, sr_p) = parse_stmt(p);
       // Progress guard: a malformed statement that consumed no token
       // would otherwise spin forever — skip it instead.
@@ -4992,6 +4998,44 @@ function parse_block_items(p: Par): (ast.Stmt[], boolean, ast.Expr, boolean, Par
     p = p.advance();
   }
   return (leading, have_tail, tail, true, p);
+}
+
+// nested_block_tail reports whether the `{` at the cursor opens a block with
+// a trailing value that the enclosing block's `}` follows: `{ …; { 1 } }`.
+// That block is the enclosing block's value, so it is read as a value block;
+// any other `{` opens a statement block.
+// item_is_stmt reports whether the item at the cursor in a block that may
+// end in a value is a statement rather than an expression: an ExprStmt or
+// the trailing value.
+function item_is_stmt(p: Par): (boolean, Par) {
+  if (!branch_stmt_start(p)) {
+    return (false, p);
+  }
+  let (tail, q) = nested_block_tail(p);
+  return (!tail, q);
+}
+
+// tail_item_at reports whether, in a body that may end in a value, the item
+// at the cursor is read as an expression: an ExprStmt or the trailing value.
+function tail_item_at(p: Par, tail_value: boolean): (boolean, Par) {
+  if (!tail_value) {
+    return (false, p);
+  }
+  let (is_stmt, q) = item_is_stmt(p);
+  return (!is_stmt, q);
+}
+
+function nested_block_tail(p: Par): (boolean, Par) {
+  if (p.peek_punct() != "{") {
+    return (false, p);
+  }
+  let k: i32 = util.index_of_i32(p.tail_at, p.pos);
+  if (k >= 0) {
+    return (p.tail_is[k], p);
+  }
+  let (nb_leading, nb_have_tail, nb_tail, nb_ok, nb_p) = parse_block_items(p);
+  let yes: boolean = nb_ok && nb_have_tail && nb_p.peek_punct() == "}";
+  return (yes, Par { ...p, tail_at: nb_p.tail_at.append(p.pos), tail_is: nb_p.tail_is.append(yes) });
 }
 
 function parse_branch_body(p: Par): (ast.Stmt[], string, Par) {
@@ -5732,7 +5776,9 @@ function parse_block_body_nested(p: Par, tail_value: boolean): (ast.Stmt[], Par)
       }
       return (body, p);
     }
-    if (tail_value && !branch_stmt_start(p)) {
+    let (tail_item, tp) = tail_item_at(p, tail_value);
+    p = tp;
+    if (tail_item) {
       // A non-keyword item that the closing `}` follows is the body's
       // trailing value. Anything else — including the same expression
       // followed by a `;` — is an ordinary statement, so the cursor is
@@ -8034,7 +8080,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
 }
 
 pub function parse_program(toks: lexer.Token[]): ast.Stmt[] {
-  let p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false, depth: 0, type_errs: [], todos: [] };
+  let p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [] };
   let out: ast.Stmt[] = [];
   while (!p.at_end()) {
     let (r_stmt, r_p) = parse_stmt(p);
@@ -29480,7 +29526,7 @@ function record_field_lines(acc: FieldLines[], verbatim: boolean, name: string, 
 }
 
 function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, TraitDecl[], ImplDecl[], FieldLines[], FunctionInlineHint[]) {
-  let p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: verbatim, depth: 0, type_errs: [], todos: [] };
+  let p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: verbatim, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [] };
   let funcs: FuncDecl[] = [];
   let trait_defaults: TraitDefault[] = [];
   let trait_reqs: TraitReq[] = [];

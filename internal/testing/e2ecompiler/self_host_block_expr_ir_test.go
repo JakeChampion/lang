@@ -81,6 +81,17 @@ function main(): i32 { return f(-1); }`},
 	while (i < 10) { i = i + 1; let d: i32 = { if (i == 4) { break; } i }; s = s + d; }
 	return s;
 }`},
+	// #12388: a block in a branch's tail position is the branch's value.
+	// f(3): k = 3, m = k * 2 = 6, m + 1 = 7; f(-1): 2. 7 + 2 = 9.
+	{"nested-block-tail", `function f(e: i32): i32 { let x: i32 = if (e > 0) { let k = e; { let m = k * 2; m + 1 } } else { { 2 } }; return x; }
+function main(): i32 { return f(3) + f(0 - 1); }`},
+	// #12388: a match arm, a lambda body and a block nested twice. 10 + 22 + 5 = 37.
+	{"nested-block-tail-arms", `enum E { A, B }
+function pick(e: E): i32 { return match (e) { E.A => { { 10 } }, E.B => { let t = 2; { { t + 20 } } } }; }
+function main(): i32 { let f = (n: i32): i32 => { { n + 1 } }; return pick(E.A) + pick(E.B) + f(4); }`},
+	// #12388: a nested block more statements follow is still a statement.
+	// The inner t shadows nothing outside it: 5 + 1 = 6.
+	{"nested-block-statement", `function main(): i32 { let t: i32 = 1; let x: i32 = if (t > 0) { { let t = 9; } 5 + t } else { 0 }; return x; }`},
 	// #4522: a `continue` inside a value-position block skips the rest of the
 	// loop body. i=3 skipped: s = 1+2+4+5+6 = 18.
 	{"cf-continue-in-block", `function main(): i32 {
