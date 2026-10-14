@@ -1727,6 +1727,13 @@ function cmp_method_receiver(t: typeinfo.Type): string {
   return "";
 }
 
+// has_ord_cmp reports whether `t` is a struct or enum with the `cmp` method a
+// structural `<` on it dispatches through (`a.cmp(b) <op> 0`).
+function (s: Scope) has_ord_cmp(t: typeinfo.Type): boolean {
+  let recv: string = cmp_method_receiver(t);
+  return recv != "" && s.lookup_method("cmp", recv).name.len() > 0;
+}
+
 // binop_overload_ret returns the DECLARED return type of the overload that `lt`
 // dispatches `op` through — unknown when the operator has no overload form, the
 // operand is not a nominal type, or that type does not define the method.
@@ -3395,7 +3402,7 @@ function (s: Scope) has_array_method(field: string, view: boolean): boolean {
 // method still surfaces as unknown rather than a wrong concrete type.
 // `append` / `with` are the built-in array growers and return the array
 // itself (the receiver type), short-circuited ahead of the sig scan.
-function (s: Scope) array_method_ret_type(recv_ty: typeinfo.Type, field: string): typeinfo.Type {
+function (s: Scope) array_method_ret_type(c: ast.ExprCall, recv_ty: typeinfo.Type, field: string): typeinfo.Type {
   match (recv_ty) {
     typeinfo.TypeArray(array) => {
       if (!array.view && (field == "append" || field == "with")) {
@@ -3409,7 +3416,7 @@ function (s: Scope) array_method_ret_type(recv_ty: typeinfo.Type, field: string)
         return t_i32();
       }
       if (array.view) {
-        return s.arr_recv_ret_type(recv_ty, s.array_recv_method(field, true));
+        return s.arr_recv_ret_type(c, recv_ty, s.array_recv_method(field, true));
       }
       let target: string = "__method_Array_" + field;
       let tn: i32 = target.len();
@@ -3426,7 +3433,7 @@ function (s: Scope) array_method_ret_type(recv_ty: typeinfo.Type, field: string)
       }
       let arm: MethodSig = s.array_recv_method(field, false);
       if (arm.name.len() > 0) {
-        return s.arr_recv_ret_type(recv_ty, arm);
+        return s.arr_recv_ret_type(c, recv_ty, arm);
       }
       return t_unknown("no array method `" + field + "`");
     },
@@ -3436,40 +3443,14 @@ function (s: Scope) array_method_ret_type(recv_ty: typeinfo.Type, field: string)
   }
 }
 
-// arr_recv_ret_type resolves an array-receiver method's declared return when
-// it names the receiver's ELEMENT type parameter — `(xs: T[]) sum[T: …](): T`.
-// collect erases that spelling to unknown (T is not a type it can represent on
-// its own), so the receiver's actual element is substituted for it here.
-//
-// Only a BARE element return needs this. A `T[]` / `Option[T]` return already
-// mismatches a wrong destination on its shape alone, and a concrete return
-// (`i32`, `boolean`) was never erased — which is why `sum` and `product`, the
-// only array methods returning the element itself, were the ones a wrong
-// destination type slipped past.
-//
-// The array analogue of the `Box[T]` receiver substitution in check_call_expr,
-// down to reusing type_from_ref_subst. A method-level parameter pinned by an
-// ARGUMENT rather than by the element (`fold[A](init: A, …): A`) is a separate
-// inference this does not attempt.
-function (s: Scope) arr_recv_ret_type(recv_ty: typeinfo.Type, arm: MethodSig): typeinfo.Type {
-  if (!type_contains_unknown(arm.ret_type) || arm.ret_type_name.len() == 0) {
+// arr_recv_ret_type is an array-receiver method call's result, its type
+// variables bound from the receiver's element and from the arguments, as a
+// nominal receiver's are.
+function (s: Scope) arr_recv_ret_type(c: ast.ExprCall, recv_ty: typeinfo.Type, arm: MethodSig): typeinfo.Type {
+  if (arm.name.len() == 0) {
     return arm.ret_type;
   }
-  let rt: string = arm.receiver_type;
-  if (rt.len() <= 2) {
-    return arm.ret_type;
-  }
-  let elem_param: string = parser.array_method_element(rt);
-  match (recv_ty) {
-    typeinfo.TypeArray(ra) => {
-      let tps: string[] = [elem_param];
-      let targs: typeinfo.Type[] = [ra.elem];
-      let rref: parser.TypeRef = parser.parse_type_ref(arm.ret_type_name);
-      return type_from_ref_subst(rref, tps, targs, s.type_names());
-    },
-    _ => {}
-  }
-  return arm.ret_type;
+  return generic_method_ret(c, arm, method_binding(c, arm, recv_ty, s), s);
 }
 
 // has_struct is lookup_struct's predicate form, for the callers that only ask
@@ -5419,7 +5400,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
         // Done ahead of the recv_type_name match below because an
         // array receiver has no nominal type-name and would
         // otherwise fall into the `_` "isn't a typed value" arm.
-        let arr_mt: typeinfo.Type = s.array_method_ret_type(recv_ty, name);
+        let arr_mt: typeinfo.Type = s.array_method_ret_type(c, recv_ty, name);
         if (!is_unknown(arr_mt)) {
           return arr_mt;
         }
@@ -5672,7 +5653,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     // concrete instantiation (`Box[i32]`, `Option[string]`) those parameters
     // are bound to the receiver's arguments throughout the parameter and
     // return spellings (#4346 piece 2); what stays unresolved is not checked.
-    let rmb: MethodBinding = method_binding(c, msig, nominal_args(recv_ty), s);
+    let rmb: MethodBinding = method_binding(c, msig, recv_ty, s);
     let mi: i32 = 0;
     while (mi < c.args.len()) {
       let want: typeinfo.Type = receiver_bound(msig.param_types[mi], param_type_name_at(msig, mi), rmb, s);
@@ -6879,7 +6860,11 @@ function operator_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo
     if (type_eq(lt, t_string()) && type_eq(rt, t_string())) {
       return t_bool();
     }
-    return t_unknown("comparison op `" + b.op + "` requires matching i32, f64 or string operands");
+    // Two values of one struct or enum order through its `Ord` impl.
+    if (type_eq(lt, rt) && s.has_ord_cmp(lt)) {
+      return t_bool();
+    }
+    return t_unknown("comparison op `" + b.op + "` requires matching i32, f64, string or `Ord` operands");
   }
   if (b.op == "==" || b.op == "!=") {
     if (float_operands_agree(lt, rt)) {
@@ -7758,12 +7743,9 @@ struct MethodBinding { names: string[], types: typeinfo.Type[], written: string[
 // method_binding binds a method call's type variables as native does (#9976):
 // a written list names the whole parameter list, or when shorter the method's
 // own parameters, the last ones.
-function method_binding(c: ast.ExprCall, msig: MethodSig, recv_args: typeinfo.Type[], s: Scope): MethodBinding {
+function method_binding(c: ast.ExprCall, msig: MethodSig, recv: typeinfo.Type, s: Scope): MethodBinding {
   let rref: parser.TypeRef = parser.parse_type_ref(msig.receiver_type);
-  let full: string[] = [];
-  for ra in rref.args {
-    full = ref_type_vars(ra, msig.all_type_params, s, full);
-  }
+  let full: string[] = ref_type_vars(rref, msig.all_type_params, s, []);
   for tp in msig.all_type_params {
     if (!util.has_str(full, tp)) {
       full = full.append(tp);
@@ -7782,14 +7764,8 @@ function method_binding(c: ast.ExprCall, msig: MethodSig, recv_args: typeinfo.Ty
     }
     wi = wi + 1;
   }
-  let ri: i32 = 0;
-  while (ri < rref.args.len() && ri < recv_args.len()) {
-    let (n2, t2) = gc_bind_param(rref.args[ri], recv_args[ri], full, s.type_names(), names, types);
-    names = n2;
-    types = t2;
-    ri = ri + 1;
-  }
-  return MethodBinding { names: names, types: types, written: written, full: full };
+  let (n2, t2) = gc_bind_param(rref, recv, full, s.type_names(), names, types);
+  return MethodBinding { names: n2, types: t2, written: written, full: full };
 }
 
 // ref_type_vars appends the type variables a receiver spelling names, in order:
@@ -7813,12 +7789,12 @@ function ref_type_vars(r: parser.TypeRef, tparams: string[], s: Scope, acc: stri
 // argument the written types contradict. Only a parameter whose spelling names
 // a written-bound variable is checked here; the rest stay with the ordinary
 // argument check.
-function method_type_arg_diags(c: ast.ExprCall, method: string, msig: MethodSig, recv_args: typeinfo.Type[], s: Scope): util.Diag[] {
+function method_type_arg_diags(c: ast.ExprCall, method: string, msig: MethodSig, recv: typeinfo.Type, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   if (c.type_args.len() == 0) {
     return out;
   }
-  let mb: MethodBinding = method_binding(c, msig, recv_args, s);
+  let mb: MethodBinding = method_binding(c, msig, recv, s);
   if (c.type_args.len() > mb.full.len()) {
     return [dg_at("E040", util.arity_message(method, mb.full.len(), c.type_args.len(), "type argument"), c.line, c.col)];
   }
@@ -7901,13 +7877,16 @@ function same_nominal(a: typeinfo.Type, b: typeinfo.Type): boolean {
   return false;
 }
 
-// nominal_args are a struct or enum type's arguments, or none for any other.
+// nominal_args are a struct, enum or Map type's arguments, or none for any other.
 function nominal_args(t: typeinfo.Type): typeinfo.Type[] {
   if let typeinfo.TypeStruct(st) = t {
     return st.args;
   }
   if let typeinfo.TypeUnion(u) = t {
     return u.args;
+  }
+  if let typeinfo.TypeMap(m) = t {
+    return [m.key, m.value];
   }
   return [];
 }
@@ -8364,7 +8343,7 @@ function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: typein
   return with_nominal_args(whole, sargs);
 }
 
-// with_nominal_args is a generic struct or enum type with `args` in place of
+// with_nominal_args is a generic struct, enum or Map type with `args` in place of
 // its own: `Box[U, E]` with U bound is Box[<U's type>, …], not the unknowns
 // the plain resolver reads. Any other type is returned unchanged.
 function with_nominal_args(t: typeinfo.Type, args: typeinfo.Type[]): typeinfo.Type {
@@ -8376,6 +8355,9 @@ function with_nominal_args(t: typeinfo.Type, args: typeinfo.Type[]): typeinfo.Ty
   }
   if let typeinfo.TypeUnion(u) = t {
     return typeinfo.TypeUnion { name: u.name, args: args };
+  }
+  if let typeinfo.TypeMap(_) = t {
+    return t_map(args[0], args[1]);
   }
   return t;
 }
@@ -14206,7 +14188,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
                 // assignability check is sound on real code
                 // (verified across all self-host modules) —
                 // no longer restricted to primitives.
-                let rmb: MethodBinding = method_binding(c, msig, sn.args, s);
+                let rmb: MethodBinding = method_binding(c, msig, recv, s);
                 let mi: i32 = 0;
                 while (mi < c.args.len()) {
                   let mat: typeinfo.Type = check_expr(c.args[mi], s);
@@ -14222,7 +14204,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
                   out = util.append_diags(out, array_elem_check(array_elem_type_of(msig.param_types[mi]), c.args[mi], s));
                   mi = mi + 1;
                 }
-                out = util.append_diags(out, method_type_arg_diags(c, mfa.field, msig, sn.args, s));
+                out = util.append_diags(out, method_type_arg_diags(c, mfa.field, msig, recv, s));
                 out = util.append_diags(out, uninferred_method_diags(c, sn.name, mfa.field, msig));
               }
             } else {
@@ -14275,7 +14257,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           out = util.append_diags(out, ambiguous_call_diags(mfa, un.name, s));
           let umsig: MethodSig = s.lookup_method(mfa.field, un.name);
           if (umsig.name.len() > 0 && c.args.len() == umsig.param_types.len()) {
-            out = util.append_diags(out, method_type_arg_diags(c, mfa.field, umsig, un.args, s));
+            out = util.append_diags(out, method_type_arg_diags(c, mfa.field, umsig, recv, s));
             out = util.append_diags(out, uninferred_method_diags(c, un.name, mfa.field, umsig));
           }
           if (s.method_missing(recv, mfa.field)) {
@@ -14569,7 +14551,7 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
           let ordrecv: string = cmp_method_receiver(olt);
           if (ordrecv == "") {
             out = out.append(dg_at("E041", "cannot order values of type " + type_label(olt) + " with \"" + b.op + "\": structural ordering for arrays / slices / tuples is not supported", b.line, b.col));
-          } else if (s.lookup_method("cmp", ordrecv).name.len() == 0) {
+          } else if (!s.has_ord_cmp(olt)) {
             out = out.append(dg_at("E041", "cannot order values of type " + util.demangle(type_label(olt)) + " with \"" + b.op + "\": type does not implement `Ord` — " + util.derive_hint(ordrecv, "cmp.Ord", "cmp.Ord") + ", so ordering can use structural comparison", b.line, b.col));
           }
         } else if (o_both_int) {

@@ -188,6 +188,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"map-iter-has-no-next", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let it: MapIter[string, i32] = m.iter(); while (it.has_next()) { it.next(); } return 0; }\n", []string{"E043"}},
 		{"map-iter-methods", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let it: MapIter[string, i32] = m.iter(); let n: i32 = 0; while (it.has_next()) { n = n + it.value() + it.key().len(); it.advance(); } return n; }\n", nil},
 		{"view-append-is-not-a-builtin-arity-error", "function main(): i32 { let v: [u8] = \"abc\".as_bytes(); v.append(); return 0; }", []string{"E043"}},
+		// An array receiver's method binds its own type parameters from the
+		// arguments, as a nominal receiver's does (#12382).
+		{"array-recv-method-own-tparam-ret", "function (xs: string[]) echo[T](value: T): T { return value; }\nfunction main(): i32 { let w: string[] = [\"a\"]; return w.echo(\"four\").len(); }\n", nil},
+		{"view-recv-method-own-tparam-ret", "function (xs: [string]) echo[T](value: T): T { return value; }\nfunction main(): i32 { let w: string[] = [\"a\"]; return w[:].echo(\"four\").len(); }\n", nil},
+		{"array-recv-method-own-tparam-ret-mismatch", "function (xs: string[]) echo[T](value: T): T { return value; }\nfunction main(): i32 { let w: string[] = [\"a\"]; let n: i32 = w.echo(\"four\"); return n; }\n", []string{"E003"}},
+		// A method on `Map[K, V]` binds K and V from the receiver, as
+		// core/map's `merge` needs.
+		{"map-generic-method-ret", "import \"core/map\";\nfunction (m: Map[K, V]) same(): Map[K, V] { return m; }\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let mg = m.same(); if (mg.get_or(\"a\", 0) != 7) { return 1; } return 0; }\n", nil},
+		{"map-generic-method-ret-mismatch", "import \"core/map\";\nfunction (m: Map[K, V]) same(): Map[K, V] { return m; }\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let mg = m.same(); let s: string = mg.get_or(\"a\", 0); return 0; }\n", []string{"E003"}},
 		{"view-custom-append-method", "function (xs: [u8]) append(): i32 { return xs.len(); } function main(): i32 { let v: [u8] = \"abc\".as_bytes(); return v.append(); }", nil},
 		{"view-custom-with-method", "function (xs: [u8]) with(s: string): string { return s; } function main(): i32 { let v: [u8] = \"abc\".as_bytes(); return v.with(\"x\").len(); }", nil},
 		{"view-custom-append-discard", "function (xs: [u8]) append(): i32 { return xs.len(); } function main(): i32 { let v: [u8] = \"abc\".as_bytes(); v.append(); return 0; }", nil},
@@ -1452,6 +1461,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"order-struct-struct", "struct P { x: i32 }\nfunction main(): i32 { let a = P { x: 1 }; let b = P { x: 2 }; if (a < b) { return 1; } return 0; }\n", []string{"E041"}},
 		{"order-array-array", "function main(): i32 { let a = [1]; let b = [2]; if (a <= b) { return 1; } return 0; }\n", []string{"E041"}},
 		{"order-struct-i32-mixed", "struct P { x: i32 }\nfunction main(): i32 { let a = P { x: 1 }; if (a < 3) { return 1; } return 0; }\n", []string{"E009"}},
+		// With an `Ord` impl the ordering is a bool (#12382): it was typed
+		// unknown, so the `if` fell to the uncoded "could not infer" bail.
+		{"order-struct-derived-ord", "trait Ord { function cmp(self: Self, other: Self): i32; }\nimpl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }\n@derive(Ord) struct P { x: i32 }\nfunction main(): i32 { let a = P { x: 1 }; let b = P { x: 2 }; if (a < b) { return 1; } return 0; }\n", nil},
+		{"order-enum-derived-ord", "import \"core/cmp\";\n@derive(cmp.Ord)\nenum E { A(i32), B(i32, string) }\nfunction main(): i32 { if (B(2, \"a\") < B(2, \"b\")) { return 1; } return 0; }\n", nil},
+		{"order-enum-no-ord", "import \"core/cmp\";\n@derive(cmp.Eq)\nenum E { A(i32), B(i32, string) }\nfunction main(): i32 { if (B(2, \"a\") < B(2, \"b\")) { return 1; } return 0; }\n", []string{"E041"}},
 		{"field-unknown", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; return p.y; }\n", []string{"E043"}},
 		{"field-known-ok", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; return p.x; }\n", nil},
 		{"method-call-not-field-ok", "struct P { x: i32 }\nfunction (p: P) getx(): i32 { return p.x; }\nfunction main(): i32 { let p: P = P { x: 1 }; return p.getx(); }\n", nil},
