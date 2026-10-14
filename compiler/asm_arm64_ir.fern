@@ -3813,7 +3813,9 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
 function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   let argc: i32 = ins.args.len() - 1;
-  s = ssa_load(reg_of, ins.args[0], "x6", s);
+  if (!ssa.slot_call(ins)) {
+    s = ssa_load(reg_of, ins.args[0], "x6", s);
+  }
   if (argc > ssa_nregs()) {
     let i: i32 = argc;
     while (i >= 1) {
@@ -3835,6 +3837,10 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
       a = a + 1;
     }
     s = ssa_parallel_moves(srcs, dsts, s);
+  }
+  // A slot_call reads the target out of the environment, in x0 by now.
+  if (ssa.slot_call(ins)) {
+    s = ssa_ldst(s, true, "x6", "x0", 8);
   }
   s = s.write("    blr x6\n");
   if (argc > ssa_nregs()) {

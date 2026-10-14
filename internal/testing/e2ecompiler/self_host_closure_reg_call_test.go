@@ -74,18 +74,19 @@ func TestSelfHostClosureCallInRegisters(t *testing.T) {
 		return n
 	}
 	apply := condBranchBody(t, string(asm), "apply")
-	if !strings.Contains(apply, "call *%rdx") || pushes(apply) != 0 {
-		t.Errorf("apply: want a call through %%rdx with no argument pushed:\n%s", apply)
+	if !strings.Contains(apply, "call *8(%rax)") || pushes(apply) != 0 {
+		t.Errorf("apply: want a call through the environment in %%rax with no argument pushed:\n%s", apply)
 	}
 	sev := condBranchBody(t, string(asm), "seven")
-	if !strings.Contains(sev, "call *%rdx") || pushes(sev) != 8 {
-		t.Errorf("seven: want its eight arguments pushed for a call through %%rdx:\n%s", sev)
+	if !strings.Contains(sev, "call *8(%rax)") || pushes(sev) != 8 {
+		t.Errorf("seven: want its eight arguments pushed for a call through the environment in %%rax:\n%s", sev)
 	}
 	if !regexp.MustCompile(`__fn_\S*clo\d+\.r\b`).Match(asm) {
 		t.Errorf("no function value names a closure's .r entry")
 	}
 	arm := emit("arm64-linux")
-	armPush := regexp.MustCompile(`str x\d+, \[sp, #-16\]!`)
+	// The prologue's callee-saved stores come before the body's first label.
+	armPush := regexp.MustCompile(`(?s)\.Lssa_\w+_0:.*str x\d+, \[sp, #-16\]!`)
 	for _, fn := range []string{"apply", "seven"} {
 		if body := condBranchBody(t, arm, fn); !strings.Contains(body, "blr x6") || armPush.MatchString(body) {
 			t.Errorf("arm64 %s: want a call through x6 with no argument pushed:\n%s", fn, body)
