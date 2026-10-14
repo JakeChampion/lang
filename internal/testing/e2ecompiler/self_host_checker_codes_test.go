@@ -2003,6 +2003,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// if unsettled, so the destination compare still reports it.
 		{"settle-value-if-i32-arm", "function main(): i32 { let n: i32 = 1; let x: f64 = if (1 < 2) { n } else { 2 }; return 0; }\n", []string{"E003"}},
 		{"settle-value-if-string-arm", "function main(): i32 { let x: f64 = if (1 < 2) { 1 } else { \"s\" }; return 0; }\n", []string{"E031"}},
+		// A lambda the program writes and calls in place is typed by the result
+		// it declares, whatever its body returns through: a value if of arms
+		// that return, or a block. A binding's annotation does not relabel it.
+		{"written-iife-returning-arms", "function why(b: i32): string { let w = ((): string => if (b == 0) { return \"zero\"; } else { if (b == 2) { return \"two\"; } else { return \"other\"; } })(); return w; }\nfunction main(): i32 { return why(2).len(); }\n", nil},
+		{"written-iife-into-other-annotation", "function main(): i32 { let s: string = ((): i32 => 4)(); return 0; }\n", []string{"E003"}},
+		{"written-iife-block-into-other-annotation", "function main(): i32 { let s: string = ((): i32 => { return 4; })(); return 0; }\n", []string{"E003"}},
 		// Settling is literal-only, not an i32 -> f64 widening: native rejects
 		// each of these too, and they are what stops the rule going too far. A
 		// typed suffix has already picked its width, and an identifier is not a

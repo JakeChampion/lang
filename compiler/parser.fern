@@ -23949,6 +23949,7 @@ function stamp_lambda_ret(e: ast.Expr, fn_ret: string): ast.Expr {
 // struct literal is as unguessable as a call. A coarse fn tag is left alone —
 // its signature lives in sidecars the lambda has none of — and so is a
 // spelling naming a type variable, which the instantiation substitutes later.
+// A lambda the program wrote and calls in place keeps the type it declares.
 function stamp_value_block_ret(e: ast.Expr, decl_ty: string): ast.Expr {
   // `let xs: i64[] = [ <value block>, … ]` — the annotation names the ELEMENT
   // type, so each element gets the same treatment the scalar binding gets.
@@ -23983,7 +23984,7 @@ function stamp_value_block_ret(e: ast.Expr, decl_ty: string): ast.Expr {
       }
       match (c.callee) {
         ast.ExprLambda(lm) => {
-          if (lm.params.len() != 0 || lm.ret_type == decl_ty) {
+          if (lm.params.len() != 0 || lm.ret_type == decl_ty || is_written_lambda_origin(lm.origin)) {
             return e;
           }
           let nl: ast.Expr = ast.ExprLambda { ...lm, ret_type: decl_ty };

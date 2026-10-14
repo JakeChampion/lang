@@ -4695,14 +4695,17 @@ function type_from_name(name: string): typeinfo.Type {
 // parameter spellings) skips the argument checks rather than rejecting the
 // call: an empty param list is "unrecorded", not "zero parameters".
 function call_through_fn_value(c: ast.ExprCall, s: Scope): typeinfo.Type {
-  // A LAMBDA callee is the value-if / value-match IIFE the desugar emits, and
-  // the arm at the head of check_call_expr already types it — from the
-  // branches, and deliberately declining when they disagree so E031 is the only
-  // diagnostic the mixed-arm form draws. Reading the lambda's own return type
-  // here would answer where that arm chose not to.
+  // A desugared LAMBDA callee is the value-if / value-match IIFE, and the arm
+  // at the head of check_call_expr already types it — from the branches, and
+  // deliberately declining when they disagree so E031 is the only diagnostic
+  // the mixed-arm form draws. Reading the lambda's own return type here would
+  // answer where that arm chose not to. A lambda the program wrote is typed by
+  // what it declares, like any other function value.
   match (c.callee) {
-    ast.ExprLambda(_) => {
-      return t_unknown("immediately-invoked lambda: typed from its branches, not its value");
+    ast.ExprLambda(lm) => {
+      if (!parser.is_written_lambda_origin(lm.origin)) {
+        return t_unknown("immediately-invoked lambda: typed from its branches, not its value");
+      }
     },
     _ => {}
   }
