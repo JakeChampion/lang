@@ -177,7 +177,7 @@ function main(): i32 {
 // the Inline pass mis-spliced the two-word inline `dyn` value's exit-sweep
 // reclaim, running it on the slot's pre-init value and stranding the fresh
 // box un-swept → freelist corruption. Fixed by excluding dyn-slot callees
-// from inlining (internal/oracle/ir/inline.go). Now bounded like the natives.
+// from inlining. Now bounded like the natives.
 func TestWASMDynTraitEnumPayloadHeapBumpBounded(t *testing.T) {
 	small := runWasm(t, dynEnumPayloadBumpGrowthSrc("50"))
 	large := runWasm(t, dynEnumPayloadBumpGrowthSrc("5000"))

@@ -6,9 +6,8 @@ import (
 )
 
 // #5637 option 3 — end-to-end benefit and safety of the in-place string
-// self-append (`s = s + piece` → __fern_str_append). The LOWERING decision is
-// pinned target-independently in internal/oracle/ir/rc_str_self_append_test.go; these
-// pin what the emitted runtime actually does.
+// self-append (`s = s + piece` → __fern_str_append). These pin what the
+// emitted runtime actually does.
 
 // strSelfAppendLoopSrc grows a string 2 bytes at a time to 4000 bytes, the
 // shape `std/unicode`'s _map_case and `std/utf8`'s encode_all use per code
@@ -373,10 +372,9 @@ const strChainAliasSrc = `function main(): i32 {
 
 const strChainAliasWant = "ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab\n"
 
-// TestX86_64StrSelfAppendChainAliasIsNotFused is the runtime half of
-// internal/oracle/ir's TestLowerStrSelfAppendChainStopsAtAReadOfTheAccumulator: the
-// answer stays right, and the heap stays balanced, when the spine declines to
-// fuse. Under the leak detector so an over-release shows as frees > allocs.
+// TestX86_64StrSelfAppendChainAliasIsNotFused covers a self-append chain that
+// reads its own accumulator: the answer stays right, and the heap stays
+// balanced, when the spine declines to fuse. Under the leak detector so an over-release shows as frees > allocs.
 func TestX86_64StrSelfAppendChainAliasIsNotFused(t *testing.T) {
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strChainAliasSrc)

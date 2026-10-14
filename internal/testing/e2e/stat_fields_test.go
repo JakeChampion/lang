@@ -120,11 +120,9 @@ function main(): i32 {
 // full `stat(2)` record: the mode a chmod set, the mtime a chtimes pinned, and
 // the (dev, ino) pair a hard link shares.
 //
-// Every backend fills this struct by hand — the two arm64 emitters and x86-64
-// with stores at literal offsets, wasmbin with i32/i64.store — off one offset
-// table in `internal/oracle/ir`. What that table cannot check is the OTHER side of
-// each copy: which kernel field feeds which slot, which is per-target and, on
-// Darwin, shares almost no offset with Linux. A wrong source offset is silent —
+// Every target fills this struct from one field list (compiler/asmcore.fern's
+// stat_fields_src); statoff / statkind say which kernel field feeds which slot,
+// which is per-target and, on Darwin, shares almost no offset with Linux. A wrong source offset is silent —
 // it reads a real number out of the neighbouring field — so the assertions are
 // on values a test can arrange rather than on "not zero".
 func TestX86_64StatFields(t *testing.T) {

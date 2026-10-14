@@ -36,17 +36,16 @@
 //
 // Lowering-error fixtures: `expected.lowering-error` is the sibling for
 // a rejection the front end does NOT make. Such a fixture must be
-// ACCEPTED by parse / module-load / type-check and then rejected by
-// ir.LowerWith, at both pointer widths. E068 (a `fbip` function that
-// allocates without a donor to reuse) is the case in point: it comes
-// out of internal/oracle/ir/fip_verify.go during lowering, so the front-end
-// path above can never reach it. Asserting both halves is what stops a
+// ACCEPTED by parse / module-load / type-check and then rejected by the
+// self-host compiler, on a 32-bit and a 64-bit target. E068 (a `fbip`
+// function that allocates without a donor to reuse) is the case in point:
+// it comes out of compiler/irfipverify.fern during lowering, so the
+// front-end path above can never reach it. Asserting both halves is what stops a
 // program the checker already rejects from masquerading as a lowering
 // rule.
 package e2e
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,7 +57,6 @@ import (
 
 	"github.com/jakechampion/lang/internal/check/checker"
 	"github.com/jakechampion/lang/internal/check/constfold"
-	"github.com/jakechampion/lang/internal/oracle/ir"
 	"github.com/jakechampion/lang/internal/pkg/modload"
 	"github.com/jakechampion/lang/internal/syntax/diag"
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
@@ -240,10 +238,10 @@ func TestFernFixtures(t *testing.T) {
 				// Both widths: a lowering rejection that fires on one
 				// target and not the other is a portability defect in its
 				// own right, so the case has to hold at each.
-				for _, w := range []int{4, 8} {
-					w := w
-					t.Run(fmt.Sprintf("lower%d", w), func(t *testing.T) {
-						errText, stage := runFixtureLoweringError(f.mainPath, w)
+				for _, target := range []string{e2eharness.TargetWasm32Wasi, e2eharness.TargetX86_64Linux} {
+					target := target
+					t.Run("lower-"+target, func(t *testing.T) {
+						errText, stage := runFixtureLoweringError(t, f.mainPath, target)
 						switch stage {
 						case loweringRejected:
 							checkExpectedDiagnostics(t, "lowering", f.wantErrors, errText)
@@ -365,10 +363,9 @@ const (
 )
 
 // runFixtureLoweringError requires the front end to accept the program
-// and lowering to reject it. Unlike the front-end path this is
-// per-pointer-width, because lowering is where the target starts to
-// matter.
-func runFixtureLoweringError(mainPath string, ptrW int) (string, loweringStage) {
+// and the self-host compiler to reject it. Unlike the front-end path this
+// is per-target, because lowering is where the target starts to matter.
+func runFixtureLoweringError(t *testing.T, mainPath, target string) (string, loweringStage) {
 	prog, _, err := modload.Load(mainPath)
 	if err != nil {
 		return err.Error(), frontEndRejected
@@ -376,12 +373,17 @@ func runFixtureLoweringError(mainPath string, ptrW int) (string, loweringStage) 
 	if err := constfold.Fold(prog, nil); err != nil {
 		return err.Error(), frontEndRejected
 	}
-	info, err := checker.Check(prog)
-	if err != nil {
+	if _, err := checker.Check(prog); err != nil {
 		return err.Error(), frontEndRejected
 	}
-	if _, err := ir.LowerWith(prog, info, ptrW); err != nil {
-		return err.Error(), loweringRejected
+	args := []string{"-target", target, "-o", filepath.Join(t.TempDir(), "prog")}
+	if target == e2eharness.TargetWasm32Wasi {
+		args = append(args, "-emit", "core-module")
+	}
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), append(args, mainPath, e2eharness.SelfHostStdlibRoot(t))...)
+	cmd.Env = e2eharness.SelfHostChildEnv()
+	if msg, err := cmd.CombinedOutput(); err != nil {
+		return string(msg), loweringRejected
 	}
 	return "", loweredCleanly
 }

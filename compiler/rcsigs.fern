@@ -201,8 +201,6 @@ pub function table(): Table {
 // The runtime's releases: each takes the object as argument 0 and the
 // caller's unit on it ends there. `__fern_box_free` and `__free` take the
 // block and its size; the `__map_*` rows are core/map's, written in Fern.
-// TestSelfHostRcSigsReleaseSetCoversOracle pins this list and the two below
-// against internal/oracle/ir/rcsigs.go.
 function release_helpers(): string[] {
   return [
     "__fern_rc_dec", "__fern_arr_dec", "__fern_arr_share_dec", "__fern_str_free", "__fern_str_dec", "__fern_str_rc_dec",

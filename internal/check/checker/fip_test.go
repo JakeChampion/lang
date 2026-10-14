@@ -115,9 +115,9 @@ function main(): i32 { return 0; }`)
 // A constructor in a bare `fip` body is no longer an E053 SHAPE violation
 // (#9602). The checker cannot tell a rebuild that reuses a dead donor's box
 // from one that allocates a fresh box, so it admits the shape and the IR layer
-// decides: verifyFipAllocs counts the sites that lowered to a real OpAlloc and
-// refuses the function with E068 when they exceed the allowance, which for a
-// bare `fip` is zero. internal/oracle/ir/fip_verify_test.go owns that half.
+// decides: compiler/irfipverify.fern counts the sites that lowered to a real
+// allocation and refuses the function with E068 when they exceed the
+// allowance, which for a bare `fip` is zero.
 //
 // Rejecting the shape here left `fip` unable to carry struct state at all: a
 // field write is E048, whose message names the rebuild `T { ...old, f: v }` as

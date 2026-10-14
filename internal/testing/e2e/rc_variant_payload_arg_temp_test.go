@@ -13,8 +13,7 @@ import (
 // node on every ordered-map insert whose node holds a string key; a heap
 // string temp and an array temp into a payload leaked the same way.
 //
-// The credit now mirrors emitEnumNew's inc gate exactly
-// (internal/oracle/ir/variant_payload_counted_retain_test.go), and a variant
+// The credit now mirrors emitEnumNew's inc gate exactly, and a variant
 // construction counts as a fresh box in findReturnsFreshBox, so the local an
 // insert binds to the recursive result stays reclaimable.
 //

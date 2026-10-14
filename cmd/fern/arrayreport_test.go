@@ -7,15 +7,24 @@ import (
 	"testing"
 )
 
-// `fern -array-report` over a program with a three-stage chain (#9730).
-//
-// Asserts the SHAPE rather than the whole rendering: the column widths move
-// with the longest function name, and a test that pinned the layout would
-// fail on an unrelated rename while telling nobody anything.
+// arrayReport writes src as main.fern and returns `fern -array-report`'s output.
+func arrayReport(t *testing.T, src string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := runArrayReport(path, &out); err != nil {
+		t.Fatalf("runArrayReport: %v", err)
+	}
+	return out.String()
+}
+
+// A three-stage chain is reported as one traversal, with the reason tag that
+// fused it (#9730).
 func TestArrayReportCLI(t *testing.T) {
-	dir := t.TempDir()
-	src := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(src, []byte(`import "std/array";
+	got := arrayReport(t, `import "std/array";
 function run(xs: i64[]): i64 {
   let out: Option[i64] = xs
     .map((x: i64): i64 => x + (1 as i64))
@@ -24,20 +33,12 @@ function run(xs: i64[]): i64 {
   match (out) { Some(v) => { return v; }, None => { return 0 as i64; } }
 }
 function main(): i32 { return run([1 as i64, 2 as i64]) as i32; }
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var out strings.Builder
-	if err := runArrayReport(src, &out); err != nil {
-		t.Fatalf("runArrayReport: %v", err)
-	}
-	got := out.String()
+`)
 	for _, want := range []string{
-		"map(n->n) -> filter(n->k) -> reduce(n->1)",
-		"elementwise",
-		"selection",
-		"reduction",
-		"1 pipeline(s), 1 with more than one stage",
+		"array report: primary Fern compiler, typed semantic fusion",
+		"run: map -> filter -> reduce; one traversal",
+		"reason=fused storage=no-intermediate-arrays",
+		"typed semantic fusion decisions: 1",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report does not mention %q:\n%s", want, got)
@@ -45,45 +46,31 @@ function main(): i32 { return run([1 as i64, 2 as i64]) as i32; }
 	}
 }
 
-// A program with no std/array pipeline says so, rather than printing an empty
-// report a reader would have to interpret.
+// A program with no std/array chain reports zero decisions rather than
+// printing nothing a reader would have to interpret.
 func TestArrayReportCLIEmpty(t *testing.T) {
-	dir := t.TempDir()
-	src := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(src, []byte("function main(): i32 { return 0; }\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var out strings.Builder
-	if err := runArrayReport(src, &out); err != nil {
-		t.Fatalf("runArrayReport: %v", err)
-	}
-	if got := out.String(); !strings.Contains(got, "no std/array pipelines") {
-		t.Errorf("want the empty-case line, got:\n%s", got)
+	got := arrayReport(t, "function main(): i32 { return 0; }\n")
+	if !strings.Contains(got, "typed semantic fusion decisions: 0") {
+		t.Errorf("want the zero-decision line, got:\n%s", got)
 	}
 }
 
-// A std/ndarray product is reported as a recognized shape beside the
-// std/array pipelines, with the element functions the site was handed
-// (#9735, step 3).
+// A std/ndarray product is reported with its layouts and the element
+// functions the site was handed (#9735).
 func TestArrayReportCLINdarrayProducts(t *testing.T) {
-	dir := t.TempDir()
-	src := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(src, []byte(`import "std/ndarray";
+	got := arrayReport(t, `import "std/ndarray";
 function mul(x: i64, y: i64): i64 { return x * y; }
 function add(x: i64, y: i64): i64 { return x + y; }
 function main(): i32 {
   let v: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64], [2]);
   return v.inner(v, 0 as i64, mul, add).get([]) as i32;
 }
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var out strings.Builder
-	if err := runArrayReport(src, &out); err != nil {
-		t.Fatalf("runArrayReport: %v", err)
-	}
-	got := out.String()
-	for _, want := range []string{"no std/array pipelines", "std/ndarray operations", "inner  over packed     mul [i64 mul], add [i64 add]"} {
+`)
+	for _, want := range []string{
+		"array report: primary Fern compiler, ndarray kernels",
+		"main: inner; layout=packed; rhs-layout=packed; multiply=mul$wrap; element=add$wrap",
+		"ndarray kernels decisions: 1",
+	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report does not mention %q:\n%s", want, got)
 		}
@@ -93,58 +80,30 @@ function main(): i32 {
 // An axis-parameterized site carries the axis it walks, so the report says
 // which elements an operation touches and not only which operation it is.
 func TestArrayReportCLINdarrayAxis(t *testing.T) {
-	dir := t.TempDir()
-	src := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(src, []byte(`import "std/ndarray";
+	got := arrayReport(t, `import "std/ndarray";
 function add(x: i64, y: i64): i64 { return x + y; }
 function main(): i32 {
   let m: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2]);
   return m.reduce_axis(1, 0 as i64, add).get([0]) as i32;
 }
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var out strings.Builder
-	if err := runArrayReport(src, &out); err != nil {
-		t.Fatalf("runArrayReport: %v", err)
-	}
-	if got := out.String(); !strings.Contains(got, "reduce_axis(axis 1)  over packed     add") {
+`)
+	if !strings.Contains(got, "main: reduce_axis; layout=packed; axis=1; element=add$wrap") {
 		t.Errorf("report does not name the axis the reduction walks, over the layout it walks:\n%s", got)
 	}
 }
 
-// `fern -array-report` names, per storage-sensitive site, what the receiver
-// is proved to be and whether that is enough for the call to move no
-// elements (#9734). The two to_flat calls below are the same call on
-// receivers the IR cannot otherwise tell apart, and one of them is free.
-func TestArrayReportCLINdarrayLayouts(t *testing.T) {
-	dir := t.TempDir()
-	src := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(src, []byte(`import "std/ndarray";
-function main(): i32 {
-  let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
-  let t: ndarray.NdArray[i32] = a.transpose();
-  return a.to_flat()[0] + t.to_flat()[0];
-}
-`), 0o644); err != nil {
+// A program the compiler refuses reports the diagnostic, not an empty report.
+func TestArrayReportCLICompileError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(path, []byte("function main(): i32 { return true; }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	var out strings.Builder
-	t.Setenv("FERN_ARRAY_REPORT", "1")
-	if err := runArrayReport(src, &out); err != nil {
-		t.Fatalf("runArrayReport: %v", err)
+	err := runArrayReport(path, &out)
+	if err == nil {
+		t.Fatalf("runArrayReport accepted a program that does not type-check:\n%s", out.String())
 	}
-	got := out.String()
-	for _, want := range []string{
-		"std/ndarray storage-sensitive operations, and what their receiver is proved to be:",
-		"to_flat  over packed     -> metadata",
-		"to_flat  over strided    -> not-proven-packed",
-		"std/ndarray storage-sensitive operations (#9734): 2, 1 proved to move no elements",
-		"  not-proven-row-major       0",
-		"their receivers' layouts:",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("report does not carry %q:\n%s", want, got)
-		}
+	if !strings.Contains(err.Error(), "E0") {
+		t.Errorf("want the compiler's diagnostic, got: %v", err)
 	}
 }

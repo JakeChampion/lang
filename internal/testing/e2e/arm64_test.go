@@ -2853,7 +2853,7 @@ function main(): i32 {
 //	x * 1   →   x      x * 0   →   0
 //	1 * x   →   x      x / 1   →   x
 //
-// The real `internal/oracle/ir/strength.go` runs these on IR (after
+// The real pass (compiler/ir.fern's reduce_strength) runs these on IR (after
 // type-aware short-circuit handling); this spike runs them on
 // the toy Expr AST. Same shape, simpler representation.
 //
