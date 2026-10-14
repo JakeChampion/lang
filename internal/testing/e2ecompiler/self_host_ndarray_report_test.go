@@ -64,6 +64,12 @@ function main(): i32 {
 }
 `
 
+// reachesCall reports whether body calls sym, a call in tail position
+// leaving through a jump to it.
+func reachesCall(body, sym string) bool {
+	return strings.Contains(body, "call "+sym) || strings.Contains(body, "jmp "+sym)
+}
+
 func compileNdarrayReport(t *testing.T, runner []string, driver, src, report, disabled string) (string, string, string) {
 	t.Helper()
 	dir := e2eharness.WriteSourceModloadProject(t, src)
@@ -106,8 +112,7 @@ func TestSelfHostNdarrayReportMatchesEmission(t *testing.T) {
 			}
 			body := emittedBody(t, asm, "__fn_"+tc.name)
 			vector := strings.Contains(body, "vbroadcastsd")
-			// A map call in tail position leaves through a jump.
-			mapped := strings.Contains(body, "call __fn___smm_ndarray__NdArray_map__") || strings.Contains(body, "jmp __fn___smm_ndarray__NdArray_map__")
+			mapped := reachesCall(body, "__fn___smm_ndarray__NdArray_map__")
 			kernel := tc.reason == "scale-kernel"
 			if vector != kernel || mapped == kernel {
 				t.Fatalf("reported %s but vector=%t, mapped=%t\n%s", tc.reason, vector, mapped, body)

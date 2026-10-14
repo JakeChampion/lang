@@ -130,7 +130,7 @@ func TestSelfHostNdarrayProductReport(t *testing.T) {
 		}
 		body := emittedBody(t, asm, "__fn_"+tc.name)
 		kernel := tc.reason == "outer-mul-kernel"
-		if strings.Contains(body, "mulpd") != kernel || strings.Contains(body, "call __fn___smm_ndarray__NdArray_outer__") == kernel {
+		if strings.Contains(body, "mulpd") != kernel || reachesCall(body, "__fn___smm_ndarray__NdArray_outer__") == kernel {
 			t.Fatalf("report disagrees with emitted %s:\n%s", tc.name, body)
 		}
 		if kernel {
@@ -150,7 +150,7 @@ func TestSelfHostNdarrayProductReport(t *testing.T) {
 	if !strings.Contains(disabled, "reason=disabled ") || strings.Contains(disabled, "reason=outer-mul-kernel ") {
 		t.Fatalf("disabled product reported a rewrite:\n%s", disabled)
 	}
-	if body := emittedBody(t, disabledASM, "__fn_packed"); strings.Contains(body, "mulpd") || !strings.Contains(body, "call __fn___smm_ndarray__NdArray_outer__") {
+	if body := emittedBody(t, disabledASM, "__fn_packed"); strings.Contains(body, "mulpd") || !reachesCall(body, "__fn___smm_ndarray__NdArray_outer__") {
 		t.Fatalf("disabled product still rewrote packed:\n%s", body)
 	}
 	shadowSrc := strings.Replace(ndarrayProductReportSrc, "function main(): i32 {", "function main(): i32 {\n  if (__outer_mul_f64([2.0], [3.0])[0] != 99.0) { return 10; }", 1) + `
