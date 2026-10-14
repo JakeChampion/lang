@@ -105,6 +105,14 @@ function main(): i32 { return 0; }`, 0},
 		{"written-type-arg-sole-binding", `function pick[T](a: T[]): T { return a[0]; }
 function use64(x: i64): i64 { return x; }
 function main(): i32 { use64(pick[i64]([])); return 0; }`, 0},
+		// A generic result only the destination binds reads at its type
+		// (#12382).
+		{"generic-result-bound-by-destination", `trait Ident { function one(): Self; }
+struct A { v: i32 }
+impl Ident for A { function one(): Self { return A { v: 10 }; } }
+function unit[T: Ident](): T { return T.one(); }
+function geta(): A { return unit(); }
+function main(): i32 { let a: A = unit(); return a.v + geta().v; }`, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(dir, tc.name+".fern")

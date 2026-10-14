@@ -3224,6 +3224,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// A generic enum's callable payload keeps its signature (#12382).
 		{"generic-enum-callable-payload", genericEnumCallablePayload, nil},
 		{"generic-enum-callable-payload-mismatch", "enum Fut[T] { Done(T), Wait(i32, (i32) => Fut[T]) }\nfunction run(f: Fut[i32]): i32 { match (f) { Done(v) => { return v; }, Wait(tok, k) => { let s: string = k(tok); return 0; } } return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E003"}},
+		// A generic result only the destination binds reads at the
+		// destination's type, which must meet the variable's bound (#12382).
+		{"generic-result-bound-by-destination", "trait Ident { function one(): Self; }\nstruct A { v: i32 }\nimpl Ident for A { function one(): Self { return A { v: 10 }; } }\nfunction unit[T: Ident](): T { return T.one(); }\nfunction geta(): A { return unit(); }\nfunction main(): i32 { let a: A = unit(); return a.v + geta().v; }\n", nil},
+		// The callee's T is not the enclosing generic's T of the same name.
+		{"generic-result-bound-by-destination-in-generic", "trait Ident { function one(): Self; }\nstruct A { v: i32 }\nimpl Ident for A { function one(): Self { return A { v: 10 }; } }\nfunction unit[T: Ident](): T { return T.one(); }\nfunction wrap[T](x: T): A { let a: A = unit(); return a; }\nfunction wrap2[T](x: T): A { return unit(); }\nfunction main(): i32 { return wrap(1).v + wrap2(2).v; }\n", nil},
+		{"generic-result-destination-unmet-bound", "trait Ident { function one(): Self; }\nstruct A { v: i32 }\nstruct C { v: i32 }\nimpl Ident for A { function one(): Self { return A { v: 10 }; } }\nfunction unit[T: Ident](): T { return T.one(); }\nfunction main(): i32 { let c: C = unit(); return c.v; }\n", []string{"E021"}},
+		{"generic-result-return-unmet-bound", "trait Ident { function one(): Self; }\nstruct A { v: i32 }\nstruct C { v: i32 }\nimpl Ident for A { function one(): Self { return A { v: 10 }; } }\nfunction unit[T: Ident](): T { return T.one(); }\nfunction getc(): C { return unit(); }\nfunction main(): i32 { return getc().v; }\n", []string{"E021"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

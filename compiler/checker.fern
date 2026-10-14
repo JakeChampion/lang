@@ -6175,11 +6175,44 @@ function dest_bound_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag
       if (dn.len() == bn.len()) {
         return none;
       }
+      let out: util.Diag[] = [];
+      let di: i32 = bn.len();
+      while (di < dn.len()) {
+        let ti: i32 = util.index_of_str(sig.type_params, dn[di]);
+        if (ti >= 0 && ti < sig.type_bounds.len() && sig.type_bounds[ti].len() > 0) {
+          out = util.append_diags(out, e021_bound_call_diag(sig.type_bounds[ti], dt[di], s, c.line, c.col));
+        }
+        di = di + 1;
+      }
       let (fn_, ft) = bound_bindings(sig, s, dn, dt);
-      return bound_arg_diags(sig, c, fn_, ft, s);
+      return util.append_diags(out, bound_arg_diags(sig, c, fn_, ft, s));
     }
   }
   return none;
+}
+
+// dest_bound_result reports whether `e` is a generic call whose result is a
+// type variable the call leaves unbound, so the destination binds it and the
+// call reads at the destination's type.
+function dest_bound_result(e: ast.Expr, s: Scope): boolean {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprIdent(id) = c.callee {
+      if (s.defines(id.name)) {
+        return false;
+      }
+      let sig: FuncSig = s.lookup_sig(id.name);
+      if (sig.all_type_params.len() == 0 || c.args.len() != sig.param_types.len()) {
+        return false;
+      }
+      let ret: parser.TypeRef = sig_ret_ref(sig);
+      if (ret.args.len() > 0 || ret.array_depth > 0 || !util.has_str(sig.all_type_params, ret.base)) {
+        return false;
+      }
+      let (bn, _) = call_type_bindings(sig, c, s);
+      return util.index_of_str(bn, ret.base) < 0 && is_type_variable(check_expr(e, s));
+    }
+  }
+  return false;
 }
 
 // value_if_results are the values a value-`if` or value-`match` yields, the
@@ -7393,8 +7426,10 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
       }
       if (is_unknown(t)) {
         // A generic function named as the value has the declared callable
-        // type when that binds every one of its type parameters.
-        if (generic_fn_value_arg(r.value, s) && settles_to(r.value, s.ret_type, s)) {
+        // type when that binds every one of its type parameters, and a
+        // generic call whose result only the destination binds has the
+        // declared type.
+        if ((generic_fn_value_arg(r.value, s) || dest_bound_result(r.value, s)) && settles_to(r.value, s.ret_type, s)) {
           return CheckResult { scope: s, ty: s.ret_type };
         }
         return CheckResult { scope: s, ty: t };
@@ -8506,8 +8541,10 @@ function unknown_beyond_tvars(t: typeinfo.Type): boolean {
 // tvar_meets_concrete reports whether a value of a bare type variable reaches a
 // destination that names a concrete type. The variable stands for every type,
 // so it meets no concrete one; a `dyn` destination is the bounds' question.
-function tvar_meets_concrete(from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean {
-  if (!util.has_str(s.fn_tvars, tvar_name(from)) || type_contains_unknown(to)) {
+// `e` is the value: a callee's variable only the destination binds is not one
+// of the enclosing function's, whatever its name.
+function tvar_meets_concrete(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean {
+  if (!util.has_str(s.fn_tvars, tvar_name(from)) || type_contains_unknown(to) || dest_bound_result(e, s)) {
     return false;
   }
   if let typeinfo.TypeDyn(_) = to {
@@ -9054,7 +9091,7 @@ function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: U
           if (rbound.len() == 0 && !is_unknown(t) && !settles_to(r.value, ret_ty, cur) && !(type_assignable(t, ret_ty, unions) && dyn_conforms(t, ret_ty, cur))) {
             out = out.append(dg_at("E002", "return value: expected " + type_label(ret_ty) + ", got " + type_label(t) + str_copy_hint(t, ret_ty), r.line, r.col));
           }
-          if (tvar_meets_concrete(t, ret_ty, cur)) {
+          if (tvar_meets_concrete(r.value, t, ret_ty, cur)) {
             out = out.append(dg_at("E002", "return value: expected " + type_label(ret_ty) + ", got " + tvar_name(t), r.line, r.col));
           }
         }
@@ -12661,6 +12698,9 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
       }
       return false;
     }
+  }
+  if (dest_bound_result(e, s)) {
+    return true;
   }
   // A generic function named as a value settles to the function type
   // expected of it when that type binds every one of its type parameters;
@@ -16593,7 +16633,7 @@ function assign_diags(a: ast.StmtAssign, cur: Scope, unions: UnionSig[]): util.D
     if (abound.len() == 0 && !is_unknown(tt) && !is_unknown(vt) && !settles_to(a.value, tt, cur) && !(type_assignable(vt, tt, unions) && dyn_conforms(vt, tt, cur))) {
       out = out.append(dg_at("E003", "variable \"" + a.target + "\": expected " + type_label(tt) + ", got " + type_label(vt) + str_copy_hint(vt, tt), a.line, a.col));
     }
-    if (tvar_meets_concrete(vt, tt, cur)) {
+    if (tvar_meets_concrete(a.value, vt, tt, cur)) {
       out = out.append(dg_at("E003", "variable \"" + a.target + "\": expected " + type_label(tt) + ", got " + tvar_name(vt), a.line, a.col));
     }
   }
@@ -16669,7 +16709,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
           if (vbound.len() == 0 && !is_unknown(declared) && !is_unknown(initt) && !settles_to(v.init, declared, cur) && !(type_assignable(initt, declared, unions) && dyn_conforms(initt, declared, cur))) {
             out = out.append(dg_at("E003", "variable \"" + v.name + "\": expected " + type_label(declared) + ", got " + type_label(initt) + str_copy_hint(initt, declared), v.line, v.col));
           }
-          if (tvar_meets_concrete(initt, declared, cur)) {
+          if (tvar_meets_concrete(v.init, initt, declared, cur)) {
             out = out.append(dg_at("E003", "variable \"" + v.name + "\": expected " + type_label(declared) + ", got " + tvar_name(initt), v.line, v.col));
           }
           // An annotation naming no declared type (the E064 case) is a type
