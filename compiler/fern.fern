@@ -3258,7 +3258,7 @@ function serve_lsp(pos: string[], embedded_root: string, target: string, target_
     return usage();
   }
   if (pos.len() == 1) {
-    root = pos[0];
+    root = util.clean_path(pos[0]);
   }
   return run_lsp(Server { root: root, target: target, target_given: target_given, embed_dir: embed_dir, uris: [], srcs: [], published: [], shutdown: false });
 }
@@ -4286,7 +4286,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
           return flag_after_entry(a);
         }
         pos = pos.append(a);
-        root = a;
+        root = util.clean_path(a);
         have_root = true;
       } else if (prog_args.len() == 0 && !prog_sep && a == "--") {
         prog_sep = true;
