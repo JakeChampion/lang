@@ -119,12 +119,17 @@ func runZeroCopy(t *testing.T, ring bool) {
 }
 
 // ringSubmitted waits up to two seconds for the idle server's rings to
-// hold no submission the kernel was not given: SqHead equal to SqTail.
+// hold no submission the kernel was not given: SqHead equal to SqTail. A
+// server holding no ring at all fails, since it never ran on one.
 func ringSubmitted(pgid int) error {
 	var last string
 	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
 		last = ""
-		for _, info := range ringInfos(pgid) {
+		infos := ringInfos(pgid)
+		if len(infos) == 0 {
+			last = "no io_uring"
+		}
+		for _, info := range infos {
 			head, tail := fdinfoField(info, "SqHead"), fdinfoField(info, "SqTail")
 			if head != tail {
 				last = fmt.Sprintf("SqHead %s, SqTail %s", head, tail)
