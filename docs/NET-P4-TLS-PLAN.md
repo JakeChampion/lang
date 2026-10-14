@@ -292,3 +292,38 @@ config adds and `peer_extensions()` answers, and RFC 9001's terms hold
 application data, no alert record, no compatibility CCS). An HTTP/3
 package owns the packets, frames, flow control and recovery; nothing in
 `std/tls` changes for the record-layer client and server.
+
+kTLS (landed): an offloaded session hands its
+record layer to Linux's (`std/tls/ktls`). The handshake runs in userspace
+as before; `offload()` then gives the kernel each direction's key, IV and
+next sequence number in its own structure
+(`record.Protection.kernel_info`), only at a record boundary with nothing
+read but unprocessed, since the kernel takes the stream from the next
+record. Afterwards application data is plain bytes on the socket, and the
+other records still pass through the session, which frames what it writes
+in the clear and takes what the kernel opened framed as it arrived: an
+alert, a ticket, and a KeyUpdate, whose new secret comes back in the step's
+`rekeyed` for `install`. A kernel before 6.14 refuses a second key in a
+direction, so there a KeyUpdate ends the connection with `KeysRefused`.
+`update_keys(request)` sends a KeyUpdate from either side, offloaded or
+not. Measured in a qemu VM before CI, on Ubuntu's 6.8 and 6.17 kernels:
+the three suites round-trip both ways against the record layer, and Go's
+crypto/tls drives both ends, with the rekey both ways on 6.17 and refused
+on 6.8. The x86-64 e2e lane loads the `tls` module and runs
+`TestX86_64KtlsRecords` and `TestX86_64KtlsAgainstGo`, which elsewhere
+skip. `std/serve` offloads its TLS connections under `Config.ktls`,
+right after the read that completes the handshake: its plain read path
+then serves them, an EIO from it is the next control record for the
+session, and a file body goes out by sendfile. Go's net/http client
+drives the serve TLS world with it (`TestX86_64KtlsServe`; in the VM on
+both kernels, two connections per run taken by the kernel both ways).
+`std/fetch` offloads each https connection it opens under
+`Request.ktls`, in `__secured` once the handshake is done; the
+`Transport` names the socket under a connection (`socket`, -1 for the
+simulator's), and an offloaded session's empty read is told apart from
+the end of the stream by the kernel's typed read. The HTTP/2 connections
+a serve loop drives for its handlers take the same path. Go's servers
+drive it through `TestTLSClientAgainstGo`'s world, all eight completed
+handshakes offloaded (`TestX86_64KtlsFetch`), and the serve loop's shared
+upstream through a tunnel (`TestX86_64KtlsServeH2`), in the VM on both
+kernels.
