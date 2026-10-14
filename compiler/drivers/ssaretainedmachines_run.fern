@@ -1,6 +1,7 @@
 // The x86-64 text machines over the retained runtime helpers. They run apart
 // from ssaretained_run because the sanitizer keeps every freed block, and the
 // two together outgrow a 16 GB runner.
+import "../asmcore";
 import "./ssaretainedprogram" as retained;
 import "./ssadecrementtexts" as decrementtexts;
 import "./ssadecrementisas" as decrementisas;
@@ -27,7 +28,11 @@ import "./ssastringreleases" as stringreleases;
 import "./ssaarrayboxmachines" as arrayboxmachines;
 
 function main(): i32 {
-  let g = retained.program();
+  let mod = retained.module();
+  if (asmcore.refuse_parse_unknowns([mod]) || asmcore.refuse_decl_names([mod])) {
+    return 1;
+  }
+  let g = retained.program(mod);
   if (!g.ok) {
     return 1;
   }

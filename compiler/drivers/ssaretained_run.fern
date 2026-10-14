@@ -168,7 +168,11 @@ function main(): i32 {
   constructorisas.run();
   retainedtext.run();
   smallcallerflows.run();
-  let g = retained.program();
+  let mod = retained.module();
+  if (asmcore.refuse_parse_unknowns([mod]) || asmcore.refuse_decl_names([mod])) {
+    return 1;
+  }
+  let g = retained.program(mod);
   require(g.ok && g.im.funcs.len() == 3 && g.cache.len() == 3, 1);
   let fresh = asmcore.new_state();
   require(!fresh.retain_prepared, 2);

@@ -27,11 +27,10 @@ pub function emit(g: ircore.Gated, cache: irtables.LowerResult[], physical: phys
   return asm_ir.emit_module_ir_unit_prepared(g.im, entry, false, "", ["str_cmp"], g.im.funcs, g.stab, lo, hi, cache, physical, runtime, 0 as usize, sw, retain);
 }
 
-// program exits 1 when the source does not parse.
-pub function program(): ircore.Gated {
-  let mod = parser.parse_module(lexer.tokenize("@noinline function first(): i32 { return 7; } @noinline function second(): i32 { return first(); } function main(): i32 { return second(); }"));
-  if (asmcore.refuse_parse_unknowns([mod]) || asmcore.refuse_decl_names([mod])) {
-    exit(1);
-  }
+pub function module(): parser.Module {
+  return parser.parse_module(lexer.tokenize("@noinline function first(): i32 { return 7; } @noinline function second(): i32 { return first(); } function main(): i32 { return second(); }"));
+}
+
+pub function program(mod: parser.Module): ircore.Gated {
   return semlower.program(semlower.driven(mod, "x86-64-linux"));
 }
