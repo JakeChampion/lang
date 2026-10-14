@@ -52,6 +52,7 @@ function program(input: string[], name: string, arm: boolean): Program {
   let labels: string[] = [];
   let ops: isa.Op[] = [];
   let entry = -1;
+  let closure = -1;
   let reg = -1;
   let ok = symbol(name);
   let entry_label = "__fn_" + asmcore.sanitize_label(name);
@@ -69,6 +70,8 @@ function program(input: string[], name: string, arm: boolean): Program {
         }
         if (label == entry_label) {
           entry = lines.len();
+        } else if (label == entry_label + ".k" && closure < 0) {
+          closure = lines.len();
         } else if (label == entry_label + ".r") {
           reg = lines.len();
         } else if (!label.starts_with(".L")) {
@@ -83,7 +86,9 @@ function program(input: string[], name: string, arm: boolean): Program {
     }
   }
   let resolved = destinations(ops, labels);
-  return Program { lines: lines, labels: labels, ops: ops, targets: resolved.targets, entry: entry, register_entry: reg, ok: ok && resolved.ok && entry == 0 && reg > 0 };
+  // The closure entry `.k`, where present, sits between the stack entry and `.r`.
+  let ordered = closure < 0 || closure > entry && closure <= reg;
+  return Program { lines: lines, labels: labels, ops: ops, targets: resolved.targets, entry: entry, register_entry: reg, ok: ok && resolved.ok && entry == 0 && reg > 0 && ordered };
 }
 
 // Resolve targets once into the bounded line array. Each abstract case uses
