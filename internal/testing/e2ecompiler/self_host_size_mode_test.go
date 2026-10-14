@@ -1,0 +1,111 @@
+package e2ecompiler
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+// A -size build calls the reference-count helpers rather than testing the
+// count inline (asm_ir / asm_arm64_ir ssa_call): `g` releases the string it
+// built through __fern_str_free's register entry, with none of the inline
+// guard's labels, and `h` retains the array it goes on reading through
+// __fern_rc_inc. The program answers the same either way, -size drops the
+// backtrace walk unless -backtrace asks for it, and the net-bench hello
+// server, std/serve whole, builds smaller.
+const sizeModeProg = `@noinline function g(a: string): i32 { let t: string = a + "x"; return t.len(); }
+@noinline function h(xs: i32[]): i32 { let ys: i32[] = xs; let zs: i32[] = ys.append(1); return zs.len() + xs.len(); }
+function main(): i32 { return g("abc" + "") + g("") * 10 + h([1, 2, 3]) * 100; }
+`
+
+func TestSelfHostSizeMode(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "size.fern")
+	if err := os.WriteFile(src, []byte(sizeModeProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	emit := func(target string, flags ...string) string {
+		t.Helper()
+		out := filepath.Join(dir, target+strings.Join(flags, "")+".s")
+		args := append(append([]string{}, flags...), "-target", target, "-emit", "asm", "-o", out, src, h.stdlib)
+		if combined, err := exec.Command(h.cli, args...).CombinedOutput(); err != nil {
+			t.Fatalf("%s %v: emitting: %v\n%s", target, flags, err, combined)
+		}
+		asm, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(asm)
+	}
+	release := map[string]*regexp.Regexp{
+		"x86-64-linux": regexp.MustCompile(`call __fn___fern_str_free\.r\n`),
+		"arm64-linux":  regexp.MustCompile(`bl __fn___fern_str_free\.r\n`),
+	}
+	retain := map[string]*regexp.Regexp{
+		"x86-64-linux": regexp.MustCompile(`call __fn___fern_rc_inc\n`),
+		"arm64-linux":  regexp.MustCompile(`bl __fn___fern_rc_inc\n`),
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		asm := emit(target, "-size")
+		g := condBranchBody(t, asm, "g")
+		if strings.Contains(g, "rcdec") || !release[target].MatchString(g) {
+			t.Errorf("%s -size: g does not release its string through the helper's register entry alone:\n%s", target, g)
+		}
+		if hb := condBranchBody(t, asm, "h"); strings.Contains(hb, "rcinc") || !retain[target].MatchString(hb) {
+			t.Errorf("%s -size: h does not retain its array through __fern_rc_inc:\n%s", target, hb)
+		}
+		if strings.Contains(asm, "backtrace:") {
+			t.Errorf("%s -size: the backtrace walk is still emitted", target)
+		}
+		if !strings.Contains(emit(target, "-size", "-backtrace"), "backtrace:") {
+			t.Errorf("%s -size -backtrace: the backtrace walk is not emitted", target)
+		}
+	}
+	for _, tg := range h.targets {
+		for _, mode := range []string{"default", "size"} {
+			bin := filepath.Join(dir, tg.target+"."+mode)
+			args := []string{"-target", tg.target, "-o", bin, src, h.stdlib}
+			if mode == "size" {
+				args = append([]string{"-size"}, args...)
+			}
+			if combined, err := exec.Command(h.cli, args...).CombinedOutput(); err != nil {
+				t.Fatalf("%s %s: building: %v\n%s", tg.target, mode, err, combined)
+			}
+			run := exec.Command(bin)
+			if len(tg.runner) > 0 {
+				run = exec.Command(tg.runner[0], append(tg.runner[1:], bin)...)
+			}
+			_ = run.Run()
+			if got := run.ProcessState.ExitCode(); got != 714%256 {
+				t.Errorf("%s %s: exit %d, want %d (714 mod 256)", tg.target, mode, got, 714%256)
+			}
+		}
+	}
+	hello := filepath.Join(repoRootFromTest(t), "scripts", "net-bench.d", "hello.fern")
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		sizes := map[string]int64{}
+		for _, mode := range []string{"default", "size"} {
+			bin := filepath.Join(dir, target+".hello."+mode)
+			args := []string{"-target", target, "-o", bin, hello, h.stdlib}
+			if mode == "size" {
+				args = append([]string{"-size"}, args...)
+			}
+			if combined, err := exec.Command(h.cli, args...).CombinedOutput(); err != nil {
+				t.Fatalf("%s %s: building the hello server: %v\n%s", target, mode, err, combined)
+			}
+			fi, err := os.Stat(bin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sizes[mode] = fi.Size()
+		}
+		if sizes["size"] >= sizes["default"]*9/10 {
+			t.Errorf("%s: the -size hello server is %d bytes, the default %d: not a tenth smaller", target, sizes["size"], sizes["default"])
+		}
+		t.Logf("%s hello server: %d bytes, %d with -size", target, sizes["default"], sizes["size"])
+	}
+}

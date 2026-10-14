@@ -34,6 +34,15 @@ func TestCompileArgsEmitDefault(t *testing.T) {
 	}
 }
 
+// TestCompileArgsSize: -size reaches the self-host, and only when asked for.
+func TestCompileArgsSize(t *testing.T) {
+	sized := compileArgs(compileRequest{src: "p.fern", target: "x86-64-linux", size: true}, "prog", "stdlib")
+	plain := compileArgs(compileRequest{src: "p.fern", target: "x86-64-linux"}, "prog", "stdlib")
+	if !slices.Contains(sized, "-size") || slices.Contains(plain, "-size") {
+		t.Errorf("-size forwarded as %q with the flag and %q without", strings.Join(sized, " "), strings.Join(plain, " "))
+	}
+}
+
 // TestStdoutRefusal: a wasm compile with no -o is refused unless it asked for
 // text, and a native one never is.
 func TestStdoutRefusal(t *testing.T) {

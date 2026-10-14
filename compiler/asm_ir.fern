@@ -7854,11 +7854,13 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitSt
 // in IR order for a runtime helper and reversed for a user function (arg0 on
 // top), the callee, the caller-side pop, and %rax stored.
 function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
-  if (ssa.rc_inlined(ins)) {
+  // A -size build calls the helpers: the release through its register
+  // entry, the retain and the uniqueness test through their stack entries.
+  if (ssa.rc_inlined(ins) && !s.size) {
     return ssa_rc_prim(ins, reg_of, lp, s);
   }
   s = ssa_x0_forget(s);
-  if ((ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug) {
+  if ((ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !s.rc_free_debug && !s.size) {
     return ssa_rc_dec(ins, reg_of, lp, s);
   }
   if (s.ssa_trap_suffix != "" && ins.args.len() == 0 && util.has_str(ssa_called_traps(), ins.str)) {

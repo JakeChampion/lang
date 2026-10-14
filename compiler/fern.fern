@@ -4248,6 +4248,11 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // -backtrace: whether a fatal abort walks the frame chain under its cause
   // line, as native's flag of the same name; FERN_BACKTRACE is the default.
   let backtrace: boolean = asmcore.backtrace_on();
+  let backtrace_set: boolean = false;
+  // -size: build for size over speed (asmcore.EmitState.size), and drop the
+  // backtrace walk unless -backtrace says otherwise; FERN_SIZE=1 is the
+  // default.
+  let size: boolean = asmcore.size_on();
   // -sanitize: the heap memory-safety detectors together, as native's flag;
   // FERN_SANITIZE is the other way to turn them on.
   let sanitize_flag: boolean = false;
@@ -4331,8 +4336,14 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
       emit_syms = true;
     } else if (a == "-backtrace" || a == "-backtrace=true" || a == "-backtrace=1") {
       backtrace = true;
+      backtrace_set = true;
     } else if (a == "-backtrace=false" || a == "-backtrace=0") {
       backtrace = false;
+      backtrace_set = true;
+    } else if (a == "-size" || a == "-size=true" || a == "-size=1") {
+      size = true;
+    } else if (a == "-size=false" || a == "-size=0") {
+      size = false;
     } else if (a == "-sanitize" || a == "-sanitize=true" || a == "-sanitize=1") {
       sanitize_flag = true;
     } else if (a == "-sanitize=false" || a == "-sanitize=0") {
@@ -4873,7 +4884,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // statement, the emitter renders the marks as `.loc` rows over the `.file`
   // table prepended below, and the image writer encodes .debug_line (#11410).
   let debug_lines: boolean = emit_syms && (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin");
-  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, debug_lines), switches: asmcore.Switches { backtrace: backtrace, sanitize: sanitize_flag || asmcore.sanitize_on(), var_rows: debug_lines && emit != "asm", shared: shared } };
+  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, debug_lines), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size } };
   let out_asm: string = "";
   let emit_text: boolean = emit == "asm";
   if (target == "arm64-linux") {
