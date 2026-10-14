@@ -9,12 +9,14 @@ import (
 	"testing"
 )
 
-// A call through a function value enters the callee's `.r` entry with the
-// arguments in the pool registers, as a register call passes them, and pushes
-// them only past ssa_nregs(). `apply` calls a closure with its environment and
-// two arguments, so it pushes nothing. `seven`'s closure takes its environment
-// and seven arguments, one past the pool, so every argument is also pushed,
-// where `.r` reads the ones past the registers.
+// A call through a function value passes the arguments in the pool registers
+// and pushes them only past ssa_nregs(): six on x86-64, eight on arm64. On
+// x86-64 the value names the callee's `.r` entry; on arm64 its `.k` entry,
+// which takes every argument in an integer register and moves an f64 one into
+// the float register `.r` reads it from. `apply` calls a closure with its
+// environment and two arguments, so it pushes nothing. `seven`'s closure takes
+// its environment and seven arguments, two past x86-64's pool, so there every
+// argument is also pushed, and none on arm64.
 const closureRegCallProg = `@noinline function apply(f: (i32, i32) => i32, a: i32, b: i32): i32 { return f(a, b); }
 @noinline function seven(f: (i32, i32, i32, i32, i32, i32, i32) => i32): i32 { return f(1, 2, 3, 4, 5, 6, 7); }
 function main(): i32 {
@@ -26,6 +28,21 @@ function main(): i32 {
 }
 `
 
+// closureFloatCallProg passes f64 arguments between integer ones, through a
+// call that fits the pool and one, ten arguments with the environment, past
+// it on both targets.
+const closureFloatCallProg = `function applyf(f: (f64, i32, f64) => f64, a: f64, n: i32, b: f64): f64 { return f(a, n, b); }
+function many(f: (i32, f64, i32, i32, i32, i32, i32, f64, i32) => f64): f64 { return f(1, 2.5, 3, 4, 5, 6, 7, 0.25, 9); }
+function main(): i32 {
+    let k: f64 = 1.5;
+    let g = (x: f64, n: i32, y: f64): f64 => x * (n as f64) + y + k;
+    let h = (a: i32, b: f64, c: i32, d: i32, e: i32, f: i32, g2: i32, q: f64, r: i32): f64 => (a + c + d + e + f + g2 + r) as f64 + b * q + k;
+    let r1: f64 = applyf(g, 2.0, 3, 0.5);
+    let r2: f64 = many(h);
+    return ((r1 * 10.0) as i32) + ((r2 * 100.0) as i32);
+}
+`
+
 func TestSelfHostClosureCallInRegisters(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -33,14 +50,18 @@ func TestSelfHostClosureCallInRegisters(t *testing.T) {
 	if err := os.WriteFile(src, []byte(closureRegCallProg), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out := filepath.Join(dir, "clo.s")
-	if combined, err := exec.Command(h.cli, "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
-		t.Fatalf("emitting: %v\n%s", err, combined)
+	emit := func(target string) string {
+		out := filepath.Join(dir, target+".s")
+		if combined, err := exec.Command(h.cli, "-target", target, "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
+			t.Fatalf("%s: emitting: %v\n%s", target, err, combined)
+		}
+		asm, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(asm)
 	}
-	asm, err := os.ReadFile(out)
-	if err != nil {
-		t.Fatal(err)
-	}
+	asm := []byte(emit("x86-64-linux"))
 	// A push the CFI tracks is a frame save, not an argument.
 	argPush := regexp.MustCompile(`\n\s+pushq [^\n]+(\n\s+\.cfi_def_cfa_offset)?`)
 	pushes := func(body string) int {
@@ -63,18 +84,43 @@ func TestSelfHostClosureCallInRegisters(t *testing.T) {
 	if !regexp.MustCompile(`__fn_\S*clo\d+\.r\b`).Match(asm) {
 		t.Errorf("no function value names a closure's .r entry")
 	}
-	for _, tg := range h.targets {
-		bin := filepath.Join(dir, tg.target+".bin")
-		if combined, err := exec.Command(h.cli, "-target", tg.target, "-o", bin, src, h.stdlib).CombinedOutput(); err != nil {
-			t.Fatalf("%s: building: %v\n%s", tg.target, err, combined)
+	arm := emit("arm64-linux")
+	armPush := regexp.MustCompile(`str x\d+, \[sp, #-16\]!`)
+	for _, fn := range []string{"apply", "seven"} {
+		if body := condBranchBody(t, arm, fn); !strings.Contains(body, "blr x6") || armPush.MatchString(body) {
+			t.Errorf("arm64 %s: want a call through x6 with no argument pushed:\n%s", fn, body)
 		}
-		run := exec.Command(bin)
-		if len(tg.runner) > 0 {
-			run = exec.Command(tg.runner[0], append(tg.runner[1:], bin)...)
+	}
+	if !regexp.MustCompile(`__fn_\S*clo\d+\.k\b`).MatchString(arm) {
+		t.Errorf("arm64: no function value names a closure's .k entry")
+	}
+	// A Mach-O build is one unit, so `.k`, inside its function, is a local
+	// label there, as `.r` is: a symbol would split the function's CFI.
+	dar := emit("arm64-darwin")
+	if !regexp.MustCompile(`\bL__fn_\S*clo\d+\.k\b`).MatchString(dar) || regexp.MustCompile(`(^|[^L\w])__fn_\S*\.k\b`).MatchString(dar) {
+		t.Errorf("arm64-darwin: a .k entry is not a local label")
+	}
+	for _, c := range []struct {
+		name, src string
+		want      int
+	}{{"clo", closureRegCallProg, 197}, {"clof", closureFloatCallProg, 208}} {
+		prog := filepath.Join(dir, c.name+".fern")
+		if err := os.WriteFile(prog, []byte(c.src), 0o644); err != nil {
+			t.Fatal(err)
 		}
-		_ = run.Run()
-		if got := run.ProcessState.ExitCode(); got != 197 {
-			t.Errorf("%s: exit %d, want 197 (the interpreter's)", tg.target, got)
+		for _, tg := range h.targets {
+			bin := filepath.Join(dir, c.name+"-"+tg.target+".bin")
+			if combined, err := exec.Command(h.cli, "-target", tg.target, "-o", bin, prog, h.stdlib).CombinedOutput(); err != nil {
+				t.Fatalf("%s %s: building: %v\n%s", c.name, tg.target, err, combined)
+			}
+			run := exec.Command(bin)
+			if len(tg.runner) > 0 {
+				run = exec.Command(tg.runner[0], append(tg.runner[1:], bin)...)
+			}
+			_ = run.Run()
+			if got := run.ProcessState.ExitCode(); got != c.want {
+				t.Errorf("%s %s: exit %d, want %d (the interpreter's)", c.name, tg.target, got, c.want)
+			}
 		}
 	}
 }

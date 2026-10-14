@@ -38,13 +38,13 @@ func countUserCalls(asm []byte, callee string) int {
 }
 
 // isFunctionLabel reports a label that starts a function: at column 0, not a
-// local `.L` label, and not a function's own register entry `<label>.r:`,
-// which sits inside the function it names.
+// local `.L` label, and not a function's own register entries `<label>.r:` and
+// arm64's `<label>.k:`, which sit inside the function they name.
 func isFunctionLabel(line, trimmed []byte) bool {
 	if len(line) == 0 || line[0] == ' ' || line[0] == '\t' || line[0] == '.' {
 		return false
 	}
-	return bytes.HasSuffix(trimmed, []byte(":")) && !bytes.HasSuffix(trimmed, []byte(".r:"))
+	return bytes.HasSuffix(trimmed, []byte(":")) && !bytes.HasSuffix(trimmed, []byte(".r:")) && !bytes.HasSuffix(trimmed, []byte(".k:"))
 }
 
 // countCallsInFn counts `call <callee>` sites inside ONE user function

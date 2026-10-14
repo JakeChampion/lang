@@ -3667,20 +3667,40 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   return s.write("    strb " + ssa_wreg(c) + ", " + at + "\n");
 }
 
-// ssa_call_ind is the stack machine's call through a function value: the
-// arguments pushed with the first on top, the target in x9, which nothing
-// live can occupy at a call.
+// ssa_call_ind is a call through a function value, which names the callee's
+// `.k` entry: every argument in the pool registers in order, whatever its
+// type. Past ssa_nregs() arguments, every one is pushed, first on top, and the
+// first ssa_nregs() are loaded back from the pushes, since a spilled
+// operand's slot moves with sp. The target is read into x6 first, which is
+// neither a pool register nor a scratch the argument moves use.
 function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   let argc: i32 = ins.args.len() - 1;
-  let i: i32 = argc;
-  while (i >= 1) {
-    s = ssa_push_operand(reg_of, ins.args[i], (argc - i) * 16, s);
-    i = i - 1;
+  s = ssa_load(reg_of, ins.args[0], "x6", s);
+  if (argc > ssa_nregs()) {
+    let i: i32 = argc;
+    while (i >= 1) {
+      s = ssa_push_operand(reg_of, ins.args[i], (argc - i) * 16, s);
+      i = i - 1;
+    }
+    let p: i32 = 0;
+    while (p < ssa_nregs()) {
+      s = ssa_ldst(s, true, ssa_reg(p), "sp", 16 * p);
+      p = p + 1;
+    }
+  } else {
+    let srcs: i32[] = [];
+    let dsts: i32[] = [];
+    let a: i32 = 0;
+    while (a < argc) {
+      srcs = srcs.append(reg_of[ins.args[a + 1]]);
+      dsts = dsts.append(a);
+      a = a + 1;
+    }
+    s = ssa_parallel_moves(srcs, dsts, s);
   }
-  s = ssa_load_pushed(reg_of, ins.args[0], "x9", argc * 16, s);
-  s = s.write("    blr x9\n");
-  if (argc > 0) {
+  s = s.write("    blr x6\n");
+  if (argc > ssa_nregs()) {
     s = ssa_addsub_imm(s, false, "sp", "sp", argc * 16);
   }
   return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
@@ -3690,7 +3710,7 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 // function-value box the lowering folded whole (ir.const_struct_* /
 // ir.const_closure), interned as the flat arm interns it.
 function ssa_agg_lit(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState): asmcore.EmitState {
-  let pk: asmcore.ConstAggPack = asmcore.const_agg_pack(s, ins.str, "");
+  let pk: asmcore.ConstAggPack = asmcore.const_agg_pack(s, ins.str, ".k");
   s = pk.state;
   let kout: asmcore.ConstAggOut = asmcore.add_const_agg(s, pk.text);
   s = kout.state;
@@ -3706,7 +3726,7 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
   let k: i32 = ins.kind_tag;
   let label: string = "";
   if (k == 45) {
-    label = "__fn_" + asmcore.sanitize_label(ins.str);
+    label = "__fn_" + asmcore.sanitize_label(ins.str) + ".k";
   } else if (k == 46) {
     let sh: asmcore.ShapeRefOut = asmcore.shape_ref(s, ins.str);
     s = sh.state;
@@ -4255,21 +4275,29 @@ function ssa_reg_params(f: ssa.SFunc): i32 {
   return ssa_nregs();
 }
 
-// ssa_entry_shim is a function's two entries. `__fn_<name>`, the stack-ABI
+// ssa_entry_shim is a function's three entries. `__fn_<name>`, the stack-ABI
 // entry every caller outside this unit's direct calls uses, loads the first
 // ssa_reg_params() arguments from the caller's 16-byte stack slots into the
-// pool registers and falls through into `__fn_<name>.r`, where a register-ABI
-// caller enters with them already there. A function with no parameters has
-// one entry.
+// pool registers in order and falls through into `__fn_<name>.k`, where a call
+// through a function value enters with them there. It moves each f64
+// parameter into the float register the register ABI passes it in and falls
+// through into `__fn_<name>.r`, where a register-ABI caller enters with every
+// argument in place. A function with no f64 parameter has `.k` and `.r` at one
+// address, and one with no parameters all three.
 function ssa_entry_shim(f: ssa.SFunc, name: string, s: asmcore.EmitState): asmcore.EmitState {
   let k: i32 = ssa_reg_params(f);
-  if (k == 0) {
-    return s;
-  }
   let mask: string = s.float_mask(name);
   let p: i32 = 0;
   while (p < k) {
-    s = ssa_ldst(s, true, ssa_reg(ssa_arg_loc(mask, p)), "sp", 16 * p);
+    s = ssa_ldst(s, true, ssa_reg(p), "sp", 16 * p);
+    p = p + 1;
+  }
+  s = s.write("__fn_" + name + ".k:\n");
+  p = 0;
+  while (p < k) {
+    if (asmcore.float_param(mask, p)) {
+      s = ssa_mov_rr(s, ssa_reg(ssa_farg(p)), ssa_reg(p));
+    }
     p = p + 1;
   }
   return s.write("__fn_" + name + ".r:\n");
@@ -4555,7 +4583,7 @@ pub function emit_function_via_ir_pre(r: irtables.LowerResult, selected: physica
 // asm_ir.emit_function_via_ir_named.
 pub function emit_function_via_ir_named(r: irtables.LowerResult, selected: physicalbody.Selected, label_name: string, weak: boolean, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   if (weak) {
-    s = s.write(".weak __fn_" + asmcore.sanitize_label(label_name) + "\n");
+    s = s.write(".weak __fn_" + asmcore.sanitize_label(label_name) + "\n.weak __fn_" + asmcore.sanitize_label(label_name) + ".k\n");
   }
   ircore.lower_failed_refuse(label_name, r);
   irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals, vgate);
@@ -12174,7 +12202,7 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
       if (mod.funcs[fi].receiver_type.len() > 0) {
         gname = util.base_type_name(mod.funcs[fi].receiver_type) + "." + mod.funcs[fi].name;
       }
-      s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
+      s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n.globl __fn_" + asmcore.sanitize_label(gname) + ".k\n");
     }
     s = emit_function_via_ir_pre(r, physicalbody.select(physical, fi), mod.funcs[fi], s, vgate);
     fi = fi + 1;
@@ -12420,8 +12448,9 @@ function darwin_retarget_locals(line: string): string {
       continue;
     }
     if (c == 95 && (i == 0 || !darwin_is_sym_byte(line[i - 1])) && darwin_is_reg_entry(line, i)) {
-      // A register entry `__fn_X.r` becomes `L__fn_X.r`, for the same
-      // reason: as a symbol it would split its function's CFI.
+      // A register entry, `__fn_X.r` or `__fn_X.k`, becomes `L__fn_X.r` or
+      // `L__fn_X.k`, for the same reason: as a symbol it would split its
+      // function's CFI.
       out = out + slice_unchecked(line, run, i) + "L";
       run = i;
     }
@@ -12433,8 +12462,9 @@ function darwin_retarget_locals(line: string): string {
   return out + slice_unchecked(line, run, n);
 }
 
-// darwin_is_reg_entry reports whether the symbol starting at `i` is a
-// function's register entry, `__fn_<name>.r`.
+// darwin_is_reg_entry reports whether the symbol starting at `i` is one of a
+// function's register entries, `__fn_<name>.r` or `__fn_<name>.k`. A Mach-O
+// build is one unit, so nothing outside the file names either.
 function darwin_is_reg_entry(line: string, i: i32): boolean {
   if (!util.str_has_prefix(slice_unchecked(line, i, line.len()), "__fn_")) {
     return false;
@@ -12443,7 +12473,7 @@ function darwin_is_reg_entry(line: string, i: i32): boolean {
   while (j < line.len() && darwin_is_sym_byte(line[j])) {
     j = j + 1;
   }
-  return j - i > 7 && line[j - 2] == 46 && line[j - 1] == 114;
+  return j - i > 7 && line[j - 2] == 46 && (line[j - 1] == 114 || line[j - 1] == 107);
 }
 
 // darwin_is_sym_byte reports whether the byte can appear inside an assembler
@@ -12493,6 +12523,9 @@ pub function darwinize(asm: string): string {
       let out_line: string = line + "";
 
       if (util.str_has_prefix(body, ".type ") || util.str_has_prefix(body, ".size ")) {
+        keep = false;
+      } else if ((util.str_has_prefix(body, ".globl ") || util.str_has_prefix(body, ".weak ")) && darwin_is_reg_entry(body, darwin_index_of_unquoted(body, " ") + 1)) {
+        // A register entry is a local label here, which nothing exports.
         keep = false;
       } else if (util.str_has_prefix(body, ".note.GNU-stack")) {
         keep = false;
