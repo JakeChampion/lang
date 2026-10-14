@@ -234,7 +234,9 @@ function comparison(g: ircore.Gated, arm: boolean, mode: i32): void {
   if (mode == 1) {
     ops = ops.append(ir.op_bin("not", 32, false));
   }
-  ops = util.append_all(ops, [ir.op_if(0), ir.op_const_i32(7), ir.op_return(), ir.op_else(), ir.op_const_i32(9), ir.op_return(), ir.op_end()]);
+  // The else arm divides, which may not run on the path that did not take
+  // it, so the branch stays a branch rather than a select.
+  ops = util.append_all(ops, [ir.op_if(0), ir.op_const_i32(7), ir.op_return(), ir.op_else(), ir.op_load_local(1), ir.op_load_local(1), ir.op_bin("div_s", 64, false), ir.op_return(), ir.op_end()]);
   let out = checked(g, irtables.LowerResult { ...g.cache[0], n_params: 2, n_locals: 2, ops: ops }, arm);
   compare_fusion(out.bodies[0], mode);
 }

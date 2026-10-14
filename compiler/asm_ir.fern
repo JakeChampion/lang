@@ -8813,6 +8813,105 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
   return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false };
 }
 
+// ssa_block_inst emits the instruction at position ii of blk: nothing for a
+// parameter, a phi or a compare a select after it reads as flags.
+function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.LowerResult, own s: asmcore.EmitState): asmcore.EmitState {
+  let ins: ssa.SInst = blk.insts[ii];
+  if (ins.kind_tag == 36) {
+    return ssa_select(ins, reg_of, fr, ssa_select_fuse(fr, blk, ii), s);
+  }
+  if (ins.kind_tag == 6 || ins.kind_tag == 8 || ssa_select_fuse(fr, blk, ii + 1).fu.n > 0) {
+    return s;
+  }
+  return ssa_inst(ins, reg_of, lp, fr, r, s);
+}
+
+// SelectCond is the compare a select reads as flags: `fu` is that compare
+// (fu.n 0 when there is none) and `first` says this select sets the flags,
+// which the selects after it in its run then read.
+struct SelectCond { fu: SsaFuse, first: boolean }
+
+// ssa_select_fuse is the integer compare the select at position ii reads as its
+// condition, when the compare comes just before the run of selects ii is in
+// and nothing but those selects reads it: the run's first select sets the
+// flags, a move leaves them alone, and the compare emits nothing of its own.
+function ssa_select_fuse(fr: SsaFrame, blk: ssa.SBlock, ii: i32): SelectCond {
+  let none: SelectCond = SelectCond { fu: ssa_no_fuse(), first: false };
+  if (ii < 1 || ii >= blk.insts.len() || blk.insts[ii].kind_tag != 36) {
+    return none;
+  }
+  let c: i32 = blk.insts[ii].args[0];
+  let run: i32[] = ssa.select_run(blk, ii);
+  if (run[0] < 1 || fr.uses[c] != run[1] - run[0]) {
+    return none;
+  }
+  let cmp: ssa.SInst = blk.insts[run[0] - 1];
+  if (cmp.result != c || cmp.kind_tag != 9 || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str))) {
+    return none;
+  }
+  return SelectCond { fu: ssa_cmp_flags(fr, cmp), first: ii == run[0] };
+}
+
+// ssa_cmp_flags is compare `cmp` as the flags it leaves, its operands swapped
+// when the left one is an immediate.
+function ssa_cmp_flags(fr: SsaFrame, cmp: ssa.SInst): SsaFuse {
+  if (fr.imm.is_imm[cmp.args[0]]) {
+    return SsaFuse { n: 1, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: false, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false };
+  }
+  return SsaFuse { n: 1, tag: ir.kind_id(cmp.str), inverted: false, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false };
+}
+
+// ssa_select renders a select as a conditional move: its first operand moved
+// into the destination, then its second moved over that unless the condition
+// holds. The condition is the flags of the compare fused into its run (sc)
+// or a test of the condition's value; neither move touches them. A select
+// reads no immediate (ssa.imm_operands), so each operand is a register or a
+// frame slot, which cmov reads directly.
+function ssa_select(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, sc: SelectCond, s: asmcore.EmitState): asmcore.EmitState {
+  let a: i32 = ins.args[1];
+  let b: i32 = ins.args[2];
+  let cc: i32 = J_JNE;
+  if (sc.fu.n > 0) {
+    if (sc.first) {
+      s = ssa_fused_test_emit(fr, reg_of, sc.fu, "", s);
+    }
+    cc = ir_cmp_jcc(sc.fu.tag, true);
+  } else {
+    s = ssa_read(reg_of, ins.args[0], "%r11", s);
+    let c: string = ssa_src(reg_of, ins.args[0], "%r11");
+    s = ssa_test_rr(s, 64, c, c);
+  }
+  if (reg_of[ins.result] == 0 - 1) {
+    return s;
+  }
+  let d: string = ssa_dst(reg_of, ins.result);
+  if (ssa_in_x(reg_of, b) && ssa_reg(reg_of[b]) == d && d != ssa_operand(reg_of, a, s)) {
+    s = s.write("    cmov" + ssa_cc_text(cc & 31) + "q " + ssa_operand(reg_of, a, s) + ", " + d + "\n");
+  } else {
+    s = ssa_load(reg_of, a, d, s);
+    s = s.write("    cmov" + ssa_cc_text(cc & 31 ^ 1) + "q " + ssa_operand(reg_of, b, s) + ", " + d + "\n");
+  }
+  return ssa_store(reg_of, ins.result, d, s);
+}
+
+// ssa_operand spells where an integer value can be read in place: its
+// register, %r11 while that caches it, or its frame slot.
+function ssa_operand(reg_of: i32[], v: i32, s: asmcore.EmitState): string {
+  if (ssa_in_x(reg_of, v)) {
+    return ssa_reg(reg_of[v]);
+  }
+  if (s.ssa_x0 == v) {
+    return "%r11";
+  }
+  return ssa_slot(ssa.spill_slot(reg_of[v]), s.ssa_save);
+}
+
+// ssa_cc_text is condition code cc's suffix, as jcc, setcc and cmovcc spell it.
+function ssa_cc_text(cc: i32): string {
+  let names: string[] = ["o", "no", "b", "ae", "e", "ne", "be", "a", "s", "ns", "p", "np", "l", "ge", "le", "g"];
+  return names[cc];
+}
+
 // ssa_join is the label a block's fused test joins at; a rotated latch
 // re-runs its header's test under its own.
 function ssa_join(lp: string, blk: i32): string {
@@ -9669,8 +9768,8 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
       if (ii == blk.insts.len() - 1 && ssa_tail_call(blk, ins, s, tails)) {
         s = ssa_emit_tail_call(ins, reg_of, fr, s);
         tailed = true;
-      } else if (ins.kind_tag != 6 && ins.kind_tag != 8) {
-        s = ssa_inst(ins, reg_of, lp, fr, r, s);
+      } else {
+        s = ssa_block_inst(blk, ii, reg_of, lp, fr, r, s);
       }
       ii = ii + 1;
     }
@@ -9998,11 +10097,12 @@ function emit_ssa_function(r: irtables.LowerResult, selected: physicalbody.Selec
   }
   let lift_ms: i64 = (monotonic_ns() - t_lift) / 1000000i64;
   let t_emit: i64 = monotonic_ns();
-  let prepared: ssaprepare.Body = ssaprepare.finish(r, selected, lifted, s.leaves);
-  // Certified in the form the emitter allocates: the leaves spliced, the
-  // trivial phis folded and the dead values pruned, so a slot the lowering
-  // wrote and never read carries no phi of its own.
-  irverifygate.certify_or_refuse(label_name, prepared.formed.f, r.ops, vgate);
+  let certified: ssaprepare.Body = ssaprepare.finish(r, selected, lifted, s.leaves);
+  // Certified in the form the emitter allocates but for its selects: the
+  // leaves spliced, the trivial phis folded and the dead values pruned, so a
+  // slot the lowering wrote and never read carries no phi of its own.
+  irverifygate.certify_or_refuse(label_name, certified.formed.f, r.ops, vgate);
+  let prepared: ssaprepare.Body = ssaprepare.with_selects(certified);
   let context = asmcore.preparation_context(s, "x86-64");
   let entry = ircore.release_entry(r, "x86-64", s.rc_free_debug, s.reg_entries);
   s = emit_ssa_function_x86(prepared, label_name, entry, context, s);
