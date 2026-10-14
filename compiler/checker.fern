@@ -6653,7 +6653,7 @@ function check_number_expr(n: ast.ExprNumber, s: Scope): typeinfo.Type {
   // A SUFFIX names the type outright. Without this every integer
   // literal typed i32, and check_call_expr's if-expression arm — which
   // types the desugared IIFE from its branches' common type — handed
-  // irlower `c.ty = "i32"` for `if (c) { big_u64 } else { 0u64 }`.
+  // the lowering `c.ty = "i32"` for `if (c) { big_u64 } else { 0u64 }`.
   // expr_is_u64 trusts that tag before its structural walk, so the
   // chained `>>` selected the SIGNED shift: wrong once bit 63 is set,
   // with no trap and no diagnostic. parser.if_expr_rt and mono_infer

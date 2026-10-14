@@ -1142,35 +1142,14 @@ pub function result_f64(): i32 {
 
 // is_f64_scalar_type_name reports whether a declared SCALAR type is an 8-byte
 // IEEE float — f64 or f32 (Fern represents f32 as an f64 internally: f32<->f64
-// casts are no-ops and every float op runs at double width). The two spell the
-// same runtime value, so a slot of either is marked local_is_f64 and a function
-// returning either is registered f64-returning. (Arrays f64[]/f32[] are tracked
-// separately via local_is_f64arr; this is the scalar classifier only.)
+// casts are no-ops and every float op runs at double width), so the two spell
+// the same runtime value. Scalars only: f64[] and f32[] are not classified here.
 pub function is_f64_scalar_type_name(t: string): boolean {
   return t == "f64" || t == "f32" || t == "float";
 }
 
-// --- Binding-SITE keys for the tuple class credits (#7272 / #7253 step 1) ---
-//
-// The class credits are collected from the AST, before any slot exists, so their
-// key has always been the variable NAME — and a name has no scope. Two `let t`
-// in sibling blocks are two slots under one key, and when they are not the same
-// class the table hands each slot BOTH credits: the box takes the "TUP:" shallow
-// dec AND the "TUPRCS:" deep free, and is released twice. Measured as exit 99
-// (rc underflow) against 10 on native and interp, with `live_bytes=0` throughout
-// — only the underflow counter reports it. Renaming one of the two locals, and
-// nothing else, made it correct.
-//
-// A `StmtVar` carries line and col, so `name@line:col` names the BINDING rather
-// than the name, and the two blocks stop colliding. bind_var_slot records it on
-// the slot, so every consumer resolves the credit its own binding earned.
-//
-// The families converted so far: tuple (#7272), "STR:" (#7292), "SARR:" /
-// "SARRB:" and "ARRARR:" / "ARRARRS:" (#7253, #7335), the bare-name struct
-// credit and its "NODEEP:" / "FLDCHECKED:" markers (#7349), and the whole
-// Option family. The rest of the ~70 namespaces multiplexed into
-// reclaimable_names are keyed on the site too as of the final-eight conversion,
-// which retired `reclaim_slot_name` outright — this is the only credit key now.
+// The key of a `let` binding SITE: two `let`s of one name in sibling blocks are
+// two keys, where the bare name would be one.
 pub function reclaim_site_key_of(name: string, line: i32, col: i32): string {
   return name + "@" + util.i32_to_string(line) + ":" + util.i32_to_string(col);
 }
