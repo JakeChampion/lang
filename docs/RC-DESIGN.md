@@ -158,7 +158,8 @@ reads (`units_of`):
   `TestSelfHostTrmcConsumeIR*` and the `Emit { ...e, r: emit(e.r, op) }` rows
   in `TestSelfHostSemanticAllocationCounts`.
 - **Sole box** (`sole_boxes`, `sole_result`): a buffer no unit but the
-  frame's own ever holds, from a fresh array, a `with`, or a fresh row, kept
+  frame's own ever holds, from a fresh array, a `with` whose receiver no
+  borrowed parameter carries (`lent_withs`), or a fresh row, kept
   sole through passes and phis that preserve it, so a `with` on it writes in
   place without a copy guard. Pinned by `TestSelfHostSoleLoopWithX86_64` and
   `TestSelfHostGrowSoleOccurrenceX86_64`.
@@ -185,12 +186,16 @@ box, and those decisions are tables of its own (`Plan.reuse`, `Plan.links`,
 made by `with_reuse` at the lowering's entry, once per function rather than
 for every plan ownership inference tries):
 
-- **Links** (`links_of`, `Plan.links`): an append threaded through a borrowed
-  array parameter, `b = b.append(x); return b.append(y)` or the same in a
-  loop, keeps the plan's unit but encodes it at run time: while the result
-  is still the parameter's box no unit is owed, and once it is a box of the
-  frame's own the push grows it in place. A link is never a reuse donor,
-  since its box may be the caller's.
+- **Links** (`links_of`, `Plan.links`): an append or a with threaded
+  through a borrowed array parameter, `b = b.append(x); return b.append(y)`,
+  `xs = xs.with(0, y); return xs.with(1, x)` or either in a loop, keeps the
+  plan's unit but encodes it at run time: while the result is still the
+  parameter's box no unit is owed, and once it is a box of the frame's own
+  the update writes it in place. A with's first write onto the parameter
+  tests the box's count, so it writes in place only when the caller is done
+  with the array (the grow row brackets every caller still reading it), and
+  copies otherwise. A link is never a reuse donor, since its box may be the
+  caller's.
 - **Reuse tokens** (`reuse_pairs`, `carried_pairs`, `block_keeps`,
   `Plan.reuse`): a value dying in a block, of the slot count a later
   construction in the block claims, has its drop turned into a **token**

@@ -3892,7 +3892,7 @@ function instruction(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
     return emit(r, ir.op_line(ins.imm, util.digits_to_i32(ins.str)));
   }
   if (ins.kind_tag == ssasem.with()) {
-    r = with_update(r, f, p, ins, defer0);
+    r = with_update(r, f, p, ins, defer0, link);
     return emit(r, ir.op_store_local(ins.result));
   }
   if (ssasem.is_cell_op(ins.kind_tag)) {
@@ -4085,8 +4085,8 @@ function took_payload(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.P
 // exactly one unit goes in and `scratch` holds one nobody else shares.
 //
 // A receiver whose retain was DEFERRED never arrives here: `append_push` sends
-// it to `append_borrowed` or `append_field` instead, and `with_update` sends
-// one whose field the plan admitted to `with_field`.
+// it to `append_borrowed` or `append_field` instead, and `with_update` to
+// `borrowed_with_base` or `with_field`.
 function sole_owned_base(own r: irtables.LowerResult, f: ssasem.Func, base: i32, scratch: i32): irtables.LowerResult {
   let elem: typeinfo.Type = elem_type(f.values[base]);
   r = emit(r, ir.op_load_local(base));
@@ -4251,10 +4251,10 @@ function append_linked(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   return emit(r, ir.op_load_local(scratch));
 }
 
-// The append's view of the links: the root its receiver is a link of, and
-// whether its own result is one.
+// An append's or a with's view of the links: the root its receiver is a link
+// of, and whether its own result is one.
 function link_at(f: ssasem.Func, links: i32[], ins: ssa.SInst): Link {
-  if (ins.kind_tag != ssasem.append()) {
+  if (ins.kind_tag != ssasem.append() && ins.kind_tag != ssasem.with()) {
     return Link { root: 0 - 1, out: false };
   }
   let root: i32 = 0 - 1;
@@ -4383,20 +4383,77 @@ function drop_replaced(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
 // One element replaced in the sole-owned box above: in place when the received
 // unit was the box's only one and in a fresh copy otherwise, the AST lowering's
 // two forms chosen here by the count at run time rather than by the receiver's
-// syntax.
-function with_update(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean): irtables.LowerResult {
+// syntax. A receiver whose retain was deferred is written as `borrowed_with_base`
+// writes it, and one that is a link as `with_linked` does.
+function with_update(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean, link: Link): irtables.LowerResult {
+  if (link.root >= 0) {
+    return with_linked(r, f, p, ins, link);
+  }
   if (defer0 && p.grows[ins.result] >= 0) {
     return with_field(r, f, p, ins);
   }
-  let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
   let scratch: i32 = scratch_base(f);
   r = reserve(r, scratch + 1);
-  if (p.unique_receivers[ins.result]) {
+  if (defer0) {
+    r = borrowed_with_base(r, f, ins, scratch, link.out);
+  } else if (p.unique_receivers[ins.result]) {
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, ir.op_store_local(scratch));
   } else {
     r = sole_owned_base(r, f, ins.args[0], scratch);
   }
+  return with_write(r, f, p, ins, scratch);
+}
+
+// A with onto a link (`append_linked`): one still the parameter's box is
+// written as `borrowed_with_base` writes it, and any other is a box of the
+// frame's own.
+function with_linked(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, link: Link): irtables.LowerResult {
+  let scratch: i32 = scratch_base(f);
+  r = reserve(r, scratch + 1);
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_load_local(link.root));
+  r = emit(r, ir.op_bin("eq", 0, false));
+  r = emit(r, ir.op_if(0));
+  r = borrowed_with_base(r, f, ins, scratch, link.out);
+  r = emit(r, ir.op_else());
+  r = sole_owned_base(r, f, ins.args[0], scratch);
+  r = emit(r, ir.op_end());
+  return with_write(r, f, p, ins, scratch);
+}
+
+// The box a with writes when the frame holds no unit of its receiver, left in
+// `scratch`: the receiver's own when its count test finds it sole, which
+// `bracketed` makes true only when the caller keeps no binding, retained for
+// the unit the result owes unless `out` leaves that to the chain's end; and a
+// fresh copy otherwise, holding a count on every element it shares.
+function borrowed_with_base(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, scratch: i32, out: boolean): irtables.LowerResult {
+  let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_store_local(scratch));
+  if (!out) {
+    r = helper(r, scratch, "__fern_rc_inc");
+  }
+  r = emit(r, ir.op_else());
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_arr_len());
+  r = emit(r, ir.op_arr_slice(elem_width(elem)));
+  r = emit(r, ir.op_store_local(scratch));
+  if (ssasem.reference(elem)) {
+    r = own_copied(r, elem, scratch, scratch);
+  }
+  return emit(r, ir.op_end());
+}
+
+// The element at the with's index replaced in the sole-held box in `scratch`,
+// which is the with's result.
+function with_write(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, scratch: i32): irtables.LowerResult {
+  let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
   if (ssasem.reference(elem)) {
     r = drop_replaced(r, f, ins, scratch, elem);
   }

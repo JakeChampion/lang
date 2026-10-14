@@ -573,20 +573,29 @@ function main(): i32 {
         if (o.str == "__fern_rc_inc") { sawFieldWithRetain = true; }
     }
     if (fieldWithUniques != 2 || !sawFieldWithSet || !sawFieldWithNull || !sawFieldWithCopy || sawFieldWithRetain) { return 164; }
-    // The same with on a borrowed ARRAY parameter has no field to null and no
-    // non-consuming helper to write through, so it keeps the retain and copies.
+    // The same with on a borrowed ARRAY parameter defers its retain as an
+    // append does (#12332): the row says the parameter may be written, and the
+    // count test comes before any retain, so it reads the caller's units. The
+    // copy arm stays for a caller still holding the array.
     let arrWithGraph = ssa.SFunc { ...appendGraph, name: "set_arr",
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
             ssa.SInst { kind_tag: ssasem.with(), result: 2, args: [0, 1, 1], imm: 0, str: "" }], term: ret(2) }] };
     let arrWithFunc = ssasem.Func { ...appendFunc, graph: arrWithGraph };
     let arrWithPlan = ssaunits.plan(arrWithFunc, [2, 1], ssaunits.no_view());
     if (!arrWithPlan.ok) { eprint(arrWithPlan.why); return 165; }
-    if (ssaunits.grow_rows("set_arr", arrWithFunc, arrWithPlan, [], util.name_index([])).len() != 0) { return 166; }
+    let arrWithRows = ssaunits.grow_rows("set_arr", arrWithFunc, arrWithPlan, [], util.name_index([]));
+    if (arrWithRows.len() != 1 || arrWithRows[0].param != 0 || arrWithRows[0].field != 0 - 1) { return 166; }
     let arrWithLowered = ssarc.lower(arrWithFunc, [2, 1], arrWithPlan, irtables.struct_tab_empty(), ssaunits.no_grows(), util.name_index([]), ssaunits.no_view(), suspend.none());
     if (!arrWithLowered.ok) { eprint(arrWithLowered.why); return 167; }
-    let sawArrWithRetain: boolean = false;
-    for o in arrWithLowered.ops { if (o.str == "__fern_rc_inc") { sawArrWithRetain = true; } }
-    if (!sawArrWithRetain) { return 168; }
+    let arrWithTested: boolean = false;
+    let arrWithEarlyRetain: boolean = false;
+    let sawArrWithCopy: boolean = false;
+    for o in arrWithLowered.ops {
+        if (o.str == "__fern_rc_is_unique") { arrWithTested = true; }
+        if (o.str == "__fern_rc_inc" && !arrWithTested) { arrWithEarlyRetain = true; }
+        if (ir.render_op(o) == "arr_slice") { sawArrWithCopy = true; }
+    }
+    if (!arrWithTested || arrWithEarlyRetain || !sawArrWithCopy) { return 168; }
     // A caller that still reads a record it lends to grow holds a count on
     // the field the callee may grow, and on that field alone: the bracket
     // reads the callee's row, captures the buffer, and releases the capture.
