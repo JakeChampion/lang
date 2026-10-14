@@ -410,7 +410,7 @@ func asmWholeFunc(asm, name string) (string, bool) {
 		return "", false
 	}
 	for i := start; i < len(lines); i++ {
-		if strings.HasPrefix(lines[i], "__fn_") && strings.HasSuffix(lines[i], ":") && lines[i] != "__fn_"+name+".r:" {
+		if strings.HasPrefix(lines[i], "__fn_") && strings.HasSuffix(lines[i], ":") && lines[i] != "__fn_"+name+".r:" && lines[i] != "__fn_"+name+".k:" {
 			return strings.Join(lines[start:i], "\n"), true
 		}
 	}
