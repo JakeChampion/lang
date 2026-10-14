@@ -62,7 +62,7 @@ func (u unreadable) Open(name string) (fs.File, error) {
 }
 
 // The PPid scan finds this process's real children on the running kernel,
-// and agrees with the children file where the kernel provides one.
+// and so does ChildPIDs, whichever of the test binary's threads forked them.
 func TestChildPIDsOnTheKernel(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("reads /proc")

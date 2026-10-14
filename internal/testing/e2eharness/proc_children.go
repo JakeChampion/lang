@@ -10,23 +10,38 @@ import (
 	"strings"
 )
 
-// ChildPIDs lists pid's direct children. It reads
-// /proc/PID/task/PID/children, which a kernel built without
-// CONFIG_CHECKPOINT_RESTORE does not provide; there it scans every
+// ChildPIDs lists pid's direct children, in pid order. Each thread's
+// /proc/PID/task/TID/children names the children that thread forked, so
+// it reads every thread's; a kernel built without
+// CONFIG_CHECKPOINT_RESTORE provides none, and there it scans every
 // process's PPid instead. A missing parent, unreadable metadata and a
 // malformed record are errors either way.
 func ChildPIDs(pid int) ([]string, error) {
-	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/task/%d/children", pid, pid))
-	if err == nil {
-		return strings.Fields(string(b)), nil
-	}
-	if !errors.Is(err, fs.ErrNotExist) {
-		return nil, err
-	}
-	if _, err := os.Stat(fmt.Sprintf("/proc/%d", pid)); err != nil {
+	tasks, err := os.ReadDir(fmt.Sprintf("/proc/%d/task", pid))
+	if err != nil {
 		return nil, fmt.Errorf("process %d: %w", pid, err)
 	}
-	return childrenByPPid(os.DirFS("/proc"), pid)
+	var kids []int
+	for _, task := range tasks {
+		b, err := os.ReadFile(fmt.Sprintf("/proc/%d/task/%s/children", pid, task.Name()))
+		if errors.Is(err, fs.ErrNotExist) {
+			if _, serr := os.Stat(fmt.Sprintf("/proc/%d/task/%s", pid, task.Name())); serr == nil {
+				return childrenByPPid(os.DirFS("/proc"), pid)
+			}
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range strings.Fields(string(b)) {
+			n, err := strconv.Atoi(f)
+			if err != nil {
+				return nil, fmt.Errorf("/proc/%d/task/%s/children: %q: %w", pid, task.Name(), f, err)
+			}
+			kids = append(kids, n)
+		}
+	}
+	return pidStrings(kids), nil
 }
 
 // childrenByPPid scans proc, a /proc tree, for the processes whose
@@ -58,12 +73,16 @@ func childrenByPPid(proc fs.FS, pid int) ([]string, error) {
 			kids = append(kids, n)
 		}
 	}
-	sort.Ints(kids)
-	out := make([]string, len(kids))
-	for i, k := range kids {
-		out[i] = strconv.Itoa(k)
+	return pidStrings(kids), nil
+}
+
+func pidStrings(pids []int) []string {
+	sort.Ints(pids)
+	out := make([]string, len(pids))
+	for i, p := range pids {
+		out[i] = strconv.Itoa(p)
 	}
-	return out, nil
+	return out
 }
 
 // statusPPid reads the PPid line of a /proc/PID/status record.
