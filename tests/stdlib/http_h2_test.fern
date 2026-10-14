@@ -434,6 +434,26 @@ function test_idle_and_self_dependency(): test.TestOutcome {
   return test.assert_eq(got, "closed 1 RST_STREAM on an idle stream\nclosed 1 WINDOW_UPDATE on an idle stream\nRST_STREAM 3 1\nRST_STREAM 5 1\nrequest 1 GET / host=example.test body= trailer=-\n");
 }
 
+// HEADERS on a stream whose request has ended: a STREAM_CLOSED stream
+// error while the stream is half closed, as when it comes in the same
+// read as the request, and a connection error once the response has
+// closed it (§5.1).
+function test_headers_on_closed_streams(): test.TestOutcome {
+  let o: Opened = opened(h2.config());
+  let (cl, first) = request(o.client, 1, get("/"), true);
+  let (cl2, again) = request(cl, 1, get("/"), true);
+  let half: h2.Step = o.conn.read(first.concat(again));
+  let got: string = shown(cl2, half.output).text + events_text(half.events);
+  let o2: Opened = opened(h2.config());
+  let (cl3, req) = request(o2.client, 1, get("/"), true);
+  let asked: h2.Step = o2.conn.read(req);
+  let answered: h2.Step = asked.conn.respond(1, http.ok("hi"));
+  let (cl4, late) = request(cl3, 1, get("/"), true);
+  let closed: h2.Step = answered.conn.read(late);
+  got = got + shown(cl4, closed.output).text + events_text(closed.events) + "open " + int.int_to_string(closed.conn.streams_open());
+  return test.assert_eq(got, "RST_STREAM 1 5\nrequest 1 GET / host=example.test body= trailer=-\nGOAWAY last 1 1 stream 1 is not a new client stream\nclosed 1 stream 1 is not a new client stream\nopen 0");
+}
+
 // PING is answered, an unknown frame and PRIORITY are skipped, the
 // client's GOAWAY is reported and stops new streams, the server's GOAWAY
 // goes out, and a SETTINGS ACK is noted.
@@ -616,6 +636,7 @@ function main(): i32 {
   r = r.it("the reset and empty-DATA budgets", test_reset_budgets);
   r = r.it("malformed requests and connections", test_malformed);
   r = r.it("idle streams and self-dependency", test_idle_and_self_dependency);
+  r = r.it("HEADERS on a stream that has closed", test_headers_on_closed_streams);
   r = r.it("control frames", test_control_frames);
   r = r.it("streamed bodies and produced responses", test_streamed_bodies);
   r = r.it("a client's request and its answer", test_client_round_trip);
