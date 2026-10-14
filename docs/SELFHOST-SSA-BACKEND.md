@@ -124,13 +124,16 @@ function with parameters now has two entries:
 A direct call to a function the same unit emits (`reg_entries`, built by
 `emit_module_funcs`), with one to six arguments, moves its arguments into
 the pool in parallel (`ssa_parallel_moves`, which phi edges use too) and
-calls the `.r` entry: no pushes and no pop. On x86-64 a call through a
-function value does the same, since a function value names its callee's `.r`
-entry, and pushes every argument as well only past six (`ssa_call_ind`).
-Everything else keeps the stack entry — runtime helpers, `__c_call`, the
-flat-op arms, hand-written stubs, dyn-dispatch calls, arm64's indirect calls,
-and a direct call across per-module units — so a callee the registry does not
-name is still called correctly. The pool is the
+calls the `.r` entry: no pushes and no pop. A call through a function value
+passes its arguments in the pool too, pushing every one as well only past the
+pool's size (`ssa_call_ind`). On x86-64 the value names its callee's `.r`
+entry. On arm64 it names `.k`, which takes every argument in an integer
+register and moves each f64 parameter into the float register `.r` reads it
+from, since a call through a function value need not know the callee's float
+mask. Everything else keeps the stack entry — runtime helpers, `__c_call`, the
+flat-op arms, hand-written stubs, dyn-dispatch calls, and a direct call across
+per-module units — so a callee the registry does not name is still called
+correctly. The pool is the
 argument order because it is also where the allocator homes caller-saved
 values: `ssa_arg_prefs` asks for a parameter's arrival register and an
 argument's departure register. The allocator asks the result register for a
