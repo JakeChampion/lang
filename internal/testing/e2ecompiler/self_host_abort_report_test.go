@@ -40,6 +40,8 @@ function main(): i32 { let xs: u8[] = [10, 20, 30]; return at(xs, ` + index + `)
 
 var abortFrameRe = regexp.MustCompile(`(?m)^  0x[0-9a-f]{16}$`)
 
+var trapStubRe = regexp.MustCompile(`(?m)^__fern_\w+_abort\.(l\d+|c):`)
+
 func checkAbortReports(t *testing.T, cli *selfHostCLI, target string) {
 	t.Helper()
 	for _, tc := range abortReportCases {
@@ -230,6 +232,10 @@ func TestSelfHostAbortBareFrameX86_64(t *testing.T) {
 	}
 	if body := asmFuncBody(t, string(asm), "__fn_cut"); strings.Contains(body, "%rbp") {
 		t.Fatalf("cut keeps a frame pointer, so it no longer tests the frameless trap:\n%s", body)
+	}
+	// Only the stub cut reaches is emitted.
+	if stubs := trapStubRe.FindAllString(string(asm), -1); len(stubs) != 1 || stubs[0] != "__fern_str_oob_abort.l1:" {
+		t.Errorf("trap stubs %v, want only __fern_str_oob_abort.l1", stubs)
 	}
 	bin := filepath.Join(dir, "bare")
 	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", bin).CombinedOutput(); err != nil {
