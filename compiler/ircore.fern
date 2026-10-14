@@ -714,6 +714,10 @@ pub function all_runtime_need_roots(): string[] {
     // The flag-raising catch and its poll, and a signal sent to this
     // process.
     "signal_catch", "signal_taken", "signal_raise",
+    // Every stub a function with no frame pointer reaches its traps
+    // through. Each stub is also a need of its own, by its label, which
+    // this root stands for (asm_ir.emit_trap_stubs).
+    "trap_stubs",
     // The liveness of one pid, delivering a signal to one, and this
     // process's descriptor ceiling.
     "process_alive", "signal_send", "set_process_group", "rlimit_nofile",

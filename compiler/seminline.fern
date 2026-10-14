@@ -22,6 +22,7 @@ import "./typeinfo";
 import "./semtypes";
 import "./semrecords";
 import "./sempair";
+import "./ownership";
 
 // Past these a leaf is not tiny, and splicing it grows its callers more than
 // the call it removes costs.
@@ -110,6 +111,7 @@ struct Rewrite { f: ssasem.Func, changed: boolean }
 pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][], inlinable: boolean[], rewrite: boolean[], unnamed: boolean[]): Inlined {
   let ix: util.NameIndex = util.name_index(names);
   let calls: i32[] = call_counts(funcs0, ix);
+  let cycle: i32[] = ownership.cycles(callees_of_all(funcs0, ix));
   let leaves: boolean[] = [];
   let once: boolean[] = [];
   let shared: boolean[] = [];
@@ -117,14 +119,14 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
   let i: i32 = 0;
   while (i < funcs0.len()) {
     let is_leaf: boolean = inlinable[i] && leaf(funcs0[i]);
-    let is_shared: boolean = !is_leaf && inlinable[i] && unnamed[i] && shared_spliceable(funcs0[i], calls[i], i, ix);
+    let is_shared: boolean = !is_leaf && inlinable[i] && unnamed[i] && shared_spliceable(funcs0[i], calls[i], cycle[i]);
     small = small.append(is_shared && count_insts(funcs0[i].graph) <= max_shared_insts());
     leaves = leaves.append(is_leaf);
     shared = shared.append(is_shared);
     once = once.append(is_shared || !is_leaf && inlinable[i] && unnamed[i] && once_spliceable(funcs0[i], calls[i]));
     i = i + 1;
   }
-  let sp: Spliceable = Spliceable { ix: ix, leaves: leaves, once: once, shared: shared, small: small, inlinable: inlinable, calls: calls, unnamed: unnamed };
+  let sp: Spliceable = Spliceable { ix: ix, leaves: leaves, once: once, shared: shared, small: small, inlinable: inlinable, calls: calls, unnamed: unnamed, cycle: cycle };
   let done: Rounds = splice_rounds(funcs0, rewrite, sp);
   let rounds: Inlined = done.out;
   sp = grown_leaves(rounds, done.sp);
@@ -174,10 +176,12 @@ function once_spliceable(f: ssasem.Func, calls: i32): boolean {
 // each: a few callers, a body under the shared budget, a construction at every
 // return, and at one of them a box the pair return keeps. A function that
 // calls itself is never one: each copy spliced brings a call to it the next
-// round would splice again, and the box its recursion builds stays.
-function shared_spliceable(f: ssasem.Func, calls: i32, index: i32, ix: util.NameIndex): boolean {
+// round would splice again, and the box its recursion builds stays. Nor is
+// one on a longer cycle of calls (`cycle` >= 0), for the same reason: each
+// copy brings back a call that reaches it again.
+function shared_spliceable(f: ssasem.Func, calls: i32, cycle: i32): boolean {
   return calls > 1 && calls <= max_shared_callers() && !lends_view(f) && spliceable(f, max_reuse_shared_insts()) && returns_boxes(f)
-    && util.index_of_i32(callees_of(f, ix), index) < 0;
+    && cycle < 0;
 }
 
 // Whether every return of `f` returns a construction, through copies and
@@ -260,7 +264,7 @@ function spliced_away(sp: Spliceable, ctors: boolean[], calls: i32[], left: i32[
 // `small` marks the shared functions within max_shared_insts when they became
 // shared, the ones a caller that reads the result apart may splice: a body
 // later grown by its own splices keeps the answer it was given.
-struct Spliceable { ix: util.NameIndex, leaves: boolean[], once: boolean[], shared: boolean[], small: boolean[], inlinable: boolean[], calls: i32[], unnamed: boolean[] }
+struct Spliceable { ix: util.NameIndex, leaves: boolean[], once: boolean[], shared: boolean[], small: boolean[], inlinable: boolean[], calls: i32[], unnamed: boolean[], cycle: i32[] }
 
 // A function called once is spliced only after the ones it calls once are in
 // it, so a chain of them folds from the bottom up. The shared ones wait for
@@ -337,7 +341,7 @@ function grown_shared(sofar: Inlined, sp: Spliceable): Spliceable {
   let small: boolean[] = sp.small;
   let i: i32 = 0;
   while (i < sofar.funcs.len()) {
-    if (!shared[i] && !sp.leaves[i] && sofar.rewritten[i] && sp.inlinable[i] && sp.unnamed[i] && shared_spliceable(sofar.funcs[i], sp.calls[i], i, sp.ix)) {
+    if (!shared[i] && !sp.leaves[i] && sofar.rewritten[i] && sp.inlinable[i] && sp.unnamed[i] && shared_spliceable(sofar.funcs[i], sp.calls[i], sp.cycle[i])) {
       shared = shared.with(i, true);
       once = once.with(i, true);
       small = small.with(i, count_insts(sofar.funcs[i].graph) <= max_shared_insts());
