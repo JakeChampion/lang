@@ -3842,6 +3842,16 @@ function parse_tool_flag(tf: ToolFlags, av: string[], i: i32): (ToolFlags, i32, 
   return (ToolFlags { ...tf, color_mode: mode }, next, 0);
 }
 
+// stdout_emit is the output form of a compile with `emit` asked for: one
+// with nowhere to write prints a native target's assembly rather than its
+// executable. A wasm module or component goes to stdout as it is.
+function stdout_emit(target: string, emit: string, has_out: boolean): string {
+  if (!has_out && emit.len() == 0 && platforms.for_target(target).isa != "wasm32") {
+    return "asm";
+  }
+  return emit;
+}
+
 // run_output is where a `-run` compile writes: the -o path when one was
 // given, else `prog` (or `prog.wasm`) in a fresh directory under $TMPDIR,
 // which the caller removes after the run. The third result is a non-zero exit
@@ -4201,7 +4211,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // Positionals past the stdlib root are the program's own, as `-interp
   // FILE ARG...` hands them to `args()` behind the entry's path.
   let prog_args: string[] = [];
-  let target: string = "x86-64-linux";
+  let target: string = "arm64-linux";
   // Output FORM, independent of the target: "" is the target's default
   // (a linked executable, or a component on wasm), "asm" the emitter's
   // text, "core-module" a raw wasm core module.
@@ -4727,6 +4737,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     }
     return status;
   }
+  emit = stdout_emit(target, emit, out_path.len() > 0 || tf.run_it);
 
   // The parse gates the `-check` path runs (#7447), for the same reason the
   // checker gate below exists: without them a build is MORE permissive than
