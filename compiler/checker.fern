@@ -5409,7 +5409,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
               let tag: typeinfo.Type = lambda_ret_type(lm, s);
               let bi: i32 = 0;
               while (bi < bts.len() && bi < arms.len()) {
-                if (!int_literal_tree(arms[bi]) && !is_unknown(bts[bi]) && !type_eq(bts[bi], tag)) {
+                if (!arm_int_literal(arms[bi]) && !is_unknown(bts[bi]) && !type_eq(bts[bi], tag)) {
                   return bts[bi];
                 }
                 bi = bi + 1;
@@ -7492,8 +7492,9 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
         // A generic function named as the value has the declared callable
         // type when that binds every one of its type parameters, and a
         // generic call whose result only the destination binds has the
-        // declared type.
-        if ((generic_fn_value_arg(r.value, s) || dest_bound_result(r.value, s)) && settles_to(r.value, s.ret_type, s)) {
+        // declared type. So does a value block whose tail adapts to it.
+        let (ret_block, is_block) = value_block_body(r.value);
+        if (is_block && vb_settles(ret_block, s.ret_type, s) || (generic_fn_value_arg(r.value, s) || dest_bound_result(r.value, s)) && settles_to(r.value, s.ret_type, s)) {
           return CheckResult { scope: s, ty: s.ret_type };
         }
         return CheckResult { scope: s, ty: t };
@@ -10752,7 +10753,7 @@ function arm_int_literal(e: ast.Expr): boolean {
 // unsettled_tree is whether a value is an integer native still types
 // polymorphic: a literal tree (one a float destination stamped included), a
 // read of one of the literal locals `lits`, arithmetic over such values, or a
-// value if / match every arm of which is one.
+// value block, if or match every arm of which is one.
 function unsettled_tree(e: ast.Expr, lits: string[]): boolean {
   match (e) {
     ast.ExprNumber(n) => {
@@ -10777,25 +10778,87 @@ function unsettled_tree(e: ast.Expr, lits: string[]): boolean {
   return false;
 }
 
-// unsettled_value_block: is `c` a value if or match every arm of which is an
-// unsettled_tree?
+// unsettled_value_block: is `c` a value block, if or match with an arm that
+// yields, every such arm an unsettled_tree?
 function unsettled_value_block(c: ast.ExprCall, lits: string[]): boolean {
   if (c.args.len() > 0) {
     return false;
   }
   if let ast.ExprLambda(lm) = c.callee {
-    if (lm.params.len() > 0 || lm.body.len() != 1 || lm.origin != parser.ORIGIN_IF_EXPR && lm.origin != parser.ORIGIN_MATCH_EXPR) {
+    let branches: boolean = lm.body.len() == 1 && (lm.origin == parser.ORIGIN_IF_EXPR || lm.origin == parser.ORIGIN_MATCH_EXPR);
+    if (lm.params.len() > 0 || !branches && lm.origin != parser.ORIGIN_BLOCK) {
       return false;
     }
-    let arms: ast.Expr[] = mx_body_result_exprs(lm.body);
-    for arm in arms {
-      if (!unsettled_tree(arm, lits)) {
-        return false;
-      }
-    }
-    return arms.len() > 0;
+    return unsettled_arms(lm.body, lits) > 0;
   }
   return false;
+}
+
+// unsettled_arms counts the arms of a value body that yield, reading each in
+// the literal locals its leading statements and its pattern leave, or is -1
+// where one is not an unsettled_tree.
+function unsettled_arms(body: ast.Stmt[], outer: string[]): i32 {
+  if (!mx_branch_yields(body)) {
+    return 0;
+  }
+  let lits: string[] = outer;
+  let i: i32 = 0;
+  while (i + 1 < body.len()) {
+    lits = lit_locals_after(body[i], lits);
+    i = i + 1;
+  }
+  match (body[i]) {
+    ast.StmtReturn(r) => {
+      if (unsettled_tree(r.value, lits)) {
+        return 1;
+      }
+      return 0 - 1;
+    },
+    ast.StmtIf(f) => {
+      return unsettled_arm_sum(unsettled_arms(f.then_body, lits), unsettled_arms(f.else_body, lits));
+    },
+    ast.StmtMatch(m) => {
+      let n: i32 = 0;
+      for arm in m.arms {
+        n = unsettled_arm_sum(n, unsettled_arms(arm.body, drop_lit_locals(lits, astwalk.pattern_binders(arm.pattern, []))));
+      }
+      return n;
+    },
+    _ => {}
+  }
+  return 0;
+}
+
+// unsettled_arm_sum adds two unsettled_arms counts, -1 absorbing.
+function unsettled_arm_sum(a: i32, b: i32): i32 {
+  if (a < 0 || b < 0) {
+    return 0 - 1;
+  }
+  return a + b;
+}
+
+// lit_locals_after is `lits` past a statement, as bind_stmt leaves them: a
+// `let` rebinds its names, and an unannotated one an unsettled integer
+// initialises is a literal local.
+function lit_locals_after(st: ast.Stmt, lits: string[]): string[] {
+  if let ast.StmtVar(v) = st {
+    let out: string[] = drop_lit_locals(lits, astwalk.binders_of(st, []));
+    if (v.type_name.len() == 0 && !name_has_comma(v.name) && unsettled_tree(v.init, lits)) {
+      return out.append(v.name);
+    }
+    return out;
+  }
+  return lits;
+}
+
+function drop_lit_locals(lits: string[], names: string[]): string[] {
+  let out: string[] = [];
+  for lit in lits {
+    if (!util.has_str(names, lit)) {
+      out = out.append(lit);
+    }
+  }
+  return out;
 }
 
 // mx_builtin_enum_of returns the built-in enum a variant name belongs to
@@ -11111,15 +11174,56 @@ function mx_branch_yields(body: ast.Stmt[]): boolean {
 
 // mx_arm_result_type types an arm's value, polymorphic where it reads a literal
 // local and is otherwise built only from unsettled integers: the arm's
-// expression alone cannot say so, as it can for a literal tree.
+// expression alone cannot say so, as it can for a literal tree. A value block
+// whose tail adapts to its receiver, which check_expr leaves unknown, types as
+// its tail does as an arm.
 function mx_arm_result_type(e: ast.Expr, s: Scope): typeinfo.Type {
   let t: typeinfo.Type = check_expr(e, s);
+  let (block, is_block) = value_block_body(e);
+  if (is_unknown(t) && is_block) {
+    return block_tail_arm_type(block, s);
+  }
   if let typeinfo.TypeI32(i) = t {
     if (!i.is_char && !arm_int_literal(e) && unsettled_tree(e, s.lit_locals)) {
       return typeinfo.TypeI32 { ...i, polymorphic: true };
     }
   }
   return t;
+}
+
+// value_block_body is the body of the `{ …; tail }` value block `e`, if it is
+// one.
+function value_block_body(e: ast.Expr): (ast.Stmt[], boolean) {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprLambda(lm) = c.callee {
+      if (c.args.len() == 0 && lm.params.len() == 0 && lm.origin == parser.ORIGIN_BLOCK) {
+        return (lm.body, true);
+      }
+    }
+  }
+  let none: ast.Stmt[] = [];
+  return (none, false);
+}
+
+// block_tail_arm_type is mx_arm_result_type over a value block's tail, with the
+// block's leading statements bound.
+function block_tail_arm_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
+  if (body.len() == 0) {
+    return t_unknown("empty value block");
+  }
+  if let ast.StmtReturn(r) = body[body.len() - 1] {
+    if (parser.bare_return(r.value)) {
+      return t_unknown("value block tail");
+    }
+    let bs: Scope = s;
+    let i: i32 = 0;
+    while (i < body.len() - 1) {
+      bs = bind_stmt(body[i], bs);
+      i = i + 1;
+    }
+    return mx_arm_result_type(r.value, bs);
+  }
+  return t_unknown("value block tail");
 }
 
 // Type the terminal value in the scope established by preceding statements.

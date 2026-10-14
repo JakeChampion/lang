@@ -28839,7 +28839,8 @@ function float_settleable(e: ast.Expr): boolean {
 }
 
 // value_branches_float_settleable reports whether `e` is the desugared value
-// if/match AND every one of its branches is settleable.
+// if/match AND every one of its branches is settleable, or a value block whose
+// tail is.
 function value_branches_float_settleable(e: ast.Expr): boolean {
   match (e) {
     ast.ExprCall(c) => {
@@ -28848,6 +28849,10 @@ function value_branches_float_settleable(e: ast.Expr): boolean {
       }
       match (c.callee) {
         ast.ExprLambda(lm) => {
+          if (lm.params.len() == 0 && lm.origin == ORIGIN_BLOCK) {
+            let (tv, t_ok) = settled_branch_value(lm.body);
+            return t_ok && float_settleable(tv);
+          }
           if (lm.params.len() != 0 || lm.body.len() != 1) {
             return false;
           }
@@ -28961,48 +28966,41 @@ function settle_match_arms(m: ast.StmtMatch): ast.Stmt {
 
 // settle_float_value_branches settles the desugared value if/match — a 0-arg
 // call of a 0-param lambda whose body is a single StmtIf / StmtMatch, the shape
-// the E031 pass and the lowering both key on. Anything else, and any
-// branch set that is not wholly settleable, comes back untouched.
+// the E031 pass and the lowering both key on — and a value block's tail.
+// Anything else, and any branch set that is not wholly settleable, comes back
+// untouched.
 function settle_float_value_branches(e: ast.Expr): ast.Expr {
   match (e) {
     ast.ExprCall(c) => {
-      if (c.args.len() != 0) {
+      if (!value_branches_float_settleable(e)) {
         return e;
       }
-      match (c.callee) {
-        ast.ExprLambda(lm) => {
-          if (lm.params.len() != 0 || lm.body.len() != 1) {
-            return e;
-          }
-          if (!value_branches_float_settleable(e)) {
-            return e;
-          }
-          let nbody: ast.Stmt[] = [];
-          match (lm.body[0]) {
-            ast.StmtIf(f) => {
-              nbody = nbody.append(settle_if_branches(f));
-            },
-            ast.StmtMatch(m) => {
-              nbody = nbody.append(settle_match_arms(m));
-            },
-            _ => {
-              return e;
-            }
-          }
-          if (nbody.len() == 0) {
-            return e;
-          }
-          let nlam: ast.Expr = ast.ExprLambda { ...lm, body: nbody };
-          return ast.ExprCall { callee: nlam, args: c.args, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
-        },
-        _ => {
-          return e;
-        }
+      if let ast.ExprLambda(lm) = c.callee {
+        let nlam: ast.Expr = ast.ExprLambda { ...lm, body: settle_value_body(lm) };
+        return ast.ExprCall { callee: nlam, args: c.args, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
       }
     },
     _ => {}
   }
   return e;
+}
+
+// settle_value_body settles the body of a lambda value_branches_float_settleable
+// accepted: a value block's tail, or the branches of its single if / match.
+function settle_value_body(lm: ast.ExprLambda): ast.Stmt[] {
+  if (lm.origin == ORIGIN_BLOCK) {
+    return settle_branch_body(lm.body);
+  }
+  match (lm.body[0]) {
+    ast.StmtIf(f) => {
+      return [settle_if_branches(f)];
+    },
+    ast.StmtMatch(m) => {
+      return [settle_match_arms(m)];
+    },
+    _ => {}
+  }
+  return lm.body;
 }
 
 // settle_to_type settles `e` against the destination type `t`: a float scalar

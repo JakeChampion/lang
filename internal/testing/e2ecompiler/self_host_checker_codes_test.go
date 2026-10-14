@@ -2605,6 +2605,16 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e031-literal-local-ok", "function main(): i32 { let q = 2; let r = q + 1; let x = if (true) { q } else { 2.5 }; let y = if (true) { r } else { 2i64 }; return 0; }\n", nil},
 		{"e031-literal-local-payload-ok", "function main(): i32 { let q = 2; let o = Some(q); let x = match (o) { Some(v) => v, None => 2.5 }; return 0; }\n", nil},
 		{"e031-arm-literal-local-ok", "function main(): i32 { let k: i32 = 3; let x = match (k) { 1 => { let q = 2; q + 1 }, _ => 2.5 }; return 0; }\n", nil},
+		// A value block arm settles as its tail does: a typed tail does not.
+		{"e031-block-arm-typed-tail", "function main(): i32 { let x = if (true) { ({ let q: i32 = 3; q }) } else { 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-block-arm-i32-local", "function main(): i32 { let n: i32 = 1; let x = if (true) { ({ n }) } else { 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-nested-block-arm-i32-local", "function main(): i32 { let n: i32 = 1; let x = if (true) { ({ ({ n }) }) } else { 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-match-block-arm-i32-local", "function main(): i32 { let k: i32 = 1; let n: i32 = 1; let x = match (k) { 1 => ({ n }), _ => 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-block-shadows-literal-local", "function main(): i32 { let q = 2; let x = if (true) { ({ let q: i32 = 3; q }) } else { 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-pattern-shadows-literal-local", "function main(): i32 { let q = 2; let o: Option[i32] = Some(1); let x = if (true) { match (o) { Some(q) => q, None => 3 } } else { 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-block-arm-literal-ok", "function main(): i32 { let k: i32 = 1; let x = if (true) { ({ 1 }) } else { 2.5 }; let y = if (true) { 2.5 } else { ({ let q: i32 = 3; 1 }) }; let z = match (k) { 1 => ({ ({ 1 }) }), _ => 2.5 }; return 0; }\n", nil},
+		{"e002-block-return-i32-local", "function g(): f64 { let n: i32 = 1; return if (true) { ({ n }) } else { 2 }; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"e003-block-i32-local", "function main(): i32 { let n: i32 = 1; let x: f64 = ({ n }); return 0; }\n", []string{"E003"}},
 		{"e031-wide-array-arms-ok", "function main(): i32 { let arr: i64[] = if (true) { [1234567890123, 9876543210] } else { [0, 0] }; return 0; }\n", nil},
 		{"e031-literal-match-array-assigns-ok", "function main(): i32 { let k: i32 = 1; let a: i64 = 2; let u: u8 = 1; let x = match (k) { 1 => [a], _ => [3] }; let y = match (k) { 1 => [u], _ => [3] }; let z = match (k) { 1 => [[a]], _ => [[3]] }; return 0; }\n", nil},
 		// E045: a map literal's first key fixes the key type, which must be

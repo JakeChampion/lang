@@ -121,6 +121,20 @@ function main(): i32 { let a: A = unit(); return a.v + geta().v; }`, 0},
 		{"value-if-literal-settles-at-i64", `function main(): i32 { let a: i64 = 5; let x = if (true) { a } else { -1 }; return 0; }`, 0},
 		{"value-if-wide-array-arms", `function main(): i32 { let arr: i64[] = if (true) { [1234567890123] } else { [0, 0] }; return 0; }`, 0},
 		{"value-match-literal-array-assigns", `function main(): i32 { let k: i32 = 1; let a: i64 = 2; let x = match (k) { 1 => [a], _ => [3] }; return 0; }`, 0},
+		// So does a value block whose tail is one.
+		{"value-if-block-arm-settles-at-float", `function main(): i32 { let c: boolean = true; let x = if (c) { ({ 1 }) } else { 2.5 }; if (x > 2.0) { return 1; } return 0; }`, 0},
+		{"value-if-block-arm-leading-statement", `function main(): i32 { let x = if (true) { ({ let q: i32 = 3; 1 }) } else { 2.5 }; return 0; }`, 0},
+		{"value-if-nested-block-arm", `function main(): i32 { let x = if (true) { ({ ({ 1 }) }) } else { 2.5 }; return 0; }`, 0},
+		{"value-if-block-arm-after-float", `function main(): i32 { let x = if (true) { 2.5 } else { ({ 1 }) }; return 0; }`, 0},
+		{"value-if-block-arm-literal-local", `function main(): i32 { let x = if (true) { ({ let q = 2; q }) } else { 2.5 }; return 0; }`, 0},
+		{"value-if-nested-arm-literal-local", `function main(): i32 { let x = if (true) { if (false) { let q = 2; q } else { 2 } } else { 2.5 }; return 0; }`, 0},
+		{"value-match-block-arm", `function main(): i32 { let k: i32 = 1; let x = match (k) { 1 => ({ 1 }), _ => 2.5 }; return 0; }`, 0},
+		{"value-if-block-arm-return", `function g(c: boolean): f64 { return if (c) { ({ 1 }) } else { 2.5 }; }
+function main(): i32 { return 0; }`, 0},
+		{"value-block-return", `function g(): f64 { return ({ 1 }); }
+function main(): i32 { return 0; }`, 0},
+		{"value-if-block-arm-argument", `function take(v: f64): i32 { return 0; }
+function main(): i32 { return take(if (true) { ({ 1 }) } else { 2.5 }); }`, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(dir, tc.name+".fern")
