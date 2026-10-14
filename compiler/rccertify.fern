@@ -452,9 +452,10 @@ struct Walk {
   // from the counts the base handed in (seeded) instead.
   params_at_entry: boolean,
   debt: boolean[],
-  // Per value, whether every store of it is back into the slot of the held
-  // box it was read from, with the slot's unit still in place: such a store
-  // keeps the slot's unit and spends nothing (apply_store).
+  // Per value, whether every store of it back into the slot of the held box
+  // it was read from has the slot's unit still in place: such a store keeps
+  // the slot's unit and spends nothing (apply_store). A store of it into any
+  // other slot spends a unit as usual.
   kept: boolean[],
 }
 
@@ -2751,12 +2752,15 @@ function apply_store(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken
 
 // put_back: `st` stores `val` back where it was read (Walk.kept).
 function put_back(w: Walk, st: ssa.SInst, val: i32): boolean {
-  return st.kind_tag == 41 && val >= 0 && val < w.kept.len() && w.kept[w.root[val]] && st.args.len() >= 2 && w.root[st.args[0]] == w.held;
+  if (st.kind_tag != 41 || val < 0 || val >= w.kept.len() || !w.kept[w.root[val]] || st.args.len() < 2 || w.root[st.args[0]] != w.held) {
+    return false;
+  }
+  return def_of(w.f, w.defs, w.root[val]).imm == st.imm;
 }
 
-// put_backs marks the borrows read off the held box whose every field store
-// is back into the slot they were read from, with no reload of the slot and
-// no children-only drop of the box between: the slot's unit is still the
+// put_backs marks the borrows read off the held box whose every store back
+// into the slot they were read from has no reload of the slot and no
+// children-only drop of the box between: the slot's unit is still the
 // value's, and the store keeps it there. A reload between released the
 // slot's unit (an overwritten slot's child), so the store spends one; and a
 // child's unit is the frame's, which the store hands back to the slot.
@@ -2765,6 +2769,7 @@ function put_backs(w: Walk, dom: ssadeps.Dom): boolean[] {
     return [];
   }
   let out: boolean[] = __alloc_bool(w.f.nvals);
+  let refused: boolean[] = __alloc_bool(w.f.nvals);
   let st: Stores = stores_of(w);
   let k: i32 = 0;
   while (k < st.base.len()) {
@@ -2773,13 +2778,23 @@ function put_backs(w: Walk, dom: ssadeps.Dom): boolean[] {
       let val: i32 = w.root[ins.args[ins.args.len() - 1]];
       let ld: ssa.SInst = def_of(w.f, w.defs, val);
       let lb: i32 = w.defs.block[val];
-      if (ld.kind_tag == 40 && ld.args.len() > 0 && ld.imm == ins.imm && w.root[ld.args[0]] == w.held && lb >= 0 && w.origin[val] == org_borrowed()
-        && (lb == st.block[k] && w.defs.at[val] < st.at[k] || ssadeps.dom_holds(dom, st.block[k], lb))
-        && !between(w, dom, ld, lb, w.defs.at[val], st.block[k], st.at[k])) {
-        out = out.with(val, true);
+      if (ld.kind_tag == 40 && ld.args.len() > 0 && ld.imm == ins.imm && w.root[ld.args[0]] == w.held && lb >= 0 && w.origin[val] == org_borrowed()) {
+        if ((lb == st.block[k] && w.defs.at[val] < st.at[k] || ssadeps.dom_holds(dom, st.block[k], lb))
+          && !between(w, dom, ld, lb, w.defs.at[val], st.block[k], st.at[k])) {
+          out = out.with(val, true);
+        } else {
+          refused = refused.with(val, true);
+        }
       }
     }
     k = k + 1;
+  }
+  let v: i32 = 0;
+  while (v < out.len()) {
+    if (refused[v]) {
+      out = out.with(v, false);
+    }
+    v = v + 1;
   }
   return out;
 }

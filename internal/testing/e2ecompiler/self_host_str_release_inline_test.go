@@ -24,8 +24,8 @@ func TestSelfHostStrReleaseInline(t *testing.T) {
 		t.Fatal(err)
 	}
 	inline := map[string]*regexp.Regexp{
-		"x86-64-linux": regexp.MustCompile(`testb \$1, %[a-z0-9]+\n\s+jnz \S+\n(?:.*\n){0,10}\s+call __fn___fern_str_free\.r\n(?:.*\n){0,4}\s+subl \$1, -8\(`),
-		"arm64-linux":  regexp.MustCompile(`tbnz x[0-9]+, #0, \S+\n(?:.*\n){0,10}\s+bl __fn___fern_str_free\.r\n(?:.*\n){0,4}\s+sub w5, w5, #1\n`),
+		"x86-64-linux": regexp.MustCompile(`testb \$1, %[a-z0-9]+\n\s+jnz \S+\n(?:.*\n){0,10}\s+call __fn___fern_str_free\.u\n(?:.*\n){0,4}\s+subl \$1, -8\(`),
+		"arm64-linux":  regexp.MustCompile(`tbnz x[0-9]+, #0, \S+\n(?:.*\n){0,10}\s+bl __fn___fern_str_free\.u\n(?:.*\n){0,4}\s+sub w5, w5, #1\n`),
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		out := filepath.Join(dir, target+".s")

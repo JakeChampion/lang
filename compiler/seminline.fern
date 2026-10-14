@@ -87,6 +87,13 @@ function max_caller_insts(): i32 {
   return 1500;
 }
 
+// The size a splice that saves a box may still grow a caller to. A dispatch
+// calling hundreds of box-returning helpers once each would otherwise take
+// every one of them, past what the later passes' per-function matrices hold.
+function max_box_saving_caller_insts(): i32 {
+  return 6000;
+}
+
 // What the pass made of each function, and whether it rewrote the graph: a
 // caller holding an analysis of what it handed in keeps it only where the
 // graph came back as it went in. `spliced` marks the functions spliced
@@ -357,7 +364,7 @@ function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rew
   let i: i32 = 0;
   while (i < funcs.len()) {
     // A body that calls no ready function has nothing to splice.
-    if (rewrite[i] && (sizes[i] <= max_caller_insts() || any_box_saving(funcs, sizes, callees[i], ready, shared)) && any_ready(callees[i], ready)) {
+    if (rewrite[i] && (sizes[i] <= max_caller_insts() || sizes[i] <= max_box_saving_caller_insts() && any_box_saving(funcs, sizes, callees[i], ready, shared)) && any_ready(callees[i], ready)) {
       let spliced: Rewrite = splice_calls(funcs[i], sizes[i], funcs, sizes, ix, ready, ctors, shared, small, false);
       if (spliced.changed) {
         sizes = sizes.with(i, count_insts(spliced.f.graph));
@@ -912,9 +919,10 @@ function splice_calls(f0: ssasem.Func, size: i32, funcs: ssasem.Func[], sizes: i
       }
       // A module const's body becomes one static box wherever it lands, so
       // it costs the caller nothing the budget measures, and a splice that
-      // saves a box (saves_box) is not gated by the caller's size either.
+      // saves a box (saves_box) is held to the larger box-saving budget.
       if (at >= 0 && funcs[at].graph.name != f.graph.name
-        && (fsize + sizes[at] <= max_caller_insts() || ctors[at] && funcs[at].params.len() == 0 || saves_box(funcs, sizes, at, shared))) {
+        && (fsize + sizes[at] <= max_caller_insts() || ctors[at] && funcs[at].params.len() == 0
+        || fsize + sizes[at] <= max_box_saving_caller_insts() && saves_box(funcs, sizes, at, shared))) {
         done = done + 1;
         // A straight callee's body now stands at k, and is walked in turn.
         if (straight(funcs[at])) {
@@ -1887,8 +1895,8 @@ function callees_of_all(funcs: ssasem.Func[], ix: util.NameIndex): i32[][] {
 }
 
 // Whether the splice of `funcs[at]` saves a box, which leaves the caller
-// holding the box's parts, values it held already, so the caller's size
-// does not gate it: a shared callee within the reuse budget, spliced where
+// holding the box's parts, values it held already, so the caller is held to
+// max_box_saving_caller_insts rather than max_caller_insts: a shared callee within the reuse budget, spliced where
 // its box dies, or any other ready callee within the once budget whose every
 // return is a construction, one of them a box. Leaves return words, so that
 // is a function called once, whose construction the caller then reads
@@ -1903,8 +1911,8 @@ function saves_box(funcs: ssasem.Func[], sizes: i32[], at: i32, shared: boolean[
 }
 
 // Whether a body calls a ready function whose splice saves a box: such a
-// splice is not gated by the body's size, so a body past the budget is
-// still walked.
+// splice is held to the box-saving budget, so a body past the caller budget
+// is still walked.
 function any_box_saving(funcs: ssasem.Func[], sizes: i32[], callees: i32[], ready: boolean[], shared: boolean[]): boolean {
   for j in callees {
     if (ready[j] && saves_box(funcs, sizes, j, shared)) {

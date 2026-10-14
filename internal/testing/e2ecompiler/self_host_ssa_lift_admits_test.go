@@ -49,8 +49,8 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	// pushes one Option.
 	// read_dir_ino_all (432) adds one with one input that pushes a Result.
 	// utf8_blocks (433) adds one with three inputs that pushes the checked
-	// offset. The io_uring readiness ring's ring_new, ring_ctl and ring_wait
-	// (434-436) add three admitted kinds.
+	// offset. The io_uring readiness set adds three: ring_new (434),
+	// ring_ctl (435) and ring_wait (436), with one, four and three inputs.
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +

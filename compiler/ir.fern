@@ -392,6 +392,17 @@ pub function is_lent(op: Op): boolean {
   return op.i64_imm == 3;
 }
 
+// sole marks a release of a box the frame holds the only count on: the count
+// was read as one and no instruction since could have changed it. The
+// register backends free the box without reading the count again.
+pub function sole(op: Op): Op {
+  return Op { ...op, i64_imm: 5 };
+}
+
+pub function is_sole(op: Op): boolean {
+  return op.i64_imm == 5;
+}
+
 pub function op_arr_set(width: i32): Op {
   return Op { decl: 0 - 1, kind_tag: 89, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }

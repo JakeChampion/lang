@@ -379,10 +379,20 @@ function emit(own r: irtables.LowerResult, op: ir.Op): irtables.LowerResult {
 // shell_release marks the release call `release` just emitted as a shell's
 // (ir.shell): the box goes shallowly, its payload is the frame's.
 function shell_release(own r: irtables.LowerResult): irtables.LowerResult {
+  return mark_release(r, ir.shell);
+}
+
+// sole_release marks the release call `release` just emitted as a box's the
+// frame holds the only count on (ir.sole).
+function sole_release(own r: irtables.LowerResult): irtables.LowerResult {
+  return mark_release(r, ir.sole);
+}
+
+function mark_release(own r: irtables.LowerResult, mark: (ir.Op) => ir.Op): irtables.LowerResult {
   let i: i32 = r.ops.len() - 1;
   while (i >= 0) {
     if (r.ops[i].kind_tag == ir.op_call_direct("", 1).kind_tag) {
-      return irtables.LowerResult { ...r, ops: r.ops.with(i, ir.shell(r.ops[i])) };
+      return irtables.LowerResult { ...r, ops: r.ops.with(i, mark(r.ops[i])) };
     }
     i = i - 1;
   }
@@ -1342,8 +1352,11 @@ function keep_release(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, f
 // or, `held` for a construction, left in its local as the token. Past a few
 // such fields the taken slots are nulled and the type's drop helper walks the
 // rest, which costs a store a slot rather than a walk a field at every death.
-// A donor read as shared had its takes retained, and is released whole by the
-// ordinary test, which also covers its count having fallen since.
+// The free reads no count (ir.sole): the one read at the first take still
+// holds, as nothing between admits the donor but its takes and tests, and no
+// other holder exists to retain it. A donor read as shared had its takes
+// retained, and is released whole by the ordinary test, which also covers its
+// count having fallen since.
 function classified_death(own r: irtables.LowerResult, f: ssasem.Func, k: ssaunits.Keeps, at: i32, held: boolean): irtables.LowerResult {
   let donor: i32 = k.donors[at];
   let fields: semrecords.Field[] = donor_fields(f, k.moved[at][0], donor);
@@ -1358,7 +1371,7 @@ function classified_death(own r: irtables.LowerResult, f: ssasem.Func, k: ssauni
     r = drop_children(r, donor, f.values[donor], scratch_base(f), f);
   }
   if (!held) {
-    r = release(r, donor, f.values[donor], f);
+    r = sole_release(release(r, donor, f.values[donor], f));
   }
   r = emit(r, ir.op_else());
   r = drop_value(r, donor, f.values[donor], scratch_base(f), f);

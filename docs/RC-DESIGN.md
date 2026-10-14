@@ -245,7 +245,9 @@ locals sit above `nvals`. It emits:
   value in its local (`steal`); a kept or classified donor's takes read the
   token slot instead, and on its unique arm leave the slot as it is: its
   death releases only the fields nothing took (`keep_release`,
-  `classified_death`);
+  `classified_death`), and a classified donor's box goes to the release
+  helper's `.u` entry with no guard in front (`ir.sole`), since nothing
+  between the take and the death can have changed its count;
 - **reuse**, as the plan's tables say (`Plan.reuse`): where a token is taken,
   `__fern_rc_is_unique(d)` selects the box or null (`reuse_token`); where it
   is spent, `__fern_alloc_reuse(token, slots)` hands back the box or a fresh
