@@ -90,10 +90,10 @@ func TestSelfHostNdarrayInnerPlan(t *testing.T) {
 		}
 		body := emittedBody(t, asm, "__fn_"+tc.name)
 		if tc.reason == "inner-mul-add-kernel" {
-			if !strings.Contains(body, "call __fn_ndarray__inner_kernel") || strings.Contains(body, "call __fn___smm_ndarray__NdArray_inner") {
+			if !reachesCall(body, "__fn_ndarray__inner_kernel") || reachesCall(body, "__fn___smm_ndarray__NdArray_inner") {
 				t.Fatalf("admitted inner kept its scalar call:\n%s", body)
 			}
-		} else if !strings.Contains(body, "call __fn___smm_ndarray__NdArray_inner") {
+		} else if !reachesCall(body, "__fn___smm_ndarray__NdArray_inner") {
 			t.Fatalf("refused inner lost its scalar call:\n%s", body)
 		}
 	}
@@ -102,7 +102,7 @@ func TestSelfHostNdarrayInnerPlan(t *testing.T) {
 	if strings.Contains(disabled, "reason=inner-mul-add-kernel ") || !strings.Contains(disabled, "reason=disabled ") {
 		t.Fatalf("disabled inner report:\n%s", disabled)
 	}
-	if !strings.Contains(emittedBody(t, disabledASM, "__fn_packed"), "call __fn___smm_ndarray__NdArray_inner") {
+	if !reachesCall(emittedBody(t, disabledASM, "__fn_packed"), "__fn___smm_ndarray__NdArray_inner") {
 		t.Fatal("disabled inner kernel lost its scalar call")
 	}
 	if strings.Contains(disabledASM, "__fn_ndarray__inner_kernel:") {
