@@ -1394,7 +1394,14 @@ pub struct Policy { public_only: boolean, proxies: ProxyEnv, roots: Option[verif
 // `public_policy()` — the route `plat.http` takes: global addresses only,
 // the environment's proxies, the machine's roots, no jar, any host.
 pub function public_policy(): Policy {
-  return Policy { public_only: true, proxies: __proxies(), roots: None, jar: None, allow: None };
+  return public_policy_via(__proxies());
+}
+
+// `public_policy_via(proxies)` — `public_policy()` through `proxies` in
+// place of the environment's: the route a platform whose configuration is
+// not the machine's (std/sim_platform) takes.
+pub function public_policy_via(proxies: ProxyEnv): Policy {
+  return Policy { public_only: true, proxies: proxies, roots: None, jar: None, allow: None };
 }
 
 // `Allow` — the hosts a route may reach, built by `allow`. A `Policy`

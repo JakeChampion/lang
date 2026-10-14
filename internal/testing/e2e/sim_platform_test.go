@@ -1,9 +1,13 @@
 package e2e
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // `tests/stdlib/sim_platform_test.fern` runs a handler's platform over
@@ -15,7 +19,26 @@ import (
 
 const simPlatformSuite = "tests/stdlib/sim_platform_test.fern"
 
-var simPlatformWant = []string{"# Suite: std/sim_platform", "# pass 12", "# fail 0", "1..12"}
+var simPlatformWant = []string{"# Suite: std/sim_platform", "# pass 13", "# fail 0", "1..13"}
+
+// hostProxyEnv is a proxy configuration for the machine that leads nowhere.
+// Every leg runs under it: the simulated network's requests are virtual, so
+// the host's proxies must not reach them.
+var hostProxyEnv = []string{"http_proxy=http://192.0.2.1:9", "https_proxy=http://192.0.2.1:9", "HTTPS_PROXY=http://192.0.2.1:9"}
+
+// runUnderHostProxy runs cmd with hostProxyEnv added to the test's
+// environment, returning its combined output and exit code.
+func runUnderHostProxy(t *testing.T, cmd *exec.Cmd) (string, int) {
+	t.Helper()
+	cmd.Env = append(os.Environ(), hostProxyEnv...)
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	_ = cmd.Run()
+	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+		t.Fatalf("%s did not exit normally\n%s", cmd.Path, out.String())
+	}
+	return out.String(), cmd.ProcessState.ExitCode()
+}
 
 func checkSimPlatformOutput(t *testing.T, leg, out string) {
 	t.Helper()
@@ -28,9 +51,9 @@ func checkSimPlatformOutput(t *testing.T, leg, out string) {
 
 func TestRunnerSimPlatformExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	code, out, errOut := runLangInterp(t, bin, langSrcAbs(t, simPlatformSuite))
+	out, code := runUnderHostProxy(t, exec.Command(bin, "-interp", langSrcAbs(t, simPlatformSuite)))
 	if code != 0 {
-		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+		t.Fatalf("exit = %d, want 0\n%s", code, out)
 	}
 	checkSimPlatformOutput(t, "interp", out)
 }
@@ -45,7 +68,8 @@ func simPlatformSource(t *testing.T) string {
 }
 
 func TestSimPlatformNativeX86_64(t *testing.T) {
-	out, code := compileAndRunX86_64(t, simPlatformSource(t))
+	bin, runner := e2eharness.CompileX86_64Bin(t, simPlatformSource(t))
+	out, code := runUnderHostProxy(t, e2eharness.RunX86_64Bin(runner, bin))
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\n%s", code, out)
 	}
@@ -53,7 +77,8 @@ func TestSimPlatformNativeX86_64(t *testing.T) {
 }
 
 func TestSimPlatformArm64(t *testing.T) {
-	out, code := compileAndRunArm64(t, simPlatformSource(t))
+	bin, qemu := e2eharness.CompileArm64Bin(t, simPlatformSource(t))
+	out, code := runUnderHostProxy(t, e2eharness.RunArm64Bin(qemu, bin))
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\n%s", code, out)
 	}
@@ -61,7 +86,7 @@ func TestSimPlatformArm64(t *testing.T) {
 }
 
 func TestWASMSimPlatform(t *testing.T) {
-	out, _, code := runWasmArtifact(t, buildResultComponent(t, simPlatformSource(t)), runOpts{})
+	out, _, code := runWasmArtifact(t, buildResultComponent(t, simPlatformSource(t)), runOpts{envs: hostProxyEnv})
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\n%s", code, out)
 	}
