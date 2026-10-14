@@ -515,8 +515,8 @@
 # Number from driver-sizes' report on run 38401685655. The other rows stay
 # inside 2.1%.
 
-fern.fern/stage2 11181568
-fern.fern 11715024
+fern.fern/stage2 11761952
+fern.fern 12339464
 drivers/asm_load_run.fern 9642480
 drivers/asm_modload_run.fern 8271632
 drivers/asm_ir_run.fern 7975200
