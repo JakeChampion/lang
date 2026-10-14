@@ -178,6 +178,60 @@ func TestSelfHostSharedSpliceSeesUpdateBaseX86_64(t *testing.T) {
 	}
 }
 
+// mutualSharedSrc's `ping` returns a record and has two callers,
+// `apart_ping` and `pong`, which only ping calls. The two recurse through
+// each other, so ping is never shared: a copy spliced into pong makes pong
+// call itself, a copy spliced into apart_ping brings a call to pong, and
+// round after round the copies multiplied, some 900 of them in apart_ping.
+// apart_ping keeps its call.
+const mutualSharedSrc = `struct Range { lo: i32, hi: i32, name: string }
+
+function ping(lo: i32, n: i32, name: string): Range {
+  if (n == 0) {
+    return Range { lo: lo, hi: lo + 6, name: name };
+  }
+  let r: Range = pong(lo, n - 1, name);
+  return Range { lo: r.lo, hi: r.hi + 1, name: r.name };
+}
+
+function pong(lo: i32, n: i32, name: string): Range {
+  if (n == 0) {
+    return Range { lo: lo, hi: lo + 4, name: name };
+  }
+  let r: Range = ping(lo, n - 1, name);
+  return Range { lo: r.lo, hi: r.hi + 2, name: r.name };
+}
+
+@noinline function apart_ping(): i32 {
+  let t: i32 = 0;
+  let i: i32 = 0;
+  while (i < 100) {
+    let s: Range = ping(i, 3, "ab");
+    t = t + s.hi - s.lo + s.name.len();
+    i = i + 1;
+  }
+  return t;
+}
+
+function main(): i32 {
+  if (apart_ping() != 1000) {
+    return 1;
+  }
+  return 0;
+}`
+
+func TestSelfHostMutualRecursionNotSharedX86_64(t *testing.T) {
+	emit, run := x86ShapeHarness(t)
+	asm := emit(t, mutualSharedSrc)
+	body := asmFuncBody(t, asm, "__fn_apart_ping")
+	if !strings.Contains(body, "call __fn_ping.") || strings.Count(body, "\n") > 200 {
+		t.Errorf("apart_ping: ping was spliced although it recurses through pong:\n%s", body)
+	}
+	if got := run(t, "mutual_shared", asm); got != 0 {
+		t.Errorf("exit = %d, want 0", got)
+	}
+}
+
 // exhaustiveLeafSrc's `is_red` ends in the unreachable block an exhaustive
 // match leaves, and most of its blocks are the match lowering's empty jumps.
 // It is a leaf all the same, spliced at both of `probe`'s calls.
