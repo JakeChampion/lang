@@ -6711,12 +6711,9 @@ function env_rows_closed(named: typeinfo.Type[], s: State, memo: SchemaMemo): Cl
   let drows: ssasem.EnvRow[] = [];
   let table: Schemas = schemas(named, s, memo);
   while (table.ok) {
-    let reach: typeinfo.Type[] = [];
-    let dreach: typeinfo.Type[] = [];
-    for t in named_by_schemas(table, 0, 0, named) {
-      reach = func_types_in(t, reach);
-      dreach = dyn_types_in(t, dreach);
-    }
+    let r: Reach = table_reach(table, named);
+    let reach: typeinfo.Type[] = r.fns;
+    let dreach: typeinfo.Type[] = r.dyns;
     let grown: boolean = false;
     for row in env_rows(reach, s.contracts.envs) {
       if (has_env_row(rows, row.fn_ty, row.env_ty)) {
@@ -6744,33 +6741,66 @@ function env_rows_closed(named: typeinfo.Type[], s: State, memo: SchemaMemo): Cl
   return Closed { rows: rows, dyns: drows, table: table };
 }
 
-// The dyn types a type carries, itself included, through the containers a
-// release walks into.
-function dyn_types_in(t: typeinfo.Type, out: typeinfo.Type[]): typeinfo.Type[] {
+// Reach is the function types and the dyn types carried by the types
+// named_by_schemas lists, `named` and then the schema-naming fields of the
+// table's records and its enums' variants, each in the order the walk meets it.
+struct Reach { fns: typeinfo.Type[], dyns: typeinfo.Type[] }
+
+function table_reach(table: Schemas, named: typeinfo.Type[]): Reach {
+  let r: Reach = Reach { fns: [], dyns: [] };
+  for t in named {
+    r = reach_in(t, r, true);
+  }
+  for rec in table.records {
+    for field in rec.fields {
+      if (names_schema(field.ty)) {
+        r = reach_in(field.ty, r, true);
+      }
+    }
+  }
+  for e in table.enums {
+    for v in e.variants {
+      for field in v.fields {
+        if (names_schema(field.ty)) {
+          r = reach_in(field.ty, r, true);
+        }
+      }
+    }
+  }
+  return r;
+}
+
+// reach_in walks `t` through the containers a release walks into, itself
+// included. A union's arguments are walked for dyn types only, with `fns`
+// false.
+function reach_in(t: typeinfo.Type, own r: Reach, fns: boolean): Reach {
+  if (fns && ssasem.is_func(t)) {
+    return Reach { ...r, fns: r.fns.append(t) };
+  }
   if (ssasem.is_dyn(t)) {
-    return out.append(t);
+    return Reach { ...r, dyns: r.dyns.append(t) };
   }
   if let typeinfo.TypeArray(a) = t {
-    return dyn_types_in(a.elem, out);
+    return reach_in(a.elem, r, fns);
   }
   if let typeinfo.TypeTuple(tup) = t {
     for e in tup.elements {
-      out = dyn_types_in(e, out);
+      r = reach_in(e, r, fns);
     }
-    return out;
+    return r;
   }
   if (semtypes.is_cell(t)) {
-    return dyn_types_in(semtypes.cell_elem(t), out);
+    return reach_in(semtypes.cell_elem(t), r, fns);
   }
   if let typeinfo.TypeMap(m) = t {
-    return dyn_types_in(m.value, dyn_types_in(m.key, out));
+    return reach_in(m.value, reach_in(m.key, r, fns), fns);
   }
   if let typeinfo.TypeUnion(u) = t {
     for a in u.args {
-      out = dyn_types_in(a, out);
+      r = reach_in(a, r, false);
     }
   }
-  return out;
+  return r;
 }
 
 // The records, enums and strings a dyn value of type `t` can be holding: every
@@ -6983,30 +7013,6 @@ function same_modulo_spaces(a: string, b: string): boolean {
     j = j + 1;
   }
   return false;
-}
-
-// The function types a type carries, itself included, through the containers
-// a release walks into.
-function func_types_in(t: typeinfo.Type, out: typeinfo.Type[]): typeinfo.Type[] {
-  if (ssasem.is_func(t)) {
-    return out.append(t);
-  }
-  if let typeinfo.TypeArray(a) = t {
-    return func_types_in(a.elem, out);
-  }
-  if let typeinfo.TypeTuple(tup) = t {
-    for e in tup.elements {
-      out = func_types_in(e, out);
-    }
-    return out;
-  }
-  if (semtypes.is_cell(t)) {
-    return func_types_in(semtypes.cell_elem(t), out);
-  }
-  if let typeinfo.TypeMap(m) = t {
-    return func_types_in(m.value, func_types_in(m.key, out));
-  }
-  return out;
 }
 
 function has_type(ts: typeinfo.Type[], t: typeinfo.Type): boolean {
