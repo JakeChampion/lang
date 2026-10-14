@@ -169,6 +169,9 @@ type parser struct {
 	// emitted in this Parse so synthetic slot names stay unique
 	// across nested foreach loops.
 	foreachN int
+	// nestedTails remembers nestedBlockTail's answer per token index, so a
+	// chain of nested value blocks is read once rather than once per level.
+	nestedTails map[int]bool
 	// noStructLit suppresses the `Ident { … }` struct-literal
 	// shortcut while parsing expressions in positions that
 	// otherwise greedily consume a trailing `{` as the body —
@@ -2668,7 +2671,7 @@ func (p *parser) parseBlockStmts(block *ast.Block, tailValue bool) {
 			}
 			continue
 		}
-		if tailValue && !p.branchStmtStart() {
+		if tailValue && (!p.branchStmtStart() || p.nestedBlockTail()) {
 			// A non-keyword item that the closing `}` follows is the body's
 			// trailing value. Anything else — including the same expression
 			// followed by a `;` — is an ordinary statement, so the cursor is
@@ -3161,12 +3164,12 @@ func (p *parser) parseIfExpr() (ast.Expr, error) {
 //     value is required.
 //
 // Statement-led forms (keyword statements: `let`/`if`/`while`/… and a
-// nested `{`-block) always parse as statements via parseStmt, which
-// consumes its own terminator. A non-keyword item parses as an
-// expression: if a `;` follows it's an ExprStmt, if `}` follows it's
-// the trailing value expression. This keeps the new grammar form
-// confined to branch position — general value-position blocks are a
-// later slice.
+// nested `{`-block) parse as statements via parseStmt, which consumes its
+// own terminator — except a nested block that yields a value with the
+// closing `}` right after it, which is the trailing value
+// (nestedBlockTail). A non-keyword item parses as an expression: if a `;`
+// follows it's an ExprStmt, if `}` follows it's the trailing value
+// expression.
 func (p *parser) parseBranchBody() (ast.Expr, error) {
 	open, err := p.expect(lexer.Punct, "{")
 	if err != nil {
@@ -3175,7 +3178,7 @@ func (p *parser) parseBranchBody() (ast.Expr, error) {
 	var stmts []ast.Stmt
 	var tail ast.Expr
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
-		if p.branchStmtStart() {
+		if p.branchStmtStart() && !p.nestedBlockTail() {
 			s, err := p.parseStmt()
 			if err != nil {
 				return nil, err
@@ -3233,11 +3236,44 @@ func (p *parser) parseBranchBody() (ast.Expr, error) {
 	return &ast.BlockExpr{P: open.Pos, Stmts: stmts, Tail: tail}, nil
 }
 
+// nestedBlockTail reports whether the `{` at the cursor opens a block with a
+// trailing value that the enclosing block's `}` follows: `{ …; { 1 } }`.
+// That block is the enclosing block's value, so it is read as an expression;
+// any other `{` opens a statement block. The cursor is left where it was.
+func (p *parser) nestedBlockTail() bool {
+	if !p.match(lexer.Punct, "{") {
+		return false
+	}
+	if yes, ok := p.nestedTails[p.i]; ok {
+		return yes
+	}
+	mark, nRefs, nTodo, nErr := p.i, len(p.typeRefs), len(p.todoSites), len(p.errors)
+	if err := p.enter(); err != nil {
+		p.leave()
+		p.errors = p.errors[:nErr]
+		return false
+	}
+	e, err := p.parseBranchBody()
+	yes := err == nil && p.match(lexer.Punct, "}")
+	if b, ok := e.(*ast.BlockExpr); ok && b.Tail == nil {
+		yes = false
+	}
+	p.leave()
+	p.i = mark
+	p.typeRefs, p.todoSites, p.errors = p.typeRefs[:nRefs], p.todoSites[:nTodo], p.errors[:nErr]
+	if p.nestedTails == nil {
+		p.nestedTails = map[int]bool{}
+	}
+	p.nestedTails[mark] = yes
+	return yes
+}
+
 // branchStmtStart reports whether the next token begins a statement
 // that parseStmt handles directly (and which consumes its own
 // terminator) inside a branch body. These are the keyword-led
-// statements plus a nested `{`-block and a labeled loop. Everything
-// else is parsed as an expression (ExprStmt or the trailing tail).
+// statements plus a nested `{`-block (unless nestedBlockTail) and a
+// labeled loop. Everything else is parsed as an expression (ExprStmt or
+// the trailing tail).
 func (p *parser) branchStmtStart() bool {
 	t := p.peek()
 	if t.Kind == lexer.Punct && t.Text == "{" {
