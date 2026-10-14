@@ -256,3 +256,18 @@ aarch64/utf8_ingest_unchecked.text	9708
 aarch64/utf8_ingest_unchecked.ir	2731216
 aarch64/utf8_ingest_validated.text	9973
 aarch64/utf8_ingest_validated.ir	6317823
+
+# lane: net-grpc-interop
+grpc/passed	11
+grpc/failed	0
+grpc/empty_unary	1
+grpc/large_unary	1
+grpc/client_streaming	1
+grpc/server_streaming	1
+grpc/ping_pong	1
+grpc/timeout_on_sleeping_server	1
+grpc/status_code_and_message	1
+grpc/special_status_message	1
+grpc/custom_metadata	1
+grpc/unimplemented_method	1
+grpc/unimplemented_service	1
