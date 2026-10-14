@@ -2008,14 +2008,14 @@ function matches_store(w: Walk, ld: ssa.SInst, st: ssa.SInst): boolean {
   return ld.kind_tag == 42 && ld.args.len() >= 2 && st.args.len() >= 3 && w.root[ld.args[1]] == w.root[st.args[1]];
 }
 
-// mark_taken_loads marks the load the null store at (sb, si) gives the
-// slot's unit to: the nearest load of that slot before it on every path
-// that the body goes on to read after it — the value the lowering took the
-// unit for. An older load read after it names the same object but the unit
-// is taken once, by the latest; a load read only before the store takes
-// nothing. With no load read after, the nearest one is marked, so a take
-// the lowering emits and never uses still shows as held.
-function mark_taken_loads(w: Walk, dom: ssadeps.Dom, own out: boolean[], sb: i32, si: i32, st: ssa.SInst): boolean[] {
+// taken_root is the root of the load the null store at (sb, si) gives the
+// slot's unit to, -1 for none: the nearest load of that slot before it on
+// every path that the body goes on to read after it — the value the lowering
+// took the unit for. An older load read after it names the same object but
+// the unit is taken once, by the latest; a load read only before the store
+// takes nothing. With no load read after, the nearest one is taken, so a
+// take the lowering emits and never uses still shows as held.
+function taken_root(w: Walk, dom: ssadeps.Dom, sb: i32, si: i32, st: ssa.SInst): i32 {
   let after: boolean[] = reached_from(w, sb);
   let pick: Picked = pick_loads(w, dom, after, Picked { used: -1, any: -1 }, sb, si, sb, si, st);
   // The blocks that dominate the store's are its dominator-tree ancestors.
@@ -2025,12 +2025,12 @@ function mark_taken_loads(w: Walk, dom: ssadeps.Dom, own out: boolean[], sb: i32
     pick = pick_loads(w, dom, after, pick, lb, w.f.blocks[lb].insts.len(), sb, si, st);
   }
   if (pick.used >= 0) {
-    return out.with(w.root[pick.used], true);
+    return w.root[pick.used];
   }
   if (pick.any >= 0) {
-    return out.with(w.root[pick.any], true);
+    return w.root[pick.any];
   }
-  return out;
+  return -1;
 }
 
 // Picked is the nearest load of the slot read after the store, and the
@@ -2837,14 +2837,10 @@ function takes_of(w: Walk, dom: ssadeps.Dom): Takes {
     while (si < insts.len()) {
       let st: ssa.SInst = insts[si];
       if (is_take(w, st)) {
-        let marks: boolean[] = mark_taken_loads(w, dom, __alloc_bool(f.nvals), sb, si, st);
+        let r: i32 = taken_root(w, dom, sb, si, st);
         let rs: i32[] = [];
-        let v: i32 = 0;
-        while (v < f.nvals) {
-          if (marks[v]) {
-            rs = rs.append(v);
-          }
-          v = v + 1;
+        if (r >= 0) {
+          rs = rs.append(r);
         }
         let first: i32[] = out.first;
         if (first[sb] < 0) {
@@ -3541,11 +3537,13 @@ function inherited_takes(own t: Takes, w: Walk, base: Base): Takes {
   }
   let k: i32 = 0;
   while (k < t.block.len()) {
-    let id: i32 = w.f.blocks[t.block[k]].id;
-    let bb: i32 = base.at[id];
-    let j: i32 = 0;
-    while (j < base.takes.block.len()) {
-      if (base.takes.block[j] == bb && base.takes.at[j] == t.at[k]) {
+    let bb: i32 = base.at[w.f.blocks[t.block[k]].id];
+    let j: i32 = -1;
+    if (bb >= 0) {
+      j = base.takes.first[bb];
+    }
+    while (j >= 0 && j < base.takes.block.len() && base.takes.block[j] == bb) {
+      if (base.takes.at[j] == t.at[k]) {
         let rs: i32[] = base.takes.roots[j];
         if (rs.len() > 0 && outside(w.f, w.defs, rs[0])) {
           t = Takes { ...t, roots: t.roots.with(k, rs) };
@@ -3802,21 +3800,15 @@ function fixed_phis(w: Walk, pr: Pruned, reach: boolean[], box: i32): i32[] {
   let changed: boolean = true;
   while (changed) {
     changed = false;
-    let bi: i32 = 0;
-    while (bi < w.f.blocks.len()) {
-      if (reach[bi]) {
-        let b: ssa.SBlock = w.f.blocks[bi];
-        for ins in b.insts {
-          if (ins.kind_tag == 8 && ins.result >= 0 && out[ins.result] < 0) {
-            let fx: i32 = fixed_phi(w, pr, reach, out, b, ins, box);
-            if (fx >= 0) {
-              out = out.with(ins.result, fx);
-              changed = true;
-            }
-          }
+    for p in w.phis {
+      let bi: i32 = w.defs.block[p];
+      if (out[p] < 0 && reach[bi]) {
+        let fx: i32 = fixed_phi(w, pr, reach, out, w.f.blocks[bi], def_of(w.f, w.defs, p), box);
+        if (fx >= 0) {
+          out = out.with(p, fx);
+          changed = true;
         }
       }
-      bi = bi + 1;
     }
   }
   return out;
@@ -3886,7 +3878,9 @@ function box_ops(w: Walk, f: ssa.SFunc, box: i32): BoxOps {
   let ops: BoxOps = BoxOps { f: f, reused: __alloc_bool(f.nvals) };
   let bi: i32 = 0;
   while (bi < f.blocks.len()) {
-    ops = box_ops_in(ops, bi, root, box, util.index_of_i32(w.regions[bi], box) >= 0);
+    if (calls_on_box(f.blocks[bi], root, box)) {
+      ops = box_ops_in(ops, bi, root, box, util.index_of_i32(w.regions[bi], box) >= 0);
+    }
     bi = bi + 1;
   }
   return ops;
@@ -3915,6 +3909,15 @@ function box_ops_in(own ops: BoxOps, bi: i32, root: i32[], box: i32, unique: boo
     return ops;
   }
   return BoxOps { ...ops, f: ssa.SFunc { ...ops.f, blocks: ops.f.blocks.with(bi, ssa.SBlock { ...b, insts: insts }) } };
+}
+
+function calls_on_box(b: ssa.SBlock, root: i32[], box: i32): boolean {
+  for ins in b.insts {
+    if (ins.kind_tag == 11 && ins.args.len() > 0 && ins.args[0] >= 0 && root[ins.args[0]] == box) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // drop_phi_edges drops the edges into the token's phi that would give it
