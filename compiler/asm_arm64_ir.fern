@@ -5757,7 +5757,7 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_str_borrow") {
     s = s.need("str_borrow");
   }
-  if (name == "__fern_str_grow" || name == "__fern_str_grow_range") {
+  if (name == "__fern_str_grow" || name == "__fern_str_grow_range" || name == "__fern_str_grow_fresh" || name == "__fern_str_grow_fresh_range") {
     s = s.need("str_grow");
   }
   if (name == "__fern_account_entry") {
@@ -7844,6 +7844,14 @@ function mov_borrowed_marker(s: asmcore.EmitState, reg: string): asmcore.EmitSta
   return s.write("    movk " + reg + ", #0x424F, lsl #16\n");
 }
 
+// GROW identifies a fused box whose block carries its capacity, in words,
+// in the word ahead of the count (base = box - 16): asm_ir.grown_marker's
+// arm64 sibling, freed at that capacity rather than at its length.
+function mov_grown_marker(s: asmcore.EmitState, reg: string): asmcore.EmitState {
+  s = s.write("    mov " + reg + ", #0x4F57\n");
+  return s.write("    movk " + reg + ", #0x4752, lsl #16\n");
+}
+
 // abort_trap emits the trap `label`: it points x1 / x2 at the cause line
 // `text` (laid down in .rodata under `msg`) and branches to __fern_report
 // with the exit status in x0. A `.L` label gets no .globl / .type / .size.
@@ -8872,14 +8880,26 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write(san_poison_check("w2", "w9", ".Lsg_live", s.rc_free_debug));
     s = s.write("    cmp w2, #1\n");
     s = s.write("    b.ne .Lsg_no\n");
-    s = s.write("    ldur w2, [x0, #-4]\n");
-    s = mov_fused_marker(s, "w4");
-    s = s.write("    cmp w2, w4\n");
-    s = s.write("    b.ne .Lsg_no\n");
     s = s.write("    ldr x2, [x0, #8]\n");  // la
     s = s.write("    add x4, x2, x3\n");  // grown length
     s = s.write("    lsr x9, x4, #31\n");
     s = s.write("    cbnz x9, .Lsg_no\n");
+    // A grown box takes the bytes while its capacity holds them; its block
+    // does not move, so the census sees nothing.
+    s = s.write("    ldur w5, [x0, #-4]\n");
+    s = mov_grown_marker(s, "w6");
+    s = s.write("    cmp w5, w6\n");
+    s = s.write("    b.ne .Lsg_fused\n");
+    s = s.write("    add x6, x4, #39\n");
+    s = s.write("    lsr x6, x6, #3\n");  // words grown, under the 32-byte header
+    s = s.write("    ldur x7, [x0, #-16]\n");
+    s = s.write("    cmp x6, x7\n");
+    s = s.write("    b.hi .Lsg_no\n");
+    s = s.write("    b .Lsg_copy\n");
+    s = s.write(".Lsg_fused:\n");
+    s = mov_fused_marker(s, "w6");
+    s = s.write("    cmp w5, w6\n");
+    s = s.write("    b.ne .Lsg_no\n");
     s = s.write("    add x5, x2, #31\n");
     s = s.write("    lsr x5, x5, #3\n");  // words now
     s = s.write("    add x6, x4, #31\n");
@@ -8917,6 +8937,99 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    ret\n");
     s = s.write(".Lsg_no:\n");
     s = s.write("    mov x0, #0\n");
+    s = s.write("    ret\n");
+    // __fern_str_grow_fresh(a@[sp,#16], b@[sp]) -> a grown box of a then b,
+    // the arm64 sibling of the x86-64 body: the self-append's path when a's
+    // block cannot take b, sized at twice a's words or the grown string's,
+    // whichever is more, rounded to its class. a is read, not released.
+    // __fern_str_grow_fresh_range(a@[sp,#48], s@[sp,#32], lo@[sp,#16],
+    // hi@[sp]) appends s's bytes [lo, hi) the same way and traps on a range
+    // outside s. Both entries hand the body the source bytes in x1 and their
+    // count in x3.
+    s = s.write("__fn___fern_str_grow_fresh:\n");
+    s = s.write("    ldr x0, [sp, #16]\n");  // a
+    s = s.write("    ldr x1, [sp]\n");  // b
+    s = s.write("    ldr x3, [x1, #8]\n");  // lb
+    s = s.write("    ldr x1, [x1]\n");  // b's data
+    s = s.write("    b .Lsgf_body\n");
+    s = s.write("__fn___fern_str_grow_fresh_range:\n");
+    s = s.write("    ldr x0, [sp, #48]\n");  // a
+    s = s.write("    ldr x1, [sp, #32]\n");  // s
+    s = s.write("    ldrsw x2, [sp, #16]\n");  // lo
+    s = s.write("    ldrsw x3, [sp]\n");  // hi
+    s = s.write("    tbz x2, #63, .Lsgf_lo\n");
+    s = s.write("    b __fern_slice_abort\n");
+    s = s.write(".Lsgf_lo:\n");
+    s = s.write("    ldr x4, [x1, #8]\n");  // s's length
+    s = s.write("    cmp x3, x4\n");
+    s = s.write("    b.le .Lsgf_hi\n");
+    s = s.write("    b __fern_slice_abort\n");
+    s = s.write(".Lsgf_hi:\n");
+    s = s.write("    subs x3, x3, x2\n");  // lb
+    s = s.write("    b.ge .Lsgf_range\n");
+    s = s.write("    b __fern_slice_abort\n");
+    s = s.write(".Lsgf_range:\n");
+    s = s.write("    ldr x1, [x1]\n");
+    s = s.write("    add x1, x1, x2\n");  // s's data + lo
+    s = s.write(".Lsgf_body:\n");
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    mov x29, sp\n");
+    s = s.write("    ldr x2, [x0, #8]\n");  // la
+    s = s.write("    add x4, x2, x3\n");  // grown length
+    s = s.write("    lsr x9, x4, #31\n");
+    s = s.write("    cbz x9, .Lsgf_sized\n");
+    s = s.write("    b __fern_alloc_size_abort\n");
+    s = s.write(".Lsgf_sized:\n");
+    s = s.write("    add x5, x4, #39\n");
+    s = s.write("    lsr x5, x5, #3\n");  // words the grown string needs
+    s = s.write("    add x6, x2, #31\n");
+    s = s.write("    lsr x6, x6, #3\n");  // a's words as a fused box
+    s = s.write("    lsl x6, x6, #1\n");
+    s = s.write("    cmp x6, x5\n");
+    s = s.write("    csel x6, x5, x6, lo\n");  // the larger
+    s = s.write("    mov x9, #0x10000\n");
+    s = s.write("    cmp x6, x9\n");
+    s = s.write("    b.hs .Lsgf_large\n");
+    s = s.write("    stp x6, x30, [sp, #-16]!\n");
+    s = s.write("    bl __fern_capw\n");
+    s = s.write("    ldp x6, x30, [sp], #16\n");  // the class's capacity, which the block is bumped at
+    s = s.write("    b .Lsgf_alloc\n");
+    s = s.write(".Lsgf_large:\n");
+    s = s.write("    mov x9, #1\n");
+    s = s.write("    lsl x9, x9, #27\n");  // past 1 GiB the block is exact
+    s = s.write("    cmp x6, x9\n");
+    s = s.write("    b.hi .Lsgf_alloc\n");
+    s = s.write("    lsl x7, x6, #3\n");
+    s = arm64_large_class(s, "x7", "x10", "x11");
+    s = s.write("    lsr x6, x7, #3\n");
+    s = s.write(".Lsgf_alloc:\n");
+    s = s.write("    stp x0, x1, [sp, #-48]!\n");  // a, the source bytes
+    s = s.write("    stp x2, x3, [sp, #16]\n");  // la, lb
+    s = s.write("    str x6, [sp, #32]\n");  // the capacity, in words
+    s = s.write("    lsl x0, x6, #3\n");
+    s = s.write("    bl __fern_alloc\n");  // x0 = base
+    s = s.write("    ldr x6, [sp, #32]\n");
+    s = s.write("    ldp x2, x3, [sp, #16]\n");
+    s = s.write("    ldp x4, x1, [sp], #48\n");
+    s = s.write("    str x6, [x0]\n");  // the capacity
+    s = s.write("    mov w5, #1\n");
+    s = s.write("    str w5, [x0, #8]\n");  // rc
+    s = mov_grown_marker(s, "w5");
+    s = s.write("    str w5, [x0, #12]\n");
+    s = s.write("    add x5, x0, #32\n");  // data
+    s = s.write("    str x5, [x0, #16]\n");
+    s = s.write("    add x6, x2, x3\n");
+    s = s.write("    str x6, [x0, #24]\n");  // len
+    s = s.write("    ldr x6, [x4]\n");  // a's bytes
+    s = arm64_copy_bytes(s, CopyRegs { dst: "x5", src: "x6", n: "x2", tmp: "x7", src_end: "x9", dst_end: "x10" }, ".Lsgf_aw", ".Lsgf_at", ".Lsgf_ab", ".Lsgf_ad");
+    s = s.write("    add x5, x0, #32\n");
+    s = s.write("    ldr x2, [x0, #24]\n");
+    s = s.write("    sub x2, x2, x3\n");  // la again: the copy moved its counters
+    s = s.write("    add x5, x5, x2\n");  // dst = data + la
+    s = s.write("    mov x6, x1\n");
+    s = arm64_copy_bytes(s, CopyRegs { dst: "x5", src: "x6", n: "x3", tmp: "x7", src_end: "x9", dst_end: "x10" }, ".Lsgf_bw", ".Lsgf_bt", ".Lsgf_bb", ".Lsgf_bd");
+    s = s.write("    add x0, x0, #16\n");  // box = base+16
+    s = s.write("    ldp x29, x30, [sp], #16\n");
     s = s.write("    ret\n");
   }
   // __fern_str_borrow(data@[sp, #16], len@[sp]) -> a counted box over bytes it
@@ -9294,6 +9407,9 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = mov_fused_marker(s, "w3");
   s = s.write("    cmp w2, w3\n");
   s = s.write("    beq .Lstrfree_fused\n");
+  s = mov_grown_marker(s, "w3");
+  s = s.write("    cmp w2, w3\n");
+  s = s.write("    beq .Lstrfree_grown\n");
   s = mov_borrowed_marker(s, "w3");
   s = s.write("    cmp w2, w3\n    beq .Lstrfree_box\n");
   // rc==1: sole owner -> free data buffer (heap-guarded) then the 24-byte box.
@@ -9350,6 +9466,13 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   // always made when it freed at ceil(len/8). Unlike that path a large block is
   // RECYCLED rather than leaked: the whole string is one allocation now, so
   // leaking it would leak the box with it.
+  // A grown box's block is its capacity, read from the word ahead of the
+  // count, under a 32-byte header.
+  s = s.write(".Lstrfree_grown:\n");
+  s = s.write("    ldur x2, [x0, #-16]\n");  // words = the capacity
+  s = s.write(quarantine_rc("[x0, #-8]", "w10", s.rc_free_debug));
+  s = s.write("    sub x1, x0, #16\n");  // base = box-16
+  s = s.write("    b .Lstrfree_block\n");
   s = s.write(".Lstrfree_fused:\n");
   s = s.write("    ldr x2, [x0, #8]\n");  // len = box[8]
   s = s.write("    add x2, x2, #7\n");  // words = ceil(len/8) + 3
@@ -9357,6 +9480,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    add x2, x2, #3\n");
   s = s.write(quarantine_rc("[x0, #-8]", "w10", s.rc_free_debug));  // release the rc word
   s = s.write("    sub x1, x0, #8\n");  // base = box-8
+  s = s.write(".Lstrfree_block:\n");
   // Over 256 words the block takes the large-tier test beside the class call.
   s = s.write("    cmp x2, #256\n");
   s = s.write("    b.hi .Lstrfree_fused_big\n");

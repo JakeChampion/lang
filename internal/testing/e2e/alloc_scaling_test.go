@@ -81,7 +81,7 @@ type allocScaleCase struct {
 
 	// wantQuadratic marks a shape that is SUPPOSED to be superlinear, so the
 	// gate asserts the ratio is ABOVE maxRatio instead of below it. Without
-	// this, a shape like naive `s = s + x` in a loop would have to be left
+	// this, a shape like a prepend `s = x + s` in a loop would have to be left
 	// out of the corpus, and the gate would lose its own calibration — these
 	// entries are what prove the bound still separates the two classes.
 	wantQuadratic bool
@@ -958,18 +958,33 @@ function churn(n: i32): i32 {
 		maxRatio: 220,
 	},
 	{
-		// CALIBRATION: naive left-fold string concatenation, which is
-		// inherently quadratic — every `+` copies the whole accumulated
-		// prefix. This is not a bug to fix; it is the control that proves the
-		// bound above still discriminates. If this ever drops BELOW the
-		// bound, either the gate stopped measuring or `+` grew a rope/builder
-		// representation — both of which must be noticed deliberately.
+		// A left fold of `+` onto the accumulator: the self-append grows in
+		// place while its block's capacity holds and past it into a block
+		// twice its length (#8770), so its fresh bytes are linear in n.
 		name: "string-concat-fold",
 		decls: `import "std/string";
 function churn(n: i32): i32 {
     let s: string = "";
     let i: i32 = 0;
     while (i < n) { s = s + "x"; i = i + 1; }
+    return s.len();
+}`,
+		n:        400,
+		maxRatio: 220,
+	},
+	{
+		// CALIBRATION: a prepend fold, which is inherently quadratic — every
+		// `+` copies the whole accumulated string behind the new byte. This
+		// is not a bug to fix; it is the control that proves the bound above
+		// still discriminates. If this ever drops BELOW the bound, either the
+		// gate stopped measuring or `+` grew a rope representation — both of
+		// which must be noticed deliberately.
+		name: "string-prepend-fold",
+		decls: `import "std/string";
+function churn(n: i32): i32 {
+    let s: string = "";
+    let i: i32 = 0;
+    while (i < n) { s = "x" + s; i = i + 1; }
     return s.len();
 }`,
 		n:             400,
