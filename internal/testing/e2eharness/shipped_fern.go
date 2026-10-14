@@ -20,7 +20,7 @@ var (
 // explanations and VERSION. Built once per process.
 func ShippedFern(t testing.TB) string {
 	t.Helper()
-	host := hostSelfHostTarget()
+	host := HostSelfHostTarget()
 	if host == "" {
 		t.Skip("no self-host target runs natively on this host")
 	}

@@ -56,7 +56,7 @@ func TestSelfHostShippedFernCarriesItsStdlib(t *testing.T) {
 	if out, code := runFern(t, fern, cache, "-interp", stdProg); code != 0 || out != "b.fern\n" {
 		t.Errorf("-interp importing std/path: exit %d, output %q", code, out)
 	}
-	if out, code := runFern(t, fern, cache, "-run", prog, "x"); code != 2 || out != "x\n" {
+	if out, code := runFern(t, fern, cache, "-run", "-target", e2eharness.HostSelfHostTarget(), prog, "x"); code != 2 || out != "x\n" {
 		t.Errorf("-run: exit %d, output %q; want 2, \"x\\n\"", code, out)
 	}
 	entries, err := os.ReadDir(cache)
@@ -109,9 +109,12 @@ func TestSelfHostCLIRun(t *testing.T) {
 	if err := os.Mkdir(tmp, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	targets := []string{e2eharness.TargetX86_64Linux}
-	if _, err := exec.LookPath("qemu-aarch64"); err == nil {
-		targets = append(targets, e2eharness.TargetArm64Linux)
+	// Each Linux target this host runs, natively or under its emulator.
+	var targets []string
+	for _, c := range []struct{ target, qemu string }{{e2eharness.TargetX86_64Linux, "qemu-x86_64"}, {e2eharness.TargetArm64Linux, "qemu-aarch64"}} {
+		if _, err := exec.LookPath(c.qemu); err == nil || c.target == e2eharness.HostSelfHostTarget() {
+			targets = append(targets, c.target)
+		}
 	}
 	for _, target := range targets {
 		cmd := exec.Command(cli, "-run", "-target", target, prog, root, "a", "b")

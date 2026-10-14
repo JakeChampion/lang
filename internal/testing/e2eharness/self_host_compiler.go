@@ -336,7 +336,7 @@ var (
 // the pin for the host, shared by every program compile in the process.
 func SelfHostCLI(t testing.TB) string {
 	t.Helper()
-	host := hostSelfHostTarget()
+	host := HostSelfHostTarget()
 	if host == "" {
 		t.Skipf("no self-host target runs natively on %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
@@ -356,14 +356,14 @@ func SelfHostCLI(t testing.TB) string {
 // runs past ten seconds, and the first input to reach the lazy build would.
 func WarmSelfHostCLI(t testing.TB) {
 	t.Helper()
-	if hostSelfHostTarget() != "" {
+	if HostSelfHostTarget() != "" {
 		SelfHostCLI(t)
 	}
 }
 
-// hostSelfHostTarget is the self-host target whose binaries this host runs
+// HostSelfHostTarget is the self-host target whose binaries this host runs
 // directly, or "" when there is none.
-func hostSelfHostTarget() string {
+func HostSelfHostTarget() string {
 	switch runtime.GOOS + "/" + runtime.GOARCH {
 	case "linux/amd64":
 		return TargetX86_64Linux
@@ -399,7 +399,7 @@ func SelfHostReactorCore(t testing.TB, srcPath string) []byte {
 
 func selfHostComponentCore(t testing.TB, srcPath string, args ...string) []byte {
 	t.Helper()
-	host := hostSelfHostTarget()
+	host := HostSelfHostTarget()
 	if host == "" {
 		t.Skipf("no self-host target runs natively on %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
