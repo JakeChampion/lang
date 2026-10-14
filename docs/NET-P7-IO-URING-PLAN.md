@@ -1,9 +1,8 @@
 # Net P7: io_uring — the plan
 
-How #9861 is built, in the order it lands. One PR per slice. Each slice
-names its gate. The backend is opt-in and Linux-only, and it is kept only
-if it wins on the measurements of slice 5. A backend that does not win is
-deleted, not left in as a second path to maintain.
+How #9861 was built, in the order it landed. One PR per slice. Each slice
+names its gate. The backend is opt-in and Linux-only. Slice 5 measured it
+level with epoll, and it is kept (slice 5 says why).
 
 ## Where it sits
 
@@ -195,17 +194,16 @@ fallback; the native arm64 runner exercises the ring.
    `Ring` twin (bodies from 1,000 bytes to 8 MiB, kept, closing, HTTP/1.0,
    HEAD and sixteen clients at once, every body whole); the
    zero-allocation gate; and the x86-64 serve suite under both backends.
-5. **Measured, and kept only if it wins.** The HttpArena profiles #9861
-   names (baseline at 4,096 connections, pipelined at 4,096, and the
-   async profile at 32,000) on the fixed host, epoll against the ring
-   after each of slices 1, 3 and 4: throughput, p99 and bump bytes per
-   connection, recorded in `docs/benchmarks/`. The `net-nightly` lane
-   runs the serve suites and `scripts/net-bench` under both backends;
-   the per-PR lanes run epoll only, plus the slice gates above. If the
-   ring does not win, it is deleted with this plan's record of why.
-   Recorded so far: `scripts/net-bench` loads the same hello binary
-   under both backends (`net/fern-ring/*` beside `net/fern/*`), so the
-   nightly trend holds the comparison. `docs/benchmarks/net-ring-2026-10-14.md`
+5. **Measured, and kept (decided 2026-10-14).** The HttpArena profiles
+   #9861 names (baseline at 4,096 connections, pipelined at 4,096, and
+   the async profile at 32,000), epoll against the ring after each of
+   slices 1, 3 and 4: throughput, p99 and bump bytes per connection,
+   recorded in `docs/benchmarks/`. The `net-nightly` lane runs the serve
+   suites, the x86-64 serve tests and h2spec under both backends (the
+   `net-io-uring` job); the per-PR lanes run epoll only, plus the slice
+   gates above. `scripts/net-bench` loads the same hello binary under
+   both backends (`net/fern-ring/*` beside `net/fern/*`), so the nightly
+   trend holds the comparison. `docs/benchmarks/net-ring-2026-10-14.md`
    is the first comparison, from the development container. The
    backends serve the same at 64 connections. At 4,096 the ring serves 5
    to 7% fewer requests at a 13% lower 99th percentile, and slice 3
@@ -213,10 +211,15 @@ fallback; the native arm64 runner exercises the ring.
    per batch, also recorded nightly as `net/<server>/p<N>.rps`) the three
    are within 5% of each other, the runs' own spread. In the async
    profile (`twofetch`, two upstream fetches per request) the ring serves
-   8% more at 4,096 connections, about the runs' spread. On this box the
-   ring has not won by a margin the measurements can tell from noise.
-   Whether to keep it is to be decided from the nightly trend on the
-   runner.
+   8% more at 4,096 connections, about the runs' spread. The second
+   comparison, net-nightly run 38596773082 on main at 957181fc6, is the
+   same: the ring within 3% of epoll at c64, p64 and c4096 and 4% under at
+   p4096, p99 within 1%. Neither backend wins by a margin the
+   measurements can tell from noise. The ring is kept as the opt-in
+   backend anyway, on the project's call: it is the path to the kernel's
+   completion-side features that epoll has no counterpart for (provided
+   buffer reads, SEND_ZC), and it is level on everything measured. The
+   nightly trend (`net/fern-ring/*`) keeps the comparison running.
 
 ## What is not here
 
