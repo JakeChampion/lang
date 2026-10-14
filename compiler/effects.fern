@@ -259,7 +259,8 @@ function has_i32(xs: i32[], v: i32): boolean {
   return false;
 }
 
-function build(mod: parser.Module, tagged: string[]): Graph {
+// context indexes what the walk looks names up in.
+function context(mod: parser.Module, tagged: string[]): Ctx {
   let names: string[] = [];
   let method_names: string[] = [];
   for fd in mod.funcs {
@@ -279,39 +280,44 @@ function build(mod: parser.Module, tagged: string[]): Graph {
       }
     }
   }
-  let ctx: Ctx = Ctx { names: util.name_index(names), method_names: method_names, fn_fields: util.name_index(fn_fields), tagged: util.name_index(tagged) };
+  return Ctx { names: util.name_index(names), method_names: method_names, fn_fields: util.name_index(fn_fields), tagged: util.name_index(tagged) };
+}
+
+// add_scan appends function k's scan to the graph.
+function add_scan(g: Graph, k: i32, s: Scan): Graph {
+  let edges: i32[] = g.edges;
+  for e in s.edges {
+    if (e != k) {
+      edges = edges.append(e);
+    }
+  }
+  let builtins: string[] = g.builtins;
+  for b in s.builtins {
+    builtins = builtins.append(b);
+  }
+  let esc_b: string[] = g.esc_builtins;
+  for b in s.esc_builtins {
+    if (!util.has_str(esc_b, b)) {
+      esc_b = esc_b.append(b);
+    }
+  }
+  return Graph { ...g, edge_at: g.edge_at.append(g.edges.len()), edges: edges, builtin_at: g.builtin_at.append(g.builtins.len()), builtins: builtins, indirect: g.indirect.append(s.indirect), esc_builtins: esc_b };
+}
+
+function build(mod: parser.Module, tagged: string[]): Graph {
+  let ctx: Ctx = context(mod, tagged);
   let g: Graph = Graph { funcs: mod.funcs, edge_at: [], edges: [], builtin_at: [], builtins: [], indirect: [], escaping: [], esc_builtins: [] };
+  let esc: boolean[] = [];
   let escaping: i32[] = [];
   let k: i32 = 0;
   while (k < mod.funcs.len()) {
     let s: Scan = scan(ctx, mod.funcs, mod.funcs[k]);
-    let edges: i32[] = g.edges;
-    for e in s.edges {
-      if (e != k) {
-        edges = edges.append(e);
-      }
-    }
-    let builtins: string[] = g.builtins;
-    for b in s.builtins {
-      builtins = builtins.append(b);
-    }
-    let esc_b: string[] = g.esc_builtins;
-    for b in s.esc_builtins {
-      if (!util.has_str(esc_b, b)) {
-        esc_b = esc_b.append(b);
-      }
-    }
+    g = add_scan(g, k, s);
     for e in s.escaping {
       escaping = escaping.append(e);
     }
-    g = Graph { ...g, edge_at: g.edge_at.append(g.edges.len()), edges: edges, builtin_at: g.builtin_at.append(g.builtins.len()), builtins: builtins, indirect: g.indirect.append(s.indirect), esc_builtins: esc_b };
-    k = k + 1;
-  }
-  let esc: boolean[] = [];
-  let j: i32 = 0;
-  while (j < mod.funcs.len()) {
     esc = esc.append(false);
-    j = j + 1;
+    k = k + 1;
   }
   for e in escaping {
     esc = esc.with(e, true);

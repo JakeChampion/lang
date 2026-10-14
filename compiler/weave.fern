@@ -735,48 +735,72 @@ function span(cls: string, text: string): string {
 // keywords and type names.
 pub function highlight_fern(line: string): string {
   let out: string = "";
-  let n: i32 = line.len();
   let i: i32 = 0;
-  while (i < n) {
-    let c: u8 = line[i];
-    let j: i32 = i + 1;
-    if (c == b'/' && j < n && line[j] == b'/') {
-      out = out + span("c", html_escape(slice_unchecked(line, i, n) + ""));
-      j = n;
-    } else if (c == b'"') {
-      while (j < n && line[j] != b'"') {
-        if (line[j] == b'\\' && j + 1 < n) {
-          j = j + 1;
-        }
-        j = j + 1;
-      }
-      if (j < n) {
-        j = j + 1;
-      }
-      out = out + span("s", html_escape(slice_unchecked(line, i, j) + ""));
-    } else if (c >= b'0' && c <= b'9') {
-      while (j < n && (is_word(line[j]) || line[j] == b'.')) {
-        j = j + 1;
-      }
-      out = out + span("n", html_escape(slice_unchecked(line, i, j) + ""));
-    } else if (is_word(c)) {
-      while (j < n && is_word(line[j])) {
-        j = j + 1;
-      }
-      let w: string = slice_unchecked(line, i, j) + "";
-      if (is_keyword(w)) {
-        out = out + span("k", w);
-      } else if (is_type_name(w)) {
-        out = out + span("t", w);
-      } else {
-        out = out + w;
-      }
-    } else {
-      out = out + html_escape(slice_unchecked(line, i, j) + "");
-    }
+  while (i < line.len()) {
+    let j: i32 = token_end(line, i);
+    out = out + token_html(slice_unchecked(line, i, j) + "");
     i = j;
   }
   return out;
+}
+
+// token_end is where the token starting at line[i] ends: a comment runs to
+// the end of the line, a string to its closing quote (escapes skipped), a
+// number or a word over its characters, and anything else is one byte.
+function token_end(line: string, i: i32): i32 {
+  let n: i32 = line.len();
+  let c: u8 = line[i];
+  let j: i32 = i + 1;
+  if (c == b'/' && j < n && line[j] == b'/') {
+    return n;
+  }
+  if (c == b'"') {
+    return string_end(line, j);
+  }
+  let number: boolean = c >= b'0' && c <= b'9';
+  if (number || is_word(c)) {
+    while (j < n && (is_word(line[j]) || number && line[j] == b'.')) {
+      j = j + 1;
+    }
+  }
+  return j;
+}
+
+// string_end is where the string literal whose body starts at line[j] ends:
+// past its closing quote, or the end of the line when it has none.
+function string_end(line: string, j: i32): i32 {
+  let k: i32 = j;
+  while (k < line.len() && line[k] != b'"') {
+    if (line[k] == b'\\' && k + 1 < line.len()) {
+      k = k + 1;
+    }
+    k = k + 1;
+  }
+  if (k < line.len()) {
+    return k + 1;
+  }
+  return k;
+}
+
+// token_html renders one token.
+function token_html(t: string): string {
+  let c: u8 = t[0];
+  if (t.len() > 1 && c == b'/' && t[1] == b'/') {
+    return span("c", html_escape(t));
+  }
+  if (c == b'"') {
+    return span("s", html_escape(t));
+  }
+  if (c >= b'0' && c <= b'9') {
+    return span("n", html_escape(t));
+  }
+  if (is_keyword(t)) {
+    return span("k", t);
+  }
+  if (is_type_name(t)) {
+    return span("t", t);
+  }
+  return html_escape(t);
 }
 
 // weave_css styles the page weave_html writes.

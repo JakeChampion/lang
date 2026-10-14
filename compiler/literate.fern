@@ -1060,7 +1060,9 @@ function file_code(files: FileResult[], path: string): string {
   return "";
 }
 
-function main(): i32 {
+// check_chunks — Chunks: expansion, concatenation, indentation, display-only blocks and
+// the three refusals.
+function check_chunks(): i32 {
   // 1. Root chunk only.
   let s1: string = "# Title\n\nProse.\n\n```fern\n<<*>>=\nfn main() {}\n```\n";
   if (tangle_code(s1) != "fn main() {}") {
@@ -1127,7 +1129,11 @@ function main(): i32 {
   if (tangle_code(s9) != "fn main() {}") {
     return 11;
   }
+  return 0;
+}
 
+// check_files — File roots and the entry pick.
+function check_files(): i32 {
   // 10. Multi-file: a `file=` document tangles to two modules, with a
   // chunk shared across them. The entry module references the helper.
   let m1: string = "```fern file=main.fern entry\nimport \"./u\";\n<<g>>\n```\n"
@@ -1190,7 +1196,16 @@ function main(): i32 {
       }
     }
   }
+  return 0;
+}
 
+// check_maps — Line maps, escapes, the entry rule's edges and unused chunks.
+function check_maps(): i32 {
+  let s4: string = "```fern\n<<*>>=\nfn main() {\n    <<body>>\n}\n```\n"
+    + "```fern\n<<body>>=\nreturn 7;\n```\n";
+  let m1: string = "```fern file=main.fern entry\nimport \"./u\";\n<<g>>\n```\n"
+    + "```fern file=u.fern\n<<g>>\n```\n"
+    + "```fern\n<<g>>=\npub fn g() {}\n```\n";
   // 16. Each tangled line records its document line and the indentation
   // its reference prepended.
   let p4: TangleOk = tangled(s4);
@@ -1234,7 +1249,11 @@ function main(): i32 {
   if (un.len() != 2 || un[0] != "c" || un[1] != "zed") {
     return 28;
   }
+  return 0;
+}
 
+// check_blocks — The block model: fence forms, examples and open fences.
+function check_blocks(): i32 {
   // 22. The fence language is case-insensitive, and a quoted `file=` path
   // loses its quotes.
   if (tangle_code("```FERN\n<<*>>=\nx\n```\n") != "x") {
@@ -1264,6 +1283,11 @@ function main(): i32 {
     return 33;
   }
 
+  return 0;
+}
+
+// check_doctests — examples tangled against the document's chunks.
+function check_doctests(): i32 {
   // 26. Examples tangle on their own against the document's chunks.
   let s26: string = "```fern\n<<h>>=\nfn h() {}\n```\n```fern test name=\"adds\"\n<<h>>\nfn main() {}\n```\n```fern test\nfn main() {}\n```\n";
   match (doctests(s26)) {
@@ -1287,6 +1311,22 @@ function main(): i32 {
       }
     }
   }
-
   return 0;
+}
+
+function main(): i32 {
+  let rc: i32 = check_chunks();
+  if (rc == 0) {
+    rc = check_files();
+  }
+  if (rc == 0) {
+    rc = check_maps();
+  }
+  if (rc == 0) {
+    rc = check_blocks();
+  }
+  if (rc == 0) {
+    rc = check_doctests();
+  }
+  return rc;
 }
