@@ -4530,6 +4530,13 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
   if (integer_literal_widens(from, to)) {
     return true;
   }
+  // Ahead of type_eq, which compares callables blind to `own` and to views.
+  if let typeinfo.TypeFunc(tf) = to {
+    if let typeinfo.TypeFunc(ff) = from {
+      return callable_assignable(ff, tf, unions);
+    }
+    return false;
+  }
   // `str` (#4813): a borrowed view never silently promotes to an owned
   // `string` — an owning sink must materialise a copy via .to_owned().
   // Checked BEFORE type_eq, which is deliberately tag-blind. The reverse
@@ -4657,17 +4664,55 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
       // method call) is accepted so it can't false-positive.
       return !is_str_view(from) && !is_arr_view(from);
     },
-    typeinfo.TypeFunc(_) => {
-      // Callable assignment compatibility remains coarse in this partial
-      // checker. Calls themselves check the retained parameter contract;
-      // signature variance and callable assignment are a separate rule.
-      return is_func_type(from);
-    },
     _ => {
       return false;
     }
   }
   return false;
+}
+
+// callable_assignable: a function type assigns only to the same function type,
+// as native's ast.Equal decides it — same arity, the same consuming slots, and
+// every parameter and the result invariant. An opaque `fn` (params_known false)
+// records no signature to compare, so it assigns either way.
+function callable_assignable(from: typeinfo.TypeFunc, to: typeinfo.TypeFunc, unions: UnionSig[]): boolean {
+  if (!from.params_known || !to.params_known) {
+    return true;
+  }
+  if (from.param_types.len() != to.param_types.len() || !callable_slot_matches(from.ret_type, to.ret_type, unions)) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < from.param_types.len()) {
+    let fp: typeinfo.Type = from.param_types[i];
+    let tp: typeinfo.Type = to.param_types[i];
+    if (callable_slot_open(fp) || callable_slot_open(tp)) {
+      i = i + 1;
+      continue;
+    }
+    if (typeinfo.fn_own_at(from, i) != typeinfo.fn_own_at(to, i) || !callable_slot_matches(fp, tp, unions)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// callable_slot_open: a slot this checker could not resolve — a lambda's
+// inferred parameter or result, or a type variable — which matches anything.
+// Its `own` is not compared either: own_flags drops the flag from a scalar
+// slot, so `(own T)` bound to boolean meets a `(boolean)` that consumes.
+function callable_slot_open(t: typeinfo.Type): boolean {
+  return is_unknown(t) || is_type_variable(t);
+}
+
+// callable_slot_matches: one parameter or result of two function types is the
+// same type, assignable both ways.
+function callable_slot_matches(a: typeinfo.Type, b: typeinfo.Type, unions: UnionSig[]): boolean {
+  if (callable_slot_open(a) || callable_slot_open(b)) {
+    return true;
+  }
+  return type_assignable(a, b, unions) && type_assignable(b, a, unions);
 }
 
 // type_from_name resolves a parser-side bare type-name string with NO name
@@ -5652,25 +5697,13 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
         }
       }
       // A closure-FIELD call `h.f(args)`: no method `f`, but the struct
-      // declares a fn-typed field `f` — the call yields the field's declared
-      // return (#5986). No arity or argument check: a StructFieldDecl
-      // carries no param spellings, so the TypeFunc's param list is empty.
-      match (recv_ty) {
-        typeinfo.TypeStruct(cfsn) => {
-          let cfsig: StructSig = s.lookup_struct(cfsn.name);
-          if (cfsig.name.len() > 0) {
-            let cfi: i32 = field_index(cfsig, name);
-            if (cfi >= 0) {
-              match (cfsig.field_types[cfi]) {
-                typeinfo.TypeFunc(cff) => {
-                  return cff.ret_type;
-                },
-                _ => {}
-              }
-            }
-          }
-        },
-        _ => {}
+      // declares a fn-typed field `f` — the call yields the field's return,
+      // as the receiver's instantiation reads it (#5986). The arguments are
+      // call_diags' to check against the same field type.
+      if let typeinfo.TypeStruct(cfsn) = recv_ty {
+        if let typeinfo.TypeFunc(cff) = struct_field_type(cfsn, name, s) {
+          return cff.ret_type;
+        }
       }
       return t_unknown("undefined method `" + name + "` on `" + recv_type_name + "`");
     }
@@ -7277,32 +7310,7 @@ function field_access_result_type(fa: ast.ExprFieldAccess, ot: typeinfo.Type, s:
   }
   match (ot) {
     typeinfo.TypeStruct(sn) => {
-      let fsig: StructSig = s.lookup_struct(sn.name);
-      if (fsig.name.len() == 0) {
-        return t_unknown("undefined struct: " + sn.name);
-      }
-      let fai: i32 = 0;
-      while (fai < fsig.field_names.len()) {
-        if (fsig.field_names[fai] == fa.field) {
-          // Generic field substitution (#4346 piece 2): when
-          // the receiver carries concrete instantiation args
-          // (`Box[i32]`) substitute the struct's type
-          // parameters with them throughout the field's
-          // declared spelling — so a bare type-param field
-          // (`v: T` → i32), a nested one (`items: T[]` →
-          // i32[], `kv: (K, V)` → (i32, string), `m:
-          // Map[string, T]` → map<string, i32>) all resolve
-          // to the instantiated field type rather than the
-          // erased unknown.
-          if (fai < fsig.field_type_names.len() && fsig.type_params.len() > 0 && sn.args.len() > 0) {
-            let fref: parser.TypeRef = parser.parse_type_ref(fsig.field_type_names[fai]);
-            return type_from_ref_subst(fref, fsig.type_params, sn.args, s.type_names());
-          }
-          return fsig.field_types[fai];
-        }
-        fai = fai + 1;
-      }
-      return t_unknown("struct " + sn.name + " has no field `" + fa.field + "`");
+      return struct_field_type(sn, fa.field, s);
     },
     typeinfo.TypeTuple(tt) => {
       // Tuple field is `.0` / `.1` / … — parse the
@@ -7318,6 +7326,26 @@ function field_access_result_type(fa: ast.ExprFieldAccess, ot: typeinfo.Type, s:
     }
   }
   return t_unknown("unreachable field-access arm");
+}
+
+// struct_field_type is the declared type of field `field` of the struct `sn`
+// names. When `sn` carries instantiation arguments (`Box[i32]`) they replace
+// the struct's type parameters throughout the field's spelling, so `v: T`,
+// `items: T[]` and `f: (T) => T` read as i32, i32[] and (i32) => i32.
+function struct_field_type(sn: typeinfo.TypeStruct, field: string, s: Scope): typeinfo.Type {
+  let fsig: StructSig = s.lookup_struct(sn.name);
+  if (fsig.name.len() == 0) {
+    return t_unknown("undefined struct: " + sn.name);
+  }
+  let fai: i32 = field_index(fsig, field);
+  if (fai < 0) {
+    return t_unknown("struct " + sn.name + " has no field `" + field + "`");
+  }
+  if (fai < fsig.field_type_names.len() && fsig.type_params.len() > 0 && sn.args.len() > 0) {
+    let fref: parser.TypeRef = parser.parse_type_ref(fsig.field_type_names[fai]);
+    return type_from_ref_subst(fref, fsig.type_params, sn.args, s.type_names());
+  }
+  return fsig.field_types[fai];
 }
 
 function check_lambda_expr(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
@@ -7799,9 +7827,9 @@ function collect_func_sigs(funcs: parser.FuncDecl[], tn: TypeNames): FuncSig[] {
 }
 
 // MethodBinding is what a method call's type variables are bound to: the
-// receiver's variables to its arguments, and those the call wrote (`written`)
-// to the written types. `full` is every type parameter, receiver's first.
-struct MethodBinding { names: string[], types: typeinfo.Type[], written: string[], full: string[] }
+// receiver's variables to its arguments, and those the call wrote to the
+// written types. `full` is every type parameter, receiver's first.
+struct MethodBinding { names: string[], types: typeinfo.Type[], full: string[] }
 
 // method_binding binds a method call's type variables as native does (#9976):
 // a written list names the whole parameter list, or when shorter the method's
@@ -7816,19 +7844,17 @@ function method_binding(c: ast.ExprCall, msig: MethodSig, recv: typeinfo.Type, s
   }
   let names: string[] = [];
   let types: typeinfo.Type[] = [];
-  let written: string[] = [];
   let offset: i32 = full.len() - c.type_args.len();
   let wi: i32 = 0;
   while (offset >= 0 && wi < c.type_args.len()) {
     if (c.type_args[wi].len() > 0) {
       names = names.append(full[offset + wi]);
       types = types.append(type_from_spelling(c.type_args[wi], s.type_names()));
-      written = written.append(full[offset + wi]);
     }
     wi = wi + 1;
   }
   let (n2, t2) = gc_bind_param(rref, recv, full, s.type_names(), names, types);
-  return MethodBinding { names: n2, types: t2, written: written, full: full };
+  return MethodBinding { names: n2, types: t2, full: full };
 }
 
 // ref_type_vars appends the type variables a receiver spelling names, in order:
@@ -7847,31 +7873,38 @@ function ref_type_vars(r: parser.TypeRef, tparams: string[], s: Scope, acc: stri
   return out;
 }
 
-// method_type_arg_diags holds a method call's written type arguments to the
-// method's parameters: E040 for a list longer than the parameters, E038 for an
-// argument the written types contradict. Only a parameter whose spelling names
-// a written-bound variable is checked here; the rest stay with the ordinary
-// argument check.
+// method_arg_diags checks each argument of a receiver-method call against its
+// parameter with the receiver's type variables bound: E047 for a literal out of
+// range, E038 for a mismatch, E034 for a composite array's elements. An opaque
+// generic parameter is skipped, as the free-function check skips it.
+function method_arg_diags(c: ast.ExprCall, method: string, msig: MethodSig, recv: typeinfo.Type, s: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  let rmb: MethodBinding = method_binding(c, msig, recv, s);
+  let mi: i32 = 0;
+  while (mi < c.args.len() && mi < msig.param_types.len()) {
+    let mat: typeinfo.Type = check_expr(c.args[mi], s);
+    let want: typeinfo.Type = receiver_bound(msig.param_types[mi], param_type_name_at(msig, mi), rmb, s);
+    out = util.append_diags(out, int_dest_range_diags(c.args[mi], want));
+    if (!is_unknown(mat) && !is_unknown(want) && !settles_to(c.args[mi], want, s) && !view_arg_borrow(mat, want) && !coercible(mat, want, s)) {
+      out = out.append(dg_at("E038", "argument " + util.i32_to_string(mi + 1) + " to \"" + method + "\": expected " + type_label(want) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
+    }
+    out = util.append_diags(out, array_elem_check(array_elem_type_of(msig.param_types[mi]), c.args[mi], s));
+    mi = mi + 1;
+  }
+  return out;
+}
+
+// method_type_arg_diags is E040 for a method call writing more type arguments
+// than the method and its receiver have type parameters. The arguments the
+// written ones bind are method_arg_diags' to check.
 function method_type_arg_diags(c: ast.ExprCall, method: string, msig: MethodSig, recv: typeinfo.Type, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   if (c.type_args.len() == 0) {
     return out;
   }
-  let mb: MethodBinding = method_binding(c, msig, recv, s);
-  if (c.type_args.len() > mb.full.len()) {
-    return [dg_at("E040", util.arity_message(method, mb.full.len(), c.type_args.len(), "type argument"), c.line, c.col)];
-  }
-  let ai: i32 = 0;
-  while (ai < c.args.len() && ai < msig.param_type_names.len()) {
-    let pref: parser.TypeRef = parser.parse_type_ref(msig.param_type_names[ai]);
-    if (type_ref_names_any(pref, mb.written)) {
-      let want: typeinfo.Type = type_from_ref_subst(pref, mb.names, mb.types, s.type_names());
-      let got: typeinfo.Type = check_expr(c.args[ai], s);
-      if (!is_unknown(got) && !coercible(got, want, s)) {
-        out = out.append(dg_at("E038", "argument " + util.i32_to_string(ai + 1) + " to \"" + method + "\": expected " + type_label(want) + ", got " + type_label(got), expr_line(c.args[ai]), expr_col(c.args[ai])));
-      }
-    }
-    ai = ai + 1;
+  let full: i32 = method_binding(c, msig, recv, s).full.len();
+  if (c.type_args.len() > full) {
+    out = out.append(dg_at("E040", util.arity_message(method, full, c.type_args.len(), "type argument"), c.line, c.col));
   }
   return out;
 }
@@ -8988,6 +9021,11 @@ function type_label(t: typeinfo.Type): string {
       if (a.view) {
         return "[" + type_label(a.elem) + "]";
       }
+      if let typeinfo.TypeFunc(ef) = a.elem {
+        if (ef.params_known) {
+          return "(" + type_label(a.elem) + ")[]";
+        }
+      }
       return type_label(a.elem) + "[]";
     },
     typeinfo.TypeStruct(sd) => {
@@ -9005,10 +9043,25 @@ function type_label(t: typeinfo.Type): string {
       }
       return tout + ")";
     },
-    typeinfo.TypeFunc(_) => {
+    typeinfo.TypeFunc(f) => {
       // The opaque callable records no parameter list, so an arrow rendering
       // would state an arity nothing ever supplied.
-      return "fn";
+      if (!f.params_known) {
+        return "fn";
+      }
+      let fout: string = "(";
+      let fi: i32 = 0;
+      while (fi < f.param_types.len()) {
+        if (fi > 0) {
+          fout = fout + ", ";
+        }
+        if (typeinfo.fn_own_at(f, fi)) {
+          fout = fout + "own ";
+        }
+        fout = fout + type_label(f.param_types[fi]);
+        fi = fi + 1;
+      }
+      return fout + ") => " + type_label(f.ret_type);
     },
     typeinfo.TypeMap(m) => {
       return "Map[" + type_label(m.key) + ", " + type_label(m.value) + "]";
@@ -14186,7 +14239,12 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           if (ar.view) {
             arr_label = "slice";
           }
-          out = util.append_diags(out, uninferred_method_diags(c, arr_label, mfa.field, s.array_recv_method(mfa.field, ar.view)));
+          let asig: MethodSig = s.array_recv_method(mfa.field, ar.view);
+          out = util.append_diags(out, uninferred_method_diags(c, arr_label, mfa.field, asig));
+          if (asig.name.len() > 0 && c.args.len() == asig.param_types.len()) {
+            out = util.append_diags(out, method_arg_diags(c, mfa.field, asig, recv, s));
+            out = util.append_diags(out, method_type_arg_diags(c, mfa.field, asig, recv, s));
+          }
           // E004 (array builtin arity): the three unconditional array
           // builtins take a fixed number of arguments — `len()` none,
           // `append(x)` one, `with(i, v)` two — so an over- or
@@ -14249,30 +14307,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
               if (c.args.len() != msig.param_types.len()) {
                 out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
               } else {
-                // E038: per-argument type mismatch on a
-                // user-defined method. Now that
-                // type_assignable resolves array / struct /
-                // union / qualified types and treats
-                // `unknown` as a wildcard, the full
-                // assignability check is sound on real code
-                // (verified across all self-host modules) —
-                // no longer restricted to primitives.
-                let rmb: MethodBinding = method_binding(c, msig, recv, s);
-                let mi: i32 = 0;
-                while (mi < c.args.len()) {
-                  let mat: typeinfo.Type = check_expr(c.args[mi], s);
-                  let want: typeinfo.Type = receiver_bound(msig.param_types[mi], param_type_name_at(msig, mi), rmb, s);
-                  out = util.append_diags(out, int_dest_range_diags(c.args[mi], want));
-                  // Skip an opaque generic param type (see
-                  // the free-function E038 note above).
-                  if (!is_unknown(mat) && !is_unknown(want) && !settles_to(c.args[mi], want, s) && !view_arg_borrow(mat, want) && !coercible(mat, want, s)) {
-                    out = out.append(dg_at("E038", "argument " + util.i32_to_string(mi + 1) + " to \"" + mfa.field + "\": expected " + type_label(want) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
-                  }
-                  // E034: composite-array method argument
-                  // elements vs the parameter element type.
-                  out = util.append_diags(out, array_elem_check(array_elem_type_of(msig.param_types[mi]), c.args[mi], s));
-                  mi = mi + 1;
-                }
+                out = util.append_diags(out, method_arg_diags(c, mfa.field, msig, recv, s));
                 out = util.append_diags(out, method_type_arg_diags(c, mfa.field, msig, recv, s));
                 out = util.append_diags(out, uninferred_method_diags(c, sn.name, mfa.field, msig));
               }
@@ -14326,6 +14361,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           out = util.append_diags(out, ambiguous_call_diags(mfa, un.name, s));
           let umsig: MethodSig = s.lookup_method(mfa.field, un.name);
           if (umsig.name.len() > 0 && c.args.len() == umsig.param_types.len()) {
+            out = util.append_diags(out, method_arg_diags(c, mfa.field, umsig, recv, s));
             out = util.append_diags(out, method_type_arg_diags(c, mfa.field, umsig, recv, s));
             out = util.append_diags(out, uninferred_method_diags(c, un.name, mfa.field, umsig));
           }
@@ -20766,10 +20802,15 @@ function e064_unknown_bare(type_name: string, tn: TypeNames): boolean {
   if (type_name == "u8" || type_name == "usize" || type_name == "str" || type_name == "char") {
     return false;
   }
-  // The parser coarses a function type (`() => R`) to the tag "fn" and some
-  // shapes to "tuple"; neither is a user nominal, so don't flag them.
-  if (type_name == "fn" || type_name == "tuple") {
+  // The parser coarses some shapes to "tuple", which is no user nominal.
+  if (type_name == "tuple") {
     return false;
+  }
+  // A coarsened function type reaches here only as a written `fn`, since
+  // e064_decl_spelling sets a declared callable aside. `fn` names no type,
+  // though the resolver reads the bare tag as the opaque callable.
+  if (type_name == "fn") {
+    return true;
   }
   // The front end's built-in structs and enums are registered types natively
   // (checker.go's builtinStructDecls / builtinEnumDecls), so naming one is not
@@ -20839,6 +20880,17 @@ function plain_ident(name: string): boolean {
 // parameters in scope, which a bare name may be.
 function e064_unknown_name(type_name: string, tn: TypeNames, extra_known: string[], tparams: string[]): string {
   return e064_unknown_name_tref(parser.parse_type_ref(type_name), tn, extra_known, tparams);
+}
+
+// e064_decl_spelling is the spelling E064 reads of a declared type: none for a
+// callable, whose coarse tag ("fn", "fn[]", "[fn]") keeps its signature in the
+// result sidecar, else the written spelling. parse_decl_type records that
+// result for every written arrow, so a tag without one was written `fn`.
+function e064_decl_spelling(type_name: string, fn_ret: string): string {
+  if (parser.is_fn_contract_tag(type_name) && fn_ret.len() > 0) {
+    return "";
+  }
+  return type_name;
 }
 
 function e064_unknown_name_tref(tr: parser.TypeRef, tn: TypeNames, extra_known: string[], tparams: string[]): string {
@@ -20920,7 +20972,7 @@ function collect_annots(stmts: ast.Stmt[]): Annot[] {
 function annot_of_stmt(st: ast.Stmt, own acc: Annot[]): Annot[] {
   match (st) {
     ast.StmtVar(v) => {
-      return acc.append(Annot { type_name: v.type_name, line: v.line, col: v.col });
+      return acc.append(Annot { type_name: e064_decl_spelling(v.type_name, v.fn_ret), line: v.line, col: v.col });
     },
     _ => {
       return acc;
@@ -20952,9 +21004,9 @@ function annot_of_expr(e: ast.Expr, own acc: Annot[]): Annot[] {
         return acc;
       }
       for param in lm.params {
-        acc = acc.append(Annot { type_name: param.type_name, line: lm.line, col: lm.col });
+        acc = acc.append(Annot { type_name: e064_decl_spelling(param.type_name, param.fn_ret), line: lm.line, col: lm.col });
       }
-      return acc.append(Annot { type_name: lm.ret_type, line: lm.line, col: lm.col });
+      return acc.append(Annot { type_name: e064_decl_spelling(lm.ret_type, lm.ret_fn_ret), line: lm.line, col: lm.col });
     },
     ast.ExprStructLit(sl) => {
       // A literal's written type arguments, `Box[Zzz] { … }`, as native
@@ -24126,12 +24178,12 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     if (in_focus(focus, efn) && efn.receiver_name.len() == 0) {
       let efn_tps: string[] = e064_fn_tparams(efn);
       for param in efn.params {
-        let pu: string = e064_unknown_name(param.type_name, e064_tn, e064_extra, efn_tps);
+        let pu: string = e064_unknown_name(e064_decl_spelling(param.type_name, param.fn_ret), e064_tn, e064_extra, efn_tps);
         if (pu.len() > 0) {
           body_diags = body_diags.append(dg_at("E064", "cannot find type \"" + util.demangle(pu) + "\" in this scope" + unknown_type_hint(pu, e064_traits), efn.line, efn.col));
         }
       }
-      let ru: string = e064_unknown_name(efn.ret_type, e064_tn, e064_extra, efn_tps);
+      let ru: string = e064_unknown_name(e064_decl_spelling(efn.ret_type, efn.ret_fn_ret), e064_tn, e064_extra, efn_tps);
       if (ru.len() > 0) {
         body_diags = body_diags.append(dg_at("E064", "cannot find type \"" + util.demangle(ru) + "\" in this scope" + unknown_type_hint(ru, e064_traits), efn.line, efn.col));
       }
@@ -24264,7 +24316,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   for esd in mod.structs {
     if (esd.type_params.len() == 0 && esd.enum_owner.len() == 0) {
       for field in esd.fields {
-        let fu: string = e064_unknown_name(field.type_name, e064_tn, e064_extra, esd.type_params);
+        let fu: string = e064_unknown_name(e064_decl_spelling(field.type_name, field.fn_ret), e064_tn, e064_extra, esd.type_params);
         if (fu.len() > 0) {
           body_diags = body_diags.append(dg_at("E064", "cannot find type \"" + util.demangle(fu) + "\" in this scope" + unknown_type_hint(fu, e064_traits), esd.line, esd.col));
         }

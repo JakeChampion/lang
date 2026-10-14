@@ -63,6 +63,9 @@ impl Greet for Dog { function hi(self: Self): i32 { return 7; } }
 		{"option-inferred-local", `function main(): i32 { let o = Some("ab"); match (o) { Some(v) => { return v.len(); }, None => { return 0; } } }`, 0},
 		{"dyn-binding", dynPrelude + `function main(): i32 { let d: dyn Greet = Dog {}; return 0; }`, 0},
 		{"dyn-method", dynPrelude + `function main(): i32 { let d: dyn Greet = Dog {}; return d.hi(); }`, 0},
+		// A generic struct's callable field is called at the instance's type
+		// arguments.
+		{"generic-struct-callable-field-call", `struct S[T] { f: (T) => T } function main(): i32 { let s = S[i32] { f: (x: i32): i32 => x }; return s.f(3); }`, 0},
 		// A lambda the program writes and calls in place is typed by what it
 		// declares, in a loop body as anywhere else.
 		{"iife", `function main(): i32 { return ((x: i32): i32 => { return x * 2; })(4); }`, 0},
