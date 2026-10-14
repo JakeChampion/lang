@@ -10,7 +10,7 @@
 // repro). Each case prints its result so the oracle (interp) and all
 // three backends are compared by stdout.
 //
-// The fix (internal/oracle/ir emitArrayPush) forces the copy path for a
+// The fix forces the copy path for a
 // non-self-reassign append whose operand aliases an existing binding,
 // while leaving the self-reassign in-place optimization (push loops) and
 // fresh-temporary appends untouched — the last two are pinned here too so

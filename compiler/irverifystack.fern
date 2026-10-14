@@ -1,6 +1,5 @@
 // compiler/irverifystack.fern — the operand-stack half of the
-// self-host IR verifier, mirroring native's internal/oracle/ir/verifystack.go
-// (#6639 slice 2).
+// self-host IR verifier (#6639 slice 2).
 //
 // irverify.fern checks the invariants a backend needs to emit anything at
 // all. This file checks the one it needs to emit anything CORRECT: that the

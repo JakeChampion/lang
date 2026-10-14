@@ -6,10 +6,10 @@ import (
 
 // Producer-consumer fusion of std/array pipelines (#9731), from the outside.
 //
-// internal/oracle/ir's tests prove the chain became one loop. They cannot prove it
+// A structural test can prove the chain became one loop. It cannot prove it
 // became the RIGHT loop: a fused pipeline that drops the last element, or
 // seeds `reduce` with `h(x, x)` on a singleton, passes every structural check
-// there and returns the wrong number here. So this asserts the answers, and
+// and returns the wrong number here. So this asserts the answers, and
 // asserts them on each backend rather than one — the fused loop is emitted
 // from a single op stream, but the backends disagree about how strictly that
 // stream is typed, and wasm rejected an i64 element in an i32 slot that arm64

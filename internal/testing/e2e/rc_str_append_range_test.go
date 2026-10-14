@@ -5,9 +5,8 @@ import (
 )
 
 // #8770 — end-to-end benefit and safety of `__fern_str_append_range`, the
-// fusion of `acc = acc + slice_unchecked(s, lo, hi)`. The LOWERING decision is
-// pinned target-independently in internal/oracle/ir/rc_str_append_range_test.go;
-// these pin what the emitted runtime does.
+// fusion of `acc = acc + slice_unchecked(s, lo, hi)`. These pin what the
+// emitted runtime does.
 
 // strAppendRangeCorrectnessSrc covers every shape the fused path must get
 // right, all against values the interpreter agrees on:

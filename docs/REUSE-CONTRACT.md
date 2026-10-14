@@ -19,15 +19,13 @@ dynamically guarded*: a site fires only when the static analysis
 recognises the pattern AND the runtime uniqueness check passes.
 The shapes below are stable, documented, and test-locked — users
 may rely on them firing for the described patterns. Koka's
-*visibility* half now exists in verify-and-enable form on the
-NATIVE compiler (plan E2', 2026-07-13): annotate a function
-`fbip` (or graded `fbip(n)` / `fip(n)`) and the IR layer errors
-with **E068** unless every constructor site is reuse-paired
-(R1–R4 below) or within the allowance — `fern explain E068` for
-the exact contract, `internal/oracle/ir/fip_verify.go` for the pass.
-The self-host compiler runs the same check over its own lowering
-(`compiler/irfipverify.fern`, on every compile path). Still
-open: the drop-guided source selection default (plan E3 —
+*visibility* half exists in verify-and-enable form (plan E2',
+2026-07-13): annotate a function `fbip` (or graded `fbip(n)` /
+`fip(n)`) and the IR layer errors with **E068** unless every
+constructor site is reuse-paired (R1–R4 below) or within the
+allowance — `fern explain E068` for the exact contract,
+`compiler/irfipverify.fern` for the pass, which runs on every
+compile path. Still open: the drop-guided source selection default (plan E3 —
 evaluated, kept off). Where a shape has known non-firing edges,
 they are listed under "taints".
 
@@ -35,12 +33,12 @@ they are listed under "taints".
 
 Every reuse shape has the same skeleton:
 
-1. **Static selection** (`internal/oracle/ir/rc_analysis.go`): an
+1. **Static selection** (`with_reuse` / `reuse_pairs` in
+   `compiler/ssaunits.fern`, `docs/RC-DESIGN.md` §1.3): an
    analysis pass proves a *pairing* — a construction site C can
    take over the box of a dead, owned donor D of compatible
    layout. This is the PLDI 2021 Perceus "reuse token" model
-   (the token threads from D's drop to C's alloc). See
-   `computeReuseSources` and the per-shape hooks below.
+   (the token threads from D's drop to C's alloc).
 2. **Runtime guard**: the paired site still checks
    `is_unique(D)` (refcount == 1) at runtime. Unique → C writes
    into D's box in place (no alloc, no free). Shared → C falls
@@ -60,10 +58,13 @@ values built from literals/untracked sources.
 
 `p = Point { … };` where `p` already holds a uniquely-owned
 `Point`: the new literal writes into `p`'s existing box.
-Hook: `tryStructReuseOverwrite` (`internal/oracle/ir/ir.go`), wired
-into `assign`. Old field payloads are released to balance
-StructLit's field incs (`emitReuseOldFieldDrops`).
-Locked by: `internal/oracle/ir/struct_reuse_test.go`.
+Selection: the `.selfs` row of `reuse_pairs`
+(`compiler/ssaunits.fern`). Old field payloads the new literal
+replaces are released under the token's non-null arm
+(`reuse_construct`, `compiler/ssarc.fern`).
+Locked by: `internal/testing/e2e/rc_freelist_test.go`
+(`TestX86_64StructReuse` and its arm64 / WASM siblings),
+`TestSelfHostReuseDifferentialX86_64`, `TestSelfHostLoopReuseIRX86_64`.
 
 ### R2 — enum self-overwrite
 
@@ -75,7 +76,7 @@ doesn't inc its payloads, so the reuse is a pure alloc-elision
 that is rc-neutral vs the baseline flat-dec. Scalar enums built
 from literal args are conservatively tainted (`rhsTainted`) and
 don't fire.
-Locked by: `internal/oracle/ir/enum_reuse_test.go`.
+Locked by: `internal/testing/e2e/rc_heap_bump_enum_reuse_test.go`.
 
 ### R3 — general pairing reuse (cross-local FBIP)
 
@@ -94,13 +95,13 @@ D's OWN layout (`reuseSourceLayout`) before C stores its own.
 One dead D can feed a construction in **every arm** of an `if` /
 `match` nested in the statement it dies before: only one arm runs
 per pass, so the single token is claimed at most once
-(`mutuallyExclusive`, `internal/oracle/ir/rc_cross_branch.go`). Two
+(`carried_pairs`, `compiler/ssaunits.fern`). Two
 constructions that can both run — straight-line siblings, or
 separate iterations of a loop — still share nothing: the first
 consumer zeroes D's slot.
-Locked by: `internal/oracle/ir/general_reuse_test.go`,
-`internal/oracle/ir/cross_branch_reuse_test.go`,
-`internal/testing/e2e/rc_cross_branch_reuse_test.go`.
+Locked by: `internal/testing/e2e/rc_heap_bump_general_reuse_test.go`,
+`internal/testing/e2e/rc_cross_branch_reuse_test.go`,
+`TestSelfHostCrossBlockReuse`.
 
 ### R4 — consuming-match reuse (C2, zero-alloc FBIP)
 
@@ -115,11 +116,11 @@ The two compilers take different preconditions. Native pairs only
 when every payloadful variant of the enum has one box size
 (`uniformEnumBoxSize`). The self-host pairs per arm: it reads the
 donor's slot count off the variant the arm's payload reads name
-(`ssarc.donor_slots`, #11073), which is sound because the donor and
+(`ssaunits.donor_slots`, #11073), which is sound because the donor and
 the construction are the same variant there. So a ragged enum such as
 `Tree { Tip(i32), Fork(Tree, Tree) }` compiles under `fbip` and runs
 allocation-free on the self-host, while native's E068 refuses it.
-Locked by: `internal/oracle/ir/c2_consuming_reuse_test.go`,
+Locked by: `internal/testing/e2e/rc_c2_consuming_reuse_test.go`,
 `internal/testing/e2ecompiler/self_host_fip_inplace_reuse_test.go` (its
 `fbip-ragged-enum-rebuilt-per-arm` case pins the self-host's answer).
 
@@ -163,8 +164,10 @@ A consumed `.with` receiver has its slot nulled at the call
 (`arraySetConsumedSites`), so every later release of the slot
 no-ops and a path that never reached the `.with` still releases
 what it holds.
-Locked by: `internal/oracle/ir/append_inplace_test.go`,
-`push_counted_store_test.go`.
+Locked by: `internal/testing/e2e/array_with_value_semantics_test.go`
+(the #2832 guard), `TestSelfHostBorrowedWithInPlaceIRX86_64` (a
+borrowed `.with` receiver is copied, not written),
+`TestSelfHostArrPushCopy` (an append onto a shared array copies).
 
 ### R7 — owned same-shape elementwise map (#9733)
 
@@ -214,17 +217,17 @@ a soundness property on a refcount is the wrong way round.
 
 **Taints**: a borrowed receiver; any capture; a type-changing
 `map`; an element function that can reach the world; a donor
-whose decrement is not in the epilogue. `FERN_NO_ARRAY_INPLACE=1`
+whose decrement is not in the epilogue. `FERN_SELFHOST_NO_REUSE=1`
 turns the shape off. Each taint is a row of `fern -array-report`'s
-buffer verdicts (`receiver-not-own-param`, `element-fn-captures`,
-…), read from the same planner that performs the rewrite.
+`map storage` verdicts (`receiver-not-consumed-param`,
+`receiver-still-live`, `element-fn-captures`, …), read from the same
+planner that performs the rewrite.
 
-The primary Fern compiler selects R7 in `ssarc.fern` from typed ownership
-plans. Its switch is `FERN_SELFHOST_NO_REUSE=1`.
-`FERN_ARRAY_REPORT=1` prints the final plan's map storage verdicts, including
-`guarded-reuse`: unique input is reused and shared input is copied. The
-`-array-report` interface above describes the retained Go analysis. Both
-interfaces and their reason tags are documented in `ARRAY-ALGEBRA.md`.
+R7 is selected in `ssarc.fern` from typed ownership plans.
+`fern -array-report`, or `FERN_ARRAY_REPORT=1` on a compile, prints the final
+plan's map storage verdicts, including `guarded-reuse`: unique input is reused
+and shared input is copied. The reason tags are documented in
+`ARRAY-ALGEBRA.md`.
 
 Packed ndarray literal-scale kernels use the same typed ownership layer.
 `__scale_f64` keeps its borrowed source contract; physical lowering can reuse
@@ -239,10 +242,10 @@ path. See `ARRAY-SHAPES.md` for its layout and refusal contracts.
 `xs.map(f)` on an `own` receiver the way it admits constructors
 (the checker cannot tell which `map` R7 writes through its
 donor), and E068 counts a `map` the planner declines as one
-un-reused site, naming the call and the taint — so `fip function
-twice(own xs: i64[]): i64[] { return xs.map(f); }` is a checked
-space contract, and a capturing `f` or a type-changing `map`
-under the same annotation is refused by name. The element
+un-reused site, naming the call and listing R7's conditions — so
+`fip function twice(own xs: i64[]): i64[] { return xs.map(f); }` is a
+checked space contract, and a capturing `f` or a type-changing `map`
+under the same annotation is refused. The element
 function is inside the claim: what it calls must be `fip`.
 
 The SELF-HOST compiler writes the same shape in place
@@ -257,11 +260,11 @@ compiler's reuse layer. Its E068 counts a `map` it declines as
 fresh, listing the conditions rather than naming the one that
 failed.
 
-Locked by: `internal/oracle/ir/array_inplace_test.go` (the rewrite, one
-refusal per condition above, and E068 passing on the shape and
-naming the rule where it declines),
-`internal/oracle/ir/array_storage_test.go` (one report verdict per
-taint), `internal/testing/e2e/array_inplace_test.go` (the same answers
+Locked by: `internal/testing/e2ecompiler/self_host_array_report_test.go`
+(the `guarded-reuse` verdict matches the emitted uniqueness test and
+shared copy, and `FERN_SELFHOST_NO_REUSE=1` reports `reuse-disabled`),
+`self_host_array_report_tags_test.go` (every map storage tag's ordinal
+and spelling), `internal/testing/e2e/array_inplace_test.go` (the same answers
 as a hand-written loop, four backends),
 `internal/testing/e2e/array_inplace_fip_test.go` (the annotated function
 allocates nothing across 200 maps on every backend, and a donor
@@ -316,41 +319,36 @@ the nine `emitAliasInc` call sites is gated on `moveSites`
   analysis the borrow model postponed.
 - **5g** — string reuse is hard-blocked on the SSO native flip.
 - **Drop-guided selection** (ICFP 2022): **evaluated 2026-07-13**
-  (plan item **E3**) — implemented behind `ast.RcReuseDropGuided`
-  (default OFF; `FERN_RC_REUSE_DROP_GUIDED=1`) in
-  `internal/oracle/ir/rc_dropguided.go`. Finding: on this codebase's
+  (plan item **E3**) on the native compiler. Finding: on this codebase's
   shapes the token flow selects a **superset** of the PLDI
   pairing — equal on every shape above (R1–R6/M unchanged), plus
   one genuinely new shape: a donor whose LAST USE sits inside a
   dominated non-loop if/match arm, claimed by a later
-  construction in the same arm (`drop_guided_reuse_test.go`,
-  `TestDropGuidedFiresArmDropShape`). Verdict — **keep pairing
+  construction in the same arm. Verdict — **keep pairing
   as the default, revisit at the self-host port** — with the
   measured numbers lives in `RC-PERCEUS-PLAN.md` ("E3 drop-guided
   reuse evaluation — verdict"). The shapes' observable behavior
   is identical under both strategies by construction (shared
   gates + is_unique guard + degrade path; a 224-seed differential
   on the native compiler agreed).
-- **Visibility** (`fip`/`fbip` verify-and-enable): **CLOSED on the
-  native compiler** (plan item **E2'**, 2026-07-13). `fbip` /
-  `fbip(n)` / `fip(n)` make the pairing programmer-visible: the IR
-  op-scan (`internal/oracle/ir/fip_verify.go`, run per function right
-  after lowering) errors with E068 when a constructor site is NOT
-  reuse-paired — a paired site lowers to `__alloc_reuse`, so every
-  remaining `OpAlloc` is a fresh site; the runtime `is_unique`
+- **Visibility** (`fip`/`fbip` verify-and-enable): **CLOSED** (plan
+  item **E2'**, 2026-07-13). `fbip` / `fbip(n)` / `fip(n)` make the
+  pairing programmer-visible: the IR op-scan
+  (`compiler/irfipverify.fern`, run per function over the lowered ops)
+  errors with E068 when a constructor site is NOT reuse-paired — a
+  paired site lowers to a `__fern_alloc_reuse` call, so every
+  remaining constructor op is a fresh site; the runtime `is_unique`
   fallback inside the paired form deliberately does not count
   (fip/fbip is the SHAPE guarantee — shared inputs may copy).
-  The self-host compiler verifies the same claims
-  (`irfipverify.fern`). For un-annotated code, the rc dump
-  (`internal/oracle/ir/rc_dump.go`) and the allocation counters in the
-  reuse tests remain the inspection tools.
+  For un-annotated code, the dumps in `docs/RC-DESIGN.md` §3 and the
+  allocation counters in the reuse tests remain the inspection tools.
 
 ## Contract for the self-host port
 
 `SELFHOST-PERCEUS-REUSE.md` ports the selection analyses; this
 doc defines the behavior bar: for each shape R1–R7/M above, the
 self-host compiler must (a) fire on the same test patterns
-(the Go test files named per-shape are the executable spec) and
+(the tests named per shape are the executable spec) and
 (b) never fire where native doesn't (the taints are part of the
 contract — they encode soundness guards, not just missed wins).
 When E3's verdict lands, this doc updates to name the chosen

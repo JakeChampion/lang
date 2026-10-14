@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/syntax/ast"
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
@@ -171,36 +170,6 @@ const sanStaleTouchSrc = `function main(): i32 {
 }`
 
 var sanLeakVerdictRe = regexp.MustCompile(`fern-sanitizer: leak (\d+) bytes in (\d+) blocks\n`)
-
-// ApplySanitize is the fold-down every entry point shares: the backends
-// read the component flags directly, so a late -sanitize has to push
-// into them. It must also compose with an individually-set flag rather
-// than replacing the set.
-func TestApplySanitizeFoldsIntoComponentFlags(t *testing.T) {
-	prevSan := ast.SanitizeEnabled
-	prevLc, prevTrap, prevDbg, prevTrace := ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug, ast.RcTrace
-	t.Cleanup(func() {
-		ast.SanitizeEnabled = prevSan
-		ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug, ast.RcTrace = prevLc, prevTrap, prevDbg, prevTrace
-	})
-
-	ast.SanitizeEnabled = false
-	ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug, ast.RcTrace = false, false, false, false
-	ast.ApplySanitize()
-	if ast.LeakCheckEnabled || ast.RcUnderflowTrap || ast.RcFreeDebug {
-		t.Error("ApplySanitize turned checks on with SanitizeEnabled false")
-	}
-
-	ast.SanitizeEnabled = true
-	ast.ApplySanitize()
-	if !ast.LeakCheckEnabled || !ast.RcUnderflowTrap || !ast.RcFreeDebug {
-		t.Errorf("ApplySanitize left a check off: leak=%v trap=%v uaf=%v",
-			ast.LeakCheckEnabled, ast.RcUnderflowTrap, ast.RcFreeDebug)
-	}
-	if ast.RcTrace {
-		t.Error("ApplySanitize enabled RcTrace: per-heap-event output is a targeted probe, not a standing mode")
-	}
-}
 
 func TestX86_64SanitizeCleanRunIsSilent(t *testing.T) {
 	stdout, stderr, code := runSanitizeX86_64(t, sanCleanSrc)

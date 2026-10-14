@@ -15,8 +15,7 @@
 # blocks); everything else must be deleted rather than allowlisted.
 #
 # Blind spot: `-test` makes tests reachability roots, so a function whose
-# only callers are its own tests is never reported. `internal/oracle/ir.Fold`
-# sat exported and caller-less that way (#8477).
+# only callers are its own tests is never reported (#8477).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
