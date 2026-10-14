@@ -350,7 +350,7 @@ pub function outcomes(f: ssa.SFunc): Outcomes {
             value = Number { known: true, value: op.imm };
           } else if (op.kind_tag == 7) {
             value = row[op.args[0]];
-          } else if (op.kind_tag == 36) {
+          } else if (is_select(op)) {
             value = picked_number(row[op.args[0]], row[op.args[1]], row[op.args[2]]);
           } else if (op.kind_tag == 50) {
             result = Outcomes { ...result, exits: result.exits.with(input, true) };

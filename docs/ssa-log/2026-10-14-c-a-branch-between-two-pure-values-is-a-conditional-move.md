@@ -108,6 +108,10 @@ Two other measurements:
   are now selects. Their else arms call, so they stay branches, and the
   polarity matrix gained a calling consumer beside the two that are now
   selects.
+- `TestSelfHostCtGateX86_64`'s secret-branch controls branched on a secret
+  byte with arms that only return a constant. Those became a cmov, which
+  memcheck rightly no longer reports as a secret-dependent jump. The
+  controls now return through a call, so they stay branches.
 - The retained-body drivers read the emitted form, selects included.
   `ssacreditscalar` refused the select as an unknown effect, and the driver
   then exited early with its census unbalanced. That read as a 252 KB leak
