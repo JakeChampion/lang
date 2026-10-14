@@ -3739,6 +3739,90 @@ function settled(f: Func, value: i32, bi: i32, g: Guards): Known {
   return Known { held: held, gone: gone };
 }
 
+// What the tests of `value` have settled on every way into each block, by
+// position, met over its predecessors. A branch threaded past a join
+// (semthread) enters a block both from below a test and from a path that
+// tested the value earlier, so no one test's edge dominates the block though
+// every way in has passed one.
+function settled_ways(f: Func, value: i32, g: Guards): Known[] {
+  let n: i32 = f.graph.blocks.len();
+  let known: Known[] = [];
+  let seen: boolean[] = __alloc_bool(n);
+  let i: i32 = 0;
+  while (i < n) {
+    known = known.append(Known { held: [], gone: [] });
+    i = i + 1;
+  }
+  let entry: i32 = g.at[f.graph.entry];
+  seen = seen.with(entry, true);
+  let changed: boolean = true;
+  while (changed) {
+    changed = false;
+    i = 0;
+    while (i < n) {
+      let met: Known = Known { held: [], gone: [] };
+      let any: boolean = false;
+      for p in f.graph.blocks[i].preds {
+        let pi: i32 = 0 - 1;
+        if (p >= 0 && p < g.at.len()) {
+          pi = g.at[p];
+        }
+        if (i != entry && pi >= 0 && seen[pi]) {
+          let out: Known = edge_known(f, value, g, pi, known[pi], f.graph.blocks[i].id);
+          if (any) {
+            met = Known { held: common(met.held, out.held), gone: common(met.gone, out.gone) };
+          } else {
+            met = out;
+            any = true;
+          }
+        }
+      }
+      if (any && (!seen[i] || !same_known(met, known[i]))) {
+        known = known.with(i, met);
+        seen = seen.with(i, true);
+        changed = true;
+      }
+      i = i + 1;
+    }
+  }
+  return known;
+}
+
+// `known` past the end of the block at position `pi`, along its edge to the
+// block `target`: what its test of `value`, if it ends in one, settles there.
+function edge_known(f: Func, value: i32, g: Guards, pi: i32, known: Known, target: i32): Known {
+  let term: ssa.STerm = f.graph.blocks[pi].term;
+  if (term.kind_tag != 3 || term.t == term.f || term.cond < 0 || term.cond >= g.defs.len()) {
+    return known;
+  }
+  let test: ssa.SInst = g.defs[term.cond];
+  if (test.kind_tag != variant_is() && test.kind_tag != dyn_is() || test.args[0] != value && twin_of(g, test.args[0]) != twin_of(g, value)) {
+    return known;
+  }
+  if (target == term.t && !names_has(known.held, test.str)) {
+    return Known { ...known, held: known.held.append(test.str) };
+  }
+  if (target == term.f && !names_has(known.gone, test.str)) {
+    return Known { ...known, gone: known.gone.append(test.str) };
+  }
+  return known;
+}
+
+function common(a: string[], b: string[]): string[] {
+  let out: string[] = [];
+  for n in a {
+    if (names_has(b, n)) {
+      out = out.append(n);
+    }
+  }
+  return out;
+}
+
+function same_known(a: Known, b: Known): boolean {
+  return a.held.len() == b.held.len() && a.gone.len() == b.gone.len() && common(a.held, b.held).len() == a.held.len()
+    && common(a.gone, b.gone).len() == a.gone.len();
+}
+
 // What a guard check reads of the function: its dominators, the position of
 // each block, the definition of each value, the positions of the blocks
 // whose two-way branch tests a value's variant or dyn shape, ascending, and
@@ -3837,10 +3921,17 @@ function names_has(names: string[], name: string): boolean {
 // A variant is known outright when a test held for it, and by exclusion when
 // every OTHER variant its enum declares has been refuted, since a value is
 // one of them. The second is what a total match's last arm rests on: it
-// carries no test of its own.
+// carries no test of its own. The tests whose edges dominate the block are
+// read first, and every way into it only when they fall short.
 function guarded(f: Func, ins: ssa.SInst, bi: i32, g: Guards): boolean {
+  if (guarded_by(f, ins, settled(f, ins.args[0], bi, g))) {
+    return true;
+  }
+  return guarded_by(f, ins, settled_ways(f, ins.args[0], g)[bi]);
+}
+
+function guarded_by(f: Func, ins: ssa.SInst, known: Known): boolean {
   let value: i32 = ins.args[0];
-  let known: Known = settled(f, value, bi, g);
   if (settled_viewless(ins)) {
     for c in dyn_view_concretes(f, f.values[value]) {
       if (!names_has(known.gone, shape_name(f, c))) {
