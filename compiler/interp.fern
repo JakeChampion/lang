@@ -6432,6 +6432,230 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
   return v_err("module has no `main` and no top-level `return`");
 }
 
+// =================== REPL ====================
+
+// Session is a REPL's state between lines: the declarations entered so far,
+// and the environment its statements run in, which sees them.
+pub struct Session { decls: parser.Module, env: Env }
+
+pub function new_session(): Session {
+  return Session { decls: parser.parse_module(lexer.tokenize("")), env: new_module_env([], [], module_type_decls([]), ["-"]) };
+}
+
+function lowered(raw: parser.Module): parser.Module {
+  return parser.fill_default_args_module(parser.desugar_ranges_module(parser.lower_defers_module(parser.erase_view_module(raw))));
+}
+
+// declare adds a line's declarations; a function declared again replaces the
+// earlier one.
+pub function (s: Session) declare(m: parser.Module): Session {
+  let funcs: parser.FuncDecl[] = [];
+  for f in s.decls.funcs {
+    if (!declares_func(m, f.name)) {
+      funcs = funcs.append(f);
+    }
+  }
+  for f in m.funcs {
+    funcs = funcs.append(f);
+  }
+  let structs: parser.StructDecl[] = s.decls.structs;
+  for d in m.structs {
+    structs = structs.append(d);
+  }
+  let aliases: parser.TypeAlias[] = s.decls.aliases;
+  for a in m.aliases {
+    aliases = aliases.append(a);
+  }
+  let decls: parser.Module = parser.Module { ...s.decls, funcs: funcs, structs: structs, aliases: aliases };
+  let mod: parser.Module = lowered(decls);
+  let types: parser.StructDecl[] = module_type_decls(mod.structs);
+  return Session { decls: decls, env: Env { ...s.env, funcs: mod.funcs, aliases: aliases_with_enums(mod.aliases, types), type_decls: types } };
+}
+
+function declares_func(m: parser.Module, name: string): boolean {
+  for f in m.funcs {
+    if (f.name == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// run executes a line's statements, wrapped as the body of function `name`
+// in `m`, against the session. It returns whether a final expression
+// statement has a value to show, and that value; a runtime error is a VErr
+// to show.
+pub function (s: Session) run(m: parser.Module, name: string): (Session, boolean, Value) {
+  let body: ast.Stmt[] = [];
+  for f in lowered(m).funcs {
+    if (f.name == name) {
+      body = f.body;
+    }
+  }
+  let env: Env = s.env;
+  let k: i32 = 0;
+  while (k < body.len()) {
+    if (k == body.len() - 1) {
+      match (body[k]) {
+        ast.StmtExpr(x) => {
+          let v: Value = eval_expr(x.value, env);
+          return (Session { ...s, env: env }, is_err(v) || !returns_void(env, x.value), v);
+        },
+        _ => {}
+      }
+    }
+    let r: StepResult = eval_stmt(body[k], env);
+    env = r.env;
+    if (r.sig != 0 && is_err(r.ret)) {
+      return (Session { ...s, env: env }, true, r.ret);
+    }
+    k = k + 1;
+  }
+  return (Session { ...s, env: env }, false, v_void());
+}
+
+// returns_void reports a call with no value: to a function declared `void`,
+// or to an output builtin. The interpreter has no void value to tell by.
+function returns_void(env: Env, x: ast.Expr): boolean {
+  if (env.static_type_of(x) == "void") {
+    return true;
+  }
+  match (x) {
+    ast.ExprCall(c) => {
+      match (c.callee) {
+        ast.ExprIdent(id) => {
+          return !env.binds_name(id.name) && func_ret_type(env.funcs, id.name).len() == 0
+            && (id.name == "print" || id.name == "write" || id.name == "eprint" || id.name == "putchar");
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  return false;
+}
+
+// show is how the REPL prints a value: through the `to_string()` its type
+// has in the session, else as value_text renders it, and a runtime error as
+// its message.
+pub function (s: Session) show(v: Value): string {
+  if (is_err(v)) {
+    return value_text(v);
+  }
+  if (method_ret_type(s.env.funcs, value_type_name(v), "to_string") == "string") {
+    match (call_method(v, "to_string", [], s.env.funcs, s.env.aliases, s.env.type_decls, s.env.argv)) {
+      VString(t) => {
+        let text: string = t.v;
+        return text;
+      },
+      VErr(e) => {
+        return "error: " + e.msg;
+      },
+      _ => {}
+    }
+  }
+  return value_text(v);
+}
+
+// value_text renders a value as the Go interpreter's Value.String does.
+function value_text(v: Value): string {
+  match (v) {
+    VInt(n) => {
+      if (n.is_char) {
+        return utf8.utf8_encode(n.v as char);
+      }
+      return util.i32_to_string(n.v);
+    },
+    VInt64(n) => {
+      return u64_text(unpack_i64(n), n.unsigned);
+    },
+    VUint(n) => {
+      let mask: i64 = 4294967295;
+      return util.i64_to_string(n.v as i64 & mask);
+    },
+    VBool(b) => {
+      if (b.v) {
+        return "true";
+      }
+      return "false";
+    },
+    VString(t) => {
+      let text: string = t.v;
+      return text;
+    },
+    VArr(a) => {
+      return "[" + values_text(a.elements) + "]";
+    },
+    VTuple(t) => {
+      return "(" + values_text(t.elements) + ")";
+    },
+    VStruct(sv) => {
+      return struct_text(sv);
+    },
+    VMap(m) => {
+      let out: string = "";
+      let i: i32 = 0;
+      while (i < m.keys.len()) {
+        if (i > 0) {
+          out = out + ", ";
+        }
+        out = out + value_text(m.keys[i]) + ": " + value_text(m.values[i]);
+        i = i + 1;
+      }
+      return "Map { " + out + " }";
+    },
+    VErr(e) => {
+      return "error: " + e.msg;
+    },
+    _ => {}
+  }
+  return "<" + value_type_name(v) + ">";
+}
+
+function values_text(vs: Value[]): string {
+  let out: string = "";
+  for x in vs {
+    if (out.len() > 0) {
+      out = out + ", ";
+    }
+    out = out + value_text(x);
+  }
+  return out;
+}
+
+// struct_text is `Name { field: value, … }`, or for an enum variant `Name`
+// or `Name(payload, …)`.
+function struct_text(sv: VStruct): string {
+  let fields: string = "";
+  let payloads: string = "";
+  let i: i32 = 0;
+  while (i < sv.field_names.len()) {
+    if (i > 0) {
+      fields = fields + ", ";
+      payloads = payloads + ", ";
+    }
+    fields = fields + sv.field_names[i] + ": " + value_text(sv.field_values[i]);
+    payloads = payloads + value_text(sv.field_values[i]);
+    i = i + 1;
+  }
+  if (sv.field_names.len() == 0) {
+    return sv.type_name;
+  }
+  if (util.str_has_prefix(sv.field_names[0], "_")) {
+    return sv.type_name + "(" + payloads + ")";
+  }
+  return sv.type_name + " { " + fields + " }";
+}
+
+function u64_text(n: i64, unsigned: boolean): string {
+  if (!unsigned || n >= 0) {
+    return util.i64_to_string(n);
+  }
+  let u: u64 = n as u64;
+  let q: u64 = u / 10;
+  return util.i64_to_string(q as i64) + util.i32_to_string((u - q * 10) as i32);
+}
+
 // =================== VALIDATION ====================
 
 function run_source(src: string): Value {

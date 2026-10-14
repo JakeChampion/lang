@@ -536,11 +536,7 @@ func main() {
 	}
 
 	if *repl {
-		if err := interp.REPL(os.Stdin, os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		return
+		os.Exit(runREPL())
 	}
 
 	if *doInterp {
@@ -644,11 +640,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "usage: fern -effects FILE.fern")
 			os.Exit(2)
 		}
-		if err := runEffects(flag.Arg(0), os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		return
+		os.Exit(runEffects(flag.Arg(0)))
 	}
 
 	if *doFetch {

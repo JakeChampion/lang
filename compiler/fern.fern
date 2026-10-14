@@ -20,6 +20,8 @@
 //     fern -tangle <doc.fern.md>            literate: emit the tangled source
 //     fern -weave [-html] <doc.fern.md>     literate: render it for reading
 //     fern -doctest <doc.fern.md>           literate: run its `test` examples
+//     fern -repl                            an interactive interpreter session
+//     fern -effects <entry.fern>            per-function effect rows
 //     fern -doc <module.fern | DIR>         Markdown reference pages
 //     fern -add NAME SPEC <ABS-DIR>         declare a dependency
 //     fern -vendor <ABS-DIR>                flatten the dep graph into vendor/
@@ -79,6 +81,7 @@ import "./asmcore";
 import "./fern_toml";
 import "./literate";
 import "./weave";
+import "./effects";
 import "./ferndoc";
 import "./mvs";
 import "./treeshake";
@@ -1151,6 +1154,8 @@ function usage(): i32 {
   eprint("       fern -tangle <doc.fern.md>                   (literate: emit the tangled Fern source)");
   eprint("       fern -weave [-html] <doc.fern.md>            (literate: woven Markdown, or an HTML page)");
   eprint("       fern -doctest <doc.fern.md>                  (literate: run the `test` examples, TAP)");
+  eprint("       fern -repl                                   (an interactive interpreter session)");
+  eprint("       fern -effects <entry.fern>                   (the effect row of every function)");
   eprint("       fern -doc [-o OUT] <module.fern>             (Markdown reference page; stdout without -o)");
   eprint("       fern -doc -o OUTDIR <DIR>                    (one page per module under DIR)");
   eprint("       fern -add NAME SPEC <ABS-DIR>                (declare a dependency: path:DIR | workspace)");
@@ -2547,6 +2552,82 @@ function interp_status(v: interp.Value): (i32, string) {
     }
   }
   return (254, "");
+}
+
+// run_repl implements `-repl`: an interactive session on the interpreter. A
+// line declaring a function or a type adds it; any other line runs as
+// statements in one top-level scope, so a `let` at one prompt is in reach at
+// the next, and the value of a final expression is printed. The session
+// starts with the stdlib modules that display values loaded, when there is a
+// stdlib root.
+function run_repl(root: string, target: string): i32 {
+  print("fern REPL — Ctrl+D to exit");
+  let s: interp.Session = interp.new_session();
+  if (root.len() > 0) {
+    let ld: Loaded = load_checked(Sources { paths: ["repl.fern"], srcs: ["import \"std/float\";\n"], maps: [util.no_line_map()] }, root, target, "");
+    if (ld.refused.len() == 0) {
+      s = s.declare(ld.b.merged);
+    }
+  }
+  let done: boolean = false;
+  while (!done) {
+    write("> ");
+    match (read_line()) {
+      Some(raw) => {
+        let line: string = raw.trim();
+        if (line.len() > 0) {
+          s = repl_line(s, line);
+        }
+      },
+      None => {
+        print("");
+        done = true;
+      }
+    }
+  }
+  return 0;
+}
+
+function repl_line(s: interp.Session, line: string): interp.Session {
+  if (repl_declares(line)) {
+    let m: parser.Module = parser.parse_module(lexer.tokenize(line));
+    if (repl_parse_error(m)) {
+      return s;
+    }
+    return s.declare(m);
+  }
+  let src: string = line;
+  if (!util.str_has_suffix(src, ";") && !util.str_has_suffix(src, "}")) {
+    src = src + ";";
+  }
+  let m: parser.Module = parser.parse_module(lexer.tokenize("function __repl(): void { " + src + " }"));
+  if (repl_parse_error(m)) {
+    return s;
+  }
+  let (next, shows, v) = s.run(m, "__repl");
+  if (shows) {
+    print(next.show(v));
+  }
+  return next;
+}
+
+function repl_declares(line: string): boolean {
+  for kw in ["function ", "fn ", "pub ", "struct ", "enum ", "type "] {
+    if (util.str_has_prefix(line, kw)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// repl_parse_error prints what the parser's gates find in a line, and reports
+// whether it did not parse.
+function repl_parse_error(m: parser.Module): boolean {
+  let fs: Finding[] = parse_findings(m);
+  for f in fs {
+    print("error: " + f.diag.message);
+  }
+  return fs.len() > 0;
 }
 
 // run_doctests implements `-doctest FILE.fern.md`: each ```fern test example
@@ -4017,6 +4098,7 @@ pub function run_with(av: string[], embedded_root: string): i32 {
   let fmt_write: boolean = false;
   let fmt_diff: boolean = false;
   let mode_caps: boolean = false;
+  let mode_effects: boolean = false;
   let mode_targets: boolean = false;
   let mode_resolve: boolean = false;
   let mode_tangle: boolean = false;
@@ -4025,6 +4107,7 @@ pub function run_with(av: string[], embedded_root: string): i32 {
   let mode_add: boolean = false;
   let mode_vendor: boolean = false;
   let mode_lsp: boolean = false;
+  let mode_repl: boolean = false;
   // Every non-flag argument, in order. The compile modes read the first two
   // (entry, stdlib root); `-add` takes three of its own.
   let pos: string[] = [];
@@ -4103,6 +4186,8 @@ pub function run_with(av: string[], embedded_root: string): i32 {
       i = ni;
     } else if (a == "-interp") {
       mode_interp = true;
+    } else if (a == "-repl") {
+      mode_repl = true;
     } else if (a == "-fmt") {
       mode_fmt = true;
     } else if (a == "-w") {
@@ -4145,6 +4230,8 @@ pub function run_with(av: string[], embedded_root: string): i32 {
       export_list = slice_unchecked(a, 8, a.len()) + "";
     } else if (a == "-capabilities") {
       mode_caps = true;
+    } else if (a == "-effects") {
+      mode_effects = true;
     } else if (a == "-tangle") {
       // Literate: expand a .fern.md document's chunks into Fern source.
       // It reads a document, not a module, so it never loads imports.
@@ -4310,6 +4397,15 @@ pub function run_with(av: string[], embedded_root: string): i32 {
   if (mode_lsp) {
     return serve_lsp(pos, embedded_root, target, target_given, embed_dir);
   }
+  if (mode_repl) {
+    if (pos.len() > 1 || pos.len() == 1 && embedded_root.len() > 0) {
+      return usage();
+    }
+    if (pos.len() == 1) {
+      return run_repl(pos[0], target);
+    }
+    return run_repl(embedded_root, target);
+  }
 
   // `-check` and `-interp` with no path read the program from stdin, as
   // native's do. Every other mode wants a file: `-fmt` writes back over one,
@@ -4471,6 +4567,17 @@ pub function run_with(av: string[], embedded_root: string): i32 {
   // paths below.
   if (mode_caps) {
     write(caps.format_rows(caps.analyze(merged, pkgs)));
+    return 0;
+  }
+
+  // `-effects`: the per-function effect rows of a program that checks
+  // (effects.fern). Report mode; nothing here enforces.
+  if (mode_effects) {
+    let c: Checked = check_bundle(b, entry_path, target, target_given);
+    if (!c.ok) {
+      return report_checked(st, c);
+    }
+    write(effects.report(merged));
     return 0;
   }
 

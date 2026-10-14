@@ -180,31 +180,6 @@ func TestIndirectCallViaLocal(t *testing.T) {
 	}
 }
 
-func TestREPLEvaluatesExpressions(t *testing.T) {
-	in := strings.NewReader("1 + 2 * 3\n\"hi\"\nlet x = 5;\nx + 10\n")
-	var out bytes.Buffer
-	if err := REPL(in, &out); err != nil {
-		t.Fatal(err)
-	}
-	got := out.String()
-	for _, want := range []string{"7", "hi", "15"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("REPL output missing %q\n--- got ---\n%s", want, got)
-		}
-	}
-}
-
-func TestREPLDeclaresThenCallsFunction(t *testing.T) {
-	in := strings.NewReader("function dbl(x: i32): i32 { return x * 2; }\ndbl(21)\n")
-	var out bytes.Buffer
-	if err := REPL(in, &out); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), "42") {
-		t.Errorf("expected 42 in REPL output, got:\n%s", out.String())
-	}
-}
-
 func TestInterpLenOfString(t *testing.T) {
 	if got := evalProgramValue(t, `function main(): i32 { return ("hello").len(); }`); got != Number(5) {
 		t.Errorf("got %v, want 5", got)

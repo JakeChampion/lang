@@ -95,9 +95,11 @@ self-contained.
 
 ## 6. Hygiene
 
-- **REPL through modload.** `internal/oracle/interp/repl.go` still uses bare
-  `parser.Parse`, so REPL input can't `import` stdlib. Route it through
-  `modload.LoadSource` like the other in-memory entry points.
+- **REPL imports.** `fern -repl` (`run_repl` in `compiler/fern.fern`,
+  `interp.Session`) parses each line on its own, so a session can't `import`
+  a module: it starts with `std/float` loaded, for printing values, and
+  nothing else. A qualified call needs the loader's renaming applied to the
+  line, as a module's body gets it.
 - **Remove the dead `IsPrelude` field.** Nothing sets
   `ast.FuncDecl.IsPrelude` post-flip; `treeshake.go` still filters on
   it (a no-op). Delete the field + the filter.
