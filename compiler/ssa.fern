@@ -1012,18 +1012,22 @@ pub struct Alloc { reg_of: i32[], def_pos: i32[], hi: i32[] }
 pub function float_values(f: SFunc, fcalls: boolean[], tolerant: boolean): boolean[] {
   let fl: boolean[] = __alloc_bool(f.nvals);
   let derived: boolean[] = __alloc_bool(f.nvals);
-  let any: boolean = false;
+  // A derived value stays only where an f64 operation reads it, so a function
+  // with no f64 operation and no value only an f64 can be keeps none.
+  let seeded: boolean = false;
   for blk in f.blocks {
     for ins in blk.insts {
       let fcall: boolean = ins.kind_tag == 11 && ins.result >= 0 && ins.result < fcalls.len() && fcalls[ins.result];
       if (ins.result >= 0 && ins.result < f.nvals && (float_def(ins) || fcall)) {
+        let d: boolean = ins.kind_tag == 6 || ins.kind_tag == 8 || ins.kind_tag == 11 || float_load(ins);
         fl = fl.with(ins.result, true);
-        derived = derived.with(ins.result, ins.kind_tag == 6 || ins.kind_tag == 8 || ins.kind_tag == 11 || float_load(ins));
-        any = true;
+        derived = derived.with(ins.result, d);
+        seeded = seeded || !d;
       }
+      seeded = seeded || float_use(ins);
     }
   }
-  if (!any) {
+  if (!seeded) {
     return [];
   }
   // A value leaves the class when anything outside it reads it, which can
