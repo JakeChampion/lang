@@ -213,92 +213,10 @@ Layout facts come from the same interprocedural analysis that gates rewrites.
 Outer and inner sites must pass both packed-layout proofs and the exact
 element-body proofs below before the report identifies them as kernels.
 
-**Retained Go analysis.** The older `-array-report` interface described below
-is labelled as Go analysis and does not describe primary compiler output.
-**What it recognizes is §7's closed list**: the eight operations that are
-handed a function. `fern -array-report` lists every site under
-`std/ndarray operations`, with the element functions the site was handed,
-keyed on the `__method_ndarray__NdArray_` mangling that only
-std/ndarray's receiver methods get. The three axis-parameterized verbs
-also carry the argument that says which elements they walk —
-`reduce_axis(axis 1)`, `scan_axis(axis 0)`, `map_rank(rank 2)` — read
-only where it is written as a literal, and printed `axis ?` where it is
-computed. A guessed axis would be worse than none: a reduction along the
-last axis walks contiguous storage and one along any other axis strides,
-so the two plan differently.
-
-§2's structural operations are deliberately absent from that worklist.
-They move no elements, so there is nothing for a kernel to replace — but
-they decide what the operations BELOW them cost, which is the layout
-analysis further down this section.
-
-That list is the kernel half's worklist, and it answers the worklist's
-own question rather than leaving the reader to go and look: each element
-function is printed with what a kernel could do with it.
-
-```
-run:5:87  inner  over packed     mul [f64 mul], add [f64 add]  -> kernel-candidate
-run:6:51  map    over strided    __closure_lambda_1 [element-fn-captures]  -> element-not-primitive
-```
-
-The first of those is `dot_f64` in disguise; the second is not, and says
-why. `over` is the receiver's layout and `->` the site's verdict; both
-are below, and the element functions in the brackets are what this part
-of the section is about. The bar is `ATLAS-PLATFORM-PLAN.md` §3's: a
-kernel is one IR op whose whole vector lifetime stays inside its own
-emitted sequence, so a call to an element function is an op boundary and
-nothing survives it. A kernel can only take an element function it can
-INLINE, which means one primitive operation over the operands. `x * y`,
-`x * 2.0` and `-x` all are — a unary is emitted as readily as a binary —
-while a body with two operations or a call is not.
-
-The name a primitive is printed under is the operation a kernel would
-have to emit, not the source's spelling: `x < y` over `u64` prints
-`u64 lt`, because the IR's `OpLtS` carries `Unsigned` and the
-instruction is `lt_u`.
-
-The refusals are a **closed set with stable tags**, for the reason
-`FusionRefusal`'s are: they are the coverage checklist for widening the
-kernels, and a checklist of free text cannot be tallied.
-`FERN_ARRAY_REPORT=1` prints the tally, a row per reason even at zero.
-
-| tag | what it means |
-| --- | --- |
-| `element-fn-unresolved` | the lowering did not park the function where the recogniser could name it |
-| `element-fn-not-in-program` | named, but the program does not hold that function |
-| `element-fn-captures` | a lambda closed over something, and a kernel has nowhere to put it |
-| `element-fn-calls` | the body calls something, and a call is an op boundary |
-| `element-fn-not-one-op` | the body is more than one operation, or applies none |
-| `element-fn-not-arithmetic` | The body's one operation is outside the retained classifier's supported arithmetic set. Integer division and remainder are excluded, although Fern defines them as total even for zero divisors (`ARRAY-ALGEBRA.md` §2). Conversions are excluded because they change the element type. |
-
-Each line then carries the SITE's verdict, which is the question a
-planner actually asks: every element function primitive is necessary and
-not sufficient, because an axis verb also has to say which elements it
-walks.
-
-```
-algebra:11:60  reduce_axis(axis 1)  over unknown    add [i64 add]  -> kernel-candidate
-algebra:13:48  map_rank(rank 1)     over unknown    sum_cell [element-fn-calls]  -> element-not-primitive
-algebra:14:60  reduce_axis(axis ?)  over unknown    add [i64 add]  -> axis-not-literal
-```
-
-The third of those is the one a per-element reading cannot see: its
-element function is primitive, and only the site-level question declines
-it. `axis-not-literal` is its own row for the reason the axis is read at
-all — a reduction along the last axis walks contiguous storage and one
-along any other axis strides, so a kernel cannot be selected without
-knowing which. The axis is half of that question: the last axis of a
-STRIDED handle is not contiguous either, and the layout below is the
-other half. Each site's line carries both.
-
-The site verdicts are a closed set too, and their tally sits beside the
-element one under `FERN_ARRAY_REPORT=1`.
-
-| tag | what it means |
-| --- | --- |
-| `kernel-candidate` | nothing this pass can see would make a planner decline the site |
-| `element-not-primitive` | an element function is not one a kernel can inline, per the table above |
-| `axis-not-literal` | the axis is not a literal, so which elements the kernel would walk is not known here |
+§2's structural operations are not reported sites. They move no
+elements, so there is nothing for a kernel to replace — but they decide
+what the operations below them cost, which is the layout analysis further
+down this section.
 
 ### What a handle's layout is, and where it is proved
 
@@ -321,15 +239,15 @@ conjunct is decided before the program runs.
 Both predicates are decided by the metadata, and the metadata is decided
 by the chain of operations that built the handle — every one of which §2
 names. So **the layout is a property the IR carries**, derived from
-provenance: `internal/oracle/ir/ndarray_layout.go`, printed per site by
-`fern -array-report`.
+provenance: `compiler/semndlayout.fern`, printed per kernel site by
+`fern -array-report` as `layout=` and, for a binary operation, `rhs-layout=`.
 
 | layout | what it asserts |
 | --- | --- |
 | `packed` | `is_packed()` is provably true, so all three of §2's branching rows take their free arm |
 | `row-major` | `is_row_major()` is provably true and `is_packed()` is not proven, so `reshape` is metadata and `to_flat()` may copy |
 | `strided` | the provenance WAS followed, to a §2 metadata operation that preserves neither predicate |
-| `unknown` | the provenance was not followed: a parameter, a struct field, a call whose callee the summary below does not settle |
+| `unknown` | the provenance was not followed: an entry point's parameter, a struct field, an unresolved call (see below) |
 
 `strided` and `unknown` both claim nothing, and are separate rows
 because they fail for different reasons — which is what makes the tally
@@ -356,83 +274,22 @@ is the operation's own code:
   buffer it just filled, so **packed**. `fold_all` returns a scalar and
   `to_flat` a `T[]`, so neither produces a layout.
 
-Slots are **flow-insensitive**: a slot's layout is the meet of every
-layout stored into it anywhere in the function, and a parameter claims
-nothing. A slot holding a packed handle on one branch and a transposed
-one on the other therefore reads `strided` at both. That costs precision
-and needs no reasoning about which store reaches which load, so the
-answer is correct whatever the control flow does. Two stores are not
-counted: a constant, which is the null the lowering writes into a slot it
-has moved the handle out of and which no handle ever is; and anything
-reached after the operand stack stopped being tracked, which claims
-`unknown`.
-
-A CALL is followed when the callee's own returns settle it. A function
-whose every return is a handle of one layout is a producer of that
-layout, exactly as `packed()` is, so a program that builds its handles in
-a helper reads the same as one that inlines them. The summary is the
-**meet** over the function's returns, so a helper returning a packed
-handle on one arm and a transposed one on the other claims `strided`, not
-the arm a given call site took. A recursive function has its cycle **cut**
-rather than followed: the arm reaching it reads `unknown`, which is what
-bounds the summary. The function itself is not thereby nothing — it
-still settles at the meet over its arms, so one whose base arm is a
-`from_flat` and whose recursive arm is a `reshape` reads `row-major`. A
-function whose declared result is not a handle reads `unknown`, and so
-does one the program does not define.
-
-The retained Go report only propagates return summaries. Its parameter
-receivers remain unknown: over `tests/stdlib/ndarray_test.fern`, 14 of 43
-reported rows read `unknown` before those summaries and 1 after, a parameter.
-The primary compiler's typed analysis also propagates arguments from callers
-into callees, as described below. The historical Go report's counts do not
-measure that analysis.
-
-Each storage-sensitive site then carries a verdict, closed and tagged
-like the kernel sets above, tallied under `FERN_ARRAY_REPORT=1`:
-
-| tag | what it means |
-| --- | --- |
-| `metadata` | the receiver's layout proves the free branch, so no element moves |
-| `not-proven-packed` | `to_flat()` or `packed()` on a receiver not proven packed, so the call may copy |
-| `not-proven-row-major` | `reshape()` on a receiver not proven row-major, so the call may copy |
-
-```
-main:5:10  to_flat  over packed     -> metadata
-main:5:27  to_flat  over strided    -> not-proven-packed
-```
-
-**This changes nothing.** `metadata` says the copy is provably absent,
-not that anything was removed; the call still runs `std/ndarray`'s own
-branch and takes its free arm at run time, exactly as before. What is new
-is that the answer exists before the program does, which is what §8's
-in-place licence and #9735's kernels need and could not ask for.
-
-Recognition and both verdicts change nothing. **A verdict of `primitive`
-says the element function is not what stands in the way, and
-`kernel-candidate` says nothing this pass can see would make a planner
-decline the site — neither says that the site lowers to a kernel.**
-`internal/oracle/ir/ndarray_shapes_test.go` pins that the recogniser changes no
-op, and the layout analysis below changes none either.
-
-One verb now has a kernel. `map` by a scalar `f64` factor over a handle
-the layout analysis proves **packed** becomes
+`map` by a scalar `f64` factor over a handle the layout analysis proves
+**packed** becomes
 
 ```
 from_flat(__fern_scale_f64(a.data, k), a.shape)
 ```
 
-— `internal/oracle/ir/ndarray_scale.go`, the std/array kernel of #9735 reached
+— `compiler/semndarray.fern`, the std/array kernel of #9735 reached
 through a shape. Packed is what licenses it: `data` IS the reading order,
 so the kernel reads the elements the scalar walk would have visited. Over
 a strided handle the same rewrite computes DIFFERENT numbers rather than
 the same ones faster, which is why the gate is the proof and not the
-verb. Everything else still runs the scalar loop, and nothing fuses or
-donates on this side.
+verb.
 
-The primary Fern compiler reaches the same kernel through
-`compiler/semndarray.fern`, on typed semantic values before ownership
-planning. `semndlayout.fern` carries the layout lattice through constructors,
+The rewrite runs on typed semantic values before ownership planning.
+`semndlayout.fern` carries the layout lattice through constructors,
 structural operations, copies, joins, helper returns and direct-call arguments.
 Its return summary meets every return, and each parameter meets every caller's
 argument. A helper called with both packed and strided handles therefore
@@ -469,8 +326,8 @@ These are coverage limits, not claims that those cases cannot be optimized.
 `FERN_NO_SCALE_KERNEL=1` disables this rewrite. The primary gate
 checks emitted instructions as well as values: a packed map emits the SIMD
 scale, while mixed callers, indirect calls, exports and unproven recursive
-returns retain their map calls. Reporting parity and broader element-function
-proofs remain part of #9727.
+returns retain their map calls. Broader element-function proofs remain
+part of #9727.
 
 Measured on arm64-darwin on 2026-10-05 with
 `examples/array_pipeline/ndarray_scale.fern`: the same candidate compiler,
