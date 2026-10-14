@@ -57,10 +57,12 @@ every other case holds the read side of the same lock and they still run
 concurrently, which the self-host leg needs.
 
 On Linux, root-rename fixtures require their destination to be on the same
-filesystem as `/`. Otherwise even GNU 9.12's EXDEV fallback can copy the live root before
+mount as `/`, checked through the kernel's fdinfo mount IDs. Device numbers
+alone do not suffice: bind mounts of the same filesystem still reach EXDEV.
+Otherwise even GNU 9.12's fallback can copy the live root before
 reporting that it encountered its own destination. The harness refuses such
 a fixture before either binary starts; it does not skip or change the parity
-case. Set `TMPDIR` to a writable directory on `/`'s filesystem, and run the
+case. Set `TMPDIR` to a writable directory on `/`'s mount, and run the
 whole corpus in a disposable environment with source mounted read-only.
 
 A case CANNOT name a starting niceness, and the reason generalises to any

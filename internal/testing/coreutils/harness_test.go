@@ -201,7 +201,7 @@ type invocation struct {
 	// too, which an `artifacts` list cannot express. Takes precedence
 	// over dir.
 	seedTree func(t *testing.T, dir string)
-	// rootRename requires a Linux destination fixture to share /'s filesystem.
+	// rootRename requires a Linux destination fixture to share /'s mount.
 	// Otherwise even GNU's EXDEV fallback copies the live root before refusing.
 	rootRename bool
 	// umask is the file-mode creation mask the child inherits, for a
@@ -988,9 +988,9 @@ func deviceOf(t *testing.T, path string) uint64 {
 	return uint64(st.Dev)
 }
 
-func rootRenameSafety(rootDevice, destinationDevice uint64) error {
-	if rootDevice != destinationDevice {
-		return errors.New("unsafe root-rename fixture: destination is on another filesystem; set TMPDIR to a writable directory on /'s filesystem and run in a disposable environment (GNU's EXDEV fallback can copy the live root)")
+func rootRenameSafety(rootMount, destinationMount uint64) error {
+	if rootMount == 0 || destinationMount == 0 || rootMount != destinationMount {
+		return errors.New("unsafe root-rename fixture: destination is not verified on /'s mount; set TMPDIR to a writable directory on the root mount and run in a disposable environment (GNU's EXDEV fallback can copy the live root, even across same-device bind mounts)")
 	}
 	return nil
 }
@@ -1063,7 +1063,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	if inv.seedTree != nil {
 		workDir = t.TempDir()
 		if inv.rootRename && runtime.GOOS == "linux" {
-			if err := rootRenameSafety(deviceOf(t, "/"), deviceOf(t, workDir)); err != nil {
+			if err := rootRenameSafety(linuxMountOf(t, "/"), linuxMountOf(t, workDir)); err != nil {
 				t.Fatal(err)
 			}
 		}
