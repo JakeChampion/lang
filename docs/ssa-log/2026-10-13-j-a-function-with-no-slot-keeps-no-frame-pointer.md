@@ -71,10 +71,12 @@ The stage-2 compiler recompiles itself byte for byte.
 | `map_int.ir` | −1.62% |
 
 `perceus_deriv`, `perceus_nqueens`, `record_update`, `string_build`,
-`struct_drop` and the other `.ir` rows fall as well. The `.text` rows of the
-smallest programs rise. That is the trap stubs every runtime now
-carries: two `.c` stubs and six `.l` stubs for each of the three jumped
-traps, a fixed 80 instructions per binary.
+`struct_drop` and the other `.ir` rows fall as well.
+
+A runtime carries only the trap stubs its functions reach: each stub is a
+need of its own, and the root `trap_stubs` stands for all of them on the
+per-module path. Before, every runtime carried the six bounds stubs. Twelve
+`.text` rows fall by 1.2–4.4%, `string_slice` the most.
 
 ## The machines
 

@@ -49,21 +49,21 @@
 # past the join tested it once. Values are the perf-x86_64 and perf-aarch64
 # lanes' measurements of the branch.
 
-x86_64/array_append.text	954
+x86_64/array_append.text	924
 x86_64/array_append.ir	13383897
-x86_64/array_index.text	947
+x86_64/array_index.text	913
 x86_64/array_index.ir	16455548
 x86_64/array_scale_f64.text	2759
 x86_64/array_scale_f64.ir	21337821
 x86_64/array_with.ir	37762183
-x86_64/array_with.text	1088
+x86_64/array_with.text	1068
 x86_64/ascii_scan.text	3038
 x86_64/ascii_scan.ir	37119510
 x86_64/call_overhead.text	88
 x86_64/call_overhead.ir	8250759
-x86_64/closure_call.text	848
+x86_64/closure_call.text	818
 x86_64/closure_call.ir	94308097
-x86_64/enum_match.text	1009
+x86_64/enum_match.text	975
 x86_64/enum_match.ir	53775055
 x86_64/http_hello.text	19770
 x86_64/http_hello.ir	27552835
@@ -82,7 +82,7 @@ x86_64/pmap_insert.ir	62362284
 x86_64/pvec_with.text	2769
 x86_64/pvec_with.ir	60166754
 x86_64/record_update.ir	109849111
-x86_64/record_update.text	1412
+x86_64/record_update.text	1385
 x86_64/sort_inplace.text	2918
 x86_64/sort_inplace.ir	43380614
 x86_64/sort_ints.text	3398
@@ -99,11 +99,11 @@ x86_64/string_rfind_byte.text	3359
 x86_64/string_rfind_byte.ir	43582563
 x86_64/string_scan.text	3274
 x86_64/string_scan.ir	52966728
-x86_64/string_slice.text	773
+x86_64/string_slice.text	739
 x86_64/string_slice.ir	38700038
 x86_64/struct_drop.text	3425
 x86_64/struct_drop.ir	310900547
-x86_64/tokenize.text	1007
+x86_64/tokenize.text	973
 x86_64/tokenize.ir	36950039
 x86_64/utf8_ingest_unchecked.text	9286
 x86_64/utf8_ingest_unchecked.ir	2870412
@@ -251,15 +251,15 @@ aarch64/utf8_ingest_validated.text	9799
 aarch64/utf8_ingest_validated.ir	6347933
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-x86_64/perceus_cfold.text	2343
+x86_64/perceus_cfold.text	2310
 x86_64/perceus_cfold.ir	57965216
 x86_64/perceus_deriv.text	2647
 x86_64/perceus_deriv.ir	74248648
-x86_64/perceus_nqueens.text	1448
+x86_64/perceus_nqueens.text	1423
 x86_64/perceus_nqueens.ir	94653628
-x86_64/perceus_rbtree.text	2729
+x86_64/perceus_rbtree.text	2697
 x86_64/perceus_rbtree.ir	57231727
-x86_64/perceus_rbtree_ck.text	3001
+x86_64/perceus_rbtree_ck.text	2960
 x86_64/perceus_rbtree_ck.ir	66352281
 aarch64/perceus_cfold.text	2563
 aarch64/perceus_cfold.ir	65049710
