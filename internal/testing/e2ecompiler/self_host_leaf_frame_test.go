@@ -9,11 +9,11 @@ import (
 	"testing"
 )
 
-// On x86-64 a function with no frame slots that makes no call builds no %rbp
-// frame: it pushes only the callee-saved registers it uses and pops them
-// before each return. mix loops, early returns before its loop, and wide keeps
-// enough values live to need callee-saved registers; outer calls, so it keeps
-// its frame.
+// On x86-64 a function with no frame slots builds no %rbp frame: it pushes only
+// the callee-saved registers it uses and pops them before each return. mix
+// loops, early returns before its loop, and wide keeps enough values live to
+// need callee-saved registers. outer calls, so it also keeps %rsp aligned for
+// its calls, and a -g build gives it its frame back.
 const leafFrameProg = `@noinline function mix(s: string, n: i32): i32 {
     if (n <= 1) { return 0; }
     let a: i32 = 208357;
@@ -106,8 +106,18 @@ func TestSelfHostLeafFrame(t *testing.T) {
 	if wide := leafFunction(t, asm, "wide"); !strings.Contains(wide, "pushq %r") || !strings.Contains(wide, ".cfi_def_cfa_offset 16") {
 		t.Errorf("wide saves no callee-saved register against %%rsp:\n%s", wide)
 	}
-	if !strings.Contains(leafFunction(t, asm, "outer"), "pushq %rbp") {
-		t.Errorf("outer calls, but builds no frame")
+	if outer := leafFunction(t, asm, "outer"); strings.Contains(outer, "%rbp") || !strings.Contains(outer, "call") {
+		t.Errorf("outer builds a frame or makes no call:\n%s", outer)
+	}
+	debug := filepath.Join(dir, "leaf-g.s")
+	cmd = exec.Command(h.cli, "-g", "-target", "x86-64-linux", "-emit", "asm", "-o", debug, src, h.stdlib)
+	if combined, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("emitting with -g: %v\n%s", err, combined)
+	}
+	if raw, err := os.ReadFile(debug); err != nil {
+		t.Fatal(err)
+	} else if !strings.Contains(leafFunction(t, string(raw), "outer"), "pushq %rbp") {
+		t.Errorf("a -g build of outer builds no frame")
 	}
 
 	for _, tg := range h.targets {

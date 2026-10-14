@@ -84,15 +84,19 @@ function stores(output: ssaprepare.Output, single: boolean): void {
 }
 
 function frame(output: ssaprepare.Output, single: boolean): void {
-  for from in ["pushq %rbp", "pushq %rbx", "popq %rbx", "popq %rbp"] {
+  // The body keeps no %rbp: it pushes its saves against %rsp, the two-field
+  // body a pad word after them, and pops them before the return.
+  let pairs = ["pushq %rbx", "popq %rbx"];
+  if (!single) {
+    pairs = pairs.append("pushq %r12").append("popq %r12").append("pushq %rcx").append("popq %rcx");
+  }
+  for from in pairs {
     altered(output, from, "", false);
   }
-  for to in ["movq %rax, %rbp", "movl %esp, %ebp"] {
-    altered(output, "movq %rsp, %rbp", to, false);
-  }
-  let offset = if (single) { "-8" } else { "-16" };
-  altered(output, "leaq " + offset + "(%rbp), %rsp", "movq %rbp, %rsp\nsubq $" + (if (single) { "8" } else { "16" }) + ", %rsp", true);
   altered(output, "popq %rbx", "movq (%rsp), %rbx\naddq $8, %rsp", true);
+  if (!single) {
+    altered(output, "popq %rcx", "addq $8, %rsp", true);
+  }
   for to in ["movq $0, (%rsp)\nret", "movq $0, 8(%rsp)\nret", "movq -64(%rsp), %rbx\nret", "ret $8", "unknown_instruction\nret"] {
     altered(output, "ret\n", to + "\n", false);
   }
@@ -119,7 +123,7 @@ function dependency_frame(output: ssaprepare.Output): void {
   // A different call SP must relocate all helper scratch effects. These
   // positives concern the stated aligned-stack implication, not a system ABI.
   altered(output, "call __fern_arr_box", "subq $8, %rsp\ncall __fern_arr_box\nmovq -16(%rsp), %rdi\naddq $8, %rsp", true);
-  altered(output, "call __fern_arr_box", "subq $24, %rsp\ncall __fern_arr_box\naddq $24, %rsp", false);
+  altered(output, "call __fern_arr_box", "subq $40, %rsp\ncall __fern_arr_box\naddq $40, %rsp", false);
   altered(output, "call __fern_arr_box", "movq %rbx, -32(%rsp)\ncall __fern_arr_box\nmovq -32(%rsp), %rbx", false);
   altered(output, "call __fern_arr_box", "call __fern_arr_box\nmovq %rbx, -32(%rsp)\nmovq -32(%rsp), %rbx", true);
   altered(output, "call __fern_arr_box", "call __fern_arr_box\nmovq -16(%rsp), %rdi", true);
