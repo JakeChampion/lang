@@ -55,8 +55,13 @@ func tarGz(t *testing.T, entries []tarEntry) ([]byte, string) {
 	if err := gz.Close(); err != nil {
 		t.Fatal(err)
 	}
-	sum := sha256.Sum256(buf.Bytes())
-	return buf.Bytes(), "sha256:" + hex.EncodeToString(sum[:])
+	return buf.Bytes(), sha256Ref(buf.Bytes())
+}
+
+// sha256Ref is b's hash as a manifest writes it.
+func sha256Ref(b []byte) string {
+	sum := sha256.Sum256(b)
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 // serve answers every request with body.
@@ -142,13 +147,16 @@ func TestShippedFernFetch(t *testing.T) {
 }
 
 // TestShippedFernFetchRefusals: an archive whose hash is not the manifest's,
-// one with an entry leaving the package directory, and one with a link are
-// all refused, and nothing is left in the store.
+// one with an entry leaving the package directory, one with a link, one that
+// is not gzip and one cut short are all refused, saying why, and nothing is
+// left in the store.
 func TestShippedFernFetchRefusals(t *testing.T) {
 	good, _ := helperArchive(t)
 	_, other := helperArchive(t, tarEntry{name: "helper/extra.fern", body: "\n"})
 	escaping, escHash := helperArchive(t, tarEntry{name: "../evil.fern", body: "x"})
 	linked, linkHash := helperArchive(t, tarEntry{name: "helper/link", body: "/etc/passwd", typeflag: tar.TypeSymlink})
+	plain := []byte("not an archive\n")
+	cut := good[:len(good)/2]
 	for _, c := range []struct {
 		name, hash, want string
 		body             []byte
@@ -156,6 +164,8 @@ func TestShippedFernFetchRefusals(t *testing.T) {
 		{"hash-mismatch", other, "hash mismatch — manifest declares " + other, good},
 		{"escaping-entry", escHash, `archive entry "../evil.fern" escapes the package directory`, escaping},
 		{"symlink", linkHash, `archive entry "helper/link" has unsupported type 50 (only files and directories)`, linked},
+		{"not-gzip", sha256Ref(plain), "cannot gunzip the archive: unsupported compressed data: not gzip", plain},
+		{"truncated", sha256Ref(cut), "cannot gunzip the archive: the compressed data ends early", cut},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			url := serve(t, c.body)

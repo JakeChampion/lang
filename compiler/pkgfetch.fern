@@ -84,7 +84,7 @@ function unpack_into(dir: string, raw: u8[]): string {
       tar = b;
     },
     Err(e) => {
-      return "not a gzip archive";
+      return "cannot gunzip the archive: " + e.message();
     }
   }
   let parent: string = util.dir_of(dir);
