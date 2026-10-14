@@ -514,8 +514,14 @@ function steal(own r: irtables.LowerResult, f: ssasem.Func, v: i32, unique: i32)
 // wrappers that lend a record on.
 struct Held { arrays: i32[], records: i32[], fields: i32[], gated: i32[], gated_roots: i32[], gated_records: i32[], gated_fields: i32[] }
 
-function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: ssaunits.GrowTable): Held {
+function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: ssaunits.GrowTable, links: i32[]): Held {
   let out: Held = Held { arrays: [], records: [], fields: [], gated: [], gated_roots: [], gated_records: [], gated_fields: [] };
+  if (ins.kind_tag == ssasem.call_value()) {
+    return dispatch_bracketed(f, step, ins, grows, links, ssaunits.indirect_callee(), 1);
+  }
+  if (dyn_call(ins)) {
+    return dispatch_bracketed(f, step, ins, grows, links, ins.str, 0);
+  }
   if (ins.kind_tag != ssasem.call()) {
     return out;
   }
@@ -545,6 +551,59 @@ function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: s
     i = i + 1;
   }
   return out;
+}
+
+// A call through a function value or a dyn receiver names no body, so it is
+// bracketed at every position one of the bodies it may reach may grow
+// (`ssaunits.dispatched_rows`), and whole: a record's field, or a dyn value's
+// concrete box's, is grown only under the box's own count, which the bracket
+// raises. A value dying at the call is the frame's to give unless it is a
+// link, whose box may still be the caller's, and a handed parameter is
+// bracketed here, its caller's row naming no body this call reaches.
+function dispatch_bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: ssaunits.GrowTable, links: i32[], name: string, first: i32): Held {
+  let out: Held = Held { arrays: [], records: [], fields: [], gated: [], gated_roots: [], gated_records: [], gated_fields: [] };
+  let modes: i32[] = dispatch_modes(f, ins, first);
+  let i: i32 = first;
+  while (i < ins.args.len()) {
+    let v: i32 = ins.args[i];
+    let linked: boolean = v < links.len() && links[v] >= 0;
+    let last: boolean = util.index_of_i32(step.drops, v) >= 0 && ssaunits.occurrences(ins.args, v) == 1 && !linked;
+    if (i < modes.len() && modes[i] == ssaunits.borrow_mode() && !last && whole_bracketable(f.values[v]) && ssaunits.grows_buffer(grows, name, i)
+      && util.index_of_i32(out.arrays, v) < 0) {
+      out = Held { ...out, arrays: out.arrays.append(v) };
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// The mode at each operand of a dispatched call: a dyn call's contract's, and
+// for a call through a function value, lent at every slot its type does not
+// spell `own`, the callee at operand 0 included.
+function dispatch_modes(f: ssasem.Func, ins: ssa.SInst, first: i32): i32[] {
+  if (first == 0) {
+    return ssaunits.callee_modes(f, ins);
+  }
+  let out: i32[] = [ssaunits.borrow_mode()];
+  let i: i32 = 1;
+  while (i < ins.args.len()) {
+    if (ssasem.func_param_own(f.values[ins.args[0]], i - 1)) {
+      out = out.append(ssaunits.counted_mode());
+    } else {
+      out = out.append(ssaunits.borrow_mode());
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// A box a body may grow under its own count: an array, a record holding the
+// field, or a dyn value, which is its concrete's box.
+function whole_bracketable(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeDyn(_) = t {
+    return true;
+  }
+  return bracketable(t) || record_bracketable(t);
 }
 
 function holds_field(h: Held, rec: i32, field: i32): boolean {
@@ -6136,7 +6195,7 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
   for ins in b.insts {
     if (ins.kind_tag != 6 && ins.kind_tag != 8) {
       let step: ssaunits.Step = at(p, idx, b.id, pos, 0 - 1);
-      let held: Held = bracketed(f, step, ins, grows);
+      let held: Held = bracketed(f, step, ins, grows, links);
       // One answer for both: the retain `supplies` holds back is the one
       // `instruction` then takes, and two calls could drift apart with
       // nothing to catch it.

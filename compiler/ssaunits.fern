@@ -128,7 +128,8 @@ function has_row(rows: GrowRow[], callee: string, param: i32, field: i32): boole
 // Whether two grow tables say the same thing about `callees`.
 //
 // A body reads this table only through `grow_fields_of` and `grows_buffer` in
-// `ssarc.bracketed`, keyed by the name each call instruction names — so two
+// `ssarc.bracketed`, keyed by the name each call instruction names, or by
+// `indirect_callee` for a call through a function value — so two
 // tables that agree on the callees one body names produce that body
 // identically, however much they differ elsewhere. That is what lets a second
 // lowering keep a body the inference did not move.
@@ -360,7 +361,76 @@ pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Gr
       i = i + 1;
     }
   }
+  for row in dispatched_rows(funcs, plans, table, tix) {
+    if (!has_row_at(table, tix, row.callee, row.param, row.field)) {
+      table = table.append(row);
+      tix = tix.added(row.callee);
+    }
+  }
   return GrowTable { rows: table, by_callee: tix };
+}
+
+// The callee under which the table holds the positions a call through a
+// function value may grow. No function can take this name.
+pub function indirect_callee(): string {
+  return "&";
+}
+
+// The names a body reads the grow table under: its direct callees, and
+// `indirect_callee` when it calls through a function value.
+pub function grow_callees(f: ssasem.Func): string[] {
+  let out: string[] = ssasem.called_names(f);
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.call_value()) {
+        return out.append(indirect_callee());
+      }
+    }
+  }
+  return out;
+}
+
+// The rows of calls that name no body: a call through a function value may
+// reach any closure body the module makes, and a dyn call any of its arms.
+// A position some body may grow is a row of the call's own name, with no
+// field, since `ssarc.dispatch_bracketed` holds the whole box: a field is
+// grown only under its record's own count. A body's parameter p is the
+// call's operand p either way, the environment and the receiver both being
+// operand 0. Nothing in the fixpoint reads these rows, so they are made once
+// it has settled.
+function dispatched_rows(funcs: ssasem.Func[], plans: Plan[], table: GrowRow[], tix: util.NameIndex): GrowRow[] {
+  let out: GrowRow[] = [];
+  let i: i32 = 0;
+  while (i < plans.len()) {
+    if (plans[i].ok) {
+      for b in funcs[i].graph.blocks {
+        for ins in b.insts {
+          if (ins.kind_tag == ssasem.closure_new()) {
+            out = rows_as(out, table, tix, ins.str, indirect_callee(), 1);
+          } else if (ins.kind_tag == ssasem.call() && ssasem.is_dyn_call(ins.str)) {
+            for arm in ssasem.dyn_call_arms(ins.str) {
+              out = rows_as(out, table, tix, arm, ins.str, 0);
+            }
+          }
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// `body`'s rows at a parameter from `first` on, as rows of `name` with no
+// field.
+function rows_as(own out: GrowRow[], table: GrowRow[], tix: util.NameIndex, body: string, name: string, first: i32): GrowRow[] {
+  let k: i32 = tix.chain(body);
+  while (k >= 0) {
+    if (table[k].callee == body && table[k].param >= first) {
+      out = with_row(out, name, table[k].param, 0 - 1);
+    }
+    k = tix.next[k];
+  }
+  return out;
 }
 
 // plan_callers[j] lists the plans whose steps name the plan first keyed
