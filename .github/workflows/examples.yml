@@ -38,7 +38,7 @@ jobs:
       - uses: ./.github/actions/setup-fern
       - name: Compile every example (arm64 target)
         run: |
-          go build -o bin/fern ./cmd/fern
+          make bin/fern
           mkdir -p build
           for f in examples/*.fern examples/tests/*.fern; do
             name=$(basename "$f" .fern)

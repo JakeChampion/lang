@@ -42,8 +42,9 @@ what separates them: a `wasi:cli/run` component reports ok or err and nothing
 wider, so `return 42` reaches the host as 1. A `main` that returns nothing
 exits 0 (#9233, `internal/testing/e2e/void_main_exit_test.go`).
 
-`cmd/fern` passes `-target`, `-emit` and `-backend` through to the self-host
-driver unchanged (`cmd/fern/selfhost.go`), and `fern -targets` lists the
+`fern` is the self-host driver (`compiler/fern_main.fern`), and the Go
+oracle `cmd/fern` passes `-target`, `-emit` and `-backend` through to it
+unchanged (`cmd/fern/selfhost.go`). `fern -targets` lists the
 targets. `-emit asm` stops at the emitter's text (GAS on the natives, WAT on
 wasm); it is what a native compile with neither `-o` nor `-emit` prints, and
 how the emitters are observed in isolation
