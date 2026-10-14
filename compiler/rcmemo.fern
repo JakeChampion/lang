@@ -52,25 +52,7 @@ function root(): string {
     },
     None => {}
   }
-  match (env("FERN_CACHE_DIR")) {
-    Some(d) => {
-      return d;
-    },
-    None => {}
-  }
-  match (env("XDG_CACHE_HOME")) {
-    Some(x) => {
-      return x + "/fern";
-    },
-    None => {}
-  }
-  match (env("HOME")) {
-    Some(h) => {
-      return h + "/.cache/fern";
-    },
-    None => {}
-  }
-  return "";
+  return util.cache_base();
 }
 
 // open reads the memo of `target`, or an off memo when there is nowhere to

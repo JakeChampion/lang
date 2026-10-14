@@ -16,6 +16,7 @@
 import "./ir";
 import "./irtables";
 import "./ssasem";
+import "./typeinfo";
 import "./util";
 
 // Set is the module's suspendable rows by symbol, and whether an indirect
@@ -30,17 +31,24 @@ pub function none(): Set {
 
 // classify marks the rows that reach __task_park: the direct callers of a
 // marked row transitively, never a trampoline (std/async's run_task, which
-// calls the entry it drives), and, once a lifted closure body is marked,
-// every row with a call through a value or a dyn dispatch.
+// calls the entry it drives); every row with a call through a value whose
+// function type is a marked lifted closure's (or is not known), since that
+// call may reach the closure; and, once any lifted closure is marked, every
+// row with a dyn dispatch. Marking a row can mark a closure that calls it, so
+// the last two repeat until nothing changes.
 pub function classify(keys: string[], funcs: ssasem.Func[]): Set {
   let rows: util.NameIndex = util.name_index(keys);
   let marks: boolean[] = [];
-  let indirect: boolean[] = [];
+  let dyn_calls: boolean[] = [];
+  let through: string[][] = [];
+  let made: string[] = [];
+  let made_sigs: string[] = [];
   let callers: i32[][] = [];
   let i: i32 = 0;
   while (i < keys.len()) {
     marks = marks.append(false);
-    indirect = indirect.append(false);
+    dyn_calls = dyn_calls.append(false);
+    through = through.append([]);
     callers = callers.append([]);
     i = i + 1;
   }
@@ -48,8 +56,13 @@ pub function classify(keys: string[], funcs: ssasem.Func[]): Set {
   while (i < funcs.len()) {
     for b in funcs[i].graph.blocks {
       for ins in b.insts {
-        if (ins.kind_tag == ssasem.call_value() || ins.kind_tag == ssasem.call() && ssasem.is_dyn_call(ins.str)) {
-          indirect = indirect.with(i, true);
+        if (ins.kind_tag == ssasem.call_value()) {
+          through = through.with(i, through[i].append(value_sig(funcs[i], [ins.args[0]])));
+        } else if (ins.kind_tag == ssasem.closure_new()) {
+          made = made.append(ins.str);
+          made_sigs = made_sigs.append(value_sig(funcs[i], [ins.result]));
+        } else if (ins.kind_tag == ssasem.call() && ssasem.is_dyn_call(ins.str)) {
+          dyn_calls = dyn_calls.with(i, true);
         } else if (ins.kind_tag == ssasem.call()) {
           if (ins.str == "__task_park") {
             marks = marks.with(i, true);
@@ -64,24 +77,24 @@ pub function classify(keys: string[], funcs: ssasem.Func[]): Set {
     i = i + 1;
   }
   let closed: boolean[] = spread(marks, callers, keys);
-  let any_closure: boolean = false;
-  i = 0;
-  while (i < keys.len()) {
-    if (closed[i] && is_lifted(keys[i])) {
-      any_closure = true;
-    }
-    i = i + 1;
-  }
-  if (any_closure) {
+  let sigs: string[] = closure_sigs(keys, funcs, closed, made, made_sigs);
+  let changed: boolean = sigs.len() > 0;
+  while (changed) {
+    changed = false;
     i = 0;
     while (i < keys.len()) {
-      if (indirect[i] && !trampoline(keys[i])) {
+      if (!closed[i] && !trampoline(keys[i]) && (dyn_calls[i] || calls_through(through[i], sigs))) {
         closed = closed.with(i, true);
+        changed = true;
       }
       i = i + 1;
     }
-    closed = spread(closed, callers, keys);
+    if (changed) {
+      closed = spread(closed, callers, keys);
+      sigs = closure_sigs(keys, funcs, closed, made, made_sigs);
+    }
   }
+  let any_closure: boolean = sigs.len() > 0;
   let names: string[] = [];
   let classes: string[] = [];
   i = 0;
@@ -97,6 +110,77 @@ pub function classify(keys: string[], funcs: ssasem.Func[]): Set {
     i = i + 1;
   }
   return Set { rows: util.name_index(names), classes: classes, indirect: any_closure, on: names.len() > 0 };
+}
+
+// closure_sigs is the function types of the marked lifted closures, read off
+// the values that make them (`made` / `made_sigs`, parallel), spelled as
+// value_sig spells a callee's. A marked closure made nowhere, or made as a
+// value of unknown type, is "": it may be reached through any value.
+function closure_sigs(keys: string[], funcs: ssasem.Func[], closed: boolean[], made: string[], made_sigs: string[]): string[] {
+  let out: string[] = [];
+  let i: i32 = 0;
+  while (i < keys.len() && i < funcs.len()) {
+    if (closed[i] && is_lifted(keys[i])) {
+      let found: boolean = false;
+      let k: i32 = 0;
+      while (k < made.len()) {
+        if (made[k] == keys[i] || made[k] == funcs[i].graph.name) {
+          found = true;
+          if (!util.has_str(out, made_sigs[k])) {
+            out = out.append(made_sigs[k]);
+          }
+        }
+        k = k + 1;
+      }
+      if (!found && !util.has_str(out, "")) {
+        out = out.append("");
+      }
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// value_sig spells the function type of value args[0], or "" when it is not
+// known.
+function value_sig(f: ssasem.Func, args: i32[]): string {
+  if (args.len() == 0 || args[0] >= f.values.len()) {
+    return "";
+  }
+  match (f.values[args[0]]) {
+    typeinfo.TypeFunc(ft) => {
+      if (ft.params_known) {
+        return sig_of(ft.param_types, ft.ret_type);
+      }
+    },
+    _ => {}
+  }
+  return "";
+}
+
+function sig_of(params: typeinfo.Type[], result: typeinfo.Type): string {
+  let s: string = "(";
+  let i: i32 = 0;
+  while (i < params.len()) {
+    if (i > 0) {
+      s = s + ", ";
+    }
+    s = s + typeinfo.spelling(params[i]);
+    i = i + 1;
+  }
+  return s + ") => " + typeinfo.spelling(result);
+}
+
+// calls_through reports whether a call through a value of one of the types
+// in `through` may reach a closure of a type in `sigs`; an unknown type, on
+// either side, may reach any.
+function calls_through(through: string[], sigs: string[]): boolean {
+  for t in through {
+    if (t == "" || util.has_str(sigs, "") || util.has_str(sigs, t)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // The save-area class of a row's result: i64 for a wide integer, f64 for a
@@ -209,7 +293,7 @@ pub function transform(r: irtables.LowerResult, set: Set): irtables.LowerResult 
 }
 
 function run(r: irtables.LowerResult, set: Set): Tx {
-  let ops: ir.Op[] = r.ops;
+  let (ops, tmps) = stored_results(r, set);
   let n: i32 = ops.len();
   // Site numbering: before[i] is how many sites precede op i, so a range of
   // ops holds the sites numbered before[a] .. before[b] - 1.
@@ -223,7 +307,7 @@ function run(r: irtables.LowerResult, set: Set): Tx {
     }
     i = i + 1;
   }
-  let t: Tx = Tx { out: [], seg: [], ci: r.n_locals, tc: r.n_locals + 1, before: before, else_of: [], end_of: [], carry: [], tmps: [], live: [], saves: [], why: "" };
+  let t: Tx = Tx { out: [], seg: [], ci: r.n_locals, tc: r.n_locals + 1, before: before, else_of: [], end_of: [], carry: [], tmps: tmps, live: [], saves: [], why: "" };
   if (count == 0) {
     return Tx { ...t, out: ops };
   }
@@ -287,6 +371,34 @@ function run(r: irtables.LowerResult, set: Set): Tx {
   }
   t = flush(t);
   return Tx { ...t, out: util.append_all(prologue(t, r), t.out) };
+}
+
+// stored_results is the body with every site whose value is used in place —
+// a condition, an operand, an argument — storing it to a slot the pass adds
+// and loading it back, so each site is a call and its result's store, the
+// shape the rewrite resumes at. The second result is the added slots'
+// classes. A site with no known result class is left as it is, for site to
+// refuse.
+function stored_results(r: irtables.LowerResult, set: Set): (ir.Op[], string[]) {
+  let none: Tx = Tx { out: [], seg: [], ci: r.n_locals, tc: r.n_locals + 1, before: [], else_of: [], end_of: [], carry: [], tmps: [], live: [], saves: [], why: "" };
+  let out: ir.Op[] = [];
+  let tmps: string[] = [];
+  let i: i32 = 0;
+  while (i < r.ops.len()) {
+    let o: ir.Op = r.ops[i];
+    out = out.append(o);
+    if (is_site(o, set) && ir.op_pushes(o) == 1 && group_end(r.ops, i) < 0) {
+      let class: string = value_class(none, r, set, o);
+      if (class != "") {
+        let slot: i32 = r.n_locals + 2 + tmps.len();
+        tmps = tmps.append(class);
+        out = out.append(ir.op_store_local(slot));
+        out = out.append(ir.op_load_local(slot));
+      }
+    }
+    i = i + 1;
+  }
+  return (out, tmps);
 }
 
 // The op index where an if's then-arm ends: its else, or its end.

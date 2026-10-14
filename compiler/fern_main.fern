@@ -13,6 +13,7 @@
 // command line (the bootstrap chain and the tests).
 
 import "./fern";
+import "./pkgfetch";
 import "./util";
 import "std/crypto";
 
@@ -21,32 +22,7 @@ function main(): i32 {
   if (root.len() == 0) {
     return 1;
   }
-  return util.arr_push_cliff_report("fern", fern.run_with(args(), root));
-}
-
-// cache_base is $FERN_CACHE_DIR, else $XDG_CACHE_HOME/fern, else
-// $HOME/.cache/fern — the directories the package store and the certifier
-// memo use.
-function cache_base(): string {
-  match (env("FERN_CACHE_DIR")) {
-    Some(d) => {
-      return d;
-    },
-    None => {}
-  }
-  match (env("XDG_CACHE_HOME")) {
-    Some(x) => {
-      return x + "/fern";
-    },
-    None => {}
-  }
-  match (env("HOME")) {
-    Some(h) => {
-      return h + "/.cache/fern";
-    },
-    None => {}
-  }
-  return "";
+  return util.arr_push_cliff_report("fern", fern.run_with(args(), root, fern.Fetcher { fetch: pkgfetch.fetch }));
 }
 
 // stdlib_digest names the embedded tree by the SHA-256 of every asset's name
@@ -65,7 +41,7 @@ function stdlib_digest(): string {
 // directory and renamed into place, so a reader never sees a partial tree;
 // losing that rename to a concurrent `fern` leaves the winner's identical tree.
 function stdlib_root(): string {
-  let base: string = cache_base();
+  let base: string = util.cache_base();
   if (base.len() == 0) {
     eprint("fern: no cache directory for the stdlib: set FERN_CACHE_DIR, XDG_CACHE_HOME or HOME");
     return "";

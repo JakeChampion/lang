@@ -1,0 +1,366 @@
+// compiler/pkgfetch.fern — downloading a url dependency into the package
+// store (modloader.store_root): the archive is fetched over HTTP(S), checked
+// against the sha256 the manifest or the lock records, and its gzip'd tar
+// unpacked into the directory that hash names. Only the shipped `fern`
+// (fern_main.fern) links it: the pinned stage0 cannot compile std/fetch, so
+// fern.fern takes it as a value (fern.Fetcher).
+//
+// The unpack writes into a private directory beside the store and renames it
+// into place, so a reader never sees a partial package. An archive whose
+// entries all sit under one top-level directory (the shape `git archive` and
+// release tarballs have) is unpacked from inside it.
+
+import "std/crypto";
+import "std/deflate";
+import "std/fetch";
+import "std/http";
+import "./fern";
+import "./modloader";
+import "./util";
+
+// MAX_ARCHIVE bounds a download, and MAX_UNPACKED what it may inflate to.
+const MAX_ARCHIVE: i32 = 67108864;
+
+const MAX_UNPACKED: i32 = 536870912;
+
+// fetch is a fern.Fetcher: the archive at `url`, which must hash to `hash`
+// unless `hash` is empty, unpacked into the store.
+pub function fetch(url: string, hash: string): fern.Fetched {
+  let (raw, derr) = download(url);
+  if (derr.len() > 0) {
+    return failed(derr);
+  }
+  let got: string = "sha256:" + crypto.sha256_new().update_array(raw).final_hex();
+  if (hash.len() > 0 && got != hash) {
+    return failed("fetch " + url + ": hash mismatch — manifest declares " + hash + ", server sent " + got + "; refusing to unpack");
+  }
+  let dir: string = "";
+  match (modloader.store_dir(got)) {
+    Some(d) => {
+      dir = slice_unchecked(d, 0, d.len() - 1) + "";
+    },
+    None => {
+      return failed("fetch " + url + ": no cache directory for the package store: set FERN_CACHE_DIR, XDG_CACHE_HOME or HOME");
+    }
+  }
+  if (util.is_dir(dir)) {
+    return fern.Fetched { hash: got, dir: dir, err: "" };
+  }
+  let uerr: string = unpack_into(dir, raw);
+  if (uerr.len() > 0) {
+    return failed("fetch " + url + ": " + uerr);
+  }
+  return fern.Fetched { hash: got, dir: dir, err: "" };
+}
+
+function failed(err: string): fern.Fetched {
+  return fern.Fetched { hash: "", dir: "", err: err };
+}
+
+// download is the body `url` answers with, or why there is none. The archive
+// is hashed as the server sent it, so the request asks for no content coding.
+function download(url: string): (u8[], string) {
+  let limits: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: MAX_ARCHIVE };
+  let req: fetch.Request = fetch.get(url).with_header("Accept-Encoding", "identity").with_limits(limits);
+  match (fetch.send(req)) {
+    Ok(resp) => {
+      if (resp.status != 200) {
+        return ([], "fetch " + url + ": HTTP " + util.i32_to_string(resp.status));
+      }
+      return (resp.body_bytes(), "");
+    },
+    Err(e) => {
+      return ([], "fetch " + url + ": " + e.message());
+    }
+  }
+  return ([], "fetch " + url + ": no response");
+}
+
+// unpack_into writes the gzip'd tar `raw` to `dir`, or says why it cannot.
+function unpack_into(dir: string, raw: u8[]): string {
+  let tar: u8[] = [];
+  match (deflate.gunzip(raw, MAX_UNPACKED)) {
+    Ok(b) => {
+      tar = b;
+    },
+    Err(e) => {
+      return "not a gzip archive";
+    }
+  }
+  let parent: string = util.dir_of(dir);
+  let suffix: string = "";
+  for b in random_bytes(6) {
+    suffix = suffix + util.i32_to_string(b as i32);
+  }
+  let tmp: string = parent + "/.unpack-" + suffix;
+  let err: string = write_entries(tmp, tar);
+  if (err.len() == 0) {
+    err = install(tmp, dir);
+  }
+  match (remove_dir_all(tmp)) {
+    Ok(_) => {},
+    Err(_) => {}
+  }
+  return err;
+}
+
+// install renames the unpacked tree into place: from inside its one top-level
+// directory when it has exactly one. Losing the rename to a concurrent fetch
+// of the same archive leaves the winner's identical tree, which is success.
+function install(tmp: string, dir: string): string {
+  let src: string = tmp;
+  match (read_dir(tmp)) {
+    Ok(names) => {
+      if (names.len() == 1 && util.is_dir(tmp + "/" + names[0])) {
+        src = tmp + "/" + names[0];
+      }
+    },
+    Err(_) => {}
+  }
+  match (rename(src, dir)) {
+    Ok(_) => {
+      return "";
+    },
+    Err(e) => {
+      if (util.is_dir(dir)) {
+        return "";
+      }
+      return "cannot install " + dir + ": " + util.io_error_reason(e);
+    }
+  }
+  return "";
+}
+
+// Entry is one tar member: its path, type flag, and where its contents lie in
+// the archive.
+struct Entry { name: string, kind: u8, at: i32, size: i32 }
+
+// write_entries walks the tar `t` (512-byte headers, contents padded to the
+// next block) and writes its files and directories under `tmp`. A pax
+// extended header's `path` names the entry after it, a GNU `L` entry's
+// contents do the same, and a pax global header is skipped. Any other kind
+// of entry, and any path leaving the package directory, is refused.
+function write_entries(tmp: string, t: u8[]): string {
+  match (create_dir_all(tmp)) {
+    Ok(_) => {},
+    Err(e) => {
+      return "cannot create " + tmp + ": " + util.io_error_reason(e);
+    }
+  }
+  let next_name: string = "";
+  let off: i32 = 0;
+  while (off + 512 <= t.len() && t[off] != 0) {
+    let e: Entry = header(t, off);
+    if (e.size < 0 || e.at + e.size > t.len()) {
+      return "reading tar: truncated archive";
+    }
+    off = e.at + (e.size + 511) / 512 * 512;
+    if (e.kind == b'g') {
+      continue;
+    }
+    if (e.kind == b'x') {
+      next_name = pax_path(t, e.at, e.size);
+      continue;
+    }
+    if (e.kind == b'L') {
+      next_name = c_string(t, e.at, e.size);
+      continue;
+    }
+    if (next_name.len() > 0) {
+      e = Entry { ...e, name: next_name };
+      next_name = "";
+    }
+    let err: string = write_entry(tmp, t, e);
+    if (err.len() > 0) {
+      return err;
+    }
+  }
+  return "";
+}
+
+function write_entry(tmp: string, t: u8[], e: Entry): string {
+  let name: string = clean(e.name);
+  if (name == ".") {
+    return "";
+  }
+  if (name.len() == 0 || name[0] == b'/' || name == ".." || util.str_has_prefix(name, "../")) {
+    return "archive entry " + quoted(e.name) + " escapes the package directory";
+  }
+  let dst: string = tmp + "/" + name;
+  if (e.kind == b'5') {
+    return made(create_dir_all(dst), dst);
+  }
+  if (e.kind != b'0' && e.kind != 0) {
+    return "archive entry " + quoted(e.name) + " has unsupported type " + util.i32_to_string(e.kind as i32) + " (only files and directories)";
+  }
+  let err: string = made(create_dir_all(util.dir_of(dst)), util.dir_of(dst));
+  if (err.len() > 0) {
+    return err;
+  }
+  match (write_file_bytes(dst, bytes(t, e.at, e.at + e.size))) {
+    Ok(_) => {},
+    Err(we) => {
+      return "cannot write " + dst + ": " + util.io_error_reason(we);
+    }
+  }
+  return "";
+}
+
+function made(r: Result[void, IoError], path: string): string {
+  match (r) {
+    Ok(_) => {
+      return "";
+    },
+    Err(e) => {
+      return "cannot create " + path + ": " + util.io_error_reason(e);
+    }
+  }
+  return "";
+}
+
+// header reads the tar header at `off`: a ustar `prefix` joins onto the name.
+function header(t: u8[], off: i32): Entry {
+  let name: string = c_string(t, off, 100);
+  if (c_string(t, off + 257, 5) == "ustar") {
+    let prefix: string = c_string(t, off + 345, 155);
+    if (prefix.len() > 0) {
+      name = prefix + "/" + name;
+    }
+  }
+  return Entry { name: name, kind: t[off + 156], at: off + 512, size: octal(t, off + 124, 12) };
+}
+
+// c_string is the NUL-terminated text in t[at..at+n].
+function c_string(t: u8[], at: i32, n: i32): string {
+  let end: i32 = at;
+  while (end < at + n && t[end] != 0) {
+    end = end + 1;
+  }
+  return string_from_bytes_unchecked(bytes(t, at, end));
+}
+
+// bytes is a copy of t[from..to].
+function bytes(t: u8[], from: i32, to: i32): u8[] {
+  let out: u8[] = [];
+  let i: i32 = from;
+  while (i < to) {
+    out = out.append(t[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// octal is the octal number in t[at..at+n], or -1 when a digit is out of
+// range; spaces and NULs around it are ignored.
+function octal(t: u8[], at: i32, n: i32): i32 {
+  let v: i32 = 0;
+  let i: i32 = at;
+  while (i < at + n) {
+    let c: u8 = t[i];
+    if (c >= b'0' && c <= b'7') {
+      v = v * 8 + (c - b'0') as i32;
+    } else if (c != b' ' && c != 0) {
+      return 0 - 1;
+    }
+    i = i + 1;
+  }
+  return v;
+}
+
+// pax_path is the `path` record of a pax extended header, "" when it has
+// none. Each record is `LEN key=value\n`, LEN counting the whole record.
+function pax_path(t: u8[], at: i32, size: i32): string {
+  let i: i32 = at;
+  while (i < at + size) {
+    let sp: i32 = i;
+    while (sp < at + size && t[sp] != b' ') {
+      sp = sp + 1;
+    }
+    let len: i32 = decimal(t, i, sp);
+    if (len <= 0 || i + len > at + size) {
+      return "";
+    }
+    let rec: string = string_from_bytes_unchecked(bytes(t, sp + 1, i + len - 1));
+    if (util.str_has_prefix(rec, "path=")) {
+      return slice_unchecked(rec, 5, rec.len()) + "";
+    }
+    i = i + len;
+  }
+  return "";
+}
+
+// decimal reads the decimal number in t[from..to].
+function decimal(t: u8[], from: i32, to: i32): i32 {
+  let v: i32 = 0;
+  let i: i32 = from;
+  while (i < to) {
+    if (t[i] < b'0' || t[i] > b'9') {
+      return 0 - 1;
+    }
+    v = v * 10 + (t[i] - b'0') as i32;
+    i = i + 1;
+  }
+  return v;
+}
+
+// clean is a slash-separated path with `.` segments, empty segments and a
+// trailing slash dropped, and `..` folded where it can be; a path that climbs
+// out keeps its leading `..`.
+function clean(p: string): string {
+  let segs: string[] = [];
+  let lead: string = "";
+  if (p.len() > 0 && p[0] == b'/') {
+    lead = "/";
+  }
+  for seg in split(p) {
+    if (seg == ".." && segs.len() > 0 && segs[segs.len() - 1] != "..") {
+      segs = drop_last(segs);
+    } else if (seg.len() > 0 && seg != ".") {
+      segs = segs.append(seg);
+    }
+  }
+  if (segs.len() == 0) {
+    if (lead.len() > 0) {
+      return "/";
+    }
+    return ".";
+  }
+  let out: string = lead;
+  let i: i32 = 0;
+  while (i < segs.len()) {
+    if (i > 0) {
+      out = out + "/";
+    }
+    out = out + segs[i];
+    i = i + 1;
+  }
+  return out;
+}
+
+function split(p: string): string[] {
+  let out: string[] = [];
+  let start: i32 = 0;
+  let i: i32 = 0;
+  while (i <= p.len()) {
+    if (i == p.len() || p[i] == b'/') {
+      out = out.append(slice_unchecked(p, start, i) + "");
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function drop_last(xs: string[]): string[] {
+  let out: string[] = [];
+  let i: i32 = 0;
+  while (i + 1 < xs.len()) {
+    out = out.append(xs[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+function quoted(s: string): string {
+  return "\"" + s + "\"";
+}

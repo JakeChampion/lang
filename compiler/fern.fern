@@ -16,15 +16,16 @@
 //     fern -interp <entry.fern>             evaluate; exit = program result
 //     fern -fmt [-w | -d] <entry.fern>      format to stdout / in place / as a diff
 //     fern -targets                         list the targets + capabilities
-//     fern -resolve <ABS-DIR>               run MVS; write fern.lock
+//     fern -resolve [DIR]                   run MVS; write fern.lock
 //     fern -tangle <doc.fern.md>            literate: emit the tangled source
 //     fern -weave [-html] <doc.fern.md>     literate: render it for reading
 //     fern -doctest <doc.fern.md>           literate: run its `test` examples
 //     fern -repl                            an interactive interpreter session
 //     fern -effects <entry.fern>            per-function effect rows
 //     fern -doc <module.fern | DIR>         Markdown reference pages
-//     fern -add NAME SPEC <ABS-DIR>         declare a dependency
-//     fern -vendor <ABS-DIR>                flatten the dep graph into vendor/
+//     fern -add NAME SPEC [DIR]             declare a dependency
+//     fern -vendor [DIR]                    flatten the dep graph into vendor/
+//     fern -fetch [DIR]                     download url dependencies into the store
 //     fern -lsp [stdlib]                    a language server on stdin/stdout
 //
 // A target is `<isa>-<environment>` (#6529 / #6635): the ISA half picks the
@@ -1150,7 +1151,7 @@ function usage(): i32 {
   eprint("       fern -shared [-export NAME,...] -o OUT.so <entry.fern> [stdlib-root]  (a shared object exporting the named functions, main by default)");
   eprint("       fern -fmt [-w | -d | -o OUT] FILE...          (-w overwrites each file, -d prints unified diffs; -o takes one FILE)");
   eprint("       fern -targets                                (list supported targets + capabilities)");
-  eprint("       fern -resolve <ABS-DIR>                      (run MVS over the manifest's index; write fern.lock)");
+  eprint("       fern -resolve [DIR]                          (run MVS over the manifest's index; write fern.lock)");
   eprint("       fern -tangle <doc.fern.md>                   (literate: emit the tangled Fern source)");
   eprint("       fern -weave [-html] <doc.fern.md>            (literate: woven Markdown, or an HTML page)");
   eprint("       fern -doctest <doc.fern.md>                  (literate: run the `test` examples, TAP)");
@@ -1158,8 +1159,9 @@ function usage(): i32 {
   eprint("       fern -effects <entry.fern>                   (the effect row of every function)");
   eprint("       fern -doc [-o OUT] <module.fern>             (Markdown reference page; stdout without -o)");
   eprint("       fern -doc -o OUTDIR <DIR>                    (one page per module under DIR)");
-  eprint("       fern -add NAME SPEC <ABS-DIR>                (declare a dependency: path:DIR | workspace)");
-  eprint("       fern -vendor <ABS-DIR>                       (flatten the dependency graph into vendor/)");
+  eprint("       fern -add NAME SPEC [DIR]                    (declare a dependency: path:DIR | url:URL | workspace)");
+  eprint("       fern -vendor [DIR]                           (flatten the dependency graph into vendor/)");
+  eprint("       fern -fetch [DIR]                            (download url dependencies into the package store)");
   eprint("       fern -lsp [-target T] [-embed DIR] [stdlib-root]  (language server on stdin/stdout: -check's diagnostics, -fmt)");
   return 2;
 }
@@ -1388,16 +1390,9 @@ function find_manifest_dir(dir: string): string {
 // the lock, never the index (the no-build-time-network constraint), so this
 // is the step that makes the following build offline.
 //
-// Two deliberate departures from native's `fern -resolve`. DIR must be
-// absolute: there is no working-directory builtin, and a lock recording a
-// path resolved against the wrong root is worse than a refusal. And a url
-// source cannot be materialised — fetching is native-only — so an index
-// entry MVS actually selects by url is a diagnostic rather than a download.
-function run_resolve(start: string): i32 {
-  if (start.len() == 0 || start[0] != b'/') {
-    eprint("resolve: pass an absolute path (this driver has no working-directory builtin)");
-    return 2;
-  }
+// A version MVS selects from a url source is fetched and verified into the
+// package store, which is also what makes the following build offline.
+function run_resolve(start: string, fetcher: Fetcher): i32 {
   let dir: string = start;
   match (read_file(start)) {
     Ok(s) => {
@@ -1460,8 +1455,13 @@ function run_resolve(start: string): i32 {
   while (st.err.len() == 0 && !mvs.done(st)) {
     let src: mvs.Source = mvs.index_source(ix, st.need_pkg, st.need_ver);
     if (src.path.len() == 0) {
-      st = mvs.fail(st, "url sources need `fern -fetch`, which this driver does not have");
-    } else {
+      let got: Fetched = fetch_into_store(fetcher, src.url, src.hash);
+      src = mvs.Source { ...src, path: got.dir };
+      if (got.err.len() > 0) {
+        st = mvs.fail(st, st.need_pkg + "@" + st.need_ver + ": " + got.err);
+      }
+    }
+    if (st.err.len() == 0) {
       let dsrc: string = "";
       let dok: boolean = false;
       match (read_file(src.path + "/fern.toml")) {
@@ -1501,30 +1501,26 @@ function run_resolve(start: string): i32 {
   return 0;
 }
 
-// run_add implements `-add NAME SPEC <ABS-DIR>`: append a declared dependency
-// to the nearest fern.toml. SPEC selects the source — `path:../helper`,
-// `workspace`, or `url:https://…`, which this driver refuses (recording the
-// archive's sha256 means fetching it, and fetching stays native's `-fetch`).
+// run_add implements `-add NAME SPEC [DIR]`: append a declared dependency to
+// the fern.toml governing DIR (the working directory by default). SPEC selects
+// the source — `path:../helper`, `workspace`, or `url:https://…`, which is
+// downloaded to record its archive's sha256 (and leaves it in the store).
 //
 // The manifest is edited TEXTUALLY, so existing formatting and comments
 // survive: a dependency is a line spliced into `[dependencies]`, not a
 // re-render of a parsed tree.
-function run_add(pos: string[]): i32 {
+function run_add(pos: string[], fetcher: Fetcher): i32 {
   if (pos.len() < 2) {
     eprint("usage: fern -add NAME SPEC   (SPEC = path:../dir | url:https://… | workspace)");
     return 1;
   }
   let name: string = pos[0];
   let spec: string = pos[1];
-  if (pos.len() < 3) {
-    eprint("add: pass the package directory (this driver has no working-directory builtin)");
-    return 2;
+  let dir: string = "";
+  if (pos.len() > 2) {
+    dir = pos[2];
   }
-  let dir: string = pos[2];
-  if (!mvs.is_abs(dir)) {
-    eprint("add: pass an absolute directory (this driver has no working-directory builtin)");
-    return 2;
-  }
+  dir = abs_dir(dir);
   if (!valid_dep_name(name)) {
     eprint("add: invalid dependency name " + mvs.quoted(name) + " (letters, digits, `_`, `-`; must not start with a digit)");
     return 1;
@@ -1550,8 +1546,18 @@ function run_add(pos: string[]): i32 {
     }
     line = name + " = { path = " + mvs.quoted(p) + " }";
   } else if (spec.len() >= 4 && slice_unchecked(spec, 0, 4) == "url:") {
-    eprint("add: a url dependency records the archive's sha256, which means fetching it — use the native `fern -add` (this driver has no fetcher)");
-    return 1;
+    let u: string = slice_unchecked(spec, 4, spec.len()) + "";
+    if (!util.str_has_prefix(u, "https://") && !util.str_has_prefix(u, "http://")) {
+      eprint("add: url must be http(s), got " + mvs.quoted(u));
+      return 1;
+    }
+    eprint("fetching " + u + " to compute its hash…");
+    let got: Fetched = fetcher.fetch(u, "");
+    if (got.err.len() > 0) {
+      eprint("add: " + got.err);
+      return 1;
+    }
+    line = name + " = { url = " + mvs.quoted(u) + ", hash = " + mvs.quoted(got.hash) + " }";
   } else {
     eprint("add: unrecognised source " + mvs.quoted(spec) + " — use path:DIR, url:HTTPS_URL, or workspace");
     return 1;
@@ -1652,23 +1658,117 @@ struct VendorSrc { dir: string, err: string }
 // parallel arrays, plus the first error that stopped the walk.
 struct VendorSet { names: string[], srcs: string[], err: string }
 
-// run_vendor implements `-vendor <ABS-DIR>`: flatten the whole transitive
+// fetch_into_store is the store directory of the archive `url` serves, which
+// must hash to `hash`: already there, or downloaded and verified now.
+function fetch_into_store(fetcher: Fetcher, url: string, hash: string): Fetched {
+  let have: string = store_dir(hash);
+  if (have.len() > 0) {
+    return Fetched { hash: hash, dir: have, err: "" };
+  }
+  return fetcher.fetch(url, hash);
+}
+
+// FetchWalk is `-fetch`'s progress: the manifest directories walked and the
+// archives downloaded.
+struct FetchWalk { seen: string[], fetched: i32, err: string }
+
+// run_fetch implements `-fetch [DIR]`: download every url dependency the
+// package governing DIR declares, and its dependencies declare, into the
+// package store, then every url-sourced version its fern.lock pins. A build
+// only reads the store (no build-time network), so this is the step that
+// makes the next build possible.
+function run_fetch(start: string, fetcher: Fetcher): i32 {
+  let dir: string = start;
+  if (!util.is_dir(start)) {
+    dir = util.dir_of(start);
+  }
+  let mdir: string = find_manifest_dir(dir);
+  if (mdir.len() == 0) {
+    eprint("fetch: no fern.toml governs " + dir);
+    return 1;
+  }
+  let w: FetchWalk = fetch_walk(fetcher, FetchWalk { seen: [], fetched: 0, err: "" }, mdir);
+  if (w.err.len() == 0) {
+    w = fetch_locked(fetcher, w, mdir);
+  }
+  if (w.err.len() > 0) {
+    eprint(w.err);
+    return 1;
+  }
+  eprint("fetch: " + util.i32_to_string(w.fetched) + " downloaded, " + util.i32_to_string(w.seen.len()) + " package(s) checked");
+  return 0;
+}
+
+// fetch_walk fetches the url dependencies of the manifest in `mdir` and walks
+// on into every dependency that has a manifest of its own.
+function fetch_walk(fetcher: Fetcher, w: FetchWalk, mdir: string): FetchWalk {
+  if (str_index(w.seen, mdir) >= 0) {
+    return w;
+  }
+  let out: FetchWalk = FetchWalk { ...w, seen: w.seen.append(mdir) };
+  for d in read_manifest(mdir + "/").deps {
+    if (out.err.len() > 0) {
+      return out;
+    }
+    let ddir: string = "";
+    if (d.kind == "url") {
+      if (store_dir(d.hash).len() == 0) {
+        eprint("fetching " + d.name + " (" + d.url + ")");
+        out = FetchWalk { ...out, fetched: out.fetched + 1 };
+      }
+      let got: Fetched = fetch_into_store(fetcher, d.url, d.hash);
+      if (got.err.len() > 0) {
+        return FetchWalk { ...out, err: "dependency " + mvs.quoted(d.name) + ": " + got.err };
+      }
+      ddir = got.dir;
+    } else if (d.kind == "path") {
+      ddir = vendor_dep_dir(mdir, d).dir;
+    }
+    if (ddir.len() > 0 && has_manifest(ddir)) {
+      out = fetch_walk(fetcher, out, ddir);
+    }
+  }
+  return out;
+}
+
+// fetch_locked fetches every url-sourced version `mdir`'s fern.lock pins.
+function fetch_locked(fetcher: Fetcher, w: FetchWalk, mdir: string): FetchWalk {
+  let lsrc: string = "";
+  match (read_file(mdir + "/fern.lock")) {
+    Ok(s) => {
+      lsrc = s;
+    },
+    Err(e) => {
+      return w;
+    }
+  }
+  let lr: fern_toml.LockResult = fern_toml.parse_lock(lsrc);
+  if (lr.err.len() > 0) {
+    return FetchWalk { ...w, err: mdir + "/" + lr.err };
+  }
+  let out: FetchWalk = w;
+  for e in lr.entries {
+    if (e.url.len() > 0 && store_dir(e.hash).len() == 0) {
+      eprint("fetching " + e.name + "@" + e.version + " (" + e.url + ")");
+      let got: Fetched = fetcher.fetch(e.url, e.hash);
+      if (got.err.len() > 0) {
+        return FetchWalk { ...out, err: "locked dependency " + mvs.quoted(e.name) + ": " + got.err };
+      }
+      out = FetchWalk { ...out, fetched: out.fetched + 1 };
+    }
+  }
+  return out;
+}
+
+// run_vendor implements `-vendor [DIR]`: flatten the whole transitive
 // dependency graph of the manifest governing DIR into `<root>/vendor/<name>/`,
 // one directory per package keyed by its manifest `name`. After vendoring, a
 // build resolves every declared dependency out of vendor/ and reaches neither
 // the deps' original locations nor the network — which is what makes the
 // vendored tree the offline artefact.
 //
-// DIR must be absolute, the same departure `-resolve` and `-add` take: there
-// is no working-directory builtin, and a vendor tree written under the wrong
-// root is worse than a refusal. A url dependency is copied FROM the store, so
-// it is reachable here — populating the store is `fern -fetch`, which is still
-// native's.
+// A url dependency is copied FROM the store, which `fern -fetch` populates.
 function run_vendor(start: string): i32 {
-  if (!mvs.is_abs(start)) {
-    eprint("vendor: pass an absolute path (this driver has no working-directory builtin)");
-    return 2;
-  }
   let dir: string = start;
   if (!util.is_dir(start)) {
     let readable: boolean = false;
@@ -1870,41 +1970,13 @@ function vendor_locked_dir(mdir: string, name: string): VendorSrc {
     + "/fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
 }
 
-// store_dir returns the content-addressed store directory holding the archive
-// for a `sha256:<hex>` hash, or "" when it is absent (or the hash is not one).
-// Mirrors native pkgcache.Root(): an explicit $FERN_CACHE_DIR wins and is NOT
-// fallen through on a miss; otherwise the user cache dir is $XDG_CACHE_HOME,
-// else $HOME/.cache — with $HOME/Library/Caches tried as the darwin sibling.
-// Read-only: the store is populated and sha256-verified by `fern -fetch`.
-//
-// The hash is re-validated here even though every parse boundary already does:
-// the hex is joined onto the store root, so a later route reaching this
-// unchecked would be a directory traversal (#8464).
+// store_dir returns the store directory holding the archive for a
+// `sha256:<hex>` hash (modloader.store_dir), or "" when it is absent or the
+// hash is not one.
 function store_dir(hash: string): string {
-  let hr: fern_toml.HashResult = fern_toml.validate_hash(hash);
-  if (hr.err.len() > 0) {
-    return "";
-  }
-  let hex: string = hr.hex;
-  match (env("FERN_CACHE_DIR")) {
+  match (modloader.store_dir(hash)) {
     Some(d) => {
-      return dir_or_empty(d + "/pkgs/" + hex);
-    },
-    None => {}
-  }
-  match (env("XDG_CACHE_HOME")) {
-    Some(x) => {
-      return dir_or_empty(x + "/fern/pkgs/" + hex);
-    },
-    None => {}
-  }
-  match (env("HOME")) {
-    Some(h) => {
-      let linux: string = dir_or_empty(h + "/.cache/fern/pkgs/" + hex);
-      if (linux.len() > 0) {
-        return linux;
-      }
-      return dir_or_empty(h + "/Library/Caches/fern/pkgs/" + hex);
+      return dir_or_empty(slice_unchecked(d, 0, d.len() - 1) + "");
     },
     None => {}
   }
@@ -4067,13 +4139,52 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
 }
 
 function run(): i32 {
-  return run_with(args(), "");
+  return run_with(args(), "", no_fetcher());
+}
+
+// Fetched is what downloading a url dependency came to: the archive's sha256,
+// the store directory it was unpacked into, and why it failed, "" when it did
+// not.
+pub struct Fetched { hash: string, dir: string, err: string }
+
+// Fetcher downloads a url dependency into the package store
+// (modloader.store_root), checked against the hash it must have; an empty
+// hash takes the archive that arrives and reports its hash. The shipped
+// `fern` passes pkgfetch.fetch (fern_main.fern). A build of this file alone
+// has none: the pinned stage0 cannot compile the HTTP client.
+pub struct Fetcher { fetch: (string, string) => Fetched }
+
+pub function no_fetcher(): Fetcher {
+  return Fetcher { fetch: cannot_fetch };
+}
+
+function cannot_fetch(url: string, hash: string): Fetched {
+  return Fetched { hash: "", dir: "", err: "fetching " + url + " needs the shipped `fern`; this build has no HTTP client" };
+}
+
+// abs_dir is `p` made absolute against the working directory, which an empty
+// `p` names.
+function abs_dir(p: string): string {
+  if (mvs.is_abs(p)) {
+    return p;
+  }
+  match (getcwd()) {
+    Ok(cwd) => {
+      if (p.len() == 0) {
+        return cwd;
+      }
+      return mvs.join_path(cwd, p);
+    },
+    Err(_) => {}
+  }
+  return p;
 }
 
 // run_with is the CLI over `av`. A non-empty `embedded_root` is the stdlib
 // root a build carrying its own stdlib supplies (fern_main.fern), so no
-// positional names one and every positional past the entry is the program's.
-pub function run_with(av: string[], embedded_root: string): i32 {
+// positional names one and every positional past the entry is the program's;
+// `fetcher` is how `-fetch`, `-add url:…` and `-resolve` download.
+pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i32 {
   let entry_path: string = "";
   let out_path: string = "";
   let root: string = embedded_root;
@@ -4106,6 +4217,7 @@ pub function run_with(av: string[], embedded_root: string): i32 {
   let mode_doc: boolean = false;
   let mode_add: boolean = false;
   let mode_vendor: boolean = false;
+  let mode_fetch: boolean = false;
   let mode_lsp: boolean = false;
   let mode_repl: boolean = false;
   // Every non-flag argument, in order. The compile modes read the first two
@@ -4244,6 +4356,8 @@ pub function run_with(av: string[], embedded_root: string): i32 {
       // Manifest editing: append a declared dependency. Takes NAME SPEC
       // DIR positionally, not an entry module.
       mode_add = true;
+    } else if (a == "-fetch") {
+      mode_fetch = true;
     } else if (a == "-vendor") {
       // Flatten the transitive dependency graph into <root>/vendor/.
       // Like -resolve it reads manifests, so it takes a directory.
@@ -4327,15 +4441,18 @@ pub function run_with(av: string[], embedded_root: string): i32 {
   // `-resolve` takes a directory (or any file inside the package), not an
   // entry module — it reads manifests and never compiles anything.
   if (mode_resolve) {
-    return run_resolve(entry_path);
+    return run_resolve(abs_dir(entry_path), fetcher);
+  }
+
+  // `-fetch` downloads the url dependencies a package and its dependencies
+  // declare into the package store, and those its fern.lock pins.
+  if (mode_fetch) {
+    return run_fetch(abs_dir(entry_path), fetcher);
   }
 
   // `-vendor` copies sources between directories and compiles nothing.
   if (mode_vendor) {
-    if (!have_entry) {
-      return usage();
-    }
-    return run_vendor(entry_path);
+    return run_vendor(abs_dir(entry_path));
   }
 
   // `-tangle` and `-weave` read a literate document and compile nothing;
@@ -4365,7 +4482,7 @@ pub function run_with(av: string[], embedded_root: string): i32 {
 
   // `-add` edits a manifest and compiles nothing.
   if (mode_add) {
-    return run_add(pos);
+    return run_add(pos, fetcher);
   }
 
   if (!platforms.for_target(target).known) {
