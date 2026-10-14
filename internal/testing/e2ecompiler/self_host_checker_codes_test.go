@@ -2652,6 +2652,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e031-array-arms-literal-settles-at-float-ok", "function f(c: boolean): i32 { let v = if (c) { [1.5] } else { [1] }; let u = if (c) { [[1]] } else { [[2.5]] }; return v.len() + u.len(); }\nfunction main(): i32 { return f(true); }\n", nil},
 		{"e031-array-match-arms-literal-settles-ok", "function f(k: i32, big: i32): i32 { let w: i64[] = match (k) { 0 => [-(big as i64)], _ => [2] }; return w.len(); }\nfunction main(): i32 { return f(0, 3); }\n", nil},
 		{"e031-array-arms-enum-payload-settles-at-float-ok", "function f(c: boolean): i32 { let a = if (c) { [Some(1)] } else { [Some(2.5)] }; return a.len(); }\nfunction main(): i32 { return f(true); }\n", nil},
+		{"e031-view-arms-join-ok", "function f(c: boolean, a: i64[]): i64 { let w = if (c) { a[:] } else { a[1:] }; return w[0]; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e031-owned-array-beside-view", "function f(c: boolean, s: string): i32 { let owned: u8[] = [1 as u8]; let w = if (c) { owned } else { s.as_bytes() }; return w.len(); }\nfunction main(): i32 { return 0; }\n", []string{"E031"}},
+		{"e031-match-owned-array-beside-view", "function f(c: boolean, s: string): i32 { let owned: u8[] = [1 as u8]; let w = match (c) { true => owned, _ => s.as_bytes() }; return w.len(); }\nfunction main(): i32 { return 0; }\n", []string{"E031"}},
 		{"e031-array-arms-typed-elements-differ", "function f(c: boolean, big: i32): i32 { let w = if (c) { [big as u64] } else { [big] }; return w.len(); }\nfunction main(): i32 { return f(true, 3); }\n", []string{"E031"}},
 		{"e031-array-match-arms-literal-then-typed-differ", "function f(k: i32, n: i32, m: i64): i32 { let w = match (k) { 0 => [1], 1 => [n], _ => [m] }; return w.len(); }\nfunction main(): i32 { return f(0, 1, 2i64); }\n", []string{"E031"}},
 		// E045: a map literal's first key fixes the key type, which must be

@@ -66,6 +66,8 @@ var valueBlockFloatArmCases = []struct {
 	{"array-arm-literal-match-at-i64", `function f(k: i32, big: i32): i64 { let w = match (k) { 0 => [-(big as i64)], _ => [2] }; return w[0]; } function main(): i32 { if (f(0, 3) == -3 && f(1, 3) == 2) { return 95; } return 96; }`, 95},
 	{"array-arm-literal-at-float", `function f(c: boolean): f64 { let v = if (c) { [1.5] } else { [1] }; let u = if (c) { [[1]] } else { [[2.5]] }; return v[0] + u[0][0]; } function main(): i32 { if (f(false) == 3.5 && f(true) == 2.5) { return 97; } return 98; }`, 97},
 	{"array-arm-enum-payload-at-float", `function f(c: boolean): f64 { let a = if (c) { [Some(1)] } else { [Some(2.5)] }; match (a[0]) { Some(v) => { return v; }, None => { return 0.0; } } } function main(): i32 { if (f(true) == 1.0 && f(false) == 2.5) { return 99; } return 100; }`, 99},
+	// Two view arms join as a view.
+	{"view-arms-stay-views", `function f(c: boolean, a: i64[]): i64 { let w = if (c) { a[:] } else { a[1:] }; let u = if (c) { [a[0]] } else { [7] }; return w[0] + u[0]; } function main(): i32 { let a: i64[] = [3, 4]; if (f(false, a) == 11 && f(true, a) == 6) { return 101; } return 102; }`, 101},
 }
 
 // TestSelfHostValueBlockFloatArmX86_64 runs each case as a self-host x86-64
