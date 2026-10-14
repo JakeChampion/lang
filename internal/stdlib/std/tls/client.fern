@@ -16,13 +16,16 @@
 
 import "core/int";
 import "std/dns";
+import "std/i32";
 import "std/net";
 import "std/tcp";
 import "std/time";
 import "std/tls/handshake";
 import "std/tls/identity";
 import "std/tls/keyschedule";
+import "std/tls/ktls";
 import "std/tls/message";
+import "std/tls/record";
 import "std/tls/verify";
 import "std/tls/x509";
 
@@ -75,8 +78,13 @@ pub enum TlsError {
   HandshakeTimeout,
   ClosedEarly,
   RecordCut,
+  // The kernel's TLS record layer refused a KeyUpdate's keys, with the
+  // errno: Linux before 6.14 takes one key per direction.
+  KeysRefused(i32),
 }
 
+// One arm per variant.
+// fern-lint: allow cyclomatic-complexity
 pub function (e: TlsError) message(): string {
   match (e) {
     HandshakeFailed(h) => {
@@ -105,6 +113,9 @@ pub function (e: TlsError) message(): string {
     },
     RecordCut => {
       return "the peer closed the connection inside a record";
+    },
+    KeysRefused(errno) => {
+      return "the kernel's TLS record layer refused new keys (errno " + errno.to_string() + "); Linux before 6.14 takes one key per direction";
     }
   }
   return "";
@@ -124,9 +135,10 @@ pub function (f: Failure) message(): string {
 }
 
 // Step — the session after a call, the bytes to send, the application data
-// read, whether the peer has sent close_notify, and the tickets the server
-// issued, to keep for `with_ticket`.
-pub struct Step { session: Session, output: u8[], data: u8[], closed: boolean, tickets: Ticket[] }
+// read, whether the peer has sent close_notify, the tickets the server
+// issued, to keep for `with_ticket`, and, once offloaded, the keys a
+// KeyUpdate gave the kernel to take next.
+pub struct Step { session: Session, output: u8[], data: u8[], closed: boolean, tickets: Ticket[], rekeyed: handshake.KernelKeys }
 
 // start begins a handshake; send `output`, then feed what arrives to `read`.
 pub function start(config: Config): Result[Step, TlsError] {
@@ -144,7 +156,7 @@ pub function start(config: Config): Result[Step, TlsError] {
   match (handshake.client_start(hc, random_bytes(handshake.client_entropy(hc)))) {
     Ok(step) => {
       let s: Session = Session { client: step.client, name: config.server_name, roots: config.roots, identity: config.identity, held: [] };
-      return Ok(Step { session: s, output: step.output, data: [], closed: false, tickets: [] });
+      return Ok(Step { session: s, output: step.output, data: [], closed: false, tickets: [], rekeyed: __no_keys() });
     },
     Err(e) => {
       return Err(HandshakeFailed(e));
@@ -203,6 +215,7 @@ pub function (s: Session) read(input: [u8]): Result[Step, Failure] {
   let data: u8[] = [];
   let closed: boolean = false;
   let tickets: Ticket[] = [];
+  let keys: handshake.KernelKeys = __no_keys();
   let at: i32 = 0;
   while (!closed && buf.len() - at >= 5) {
     let end: i32 = at + 5 + (buf[at + 3] as i32 << 8 | buf[at + 4] as i32);
@@ -217,9 +230,10 @@ pub function (s: Session) read(input: [u8]): Result[Step, Failure] {
     for t in next.tickets {
       tickets = tickets.append(t);
     }
+    keys = keys.then(next.rekeyed);
     at = end;
   }
-  return Ok(Step { session: Session { ...session, held: __copy(buf[at:buf.len()]) }, output: output, data: data, closed: closed, tickets: tickets });
+  return Ok(Step { session: Session { ...session, held: __copy(buf[at:buf.len()]) }, output: output, data: data, closed: closed, tickets: tickets, rekeyed: keys });
 }
 
 function __record(s: Session, record: [u8]): Result[Step, Failure] {
@@ -237,17 +251,48 @@ function __record(s: Session, record: [u8]): Result[Step, Failure] {
 // write seals application data; the session must be connected.
 pub function (s: Session) write(data: [u8]): Result[Step, TlsError] {
   let step: handshake.ClientStep = __step(s.client.write(data))?;
-  return Ok(Step { session: Session { ...s, client: step.client }, output: step.output, data: [], closed: false, tickets: [] });
+  return Ok(Step { session: Session { ...s, client: step.client }, output: step.output, data: [], closed: false, tickets: [], rekeyed: __no_keys() });
 }
 
 // close is the close_notify to send; nothing more may be written.
 pub function (s: Session) close(): Result[Step, TlsError] {
   let step: handshake.ClientStep = __step(s.client.close())?;
-  return Ok(Step { session: Session { ...s, client: step.client }, output: step.output, data: [], closed: false, tickets: [] });
+  return Ok(Step { session: Session { ...s, client: step.client }, output: step.output, data: [], closed: false, tickets: [], rekeyed: __no_keys() });
+}
+
+// update_keys sends a KeyUpdate and moves to the next write key; `request`
+// asks the server to move to its next one too.
+pub function (s: Session) update_keys(request: boolean): Result[Step, TlsError] {
+  let step: handshake.ClientStep = __step(s.client.update_keys(request))?;
+  return Ok(Step { session: Session { ...s, client: step.client }, output: step.output, data: [], closed: false, tickets: [], rekeyed: handshake.rekeyed(step.client.cipher_suite(), step.events) });
+}
+
+// Offloaded — a session whose records the kernel now seals and opens
+// (std/tls/ktls), and the keys to give it.
+pub struct Offloaded { session: Session, keys: handshake.KernelKeys }
+
+// offload hands the record layer to the kernel, as server.Session.offload
+// does.
+pub function (s: Session) offload(): Option[Offloaded] {
+  if (s.held.len() != 0) {
+    return None;
+  }
+  match (s.client.offload()) {
+    Some(o) => {
+      return Some(Offloaded { session: Session { ...s, client: o.client }, keys: o.keys });
+    },
+    None => {}
+  }
+  return None;
 }
 
 pub function (s: Session) connected(): boolean {
   return s.client.connected();
+}
+
+// Whether the kernel seals and opens the session's records (`offload`).
+pub function (s: Session) offloaded(): boolean {
+  return s.client.offloaded();
 }
 
 // The protocol the server chose by ALPN, empty when none was.
@@ -355,7 +400,11 @@ function __judged(s: Session, first: handshake.ClientStep): Result[Step, Failure
     }
     i = i + 1;
   }
-  return Ok(Step { session: Session { ...s, client: c }, output: output, data: data, closed: closed, tickets: tickets });
+  return Ok(Step { session: Session { ...s, client: c }, output: output, data: data, closed: closed, tickets: tickets, rekeyed: handshake.rekeyed(c.cipher_suite(), events) });
+}
+
+function __no_keys(): handshake.KernelKeys {
+  return handshake.KernelKeys { transmit: [], receive: [] };
 }
 
 // __kept is the tickets with a new one the server issued, as the caller
@@ -551,14 +600,63 @@ function __more_tickets(own a: Ticket[], b: Ticket[]): Ticket[] {
 
 // send writes data to the server.
 pub function (c: Connection) send(data: [u8]): Result[Connection, TlsError] {
+  if (c.session.offloaded()) {
+    __send_fd(c.fd, data)?;
+    return Ok(c);
+  }
   let step: Step = c.session.write(data)?;
   __send_fd(c.fd, step.output)?;
+  return Ok(Connection { ...c, session: step.session });
+}
+
+// offload moves the connection's records into the kernel, as
+// server.Connection.offload does. A ticket the server sends afterwards
+// still reaches `tickets`.
+pub function (c: Connection) offload(): Result[Connection, TlsError] {
+  if let Some(o) = c.session.offload() {
+    match (ktls.attach(c.fd, o.keys)) {
+      ktls.Kernel => {
+        return Ok(Connection { ...c, session: o.session });
+      },
+      ktls.Unchanged => {},
+      ktls.Broken(e) => {
+        tcp_close(c.fd);
+        c.open.set(false);
+        return Err(NetFailed(net.error_from_errno(e)));
+      }
+    }
+  }
+  return Ok(c);
+}
+
+// Whether the kernel seals and opens the connection's records (`offload`).
+pub function (c: Connection) offloaded(): boolean {
+  return c.session.offloaded();
+}
+
+// update_keys sends a KeyUpdate and moves to the next write key; `request`
+// asks the server to move to its next one too. Once offloaded the kernel takes
+// the new key after the KeyUpdate it seals under the old one; a kernel
+// that refuses it (before 6.14) leaves the socket unusable, and it is
+// closed.
+pub function (c: Connection) update_keys(request: boolean): Result[Connection, TlsError] {
+  let step: Step = c.session.update_keys(request)?;
+  __send_out(c.fd, c.session, step.output)?;
+  let r: i32 = ktls.install(c.fd, step.rekeyed);
+  if (r < 0) {
+    tcp_close(c.fd);
+    c.open.set(false);
+    return Err(KeysRefused(0 - r));
+  }
   return Ok(Connection { ...c, session: step.session });
 }
 
 // recv waits at most `wait` for application data.
 pub function (c: Connection) recv(wait: Duration): Result[Received, TlsError] {
   let deadline: i64 = monotonic_ns() + wait.as_nanos();
+  if (c.session.offloaded()) {
+    return __recv_kernel(c, deadline);
+  }
   let conn: Connection = c;
   let s: Session = c.session;
   while (true) {
@@ -588,6 +686,73 @@ function __received(c: Connection, s: Session, data: u8[], ended: boolean): Rece
   return Received { conn: Connection { ...c, session: s }, data: data, ended: ended };
 }
 
+// __recv_kernel reads records the kernel opened until application data or
+// the end of the stream arrives, or the deadline passes; any other record
+// (a ticket, a KeyUpdate, an alert) goes through the session.
+function __recv_kernel(c: Connection, deadline: i64): Result[Received, TlsError] {
+  let conn: Connection = c;
+  while (true) {
+    let left: i64 = deadline - monotonic_ns();
+    if (left <= 0) {
+      return Ok(__received(conn, conn.session, [], false));
+    }
+    let next: Kerneled = __kernel_next(conn, ktls.recv(c.fd, time.duration_nanos(left)))?;
+    conn = Connection { ...conn, tickets: __more_tickets(conn.tickets, next.tickets) };
+    if (next.done) {
+      return Ok(__received(conn, next.session, next.data, next.ended));
+    }
+    conn = Connection { ...conn, session: next.session };
+  }
+  return Ok(__received(conn, conn.session, [], true));
+}
+
+// Kerneled — what one read off an offloaded socket gave: the session after
+// it, the application data, whether the stream ended, the tickets the
+// server issued, and whether it ends the wait (`done`).
+struct Kerneled { session: Session, data: u8[], ended: boolean, tickets: Ticket[], done: boolean }
+
+function __kernel_next(c: Connection, read: ktls.Read): Result[Kerneled, TlsError] {
+  let s: Session = c.session;
+  match (read) {
+    ktls.Opened(t, content) => {
+      if (t == 23) {
+        return Ok(Kerneled { session: s, data: content, ended: false, tickets: [], done: true });
+      }
+      let step: Step = __exchange(c, s, ktls.framed(t, content))?;
+      return Ok(Kerneled { session: step.session, data: step.data, ended: step.closed, tickets: step.tickets, done: step.data.len() > 0 || step.closed });
+    },
+    ktls.StreamEnded => {
+      return Ok(Kerneled { session: s, data: [], ended: true, tickets: [], done: true });
+    },
+    ktls.NothingYet => {
+      return Ok(Kerneled { session: s, data: [], ended: false, tickets: [], done: true });
+    },
+    ktls.WaitCancelled => {
+      return Err(NetFailed(net.Interrupted));
+    },
+    ktls.ReadFailed(e) => {
+      return Err(__kernel_failed(c, e));
+    }
+  }
+  return Err(ClosedEarly);
+}
+
+// __kernel_failed is a read the kernel refused: a record that did not open
+// or overflowed gets its alert, and the socket is closed either way.
+function __kernel_failed(c: Connection, errno: i32): TlsError {
+  let err: TlsError = NetFailed(net.error_from_errno(errno));
+  if (errno == 74) {
+    ktls.alert(c.fd, 20);
+    err = HandshakeFailed(handshake.Record(record.BadRecordMac));
+  } else if (errno == 90) {
+    ktls.alert(c.fd, 22);
+    err = HandshakeFailed(handshake.Record(record.RecordOverflow(0)));
+  }
+  tcp_close(c.fd);
+  c.open.set(false);
+  return err;
+}
+
 // __stream_ended is the socket's end of stream: the peer has gone, which
 // inside a record is a cut.
 function __stream_ended(c: Connection, s: Session): Result[Received, TlsError] {
@@ -614,19 +779,37 @@ function __exchange(c: Connection, s: Session, input: [u8]): Result[Step, TlsErr
 }
 
 // __exchange_fd reads input and sends what the session answers, or the
-// alert a failure calls for.
+// alert a failure calls for. Once offloaded, the keys a KeyUpdate set go to
+// the kernel after what the session answered under the old ones.
 function __exchange_fd(fd: i32, s: Session, input: [u8]): Result[Step, TlsError] {
   match (s.read(input)) {
     Ok(step) => {
-      __send_fd(fd, step.output)?;
+      __send_out(fd, s, step.output)?;
+      let r: i32 = ktls.install(fd, step.rekeyed);
+      if (r < 0) {
+        return Err(KeysRefused(0 - r));
+      }
       return Ok(step);
     },
     Err(f) => {
-      __send_fd(fd, f.alert);
+      __send_out(fd, s, f.alert);
       return Err(f.error);
     }
   }
   return Err(ClosedEarly);
+}
+
+// __send_out sends what a session wrote: records it sealed, or once
+// offloaded the records it framed for the kernel.
+function __send_out(fd: i32, s: Session, out: [u8]): Result[void, TlsError] {
+  if (!s.offloaded()) {
+    return __send_fd(fd, out);
+  }
+  let r: i32 = ktls.send_records(fd, out);
+  if (r < 0) {
+    return Err(NetFailed(net.error_from_errno(0 - r)));
+  }
+  return Ok(());
 }
 
 // close sends close_notify and closes the socket, once.
@@ -636,7 +819,7 @@ pub function (c: Connection) close(): void {
   }
   c.open.set(false);
   if let Ok(step) = c.session.close() {
-    __send_fd(c.fd, step.output);
+    __send_out(c.fd, c.session, step.output);
   }
   tcp_close(c.fd);
 }

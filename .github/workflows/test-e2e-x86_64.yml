@@ -47,8 +47,17 @@ jobs:
         run: |
           go test -c -o "$RUNNER_TEMP/e2e-x86_64.test" ./internal/testing/e2e/
           go build -o "$RUNNER_TEMP/ci-test-workers" ./cmd/ci-test-workers
+      # TestX86_64Ktls* hand TLS records to the kernel, which needs the tls
+      # upper-layer protocol; a user cannot load it on first use, so it is
+      # loaded here, and FERN_REQUIRE_KTLS below fails those tests without it.
+      - name: load the kernel's TLS record layer
+        run: |
+          sudo modprobe tls
+          grep -qw tls /proc/sys/net/ipv4/tcp_available_ulp
       - name: go test (x86_64 e2e, shard ${{ matrix.shard }}/${{ matrix.nshard }}, two workers)
         id: tests
+        env:
+          FERN_REQUIRE_KTLS: "1"
         # `^TestX86_64` covers internal/testing/e2e/x86_64_test.go +
         # cross_module_variant_test.go's X86_64 subset. The
         # trailing underscore is in the test names themselves

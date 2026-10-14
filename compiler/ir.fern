@@ -1736,6 +1736,12 @@ pub function op_tcp_recv_into(): Op {
   return op0(344);
 }
 
+// `tcp_ktls(fd, op, arg, data)`: the kernel TLS record layer on a connected
+// socket (#9858), ops 1 to 5 as asmcore.rt_src_tcp_ktls documents.
+pub function op_tcp_ktls(): Op {
+  return op0(437);
+}
+
 // `tcp_sendfile` [fd, file, max] -> i32 bytes sent (0 at the file's end, or
 // -errno): up to max bytes of the open file, from its position, moved to the
 // socket with no copy through the process; -ENOTSUP where the target has no
@@ -4006,6 +4012,9 @@ function kind_id_len8_s(name: string): i32 {
 }
 
 function kind_id_len8_t(name: string): i32 {
+  if (name == "tcp_ktls") {
+    return 437;
+  }
   if (name == "temp_dir") {
     return 174;
   }
@@ -5817,6 +5826,9 @@ pub function kind_name(id: i32): string {
   if (id == 436) {
     return "ring_wait";
   }
+  if (id == 437) {
+    return "tcp_ktls";
+  }
   if (id == 408) {
     return "pipe";
   }
@@ -6325,7 +6337,7 @@ function kind_pops(t: i32): i32 {
   if (t == 336 || t == 355) {  // udp_sendto / udp_sendto_bytes: fd + addr + port + data
     return 4;
   }
-  if (t == 342 || t == 435) {  // reactor_ctl / ring_ctl: r + op + fd + arg
+  if (t == 342 || t == 435 || t == 437) {  // reactor_ctl / ring_ctl: r + op + fd + arg; tcp_ktls: fd + op + arg + data
     return 4;
   }
   if (t == 206) {  // syscall4

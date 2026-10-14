@@ -1361,7 +1361,8 @@ address is checked against the certificate's addresses and not sent as SNI
   a ticket is only ever offered to the name it was issued to.
 - `(s).save()` and `restore(saved)` turn a connected session into bytes
   and back, for a pool that can keep only bytes. The bytes hold the
-  traffic secrets.
+  traffic secrets. An offloaded session is not saved: the kernel holds its
+  sequence numbers.
 - `Connection` is a session over a TCP socket: `connect(host, port, config,
   timeout)` resolves, races the addresses and completes the handshake
   within `timeout`; `over(fd, config, timeout)` does the handshake on a
@@ -1371,10 +1372,16 @@ address is checked against the certificate's addresses and not sent as SNI
   `c.tickets` are the tickets issued so far. A failure in `send` or `recv`
   sends the alert it calls for and closes the socket, and `close()` after
   it does nothing.
+- KeyUpdate and the kernel's record layer: `(s).update_keys(request)` and
+  `(s).offload()` on a `Session`, and `(c).update_keys(request)`,
+  `(c).offload()` and `(c).offloaded()` on a `Connection`, as on the server
+  below; a ticket the server sends after an offload still reaches
+  `c.tickets`.
 - `TlsError` is `HandshakeFailed(HandshakeError)`, `Untrusted(VerifyError)`,
   `SignatureInvalid`, `Unresolved(DnsError)`, `NetFailed(NetError)`,
-  `HandshakeTimeout`, `ClosedEarly` or `RecordCut` (closed inside a record),
-  with `message()`.
+  `HandshakeTimeout`, `ClosedEarly`, `RecordCut` (closed inside a record) or
+  `KeysRefused(errno)` (the kernel refused a KeyUpdate's keys), with
+  `message()`.
 
 ### `std/tls/der`
 
@@ -1745,13 +1752,55 @@ crypto/tls client in `TestTLSServerAgainstGo`).
   data the client sent in the same read as its Finished comes back first),
   and `(c).close()`. A failure in `send` or `recv` sends the alert it calls
   for and closes the socket, and `close()` after it does nothing.
+- KeyUpdate: `(s).update_keys(request)` on a `Session` and
+  `(c).update_keys(request)` on a `Connection` send a KeyUpdate and move to
+  the next write key, `request` asking the peer to move to its next one
+  too; a peer's KeyUpdate is answered as RFC 8446 §4.6.3 says. A step's
+  `rekeyed` holds the keys an update set while the session is offloaded.
+- The kernel's record layer (`std/tls/ktls`, Linux): `(c).offload()` hands
+  the connection's records to the kernel, which then seals what `send`
+  writes and opens what `recv` reads, and `(c).offloaded()` says whether it
+  took them. Where the kernel has no `tls` module, on Darwin and wasm, in
+  the interpreter, or while part of a record is still arriving, the
+  connection is returned as it was and goes on sealing its own; it fails
+  only when the kernel took one direction and refused the other, which
+  closes it. Alerts, KeyUpdates and tickets still go through the session,
+  framed in the clear. A kernel before 6.14 takes one key per direction,
+  so there a KeyUpdate either way ends the connection with
+  `KeysRefused`. `(s).offload()` is the sans-IO step under it: an
+  `Offloaded { session, keys }` whose `keys` are the kernel's structures
+  for each direction, or None. `TestX86_64KtlsAgainstGo` runs both ends
+  against Go's crypto/tls.
 - `TlsError` is `HandshakeFailed(HandshakeError)`, `SigningFailed`,
   `ClientCertificateMissing` (alert certificate_required),
   `ClientUntrusted(VerifyError)` (bad_certificate), `ClientSignatureInvalid`
   (decrypt_error), `ClientSchemeMismatch` (a CertificateVerify under a
   scheme the client's key cannot make; illegal_parameter),
   `NetFailed(NetError)`, `HandshakeTimeout`,
-  `ClosedEarly` or `RecordCut`, with `message()`.
+  `ClosedEarly`, `RecordCut` or `KeysRefused(errno)` (the kernel refused a
+  KeyUpdate's keys), with `message()`.
+
+### `std/tls/ktls`
+
+Linux's TLS record layer under an offloaded session's socket, which
+`server.Connection.offload` and `client.Connection.offload` use and a loop
+that owns its sockets can use the same way. `attach(fd, keys)` attaches the
+`tls` upper-layer protocol and installs the receive key, then the transmit
+key, answering `Kernel`, `Unchanged` (nothing taken; the layer passes bytes
+through until a key is installed) or `Broken(errno)` (the receive key taken
+and the transmit key refused). `install(fd, keys)` gives the kernel the keys
+a KeyUpdate set. `send_records(fd, framed)` writes what an offloaded session
+framed: application data as plain bytes and any other record with its
+content type. `recv(fd, wait)` and `read_now(fd)` read one record's content
+and type, a `Read` that is `Got(type, content)`, `Ended`, `Waited`,
+`Cancelled` or `Failed(errno)` (EBADMSG for a record that did not open);
+`framed(type, content)` is a record as a session's `read` takes it, and
+`alert(fd, code)` sends a fatal alert through the kernel. The kernel takes
+AES-128-GCM, AES-256-GCM and ChaCha20-Poly1305
+(`record.Protection.kernel_info`, pinned against the record layer in both
+directions for each suite by `TestX86_64KtlsRecords`). Under it is the
+`tcp_ktls(fd, op, arg, data)` builtin, ENOSYS on Darwin, wasm and in the
+interpreter.
 
 ### `std/tls/verify`
 
@@ -3363,7 +3412,7 @@ points that run a handler under it.
   every connection then speaks TLS 1.3, the handshake running on the
   connection's own reads and writes before its first request, each
   response sealed as it is written, and a file body read and sealed
-  rather than moved by sendfile; the protocol offered by ALPN is
+  rather than moved by sendfile unless `ktls` is set; the protocol offered by ALPN is
   `http/1.1`. A client that does not speak TLS, or whose handshake the
   server refuses, is sent the alert and closed, and the read deadline
   bounds the handshake as it bounds a request. Under `supervise` the
@@ -3396,6 +3445,16 @@ points that run a handler under it.
   than epoll where the host allows one (Linux 6.1 or later, outside a
   seccomp profile that refuses it) and on epoll elsewhere, decided as the
   loop starts (docs/NET-P7-IO-URING-PLAN.md). A handler sees no difference.
+  `ktls` (false), set by `(c).with_ktls()` or by `FERN_KTLS=1` in the
+  environment, hands each TLS connection's records to Linux's record layer
+  once its handshake is done (`std/tls/ktls`): responses are written as
+  plain bytes for the kernel to seal, a file body goes out by sendfile,
+  and the records that are not application data (close_notify, a
+  KeyUpdate) still pass through the session. A connection keeps sealing its
+  own where the kernel has no `tls` module, on Darwin and wasm, or when its
+  handshake ended mid-record or with its answer not yet written. A record
+  other than application data arriving while a handler pulls a streamed
+  body ends that body (`TestX86_64KtlsServe`).
   `proxy_protocol` (false) reads a PROXY protocol header, version 1 or 2,
   at the start of every connection, before TLS when both are set
   (`forwarded.proxy_header`): its source address becomes the connection's
@@ -3558,6 +3617,17 @@ answer is `Result[HttpResponse, FetchError]`.
   HEAD or 204 answer may still name a coding), a coding the client did
   not ask for, and a caller's own `Accept-Encoding` leave the body as it
   came. Request bodies are never compressed.
+- **kTLS:** `(req).with_ktls()`, or `FERN_KTLS=1` in the environment,
+  hands each https connection the request opens to Linux's TLS record
+  layer once its handshake is done (`std/tls/ktls`): the response is read
+  as plain bytes off the socket, the request written as plain bytes, and
+  a ticket, a KeyUpdate or the server's close_notify still pass through
+  the session. That holds over HTTP/2 and through a proxy's tunnel, and
+  for the HTTP/2 connections a serve loop drives for its handlers. A
+  connection keeps sealing its own where the kernel has no `tls` module,
+  on Darwin and wasm, under a transport with no sockets (`Transport.socket`
+  answering -1, as std/sim_fetch's does), or when the handshake ended
+  inside a record (`TestX86_64KtlsFetch`, `TestX86_64KtlsServeH2`).
 - **Retry:** a request the peer resets before any response byte (a
   reset or abort on the socket, a broken pipe, a close with nothing
   read) is sent once more when its method is idempotent
