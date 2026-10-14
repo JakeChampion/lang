@@ -96,6 +96,15 @@ func uniqueSortedCodes(in []string) []string {
 	return out
 }
 
+// Programs both checkers accept that the self-host one rejected with only its
+// uncoded fallback hint (#12382). TestSelfHostCheckerDriverX86_64 holds them to
+// exit 0; the codes table holds them to Go's (empty) code set.
+const (
+	valueMatchSettledLocal     = "function f(): u8 { let t: (u8, i32) = (5u8, 4); return match (t) { (q, n) => q }; }\nfunction g(): i64 { let t: (i64, i32) = (5000000000i64, 4); let r = match (t) { (q, n) => q }; return r; }\nfunction main(): i32 { return 0; }\n"
+	methodCallableParamBinds   = "struct Box[T] { v: T }\nfunction (b: Box[T]) app[U](d: () => U, f: (T) => U): U { return f(b.v); }\nfunction g(s: Box[i32]): i32 { let a: i32 = s.app((): i32 => 0, (x: i32): i32 => x + 1); return a; }\nfunction main(): i32 { return 0; }\n"
+	genericEnumCallablePayload = "enum Fut[T] { Done(T), Wait(i32, (i32) => Fut[T]) }\nfunction run(start: Fut[i32]): i32 { let f: Fut[i32] = start; while (true) { match (f) { Done(v) => { return v; }, Wait(tok, k) => { f = k(tok); } } } return 0; }\nfunction main(): i32 { return 0; }\n"
+)
+
 // TestSelfHostCheckerCodesX86_64 is the differential gate for the
 // self-host type-checker port: it compiles the diag-printing checker
 // driver (checker_codes_run.fern) with the Go-built self-host bundle
@@ -1164,8 +1173,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"range-expr-bounds-clean", "function main(): i32 { let n = 4; let s = 0; for i in 1..n + 1 { s = s + i; } return s; }\n", nil},
 		// Type ascription `e as T` (#2669): a zero-cost annotation. An array /
 		// string ascription draws no diagnostic from EITHER checker — the
-		// self-host only flags E033 when both sides are scalar primitives, and
-		// the Go checker accepts the cast as an upcast assignable to the target.
+		// value is assignable to the target.
 		{"asc-arr-clean", "function main(): i32 { let a = [] as i32[]; a = [1, 2]; return a[0] + a[1]; }\n", nil},
 		{"asc-str-clean", "function main(): i32 { let s = \"x\" as string; return s.len(); }\n", nil},
 		// Non-binding-position ascription (#2669) — arg / return / nested — is
@@ -1951,6 +1959,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cast-string-to-f64", "function main(): i32 { let s: string = \"x\"; let f: f64 = s as f64; return 0; }\n", []string{"E033"}},
 		{"cast-f64-to-i32-ok", "function main(): i32 { let f: f64 = 1.0; let x: i32 = f as i32; return 0; }\n", nil},
 		{"cast-i32-to-f64-ok", "function main(): i32 { let x: i32 = 1; let y: f64 = x as f64; return 0; }\n", nil},
+		// A non-scalar side: the target resolves through the program's types,
+		// and the cast is a pointer hop or an ascription the value must fit.
+		{"cast-struct-to-other-struct", "struct Point { x: i32, y: i32 }\nstruct Vec2 { x: i32, y: i32 }\nfunction f(p: Point): Vec2 { return p as Vec2; }\nfunction main(): i32 { return 0; }\n", []string{"E033"}},
+		{"cast-struct-to-i64", "struct Point { x: i32, y: i32 }\nfunction f(p: Point): i64 { return p as i64; }\nfunction main(): i32 { return 0; }\n", []string{"E033"}},
+		{"cast-i32-to-struct-e069", "struct Point { x: i32, y: i32 }\nfunction f(k: i32): i32 { let c: Point = k as Point; return c.x; }\nfunction main(): i32 { return 0; }\n", []string{"E069"}},
+		{"cast-struct-hops-and-ascription-ok", "struct Point { x: i32, y: i32 }\nfunction f(p: Point, n: usize, xs: i32[]): i32 { let a: Point = p as Point; let b: usize = p as usize; let c: Point = n as Point; let d: i32 = xs as i32; let e: i32[] = n as i32[]; return a.x + c.x + d + e.len(); }\nfunction main(): i32 { return 0; }\n", nil},
 		// Numeric-literal settling (#6654): an unsuffixed integer literal reads
 		// at the destination's type, so every one of these is clean on native
 		// and had been an over-reject here — the self-host types every numeric
@@ -3193,6 +3207,17 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"resource-named-like-builtin-option", "@import(\"local:test/res@0.1.0\", \"option\")\nresource Option;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"resource-named-like-builtin-map", "@import(\"local:test/res@0.1.0\", \"map\")\nresource Map;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"tuple-match-exhausts-the-function", "function f(t: (i32, i32)): i32 { match (t) { (0, b) => { return b; }, (a, _) => { return a; } } }\nfunction main(): i32 { return f((0, 7)); }\n", nil},
+		// A tuple-pattern value match whose value local the literal settle
+		// widened is still typed from its arm stores (#12382).
+		{"value-match-settled-local", valueMatchSettledLocal, nil},
+		{"value-match-settled-local-mismatch", "function f(): string { let t: (u8, i32) = (5u8, 4); return match (t) { (q, n) => q }; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		// A callable parameter of a method binds the method's own type
+		// variable, as a free function's does (#12382).
+		{"method-callable-param-binds", methodCallableParamBinds, nil},
+		{"method-callable-param-binds-mismatch", "struct Box[T] { v: T }\nfunction (b: Box[T]) app[U](f: (T) => U): U { return f(b.v); }\nfunction g(s: Box[i32]): i32 { let c: string = s.app((x: i32): i32 => x + 1); return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E003"}},
+		// A generic enum's callable payload keeps its signature (#12382).
+		{"generic-enum-callable-payload", genericEnumCallablePayload, nil},
+		{"generic-enum-callable-payload-mismatch", "enum Fut[T] { Done(T), Wait(i32, (i32) => Fut[T]) }\nfunction run(f: Fut[i32]): i32 { match (f) { Done(v) => { return v; }, Wait(tok, k) => { let s: string = k(tok); return 0; } } return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E003"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

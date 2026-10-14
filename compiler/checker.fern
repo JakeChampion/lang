@@ -1836,6 +1836,33 @@ function as_cast_allowed(src: typeinfo.Type, tgt: typeinfo.Type): boolean {
   return false;
 }
 
+// cast_pointer_int: an integer wide enough to carry a handle's address through
+// a pointer-hop cast — i32 / u32 (truncating, E069 on the way in) or usize.
+function cast_pointer_int(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeI32(i) = t {
+    return !i.is_char && (i.width == 32 || i.width == typeinfo.width_ptr());
+  }
+  return false;
+}
+
+// cast_pointer_shaped: a non-scalar value that is one pointer at runtime, so a
+// pointer-hop cast may take it to or from a cast_pointer_int. A view is one
+// only as the source.
+function cast_pointer_shaped(t: typeinfo.Type, source: boolean): boolean {
+  match (t) {
+    typeinfo.TypeArray(a) => {
+      return source || !a.view;
+    },
+    typeinfo.TypeStruct(_) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
 // type_from_name accepts an optional `[]` suffix on the type
 // name string (the parser currently only captures the first
 // token, but a future extension that captures `i32[]` should
@@ -4644,7 +4671,7 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
 }
 
 // type_from_name resolves a parser-side bare type-name string with NO name
-// context — the cast-target resolver, where the target is a primitive.
+// context — the builtin-signature resolver, whose spellings are primitives.
 // Unrecognised names surface as TypeUnknown so the checker can flag bogus
 // signatures without hard-failing the whole check. i32 / i64 / u32 / u64 all map
 // to a width-tagged TypeI32 (see the struct comment), which is what lets a
@@ -6926,11 +6953,9 @@ function unary_result_type(u: ast.ExprUnary, ot: typeinfo.Type, s: Scope): typei
   }
   // `x as T` desugars to the unary op `as_<T>`. The result type
   // is the target type (matching the Go checker, which returns
-  // n.Target even when the cast is invalid). Unrecognised target
-  // names (wider ints u32 / i64 / …) resolve to unknown, which is
-  // conservatively accepted downstream.
+  // n.Target even when the cast is invalid).
   if (u.op.len() > 3 && slice_unchecked(u.op, 0, 3) == "as_") {
-    return type_from_name(slice_unchecked(u.op, 3, u.op.len()));
+    return s.resolve_type(slice_unchecked(u.op, 3, u.op.len()) + "");
   }
   if (u.op == "try_") {
     return try_success_type(s, ot);
@@ -7946,9 +7971,10 @@ function collect_method_sigs(funcs: parser.FuncDecl[], tn: TypeNames): MethodSig
       for param in fd.params {
         // Same sidecar resolution as collect_func_sigs (#5986).
         pts = pts.append(param_decl_type(param, fd.type_params, tn));
-        ptn = ptn.append(param.type_name);
+        ptn = ptn.append(parser.fn_tag_spelling(param.type_name, param.fn_ret, param.fn_param_types));
       }
-      out = out.append(MethodSig { name: fd.name, receiver_type: receiver_namespace(fd.receiver_type), param_types: pts, ret_type: func_ret_type(fd, tn), ret_type_name: fd.ret_type, param_type_names: ptn, all_type_params: fd.all_type_params, type_params: fd.type_params, type_bounds: fd.bound_traits, module: fd.module, impl_trait: fd.impl_trait, line: fd.line, col: fd.col, file: decl_file_label(fd) });
+      let rtn: string = parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types);
+      out = out.append(MethodSig { name: fd.name, receiver_type: receiver_namespace(fd.receiver_type), param_types: pts, ret_type: func_ret_type(fd, tn), ret_type_name: rtn, param_type_names: ptn, all_type_params: fd.all_type_params, type_params: fd.type_params, type_bounds: fd.bound_traits, module: fd.module, impl_trait: fd.impl_trait, line: fd.line, col: fd.col, file: decl_file_label(fd) });
     }
   }
   return out;
@@ -7989,7 +8015,7 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
       // a generic-struct instantiation can recognise a field typed by a
       // type parameter (`v: T`) and substitute the concrete arg (#4346
       // piece 2).
-      ftnames = ftnames.append(elem.type_name);
+      ftnames = ftnames.append(parser.fn_tag_spelling(elem.type_name, elem.fn_ret, elem.fn_param_types));
     }
     out = out.append(StructSig { name: sd.name, field_names: fnames, field_types: ftypes, type_params: sd.type_params, field_type_names: ftnames, variant_field_names: sd.variant_field_names, derives: sd.derives, enum_owner: sd.enum_owner });
   }
@@ -14587,18 +14613,13 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
     }
   }
   // E033: an invalid `as` cast. `x as T` desugars to the
-  // unary op `as_<T>` (operand = x). The Go checker allows
-  // numeric↔numeric casts plus the string↔i32 data-pointer
-  // hops; everything else is E033. The self-host models a
-  // sound, zero-false-positive subset over the scalar types it
-  // knows (i32 / f64 / bool / string): identity, numeric↔numeric
-  // and string↔i32 are accepted (`as_cast_allowed`); any
-  // bool↔non-bool or f64↔string is E033. Both sides are guarded
-  // by `is_primitive_type`, so struct / array / string→i32
-  // pointer hops and wider-int targets (u32 / i64 → unknown)
-  // are left to the Go checker — no false positives. Positioned
-  // at the `as` keyword to match the Go checker (whose CastExpr
-  // position is the `as` token).
+  // unary op `as_<T>` (operand = x). Between scalars
+  // (`as_cast_allowed`) identity, numeric↔numeric and string↔i32
+  // are accepted. Otherwise the cast is a pointer hop
+  // (`cast_pointer_shaped`) or a type ascription the value must be
+  // coercible to; a side that does not resolve is left alone.
+  // Positioned at the `as` keyword to match the Go checker (whose
+  // CastExpr position is the `as` token).
   if (u.op.len() > 3 && slice_unchecked(u.op, 0, 3) == "as_") {
     // E071 (#5629 slice 5): a LITERAL cast to `char` must name a
     // Unicode scalar value. Keyed on the op text, not the target
@@ -14617,7 +14638,7 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
         _ => {}
       }
     }
-    let tgt: typeinfo.Type = type_from_name(slice_unchecked(u.op, 3, u.op.len()));
+    let tgt: typeinfo.Type = s.resolve_type(slice_unchecked(u.op, 3, u.op.len()) + "");
     // E047: a bare literal operand settles at the cast's type, as native's
     // cast-inner settle does; a negated or computed operand is not settled.
     if let ast.ExprNumber(_) = u.operand {
@@ -14630,13 +14651,18 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
       // 32 bits were lost when the value became i32, so this
       // recovers a corrupt pointer once the heap exceeds 4 GiB
       // (arm64-darwin). A `usize` source is pointer-width and
-      // stays allowed. Only the `string` target is modelled (an
-      // array / struct target is not is_primitive_type here),
-      // matching the sound-subset conservatism of E033/E042 above;
-      // the Go checker carries the full array/struct-target rule.
+      // stays allowed. The array / struct targets are the hop below.
       if (type_eq(tgt, t_string()) && !is_usize(cot) && (is_integer(cot) || type_eq(cot, t_u32()))) {
         out = out.append(dg_at("E069", "reinterpreting a 32-bit " + type_label(cot) + " value as the pointer-shaped type string via `as` truncates the address; carry pointer-shaped values in a usize local/param instead", u.line, u.col));
       } else if (!as_cast_allowed(cot, tgt)) {
+        out = out.append(dg_at("E033", "cannot cast " + type_label(cot) + " to " + type_label(tgt) + ": `as` converts only between numeric types", u.line, u.col));
+      }
+    } else if (!type_contains_unknown(tgt) && !type_contains_unknown(cot)) {
+      if (cast_pointer_int(cot) && cast_pointer_shaped(tgt, false)) {
+        if (!is_usize(cot)) {
+          out = out.append(dg_at("E069", "reinterpreting a 32-bit " + type_label(cot) + " value as the pointer-shaped type " + type_label(tgt) + " via `as` truncates the address; carry pointer-shaped values in a usize local/param instead", u.line, u.col));
+        }
+      } else if (!(cast_pointer_int(tgt) && cast_pointer_shaped(cot, true)) && !coercible(cot, tgt, s)) {
         out = out.append(dg_at("E033", "cannot cast " + type_label(cot) + " to " + type_label(tgt) + ": `as` converts only between numeric types", u.line, u.col));
       }
     }
@@ -26264,7 +26290,8 @@ pub function ensure_annotated_parts(mods: parser.Module[]): parser.Module[] {
 
 // vb_local_name returns the value local a value block routes its arm values
 // through — a body shaped `[let v = <zero>; <chain>; return v;]` — or "" for
-// any other body.
+// any other body. The compiler's own value local may carry the annotation
+// settle_literal_locals gave it.
 function vb_local_name(body: ast.Stmt[]): string {
   if (body.len() < 3) {
     return "";
@@ -26272,7 +26299,7 @@ function vb_local_name(body: ast.Stmt[]): string {
   let name: string = "";
   match (body[0]) {
     ast.StmtVar(v) => {
-      if (v.type_name.len() > 0 || name_has_comma(v.name)) {
+      if (v.type_name.len() > 0 && !parser.is_value_local_name(v.name) || name_has_comma(v.name)) {
         return "";
       }
       name = v.name;
