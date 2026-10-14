@@ -514,8 +514,14 @@ function steal(own r: irtables.LowerResult, f: ssasem.Func, v: i32, unique: i32)
 // wrappers that lend a record on.
 struct Held { arrays: i32[], records: i32[], fields: i32[], gated: i32[], gated_roots: i32[], gated_records: i32[], gated_fields: i32[] }
 
-function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: ssaunits.GrowTable): Held {
+function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: ssaunits.GrowTable, links: i32[]): Held {
   let out: Held = Held { arrays: [], records: [], fields: [], gated: [], gated_roots: [], gated_records: [], gated_fields: [] };
+  if (ins.kind_tag == ssasem.call_value()) {
+    return dispatch_bracketed(f, step, ins, grows, links, ssaunits.indirect_callee(), 1);
+  }
+  if (dyn_call(ins)) {
+    return dispatch_bracketed(f, step, ins, grows, links, ins.str, 0);
+  }
   if (ins.kind_tag != ssasem.call()) {
     return out;
   }
@@ -545,6 +551,59 @@ function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: s
     i = i + 1;
   }
   return out;
+}
+
+// A call through a function value or a dyn receiver names no body, so it is
+// bracketed at every position one of the bodies it may reach may grow
+// (`ssaunits.dispatched_rows`), and whole: a record's field, or a dyn value's
+// concrete box's, is grown only under the box's own count, which the bracket
+// raises. A value dying at the call is the frame's to give unless it is a
+// link, whose box may still be the caller's, and a handed parameter is
+// bracketed here, its caller's row naming no body this call reaches.
+function dispatch_bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: ssaunits.GrowTable, links: i32[], name: string, first: i32): Held {
+  let out: Held = Held { arrays: [], records: [], fields: [], gated: [], gated_roots: [], gated_records: [], gated_fields: [] };
+  let modes: i32[] = dispatch_modes(f, ins, first);
+  let i: i32 = first;
+  while (i < ins.args.len()) {
+    let v: i32 = ins.args[i];
+    let linked: boolean = v < links.len() && links[v] >= 0;
+    let last: boolean = util.index_of_i32(step.drops, v) >= 0 && ssaunits.occurrences(ins.args, v) == 1 && !linked;
+    if (i < modes.len() && modes[i] == ssaunits.borrow_mode() && !last && whole_bracketable(f.values[v]) && ssaunits.grows_buffer(grows, name, i)
+      && util.index_of_i32(out.arrays, v) < 0) {
+      out = Held { ...out, arrays: out.arrays.append(v) };
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// The mode at each operand of a dispatched call: a dyn call's contract's, and
+// for a call through a function value, lent at every slot its type does not
+// spell `own`, the callee at operand 0 included.
+function dispatch_modes(f: ssasem.Func, ins: ssa.SInst, first: i32): i32[] {
+  if (first == 0) {
+    return ssaunits.callee_modes(f, ins);
+  }
+  let out: i32[] = [ssaunits.borrow_mode()];
+  let i: i32 = 1;
+  while (i < ins.args.len()) {
+    if (ssasem.func_param_own(f.values[ins.args[0]], i - 1)) {
+      out = out.append(ssaunits.counted_mode());
+    } else {
+      out = out.append(ssaunits.borrow_mode());
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// A box a body may grow under its own count: an array, a record holding the
+// field, or a dyn value, which is its concrete's box.
+function whole_bracketable(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeDyn(_) = t {
+    return true;
+  }
+  return bracketable(t) || record_bracketable(t);
 }
 
 function holds_field(h: Held, rec: i32, field: i32): boolean {
@@ -3833,7 +3892,7 @@ function instruction(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
     return emit(r, ir.op_line(ins.imm, util.digits_to_i32(ins.str)));
   }
   if (ins.kind_tag == ssasem.with()) {
-    r = with_update(r, f, p, ins, defer0);
+    r = with_update(r, f, p, ins, defer0, link);
     return emit(r, ir.op_store_local(ins.result));
   }
   if (ssasem.is_cell_op(ins.kind_tag)) {
@@ -4026,8 +4085,8 @@ function took_payload(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.P
 // exactly one unit goes in and `scratch` holds one nobody else shares.
 //
 // A receiver whose retain was DEFERRED never arrives here: `append_push` sends
-// it to `append_borrowed` or `append_field` instead, and `with_update` sends
-// one whose field the plan admitted to `with_field`.
+// it to `append_borrowed` or `append_field` instead, and `with_update` to
+// `borrowed_with_base` or `with_field`.
 function sole_owned_base(own r: irtables.LowerResult, f: ssasem.Func, base: i32, scratch: i32): irtables.LowerResult {
   let elem: typeinfo.Type = elem_type(f.values[base]);
   r = emit(r, ir.op_load_local(base));
@@ -4192,10 +4251,10 @@ function append_linked(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   return emit(r, ir.op_load_local(scratch));
 }
 
-// The append's view of the links: the root its receiver is a link of, and
-// whether its own result is one.
+// An append's or a with's view of the links: the root its receiver is a link
+// of, and whether its own result is one.
 function link_at(f: ssasem.Func, links: i32[], ins: ssa.SInst): Link {
-  if (ins.kind_tag != ssasem.append()) {
+  if (ins.kind_tag != ssasem.append() && ins.kind_tag != ssasem.with()) {
     return Link { root: 0 - 1, out: false };
   }
   let root: i32 = 0 - 1;
@@ -4324,20 +4383,77 @@ function drop_replaced(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
 // One element replaced in the sole-owned box above: in place when the received
 // unit was the box's only one and in a fresh copy otherwise, the AST lowering's
 // two forms chosen here by the count at run time rather than by the receiver's
-// syntax.
-function with_update(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean): irtables.LowerResult {
+// syntax. A receiver whose retain was deferred is written as `borrowed_with_base`
+// writes it, and one that is a link as `with_linked` does.
+function with_update(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean, link: Link): irtables.LowerResult {
+  if (link.root >= 0) {
+    return with_linked(r, f, p, ins, link);
+  }
   if (defer0 && p.grows[ins.result] >= 0) {
     return with_field(r, f, p, ins);
   }
-  let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
   let scratch: i32 = scratch_base(f);
   r = reserve(r, scratch + 1);
-  if (p.unique_receivers[ins.result]) {
+  if (defer0) {
+    r = borrowed_with_base(r, f, ins, scratch, link.out);
+  } else if (p.unique_receivers[ins.result]) {
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, ir.op_store_local(scratch));
   } else {
     r = sole_owned_base(r, f, ins.args[0], scratch);
   }
+  return with_write(r, f, p, ins, scratch);
+}
+
+// A with onto a link (`append_linked`): one still the parameter's box is
+// written as `borrowed_with_base` writes it, and any other is a box of the
+// frame's own.
+function with_linked(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, link: Link): irtables.LowerResult {
+  let scratch: i32 = scratch_base(f);
+  r = reserve(r, scratch + 1);
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_load_local(link.root));
+  r = emit(r, ir.op_bin("eq", 0, false));
+  r = emit(r, ir.op_if(0));
+  r = borrowed_with_base(r, f, ins, scratch, link.out);
+  r = emit(r, ir.op_else());
+  r = sole_owned_base(r, f, ins.args[0], scratch);
+  r = emit(r, ir.op_end());
+  return with_write(r, f, p, ins, scratch);
+}
+
+// The box a with writes when the frame holds no unit of its receiver, left in
+// `scratch`: the receiver's own when its count test finds it sole, which
+// `bracketed` makes true only when the caller keeps no binding, retained for
+// the unit the result owes unless `out` leaves that to the chain's end; and a
+// fresh copy otherwise, holding a count on every element it shares.
+function borrowed_with_base(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, scratch: i32, out: boolean): irtables.LowerResult {
+  let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_store_local(scratch));
+  if (!out) {
+    r = helper(r, scratch, "__fern_rc_inc");
+  }
+  r = emit(r, ir.op_else());
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_arr_len());
+  r = emit(r, ir.op_arr_slice(elem_width(elem)));
+  r = emit(r, ir.op_store_local(scratch));
+  if (ssasem.reference(elem)) {
+    r = own_copied(r, elem, scratch, scratch);
+  }
+  return emit(r, ir.op_end());
+}
+
+// The element at the with's index replaced in the sole-held box in `scratch`,
+// which is the with's result.
+function with_write(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, scratch: i32): irtables.LowerResult {
+  let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
   if (ssasem.reference(elem)) {
     r = drop_replaced(r, f, ins, scratch, elem);
   }
@@ -5594,6 +5710,9 @@ function os_floor_process_site(own r: irtables.LowerResult, ins: ssa.SInst): Low
   if (ins.str == "ring_recv") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_ring_recv())) };
   }
+  if (ins.str == "ring_send_zc") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_ring_send_zc())) };
+  }
   if (ins.str == "tcp_recv_into") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_tcp_recv_into())) };
   }
@@ -6136,7 +6255,7 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
   for ins in b.insts {
     if (ins.kind_tag != 6 && ins.kind_tag != 8) {
       let step: ssaunits.Step = at(p, idx, b.id, pos, 0 - 1);
-      let held: Held = bracketed(f, step, ins, grows);
+      let held: Held = bracketed(f, step, ins, grows, links);
       // One answer for both: the retain `supplies` holds back is the one
       // `instruction` then takes, and two calls could drift apart with
       // nothing to catch it.

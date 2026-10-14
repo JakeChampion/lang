@@ -173,6 +173,31 @@ function test_http_reaches_only_the_allow_list(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
+// A forward proxy on a private address, which only the deployment chose.
+const PROXY: string = "10.0.0.9";
+
+// `http` goes through the proxy the env the test set names, in absolute
+// form, and reaches a host `no_proxy` names directly; neither lookup is a
+// call the handler made.
+function test_http_goes_through_the_proxy_the_env_names(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).listen(PROXY, 3128, 5).route(PROXY, 3128, "http://example.test/", [sim_fetch.reply(203, "via proxy")]);
+  let p: sim_platform.SimPlatform = sim_platform.new(d, n);
+  p.env_set("http_proxy", "http://" + PROXY + ":3128");
+  let proxied: string = __message(p.http(fetch.get("http://example.test/")));
+  p.env_set("no_proxy", "example.test");
+  let direct: string = __message(p.http(fetch.get("http://example.test/")));
+  if (proxied + "|" + direct != "status 203|status 200") {
+    return test.fail(proxied + "|" + direct);
+  }
+  for c in p.calls() {
+    if (c.name != "http") {
+      return test.fail("call: " + c.name + " " + c.args);
+    }
+  }
+  return test.assert_eq(n.connects(), 2);
+}
+
 function test_http_keeps_the_connection_for_the_next_request(): test.TestOutcome {
   let p: sim_platform.SimPlatform = __plat(1);
   p.http(fetch.get("http://example.test/"));
@@ -328,6 +353,7 @@ function main(): i32 {
   t = t.it("randomness is the seed's", test_randomness_is_the_seeds);
   t = t.it("http reaches global addresses only", test_http_reaches_global_addresses_only);
   t = t.it("http reaches only the allow-list", test_http_reaches_only_the_allow_list);
+  t = t.it("http goes through the proxy the env names", test_http_goes_through_the_proxy_the_env_names);
   t = t.it("http keeps the connection for the next request", test_http_keeps_the_connection_for_the_next_request);
   t = t.it("a secret is logged by name only", test_a_secret_is_logged_by_name_only);
   t = t.it("a handler runs over the simulation", test_a_handler_runs_over_the_simulation);

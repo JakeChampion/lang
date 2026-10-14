@@ -6,7 +6,8 @@
 // in virtual time: `plat.now_ms()` is the sim's clock, `plat.random_i32()`
 // its seeded PRNG, `plat.http(req)` the public-only route over the scripted
 // network, with the network's pool keeping a connection for the next
-// request as the host platform's does. `env`, `config`, `secret`, `stat`
+// request as the host platform's does, through the proxies `env_set`
+// named and never the machine's. `env`, `config`, `secret`, `stat`
 // and `peer` answer what the test set, `deadline` the bound `with_deadline`
 // gave on the sim's clock, which `cancelled` then reports passed once the
 // clock reaches it; and every call is recorded, as a mock
@@ -106,11 +107,14 @@ impl platform.Platform for SimPlatform {
   }
 
   // The route the host platform takes, over the scripted network: global
-  // addresses only, the network's pool keeping the connection.
+  // addresses only, the network's pool keeping the connection, and the
+  // proxies the env the test set names, never the machine's.
   function http(self: SimPlatform, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
     self.mock.record("http", req.method + " " + req.url);
     let drv: sim.Sim = self.drv;
-    return fetch.send_on(self.net, platform.traced(req, self.trace, (): i32 => drv.random_i32()), fetch.Policy { ...fetch.public_policy(), jar: self.jar, allow: self.allow });
+    let m: mock_platform.MockPlatform = self.mock;
+    let proxies: fetch.ProxyEnv = fetch.proxy_env_from(m.canned("env http_proxy"), m.canned("env https_proxy"), m.canned("env HTTPS_PROXY"), m.canned("env no_proxy"), m.canned("env NO_PROXY"), m.canned("env REQUEST_METHOD"));
+    return fetch.send_on(self.net, platform.traced(req, self.trace, (): i32 => drv.random_i32()), fetch.Policy { ...fetch.public_policy_via(proxies), jar: self.jar, allow: self.allow });
   }
 
   function stat(self: SimPlatform, path: string): Result[FileStat, IoError] {

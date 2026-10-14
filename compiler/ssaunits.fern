@@ -128,7 +128,8 @@ function has_row(rows: GrowRow[], callee: string, param: i32, field: i32): boole
 // Whether two grow tables say the same thing about `callees`.
 //
 // A body reads this table only through `grow_fields_of` and `grows_buffer` in
-// `ssarc.bracketed`, keyed by the name each call instruction names — so two
+// `ssarc.bracketed`, keyed by the name each call instruction names, or by
+// `indirect_callee` for a call through a function value — so two
 // tables that agree on the callees one body names produce that body
 // identically, however much they differ elsewhere. That is what lets a second
 // lowering keep a body the inference did not move.
@@ -177,12 +178,11 @@ function has_row_at(rows: GrowRow[], ix: util.NameIndex, callee: string, param: 
 // The rows this function's plan contributes, given the rows `table` already
 // holds for its callees: one per borrowed parameter position an admitted
 // in-place grow or write reaches, directly through an append or a with of its
-// own, through an append whose receiver a phi, an earlier append or a call
-// carries from the parameter (ssarc's links grow those in place), or through a
+// own, through an append or a with whose receiver a phi, an earlier update or
+// a call carries from the parameter (ssarc's links write those in place), or through a
 // buffer it hands on unbracketed to a callee whose row says that position may
 // grow — the parameter itself, or a value dying at the call that the same
-// carriers lead back to it. A with on a buffer the plan did not admit copies,
-// so it contributes no row. An owned parameter needs no caller bracket — its caller moved the
+// carriers lead back to it. An owned parameter needs no caller bracket — its caller moved the
 // unit in, or retained and so made the record's own count answer "shared".
 pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[], tix: util.NameIndex): GrowRow[] {
   let out: GrowRow[] = [];
@@ -199,8 +199,6 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
       if (p.grows[ins.result] >= 0) {
         root = p.grows[ins.result];
         field = p.grow_fields[ins.result];
-      } else if (ins.kind_tag == ssasem.with()) {
-        continue;
       }
       if (field < 0) {
         let carried: Carried = carried_params(f, defs, root, seen);
@@ -295,7 +293,7 @@ function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32, own seen: boo
     let d: ssa.SInst = defs[w];
     if (d.kind_tag == 6) {
       out = out.append(w);
-    } else if (d.kind_tag == ssasem.append()) {
+    } else if (box_update(d)) {
       work = work.append(d.args[0]);
     } else if (d.kind_tag == 8) {
       for a in d.args {
@@ -360,7 +358,76 @@ pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Gr
       i = i + 1;
     }
   }
+  for row in dispatched_rows(funcs, plans, table, tix) {
+    if (!has_row_at(table, tix, row.callee, row.param, row.field)) {
+      table = table.append(row);
+      tix = tix.added(row.callee);
+    }
+  }
   return GrowTable { rows: table, by_callee: tix };
+}
+
+// The callee under which the table holds the positions a call through a
+// function value may grow. No function can take this name.
+pub function indirect_callee(): string {
+  return "&";
+}
+
+// The names a body reads the grow table under: its direct callees, and
+// `indirect_callee` when it calls through a function value.
+pub function grow_callees(f: ssasem.Func): string[] {
+  let out: string[] = ssasem.called_names(f);
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.call_value()) {
+        return out.append(indirect_callee());
+      }
+    }
+  }
+  return out;
+}
+
+// The rows of calls that name no body: a call through a function value may
+// reach any closure body the module makes, and a dyn call any of its arms.
+// A position some body may grow is a row of the call's own name, with no
+// field, since `ssarc.dispatch_bracketed` holds the whole box: a field is
+// grown only under its record's own count. A body's parameter p is the
+// call's operand p either way, the environment and the receiver both being
+// operand 0. Nothing in the fixpoint reads these rows, so they are made once
+// it has settled.
+function dispatched_rows(funcs: ssasem.Func[], plans: Plan[], table: GrowRow[], tix: util.NameIndex): GrowRow[] {
+  let out: GrowRow[] = [];
+  let i: i32 = 0;
+  while (i < plans.len()) {
+    if (plans[i].ok) {
+      for b in funcs[i].graph.blocks {
+        for ins in b.insts {
+          if (ins.kind_tag == ssasem.closure_new()) {
+            out = rows_as(out, table, tix, ins.str, indirect_callee(), 1);
+          } else if (ins.kind_tag == ssasem.call() && ssasem.is_dyn_call(ins.str)) {
+            for arm in ssasem.dyn_call_arms(ins.str) {
+              out = rows_as(out, table, tix, arm, ins.str, 0);
+            }
+          }
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// `body`'s rows at a parameter from `first` on, as rows of `name` with no
+// field.
+function rows_as(own out: GrowRow[], table: GrowRow[], tix: util.NameIndex, body: string, name: string, first: i32): GrowRow[] {
+  let k: i32 = tix.chain(body);
+  while (k >= 0) {
+    if (table[k].callee == body && table[k].param >= first) {
+      out = with_row(out, name, table[k].param, 0 - 1);
+    }
+    k = tix.next[k];
+  }
+  return out;
 }
 
 // plan_callers[j] lists the plans whose steps name the plan first keyed
@@ -2798,7 +2865,7 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
     return bad(why);
   }
   let consts: string[] = constants(f, defs);
-  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, likely: units.likely, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: unique_receivers(f, steps, consts, no_fresh()), fresh_seeded: false, checked_writes: checked_writes(f), links: [], reuse: no_reuse() };
+  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, likely: units.likely, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: unique_receivers(f, steps, consts, no_fresh(), lent_withs(f, defs, owned, kept)), fresh_seeded: false, checked_writes: checked_writes(f), links: [], reuse: no_reuse() };
 }
 
 // without_constant_drops is `p` less its drops of static boxes, whose count is
@@ -2850,9 +2917,9 @@ function read_before(b: ssa.SBlock, end: i32, arr: i32, index: i32): boolean {
 // unique_receivers marks, at a `with`'s or an `append`'s result, one whose
 // receiver needs no uniqueness test: the receiver is moved into it and is
 // `sole`. `fresh` is the module's rows whose result is sole (`fresh_rows`).
-function unique_receivers(f: ssasem.Func, steps: Step[], consts: string[], fresh: FreshRows): boolean[] {
+function unique_receivers(f: ssasem.Func, steps: Step[], consts: string[], fresh: FreshRows, lent: boolean[]): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
-  let sole: boolean[] = sole_boxes(f, steps, consts, fresh, 0 - 1);
+  let sole: boolean[] = sole_boxes(f, steps, consts, fresh, 0 - 1, lent);
   let at: i32[] = ssa.block_positions(f.graph);
   for st in steps {
     if (st.point >= 0) {
@@ -2930,12 +2997,13 @@ pub function fresh_rows(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Fr
 // else the first owned array parameter whose arriving sole makes them so,
 // else -2.
 function sole_result(f: ssasem.Func, p: Plan, fresh: FreshRows): i32 {
-  if (returns_sole(f, sole_boxes(f, p.steps, p.constants, fresh, 0 - 1))) {
+  let lent: boolean[] = lent_withs(f, p.defs, p.owned, p.kept);
+  if (returns_sole(f, sole_boxes(f, p.steps, p.constants, fresh, 0 - 1, lent))) {
     return 0 - 1;
   }
   let k: i32 = 0;
   while (k < f.graph.nparams) {
-    if (is_array(f.values[k]) && p.modes[k] == counted_mode() && returns_sole(f, sole_boxes(f, p.steps, p.constants, fresh, k))) {
+    if (is_array(f.values[k]) && p.modes[k] == counted_mode() && returns_sole(f, sole_boxes(f, p.steps, p.constants, fresh, k, lent))) {
       return k;
     }
     k = k + 1;
@@ -2975,7 +3043,7 @@ pub function with_fresh(p: Plan, f: ssasem.Func, fresh: FreshRows): Plan {
   if (!seeded && !p.fresh_seeded) {
     return p;
   }
-  return Plan { ...p, unique_receivers: unique_receivers(f, p.steps, p.constants, fresh), fresh_seeded: seeded };
+  return Plan { ...p, unique_receivers: unique_receivers(f, p.steps, p.constants, fresh, lent_withs(f, p.defs, p.owned, p.kept)), fresh_seeded: seeded };
 }
 
 function calls_any(f: ssasem.Func, names: util.NameIndex): boolean {
@@ -3031,7 +3099,7 @@ function passed_slot(ins: ssa.SInst, fresh: FreshRows): i32 {
 }
 
 // sole_boxes marks the values whose box no unit but the frame's own one ever
-// holds. A box starts that way when a `with` hands it back, a fresh or empty
+// holds. A box starts that way when a `with` not in `lent` hands it back, a fresh or empty
 // array is made, or a fresh row returns it; an operation that passes a box on
 // (`passed_slot`) keeps it when the box arrives sole and moved, and a phi
 // keeps it when every operand does. It stops at any unit retained on it, and
@@ -3042,7 +3110,7 @@ function passed_slot(ins: ssa.SInst, fresh: FreshRows): i32 {
 //
 // An empty constant is shared, but no write lands in it: a `with` on it fails
 // its bounds check, and a push onto it, having no room, copies.
-function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: FreshRows, seed: i32): boolean[] {
+function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: FreshRows, seed: i32, lent: boolean[]): boolean[] {
   let sole: boolean[] = __alloc_bool(f.graph.nvals);
   if (seed >= 0) {
     sole = sole.with(seed, true);
@@ -3069,7 +3137,7 @@ function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: Fres
           }
         }
       }
-      if (ins.kind_tag == 8 || ins.kind_tag == ssasem.with() || k >= 0 || fresh_array(ins, consts, fresh)) {
+      if (ins.kind_tag == 8 || ins.kind_tag == ssasem.with() && !lent[ins.result] || k >= 0 || fresh_array(ins, consts, fresh)) {
         sole = sole.with(ins.result, true);
       }
     }
@@ -3101,6 +3169,30 @@ function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: Fres
 }
 
 struct SoleLinks { from: i32[], to: i32[], phi: boolean[] }
+
+// lent_withs marks the withs that may hand back a borrowed parameter's own
+// box: the receiver is carried from one and the frame reads it no further, so
+// the with may defer its retain and write in place (`deferred_retain`, and
+// ssarc's links), leaving the box the caller's as well as the frame's.
+function lent_withs(f: ssasem.Func, defs: ssa.SInst[], owned: boolean[], kept: boolean[]): boolean[] {
+  let out: boolean[] = __alloc_bool(f.graph.nvals);
+  let seen: boolean[] = __alloc_bool(f.graph.nvals);
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag != ssasem.with() || kept[ins.result]) {
+        continue;
+      }
+      let carried: Carried = carried_params(f, defs, ins.args[0], seen);
+      seen = carried.seen;
+      for param in carried.params {
+        if (!(param < owned.len() && owned[param])) {
+          out = out.with(ins.result, true);
+        }
+      }
+    }
+  }
+  return out;
+}
 
 // settled clears, until nothing changes, a pass result whose operand is not
 // sole, and both ends of a phi link that disagree.
@@ -3827,8 +3919,8 @@ pub function payload_taken(f: ssasem.Func, p: Plan, ins: ssa.SInst): boolean {
 // An array reached any other way the frame does not own —
 // an element of a borrowed array of arrays, say — has no bracket standing
 // behind it, and growing it in place would rewrite what the container still
-// holds. A with has no non-consuming helper to fall back on, so it defers
-// only where the plan admitted the field.
+// holds. A with defers on the same terms, writing in place only when its
+// count test finds the box sole and copying otherwise.
 //
 // A map mutation never defers. Its receiver's retain is what makes a map
 // the frame still reads count as shared, and core/map's copy-on-write then
@@ -3845,7 +3937,7 @@ pub function deferred_retain(f: ssasem.Func, p: Plan, step: Step, ins: ssa.SInst
   if (ins.kind_tag != ssasem.append() && ins.kind_tag != ssasem.with()) {
     return false;
   }
-  if (p.grows[ins.result] < 0 && (ins.kind_tag == ssasem.with() || ins.args[0] >= f.graph.nparams)) {
+  if (p.grows[ins.result] < 0 && ins.args[0] >= f.graph.nparams) {
     return false;
   }
   if (ins.args[0] < p.owned.len() && p.owned[ins.args[0]]) {
@@ -5051,15 +5143,15 @@ pub function late_values(k: Keeps): i32[] {
 }
 
 // The links of a function, by value: the parameter each link's unit is owed
-// on, -1 for a value that is not one. A link is an append onto the parameter
-// whose retain was deferred, an append onto a link, a phi whose every input is
+// on, -1 for a value that is not one. A link is an append or a with onto the
+// parameter whose retain was deferred, one onto a link, a phi whose every input is
 // the parameter or a link of it, which is how a loop carries one, or the
 // result of a direct call lent the parameter or a link as the last reader of
 // its box (`call_root`), `b = f(b, v)`.
 //
 // Every use of a link has to understand the encoding, so a candidate stays
 // only while each supply naming it MOVES it into one of three places: the
-// receiver of an append, a link phi, or the return, which takes the unit that
+// receiver of an append or a with, a link phi, or the return, which takes the unit that
 // is owed. A read that takes no unit is fine, since the box is live either
 // way, and so is a drop, which releases only a box of the frame's own
 // (`drop_linked`). A loop's link reaches its phi by move only because
@@ -5110,7 +5202,7 @@ function links_of(f: ssasem.Func, p: Plan, idx: i32[][]): i32[] {
 }
 
 function link_kind(f: ssasem.Func, p: Plan, ins: ssa.SInst): boolean {
-  if (ins.kind_tag == ssasem.append()) {
+  if (box_update(ins)) {
     return p.grows[ins.result] < 0;
   }
   if (ins.kind_tag == ssasem.call()) {
@@ -5154,9 +5246,9 @@ function propagate(f: ssasem.Func, p: Plan, idx: i32[][], state: i32[], roots: b
         continue;
       }
       let root: i32 = top;
-      if (ins.kind_tag == ssasem.append()) {
+      if (box_update(ins)) {
         root = input_root(f, state, roots, ins.args[0]);
-        // Straight onto the parameter, the push must be the deferred one.
+        // Straight onto the parameter, the update must be the deferred one.
         if (ins.args[0] < f.graph.nparams && !deferred_retain(f, p, step_of(p, idx, b.id, pos, 0 - 1), ins)) {
           root = 0 - 1;
         }
@@ -5270,7 +5362,7 @@ function linked_supply(f: ssasem.Func, p: Plan, at: i32[], state: i32[], step: S
     return false;
   }
   let ins: ssa.SInst = b.insts[step.point];
-  return ins.kind_tag == ssasem.append() && supply.slot == 0 && ins.args[0] == supply.value && p.grows[ins.result] < 0;
+  return box_update(ins) && supply.slot == 0 && ins.args[0] == supply.value && p.grows[ins.result] < 0;
 }
 
 function same_root(a: i32, b: i32): boolean {

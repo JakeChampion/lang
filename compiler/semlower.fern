@@ -285,14 +285,15 @@ function base_plan(prev: Rows, changed: boolean[], i: i32, p: semsource.Produced
 // The rows whose body under the inferred plans `inferred` differs from the
 // body under `prev`'s: those the inference moved, and those naming a callee
 // whose grow mask or freshness it moved. A body reads the module's grow table
-// and fresh rows only through the callees it names (`ssarc.bracketed`,
+// and fresh rows only through the callees it names, a call through a function
+// value naming `ssaunits.indirect_callee` (`ssarc.bracketed`,
 // `ssaunits.with_fresh`), and a moved row can change either for every caller.
 function relowered(built: semsource.Built, mod: parser.Module, inferred: Planned, prev: Rows, changed: boolean[]): boolean[] {
   let out: boolean[] = [];
   let i: i32 = 0;
   while (i < inferred.r.plans.len()) {
     let p: semsource.Produced = produced_at(built, mod, i);
-    let callees: string[] = ssasem.called_names(p.func);
+    let callees: string[] = ssaunits.grow_callees(p.func);
     out = out.append(!plan_reusable(prev, changed, i) || !ssaunits.grow_rows_agree(prev.grows, inferred.r.grows, callees) || !ssaunits.fresh_rows_agree(prev.fresh, inferred.r.fresh, callees));
     i = i + 1;
   }

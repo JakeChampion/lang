@@ -394,8 +394,8 @@ function main(): i32 {
 `
 
 // asmWholeFunc returns the emitted body of `__fn_<name>` in full, from its
-// label to the next function label (its own register entry `.r:` is inside
-// it). The package's asmFuncBody stops at the
+// label to the next function label (its own entries `.k:` and `.r:` are
+// inside it). The package's asmFuncBody stops at the
 // first `ret`, which is a window these multi-arm bodies leave through early.
 func asmWholeFunc(asm, name string) (string, bool) {
 	lines := strings.Split(asm, "\n")
