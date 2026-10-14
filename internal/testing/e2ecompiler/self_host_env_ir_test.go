@@ -44,24 +44,26 @@ func TestSelfHostEnvIR(t *testing.T) {
 	}
 	progBin := buildBin(t, gcc, dir, "env_prog", string(asm))
 
+	// A variable whose name extends the one asked for, or is a prefix of it,
+	// shares its leading bytes and must not match; an empty value is Some("").
 	cases := []struct {
-		val      string // "" means unset
-		set      bool
+		vars     []string
 		wantExit int
 	}{
-		{"hello", true, 0},
-		{"nope", true, 1},
-		{"", false, 2},
+		{[]string{"FERN_ENV_IR_TEST=hello"}, 0},
+		{[]string{"FERN_ENV_IR_TEST=nope"}, 1},
+		{nil, 2},
+		{[]string{"FERN_ENV_IR_TESTX=hello", "FERN_ENV_IR_TES=hello"}, 2},
+		{[]string{"FERN_ENV_IR_TESTX=nope", "FERN_ENV_IR_TEST=hello"}, 0},
+		{[]string{"FERN_ENV_IR_TEST="}, 1},
 	}
 	for _, tc := range cases {
 		run := exec.Command(progBin)
-		run.Env = filterEnv(os.Environ(), "FERN_ENV_IR_TEST")
-		if tc.set {
-			run.Env = append(run.Env, "FERN_ENV_IR_TEST="+tc.val)
-		}
+		run.Env = filterEnv(filterEnv(filterEnv(os.Environ(), "FERN_ENV_IR_TEST"), "FERN_ENV_IR_TESTX"), "FERN_ENV_IR_TES")
+		run.Env = append(run.Env, tc.vars...)
 		_ = run.Run()
 		if code := run.ProcessState.ExitCode(); code != tc.wantExit {
-			t.Errorf("env(set=%v,val=%q): exit %d, want %d", tc.set, tc.val, code, tc.wantExit)
+			t.Errorf("env(%q): exit %d, want %d", tc.vars, code, tc.wantExit)
 		}
 	}
 }
