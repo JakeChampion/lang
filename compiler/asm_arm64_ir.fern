@@ -3094,7 +3094,9 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
 // writes at an immediate offset.
 function ssa_mem_at(ins: ssa.SInst, reg_of: i32[], c: i32, a: string, d: string, s: asmcore.EmitState): asmcore.EmitState {
   let k: i32 = ins.kind_tag;
-  s = s.mark_heap();
+  if (k != 42 || ins.imm != 1) {
+    s = s.mark_heap();
+  }
   if (ins.imm != 1) {
     let len_at: i32 = 0;
     if (k == 44) {
