@@ -3760,25 +3760,9 @@ function settled_ways(f: Func, value: i32, g: Guards): Known[] {
     changed = false;
     i = 0;
     while (i < n) {
-      let met: Known = Known { held: [], gone: [] };
-      let any: boolean = false;
-      for p in f.graph.blocks[i].preds {
-        let pi: i32 = 0 - 1;
-        if (p >= 0 && p < g.at.len()) {
-          pi = g.at[p];
-        }
-        if (i != entry && pi >= 0 && seen[pi]) {
-          let out: Known = edge_known(f, value, g, pi, known[pi], f.graph.blocks[i].id);
-          if (any) {
-            met = Known { held: common(met.held, out.held), gone: common(met.gone, out.gone) };
-          } else {
-            met = out;
-            any = true;
-          }
-        }
-      }
-      if (any && (!seen[i] || !same_known(met, known[i]))) {
-        known = known.with(i, met);
+      let m: Met = met_at(f, value, g, known, seen, i);
+      if (i != entry && m.any && (!seen[i] || !same_known(m.known, known[i]))) {
+        known = known.with(i, m.known);
         seen = seen.with(i, true);
         changed = true;
       }
@@ -3788,24 +3772,61 @@ function settled_ways(f: Func, value: i32, g: Guards): Known[] {
   return known;
 }
 
+// What the block at position `i`'s settled predecessors agree on along
+// their edges into it, and whether it has any.
+struct Met { any: boolean, known: Known }
+
+function met_at(f: Func, value: i32, g: Guards, known: Known[], seen: boolean[], i: i32): Met {
+  let met: Met = Met { any: false, known: Known { held: [], gone: [] } };
+  for p in f.graph.blocks[i].preds {
+    let pi: i32 = 0 - 1;
+    if (p >= 0 && p < g.at.len()) {
+      pi = g.at[p];
+    }
+    if (pi >= 0 && seen[pi]) {
+      let out: Known = edge_known(f, value, g, pi, known[pi], f.graph.blocks[i].id);
+      if (met.any) {
+        met = Met { any: true, known: Known { held: common(met.known.held, out.held), gone: common(met.known.gone, out.gone) } };
+      } else {
+        met = Met { any: true, known: out };
+      }
+    }
+  }
+  return met;
+}
+
 // `known` past the end of the block at position `pi`, along its edge to the
 // block `target`: what its test of `value`, if it ends in one, settles there.
 function edge_known(f: Func, value: i32, g: Guards, pi: i32, known: Known, target: i32): Known {
   let term: ssa.STerm = f.graph.blocks[pi].term;
-  if (term.kind_tag != 3 || term.t == term.f || term.cond < 0 || term.cond >= g.defs.len()) {
+  let test: i32 = value_test(g, term, value);
+  if (test < 0) {
     return known;
   }
-  let test: ssa.SInst = g.defs[term.cond];
-  if (test.kind_tag != variant_is() && test.kind_tag != dyn_is() || test.args[0] != value && twin_of(g, test.args[0]) != twin_of(g, value)) {
-    return known;
+  let name: string = g.defs[test].str;
+  if (target == term.t && !names_has(known.held, name)) {
+    return Known { ...known, held: known.held.append(name) };
   }
-  if (target == term.t && !names_has(known.held, test.str)) {
-    return Known { ...known, held: known.held.append(test.str) };
-  }
-  if (target == term.f && !names_has(known.gone, test.str)) {
-    return Known { ...known, gone: known.gone.append(test.str) };
+  if (target == term.f && !names_has(known.gone, name)) {
+    return Known { ...known, gone: known.gone.append(name) };
   }
   return known;
+}
+
+// value_test is the variant or dyn test of `value` (or its twin) a two-way
+// branch tests, -1 for any other terminator.
+function value_test(g: Guards, term: ssa.STerm, value: i32): i32 {
+  if (term.kind_tag != 3 || term.t == term.f || term.cond < 0 || term.cond >= g.defs.len()) {
+    return 0 - 1;
+  }
+  let test: ssa.SInst = g.defs[term.cond];
+  if (test.kind_tag != variant_is() && test.kind_tag != dyn_is()) {
+    return 0 - 1;
+  }
+  if (test.args[0] != value && twin_of(g, test.args[0]) != twin_of(g, value)) {
+    return 0 - 1;
+  }
+  return term.cond;
 }
 
 function common(a: string[], b: string[]): string[] {
