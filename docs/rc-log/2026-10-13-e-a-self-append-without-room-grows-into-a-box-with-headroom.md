@@ -81,3 +81,13 @@ driver outgrew a 16 GB runner under the sanitizer, whose quarantine keeps
 every freed block, so the text machines run in a driver of their own,
 `ssaretainedmachines_run.fern`: 9.3 GB and 4.4 GB at peak, where the one
 process took 13.4 GB.
+
+Three e2e gates pinned the exact boxes. `TestX86_64AllocScaling`'s
+left-fold calibration case is now linear (1.97x as n doubles), so it joins
+the corpus as an ordinary case and a prepend fold, which copies the whole
+string on every `+`, is the quadratic control (3.75x).
+`StrAppendClassBoundary` re-banks its allocation count from 258 to 8 (262
+to 11 on wasm), one block per doubling. `OwnStringParamBalanced` bounded
+its 800-round fresh bytes by twice its 200-round ones; a doubling
+accumulator's fresh bytes follow its length, 1.6x to 2.4x what it holds, so
+it now bounds each segment at eight times the string it builds.

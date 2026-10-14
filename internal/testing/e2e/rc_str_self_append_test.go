@@ -293,18 +293,14 @@ const strAppendClassBoundarySrc = `function main(): i32 {
     return 0;
 }`
 
-// The in-place grow's guard asks whether the grown request still lands in the
-// block the old one reserved: ONE capacity computation, `req_new <=
-// cap(req_old)`.
-//
-// The allocation COUNT is the assertion, because the count is the guard's
-// decision sequence: 2100 appends against 258 allocations means the guard said
-// "grow in place" 1842 times and "allocate" 258 times, at exactly the lengths
-// the size classes fall on — the 8-byte classes below 2 KiB, then the
-// three-significant-bit ones. A predicate that differed anywhere across the
-// 0..4200 span — including at the 2 KiB tier change — moves this number. A
-// change that legitimately moves it (a different rounding, a different header)
-// should re-bank it rather than loosen it.
+// The allocation COUNT is the assertion, because it is the grow's decision
+// sequence: the in-place grow takes each append while the block's capacity
+// holds, and an append past it builds a grown box with the accumulator's
+// length doubled (#8770), so 2100 appends take one block per doubling. A
+// predicate that grew in place past the capacity, or a fallback that sized
+// the new block exactly, moves this number. A change that legitimately moves
+// it (a different rounding, a different header) should re-bank it rather
+// than loosen it.
 func TestX86_64StrAppendClassBoundary(t *testing.T) {
 
 	stdout, stderr, code := runLeakCheckX86_64(t, strAppendClassBoundarySrc)
@@ -312,8 +308,8 @@ func TestX86_64StrAppendClassBoundary(t *testing.T) {
 		t.Fatalf("exited %d, want 0 (1 = wrong length, 2 = a byte at the wrong position, 3/4 = a boundary slice); stdout=%q stderr=%q", code, stdout, stderr)
 	}
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
-	if allocs != 258 {
-		t.Errorf("allocs = %d for 2100 appends across the 2048 tier change, want 258 — the in-place guard fires at different lengths than the size classes fall on", allocs)
+	if allocs != 8 {
+		t.Errorf("allocs = %d for 2100 appends across the 2048 tier change, want 8 — the grow takes an append its capacity does not hold, or sizes a fresh block other than by doubling", allocs)
 	}
 	if allocs != frees || live != 0 {
 		t.Errorf("heap unbalanced: allocs=%d frees=%d live_bytes=%d", allocs, frees, live)
@@ -321,7 +317,7 @@ func TestX86_64StrAppendClassBoundary(t *testing.T) {
 }
 
 // TestArm64StrAppendClassBoundary is the arm64 sibling. A string box has the
-// same layout on both targets, so the guard decides at the same lengths.
+// same layout on both targets, so the grow decides at the same lengths.
 func TestArm64StrAppendClassBoundary(t *testing.T) {
 
 	stdout, stderr, code := runLeakCheckArm64(t, strAppendClassBoundarySrc)
@@ -329,8 +325,8 @@ func TestArm64StrAppendClassBoundary(t *testing.T) {
 		t.Fatalf("exited %d, want 0 (1 = wrong length, 2 = a byte at the wrong position, 3/4 = a boundary slice); stdout=%q stderr=%q", code, stdout, stderr)
 	}
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
-	if allocs != 258 {
-		t.Errorf("allocs = %d for 2100 appends across the 2048 tier change, want 258 — the in-place guard fires at different lengths than the size classes fall on", allocs)
+	if allocs != 8 {
+		t.Errorf("allocs = %d for 2100 appends across the 2048 tier change, want 8 — the grow takes an append its capacity does not hold, or sizes a fresh block other than by doubling", allocs)
 	}
 	if allocs != frees || live != 0 {
 		t.Errorf("heap unbalanced: allocs=%d frees=%d live_bytes=%d", allocs, frees, live)
@@ -338,9 +334,9 @@ func TestArm64StrAppendClassBoundary(t *testing.T) {
 }
 
 // TestWASMStrAppendClassBoundary is the wasm sibling. Its string box is one
-// rc-headered block, so the same size classes fall at other lengths: 260
-// growth steps against the register backends' 258. The two boundary slices
-// are the other two allocations: a wasm slice copies where an asm one views.
+// rc-headered block, so its doublings fall at other lengths: 9 blocks against
+// the register backends' 8. The two boundary slices are the other two
+// allocations: a wasm slice copies where an asm one views.
 func TestWASMStrAppendClassBoundary(t *testing.T) {
 
 	_, stderr, code := runLeakCheckWasm(t, strAppendClassBoundarySrc, false)
@@ -348,8 +344,8 @@ func TestWASMStrAppendClassBoundary(t *testing.T) {
 		t.Fatalf("exited %d, want 0; stderr=%q", code, stderr)
 	}
 	allocs, frees, live := parseLeakCheckLine(t, stderr)
-	if allocs != 262 {
-		t.Errorf("allocs = %d for 2100 appends across the 2048 tier change, want 262 — the in-place guard fires at different lengths than the size classes fall on", allocs)
+	if allocs != 11 {
+		t.Errorf("allocs = %d for 2100 appends across the 2048 tier change, want 11 — the grow takes an append its capacity does not hold, or sizes a fresh block other than by doubling", allocs)
 	}
 	if allocs != frees || live != 0 {
 		t.Errorf("heap unbalanced: allocs=%d frees=%d live_bytes=%d", allocs, frees, live)
