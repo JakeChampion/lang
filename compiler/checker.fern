@@ -1806,10 +1806,10 @@ function is_primitive_type(t: typeinfo.Type): boolean {
 // as_cast_allowed decides whether `src as tgt` is a legal cast for the
 // scalar types the self-host models (i32 / char / f64 / bool / string),
 // mirroring the Go checker's E033 rule over those types: identity,
-// numeric↔numeric (i32 / char / f64), and the string↔i32 data-pointer hop
-// (either direction) are allowed; everything else (any bool↔non-bool,
-// f64↔string) is rejected. Callers guard with `is_primitive_type` on both
-// sides, so struct / array pointer hops and wider-int targets are never
+// numeric↔numeric (i32 / char / f64), and the string data-pointer hop to or
+// from a cast_pointer_int (either direction) are allowed; everything else (any
+// bool↔non-bool, f64↔string, string↔i64) is rejected. Callers guard with
+// `is_primitive_type` on both sides, so struct / array pointer hops are never
 // reached here.
 //
 // `char` counts as numeric HERE even though type_eq now separates it from
@@ -1827,10 +1827,10 @@ function as_cast_allowed(src: typeinfo.Type, tgt: typeinfo.Type): boolean {
   if (src_num && tgt_num) {
     return true;
   }
-  if (type_eq(src, t_string()) && is_integer(tgt)) {
+  if (type_eq(src, t_string()) && cast_pointer_int(tgt)) {
     return true;
   }
-  if (is_integer(src) && type_eq(tgt, t_string())) {
+  if (cast_pointer_int(src) && type_eq(tgt, t_string())) {
     return true;
   }
   return false;
@@ -2024,6 +2024,11 @@ pub struct Scope {
   // erased ones included; an instantiation has none. Empty on every other
   // scope.
   fn_tvars: string[],
+  // lit_locals names the locals in scope an unsettled integer initialised
+  // (`let q = 2`), which native types polymorphic until a use fixes a width;
+  // settle_literal_locals has annotated every one a use fixed at another
+  // width than i32. A value if's or match's arms read one as unsettled.
+  lit_locals: string[],
 }
 
 // SigTable is the module's function signature table plus a bucket index over
@@ -2469,7 +2474,7 @@ function new_scope(): Scope {
   let ms: MethodSig[] = [];
   let structs: StructTable = struct_table(ss, [], no_spellings());
   let unions: UnionTable = union_table(us);
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], tpvars: [], tpvar_tps: [], fn_tvars: [] };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], tpvars: [], tpvar_tps: [], fn_tvars: [], lit_locals: [] };
 }
 
 // new_scope_full is a module's scope. The impl table rides on every one:
@@ -2478,13 +2483,28 @@ function new_scope(): Scope {
 function new_scope_full(st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[], impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   let ns: string[] = [];
   let ts: typeinfo.Type[] = [];
-  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], tpvars: [], tpvar_tps: [], fn_tvars: [] };
+  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], tpvars: [], tpvar_tps: [], fn_tvars: [], lit_locals: [] };
 }
 
 function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
   let ns: string[] = s.names.append(name);
   let ts: typeinfo.Type[] = s.types.append(t);
-  return Scope { ...s, names: ns, types: ts };
+  if (!util.has_str(s.lit_locals, name)) {
+    return Scope { ...s, names: ns, types: ts };
+  }
+  let lits: string[] = [];
+  for lit in s.lit_locals {
+    if (lit != name) {
+      lits = lits.append(lit);
+    }
+  }
+  return Scope { ...s, names: ns, types: ts, lit_locals: lits };
+}
+
+// bind_lit_local binds a local an unsettled integer initialises.
+function (s: Scope) bind_lit_local(name: string, t: typeinfo.Type): Scope {
+  let b: Scope = s.bind(name, t);
+  return Scope { ...b, lit_locals: b.lit_locals.append(name) };
 }
 
 // with_tparams attaches the enclosing function's type parameters and their
@@ -5283,7 +5303,7 @@ function t_func_after_env(sig: FuncSig): typeinfo.Type {
 function inferred_payload(e: ast.Expr, s: Scope): typeinfo.Type {
   let t: typeinfo.Type = check_expr(e, s);
   if let typeinfo.TypeI32(i) = t {
-    if (!i.is_char && int_literal_tree(e)) {
+    if (!i.is_char && unsettled_tree(e, s.lit_locals)) {
       return typeinfo.TypeI32 { ...i, polymorphic: true };
     }
   }
@@ -5340,11 +5360,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   // common type. Return it (instead of `unknown`) so assignment /
   // return / argument checks see the real type — closing E003/E002
   // on `let x: string = if (…) { 1 } else { 2 }` and the match form.
-  // Only when EVERY branch agrees (type_eq); a mixed-type set (e.g. a
-  // numeric i32/f64 widening, which the Go checker unifies but this
-  // port's type_assignable doesn't) falls back to `unknown` so it
-  // can't false-positive. Arm-type *consistency* itself is E031,
-  // checked separately.
+  // Arm-type *consistency* itself is E031, checked separately.
   if (c.args.len() == 0) {
     match (c.callee) {
       ast.ExprLambda(lm) => {
@@ -5364,19 +5380,24 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
             if (!is_unknown(result)) {
               return result;
             }
-            // The arms disagree. Arms E031 reports carry no type, so the
-            // mismatch is not reported twice at the destination. Arms that
-            // merely differ in width have settled to the lambda's tag — the
-            // binding's annotation stamped on the block — all but the one
+            // The arms disagree. Past an E031 the block has the type of the
+            // arms joined before the one that failed, as native's does, unless
+            // that is an unsettled literal, which commits to no width. Arms
+            // that merely differ in width have settled to the lambda's tag —
+            // the binding's annotation stamped on the block — all but the one
             // that could not, and that arm is the block's type for the
             // destination compare; reading the tag would pass the block as
             // its own annotation.
             if (parser.is_value_block_origin(lm.origin)) {
-              if (!vb_arms_compatible(bts, s)) {
+              let arms: ast.Expr[] = mx_body_result_exprs(lm.body);
+              let fold: MxFold = vb_arms_fold(bts, arms, s);
+              if (is_unknown(fold.acc.t) || !fold.ok && arm_unsettled(fold.acc)) {
                 return t_unknown("value block arms disagree");
               }
+              if (!fold.ok) {
+                return fold.acc.t;
+              }
               let tag: typeinfo.Type = lambda_ret_type(lm, s);
-              let arms: ast.Expr[] = mx_body_result_exprs(lm.body);
               let bi: i32 = 0;
               while (bi < bts.len() && bi < arms.len()) {
                 if (!int_literal_tree(arms[bi]) && !is_unknown(bts[bi]) && !type_eq(bts[bi], tag)) {
@@ -7669,7 +7690,11 @@ pub function bind_stmt(st: ast.Stmt, s: Scope): Scope {
       if (v.type_name.len() > 0) {
         return s.bind(v.name, var_declared_type(v, s));
       }
-      return s.bind(v.name, check_expr(v.init, rec_local_scope(v, s)));
+      let t: typeinfo.Type = check_expr(v.init, rec_local_scope(v, s));
+      if (is_integer(t) && unsettled_tree(v.init, s.lit_locals)) {
+        return s.bind_lit_local(v.name, t);
+      }
+      return s.bind(v.name, t);
     },
     _ => {}
   }
@@ -10669,9 +10694,10 @@ function lret_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.Diag[
 // The compatibility predicate (`mx_arm_compatible`) mirrors the Go
 // checker's `unifyIfArms`: two arms coexist when they're equal
 // (`type_eq`), assignable either way (covers an empty-array literal vs a
-// typed array, and a struct that's a member of a union arm), both numeric
-// (i32/f64 mix freely — the self-host analogue of Go's polymorphic-numeric
-// widening), element-wise-compatible tuples / arrays / maps, or two struct
+// typed array, and a struct that's a member of a union arm), numeric where an
+// unsuffixed literal arm settles at the other arm's type (`arm_int_literal`,
+// and a polymorphic float against any float), element-wise-compatible
+// tuples / arrays / maps, or two struct
 // values of the SAME enum family. The enum-family rule is the subtle one:
 // the Go checker types an enum variant constructor as its ENUM type, so
 // `A(1)` and `B("y")` of one `enum E` unify, whereas the members of a
@@ -10685,19 +10711,59 @@ function lret_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.Diag[
 // unknown-skip below (matching Go, which sees them as the compatible enum
 // type). If ANY arm types to `unknown` the check is skipped entirely (a bad
 // arm is its own error — Go reports E001 there, not E031).
-// mx_is_numeric reports whether a type is one of the numeric scalars
-// (i32 / f64), which mix freely as match/if-expression arms.
-function mx_is_numeric(t: typeinfo.Type): boolean {
-  match (t) {
-    typeinfo.TypeI32(_) => {
-      return true;
+
+// arm_int_literal is whether an arm's value is an integer native still types
+// polymorphic, reading no local.
+function arm_int_literal(e: ast.Expr): boolean {
+  let no_locals: string[] = [];
+  return unsettled_tree(e, no_locals);
+}
+
+// unsettled_tree is whether a value is an integer native still types
+// polymorphic: a literal tree (one a float destination stamped included), a
+// read of one of the literal locals `lits`, arithmetic over such values, or a
+// value if / match every arm of which is one.
+function unsettled_tree(e: ast.Expr, lits: string[]): boolean {
+  match (e) {
+    ast.ExprNumber(n) => {
+      return int_literal_tree(e) || parser.float_settled_int(n);
     },
-    typeinfo.TypeFloat(_) => {
-      return true;
+    ast.ExprIdent(id) => {
+      return util.has_str(lits, id.name);
+    },
+    ast.ExprUnary(u) => {
+      return (u.op == "-" || u.op == "+") && unsettled_tree(u.operand, lits);
+    },
+    ast.ExprBinary(b) => {
+      return parser.int_literal_op(b.op) && unsettled_tree(b.left, lits) && unsettled_tree(b.right, lits);
+    },
+    ast.ExprCall(c) => {
+      return unsettled_value_block(c, lits);
     },
     _ => {
       return false;
     }
+  }
+  return false;
+}
+
+// unsettled_value_block: is `c` a value if or match every arm of which is an
+// unsettled_tree?
+function unsettled_value_block(c: ast.ExprCall, lits: string[]): boolean {
+  if (c.args.len() > 0) {
+    return false;
+  }
+  if let ast.ExprLambda(lm) = c.callee {
+    if (lm.params.len() > 0 || lm.body.len() != 1 || lm.origin != parser.ORIGIN_IF_EXPR && lm.origin != parser.ORIGIN_MATCH_EXPR) {
+      return false;
+    }
+    let arms: ast.Expr[] = mx_body_result_exprs(lm.body);
+    for arm in arms {
+      if (!unsettled_tree(arm, lits)) {
+        return false;
+      }
+    }
+    return arms.len() > 0;
   }
   return false;
 }
@@ -10764,31 +10830,46 @@ function mx_same_enum_family(an: string, bn: string, enums: parser.EnumDecl[]): 
   return false;
 }
 
-// mx_arm_compatible reports whether two arm result types may coexist,
-// mirroring the Go checker's unifyIfArms (see the section header).
-function mx_arm_compatible(a: typeinfo.Type, b: typeinfo.Type, unions: UnionSig[], enums: parser.EnumDecl[]): boolean {
-  if (is_float(a) && is_float(b)) {
-    return float_operands_agree(a, b);
+// mx_arm_compatible reports whether two arm results may coexist, mirroring
+// the Go checker's unifyIfArms (see the section header). An arm's expression
+// says whether it is an unsettled integer, which its type alone does not.
+// Array and map elements (`elem`) do not settle at each other: unifyIfArms
+// compares them at their default widths, and only a match that unifies under
+// assignability (`assigns`) settles an unsettled element at a sibling's.
+function mx_arm_compatible(a: VbStore, b: VbStore, elem: boolean, assigns: boolean, unions: UnionSig[], enums: parser.EnumDecl[]): boolean {
+  if (elem && !assigns && (arm_unsettled(a) || arm_unsettled(b))) {
+    return mx_arm_compatible(mx_default_width(a), mx_default_width(b), elem, assigns, unions, enums);
   }
-  if (type_eq(a, b)) {
+  if (mx_int_literal_settles(a, b.t, elem) || mx_int_literal_settles(b, a.t, elem)) {
     return true;
   }
-  if (type_assignable(a, b, unions) || type_assignable(b, a, unions)) {
+  if (is_float(a.t) && is_float(b.t) && (!elem || assigns)) {
+    return float_operands_agree(a.t, b.t);
+  }
+  if (type_eq(a.t, b.t) || type_assignable(a.t, b.t, unions) || type_assignable(b.t, a.t, unions)) {
     return true;
   }
-  if (mx_is_numeric(a) && mx_is_numeric(b)) {
-    return true;
-  }
-  match (a) {
+  return mx_parts_compatible(a, b, elem, assigns, unions, enums);
+}
+
+// mx_parts_compatible is mx_arm_compatible over two composite results, part by
+// part: tuples element-wise, arrays and maps by element, and two structs of one
+// enum family.
+function mx_parts_compatible(a: VbStore, b: VbStore, elem: boolean, assigns: boolean, unions: UnionSig[], enums: parser.EnumDecl[]): boolean {
+  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  match (a.t) {
     typeinfo.TypeTuple(ta) => {
-      match (b) {
+      match (b.t) {
         typeinfo.TypeTuple(tb) => {
-          if (ta.elements.len() != tb.elements.len()) {
+          let n: i32 = ta.elements.len();
+          if (tb.elements.len() != n) {
             return false;
           }
+          let aes: ast.Expr[] = vb_tuple_elems(a.e, n);
+          let bes: ast.Expr[] = vb_tuple_elems(b.e, n);
           let i: i32 = 0;
-          while (i < ta.elements.len()) {
-            if (!mx_arm_compatible(ta.elements[i], tb.elements[i], unions, enums)) {
+          while (i < n) {
+            if (!mx_arm_compatible(VbStore { t: ta.elements[i], e: aes[i] }, VbStore { t: tb.elements[i], e: bes[i] }, elem, assigns, unions, enums)) {
               return false;
             }
             i = i + 1;
@@ -10801,9 +10882,9 @@ function mx_arm_compatible(a: typeinfo.Type, b: typeinfo.Type, unions: UnionSig[
       }
     },
     typeinfo.TypeArray(aa) => {
-      match (b) {
+      match (b.t) {
         typeinfo.TypeArray(ba) => {
-          return mx_arm_compatible(aa.elem, ba.elem, unions, enums);
+          return mx_arm_compatible(mx_elem_store(a.e, aa.elem), mx_elem_store(b.e, ba.elem), true, assigns, unions, enums);
         },
         _ => {
           return false;
@@ -10811,9 +10892,10 @@ function mx_arm_compatible(a: typeinfo.Type, b: typeinfo.Type, unions: UnionSig[
       }
     },
     typeinfo.TypeMap(ma) => {
-      match (b) {
+      match (b.t) {
         typeinfo.TypeMap(mb) => {
-          return mx_arm_compatible(ma.key, mb.key, unions, enums) && mx_arm_compatible(ma.value, mb.value, unions, enums);
+          return mx_arm_compatible(VbStore { t: ma.key, e: none }, VbStore { t: mb.key, e: none }, true, assigns, unions, enums)
+            && mx_arm_compatible(VbStore { t: ma.value, e: none }, VbStore { t: mb.value, e: none }, true, assigns, unions, enums);
         },
         _ => {
           return false;
@@ -10821,7 +10903,7 @@ function mx_arm_compatible(a: typeinfo.Type, b: typeinfo.Type, unions: UnionSig[
       }
     },
     typeinfo.TypeStruct(sa) => {
-      match (b) {
+      match (b.t) {
         typeinfo.TypeStruct(sb) => {
           return mx_same_enum_family(sa.name, sb.name, enums);
         },
@@ -10837,65 +10919,156 @@ function mx_arm_compatible(a: typeinfo.Type, b: typeinfo.Type, unions: UnionSig[
   return false;
 }
 
-// mx_e031 emits one E031 if the collected arm types aren't all mutually
-// compatible. Skips when fewer than two arms or any arm is `unknown`.
-// vb_arms_compatible is whether a value block's arms pass the E031 rule. The
-// scope carries no enum declarations, so two variants of one enum read as
-// incompatible here — the block then stays untyped, as it did before.
-function vb_arms_compatible(types: typeinfo.Type[], s: Scope): boolean {
-  let no_enums: parser.EnumDecl[] = [];
-  for ty in types {
-    if (is_unknown(ty)) {
-      return false;
+// mx_elem_store is an array arm's element: an array literal whose elements
+// are all unsettled reads as its first, which stands for every one.
+function mx_elem_store(e: ast.Expr, elem: typeinfo.Type): VbStore {
+  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  if let ast.ExprArray(ea) = e {
+    if (ea.elements.len() > 0 && mx_unsettled_elements(ea.elements)) {
+      return VbStore { t: elem, e: ea.elements[0] };
     }
   }
-  let j: i32 = 1;
-  while (j < types.len()) {
-    if (!mx_arm_compatible(types[0], types[j], s.unions.unions, no_enums)) {
+  return VbStore { t: elem, e: none };
+}
+
+// mx_unsettled_elements: is every element an unsettled integer, or an array
+// literal of them?
+function mx_unsettled_elements(es: ast.Expr[]): boolean {
+  for x in es {
+    if let ast.ExprArray(inner) = x {
+      if (inner.elements.len() == 0 || !mx_unsettled_elements(inner.elements)) {
+        return false;
+      }
+      continue;
+    }
+    if (!arm_int_literal(x)) {
       return false;
     }
-    j = j + 1;
   }
   return true;
 }
 
-// An if-expression's concrete arm does not coerce to its other, dyn arm: the
-// Go checker's unifyIfArms has no assignability rule, where a match's arms
-// unify under one.
-function mx_e031(types: typeinfo.Type[], unions: UnionSig[], enums: parser.EnumDecl[], if_form: boolean, line: i32, col: i32): util.Diag[] {
-  let out: util.Diag[] = [];
-  if (types.len() < 2) {
-    return out;
+// mx_default_width reads an unsettled integer element at i32, the width
+// unifyIfArms compares it at however wide its literal.
+function mx_default_width(a: VbStore): VbStore {
+  if (arm_unsettled(a)) {
+    return VbStore { t: t_i32(), e: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
+  }
+  return a;
+}
+
+// mx_int_literal_settles: does arm `a`, an unsettled integer, take the
+// numeric type `t` of a sibling? An element settles at an integer only.
+function mx_int_literal_settles(a: VbStore, t: typeinfo.Type, elem: boolean): boolean {
+  return arm_unsettled(a) && (is_integer(t) || !elem && is_float(t));
+}
+
+// arm_unsettled: is a value an integer native still types polymorphic — a
+// literal tree, whatever width a destination stamped on it, or a value typed
+// polymorphic (mx_arm_result_type)?
+function arm_unsettled(a: VbStore): boolean {
+  if (arm_int_literal(a.e)) {
+    return true;
+  }
+  if let typeinfo.TypeI32(i) = a.t {
+    return !i.is_char && i.polymorphic;
+  }
+  return false;
+}
+
+// mx_arm_join is the result unifyIfArms carries past two compatible arms: a
+// settled arm's type over an unsettled literal's, element by element in a
+// tuple.
+function mx_arm_join(a: VbStore, b: VbStore): VbStore {
+  if let typeinfo.TypeTuple(at) = a.t {
+    if let typeinfo.TypeTuple(bt) = b.t {
+      let n: i32 = at.elements.len();
+      if (bt.elements.len() == n) {
+        let aes: ast.Expr[] = vb_tuple_elems(a.e, n);
+        let bes: ast.Expr[] = vb_tuple_elems(b.e, n);
+        let elems: typeinfo.Type[] = [];
+        let es: ast.Expr[] = [];
+        let i: i32 = 0;
+        while (i < n) {
+          let j: VbStore = mx_arm_join(VbStore { t: at.elements[i], e: aes[i] }, VbStore { t: bt.elements[i], e: bes[i] });
+          elems = elems.append(j.t);
+          es = es.append(j.e);
+          i = i + 1;
+        }
+        return VbStore { t: t_tuple(elems), e: ast.ExprTuple { elements: es, line: 0, col: 0 } };
+      }
+    }
+  }
+  if (arm_unsettled(b)) {
+    return a;
+  }
+  if (arm_unsettled(a)) {
+    return b;
+  }
+  let t: typeinfo.Type = join_result_types(a.t, b.t);
+  if (is_unknown(t)) {
+    return a;
+  }
+  return VbStore { t: t, e: a.e };
+}
+
+// MxFold is a value if's or match's arms joined in order: `ok` until an arm,
+// typed `bad`, fails to join `acc`, the arms joined before it.
+struct MxFold { ok: boolean, acc: VbStore, bad: typeinfo.Type }
+
+// mx_fold_arms joins arm results the way unifyIfArms does. An arm that did not
+// type, or results that do not line up with their expressions, leave nothing
+// to judge: the fold is ok and `acc` unknown. An if-expression's concrete arm
+// does not coerce to its other, dyn arm: the Go checker's unifyIfArms has no
+// assignability rule, where a match's arms unify under one — except a match on
+// an enum, whose arms do not (`assigns`).
+function mx_fold_arms(types: typeinfo.Type[], exprs: ast.Expr[], unions: UnionSig[], enums: parser.EnumDecl[], if_form: boolean, assigns: boolean): MxFold {
+  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  let unjudged: MxFold = MxFold { ok: true, acc: VbStore { t: t_unknown("value block arms unjudged"), e: none }, bad: t_unknown("") };
+  if (types.len() == 0 || types.len() != exprs.len()) {
+    return unjudged;
   }
   for ty in types {
     if (is_unknown(ty)) {
-      return out;
+      return unjudged;
     }
   }
-  let t0: typeinfo.Type = types[0];
+  let acc: VbStore = VbStore { t: types[0], e: exprs[0] };
   let j: i32 = 1;
   while (j < types.len()) {
-    if (!mx_arm_compatible(t0, types[j], unions, enums) || if_form && is_dyn_slot(t0) != is_dyn_slot(types[j])) {
-      out = out.append(dg_at("E031", "match/if-expression arms have incompatible types: " + type_label(t0) + " vs " + type_label(types[j]), line, col));
-      return out;
+    let arm: VbStore = VbStore { t: types[j], e: exprs[j] };
+    if (!mx_arm_compatible(acc, arm, false, assigns, unions, enums) || if_form && is_dyn_slot(acc.t) != is_dyn_slot(arm.t)) {
+      return MxFold { ok: false, acc: acc, bad: arm.t };
     }
-    let joined: typeinfo.Type = join_result_types(t0, types[j]);
-    if (!is_unknown(joined)) {
-      t0 = joined;
-    }
+    acc = mx_arm_join(acc, arm);
     j = j + 1;
+  }
+  return MxFold { ok: true, acc: acc, bad: acc.t };
+}
+
+// vb_arms_fold is mx_fold_arms over a value block's arms. The scope carries no
+// enum declarations, so two variants of one enum read as disagreeing here.
+function vb_arms_fold(types: typeinfo.Type[], exprs: ast.Expr[], s: Scope): MxFold {
+  let no_enums: parser.EnumDecl[] = [];
+  return mx_fold_arms(types, exprs, s.unions.unions, no_enums, false, true);
+}
+
+// mx_e031 emits one E031 if a value if's or match's arms do not all join.
+function mx_e031(types: typeinfo.Type[], exprs: ast.Expr[], unions: UnionSig[], enums: parser.EnumDecl[], if_form: boolean, assigns: boolean, line: i32, col: i32): util.Diag[] {
+  let out: util.Diag[] = [];
+  let f: MxFold = mx_fold_arms(types, exprs, unions, enums, if_form, assigns);
+  if (!f.ok) {
+    out = out.append(dg_at("E031", "match/if-expression arms have incompatible types: " + type_label(f.acc.t) + " vs " + type_label(f.bad), line, col));
   }
   return out;
 }
 
-// Type the terminal value in the scope established by preceding statements.
-// A branch whose leading statements always leave (`{ return false; }`) never
-// yields a value, so it contributes no type: its tail is parse_branch_body's
-// unreachable filler.
-function mx_body_result_types(body: ast.Stmt[], s: Scope): typeinfo.Type[] {
-  let out: typeinfo.Type[] = [];
+// mx_branch_yields: does a value branch reach its terminal value? One whose
+// leading statements always leave (`{ return false; }`) never yields one: its
+// tail is parse_branch_body's unreachable filler.
+function mx_branch_yields(body: ast.Stmt[]): boolean {
   if (body.len() == 0) {
-    return out;
+    return false;
   }
   let leading: ast.Stmt[] = [];
   let li: i32 = 0;
@@ -10903,7 +11076,27 @@ function mx_body_result_types(body: ast.Stmt[], s: Scope): typeinfo.Type[] {
     leading = leading.append(body[li]);
     li = li + 1;
   }
-  if (leading.len() > 0 && parser.branch_stmts_diverge(leading)) {
+  return leading.len() == 0 || !parser.branch_stmts_diverge(leading);
+}
+
+// mx_arm_result_type types an arm's value, polymorphic where it reads a literal
+// local and is otherwise built only from unsettled integers: the arm's
+// expression alone cannot say so, as it can for a literal tree.
+function mx_arm_result_type(e: ast.Expr, s: Scope): typeinfo.Type {
+  let t: typeinfo.Type = check_expr(e, s);
+  if let typeinfo.TypeI32(i) = t {
+    if (!i.is_char && !arm_int_literal(e) && unsettled_tree(e, s.lit_locals)) {
+      return typeinfo.TypeI32 { ...i, polymorphic: true };
+    }
+  }
+  return t;
+}
+
+// Type the terminal value in the scope established by preceding statements.
+// A branch that never yields contributes no type.
+function mx_body_result_types(body: ast.Stmt[], s: Scope): typeinfo.Type[] {
+  let out: typeinfo.Type[] = [];
+  if (!mx_branch_yields(body)) {
     return out;
   }
   let cur: Scope = s;
@@ -10914,7 +11107,7 @@ function mx_body_result_types(body: ast.Stmt[], s: Scope): typeinfo.Type[] {
   }
   match (body[i]) {
     ast.StmtReturn(r) => {
-      return out.append(check_expr(r.value, cur));
+      return out.append(mx_arm_result_type(r.value, cur));
     },
     ast.StmtIf(f) => {
       return mx_if_branch_types(f, cur);
@@ -10933,7 +11126,7 @@ function mx_body_result_types(body: ast.Stmt[], s: Scope): typeinfo.Type[] {
 // reader that needs the expression's shape as well as its type.
 function mx_body_result_exprs(body: ast.Stmt[]): ast.Expr[] {
   let out: ast.Expr[] = [];
-  if (body.len() == 0) {
+  if (!mx_branch_yields(body)) {
     return out;
   }
   match (body[body.len() - 1]) {
@@ -11005,16 +11198,21 @@ function mx_expr(e: ast.Expr, s: Scope, unions: UnionSig[], enums: parser.EnumDe
         match (c.callee) {
           ast.ExprLambda(lm) => {
             if (lm.params.len() == 0 && lm.body.len() == 1) {
+              let arms: ast.Expr[] = mx_body_result_exprs(lm.body);
               match (lm.body[0]) {
                 ast.StmtMatch(m) => {
                   let mts: typeinfo.Type[] = mx_match_arm_types(m, s);
-                  out = util.append_diags(out, mx_e031(mts, unions, enums, false, expr_line(m.scrutinee), expr_col(m.scrutinee)));
-                  out = util.append_diags(out, vb_pinned_ranges(mts, mx_body_result_exprs(lm.body)));
+                  let enum_match: boolean = false;
+                  if let typeinfo.TypeUnion(_) = check_expr(m.scrutinee, s) {
+                    enum_match = true;
+                  }
+                  out = util.append_diags(out, mx_e031(mts, arms, unions, enums, false, !enum_match, expr_line(m.scrutinee), expr_col(m.scrutinee)));
+                  out = util.append_diags(out, vb_pinned_ranges(mts, arms));
                 },
                 ast.StmtIf(f) => {
                   let fts: typeinfo.Type[] = mx_if_branch_types(f, s);
-                  out = util.append_diags(out, mx_e031(fts, unions, enums, lm.origin == parser.ORIGIN_IF_EXPR, expr_line(f.cond), expr_col(f.cond)));
-                  out = util.append_diags(out, vb_pinned_ranges(fts, mx_body_result_exprs(lm.body)));
+                  out = util.append_diags(out, mx_e031(fts, arms, unions, enums, lm.origin == parser.ORIGIN_IF_EXPR, lm.origin == parser.ORIGIN_MATCH_EXPR, expr_line(f.cond), expr_col(f.cond)));
+                  out = util.append_diags(out, vb_pinned_ranges(fts, arms));
                 },
                 _ => {}
               }
@@ -14731,7 +14929,7 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
       // recovers a corrupt pointer once the heap exceeds 4 GiB
       // (arm64-darwin). A `usize` source is pointer-width and
       // stays allowed. The array / struct targets are the hop below.
-      if (type_eq(tgt, t_string()) && !is_usize(cot) && (is_integer(cot) || type_eq(cot, t_u32()))) {
+      if (type_eq(tgt, t_string()) && cast_pointer_int(cot) && !is_usize(cot)) {
         out = out.append(dg_at("E069", "reinterpreting a 32-bit " + type_label(cot) + " value as the pointer-shaped type string via `as` truncates the address; carry pointer-shaped values in a usize local/param instead", u.line, u.col));
       } else if (!as_cast_allowed(cot, tgt)) {
         out = out.append(dg_at("E033", "cannot cast " + type_label(cot) + " to " + type_label(tgt) + ": `as` converts only between numeric types", u.line, u.col));

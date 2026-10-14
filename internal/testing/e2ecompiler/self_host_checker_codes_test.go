@@ -1954,6 +1954,17 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cast-numeric-ok", "function main(): i32 { let x: i32 = 1; let y: f64 = x as f64; return 0; }\n", nil},
 		{"cast-string-to-i32-ok", "function main(): i32 { let s: string = \"x\"; return s as i32; }\n", nil},
 		{"cast-i32-to-string-e069", "function main(): i32 { let x: i32 = 1; let s: string = x as string; return 0; }\n", []string{"E069"}},
+		// The string hop is to and from an i32, u32 or usize only; E069 is the
+		// 32-bit source, and any other integer is E033.
+		{"cast-u32-to-string-e069", "function f(x: u32): string { return x as string; }\nfunction main(): i32 { return 0; }\n", []string{"E069"}},
+		{"cast-usize-to-string-ok", "function f(x: usize): string { return x as string; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"cast-i64-to-string", "function f(x: i64): string { return x as string; }\nfunction main(): i32 { return 0; }\n", []string{"E033"}},
+		{"cast-u64-to-string", "function f(x: u64): string { return x as string; }\nfunction main(): i32 { return 0; }\n", []string{"E033"}},
+		{"cast-u8-to-string", "function f(x: u8): string { return x as string; }\nfunction main(): i32 { return 0; }\n", []string{"E033"}},
+		{"cast-i64-literal-to-string", "function f(): string { return 5i64 as string; }\nfunction main(): i32 { return 0; }\n", []string{"E033"}},
+		{"cast-string-to-i64", "function f(s: string): i64 { return s as i64; }\nfunction main(): i32 { return 0; }\n", []string{"E033"}},
+		{"cast-string-to-u8", "function f(s: string): u8 { return s as u8; }\nfunction main(): i32 { return 0; }\n", []string{"E033"}},
+		{"cast-string-to-u32-usize-ok", "function f(s: string): u32 { return s as u32; }\nfunction g(s: string): usize { return s as usize; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cast-bool-to-bool-ok", "function main(): i32 { let b: boolean = true; let c: boolean = b as boolean; return 0; }\n", nil},
 		{"cast-f64-to-string", "function main(): i32 { let f: f64 = 1.0; let s: string = f as string; return 0; }\n", []string{"E033"}},
 		{"cast-string-to-f64", "function main(): i32 { let s: string = \"x\"; let f: f64 = s as f64; return 0; }\n", []string{"E033"}},
@@ -2509,7 +2520,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// E031: a `match` / `if` used in value position desugars to an IIFE,
 		// so its arms' result types must be mutually compatible. The predicate
 		// mirrors the Go checker's unifyIfArms — clear scalar mismatches fire;
-		// numeric (f64/i32) widen; tuples/arrays unify element-wise; two
+		// an unsuffixed literal arm settles at a numeric sibling's type, but two
+		// settled numeric types must agree; tuples/arrays unify element-wise; two
 		// structs of the SAME enum family are compatible (but struct-union
 		// members and unrelated structs are NOT); an unknown arm skips E031
 		// (E001 owns it). Cross-checked against the Go checker.
@@ -2529,8 +2541,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e031-match-three-arms-last-bad", "enum O { A, B, C }\nfunction main(): i32 { let o: O = A; let r = match (o) { A => 1, B => 2, C => \"x\" }; return 0; }\n", []string{"E031"}},
 		// A value if/match-expression has a real result type (the branches'
 		// common type): a mismatched var annotation is E003, a mismatched
-		// `return` is E002. A matching annotation, and a numeric-mix set (which
-		// this port doesn't unify), stay clean.
+		// `return` is E002. A matching annotation stays clean.
 		{"if-expr-value-assign-bad", "function main(): i32 { let x: string = if (1 < 2) { 1 } else { 2 }; return 0; }\n", []string{"E003"}},
 		{"match-expr-value-assign-bad", "enum E { A, B }\nfunction main(): i32 { let e: E = A; let x: string = match (e) { A => 1, B => 2 }; return 0; }\n", []string{"E003"}},
 		{"if-expr-value-assign-ok", "function main(): i32 { let x: i32 = if (1 < 2) { 1 } else { 2 }; return x; }\n", nil},
@@ -2550,6 +2561,52 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e031-union-members-mismatch", "struct A { x: i32 }\nstruct B { y: i32 }\npub type U = A | B;\nfunction main(): i32 { let c = true; let r = if (c) { A { x: 1 } } else { B { y: 2 } }; return 0; }\n", []string{"E031"}},
 		{"e031-same-enum-diff-payload-ok", "enum E { A(i32), B(string) }\nfunction main(): i32 { let c = true; let r = if (c) { A(1) } else { B(\"y\") }; return 0; }\n", nil},
 		{"e031-tuple-elems-ok", "function main(): i32 { let c = true; let r = if (c) { (1, \"x\") } else { (2, \"y\") }; return r.0; }\n", nil},
+		// Numeric arms (#12381): only an unsettled literal — a literal tree,
+		// arithmetic over one, a nested value if of them, or a local one
+		// initialises — takes a sibling's numeric type.
+		{"e031-if-i32-local-f64-literal", "function main(): i32 { let n: i32 = 1; let x = if (true) { n } else { 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-if-f64-literal-i32-local", "function main(): i32 { let n: i32 = 1; let x = if (true) { 2.5 } else { n }; return 0; }\n", []string{"E031"}},
+		{"e031-if-i64-i32-locals", "function main(): i32 { let a: i64 = 5; let n: i32 = 1; let x = if (true) { a } else { n }; return 0; }\n", []string{"E031"}},
+		{"e031-if-u8-local-f64-literal", "function main(): i32 { let b: u8 = 1; let x = if (true) { b } else { 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-if-arith-over-local", "function main(): i32 { let n: i32 = 1; let x = if (true) { n + 1 } else { 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-if-nested-typed-arm", "function main(): i32 { let n: i32 = 1; let x = if (true) { if (false) { n } else { 2 } } else { 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-elseif-chain-typed", "function main(): i32 { let n: i32 = 1; let x = if (true) { n } else if (false) { 2 } else { 3.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-char-local-literal", "function main(): i32 { let c: char = 'a'; let x = if (true) { c } else { 1 }; return 0; }\n", []string{"E031"}},
+		{"e031-call-arm-f64-literal", "function g(): i32 { return 1; }\nfunction main(): i32 { let x = if (true) { g() } else { 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-literal-match-typed-arm", "function main(): i32 { let k: i32 = 3; let n: i32 = 1; let x = match (k) { 1 => n, 2 => 2.5, _ => 3 }; return 0; }\n", []string{"E031"}},
+		{"e031-literal-match-widths", "function main(): i32 { let k: i32 = 3; let a: i64 = 1; let n: i32 = 2; let x = match (k) { 1 => a, _ => n }; return 0; }\n", []string{"E031"}},
+		{"e031-enum-match-typed-arm", "enum E { A, B }\nfunction main(): i32 { let e: E = E.A; let n: i32 = 1; let x = match (e) { E.A => n, E.B => 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-option-payload-f64-literal", "function main(): i32 { let o: Option[i32] = Some(1); let x = match (o) { Some(v) => v, None => 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-diverging-arm-skipped", "function main(): i32 { let k: i32 = 3; let n: i32 = 1; let x = match (k) { 1 => n, 2 => { return 3; }, _ => 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-tuple-typed-elem", "function main(): i32 { let n: i32 = 1; let t = if (true) { (n, 1) } else { (2.5, 1) }; return 0; }\n", []string{"E031"}},
+		{"e031-array-literal-elems-differ", "function main(): i32 { let x = if (true) { [1] } else { [2.5] }; return 0; }\n", []string{"E031"}},
+		{"e031-array-literal-vs-i64", "function main(): i32 { let a: i64 = 1; let x = if (true) { [a] } else { [2] }; return 0; }\n", []string{"E031"}},
+		{"e031-array-poly-f64-vs-f32", "function main(): i32 { let x = if (true) { [2.5] } else { [1.0f32] }; return 0; }\n", []string{"E031"}},
+		{"e031-enum-match-array-vs-i64", "enum E { A, B }\nfunction main(): i32 { let e: E = E.A; let a: i64 = 2; let x = match (e) { E.A => [a], E.B => [3] }; return 0; }\n", []string{"E031"}},
+		{"e031-literal-match-array-vs-f64", "function main(): i32 { let k: i32 = 1; let d: f64 = 2.0; let x = match (k) { 1 => [d], _ => [3] }; return 0; }\n", []string{"E031"}},
+		// Past an E031 the block takes the arms joined before the failing one.
+		{"e031-then-annotation", "function main(): i32 { let n: i32 = 1; let x: f64 = if (true) { n } else { 2.5 }; return 0; }\n", []string{"E003", "E031"}},
+		{"e031-then-return", "function g(): f64 { let n: i32 = 1; return if (true) { n } else { 2.5 }; }\nfunction main(): i32 { return 0; }\n", []string{"E002", "E031"}},
+		{"e031-then-use-ok", "function main(): i32 { let n: i32 = 1; let x = if (true) { n } else { 2.5 }; return x; }\n", []string{"E031"}},
+		{"e031-literal-f64-ok", "function main(): i32 { let x = if (true) { 1 } else { 2.5 }; return 0; }\n", nil},
+		{"e031-literal-i64-suffix-ok", "function main(): i32 { let x = if (true) { 1 } else { 2i64 }; return 0; }\n", nil},
+		{"e031-literal-u8-suffix-ok", "function main(): i32 { let x = if (true) { 1 } else { 2u8 }; return 0; }\n", nil},
+		{"e031-literal-arith-ok", "function main(): i32 { let x = if (true) { 1 << 2 } else { 2.5 }; let y = if (true) { -1 } else { 2.5 }; let z = if (true) { 7 % 2 } else { 2.5 }; return 0; }\n", nil},
+		{"e031-wide-literal-f64-ok", "function main(): i32 { let x = if (true) { 3000000000 } else { 2.5 }; return 0; }\n", nil},
+		{"e031-i64-local-literal-ok", "function main(): i32 { let a: i64 = 5; let x = if (true) { a } else { 1 }; return 0; }\n", nil},
+		{"e031-u8-local-literal-ok", "function main(): i32 { let b: u8 = 1; let x = if (true) { b } else { 2 }; return 0; }\n", nil},
+		{"e031-f32-local-literals-ok", "function main(): i32 { let f: f32 = 1.0f32; let x = if (true) { f } else { 2 }; let y = if (true) { f } else { 2.5 }; return 0; }\n", nil},
+		{"e031-nested-literal-if-ok", "function main(): i32 { let x = if (true) { if (false) { 1 } else { 2 } } else { 2.5 }; return 0; }\n", nil},
+		{"e031-nested-literal-arith-ok", "function main(): i32 { let x = if (true) { (if (false) { 1 } else { 2 }) + 0 } else { 2.5 }; return 0; }\n", nil},
+		{"e031-literal-match-ok", "function main(): i32 { let k: i32 = 3; let x = match (k) { 1 => 1, 2 => 2.5, _ => 3 }; return 0; }\n", nil},
+		{"e031-enum-match-literals-ok", "enum E { A, B }\nfunction main(): i32 { let e: E = E.A; let a: i64 = 1; let x = match (e) { E.A => a, E.B => 2 }; return 0; }\n", nil},
+		{"e031-tuple-literal-elems-ok", "function main(): i32 { let n: i32 = 1; let t = if (true) { (n, 2) } else { (3, 2.5) }; let u = if (true) { (1, 2) } else { (2.5, 3i64) }; return 0; }\n", nil},
+		{"e031-block-arm-literal-ok", "function main(): i32 { let k: i32 = 3; let x = match (k) { 1 => { let q = 2; 2 }, _ => 2.5 }; return 0; }\n", nil},
+		{"e031-literal-local-ok", "function main(): i32 { let q = 2; let r = q + 1; let x = if (true) { q } else { 2.5 }; let y = if (true) { r } else { 2i64 }; return 0; }\n", nil},
+		{"e031-literal-local-payload-ok", "function main(): i32 { let q = 2; let o = Some(q); let x = match (o) { Some(v) => v, None => 2.5 }; return 0; }\n", nil},
+		{"e031-arm-literal-local-ok", "function main(): i32 { let k: i32 = 3; let x = match (k) { 1 => { let q = 2; q + 1 }, _ => 2.5 }; return 0; }\n", nil},
+		{"e031-wide-array-arms-ok", "function main(): i32 { let arr: i64[] = if (true) { [1234567890123, 9876543210] } else { [0, 0] }; return 0; }\n", nil},
+		{"e031-literal-match-array-assigns-ok", "function main(): i32 { let k: i32 = 1; let a: i64 = 2; let u: u8 = 1; let x = match (k) { 1 => [a], _ => [3] }; let y = match (k) { 1 => [u], _ => [3] }; let z = match (k) { 1 => [[a]], _ => [[3]] }; return 0; }\n", nil},
 		// E045: a map literal's first key fixes the key type, which must be
 		// i32 or string (the only key kinds the runtime hash/compare
 		// supports). Map programs need `import "core/map";` (Go reports E001

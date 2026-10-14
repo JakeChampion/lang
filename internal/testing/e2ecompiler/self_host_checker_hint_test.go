@@ -115,6 +115,12 @@ impl Ident for A { function one(): Self { return A { v: 10 }; } }
 function unit[T: Ident](): T { return T.one(); }
 function geta(): A { return unit(); }
 function main(): i32 { let a: A = unit(); return a.v + geta().v; }`, 0},
+		// An unsettled integer arm takes its sibling arm's type (#12381).
+		{"value-if-literal-settles-at-float", `function main(): i32 { let x = if (true) { 1 } else { 2.5 }; return 0; }`, 0},
+		{"value-if-literal-local-settles", `function main(): i32 { let q = 2; let x = if (true) { q } else { 2.5 }; return 0; }`, 0},
+		{"value-if-literal-settles-at-i64", `function main(): i32 { let a: i64 = 5; let x = if (true) { a } else { -1 }; return 0; }`, 0},
+		{"value-if-wide-array-arms", `function main(): i32 { let arr: i64[] = if (true) { [1234567890123] } else { [0, 0] }; return 0; }`, 0},
+		{"value-match-literal-array-assigns", `function main(): i32 { let k: i32 = 1; let a: i64 = 2; let x = match (k) { 1 => [a], _ => [3] }; return 0; }`, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(dir, tc.name+".fern")

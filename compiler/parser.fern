@@ -12912,18 +12912,21 @@ pub function int_literal_tree(e: ast.Expr): boolean {
       return false;
     },
     ast.ExprBinary(b) => {
-      if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%"
-        || b.op == "&" || b.op == "|" || b.op == "^" || b.op == "<<" || b.op == ">>"
-        || b.op == "+|" || b.op == "-|" || b.op == "*|" || b.op == "<<|") {
-        return int_literal_tree(b.left) && int_literal_tree(b.right);
-      }
-      return false;
+      return int_literal_op(b.op) && int_literal_tree(b.left) && int_literal_tree(b.right);
     },
     _ => {
       return false;
     }
   }
   return false;
+}
+
+// int_literal_op: does a binary `op` over two unsettled integers leave an
+// unsettled integer?
+pub function int_literal_op(op: string): boolean {
+  return op == "+" || op == "-" || op == "*" || op == "/" || op == "%"
+    || op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>"
+    || op == "+|" || op == "-|" || op == "*|" || op == "<<|";
 }
 
 // float_literal_tree: is `e` built from unsuffixed float literals only?
@@ -28727,6 +28730,14 @@ function is_unsettled_int_literal(e: ast.Expr): boolean {
     }
   }
   return false;
+}
+
+// float_settled_int: is `n` an integer literal settle_float_expr stamped
+// `is_float` on? Its text has no fraction or exponent, which every float literal
+// the lexer reads has.
+pub function float_settled_int(n: ast.ExprNumber): boolean {
+  return n.is_float && n.suffix.len() == 0 && util.index_of_sub(n.text, ".") < 0
+    && util.index_of_sub(n.text, "e") < 0 && util.index_of_sub(n.text, "E") < 0;
 }
 
 // settle_float_expr stamps `is_float` across an unsettled integer literal
