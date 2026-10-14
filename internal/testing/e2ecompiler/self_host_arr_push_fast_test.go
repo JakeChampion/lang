@@ -103,6 +103,13 @@ func TestSelfHostArrPushFastPath(t *testing.T) {
 				if !strings.Contains(empty, pop) || frame[target].MatchString(empty) || strings.Contains(empty, boxCall) {
 					t.Errorf("%s: an empty receiver does not pop its four-slot class before the slow path's frame:\n%s", target, empty)
 				}
+				// The owned append's first append to a static empty array goes
+				// to the shared slow path before building a frame of its own.
+				owned := string(asm)[strings.Index(string(asm), ".Lapo_slow:\n"):]
+				owned = owned[:frame[target].FindStringIndex(owned)[0]]
+				if !regexp.MustCompile(`\b(js|b) \.Larr_push_slow\b`).MatchString(owned) {
+					t.Errorf("%s: the owned append frames a first append to a static empty array:\n%s", target, owned)
+				}
 				slow := string(asm)[strings.Index(string(asm), ".Larr_push_slow:\n"):]
 				slow = slow[:strings.Index(slow, ".Larr_push_frame:")]
 				if !strings.Contains(slow, boxCall) {

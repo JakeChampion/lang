@@ -3690,7 +3690,7 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 // function-value box the lowering folded whole (ir.const_struct_* /
 // ir.const_closure), interned as the flat arm interns it.
 function ssa_agg_lit(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState): asmcore.EmitState {
-  let pk: asmcore.ConstAggPack = asmcore.const_agg_pack(s, ins.str);
+  let pk: asmcore.ConstAggPack = asmcore.const_agg_pack(s, ins.str, "");
   s = pk.state;
   let kout: asmcore.ConstAggOut = asmcore.add_const_agg(s, pk.text);
   s = kout.state;
@@ -10549,6 +10549,18 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = s.write("__fern_arr_push_owned:\n");
     s = s.write(arr_push_fast(".Lapo_slow", s.rc_free_debug));
     s = s.write(".Lapo_slow:\n");
+    if (!s.rc_free_debug) {
+      // The first append to a static empty array leaves nothing to free, so
+      // it goes straight to the shared slow path and returns from there.
+      s = s.write("    ldr x2, [x0]\n");
+      s = s.write("    cbnz x2, .Lapo_grow\n");
+      s = s.write("    ldur x2, [x0, #-16]\n");
+      s = s.write("    cbnz x2, .Lapo_grow\n");
+      s = s.write("    ldur w2, [x0, #-8]\n");
+      s = s.write("    tbz w2, #31, .Lapo_grow\n");
+      s = s.write("    b .Larr_push_slow\n");
+      s = s.write(".Lapo_grow:\n");
+    }
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
     s = s.write("    stp x19, x20, [sp, #-16]!\n");

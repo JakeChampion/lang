@@ -62,7 +62,7 @@ x86_64/ascii_scan.ir	37119510
 x86_64/call_overhead.text	88
 x86_64/call_overhead.ir	8250759
 x86_64/closure_call.text	824
-x86_64/closure_call.ir	94308097
+x86_64/closure_call.ir	79818106
 x86_64/enum_match.text	975
 x86_64/enum_match.ir	53775055
 x86_64/http_hello.text	19770
@@ -70,9 +70,9 @@ x86_64/http_hello.ir	27552835
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
 x86_64/map_int.text	5687
-x86_64/map_int.ir	40650096
+x86_64/map_int.ir	39453475
 x86_64/map_probe_chain.text	5694
-x86_64/map_probe_chain.ir	378133473
+x86_64/map_probe_chain.ir	369386467
 x86_64/map_string.text	8603
 x86_64/map_string.ir	63856516	2
 x86_64/ordmap_insert.text	5131
@@ -102,7 +102,7 @@ x86_64/string_scan.ir	52966728
 x86_64/string_slice.text	739
 x86_64/string_slice.ir	38700038
 x86_64/struct_drop.text	3425
-x86_64/struct_drop.ir	310900547
+x86_64/struct_drop.ir	302980547
 x86_64/tokenize.text	973
 x86_64/tokenize.ir	36950039
 x86_64/utf8_ingest_unchecked.text	9286
@@ -242,7 +242,7 @@ aarch64/string_scan.ir	60275834
 aarch64/string_slice.text	939
 aarch64/string_slice.ir	43620043
 aarch64/struct_drop.text	3563
-aarch64/struct_drop.ir	349820825
+aarch64/struct_drop.ir	344060825
 aarch64/tokenize.text	1195
 aarch64/tokenize.ir	38580038
 aarch64/utf8_ingest_unchecked.text	9679

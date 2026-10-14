@@ -518,7 +518,7 @@ func mvCases(t *testing.T) []invocation {
 		{name: "--strip-trailing-slashes changes the joined name", args: []string{"--strip-trailing-slashes", "-v", "a//", "d"}, seedTree: mvSlash},
 		{name: "--strip-trailing-slashes leaves the destination alone", args: []string{"--strip-trailing-slashes", "a", "b/"}, seedTree: mvSlash},
 		{name: "--strip-trailing-slashes under -t", args: []string{"--strip-trailing-slashes", "-vt", "d", "a//"}, seedTree: mvSlash},
-		{name: "--strip-trailing-slashes on a root operand", args: []string{"--strip-trailing-slashes", "//", "x"}, seedTree: mvSlash},
+		{name: "--strip-trailing-slashes on a root operand", args: []string{"--strip-trailing-slashes", "//", "x"}, seedTree: mvSlash, rootRename: true},
 		{name: "without it the slashes are kept", args: []string{"-v", "d///", "empty"}, seedTree: mvDirs},
 
 		// ---- backups -------------------------------------------------------------
