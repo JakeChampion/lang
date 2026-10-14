@@ -176,10 +176,14 @@ A `-size` build (`FERN_SIZE=1`, `asmcore.EmitState.size`) trades that
 inline guard for its call: a release calls the `.r` entry, and the retain
 and the uniqueness test `ssa.rc_inlined` otherwise expands call their stack
 entries, on both native ISAs. A fused uniqueness test (`ssa_fuse`) stays
-inline. `-size` also drops the backtrace walk unless `-backtrace` is given.
-The net-bench hello server is 2,197,088 bytes on x86-64 by default and
-1,656,520 with `-size`, 2,347,664 and 1,757,584 on arm64
-(`TestSelfHostSizeMode`).
+inline. The inliner then splices only what is called once
+(`semsource.BuildOpts.size`, `seminline.inline_leaves`): no leaf and no
+shared body is copied, though a body smaller than its call still is.
+`-size` also drops the backtrace walk unless `-backtrace` is given. The
+net-bench hello server is 2,197,088 bytes on x86-64 by default and
+1,446,208 with `-size`, 2,347,664 and 1,560,968 on arm64
+(`TestSelfHostSizeMode`); the guard's half of that is 1,656,520 and
+1,757,584.
 
 The rest of the track, in order:
 

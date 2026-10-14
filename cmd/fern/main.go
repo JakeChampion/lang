@@ -733,11 +733,14 @@ func main() {
 		src: srcPath, out: *out, target: *target, emit: *emit, backend: *backend,
 		embed: *embedDir, export: *export, qemu: *qemu,
 		runIt: *runIt, shared: *shared, debug: *emitDebug, sanitize: *sanitize,
-		cover: *cover, optimize: *optimize, size: *size, progArgs: progArgs,
+		cover: *cover, optimize: *optimize, progArgs: progArgs,
 	}
 	flag.Visit(func(f *flag.Flag) {
 		if f.Name == "backtrace" {
 			req.backtrace = backtrace
+		}
+		if f.Name == "size" {
+			req.size = size
 		}
 	})
 	code, err := compileSelfHost(req)

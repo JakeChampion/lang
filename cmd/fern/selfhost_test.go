@@ -34,12 +34,25 @@ func TestCompileArgsEmitDefault(t *testing.T) {
 	}
 }
 
-// TestCompileArgsSize: -size reaches the self-host, and only when asked for.
+// TestCompileArgsSize: -size reaches the self-host either way it is given,
+// so -size=false overrides FERN_SIZE=1, and nothing is passed without it,
+// leaving the self-host to read FERN_SIZE.
 func TestCompileArgsSize(t *testing.T) {
-	sized := compileArgs(compileRequest{src: "p.fern", target: "x86-64-linux", size: true}, "prog", "stdlib")
-	plain := compileArgs(compileRequest{src: "p.fern", target: "x86-64-linux"}, "prog", "stdlib")
-	if !slices.Contains(sized, "-size") || slices.Contains(plain, "-size") {
-		t.Errorf("-size forwarded as %q with the flag and %q without", strings.Join(sized, " "), strings.Join(plain, " "))
+	on, off := true, false
+	for _, c := range []struct {
+		size *bool
+		want string
+	}{{&on, "-size=true"}, {&off, "-size=false"}, {nil, ""}} {
+		args := compileArgs(compileRequest{src: "p.fern", target: "x86-64-linux", size: c.size}, "prog", "stdlib")
+		got := ""
+		for _, a := range args {
+			if strings.HasPrefix(a, "-size") {
+				got = a
+			}
+		}
+		if got != c.want {
+			t.Errorf("size %v: forwards %q, want %q (%s)", c.size, got, c.want, strings.Join(args, " "))
+		}
 	}
 }
 

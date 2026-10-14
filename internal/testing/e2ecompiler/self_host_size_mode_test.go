@@ -13,12 +13,21 @@ import (
 // count inline (asm_ir / asm_arm64_ir ssa_call): `g` releases the string it
 // built through __fern_str_free's register entry, with none of the inline
 // guard's labels, and `h` retains the array it goes on reading through
-// __fern_rc_inc. The program answers the same either way, -size drops the
+// __fern_rc_inc. The leaf `mix` is spliced into `k` by default and called
+// under -size, which splices only what is called once (seminline). The
+// program answers the same either way, -size drops the
 // backtrace walk unless -backtrace asks for it, and the net-bench hello
 // server, std/serve whole, builds smaller.
 const sizeModeProg = `@noinline function g(a: string): i32 { let t: string = a + "x"; return t.len(); }
 @noinline function h(xs: i32[]): i32 { let ys: i32[] = xs; let zs: i32[] = ys.append(1); return zs.len() + xs.len(); }
-function main(): i32 { return g("abc" + "") + g("") * 10 + h([1, 2, 3]) * 100; }
+function mix(x: i32): i32 {
+  let a: i32 = x * 31 + 7;
+  let b: i32 = (a ^ (a >> 3)) * 17;
+  let c: i32 = (b + x) % 1009;
+  return c * c + a - b;
+}
+@noinline function k(a: i32, b: i32): i32 { return mix(a) + mix(b); }
+function main(): i32 { return g("abc" + "") + g("") * 10 + h([1, 2, 3]) * 100 + k(args().len(), 2) - 5; }
 `
 
 func TestSelfHostSizeMode(t *testing.T) {
@@ -58,6 +67,13 @@ func TestSelfHostSizeMode(t *testing.T) {
 		if hb := condBranchBody(t, asm, "h"); strings.Contains(hb, "rcinc") || !retain[target].MatchString(hb) {
 			t.Errorf("%s -size: h does not retain its array through __fern_rc_inc:\n%s", target, hb)
 		}
+		mixCall := regexp.MustCompile(`(call|bl) __fn_mix\b`)
+		if kb := condBranchBody(t, asm, "k"); !mixCall.MatchString(kb) {
+			t.Errorf("%s -size: k splices the leaf mix rather than calling it:\n%s", target, kb)
+		}
+		if kb := condBranchBody(t, emit(target), "k"); mixCall.MatchString(kb) {
+			t.Errorf("%s: by default k calls the leaf mix rather than splicing it:\n%s", target, kb)
+		}
 		if strings.Contains(asm, "backtrace:") {
 			t.Errorf("%s -size: the backtrace walk is still emitted", target)
 		}
@@ -80,8 +96,8 @@ func TestSelfHostSizeMode(t *testing.T) {
 				run = exec.Command(tg.runner[0], append(tg.runner[1:], bin)...)
 			}
 			_ = run.Run()
-			if got := run.ProcessState.ExitCode(); got != 714%256 {
-				t.Errorf("%s %s: exit %d, want %d (714 mod 256)", tg.target, mode, got, 714%256)
+			if got := run.ProcessState.ExitCode(); got != sizeModeExit() {
+				t.Errorf("%s %s: exit %d, want %d", tg.target, mode, got, sizeModeExit())
 			}
 		}
 	}
@@ -108,4 +124,16 @@ func TestSelfHostSizeMode(t *testing.T) {
 		}
 		t.Logf("%s hello server: %d bytes, %d with -size", target, sizes["default"], sizes["size"])
 	}
+}
+
+// sizeModeExit is what sizeModeProg's main answers, as an exit status: g
+// gives 14, h 700, and k(1, 2) the two mixes, less 5.
+func sizeModeExit() int {
+	mix := func(x int32) int32 {
+		a := x*31 + 7
+		b := (a ^ (a >> 3)) * 17
+		c := (b + x) % 1009
+		return c*c + a - b
+	}
+	return int(uint8(14 + 700 + mix(1) + mix(2) - 5))
 }

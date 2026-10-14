@@ -44,12 +44,11 @@ reference-counting code compounded. The serve module alone is over the
 whole target.
 
 `-size` builds call the reference-count helpers instead of testing the
-count inline (docs/SELFHOST-SSA-BACKEND.md), which takes the TLS server
-from 2,098,600 bytes to 1,577,328 and the hello server from 2,197,088 to
-1,656,520. In a measurement build that also turned off the inliner's
-growing splices (leaves and two-caller shared bodies), the TLS server came
-to 1,371,496. What is left is code density: about 300,000 instructions,
-37% of them moves.
+count inline, and splice only what is called once
+(docs/SELFHOST-SSA-BACKEND.md). That takes the TLS server from 2,098,600
+bytes to 1,382,360 and the hello server from 2,197,088 to 1,446,208; the
+reference-count half alone is 1,577,328 and 1,656,520. What is left is
+code density: about 300,000 instructions, 37% of them moves.
 
 ## p99 at 4,096 connections
 

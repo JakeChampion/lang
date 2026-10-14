@@ -16,10 +16,10 @@ import (
 // compileRequest is a `-target` compile as the command line spelled it.
 // backtrace is nil when -backtrace was not passed, so FERN_BACKTRACE decides.
 type compileRequest struct {
-	src, out, target, emit, backend, embed, export, qemu  string
-	runIt, shared, debug, sanitize, cover, optimize, size bool
-	backtrace                                             *bool
-	progArgs                                              []string
+	src, out, target, emit, backend, embed, export, qemu string
+	runIt, shared, debug, sanitize, cover, optimize      bool
+	backtrace, size                                      *bool
+	progArgs                                             []string
 }
 
 // compileArgs is the self-host compiler's command line for r, writing to out.
@@ -47,8 +47,8 @@ func compileArgs(r compileRequest, out, stdlib string) []string {
 			args = append(args, f.name)
 		}
 	}
-	if r.size {
-		args = append(args, "-size")
+	if r.size != nil {
+		args = append(args, fmt.Sprintf("-size=%t", *r.size))
 	}
 	if r.backtrace != nil {
 		args = append(args, fmt.Sprintf("-backtrace=%t", *r.backtrace))
