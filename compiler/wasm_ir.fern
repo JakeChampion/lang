@@ -310,7 +310,7 @@ pub function need_ops(): string[] {
     "str_split", "tcp_accept", "tcp_close", "tcp_connect", "tcp_listen", "tcp_listen_with",
     "tcp_local_port", "tcp_pollable", "tcp_recv", "tcp_send", "tcp_send_bytes", "tcp_socket_ctl", "temp_dir",
     "udp_bind", "udp_connect", "udp_recvfrom", "udp_send", "udp_send_bytes", "udp_sendto", "udp_sendto_bytes", "tcp_connect_with", "wasm_block",
-    "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv", "tcp_recv_into", "tcp_ktls", "tcp_sendfile", "tcp_send_buf",
+    "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv", "ring_send_zc", "tcp_recv_into", "tcp_ktls", "tcp_sendfile", "tcp_send_buf",
     "wasm_poll", "wasm_pollable_drop", "wasm_timer_pollable", "write_file", "write_file_bytes", "open_file",
     "writer_write", "write_some", "write_bytes", "write_some_bytes", "buf_take_bytes", "buf_push_bytes_range",
     "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded",
@@ -2190,7 +2190,7 @@ pub function component_refused_need(needs: string[], io: boolean, proxy: boolean
     }
     // clock_set's and clone_file's bodies answer Unsupported, and the
     // ring's and kernel TLS's ENOSYS, and import nothing.
-    if (n == "clock_set" || n == "clone_file" || n == "ring_new" || n == "ring_ctl" || n == "ring_wait" || n == "ring_recv" || n == "tcp_ktls") {
+    if (n == "clock_set" || n == "clone_file" || n == "ring_new" || n == "ring_ctl" || n == "ring_wait" || n == "ring_recv" || n == "ring_send_zc" || n == "tcp_ktls") {
       i = i + 1;
       continue;
     }
@@ -4759,7 +4759,8 @@ pub function ring_funcs(): string {
   let o: string = "  (func $__fern_ring_new (param $entries i32) (result i64) (i64.const -52))\n";
   o = o + "  (func $__fern_ring_ctl (param $ring i64) (param $op i32) (param $fd i32) (param $arg i32) (result i32) (i32.const -52))\n";
   o = o + "  (func $__fern_ring_wait (param $ring i64) (param $events i32) (param $timeout i32) (result i32) (i32.const -52))\n";
-  return o + "  (func $__fern_ring_recv (param $ring i64) (param $fd i32) (param $buf i32) (result i32) (i32.const -52))\n";
+  o = o + "  (func $__fern_ring_recv (param $ring i64) (param $fd i32) (param $buf i32) (result i32) (i32.const -52))\n";
+  return o + "  (func $__fern_ring_send_zc (param $ring i64) (param $fd i32) (param $data i32) (param $from i32) (result i32) (i32.const -52))\n";
 }
 
 // wasi has no kernel TLS record layer: tcp_ktls answers ENOSYS (52), and
@@ -6329,7 +6330,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     // udp_send(host, port, data) -> bytes accepted, or -errno / -1 on a
     // malformed host literal. All three args are on the stack (#4375).
     parts = parts.append("    call $__fern_udp_send\n");
-  } else if (o.kind_tag >= 334 && o.kind_tag <= 338 || o.kind_tag >= 341 && o.kind_tag <= 344 || o.kind_tag >= 434 && o.kind_tag <= 438) {  // udp_*, tcp_connect_with, reactor_*, tcp_recv_into, ring_*, tcp_ktls
+  } else if (o.kind_tag >= 334 && o.kind_tag <= 338 || o.kind_tag >= 341 && o.kind_tag <= 344 || o.kind_tag >= 434 && o.kind_tag <= 439) {  // udp_*, tcp_connect_with, reactor_*, tcp_recv_into, ring_*, tcp_ktls
     // The datagram sockets, the started connect and the reactor floor:
     // every arg is on the stack, the helper's i32 answer replaces them.
     parts = parts.append("    call $__fern_" + ir.kind_name(o.kind_tag) + "\n");
@@ -13384,7 +13385,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need(needs, "reactor_wait")) {
     parts = parts.append(reactor_wait_func());
   }
-  if (need_any(needs, ["ring_new", "ring_ctl", "ring_wait", "ring_recv"])) {
+  if (need_any(needs, ["ring_new", "ring_ctl", "ring_wait", "ring_recv", "ring_send_zc"])) {
     parts = parts.append(ring_funcs());
   }
   if (need(needs, "tcp_ktls")) {
