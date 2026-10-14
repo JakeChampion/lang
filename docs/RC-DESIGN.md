@@ -169,9 +169,14 @@ reads (`units_of`):
   buffer's unit before the call and gives it back after, so the callee's
   append finds a unique buffer. A caller whose read ends at the call hands the
   buffer unbracketed (`Step.hand_roots`). The table is a fixpoint over the
-  module. Pinned by `TestSelfHostFieldAppendInPlace*`,
-  `TestSelfHostGrowFieldBracketReleasesRetainedX86_64` and
-  `TestSelfHostLentArrayBracket`.
+  module. A call through a function value or a dyn receiver names no body:
+  its rows are every closure body's (under `indirect_callee`) or every arm's
+  (under the dyn call's name), and it holds the whole box of each lent
+  operand at those positions, handed parameters included
+  (`dispatched_rows`, `ssarc.dispatch_bracketed`). Pinned by
+  `TestSelfHostFieldAppendInPlace*`,
+  `TestSelfHostGrowFieldBracketReleasesRetainedX86_64`,
+  `TestSelfHostLentArrayBracket` and `TestSelfHostDispatchedBracket*`.
 - **Kept fields** (`Plan.kept`): the fields a record update keeps, so the
   construction that reuses the record's box leaves them in place.
 
