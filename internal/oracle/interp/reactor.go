@@ -129,6 +129,12 @@ func builtinRingUnsupported(_ *Interp, _ []Value) (Value, error) {
 	return Number(errnoOf(syscall.ENOSYS)), nil
 }
 
+// builtinKtlsUnsupported answers tcp_ktls: the interpreter's sockets are
+// Go's, so a connection asking for the kernel's record layer keeps its own.
+func builtinKtlsUnsupported(_ *Interp, _ []Value) (Value, error) {
+	return Number(errnoOf(syscall.ENOSYS)), nil
+}
+
 // rawFd is the descriptor behind a socket handle of any kind.
 func (i *Interp) rawFd(handle int64) (int, bool) {
 	var sc syscall.Conn
