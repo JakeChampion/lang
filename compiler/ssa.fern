@@ -1522,16 +1522,24 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
         if (v < wish.len()) {
           pr = wish[v];
         }
-        if (pr < 0 || spans_call(cum, lo[v], hi[v]) || pr == abi_reg && !abi_ok || index_of_reg(free, pr) < 0) {
+        if (pr < 0 || spans_call(cum, lo[v], hi[v]) || pr == abi_reg && !abi_ok) {
           continue;
         }
-        free = remove_reg(free, pr);
-        reg_of = reg_of.with(v, pr);
-        act_val = act_val.append(v);
-        act_hi = act_hi.append(hi[v]);
-        act_reg = act_reg.append(pr);
-        placed = true;
-        continue;
+        if (index_of_reg(free, pr) >= 0) {
+          free = remove_reg(free, pr);
+          reg_of = reg_of.with(v, pr);
+          act_val = act_val.append(v);
+          act_hi = act_hi.append(hi[v]);
+          act_reg = act_reg.append(pr);
+          placed = true;
+          continue;
+        }
+        // Held: taken below if its holder dies at this definition.
+        let held: i32 = index_of_reg(act_reg, pr);
+        if (held < 0) {
+          continue;
+        }
+        h = act_val[held];
       }
       if (h < 0 || reg_of[h] < 0) {
         continue;

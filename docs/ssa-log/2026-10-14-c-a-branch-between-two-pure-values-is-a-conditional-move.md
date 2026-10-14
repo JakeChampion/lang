@@ -120,5 +120,15 @@ Two other measurements:
   control in `ssaretainedallocation` pinned `if (a > b) { return 7 } else {
   return 9 }`, which is now a select. Its else arm divides, so it stays the
   branch the control is about.
+- A returned select asks for the result register, but a fused compare reads
+  its operands at the select, so the register was still held by one of them
+  and the select took an operand's register instead, then moved it to
+  `%rax` before `ret` (`TestSelfHostReturnValueInResultRegister`). The
+  allocator now gives a value its wished-for register when the holder dies
+  at the definition and the instruction reads before it writes, the rule an
+  operand's register already followed.
+- `TestSelfHostOptimisationShapes/value_test_in_place` pinned arm64's
+  `cbz` on a boolean whose arm only returned a parameter, which is now a
+  `csel`. The arm calls, so it stays the branch the case is about.
 - A stdlib root spelled with `..` made the benchmark harness's compiles fail
   as an "import cycle" (#12398), on main as well.

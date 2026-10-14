@@ -392,9 +392,11 @@ function main(): i32 { return (two_phase(1i64) % 100i64) as i32; }
 `,
 		want:   map[string][]string{"x86-64-linux": {`-\d+\(%rbp\)`}, "arm64-linux": {`\[sp, #\d+\]`}},
 		forbid: map[string][]string{"x86-64-linux": {`-(?:1\d\d)\(%rbp\)`}, "arm64-linux": {`\[sp, #(?:1[6-9]|[2-9]\d)\]`}}},
-	// A branch on a boolean tests the register the boolean lives in.
+	// A branch on a boolean tests the register the boolean lives in. The
+	// arm calls, so the branch is not a select.
 	{name: "value_test_in_place", fn: "pick", exit: 7, src: `
-@noinline function pick(b: boolean, x: i32): i32 { if (b) { return x; } return 0; }
+@noinline function id(x: i32): i32 { return x; }
+@noinline function pick(b: boolean, x: i32): i32 { if (b) { return id(x); } return 0; }
 function main(): i32 { return pick(true, 7) + pick(false, 9); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`testq (%r\w+), (%r\w+)`}, "arm64-linux": {`\bcbn?z x\d+,`}},
