@@ -755,6 +755,185 @@ function test_client_certificate_resumed(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
+// update_keys both ways between sessions sealing their own records: the
+// server asks the client to update too, the client answers with its own
+// KeyUpdate, and data still flows; then the client updates alone.
+function test_key_update(): test.TestOutcome {
+  match (connect(client.config("tls.example", roots()), server.config(identity_of(ED_LEAF, ED_PKCS8)))) {
+    Ok(p) => {
+      match (updated(p)) {
+        Ok(t) => {
+          return test.assert_eq(t, "ping pong / ping pong");
+        },
+        Err(e) => {
+          return test.fail(e);
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function supdate(s: server.Session, request: boolean): Result[server.Step, string] {
+  match (s.update_keys(request)) {
+    Ok(step) => {
+      return Ok(step);
+    },
+    Err(e) => {
+      return Err("server: " + e.message());
+    }
+  }
+  return Err("server");
+}
+
+function cupdate(s: client.Session, request: boolean): Result[client.Step, string] {
+  match (s.update_keys(request)) {
+    Ok(step) => {
+      return Ok(step);
+    },
+    Err(e) => {
+      return Err("client: " + e.message());
+    }
+  }
+  return Err("client");
+}
+
+function updated(p: Pair): Result[string, string] {
+  let su: server.Step = supdate(p.server, true)?;
+  let ca: client.Step = crd(p.client, su.output)?;
+  if (ca.output.len() == 0) {
+    return Err("the client did not answer the request");
+  }
+  let sa: server.Step = srd(su.session, ca.output)?;
+  let first: string = exchange(Pair { ...p, client: ca.session, server: sa.session })?;
+  let cu: client.Step = cupdate(ca.session, false)?;
+  let sb: server.Step = srd(sa.session, cu.output)?;
+  if (sb.output.len() != 0) {
+    return Err("the server answered an update not asked for");
+  }
+  let second: string = exchange(Pair { ...p, client: cu.session, server: sb.session })?;
+  return Ok(first + " / " + second);
+}
+
+// offload: both sessions hand the kernel the same keys from their two
+// ends, then frame records in the clear (application data, close_notify),
+// take records framed as the kernel opened them, and report the keys a
+// KeyUpdate sets on both ends. A session already offloaded, or holding part
+// of a record, is not offloaded.
+function test_offload(): test.TestOutcome {
+  match (connect(client.config("tls.example", roots()), server.config(identity_of(ED_LEAF, ED_PKCS8)))) {
+    Ok(p) => {
+      match (offloaded(p)) {
+        Ok(t) => {
+          return test.assert_eq(t, "keys meet / 23,3,3,0,2,104,105 / hi / rekeyed both ends / 21,3,3,0,2,1,0 / refused twice");
+        },
+        Err(e) => {
+          return test.fail(e);
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function bytes_text(b: u8[]): string {
+  let out: string = "";
+  for x in b {
+    if (out.len() > 0) {
+      out = out + ",";
+    }
+    out = out + (x as i32).to_string();
+  }
+  return out;
+}
+
+function same(a: u8[], b: u8[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < a.len()) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function offloaded(p: Pair): Result[string, string] {
+  let partial: client.Step = cwrite(p.client, "x")?;
+  let half: server.Step = srd(p.server, __first(partial.output, 3))?;
+  let refused: string = "";
+  if let None = half.session.offload() {
+    refused = "refused";
+  }
+  let so: server.Offloaded = __some_server(p.server.offload())?;
+  let co: client.Offloaded = __some_client(p.client.offload())?;
+  if (!same(so.keys.transmit, co.keys.receive) || !same(so.keys.receive, co.keys.transmit) || so.keys.transmit.len() < 40 || so.keys.transmit[0] != 4 as u8) {
+    return Err("the keys do not meet");
+  }
+  if let None = so.session.offload() {
+    refused = refused + " twice";
+  }
+  let sw: server.Step = swrite(so.session, "hi")?;
+  let cr: client.Step = crd(co.session, sw.output)?;
+  let su: server.Step = supdate(sw.session, true)?;
+  if (su.rekeyed.transmit.len() == 0 || su.rekeyed.receive.len() != 0 || su.output[0] != 22 as u8) {
+    return Err("the server's update reported no transmit key");
+  }
+  let ca: client.Step = crd(cr.session, su.output)?;
+  if (!same(ca.rekeyed.receive, su.rekeyed.transmit) || ca.rekeyed.transmit.len() == 0) {
+    return Err("the client's keys do not follow the update");
+  }
+  let sa: server.Step = srd(su.session, ca.output)?;
+  if (!same(sa.rekeyed.receive, ca.rekeyed.transmit)) {
+    return Err("the server's receive key does not follow the client's answer");
+  }
+  let sc: server.Step = sclose(sa.session)?;
+  return Ok("keys meet / " + bytes_text(sw.output) + " / " + string_from_bytes_unchecked(cr.data) + " / rekeyed both ends / " + bytes_text(sc.output) + " / " + refused);
+}
+
+function __first(b: u8[], n: i32): u8[] {
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < n && i < b.len()) {
+    out = out.append(b[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+function __some_server(o: Option[server.Offloaded]): Result[server.Offloaded, string] {
+  match (o) {
+    Some(x) => {
+      return Ok(x);
+    },
+    None => {
+      return Err("the server did not offload");
+    }
+  }
+  return Err("server");
+}
+
+function __some_client(o: Option[client.Offloaded]): Result[client.Offloaded, string] {
+  match (o) {
+    Some(x) => {
+      return Ok(x);
+    },
+    None => {
+      return Err("the client did not offload");
+    }
+  }
+  return Err("client");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/tls/server");
   r = r.it("keys from PKCS #8 and SEC 1", test_keys);
@@ -765,6 +944,8 @@ function main(): i32 {
   r = r.it("no signature scheme in common", test_no_common_scheme);
   r = r.it("a key that is not the chain's", test_wrong_key);
   r = r.it("close_notify", test_close);
+  r = r.it("KeyUpdate both ways", test_key_update);
+  r = r.it("offloaded to the kernel's record layer", test_offload);
   r = r.it("resumption", test_resumption);
   r = r.it("client certificate", test_client_certificate);
   r = r.it("client signature refused", test_client_signature_refused);

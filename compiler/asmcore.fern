@@ -1196,6 +1196,12 @@ function sysno_x86_64(name: string): string {
   if (name == "prlimit64") {
     return "302";
   }
+  if (name == "sendmsg") {
+    return "46";
+  }
+  if (name == "recvmsg") {
+    return "47";
+  }
   if (name == "signalfd4") {
     return "289";
   }
@@ -1819,6 +1825,12 @@ function sysno_arm64_linux(name: string): string {
   }
   if (name == "prlimit64") {
     return "261";
+  }
+  if (name == "sendmsg") {
+    return "211";
+  }
+  if (name == "recvmsg") {
+    return "212";
   }
   if (name == "signalfd4") {
     return "74";
@@ -6179,6 +6191,32 @@ pub function rt_src_tcp_recv_u8(t: string): string {
   return "function __fern_tcp_recv_u8(fd: i32, max: i32): i32[] { if (max < 0) { max = 0; } " + packed_box("b", "max") + " let n: i32 = 0; if (max > 0) { n = __syscall3(" + sysno(t, "read") + ", fd as i64, (b + 8) as i64, max as i64) as i32; } if (n < 0) { n = 0; } __store_i64(b, n as i64); return __raw_array(b); }";
 }
 
+// tcp_ktls(fd, op, arg, data) is the kernel's TLS record layer on a
+// connected socket. Op 1 attaches the "tls" upper-layer protocol; ops 2 and
+// 3 install the transmit and receive keys, `data` being the kernel's
+// tls12_crypto_info for the suite; op 4 sends `data` as one record of
+// content type `arg` (sendmsg with TLS_SET_RECORD_TYPE); op 5 reads one
+// record's content into `data` and answers the byte count plus the record
+// type shifted left 24 (recvmsg with TLS_GET_RECORD_TYPE), the type 0 when
+// no record came, at the end of the stream. A plain read
+// stops with EIO at a record other than application data, which op 5 then
+// reads. The scratch block holds the msghdr (0), the iovec (56) and one
+// control message (72); the record passes through a block of the helper's
+// own, since the caller's array is lent and its address may not be stored.
+// Darwin has no kernel TLS: ENOSYS.
+pub function rt_src_tcp_ktls(t: string): string {
+  if (t == "arm64-darwin") {
+    return "function __fern_tcp_ktls_u8(fd: i32, op: i32, arg: i32, data: i32[]): i32 { return 0 - 78; }";
+  }
+  let set: string = sysno(t, "setsockopt");
+  let attach: string = "if (op == 1) { let u: usize = __raw_scratch(4); __raw_store8(u, 0, 116); __raw_store8(u, 1, 108); __raw_store8(u, 2, 115); __raw_store8(u, 3, 0); return __syscall5(" + set + ", fd as i64, 6, 31, u as i64, 4) as i32; }";
+  let keys: string = "if (op == 2 || op == 3) { return __syscall5(" + set + ", fd as i64, 282, (op - 1) as i64, p as i64, n as i64) as i32; }";
+  let msg: string = "let m: usize = __raw_scratch(96); let z: i32 = 0; while (z < 96) { __raw_store8(m, z, 0); z = z + 1; } let q: usize = __raw_alloc(n + 1); __store_i64(m + 16, (m + 56) as i64); __raw_store8(m, 24, 1); __store_i64(m + 32, (m + 72) as i64); __raw_store8(m, 40, 24); __store_i64(m + 56, q as i64); __store_i64(m + 64, n as i64);";
+  let send: string = "let r: i32 = 0; if (op == 4) { __memcpy(q, p, n); __raw_store8(m, 72, 17); __raw_store8(m, 80, 26); __raw_store8(m, 81, 1); __raw_store8(m, 84, 1); __raw_store8(m, 88, arg & 255); r = __syscall3(" + sysno(t, "sendmsg") + ", fd as i64, m as i64, 0) as i32; }";
+  let recv: string = "if (op == 5) { r = __syscall3(" + sysno(t, "recvmsg") + ", fd as i64, m as i64, 0) as i32; if (r > 0) { __memcpy(p, q, r); } if (r >= 0) { let ty: i32 = 0; if (__raw_load8(m, 40) != 0 && __raw_load8(m, 80) == 26 && __raw_load8(m, 81) == 1 && __raw_load8(m, 84) == 2) { ty = __raw_load8(m, 88); } r = r | (ty << 24); } } let q_own: string = __raw_string(q, n + 1); return r;";
+  return "function __fern_tcp_ktls_u8(fd: i32, op: i32, arg: i32, data: i32[]): i32 { let n: i32 = data.len(); let p: usize = __raw_arr_ptr(data) + 8; " + attach + " " + keys + " if (op != 4 && op != 5) { return 0 - 22; } " + msg + " " + send + " " + recv + " }";
+}
+
 pub function rt_src_tcp_recv_into_u8(t: string): string {
   return "function __fern_tcp_recv_into_u8(fd: i32, buf: i32[]): i32 { let max: i32 = buf.len(); if (max <= 0) { return 0; } return __syscall3(" + sysno(t, "read") + ", fd as i64, (__raw_arr_ptr(buf) + 8) as i64, max as i64) as i32; }";
 }
@@ -7776,6 +7814,7 @@ function builtin_i32_names(): string[] {
     "ring_ctl",
     "ring_wait",
     "tcp_recv_into",
+    "tcp_ktls",
     "tcp_send",
     "tcp_send_bytes",
     "tcp_send_buf",
