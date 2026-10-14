@@ -11035,7 +11035,7 @@ function mx_parts_compatible(a: VbStore, b: VbStore, elem: boolean, assigns: boo
       match (b.t) {
         typeinfo.TypeMap(mb) => {
           return mx_arm_compatible(VbStore { t: ma.key, e: none }, VbStore { t: mb.key, e: none }, true, assigns, unions, enums)
-            && mx_arm_compatible(VbStore { t: ma.value, e: none }, VbStore { t: mb.value, e: none }, true, assigns, unions, enums);
+            && mx_arm_compatible(mx_map_value_store(a.e, ma.value), mx_map_value_store(b.e, mb.value), false, assigns, unions, enums);
         },
         _ => {
           return false;
@@ -11069,6 +11069,30 @@ function mx_elem_store(e: ast.Expr, elem: typeinfo.Type): VbStore {
     }
   }
   return VbStore { t: elem, e: none };
+}
+
+// mx_map_value_store is a map arm's value. A map literal's values unify as an
+// arm's own result would, so one whose values are all unsettled reads as its
+// first.
+function mx_map_value_store(e: ast.Expr, value: typeinfo.Type): VbStore {
+  let vs: ast.Expr[] = mlit_values(e);
+  if (vs.len() > 0 && mlit_is_desugared(e) && mx_unsettled_elements(vs)) {
+    return VbStore { t: value, e: vs[0] };
+  }
+  return VbStore { t: value, e: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
+}
+
+// mlit_values are the values a desugared map literal's `.insert` chain stores.
+function mlit_values(e: ast.Expr): ast.Expr[] {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprFieldAccess(fa) = c.callee {
+      if (fa.field == "insert" && c.args.len() == 2) {
+        return mlit_values(fa.obj).append(c.args[1]);
+      }
+    }
+  }
+  let none: ast.Expr[] = [];
+  return none;
 }
 
 // mx_unsettled_elements: is every element an unsettled integer, or an array
@@ -11131,6 +11155,12 @@ function mx_arm_join(a: VbStore, b: VbStore): VbStore {
         }
         return VbStore { t: t_tuple(elems), e: ast.ExprTuple { elements: es, line: 0, col: 0 } };
       }
+    }
+  }
+  if let typeinfo.TypeMap(am) = a.t {
+    if let typeinfo.TypeMap(bm) = b.t {
+      let v: VbStore = mx_arm_join(mx_map_value_store(a.e, am.value), mx_map_value_store(b.e, bm.value));
+      return VbStore { t: t_map(am.key, v.t), e: a.e };
     }
   }
   if (arm_unsettled(b)) {

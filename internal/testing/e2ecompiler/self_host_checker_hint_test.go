@@ -63,6 +63,9 @@ impl Greet for Dog { function hi(self: Self): i32 { return 7; } }
 		{"option-inferred-local", `function main(): i32 { let o = Some("ab"); match (o) { Some(v) => { return v.len(); }, None => { return 0; } } }`, 0},
 		{"dyn-binding", dynPrelude + `function main(): i32 { let d: dyn Greet = Dog {}; return 0; }`, 0},
 		{"dyn-method", dynPrelude + `function main(): i32 { let d: dyn Greet = Dog {}; return d.hi(); }`, 0},
+		// A map literal's values unify as arm results do.
+		{"map-literal-arms-settle-wide", `import "core/map"; function main(): i32 { let c: boolean = true; let m: Map[string, i64] = if (c) { Map { "a": 1234567890123 } } else { Map { "a": 0 } }; return 0; }`, 0},
+		{"map-literal-arms-settle-float", `import "core/map"; function main(): i32 { let c: boolean = true; let m = if (c) { Map { "a": 1 } } else { Map { "a": 2.5 } }; return 0; }`, 0},
 		// A generic struct's callable field is called at the instance's type
 		// arguments.
 		{"generic-struct-callable-field-call", `struct S[T] { f: (T) => T } function main(): i32 { let s = S[i32] { f: (x: i32): i32 => x }; return s.f(3); }`, 0},

@@ -4184,6 +4184,11 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// both compilers. A borrowed receiver has no donor and stays E053.
 		// Here rather than in the codes table because std/array has to be
 		// in scope for the call to be a method call at all.
+		// A map literal's values unify as arm results do: an unsettled integer
+		// takes a sibling's integer or float type, and typed values must agree.
+		{"map-literal-arms-settle-wide", "import \"core/map\";\nfunction main(): i32 { let c: boolean = true; let m: Map[string, i64] = if (c) { Map { \"a\": 1234567890123 } } else { Map { \"a\": 0 } }; return 0; }\n"},
+		{"map-literal-arms-settle-float", "import \"core/map\";\nfunction main(): i32 { let c: boolean = true; let m = if (c) { Map { \"a\": 1 } } else { Map { \"a\": 2.5 } }; return 0; }\n"},
+		{"map-literal-arms-typed-values-differ", "import \"core/map\";\nfunction main(): i32 { let c: boolean = true; let n: i32 = 1; let w: i64 = 2; let m = if (c) { Map { \"a\": n } } else { Map { \"a\": w } }; return 0; }\n"},
 		{"e053-map-on-an-own-array", "import \"std/array\";\nfip function f(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => x); }\nfunction main(): i32 { return f([1 as i64]).len(); }\n"},
 		// An array method named like a `__method_Array_<name>` helper the
 		// program imports redeclares it (E006), as a name the checker registers
