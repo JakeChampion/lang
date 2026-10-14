@@ -95,6 +95,14 @@ pub function dotted_output(out: ssaprepare.Output, aligned: boolean): void {
   require(f.name == "Token.first" && row.label_name == f.name);
   require(row.assembly.starts_with("__fn_Token__first:\n") && row.assembly.contains("__fn_Token__first.r:\n"));
   require(caller.check_body(row.assembly, arch, f).ok == !aligned);
+  // arm64's closure entry `.k` sits between the stack entry and `.r`; past
+  // `.r` it is refused.
+  let k = "__fn_Token__first.k:\n";
+  require(arch != "arm64" || row.assembly.contains(k));
+  if (!aligned && row.assembly.contains(k)) {
+    let past = change(change(row.assembly, k, ""), "__fn_Token__first.r:\n", "__fn_Token__first.r:\n" + k);
+    require(!caller.check_body(past, arch, f).ok);
+  }
   require(unit.check_collection(out.text, arch, [f]).ok == !aligned);
   require(caller.check_selected([row], f.name, arch).ok);
   check(out.text, arch, [row], true);
