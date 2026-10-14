@@ -54,6 +54,23 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		return out, cmd.ProcessState.ExitCode()
 	}
 
+	// `-interp` runs the checker's build gate first, as a compile does: a
+	// program the checker rejects must not run, however it would evaluate.
+	t.Run("interp-runs-the-build-gate", func(t *testing.T) {
+		path := filepath.Join(dir, "interp_ill_typed.fern")
+		if err := os.WriteFile(path, []byte("function main(): i32 { let x: i32 = \"s\"; return 7; }\n"), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		cmd := exec.Command(fernBin, "-interp", path)
+		out, _ := cmd.CombinedOutput()
+		if code := cmd.ProcessState.ExitCode(); code != 1 {
+			t.Errorf("-interp exit = %d, want 1 (out: %s)", code, out)
+		}
+		if !strings.Contains(string(out), "error[E003]") {
+			t.Errorf("-interp diagnostics = %q, want error[E003]", out)
+		}
+	})
+
 	// `async function` end-to-end (#6631). printer.fern's own round-trip
 	// assertions cover parse → print → parse; what they cannot show is that
 	// the annotation survives the REAL driver, whose module pipeline runs the
@@ -878,6 +895,10 @@ function main(): i32 {
 				t.Errorf("-check %s: %v (stderr: %s)", c.arg, err, stderr.String())
 			}
 			want := c.name + ":3:3: warning: `todo` stub remaining\n" + c.name + ":5:21: warning: `todo` stub remaining\n"
+			if c.arg != "-" {
+				want = c.name + ":3:3: warning: `todo` stub remaining\n      todo;\n      ^\n" +
+					c.name + ":5:21: warning: `todo` stub remaining\n    function g(): i32 { todo(\"later\"); }\n                        ^\n"
+			}
 			if stderr.String() != want {
 				t.Errorf("-check %s wrote %q, want %q", c.arg, stderr.String(), want)
 			}
@@ -1123,9 +1144,7 @@ function main(): i32 {
 			if code := cmd.ProcessState.ExitCode(); code == 0 {
 				t.Errorf("%v: exited 0, want a rejection (out: %s)", mode, out)
 			}
-			// The interp reports the parser-side rejection as a bottom value,
-			// not a coded diagnostic; the two gating modes name P002.
-			if mode[0] != "-interp" && !strings.Contains(string(out), "error[P002]") {
+			if !strings.Contains(string(out), "error[P002]") {
 				t.Errorf("%v: diagnostics = %q, want error[P002]", mode, out)
 			}
 		}

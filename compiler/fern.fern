@@ -68,6 +68,7 @@ import "./wit_compose";
 import "./constfold";
 import "./embed";
 import "./platforms";
+import "./coverreport";
 import "./caps";
 import "./modloader";
 import "./visibility";
@@ -226,26 +227,162 @@ function has_error(fs: Finding[]): boolean {
   return false;
 }
 
+// DiagStyle is how diagnostics render on stderr: `color` paints the label and
+// caret and draws a line-number gutter, whose separator is `|` under `ascii`.
+pub struct DiagStyle { color: boolean, ascii: boolean }
+
+pub function plain_style(): DiagStyle {
+  return DiagStyle { color: false, ascii: true };
+}
+
+// diag_style resolves `-color auto|always|never` and `-ascii`: auto colours
+// only a terminal stderr with NO_COLOR unset, and the gutter is box-drawing
+// only when the locale (LC_ALL, LC_CTYPE, LANG — the first one set) says UTF-8.
+function diag_style(mode: string, force_ascii: boolean): DiagStyle {
+  let color: boolean = mode == "always";
+  if (mode == "auto") {
+    color = isatty(2);
+    match (env("NO_COLOR")) {
+      Some(v) => {
+        if (v.len() > 0) {
+          color = false;
+        }
+      },
+      None => {}
+    }
+  }
+  let ascii: boolean = true;
+  if (!force_ascii) {
+    for k in ["LC_ALL", "LC_CTYPE", "LANG"] {
+      match (env(k)) {
+        Some(v) => {
+          if (v.len() > 0) {
+            let up: string = v.to_upper();
+            ascii = !util.contains(up, "UTF-8") && !util.contains(up, "UTF8");
+            break;
+          }
+        },
+        None => {}
+      }
+    }
+  }
+  return DiagStyle { color: color, ascii: ascii };
+}
+
+function paint(st: DiagStyle, sgr: string, text: string): string {
+  if (!st.color) {
+    return text;
+  }
+  return "\x1b[" + sgr + "m" + text + "\x1b[0m";
+}
+
+// source_line is line `n` of the file at `path` with each tab shown as one
+// space so a caret lines up, or "" when it cannot be read.
+function source_line(path: string, n: i32): string {
+  if (path.len() == 0 || path == "<stdin>" || n <= 0) {
+    return "";
+  }
+  match (read_file(path)) {
+    Ok(src) => {
+      let cur: i32 = 1;
+      let start: i32 = 0;
+      let i: i32 = 0;
+      while (i <= src.len()) {
+        if (i == src.len() || src[i] == b'\n') {
+          if (cur == n) {
+            let out: string = "";
+            let k: i32 = start;
+            while (k < i) {
+              if (src[k] == b'\t') {
+                out = out + " ";
+              } else {
+                out = out + slice_unchecked(src, k, k + 1);
+              }
+              k = k + 1;
+            }
+            return out;
+          }
+          cur = cur + 1;
+          start = i + 1;
+        }
+        i = i + 1;
+      }
+      return "";
+    },
+    Err(_) => {
+      return "";
+    }
+  }
+}
+
+// snippet is the source line under a positioned diagnostic and a caret at its
+// column, laid out as native's renderer does: indented four spaces, or behind
+// a line-number gutter when colour is on.
+function snippet(st: DiagStyle, path: string, line: i32, col: i32, sgr: string): string {
+  let text: string = source_line(path, line);
+  if (text.len() == 0) {
+    return "";
+  }
+  let pad: string = "";
+  let w: i32 = col - 1;
+  if (w > text.len()) {
+    w = text.len();
+  }
+  while (w > 0) {
+    pad = pad + " ";
+    w = w - 1;
+  }
+  let mark: string = paint(st, sgr, "^");
+  if (!st.color) {
+    return "\n    " + text + "\n    " + pad + mark;
+  }
+  let num: string = util.i32_to_string(line);
+  let blank: string = "";
+  let b: i32 = 0;
+  while (b < num.len()) {
+    blank = blank + " ";
+    b = b + 1;
+  }
+  let bar: string = "│";
+  if (st.ascii) {
+    bar = "|";
+  }
+  let sep: string = paint(st, "34", bar);
+  return "\n " + num + " " + sep + " " + text + "\n " + blank + " " + sep + " " + pad + mark;
+}
+
 // finding_text renders a finding as `-check` and native print it: the
 // position (util.pos_str, naming the entry file as the command line did, and
 // moved onto the document a literate module was tangled from) when it is
 // known, then `warning: `, or `error[…]: ` for a coded error — an uncoded one
-// (the const-grammar rule, a visibility error) has no tag.
-function finding_text(f: Finding, entry: string, files: string[], maps: util.LineMap[]): string {
+// (the const-grammar rule, a visibility error) has no tag — and, under a
+// position, the source line with a caret.
+function finding_text(st: DiagStyle, f: Finding, entry: string, files: string[], maps: util.LineMap[]): string {
   let tag: string = "";
+  let sgr: string = "31";
   if (f.warning) {
-    tag = "warning: ";
+    tag = paint(st, "1;33", "warning") + ": ";
+    sgr = "33";
   } else if (f.diag.code.len() > 0) {
-    tag = "error[" + f.diag.code + "]: ";
+    tag = paint(st, "1;31", "error[" + f.diag.code + "]") + ": ";
   }
   let d: util.Diag = util.doc_diag(maps, f.diag);
-  if (d.line > 0 && f.path.len() > 0) {
-    return f.path + ":" + util.pos_str("", files, d.line, d.col) + ": " + tag + d.message;
+  if (d.line <= 0) {
+    return tag + d.message;
   }
-  if (d.line > 0) {
-    return util.pos_str(entry_display(entry), files, d.line, d.col) + ": " + tag + d.message;
+  let path: string = util.pos_file(files, d.line);
+  if (f.path.len() > 0) {
+    path = f.path;
+  } else if (path.len() == 0) {
+    path = entry_display(entry);
   }
-  return tag + d.message;
+  let head: string = "";
+  if (f.path.len() > 0) {
+    head = f.path + ":" + util.pos_str("", files, d.line, d.col);
+  } else {
+    head = util.pos_str(entry_display(entry), files, d.line, d.col);
+  }
+  return head + ": " + tag + d.message + snippet(st, path, util.pos_line(d.line), d.col, sgr);
 }
 
 // entry_display is the entry path as a diagnostic names it: the path the
@@ -260,9 +397,9 @@ function entry_display(entry_path: string): string {
 
 // eprint_findings prints each finding and reports whether any rejects the
 // program.
-function eprint_findings(fs: Finding[], entry: string, files: string[], maps: util.LineMap[]): boolean {
+function eprint_findings(st: DiagStyle, fs: Finding[], entry: string, files: string[], maps: util.LineMap[]): boolean {
   for f in fs {
-    eprint(finding_text(f, entry, files, maps));
+    eprint(finding_text(st, f, entry, files, maps));
   }
   return has_error(fs);
 }
@@ -2254,8 +2391,8 @@ function check_source(entry_path: string, src: string, root: string, target: str
 
 // report_checked prints a check's findings and returns the exit code `-check`
 // answers with.
-function report_checked(c: Checked): i32 {
-  let _rejected: boolean = eprint_findings(c.findings, c.entry, c.files, c.maps);
+function report_checked(st: DiagStyle, c: Checked): i32 {
+  let _rejected: boolean = eprint_findings(st, c.findings, c.entry, c.files, c.maps);
   if (c.ok) {
     return 0;
   }
@@ -2712,7 +2849,7 @@ function read_stdin(): string {
 // aggregating rather than stopping at the first failure, so one broken package
 // does not hide the rest. This is the workspace-wide check a multi-package
 // program wants: one command validates every member.
-function check_dir(dir: string, root: string, target: string, target_given: boolean, embed_dir: string): i32 {
+function check_dir(st: DiagStyle, dir: string, root: string, target: string, target_given: boolean, embed_dir: string): i32 {
   let mdir: string = find_manifest_dir(dir);
   if (mdir.len() == 0) {
     eprint("check: " + dir + " is a directory with no fern.toml — pass a .fern file, or run inside a package");
@@ -2725,7 +2862,7 @@ function check_dir(dir: string, root: string, target: string, target_given: bool
       eprint("no entry module in " + mdir + " (looked for " + man.lib + " and main.fern)");
       return 1;
     }
-    return check_file(entry, root, target, target_given, embed_dir);
+    return check_file(st, entry, root, target, target_given, embed_dir);
   }
   let failed: i32 = 0;
   let i: i32 = 0;
@@ -2742,7 +2879,7 @@ function check_dir(dir: string, root: string, target: string, target_given: bool
       failed = failed + 1;
       continue;
     }
-    if (check_file(mentry, root, target, target_given, embed_dir) != 0) {
+    if (check_file(st, mentry, root, target, target_given, embed_dir) != 0) {
       eprint("FAIL " + rel);
       failed = failed + 1;
       continue;
@@ -2759,10 +2896,10 @@ function check_dir(dir: string, root: string, target: string, target_given: bool
 
 // check_file loads one entry module and type-checks it — the single-package
 // half of `-check`, and the per-member step of the workspace half.
-function check_file(entry_path: string, root: string, target: string, target_given: boolean, embed_dir: string): i32 {
+function check_file(st: DiagStyle, entry_path: string, root: string, target: string, target_given: boolean, embed_dir: string): i32 {
   match (read_file(entry_path)) {
     Ok(src) => {
-      return report_checked(check_source(entry_path, src, root, target, target_given, embed_dir));
+      return report_checked(st, check_source(entry_path, src, root, target, target_given, embed_dir));
     },
     Err(e) => {
       eprint(read_failure("entry file", entry_path, modloader.read_error_reason(e)));
@@ -2786,12 +2923,13 @@ struct Server {
   shutdown: boolean,
 }
 
-// serve_lsp is `fern -lsp [stdlib-root]`.
-function serve_lsp(pos: string[], target: string, target_given: boolean, embed_dir: string): i32 {
-  if (pos.len() > 1) {
+// serve_lsp is `fern -lsp [stdlib-root]`; a build carrying its stdlib passes
+// it as `embedded_root` and takes no positional.
+function serve_lsp(pos: string[], embedded_root: string, target: string, target_given: boolean, embed_dir: string): i32 {
+  let root: string = embedded_root;
+  if (pos.len() > 1 || pos.len() == 1 && root.len() > 0) {
     return usage();
   }
-  let root: string = "";
   if (pos.len() == 1) {
     root = pos[0];
   }
@@ -3052,13 +3190,361 @@ function package_findings(merged: parser.Module, pkgs: caps.Pkg[]): Finding[] {
   return out;
 }
 
-function run(): i32 {
-  let av: string[] = args();
+// find_on_path is the first `$PATH` entry holding an executable `name`, or ""
+// when none does; proc_exec is execve(2), which searches nothing.
+function find_on_path(name: string): string {
+  match (env("PATH")) {
+    Some(path) => {
+      let start: i32 = 0;
+      let i: i32 = 0;
+      while (i <= path.len()) {
+        if (i == path.len() || path[i] == b':') {
+          if (i > start) {
+            let cand: string = slice_unchecked(path, start, i) + "/" + name;
+            if let Ok(_) = access(cand, 1) {
+              return cand;
+            }
+          }
+          start = i + 1;
+        }
+        i = i + 1;
+      }
+    },
+    None => {}
+  }
+  return "";
+}
 
+// exec_and_wait runs `path` with `argv` (argv[0] included) as a child with
+// this process's stdio and returns its exit status: 0..255, or 128 + the
+// signal that killed it.
+function exec_and_wait(path: string, argv: string[]): i32 {
+  let rest: string[] = [];
+  let i: i32 = 1;
+  while (i < argv.len()) {
+    rest = rest.append(argv[i]);
+    i = i + 1;
+  }
+  let pid: i32 = proc_fork();
+  if (pid < 0) {
+    eprint("fern: -run: cannot start " + path + " (fork failed: " + util.i32_to_string(0 - pid) + ")");
+    return 1;
+  }
+  if (pid == 0) {
+    let rc: i32 = proc_exec(path, rest);
+    eprint("fern: -run: cannot execute " + path + " (" + util.i32_to_string(0 - rc) + ")");
+    exit(127);
+  }
+  return proc_waitpid(pid);
+}
+
+// run_built executes the program a `-run` compile wrote to `out`: directly
+// when the target is this host's OS and ISA, under `wasmtime run` on wasm, and
+// otherwise under the `qemu` user-mode emulator (qemu-x86_64 for an x86-64
+// target when -qemu was left at its default).
+function run_built(target: string, out: string, prog_args: string[], qemu: string): i32 {
+  let desc: platforms.Descriptor = platforms.for_target(target);
+  if (desc.isa == "wasm32") {
+    if (target == "wasm32-wasi-http") {
+      eprint("fern: -run cannot serve -target wasm32-wasi-http; build it with -o OUT.wasm and run `wasmtime serve OUT.wasm`");
+      return 1;
+    }
+    let wt: string = find_on_path("wasmtime");
+    if (wt.len() == 0) {
+      eprint("fern: -run: wasmtime is not on PATH");
+      return 1;
+    }
+    let argv: string[] = [wt, "run", out];
+    for a in prog_args {
+      argv = argv.append(a);
+    }
+    return exec_and_wait(wt, argv);
+  }
+  let argv: string[] = [out];
+  for a in prog_args {
+    argv = argv.append(a);
+  }
+  if (desc.isa == target_arch() && desc.environment == target_os()) {
+    return exec_and_wait(out, argv);
+  }
+  if (desc.environment == "darwin") {
+    eprint("fern: -run: a Mach-O binary runs only on Apple Silicon macOS; the output at " + out + " is ready to run there");
+    return 1;
+  }
+  let emu: string = qemu;
+  if (desc.isa == "x86-64" && emu == "qemu-aarch64") {
+    emu = "qemu-x86_64";
+  }
+  let emu_path: string = emu;
+  if (util.last_slash(emu) < 0) {
+    emu_path = find_on_path(emu);
+  }
+  if (emu_path.len() == 0) {
+    eprint("fern: -run: " + emu + " is not on PATH (pass -qemu to name the emulator)");
+    return 1;
+  }
+  let qargv: string[] = [emu_path];
+  for a in argv {
+    qargv = qargv.append(a);
+  }
+  return exec_and_wait(emu_path, qargv);
+}
+
+// print_version is `fern -version`: the commit the embedded tree's VERSION
+// records, and the target this binary runs on. A build without an embedded
+// tree has no VERSION and says so.
+function print_version(root: string): i32 {
+  let commit: string = "(unknown build)";
+  if (root.len() > 0) {
+    if let Ok(v) = read_file(root + "/VERSION") {
+      commit = v.trim();
+    }
+  }
+  write("fern " + commit + "\nbuilt for " + target_arch() + "-" + target_os() + "\n");
+  return 0;
+}
+
+// explain is `fern -explain CODE`: the long-form explanation the embedded tree
+// carries under explanations/, or, with no code, the codes there are.
+function explain(root: string, code: string): i32 {
+  let dir: string = root + "/explanations";
+  let codes: string[] = [];
+  if (root.len() > 0) {
+    if let Ok(names) = read_dir(dir) {
+      for n in names {
+        if (n.len() > 3 && slice_unchecked(n, n.len() - 3, n.len()) == ".md") {
+          let c: string = slice_unchecked(n, 0, n.len() - 3) + "";
+          let at: i32 = codes.len();
+          while (at > 0 && util.str_less(c, codes[at - 1])) {
+            at = at - 1;
+          }
+          let sorted: string[] = [];
+          let k: i32 = 0;
+          while (k < codes.len()) {
+            if (k == at) {
+              sorted = sorted.append(c);
+            }
+            sorted = sorted.append(codes[k]);
+            k = k + 1;
+          }
+          if (at == codes.len()) {
+            sorted = sorted.append(c);
+          }
+          codes = sorted;
+        }
+      }
+    }
+  }
+  if (codes.len() == 0) {
+    eprint("fern: -explain: this build carries no explanations");
+    return 1;
+  }
+  if (code.len() == 0) {
+    let listing: string = "";
+    for c in codes {
+      listing = listing + c + "\n";
+    }
+    write(listing);
+    return 0;
+  }
+  let canonical: string = code.trim().to_upper();
+  match (read_file(dir + "/" + canonical + ".md")) {
+    Ok(body) => {
+      let header: string = "error " + canonical + ":";
+      if (isatty(1)) {
+        match (env("NO_COLOR")) {
+          Some(_) => {},
+          None => {
+            header = "\x1b[1;31m" + header + "\x1b[0m";
+          }
+        }
+      }
+      write(header + "\n\n" + body + "\n");
+      return 0;
+    },
+    Err(_) => {
+      let avail: string = "";
+      for c in codes {
+        if (avail.len() > 0) {
+          avail = avail + " ";
+        }
+        avail = avail + c;
+      }
+      eprint("unknown error code \"" + code + "\"\navailable codes: [" + avail + "]");
+      return 1;
+    }
+  }
+}
+
+// cover_report is `fern -cover-report FILE` (`-` for stdin): fold a saved
+// `-cover` run's output into per-file totals, or lcov under -lcov.
+function cover_report(path: string, have_path: boolean, as_lcov: boolean): i32 {
+  if (!have_path) {
+    eprint("usage: fern -cover-report [-lcov] FILE   (FILE is a saved -cover run's stderr, or - for stdin)");
+    return 2;
+  }
+  let text: string = "";
+  if (path == "-") {
+    text = read_stdin();
+  } else {
+    match (read_file(path)) {
+      Ok(t) => {
+        text = t;
+      },
+      Err(e) => {
+        eprint("fern: -cover-report: cannot read " + path + ": " + util.io_error_reason(e));
+        return 1;
+      }
+    }
+  }
+  let (out, err) = coverreport.report(text, as_lcov);
+  if (err.len() > 0) {
+    eprint("fern: -cover-report: " + err);
+    return 1;
+  }
+  write(out);
+  return 0;
+}
+
+// ToolFlags are the flags of the modes beside compiling: `-run` / `-qemu`,
+// `-version`, `-explain`, `-cover-report` / `-lcov`, and how diagnostics
+// render (`-color`, `-ascii`).
+struct ToolFlags {
+  run_it: boolean,
+  qemu: string,
+  version: boolean,
+  explain: boolean,
+  explain_code: string,
+  cover_report: boolean,
+  lcov: boolean,
+  color_mode: string,
+  ascii: boolean,
+}
+
+function tool_flag(a: string): boolean {
+  return a == "-run" || a == "--run" || a == "-qemu" || a == "-version" || a == "-explain"
+    || util.str_has_prefix(a, "-explain=") || a == "-cover-report" || a == "-lcov"
+    || a == "-color" || util.str_has_prefix(a, "-color=") || a == "-ascii";
+}
+
+// parse_tool_flag applies the tool flag at av[i], returning the flags, the
+// index of the last argument it consumed, and a non-zero exit status for a
+// malformed one.
+function parse_tool_flag(tf: ToolFlags, av: string[], i: i32): (ToolFlags, i32, i32) {
+  let a: string = av[i];
+  let has_next: boolean = i + 1 < av.len();
+  if (a == "-run" || a == "--run") {
+    return (ToolFlags { ...tf, run_it: true }, i, 0);
+  }
+  if (a == "-version") {
+    return (ToolFlags { ...tf, version: true }, i, 0);
+  }
+  if (a == "-cover-report") {
+    return (ToolFlags { ...tf, cover_report: true }, i, 0);
+  }
+  if (a == "-lcov") {
+    return (ToolFlags { ...tf, lcov: true }, i, 0);
+  }
+  if (a == "-ascii") {
+    return (ToolFlags { ...tf, ascii: true }, i, 0);
+  }
+  if (a == "-qemu") {
+    if (!has_next) {
+      return (tf, i, usage());
+    }
+    return (ToolFlags { ...tf, qemu: av[i + 1] }, i + 1, 0);
+  }
+  if (a == "-explain") {
+    // `-explain CODE` explains one code; a bare `-explain` lists them.
+    if (has_next && !is_flag(av[i + 1])) {
+      return (ToolFlags { ...tf, explain: true, explain_code: av[i + 1] }, i + 1, 0);
+    }
+    return (ToolFlags { ...tf, explain: true }, i, 0);
+  }
+  if (util.str_has_prefix(a, "-explain=")) {
+    return (ToolFlags { ...tf, explain: true, explain_code: slice_unchecked(a, 9, a.len()) + "" }, i, 0);
+  }
+  let mode: string = "";
+  let next: i32 = i;
+  if (a == "-color") {
+    if (!has_next) {
+      return (tf, i, usage());
+    }
+    mode = av[i + 1];
+    next = i + 1;
+  } else {
+    mode = slice_unchecked(a, 7, a.len()) + "";
+  }
+  if (mode != "auto" && mode != "always" && mode != "never") {
+    eprint("fern: -color wants auto, always or never (got \"" + mode + "\")");
+    return (tf, i, 2);
+  }
+  return (ToolFlags { ...tf, color_mode: mode }, next, 0);
+}
+
+// run_output is where a `-run` compile writes: the -o path when one was
+// given, else `prog` (or `prog.wasm`) in a fresh directory under $TMPDIR,
+// which the caller removes after the run. The third result is a non-zero exit
+// status when -run cannot apply.
+function run_output(target: string, emit: string, shared: boolean, out_path: string): (string, string, i32) {
+  if (emit == "asm" || shared) {
+    eprint("fern: -run executes the built program; it cannot be combined with -emit asm or -shared");
+    return ("", "", 2);
+  }
+  if (out_path.len() > 0) {
+    return (out_path, "", 0);
+  }
+  let tmp: string = "/tmp";
+  match (env("TMPDIR")) {
+    Some(t) => {
+      if (t.len() > 0) {
+        tmp = t;
+      }
+    },
+    None => {}
+  }
+  let suffix: string = "";
+  for rb in random_bytes(6) {
+    suffix = suffix + util.i32_to_string(rb as i32);
+  }
+  let dir: string = tmp + "/fern-run-" + suffix;
+  match (create_dir_all(dir)) {
+    Ok(_) => {},
+    Err(e) => {
+      eprint("fern: -run: cannot create " + dir + ": " + util.io_error_reason(e));
+      return ("", "", 1);
+    }
+  }
+  let out: string = dir + "/prog";
+  if (platforms.for_target(target).isa == "wasm32") {
+    out = out + ".wasm";
+  }
+  return (out, dir, 0);
+}
+
+// run_and_clean runs the built program and removes the temporary directory
+// run_output made for it.
+function run_and_clean(target: string, out: string, dir: string, prog_args: string[], qemu: string): i32 {
+  let status: i32 = run_built(target, out, prog_args, qemu);
+  if (dir.len() > 0) {
+    let _ = remove_file(out);
+    let _ = remove_dir(dir);
+  }
+  return status;
+}
+
+function run(): i32 {
+  return run_with(args(), "");
+}
+
+// run_with is the CLI over `av`. A non-empty `embedded_root` is the stdlib
+// root a build carrying its own stdlib supplies (fern_main.fern), so no
+// positional names one and every positional past the entry is the program's.
+pub function run_with(av: string[], embedded_root: string): i32 {
   let entry_path: string = "";
   let out_path: string = "";
-  let root: string = "";
-  let have_root: boolean = false;
+  let root: string = embedded_root;
+  let have_root: boolean = embedded_root.len() > 0;
   // Positionals past the stdlib root are the program's own, as `-interp
   // FILE ARG...` hands them to `args()` behind the entry's path.
   let prog_args: string[] = [];
@@ -3069,6 +3555,9 @@ function run(): i32 {
   let emit: string = "";
   let mode_check: boolean = false;
   let mode_interp: boolean = false;
+  // `-run`: build to a temporary binary (or -o) and execute it with the
+  // program's arguments; `-qemu` names the emulator for a foreign ISA.
+  let tf: ToolFlags = ToolFlags { run_it: false, qemu: "qemu-aarch64", version: false, explain: false, explain_code: "", cover_report: false, lcov: false, color_mode: "auto", ascii: false };
   let mode_fmt: boolean = false;
   // `-fmt` output destination, mirroring native: stdout by default, the input
   // file under `-w`, a unified diff (exit 1 when it is non-empty) under `-d`.
@@ -3152,6 +3641,13 @@ function run(): i32 {
       }
     } else if (a == "-check") {
       mode_check = true;
+    } else if (tool_flag(a)) {
+      let (ntf, ni, bad) = parse_tool_flag(tf, av, i);
+      if (bad != 0) {
+        return bad;
+      }
+      tf = ntf;
+      i = ni;
     } else if (a == "-interp") {
       mode_interp = true;
     } else if (a == "-fmt") {
@@ -3265,9 +3761,20 @@ function run(): i32 {
     i = i + 1;
   }
 
+  let st: DiagStyle = diag_style(tf.color_mode, tf.ascii);
+
   // `-targets` answers from the table alone; it needs no entry file.
   if (mode_targets) {
     return list_targets();
+  }
+  if (tf.version) {
+    return print_version(root);
+  }
+  if (tf.explain) {
+    return explain(root, tf.explain_code);
+  }
+  if (tf.cover_report) {
+    return cover_report(entry_path, have_entry, tf.lcov);
   }
 
   // `-resolve` takes a directory (or any file inside the package), not an
@@ -3333,7 +3840,7 @@ function run(): i32 {
   // `-lsp` checks the documents an editor sends, so its one positional is
   // the stdlib root.
   if (mode_lsp) {
-    return serve_lsp(pos, target, target_given, embed_dir);
+    return serve_lsp(pos, embedded_root, target, target_given, embed_dir);
   }
 
   // `-check` and `-interp` with no path read the program from stdin, as
@@ -3351,7 +3858,7 @@ function run(): i32 {
   // workspace it roots. A file argument takes the single-entry path below,
   // and so does a bad one — `is_dir` answers false for both.
   if (mode_check && util.is_dir(entry_path)) {
-    return check_dir(entry_path, root, target, target_given, embed_dir);
+    return check_dir(st, entry_path, root, target, target_given, embed_dir);
   }
 
   if (cover_on && mode_interp) {
@@ -3386,6 +3893,15 @@ function run(): i32 {
   if (emit == "core-module" && platforms.for_target(target).isa != "wasm32") {
     eprint("fern: -emit core-module is a wasm output form; -target " + target + " has no core module to emit");
     return 2;
+  }
+  let run_dir: string = "";
+  if (tf.run_it) {
+    let (rout, rdir, rcode) = run_output(target, emit, shared, out_path);
+    if (rcode != 0) {
+      return rcode;
+    }
+    out_path = rout;
+    run_dir = rdir;
   }
   if (shared) {
     if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-android") {
@@ -3476,7 +3992,7 @@ function run(): i32 {
     return 1;
   }
   let ld: Loaded = load_checked(srcs, root, target, embed_dir);
-  if (eprint_findings(ld.refused, entry_path, ld.b.files, ld.b.maps)) {
+  if (eprint_findings(st, ld.refused, entry_path, ld.b.files, ld.b.maps)) {
     return 1;
   }
   let b: Bundle = ld.b;
@@ -3493,17 +4009,25 @@ function run(): i32 {
   }
 
   if (mode_check) {
-    return report_checked(check_bundle(b, entry_path, target, target_given));
+    return report_checked(st, check_bundle(b, entry_path, target, target_given));
   }
 
   if (mode_interp) {
+    // The gates a compile runs: an interpreted program the checker rejects
+    // must not run.
+    if (eprint_findings(st, parse_findings(merged), entry_path, b.files, b.maps)) {
+      return 1;
+    }
+    if (eprint_findings(st, errors_of(checker.build_gate_diags(merged)), entry_path, b.files, b.maps)) {
+      return 1;
+    }
     // Package-capability gate (E070 — caps.fern): a dependency reaching
     // past its grant is refused before the program runs, not after it has
     // already opened the socket.
-    if (eprint_findings(package_findings(merged, pkgs), entry_path, b.files, b.maps)) {
+    if (eprint_findings(st, package_findings(merged, pkgs), entry_path, b.files, b.maps)) {
       return 1;
     }
-    if (eprint_findings(ambient_findings(merged), entry_path, b.files, b.maps)) {
+    if (eprint_findings(st, ambient_findings(merged), entry_path, b.files, b.maps)) {
       return 1;
     }
     // Evaluate via the tree-walking interpreter; the program's
@@ -3546,7 +4070,7 @@ function run(): i32 {
   // checker gate below exists: without them a build is MORE permissive than
   // `-check`, and a keyword-named function reaches codegen as a nameless
   // declaration.
-  if (eprint_findings(parse_findings(merged), entry_path, b.files, b.maps)) {
+  if (eprint_findings(st, parse_findings(merged), entry_path, b.files, b.maps)) {
     return 1;
   }
 
@@ -3561,7 +4085,7 @@ function run(): i32 {
   // diagnostic except the partial-port rules measured to false-positive —
   // and a hit is reported with the same `line:col: error[CODE]: message`
   // shape as `-check`.
-  if (eprint_findings(errors_of(checker.build_gate_diags(merged)), entry_path, b.files, b.maps)) {
+  if (eprint_findings(st, errors_of(checker.build_gate_diags(merged)), entry_path, b.files, b.maps)) {
     return 1;
   }
 
@@ -3598,20 +4122,20 @@ function run(): i32 {
       merged = parser.Module { ...merged, exports: merged.exports.append(parser.ExportBinding { func_name: n, iface: "", wit: "", c_abi: true }) };
     }
   }
-  if (eprint_findings(capability_findings(merged, target), entry_path, b.files, b.maps)) {
+  if (eprint_findings(st, capability_findings(merged, target), entry_path, b.files, b.maps)) {
     return 1;
   }
 
   // Package-capability gate (E070 — caps.fern): the other capability
   // system, gating what a DEPENDENCY may reach rather than what the target
   // provides. Without it the self-host builds a program native refuses.
-  if (eprint_findings(package_findings(merged, pkgs), entry_path, b.files, b.maps)) {
+  if (eprint_findings(st, package_findings(merged, pkgs), entry_path, b.files, b.maps)) {
     return 1;
   }
 
   // The bag boundary (E080 — ambient.fern): a handler reaching a host
   // effect around its platform, on either compiler.
-  if (eprint_findings(ambient_findings(merged), entry_path, b.files, b.maps)) {
+  if (eprint_findings(st, ambient_findings(merged), entry_path, b.files, b.maps)) {
     return 1;
   }
 
@@ -3905,6 +4429,9 @@ function run(): i32 {
     }
   } else {
     write(out_asm);
+  }
+  if (tf.run_it) {
+    return run_and_clean(target, out_path, run_dir, prog_args, tf.qemu);
   }
   return 0;
 }
