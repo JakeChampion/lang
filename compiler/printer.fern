@@ -370,15 +370,7 @@ function print_block_expr(c: ast.ExprCall, parent_prec: i32, depth: i32): string
       if (lm.body.len() == 1) {
         return print_expr_prec(tail_expr(last), parent_prec, depth);
       }
-      // The leading statements sit at depth 0, as native's
-      // formatBlockExpr renders them; only the tail keeps the depth.
-      let out: string = "{ ";
-      let i: i32 = 0;
-      while (i + 1 < lm.body.len()) {
-        out = out + print_stmt_inline(lm.body[i], 0) + " ";
-        i = i + 1;
-      }
-      return out + tail + " }";
+      return print_value_block(lm.body, tail_expr(last), true, depth);
     },
     _ => {
       return "";
@@ -460,20 +452,11 @@ function print_if_value_branch(body: ast.Stmt[], dead: boolean, depth: i32): str
       return "{ " + value + " }";
     }
   }
-  let tail = print_return_only([body[body.len() - 1]], depth);
-  if (tail == "") {
+  let last: ast.Stmt = body[body.len() - 1];
+  if (print_return_only([last], depth) == "") {
     return "";
   }
-  let out = "{ ";
-  let i: i32 = 0;
-  while (i + 1 < body.len()) {
-    out = out + print_stmt_inline(body[i], 0) + " ";
-    i = i + 1;
-  }
-  if (!dead) {
-    out = out + tail + " ";
-  }
-  return out + "}";
+  return print_value_block(body, tail_expr(last), !dead, depth);
 }
 
 function print_if_value(f: ast.StmtIf, depth: i32): string {
@@ -802,14 +785,44 @@ function arm_expr_value(body: ast.Stmt[], v: string, depth: i32): string {
   if (body.len() == 1) {
     return tail;
   }
-  // Depth 0 for the leading statements, as in print_block_expr.
-  let out: string = "{ ";
+  let value: ast.Expr = tail_expr(last);
+  if (v.len() > 0) {
+    value = assign_value(last);
+  }
+  return print_value_block(body, value, true, depth);
+}
+
+// print_value_block prints a value block from its body: the statements ahead
+// of the last, then `tail` (`show_tail` false for an arm no path reaches the
+// end of). On one line when every statement prints on one, else one per line,
+// indented against the statement at `depth` — native's formatBlockExpr.
+function print_value_block(body: ast.Stmt[], tail: ast.Expr, show_tail: boolean, depth: i32): string {
+  let inline: string = "{ ";
+  let lines: boolean = false;
   let i: i32 = 0;
   while (i + 1 < body.len()) {
-    out = out + print_stmt_inline(body[i], 0) + " ";
+    let text: string = print_stmt_inline(body[i], 0);
+    lines = lines || util.contains(text, "\n");
+    inline = inline + text + " ";
     i = i + 1;
   }
-  return out + tail + " }";
+  if (!lines) {
+    if (show_tail) {
+      inline = inline + print_expr(tail, depth) + " ";
+    }
+    return inline + "}";
+  }
+  let out: string = "{\n";
+  i = 0;
+  while (i + 1 < body.len()) {
+    let (text, _) = print_stmt_body(body[i], depth + 1, empty_fmt());
+    out = out + indent_str(depth + 1) + text + "\n";
+    i = i + 1;
+  }
+  if (show_tail) {
+    out = out + indent_str(depth + 1) + print_expr(tail, depth + 1) + "\n";
+  }
+  return out + indent_str(depth) + "}";
 }
 
 // print_expr_prec emits `e` inside a context binding at `parent_prec`, adding

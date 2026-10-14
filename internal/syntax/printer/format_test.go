@@ -404,6 +404,42 @@ func TestFormatBlockExprBranches(t *testing.T) {
 	}
 }
 
+// A branch whose leading statement spans lines — a loop, an `if`, a nested
+// block — is laid out one statement per line, indented against the statement
+// it sits in, rather than inlined with its inner lines at column 0 (#12393).
+func TestFormatBlockExprBranchSpansLines(t *testing.T) {
+	src := `function f(c: boolean): i32 {
+  let x: i32 = if (c) { let s = 0; while (s < 3) { s = s + 1; } s } else { 0 };
+  let y: i32 = match (c) { true => { { let q = 4; } 5 }, false => 0 };
+  return x + y;
+}
+`
+	want := `function f(c: boolean): i32 {
+  let x: i32 = if (c) {
+    let s = 0;
+    while (s < 3) {
+      s = s + 1;
+    }
+    s
+  } else { 0 };
+  let y: i32 = match (c) { true => {
+    {
+      let q = 4;
+    }
+    5
+  }, false => 0 };
+  return x + y;
+}
+`
+	got := formatSrc(t, src)
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+	if again := formatSrc(t, got); again != got {
+		t.Errorf("not idempotent:\n%s", again)
+	}
+}
+
 // Drive-by regression: a literal-pattern arm in a `match`-EXPRESSION
 // (`0 => …`, `"yes" => …`) must format its pattern. The formatter used
 // to drop it, emitting `=> …`, which then failed to re-parse.
