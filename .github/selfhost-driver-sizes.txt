@@ -514,6 +514,12 @@
 # 2742024 (+0.6%) and its bound preference ff45d072 at 2747272 (+0.2%).
 # Number from driver-sizes' report on run 38401685655. The other rows stay
 # inside 2.1%.
+# 2026-10-14 — fern.fern/stage2 11181568 -> 11761952 and fern.fern 11715024
+# -> 12339464: main at fc85350c links stage 2 at 11680008 (+4.5%), and
+# #12368's accumulator map spine adds 81944 bytes (+0.70%). Stage 2 is a
+# local build, which matched driver-sizes' report on run 38523949330 to the
+# byte for the commit before; fern.fern adds the same difference to that
+# run's figure.
 
 fern.fern/stage2 11761952
 fern.fern 12339464
