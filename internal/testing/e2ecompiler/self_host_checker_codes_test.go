@@ -2637,6 +2637,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e003-two-param-enum-literal-payloads-ok", "enum Pr[A, B] { Both(A, B), Neither }\nfunction main(): i32 { let p: Pr[Option[f64], i64] = Both(Some(1), 2); return 0; }\n", nil},
 		{"e003-generic-enum-i32-local-payload-at-float", "enum Bx[T] { Full(T), Empty }\nfunction main(): i32 { let n: i32 = 1; let b: Bx[f64] = Full(n); return 0; }\n", []string{"E003"}},
 		{"e003-two-param-enum-payload-mismatch", "enum Pr[A, B] { Both(A, B), Neither }\nfunction main(): i32 { let p: Pr[f64, string] = Both(1, 2); return 0; }\n", []string{"E003"}},
+		{"e003-generic-enum-block-literal-payloads-at-i64-ok", "enum Bx[T] { Full(T), Empty }\nfunction main(): i32 { let c: boolean = true; let b: Bx[i64] = if (c) { Full(1) } else { Full(2) }; return 0; }\n", nil},
+		{"e002-generic-enum-block-literal-payloads-at-i64-ok", "enum Bx[T] { Full(T), Empty }\nfunction g(c: boolean): Bx[i64] { return if (c) { Full(1) } else { Full(2) }; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e003-generic-enum-block-i32-local-payload-at-i64", "enum Bx[T] { Full(T), Empty }\nfunction main(): i32 { let c: boolean = true; let n: i32 = 1; let b: Bx[i64] = if (c) { Full(n) } else { Full(2) }; return 0; }\n", []string{"E003"}},
+		{"e002-generic-enum-block-i32-local-payload-at-i64", "enum Bx[T] { Full(T), Empty }\nfunction g(c: boolean, n: i32): Bx[i64] { return if (c) { Full(n) } else { Full(2) }; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
 		// E045: a map literal's first key fixes the key type, which must be
 		// i32 or string (the only key kinds the runtime hash/compare
 		// supports). Map programs need `import "core/map";` (Go reports E001

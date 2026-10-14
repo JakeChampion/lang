@@ -18357,6 +18357,21 @@ function me_ident(id: ast.ExprIdent, expected: string, env: MEnv, enums: EnumDec
 // clone names and recurses through every sub-expression. `expected` is the
 // type the expression flows into (a let annotation / return type), used to
 // pin a unit / ambiguous variant's instantiation; "" when unknown.
+// me_block_at is a call's callee, a value block's lambda resulting in the
+// generic-enum instance its destination names. The checker stamps the block
+// with its arms' own join, `Bx[i32]` for `if (c) { Full(1) } else { Full(2) }`,
+// and admits it at a `Bx[i64]` only where every arm settles there, so the
+// destination outranks the stamp as an annotation outranks a construction's
+// payloads (me_infer_variant_key).
+function me_block_at(c: ast.ExprCall, expected: string, enums: EnumDecl[]): ast.Expr {
+  if let ast.ExprLambda(lm) = c.callee {
+    if (is_value_block(c) && me_rewrite_ty(expected, enums) != expected) {
+      return ast.ExprLambda { ...lm, ret_type: expected, ret_fn_ret: "", ret_fn_param_types: "" };
+    }
+  }
+  return c.callee;
+}
+
 function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: MFns, ins: Insts): RExpr {
   match (e) {
     ast.ExprBinary(b) => {
@@ -18451,7 +18466,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
         let mv: string = vname + "__" + key;
         return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: mv, line: c.line, col: c.col, ty: "" }, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: cur };
       }
-      let rc: RExpr = me_expr(c.callee, "", env, enums, structs, funcs, cur);
+      let rc: RExpr = me_expr(me_block_at(c, expected, enums), "", env, enums, structs, funcs, cur);
       return RExpr { rexpr: ast.ExprCall { callee: rc.rexpr, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: rc.rins };
     },
     ast.ExprIdent(id) => {
