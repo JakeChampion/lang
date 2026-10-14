@@ -78,6 +78,18 @@ func TestSelfHostREPL(t *testing.T) {
 	}
 }
 
+// A REPL whose stdlib root is spelled with `..` loads the stdlib as the
+// cleaned spelling does (#12398): a float prints as its value, not `<f64>`.
+func TestSelfHostREPLStdlibRootWithDotDot(t *testing.T) {
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-repl", e2eharness.SelfHostStdlibRoot(t)+"/../stdlib/./")
+	cmd.Stdin = strings.NewReader("2.5\n")
+	out, err := cmd.CombinedOutput()
+	want := "fern REPL — Ctrl+D to exit\n> 2.5\n> \n"
+	if err != nil || string(out) != want {
+		t.Errorf("%v\n--- got ---\n%s\n--- want ---\n%s", err, out, want)
+	}
+}
+
 // effectsRun writes src as main.fern and returns `-effects`' stdout and exit
 // status.
 func effectsRun(t *testing.T, src string) (string, int) {

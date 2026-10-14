@@ -4528,7 +4528,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
       return usage();
     }
     if (pos.len() == 1) {
-      return run_repl(pos[0], target);
+      return run_repl(util.clean_path(pos[0]), target);
     }
     return run_repl(embedded_root, target);
   }
