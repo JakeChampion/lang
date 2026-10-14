@@ -49,14 +49,14 @@
 # past the join tested it once. Values are the perf-x86_64 and perf-aarch64
 # lanes' measurements of the branch.
 
-x86_64/array_append.text	924
+x86_64/array_append.text	935
 x86_64/array_append.ir	13383897
-x86_64/array_index.text	913
+x86_64/array_index.text	924
 x86_64/array_index.ir	16455548
 x86_64/array_scale_f64.text	2759
 x86_64/array_scale_f64.ir	21337821
 x86_64/array_with.ir	37762183
-x86_64/array_with.text	1068
+x86_64/array_with.text	1079
 x86_64/ascii_scan.text	3038
 x86_64/ascii_scan.ir	37119510
 x86_64/call_overhead.text	88
@@ -189,13 +189,13 @@ x86_64/utf8_ingest_validated.ir	5988691
 # on one program says nothing about the next. A new benchmark reports as
 # UNBASELINED here for one CI run, which is the gate saying "measured,
 # recorded, not yet compared" — paste that run's block in rather than guessing.
-aarch64/array_append.text	1105
+aarch64/array_append.text	1120
 aarch64/array_append.ir	17893556
-aarch64/array_index.text	1103
+aarch64/array_index.text	1118
 aarch64/array_index.ir	18548348
 aarch64/array_scale_f64.text	2801
 aarch64/array_scale_f64.ir	25365579
-aarch64/array_with.text	1255
+aarch64/array_with.text	1270
 aarch64/array_with.ir	31219422
 aarch64/ascii_scan.text	3204
 aarch64/ascii_scan.ir	68660210
@@ -227,7 +227,7 @@ aarch64/sort_inplace.text	3020
 aarch64/sort_inplace.ir	53111058
 aarch64/sort_ints.text	3583
 aarch64/sort_ints.ir	32514646
-aarch64/sort_strings.text	4413
+aarch64/sort_strings.text	4476
 aarch64/sort_strings.ir	106027235
 aarch64/string_build.text	3431
 aarch64/string_build.ir	63637394
