@@ -6,9 +6,9 @@ import "testing"
 // stored by a callee, reassigned over a local, bound and outliving a rebind of
 // its source, iterated, lent, captured, indexed — is a counted reference the
 // typed lowering retains at the read and releases at its consumer (#5338). Each
-// row lets the source die, churns the freelist, then reads the value back, so
-// an over-release reads recycled memory (exit 100) as well as the census
-// seeing a leak.
+// row lets the source die, churns the freelist with blocks of the same sizes
+// and other bytes, then reads the value back, so an over-release reads
+// recycled memory (exit 100) as well as the census seeing a leak.
 
 const escapingReadDecl = `struct S { name: string, n: i32 }
 struct Q { f: string[] }
@@ -16,7 +16,13 @@ struct H { s: string }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 function mk(i: i32): S { return S { name: w("s"), n: i }; }
 function mkq(i: i32): Q { let o: string[] = []; o = o.append(w("a")); o = o.append(w("bb")); return Q { f: o }; }
-function churn(i: i32): i32 { let a: Q = mkq(i); let b: S = mk(i + 1); return a.f[0].len() + b.name.len(); }
+function churn(i: i32): i32 {
+    let a: string[] = [];
+    a = a.append(w("q"));
+    a = a.append(w("rr"));
+    let b: S = S { name: w("t"), n: i };
+    return a[0].len() + b.name.len();
+}
 `
 
 const escapingReadMain = `
