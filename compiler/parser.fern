@@ -7840,9 +7840,12 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     // reconstruct it from the body. Inference can only answer for the
     // expression forms it has arms for; a builtin-method body
     // (`m.get_or(k, 0.0)`) is unanswerable there without absorbing the whole
-    // builtin surface. The annotation outranks the inference.
-    init_expr = stamp_lambda_ret(init_expr, v_fn_ret);
-    init_expr = stamp_value_block_ret(init_expr, type_name);
+    // builtin surface. The annotation outranks the inference. `-fmt` keeps
+    // the lambda as written.
+    if (!p.verbatim) {
+      init_expr = stamp_lambda_ret(init_expr, v_fn_ret);
+      init_expr = stamp_value_block_ret(init_expr, type_name);
+    }
     return (ast.StmtVar { name: discard_name(name, vline, vcol, 0), type_name: type_name, init: init_expr, line: vline, col: vcol, fn_ret: v_fn_ret, fn_param_types: v_fn_ptys }, p);
   }
   if (kw == "return") {
