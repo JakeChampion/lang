@@ -5593,6 +5593,9 @@ function os_floor_process_site(own r: irtables.LowerResult, ins: ssa.SInst): Low
   if (ins.str == "ring_wait") {
     return Lowered { found: true, r: emit(r, ir.op_ring_wait()) };
   }
+  if (ins.str == "ring_recv") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_ring_recv())) };
+  }
   if (ins.str == "tcp_recv_into") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_tcp_recv_into())) };
   }

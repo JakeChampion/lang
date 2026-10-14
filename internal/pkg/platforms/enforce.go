@@ -187,6 +187,7 @@ var gatedBuiltins = map[string]string{
 	"ring_new":      "reactor",
 	"ring_ctl":      "reactor",
 	"ring_wait":     "reactor",
+	"ring_recv":     "reactor",
 	"tcp_recv_into": "tcp",
 	"tcp_ktls":      "tcp",
 

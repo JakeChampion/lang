@@ -137,18 +137,36 @@ fallback; the native arm64 runner exercises the ring.
    with no process left to serve it. What it saves is one `accept4` per
    connection. The listener stays in the ring's epoll set and is accepted
    with `tcp_accept`.
-3. **Provided buffers and multishot receive.** One buffer ring per ring,
-   registered with `IORING_REGISTER_PBUF_RING`, of fixed-size buffers
-   the size of the loop's scratch; a watched connection's readable poll
-   becomes a multishot `IORING_OP_RECV` selecting from it. Completions
-   carry the buffer's index and length and are queued per connection;
-   `drv.recv_into(fd, scratch)` copies one into the loop's scratch and
-   hands the buffer back to the kernel, and answers EAGAIN when the
-   connection's queue is empty, as `tcp_recv_into` does. The copy is the
-   one `recv` made; the system call is what goes. A receive the kernel
-   ends for want of buffers (ENOBUFS) is re-armed once buffers return.
-   Gate: the serve suites under both backends, the zero-allocation gate,
-   and a pipelined burst larger than the buffer ring.
+3. **Provided buffers and multishot receive (landed).** One buffer ring per
+   ring, 256 buffers of 4 KiB (the loop's scratch), registered with
+   `IORING_REGISTER_PBUF_RING`. A watch with interest 8 beside 1 reads by a
+   multishot `IORING_OP_RECV` selecting from it in place of a read poll;
+   the serve loop sets it on the connections it reads itself and leaves it
+   off where something else reads the socket: a body's pull, which reads
+   once the loop has unwatched the connection, the kernel's TLS record
+   layer (`Config.ktls`), and the HTTP/2 connections fetch drives. A
+   completion queues its buffer on the descriptor, the wait reports it
+   readable while the queue holds bytes or the stream has ended, and
+   `drv.recv_into(fd, scratch)`, the `ring_recv` builtin, copies from the
+   queue, as many buffers as the scratch holds, and then reads the socket,
+   so the bytes come in order; epoll's driver reads the socket alone. The
+   loop reads until a read comes back short, so the queue is empty when it
+   lends or closes a connection, and an unwatch drops what is left. A
+   connection with 16 buffers queued, or one the pool ran dry for
+   (ENOBUFS), reads by poll until its queue has emptied and 64 buffers are
+   free, so a connection that stops reading cannot hold the others' reads
+   back. Every completion a wait reaps goes through one ready list, which
+   the wait reports from as the events array allows; the completion ring
+   is sized at 16 entries per submission entry (`IORING_SETUP_CQSIZE`), so
+   the kernel never holds completions back. Gates: `TestRingRecvX86_64`
+   and its interpreter and qemu-aarch64 twins (a line read whole, unread
+   bytes reported again and read in pieces, bytes received before the
+   watch dropped bit 8 read ahead of later ones, the end of the stream, and
+   forty connections sending 32 KiB each before any is read, more than the
+   pool holds, every byte in order); the zero-allocation gate under both
+   backends; `TestSelfHostServePipelinedBurst` and its `Ring` twin, 64,000
+   pipelined requests over four connections, some 2.3 MB, answered in
+   order; and the x86-64 serve suite under `FERN_IO_URING=1`.
 4. **Zero-copy send above the crossover.** A response body at or past
    `Config.io_uring_zc_bytes` (3,072 by default, the kernel's measured
    crossover) is written with `IORING_OP_SEND_ZC`; the loop keeps the

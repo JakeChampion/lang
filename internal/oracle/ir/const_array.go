@@ -83,6 +83,7 @@ var rawArrayWriters = map[string]bool{
 	"tcp_ktls":      true,
 	"reactor_wait":  true,
 	"ring_wait":     true,
+	"ring_recv":     true,
 }
 
 func fnReachesRawFloor(fn *ast.FuncDecl) bool {

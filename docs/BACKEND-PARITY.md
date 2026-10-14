@@ -220,7 +220,11 @@ events, timeout_ms)` are the same floor over an io_uring
 reactor's, plus op 7, the ring's own descriptor, and the handle is an `i64`,
 the address of the state the Linux body maps. A watch is a single-shot
 `POLL_ADD` re-armed as its completion is read, so readiness is
-level-triggered as epoll's is. Only Linux has a body; Darwin, wasm and the
+level-triggered as epoll's is. `ring_recv(ring, fd, buf)` is the read for a
+descriptor watched with interest 8: a multishot `RECV` from a ring of
+provided buffers fills a queue on the descriptor, the wait reports it
+readable while the queue holds bytes, and the read takes them before the
+socket's. Only Linux has a body; Darwin, wasm and the
 interpreter answer ENOSYS, as a kernel without io_uring or under a seccomp
 profile refusing it does, and `async.real_driver_io_uring()` keeps the
 reactor there. qemu-user implements no io_uring, so an arm64 binary under
@@ -247,7 +251,7 @@ of these at check time there.
 | `udp_bind`, `udp_connect`, `udp_sendto`, `udp_recvfrom` (byte address) | Fern body | Fern body; `EISCONN` for a named address on a connected socket | wasi:sockets/udp bodies (`wasm_ir.fern`); `recvfrom` blocks on the incoming pollable | E066 | raw descriptors, the kernel's errnos |
 | `unix_listen`, `unix_connect` | Fern body | Fern body, `sun_len` head | E066: no `unix` | E066 | net package |
 | `reactor_new`, `reactor_ctl`, `reactor_wait` | Fern body, epoll | Fern body, kqueue | a table of wasi:io pollables; signals `-ENOTSUP` | E066: no `reactor` | an epoll or kqueue set over the handles; signals through a pipe |
-| `ring_new`, `ring_ctl`, `ring_wait` | Fern body, io_uring (kernel 6.1 setup flags), `-ENOSYS` or `-EPERM` where the kernel refuses it | `-ENOSYS` | `-ENOSYS` | E066: no `reactor` | `-ENOSYS` |
+| `ring_new`, `ring_ctl`, `ring_wait`, `ring_recv` | Fern body, io_uring (kernel 6.1 setup flags), `-ENOSYS` or `-EPERM` where the kernel refuses it | `-ENOSYS` | `-ENOSYS` | E066: no `reactor` | `-ENOSYS` |
 
 On arm64-darwin `poll(fds, timeout_ms)` reaches `kqueue`/`kevent`
 (`asmcore.fern`'s `rt_src_poll_kqueue`). It ignores negative fds and failed
