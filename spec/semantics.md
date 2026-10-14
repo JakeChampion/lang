@@ -137,7 +137,7 @@ and `E067` were also two of the three codes `spec/diagnostics.md`
 listed as unpinned, so those rows closed in both indexes at once.
 
 `ML-06` was the interesting one, because it was not unpinned for want
-of writing a case. `E068` is reported by `internal/oracle/ir/fip_verify.go`
+of writing a case. `E068` is reported by `compiler/irfipverify.fern`
 during *lowering*, after the checker has already accepted the program,
 and a case with an `expected.error` file stops at the type check — so
 the format itself could not express the claim. Rather than move the

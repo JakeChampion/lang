@@ -5,13 +5,11 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/oracle/ir"
 )
 
 // TestSelfHostIRStrengthPeephole pins the self-hosted stack IR's
 // strength-reduction peephole (compiler/ir.fern's reduce_strength /
-// optimize_ops — the op-list twin of native's internal/oracle/ir/strength.go, #6638).
+// optimize_ops, #6638).
 //
 // The ir_strength_run driver runs the pass over one op list per rewrite and
 // prints the rendered result. The golden below is what every backend receives,
@@ -207,7 +205,7 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		"wc_int_wrap_refused: const_i32 9 ; int_wrap\n" +
 		"wc_hex_refused: const_i32_text 0x10 ; int_cast\n" +
 		"wc_opaque_refused: load_local 0 ; int_cast\n" +
-		// Zero-slot uniqueness guards (native internal/oracle/ir/zeroslot.go). Lowering
+		// Zero-slot uniqueness guards (ir.prune_zero_slot_guards). Lowering
 		// gates every scope-exit drop on __fern_rc_is_unique, on the paths that
 		// assigned the local and the paths that did not; on the latter the slot
 		// still holds the entry zero the backend prologue wrote, so the guard is
@@ -305,28 +303,29 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 	}
 }
 
-// magicParityLines renders native's reciprocal derivation in the driver's
-// format, so ir.fern's derive_magic_s / derive_magic_u are pinned to
-// internal/oracle/ir/magic.go itself rather than to a copied table. The divisors
+// magicParityLines renders the reference reciprocal derivation
+// (magic_reference_test.go) in the driver's format, so ir.fern's
+// derive_magic_s / derive_magic_u are pinned to an independent computation
+// rather than to a copied table. The divisors
 // cover every arm: plain, add, sub, a zero shift, a large shift, a tiny
 // magic, a magic one bit wider than the word, and divisors past 2^31 and 2^63
 // at both widths.
 func magicParityLines() string {
 	var b strings.Builder
 	for _, d := range []int32{3, 7, -7, 97, 4093, -4093, 641, 1000000, 715827883, -1234567, 10, 100, 2147483647, -2147483647, 5, -5} {
-		mg := ir.DeriveMagicS32(d)
+		mg := deriveMagicS32(d)
 		fmt.Fprintf(&b, "magic_s %d: m=%d s=%d add=%v sub=%v\n", d, mg.M, mg.S, mg.Add, mg.Sub)
 	}
 	for _, d := range []uint32{3, 7, 97, 641, 1000000, 2147483649, 2863311531, 4294967291, 4294967295, 10, 100, 5, 4093} {
-		mg := ir.DeriveMagicU32(d)
+		mg := deriveMagicU32(d)
 		fmt.Fprintf(&b, "magic_u %d: m=%d s=%d add=%v\n", d, mg.M, mg.S, mg.Add)
 	}
 	for _, d := range []int64{3, 7, -7, 10, 100, 641, -1000000007, 1000000000000, 6148914691236517205, -6148914691236517205, 9223372036854775807, -9223372036854775807} {
-		mg := ir.DeriveMagicS64(d)
+		mg := deriveMagicS64(d)
 		fmt.Fprintf(&b, "magic_s64 %d: m=%d s=%d add=%v sub=%v\n", d, mg.M, mg.S, mg.Add, mg.Sub)
 	}
 	for _, d := range []uint64{3, 7, 10, 100, 641, 1000000007, 9223372036854775809, 12297829382473034411, 18446744073709551557, 18446744073709551615} {
-		mg := ir.DeriveMagicU64(d)
+		mg := deriveMagicU64(d)
 		fmt.Fprintf(&b, "magic_u64 %d: m=%d s=%d add=%v\n", int64(d), int64(mg.M), mg.S, mg.Add)
 	}
 	return b.String()

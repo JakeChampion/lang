@@ -3,7 +3,7 @@ package e2e
 import "testing"
 
 // TestStructUpdateParamSpreadReuse guards a miscompile in the shared IR
-// lowering (internal/oracle/ir): a self-overwrite struct-update spread of a value
+// lowering: a self-overwrite struct-update spread of a value
 // flowing through a function parameter — `p = T { ...p, field: v }` inside a
 // function the caller threads a struct through, so p's rc is > 1 at the
 // overwrite.

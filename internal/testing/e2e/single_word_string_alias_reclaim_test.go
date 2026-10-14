@@ -113,8 +113,8 @@ func TestSingleWordABIReclaimsAStringParamBoundToALocal(t *testing.T) {
 			"Both bodies read the parameter and return a scalar, so neither retains anything "+
 			"past the return. The local takes no reference of its own either: the borrowed-alias "+
 			"cancellation elides the transfer inc against an exit sweep that never touches the "+
-			"slot. What differs is only whether internal/oracle/ir's counted-retain summary has an arm "+
-			"for the shape (frameBoundStringAliases) — and when it does not, computeFreeEligible's "+
+			"slot. What differs is only whether the lowering's counted-retain summary has an arm "+
+			"for the shape — and when it does not, computeFreeEligible's "+
 			"single-word string taint refuses the argument at every call site.\n\n"+
 			"Do not fix this by relaxing the comparison: the two numbers are supposed to be equal.",
 			aliasFrees, aliasAllocs, directFrees)

@@ -1,6 +1,5 @@
 // compiler/irverifyrc.fern — the self-host IR verifier's ownership
-// half, mirroring native's internal/oracle/ir/verifyrc.go (#7791, the follow-up to
-// #7783).
+// half (#7791, the follow-up to #7783).
 //
 // irverify.fern checks structure and irverifystack.fern checks operand-stack
 // discipline. Neither knows what a reference count is, so the one place

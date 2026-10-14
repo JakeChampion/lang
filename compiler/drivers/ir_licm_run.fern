@@ -1,6 +1,6 @@
 // compiler/ir_licm_run.fern — driver for the stack IR's loop-invariant
-// code motion (ir.fern's hoist_loop_invariants, the op-list twin of native's
-// internal/oracle/ir/licm.go, #8245) and for the slot growth it depends on (#8247).
+// code motion (ir.fern's hoist_loop_invariants, #8245) and for the slot growth
+// it depends on (#8247).
 //
 // Each case builds the op list the lowering emits for a small `while` and prints the
 // pass's output — the ops AND the frame count — so the companion Go test

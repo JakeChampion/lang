@@ -52,9 +52,10 @@
 // matrix product of two matrices, a matrix times a vector — as a handle
 // of shape `a.shape()[:-1] ++ b.shape()[1:]`, each element the fold of
 // `mul` over the contracted axis in increasing index order. The two
-// contracted extents must be equal. The native compiler recognizes both
-// by identity (docs/ARRAY-SHAPES.md §6) and `fern -array-report` names
-// each site; the lowering is still the scalar loop below.
+// contracted extents must be equal. The compiler recognizes both by
+// identity (docs/ARRAY-SHAPES.md §6): over packed `f64` handles with a
+// capture-free multiply (and add, for `inner`) each lowers to a kernel,
+// otherwise to the scalar loop below, and `fern -array-report` names which.
 //
 // # By rank
 //
