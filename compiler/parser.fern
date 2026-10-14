@@ -18806,6 +18806,11 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
           }
           return "";
         },
+        ast.ExprLambda(lm) => {
+          // A called lambda, a value block among them, yields its result
+          // spelling, which the checker stamps with the block's type.
+          return lm.ret_type;
+        },
         _ => {
           return "";
         }

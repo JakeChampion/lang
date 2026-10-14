@@ -2630,6 +2630,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e031-block-tuple-shadows-literal-local", "function main(): i32 { let q = 2; let t = if (true) { ({ let q: i32 = 3; (q, 1) }) } else { (2.5, 1) }; return 0; }\n", []string{"E031"}},
 		{"e003-joined-tuple-elem", "function main(): i32 { let t = if (true) { (1, 2) } else { (3.5, 4) }; let s: string = t; return 0; }\n", []string{"E003"}},
 		{"e003-joined-some-payload", "function main(): i32 { let o = if (true) { Some(1) } else { Some(2.5) }; let s: string = o; return 0; }\n", []string{"E003"}},
+		{"e031-generic-enum-i32-local-vs-f64", "enum Bx[T] { Full(T), Empty }\nfunction main(): i32 { let n: i32 = 1; let b = if (true) { Full(n) } else { Full(2.5) }; return 0; }\n", []string{"E031"}},
+		// A declared enum's unsettled payload settles at the destination's instance.
+		{"e003-generic-enum-literal-payload-at-float-ok", "enum Bx[T] { Full(T), Empty }\nfunction main(): i32 { let b: Bx[f64] = Full(1); return 0; }\n", nil},
+		{"e002-generic-enum-literal-payload-at-float-ok", "enum Bx[T] { Full(T), Empty }\nfunction g(): Bx[f64] { return Full(1); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e003-two-param-enum-literal-payloads-ok", "enum Pr[A, B] { Both(A, B), Neither }\nfunction main(): i32 { let p: Pr[Option[f64], i64] = Both(Some(1), 2); return 0; }\n", nil},
+		{"e003-generic-enum-i32-local-payload-at-float", "enum Bx[T] { Full(T), Empty }\nfunction main(): i32 { let n: i32 = 1; let b: Bx[f64] = Full(n); return 0; }\n", []string{"E003"}},
+		{"e003-two-param-enum-payload-mismatch", "enum Pr[A, B] { Both(A, B), Neither }\nfunction main(): i32 { let p: Pr[f64, string] = Both(1, 2); return 0; }\n", []string{"E003"}},
 		// E045: a map literal's first key fixes the key type, which must be
 		// i32 or string (the only key kinds the runtime hash/compare
 		// supports). Map programs need `import "core/map";` (Go reports E001

@@ -995,13 +995,16 @@ function literal_payloads(s: State, whole: typeinfo.Type, name: string, layout: 
 // where they are known: a builtin union's, a bare unit variant's (`Empty`
 // under `Box[T]`, typed with no arguments), and a payload's that leaves an
 // argument unbound (`Tagged(Tag { … })` under `Box[T]`, the argument
-// settled to never).
+// settled to never). A concrete destination also outranks a payload the
+// checker settled alone, since it admits the literal there only where that
+// payload settles to it: joined with a sibling arm's (`Full(Some(1))` beside
+// `Full(Some(2.5))` is a `Bx[Option[f64]]`) or read at the destination's.
 function literal_union(e: ast.Expr, s: State, expected: typeinfo.Type): typeinfo.Type {
   let ty: typeinfo.Type = checked(e, s);
   if (union_name(expected) != union_name(ty)) {
     return ty;
   }
-  if (builtin_union_layout(union_name(ty)) != 0 || union_unsettled(ty)) {
+  if (builtin_union_layout(union_name(ty)) != 0 || union_unsettled(ty) || semtypes.concrete(expected, false)) {
     return expected;
   }
   return ty;

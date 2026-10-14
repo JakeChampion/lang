@@ -13332,33 +13332,53 @@ function vb_settles(body: ast.Stmt[], want: typeinfo.Type, s: Scope): boolean {
 // literal payload read at the destination's payload type as a bare literal is.
 function ctor_payload_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
   if let ast.ExprCall(c) = e {
-    if (c.args.len() != 1 || !constructor_destination(c, want, s)) {
+    if (c.args.len() == 0 || !constructor_destination(c, want, s)) {
       return false;
     }
     let wa: typeinfo.Type[] = nominal_args(want);
     let at: i32 = builtin_payload_index(ctor_variant_name(c), want);
-    if (at < 0 || at >= wa.len()) {
+    if (at < 0) {
+      return declared_payloads_settle(c, want, s);
+    }
+    if (c.args.len() != 1 || at >= wa.len()) {
       return false;
     }
-    if (settles_to(c.args[0], wa[at], s)) {
-      return true;
-    }
-    // A direct Result construction widens a same-signed integer payload at
-    // the destination. This is a constructor conversion, not covariance of
-    // an already constructed enum, and Option retains its stricter rule.
-    if let typeinfo.TypeUnion(u) = want {
-      if (u.name == "Result") {
-        if let typeinfo.TypeI32(from) = check_expr(c.args[0], s) {
-          if let typeinfo.TypeI32(to) = wa[at] {
-            return !from.is_char && !to.is_char && from.unsigned == to.unsigned
-              && from.width > 0 && from.width < to.width;
-          }
+    return settles_to(c.args[0], wa[at], s) || result_payload_widens(c.args[0], wa[at], want, s);
+  }
+  return false;
+}
+
+// A direct Result construction widens a same-signed integer payload at the
+// destination. This is a constructor conversion, not covariance of an already
+// constructed enum, and Option retains its stricter rule.
+function result_payload_widens(payload: ast.Expr, slot: typeinfo.Type, want: typeinfo.Type, s: Scope): boolean {
+  if let typeinfo.TypeUnion(u) = want {
+    if (u.name == "Result") {
+      if let typeinfo.TypeI32(from) = check_expr(payload, s) {
+        if let typeinfo.TypeI32(to) = slot {
+          return !from.is_char && !to.is_char && from.unsigned == to.unsigned
+            && from.width > 0 && from.width < to.width;
         }
       }
     }
-    return false;
   }
   return false;
+}
+
+// A declared generic enum's construction settles where each payload does at
+// the destination's instance of its field, as a builtin's does: `Full(1)` is a
+// Bx[f64] where one is wanted.
+function declared_payloads_settle(c: ast.ExprCall, want: typeinfo.Type, s: Scope): boolean {
+  let vname: string = ctor_variant_name(c);
+  let i: i32 = 0;
+  while (i < c.args.len()) {
+    let field: typeinfo.Type = generic_variant_payload_type(s, vname, want, i);
+    if (is_unknown(field) || !settles_or_assignable(c.args[i], field, s)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
 }
 
 // Only a constructor can convert its payload at an enum destination. A
@@ -26215,7 +26235,7 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
       nargs = display_rewrite(c, nargs, s);
       nargs = settle_shared_literal_typevars(c, nargs, s);
       let ct: typeinfo.Type = check_expr(e, s);
-      return Typed { e: ast.ExprCall { callee: annotate_expr(c.callee, s), args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: type_to_irtag(ct) }, ty: ct, known: true };
+      return Typed { e: ast.ExprCall { callee: annotate_callee(c, ct, s), args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: type_to_irtag(ct) }, ty: ct, known: true };
     },
     ast.ExprFieldAccess(fa) => {
       let oa: Typed = annotate_typed(fa.obj, s);
@@ -26264,13 +26284,25 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
       return unsettled(ast.ExprStructLit { type_name: sli.type_name, field_names: sli.field_names, field_values: nfv, has_base: sli.has_base, base: nbase, line: sli.line, col: sli.col, written: sli.written });
     },
     ast.ExprLambda(lm) => {
-      return unsettled(annotate_lambda_expr(lm, s, ""));
+      return unsettled(annotate_lambda_expr(lm, s, "", t_unknown("")));
     },
     _ => {
       return unsettled(e);
     }
   }
   return unsettled(e);
+}
+
+// annotate_callee annotates a call's callee; a value block's lambda results in
+// `ct`, the block's type, which joins every arm where its first arm alone may
+// not: `if (c) { Full(1) } else { Full(2.5) }` is a Bx[f64].
+function annotate_callee(c: ast.ExprCall, ct: typeinfo.Type, s: Scope): ast.Expr {
+  if let ast.ExprLambda(lm) = c.callee {
+    if (parser.is_value_block(c)) {
+      return annotate_lambda_expr(lm, s, "", ct);
+    }
+  }
+  return annotate_expr(c.callee, s);
 }
 
 // unsettled is an annotated expression whose type the walk did not settle: a
@@ -26281,7 +26313,7 @@ function unsettled(e: ast.Expr): Typed {
 
 // Capture contracts are resolved where the lambda is defined, including
 // unknown-typed locals that still shadow globals. A recursive local binds itself.
-function annotate_lambda_expr(lm: ast.ExprLambda, s: Scope, self_name: string): ast.Expr {
+function annotate_lambda_expr(lm: ast.ExprLambda, s: Scope, self_name: string, block: typeinfo.Type): ast.Expr {
   let captures: ast.TypedBinding[] = [];
   let seen: string[] = [];
   for name in astwalk.collect_lambda_idents(lm, []) {
@@ -26311,7 +26343,7 @@ function annotate_lambda_expr(lm: ast.ExprLambda, s: Scope, self_name: string): 
   // syntax, so a checked tail that names a whole type replaces it.
   let typed: ast.ExprLambda = lm;
   if (lm.ret_type.len() == 0 || parser.is_value_block_origin(lm.origin)) {
-    typed = inferred_lambda_result(lm, ls, lm.ret_type.len() > 0);
+    typed = inferred_lambda_result(lm, ls, lm.ret_type.len() > 0, block);
   }
   return ast.ExprLambda { ...typed, body: annotate_block(lm.body, ls), captures: captures, captures_known: true };
 }
@@ -26373,13 +26405,17 @@ function union_arity(s: Scope, name: string): i32 {
 // sidecars, the pair a declaration's `ret_fn_ret` carries (#10025). Left
 // empty: a result nested inside another type that holds a function, which no
 // spelling carries, and a bare literal, which adapts to the width of whatever
-// receives the lambda.
-function inferred_lambda_result(lm: ast.ExprLambda, body_scope: Scope, need_whole: boolean): ast.ExprLambda {
+// receives the lambda. A value block's `block` type, where known, is the result
+// in place of its first return's.
+function inferred_lambda_result(lm: ast.ExprLambda, body_scope: Scope, need_whole: boolean, block: typeinfo.Type): ast.ExprLambda {
   let (returned, at) = first_returned(lm.body, body_scope);
   if (parser.bare_return(returned) || int_literal_tree(returned)) {
     return lm;
   }
-  let t: typeinfo.Type = check_expr(returned, at);
+  let t: typeinfo.Type = block;
+  if (is_unknown(t)) {
+    t = check_expr(returned, at);
+  }
   if (need_whole && !names_whole_type(t, at)) {
     return lm;
   }
@@ -26571,7 +26607,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       // Reuse the type resolved for the binding; the initializer sees s.
       let init = v.init;
       if let ast.ExprLambda(lm) = v.init {
-        init = annotate_lambda_expr(lm, s, rec_local_name(v));
+        init = annotate_lambda_expr(lm, s, rec_local_name(v), t_unknown(""));
       } else {
         init = annotate_expr(v.init, s);
       }
