@@ -113,3 +113,64 @@ func TestSelfHostInlinePrimitiveLeaf(t *testing.T) {
 		}
 	}
 }
+
+// The arms of a `&&` or `||` lower to blocks that only name a constant for
+// the join, which the SSA backend threads away, so they do not count against
+// a leaf's block budget. `is_alnum` is two short-circuit leaves spliced
+// together, the lexer's identifier test; counted block by block it is past
+// the budget, and with two callers it is spliced only as a leaf.
+const inlineShortCircuitLeafProg = `function is_digit(b: i32): boolean { return b >= 48 && b <= 57; }
+function is_alpha(b: i32): boolean { return b >= 65 && b <= 90 || b >= 97 && b <= 122 || b == 95; }
+function is_alnum(b: i32): boolean { return is_digit(b) || is_alpha(b); }
+@noinline function count(n: i32): i32 {
+    let t: i32 = 0;
+    let b: i32 = 0;
+    while (b < n) { if (is_alnum(b)) { t = t + 1; } b = b + 1; }
+    return t;
+}
+@noinline function first_other(n: i32): i32 {
+    let b: i32 = 0;
+    while (b < n && is_alnum(b)) { b = b + 1; }
+    return b;
+}
+function main(): i32 { return count(128) + first_other(4); }
+`
+
+func TestSelfHostInlineShortCircuitLeaf(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "alnum.fern")
+	if err := os.WriteFile(src, []byte(inlineShortCircuitLeafProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	call := map[string]string{"x86-64-linux": "call __fn_is_alnum", "arm64-linux": "bl __fn_is_alnum"}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		out := filepath.Join(dir, target+".s")
+		if combined, err := exec.Command(h.cli, "-O", "-target", target, "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
+			t.Fatalf("%s: emitting: %v\n%s", target, err, combined)
+		}
+		asm, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, fn := range []string{"count", "first_other"} {
+			if body := condBranchBody(t, string(asm), fn); strings.Contains(body, call[target]) {
+				t.Errorf("%s: %s still calls is_alnum:\n%s", target, fn, body)
+			}
+		}
+	}
+	for _, tg := range h.targets {
+		bin := filepath.Join(dir, tg.target+".bin")
+		if combined, err := exec.Command(h.cli, "-O", "-target", tg.target, "-o", bin, src, h.stdlib).CombinedOutput(); err != nil {
+			t.Fatalf("%s: building: %v\n%s", tg.target, err, combined)
+		}
+		run := exec.Command(bin)
+		if len(tg.runner) > 0 {
+			run = exec.Command(tg.runner[0], append(tg.runner[1:], bin)...)
+		}
+		_ = run.Run()
+		if got := run.ProcessState.ExitCode(); got != 63 {
+			t.Errorf("%s: exit %d, want 63 (the interpreter's)", tg.target, got)
+		}
+	}
+}

@@ -124,21 +124,64 @@ function is_suffix_start(b: i32): boolean {  // 'i' 'u' 'f'
 // Keyword set — mirrors `internal/syntax/lexer/lexer.go`'s `keywords` map.
 // Inlined as a string-comparison chain instead of a Map[string, bool]
 // so the lexer stays a single file with no init-order dependency.
+// Every identifier is asked, so the keywords are split by their first byte
+// and a name is compared only with the ones it could be.
+// fern-lint: allow cyclomatic-complexity
+// The keyword table itself: one guard per first byte, and a comparison per keyword.
 function is_keyword(name: string): boolean {
-  return name == "function" || name == "let"
-    || name == "use" || name == "if" || name == "else"
-    || name == "while" || name == "for" || name == "loop" || name == "break"
-    || name == "continue" || name == "return"
-    || name == "true" || name == "false"
-    || name == "boolean" || name == "void" || name == "string"
-    || name == "i32" || name == "i64"
-    || name == "u8" || name == "u32" || name == "u64"
-    || name == "usize" || name == "f32" || name == "f64"
-    || name == "as" || name == "default"
-    || name == "struct" || name == "import" || name == "pub" || name == "const"
-    || name == "enum" || name == "type" || name == "match" || name == "when"
-    || name == "defer" || name == "errdefer"
-    || name == "trait" || name == "impl" || name == "dyn";
+  if (name.len() < 2 || name.len() > 8) {
+    return false;
+  }
+  let c: u8 = name[0];
+  if (c == b'f') {
+    return name == "function" || name == "for" || name == "false" || name == "f32" || name == "f64";
+  }
+  if (c == b'i') {
+    return name == "if" || name == "i32" || name == "i64" || name == "import" || name == "impl";
+  }
+  if (c == b'u') {
+    return name == "use" || name == "u8" || name == "u32" || name == "u64" || name == "usize";
+  }
+  if (c == b'e') {
+    return name == "else" || name == "enum" || name == "errdefer";
+  }
+  if (c == b'd') {
+    return name == "default" || name == "defer" || name == "dyn";
+  }
+  if (c == b't') {
+    return name == "true" || name == "type" || name == "trait";
+  }
+  if (c == b'b') {
+    return name == "break" || name == "boolean";
+  }
+  if (c == b'c') {
+    return name == "continue" || name == "const";
+  }
+  if (c == b'l') {
+    return name == "let" || name == "loop";
+  }
+  if (c == b's') {
+    return name == "string" || name == "struct";
+  }
+  if (c == b'w') {
+    return name == "while" || name == "when";
+  }
+  if (c == b'r') {
+    return name == "return";
+  }
+  if (c == b'v') {
+    return name == "void";
+  }
+  if (c == b'a') {
+    return name == "as";
+  }
+  if (c == b'p') {
+    return name == "pub";
+  }
+  if (c == b'm') {
+    return name == "match";
+  }
+  return false;
 }
 
 function is_valid_numeric_suffix(s: string): boolean {
