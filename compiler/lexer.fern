@@ -126,6 +126,8 @@ function is_suffix_start(b: i32): boolean {  // 'i' 'u' 'f'
 // so the lexer stays a single file with no init-order dependency.
 // Every identifier is asked, so the keywords are split by their first byte
 // and a name is compared only with the ones it could be.
+// fern-lint: allow cyclomatic-complexity
+// The keyword table itself: one guard per first byte, and a comparison per keyword.
 function is_keyword(name: string): boolean {
   if (name.len() < 2 || name.len() > 8) {
     return false;
