@@ -595,8 +595,10 @@ pub function map_stmts(stmts: ast.Stmt[], visit: (ast.Expr) => ast.Expr): ast.St
 // needs its policy helpers to receive ORIGINAL children — post-order would
 // hand them already-rewritten ones and double-wrap `__mkclo$` markers.
 // handled=false → the visitor's node is ignored (decline with the node
-// untouched) and the spine rebuilds the children itself, threading the
-// visitor's acc through them, returning handled=false.
+// untouched) and the spine walks the children itself, threading the
+// visitor's acc through them. The spine's own third result is whether
+// anything in the subtree was claimed: a node nothing below claimed comes
+// back as it was, so a pass that rewrites little copies little.
 //
 // CHILD ORDER IS CONTRACT here, not an implementation detail: consumers name
 // hoisted helpers `$cloN` / `$wrapN` / `$iifeN` from a counter held in the
@@ -610,9 +612,9 @@ pub function map_stmts(stmts: ast.Stmt[], visit: (ast.Expr) => ast.Expr): ast.St
 // StructLit field_values then base, MapLit key before value per entry.
 //
 // Statements are rebuilt, never replaced, on map_stmt's terms: a declined
-// statement is rebuilt with a functional update, so line / sugar / origin pass
-// through untouched, and a claiming visitor is expected to hand back the same
-// statement kind it was shown.
+// statement with a changed child is rebuilt with a functional update, so line
+// / sugar / origin pass through untouched, and a claiming visitor is expected
+// to hand back the same statement kind it was shown.
 //
 // The result is a TUPLE, not a `Visit[T]` struct, and the constraint is the
 // per-module self-compile, not taste: a generic struct in the signature makes
@@ -632,7 +634,7 @@ pub function map_stmts(stmts: ast.Stmt[], visit: (ast.Expr) => ast.Expr): ast.St
 // concrete T.
 //
 // One tuple per node visited is a bounded constant factor on a walk that
-// already reconstructs every node it touches, so the fold spine's
+// may reconstruct every node it touches, so the fold spine's
 // predicate-not-box rule does not bind here — and it still binds THERE: the
 // fold stays allocation-free per node, and a consumer that needs state out of
 // a rewrite belongs on this spine, not on a retrofitted fold.
@@ -642,80 +644,74 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
     return (ve, va, true);
   }
   let a: T = va;
+  let out: ast.Expr = e;
+  let changed: boolean = false;
   match (e) {
-    ast.ExprNumber(_) => {
-      return (e, a, false);
-    },
-    ast.ExprIdent(_) => {
-      return (e, a, false);
-    },
-    ast.ExprString(_) => {
-      return (e, a, false);
-    },
-    ast.ExprBool(_) => {
-      return (e, a, false);
-    },
-    ast.ExprUnknown(_) => {
-      return (e, a, false);
-    },
-    ast.ExprZero(_) => {
-      return (e, a, false);
-    },
     ast.ExprBinary(b) => {
       let (le, la, lh) = map_expr_acc(b.left, a, visit_stmt, visit);
       let (re, ra, rh) = map_expr_acc(b.right, la, visit_stmt, visit);
-      return (ast.ExprBinary { ...b, left: le, right: re }, ra, false);
+      a = ra;
+      changed = lh || rh;
+      if (changed) {
+        out = ast.ExprBinary { ...b, left: le, right: re };
+      }
     },
     ast.ExprUnary(u) => {
       let (oe, oa, oh) = map_expr_acc(u.operand, a, visit_stmt, visit);
-      return (ast.ExprUnary { ...u, operand: oe }, oa, false);
+      a = oa;
+      changed = oh;
+      if (changed) {
+        out = ast.ExprUnary { ...u, operand: oe };
+      }
     },
     ast.ExprCall(c) => {
-      let args: ast.Expr[] = [];
-      for arg in c.args {
-        let (ae, aa, ah) = map_expr_acc(arg, a, visit_stmt, visit);
-        a = aa;
-        args = args.append(ae);
+      let (args, aa, ah) = map_exprs_acc(c.args, a, visit_stmt, visit);
+      let (ce, ca, ch) = map_expr_acc(c.callee, aa, visit_stmt, visit);
+      a = ca;
+      changed = ah || ch;
+      if (changed) {
+        out = ast.ExprCall { ...c, callee: ce, args: args };
       }
-      let (ce, ca, ch) = map_expr_acc(c.callee, a, visit_stmt, visit);
-      return (ast.ExprCall { ...c, callee: ce, args: args }, ca, false);
     },
     ast.ExprArray(arr) => {
-      let els: ast.Expr[] = [];
-      for el in arr.elements {
-        let (ee, ea, eh) = map_expr_acc(el, a, visit_stmt, visit);
-        a = ea;
-        els = els.append(ee);
+      let (els, ea, eh) = map_exprs_acc(arr.elements, a, visit_stmt, visit);
+      a = ea;
+      changed = eh;
+      if (changed) {
+        out = ast.ExprArray { ...arr, elements: els };
       }
-      return (ast.ExprArray { ...arr, elements: els }, a, false);
     },
     ast.ExprTuple(t) => {
-      let tel: ast.Expr[] = [];
-      for el in t.elements {
-        let (ee, ea, eh) = map_expr_acc(el, a, visit_stmt, visit);
-        a = ea;
-        tel = tel.append(ee);
+      let (tel, ta, th) = map_exprs_acc(t.elements, a, visit_stmt, visit);
+      a = ta;
+      changed = th;
+      if (changed) {
+        out = ast.ExprTuple { ...t, elements: tel };
       }
-      return (ast.ExprTuple { ...t, elements: tel }, a, false);
     },
     ast.ExprIndex(ix) => {
       let (xe, xa, xh) = map_expr_acc(ix.array, a, visit_stmt, visit);
       let (ie, ia, ih) = map_expr_acc(ix.index, xa, visit_stmt, visit);
-      return (ast.ExprIndex { ...ix, array: xe, index: ie }, ia, false);
+      a = ia;
+      changed = xh || ih;
+      if (changed) {
+        out = ast.ExprIndex { ...ix, array: xe, index: ie };
+      }
     },
     ast.ExprSlice(sl) => {
       let (xe, xa, xh) = map_expr_acc(sl.array, a, visit_stmt, visit);
       let (se, sa, sh) = map_expr_acc(sl.start, xa, visit_stmt, visit);
       let (ne, na, nh) = map_expr_acc(sl.end, sa, visit_stmt, visit);
-      return (ast.ExprSlice { ...sl, array: xe, start: se, end: ne }, na, false);
+      a = na;
+      changed = xh || sh || nh;
+      if (changed) {
+        out = ast.ExprSlice { ...sl, array: xe, start: se, end: ne };
+      }
     },
     ast.ExprStructLit(sl) => {
-      let fv: ast.Expr[] = [];
-      for field_value in sl.field_values {
-        let (fe, fa, fh) = map_expr_acc(field_value, a, visit_stmt, visit);
-        a = fa;
-        fv = fv.append(fe);
-      }
+      let (fv, fa, fh) = map_exprs_acc(sl.field_values, a, visit_stmt, visit);
+      a = fa;
+      changed = fh;
       // `base` is only a real expression when has_base; the slot is
       // otherwise whatever the parser left there.
       let nb: ast.Expr = sl.base;
@@ -723,16 +719,27 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
         let (be, ba, bh) = map_expr_acc(sl.base, a, visit_stmt, visit);
         a = ba;
         nb = be;
+        changed = changed || bh;
       }
-      return (ast.ExprStructLit { ...sl, field_values: fv, base: nb }, a, false);
+      if (changed) {
+        out = ast.ExprStructLit { ...sl, field_values: fv, base: nb };
+      }
     },
     ast.ExprFieldAccess(fa) => {
       let (oe, oa, oh) = map_expr_acc(fa.obj, a, visit_stmt, visit);
-      return (ast.ExprFieldAccess { ...fa, obj: oe }, oa, false);
+      a = oa;
+      changed = oh;
+      if (changed) {
+        out = ast.ExprFieldAccess { ...fa, obj: oe };
+      }
     },
     ast.ExprLambda(lm) => {
-      let (bs, ba) = map_stmts_acc(lm.body, a, visit_stmt, visit);
-      return (ast.ExprLambda { ...lm, body: bs }, ba, false);
+      let (bs, ba, bh) = map_stmts_acc_changed(lm.body, a, visit_stmt, visit);
+      a = ba;
+      changed = bh;
+      if (changed) {
+        out = ast.ExprLambda { ...lm, body: bs };
+      }
     },
     ast.ExprMapLit(ml) => {
       let ks: ast.Expr[] = [];
@@ -744,9 +751,12 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
         a = ua;
         ks = ks.append(ke);
         vs = vs.append(ue);
+        changed = changed || kh || uh;
         q = q + 1;
       }
-      return (ast.ExprMapLit { ...ml, keys: ks, vals: vs }, a, false);
+      if (changed) {
+        out = ast.ExprMapLit { ...ml, keys: ks, vals: vs };
+      }
     },
     ast.ExprFString(fs) => {
       // The three arrays are parallel, one entry per PART: a part with
@@ -759,15 +769,47 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
           let (pe, pa, ph) = map_expr_acc(fs.exprs[q], a, visit_stmt, visit);
           a = pa;
           xs = xs.append(pe);
+          changed = changed || ph;
         } else {
           xs = xs.append(fs.exprs[q]);
         }
         q = q + 1;
       }
-      return (ast.ExprFString { ...fs, exprs: xs }, a, false);
-    }
+      if (changed) {
+        out = ast.ExprFString { ...fs, exprs: xs };
+      }
+    },
+    _ => {}
   }
-  return (e, a, false);
+  return (out, a, changed);
+}
+
+// map_exprs_acc maps a list on map_expr_acc's terms, and hands the list back
+// as it was when no element changed. The copy starts at the first change.
+function map_exprs_acc[T](es: ast.Expr[], acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean)): (ast.Expr[], T, boolean) {
+  let out: ast.Expr[] = [];
+  let changed: boolean = false;
+  let i: i32 = 0;
+  while (i < es.len()) {
+    let (ne, na, nh) = map_expr_acc(es[i], acc, visit_stmt, visit);
+    acc = na;
+    if (nh && !changed) {
+      changed = true;
+      let j: i32 = 0;
+      while (j < i) {
+        out = out.append(es[j]);
+        j = j + 1;
+      }
+    }
+    if (changed) {
+      out = out.append(ne);
+    }
+    i = i + 1;
+  }
+  if (!changed) {
+    return (es, acc, false);
+  }
+  return (out, acc, true);
 }
 
 pub function map_stmt_acc[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean)): (ast.Stmt, T, boolean) {
@@ -776,42 +818,73 @@ pub function map_stmt_acc[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) => 
     return (vs, va, true);
   }
   let a: T = va;
+  let out: ast.Stmt = st;
+  let changed: boolean = false;
   match (st) {
     ast.StmtVar(v) => {
       let (ie, ia, ih) = map_expr_acc(v.init, a, visit_stmt, visit);
-      return (ast.StmtVar { ...v, init: ie }, ia, false);
+      a = ia;
+      changed = ih;
+      if (changed) {
+        out = ast.StmtVar { ...v, init: ie };
+      }
     },
     ast.StmtReturn(rt) => {
       let (ve, vla, vlh) = map_expr_acc(rt.value, a, visit_stmt, visit);
-      return (ast.StmtReturn { ...rt, value: ve }, vla, false);
+      a = vla;
+      changed = vlh;
+      if (changed) {
+        out = ast.StmtReturn { ...rt, value: ve };
+      }
     },
     ast.StmtExpr(x) => {
       let (ve, vla, vlh) = map_expr_acc(x.value, a, visit_stmt, visit);
-      return (ast.StmtExpr { ...x, value: ve }, vla, false);
+      a = vla;
+      changed = vlh;
+      if (changed) {
+        out = ast.StmtExpr { ...x, value: ve };
+      }
     },
     ast.StmtAssign(asg) => {
       let (ve, vla, vlh) = map_expr_acc(asg.value, a, visit_stmt, visit);
-      return (ast.StmtAssign { ...asg, value: ve }, vla, false);
+      a = vla;
+      changed = vlh;
+      if (changed) {
+        out = ast.StmtAssign { ...asg, value: ve };
+      }
     },
     ast.StmtIf(f) => {
       let (ce, ca, ch) = map_expr_acc(f.cond, a, visit_stmt, visit);
-      let (tb, ta) = map_stmts_acc(f.then_body, ca, visit_stmt, visit);
-      let (eb, ea) = map_stmts_acc(f.else_body, ta, visit_stmt, visit);
-      return (ast.StmtIf { ...f, cond: ce, then_body: tb, else_body: eb }, ea, false);
+      let (tb, ta, th) = map_stmts_acc_changed(f.then_body, ca, visit_stmt, visit);
+      let (eb, ea, eh) = map_stmts_acc_changed(f.else_body, ta, visit_stmt, visit);
+      a = ea;
+      changed = ch || th || eh;
+      if (changed) {
+        out = ast.StmtIf { ...f, cond: ce, then_body: tb, else_body: eb };
+      }
     },
     ast.StmtWhile(w) => {
       let (ce, ca, ch) = map_expr_acc(w.cond, a, visit_stmt, visit);
-      let (wb, wa) = map_stmts_acc(w.body, ca, visit_stmt, visit);
-      return (ast.StmtWhile { ...w, cond: ce, body: wb }, wa, false);
+      let (wb, wa, wh) = map_stmts_acc_changed(w.body, ca, visit_stmt, visit);
+      a = wa;
+      changed = ch || wh;
+      if (changed) {
+        out = ast.StmtWhile { ...w, cond: ce, body: wb };
+      }
     },
     ast.StmtFor(fo) => {
       let (ie, ia, ih) = map_expr_acc(fo.iter, a, visit_stmt, visit);
-      let (fb, fba) = map_stmts_acc(fo.body, ia, visit_stmt, visit);
-      return (ast.StmtFor { ...fo, iter: ie, body: fb }, fba, false);
+      let (fb, fba, fbh) = map_stmts_acc_changed(fo.body, ia, visit_stmt, visit);
+      a = fba;
+      changed = ih || fbh;
+      if (changed) {
+        out = ast.StmtFor { ...fo, iter: ie, body: fb };
+      }
     },
     ast.StmtMatch(mt) => {
       let (se, sa, sh) = map_expr_acc(mt.scrutinee, a, visit_stmt, visit);
       a = sa;
+      changed = sh;
       let arms: ast.MatchArm[] = [];
       for arm in mt.arms {
         let g: ast.Expr = arm.guard;
@@ -819,38 +892,61 @@ pub function map_stmt_acc[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) => 
           let (ge, ga, gh) = map_expr_acc(arm.guard, a, visit_stmt, visit);
           a = ga;
           g = ge;
+          changed = changed || gh;
         }
-        let (ab, aa) = map_stmts_acc(arm.body, a, visit_stmt, visit);
+        let (ab, aa, abh) = map_stmts_acc_changed(arm.body, a, visit_stmt, visit);
         a = aa;
+        changed = changed || abh;
         arms = arms.append(ast.MatchArm { ...arm, body: ab, guard: g });
       }
-      return (ast.StmtMatch { ...mt, scrutinee: se, arms: arms }, a, false);
+      if (changed) {
+        out = ast.StmtMatch { ...mt, scrutinee: se, arms: arms };
+      }
     },
     ast.StmtDefer(d) => {
       let (de, da, dh) = map_stmt_acc(d.action, a, visit_stmt, visit);
-      return (ast.StmtDefer { ...d, action: de }, da, false);
+      a = da;
+      changed = dh;
+      if (changed) {
+        out = ast.StmtDefer { ...d, action: de };
+      }
     },
-    ast.StmtBreak(_) => {
-      return (st, a, false);
-    },
-    ast.StmtContinue(_) => {
-      return (st, a, false);
-    },
-    ast.StmtUnknown(_) => {
-      return (st, a, false);
-    }
+    _ => {}
   }
-  return (st, a, false);
+  return (out, a, changed);
 }
 
 pub function map_stmts_acc[T](stmts: ast.Stmt[], acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean)): (ast.Stmt[], T) {
+  let (out, a, changed) = map_stmts_acc_changed(stmts, acc, visit_stmt, visit);
+  return (out, a);
+}
+
+// map_stmts_acc_changed is map_stmts_acc with map_stmt_acc's third result:
+// whether any statement changed. An unchanged list is handed back as it was.
+function map_stmts_acc_changed[T](stmts: ast.Stmt[], acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean)): (ast.Stmt[], T, boolean) {
   let out: ast.Stmt[] = [];
-  for stmt in stmts {
-    let (ns, na, nh) = map_stmt_acc(stmt, acc, visit_stmt, visit);
+  let changed: boolean = false;
+  let i: i32 = 0;
+  while (i < stmts.len()) {
+    let (ns, na, nh) = map_stmt_acc(stmts[i], acc, visit_stmt, visit);
     acc = na;
-    out = out.append(ns);
+    if (nh && !changed) {
+      changed = true;
+      let j: i32 = 0;
+      while (j < i) {
+        out = out.append(stmts[j]);
+        j = j + 1;
+      }
+    }
+    if (changed) {
+      out = out.append(ns);
+    }
+    i = i + 1;
   }
-  return (out, acc);
+  if (!changed) {
+    return (stmts, acc, false);
+  }
+  return (out, acc, true);
 }
 
 // splice_stmts is the REMOVING sibling of map_stmts. map_stmt rewrites

@@ -105,7 +105,7 @@ func arm64FnBody(t *testing.T, asm, label string) string {
 	for i := start + 1; i < len(lines); i++ {
 		ln := lines[i]
 		trimmed := strings.TrimSpace(ln)
-		if strings.HasSuffix(trimmed, ":") && strings.HasPrefix(trimmed, "__fn_") && trimmed != label+".r:" {
+		if strings.HasSuffix(trimmed, ":") && strings.HasPrefix(trimmed, "__fn_") && trimmed != label+".r:" && trimmed != label+".k:" {
 			break
 		}
 		if strings.HasPrefix(trimmed, ".weak") || strings.HasPrefix(trimmed, ".globl") {
