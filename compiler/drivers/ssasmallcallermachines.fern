@@ -91,7 +91,8 @@ function frames(output: ssaprepare.Output, single: boolean): void {
   mutation(output, "call __fn___fern_arr_dec.u", "pushq %rax\ncall __fn___fern_arr_dec\naddq $8, %rsp", true, "ordinary release entry");
   mutation(output, "call __fn___fern_arr_dec.u", "call __fn___fern_arr_dec.r", true, "guarded register release entry");
   if (single) {
-    mutation(output, "subq $8, %rsp", "subq $16, %rsp", true, "alternate call frame");
+    let deeper = changed(changed(output, "pushq %rbx", "pushq %rbx\nsubq $16, %rsp"), "popq %rbx", "addq $16, %rsp\npopq %rbx");
+    require(flow.derive(deeper, "caller", "parent").error == "" && machine.check(deeper, "caller", "parent", initial()), "alternate call frame");
     mutation(output, "call __fn_parent.r", "pushq %rax\ncall __fn_parent\naddq $8, %rsp", true, "ordinary constructor entry");
   }
 }

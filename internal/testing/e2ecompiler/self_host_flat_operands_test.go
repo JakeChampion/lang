@@ -33,7 +33,7 @@ func TestSelfHostFlatOperandsInRegisters(t *testing.T) {
 		t.Fatal(err)
 	}
 	stack := map[string]*regexp.Regexp{
-		"x86-64-linux": regexp.MustCompile(`\n\s+(pushq|popq) (%r[a-z0-9]+)`),
+		"x86-64-linux": regexp.MustCompile(`\n\s+(pushq|popq) (%r[a-z0-9]+)(\n\s+\.cfi_def_cfa_offset)?`),
 		"arm64-linux":  regexp.MustCompile(`\n\s+(str x[0-9]+, \[sp, #-16\]!|ldr x[0-9]+, \[sp\], #16)`),
 	}
 	firstPop := map[string]string{"x86-64-linux": "popq %rdx", "arm64-linux": "ldr x2, [sp], #16"}
@@ -48,7 +48,9 @@ func TestSelfHostFlatOperandsInRegisters(t *testing.T) {
 		}
 		nl := condBranchBody(t, string(asm), "nl")
 		for _, m := range stack[target].FindAllStringSubmatch(nl, -1) {
-			if len(m) > 2 && m[2] == "%rbp" {
+			// The frame's own saves: %rbp, or a push or pop the CFI tracks,
+			// which a function with no frame pointer makes of its pad.
+			if len(m) > 3 && (m[2] == "%rbp" || m[3] != "") {
 				continue
 			}
 			t.Errorf("%s: nl moves a value through the stack (%s):\n%s", target, strings.TrimSpace(m[0]), nl)

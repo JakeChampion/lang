@@ -127,6 +127,10 @@ pub struct EmitState {
   // function uses, between the frame record and the slots.
   ssa_frame: i32,
   ssa_save: i32,
+  // ssa_trap_suffix is the suffix of the traps the function being emitted reaches,
+  // "" for the traps themselves: one that keeps no %rbp traps through the
+  // stubs that build the frame it did not (asm_ir.leaf_trap).
+  ssa_trap_suffix: string,
   // ssa_x0 is the value id the result register (x0, %r11) holds, -1 when
   // unknown; a load of that value into it is then nothing. A store from the
   // register asserts the value stored, because the store is what makes the
@@ -463,6 +467,7 @@ pub function new_state(): EmitState {
     const_aggs: [],
     ssa_frame: 0,
     ssa_save: 0,
+    ssa_trap_suffix: "",
     ssa_x0: 0 - 1,
     reg_entries: irtables.sig_reg_of([]),
     float_abi: irtables.sig_reg_of([]),

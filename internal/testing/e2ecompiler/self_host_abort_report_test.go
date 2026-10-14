@@ -40,6 +40,8 @@ function main(): i32 { let xs: u8[] = [10, 20, 30]; return at(xs, ` + index + `)
 
 var abortFrameRe = regexp.MustCompile(`(?m)^  0x[0-9a-f]{16}$`)
 
+var trapStubRe = regexp.MustCompile(`(?m)^__fern_\w+_abort\.(l\d+|c):`)
+
 func checkAbortReports(t *testing.T, cli *selfHostCLI, target string) {
 	t.Helper()
 	for _, tc := range abortReportCases {
@@ -195,6 +197,54 @@ func TestSelfHostAbortBacktraceArm64(t *testing.T) {
 	bin := compileDeep(t, cli, "arm64-linux", nil)
 	frames, stderr := abortFrames(t, bin, runArm64Bin(qemu, bin))
 	checkAbortBacktrace(t, frames, stderr)
+}
+
+// bareTrapSrc traps in cut, which keeps no frame pointer outside -g: it
+// calls __fern_alloc for the view it returns and has no slot. Its jump to the
+// string trap goes through the stub that builds the frame cut lacks, so the
+// walk still lists mid, the function cut returns to. mid and main keep no
+// frame either, so the walk ends there.
+const bareTrapSrc = `@noinline function cut(s: string, n: i32): str { return slice_unchecked(s, 1, n); }
+@noinline function mid(s: string, n: i32): i32 { let t: str = cut(s, n); return t.len() + 1; }
+function main(): i32 { return mid("hi", args().len() + 8); }
+`
+
+// The CLI strips the symbols outside -g, so the test links the emitted
+// assembly itself to resolve the frames.
+func TestSelfHostAbortBareFrameX86_64(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	gcc, _ := x86_64Tooling(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "bare.fern")
+	if err := os.WriteFile(src, []byte(bareTrapSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	asmPath := filepath.Join(dir, "bare.s")
+	args := []string{"-emit", "asm", "-target", "x86-64-linux", "-o", asmPath, src, cli.stdlib}
+	cmd := runX86_64Bin(cli.runner, cli.bin, args...)
+	cmd.Env = childEnv()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("self-host CLI %v: %v\n%s", args, err, out)
+	}
+	asm, err := os.ReadFile(asmPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body := asmFuncBody(t, string(asm), "__fn_cut"); strings.Contains(body, "%rbp") {
+		t.Fatalf("cut keeps a frame pointer, so it no longer tests the frameless trap:\n%s", body)
+	}
+	// Only the stub cut reaches is emitted.
+	if stubs := trapStubRe.FindAllString(string(asm), -1); len(stubs) != 1 || stubs[0] != "__fern_str_oob_abort.l1:" {
+		t.Errorf("trap stubs %v, want only __fern_str_oob_abort.l1", stubs)
+	}
+	bin := filepath.Join(dir, "bare")
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", bin).CombinedOutput(); err != nil {
+		t.Fatalf("link: %v\n%s", err, out)
+	}
+	frames, stderr := abortFrames(t, bin, runX86_64Bin(cli.runner, bin))
+	if len(frames) == 0 || frames[0] != "mid" {
+		t.Errorf("frames %v, want mid first\nstderr:\n%s", frames, stderr)
+	}
 }
 
 // The opt-out, by both routes: the cause line and the status stay, the header
