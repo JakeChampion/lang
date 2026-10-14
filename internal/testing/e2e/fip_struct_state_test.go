@@ -18,7 +18,7 @@ import (
 // tell a rebuild that reuses a dead donor's box from one that allocates a
 // fresh box; the IR decides, and a bare `fip` is the allowance-0 case. The
 // checker half is internal/check/checker/fip_test.go and the E068 half is
-// internal/oracle/ir/fip_verify_test.go — this is the part neither can state: that
+// compiler/irfipverify.fern — this is the part neither can state: that
 // the accepted program really does run without touching the allocator.
 //
 // Zero is the whole claim, so the count is what this measures rather than time

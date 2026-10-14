@@ -6,11 +6,10 @@ import (
 
 // The `fip` half of #9733, end to end: a same-shape `map` over an `own`
 // array is a CHECKED space contract, not an optimizer's hope. E053 admits the
-// call on an `own` receiver, E068 verifies R7 wrote it through the donor
-// (internal/oracle/ir/array_inplace_test.go pins the refusals), and here the
-// annotated function runs on every backend and the bump cursor does not move
-// across 200 whole-array maps — the enabled guarantee the annotation makes
-// visible. The interpreter leg pins value-correctness only (its
+// call on an `own` receiver, E068 verifies R7 wrote it through the donor,
+// and here the annotated function runs on every backend and the bump cursor
+// does not move across 200 whole-array maps — the enabled guarantee the
+// annotation makes visible. The interpreter leg pins value-correctness only (its
 // __heap_bump_bytes stub reads 0).
 //
 // The second half is the aliasing case #9733 asks a test to prove: a donor

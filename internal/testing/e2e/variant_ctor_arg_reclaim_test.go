@@ -26,10 +26,8 @@ import (
 // into the freelist looks like, and over-release is the real hazard of
 // admitting a new shape to a deep drop.
 //
-// `@noinline` is on both the callee and the payload producer throughout:
-// `internal/oracle/ir/inline.go` inlines a single-reference callee, and a loop call
-// site lifts its size cap, so an inlined probe has no argument temp to reclaim
-// and reads clean whether or not the bug is present (docs/TEST-GATES.md).
+// `@noinline` is on both the callee and the payload producer throughout: an
+// inlined probe has no argument temp to reclaim and reads clean whether or not the bug is present (docs/TEST-GATES.md).
 // The payload is built by concatenation from a shared left operand so it clears
 // the 7-byte inline-string threshold and cannot grow in place.
 

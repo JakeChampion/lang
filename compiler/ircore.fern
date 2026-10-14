@@ -456,18 +456,16 @@ pub function flip_int_cmp_kind(id: i32): i32 {
 // is the caller-side workaround CLAUDE.md forbids -- the compiler is what was
 // slow, so every caller gains by fixing it here.
 //
-// # Why this is an AST pass and not native's IR pass
+// # Why this is an AST pass and not an IR pass
 //
-// native/internal/oracle/ir/array_scale.go is a whole-PROGRAM IR pass, because it has
-// to read the element function's body to find the constant. Here the typed
-// lowering builds each body from the checked AST, so a rewrite of the AST is
-// one every backend's emit sees.
+// Finding the constant means reading the element function's body, which an IR
+// pass could only do over the whole program. Here the typed lowering builds
+// each body from the checked AST, so a rewrite of the AST is one every
+// backend's emit sees.
 //
-// The AST is a better fit
-// anyway. Native's hardest problem is deleting an op range without disturbing
-// the operand stack -- it shipped a miscompile doing exactly that (#9917), and
-// the fix was to ask flatten's stack model instead of assuming positions. A
-// subtree replaced by a subtree cannot have that bug. The factor also stays the
+// The AST is a better fit anyway. An IR rewrite has to delete an op range
+// without disturbing the operand stack (#9917 was a miscompile doing exactly
+// that); a subtree replaced by a subtree cannot have that bug. The factor also stays the
 // literal the author WROTE rather than an f64 parsed out and re-emitted.
 //
 // # What it matches
@@ -1227,10 +1225,9 @@ function digest_flags(x: boolean, y: boolean): i32 {
 // inline_tiny_leaves splices the body of every small call-free function into
 // its direct callers: the call sequence is most of what such a site costs, and
 // a leaf spliced in creates no new call site, so one walk is a fixpoint. It is
-// native internal/oracle/ir/inline.go's tiny-leaf mode — the one policy that pays on
-// a unit the compiler's size (`inlineTinyLeafOps`, measured there at -12.3% Ir
-// on `sort -k2,2n` for +0.09% of the self-host's text) — with the same budget
-// bounding the sum of a large unit's growth. It runs on the lowering the register backends emit, the
+// the one inlining policy that pays on a unit the compiler's size (measured at
+// -12.3% Ir on `sort -k2,2n` for +0.09% of the self-host's text), with a
+// budget bounding the sum of a large unit's growth. It runs on the lowering the register backends emit, the
 // substituted bodies included; wasm declares each local with
 // a type (i64_slots / f64_slots), which the splice does not extend.
 //

@@ -19,7 +19,7 @@ import (
 //
 // findReturnsFreshBox now credits an `own` param that is only ever rebound
 // from owned values, so the recursion's result is the caller's own box and
-// `acc` stays freeEligible (internal/oracle/ir/own_accumulator_fresh_return_test.go).
+// `acc` stays freeEligible.
 //
 // Each round rebuilds the accumulator from scratch, so a per-call leak scales
 // with the round count; three counts tell that apart from a fixed startup

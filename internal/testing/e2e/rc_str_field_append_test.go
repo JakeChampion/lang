@@ -4,9 +4,8 @@ import (
 	"testing"
 )
 
-// #8785 — the in-place string append through a STRUCT FIELD. The lowering
-// decision is pinned in internal/oracle/ir/rc_str_field_append_test.go; these pin
-// what the emitted runtime does, and above all that the uniqueness gate is
+// #8785 — the in-place string append through a STRUCT FIELD. These pin what
+// the emitted runtime does, and above all that the uniqueness gate is
 // the BOX's and not the string's.
 
 // strFieldAppendAliasSrc is the test that separates a correct fix from the

@@ -102,12 +102,12 @@ func TestUnitLaneSetsAnExplicitTestTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse the lane's -timeout %q: %v", m[1], err)
 	}
-	// internal/oracle/ir, the longest package left after internal/testing/coreutils moved to
-	// its own lane, measures ~4m40s. The margin is deliberately generous: the
-	// lane runs 77 packages and the bound is on the slowest, not the sum.
+	// internal/syntax/printer, the longest package in the lane, measures
+	// ~6m30s. The margin is deliberately generous: the bound is on the
+	// slowest package, not the sum.
 	if mins < 20 {
-		t.Errorf("the units lane's -timeout is %dm, which leaves too little headroom above internal/oracle/ir (~4m40s) "+
-			"for the lane's other 76 packages to grow into", mins)
+		t.Errorf("the units lane's -timeout is %dm, which leaves too little headroom above internal/syntax/printer (~6m30s) "+
+			"for the lane's other packages to grow into", mins)
 	}
 }
 

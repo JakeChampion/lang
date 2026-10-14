@@ -1,19 +1,15 @@
-// Magic-number reciprocals: the constants that turn a division by a
-// compile-time constant into a multiply-high plus a shift.
+// The reference derivation ir.fern's derive_magic_s / derive_magic_u are
+// pinned against (self_host_ir_strength_test.go's magicParityLines).
 //
-// The derivation is Granlund–Montgomery as presented in Hacker's Delight
-// figures 10-1 (signed) and 10-3 (unsigned). Both pick the smallest p for
-// which the truncated reciprocal 2^p/d, rounded up, reproduces `x / d`
-// exactly for every dividend at the operand width — the loop is a search for
-// that p, not an approximation with a tolerance. One derivation serves both
-// widths; the 64-bit families need a machine multiply-high (x86-64 `mul`,
-// arm64 `umulh`), which wasm has no single op for.
+// Granlund–Montgomery as presented in Hacker's Delight figures 10-1 (signed)
+// and 10-3 (unsigned): the smallest p for which the truncated reciprocal 2^p/d,
+// rounded up, reproduces `x / d` exactly for every dividend at the width.
 
-package ir
+package e2ecompiler
 
 import "math/bits"
 
-// MagicS32 is the signed 32-bit reciprocal for d. The quotient is
+// magicS32 is the signed 32-bit reciprocal for d. The quotient is
 //
 //	q  = mulhi_s(x, M)          // (i64)x * M >> 32
 //	q += x    if Add            // M's sign disagrees with d's
@@ -23,37 +19,37 @@ import "math/bits"
 //
 // Add and Sub are never both set. d must not be 0, ±1, ±2^k or INT_MIN —
 // those have cheaper lowerings (or, for INT_MIN, no positive magnitude).
-type MagicS32 struct {
+type magicS32 struct {
 	M   int32
 	S   uint
 	Add bool
 	Sub bool
 }
 
-// MagicS64 is MagicS32 at 64 bits: the high half is of the 128-bit product,
+// magicS64 is magicS32 at 64 bits: the high half is of the 128-bit product,
 // and the rounding fixup adds bit 63.
-type MagicS64 struct {
+type magicS64 struct {
 	M   int64
 	S   uint
 	Add bool
 	Sub bool
 }
 
-// DeriveMagicS32 returns the signed reciprocal for d.
-func DeriveMagicS32(d int32) MagicS32 {
-	m, s, add, sub := deriveMagicS[int32, uint32](d)
-	return MagicS32{M: m, S: s, Add: add, Sub: sub}
+// deriveMagicS32 returns the signed reciprocal for d.
+func deriveMagicS32(d int32) magicS32 {
+	m, s, add, sub := deriveMagicSW[int32, uint32](d)
+	return magicS32{M: m, S: s, Add: add, Sub: sub}
 }
 
-// DeriveMagicS64 returns the signed reciprocal for d.
-func DeriveMagicS64(d int64) MagicS64 {
-	m, s, add, sub := deriveMagicS[int64, uint64](d)
-	return MagicS64{M: m, S: s, Add: add, Sub: sub}
+// deriveMagicS64 returns the signed reciprocal for d.
+func deriveMagicS64(d int64) magicS64 {
+	m, s, add, sub := deriveMagicSW[int64, uint64](d)
+	return magicS64{M: m, S: s, Add: add, Sub: sub}
 }
 
-// deriveMagicS derives the signed reciprocal at the width of S, with U its
+// deriveMagicSW derives the signed reciprocal at the width of S, with U its
 // unsigned twin.
-func deriveMagicS[S ~int32 | ~int64, U ~uint32 | ~uint64](d S) (m S, sh uint, add, sub bool) {
+func deriveMagicSW[S ~int32 | ~int64, U ~uint32 | ~uint64](d S) (m S, sh uint, add, sub bool) {
 	w := uint(bits.OnesCount64(uint64(^U(0))))
 	ad := U(d)
 	if d < 0 {
@@ -94,7 +90,7 @@ func deriveMagicS[S ~int32 | ~int64, U ~uint32 | ~uint64](d S) (m S, sh uint, ad
 	return m, p - w, d > 0 && m < 0, d < 0 && m > 0
 }
 
-// MagicU32 is the unsigned 32-bit reciprocal for d. The quotient is
+// magicU32 is the unsigned 32-bit reciprocal for d. The quotient is
 //
 //	h = mulhi_u(x, M)                        // (u64)x * M >> 32
 //	q = h >> S                               if !Add
@@ -103,33 +99,33 @@ func deriveMagicS[S ~int32 | ~int64, U ~uint32 | ~uint64](d S) (m S, sh uint, ad
 // Add marks a magic that needs 33 bits. Rather than widen M, the shift-average
 // form above computes (x + h) / 2 without the carry out of bit 31 that a plain
 // add would lose. d must not be 0, 1 or a power of two.
-type MagicU32 struct {
+type magicU32 struct {
 	M   uint32
 	S   uint
 	Add bool
 }
 
-// MagicU64 is MagicU32 at 64 bits: the high half is of the 128-bit product,
+// magicU64 is magicU32 at 64 bits: the high half is of the 128-bit product,
 // and Add marks a 65-bit magic.
-type MagicU64 struct {
+type magicU64 struct {
 	M   uint64
 	S   uint
 	Add bool
 }
 
-// DeriveMagicU32 returns the unsigned reciprocal for d.
-func DeriveMagicU32(d uint32) MagicU32 {
-	m, s, add := deriveMagicU(d)
-	return MagicU32{M: m, S: s, Add: add}
+// deriveMagicU32 returns the unsigned reciprocal for d.
+func deriveMagicU32(d uint32) magicU32 {
+	m, s, add := deriveMagicUW(d)
+	return magicU32{M: m, S: s, Add: add}
 }
 
-// DeriveMagicU64 returns the unsigned reciprocal for d.
-func DeriveMagicU64(d uint64) MagicU64 {
-	m, s, add := deriveMagicU(d)
-	return MagicU64{M: m, S: s, Add: add}
+// deriveMagicU64 returns the unsigned reciprocal for d.
+func deriveMagicU64(d uint64) magicU64 {
+	m, s, add := deriveMagicUW(d)
+	return magicU64{M: m, S: s, Add: add}
 }
 
-func deriveMagicU[U ~uint32 | ~uint64](d U) (m U, sh uint, add bool) {
+func deriveMagicUW[U ~uint32 | ~uint64](d U) (m U, sh uint, add bool) {
 	w := uint(bits.OnesCount64(uint64(^U(0))))
 	two := U(1) << (w - 1)
 	var zero U

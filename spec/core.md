@@ -1,7 +1,7 @@
 # Fern Core — the instruction set
 
-Status: normative index, gated by `TestCoreOpsIndexIsAccurate` and
-`TestCoreOpEffectsMatchTheModel` in `internal/oracle/ir`.
+Status: normative index, gated by `TestSelfHostCoreSpecMatchesTheIR` in
+`internal/testing/e2ecompiler`.
 
 `grammar.ebnf` says what a Fern program looks like. `diagnostics.md`
 says which programs are refused. `semantics.md` indexes the handful of
@@ -10,11 +10,12 @@ them says what a Fern program *is*.
 
 That definition, when it is written, will not be written over the
 surface language. It will be written over **Fern Core** — and Fern Core
-already exists: `internal/oracle/ir` is a target-agnostic stack machine that
-every backend consumes, and the surface language is defined by lowering
-into it. `docs/SPECIFICATION-RESEARCH.md` §Layer 3 lays out the three
-pieces that need to follow, in order: the op set, its typing rules, and
-a small-step semantics over a store.
+already exists: the stack IR in `compiler/ir.fern` is the target-agnostic
+form every backend consumes (the SSA lift on x86-64 and arm64, `wasm_ir.fern`
+on wasm), and the surface language is defined by lowering into it.
+`docs/SPECIFICATION-RESEARCH.md` §Layer 3 lays out the three pieces that
+need to follow, in order: the op set, its typing rules, and a small-step
+semantics over a store.
 
 **This file is the first of the three, and only the first.** It
 enumerates the instructions and says what each one does to the operand
@@ -22,286 +23,465 @@ stack. It says nothing about what any of them *means*.
 
 ## Why the op set is worth writing down on its own
 
-Because it is the part that is already true and is currently unreadable.
-The instruction set exists only as a Go `const` block, and a reader who
-wants to know what `call_dyn` expects on the stack has to reconstruct it
-from three emitters. That is the same position the syntax was in before
-`grammar.ebnf`: a description of *a* program, not of the language.
+Because it is the part that is already true and is otherwise unreadable.
+The instruction set exists as an id registry (`kind_name` / `kind_id`) and
+a set of id-keyed classifiers in `compiler/ir.fern`, and a reader who wants
+to know what `call_indirect` expects on the stack has to reconstruct it from
+those and from three emitters. That is the same position the syntax was in
+before `grammar.ebnf`: a description of *a* program, not of the language.
 
 It is also the part a specification cannot start without. A typing rule
 is a rule about an op, and a reduction rule reduces one — so the op set
 is the vocabulary both are written in, and an op set with a hole in it
 produces a semantics with a hole in it that nothing can detect.
 
-## Notation
+## The stack model
 
-An effect is written `pops → pushes`, **deepest operand first** — so
-`i f → —` means an integer slot below a float slot, and the float is on
-top. `—` on either side means nothing.
+Three uniformities of the lowering make the model a count of slots rather
+than a typed stack:
 
-| Symbol | One | Meaning |
-| --- | --- | --- |
-| `i` | slot | integer-shaped: `i32`, `i64`, or any pointer |
-| `f` | slot | float-shaped: `f32` or `f64` |
-| `*` | slot | one slot, class unconstrained |
-| `s` | value | a whole string — **two** slots under the two-word ABI (`ptrW == 4`), one otherwise |
-| `T` | value | a shape the op's context determines; the Notes say which context |
-| `R` | value | the callee's result shape |
-| `A…` | values | the call's arguments: as many slots as their types occupy, which exceeds the argument count when a string is passed |
-| `*…` | slots | exactly `I32` slots, class unconstrained |
+- **Every value is one slot**, on every target. A string is a single box
+  pointer on the register backends and a single i32 block pointer on wasm.
+- **Every scope is void.** The lowering opens `block`, `loop` and `if` with
+  block type 0 only; a value-producing `if` routes its result through a
+  local, so a scope leaves the stack at the height it found it and a branch
+  carries nothing.
+- **Every function has exactly one result**, `void` ones included.
 
-The IR distinguishes only these two classes, and deliberately no more:
-`WidthPtr` is resolved by the backend, and nothing anywhere separates a
-pointer from an integer of the same width. A column claiming operand
-*widths* would be describing a type system the IR does not carry — see
-`internal/oracle/ir/verifystack.go` for the same decision made in code.
+Every op that is an expression pushes exactly one slot — statement-position
+ops push a dummy the caller drops. The exceptions are the ops that consume a
+value outright (`store_local`, `drop`, `arr_set`, `struct_set`, `tuple_set`),
+the `line` marker, and structured control flow.
+
+The table deliberately says nothing about operand *kind*. Whether a slot
+holds an integer or a float is a property of the op that produced it, and
+the composite reads (`struct_get`, `tuple_get`, `arr_get`, `opt_payload`)
+carry a width but not a class. `compiler/irverifystack.fern` makes the same
+decision in code.
+
+Scopes and branches follow wasm: `block` is a forward target, `loop` a
+backward one, `if` runs its then-arm when the popped value is non-zero, and
+`br` / `brif` address scopes by relative depth, 0 innermost.
 
 ## The instructions
 
-`Imm.` lists the `Op` fields the instruction reads. `Pos` is omitted
-throughout: every op may carry it, and only `line` is about it.
+One row per registered op kind, in id order. `Id` is the stable integer tag
+the backends dispatch on; an id whose op was retired is not reused and has
+no row. `Pops` is the number of slots the op consumes: `n` means the count
+is the op's `i32_imm` (`arr_make`, `struct_make`, `tuple_make`,
+`call_direct`), `n+1` that it is the immediate plus the funcref on top
+(`call_indirect`), and `—` that the stack model does not cover the op, so
+the verifier stops tracking the function at it rather than guess. `Pushes`
+is the number of slots it leaves.
 
-### Constants
-
-| Op | Effect | Imm. | Notes |
+<!-- BEGIN ir_effects_run -->
+| Op | Id | Pops | Pushes |
 | --- | --- | --- | --- |
-| `const.i32` | `— → i` | `I32` | |
-| `const.i64` | `— → i` | `I64` | |
-| `const.f32` | `— → f` | `F32` | |
-| `const.f64` | `— → f` | `F64` | |
-| `const.str` | `— → s` | `Str` | The literal's value, not an index. Two slots under the two-word ABI. |
-| `const.func` | `— → i` | `I32` | Function-table index. |
-| `const.vtable` | `— → i` | `Str`, `Str2` | Address of the static vtable for the (Trait, Concrete) pair. `docs/DYN-TRAITS.md` §4.2.1. |
-| `enum.sentinel` | `— → i` | `I32` | Address of a shared static 4-byte cell holding the tag. Payloadless variants construct without allocating. |
-| `const.arr` | `— → i` | `I32`, `Str` | Data address of a shared static array of `I32` elements whose bytes are `Str`, under the immortal rc. A `const` array is read without allocating; a push or `with` copies it. |
-
-### Conversions
-
-| Op | Effect | Imm. | Notes |
-| --- | --- | --- | --- |
-| `extend.i32_s` | `i → i` | | Sign-extend to `i64`. |
-| `extend.i32_u` | `i → i` | | Zero-extend to `i64`. |
-| `wrap.i64` | `i → i` | | Keep the low 32 bits. |
-| `promote.f32` | `f → f` | | To `f64`. |
-| `demote.f64` | `f → f` | | To `f32`. |
-| `convert.i32` | `i → f` | `Width`, `Unsigned` | `Width` is the **destination** float width. |
-| `convert.i64` | `i → f` | `Width`, `Unsigned` | |
-| `trunc.f32` | `f → i` | `Width`, `Unsigned` | `Width` is the **destination** integer width. Saturating, and `NaN → 0` — `docs/FLOAT-SEMANTICS.md`, claims `FS-01`–`FS-03`. |
-| `trunc.f64` | `f → i` | `Width`, `Unsigned` | |
-| `i32.reinterpret_f32` | `f → i` | | Bits, unchanged. |
-| `f32.reinterpret_i32` | `i → f` | | |
-| `i64.reinterpret_f64` | `f → i` | | |
-| `f64.reinterpret_i64` | `i → f` | | |
-
-### Locals
-
-A local is one index in one flat space — parameters, then declared
-locals, then the lowering pass's scratch slots — and one variable is one
-index however many stack slots its value takes.
-
-| Op | Effect | Imm. | Notes |
-| --- | --- | --- | --- |
-| `local.load` | `— → T` | `I32`, `Width` | `T` is the local's declared shape. `Width: WidthString` forces the two-word pair for a slot whose type does not say so. |
-| `local.store` | `T → —` | `I32`, `Width` | |
-| `local.tee` | `T → T` | `I32`, `Width` | Store, and leave the value. |
-
-### Integer arithmetic and comparison
-
-`Width` selects `i32` (0, the default) or `i64`; `Unsigned` selects the
-`_u` reading where one exists. Every operation here is total and wraps
-at the operand width — `docs/INTEGER-SEMANTICS.md`, claims `IS-01`–`IS-07`.
-
-| Op | Effect | Imm. | Notes |
-| --- | --- | --- | --- |
-| `add` | `i i → i` | `Width` | |
-| `sub` | `i i → i` | `Width` | |
-| `mul` | `i i → i` | `Width` | |
-| `div_s` | `i i → i` | `Width`, `Unsigned` | `x / 0 == 0`; `MIN / -1 == MIN`. Never traps. |
-| `rem_s` | `i i → i` | `Width`, `Unsigned` | `x % 0 == x`; `MIN % -1 == 0`. |
-| `and` | `i i → i` | `Width` | |
-| `or` | `i i → i` | `Width` | |
-| `xor` | `i i → i` | `Width` | |
-| `shl` | `i i → i` | `Width` | Count masked to `& 31` / `& 63`. |
-| `shr_s` | `i i → i` | `Width`, `Unsigned` | Arithmetic when signed, logical when `Unsigned`. |
-| `rotr` | `i i → i` | `Width` | Rotate right; count masked to `& 31` / `& 63`. No rotate-left op: a left rotate by `n` is `rotr` by `Width - n`. |
-| `not` | `i → i` | | Logical `!` — 1 iff the operand is zero. |
-| `clz` | `i → i` | `Width` | Defined at zero: yields the operand width. |
-| `ctz` | `i → i` | `Width` | Defined at zero: yields the operand width. |
-| `popcnt` | `i → i` | `Width` | |
-| `eq` | `i i → i` | `Width` | |
-| `ne` | `i i → i` | `Width` | |
-| `lt_s` | `i i → i` | `Width`, `Unsigned` | |
-| `le_s` | `i i → i` | `Width`, `Unsigned` | |
-| `gt_s` | `i i → i` | `Width`, `Unsigned` | |
-| `ge_s` | `i i → i` | `Width`, `Unsigned` | |
-
-### Float arithmetic and comparison
-
-Ordinary arithmetic is IEEE 754 and portable; the edges are
-**deliberately** unspecified — `docs/FLOAT-SEMANTICS.md`, claims
-`FS-04`–`FS-06`.
-
-| Op | Effect | Imm. | Notes |
-| --- | --- | --- | --- |
-| `f.add` | `f f → f` | `Width` | |
-| `f.sub` | `f f → f` | `Width` | |
-| `f.mul` | `f f → f` | `Width` | |
-| `f.div` | `f f → f` | `Width` | |
-| `f.neg` | `f → f` | `Width` | |
-| `f.eq` | `f f → i` | `Width` | Comparisons yield an integer-shaped bool. |
-| `f.ne` | `f f → i` | `Width` | |
-| `f.lt` | `f f → i` | `Width` | |
-| `f.le` | `f f → i` | `Width` | |
-| `f.gt` | `f f → i` | `Width` | |
-| `f.ge` | `f f → i` | `Width` | |
-
-### Memory
-
-Linear, byte-addressed. Arrays, strings, structs and enum boxes all live
-here.
-
-| Op | Effect | Imm. | Notes |
-| --- | --- | --- | --- |
-| `load_u8` | `i → i` | | Zero-extended byte. |
-| `load` | `i → i` | `Width` | `Width: WidthString` loads the two-word pair instead. |
-| `store` | `i i → —` | `Width` | Address below value. `Width: WidthString` stores a pair, so three slots. |
-| `f.load` | `i → f` | `Width` | |
-| `f.store` | `i f → —` | `Width` | |
-| `store_i8` | `i i → —` | | Writes the low byte. |
-| `alloc` | `i → i` | | Pops a byte size, pushes the base pointer. |
-| `match_tag` | `i → i` | | Pops a scrutinee, pushes its variant tag. |
-
-### Strings
-
-These take whole string *values*, so each operand is a pair wherever the
-target's ABI makes a string a pair.
-
-| Op | Effect | Imm. | Notes |
-| --- | --- | --- | --- |
-| `str.eq` | `s s → i` | | |
-| `str.cmp` | `s s → i` | | Three-way: negative / 0 / positive. Byte order, ties broken by length. |
-| `str.concat` | `s s → s` | | Allocates. |
-| `str.len` | `s → i` | | The single seam a small-string optimisation would change. |
-
-### Structured control flow
-
-Scopes are lexical and branches address them by **relative depth** — 0
-is innermost — so the op list carries no label numbering. The rules are
-wasm's: `block` is a forward target, `loop` a backward one, and `if`
-runs its then-arm when the popped value is non-zero.
-
-`I32` on `block` / `loop` / `if` is a **block type**, not a count: one
-of `void` (0), `i32` (1), `f32` (2), `i64` (3), `f64` (4), or the
-two-word `i32 i32` string pair (5). It says what the scope leaves on
-the stack when control falls off its end.
-
-The effects below are the scopes' operand effects. What a scope leaves
-behind is its block type's shape, which `end` restores.
-
-| Op | Effect | Imm. | Notes |
-| --- | --- | --- | --- |
-| `block` | `— → —` | `I32` | Opens a forward-exit scope. |
-| `loop` | `— → —` | `I32` | Opens a backward-branch scope. A branch to it restarts it and carries nothing. |
-| `if` | `i → —` | `I32` | Opens a conditional scope. |
-| `else` | `— → —` | | Switches the innermost `if` to its else arm. An `if` with a non-void block type must have one. |
-| `end` | `— → —` | | Closes the innermost scope and pushes its block type's shape. |
-| `br` | `— → —` | `I32` | Branch to relative depth `I32`. Everything after it in the scope is unreachable. |
-| `br_if` | `i → —` | `I32` | Branch when the popped value is non-zero. |
-
-### Calls
-
-| Op | Effect | Imm. | Notes |
-| --- | --- | --- | --- |
-| `call` | `A… → R` | `I32`, `Str`, `ArgTypes` | `Str` names the callee, `I32` counts arguments — not slots. |
-| `call_indirect` | `A… i → R` | `I32`, `Sig` | Table index on top. `Sig` is the static signature of the function-typed value dispatched through. |
-| `call_dyn` | `i A… i → R` | `I32`, `Sig` | Receiver data below the arguments, vtable word on top; `I32` is the method's slot in the vtable. `docs/DYN-TRAITS.md` §4.2.1. |
-| `call_closure_direct` | `A… i → R` | `I32`, `Str`, `ArgTypes` | Environment pointer on top, and counted by `I32` with the arguments, as the hoisted target's parameter list counts it. The defunctionalised form of a `call_indirect` whose receiver was provably monomorphic. |
-| `call_direct_pair` | `A… → i i` | `I32`, `Str`, `ArgTypes` | The callee returns a `(tag, payload)` pair in registers. |
-
-A callee that the program does not define — a builtin, or a runtime
-helper — has its signature in the backends rather than in the IR.
-`internal/pkg/caps` is the authority on which names exist;
-`internal/oracle/ir/verifyprovided.go` is a second, independent record of their
-slot shapes, kept deliberately separate from the emitters' own tables so
-that the two can disagree.
-
-### Results
-
-| Op | Effect | Imm. | Notes |
-| --- | --- | --- | --- |
-| `return` | `T → —` | | `T` is the enclosing function's result shape. |
-| `return_void` | `— → —` | | |
-| `return_pair` | `i i → —` | | Returns a `(tag, payload)` pair. |
-| `make_some.i32` | `i → i i` | | Register-form `Option[T]` / `Result[T, E]` construction, scoped to word-sized payloads. The heap-boxed form still exists for values stored in fields, arrays and maps; the pair form fires when the value flows call-return-style. |
-| `make_none.i32` | `— → i i` | | |
-| `make_ok.i32` | `i → i i` | | |
-| `make_err.i32` | `i → i i` | | |
-
-### Closures and `dyn`
-
-| Op | Effect | Imm. | Notes |
-| --- | --- | --- | --- |
-| `make_closure` | `*… → i` | `I32`, `CaptureSlots` | Allocates the environment block, packs `I32` captures into it, and pairs it with the function index. |
-| `make_env` | `*… → i` | `I32`, `CaptureSlots` | The environment alone, for closures whose every caller was defunctionalised, so the `{fn_idx, env_ptr}` pair is dead. |
-| `box_dyn` | `i i → i` | | Packs `[data, vtable]` into a heap cell on the native backends. Never emitted on wasm, which keeps the fat pointer inline. |
-
-### Reference counting
-
-Dedicated ops rather than calls to the matching runtime helper, so that
-rc traffic is structurally visible to the IR passes that fuse and elide
-it. All three are pass-through-shaped. What they *mean* is the piece
-this file does not have — see below.
-
-| Op | Effect | Imm. | Notes |
-| --- | --- | --- | --- |
-| `rc.inc` | `i → i` | `Str` | Returns its argument. Sentinel- and static-guarded. |
-| `rc.dec` | `i → i` | `Str` | Returns its argument. Drops one reference; may free. |
-| `rc.is_unique` | `i → i` | `Str` | 1 iff the refcount is 1. A sentinel or static answers 0. |
-
-### Other
-
-| Op | Effect | Imm. | Notes |
-| --- | --- | --- | --- |
-| `drop` | `* → —` | `Width` | Discards one slot, or the two-word pair under `Width: WidthString`. **Not** an rc operation: `rc.dec` is. |
-| `line` | `— → —` | | A source-position marker carrying `Pos`. Emitted only under native `-g`; it produces no code, and the byte-identical self-host fixpoint never sees one. |
-| `cover` | `— → —` | `I32` | A coverage counter site carrying `Pos`, `I32` indexing `Program.CoverSites` — a source line, or one of the two counters a conditional needs. Emitted only under `-cover`; it lowers to one increment of a static counter and, like `line`, the byte-identical self-host fixpoint never sees one. |
+| `const_i32` | 1 | 0 | 1 |
+| `const_i32_text` | 2 | 0 | 1 |
+| `const_i64` | 3 | 0 | 1 |
+| `const_f64` | 4 | 0 | 1 |
+| `const_str` | 5 | 0 | 1 |
+| `const_func` | 6 | 0 | 1 |
+| `int_extend` | 7 | 1 | 1 |
+| `int_wrap` | 8 | 1 | 1 |
+| `int_cast` | 9 | 1 | 1 |
+| `u32_wrap` | 10 | 1 | 1 |
+| `i32_to_f64` | 11 | 1 | 1 |
+| `f64_to_i32` | 12 | 1 | 1 |
+| `f64_to_i64` | 13 | 1 | 1 |
+| `f32_bits` | 14 | 1 | 1 |
+| `f32_from_bits` | 15 | 1 | 1 |
+| `f64_bits` | 16 | 1 | 1 |
+| `f64_from_bits` | 17 | 1 | 1 |
+| `load_local` | 18 | 0 | 1 |
+| `store_local` | 19 | 1 | 0 |
+| `tee_local` | 20 | 1 | 1 |
+| `add` | 21 | 2 | 1 |
+| `sub` | 22 | 2 | 1 |
+| `mul` | 23 | 2 | 1 |
+| `div_s` | 24 | 2 | 1 |
+| `div_u` | 25 | 2 | 1 |
+| `rem_s` | 26 | 2 | 1 |
+| `rem_u` | 27 | 2 | 1 |
+| `and` | 28 | 2 | 1 |
+| `or` | 29 | 2 | 1 |
+| `xor` | 30 | 2 | 1 |
+| `shl` | 31 | 2 | 1 |
+| `shr_s` | 32 | 2 | 1 |
+| `shr_u` | 33 | 2 | 1 |
+| `not` | 34 | 1 | 1 |
+| `eq` | 35 | 2 | 1 |
+| `ne` | 36 | 2 | 1 |
+| `lt_s` | 37 | 2 | 1 |
+| `le_s` | 38 | 2 | 1 |
+| `gt_s` | 39 | 2 | 1 |
+| `ge_s` | 40 | 2 | 1 |
+| `lt_u` | 41 | 2 | 1 |
+| `le_u` | 42 | 2 | 1 |
+| `gt_u` | 43 | 2 | 1 |
+| `ge_u` | 44 | 2 | 1 |
+| `fadd` | 45 | 2 | 1 |
+| `fsub` | 46 | 2 | 1 |
+| `fmul` | 47 | 2 | 1 |
+| `fdiv` | 48 | 2 | 1 |
+| `feq` | 49 | 2 | 1 |
+| `fne` | 50 | 2 | 1 |
+| `flt` | 51 | 2 | 1 |
+| `fle` | 52 | 2 | 1 |
+| `fgt` | 53 | 2 | 1 |
+| `fge` | 54 | 2 | 1 |
+| `fneg` | 55 | 1 | 1 |
+| `fabs` | 56 | 1 | 1 |
+| `fsqrt` | 57 | 1 | 1 |
+| `fceil` | 58 | 1 | 1 |
+| `ffloor` | 59 | 1 | 1 |
+| `ftrunc` | 60 | 1 | 1 |
+| `fround` | 61 | 1 | 1 |
+| `load` | 67 | — | 1 |
+| `store` | 68 | — | 1 |
+| `load_i32` | 69 | 1 | 1 |
+| `load_i64` | 70 | 1 | 1 |
+| `load_ptr` | 71 | 1 | 1 |
+| `store_i32` | 72 | 2 | 1 |
+| `store_ptr` | 73 | 2 | 1 |
+| `memcpy` | 74 | 3 | 1 |
+| `memset` | 75 | 3 | 1 |
+| `alloc` | 76 | 1 | 1 |
+| `alloc_u8` | 77 | 1 | 1 |
+| `free` | 78 | 2 | 1 |
+| `ptr_width` | 79 | 0 | 1 |
+| `heap_bump_bytes` | 80 | 0 | 1 |
+| `raw_alloc` | 81 | 1 | 1 |
+| `raw_store8` | 82 | 3 | 1 |
+| `raw_load8` | 83 | 2 | 1 |
+| `raw_store_ptr` | 84 | 3 | 1 |
+| `raw_load_ptr` | 85 | 2 | 1 |
+| `raw_string` | 86 | 2 | 1 |
+| `arr_make` | 87 | n | 1 |
+| `arr_get` | 88 | 2 | 1 |
+| `arr_set` | 89 | 3 | 0 |
+| `arr_len` | 90 | 1 | 1 |
+| `arr_rc` | 91 | 1 | 1 |
+| `arr_push` | 92 | 2 | 1 |
+| `arr_push_owned` | 93 | 2 | 1 |
+| `arr_push_i64` | 94 | 2 | 1 |
+| `arr_push_f64` | 95 | 2 | 1 |
+| `arr_slice` | 96 | 3 | 1 |
+| `str_len` | 97 | 1 | 1 |
+| `str_concat` | 98 | 2 | 1 |
+| `str_eq` | 99 | 2 | 1 |
+| `str_cmp` | 100 | 2 | 1 |
+| `str_index` | 101 | 2 | 1 |
+| `str_slice` | 102 | 3 | 1 |
+| `str_from_bytes` | 103 | 1 | 1 |
+| `str_bytes` | 104 | 1 | 1 |
+| `str_split` | 105 | 2 | 1 |
+| `str_to_upper` | 106 | 1 | 1 |
+| `str_to_lower` | 107 | 1 | 1 |
+| `str_repeat` | 108 | 2 | 1 |
+| `str_trim` | 109 | 1 | 1 |
+| `tcp_connect` | 110 | 2 | 1 |
+| `str_replace` | 111 | 3 | 1 |
+| `tcp_pollable` | 112 | 1 | 1 |
+| `str_lines` | 113 | 1 | 1 |
+| `tcp_send` | 114 | 2 | 1 |
+| `tcp_recv` | 115 | 2 | 1 |
+| `tcp_close` | 116 | 1 | 1 |
+| `opt_make` | 120 | 1 | 1 |
+| `opt_tag` | 122 | 1 | 1 |
+| `opt_payload` | 123 | 1 | 1 |
+| `struct_make` | 138 | n | 1 |
+| `struct_get` | 139 | 1 | 1 |
+| `struct_set` | 140 | 2 | 0 |
+| `struct_set_shape` | 141 | 1 | 1 |
+| `tuple_make` | 142 | n | 1 |
+| `tuple_get` | 143 | 1 | 1 |
+| `tuple_set` | 144 | 2 | 0 |
+| `variant_is` | 145 | 1 | 1 |
+| `dyn_box` | 146 | 1 | 1 |
+| `dyn_dispatch` | 147 | 0 | 1 |
+| `wasm_timer_pollable` | 148 | 1 | 1 |
+| `call_direct` | 149 | n | 1 |
+| `call_indirect` | 150 | n+1 | 1 |
+| `call_closure_direct` | 151 | — | 1 |
+| `block` | 152 | 0 | 0 |
+| `loop` | 153 | 0 | 0 |
+| `if` | 154 | 1 | 0 |
+| `else` | 155 | 0 | 0 |
+| `end` | 156 | 0 | 0 |
+| `br` | 157 | 0 | 0 |
+| `brif` | 158 | 1 | 0 |
+| `drop` | 159 | 1 | 0 |
+| `return` | 160 | 1 | 0 |
+| `wasm_pollable_drop` | 161 | 1 | 1 |
+| `wasm_block` | 162 | 1 | 1 |
+| `print_str` | 163 | 1 | 1 |
+| `eprint_str` | 164 | 1 | 1 |
+| `putchar` | 165 | 1 | 1 |
+| `exit` | 166 | 1 | 1 |
+| `wasm_poll` | 167 | 1 | 1 |
+| `read_line` | 168 | 1 | 1 |
+| `read_file` | 169 | 1 | 1 |
+| `write_file` | 170 | 2 | 1 |
+| `read_dir` | 171 | 1 | 1 |
+| `remove_dir_all` | 172 | 1 | 1 |
+| `remove_file` | 173 | 1 | 1 |
+| `temp_dir` | 174 | 1 | 1 |
+| `stat` | 175 | 1 | 1 |
+| `env` | 176 | 1 | 1 |
+| `subprocess` | 177 | 3 | 1 |
+| `read_chunk` | 178 | 2 | 1 |
+| `reader_close` | 179 | 1 | 1 |
+| `args` | 180 | 0 | 1 |
+| `sleep_ms` | 181 | 1 | 1 |
+| `monotonic_ns` | 182 | 0 | 1 |
+| `now_ns` | 183 | 0 | 1 |
+| `now_unix_ms` | 184 | 0 | 1 |
+| `random_bytes` | 185 | 1 | 1 |
+| `random_i32` | 186 | 0 | 1 |
+| `poll` | 187 | 2 | 1 |
+| `timer_fd` | 188 | 1 | 1 |
+| `struct_copy` | 198 | 1 | 1 |
+| `store_i64` | 199 | 2 | 1 |
+| `tcp_listen` | 200 | 1 | 1 |
+| `tcp_accept` | 201 | 1 | 1 |
+| `writer_write` | 202 | 2 | 1 |
+| `open_file` | 203 | 1 | 1 |
+| `syscall3` | 204 | 4 | 1 |
+| `raw_scratch` | 205 | 1 | 1 |
+| `syscall4` | 206 | 5 | 1 |
+| `raw_environ` | 207 | 0 | 1 |
+| `udp_send` | 208 | 3 | 1 |
+| `proc_fork` | 211 | 0 | 1 |
+| `proc_waitpid` | 212 | 1 | 1 |
+| `proc_exec` | 213 | 2 | 1 |
+| `arr_push_shared_count` | 216 | 0 | 1 |
+| `arr_push_shared_bytes` | 217 | 0 | 1 |
+| `const_struct` | 218 | 0 | 1 |
+| `clz` | 219 | 1 | 1 |
+| `ctz` | 220 | 1 | 1 |
+| `popcount` | 221 | 1 | 1 |
+| `map_hash_seed` | 222 | 0 | 1 |
+| `raw_addr` | 223 | 2 | 1 |
+| `raw_arr_box` | 224 | 1 | 1 |
+| `memchr` | 225 | 3 | 1 |
+| `write_file_exec` | 226 | 2 | 1 |
+| `ascii_run` | 227 | 2 | 1 |
+| `syscall5` | 228 | 6 | 1 |
+| `heap_mark` | 229 | 0 | 1 |
+| `heap_release_to` | 230 | 1 | 1 |
+| `create_dir_all` | 231 | 1 | 1 |
+| `isatty` | 232 | 1 | 1 |
+| `read_file_bytes` | 233 | 1 | 1 |
+| `rmemchr` | 234 | 3 | 1 |
+| `count_byte` | 235 | 2 | 1 |
+| `lstat` | 236 | 1 | 1 |
+| `access` | 237 | 2 | 1 |
+| `geteuid` | 238 | 0 | 1 |
+| `getegid` | 239 | 0 | 1 |
+| `hostname` | 240 | 0 | 1 |
+| `fd_stat` | 241 | 1 | 1 |
+| `reader_seek` | 242 | 3 | 1 |
+| `signal_ignore` | 243 | 1 | 1 |
+| `signal_default` | 244 | 1 | 1 |
+| `mismatch` | 245 | 5 | 1 |
+| `getuid` | 246 | 0 | 1 |
+| `getgid` | 247 | 0 | 1 |
+| `getgroups` | 248 | 0 | 1 |
+| `environ` | 249 | 0 | 1 |
+| `uname_field` | 250 | 1 | 1 |
+| `getcwd` | 251 | 0 | 1 |
+| `cpu_count` | 252 | 0 | 1 |
+| `sum_bytes` | 253 | 1 | 1 |
+| `create_dir` | 260 | 2 | 1 |
+| `remove_dir` | 261 | 1 | 1 |
+| `create_link` | 262 | 2 | 1 |
+| `create_symlink` | 263 | 2 | 1 |
+| `read_link` | 264 | 1 | 1 |
+| `umask` | 265 | 1 | 1 |
+| `sleep_ns` | 266 | 1 | 1 |
+| `rename` | 267 | 2 | 1 |
+| `chmod` | 268 | 2 | 1 |
+| `set_file_times` | 269 | 6 | 1 |
+| `statfs` | 270 | 1 | 1 |
+| `process_alive` | 271 | 1 | 1 |
+| `rlimit_nofile` | 272 | 0 | 1 |
+| `truncate` | 273 | 2 | 1 |
+| `mknod` | 274 | 4 | 1 |
+| `chown_at` | 275 | 4 | 1 |
+| `window_size` | 276 | 1 | 1 |
+| `chdir` | 277 | 1 | 1 |
+| `signal_mask` | 278 | 2 | 1 |
+| `signal_disposition` | 279 | 1 | 1 |
+| `proc_exec_as` | 280 | 3 | 1 |
+| `writer_truncate` | 281 | 2 | 1 |
+| `priority` | 282 | 0 | 1 |
+| `set_priority` | 283 | 1 | 1 |
+| `set_process_group` | 284 | 2 | 1 |
+| `signal_send` | 285 | 2 | 1 |
+| `proc_waitpid_nohang` | 286 | 1 | 1 |
+| `raw_cover` | 287 | 0 | 1 |
+| `line` | 288 | 0 | 0 |
+| `buf_new` | 291 | 1 | 1 |
+| `buf_push` | 292 | 2 | 1 |
+| `buf_push_range` | 293 | 4 | 1 |
+| `buf_push_byte` | 294 | 2 | 1 |
+| `buf_len` | 295 | 1 | 1 |
+| `buf_take` | 296 | 1 | 1 |
+| `buf_free` | 297 | 1 | 1 |
+| `sync` | 298 | 0 | 1 |
+| `fd_fsync` | 299 | 1 | 1 |
+| `fd_fdatasync` | 300 | 1 | 1 |
+| `fd_syncfs` | 301 | 1 | 1 |
+| `arr_push_owned_i64` | 302 | 2 | 1 |
+| `arr_push_owned_f64` | 303 | 2 | 1 |
+| `open_reader_with` | 304 | 2 | 1 |
+| `open_writer_with` | 305 | 2 | 1 |
+| `buf_push_u64` | 306 | 2 | 1 |
+| `fd_flags` | 307 | 1 | 1 |
+| `write_some` | 308 | 2 | 1 |
+| `crc32_cksum` | 309 | 2 | 1 |
+| `read_dir_all` | 310 | 1 | 1 |
+| `fd_dup_onto` | 311 | 2 | 1 |
+| `termios_get` | 312 | 1 | 1 |
+| `termios_set` | 313 | 3 | 1 |
+| `set_window_size` | 314 | 3 | 1 |
+| `heap_alloc_count` | 315 | 0 | 1 |
+| `chroot` | 316 | 1 | 1 |
+| `setuid` | 317 | 1 | 1 |
+| `setgid` | 318 | 1 | 1 |
+| `setgroups` | 319 | 1 | 1 |
+| `tcp_local_port` | 320 | 1 | 1 |
+| `chmod_at` | 321 | 3 | 1 |
+| `scale_f64` | 322 | 2 | 1 |
+| `syscall6` | 323 | 7 | 1 |
+| `scan_set` | 324 | 3 | 1 |
+| `buf_push_mapped` | 325 | 3 | 1 |
+| `buf_push_filtered` | 326 | 3 | 1 |
+| `count_runs` | 327 | 3 | 1 |
+| `buf_push_expanded` | 328 | 3 | 1 |
+| `bsd_sum` | 329 | 2 | 1 |
+| `reader_splice` | 330 | 3 | 1 |
+| `raw_splice_pipe` | 331 | 0 | 1 |
+| `tcp_listen_with` | 332 | 4 | 1 |
+| `tcp_socket_ctl` | 333 | 3 | 1 |
+| `udp_bind` | 334 | 2 | 1 |
+| `udp_connect` | 335 | 3 | 1 |
+| `udp_sendto` | 336 | 4 | 1 |
+| `udp_recvfrom` | 337 | 3 | 1 |
+| `tcp_connect_with` | 338 | 3 | 1 |
+| `unix_listen` | 339 | 2 | 1 |
+| `unix_connect` | 340 | 1 | 1 |
+| `reactor_new` | 341 | 0 | 1 |
+| `reactor_ctl` | 342 | 4 | 1 |
+| `reactor_wait` | 343 | 3 | 1 |
+| `tcp_recv_into` | 344 | 2 | 1 |
+| `str_data` | 345 | 1 | 1 |
+| `tcp_sendfile` | 346 | 3 | 1 |
+| `buf_take_bytes` | 347 | 1 | 1 |
+| `read_chunk_bytes` | 348 | 2 | 1 |
+| `write_bytes` | 349 | 2 | 1 |
+| `write_some_bytes` | 350 | 2 | 1 |
+| `buf_push_bytes_range` | 351 | 4 | 1 |
+| `write_file_bytes` | 352 | 2 | 1 |
+| `tcp_send_bytes` | 353 | 2 | 1 |
+| `udp_send_bytes` | 354 | 3 | 1 |
+| `udp_sendto_bytes` | 355 | 4 | 1 |
+| `rename_noreplace` | 356 | 2 | 1 |
+| `rename_exchange` | 357 | 2 | 1 |
+| `memchr_bytes` | 358 | 3 | 1 |
+| `count_byte_bytes` | 359 | 2 | 1 |
+| `rmemchr_bytes` | 360 | 3 | 1 |
+| `scan_set_bytes` | 361 | 3 | 1 |
+| `getxattr` | 362 | 2 | 1 |
+| `lgetxattr` | 363 | 2 | 1 |
+| `setxattr` | 364 | 3 | 1 |
+| `lsetxattr` | 365 | 3 | 1 |
+| `fd_drop_cache` | 366 | 3 | 1 |
+| `raw_task_state` | 367 | 0 | 1 |
+| `sum_bytes_array` | 368 | 1 | 1 |
+| `bsd_sum_bytes` | 369 | 2 | 1 |
+| `buf_push_bytes_mapped` | 370 | 3 | 1 |
+| `buf_push_bytes_filtered` | 371 | 3 | 1 |
+| `buf_push_bytes_expanded` | 372 | 3 | 1 |
+| `crc32_cksum_array` | 373 | 2 | 1 |
+| `getxattr_bytes` | 374 | 2 | 1 |
+| `lgetxattr_bytes` | 375 | 2 | 1 |
+| `setxattr_bytes` | 376 | 3 | 1 |
+| `lsetxattr_bytes` | 377 | 3 | 1 |
+| `mismatch_bytes` | 378 | 5 | 1 |
+| `count_runs_bytes` | 379 | 3 | 1 |
+| `str_from_bytes_range` | 380 | 3 | 1 |
+| `outer_mul_f64` | 381 | 2 | 1 |
+| `inner_mul_add_f64` | 382 | 6 | 1 |
+| `arr_reserve` | 383 | 1 | 1 |
+| `ret_word` | 384 | 1 | 1 |
+| `call_word` | 385 | 0 | 1 |
+| `buf_clear` | 386 | 1 | 1 |
+| `tcp_send_buf` | 387 | 3 | 1 |
+| `clock_set` | 388 | 2 | 1 |
+| `clock_resolution` | 389 | 0 | 1 |
+| `str_hash` | 390 | 2 | 1 |
+| `read_dir_ino` | 391 | 1 | 1 |
+| `signal_catch` | 392 | 1 | 1 |
+| `signal_taken` | 393 | 1 | 1 |
+| `signal_catch_interrupting` | 394 | 1 | 1 |
+| `signal_raise` | 395 | 1 | 1 |
+| `disable_core_dumps` | 396 | 0 | 1 |
+| `proc_waitpid_status` | 397 | 1 | 1 |
+| `mounts` | 398 | 0 | 1 |
+| `ct_mark` | 399 | 1 | 1 |
+| `vg_request` | 400 | 1 | 1 |
+| `sysctl` | 401 | 1 | 1 |
+| `aes_expand_key` | 402 | 1 | 1 |
+| `aes_ctr32` | 403 | 3 | 1 |
+| `ghash` | 404 | 3 | 1 |
+| `clone_file` | 405 | 2 | 1 |
+| `set_extproc` | 406 | 2 | 1 |
+| `reader_copy_range` | 407 | 3 | 1 |
+| `pipe` | 408 | 0 | 1 |
+| `sha256_hw` | 409 | 0 | 1 |
+| `sha256_hw_blocks` | 410 | 2 | 1 |
+| `bswap` | 411 | 1 | 1 |
+| `open_dir` | 420 | 1 | 1 |
+| `dir_open` | 421 | 2 | 1 |
+| `dir_entries` | 422 | 1 | 1 |
+| `dir_stat` | 423 | 2 | 1 |
+| `dir_access` | 424 | 3 | 1 |
+| `dir_unlink` | 425 | 2 | 1 |
+| `dir_chmod` | 426 | 4 | 1 |
+| `dir_chown` | 427 | 5 | 1 |
+| `mulhi_u` | 430 | 2 | 1 |
+| `writer_splice_forever` | 431 | 2 | 1 |
+| `read_dir_ino_all` | 432 | 1 | 1 |
+| `utf8_blocks` | 433 | 3 | 1 |
+| `ring_new` | 434 | 1 | 1 |
+| `ring_ctl` | 435 | 4 | 1 |
+| `ring_wait` | 436 | 3 | 1 |
+<!-- END ir_effects_run -->
 
 ## How this is kept true
 
-Two gates, in `internal/oracle/ir` so they can drive the package directly.
+`TestSelfHostCoreSpecMatchesTheIR` builds `compiler/drivers/ir_effects_run.fern`
+with the self-host compiler and requires the table above to be its output,
+row for row. The driver sweeps every id `kind_name` names and reads the
+effects from `ir.op_pops` and `ir.op_pushes` — the functions the stack half
+of the IR verifier (`irverifystack.fern`) reads when it checks real lowered
+programs. So a row here is tied to the same code that is checked against
+compiler output, not to a second transcription that could agree with this
+table and with nothing else. A new op without a row, a row for a retired op,
+and a changed effect all fail; `FERN_UPDATE_GOLDEN=1` rewrites the table.
 
-`TestCoreOpsIndexIsAccurate` matches the table against the `OpKind`
-enum in both directions: every op has exactly one row, every row names a
-real op, and no op's mnemonic is `<invalid>` — which is what a new op
-added without a `String()` case produces, and the shape in which an
-instruction would otherwise arrive in the language undocumented and
-unnamed. It also checks that every field named in an `Imm.` cell is a
-field `Op` actually has, because a plausible misspelling is exactly what
-a reader would take at face value.
-
-`TestCoreOpEffectsMatchTheModel` checks the `Effect` column by
-**running** it. For each row it builds the declared operand stack, steps
-the verifier's stack model over the instruction, and requires the
-resulting stack to be what the row promised — at **both** pointer
-widths, which is what gives `s` its teeth: a row claiming `s` is
-checked as one slot on the register backends and as two on wasm, and a
-row claiming `i` where the real op moves a string pair fails on wasm
-only.
-
-The model is `verifystack.go`, which the corpus gate already runs over
-every lowered program in `conformance/cases`. So a row here is tied to
-the same code that is checked against real compiler output, rather than
-to a second transcription of it that could agree with the table and with
-nothing else.
+`TestSelfHostIRKindRegistry` pins the id numbering itself.
 
 ## What this does not say
 
-Everything that matters. This file says `rc.dec` pops a pointer and
-pushes it back; it does not say that it decrements a count, that
-reaching zero frees, what freeing does to a value's fields, or in what
-order. It says `alloc` pops a size and pushes a pointer, and nothing
-about what makes two pointers different. It says `call` pushes the
-callee's result and nothing about when the callee runs.
+Everything that matters. This file says `call_direct` pops its arguments and
+pushes one slot; it does not say that a call to a release helper decrements a
+count, that reaching zero frees, what freeing does to a value's fields, or in
+what order, and nothing about when the callee runs. It says `arr_set` pops
+three slots and says nothing about which array changes.
 
 Those are the store semantics — Layer 3's second and third pieces — and
 they are where the bugs actually are. `docs/ALLOCATION-OBSERVABLE.md` is
@@ -311,47 +491,3 @@ one shape: that a reclaiming loop does not grow the arena without bound.
 Reading this file as a definition of Fern Core would be the same mistake
 as reading a wasm opcode table as a definition of WebAssembly. It is the
 vocabulary. The sentences are not written yet.
-
-## Instructions the corpus does not reach
-
-`TestCoreOpsAreReachedByTheCorpus` compiles every conformance case —
-lowering it and then running `ir.OptimizeProgram`, the battery every
-backend runs — and tallies the instructions that come out. This is the
-check `spec/README.md` calls the one that matters most for a normative
-document and the one that is easy to leave out: the effects gate above
-proves a row agrees with the verifier's model, and proves nothing about
-whether any Fern program produces the instruction at all. An invented
-row would read exactly like a true one.
-
-The tally is taken on the op stream a backend is handed, not on the one
-`LowerWith` returns, because several instructions do not exist until a
-pass creates one. Stopping at lowering reports those unreached while
-every compiled program contains them — and this table is where such a
-reading would be recorded as a fact about the language.
-
-Run for the first time it found **19** unreached instructions. Fifteen
-were a corpus gap rather than a language fact, and closed by five cases
-— `float_arith_ops`, `float_width_conversion`, `float_bit_reinterpret`,
-`result_register_pair`, `dyn_trait_dispatch`. Float subtraction and
-negation, `f32`/`f64` conversion, all four bit reinterprets, the
-register-form `Ok` / `Err`, and every `dyn Trait` dispatch had **no**
-conformance coverage; `dyn` had two compile-error cases and nothing that
-ran one.
-
-Four more were a measurement gap: `local.tee`, `call_closure_direct`,
-`make_env` and `rotr` are created by `FuseTee`, `Defunctionalise` and
-`FuseRotates`, and the corpus reaches all four — the tally stopped at
-lowering and could not see them. Running the battery closed them.
-
-Two remain, and both are unreachable because an ordinary build never
-asks for them: each is emitted only under a lower option the corpus does
-not set.
-
-| Op | Why |
-| --- | --- |
-| `line` | Emitted only under the `EmitLineMarkers` lower option, which is native `-g`. The byte-identical self-host fixpoint depends on ordinary builds never seeing one. |
-| `cover` | Emitted only under the `CoverPoints` lower option, which is `-cover`. The byte-identical self-host fixpoint depends on ordinary builds never seeing one. |
-
-A row here is checked in both directions: an entry the corpus has
-started reaching is reported and must be deleted, so the list shrinks as
-cases are added rather than quietly going stale.

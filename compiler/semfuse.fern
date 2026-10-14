@@ -5,9 +5,9 @@
 // core/iter chain (#6795) fuses the same way: `iter.of(xs)` or
 // `iter.range(lo, hi)`, then `map`, `filter` and `take` adapters, ending in
 // `fold` or `count`. Its adapter calls take the place of stages, and its root
-// is replaced by the array or the integers the loop runs over. This
-// extends internal/oracle/ir/array_fusion.go on the typed semantic graphs every
-// backend lowers from, before ownership planning accounts for the output.
+// is replaced by the array or the integers the loop runs over. This runs on
+// the typed semantic graphs every backend lowers from, before ownership
+// planning accounts for the output.
 //
 // docs/ARRAY-FUSION-OPERATORS.md is the contract: each stage contributes a
 // step (pass through, rebind, skip, stop, or loop over many), the fused body

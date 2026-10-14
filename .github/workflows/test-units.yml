@@ -11,8 +11,8 @@ name: Test units
 #   internal/testing/fernsmith — its own workflow (fuzz corpus + generator
 #                        machinery; ~60s).
 #
-# Matrix per host arch so backend-tagged unit tests (e.g. the
-# internal/oracle/ir invariants) get exercised under both ABIs.
+# Matrix per host arch so host-dependent unit tests get exercised under both
+# ABIs.
 #
 # THE RUNTIMES ARE INSTALLED HERE, not assumed absent. Every wasm test in
 # these packages opens with an `exec.LookPath("wasmtime")` and every arm64
@@ -42,10 +42,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Two jobs per host: `heavy` is internal/oracle/ir and printer, each
-          # 350-390 s of serial tests that cannot t.Parallel; `rest` is the
-          # other ~75 packages. One job was 10 minutes on x86 with the
-          # heavy packages sharing four cores with everything else.
+          # Two jobs per host: `heavy` is internal/syntax/printer, 350-390 s
+          # of serial tests that cannot t.Parallel; `rest` is the other
+          # packages. One job was 10 minutes on x86 with the heavy packages
+          # sharing four cores with everything else.
           - { runner: ubuntu-latest,    host: x86_64,  group: heavy }
           - { runner: ubuntu-latest,    host: x86_64,  group: rest }
           - { runner: ubuntu-24.04-arm, host: aarch64, group: heavy }
@@ -167,8 +167,7 @@ jobs:
         # default: a binary that default kills reports whichever cases were in
         # flight as failures with no output and an unknown elapsed, so the lane
         # names tests that did not fail and never names the wall it hit. The
-        # longest package here is now internal/oracle/ir at ~4m40s, since
-        # internal/testing/coreutils moved to test-coreutils.yml.
+        # longest package here is internal/syntax/printer at ~6m30s.
         run: |
           # shellcheck disable=SC2046 # the package list is deliberately word-split
           gotestsum --format pkgname-and-test-fails -- -timeout 25m \

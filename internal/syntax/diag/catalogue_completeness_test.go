@@ -34,13 +34,12 @@ func TestEmittedCodesHaveExplanations(t *testing.T) {
 	// cmd/fern emits E066 (platform capability enforcement) and E070
 	// (per-package capability grants) via checker.Error, and
 	// internal/pkg/platforms owns the E066 pass — scan both so new codes there
-	// can't ship without explanations either. internal/oracle/ir emits E068 (the
-	// fip/fbip verify-enable, fip_verify.go's errfCode) at lowering time.
+	// can't ship without explanations either.
 	// internal/check/defaultargs emits E076 / E077 (and E004) through its own
 	// Error struct, which the checker surfaces; unscanned, it had been
 	// reusing E060 — the `as?` downcast code — for named-argument errors,
 	// so `fern -explain` answered with an unrelated page.
-	dirs := []string{"../../check/checker", "../parser", "../../pkg/modload", "../../pkg/platforms", "../../oracle/ir", "../../check/defaultargs", "../../../cmd/fern"}
+	dirs := []string{"../../check/checker", "../parser", "../../pkg/modload", "../../pkg/platforms", "../../check/defaultargs", "../../../cmd/fern"}
 	emitted := map[string]string{} // code -> first source file it's emitted from
 	for _, d := range dirs {
 		files, err := filepath.Glob(filepath.Join(d, "*.go"))

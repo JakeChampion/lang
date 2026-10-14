@@ -8965,8 +8965,7 @@ func narrowInt(v int64, width int, unsigned bool) int64 {
 // `*|`, #5542) on two width-masked operands, clamping to the operand
 // type's [MIN, MAX] instead of wrapping. `signExtend` is the caller's
 // width-and-signedness narrowing closure, used to recover the signed
-// value of a masked operand. Mirrors the IR lowering in
-// `internal/oracle/ir.(*builder).satBinary` — keep the two in step.
+// value of a masked operand.
 func satArith(op string, ln, rn Number, width int, unsigned bool, signExtend func(Number) Number) Number {
 	if unsigned {
 		var maxU uint64

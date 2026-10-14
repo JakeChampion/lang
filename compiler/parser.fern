@@ -21721,7 +21721,7 @@ pub function lower_defers_module(mod: Module): Module {
 }
 
 // ---- automatic resource-handle drop (P5 slice 3) --------------------
-// Mirrors the Go internal/oracle/ir/insert_resource_drops.go. For each owned local
+// For each owned local
 // (`own R`, or a bare R) of a WIT-bound resource that is not moved, insert `defer __resource_drop_R(slot);` right after
 // the declaration — the fused defer expansion then runs it on every exit path
 // (see drop_slot_name for the slot) — and synthesize one body-less

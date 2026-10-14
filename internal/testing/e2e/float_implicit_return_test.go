@@ -91,9 +91,7 @@ func TestFloatImplicitReturnX86_64(t *testing.T) {
 // NOTE: this leg does not by itself guard the regression. The harness treats a
 // wasm validator rejection as a wasmbin COVERAGE GAP and skips — the failure is
 // indistinguishable from an unimplemented op — so re-breaking the width would
-// turn this green-by-skip rather than red. The hard assertion lives in
-// internal/oracle/ir (TestImplicitFloatReturnMatchesDeclaredWidth), on the emitted op
-// kind. This leg is here for the end-to-end value check, and to keep the wasm
+// turn this green-by-skip rather than red. This leg is here for the end-to-end value check, and to keep the wasm
 // path exercised on the shape.
 func TestFloatImplicitReturnWasm(t *testing.T) {
 	if got := compileAndRunWasmbinMain(t, floatImplicitReturnProg); got != 42 {
