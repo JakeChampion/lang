@@ -9126,11 +9126,14 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
 // register call passes them, and when there are more, every argument pushed
 // as well, with the first on top, where `.r` reads the rest. The target is
 // read into %rdx first, which is neither a pool register nor a scratch the
-// argument moves use.
+// argument moves use. A slot_call reads the target out of the environment
+// once the moves have put it in %rax.
 function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   let argc: i32 = ins.args.len() - 1;
-  s = ssa_load(reg_of, ins.args[0], "%rdx", s);
+  if (!ssa.slot_call(ins)) {
+    s = ssa_load(reg_of, ins.args[0], "%rdx", s);
+  }
   let i: i32 = argc;
   while (argc > ssa_nregs() && i >= 1) {
     s = ssa_push_operand(reg_of, ins.args[i], s);
@@ -9145,7 +9148,11 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     a = a + 1;
   }
   s = ssa_parallel_moves(srcs, dsts, s);
-  s = s.write("    call *%rdx\n");
+  if (ssa.slot_call(ins)) {
+    s = s.write("    call *8(%rax)\n");
+  } else {
+    s = s.write("    call *%rdx\n");
+  }
   if (argc > ssa_nregs()) {
     s = ssa_alu_ir(s, 0, 64, (argc * 8) as i64, "%rsp");
   }

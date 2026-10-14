@@ -36,6 +36,4 @@ The stage-2 compiler reproduces itself, and is 8 KB smaller. Against main's
 emitted sizes (`scripts/perf-bench-selfhost`), no program grows, and 22
 shrink on each of x86-64 and arm64.
 
-The closure call still copies the loaded address into `%rdx`, because the
-allocator gives the address a register of its own. Loading it straight into
-`%rdx` would save one more instruction per call.
+2026-10-14-e takes the closure call's read into the call itself.
