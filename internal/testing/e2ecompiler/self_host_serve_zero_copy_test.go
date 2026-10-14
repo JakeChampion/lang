@@ -69,7 +69,7 @@ func runZeroCopy(t *testing.T, ring bool) {
 	fail := func(format string, args ...any) {
 		t.Helper()
 		got, _ := os.ReadFile(stderr)
-		t.Fatalf(format+"\nserver stderr:\n%s", append(args, got)...)
+		t.Fatalf(format+"\nserver stderr:\n%s\n%s", append(args, got, ringState(cmd.Process.Pid))...)
 	}
 	sizes := []int{1000, 3072, 65536, 1 << 20, 8 << 20}
 	kept := &http.Client{Timeout: 60 * time.Second}
@@ -133,9 +133,36 @@ func getPattern(c *http.Client, addr string, n int) error {
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil || resp.StatusCode != 200 || resp.Header.Get("x-size") != "/"+strconv.Itoa(n) {
-		return fmt.Errorf("GET /%d: %d %q %v", n, resp.StatusCode, resp.Header.Get("x-size"), err)
+		return fmt.Errorf("GET /%d: %d %q after %d bytes: %v", n, resp.StatusCode, resp.Header.Get("x-size"), len(body), err)
 	}
 	return checkPattern(body, n)
+}
+
+// ringState is what the kernel says of the server's process group: its
+// release, and for each process its wait channel and every io_uring it
+// holds, by fdinfo (the rings' heads and tails, and their overflow list).
+func ringState(pgid int) string {
+	var b strings.Builder
+	rel, _ := os.ReadFile("/proc/sys/kernel/osrelease")
+	fmt.Fprintf(&b, "kernel %s", rel)
+	procs, _ := filepath.Glob("/proc/[0-9]*")
+	for _, proc := range procs {
+		stat, err := os.ReadFile(filepath.Join(proc, "stat"))
+		fields := strings.Fields(string(stat[strings.LastIndexByte(string(stat), ')')+1:]))
+		if err != nil || len(fields) < 3 || fields[2] != strconv.Itoa(pgid) {
+			continue
+		}
+		wchan, _ := os.ReadFile(filepath.Join(proc, "wchan"))
+		fmt.Fprintf(&b, "%s wchan %s\n", proc, wchan)
+		fds, _ := filepath.Glob(filepath.Join(proc, "fd", "*"))
+		for _, fd := range fds {
+			if link, _ := os.Readlink(fd); link == "anon_inode:[io_uring]" {
+				info, _ := os.ReadFile(filepath.Join(proc, "fdinfo", filepath.Base(fd)))
+				fmt.Fprintf(&b, "%s:\n%s\n", fd, info)
+			}
+		}
+	}
+	return b.String()
 }
 
 // http10Pattern asks over HTTP/1.0, which the server answers and closes.

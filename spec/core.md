@@ -461,6 +461,7 @@ is the number of slots it leaves.
 | `ring_wait` | 436 | 3 | 1 |
 | `tcp_ktls` | 437 | 4 | 1 |
 | `ring_recv` | 438 | 3 | 1 |
+| `ring_send_zc` | 439 | 4 | 1 |
 <!-- END ir_effects_run -->
 
 ## How this is kept true
