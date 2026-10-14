@@ -725,10 +725,14 @@ function __answered(r: __Run, at: i32, trailers: HeaderMap): __Run {
 }
 
 // __trailers ends a request with its trailers (§8.1): they must carry
-// END_STREAM and no pseudo-header.
+// END_STREAM and no pseudo-header, on a stream whose request has not
+// already ended, which is a STREAM_CLOSED error (§5.1).
 function __trailers(r: __Run, at: i32, fields: hpack.Field[], end_stream: boolean): __Run {
   let s: __Stream = r.conn.streams[at];
-  if (!end_stream || s.state != OPEN && s.state != HALF_LOCAL) {
+  if (s.state != OPEN && s.state != HALF_LOCAL) {
+    return __reset_stream(r, s.id, frame.STREAM_CLOSED);
+  }
+  if (!end_stream) {
     return __reset_stream(r, s.id, frame.PROTOCOL_ERROR);
   }
   let trailers: HeaderMap = headers.header_map_new();
