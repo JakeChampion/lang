@@ -439,7 +439,7 @@ pub function op_arr_push(): Op {
 }
 
 // `arr_push_owned` is `arr_push` for a self-reassign `a = a.append(v)` where the
-// target `a` is the SOLE owner of its buffer (not in aliased_names). It lowers to
+// target `a` is the SOLE owner of its buffer (no alias of it is live). It lowers to
 // __fern_arr_push_owned, which behaves exactly like __fern_arr_push but, when the
 // push GROWS (reallocs into a new buffer), reclaims the old buffer instead of
 // leaking it. Sound only because the !aliased gate proves no other reference to

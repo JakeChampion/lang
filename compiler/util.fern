@@ -601,7 +601,7 @@ pub function base_type_name(t: string): string {
 
 // is_tuple_type_name reports whether a type SPELLING names a tuple, i.e.
 // starts with `(`. The single home for a test that was open-coded 43 times
-// across irlower, parser and checker.
+// across the lowering, parser and checker.
 //
 // Three sites keep their own spelling because their length guard differs and
 // the difference matters at the edge: is_enum_like_name reaches its
