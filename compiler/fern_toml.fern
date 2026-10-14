@@ -29,7 +29,7 @@ import "./util";
 // or "url" (a url+hash dep resolved from the per-machine content-
 // addressed store by `hash` — the loader never touches the network;
 // #4949). `hash` is the manifest's `sha256:<hex>` for a url dep, ""
-// otherwise.
+// otherwise, and `url` where it is downloaded from.
 //
 // `governed` records whether the entry carried a `capabilities` key at
 // all, which is a different question from what `caps` holds: an empty
@@ -39,6 +39,7 @@ pub struct Dep {
   name: string,
   kind: string,
   path: string,
+  url: string,
   hash: string,
   version: string,
   governed: boolean,
@@ -344,10 +345,10 @@ function parse_dep(name: string, val: string): Dep {
       },
       None => {}
     }
-    return Dep { name: name, kind: "version", path: "", hash: "", version: bare, governed: governed, caps: caps };
+    return Dep { name: name, kind: "version", path: "", url: "", hash: "", version: bare, governed: governed, caps: caps };
   }
   if (index_of_str(val, "workspace") >= 0 && index_of_str(val, "true") >= 0) {
-    return Dep { name: name, kind: "workspace", path: "", hash: "", version: "", governed: governed, caps: caps };
+    return Dep { name: name, kind: "workspace", path: "", url: "", hash: "", version: "", governed: governed, caps: caps };
   }
   // url+hash dep: `{ url = "https://…", hash = "sha256:…" }` (#4949).
   // Checked before the `version`/`path` substring probes because a URL
@@ -362,7 +363,7 @@ function parse_dep(name: string, val: string): Dep {
       match (quoted_value(val, heq)) {
         Some(hv) => {
           if (validate_hash(hv).err.len() == 0) {
-            return Dep { name: name, kind: "url", path: "", hash: hv, version: "", governed: governed, caps: caps };
+            return Dep { name: name, kind: "url", path: "", url: dep_url(val), hash: hv, version: "", governed: governed, caps: caps };
           }
         },
         None => {}
@@ -381,7 +382,7 @@ function parse_dep(name: string, val: string): Dep {
         None => {}
       }
     }
-    return Dep { name: name, kind: "version", path: "", hash: "", version: vv, governed: governed, caps: caps };
+    return Dep { name: name, kind: "version", path: "", url: "", hash: "", version: vv, governed: governed, caps: caps };
   }
   let p: i32 = index_of_str(val, "path");
   if (p >= 0) {
@@ -389,13 +390,28 @@ function parse_dep(name: string, val: string): Dep {
     if (eq2 >= 0) {
       match (quoted_value(val, eq2)) {
         Some(pv) => {
-          return Dep { name: name, kind: "path", path: pv, hash: "", version: "", governed: governed, caps: caps };
+          return Dep { name: name, kind: "path", path: pv, url: "", hash: "", version: "", governed: governed, caps: caps };
         },
         None => {}
       }
     }
   }
-  return Dep { name: name, kind: "", path: "", hash: "", version: "", governed: governed, caps: caps };  // unrecognised form
+  return Dep { name: name, kind: "", path: "", url: "", hash: "", version: "", governed: governed, caps: caps };  // unrecognised form
+}
+
+// dep_url is the `url = "…"` value of an inline dependency table.
+function dep_url(val: string): string {
+  let up: i32 = index_of_str(val, "url");
+  let ueq: i32 = index_of(val, b'=', up);
+  if (up >= 0 && ueq >= 0) {
+    match (quoted_value(val, ueq)) {
+      Some(v) => {
+        return v;
+      },
+      None => {}
+    }
+  }
+  return "";
 }
 
 // parse_str_array parses a single-line inline array of quoted strings:
@@ -525,6 +541,7 @@ pub struct LockEntry {
   name: string,
   version: string,
   path: string,
+  url: string,
   hash: string,
 }
 
@@ -541,27 +558,19 @@ pub struct LockResult {
 // plus the `path` directory (path-sourced) or the `hash` (url-sourced).
 pub function parse_lock(src: string): LockResult {
   let out: LockEntry[] = [];
-  let name: string = "";
-  let version: string = "";
-  let path: string = "";
-  let hash: string = "";
+  let blank: LockEntry = LockEntry { name: "", version: "", path: "", url: "", hash: "" };
+  let cur: LockEntry = blank;
   let have: boolean = false;
   let lines: string[] = split_lines(src);
   let li: i32 = 0;
   while (li < lines.len()) {
     let line: string = line_content(lines[li]);
     li = li + 1;
-    if (line.len() == 0) {
-      continue;
-    }
     if (line == "[[package]]") {
       if (have) {
-        out = out.append(LockEntry { name: name, version: version, path: path, hash: hash });
+        out = out.append(cur);
       }
-      name = "";
-      version = "";
-      path = "";
-      hash = "";
+      cur = blank;
       have = true;
       continue;
     }
@@ -570,50 +579,44 @@ pub function parse_lock(src: string): LockResult {
       continue;
     }
     let key: string = util.trim(slice_unchecked(line, 0, eq));
-    let val: string = util.trim(slice_unchecked(line, eq + 1, line.len()));
-    if (key == "name") {
-      match (quoted_value(val, 0)) {
-        Some(v) => {
-          name = v;
-        },
-        None => {}
-      }
-    }
-    if (key == "version") {
-      match (quoted_value(val, 0)) {
-        Some(v) => {
-          version = v;
-        },
-        None => {}
-      }
-    }
-    if (key == "path") {
-      match (quoted_value(val, 0)) {
-        Some(v) => {
-          path = v;
-        },
-        None => {}
-      }
-    }
-    if (key == "hash") {
-      match (quoted_value(val, 0)) {
-        Some(v) => {
-          let hr: HashResult = validate_hash(v);
-          if (hr.err.len() > 0) {
-            let none: LockEntry[] = [];
-            return LockResult { entries: none, err: "fern.lock line "
-              + util.i32_to_string(li) + ": hash " + hr.err };
-          }
-          hash = v;
-        },
-        None => {}
-      }
+    match (quoted_value(util.trim(slice_unchecked(line, eq + 1, line.len())), 0)) {
+      Some(v) => {
+        let hr: HashResult = validate_hash(v);
+        if (key == "hash" && hr.err.len() > 0) {
+          let none: LockEntry[] = [];
+          return LockResult { entries: none, err: "fern.lock line "
+            + util.i32_to_string(li) + ": hash " + hr.err };
+        }
+        cur = with_lock_field(cur, key, v);
+      },
+      None => {}
     }
   }
   if (have) {
-    out = out.append(LockEntry { name: name, version: version, path: path, hash: hash });
+    out = out.append(cur);
   }
   return LockResult { entries: out, err: "" };
+}
+
+// with_lock_field is `e` with the lock key `key` set to `v`; any other key
+// leaves it as it is.
+function with_lock_field(e: LockEntry, key: string, v: string): LockEntry {
+  if (key == "name") {
+    return LockEntry { ...e, name: v };
+  }
+  if (key == "version") {
+    return LockEntry { ...e, version: v };
+  }
+  if (key == "path") {
+    return LockEntry { ...e, path: v };
+  }
+  if (key == "url") {
+    return LockEntry { ...e, url: v };
+  }
+  if (key == "hash") {
+    return LockEntry { ...e, hash: v };
+  }
+  return e;
 }
 
 // lock_has returns whether `name` has a [[package]] entry at all — the

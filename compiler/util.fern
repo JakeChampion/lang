@@ -1840,3 +1840,33 @@ pub function io_error_reason(e: IoError): string {
     }
   }
 }
+
+// cache_base is fern's per-user cache directory: $FERN_CACHE_DIR when that is
+// set, else the user cache directory's fern — $XDG_CACHE_HOME, else ~/.cache,
+// or ~/Library/Caches on darwin, as native reads os.UserCacheDir. "" when
+// there is no home to put it in. The package store, the shipped `fern`'s
+// stdlib tree and the certifier memo live under it.
+pub function cache_base(): string {
+  match (env("FERN_CACHE_DIR")) {
+    Some(d) => {
+      return d;
+    },
+    None => {}
+  }
+  match (env("XDG_CACHE_HOME")) {
+    Some(x) => {
+      return x + "/fern";
+    },
+    None => {}
+  }
+  match (env("HOME")) {
+    Some(h) => {
+      if (target_os() == "darwin") {
+        return h + "/Library/Caches/fern";
+      }
+      return h + "/.cache/fern";
+    },
+    None => {}
+  }
+  return "";
+}

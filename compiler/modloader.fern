@@ -233,6 +233,12 @@ function try_manifest(from: string, path: string): Resolved {
     Ok(src) => {
       match (dep_dir(fern_toml.parse(src), dir, util.dep_name(path))) {
         Some(dd) => {
+          // A url dependency's directory is in the store, which only
+          // `fern -fetch` fills: say so rather than fall through to a
+          // relative path that was never meant.
+          if (!util.is_dir(dd) && util.str_has_prefix(dd, store_root() + "/")) {
+            return Resolved { ...res_none(), err: "dependency \"" + util.dep_name(path) + "\" is not in the package store — run `fern -fetch " + dir + "fern.toml` to download and verify it", err_path: dd };
+          }
           let rest: string = util.dep_subpath(path);
           if (rest.len() == 0) {
             return load_lib(dd);
@@ -485,49 +491,30 @@ function locked_dir(dir: string, name: string): Option[string] {
   return None;
 }
 
-// store_dir is a url/hash dependency's directory in the per-machine
-// content-addressed store (internal/pkg/pkgcache layout: <root>/<hex>/, with
-// root = $FERN_CACHE_DIR/pkgs when set, else <user-cache-dir>/fern/pkgs).
-// Mirrors native pkgcache.Root(): an explicit $FERN_CACHE_DIR wins and is
-// NOT fallen through on a miss; otherwise the user cache dir is
-// $XDG_CACHE_HOME, else $HOME/.cache (Linux) — with $HOME/Library/Caches
-// tried as the darwin sibling, safe because this path only READS. The
-// store is populated + sha256-verified by native `fern -fetch`; the
-// loader trusts an already-populated store, exactly like the native
-// loader does at build time (#4949 — no build-time network).
-//
-// The hash is re-validated here even though every parse boundary already
-// does: the hex is joined onto the store root, so a later route reaching this
-// unchecked would be a directory traversal (#8464).
-function store_dir(hash: string): Option[string] {
+// store_root is the per-machine content-addressed store of url dependencies,
+// one directory per archive named by its sha256, or "" when there is no
+// cache directory. `fern -fetch` populates it, sha256-verified; a build only
+// reads it (#4949 — no build-time network).
+pub function store_root(): string {
+  let base: string = util.cache_base();
+  if (base.len() == 0) {
+    return "";
+  }
+  return base + "/pkgs";
+}
+
+// store_dir is a url/hash dependency's directory in the store, with a
+// trailing `/`, present or not. The hash is re-validated here even though
+// every parse boundary already does: the hex is joined onto the store root,
+// so a later route reaching this unchecked would be a directory traversal
+// (#8464).
+pub function store_dir(hash: string): Option[string] {
   let hr: fern_toml.HashResult = fern_toml.validate_hash(hash);
-  if (hr.err.len() > 0) {
+  let root: string = store_root();
+  if (hr.err.len() > 0 || root.len() == 0) {
     return None;
   }
-  let hex: string = hr.hex;
-  match (env("FERN_CACHE_DIR")) {
-    Some(d) => {
-      return Some(d + "/pkgs/" + hex + "/");
-    },
-    None => {}
-  }
-  match (env("XDG_CACHE_HOME")) {
-    Some(x) => {
-      return Some(x + "/fern/pkgs/" + hex + "/");
-    },
-    None => {}
-  }
-  match (env("HOME")) {
-    Some(h) => {
-      let linux: string = h + "/.cache/fern/pkgs/" + hex + "/";
-      if (util.is_dir(linux)) {
-        return Some(linux);
-      }
-      return Some(h + "/Library/Caches/fern/pkgs/" + hex + "/");
-    },
-    None => {}
-  }
-  return None;
+  return Some(root + "/" + hr.hex + "/");
 }
 
 // strip_fern_ext removes a trailing ".fern" so the name joins onto
