@@ -3002,7 +3002,7 @@ function ssa_release_entry(entry: ssaprepare.ReleaseEntry, lp: string, s: asmcor
 
 // ssa_mem_inst selects the production lift's memory kinds (ssa.fern 40..44)
 // with the instructions the stack machine's own arms use, operands in x0/x1/x2.
-function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let k: i32 = ins.kind_tag;
   let a: string = ssa_src(reg_of, ins.args[0], "x4");
   s = ssa_load(reg_of, ins.args[0], a, s);
@@ -3014,6 +3014,9 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   if (k == 40) {
     s = ssa_ldst(s, true, d, a, ins.imm);
     return ssa_store(reg_of, ins.result, d, s);
+  }
+  if (k >= 42 && imm.is_imm[ins.args[1]]) {
+    return ssa_mem_at(ins, reg_of, imm.value[ins.args[1]] as i32, a, d, s);
   }
   let b: string = ssa_src(reg_of, ins.args[1], "x5");
   s = ssa_load(reg_of, ins.args[1], b, s);
@@ -3084,6 +3087,44 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   }
   s = ssa_addsub_imm(s, false, "x5", b, 1);
   return ssa_ldst_reg(s, false, c, a, "x5");
+}
+
+// ssa_mem_at is ssa_mem_inst's element or byte access at the constant index
+// `c`: the bounds test compares the length with it, and the access reads or
+// writes at an immediate offset.
+function ssa_mem_at(ins: ssa.SInst, reg_of: i32[], c: i32, a: string, d: string, s: asmcore.EmitState): asmcore.EmitState {
+  let k: i32 = ins.kind_tag;
+  s = s.mark_heap();
+  if (ins.imm != 1) {
+    let len_at: i32 = 0;
+    if (k == 44) {
+      len_at = 8;
+    }
+    s = ssa_cmp_imm(ssa_ldst(s, true, "x6", a, len_at), "x6", c);
+    s = ssa_trap_guard(s, CC_HI, "__fern_oob_abort");
+  }
+  if (k != 43 && ins.imm == 2) {
+    return s;
+  }
+  if (k == 44) {
+    s = ssa_ldst0(s, true, "x6", a);
+    s = ssa_ldrb(s, ssa_wreg(d), "x6", c);
+    return ssa_store(reg_of, ins.result, d, s);
+  }
+  if (k == 42) {
+    if (ins.str == "u8") {
+      s = ssa_ldrb(s, ssa_wreg(d), a, 8 + c);
+    } else {
+      s = ssa_ldst(s, true, d, a, 8 + 8 * c);
+    }
+    return ssa_store(reg_of, ins.result, d, s);
+  }
+  let v: string = ssa_src(reg_of, ins.args[2], "x6");
+  s = ssa_load(reg_of, ins.args[2], v, s);
+  if (ins.str == "u8") {
+    return ssa_strb(s, ssa_wreg(v), a, 8 + c);
+  }
+  return ssa_ldst(s, false, v, a, 8 + 8 * c);
 }
 
 // ssa_str_call is the stack machine's call of a Fern-compiled runtime helper
@@ -3776,7 +3817,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     return ssa_str_view(ins, reg_of, ssa_view_off(fr, ins.result), s);
   }
   if (k >= 40 && k <= 44) {
-    return ssa_mem_inst(ins, reg_of, s);
+    return ssa_mem_inst(ins, reg_of, fr.imm, s);
   }
   if (k >= 45 && k <= 48) {
     return ssa_addr_inst(ins, reg_of, s);
