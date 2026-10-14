@@ -59,3 +59,14 @@ tls/server/go.bulk_mbytes_per_s	111.1
 tls/server/curl.bulk_mbytes_per_s	101.0
 tls/server/handshakes_per_s	178.2
 tls/server/resumed_handshakes_per_s	184.8
+
+# lane: bootstrap-arm64-darwin
+bootstrap/arm64-darwin/stage1.wall_s	28
+bootstrap/arm64-darwin/stage1.peak_rss_mb	2030
+bootstrap/arm64-darwin/stage1.size_bytes	13742865
+bootstrap/arm64-darwin/stage2.wall_s	48
+bootstrap/arm64-darwin/stage2.peak_rss_mb	2005
+bootstrap/arm64-darwin/stage2.size_bytes	13148385
+bootstrap/arm64-darwin/stage3.wall_s	26
+bootstrap/arm64-darwin/stage3.peak_rss_mb	2002
+bootstrap/arm64-darwin/stage3.size_bytes	13148385
