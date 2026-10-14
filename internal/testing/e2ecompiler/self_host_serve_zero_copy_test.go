@@ -111,6 +111,39 @@ func runZeroCopy(t *testing.T, ring bool) {
 	for err := range errs {
 		fail("%v", err)
 	}
+	if ring {
+		if err := ringSubmitted(cmd.Process.Pid); err != nil {
+			fail("%v", err)
+		}
+	}
+}
+
+// ringSubmitted waits up to two seconds for the idle server's rings to
+// hold no submission the kernel was not given: SqHead equal to SqTail.
+func ringSubmitted(pgid int) error {
+	var last string
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		last = ""
+		for _, info := range ringInfos(pgid) {
+			head, tail := fdinfoField(info, "SqHead"), fdinfoField(info, "SqTail")
+			if head != tail {
+				last = fmt.Sprintf("SqHead %s, SqTail %s", head, tail)
+			}
+		}
+		if last == "" {
+			return nil
+		}
+	}
+	return fmt.Errorf("the idle server's ring holds submissions the kernel was not given: %s", last)
+}
+
+func fdinfoField(info, key string) string {
+	for _, line := range strings.Split(info, "\n") {
+		if v, ok := strings.CutPrefix(line, key+":"); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 func checkPattern(body []byte, n int) error {
@@ -145,24 +178,51 @@ func ringState(pgid int) string {
 	var b strings.Builder
 	rel, _ := os.ReadFile("/proc/sys/kernel/osrelease")
 	fmt.Fprintf(&b, "kernel %s", rel)
+	for _, proc := range groupProcs(pgid) {
+		wchan, _ := os.ReadFile(filepath.Join(proc, "wchan"))
+		fmt.Fprintf(&b, "%s wchan %s\n", proc, wchan)
+		for fd, info := range procRings(proc) {
+			fmt.Fprintf(&b, "%s:\n%s\n", fd, info)
+		}
+	}
+	return b.String()
+}
+
+// ringInfos is the fdinfo of every io_uring the process group holds.
+func ringInfos(pgid int) []string {
+	var infos []string
+	for _, proc := range groupProcs(pgid) {
+		for _, info := range procRings(proc) {
+			infos = append(infos, info)
+		}
+	}
+	return infos
+}
+
+func groupProcs(pgid int) []string {
+	var group []string
 	procs, _ := filepath.Glob("/proc/[0-9]*")
 	for _, proc := range procs {
 		stat, err := os.ReadFile(filepath.Join(proc, "stat"))
 		fields := strings.Fields(string(stat[strings.LastIndexByte(string(stat), ')')+1:]))
-		if err != nil || len(fields) < 3 || fields[2] != strconv.Itoa(pgid) {
-			continue
-		}
-		wchan, _ := os.ReadFile(filepath.Join(proc, "wchan"))
-		fmt.Fprintf(&b, "%s wchan %s\n", proc, wchan)
-		fds, _ := filepath.Glob(filepath.Join(proc, "fd", "*"))
-		for _, fd := range fds {
-			if link, _ := os.Readlink(fd); link == "anon_inode:[io_uring]" {
-				info, _ := os.ReadFile(filepath.Join(proc, "fdinfo", filepath.Base(fd)))
-				fmt.Fprintf(&b, "%s:\n%s\n", fd, info)
-			}
+		if err == nil && len(fields) >= 3 && fields[2] == strconv.Itoa(pgid) {
+			group = append(group, proc)
 		}
 	}
-	return b.String()
+	return group
+}
+
+// procRings maps each io_uring descriptor of the process to its fdinfo.
+func procRings(proc string) map[string]string {
+	rings := map[string]string{}
+	fds, _ := filepath.Glob(filepath.Join(proc, "fd", "*"))
+	for _, fd := range fds {
+		if link, _ := os.Readlink(fd); link == "anon_inode:[io_uring]" {
+			info, _ := os.ReadFile(filepath.Join(proc, "fdinfo", filepath.Base(fd)))
+			rings[fd] = string(info)
+		}
+	}
+	return rings
 }
 
 // http10Pattern asks over HTTP/1.0, which the server answers and closes.

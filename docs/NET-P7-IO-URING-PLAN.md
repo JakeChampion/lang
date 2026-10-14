@@ -112,7 +112,10 @@ fallback; the native arm64 runner exercises the ring.
    descriptor; an interest change queues a `POLL_REMOVE` and a fresh
    `POLL_ADD`; a wait submits everything queued and the re-arms of the
    completions it read in one `io_uring_enter` with a timeout
-   (`IORING_ENTER_EXT_ARG`). `RealDriver` gains the ring beside the
+   (`IORING_ENTER_EXT_ARG`). What is queued is read from the submission
+   ring (its tail less the kernel's head), not counted as it is pushed: a
+   kernel that fails one entry stops submitting after it, and the next
+   wait submits the rest. `RealDriver` gains the ring beside the
    reactor, `async.real_driver_io_uring()` makes one that asks for it and
    `.io_uring()` says whether it got it; the serve loop asks under
    `Config.io_uring`. Each new builtin is four classifications
@@ -180,7 +183,9 @@ fallback; the native arm64 runner exercises the ring.
    watched for nothing but the write's completion, which the wait reports
    as writable; a short write sends the rest from where it stopped. A
    driver without the send (epoll, a kernel that refuses it) answers
-   -EOPNOTSUPP and the loop copies from then on. Loopback copies, so on
+   -EOPNOTSUPP and the loop copies from then on; a write refused for any
+   other reason is copied, and a broken socket then fails the copy.
+   Loopback copies, so on
    every host here the kernel sends a copy behind the same completions,
    and what this slice saves is measured only between two machines with a
    real NIC; the gates are correctness. Gates: `TestRingZcX86_64` and its

@@ -3356,45 +3356,48 @@ function __zc_conn(c: __Conns, at: i32): boolean {
 // __zc_tail_send(drv, c, at, opts) — `__file_tail_send` for a body written
 // without a copy: `(conns, sent, handled)`. A write in flight is Partial
 // until its result comes; the result moves the tail on, a body written
-// whole is Whole, and the rest goes by `__zc_write`.
+// whole is Whole, a refused write is copied (`__zc_copy`), and the rest
+// goes by `__zc_write`.
 function __zc_tail_send[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Config): (__Conns, __Sent, boolean) {
   if let ZcTail(body, from, slot) = c.tails[at] {
-    let landed: (__Conns, i32) = __zc_landed(drv, c, at, from, slot);
+    let landed: (__Conns, i32, boolean) = __zc_landed(drv, c, at, from, slot);
     let off: i32 = landed.1;
     if (off == 0 - 115) {
       return (landed.0, Partial, true);
     }
-    if (off < 0) {
-      return (__Conns { ...landed.0, tails: landed.0.tails.with(at, NoTail) }, Failed, true);
-    }
     if (off >= body.len()) {
       return (__Conns { ...landed.0, tails: landed.0.tails.with(at, NoTail) }, Whole, true);
+    }
+    if (landed.2) {
+      return __zc_copy(drv, landed.0, at, body, off, opts);
     }
     return __zc_write(drv, landed.0, at, body, off, opts);
   }
   return (c, Whole, false);
 }
 
-// __zc_landed(drv, c, at, from, slot) — how far the body has gone: `from`
-// with no write in flight, -EINPROGRESS while one is, the offset its
-// result reaches, or -1 when it failed. A result the kernel's lack of the
-// send explains turns the loop to copying, from where the write began.
-function __zc_landed[D: async.Driver](drv: D, c: __Conns, at: i32, from: i32, slot: i32): (__Conns, i32) {
+// __zc_landed(drv, c, at, from, slot) — how far the body has gone, and
+// whether the kernel refused the write: `from` with no write in flight,
+// -EINPROGRESS while one is, the offset its result reaches, or `from` and
+// refused for an error, which leaves the bytes to a copy that fails in its
+// turn if the socket has. A refusal the kernel's lack of the send explains
+// turns the loop to copying from then on.
+function __zc_landed[D: async.Driver](drv: D, c: __Conns, at: i32, from: i32, slot: i32): (__Conns, i32, boolean) {
   if (slot < 0) {
-    return (c, from);
+    return (c, from, false);
   }
   let r: i32 = drv.zc_result(slot);
   if (r == 0 - 115) {
-    return (c, r);
+    return (c, r, false);
   }
   c = __zc_settled(c, slot);
   if (r == 0 - 95 || r == 0 - 22) {
-    return (__Conns { ...c, zc_bytes: 0 }, from);
+    return (__Conns { ...c, zc_bytes: 0 }, from, true);
   }
   if (r < 0) {
-    return (c, 0 - 1);
+    return (c, from, true);
   }
-  return (c, from + r);
+  return (c, from + r, false);
 }
 
 // __zc_write(drv, c, at, body, off, opts) — `body[off:]` written: by
@@ -3414,6 +3417,12 @@ function __zc_write[D: async.Driver](drv: D, c: __Conns, at: i32, body: u8[], of
       c = __Conns { ...c, zc_bytes: 0 };
     }
   }
+  return __zc_copy(drv, c, at, body, off, opts);
+}
+
+// __zc_copy(drv, c, at, body, off, opts) — `body[off:]` written as a copy,
+// the tail done with.
+function __zc_copy[D: async.Driver](drv: D, c: __Conns, at: i32, body: u8[], off: i32, opts: Config): (__Conns, __Sent, boolean) {
   let sent: (__Conns, __Sent) = __serve_send(drv, __Conns { ...c, tails: c.tails.with(at, NoTail) }, at, __bytes_from(body, off), opts);
   return (sent.0, sent.1, true);
 }
