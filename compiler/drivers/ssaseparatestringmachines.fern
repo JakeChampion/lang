@@ -171,6 +171,7 @@ pub function run(output: string): void {
   identities(output);
   mutation(output, "cmpl $1934589965, %edx", "cmpl $0, %edx", false);
   mutation(output, "cmpl $1112494674, %edx", "cmpl $0, %edx", false);
+  mutation(output, "cmpl $1196576599, %edx", "cmpl $0, %edx", false);
   mutation(output, "    ret\n", "unknown_instruction\nret\n", false);
   mutation(output, "    ret\n", "jmp .Lstrfree_ret\n", false);
   require(!machine.check(".set alias, __fern_capw\n" + output), "closed namespace");

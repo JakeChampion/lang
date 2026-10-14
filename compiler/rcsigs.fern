@@ -159,6 +159,7 @@ pub function table(): Table {
   // it implies is spelled by the lowering around it, in the moves it emits
   // on each answer, so the call itself touches nothing.
   rows = add(rows, ["__fern_str_grow", "__fern_str_grow_range"], inert(result_none()));
+  rows = add(rows, ["__fern_str_grow_fresh", "__fern_str_grow_fresh_range"], inert(result_fresh()));
   // The element retains walk the array's elements and leave the array's own
   // count alone.
   rows = add(rows, ["__fern_arr_inc_elems", "__fern_arr_own_elems", "__fern_set_args"], inert(result_none()));

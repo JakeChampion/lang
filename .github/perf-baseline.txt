@@ -89,13 +89,13 @@ x86_64/sort_ints.text	3398
 x86_64/sort_ints.ir	29849660
 x86_64/sort_strings.text	4210
 x86_64/sort_strings.ir	105692600
-x86_64/string_build.text	3221
-x86_64/string_build.ir	91870927
+x86_64/string_build.text	3263
+x86_64/string_build.ir	56829760
 x86_64/string_count_byte.text	2923
 x86_64/string_count_byte.ir	135589612
 x86_64/string_find_byte.text	3307
 x86_64/string_find_byte.ir	43567682
-x86_64/string_rfind_byte.text	3359
+x86_64/string_rfind_byte.text	3436
 x86_64/string_rfind_byte.ir	43582563
 x86_64/string_scan.text	3237
 x86_64/string_scan.ir	52966728
@@ -197,7 +197,7 @@ aarch64/array_scale_f64.text	2801
 aarch64/array_scale_f64.ir	25365579
 aarch64/array_with.text	1255
 aarch64/array_with.ir	31219422
-aarch64/ascii_scan.text	3155
+aarch64/ascii_scan.text	3204
 aarch64/ascii_scan.ir	68660210
 aarch64/call_overhead.text	148
 aarch64/call_overhead.ir	11250762
@@ -229,13 +229,13 @@ aarch64/sort_ints.text	3583
 aarch64/sort_ints.ir	32514646
 aarch64/sort_strings.text	4413
 aarch64/sort_strings.ir	106027235
-aarch64/string_build.text	3382
-aarch64/string_build.ir	89302766
-aarch64/string_count_byte.text	2999
+aarch64/string_build.text	3431
+aarch64/string_build.ir	63637394
+aarch64/string_count_byte.text	3048
 aarch64/string_count_byte.ir	295398919
-aarch64/string_find_byte.text	3424
+aarch64/string_find_byte.text	3473
 aarch64/string_find_byte.ir	55807313
-aarch64/string_rfind_byte.text	3471
+aarch64/string_rfind_byte.text	3609
 aarch64/string_rfind_byte.ir	55809919
 aarch64/string_scan.text	3393
 aarch64/string_scan.ir	60275834
@@ -245,9 +245,9 @@ aarch64/struct_drop.text	3563
 aarch64/struct_drop.ir	349820825
 aarch64/tokenize.text	1195
 aarch64/tokenize.ir	38580038
-aarch64/utf8_ingest_unchecked.text	9534
-aarch64/utf8_ingest_unchecked.ir	2761326
-aarch64/utf8_ingest_validated.text	9799
+aarch64/utf8_ingest_unchecked.text	9679
+aarch64/utf8_ingest_unchecked.ir	2732016
+aarch64/utf8_ingest_validated.text	9944
 aarch64/utf8_ingest_validated.ir	6347933
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.

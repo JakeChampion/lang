@@ -74,6 +74,8 @@ pub function provided_names(): string[] {
     "__fern_str_borrow",
     "__fern_str_grow",
     "__fern_str_grow_range",
+    "__fern_str_grow_fresh",
+    "__fern_str_grow_fresh_range",
     // Suspension lowering saves and restores frame slots through these
     // exact runtime entry points. A task-like prefix alone proves nothing.
     "__fern_task_new",

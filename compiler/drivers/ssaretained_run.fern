@@ -6,12 +6,11 @@ import "../ircore";
 import "../irtables";
 import "../irverifygate";
 import "../rccertify";
-import "../lexer";
 import "../parser";
 import "../physicalbody";
-import "../semlower";
 import "../ssaprepare";
 import "../util";
+import "./ssaretainedprogram" as retained;
 import "./ssaretainedproof" as proof;
 import "./ssaretainedwrapper" as wrapper;
 import "./ssaretainedentry" as entry;
@@ -21,58 +20,18 @@ import "./ssaretainedsites" as sites;
 import "./ssaretainedrecursive" as recursive;
 import "./ssadecrementcounts" as decrementcounts;
 import "./ssadecrementmemories" as decrementmemories;
-import "./ssadecrementtexts" as decrementtexts;
-import "./ssadecrementisas" as decrementisas;
-import "./ssadecrementmachines" as decrementmachines;
-import "./ssadecrementdata" as decrementdata;
-import "./ssadecrementzeros" as decrementzeros;
-import "./ssadecrementdependencies" as decrementdependencies;
-import "./ssacapacityisas" as capacityisas;
 import "./ssacapacityvalues" as capacityvalues;
-import "./ssacapacitymachines" as capacitymachines;
-import "./ssalargepushisas" as largepushisas;
-import "./ssalargepushmachines" as largepushmachines;
-import "./ssaarrayreleaseisas" as arrayreleaseisas;
-import "./ssasmallarraymachines" as smallarraymachines;
 import "./ssalargepushpartitions" as largepushpartitions;
 import "./ssalargepushvalues" as largepushvalues;
 import "./ssalargearrayvalues" as largearrayvalues;
-import "./ssalargearraymachines" as largearraymachines;
-import "./ssastringreleaseisas" as stringreleaseisas;
-import "./ssaboxstringmachines" as boxstringmachines;
-import "./ssastringvalues" as stringvalues;
-import "./ssafusedstringmachines" as fusedstringmachines;
-import "./ssaseparatestringmachines" as separatestringmachines;
-import "./ssadecrementguardcases" as decrementguardcases;
-import "./ssareleasestorage" as releasestorage;
-import "./ssaarrayreleases" as arrayreleases;
-import "./ssastringreleases" as stringreleases;
 import "./ssaretainedtext" as retainedtext;
 import "./ssaconstructorisas" as constructorisas;
-import "./ssaarrayboxmachines" as arrayboxmachines;
 import "./ssasmallcallerflows" as smallcallerflows;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
     exit(code);
   }
-}
-
-// This controlled producer adds a need during the first runtime trial.
-// The final str_cmp record must therefore have heap in its BEFORE context.
-function runtime(src: string): physicalbody.Lowered {
-  if (src == asmcore.rt_src_str_cmp()) {
-    return semlower.runtime_lowering("function __fern_str_cmp(a: string, b: string): i32 { let p = __raw_alloc(1); let text = __raw_string(p, 1); return text.len(); }");
-  }
-  return semlower.runtime_lowering(src);
-}
-
-function emit(g: ircore.Gated, cache: irtables.LowerResult[], physical: physicalbody.Collection, arm: boolean, retain: boolean, entry: boolean, lo: i32, hi: i32): ssaprepare.Output {
-  let sw = asmcore.Switches { backtrace: false, sanitize: false, var_rows: false, shared: false };
-  if (arm) {
-    return asm_arm64_ir.emit_module_ir_unit_arm64_prepared(g.im, entry, false, "", ["str_cmp"], g.im.funcs, g.stab, lo, hi, cache, physical, runtime, sw, retain);
-  }
-  return asm_ir.emit_module_ir_unit_prepared(g.im, entry, false, "", ["str_cmp"], g.im.funcs, g.stab, lo, hi, cache, physical, runtime, 0 as usize, sw, retain);
 }
 
 function count(rows: ssaprepare.Emitted[], name: string): i32 {
@@ -102,8 +61,8 @@ function selection(g: ircore.Gated, arm: boolean): void {
   let loser = irtables.LowerResult { ...tail, ops: [ir.op_const_i32(99), ir.op_return()] };
   let cache = g.cache.with(0, changed).append(tail).append(loser);
   let physical = physicalbody.Collection { ...g.physical, rows: g.physical.rows.append(physicalbody.Origin { producer: 0, symbol: "tail-first", helper: None }).append(physicalbody.Origin { producer: 0, symbol: "tail-loser", helper: None }) };
-  let off = emit(g, cache, physical, arm, false, false, 0, 1);
-  let on = emit(g, cache, physical, arm, true, false, 0, 1);
+  let off = retained.emit(g, cache, physical, arm, false, false, 0, 1);
+  let on = retained.emit(g, cache, physical, arm, true, false, 0, 1);
   require(off.bodies.len() == 0 && off.text == on.text, 10);
   require(on.bodies.len() == 2 && count(on.bodies, "first") == 1 && count(on.bodies, "retained_tail") == 1, 11);
   require(on.bodies[0].body.lowered.ops[0].i32_imm == 37, 12);
@@ -111,45 +70,20 @@ function selection(g: ircore.Gated, arm: boolean): void {
   require(on.bodies[0].body.selected.origin.symbol == g.physical.rows[0].symbol, 14);
   require(on.bodies[0].context.architecture == (if (arm) { "arm64" } else { "x86-64" }), 15);
   require(irtables.sig_reg_has_exact(on.bodies[0].context.reg_entries, "first"), 16);
-  let next = emit(g, cache, physical, arm, true, false, 1, 2);
+  let next = retained.emit(g, cache, physical, arm, true, false, 1, 2);
   require(count(next.bodies, "first") == 0 && count(next.bodies, "second") == 1 && count(next.bodies, "retained_tail") == 1, 17);
   let skipped = cache.with(0, irtables.LowerResult { ...changed, superseded: true });
-  let none = emit(g, skipped, physical, arm, true, false, 0, 1);
+  let none = retained.emit(g, skipped, physical, arm, true, false, 0, 1);
   require(none.bodies.len() == 1 && none.bodies[0].label_name == "retained_tail", 18);
-  let unknown = emit(g, cache, physicalbody.no_collection(), arm, true, false, 0, 1);
+  let unknown = retained.emit(g, cache, physicalbody.no_collection(), arm, true, false, 0, 1);
   require(unknown.bodies[0].body.selected.origin.producer < 0, 19);
 }
 
 function settled(g: ircore.Gated, arm: boolean): void {
-  let off = emit(g, g.cache, g.physical, arm, false, true, 0, -1);
-  let on = emit(g, g.cache, g.physical, arm, true, true, 0, -1);
+  let off = retained.emit(g, g.cache, g.physical, arm, false, true, 0, -1);
+  let on = retained.emit(g, g.cache, g.physical, arm, true, true, 0, -1);
   require(off.bodies.len() == 0 && off.text == on.text, 20);
   runtimeproof.run(on.text, arm);
-  if (!arm) {
-    decrementtexts.run(on.text);
-    decrementisas.run(on.text);
-    decrementmachines.run(on.text);
-    decrementdata.run(on.text);
-    decrementzeros.run(on.text);
-    decrementdependencies.run(on.text);
-    capacityisas.run(on.text);
-    capacitymachines.run(on.text);
-    largepushisas.run(on.text);
-    arrayreleaseisas.run(on.text);
-    smallarraymachines.run(on.text);
-    largearraymachines.run(on.text);
-    stringreleaseisas.run(on.text);
-    boxstringmachines.run(on.text);
-    stringvalues.run();
-    fusedstringmachines.run(on.text);
-    separatestringmachines.run(on.text);
-    decrementguardcases.run(on.text);
-    releasestorage.run(on.text);
-    arrayreleases.run(on.text);
-    stringreleases.run(on.text);
-    arrayboxmachines.run(on.text);
-    largepushmachines.run(on.text);
-  }
   sites.output(on);
   require(count(on.bodies, "__fern_str_cmp") == 1 && count(on.bodies, "first") == 1, 21);
   let at = find(on.bodies, "__fern_str_cmp");
@@ -167,7 +101,7 @@ function settled(g: ircore.Gated, arm: boolean): void {
 
 function direct(g: ircore.Gated): void {
   let base = asmcore.new_state();
-  base = asmcore.EmitState { ...base, struct_decls: g.stab, rt_lower: runtime, retain_prepared: true, rc_free_debug: true };
+  base = asmcore.EmitState { ...base, struct_decls: g.stab, rt_lower: retained.runtime, retain_prepared: true, rc_free_debug: true };
   let out = asm_arm64_ir.emit_body(g.im, base, false, g.cache, g.physical);
   require(base.prepared.len() == 0 && out.prepared.len() == 3, 30);
   require(out.native_sites.len() == 0 && !out.retain_sites && out.capture == base.capture, 164);
@@ -180,7 +114,7 @@ function direct(g: ircore.Gated): void {
 
 function discarded_trial(): void {
   let base = asmcore.new_state();
-  base = asmcore.EmitState { ...base, rt_lower: runtime, retain_prepared: true, needed: ["str_cmp"], sanitize: false, leak_check: false, rc_free_debug: false };
+  base = asmcore.EmitState { ...base, rt_lower: retained.runtime, retain_prepared: true, needed: ["str_cmp"], sanitize: false, leak_check: false, rc_free_debug: false };
   let trial = asm_arm64_ir.emit_ir_runtime(base, false);
   let at = find(trial.prepared, "__fern_str_cmp");
   require(at >= 0 && !util.has_str(trial.prepared[at].context.needed, "heap"), 35);
@@ -214,7 +148,7 @@ function debug_body(g: ircore.Gated, arm: boolean, var_rows: boolean): void {
     s.release();
   } else {
     let sw = asmcore.Switches { ...asmcore.env_switches(), var_rows: var_rows };
-    let out = asm_ir.emit_module_ir_unit_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, 1, g.cache.with(0, r), g.physical, runtime, recs, sw, true);
+    let out = asm_ir.emit_module_ir_unit_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, 1, g.cache.with(0, r), g.physical, retained.runtime, recs, sw, true);
     rows = out.bodies;
   }
   require(rows.len() == 1 && rows[0].context.records, 40);
@@ -234,12 +168,11 @@ function main(): i32 {
   constructorisas.run();
   retainedtext.run();
   smallcallerflows.run();
-  let mod = parser.parse_module(lexer.tokenize("@noinline function first(): i32 { return 7; } @noinline function second(): i32 { return first(); } function main(): i32 { return second(); }"));
+  let mod = retained.module();
   if (asmcore.refuse_parse_unknowns([mod]) || asmcore.refuse_decl_names([mod])) {
     return 1;
   }
-  let d = semlower.driven(mod, "x86-64-linux");
-  let g = semlower.program(d);
+  let g = retained.program(mod);
   require(g.ok && g.im.funcs.len() == 3 && g.cache.len() == 3, 1);
   let fresh = asmcore.new_state();
   require(!fresh.retain_prepared, 2);
@@ -259,7 +192,7 @@ function main(): i32 {
   // subsequent real emission through a shared accumulator.
   let needs = asm_ir.module_runtime_needs(g.im, g.im.funcs, g.stab, g.cache, g.physical);
   require(needs.len() == 0, 33);
-  let after = emit(g, g.cache, g.physical, false, true, false, 0, 1);
+  let after = retained.emit(g, g.cache, g.physical, false, true, false, 0, 1);
   require(after.bodies.len() == 1 && after.bodies[0].label_name == "first", 34);
   wrapper.run(false);
   wrapper.run(true);

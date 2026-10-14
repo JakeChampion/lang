@@ -24,10 +24,11 @@ const concatDoublingSrc = `function main(): i32 {
 const allocSizeAbortMsg = "fern: allocation size out of range"
 
 // TestSelfHostConcatPastLengthCeilingAborts is the self-host half of #8457
-// (#8519). __fern_str_concat is Fern source whose `la + lb` wraps negative past
-// 2 GiB; __raw_alloc now refuses a size that is negative as an i32, so the
-// program aborts the way the natives do instead of carrying on with a string
-// whose length is -2147483648.
+// (#8519). A self-append whose block has no room builds a grown box through
+// __fern_str_grow_fresh, whose `la + lb` would wrap negative past 2 GiB; the
+// helper refuses a length past the i32 ceiling, so the program aborts the way
+// the natives do instead of carrying on with a string whose length is
+// -2147483648.
 func TestSelfHostConcatPastLengthCeilingAborts(t *testing.T) {
 	if testing.Short() {
 		t.Skip("allocates 1.5 GiB; not a -short test")
@@ -80,12 +81,16 @@ func TestSelfHostConcatPastLengthCeilingAborts(t *testing.T) {
 			t.Fatalf("read asm: %v", err)
 		}
 		text := string(b)
-		body := text[strings.Index(text, "__fn___fern_str_concat:"):]
-		if end := strings.Index(body, "\n.size"); end > 0 {
+		start := strings.Index(text, "__fn___fern_str_grow_fresh:")
+		if start < 0 {
+			t.Fatalf("__fn___fern_str_grow_fresh not in the emitted runtime")
+		}
+		body := text[start:]
+		if end := strings.Index(body, "__fn___fern_str_borrow:"); end > 0 {
 			body = body[:end]
 		}
-		if !strings.Contains(body, "tbz w0, #31, 1f\n    b __fern_alloc_size_abort\n") {
-			t.Fatalf("__fern_str_concat's raw_alloc is not guarded against a negative size:\n%s", body)
+		if !strings.Contains(body, "cbz x9, .Lsgf_sized\n    b __fern_alloc_size_abort\n") {
+			t.Fatalf("__fern_str_grow_fresh is not guarded against a length past the ceiling:\n%s", body)
 		}
 		if !strings.Contains(text, allocSizeAbortMsg) {
 			t.Fatalf("the emitted runtime does not carry %q", allocSizeAbortMsg)
