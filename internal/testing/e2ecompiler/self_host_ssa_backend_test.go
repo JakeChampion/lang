@@ -2161,14 +2161,15 @@ func functionListing(text, label string) string {
 		return ""
 	}
 	rest := text[start+len(label)+2:]
-	// The function's register entry, `<label>.r:`, is inside its listing.
+	// The function's own entries, `<label>.k:` and `<label>.r:`, are inside
+	// its listing.
 	from := 0
 	for {
 		end := strings.Index(rest[from:], "\n__fn_")
 		if end < 0 {
 			return rest
 		}
-		if strings.HasPrefix(rest[from+end+1:], label+".r:\n") {
+		if next := rest[from+end+1:]; strings.HasPrefix(next, label+".r:\n") || strings.HasPrefix(next, label+".k:\n") {
 			from += end + 1
 			continue
 		}
