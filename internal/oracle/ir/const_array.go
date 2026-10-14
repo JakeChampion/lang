@@ -80,6 +80,7 @@ func (b *builder) reachesRawFloor() bool {
 var rawArrayWriters = map[string]bool{
 	"__arr_set_len": true,
 	"tcp_recv_into": true,
+	"tcp_ktls":      true,
 	"reactor_wait":  true,
 	"ring_wait":     true,
 }

@@ -89,6 +89,7 @@ import "std/zstd";
 // through, the one target with no sockets of its own.
 import "std/wasi_http";
 import "std/tls/client";
+import "std/tls/ktls";
 import "std/tls/verify";
 import "std/crypto";
 import "std/http/h2";
@@ -269,8 +270,9 @@ pub function timeouts(): Timeouts {
 // (`timeouts`, and `limits` for its size: the body cap is
 // `limits.body`, the status line is capped by `limits.request_line`),
 // and `redirects`, the most 3xx hops `send` follows (0 answers the 3xx
-// as data).
-pub struct Request { method: string, url: string, headers: HeaderMap, body: Body, timeouts: Timeouts, limits: http.HttpLimits, redirects: i32, decoding: Decoding }
+// as data). `ktls` hands an https connection's records to Linux's TLS
+// record layer once its handshake is done (`with_ktls`).
+pub struct Request { method: string, url: string, headers: HeaderMap, body: Body, timeouts: Timeouts, limits: http.HttpLimits, redirects: i32, decoding: Decoding, ktls: boolean }
 
 // `Decoding` — what the client undoes in a response body: `depth`, how
 // many content codings it undoes (each one `gzip`), 0 for none, and then
@@ -299,7 +301,7 @@ pub function decoding(): Decoding {
 // default bounds, ten redirects and the default decoding.
 pub function request(method: string, url: string): Request {
   let none: u8[] = [];
-  return Request { method: method, url: url, headers: headers.header_map_new(), body: BodyBytes(none), timeouts: timeouts(), limits: http.http_limits(), redirects: 10, decoding: decoding() };
+  return Request { method: method, url: url, headers: headers.header_map_new(), body: BodyBytes(none), timeouts: timeouts(), limits: http.http_limits(), redirects: 10, decoding: decoding(), ktls: false };
 }
 
 // `get(url)` — `request("GET", url)`.
@@ -349,6 +351,18 @@ pub function (r: Request) with_redirects(hops: i32): Request {
 // says; `Decoding { depth: 0, ... }` asks for none and undoes none.
 pub function (r: Request) with_decoding(d: Decoding): Request {
   return Request { ...r, decoding: d };
+}
+
+// `(r: Request).with_ktls()` — `r` over connections whose records Linux's
+// TLS record layer seals and opens once the handshake is done
+// (std/tls/ktls), so a response body is read as plain bytes off the
+// socket. A connection keeps sealing its own where the kernel has no `tls`
+// module, on Darwin and wasm, under a transport with no sockets (std/sim_fetch),
+// or when the handshake ended inside a record. `FERN_KTLS=1` in the
+// environment asks for it as this does. A connection kept for reuse
+// stays as it was opened.
+pub function (r: Request) with_ktls(): Request {
+  return Request { ...r, ktls: true };
 }
 
 // `(r: HttpResponse).ok_or_status()` — `Ok(r)` for a 2xx status, else
@@ -577,7 +591,9 @@ function __asks_codings(req: Request): boolean {
 // the client reports as `Cancelled`. `write` answers
 // the bytes taken, or a negated errno. `idle` is the transport's pool of
 // connections kept for reuse; the client decides what goes in and comes
-// out of it.
+// out of it. `socket` is the descriptor under a connection, or -1 for a
+// transport whose connections are not the machine's, which the kernel's
+// TLS record layer cannot take (`Request.with_ktls`).
 pub trait Transport {
   function now_ns(self: Self): i64;
   function wall_ms(self: Self): i64;
@@ -587,6 +603,7 @@ pub trait Transport {
   function read(self: Self, conn: i32, max: i32, wait_ms: i64): tcp.Recv;
   function close(self: Self, conn: i32): i32;
   function idle(self: Self): Idle;
+  function socket(self: Self, conn: i32): i32;
 }
 
 // `Idle` — the connections a transport keeps for the next request to the
@@ -890,11 +907,51 @@ pub function (sh: Shared) sockets(): i32[] {
   return out;
 }
 
+// `__driven_kernel(sh, at, d, bytes)` — `event` on an offloaded
+// connection: `bytes` read plain off the socket, or, when the read
+// stopped short of them, the record the session takes instead.
+function __driven_kernel(sh: Shared, at: i32, d: Driven, bytes: u8[]): Option[i32] {
+  let session: client.Session = d.tls;
+  if (bytes.len() == 0) {
+    match (__kernel_record(d.fd, d.tls)) {
+      RecordTaken(step) => {
+        session = step.session;
+        if (step.closed) {
+          __driven_failed(sh, d.fd, __closed_early(0));
+          return Some(d.fd);
+        }
+      },
+      RecordAwaited => {
+        return None;
+      },
+      RecordsEnded => {
+        __driven_failed(sh, d.fd, __closed_early(0));
+        return Some(d.fd);
+      },
+      RecordFailed(e) => {
+        __driven_failed(sh, d.fd, e);
+        return Some(d.fd);
+      }
+    }
+  }
+  let fed: h2.Step = d.h2.read(bytes);
+  let streams: i32 = __mail_answered(sh, d.fd, fed.events, d.streams);
+  sh.rows.set(sh.rows.get().with(at, Driven { ...d, tls: session, h2: fed.conn, out: d.out.concat(fed.output), streams: streams, since: monotonic_ns() }));
+  if (fed.conn.closed()) {
+    __driven_failed(sh, d.fd, Protocol("HTTP/2: the connection closed before the response ended"));
+    return Some(d.fd);
+  }
+  return None;
+}
+
 // `__sealed(d)` — the connection's queued frames sealed by its session
-// onto the wire bytes.
+// onto the wire bytes, or queued as they are once the kernel seals them.
 function __sealed(d: Driven): Driven {
   if (d.out.len() == 0) {
     return d;
+  }
+  if (d.tls.offloaded()) {
+    return Driven { ...d, out: [], wire: d.wire.concat(d.out) };
   }
   match (d.tls.write(d.out)) {
     Ok(step) => {
@@ -922,11 +979,14 @@ pub function (sh: Shared) event(fd: i32, readable: boolean): Option[i32] {
     return None;
   }
   let bytes: u8[] = tcp_recv(fd, 65536);
+  let d: Driven = rows[at];
+  if (d.tls.offloaded()) {
+    return __driven_kernel(sh, at, d, bytes);
+  }
   if (bytes.len() == 0) {
     __driven_failed(sh, fd, __closed_early(0));
     return Some(fd);
   }
-  let d: Driven = rows[at];
   match (d.tls.read(bytes)) {
     Ok(step) => {
       let fed: h2.Step = d.h2.read(step.data);
@@ -1266,6 +1326,9 @@ impl Transport for Sockets {
   }
   function idle(self: Sockets): Idle {
     return self.pool;
+  }
+  function socket(self: Sockets, conn: i32): i32 {
+    return conn;
   }
 }
 
@@ -1740,7 +1803,7 @@ function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64,
         None => {}
       }
     }
-    conn = __connect(tr, t, req.timeouts, guard, roots)?;
+    conn = __connect(tr, t, req, guard, roots)?;
   }
   return __attempt_opened(tr, req, t, started, key, conn);
 }
@@ -1798,7 +1861,7 @@ function __shared_socket[T: Transport](tr: T, req: Request, t: __Target, started
       return Ok(OnLoop(fd));
     }
     if (sh.dialing(key)) {
-      match (__connect(tr, t, req.timeouts, guard, roots)) {
+      match (__connect(tr, t, req, guard, roots)) {
         Ok(conn) => {
           let adopted: i32 = __shared_adopted(sh, key, conn, tr.now_ns());
           sh.dialed(key);
@@ -2020,17 +2083,30 @@ function __no_conn(): __Conn {
 function __close[T: Transport](tr: T, conn: __Conn): void {
   if let Some(s) = conn.tls {
     if let Ok(step) = s.close() {
-      tr.write(conn.fd, step.output);
+      __send_framed(tr, conn.fd, s, step.output);
     }
   }
   tr.close(conn.fd);
 }
 
-// `__connect(tr, t, timeouts, guard, roots)` — a connection to the host,
-// resolved and raced under the connect bound; with `guard`, refused
-// before the race when any address resolved is not a global one; secured
-// under `roots` when the target is https.
-function __connect[T: Transport](tr: T, t: __Target, timeouts: Timeouts, guard: boolean, roots: Option[verify.Roots]): Result[__Conn, FetchError] {
+// `__send_framed(tr, fd, s, output)` — what the session `s` wrote, onto
+// the connection: sealed records as they are, or, once the session is
+// offloaded, its records in the clear handed to the kernel to seal.
+function __send_framed[T: Transport](tr: T, fd: i32, s: client.Session, output: u8[]): void {
+  if (s.offloaded()) {
+    ktls.send_records(tr.socket(fd), output);
+  } else {
+    tr.write(fd, output);
+  }
+}
+
+// `__connect(tr, t, req, guard, roots)` — a connection to the host,
+// resolved and raced under the request's connect bound; with `guard`,
+// refused before the race when any address resolved is not a global one;
+// secured under `roots` when the target is https, and offloaded when the
+// request asks for kTLS.
+function __connect[T: Transport](tr: T, t: __Target, req: Request, guard: boolean, roots: Option[verify.Roots]): Result[__Conn, FetchError] {
+  let timeouts: Timeouts = req.timeouts;
   let begun: i64 = tr.now_ns();
   let addrs: net.IpAddr[] = __resolve(tr, t.host, guard)?;
   match (tr.connect(addrs, t.port, __connect_bound(timeouts).as_millis() as i32)) {
@@ -2038,7 +2114,7 @@ function __connect[T: Transport](tr: T, t: __Target, timeouts: Timeouts, guard: 
       if (!t.tls) {
         return Ok(__Conn { fd: fd, tls: None, closed: false, h2: None });
       }
-      match (__secured(tr, fd, t, begun + __connect_bound(timeouts).as_nanos(), roots)) {
+      match (__secured(tr, fd, t, begun + __connect_bound(timeouts).as_nanos(), roots, req)) {
         Ok(s) => {
           if (s.alpn() != "h2") {
             return Ok(__Conn { fd: fd, tls: Some(s), closed: false, h2: None });
@@ -2081,14 +2157,93 @@ function __h2_opened[T: Transport](tr: T, fd: i32, s: client.Session): Result[__
   return Err(Protocol("unreachable"));
 }
 
-// `__secured(tr, fd, t, deadline, roots)` — a TLS session with the origin
-// on `fd`, through the proxy's tunnel when `fd` reaches a proxy, before the
-// transport's clock reaches `deadline`.
-function __secured[T: Transport](tr: T, fd: i32, t: __Target, deadline: i64, roots: Option[verify.Roots]): Result[client.Session, FetchError] {
+// `__secured(tr, fd, t, deadline, roots, req)` — a TLS session with the
+// origin on `fd`, through the proxy's tunnel when `fd` reaches a proxy,
+// before the transport's clock reaches `deadline`, and offloaded to the
+// kernel when `req` asks for it (`__kernel_session`).
+function __secured[T: Transport](tr: T, fd: i32, t: __Target, deadline: i64, roots: Option[verify.Roots], req: Request): Result[client.Session, FetchError] {
   if (!t.direct) {
     __tunnel(tr, fd, t, deadline)?;
   }
-  return __tls_handshake(tr, fd, t.origin, deadline, roots);
+  let s: client.Session = __tls_handshake(tr, fd, t.origin, deadline, roots)?;
+  return __kernel_session(tr.socket(fd), s, req);
+}
+
+// `__kernel_session(sock, s, req)` — the session `s` over the socket
+// `sock` handed to the kernel's record layer when `req` asks for kTLS; as
+// it was where there is no socket, the kernel has no record layer, or the
+// handshake left part of a record read; a failure when the kernel took the
+// receive direction and refused the other, leaving the socket unusable.
+function __kernel_session(sock: i32, s: client.Session, req: Request): Result[client.Session, FetchError] {
+  if (sock < 0 || !__ktls_asked(req)) {
+    return Ok(s);
+  }
+  if let Some(o) = s.offload() {
+    match (ktls.attach(sock, o.keys)) {
+      ktls.Kernel => {
+        return Ok(o.session);
+      },
+      ktls.Unchanged => {},
+      ktls.Broken(errno) => {
+        return Err(Tls("the kernel's TLS record layer refused the transmit keys (errno " + errno.to_string() + ")"));
+      }
+    }
+  }
+  return Ok(s);
+}
+
+function __ktls_asked(req: Request): boolean {
+  match (env("FERN_KTLS")) {
+    Some(v) => {
+      return req.ktls || v == "1";
+    },
+    None => {}
+  }
+  return req.ktls;
+}
+
+// `__Record` — a record other than application data off an offloaded
+// connection, once the session has taken it (its answer sent and any new
+// keys installed); the end of the stream; no record waiting yet; or the
+// failure.
+enum __Record { RecordTaken(client.Step), RecordsEnded, RecordAwaited, RecordFailed(FetchError) }
+
+// `__kernel_record(sock, s)` — the record a read on the offloaded socket
+// `sock` stopped short at, given to the session `s`.
+function __kernel_record(sock: i32, s: client.Session): __Record {
+  match (ktls.read_now(sock)) {
+    ktls.Opened(t, content) => {
+      match (s.read(ktls.framed(t, content))) {
+        Ok(step) => {
+          if (ktls.send_records(sock, step.output) < 0) {
+            return RecordFailed(Tls("the connection closed while the session answered a record"));
+          }
+          let installed: i32 = ktls.install(sock, step.rekeyed);
+          if (installed < 0) {
+            return RecordFailed(Tls("the kernel's TLS record layer refused new keys (errno " + (0 - installed).to_string() + ")"));
+          }
+          return RecordTaken(step);
+        },
+        Err(f) => {
+          ktls.send_records(sock, f.alert);
+          return RecordFailed(Tls(f.message()));
+        }
+      }
+    },
+    ktls.StreamEnded => {
+      return RecordsEnded;
+    },
+    ktls.ReadFailed(errno) => {
+      if (errno == 74) {
+        ktls.alert(sock, 20);
+      }
+      return RecordFailed(Tls("the kernel's TLS record layer failed a read (errno " + errno.to_string() + ")"));
+    },
+    _ => {
+      return RecordAwaited;
+    }
+  }
+  return RecordAwaited;
 }
 
 // `__tunnel(tr, fd, t, deadline)` — the proxy on `fd` asked to open a
@@ -2483,6 +2638,10 @@ function __reusable(framed: http.HttpResponseFramed, from: i32, read: i32, eof: 
 // when it speaks TLS.
 function __send_all[T: Transport](tr: T, conn: __Conn, payload: u8[]): Result[__Conn, FetchError] {
   if let Some(s) = conn.tls {
+    if (s.offloaded()) {
+      __write_all(tr, conn.fd, payload)?;
+      return Ok(conn);
+    }
     let step: client.Step = __tls(s.write(payload))?;
     __write_all(tr, conn.fd, step.output)?;
     return Ok(__Conn { ...conn, tls: Some(step.session) });
@@ -2754,6 +2913,9 @@ function __recv_bounded[T: Transport](tr: T, conn: __Conn, timeouts: Timeouts, s
   }
   match (conn.tls) {
     Some(s) => {
+      if (s.offloaded()) {
+        return __recv_kernel(tr, conn, s, timeouts, started);
+      }
       let session: client.Session = s;
       while (true) {
         let raw: u8[] = __recv_raw(tr, conn.fd, timeouts, started)?;
@@ -2773,6 +2935,36 @@ function __recv_bounded[T: Transport](tr: T, conn: __Conn, timeouts: Timeouts, s
     },
     None => {
       return Ok(__Got { conn: conn, bytes: __recv_raw(tr, conn.fd, timeouts, started)? });
+    }
+  }
+  return Ok(__Got { conn: conn, bytes: [] });
+}
+
+// `__recv_kernel(tr, conn, s, timeouts, started)` — `__recv_bounded` on a
+// connection whose records the kernel opens: application data is the
+// socket's bytes, and a read that stops short of them at another record
+// gives it to the session, the peer's close_notify ending the response.
+function __recv_kernel[T: Transport](tr: T, conn: __Conn, s: client.Session, timeouts: Timeouts, started: i64): Result[__Got, FetchError] {
+  let session: client.Session = s;
+  while (true) {
+    let raw: u8[] = __recv_raw(tr, conn.fd, timeouts, started)?;
+    if (raw.len() > 0) {
+      return Ok(__Got { conn: __Conn { ...conn, tls: Some(session) }, bytes: raw });
+    }
+    match (__kernel_record(tr.socket(conn.fd), session)) {
+      RecordTaken(step) => {
+        session = step.session;
+        if (step.closed) {
+          return Ok(__Got { conn: __Conn { ...conn, tls: Some(session), closed: true }, bytes: [] });
+        }
+      },
+      RecordsEnded => {
+        return Ok(__Got { conn: __Conn { ...conn, tls: Some(session) }, bytes: [] });
+      },
+      RecordAwaited => {},
+      RecordFailed(e) => {
+        return Err(e);
+      }
     }
   }
   return Ok(__Got { conn: conn, bytes: [] });

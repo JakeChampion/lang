@@ -216,6 +216,40 @@ pub function protection(suite: keyschedule.CipherSuite, traffic_secret: [u8]): P
   return Protection { suite: suite, key: k.key, iv: k.iv, seq: 0 as u64 };
 }
 
+// kernel_info is the protection as Linux's TLS record layer takes it for one
+// direction (`struct tls12_crypto_info_*` in linux/tls.h): the version and
+// cipher in host order, then the IV, key, salt and the sequence number of
+// the next record, big-endian. For the GCM suites the salt is the IV's first
+// four bytes and the kernel's IV the other eight; ChaCha20-Poly1305 has no
+// salt and a twelve-byte IV.
+pub function (p: Protection) kernel_info(): u8[] {
+  let cipher: i32 = 54;
+  let salt: i32 = 0;
+  match (p.suite) {
+    keyschedule.Aes128GcmSha256 => {
+      cipher = 51;
+      salt = 4;
+    },
+    keyschedule.Aes256GcmSha384 => {
+      cipher = 52;
+      salt = 4;
+    },
+    keyschedule.ChaCha20Poly1305Sha256 => {}
+  }
+  let out: u8[] = __alloc_u8(4 + p.iv.len() + p.key.len() + 8);
+  out = out.with(0, 4 as u8).with(1, 3 as u8).with(2, cipher as u8).with(3, 0 as u8);
+  out = __put(out, 4, p.iv[salt:p.iv.len()]);
+  out = __put(out, 4 + p.iv.len() - salt, p.key);
+  out = __put(out, 4 + p.iv.len() - salt + p.key.len(), p.iv[0:salt]);
+  let at: i32 = out.len() - 8;
+  let i: i32 = 0;
+  while (i < 8) {
+    out = out.with(at + i, (p.seq >> (8 * (7 - i)) as u64 & 255 as u64) as u8);
+    i = i + 1;
+  }
+  return out;
+}
+
 // __nonce is the IV exclusive-ored with the sequence number, big-endian
 // and padded on the left to the IV's length (§5.3).
 function __nonce(p: Protection): u8[] {

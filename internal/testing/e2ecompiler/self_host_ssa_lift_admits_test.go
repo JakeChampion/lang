@@ -51,10 +51,11 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	// utf8_blocks (433) adds one with three inputs that pushes the checked
 	// offset. The io_uring readiness set adds three: ring_new (434),
 	// ring_ctl (435) and ring_wait (436), with one, four and three inputs.
+	// tcp_ktls (437) adds one with four inputs.
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
-		"registered=382 declined=3\n"
+		"registered=383 declined=3\n"
 
 	cmd := runX86_64Bin(runner, bin)
 	out, err := cmd.Output()

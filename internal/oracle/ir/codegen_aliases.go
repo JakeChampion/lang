@@ -67,6 +67,7 @@ var CodegenAliases = map[string]string{
 	"ring_ctl":         "__fern_ring_ctl",
 	"ring_wait":        "__fern_ring_wait",
 	"tcp_recv_into":    "__fern_tcp_recv_into",
+	"tcp_ktls":         "__fern_tcp_ktls",
 	"udp_bind":         "__fern_udp_bind",
 	"udp_connect":      "__fern_udp_connect",
 	"udp_sendto":       "__fern_udp_sendto",
