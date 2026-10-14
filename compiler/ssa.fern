@@ -2535,7 +2535,9 @@ function free_slot(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: i32
 // the right operand of an op named in `right`, or as the left operand of one
 // named in `left` (the commutative ops and the comparisons, which the emitter
 // turns round), the offset of a byte load or store (54, 55), which the
-// emitter reads as a displacement, a phi operand, which the edge's moves load into the phi's
+// emitter reads as a displacement, the index of an array element or string
+// byte (42..44) up to 4087, which both emitters fold into the address and the
+// bounds compare, a phi operand, which the edge's moves load into the phi's
 // home, or a returned value, loaded into the result register; a use anywhere
 // else keeps it in a register. When both
 // operands are constants (the optimiser's folds do not run here, so
@@ -2587,7 +2589,7 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
       let a: i32 = 0;
       while (a < ins.args.len()) {
         let v: i32 = ins.args[a];
-        if (v >= 0 && v < is_imm.len() && is_imm[v] && ins.kind_tag != 8 && !imm_use(ins, a, konst, right, left)) {
+        if (v >= 0 && v < is_imm.len() && is_imm[v] && ins.kind_tag != 8 && !imm_use(ins, a, konst, value[v], right, left)) {
           is_imm = is_imm.with(v, false);
         }
         a = a + 1;
@@ -2601,9 +2603,12 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
   return Imms { is_imm: is_imm, konst: konst, value: value, sym_at: __alloc_i32(f.nvals), syms: [] };
 }
 
-function imm_use(ins: SInst, a: i32, konst: boolean[], right: string[], left: string[]): boolean {
+function imm_use(ins: SInst, a: i32, konst: boolean[], c: i64, right: string[], left: string[]): boolean {
   if ((ins.kind_tag == 54 || ins.kind_tag == 55) && a == 1) {
     return true;
+  }
+  if (ins.kind_tag >= 42 && ins.kind_tag <= 44 && a == 1) {
+    return c >= 0i64 && c <= 4087i64;
   }
   if (ins.kind_tag != 9 || ins.args.len() != 2) {
     return false;
