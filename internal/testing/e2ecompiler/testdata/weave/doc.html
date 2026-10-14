@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A woven program</title>
+<style>
+:root{--fg:#24292f;--muted:#57606a;--bg:#fff;--code-bg:#f6f8fa;--border:#d0d7de;--accent:#0969da;--kw:#cf222e;--type:#953800;--str:#0a3069;--com:#6e7781;--num:#0550ae}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+main{max-width:52rem;margin:0 auto;padding:2.5rem 1.25rem 6rem}
+h1,h2,h3,h4,h5,h6{line-height:1.25;margin:1.6em 0 .6em;font-weight:600}
+h1{font-size:1.9rem;border-bottom:1px solid var(--border);padding-bottom:.3em}
+h2{font-size:1.5rem;border-bottom:1px solid var(--border);padding-bottom:.3em}
+p{margin:.8em 0}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+blockquote{margin:.8em 0;padding:0 1em;color:var(--muted);border-left:.25em solid var(--border)}
+hr{border:0;border-top:1px solid var(--border);margin:1.6em 0}
+ul,ol{margin:.8em 0;padding-left:1.6em}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9em;background:var(--code-bg);padding:.15em .35em;border-radius:6px}
+pre.code{background:var(--code-bg);border:1px solid var(--border);border-radius:8px;padding:.85rem 1rem;overflow:auto;margin:0}
+pre.code code{background:none;padding:0;font-size:.86rem;line-height:1.55}
+section.chunk{margin:1.6em 0}
+.chunk-label{font-weight:600;color:var(--muted);margin-bottom:.4em;scroll-margin-top:1rem}
+.chunk-name{color:var(--fg)}
+section.file .chunk-name code{background:none;padding:0;color:var(--fg)}
+.xref{font-size:.85rem;color:var(--muted);margin:.4em 0 0;font-style:italic}
+a.ref{font-weight:600}
+.code .k{color:var(--kw)}
+.code .t{color:var(--type)}
+.code .s{color:var(--str)}
+.code .c{color:var(--com);font-style:italic}
+.code .n{color:var(--num)}
+nav.toc{background:var(--code-bg);border:1px solid var(--border);border-radius:8px;padding:.8rem 1rem;margin:0 0 2rem}
+nav.toc .toc-title{font-weight:600;font-size:.85rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:.4em}
+nav.toc ul{list-style:none;margin:0;padding:0}
+nav.toc li{margin:.15em 0}
+nav.toc .toc-l2{padding-left:1rem}
+nav.toc .toc-l3{padding-left:2rem}
+nav.toc .toc-l4,nav.toc .toc-l5,nav.toc .toc-l6{padding-left:3rem}
+section.chunk-index{margin-top:3rem;border-top:1px solid var(--border);padding-top:1rem}
+section.chunk-index ul{list-style:none;margin:0;padding:0}
+section.chunk-index li{margin:.25em 0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9rem}
+.idx-note{color:var(--muted);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:.82rem}
+</style>
+</head>
+<body>
+<main>
+<nav class="toc"><div class="toc-title">Contents</div>
+<ul>
+<li class="toc-l1"><a href="#a-woven-program">A woven program</a></li>
+<li class="toc-l2"><a href="#the-main-loop">The main loop</a></li>
+<li class="toc-l3"><a href="#examples">Examples</a></li>
+</ul>
+</nav>
+<h1 id="a-woven-program">A woven program</h1>
+<p>Intro with <strong>bold</strong>, <em>italic</em>, <code>code</code>, a <code>```fern file=x</code> span, a <a href="https://example.com">link</a>, a <a href="mailto:me@x.com">mail</a>, a <a href="./rel/path">relative</a>, a <a href="#frag">fragment</a> and a script) that must not link.</p>
+<h2 id="the-main-loop">The main loop</h2>
+<blockquote>A quote over two lines.</blockquote>
+<ul>
+<li>one item</li>
+<li>two &amp; &lt;three&gt;</li>
+</ul>
+<ol>
+<li>first</li>
+<li>second</li>
+</ol>
+<hr>
+<pre class="code display"><code># not a heading: a shell comment in a fenced block
+fern -weave doc.fern.md
+</code></pre>
+<section class="chunk">
+<div class="chunk-label" id="chunk--"><span class="chunk-name">⟨*⟩</span>≡</div>
+<pre class="code"><code><span class="k">function</span> main(): <span class="t">i32</span> {
+    <a class="ref" href="#chunk-the-main-loop">⟨the main loop⟩</a>
+    &lt;&lt;helper&gt;&gt;
+    <span class="k">return</span> <span class="n">0</span>;
+}
+</code></pre>
+</section>
+<p>The loop, in two pieces:</p>
+<section class="chunk">
+<div class="chunk-label" id="chunk-the-main-loop"><span class="chunk-name">⟨the main loop⟩</span>≡</div>
+<pre class="code"><code><span class="k">let</span> s: <span class="t">string</span> = <span class="s">&quot;hi \&quot;there\&quot;&quot;</span>;
+</code></pre>
+<p class="xref">⟨the main loop⟩ is used in <a class="ref" href="#chunk--">⟨*⟩</a>.</p>
+</section>
+<section class="chunk">
+<div class="chunk-label"><span class="chunk-name">⟨the main loop⟩</span>+≡</div>
+<pre class="code"><code><span class="k">let</span> n: <span class="t">i32</span> = <span class="n">0x1F</span> + <span class="n">2.5</span>; <span class="c">// a comment &amp; &lt;tag&gt;</span>
+</code></pre>
+<p class="xref">⟨the main loop⟩ is used in <a class="ref" href="#chunk--">⟨*⟩</a>.</p>
+</section>
+<pre class="code display"><code>illustrative … not a chunk, with a <span class="s">&quot;string&quot;</span> and <span class="n">42</span>
+</code></pre>
+<section class="chunk">
+<div class="chunk-label" id="chunk-caf-"><span class="chunk-name">⟨café⟩</span>≡</div>
+<pre class="code"><code><span class="k">function</span> helper() {}
+</code></pre>
+</section>
+<section class="chunk file">
+<div class="chunk-label"><span class="chunk-name">📄 <code>lib.fern</code></span>≡</div>
+<pre class="code"><code><a class="ref" href="#chunk-shared">⟨shared⟩</a>
+</code></pre>
+</section>
+<section class="chunk">
+<div class="chunk-label" id="chunk-shared"><span class="chunk-name">⟨shared⟩</span>≡</div>
+<pre class="code"><code><span class="k">pub</span> <span class="k">function</span> s(): <span class="t">i32</span> { <span class="k">return</span> <span class="n">1</span>; }
+</code></pre>
+</section>
+<h3 id="examples">Examples</h3>
+<pre class="code display"><code><span class="k">function</span> main(): <span class="t">i32</span> { <span class="k">return</span> <span class="n">0</span>; }
+</code></pre>
+<section class="chunk-index">
+<h2 id="chunk-index">Chunk index</h2>
+<ul>
+<li><a class="ref" href="#chunk--">⟨*⟩</a> <span class="idx-note">(root)</span></li>
+<li><a class="ref" href="#chunk-caf-">⟨café⟩</a> <span class="idx-note">(unused)</span></li>
+<li><a class="ref" href="#chunk-shared">⟨shared⟩</a> <span class="idx-note">(used by a file root)</span></li>
+<li><a class="ref" href="#chunk-the-main-loop">⟨the main loop⟩</a> <span class="idx-note">used in <a class="ref" href="#chunk--">⟨*⟩</a></span></li>
+</ul>
+</section>
+</main>
+</body>
+</html>

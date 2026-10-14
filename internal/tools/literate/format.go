@@ -80,5 +80,5 @@ func reformatFernBlock(blk block, format func(string) (string, bool)) string {
 // whitespace).
 func isBacktickFence(line string) bool {
 	t := strings.TrimSpace(line)
-	return fenceRunLen(t) >= 3 && t == strings.Repeat("`", len(t))
+	return len(t) >= 3 && strings.Trim(t, "`") == ""
 }

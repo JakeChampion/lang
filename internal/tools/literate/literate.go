@@ -45,7 +45,6 @@ package literate
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/syntax/ast"
@@ -98,23 +97,21 @@ type bodyLine struct {
 }
 
 // chunkDef collects every piece of a named chunk plus the line of its
-// first definition (used to order chunks in the woven output).
+// first definition (where a cyclic reference is reported).
 type chunkDef struct {
 	name      string
 	pieces    []piece
 	firstLine int
 }
 
-// block is one top-level region of the document: either prose (Markdown
-// to pass through to weave, ignored by tangle) or a fenced ```fern code
-// block. A fern block is a chunk definition when chunk != "", or a
-// file-root when file != "".
+// block is one top-level region of the document: either prose (ignored by
+// tangle) or a fenced ```fern code block. A fern block is a chunk definition
+// when chunk != "", or a file-root when file != "".
 type block struct {
 	isFern  bool
-	chunk   string     // chunk name if this fern block is a `<<name>>=` definition
-	file    string     // output path if this fern block is a `file=PATH` root
-	lines   []bodyLine // body lines (fern blocks only): for a definition, the lines after the header
-	rawText string     // verbatim text including fences (prose + display-only fern), for weave
+	chunk   string // chunk name if this fern block is a `<<name>>=` definition
+	file    string // output path if this fern block is a `file=PATH` root
+	rawText string // verbatim text including fences, for FormatCode
 }
 
 // fileRoot is a tangle output target named by a `file=PATH` fence
@@ -128,30 +125,16 @@ type fileRoot struct {
 	firstLine int
 }
 
-// Document is a parsed literate program: the ordered blocks (for weave),
-// the chunk table (for tangle), and the file-root table (for multi-file
-// tangle).
+// Document is a parsed literate program: the ordered blocks (for
+// FormatCode), the chunk table (for tangle), and the file-root table (for
+// multi-file tangle).
 type Document struct {
 	blocks []block
 	chunks map[string]*chunkDef
-	// order preserves the document order in which chunk names were
-	// first defined, so weave and "defined chunks" listings are stable.
-	order []string
 	// fileIndex accumulates file-root bodies per output path; fileOrder
 	// preserves first-definition order for stable multi-file output.
 	fileIndex map[string]*fileRoot
 	fileOrder []string
-	// tests holds `test`-directive blocks in document order (doctests).
-	tests []*testBlock
-}
-
-// testBlock is a `test`-directive fern fence: a runnable example whose
-// body tangles (resolving `<<refs>>` against the document's chunks) to a
-// complete program that `fern -doctest` compiles and runs.
-type testBlock struct {
-	name      string
-	body      []bodyLine
-	firstLine int
 }
 
 // Parse reads literate source (the contents of a `.fern.md` file) into
@@ -201,7 +184,8 @@ func Parse(src string) *Document {
 				case d.file != "":
 					doc.addFileBlock(d.file, d.entry, body, raw, fenceLine)
 				case d.test:
-					doc.addTestBlock(d.name, body, raw, fenceLine)
+					// An example `fern -doctest` runs: never a chunk.
+					doc.blocks = append(doc.blocks, block{isFern: true, rawText: raw})
 				default:
 					doc.addFernBlock(body, raw)
 				}
@@ -236,10 +220,9 @@ func (doc *Document) addFernBlock(body []bodyLine, raw string) {
 	if cd == nil {
 		cd = &chunkDef{name: name, firstLine: body[headerIdx].litLine}
 		doc.chunks[name] = cd
-		doc.order = append(doc.order, name)
 	}
 	cd.pieces = append(cd.pieces, piece{body: def})
-	doc.blocks = append(doc.blocks, block{isFern: true, chunk: name, lines: def, rawText: raw})
+	doc.blocks = append(doc.blocks, block{isFern: true, chunk: name, rawText: raw})
 }
 
 // addFileBlock records a `file=PATH` fern block as (part of) the
@@ -257,15 +240,7 @@ func (doc *Document) addFileBlock(path string, isEntry bool, body []bodyLine, ra
 	if isEntry {
 		fr.isEntry = true
 	}
-	doc.blocks = append(doc.blocks, block{isFern: true, file: path, lines: body, rawText: raw})
-}
-
-// addTestBlock records a `test`-directive block as a doctest and also
-// emits it as a display-only block so it still appears in the woven
-// document (it is an illustrative example, never part of the tangle).
-func (doc *Document) addTestBlock(name string, body []bodyLine, raw string, firstLine int) {
-	doc.tests = append(doc.tests, &testBlock{name: name, body: body, firstLine: firstLine})
-	doc.blocks = append(doc.blocks, block{isFern: true, rawText: raw})
+	doc.blocks = append(doc.blocks, block{isFern: true, file: path, rawText: raw})
 }
 
 // Tangle expands the root chunk into compilable Fern source and returns
@@ -472,17 +447,12 @@ func openingFence(line string) (fence, lang, info string, ok bool) {
 	return fence, strings.ToLower(lang), info, true
 }
 
-// parseFenceDirectives extracts the multi-file directives from a fern
-// fence's info string: `file=PATH` marks the block as a tangle output
-// file (its body is a file-root), and a bare `entry` token marks that
-// file as the program's compile entry. The leading language token and
-// any other words are ignored. PATH may be quoted.
 // fenceDirectives holds the parsed directives of a fern fence's info
-// string: `file=PATH` (file-root), `entry` (compile entry), `test` (a
-// doctest block), and `name=…` (a doctest's label).
+// string: `file=PATH` (file-root, PATH may be quoted), `entry` (compile
+// entry), and `test` (an example, never a chunk). The leading language
+// token and any other words are ignored.
 type fenceDirectives struct {
 	file  string
-	name  string
 	entry bool
 	test  bool
 }
@@ -492,8 +462,6 @@ func parseFenceDirectives(info string) (d fenceDirectives) {
 		switch {
 		case strings.HasPrefix(f, "file="):
 			d.file = strings.Trim(strings.TrimPrefix(f, "file="), "\"")
-		case strings.HasPrefix(f, "name="):
-			d.name = strings.Trim(strings.TrimPrefix(f, "name="), "\"")
 		case f == "entry":
 			d.entry = true
 		case f == "test":
@@ -523,41 +491,4 @@ func isClosingFence(line, fence string) bool {
 		}
 	}
 	return len(trimmed) >= len(fence)
-}
-
-// DefinedChunks returns the chunk names defined in the document, in the
-// order they were first defined. Used by tooling and tests.
-func (doc *Document) DefinedChunks() []string {
-	out := make([]string, len(doc.order))
-	copy(out, doc.order)
-	return out
-}
-
-// usedIn returns, for each chunk, the sorted set of chunk names whose
-// bodies reference it — the "⟨X⟩ is used in ⟨Y⟩" cross-reference weave
-// annotates definitions with.
-func (doc *Document) usedIn() map[string][]string {
-	users := map[string]map[string]bool{}
-	for _, cd := range doc.chunks {
-		for _, p := range cd.pieces {
-			for _, bl := range p.body {
-				if _, ref, ok := chunkRef(bl.text); ok {
-					if users[ref] == nil {
-						users[ref] = map[string]bool{}
-					}
-					users[ref][cd.name] = true
-				}
-			}
-		}
-	}
-	out := map[string][]string{}
-	for ref, set := range users {
-		names := make([]string, 0, len(set))
-		for n := range set {
-			names = append(names, n)
-		}
-		sort.Strings(names)
-		out[ref] = names
-	}
-	return out
 }

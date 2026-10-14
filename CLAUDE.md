@@ -395,7 +395,7 @@ it.
 
 - **Literate programming** (`.fern.md`, tangle/weave, multi-module documents,
   importable literate libraries) — `docs/LITERATE.md`. Engine:
-  `internal/tools/literate`. When extending the chunk grammar or the remap, add cases
+  `compiler/literate.fern` and `compiler/weave.fern`. When extending the chunk grammar or the remap, add cases
   at the layer you touched; the **diagnostic remap (generated line → document
   line) is the most regression-prone surface**.
 - **Test runner** — `internal/stdlib/std/test.fern`, the pure-Fern TAP-13 runner

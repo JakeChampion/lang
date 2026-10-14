@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -131,4 +132,51 @@ func compileSelfHost(r compileRequest) (int, error) {
 		qemu = "qemu-x86_64"
 	}
 	return execUnderQemu(qemu, out, r.progArgs)
+}
+
+// runLiterate implements `-tangle`, `-weave [-html]` and `-doctest` on one
+// literate document with the self-host compiler; its exit status is theirs.
+// -doctest loads the examples' imports, so it takes the stdlib root.
+func runLiterate(doc, mode, out, chunk string, html bool) int {
+	args := []string{mode}
+	if out != "" {
+		args = append(args, "-o", out)
+	}
+	if chunk != "" {
+		args = append(args, "-chunk", chunk)
+	}
+	if html {
+		args = append(args, "-html")
+	}
+	args = append(args, doc)
+	if mode == "-doctest" {
+		stdlib, err := launcher.StdlibRoot()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 2
+		}
+		args = append(args, stdlib)
+	}
+	return runSelfHostTool(args, os.Stdout)
+}
+
+// runSelfHostTool runs the self-host compiler with args, its stdout to w and
+// its stderr to this process's, and returns its exit status.
+func runSelfHostTool(args []string, w io.Writer) int {
+	compiler, err := launcher.Compiler()
+	if err != nil {
+		io.WriteString(os.Stderr, err.Error()+"\n")
+		return 2
+	}
+	cmd := exec.Command(compiler, args...)
+	cmd.Stdout, cmd.Stderr = w, os.Stderr
+	if err := cmd.Run(); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return ee.ExitCode()
+		}
+		io.WriteString(os.Stderr, "fern: "+err.Error()+"\n")
+		return 2
+	}
+	return 0
 }

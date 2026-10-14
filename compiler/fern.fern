@@ -18,6 +18,8 @@
 //     fern -targets                         list the targets + capabilities
 //     fern -resolve <ABS-DIR>               run MVS; write fern.lock
 //     fern -tangle <doc.fern.md>            literate: emit the tangled source
+//     fern -weave [-html] <doc.fern.md>     literate: render it for reading
+//     fern -doctest <doc.fern.md>           literate: run its `test` examples
 //     fern -doc <module.fern | DIR>         Markdown reference pages
 //     fern -add NAME SPEC <ABS-DIR>         declare a dependency
 //     fern -vendor <ABS-DIR>                flatten the dep graph into vendor/
@@ -76,6 +78,7 @@ import "./visibility";
 import "./asmcore";
 import "./fern_toml";
 import "./literate";
+import "./weave";
 import "./ferndoc";
 import "./mvs";
 import "./treeshake";
@@ -1146,6 +1149,8 @@ function usage(): i32 {
   eprint("       fern -targets                                (list supported targets + capabilities)");
   eprint("       fern -resolve <ABS-DIR>                      (run MVS over the manifest's index; write fern.lock)");
   eprint("       fern -tangle <doc.fern.md>                   (literate: emit the tangled Fern source)");
+  eprint("       fern -weave [-html] <doc.fern.md>            (literate: woven Markdown, or an HTML page)");
+  eprint("       fern -doctest <doc.fern.md>                  (literate: run the `test` examples, TAP)");
   eprint("       fern -doc [-o OUT] <module.fern>             (Markdown reference page; stdout without -o)");
   eprint("       fern -doc -o OUTDIR <DIR>                    (one page per module under DIR)");
   eprint("       fern -add NAME SPEC <ABS-DIR>                (declare a dependency: path:DIR | workspace)");
@@ -2151,6 +2156,11 @@ function tangle_error(path: string, line: i32, col: i32, msg: string): string {
   return path + ":" + util.i32_to_string(line) + ":" + util.i32_to_string(col) + ": error: " + msg;
 }
 
+// eprint_tangle_error prints a refusal with the line it points at.
+function eprint_tangle_error(path: string, line: i32, col: i32, msg: string): void {
+  eprint(tangle_error(path, line, col, msg) + snippet(plain_style(), path, line, col, "31"));
+}
+
 // display_path names a module file as native's diagnostics do: a stdlib module
 // as `stdlib://<path>`, any other as the path it was read from.
 function display_path(mpath: string, root: string): string {
@@ -2487,6 +2497,161 @@ function file_readable(path: string): boolean {
   return false;
 }
 
+// interp_findings is what the gates a compile runs report on a program
+// `-interp` is about to evaluate, up to the first gate that rejects it: an
+// interpreted program the checker rejects must not run, and a dependency
+// reaching past its grant (E070 — caps.fern) is refused before the program
+// runs, not after it has already opened the socket.
+function interp_findings(merged: parser.Module, pkgs: caps.Pkg[]): Finding[] {
+  let fs: Finding[] = parse_findings(merged);
+  if (!has_error(fs)) {
+    fs = with_findings(fs, errors_of(checker.build_gate_diags(merged)));
+  }
+  if (!has_error(fs)) {
+    fs = with_findings(fs, package_findings(merged, pkgs));
+  }
+  if (!has_error(fs)) {
+    fs = with_findings(fs, ambient_findings(merged));
+  }
+  return fs;
+}
+
+function with_findings(fs: Finding[], more: Finding[]): Finding[] {
+  let out: Finding[] = fs;
+  for f in more {
+    out = out.append(f);
+  }
+  return out;
+}
+
+// interp_status is an interpreted program's exit status — an i32 result's
+// value, a boolean's 1 or 0, 254 for anything else — and, when the
+// interpreter stopped, why: printing it is the difference between "exit 254"
+// and a usable report (#5990).
+function interp_status(v: interp.Value): (i32, string) {
+  match (v) {
+    interp.VInt(iv) => {
+      return (iv.v, "");
+    },
+    interp.VBool(bv) => {
+      if (bv.v) {
+        return (1, "");
+      }
+      return (0, "");
+    },
+    interp.VErr(ev) => {
+      return (254, ev.msg);
+    },
+    _ => {
+      return (254, "");
+    }
+  }
+  return (254, "");
+}
+
+// run_doctests implements `-doctest FILE.fern.md`: each ```fern test example
+// is tangled on its own, against the document's chunks, then loaded, gated
+// and interpreted as `-interp` would, as the document's module, so its
+// imports resolve from the document's directory. An example passes
+// when main returns 0. The results print as TAP, a failure's diagnostics
+// under it as comments, placed on the document.
+function run_doctests(path: string, root: string, target: string, embed_dir: string): i32 {
+  let (src, ok) = read_document(path);
+  if (!ok) {
+    return 1;
+  }
+  let tests: literate.Doctest[] = [];
+  match (literate.doctests(src)) {
+    literate.DoctestsOk(o) => {
+      tests = o.tests;
+    },
+    literate.DoctestsErr(e) => {
+      eprint_tangle_error(path, e.line, e.col, e.msg);
+      return 1;
+    }
+  }
+  write("1.." + util.i32_to_string(tests.len()) + "\n");
+  if (tests.len() == 0) {
+    eprint(path + ": no `test` blocks found");
+    return 0;
+  }
+  let failed: i32 = 0;
+  let n: i32 = 1;
+  for tc in tests {
+    let name: string = tc.name;
+    if (name.len() == 0) {
+      name = "doctest " + util.i32_to_string(n) + " (line " + util.i32_to_string(tc.line) + ")";
+    }
+    let why: string = run_doctest(path, tc, root, target, embed_dir);
+    if (why.len() == 0) {
+      write("ok " + util.i32_to_string(n) + " - " + name + "\n");
+    } else {
+      failed = failed + 1;
+      write("not ok " + util.i32_to_string(n) + " - " + name + "\n");
+      for line in literate.split_lines(why) {
+        write("# " + line + "\n");
+      }
+    }
+    n = n + 1;
+  }
+  if (failed > 0) {
+    return 1;
+  }
+  return 0;
+}
+
+// run_doctest runs one example, returning why it failed, or "" when it
+// passed.
+function run_doctest(path: string, tc: literate.Doctest, root: string, target: string, embed_dir: string): string {
+  let st: DiagStyle = DiagStyle { color: false, ascii: false };
+  let srcs: Sources = Sources { paths: [path], srcs: [tc.code], maps: [util.LineMap { doc: path, lits: tc.lits, shifts: tc.shifts }] };
+  let ld: Loaded = load_checked(srcs, root, target, embed_dir);
+  let fs: Finding[] = ld.refused;
+  if (!has_error(fs)) {
+    fs = with_findings(fs, interp_findings(ld.b.merged, ld.b.pkgs));
+  }
+  if (has_error(fs)) {
+    let text: string = "";
+    for f in fs {
+      if (text.len() > 0) {
+        text = text + "\n";
+      }
+      text = text + finding_text(st, f, path, ld.b.files, ld.b.maps);
+    }
+    return text;
+  }
+  let (status, why) = interp_status(interp.eval_module_argv(ld.b.merged, [path]));
+  if (why.len() > 0) {
+    return why;
+  }
+  if (status != 0) {
+    return "example failed: main returned " + util.i32_to_string(status) + " (expected 0)";
+  }
+  return "";
+}
+
+// read_document reads a literate document, saying why on stderr when it
+// cannot.
+function read_document(path: string): (string, boolean) {
+  match (read_file(path)) {
+    Ok(s) => {
+      return (s, true);
+    },
+    Err(e) => {
+      eprint("fern: cannot read " + path);
+    }
+  }
+  return ("", false);
+}
+
+// warn_unused_chunks notes each chunk no root reaches — typically a typo in a
+// `<<ref>>`, or a leftover definition.
+function warn_unused_chunks(path: string, src: string): void {
+  for name in literate.unused_chunks(src) {
+    eprint(path + ": warning: chunk <<" + name + ">> is defined but never used");
+  }
+}
+
 // run_tangle implements `-tangle FILE.fern.md`: expand a literate document's
 // chunks into plain Fern source (#6751). `literate.fern` has carried the
 // engine — single-file `<<*>>`, multi-file `file=PATH`, the entry rule —
@@ -2494,30 +2659,29 @@ function file_readable(path: string): boolean {
 //
 // A document declaring `file=PATH` blocks tangles to one module per path,
 // each under a `// ==> path <==` banner, because a multi-module program is
-// one document and several files.
-function run_tangle(path: string, out_path: string, chunk: string): i32 {
-  let src: string = "";
-  let ok: boolean = false;
-  match (read_file(path)) {
-    Ok(s) => {
-      src = s;
-      ok = true;
-    },
-    Err(e) => {}
-  }
+// one document and several files. `-weave` (weave.fern) renders the
+// document for reading instead, as Markdown or, with `-html`, a page.
+function run_tangle(path: string, out_path: string, chunk: string, weave_it: boolean, html: boolean): i32 {
+  let (src, ok) = read_document(path);
   if (!ok) {
-    eprint("fern: cannot read " + path);
     return 1;
+  }
+  warn_unused_chunks(path, src);
+  if (weave_it && html) {
+    return write_generated(weave.weave_html(src), out_path);
+  }
+  if (weave_it) {
+    return write_generated(weave.weave(src), out_path);
   }
   // `-chunk NAME` expands one definition rather than the document, so it
   // answers about the chunk whether or not the document has a root.
   if (chunk.len() > 0) {
     match (literate.tangle_chunk(src, chunk)) {
       literate.TangleOk(o) => {
-        return tangle_emit(end_with_newline(o.code), out_path);
+        return write_generated(end_with_newline(o.code), out_path);
       },
       literate.TangleErr(e) => {
-        eprint(tangle_error(path, e.line, e.col, e.msg));
+        eprint_tangle_error(path, e.line, e.col, e.msg);
         return 1;
       }
     }
@@ -2544,20 +2708,20 @@ function run_tangle(path: string, out_path: string, chunk: string): i32 {
           out = out + "// ==> " + o.files[i].path + " <==\n" + end_with_newline(o.files[i].code);
           i = i + 1;
         }
-        return tangle_emit(out, "");
+        return write_generated(out, "");
       },
       literate.FileTangleErr(e) => {
-        eprint(tangle_error(path, e.line, e.col, e.msg));
+        eprint_tangle_error(path, e.line, e.col, e.msg);
         return 1;
       }
     }
   }
   match (literate.tangle(src)) {
     literate.TangleOk(o) => {
-      return tangle_emit(end_with_newline(o.code), out_path);
+      return write_generated(end_with_newline(o.code), out_path);
     },
     literate.TangleErr(e) => {
-      eprint(tangle_error(path, e.line, e.col, e.msg));
+      eprint_tangle_error(path, e.line, e.col, e.msg);
       return 1;
     }
   }
@@ -2574,11 +2738,11 @@ function end_with_newline(code: string): string {
   return code + "\n";
 }
 
-// tangle_emit writes the tangled source to `-o` when one was given, else to
+// write_generated writes the generated text to `-o` when one was given, else to
 // stdout — the pipeline shape `-tangle` is usually used in. A written file
 // is announced on stderr, so `-o` reports what it produced without
 // contaminating a redirected stdout.
-function tangle_emit(code: string, out_path: string): i32 {
+function write_generated(code: string, out_path: string): i32 {
   if (out_path.len() == 0) {
     write(code);
     return 0;
@@ -2609,7 +2773,7 @@ function tangle_emit(code: string, out_path: string): i32 {
 }
 
 // tangle_write_files writes one module per `file=PATH` root into `dir`,
-// subdirectory layout preserved — tangle_emit creates the parents.
+// subdirectory layout preserved — write_generated creates the parents.
 function tangle_write_files(files: literate.FileResult[], dir: string): i32 {
   let i: i32 = 0;
   while (i < files.len()) {
@@ -2617,7 +2781,7 @@ function tangle_write_files(files: literate.FileResult[], dir: string): i32 {
     // Written verbatim, NOT newline-terminated: native's per-module
     // files end where the chunk does, even though its stdout form
     // terminates the last line. Parity is on what native writes.
-    let code: i32 = tangle_emit(files[i].code, dir + "/" + rel);
+    let code: i32 = write_generated(files[i].code, dir + "/" + rel);
     if (code != 0) {
       return code;
     }
@@ -3424,13 +3588,17 @@ struct ToolFlags {
   lint_rules: boolean,
   lint_sets: string[],
   lint_opts: string[],
+  weave: boolean,
+  html: boolean,
+  doctest: boolean,
 }
 
 function tool_flag(a: string): boolean {
   return a == "-run" || a == "--run" || a == "-qemu" || a == "-version" || a == "-explain"
     || util.str_has_prefix(a, "-explain=") || a == "-cover-report" || a == "-lcov"
     || a == "-color" || util.str_has_prefix(a, "-color=") || a == "-ascii"
-    || a == "-lint" || a == "-lint-rules" || a == "-lint-set" || a == "-lint-opt";
+    || a == "-lint" || a == "-lint-rules" || a == "-lint-set" || a == "-lint-opt"
+    || a == "-weave" || a == "-html" || a == "-doctest";
 }
 
 // parse_tool_flag applies the tool flag at av[i], returning the flags, the
@@ -3459,6 +3627,15 @@ function parse_tool_flag(tf: ToolFlags, av: string[], i: i32): (ToolFlags, i32, 
   }
   if (a == "-lint-rules") {
     return (ToolFlags { ...tf, lint_rules: true }, i, 0);
+  }
+  if (a == "-weave") {
+    return (ToolFlags { ...tf, weave: true }, i, 0);
+  }
+  if (a == "-html") {
+    return (ToolFlags { ...tf, html: true }, i, 0);
+  }
+  if (a == "-doctest") {
+    return (ToolFlags { ...tf, doctest: true }, i, 0);
   }
   if (a == "-lint-set" || a == "-lint-opt") {
     if (!has_next) {
@@ -3833,7 +4010,7 @@ pub function run_with(av: string[], embedded_root: string): i32 {
   // `-run`: build to a temporary binary (or -o) and execute it with the
   // program's arguments; `-qemu` names the emulator for a foreign ISA.
   let no_strs: string[] = [];
-  let tf: ToolFlags = ToolFlags { run_it: false, qemu: "qemu-aarch64", version: false, explain: false, explain_code: "", cover_report: false, lcov: false, color_mode: "auto", ascii: false, lint: false, lint_rules: false, lint_sets: no_strs, lint_opts: no_strs };
+  let tf: ToolFlags = ToolFlags { run_it: false, qemu: "qemu-aarch64", version: false, explain: false, explain_code: "", cover_report: false, lcov: false, color_mode: "auto", ascii: false, lint: false, lint_rules: false, lint_sets: no_strs, lint_opts: no_strs, weave: false, html: false, doctest: false };
   let mode_fmt: boolean = false;
   // `-fmt` output destination, mirroring native: stdout by default, the input
   // file under `-w`, a unified diff (exit 1 when it is non-empty) under `-d`.
@@ -4074,12 +4251,20 @@ pub function run_with(av: string[], embedded_root: string): i32 {
     return run_vendor(entry_path);
   }
 
-  // `-tangle` reads a literate document and compiles nothing.
-  if (mode_tangle) {
+  // `-tangle` and `-weave` read a literate document and compile nothing;
+  // `-doctest` runs the examples in one.
+  if (mode_tangle || tf.weave || tf.doctest) {
     if (!have_entry) {
       return usage();
     }
-    return run_tangle(entry_path, out_path, chunk);
+    if (prog_args.len() > 0) {
+      eprint("fern: one document expected, got \"" + entry_path + "\" and \"" + prog_args[0] + "\"");
+      return 2;
+    }
+    if (tf.doctest) {
+      return run_doctests(entry_path, root, target, embed_dir);
+    }
+    return run_tangle(entry_path, out_path, chunk, tf.weave, tf.html);
   }
 
   // `-doc` reads sources for their declarations and comments and compiles
@@ -4265,9 +4450,7 @@ pub function run_with(av: string[], embedded_root: string): i32 {
   // that assets exist. Native folds them in the same place, ahead of
   // checker.Check.
   if (is_literate(entry_path)) {
-    for name in literate.unused_chunks(esrc) {
-      eprint(entry_path + ": warning: chunk <<" + name + ">> is defined but never used");
-    }
+    warn_unused_chunks(entry_path, esrc);
   }
   let (srcs, serr) = entry_sources(entry_path, esrc);
   if (serr.len() > 0) {
@@ -4296,57 +4479,20 @@ pub function run_with(av: string[], embedded_root: string): i32 {
   }
 
   if (mode_interp) {
-    // The gates a compile runs: an interpreted program the checker rejects
-    // must not run.
-    if (eprint_findings(st, parse_findings(merged), entry_path, b.files, b.maps)) {
+    if (eprint_findings(st, interp_findings(merged, pkgs), entry_path, b.files, b.maps)) {
       return 1;
     }
-    if (eprint_findings(st, errors_of(checker.build_gate_diags(merged)), entry_path, b.files, b.maps)) {
-      return 1;
-    }
-    // Package-capability gate (E070 — caps.fern): a dependency reaching
-    // past its grant is refused before the program runs, not after it has
-    // already opened the socket.
-    if (eprint_findings(st, package_findings(merged, pkgs), entry_path, b.files, b.maps)) {
-      return 1;
-    }
-    if (eprint_findings(st, ambient_findings(merged), entry_path, b.files, b.maps)) {
-      return 1;
-    }
-    // Evaluate via the tree-walking interpreter; the program's
-    // result becomes the process exit code (VInt → its value,
-    // VBool → 1/0), matching interp_run.fern. A non-i32/bool
-    // result exits 254.
     let argv: string[] = [entry_path];
     let pa: i32 = 0;
     while (pa < prog_args.len()) {
       argv = argv.append(prog_args[pa]);
       pa = pa + 1;
     }
-    let result: interp.Value = interp.eval_module_argv(merged, argv);
-    match (result) {
-      interp.VInt(iv) => {
-        return iv.v;
-      },
-      interp.VBool(bv) => {
-        if (bv.v) {
-          return 1;
-        }
-        return 0;
-      },
-      interp.VErr(ev) => {
-        // The interpreter's bottom carries WHY it stopped. Printing it is
-        // the difference between "exit 254" and a usable report: #5990 was
-        // filed against a silent 254 whose cause (an unimplemented
-        // construct) the message already named.
-        eprint("fern: interp: " + ev.msg);
-        return 254;
-      },
-      _ => {
-        return 254;
-      }
+    let (status, why) = interp_status(interp.eval_module_argv(merged, argv));
+    if (why.len() > 0) {
+      eprint("fern: interp: " + why);
     }
-    return 254;
+    return status;
   }
 
   // The parse gates the `-check` path runs (#7447), for the same reason the

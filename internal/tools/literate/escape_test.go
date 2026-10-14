@@ -102,12 +102,3 @@ func TestTangleUnclosedFenceNoPhantomLine(t *testing.T) {
 		t.Errorf("lineMap has %d entries, want 1 (phantom line leaked?): %+v", len(lm), lm)
 	}
 }
-
-// An escaped reference does not count as a use (so it can't keep a chunk
-// "reached" for the unused-chunk lint, nor appear in weave cross-refs).
-func TestEscapedRefNotCountedAsUse(t *testing.T) {
-	src := "```fern\n<<*>>=\n\\<<helper>>\n```\n```fern\n<<helper>>=\nx\n```\n"
-	if u := Parse(src).usedIn()["helper"]; len(u) != 0 {
-		t.Errorf("escaped \\<<helper>> should not count as a use, got users %v", u)
-	}
-}
