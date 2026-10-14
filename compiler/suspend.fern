@@ -121,24 +121,32 @@ function closure_sigs(keys: string[], funcs: ssasem.Func[], closed: boolean[], m
   let i: i32 = 0;
   while (i < keys.len() && i < funcs.len()) {
     if (closed[i] && is_lifted(keys[i])) {
-      let found: boolean = false;
-      let k: i32 = 0;
-      while (k < made.len()) {
-        if (made[k] == keys[i] || made[k] == funcs[i].graph.name) {
-          found = true;
-          if (!util.has_str(out, made_sigs[k])) {
-            out = out.append(made_sigs[k]);
-          }
+      for sig in made_as(keys[i], funcs[i].graph.name, made, made_sigs) {
+        if (!util.has_str(out, sig)) {
+          out = out.append(sig);
         }
-        k = k + 1;
-      }
-      if (!found && !util.has_str(out, "")) {
-        out = out.append("");
       }
     }
     i = i + 1;
   }
   return out;
+}
+
+// made_as is the types the closure `key`, lifted from `name`, is made with:
+// [""] when it is made nowhere.
+function made_as(key: string, name: string, made: string[], made_sigs: string[]): string[] {
+  let sigs: string[] = [];
+  let k: i32 = 0;
+  while (k < made.len()) {
+    if (made[k] == key || made[k] == name) {
+      sigs = sigs.append(made_sigs[k]);
+    }
+    k = k + 1;
+  }
+  if (sigs.len() == 0) {
+    return [""];
+  }
+  return sigs;
 }
 
 // value_sig spells the function type of value args[0], or "" when it is not

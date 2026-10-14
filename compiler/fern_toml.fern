@@ -558,29 +558,19 @@ pub struct LockResult {
 // plus the `path` directory (path-sourced) or the `hash` (url-sourced).
 pub function parse_lock(src: string): LockResult {
   let out: LockEntry[] = [];
-  let name: string = "";
-  let version: string = "";
-  let path: string = "";
-  let url: string = "";
-  let hash: string = "";
+  let blank: LockEntry = LockEntry { name: "", version: "", path: "", url: "", hash: "" };
+  let cur: LockEntry = blank;
   let have: boolean = false;
   let lines: string[] = split_lines(src);
   let li: i32 = 0;
   while (li < lines.len()) {
     let line: string = line_content(lines[li]);
     li = li + 1;
-    if (line.len() == 0) {
-      continue;
-    }
     if (line == "[[package]]") {
       if (have) {
-        out = out.append(LockEntry { name: name, version: version, path: path, url: url, hash: hash });
+        out = out.append(cur);
       }
-      name = "";
-      version = "";
-      path = "";
-      url = "";
-      hash = "";
+      cur = blank;
       have = true;
       continue;
     }
@@ -589,58 +579,44 @@ pub function parse_lock(src: string): LockResult {
       continue;
     }
     let key: string = util.trim(slice_unchecked(line, 0, eq));
-    let val: string = util.trim(slice_unchecked(line, eq + 1, line.len()));
-    if (key == "name") {
-      match (quoted_value(val, 0)) {
-        Some(v) => {
-          name = v;
-        },
-        None => {}
-      }
-    }
-    if (key == "version") {
-      match (quoted_value(val, 0)) {
-        Some(v) => {
-          version = v;
-        },
-        None => {}
-      }
-    }
-    if (key == "path") {
-      match (quoted_value(val, 0)) {
-        Some(v) => {
-          path = v;
-        },
-        None => {}
-      }
-    }
-    if (key == "url") {
-      match (quoted_value(val, 0)) {
-        Some(v) => {
-          url = v;
-        },
-        None => {}
-      }
-    }
-    if (key == "hash") {
-      match (quoted_value(val, 0)) {
-        Some(v) => {
-          let hr: HashResult = validate_hash(v);
-          if (hr.err.len() > 0) {
-            let none: LockEntry[] = [];
-            return LockResult { entries: none, err: "fern.lock line "
-              + util.i32_to_string(li) + ": hash " + hr.err };
-          }
-          hash = v;
-        },
-        None => {}
-      }
+    match (quoted_value(util.trim(slice_unchecked(line, eq + 1, line.len())), 0)) {
+      Some(v) => {
+        let hr: HashResult = validate_hash(v);
+        if (key == "hash" && hr.err.len() > 0) {
+          let none: LockEntry[] = [];
+          return LockResult { entries: none, err: "fern.lock line "
+            + util.i32_to_string(li) + ": hash " + hr.err };
+        }
+        cur = with_lock_field(cur, key, v);
+      },
+      None => {}
     }
   }
   if (have) {
-    out = out.append(LockEntry { name: name, version: version, path: path, url: url, hash: hash });
+    out = out.append(cur);
   }
   return LockResult { entries: out, err: "" };
+}
+
+// with_lock_field is `e` with the lock key `key` set to `v`; any other key
+// leaves it as it is.
+function with_lock_field(e: LockEntry, key: string, v: string): LockEntry {
+  if (key == "name") {
+    return LockEntry { ...e, name: v };
+  }
+  if (key == "version") {
+    return LockEntry { ...e, version: v };
+  }
+  if (key == "path") {
+    return LockEntry { ...e, path: v };
+  }
+  if (key == "url") {
+    return LockEntry { ...e, url: v };
+  }
+  if (key == "hash") {
+    return LockEntry { ...e, hash: v };
+  }
+  return e;
 }
 
 // lock_has returns whether `name` has a [[package]] entry at all — the

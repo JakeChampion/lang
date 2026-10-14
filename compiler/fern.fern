@@ -1535,31 +1535,8 @@ function run_add(pos: string[], fetcher: Fetcher): i32 {
     eprint("add: " + mvs.quoted(name) + " is already a dependency in " + mpath + " (edit it by hand to change its source)");
     return 1;
   }
-  let line: string = "";
-  if (spec == "workspace") {
-    line = name + " = { workspace = true }";
-  } else if (spec.len() >= 5 && slice_unchecked(spec, 0, 5) == "path:") {
-    let p: string = slice_unchecked(spec, 5, spec.len()) + "";
-    if (p.len() == 0) {
-      eprint("add: empty path in " + mvs.quoted(spec));
-      return 1;
-    }
-    line = name + " = { path = " + mvs.quoted(p) + " }";
-  } else if (spec.len() >= 4 && slice_unchecked(spec, 0, 4) == "url:") {
-    let u: string = slice_unchecked(spec, 4, spec.len()) + "";
-    if (!util.str_has_prefix(u, "https://") && !util.str_has_prefix(u, "http://")) {
-      eprint("add: url must be http(s), got " + mvs.quoted(u));
-      return 1;
-    }
-    eprint("fetching " + u + " to compute its hash…");
-    let got: Fetched = fetcher.fetch(u, "");
-    if (got.err.len() > 0) {
-      eprint("add: " + got.err);
-      return 1;
-    }
-    line = name + " = { url = " + mvs.quoted(u) + ", hash = " + mvs.quoted(got.hash) + " }";
-  } else {
-    eprint("add: unrecognised source " + mvs.quoted(spec) + " — use path:DIR, url:HTTPS_URL, or workspace");
+  let line: string = dep_line(name, spec, fetcher);
+  if (line.len() == 0) {
     return 1;
   }
 
@@ -1595,6 +1572,38 @@ function run_add(pos: string[], fetcher: Fetcher): i32 {
   }
   eprint("add: " + line);
   return 0;
+}
+
+// dep_line is the manifest line declaring `name` from the `-add` source
+// `spec`, or "" once it has said why there is none.
+function dep_line(name: string, spec: string, fetcher: Fetcher): string {
+  if (spec == "workspace") {
+    return name + " = { workspace = true }";
+  } else if (util.str_has_prefix(spec, "path:")) {
+    let p: string = slice_unchecked(spec, 5, spec.len()) + "";
+    if (p.len() == 0) {
+      eprint("add: empty path in " + mvs.quoted(spec));
+      return "";
+    }
+    return name + " = { path = " + mvs.quoted(p) + " }";
+  } else if (util.str_has_prefix(spec, "url:")) {
+    let u: string = slice_unchecked(spec, 4, spec.len()) + "";
+    if (!util.str_has_prefix(u, "https://") && !util.str_has_prefix(u, "http://")) {
+      eprint("add: url must be http(s), got " + mvs.quoted(u));
+      return "";
+    }
+    eprint("fetching " + u + " to compute its hash…");
+    let got: Fetched = fetcher.fetch(u, "");
+    if (got.err.len() > 0) {
+      eprint("add: " + got.err);
+      return "";
+    }
+    return name + " = { url = " + mvs.quoted(u) + ", hash = " + mvs.quoted(got.hash) + " }";
+  } else {
+    eprint("add: unrecognised source " + mvs.quoted(spec) + " — use path:DIR, url:HTTPS_URL, or workspace");
+    return "";
+  }
+  return "";
 }
 
 // insert_dependency splices a dependency line into a manifest's

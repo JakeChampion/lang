@@ -155,15 +155,8 @@ function write_entries(tmp: string, t: u8[]): string {
       return "reading tar: truncated archive";
     }
     off = e.at + (e.size + 511) / 512 * 512;
-    if (e.kind == b'g') {
-      continue;
-    }
-    if (e.kind == b'x') {
-      next_name = pax_path(t, e.at, e.size);
-      continue;
-    }
-    if (e.kind == b'L') {
-      next_name = c_string(t, e.at, e.size);
+    if (names_next_entry(e.kind)) {
+      next_name = names_next(t, e);
       continue;
     }
     if (next_name.len() > 0) {
@@ -178,12 +171,30 @@ function write_entries(tmp: string, t: u8[]): string {
   return "";
 }
 
+// names_next_entry says whether an entry of type `kind` is a header for the
+// entries after it rather than a member of its own.
+function names_next_entry(kind: u8): boolean {
+  return kind == b'g' || kind == b'x' || kind == b'L';
+}
+
+// names_next is the path a pax extended header or a GNU `L` entry gives the
+// entry after it; a pax global header gives none.
+function names_next(t: u8[], e: Entry): string {
+  if (e.kind == b'x') {
+    return pax_path(t, e.at, e.size);
+  }
+  if (e.kind == b'L') {
+    return c_string(t, e.at, e.size);
+  }
+  return "";
+}
+
 function write_entry(tmp: string, t: u8[], e: Entry): string {
   let name: string = clean(e.name);
   if (name == ".") {
     return "";
   }
-  if (name.len() == 0 || name[0] == b'/' || name == ".." || util.str_has_prefix(name, "../")) {
+  if (escapes(name)) {
     return "archive entry " + quoted(e.name) + " escapes the package directory";
   }
   let dst: string = tmp + "/" + name;
@@ -204,6 +215,12 @@ function write_entry(tmp: string, t: u8[], e: Entry): string {
     }
   }
   return "";
+}
+
+// escapes says whether the cleaned path `name` leaves the directory it is
+// joined onto.
+function escapes(name: string): boolean {
+  return name.len() == 0 || name[0] == b'/' || name == ".." || util.str_has_prefix(name, "../");
 }
 
 function made(r: Result[void, IoError], path: string): string {
@@ -319,13 +336,16 @@ function clean(p: string): string {
       segs = segs.append(seg);
     }
   }
-  if (segs.len() == 0) {
-    if (lead.len() > 0) {
-      return "/";
-    }
+  let out: string = lead + joined(segs);
+  if (out.len() == 0) {
     return ".";
   }
-  let out: string = lead;
+  return out;
+}
+
+// joined is `segs` separated by slashes.
+function joined(segs: string[]): string {
+  let out: string = "";
   let i: i32 = 0;
   while (i < segs.len()) {
     if (i > 0) {
