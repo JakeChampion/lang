@@ -29,7 +29,9 @@ func TestX86_64WriterArgTempReclaimed(t *testing.T) {
 		t.Fatalf("exit %d, want 0; stderr: %s", exit, stderr)
 	}
 	allocs, frees, _ := parseLeakCheckLine(t, stderr)
-	if allocs < 120 {
+	// A round builds one string, whose later appends grow into its headroom,
+	// and one result box.
+	if allocs < 80 {
 		t.Fatalf("allocs=%d: the probe is not building its strings", allocs)
 	}
 	// The 40 build() results and the 40 write result boxes all come back.
