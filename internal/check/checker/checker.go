@@ -15463,6 +15463,8 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 				} else {
 					litLocal = true
 				}
+			} else if holdsUntypedFloat(got) {
+				c.promoteIntLiterals(n.Init)
 			} else if widened := c.widenCompositeByLiterals(got, n.Init); widened != nil {
 				c.settleNumeric(n.Init, widened)
 				got = widened
@@ -21929,6 +21931,50 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 		}
 	case *ast.FieldAccess:
 		c.settleGenericCallByHint(x, hf)
+	}
+}
+
+// holdsUntypedFloat reports a polymorphic float, or an array of one.
+func holdsUntypedFloat(t ast.Type) bool {
+	switch x := t.(type) {
+	case ast.FloatType:
+		return x.Polymorphic
+	case ast.ArrayType:
+		return holdsUntypedFloat(x.Elem)
+	}
+	return false
+}
+
+// promoteIntLiterals settles to f64, the float an untyped local holds, each
+// integer literal an untyped float join carries (`if (c) { 1 } else { 2.5 }`,
+// `[1, 2.5]`), and leaves its float literals unsettled.
+func (c *checker) promoteIntLiterals(e ast.Expr) {
+	switch x := e.(type) {
+	case *ast.NumberLit, *ast.Call:
+		// A generic call returning its type parameter takes the f64 too.
+		c.settleFloat(x, ast.FloatType{Width: 64})
+	case *ast.ArrayLit:
+		for _, el := range x.Elems {
+			c.promoteIntLiterals(el)
+		}
+	case *ast.Unary:
+		if x.Op == "-" || x.Op == "+" {
+			c.promoteIntLiterals(x.Operand)
+			x.CheckedType = c.postSettleType(x.Operand, x.CheckedType)
+		}
+	case *ast.IfExpr:
+		c.promoteIntLiterals(x.Then)
+		c.promoteIntLiterals(x.Else)
+	case *ast.MatchExpr:
+		for _, arm := range x.Arms {
+			if arm != nil {
+				c.promoteIntLiterals(arm.Body)
+			}
+		}
+	case *ast.BlockExpr:
+		if x.Tail != nil {
+			c.promoteIntLiterals(x.Tail)
+		}
 	}
 }
 
