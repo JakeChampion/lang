@@ -61,7 +61,24 @@ so with the phi's inputs the other way round, the other arm's null
 first, it stopped at the null and the index missed the box. The same
 refusal followed. `zero_at` now answers every null test a walk makes:
 `carries_at`, `carry_candidates`, `box_on_edges`, `tested`,
-`unique_word`, `token_inputs`, `is_take`, `apply_store` and `stores_of`.
+`unique_word`, `token_inputs`, `is_take`, `apply_store` and `stores_of`
+on the walks under a token, and `fixed_phi` and `drop_phi_edges` on the
+base walk, where it is `is_zero`.
 `TestSelfHostRcCertifyCases` gains `reuse-past-a-join-null-first`, which
 reports `spent without a unit of v5 (borrow ld_at) in b10` with the
 `carries_at` fix alone and nothing with `zero_at`.
+
+## The edge a null test settles
+
+`compared`, which reads the constant a branch's `x == c` compares against
+for the edge that branch settles, still read it off the region's function
+alone. A word tested against the other arm's null was not absent on its
+null edge, so the walk under the token held its unit there and reported
+it leaked. `def_at` now gives a value's definition from the base walk when
+the region does not define it; `zero_at`, `phi_valued` and `compared` read
+through it. `TestSelfHostRcCertifyCases` gains
+`null-tested-against-an-outside-null`, a fresh box or that null in a phi,
+released only where it is not null: on main it reports `leaked where it
+dies of v19 (fresh invalid) in b10`, and nothing with the fix. The
+compiler's own census is the same either way, 24,690 unproved and no
+finding.

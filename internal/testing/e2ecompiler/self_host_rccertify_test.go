@@ -354,6 +354,26 @@ function pick(name: string): Case {
         let b12: ssa.SBlock = block(12, [5, 10], [inst(8, 15, [14, 11], 0, ""), const_int(16, 2), call(17, "__fern_alloc_reuse", [15, 16]), fresh_box(18), store(17, 8, 18)], ret(17));
         return Case { f: func(2, 19, [b0, b1, b2, b3, b4, b6, b7, b8, b9, b10, b5, b12]), modes: [counted, value], returns_unit: true };
     }
+    if (name == "null-tested-against-an-outside-null") {
+        // reuse-past-a-join-null-first with a second phi in the token's
+        // block, a fresh box or the outside arm's null, released only on
+        // the edge where it is not null.
+        let b0: ssa.SBlock = block(0, [], [param(0), param(1)], brif(1, 1, 5));
+        let b1: ssa.SBlock = block(1, [0], [call(2, "__fern_rc_is_unique", [0]), const_int(3, 0)], brif(2, 2, 3));
+        let b2: ssa.SBlock = block(2, [1], [fresh_box(19)], br(4));
+        let b3: ssa.SBlock = block(3, [1], [], br(4));
+        let b4: ssa.SBlock = block(4, [2, 3], [inst(8, 4, [0, 3], 0, ""), inst(8, 20, [19, 3], 0, ""), counted_load(5, 0, 8), inst(9, 6, [4, 3], 0, "eq")], brif(6, 6, 7));
+        let b6: ssa.SBlock = block(6, [4], [call(7, "__fern_rc_inc", [5])], br(7));
+        let b7: ssa.SBlock = block(7, [4, 6], [inst(9, 8, [4, 3], 0, "ne")], brif(8, 8, 9));
+        let b8: ssa.SBlock = block(8, [7], [], br(10));
+        let b9: ssa.SBlock = block(9, [7], [call(9, "__sem_release_T", [0]), const_int(10, 0)], br(10));
+        let b10: ssa.SBlock = block(10, [8, 9], [inst(8, 11, [0, 10], 0, ""), call(12, "take", [5]), inst(9, 21, [20, 3], 0, "eq")], brif(21, 13, 14));
+        let b13: ssa.SBlock = block(13, [10], [], br(12));
+        let b14: ssa.SBlock = block(14, [10], [call(22, "__fern_rc_dec", [20])], br(12));
+        let b5: ssa.SBlock = block(5, [0], [call(13, "__fern_rc_dec", [0]), const_int(14, 0)], br(12));
+        let b12: ssa.SBlock = block(12, [5, 13, 14], [inst(8, 15, [14, 11, 11], 0, ""), const_int(16, 2), call(17, "__fern_alloc_reuse", [15, 16]), fresh_box(18), store(17, 8, 18)], ret(17));
+        return Case { f: func(2, 23, [b0, b1, b2, b3, b4, b6, b7, b8, b9, b10, b13, b14, b5, b12]), modes: [counted, value], returns_unit: true };
+    }
     eprint("rccertify_cases: no case named " + name);
     exit(2);
     return Case { f: one_block(0, 0, [], ret(0 - 1)), modes: [], returns_unit: false };
@@ -445,6 +465,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		// The null comes first in the phi; the join past the match, which no
 		// token decides, stays unproved.
 		{"reuse-past-a-join-null-first", nil, 1, ""},
+		// The phi's null edge is settled against the outside arm's null.
+		{"null-tested-against-an-outside-null", nil, 1, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
