@@ -34,16 +34,27 @@ function max_leaf_blocks(): i32 {
   return 16;
 }
 
-// The blocks of `g` that emit anything: a block holding nothing but a jump is
-// a trampoline the match lowering leaves and the SSA backend threads away.
+// The blocks of `g` that emit anything. A block holding nothing but a jump is
+// a trampoline the match lowering leaves and the SSA backend threads away, and
+// one that only names constants for a join is the arm of a `&&` or `||`, which
+// threading the boolean join removes too.
 function code_blocks(g: ssa.SFunc): i32 {
   let n: i32 = 0;
   for b in g.blocks {
-    if (b.term.kind_tag != 2 || b.insts.len() > 0) {
+    if (b.term.kind_tag != 2 || !only_constants(b.insts)) {
       n = n + 1;
     }
   }
   return n;
+}
+
+function only_constants(insts: ssa.SInst[]): boolean {
+  for ins in insts {
+    if (ins.kind_tag != 1 && ins.kind_tag != 2) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // A function called from one place is spliced there whatever it computes, as
