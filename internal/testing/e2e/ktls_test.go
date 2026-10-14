@@ -601,3 +601,52 @@ func TestX86_64KtlsServe(t *testing.T) {
 		}
 	}
 }
+
+// TestX86_64KtlsFetch runs std/fetch's https world (TestTLSClientAgainstGo)
+// with FERN_KTLS=1, so each connection fetch opens is offloaded once its
+// handshake is done: kept and fresh connections, a HelloRetryRequest, RSA
+// and Ed25519 leaves, a CONNECT tunnel, HTTP/2, and handshakes that fail.
+// The output is the world's, and the kernel's counters show the
+// connections the handshakes completed on were offloaded both ways.
+func TestX86_64KtlsFetch(t *testing.T) {
+	requireKtls(t)
+	w := startTLSWorld(t)
+	bin := buildKtlsProgram(t, "ktls_fetch", w.source())
+	tx, rx := tlsStat(t, "TlsTxSw"), tlsStat(t, "TlsRxSw")
+	cmd := exec.Command(bin)
+	cmd.Env = append(w.env(), "FERN_KTLS=1")
+	got, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run: %v\n%s", err, got)
+	}
+	w.check(t, string(got), w.mainConns.Load())
+	// Eight handshakes complete: the kept connection, the address, the
+	// retry, RSA, Ed25519, the tunnel, HTTP/2 and the held transport's.
+	if dtx, drx := tlsStat(t, "TlsTxSw")-tx, tlsStat(t, "TlsRxSw")-rx; dtx < 8 || drx < 8 {
+		t.Fatalf("the kernel took %d transmit and %d receive directions, want both at least 8", dtx, drx)
+	}
+}
+
+// TestX86_64KtlsServeH2 runs two of std/serve's HTTP/2 worlds
+// (TestServeH2X86_64) with FERN_KTLS=1: HTTP/2 chosen by ALPN over the
+// loop's TLS connections, which the loop offloads; and six handlers parked
+// on one shared upstream HTTP/2 connection through a CONNECT tunnel, which
+// fetch offloads for the loop to read as plain bytes. Each world moves the
+// kernel's counters both ways.
+func TestX86_64KtlsServeH2(t *testing.T) {
+	requireKtls(t)
+	w := newServeH2World(t)
+	out := filepath.Join(w.dir, "serve_h2_ktls.bin")
+	if o, err := exec.Command(buildFernCLI(t), "-target", "x86-64-linux", "-o", out, w.src).CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, o)
+	}
+	for name, drive := range map[string]func(*testing.T, *exec.Cmd){"tls": w.driveTLS, "shared": w.driveShared} {
+		tx, rx := tlsStat(t, "TlsTxSw"), tlsStat(t, "TlsRxSw")
+		cmd := exec.Command(out)
+		cmd.Env = append(os.Environ(), "FERN_KTLS=1")
+		drive(t, cmd)
+		if dtx, drx := tlsStat(t, "TlsTxSw")-tx, tlsStat(t, "TlsRxSw")-rx; dtx < 1 || drx < 1 {
+			t.Fatalf("%s: the kernel took %d transmit and %d receive directions, want both at least 1", name, dtx, drx)
+		}
+	}
+}

@@ -3617,6 +3617,17 @@ answer is `Result[HttpResponse, FetchError]`.
   HEAD or 204 answer may still name a coding), a coding the client did
   not ask for, and a caller's own `Accept-Encoding` leave the body as it
   came. Request bodies are never compressed.
+- **kTLS:** `(req).with_ktls()`, or `FERN_KTLS=1` in the environment,
+  hands each https connection the request opens to Linux's TLS record
+  layer once its handshake is done (`std/tls/ktls`): the response is read
+  as plain bytes off the socket, the request written as plain bytes, and
+  a ticket, a KeyUpdate or the server's close_notify still pass through
+  the session. That holds over HTTP/2 and through a proxy's tunnel, and
+  for the HTTP/2 connections a serve loop drives for its handlers. A
+  connection keeps sealing its own where the kernel has no `tls` module,
+  on Darwin and wasm, under a transport with no sockets (`Transport.socket`
+  answering -1, as std/sim_fetch's does), or when the handshake ended
+  inside a record (`TestX86_64KtlsFetch`, `TestX86_64KtlsServeH2`).
 - **Retry:** a request the peer resets before any response byte (a
   reset or abort on the socket, a broken pipe, a close with nothing
   read) is sent once more when its method is idempotent

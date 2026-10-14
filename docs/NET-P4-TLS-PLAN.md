@@ -293,7 +293,7 @@ application data, no alert record, no compatibility CCS). An HTTP/3
 package owns the packets, frames, flow control and recovery; nothing in
 `std/tls` changes for the record-layer client and server.
 
-kTLS (landed for the socket connections): an offloaded session hands its
+kTLS (landed): an offloaded session hands its
 record layer to Linux's (`std/tls/ktls`). The handshake runs in userspace
 as before; `offload()` then gives the kernel each direction's key, IV and
 next sequence number in its own structure
@@ -317,4 +317,13 @@ then serves them, an EIO from it is the next control record for the
 session, and a file body goes out by sendfile. Go's net/http client
 drives the serve TLS world with it (`TestX86_64KtlsServe`; in the VM on
 both kernels, two connections per run taken by the kernel both ways).
-Left for the next slice: `std/fetch`.
+`std/fetch` offloads each https connection it opens under
+`Request.ktls`, in `__secured` once the handshake is done; the
+`Transport` names the socket under a connection (`socket`, -1 for the
+simulator's), and an offloaded session's empty read is told apart from
+the end of the stream by the kernel's typed read. The HTTP/2 connections
+a serve loop drives for its handlers take the same path. Go's servers
+drive it through `TestTLSClientAgainstGo`'s world, all eight completed
+handshakes offloaded (`TestX86_64KtlsFetch`), and the serve loop's shared
+upstream through a tunnel (`TestX86_64KtlsServeH2`), in the VM on both
+kernels.
