@@ -135,6 +135,26 @@ function main(): i32 { return 0; }`, 0},
 function main(): i32 { return 0; }`, 0},
 		{"value-if-block-arm-argument", `function take(v: f64): i32 { return 0; }
 function main(): i32 { return take(if (true) { ({ 1 }) } else { 2.5 }); }`, 0},
+		// The join reaches tuple elements and enum payloads.
+		{"value-if-tuple-elem-settles-at-float", `function main(): i32 { let c: boolean = true; let t = if (c) { (1, 2) } else { (3.5, 4) }; if (t.0 > 0.5) { return 1; } return 0; }`, 0},
+		{"value-if-tuple-elem-after-float", `function main(): i32 { let c: boolean = true; let t = if (c) { (3.5, 4) } else { (1, 2) }; if (t.0 > 0.5) { return 1; } return 0; }`, 0},
+		{"value-if-tuple-typed-sibling-elem", `function main(): i32 { let c: boolean = true; let n: i32 = 4; let t = if (c) { (1, n) } else { (3.5, 4) }; if (t.0 > 0.5 && t.1 == 4) { return 1; } return 0; }`, 0},
+		{"value-if-nested-tuple-elem", `function main(): i32 { let c: boolean = true; let t = if (c) { ((1, 2), 3) } else { ((3.5, 4), 5) }; if (t.0.0 > 0.5) { return 1; } return 0; }`, 0},
+		{"value-match-tuple-elem", `function main(): i32 { let k: i32 = 1; let t = match (k) { 1 => (1, 2), _ => (3.5, 4) }; if (t.0 > 0.5) { return 1; } return 0; }`, 0},
+		{"value-if-block-tuple-arm", `function main(): i32 { let c: boolean = true; let t = if (c) { ({ (1, 2) }) } else { (3.5, 4) }; if (t.0 > 0.5) { return 1; } return 0; }`, 0},
+		{"value-if-block-tuple-literal-local", `function main(): i32 { let c: boolean = true; let t = if (c) { ({ let q = 2; (q, 2) }) } else { (3.5, 4) }; if (t.0 > 0.5) { return 1; } return 0; }`, 0},
+		{"value-if-nested-if-tuple-arm", `function main(): i32 { let c: boolean = true; let t = if (c) { if (false) { (1, 2) } else { (3, 4) } } else { (3.5, 4) }; if (t.0 > 0.5) { return 1; } return 0; }`, 0},
+		{"value-if-nested-if-tuple-elem", `function main(): i32 { let c: boolean = true; let t = if (c) { (if (false) { 1 } else { 2 }, 3) } else { (3.5, 4) }; if (t.0 > 0.5) { return 1; } return 0; }`, 0},
+		{"value-if-literal-tuple-widens", `function main(): i32 { let c: boolean = true; let t = if (c) { (1, 2) } else { (3, 4) }; let u: (i64, i32) = t; return 0; }`, 0},
+		{"value-if-some-payload-settles-at-float", `function main(): i32 { let c: boolean = true; let o = if (c) { Some(1) } else { Some(2.5) }; match (o) { Some(v) => { if (v > 0.5) { return 1; } }, None => {} } return 0; }`, 0},
+		{"value-if-some-payload-after-float", `function main(): i32 { let c: boolean = true; let o = if (c) { Some(2.5) } else { Some(1) }; match (o) { Some(v) => { if (v > 0.5) { return 1; } }, None => {} } return 0; }`, 0},
+		{"value-if-some-tuple-payload", `function main(): i32 { let c: boolean = true; let o = if (c) { Some((1, 2)) } else { Some((3.5, 4)) }; match (o) { Some(v) => { if (v.0 > 0.5) { return 1; } }, None => {} } return 0; }`, 0},
+		{"value-if-ok-payload-settles-at-float", `function main(): i32 { let c: boolean = true; let r = if (c) { Ok(1) } else { Ok(2.5) }; match (r) { Ok(v) => { if (v > 0.5) { return 1; } }, Err(e) => {} } return 0; }`, 0},
+		{"value-if-generic-enum-payload", `enum Bx[T] { Full(T), Empty }
+function main(): i32 { let c: boolean = true; let b = if (c) { Full(1) } else { Full(2.5) }; match (b) { Full(v) => { if (v > 0.5) { return 1; } }, Empty => {} } return 0; }`, 0},
+		// A literal local binds as one in a statement the checker types on its own.
+		{"value-if-literal-local-arm", `function main(): i32 { let c: boolean = true; let x = 1; let y = if (c) { x } else { 2.5 }; if (y > 0.5) { return 1; } return 0; }`, 0},
+		{"value-if-literal-local-tuple-elem", `function main(): i32 { let c: boolean = true; let x = 1; let t = if (c) { (x, 2) } else { (3.5, 4) }; if (t.0 > 0.5) { return 1; } return 0; }`, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(dir, tc.name+".fern")

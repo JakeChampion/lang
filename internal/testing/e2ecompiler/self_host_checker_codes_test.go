@@ -2617,6 +2617,19 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e003-block-i32-local", "function main(): i32 { let n: i32 = 1; let x: f64 = ({ n }); return 0; }\n", []string{"E003"}},
 		{"e031-wide-array-arms-ok", "function main(): i32 { let arr: i64[] = if (true) { [1234567890123, 9876543210] } else { [0, 0] }; return 0; }\n", nil},
 		{"e031-literal-match-array-assigns-ok", "function main(): i32 { let k: i32 = 1; let a: i64 = 2; let u: u8 = 1; let x = match (k) { 1 => [a], _ => [3] }; let y = match (k) { 1 => [u], _ => [3] }; let z = match (k) { 1 => [[a]], _ => [[3]] }; return 0; }\n", nil},
+		// Enum payloads join argument by argument: a typed payload still must agree.
+		{"e031-some-f64-vs-i32-local", "function main(): i32 { let n: i32 = 1; let o = if (true) { Some(1.5) } else { Some(n) }; return 0; }\n", []string{"E031"}},
+		{"e031-some-i32-local-vs-f64", "function main(): i32 { let n: i32 = 1; let o = if (true) { Some(n) } else { Some(1.5) }; return 0; }\n", []string{"E031"}},
+		{"e031-ok-i32-local-vs-f64", "function main(): i32 { let n: i32 = 1; let r = if (true) { Ok(n) } else { Ok(2.5) }; return 0; }\n", []string{"E031"}},
+		{"e031-err-i32-local-vs-f64", "function main(): i32 { let n: i32 = 1; let r = if (true) { Err(n) } else { Err(2.5) }; return 0; }\n", []string{"E031"}},
+		{"e031-generic-enum-f64-vs-i32-local", "enum Bx[T] { Full(T), Empty }\nfunction main(): i32 { let n: i32 = 3; let b = if (true) { Full(1.5) } else { Full(n) }; return 0; }\n", []string{"E031"}},
+		{"e031-match-some-i32-local-vs-f64", "function main(): i32 { let k: i32 = 1; let n: i32 = 1; let o = match (k) { 1 => Some(n), _ => Some(2.5) }; return 0; }\n", []string{"E031"}},
+		{"e031-some-tuple-typed-elem", "function main(): i32 { let n: i32 = 1; let o = if (true) { Some((n, 1)) } else { Some((2.5, 1)) }; return 0; }\n", []string{"E031"}},
+		{"e031-block-tuple-typed-elem", "function main(): i32 { let n: i32 = 1; let t = if (true) { ({ (n, 2) }) } else { (3.5, 4) }; return 0; }\n", []string{"E031"}},
+		{"e031-nested-if-tuple-typed-elem", "function main(): i32 { let n: i32 = 1; let t = if (true) { if (false) { (n, 2) } else { (1, 2) } } else { (3.5, 4) }; return 0; }\n", []string{"E031"}},
+		{"e031-block-tuple-shadows-literal-local", "function main(): i32 { let q = 2; let t = if (true) { ({ let q: i32 = 3; (q, 1) }) } else { (2.5, 1) }; return 0; }\n", []string{"E031"}},
+		{"e003-joined-tuple-elem", "function main(): i32 { let t = if (true) { (1, 2) } else { (3.5, 4) }; let s: string = t; return 0; }\n", []string{"E003"}},
+		{"e003-joined-some-payload", "function main(): i32 { let o = if (true) { Some(1) } else { Some(2.5) }; let s: string = o; return 0; }\n", []string{"E003"}},
 		// E045: a map literal's first key fixes the key type, which must be
 		// i32 or string (the only key kinds the runtime hash/compare
 		// supports). Map programs need `import "core/map";` (Go reports E001

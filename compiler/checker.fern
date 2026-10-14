@@ -297,12 +297,21 @@ function float_result(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type {
   return a;
 }
 
+// is_poly_int: is `t` an integer a literal leaves unsettled?
+function is_poly_int(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeI32(i) = t {
+    return i.polymorphic && !i.is_char;
+  }
+  return false;
+}
+
 // Merge literal commitments before default-width equality, including tuples.
+// An unsettled integer takes a float sibling's type, as in unifyIfArms.
 function join_result_types(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type {
-  if (integer_literal_widens(a, b)) {
+  if (integer_literal_widens(a, b) || is_poly_int(a) && is_float(b)) {
     return b;
   }
-  if (integer_literal_widens(b, a)) {
+  if (integer_literal_widens(b, a) || is_poly_int(b) && is_float(a)) {
     return a;
   }
   if let typeinfo.TypeI32(ai) = a {
@@ -2506,10 +2515,14 @@ function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
   return Scope { ...s, names: ns, types: ts, lit_locals: lits };
 }
 
-// bind_lit_local binds a local an unsettled integer initialises.
-function (s: Scope) bind_lit_local(name: string, t: typeinfo.Type): Scope {
-  let b: Scope = s.bind(name, t);
-  return Scope { ...b, lit_locals: b.lit_locals.append(name) };
+// bind_inferred binds an unannotated local at its initialiser's type `t`, as a
+// literal local where an unsettled integer initialises it.
+function (s: Scope) bind_inferred(v: ast.StmtVar, t: typeinfo.Type): Scope {
+  let b: Scope = s.bind(v.name, t);
+  if (is_integer(t) && unsettled_tree(v.init, s.lit_locals)) {
+    return Scope { ...b, lit_locals: b.lit_locals.append(v.name) };
+  }
+  return b;
 }
 
 // with_tparams attaches the enclosing function's type parameters and their
@@ -5310,13 +5323,7 @@ function t_func_after_env(sig: FuncSig): typeinfo.Type {
 // value types its payload. Result constructors retain the argument their
 // payload determines and leave the other position open for context.
 function inferred_payload(e: ast.Expr, s: Scope): typeinfo.Type {
-  let t: typeinfo.Type = check_expr(e, s);
-  if let typeinfo.TypeI32(i) = t {
-    if (!i.is_char && unsettled_tree(e, s.lit_locals)) {
-      return typeinfo.TypeI32 { ...i, polymorphic: true };
-    }
-  }
-  return t;
+  return unsettled_marked(check_expr(e, s), e, s.lit_locals, true);
 }
 
 // Only an uncommitted literal can change a known enum argument's width.
@@ -7455,8 +7462,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
         }
         return CheckResult { scope: s.bind(v.name, declared), ty: declared };
       }
-      let s2: Scope = s.bind(v.name, t);
-      return CheckResult { scope: s2, ty: t };
+      return CheckResult { scope: s.bind_inferred(v, t), ty: t };
     },
     ast.StmtReturn(r) => {
       // A bare `return;` yields no value. The parser leaves an
@@ -7706,11 +7712,7 @@ pub function bind_stmt(st: ast.Stmt, s: Scope): Scope {
       if (v.type_name.len() > 0) {
         return s.bind(v.name, var_declared_type(v, s));
       }
-      let t: typeinfo.Type = check_expr(v.init, rec_local_scope(v, s));
-      if (is_integer(t) && unsettled_tree(v.init, s.lit_locals)) {
-        return s.bind_lit_local(v.name, t);
-      }
-      return s.bind(v.name, t);
+      return s.bind_inferred(v, check_expr(v.init, rec_local_scope(v, s)));
     },
     _ => {}
   }
@@ -10728,7 +10730,7 @@ function lret_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.Diag[
 // typed array, and a struct that's a member of a union arm), numeric where an
 // unsuffixed literal arm settles at the other arm's type (`arm_int_literal`,
 // and a polymorphic float against any float), element-wise-compatible
-// tuples / arrays / maps, or two struct
+// tuples / arrays / maps / generic enum arguments, or two struct
 // values of the SAME enum family. The enum-family rule is the subtle one:
 // the Go checker types an enum variant constructor as its ENUM type, so
 // `A(1)` and `B("y")` of one `enum E` unify, whereas the members of a
@@ -10769,7 +10771,7 @@ function unsettled_tree(e: ast.Expr, lits: string[]): boolean {
       return parser.int_literal_op(b.op) && unsettled_tree(b.left, lits) && unsettled_tree(b.right, lits);
     },
     ast.ExprCall(c) => {
-      return unsettled_value_block(c, lits);
+      return unsettled_value_block(c, [], 0, lits);
     },
     _ => {
       return false;
@@ -10778,9 +10780,24 @@ function unsettled_tree(e: ast.Expr, lits: string[]): boolean {
   return false;
 }
 
+// unsettled_part is unsettled_tree over the part of `e` the tuple element
+// indices `path[at..]` name.
+function unsettled_part(e: ast.Expr, path: i32[], at: i32, lits: string[]): boolean {
+  if (at >= path.len()) {
+    return unsettled_tree(e, lits);
+  }
+  if let ast.ExprTuple(t) = e {
+    return path[at] < t.elements.len() && unsettled_part(t.elements[path[at]], path, at + 1, lits);
+  }
+  if let ast.ExprCall(c) = e {
+    return unsettled_value_block(c, path, at, lits);
+  }
+  return false;
+}
+
 // unsettled_value_block: is `c` a value block, if or match with an arm that
-// yields, every such arm an unsettled_tree?
-function unsettled_value_block(c: ast.ExprCall, lits: string[]): boolean {
+// yields, every such arm's unsettled_part at `path[at..]` unsettled?
+function unsettled_value_block(c: ast.ExprCall, path: i32[], at: i32, lits: string[]): boolean {
   if (c.args.len() > 0) {
     return false;
   }
@@ -10789,15 +10806,15 @@ function unsettled_value_block(c: ast.ExprCall, lits: string[]): boolean {
     if (lm.params.len() > 0 || !branches && lm.origin != parser.ORIGIN_BLOCK) {
       return false;
     }
-    return unsettled_arms(lm.body, lits) > 0;
+    return unsettled_arms(lm.body, path, at, lits) > 0;
   }
   return false;
 }
 
 // unsettled_arms counts the arms of a value body that yield, reading each in
 // the literal locals its leading statements and its pattern leave, or is -1
-// where one is not an unsettled_tree.
-function unsettled_arms(body: ast.Stmt[], outer: string[]): i32 {
+// where one's unsettled_part at `path[at..]` is not unsettled.
+function unsettled_arms(body: ast.Stmt[], path: i32[], at: i32, outer: string[]): i32 {
   if (!mx_branch_yields(body)) {
     return 0;
   }
@@ -10809,18 +10826,18 @@ function unsettled_arms(body: ast.Stmt[], outer: string[]): i32 {
   }
   match (body[i]) {
     ast.StmtReturn(r) => {
-      if (unsettled_tree(r.value, lits)) {
+      if (unsettled_part(r.value, path, at, lits)) {
         return 1;
       }
       return 0 - 1;
     },
     ast.StmtIf(f) => {
-      return unsettled_arm_sum(unsettled_arms(f.then_body, lits), unsettled_arms(f.else_body, lits));
+      return unsettled_arm_sum(unsettled_arms(f.then_body, path, at, lits), unsettled_arms(f.else_body, path, at, lits));
     },
     ast.StmtMatch(m) => {
       let n: i32 = 0;
       for arm in m.arms {
-        n = unsettled_arm_sum(n, unsettled_arms(arm.body, drop_lit_locals(lits, astwalk.pattern_binders(arm.pattern, []))));
+        n = unsettled_arm_sum(n, unsettled_arms(arm.body, path, at, drop_lit_locals(lits, astwalk.pattern_binders(arm.pattern, []))));
       }
       return n;
     },
@@ -10939,10 +10956,40 @@ function mx_arm_compatible(a: VbStore, b: VbStore, elem: boolean, assigns: boole
   if (is_float(a.t) && is_float(b.t) && (!elem || assigns)) {
     return float_operands_agree(a.t, b.t);
   }
+  if let typeinfo.TypeUnion(ua) = a.t {
+    if let typeinfo.TypeUnion(ub) = b.t {
+      if (ua.name == ub.name) {
+        return mx_args_compatible(ua, ub, elem, assigns, unions, enums);
+      }
+    }
+  }
   if (type_eq(a.t, b.t) || type_assignable(a.t, b.t, unions) || type_assignable(b.t, a.t, unions)) {
     return true;
   }
   return mx_parts_compatible(a, b, elem, assigns, unions, enums);
+}
+
+// mx_args_compatible is mx_arm_compatible over two instances of one generic
+// enum, argument by argument, as mergeEnumInference joins them: an argument
+// either construction leaves open joins anything.
+function mx_args_compatible(a: typeinfo.TypeUnion, b: typeinfo.TypeUnion, elem: boolean, assigns: boolean, unions: UnionSig[], enums: parser.EnumDecl[]): boolean {
+  if (a.args.len() == 0 || b.args.len() == 0) {
+    return true;
+  }
+  if (a.args.len() != b.args.len()) {
+    return false;
+  }
+  let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  let i: i32 = 0;
+  while (i < a.args.len()) {
+    let x: typeinfo.Type = a.args[i];
+    let y: typeinfo.Type = b.args[i];
+    if (!is_unknown(x) && !is_unknown(y) && !mx_arm_compatible(VbStore { t: x, e: none }, VbStore { t: y, e: none }, elem, assigns, unions, enums)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
 }
 
 // mx_parts_compatible is mx_arm_compatible over two composite results, part by
@@ -11060,13 +11107,7 @@ function mx_int_literal_settles(a: VbStore, t: typeinfo.Type, elem: boolean): bo
 // literal tree, whatever width a destination stamped on it, or a value typed
 // polymorphic (mx_arm_result_type)?
 function arm_unsettled(a: VbStore): boolean {
-  if (arm_int_literal(a.e)) {
-    return true;
-  }
-  if let typeinfo.TypeI32(i) = a.t {
-    return !i.is_char && i.polymorphic;
-  }
-  return false;
+  return arm_int_literal(a.e) || is_poly_int(a.t);
 }
 
 // mx_arm_join is the result unifyIfArms carries past two compatible arms: a
@@ -11183,8 +11224,31 @@ function mx_arm_result_type(e: ast.Expr, s: Scope): typeinfo.Type {
   if (is_unknown(t) && is_block) {
     return block_tail_arm_type(block, s);
   }
+  return unsettled_marked(t, e, s.lit_locals, false);
+}
+
+// unsettled_marked is `t` typed polymorphic wherever `e` is an unsettled
+// integer, element by element through a tuple, which a literal, a value block,
+// if or match may yield. A whole value that is a literal tree is marked only
+// with `literals`; its expression says so already.
+function unsettled_marked(t: typeinfo.Type, e: ast.Expr, lits: string[], literals: boolean): typeinfo.Type {
+  return unsettled_marked_at(t, e, [], lits, literals);
+}
+
+// unsettled_marked_at is unsettled_marked over `t`, the part of `e` at tuple
+// `path`.
+function unsettled_marked_at(t: typeinfo.Type, e: ast.Expr, path: i32[], lits: string[], literals: boolean): typeinfo.Type {
+  if let typeinfo.TypeTuple(tt) = t {
+    let elems: typeinfo.Type[] = [];
+    let k: i32 = 0;
+    while (k < tt.elements.len()) {
+      elems = elems.append(unsettled_marked_at(tt.elements[k], e, path.append(k), lits, literals));
+      k = k + 1;
+    }
+    return t_tuple(elems);
+  }
   if let typeinfo.TypeI32(i) = t {
-    if (!i.is_char && !arm_int_literal(e) && unsettled_tree(e, s.lit_locals)) {
+    if (!i.is_char && (literals || path.len() > 0 || !arm_int_literal(e)) && unsettled_part(e, path, 0, lits)) {
       return typeinfo.TypeI32 { ...i, polymorphic: true };
     }
   }
@@ -26807,9 +26871,12 @@ function vb_assigned_stores(stmts: ast.Stmt[], name: string, s: Scope, acc: VbSt
 
 // vb_untyped_fits reports whether `e` is a tree of unsuffixed integer literals
 // that `t` can hold: such a literal settles to the type the value is declared
-// with.
+// with. Any float holds one.
 function vb_untyped_fits(e: ast.Expr, t: typeinfo.Type): boolean {
-  return is_integer(t) && int_literal_tree(e) && int_range_diags(e, type_to_irtag(t), false).len() == 0;
+  if (!int_literal_tree(e)) {
+    return false;
+  }
+  return is_float(t) || is_integer(t) && int_range_diags(e, type_to_irtag(t), false).len() == 0;
 }
 
 // vb_pinned_ranges is E047 for a value if's or match's literal arms, at the
