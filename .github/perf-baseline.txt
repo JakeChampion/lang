@@ -49,14 +49,14 @@
 # past the join tested it once. Values are the perf-x86_64 and perf-aarch64
 # lanes' measurements of the branch.
 
-x86_64/array_append.text	924
+x86_64/array_append.text	935
 x86_64/array_append.ir	13383897
-x86_64/array_index.text	913
+x86_64/array_index.text	924
 x86_64/array_index.ir	16455548
 x86_64/array_scale_f64.text	2759
 x86_64/array_scale_f64.ir	21337821
 x86_64/array_with.ir	37762183
-x86_64/array_with.text	1068
+x86_64/array_with.text	1079
 x86_64/ascii_scan.text	3038
 x86_64/ascii_scan.ir	37119510
 x86_64/call_overhead.text	88
@@ -189,20 +189,20 @@ x86_64/utf8_ingest_validated.ir	5988691
 # on one program says nothing about the next. A new benchmark reports as
 # UNBASELINED here for one CI run, which is the gate saying "measured,
 # recorded, not yet compared" — paste that run's block in rather than guessing.
-aarch64/array_append.text	1105
+aarch64/array_append.text	1120
 aarch64/array_append.ir	17893556
-aarch64/array_index.text	1103
+aarch64/array_index.text	1118
 aarch64/array_index.ir	18548348
 aarch64/array_scale_f64.text	2801
 aarch64/array_scale_f64.ir	25365579
-aarch64/array_with.text	1255
+aarch64/array_with.text	1270
 aarch64/array_with.ir	31219422
 aarch64/ascii_scan.text	3204
 aarch64/ascii_scan.ir	68660210
 aarch64/call_overhead.text	148
 aarch64/call_overhead.ir	11250762
 aarch64/closure_call.text	1009
-aarch64/closure_call.ir	106368083
+aarch64/closure_call.ir	91824111
 aarch64/enum_match.text	1166
 aarch64/enum_match.ir	41400056
 aarch64/http_hello.text	20147
@@ -210,11 +210,11 @@ aarch64/http_hello.ir	29648969
 aarch64/int_loop.text	90
 aarch64/int_loop.ir	18000025
 aarch64/map_int.text	6044
-aarch64/map_int.ir	40249135
+aarch64/map_int.ir	39212671
 aarch64/map_probe_chain.text	6055
-aarch64/map_probe_chain.ir	382212817
+aarch64/map_probe_chain.ir	374464985
 aarch64/map_string.text	8944
-aarch64/map_string.ir	66191654	2
+aarch64/map_string.ir	64821463	2
 aarch64/ordmap_insert.text	5441
 aarch64/ordmap_insert.ir	124791436
 aarch64/pmap_insert.text	4965
@@ -227,7 +227,7 @@ aarch64/sort_inplace.text	3020
 aarch64/sort_inplace.ir	53111058
 aarch64/sort_ints.text	3583
 aarch64/sort_ints.ir	32514646
-aarch64/sort_strings.text	4413
+aarch64/sort_strings.text	4476
 aarch64/sort_strings.ir	106027235
 aarch64/string_build.text	3431
 aarch64/string_build.ir	63637394
