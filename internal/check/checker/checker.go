@@ -15464,7 +15464,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 					litLocal = true
 				}
 			} else if holdsUntypedFloat(got) {
-				c.promoteIntLiterals(n.Init)
+				c.promoteIntLiterals(n.Init, got)
 			} else if widened := c.widenCompositeByLiterals(got, n.Init); widened != nil {
 				c.settleNumeric(n.Init, widened)
 				got = widened
@@ -21934,46 +21934,109 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 	}
 }
 
-// holdsUntypedFloat reports a polymorphic float, or an array of one.
+// holdsUntypedFloat reports whether t is a polymorphic float or a composite
+// with one inside it.
 func holdsUntypedFloat(t ast.Type) bool {
 	switch x := t.(type) {
 	case ast.FloatType:
 		return x.Polymorphic
 	case ast.ArrayType:
 		return holdsUntypedFloat(x.Elem)
+	case ast.TupleType:
+		return slices.ContainsFunc(x.Elems, holdsUntypedFloat)
+	case ast.EnumType:
+		return slices.ContainsFunc(x.Args, holdsUntypedFloat)
+	case ast.StructType:
+		return slices.ContainsFunc(x.Args, holdsUntypedFloat)
 	}
 	return false
 }
 
-// promoteIntLiterals settles to f64, the float an untyped local holds, each
-// integer literal an untyped float join carries (`if (c) { 1 } else { 2.5 }`,
-// `[1, 2.5]`), and leaves its float literals unsettled.
-func (c *checker) promoteIntLiterals(e ast.Expr) {
+// f64Floats is t with each polymorphic float in it made f64, the float an
+// untyped local holds.
+func f64Floats(t ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.FloatType:
+		if x.Polymorphic {
+			return ast.FloatType{Width: 64}
+		}
+	case ast.ArrayType:
+		return ast.ArrayType{Elem: f64Floats(x.Elem)}
+	case ast.TupleType:
+		elems := make([]ast.Type, len(x.Elems))
+		for i, el := range x.Elems {
+			elems[i] = f64Floats(el)
+		}
+		return ast.TupleType{Elems: elems}
+	case ast.EnumType:
+		args := make([]ast.Type, len(x.Args))
+		for i, a := range x.Args {
+			args[i] = f64Floats(a)
+		}
+		return ast.EnumType{Name: x.Name, Args: args}
+	case ast.StructType:
+		args := make([]ast.Type, len(x.Args))
+		for i, a := range x.Args {
+			args[i] = f64Floats(a)
+		}
+		return ast.StructType{Name: x.Name, Args: args}
+	}
+	return t
+}
+
+// promoteIntLiterals settles to f64 each integer literal in e that sits where
+// t, the untyped local's joined type, holds a polymorphic float: an
+// `if (c) { 1 } else { 2.5 }` arm, an element of `[1, 2.5]`, the first of
+// `(1, 2)` joined with `(3.5, 4)`. Float literals stay unsettled, and an
+// integer where t holds an integer stays one.
+func (c *checker) promoteIntLiterals(e ast.Expr, t ast.Type) {
+	if !holdsUntypedFloat(t) {
+		return
+	}
 	switch x := e.(type) {
-	case *ast.NumberLit, *ast.Call:
-		// A generic call returning its type parameter takes the f64 too.
+	case *ast.NumberLit:
 		c.settleFloat(x, ast.FloatType{Width: 64})
-	case *ast.ArrayLit:
-		for _, el := range x.Elems {
-			c.promoteIntLiterals(el)
+	case *ast.Call:
+		// A generic call returning its type parameter, or a variant
+		// constructor carrying the float, settles through its arguments.
+		c.settleNumeric(x, f64Floats(t))
+	case *ast.Binary:
+		switch x.Op {
+		case "+", "-", "*", "/":
+			if !x.IsStringConcat {
+				c.promoteIntLiterals(x.Left, t)
+				c.promoteIntLiterals(x.Right, t)
+			}
 		}
 	case *ast.Unary:
 		if x.Op == "-" || x.Op == "+" {
-			c.promoteIntLiterals(x.Operand)
+			c.promoteIntLiterals(x.Operand, t)
 			x.CheckedType = c.postSettleType(x.Operand, x.CheckedType)
 		}
+	case *ast.ArrayLit:
+		if at, ok := t.(ast.ArrayType); ok {
+			for _, el := range x.Elems {
+				c.promoteIntLiterals(el, at.Elem)
+			}
+		}
+	case *ast.TupleLit:
+		if tt, ok := t.(ast.TupleType); ok && len(tt.Elems) == len(x.Elems) {
+			for i, el := range x.Elems {
+				c.promoteIntLiterals(el, tt.Elems[i])
+			}
+		}
 	case *ast.IfExpr:
-		c.promoteIntLiterals(x.Then)
-		c.promoteIntLiterals(x.Else)
+		c.promoteIntLiterals(x.Then, t)
+		c.promoteIntLiterals(x.Else, t)
 	case *ast.MatchExpr:
 		for _, arm := range x.Arms {
 			if arm != nil {
-				c.promoteIntLiterals(arm.Body)
+				c.promoteIntLiterals(arm.Body, t)
 			}
 		}
 	case *ast.BlockExpr:
 		if x.Tail != nil {
-			c.promoteIntLiterals(x.Tail)
+			c.promoteIntLiterals(x.Tail, t)
 		}
 	}
 }
