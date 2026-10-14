@@ -2161,8 +2161,8 @@ func functionListing(text, label string) string {
 		return ""
 	}
 	rest := text[start+len(label)+2:]
-	// The function's own entries, `<label>.k:` and `<label>.r:`, are inside
-	// its listing.
+	// The function's register entries, `<label>.k:` and `<label>.r:`, are
+	// inside its listing.
 	from := 0
 	for {
 		end := strings.Index(rest[from:], "\n__fn_")
