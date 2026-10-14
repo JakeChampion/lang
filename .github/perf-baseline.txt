@@ -62,7 +62,7 @@ x86_64/ascii_scan.ir	37119510
 x86_64/call_overhead.text	88
 x86_64/call_overhead.ir	8250759
 x86_64/closure_call.text	824
-x86_64/closure_call.ir	79818106
+x86_64/closure_call.ir	72618106
 x86_64/enum_match.text	975
 x86_64/enum_match.ir	53775055
 x86_64/http_hello.text	19770
@@ -70,11 +70,11 @@ x86_64/http_hello.ir	27552835
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
 x86_64/map_int.text	5687
-x86_64/map_int.ir	39453475
+x86_64/map_int.ir	38961091
 x86_64/map_probe_chain.text	5694
 x86_64/map_probe_chain.ir	369386467
 x86_64/map_string.text	8603
-x86_64/map_string.ir	63856516	2
+x86_64/map_string.ir	62526498	2
 x86_64/ordmap_insert.text	5131
 x86_64/ordmap_insert.ir	112624390
 x86_64/pmap_insert.text	4803
@@ -106,9 +106,9 @@ x86_64/struct_drop.ir	302980547
 x86_64/tokenize.text	973
 x86_64/tokenize.ir	36950039
 x86_64/utf8_ingest_unchecked.text	9286
-x86_64/utf8_ingest_unchecked.ir	2870412
+x86_64/utf8_ingest_unchecked.ir	2833479
 x86_64/utf8_ingest_validated.text	9532
-x86_64/utf8_ingest_validated.ir	5988691
+x86_64/utf8_ingest_validated.ir	5916087
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -202,7 +202,7 @@ aarch64/ascii_scan.ir	68660210
 aarch64/call_overhead.text	148
 aarch64/call_overhead.ir	11250762
 aarch64/closure_call.text	1009
-aarch64/closure_call.ir	91824111
+aarch64/closure_call.ir	77424111
 aarch64/enum_match.text	1166
 aarch64/enum_match.ir	41400056
 aarch64/http_hello.text	20147
@@ -210,9 +210,9 @@ aarch64/http_hello.ir	29648969
 aarch64/int_loop.text	90
 aarch64/int_loop.ir	18000025
 aarch64/map_int.text	6044
-aarch64/map_int.ir	39212671
+aarch64/map_int.ir	38346978
 aarch64/map_probe_chain.text	6055
-aarch64/map_probe_chain.ir	374464985
+aarch64/map_probe_chain.ir	368004126
 aarch64/map_string.text	8944
 aarch64/map_string.ir	64821463	2
 aarch64/ordmap_insert.text	5441
@@ -246,7 +246,7 @@ aarch64/struct_drop.ir	344060825
 aarch64/tokenize.text	1195
 aarch64/tokenize.ir	38580038
 aarch64/utf8_ingest_unchecked.text	9679
-aarch64/utf8_ingest_unchecked.ir	2732016
+aarch64/utf8_ingest_unchecked.ir	2703816
 aarch64/utf8_ingest_validated.text	9944
 aarch64/utf8_ingest_validated.ir	6347933
 
