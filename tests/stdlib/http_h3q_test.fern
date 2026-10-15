@@ -1,0 +1,351 @@
+import "std/test";
+import "std/http/h3q";
+import "std/http/h3";
+import "std/quic/conn";
+import "std/quic/packet";
+import "std/tls/identity";
+import "std/tls/verify";
+import "std/headers";
+import "std/hex";
+import "std/string";
+import "std/option";
+import "std/result";
+import "core/int";
+
+// tests/stdlib/http_h3q_test.fern — std/http/h3q: an HTTP/3 client and
+// server over std/quic connections in memory on a virtual clock. A GET and
+// its response, a large upload answered with trailers through loss and
+// reordering, requests answered out of order, and a graceful close.
+
+const ROOT: string = "3082011c3081cfa00302010202020201300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30243122302006035504030c194665726e20544c5320536572766572205465737420526f6f74302a300506032b6570032100d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737a3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300506032b65700341007353a91b5ad2e713d51d2fa08f3e800b99afa9e5725cfd746269d03210b1faadccfc942258bb8151da41be07943a4e8a14bd615e96692c8b896872460e827c0a";
+
+const ED_LEAF: string = "3082013e3081f1a00302010202020204300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b746c732e6578616d706c65302a300506032b6570032100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0a3533051300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301301c0603551d1104153013820b746c732e6578616d706c658704c0000207300506032b6570034100bdd423797a497344c22bf704b418f31b7b6d0d884b517a57d1421c064fa68de8266518e0ddedfbdf189a71a2bb5bd2ffb7ca885f2a7f9ac0e96cb6d07d83e802";
+
+const ED_PKCS8: string = "-----BEGIN PRIVATE KEY-----\n"
+  + "MC4CAQAwBQYDK2VwBCIEICIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIi\n"
+  + "-----END PRIVATE KEY-----\n";
+
+const MS: i64 = 1000000;
+
+function server_config(): conn.Config {
+  match (identity.private_key_from_pem(ED_PKCS8)) {
+    Ok(k) => {
+      match (identity.pair([hex.hex_decode(ED_LEAF)], k)) {
+        Ok(id) => {
+          return h3q.transport(conn.config([]).server_side(id));
+        },
+        Err(_) => {}
+      }
+    },
+    Err(_) => {}
+  }
+  return h3q.transport(conn.config([]));
+}
+
+function client_config(): conn.Config {
+  return h3q.transport(conn.config([]).client_side("tls.example", verify.roots([hex.hex_decode(ROOT)])));
+}
+
+function entropy(seed: i32, n: i32): u8[] {
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append((seed + i * 7 & 255) as u8);
+    i = i + 1;
+  }
+  return out;
+}
+
+// Ends — the client, the server once its first datagram has made it, the
+// clock, what each reported, and every `lose_every`-th datagram lost and
+// each batch reversed when `reorder`.
+struct Ends { client: h3q.Conn, server: Option[h3q.Conn], now: i64, log: string, lose_every: i32, carried: i32, reorder: boolean, requests: HttpRequest[], ids: i64[], responses: string }
+
+function begin(): Result[Ends, string] {
+  let cc: conn.Config = client_config();
+  let q: conn.Conn = conn.client(cc, entropy(1, conn.client_entropy(cc)), 0 as i64)?;
+  return Ok(Ends { client: h3q.client(q, h3.config()), server: None, now: 0 as i64, log: "", lose_every: 0, carried: 0, reorder: false, requests: [], ids: [], responses: "" });
+}
+
+function to_server(e: Ends, d: u8[]): Ends {
+  if let Some(s) = e.server {
+    return Ends { ...e, server: Some(s.receive(d, e.now)) };
+  }
+  let sc: conn.Config = server_config();
+  let Ok(h) = packet.parse(d, 0, 8) else {
+    return e;
+  };
+  let Ok(q) = conn.accept(sc, entropy(2, conn.server_entropy(sc)), h, e.now) else {
+    return e;
+  };
+  return Ends { ...e, server: Some(h3q.server(q, h3.config()).receive(d, e.now)) };
+}
+
+function carried(e: Ends): (Ends, boolean) {
+  let n: i32 = e.carried + 1;
+  return (Ends { ...e, carried: n }, e.lose_every > 0 && n % e.lose_every == 0);
+}
+
+function ordered(e: Ends, out: u8[][]): u8[][] {
+  if (!e.reorder) {
+    return out;
+  }
+  let back: u8[][] = [];
+  let i: i32 = out.len() - 1;
+  while (i >= 0) {
+    back = back.append(out[i]);
+    i = i - 1;
+  }
+  return back;
+}
+
+// round moves each side's datagrams to the other, takes what each
+// reported, and answers whether anything moved.
+function round(e: Ends): (Ends, boolean) {
+  let (c, out) = e.client.transmit(e.now);
+  let cur: Ends = Ends { ...e, client: c };
+  for d in ordered(cur, out) {
+    let (next, lost) = carried(cur);
+    cur = next;
+    if (!lost) {
+      cur = to_server(cur, d);
+    }
+  }
+  let moved: boolean = out.len() > 0;
+  if let Some(s) = cur.server {
+    let (s2, sout) = s.transmit(cur.now);
+    cur = Ends { ...cur, server: Some(s2) };
+    for d in ordered(cur, sout) {
+      let (next, lost) = carried(cur);
+      cur = next;
+      if (!lost) {
+        cur = Ends { ...cur, client: cur.client.receive(d, cur.now) };
+      }
+    }
+    moved = moved || sout.len() > 0;
+  }
+  return (noticed(cur), moved);
+}
+
+// noticed takes each side's events: the server keeps the requests, the
+// client notes the responses.
+function noticed(e: Ends): Ends {
+  let (c, cevs) = e.client.take_events();
+  let cur: Ends = Ends { ...e, client: c };
+  for ev in cevs {
+    cur = Ends { ...cur, log: cur.log + "client " + event_text(ev) + "; " };
+  }
+  if let Some(s) = cur.server {
+    let (s2, sevs) = s.take_events();
+    cur = Ends { ...cur, server: Some(s2) };
+    for ev in sevs {
+      cur = Ends { ...cur, log: cur.log + "server " + event_text(ev) + "; " };
+      if let h3q.Requested(id, req) = ev {
+        cur = Ends { ...cur, requests: cur.requests.append(req), ids: cur.ids.append(id) };
+      }
+    }
+  }
+  return cur;
+}
+
+function event_text(ev: h3q.Event): string {
+  match (ev) {
+    h3q.Requested(id, req) => {
+      return "request " + id.to_string() + " " + req.method + " " + req.path + " " + int.int_to_string(req.body.data.len()) + "b host=" + req.headers.get("host").unwrap_or("-");
+    },
+    h3q.Responded(id, resp) => {
+      let trailer: string = "";
+      if (resp.trailers.names.len() > 0) {
+        trailer = " trailer " + resp.trailers.names[0] + "=" + resp.trailers.values[0];
+      }
+      return "response " + id.to_string() + " " + int.int_to_string(resp.status) + " " + string_from_bytes_unchecked(resp.body_bytes()) + trailer;
+    },
+    h3q.StreamDropped(id, code) => {
+      return "failed " + id.to_string() + " " + code.to_string();
+    },
+    h3q.Ended(why) => {
+      return "ended " + why.code.to_string() + " remote " + why.remote.to_string();
+    }
+  }
+}
+
+// settled runs rounds until nothing moves, then the clock to the next
+// deadline, `rounds` times at most.
+function settled(e: Ends, rounds: i32): Ends {
+  let cur: Ends = e;
+  let i: i32 = 0;
+  while (i < rounds) {
+    let (next, moved) = round(cur);
+    cur = next;
+    if (!moved) {
+      cur = ticked(cur);
+    }
+    i = i + 1;
+  }
+  return cur;
+}
+
+function ticked(e: Ends): Ends {
+  let due: i64 = e.client.deadline();
+  if let Some(s) = e.server {
+    let d: i64 = s.deadline();
+    if (d != 0 && (due == 0 || d < due)) {
+      due = d;
+    }
+  }
+  if (due == 0 || due > e.now + 5000 * MS) {
+    return e;
+  }
+  let now: i64 = due;
+  if (now < e.now) {
+    now = e.now;
+  }
+  let cur: Ends = Ends { ...e, now: now, client: e.client.tick(now) };
+  if let Some(s) = cur.server {
+    cur = Ends { ...cur, server: Some(s.tick(now)) };
+  }
+  return noticed(cur);
+}
+
+function get(path: string): HttpRequest {
+  return HttpRequest { method: "GET", path: path, body: Stream { data: [], pos: 0, source: None }, headers: headers.header_map_new().append("host", "tls.example").append("accept", "*/*"), trailers: headers.header_map_new() };
+}
+
+function asked(e: Ends, req: HttpRequest): Result[Ends, string] {
+  let (c, id) = e.client.request(req, "https")?;
+  return Ok(Ends { ...e, client: c });
+}
+
+function answered(e: Ends, i: i32, resp: HttpResponse): Ends {
+  let Some(s) = e.server else {
+    return e;
+  };
+  return Ends { ...e, server: Some(s.respond(e.ids[i], resp)) };
+}
+
+function text(status: i32, body: string): HttpResponse {
+  return HttpResponse { status: status, body: BodyText(body), headers: headers.header_map_new().append("Content-Type", "text/plain"), trailers: headers.header_map_new(), background: None };
+}
+
+function test_get(): test.TestOutcome {
+  match (begin()) {
+    Ok(e0) => {
+      let e: Ends = settled(e0, 12);
+      let ready: string = e.client.ready().to_string();
+      match (asked(Ends { ...e, log: "" }, get("/hello"))) {
+        Ok(e1) => {
+          let e2: Ends = settled(e1, 6);
+          let e3: Ends = settled(answered(e2, 0, text(200, "hi there")), 6);
+          return test.assert_eq(ready + " | " + e3.log, "true | server request 0 GET /hello 0b host=tls.example; client response 0 200 hi there; ");
+        },
+        Err(why) => {
+          return test.fail(why);
+        }
+      }
+    },
+    Err(why) => {
+      return test.fail(why);
+    }
+  }
+}
+
+function big(n: i32): u8[] {
+  let out: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.with(i, (97 + i % 26) as u8);
+    i = i + 1;
+  }
+  return out;
+}
+
+// A 30000-byte upload through loss and reordering, answered with its
+// size and a trailer.
+function test_upload_lossy(): test.TestOutcome {
+  match (begin()) {
+    Ok(e0) => {
+      let e: Ends = Ends { ...settled(e0, 12), log: "", lose_every: 9, reorder: true };
+      let req: HttpRequest = HttpRequest { method: "POST", path: "/up", body: Stream { data: big(30000), pos: 0, source: None }, headers: headers.header_map_new().append("host", "tls.example"), trailers: headers.header_map_new() };
+      match (asked(e, req)) {
+        Ok(e1) => {
+          let e2: Ends = settled(e1, 300);
+          let size: i32 = 0;
+          if (e2.requests.len() > 0) {
+            size = e2.requests[0].body.data.len();
+          }
+          let resp: HttpResponse = HttpResponse { ...text(201, "got " + int.int_to_string(size)), trailers: headers.header_map_new().append("x-check", "ok") };
+          let e3: Ends = settled(answered(e2, 0, resp), 300);
+          return test.assert_eq(e3.log, "server request 0 POST /up 30000b host=tls.example; client response 0 201 got 30000 trailer x-check=ok; ");
+        },
+        Err(why) => {
+          return test.fail(why);
+        }
+      }
+    },
+    Err(why) => {
+      return test.fail(why);
+    }
+  }
+}
+
+// Three requests at once, answered last first, each reaching the client
+// before the next is answered.
+function test_concurrent(): test.TestOutcome {
+  match (begin()) {
+    Ok(e0) => {
+      let e: Ends = Ends { ...settled(e0, 12), log: "" };
+      let paths: string[] = ["/a", "/b", "/c"];
+      for p in paths {
+        match (asked(e, get(p))) {
+          Ok(next) => {
+            e = next;
+          },
+          Err(why) => {
+            return test.fail(why);
+          }
+        }
+      }
+      e = settled(e, 6);
+      e = Ends { ...e, log: "" };
+      e = settled(answered(e, 2, text(200, "c")), 6);
+      e = settled(answered(e, 1, text(200, "b")), 6);
+      e = settled(answered(e, 0, text(404, "a")), 6);
+      return test.assert_eq(e.log, "client response 8 200 c; client response 4 200 b; client response 0 404 a; ");
+    },
+    Err(why) => {
+      return test.fail(why);
+    }
+  }
+}
+
+// The server shuts down: GOAWAY, after which the client sends no more
+// requests, then H3_NO_ERROR, which the client reports.
+function test_close(): test.TestOutcome {
+  match (begin()) {
+    Ok(e0) => {
+      let e: Ends = Ends { ...settled(e0, 12), log: "" };
+      let Some(s) = e.server else {
+        return test.fail("no server");
+      };
+      e = settled(Ends { ...e, server: Some(s.shutdown()) }, 6);
+      let after_goaway: string = e.client.ready().to_string() + " " + e.client.request(get("/late"), "https").is_err().to_string();
+      let Some(s2) = e.server else {
+        return test.fail("no server");
+      };
+      e = settled(Ends { ...e, server: Some(s2.close(e.now)) }, 20);
+      return test.assert_eq(after_goaway + " | " + e.log, "false true | client ended 256 remote true; server ended 256 remote false; ");
+    },
+    Err(why) => {
+      return test.fail(why);
+    }
+  }
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/http/h3q");
+  r = r.it("a GET and its response", test_get);
+  r = r.it("an upload through loss and reordering, answered with a trailer", test_upload_lossy);
+  r = r.it("three requests answered out of order", test_concurrent);
+  r = r.it("a graceful close", test_close);
+  return r.finish();
+}

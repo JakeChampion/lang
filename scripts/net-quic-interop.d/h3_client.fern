@@ -1,0 +1,171 @@
+// An HTTP/3 client over UDP: a GET of /hello and a POST of SIZE bytes to
+// /upload on one connection, each response printed with its trailers,
+// then a close; exits 0 when both were answered.
+//   h3_client PORT NAME CA.pem SIZE
+import "std/net";
+import "std/quic/conn";
+import "std/http/h3";
+import "std/http/h3q";
+import "std/tls/verify";
+import "std/headers";
+import "std/async";
+import "std/option";
+import "std/i64";
+import "std/string";
+import "core/int";
+
+function now(): i64 {
+  return monotonic_ns();
+}
+
+function pump(c: h3q.Conn, sock: i32, peer: net.SocketAddr): h3q.Conn {
+  let (c2, out) = c.transmit(now());
+  for d in out {
+    let r: Result[i32, net.NetError] = net.send_to(sock, d, peer);
+  }
+  return c2;
+}
+
+function drain(c: h3q.Conn, sock: i32, buf: u8[]): h3q.Conn {
+  let cur: h3q.Conn = c;
+  while (true) {
+    let Ok(got) = net.recv_from(sock, buf) else {
+      return cur;
+    };
+    cur = cur.receive(buf[0:got.0], now());
+  }
+  return cur;
+}
+
+function wait_ms(c: h3q.Conn): i32 {
+  let d: i64 = c.deadline();
+  if (d == 0) {
+    return 100;
+  }
+  let ms: i64 = (d - now()) / 1000000 + 1;
+  if (ms < 1) {
+    return 1;
+  }
+  if (ms > 100) {
+    return 100;
+  }
+  return ms as i32;
+}
+
+function request(method: string, path: string, body: u8[]): HttpRequest {
+  return HttpRequest { method: method, path: path, body: Stream { data: body, pos: 0, source: None }, headers: headers.header_map_new().append("host", "localhost"), trailers: headers.header_map_new() };
+}
+
+// Fetches — the requests still to send, how many answers are owed, and
+// how many came.
+struct Fetches { todo: HttpRequest[], owed: i32, answered: i32, closing: boolean }
+
+function shown(resp: HttpResponse): string {
+  let out: string = int.int_to_string(resp.status) + " " + string_from_bytes_unchecked(resp.body_bytes()) + " |";
+  let i: i32 = 0;
+  while (i < resp.trailers.names.len()) {
+    out = out + " " + resp.trailers.names[i] + "=" + resp.trailers.values[i];
+    i = i + 1;
+  }
+  return out;
+}
+
+// stepped sends the next request once the last is answered, reports each
+// response, and closes after the last.
+function stepped(c: h3q.Conn, f: Fetches): (h3q.Conn, Fetches) {
+  let (cur, evs) = c.take_events();
+  let next: Fetches = noted(evs, f);
+  if (!cur.ready() || next.owed > 0 || next.closing) {
+    return (cur, next);
+  }
+  if (next.todo.len() == 0) {
+    return (cur.close(now()), Fetches { ...next, closing: true });
+  }
+  let Ok(sent) = cur.request(next.todo[0], "https") else {
+    return (cur, next);
+  };
+  let rest: HttpRequest[] = [];
+  let i: i32 = 1;
+  while (i < next.todo.len()) {
+    rest = rest.append(next.todo[i]);
+    i = i + 1;
+  }
+  return (sent.0, Fetches { ...next, todo: rest, owed: 1 });
+}
+
+// noted prints each response, failure and the end, counting the answers.
+function noted(evs: h3q.Event[], f: Fetches): Fetches {
+  let next: Fetches = f;
+  for e in evs {
+    match (e) {
+      h3q.Responded(id, resp) => {
+        print("fern h3 client: stream " + id.to_string() + " -> " + shown(resp));
+        next = Fetches { ...next, owed: next.owed - 1, answered: next.answered + 1 };
+      },
+      h3q.StreamDropped(id, code) => {
+        print("fern h3 client: stream " + id.to_string() + " failed " + code.to_string());
+        next = Fetches { ...next, owed: next.owed - 1 };
+      },
+      h3q.Ended(why) => {
+        print("fern h3 client: ended code=" + why.code.to_string() + " reason=" + why.reason);
+      },
+      _ => {}
+    }
+  }
+  return next;
+}
+
+// opened is the connection begun to NAME at 127.0.0.1:PORT, trusting
+// CA.pem, and its socket.
+function opened(argv: string[]): Option[(h3q.Conn, i32)] {
+  let Ok(roots) = verify.roots_from_file(argv[3]) else {
+    eprint("no roots");
+    return None;
+  };
+  let cfg: conn.Config = h3q.transport(conn.config([]).client_side(argv[2], roots));
+  let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now()) else {
+    return None;
+  };
+  let Some(any) = net.socket_addr_parse("127.0.0.1:0") else {
+    return None;
+  };
+  let Ok(sock) = net.udp_socket(any) else {
+    return None;
+  };
+  let nb: Result[void, net.NetError] = net.set_nonblocking(sock, true);
+  return Some((h3q.client(q, h3.config()), sock));
+}
+
+function main(): i32 {
+  let argv: string[] = args();
+  let Some(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
+    return 2;
+  };
+  let Some(size) = argv[4].parse_int() else {
+    return 2;
+  };
+  let Some(o) = opened(argv) else {
+    return 2;
+  };
+  let sock: i32 = o.1;
+  let upload: u8[] = __alloc_u8(size);
+  let f: Fetches = Fetches { todo: [request("GET", "/hello", []), request("POST", "/upload", upload)], owed: 0, answered: 0, closing: false };
+  let c: h3q.Conn = o.0;
+  let buf: u8[] = __alloc_u8(65536);
+  let started: i64 = now();
+  while (!c.done() && now() - started < 20000000000) {
+    c = pump(c, sock, peer);
+    let woke: i32 = async.wait_any([sock, 1], wait_ms(c));
+    c = drain(c, sock, buf);
+    if (c.deadline() != 0 && now() >= c.deadline()) {
+      c = c.tick(now());
+    }
+    let (c2, f2) = stepped(c, f);
+    c = c2;
+    f = f2;
+  }
+  if (f.answered == 2) {
+    return 0;
+  }
+  return 1;
+}

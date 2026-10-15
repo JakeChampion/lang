@@ -1,0 +1,178 @@
+// An HTTP/3 server over UDP for one connection: answers every request
+// with 200, a body naming its method and path and how many body bytes it
+// carried, and a trailer; exits 0 once the connection is done after
+// answering at least one request.
+//   h3_server PORT CERT.pem KEY.pem
+// It prints a line once its socket is bound, which the script waits on.
+import "std/net";
+import "std/quic/conn";
+import "std/quic/packet";
+import "std/http/h3";
+import "std/http/h3q";
+import "std/tls/identity";
+import "std/headers";
+import "std/async";
+import "std/option";
+import "std/i64";
+import "core/int";
+
+struct Server { cfg: conn.Config, sock: i32, current: Option[h3q.Conn], peer: Option[net.SocketAddr], answered: i32 }
+
+function now(): i64 {
+  return monotonic_ns();
+}
+
+function answer(req: HttpRequest): HttpResponse {
+  let body: string = req.method + " " + req.path + " " + int.int_to_string(req.body.data.len());
+  print("fern h3 server: answered " + body);
+  return HttpResponse { status: 200, body: BodyText(body), headers: headers.header_map_new().append("content-type", "text/plain"), trailers: headers.header_map_new().append("x-served-by", "fern"), background: None };
+}
+
+// served answers the requests the connection reported, and prints how it
+// ended.
+function served(s: Server, c: h3q.Conn): Server {
+  let (cur, evs) = c.take_events();
+  let answered: i32 = s.answered;
+  for e in evs {
+    match (e) {
+      h3q.Requested(id, req) => {
+        cur = cur.respond(id, answer(req));
+        answered = answered + 1;
+      },
+      h3q.Ended(why) => {
+        print("fern h3 server: ended code=" + why.code.to_string() + " remote=" + why.remote.to_string() + " reason=" + why.reason);
+      },
+      _ => {}
+    }
+  }
+  return Server { ...s, current: Some(cur), answered: answered };
+}
+
+function copied(buf: u8[], n: i32): u8[] {
+  let out: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.with(i, buf[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+function wait_ms(s: Server): i32 {
+  let Some(c) = s.current else {
+    return 100;
+  };
+  let d: i64 = c.deadline();
+  if (d == 0) {
+    return 100;
+  }
+  let ms: i64 = (d - now()) / 1000000 + 1;
+  if (ms < 1) {
+    return 1;
+  }
+  if (ms > 100) {
+    return 100;
+  }
+  return ms as i32;
+}
+
+function accepted(s: Server, d: u8[], from: net.SocketAddr): Server {
+  if (d.len() < packet.MIN_INITIAL_DATAGRAM) {
+    return s;
+  }
+  let Ok(h) = packet.parse(d, 0, 8) else {
+    return s;
+  };
+  let Ok(q) = conn.accept(s.cfg, random_bytes(conn.server_entropy(s.cfg)), h, now()) else {
+    return s;
+  };
+  return served(Server { ...s, peer: Some(from) }, h3q.server(q, h3.config()).receive(d, now()));
+}
+
+function received(s: Server, d: u8[], from: net.SocketAddr): Server {
+  let Some(c) = s.current else {
+    return accepted(s, d, from);
+  };
+  return served(s, c.receive(d, now()));
+}
+
+function drained(s: Server, buf: u8[]): Server {
+  let cur: Server = s;
+  while (true) {
+    let Ok(got) = net.recv_from(cur.sock, buf) else {
+      return cur;
+    };
+    cur = received(cur, copied(buf, got.0), got.1);
+  }
+  return cur;
+}
+
+function sent(s: Server, c: h3q.Conn): Server {
+  let cur: Server = s;
+  if (c.deadline() != 0 && now() >= c.deadline()) {
+    cur = served(cur, c.tick(now()));
+  }
+  let Some(ticked) = cur.current else {
+    return cur;
+  };
+  let (next, out) = ticked.transmit(now());
+  if let Some(to) = cur.peer {
+    for d in out {
+      let r: Result[i32, net.NetError] = net.send_to(cur.sock, d, to);
+    }
+  }
+  return Server { ...cur, current: Some(next) };
+}
+
+function bound(port: string, cert: string, key: string): Option[Server] {
+  let Ok(chain) = read_file(cert) else {
+    return None;
+  };
+  let Ok(pem) = read_file(key) else {
+    return None;
+  };
+  let Ok(id) = identity.from_pem(chain, pem) else {
+    eprint("bad identity");
+    return None;
+  };
+  let cfg: conn.Config = h3q.transport(conn.config([]).server_side(id));
+  let Some(addr) = net.socket_addr_parse("127.0.0.1:" + port) else {
+    return None;
+  };
+  let Ok(sock) = net.udp_socket(addr) else {
+    return None;
+  };
+  let nb: Result[void, net.NetError] = net.set_nonblocking(sock, true);
+  return Some(Server { cfg: cfg, sock: sock, current: None, peer: None, answered: 0 });
+}
+
+function main(): i32 {
+  let argv: string[] = args();
+  let Some(s0) = bound(argv[1], argv[2], argv[3]) else {
+    return 2;
+  };
+  print("fern h3 server: listening");
+  let buf: u8[] = __alloc_u8(65536);
+  let s: Server = s0;
+  let started: i64 = now();
+  while (now() - started < 20000000000) {
+    let woke: i32 = async.wait_any([s.sock, 1], wait_ms(s));
+    s = drained(s, buf);
+    if let Some(c) = s.current {
+      s = sent(s, c);
+      if let Some(after) = s.current {
+        if (after.done()) {
+          return if_answered(s);
+        }
+      }
+    }
+  }
+  return 1;
+}
+
+function if_answered(s: Server): i32 {
+  if (s.answered > 0) {
+    return 0;
+  }
+  return 1;
+}
