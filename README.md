@@ -138,7 +138,8 @@ ISAs. Per-backend support and known gaps: `docs/BACKEND-PARITY.md`.
 - **Embedding and sharing.** `-embed DIR` compiles assets into the binary;
   `-shared -export` emits a `.so` loadable with `dlopen` or Android's
   `System.loadLibrary`. `docs/EMBED.md`.
-- **Editor support.** `fern-lsp` plus a VS Code extension in `editors/`.
+- **Editor support.** `fern -lsp`, a language server, plus a VS Code
+  extension in `editors/`.
 - **Async.** Colourless concurrency through `std/async` combinators over
   `Future[T]`, with real overlapping socket I/O on the native backends.
   `docs/ASYNC.md`.
@@ -184,13 +185,14 @@ in place for a fresh one of the same shape.
 
 ```
 compiler/             the compiler, written in Fern (fern_main.fern is `fern`; drivers/ holds its test drivers)
-cmd/fern/             the Go oracle's CLI  cmd/fern-lsp/       language server
-cmd/ferndoc/          stdlib doc generator cmd/fern-wasm/      playground bundle
+cmd/fern/             the Go oracle's CLI
+cmd/ferndoc/          stdlib doc generator
+web/                  the browser playground, which runs the compiler built for WASI
 internal/syntax/      the Go oracle's lexer, parser, AST, printer and diagnostics
 internal/check/       its type checker and the rules it runs
 internal/oracle/      its interpreter and REPL, and the passes from a checked program to them
 internal/pkg/         module loading, manifests, the package store and capabilities
-internal/tools/       the LSP, literate tools, the launcher and the source gates
+internal/tools/       literate tools, the launcher and the source gates
 internal/tables/      generated tables: assembler vocabularies, errno text, libm data
 internal/testing/     the end-to-end suites (e2e, e2ecompiler) and test support
 internal/wasm/        WebAssembly and component-model encoders

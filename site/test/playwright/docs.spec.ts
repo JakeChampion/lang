@@ -27,9 +27,9 @@ test("tutorial sidebar group lists the install page", async ({ page }) => {
   await expect(sidebar.getByText("First steps", { exact: true })).toBeVisible();
 });
 
-test("reference > tooling page describes fern-lsp", async ({ page }) => {
+test("reference > tooling page describes the language server", async ({ page }) => {
   await page.goto("reference/tooling/");
-  await expect(page.locator("main")).toContainText("fern-lsp");
+  await expect(page.locator("main")).toContainText("fern -lsp");
   await expect(page.locator("main")).toContainText("textDocument/formatting");
 });
 
@@ -107,7 +107,7 @@ test("embedded playground actually boots — the staged bundle is complete", asy
   // Boot sentinel: status flips to a "ready" prefix once the wasm runtime is
   // up. Since #4590 the boot runs in its own script, decoupled from the
   // esm.sh CodeMirror import, so a CDN stall can no longer strand this at
-  // "loading runtime…". The remaining variable is the ~19 MB fern.wasm
+  // "loading runtime…". The remaining variable is the ~12 MB playground.wasm
   // streaming-compile, which grows with every compiler feature and can spike
   // on a loaded shared runner — hence 90 s, not 30 s (a genuine boot failure
   // surfaces as "wasm load failed: …", so the longer window costs nothing on

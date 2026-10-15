@@ -6605,7 +6605,7 @@ function ssa_branch(s: asmcore.EmitState, j: i32, l: asmcore.Lab): asmcore.EmitS
   if (s.records()) {
     return s.lab_ref((j & 31) as i64, l);
   }
-  return s.write("    " + ssa_jump_text(j) + " " + l.name + "\n");
+  return s.write("    " + ssa_jump_text(j) + " " + l.text() + "\n");
 }
 
 // ssa_call_sym calls a function symbol, which keeps its name: the record
@@ -6636,7 +6636,7 @@ function ssa_sext32(what: string, unsigned: boolean): boolean {
 // ssa_blab is block `id`'s label: its id from the function's base, its name
 // from the prefix.
 function ssa_blab(fr: SsaFrame, lp: string, id: i32): asmcore.Lab {
-  return asmcore.Lab { id: fr.lbase + id, name: lp + util.i32_to_string(id) };
+  return asmcore.Lab { id: fr.lbase + id, pre: lp, n: id };
 }
 
 // The instruction helpers below hand the assembler the encoded bytes when it

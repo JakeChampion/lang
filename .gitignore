@@ -1,9 +1,6 @@
 /fern
-/fern-lsp
 /ferndoc
-/fern-wasm
 /lang
-/lang-lsp
 /bin/
 /build/
 /.gotmp/

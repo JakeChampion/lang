@@ -354,6 +354,15 @@ function pick(name: string): Case {
         let b12: ssa.SBlock = block(12, [5, 10], [inst(8, 15, [14, 11], 0, ""), const_int(16, 2), call(17, "__fern_alloc_reuse", [15, 16]), fresh_box(18), store(17, 8, 18)], ret(17));
         return Case { f: func(2, 19, [b0, b1, b2, b3, b4, b6, b7, b8, b9, b10, b5, b12]), modes: [counted, value], returns_unit: true };
     }
+    if (name == "leak-in-a-loop-body") {
+        // The body's inputs are the same in the second round as the first,
+        // so its finding there comes from replaying its first run.
+        let b0: ssa.SBlock = block(0, [], [param(0)], br(1));
+        let b1: ssa.SBlock = block(1, [0, 2], [], brif(0, 2, 3));
+        let b2: ssa.SBlock = block(2, [1], [fresh_box(1)], br(1));
+        let b3: ssa.SBlock = block(3, [1], [const_int(2, 0)], ret(2));
+        return Case { f: func(1, 3, [b0, b1, b2, b3]), modes: [value], returns_unit: false };
+    }
     if (name == "null-tested-against-an-outside-null") {
         // reuse-past-a-join-null-first with a second phi in the token's
         // block, a fresh box or the outside arm's null, released only on
@@ -467,6 +476,7 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"reuse-past-a-join-null-first", nil, 1, ""},
 		// The phi's null edge is settled against the outside arm's null.
 		{"null-tested-against-an-outside-null", nil, 1, ""},
+		{"leak-in-a-loop-body", []string{"leaked where it dies of v1"}, 0, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

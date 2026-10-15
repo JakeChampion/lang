@@ -2140,7 +2140,7 @@ function ssa_b(s: asmcore.EmitState, l: asmcore.Lab): asmcore.EmitState {
   if (s.records()) {
     return s.lab_ref(arm64_native.arm64_rec_b(false), l);
   }
-  return s.write("    b " + l.name + "\n");
+  return s.write("    b " + l.text() + "\n");
 }
 
 // ssa_bcond writes the conditional branch `b.<cond> label` on condition code
@@ -2149,7 +2149,7 @@ function ssa_bcond(s: asmcore.EmitState, cond: i32, l: asmcore.Lab): asmcore.Emi
   if (s.records()) {
     return s.lab_ref(arm64_native.arm64_rec_bcond(cond), l);
   }
-  return s.write("    b." + arm64_native.arm64_cond_name(cond) + " " + l.name + "\n");
+  return s.write("    b." + arm64_native.arm64_cond_name(cond) + " " + l.text() + "\n");
 }
 
 // ssa_cbz writes `cbz reg, label`, or nonzero `cbnz`.
@@ -2161,9 +2161,9 @@ function ssa_cbz(s: asmcore.EmitState, nonzero: boolean, reg: string, l: asmcore
     }
   }
   if (nonzero) {
-    return s.write("    cbnz " + reg + ", " + l.name + "\n");
+    return s.write("    cbnz " + reg + ", " + l.text() + "\n");
   }
-  return s.write("    cbz " + reg + ", " + l.name + "\n");
+  return s.write("    cbz " + reg + ", " + l.text() + "\n");
 }
 
 // ssa_tbz writes `tbz reg, #bit, label`, or nonzero `tbnz`.
@@ -2178,13 +2178,13 @@ function ssa_tbz(s: asmcore.EmitState, nonzero: boolean, reg: string, bit: i32, 
   if (nonzero) {
     m = "    tbnz ";
   }
-  return s.write(m + reg + ", #" + util.i32_to_string(bit) + ", " + l.name + "\n");
+  return s.write(m + reg + ", #" + util.i32_to_string(bit) + ", " + l.text() + "\n");
 }
 
 // ssa_blab is block `id`'s label: its id from the function's base, its name
 // from the prefix.
 function ssa_blab(fr: SsaFrame, lp: string, id: i32): asmcore.Lab {
-  return asmcore.Lab { id: fr.lbase + id, name: lp + util.i32_to_string(id) };
+  return asmcore.Lab { id: fr.lbase + id, pre: lp, n: id };
 }
 
 // ssa_x0_forget marks x0 as holding no tracked value: at a label, and
@@ -2839,7 +2839,7 @@ function ssa_rc_prim_emit(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
     // answer hold all three across the compare, and x7 is not in the home
     // pool (x0, x9..x15, x19..x28), so the check can borrow it.
     s = ssa_unscaled(s, true, "w5", base, 0 - 8);
-    s = s.write(san_poison_check("w5", "w7", done.name + "us", s.rc_free_debug));
+    s = s.write(san_poison_check("w5", "w7", done.text() + "us", s.rc_free_debug));
     s = ssa_cmp_imm(s, "w5", 1);
     s = ssa_bcond(s, CC_NE, done);
     s = ssa_mov_imm(s, "x6", "1");
@@ -2849,7 +2849,7 @@ function ssa_rc_prim_emit(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
   }
   s = ssa_rc_guard(s, p, done, ins.imm != 4);
   s = ssa_unscaled(s, true, "w5", base, 0 - 8);
-  s = s.write(san_poison_check("w5", "w6", done.name + "sl", s.rc_free_debug));
+  s = s.write(san_poison_check("w5", "w6", done.text() + "sl", s.rc_free_debug));
   s = ssa_tbz(s, true, "w5", 31, done);
   s = ssa_addsub_imm(s, false, "w5", "w5", 1);
   s = ssa_unscaled(s, false, "w5", base, 0 - 8);

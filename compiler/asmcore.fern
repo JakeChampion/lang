@@ -8760,16 +8760,24 @@ pub function fresh_label(s: EmitState): LabelOut {
   return LabelOut { state: ns, name: name };
 }
 
-// Lab is a label an emitter defines and branches to: its id for the records
-// and its name for the text. The name is built in both modes, so a branch
-// the records cannot take still has its text.
-pub struct Lab { id: i32, name: string }
+// Lab is a label an emitter defines and branches to: its id for the records,
+// and for the text its name, `pre` followed by `n` unless n is negative. The
+// name is spelled only where text is written (text), a branch the records
+// cannot take included.
+pub struct Lab { id: i32, pre: string, n: i32 }
+
+pub function (l: Lab) text(): string {
+  if (l.n < 0) {
+    return l.pre;
+  }
+  return l.pre + util.i32_to_string(l.n);
+}
 
 pub struct LabNew { state: EmitState, lab: Lab }
 
 // lab_new mints the label `name` with the next id.
 pub function lab_new(s: EmitState, name: string): LabNew {
-  return LabNew { state: EmitState { ...s, nlab: s.nlab + 1 }, lab: Lab { id: s.nlab, name: name } };
+  return LabNew { state: EmitState { ...s, nlab: s.nlab + 1 }, lab: Lab { id: s.nlab, pre: name, n: 0 - 1 } };
 }
 
 // lab_take allocates the next n ids, the first of them `nlab` before the call.
@@ -8784,7 +8792,7 @@ pub function (s: EmitState) lab_def(l: Lab): EmitState {
     buf_push_u64(s.recs, l.id as u64);
     return s.mark("\x04", "");
   }
-  return s.write(l.name + ":\n");
+  return s.write(l.text() + ":\n");
 }
 
 // lab_ref hands over a branch to `l` as the \x05 record: the target's id in
