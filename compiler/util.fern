@@ -1233,8 +1233,14 @@ pub function str_join_chunks(parts: string[]): string {
 // available yet). Positions are being threaded through the AST node by
 // node; a diagnostic emitted from a node that already carries a position
 // renders `line:col: error[E0XX]: …` like the Go checker, the rest still
-// render `error[E0XX]: …`. See docs/SELFHOST-CHECKER-PORT.md.
-pub struct Diag { code: string, message: string, line: i32, col: i32 }
+// render `error[E0XX]: …`. See docs/SELFHOST-CHECKER-PORT.md. `fix` is a
+// machine-applicable fix, when there is one.
+pub struct Diag { code: string, message: string, line: i32, col: i32, fix: Option[Fix] }
+
+// Fix replaces the identifier `old`, written at `line`, `col`, with `new_text`:
+// a respelling, which always re-parses. `title` is the line `-check` prints
+// after `help:`, and an editor's name for the quick fix.
+pub struct Fix { line: i32, col: i32, old: string, new_text: string, title: string }
 
 // is_diagnostic_code reports whether `code` is a real diagnostic code: `E` or
 // `P` followed by three digits. The checker also emits the pseudo-code "type"
@@ -1320,19 +1326,32 @@ pub function no_line_map(): LineMap {
 // when the generated line has no document line. `maps` is indexed as
 // pos_file_index numbers modules: the entry, then files[k] at k + 1.
 pub function doc_diag(maps: LineMap[], d: Diag): Diag {
-  let m: i32 = pos_file_index(d.line);
+  let (line, col) = doc_pos(maps, d.line, d.col);
+  if let Some(f) = d.fix {
+    let (fl, fc) = doc_pos(maps, f.line, f.col);
+    if (fl == 0) {
+      return Diag { ...d, line: line, col: col, fix: None };
+    }
+    return Diag { ...d, line: line, col: col, fix: Some(Fix { ...f, line: fl, col: fc }) };
+  }
+  return Diag { ...d, line: line, col: col };
+}
+
+// doc_pos is doc_diag for a bare position.
+pub function doc_pos(maps: LineMap[], line: i32, col: i32): (i32, i32) {
+  let m: i32 = pos_file_index(line);
   if (m < 0 || m >= maps.len() || maps[m].doc.len() == 0) {
-    return d;
+    return (line, col);
   }
-  let k: i32 = pos_line(d.line);
+  let k: i32 = pos_line(line);
   if (k < 1 || k > maps[m].lits.len()) {
-    return Diag { ...d, line: 0, col: 0 };
+    return (0, 0);
   }
-  let col: i32 = d.col - maps[m].shifts[k - 1];
-  if (col < 1) {
-    col = 1;
+  let c: i32 = col - maps[m].shifts[k - 1];
+  if (c < 1) {
+    c = 1;
   }
-  return Diag { ...d, line: d.line - k + maps[m].lits[k - 1], col: col };
+  return (line - k + maps[m].lits[k - 1], c);
 }
 
 // format_diags renders diagnostics one-per-line as
