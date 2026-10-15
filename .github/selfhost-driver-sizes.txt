@@ -533,6 +533,10 @@
 # Built locally with TestSelfHostWarmStockDriver, main at 836578b5 links it
 # at 10125912, and #12443's language-server switch adds 0 bytes. Matches
 # driver-sizes' report on run 38755174188.
+# 2026-10-15 — asm_pathprobe_run 4684360 -> 4918624 (+5.0%): main's growth.
+# Built locally with TestSelfHostWarmStockDriver, main at bc1ce0b5 links it
+# at 4917608 (+4.98%), and #12449's five #8171 commits add 1016 bytes.
+# Matches driver-sizes' report on run 38773653946.
 
 fern.fern/stage2 11761952
 fern.fern 12339464
@@ -543,5 +547,5 @@ drivers/asm_run.fern 7612208
 drivers/wasm_ir_run.fern 7533704
 drivers/wasm_run.fern 7530568
 drivers/wasm_runio_run.fern 7540984
-drivers/asm_pathprobe_run.fern 4684360
+drivers/asm_pathprobe_run.fern 4918624
 drivers/checker_modload_run.fern 2747272
