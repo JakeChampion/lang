@@ -4,15 +4,17 @@
 > go-to-def, completion) and the playground wires it via `cmd/fern-wasm`.
 > Post-MVP performance work is surveyed in `IDE-COMPILATION-RESEARCH.md`
 > and tracked in [#4415](https://github.com/JakeChampion/lang/issues/4415).
-> The self-host compiler serves diagnostics, formatting, hover and
-> go-to-definition as `fern -lsp` (#6641) — see the next section; everything
-> below it describes the Go server.
+> The self-host compiler serves diagnostics, formatting, hover,
+> go-to-definition, completion, signature help, document symbols and inlay
+> hints as `fern -lsp` (#6641) — see the next section; everything below it
+> describes the Go server.
 
 ## The self-host server: `fern -lsp`
 
 `fern -lsp [-target T] [-embed DIR] [stdlib-root]` runs the self-host CLI as a
-language server on stdin and stdout: diagnostics, formatting, hover and
-go-to-definition.
+language server on stdin and stdout: diagnostics, formatting, hover,
+go-to-definition, completion, signature help, document symbols and inlay
+hints.
 
 - **The wire** is `compiler/lsp.fern`. It does Content-Length framing
   over `stdin()`, JSON-RPC through `std/json`, the UTF-16 position conversion
@@ -58,6 +60,35 @@ go-to-definition.
   and a name with no declaration (`Some`) has none, where the Go server
   answered 0:0. Hover also describes what the Go server left blank: a
   constant, a lambda's parameter and an enum-qualified variant.
+- **Completion, signature help, document symbols and inlay hints**
+  (`compiler/lspassist.fern`) read the same view, tokens and scopes. The
+  capabilities are the Go server's: completion is asked again after `.`,
+  signature help after `(` and `,`. Completion offers the enclosing function's
+  bindings — every one, typed where it is bound, as the Go server offers every
+  `let` of the function — then the module's functions, constants, structs,
+  enums and variants, `Option` and `Result`, and the keywords, sorted by label.
+  After a `.` it offers what can follow instead: a module's exports after its
+  alias, an enum's variants, or the fields and methods (declared, built-in and
+  std/array's) of the value before it, typed from the tree or, while the access
+  does not parse yet, from the binding it names. Signature help finds the call
+  from the tokens before the cursor, so strings and comments are skipped
+  exactly, and resolves its callee as hover does: a function, a module's
+  function or a method; a call that does not parse falls back to the function
+  its spelling names. The outline lists the document's own functions, methods,
+  structs with their fields, enums with their variants, and constants. An inlay
+  hint is the type of each `let` that writes none, for the functions in the
+  requested range. The answers are the Go server's where it has one, except:
+  completion leaves out a function the cursor is past, and offers constants
+  and a loop's, an arm's and a lambda's bindings; after a `.` the Go server
+  offers the whole scope again; signature help also covers methods and other
+  modules' functions, names a parameter by its offsets rather than by text
+  (which `add(i32, i32)`'s two parameters share), and gives none inside
+  brackets in the arguments; an outline entry spans its whole declaration with
+  its name selected, where the Go server gave the name's length at the
+  keyword, and holds methods and no built-in structs; a field and a
+  destructured name have their own positions; a hint names an imported type as
+  the document writes it (`util.Kind`); and a literate document has an outline
+  and hints.
 - A publish goes out only when a document's diagnostics change, and didClose
   clears them. The exit codes are the spec's: 0 for `exit` after `shutdown`,
   1 for `exit` without it, and 2 for input that cannot be framed.
@@ -76,11 +107,15 @@ document importing `std/json` and `std/string`, the first request after a
 check, which builds the view, is lost in the few milliseconds of run-to-run
 noise, and each later one takes under 0.1 ms. On the 2,700-line
 `compiler/flatten.fern` one takes about 1 ms, and on the 29,000-line
-`compiler/checker.fern` about 18 ms, most of it re-lexing the module.
+`compiler/checker.fern` about 18 ms, most of it re-lexing the module. The other
+requests cost about the same there (2026-10-15): completion inside a function
+with 18 bindings, 1,213 items, about 22 ms; signature help, the whole outline
+and the whole file's inlay hints about 20 ms each.
 
 `internal/testing/e2ecompiler/self_host_lsp_test.go` gates it (`TEST-GATES.md` has the
-row), with `self_host_lsp_hover_test.go` for hover and definition: the Go
-server's hover, definition and workspace cases, their answers written out as
+row), with `self_host_lsp_hover_test.go` for hover and definition and
+`self_host_lsp_complete_test.go` for completion, signature help, document
+symbols and inlay hints: the Go server's cases, their answers written out as
 data. The diagnostics are held to two references:
 
 - **`-check`, across the whole conformance corpus.** Every finding in the
@@ -96,7 +131,10 @@ data. The diagnostics are held to two references:
 
 What the next slices add:
 
-1. Completion, references and the other cursor features, over the same view.
+1. References, rename, semantic tokens and code actions, over the same view.
+   Completion's bindings are the whole enclosing function's, as the Go
+   server's are; offering only those in scope at the cursor needs statement
+   extents the syntax tree does not record.
 2. Imports parsed once and reused across checks.
 3. The playground's in-process server (`fernLsp`) on the self-host wasm build,
    which is what `cmd/fern-wasm` still carries.

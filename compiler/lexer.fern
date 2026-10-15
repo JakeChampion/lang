@@ -184,6 +184,11 @@ function is_keyword(name: string): boolean {
   return false;
 }
 
+// keywords is every name is_keyword accepts, in byte order.
+pub function keywords(): string[] {
+  return ["as", "boolean", "break", "const", "continue", "default", "defer", "dyn", "else", "enum", "errdefer", "f32", "f64", "false", "for", "function", "i32", "i64", "if", "impl", "import", "let", "loop", "match", "pub", "return", "string", "struct", "trait", "true", "type", "u32", "u64", "u8", "use", "usize", "void", "when", "while"];
+}
+
 function is_valid_numeric_suffix(s: string): boolean {
   return s == "i32" || s == "i64"
     || s == "u8" || s == "u32" || s == "u64"

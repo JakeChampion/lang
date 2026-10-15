@@ -3863,6 +3863,15 @@ function bind_variant_payloads(arm: Scope, look: Scope, pvin0: ast.PatVariant, w
   return sc;
 }
 
+// receives reports whether method `ms` is called on a receiver of type
+// `recv_type`: declared on it, on its generic base — a generic receiver method
+// stores its spelling with the type parameters (`Box[T]`) where the call site
+// names the base (`Box`, the #4346-piece-2 companion to the generic-method
+// return substitution) — or on a union it is a variant of.
+function (s: Scope) receives(ms: MethodSig, recv_type: string): boolean {
+  return ms.receiver_type == recv_type || parser.parse_type_ref(ms.receiver_type).base == recv_type || is_variant_of(recv_type, ms.receiver_type, s.unions.unions);
+}
+
 function (s: Scope) lookup_method(name: string, recv_type: string): MethodSig {
   let i: i32 = s.methods.head[sig_name_bucket(name)];
   while (i >= 0) {
@@ -3874,22 +3883,7 @@ function (s: Scope) lookup_method(name: string, recv_type: string): MethodSig {
       i = s.methods.next[i];
       continue;
     }
-    let rt_match: boolean = s.methods.methods[i].receiver_type == recv_type;
-    // A generic receiver method stores its receiver spelling WITH the
-    // type parameters (`function (b: Box[T]) get()` → "Box[T]"), but the
-    // call site names the base struct ("Box"). Match on the base so an
-    // instantiation (`Box[i32]`) dispatches its generic methods — the
-    // #4346-piece-2 companion to the generic-method return substitution.
-    if (!rt_match && parser.parse_type_ref(s.methods.methods[i].receiver_type).base == recv_type) {
-      rt_match = true;
-    }
-    // Union-receiver methods: a method declared on a union
-    // (e.g. `function (sh: Shape) area()`) matches when the
-    // receiver is one of the union's variant structs.
-    if (!rt_match && is_variant_of(recv_type, s.methods.methods[i].receiver_type, s.unions.unions)) {
-      rt_match = true;
-    }
-    if (rt_match) {
+    if (s.receives(s.methods.methods[i], recv_type)) {
       return s.methods.methods[i];
     }
     i = s.methods.next[i];
@@ -25159,6 +25153,49 @@ pub function func_sig(s: Scope, name: string): FuncSig {
 
 pub function method_sig(s: Scope, name: string, recv: string): MethodSig {
   return s.lookup_method(name, recv);
+}
+
+// methods_on is every method a receiver of type `recv` is called with, as
+// method_sig finds one, in declaration order.
+pub function methods_on(s: Scope, recv: string): MethodSig[] {
+  let out: MethodSig[] = [];
+  for ms in s.methods.methods {
+    if (s.receives(ms, recv)) {
+      out = out.append(ms);
+    }
+  }
+  return out;
+}
+
+// builtin_method_names is the built-in methods of receiver type `recv`
+// (builtin_method_sig).
+pub function builtin_method_names(recv: string): string[] {
+  let head: string = "__method_" + recv + "_";
+  let out: string[] = [];
+  for row in builtin_sigs() {
+    let open: i32 = util.index_of_sub(row, "(");
+    if (open > head.len() && util.str_has_prefix(row, head)) {
+      out = out.append(slice_unchecked(row, head.len(), open) + "");
+    }
+  }
+  return out;
+}
+
+// array_method_names is the methods std/array gives an array
+// (array_method_func), each once.
+pub function array_method_names(s: Scope): string[] {
+  let key: string = "__method_Array_";
+  let out: string[] = [];
+  for sig in s.sigs.sigs {
+    let at: i32 = util.index_of_sub(sig.name, key);
+    if (at >= 0) {
+      let name: string = slice_unchecked(sig.name, at + key.len(), sig.name.len()) + "";
+      if (!util.has_str(out, name)) {
+        out = out.append(name);
+      }
+    }
+  }
+  return out;
 }
 
 // enum_sig is enum `name`'s signature, a built-in Option's or Result's
