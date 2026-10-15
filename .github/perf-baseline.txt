@@ -189,7 +189,9 @@ x86_64/utf8_ingest_validated.ir	5988691
 # both arms where the branch ran one. These rows' branches are predictable,
 # so callgrind, which has no branch predictor, counts only the cost. Wall
 # time on sort_ints scaled up is 5-10% faster; struct_drop's is within
-# noise. Both arches' figures are the perf lanes'.
+# noise. Both arches' figures are the perf lanes'. The same change takes
+# aarch64 ordmap_insert.text and sort_strings.text down 1.0% and 1.1%,
+# measured by the perf-aarch64 lane.
 #
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
@@ -223,7 +225,7 @@ aarch64/map_probe_chain.text	6055
 aarch64/map_probe_chain.ir	374464985
 aarch64/map_string.text	8944
 aarch64/map_string.ir	64821463	2
-aarch64/ordmap_insert.text	5441
+aarch64/ordmap_insert.text	5386
 aarch64/ordmap_insert.ir	124791436
 aarch64/pmap_insert.text	4965
 aarch64/pmap_insert.ir	71272111
@@ -235,7 +237,7 @@ aarch64/sort_inplace.text	3020
 aarch64/sort_inplace.ir	53111058
 aarch64/sort_ints.text	3583
 aarch64/sort_ints.ir	33759009
-aarch64/sort_strings.text	4476
+aarch64/sort_strings.text	4428
 aarch64/sort_strings.ir	106027235
 aarch64/string_build.text	3431
 aarch64/string_build.ir	64717394
