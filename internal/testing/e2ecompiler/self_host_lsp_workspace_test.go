@@ -115,6 +115,32 @@ func TestSelfHostLSPWorkspaceX86_64(t *testing.T) {
 		}
 	})
 
+	// The same for an open module under the stdlib root, which a check names
+	// by its stdlib:// display path rather than the file it read.
+	t.Run("transitive-change-refreshes-an-open-stdlib-module", func(t *testing.T) {
+		dir := t.TempDir()
+		const aUses = "import \"std/b\";\npub function a(): i32 { return b.part(); }\n"
+		const bHas = "pub function part(): i32 { return 1; }\n"
+		const bLacks = "pub function other(): i32 { return 1; }\n"
+		const appMain = "import \"std/a\";\nfunction main(): i32 { return a.a(); }\n"
+		writeTree(t, dir, map[string]string{"root/std/a.fern": aUses, "root/std/b.fern": bHas, "app/main.fern": appMain})
+		root := filepath.Join(dir, "root")
+		aURI, bURI := fileURI(filepath.Join(root, "std", "a.fern")), fileURI(filepath.Join(root, "std", "b.fern"))
+		mainURI := fileURI(filepath.Join(dir, "app", "main.fern"))
+		frames, code := runLSP(t, runX86_64Bin(s.runner, s.driver, "-lsp", root),
+			session(lspOpen(aURI, aUses), lspOpen(bURI, bHas), lspChange(bURI, bLacks), lspOpen(mainURI, appMain)))
+		if code != 0 {
+			t.Fatalf("exit %d", code)
+		}
+		got := map[string][]lspDiag{}
+		for _, p := range publishes(t, frames) {
+			got[p.URI] = p.Diagnostics
+		}
+		if ds := got[aURI]; len(ds) == 0 || ds[0].Range.Start.Line != 1 {
+			t.Errorf("std/a = %+v, want its call to the removed b.part flagged on line 1", ds)
+		}
+	})
+
 	t.Run("cross-file-diagnostics-route", func(t *testing.T) {
 		dir := t.TempDir()
 		writeTree(t, dir, map[string]string{"main.fern": mainSrc, "util.fern": utilBad})
