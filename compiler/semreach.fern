@@ -16,11 +16,10 @@
 // Facts are kept for the bool and i32 fields of records, the variants of
 // declared enums, what scalar, if any, each function returns, and whether
 // any value of a record type exists: an array of one with none is empty. A
-// type a
-// value of which can arrive other than by a construction in a reached body
-// is opaque, its fields any value and its variants all built: an extern's
-// or a dyn narrowing's result, the result of a function value that itself
-// arrived, a root's parameter, and everything such a value holds. A
+// type a value of which can arrive other than by a construction in a reached
+// body is opaque, its fields any value and its variants all built: an
+// extern's or a dyn narrowing's result, the result of a function value that
+// itself arrived, a root's parameter, and everything such a value holds. A
 // closure's result is what its body built, and a paired call's payload read
 // back (sempair) what its callee built. A closure's construction builds its
 // environment, the captures in the slots after the body's address.

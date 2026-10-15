@@ -53,8 +53,8 @@ The first of the two causes is now gone. The compiler drops what no
 reachable construction enables (`semreach`,
 docs/SELFHOST-SEMANTIC-SOURCE.md), so a server that never calls `with_h2`
 carries no HTTP/2: the hello server's symbols hold no `h2` or `hpack`
-function, and of the TLS handshake only the server side is left. At
-e3e9a6473 the hello server is 1,335,760 bytes by default and 894,672
+function, and of the TLS handshake only the server side is left. With
+#12462 on e3e9a6473 the hello server is 1,335,760 bytes by default and 894,672
 with `-size`, against 2,215,072 and 1,448,016 with the pass off. The TLS
 server, which does serve HTTP/2 and passes h2spec's strict selection, is
 1,572,880 and 1,039,024, against 2,114,416 and 1,383,792. In hello's
