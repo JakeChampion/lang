@@ -1964,7 +1964,7 @@ pub struct MethodSig { name: string, receiver_type: string, param_types: typeinf
 // payloadless variant's name is read as that variant's payload (#9900).
 // module is the bundle prefix of the import that declared the enum or alias,
 // "" for the entry module.
-pub struct UnionSig { name: string, variants: string[], is_try: boolean, is_enum: boolean, module: string, type_params: string[], instance: string }
+pub struct UnionSig { name: string, variants: string[], is_try: boolean, is_enum: boolean, module: string, type_params: string[], instance: string, visible_from: string[] }
 
 // A flat name → type map plus the function signature table
 // plus the struct-decl table plus the union-alias table.
@@ -2284,13 +2284,19 @@ pub struct UnionTable {
   // from_import selects the lib_ index: the scope is a function an import
   // declared (build_func_scope).
   from_import: boolean,
+  // bnames / bhead / bnext index the same entries by the variant's name as
+  // its module writes it bare: `Go` for the bundle's `lib__Go`. A bare
+  // reference is ambiguous by that name (variant_ambiguous).
+  bnames: string[],
+  bhead: i32[],
+  bnext: i32[],
 }
 
 // enum_union_sig registers an enum as a union sig (variants = variant names),
 // so an enum-typed scrutinee types to TypeUnion and exhaustiveness and
 // union-variant assignability cover enums the way they cover aliases.
 function enum_union_sig(ed: parser.EnumDecl): UnionSig {
-  return UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker, is_enum: true, module: ed.module, type_params: ed.type_params, instance: ed.instance };
+  return UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker, is_enum: true, module: ed.module, type_params: ed.type_params, instance: ed.instance, visible_from: ed.visible_from };
 }
 
 // union_table indexes every union's variants by variant name. Built backward so
@@ -2314,6 +2320,14 @@ function union_table(unions: UnionSig[]): UnionTable {
   let next: i32[] = util.minus_ones(vnames.len());
   let lib_head: i32[] = head;
   let lib_next: i32[] = next;
+  let bnames: string[] = [];
+  let b: i32 = 0;
+  while (b < vnames.len()) {
+    bnames = bnames.append(unprefixed_variant(vnames[b], unions[vowner[b]].module));
+    b = b + 1;
+  }
+  let bhead: i32[] = head;
+  let bnext: i32[] = next;
   let k: i32 = vnames.len() - 1;
   while (k >= 0) {
     let bk: i32 = sig_name_bucket(vnames[k]);
@@ -2323,6 +2337,9 @@ function union_table(unions: UnionSig[]): UnionTable {
       lib_next = lib_next.with(k, lib_head[bk]);
       lib_head = lib_head.with(bk, k);
     }
+    let bb: i32 = sig_name_bucket(bnames[k]);
+    bnext = bnext.with(k, bhead[bb]);
+    bhead = bhead.with(bb, k);
     k = k - 1;
   }
   let names: string[] = [];
@@ -2331,11 +2348,28 @@ function union_table(unions: UnionSig[]): UnionTable {
     names = names.append(unions[m].name);
     m = m + 1;
   }
-  return UnionTable { unions: unions, vnames: vnames, vowner: vowner, index: util.name_index(names), head: head, next: next, lib_head: lib_head, lib_next: lib_next, from_import: false };
+  return UnionTable { unions: unions, vnames: vnames, vowner: vowner, index: util.name_index(names), head: head, next: next, lib_head: lib_head, lib_next: lib_next, from_import: false, bnames: bnames, bhead: bhead, bnext: bnext };
 }
 
 function declared_by_entry(u: UnionSig): boolean {
   return u.module.len() == 0;
+}
+
+// unprefixed_variant is `name` as module `module` (a bundle prefix, "" for the
+// entry) writes it bare: its own mangle prefix taken off.
+function unprefixed_variant(name: string, module: string): string {
+  let m: i32 = module.len();
+  if (m > 0 && name.len() > m + 2 && name[m] == b'_' && name[m + 1] == b'_' && slice_unchecked(name, 0, m) == module) {
+    return slice_unchecked(name, m + 2, name.len()) + "";
+  }
+  return name;
+}
+
+// enum_visible_from reports whether a bare variant reference written in
+// module `from` may resolve to enum `u`: the module's own enums and those of
+// every module its import closure reaches (UnionSig.visible_from).
+function enum_visible_from(u: UnionSig, from: string): boolean {
+  return u.module == from || util.has_str(u.visible_from, from);
 }
 
 // seen_from is the table as the function `fd` reads the variant namespace.
@@ -2794,10 +2828,10 @@ function bind_names(s: Scope, name: string): Scope {
 // front-end auto-injects (Option / Result, plus IoError / Body via
 // parser.inject_builtin_enums) — these can be referenced bare (e.g.
 // `return None;`) without a local declaration, so E001 must not flag them.
-// Derived from the single variant→enum table in mx_builtin_enum_of so the
+// Derived from the single variant→enum table in parser.builtin_enum_of so the
 // builtin-variant list lives in exactly one place (SH-046).
 function is_builtin_variant(name: string): boolean {
-  return mx_builtin_enum_of(name).len() > 0;
+  return parser.builtin_enum_of(name).len() > 0;
 }
 
 // variant_in_unions reports whether `name` is a variant of ANY declared
@@ -2845,7 +2879,7 @@ function union_sig_of_variant(name: string, unions: UnionTable): UnionSig {
     e = unions.variant_chain_next(e);
   }
   let empty_v: string[] = [];
-  return UnionSig { name: "", variants: empty_v, is_try: false, is_enum: false, module: "", type_params: [], instance: "" };
+  return UnionSig { name: "", variants: empty_v, is_try: false, is_enum: false, module: "", type_params: [], instance: "", visible_from: [] };
 }
 
 // union_of_variant returns the NAME of that union, or "" when none declares
@@ -2879,7 +2913,8 @@ function variant_carries_payload(s: Scope, name: string): boolean {
 // is_resolvable_value reports whether a bare identifier in VALUE position
 // resolves to something defined: a local / param / loop / match binding, a
 // free function or 0-arg const (used as a value), an enum/union variant
-// (declared or builtin), or a struct name. Anything else is E001. Builtin
+// (declared or builtin; an ambiguous one is E036 instead), or a struct name.
+// Anything else is E001. Builtin
 // FUNCTIONS (print / read_file / …) are only ever called, never read as a
 // bare value, so they don't need to be listed here — call callees are
 // checked separately (and aren't flagged by this value-position pass).
@@ -2890,7 +2925,7 @@ function is_resolvable_value(name: string, s: Scope): boolean {
   if (s.has_sig(name)) {
     return true;
   }
-  if (variant_in_unions(name, s.unions)) {
+  if (variant_in_unions(name, s.unions) || s.variant_ambiguous(name)) {
     return true;
   }
   if (is_builtin_variant(name)) {
@@ -2918,8 +2953,9 @@ function is_resolvable_value(name: string, s: Scope): boolean {
 
 // is_resolvable_callee reports whether a bare-identifier CALL target
 // resolves: a local (closure value), a free function, a variant
-// constructor (declared or builtin), a runtime intrinsic (`__`-prefixed),
-// or a builtin function. Anything else is an undefined call → E001.
+// constructor (declared or builtin; an ambiguous one is E036 instead), a
+// runtime intrinsic (`__`-prefixed), or a builtin function. Anything else is
+// an undefined call → E001.
 function is_resolvable_callee(name: string, s: Scope): boolean {
   if (s.defines(name)) {
     return true;
@@ -2927,7 +2963,7 @@ function is_resolvable_callee(name: string, s: Scope): boolean {
   if (s.has_sig(name)) {
     return true;
   }
-  if (variant_in_unions(name, s.unions)) {
+  if (variant_in_unions(name, s.unions) || s.variant_ambiguous(name)) {
     return true;
   }
   if (is_builtin_variant(name)) {
@@ -3663,23 +3699,27 @@ function (s: Scope) variant_hidden(v: StructSig): boolean {
 }
 
 // variant_ambiguous reports whether a bare `name` is a variant of two or more
-// enums this scope sees, a built-in enum counting as one — the E036 case, where
-// the reference has no type until it is qualified. A variant repeated within
-// one enum is E017 and counts once.
+// enums the scope's module sees, a built-in enum counting as one — the E036
+// case, where the reference has no type until it is qualified. A variant
+// repeated within one enum is E017 and counts once. flatten leaves such a
+// reference in its module's own spelling (`lib__Go`, bare `Go` in the entry),
+// so the module's prefix comes off before the lookup.
 function (s: Scope) variant_ambiguous(name: string): boolean {
+  let bare: string = unprefixed_variant(name, s.fn_module);
   let n: i32 = 0;
-  if (mx_builtin_enum_of(name).len() > 0) {
+  if (parser.builtin_enum_of(bare).len() > 0) {
     n = 1;
   }
   let last: i32 = 0 - 1;
-  let e: i32 = s.unions.variant_chain_head(name);
+  let e: i32 = s.unions.bhead[sig_name_bucket(bare)];
   while (e >= 0) {
     let o: i32 = s.unions.vowner[e];
-    if (s.unions.vnames[e] == name && s.unions.unions[o].is_enum && o != last) {
+    let u: UnionSig = s.unions.unions[o];
+    if (s.unions.bnames[e] == bare && u.is_enum && o != last && enum_visible_from(u, s.fn_module)) {
       n = n + 1;
       last = o;
     }
-    e = s.unions.variant_chain_next(e);
+    e = s.unions.bnext[e];
   }
   return n >= 2;
 }
@@ -3773,7 +3813,7 @@ function variant_pattern_qualified(type_name: string): boolean {
 function variant_pattern_payload_type(s: Scope, name: string, whole: typeinfo.Type, index: i32): typeinfo.Type {
   if let typeinfo.TypeUnion(u) = whole {
     let bare: string = variant_pattern_name(name);
-    if ((u.name == "Option" || u.name == "Result") && mx_builtin_enum_of(bare) == u.name) {
+    if ((u.name == "Option" || u.name == "Result") && parser.builtin_enum_of(bare) == u.name) {
       let arg: i32 = 0;
       if (bare == "Err") {
         arg = 1;
@@ -4376,7 +4416,7 @@ function (s: Scope) lookup_union(name: string): UnionSig {
   }
   // Sentinel: empty name signals "no such union".
   let empty_v: string[] = [];
-  return UnionSig { name: "", variants: empty_v, is_try: false, is_enum: false, module: "", type_params: [], instance: "" };
+  return UnionSig { name: "", variants: empty_v, is_try: false, is_enum: false, module: "", type_params: [], instance: "", visible_from: [] };
 }
 
 // try_able_union answers whether `?` accepts an operand of this union type.
@@ -5912,7 +5952,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   }
   let ctor_enum: string = "";
   if (!ctor_shadowed) {
-    ctor_enum = mx_builtin_enum_of(name);
+    ctor_enum = parser.builtin_enum_of(name);
   }
   if (ctor_enum.len() > 0) {
     return builtin_ctor_type(ctor_enum, name, c, s);
@@ -6939,7 +6979,7 @@ function check_ident_expr(id: ast.ExprIdent, s: Scope): typeinfo.Type {
   // mistype a `Some(3)` callee as a value. A function of the same name
   // shadows the builtin, as native resolves it (#10394).
   if (is_nopayload_builtin_variant(id.name) && !s.has_sig(id.name)) {
-    return t_union(mx_builtin_enum_of(id.name));
+    return t_union(parser.builtin_enum_of(id.name));
   }
   // A top-level `const` reaches the parser as a zero-parameter FuncDecl
   // carrying `is_const`, so it lands in the SIG table rather than the value
@@ -7702,7 +7742,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
             let ss: StructSig = s.lookup_variant(pvn);
             // Option's and Result's variants have no struct sig, and no
             // built-in enum is in the union table.
-            let builtin_arm: boolean = union_name.len() > 0 && mx_builtin_enum_of(pvn) == union_name;
+            let builtin_arm: boolean = union_name.len() > 0 && parser.builtin_enum_of(pvn) == union_name;
             if (ss.name.len() == 0 && !builtin_arm) {
               ok = false;
             } else {
@@ -8877,7 +8917,7 @@ function collect_union_sigs(mod: parser.Module): UnionSig[] {
   while (i < mod.aliases.len()) {
     let a: parser.TypeAlias = mod.aliases[i];
     if (parser.alias_registers(mod, i)) {
-      out = out.append(UnionSig { name: a.name, variants: a.variants, is_try: false, is_enum: false, module: a.module, type_params: [], instance: "" });
+      out = out.append(UnionSig { name: a.name, variants: a.variants, is_try: false, is_enum: false, module: a.module, type_params: [], instance: "", visible_from: [] });
     }
     i = i + 1;
   }
@@ -10086,7 +10126,7 @@ function mc_call_consumes(c: ast.ExprCall, name: string, tname: string, report: 
     ast.ExprIdent(cid) => {
       owner = mx_enum_of(cid.name, enums);
       if (owner.len() == 0) {
-        owner = mx_builtin_enum_of(cid.name);
+        owner = parser.builtin_enum_of(cid.name);
       }
     },
     _ => {}
@@ -10827,7 +10867,7 @@ function lret_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.Diag[
 // struct-union (`type U = A | B`) keep their distinct struct types and do
 // NOT unify (Go reports E031). The self-host types BOTH as `t_struct(name)`,
 // so the names are mapped back to their family via the user `enum` decls
-// (`mx_enum_of`) and the built-in enums (`mx_builtin_enum_of`, Option /
+// (`mx_enum_of`) and the built-in enums (`parser.builtin_enum_of`, Option /
 // Result / IoError / Body) — but NOT via union aliases, so union
 // members correctly stay incompatible. Bare no-payload variants (`None`,
 // `Empty`) resolve to `unknown` in the self-host and so are handled by the
@@ -10968,36 +11008,17 @@ function drop_lit_locals(lits: string[], names: string[]): string[] {
   return out;
 }
 
-// mx_builtin_enum_of returns the built-in enum a variant name belongs to
-// (Option / Result / IoError / Body), or "" if it isn't a built-in
-// variant. Two struct arms in the same non-empty family unify.
 // builtin_union_sig is the variant list of a built-in Option or Result,
 // neither of which is in the union table, so a match on one is held to E014
 // and E030 like any enum's. Any other name answers an empty sig.
 function builtin_union_sig(name: string): UnionSig {
   if (name == "Option") {
-    return UnionSig { name: name, variants: ["Some", "None"], is_try: false, is_enum: true, module: "", type_params: ["T"], instance: "" };
+    return UnionSig { name: name, variants: ["Some", "None"], is_try: false, is_enum: true, module: "", type_params: ["T"], instance: "", visible_from: [] };
   }
   if (name == "Result") {
-    return UnionSig { name: name, variants: ["Ok", "Err"], is_try: false, is_enum: true, module: "", type_params: ["T", "E"], instance: "" };
+    return UnionSig { name: name, variants: ["Ok", "Err"], is_try: false, is_enum: true, module: "", type_params: ["T", "E"], instance: "", visible_from: [] };
   }
-  return UnionSig { name: "", variants: [], is_try: false, is_enum: false, module: "", type_params: [], instance: "" };
-}
-
-function mx_builtin_enum_of(name: string): string {
-  if (name == "Some" || name == "None") {
-    return "Option";
-  }
-  if (name == "Ok" || name == "Err") {
-    return "Result";
-  }
-  if (name == "NotFound" || name == "PermissionDenied" || name == "AlreadyExists" || name == "InvalidUtf8" || name == "Interrupted" || name == "Unsupported" || name == "Other") {
-    return "IoError";
-  }
-  if (name == "BodyText" || name == "BodyBytes" || name == "BodyStream" || name == "BodyFile" || name == "BodyChunks" || name == "BodyFileRanges") {
-    return "Body";
-  }
-  return "";
+  return UnionSig { name: "", variants: [], is_try: false, is_enum: false, module: "", type_params: [], instance: "", visible_from: [] };
 }
 
 // mx_enum_of returns the user `enum` whose variant list contains `name`, or
@@ -11019,8 +11040,8 @@ function mx_same_enum_family(an: string, bn: string, enums: parser.EnumDecl[]): 
   if (an == bn) {
     return true;
   }
-  let ab: string = mx_builtin_enum_of(an);
-  if (ab.len() > 0 && ab == mx_builtin_enum_of(bn)) {
+  let ab: string = parser.builtin_enum_of(an);
+  if (ab.len() > 0 && ab == parser.builtin_enum_of(bn)) {
     return true;
   }
   let au: string = mx_enum_of(an, enums);
@@ -12569,7 +12590,7 @@ function generic_binder_diags(pv: ast.PatVariant, s: Scope, whole: typeinfo.Type
       }
       let owner: string = union_of_variant(nm, s.unions);
       if (owner.len() == 0) {
-        owner = mx_builtin_enum_of(nm);
+        owner = parser.builtin_enum_of(nm);
       }
       if (nm.len() > 0 && nm != "_" && declared != u.name && owner == u.name && variant_payload_count(nm, s.structs) < 0) {
         out = out.append(dg_at("E015", nm + " is a payload-less variant of enum " + u.name + ", but a bare name in a payload slot is a binder that matches every value — write `" + nm + "()` to match the variant, or rename the binder", line, col));
@@ -13391,7 +13412,7 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
 function ctor_boxes_into(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
   if let ast.ExprCall(c) = e {
     let vname: string = ctor_variant_name(c);
-    if (union_of_variant(vname, s.unions).len() == 0 && mx_builtin_enum_of(vname).len() == 0) {
+    if (union_of_variant(vname, s.unions).len() == 0 && parser.builtin_enum_of(vname).len() == 0) {
       return false;
     }
     let got: typeinfo.Type = check_expr(e, s);
@@ -13662,7 +13683,7 @@ function qual_variant_exists(en: string, field: string, s: Scope): boolean {
   if (ou.name.len() > 0) {
     return util.has_str(ou.variants, field);
   }
-  return mx_builtin_enum_of(field) == en;
+  return parser.builtin_enum_of(field) == en;
 }
 
 // qual_variant_union names the enum a qualified variant reference `Enum.Variant`
@@ -14594,7 +14615,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       // function draws E038 and to a struct field E043, so
       // widening this past variant constructors would report a
       // code native does not.
-      if (union_of_variant(id.name, s.unions).len() > 0 || mx_builtin_enum_of(id.name).len() > 0) {
+      if (union_of_variant(id.name, s.unions).len() > 0 || parser.builtin_enum_of(id.name).len() > 0) {
         for arg in c.args {
           // `Ok(())` is the payload written as the unit itself — void's one
           // value, and the spelling the message asks for. Native's
@@ -17105,35 +17126,35 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
   return out;
 }
 
-// ambiguous_variants returns the variant names that are declared in TWO
-// OR MORE enums — an unqualified reference to one of them is ambiguous
-// (E036). (A variant repeated within ONE enum is E017, counted once per
-// enum here so it doesn't masquerade as cross-enum ambiguity.)
-function ambiguous_variants(enums: parser.EnumDecl[]): string[] {
+// ambiguous_variants returns the bare variant names some module may find
+// ambiguous (E036): those two or more enums declare, or an enum and a
+// built-in one (`enum O { Some(i32), None }` beside Option). Which modules do
+// is variant_ambiguous's question; this only decides whether the walk runs.
+// A variant repeated within one enum is E017 and counts once.
+function ambiguous_variants(ut: UnionTable): string[] {
   let out: string[] = [];
-  for ed in enums {
-    let vn: string[] = ed.variant_names;
-    for elem in vn {
-      let cnt: i32 = 0;
-      for edecl in enums {
-        if (util.has_str(edecl.variant_names, elem)) {
-          cnt = cnt + 1;
-        }
-      }
-      // Ambiguous if the name is declared in 2+ USER enums, OR in a user
-      // enum AND a BUILT-IN enum (Option / Result / IoError / Body):
-      // e.g. `enum O { Some(i32), None }` collides with Option's
-      // Some / None, so a bare `None` must be qualified. Mirrors the Go
-      // checker, which carries the built-in enums in the same variant
-      // table the user enums register into. (cnt is >= 1 here — the
-      // current enum contains elem.)
-      let also_builtin: boolean = mx_builtin_enum_of(elem).len() > 0;
-      if ((cnt >= 2 || also_builtin) && !util.has_str(out, elem)) {
-        out = out.append(elem);
-      }
+  let e: i32 = 0;
+  while (e < ut.bnames.len()) {
+    let name: string = ut.bnames[e];
+    if (ut.unions[ut.vowner[e]].is_enum && !util.has_str(out, name) && (parser.builtin_enum_of(name).len() > 0 || second_enum_declares(ut, e))) {
+      out = out.append(name);
     }
+    e = e + 1;
   }
   return out;
+}
+
+// second_enum_declares reports whether an enum other than entry `e`'s owner
+// declares a variant of the same bare name.
+function second_enum_declares(ut: UnionTable, e: i32): boolean {
+  let k: i32 = ut.bhead[sig_name_bucket(ut.bnames[e])];
+  while (k >= 0) {
+    if (ut.bnames[k] == ut.bnames[e] && ut.vowner[k] != ut.vowner[e] && ut.unions[ut.vowner[k]].is_enum) {
+      return true;
+    }
+    k = ut.bnext[k];
+  }
+  return false;
 }
 
 // vref_expr recurses an expression and emits E036 for a bare reference to
@@ -17154,8 +17175,9 @@ function vref_expr(e: ast.Expr, s: Scope, ambig: string[]): util.Diag[] {
   function at(n: ast.Expr, own acc: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprIdent(id) => {
-        if (util.has_str(ambig, id.name) && !s.known(id.name) && !s.has_sig(id.name) && s.variant_ambiguous(id.name)) {
-          return acc.append(dg_at("E036", "variant \"" + id.name + "\" is declared in multiple enums — qualify the reference", id.line, id.col));
+        let bare: string = unprefixed_variant(id.name, s.fn_module);
+        if (util.has_str(ambig, bare) && !s.known(id.name) && !s.has_sig(id.name) && s.variant_ambiguous(id.name)) {
+          return acc.append(dg_at("E036", "variant \"" + bare + "\" is declared in multiple enums — qualify the reference", id.line, id.col));
         }
         return acc;
       },
@@ -24739,7 +24761,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     well_typed = false;
   }
   let body_diags: util.Diag[] = [];
-  let ambig: string[] = ambiguous_variants(mod.enums);
+  let ambig: string[] = ambiguous_variants(ut);
   // E067 runs only when the module declares a @must_consume type — the
   // fast path that keeps the obligation walk free for unmarked modules
   // (e.g. the self-host compiler's own sources).
@@ -25538,7 +25560,7 @@ pub function variant_enum(s: Scope, name: string): string {
   if (owner.len() > 0) {
     return owner;
   }
-  return mx_builtin_enum_of(name);
+  return parser.builtin_enum_of(name);
 }
 
 // payload_slot is which of enum `owner`'s type parameters payload `k` of its

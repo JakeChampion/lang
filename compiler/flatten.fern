@@ -229,20 +229,28 @@ function follow_reexports(mangled: string, keys: string[], targets: string[]): s
   return cur;
 }
 
-// lookup_ivar answers the bundled name of the imported enum variant `name`
-// as seen from ctx's module, or "" when no module in its variant_scope
-// declares one. The map holds every loaded module's variants, but a name the
-// program loads for an unrelated module's sake (std/net's `Other` beside
-// IoError's) must not capture a bare reference here.
-function lookup_ivar(name: string, ctx: RewriteCtx): string {
+// IvarMatch is what a bare `name` finds among the imported enum variants
+// ctx's module sees: the first one's bundled name, "" when no module in its
+// variant_scope declares one, and whether a second enum the module sees, an
+// imported or a built-in one, declares it too. The map holds every loaded
+// module's variants, but a name the program loads for an unrelated module's
+// sake (std/net's `Other` beside IoError's) must not capture a bare reference
+// here.
+struct IvarMatch { mangled: string, ambiguous: boolean }
+
+function match_ivar(name: string, ctx: RewriteCtx): IvarMatch {
+  let first: string = "";
   let i: i32 = 0;
   while (i < ctx.ivar_names.len()) {
     if (ctx.ivar_names[i] == name && ivar_visible(ctx.ivar_mangled[i], name, ctx)) {
-      return ctx.ivar_mangled[i];
+      if (first.len() > 0) {
+        return IvarMatch { mangled: first, ambiguous: true };
+      }
+      first = ctx.ivar_mangled[i];
     }
     i = i + 1;
   }
-  return "";
+  return IvarMatch { mangled: first, ambiguous: first.len() > 0 && parser.builtin_enum_of(name).len() > 0 };
 }
 
 // ivar_visible: whether `mangled` (`pfx__name`) is declared by a module in
@@ -365,13 +373,25 @@ pub function under_root(ident: string, root: string): boolean {
 // may name bare. It is native's import closure (modload.importClosures), which
 // is what the checker's moduleSeesVariant consults.
 function variant_scope(mod: parser.Module, g: ImportGraph, ids: string[], pfxs: string[]): string[] {
-  let direct: string[] = import_prefixes(mod, ids, pfxs);
+  return prefixes_at(import_closure(mod, g, ids, pfxs), pfxs);
+}
+
+function prefixes_at(ks: i32[], pfxs: string[]): string[] {
+  let out: string[] = [];
+  for k in ks {
+    out = out.append(pfxs[k]);
+  }
+  return out;
+}
+
+// import_closure is variant_scope by index into the loaded modules.
+function import_closure(mod: parser.Module, g: ImportGraph, ids: string[], pfxs: string[]): i32[] {
   let seen: boolean[] = [];
   while (seen.len() < pfxs.len()) {
     seen = seen.append(false);
   }
   let queue: i32[] = [];
-  for p in direct {
+  for p in import_prefixes(mod, ids, pfxs) {
     let d: i32 = index_of_str(p, pfxs);
     if (d >= 0 && !seen[d]) {
       seen = seen.with(d, true);
@@ -391,11 +411,40 @@ function variant_scope(mod: parser.Module, g: ImportGraph, ids: string[], pfxs: 
     }
     qi = qi + 1;
   }
-  let out: string[] = direct;
-  for q in queue {
-    out = out.append(pfxs[q]);
+  return queue;
+}
+
+// enum_viewers is, for each loaded module, the prefixes of the other modules
+// whose import closure reaches it, "" for the entry: what its enums'
+// EnumDecl.visible_from holds.
+function enum_viewers(closures: i32[][], entry_closure: i32[], pfxs: string[]): string[][] {
+  let none: string[] = [];
+  let out: string[][] = [];
+  while (out.len() < pfxs.len()) {
+    out = out.append(none);
+  }
+  let k: i32 = 0;
+  while (k < closures.len()) {
+    for t in closures[k] {
+      if (t != k) {
+        out = out.with(t, out[t].append(pfxs[k]));
+      }
+    }
+    k = k + 1;
+  }
+  for t in entry_closure {
+    out = out.with(t, out[t].append(""));
   }
   return out;
+}
+
+// with_enum_viewers stamps every enum `mod` declares with `viewers`.
+function with_enum_viewers(mod: parser.Module, viewers: string[]): parser.Module {
+  let enums: parser.EnumDecl[] = [];
+  for ed in mod.enums {
+    enums = enums.append(parser.EnumDecl { ...ed, visible_from: viewers });
+  }
+  return parser.Module { ...mod, enums: enums };
 }
 
 // first_dot / first_bracket: byte index of the first '.' / '[' in s,
@@ -857,6 +906,19 @@ function module_ids(imports: LoadedModule[]): string[] {
 // mangle_bare maps a bare reference name to its own-module mangled
 // form when it names one of this module's top-level decls.
 function mangle_bare(name: string, ctx: RewriteCtx): string {
+  return resolve_bare(name, ctx, false);
+}
+
+// mangle_bare_value is mangle_bare for a name read as a value. A variant name
+// that more than one enum the module sees declares resolves to none of them
+// here: it keeps the module's own spelling, and the checker reports it as
+// E036. A pattern or a type takes the first, since the scrutinee or the
+// declared type settles which one it is.
+function mangle_bare_value(name: string, ctx: RewriteCtx): string {
+  return resolve_bare(name, ctx, true);
+}
+
+function resolve_bare(name: string, ctx: RewriteCtx, as_value: boolean): string {
   // Own decl → its precomputed shared mangled instance, avoiding a fresh
   // concat per occurrence.
   let di: i32 = declname_index_of(name, ctx);
@@ -866,9 +928,15 @@ function mangle_bare(name: string, ctx: RewriteCtx): string {
   // A bare reference to one of this module's imported enum variants
   // resolves to its bundled (prefix-mangled) struct name. Checked
   // after own decls so a same-named local decl still wins.
-  let iv: string = lookup_ivar(name, ctx);
-  if (iv.len() > 0) {
-    return iv;
+  let iv: IvarMatch = match_ivar(name, ctx);
+  if (as_value && iv.ambiguous) {
+    if (ctx.prefix.len() == 0) {
+      return name;
+    }
+    return mangled_name(ctx.prefix, name);
+  }
+  if (iv.mangled.len() > 0) {
+    return iv.mangled;
   }
   return name;
 }
@@ -1064,7 +1132,7 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
       if (is_in(id.name, ctx.locals)) {
         return ast.ExprIdent { name: id.name, line: id.line, col: id.col, ty: id.ty };
       }
-      return ast.ExprIdent { name: mangle_bare(id.name, ctx), line: id.line, col: id.col, ty: id.ty };
+      return ast.ExprIdent { name: mangle_bare_value(id.name, ctx), line: id.line, col: id.col, ty: id.ty };
     },
     ast.ExprFieldAccess(fa) => {
       match (fa.obj) {
@@ -1641,6 +1709,7 @@ function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.En
       is_pub: true,
       is_package: false, module: ctx.prefix,
       instance: rewrite_type_name(e.instance, ctx),
+      visible_from: e.visible_from,
     });
     i = i + 1;
   }
@@ -1816,20 +1885,24 @@ struct RenamedImports { mods: parser.Module[], defaults: TraitDefaultIn[] }
 
 // rename_imports is the import half bundle and bundle_per_module share, so
 // the merged and the per-module builds agree on every module's decls.
-function rename_imports(imports: LoadedModule[], ids: string[], pfxs: string[], graph: ImportGraph, ivar_names: string[], ivar_mangled: string[], rx: ReexportTable): RenamedImports {
+function rename_imports(entry: parser.Module, imports: LoadedModule[], ids: string[], pfxs: string[], graph: ImportGraph, ivar_names: string[], ivar_mangled: string[], rx: ReexportTable): RenamedImports {
   let ctxs: RewriteCtx[] = [];
+  let closures: i32[][] = [];
   let defaults: TraitDefaultIn[] = [];
   let i: i32 = 0;
   while (i < imports.len()) {
-    let cx: RewriteCtx = module_ctx(imports[i].mod, pfxs[i], ids, pfxs, variant_scope(imports[i].mod, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets);
+    let closure: i32[] = import_closure(imports[i].mod, graph, ids, pfxs);
+    closures = closures.append(closure);
+    let cx: RewriteCtx = module_ctx(imports[i].mod, pfxs[i], ids, pfxs, prefixes_at(closure, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets);
     ctxs = ctxs.append(cx);
     defaults = module_trait_defaults(imports[i].mod, cx, defaults);
     i = i + 1;
   }
+  let viewers: string[][] = enum_viewers(closures, import_closure(entry, graph, ids, pfxs), pfxs);
   let mods: parser.Module[] = [];
   let j: i32 = 0;
   while (j < imports.len()) {
-    mods = mods.append(inherit_trait_defaults(rewrite_module_bodies(imports[j].mod, ctxs[j]), pfxs[j], defaults));
+    mods = mods.append(with_enum_viewers(inherit_trait_defaults(rewrite_module_bodies(imports[j].mod, ctxs[j]), pfxs[j], defaults), viewers[j]));
     j = j + 1;
   }
   return RenamedImports { mods: mods, defaults: defaults };
@@ -2049,7 +2122,7 @@ pub function bundle(entry0: parser.Module, imports0: LoadedModule[], target: str
   let rx: ReexportTable = build_reexports(imports, ids, pfxs);
   let graph: ImportGraph = import_graph(imports, ids, pfxs);
   let inferred: string[] = mangled_inferred_consts(imports, pfxs, entry);
-  let renamed: RenamedImports = rename_imports(imports, ids, pfxs, graph, ivar_names, ivar_mangled, rx);
+  let renamed: RenamedImports = rename_imports(entry, imports, ids, pfxs, graph, ivar_names, ivar_mangled, rx);
   let mclaims: string[] = [];
   let i: i32 = 0;
   while (i < imports.len()) {
@@ -2291,7 +2364,7 @@ pub function bundle_per_module(entry0: parser.Module, imports0: LoadedModule[], 
   // Same claim threading `bundle` does, in the same module order, so the
   // per-module units and the merged bundle agree on which definition owns a
   // `<Type>.<name>` symbol.
-  let renamed: RenamedImports = rename_imports(imports, ids, pfxs, graph, ivar_names, ivar_mangled, rx);
+  let renamed: RenamedImports = rename_imports(entry, imports, ids, pfxs, graph, ivar_names, ivar_mangled, rx);
   let mclaims: string[] = [];
   let i: i32 = 0;
   while (i < imports.len()) {
