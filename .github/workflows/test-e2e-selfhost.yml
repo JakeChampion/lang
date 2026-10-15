@@ -186,6 +186,7 @@ jobs:
           path: shard-outcome/
           retention-days: 1
           if-no-files-found: ignore
+          overwrite: true
 
   # THE DRIVER SIZE GATE (#6826, #7519). Builds every driver named in
   # .github/selfhost-driver-sizes.txt — the list is read from the baseline, so
@@ -572,12 +573,16 @@ jobs:
           else
             echo "no worker timing events: no durations to record"
           fi
+      # `overwrite` so a re-run attempt's marker replaces the earlier one:
+      # `verify` merges every marker into one directory, where a stale
+      # same-named copy could win.
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
           name: shard-outcome-${{ matrix.host }}-${{ matrix.shard }}
           path: shard-outcome/
           retention-days: 1
+          overwrite: true
 
   # Every shard must have REPORTED success: a shard whose runner vanished
   # leaves no marker, which is a failure with a diagnosis here rather than a
