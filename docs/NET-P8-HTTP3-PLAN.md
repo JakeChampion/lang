@@ -134,13 +134,19 @@ Each is a bound with a test that crosses it.
 7a. **HTTP/3 over QUIC.** `std/http/h3q`. Gate:
    `tests/stdlib/http_h3q_test.fern` in memory under loss and reordering,
    and `scripts/net-quic-interop` against aioquic's HTTP/3 each way.
-7. **Serving.** `serve.Config.with_h3()`: a UDP socket per worker beside
-   the TCP listener, connections routed by connection ID, QUIC's timers in
-   the loop's wait, handlers parked per stream as for HTTP/2, and Alt-Svc on
-   the TCP responses. The runtime gains what UDP serving needs:
-   `SO_REUSEPORT` and dual-stack on UDP sockets, and the datagram's local
-   address. Gate: `TestServeH3Interp` and `TestServeH3X86_64` against an
-   aioquic client.
+7. **Serving.** `serve.Config.with_h3()`: a UDP socket beside the TCP
+   listener, connections routed by connection ID, QUIC's timers in the
+   loop's wait, handlers parked per stream as for HTTP/2 (keyed by the
+   connection's serial, since one socket carries every connection), chunked
+   bodies produced as tasks under a cap on what the client has not
+   acknowledged, GOAWAY on shutdown, and Alt-Svc on the TCP responses.
+   `run_with`'s stateful loop serves HTTP/3 too, its state threaded through
+   each request in turn. Gate: `TestServeH3Interp` and `TestServeH3X86_64`,
+   a std/http/h3q client against the served program. Landed, with two
+   follow-ups: each worker binds its own socket with SO_REUSEPORT once
+   `udp_bind_with` (#12480) is in (until then the first worker to bind the
+   port serves every HTTP/3 connection), and file bodies use the part
+   producer that #12479's fix adds for HTTP/2.
 8. **Interop nightly.** h3spec, and more HTTP/3 peers beside aioquic
    (`scripts/net-quic-interop` has carried HTTP/3 both ways since 7a).
    Gate: the nightly job.

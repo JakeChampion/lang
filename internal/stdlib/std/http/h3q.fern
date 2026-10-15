@@ -415,6 +415,12 @@ pub function (c: Conn) end(id: i64, trailers: HeaderMap): Conn {
   return Conn { ...c, session: c.session.send_data(id, [], true) }.__applied(0 as i64);
 }
 
+// abort resets stream `id` both ways with `code`, as when a response
+// cannot be finished.
+pub function (c: Conn) abort(id: i64, code: i64): Conn {
+  return Conn { ...c, session: c.session.abort(id, code), partials: __without(c.partials, id) }.__applied(0 as i64);
+}
+
 // request sends `req` on a new stream, its body whole, and answers the
 // stream's ID; the response arrives as `Responded` on it.
 pub function (c: Conn) request(req: HttpRequest, scheme: string): Result[(Conn, i64), string] {
