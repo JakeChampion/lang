@@ -5,8 +5,9 @@
 // canonical landing URL on docs (standard for a language project)
 // without breaking any existing playground deep links.
 //
-// Three top-level sections in the sidebar:
+// Four top-level sections in the sidebar:
 //   - Tutorial: narrative learn-the-language pages, ordered.
+//   - HTTP guide: serving and calling HTTP, basic to advanced, ordered.
 //   - Reference: syntax + types + tooling.
 //   - Stdlib: auto-generated from internal/stdlib/*.fern by
 //     `cmd/ferndoc`; pages exist under src/content/docs/stdlib/
@@ -214,6 +215,10 @@ export default defineConfig({
         {
           label: "Tutorial",
           items: [{ autogenerate: { directory: "tutorial" } }],
+        },
+        {
+          label: "HTTP guide",
+          items: [{ autogenerate: { directory: "http" } }],
         },
         { label: "Cookbook", link: "/cookbook/" },
         {

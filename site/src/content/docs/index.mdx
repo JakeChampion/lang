@@ -49,10 +49,10 @@ programs work too: Fern's own compiler is written in Fern.
 
 <CommandCard
   label="Install"
-  commands={["go install github.com/jakechampion/lang/cmd/fern@latest", "fern -interp hello.fern"]}>
+  commands={["curl -fsSL https://github.com/JakeChampion/lang/releases/download/nightly/fern-linux-x86_64.tar.gz | tar -xz", "./fern -interp hello.fern"]}>
 
-Needs Go 1.26+. Prefer a prebuilt binary? See the
-[install guide](tutorial/install/).
+One self-contained binary. macOS, arm64 and building from source are in
+the [install guide](tutorial/install/).
 
 </CommandCard>
 
@@ -210,7 +210,7 @@ system, and the error-handling rules.
     },
     {
       term: "Install",
-      value: "A single binary; Go 1.26+ only if you build it from source",
+      value: "A single binary; building it from source needs only make and curl",
     },
     {
       term: "Editors",
@@ -236,7 +236,8 @@ system, and the error-handling rules.
   time rather than a surprise at runtime.
 - **The standard library grows when a real program needs it to.**
   Today that covers strings, regular expressions, collections, iterators,
-  JSON and CSV, files and paths, HTTP client and server, TCP and DNS,
+  JSON and CSV, files and paths, an HTTP/1.1 and HTTP/2 client and
+  server with TLS 1.3, WebSockets and gRPC, TCP and DNS, compression,
   dates and time zones, hashes and cryptography.
 
 [Why Fern](why/) has the fuller account: what it gives up, and how it
@@ -257,9 +258,9 @@ compares to Go, Rust, Zig and TypeScript.
       blurb: "Arguments, stdin and files, exit codes, and the error handling a filter needs.",
     },
     {
-      label: "Build an HTTP handler",
-      href: "tutorial/http-server/",
-      blurb: "Routing, JSON, and a .wasm you can hand straight to wasmtime serve.",
+      label: "HTTP guide",
+      href: "http/",
+      blurb: "From a one-function handler to routing, streaming, TLS, HTTP/2, gRPC, metrics and simulated-network tests.",
     },
     {
       label: "Cookbook",

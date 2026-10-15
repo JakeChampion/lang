@@ -341,13 +341,14 @@ and answers.
 
 Inside a task, fan out with the task combinators. Each runs its entries as
 tasks of the calling task and parks on the union of their waits, so a
-handler that fetches from two upstreams parks once for both:
+handler that fetches from two upstreams parks once for both (once #12456
+lets a handler call them):
 
 ```fern
-let both: (() => fetch.FetchResult)[] = [() => plat.http(a), () => plat.http(b)];
-let rs: fetch.FetchResult[] = async.gather_tasks(both, fallback);
+let both: (() => Result[HttpResponse, fetch.FetchError])[] = [() => plat.http(a), () => plat.http(b)];
+let rs: Result[HttpResponse, fetch.FetchError][] = async.gather_tasks(both, fallback);
 let (won, first) = async.race_tasks(both, fallback);
-let timed: Option[fetch.FetchResult][] = async.with_deadline_tasks(time.duration_millis(200), both);
+let timed: Option[Result[HttpResponse, fetch.FetchError]][] = async.with_deadline_tasks(time.duration_millis(200), both);
 ```
 
 `gather_tasks(entries, on_incomplete)` answers every result in order;
