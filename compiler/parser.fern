@@ -1722,18 +1722,25 @@ struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32, s
 // keyword, so the ident that follows one is always a declared struct name.
 function scan_struct_names(toks: lexer.Token[]): string[] {
   let out: string[] = [];
-  let q: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: out, verbatim: false, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [] };
-  while (!q.at_end()) {
-    if (q.peek_keyword() != "struct") {
-      q = q.advance();
-      continue;
+  let i: i32 = 0;
+  while (i < toks.len()) {
+    match (toks[i]) {
+      lexer.TokEof(_) => {
+        return out;
+      },
+      lexer.TokKeyword(k) => {
+        if (k.name == "struct" && i + 1 < toks.len()) {
+          if let lexer.TokIdent(id) = toks[i + 1] {
+            if (id.name.len() > 0) {
+              out = out.append(id.name);
+              i = i + 1;
+            }
+          }
+        }
+      },
+      _ => {}
     }
-    q = q.advance();
-    let nm: string = q.peek_ident();
-    if (nm.len() > 0) {
-      out = out.append(nm);
-      q = q.advance();
-    }
+    i = i + 1;
   }
   return out;
 }
