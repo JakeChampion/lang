@@ -4014,13 +4014,11 @@ pub function register_form(f: SFunc): Formed {
   let folded: Formed = prune_trivial_phis(slot_calls(f));
   let merged: Formed = merge_duplicates(folded.f);
   let shared: Formed = share_shape_loads(merged.f);
+  // drop_low_wraps deletes each wrap it replaces, and the wrap's operand
+  // takes over its reads, so nothing it leaves is dead. prune_dead is
+  // idempotent, so a pass that changed nothing needs no prune after it.
   let unwrapped: Formed = drop_low_wraps(prune_dead(fuse_rotates(shared.f)));
-  // prune_dead is idempotent, so a pass that changed nothing needs no prune
-  // after it.
   let g: SFunc = unwrapped.f;
-  if (unwrapped.repl.len() > 0) {
-    g = prune_dead(g);
-  }
   let bytes: Formed = fold_byte_access(g);
   if (bytes.repl.len() > 0) {
     g = prune_dead(bytes.f);
