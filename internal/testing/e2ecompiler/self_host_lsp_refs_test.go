@@ -12,12 +12,8 @@ import (
 
 // `fern -lsp`'s references, rename (compiler/lsprefs.fern), semantic tokens
 // (compiler/lsptokens.fern) and code actions (lsp.fern's code_actions, from
-// the fixes the checker attaches to its diagnostics). The cases are the Go
-// server's (references_test.go, the rename tests beside it,
-// semantic_tokens_test.go, codeaction_test.go and workspace_test.go's
-// VariantReferencesStayInTheirEnum and SemanticTokensCoverOnlyTheRequestedFile),
-// with the answers written out as data. Where this server answers otherwise the
-// case says so: a declaration is placed on its name, and a request on a
+// the fixes the checker attaches to its diagnostics), with the answers written
+// out as data: a declaration is placed on its name, and a request on a
 // declaration's name answers as one on a use; a local is the binding a name
 // reads, not every like-named local of the function, and a parameter's
 // declaration is one of its places; includeDeclaration is honoured; a rename
@@ -114,9 +110,9 @@ func renameProbe(dir, name, doc string, line, char int, newName string, want ...
 	}}
 }
 
-// TestSelfHostLSPReferencesX86_64 holds references and rename to the Go
-// server's cases (references_test.go), plus the shapes they leave out: a
-// declaration's own name, includeDeclaration, a parameter, shadowing, a local
+// TestSelfHostLSPReferencesX86_64 holds references and rename on locals,
+// functions, methods, fields and variants, a blank spot, a declaration's own
+// name, includeDeclaration, a parameter, shadowing, a local
 // shadowing a function, a built-in variant, non-ASCII before a name, a
 // literate document, and the renames that are refused.
 func TestSelfHostLSPReferencesX86_64(t *testing.T) {
@@ -143,21 +139,17 @@ func TestSelfHostLSPReferencesX86_64(t *testing.T) {
 	})
 	open := []string{"local.fern", "top.fern", "blank.fern", "plus.fern", "method.fern", "field.fern", "variant.fern", "shadow.fern", "global.fern", "opt.fern", "std.fern", "utf.fern", "nest.fern", "chunks.fern.md"}
 	probeLSP(t, s, dir, open, []lspProbe{
-		// TestReferences_LocalVar: the declaration and both uses.
+		// A local: the declaration and both uses.
 		refsProbe(dir, "local-var", "local.fern", 2, 9, true, place("local.fern", 1, 6, 7), place("local.fern", 2, 9, 10), place("local.fern", 2, 13, 14)),
-		// TestReferences_TopLevelFunction: the declaration — its name, where
-		// the Go server placed it at the `function` keyword — and both calls.
+		// A function: the declaration, at its name, and both calls.
 		refsProbe(dir, "top-level-function", "top.fern", 1, 31, true, place("top.fern", 0, 9, 12), place("top.fern", 1, 30, 33), place("top.fern", 1, 37, 40)),
-		// TestReferences_NoneAtBlankSpot: a literal, and a keyword.
+		// Nothing on a literal or a keyword.
 		refsProbe(dir, "none-on-a-literal", "blank.fern", 0, 30, true),
 		refsProbe(dir, "none-on-a-keyword", "blank.fern", 0, 25, true),
-		// The Go server answered nothing on a declaration's own name.
 		refsProbe(dir, "from-the-declaration", "top.fern", 0, 10, true, place("top.fern", 0, 9, 12), place("top.fern", 1, 30, 33), place("top.fern", 1, 37, 40)),
-		// The Go server ignored includeDeclaration.
 		refsProbe(dir, "without-the-declaration", "top.fern", 1, 31, false, place("top.fern", 1, 30, 33), place("top.fern", 1, 37, 40)),
-		// The Go server left a parameter's declaration out.
 		refsProbe(dir, "parameter", "top.fern", 0, 13, true, place("top.fern", 0, 13, 14), place("top.fern", 0, 43, 44)),
-		// The Go server gave all five `x`s for either binding.
+		// Each binding of a shadowed name has only its own places.
 		refsProbe(dir, "outer-binding", "shadow.fern", 6, 9, true, place("shadow.fern", 1, 6, 7), place("shadow.fern", 2, 6, 7), place("shadow.fern", 6, 9, 10)),
 		refsProbe(dir, "inner-binding", "shadow.fern", 4, 11, true, place("shadow.fern", 3, 8, 9), place("shadow.fern", 4, 11, 12)),
 		refsProbe(dir, "function-not-the-local-shadowing-it", "global.fern", 0, 9, true, place("global.fern", 0, 9, 10), place("global.fern", 5, 27, 28)),
@@ -166,23 +158,20 @@ func TestSelfHostLSPReferencesX86_64(t *testing.T) {
 		refsProbe(dir, "arm-binding", "opt.fern", 2, 19, true, place("opt.fern", 2, 19, 20), place("opt.fern", 2, 34, 35)),
 		refsProbe(dir, "non-ascii-before", "utf.fern", 2, 10, true, place("utf.fern", 1, 29, 34), place("utf.fern", 2, 9, 14)),
 		refsProbe(dir, "literate", "chunks.fern.md", 14, 14, true, place("chunks.fern.md", 4, 9, 15), place("chunks.fern.md", 14, 13, 19)),
-		// The Go server found a variant only where it heads an arm's pattern.
+		// A variant wherever a pattern names it, nested ones included.
 		refsProbe(dir, "variant-in-nested-patterns", "nest.fern", 0, 14, true,
 			place("nest.fern", 0, 13, 19), place("nest.fern", 4, 9, 15), place("nest.fern", 10, 27, 33), place("nest.fern", 11, 14, 20), place("nest.fern", 18, 19, 25), place("nest.fern", 18, 44, 50)),
 		refsProbe(dir, "from-a-nested-pattern", "nest.fern", 4, 10, true,
 			place("nest.fern", 0, 13, 19), place("nest.fern", 4, 9, 15), place("nest.fern", 10, 27, 33), place("nest.fern", 11, 14, 20), place("nest.fern", 18, 19, 25), place("nest.fern", 18, 44, 50)),
 		refsProbe(dir, "variant-in-a-nested-let-else", "nest.fern", 14, 12, true, place("nest.fern", 0, 26, 32), place("nest.fern", 5, 9, 15), place("nest.fern", 14, 11, 17), place("nest.fern", 18, 55, 61)),
 		refsProbe(dir, "binding-in-a-nested-if-let", "nest.fern", 11, 21, true, place("nest.fern", 11, 21, 22), place("nest.fern", 12, 11, 12)),
-		// TestRename_LocalVar.
 		renameProbe(dir, "local-var", "local.fern", 2, 9, "renamed", place("local.fern", 1, 6, 7), place("local.fern", 2, 9, 10), place("local.fern", 2, 13, 14)),
-		// TestRename_TopLevelFunction.
 		renameProbe(dir, "top-level-function", "plus.fern", 1, 31, "plus", place("plus.fern", 0, 9, 12), place("plus.fern", 1, 30, 33)),
-		// TestRename_MethodCall: the declaration and the call.
+		// A method: the declaration and the call.
 		renameProbe(dir, "method-call", "method.fern", 4, 13, "total", place("method.fern", 1, 20, 23), place("method.fern", 4, 11, 14)),
-		// TestRename_StructField: the declaration, the literal's field and the
-		// access.
+		// A field: the declaration, the literal's field and the access.
 		renameProbe(dir, "struct-field", "field.fern", 3, 11, "horiz", place("field.fern", 0, 15, 16), place("field.fern", 2, 25, 26), place("field.fern", 3, 11, 12)),
-		// TestRename_EnumVariant: the declaration, the literal and the arm.
+		// A variant: the declaration, the literal and the arm.
 		renameProbe(dir, "enum-variant", "variant.fern", 2, 17, "Crimson", place("variant.fern", 0, 13, 16), place("variant.fern", 2, 17, 20), place("variant.fern", 3, 14, 17)),
 		renameProbe(dir, "struct-from-its-declaration", "method.fern", 0, 8, "Pt", place("method.fern", 0, 7, 12), place("method.fern", 1, 13, 18), place("method.fern", 3, 9, 14), place("method.fern", 3, 17, 22)),
 		renameProbe(dir, "literate", "chunks.fern.md", 15, 7, "w", place("chunks.fern.md", 14, 4, 5), place("chunks.fern.md", 15, 7, 8)),
@@ -199,9 +188,9 @@ func TestSelfHostLSPReferencesX86_64(t *testing.T) {
 	})
 }
 
-// TestSelfHostLSPReferencesWorkspaceX86_64 is references across modules:
-// workspace_test.go's VariantReferencesStayInTheirEnum and the references half
-// of PositionSearchDoesNotCrossFiles, and every kind of name referred to from
+// TestSelfHostLSPReferencesWorkspaceX86_64 is references across modules: a
+// variant's stay in its enum, a position is searched for only in the document
+// the request names, and every kind of name referred to from
 // another module — a type, a field, a function, a method, and a variant
 // written in a match arm, an `if let` and a construction.
 func TestSelfHostLSPReferencesWorkspaceX86_64(t *testing.T) {
@@ -271,8 +260,7 @@ func (s semToken) String() string {
 
 func tok(line, char, n int, kind string) semToken { return semToken{line, char, n, kind} }
 
-// semTypes is the Go server's legend (semantic_tokens.go), which this server
-// must advertise in the same order.
+// semTypes is the legend the server advertises, in order.
 var semTypes = []string{"function", "method", "struct", "enum", "enumMember", "parameter", "variable", "property", "type", "keyword", "namespace"}
 
 // decodeSemantic undoes LSP's encoding: each token's line relative to the
@@ -313,15 +301,11 @@ func tokensProbe(name, doc string, want ...semToken) lspProbe {
 	}}
 }
 
-// TestSelfHostLSPSemanticTokensX86_64 holds semantic tokens to the Go
-// server's cases (semantic_tokens_test.go, and workspace_test.go's
-// SemanticTokensCoverOnlyTheRequestedFile), with every token written out: the
-// legend, a simple program and its encoding, every token type there is, a
-// workspace's entry, non-ASCII before a name, and a literate document. The Go
-// server classified only what a function body names and each type an
-// annotation writes, and anything it could not classify as a variable; this
-// one also classifies each declared name, parameter and binding, and leaves
-// out what it cannot classify.
+// TestSelfHostLSPSemanticTokensX86_64 holds semantic tokens, every token
+// written out: the legend, a simple program and its encoding, every token type
+// there is, a workspace's entry and only it, non-ASCII before a name, and a
+// literate document. Each declared name, parameter and binding is classified,
+// and what cannot be classified is left out.
 func TestSelfHostLSPSemanticTokensX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 
@@ -343,7 +327,7 @@ func TestSelfHostLSPSemanticTokensX86_64(t *testing.T) {
 		}
 		p := got.Capabilities.SemanticTokensProvider
 		if p == nil || !reflect.DeepEqual(p.Legend.TokenTypes, semTypes) || p.Legend.TokenModifiers == nil || len(p.Legend.TokenModifiers) != 0 || !p.Full {
-			t.Errorf("semanticTokensProvider = %+v, want the Go server's legend, no modifiers, full", p)
+			t.Errorf("semanticTokensProvider = %+v, want semTypes as the legend, no modifiers, full", p)
 		}
 	})
 
@@ -371,8 +355,8 @@ func TestSelfHostLSPSemanticTokensX86_64(t *testing.T) {
 		"chunks.fern.md": "# Doc\n\n```fern\n<<*>>=\nfunction helper(n: i32): i32 { return n + 1; }\nfunction main(): i32 {\n  <<body>>\n}\n```\n\nThe body.\n\n```fern\n<<body>>=\nlet v: i32 = helper(41);\nreturn v;\n```\n",
 	})
 	probeLSP(t, s, dir, []string{"simple.fern", "kinds.fern", "main.fern", "utf.fern", "nest.fern", "chunks.fern.md"}, []lspProbe{
-		// TestSemanticTokens_EmitsForSimpleProgram / DeltaEncoded: every token
-		// after the first on its line is relative to the one before.
+		// Every token after the first on its line is relative to the one
+		// before.
 		{name: "tokens/delta-encoded", method: "textDocument/semanticTokens/full", doc: "simple.fern", params: lspMsg{}, check: func(t *testing.T, result json.RawMessage) {
 			var r struct {
 				Data []int `json:"data"`
@@ -462,9 +446,9 @@ func fixOf(t *testing.T, d json.RawMessage) (lspFix, bool) {
 	return *v.Data, true
 }
 
-// TestSelfHostLSPCodeActionX86_64 holds code actions to codeaction_test.go:
-// a fix a diagnostic carries in its data comes back as a quick fix whose edit
-// corrects the program, and a diagnostic with none gives none. It covers each
+// TestSelfHostLSPCodeActionX86_64 holds code actions: a fix a diagnostic
+// carries in its data comes back as a quick fix whose edit corrects the
+// program, and a diagnostic with none gives none. It covers each
 // diagnostic the checker attaches a fix to — a misspelt name read, called or
 // assigned, a retired name, a misspelt field of a literal, and a misspelt
 // field or method of an access — and the fix's span in UTF-16 units and in a

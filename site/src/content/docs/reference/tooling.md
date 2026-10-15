@@ -236,14 +236,12 @@ fern -target x86-64-linux -shared -export add -o libadd.so add.fern
 `-shared` needs `-o` and an ELF target: `x86-64-linux`, `arm64-linux` or
 `arm64-android`.
 
-## Language server — `fern-lsp`
+## Language server — `fern -lsp`
 
-Speaks LSP over stdin/stdout. Spawn it from any editor with a
-generic LSP client. Install it with Go:
-
-```bash
-go install github.com/jakechampion/lang/cmd/fern-lsp@latest
-```
+Speaks LSP over stdin/stdout. Spawn `fern -lsp` from any editor with a
+generic LSP client; it is part of the `fern` binary, so there is nothing
+else to install. `-target T` checks documents against that target's
+capabilities, as `fern -check -target T` does.
 
 Features:
 
@@ -284,12 +282,12 @@ code --install-extension fern-vscode-0.1.0.vsix
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `fern.serverPath` | `fern-lsp` | Path to the server binary; looked up on `$PATH` when unqualified. |
-| `fern.serverArgs` | `[]` | Arguments passed to the server. |
+| `fern.serverPath` | `fern` | Path to the `fern` binary; looked up on `$PATH` when unqualified. |
+| `fern.serverArgs` | `["-lsp"]` | Arguments passed to the server. |
 | `fern.trace.server` | `off` | Log LSP traffic: `messages` or `verbose`. |
 
-The **Fern: Restart Server** command restarts `fern-lsp`, which is useful
-after rebuilding it.
+The **Fern: Restart Server** command restarts the server, which is useful
+after rebuilding `fern`.
 
 ## REPL
 

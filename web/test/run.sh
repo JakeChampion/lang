@@ -31,9 +31,7 @@ fi
 
 mkdir -p "$output_dir"
 
-# Build the wasm bundle so the page has something to load. build.sh
-# refreshes wasm_exec.js too — important because the Go toolchain
-# version determines which import-object layout the page expects.
+# Build the wasm bundle so the page has something to load.
 echo "==> building playground wasm"
 "$web/build.sh"
 

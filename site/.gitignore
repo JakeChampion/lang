@@ -12,5 +12,5 @@ src/content/docs/stdlib/*.md
 !src/content/docs/stdlib/index.md
 
 # Embedded playground bundle (copied in from web/ at build time;
-# committing it would duplicate web/fern.wasm under version control).
+# committing it would duplicate web/playground.wasm under version control).
 public/playground/

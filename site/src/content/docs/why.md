@@ -53,7 +53,7 @@ The same binary type-checks (`-check`), formats (`-fmt`), lints
 (`-lint`), runs a program without compiling it (`-interp`), measures
 test coverage (`-cover`), builds with memory-safety checks
 (`-sanitize`), resolves dependencies, and reports what capabilities a
-package uses. Editor support is `fern-lsp` plus a VS Code extension; the
+package uses. Editor support is `fern -lsp` plus a VS Code extension; the
 test runner is `std/test`, a library rather than a separate tool.
 
 ## The same program, native or WebAssembly

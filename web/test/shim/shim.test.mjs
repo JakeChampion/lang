@@ -157,6 +157,22 @@ describe("the exit code", () => {
   });
 });
 
+// The page has no filesystem, so no preopened directory: a path resolves
+// against a descriptor that does not exist, and read_file fails as it does
+// under a host given no --dir rather than trapping.
+describe("a path", () => {
+  it("opens to EBADF", async () => {
+    const bin = compile("nofs", `function main(): i32 {
+  match (read_file("/etc/hostname")) {
+    Ok(_) => { return 1; },
+    Err(_) => { return 7; },
+  }
+  return 0;
+}`);
+    assert.equal((await runCoreWasm(bin)).exit, 7);
+  });
+});
+
 describe("the streams", () => {
   it("stay separate", async () => {
     const bin = compile("streams", `function main(): i32 {
@@ -171,10 +187,10 @@ describe("the streams", () => {
 });
 
 // The page's own compiler, built as web/build.sh builds it, run through the
-// shim. Any filesystem probe it makes throws here, as it does in the browser:
-// its stdlib is an embedded overlay and the shim implements no path_open.
+// shim as the page runs it.
 describe("the playground compiler", () => {
-  it("interprets a stdlib import without touching a filesystem", async () => {
+  let playground;
+  before(() => {
     const outPath = join(workDir, "playground.wasm");
     execFileSync(
       fernBin,
@@ -182,7 +198,11 @@ describe("the playground compiler", () => {
         join(repoRoot, "compiler/playground_run.fern"), join(repoRoot, "internal/stdlib")],
       { cwd: repoRoot },
     );
-    const r = await runCoreWasm(readFileSync(outPath), {
+    playground = readFileSync(outPath);
+  }, { timeout: 600000 });
+
+  it("interprets a stdlib import", async () => {
+    const r = await runCoreWasm(playground, {
       stdin: `import "std/i64";
 function main(): i32 {
   print("hi");
@@ -193,5 +213,35 @@ function main(): i32 {
     assert.equal(r.stderr, "");
     assert.equal(r.stdout, "hi\n");
     assert.equal(r.exit, 0);
-  }, { timeout: 600000 });
+  });
+
+  // The page's language server: one session per question, framed as an
+  // editor frames it, answered from the embedded stdlib.
+  it("answers a language-server session", async () => {
+    const uri = "file:///playground.fern";
+    const text = `import "std/i32";
+function main(): i32 {
+  let n: i32 = "s";
+  return n.abs();
+}`;
+    const msgs = [
+      { id: 1, method: "initialize", params: {} },
+      { method: "textDocument/didOpen", params: { textDocument: { uri, languageId: "fern", version: 1, text } } },
+      { id: 2, method: "textDocument/hover", params: { textDocument: { uri }, position: { line: 3, character: 12 } } },
+      { id: 3, method: "shutdown" },
+      { method: "exit" },
+    ];
+    const stdin = msgs.map((m) => {
+      const body = JSON.stringify({ jsonrpc: "2.0", ...m });
+      return `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
+    }).join("");
+    const r = await runCoreWasm(playground, { stdin, args: ["playground", "-lsp"] });
+    assert.equal(r.stderr, "");
+    assert.equal(r.exit, 0);
+    const bodies = r.stdout.split(/Content-Length: \d+\r\n\r\n/).filter(Boolean).map((b) => JSON.parse(b));
+    const published = bodies.find((b) => b.method === "textDocument/publishDiagnostics");
+    assert.deepEqual(published.params.diagnostics.map((d) => [d.code, d.range.start.line]), [["E003", 2]]);
+    const hover = bodies.find((b) => b.id === 2);
+    assert.equal(hover.result.contents.value, "```fern\n(method on i32) function abs(): i32\n```");
+  });
 });

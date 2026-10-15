@@ -163,6 +163,15 @@ export async function runCoreWasm(module, opts = {}) {
     fd_close() {
       return 0;
     },
+    // There is no filesystem and so no preopened directory: every path is
+    // relative to a directory fd that does not exist, which is EBADF (8). A
+    // guest's read_file then fails as it would under a host given no --dir.
+    path_open() {
+      return 8;
+    },
+    path_filestat_get() {
+      return 8;
+    },
     sched_yield() {
       return 0;
     },

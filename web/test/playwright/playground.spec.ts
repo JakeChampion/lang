@@ -10,10 +10,10 @@ import { test, expect } from "@playwright/test";
 
 // Test fixture: wait for the page to finish booting. The status
 // element flips from "loading runtime…" to "ready · …" once
-// wasm_exec.js + the lang wasm + the LSP init have all completed.
+// playground.wasm has compiled.
 async function gotoReady(page) {
   await page.goto("/index.html");
-  // Status text settles on a "ready" prefix once initLsp() runs;
+  // Status text settles on a "ready" prefix once the compiler is up;
   // that's our boot sentinel (mirrors the Bombadil spec).
   await expect(page.locator("#status")).toContainText("ready", {
     timeout: 30_000,
@@ -67,6 +67,50 @@ test("clean source clears the Problems panel", async ({ page }) => {
   // debounced LSP roundtrip to publish the empty-diagnostic list.
   await expect(page.locator("#problemList .empty")).toBeVisible({
     timeout: 5_000,
+  });
+});
+
+// hoverText moves the mouse over the first `text` in the editor. The editor
+// has no syntax mode, so a line is one text node and the name has no element
+// of its own to hover.
+async function hoverText(page, text: string) {
+  const box = await page.locator(".cm-content").evaluate((root, needle) => {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const at = n.textContent!.indexOf(needle);
+      if (at < 0) continue;
+      const r = document.createRange();
+      r.setStart(n, at);
+      r.setEnd(n, at + needle.length);
+      const b = r.getBoundingClientRect();
+      return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+    }
+    return null;
+  }, text);
+  expect(box).not.toBeNull();
+  await page.mouse.move(box!.x, box!.y);
+}
+
+test("hovering a stdlib method shows its signature", async ({ page }) => {
+  await gotoReady(page);
+  await page.locator("#example").selectOption("fact");
+  await expect(page.locator(".cm-content")).toContainText("to_string");
+  await hoverText(page, "to_string");
+  await expect(page.locator(".fern-hover")).toContainText(
+    "(method on i32) function to_string(): string",
+    { timeout: 15_000 },
+  );
+});
+
+test("typing after a `.` offers the receiver's methods", async ({ page }) => {
+  await gotoReady(page);
+  await page.locator("#example").selectOption("fact");
+  await page.locator(".cm-line", { hasText: "let f: i32 = fact(5);" }).click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("let g: i32 = f.ab");
+  await expect(page.locator(".cm-tooltip-autocomplete")).toContainText("abs_diff", {
+    timeout: 15_000,
   });
 });
 

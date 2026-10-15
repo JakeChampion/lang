@@ -57,7 +57,7 @@ pub function no_answer(): Answer {
   return Answer { found: false, text: "", line: 0, col: 0, len: 0 };
 }
 
-// hover describes the name at `line`, `col` as the Go server's hover does.
+// hover describes the name at `line`, `col`.
 pub function hover(p: Program, line: i32, col: i32): Answer {
   let (q, ok) = query(p, line, col);
   if (!ok) {

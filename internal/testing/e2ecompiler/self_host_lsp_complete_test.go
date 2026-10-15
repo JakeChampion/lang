@@ -12,16 +12,13 @@ import (
 )
 
 // `fern -lsp`'s completion, signature help, document symbols and inlay hints
-// (compiler/lspassist.fern). The cases are the Go server's (completion_test.go,
-// signature_test.go, symbols_test.go, inlay_test.go, and the literate and
-// UTF-16 cases of literate_features_test.go and utf16_missed_sites_test.go),
-// with the answers written out as data. Where this server answers otherwise
-// the case says so: completion types every binding of the enclosing function
-// and offers constants, members after a `.` and nothing of a function the
-// cursor is past; a signature's parameters are named by offset; an outline
-// entry spans its whole declaration with its name selected, and the outline
-// holds the document's own declarations, methods included, and nothing else;
-// and a hint names an imported type as the document writes it.
+// (compiler/lspassist.fern), with the answers written out as data: completion
+// types every binding of the enclosing function and offers constants, members
+// after a `.` and nothing of a function the cursor is past; a signature's
+// parameters are named by offset; an outline entry spans its whole
+// declaration with its name selected, and the outline holds the document's
+// own declarations, methods included, and nothing else; and a hint names an
+// imported type as the document writes it.
 
 type lspItem struct {
 	Label  string `json:"label"`
@@ -210,9 +207,9 @@ func someItems(want ...lspItem) func(*testing.T, []lspItem) {
 	}
 }
 
-// TestSelfHostLSPCompletionX86_64 is completion_test.go and the literate
-// completion case, then what they leave out: the bindings of blocks, loops,
-// arms and lambdas, a function the cursor is past, constants, and members.
+// TestSelfHostLSPCompletionX86_64 completes in a function body, a literate
+// document, the bindings of blocks, loops, arms and lambdas, past a function,
+// and constants and members.
 func TestSelfHostLSPCompletionX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	dir := t.TempDir()
@@ -264,7 +261,7 @@ func TestSelfHostLSPCompletionX86_64(t *testing.T) {
 	}
 	pointMembers := exactItems(lspItem{"sum", 2, "function sum(): i32"}, lspItem{"x", 5, "i32"}, lspItem{"y", 5, "i32"})
 	probes := []lspProbe{
-		// The Go server's cases, every name offered written out.
+		// Every name offered written out.
 		completeAt("in-function-body", "body.fern", 2, 2, scopeItems(
 			lspItem{"a", 6, "(parameter) i32"}, lspItem{"add", 3, "function add(i32, i32): i32"},
 			lspItem{"b", 6, "(parameter) i32"}, lspItem{"sum", 6, "i32"})),
@@ -282,12 +279,11 @@ func TestSelfHostLSPCompletionX86_64(t *testing.T) {
 		completeAt("literate", "t.fern.md", 3, 33, scopeItems(
 			lspItem{"greeting", 3, "function greeting(): i32"}, lspItem{"main", 3, "function main(): i32"})),
 
-		// The Go server offers a function's locals after its body has
-		// closed, where `t` is out of scope.
+		// Past a function's closing brace its locals, `t` among them, are out
+		// of scope.
 		completeAt("past-a-function", "past.fern", 1, 0, scopeItems(lspItem{"f", 3, "function f(): i32"})),
-		// Every binding of the function is offered, as the Go server offers
-		// its `let`s; the Go server leaves out a loop's, an arm's and a
-		// lambda's, and constants.
+		// Every binding of the function is offered, a loop's, an arm's and a
+		// lambda's included, and constants.
 		completeAt("scoped-bindings", "scoped.fern", 11, 2, scopeItems(
 			lspItem{"Circle", 20, "(variant of Shape) Circle(f64)"}, lspItem{"LIMIT", 21, "(const) i32"},
 			lspItem{"Shape", 13, "enum Shape"}, lspItem{"Square", 20, "(variant of Shape) Square(i32)"},
@@ -296,8 +292,7 @@ func TestSelfHostLSPCompletionX86_64(t *testing.T) {
 			lspItem{"r", 6, "f64"}, lspItem{"s", 6, "(parameter) Shape"}, lspItem{"w", 6, "string"},
 			lspItem{"x", 6, "string"}, lspItem{"x", 6, "(parameter) i32"})),
 
-		// After a `.` the Go server offers the whole scope again; this one
-		// offers what can follow it.
+		// After a `.` what can follow it is offered.
 		completeAt("struct-members", "members.fern", 8, 17, pointMembers),
 		completeAt("member-being-written", "members.fern", 8, 18, pointMembers),
 		completeAt("module-exports", "members.fern", 8, 30, exactItems(
@@ -345,11 +340,11 @@ func signatureAt(name, doc string, line, char int, label string, params [][2]int
 	}}
 }
 
-// TestSelfHostLSPSignatureHelpX86_64 is signature_test.go and the UTF-16
-// position case, then a method, a module's function, a built-in method, a
-// generic function, a call that does not parse, and calls that have no
-// signature to show. A parameter is named by its offsets in the label, where
-// the Go server names it by text: `i32` names both of add's.
+// TestSelfHostLSPSignatureHelpX86_64 covers a document's function, a UTF-16
+// position, a method, a module's function, a built-in method, a generic
+// function, a call that does not parse, and calls that have no signature to
+// show. A parameter is named by its offsets in the label, not by its text,
+// which `i32` would give for both of add's.
 func TestSelfHostLSPSignatureHelpX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	dir := t.TempDir()
@@ -390,16 +385,13 @@ func TestSelfHostLSPSignatureHelpX86_64(t *testing.T) {
 		signatureAt("handle-message", "call.fern", 1, 37, "function add(i32, i32): i32", addParams, 1),
 		signatureAt("position-is-utf16", "utf16.fern", 2, utf16Column([]string{utfLine}, 1, len(utfLine)+1), "function add(string, i32): i32", strParams, 1),
 
-		// The Go server shows a signature only for a function of the
-		// document called by its bare name.
 		signatureAt("method", "more.fern", 9, after("p.sum("), "function sum(): i32", nil, 0),
 		signatureAt("module-function", "more.fern", 9, after("util.foo("), "function foo(i32): i32", [][2]int{{13, 16}}, 0),
 		signatureAt("builtin-method", "more.fern", 9, after("s.len("), "function len(): i32", nil, 0),
 		signatureAt("generic", "more.fern", 9, after("id("), "function id(T): T", [][2]int{{12, 13}}, 0),
 		signatureAt("more-arguments-than-parameters", "more.fern", 9, after("add(1, 2, "), "function add(i32, i32): i32", addParams, 1),
 		signatureAt("call-that-does-not-parse", "open.fern", 2, 22, "function add(i32, i32): i32", addParams, 1),
-		// In brackets inside the arguments there is no parameter to point at;
-		// the Go server can count the brackets' commas as the call's.
+		// In brackets inside the arguments there is no parameter to point at.
 		signatureAt("inside-brackets", "more.fern", 9, after("add([1, "), "", nil, 0),
 		// A local closure has a type, not a declaration to show.
 		signatureAt("local-closure", "more.fern", 9, after("f("), "", nil, 0),
@@ -432,14 +424,12 @@ func member(name, detail string, kind int, r lspRange) lspSymbol {
 	return lspSymbol{Name: name, Detail: detail, Kind: kind, Range: r, SelectionRange: r}
 }
 
-// TestSelfHostLSPDocumentSymbolsX86_64 is symbols_test.go with each outline
-// written out, then generic, method, constant and `pub` declarations, a
+// TestSelfHostLSPDocumentSymbolsX86_64 writes out each outline: functions,
+// structs and enums, generic, method, constant and `pub` declarations, a
 // literate document and one importing another. An entry spans its whole
-// declaration and selects its name, where the Go server gives both the name's
-// length at the declaration's keyword; a field spans its own name rather than
+// declaration and selects its name; a field spans its own name rather than
 // its struct's; and the document's own declarations are listed, methods
-// included, where the Go server leaves methods out and lists the checker's
-// built-in structs.
+// included, and none of the checker's built-in structs.
 func TestSelfHostLSPDocumentSymbolsX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	dir := t.TempDir()
@@ -477,7 +467,6 @@ func TestSelfHostLSPDocumentSymbolsX86_64(t *testing.T) {
 		symbolsOf("skips-internal-names", "plain.fern", []lspSymbol{mainAt(0)}),
 		symbolsOf("generic-method-constant-pub", "more.fern", []lspSymbol{
 			{Name: "id", Detail: "function id(T): T", Kind: 12, Range: span(3, 0, 5, 1), SelectionRange: span(3, 13, 3, 15)},
-			// The Go server leaves a method out.
 			{Name: "get", Detail: "function get(): i32", Kind: 6, Range: span(6, 0, 6, 49), SelectionRange: span(6, 23, 6, 26)},
 			{Name: "Box", Detail: "struct", Kind: 23, Range: span(0, 0, 0, 26), SelectionRange: span(0, 11, 0, 14), Children: []lspSymbol{member("v", "T", 8, span(0, 20, 0, 21))}},
 			{Name: "Shape", Detail: "enum", Kind: 10, Range: span(7, 0, 7, 39), SelectionRange: span(7, 5, 7, 10), Children: []lspSymbol{
@@ -489,7 +478,6 @@ func TestSelfHostLSPDocumentSymbolsX86_64(t *testing.T) {
 			{Name: "S", Detail: "string", Kind: 14, Range: span(2, 0, 2, 25), SelectionRange: span(2, 6, 2, 7)},
 			{Name: "K", Detail: "i32", Kind: 14, Range: span(2, 26, 2, 43), SelectionRange: span(2, 32, 2, 33)},
 		}),
-		// The Go server has no outline for a literate document.
 		symbolsOf("literate", "chunks.fern.md", []lspSymbol{
 			{Name: "helper", Detail: "function helper(i32): i32", Kind: 12, Range: span(4, 0, 4, 46), SelectionRange: span(4, 9, 4, 15)},
 			{Name: "main", Detail: "function main(): i32", Kind: 12, Range: span(5, 0, 7, 1), SelectionRange: span(5, 9, 5, 13)},
@@ -526,12 +514,11 @@ func hint(line, char int, label string) lspInlay {
 	return lspInlay{Position: lspPos{line, char}, Label: label, Kind: 1}
 }
 
-// TestSelfHostLSPInlayHintsX86_64 is inlay_test.go, then a destructuring, a
+// TestSelfHostLSPInlayHintsX86_64 hints plain lets, a destructuring, a
 // closure, lets in a loop and an arm, a let after non-ASCII text, the ends of
 // the range, an imported type and a literate document. A destructured name is
-// hinted where the Go server hints the checker's hidden temporaries, and an
-// imported type is named as the document writes it (`util.Kind`), not by its
-// bundled name.
+// hinted, not the checker's hidden temporaries, and an imported type is named
+// as the document writes it (`util.Kind`), not by its bundled name.
 func TestSelfHostLSPInlayHintsX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	dir := t.TempDir()
@@ -570,7 +557,6 @@ func TestSelfHostLSPInlayHintsX86_64(t *testing.T) {
 			hint(2, 8, ": i32"), hint(2, 11, ": string"), hint(3, 7, ": (i32) => i32"),
 			hint(5, 9, ": i32"), hint(8, 25, ": f64"), hint(11, naEnd, ": i32")),
 		inlayIn("imported-type", "main.fern", whole, hint(2, 7, ": util.Kind")),
-		// The Go server has no hints for a literate document.
 		inlayIn("literate", "chunks.fern.md", whole, hint(14, 5, ": i32")),
 	}
 	probeLSP(t, s, dir, []string{"inferred.fern", "annotated.fern", "two.fern", "shapes.fern", "main.fern", "chunks.fern.md"}, probes)

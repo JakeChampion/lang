@@ -16,13 +16,12 @@ import (
 	"unicode/utf8"
 )
 
-// `fern -lsp` is the self-host language server (#6641): compiler/
-// lsp.fern is the wire, fern.fern's check_source the diagnostics, and its
-// format_source the formatting. These tests drive it as an editor does —
-// framed JSON-RPC on stdin, everything read back from stdout once the input
-// is closed — and hold it to two references: `-check`, whose findings it
-// must publish exactly, and native fern-lsp, whose wire behaviour it must
-// match where the two front ends agree.
+// `fern -lsp` is the language server (#6641): compiler/lsp.fern is the wire,
+// fern.fern's check_source the diagnostics, and its format_source the
+// formatting. These tests drive it as an editor does — framed JSON-RPC on
+// stdin, everything read back from stdout once the input is closed — and hold
+// it to `-check`, whose findings it must publish exactly, and to the wire
+// answers written out below.
 
 // lspMsg is one message a test sends.
 type lspMsg = map[string]any
@@ -68,12 +67,11 @@ type lspEdit struct {
 	NewText string   `json:"newText"`
 }
 
-// lspServers holds the two servers under test: the self-host CLI, which
-// selfHost starts in server mode, and native fern-lsp.
+// lspServers holds the server under test: the self-host CLI, which selfHost
+// starts in server mode.
 type lspServers struct {
 	driver string
 	runner []string
-	native string
 	stdlib string
 }
 
@@ -91,11 +89,7 @@ func buildLSPServers(t *testing.T) lspServers {
 	if err != nil {
 		t.Fatal(err)
 	}
-	native := filepath.Join(t.TempDir(), "fern-lsp")
-	if out, err := exec.Command("go", "build", "-o", native, "github.com/jakechampion/lang/cmd/fern-lsp").CombinedOutput(); err != nil {
-		t.Fatalf("go build fern-lsp: %v\n%s", err, out)
-	}
-	return lspServers{driver: driver, runner: runner, native: native, stdlib: stdlib}
+	return lspServers{driver: driver, runner: runner, stdlib: stdlib}
 }
 
 func lspFrameBytes(t *testing.T, m lspMsg) []byte {
@@ -226,10 +220,8 @@ func response(t *testing.T, frames []lspFrame, id string) lspFrame {
 	return lspFrame{}
 }
 
-// placed is a diagnostic as both servers must agree on it: everything but the
-// message, whose wording is the checker's and differs between the two
-// (`undefined name` / `undefined identifier`) as the checker differentials
-// already allow.
+// placed is a diagnostic as the wire places it: everything but the message,
+// whose wording is the checker's and is held by the checker's own tests.
 type placed struct {
 	Range    lspRange
 	Severity int
@@ -303,12 +295,11 @@ func TestSelfHostLSPLifecycleX86_64(t *testing.T) {
 		if c.TextDocumentSync != 1 || !c.DocumentFormattingProvider || !c.HoverProvider || !c.DefinitionProvider || !c.DocumentSymbolProvider || !c.InlayHintProvider || got.ServerInfo.Name != "fern" {
 			t.Errorf("initialize result = %+v, want full sync, formatting, hover, definition, document symbols, inlay hints, server fern", got)
 		}
-		// The Go server's shapes: plain booleans, and full semantic tokens (the
-		// legend is held in self_host_lsp_refs_test.go).
+		// Plain booleans, and full semantic tokens (the legend is held in
+		// self_host_lsp_refs_test.go).
 		if !c.CodeActionProvider || !c.ReferencesProvider || !c.RenameProvider || c.SemanticTokensProvider == nil || !c.SemanticTokensProvider.Full {
 			t.Errorf("initialize result = %+v, want code actions, references, rename and full semantic tokens", got)
 		}
-		// The trigger characters are the Go server's.
 		if c.CompletionProvider == nil || !reflect.DeepEqual(c.CompletionProvider.TriggerCharacters, []string{"."}) {
 			t.Errorf("completionProvider = %+v, want triggered by `.`", c.CompletionProvider)
 		}
@@ -391,75 +382,64 @@ func TestSelfHostLSPLifecycleX86_64(t *testing.T) {
 	}
 }
 
-// lspCases are programs both front ends judge alike, placed through every
-// shape the wire conversion has: no diagnostic, one, several, a line with
-// non-ASCII before the position (2- and 4-byte UTF-8: one and two UTF-16
-// units), CRLF line endings, a parse marker, a positionless refusal, a
-// top-level const, imports from a sibling and from the stdlib, a sibling's
-// private function, and a warning.
+// lspCases are programs placed through every shape the wire conversion has:
+// no diagnostic, one, several, a line with non-ASCII before the position (2-
+// and 4-byte UTF-8: one and two UTF-16 units), CRLF line endings, a parse
+// marker, a positionless refusal, a top-level const, imports from a sibling
+// and from the stdlib, a sibling's private function, and a warning. `want` is
+// what opening main.fern publishes.
 var lspCases = []struct {
 	name  string
 	files map[string]string // main.fern is the document opened
+	want  []placed
 }{
-	{"clean", map[string]string{"main.fern": "function main(): i32 {\n  return 0;\n}\n"}},
-	{"undefined", map[string]string{"main.fern": "function main(): i32 {\n  return y;\n}\n"}},
-	{"assign-mismatch", map[string]string{"main.fern": "function main(): i32 {\n  let x: i32 = \"s\";\n  return x;\n}\n"}},
-	{"arg-count", map[string]string{"main.fern": "function f(a: i32): i32 {\n  return a;\n}\nfunction main(): i32 {\n  return f(1, 2);\n}\n"}},
-	{"return-type", map[string]string{"main.fern": "function main(): i32 {\n  return \"s\";\n}\n"}},
-	{"missing-field", map[string]string{"main.fern": "struct P { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: P = P { x: 1 };\n  return p.x;\n}\n"}},
-	{"nonbool-if", map[string]string{"main.fern": "function main(): i32 {\n  if (1) {\n    return 1;\n  }\n  return 0;\n}\n"}},
-	{"break-outside-loop", map[string]string{"main.fern": "function main(): i32 {\n  break;\n  return 0;\n}\n"}},
-	{"several", map[string]string{"main.fern": "function main(): i32 {\n  let a: i32 = p;\n  let b: i32 = q;\n  return a + b;\n}\n"}},
-	{"two-byte-before", map[string]string{"main.fern": "function main(): i32 {\n  let s: string = \"é\"; let x: i32 = y;\n  return 0;\n}\n"}},
-	{"astral-before", map[string]string{"main.fern": "function main(): i32 {\n  let s: string = \"\U0001F600\"; let x: i32 = y;\n  return 0;\n}\n"}},
-	{"crlf", map[string]string{"main.fern": "function main(): i32 {\r\n  return y;\r\n}\r\n"}},
-	{"parse-marker", map[string]string{"main.fern": "function main(): i32 {\n  let x: i32 = ;\n  return 0;\n}\n"}},
-	{"unresolved-import", map[string]string{"main.fern": "import \"./nope\";\nfunction main(): i32 {\n  return 0;\n}\n"}},
+	{"clean", map[string]string{"main.fern": "function main(): i32 {\n  return 0;\n}\n"}, []placed{}},
+	{"undefined", map[string]string{"main.fern": "function main(): i32 {\n  return y;\n}\n"}, []placed{{span(1, 9, 1, 10), 1, "fern", "E001"}}},
+	{"assign-mismatch", map[string]string{"main.fern": "function main(): i32 {\n  let x: i32 = \"s\";\n  return x;\n}\n"}, []placed{{span(1, 2, 1, 3), 1, "fern", "E003"}}},
+	{"arg-count", map[string]string{"main.fern": "function f(a: i32): i32 {\n  return a;\n}\nfunction main(): i32 {\n  return f(1, 2);\n}\n"}, []placed{{span(4, 10, 4, 11), 1, "fern", "E004"}}},
+	{"return-type", map[string]string{"main.fern": "function main(): i32 {\n  return \"s\";\n}\n"}, []placed{{span(1, 2, 1, 3), 1, "fern", "E002"}}},
+	{"missing-field", map[string]string{"main.fern": "struct P { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: P = P { x: 1 };\n  return p.x;\n}\n"}, []placed{{span(2, 13, 2, 14), 1, "fern", "E005"}}},
+	{"nonbool-if", map[string]string{"main.fern": "function main(): i32 {\n  if (1) {\n    return 1;\n  }\n  return 0;\n}\n"}, []placed{{span(1, 6, 1, 7), 1, "fern", "E008"}}},
+	{"break-outside-loop", map[string]string{"main.fern": "function main(): i32 {\n  break;\n  return 0;\n}\n"}, []placed{{span(1, 2, 1, 3), 1, "fern", "E011"}}},
+	{"several", map[string]string{"main.fern": "function main(): i32 {\n  let a: i32 = p;\n  let b: i32 = q;\n  return a + b;\n}\n"}, []placed{{span(1, 15, 1, 16), 1, "fern", "E001"}, {span(2, 15, 2, 16), 1, "fern", "E001"}}},
+	{"two-byte-before", map[string]string{"main.fern": "function main(): i32 {\n  let s: string = \"é\"; let x: i32 = y;\n  return 0;\n}\n"}, []placed{{span(1, 36, 1, 37), 1, "fern", "E001"}}},
+	{"astral-before", map[string]string{"main.fern": "function main(): i32 {\n  let s: string = \"\U0001F600\"; let x: i32 = y;\n  return 0;\n}\n"}, []placed{{span(1, 37, 1, 38), 1, "fern", "E001"}}},
+	{"crlf", map[string]string{"main.fern": "function main(): i32 {\r\n  return y;\r\n}\r\n"}, []placed{{span(1, 9, 1, 10), 1, "fern", "E001"}}},
+	{"parse-marker", map[string]string{"main.fern": "function main(): i32 {\n  let x: i32 = ;\n  return 0;\n}\n"}, []placed{{span(1, 15, 1, 16), 1, "fern", "P001"}}},
+	{"unresolved-import", map[string]string{"main.fern": "import \"./nope\";\nfunction main(): i32 {\n  return 0;\n}\n"}, []placed{{span(0, 0, 0, 0), 1, "fern", ""}}},
 	{"sibling-import", map[string]string{
 		"main.fern": "import \"./lib\";\nfunction main(): i32 {\n  return lib.shown() + z;\n}\n",
 		"lib.fern":  "pub function shown(): i32 { return 2; }\n",
-	}},
-	{"stdlib-import", map[string]string{"main.fern": "import \"std/string\";\nfunction main(): i32 {\n  let s: string = \"abc\";\n  return s.len() + w;\n}\n"}},
-	{"const", map[string]string{"main.fern": "const LIMIT: i32 = 10;\nfunction main(): i32 {\n  return LIMIT + y;\n}\n"}},
+	}, []placed{{span(2, 23, 2, 24), 1, "fern", "E001"}}},
+	{"stdlib-import", map[string]string{"main.fern": "import \"std/string\";\nfunction main(): i32 {\n  let s: string = \"abc\";\n  return s.len() + w;\n}\n"}, []placed{{span(3, 19, 3, 20), 1, "fern", "E001"}}},
+	{"const", map[string]string{"main.fern": "const LIMIT: i32 = 10;\nfunction main(): i32 {\n  return LIMIT + y;\n}\n"}, []placed{{span(2, 17, 2, 18), 1, "fern", "E001"}}},
 	{"private-in-sibling", map[string]string{
 		"main.fern": "import \"./lib\";\nfunction main(): i32 {\n  return lib.hidden();\n}\n",
 		"lib.fern":  "function hidden(): i32 { return 1; }\n",
-	}},
-	{"todo-stub", map[string]string{"main.fern": "function f(): i32 {\n  todo;\n}\nfunction main(): i32 {\n  return 0;\n}\n"}},
+	}, []placed{{span(2, 12, 2, 13), 1, "fern", ""}}},
+	{"todo-stub", map[string]string{"main.fern": "function f(): i32 {\n  todo;\n}\nfunction main(): i32 {\n  return 0;\n}\n"}, []placed{{span(1, 2, 1, 3), 2, "fern", ""}}},
 }
 
-// TestSelfHostLSPDiagnosticsMatchFernLSPX86_64 is the differential the issue
-// asked for: the same document opened in both servers publishes the same
-// diagnostics, placed the same.
-func TestSelfHostLSPDiagnosticsMatchFernLSPX86_64(t *testing.T) {
+// TestSelfHostLSPDiagnosticPlacementX86_64 opens each case and wants its
+// diagnostics published once, placed as written.
+func TestSelfHostLSPDiagnosticPlacementX86_64(t *testing.T) {
 	s := buildLSPServers(t)
-	withDiags := 0
 	for _, c := range lspCases {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
 			writeTree(t, dir, c.files)
-			msgs := session(lspOpen(fileURI(filepath.Join(dir, "main.fern")), c.files["main.fern"]))
-			nf, _ := runLSP(t, exec.Command(s.native), msgs)
-			sf, _ := runLSP(t, s.selfHost(), msgs)
-			want, got := placements(publishes(t, nf)), placements(publishes(t, sf))
-			if !reflect.DeepEqual(got, want) {
-				t.Errorf("self-host published %+v\nfern-lsp published  %+v", got, want)
-			}
-			if len(want) == 1 && len(want[0]) > 0 {
-				withDiags++
+			sf, _ := runLSP(t, s.selfHost(), session(lspOpen(fileURI(filepath.Join(dir, "main.fern")), c.files["main.fern"])))
+			if got, want := placements(publishes(t, sf)), [][]placed{c.want}; !reflect.DeepEqual(got, want) {
+				t.Errorf("published %+v\nwant      %+v", got, want)
 			}
 		})
 	}
-	if withDiags < len(lspCases)-2 {
-		t.Errorf("only %d of %d cases published a diagnostic — the corpus stopped exercising placement", withDiags, len(lspCases))
-	}
 }
 
-// TestSelfHostLSPDocumentSyncMatchesFernLSPX86_64 drives one document through
-// an editing session and wants the same notifications from both servers: a
-// publish when the diagnostics change, none when the text or the diagnostics
-// do not, an empty one on close, and a fresh one on reopening.
-func TestSelfHostLSPDocumentSyncMatchesFernLSPX86_64(t *testing.T) {
+// TestSelfHostLSPDocumentSyncX86_64 drives one document through an editing
+// session: a publish when the diagnostics change, none when the text or the
+// diagnostics do not, an empty one on close, and a fresh one on reopening.
+func TestSelfHostLSPDocumentSyncX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	// A space in the directory is a %20 in the URI the server must decode to
 	// find the document's sibling import.
@@ -473,7 +453,7 @@ func TestSelfHostLSPDocumentSyncMatchesFernLSPX86_64(t *testing.T) {
 	fixed := "import \"./lib\";\nfunction main(): i32 {\n  return lib.one();\n}\n"
 	alsoFine := "import \"./lib\";\nfunction main(): i32 {\n  return lib.one() + 1;\n}\n"
 	untitled := "untitled:Untitled-1"
-	msgs := session(
+	sf, code := runLSP(t, s.selfHost(), session(
 		lspOpen(uri, broken),     // publish: one E001
 		lspChange(uri, fixed),    // publish: none left — the buffer, not the disk
 		lspChange(uri, fixed),    // same text: nothing
@@ -482,71 +462,65 @@ func TestSelfHostLSPDocumentSyncMatchesFernLSPX86_64(t *testing.T) {
 		lspClose(uri),            // publish: empty
 		lspOpen(uri, broken),     // publish: E001, the first since closing
 		lspOpen(untitled, "function main(): i32 {\n  return u;\n}\n"),
-	)
-	nf, _ := runLSP(t, exec.Command(s.native), msgs)
-	sf, code := runLSP(t, s.selfHost(), msgs)
-	want, got := publishes(t, nf), publishes(t, sf)
-	if len(want) != 6 {
-		t.Fatalf("fern-lsp published %d times, want 6 — the session no longer exercises what it describes: %+v", len(want), want)
+	))
+	e001 := []placed{{span(2, 21, 2, 22), 1, "fern", "E001"}}
+	wantURIs := []string{uri, uri, uri, uri, uri, untitled}
+	want := [][]placed{e001, {}, e001, {}, e001, {{span(1, 9, 1, 10), 1, "fern", "E001"}}}
+	got := publishes(t, sf)
+	var gotURIs []string
+	for _, p := range got {
+		gotURIs = append(gotURIs, p.URI)
 	}
-	for i := range want {
-		if i < len(got) && got[i].URI != want[i].URI {
-			t.Errorf("publish %d is for %s, want %s", i, got[i].URI, want[i].URI)
-		}
+	if !reflect.DeepEqual(gotURIs, wantURIs) {
+		t.Errorf("published for %v\nwant          %v", gotURIs, wantURIs)
 	}
-	if g, w := placements(got), placements(want); !reflect.DeepEqual(g, w) {
-		t.Errorf("self-host published %+v\nfern-lsp published  %+v", g, w)
+	if g := placements(got); !reflect.DeepEqual(g, want) {
+		t.Errorf("published %+v\nwant      %+v", g, want)
 	}
 	if code != 0 {
 		t.Errorf("exit after shutdown = %d, want 0", code)
 	}
 }
 
-// TestSelfHostLSPFormattingMatchesFernLSPX86_64 wants the same answer to a
-// formatting request from both servers: one edit replacing the document with
-// what `-fmt` writes, its end in UTF-16 units, or none when the text is
-// already formatted, does not parse, or is not open.
-func TestSelfHostLSPFormattingMatchesFernLSPX86_64(t *testing.T) {
+// TestSelfHostLSPFormattingX86_64 wants each formatting request answered with
+// one edit replacing the document with what `-fmt` writes, its end in UTF-16
+// units, or none when the text is already formatted, does not parse, or is not
+// open.
+func TestSelfHostLSPFormattingX86_64(t *testing.T) {
 	s := buildLSPServers(t)
-	edits := 0
-	for _, c := range []struct{ name, src string }{
-		{"tabs", "function main(): i32 {\n\t\treturn 0;\n}\n"},
-		{"comments", "// header\nfunction main(): i32 {\n  // inside\n  let x: i32 = 7;   // trailing\n  return x;\n}\n"},
-		{"blank-lines", "function a(): i32 { return 1; }\n\n\n\nfunction main(): i32 {   return a(); }\n"},
-		{"struct-and-match", "enum E { A, B(i32) }\nstruct P { x: i32 }\nfunction main(): i32 {\nlet p: P = P{x:1};\nlet e: E = B(2);\nmatch (e) { A => { return p.x; }, B(n) => { return n; } }\n}\n"},
-		{"non-ascii-last-line", "function main(): i32 {\n  return 0;\n}\n// café"},
-		{"formatted", "function main(): i32 {\n  return 0;\n}\n"},
-		{"does-not-parse", "function main(): i32 { return"},
-		{"missing-last-brace", "function main(): i32 {\n  return 0;\n"},
+	for _, c := range []struct {
+		name, src string
+		want      []lspEdit
+	}{
+		{"tabs", "function main(): i32 {\n\t\treturn 0;\n}\n", []lspEdit{{span(0, 0, 3, 0), "function main(): i32 {\n  return 0;\n}\n"}}},
+		{"comments", "// header\nfunction main(): i32 {\n  // inside\n  let x: i32 = 7;   // trailing\n  return x;\n}\n",
+			[]lspEdit{{span(0, 0, 6, 0), "// header\nfunction main(): i32 {\n  // inside\n  let x: i32 = 7;  // trailing\n  return x;\n}\n"}}},
+		{"blank-lines", "function a(): i32 { return 1; }\n\n\n\nfunction main(): i32 {   return a(); }\n",
+			[]lspEdit{{span(0, 0, 5, 0), "function a(): i32 {\n  return 1;\n}\n\nfunction main(): i32 {\n  return a();\n}\n"}}},
+		{"struct-and-match", "enum E { A, B(i32) }\nstruct P { x: i32 }\nfunction main(): i32 {\nlet p: P = P{x:1};\nlet e: E = B(2);\nmatch (e) { A => { return p.x; }, B(n) => { return n; } }\n}\n",
+			[]lspEdit{{span(0, 0, 7, 0), "enum E { A, B(i32) }\n\nstruct P { x: i32 }\n\nfunction main(): i32 {\n  let p: P = P { x: 1 };\n  let e: E = B(2);\n  match (e) {\n    A => {\n      return p.x;\n    },\n    B(n) => {\n      return n;\n    }\n  }\n}\n"}}},
+		{"non-ascii-last-line", "function main(): i32 {\n  return 0;\n}\n// café", []lspEdit{{span(0, 0, 3, 7), "function main(): i32 {\n  return 0;\n}\n// café\n"}}},
+		{"formatted", "function main(): i32 {\n  return 0;\n}\n", []lspEdit{}},
+		{"does-not-parse", "function main(): i32 { return", []lspEdit{}},
+		{"missing-last-brace", "function main(): i32 {\n  return 0;\n", []lspEdit{}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "main.fern")
 			writeTree(t, filepath.Dir(path), map[string]string{"main.fern": c.src})
-			msgs := session(lspOpen(fileURI(path), c.src), lspFormat(2, fileURI(path)), lspFormat(3, "file:///nowhere/unopened.fern"))
-			nf, _ := runLSP(t, exec.Command(s.native), msgs)
-			sf, _ := runLSP(t, s.selfHost(), msgs)
-			for _, id := range []string{"2", "3"} {
-				var want, got []lspEdit
-				if err := json.Unmarshal(response(t, nf, id).Result, &want); err != nil {
-					t.Fatalf("fern-lsp formatting %s: %v", id, err)
+			sf, _ := runLSP(t, s.selfHost(), session(lspOpen(fileURI(path), c.src), lspFormat(2, fileURI(path)), lspFormat(3, "file:///nowhere/unopened.fern")))
+			for _, r := range []struct {
+				id   string
+				want []lspEdit
+			}{{"2", c.want}, {"3", []lspEdit{}}} {
+				var got []lspEdit
+				if err := json.Unmarshal(response(t, sf, r.id).Result, &got); err != nil {
+					t.Fatalf("formatting %s: %v", r.id, err)
 				}
-				if err := json.Unmarshal(response(t, sf, id).Result, &got); err != nil {
-					t.Fatalf("self-host formatting %s: %v", id, err)
-				}
-				if got == nil {
-					t.Errorf("request %s: self-host answered null, want an array", id)
-				}
-				if !reflect.DeepEqual(got, want) {
-					t.Errorf("request %s: self-host %+v\nfern-lsp  %+v", id, got, want)
-				}
-				if id == "2" && len(want) > 0 {
-					edits++
+				if !reflect.DeepEqual(got, r.want) {
+					t.Errorf("request %s answered %+v\nwant %+v", r.id, got, r.want)
 				}
 			}
 		})
-	}
-	if edits != 5 {
-		t.Errorf("%d cases produced an edit, want 5 — the cases stopped needing formatting", edits)
 	}
 }
 
