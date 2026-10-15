@@ -5,7 +5,8 @@
 // HTTP/1.1 server runs; the loop hands a connection that opens with the
 // HTTP/2 preface to std/http/h2. A handler that suspends on an upstream
 // parks per stream: the connection's other streams are answered while it
-// waits, and its answer comes on its stream when the upstream does.
+// waits, and its answer comes on its stream when the upstream does. File
+// bodies (std/http/static, `http.file`) go out in pieces under the windows.
 package e2e
 
 import (
@@ -230,6 +231,8 @@ func TestServeH2Interp(t *testing.T) {
 	w.driveState(t, exec.Command(bin, "-interp", w.stateSrc))
 	w.drivePrefix(t, exec.Command(bin, "-interp", w.src))
 	w.drivePrefix(t, exec.Command(bin, "-interp", w.stateSrc))
+	staticSrc, big := writeStaticServeSource(t, "serve.config().with_h2()")
+	driveFiles(t, exec.Command(bin, "-interp", staticSrc), big)
 }
 
 func TestServeH2X86_64(t *testing.T) {
@@ -252,6 +255,26 @@ func TestServeH2X86_64(t *testing.T) {
 	w.driveState(t, runX86Bin(qemu, stateOut))
 	w.drivePrefix(t, runX86Bin(qemu, out))
 	w.drivePrefix(t, runX86Bin(qemu, stateOut))
+	staticSrc, big := writeStaticServeSource(t, "serve.config().with_h2()")
+	staticOut := filepath.Join(w.dir, "static_serve_h2.bin")
+	if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", staticOut, staticSrc).CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, o)
+	}
+	driveFiles(t, runX86Bin(qemu, staticOut), big)
+}
+
+// driveFiles runs static_serve_test.go's checks over prior-knowledge h2c:
+// file bodies, whole, as one range and as a multipart/byteranges body, with
+// their lengths, HEAD and the 304 without one, and the 404 for a file that
+// is not there. The client's windows are 16 KiB per stream and 64 KiB per
+// connection, so the 300 000-byte file goes out paced by them.
+func driveFiles(t *testing.T, cmd *exec.Cmd, big []byte) {
+	t.Helper()
+	addr, _ := e2eharness.StartInheritedServer(t, cmd)
+	protocols := new(http.Protocols)
+	protocols.SetUnencryptedHTTP2(true)
+	tr := &http.Transport{Protocols: protocols, HTTP2: &http.HTTP2Config{MaxReceiveBufferPerStream: 16 << 10, MaxReceiveBufferPerConnection: 64 << 10}}
+	checkStaticServe(t, addr, big, tr, 2)
 }
 
 // drivePrefix sends a strict prefix of the HTTP/2 connection preface and
