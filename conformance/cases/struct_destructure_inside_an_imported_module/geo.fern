@@ -1,0 +1,18 @@
+pub struct P { x: i32, y: i32 }
+
+pub function sum(p: P): i32 {
+    let P { x, y } = p;
+    return x + y;
+}
+
+pub function product(P { x, y }: P): i32 {
+    return x * y;
+}
+
+pub function drift(ps: P[]): i32 {
+    let t = 0;
+    for P { x, y } in ps {
+        t = t + x - y;
+    }
+    return t;
+}

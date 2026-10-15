@@ -2112,6 +2112,9 @@ func (r *rewriter) rewriteStmt(s ast.Stmt) {
 		}
 		r.rewriteStmt(x.Body)
 	case *ast.ForEach:
+		if x.Pattern != nil {
+			r.rewriteDestructureStructNames(x.Pattern)
+		}
 		r.rewriteExpr(&x.Iter)
 		r.rewriteStmt(x.Body)
 	case *ast.Return:
@@ -2122,6 +2125,7 @@ func (r *rewriter) rewriteStmt(s ast.Stmt) {
 		r.rewriteType(&x.Type)
 		r.rewriteExpr(&x.Init)
 	case *ast.Destructure:
+		r.rewriteDestructureStructNames(x)
 		r.rewriteExpr(&x.Init)
 	case *ast.ExprStmt:
 		r.rewriteExpr(&x.Expr)
@@ -2496,6 +2500,19 @@ func (r *rewriter) qualifiedVariant(mod *module, prefix, name string, pos ast.Po
 		return "", true
 	}
 	return "", false
+}
+
+// rewriteDestructureStructNames mangles the struct a destructure pattern names,
+// at every nesting level, as an annotation naming it would be.
+func (r *rewriter) rewriteDestructureStructNames(d *ast.Destructure) {
+	if d.StructName != "" {
+		d.StructName = r.rewriteStructNameAt(d.StructName, d.P)
+	}
+	for _, sub := range d.Nested {
+		if sub != nil {
+			r.rewriteDestructureStructNames(sub)
+		}
+	}
 }
 
 // rewriteStructName turns a struct name (possibly qualified as

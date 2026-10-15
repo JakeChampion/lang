@@ -2672,6 +2672,17 @@ function struct_destr_fields(type_name: string): (string[], boolean) {
   return (split_pattern_names(slice_unchecked(rest, colon + 1, rest.len()) + ""), true);
 }
 
+// struct_destr_name is the struct a struct destructure's marker names.
+function struct_destr_name(type_name: string): string {
+  let marker: string = parser.destr_marker_split(type_name).tag;
+  let rest: string = slice_unchecked(marker, 4, marker.len()) + "";
+  let colon: i32 = util.index_of_sub(rest, ":");
+  if (colon < 0) {
+    return "";
+  }
+  return slice_unchecked(rest, 0, colon) + "";
+}
+
 // struct_destr_diags is E043 for each field a struct destructure
 // `let P { x, z } = e;` reads that the struct `e` is lacks, at the `let`, as
 // native reports it. The field has no position of its own, so its fix stands
@@ -2685,6 +2696,10 @@ function struct_destr_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
   let it: typeinfo.Type = check_expr(v.init, s);
   match (it) {
     typeinfo.TypeStruct(st) => {
+      let named: string = struct_destr_name(v.type_name);
+      if (named.len() > 0 && named != st.name) {
+        return out.append(dg_at("E024", "struct destructure pattern names " + named + ", but the expression is " + st.name, v.line, v.col));
+      }
       let sig: StructSig = s.lookup_struct(st.name);
       for f in fields {
         if (sig.name.len() > 0 && !util.has_str(sig.field_names, f)) {
