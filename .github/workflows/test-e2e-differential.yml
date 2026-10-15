@@ -3,7 +3,10 @@ name: Test e2e differential
 # The seeded differential sweeps whose names start `TestDifferential`:
 # `TestDifferential_PrintableStdout` compares each fernsmith-generated
 # program's stdout from the interpreter against the self-host compiler's
-# x86-64, arm64 and wasm32-wasi builds. The self-host exit-byte legs
+# x86-64, arm64 and wasm32-wasi builds.
+# `TestDifferential_TranslationValidationStrength` proves the compiler's
+# strength reductions on those programs equivalent with z3
+# (docs/TRANSLATION-VALIDATION.md). The self-host exit-byte legs
 # (`TestDifferential_SelfHost*`) run in test-e2e-selfhost.yml's
 # diff-selfhost job instead, behind FERN_SELFHOST_DIFF.
 #
@@ -79,6 +82,9 @@ jobs:
       - name: go test (differential shard ${{ matrix.shard.index }}/${{ matrix.shard.nshard }})
         env:
           DIFF_ORACLE_SHARD: "${{ matrix.shard.index }}/${{ matrix.shard.nshard }}"
+          # TestDifferential_TranslationValidationStrength proves with z3,
+          # which setup-fern installs from mise.toml.
+          FERN_REQUIRE_Z3: "1"
         # -timeout is EXPLICIT because Go's default is 10 minutes, which
         # sits inside this lane's own headroom: the sweep is ~9.5 min at
         # one shard against a 25-minute job budget, so a slightly slow

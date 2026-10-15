@@ -136,6 +136,29 @@ url = "https://github.com/bytecodealliance/wasmtime/releases/download/v46.0.1/wa
 [tools."http:wasi-adapter"."platforms.windows-x64"]
 url = "https://github.com/bytecodealliance/wasmtime/releases/download/v46.0.1/wasi_snapshot_preview1.command.wasm"
 
+[[tools."http:z3"]]
+version = "4.15.3"
+backend = "http:z3"
+
+[tools."http:z3".options]
+strip_components = "1"
+
+[tools."http:z3"."platforms.linux-arm64"]
+url = "https://github.com/Z3Prover/z3/releases/download/z3-4.15.3/z3-4.15.3-arm64-glibc-2.34.zip"
+
+[tools."http:z3"."platforms.linux-arm64-musl"]
+url = "https://github.com/Z3Prover/z3/releases/download/z3-4.15.3/z3-4.15.3-arm64-glibc-2.34.zip"
+
+[tools."http:z3"."platforms.linux-x64"]
+checksum = "blake3:397b0e66464934ba351209d7123dee5730609a088c1354890c87a0de71e4c9e3"
+url = "https://github.com/Z3Prover/z3/releases/download/z3-4.15.3/z3-4.15.3-x64-glibc-2.39.zip"
+
+[tools."http:z3"."platforms.linux-x64-musl"]
+url = "https://github.com/Z3Prover/z3/releases/download/z3-4.15.3/z3-4.15.3-x64-glibc-2.39.zip"
+
+[tools."http:z3"."platforms.macos-arm64"]
+url = "https://github.com/Z3Prover/z3/releases/download/z3-4.15.3/z3-4.15.3-arm64-osx-13.7.6.zip"
+
 [[tools.oha]]
 version = "1.16.0"
 backend = "aqua:hatoo/oha"

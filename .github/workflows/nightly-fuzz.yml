@@ -121,9 +121,12 @@ jobs:
         env:
           DIFF_ORACLE_SEED_BASE: "${{ needs.window.outputs.base }}"
           DIFF_ORACLE_SHARD: "${{ matrix.shard }}/2"
+          # The translation-validation sweep takes the whole window.
+          FERN_TV_SEEDS: "${{ env.SEED_WINDOW }}"
+          FERN_REQUIRE_Z3: "1"
         run: |
           gotestsum --format pkgname-and-test-fails -- -timeout=25m \
-            -run '^TestDifferential_PrintableStdout$' ./internal/testing/e2e/
+            -run '^TestDifferential_(PrintableStdout|TranslationValidationStrength)$' ./internal/testing/e2e/
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"

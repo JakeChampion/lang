@@ -2819,13 +2819,18 @@ pub function const_struct_values(packed: string): string[] {
 // A field word holding string literal `text`'s static box: its packing is
 // `&str` and the text's bytes in hex, which no delimiter can occur in.
 pub function const_str_word(text: string): string {
-  let out: string = "{&str|";
+  return "{&str|" + hex_text(text) + "}";
+}
+
+// hex_text spells each byte of `text` as two lowercase hex digits.
+function hex_text(text: string): string {
+  let out: string = "";
   let i: i32 = 0;
   while (i < text.len()) {
     out = out + hex_digit(text[i] as i32 >> 4) + hex_digit(text[i] as i32 & 15);
     i = i + 1;
   }
-  return out + "}";
+  return out;
 }
 
 function hex_digit(d: i32): string {
@@ -7469,9 +7474,41 @@ pub function reduce_strength_ex(ops: Op[]): StrengthResult {
     i = i + 1;
   }
   if (changed) {
+    tv_dump("strength", ops, out);
     return StrengthResult { ops: out, changed: true };
   }
   return StrengthResult { ops: ops, changed: false };
+}
+
+// tv_dump writes a rewrite's input and output op lists to stderr when
+// FERN_TV_DUMP names `pass`, for the translation-validation oracle
+// (internal/testing/tv, docs/TRANSLATION-VALIDATION.md) to prove equivalent.
+function tv_dump(pass: string, before: Op[], after: Op[]): void {
+  match (env("FERN_TV_DUMP")) {
+    Some(want) => {
+      if (want == pass) {
+        eprint("fern-tv " + pass + "\n" + tv_ops("before", before) + tv_ops("after", after) + "fern-tv end");
+      }
+    },
+    None => {}
+  }
+}
+
+// tv_ops renders every field of each op, so ops the oracle does not model
+// can still be compared for exact equality.
+function tv_ops(side: string, ops: Op[]): string {
+  let s: string = "fern-tv " + side + " " + util.i32_to_string(ops.len()) + "\n";
+  let i: i32 = 0;
+  while (i < ops.len()) {
+    let o: Op = ops[i];
+    let u: string = "0";
+    if (o.unsigned) {
+      u = "1";
+    }
+    s = s + kind_name(o.kind_tag) + " " + util.i32_to_string(o.kind_tag) + " " + util.i32_to_string(o.i32_imm) + " " + util.i64_to_string(o.i64_imm) + " " + util.i64_to_string(f64_bits(o.f64_imm)) + " " + util.i32_to_string(o.width) + " " + u + " " + util.i32_to_string(o.decl) + " :" + hex_text(o.str) + "\n";
+    i = i + 1;
+  }
+  return s;
 }
 
 // reduce_strength is the plain-op-list form, for callers that don't need the
