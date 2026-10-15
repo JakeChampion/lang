@@ -230,6 +230,51 @@ pub function scale_storage_reasons(): string[] {
   return ["guarded-reuse", "reuse-disabled", "receiver-borrowed", "receiver-still-live", "receiver-supplied", "borrow-linked-result", "builtin-shadowed", "shape-unsupported"];
 }
 
+// Append sites, decided the way ssarc.append_push lowers them.
+pub function append_sole_owner(): i32 {
+  return 0;
+}
+
+pub function append_guarded(): i32 {
+  return 1;
+}
+
+pub function append_receiver_still_live(): i32 {
+  return 2;
+}
+
+pub function append_receiver_retained(): i32 {
+  return 3;
+}
+
+pub function append_receiver_borrowed(): i32 {
+  return 4;
+}
+
+pub function append_field_grow(): i32 {
+  return 5;
+}
+
+pub function append_borrow_linked(): i32 {
+  return 6;
+}
+
+pub function append_reasons(): string[] {
+  return ["sole-owner", "guarded", "receiver-still-live", "receiver-retained", "receiver-borrowed", "field-grow", "borrow-linked"];
+}
+
+// What the push does with the receiver's buffer: grow it with no test, copy
+// it every time, or ask the box's count at run time.
+pub function append_storage(reason: i32): string {
+  if (reason == append_sole_owner()) {
+    return "in-place";
+  }
+  if (reason == append_receiver_still_live() || reason == append_receiver_retained()) {
+    return "copy";
+  }
+  return "unique-grow/shared-copy";
+}
+
 pub function render_kind(kind: string, tags: string[], sites: Site[]): string {
   let counts: i32[] = [];
   for tag in tags {
