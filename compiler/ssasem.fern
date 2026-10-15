@@ -5224,7 +5224,7 @@ pub function tail_recursion(own f: Func, name: string): Func {
     return f;
   }
   let nparams: i32 = f.graph.nparams;
-  if (f.values.len() < nparams) {
+  if (f.values.len() < nparams || !calls_itself(f, name)) {
     return f;
   }
   let parents: i32[][] = borrow_parents(f);
@@ -5238,6 +5238,18 @@ pub function tail_recursion(own f: Func, name: string): Func {
     return f;
   }
   return spliced(f, kinds, nparams, hole, name);
+}
+
+// Both tail shapes need a call to the function itself.
+function calls_itself(f: Func, name: string): boolean {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == call() && ins.str == name) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function self_tail(): i32 {
