@@ -32,6 +32,15 @@ const runButtonDisabled = extract((s) => {
   return btn ? btn.disabled : true;
 });
 
+const runInFlight = extract(
+  (s) => s.document.querySelector("#run")?.textContent === "Running…"
+);
+
+const httpWorldSelected = extract((s) => {
+  const sel = s.document.querySelector("#worldSelect") as HTMLSelectElement | null;
+  return sel?.value === "wasm32-wasi-http";
+});
+
 const outputText = extract(
   (s) => s.document.querySelector("#out")?.textContent ?? ""
 );
@@ -124,7 +133,15 @@ export const editorNeverTearsDown = always(
 //    needs both, so guarding on `editorMounted` (a proxy for "the editor
 //    module ran") plus `notBooted()` keeps this from firing while the CDN
 //    is still in flight or unreachable — while still catching a button
-//    stuck disabled when everything is actually ready.
+//    stuck disabled when everything is actually ready. The page disables
+//    it itself while a run is in flight ("Running…", which can outlast a
+//    sample when the run queues behind a build) and in the wasi-http
+//    world, where the interpreter cannot run a handler.
 export const runButtonEnabledWhenReady = always(
-  () => !runButtonDisabled.current || !editorMounted.current || notBooted()
+  () =>
+    !runButtonDisabled.current ||
+    runInFlight.current ||
+    httpWorldSelected.current ||
+    !editorMounted.current ||
+    notBooted()
 );
