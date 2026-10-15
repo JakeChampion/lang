@@ -47,8 +47,16 @@ whole target.
 count inline, and splice only what is called once
 (docs/SELFHOST-SSA-BACKEND.md). At 3ae61060f that takes the TLS server
 from 2,105,368 bytes to 1,374,696 and the hello server from 2,206,008 to
-1,438,928; the reference-count half alone is 1,583,480 and 1,664,832. What is left is
-code density: about 300,000 instructions, 37% of them moves.
+1,438,928; the reference-count half alone is 1,583,480 and 1,664,832.
+
+The first of the two causes is now gone. The compiler drops what no
+reachable construction enables (`semreach`,
+docs/SELFHOST-SEMANTIC-SOURCE.md), so a server that never calls `with_h2`
+carries no HTTP/2. At 43f86616e the hello server is 1,958,416 bytes by
+default and 1,271,536 with `-size`, against 2,215,072 and 1,448,016 with
+the pass off. The TLS server, which does serve HTTP/2, is 1,954,944 and
+1,280,288, against 2,114,416 and 1,383,792. What is left is code density: about
+300,000 instructions, 37% of them moves.
 
 ## p99 at 4,096 connections
 

@@ -1,0 +1,921 @@
+// What the whole program can reach, decided together with the branches it
+// can take: an interprocedural sparse conditional constant propagation over
+// the semantic graphs.
+//
+// It starts optimistic. Only the roots are reached, no record field has a
+// value yet, no enum variant is built, and no function returns. A reached
+// function's blocks are walked from its entry over the edges its facts
+// allow, and what it builds, names and returns there widens the facts; a
+// function that read a fact that widened is walked again. At the fixpoint a
+// branch one value decides becomes a jump, a branch on a value nothing
+// produces is unreachable, and a function nothing reached is dropped. So a
+// field no reachable construction sets never enables the code it guards,
+// and a variant only that code builds is never tested true: std/serve's
+// HTTP/2 is not in a program that never calls `with_h2`.
+//
+// Facts are kept for the bool and i32 fields of records, the variants of
+// declared enums, and what scalar, if any, each function returns. A type a
+// value of which can arrive other than by a construction in a reached body
+// is opaque, its fields any value and its variants all built: an extern's,
+// a closure's or a dyn narrowing's result, an entry's parameter, and
+// everything such a value holds. A closure's construction builds its
+// environment, the captures in the slots after the body's address.
+import "./ssa";
+import "./ssadeps";
+import "./ssasem";
+import "./semrecords";
+import "./semthread";
+import "./typeinfo";
+import "./util";
+
+// `live[i]` says whether anything reached `funcs[i]` and `rewritten[i]`
+// whether a branch in it was decided. `ok` is false when a reached function
+// could not be walked, and the module is then left as it was.
+pub struct Reached { funcs: ssasem.Func[], live: boolean[], rewritten: boolean[], ok: boolean }
+
+// `usable[i]` marks the functions with a body to walk, `blocked[i]` those
+// whose references cannot be seen (a refusal), `roots[i]` those named from
+// outside the bodies, and `entries[i]` those called from outside with
+// arguments of their own.
+pub function reach(funcs: ssasem.Func[], names: string[], usable: boolean[], blocked: boolean[], roots: boolean[], entries: boolean[]): Reached {
+  let ix: util.NameIndex = util.name_index(names);
+  let u: Universe = universe(funcs, usable);
+  let op: util.NameIndex = opaque_types(funcs, ix, usable, entries, u);
+  let ctx: Ctx = Ctx { funcs: funcs, ix: ix, usable: usable, u: u, callers: callers_of(funcs, ix, usable), freaders: readers_of(funcs, usable, u), vtesters: testers_of(funcs, usable, u) };
+  let w: World = start(ctx, roots, op, zeroed(funcs, usable));
+  while (w.next < w.queue.len()) {
+    let i: i32 = w.queue[w.next];
+    w = World { ...w, next: w.next + 1, queued: w.queued.with(i, false) };
+    if (usable[i]) {
+      w = absorb(ctx, w, i, walk(ctx, w, i));
+    }
+  }
+  let i: i32 = 0;
+  while (i < funcs.len()) {
+    if (w.reach[i] && blocked[i]) {
+      return Reached { funcs: funcs, live: w.reach, rewritten: [], ok: false };
+    }
+    i = i + 1;
+  }
+  let out: ssasem.Func[] = [];
+  let changed: boolean[] = [];
+  i = 0;
+  while (i < funcs.len()) {
+    let r: Rewritten = Rewritten { f: funcs[i], changed: 0 };
+    if (w.reach[i] && usable[i]) {
+      r = rewritten(funcs[i], walk(ctx, w, i));
+    }
+    out = out.append(r.f);
+    changed = changed.append(r.changed > 0);
+    i = i + 1;
+  }
+  return Reached { funcs: out, live: w.reach, rewritten: changed, ok: true };
+}
+
+// ---- the lattice -----------------------------------------------------------
+
+// A value is TOP (nothing produced it yet), one constant, or BOTTOM (any).
+function top(): i32 {
+  return 0;
+}
+
+function known(): i32 {
+  return 1;
+}
+
+function bottom(): i32 {
+  return 2;
+}
+
+struct Lat { s: i32, v: i32 }
+
+function join(a: Lat, b: Lat): Lat {
+  if (a.s == top()) {
+    return b;
+  }
+  if (b.s == top()) {
+    return a;
+  }
+  if (a.s == known() && b.s == known() && a.v == b.v) {
+    return a;
+  }
+  return Lat { s: bottom(), v: 0 };
+}
+
+function same(a: Lat, b: Lat): boolean {
+  return a.s == b.s && (a.s != known() || a.v == b.v);
+}
+
+function any(): Lat {
+  return Lat { s: bottom(), v: 0 };
+}
+
+function none(): Lat {
+  return Lat { s: top(), v: 0 };
+}
+
+function tracked(t: typeinfo.Type): boolean {
+  return ssasem.is_bool(t) || ssasem.is_i32(t);
+}
+
+// ---- the facts' keys -------------------------------------------------------
+
+// Every tracked field (`type#index`) and every declared enum's variant
+// (`type|name`), with the type each belongs to.
+struct Universe { fields: util.NameIndex, field_owner: string[], variants: util.NameIndex, variant_owner: string[], rec_ix: util.NameIndex, recs: semrecords.Record[], enum_ix: util.NameIndex, enums: semrecords.Enum[] }
+
+function field_key(t: typeinfo.Type, k: i32): string {
+  return ssasem.type_key(t) + "#" + util.i32_to_string(k);
+}
+
+function variant_key(t: typeinfo.Type, name: string): string {
+  return ssasem.type_key(t) + "|" + name;
+}
+
+function universe(funcs: ssasem.Func[], usable: boolean[]): Universe {
+  let u: Universe = Universe { fields: util.name_index([]), field_owner: [], variants: util.name_index([]), variant_owner: [], rec_ix: util.name_index([]), recs: [], enum_ix: util.name_index([]), enums: [] };
+  let i: i32 = 0;
+  while (i < funcs.len()) {
+    if (usable[i]) {
+      for r in funcs[i].records.list {
+        u = with_record(u, r);
+      }
+      for e in funcs[i].enums {
+        u = with_enum(u, e);
+      }
+    }
+    i = i + 1;
+  }
+  return u;
+}
+
+function with_record(u: Universe, r: semrecords.Record): Universe {
+  let owner: string = ssasem.type_key(r.ty);
+  if (u.rec_ix.has(owner)) {
+    return u;
+  }
+  u = Universe { ...u, rec_ix: u.rec_ix.added(owner), recs: u.recs.append(r) };
+  let k: i32 = 0;
+  while (k < r.fields.len()) {
+    if (tracked(r.fields[k].ty)) {
+      u = Universe { ...u, fields: u.fields.added(field_key(r.ty, k)), field_owner: u.field_owner.append(owner) };
+    }
+    k = k + 1;
+  }
+  return u;
+}
+
+function with_enum(u: Universe, e: semrecords.Enum): Universe {
+  let owner: string = ssasem.type_key(e.ty);
+  if (u.enum_ix.has(owner)) {
+    return u;
+  }
+  u = Universe { ...u, enum_ix: u.enum_ix.added(owner), enums: u.enums.append(e) };
+  if (e.layout != semrecords.layout_variant()) {
+    return u;
+  }
+  for v in e.variants {
+    u = Universe { ...u, variants: u.variants.added(variant_key(e.ty, v.name)), variant_owner: u.variant_owner.append(owner) };
+  }
+  return u;
+}
+
+// ---- opaque types ----------------------------------------------------------
+
+function opaque_types(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[], entries: boolean[], u: Universe): util.NameIndex {
+  let op: util.NameIndex = util.name_index([]);
+  let i: i32 = 0;
+  while (i < funcs.len()) {
+    if (usable[i]) {
+      let f: ssasem.Func = funcs[i];
+      for b in f.graph.blocks {
+        for ins in b.insts {
+          if (ins.result >= 0 && ins.result < f.values.len() && arrives(ins, f.values[ins.result], ix, usable)) {
+            op = opaque_add(f.values[ins.result], op, u);
+          }
+        }
+      }
+      if (entries[i]) {
+        for t in f.params {
+          op = opaque_add(t, op, u);
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return op;
+}
+
+// Whether `ins` makes its `result` other than from the values a body built:
+// a call to what has no body here, a closure's result, a dyn narrowing, an
+// enum's widening from its member, a zero that is not a record's (a zero
+// record is its fields' zeros, `zeroed`), or any physical operation.
+function arrives(ins: ssa.SInst, result: typeinfo.Type, ix: util.NameIndex, usable: boolean[]): boolean {
+  let k: i32 = ins.kind_tag;
+  if (k == ssasem.call()) {
+    return call_arrives(ins, ix, usable);
+  }
+  if (k < 0) {
+    return semantic_arrives(k, result);
+  }
+  return !(k >= 1 && k <= 10 || k == 35 || k == 36);
+}
+
+function call_arrives(ins: ssa.SInst, ix: util.NameIndex, usable: boolean[]): boolean {
+  if (ssasem.is_dyn_call(ins.str)) {
+    return false;
+  }
+  let g: i32 = ix.find(ins.str);
+  return g < 0 || !usable[g];
+}
+
+function semantic_arrives(k: i32, result: typeinfo.Type): boolean {
+  if (k == ssasem.zero()) {
+    return !is_record(result);
+  }
+  return k == ssasem.call_value() || k == ssasem.dyn_as() || k == ssasem.variant_up();
+}
+
+function is_record(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeStruct(_) = t {
+    return true;
+  }
+  return false;
+}
+
+// `t` and every type a value of it holds, added to `op`.
+function opaque_add(t: typeinfo.Type, op: util.NameIndex, u: Universe): util.NameIndex {
+  match (t) {
+    typeinfo.TypeStruct(s) => {
+      return opaque_nominal(ssasem.type_key(t), s.args, op, u);
+    },
+    typeinfo.TypeUnion(un) => {
+      return opaque_nominal(ssasem.type_key(t), un.args, op, u);
+    },
+    typeinfo.TypeArray(a) => {
+      return opaque_add(a.elem, op, u);
+    },
+    typeinfo.TypeTuple(tup) => {
+      return opaque_all(tup.elements, op, u);
+    },
+    typeinfo.TypeMap(m) => {
+      return opaque_add(m.value, opaque_add(m.key, op, u), u);
+    },
+    _ => {}
+  }
+  return op;
+}
+
+function opaque_nominal(key: string, args: typeinfo.Type[], op: util.NameIndex, u: Universe): util.NameIndex {
+  if (op.has(key)) {
+    return op;
+  }
+  return opaque_all(held_types(u, key), opaque_all(args, op.added(key), u), u);
+}
+
+function opaque_all(ts: typeinfo.Type[], op: util.NameIndex, u: Universe): util.NameIndex {
+  for t in ts {
+    op = opaque_add(t, op, u);
+  }
+  return op;
+}
+
+// The field types of the record or of every variant of the enum `key` names.
+function held_types(u: Universe, key: string): typeinfo.Type[] {
+  let out: typeinfo.Type[] = [];
+  let r: i32 = u.rec_ix.find(key);
+  if (r >= 0) {
+    for fl in u.recs[r].fields {
+      out = out.append(fl.ty);
+    }
+  }
+  let e: i32 = u.enum_ix.find(key);
+  if (e >= 0) {
+    for v in u.enums[e].variants {
+      for fl in v.fields {
+        out = out.append(fl.ty);
+      }
+    }
+  }
+  return out;
+}
+
+// The record types some reached body may build as a zero.
+function zeroed(funcs: ssasem.Func[], usable: boolean[]): typeinfo.Type[] {
+  let out: typeinfo.Type[] = [];
+  let i: i32 = 0;
+  while (i < funcs.len()) {
+    if (usable[i]) {
+      let f: ssasem.Func = funcs[i];
+      for b in f.graph.blocks {
+        for ins in b.insts {
+          if (ins.kind_tag == ssasem.zero() && ins.result >= 0 && ins.result < f.values.len()) {
+            out = out.append(f.values[ins.result]);
+          }
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// ---- who reads what --------------------------------------------------------
+
+struct Ctx { funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[], u: Universe, callers: i32[][], freaders: i32[][], vtesters: i32[][] }
+
+function lists(n: i32): i32[][] {
+  let out: i32[][] = [];
+  while (out.len() < n) {
+    out = out.append([]);
+  }
+  return out;
+}
+
+function noted(own xs: i32[][], at: i32, i: i32): i32[][] {
+  let l: i32[] = xs[at];
+  if (l.len() > 0 && l[l.len() - 1] == i) {
+    return xs;
+  }
+  return xs.with(at, l.append(i));
+}
+
+function callers_of(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[]): i32[][] {
+  let out: i32[][] = lists(funcs.len());
+  let i: i32 = 0;
+  while (i < funcs.len()) {
+    if (usable[i]) {
+      for b in funcs[i].graph.blocks {
+        for ins in b.insts {
+          if (ins.kind_tag == ssasem.call()) {
+            let g: i32 = ix.find(ins.str);
+            if (g >= 0) {
+              out = noted(out, g, i);
+            }
+          }
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function readers_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[][] {
+  let out: i32[][] = lists(u.field_owner.len());
+  let i: i32 = 0;
+  while (i < funcs.len()) {
+    if (usable[i]) {
+      let f: ssasem.Func = funcs[i];
+      for b in f.graph.blocks {
+        for ins in b.insts {
+          if (ins.kind_tag == ssasem.record_get() && ins.args.len() == 1) {
+            let k: i32 = u.fields.find(field_key(f.values[ins.args[0]], ins.imm));
+            if (k >= 0) {
+              out = noted(out, k, i);
+            }
+          }
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function testers_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[][] {
+  let out: i32[][] = lists(u.variant_owner.len());
+  let i: i32 = 0;
+  while (i < funcs.len()) {
+    if (usable[i]) {
+      let f: ssasem.Func = funcs[i];
+      for b in f.graph.blocks {
+        for ins in b.insts {
+          if (ins.kind_tag == ssasem.variant_is() && ins.args.len() == 1) {
+            let v: i32 = u.variants.find(variant_key(f.values[ins.args[0]], ins.str));
+            if (v >= 0) {
+              out = noted(out, v, i);
+            }
+          }
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// ---- the whole program's facts ---------------------------------------------
+
+struct World { reach: boolean[], fields: Lat[], built: boolean[], rets: Lat[], queue: i32[], next: i32, queued: boolean[] }
+
+function start(ctx: Ctx, roots: boolean[], op: util.NameIndex, zeros: typeinfo.Type[]): World {
+  let built: boolean[] = [];
+  for owner in ctx.u.variant_owner {
+    built = built.append(op.has(owner));
+  }
+  let rets: Lat[] = [];
+  while (rets.len() < ctx.funcs.len()) {
+    rets = rets.append(none());
+  }
+  let w: World = World { reach: __alloc_bool(ctx.funcs.len()), fields: zero_fields(ctx.u, opaque_fields(ctx.u, op), zeros), built: built, rets: rets, queue: [], next: 0, queued: __alloc_bool(ctx.funcs.len()) };
+  let i: i32 = 0;
+  while (i < roots.len()) {
+    if (roots[i]) {
+      w = reached(w, i);
+    }
+    i = i + 1;
+  }
+  return w;
+}
+
+// Every field unknown yet, but an opaque record's, which is any value.
+function opaque_fields(u: Universe, op: util.NameIndex): Lat[] {
+  let fields: Lat[] = [];
+  for owner in u.field_owner {
+    if (op.has(owner)) {
+      fields = fields.append(any());
+    } else {
+      fields = fields.append(none());
+    }
+  }
+  return fields;
+}
+
+// `fields` with each field of a record a body builds as a zero holding 0.
+function zero_fields(u: Universe, own fields: Lat[], zeros: typeinfo.Type[]): Lat[] {
+  for t in zeros {
+    let r: i32 = u.rec_ix.find(ssasem.type_key(t));
+    let k: i32 = 0;
+    while (r >= 0 && k < u.recs[r].fields.len()) {
+      let at: i32 = u.fields.find(field_key(t, k));
+      if (at >= 0) {
+        fields = fields.with(at, join(fields[at], Lat { s: known(), v: 0 }));
+      }
+      k = k + 1;
+    }
+  }
+  return fields;
+}
+
+function queued(w: World, i: i32): World {
+  if (w.queued[i]) {
+    return w;
+  }
+  return World { ...w, queue: w.queue.append(i), queued: w.queued.with(i, true) };
+}
+
+function queued_all(w: World, xs: i32[]): World {
+  for i in xs {
+    if (w.reach[i]) {
+      w = queued(w, i);
+    }
+  }
+  return w;
+}
+
+function reached(w: World, i: i32): World {
+  if (w.reach[i]) {
+    return w;
+  }
+  return queued(World { ...w, reach: w.reach.with(i, true) }, i);
+}
+
+function reached_name(ctx: Ctx, w: World, name: string): World {
+  let g: i32 = ctx.ix.find(name);
+  if (g < 0) {
+    return w;
+  }
+  return reached(w, g);
+}
+
+// ---- one function's walk ---------------------------------------------------
+
+// Each value's lattice, which blocks run, and which of each block's incoming
+// edges do, parallel to its preds. `stale[pos]` marks a block entered along
+// an edge its preds do not list, whose phis are then any value.
+struct Walk { vals: Lat[], exec: boolean[], edges: boolean[][], stale: boolean[] }
+
+function walk(ctx: Ctx, w: World, i: i32): Walk {
+  let f: ssasem.Func = ctx.funcs[i];
+  let g: ssa.SFunc = f.graph;
+  let at: i32[] = ssadeps.position_of(g);
+  let wk: Walk = Walk { vals: entry_values(g), exec: __alloc_bool(g.blocks.len()).with(at[g.entry], true), edges: no_edges(g), stale: __alloc_bool(g.blocks.len()) };
+  let changed: boolean = true;
+  while (changed) {
+    changed = false;
+    let pos: i32 = 0;
+    while (pos < g.blocks.len()) {
+      if (wk.exec[pos]) {
+        let stepped: Stepped = walked_block(ctx, w, f, at, wk, pos);
+        wk = stepped.wk;
+        changed = changed || stepped.changed;
+      }
+      pos = pos + 1;
+    }
+  }
+  return wk;
+}
+
+// The parameters are any value; nothing else is produced yet.
+function entry_values(g: ssa.SFunc): Lat[] {
+  let vals: Lat[] = [];
+  while (vals.len() < g.nvals) {
+    if (vals.len() < g.nparams) {
+      vals = vals.append(any());
+    } else {
+      vals = vals.append(none());
+    }
+  }
+  return vals;
+}
+
+function no_edges(g: ssa.SFunc): boolean[][] {
+  let edges: boolean[][] = [];
+  for b in g.blocks {
+    edges = edges.append(__alloc_bool(b.preds.len()));
+  }
+  return edges;
+}
+
+// One pass over the block at `pos`: its values, then the edges its branch
+// takes.
+function walked_block(ctx: Ctx, w: World, f: ssasem.Func, at: i32[], wk: Walk, pos: i32): Stepped {
+  let g: ssa.SFunc = f.graph;
+  let b: ssa.SBlock = g.blocks[pos];
+  let changed: boolean = false;
+  for ins in b.insts {
+    if (ins.result >= 0 && ins.result < g.nvals) {
+      let next: Lat = join(wk.vals[ins.result], eval(ctx, w, f, wk, pos, ins));
+      if (!same(next, wk.vals[ins.result])) {
+        wk = Walk { ...wk, vals: wk.vals.with(ins.result, next) };
+        changed = true;
+      }
+    }
+  }
+  let stepped: Stepped = followed(g, at, wk, pos, b);
+  return Stepped { wk: stepped.wk, changed: changed || stepped.changed };
+}
+
+struct Stepped { wk: Walk, changed: boolean }
+
+function followed(g: ssa.SFunc, at: i32[], wk: Walk, pos: i32, b: ssa.SBlock): Stepped {
+  let t: ssa.STerm = b.term;
+  if (t.kind_tag == 2) {
+    return entered(g, at, wk, b.id, t.target);
+  }
+  if (t.kind_tag != 3) {
+    return Stepped { wk: wk, changed: false };
+  }
+  let c: Lat = wk.vals[t.cond];
+  if (c.s == top()) {
+    return Stepped { wk: wk, changed: false };
+  }
+  if (c.s == known()) {
+    if (c.v != 0) {
+      return entered(g, at, wk, b.id, t.t);
+    }
+    return entered(g, at, wk, b.id, t.f);
+  }
+  let one: Stepped = entered(g, at, wk, b.id, t.t);
+  let two: Stepped = entered(g, at, one.wk, b.id, t.f);
+  return Stepped { wk: two.wk, changed: one.changed || two.changed };
+}
+
+function entered(g: ssa.SFunc, at: i32[], wk: Walk, from: i32, to: i32): Stepped {
+  let tp: i32 = at[to];
+  let changed: boolean = false;
+  if (!wk.exec[tp]) {
+    wk = Walk { ...wk, exec: wk.exec.with(tp, true) };
+    changed = true;
+  }
+  let preds: i32[] = g.blocks[tp].preds;
+  let j: i32 = 0;
+  while (j < preds.len() && preds[j] != from) {
+    j = j + 1;
+  }
+  if (j == preds.len()) {
+    if (!wk.stale[tp]) {
+      return Stepped { wk: Walk { ...wk, stale: wk.stale.with(tp, true) }, changed: true };
+    }
+    return Stepped { wk: wk, changed: changed };
+  }
+  if (!wk.edges[tp][j]) {
+    let row: boolean[] = wk.edges[tp].with(j, true);
+    return Stepped { wk: Walk { ...wk, edges: wk.edges.with(tp, row) }, changed: true };
+  }
+  return Stepped { wk: wk, changed: changed };
+}
+
+function eval(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, pos: i32, ins: ssa.SInst): Lat {
+  if (ins.kind_tag < 0) {
+    return semantic_value(ctx, w, f, ins);
+  }
+  return scalar_value(f, wk, pos, ins);
+}
+
+function scalar_value(f: ssasem.Func, wk: Walk, pos: i32, ins: ssa.SInst): Lat {
+  let k: i32 = ins.kind_tag;
+  if (k == 1 || k == 2) {
+    return Lat { s: known(), v: ins.imm };
+  }
+  if (k == 7) {
+    return wk.vals[ins.args[0]];
+  }
+  if (k == 8) {
+    return phi_value(wk, pos, ins);
+  }
+  if (k == 36) {
+    return select_value(wk, ins);
+  }
+  if (k == 9) {
+    return binary(f, wk, ins);
+  }
+  if (k == 10) {
+    return unary(f, wk, ins);
+  }
+  return any();
+}
+
+// A boolean `!` of a constant.
+function unary(f: ssasem.Func, wk: Walk, ins: ssa.SInst): Lat {
+  let a: Lat = wk.vals[ins.args[0]];
+  if (ins.str != "!" || !ssasem.is_bool(f.values[ins.args[0]]) || a.s == bottom()) {
+    return any();
+  }
+  if (a.s == top()) {
+    return a;
+  }
+  return Lat { s: known(), v: 1 - a.v };
+}
+
+function phi_value(wk: Walk, pos: i32, ins: ssa.SInst): Lat {
+  if (wk.stale[pos]) {
+    return any();
+  }
+  let out: Lat = none();
+  let j: i32 = 0;
+  while (j < ins.args.len() && j < wk.edges[pos].len()) {
+    if (wk.edges[pos][j]) {
+      out = join(out, wk.vals[ins.args[j]]);
+    }
+    j = j + 1;
+  }
+  return out;
+}
+
+function select_value(wk: Walk, ins: ssa.SInst): Lat {
+  let c: Lat = wk.vals[ins.args[0]];
+  if (c.s == top()) {
+    return none();
+  }
+  if (c.s == bottom()) {
+    return join(wk.vals[ins.args[1]], wk.vals[ins.args[2]]);
+  }
+  if (c.v != 0) {
+    return wk.vals[ins.args[1]];
+  }
+  return wk.vals[ins.args[2]];
+}
+
+// A field's fact, a variant test nothing built the variant for, and a call's
+// result. A paired call's position (sempair, `imm` naming its word) stays a
+// test: the branch on it is where the certifier settles whether the word
+// holds the payload's unit.
+function semantic_value(ctx: Ctx, w: World, f: ssasem.Func, ins: ssa.SInst): Lat {
+  let k: i32 = ins.kind_tag;
+  if (k == ssasem.record_get()) {
+    return field_value(ctx, w, f, ins);
+  }
+  if (k == ssasem.variant_is()) {
+    let vk: i32 = ctx.u.variants.find(variant_key(f.values[ins.args[0]], ins.str));
+    if (vk >= 0 && !w.built[vk]) {
+      return Lat { s: known(), v: 0 };
+    }
+    return any();
+  }
+  if (k == ssasem.call()) {
+    return call_value(ctx, w, ins);
+  }
+  return any();
+}
+
+function field_value(ctx: Ctx, w: World, f: ssasem.Func, ins: ssa.SInst): Lat {
+  let fk: i32 = ctx.u.fields.find(field_key(f.values[ins.args[0]], ins.imm));
+  if (fk < 0) {
+    return any();
+  }
+  return w.fields[fk];
+}
+
+function call_value(ctx: Ctx, w: World, ins: ssa.SInst): Lat {
+  if (ssasem.is_dyn_call(ins.str) || ins.imm != 0) {
+    return any();
+  }
+  let g: i32 = ctx.ix.find(ins.str);
+  if (g < 0 || !ctx.usable[g]) {
+    return any();
+  }
+  return w.rets[g];
+}
+
+// The comparisons of two bool or i32 constants.
+function binary(f: ssasem.Func, wk: Walk, ins: ssa.SInst): Lat {
+  let a: Lat = wk.vals[ins.args[0]];
+  let b: Lat = wk.vals[ins.args[1]];
+  if (a.s == bottom() || b.s == bottom()) {
+    return any();
+  }
+  if (a.s == top() || b.s == top()) {
+    return none();
+  }
+  let t: typeinfo.Type = f.values[ins.args[0]];
+  if (!comparable(t, f.values[ins.args[1]])) {
+    return any();
+  }
+  return compared(ins.str, a.v, b.v, ssasem.is_i32(t));
+}
+
+function compared(op: string, x: i32, y: i32, ordered: boolean): Lat {
+  if (op == "==") {
+    return truth(x == y);
+  }
+  if (op == "!=") {
+    return truth(x != y);
+  }
+  if (!ordered) {
+    return any();
+  }
+  if (op == "<") {
+    return truth(x < y);
+  }
+  if (op == "<=") {
+    return truth(x <= y);
+  }
+  if (op == ">") {
+    return truth(x > y);
+  }
+  if (op == ">=") {
+    return truth(x >= y);
+  }
+  return any();
+}
+
+function comparable(a: typeinfo.Type, b: typeinfo.Type): boolean {
+  return ssasem.is_bool(a) && ssasem.is_bool(b) || ssasem.is_i32(a) && ssasem.is_i32(b);
+}
+
+function truth(b: boolean): Lat {
+  if (b) {
+    return Lat { s: known(), v: 1 };
+  }
+  return Lat { s: known(), v: 0 };
+}
+
+// ---- what a walk adds to the world -----------------------------------------
+
+function absorb(ctx: Ctx, w: World, i: i32, wk: Walk): World {
+  let f: ssasem.Func = ctx.funcs[i];
+  let pos: i32 = 0;
+  while (pos < f.graph.blocks.len()) {
+    if (wk.exec[pos]) {
+      let b: ssa.SBlock = f.graph.blocks[pos];
+      for ins in b.insts {
+        w = absorb_inst(ctx, w, f, wk, ins);
+      }
+      if (b.term.kind_tag == 1) {
+        w = returned(ctx, w, i, wk, b.term.value);
+      }
+    }
+    pos = pos + 1;
+  }
+  for t in f.values {
+    if let typeinfo.TypeMap(m) = t {
+      w = reached_name(ctx, reached_name(ctx, w, ssasem.keyed_map_key_fn(m.key, "hash")), ssasem.keyed_map_key_fn(m.key, "eq"));
+    }
+  }
+  return w;
+}
+
+// `funcs[i]` returns `value`: a tracked scalar's lattice, anything else's
+// mere return.
+function returned(ctx: Ctx, w: World, i: i32, wk: Walk, value: i32): World {
+  let r: Lat = any();
+  if (tracked(ctx.funcs[i].result) && value >= 0) {
+    r = wk.vals[value];
+  }
+  let next: Lat = join(w.rets[i], r);
+  if (same(next, w.rets[i])) {
+    return w;
+  }
+  return queued_all(World { ...w, rets: w.rets.with(i, next) }, ctx.callers[i]);
+}
+
+function absorb_inst(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, ins: ssa.SInst): World {
+  w = named(ctx, w, ins.str);
+  if (ins.kind_tag == ssasem.record_new()) {
+    return built_record(ctx, w, f.values[ins.result], wk, ins.args, 0);
+  }
+  if (ins.kind_tag == ssasem.closure_new()) {
+    let at: i32 = ssasem.find_contract_in(f.calls, ins.str);
+    if (at >= 0 && f.calls[at].params.len() > 0) {
+      return built_record(ctx, w, f.calls[at].params[0], wk, ins.args, 1);
+    }
+  }
+  if (ins.kind_tag == ssasem.variant_new()) {
+    let vk: i32 = ctx.u.variants.find(variant_key(f.values[ins.result], ins.str));
+    if (vk >= 0 && !w.built[vk]) {
+      return queued_all(World { ...w, built: w.built.with(vk, true) }, ctx.vtesters[vk]);
+    }
+  }
+  return w;
+}
+
+// What `name` reaches: the function it names, or every arm of a dyn call.
+function named(ctx: Ctx, w: World, name: string): World {
+  if (!ssasem.is_dyn_call(name)) {
+    return reached_name(ctx, w, name);
+  }
+  for arm in ssasem.dyn_call_arms(name) {
+    w = reached_name(ctx, w, arm);
+  }
+  return w;
+}
+
+// Each tracked field of a `t` built from `args`, field `first + k` from
+// `args[k]`, widened by the operand's lattice: a record from its fields, or
+// a closure's environment from its captures (slot 0 is the body's address).
+function built_record(ctx: Ctx, w: World, t: typeinfo.Type, wk: Walk, args: i32[], first: i32): World {
+  let k: i32 = 0;
+  while (k < args.len()) {
+    let fk: i32 = ctx.u.fields.find(field_key(t, first + k));
+    if (fk >= 0) {
+      let next: Lat = join(w.fields[fk], wk.vals[args[k]]);
+      if (!same(next, w.fields[fk])) {
+        w = queued_all(World { ...w, fields: w.fields.with(fk, next) }, ctx.freaders[fk]);
+      }
+    }
+    k = k + 1;
+  }
+  return w;
+}
+
+// ---- the rewrite -----------------------------------------------------------
+
+struct Rewritten { f: ssasem.Func, changed: i32 }
+
+// A branch the walk decided keeps its test, and the side it never takes goes
+// to an unreachable block: what later passes read off a test (that a variant
+// projection is guarded, that a paired word is settled) still holds. A
+// branch on a value nothing produced is unreachable itself. So no edge into
+// a block the walk did not run is left, and the blocks the graph still
+// reaches are the ones it ran.
+function rewritten(f: ssasem.Func, wk: Walk): Rewritten {
+  let g: ssa.SFunc = f.graph;
+  let dead: i32 = 0;
+  for b in g.blocks {
+    if (b.id >= dead) {
+      dead = b.id + 1;
+    }
+  }
+  let blocks: ssa.SBlock[] = g.blocks;
+  let changed: i32 = 0;
+  let pos: i32 = 0;
+  while (pos < g.blocks.len()) {
+    let b: ssa.SBlock = g.blocks[pos];
+    if (wk.exec[pos] && b.term.kind_tag == 3) {
+      let t: ssa.STerm = decided(b.term, wk.vals[b.term.cond], dead);
+      if (t.kind_tag != 3 || t.t != b.term.t || t.f != b.term.f) {
+        blocks = blocks.with(pos, ssa.SBlock { ...b, term: t });
+        changed = changed + 1;
+      }
+    }
+    pos = pos + 1;
+  }
+  if (changed == 0) {
+    return Rewritten { f: f, changed: 0 };
+  }
+  blocks = blocks.append(ssa.SBlock { id: dead, insts: [], term: unreachable(), preds: [] });
+  let moved: ssa.SFunc = ssa.SFunc { ...g, blocks: blocks };
+  let kept: ssa.SFunc = ssa.SFunc { ...moved, blocks: semthread.reachable_only(moved) };
+  return Rewritten { f: ssasem.Func { ...f, graph: ssa.SFunc { ...kept, blocks: ssa.refreshed_preds(kept) } }, changed: changed };
+}
+
+// The branch `t` with the side its condition `c` never takes sent to the
+// block `dead`, or unreachable where nothing produced `c`.
+function decided(t: ssa.STerm, c: Lat, dead: i32): ssa.STerm {
+  if (c.s == top()) {
+    return unreachable();
+  }
+  if (c.s == bottom() || t.t == t.f) {
+    return t;
+  }
+  if (c.v == 0) {
+    return ssa.STerm { ...t, t: dead };
+  }
+  return ssa.STerm { ...t, f: dead };
+}
+
+function unreachable(): ssa.STerm {
+  return ssa.STerm { kind_tag: 4, cond: 0, target: 0, t: 0, f: 0, value: 0 };
+}

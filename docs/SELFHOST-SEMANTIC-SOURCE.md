@@ -40,6 +40,30 @@ Unsupported constructs refuse the whole function with a reason.
   released where they die. A type with a finalizer, and under `-g` a value a
   source variable is bound to, are kept; a record update names its base in
   `imm`, which counts as a read, so a kept update keeps its base built.
+- Before that, what the whole program reaches is decided together with the
+  branches it takes (`semreach`, after the splices). The analysis is
+  optimistic: only the roots are reached, no record field has a value and no
+  enum variant is built until a reached body builds one, and no function
+  returns until one of its reached `ret`s runs. It widens to a fixpoint over
+  the bool and i32 fields of records, the variants of declared enums, and
+  each function's scalar result. A branch a fact decides keeps its test, and
+  its other side becomes unreachable, so variant guards and paired words
+  (`sempair`) are still read off tests. A function nothing reached is
+  dropped, together with its closure environment's row in the release
+  tables. So `std/serve`'s HTTP/2 is not in a program that never calls
+  `with_h2`.
+  - Roots are the tree-shaker's (`main`, top-level statements, exports, Drop
+    finalizers, derive-carrying types' methods, async entries), plus the
+    runtime helpers and live map keys' `hash` and `eq`.
+  - A type is opaque, with its fields any value and its variants all built,
+    when a value of it can arrive other than from a body's construction: an
+    extern's, a closure's or a dyn narrowing's result, or an entry's
+    parameter. A closure's construction (`closure_new`) builds its
+    environment, whose fields after the body's address are the captures.
+  - A reached refusal leaves the module as it was.
+  - A paired call's position stays a test, because the certifier settles
+    its word on that branch.
+  - `FERN_NO_SEM_REACH=1` turns the pass off.
 - Record literals as `record_new` and named-field projections as
   `record_get`. A record is a declared struct with no type parameters and no
   enum owner; its schema (`semrecords.Record`) is the declaration's field

@@ -898,14 +898,17 @@ function ts_lambda_sig_types(e: ast.Expr, own acc: string[]): string[] {
   return acc;
 }
 
+// `refs` and the names `mod`'s top-level statements reference.
+pub function top_level_names(mod: parser.Module, own refs: string[]): string[] {
+  for st in mod.top_stmts {
+    refs = ts_names_stmt(st, refs);
+  }
+  return refs;
+}
+
 pub function treeshake(mod: parser.Module): parser.Module {
   // Seed the reachable-name set from the roots.
-  let refs: string[] = ["main"];
-  let ti: i32 = 0;
-  while (ti < mod.top_stmts.len()) {
-    refs = ts_names_stmt(mod.top_stmts[ti], refs);
-    ti = ti + 1;
-  }
+  let refs: string[] = top_level_names(mod, ["main"]);
   let ei: i32 = 0;
   while (ei < mod.exports.len()) {
     refs = refs.append(mod.exports[ei].func_name);

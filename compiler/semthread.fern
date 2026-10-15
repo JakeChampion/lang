@@ -400,7 +400,7 @@ function has_phi(b: ssa.SBlock): boolean {
   return false;
 }
 
-function reachable_only(g: ssa.SFunc): ssa.SBlock[] {
+pub function reachable_only(g: ssa.SFunc): ssa.SBlock[] {
   let live: boolean[] = ssadeps.reachable_blocks(g);
   let out: ssa.SBlock[] = [];
   let i: i32 = 0;
