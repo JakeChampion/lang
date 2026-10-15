@@ -186,3 +186,83 @@ func TestImportClosureAllowsMissingExternalImport(t *testing.T) {
 		t.Errorf("closure = %v, want just the entry (stdlib imports are outside the key)", files)
 	}
 }
+
+// Import layout cannot hide a compiler dependency from the binary cache key.
+// In particular, several valid imports can occupy a single physical line.
+func TestImportClosureTracksSameLineImports(t *testing.T) {
+	dir := writeClosure(t, map[string]string{
+		"entry.fern": `import "std/io"; import "./first"; import "./second" as second;
+function main(): i32 { return 0; }`,
+		"first.fern":  "pub function a(): i32 { return 1; }",
+		"second.fern": "pub function b(): i32 { return 2; }",
+	})
+	files := SelfHostImportClosure(t, dir, "entry.fern")
+	if len(files) != 3 {
+		t.Errorf("closure = %v, want entry plus both same-line local imports", files)
+	}
+	before := HashSelfHostSources(t, dir, "entry.fern")
+	if err := os.WriteFile(filepath.Join(dir, "second.fern"), []byte("pub function b(): i32 { return 99; }"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if after := HashSelfHostSources(t, dir, "entry.fern"); before == after {
+		t.Error("editing the second same-line import did not invalidate the binary cache")
+	}
+}
+
+func TestImportClosureIgnoresCommentAndLiteralImports(t *testing.T) {
+	dir := writeClosure(t, map[string]string{
+		"entry.fern": `// import "./missing_comment";
+import // a comment can separate the keyword and path
+"./leaf";
+function main(): i32 {
+  let s: string = "import \"./missing_string\";";
+  let f: string = f"import \"./missing_fstring\";";
+  return 0;
+}`,
+		"leaf.fern": "pub function l(): i32 { return 1; }",
+	})
+	files, err := selfHostImportClosure(dir, "entry.fern")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 || filepath.Base(files[1]) != "leaf.fern" {
+		t.Errorf("closure = %v, want entry and leaf, not import-like comment/literal text", files)
+	}
+}
+
+func TestImportClosureTracksReexportsAndDecodedPaths(t *testing.T) {
+	dir := writeClosure(t, map[string]string{
+		"entry.fern": `pub use "./mid".{m}; function main(): i32 { return 0; }`,
+		"mid.fern":   `import "\x2e/leaf"; pub function m(): i32 { return leaf.l(); }`,
+		"leaf.fern":  "pub function l(): i32 { return 2; }",
+	})
+	files := SelfHostImportClosure(t, dir, "entry.fern")
+	if len(files) != 3 {
+		t.Errorf("closure = %v, want reexport and its decoded-path dependency", files)
+	}
+	before := HashSelfHostSources(t, dir, "entry.fern")
+	if err := os.WriteFile(filepath.Join(dir, "leaf.fern"), []byte("pub function l(): i32 { return 99; }"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if after := HashSelfHostSources(t, dir, "entry.fern"); before == after {
+		t.Error("editing a transitively reexported dependency did not invalidate the cache")
+	}
+}
+
+func TestImportClosureFailsOnMissingSameLineLocalImport(t *testing.T) {
+	dir := writeClosure(t, map[string]string{
+		"entry.fern": `import "std/io"; import "./gone"; function main(): i32 { return 0; }`,
+	})
+	_, err := selfHostImportClosure(dir, "entry.fern")
+	if err == nil || !strings.Contains(err.Error(), "gone.fern") {
+		t.Fatalf("missing second import must fail naming gone.fern, got %v", err)
+	}
+}
+
+func TestImportClosureFailsOnUnlexableSource(t *testing.T) {
+	dir := writeClosure(t, map[string]string{"entry.fern": `import "./unterminated`})
+	_, err := selfHostImportClosure(dir, "entry.fern")
+	if err == nil {
+		t.Fatal("unlexable source must not yield a partial dependency closure")
+	}
+}

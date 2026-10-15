@@ -60,6 +60,14 @@ var fnTypeCrossModuleCases = []struct {
 		exit: 6,
 	},
 	{
+		// A consuming parameter of a fn type in an imported module: `own A[]`
+		// keeps its mode and mangles the module's own `A` behind it.
+		name: "xmod-fn-type-own-param",
+		lib:  "struct A { n: i32 }\nfunction apply(f: (own A[]) => A[]): i32 { return f([A { n: 1 }]).len() + 6; }\nfunction keep(own acc: A[]): A[] { return acc.append(A { n: 2 }); }\npub function count(): i32 { return apply(keep); }",
+		main: "import \"lib\";\nfunction main(): i32 {\n    return lib.count();\n}",
+		exit: 8,
+	},
+	{
 		// Result's SECOND type argument, cross-module: `Err` indexes arg 1, and
 		// the arrow has to survive in that position too.
 		name: "xmod-result-err-zeroarg",

@@ -39,7 +39,8 @@ func TestSelfHostBareSiblingImportWithoutRoot(t *testing.T) {
 		t.Fatalf("-check: exit %d\n%s", code, out)
 	}
 	bin := filepath.Join(work, "prog")
-	if out, code := run("-o", bin, entry); code != 0 {
+	// This test executes via the x86-64 runner; the CLI's default is ARM64.
+	if out, code := run("-target", "x86-64-linux", "-o", bin, entry); code != 0 {
 		t.Fatalf("-o: exit %d\n%s", code, out)
 	}
 	prog := runX86_64Bin(runner, bin)
