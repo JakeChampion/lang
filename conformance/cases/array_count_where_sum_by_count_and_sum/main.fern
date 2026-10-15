@@ -1,0 +1,11 @@
+// std/array's count_where (tally of matching elements) and sum_by (sum of an
+// i32 projection). Empty gives 0.
+// A minimal inline body, so this pins the lowering of its shape rather than
+// the shipped module.
+//
+// 3 evens in [1..6] (tag 3) then sum of string lengths a/bb/ccc = 6; 3*10+6 = 36.
+function count_where[T](xs: T[], pred: (T) => boolean): i32 { let c: i32 = 0; let i: i32 = 0; while (i < xs.len()) { if (pred(xs[i])) { c = c + 1; } i = i + 1; } return c; }
+function sum_by[T](xs: T[], key: (T) => i32): i32 { let t: i32 = 0; let i: i32 = 0; while (i < xs.len()) { t = t + key(xs[i]); i = i + 1; } return t; }
+function is_even(x: i32): boolean { return x % 2 == 0; }
+function slen(s: string): i32 { return s.len(); }
+function main(): i32 { let ns: i32[] = [1, 2, 3, 4, 5, 6]; let ws: string[] = ["a", "bb", "ccc"]; return count_where(ns, is_even) * 10 + sum_by(ws, slen); }

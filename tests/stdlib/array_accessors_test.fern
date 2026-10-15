@@ -6,13 +6,8 @@ import "std/array";
 // the safe, bounds-checked alternatives to len()==0 / xs[0] / xs[len-1] / xs[i],
 // returning Option[T] (None on empty / out-of-range; negative index is None).
 // Kept as its own suite so the self-host merged bundle stays under the asm_ir IR
-// budget; uses assert_true + match (no generic assert_eq[i32]).
-//
-// The i32 cases here are self-host-gated; STRING-element first/get is covered
-// only by the Go-side native differential (TestNativeArrayFirstLastGet exercises
-// a string[] on all four native backends) because the self-host compiler
-// mishandles the generic Option[T] return over pointer-payload (string)
-// elements — the same gap that keeps array_rotate's string case native-only.
+// budget; uses assert_true + match (no generic assert_eq[i32]). String-element
+// first/get is pinned on every backend by conformance/cases/array_first_last_get_module.
 
 function uw(o: Option[i32]): i32 {
   match (o) {

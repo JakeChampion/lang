@@ -1,0 +1,16 @@
+// std/array's count_where (tally of matching elements) and sum_by (sum of an
+// i32 projection). Empty gives 0.
+// The shipped module's free and method forms.
+import "std/array" as arr;
+function is_even(x: i32): boolean { return x % 2 == 0; }
+function slen(s: string): i32 { return s.len(); }
+function main(): i32 {
+    let r = 0;
+    let ns: i32[] = [1, 2, 3, 4, 5, 6];
+    if (arr.count_where(ns, is_even) == 3) { r = r + 1; }
+    if (ns.count_where(is_even) == 3) { r = r + 2; }
+    let ws: string[] = ["a", "bb", "ccc"];
+    if (arr.sum_by(ws, slen) == 6) { r = r + 4; }
+    if (ws.sum_by(slen) == 6) { r = r + 8; }
+    return r;
+}

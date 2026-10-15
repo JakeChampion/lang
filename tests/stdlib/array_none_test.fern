@@ -6,9 +6,8 @@ import "std/array";
 // the readable complement of any; short-circuits, vacuously true for empty.
 // Kept as its own suite so the self-host merged bundle stays under the asm_ir IR
 // budget; uses assert_true. Closure-based over a generic T[] (same shape as
-// any/all), so the i32 cases lower on the self-host IR path. The Go-side
-// TestNativeArrayNone pins native compilation on all four backends (incl. a
-// string-closure case); this is the migration-shaped companion.
+// any/all). conformance/cases/array_none_module pins it on every backend, incl. a
+// string-closure case.
 
 function is_neg(x: i32): boolean {
   return x < 0;

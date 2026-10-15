@@ -1,0 +1,10 @@
+// std/array's max_by / min_by under a three-way comparator. Empty gives None;
+// ties keep the first extremum.
+// A minimal inline body, so this pins the lowering of its shape rather than
+// the shipped module.
+//
+// empty -> None for both; encode as 2 (max None) + 3 (min None) = 5.
+function max_by[T](xs: T[], cmp: (T, T) => i32): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let i: i32 = 1; while (i < xs.len()) { if (cmp(xs[i], best) > 0) { best = xs[i]; } i = i + 1; } return Some(best); }
+function min_by[T](xs: T[], cmp: (T, T) => i32): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let i: i32 = 1; while (i < xs.len()) { if (cmp(xs[i], best) < 0) { best = xs[i]; } i = i + 1; } return Some(best); }
+function cmp_i(a: i32, b: i32): i32 { return a - b; }
+function main(): i32 { let e: i32[] = []; let r = 0; match (max_by(e, cmp_i)) { Some(x) => {}, None => { r = r + 2; } } match (min_by(e, cmp_i)) { Some(x) => {}, None => { r = r + 3; } } return r; }

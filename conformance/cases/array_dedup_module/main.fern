@@ -1,0 +1,16 @@
+// std/array's dedup: collapse each run of consecutive equal elements to one.
+// The shipped module's free and method forms.
+import "std/array" as arr;
+function same(a: i32[], b: i32[]): boolean { if (a.len() != b.len()) { return false; } let i = 0; while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; } return true; }
+function main(): i32 {
+    let r = 0;
+    if (same(arr.dedup([1, 1, 2, 2, 1]), [1, 2, 1])) { r = r + 1; }
+    if (same([1, 1, 1].dedup(), [1])) { r = r + 2; }
+    if (same([1, 2, 3].dedup(), [1, 2, 3])) { r = r + 4; }
+    let e: i32[] = [];
+    if (e.dedup().len() == 0) { r = r + 8; }
+    let ss: string[] = ["a", "a", "b", "a"];
+    let sr = ss.dedup();
+    if (sr.len() == 3 && sr[0] == "a" && sr[1] == "b" && sr[2] == "a") { r = r + 16; }
+    return r;
+}

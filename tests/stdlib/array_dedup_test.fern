@@ -6,13 +6,8 @@ import "std/array";
 // elements to one, the single-pass complement of distinct. Covers runs,
 // all-equal, no-dup, sorted (behaves like distinct), and empty. Kept as its own
 // suite so the self-host merged bundle stays under the asm_ir IR budget; uses
-// assert_eq_array / assert_true (no scalar assert_eq[i32]).
-//
-// The i32 cases here are self-host-gated; STRING-element dedup is covered only
-// by the Go-side native differential (TestNativeArrayDedup exercises a string[]
-// dedup on all four native backends) because the self-host compiler mishandles
-// the generic cmp.Eq dedup over pointer-payload (string) elements — the same
-// gap that keeps array_rotate / array_accessors' string cases native-only.
+// assert_eq_array / assert_true (no scalar assert_eq[i32]). String-element dedup
+// is pinned on every backend by conformance/cases/array_dedup_module.
 
 function test_runs(): test.TestOutcome {
   // Only ADJACENT dups collapse — the trailing 1 survives.

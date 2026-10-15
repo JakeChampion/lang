@@ -1,0 +1,11 @@
+// std/array's is_empty / first / last / get: bounds-checked accessors returning
+// Option[T]; a negative index is None, not from-the-end.
+// A minimal inline body, so this pins the lowering of its shape rather than
+// the shipped module.
+//
+// first=10, last=30, get(1)=20 -> 10 + 30 + 20 = 60.
+function first[T](xs: T[]): Option[T] { if (xs.len() == 0) { return None; } return Some(xs[0]); }
+function last[T](xs: T[]): Option[T] { let n: i32 = xs.len(); if (n == 0) { return None; } return Some(xs[n - 1]); }
+function get[T](xs: T[], i: i32): Option[T] { if (i < 0 || i >= xs.len()) { return None; } return Some(xs[i]); }
+function uw(o: Option[i32]): i32 { match (o) { Some(v) => { return v; }, None => { return 0; } } }
+function main(): i32 { let xs: i32[] = [10, 20, 30]; return uw(first(xs)) + uw(last(xs)) + uw(get(xs, 1)); }
