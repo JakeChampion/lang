@@ -3027,8 +3027,8 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
   honoured), so it holds no compressor between messages, and the client
   keeps its own: the reader holds the last 32 KiB the client's messages
   decoded to and decodes the next against it (`deflate.inflate_after`),
-  which spares the client a compressor per message; a compressed message is inflated whole under
-  `max_message` once its last fragment arrives (1009 past it, 1007 for a
+  which spares the client a compressor per message; a compressed message
+  is inflated whole under `max_message` once its last fragment arrives (1009 past it, 1007 for a
   stream that does not inflate or text that is not UTF-8 once it does),
   and every data message the handler sends goes out compressed under
   RSV1 (`Conn.window` is the window bits, 0 without the extension). `accept_key(key)` and

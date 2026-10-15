@@ -62,9 +62,9 @@ import "std/deflate";
 // `send` answers `Backpressure`; `max_backpressure`, past which it drops
 // the message; `protocols`, the subprotocols the server speaks, the
 // first of the client's offers among them chosen; and `compression`,
-// whether to take a client's `permessage-deflate` offer (RFC 7692) in
-// the shared-compressor mode, no context carried from one message to
-// the next on either side, so a connection costs no window of its own.
+// whether to take a client's `permessage-deflate` offer (RFC 7692),
+// the server compressing each message alone and the reader keeping the
+// client's 32 KiB window across messages.
 pub struct Options { max_message: i32, backpressure: i32, max_backpressure: i32, protocols: string[], compression: boolean }
 
 // `options()` — a 1 MiB message, 64 KiB of cork before backpressure, 1

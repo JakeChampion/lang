@@ -32,6 +32,7 @@ IMAGE=crossbario/autobahn-testsuite@sha256:519915fb568b04c9383f70a1c405ae3ff44ab
 report="${1:--}"
 shift || true
 out="${FERN_AUTOBAHN_OUT:-$work/autobahn}"
+rm -rf "$out/reports"
 mkdir -p "$out/config" "$out/reports"
 chmod 777 "$out/reports"
 # Every section by default, in groups, each run by a wstest process of its
