@@ -97,11 +97,45 @@ func lifetimeFixture(t *testing.T, name string) (source, want string) {
 	return read(".fern"), read(".want")
 }
 
+// keptAgreesSource checks ssalive.compute_kept against compute on a
+// fixture's graph: under each mask a kept value is live exactly where
+// compute says, and a value outside the mask is live nowhere.
+const keptAgreesSource = `
+function kept_agrees(f: ssa.SFunc, deps: i32[][], full: ssalive.Flow): boolean {
+    let m: i32 = 2;
+    while (m <= 3) {
+        let keep: boolean[] = [];
+        let v: i32 = 0;
+        while (v < f.nvals) { keep = keep.append(v % m == 0); v = v + 1; }
+        let kept = ssalive.compute_kept(f, deps, keep);
+        if (!kept.ok) { return false; }
+        let bi: i32 = 0;
+        while (bi < f.blocks.len()) {
+            v = 0;
+            while (v < f.nvals) {
+                let live_in: boolean = keep[v] && ssalive.live_in_has(full, bi, v);
+                let live_out: boolean = keep[v] && ssalive.live_out_has(full, bi, v);
+                if (ssalive.live_in_has(kept, bi, v) != live_in || ssalive.live_out_has(kept, bi, v) != live_out) { return false; }
+                v = v + 1;
+            }
+            bi = bi + 1;
+        }
+        m = m + 1;
+    }
+    return true;
+}
+`
+
 func TestSelfHostSSALifetimeDependencies(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	for _, name := range lifetimeFixtureNames {
 		t.Run(name, func(t *testing.T) {
 			source, want := lifetimeFixture(t, name)
+			const call = "let result = ssalive.compute(f, deps);\n"
+			if !strings.Contains(source, call) {
+				t.Fatalf("fixture does not call ssalive.compute as %q", call)
+			}
+			source = strings.Replace(source, call, call+"if (result.ok && !kept_agrees(f, deps, result)) { print(\"compute_kept\"); return 4; }\n", 1) + keptAgreesSource
 			dir := t.TempDir()
 			copySelfHostDriver(t, dir, "ssalive.fern")
 			if err := os.WriteFile(filepath.Join(dir, "lifetime_fixture.fern"), []byte(source), 0o644); err != nil {

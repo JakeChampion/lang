@@ -36,7 +36,8 @@
 //   - `x` is `length(b) - c` with a fact putting `length(b)` at `c` or more;
 //   - `x` is a phi whose operands are all at least zero, assuming the phi is;
 //   - `x` is `y & c` for a constant `c` at least zero;
-//   - `x` is what a byte-set scan or a bit count returns, never negative.
+//   - `x` is what a byte-set scan or a bit count returns, never negative;
+//   - `x` widens an unsigned integer, or sign-extends one at least zero.
 import "./ssa";
 import "./ssadeps";
 import "./ssasem";
@@ -50,7 +51,9 @@ struct Rel { lo: i32, hi: i32, strict: boolean }
 // learns from its own edge are `rels[first[b] .. first[b] + count[b]]`. `up[b]`
 // is b when it learns any, else its nearest dominator that does, and -1 when
 // none does; `above[b]` is the nearest strict dominator that does.
-struct Graph { defs: ssa.SInst[], home: i32[], i32s: boolean[], rels: Rel[], first: i32[], count: i32[], up: i32[], above: i32[] }
+// `widens[v]` is 1 when v widens an unsigned integer (never negative), 2 when
+// it sign-extends a signed one (negative only when its operand is), else 0.
+struct Graph { defs: ssa.SInst[], home: i32[], i32s: boolean[], i64s: boolean[], widens: i32[], rels: Rel[], first: i32[], count: i32[], up: i32[], above: i32[] }
 
 pub function proven_indices(f: ssasem.Func): ssasem.Func {
   if (!any_checked_index(f)) {
@@ -138,13 +141,16 @@ function graph_of(f: ssasem.Func): Graph {
   let defs: ssa.SInst[] = [];
   let home: i32[] = [];
   let i32s: boolean[] = [];
+  let i64s: boolean[] = [];
   let v: i32 = 0;
   while (v < n) {
     defs = defs.append(none);
     home = home.append(0 - 1);
     i32s = i32s.append(ssasem.is_i32(f.values[v]));
+    i64s = i64s.append(ssasem.is_i64(f.values[v]));
     v = v + 1;
   }
+  let widens: i32[] = __alloc_i32(n);
   let nb: i32 = f.graph.blocks.len();
   let b: i32 = 0;
   while (b < nb) {
@@ -152,11 +158,12 @@ function graph_of(f: ssasem.Func): Graph {
       if (ins.result >= 0 && ins.result < n) {
         defs = defs.with(ins.result, ins);
         home = home.with(ins.result, b);
+        widens = widens.with(ins.result, widening(f, ins));
       }
     }
     b = b + 1;
   }
-  let g: Graph = Graph { defs: defs, home: home, i32s: i32s, rels: [], first: [], count: [], up: [], above: [] };
+  let g: Graph = Graph { defs: defs, home: home, i32s: i32s, i64s: i64s, widens: widens, rels: [], first: [], count: [], up: [], above: [] };
   let at: i32[] = ssadeps.position_of(f.graph);
   b = 0;
   while (b < nb) {
@@ -512,10 +519,13 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
     return true;
   }
   let d: ssa.SInst = g.defs[x];
-  if (d.kind_tag == ssasem.call() && nonneg_call(d.str)) {
+  if (d.kind_tag == ssasem.call() && nonneg_call(d.str) || g.widens[x] == 1) {
     return true;
   }
   let at: i32 = g.home[x];
+  if (g.widens[x] == 2 && nonneg(g, at, d.args[0], assume, steps - 1)) {
+    return true;
+  }
   if (binary(d, "+")) {
     let y: i32 = 0 - 1;
     if (is_const(g, d.args[1]) && const_value(g, d.args[1]) == 1) {
@@ -645,16 +655,17 @@ pub function nonneg_quotients(f: ssasem.Func): ssasem.Func {
     let marked: boolean = false;
     for ins in blk.insts {
       let k: i32 = pow2_divisor(g, ins);
-      if (k > 0 && g.i32s[ins.result] && nonneg(g, b, ins.args[0], [], depth())) {
+      if (k > 0 && (g.i32s[ins.result] || g.i64s[ins.result]) && nonneg(g, b, ins.args[0], [], depth())) {
         let c: i32 = values.len();
         values = values.append(f.values[ins.result]);
+        let op: string = "&";
+        let operand: i32 = (1 << k) - 1;
         if (ins.str == "/") {
-          insts = insts.append(ssa.SInst { kind_tag: 1, result: c, args: [], imm: k, str: "" });
-          insts = insts.append(ssa.SInst { ...ins, args: [ins.args[0], c], str: ">>" });
-        } else {
-          insts = insts.append(ssa.SInst { kind_tag: 1, result: c, args: [], imm: (1 << k) - 1, str: "" });
-          insts = insts.append(ssa.SInst { ...ins, args: [ins.args[0], c], str: "&" });
+          op = ">>";
+          operand = k;
         }
+        insts = insts.append(int_const(f.values[ins.result], c, operand));
+        insts = insts.append(ssa.SInst { ...ins, args: [ins.args[0], c], str: op });
         marked = true;
       } else {
         insts = insts.append(ins);
@@ -684,13 +695,60 @@ function any_pow2_quotient(f: ssasem.Func): boolean {
   return false;
 }
 
+// small_const is the value of `v` when it is an i32 constant at least zero,
+// one widened (`8 as i64`), or an i64 constant (carried as decimal text)
+// that fits an i32; -1 otherwise.
+function small_const(g: Graph, v: i32): i32 {
+  let r: i32 = root(g, v);
+  let d: ssa.SInst = g.defs[r];
+  if (g.widens[r] != 0) {
+    return small_const(g, d.args[0]);
+  }
+  if (is_const(g, r) && const_value(g, r) >= 0) {
+    return const_value(g, r);
+  }
+  if (d.kind_tag == 1 && g.i64s[r] && d.str.len() > 0 && d.str.len() < 10 && util.is_all_digits(d.str)) {
+    return util.digits_to_i32(d.str);
+  }
+  return 0 - 1;
+}
+
+// int_const defines `result`, of integer type `t`, as `n`: in the immediate,
+// or as decimal text for a type whose constants are carried that way.
+function int_const(t: typeinfo.Type, result: i32, n: i32): ssa.SInst {
+  if (ssasem.text_constant(t)) {
+    return ssa.SInst { kind_tag: 1, result: result, args: [], imm: 0, str: util.i32_to_string(n) };
+  }
+  return ssa.SInst { kind_tag: 1, result: result, args: [], imm: n, str: "" };
+}
+
+// widening is Graph.widens for `ins`: a cast from an unsigned integer to a
+// wider signed one (1), or from a signed integer to a wider one (2).
+function widening(f: ssasem.Func, ins: ssa.SInst): i32 {
+  if (ins.kind_tag != ssasem.cast() || ins.args.len() != 1) {
+    return 0;
+  }
+  if let typeinfo.TypeI32(from) = f.values[ins.args[0]] {
+    if let typeinfo.TypeI32(to) = f.values[ins.result] {
+      if (from.is_char || to.is_char || to.unsigned || from.width >= to.width) {
+        return 0;
+      }
+      if (from.unsigned) {
+        return 1;
+      }
+      return 2;
+    }
+  }
+  return 0;
+}
+
 // pow2_divisor is k when `ins` is `x / 2^k` or `x % 2^k` for a constant
 // divisor 2^k with k at least 1, and 0 otherwise.
 function pow2_divisor(g: Graph, ins: ssa.SInst): i32 {
-  if (!binary(ins, "/") && !binary(ins, "%") || !is_const(g, ins.args[1])) {
+  if (!binary(ins, "/") && !binary(ins, "%")) {
     return 0;
   }
-  let d: i32 = const_value(g, ins.args[1]);
+  let d: i32 = small_const(g, ins.args[1]);
   if (d < 2 || (d & d - 1) != 0) {
     return 0;
   }
