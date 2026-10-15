@@ -4011,7 +4011,7 @@ function compose_repl(a: i32[], b: i32[]): i32[] {
 // Dead values are pruned before the wraps too: a fused rotate's right shift
 // would otherwise still read its operand's high half.
 pub function register_form(f: SFunc): Formed {
-  let folded: Formed = prune_trivial_phis(f);
+  let folded: Formed = prune_trivial_phis(slot_calls(f));
   let merged: Formed = merge_duplicates(folded.f);
   let shared: Formed = share_shape_loads(merged.f);
   let unwrapped: Formed = drop_low_wraps(prune_dead(fuse_rotates(shared.f)));
@@ -4035,6 +4035,67 @@ pub function register_form(f: SFunc): Formed {
     g = prune_dead(g);
   }
   return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), shared.repl), unwrapped.repl), bytes.repl) };
+}
+
+// slot_call is a call through a function value that reads the body's address
+// out of slot 0 of the environment it passes first, args[1]; its args[0]
+// repeats the environment.
+pub function slot_call(ins: SInst): boolean {
+  return ins.kind_tag == 56 && ins.str == "slot";
+}
+
+// slot_calls makes a slot_call of each call through a function value whose
+// address is the unchecked read of slot 0 of the environment the call passes
+// (ssarc.body_address) and is read nowhere else, and drops the read: the
+// emitter loads the address from the environment at the call.
+function slot_calls(f: SFunc): SFunc {
+  let zero: boolean[] = __alloc_bool(f.nvals);
+  let env_of: i32[] = util.minus_ones(f.nvals);
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == 1 && ins.imm == 0) {
+        zero = zero.with(ins.result, true);
+      }
+    }
+  }
+  let any: boolean = false;
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == 42 && ins.imm == 1 && ins.str == "" && zero[ins.args[1]]) {
+        env_of = env_of.with(ins.result, ins.args[0]);
+      }
+      any = any || ins.kind_tag == 56;
+    }
+  }
+  if (!any) {
+    return f;
+  }
+  let uses: i32[] = use_counts(f);
+  let dropped: boolean[] = __alloc_bool(f.nvals);
+  let blocks: SBlock[] = [];
+  for blk in f.blocks {
+    let insts: SInst[] = [];
+    for ins in blk.insts {
+      if (ins.kind_tag == 56 && ins.args.len() > 1 && env_of[ins.args[0]] == ins.args[1] && uses[ins.args[0]] == 1) {
+        dropped = dropped.with(ins.args[0], true);
+        insts = insts.append(SInst { ...ins, args: ins.args.with(0, ins.args[1]), str: "slot" });
+      } else {
+        insts = insts.append(ins);
+      }
+    }
+    blocks = blocks.append(SBlock { ...blk, insts: insts });
+  }
+  let out: SBlock[] = [];
+  for blk in blocks {
+    let insts: SInst[] = [];
+    for ins in blk.insts {
+      if (ins.kind_tag != 42 || !dropped[ins.result]) {
+        insts = insts.append(ins);
+      }
+    }
+    out = out.append(SBlock { ...blk, insts: insts });
+  }
+  return SFunc { ...f, blocks: out };
 }
 
 // share_shape_loads maps a load of a box's word 0, its shape, onto an earlier

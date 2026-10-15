@@ -187,7 +187,7 @@ function main(): i32 {
     return apply((y: i32) => y + k, 3);
 }
 `,
-		want:   map[string][]string{"x86-64-linux": {`call \*%\w+`}, "arm64-linux": {`blr x\d+`}},
+		want:   map[string][]string{"x86-64-linux": {`call \*8\(%rax\)`}, "arm64-linux": {`blr x\d+`}},
 		forbid: map[string][]string{"x86-64-linux": {`__fern_oob_abort`}, "arm64-linux": {`__fern_oob_abort`}}},
 	// A variant box's drop tests its variants as one chain: the first that
 	// matches ends it, so the shape is loaded once and compared until a

@@ -14,7 +14,8 @@ import (
 // built through __fern_str_free's register entry, with none of the inline
 // guard's labels, and `h` retains the array it goes on reading through
 // __fern_rc_inc. The leaf `mix` is spliced into `k` by default and called
-// under -size, which splices only what is called once (seminline). The
+// under -size, which splices only what is called once (seminline); so is
+// `wrap`, a leaf only once `mix2`, called from it alone, folds in. The
 // program answers the same either way, -size drops the
 // backtrace walk unless -backtrace asks for it, and the net-bench hello
 // server, std/serve whole, builds smaller.
@@ -27,7 +28,15 @@ function mix(x: i32): i32 {
   return c * c + a - b;
 }
 @noinline function k(a: i32, b: i32): i32 { return mix(a) + mix(b); }
-function main(): i32 { return g("abc" + "") + g("") * 10 + h([1, 2, 3]) * 100 + k(args().len(), 2) - 5; }
+function mix2(x: i32): i32 {
+  let a: i32 = x * 29 + 3;
+  let b: i32 = (a ^ (a >> 2)) * 13;
+  let c: i32 = (b + x) % 1013;
+  return c * c + a - b;
+}
+function wrap(x: i32): i32 { return mix2(x) + 1; }
+@noinline function w(a: i32, b: i32): i32 { return wrap(a) + wrap(b); }
+function main(): i32 { return g("abc" + "") + g("") * 10 + h([1, 2, 3]) * 100 + k(args().len(), 2) + w(args().len(), 3) - 5; }
 `
 
 func TestSelfHostSizeMode(t *testing.T) {
@@ -71,8 +80,16 @@ func TestSelfHostSizeMode(t *testing.T) {
 		if kb := condBranchBody(t, asm, "k"); !mixCall.MatchString(kb) {
 			t.Errorf("%s -size: k splices the leaf mix rather than calling it:\n%s", target, kb)
 		}
-		if kb := condBranchBody(t, emit(target), "k"); mixCall.MatchString(kb) {
+		def := emit(target)
+		if kb := condBranchBody(t, def, "k"); mixCall.MatchString(kb) {
 			t.Errorf("%s: by default k calls the leaf mix rather than splicing it:\n%s", target, kb)
+		}
+		wrapCall := regexp.MustCompile(`(call|bl) __fn_wrap\b`)
+		if wb := condBranchBody(t, asm, "w"); !wrapCall.MatchString(wb) {
+			t.Errorf("%s -size: w splices wrap, grown into a leaf, rather than calling it:\n%s", target, wb)
+		}
+		if wb := condBranchBody(t, def, "w"); wrapCall.MatchString(wb) {
+			t.Errorf("%s: by default w calls wrap, grown into a leaf, rather than splicing it:\n%s", target, wb)
 		}
 		if strings.Contains(asm, "backtrace:") {
 			t.Errorf("%s -size: the backtrace walk is still emitted", target)
@@ -127,7 +144,7 @@ func TestSelfHostSizeMode(t *testing.T) {
 }
 
 // sizeModeExit is what sizeModeProg's main answers, as an exit status: g
-// gives 14, h 700, and k(1, 2) the two mixes, less 5.
+// gives 14, h 700, k(1, 2) the two mixes and w(1, 3) the two wraps, less 5.
 func sizeModeExit() int {
 	mix := func(x int32) int32 {
 		a := x*31 + 7
@@ -135,5 +152,11 @@ func sizeModeExit() int {
 		c := (b + x) % 1009
 		return c*c + a - b
 	}
-	return int(uint8(14 + 700 + mix(1) + mix(2) - 5))
+	mix2 := func(x int32) int32 {
+		a := x*29 + 3
+		b := (a ^ (a >> 2)) * 13
+		c := (b + x) % 1013
+		return c*c + a - b
+	}
+	return int(uint8(14 + 700 + mix(1) + mix(2) + mix2(1) + 1 + mix2(3) + 1 - 5))
 }
