@@ -163,7 +163,9 @@ def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endi
         p(f"// {rounds} is __{tag}_blocks without the instructions.")
         p(f"// Generated: the rounds are unrolled with the working variables renamed per")
         p(f"// round and the message schedule a rolling window of locals, so the loop")
-        p(f"// touches no array but the input.")
+        p(f"// touches no array but the input.{' ' + order_doc[0] if order_doc else ''}")
+        for line in order_doc[1:]:
+            p(f"// {line}")
     else:
         p(f"// __{tag}_blocks folds `nblocks` {block}-byte blocks of `bs`, starting at byte")
         p(f"// `from`, into the state. Generated: the rounds are unrolled with the working")
@@ -609,7 +611,7 @@ def unformatted():
                            "rotate and one add sit between one round's result and the next's."))
     emit_family(p, tag="sha1", struct="Sha1", ty="u32", width=32, nwords=5, block=64, len_bytes=8,
                 big_endian=True, ivs={"sha1_new": (SHA1_IV, 20)}, rounds_body=sha1_rounds,
-                doc="SHA-1 (RFC 3174)",
+                doc="SHA-1 (RFC 3174)", hw=True,
                 order_doc=("Each round adds the", "rotated newest variable last, after the constant, the word and the",
                            "function, so one rotate and one add sit between consecutive rounds."))
     emit_family(p, tag="sha256", struct="Sha256", ty="u32", width=32, nwords=8, block=64, len_bytes=8,

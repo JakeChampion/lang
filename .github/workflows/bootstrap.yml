@@ -115,6 +115,7 @@ jobs:
           name: bootstrap-report-${{ matrix.host }}
           path: build/bootstrap/distcheck-report.txt
           if-no-files-found: warn
+          overwrite: true
 
   # The freshly built arm64 candidate compiling the whole compiler. `verify`
   # above runs the PINNED stage0, and stage2-fixpoint-arm64 drives
@@ -204,6 +205,7 @@ jobs:
           name: stage0-${{ matrix.host }}
           path: dist/*
           if-no-files-found: error
+          overwrite: true
 
   release:
     needs: publish

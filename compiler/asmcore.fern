@@ -413,12 +413,15 @@ pub function float_result(mask: string): boolean {
 
 // unit_leaves lifts every small body in the unit's cache (the same bodies
 // unit_labels names) and keeps the ones a caller may take inline. A body
-// declared `@noinline` stays a call.
-pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.LowerResult[]): ssa.Leaf[] {
+// declared `@noinline` stays a call. Each lift is kept for the emit, by cache
+// position, with its register form when it calls none of the leaves.
+pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.LowerResult[]): UnitLeaves {
   let out: ssa.Leaf[] = [];
+  let pre: Prelift[] = [];
   let kt: ssa_lift.KindTable = ssa_lift.kind_table();
   let fi: i32 = 0;
   while (fi < cache.len()) {
+    let p: Prelift = no_prelift();
     let inside: boolean = fi >= mod.funcs.len() || fi >= lo && fi < hi;
     if (fi < mod.funcs.len() && mod.funcs[fi].no_inline) {
       inside = false;
@@ -433,15 +436,72 @@ pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.L
       }
       let lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(kt, name, cache[fi].n_params, cache[fi].n_locals, cache[fi].ops, false);
       if (lifted.ok) {
-        let f: ssa.SFunc = ssa.register_form(lifted.func).f;
-        for leaf in ssa.leaf_of(name, f) {
+        let f: ssa.Formed = ssa.register_form(lifted.func);
+        for leaf in ssa.leaf_of(name, f.f) {
           out = out.append(leaf);
         }
+        p = Prelift { lifted: Some(lifted), formed: Some(f) };
       }
     }
+    pre = pre.append(p);
     fi = fi + 1;
   }
-  return out;
+  return UnitLeaves { leaves: out, pre: unformed_callers(pre, out) };
+}
+
+// unformed_callers drops the register form of each body that calls one of
+// `leaves`, since inlining them changes it.
+function unformed_callers(own pre: Prelift[], leaves: ssa.Leaf[]): Prelift[] {
+  let i: i32 = 0;
+  while (i < pre.len()) {
+    if let Some(l) = pre[i].lifted {
+      if (ssa.calls_leaf(l.func, leaves)) {
+        pre = pre.with(i, Prelift { lifted: Some(l), formed: None });
+      }
+    }
+    i = i + 1;
+  }
+  return pre;
+}
+
+// The unit's leaves, and what unit_leaves made of each cache position's body
+// (Prelift).
+pub struct UnitLeaves { leaves: ssa.Leaf[], pre: Prelift[] }
+
+// A body's lift made before the emit, and its register form when it calls
+// none of the unit's leaves; None where there is none to reuse.
+pub struct Prelift { lifted: Option[ssa_lift.LResult], formed: Option[ssa.Formed] }
+
+// prelift is what unit_leaves made of body `r`, position `i` of the cache
+// `pre` was made from. A body whose emit tracks its slots lifts again, since
+// its lift records them.
+pub function (s: EmitState) prelift(pre: Prelift[], i: i32, r: irtables.LowerResult): Prelift {
+  if (i >= pre.len() || r.dbg_slots.len() > 0 && s.var_rows) {
+    return no_prelift();
+  }
+  return pre[i];
+}
+
+pub function no_prelift(): Prelift {
+  return Prelift { lifted: None, formed: None };
+}
+
+// lift is `r`'s lift, emitted as `label_name`: the one `pre` holds, else a
+// fresh one.
+pub function (s: EmitState) lift(pre: Prelift, label_name: string, r: irtables.LowerResult): ssa_lift.LResult {
+  if let Some(l) = pre.lifted {
+    return l;
+  }
+  return ssa_lift.lift_from_ir_prod(s.kinds, label_name, r.n_params, r.n_locals, r.ops, r.dbg_slots.len() > 0 && s.var_rows);
+}
+
+// finish is ssaprepare.finish over the unit's leaves, taking the register
+// form `pre` holds rather than making it again.
+pub function (s: EmitState) finish(pre: Prelift, r: irtables.LowerResult, selected: physicalbody.Selected, lifted: ssa_lift.LResult): ssaprepare.Body {
+  if let Some(f) = pre.formed {
+    return ssaprepare.finish_formed(r, selected, lifted, f);
+  }
+  return ssaprepare.finish(r, selected, lifted, s.leaves);
 }
 
 pub function new_state(): EmitState {
@@ -9421,26 +9481,26 @@ function parse_unknown_error(where: string, kind: string, line: i32, col: i32): 
   // An out-of-range float literal is P002, the numeric-literal code native's
   // parser reports for it, not the generic parser-side-unknown P001 (#6842).
   if (util.is_f64_range_kind(kind)) {
-    return util.Diag { code: "P002", message: where + ": " + util.f64_range_message(kind), line: line, col: col };
+    return util.Diag { code: "P002", message: where + ": " + util.f64_range_message(kind), line: line, col: col, fix: None };
   }
   // The parser refused to recurse further rather than run the stack out.
   // P005, matching native, so both front ends name the same code for it.
   // The statement-level scan prefixes the kind, so match either spelling.
   if (kind == "nest:too-deep" || kind == "stmt: nest:too-deep") {
-    return util.Diag { code: "P005", message: where + ": input nests too deeply", line: line, col: col };
+    return util.Diag { code: "P005", message: where + ": input nests too deeply", line: line, col: col, fix: None };
   }
   // A value-position block ending in a `;`-terminated statement: E061, the
   // code native and the self-host checker report for it.
   if (kind == "value branch has no trailing expression" || kind == "stmt: value branch has no trailing expression") {
-    return util.Diag { code: "E061", message: where + ": block-expression has no trailing value", line: line, col: col };
+    return util.Diag { code: "E061", message: where + ": block-expression has no trailing value", line: line, col: col, fix: None };
   }
   // A declaration the parser discarded (a local function's) carries the
   // declaration gate's own text, so it reads as check_decl_names' would.
   let decl: string = decl_sentinel_text(kind);
   if (decl.len() > 0) {
-    return util.Diag { code: "P001", message: where + ": " + decl, line: line, col: col };
+    return util.Diag { code: "P001", message: where + ": " + decl, line: line, col: col, fix: None };
   }
-  return util.Diag { code: "P001", message: where + ": " + sentinel_message(kind), line: line, col: col };
+  return util.Diag { code: "P001", message: where + ": " + sentinel_message(kind), line: line, col: col, fix: None };
 }
 
 // sentinel_message words a parser sentinel's kind the way native's parser
@@ -9717,6 +9777,7 @@ pub function parse_unknown_errors_module(mod: parser.Module): util.Diag[] {
       errs = errs.append(util.Diag {
         code: "P001", message: parser.malformed_fn_decl_message(),
         line: mod.funcs[fi].line, col: mod.funcs[fi].col,
+        fix: None,
       });
       where = "in malformed function declaration";
     }
@@ -9810,6 +9871,7 @@ function display_arg_errs(e: ast.Expr, fname: string, st: EmitState): util.Diag[
                 + " — give " + an + " a `to_string(): string` method, or "
                 + util.derive_hint(tn, "cmp.Display", "cmp.Display"),
               line: id.line, col: id.col,
+              fix: None,
             }];
           }
           return [];
@@ -9879,6 +9941,7 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
               + "': return value: expected " + ty_friendly(want)
               + ", got " + ty_friendly(got),
             line: r.line, col: r.col,
+            fix: None,
           }),
         };
       }
@@ -9915,6 +9978,7 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
                 + ty_friendly(declared) + ", got "
                 + ty_friendly(got),
               line: v.line, col: v.col,
+              fix: None,
             }),
           };
         }
@@ -9936,6 +10000,7 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
               + ty_friendly(tt) + ", got "
               + ty_friendly(got),
             line: a.line, col: a.col,
+            fix: None,
           }),
         };
       }
@@ -10206,6 +10271,7 @@ function map_chain_check_expr(e: ast.Expr, fname: string, errs: util.Diag[]): ut
                     + " ctor's key/value types are not inferable through a method"
                     + " chain; bind it first (let m: Map[K, V] = " + mroot + "(n))",
                   line: 0, col: 0,
+                  fix: None,
                 });
               }
             }
@@ -10480,7 +10546,7 @@ function callgate_undefined_error(g: CallGate, where: string, name: string, line
     out = out + " — no module '" + ns + "' was loaded (a std/ or core/ import is"
       + " skipped when no stdlib was given, so every call into it dangles)";
   }
-  return util.Diag { code: "E001", message: out, line: line, col: col };
+  return util.Diag { code: "E001", message: out, line: line, col: col, fix: None };
 }
 
 // callgate_expr walks one expression, appending a diagnostic line for each
@@ -10498,6 +10564,7 @@ function callgate_expr(e: ast.Expr, g: CallGate, where: string, bound: string[],
               errs = errs.append(util.Diag {
                 code: "E004", message: util.arity_message("function \"" + id.name + "\"", g.argc[ti], c.args.len(), "argument"),
                 line: id.line, col: id.col,
+                fix: None,
               });
             }
             if (g.check_undef && !found && !callgate_known_callee(id.name, g.known)) {
@@ -10743,12 +10810,14 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
       errs = errs.append(util.Diag {
         code: "P001", message: malformed_type_decl_message("const"),
         line: mod.funcs[i].line, col: mod.funcs[i].col,
+        fix: None,
       });
     } else if (mod.funcs[i].name.len() == 0) {
       errs = errs.append(util.Diag {
         code: "P001",
         message: parser.malformed_fn_decl_message(),
         line: mod.funcs[i].line, col: mod.funcs[i].col,
+        fix: None,
       });
     }
     errs = untyped_param_errs(mod.funcs[i], errs);
@@ -10756,11 +10825,11 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
   }
   for td in mod.trait_decls {
     if (td.name.len() == 0) {
-      errs = errs.append(util.Diag { code: "P001", message: malformed_type_decl_message("trait"), line: td.line, col: td.col });
+      errs = errs.append(util.Diag { code: "P001", message: malformed_type_decl_message("trait"), line: td.line, col: td.col, fix: None });
     }
     for tm in td.methods {
       if (tm.name.len() == 0) {
-        errs = errs.append(util.Diag { code: "P001", message: parser.malformed_fn_decl_message(), line: tm.line, col: tm.col });
+        errs = errs.append(util.Diag { code: "P001", message: parser.malformed_fn_decl_message(), line: tm.line, col: tm.col, fix: None });
       }
       errs = untyped_param_errs(tm, errs);
     }
@@ -10771,18 +10840,19 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
       errs = errs.append(util.Diag {
         code: "P001", message: malformed_type_decl_message("struct"),
         line: mod.structs[si].line, col: mod.structs[si].col,
+        fix: None,
       });
     }
     si = si + 1;
   }
   for en in mod.enums {
     if (en.name.len() == 0) {
-      errs = errs.append(util.Diag { code: "P001", message: malformed_type_decl_message("enum"), line: en.line, col: en.col });
+      errs = errs.append(util.Diag { code: "P001", message: malformed_type_decl_message("enum"), line: en.line, col: en.col, fix: None });
     }
   }
   for al in mod.aliases {
     if (al.name.len() == 0) {
-      errs = errs.append(util.Diag { code: "P001", message: malformed_type_decl_message("type alias"), line: al.line, col: al.col });
+      errs = errs.append(util.Diag { code: "P001", message: malformed_type_decl_message("type alias"), line: al.line, col: al.col, fix: None });
     }
   }
   return errs;
@@ -10838,6 +10908,7 @@ function untyped_param_errs(fd: parser.FuncDecl, errs: util.Diag[]): util.Diag[]
       out = out.append(util.Diag {
         code: "P001", message: "parameter \"" + param.name + "\" of \"" + fd.name + "\" has no type: expected \":\" after its name",
         line: fd.line, col: fd.col,
+        fix: None,
       });
     }
   }
@@ -10888,6 +10959,7 @@ pub function check_top_level_stmts(mod: parser.Module): util.Diag[] {
       code: "P001",
       message: "statement at top level: a module declaring `main` runs that, so this never executes — move it inside a function",
       line: ast.stmt_line(st), col: 0,
+      fix: None,
     });
   }
   return errs;

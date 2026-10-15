@@ -3949,7 +3949,7 @@ pub function deferred_retain(f: ssasem.Func, p: Plan, step: Step, ins: ssa.SInst
   return receiver_retained(step);
 }
 
-function receiver_retained(step: Step): boolean {
+pub function receiver_retained(step: Step): boolean {
   for supply in step.supplies {
     if (supply.slot == 0 && supply.mode == retain_unit()) {
       return true;

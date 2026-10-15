@@ -285,6 +285,12 @@ func TestSelfHostLSPLifecycleX86_64(t *testing.T) {
 				} `json:"signatureHelpProvider"`
 				DocumentSymbolProvider bool `json:"documentSymbolProvider"`
 				InlayHintProvider      bool `json:"inlayHintProvider"`
+				CodeActionProvider     bool `json:"codeActionProvider"`
+				ReferencesProvider     bool `json:"referencesProvider"`
+				RenameProvider         bool `json:"renameProvider"`
+				SemanticTokensProvider *struct {
+					Full bool `json:"full"`
+				} `json:"semanticTokensProvider"`
 			} `json:"capabilities"`
 			ServerInfo struct {
 				Name string `json:"name"`
@@ -296,6 +302,11 @@ func TestSelfHostLSPLifecycleX86_64(t *testing.T) {
 		c := got.Capabilities
 		if c.TextDocumentSync != 1 || !c.DocumentFormattingProvider || !c.HoverProvider || !c.DefinitionProvider || !c.DocumentSymbolProvider || !c.InlayHintProvider || got.ServerInfo.Name != "fern" {
 			t.Errorf("initialize result = %+v, want full sync, formatting, hover, definition, document symbols, inlay hints, server fern", got)
+		}
+		// The Go server's shapes: plain booleans, and full semantic tokens (the
+		// legend is held in self_host_lsp_refs_test.go).
+		if !c.CodeActionProvider || !c.ReferencesProvider || !c.RenameProvider || c.SemanticTokensProvider == nil || !c.SemanticTokensProvider.Full {
+			t.Errorf("initialize result = %+v, want code actions, references, rename and full semantic tokens", got)
 		}
 		// The trigger characters are the Go server's.
 		if c.CompletionProvider == nil || !reflect.DeepEqual(c.CompletionProvider.TriggerCharacters, []string{"."}) {
@@ -318,16 +329,16 @@ func TestSelfHostLSPLifecycleX86_64(t *testing.T) {
 			lspInitialize(),
 			{"method": "initialized", "params": lspMsg{}},
 			{"method": "$/cancelRequest", "params": lspMsg{"id": 1}},
-			{"id": "req-a", "method": "textDocument/references", "params": lspMsg{}},
+			{"id": "req-a", "method": "workspace/symbol", "params": lspMsg{"query": ""}},
 			{"id": 7, "method": "shutdown"},
 			{"method": "exit"},
 		})
 		if len(frames) != 3 {
-			t.Fatalf("got %d frames, want 3 (initialize, references, shutdown): %+v", len(frames), frames)
+			t.Fatalf("got %d frames, want 3 (initialize, workspace/symbol, shutdown): %+v", len(frames), frames)
 		}
-		refs := response(t, frames, `"req-a"`)
-		if refs.Error == nil || refs.Error.Code != -32601 || refs.Result != nil {
-			t.Errorf("references answered %+v, want error -32601 and no result", refs)
+		ws := response(t, frames, `"req-a"`)
+		if ws.Error == nil || ws.Error.Code != -32601 || ws.Result != nil {
+			t.Errorf("workspace/symbol answered %+v, want error -32601 and no result", ws)
 		}
 		if sd := response(t, frames, "7"); string(sd.Result) != "null" || sd.Error != nil {
 			t.Errorf("shutdown answered result=%q error=%+v, want result null", sd.Result, sd.Error)

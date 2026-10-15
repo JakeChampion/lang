@@ -127,6 +127,7 @@ jobs:
           path: |
             fern-*${{ matrix.name }}.tar.gz
             fern-*${{ matrix.name }}.tar.gz.sha256
+          overwrite: true
 
   release:
     # Only publish on the scheduled daily run; workflow_dispatch runs still

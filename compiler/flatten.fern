@@ -889,6 +889,16 @@ function rewrite_written(w: string, ctx: RewriteCtx): string {
 }
 
 pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
+  // A function type's parameter list spells a consuming slot `own T`, and the
+  // type sits behind the mode.
+  if (parser.spelling_is_own(tn)) {
+    return "own " + rewrite_type_spelling(parser.spelling_without_own(tn), ctx);
+  }
+  return rewrite_type_spelling(tn, ctx);
+}
+
+// rewrite_type_spelling is rewrite_type_name for a spelling with no mode.
+function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
   // A tuple type `(A, B, …)` — mangle each ELEMENT type, preserving nesting.
   // Without this, rewrite_type_name's bare/bracket logic treats the whole
   // spelling as one name and leaves an own-module struct element unmangled
@@ -1170,15 +1180,7 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
       if (slit.has_base) {
         new_base = rewrite_expr(slit.base, ctx);
       }
-      return ast.ExprStructLit {
-        type_name: rewrite_type_name(slit.type_name, ctx),
-        field_names: slit.field_names,
-        field_values: fvs,
-        has_base: slit.has_base,
-        base: new_base,
-        line: slit.line, col: slit.col,
-        written: rewrite_written(slit.written, ctx),
-      };
+      return ast.ExprStructLit { ...slit, type_name: rewrite_type_name(slit.type_name, ctx), field_values: fvs, base: new_base, written: rewrite_written(slit.written, ctx) };
     },
     ast.ExprLambda(lm) => {
       // The lambda's params and body locals shadow module-level

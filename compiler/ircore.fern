@@ -693,7 +693,7 @@ pub function all_runtime_need_roots(): string[] {
     "termios_get", "termios_set", "set_extproc",
     "temp_dir", "open_file", "open_with", "reader", "fd_stat", "reader_seek", "reader_splice", "reader_copy_range", "fd_flags",
     "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8",
-    "writer_write", "write_some", "splice_forever", "writer_truncate", "subprocess", "crc32_cksum", "sum_bytes", "utf8_blocks", "aes_gcm", "sha256",
+    "writer_write", "write_some", "splice_forever", "writer_truncate", "subprocess", "crc32_cksum", "sum_bytes", "utf8_blocks", "aes_gcm", "sha256", "sha1",
     // The packed-byte twins a typed program's u8[] calls (asmcore.packed_suffix).
     "alloc_bytes", "arr_push_u8", "buf_u8", "buf_take_bytes", "buf_take_bytes_u8", "str_bytes_u8", "str_from_bytes_u8", "arr_slice_u8",
     "str_from_bytes_range", "str_from_bytes_range_u8",
@@ -1513,7 +1513,7 @@ function fip_claim_diags(fn: parser.FuncDecl, r: irtables.LowerResult, acc: util
   let res: irfipverify.FipResult = irfipverify.verify_fip_fn(claim, r.ops);
   let out: util.Diag[] = acc;
   for p in res.problems {
-    out = out.append(util.Diag { code: "E068", message: irverify.problem_str(p), line: fn.line, col: fn.col });
+    out = out.append(util.Diag { code: "E068", message: irverify.problem_str(p), line: fn.line, col: fn.col, fix: None });
   }
   return out;
 }

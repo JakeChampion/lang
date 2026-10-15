@@ -535,8 +535,8 @@ pub function core_builtins(): string[] {
     // wherever valgrind is not running.
     "__ct_secret", "__ct_public",
     // The AES-GCM and SHA-256 kernels compute over bytes in memory and nothing
-    // else; where a target has no SHA-256 kernel, __sha256_hw says so.
-    "__aes_expand_key", "__aes_ctr32", "__ghash", "__sha256_hw", "__sha256_hw_blocks",
+    // else; where a target has no SHA kernel, __sha256_hw or __sha1_hw says so.
+    "__aes_expand_key", "__aes_ctr32", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks",
     "map_new", "cell_new", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked",
     "slice_unchecked",
     "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64",

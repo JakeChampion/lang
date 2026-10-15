@@ -4710,9 +4710,9 @@ function ssa_dbg_locs(reg_of: i32[], save: i32, want: boolean): string[] {
 // is refused naming the op (ircore.ssa_refuse). Every op the lowering
 // produces has an arm, so a refusal here is a compiler bug, not a program
 // the backend does not cover.
-function emit_ssa_function(r: irtables.LowerResult, selected: physicalbody.Selected, label_name: string, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
+function emit_ssa_function(r: irtables.LowerResult, selected: physicalbody.Selected, pre: asmcore.Prelift, label_name: string, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   let t_lift: i64 = monotonic_ns();
-  let lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(s.kinds, label_name, r.n_params, r.n_locals, r.ops, r.dbg_slots.len() > 0 && s.var_rows);
+  let lifted: ssa_lift.LResult = s.lift(pre, label_name, r);
   let why: string = lifted.bail;
   if (lifted.ok) {
     let collision: i32 = ssa.repeated_block_id(lifted.func);
@@ -4726,7 +4726,7 @@ function emit_ssa_function(r: irtables.LowerResult, selected: physicalbody.Selec
   }
   let lift_ms: i64 = (monotonic_ns() - t_lift) / 1000000i64;
   let t_emit: i64 = monotonic_ns();
-  let certified: ssaprepare.Body = ssaprepare.finish(r, selected, lifted, s.leaves);
+  let certified: ssaprepare.Body = s.finish(pre, r, selected, lifted);
   // Certified in the form the emitter allocates but for its selects: the
   // leaves spliced, the trivial phis folded and the dead values pruned, so a
   // slot the lowering wrote and never read carries no phi of its own.
@@ -4748,26 +4748,26 @@ function emit_ssa_function(r: irtables.LowerResult, selected: physicalbody.Selec
 // emit_function_via_ir_pre emits declaration `fd`'s lowered body `r` through
 // the register path, as arm64: x29 frame pointer, params read from the
 // caller's rt-stack at [x29, #16+i*16], the result in x0.
-pub function emit_function_via_ir_pre(r: irtables.LowerResult, selected: physicalbody.Selected, fd: parser.FuncDecl, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
+pub function emit_function_via_ir_pre(r: irtables.LowerResult, selected: physicalbody.Selected, pre: asmcore.Prelift, fd: parser.FuncDecl, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   // Methods get the receiver-type-qualified label `__fn_<Type>.<name>`.
   let label_name: string = fd.name;
   if (fd.receiver_type.len() > 0) {
     label_name = util.base_type_name(fd.receiver_type) + "." + fd.name;
   }
-  return emit_function_via_ir_named(r, selected, label_name, false, s, vgate);
+  return emit_function_via_ir_named(r, selected, pre, label_name, false, s, vgate);
 }
 
 // emit_function_via_ir_named is the body above with the label supplied rather
 // than read from a declaration, so a body the semantic pipeline produced — which
 // carries its own name — emits through the same path. The x86 twin is
 // asm_ir.emit_function_via_ir_named.
-pub function emit_function_via_ir_named(r: irtables.LowerResult, selected: physicalbody.Selected, label_name: string, weak: boolean, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
+pub function emit_function_via_ir_named(r: irtables.LowerResult, selected: physicalbody.Selected, pre: asmcore.Prelift, label_name: string, weak: boolean, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   if (weak) {
     s = s.write(".weak __fn_" + asmcore.sanitize_label(label_name) + "\n.weak __fn_" + asmcore.sanitize_label(label_name) + ".k\n");
   }
   ircore.lower_failed_refuse(label_name, r);
   irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals, vgate);
-  return emit_ssa_function(r, selected, label_name, s, vgate);
+  return emit_ssa_function(r, selected, pre, label_name, s, vgate);
 }
 
 // emit_dir_op calls a Dir op's runtime leaf, __fern_<kind name>, on the stack
@@ -4805,9 +4805,12 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
   if (o.kind_tag == 79) {  // ptr_width
     // () -> heap-pointer width in bytes. 8 on arm64.
     s = s.write("    mov x0, #8\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 409) {  // sha256_hw
-    // () -> 1: the SHA-256 instructions are in the ARMv8.2-A crypto baseline.
+  } else if (ir.is_sha_hw_op(o.kind_tag)) {  // sha256_hw, sha1_hw
+    // () -> 1: the SHA-1 and SHA-256 instructions are in the ARMv8.2-A crypto baseline.
     s = s.write("    mov x0, #1\n    str x0, [sp, #-16]!\n");
+  } else if (o.kind_tag == 441) {  // sha1_hw_blocks
+    s = s.need("sha1").mark_heap();
+    s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_sha1_hw_blocks\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 74) {  // memcpy
     s = emit_arm64_op_memcpy(o, i, lp, s);
   } else if (o.kind_tag == 75) {  // memset
@@ -6343,7 +6346,8 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
   s = s.write("    .text\n");
   let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(mod.funcs), s.kinds.pops, physicalbody.abis(physical)), s.memo);
   ircore.check_fip_claims(mod.funcs, 0, mod.funcs.len(), cache);
-  s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, 0, mod.funcs.len(), cache)), leaves: asmcore.unit_leaves(mod, 0, mod.funcs.len(), cache) };
+  let unit: asmcore.UnitLeaves = asmcore.unit_leaves(mod, 0, mod.funcs.len(), cache);
+  s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, 0, mod.funcs.len(), cache)), leaves: unit.leaves };
   let fabi: asmcore.FloatAbi = asmcore.unit_float_abi(mod, 0, mod.funcs.len(), cache);
   s = asmcore.EmitState { ...s, float_abi: fabi.names, float_abi_masks: fabi.masks };
   let fi: i32 = 0;
@@ -6352,13 +6356,13 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
     // A template the substitution superseded has no body: its instances
     // are on the cache tail.
     if (!r.superseded) {
-      s = emit_function_via_ir_pre(r, physicalbody.select(physical, fi), mod.funcs[fi], s, vgate);
+      s = emit_function_via_ir_pre(r, physicalbody.select(physical, fi), s.prelift(unit.pre, fi, r), mod.funcs[fi], s, vgate);
     }
     fi = fi + 1;
   }
   // Cache entries past the declarations are bodies with no FuncDecl, each
   // naming the symbol it defines.
-  s = emit_named_bodies(cache, physical, mod.funcs.len(), s, vgate);
+  s = emit_named_bodies(cache, physical, unit.pre, mod.funcs.len(), s, vgate);
   irverifygate.report(vgate);
   // Ahead of _start, which gates its envp save on the heap need. close_needs
   // is what turns a root like str_concat into that heap need, so reading it
@@ -6426,11 +6430,11 @@ function rt_arm64_str_eq(): string {
 
 // Bodies with no FuncDecl, each naming the symbol it defines; `.weak`, so a
 // sibling unit emitting the same one co-links, and once per file.
-function emit_named_bodies(cache: irtables.LowerResult[], physical: physicalbody.Collection, from: i32, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
+function emit_named_bodies(cache: irtables.LowerResult[], physical: physicalbody.Collection, pre: asmcore.Prelift[], from: i32, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   let xi: i32 = from;
   while (xi < cache.len()) {
     if (!s.has_named(cache[xi].name)) {
-      s = emit_function_via_ir_named(cache[xi], physicalbody.select(physical, xi), cache[xi].name, true, s, vgate).with_named(cache[xi].name);
+      s = emit_function_via_ir_named(cache[xi], physicalbody.select(physical, xi), s.prelift(pre, xi, cache[xi]), cache[xi].name, true, s, vgate).with_named(cache[xi].name);
     }
     xi = xi + 1;
   }
@@ -6450,11 +6454,11 @@ pub function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore
   let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate_unreported(irtables.fn_sig_index(fns), s.kinds.pops, physicalbody.abis(physical)), s.memo);
   let i: i32 = 0;
   while (i < fns.len()) {
-    s = emit_function_via_ir_pre(bodies[i], physicalbody.select(physical, i), fns[i], s, vgate);
+    s = emit_function_via_ir_pre(bodies[i], physicalbody.select(physical, i), asmcore.no_prelift(), fns[i], s, vgate);
     i = i + 1;
   }
   // Past the declarations: the drop helpers the typed lowering defines.
-  s = emit_named_bodies(bodies, physical, fns.len(), s, vgate);
+  s = emit_named_bodies(bodies, physical, [], fns.len(), s, vgate);
   return s;
 }
 
@@ -10509,9 +10513,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("aes_gcm")) {
     s = emit_rt_aes_gcm(s);
   }
-  if (s.has_need("sha256")) {
-    s = s.write("    .arch_extension sha2\n" + a64_sha256_blocks());
-  }
+  s = emit_rt_sha(s);
   if (s.has_need("sum_bytes")) {
     s = emit_rt_sum_bytes(s);
   }
@@ -11935,6 +11937,83 @@ function a64_sha256_blocks(): string {
     + ".Lsha_ret:\n    ldr x0, [x29, #40]\n    ldp x29, x30, [sp], #96\n    ret\n    .size __fern_sha256_hw_blocks, .-__fern_sha256_hw_blocks\n";
 }
 
+// __fern_sha1_hw_blocks(x0 = state, x1 = data), the SHA-1 compression over
+// each whole 64-byte block of data, answering a fresh 20-byte packed u8[] in
+// x0, or an empty one for a state under 20 bytes. The state is five
+// little-endian words: ABCD loads straight into v0 and E into s1.
+// SHA1C/P/M/H/SU0/SU1 are in the ARMv8.2-A crypto baseline. The four round
+// constants live in v16-v19, a block's message words in v4-v7, and the state
+// a block starts from in v20 and v21; x16-x28 and v8-v15 are untouched.
+function a64_sha1_blocks(): string {
+  let o: string = "    .global __fern_sha1_hw_blocks\n    .type __fern_sha1_hw_blocks, %function\n__fern_sha1_hw_blocks:\n"
+    + "    stp x29, x30, [sp, #-48]!\n    mov x29, sp\n"
+    + a64_aes_view("x1", "x3", "x4", ".Lsha1_data") + "    str x3, [x29, #16]\n    str x4, [x29, #24]\n"
+    + a64_aes_view("x0", "x3", "x5", ".Lsha1_st") + "    str x3, [x29, #32]\n"
+    + "    mov x0, #20\n    cmp x5, #20\n    b.hs .Lsha1_stok\n    mov x0, #0\n.Lsha1_stok:\n"
+    + a64_aes_alloc("40") + "    ldr x4, [x0]\n    cbz x4, .Lsha1_ret\n"
+    + "    ldr x3, [x29, #32]\n    ld1 {v0.16b}, [x3]\n    ldr w9, [x3, #16]\n    ins v1.s[0], w9\n";
+  let k: u32[] = [0x5a827999, 0x6ed9eba1, 0x8f1bbcdc, 0xca62c1d6];
+  let i: i32 = 0;
+  while (i < 4) {
+    o = o + "    movz w8, #" + util.i32_to_string((k[i] & 0xffff) as i32) + "\n    movk w8, #" + util.i32_to_string((k[i] >> 16) as i32)
+      + ", lsl #16\n    dup v" + util.i32_to_string(16 + i) + ".4s, w8\n";
+    i = i + 1;
+  }
+  o = o + "    ldr x1, [x29, #16]\n    ldr x4, [x29, #24]\n.Lsha1_loop:\n    cmp x4, #64\n    b.lo .Lsha1_done\n";
+  let j: i32 = 4;
+  while (j < 8) {
+    let v: string = "v" + util.i32_to_string(j);
+    o = o + "    ld1 {" + v + ".16b}, [x1]\n    add x1, x1, #16\n    rev32 " + v + ".16b, " + v + ".16b\n";
+    j = j + 1;
+  }
+  o = o + "    orr v20.16b, v0.16b, v0.16b\n    orr v21.16b, v1.16b, v1.16b\n" + a64_sha1_rounds()
+    + "    add v0.4s, v0.4s, v20.4s\n    add v1.4s, v1.4s, v21.4s\n    sub x4, x4, #64\n    b .Lsha1_loop\n";
+  return o + ".Lsha1_done:\n    ldr x0, [x29, #40]\n    add x3, x0, #8\n    st1 {v0.16b}, [x3]\n    umov w9, v1.s[0]\n    str w9, [x3, #16]\n"
+    + ".Lsha1_ret:\n    ldr x0, [x29, #40]\n    ldp x29, x30, [sp], #48\n    ret\n    .size __fern_sha1_hw_blocks, .-__fern_sha1_hw_blocks\n";
+}
+
+// emit_rt_sha emits the SHA kernels the program calls.
+function emit_rt_sha(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.has_need("sha256") || s.has_need("sha1")) {
+    s = s.write("    .arch_extension sha2\n");
+  }
+  if (s.has_need("sha256")) {
+    s = s.write(a64_sha256_blocks());
+  }
+  if (s.has_need("sha1")) {
+    s = s.write(a64_sha1_blocks());
+  }
+  return s;
+}
+
+// a64_sha1_rounds is one block's eighty rounds, four a step: v2 is the step's
+// words plus constant, and E alternates between s1 and s3, since SHA1H takes
+// the next step's E from A before the hash update overwrites it. The first
+// sixteen steps also extend the schedule in place, w(i) from w(i+1), w(i+2)
+// and w(i+3), the four registers taken in rotation.
+function a64_sha1_rounds(): string {
+  let ops: string[] = ["sha1c", "sha1p", "sha1m", "sha1p"];
+  let o: string = "";
+  let i: i32 = 0;
+  while (i < 20) {
+    let w: string = "v" + util.i32_to_string(4 + i % 4);
+    let e: string = "s1";
+    let next: string = "s3";
+    if (i % 2 == 1) {
+      e = "s3";
+      next = "s1";
+    }
+    o = o + "    add v2.4s, " + w + ".4s, v" + util.i32_to_string(16 + i / 5) + ".4s\n    sha1h " + next + ", s0\n    "
+      + ops[i / 5] + " q0, " + e + ", v2.4s\n";
+    if (i < 16) {
+      o = o + "    sha1su0 " + w + ".4s, v" + util.i32_to_string(4 + (i + 1) % 4) + ".4s, v" + util.i32_to_string(4 + (i + 2) % 4) + ".4s\n"
+        + "    sha1su1 " + w + ".4s, v" + util.i32_to_string(4 + (i + 3) % 4) + ".4s\n";
+    }
+    i = i + 1;
+  }
+  return o;
+}
+
 // a64_sha256_pair builds k[at] | k[at + 1] << 32 in x.
 function a64_sha256_pair(x: string, k: u32[], at: i32): string {
   let o: string = "";
@@ -12366,7 +12445,8 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
   // `cache` is the unit's lowering, indexed by mod.funcs position, with
   // declaration-less bodies on its tail (asm_ir.emit_module_funcs).
   ircore.check_fip_claims(mod.funcs, lo, hh, cache);
-  s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)), leaves: asmcore.unit_leaves(mod, lo, hh, cache) };
+  let unit: asmcore.UnitLeaves = asmcore.unit_leaves(mod, lo, hh, cache);
+  s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)), leaves: unit.leaves };
   let fabi: asmcore.FloatAbi = asmcore.unit_float_abi(mod, lo, hh, cache);
   s = asmcore.EmitState { ...s, float_abi: fabi.names, float_abi_masks: fabi.masks };
   let fi: i32 = lo;
@@ -12383,10 +12463,10 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
       }
       s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n.globl __fn_" + asmcore.sanitize_label(gname) + ".k\n");
     }
-    s = emit_function_via_ir_pre(r, physicalbody.select(physical, fi), mod.funcs[fi], s, vgate);
+    s = emit_function_via_ir_pre(r, physicalbody.select(physical, fi), s.prelift(unit.pre, fi, r), mod.funcs[fi], s, vgate);
     fi = fi + 1;
   }
-  s = emit_named_bodies(cache, physical, mod.funcs.len(), s, vgate);
+  s = emit_named_bodies(cache, physical, unit.pre, mod.funcs.len(), s, vgate);
   irverifygate.report(vgate);
   // Fold the whole-program need union (sibling modules' needs) into the entry's
   // single runtime BEFORE _start, so _start's args gating sees a sibling's
