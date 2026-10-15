@@ -2273,7 +2273,7 @@ function read_bundle_module(s: Sources, mpath: string, from: string, ipath: stri
   if (gi >= 0) {
     return modloader.Resolved { src: s.srcs[gi], ok: true, err: "", err_path: "", shown: mpath, map: s.maps[gi] };
   }
-  let r: modloader.Resolved = modloader.read_module_in(s.open, mpath);
+  let r: modloader.Resolved = modloader.read_module(s.open, mpath);
   if (r.ok || r.err.len() > 0) {
     return r;
   }
@@ -3359,12 +3359,13 @@ function lsp_update(s: Server, uri: string, src: string): Server {
   }
   let path: string = lsp_doc_path(uri);
   let c: Checked = check_source(path, src, lsp_buffers(s), s.root, s.target, s.target_given, s.embed_dir);
-  s = lsp_publish(s, i, lsp_diagnostics(c, path, src));
+  let files: string[] = lsp_checked_files(c, s.root);
+  s = lsp_publish(s, i, lsp_diagnostics(c, files, path, src));
   let j: i32 = 0;
   while (j < s.uris.len()) {
     let other: string = lsp_doc_path(s.uris[j]);
-    if (j != i && other != "-" && util.has_str(lsp_checked_files(c), other)) {
-      s = lsp_publish(s, j, lsp_diagnostics(c, other, s.srcs[j]));
+    if (j != i && other != "-" && util.has_str(files, other)) {
+      s = lsp_publish(s, j, lsp_diagnostics(c, files, other, s.srcs[j]));
     }
     j = j + 1;
   }
@@ -3408,11 +3409,16 @@ function lsp_buffers(s: Server): modloader.Buffers {
 }
 
 // lsp_checked_files names every file a check read: its entry, then each
-// module in the order their positions are numbered.
-function lsp_checked_files(c: Checked): string[] {
+// module in the order their positions are numbered. A module under the stdlib
+// root is named by its file there, not its `stdlib://` display name.
+function lsp_checked_files(c: Checked, root: string): string[] {
   let out: string[] = [c.entry];
   for f in c.files {
-    out = out.append(util.clean_path(f));
+    if (root.len() > 0 && util.str_has_prefix(f, "stdlib://")) {
+      out = out.append(util.clean_path(root + "/" + slice_unchecked(f, 9, f.len())));
+    } else {
+      out = out.append(util.clean_path(f));
+    }
   }
   return out;
 }
@@ -3437,11 +3443,11 @@ function lsp_close(s: Server, uri: string): Server {
 }
 
 // lsp_diagnostics is the findings of check `c` that are in file `path`, as
-// LSP diagnostics placed in `text`, that file's open buffer. A finding is in
-// the module its position is numbered in (a literate module's is its
-// document's); one with no position is in the entry.
-function lsp_diagnostics(c: Checked, path: string, text: string): string[] {
-  let files: string[] = lsp_checked_files(c);
+// LSP diagnostics placed in `text`, that file's open buffer. `files` is
+// lsp_checked_files: a finding is in the module its position is numbered in
+// (a literate module's is its document's), and one with no position is in
+// the entry.
+function lsp_diagnostics(c: Checked, files: string[], path: string, text: string): string[] {
   let out: string[] = [];
   for f in c.findings {
     let d: util.Diag = util.doc_diag(c.maps, f.diag);

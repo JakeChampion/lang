@@ -95,14 +95,7 @@ function res_none(): Resolved {
 
 // res_read reads `<dir><rel>.fern`, from its buffer when `ov` holds one.
 function res_read(ov: Overlay, dir: string, rel: string): Resolved {
-  return read_module_in(ov.files, dir + rel + ".fern");
-}
-
-// read_module reads the module file `path`, a `.fern`, or — when there is no
-// such file — the literate document `path.md`, tangled to one module. A plain
-// `.fern` wins over a `.fern.md` of the same name.
-pub function read_module(path: string): Resolved {
-  return read_module_in(no_buffers(), path);
+  return read_module(ov.files, dir + rel + ".fern");
 }
 
 // Buffers is the text of the files an editor holds open, keyed by file path,
@@ -122,8 +115,11 @@ function read_text(bufs: Buffers, path: string): Result[string, IoError] {
   return read_file(path);
 }
 
-// read_module_in is read_module with `bufs` standing in for the files they name.
-pub function read_module_in(bufs: Buffers, path: string): Resolved {
+// read_module reads the module file `path`, a `.fern`, or — when there is no
+// such file — the literate document `path.md`, tangled to one module, each
+// from its buffer in `bufs` when one is open. A plain `.fern` wins over a
+// `.fern.md` of the same name.
+pub function read_module(bufs: Buffers, path: string): Resolved {
   match (read_text(bufs, path)) {
     Ok(s) => {
       return Resolved { ...res_none(), src: s, ok: true, shown: path };
