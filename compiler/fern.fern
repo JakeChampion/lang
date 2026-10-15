@@ -97,6 +97,8 @@ import "./cover";
 import "./lsp";
 import "./lspassist";
 import "./lspquery";
+import "./lsprefs";
+import "./lsptokens";
 
 // blank_line_map marks the 1-based source lines that hold nothing but
 // whitespace, indexed by line number so the formatter can ask about one in
@@ -3309,10 +3311,12 @@ function serve_lsp(pos: string[], embedded_root: string, target: string, target_
 // run_lsp is a language server on stdin and stdout (lsp.fern is the wire),
 // until the client sends `exit` or hangs up. It publishes `-check`'s findings
 // for a document whenever the editor opens or changes it, formats one as
-// `-fmt` would, and answers hover, go-to-definition (lspquery.fern),
-// completion, signature help, document symbols and inlay hints
-// (lspassist.fern). The exit code is the spec's: 0 for an `exit` after
-// `shutdown`, 1 for one without, and 2 for a stream that could not be framed.
+// `-fmt` would, offers the quick fixes its diagnostics carry, and answers
+// hover, go-to-definition (lspquery.fern), completion, signature help, document
+// symbols and inlay hints (lspassist.fern), references and rename
+// (lsprefs.fern) and semantic tokens (lsptokens.fern). The exit code is the
+// spec's: 0 for an `exit` after `shutdown`, 1 for one without, and 2 for a
+// stream that could not be framed.
 function run_lsp(s: Server): i32 {
   let inp: lsp.Input = lsp.stdin_input();
   while (true) {
@@ -3354,6 +3358,8 @@ function lsp_handle(s: Server, m: lsp.Message): Server {
     lsp.send(lsp.response(m.id, "null"));
   } else if (m.method == "textDocument/formatting") {
     lsp.send(lsp.response(m.id, lsp_formatting(s, lsp.document_uri(m.params))));
+  } else if (m.method == "textDocument/codeAction") {
+    lsp.send(lsp.response(m.id, lsp.code_actions(m.params)));
   } else if (lsp_answers(m.method)) {
     let (next, result) = lsp_query(s, m);
     s = next;
@@ -3505,9 +3511,10 @@ function lsp_doc(ld: Loaded): Doc {
 }
 
 // lsp_query answers a request about a document — a hover, a definition,
-// completion, signature help, its outline or its inlay hints — from its last
-// check, building what requests read of that program on the first one. A
-// document that is not open, or did not load, has no answer (lsp_no_answer).
+// completion, signature help, its outline, its inlay hints, references, a
+// rename or its semantic tokens — from its last check, building what requests
+// read of that program on the first one. A document that is not open, or did
+// not load, has no answer (lsp_no_answer).
 function lsp_query(s: Server, m: lsp.Message): (Server, string) {
   let uri: string = lsp.document_uri(m.params);
   let i: i32 = util.index_of_str(s.uris, uri);
@@ -3523,11 +3530,14 @@ function lsp_query(s: Server, m: lsp.Message): (Server, string) {
   if (m.method == "textDocument/inlayHint") {
     return (s, lsp_inlay_hints(q, m));
   }
+  if (m.method == "textDocument/semanticTokens/full") {
+    return (s, lsp_semantic_tokens(q));
+  }
   let (line, col) = lsp_request_position(q, m);
   if (line <= 0) {
     return (s, lsp_no_answer(m.method));
   }
-  return (s, lsp_answer_at(s, q, m.method, line, col));
+  return (s, lsp_answer_at(s, q, m, line, col));
 }
 
 // Asked is the document a request names: its URI, path and text, and what its
@@ -3537,7 +3547,8 @@ struct Asked { uri: string, path: string, text: lsp.Text, d: Doc }
 // lsp_answers reports whether `method` is a request lsp_query answers.
 function lsp_answers(method: string): boolean {
   return method == "textDocument/hover" || method == "textDocument/definition" || method == "textDocument/completion"
-    || method == "textDocument/signatureHelp" || method == "textDocument/documentSymbol" || method == "textDocument/inlayHint";
+    || method == "textDocument/signatureHelp" || method == "textDocument/documentSymbol" || method == "textDocument/inlayHint"
+    || method == "textDocument/references" || method == "textDocument/rename" || method == "textDocument/semanticTokens/full";
 }
 
 // lsp_no_answer is the answer to `method` when there is nothing to say: an
@@ -3546,7 +3557,10 @@ function lsp_no_answer(method: string): string {
   if (method == "textDocument/completion") {
     return lsp.completion_list([]);
   }
-  if (method == "textDocument/documentSymbol" || method == "textDocument/inlayHint") {
+  if (method == "textDocument/semanticTokens/full") {
+    return lsp.semantic_tokens([]);
+  }
+  if (method == "textDocument/documentSymbol" || method == "textDocument/inlayHint" || method == "textDocument/references") {
     return "[]";
   }
   return "null";
@@ -3562,7 +3576,14 @@ function lsp_request_position(q: Asked, m: lsp.Message): (i32, i32) {
   return lsp_into_bundle(q.d, q.path, pl + 1, lsp.byte_col(lsp.line_text(q.text, pl + 1), pc));
 }
 
-function lsp_answer_at(s: Server, q: Asked, method: string, line: i32, col: i32): string {
+function lsp_answer_at(s: Server, q: Asked, m: lsp.Message, line: i32, col: i32): string {
+  let method: string = m.method;
+  if (method == "textDocument/references") {
+    return lsp_references(s, q, lsprefs.references(q.d.prog, line, col), lsp.include_declaration(m.params));
+  }
+  if (method == "textDocument/rename") {
+    return lsp_rename(s, q, lsprefs.references(q.d.prog, line, col), lsp.get_string(m.params, "newName"));
+  }
   if (method == "textDocument/completion") {
     return lsp_completion(lspassist.completion(q.d.prog, line, col));
   }
@@ -3593,6 +3614,89 @@ function lsp_definition(s: Server, q: Asked, line: i32, col: i32): string {
     return lsp.location(q.uri, lsp_answer_range(q.d, q.text, a));
   }
   return lsp.location(lsp.file_uri(target), lsp_answer_range(q.d, lsp.text_of(lsp_doc_text(s, target)), a));
+}
+
+// lsp_references is the locations of `refs`, the declaration among them only
+// when `with_decl`.
+function lsp_references(s: Server, q: Asked, refs: lsprefs.Ref[], with_decl: boolean): string {
+  let out: string[] = [];
+  let at: RefDoc = ref_doc_none();
+  for r in refs {
+    at = lsp_ref_doc(s, q, at, util.pos_file_index(r.line));
+    let range: string = lsp_ref_range(q, at, r);
+    if ((with_decl || !r.decl) && range.len() > 0) {
+      out = out.append(lsp.location(at.uri, range));
+    }
+  }
+  return lsp.json_array(out);
+}
+
+// lsp_rename is the edit renaming every one of `refs` to `name`: none when
+// `name` is not an identifier, when they hold no declaration, or when one is
+// in the stdlib, which a rename does not edit.
+function lsp_rename(s: Server, q: Asked, refs: lsprefs.Ref[], name: string): string {
+  let declared: boolean = false;
+  for r in refs {
+    declared = declared || r.decl;
+  }
+  if (!declared || !lsp_identifier(name)) {
+    return "null";
+  }
+  let uris: string[] = [];
+  let edits: string[][] = [];
+  let at: RefDoc = ref_doc_none();
+  for r in refs {
+    at = lsp_ref_doc(s, q, at, util.pos_file_index(r.line));
+    if (at.stdlib) {
+      return "null";
+    }
+    let range: string = lsp_ref_range(q, at, r);
+    let i: i32 = util.index_of_str(uris, at.uri);
+    if (range.len() > 0 && i < 0) {
+      uris = uris.append(at.uri);
+      edits = edits.append([lsp.text_edit(range, name)]);
+    } else if (range.len() > 0) {
+      edits = edits.with(i, edits[i].append(lsp.text_edit(range, name)));
+    }
+  }
+  return lsp.workspace_edit(uris, edits);
+}
+
+// lsp_identifier reports whether `name` can name a declaration: an
+// identifier, and not a keyword.
+function lsp_identifier(name: string): boolean {
+  return util.is_ident(name) && !util.has_str(lexer.keywords(), name);
+}
+
+// RefDoc is the document module `m` of a check was read from: its URI and
+// text, and whether it is in the stdlib.
+struct RefDoc { m: i32, uri: string, text: lsp.Text, stdlib: boolean }
+
+function ref_doc_none(): RefDoc {
+  return RefDoc { m: 0 - 1, uri: "", text: lsp.text_of(""), stdlib: false };
+}
+
+// lsp_ref_doc is module `m`'s document: `at` when it is already that one.
+function lsp_ref_doc(s: Server, q: Asked, at: RefDoc, m: i32): RefDoc {
+  if (at.m == m) {
+    return at;
+  }
+  let path: string = lsp_module_doc(s, q.d, m, q.path);
+  let stdlib: boolean = m > 0 && m <= q.d.files.len() && util.str_has_prefix(q.d.files[m - 1], "stdlib://");
+  if (path == q.path) {
+    return RefDoc { m: m, uri: q.uri, text: q.text, stdlib: stdlib };
+  }
+  return RefDoc { m: m, uri: lsp.file_uri(path), text: lsp.text_of(lsp_doc_text(s, path)), stdlib: stdlib };
+}
+
+// lsp_ref_range is the range of `r` in its document `at`, or "" when its line
+// has no document line.
+function lsp_ref_range(q: Asked, at: RefDoc, r: lsprefs.Ref): string {
+  let (line, col) = util.doc_pos(q.d.maps, r.line, r.col);
+  if (line == 0) {
+    return "";
+  }
+  return lsp.span_range(at.text, util.pos_line(line), col, r.len);
 }
 
 function lsp_completion(items: lspassist.Item[]): string {
@@ -3670,6 +3774,23 @@ function lsp_inlay_hints(q: Asked, m: lsp.Message): string {
     }
   }
   return lsp.json_array(out);
+}
+
+// lsp_semantic_tokens is the semantic tokens of the document a request
+// names: those of each module read from it, moved onto it.
+function lsp_semantic_tokens(q: Asked): string {
+  let out: lsp.SemanticToken[] = [];
+  for mi in lsp_doc_modules(q.d, q.path) {
+    for t in lsptokens.semantic_tokens(q.d.prog, mi) {
+      let (line, col) = util.doc_pos(q.d.maps, t.line, t.col);
+      if (line > 0) {
+        let text: string = lsp.line_text(q.text, util.pos_line(line));
+        let start: i32 = lsp.utf16_col(text, col);
+        out = out.append(lsp.SemanticToken { line: util.pos_line(line) - 1, start: start, len: lsp.utf16_col(text, col + t.len) - start, kind: t.kind });
+      }
+    }
+  }
+  return lsp.semantic_tokens(out);
 }
 
 // lsp_bundle_lines is the first and last line of module `m` read from
@@ -3780,10 +3901,23 @@ function lsp_diagnostics(c: Checked, files: string[], path: string, text: string
     let d: util.Diag = util.doc_diag(c.maps, f.diag);
     let m: i32 = util.pos_file_index(d.line);
     if (m < files.len() && files[m] == path) {
-      out = out.append(lsp.diagnostic(t, util.pos_line(d.line), d.col, d.code, lsp_message(d.message), f.warning));
+      out = out.append(lsp.diagnostic(t, util.pos_line(d.line), d.col, d.code, lsp_message(d.message), f.warning, lsp_fix_data(t, d)));
     }
   }
   return out;
+}
+
+// lsp_fix_data is a diagnostic's fix as its `data` (lsp.fix_data), or "" when
+// it has none, or when the text it would replace is not what `t` holds there.
+function lsp_fix_data(t: lsp.Text, d: util.Diag): string {
+  if let Some(f) = d.fix {
+    let line: string = lsp.line_text(t, util.pos_line(f.line));
+    let end: i32 = f.col - 1 + f.old.len();
+    if (f.col >= 1 && end <= line.len() && slice_unchecked(line, f.col - 1, end) == f.old) {
+      return lsp.fix_data(lsp.span_range(t, util.pos_line(f.line), f.col, f.old.len()), f.new_text, f.title);
+    }
+  }
+  return "";
 }
 
 // lsp_message is a finding's message as an editor shows it: a refusal is the

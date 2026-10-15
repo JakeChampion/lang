@@ -52,7 +52,7 @@ pub function completion(p: lspquery.Program, line: i32, col: i32): Item[] {
     return sorted(members(v.types, toks, quals, m, dot));
   }
   let items: Item[] = [];
-  let f: i32 = enclosing(v.types.mod, toks, m, line, col);
+  let f: i32 = lspquery.enclosing(v.types.mod, toks, m, line, col);
   if (f >= 0) {
     items = bound_items(bound_in_func(v.types, v.types.mod.funcs[f]));
   }
@@ -85,17 +85,17 @@ function bound_items(bs: Bound[]): Item[] {
 // bundle), and the built-in Option and Result.
 function global_items(s: checker.Scope, mod: parser.Module, m: i32, own: string, own acc: Item[]): Item[] {
   for fd in mod.funcs {
-    if (declared_in(fd.line, m) && offered_func(fd, fd.name)) {
+    if (lspquery.declared_in(fd.line, m) && offered_func(fd, fd.name)) {
       acc = acc.append(func_item(s, fd.name, lspquery.unprefixed(fd.name, own)));
     }
   }
   for sd in mod.structs {
-    if (declared_in(sd.line, m) && offered_struct(sd)) {
+    if (lspquery.declared_in(sd.line, m) && offered_struct(sd)) {
       acc = acc.append(struct_item(sd, own));
     }
   }
   for ed in mod.enums {
-    if (declared_in(ed.line, m)) {
+    if (lspquery.declared_in(ed.line, m)) {
       acc = enum_items(s, ed.name, ed.variant_names, own, acc);
     }
   }
@@ -139,12 +139,6 @@ function enum_items(s: checker.Scope, name: string, variants: string[], own: str
     acc = acc.append(Item { label: lspquery.unprefixed(vn, module), kind: CI_ENUM_MEMBER, detail: lspquery.variant_text(s, vn, name) });
   }
   return acc;
-}
-
-// declared_in reports whether a declaration at bundle line `line` is in module
-// `m`; a declaration the front end synthesises has no line.
-function declared_in(line: i32, m: i32): boolean {
-  return line > 0 && util.pos_file_index(line) == m;
 }
 
 // visible reports whether a name is one a program writes: the front end's own
@@ -242,7 +236,7 @@ function variant_items(s: checker.Scope, u: checker.UnionSig): Item[] {
 // the `.` at token `dot`, as the checker types it there.
 function value_members(v: checker.QueryView, toks: lspquery.Tok[], m: i32, dot: i32): Item[] {
   let d: lspquery.Tok = toks[dot];
-  let f: i32 = enclosing(v.mod, toks, m, d.line, d.col);
+  let f: i32 = lspquery.enclosing(v.mod, toks, m, d.line, d.col);
   let out: Item[] = [];
   if (f < 0) {
     return out;
@@ -272,7 +266,7 @@ function value_members(v: checker.QueryView, toks: lspquery.Tok[], m: i32, dot: 
 function bound_type(bs: Bound[], name: lspquery.Tok, at: lspquery.Tok): typeinfo.Type {
   let t: typeinfo.Type = typeinfo.TypeUnknown { reason: "unbound" };
   for b in bs {
-    if (b.name == name.text && (b.let_line == 0 || before(b.let_line, b.let_col, at.line, at.col))) {
+    if (b.name == name.text && (b.let_line == 0 || lspquery.before(b.let_line, b.let_col, at.line, at.col))) {
       t = b.t;
     }
   }
@@ -327,36 +321,6 @@ function array_members(s: checker.Scope, a: typeinfo.TypeArray, own out: Item[])
 
 function method_item(name: string, parts: lspquery.Parts): Item {
   return Item { label: name, kind: CI_METHOD, detail: util.show_type_vars(lspquery.parts_text(name, parts)) };
-}
-
-// ---- The enclosing function ----
-
-// enclosing is the index in `mod.funcs` of the function of module `m` whose
-// declaration holds `line`, `col` — the latest one to start before it, when
-// its body has not closed — or -1.
-function enclosing(mod: parser.Module, toks: lspquery.Tok[], m: i32, line: i32, col: i32): i32 {
-  let best: i32 = 0 - 1;
-  let i: i32 = 0;
-  while (i < mod.funcs.len()) {
-    let fd: parser.FuncDecl = mod.funcs[i];
-    if (declared_in(fd.line, m) && before(fd.line, fd.col, line, col) && (best < 0 || before(mod.funcs[best].line, mod.funcs[best].col, fd.line, fd.col))) {
-      best = i;
-    }
-    i = i + 1;
-  }
-  if (best < 0) {
-    return best;
-  }
-  let close: i32 = lspquery.body_end(toks, lspquery.after(toks, mod.funcs[best].line, mod.funcs[best].col));
-  if (close < 0 || before(toks[close].line, toks[close].col, line, col)) {
-    return 0 - 1;
-  }
-  return best;
-}
-
-// before reports whether `l0`, `c0` comes strictly before `l1`, `c1`.
-function before(l0: i32, c0: i32, l1: i32, c1: i32): boolean {
-  return l0 < l1 || l0 == l1 && c0 < c1;
 }
 
 // ---- Bindings ----
@@ -591,19 +555,19 @@ function signature(name: string, parts: lspquery.Parts, commas: i32): Signature 
 // just past `end_line`, `end_col` — and of its name, and its members.
 pub struct Symbol { name: string, detail: string, kind: i32, line: i32, col: i32, end_line: i32, end_col: i32, name_line: i32, name_col: i32, children: Symbol[] }
 
-const SK_METHOD: i32 = 6;
+pub const SK_METHOD: i32 = 6;
 
-const SK_FIELD: i32 = 8;
+pub const SK_FIELD: i32 = 8;
 
-const SK_ENUM: i32 = 10;
+pub const SK_ENUM: i32 = 10;
 
-const SK_FUNCTION: i32 = 12;
+pub const SK_FUNCTION: i32 = 12;
 
-const SK_CONSTANT: i32 = 14;
+pub const SK_CONSTANT: i32 = 14;
 
-const SK_ENUM_MEMBER: i32 = 22;
+pub const SK_ENUM_MEMBER: i32 = 22;
 
-const SK_STRUCT: i32 = 23;
+pub const SK_STRUCT: i32 = 23;
 
 // symbols is module `m`'s outline: its functions and methods, structs with
 // their fields, enums with their variants, and constants, as it declares them.
@@ -800,7 +764,7 @@ pub function inlay_hints(p: lspquery.Program, m: i32, lo: i32, hi: i32): Hint[] 
   let quals: flatten.Qualifiers = lspquery.quals_of(v, m);
   let out: Hint[] = [];
   for fd in v.types.mod.funcs {
-    if (declared_in(fd.line, m) && fd.line <= hi) {
+    if (lspquery.declared_in(fd.line, m) && fd.line <= hi) {
       let close: i32 = lspquery.body_end(toks, lspquery.after(toks, fd.line, fd.col));
       if (close >= 0 && toks[close].line >= lo) {
         out = func_hints(toks, quals, bound_in_func(v.types, fd), out);
