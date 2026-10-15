@@ -1,0 +1,1573 @@
+// std/quic/conn — a QUIC connection (RFC 9000) as a value, with no IO: what
+// the caller feeds it is datagrams received and the time, and what it gives
+// back is datagrams to send, events, and when it next needs the time.
+//
+//     let c: conn.Conn = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now)?;
+//     c = c.receive(datagram, now).conn;     // each datagram that arrives
+//     let (c2, out) = c.transmit(now);       // datagrams to send now
+//     c2.deadline()                          // when to call `tick`
+//
+// A server makes its connection from the first Initial it receives
+// (`accept`), after `packet.parse` has read its header. The TLS handshake
+// is std/tls/handshake's, run under QUIC (RFC 9001): CRYPTO frames carry its
+// bytes at each encryption level, and each secret it reports becomes that
+// level's packet protection. Loss detection and congestion control are
+// std/quic/recovery's.
+//
+// Streams and their flow control are std/quic/streams', reached through
+// `open_stream`, `write`, `read`, `reset_stream` and `stop_sending`; the
+// limits a side declares (`Config.with_streams`) bound what the peer may
+// open and send.
+//
+// Around them: ACKs and retransmission, the transport parameters checked
+// against the connection IDs actually used (§7.3), Retry and Version
+// Negotiation at the client, a server's anti-amplification limit (§8.1),
+// Initial padding, the idle timeout, closing and draining (§10), and
+// stateless reset.
+
+import "std/quic/frames";
+import "std/quic/packet";
+import "std/quic/params";
+import "std/quic/recovery";
+import "std/quic/streams";
+import "std/tls/handshake";
+import "std/tls/keyschedule";
+import "std/tls/identity";
+import "std/tls/message";
+import "std/tls/verify";
+import "std/array";
+import "std/option";
+import "std/i64";
+
+// The states of a connection.
+const HANDSHAKING: i32 = 0;
+
+const ESTABLISHED: i32 = 1;
+
+const CLOSING: i32 = 2;
+
+const DRAINING: i32 = 3;
+
+const CLOSED: i32 = 4;
+
+// The most ACK ranges remembered per space, and the most out-of-order
+// CRYPTO bytes held per level (§7.5).
+const MAX_ACK_RANGES: i32 = 32;
+
+const MAX_CRYPTO_HELD: i64 = 65536;
+
+// The most packets held for keys not yet available.
+const MAX_UNDECRYPTED: i32 = 8;
+
+// Config — one endpoint's side of a connection: the application protocols
+// it offers or accepts (ALPN, which QUIC requires), the transport parameters
+// it declares, the length of its connection IDs, and the largest datagram it
+// sends. A client names the server and the roots it trusts; a server has
+// its certificate chain and key.
+pub struct Config {
+  alpn: string[],
+  params: params.Params,
+  cid_len: i32,
+  max_datagram: i32,
+  server_name: string,
+  roots: verify.Roots,
+  identity: Option[identity.Identity],
+}
+
+// config declares a 30-second idle timeout and no streams; a protocol on
+// QUIC raises the stream limits it needs with `with_streams`.
+pub function config(alpn: string[]): Config {
+  let p: params.Params = params.Params { ...params.defaults(), max_idle_timeout: 30000 as i64, max_udp_payload_size: 1472 as i64, disable_active_migration: true };
+  return Config { alpn: alpn, params: p, cid_len: 8, max_datagram: 1200, server_name: "", roots: verify.roots([]), identity: None };
+}
+
+// client_side names the server a client connects to and the roots its
+// certificate must chain to.
+pub function (c: Config) client_side(server_name: string, roots: verify.Roots): Config {
+  return Config { ...c, server_name: server_name, roots: roots };
+}
+
+// with_streams declares how many bidirectional and unidirectional streams
+// the peer may open at once, how much it may send on each before reading
+// opens the window again, and how much on all of them together.
+pub function (c: Config) with_streams(bidi: i64, uni: i64, stream_window: i64, connection_window: i64): Config {
+  let p: params.Params = params.Params { ...c.params, initial_max_streams_bidi: bidi, initial_max_streams_uni: uni, initial_max_stream_data_bidi_local: stream_window, initial_max_stream_data_bidi_remote: stream_window, initial_max_stream_data_uni: stream_window, initial_max_data: connection_window };
+  return Config { ...c, params: p };
+}
+
+// server_side gives a server its certificate chain and key.
+pub function (c: Config) server_side(id: identity.Identity): Config {
+  return Config { ...c, identity: Some(id) };
+}
+
+// Close — why a connection ended: the error code, the frame type that
+// caused a transport error, the reason, whether the code is the
+// application's, and whether the peer was the one to close.
+pub struct Close { code: i64, frame_type: i64, reason: string, app: boolean, remote: boolean }
+
+// Event — what changed while the connection took a datagram or the time:
+// the handshake completed, the connection ended, the peer opened a stream,
+// a stream has data or its end to `read`, the peer reset a stream it was
+// sending (with its application error code), or the peer asked this side
+// to stop sending, which resets this side's sending half with that code.
+pub enum Event { Connected, Closed(Close), StreamOpened(i64), StreamReadable(i64), StreamReset(i64, i64), StreamStopped(i64, i64) }
+
+// Step — a connection and what happened to it.
+pub struct Step { conn: Conn, events: Event[] }
+
+// Space — one packet number space (§12.3).
+struct Space {
+  send: Option[packet.Keys],
+  recv: Option[packet.Keys],
+  next_pn: i64,
+  largest_recv: i64,
+  largest_recv_at: i64,
+  ranges: frames.AckRange[],
+  ack_wanted: boolean,
+  crypto_out: u8[],
+  crypto_sent: i64,
+  crypto_lost: i64[],
+  crypto_in: streams.Reassembly,
+  discarded: boolean,
+}
+
+// Tls — the handshake, at whichever side this endpoint is.
+enum Tls { TlsClient(handshake.Client), TlsServer(handshake.Server), TlsNone }
+
+// Conn — one connection. Its fields are its own; read it through the
+// methods below.
+pub struct Conn {
+  config: Config,
+  server: boolean,
+  tls: Tls,
+  spaces: Space[],
+  recovery: recovery.Recovery,
+  scid: u8[],
+  dcid: u8[],
+  odcid: u8[],
+  retry_scid: Option[u8[]],
+  token: u8[],
+  peer_seen: boolean,
+  peer_params: Option[params.Params],
+  reset_token: u8[],
+  state: i32,
+  close: Option[Close],
+  close_pending: boolean,
+  close_until: i64,
+  idle_until: i64,
+  validated: boolean,
+  received_bytes: i64,
+  sent_bytes: i64,
+  handshake_done_pending: boolean,
+  probes: i32[],
+  pending: frames.Frame[],
+  held: u8[][],
+  streams: streams.Streams,
+  events: Event[],
+}
+
+function __space(): Space {
+  return Space { send: None, recv: None, next_pn: 0 as i64, largest_recv: 0 - 1 as i64, largest_recv_at: 0 as i64, ranges: [], ack_wanted: false, crypto_out: [], crypto_sent: 0 as i64, crypto_lost: [], crypto_in: streams.reassembly(), discarded: false };
+}
+
+// === making a connection ===================================================
+
+// client_entropy is the bytes of entropy `client` takes: its connection ID,
+// the Destination Connection ID of its first Initial, and the handshake's.
+pub function client_entropy(c: Config): i32 {
+  return c.cid_len + 8 + handshake.client_entropy(__tls_client_config(c, [], []));
+}
+
+// server_entropy is the bytes of entropy `accept` takes: its connection ID,
+// its stateless reset token, and the handshake's.
+pub function server_entropy(c: Config): i32 {
+  let sc: handshake.ServerConfig = __tls_server_config(c, [], [], []);
+  return c.cid_len + 16 + handshake.server_entropy(sc);
+}
+
+function __tls_client_config(c: Config, scid: [u8], params_bytes: u8[]): handshake.ClientConfig {
+  let ext: message.Extension = message.Extension { kind: message.EXT_QUIC_TRANSPORT_PARAMETERS, data: params_bytes };
+  return handshake.ClientConfig { ...handshake.client_config(c.server_name), alpn: c.alpn, shares: 2, quic: true, extensions: [ext] };
+}
+
+function __tls_server_config(c: Config, chain: u8[][], schemes: i32[], params_bytes: u8[]): handshake.ServerConfig {
+  let ext: message.Extension = message.Extension { kind: message.EXT_QUIC_TRANSPORT_PARAMETERS, data: params_bytes };
+  return handshake.ServerConfig { ...handshake.server_config(chain, schemes), alpn: c.alpn, quic: true, extensions: [ext] };
+}
+
+function __base(c: Config, server: boolean, scid: u8[], dcid: u8[], odcid: u8[], now: i64): Conn {
+  let r: recovery.Recovery = recovery.new(c.max_datagram, server).with_max_ack_delay(25000000 as i64);
+  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [] };
+}
+
+// client starts a connection: its first Initial is ready to `transmit`.
+pub function client(c: Config, entropy: [u8], now: i64): Result[Conn, string] {
+  let scid: u8[] = __copy(entropy[0:c.cid_len]);
+  let dcid: u8[] = __copy(entropy[c.cid_len:c.cid_len + 8]);
+  let p: params.Params = params.Params { ...c.params, initial_source_connection_id: Some(scid) };
+  let cc: handshake.ClientConfig = __tls_client_config(c, scid, params.encode(p, false));
+  match (handshake.client_start(cc, entropy[c.cid_len + 8:entropy.len()])) {
+    Ok(step) => {
+      let conn: Conn = __base(c, false, scid, dcid, dcid, now).__initial_keys(dcid);
+      conn = Conn { ...conn, tls: TlsClient(step.client) };
+      return Ok(conn.__tls_events(step.events, now));
+    },
+    Err(e) => {
+      return Err(e.message());
+    }
+  }
+}
+
+// accept makes the server's side of a connection from the header of the
+// client's first Initial, which the caller then gives to `receive`.
+pub function accept(c: Config, entropy: [u8], first: packet.Header, now: i64): Result[Conn, string] {
+  let Some(id) = c.identity else {
+    return Err("quic: a server needs an identity");
+  };
+  let scid: u8[] = __copy(entropy[0:c.cid_len]);
+  let reset: u8[] = __copy(entropy[c.cid_len:c.cid_len + 16]);
+  let p: params.Params = params.Params { ...c.params, original_destination_connection_id: Some(first.dcid), initial_source_connection_id: Some(scid), stateless_reset_token: Some(reset) };
+  let sc: handshake.ServerConfig = __tls_server_config(c, id.chain, [id.key.scheme()], params.encode(p, true));
+  match (handshake.server_new(sc, entropy[c.cid_len + 16:entropy.len()])) {
+    Ok(s) => {
+      let conn: Conn = __base(c, true, scid, first.scid, first.dcid, now).__initial_keys(first.dcid);
+      return Ok(Conn { ...conn, tls: TlsServer(s), reset_token: reset });
+    },
+    Err(e) => {
+      return Err(e.message());
+    }
+  }
+}
+
+// __initial_keys installs the Initial keys the client's chosen Destination
+// Connection ID gives (RFC 9001 §5.2).
+function (c: Conn) __initial_keys(dcid: [u8]): Conn {
+  let s: Space = c.spaces[recovery.INITIAL];
+  s = Space { ...s, send: Some(packet.initial_keys(dcid, !c.server)), recv: Some(packet.initial_keys(dcid, c.server)) };
+  return Conn { ...c, spaces: c.spaces.with(recovery.INITIAL, s) };
+}
+
+// === what the caller reads =================================================
+
+// connected reports whether the handshake is complete.
+pub function (c: Conn) connected(): boolean {
+  return c.state == ESTABLISHED;
+}
+
+// confirmed reports whether the handshake is confirmed (RFC 9001 §4.1.2):
+// at a server once it completes, at a client once HANDSHAKE_DONE arrives.
+pub function (c: Conn) confirmed(): boolean {
+  return c.state == ESTABLISHED && c.spaces[recovery.HANDSHAKE].discarded;
+}
+
+// done reports whether the connection is over: closed or drained, and its
+// state no longer needed.
+pub function (c: Conn) done(): boolean {
+  return c.state == CLOSED;
+}
+
+// alpn is the application protocol the handshake chose.
+pub function (c: Conn) alpn(): string {
+  match (c.tls) {
+    TlsClient(t) => {
+      return t.alpn();
+    },
+    TlsServer(t) => {
+      return t.alpn;
+    },
+    TlsNone => {
+      return "";
+    }
+  }
+}
+
+// scid is this endpoint's connection ID: what the peer's packets carry as
+// their Destination Connection ID, and what a server routes them by.
+pub function (c: Conn) scid(): u8[] {
+  return c.scid;
+}
+
+// peer_params are the transport parameters the peer declared, once the
+// handshake has authenticated them.
+pub function (c: Conn) peer_params(): Option[params.Params] {
+  return c.peer_params;
+}
+
+// closed_with is why the connection ended, once it has.
+pub function (c: Conn) closed_with(): Option[Close] {
+  return c.close;
+}
+
+// deadline is when the connection next needs `tick`, or 0 for never.
+pub function (c: Conn) deadline(): i64 {
+  if (c.state == CLOSED) {
+    return 0 as i64;
+  }
+  if (c.state == CLOSING || c.state == DRAINING) {
+    return c.close_until;
+  }
+  return __earliest(c.recovery.timer(), c.idle_until);
+}
+
+function __earliest(a: i64, b: i64): i64 {
+  if (a == 0 || b != 0 && b < a) {
+    return b;
+  }
+  return a;
+}
+
+// __stepped hands back the connection with what happened to it, the
+// streams' events after the connection's own.
+function (c: Conn) __stepped(): Step {
+  let (table, notes) = c.streams.take_events();
+  let events: Event[] = c.events;
+  for n in notes {
+    events = events.append(__stream_event(n));
+  }
+  return Step { conn: Conn { ...c, streams: table, events: [] }, events: events };
+}
+
+function __stream_event(n: streams.Event): Event {
+  match (n) {
+    streams.Opened(id) => {
+      return StreamOpened(id);
+    },
+    streams.Readable(id) => {
+      return StreamReadable(id);
+    },
+    streams.ResetByPeer(id, code) => {
+      return StreamReset(id, code);
+    },
+    streams.StopRequested(id, code) => {
+      return StreamStopped(id, code);
+    }
+  }
+}
+
+// === streams ================================================================
+
+// open_stream opens a stream of this side's once the handshake is complete,
+// answering its ID, or refuses when the peer's limit on streams is reached;
+// the peer is then told this side is blocked (STREAMS_BLOCKED).
+pub function (c: Conn) open_stream(uni: boolean): Result[(Conn, i64), string] {
+  if (c.state != ESTABLISHED) {
+    return Err("quic: the connection is not established");
+  }
+  match (c.streams.open(uni)) {
+    Ok(pair) => {
+      return Ok((Conn { ...c, streams: pair.0 }, pair.1));
+    },
+    Err(e) => {
+      return Err("quic: " + e);
+    }
+  }
+}
+
+// can_open reports whether `open_stream` would succeed.
+pub function (c: Conn) can_open(uni: boolean): boolean {
+  return c.state == ESTABLISHED && c.streams.can_open(uni);
+}
+
+// blocked_open tells the peer, on the next `transmit`, that this side wants
+// to open another stream of the kind and its limit refuses.
+pub function (c: Conn) blocked_open(uni: boolean): Conn {
+  return Conn { ...c, streams: c.streams.blocked_open(uni) };
+}
+
+// write queues `data` on a stream, and with `fin` ends this side of it;
+// `transmit` sends it as the windows allow.
+pub function (c: Conn) write(id: i64, data: [u8], fin: boolean): Result[Conn, string] {
+  match (c.streams.write(id, data, fin)) {
+    Ok(t) => {
+      return Ok(Conn { ...c, streams: t });
+    },
+    Err(e) => {
+      return Err("quic: " + e);
+    }
+  }
+}
+
+// read takes what has arrived on a stream, in order, and whether that is
+// its end.
+pub function (c: Conn) read(id: i64): Result[(Conn, u8[], boolean), string] {
+  match (c.streams.read(id)) {
+    Ok(r) => {
+      return Ok((Conn { ...c, streams: r.0 }, r.1, r.2));
+    },
+    Err(e) => {
+      return Err("quic: " + e);
+    }
+  }
+}
+
+// reset_stream abandons this side of a stream with an application error
+// code (RESET_STREAM).
+pub function (c: Conn) reset_stream(id: i64, code: i64): Result[Conn, string] {
+  match (c.streams.reset(id, code)) {
+    Ok(t) => {
+      return Ok(Conn { ...c, streams: t });
+    },
+    Err(e) => {
+      return Err("quic: " + e);
+    }
+  }
+}
+
+// stop_sending asks the peer to stop sending on a stream, with an
+// application error code (STOP_SENDING).
+pub function (c: Conn) stop_sending(id: i64, code: i64): Result[Conn, string] {
+  match (c.streams.stop(id, code)) {
+    Ok(t) => {
+      return Ok(Conn { ...c, streams: t });
+    },
+    Err(e) => {
+      return Err("quic: " + e);
+    }
+  }
+}
+
+// buffered is how many bytes written to a stream the peer has not yet
+// acknowledged: what a writer paces itself by.
+pub function (c: Conn) buffered(id: i64): i64 {
+  return c.streams.buffered(id);
+}
+
+// === closing ================================================================
+
+// close ends the connection with `code`, an application error when `app`:
+// a CONNECTION_CLOSE goes out on the next `transmit`, and the connection
+// waits three probe timeouts before it is done (§10.2).
+pub function (c: Conn) close(code: i64, reason: string, app: boolean, now: i64): Conn {
+  if (c.state >= CLOSING) {
+    return c;
+  }
+  let why: Close = Close { code: code, frame_type: 0 as i64, reason: reason, app: app, remote: false };
+  return Conn { ...c, state: CLOSING, close: Some(why), close_pending: true, close_until: now + 3 * c.recovery.pto(recovery.APPLICATION), events: c.events.append(Closed(why)) };
+}
+
+// __fail closes with a transport error.
+function (c: Conn) __fail(code: i64, frame_type: i64, reason: string, now: i64): Conn {
+  if (c.state >= CLOSING) {
+    return c;
+  }
+  let why: Close = Close { code: code, frame_type: frame_type, reason: reason, app: false, remote: false };
+  return Conn { ...c, state: CLOSING, close: Some(why), close_pending: true, close_until: now + 3 * c.recovery.pto(recovery.APPLICATION), events: c.events.append(Closed(why)) };
+}
+
+// __drain enters the draining state: the peer has closed, or the
+// connection was reset, and nothing more is sent (§10.2.2).
+function (c: Conn) __drain(why: Close, now: i64): Conn {
+  if (c.state >= DRAINING) {
+    return c;
+  }
+  let events: Event[] = c.events;
+  if (c.state < CLOSING) {
+    events = events.append(Closed(why));
+  }
+  return Conn { ...c, state: DRAINING, close: Some(why), close_pending: false, close_until: now + 3 * c.recovery.pto(recovery.APPLICATION), events: events };
+}
+
+// === time ===================================================================
+
+// tick runs whatever was due at `now`: the end of closing or draining, the
+// idle timeout, and loss detection's timer.
+pub function (c: Conn) tick(now: i64): Step {
+  if (c.state == CLOSING || c.state == DRAINING) {
+    if (now >= c.close_until) {
+      return Conn { ...c, state: CLOSED }.__stepped();
+    }
+    return c.__stepped();
+  }
+  if (c.state == CLOSED) {
+    return c.__stepped();
+  }
+  if (c.idle_until > 0 && now >= c.idle_until) {
+    let why: Close = Close { code: frames.NO_ERROR, frame_type: 0 as i64, reason: "idle timeout", app: false, remote: false };
+    return Conn { ...c, state: CLOSED, close: Some(why), events: c.events.append(Closed(why)) }.__stepped();
+  }
+  let t: i64 = c.recovery.timer();
+  if (t == 0 || now < t) {
+    return c.__stepped();
+  }
+  let o: recovery.Outcome = c.recovery.on_timeout(now);
+  let after: Conn = Conn { ...c, recovery: o.recovery }.__requeue(o.lost);
+  if (o.probe >= 0) {
+    after = Conn { ...after, probes: after.probes.append(o.probe) };
+  }
+  return after.__stepped();
+}
+
+// === receiving ==============================================================
+
+// receive takes one datagram that arrived at `now`.
+pub function (c: Conn) receive(datagram: [u8], now: i64): Step {
+  if (c.state == CLOSED) {
+    return c.__stepped();
+  }
+  let cur: Conn = Conn { ...c, received_bytes: c.received_bytes + datagram.len() as i64 };
+  if (cur.state == CLOSING) {
+    return Conn { ...cur, close_pending: true }.__stepped();
+  }
+  cur = cur.__datagram(datagram, now);
+  return cur.__retry_held(now).__stepped();
+}
+
+// __datagram takes each packet a datagram holds, in order (§12.2).
+function (c: Conn) __datagram(datagram: [u8], now: i64): Conn {
+  let cur: Conn = c;
+  let at: i32 = 0;
+  while (at < datagram.len() && cur.state < DRAINING) {
+    match (packet.parse(datagram, at, cur.config.cid_len)) {
+      Ok(h) => {
+        cur = cur.__packet(datagram, h, now);
+        at = h.end;
+      },
+      Err(_) => {
+        return cur;
+      }
+    }
+  }
+  return cur;
+}
+
+// __packet routes one packet by its kind.
+function (c: Conn) __packet(datagram: [u8], h: packet.Header, now: i64): Conn {
+  match (h.kind) {
+    packet.VersionNegotiation => {
+      return c.__version_negotiation(h, now);
+    },
+    packet.Retry => {
+      return c.__retry(datagram, h, now);
+    },
+    packet.Initial => {
+      return c.__protected(datagram, h, recovery.INITIAL, frames.IN_INITIAL, now);
+    },
+    packet.Handshake => {
+      return c.__protected(datagram, h, recovery.HANDSHAKE, frames.IN_HANDSHAKE, now);
+    },
+    packet.OneRtt => {
+      return c.__protected(datagram, h, recovery.APPLICATION, frames.IN_ONE_RTT, now);
+    },
+    _ => {
+      return c;
+    }
+  }
+}
+
+// __version_negotiation ends a client's attempt when the server speaks no
+// version it does; one that lists version 1 is ignored (§6.2).
+function (c: Conn) __version_negotiation(h: packet.Header, now: i64): Conn {
+  if (c.server || c.peer_seen || h.versions.contains(packet.VERSION_1)) {
+    return c;
+  }
+  let why: Close = Close { code: frames.NO_ERROR, frame_type: 0 as i64, reason: "no version in common", app: false, remote: true };
+  return Conn { ...c, state: CLOSED, close: Some(why), events: c.events.append(Closed(why)) };
+}
+
+// __retry follows a server's Retry (§17.2.5): once, before any other
+// packet from the server, and only with a valid integrity tag. The next
+// Initial carries the token to the new connection ID, under new keys.
+function (c: Conn) __retry(datagram: [u8], h: packet.Header, now: i64): Conn {
+  if (c.server || c.peer_seen || c.retry_scid.is_some() || !packet.retry_valid(datagram[h.at:h.end], c.odcid)) {
+    return c;
+  }
+  let fresh: Conn = Conn { ...c, dcid: h.scid, retry_scid: Some(h.scid), token: h.token, recovery: c.recovery.discard(recovery.INITIAL) }.__initial_keys(h.scid);
+  let s: Space = fresh.spaces[recovery.INITIAL];
+  return Conn { ...fresh, spaces: fresh.spaces.with(recovery.INITIAL, Space { ...s, crypto_sent: 0 as i64, crypto_lost: [] }) };
+}
+
+// __ours reports whether a packet is addressed to this connection: its own
+// connection ID, or at a server, the one the client chose for its Initials.
+function (c: Conn) __ours(h: packet.Header): boolean {
+  if (__same(h.dcid, c.scid)) {
+    return true;
+  }
+  return c.server && __same(h.dcid, c.odcid);
+}
+
+// __protected opens a packet in `space` and takes its frames.
+function (c: Conn) __protected(datagram: [u8], h: packet.Header, space: i32, kind: i32, now: i64): Conn {
+  let s: Space = c.spaces[space];
+  if (s.discarded || !c.__ours(h)) {
+    return c;
+  }
+  let Some(keys) = s.recv else {
+    return c.__hold(datagram[h.at:h.end]);
+  };
+  match (packet.open(datagram, h, keys, s.largest_recv)) {
+    Ok(o) => {
+      return c.__opened(h, o, space, kind, now);
+    },
+    Err(_) => {
+      return c.__maybe_reset(datagram, h, now);
+    }
+  }
+}
+
+// __hold keeps a packet whose keys are not here yet, for `__retry_held`.
+function (c: Conn) __hold(bytes: [u8]): Conn {
+  if (c.held.len() >= MAX_UNDECRYPTED) {
+    return c;
+  }
+  return Conn { ...c, held: c.held.append(__copy(bytes)) };
+}
+
+function (c: Conn) __retry_held(now: i64): Conn {
+  if (c.held.len() == 0) {
+    return c;
+  }
+  let held: u8[][] = c.held;
+  let cur: Conn = Conn { ...c, held: [] };
+  for p in held {
+    if (cur.state < DRAINING) {
+      cur = cur.__datagram(p, now);
+    }
+  }
+  if (cur.held.len() == held.len()) {
+    return Conn { ...cur, held: held };
+  }
+  return cur;
+}
+
+// __maybe_reset recognises a stateless reset (§10.3): a short-header packet
+// that does not decrypt and ends in the token the peer gave.
+function (c: Conn) __maybe_reset(datagram: [u8], h: packet.Header, now: i64): Conn {
+  let Some(p) = c.peer_params else {
+    return c;
+  };
+  let Some(token) = p.stateless_reset_token else {
+    return c;
+  };
+  let n: i32 = datagram.len();
+  if (c.server || n < 21 || !__same(datagram[n - 16:n], token)) {
+    return c;
+  }
+  return c.__drain(Close { code: frames.NO_ERROR, frame_type: 0 as i64, reason: "stateless reset", app: false, remote: true }, now);
+}
+
+// __opened takes a decrypted packet: its reserved bits, the server's
+// connection ID at a client, address validation at a server, and its
+// frames, then records its packet number for acknowledgement.
+function (c: Conn) __opened(h: packet.Header, o: packet.Opened, space: i32, kind: i32, now: i64): Conn {
+  if (!o.reserved_ok) {
+    return c.__fail(frames.PROTOCOL_VIOLATION, 0 as i64, "reserved bits set", now);
+  }
+  if (__has(c.spaces[space].ranges, o.pn)) {
+    return c;
+  }
+  let cur: Conn = c.__peer_cid(h);
+  if (cur.server && space == recovery.HANDSHAKE && !cur.spaces[recovery.INITIAL].discarded) {
+    cur = Conn { ...cur, validated: true }.__discard(recovery.INITIAL);
+  }
+  match (frames.read_all(o.payload)) {
+    Ok(fs) => {
+      cur = cur.__frames(fs, space, kind, now);
+      if (cur.state < CLOSING) {
+        cur = Conn { ...cur, idle_until: __idle(cur, now) }.__received(space, o.pn, __eliciting(fs), now);
+      }
+      return cur;
+    },
+    Err(e) => {
+      return cur.__fail(e.code, e.frame_type, e.reason, now);
+    }
+  }
+}
+
+// __peer_cid adopts, at a client, the connection ID the server chose in its
+// first packet (§7.2).
+function (c: Conn) __peer_cid(h: packet.Header): Conn {
+  if (c.server || c.peer_seen) {
+    return c;
+  }
+  match (h.kind) {
+    packet.OneRtt => {
+      return c;
+    },
+    _ => {
+      return Conn { ...c, dcid: h.scid, peer_seen: true };
+    }
+  }
+}
+
+function __idle(c: Conn, now: i64): i64 {
+  let ms: i64 = c.config.params.max_idle_timeout;
+  if let Some(p) = c.peer_params {
+    if (p.max_idle_timeout > 0 && (ms == 0 || p.max_idle_timeout < ms)) {
+      ms = p.max_idle_timeout;
+    }
+  }
+  if (ms == 0) {
+    return 0 as i64;
+  }
+  let floor: i64 = 3 * c.recovery.pto(recovery.APPLICATION);
+  let d: i64 = ms * 1000000;
+  if (d < floor) {
+    d = floor;
+  }
+  return now + d;
+}
+
+function __eliciting(fs: frames.Frame[]): boolean {
+  for f in fs {
+    if (f.ack_eliciting()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// __received records packet `pn` in `space`'s ACK ranges, and whether an
+// ACK is owed for it.
+function (c: Conn) __received(space: i32, pn: i64, eliciting: boolean, now: i64): Conn {
+  let s: Space = c.spaces[space];
+  let largest: i64 = s.largest_recv;
+  let at: i64 = s.largest_recv_at;
+  if (pn > largest) {
+    largest = pn;
+    at = now;
+  }
+  s = Space { ...s, ranges: __add_range(s.ranges, pn), largest_recv: largest, largest_recv_at: at, ack_wanted: s.ack_wanted || eliciting };
+  return Conn { ...c, spaces: c.spaces.with(space, s) };
+}
+
+// === frames =================================================================
+
+function (c: Conn) __frames(fs: frames.Frame[], space: i32, kind: i32, now: i64): Conn {
+  let cur: Conn = c;
+  for f in fs {
+    if (cur.state >= CLOSING) {
+      return cur;
+    }
+    if (!f.permitted(kind)) {
+      return cur.__fail(frames.PROTOCOL_VIOLATION, 0 as i64, "a frame not allowed in this packet type", now);
+    }
+    cur = cur.__frame(f, space, now);
+  }
+  return cur;
+}
+
+function (c: Conn) __frame(f: frames.Frame, space: i32, now: i64): Conn {
+  match (f) {
+    frames.AckFrame(a) => {
+      return c.__ack(a, space, now);
+    },
+    frames.Crypto(offset, data) => {
+      return c.__crypto(space, offset, data, now);
+    },
+    frames.HandshakeDone => {
+      return c.__handshake_done(now);
+    },
+    frames.ConnectionCloseFrame(cc) => {
+      return c.__drain(Close { code: cc.code, frame_type: cc.frame_type, reason: cc.reason, app: cc.app, remote: true }, now);
+    },
+    frames.PathChallenge(data) => {
+      return Conn { ...c, pending: c.pending.append(frames.PathResponse(data)) };
+    },
+    _ => {
+      return c.__frame_rest(f, now);
+    }
+  }
+}
+
+// __frame_rest takes the streams' frames, and the connection-level frames
+// this side does not act on yet, which are dropped.
+function (c: Conn) __frame_rest(f: frames.Frame, now: i64): Conn {
+  if (streams.owns(f)) {
+    match (c.streams.on_frame(f)) {
+      Ok(t) => {
+        return Conn { ...c, streams: t };
+      },
+      Err(e) => {
+        return c.__fail(e.code, e.frame_type, e.reason, now);
+      }
+    }
+  }
+  match (f) {
+    frames.NewToken(_) => {
+      if (c.server) {
+        return c.__fail(frames.PROTOCOL_VIOLATION, frames.NEW_TOKEN, "a client sent NEW_TOKEN", now);
+      }
+      return c;
+    },
+    _ => {
+      return c;
+    }
+  }
+}
+
+// __ack takes an ACK frame: what it acknowledges and what it shows lost.
+function (c: Conn) __ack(a: frames.Ack, space: i32, now: i64): Conn {
+  let exponent: i64 = 3;
+  if let Some(p) = c.peer_params {
+    exponent = p.ack_delay_exponent;
+  }
+  let delay: i64 = (a.delay << exponent) * 1000;
+  match (c.recovery.on_ack(space, a, delay, now, c.spaces[space].next_pn - 1)) {
+    Ok(o) => {
+      let r: recovery.Recovery = o.recovery;
+      if (!c.server && space == recovery.HANDSHAKE) {
+        r = r.validated();
+      }
+      return Conn { ...c, recovery: r }.__delivered(o.acked).__requeue(o.lost);
+    },
+    Err(code) => {
+      return c.__fail(code, frames.ACK, "an ACK of a packet never sent", now);
+    }
+  }
+}
+
+// __delivered tells the streams what acknowledged packets carried.
+function (c: Conn) __delivered(acked: recovery.Sent[]): Conn {
+  let t: streams.Streams = c.streams;
+  for p in acked {
+    for item in p.resend {
+      t = t.acked(item);
+    }
+  }
+  return Conn { ...c, streams: t };
+}
+
+// __requeue puts back what lost packets carried, to be sent again.
+function (c: Conn) __requeue(lost: recovery.Sent[]): Conn {
+  let cur: Conn = c;
+  for p in lost {
+    cur = cur.__resend(p.resend);
+  }
+  return cur;
+}
+
+function (c: Conn) __resend(items: recovery.Resend[]): Conn {
+  let cur: Conn = c;
+  for item in items {
+    match (item) {
+      recovery.CryptoRange(offset, len) => {
+        cur = cur.__crypto_lost(offset, len);
+      },
+      recovery.StreamRange(_, _, _, _) => {
+        cur = Conn { ...cur, streams: cur.streams.lost(item) };
+      },
+      recovery.Again(f) => {
+        cur = cur.__again(f);
+      }
+    }
+  }
+  return cur;
+}
+
+// __crypto_lost notes CRYPTO data to send again; the space is the one whose
+// stream holds that offset, found by which still has unacknowledged data.
+function (c: Conn) __crypto_lost(offset: i64, len: i32): Conn {
+  let space: i32 = __crypto_space(c, offset);
+  if (space < 0) {
+    return c;
+  }
+  let s: Space = c.spaces[space];
+  return Conn { ...c, spaces: c.spaces.with(space, Space { ...s, crypto_lost: s.crypto_lost.append(offset).append(len as i64) }) };
+}
+
+function (c: Conn) __again(f: frames.Frame): Conn {
+  if (streams.owns(f)) {
+    return Conn { ...c, streams: c.streams.lost(recovery.Again(f)) };
+  }
+  match (f) {
+    frames.HandshakeDone => {
+      return Conn { ...c, handshake_done_pending: true };
+    },
+    _ => {
+      return Conn { ...c, pending: c.pending.append(f) };
+    }
+  }
+}
+
+// __handshake_done confirms the handshake at a client (RFC 9001 §4.1.2);
+// a server receiving one is a protocol violation.
+function (c: Conn) __handshake_done(now: i64): Conn {
+  if (c.server) {
+    return c.__fail(frames.PROTOCOL_VIOLATION, frames.HANDSHAKE_DONE, "a client sent HANDSHAKE_DONE", now);
+  }
+  return Conn { ...c, recovery: c.recovery.confirmed() }.__discard(recovery.HANDSHAKE);
+}
+
+// __discard drops a space's keys and what was in flight under them (§4.9).
+function (c: Conn) __discard(space: i32): Conn {
+  let s: Space = c.spaces[space];
+  if (s.discarded) {
+    return c;
+  }
+  return Conn { ...c, spaces: c.spaces.with(space, Space { ...__space(), discarded: true, next_pn: s.next_pn }), recovery: c.recovery.discard(space) };
+}
+
+// === the handshake ==========================================================
+
+// __crypto takes CRYPTO data at the level `space` is, in order, and hands
+// what is contiguous to the handshake.
+function (c: Conn) __crypto(space: i32, offset: i64, data: u8[], now: i64): Conn {
+  let s: Space = c.spaces[space];
+  let (r, bytes) = s.crypto_in.add(offset, data).take();
+  if (r.held_bytes > MAX_CRYPTO_HELD) {
+    return c.__fail(frames.CRYPTO_BUFFER_EXCEEDED, frames.CRYPTO, "too much CRYPTO data held out of order", now);
+  }
+  let cur: Conn = Conn { ...c, spaces: c.spaces.with(space, Space { ...s, crypto_in: r }) };
+  if (bytes.len() == 0) {
+    return cur;
+  }
+  return cur.__tls_read(space, bytes, now);
+}
+
+function (c: Conn) __tls_read(level: i32, bytes: u8[], now: i64): Conn {
+  match (c.tls) {
+    TlsClient(t) => {
+      return c.__client_step(t.read_crypto(level, bytes), now);
+    },
+    TlsServer(t) => {
+      return c.__server_step(t.read_crypto(level, bytes), now);
+    },
+    TlsNone => {
+      return c;
+    }
+  }
+}
+
+function (c: Conn) __client_step(r: Result[handshake.ClientStep, handshake.HandshakeError], now: i64): Conn {
+  match (r) {
+    Ok(step) => {
+      return Conn { ...c, tls: TlsClient(step.client) }.__tls_events(step.events, now);
+    },
+    Err(e) => {
+      return c.__fail(frames.CRYPTO_ERROR + e.alert() as i64, frames.CRYPTO, e.message(), now);
+    }
+  }
+}
+
+function (c: Conn) __server_step(r: Result[handshake.ServerStep, handshake.HandshakeError], now: i64): Conn {
+  match (r) {
+    Ok(step) => {
+      return Conn { ...c, tls: TlsServer(step.server) }.__tls_events(step.events, now);
+    },
+    Err(e) => {
+      return c.__fail(frames.CRYPTO_ERROR + e.alert() as i64, frames.CRYPTO, e.message(), now);
+    }
+  }
+}
+
+// __tls_events acts on what the handshake reported, in order.
+function (c: Conn) __tls_events(events: handshake.Event[], now: i64): Conn {
+  let cur: Conn = c;
+  for e in events {
+    if (cur.state >= CLOSING) {
+      return cur;
+    }
+    cur = cur.__tls_event(e, now);
+  }
+  return cur;
+}
+
+function (c: Conn) __tls_event(e: handshake.Event, now: i64): Conn {
+  match (e) {
+    handshake.Crypto(f) => {
+      let s: Space = c.spaces[f.level];
+      return Conn { ...c, spaces: c.spaces.with(f.level, Space { ...s, crypto_out: s.crypto_out.concat(f.bytes) }) };
+    },
+    handshake.Secret(t) => {
+      return c.__secret(t);
+    },
+    handshake.Connected => {
+      return c.__connected(now);
+    },
+    _ => {
+      return c.__tls_question(e, now);
+    }
+  }
+}
+
+// __secret installs the keys a traffic secret gives, for the direction it
+// names, at its level.
+function (c: Conn) __secret(t: handshake.TrafficSecret): Conn {
+  let k: packet.Keys = packet.keys(__suite(c), t.secret);
+  let s: Space = c.spaces[t.level];
+  if (t.write) {
+    s = Space { ...s, send: Some(k) };
+  } else {
+    s = Space { ...s, recv: Some(k) };
+  }
+  return Conn { ...c, spaces: c.spaces.with(t.level, s) };
+}
+
+function __suite(c: Conn): keyschedule.CipherSuite {
+  match (c.tls) {
+    TlsClient(t) => {
+      return t.cipher_suite();
+    },
+    TlsServer(t) => {
+      return t.cipher_suite();
+    },
+    TlsNone => {
+      return keyschedule.Aes128GcmSha256;
+    }
+  }
+}
+
+// __tls_question answers what the handshake asks: a server's signature, a
+// client's judgement of the server's certificate, and the resumption a
+// client offers, which this slice declines.
+function (c: Conn) __tls_question(e: handshake.Event, now: i64): Conn {
+  match (c.tls) {
+    TlsClient(t) => {
+      match (e) {
+        handshake.VerifyServer(v) => {
+          return c.__client_step(t.verdict(__trusted(c.config, v, now)), now);
+        },
+        _ => {
+          return c;
+        }
+      }
+    },
+    TlsServer(t) => {
+      return c.__server_question(t, e, now);
+    },
+    TlsNone => {
+      return c;
+    }
+  }
+}
+
+function (c: Conn) __server_question(t: handshake.Server, e: handshake.Event, now: i64): Conn {
+  match (e) {
+    handshake.SignNeeded(sg) => {
+      let Some(id) = c.config.identity else {
+        return c.__fail(frames.INTERNAL_ERROR, frames.CRYPTO, "no identity to sign with", now);
+      };
+      match (id.key.sign(sg.scheme, sg.signed)) {
+        Ok(sig) => {
+          return c.__server_step(t.signature(sig), now);
+        },
+        Err(err) => {
+          return c.__fail(frames.INTERNAL_ERROR, frames.CRYPTO, err.message(), now);
+        }
+      }
+    },
+    handshake.ResumeOffered(_) => {
+      return c.__server_step(t.resume(None), now);
+    },
+    handshake.VerifyClient(_) => {
+      return c.__server_step(t.verdict(true), now);
+    },
+    _ => {
+      return c;
+    }
+  }
+}
+
+// __trusted judges the server's chain against the client's roots for the
+// name it asked for, at the wall-clock second `now` falls in.
+function __trusted(cfg: Config, v: handshake.Verification, now: i64): boolean {
+  match (verify.verify_server(v.chain, cfg.roots, cfg.server_name, now_unix_ms() / 1000)) {
+    Ok(leaf) => {
+      return verify.verify_signed(leaf, v.scheme, v.signed, v.signature);
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+}
+
+// __connected completes the handshake: the peer's transport parameters,
+// authenticated now, are checked and taken (§7.3, §7.4). A server confirms
+// at once and owes the client HANDSHAKE_DONE.
+function (c: Conn) __connected(now: i64): Conn {
+  match (c.__peer_transport_params()) {
+    Ok(p) => {
+      let cur: Conn = Conn { ...c, state: ESTABLISHED, peer_params: Some(p), streams: c.streams.with_peer(p), recovery: c.recovery.with_max_ack_delay(p.max_ack_delay * 1000000), events: c.events.append(Event.Connected) };
+      if (cur.server) {
+        cur = Conn { ...cur, handshake_done_pending: true, recovery: cur.recovery.confirmed() }.__discard(recovery.HANDSHAKE);
+      }
+      return Conn { ...cur, idle_until: __idle(cur, now) };
+    },
+    Err(e) => {
+      return c.__fail(e.code, 0 as i64, e.reason, now);
+    }
+  }
+}
+
+function (c: Conn) __peer_extensions(): message.Extension[] {
+  match (c.tls) {
+    TlsClient(t) => {
+      return t.peer_extensions();
+    },
+    TlsServer(t) => {
+      return t.peer_extensions();
+    },
+    TlsNone => {
+      return [];
+    }
+  }
+}
+
+// __peer_transport_params reads the peer's parameters and checks the
+// connection IDs they name against those the packets used (§7.3).
+function (c: Conn) __peer_transport_params(): Result[params.Params, frames.FrameError] {
+  let Some(raw) = message.find(c.__peer_extensions(), message.EXT_QUIC_TRANSPORT_PARAMETERS) else {
+    return Err(__param_error("no transport parameters"));
+  };
+  let p: params.Params = params.decode(raw, !c.server)?;
+  if (!__is(p.initial_source_connection_id, c.dcid)) {
+    return Err(__param_error("initial_source_connection_id is not the connection ID the peer used"));
+  }
+  if (c.server) {
+    return Ok(p);
+  }
+  if (!__is(p.original_destination_connection_id, c.odcid)) {
+    return Err(__param_error("original_destination_connection_id is not the connection ID this client chose"));
+  }
+  if (!__same_option(p.retry_source_connection_id, c.retry_scid)) {
+    return Err(__param_error("retry_source_connection_id does not match the Retry"));
+  }
+  return Ok(p);
+}
+
+function __param_error(reason: string): frames.FrameError {
+  return frames.FrameError { code: frames.TRANSPORT_PARAMETER_ERROR, frame_type: 0 as i64, reason: reason };
+}
+
+// === sending ================================================================
+
+// transmit is the datagrams to send at `now`, up to what congestion control
+// and, at a server not yet sure of the client's address, the
+// anti-amplification limit allow.
+pub function (c: Conn) transmit(now: i64): (Conn, u8[][]) {
+  let out: u8[][] = [];
+  let cur: Conn = c;
+  let guard: i32 = 0;
+  while (guard < 64) {
+    let (next, d) = cur.__datagram_out(now);
+    if (d.len() == 0) {
+      return (next, out);
+    }
+    if (!next.validated && next.sent_bytes + d.len() as i64 > 3 * next.received_bytes) {
+      return (cur, out);
+    }
+    cur = Conn { ...next, sent_bytes: next.sent_bytes + d.len() as i64 };
+    out = out.append(d);
+    guard = guard + 1;
+  }
+  return (cur, out);
+}
+
+// Plan — one packet before it is sealed: its space, its frames' bytes,
+// whether it elicits an ACK, and what to resend if it is lost.
+struct Plan { space: i32, payload: u8[], eliciting: boolean, resend: recovery.Resend[] }
+
+// __datagram_out builds the next datagram: a packet from each space with
+// something to send, coalesced in order, the Initial-bearing ones padded to
+// 1200 bytes (§14.1).
+function (c: Conn) __datagram_out(now: i64): (Conn, u8[]) {
+  if (c.state == DRAINING || c.state == CLOSED) {
+    return (c, []);
+  }
+  if (c.state == CLOSING) {
+    return c.__close_datagram();
+  }
+  let cur: Conn = c;
+  let plans: Plan[] = [];
+  let room: i32 = c.config.max_datagram;
+  let space: i32 = 0;
+  while (space < 3) {
+    let (next, plan) = cur.__plan(space, room - 64, now);
+    cur = next;
+    if (plan.payload.len() > 0) {
+      plans = plans.append(plan);
+      room = room - plan.payload.len() - 64;
+    }
+    space = space + 1;
+  }
+  if (plans.len() == 0) {
+    return (cur, []);
+  }
+  return cur.__seal(plans, now);
+}
+
+// __plan chooses one space's frames: an ACK if one is owed, then what
+// must be resent, then new CRYPTO data, then, in the application space,
+// HANDSHAKE_DONE, pending control frames and the streams', then a probe if
+// asked for.
+function (c: Conn) __plan(space: i32, room: i32, now: i64): (Conn, Plan) {
+  let empty: Plan = Plan { space: space, payload: [], eliciting: false, resend: [] };
+  let s: Space = c.spaces[space];
+  if (s.discarded || s.send.is_none() || room < 40) {
+    return (c, empty);
+  }
+  let plan: Plan = empty;
+  if (s.ack_wanted) {
+    plan = Plan { ...plan, payload: frames.put(plan.payload, frames.AckFrame(__ack_of(s, space, now))) };
+  }
+  let window: boolean = c.recovery.window() >= c.config.max_datagram as i64 || c.probes.contains(space);
+  if (!window) {
+    return (c.__acked_out(space, plan), plan);
+  }
+  let (c1, p1) = c.__crypto_out(space, plan, room);
+  let (c2, p2) = c1.__control_out(space, p1, room);
+  let (c3, p3) = c2.__streams_out(space, p2, room);
+  let (c4, p4) = c3.__probe_out(space, p3);
+  return (c4.__acked_out(space, p4), p4);
+}
+
+// __acked_out notes that an ACK just planned answers what was owed.
+function (c: Conn) __acked_out(space: i32, p: Plan): Conn {
+  if (p.payload.len() == 0) {
+    return c;
+  }
+  let s: Space = c.spaces[space];
+  return Conn { ...c, spaces: c.spaces.with(space, Space { ...s, ack_wanted: false }) };
+}
+
+function __ack_of(s: Space, space: i32, now: i64): frames.Ack {
+  let delay: i64 = 0;
+  if (space == recovery.APPLICATION) {
+    delay = (now - s.largest_recv_at) / 1000 >> 3;
+  }
+  return frames.Ack { delay: delay, ranges: s.ranges, ecn: None };
+}
+
+// __crypto_out adds CRYPTO frames: lost ranges first, then unsent data.
+function (c: Conn) __crypto_out(space: i32, p: Plan, room: i32): (Conn, Plan) {
+  let s: Space = c.spaces[space];
+  let plan: Plan = p;
+  let lost: i64[] = s.crypto_lost;
+  let kept: i64[] = [];
+  let i: i32 = 0;
+  while (i + 1 < lost.len()) {
+    let (next, rest) = __crypto_frame(plan, s, lost[i], lost[i + 1] as i32, room);
+    plan = next;
+    if (rest > 0) {
+      kept = kept.append(lost[i] + (lost[i + 1] - rest as i64)).append(rest as i64);
+    }
+    i = i + 2;
+  }
+  let unsent: i32 = (s.crypto_out.len() as i64 - s.crypto_sent) as i32;
+  let sent: i64 = s.crypto_sent;
+  if (unsent > 0) {
+    let (next, rest) = __crypto_frame(plan, s, s.crypto_sent, unsent, room);
+    plan = next;
+    sent = s.crypto_sent + (unsent - rest) as i64;
+  }
+  return (Conn { ...c, spaces: c.spaces.with(space, Space { ...s, crypto_lost: kept, crypto_sent: sent }) }, plan);
+}
+
+// __crypto_frame adds as much of `len` CRYPTO bytes at `offset` as fits,
+// and answers how many did not.
+function __crypto_frame(p: Plan, s: Space, offset: i64, len: i32, room: i32): (Plan, i32) {
+  let free: i32 = room - p.payload.len() - 1 - frames.varint_len(offset) - 2;
+  if (free <= 0) {
+    return (p, len);
+  }
+  let n: i32 = len;
+  if (n > free) {
+    n = free;
+  }
+  let at: i32 = offset as i32;
+  let f: frames.Frame = frames.Crypto(offset, __copy(s.crypto_out[at:at + n]));
+  return (Plan { ...p, payload: p.payload.concat(frames.encode(f)), eliciting: true, resend: p.resend.append(recovery.CryptoRange(offset, n)) }, len - n);
+}
+
+// __control_out adds, in the application space, HANDSHAKE_DONE and the
+// pending control frames.
+function (c: Conn) __control_out(space: i32, p: Plan, room: i32): (Conn, Plan) {
+  if (space != recovery.APPLICATION) {
+    return (c, p);
+  }
+  let plan: Plan = p;
+  let cur: Conn = c;
+  if (cur.handshake_done_pending) {
+    plan = Plan { ...plan, payload: frames.put(plan.payload, frames.HandshakeDone), eliciting: true, resend: plan.resend.append(recovery.Again(frames.HandshakeDone)) };
+    cur = Conn { ...cur, handshake_done_pending: false };
+  }
+  let kept: frames.Frame[] = [];
+  for f in cur.pending {
+    let bytes: u8[] = frames.encode(f);
+    if (plan.payload.len() + bytes.len() <= room) {
+      plan = Plan { ...plan, payload: plan.payload.concat(bytes), eliciting: true, resend: plan.resend.append(recovery.Again(f)) };
+    } else {
+      kept = kept.append(f);
+    }
+  }
+  return (Conn { ...cur, pending: kept }, plan);
+}
+
+// __streams_out adds, in the application space once the handshake is
+// complete, what the streams have to send.
+function (c: Conn) __streams_out(space: i32, p: Plan, room: i32): (Conn, Plan) {
+  if (space != recovery.APPLICATION || c.state != ESTABLISHED) {
+    return (c, p);
+  }
+  let before: i32 = p.payload.len();
+  let (t, payload, resend) = c.streams.fill(p.payload, room);
+  let plan: Plan = Plan { ...p, payload: payload, eliciting: p.eliciting || payload.len() > before, resend: p.resend.concat(resend) };
+  return (Conn { ...c, streams: t }, plan);
+}
+
+// __probe_out answers a probe timeout for this space (§6.2.4): if nothing
+// ack-eliciting is already planned, the oldest unacknowledged CRYPTO data
+// again, or a PING.
+function (c: Conn) __probe_out(space: i32, p: Plan): (Conn, Plan) {
+  if (!c.probes.contains(space)) {
+    return (c, p);
+  }
+  let cur: Conn = Conn { ...c, probes: __without(c.probes, space) };
+  if (p.eliciting) {
+    return (cur, p);
+  }
+  for sent in c.recovery.unacked(space) {
+    for item in sent.resend {
+      if let recovery.CryptoRange(offset, len) = item {
+        let (plan, _) = __crypto_frame(p, c.spaces[space], offset, len, c.config.max_datagram - 64);
+        if (plan.eliciting) {
+          return (cur, plan);
+        }
+      }
+    }
+  }
+  return (cur, Plan { ...p, payload: p.payload.concat(frames.encode(frames.Ping)), eliciting: true });
+}
+
+// __seal protects each planned packet into one datagram, padding the last
+// when an Initial packet that must reach 1200 bytes is aboard, and records
+// each as sent.
+function (c: Conn) __seal(plans: Plan[], now: i64): (Conn, u8[]) {
+  let pad: boolean = __needs_padding(plans, c.server);
+  let cur: Conn = c;
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < plans.len()) {
+    let plan: Plan = plans[i];
+    let (next, bytes) = cur.__seal_one(plan, now, 0);
+    if (pad && i == plans.len() - 1 && out.len() + bytes.len() < packet.MIN_INITIAL_DATAGRAM) {
+      let (padded, again) = cur.__seal_one(plan, now, packet.MIN_INITIAL_DATAGRAM - out.len() - bytes.len());
+      next = padded;
+      bytes = again;
+    }
+    cur = next;
+    out = out.concat(bytes);
+    i = i + 1;
+  }
+  if (!cur.server && __has_space(plans, recovery.HANDSHAKE)) {
+    cur = cur.__discard(recovery.INITIAL);
+  }
+  return (cur, out);
+}
+
+function __needs_padding(plans: Plan[], server: boolean): boolean {
+  for p in plans {
+    if (p.space == recovery.INITIAL && (!server || p.eliciting)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function __has_space(plans: Plan[], space: i32): boolean {
+  for p in plans {
+    if (p.space == space) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// __seal_one seals one packet, `extra` bytes of PADDING added, and records
+// it with loss detection.
+function (c: Conn) __seal_one(p: Plan, now: i64, extra: i32): (Conn, u8[]) {
+  let s: Space = c.spaces[p.space];
+  let Some(keys) = s.send else {
+    return (c, []);
+  };
+  let payload: u8[] = p.payload;
+  if (extra > 0) {
+    payload = frames.put(payload, frames.Padding(extra));
+  }
+  let n: i32 = packet.pn_len(s.next_pn, 0 - 1 as i64);
+  let bytes: u8[] = [];
+  if (p.space == recovery.APPLICATION) {
+    bytes = packet.seal_short(c.dcid, s.next_pn, n, false, false, payload, keys);
+  } else {
+    let kind: packet.Kind = packet.Initial;
+    if (p.space == recovery.HANDSHAKE) {
+      kind = packet.Handshake;
+    }
+    let token: u8[] = [];
+    if (p.space == recovery.INITIAL) {
+      token = c.token;
+    }
+    bytes = packet.seal_long(packet.Long { kind: kind, dcid: c.dcid, scid: c.scid, token: token, pn: s.next_pn, pn_len: n }, payload, keys);
+  }
+  let sent: recovery.Sent = recovery.Sent { pn: s.next_pn, at: now, size: bytes.len(), ack_eliciting: p.eliciting, in_flight: p.eliciting || extra > 0, resend: p.resend };
+  let r: recovery.Recovery = c.recovery.on_sent(p.space, sent);
+  return (Conn { ...c, recovery: r, spaces: c.spaces.with(p.space, Space { ...s, next_pn: s.next_pn + 1 }) }, bytes);
+}
+
+// __close_datagram sends CONNECTION_CLOSE once per `close_pending`, in
+// every space with keys: before the handshake completes the peer may read
+// only some of them (§10.2.3). An application close is sent as a transport
+// APPLICATION_ERROR outside 1-RTT packets.
+function (c: Conn) __close_datagram(): (Conn, u8[]) {
+  if (!c.close_pending) {
+    return (c, []);
+  }
+  let Some(why) = c.close else {
+    return (c, []);
+  };
+  let plans: Plan[] = [];
+  let space: i32 = 0;
+  while (space < 3) {
+    let s: Space = c.spaces[space];
+    if (!s.discarded && s.send.is_some()) {
+      plans = plans.append(Plan { space: space, payload: frames.encode(frames.ConnectionCloseFrame(__close_frame(why, space))), eliciting: false, resend: [] });
+    }
+    space = space + 1;
+  }
+  let (sealed, bytes) = Conn { ...c, close_pending: false }.__seal(plans, 0 as i64);
+  return (sealed, bytes);
+}
+
+function __close_frame(why: Close, space: i32): frames.ConnectionClose {
+  if (why.app && space != recovery.APPLICATION) {
+    return frames.ConnectionClose { code: frames.APPLICATION_ERROR, frame_type: 0 as i64, reason: "", app: false };
+  }
+  return frames.ConnectionClose { code: why.code, frame_type: why.frame_type, reason: why.reason, app: why.app };
+}
+
+// === helpers ================================================================
+
+// __add_range adds packet number `pn` to ranges kept largest first, merging
+// neighbours and keeping at most MAX_ACK_RANGES.
+function __add_range(ranges: frames.AckRange[], pn: i64): frames.AckRange[] {
+  let out: frames.AckRange[] = [];
+  let placed: boolean = false;
+  for r in ranges {
+    if (!placed && pn > r.high + 1) {
+      out = __push_range(out, frames.AckRange { low: pn, high: pn });
+      placed = true;
+    }
+    if (!placed && pn >= r.low - 1 && pn <= r.high + 1) {
+      out = __push_range(out, frames.AckRange { low: __min(r.low, pn), high: __max(r.high, pn) });
+      placed = true;
+    } else {
+      out = __push_range(out, r);
+    }
+  }
+  if (!placed) {
+    out = __push_range(out, frames.AckRange { low: pn, high: pn });
+  }
+  if (out.len() <= MAX_ACK_RANGES) {
+    return out;
+  }
+  let kept: frames.AckRange[] = [];
+  let i: i32 = 0;
+  while (i < MAX_ACK_RANGES) {
+    kept = kept.append(out[i]);
+    i = i + 1;
+  }
+  return kept;
+}
+
+// __push_range appends a range, merging it into the last when they touch.
+function __push_range(out: frames.AckRange[], r: frames.AckRange): frames.AckRange[] {
+  if (out.len() > 0) {
+    let last: frames.AckRange = out[out.len() - 1];
+    if (r.high + 1 >= last.low) {
+      return out.with(out.len() - 1, frames.AckRange { low: __min(last.low, r.low), high: __max(last.high, r.high) });
+    }
+  }
+  return out.append(r);
+}
+
+function __has(ranges: frames.AckRange[], pn: i64): boolean {
+  for r in ranges {
+    if (pn >= r.low && pn <= r.high) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// __crypto_space is the space whose CRYPTO stream a lost range belongs to:
+// the lowest one not discarded whose data reaches past `offset`.
+function __crypto_space(c: Conn, offset: i64): i32 {
+  let space: i32 = 0;
+  while (space < 3) {
+    let s: Space = c.spaces[space];
+    if (!s.discarded && s.crypto_out.len() as i64 > offset && s.crypto_sent > offset) {
+      return space;
+    }
+    space = space + 1;
+  }
+  return 0 - 1;
+}
+
+function __without(xs: i32[], x: i32): i32[] {
+  let out: i32[] = [];
+  for y in xs {
+    if (y != x) {
+      out = out.append(y);
+    }
+  }
+  return out;
+}
+
+function __min(a: i64, b: i64): i64 {
+  if (a < b) {
+    return a;
+  }
+  return b;
+}
+
+function __max(a: i64, b: i64): i64 {
+  if (a > b) {
+    return a;
+  }
+  return b;
+}
+
+function __is(o: Option[u8[]], b: [u8]): boolean {
+  match (o) {
+    Some(x) => {
+      return __same(x, b);
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
+function __same_option(a: Option[u8[]], b: Option[u8[]]): boolean {
+  match (a) {
+    Some(x) => {
+      return __is(b, x);
+    },
+    None => {
+      return b.is_none();
+    }
+  }
+}
+
+function __same(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let diff: i32 = 0;
+  let i: i32 = 0;
+  while (i < a.len()) {
+    diff = diff | a[i] as i32 ^ b[i] as i32;
+    i = i + 1;
+  }
+  return diff == 0;
+}
+
+function __copy(b: [u8]): u8[] {
+  let out: u8[] = __alloc_u8(b.len());
+  let i: i32 = 0;
+  while (i < b.len()) {
+    out = out.with(i, b[i]);
+    i = i + 1;
+  }
+  return out;
+}
