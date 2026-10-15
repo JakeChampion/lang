@@ -110,6 +110,10 @@ skipped cases don't affect the exit code.
 import "std/test";
 import "std/option";
 
+function run_wasm_test(): test.TestOutcome {
+    return test.assert_eq(1 + 1, 2);
+}
+
 function main(): i32 {
     let r: test.TestRunner = test.test_new("backends");
     r = r.skip_if(env("WASMTIME_PATH").is_none(),
