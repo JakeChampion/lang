@@ -10373,6 +10373,12 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
   } else if (o.kind_tag == 409) {  // sha256_hw
     // () -> 1: __fern_sha256_hw_blocks is the kernel.
     s = s.write("    pushq $1\n");
+  } else if (o.kind_tag == 440) {  // sha1_hw
+    // () -> 0: std/crypto runs its own SHA-1 rounds.
+    s = s.write("    pushq $0\n");
+  } else if (o.kind_tag == 441) {  // sha1_hw_blocks
+    // [state, data] -> empty, as sha1_hw's 0 promises.
+    s = s.write("    addq $16, %rsp\n    xorl %edi, %edi\n    call __fern_arr_box\n    movq $0, (%rax)\n    pushq %rax\n").need("heap");
   } else if (o.kind_tag == 74) {  // memcpy
     // [dst, src, n] -> copy n bytes src->dst (rep movsb), push dummy 0.
     // n is on top, then src, then dst (the lowering order). Mirrors the

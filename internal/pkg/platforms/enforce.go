@@ -450,10 +450,12 @@ var coreBuiltins = map[string]bool{
 	"__aes_expand_key": true,
 	"__aes_ctr32":      true,
 	"__ghash":          true,
-	// The SHA-256 kernel too; a target without one answers __sha256_hw false
-	// rather than lacking the builtin.
+	// The SHA kernels too; a target without one answers __sha256_hw or
+	// __sha1_hw false rather than lacking the builtin.
 	"__sha256_hw":        true,
 	"__sha256_hw_blocks": true,
+	"__sha1_hw":          true,
+	"__sha1_hw_blocks":   true,
 
 	"map_new":                     true,
 	"cell_new":                    true,

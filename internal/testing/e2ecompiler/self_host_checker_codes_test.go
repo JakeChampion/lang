@@ -3748,6 +3748,11 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"sha256-hw-arity", "function main(): i32 { let s: u8[] = __alloc_u8(32); let out: u8[] = __sha256_hw_blocks(s); return 0; }\n"},
 		{"sha256-hw-wrong-element", "function main(): i32 { let s: i32[] = [1, 2]; let out: u8[] = __sha256_hw_blocks(s, s); return 0; }\n"},
 		{"sha256-hw-result", "function main(): i32 { let r: i32 = __sha256_hw(); return r; }\n"},
+		// The SHA-1 pair has the same shapes.
+		{"sha1-hw-kernel", "function main(): i32 { let s: u8[] = __alloc_u8(20); let d: [u8] = s[0:16]; let out: u8[] = __sha1_hw_blocks(s, d); if (__sha1_hw()) { return out.len(); } return 0; }\n"},
+		{"sha1-hw-arity", "function main(): i32 { let s: u8[] = __alloc_u8(20); let out: u8[] = __sha1_hw_blocks(s); return 0; }\n"},
+		{"sha1-hw-wrong-element", "function main(): i32 { let s: i32[] = [1, 2]; let out: u8[] = __sha1_hw_blocks(s, s); return 0; }\n"},
+		{"sha1-hw-result", "function main(): i32 { let r: i32 = __sha1_hw(); return r; }\n"},
 		{"tuple-var-annot", "function main(): i32 { let t: (i32, string) = (1, \"a\"); return t.0; }\n"},
 		{"tuple-array-annot", "function main(): i32 { let out: (i32, string)[] = []; return 0; }\n"},
 		{"tuple-nested", "function main(): i32 { let t: (i32, (string, i32)) = (1, (\"a\", 2)); return t.0; }\n"},
