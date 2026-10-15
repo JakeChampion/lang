@@ -1315,8 +1315,10 @@ TestSelfHostStaticBoxes 13
 TestSelfHostStaticStringArray 2
 TestSelfHostStdIoBundleX86_64 3
 TestSelfHostStdPartitionAgreesWithNative 10
-TestSelfHostStdTestE2E 1157
-TestSelfHostStdTestE2EArm64 1185
+TestSelfHostStdTestE2E 620
+TestSelfHostStdTestE2EArm64 840
+TestSelfHostStdTestE2EArm64TLS 640
+TestSelfHostStdTestE2ETLS 540
 TestSelfHostStdUnicodeWordsX86_64 2
 TestSelfHostStdinEntryDifferentialX86_64 2
 TestSelfHostStdioBytes 7

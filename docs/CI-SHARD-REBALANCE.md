@@ -105,6 +105,19 @@ The audit's 1.5-times safety band flags substantial underestimates without
 treating small timing fluctuations as new evidence. A warm driver becoming
 unavailable can invalidate the table even when no test source changes.
 
+## Split of the stdlib gates (2026-10-15)
+
+`TestSelfHostStdTestE2EArm64`, weighted 1,185 s, measured 1,397 s on green run
+[38681317686](https://github.com/JakeChampion/lang/actions/runs/38681317686)
+and then ran into the 28-minute timeout twice in a row on #12416, a change that
+does not touch the cases it was running. Its twelve `tls_` cases account for
+1,209 of the 2,790 case-seconds, `tls_verify` alone 367 s, and nearly all of that
+is the interpreter oracle. The `tls_` cases now run as separate top-level tests,
+`TestSelfHostStdTestE2ETLS` and `TestSelfHostStdTestE2EArm64TLS`. Their weights
+are estimated from that run's case-seconds until the next refresh measures
+them. The driver build is cached, so the split adds about two
+seconds per test.
+
 ## Replay of training observations
 
 | Run | Original longest active-time sum | Candidate longest active-time sum | Original spread | Candidate spread |
