@@ -8227,6 +8227,12 @@ function cfi_op_def_cfa(): i32 {
   return 12;
 }
 
+// DW_CFA_AARCH64_negate_ra_state: the return address flips between signed
+// and plain from here on.
+function cfi_op_negate_ra_state(): i32 {
+  return 45;
+}
+
 function cfi_op_def_cfa_register(): i32 {
   return 13;
 }
@@ -8514,14 +8520,18 @@ pub function cfi_directive(own s: CfiState, line: string, off: i32): CfiState {
   if (d == ".cfi_restore_state") {
     return cfi_add_rule(s, off, [cfi_op_restore_state()]);
   }
+  if (d == ".cfi_negate_ra_state") {
+    return cfi_add_rule(s, off, [cfi_op_negate_ra_state()]);
+  }
   return cfi_reg_directive(s, d, ops, rest, off);
 }
 
 // cfi_record applies a directive an emitter handed over as a record instead
 // of text: `kind` 1 is .cfi_startproc, 2 .cfi_endproc, 3 .cfi_def_cfa_offset n,
 // 4 .cfi_def_cfa_register r, 5 .cfi_def_cfa r, n, 6 .cfi_offset r, n, 7
-// .cfi_remember_state and 8 .cfi_restore_state, with `r` the DWARF register
-// number. Each records what its text would have recorded.
+// .cfi_remember_state, 8 .cfi_restore_state and 9 .cfi_negate_ra_state, with
+// `r` the DWARF register number. Each records what its text would have
+// recorded.
 pub function cfi_record(own s: CfiState, kind: i32, r: i32, n: i32, off: i32): CfiState {
   if (kind == 1) {
     return cfi_proc_directive(s, ".cfi_startproc", [], off);
@@ -8550,6 +8560,9 @@ pub function cfi_record(own s: CfiState, kind: i32, r: i32, n: i32, off: i32): C
   }
   if (kind == 8) {
     return cfi_add_rule(s, off, [cfi_op_restore_state()]);
+  }
+  if (kind == 9) {
+    return cfi_add_rule(s, off, [cfi_op_negate_ra_state()]);
   }
   return cfi_bad(s, "a cfi record of an unknown kind");
 }
