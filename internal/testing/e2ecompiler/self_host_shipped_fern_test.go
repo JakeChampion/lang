@@ -232,3 +232,20 @@ func TestSelfHostFmtKeepsTodoAndClosedBooleanArms(t *testing.T) {
 		t.Errorf("-fmt: %v\n--- got ---\n%s--- want ---\n%s", err, out, src)
 	}
 }
+
+// Without -o, a compile prints its assembly for arm64-linux, the target a
+// compile gets when none is named, where a wasm target's binary goes to
+// stdout as it is.
+func TestSelfHostCLIWritesAssemblyToStdout(t *testing.T) {
+	cli := e2eharness.SelfHostCLI(t)
+	root := e2eharness.SelfHostStdlibRoot(t)
+	src := writeShippedSrc(t, t.TempDir(), "main.fern", shippedArgsSrc)
+	out, err := exec.Command(cli, src, root).Output()
+	if err != nil || !strings.Contains(string(out), "__fn_main:\n") || !strings.Contains(string(out), "stp x29, x30, [sp, #-16]!") {
+		t.Errorf("no -o, no -target: %v\n%.400s", err, out)
+	}
+	out, err = exec.Command(cli, "-target", "wasm32-wasi", src, root).Output()
+	if err != nil || !strings.HasPrefix(string(out), "\x00asm") {
+		t.Errorf("no -o, -target wasm32-wasi: %v\n%.40q", err, out)
+	}
+}

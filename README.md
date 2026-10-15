@@ -70,10 +70,7 @@ has the full surface.
 #   https://github.com/JakeChampion/lang/releases/tag/nightly
 #   fern-linux-x86_64.tar.gz / fern-linux-arm64.tar.gz / fern-darwin-arm64.tar.gz
 
-# Or with Go 1.26+
-go install github.com/jakechampion/lang/cmd/fern@latest
-
-# Or from a checkout
+# Or from a checkout, with no Go toolchain
 make build        # -> bin/fern
 ```
 
@@ -95,15 +92,10 @@ fern -lint examples/                 # lint a tree (fern -lint-rules lists the r
 fern -repl                           # interactive session
 ```
 
-A `-target` compile runs the compiler, which assembles, links and
-(for Darwin) code-signs in-process with no external toolchain. `fern` uses
-`$FERN_SELFHOST` when set, else a `fern-selfhost` beside it that was built from
-the same sources (`make bootstrap` and `make selfhost-cli` install one, with its
-sources key in `fern-selfhost.key`), else it builds one on first use from the
-compiler sources it embeds, with the pinned stage0 compiler it downloads and
-verifies (`docs/BOOTSTRAP.md`). The result is cached. `fern -targets` lists every target with the
-capabilities its host provides; `fern -explain E030` explains an error
-code.
+`fern` is the self-hosted compiler, one binary with the standard library
+inside it. It assembles, links and (for Darwin) code-signs in-process with no
+external toolchain. `fern -targets` lists every target with the capabilities
+its host provides; `fern -explain E030` explains an error code.
 
 ### Targets
 
@@ -155,13 +147,15 @@ ISAs. Per-backend support and known gaps: `docs/BACKEND-PARITY.md`.
 
 The compiler is written in Fern and lives under `compiler/`. It compiles
 itself to a byte-identical fixpoint (`make distcheck`) and builds every
-program in `coreutils/`. `make bootstrap` builds it from a checkout with no
-Go installed, using a pinned earlier release (`docs/BOOTSTRAP.md`), and
-`make selfhost-cli` builds it with the `fern` you already have.
+program in `coreutils/`. `compiler/fern_main.fern` is the shipped `fern`;
+`compiler/fern.fern` is the same command line without the embedded stdlib,
+which the test suites drive. `make build` gets there from a checkout with no
+Go installed: a pinned earlier release compiles the compiler
+(`make bootstrap`, `docs/BOOTSTRAP.md`), which then builds `bin/fern`.
 
 The Go code under `internal/` is the oracle, not a second compiler: a
 parser, type checker and interpreter that the differential tests run every
-program against, plus `-fmt`, the LSP and the package tools. It has had no
+program against, built as `bin/fern-oracle` (`cmd/fern`). It has had no
 backends since 2026-10-05 (`docs/NATIVE-RETIREMENT.md`), and it learns a
 language feature only after `compiler/` has it, so the differentials can
 check it.
@@ -189,14 +183,14 @@ skip them, and an allocation whose last reference is dropped can be reused
 in place for a fresh one of the same shape.
 
 ```
-compiler/             the compiler, written in Fern (fern.fern is its entry; drivers/ holds its test drivers)
-cmd/fern/             CLI driver           cmd/fern-lsp/       language server
+compiler/             the compiler, written in Fern (fern_main.fern is `fern`; drivers/ holds its test drivers)
+cmd/fern/             the Go oracle's CLI  cmd/fern-lsp/       language server
 cmd/ferndoc/          stdlib doc generator cmd/fern-wasm/      playground bundle
 internal/syntax/      the Go oracle's lexer, parser, AST, printer and diagnostics
 internal/check/       its type checker and the rules it runs
 internal/oracle/      its interpreter and REPL, and the passes from a checked program to them
 internal/pkg/         module loading, manifests, the package store and capabilities
-internal/tools/       the LSP, linter, literate tools and the launcher
+internal/tools/       the LSP, literate tools, the launcher and the source gates
 internal/tables/      generated tables: assembler vocabularies, errno text, libm data
 internal/testing/     the end-to-end suites (e2e, e2ecompiler) and test support
 internal/wasm/        WebAssembly and component-model encoders
@@ -218,10 +212,10 @@ Tool versions are pinned in `mise.toml`; `eval "$(scripts/toolchain-env)"`
 installs them.
 
 ```sh
-make build        # go build -> bin/fern
+make build        # bin/fern, through make bootstrap: no Go needed
+make bin/fern-oracle  # go build -> the Go oracle
 make test         # go test ./...
 make examples     # compile every examples/*.fern
-make bootstrap    # build the compiler without Go
 ```
 
 The end-to-end suites in `internal/testing/e2e`, `internal/testing/e2ecompiler`, and the

@@ -84,19 +84,19 @@ those measurements used the retired Go compilation pipeline.
 ```
 make selfhost-cli
 bin/fern-selfhost -target wasm32-wasi -emit asm -o p.wat /ABS/prog.fern $PWD/internal/stdlib
-wasmtime run p.wat; echo $?     # oracle: ./bin/fern -interp /ABS/prog.fern
+wasmtime run p.wat; echo $?     # oracle: ./bin/fern-oracle -interp /ABS/prog.fern
 ```
 
-**Record which compiler produced the binary being measured.** `make selfhost-cli`
-calls `bin/fern -target`, which now delegates to the Fern-written compiler.
-The launcher selects `FERN_SELFHOST`, then a sibling `fern-selfhost` whose
-`fern-selfhost.key` matches the sources `bin/fern` embeds (`fern
--selfhost-key`), then a compiler built from those sources by stage0. The target
-does not use Go lowering. `make selfhost-cli` and `make bootstrap` both install
-at `bin/fern-selfhost` and write its key, so its path alone does not identify
-its producer or generation. A sibling from an older tree has a key that no
-longer matches, so `bin/fern -target` passes over it; the benchmark scripts
-rebuild it through `scripts/selfhost-current`.
+**Record which compiler produced the binary being measured.** `bin/fern` is
+the shipped compiler, `compiler/fern_main.fern` built by `bin/fern-selfhost`,
+and `make build` rebuilds both when a compiler or stdlib source is newer.
+`bin/fern-selfhost` is written by `make bootstrap` (the stage0 pin, which is
+how `make build` gets it) or by `make selfhost-cli`, which compiles through
+`bin/fern-oracle`'s launcher: `FERN_SELFHOST`, then a sibling `fern-selfhost`
+whose `fern-selfhost.key` matches the sources the oracle embeds, then a
+compiler built from those sources by stage0. Its path alone therefore does not
+identify its producer or generation. The benchmark scripts build through
+`make bin/fern`.
 
 To measure the effect of a lowering change on the compiler's own generated code,
 compile the same source with the base and changed compilers, then time those

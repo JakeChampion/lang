@@ -411,7 +411,7 @@ jobs:
         # ported (read_file / now_unix_ms — Linux-only syscalls) error at
         # codegen the same as on the clang path; skip those.
         run: |
-          go build -o bin/fern ./cmd/fern
+          make bin/fern
           mkdir -p build
           for f in examples/*.fern examples/tests/*.fern; do
             name=$(basename "$f" .fern)
