@@ -954,7 +954,10 @@ expansion, so the bound is part of the call.
 - `inflate(input, max_out): Result[Inflated, InflateError]` and
   `inflate_from(input, from, max_out)` decode a raw stream;
   `Inflated { out, consumed }` says how many input bytes it took, so a
-  framing can read what follows.
+  framing can read what follows. `inflate_after(history, input,
+  max_out)` decodes a stream that goes on from earlier output, its
+  matches reaching back into `history`, which is not part of `out`:
+  a message under permessage-deflate's context takeover.
 - `gunzip(input, max_out): Result[u8[], InflateError]` decodes every
   member in the input and checks each CRC-32 and length;
   `zlib_decode(input, max_out)` checks the Adler-32 (`adler32(bs)` is
@@ -3019,25 +3022,25 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
   frame 1002 or 1007), answers a ping with its pong at once, echoes the
   peer's close, and is closed as an idle persistent connection is after
   `serve.Config.keep_alive_idle` of quiet. With `compression` the
-  extension is negotiated in its shared-compressor mode, no context
-  carried from one message to the next on either side
-  (`server_no_context_takeover; client_no_context_takeover`, the
-  client's `server_max_window_bits` honoured), so a connection costs no
-  window of its own; a compressed message is inflated whole under
+  server carries no context from one message to the next
+  (`server_no_context_takeover`, the client's `server_max_window_bits`
+  honoured), so it holds no compressor between messages, and the client
+  keeps its own: the reader holds the last 32 KiB the client's messages
+  decoded to and decodes the next against it (`deflate.inflate_after`),
+  which spares the client a compressor per message; a compressed message is inflated whole under
   `max_message` once its last fragment arrives (1009 past it, 1007 for a
   stream that does not inflate or text that is not UTF-8 once it does),
   and every data message the handler sends goes out compressed under
   RSV1 (`Conn.window` is the window bits, 0 without the extension). `accept_key(key)` and
   `frame(fin, opcode, payload, mask)` are the handshake's and the codec's
   pieces for a client or a test (`tests/stdlib/http_websocket_test.fern`,
-  a session over a scripted connection). The Autobahn suite's
-  conformance cases (sections 1-8, 10) run against the echo in
-  `scripts/net-autobahn.d/server.fern` on the `net-nightly` lane; they
-  gate framing, fragmentation, UTF-8 and close, not compression — the
-  client offers permessage-deflate only in the compression sections (12
-  and 13). Those, with the performance section (9), are deferred to #12136
-  and run on demand (`net-autobahn - "13.*"`), the only run that exercises
-  the compressor.
+  a session over a scripted connection). The whole Autobahn suite runs
+  against the echo in `scripts/net-autobahn.d/server.fern` on the
+  `net-nightly` lane: the conformance sections (1-8, 10) gate framing,
+  fragmentation, UTF-8 and close, the performance section (9) large and
+  finely fragmented messages, and the compression sections (12, 13), the
+  only ones whose client offers permessage-deflate, the compressor under
+  every offer the suite makes.
 - Under std/serve an upgrade request's body is the connection's bytes
   after the head, streamed as `stream_bodies` streams one whatever the
   setting says, and a handler that answers 101 with a producer keeps the

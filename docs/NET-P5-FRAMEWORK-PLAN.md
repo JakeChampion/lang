@@ -146,25 +146,22 @@ decides what wraps it.
    session). Gate: `tests/stdlib/http_websocket_test.fern` in the stdtest
    differential; `TestSelfHostServeWebSocket` (x86-64, arm64) and
    `TestServeWebSocketSequentialInterp`. permessage-deflate (RFC 7692)
-   in its shared-compressor mode: `Options.compression` takes the
-   client's offer with no context takeover on either side, so no
-   connection holds a window; `std/deflate` gained the encoder it needs
+   with no context takeover on the server's side: `Options.compression`
+   takes the client's offer, the server compressing each message alone
+   and the client keeping its window, which the reader decodes against
+   (`deflate.inflate_after`, the last 32 KiB of the client's messages);
+   `std/deflate` gained the encoder it needs
    (`deflate`, `deflate_flushed`: fixed Huffman codes over LZ77, the
    sync flush a continuing stream ends on), a compressed message is
    inflated whole under `max_message`, and the echo's replies go out
-   compressed. The Autobahn suite's fuzzing client runs the conformance
-   sections (1-8, 10) against `scripts/net-autobahn.d/server.fern` on the
+   compressed. The Autobahn suite's fuzzing client runs against
+   `scripts/net-autobahn.d/server.fern` on the
    `net-nightly` lane (`scripts/net-autobahn`, the image pinned by
-   digest), each case passing or the job failing; these gate framing,
-   fragmentation, UTF-8 and close, not compression — the client offers
-   permessage-deflate only in the compression sections (12 and 13), so the
-   compressor is exercised only when one of those is run on demand. The
-   performance and compression-volume sections (9,
-   12, 13) are left out of the default set: each case passes in seconds
-   in isolation, but any high-frame-count case late in the full suite
-   stalls once a few hundred connections precede it, an accumulation
-   tracked in issue #12136; the wstest run is bounded by a timeout and
-   `net-autobahn - "13.*"` runs an excluded section by hand.
+   digest), each case passing or the job failing: every section, the
+   performance (9) and compression (12, 13) ones included, each group of
+   them in a client process of its own (the suite's PyPy client keeps the
+   native memory of every zlib object it makes, and run whole it grew past
+   10 GB and slowed to what read as a stall, #12136).
 5. **Static files, compression, proxies, caching.** Four PRs, in the
    order each builds on the last.
    `std/http/cache` (landed): the response-side RFC 9111 helpers and the

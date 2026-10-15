@@ -203,7 +203,9 @@ pub function accept(req: HttpRequest, opts: Options, h: Handlers): Result[HttpRe
 // the server compresses and the client made one it can take: the window
 // bits the server compresses with (the client's `server_max_window_bits`
 // where it named one, 15 otherwise) and the extension's response line,
-// which names no context takeover on either side; `(0, "")` otherwise.
+// which names no context takeover on the server's side only: the client
+// keeps its window across messages, and the reader decodes against it;
+// `(0, "")` otherwise.
 function __negotiated(req: HttpRequest, opts: Options): (i32, string) {
   if (!opts.compression) {
     return (0, "");
@@ -212,7 +214,7 @@ function __negotiated(req: HttpRequest, opts: Options): (i32, string) {
     for offer in v.split(",") {
       let bits: i32 = __deflate_offer(offer);
       if (bits > 0) {
-        return (bits, "permessage-deflate; server_no_context_takeover; client_no_context_takeover; server_max_window_bits=" + bits.to_string());
+        return (bits, "permessage-deflate; server_no_context_takeover; server_max_window_bits=" + bits.to_string());
       }
     }
   }
@@ -476,9 +478,10 @@ function __flush(c: Conn, h: Handlers): boolean {
 // __Reading — the frame reader's state across frames: the fragmented
 // message under way (`opcode` 0 for none, its bytes so far in the
 // builder `parts`, so a fragment is appended and not copied onto,
-// whether it came compressed, and its UTF-8 check so far), and whether
-// the peer sent its close.
-struct __Reading { opcode: i32, parts: usize, compressed: boolean, need: i32, lo: i32, hi: i32, peer_closed: boolean, code: i32, reason: string }
+// whether it came compressed, and its UTF-8 check so far), the last
+// 32 KiB the peer's compressed messages decoded to, which its next one may
+// refer back into, and whether the peer sent its close.
+struct __Reading { opcode: i32, parts: usize, compressed: boolean, need: i32, lo: i32, hi: i32, history: u8[], peer_closed: boolean, code: i32, reason: string }
 
 // __Frame — one frame off the wire, `rsv1` its compression bit.
 struct __Frame { fin: boolean, opcode: i32, rsv1: boolean, payload: u8[] }
@@ -495,7 +498,8 @@ function __run(i: i32, c: Conn, body: Stream, h: Handlers): Option[u8[]] {
   }
   let open: (Conn) => void = h.open;
   open(c);
-  let r: __Reading = __Reading { opcode: 0, parts: buf_new(1024), compressed: false, need: 0, lo: 128, hi: 191, peer_closed: false, code: 1006, reason: "" };
+  let none: u8[] = [];
+  let r: __Reading = __Reading { opcode: 0, parts: buf_new(1024), compressed: false, need: 0, lo: 128, hi: 191, history: none, peer_closed: false, code: 1006, reason: "" };
   let s: Stream = body;
   let going: boolean = __flush(c, h);
   while (going) {
@@ -669,8 +673,9 @@ function __on_data(c: Conn, h: Handlers, r: __Reading, f: __Frame): (__Reading, 
 // unless the handler closed, and the reader cleared for the next.
 function __message_done(c: Conn, h: Handlers, r: __Reading, opcode: i32): (__Reading, boolean) {
   let data: u8[] = buf_take_bytes(r.parts);
+  let history: u8[] = r.history;
   if (r.compressed) {
-    match (__inflated(c, data)) {
+    match (__inflated(c, history, data)) {
       Ok(out) => {
         data = out;
       },
@@ -678,6 +683,7 @@ function __message_done(c: Conn, h: Handlers, r: __Reading, opcode: i32): (__Rea
         return __violated(c, r, code);
       }
     }
+    history = array.take_last(history.concat(data), 32768);
     if (opcode == 1 && !utf8.from_bytes(data).is_some()) {
       return __violated(c, r, 1007);
     }
@@ -685,15 +691,16 @@ function __message_done(c: Conn, h: Handlers, r: __Reading, opcode: i32): (__Rea
   if (c.state.get() == 0) {
     __deliver(c, h, opcode, data);
   }
-  return (__Reading { ...r, opcode: 0, compressed: false, need: 0, lo: 128, hi: 191 }, true);
+  return (__Reading { ...r, opcode: 0, compressed: false, need: 0, lo: 128, hi: 191, history: history }, true);
 }
 
-// __inflated(c, parts) — a compressed message decoded: the stream closed
-// with the tail the sender dropped and a final empty block, under the
-// message cap; the close code for one that cannot be.
-function __inflated(c: Conn, parts: u8[]): Result[u8[], i32] {
+// __inflated(c, history, parts) — a compressed message decoded after
+// `history`: the stream closed with the tail the sender dropped and a
+// final empty block, under the message cap; the close code for one that
+// cannot be.
+function __inflated(c: Conn, history: u8[], parts: u8[]): Result[u8[], i32] {
   let closed: u8[] = parts.concat([0 as u8, 0 as u8, 255 as u8, 255 as u8, 1 as u8, 0 as u8, 0 as u8, 255 as u8, 255 as u8]);
-  match (deflate.inflate(closed, c.opts.max_message)) {
+  match (deflate.inflate_after(history, closed, c.opts.max_message)) {
     Ok(got) => {
       return Ok(got.out);
     },
