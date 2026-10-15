@@ -4,17 +4,18 @@
 > go-to-def, completion) and the playground wires it via `cmd/fern-wasm`.
 > Post-MVP performance work is surveyed in `IDE-COMPILATION-RESEARCH.md`
 > and tracked in [#4415](https://github.com/JakeChampion/lang/issues/4415).
-> The self-host compiler serves diagnostics, formatting, hover,
-> go-to-definition, completion, signature help, document symbols and inlay
-> hints as `fern -lsp` (#6641) — see the next section; everything below it
-> describes the Go server.
+> The self-host compiler serves every method the Go server does — diagnostics,
+> formatting, hover, go-to-definition, completion, signature help, document
+> symbols, inlay hints, references, rename, semantic tokens and code actions —
+> as `fern -lsp` (#6641); see the next section. Everything below it describes
+> the Go server.
 
 ## The self-host server: `fern -lsp`
 
 `fern -lsp [-target T] [-embed DIR] [stdlib-root]` runs the self-host CLI as a
 language server on stdin and stdout: diagnostics, formatting, hover,
-go-to-definition, completion, signature help, document symbols and inlay
-hints.
+go-to-definition, completion, signature help, document symbols, inlay hints,
+references, rename, semantic tokens and code actions.
 
 - **The wire** is `compiler/lsp.fern`. It does Content-Length framing
   over `stdin()`, JSON-RPC through `std/json`, the UTF-16 position conversion
@@ -89,6 +90,54 @@ hints.
   destructured name have their own positions; a hint names an imported type as
   the document writes it (`util.Kind`); and a literate document has an outline
   and hints.
+- **References and rename** (`compiler/lsprefs.fern`) resolve the name at
+  the position, or the declaration whose name it is, to what it names: a
+  local binding (by `lexical.resolve_func`'s symbol, so shadowing is
+  respected), a module-level function or constant, a struct or enum, a
+  variant, a field or a method. Each kind is found where the tree has it — an
+  identifier, a member after a `.` typed by the scope its statement is checked
+  in, a struct literal's field (the parser now records each field name's
+  position), a variant at any depth of a match arm's, `if let`'s or
+  `let … else`'s pattern (the parser flattens a nested pattern into matches
+  that all stand where the whole pattern does, so the pattern's tokens are
+  searched) — and placed on the token spelling it, so a node synthesised at a
+  borrowed position never answers. A type is found among the tokens of each
+  module that can name it, bare or behind an alias. References cover every
+  module the document's check loaded, so a name from another module is found
+  in both, and a rename edits each file; like the Go server's, they reach no
+  module that check did not load.
+  The answers differ from the Go server's where it was wrong: a declaration
+  is placed on its name, not at its keyword (a rename edited `fun`); a request
+  on a declaration's own name answers; a local is the binding a name reads, not
+  every like-named local of the function, and a parameter's declaration is one
+  of its places; a variant inside a nested pattern is found, where the Go
+  server found one only heading an arm; `includeDeclaration` is honoured; and a
+  rename to a name that
+  is not an identifier, or of something with no declaration (`Some`) or
+  declared in the stdlib, is refused (null).
+- **Semantic tokens** (`compiler/lsptokens.fern`) use the Go server's
+  eleven-type legend and its encoding. Each name a module writes is classified
+  from the tree (identifiers by the checker's tables, members, struct literals
+  and their fields, assignment targets, arm variants), then each declaration's
+  name from the outline, then the types an annotation writes from the tokens,
+  first classification winning. The Go server classified only what a function
+  body names and each annotated type, and called whatever it could not
+  classify a variable; this one classifies declarations, parameters and
+  bindings where they are declared, a built-in function as a function and a
+  type parameter as a type, and leaves out what it cannot classify. Neither
+  emits `keyword`.
+- **Code actions** are quick fixes from a diagnostic's `data`. The self-host
+  checker attaches a fix (`util.Diag.fix`, also printed by `-check` as the
+  Go renderer's `help:` line) to the diagnostics the Go checker does: E001 for
+  a name read, called or assigned that resolves to nothing, respelt as the
+  closest name in scope or the replacement of a retired one, and E043 for a
+  struct literal's, an access's, a struct pattern's or a destructuring `let`'s
+  unknown field or method, respelt as the closest field or method. A fix
+  replaces the first identifier spelled as the old name from its position on
+  along its line: a pattern's fields have no position of their own, so their
+  fix stands where the arm or the `let` does and the server places it on the
+  field, where the Go server's edit replaced the statement's first bytes. A
+  code action names the diagnostic as the client sent it.
 - A publish goes out only when a document's diagnostics change, and didClose
   clears them. The exit codes are the spec's: 0 for `exit` after `shutdown`,
   1 for `exit` without it, and 2 for input that cannot be framed.
@@ -110,13 +159,16 @@ noise, and each later one takes under 0.1 ms. On the 2,700-line
 `compiler/checker.fern` about 18 ms, most of it re-lexing the module. The other
 requests cost about the same there (2026-10-15): completion inside a function
 with 18 bindings, 1,213 items, about 22 ms; signature help, the whole outline
-and the whole file's inlay hints about 20 ms each.
+and the whole file's inlay hints about 20 ms each. References and rename cost
+60–70 ms there — `Scope`'s 520 places, `dg_at`'s 245, a field's 12 — and
+the whole file's semantic tokens, 60,174 of them, about 135 ms.
 
 `internal/testing/e2ecompiler/self_host_lsp_test.go` gates it (`TEST-GATES.md` has the
-row), with `self_host_lsp_hover_test.go` for hover and definition and
+row), with `self_host_lsp_hover_test.go` for hover and definition,
 `self_host_lsp_complete_test.go` for completion, signature help, document
-symbols and inlay hints: the Go server's cases, their answers written out as
-data. The diagnostics are held to two references:
+symbols and inlay hints, and `self_host_lsp_refs_test.go` for references,
+rename, semantic tokens and code actions: the Go server's cases, their answers
+written out as data. The diagnostics are held to two references:
 
 - **`-check`, across the whole conformance corpus.** Every finding in the
   document is published, at its position, with its code and message, and
@@ -131,13 +183,13 @@ data. The diagnostics are held to two references:
 
 What the next slices add:
 
-1. References, rename, semantic tokens and code actions, over the same view.
-   Completion's bindings are the whole enclosing function's, as the Go
+1. Imports parsed once and reused across checks.
+2. The playground's in-process server (`fernLsp`) on the self-host wasm build,
+   which is what `cmd/fern-wasm` still carries; then the Go server's deletion.
+3. Completion's bindings are the whole enclosing function's, as the Go
    server's are; offering only those in scope at the cursor needs statement
-   extents the syntax tree does not record.
-2. Imports parsed once and reused across checks.
-3. The playground's in-process server (`fernLsp`) on the self-host wasm build,
-   which is what `cmd/fern-wasm` still carries.
+   extents the syntax tree does not record. A rename, as the Go server's, edits
+   only the modules the requesting document's check loaded.
 
 ## Goal
 

@@ -1,6 +1,8 @@
 # Parallel stdlib end-to-end validation
 
-`TestSelfHostStdTestE2E` and its ARM64 counterpart run the same 148 cases.
+`TestSelfHostStdTestE2E` and its ARM64 counterpart run the same cases, with
+the `tls_` cases split out into `TestSelfHostStdTestE2ETLS` and
+`TestSelfHostStdTestE2EArm64TLS` so the sharder can place them apart.
 Each case runs the Go reference interpreter, compiles through the Fern
 selfhost compiler, assembles and links the result, then compares its output
 and exit code with the interpreter. The synthetic failing suite still checks
@@ -76,7 +78,7 @@ Then scale only the case selector to all cases, retaining both targets:
 ```sh
 scripts/devbox env FERN_SELFHOST_BUILD_CACHE=/work/build/ci-stdtest-cache \
   go test ./internal/testing/e2ecompiler \
-  -run '^TestSelfHostStdTestE2E(Arm64)?$' \
+  -run '^TestSelfHostStdTestE2E(Arm64)?(TLS)?$' \
   -race -parallel 4 -count=1 -v -timeout 30m
 ```
 

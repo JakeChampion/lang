@@ -2637,20 +2637,10 @@ function bind_destructure_names(s: Scope, v: ast.StmtVar): Scope {
 // check_expr — the same expression the lowering emits — so a renamed binding,
 // a generic struct and an opaque field all type exactly as they would there.
 function bind_struct_destr_fields(out: Scope, v: ast.StmtVar, s: Scope): Scope {
-  let marker: string = parser.destr_marker_split(v.type_name).tag;
-  let rest: string = slice_unchecked(marker, 4, marker.len()) + "";
-  let colon: i32 = 0 - 1;
-  let ri: i32 = 0;
-  while (ri < rest.len()) {
-    if (rest[ri] == b':' && colon < 0) {
-      colon = ri;
-    }
-    ri = ri + 1;
-  }
-  if (colon < 0) {
+  let (fields, ok) = struct_destr_fields(v.type_name);
+  if (!ok) {
     return bind_names(out, v.name);
   }
-  let fields: string[] = split_pattern_names(slice_unchecked(rest, colon + 1, rest.len()) + "");
   let names: string[] = split_pattern_names(v.name);
   let i: i32 = 0;
   while (i < names.len()) {
@@ -2660,6 +2650,40 @@ function bind_struct_destr_fields(out: Scope, v: ast.StmtVar, s: Scope): Scope {
     }
     out = out.bind(names[i], ft);
     i = i + 1;
+  }
+  return out;
+}
+
+// struct_destr_fields is the fields a struct destructure's marker reads, in
+// the order it binds them, and false when the marker names none.
+function struct_destr_fields(type_name: string): (string[], boolean) {
+  let marker: string = parser.destr_marker_split(type_name).tag;
+  let rest: string = slice_unchecked(marker, 4, marker.len()) + "";
+  let colon: i32 = util.index_of_sub(rest, ":");
+  if (colon < 0) {
+    return ([], false);
+  }
+  return (split_pattern_names(slice_unchecked(rest, colon + 1, rest.len()) + ""), true);
+}
+
+// struct_destr_diags is E043 for each field a struct destructure
+// `let P { x, z } = e;` reads that the struct `e` is lacks, at the `let`, as
+// native reports it. The field has no position of its own, so its fix stands
+// at the `let` too and names the field written after it.
+function struct_destr_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  if (!parser.is_struct_destr_marker(v.type_name)) {
+    return out;
+  }
+  let (fields, _) = struct_destr_fields(v.type_name);
+  if let typeinfo.TypeStruct(st) = check_expr(v.init, s) {
+    let sig: StructSig = s.lookup_struct(st.name);
+    for f in fields {
+      if (sig.name.len() > 0 && !util.has_str(sig.field_names, f)) {
+        let d: util.Diag = dg_at("E043", "struct " + util.demangle(st.name) + " has no field \"" + f + "\"", v.line, v.col);
+        out = out.append(with_fix(d, f, v.line, v.col, util.suggest(f, sig.field_names), ""));
+      }
+    }
   }
   return out;
 }
@@ -3966,7 +3990,11 @@ function (s: Scope) has_sig(name: string): boolean {
 // is_map_iter_method reports whether `name` is one of the MapIter cursor's
 // builtin methods (native registerMapIterMethod).
 function is_map_iter_method(name: string): boolean {
-  return name == "has_next" || name == "key" || name == "value" || name == "advance";
+  return util.has_str(map_iter_methods(), name);
+}
+
+function map_iter_methods(): string[] {
+  return ["advance", "has_next", "key", "value"];
 }
 
 // --- E043 unknown-method advice (the native unknownMethodMessage port) -------
@@ -11720,10 +11748,13 @@ function slit_diags(e: ast.Expr, structs: StructTable): util.Diag[] {
       // variant finds no sig and is skipped.
       let usig: StructSig = find_struct_sig(structs, sl.type_name);
       if (usig.name.len() > 0) {
-        for field_name in sl.field_names {
-          if (!util.has_str(usig.field_names, field_name)) {
-            out = out.append(dg_at("E043", "struct " + util.demangle(sl.type_name) + " has no field \"" + field_name + "\"", sl.line, sl.col));
+        let fi: i32 = 0;
+        while (fi < sl.field_names.len()) {
+          if (!util.has_str(usig.field_names, sl.field_names[fi])) {
+            let d: util.Diag = dg_at("E043", "struct " + util.demangle(sl.type_name) + " has no field \"" + sl.field_names[fi] + "\"", sl.line, sl.col);
+            out = out.append(literal_field_fix(d, sl, fi, usig.field_names));
           }
+          fi = fi + 1;
         }
       } else if (slit_names_no_struct(structs, sl.type_name)) {
         out = out.append(dg_at("E043", "cannot find struct \"" + util.demangle(sl.type_name) + "\" in this scope", sl.line, sl.col));
@@ -14053,7 +14084,7 @@ function cell_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, recv: typein
     want = 1;
   }
   if (want < 0) {
-    return [dg_at("E043", "struct Cell has no field or method \"" + mfa.field + "\"", mfa.line, mfa.col)];
+    return [access_fix(dg_at("E043", "struct Cell has no field or method \"" + mfa.field + "\"", mfa.line, mfa.col), mfa, ["get", "set"])];
   }
   if (c.args.len() != want) {
     return [dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", want, c.args.len(), "argument"), c.line, c.col)];
@@ -14412,7 +14443,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       // intrinsic (`__`-prefixed), or a builtin function — is an
       // undefined call, reported at the callee.
       if (!is_resolvable_callee(cid.name, s)) {
-        out = out.append(dg_at("E001", "cannot find \"" + cid.name + "\" in this scope", cid.line, cid.col));
+        out = out.append(undefined_name(cid.name, s, cid.line, cid.col));
       }
       // E001: a Map built without `core/map` in the program's import closure.
       // Every Map operation lowers to that module's runtime helpers, so
@@ -14824,11 +14855,11 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
               } else if (sn.name == "MapIter" && !is_map_iter_method(mfa.field)) {
                 // Map.iter()'s cursor is a builtin with no struct
                 // declaration, so the field fallback below never sees it.
-                out = out.append(dg_at("E043", "struct MapIter has no field or method \"" + mfa.field + "\"", mfa.line, mfa.col));
+                out = out.append(access_fix(dg_at("E043", "struct MapIter has no field or method \"" + mfa.field + "\"", mfa.line, mfa.col), mfa, map_iter_methods()));
               } else if (fsig.name.len() > 0) {
                 let fldi: i32 = field_index(fsig, mfa.field);
                 if (fldi < 0) {
-                  out = out.append(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + mfa.field + "\"", mfa.line, mfa.col));
+                  out = out.append(s.member_fix(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + mfa.field + "\"", mfa.line, mfa.col), mfa, fsig));
                 } else {
                   let fldt: typeinfo.Type = field_access_result_type(mfa, sn, s);
                   let fld_is_fn: boolean = false;
@@ -15546,7 +15577,7 @@ function call_diags_field_access(fa: ast.ExprFieldAccess, s: Scope, out: util.Di
     typeinfo.TypeStruct(sn) => {
       let fsig: StructSig = s.lookup_struct(sn.name);
       if (fsig.name.len() > 0 && !util.has_str(fsig.field_names, fa.field) && s.lookup_method(fa.field, sn.name).name.len() == 0) {
-        out = out.append(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + fa.field + "\"", fa.line, fa.col));
+        out = out.append(s.member_fix(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + fa.field + "\"", fa.line, fa.col), fa, fsig));
       }
     },
     typeinfo.TypeTuple(tt) => {
@@ -15817,7 +15848,7 @@ function call_diags_ident(id: ast.ExprIdent, s: Scope, out: util.Diag[]): util.D
     // ExprCall arm (a bare-ident callee is skipped here), so this
     // fires only on value reads, matching where the Go checker's
     // errIdent reports E001.
-    out = out.append(dg_at("E001", "cannot find \"" + id.name + "\" in this scope", id.line, id.col));
+    out = out.append(undefined_name(id.name, s, id.line, id.col));
   }
 
   return out;
@@ -17163,7 +17194,7 @@ function assign_diags(a: ast.StmtAssign, cur: Scope, unions: UnionSig[]): util.D
     // variant / builtin to confuse it with, hence no
     // allowlist needed. Reported at the `=` token (the
     // assignment position the parser captured).
-    out = out.append(dg_at("E001", "cannot find \"" + a.target + "\" in this scope", a.target_line, a.target_col));
+    out = out.append(undefined_name(a.target, cur, a.target_line, a.target_col));
   } else {
     let tt: typeinfo.Type = cur.lookup(a.target);
     let vt: typeinfo.Type = check_expr(a.value, cur);
@@ -17272,6 +17303,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
         // E024: a tuple destructure `let (a, b) = E` (the parser
         // encodes the names as "a,b") requires E to be a tuple whose
         // element count matches the number of names.
+        out = util.append_diags(out, struct_destr_diags(v, cur));
         let positions: string[] = split_pattern_names(v.name);
         if (positions.len() > 1 && !parser.is_struct_destr_marker(v.type_name)) {
           let nnames: i32 = positions.len();
@@ -17391,7 +17423,69 @@ function dg(code: string, message: string): util.Diag {
 }
 
 function dg_at(code: string, message: string, line: i32, col: i32): util.Diag {
-  return util.Diag { code: code, message: util.show_type_vars(message), line: line, col: col };
+  return util.Diag { code: code, message: util.show_type_vars(message), line: line, col: col, fix: None };
+}
+
+// with_fix is `d` fixed by respelling `old`, written at `line`, `col`, as `to`,
+// the fix's title ending in `note`; `d` itself when there is no `to` or no
+// position.
+function with_fix(d: util.Diag, old: string, line: i32, col: i32, to: string, note: string): util.Diag {
+  if (to.len() == 0 || line <= 0) {
+    return d;
+  }
+  return util.Diag { ...d, fix: Some(util.Fix { line: line, col: col, old: old, new_text: to, title: "replace `" + old + "` with `" + to + "`" + note }) };
+}
+
+// literal_field_fix is `d`, for field `i` of literal `sl`, which its struct
+// does not declare, fixed by respelling the field as the closest of `fields`.
+function literal_field_fix(d: util.Diag, sl: ast.ExprStructLit, i: i32, fields: string[]): util.Diag {
+  if (i >= sl.field_lines.len()) {
+    return d;
+  }
+  return with_fix(d, sl.field_names[i], sl.field_lines[i], sl.field_cols[i], util.suggest(sl.field_names[i], fields), "");
+}
+
+// member_fix is `d`, for an access to a member struct `st` lacks, fixed by
+// respelling the member, written just past the access's `.`, as the closest
+// of the struct's fields and then its methods.
+function (s: Scope) member_fix(d: util.Diag, fa: ast.ExprFieldAccess, st: StructSig): util.Diag {
+  return access_fix(d, fa, util.append_all(st.field_names, s.methods_in_namespace(st.name)));
+}
+
+// access_fix is `d`, for an access to a member its value lacks, fixed by
+// respelling the member, written just past the access's `.`, as the closest
+// of `members`.
+function access_fix(d: util.Diag, fa: ast.ExprFieldAccess, members: string[]): util.Diag {
+  return with_fix(d, fa.field, fa.line, fa.col + 1, util.suggest(fa.field, members), "");
+}
+
+// undefined_name is E001 for `name`, written at `line`, `col`, where nothing
+// in `s` declares it. Its fix is a retired name's replacement, or else the
+// closest name `s` can resolve.
+function undefined_name(name: string, s: Scope, line: i32, col: i32): util.Diag {
+  let d: util.Diag = dg_at("E001", "cannot find \"" + name + "\" in this scope", line, col);
+  // A retired name is too far from its replacement for a respelling to find.
+  if (name == "string_from_bytes") {
+    return with_fix(d, name, line, col, "string_from_bytes_unchecked", " (or `std/utf8.from_bytes`, which validates and returns `Option[string]`)");
+  }
+  return with_fix(d, name, line, col, util.suggest(name, s.visible_names()), "");
+}
+
+// visible_names is every name `s` resolves: its bindings, innermost first,
+// then the module's functions and constants.
+function (s: Scope) visible_names(): string[] {
+  let out: string[] = [];
+  let i: i32 = s.names.len() - 1;
+  while (i >= 0) {
+    out = astwalk.append_bound_name(out, s.names[i]);
+    i = i - 1;
+  }
+  for sig in s.sigs.sigs {
+    if (sig.receiver.len() == 0) {
+      out = out.append(sig.name);
+    }
+  }
+  return util.append_all(out, parser.builtin_function_names());
 }
 
 // scalar_match_exhaustive_diags: E030 for a `match` on a number / string /
@@ -26427,7 +26521,7 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
       if (sli.has_base) {
         nbase = annotate_expr(sli.base, s);
       }
-      return unsettled(ast.ExprStructLit { type_name: sli.type_name, field_names: sli.field_names, field_values: nfv, has_base: sli.has_base, base: nbase, line: sli.line, col: sli.col, written: sli.written });
+      return unsettled(ast.ExprStructLit { ...sli, field_values: nfv, base: nbase });
     },
     ast.ExprLambda(lm) => {
       return unsettled(annotate_lambda_expr(lm, s, "", t_unknown("")));

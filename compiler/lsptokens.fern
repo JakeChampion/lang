@@ -1,0 +1,420 @@
+// compiler/lsptokens.fern — what `fern -lsp` answers a semantic tokens
+// request from: what each name a module writes is — a function, method,
+// struct, enum, variant, parameter, local, field, type or module — read from
+// the program, view and tokens a hover reads (lspquery.fern).
+//
+// Names are classified from the syntax tree where it has them, typed by the
+// checker's tables; a declaration's name from the module's outline
+// (lspassist.symbols); and what is left, the types a program writes, which the
+// tree keeps no positions for, from the tokens. Each token takes the first
+// classification that reaches it.
+
+import "./ast";
+import "./astwalk";
+import "./checker";
+import "./flatten";
+import "./lexical";
+import "./lspassist";
+import "./lspquery";
+import "./parser";
+import "./util";
+
+// The token types, each its index in lsp.semantic_token_types().
+const T_FUNCTION: i32 = 0;
+
+const T_METHOD: i32 = 1;
+
+const T_STRUCT: i32 = 2;
+
+const T_ENUM: i32 = 3;
+
+const T_ENUM_MEMBER: i32 = 4;
+
+const T_PARAMETER: i32 = 5;
+
+const T_VARIABLE: i32 = 6;
+
+const T_PROPERTY: i32 = 7;
+
+const T_TYPE: i32 = 8;
+
+const T_NAMESPACE: i32 = 10;
+
+// SemTok is a name module `m` writes: the `len` bytes at bundle position
+// `line`, `col`, of token type `kind`.
+pub struct SemTok { line: i32, col: i32, len: i32, kind: i32 }
+
+// semantic_tokens is every name module `m` writes that is known to be one of
+// the token types, in order.
+pub function semantic_tokens(p: lspquery.Program, m: i32): SemTok[] {
+  let v: lspquery.View = lspquery.view_of(p);
+  let x: Ctx = Ctx { toks: lspquery.module_toks(p, m), aliases: lspquery.quals_of(v, m).aliases };
+  let kinds: i32[] = [];
+  for t in x.toks {
+    kinds = kinds.append(0 - 1);
+  }
+  let body: Mark[] = body_classes(v.types, m, x);
+  kinds = applied(kinds, decl_classes(p, m, x, body));
+  let types: Mark[] = type_classes(v, type_params(lspquery.parsed_module(p, m)), m, x, kinds);
+  kinds = applied(kinds, types);
+  let out: SemTok[] = [];
+  let i: i32 = 0;
+  while (i < x.toks.len()) {
+    if (kinds[i] >= 0) {
+      out = out.append(SemTok { line: x.toks[i].line, col: x.toks[i].col, len: x.toks[i].text.len(), kind: kinds[i] });
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// Ctx is a module's tokens and the aliases it imports modules under.
+struct Ctx { toks: lspquery.Tok[], aliases: string[] }
+
+// Mark gives token `i` type `kind`.
+struct Mark { i: i32, kind: i32 }
+
+// applied is `kinds` with each of `marks` that reaches a token with no type.
+function applied(own kinds: i32[], marks: Mark[]): i32[] {
+  for mk in marks {
+    if (kinds[mk.i] < 0) {
+      kinds = kinds.with(mk.i, mk.kind);
+    }
+  }
+  return kinds;
+}
+
+// marked adds a mark giving token `i` type `kind`, when there is such a token
+// and it is a name.
+function marked(x: Ctx, i: i32, kind: i32, own acc: Mark[]): Mark[] {
+  if (i < 0 || i >= x.toks.len() || kind < 0 || !x.toks[i].ident && !util.has_str(x.aliases, x.toks[i].text)) {
+    return acc;
+  }
+  return acc.append(Mark { i: i, kind: kind });
+}
+
+// node_at gives the name a node at `line`, `col` stands for type `kind`: the
+// member after a `.` there, the name after a module's alias there, which is
+// then a namespace, or the token there.
+function node_at(x: Ctx, line: i32, col: i32, kind: i32, own acc: Mark[]): Mark[] {
+  let i: i32 = lspquery.tok_at(x.toks, line, col);
+  if (i < 0) {
+    return acc;
+  }
+  if (!x.toks[i].ident && x.toks[i].text == ".") {
+    return marked(x, i + 1, kind, acc);
+  }
+  if (qualifies(x, i)) {
+    return marked(x, i + 2, kind, marked(x, i, T_NAMESPACE, acc));
+  }
+  return marked(x, i, kind, acc);
+}
+
+// qualifies reports whether token `i` is a module's alias before `.name`.
+function qualifies(x: Ctx, i: i32): boolean {
+  return util.has_str(x.aliases, x.toks[i].text) && i + 2 < x.toks.len() && lspquery.punct_before(x.toks, i + 2, ".") && !lspquery.punct_before(x.toks, i, ".");
+}
+
+// ---- The syntax tree ----
+
+// body_classes marks the names the bodies of module `m`'s functions write:
+// each identifier, member, struct literal and its fields, assignment target
+// and arm's variant, and each binding where it is declared.
+function body_classes(v: checker.QueryView, m: i32, x: Ctx): Mark[] {
+  let s: checker.Scope = checker.module_scope(v);
+  let out: Mark[] = [];
+  for fd in v.mod.funcs {
+    if (lspquery.declared_in(fd.line, m)) {
+      let r: lexical.ResolvedFunction = lexical.resolve_func(fd);
+      let params: string[] = [];
+      for b in r.bindings {
+        if (lspquery.is_param(b, fd)) {
+          params = params.append(b.symbol);
+        }
+      }
+      out = func_classes(s, x, r.func.body, params, out);
+      for b in r.bindings {
+        let a: lspquery.Answer = lspquery.binding_decl(x.toks, b, util.has_str(params, b.symbol), b.name);
+        let i: i32 = lspquery.tok_at(x.toks, a.line, a.col);
+        if (a.found && i >= 0 && x.toks[i].text == b.name) {
+          out = marked(x, i, local_kind(b.symbol, params), out);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// Classify is a walk of one function's body, typed by the module scope `s`,
+// whose parameters (and its lambdas') are the symbols `params`, and the marks
+// it has made.
+struct Classify { s: checker.Scope, x: Ctx, params: string[], marks: Mark[] }
+
+function func_classes(s: checker.Scope, x: Ctx, body: ast.Stmt[], params: string[], own out: Mark[]): Mark[] {
+  let c: Classify = Classify { s: s, x: x, params: params, marks: out };
+  for st in body {
+    c = astwalk.fold_stmt_nodes(st, c, classify_stmt, classify_expr, astwalk.descend_all);
+  }
+  return c.marks;
+}
+
+function classify_stmt(st: ast.Stmt, own c: Classify): Classify {
+  return Classify { ...c, marks: stmt_class(c.x, st, c.params, c.marks) };
+}
+
+function classify_expr(e: ast.Expr, own c: Classify): Classify {
+  return Classify { ...c, marks: expr_class(c.s, c.x, e, c.params, c.marks) };
+}
+
+function stmt_class(x: Ctx, st: ast.Stmt, params: string[], own acc: Mark[]): Mark[] {
+  match (st) {
+    ast.StmtAssign(a) => {
+      if (local(a.target)) {
+        return node_at(x, a.target_line, a.target_col, local_kind(a.target, params), acc);
+      }
+    },
+    ast.StmtMatch(m) => {
+      for arm in m.arms {
+        if let ast.PatVariant(pv) = arm.pattern {
+          acc = pattern_variants(x, lspquery.tok_at(x.toks, arm.line, arm.col), pv.type_name, acc);
+        }
+      }
+    },
+    _ => {}
+  }
+  return acc;
+}
+
+// pattern_variants marks each place the pattern starting at token `i` writes
+// the variant `name` (bundled): an arm's nested sub-patterns are matches the
+// parser flattens to stand where the whole pattern does. A name before a `:`
+// is a struct pattern's field.
+function pattern_variants(x: Ctx, i: i32, name: string, own acc: Mark[]): Mark[] {
+  if (i < 0) {
+    return acc;
+  }
+  let end: i32 = lspquery.pattern_end(x.toks, i);
+  let j: i32 = i;
+  while (j < end) {
+    if (spells_variant(x.toks[j], name) && lspquery.text_at(x.toks, j + 1) != ":") {
+      acc = pattern_class(x, qualifier_of(x, j), acc);
+    }
+    j = j + 1;
+  }
+  return acc;
+}
+
+// spells_variant reports whether `t` writes the variant `name` (bundled):
+// bare, or as the last part of a module's or an enum's prefix.
+function spells_variant(t: lspquery.Tok, name: string): boolean {
+  return t.ident && (name == t.text || util.str_has_suffix(name, "__" + t.text) || util.str_has_suffix(name, "." + t.text));
+}
+
+// qualifier_of is the index of the qualifier written before token `j`'s
+// `.`, or `j` when there is none.
+function qualifier_of(x: Ctx, j: i32): i32 {
+  if (j >= 2 && lspquery.punct_before(x.toks, j, ".")) {
+    return j - 2;
+  }
+  return j;
+}
+
+// pattern_class marks the variant an arm's pattern names from token `i`: a
+// bare `Red`, a module's `util.Red` or an enum's `Color.Red`.
+function pattern_class(x: Ctx, i: i32, own acc: Mark[]): Mark[] {
+  if (i < 0) {
+    return acc;
+  }
+  if (qualifies(x, i)) {
+    return marked(x, i + 2, T_ENUM_MEMBER, marked(x, i, T_NAMESPACE, acc));
+  }
+  if (i + 2 < x.toks.len() && lspquery.punct_before(x.toks, i + 2, ".")) {
+    return marked(x, i + 2, T_ENUM_MEMBER, marked(x, i, T_ENUM, acc));
+  }
+  return marked(x, i, T_ENUM_MEMBER, acc);
+}
+
+function expr_class(s: checker.Scope, x: Ctx, e: ast.Expr, params: string[], own acc: Mark[]): Mark[] {
+  match (e) {
+    ast.ExprIdent(id) => {
+      return node_at(x, id.line, id.col, ident_kind(s, id.name, params), acc);
+    },
+    ast.ExprCall(call) => {
+      if let ast.ExprFieldAccess(fa) = call.callee {
+        return node_at(x, fa.line, fa.col, member_kind(s, fa, T_METHOD), acc);
+      }
+    },
+    ast.ExprFieldAccess(fa) => {
+      return node_at(x, fa.line, fa.col, member_kind(s, fa, T_PROPERTY), acc);
+    },
+    ast.ExprStructLit(sl) => {
+      acc = node_at(x, sl.line, sl.col, T_STRUCT, acc);
+      let i: i32 = 0;
+      while (i < sl.field_lines.len()) {
+        acc = node_at(x, sl.field_lines[i], sl.field_cols[i], T_PROPERTY, acc);
+        i = i + 1;
+      }
+    },
+    _ => {}
+  }
+  return acc;
+}
+
+// member_kind is what `fa` names after its `.`: an enum's variant, or else
+// `kind`, a method's or a field's.
+function member_kind(s: checker.Scope, fa: ast.ExprFieldAccess, kind: i32): i32 {
+  if (lspquery.enum_qualifier(s, fa).len() > 0) {
+    return T_ENUM_MEMBER;
+  }
+  return kind;
+}
+
+function local(name: string): boolean {
+  return util.str_has_prefix(name, "$binding$");
+}
+
+function local_kind(symbol: string, params: string[]): i32 {
+  if (util.has_str(params, symbol)) {
+    return T_PARAMETER;
+  }
+  return T_VARIABLE;
+}
+
+// ident_kind is what an identifier names: a parameter or local, or the
+// module-level name it is bundled as.
+function ident_kind(s: checker.Scope, name: string, params: string[]): i32 {
+  if (local(name)) {
+    return local_kind(name, params);
+  }
+  return global_kind(s, name);
+}
+
+// global_kind is what the module-level `name` (bundled) is: a variant,
+// function, constant (a variable), enum or struct, or -1.
+function global_kind(s: checker.Scope, name: string): i32 {
+  if (checker.variant_enum(s, name).len() > 0) {
+    return T_ENUM_MEMBER;
+  }
+  let sig: checker.FuncSig = checker.func_sig(s, name);
+  if (sig.name.len() > 0 && sig.is_const) {
+    return T_VARIABLE;
+  }
+  if (sig.name.len() > 0 || parser.is_builtin_function(name)) {
+    return T_FUNCTION;
+  }
+  return type_kind(s, name);
+}
+
+// type_kind is what the type `name` (bundled) is: an enum, a struct, a union
+// alias (a type), or -1.
+function type_kind(s: checker.Scope, name: string): i32 {
+  let u: checker.UnionSig = checker.enum_sig(s, name);
+  if (u.name.len() > 0 && u.is_enum) {
+    return T_ENUM;
+  }
+  if (u.name.len() > 0) {
+    return T_TYPE;
+  }
+  if (checker.struct_sig(s, name).name.len() > 0) {
+    return T_STRUCT;
+  }
+  return 0 - 1;
+}
+
+// ---- Declarations ----
+
+// decl_classes adds to `acc` a mark for each name module `m`'s outline
+// declares.
+function decl_classes(p: lspquery.Program, m: i32, x: Ctx, own acc: Mark[]): Mark[] {
+  for sym in lspassist.symbols(p, m) {
+    acc = symbol_class(x, sym, acc);
+  }
+  return acc;
+}
+
+function symbol_class(x: Ctx, sym: lspassist.Symbol, own acc: Mark[]): Mark[] {
+  acc = marked(x, lspquery.tok_at(x.toks, sym.name_line, sym.name_col), symbol_kind(sym.kind), acc);
+  for child in sym.children {
+    acc = symbol_class(x, child, acc);
+  }
+  return acc;
+}
+
+function symbol_kind(kind: i32): i32 {
+  if (kind == lspassist.SK_FUNCTION) {
+    return T_FUNCTION;
+  }
+  if (kind == lspassist.SK_METHOD) {
+    return T_METHOD;
+  }
+  if (kind == lspassist.SK_STRUCT) {
+    return T_STRUCT;
+  }
+  if (kind == lspassist.SK_FIELD) {
+    return T_PROPERTY;
+  }
+  if (kind == lspassist.SK_ENUM) {
+    return T_ENUM;
+  }
+  if (kind == lspassist.SK_ENUM_MEMBER) {
+    return T_ENUM_MEMBER;
+  }
+  return T_VARIABLE;
+}
+
+// ---- Types ----
+
+// type_classes marks the names a type annotation writes among the tokens
+// `kinds` leaves without a type: a struct, enum or union alias, bare or behind
+// a module's alias, or one of the type parameters `tparams`.
+function type_classes(v: lspquery.View, tparams: string[], m: i32, x: Ctx, kinds: i32[]): Mark[] {
+  let s: checker.Scope = checker.module_scope(v.types);
+  let q: flatten.Qualifiers = lspquery.quals_of(v, m);
+  let out: Mark[] = [];
+  let i: i32 = 0;
+  while (i < x.toks.len()) {
+    if (kinds[i] < 0 && !lspquery.punct_before(x.toks, i, ".")) {
+      out = type_class(s, q, tparams, x, i, out);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function type_class(s: checker.Scope, q: flatten.Qualifiers, tparams: string[], x: Ctx, i: i32, own acc: Mark[]): Mark[] {
+  let t: lspquery.Tok = x.toks[i];
+  if (qualifies(x, i)) {
+    let name: string = flatten.qualified_name(q, t.text, x.toks[i + 2].text);
+    return marked(x, i + 2, global_kind(s, name), marked(x, i, T_NAMESPACE, acc));
+  }
+  if (!t.ident) {
+    return acc;
+  }
+  let kind: i32 = 0 - 1;
+  if (q.own.len() > 0) {
+    kind = type_kind(s, q.own + "__" + t.text);
+  }
+  if (kind < 0) {
+    kind = type_kind(s, t.text);
+  }
+  if (kind < 0 && util.has_str(tparams, "0_" + t.text)) {
+    kind = T_TYPE;
+  }
+  return marked(x, i, kind, acc);
+}
+
+// type_params is every type parameter a declaration of `mod`, a module as it
+// was parsed, binds, each spelled as the front end carries it (`0_T`).
+function type_params(mod: parser.Module): string[] {
+  let out: string[] = [];
+  for fd in mod.funcs {
+    out = util.append_all(out, fd.type_params);
+  }
+  for sd in mod.structs {
+    out = util.append_all(out, sd.type_params);
+  }
+  for ed in mod.enums {
+    out = util.append_all(out, ed.type_params);
+  }
+  return out;
+}

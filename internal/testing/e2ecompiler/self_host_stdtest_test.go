@@ -35,7 +35,12 @@ func stripLinesWithPrefix(s, prefix string) string {
 // examples as they evolve rather than pinning hand-copied output.
 //
 // The configured user-mode runner shares the driver's filesystem paths.
-func TestSelfHostStdTestE2E(t *testing.T) {
+func TestSelfHostStdTestE2E(t *testing.T) { runSelfHostStdTestX86(t, false) }
+
+// TestSelfHostStdTestE2ETLS runs the gate's TLS cases (see selfHostStdTestCases).
+func TestSelfHostStdTestE2ETLS(t *testing.T) { runSelfHostStdTestX86(t, true) }
+
+func runSelfHostStdTestX86(t *testing.T, tls bool) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 
@@ -48,22 +53,7 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	// A synthetic failing suite (written to a temp file) pins the
-	// failure path: a `not ok` line and exit code 1. The example files
-	// below are all green suites (exit 0).
-	failing := filepath.Join(t.TempDir(), "synthetic_fail_test.fern")
-	failSrc := "import \"std/test\";\n" +
-		"function bad(): test.TestOutcome { return test.assert_eq(1, 2); }\n" +
-		"function main(): i32 {\n" +
-		"    let r: test.TestRunner = test.test_new(\"synthetic\");\n" +
-		"    r = r.it(\"one is two\", bad);\n" +
-		"    return r.finish();\n" +
-		"}\n"
-	if err := os.WriteFile(failing, []byte(failSrc), 0o644); err != nil {
-		t.Fatalf("write synthetic: %v", err)
-	}
-
-	cases := selfHostStdTestCases(t, failing)
+	cases := selfHostStdTestCases(t, tls)
 
 	// The group includes parallel children in the top-level duration used
 	// by scripts/ci-test-weights. Each case owns its output directory.
@@ -129,7 +119,12 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 // surface on every PR — without this, parity work (e.g. the
 // unsigned-cmp / wider-int dispatch mirror) only shows up when
 // someone runs the arm64 emit suite manually.
-func TestSelfHostStdTestE2EArm64(t *testing.T) {
+func TestSelfHostStdTestE2EArm64(t *testing.T) { runSelfHostStdTestArm64(t, false) }
+
+// TestSelfHostStdTestE2EArm64TLS runs the gate's TLS cases (see selfHostStdTestCases).
+func TestSelfHostStdTestE2EArm64TLS(t *testing.T) { runSelfHostStdTestArm64(t, true) }
+
+func runSelfHostStdTestArm64(t *testing.T, tls bool) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -144,19 +139,7 @@ func TestSelfHostStdTestE2EArm64(t *testing.T) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	failing := filepath.Join(t.TempDir(), "synthetic_fail_test.fern")
-	failSrc := "import \"std/test\";\n" +
-		"function bad(): test.TestOutcome { return test.assert_eq(1, 2); }\n" +
-		"function main(): i32 {\n" +
-		"    let r: test.TestRunner = test.test_new(\"synthetic\");\n" +
-		"    r = r.it(\"one is two\", bad);\n" +
-		"    return r.finish();\n" +
-		"}\n"
-	if err := os.WriteFile(failing, []byte(failSrc), 0o644); err != nil {
-		t.Fatalf("write synthetic: %v", err)
-	}
-
-	cases := selfHostStdTestCases(t, failing)
+	cases := selfHostStdTestCases(t, tls)
 	// The group includes parallel children in the top-level duration used
 	// by scripts/ci-test-weights. Each case owns its output directory.
 	t.Run("cases", func(t *testing.T) {
@@ -229,11 +212,28 @@ type selfHostStdTestCase struct {
 }
 
 // selfHostStdTestCases returns the differential gate case list shared
-// by both backend variants. It is the single list: TestSelfHostStdTestE2E
-// calls it too, so a case added here reaches every variant.
-func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
+// by both backend variants. It is the single list, so a case added here
+// reaches every variant. The tls_ cases run as their own top-level tests
+// (tls true): their interpreter oracle alone takes about 20 CPU-minutes,
+// and as one test with the rest the gate outgrew a shard's time budget.
+func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 	t.Helper()
-	return []selfHostStdTestCase{
+	// A synthetic failing suite (written to a temp file) pins the
+	// failure path: a `not ok` line and exit code 1. The example files
+	// are all green suites (exit 0).
+	failing := filepath.Join(t.TempDir(), "synthetic_fail_test.fern")
+	failSrc := "import \"std/test\";\n" +
+		"function bad(): test.TestOutcome { return test.assert_eq(1, 2); }\n" +
+		"function main(): i32 {\n" +
+		"    let r: test.TestRunner = test.test_new(\"synthetic\");\n" +
+		"    r = r.it(\"one is two\", bad);\n" +
+		"    return r.finish();\n" +
+		"}\n"
+	if err := os.WriteFile(failing, []byte(failSrc), 0o644); err != nil {
+		t.Fatalf("write synthetic: %v", err)
+	}
+
+	all := []selfHostStdTestCase{
 		{"arithmetic", langSrcAbs(t, "tests/stdlib/arithmetic_test.fern"), ""},
 		{"strings", langSrcAbs(t, "tests/stdlib/strings_test.fern"), ""},
 		{"dns", langSrcAbs(t, "tests/stdlib/dns_test.fern"), ""},
@@ -490,6 +490,13 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"hash_checksums", langSrcAbs(t, "tests/stdlib/hash_checksums_test.fern"), ""},
 		{"synthetic_fail", failing, ""},
 	}
+	var cases []selfHostStdTestCase
+	for _, tc := range all {
+		if strings.HasPrefix(tc.name, "tls_") == tls {
+			cases = append(cases, tc)
+		}
+	}
+	return cases
 }
 
 // runSelfHostDriverStdin feeds src to a self-host driver binary and returns

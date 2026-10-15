@@ -169,7 +169,9 @@ pub struct ExprSlice { array: Expr, start: Expr, end: Expr, ty: string, open_end
 // docs/IMMUTABILITY-MIGRATION-PLAN.md.
 // written is the instantiation the literal spells, `Box[i64]` for
 // `Box[i64] { v: 1 }`, and "" when the literal names the bare struct.
-pub struct ExprStructLit { type_name: string, field_names: string[], field_values: Expr[], has_base: boolean, base: Expr, line: i32, col: i32, written: string }
+// field_lines[i], field_cols[i] is where field_names[i] is written; both are
+// empty for a literal the parser synthesized.
+pub struct ExprStructLit { type_name: string, field_names: string[], field_lines: i32[], field_cols: i32[], field_values: Expr[], has_base: boolean, base: Expr, line: i32, col: i32, written: string }
 
 // Postfix field access `obj.field`. obj can be any Expr that
 // evaluates to a struct value. `ty` is the typed-IR carrier

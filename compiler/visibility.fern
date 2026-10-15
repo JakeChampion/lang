@@ -212,6 +212,7 @@ function package_diag(cx: VisCtx, qual: string, name: string, line: i32, col: i3
     message: m + "." + name + " is `pub(package)` — only modules in the same package as " + m + " may use it",
     line: line,
     col: col,
+    fix: None,
   };
 }
 
@@ -246,6 +247,7 @@ function module_diags(cx: VisCtx): util.Diag[] {
         message: key + " is not exported (declare it as `pub " + kw + " " + r.name + " …` to make it accessible from other modules)",
         line: r.line,
         col: r.col,
+        fix: None,
       });
     }
   }
@@ -413,6 +415,7 @@ function check_type_name(tn: string, cx: VisCtx, line: i32, col: i32, acc: util.
     message: q + "." + base + " is not exported (declare it as `pub " + kind + " " + base + " …` to make it accessible from other modules)",
     line: line,
     col: col,
+    fix: None,
   });
 }
 
