@@ -100,22 +100,22 @@ function main(): i32 {
     // body @120 = the .text bytes.
     if (bin[120] != 0 || bin[121] != 0 || bin[122] != 128 || bin[123] != 210) { return 20; }
 
-    // x86-64 R+W+X data variant: 5-byte text (padded to 8) + 2-byte data.
+    // x86-64 R+W+X data variant: 5-byte text (padded to 16) + 2-byte data.
     let t2: u8[] = [1, 2, 3, 4, 5];
     let d2: i32[] = [9, 9];
     let b2: i32[] = elf_static_executable_data_x86(t2, d2);
-    // body = pad(5 -> 8) + 2 = 10; total = 64 + 56 + 10 = 130.
-    if (b2.len() != 64 + 56 + 10) { return 21; }
+    // body = pad(5 -> 16) + 2 = 18; total = 64 + 56 + 18 = 138.
+    if (b2.len() != 64 + 56 + 18) { return 21; }
     // e_machine = EM_X86_64 (62) @18.
     if (b2[18] != 62 || b2[19] != 0) { return 22; }
     // p_flags = 7 (R|W|X) @68.
     if (b2[68] != 7) { return 23; }
-    // text @120..124, pad @125..127 zero, data @128..129.
+    // text @120..124, pad @125..135 zero, data @136..137.
     if (b2[120] != 1 || b2[124] != 5) { return 24; }
-    if (b2[125] != 0 || b2[126] != 0 || b2[127] != 0) { return 25; }
-    if (b2[128] != 9 || b2[129] != 9) { return 26; }
-    // p_filesz = 130 @96.
-    if (b2[96] != 130 || b2[97] != 0) { return 27; }
+    if (b2[125] != 0 || b2[130] != 0 || b2[135] != 0) { return 25; }
+    if (b2[136] != 9 || b2[137] != 9) { return 26; }
+    // p_filesz = 138 @96.
+    if (b2[96] != 138 || b2[97] != 0) { return 27; }
 
     // ---- W^X two-segment layout ----
     // arm64 W^X: 4-byte text + 8-byte data. headers = 64 + 3*56 = 232 (the
@@ -185,7 +185,7 @@ function main(): i32 {
     // arm64 used elf_image_entry_bss): p_memsz @104. body = pad8(4)=8 + 8 data
     // = 16; filesz = 64+56+16 = 136; memsz = 136 + 0xA0000000 = 0xA0000088
     // (LE 0x88=136,0,0,0xA0,0,0,0,0).
-    let body6: i32[] = elf_pad_to_8(elf_cat_u8([], t3));
+    let body6: i32[] = elf_pad_to(elf_cat_u8([], t3), 8);
     body6 = elf_cat(body6, d3);
     let b6: i32[] = elf_image_entry_bss(body6, 7, elf_em_aarch64(), 0, bigbss);
     if (b6[104] != 136 || b6[105] != 0 || b6[106] != 0 || b6[107] != 160) { return 44; }

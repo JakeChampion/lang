@@ -180,6 +180,7 @@ var Named = []NamedFamily{
 		{ATT: "pcmpistri", Op: 0x63, ATTProbe: "pcmpistri $0, %xmm1, %xmm0"},
 		{ATT: "pclmulqdq", Op: 0x44, ATTProbe: "pclmulqdq $0, %xmm1, %xmm0"},
 		{ATT: "aeskeygenassist", Op: 0xDF, ATTProbe: "aeskeygenassist $1, %xmm1, %xmm0"},
+		{ATT: "palignr", Op: 0x0F, ATTProbe: "palignr $4, %xmm1, %xmm0"},
 	}},
 	{Name: "shuf", Doc: "the [Prefix] 0F Op /r ib shuffles; packed as pfx*256 + op", FernFn: "x86_gas_shuf_op", Pack: pfxOp, Ops: []NamedOp{
 		{ATT: "pshufd", Prefix: 0x66, Op: 0x70, ATTProbe: "pshufd $0, %xmm2, %xmm1"},
