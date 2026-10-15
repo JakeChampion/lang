@@ -554,25 +554,69 @@ function reached_name(ctx: Ctx, w: World, name: string): World {
 // an edge its preds do not list, whose phis are then any value.
 struct Walk { vals: i64[], exec: boolean[], edges: boolean[][], stale: boolean[], keys: i32[] }
 
+// A block is walked again only once something it reads has moved: a value it
+// reads, or its own entry, edges or staleness.
 function walk(ctx: Ctx, w: World, i: i32): Walk {
   let f: ssasem.Func = ctx.funcs[i];
   let g: ssa.SFunc = f.graph;
   let at: i32[] = ssadeps.position_of(g);
   let wk: Walk = Walk { vals: entry_values(g), exec: __alloc_bool(g.blocks.len()).with(at[g.entry], true), edges: no_edges(g), stale: __alloc_bool(g.blocks.len()), keys: ctx.keys[i] };
-  let changed: boolean = true;
-  while (changed) {
-    changed = false;
+  let readers: i32[][] = value_readers(g);
+  let m: Marks = marked(Marks { dirty: __alloc_bool(g.blocks.len()), pending: 0 }, at[g.entry]);
+  while (m.pending > 0) {
     let pos: i32 = 0;
     while (pos < g.blocks.len()) {
-      if (wk.exec[pos]) {
-        let stepped: Stepped = walked_block(ctx, w, f, at, wk, pos);
-        wk = stepped.wk;
-        changed = changed || stepped.changed;
+      if (m.dirty[pos]) {
+        m = Marks { dirty: m.dirty.with(pos, false), pending: m.pending - 1 };
+        if (wk.exec[pos]) {
+          let swept: Swept = walked_block(ctx, w, f, at, readers, wk, m, pos);
+          wk = swept.wk;
+          m = swept.m;
+        }
       }
       pos = pos + 1;
     }
   }
   return wk;
+}
+
+// The blocks to walk again, and how many there are.
+struct Marks { dirty: boolean[], pending: i32 }
+
+function marked(own m: Marks, pos: i32): Marks {
+  if (m.dirty[pos]) {
+    return m;
+  }
+  return Marks { dirty: m.dirty.with(pos, true), pending: m.pending + 1 };
+}
+
+// The positions of the blocks that read each value: as an operand, or as the
+// condition their branch tests.
+function value_readers(g: ssa.SFunc): i32[][] {
+  let out: i32[][] = lists(g.nvals);
+  let pos: i32 = 0;
+  while (pos < g.blocks.len()) {
+    let b: ssa.SBlock = g.blocks[pos];
+    for ins in b.insts {
+      for a in ins.args {
+        if (a >= 0 && a < g.nvals) {
+          out = noted(out, a, pos);
+        }
+      }
+    }
+    if (b.term.kind_tag == 3 && b.term.cond >= 0 && b.term.cond < g.nvals) {
+      out = noted(out, b.term.cond, pos);
+    }
+    pos = pos + 1;
+  }
+  return out;
+}
+
+function marked_readers(own m: Marks, readers: i32[][], v: i32): Marks {
+  for pos in readers[v] {
+    m = marked(m, pos);
+  }
+  return m;
 }
 
 // The parameters are any value; nothing else is produced yet.
@@ -597,48 +641,59 @@ function no_edges(g: ssa.SFunc): boolean[][] {
 }
 
 // One pass over the block at `pos`: its values, then the edges its branch
-// takes.
-function walked_block(ctx: Ctx, w: World, f: ssasem.Func, at: i32[], wk: Walk, pos: i32): Stepped {
+// takes, marking what each change moves.
+function walked_block(ctx: Ctx, w: World, f: ssasem.Func, at: i32[], readers: i32[][], wk: Walk, own m: Marks, pos: i32): Swept {
   let g: ssa.SFunc = f.graph;
   let b: ssa.SBlock = g.blocks[pos];
-  let changed: boolean = false;
   for ins in b.insts {
     if (ins.result >= 0 && ins.result < g.nvals) {
       let next: i64 = join(wk.vals[ins.result], eval(ctx, w, f, wk, pos, ins));
       if (next != wk.vals[ins.result]) {
         wk = Walk { ...wk, vals: wk.vals.with(ins.result, next) };
-        changed = true;
+        m = marked_readers(m, readers, ins.result);
       }
     }
   }
-  let stepped: Stepped = followed(g, at, wk, pos, b);
-  return Stepped { wk: stepped.wk, changed: changed || stepped.changed };
+  return followed(g, at, wk, m, b);
 }
 
-struct Stepped { wk: Walk, changed: boolean }
+struct Swept { wk: Walk, m: Marks }
 
-function followed(g: ssa.SFunc, at: i32[], wk: Walk, pos: i32, b: ssa.SBlock): Stepped {
+function followed(g: ssa.SFunc, at: i32[], wk: Walk, own m: Marks, b: ssa.SBlock): Swept {
   let t: ssa.STerm = b.term;
   if (t.kind_tag == 2) {
-    return entered(g, at, wk, b.id, t.target);
+    let s: Stepped = entered(g, at, wk, b.id, t.target);
+    return Swept { wk: s.wk, m: marked_if(m, s.changed, at[t.target]) };
   }
   if (t.kind_tag != 3) {
-    return Stepped { wk: wk, changed: false };
+    return Swept { wk: wk, m: m };
   }
   let c: i64 = wk.vals[t.cond];
   if (c == top()) {
-    return Stepped { wk: wk, changed: false };
+    return Swept { wk: wk, m: m };
   }
   if (known(c)) {
+    let to: i32 = t.f;
     if (c as i32 != 0) {
-      return entered(g, at, wk, b.id, t.t);
+      to = t.t;
     }
-    return entered(g, at, wk, b.id, t.f);
+    let s: Stepped = entered(g, at, wk, b.id, to);
+    return Swept { wk: s.wk, m: marked_if(m, s.changed, at[to]) };
   }
   let one: Stepped = entered(g, at, wk, b.id, t.t);
+  m = marked_if(m, one.changed, at[t.t]);
   let two: Stepped = entered(g, at, one.wk, b.id, t.f);
-  return Stepped { wk: two.wk, changed: one.changed || two.changed };
+  return Swept { wk: two.wk, m: marked_if(m, two.changed, at[t.f]) };
 }
+
+function marked_if(own m: Marks, news: boolean, pos: i32): Marks {
+  if (news) {
+    return marked(m, pos);
+  }
+  return m;
+}
+
+struct Stepped { wk: Walk, changed: boolean }
 
 function entered(g: ssa.SFunc, at: i32[], wk: Walk, from: i32, to: i32): Stepped {
   let tp: i32 = at[to];
