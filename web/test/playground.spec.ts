@@ -62,8 +62,8 @@ const editorMounted = extract(
 // reaches. A violation produces a counter-example trace + a sequence
 // of actions that reproduces it.
 
-// 1. The wasm runtime never reports a load failure. If the CDN goes
-//    down or wasm_exec.js is broken, the status text would carry
+// 1. The wasm runtime never reports a load failure. If the fetch fails
+//    or playground.wasm does not compile, the status text would carry
 //    "wasm load failed: …" and we'd want to know.
 export const wasmNeverFailsToLoad = always(
   () => !statusText.current.includes("wasm load failed")

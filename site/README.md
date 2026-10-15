@@ -94,9 +94,9 @@ go run ../cmd/ferndoc -out src/content/docs/stdlib/
 npm run dev
 ```
 
-`web/build.sh` writes `playground.wasm` (Fern's compiler built for WASI,
-which checks, runs and compiles the editor's program) and `fern.wasm`
-(the Go language server behind diagnostics, hover and completion).
+`web/build.sh` writes `playground.wasm`: Fern's compiler built for WASI,
+which checks, runs and compiles the editor's program and serves its
+diagnostics, hover and completion.
 
 Open `http://localhost:4321/lang/` (Starlight serves under the
 configured `base`).

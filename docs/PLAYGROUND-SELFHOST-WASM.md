@@ -24,14 +24,13 @@ instantiates, and Build component is that target's `-emit component`
 (#6636). `TestSelfHostPlaygroundExamples` drives the page's handler example
 through both forms.
 
-`web/fern.wasm`, the Go toolchain under `GOOS=js`, is down to the language
-server behind diagnostics, hover and completion (`fernLsp`, #6641): 12.5 MB
-(3.3 MB gzipped) where the toolchain bundle was 28.7 MB, since nothing under
-`cmd/fern-wasm` links a code generator, an interpreter or the component
-composer any more. Everything below is the measurement and the reasoning
-that led here, kept as written on 2026-09-01: its two present-tense
-sections, the headline's bundle size and "What the playground was", describe
-the page of that date.
+Diagnostics, hover and completion are `fern -lsp`'s language server, the
+driver's `-lsp` mode, replayed one session per question
+(`LSP-INTEGRATION-PLAN.md`, "In the browser"; #6641). The page loads no Go
+toolchain at all: `playground.wasm` (11.6 MB) is its only module. Everything
+below is the measurement and the reasoning that led here, kept as written on
+2026-09-01: its two present-tense sections, the headline's bundle size and
+"What the playground was", describe the page of that date.
 
 ## Headline
 
@@ -500,10 +499,8 @@ What is left:
    its own worklist and only falls back to `modloader.resolve_module`, so the
    overlay does not give `fern -embed` an embedded stdlib. That is its own
    piece of work.
-4. **The LSP** is the long pole and is not costed here. The self-host has a
-   stdio server, `fern -lsp`, with diagnostics and formatting (#6641,
-   `LSP-INTEGRATION-PLAN.md`). The page needs an in-process one, as
-   `fernLsp` is, plus the cursor features.
+4. **The LSP** — done 2026-10-15: the driver's `-lsp` mode is `fern -lsp`'s
+   server, the cursor features included (#6641, `LSP-INTEGRATION-PLAN.md`).
 
 Precondition 3 of §3a — whether the native backends should be deleted at all,
 given `BOOTSTRAP-RESEARCH.md §1` recommends two-implementations-forever so the

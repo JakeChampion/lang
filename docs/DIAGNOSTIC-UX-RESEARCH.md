@@ -54,7 +54,7 @@ Two reasons specific to this codebase:
 
 - **Errors collected, not first-fail.** Parser and checker
   both return `diag.Errors` aggregating every error in one
-  pass. (See `LSP-INTEGRATION-PLAN.md ▸ Why this is tractable`.)
+  pass.
 - **Composable error interfaces.** `Positioned + Spanned +
   Hinted + Filed`. Each error opts into whatever metadata it
   has. New interfaces compose without forcing existing errors

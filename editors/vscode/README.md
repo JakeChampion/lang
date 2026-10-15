@@ -17,20 +17,18 @@ the Fern language. Provides:
 
 ## Install
 
-1. Build `fern-lsp` and put it on your `$PATH`:
+1. Build `fern` and put it on your `$PATH`; the extension runs its
+   language server, `fern -lsp`:
 
    ```bash
-   go build -o ~/.local/bin/fern-lsp ./cmd/fern-lsp
+   make build
+   install -m755 bin/fern ~/.local/bin/fern
    ```
 
-   Or set an explicit path via the `fern.serverPath` setting.
-
-   The self-hosted compiler is a server too: `fern-selfhost -lsp STDLIB-ROOT`
-   publishes `fern -check`'s diagnostics and formats as `fern -fmt` does,
-   without the cursor features below. Point `fern.serverPath` at the
-   `fern-selfhost` binary (`make bootstrap` or `make selfhost-cli` writes it
-   to `bin/`) and set `fern.serverArgs` to
-   `["-lsp", "/path/to/internal/stdlib"]`.
+   Or set an explicit path via the `fern.serverPath` setting. A compiler
+   without an embedded stdlib — `bin/fern-selfhost`, which `make bootstrap`
+   or `make selfhost-cli` writes — also needs its stdlib root: set
+   `fern.serverArgs` to `["-lsp", "/path/to/internal/stdlib"]`.
 
 2. Build + install the extension:
 
@@ -47,19 +45,19 @@ the Fern language. Provides:
 
 | Setting             | Default     | Meaning                                     |
 | ------------------- | ----------- | ------------------------------------------- |
-| `fern.serverPath`   | `fern-lsp`  | Path to the binary. Absolute or on PATH.    |
-| `fern.serverArgs`   | `[]`        | Arguments passed to the server.             |
+| `fern.serverPath`   | `fern`      | Path to the binary. Absolute or on PATH.    |
+| `fern.serverArgs`   | `["-lsp"]`  | Arguments passed to the server.             |
 | `fern.trace.server` | `off`       | LSP trace level. `messages` or `verbose`.   |
 
 ## Commands
 
-- **Fern: Restart Server** — kills + respawns fern-lsp. Useful
+- **Fern: Restart Server** — kills + respawns the server. Useful
   when the binary is rebuilt while the extension is running.
 
 ## Troubleshooting
 
-- "fern-lsp binary not found" — set `fern.serverPath` or add it
-  to PATH.
+- "the fern binary was not found" — set `fern.serverPath` or add
+  it to PATH.
 - No diagnostics — turn on `fern.trace.server` to `verbose` and
   check the Fern language server output channel for protocol
   errors.

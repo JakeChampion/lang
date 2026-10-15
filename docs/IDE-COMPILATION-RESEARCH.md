@@ -1,11 +1,9 @@
 # IDE-grade incremental compilation research
 
-`docs/LSP-INTEGRATION-PLAN.md` ships an MVP LSP: hover, go-to-def,
-diagnostics, completion, all backed by a small `compileCache` that
-content-hashes whole files and re-runs `parser.Parse` →
-`checker.Check` on every edit. That's the right MVP — it works,
-it's small, and `cmd/fern-wasm` already builds it for the
-playground.
+This survey was written against the Go language server, deleted on
+2026-10-15. The mechanisms and their order carry over to `fern -lsp`
+(`docs/LSP-INTEGRATION-PLAN.md`), which re-loads and re-checks the whole
+program on every edit, with no cache at all.
 
 This doc is about what comes *after* the MVP, when sub-100ms-on-
 every-keystroke becomes the goal. The reference bar for that is
@@ -69,18 +67,13 @@ at the granularity of "AST of file X" → "type of symbol Y" →
   right architecture (gopls / rust-analyzer / merlin do the
   same; tsserver-via-subprocess is the wrong shape).
 
-- **Errors are collected, not first-fail.** Per
-  `LSP-INTEGRATION-PLAN.md ▸ Why this is tractable`, both the
+- **Errors are collected, not first-fail.** Both the
   parser and the checker return `diag.Errors`, not panic-on-
   first-error. LSP can surface every diagnostic in one pass.
 
 - **`ast.Walk` visitor exists.** Recently added (per the LSP
   plan's PR ordering); cursor-position → AST node lookup is
   tractable.
-
-- **Compile cache exists at file granularity.** `internal/tools/lsp/
-  cache.go`. FIFO, content-hashed. Right shape for the MVP;
-  see Rec §3 for the salsa-flavoured generalisation.
 
 - **Same Wasm build serves browser + editor.** Avoids the
   classic LSP-vs-playground bifurcation. Cuts maintenance.
@@ -621,7 +614,6 @@ Cheap to wire, no architectural change.
 **Cost: 1 week.** **Impact: gates Rec §4, §5 + a clutch of
 LSP features.**
 
-Per `LSP-INTEGRATION-PLAN.md ▸ Significant gaps to close`,
 AST nodes carry only start positions. Hover, semantic
 tokens, go-to-def all need end positions for correct
 ranges. Listed as a gap; just blocking on it.
