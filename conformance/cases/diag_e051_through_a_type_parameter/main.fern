@@ -1,0 +1,15 @@
+// spec: ML-01
+//
+// A generic that hands back its type-parameter argument returns a borrow
+// when it is instantiated with an array, so passing the result on into an
+// `own` parameter is E051 (#12428).
+function consume(own xs: i32[]): i32 { return xs[0]; }
+
+function same[A](a: A): A { return a; }
+
+function relay(xs: i32[]): i32[] { return same(xs); }
+
+function main(): i32 {
+    let xs: i32[] = [1];
+    return consume(relay(xs));
+}

@@ -18351,8 +18351,8 @@ pub struct OwnFunc { name: string, flags: boolean[], arr: boolean[] }
 // A method's row is keyed by its receiver's namespace (ow_receiver_ns) and its
 // name, its receiver the first flag; a trait's method is keyed by the trait,
 // for a `dyn` receiver. `methods` names the methods that take their receiver
-// `own`.
-pub struct OwnFuncs { rows: OwnFunc[], names: util.NameIndex, structs: util.NameIndex, decls: util.NameIndex, ctors: util.NameIndex, methods: util.NameIndex }
+// `own`, and `funcs` every declared free function, own-taking or not.
+pub struct OwnFuncs { rows: OwnFunc[], names: util.NameIndex, structs: util.NameIndex, decls: util.NameIndex, ctors: util.NameIndex, methods: util.NameIndex, funcs: util.NameIndex }
 
 struct MovedEntry { mname: string, mline: i32 }
 
@@ -20126,7 +20126,11 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
   let out: OwnFunc[] = [];
   let names: string[] = [];
   let methods: string[] = [];
+  let funcs: string[] = [];
   for func in mod.funcs {
+    if (func.receiver_name.len() == 0) {
+      funcs = funcs.append(func.name);
+    }
     let any_own: boolean = func.receiver_own;
     let flags: boolean[] = [];
     let arr: boolean[] = [];
@@ -20178,7 +20182,7 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
   for alias in mod.aliases {
     decls = decls.append(alias.name);
   }
-  return OwnFuncs { rows: out, names: util.name_index(names), structs: util.name_index(structs), decls: util.name_index(decls), ctors: util.name_index(ctors), methods: util.name_index(methods) };
+  return OwnFuncs { rows: out, names: util.name_index(names), structs: util.name_index(structs), decls: util.name_index(decls), ctors: util.name_index(ctors), methods: util.name_index(methods), funcs: util.name_index(funcs) };
 }
 
 // ow_takes_own_self: a trait method whose receiver, its first parameter
@@ -20307,10 +20311,6 @@ function ow_type_is_pointer(tn: string, ofuncs: OwnFuncs): boolean {
 // The ownership of a call's RESULT, which decides whether passing it into an
 // `own` parameter transfers or borrows. Native's half is computeResultBorrows
 // in internal/check/checker/result_borrow.go; these functions mirror it.
-//
-// Generic functions are skipped throughout: an erased type parameter's spelling
-// reads as a nominal here, and native types it as a ParamType, which is not
-// pointer-shaped.
 // ow_spine_stmts flattens a body into every statement its control flow
 // encloses. fold_stmt_spine enters no expression, so a lambda's body — whose
 // returns belong to the lambda, not to this function — stays out of it.
@@ -20333,7 +20333,7 @@ function ow_borrowed_params(fn: parser.FuncDecl, mod: parser.Module, ofuncs: Own
   let out: string[] = [];
   let i: i32 = 0;
   while (i < fn.params.len()) {
-    if (ow_type_is_pointer(fn.params[i].type_name, ofuncs)) {
+    if (ow_decl_type_is_pointer(fn, fn.params[i].type_name, ofuncs)) {
       if (i >= flags.len() || !flags[i]) {
         out = out.append(fn.params[i].name);
       }
@@ -20341,6 +20341,19 @@ function ow_borrowed_params(fn: parser.FuncDecl, mod: parser.Module, ofuncs: Own
     i = i + 1;
   }
   return out;
+}
+
+// Native reads a type parameter two ways. The result analysis reads the
+// declaration, where its spelling parses as a nominal type and so is
+// pointer-shaped (ow_decl_type_is_pointer); the call-site and scrutinee rules
+// read the resolved signature, where it is a ParamType and is not
+// (ow_sig_type_is_pointer).
+function ow_decl_type_is_pointer(fn: parser.FuncDecl, tn: string, ofuncs: OwnFuncs): boolean {
+  return util.has_str(fn.all_type_params, tn) || ow_type_is_pointer(tn, ofuncs);
+}
+
+function ow_sig_type_is_pointer(fn: parser.FuncDecl, tn: string, ofuncs: OwnFuncs): boolean {
+  return !util.has_str(fn.all_type_params, tn) && ow_type_is_pointer(tn, ofuncs);
 }
 
 // ow_elem_type_name is the element of an array (`T[]`) or view (`[T]`) type
@@ -20372,8 +20385,8 @@ function ow_value_elem_params(fn: parser.FuncDecl, borrowed: string[], ofuncs: O
 // ow_call_may_borrow reports whether a call's result can alias one of the
 // arguments it was handed. A struct or variant construction cannot; a declared
 // function answers from `borrows`; a builtin from the fresh list below. A
-// method is reached through a receiver this walk does not resolve, so it is
-// assumed to be able to.
+// method is reached through a receiver this walk does not resolve, and any
+// other name is a function value, so both are assumed to be able to.
 function ow_call_may_borrow(c: ast.ExprCall, ofuncs: OwnFuncs, borrows: util.NameIndex, builtins: util.NameIndex): boolean {
   if let ast.ExprIdent(cid) = c.callee {
     if (ofuncs.ctors.has(cid.name)) {
@@ -20382,9 +20395,44 @@ function ow_call_may_borrow(c: ast.ExprCall, ofuncs: OwnFuncs, borrows: util.Nam
     if (builtins.has(cid.name)) {
       return false;
     }
-    return borrows.has(cid.name);
+    return borrows.has(cid.name) || !ofuncs.funcs.has(cid.name);
   }
   return true;
+}
+
+function ow_value_if_origin(origin: string): boolean {
+  return origin == parser.ORIGIN_IF_EXPR || origin == parser.ORIGIN_IF_DEAD_THEN || origin == parser.ORIGIN_IF_DEAD_ELSE || origin == parser.ORIGIN_IF_DEAD_BOTH;
+}
+
+// ow_value_block_borrows answers for a value `if`, `match` or block, which the
+// parser lowers to a call of an argument-less lambda. Native reads an `if`
+// whose arms are each a bare value arm by arm, and assumes any arm with
+// statements, any `match` and any block can borrow.
+function ow_value_block_borrows(lm: ast.ExprLambda, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
+  if (lm.origin != parser.ORIGIN_IF_EXPR || lm.body.len() != 1) {
+    return true;
+  }
+  return ow_value_arm_borrows(lm.body, ofuncs, borrowed, locals, values, borrows, builtins);
+}
+
+function ow_value_arm_borrows(arm: ast.Stmt[], ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
+  if (arm.len() != 1) {
+    return true;
+  }
+  match (arm[0]) {
+    ast.StmtReturn(r) => {
+      return ow_expr_borrows(r.value, ofuncs, borrowed, locals, values, borrows, builtins);
+    },
+    ast.StmtIf(f) => {
+      if (!ow_value_if_origin(f.origin) || f.sugar.origin.len() > 0) {
+        return true;
+      }
+      return ow_value_arm_borrows(f.then_body, ofuncs, borrowed, locals, values, borrows, builtins) || ow_value_arm_borrows(f.else_body, ofuncs, borrowed, locals, values, borrows, builtins);
+    },
+    _ => {
+      return true;
+    }
+  }
 }
 
 // ow_expr_borrows reports whether `e` can alias one of `borrowed`.
@@ -20449,17 +20497,29 @@ function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], loca
       return ow_expr_borrows(sl.array, ofuncs, borrowed, locals, values, borrows, builtins);
     },
     ast.ExprCall(c) => {
-      if (!ow_call_may_borrow(c, ofuncs, borrows, builtins)) {
-        return false;
-      }
-      for a in c.args {
-        if (ow_expr_borrows(a, ofuncs, borrowed, locals, values, borrows, builtins)) {
-          return true;
-        }
-      }
-      return false;
+      return ow_call_borrows(c, ofuncs, borrowed, locals, values, borrows, builtins);
     }
   }
+}
+
+// ow_call_borrows: a callee that can hand a borrowed parameter back aliases
+// whichever argument it was given, so its result is a borrow here only when
+// one of those arguments is one.
+function ow_call_borrows(c: ast.ExprCall, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
+  if let ast.ExprLambda(lm) = c.callee {
+    if (c.args.len() == 0 && lm.params.len() == 0) {
+      return ow_value_block_borrows(lm, ofuncs, borrowed, locals, values, borrows, builtins);
+    }
+  }
+  if (!ow_call_may_borrow(c, ofuncs, borrows, builtins)) {
+    return false;
+  }
+  for a in c.args {
+    if (ow_expr_borrows(a, ofuncs, borrowed, locals, values, borrows, builtins)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // ow_borrowed_locals names the locals that can hold a borrow of one of
@@ -20558,10 +20618,7 @@ function ow_fresh_builtins(): string[] {
 function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex): string[] {
   let out: string[] = builtins.names;
   for fn in mod.funcs {
-    if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) {
-      continue;
-    }
-    if (!ow_type_is_pointer(fn.ret_type, ofuncs)) {
+    if (fn.receiver_name.len() > 0 || !ow_sig_type_is_pointer(fn, fn.ret_type, ofuncs)) {
       continue;
     }
     let flags: boolean[] = ow_func_flags(ofuncs, fn.name);
@@ -20569,7 +20626,7 @@ function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtin
     let all_own: boolean = true;
     let i: i32 = 0;
     while (i < fn.params.len()) {
-      if (ow_type_is_pointer(fn.params[i].type_name, ofuncs)) {
+      if (ow_sig_type_is_pointer(fn, fn.params[i].type_name, ofuncs)) {
         any_ptr = true;
         if (i >= flags.len() || !flags[i]) {
           all_own = false;
@@ -20595,10 +20652,10 @@ function ow_result_borrows(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.
   let pending: parser.FuncDecl[] = [];
   let pnames: string[] = [];
   for fn in mod.funcs {
-    if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) {
+    if (fn.receiver_name.len() > 0) {
       continue;
     }
-    if (ow_type_is_pointer(fn.ret_type, ofuncs)) {
+    if (ow_decl_type_is_pointer(fn, fn.ret_type, ofuncs)) {
       pending = pending.append(fn);
       pnames = pnames.append(fn.name);
     }
@@ -20662,10 +20719,7 @@ function ow_calls_any(callees: string[], names: util.NameIndex): boolean {
 function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, borrows: util.NameIndex): string[] {
   let out: string[] = builtins.names;
   for fn in mod.funcs {
-    if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) {
-      continue;
-    }
-    if (!ow_type_is_pointer(fn.ret_type, ofuncs)) {
+    if (fn.receiver_name.len() > 0 || !ow_sig_type_is_pointer(fn, fn.ret_type, ofuncs)) {
       continue;
     }
     if (borrows.has(fn.name)) {
