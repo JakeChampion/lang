@@ -3907,14 +3907,14 @@ function lsp_diagnostics(c: Checked, files: string[], path: string, text: string
   return out;
 }
 
-// lsp_fix_data is a diagnostic's fix as its `data` (lsp.fix_data), or "" when
-// it has none, or when the text it would replace is not what `t` holds there.
+// lsp_fix_data is a diagnostic's fix as its `data` (lsp.fix_data), placed on
+// the name it replaces in `t`; "" when it has none, or when that line writes
+// no such name.
 function lsp_fix_data(t: lsp.Text, d: util.Diag): string {
   if let Some(f) = d.fix {
-    let line: string = lsp.line_text(t, util.pos_line(f.line));
-    let end: i32 = f.col - 1 + f.old.len();
-    if (f.col >= 1 && end <= line.len() && slice_unchecked(line, f.col - 1, end) == f.old) {
-      return lsp.fix_data(lsp.span_range(t, util.pos_line(f.line), f.col, f.old.len()), f.new_text, f.title);
+    let col: i32 = util.ident_from(lsp.line_text(t, util.pos_line(f.line)), f.col, f.old);
+    if (col > 0) {
+      return lsp.fix_data(lsp.span_range(t, util.pos_line(f.line), col, f.old.len()), f.new_text, f.title);
     }
   }
   return "";

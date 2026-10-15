@@ -14,9 +14,10 @@ import (
 // of the fix the checker attaches to a diagnostic — to the Go renderer's for
 // each diagnostic the Go checker attaches one to (internal/syntax/diag's
 // Suggestion): E001 for a name read, called or assigned, and for a retired
-// name, and E043 for a literal's field, an access's field or method, and a
-// struct pattern's field. A diagnostic with no fix prints none. The span each
-// fix replaces is held by the code-action cases of self_host_lsp_refs_test.go.
+// name, and E043 for a literal's field, an access's field or method, a struct
+// pattern's field and a destructuring `let`'s field. A diagnostic with no fix
+// prints none. The span each fix replaces is held by the code-action cases of
+// self_host_lsp_refs_test.go.
 func TestSelfHostCheckerPrintsFixes(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	root := e2eharness.SelfHostStdlibRoot(t)
@@ -31,6 +32,7 @@ func TestSelfHostCheckerPrintsFixes(t *testing.T) {
 		{"literal-field", "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: Point = Point { x: 1, yy: 2 };\n  return p.x;\n}\n", []string{"replace `yy` with `y`"}},
 		{"member", "struct Point { x: i32, y: i32 }\nfunction (p: Point) push(n: i32): i32 { return p.x + n; }\nfunction main(): i32 {\n  let p: Point = Point { x: 1, y: 2 };\n  return p.puzh(2) + p.yy;\n}\n", []string{"replace `puzh` with `push`", "replace `yy` with `y`"}},
 		{"pattern-field", "struct P { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: P = P { x: 1, y: 2 };\n  match (p) {\n    P { x, yy } => { return x; }\n  }\n}\n", []string{"replace `yy` with `y`"}},
+		{"destructure-field", "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: Point = Point { x: 1, y: 2 };\n  let Point { x, z } = p;\n  return x;\n}\n", []string{"replace `z` with `x`"}},
 		{"nothing-close", "function main(): i32 { return zzzzzz; }\n", nil},
 		{"type-error", "function main(): i32 {\n  let x: i32 = \"s\";\n  return x;\n}\n", nil},
 	} {
