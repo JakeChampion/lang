@@ -1,0 +1,22 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Transitive reclamation — CHILDLESS nested-struct field box.
+// Outer holds a Pt with no rc-tracked fields; dropFnNameFor now
+// routes it through __drop_struct_Pt (is_unique → box_free)
+// instead of the flat dec that leaked the Pt box. Churned so a
+// per-iteration over-release would accumulate. sum_{i=0..99}(i+1)
+// = 5050.
+import "core/int";
+struct Pt { x: i32, y: i32 }
+struct Outer { inner: Pt, tag: i32 }
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) {
+        let o: Outer = Outer { inner: Pt { x: i, y: i + 1 }, tag: i };
+        acc = acc + o.inner.y;
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}

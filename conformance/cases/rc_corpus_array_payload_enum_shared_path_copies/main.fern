@@ -1,0 +1,61 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The shared path of the same trie: two snapshots are held across
+// two rounds of updates and must read back unchanged, while the
+// value that was unique after the first copy goes on in place.
+enum N { E, L(i32[]), B(N[]) }
+function with_in(node: N, shift: i32, i: i32, x: i32): N {
+    match (node) {
+        B(kids) => {
+            let sub: i32 = i >> shift & 31;
+            let child: N = kids[sub];
+            let rest: N[] = kids.with(sub, E);
+            child = with_in(child, shift - 5, i, x);
+            return B(rest.with(sub, child));
+        },
+        L(xs) => { return L(xs.with(i & 31, x)); },
+        E => { return E; }
+    }
+}
+function get(node: N, shift: i32, i: i32): i32 {
+    match (node) {
+        B(kids) => { return get(kids[i >> shift & 31], shift - 5, i); },
+        L(xs) => { return xs[i & 31]; },
+        E => { return -1; }
+    }
+}
+function build(): N {
+    let kids: N[] = [];
+    let a: i32 = 0;
+    while (a < 4) {
+        let xs: i32[] = [];
+        let b: i32 = 0;
+        while (b < 32) { xs = xs.append(a * 32 + b); b = b + 1; }
+        kids = kids.append(L(xs));
+        a = a + 1;
+    }
+    return B(kids);
+}
+function main(): i32 {
+    let t: N = build();
+    let snap: N = t;
+    let j: i32 = 0;
+    while (j < 128) { t = with_in(t, 5, j, j + 7); j = j + 1; }
+    let snap2: N = t;
+    j = 0;
+    while (j < 128) { t = with_in(t, 5, j, j + 9); j = j + 1; }
+    let sum: i32 = 0;
+    let s1: i32 = 0;
+    let s2: i32 = 0;
+    let i: i32 = 0;
+    while (i < 128) {
+        sum = sum + get(t, 5, i);
+        s1 = s1 + get(snap, 5, i);
+        s2 = s2 + get(snap2, 5, i);
+        i = i + 1;
+    }
+    if (s1 != 8128) { return 1; }
+    if (s2 != 9024) { return 2; }
+    return (sum - 9280) + __rc_underflow_count();
+}

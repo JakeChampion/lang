@@ -1,0 +1,24 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Transitive reclamation — GENERIC enum (Option[struct]). The
+// boxed Option[Item] carries a ParamType payload in its decl, so
+// the drop plan couldn't see the concrete type and flat-dec'd
+// (leaking the box + the Item). Substituting the type args
+// (Option[Item] → Some(Item)) recovers the concrete payload and
+// routes it through the tag-dispatch variant-plan deep-drop. Only
+// adopted when the substituted payload is a struct (so the
+// instantiation is heap-boxed, not pair-form). sum_{0..99}(i+1)=5050.
+import "core/int";
+struct Item { tags: i32[] }
+function mk(n: i32): Option[Item] { return Some(Item { tags: [n, n + 1] }); }
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) {
+        let o: Option[Item] = mk(i);
+        match (o) { Some(it) => { acc = acc + it.tags[1]; }, None => { acc = acc + 0; } }
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}

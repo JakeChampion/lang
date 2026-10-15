@@ -1,22 +1,46 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
 )
 
+// rcCase is one case of the rc-correctness corpus: the conformance cases named
+// rc_corpus_*, each of which tears its values down and folds
+// `__rc_underflow_count()` into an exit code of 0.
+type rcCase struct{ name, src string }
+
+// rcCorpusCases reads the corpus. Names drop the rc_corpus_ prefix.
+func rcCorpusCases(t *testing.T) []rcCase {
+	t.Helper()
+	dirs, err := filepath.Glob("../../../conformance/cases/rc_corpus_*")
+	if err != nil {
+		t.Fatalf("glob rc corpus: %v", err)
+	}
+	if len(dirs) < 300 {
+		t.Fatalf("found %d rc_corpus_* conformance cases; the glob is wrong", len(dirs))
+	}
+	cases := make([]rcCase, 0, len(dirs))
+	for _, d := range dirs {
+		src, err := os.ReadFile(filepath.Join(d, "main.fern"))
+		if err != nil {
+			t.Fatalf("read %s: %v", d, err)
+		}
+		cases = append(cases, rcCase{strings.TrimPrefix(filepath.Base(d), "rc_corpus_"), string(src)})
+	}
+	return cases
+}
+
 // The rc corpus's LEAK leg (#7790).
 //
-// rc_correctness_test.go runs every corpus case for its exit code, which
-// catches an over-release: `__rc_underflow_count()` is folded into the
-// result, so a stray dec shows up as a non-zero exit. Its own header
-// records what that cannot see:
-//
-//	Drop handlers that only LEAK (closures, maps, generic enums, deep
-//	nesting) are still exercised here — leaks don't bump the underflow
-//	counter, so they read 0 too.
+// The conformance legs run every corpus case for its exit code, which catches
+// an over-release: `__rc_underflow_count()` is folded into the result, so a
+// stray dec shows up as a non-zero exit. A drop handler that only LEAKS does
+// not bump the underflow counter, so it reads 0 too.
 //
 // So the corpus already runs the shapes that leak and is structurally
 // blind to the leaking. `FERN_LEAKCHECK=1` has reported the live-byte
@@ -58,11 +82,8 @@ var rcCorpusLeakBaselineWasm = map[string]int64{}
 // holds each one at its baseline.
 func checkCorpusLeaks(t *testing.T, backend string, baseline map[string]int64,
 	run func(*testing.T, string) (string, string, int)) {
-	for _, c := range rcCorpus {
+	for _, c := range rcCorpusCases(t) {
 		t.Run(c.name, func(t *testing.T) {
-			if backend == "wasm" && c.skipWasm != "" {
-				t.Skip(c.skipWasm)
-			}
 			_, stderr, code := run(t, c.src)
 			// The natives own their stderr, so the report is the whole
 			// of it and the anchored pattern says so. Under wasmtime it
@@ -122,7 +143,7 @@ func TestWASMRcCorpusLeakGate(t *testing.T) {
 // there forever, unreachable and unfalsifiable.
 func TestRcCorpusLeakBaselinesNameRealCases(t *testing.T) {
 	have := map[string]bool{}
-	for _, c := range rcCorpus {
+	for _, c := range rcCorpusCases(t) {
 		have[c.name] = true
 	}
 	for _, tbl := range []struct {
@@ -141,7 +162,7 @@ func TestRcCorpusLeakBaselinesNameRealCases(t *testing.T) {
 		}
 		sort.Strings(stale)
 		if len(stale) > 0 {
-			t.Errorf("%s names %d case(s) no longer in rcCorpus: %s — delete the entries",
+			t.Errorf("%s names %d case(s) no longer in the rc corpus: %s — delete the entries",
 				tbl.name, len(stale), strings.Join(stale, ", "))
 		}
 	}

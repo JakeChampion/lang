@@ -1,0 +1,17 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The same collision on the simplest possible array: no rc-tracked
+// element, so nothing is freed and nothing over-releases — the
+// in-place `.with` is just VISIBLE through the alias. i32[] pins the
+// value-semantics half on its own, since the string[] case below
+// could otherwise pass for an rc-accounting bug.
+// Before the fix: interpreter 19, x86-64 / arm64 / wasm 99.
+function main(): i32 {
+    let xs: i32[] = [1, 2, 3];
+    let y: i32[] = xs;
+    let zs: i32[] = xs.with(0, 9);
+    let c: i32 = y[0];
+    let d: i32 = zs[0];
+    return (c - 1) + (d - 9) + __rc_underflow_count();
+}

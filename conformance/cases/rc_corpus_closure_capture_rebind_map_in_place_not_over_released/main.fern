@@ -1,0 +1,35 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// #8833: the third state of that same store. #8441 released the
+// superseded element UNCONDITIONALLY, and a consuming update that
+// finds its receiver uniquely held mutates in place and hands the
+// SAME reference back — so `m = m.insert(..)` through the cell
+// released the map it was about to store. Both natives then read a
+// map with no entries (the `-interp` oracle read the new one), and
+// `-sanitize` called it what it was: `use-after-free (touched a
+// quarantined block)`, exit 124 on x86-64 and arm64. wasm has no
+// use-after-free detector, so there it showed only as the leak leg
+// (30752 bytes against the 128 pinned below).
+//
+// The two string cases above cannot witness this: a string read out
+// of the cell is retained, so `s = s + piece` and `s = mk(i)` both
+// arrive as a reference of their own and the release is owed. A Map
+// read is borrowed, so the in-place insert brings no count at all.
+//
+// Both arms are in the loop on purpose. `m = map_new(4)` supersedes
+// a genuinely different handle and must still release it — that is
+// #8441's property, and without it this case leaks 50 maps rather
+// than one. `m = m.insert("k", i)` supersedes ITSELF and must not.
+import "core/map";
+function main(): i32 {
+    let m: Map[string, i32] = map_new(4);
+    let f: () => i32 = (): i32 => { return m.len(); };
+    let i: i32 = 0;
+    while (i < 50) {
+        m = map_new(4);
+        m = m.insert("k", i);
+        i = i + 1;
+    }
+    return (m.len() - 1) + (f() - 1) + __rc_underflow_count();
+}

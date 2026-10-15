@@ -1,0 +1,21 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// A reassigned loop counter is a scalar built by arithmetic. Under the
+// blanket Binary taint it counted as "may alias a borrow", and the
+// any-arg-tainted call rule then stranded `t` at exit — while the same
+// loop with `bump(t, 1)` reclaimed everything. The leak gate holds this
+// at 0 on both natives.
+enum N { L(i32), B(i32, N[]) }
+function bump(n: N, v: i32): N {
+    match (n) {
+        L(x) => { return n; },
+        B(c, kids) => { return B(c + v, kids); },
+    }
+}
+function main(): i32 {
+    let t: N = B(0, [L(1), L(2), L(3)]);
+    let i: i32 = 0;
+    while (i < 3) { t = bump(t, i); i = i + 1; }
+    match (t) { L(x) => { return 7; }, B(c, k) => { return c - 3 + __rc_underflow_count(); } }
+}

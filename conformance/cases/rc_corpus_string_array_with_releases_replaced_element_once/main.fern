@@ -1,0 +1,21 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The same store where the REPLACED element is SHARED with a live
+// local. `keep` holds the element that gets overwritten, so the
+// release `.with` now owes must only DEC it, never free — otherwise
+// `keep` reads a recycled buffer.
+//
+// One-directional, like the rest of this corpus: the pre-#6407
+// behaviour (no release at all) leaks, and a leak reads 0 here too.
+// It gates the release not turning into an over-release later.
+import "core/int";
+import "std/string";
+function cat(a: string, b: string): string { return a + b; }
+function main(): i32 {
+    let fresh: string = cat("aaaaaaaaa", "bbbbbbbb");
+    let a: string[] = [fresh, "ccccccccccccccccc"];
+    let keep: string = a[0];
+    a = a.with(0, "ddddddddddddddddd");
+    return (keep.len() + a[0].len() - 34) + __rc_underflow_count();
+}

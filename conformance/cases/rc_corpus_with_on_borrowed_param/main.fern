@@ -1,0 +1,17 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// `.with` on a BORROWED parameter: `xs` is a non-`own`, borrow-inferred
+// param (the callee only reads it), so the caller still owns the buffer
+// (rc 1, the caller's) — an in-place cow would mutate the caller's array.
+// computeArraySetIncs treated the param at its last use as a move and
+// skipped the inc, so native mutated the caller's `a` in place
+// (`a[0]` became 99) → 99 + 99 = 198 instead of the copy-on-write
+// 99 + 1 = 100. The fix forces the inc for a borrowed-param receiver.
+// b[0]=99, a[0]=1 → 100; the -100 makes a correct run read 0.
+function bump(xs: i32[]): i32[] { return xs.with(0, 99); }
+function main(): i32 {
+    let a: i32[] = [1, 2];
+    let b: i32[] = bump(a);
+    return (b[0] + a[0] - 100) + __rc_underflow_count();
+}

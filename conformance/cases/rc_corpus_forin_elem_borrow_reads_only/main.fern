@@ -1,0 +1,26 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// For-in element borrow (#6888): a read-only loop element takes no
+// retain and no per-iteration deep drop — the container's buffer
+// keeps it alive. This is the happy path: values must be exact and
+// the underflow counter must stay 0, which catches the borrow
+// wrongly widening into a release (the element or the container
+// dec'd while borrowed). The loop lives in a HELPER so its exit
+// sweep — where every suppressed dec of this change would sit — has
+// run before main reads the counter; a main-resident loop reads the
+// counter inside its own return expression, before its sweep.
+// 11+1 + 1+1 = 14.
+struct S { name: string, fields: string[] }
+function mkstr(p: string): string { return p + "!"; }
+function scan(): i32 {
+    let xs: S[] = [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] },
+                   S{ name: mkstr(""), fields: [mkstr("")] }];
+    let n: i32 = 0;
+    for sd in xs { n = n + sd.name.len() + sd.fields.len(); }
+    return n;
+}
+function main(): i32 {
+    let c: i32 = scan();
+    return (c - 14) + __rc_underflow_count();
+}

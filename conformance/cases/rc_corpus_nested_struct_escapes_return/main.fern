@@ -1,0 +1,22 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Transitive reclamation Stage A — escape guard: a nested
+// struct (Inner) inside a RETURNED Outer must NOT be freed at
+// the constructor's exit. The deep recursive drop is
+// is_unique-gated, and the return-inc keeps Outer (and hence
+// Inner) live, so the churn loop's same-size reuse must not
+// corrupt the surviving Inner.vals.
+import "core/int";
+struct Inner { vals: i32[] }
+struct Outer { inner: Inner }
+function mk(n: i32): Outer { return Outer { inner: Inner { vals: [n, n + 1] } }; }
+function main(): i32 {
+    let o: Outer = mk(42);
+    let c: i32 = 0;
+    while (c < 200) {
+        let junk: i32[] = [c, c];
+        c = c + 1;
+    }
+    return (o.inner.vals[0] - 42) + (o.inner.vals[1] - 43) + __rc_underflow_count();
+}

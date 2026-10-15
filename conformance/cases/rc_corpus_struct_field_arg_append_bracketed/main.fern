@@ -1,0 +1,24 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// A struct passed as a FIELD argument (`push(h.b)`) was never
+// bracketed by the #4873 containment, so the callee's rc==1 append
+// grew `h.b.xs` in place. The bracket now follows the field chain.
+struct Box { xs: i32[] }
+struct Holder { b: Box }
+function push(b: Box, x: i32): Box {
+    let ys: i32[] = b.xs.append(x);
+    return Box { xs: ys };
+}
+function size(b: Box): i32 { return b.xs.len(); }
+function main(): i32 {
+    let xs: i32[] = [];
+    xs = xs.append(1);
+    xs = xs.append(2);
+    xs = xs.append(3);
+    let h: Holder = Holder { b: Box { xs: xs } };
+    let before: i32 = size(h.b);
+    let c: Box = push(h.b, 4);
+    let after: i32 = size(h.b);
+    return (before * 10 + after - 33) + __rc_underflow_count();
+}

@@ -1,0 +1,24 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Transitive reclamation Stage A — nested struct churn: an
+// Outer holding an Inner (which itself holds an array) is
+// built + discarded every iteration. Stage A recurses the
+// Outer drop into __drop_struct_Inner (freeing Inner's box
+// AND its array buffer), where the pre-transitive drop only
+// flat-dec'd Inner (leak). A per-iteration over-release of
+// the now-freed Inner box would accumulate on the underflow
+// counter. sum_{i=0..99}(i+2) = 4950 + 200 = 5150.
+import "core/int";
+struct Inner { vals: i32[] }
+struct Outer { inner: Inner, tag: i32 }
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) {
+        let o: Outer = Outer { inner: Inner { vals: [i, i + 1, i + 2] }, tag: i };
+        acc = acc + o.inner.vals[2];
+        i = i + 1;
+    }
+    return (acc - 5150) + __rc_underflow_count();
+}

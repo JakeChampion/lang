@@ -1,0 +1,18 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// O(N) push loop building an array of structs (push CoW +
+// dec-on-overwrite interplay).
+import "core/int";
+import "std/array";
+import "std/string";
+struct Node { id: i32 }
+function main(): i32 {
+    let ns: Node[] = [];
+    let i: i32 = 0;
+    while (i < 8) {
+        ns = ns.append(Node { id: i });
+        i = i + 1;
+    }
+    return (ns.len() - 8) + (ns[7].id - 7) + __rc_underflow_count();
+}

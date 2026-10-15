@@ -1,0 +1,24 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// String alias-inc stress (wasm). A single fresh concat buffer is
+// shared across THREE owned locals (s, s2, s3) — two alias-incs take
+// its rc to 3. At scope exit three __fern_str_dec calls fire; the
+// rc==1 / is-unique gate must decrement twice and free exactly once.
+// Over-counting (freeing while rc>1) corrupts the still-live aliases;
+// under-counting leaks. Churned 250x so any drift in the shared-buffer
+// rc accounting surfaces in the checksum or underflow detector. Each
+// .len() = 2; 250*(2+2+2)=1500.
+function mk(seed: i32): i32 {
+    let pre: string = "a";
+    let s: string = pre + "b";
+    let s2: string = s;
+    let s3: string = s2;
+    return s.len() + s2.len() + s3.len();
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 250) { total = total + mk(k); k = k + 1; }
+    return (total - 1500) + __rc_underflow_count();
+}

@@ -1,0 +1,33 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// #7867 slice 2, the argument-temp half. A fresh concat handed
+// to a callee that only SCANS it — a copying builtin — is the
+// caller's to reclaim: the builtin memcpys or reads the bytes
+// and retains nothing, so with the parameter uncredited the
+// temp was stranded, one buffer per call (measured 202/102,
+// 3200 B live at 100 rounds; exactly 2x at 200). The callee
+// carries the state's string field into its result so the
+// call-level returnsNoParamEscape gate stays closed and the
+// per-argument credit is the only route — the EmitState.write
+// shape.
+struct St { tag: string, n: i32 }
+
+@noinline
+function mk(pad: string, i: i32): string { return pad + "0123456789abcdef"; }
+
+@noinline
+function scan(s: St, text: string): St {
+    return St { tag: s.tag, n: s.n + __count_byte(text, 97) };
+}
+
+function main(): i32 {
+    let pad: string = "xyzw";
+    let st: St = St { tag: pad + "tagtagtagtag", n: 0 };
+    let i: i32 = 0;
+    while (i < 4) {
+        st = scan(st, mk(pad, i));
+        i = i + 1;
+    }
+    return (st.n - 4) + __rc_underflow_count();
+}

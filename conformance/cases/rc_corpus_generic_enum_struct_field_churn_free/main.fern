@@ -1,0 +1,27 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Transitive reclamation — a GENERIC enum as a struct FIELD
+// (`Holder { b: Option[Item] }`). Generic-enum LOCALS already
+// reclaim (the inline emitDec path substitutes the type args); a
+// nested field reaches the drop through __drop_struct_Holder →
+// dropFnNameFor. Bailing on any EnumType with Args and flat-dec'ing
+// leaks the Option box + Item + its buffer, so it substitutes
+// (Option[Item] → Some(Item)), confirms the
+// instantiation is heap-boxed (pointer payload), and routes to a
+// per-instantiation __drop_enum_<mangled> the worklist regenerates
+// from the stashed substituted decl. Churned 100x.
+// sum_{0..99}(i+1) = 5050.
+import "core/int";
+struct Item { xs: i32[] }
+struct Holder { b: Option[Item], n: i32 }
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) {
+        let h: Holder = Holder { b: Some(Item { xs: [i, i + 1] }), n: i };
+        match (h.b) { Some(it) => { acc = acc + it.xs[1]; }, None => { acc = acc + 0; } }
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}

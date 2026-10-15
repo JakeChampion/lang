@@ -1,0 +1,25 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Enum-box reclamation: a uniform enum (both variants carry one
+// i32[], so the box size + droppable layout are static) frees
+// its box at the last reference. 200 build/free cycles churn
+// the box size class; a corrupted reuse or over-release drifts
+// the checksum. mk(seed)=seed+2; sum_{0..199}(k+2)=19900+400.
+import "core/int";
+enum Wrap { A(i32[]), B(i32[]) }
+function mk(seed: i32): i32 {
+    let w: Wrap = A([seed, seed + 1, seed + 2]);
+    let got: i32 = 0;
+    match (w) {
+        A(xs) => { got = xs[2]; },
+        B(xs) => { got = xs[0]; }
+    }
+    return got;
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 20300) + __rc_underflow_count();
+}

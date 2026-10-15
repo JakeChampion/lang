@@ -1,0 +1,24 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Transitive reclamation — an ENUM-typed struct FIELD. A
+// `Holder { val: Value }` (Value = VInt | VArr) field flat-dec'd
+// and leaked the enum box + payload. It now routes through a
+// generated tag-dispatched __drop_enum_Value (reading the runtime
+// tag picks the exact per-variant payload type, then box_free's
+// with that variant's size). Churned 100x. sum_{0..99}(i+1)=5050.
+import "core/int";
+struct VInt { v: i32[] }
+struct VArr { v: i32[] }
+type Value = VInt | VArr;
+struct Holder { val: Value, n: i32 }
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) {
+        let h: Holder = Holder { val: VInt { v: [i, i + 1] }, n: i };
+        match (h.val) { VInt(a) => { acc = acc + a.v[1]; }, VArr(b) => { acc = acc + b.v[0]; } }
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}

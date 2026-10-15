@@ -1,0 +1,16 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Map-value reclamation: string[] values. string elements are
+// not rc-tracked, so string[] is a plain-elem array (valKind 2
+// → arr_dec frees the buffer; the strings themselves leak, as
+// in standalone array reclamation).
+import "core/int";
+import "core/map";
+import "std/string";
+function main(): i32 {
+    let m: Map[string, string[]] = map_new(4);
+    m = m.insert("a", ["x", "yy", "zzz"]);
+    let v: string[] = m.get_or("a", []);
+    return (v[2].len() - 3) + __rc_underflow_count();
+}
