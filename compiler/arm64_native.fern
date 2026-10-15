@@ -7046,15 +7046,23 @@ function arm64_gas_family_len6_u(mnem: string): i32 {
 }
 
 function arm64_gas_family_len7(mnem: string): i32 {
-  if (mnem == "paciasp") {
+  let c: u8 = mnem[0];
+  if (c == b'a' && mnem == "autiasp") {
     return arm64_fam_fixed();
   }
-  if (mnem == "autiasp") {
+  if (c == b'p' && mnem == "paciasp") {
     return arm64_fam_fixed();
   }
-  if (mnem == "xpaclri") {
+  if (c == b's') {
+    return arm64_gas_family_len7_s(mnem);
+  }
+  if (c == b'x' && mnem == "xpaclri") {
     return arm64_fam_fixed();
   }
+  return 0 - 1;
+}
+
+function arm64_gas_family_len7_s(mnem: string): i32 {
   if (mnem == "sha256h") {
     return arm64_fam_vecext();
   }
