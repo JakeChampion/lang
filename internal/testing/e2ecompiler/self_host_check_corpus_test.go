@@ -11,21 +11,41 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// TestSelfHostCheckAgreesWithGoOnTheCorpus holds the self-host compiler's
-// `-check`, the one `fern -check` runs, to the Go checker's verdict on every
-// program the repository keeps that is meant to compile: the conformance cases
-// without an expected error, tests/ and examples/. A program one accepts and
-// the other refuses fails here, in either direction (#12382).
+// TestSelfHostCheckAgreesWithGo* hold the self-host compiler's `-check`, the
+// one `fern -check` runs, to the Go checker's verdict on every program the
+// repository keeps that is meant to compile: the conformance cases without an
+// expected error, tests/ and examples/. A program one accepts and the other
+// refuses fails here, in either direction (#12382). The corpus is split so the
+// sharder can place the parts apart; together they are more than half a
+// shard's budget, and tests/stdlib is two thirds of it.
 //
 // The expected.error cases are TestSelfHostRejectsConformanceErrorCasesX86_64's.
-func TestSelfHostCheckAgreesWithGoOnTheCorpus(t *testing.T) {
+func TestSelfHostCheckAgreesWithGoOnConformance(t *testing.T) {
+	checkAgreesWithGo(t, conformanceCorpus(t), 500)
+}
+
+func TestSelfHostCheckAgreesWithGoOnStdlibTests(t *testing.T) {
+	checkAgreesWithGo(t, treeCorpus(t, filepath.Join("tests", "stdlib"), ""), 200)
+}
+
+func TestSelfHostCheckAgreesWithGoOnTests(t *testing.T) {
+	checkAgreesWithGo(t, treeCorpus(t, "tests", filepath.Join("tests", "stdlib")), 50)
+}
+
+func TestSelfHostCheckAgreesWithGoOnExamples(t *testing.T) {
+	checkAgreesWithGo(t, treeCorpus(t, "examples", ""), 100)
+}
+
+// checkAgreesWithGo checks each program, paths relative to the repository
+// root, under both checkers. Fewer than `least` programs means the corpus
+// moved and the gate proves little.
+func checkAgreesWithGo(t *testing.T, progs []string, least int) {
+	if len(progs) < least {
+		t.Fatalf("found only %d corpus programs — the corpus moved and this gate proves little", len(progs))
+	}
 	cli := e2eharness.SelfHostCLI(t)
 	root := e2eharness.SelfHostStdlibRoot(t)
 	oracle := e2eharness.BuildLangBinForInterp(t)
-	progs := checkCorpus(t)
-	if len(progs) < 800 {
-		t.Fatalf("found only %d corpus programs — the corpus moved and this gate proves little", len(progs))
-	}
 	for _, rel := range progs {
 		t.Run(rel, func(t *testing.T) {
 			t.Parallel()
@@ -40,8 +60,8 @@ func TestSelfHostCheckAgreesWithGoOnTheCorpus(t *testing.T) {
 	}
 }
 
-// checkCorpus is the corpus, as paths relative to the repository root.
-func checkCorpus(t *testing.T) []string {
+// conformanceCorpus is the conformance cases that are meant to compile.
+func conformanceCorpus(t *testing.T) []string {
 	t.Helper()
 	var out []string
 	cases, err := filepath.Glob(e2eharness.RepoPath("conformance", "cases", "*", "main.fern"))
@@ -55,20 +75,30 @@ func checkCorpus(t *testing.T) []string {
 		}
 		out = append(out, filepath.Join("conformance", "cases", filepath.Base(dir), "main.fern"))
 	}
-	for _, top := range []string{"tests", "examples"} {
-		err := filepath.WalkDir(e2eharness.RepoPath(top), func(p string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if !d.IsDir() && strings.HasSuffix(p, ".fern") {
-				rel, _ := filepath.Rel(e2eharness.RepoPath(), p)
-				out = append(out, rel)
-			}
-			return nil
-		})
+	sort.Strings(out)
+	return out
+}
+
+// treeCorpus is every .fern file under the repository directory `top`, less
+// those under `skip` when it is not empty.
+func treeCorpus(t *testing.T, top, skip string) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(e2eharness.RepoPath(top), func(p string, d os.DirEntry, err error) error {
 		if err != nil {
-			t.Fatal(err)
+			return err
 		}
+		if d.IsDir() && skip != "" && p == e2eharness.RepoPath(skip) {
+			return filepath.SkipDir
+		}
+		if !d.IsDir() && strings.HasSuffix(p, ".fern") {
+			rel, _ := filepath.Rel(e2eharness.RepoPath(), p)
+			out = append(out, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 	sort.Strings(out)
 	return out
