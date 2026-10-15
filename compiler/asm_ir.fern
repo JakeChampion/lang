@@ -7951,7 +7951,7 @@ function ssa_release_entry(entry: ssaprepare.ReleaseEntry, lp: string, s: asmcor
 // ssa_mem_inst selects the production lift's memory kinds (ssa.fern 40..44)
 // with the instructions the stack machine's own arms use, operands in
 // %rax/%rcx/%rdx.
-function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let k: i32 = ins.kind_tag;
   let a: string = ssa_src(reg_of, ins.args[0], "%r11");
   s = ssa_load(reg_of, ins.args[0], a, s);
@@ -7959,6 +7959,9 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   if (k == 40) {
     s = ssa_mov_rm(s, 64, true, d, a, ins.imm);
     return ssa_store(reg_of, ins.result, d, s);
+  }
+  if (k >= 42 && imm.is_imm[ins.args[1]]) {
+    return ssa_mem_at(ins, reg_of, imm.value[ins.args[1]] as i32, a, d, s);
   }
   let b: string = ssa_src(reg_of, ins.args[1], "%rcx");
   s = ssa_load(reg_of, ins.args[1], b, s);
@@ -8007,6 +8010,43 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     return ssa_mov_rmi(s, 8, false, c, a, b, 1, 8);
   }
   return ssa_mov_rmi(s, 64, false, c, a, b, 8, 8);
+}
+
+// ssa_mem_at is ssa_mem_inst's element or byte access at the constant index
+// `c`: the bounds test compares the length with it, and the access reads or
+// writes at a displacement.
+function ssa_mem_at(ins: ssa.SInst, reg_of: i32[], c: i32, a: string, d: string, s: asmcore.EmitState): asmcore.EmitState {
+  let k: i32 = ins.kind_tag;
+  s = s.need("heap");
+  if (ins.imm != 1) {
+    let len_at: i32 = 0;
+    if (k == 44) {
+      len_at = 8;
+    }
+    s = ssa_trap_jump(ssa_alu_im(s, 7, 64, c, a, len_at), "jbe", "__fern_oob_abort");
+  }
+  if (k != 43 && ins.imm == 2) {
+    return s;
+  }
+  if (k == 44) {
+    s = ssa_mov_rm0(s, 64, true, "%rdx", a);
+    s = s.write("    movzbl " + util.i32_to_string(c) + "(%rdx), " + ssa_r32(d) + "\n");
+    return ssa_store(reg_of, ins.result, d, s);
+  }
+  if (k == 42) {
+    if (ins.str == "u8") {
+      s = s.write("    movzbl " + util.i32_to_string(8 + c) + "(" + a + "), " + ssa_r32(d) + "\n");
+    } else {
+      s = ssa_mov_rm(s, 64, true, d, a, 8 + 8 * c);
+    }
+    return ssa_store(reg_of, ins.result, d, s);
+  }
+  let v: string = ssa_src(reg_of, ins.args[2], "%rdx");
+  s = ssa_load(reg_of, ins.args[2], v, s);
+  if (ins.str == "u8") {
+    return ssa_mov_rm(s, 8, false, v, a, 8 + c);
+  }
+  return ssa_mov_rm(s, 64, false, v, a, 8 + 8 * c);
 }
 
 // ssa_str_call is the stack machine's call of a Fern-compiled runtime helper
@@ -9059,7 +9099,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     return ssa_str_view(ins, reg_of, ssa_view_off(fr, ins.result), s);
   }
   if (k >= 40 && k <= 44) {
-    return ssa_mem_inst(ins, reg_of, s);
+    return ssa_mem_inst(ins, reg_of, fr.imm, s);
   }
   if (k == 46 && fr.imm.is_imm[ins.result]) {
     // A shape address the compares read as an immediate; interned already.

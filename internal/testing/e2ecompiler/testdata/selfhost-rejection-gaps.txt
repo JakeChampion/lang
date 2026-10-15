@@ -19,7 +19,6 @@
 # so it never reaches a checker and this gate has nothing to read. They are
 # pinned rather than skipped so that a case which starts parsing is reported.
 
-diag_e033
 diag_e073
 
 parse:diag_p001
