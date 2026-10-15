@@ -520,18 +520,21 @@
 # local build, which matched driver-sizes' report on run 38523949330 to the
 # byte for the commit before; fern.fern adds the same difference to that
 # run's figure.
-# 2026-10-15 — asm_modload_run 8271632 -> 8706736 (+5.3%), asm_ir_run
-# 7975200 -> 8378344 (+5.1%) and asm_run 7237248 -> 7613600 (+5.2%): main at
-# 43f86616 already links them at 8697288, 8368904 and 7612208 with the
-# stage0 pin, over the line on its own; #12416's SHA-1 kernel adds 9448, 9440
-# and 1392 bytes. Numbers from driver-sizes' report on run 38672737282.
+# 2026-10-15 — asm_run 7237248 -> 7612208 (+5.2%) and asm_modload_run
+# 8271632 -> 8699400 (+5.2%): main's growth. Built locally with
+# TestSelfHostWarmStockDriver, main at 6b07ebec links them at 7587184 (+4.8%)
+# and 8674800 (+4.9%); #12414's buffers add 0 and 2104 bytes. Numbers from
+# driver-sizes' report on run 38672221342.
+# 2026-10-15 — asm_ir_run 7975200 -> 8378344 (+5.1%): main at 43f86616
+# links it at 8368904 (+4.9%) with the stage0 pin, and #12416's SHA-1 kernel
+# adds 9440 bytes. Number from driver-sizes' report on run 38672737282.
 
 fern.fern/stage2 11761952
 fern.fern 12339464
 drivers/asm_load_run.fern 9642480
-drivers/asm_modload_run.fern 8706736
+drivers/asm_modload_run.fern 8699400
 drivers/asm_ir_run.fern 8378344
-drivers/asm_run.fern 7613600
+drivers/asm_run.fern 7612208
 drivers/wasm_ir_run.fern 7533704
 drivers/wasm_run.fern 7530568
 drivers/wasm_runio_run.fern 7540984
