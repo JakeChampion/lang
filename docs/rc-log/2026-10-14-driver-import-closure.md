@@ -96,3 +96,40 @@ tests and every current-head CI check before merging. The older externally
 merged documentation PR's ARM-bootstrap UDP failure/cancelled workflow is not
 waived by a local x86-host pass. No compiler, ownership or coreutils speedup is
 claimed by this cache repair.
+
+## Integration with current main
+
+The first 23-test integration sweep on base
+`6b07ebec38975dbdf9636247e855ca5d4c130274` is preserved as failed: 22 tests
+passed, while `TestSelfHostBareSiblingImportWithoutRoot` could not execute its
+generated program. Isolated diagnostic runs on both unmodified upstream and
+the cache repair report `exec format error`. Their driver and program bytes
+match exactly; the generated program is an AArch64 ELF. Upstream commit
+`cbd33f07a` intentionally changed the CLI default to ARM64, but this test used
+an x86-64 runner without requesting that target.
+
+The test now explicitly requests `x86-64-linux`. Its successful sibling call
+must still return 3, and the edited sibling must still produce E003 rather
+than E001. No CLI default, compiler implementation or diagnostic assertion is
+changed. The dedicated CLI-default test remains unchanged and will run with
+the repeated integration gates. Failed integration and diagnostic archives
+remain under `/workspace/tooling/import-closure-main-121-focused-FAILED-0228*`
+and `import-sibling-diagnostic-{baseline,candidate}-023*.tar.gz`.
+
+The corrected 24-test integration sweep passed in 253.609 seconds with no
+skips: both whole-compiler builds, the executable cache regression, sibling and
+transitive-import tests, borrowed/dispatched ownership, FIP, physical-RC
+rejection and the unchanged CLI-default test. All 8,848 source hashes and the
+exact host inventory matched the durable ledger; all selected top-level
+terminals, 86 nested passes, package PASS and aggregate zero were audited.
+`lint-fast` also passed after the explicit-target test change. The failed
+23-test sweep remains failed, independently of this successful repeat.
+
+The repeat ledger is `import-closure-main-121-corrected-focused-0237.tar.gz`
+with its audit JSON. Its exact pre-summary source is
+`import-closure-main-corrected-source-0238.tar.gz`, SHA256
+`813fb783a8be8d5e569a938b7022b6470320adf6939e1c21e49c9c60205dc431`;
+every archived source byte matches that ledger's manifest. This is targeted
+integrated evidence on base `6b07ebec3`, not full CI or validation of a later
+main. The upstream SHA-256/alignment changes require a separately validated
+integration head before publishing.
