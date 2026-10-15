@@ -525,12 +525,16 @@
 # TestSelfHostWarmStockDriver, main at 6b07ebec links them at 7587184 (+4.8%)
 # and 8674800 (+4.9%); #12414's buffers add 0 and 2104 bytes. Numbers from
 # driver-sizes' report on run 38672221342.
+# 2026-10-15 — asm_ir_run 7975200 -> 8379504 (+5.1%): main at cd064bc0
+# links it at 8368344 (+4.9%), and #12425's checker fixes and language
+# server add 11160 bytes. Built locally with TestSelfHostWarmStockDriver,
+# which matched driver-sizes' report on run 38693262971 to the byte.
 
 fern.fern/stage2 11761952
 fern.fern 12339464
 drivers/asm_load_run.fern 9642480
 drivers/asm_modload_run.fern 8699400
-drivers/asm_ir_run.fern 7975200
+drivers/asm_ir_run.fern 8379504
 drivers/asm_run.fern 7612208
 drivers/wasm_ir_run.fern 7533704
 drivers/wasm_run.fern 7530568
