@@ -19738,7 +19738,7 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       match (c.callee) {
         ast.ExprLambda(lm) => {
           if (lm.params.len() == 0 && c.args.len() == 0) {
-            return ow_stmts(lm.body, moved, ctx);
+            return ow_stmts(ow_value_block_stmts(lm), moved, ctx);
           }
         },
         _ => {}
@@ -19821,6 +19821,61 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return OwnWalk { moved: moved, diags: [] };
     }
   }
+}
+
+// ow_value_block_stmts is a value block's body without the unreachable filler
+// value the parser gives a branch that always leaves (mx_branch_yields): it
+// repeats the branch's own `return` value, so walking it would count that
+// value's moves twice. A written IIFE is ordinary code and is walked whole.
+function ow_value_block_stmts(lm: ast.ExprLambda): ast.Stmt[] {
+  if (lm.origin == parser.ORIGIN_BLOCK) {
+    return ow_branch_stmts(lm.body);
+  }
+  if (lm.origin != parser.ORIGIN_IF_EXPR && lm.origin != parser.ORIGIN_MATCH_EXPR) {
+    return lm.body;
+  }
+  let out: ast.Stmt[] = [];
+  for st in lm.body {
+    out = out.append(ow_value_arms(st));
+  }
+  return out;
+}
+
+function ow_value_arms(st: ast.Stmt): ast.Stmt {
+  match (st) {
+    ast.StmtMatch(m) => {
+      let arms: ast.MatchArm[] = [];
+      for arm in m.arms {
+        arms = arms.append(ast.MatchArm { ...arm, body: ow_branch_stmts(arm.body) });
+      }
+      return ast.StmtMatch { ...m, arms: arms };
+    },
+    ast.StmtIf(f) => {
+      let els: ast.Stmt[] = ow_branch_stmts(f.else_body);
+      if (f.else_body.len() == 1) {
+        if let ast.StmtIf(_) = f.else_body[0] {
+          els = [ow_value_arms(f.else_body[0])];
+        }
+      }
+      return ast.StmtIf { ...f, then_body: ow_branch_stmts(f.then_body), else_body: els };
+    },
+    _ => {
+      return st;
+    }
+  }
+}
+
+function ow_branch_stmts(body: ast.Stmt[]): ast.Stmt[] {
+  if (mx_branch_yields(body)) {
+    return body;
+  }
+  let out: ast.Stmt[] = [];
+  let i: i32 = 0;
+  while (i + 1 < body.len()) {
+    out = out.append(body[i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // ow_loop walks a loop body once from the entry state and flags any owned
