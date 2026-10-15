@@ -630,7 +630,7 @@ function followed(g: ssa.SFunc, at: i32[], wk: Walk, pos: i32, b: ssa.SBlock): S
     return Stepped { wk: wk, changed: false };
   }
   if (known(c)) {
-    if ((c as i32) != 0) {
+    if (c as i32 != 0) {
       return entered(g, at, wk, b.id, t.t);
     }
     return entered(g, at, wk, b.id, t.f);
@@ -704,7 +704,7 @@ function unary(f: ssasem.Func, wk: Walk, ins: ssa.SInst): i64 {
   if (a == top()) {
     return a;
   }
-  return konst(1 - (a as i32));
+  return konst(1 - a as i32);
 }
 
 function phi_value(wk: Walk, pos: i32, ins: ssa.SInst): i64 {
@@ -730,7 +730,7 @@ function select_value(wk: Walk, ins: ssa.SInst): i64 {
   if (c == bottom()) {
     return join(wk.vals[ins.args[1]], wk.vals[ins.args[2]]);
   }
-  if ((c as i32) != 0) {
+  if (c as i32 != 0) {
     return wk.vals[ins.args[1]];
   }
   return wk.vals[ins.args[2]];
@@ -762,7 +762,6 @@ function semantic_value(ctx: Ctx, w: World, wk: Walk, ins: ssa.SInst): i64 {
   return any();
 }
 
-
 function call_value(ctx: Ctx, w: World, ins: ssa.SInst): i64 {
   if (ssasem.is_dyn_call(ins.str) || ins.imm != 0) {
     return any();
@@ -788,7 +787,7 @@ function binary(f: ssasem.Func, wk: Walk, ins: ssa.SInst): i64 {
   if (!comparable(t, f.values[ins.args[1]])) {
     return any();
   }
-  return compared(ins.str, (a as i32), (b as i32), ssasem.is_i32(t));
+  return compared(ins.str, a as i32, b as i32, ssasem.is_i32(t));
 }
 
 function compared(op: string, x: i32, y: i32, ordered: boolean): i64 {
@@ -967,7 +966,7 @@ function decided(t: ssa.STerm, c: i64, dead: i32): ssa.STerm {
   if (c == bottom() || t.t == t.f) {
     return t;
   }
-  if ((c as i32) == 0) {
+  if (c as i32 == 0) {
     return ssa.STerm { ...t, t: dead };
   }
   return ssa.STerm { ...t, f: dead };
