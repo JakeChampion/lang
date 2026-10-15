@@ -135,10 +135,13 @@ func TestSelfHostLSPReferencesX86_64(t *testing.T) {
 		"opt.fern":     "function main(): i32 {\n  let o: Option[i32] = Some(1);\n  match (o) { Some(n) => { return n; }, None => { return 0; } }\n}\n",
 		"std.fern":     "import \"std/string\";\nfunction main(): i32 {\n  let r: string = string.repeat_char(1 as char, 2);\n  return r.len();\n}\n",
 		"utf.fern":     "function main(): i32 {\n  let s: string = \"é😀\"; let count: i32 = 1;\n  return count + 1;\n}\n",
+		// A variant at every depth of a pattern: a nested match arm, a match
+		// expression, a nested `if let` and `let … else`, and constructions.
+		"nest.fern": "enum Shape { Circle(i32), Square(i32) }\nstruct Box { s: Shape }\nfunction area(o: Option[Shape]): i32 {\n  match (o) {\n    Some(Circle(r)) => { return r; },\n    Some(Square(w)) => { return w * w; },\n    None => { return 0; }\n  }\n}\nfunction pair(a: Shape, b: Shape): i32 {\n  let n: i32 = match (a) { Circle(r) => r, _ => 0 };\n  if let Some(Circle(q)) = Some(b) {\n    return q + n;\n  }\n  let Some(Square(z)) = Some(a) else { return 1; };\n  return z;\n}\nfunction main(): i32 {\n  return area(Some(Circle(2))) + pair(Shape.Circle(1), Square(2));\n}\n",
 		// A chunk referenced two columns in, so its columns move.
 		"chunks.fern.md": "# Doc\n\n```fern\n<<*>>=\nfunction helper(n: i32): i32 { return n + 1; }\nfunction main(): i32 {\n  <<body>>\n}\n```\n\nThe body.\n\n```fern\n<<body>>=\nlet v: i32 = helper(41);\nreturn v;\n```\n",
 	})
-	open := []string{"local.fern", "top.fern", "blank.fern", "plus.fern", "method.fern", "field.fern", "variant.fern", "shadow.fern", "global.fern", "opt.fern", "std.fern", "utf.fern", "chunks.fern.md"}
+	open := []string{"local.fern", "top.fern", "blank.fern", "plus.fern", "method.fern", "field.fern", "variant.fern", "shadow.fern", "global.fern", "opt.fern", "std.fern", "utf.fern", "nest.fern", "chunks.fern.md"}
 	probeLSP(t, s, dir, open, []lspProbe{
 		// TestReferences_LocalVar: the declaration and both uses.
 		refsProbe(dir, "local-var", "local.fern", 2, 9, true, place("local.fern", 1, 6, 7), place("local.fern", 2, 9, 10), place("local.fern", 2, 13, 14)),
@@ -163,6 +166,13 @@ func TestSelfHostLSPReferencesX86_64(t *testing.T) {
 		refsProbe(dir, "arm-binding", "opt.fern", 2, 19, true, place("opt.fern", 2, 19, 20), place("opt.fern", 2, 34, 35)),
 		refsProbe(dir, "non-ascii-before", "utf.fern", 2, 10, true, place("utf.fern", 1, 29, 34), place("utf.fern", 2, 9, 14)),
 		refsProbe(dir, "literate", "chunks.fern.md", 14, 14, true, place("chunks.fern.md", 4, 9, 15), place("chunks.fern.md", 14, 13, 19)),
+		// The Go server found a variant only where it heads an arm's pattern.
+		refsProbe(dir, "variant-in-nested-patterns", "nest.fern", 0, 14, true,
+			place("nest.fern", 0, 13, 19), place("nest.fern", 4, 9, 15), place("nest.fern", 10, 27, 33), place("nest.fern", 11, 14, 20), place("nest.fern", 18, 19, 25), place("nest.fern", 18, 44, 50)),
+		refsProbe(dir, "from-a-nested-pattern", "nest.fern", 4, 10, true,
+			place("nest.fern", 0, 13, 19), place("nest.fern", 4, 9, 15), place("nest.fern", 10, 27, 33), place("nest.fern", 11, 14, 20), place("nest.fern", 18, 19, 25), place("nest.fern", 18, 44, 50)),
+		refsProbe(dir, "variant-in-a-nested-let-else", "nest.fern", 14, 12, true, place("nest.fern", 0, 26, 32), place("nest.fern", 5, 9, 15), place("nest.fern", 14, 11, 17), place("nest.fern", 18, 55, 61)),
+		refsProbe(dir, "binding-in-a-nested-if-let", "nest.fern", 11, 21, true, place("nest.fern", 11, 21, 22), place("nest.fern", 12, 11, 12)),
 		// TestRename_LocalVar.
 		renameProbe(dir, "local-var", "local.fern", 2, 9, "renamed", place("local.fern", 1, 6, 7), place("local.fern", 2, 9, 10), place("local.fern", 2, 13, 14)),
 		// TestRename_TopLevelFunction.
@@ -177,6 +187,8 @@ func TestSelfHostLSPReferencesX86_64(t *testing.T) {
 		renameProbe(dir, "struct-from-its-declaration", "method.fern", 0, 8, "Pt", place("method.fern", 0, 7, 12), place("method.fern", 1, 13, 18), place("method.fern", 3, 9, 14), place("method.fern", 3, 17, 22)),
 		renameProbe(dir, "literate", "chunks.fern.md", 15, 7, "w", place("chunks.fern.md", 14, 4, 5), place("chunks.fern.md", 15, 7, 8)),
 		renameProbe(dir, "non-ascii-before", "utf.fern", 1, 30, "total", place("utf.fern", 1, 29, 34), place("utf.fern", 2, 9, 14)),
+		renameProbe(dir, "variant-in-nested-patterns", "nest.fern", 11, 15, "Round",
+			place("nest.fern", 0, 13, 19), place("nest.fern", 4, 9, 15), place("nest.fern", 10, 27, 33), place("nest.fern", 11, 14, 20), place("nest.fern", 18, 19, 25), place("nest.fern", 18, 44, 50)),
 		// Refused: a keyword, a name that is not an identifier, no name, a
 		// variant with no declaration, and a function the stdlib declares.
 		renameProbe(dir, "to-a-keyword", "local.fern", 2, 9, "let"),
@@ -355,9 +367,10 @@ func TestSelfHostLSPSemanticTokensX86_64(t *testing.T) {
 			"import \"./b\";\n" +
 			"function main(): i32 { let x: a.Kind = a.ka(); let y: b.Kind = b.kb(); return 0; }\n",
 		"utf.fern":       "function main(): i32 {\n  let s: string = \"é😀\"; let count: i32 = 1;\n  return count;\n}\n",
+		"nest.fern":      "enum Shape { Circle(i32), Square }\nfunction f(o: Option[Shape]): i32 {\n  match (o) { Some(Circle(r)) => { return r; }, _ => { return 0; } }\n}\n",
 		"chunks.fern.md": "# Doc\n\n```fern\n<<*>>=\nfunction helper(n: i32): i32 { return n + 1; }\nfunction main(): i32 {\n  <<body>>\n}\n```\n\nThe body.\n\n```fern\n<<body>>=\nlet v: i32 = helper(41);\nreturn v;\n```\n",
 	})
-	probeLSP(t, s, dir, []string{"simple.fern", "kinds.fern", "main.fern", "utf.fern", "chunks.fern.md"}, []lspProbe{
+	probeLSP(t, s, dir, []string{"simple.fern", "kinds.fern", "main.fern", "utf.fern", "nest.fern", "chunks.fern.md"}, []lspProbe{
 		// TestSemanticTokens_EmitsForSimpleProgram / DeltaEncoded: every token
 		// after the first on its line is relative to the one before.
 		{name: "tokens/delta-encoded", method: "textDocument/semanticTokens/full", doc: "simple.fern", params: lspMsg{}, check: func(t *testing.T, result json.RawMessage) {
@@ -386,6 +399,11 @@ func TestSelfHostLSPSemanticTokensX86_64(t *testing.T) {
 			tok(2, 51, 1, "variable"), tok(2, 54, 1, "namespace"), tok(2, 56, 4, "enum"), tok(2, 63, 1, "namespace"), tok(2, 65, 2, "function")),
 		// é is one UTF-16 unit and 😀 two, so `count` starts at 29, not at its
 		// byte offset 32.
+		// A variant inside a nested pattern is a variant too.
+		tokensProbe("nested-pattern", "nest.fern",
+			tok(0, 5, 5, "enum"), tok(0, 13, 6, "enumMember"), tok(0, 26, 6, "enumMember"),
+			tok(1, 9, 1, "function"), tok(1, 11, 1, "parameter"), tok(1, 14, 6, "enum"), tok(1, 21, 5, "enum"),
+			tok(2, 9, 1, "parameter"), tok(2, 14, 4, "enumMember"), tok(2, 19, 6, "enumMember"), tok(2, 26, 1, "variable"), tok(2, 42, 1, "variable")),
 		tokensProbe("non-ascii-before", "utf.fern", tok(0, 9, 4, "function"), tok(1, 6, 1, "variable"), tok(1, 29, 5, "variable"), tok(2, 9, 5, "variable")),
 		tokensProbe("literate", "chunks.fern.md",
 			tok(4, 9, 6, "function"), tok(4, 16, 1, "parameter"), tok(4, 38, 1, "parameter"), tok(5, 9, 4, "function"),

@@ -167,16 +167,6 @@ function pattern(p: ast.Pattern, s: Scope): ast.Pattern {
   return p;
 }
 
-// arm_at is where `arm` of `m` is written: its own position, or, for the arm
-// of an `if let` or `let … else`, which has none, the match's, which is its
-// pattern's.
-pub function arm_at(m: ast.StmtMatch, arm: ast.MatchArm): (i32, i32) {
-  if (arm.line > 0) {
-    return (arm.line, arm.col);
-  }
-  return (m.line, m.col);
-}
-
 function stmt_at(st: ast.Stmt, s: Scope): (ast.Stmt, Scope, boolean) {
   match (st) {
     ast.StmtVar(v) => {
@@ -217,9 +207,8 @@ function stmt_at(st: ast.Stmt, s: Scope): (ast.Stmt, Scope, boolean) {
       let arms: ast.MatchArm[] = [];
       for arm in m.arms {
         let inner = cur;
-        let (al, ac) = arm_at(m, arm);
         for n in astwalk.pattern_binders(arm.pattern, []) {
-          inner = bind_names(inner, n, al, ac);
+          inner = bind_names(inner, n, arm.line, arm.col);
         }
         let p = pattern(arm.pattern, inner);
         let guard = arm.guard;

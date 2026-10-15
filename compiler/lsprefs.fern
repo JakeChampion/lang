@@ -8,10 +8,10 @@
 // variant of an enum, a field of a struct, or a method. A name a declaration
 // declares resolves as a use of it does. Then each kind is found where the
 // syntax tree has it — an identifier, a member after a `.`, a struct literal's
-// field, a match arm's variant — and placed on the token that spells it, so a
-// node the front end synthesised at a borrowed position is never a place. A
-// type is found among the tokens instead, since the tree keeps no positions
-// for the types a program writes.
+// field, a variant anywhere in a pattern — and placed on the token that spells
+// it, so a node the front end synthesised at a borrowed position is never a
+// place. A type is found among the tokens instead, since the tree keeps no
+// positions for the types a program writes.
 
 import "./ast";
 import "./astwalk";
@@ -324,8 +324,9 @@ function at_site(a: lspquery.Answer, site: lspquery.Site): boolean {
 // ---- Where it is used ----
 
 // Anchor is where a node naming the target stands: at the name, at the
-// qualifier of a qualified one, or at the `.` before a member.
-struct Anchor { line: i32, col: i32 }
+// qualifier of a qualified one, or at the `.` before a member; or, for a
+// `pattern`, where the pattern naming it starts, at any depth inside it.
+struct Anchor { line: i32, col: i32, pattern: boolean }
 
 function uses(p: lspquery.Program, t: Target): Anchor[] {
   let v: checker.QueryView = lspquery.view_of(p).types;
@@ -351,7 +352,7 @@ struct Named { name: string, out: Anchor[] }
 function named_stmt(st: ast.Stmt, own n: Named): Named {
   if let ast.StmtAssign(a) = st {
     if (a.target == n.name) {
-      return Named { ...n, out: n.out.append(Anchor { line: a.target_line, col: a.target_col }) };
+      return Named { ...n, out: n.out.append(Anchor { line: a.target_line, col: a.target_col, pattern: false }) };
     }
   }
   return n;
@@ -360,7 +361,7 @@ function named_stmt(st: ast.Stmt, own n: Named): Named {
 function named_expr(e: ast.Expr, own n: Named): Named {
   if let ast.ExprIdent(id) = e {
     if (id.name == n.name) {
-      return Named { ...n, out: n.out.append(Anchor { line: id.line, col: id.col }) };
+      return Named { ...n, out: n.out.append(Anchor { line: id.line, col: id.col, pattern: false }) };
     }
   }
   return n;
@@ -421,8 +422,7 @@ function variant_stmt(st: ast.Stmt, own f: VariantFind): VariantFind {
     for arm in m.arms {
       if let ast.PatVariant(pv) = arm.pattern {
         if (names_variant(f, pv.type_name)) {
-          let (line, col) = lexical.arm_at(m, arm);
-          f = VariantFind { ...f, out: f.out.append(Anchor { line: line, col: col }) };
+          f = VariantFind { ...f, out: f.out.append(Anchor { line: arm.line, col: arm.col, pattern: true }) };
         }
       }
     }
@@ -434,12 +434,12 @@ function variant_expr(e: ast.Expr, own f: VariantFind): VariantFind {
   match (e) {
     ast.ExprIdent(id) => {
       if (names_variant(f, id.name)) {
-        return VariantFind { ...f, out: f.out.append(Anchor { line: id.line, col: id.col }) };
+        return VariantFind { ...f, out: f.out.append(Anchor { line: id.line, col: id.col, pattern: false }) };
       }
     },
     ast.ExprFieldAccess(fa) => {
       if (lspquery.unprefixed(fa.field, f.prefix) == f.name && lspquery.enum_qualifier(f.s, fa) == f.owner) {
-        return VariantFind { ...f, out: f.out.append(Anchor { line: fa.line, col: fa.col }) };
+        return VariantFind { ...f, out: f.out.append(Anchor { line: fa.line, col: fa.col, pattern: false }) };
       }
     },
     _ => {}
@@ -456,7 +456,7 @@ function member_uses(v: checker.QueryView, t: Target): Anchor[] {
     if (fd.line > 0) {
       for site in member_sites(fd.body, t.name) {
         if (member_is(v, fd, site, t)) {
-          out = out.append(Anchor { line: site.line, col: site.col });
+          out = out.append(Anchor { line: site.line, col: site.col, pattern: false });
         }
       }
     }
@@ -574,7 +574,11 @@ function module_refs(p: lspquery.Program, t: Target, m: i32, anchors: Anchor[], 
     marks = marks.append(0);
   }
   for a in anchors {
-    marks = marked(marks, spelling_at(toks, a, t.spelled), 1);
+    if (a.pattern) {
+      marks = pattern_marks(toks, a, t.spelled, marks);
+    } else {
+      marks = marked(marks, spelling_at(toks, a, t.spelled), 1);
+    }
   }
   if (quals.len() > 0) {
     marks = type_marks(p, t, m, toks, quals, marks);
@@ -621,6 +625,25 @@ function spelling_at(toks: lspquery.Tok[], a: Anchor, name: string): i32 {
     return i;
   }
   return 0 - 1;
+}
+
+// pattern_marks marks each token spelling `name` in the pattern that starts
+// at `a`: a match arm's or an `if let`'s, whose nested sub-patterns the
+// parser flattens into matches that all stand where the pattern does. A
+// name before a `:` is a struct pattern's field.
+function pattern_marks(toks: lspquery.Tok[], a: Anchor, name: string, own marks: i32[]): i32[] {
+  let i: i32 = lspquery.tok_at(toks, a.line, a.col);
+  if (i < 0) {
+    return marks;
+  }
+  let end: i32 = lspquery.pattern_end(toks, i);
+  while (i < end) {
+    if (toks[i].ident && toks[i].text == name && lspquery.text_at(toks, i + 1) != ":") {
+      marks = marked(marks, i, 1);
+    }
+    i = i + 1;
+  }
+  return marks;
 }
 
 // named_from is the index of the token a node at token `i` names: past a `.`

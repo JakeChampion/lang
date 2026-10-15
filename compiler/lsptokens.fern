@@ -174,15 +174,48 @@ function stmt_class(x: Ctx, st: ast.Stmt, params: string[], own acc: Mark[]): Ma
     },
     ast.StmtMatch(m) => {
       for arm in m.arms {
-        if let ast.PatVariant(_) = arm.pattern {
-          let (line, col) = lexical.arm_at(m, arm);
-          acc = pattern_class(x, lspquery.tok_at(x.toks, line, col), acc);
+        if let ast.PatVariant(pv) = arm.pattern {
+          acc = pattern_variants(x, lspquery.tok_at(x.toks, arm.line, arm.col), pv.type_name, acc);
         }
       }
     },
     _ => {}
   }
   return acc;
+}
+
+// pattern_variants marks each place the pattern starting at token `i` writes
+// the variant `name` (bundled): an arm's nested sub-patterns are matches the
+// parser flattens to stand where the whole pattern does. A name before a `:`
+// is a struct pattern's field.
+function pattern_variants(x: Ctx, i: i32, name: string, own acc: Mark[]): Mark[] {
+  if (i < 0) {
+    return acc;
+  }
+  let end: i32 = lspquery.pattern_end(x.toks, i);
+  let j: i32 = i;
+  while (j < end) {
+    if (spells_variant(x.toks[j], name) && lspquery.text_at(x.toks, j + 1) != ":") {
+      acc = pattern_class(x, qualifier_of(x, j), acc);
+    }
+    j = j + 1;
+  }
+  return acc;
+}
+
+// spells_variant reports whether `t` writes the variant `name` (bundled):
+// bare, or as the last part of a module's or an enum's prefix.
+function spells_variant(t: lspquery.Tok, name: string): boolean {
+  return t.ident && (name == t.text || util.str_has_suffix(name, "__" + t.text) || util.str_has_suffix(name, "." + t.text));
+}
+
+// qualifier_of is the index of the qualifier written before token `j`'s
+// `.`, or `j` when there is none.
+function qualifier_of(x: Ctx, j: i32): i32 {
+  if (j >= 2 && lspquery.punct_before(x.toks, j, ".")) {
+    return j - 2;
+  }
+  return j;
 }
 
 // pattern_class marks the variant an arm's pattern names from token `i`: a
