@@ -525,15 +525,24 @@
 # TestSelfHostWarmStockDriver, main at 6b07ebec links them at 7587184 (+4.8%)
 # and 8674800 (+4.9%); #12414's buffers add 0 and 2104 bytes. Numbers from
 # driver-sizes' report on run 38672221342.
+# 2026-10-15 — fern.fern/stage2 11761952 -> 12054832 (+2.5%), fern.fern
+# 12339464 -> 12630080 (+2.4%), asm_load_run 9642480 -> 10120120 (+5.0%),
+# asm_ir_run 7975200 -> 8418328 (+5.6%), wasm_ir_run 7533704 -> 7833136,
+# wasm_run 7530568 -> 7835128 and wasm_runio_run 7540984 -> 7835304 (+3.9-4.0%),
+# asm_pathprobe_run 4684360 -> 4962512 (+5.9%) and checker_modload_run
+# 2747272 -> 2852304 (+3.8%): #12418's semreach pass
+# (compiler/semreach.fern) in every driver that links semsource. Numbers from
+# driver-sizes' report on run 38693049933; asm_run and asm_modload_run stay
+# inside 0.7%.
 
-fern.fern/stage2 11761952
-fern.fern 12339464
-drivers/asm_load_run.fern 9642480
+fern.fern/stage2 12054832
+fern.fern 12630080
+drivers/asm_load_run.fern 10120120
 drivers/asm_modload_run.fern 8699400
-drivers/asm_ir_run.fern 7975200
+drivers/asm_ir_run.fern 8418328
 drivers/asm_run.fern 7612208
-drivers/wasm_ir_run.fern 7533704
-drivers/wasm_run.fern 7530568
-drivers/wasm_runio_run.fern 7540984
-drivers/asm_pathprobe_run.fern 4684360
-drivers/checker_modload_run.fern 2747272
+drivers/wasm_ir_run.fern 7833136
+drivers/wasm_run.fern 7835128
+drivers/wasm_runio_run.fern 7835304
+drivers/asm_pathprobe_run.fern 4962512
+drivers/checker_modload_run.fern 2852304
