@@ -118,6 +118,9 @@ function bit_has(rows: i64[], base: i32, v: i32): boolean {
 }
 
 function bit_set(own rows: i64[], base: i32, v: i32): i64[] {
+  if (v < 0) {
+    return rows;
+  }
   let w: i32 = base + v / 64;
   return rows.with(w, rows[w] | 1i64 << (v % 64) as i64);
 }
@@ -278,16 +281,28 @@ function exposed(own up: i32[], def_b: i32[], def_k: i32[], bi: i32, k: i32, val
 // Dependencies must already be transitive
 // and available at every use of their key, including uses on phi edges.
 pub function compute(f: ssa.SFunc, dependencies: i32[][]): Flow {
+  return compute_kept(f, dependencies, []);
+}
+
+// compute_kept is compute giving a bit only to the values `keep` marks, all
+// of them when it is empty. A value's bit never depends on another's, so the
+// answer for a kept value is compute's, over rows sized to what the reader
+// asks about.
+pub function compute_kept(f: ssa.SFunc, dependencies: i32[][], keep: boolean[]): Flow {
   let why: string = input_error(f, dependencies);
   if (why != "") {
     return failed(why);
   }
-  return compute_checked(f, dependencies);
+  return compute_checked_kept(f, dependencies, keep);
 }
 
 // compute_checked is compute over a graph and dependencies input_error has
 // already passed.
 pub function compute_checked(f: ssa.SFunc, dependencies: i32[][]): Flow {
+  return compute_checked_kept(f, dependencies, []);
+}
+
+function compute_checked_kept(f: ssa.SFunc, dependencies: i32[][], keep: boolean[]): Flow {
   let nb: i32 = f.blocks.len();
   let at: i32[] = position_of(f);
   // Where each value is defined: its block's position and its own.
@@ -355,7 +370,7 @@ pub function compute_checked(f: ssa.SFunc, dependencies: i32[][]): Flow {
   let slot_value: i32[] = [];
   v = 0;
   while (v < f.nvals) {
-    if (named[v]) {
+    if (named[v] && (keep.len() == 0 || keep[v])) {
       slot = slot.with(v, slot_value.len());
       slot_value = slot_value.append(v);
     } else {

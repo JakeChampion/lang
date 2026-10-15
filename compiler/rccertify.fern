@@ -2446,8 +2446,23 @@ function defined_before(w: Walk, a: i32, b: i32): boolean {
   return ssadeps.dom_holds(w.dom, bb, ab);
 }
 
+// tracked_values marks the values whose root the walk tracks, the only ones
+// live_rows reads a liveness bit for.
+function tracked_values(w: Walk): boolean[] {
+  let out: boolean[] = __alloc_bool(w.f.nvals);
+  let v: i32 = 0;
+  while (v < w.f.nvals && v < w.root.len()) {
+    let r: i32 = w.root[v];
+    if (r >= 0 && r < w.idx.len() && w.idx[r] >= 0) {
+      out = out.with(v, true);
+    }
+    v = v + 1;
+  }
+  return out;
+}
+
 function live_of(w: Walk, takes: Takes): Live {
-  let fl: ssalive.Flow = ssalive.compute(w.f, debt_deps(w, takes, alias_deps(w)));
+  let fl: ssalive.Flow = ssalive.compute_kept(w.f, debt_deps(w, takes, alias_deps(w)), tracked_values(w));
   if (!fl.ok) {
     return no_live(fl.why);
   }
@@ -2463,7 +2478,9 @@ function live_of(w: Walk, takes: Takes): Live {
 // its round ends, so only the slots in the block's row are ever read.
 // `maybe_at` is, per slot, the block whose entry first met the slot's
 // count to maybe, -1 for none: the join a token's walks may settle.
-struct Progress { out: i32[], done: boolean[], phi_at: i32[], phin: i32[], state: i32[], findings: Finding[], opaque: string[], unproved: boolean[], maybe_at: i32[] }
+// `ulog` and `mlog` list the slots the block being run leaves unproved and
+// meets at maybe, for its Memo.
+struct Progress { out: i32[], done: boolean[], phi_at: i32[], phin: i32[], state: i32[], findings: Finding[], opaque: string[], unproved: boolean[], maybe_at: i32[], ulog: i32[], mlog: i32[] }
 
 function filled(n: i32, v: i32): i32[] {
   let out: i32[] = __alloc_i32(n);
@@ -2900,13 +2917,22 @@ function entry_row(own p: Progress, w: Walk, lv: Live, bi: i32): Progress {
       s = meet(s, p.out[base + j]);
     }
     let k: i32 = lv.slots[lv.in_at[bi] + j];
-    if (s == maybe() && p.maybe_at[k] < 0) {
-      p = Progress { ...p, maybe_at: p.maybe_at.with(k, bi) };
+    if (s == maybe()) {
+      p = met_maybe(p, k, bi);
     }
     p = Progress { ...p, state: p.state.with(k, s) };
     j = j + 1;
   }
   return p;
+}
+
+// met_maybe records that block bi's entry met slot k at maybe: the first
+// block of the round to do so is the slot's maybe_at.
+function met_maybe(own p: Progress, k: i32, bi: i32): Progress {
+  if (p.maybe_at[k] < 0) {
+    p = Progress { ...p, maybe_at: p.maybe_at.with(k, bi) };
+  }
+  return Progress { ...p, mlog: p.mlog.append(k) };
 }
 
 // edge_base is where block pb's row for the edge into block `id` starts.
@@ -2939,8 +2965,8 @@ function enter_phis(own p: Progress, w: Walk, bi: i32): Progress {
       s = meet(s, p.phin[at + i]);
       i = i + 1;
     }
-    if (s == maybe() && p.maybe_at[k] < 0) {
-      p = Progress { ...p, maybe_at: p.maybe_at.with(k, bi) };
+    if (s == maybe()) {
+      p = met_maybe(p, k, bi);
     }
     if (s == absent()) {
       s = maybe();
@@ -3155,7 +3181,7 @@ function retire(own p: Progress, w: Walk, lv: Live, at: i32, n: i32, block: i32,
     } else if (held == owed()) {
       p = found(p, w, "spent without a unit", root_at(w, k), block, "its slot was not emptied on this path");
     } else if (held == maybe()) {
-      p = Progress { ...p, unproved: p.unproved.with(k, true) };
+      p = Progress { ...p, unproved: p.unproved.with(k, true), ulog: p.ulog.append(k) };
     }
     j = j + 1;
   }
@@ -3596,7 +3622,7 @@ function progress_of(w: Walk, lv: Live): Progress {
       }
     }
   }
-  return Progress { out: filled(lv.nout, absent()), done: __alloc_bool(f.blocks.len()), phi_at: phi_at, phin: filled(nphin, absent()), state: filled(w.tracked, absent()), findings: [], opaque: [], unproved: __alloc_bool(w.tracked), maybe_at: util.minus_ones(w.tracked) };
+  return Progress { out: filled(lv.nout, absent()), done: __alloc_bool(f.blocks.len()), phi_at: phi_at, phin: filled(nphin, absent()), state: filled(w.tracked, absent()), findings: [], opaque: [], unproved: __alloc_bool(w.tracked), maybe_at: util.minus_ones(w.tracked), ulog: [], mlog: [] };
 }
 
 // Settled is the walk's progress once no row changes, or `changed` still
@@ -3607,17 +3633,30 @@ function settle(own p: Progress, w: Walk, lv: Live, order: i32[], reach: boolean
   let rounds: i32 = 0;
   let changed: boolean = true;
   let once: boolean = acyclic(w, order);
+  let memos: Memo[] = no_memos(w.f.blocks.len());
   while (changed && rounds < round_limit()) {
     changed = false;
     // Findings and the census accumulate across rounds; only the final
     // round's are kept, since an earlier round reads rows not yet settled.
     p = Progress { ...p, findings: [], opaque: [], unproved: __alloc_bool(w.tracked), maybe_at: util.minus_ones(w.tracked) };
     for bi in order {
-      if (reach[bi]) {
+      if (reach[bi] && !once && memos[bi].ran && inputs_match(p, w, lv, bi, memos[bi].inputs)) {
+        p = replayed(p, memos[bi], bi);
+      } else if (reach[bi]) {
+        let inputs: i32[] = [];
+        if (!once) {
+          inputs = block_inputs(p, w, lv, bi);
+        }
+        let f0: i32 = p.findings.len();
+        let o0: i32 = p.opaque.len();
+        p = Progress { ...p, ulog: [], mlog: [] };
         let r: RoundResult = block_round(p, w, lv, bi, takes);
         p = r.p;
         if (r.changed) {
           changed = true;
+        }
+        if (!once) {
+          memos = memos.with(bi, Memo { ran: true, inputs: inputs, findings: findings_from(p.findings, f0), opaque: strings_from(p.opaque, o0), unproved: p.ulog, maybe: p.mlog });
         }
       }
     }
@@ -3630,6 +3669,133 @@ function settle(own p: Progress, w: Walk, lv: Live, order: i32[], reach: boolean
     }
   }
   return Settled { p: p, changed: changed };
+}
+
+// Memo is a block's last run in a settle: the inputs it read and what it
+// added to the round. A block whose inputs are those of its last run would
+// redo exactly that run, so settle replays it instead.
+struct Memo { ran: boolean, inputs: i32[], findings: Finding[], opaque: string[], unproved: i32[], maybe: i32[] }
+
+function no_memos(n: i32): Memo[] {
+  let out: Memo[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(Memo { ran: false, inputs: [], findings: [], opaque: [], unproved: [], maybe: [] });
+    i = i + 1;
+  }
+  return out;
+}
+
+// block_inputs is everything block bi's run reads from other blocks: whether
+// each predecessor has run, and if so the row on its edge, then the inputs
+// of each tracked phi. The rest of a run reads only the walk's tables and
+// the block's own scratch row.
+function block_inputs(p: Progress, w: Walk, lv: Live, bi: i32): i32[] {
+  let b: ssa.SBlock = w.f.blocks[bi];
+  let out: i32[] = [];
+  for pid in b.preds {
+    let pb: i32 = w.at[pid];
+    if (pb >= 0 && p.done[pb]) {
+      out = out.append(1);
+      let base: i32 = edge_base(w, lv, pb, b.id);
+      let j: i32 = 0;
+      while (j < lv.in_n[bi]) {
+        out = out.append(p.out[base + j]);
+        j = j + 1;
+      }
+    } else {
+      out = out.append(0);
+    }
+  }
+  for ins in b.insts {
+    if (ins.kind_tag == 8 && ins.result >= 0 && w.idx[ins.result] >= 0) {
+      let at: i32 = p.phi_at[ins.result];
+      let i: i32 = 0;
+      while (i < b.preds.len()) {
+        out = out.append(p.phin[at + i]);
+        i = i + 1;
+      }
+    }
+  }
+  return out;
+}
+
+// replayed adds to the round what block bi's memoized run added.
+function replayed(own p: Progress, m: Memo, bi: i32): Progress {
+  for x in m.findings {
+    p = Progress { ...p, findings: p.findings.append(x) };
+  }
+  for o in m.opaque {
+    p = Progress { ...p, opaque: p.opaque.append(o) };
+  }
+  for k in m.unproved {
+    p = Progress { ...p, unproved: p.unproved.with(k, true) };
+  }
+  for k in m.maybe {
+    if (p.maybe_at[k] < 0) {
+      p = Progress { ...p, maybe_at: p.maybe_at.with(k, bi) };
+    }
+  }
+  return p;
+}
+
+function findings_from(xs: Finding[], at: i32): Finding[] {
+  let out: Finding[] = [];
+  let i: i32 = at;
+  while (i < xs.len()) {
+    out = out.append(xs[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+function strings_from(xs: string[], at: i32): string[] {
+  let out: string[] = [];
+  let i: i32 = at;
+  while (i < xs.len()) {
+    out = out.append(xs[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// inputs_match is `block_inputs(p, w, lv, bi) == old`, read in place.
+function inputs_match(p: Progress, w: Walk, lv: Live, bi: i32, old: i32[]): boolean {
+  let b: ssa.SBlock = w.f.blocks[bi];
+  let at: i32 = 0;
+  for pid in b.preds {
+    let pb: i32 = w.at[pid];
+    let ran: boolean = pb >= 0 && p.done[pb];
+    if (at >= old.len() || old[at] == 1 != ran) {
+      return false;
+    }
+    at = at + 1;
+    if (ran) {
+      let base: i32 = edge_base(w, lv, pb, b.id);
+      let j: i32 = 0;
+      while (j < lv.in_n[bi]) {
+        if (at >= old.len() || old[at] != p.out[base + j]) {
+          return false;
+        }
+        at = at + 1;
+        j = j + 1;
+      }
+    }
+  }
+  for ins in b.insts {
+    if (ins.kind_tag == 8 && ins.result >= 0 && w.idx[ins.result] >= 0) {
+      let ph: i32 = p.phi_at[ins.result];
+      let i: i32 = 0;
+      while (i < b.preds.len()) {
+        if (at >= old.len() || old[at] != p.phin[ph + i]) {
+          return false;
+        }
+        at = at + 1;
+        i = i + 1;
+      }
+    }
+  }
+  return at == old.len();
 }
 
 // acyclic: no edge leads to a block at or before its source in `order`.
