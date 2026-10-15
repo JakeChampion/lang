@@ -353,7 +353,8 @@ function main(): i32 {
         eprint("asm_load_run: the program uses WASI imports the component wrapper does not frame");
         return 1;
       }
-      write(wasm_ir.emit_module_mode_or_error_sub(dw.full, true, shape != 0, dw.sub));
+      let io: boolean = shape != 0 || !wasm_ir.framing_covers(dw.full, dw.sub.switches, util.append_all(dw.sub.bodies, dw.sub.extra));
+      write(wasm_ir.emit_module_mode_or_error_sub(dw.full, true, io, dw.sub));
       return 0;
     }
     write(wasm_ir.emit_module_mode_or_error_sub(dw.full, false, false, dw.sub));
