@@ -9082,15 +9082,18 @@ function with_reached(all: Produced[], usable: boolean[], r: semreach.Reached): 
   return out;
 }
 
-// The tree-shaker's roots, the names the backends and the runtime call by
-// themselves, and each instance of a rooted declaration.
+// The tree-shaker's roots, the runtime helpers the backends call by
+// themselves, and each instance of a rooted declaration. A `__` fold
+// (`__smm_*`, `__arrm_*`) is reached through the calls the bodies make: one
+// a pipeline was fused out of has none, and its arguments would be values no
+// body built.
 function reach_roots(all: Produced[], names: string[], entries: boolean[], mod: parser.Module): boolean[] {
   let named: util.NameIndex = util.name_index(outside_names(all, mod));
   let roots: boolean[] = [];
   let templates: string[] = [];
   let i: i32 = 0;
   while (i < all.len()) {
-    let root: boolean = entries[i] || named.has(names[i]) || util.str_has_prefix(names[i], "__") || flatten.is_runtime_helper_name(names[i]);
+    let root: boolean = entries[i] || named.has(names[i]) || flatten.is_runtime_helper_name(names[i]);
     if (i < mod.funcs.len() && (root || rooted_method(mod.funcs[i], mod))) {
       root = true;
       templates = templates.append(all[i].key);

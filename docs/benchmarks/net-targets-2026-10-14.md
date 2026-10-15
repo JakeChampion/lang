@@ -9,7 +9,7 @@ rows that need one take these indicative figures as their answer.
 
 | axis | target | measured | state |
 |---|---|---|---|
-| binary with HTTP/1.1 + TLS + DNS | under 500 KB static | 2,132,112 bytes (`scripts/net-h2spec.d/server.fern`, HTTP/1.1, h2 and TLS); `scripts/net-bench.d/hello.fern` is 2,230,552 | missed, 4.3x; the work is under #9851 |
+| binary with HTTP/1.1 + TLS + DNS | under 500 KB static | with `-size`, 1,039,024 bytes (`scripts/net-h2spec.d/server.fern`, HTTP/1.1, h2 and TLS) and 894,672 (`scripts/net-bench.d/hello.fern`, HTTP/1.1 and TLS); 1,572,880 and 1,335,760 by default | missed, 1.8x; the work is under #9851 |
 | idle heap per worker | `__heap_bump_bytes()` under 64 KiB after first accept | 15,840 bytes at the first request | met |
 | per idle keep-alive connection | under 1 KiB of bump growth per held connection | 992 bytes (`net/fern/held.bytes_per_connection`, nightly) | met |
 | allocations per request, hello and static | 0 | 0, gated by the zero-allocation tests | met |
@@ -52,11 +52,15 @@ from 2,105,368 bytes to 1,374,696 and the hello server from 2,206,008 to
 The first of the two causes is now gone. The compiler drops what no
 reachable construction enables (`semreach`,
 docs/SELFHOST-SEMANTIC-SOURCE.md), so a server that never calls `with_h2`
-carries no HTTP/2. At 43f86616e the hello server is 1,958,416 bytes by
-default and 1,271,536 with `-size`, against 2,215,072 and 1,448,016 with
-the pass off. The TLS server, which does serve HTTP/2, is 1,954,944 and
-1,280,288, against 2,114,416 and 1,383,792. What is left is code density: about
-300,000 instructions, 37% of them moves.
+carries no HTTP/2: the hello server's symbols hold no `h2` or `hpack`
+function, and of the TLS handshake only the server side is left. At
+e3e9a6473 the hello server is 1,335,760 bytes by default and 894,672
+with `-size`, against 2,215,072 and 1,448,016 with the pass off. The TLS
+server, which does serve HTTP/2 and passes h2spec's strict selection, is
+1,572,880 and 1,039,024, against 2,114,416 and 1,383,792. In hello's
+`-size` build the symbols total 738,134 bytes. The largest groups are
+`std/serve` at 171,047, the TLS handshake at 69,125, x509 at 53,638 and
+crypto at 51,780.
 
 ## p99 at 4,096 connections
 
