@@ -20,7 +20,7 @@ import (
 //
 // These cases nest at a single payload slot (`Some(Ok(n))`), including deep
 // nesting, flat siblings, guards, and the outer-`_` fallthrough; multi-payload
-// nesting is in internal/testing/e2e/nested_pattern_test.go.
+// nesting is in conformance/cases/nested_pattern_*.
 var selfHostNestedPatternCases = []struct {
 	name string
 	main string

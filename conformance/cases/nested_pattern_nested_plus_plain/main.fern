@@ -1,0 +1,17 @@
+// Nested match patterns (#5353) desugar at parse time to a flat outer arm that
+// re-matches the payload, so every backend sees only flat arms.
+//
+// One nested payload slot alongside a plain binder slot — the plain
+// slot's name stays in scope in every inner arm body.
+// exit: 9 + 7
+enum Inner { A(i32), B(i32) }
+enum Outer { P(Inner, i32), Nil }
+function g(e: Outer): i32 {
+  match (e) {
+    P(A(a), b) => { return a + b; },
+    P(B(z), b) => { return z - b; },
+    Nil => { return 0 - 1; },
+  }
+  return 0 - 2;
+}
+function main(): i32 { return g(P(A(4), 5)) + g(P(B(9), 2)); }

@@ -25,7 +25,7 @@ run against it. So a diagnostic rule with only Go-side coverage is a
 rule that stops being checked at exactly the moment it starts mattering
 most.
 
-**67 of 86** codes are pinned by a conformance case. The table
+**68 of 86** codes are pinned by a conformance case. The table
 below is verified against reality by `TestDiagnosticsIndexIsAccurate`:
 a code with no explanation, an explanation with no row, a claimed case
 that does not exist or does not actually emit the code, and a `—` on a
@@ -68,9 +68,9 @@ language does not have. It is deleted.
 | `E019` | Generic type-parameter count mismatch | `diag_e019` |
 | `E020` | Empty array literal needs a type annotation | `diag_e020` |
 | `E021` | Invalid method receiver / trait conformance | `diag_e021` |
-| `E022` | `let-else` / `if-let` source error | — |
+| `E022` | `let-else` / `if-let` source error | `let_else_rejects_else_must_diverge` |
 | `E023` | Unknown enum | — |
-| `E024` | Tuple destructure error | `param_destructure_err_arity` |
+| `E024` | Tuple or struct destructure error | `param_destructure_err_arity` |
 | `E026` | Wildcard `_` arm must be last | — |
 | `E027` | Match guard must be boolean | — |
 | `E028` | Match arm variant already covered | — |

@@ -1,0 +1,12 @@
+// `let PAT = E else { … }` reads the shared pattern grammar (#5356); the else
+// must diverge, so the bindings are live for the rest of the block.
+//
+// Two let-elses in a row: the second is parsed inside the first's
+// success arm, and both sets of bindings stay live.
+enum O { Has(i32), Nil }
+function f(a: O, b: O): i32 {
+  let Has(x) = a else { return 100; };
+  let Has(y) = b else { return 200; };
+  return x * 10 + y;
+}
+function main(): i32 { return f(Has(3), Has(4)); }

@@ -1,0 +1,19 @@
+// Nested match patterns (#5353) desugar at parse time to a flat outer arm that
+// re-matches the payload, so every backend sees only flat arms.
+//
+// A TUPLE sub-pattern in a payload slot (`Pr((a, b))`). It uses the
+// same group-by-variant desugar variant sub-patterns use — the slot
+// binds a temp and the inner match is a tuple match — so the only
+// parser change was recognising `(` as a sub-pattern start. Folds a
+// literal element in too, which must still discriminate.
+// exit: 52 + 70 + 0
+enum T2 { Pr((i32, i32)), Non }
+function g(t: T2): i32 {
+  match (t) {
+    Pr((1, b)) => { return 50 + b; },
+    Pr((a, b)) => { return a + b; },
+    Non => { return 0; },
+  }
+  return 0 - 2;
+}
+function main(): i32 { return g(T2.Pr((1, 2))) + g(T2.Pr((3, 4))) * 10 + g(T2.Non) * 100; }

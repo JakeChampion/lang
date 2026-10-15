@@ -1,0 +1,10 @@
+// A `let` destructure reads the shared pattern grammar (#5356); `_` is renamed
+// per occurrence, so a pattern can discard more than one slot.
+//
+// The same rule inside a destructured PARAMETER, which routes
+// through the identical conversion — this shape was E013
+// ("variable \"_\" already declared") before the two paths shared it.
+// exit: 7 + 36
+function g((_, _): (i32, i32)): i32 { return 7; }
+function h((a, _): (i32, i32), (_, b): (i32, i32)): i32 { return a * 10 + b; }
+function main(): i32 { return g((1, 2)) + h((3, 4), (5, 6)); }

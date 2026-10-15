@@ -7,14 +7,8 @@ import "std/array";
 // way, n%len==0 / empty → unchanged. Kept as its own suite so the self-host
 // merged bundle stays under the asm_ir IR budget; uses assert_eq_array /
 // assert_true (not the generic assert_eq[i32]) so it stays clear of the
-// self-host monomorph gap.
-//
-// The i32 cases here are self-host-gated; STRING-element rotation is covered
-// only by the Go-side native differential (TestNativeArrayRotate exercises a
-// string[] rotate on all four native backends) because the self-host compiler
-// miscompiles the generic rotate over pointer-payload (string) elements —
-// returning an empty array — a self-host codegen gap unrelated to the (correct)
-// stdlib body, tracked separately.
+// self-host monomorph gap. String-element rotation is pinned on every backend by
+// conformance/cases/array_rotate_module.
 
 function test_left(): test.TestOutcome {
   return test.assert_eq_array([1, 2, 3, 4, 5].rotate_left(2), [3, 4, 5, 1, 2]);

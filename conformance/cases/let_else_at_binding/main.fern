@@ -1,0 +1,12 @@
+// `let PAT = E else { … }` reads the shared pattern grammar (#5356); the else
+// must diverge, so the bindings are live for the rest of the block.
+//
+// `@` binding: `w` is the whole value, `v` the payload — both live
+// for the rest of the block.
+enum Box { Full(i32), Empty }
+function total(b: Box): i32 { match (b) { Full(v) => { return v; }, Empty => { return 0; } } return 0; }
+function f(b: Box): i32 {
+  let w @ Full(v) = b else { return 0; };
+  return total(w) * 10 + v;
+}
+function main(): i32 { return f(Full(3)); }

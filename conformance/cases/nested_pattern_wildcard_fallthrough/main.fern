@@ -1,0 +1,14 @@
+// Nested match patterns (#5353) desugar at parse time to a flat outer arm that
+// re-matches the payload, so every backend sees only flat arms.
+//
+// Outer `_` fallthrough: `Some(Err(_))` matches no inner arm, so the
+// outer wildcard body runs (rather than a non-exhaustive bail).
+// exit: 105 + 7 + 7
+function g(o: Option[Result[i32, i32]]): i32 {
+  match (o) {
+    Some(Ok(n)) => { return n + 100; },
+    _ => { return 7; },
+  }
+  return 0 - 2;
+}
+function main(): i32 { return g(Some(Ok(5))) + g(Some(Err(9))) + g(None); }

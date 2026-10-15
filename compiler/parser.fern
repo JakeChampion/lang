@@ -820,6 +820,9 @@ function parse_struct_destructure(p: Par, struct_name: string, at: string, line:
   let (init_expr, ip) = parse_expr(p);
   p = ip;
   p = p.end_of(init_expr);
+  if (bindings.len() == 0) {
+    return (s_unknown_at("struct destructure needs at least one field", line, col), p);
+  }
   return (s_var_at(bindings, destr_marker(at, fields_rest, "@sd:" + struct_name + ":" + fields), init_expr, line, col), p);
 }
 

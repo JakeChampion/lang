@@ -422,6 +422,8 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"array_all_equal", langSrcAbs(t, "tests/stdlib/array_all_equal_test.fern"), ""},
 		{"array_none", langSrcAbs(t, "tests/stdlib/array_none_test.fern"), ""},
 		{"array_rotate", langSrcAbs(t, "tests/stdlib/array_rotate_test.fern"), ""},
+		{"array_count_sum_by", langSrcAbs(t, "tests/stdlib/array_count_sum_by_test.fern"), ""},
+		{"array_extremum_by", langSrcAbs(t, "tests/stdlib/array_extremum_by_test.fern"), ""},
 		{"array_batch", langSrcAbs(t, "tests/stdlib/array_batch_test.fern"), ""},
 		{"iter_combinators", langSrcAbs(t, "tests/stdlib/iter_combinators_test.fern"), ""},
 		{"num_reducers", langSrcAbs(t, "tests/stdlib/num_reducers_test.fern"), ""},

@@ -1,0 +1,7 @@
+// A destructuring parameter reads the shared pattern grammar (#5356): struct
+// patterns (with rename and `..`), tuples, and `w @ PAT`.
+//
+// Mixed param list: a destructured param in second position.
+struct Point { x: i32, y: i32 }
+function f(k: i32, Point { x, y }: Point): i32 { return k + x * 10 + y; }
+function main(): i32 { return f(1, Point { x: 3, y: 4 }); }

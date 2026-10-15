@@ -8,22 +8,6 @@ import "std/array";
 // comparator (the `sort_by` convention, `cmp(a, b) < 0 == a-before-b`), so the
 // extremum can be by string length, lexicographic order, or any struct rule.
 // Ties keep the FIRST extremum; empty → None.
-//
-// Deliberately kept in its OWN file (not folded into array_hof_test): the
-// self-host merged bundle for array_hof already sits near the asm_ir 512-function
-// IR budget, and adding these functions to its reachable set tips it over,
-// flipping unrelated functions (sort_by / partition) to the legacy AST emitter
-// that miscompiles them (regressed the array_hof self-host gate — this file is
-// the follow-up fix that un-tips that budget).
-//
-// Interp-gated only (NOT in selfHostStdTestCases): a string-element `max_by` /
-// `min_by` — Option[string] returned from the generic comparator body — crashes
-// the arm64 self-host emitter (exit -1) even as a standalone under-budget
-// bundle, though it runs correctly on the x86-64 self-host path AND on all four
-// native backends (interp / x86-64 / wasm / arm64, pinned by the Go-side
-// differential TestNativeArrayMinMaxBy). The arm64 self-host string-payload gap
-// is compiler territory, tracked separately; here we cover the verbs on interp,
-// mirroring the iter_combinators precedent (interp-only for a self-host gap).
 
 function cmp_i(a: i32, b: i32): i32 {
   return a - b;

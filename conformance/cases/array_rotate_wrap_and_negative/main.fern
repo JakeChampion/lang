@@ -1,0 +1,9 @@
+// std/array's rotate_left / rotate_right: cyclic shift by n mod len; negative n
+// rotates the other way.
+// A minimal inline body, so this pins the lowering of its shape rather than
+// the shipped module.
+//
+// n > len wraps (7 % 5 == 2 -> same as left-basic): r[0]*10+r[1] = 34.
+function rotate_left[T](xs: T[], n: i32): T[] { let len: i32 = xs.len(); let out: T[] = []; if (len == 0) { return out; } let sh: i32 = ((n % len) + len) % len; let i: i32 = 0; while (i < len) { out = out.append(xs[(i + sh) % len]); i = i + 1; } return out; }
+function same(a: i32[], b: i32[]): boolean { if (a.len() != b.len()) { return false; } let i = 0; while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; } return true; }
+function main(): i32 { let xs: i32[] = [1, 2, 3, 4, 5]; if (!same(rotate_left(xs, 7), rotate_left(xs, 2))) { return 0; } if (!same(rotate_left(xs, 0 - 1), rotate_left(xs, 4))) { return 0; } let r = rotate_left(xs, 7); return r[0] * 10 + r[1]; }

@@ -1,0 +1,12 @@
+// `let PAT = E else { … }` reads the shared pattern grammar (#5356); the else
+// must diverge, so the bindings are live for the rest of the block.
+//
+// Tuple and struct destructuring keep their own irrefutable form
+// (no `else`) — the let-else branch must not steal them.
+// exit: 30 + 4 + 100 + 2
+struct P { x: i32, y: i32 }
+function main(): i32 {
+  let (a, b) = (3, 4);
+  let P { x, y } = P { x: 1, y: 2 };
+  return a * 10 + b + x * 100 + y;
+}

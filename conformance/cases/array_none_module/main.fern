@@ -1,0 +1,19 @@
+// std/array's none: true iff the predicate holds for no element; vacuously
+// true for an empty array.
+// The shipped module's free and method forms.
+import "std/array" as arr;
+function is_neg(x: i32): boolean { return x < 0; }
+function is_even(x: i32): boolean { return x % 2 == 0; }
+function is_empty_str(s: string): boolean { return s.len() == 0; }
+function main(): i32 {
+    let r = 0;
+    let xs: i32[] = [1, 2, 3, 4];
+    if (xs.none(is_neg)) { r = r + 1; }        // no negatives
+    if (!xs.none(is_even)) { r = r + 2; }      // has evens
+    if (arr.none(xs, is_neg)) { r = r + 4; }   // free fn
+    let e: i32[] = [];
+    if (e.none(is_neg)) { r = r + 8; }         // empty -> true
+    let ss: string[] = ["a", "b", "c"];
+    if (ss.none(is_empty_str)) { r = r + 16; } // no empty strings
+    return r;
+}

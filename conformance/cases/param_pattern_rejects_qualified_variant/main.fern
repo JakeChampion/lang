@@ -1,0 +1,5 @@
+// A destructuring parameter binds unconditionally, so it reads only the
+// irrefutable half of the shared pattern grammar (#5356).
+enum O { A(i32), B }
+function f(O.A(v): O): i32 { return v; }
+function main(): i32 { return 0; }

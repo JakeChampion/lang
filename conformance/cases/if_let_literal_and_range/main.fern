@@ -1,0 +1,8 @@
+// `if let` reads the shared pattern grammar (#5356): every pattern form a
+// `match` accepts works in its head.
+function classify(n: i32): i32 {
+  if let 0 = n { return 1; }
+  if let 10..=20 = n { return 2; }
+  return 3;
+}
+function main(): i32 { return classify(0) * 100 + classify(15) * 10 + classify(50); }

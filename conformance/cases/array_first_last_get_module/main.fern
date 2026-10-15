@@ -1,0 +1,19 @@
+// std/array's is_empty / first / last / get: bounds-checked accessors returning
+// Option[T]; a negative index is None, not from-the-end.
+// The shipped module's free and method forms.
+import "std/array" as arr;
+function uw(o: Option[i32]): i32 { match (o) { Some(v) => { return v; }, None => { return 0 - 1; } } }
+function main(): i32 {
+    let r = 0;
+    let xs: i32[] = [10, 20, 30];
+    if (!xs.is_empty()) { r = r + 1; }
+    if (uw(xs.first()) == 10) { r = r + 2; }
+    if (uw(xs.last()) == 30) { r = r + 4; }
+    if (uw(xs.get(1)) == 20) { r = r + 8; }
+    let e: i32[] = [];
+    if (e.is_empty()) { r = r + 16; }
+    match (arr.first(e)) { Some(v) => {}, None => { r = r + 32; } }
+    let ss: string[] = ["a", "b"];
+    match (ss.get(1)) { Some(v) => { if (v == "b") { r = r + 64; } }, None => {} }
+    return r;
+}

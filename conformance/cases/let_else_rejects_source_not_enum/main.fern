@@ -1,0 +1,3 @@
+// `let PAT = E else { … }` reads the shared pattern grammar (#5356); the else
+// must diverge, so the bindings are live for the rest of the block.
+function main(): i32 { let n: i32 = 5; let Has(v) = n else { return 0; }; return 0; }

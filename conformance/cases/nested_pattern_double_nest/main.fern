@@ -1,0 +1,14 @@
+// Nested match patterns (#5353) desugar at parse time to a flat outer arm that
+// re-matches the payload, so every backend sees only flat arms.
+//
+// Two levels of payload-carrying nesting.
+// exit: 54 + 23 + 1
+function g(o: Result[Result[i32, i32], i32]): i32 {
+  match (o) {
+    Ok(Ok(n)) => { return n + 50; },
+    Ok(Err(e)) => { return e + 20; },
+    Err(x) => { return x; },
+  }
+  return 0 - 2;
+}
+function main(): i32 { return g(Ok(Ok(4))) + g(Ok(Err(3))) + g(Err(1)); }
