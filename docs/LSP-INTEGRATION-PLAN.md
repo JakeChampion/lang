@@ -4,15 +4,15 @@
 > go-to-def, completion) and the playground wires it via `cmd/fern-wasm`.
 > Post-MVP performance work is surveyed in `IDE-COMPILATION-RESEARCH.md`
 > and tracked in [#4415](https://github.com/JakeChampion/lang/issues/4415).
-> The self-host compiler serves diagnostics and formatting as `fern -lsp`
-> (#6641) — see the next section; everything below it describes the Go
-> server.
+> The self-host compiler serves diagnostics, formatting, hover and
+> go-to-definition as `fern -lsp` (#6641) — see the next section; everything
+> below it describes the Go server.
 
 ## The self-host server: `fern -lsp`
 
 `fern -lsp [-target T] [-embed DIR] [stdlib-root]` runs the self-host CLI as a
-language server on stdin and stdout. It is #6641's first slice: diagnostics and
-formatting, and none of the cursor features yet.
+language server on stdin and stdout: diagnostics, formatting, hover and
+go-to-definition.
 
 - **The wire** is `compiler/lsp.fern`. It does Content-Length framing
   over `stdin()`, JSON-RPC through `std/json`, the UTF-16 position conversion
@@ -34,6 +34,30 @@ formatting, and none of the cursor features yet.
 - **Formatting is `-fmt`'s** (`format_source`). The server refuses an edit
   under `-fmt -w`'s rule, `fmt_output_is_readable`: no edit when the formatted
   text would not come back through the formatter as itself.
+- **Hover and go-to-definition** (`compiler/lspquery.fern`) answer from what
+  the document's last check loaded, kept on the server: the bundle and each
+  module's text. The first request after a check builds the checker's view of
+  the bundle (`checker.query_view`: the module as `check_module` types it and
+  its tables); later requests reuse it. The name under the cursor is found
+  among the module's tokens and read off the syntax tree at that token's
+  position — an identifier, a qualified `alias.name`, a field or method after a
+  `.`, a struct literal — or, where no node is, as a type written in an
+  annotation. Its type comes from the checker's scope at that statement, walked
+  with `bind_stmt` through every enclosing block, arm, loop and lambda, and a
+  local is told from a global by `lexical.resolve_func`. Only the requesting
+  document's own module is searched, so a sibling's name at the same position
+  never answers. A literate document's positions go through its line map both
+  ways. The hover text is the Go server's shape (`(var) x: i32`,
+  `function add(i32, i32): i32`, `struct Point { x: i32, y: i32 }`,
+  `(variant of Color) Red`, `(method on Point) …`, `(from util) …`), with
+  another module's types under their bundled names (`util__Point`), as native's
+  are. A definition into another module names that module's file. It differs
+  from the Go server's in three ways: it lands on the declared name, not on the
+  declaration's keyword; one into the stdlib names the stdlib file under the
+  root, where the Go server named the requesting document at the stdlib line;
+  and a name with no declaration (`Some`) has none, where the Go server
+  answered 0:0. Hover also describes what the Go server left blank: a
+  constant, a lambda's parameter and an enum-qualified variant.
 - A publish goes out only when a document's diagnostics change, and didClose
   clears them. The exit codes are the spec's: 0 for `exit` after `shutdown`,
   1 for `exit` without it, and 2 for input that cannot be framed.
@@ -47,8 +71,17 @@ stdlib closure on every edit, so caching parsed imports between checks is the
 first step `IDE-COMPILATION-RESEARCH.md` describes. Peak RSS stays at 30–31 MB over 100 changes, so each check's memory
 is reclaimed.
 
+A hover or definition costs, on the same container (2026-10-15): for a
+document importing `std/json` and `std/string`, the first request after a
+check, which builds the view, is lost in the few milliseconds of run-to-run
+noise, and each later one takes under 0.1 ms. On the 2,700-line
+`compiler/flatten.fern` one takes about 1 ms, and on the 29,000-line
+`compiler/checker.fern` about 18 ms, most of it re-lexing the module.
+
 `internal/testing/e2ecompiler/self_host_lsp_test.go` gates it (`TEST-GATES.md` has the
-row). It holds the server to two references:
+row), with `self_host_lsp_hover_test.go` for hover and definition: the Go
+server's hover, definition and workspace cases, their answers written out as
+data. The diagnostics are held to two references:
 
 - **`-check`, across the whole conformance corpus.** Every finding in the
   document is published, at its position, with its code and message, and
@@ -63,7 +96,7 @@ row). It holds the server to two references:
 
 What the next slices add:
 
-1. Hover, go-to-definition and completion, over the self-host checker's types.
+1. Completion, references and the other cursor features, over the same view.
 2. Imports parsed once and reused across checks.
 3. The playground's in-process server (`fernLsp`) on the self-host wasm build,
    which is what `cmd/fern-wasm` still carries.
