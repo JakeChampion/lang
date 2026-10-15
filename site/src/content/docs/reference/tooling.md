@@ -31,6 +31,7 @@ code-signs in-process, so no external toolchain is needed.
 | `x86-64-linux` | Static ELF. x86-64-v3 (Haswell, 2013, with AVX2). |
 | `wasm32-wasi` | WASI Preview 2 component; run with `wasmtime run`. |
 | `wasm32-wasi-http` | `wasi:http/incoming-handler` component; run with `wasmtime serve`. |
+| `arm64-freestanding`, `x86-64-freestanding` | Check only (`fern -check -target …`): no OS underneath, so no host capabilities at all. No backend emits for them yet. |
 
 Binaries are static and do no CPU feature detection at run time, so the
 baseline is a requirement, not a fast path. `fern -targets`
@@ -48,14 +49,17 @@ to compile with E066 instead of failing at run time.
 | `-qemu` | `qemu-aarch64` | User-mode emulator for `-run` on a foreign ISA. For `-target x86-64-linux` the default becomes `qemu-x86_64`. |
 | `-O` | off | Release build: drop every `assert()` after type-checking, without evaluating its condition. `-check` and `-interp` always keep asserts. |
 | `-g` | off | Emit a symbol table and DWARF so debuggers, `nm`, backtraces and profilers can name functions and source lines. |
+| `-size` | off | Build for size over speed, and leave the backtrace walk out unless `-backtrace` asks for it. `FERN_SIZE=1` makes it the default. |
+| `-harden` | off | `arm64-linux` executables only: BTI landing pads at every indirect-call target, and return addresses signed with pointer authentication. |
 | `-backtrace` | on | Print a frame-pointer backtrace under a fatal abort's cause line. `-backtrace=false` leaves the walk out of the binary. |
 | `-sanitize` | off | Debug build with the heap checks on; see [Debugging](#debugging). |
 | `-cover` | off | Instrument for line and branch coverage; see [Coverage](#coverage). |
 | `-embed DIR` | none | Compile the files under `DIR` into the binary; see [Assets](#embedding-assets). |
 | `-shared` | off | Emit a shared object (`.so`) instead of an executable; with `-export f,g` naming the functions to export. |
-| `-emit` | target's own | Wasm only: `core-module` for a raw core module, `command-module` for a WASI preview-1 command module. |
+| `-emit` | target's own | `asm` stops at the generated assembly (GAS on the native targets, WAT on wasm). On wasm, `core-module` gives a raw core module and `command-module` a WASI preview-1 command module. |
 | `-backend` | target's own | Code generator. `ssa`, the register allocator, is the only one on the native ISAs. |
 | `-color` | `auto` | Colour diagnostics: `auto`, `always`, or `never`. `NO_COLOR` turns `auto` off. |
+| `-ascii` | auto | Draw diagnostics with ASCII only. Chosen automatically when the locale is not UTF-8. |
 
 ### Program arguments
 
@@ -83,10 +87,12 @@ silently.
 | `fern -targets` | List the targets and their capabilities. |
 | `fern -capabilities FILE` | Report which of `net`, `fs`, `env`, `subprocess`, `time`, `random` each package can reach, with an example call chain. |
 | `fern -effects FILE` | The same report per function instead of per package. |
-| `fern -version` | Print the commit this binary was built from, plus the Go version and platform. |
+| `fern -doc FILE` | A Markdown reference page from a module's doc comments; `-o OUTDIR DIR` writes one page per module. |
+| `fern -version` | Print the commit this binary was built from and the target it was built for. |
 
 The package commands (`-add`, `-fetch`, `-resolve`, `-vendor`) are on the
-[Packages](../packages/) page. `fern -help` lists every flag.
+[Packages](../packages/) page. `fern` with no arguments prints a usage
+summary.
 
 ## Formatter
 

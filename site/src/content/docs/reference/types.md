@@ -135,6 +135,13 @@ far as any other holder can see, but when the binding is the only
 reference the update happens in place, so the rebinding idiom costs no
 copy.
 
+Chains of `map`, `filter`, `take`, `take_while` and `flat_map` ending in
+`fold`, `reduce`, `count` or `scan` are fused into a single loop, so
+`xs.filter(even).map(square).reduce(add)` allocates no intermediate
+arrays. That holds for any combination of those operators, on arrays
+and on `core/iter` chains alike; `skip`, `enumerate` and `zip` run
+unfused.
+
 ## Structs, enums and tuples
 
 Struct fields are read-only after construction too (`E048`). A
@@ -281,8 +288,10 @@ type arguments at the call when they cannot be inferred or you want to
 say them: `id[i32](7)`, `id[Point](p)`. The compiler monomorphises every
 distinct instantiation before codegen, so there's no runtime cost.
 
-A type parameter can carry a **trait bound** (`[T: Display]`) to
-constrain it to types implementing a trait — see [Traits](../traits/).
+A function's type parameter can carry a **trait bound** (`[T: Display]`)
+to constrain it to types implementing a trait — see [Traits](../traits/).
+A struct, enum or union declaration cannot: a bound belongs on the
+`impl[T: Display] … for Pair[T]` that needs it.
 
 ## Union types
 
@@ -304,6 +313,25 @@ function eval(e: Expr): i32 {
 A struct value converts to the union implicitly (`eval(Add { l: 1, r: 2 })`),
 and each match arm names a member struct. A union lists at least two
 structs; `type` declares nothing else, so there is no single-type alias.
+
+Unions can be generic, and a member can be named explicitly with
+`Union.Member(value)` when the implicit conversion has nothing to go by:
+
+```fern
+struct Leaf[T] { v: T }
+struct Pair[T] { a: T, b: T }
+type Tree[T] = Leaf[T] | Pair[T];
+
+function sum(t: Tree[i32]): i32 {
+    match (t) {
+        Leaf(l) => { return l.v; },
+        Pair(p) => { return p.a + p.b; },
+    }
+}
+
+let a: Tree[i32] = Tree.Leaf(Leaf[i32] { v: 4 });
+let b: Tree[i32] = Pair[i32] { a: 5, b: 6 };
+```
 
 The checker desugars unions to synthetic enums with one variant per
 member; everything downstream (IR / codegen) treats them as

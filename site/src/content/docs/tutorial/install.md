@@ -6,7 +6,7 @@ sidebar:
 ---
 
 There are two ways to get `fern`: download a prebuilt binary, or build
-from source with Go. Both take about a minute.
+it from source with `make`.
 
 ## Option A — prebuilt binary (fastest)
 
@@ -31,7 +31,9 @@ install -m755 fern ~/.local/bin/fern    # anywhere on your $PATH
 Each asset ships a `*.tar.gz.sha256` alongside it if you want to verify
 the download. The archive holds the one `fern` binary: the compiler, written
 in Fern, with its standard library inside it, so it needs nothing beside it
-and no network. [Releases](../../releases/) covers what the nightly channel
+and no network. On first use it unpacks that standard library into a
+cache directory (`$FERN_CACHE_DIR`, else `$XDG_CACHE_HOME`, else
+`~/.cache`). [Releases](../../releases/) covers what the nightly channel
 promises and how to pin a build.
 
 ## Option B — build from source
@@ -58,7 +60,9 @@ fern -targets    # every compile target and what its host provides
 
 ### Companion binaries
 
-These are built from a source checkout; all but `fern` need Go 1.26+:
+These are built from a source checkout. `ferndoc` is the generator this
+site's standard library reference comes from, and needs Go 1.26+; for your
+own modules, `fern -doc` does the same job:
 
 | Binary          | Build command              | Purpose                                                                  |
 | --------------- | -------------------------- | ------------------------------------------------------------------------ |

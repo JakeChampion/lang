@@ -91,13 +91,18 @@ audit.
   changes under you, and there is no compatibility promise yet.
 - **The ecosystem is small.** The standard library is broad for its
   age — strings, regular expressions, collections (including persistent
-  ones), JSON and CSV, files and paths, HTTP client and server, TCP and
-  DNS, dates and time zones, gzip decoding, hashes and cryptography — but
+  ones), JSON and CSV, files and paths, an HTTP/1.1 and HTTP/2 client
+  and server with TLS 1.3, WebSockets and gRPC, TCP and DNS, dates and
+  time zones, gzip, zstd and brotli, protobuf, metrics, hashes and
+  cryptography — but
   there is no package registry full of third-party libraries. Beyond the
   standard library you will be writing it yourself.
-- **Single-threaded.** Concurrency is I/O-driven futures (`std/async`) —
-  `gather`, `race`, and friends over one poll loop. There are no threads
-  and no parallelism; refcounts are non-atomic by design.
+- **Single-threaded.** Concurrency is I/O-driven tasks and futures
+  (`std/async`) over one event loop: code that waits parks and resumes,
+  with no `async` keyword. There are no threads and no parallelism inside
+  a process; refcounts are non-atomic by design. An HTTP server gets
+  its parallelism from processes: one worker per CPU under a
+  supervisor.
 - **No cycles, by construction.** Reference counting cannot collect a
   cycle, so Fern makes cycles unconstructible: a struct's fields and an
   array's elements cannot be assigned after construction (you build an
