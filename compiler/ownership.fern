@@ -114,15 +114,6 @@ pub function address_taken(f: ssasem.Func, seen: string[]): string[] {
   return out;
 }
 
-pub function names_has(xs: string[], name: string): boolean {
-  for x in xs {
-    if (x == name) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function all_true(n: i32): boolean[] {
   let out: boolean[] = [];
   let i: i32 = 0;
@@ -382,27 +373,33 @@ function slot_phi(ins: ssa.SInst): boolean {
 // later operands are arguments a call passed (`slot_carried`); its first is
 // the parameter itself. Phis chain, so this runs to a fixpoint.
 function continued(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis): boolean[] {
-  let changed: boolean = true;
+  let phis: ssa.SInst[] = [];
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == 8) {
+        phis = phis.append(ins);
+      }
+    }
+  }
+  let changed: boolean = phis.len() > 0;
   while (changed) {
     changed = false;
-    for b in f.graph.blocks {
-      for ins in b.insts {
-        if (ins.kind_tag != 8 || !out[ins.result]) {
-          continue;
+    for ins in phis {
+      if (!out[ins.result]) {
+        continue;
+      }
+      let n: i32 = ins.args.len();
+      if (slot_phi(ins)) {
+        n = 1;
+      }
+      let i: i32 = 0;
+      while (i < n) {
+        let arg: i32 = ins.args[i];
+        if (arg >= 0 && arg < out.len() && !out[arg] && ssasem.reference(f.values[arg])) {
+          out = carry(out, a, arg);
+          changed = true;
         }
-        let n: i32 = ins.args.len();
-        if (slot_phi(ins)) {
-          n = 1;
-        }
-        let i: i32 = 0;
-        while (i < n) {
-          let arg: i32 = ins.args[i];
-          if (arg >= 0 && arg < out.len() && !out[arg] && ssasem.reference(f.values[arg])) {
-            out = carry(out, a, arg);
-            changed = true;
-          }
-          i = i + 1;
-        }
+        i = i + 1;
       }
     }
   }
