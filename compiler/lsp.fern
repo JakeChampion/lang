@@ -177,7 +177,12 @@ pub function document_uri(params: json.JsonValue): string {
 // position is a position request's 0-based line and UTF-16 character, or
 // (-1, -1) when it carries none.
 pub function position(params: json.JsonValue): (i32, i32) {
-  let p: json.JsonValue = get_value(params, "position");
+  return position_in(get_value(params, "position"));
+}
+
+// position_in is the 0-based line and UTF-16 character of the Position `p`,
+// or (-1, -1) when it is not one.
+function position_in(p: json.JsonValue): (i32, i32) {
   match (json.json_get_i32(p, "line")) {
     Some(line) => {
       match (json.json_get_i32(p, "character")) {
@@ -190,6 +195,18 @@ pub function position(params: json.JsonValue): (i32, i32) {
     None => {}
   }
   return (0 - 1, 0 - 1);
+}
+
+// request_range is a range request's start and end, each a 0-based line and
+// UTF-16 character, or all -1 when it carries none.
+pub function request_range(params: json.JsonValue): (i32, i32, i32, i32) {
+  let r: json.JsonValue = get_value(params, "range");
+  let (l0, c0) = position_in(get_value(r, "start"));
+  let (l1, c1) = position_in(get_value(r, "end"));
+  if (l0 < 0 || l1 < 0) {
+    return (0 - 1, 0 - 1, 0 - 1, 0 - 1);
+  }
+  return (l0, c0, l1, c1);
 }
 
 // changed_text is a didChange's new document text: the last content change,
@@ -235,10 +252,68 @@ function quote(s: string): string {
 }
 
 // initialize_result advertises what this server does: full-document sync
-// (every didChange carries the whole text), diagnostics, formatting, hover and
-// go-to-definition.
+// (every didChange carries the whole text), diagnostics, formatting, hover,
+// go-to-definition, completion (asked again after a `.`), signature help (after
+// a `(` or `,`), the document's outline and inlay hints.
 pub function initialize_result(): string {
-  return "{\"capabilities\":{\"textDocumentSync\":1,\"documentFormattingProvider\":true,\"hoverProvider\":true,\"definitionProvider\":true},\"serverInfo\":{\"name\":\"fern\"}}";
+  let caps: string = "\"textDocumentSync\":1,\"documentFormattingProvider\":true,\"hoverProvider\":true,\"definitionProvider\":true,"
+    + "\"completionProvider\":{\"triggerCharacters\":[\".\"]},"
+    + "\"signatureHelpProvider\":{\"triggerCharacters\":[\"(\",\",\"],\"retriggerCharacters\":[\",\"]},"
+    + "\"documentSymbolProvider\":true,\"inlayHintProvider\":true";
+  return "{\"capabilities\":{" + caps + "},\"serverInfo\":{\"name\":\"fern\"}}";
+}
+
+// completion_list is a CompletionList holding every item there is.
+pub function completion_list(items: string[]): string {
+  return "{\"isIncomplete\":false,\"items\":" + json_array(items) + "}";
+}
+
+// completion_item is a CompletionItem of CompletionItemKind `kind`; an empty
+// `detail` is left out.
+pub function completion_item(label: string, kind: i32, detail: string): string {
+  let out: string = "{\"label\":" + quote(label) + ",\"kind\":" + util.i32_to_string(kind);
+  if (detail.len() > 0) {
+    out = out + ",\"detail\":" + quote(detail);
+  }
+  return out + "}";
+}
+
+// signature_help is a SignatureHelp offering one signature, `label`, whose
+// parameters are its bytes `starts[i]` to `ends[i]`, with `active` the one the
+// cursor is on. A parameter is named by its offsets in UTF-16 units rather
+// than its text, which another parameter of the same type would share.
+pub function signature_help(label: string, starts: i32[], ends: i32[], active: i32): string {
+  let params: string[] = [];
+  let i: i32 = 0;
+  while (i < starts.len()) {
+    params = params.append("{\"label\":[" + util.i32_to_string(utf16_units(label, starts[i])) + "," + util.i32_to_string(utf16_units(label, ends[i])) + "]}");
+    i = i + 1;
+  }
+  let sig: string = "{\"label\":" + quote(label);
+  if (params.len() > 0) {
+    sig = sig + ",\"parameters\":" + json_array(params);
+  }
+  return "{\"signatures\":[" + sig + "}],\"activeSignature\":0,\"activeParameter\":" + util.i32_to_string(active) + "}";
+}
+
+// document_symbol is a DocumentSymbol of SymbolKind `kind`; an empty `detail`
+// and no `children` are left out.
+pub function document_symbol(name: string, detail: string, kind: i32, range: string, selection: string, children: string[]): string {
+  let out: string = "{\"name\":" + quote(name);
+  if (detail.len() > 0) {
+    out = out + ",\"detail\":" + quote(detail);
+  }
+  out = out + ",\"kind\":" + util.i32_to_string(kind) + ",\"range\":" + range + ",\"selectionRange\":" + selection;
+  if (children.len() > 0) {
+    out = out + ",\"children\":" + json_array(children);
+  }
+  return out + "}";
+}
+
+// inlay_hint is a type InlayHint showing `label` at the 0-based `line` and
+// UTF-16 `character`.
+pub function inlay_hint(line: i32, character: i32, label: string): string {
+  return "{\"position\":" + position_json(line, character) + ",\"label\":" + quote(label) + ",\"kind\":1}";
 }
 
 // hover_result is a Hover showing `code` as a Fern code block over `range`.
@@ -277,7 +352,7 @@ pub function json_array(items: string[]): string {
 // native's does when an error carries no width. `code` is sent only when it
 // is a real diagnostic code — the code a client deep-links, so the checker's
 // "type" marker is not one.
-pub function diagnostic(src: string, line: i32, col: i32, code: string, message: string, warning: boolean): string {
+pub function diagnostic(src: Text, line: i32, col: i32, code: string, message: string, warning: boolean): string {
   let r: string = range_json(0, 0, 0, 0);
   if (line > 0) {
     let c: i32 = utf16_col(line_text(src, line), col);
@@ -296,9 +371,20 @@ pub function diagnostic(src: string, line: i32, col: i32, code: string, message:
 
 // span_range is the range of the `len` bytes at Fern's 1-based `line` and
 // byte `col` of `src`, which lie on one line.
-pub function span_range(src: string, line: i32, col: i32, len: i32): string {
+pub function span_range(src: Text, line: i32, col: i32, len: i32): string {
   let text: string = line_text(src, line);
   return range_json(line - 1, utf16_col(text, col), line - 1, utf16_col(text, col + len));
+}
+
+// lsp_position is the 0-based line and UTF-16 character of Fern's 1-based
+// `line` and byte `col` of `src`.
+pub function lsp_position(src: Text, line: i32, col: i32): (i32, i32) {
+  return (line - 1, utf16_col(line_text(src, line), col));
+}
+
+// span_between is the range from Fern's `l0`, `c0` to `l1`, `c1` of `src`.
+pub function span_between(src: Text, l0: i32, c0: i32, l1: i32, c1: i32): string {
+  return range_json(l0 - 1, utf16_col(line_text(src, l0), c0), l1 - 1, utf16_col(line_text(src, l1), c1));
 }
 
 function range_json(l0: i32, c0: i32, l1: i32, c1: i32): string {
@@ -313,45 +399,44 @@ function position_json(line: i32, character: i32): string {
 // end position is the last line's length in UTF-16 units, since the client
 // replaces exactly that range and the last line may hold non-ASCII.
 pub function whole_document_edit(src: string, text: string): string {
-  let line: i32 = 0;
-  let last: i32 = 0;
+  let t: Text = text_of(src);
+  let last: i32 = t.starts.len() - 1;
+  let tail: string = slice_unchecked(src, t.starts[last], src.len()) + "";
+  return "{\"range\":" + range_json(0, 0, last, utf16_units(tail, tail.len())) + ",\"newText\":" + quote(text) + "}";
+}
+
+// Text is a document's text and the offset each of its lines starts at, so a
+// position on any line converts without scanning the lines before it.
+pub struct Text { src: string, starts: i32[] }
+
+pub function text_of(src: string): Text {
+  let starts: i32[] = [0];
   let i: i32 = 0;
   while (i < src.len()) {
     if (src[i] == b'\n') {
-      line = line + 1;
-      last = i + 1;
+      starts = starts.append(i + 1);
     }
     i = i + 1;
   }
-  let tail: string = slice_unchecked(src, last, src.len()) + "";
-  return "{\"range\":" + range_json(0, 0, line, utf16_units(tail, tail.len())) + ",\"newText\":" + quote(text) + "}";
+  return Text { src: src, starts: starts };
 }
 
-// line_text is src's 1-based line n without its line ending, or "" when src
-// has no such line — which makes a stale position convert as ASCII rather
+// line_text is the text's 1-based line n without its line ending, or "" when
+// it has no such line — which makes a stale position convert as ASCII rather
 // than fail.
-pub function line_text(src: string, n: i32): string {
-  let line: i32 = 1;
-  let start: i32 = 0;
-  let i: i32 = 0;
-  while (i < src.len() && line < n) {
-    if (src[i] == b'\n') {
-      line = line + 1;
-      start = i + 1;
-    }
-    i = i + 1;
-  }
-  if (line < n) {
+pub function line_text(t: Text, n: i32): string {
+  if (n < 1 || n > t.starts.len()) {
     return "";
   }
-  let end: i32 = start;
-  while (end < src.len() && src[end] != b'\n') {
-    end = end + 1;
+  let start: i32 = t.starts[n - 1];
+  let end: i32 = t.src.len();
+  if (n < t.starts.len()) {
+    end = t.starts[n] - 1;
   }
-  if (end > start && src[end - 1] == b'\r') {
+  if (end > start && t.src[end - 1] == b'\r') {
     end = end - 1;
   }
-  return slice_unchecked(src, start, end) + "";
+  return slice_unchecked(t.src, start, end) + "";
 }
 
 // utf16_col converts a 1-based byte column within `line` to the 0-based UTF-16
