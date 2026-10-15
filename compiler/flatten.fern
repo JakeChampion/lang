@@ -1033,7 +1033,7 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
     return mangle_bare(tn, ctx);
   }
   let base: str = slice_unchecked(tn, 0, br);
-  if (is_in(base, ctx.declnames)) {
+  if (declname_index_of(base + "", ctx) >= 0) {
     return ctx.prefix + "__" + base + slice_unchecked(tn, br, tn.len());
   }
   return tn;
