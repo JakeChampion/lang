@@ -294,6 +294,56 @@ func TestDistcheckReachesFixedPoint(t *testing.T) {
 	}
 }
 
+// distcheck reuses the stage1 a build left only while it was built from the
+// same sources by the same stage0. Compiling the source literally, stage1 is
+// the source it was built from, plus the older pin's extra line when that pin
+// built it, so its bytes show which build made it.
+func TestDistcheckRebuildsAStaleStage1(t *testing.T) {
+	root := checkout(t)
+	source := filepath.Join(root, "compiler", "fern.fern")
+	write(t, source, []byte(sourceCompiler), 0o644)
+	stage0 := filepath.Join(root, "candidate")
+	write(t, stage0, []byte(sourceCompiler), 0o755)
+	stage1 := filepath.Join(root, "build", "bootstrap", "stage1")
+	distcheck := func(t *testing.T, seed, want string, reused bool) {
+		t.Helper()
+		out, err := run(t, root, "distcheck", []string{"STAGE0=" + seed}, "")
+		if err != nil {
+			t.Fatalf("expected success: %v", err)
+		}
+		if strings.Contains(out, "stage1: reused") != reused {
+			t.Errorf("stage1 reused is %v, want %v", !reused, reused)
+		}
+		got, err := os.ReadFile(stage1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Errorf("stage1 is not what this stage0 builds from these sources")
+		}
+	}
+
+	if _, err := run(t, root, "build", []string{"STAGE0=" + stage0}, ""); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "build", "bootstrap", "stage1.key")); err != nil {
+		t.Fatalf("build left no stage1.key: %v", err)
+	}
+	distcheck(t, stage0, sourceCompiler, true)
+
+	edited := sourceCompiler + "# an edit to the compiler's source\n"
+	write(t, source, []byte(edited), 0o644)
+	distcheck(t, stage0, edited, false)
+	distcheck(t, stage0, edited, true)
+
+	write(t, filepath.Join(root, "internal", "stdlib", "added.fern"), []byte("function f(): i32 { return 1; }\n"), 0o644)
+	distcheck(t, stage0, edited, false)
+
+	older := filepath.Join(root, "older")
+	write(t, older, []byte(olderPinCompiler), 0o755)
+	distcheck(t, older, edited+"# an older code generator emitted this\n", false)
+}
+
 // A pin built before a code generator change emits a stage1 that differs from
 // stage2, and that is not a failure: stage1 carries the pin's code generation,
 // stage2 and stage3 the current source's. The fixed point is stage2 == stage3.
