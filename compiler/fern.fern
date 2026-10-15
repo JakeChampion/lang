@@ -95,6 +95,8 @@ import "./emitforms";
 import "./semlower";
 import "./cover";
 import "./lsp";
+import "./lspassist";
+import "./lspquery";
 
 // blank_line_map marks the 1-based source lines that hold nothing but
 // whitespace, indexed by line number so the formatter can ask about one in
@@ -2121,10 +2123,10 @@ function is_vendorable(name: string): boolean {
 // Bundle is a loaded program: the entry module, the modules its imports
 // pulled in, the flattened whole, and the packages the capability layers
 // attribute to. `files` names each loaded module for a diagnostic, in load
-// order, which is the order of their line bases (util.pos_str); `maps` is each
-// module's line map, the entry's first (util.doc_diag). `err` is the line
-// `-check` prints when the program could not be loaded, and is empty when it
-// was.
+// order, which is the order of their line bases (util.pos_str); `maps` and
+// `srcs` are each module's line map and text, the entry's first
+// (util.doc_diag). `err` is the line `-check` prints when the program could
+// not be loaded, and is empty when it was.
 struct Bundle {
   entry: parser.Module,
   entry_ident: string,
@@ -2134,6 +2136,7 @@ struct Bundle {
   pkgs: caps.Pkg[],
   files: string[],
   maps: util.LineMap[],
+  srcs: string[],
   err: string,
 }
 
@@ -2306,9 +2309,10 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   let no_mods: flatten.LoadedModule[] = [];
   let no_files: string[] = [];
   let maps: util.LineMap[] = [s.maps[0]];
+  let srcs: string[] = [s.srcs[0]];
   let missing: string = emitforms.http_entry_refused(entry_mod, target, entry_display(entry_path));
   if (missing.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, err: missing };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, srcs: srcs, err: missing };
   }
 
   let q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [], importers: [], unrooted: "" }, entry_mod, entry_path, dir_slash, root, deps);
@@ -2340,7 +2344,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
         if (rm.err.len() > 0) {
           bad = rm.err_path;
         }
-        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, err: "fern: " + modloader.unresolved_import(ipath, importer, bad, rm.err) };
+        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: " + modloader.unresolved_import(ipath, importer, bad, rm.err) };
       }
       // A module's own imports resolve beside its file — a module in lib/
       // writing `import "./gnu"` means lib/gnu.fern — wherever it was found.
@@ -2357,6 +2361,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
       }
       files = files.append(shown);
       maps = maps.append(rm.map);
+      srcs = srcs.append(rm.src);
       // Identity is the FILE, not its basename: two modules can share a
       // basename (`std/sort` and `coreutils/sort`) and the bundler has
       // to tell them apart to give each its own prefix (#9762).
@@ -2369,12 +2374,12 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
     }
   }
   if (q.unrooted.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, err: "fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file" };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file" };
   }
   let entry_r: parser.Module = flatten.resolve_imports(entry_mod, dir_slash, root);
   let cycle: i32 = flatten.import_cycle(entry_r, loaded, root);
   if (cycle >= 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, err: "fern: import cycle detected including " + files[cycle] };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: import cycle detected including " + files[cycle] };
   }
   let merged: parser.Module = flatten.bundle(entry_r, loaded, target);
   // Fill omitted trailing args from default parameter values up front, so the
@@ -2384,7 +2389,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   // settle against until the bundle exists; parse_module resolved the
   // same-module ones already, and the pass is idempotent.
   merged = parser.resolve_variant_fields_module(merged);
-  return Bundle { entry: entry_r, entry_ident: flatten.module_ident(entry_path), root: root, loaded: loaded, merged: merged, pkgs: pkgs, files: files, maps: maps, err: "" };
+  return Bundle { entry: entry_r, entry_ident: flatten.module_ident(entry_path), root: root, loaded: loaded, merged: merged, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "" };
 }
 
 // Loaded is a program read for checking or building, and the findings that
@@ -2477,11 +2482,22 @@ function fold_embedded_assets(b: Bundle, embed_dir: string): (Bundle, Finding[])
 // check_source is `-check` on an entry's text: everything it reports, and its
 // verdict.
 function check_source(entry_path: string, src: string, open: modloader.Buffers, root: string, target: string, target_given: boolean, embed_dir: string): Checked {
+  return check_loaded(load_source(entry_path, src, open, root, target, embed_dir), entry_path, target, target_given);
+}
+
+// load_source is load_checked on an entry's text, which is refused before
+// anything loads when it is a literate document that does not tangle.
+function load_source(entry_path: string, src: string, open: modloader.Buffers, root: string, target: string, embed_dir: string): Loaded {
   let (s, err) = entry_sources(entry_path, src);
   if (err.len() > 0) {
-    return Checked { findings: [refusal(err)], entry: entry_path, files: [], maps: [], ok: false };
+    let none: parser.Module = parser.parse_module(lexer.tokenize(""));
+    return Loaded { b: Bundle { entry: none, entry_ident: "", root: root, loaded: [], merged: none, pkgs: [], files: [], maps: [], srcs: [], err: err }, refused: [refusal(err)] };
   }
-  let ld: Loaded = load_checked(Sources { ...s, open: open }, root, target, embed_dir);
+  return load_checked(Sources { ...s, open: open }, root, target, embed_dir);
+}
+
+// check_loaded is what `-check` reports for a program load_source read.
+function check_loaded(ld: Loaded, entry_path: string, target: string, target_given: boolean): Checked {
   if (ld.refused.len() > 0) {
     return Checked { findings: ld.refused, entry: entry_path, files: ld.b.files, maps: ld.b.maps, ok: false };
   }
@@ -3240,7 +3256,8 @@ function check_file(st: DiagStyle, entry_path: string, root: string, target: str
 
 // Server is `-lsp`'s state: what every document is checked against, as
 // `-check` takes it, and the text of each document the editor has open with
-// the diagnostics last published for it ("" before the first), by URI.
+// the diagnostics last published for it ("" before the first) and what its
+// last check loaded, by URI.
 struct Server {
   root: string,
   target: string,
@@ -3249,8 +3266,14 @@ struct Server {
   uris: string[],
   srcs: string[],
   published: string[],
+  docs: Doc[],
   shutdown: boolean,
 }
+
+// Doc is what a document's last check loaded, which the requests about it
+// answer from: the program, and the module files and line maps its positions
+// index, as Checked carries them. `loaded` is false when nothing loaded.
+struct Doc { loaded: boolean, prog: lspquery.Program, files: string[], maps: util.LineMap[] }
 
 // serve_lsp is `fern -lsp [stdlib-root]`; a build carrying its stdlib passes
 // it as `embedded_root` and takes no positional.
@@ -3262,13 +3285,15 @@ function serve_lsp(pos: string[], embedded_root: string, target: string, target_
   if (pos.len() == 1) {
     root = util.clean_path(pos[0]);
   }
-  return run_lsp(Server { root: root, target: target, target_given: target_given, embed_dir: embed_dir, uris: [], srcs: [], published: [], shutdown: false });
+  return run_lsp(Server { root: root, target: target, target_given: target_given, embed_dir: embed_dir, uris: [], srcs: [], published: [], docs: [], shutdown: false });
 }
 
 // run_lsp is a language server on stdin and stdout (lsp.fern is the wire),
 // until the client sends `exit` or hangs up. It publishes `-check`'s findings
-// for a document whenever the editor opens or changes it, and formats one as
-// `-fmt` would. The exit code is the spec's: 0 for an `exit` after
+// for a document whenever the editor opens or changes it, formats one as
+// `-fmt` would, and answers hover, go-to-definition (lspquery.fern),
+// completion, signature help, document symbols and inlay hints
+// (lspassist.fern). The exit code is the spec's: 0 for an `exit` after
 // `shutdown`, 1 for one without, and 2 for a stream that could not be framed.
 function run_lsp(s: Server): i32 {
   let inp: lsp.Input = lsp.stdin_input();
@@ -3311,6 +3336,10 @@ function lsp_handle(s: Server, m: lsp.Message): Server {
     lsp.send(lsp.response(m.id, "null"));
   } else if (m.method == "textDocument/formatting") {
     lsp.send(lsp.response(m.id, lsp_formatting(s, lsp.document_uri(m.params))));
+  } else if (lsp_answers(m.method)) {
+    let (next, result) = lsp_query(s, m);
+    s = next;
+    lsp.send(lsp.response(m.id, result));
   } else {
     lsp.send(lsp.method_not_found(m.id, m.method));
   }
@@ -3351,14 +3380,21 @@ function lsp_update(s: Server, uri: string, src: string): Server {
   if (i >= 0 && s.srcs[i] == src) {
     return s;
   }
-  if (i < 0) {
+  let opened: boolean = i < 0;
+  if (opened) {
     s = Server { ...s, uris: s.uris.append(uri), srcs: s.srcs.append(src), published: s.published.append("") };
     i = s.uris.len() - 1;
   } else {
     s = Server { ...s, srcs: s.srcs.with(i, src) };
   }
   let path: string = lsp_doc_path(uri);
-  let c: Checked = check_source(path, src, lsp_buffers(s), s.root, s.target, s.target_given, s.embed_dir);
+  let ld: Loaded = load_source(path, src, lsp_buffers(s), s.root, s.target, s.embed_dir);
+  let c: Checked = check_loaded(ld, path, s.target, s.target_given);
+  if (opened) {
+    s = Server { ...s, docs: s.docs.append(lsp_doc(ld)) };
+  } else {
+    s = Server { ...s, docs: s.docs.with(i, lsp_doc(ld)) };
+  }
   let files: string[] = lsp_checked_files(c, s.root);
   s = lsp_publish(s, i, lsp_diagnostics(c, files, path, src));
   let j: i32 = 0;
@@ -3429,17 +3465,288 @@ function lsp_close(s: Server, uri: string): Server {
   let uris: string[] = [];
   let srcs: string[] = [];
   let published: string[] = [];
+  let docs: Doc[] = [];
   let i: i32 = 0;
   while (i < s.uris.len()) {
     if (s.uris[i] != uri) {
       uris = uris.append(s.uris[i]);
       srcs = srcs.append(s.srcs[i]);
       published = published.append(s.published[i]);
+      docs = docs.append(s.docs[i]);
     }
     i = i + 1;
   }
   lsp.send(lsp.publish_diagnostics(uri, "[]"));
-  return Server { ...s, uris: uris, srcs: srcs, published: published };
+  return Server { ...s, uris: uris, srcs: srcs, published: published, docs: docs };
+}
+
+// lsp_doc keeps what load_source loaded for the requests that answer from it.
+function lsp_doc(ld: Loaded): Doc {
+  let b: Bundle = ld.b;
+  return Doc { loaded: b.err.len() == 0, prog: lspquery.program(b.merged, b.entry, b.loaded, b.srcs), files: b.files, maps: b.maps };
+}
+
+// lsp_query answers a request about a document — a hover, a definition,
+// completion, signature help, its outline or its inlay hints — from its last
+// check, building what requests read of that program on the first one. A
+// document that is not open, or did not load, has no answer (lsp_no_answer).
+function lsp_query(s: Server, m: lsp.Message): (Server, string) {
+  let uri: string = lsp.document_uri(m.params);
+  let i: i32 = util.index_of_str(s.uris, uri);
+  if (i < 0 || !s.docs[i].loaded) {
+    return (s, lsp_no_answer(m.method));
+  }
+  let d: Doc = Doc { ...s.docs[i], prog: lspquery.viewed(s.docs[i].prog) };
+  s = Server { ...s, docs: s.docs.with(i, d) };
+  let q: Asked = Asked { uri: uri, path: lsp_doc_path(uri), text: lsp.text_of(s.srcs[i]), d: d };
+  if (m.method == "textDocument/documentSymbol") {
+    return (s, lsp_symbols(q));
+  }
+  if (m.method == "textDocument/inlayHint") {
+    return (s, lsp_inlay_hints(q, m));
+  }
+  let (line, col) = lsp_request_position(q, m);
+  if (line <= 0) {
+    return (s, lsp_no_answer(m.method));
+  }
+  return (s, lsp_answer_at(s, q, m.method, line, col));
+}
+
+// Asked is the document a request names: its URI, path and text, and what its
+// last check loaded.
+struct Asked { uri: string, path: string, text: lsp.Text, d: Doc }
+
+// lsp_answers reports whether `method` is a request lsp_query answers.
+function lsp_answers(method: string): boolean {
+  return method == "textDocument/hover" || method == "textDocument/definition" || method == "textDocument/completion"
+    || method == "textDocument/signatureHelp" || method == "textDocument/documentSymbol" || method == "textDocument/inlayHint";
+}
+
+// lsp_no_answer is the answer to `method` when there is nothing to say: an
+// empty list for a request answered with one, else null.
+function lsp_no_answer(method: string): string {
+  if (method == "textDocument/completion") {
+    return lsp.completion_list([]);
+  }
+  if (method == "textDocument/documentSymbol" || method == "textDocument/inlayHint") {
+    return "[]";
+  }
+  return "null";
+}
+
+// lsp_request_position is the bundle position a position request names, or
+// line 0 when it names none the check read.
+function lsp_request_position(q: Asked, m: lsp.Message): (i32, i32) {
+  let (pl, pc) = lsp.position(m.params);
+  if (pl < 0) {
+    return (0, 0);
+  }
+  return lsp_into_bundle(q.d, q.path, pl + 1, lsp.byte_col(lsp.line_text(q.text, pl + 1), pc));
+}
+
+function lsp_answer_at(s: Server, q: Asked, method: string, line: i32, col: i32): string {
+  if (method == "textDocument/completion") {
+    return lsp_completion(lspassist.completion(q.d.prog, line, col));
+  }
+  if (method == "textDocument/signatureHelp") {
+    let sh: lspassist.Signature = lspassist.signature_help(q.d.prog, line, col);
+    if (!sh.found) {
+      return "null";
+    }
+    return lsp.signature_help(sh.label, sh.starts, sh.ends, sh.active);
+  }
+  if (method == "textDocument/hover") {
+    let h: lspquery.Answer = lspquery.hover(q.d.prog, line, col);
+    if (!h.found) {
+      return "null";
+    }
+    return lsp.hover_result(h.text, lsp_answer_range(q.d, q.text, h));
+  }
+  return lsp_definition(s, q, line, col);
+}
+
+function lsp_definition(s: Server, q: Asked, line: i32, col: i32): string {
+  let a: lspquery.Answer = lspquery.definition(q.d.prog, line, col);
+  if (!a.found) {
+    return "null";
+  }
+  let target: string = lsp_module_doc(s, q.d, util.pos_file_index(a.line), q.path);
+  if (target == q.path) {
+    return lsp.location(q.uri, lsp_answer_range(q.d, q.text, a));
+  }
+  return lsp.location(lsp.file_uri(target), lsp_answer_range(q.d, lsp.text_of(lsp_doc_text(s, target)), a));
+}
+
+function lsp_completion(items: lspassist.Item[]): string {
+  let out: string[] = [];
+  for it in items {
+    out = out.append(lsp.completion_item(it.label, it.kind, it.detail));
+  }
+  return lsp.completion_list(out);
+}
+
+// lsp_doc_modules is the modules of a check that were read from the document
+// at `path`: those tangled from it, for a literate document, else the entry.
+function lsp_doc_modules(d: Doc, path: string): i32[] {
+  if (d.maps.len() > 0 && d.maps[0].doc.len() == 0) {
+    return [0];
+  }
+  let out: i32[] = [];
+  let m: i32 = 0;
+  while (m < d.maps.len()) {
+    if (d.maps[m].doc == path) {
+      out = out.append(m);
+    }
+    m = m + 1;
+  }
+  return out;
+}
+
+function lsp_symbols(q: Asked): string {
+  let out: string[] = [];
+  for m in lsp_doc_modules(q.d, q.path) {
+    for sym in lspassist.symbols(q.d.prog, m) {
+      out = out.append(lsp_symbol(q, sym));
+    }
+  }
+  return lsp.json_array(out);
+}
+
+function lsp_symbol(q: Asked, sym: lspassist.Symbol): string {
+  let children: string[] = [];
+  for c in sym.children {
+    children = children.append(lsp_symbol(q, c));
+  }
+  let range: string = lsp_doc_span(q, sym.line, sym.col, sym.end_line, sym.end_col);
+  let selection: string = lsp_doc_span(q, sym.name_line, sym.name_col, sym.name_line, sym.name_col + sym.name.len());
+  return lsp.document_symbol(sym.name, sym.detail, sym.kind, range, selection, children);
+}
+
+// lsp_doc_span is the LSP range of the bundle span from `l0`, `c0` to `l1`,
+// `c1` in the requested document; an end with no document line is the start.
+function lsp_doc_span(q: Asked, l0: i32, c0: i32, l1: i32, c1: i32): string {
+  let a: util.Diag = util.doc_diag(q.d.maps, util.Diag { code: "", message: "", line: l0, col: c0 });
+  let b: util.Diag = util.doc_diag(q.d.maps, util.Diag { code: "", message: "", line: l1, col: c1 });
+  if (b.line == 0) {
+    b = a;
+  }
+  return lsp.span_between(q.text, util.pos_line(a.line), a.col, util.pos_line(b.line), b.col);
+}
+
+// lsp_inlay_hints is the inlay hints of the document in a request's range.
+function lsp_inlay_hints(q: Asked, m: lsp.Message): string {
+  let (l0, c0, l1, c1) = lsp.request_range(m.params);
+  let out: string[] = [];
+  if (l0 < 0) {
+    return lsp.json_array(out);
+  }
+  for mi in lsp_doc_modules(q.d, q.path) {
+    let (lo, hi) = lsp_bundle_lines(q.d, mi, l0 + 1, l1 + 1);
+    for h in lspassist.inlay_hints(q.d.prog, mi, lo, hi) {
+      let at: util.Diag = util.doc_diag(q.d.maps, util.Diag { code: "", message: "", line: h.line, col: h.col });
+      let (hl, hc) = lsp.lsp_position(q.text, util.pos_line(at.line), at.col);
+      if (at.line > 0 && lsp_in_range(hl, hc, l0, c0, l1, c1)) {
+        out = out.append(lsp.inlay_hint(hl, hc, h.label));
+      }
+    }
+  }
+  return lsp.json_array(out);
+}
+
+// lsp_bundle_lines is the first and last line of module `m` read from
+// document lines `first` to `last`; the first is past the last when none is.
+function lsp_bundle_lines(d: Doc, m: i32, first: i32, last: i32): (i32, i32) {
+  let base: i32 = util.line_base(m - 1);
+  if (d.maps[m].doc.len() == 0) {
+    return (base + first, base + last);
+  }
+  let lo: i32 = 0;
+  let hi: i32 = 0 - 1;
+  let k: i32 = 0;
+  while (k < d.maps[m].lits.len()) {
+    let lit: i32 = d.maps[m].lits[k];
+    if (lit >= first && lit <= last) {
+      if (hi < lo) {
+        lo = base + k + 1;
+      }
+      hi = base + k + 1;
+    }
+    k = k + 1;
+  }
+  return (lo, hi);
+}
+
+// lsp_in_range reports whether a position is in a range, both ends included.
+function lsp_in_range(line: i32, ch: i32, l0: i32, c0: i32, l1: i32, c1: i32): boolean {
+  if (line < l0 || line > l1) {
+    return false;
+  }
+  return !(line == l0 && ch < c0 || line == l1 && ch > c1);
+}
+
+// lsp_into_bundle is the bundle position of line `line`, byte column `col` of
+// the document at `path`: in a module tangled from it, for a literate
+// document, else in its entry. Line 0 when no module holds the position.
+function lsp_into_bundle(d: Doc, path: string, line: i32, col: i32): (i32, i32) {
+  let m: i32 = 0;
+  while (m < d.maps.len()) {
+    let lm: util.LineMap = d.maps[m];
+    if (lm.doc == path) {
+      let k: i32 = util.index_of_i32(lm.lits, line);
+      if (k >= 0) {
+        return (util.line_base(m - 1) + k + 1, col + lm.shifts[k]);
+      }
+    }
+    m = m + 1;
+  }
+  if (d.maps.len() > 0 && d.maps[0].doc.len() == 0) {
+    return (line, col);
+  }
+  return (0, 0);
+}
+
+// lsp_answer_range is the LSP range of an answer's span in `text`, the
+// document its module was read from.
+function lsp_answer_range(d: Doc, text: lsp.Text, a: lspquery.Answer): string {
+  let at: util.Diag = util.doc_diag(d.maps, util.Diag { code: "", message: "", line: a.line, col: a.col });
+  return lsp.span_range(text, util.pos_line(at.line), at.col, a.len);
+}
+
+// lsp_module_doc is the file module `m` of a check was read from — the
+// document it was tangled from, for a literate module — where `entry` is the
+// path of the document checked. A stdlib module is its file under the root.
+function lsp_module_doc(s: Server, d: Doc, m: i32, entry: string): string {
+  if (m < d.maps.len() && d.maps[m].doc.len() > 0) {
+    return d.maps[m].doc;
+  }
+  if (m == 0 || m > d.files.len()) {
+    return entry;
+  }
+  let f: string = d.files[m - 1];
+  let std: string = "stdlib://";
+  if (util.str_has_prefix(f, std)) {
+    return util.clean_path(s.root + "/" + slice_unchecked(f, std.len(), f.len()));
+  }
+  return util.clean_path(f);
+}
+
+// lsp_doc_text is the text of the file at `path`: its open document's, else
+// what is on disk, else "".
+function lsp_doc_text(s: Server, path: string): string {
+  let i: i32 = 0;
+  while (i < s.uris.len()) {
+    if (lsp_doc_path(s.uris[i]) == path) {
+      return s.srcs[i];
+    }
+    i = i + 1;
+  }
+  match (read_file(path)) {
+    Ok(text) => {
+      return text;
+    },
+    Err(_) => {}
+  }
+  return "";
 }
 
 // lsp_diagnostics is the findings of check `c` that are in file `path`, as
@@ -3448,12 +3755,13 @@ function lsp_close(s: Server, uri: string): Server {
 // (a literate module's is its document's), and one with no position is in
 // the entry.
 function lsp_diagnostics(c: Checked, files: string[], path: string, text: string): string[] {
+  let t: lsp.Text = lsp.text_of(text);
   let out: string[] = [];
   for f in c.findings {
     let d: util.Diag = util.doc_diag(c.maps, f.diag);
     let m: i32 = util.pos_file_index(d.line);
     if (m < files.len() && files[m] == path) {
-      out = out.append(lsp.diagnostic(text, util.pos_line(d.line), d.col, d.code, lsp_message(d.message), f.warning));
+      out = out.append(lsp.diagnostic(t, util.pos_line(d.line), d.col, d.code, lsp_message(d.message), f.warning));
     }
   }
   return out;

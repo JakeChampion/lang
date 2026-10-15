@@ -1,0 +1,916 @@
+// compiler/lspassist.fern — what `fern -lsp` answers a completion, signature
+// help, document symbol or inlay hint request from: the program lspquery.fern
+// keeps for a document, read through the same view, tokens and scopes a hover
+// reads. Positions are the bundle's, as there; lsp.fern is the wire.
+
+import "./ast";
+import "./astwalk";
+import "./checker";
+import "./flatten";
+import "./lexer";
+import "./lexical";
+import "./lspquery";
+import "./parser";
+import "./typeinfo";
+import "./util";
+
+// ---- Completion ----
+
+// Item is a completion item: the name offered, its LSP CompletionItemKind,
+// and the detail shown beside it ("" for none).
+pub struct Item { label: string, kind: i32, detail: string }
+
+const CI_METHOD: i32 = 2;
+
+const CI_FUNCTION: i32 = 3;
+
+const CI_FIELD: i32 = 5;
+
+const CI_VARIABLE: i32 = 6;
+
+const CI_ENUM: i32 = 13;
+
+const CI_KEYWORD: i32 = 14;
+
+const CI_ENUM_MEMBER: i32 = 20;
+
+const CI_CONSTANT: i32 = 21;
+
+const CI_STRUCT: i32 = 22;
+
+// completion is what may be written at `line`, `col`, sorted by label: after
+// a `.`, the members of what precedes it; elsewhere the bindings of the
+// enclosing function, the module's declarations, the built-in enums and the
+// keywords.
+pub function completion(p: lspquery.Program, line: i32, col: i32): Item[] {
+  let v: lspquery.View = lspquery.view_of(p);
+  let m: i32 = util.pos_file_index(line);
+  let toks: lspquery.Tok[] = lspquery.module_toks(p, m);
+  let quals: flatten.Qualifiers = lspquery.quals_of(v, m);
+  let dot: i32 = member_dot(toks, line, col);
+  if (dot >= 0) {
+    return sorted(members(v.types, toks, quals, m, dot));
+  }
+  let items: Item[] = [];
+  let f: i32 = enclosing(v.types.mod, toks, m, line, col);
+  if (f >= 0) {
+    items = bound_items(bound_in_func(v.types, v.types.mod.funcs[f]));
+  }
+  items = global_items(checker.module_scope(v.types), v.types.mod, m, quals.own, items);
+  for kw in lexer.keywords() {
+    items = items.append(Item { label: kw, kind: CI_KEYWORD, detail: "" });
+  }
+  return sorted(items);
+}
+
+// bound_items offers a function's bindings: those of its body first, then its
+// parameters, each described by its type.
+function bound_items(bs: Bound[]): Item[] {
+  let out: Item[] = [];
+  for b in bs {
+    if (!b.param && visible(b.name)) {
+      out = out.append(Item { label: b.name, kind: CI_VARIABLE, detail: type_text(b.t) });
+    }
+  }
+  for b in bs {
+    if (b.param && visible(b.name)) {
+      out = out.append(Item { label: b.name, kind: CI_VARIABLE, detail: "(parameter) " + type_text(b.t) });
+    }
+  }
+  return out;
+}
+
+// global_items offers module `m`'s functions, constants, structs and enums
+// with their variants, as the module writes them (`own` is its prefix in the
+// bundle), and the built-in Option and Result.
+function global_items(s: checker.Scope, mod: parser.Module, m: i32, own: string, own acc: Item[]): Item[] {
+  for fd in mod.funcs {
+    if (declared_in(fd.line, m) && offered_func(fd, fd.name)) {
+      acc = acc.append(func_item(s, fd.name, lspquery.unprefixed(fd.name, own)));
+    }
+  }
+  for sd in mod.structs {
+    if (declared_in(sd.line, m) && offered_struct(sd)) {
+      acc = acc.append(struct_item(sd, own));
+    }
+  }
+  for ed in mod.enums {
+    if (declared_in(ed.line, m)) {
+      acc = enum_items(s, ed.name, ed.variant_names, own, acc);
+    }
+  }
+  for name in ["Option", "Result"] {
+    acc = enum_items(s, name, checker.enum_sig(s, name).variants, "", acc);
+  }
+  return acc;
+}
+
+// offered_func: is `fd`, written `shown`, a free function completion offers?
+function offered_func(fd: parser.FuncDecl, shown: string): boolean {
+  return fd.receiver_type.len() == 0 && visible(shown);
+}
+
+// offered_struct: is `sd` a struct of its own, not an enum's variant?
+function offered_struct(sd: parser.StructDecl): boolean {
+  return sd.enum_owner.len() == 0 && visible(sd.name);
+}
+
+// struct_item offers struct `sd`, declared in the module bundled under
+// `prefix`.
+function struct_item(sd: parser.StructDecl, prefix: string): Item {
+  let shown: string = lspquery.unprefixed(sd.name, prefix);
+  return Item { label: shown, kind: CI_STRUCT, detail: "struct " + shown + lspquery.type_params(sd.type_params) };
+}
+
+function func_item(s: checker.Scope, name: string, shown: string): Item {
+  let sig: checker.FuncSig = checker.func_sig(s, name);
+  if (sig.is_const) {
+    return Item { label: shown, kind: CI_CONSTANT, detail: "(const) " + lspquery.label(sig.ret_type, sig.ret_type_name) };
+  }
+  return Item { label: shown, kind: CI_FUNCTION, detail: util.show_type_vars(lspquery.func_text(shown, sig)) };
+}
+
+// enum_items offers enum `name` and each of its variants.
+function enum_items(s: checker.Scope, name: string, variants: string[], own: string, own acc: Item[]): Item[] {
+  let shown: string = lspquery.unprefixed(name, own);
+  let module: string = checker.enum_sig(s, name).module;
+  acc = acc.append(Item { label: shown, kind: CI_ENUM, detail: "enum " + shown });
+  for vn in variants {
+    acc = acc.append(Item { label: lspquery.unprefixed(vn, module), kind: CI_ENUM_MEMBER, detail: lspquery.variant_text(s, vn, name) });
+  }
+  return acc;
+}
+
+// declared_in reports whether a declaration at bundle line `line` is in module
+// `m`; a declaration the front end synthesises has no line.
+function declared_in(line: i32, m: i32): boolean {
+  return line > 0 && util.pos_file_index(line) == m;
+}
+
+// visible reports whether a name is one a program writes: the front end's own
+// helpers and temporaries begin `__`.
+function visible(name: string): boolean {
+  return name.len() > 0 && !util.str_has_prefix(name, "__");
+}
+
+function type_text(t: typeinfo.Type): string {
+  return util.show_type_vars(checker.type_label(t));
+}
+
+// ---- Members ----
+
+// member_dot is the index of the `.` a completion at `line`, `col` follows,
+// past any of the member's name already written, or -1.
+function member_dot(toks: lspquery.Tok[], line: i32, col: i32): i32 {
+  let i: i32 = lspquery.after(toks, line, col) - 1;
+  if (i >= 0 && toks[i].ident && toks[i].line == line && col <= toks[i].col + toks[i].text.len()) {
+    i = i - 1;
+  }
+  if (i >= 1 && !toks[i].ident && toks[i].text == ".") {
+    return i;
+  }
+  return 0 - 1;
+}
+
+// members is what may follow the `.` at token `dot`: what a module exports
+// after its alias, an enum's variants after its name, else the fields and
+// methods of the value before it.
+function members(v: checker.QueryView, toks: lspquery.Tok[], quals: flatten.Qualifiers, m: i32, dot: i32): Item[] {
+  let s: checker.Scope = checker.module_scope(v);
+  let recv: lspquery.Tok = toks[dot - 1];
+  if (lspquery.names_something(recv, quals) && !lspquery.punct_before(toks, dot - 1, ".")) {
+    let a: i32 = util.index_of_str(quals.aliases, recv.text);
+    if (a >= 0) {
+      return export_items(s, v.mod, quals.prefixes[a]);
+    }
+    for c in own_first(quals.own, recv.text) {
+      let u: checker.UnionSig = checker.enum_sig(s, c);
+      if (u.is_enum) {
+        return variant_items(s, u);
+      }
+    }
+  }
+  return value_members(v, toks, m, dot);
+}
+
+// own_first is the bundled names a bare `name` written in a module with
+// prefix `own` may be: its own declaration's, then the name itself.
+function own_first(own: string, name: string): string[] {
+  if (own.len() > 0) {
+    return [own + "__" + name, name];
+  }
+  return [name];
+}
+
+// export_items is what the module bundled under `prefix` exports.
+function export_items(s: checker.Scope, mod: parser.Module, prefix: string): Item[] {
+  let out: Item[] = [];
+  let head: string = prefix + "__";
+  for fd in mod.funcs {
+    if (exported(fd.is_pub, fd.name, head) && offered_func(fd, lspquery.unprefixed(fd.name, prefix))) {
+      out = out.append(func_item(s, fd.name, lspquery.unprefixed(fd.name, prefix)));
+    }
+  }
+  for sd in mod.structs {
+    if (exported(sd.is_pub, sd.name, head) && offered_struct(sd)) {
+      out = out.append(struct_item(sd, prefix));
+    }
+  }
+  for ed in mod.enums {
+    if (exported(ed.is_pub, ed.name, head)) {
+      out = enum_items(s, ed.name, ed.variant_names, prefix, out);
+    }
+  }
+  return out;
+}
+
+// exported: is a declaration bundled as `name` a `pub` one of the module
+// whose names start with `head`?
+function exported(is_pub: boolean, name: string, head: string): boolean {
+  return is_pub && util.str_has_prefix(name, head);
+}
+
+function variant_items(s: checker.Scope, u: checker.UnionSig): Item[] {
+  let out: Item[] = [];
+  for vn in u.variants {
+    out = out.append(Item { label: lspquery.unprefixed(vn, u.module), kind: CI_ENUM_MEMBER, detail: lspquery.variant_text(s, vn, u.name) });
+  }
+  return out;
+}
+
+// value_members is the members of the value whose field access is written at
+// the `.` at token `dot`, as the checker types it there.
+function value_members(v: checker.QueryView, toks: lspquery.Tok[], m: i32, dot: i32): Item[] {
+  let d: lspquery.Tok = toks[dot];
+  let f: i32 = enclosing(v.mod, toks, m, d.line, d.col);
+  let out: Item[] = [];
+  if (f < 0) {
+    return out;
+  }
+  let fd: parser.FuncDecl = v.mod.funcs[f];
+  for st in fd.body {
+    for fa in astwalk.fold_stmt_nodes(st, [], skip_stmt, collect_access, astwalk.descend_all) {
+      if (fa.line == d.line && fa.col == d.col) {
+        let site: lspquery.Site = lspquery.access_site(fa);
+        let s: checker.Scope = lspquery.scope_at(v, fd, site);
+        return type_members(s, checker.expr_type(fa.obj, s));
+      }
+    }
+  }
+  // An access that does not parse yet: a name before the `.` that the
+  // function binds is typed as it is bound.
+  let recv: lspquery.Tok = toks[dot - 1];
+  let t: typeinfo.Type = bound_type(bound_in_func(v, fd), recv, d);
+  if (recv.ident && known(t)) {
+    return type_members(checker.func_scope(v, fd), t);
+  }
+  return out;
+}
+
+// bound_type is the type of the last of `bs` named as `name` is that is not a
+// `let` coming after `at`.
+function bound_type(bs: Bound[], name: lspquery.Tok, at: lspquery.Tok): typeinfo.Type {
+  let t: typeinfo.Type = typeinfo.TypeUnknown { reason: "unbound" };
+  for b in bs {
+    if (b.name == name.text && (b.let_line == 0 || before(b.let_line, b.let_col, at.line, at.col))) {
+      t = b.t;
+    }
+  }
+  return t;
+}
+
+function collect_access(e: ast.Expr, own acc: ast.ExprFieldAccess[]): ast.ExprFieldAccess[] {
+  if let ast.ExprFieldAccess(fa) = e {
+    return acc.append(fa);
+  }
+  return acc;
+}
+
+function skip_stmt(st: ast.Stmt, own acc: ast.ExprFieldAccess[]): ast.ExprFieldAccess[] {
+  return acc;
+}
+
+// type_members is the fields of a struct and the methods of any type: those
+// declared on it, std/array's for an array, and the built-in ones.
+function type_members(s: checker.Scope, t: typeinfo.Type): Item[] {
+  let out: Item[] = [];
+  if let typeinfo.TypeStruct(st) = t {
+    let sig: checker.StructSig = checker.struct_sig(s, st.name);
+    let i: i32 = 0;
+    while (i < sig.field_names.len()) {
+      out = out.append(Item { label: sig.field_names[i], kind: CI_FIELD, detail: lspquery.label(sig.field_types[i], sig.field_type_names[i]) });
+      i = i + 1;
+    }
+  }
+  if let typeinfo.TypeArray(a) = t {
+    return array_members(s, a, out);
+  }
+  let recv: string = checker.receiver_key(t);
+  if (recv.len() == 0) {
+    return out;
+  }
+  for ms in checker.methods_on(s, recv) {
+    out = out.append(method_item(ms.name, lspquery.method_parts(ms)));
+  }
+  for name in checker.builtin_method_names(recv) {
+    out = out.append(method_item(name, lspquery.builtin_parts(recv, name)));
+  }
+  return out;
+}
+
+function array_members(s: checker.Scope, a: typeinfo.TypeArray, own out: Item[]): Item[] {
+  for name in checker.array_method_names(s) {
+    out = out.append(method_item(name, lspquery.array_parts(s, a, name)));
+  }
+  return out.append(method_item("len", lspquery.array_parts(s, a, "len")));
+}
+
+function method_item(name: string, parts: lspquery.Parts): Item {
+  return Item { label: name, kind: CI_METHOD, detail: util.show_type_vars(lspquery.parts_text(name, parts)) };
+}
+
+// ---- The enclosing function ----
+
+// enclosing is the index in `mod.funcs` of the function of module `m` whose
+// declaration holds `line`, `col` — the latest one to start before it, when
+// its body has not closed — or -1.
+function enclosing(mod: parser.Module, toks: lspquery.Tok[], m: i32, line: i32, col: i32): i32 {
+  let best: i32 = 0 - 1;
+  let i: i32 = 0;
+  while (i < mod.funcs.len()) {
+    let fd: parser.FuncDecl = mod.funcs[i];
+    if (declared_in(fd.line, m) && before(fd.line, fd.col, line, col) && (best < 0 || before(mod.funcs[best].line, mod.funcs[best].col, fd.line, fd.col))) {
+      best = i;
+    }
+    i = i + 1;
+  }
+  if (best < 0) {
+    return best;
+  }
+  let close: i32 = lspquery.body_end(toks, lspquery.after(toks, mod.funcs[best].line, mod.funcs[best].col));
+  if (close < 0 || before(toks[close].line, toks[close].col, line, col)) {
+    return 0 - 1;
+  }
+  return best;
+}
+
+// before reports whether `l0`, `c0` comes strictly before `l1`, `c1`.
+function before(l0: i32, c0: i32, l1: i32, c1: i32): boolean {
+  return l0 < l1 || l0 == l1 && c0 < c1;
+}
+
+// ---- Bindings ----
+
+// Bound is a name a function binds, as written, with its type: a parameter
+// (of the function or of a lambda in it), or a binding of its body — for a
+// `let`, with the statement's position and whether it annotates the type.
+struct Bound { name: string, t: typeinfo.Type, param: boolean, let_line: i32, let_col: i32, annotated: boolean }
+
+// bound_in_func is every name `fd` binds, typed as the checker types it where
+// it is bound: the receiver and parameters, then each binding of the body.
+function bound_in_func(v: checker.QueryView, fd: parser.FuncDecl): Bound[] {
+  let s: checker.Scope = checker.func_scope(v, fd);
+  return bound_in(fd.body, s, added(0, s, true, 0, 0, true, []));
+}
+
+// added is the bindings `s` holds past its first `from`.
+function added(from: i32, s: checker.Scope, param: boolean, line: i32, col: i32, annotated: boolean, own acc: Bound[]): Bound[] {
+  let i: i32 = from;
+  while (i < s.names.len()) {
+    acc = acc.append(Bound { name: lexical.source_name(s.names[i]), t: s.types[i], param: param, let_line: line, let_col: col, annotated: annotated });
+    i = i + 1;
+  }
+  return acc;
+}
+
+function bound_in(stmts: ast.Stmt[], s: checker.Scope, own acc: Bound[]): Bound[] {
+  for st in stmts {
+    acc = bound_in_stmt(st, s, acc);
+    let next: checker.Scope = checker.bind_stmt(st, s);
+    if let ast.StmtVar(vr) = st {
+      acc = added(s.names.len(), next, false, vr.line, vr.col, vr.type_name.len() > 0, acc);
+    } else {
+      acc = added(s.names.len(), next, false, 0, 0, true, acc);
+    }
+    s = next;
+  }
+  return acc;
+}
+
+// bound_in_stmt is the bindings of the blocks, arms, loops and lambdas `st`
+// holds, each walked in the scope the checker walks it in.
+function bound_in_stmt(st: ast.Stmt, s: checker.Scope, own acc: Bound[]): Bound[] {
+  match (st) {
+    ast.StmtIf(f) => {
+      return bound_in(f.else_body, s, bound_in(f.then_body, s, bound_in_expr(f.cond, s, acc)));
+    },
+    ast.StmtWhile(w) => {
+      return bound_in(w.body, s, bound_in_expr(w.cond, s, acc));
+    },
+    ast.StmtFor(fo) => {
+      let inner: checker.Scope = checker.for_body_scope(fo, s);
+      return bound_in(fo.body, inner, added(s.names.len(), inner, false, 0, 0, true, bound_in_expr(fo.iter, s, acc)));
+    },
+    ast.StmtMatch(m) => {
+      return bound_in_arms(m, s, bound_in_expr(m.scrutinee, s, acc));
+    },
+    ast.StmtDefer(d) => {
+      return bound_in_stmt(d.action, s, acc);
+    },
+    ast.StmtVar(vr) => {
+      return bound_in_expr(vr.init, s, acc);
+    },
+    ast.StmtReturn(r) => {
+      return bound_in_expr(r.value, s, acc);
+    },
+    ast.StmtExpr(x) => {
+      return bound_in_expr(x.value, s, acc);
+    },
+    ast.StmtAssign(a) => {
+      return bound_in_expr(a.value, s, acc);
+    },
+    _ => {
+      return acc;
+    }
+  }
+  return acc;
+}
+
+function bound_in_arms(m: ast.StmtMatch, s: checker.Scope, own acc: Bound[]): Bound[] {
+  let whole: typeinfo.Type = checker.expr_type(m.scrutinee, s);
+  for arm in m.arms {
+    let a: checker.Scope = checker.arm_scope(arm, s, whole);
+    acc = added(s.names.len(), a, false, 0, 0, true, acc);
+    if (arm.has_guard) {
+      acc = bound_in_expr(arm.guard, a, acc);
+    }
+    acc = bound_in(arm.body, a, acc);
+  }
+  return acc;
+}
+
+// bound_in_expr is the bindings of each lambda `e` holds: its parameters and
+// its body's.
+function bound_in_expr(e: ast.Expr, s: checker.Scope, own acc: Bound[]): Bound[] {
+  for lm in lspquery.lambdas(e) {
+    let inner: checker.Scope = checker.lambda_body_scope(lm, s);
+    acc = bound_in(lm.body, inner, added(s.names.len(), inner, true, 0, 0, true, acc));
+  }
+  return acc;
+}
+
+// ---- Signature help ----
+
+// Signature is the signature of the call a position is in: its label, the
+// byte span of each parameter's in it, and the parameter the position is on.
+pub struct Signature { found: boolean, label: string, starts: i32[], ends: i32[], active: i32 }
+
+// signature_help is the signature of the innermost call whose argument list
+// holds `line`, `col`: a function's, a module's function's or a method's.
+pub function signature_help(p: lspquery.Program, line: i32, col: i32): Signature {
+  let none: Signature = Signature { found: false, label: "", starts: [], ends: [], active: 0 };
+  let v: lspquery.View = lspquery.view_of(p);
+  let m: i32 = util.pos_file_index(line);
+  let toks: lspquery.Tok[] = lspquery.module_toks(p, m);
+  let quals: flatten.Qualifiers = lspquery.quals_of(v, m);
+  let (callee, commas) = call_at(toks, line, col);
+  if (callee < 0 || !lspquery.names_something(toks[callee], quals)) {
+    return none;
+  }
+  let (name, parts) = callee_parts(v.types, toks, quals, callee);
+  if (!parts.found) {
+    return none;
+  }
+  return signature(name, parts, commas);
+}
+
+// call_at is the index of the name a call whose argument list holds `line`,
+// `col` is made through — the token before its unmatched `(` — and how many of
+// its arguments come before the position; -1 when the position is in no
+// argument list, or in a block or brackets inside one.
+function call_at(toks: lspquery.Tok[], line: i32, col: i32): (i32, i32) {
+  let depth: i32 = 0;
+  let commas: i32 = 0;
+  let i: i32 = lspquery.after(toks, line, col) - 1;
+  while (i >= 0) {
+    let t: string = punct(toks[i]);
+    if (closes(t)) {
+      depth = depth + 1;
+    } else if (opens(t)) {
+      if (depth == 0) {
+        if (t == "(" && i > 0) {
+          return (i - 1, commas);
+        }
+        return (0 - 1, 0);
+      }
+      depth = depth - 1;
+    } else if (t == "," && depth == 0) {
+      commas = commas + 1;
+    }
+    i = i - 1;
+  }
+  return (0 - 1, 0);
+}
+
+function opens(t: string): boolean {
+  return t == "(" || t == "[" || t == "{";
+}
+
+function closes(t: string): boolean {
+  return t == ")" || t == "]" || t == "}";
+}
+
+function punct(t: lspquery.Tok): string {
+  if (t.ident) {
+    return "";
+  }
+  return t.text;
+}
+
+// callee_parts is the name written at token `i` and the signature of what it
+// calls there: what the syntax tree has at it, or when the tree has nothing
+// there (the call does not parse), the function its spelling names.
+function callee_parts(v: checker.QueryView, toks: lspquery.Tok[], quals: flatten.Qualifiers, i: i32): (string, lspquery.Parts) {
+  let t: lspquery.Tok = toks[i];
+  let (site, ok) = lspquery.site_at(toks, quals, t.line, t.col);
+  if (!ok) {
+    return (t.text, lspquery.no_parts());
+  }
+  let (parts, located) = lspquery.call_parts(v, site);
+  if (located) {
+    return (t.text, parts);
+  }
+  let s: checker.Scope = checker.module_scope(v);
+  if (site.qual.len() > 0) {
+    return (t.text, lspquery.func_parts(checker.func_sig(s, site.target)));
+  }
+  if (site.dot_col > 0) {
+    return (t.text, lspquery.no_parts());
+  }
+  for c in own_first(quals.own, t.text) {
+    let sig: checker.FuncSig = checker.func_sig(s, c);
+    if (sig.name.len() > 0 && !sig.is_const) {
+      return (t.text, lspquery.func_parts(sig));
+    }
+  }
+  return (t.text, lspquery.no_parts());
+}
+
+// signature lays out `function name(p1, p2): ret`, marking each parameter's
+// span, with the parameter after `commas` commas active — the last one, when
+// there are more arguments than parameters.
+function signature(name: string, parts: lspquery.Parts, commas: i32): Signature {
+  let label: string = "function " + name + "(";
+  let starts: i32[] = [];
+  let ends: i32[] = [];
+  let i: i32 = 0;
+  while (i < parts.params.len()) {
+    if (i > 0) {
+      label = label + ", ";
+    }
+    let shown: string = util.show_type_vars(parts.params[i]);
+    starts = starts.append(label.len());
+    label = label + shown;
+    ends = ends.append(label.len());
+    i = i + 1;
+  }
+  let active: i32 = commas;
+  if (active >= parts.params.len()) {
+    active = parts.params.len() - 1;
+  }
+  if (active < 0) {
+    active = 0;
+  }
+  return Signature { found: true, label: label + "): " + util.show_type_vars(parts.ret), starts: starts, ends: ends, active: active };
+}
+
+// ---- Document symbols ----
+
+// Symbol is an outline entry: a declaration's name, detail and LSP
+// SymbolKind, the bundle span of the whole declaration — from `line`, `col` to
+// just past `end_line`, `end_col` — and of its name, and its members.
+pub struct Symbol { name: string, detail: string, kind: i32, line: i32, col: i32, end_line: i32, end_col: i32, name_line: i32, name_col: i32, children: Symbol[] }
+
+const SK_METHOD: i32 = 6;
+
+const SK_FIELD: i32 = 8;
+
+const SK_ENUM: i32 = 10;
+
+const SK_FUNCTION: i32 = 12;
+
+const SK_CONSTANT: i32 = 14;
+
+const SK_ENUM_MEMBER: i32 = 22;
+
+const SK_STRUCT: i32 = 23;
+
+// symbols is module `m`'s outline: its functions and methods, structs with
+// their fields, enums with their variants, and constants, as it declares them.
+pub function symbols(p: lspquery.Program, m: i32): Symbol[] {
+  let mod: parser.Module = lspquery.parsed_module(p, m);
+  let toks: lspquery.Tok[] = lspquery.module_toks(p, m);
+  return type_symbols(p, m, mod, toks, func_symbols(mod, toks));
+}
+
+// func_symbols is a module's functions and methods.
+function func_symbols(mod: parser.Module, toks: lspquery.Tok[]): Symbol[] {
+  let out: Symbol[] = [];
+  for fd in mod.funcs {
+    if (!fd.is_const && visible(fd.name)) {
+      let kind: i32 = SK_FUNCTION;
+      if (fd.receiver_type.len() > 0) {
+        kind = SK_METHOD;
+      }
+      out = out.append(decl_symbol(toks, fd.line, fd.col, fd.name, decl_sig(fd), kind, false));
+    }
+  }
+  return out;
+}
+
+// type_symbols adds a module's structs, enums and constants to `out`.
+function type_symbols(p: lspquery.Program, m: i32, mod: parser.Module, toks: lspquery.Tok[], own out: Symbol[]): Symbol[] {
+  for sd in mod.structs {
+    if (sd.enum_owner.len() == 0 && visible(sd.name)) {
+      out = out.append(struct_symbol(toks, sd));
+    }
+  }
+  for ed in mod.enums {
+    if (ed.line > 0) {
+      out = out.append(enum_symbol(toks, ed));
+    }
+  }
+  for fd in mod.funcs {
+    if (fd.is_const && visible(fd.name)) {
+      out = out.append(decl_symbol(toks, fd.line, fd.col, fd.name, const_type(p, m, fd), SK_CONSTANT, true));
+    }
+  }
+  return out;
+}
+
+// decl_symbol is the declaration at `line`, `col` that declares `name`: from
+// its `pub`, if any, to the end of its body, or of its `;` for a `statement`.
+function decl_symbol(toks: lspquery.Tok[], line: i32, col: i32, name: string, detail: string, kind: i32, statement: boolean): Symbol {
+  let start: i32 = lspquery.after(toks, line, col);
+  if (start > 0 && toks[start - 1].text == "pub" && !toks[start - 1].ident) {
+    start = start - 1;
+  }
+  let at: i32 = lspquery.first_ident(toks, start, name);
+  let end: i32 = 0 - 1;
+  if (statement) {
+    end = statement_end(toks, start);
+  } else {
+    end = lspquery.body_end(toks, start);
+  }
+  if (end < 0) {
+    end = statement_end(toks, start);
+  }
+  let s: Symbol = Symbol { name: name, detail: detail, kind: kind, line: line, col: col, end_line: line, end_col: col + 1, name_line: line, name_col: col, children: [] };
+  if (start < toks.len()) {
+    s = Symbol { ...s, line: toks[start].line, col: toks[start].col };
+  }
+  if (at >= 0) {
+    s = Symbol { ...s, name_line: toks[at].line, name_col: toks[at].col };
+  }
+  if (end >= 0) {
+    s = Symbol { ...s, end_line: toks[end].line, end_col: toks[end].col + tok_len(toks[end]) };
+  }
+  return s;
+}
+
+function tok_len(t: lspquery.Tok): i32 {
+  if (t.text.len() > 0) {
+    return t.text.len();
+  }
+  return 1;
+}
+
+// statement_end is the index of the `;` ending the declaration whose tokens
+// start at `from`, or -1.
+function statement_end(toks: lspquery.Tok[], from: i32): i32 {
+  let depth: i32 = 0;
+  let i: i32 = from;
+  while (i < toks.len()) {
+    let t: string = punct(toks[i]);
+    if (t == "(" || t == "[" || t == "{") {
+      depth = depth + 1;
+    } else if (t == ")" || t == "]" || t == "}") {
+      depth = depth - 1;
+    } else if (t == ";" && depth == 0) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// member_symbol is a field's or variant's entry: the name, alone.
+function member_symbol(toks: lspquery.Tok[], i: i32, name: string, detail: string, kind: i32): Symbol {
+  let t: lspquery.Tok = toks[i];
+  return Symbol { name: name, detail: detail, kind: kind, line: t.line, col: t.col, end_line: t.line, end_col: t.col + name.len(), name_line: t.line, name_col: t.col, children: [] };
+}
+
+function struct_symbol(toks: lspquery.Tok[], sd: parser.StructDecl): Symbol {
+  let s: Symbol = decl_symbol(toks, sd.line, sd.col, sd.name, "struct", SK_STRUCT, false);
+  let open: i32 = lspquery.after(toks, s.name_line, s.name_col);
+  let fields: Symbol[] = [];
+  for f in sd.fields {
+    let i: i32 = lspquery.field_tok(toks, open, f.name);
+    if (i >= 0) {
+      fields = fields.append(member_symbol(toks, i, f.name, util.show_type_vars(f.type_name), SK_FIELD));
+    }
+  }
+  return Symbol { ...s, children: fields };
+}
+
+function enum_symbol(toks: lspquery.Tok[], ed: parser.EnumDecl): Symbol {
+  let s: Symbol = decl_symbol(toks, ed.line, ed.col, ed.name, "enum", SK_ENUM, false);
+  let from: i32 = lspquery.after(toks, s.name_line, s.name_col) + 1;
+  let variants: Symbol[] = [];
+  for vn in ed.variant_names {
+    let i: i32 = variant_tok(toks, from, vn);
+    if (i >= 0) {
+      variants = variants.append(member_symbol(toks, i, vn, "", SK_ENUM_MEMBER));
+    }
+  }
+  return Symbol { ...s, children: variants };
+}
+
+// variant_tok is the index of the variant `name` declared at the top level of
+// the enum body that token `from` is in or before, or -1.
+function variant_tok(toks: lspquery.Tok[], from: i32, name: string): i32 {
+  let depth: i32 = 0;
+  let i: i32 = from;
+  while (i < toks.len()) {
+    let t: string = punct(toks[i]);
+    if (t == "(" || t == "{") {
+      depth = depth + 1;
+    } else if (t == ")" || t == "}") {
+      depth = depth - 1;
+      if (depth <= 0) {
+        return 0 - 1;
+      }
+    } else if (depth == 1 && toks[i].ident && toks[i].text == name) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// decl_sig is `function name(T1, T2): R` as the declaration spells it.
+function decl_sig(fd: parser.FuncDecl): string {
+  let ps: string[] = [];
+  for pd in fd.params {
+    ps = ps.append(pd.type_name);
+  }
+  let ret: string = fd.ret_type;
+  if (ret.len() == 0) {
+    ret = "void";
+  }
+  return util.show_type_vars(lspquery.parts_text(fd.name, lspquery.Parts { found: true, params: ps, ret: ret }));
+}
+
+// const_type is constant `fd`'s type: as written, else as the checker infers
+// it from the value.
+function const_type(p: lspquery.Program, m: i32, fd: parser.FuncDecl): string {
+  if (fd.ret_type.len() > 0) {
+    return util.show_type_vars(fd.ret_type);
+  }
+  let v: lspquery.View = lspquery.view_of(p);
+  let own: string = lspquery.quals_of(v, m).own;
+  let bundled: string = fd.name;
+  if (own.len() > 0) {
+    bundled = own + "__" + fd.name;
+  }
+  return type_text(checker.func_sig(checker.module_scope(v.types), bundled).ret_type);
+}
+
+// ---- Inlay hints ----
+
+// Hint is an inlay hint: the type `label` shown at `line`, `col`, just past
+// the name it describes.
+pub struct Hint { line: i32, col: i32, label: string }
+
+// inlay_hints is the type of each `let` of module `m` that does not write one,
+// for the functions that reach into lines `lo` to `hi`.
+pub function inlay_hints(p: lspquery.Program, m: i32, lo: i32, hi: i32): Hint[] {
+  let v: lspquery.View = lspquery.view_of(p);
+  let toks: lspquery.Tok[] = lspquery.module_toks(p, m);
+  let quals: flatten.Qualifiers = lspquery.quals_of(v, m);
+  let out: Hint[] = [];
+  for fd in v.types.mod.funcs {
+    if (declared_in(fd.line, m) && fd.line <= hi) {
+      let close: i32 = lspquery.body_end(toks, lspquery.after(toks, fd.line, fd.col));
+      if (close >= 0 && toks[close].line >= lo) {
+        out = func_hints(toks, quals, bound_in_func(v.types, fd), out);
+      }
+    }
+  }
+  return out;
+}
+
+// func_hints adds a hint for each of a function's `let` bindings whose type
+// was inferred, at most one at a position: a generic function's instances
+// share their declaration's positions.
+function func_hints(toks: lspquery.Tok[], quals: flatten.Qualifiers, bs: Bound[], own out: Hint[]): Hint[] {
+  for b in bs {
+    if (b.let_line > 0 && !b.annotated && visible(b.name) && known(b.t)) {
+      let i: i32 = lspquery.first_ident(toks, lspquery.after(toks, b.let_line, b.let_col), b.name);
+      if (i >= 0 && !hinted(out, toks[i].line, toks[i].col + b.name.len())) {
+        out = out.append(Hint { line: toks[i].line, col: toks[i].col + b.name.len(), label: ": " + written(quals, type_text(b.t)) });
+      }
+    }
+  }
+  return out;
+}
+
+// written is a type label as the module whose qualifiers are `q` writes it:
+// a bundled name `prefix__Name` of a module it imports as `alias.Name`, and
+// one of its own as `Name`.
+function written(q: flatten.Qualifiers, label: string): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < label.len()) {
+    let j: i32 = i;
+    while (j < label.len() && word_byte(label[j])) {
+      j = j + 1;
+    }
+    if (j == i) {
+      j = i + 1;
+    }
+    out = out + written_name(q, slice_unchecked(label, i, j) + "");
+    i = j;
+  }
+  return out;
+}
+
+function written_name(q: flatten.Qualifiers, name: string): string {
+  let k: i32 = 0;
+  while (k < q.prefixes.len()) {
+    let p: string = q.prefixes[k] + "__";
+    if (util.str_has_prefix(name, p)) {
+      return q.aliases[k] + "." + slice_unchecked(name, p.len(), name.len());
+    }
+    k = k + 1;
+  }
+  return lspquery.unprefixed(name, q.own);
+}
+
+function word_byte(b: u8): boolean {
+  return b == b'_' || b >= b'a' && b <= b'z' || b >= b'A' && b <= b'Z' || b >= b'0' && b <= b'9';
+}
+
+function known(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeUnknown(_) = t {
+    return false;
+  }
+  return true;
+}
+
+function hinted(hs: Hint[], line: i32, col: i32): boolean {
+  for h in hs {
+    if (h.line == line && h.col == col) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// ---- Sorting ----
+
+// sorted is `items` in byte order of their labels, items with equal labels in
+// the order given.
+function sorted(items: Item[]): Item[] {
+  if (items.len() < 2) {
+    return items;
+  }
+  let mid: i32 = items.len() / 2;
+  return merged(sorted(part(items, 0, mid)), sorted(part(items, mid, items.len())));
+}
+
+function part(items: Item[], from: i32, to: i32): Item[] {
+  let out: Item[] = [];
+  let i: i32 = from;
+  while (i < to) {
+    out = out.append(items[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+function merged(a: Item[], b: Item[]): Item[] {
+  let out: Item[] = [];
+  let i: i32 = 0;
+  let j: i32 = 0;
+  while (i < a.len() || j < b.len()) {
+    if (j >= b.len() || i < a.len() && !util.str_less(b[j].label, a[i].label)) {
+      out = out.append(a[i]);
+      i = i + 1;
+    } else {
+      out = out.append(b[j]);
+      j = j + 1;
+    }
+  }
+  return out;
+}

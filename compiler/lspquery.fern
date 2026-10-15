@@ -1,0 +1,1151 @@
+// compiler/lspquery.fern — what `fern -lsp` answers a hover or a
+// go-to-definition request from: the bundle a document's check loaded and the
+// self-host checker's view of it, whose tokens, scopes and signatures
+// lspassist.fern answers the other requests with. Positions here are the
+// bundle's, a module's lines numbered from its base (util.line_base), so the
+// server maps a request into them and an answer out of them; lsp.fern is the
+// wire.
+//
+// The name under the cursor is found among the module's tokens, then read off
+// the syntax tree at that token's position: an identifier, a qualified
+// `alias.name`, a field or method after a `.`, or a struct literal's type. A
+// name no tree node is positioned at is a type written in an annotation.
+
+import "./ast";
+import "./astwalk";
+import "./checker";
+import "./flatten";
+import "./lexer";
+import "./lexical";
+import "./parser";
+import "./typeinfo";
+import "./util";
+
+// Program is what a document's check loaded: the bundle, its entry and the
+// modules it imports, and each module's text, indexed as util.pos_file_index
+// numbers modules; and what requests read of it, built by `viewed` on first
+// use.
+pub struct Program { merged: parser.Module, entry: parser.Module, loaded: flatten.LoadedModule[], srcs: string[], view: Option[View] }
+
+// View is the checker's view of a program and how each of its modules names
+// the others.
+pub struct View { types: checker.QueryView, quals: flatten.Qualifiers[] }
+
+pub function program(merged: parser.Module, entry: parser.Module, loaded: flatten.LoadedModule[], srcs: string[]): Program {
+  return Program { merged: merged, entry: entry, loaded: loaded, srcs: srcs, view: None };
+}
+
+pub function viewed(p: Program): Program {
+  if let Some(_) = p.view {
+    return p;
+  }
+  return Program { ...p, view: Some(view_of(p)) };
+}
+
+pub function view_of(p: Program): View {
+  if let Some(v) = p.view {
+    return v;
+  }
+  return View { types: checker.query_view(p.merged), quals: flatten.bundle_qualifiers(p.entry, p.loaded) };
+}
+
+// Answer is a request's answer: a hover's `text`, and the `len` bytes at
+// `line`, `col` — the name hovered, or the declaration a definition names.
+pub struct Answer { found: boolean, text: string, line: i32, col: i32, len: i32 }
+
+function no_answer(): Answer {
+  return Answer { found: false, text: "", line: 0, col: 0, len: 0 };
+}
+
+// hover describes the name at `line`, `col` as the Go server's hover does.
+pub function hover(p: Program, line: i32, col: i32): Answer {
+  let (q, ok) = query(p, line, col);
+  if (!ok) {
+    return no_answer();
+  }
+  let text: string = "";
+  if (q.f.kind == K_NONE) {
+    text = type_ref_text(checker.module_scope(q.v), type_candidates(q));
+  } else {
+    let fd: parser.FuncDecl = q.v.mod.funcs[q.f.fd];
+    text = node_text(scope_at(q.v, fd, q.site), fd, q.f, q.site);
+  }
+  if (text.len() == 0) {
+    return no_answer();
+  }
+  return Answer { found: true, text: util.show_type_vars(text), line: q.site.line, col: q.site.col, len: q.site.len };
+}
+
+// definition is where the name at `line`, `col` is declared: its name in that
+// declaration.
+pub function definition(p: Program, line: i32, col: i32): Answer {
+  let (q, ok) = query(p, line, col);
+  if (!ok) {
+    return no_answer();
+  }
+  if (q.f.kind == K_NONE) {
+    return type_def(p, q.v, checker.module_scope(q.v), type_candidates(q));
+  }
+  let fd: parser.FuncDecl = q.v.mod.funcs[q.f.fd];
+  return node_def(p, q.v, scope_at(q.v, fd, q.site), fd, q.f, q.site);
+}
+
+// Query is a request read against a program: the checker's view of it, the
+// name at the position, how that name's module names others, and the node
+// naming it (K_NONE for a type written in an annotation).
+struct Query { v: checker.QueryView, site: Site, quals: flatten.Qualifiers, f: Found }
+
+function query(p: Program, line: i32, col: i32): (Query, boolean) {
+  let view: View = view_of(p);
+  let m: i32 = util.pos_file_index(line);
+  let quals: flatten.Qualifiers = quals_of(view, m);
+  let (site, ok) = site_at(module_toks(p, m), quals, line, col);
+  return (Query { v: view.types, site: site, quals: quals, f: locate(view.types, site) }, ok);
+}
+
+// ---- Tokens ----
+
+// Tok is a token as the locator reads it: its spelling (an identifier's name,
+// a keyword's or punctuation's text, "" for a literal), whether it is an
+// identifier, and where it starts.
+pub struct Tok { text: string, ident: boolean, line: i32, col: i32 }
+
+// module_toks is module `m`'s tokens, numbered as the bundle numbers its
+// lines; an f-string's interpolants are lexed in place.
+pub function module_toks(p: Program, m: i32): Tok[] {
+  let out: Tok[] = [];
+  if (m < 0 || m >= p.srcs.len()) {
+    return out;
+  }
+  // Module m's lines follow util.line_base(m - 1): the entry's start at 1.
+  for t in lexer.tokenize_from(p.srcs[m], util.line_base(m - 1) + 1) {
+    out = append_tok(out, t);
+  }
+  return out;
+}
+
+// parsed_module is module `m` as it was parsed, its names unprefixed.
+pub function parsed_module(p: Program, m: i32): parser.Module {
+  if (m > 0 && m <= p.loaded.len()) {
+    return p.loaded[m - 1].mod;
+  }
+  return p.entry;
+}
+
+function append_tok(own out: Tok[], t: lexer.Token): Tok[] {
+  match (t) {
+    lexer.TokIdent(i) => {
+      return out.append(Tok { text: i.name, ident: true, line: i.line, col: i.col });
+    },
+    lexer.TokKeyword(k) => {
+      return out.append(Tok { text: k.name, ident: false, line: k.line, col: k.col });
+    },
+    lexer.TokPunct(pu) => {
+      return out.append(Tok { text: pu.text, ident: false, line: pu.line, col: pu.col });
+    },
+    lexer.TokFString(fs) => {
+      for part in fs.parts {
+        if (part.is_expr) {
+          for it in lexer.rebase_tokens(lexer.tokenize(part.expr), part.line, part.col) {
+            out = append_tok(out, it);
+          }
+        }
+      }
+      return out;
+    },
+    lexer.TokNumber(n) => {
+      return out.append(Tok { text: "", ident: false, line: n.line, col: n.col });
+    },
+    lexer.TokString(st) => {
+      return out.append(Tok { text: "", ident: false, line: st.line, col: st.col });
+    },
+    lexer.TokError(e) => {
+      return out.append(Tok { text: "", ident: false, line: e.line, col: e.col });
+    },
+    lexer.TokEof(e) => {
+      return out.append(Tok { text: "", ident: false, line: e.line, col: e.col });
+    }
+  }
+  return out;
+}
+
+pub function quals_of(v: View, m: i32): flatten.Qualifiers {
+  if (m >= 0 && m < v.quals.len()) {
+    return v.quals[m];
+  }
+  return flatten.Qualifiers { aliases: [], prefixes: [], own: "", reexport_keys: [], reexport_targets: [] };
+}
+
+// Site is the name under the cursor: `name`, written in the `len` bytes from
+// `line`, `col` — from its qualifier, for a qualified `alias.name`, whose alias
+// is `qual` and bundled name `target` — with the name itself at `name_col`,
+// the `.` before it at `dot_col` (0 when there is none), and the token before
+// the whole name in `prev`.
+pub struct Site { name: string, qual: string, target: string, line: i32, col: i32, len: i32, name_col: i32, dot_col: i32, prev: string }
+
+pub function site_at(toks: Tok[], q: flatten.Qualifiers, line: i32, col: i32): (Site, boolean) {
+  let none: Site = Site { name: "", qual: "", target: "", line: 0, col: 0, len: 0, name_col: 0, dot_col: 0, prev: "" };
+  let i: i32 = ident_at(toks, q, line, col);
+  if (i < 0) {
+    return (none, false);
+  }
+  // On the alias of `alias.name`, the cursor is on the qualified name.
+  if (!punct_before(toks, i, ".") && util.has_str(q.aliases, toks[i].text) && dot_ident_after(toks, i)) {
+    i = i + 2;
+  }
+  let t: Tok = toks[i];
+  let site: Site = Site { ...none, name: t.text, line: t.line, col: t.col, len: t.text.len(), name_col: t.col, prev: text_at(toks, i - 1) };
+  if (!punct_before(toks, i, ".")) {
+    return (site, true);
+  }
+  site = Site { ...site, dot_col: toks[i - 1].col };
+  let qt: Tok = toks[i - 2];
+  if (!names_something(qt, q) || qt.line != t.line || punct_before(toks, i - 2, ".")) {
+    return (site, true);
+  }
+  let target: string = flatten.qualified_name(q, qt.text, t.text);
+  if (target.len() == 0) {
+    return (site, true);
+  }
+  return (Site { ...site, qual: qt.text, target: target, col: qt.col, len: t.col + t.text.len() - qt.col, prev: text_at(toks, i - 3) }, true);
+}
+
+// ident_at is the index of the name token covering `line`, `col`, or -1. A
+// token covers its own bytes, not the position just past its end.
+function ident_at(toks: Tok[], q: flatten.Qualifiers, line: i32, col: i32): i32 {
+  let i: i32 = 0;
+  while (i < toks.len()) {
+    let t: Tok = toks[i];
+    if (names_something(t, q) && t.line == line && col >= t.col && col < t.col + t.text.len()) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// names_something reports whether `t` is a name: an identifier, or a keyword
+// an import is qualified by (std/string's `string`).
+pub function names_something(t: Tok, q: flatten.Qualifiers): boolean {
+  return t.ident || util.has_str(q.aliases, t.text);
+}
+
+function text_at(toks: Tok[], i: i32): string {
+  if (i < 0 || i >= toks.len()) {
+    return "";
+  }
+  return toks[i].text;
+}
+
+// punct_before reports whether token `i` follows `text` on its own line.
+pub function punct_before(toks: Tok[], i: i32, text: string): boolean {
+  return i >= 1 && !toks[i - 1].ident && toks[i - 1].text == text && toks[i - 1].line == toks[i].line;
+}
+
+function dot_ident_after(toks: Tok[], i: i32): boolean {
+  return i + 2 < toks.len() && toks[i + 2].ident && punct_before(toks, i + 2, ".") && toks[i + 1].line == toks[i].line;
+}
+
+// ---- Finding the node ----
+
+const K_NONE: i32 = 0;
+
+const K_IDENT: i32 = 1;
+
+const K_QUALIFIED: i32 = 2;
+
+const K_FIELD: i32 = 3;
+
+const K_METHOD: i32 = 4;
+
+const K_STRUCT_LIT: i32 = 5;
+
+// Probe is a search of a tree for the node naming `site`: the kind of node
+// found (K_NONE until one is) and the node. A method call outranks the field
+// access that is its callee.
+struct Probe { site: Site, kind: i32, expr: ast.Expr }
+
+function probe(site: Site): Probe {
+  return Probe { site: site, kind: K_NONE, expr: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
+}
+
+function probe_expr(e: ast.Expr, own p: Probe): Probe {
+  let k: i32 = node_kind(e, p.site);
+  if (k > p.kind) {
+    return Probe { ...p, kind: k, expr: e };
+  }
+  return p;
+}
+
+function probe_stmt(st: ast.Stmt, own p: Probe): Probe {
+  return p;
+}
+
+function node_kind(e: ast.Expr, site: Site): i32 {
+  match (e) {
+    ast.ExprIdent(id) => {
+      return ident_kind(id, site);
+    },
+    ast.ExprFieldAccess(fa) => {
+      if (after_dot(fa, site)) {
+        return K_FIELD;
+      }
+    },
+    ast.ExprCall(c) => {
+      if let ast.ExprFieldAccess(fa) = c.callee {
+        if (after_dot(fa, site)) {
+          return K_METHOD;
+        }
+      }
+    },
+    ast.ExprStructLit(sl) => {
+      if (sl.line == site.line && sl.col == site.col && (sl.type_name == site.target || names(sl.type_name, site.name))) {
+        return K_STRUCT_LIT;
+      }
+    },
+    _ => {}
+  }
+  return K_NONE;
+}
+
+function ident_kind(id: ast.ExprIdent, site: Site): i32 {
+  if (id.line != site.line) {
+    return K_NONE;
+  }
+  if (site.qual.len() > 0) {
+    if (id.col == site.col && id.name == site.target) {
+      return K_QUALIFIED;
+    }
+    return K_NONE;
+  }
+  if (id.col == site.name_col && names(id.name, site.name)) {
+    return K_IDENT;
+  }
+  return K_NONE;
+}
+
+function after_dot(fa: ast.ExprFieldAccess, site: Site): boolean {
+  return site.dot_col > 0 && site.qual.len() == 0 && fa.line == site.line && fa.col == site.dot_col && names(fa.field, site.name);
+}
+
+// names reports whether the bundled name `n` is a spelling of `name`: the name
+// itself, a module's mangled `prefix__name`, or a lexical binding of it.
+function names(n: string, name: string): boolean {
+  let s: string = lexical.source_name(n);
+  return s == name || util.str_has_suffix(s, "__" + name);
+}
+
+// Found is the node naming a site and the index of the function whose body
+// holds it.
+struct Found { kind: i32, expr: ast.Expr, fd: i32 }
+
+function locate(v: checker.QueryView, site: Site): Found {
+  let m: i32 = util.pos_file_index(site.line);
+  let i: i32 = 0;
+  while (i < v.mod.funcs.len()) {
+    let fd: parser.FuncDecl = v.mod.funcs[i];
+    if (util.pos_file_index(fd.line) == m) {
+      let p: Probe = probe_all(fd.body, site);
+      if (p.kind != K_NONE) {
+        return Found { kind: p.kind, expr: p.expr, fd: i };
+      }
+    }
+    i = i + 1;
+  }
+  return Found { kind: K_NONE, expr: probe(site).expr, fd: 0 - 1 };
+}
+
+function probe_all(stmts: ast.Stmt[], site: Site): Probe {
+  let p: Probe = probe(site);
+  for st in stmts {
+    p = astwalk.fold_stmt_nodes(st, p, probe_stmt, probe_expr, astwalk.descend_all);
+  }
+  return p;
+}
+
+function holds(stmts: ast.Stmt[], site: Site): boolean {
+  return probe_all(stmts, site).kind != K_NONE;
+}
+
+function holds_expr(e: ast.Expr, site: Site): boolean {
+  return astwalk.fold_expr_nodes(e, probe(site), probe_stmt, probe_expr, astwalk.descend_all).kind != K_NONE;
+}
+
+// access_site is the site of the member a field access names after its `.`.
+pub function access_site(fa: ast.ExprFieldAccess): Site {
+  let name: string = lexical.source_name(fa.field);
+  return Site { name: name, qual: "", target: "", line: fa.line, col: fa.col + 1, len: name.len(), name_col: fa.col + 1, dot_col: fa.col, prev: "." };
+}
+
+// call_parts is the signature of what the name at `site` calls — a function,
+// a module's function or a method — and whether the tree has a node there.
+pub function call_parts(v: checker.QueryView, site: Site): (Parts, boolean) {
+  let f: Found = locate(v, site);
+  if (f.kind == K_NONE) {
+    return (no_parts(), false);
+  }
+  let fd: parser.FuncDecl = v.mod.funcs[f.fd];
+  let s: checker.Scope = scope_at(v, fd, site);
+  match (f.expr) {
+    ast.ExprIdent(id) => {
+      let (_, local) = binding_of(fd, site);
+      let sig: checker.FuncSig = checker.func_sig(s, id.name);
+      if (local && f.kind == K_IDENT || sig.is_const) {
+        return (no_parts(), true);
+      }
+      return (func_parts(sig), true);
+    },
+    ast.ExprCall(c) => {
+      if let ast.ExprFieldAccess(fa) = c.callee {
+        if (enum_qualifier(s, fa).len() == 0) {
+          return (member_parts(s, checker.expr_type(fa.obj, s), fa.field), true);
+        }
+      }
+    },
+    _ => {}
+  }
+  return (no_parts(), true);
+}
+
+// ---- The scope at a node ----
+
+// scope_at is the scope the checker types the statement holding `site` in:
+// the function's, with every statement before it bound, inside each block,
+// arm, loop and lambda that encloses it.
+pub function scope_at(v: checker.QueryView, fd: parser.FuncDecl, site: Site): checker.Scope {
+  return scope_in(fd.body, checker.func_scope(v, fd), site);
+}
+
+function scope_in(stmts: ast.Stmt[], s: checker.Scope, site: Site): checker.Scope {
+  for st in stmts {
+    if (holds([st], site)) {
+      return scope_in_stmt(st, s, site);
+    }
+    s = checker.bind_stmt(st, s);
+  }
+  return s;
+}
+
+function scope_in_stmt(st: ast.Stmt, s: checker.Scope, site: Site): checker.Scope {
+  match (st) {
+    ast.StmtIf(f) => {
+      if (holds(f.then_body, site)) {
+        return scope_in(f.then_body, s, site);
+      }
+      if (holds(f.else_body, site)) {
+        return scope_in(f.else_body, s, site);
+      }
+      return scope_in_expr(f.cond, s, site);
+    },
+    ast.StmtWhile(w) => {
+      if (holds(w.body, site)) {
+        return scope_in(w.body, s, site);
+      }
+      return scope_in_expr(w.cond, s, site);
+    },
+    ast.StmtFor(fo) => {
+      if (holds(fo.body, site)) {
+        return scope_in(fo.body, checker.for_body_scope(fo, s), site);
+      }
+      return scope_in_expr(fo.iter, s, site);
+    },
+    ast.StmtMatch(m) => {
+      return scope_in_match(m, s, site);
+    },
+    ast.StmtDefer(d) => {
+      return scope_in_stmt(d.action, s, site);
+    },
+    ast.StmtVar(vr) => {
+      return scope_in_expr(vr.init, s, site);
+    },
+    ast.StmtReturn(r) => {
+      return scope_in_expr(r.value, s, site);
+    },
+    ast.StmtExpr(x) => {
+      return scope_in_expr(x.value, s, site);
+    },
+    ast.StmtAssign(a) => {
+      return scope_in_expr(a.value, s, site);
+    },
+    _ => {
+      return s;
+    }
+  }
+  return s;
+}
+
+function scope_in_match(m: ast.StmtMatch, s: checker.Scope, site: Site): checker.Scope {
+  let whole: typeinfo.Type = checker.expr_type(m.scrutinee, s);
+  for arm in m.arms {
+    let in_guard: boolean = arm.has_guard && holds_expr(arm.guard, site);
+    if (in_guard || holds(arm.body, site)) {
+      let a: checker.Scope = checker.arm_scope(arm, s, whole);
+      if (in_guard) {
+        return scope_in_expr(arm.guard, a, site);
+      }
+      return scope_in(arm.body, a, site);
+    }
+  }
+  return scope_in_expr(m.scrutinee, s, site);
+}
+
+function collect_lambda(e: ast.Expr, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
+  if let ast.ExprLambda(lm) = e {
+    return acc.append(lm);
+  }
+  return acc;
+}
+
+function skip_stmt(st: ast.Stmt, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
+  return acc;
+}
+
+// lambdas is the lambdas `e` holds that no other lambda of it holds.
+pub function lambdas(e: ast.Expr): ast.ExprLambda[] {
+  return astwalk.fold_expr_nodes(e, [], skip_stmt, collect_lambda, astwalk.not_lambda);
+}
+
+// scope_in_expr is the scope inside whichever lambda of `e` holds `site`, or
+// `s` when none does.
+function scope_in_expr(e: ast.Expr, s: checker.Scope, site: Site): checker.Scope {
+  for lm in lambdas(e) {
+    if (holds(lm.body, site)) {
+      return scope_in(lm.body, checker.lambda_body_scope(lm, s), site);
+    }
+  }
+  return s;
+}
+
+// binding_of is the lexical binding the identifier at `site` reads, when it
+// reads a local or a parameter of `fd`.
+function binding_of(fd: parser.FuncDecl, site: Site): (lexical.Binding, boolean) {
+  let r: lexical.ResolvedFunction = lexical.resolve_func(fd);
+  let p: Probe = probe_all(r.func.body, site);
+  if let ast.ExprIdent(id) = p.expr {
+    for b in r.bindings {
+      if (b.symbol == id.name) {
+        return (b, true);
+      }
+    }
+  }
+  return (lexical.Binding { id: 0 - 1, name: "", symbol: "", line: 0, col: 0 }, false);
+}
+
+// is_param reports whether `b` is a parameter of `fd` or of a lambda in it:
+// those are bound at their function's position.
+function is_param(b: lexical.Binding, fd: parser.FuncDecl): boolean {
+  if (b.line == fd.line && b.col == fd.col) {
+    return true;
+  }
+  for st in fd.body {
+    for lm in astwalk.fold_stmt_nodes(st, [], skip_stmt, collect_lambda, astwalk.descend_all) {
+      if (b.line == lm.line && b.col == lm.col) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// ---- Hover text ----
+
+function node_text(s: checker.Scope, fd: parser.FuncDecl, f: Found, site: Site): string {
+  match (f.expr) {
+    ast.ExprIdent(id) => {
+      if (f.kind == K_QUALIFIED) {
+        return qualified_text(s, id.name, site);
+      }
+      return ident_text(s, fd, id.name, site);
+    },
+    ast.ExprFieldAccess(fa) => {
+      return member_text(s, fa, false);
+    },
+    ast.ExprCall(c) => {
+      if let ast.ExprFieldAccess(fa) = c.callee {
+        return member_text(s, fa, true);
+      }
+    },
+    ast.ExprStructLit(sl) => {
+      return type_text(s, sl.type_name);
+    },
+    _ => {}
+  }
+  return "";
+}
+
+function ident_text(s: checker.Scope, fd: parser.FuncDecl, name: string, site: Site): string {
+  let (b, local) = binding_of(fd, site);
+  if (!local) {
+    return global_text(s, name, site.name);
+  }
+  let kind: string = "(var) ";
+  if (is_param(b, fd)) {
+    kind = "(parameter) ";
+  }
+  return kind + site.name + ": " + checker.type_label(checker.scope_type(s, name));
+}
+
+// global_text describes a module-level name — a variant, function, struct or
+// enum — written `shown`.
+function global_text(s: checker.Scope, name: string, shown: string): string {
+  let owner: string = checker.variant_enum(s, name);
+  if (owner.len() > 0) {
+    return variant_text(s, name, owner);
+  }
+  let sig: checker.FuncSig = checker.func_sig(s, name);
+  if (sig.name.len() > 0) {
+    if (sig.is_const) {
+      return "(const) " + shown + ": " + label(sig.ret_type, sig.ret_type_name);
+    }
+    return func_text(shown, sig);
+  }
+  return type_text(s, name);
+}
+
+function qualified_text(s: checker.Scope, name: string, site: Site): string {
+  let sig: checker.FuncSig = checker.func_sig(s, name);
+  if (sig.name.len() > 0 && !sig.is_const) {
+    return "(from " + site.qual + ") " + func_text(site.name, sig);
+  }
+  return global_text(s, name, site.name);
+}
+
+// type_text describes the struct, record variant or enum `name` names.
+function type_text(s: checker.Scope, name: string): string {
+  let owner: string = checker.variant_enum(s, name);
+  if (owner.len() > 0) {
+    return variant_text(s, name, owner);
+  }
+  let st: checker.StructSig = checker.struct_sig(s, name);
+  if (st.name.len() > 0 && st.enum_owner.len() == 0) {
+    return struct_text(st);
+  }
+  let u: checker.UnionSig = checker.enum_sig(s, name);
+  if (u.is_enum) {
+    return enum_text(s, u);
+  }
+  return "";
+}
+
+// enum_qualifier is the enum `fa` names a variant of, as `Shape.Circle`, or "".
+function enum_qualifier(s: checker.Scope, fa: ast.ExprFieldAccess): string {
+  if let ast.ExprIdent(q) = fa.obj {
+    if (checker.enum_sig(s, q.name).is_enum) {
+      return q.name;
+    }
+  }
+  return "";
+}
+
+// member_text describes what `fa` names: an enum's variant, or a method when
+// `fa` is called, else a field.
+function member_text(s: checker.Scope, fa: ast.ExprFieldAccess, called: boolean): string {
+  if (enum_qualifier(s, fa).len() > 0) {
+    return type_text(s, fa.field);
+  }
+  if (called) {
+    return method_text(s, fa);
+  }
+  return field_text(s, fa);
+}
+
+function field_text(s: checker.Scope, fa: ast.ExprFieldAccess): string {
+  if let typeinfo.TypeStruct(t) = checker.expr_type(fa.obj, s) {
+    let st: checker.StructSig = checker.struct_sig(s, t.name);
+    let i: i32 = util.index_of_str(st.field_names, fa.field);
+    if (i >= 0) {
+      return "(field) " + fa.field + ": " + label(st.field_types[i], st.field_type_names[i]);
+    }
+  }
+  return "";
+}
+
+function method_text(s: checker.Scope, fa: ast.ExprFieldAccess): string {
+  let t: typeinfo.Type = checker.expr_type(fa.obj, s);
+  let owner: string = checker.receiver_key(t);
+  if let typeinfo.TypeArray(_) = t {
+    owner = "Array";
+  }
+  let parts: Parts = member_parts(s, t, fa.field);
+  if (!parts.found) {
+    return "";
+  }
+  return "(method on " + owner + ") " + parts_text(fa.field, parts);
+}
+
+// Parts is a signature's parameter and result types, spelled as its
+// declaration spells them; `found` is false when there is no signature.
+pub struct Parts { found: boolean, params: string[], ret: string }
+
+pub function no_parts(): Parts {
+  return Parts { found: false, params: [], ret: "" };
+}
+
+// parts_text is `function name(p1, p2): ret`.
+pub function parts_text(name: string, parts: Parts): string {
+  return "function " + name + "(" + joined(parts.params) + "): " + parts.ret;
+}
+
+pub function func_parts(sig: checker.FuncSig): Parts {
+  return Parts { found: sig.name.len() > 0, params: label_list(sig.param_types, sig.param_type_names, 0), ret: label(sig.ret_type, sig.ret_type_name) };
+}
+
+pub function method_parts(ms: checker.MethodSig): Parts {
+  return Parts { found: ms.name.len() > 0, params: label_list(ms.param_types, ms.param_type_names, 0), ret: label(ms.ret_type, ms.ret_type_name) };
+}
+
+// member_parts is the signature of method `field` of a value of type `t`:
+// one declared on its type, a built-in one, or an array's.
+function member_parts(s: checker.Scope, t: typeinfo.Type, field: string): Parts {
+  if let typeinfo.TypeArray(a) = t {
+    return array_parts(s, a, field);
+  }
+  let recv: string = checker.receiver_key(t);
+  if (recv.len() == 0) {
+    return no_parts();
+  }
+  let ms: checker.MethodSig = checker.method_sig(s, field, recv);
+  if (ms.name.len() > 0) {
+    return method_parts(ms);
+  }
+  return builtin_parts(recv, field);
+}
+
+// builtin_parts is the signature of the built-in method `name` of receiver
+// type `recv`, its receiver left out.
+pub function builtin_parts(recv: string, name: string): Parts {
+  if let typeinfo.TypeFunc(f) = checker.builtin_method_sig(recv, name) {
+    return Parts { found: true, params: label_list(f.param_types, [], 0), ret: checker.type_label(f.ret_type) };
+  }
+  return no_parts();
+}
+
+// array_func is std/array's function `field` on array `a` calls — its first
+// parameter the receiver — or the empty-named sentinel when the call is an
+// array receiver's method instead, as the checker's array dispatch picks.
+function array_func(s: checker.Scope, a: typeinfo.TypeArray, field: string): checker.FuncSig {
+  if (a.view) {
+    return checker.func_sig(s, "");
+  }
+  return checker.array_method_func(s, field);
+}
+
+// array_parts is the signature of the method `field` of an array: std/array's
+// function for it, its receiver left out, a method declared on an array
+// receiver, or the built-in `len`.
+pub function array_parts(s: checker.Scope, a: typeinfo.TypeArray, field: string): Parts {
+  let af: checker.FuncSig = array_func(s, a, field);
+  if (af.name.len() > 0) {
+    return Parts { found: true, params: label_list(af.param_types, af.param_type_names, 1), ret: label(af.ret_type, af.ret_type_name) };
+  }
+  let ms: checker.MethodSig = checker.array_method_sig(s, field, a.view);
+  if (ms.name.len() > 0) {
+    return method_parts(ms);
+  }
+  if (field == "len") {
+    return Parts { found: true, params: [], ret: "i32" };
+  }
+  return no_parts();
+}
+
+pub function func_text(name: string, sig: checker.FuncSig): string {
+  return parts_text(name, func_parts(sig));
+}
+
+pub function variant_text(s: checker.Scope, name: string, owner: string): string {
+  let u: checker.UnionSig = checker.enum_sig(s, owner);
+  return "(variant of " + owner + ") " + unprefixed(name, u.module) + payload(s, name, u);
+}
+
+// payload is variant `name`'s payload list: its declaration's, or for a
+// built-in Option's or Result's, the type parameter it carries.
+function payload(s: checker.Scope, name: string, u: checker.UnionSig): string {
+  let v: checker.StructSig = checker.variant_sig(s, name, u.name);
+  if (v.field_types.len() > 0) {
+    return "(" + labels(v.field_types, v.field_type_names) + ")";
+  }
+  let slot: i32 = checker.payload_slot(s, u.name, name, 0);
+  if (v.name.len() == 0 && slot >= 0 && slot < u.type_params.len()) {
+    return "(" + u.type_params[slot] + ")";
+  }
+  return "";
+}
+
+function struct_text(st: checker.StructSig): string {
+  let out: string = "struct " + st.name + type_params(st.type_params) + " {";
+  let i: i32 = 0;
+  while (i < st.field_names.len()) {
+    if (i > 0) {
+      out = out + ",";
+    }
+    out = out + " " + st.field_names[i] + ": " + label(st.field_types[i], st.field_type_names[i]);
+    i = i + 1;
+  }
+  return closed(out, st.field_names.len());
+}
+
+function enum_text(s: checker.Scope, u: checker.UnionSig): string {
+  let out: string = "enum " + u.name + type_params(u.type_params) + " {";
+  let i: i32 = 0;
+  while (i < u.variants.len()) {
+    if (i > 0) {
+      out = out + ",";
+    }
+    out = out + " " + unprefixed(u.variants[i], u.module) + payload(s, u.variants[i], u);
+    i = i + 1;
+  }
+  return closed(out, u.variants.len());
+}
+
+function closed(out: string, members: i32): string {
+  if (members > 0) {
+    return out + " }";
+  }
+  return out + "}";
+}
+
+pub function type_params(tps: string[]): string {
+  if (tps.len() == 0) {
+    return "";
+  }
+  let out: string = "[";
+  let i: i32 = 0;
+  while (i < tps.len()) {
+    if (i > 0) {
+      out = out + ", ";
+    }
+    out = out + tps[i];
+    i = i + 1;
+  }
+  return out + "]";
+}
+
+// label spells a declared type as its declaration does, and an inferred one,
+// which has no spelling, as the checker names it.
+pub function label(t: typeinfo.Type, spelling: string): string {
+  if (spelling.len() > 0) {
+    return spelling;
+  }
+  return checker.type_label(t);
+}
+
+function labels(ts: typeinfo.Type[], spellings: string[]): string {
+  return joined(label_list(ts, spellings, 0));
+}
+
+// label_list is the labels of the types from index `from` on.
+function label_list(ts: typeinfo.Type[], spellings: string[], from: i32): string[] {
+  let out: string[] = [];
+  let i: i32 = from;
+  while (i < ts.len()) {
+    let sp: string = "";
+    if (i < spellings.len()) {
+      sp = spellings[i];
+    }
+    out = out.append(label(ts[i], sp));
+    i = i + 1;
+  }
+  return out;
+}
+
+function joined(xs: string[]): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    if (i > 0) {
+      out = out + ", ";
+    }
+    out = out + xs[i];
+    i = i + 1;
+  }
+  return out;
+}
+
+// unprefixed is a bundled name as its own module wrote it.
+pub function unprefixed(name: string, prefix: string): string {
+  let p: string = prefix + "__";
+  if (prefix.len() > 0 && util.str_has_prefix(name, p)) {
+    return slice_unchecked(name, p.len(), name.len()) + "";
+  }
+  return name;
+}
+
+// ---- Type references ----
+
+// type_candidates are the bundled names the type written at the query's site
+// may name: a qualified one's target, or a bare one's own-module declaration
+// and then the name as a builtin or entry declaration. A declaration's own
+// name is not a reference, nor is a member after a `.`.
+function type_candidates(q: Query): string[] {
+  let p: string = q.site.prev;
+  if (p == "struct" || p == "enum" || p == "type" || p == "trait" || p == "function" || p == "resource") {
+    return [];
+  }
+  if (q.site.qual.len() > 0) {
+    return [q.site.target];
+  }
+  if (q.site.dot_col > 0) {
+    return [];
+  }
+  if (q.quals.own.len() > 0) {
+    return [q.quals.own + "__" + q.site.name, q.site.name];
+  }
+  return [q.site.name];
+}
+
+// type_ref_text describes the first candidate naming a struct or an enum.
+function type_ref_text(s: checker.Scope, candidates: string[]): string {
+  for c in candidates {
+    if (checker.variant_enum(s, c).len() == 0) {
+      let text: string = type_text(s, c);
+      if (text.len() > 0) {
+        return text;
+      }
+    }
+  }
+  return "";
+}
+
+// ---- Definitions ----
+
+function node_def(p: Program, v: checker.QueryView, s: checker.Scope, fd: parser.FuncDecl, f: Found, site: Site): Answer {
+  match (f.expr) {
+    ast.ExprIdent(id) => {
+      if (f.kind == K_IDENT) {
+        let (b, local) = binding_of(fd, site);
+        if (local) {
+          return local_def(p, b, is_param(b, fd), site.name);
+        }
+      }
+      return global_def(p, v, s, id.name);
+    },
+    ast.ExprFieldAccess(fa) => {
+      return member_def(p, v, s, fa, false);
+    },
+    ast.ExprCall(c) => {
+      if let ast.ExprFieldAccess(fa) = c.callee {
+        return member_def(p, v, s, fa, true);
+      }
+    },
+    ast.ExprStructLit(sl) => {
+      return global_def(p, v, s, sl.type_name);
+    },
+    _ => {}
+  }
+  return no_answer();
+}
+
+// local_def is the name a local or parameter is declared with: the first
+// token spelled so at its binding, which for a parameter is in its function's
+// parameter list.
+function local_def(p: Program, b: lexical.Binding, param: boolean, name: string): Answer {
+  let toks: Tok[] = module_toks(p, util.pos_file_index(b.line));
+  let i: i32 = first_ident(toks, after(toks, b.line, b.col), name);
+  while (param && i >= 0 && !(punct_before(toks, i, "(") || punct_before(toks, i, ","))) {
+    i = first_ident(toks, i + 1, name);
+  }
+  return tok_answer(toks, i, b.line, b.col, name);
+}
+
+// global_def is the declaration of the module-level name `name` (bundled):
+// a variant's in its enum, or a function's, struct's or enum's.
+function global_def(p: Program, v: checker.QueryView, s: checker.Scope, name: string): Answer {
+  let owner: string = checker.variant_enum(s, name);
+  if (owner.len() > 0) {
+    return variant_def(p, v, owner, name);
+  }
+  for fd in v.mod.funcs {
+    if (fd.name == name && fd.receiver_type.len() == 0) {
+      return decl_def(p, fd.line, fd.col, name);
+    }
+  }
+  return type_decl_def(p, v, name);
+}
+
+function type_decl_def(p: Program, v: checker.QueryView, name: string): Answer {
+  for sd in v.mod.structs {
+    if (sd.name == name && sd.enum_owner.len() == 0) {
+      return decl_def(p, sd.line, sd.col, name);
+    }
+  }
+  for ed in v.mod.enums {
+    if (ed.name == name) {
+      return decl_def(p, ed.line, ed.col, name);
+    }
+  }
+  return no_answer();
+}
+
+function variant_def(p: Program, v: checker.QueryView, owner: string, name: string): Answer {
+  for ed in v.mod.enums {
+    if (ed.name == owner) {
+      let at: Answer = decl_def(p, ed.line, ed.col, owner);
+      if (!at.found) {
+        return at;
+      }
+      return decl_def(p, at.line, at.col + at.len, name);
+    }
+  }
+  return no_answer();
+}
+
+function member_def(p: Program, v: checker.QueryView, s: checker.Scope, fa: ast.ExprFieldAccess, called: boolean): Answer {
+  let owner: string = enum_qualifier(s, fa);
+  if (owner.len() > 0) {
+    return variant_def(p, v, owner, fa.field);
+  }
+  if (called) {
+    return method_def(p, v, s, fa);
+  }
+  return field_def(p, v, s, fa);
+}
+
+function field_def(p: Program, v: checker.QueryView, s: checker.Scope, fa: ast.ExprFieldAccess): Answer {
+  if let typeinfo.TypeStruct(t) = checker.expr_type(fa.obj, s) {
+    let at: Answer = type_decl_def(p, v, t.name);
+    if (at.found && util.has_str(checker.struct_sig(s, t.name).field_names, fa.field)) {
+      let toks: Tok[] = module_toks(p, util.pos_file_index(at.line));
+      return tok_answer(toks, field_tok(toks, after(toks, at.line, at.col + at.len), fa.field), at.line, at.col, fa.field);
+    }
+  }
+  return no_answer();
+}
+
+function method_def(p: Program, v: checker.QueryView, s: checker.Scope, fa: ast.ExprFieldAccess): Answer {
+  let t: typeinfo.Type = checker.expr_type(fa.obj, s);
+  if let typeinfo.TypeArray(a) = t {
+    let af: checker.FuncSig = array_func(s, a, fa.field);
+    if (af.name.len() > 0) {
+      return global_def(p, v, s, af.name);
+    }
+    return method_decl_def(p, checker.array_method_sig(s, fa.field, a.view), fa.field);
+  }
+  return method_decl_def(p, checker.method_sig(s, fa.field, checker.receiver_key(t)), fa.field);
+}
+
+function method_decl_def(p: Program, ms: checker.MethodSig, name: string): Answer {
+  if (ms.name.len() == 0 || ms.line == 0) {
+    return no_answer();
+  }
+  return decl_def(p, ms.line, ms.col, name);
+}
+
+function type_def(p: Program, v: checker.QueryView, s: checker.Scope, candidates: string[]): Answer {
+  for c in candidates {
+    if (checker.variant_enum(s, c).len() == 0) {
+      let at: Answer = type_decl_def(p, v, c);
+      if (at.found) {
+        return at;
+      }
+    }
+  }
+  return no_answer();
+}
+
+// decl_def is the name of the declaration at `line`, `col` that declares the
+// bundled `name`: the first token after it spelled as its module wrote it.
+function decl_def(p: Program, line: i32, col: i32, name: string): Answer {
+  if (line <= 0) {
+    return no_answer();
+  }
+  let m: i32 = util.pos_file_index(line);
+  let shown: string = unprefixed(name, quals_of(view_of(p), m).own);
+  let toks: Tok[] = module_toks(p, m);
+  return tok_answer(toks, first_ident(toks, after(toks, line, col), shown), line, col, shown);
+}
+
+// tok_answer is token `i`, or the declaration position `line`, `col` when no
+// token was found there.
+function tok_answer(toks: Tok[], i: i32, line: i32, col: i32, name: string): Answer {
+  if (i >= 0) {
+    return Answer { found: true, text: "", line: toks[i].line, col: toks[i].col, len: name.len() };
+  }
+  return Answer { found: line > 0, text: "", line: line, col: col, len: name.len() };
+}
+
+// after is the index of the first token at or after `line`, `col`; tokens are
+// in source order.
+pub function after(toks: Tok[], line: i32, col: i32): i32 {
+  let lo: i32 = 0;
+  let hi: i32 = toks.len();
+  while (lo < hi) {
+    let mid: i32 = (lo + hi) / 2;
+    if (toks[mid].line < line || toks[mid].line == line && toks[mid].col < col) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
+// body_end is the index of the `}` closing the body of the declaration whose
+// tokens start at `from` — its first `{` outside parentheses and brackets —
+// or -1 when a `;` ends it first.
+pub function body_end(toks: Tok[], from: i32): i32 {
+  let depth: i32 = 0;
+  let i: i32 = from;
+  while (i < toks.len()) {
+    let t: string = toks[i].text;
+    if (toks[i].ident || t.len() != 1) {
+      i = i + 1;
+      continue;
+    }
+    if (t == "(" || t == "[") {
+      depth = depth + 1;
+    } else if (t == ")" || t == "]") {
+      depth = depth - 1;
+    } else if (t == ";" && depth == 0) {
+      return 0 - 1;
+    } else if (t == "{" && depth == 0) {
+      return closing_brace(toks, i);
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// closing_brace is the index of the `}` matching the `{` at `open`, or the
+// last token when the braces do not balance.
+function closing_brace(toks: Tok[], open: i32): i32 {
+  let depth: i32 = 0;
+  let i: i32 = open;
+  while (i < toks.len()) {
+    if (!toks[i].ident && toks[i].text == "{") {
+      depth = depth + 1;
+    } else if (!toks[i].ident && toks[i].text == "}") {
+      depth = depth - 1;
+      if (depth == 0) {
+        return i;
+      }
+    }
+    i = i + 1;
+  }
+  return toks.len() - 1;
+}
+
+// field_tok is the index of the field `name` declared in the struct body that
+// follows token `from` — spelled so and followed by `:` — or -1.
+pub function field_tok(toks: Tok[], from: i32, name: string): i32 {
+  let i: i32 = from;
+  while (i < toks.len() && toks[i].text != "}") {
+    if (toks[i].ident && toks[i].text == name && text_at(toks, i + 1) == ":") {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// first_ident is the index of the first identifier spelled `name` from token
+// `from` on, looking no further than a declaration's head reaches, or -1.
+pub function first_ident(toks: Tok[], from: i32, name: string): i32 {
+  let i: i32 = from;
+  while (i >= 0 && i < toks.len() && i < from + 64) {
+    if (toks[i].ident && toks[i].text == name) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}

@@ -1261,7 +1261,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
           reads_mate = reads_mate.with(ins.result, true);
           def_a = def_a.with(ins.result, ins.args[1]);
           def_b = def_b.with(ins.result, ins.args[2]);
-        } else if (ins.kind_tag == 8 || ins.kind_tag == 10 || ins.kind_tag == 11 || ins.kind_tag == 9 && shares_operand_home(ins.str)) {
+        } else if (ins.kind_tag == 8 || ins.kind_tag == 10 || ins.kind_tag == 11 || ins.kind_tag == 56 || ins.kind_tag == 60 || ins.kind_tag == 9 && shares_operand_home(ins.str)) {
           reads_mate = reads_mate.with(ins.result, true);
           if (ins.kind_tag != 8 && ins.args.len() > 0) {
             def_a = def_a.with(ins.result, ins.args[0]);
@@ -4049,8 +4049,45 @@ pub function slot_call(ins: SInst): boolean {
 // (ssarc.body_address) and is read nowhere else, and drops the read: the
 // emitter loads the address from the environment at the call.
 function slot_calls(f: SFunc): SFunc {
+  if (!has_kind(f, 56)) {
+    return f;
+  }
+  let env_of: i32[] = slot_reads(f);
+  let uses: i32[] = use_counts(f);
+  let dropped: boolean[] = __alloc_bool(f.nvals);
+  let found: boolean = false;
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (reads_own_slot(ins, env_of, uses)) {
+        dropped = dropped.with(ins.args[0], true);
+        found = true;
+      }
+    }
+  }
+  if (!found) {
+    return f;
+  }
+  let out: SBlock[] = [];
+  for blk in f.blocks {
+    out = out.append(slot_block(blk, env_of, uses, dropped));
+  }
+  return SFunc { ...f, blocks: out };
+}
+
+function has_kind(f: SFunc, k: i32): boolean {
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == k) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// slot_reads maps each unchecked read of slot 0 of a box to the box.
+function slot_reads(f: SFunc): i32[] {
   let zero: boolean[] = __alloc_bool(f.nvals);
-  let env_of: i32[] = util.minus_ones(f.nvals);
   for blk in f.blocks {
     for ins in blk.insts {
       if (ins.kind_tag == 1 && ins.imm == 0) {
@@ -4058,44 +4095,42 @@ function slot_calls(f: SFunc): SFunc {
       }
     }
   }
-  let any: boolean = false;
+  let env_of: i32[] = util.minus_ones(f.nvals);
   for blk in f.blocks {
     for ins in blk.insts {
       if (ins.kind_tag == 42 && ins.imm == 1 && ins.str == "" && zero[ins.args[1]]) {
         env_of = env_of.with(ins.result, ins.args[0]);
       }
-      any = any || ins.kind_tag == 56;
     }
   }
-  if (!any) {
-    return f;
+  return env_of;
+}
+
+// slot_block is `blk` with its slot calls marked and the reads they replace
+// dropped; a block with neither is handed back as it is.
+function slot_block(blk: SBlock, env_of: i32[], uses: i32[], dropped: boolean[]): SBlock {
+  let edit: boolean = false;
+  for ins in blk.insts {
+    edit = edit || reads_own_slot(ins, env_of, uses) || ins.kind_tag == 42 && dropped[ins.result];
   }
-  let uses: i32[] = use_counts(f);
-  let dropped: boolean[] = __alloc_bool(f.nvals);
-  let blocks: SBlock[] = [];
-  for blk in f.blocks {
-    let insts: SInst[] = [];
-    for ins in blk.insts {
-      if (ins.kind_tag == 56 && ins.args.len() > 1 && env_of[ins.args[0]] == ins.args[1] && uses[ins.args[0]] == 1) {
-        dropped = dropped.with(ins.args[0], true);
-        insts = insts.append(SInst { ...ins, args: ins.args.with(0, ins.args[1]), str: "slot" });
-      } else {
-        insts = insts.append(ins);
-      }
+  if (!edit) {
+    return blk;
+  }
+  let insts: SInst[] = [];
+  for ins in blk.insts {
+    if (reads_own_slot(ins, env_of, uses)) {
+      insts = insts.append(SInst { ...ins, args: ins.args.with(0, ins.args[1]), str: "slot" });
+    } else if (ins.kind_tag != 42 || !dropped[ins.result]) {
+      insts = insts.append(ins);
     }
-    blocks = blocks.append(SBlock { ...blk, insts: insts });
   }
-  let out: SBlock[] = [];
-  for blk in blocks {
-    let insts: SInst[] = [];
-    for ins in blk.insts {
-      if (ins.kind_tag != 42 || !dropped[ins.result]) {
-        insts = insts.append(ins);
-      }
-    }
-    out = out.append(SBlock { ...blk, insts: insts });
-  }
-  return SFunc { ...f, blocks: out };
+  return SBlock { ...blk, insts: insts };
+}
+
+// reads_own_slot is a call through a function value whose target is read out
+// of slot 0 of the environment it passes and by nothing else.
+function reads_own_slot(ins: SInst, env_of: i32[], uses: i32[]): boolean {
+  return ins.kind_tag == 56 && ins.args.len() > 1 && env_of[ins.args[0]] == ins.args[1] && uses[ins.args[0]] == 1;
 }
 
 // share_shape_loads maps a load of a box's word 0, its shape, onto an earlier

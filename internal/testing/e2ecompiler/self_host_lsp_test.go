@@ -274,6 +274,17 @@ func TestSelfHostLSPLifecycleX86_64(t *testing.T) {
 			Capabilities struct {
 				TextDocumentSync           int  `json:"textDocumentSync"`
 				DocumentFormattingProvider bool `json:"documentFormattingProvider"`
+				HoverProvider              bool `json:"hoverProvider"`
+				DefinitionProvider         bool `json:"definitionProvider"`
+				CompletionProvider         *struct {
+					TriggerCharacters []string `json:"triggerCharacters"`
+				} `json:"completionProvider"`
+				SignatureHelpProvider *struct {
+					TriggerCharacters   []string `json:"triggerCharacters"`
+					RetriggerCharacters []string `json:"retriggerCharacters"`
+				} `json:"signatureHelpProvider"`
+				DocumentSymbolProvider bool `json:"documentSymbolProvider"`
+				InlayHintProvider      bool `json:"inlayHintProvider"`
 			} `json:"capabilities"`
 			ServerInfo struct {
 				Name string `json:"name"`
@@ -282,8 +293,16 @@ func TestSelfHostLSPLifecycleX86_64(t *testing.T) {
 		if err := json.Unmarshal(response(t, frames, "1").Result, &got); err != nil {
 			t.Fatal(err)
 		}
-		if got.Capabilities.TextDocumentSync != 1 || !got.Capabilities.DocumentFormattingProvider || got.ServerInfo.Name != "fern" {
-			t.Errorf("initialize result = %+v, want full sync, formatting, server fern", got)
+		c := got.Capabilities
+		if c.TextDocumentSync != 1 || !c.DocumentFormattingProvider || !c.HoverProvider || !c.DefinitionProvider || !c.DocumentSymbolProvider || !c.InlayHintProvider || got.ServerInfo.Name != "fern" {
+			t.Errorf("initialize result = %+v, want full sync, formatting, hover, definition, document symbols, inlay hints, server fern", got)
+		}
+		// The trigger characters are the Go server's.
+		if c.CompletionProvider == nil || !reflect.DeepEqual(c.CompletionProvider.TriggerCharacters, []string{"."}) {
+			t.Errorf("completionProvider = %+v, want triggered by `.`", c.CompletionProvider)
+		}
+		if sh := c.SignatureHelpProvider; sh == nil || !reflect.DeepEqual(sh.TriggerCharacters, []string{"(", ","}) || !reflect.DeepEqual(sh.RetriggerCharacters, []string{","}) {
+			t.Errorf("signatureHelpProvider = %+v, want triggered by `(` and `,`, retriggered by `,`", sh)
 		}
 		if code != 0 {
 			t.Errorf("exit after shutdown = %d, want 0", code)
@@ -299,16 +318,16 @@ func TestSelfHostLSPLifecycleX86_64(t *testing.T) {
 			lspInitialize(),
 			{"method": "initialized", "params": lspMsg{}},
 			{"method": "$/cancelRequest", "params": lspMsg{"id": 1}},
-			{"id": "req-a", "method": "textDocument/hover", "params": lspMsg{}},
+			{"id": "req-a", "method": "textDocument/references", "params": lspMsg{}},
 			{"id": 7, "method": "shutdown"},
 			{"method": "exit"},
 		})
 		if len(frames) != 3 {
-			t.Fatalf("got %d frames, want 3 (initialize, hover, shutdown): %+v", len(frames), frames)
+			t.Fatalf("got %d frames, want 3 (initialize, references, shutdown): %+v", len(frames), frames)
 		}
-		hover := response(t, frames, `"req-a"`)
-		if hover.Error == nil || hover.Error.Code != -32601 || hover.Result != nil {
-			t.Errorf("hover answered %+v, want error -32601 and no result", hover)
+		refs := response(t, frames, `"req-a"`)
+		if refs.Error == nil || refs.Error.Code != -32601 || refs.Result != nil {
+			t.Errorf("references answered %+v, want error -32601 and no result", refs)
 		}
 		if sd := response(t, frames, "7"); string(sd.Result) != "null" || sd.Error != nil {
 			t.Errorf("shutdown answered result=%q error=%+v, want result null", sd.Result, sd.Error)
