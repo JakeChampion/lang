@@ -2637,20 +2637,10 @@ function bind_destructure_names(s: Scope, v: ast.StmtVar): Scope {
 // check_expr — the same expression the lowering emits — so a renamed binding,
 // a generic struct and an opaque field all type exactly as they would there.
 function bind_struct_destr_fields(out: Scope, v: ast.StmtVar, s: Scope): Scope {
-  let marker: string = parser.destr_marker_split(v.type_name).tag;
-  let rest: string = slice_unchecked(marker, 4, marker.len()) + "";
-  let colon: i32 = 0 - 1;
-  let ri: i32 = 0;
-  while (ri < rest.len()) {
-    if (rest[ri] == b':' && colon < 0) {
-      colon = ri;
-    }
-    ri = ri + 1;
-  }
-  if (colon < 0) {
+  let (fields, ok) = struct_destr_fields(v.type_name);
+  if (!ok) {
     return bind_names(out, v.name);
   }
-  let fields: string[] = split_pattern_names(slice_unchecked(rest, colon + 1, rest.len()) + "");
   let names: string[] = split_pattern_names(v.name);
   let i: i32 = 0;
   while (i < names.len()) {
@@ -2660,6 +2650,40 @@ function bind_struct_destr_fields(out: Scope, v: ast.StmtVar, s: Scope): Scope {
     }
     out = out.bind(names[i], ft);
     i = i + 1;
+  }
+  return out;
+}
+
+// struct_destr_fields is the fields a struct destructure's marker reads, in
+// the order it binds them, and false when the marker names none.
+function struct_destr_fields(type_name: string): (string[], boolean) {
+  let marker: string = parser.destr_marker_split(type_name).tag;
+  let rest: string = slice_unchecked(marker, 4, marker.len()) + "";
+  let colon: i32 = util.index_of_sub(rest, ":");
+  if (colon < 0) {
+    return ([], false);
+  }
+  return (split_pattern_names(slice_unchecked(rest, colon + 1, rest.len()) + ""), true);
+}
+
+// struct_destr_diags is E043 for each field a struct destructure
+// `let P { x, z } = e;` reads that the struct `e` is lacks, at the `let`, as
+// native reports it. The field has no position of its own, so its fix stands
+// at the `let` too and names the field written after it.
+function struct_destr_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  if (!parser.is_struct_destr_marker(v.type_name)) {
+    return out;
+  }
+  let (fields, _) = struct_destr_fields(v.type_name);
+  if let typeinfo.TypeStruct(st) = check_expr(v.init, s) {
+    let sig: StructSig = s.lookup_struct(st.name);
+    for f in fields {
+      if (sig.name.len() > 0 && !util.has_str(sig.field_names, f)) {
+        let d: util.Diag = dg_at("E043", "struct " + util.demangle(st.name) + " has no field \"" + f + "\"", v.line, v.col);
+        out = out.append(with_fix(d, f, v.line, v.col, util.suggest(f, sig.field_names), ""));
+      }
+    }
   }
   return out;
 }
@@ -17279,6 +17303,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
         // E024: a tuple destructure `let (a, b) = E` (the parser
         // encodes the names as "a,b") requires E to be a tuple whose
         // element count matches the number of names.
+        out = util.append_diags(out, struct_destr_diags(v, cur));
         let positions: string[] = split_pattern_names(v.name);
         if (positions.len() > 1 && !parser.is_struct_destr_marker(v.type_name)) {
           let nnames: i32 = positions.len();

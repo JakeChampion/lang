@@ -1237,9 +1237,12 @@ pub function str_join_chunks(parts: string[]): string {
 // machine-applicable fix, when there is one.
 pub struct Diag { code: string, message: string, line: i32, col: i32, fix: Option[Fix] }
 
-// Fix replaces the identifier `old`, written at `line`, `col`, with `new_text`:
-// a respelling, which always re-parses. `title` is the line `-check` prints
-// after `help:`, and an editor's name for the quick fix.
+// Fix replaces the identifier `old` with `new_text`: a respelling, which always
+// re-parses. `old` is the first identifier so spelled from `line`, `col` on
+// along that line — its own position, or, for a name the front end keeps no
+// position of (a struct pattern's field), the position of what writes it.
+// `title` is the line `-check` prints after `help:`, and an editor's name for
+// the quick fix.
 pub struct Fix { line: i32, col: i32, old: string, new_text: string, title: string }
 
 // is_diagnostic_code reports whether `code` is a real diagnostic code: `E` or
@@ -1425,6 +1428,29 @@ pub function show_type_vars(text: string): string {
     return text;
   }
   return out + slice_unchecked(text, start, text.len());
+}
+
+// ident_from is the 1-based column of the first identifier spelled `name`
+// in `line` at or after column `col`, or 0.
+pub function ident_from(line: string, col: i32, name: string): i32 {
+  let at: i32 = col - 1;
+  while (at >= 0 && at + name.len() <= line.len()) {
+    let i: i32 = index_of_sub(slice_unchecked(line, at, line.len()) + "", name);
+    if (i < 0) {
+      return 0;
+    }
+    at = at + i;
+    if (!ident_byte_at(line, at - 1) && !ident_byte_at(line, at + name.len())) {
+      return at + 1;
+    }
+    at = at + 1;
+  }
+  return 0;
+}
+
+// ident_byte_at reports whether byte `i` of `s` can be part of an identifier.
+function ident_byte_at(s: string, i: i32): boolean {
+  return i >= 0 && i < s.len() && (ident_start_byte(s[i]) || s[i] >= b'0' && s[i] <= b'9');
 }
 
 function ident_start_byte(c: u8): boolean {

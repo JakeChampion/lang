@@ -131,13 +131,13 @@ references, rename, semantic tokens and code actions.
   Go renderer's `help:` line) to the diagnostics the Go checker does: E001 for
   a name read, called or assigned that resolves to nothing, respelt as the
   closest name in scope or the replacement of a retired one, and E043 for a
-  struct literal's or an access's unknown field or method, respelt as the
-  closest field or method. The server publishes a fix only when the text at
-  its span is the name it replaces, which drops the one the checker reports
-  for a struct pattern's field at the arm's start (the Go server published an
-  edit there that broke the pattern), and a code action names the diagnostic
-  as the client sent it. The Go checker's other E043 fix, a destructuring
-  `let`'s unknown field, has no self-host diagnostic.
+  struct literal's, an access's, a struct pattern's or a destructuring `let`'s
+  unknown field or method, respelt as the closest field or method. A fix
+  replaces the first identifier spelled as the old name from its position on
+  along its line: a pattern's fields have no position of their own, so their
+  fix stands where the arm or the `let` does and the server places it on the
+  field, where the Go server's edit replaced the statement's first bytes. A
+  code action names the diagnostic as the client sent it.
 - A publish goes out only when a document's diagnostics change, and didClose
   clears them. The exit codes are the spec's: 0 for `exit` after `shutdown`,
   1 for `exit` without it, and 2 for input that cannot be framed.

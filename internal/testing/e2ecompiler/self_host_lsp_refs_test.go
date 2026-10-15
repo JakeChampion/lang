@@ -468,8 +468,9 @@ func fixOf(t *testing.T, d json.RawMessage) (lspFix, bool) {
 // diagnostic the checker attaches a fix to — a misspelt name read, called or
 // assigned, a retired name, a misspelt field of a literal, and a misspelt
 // field or method of an access — and the fix's span in UTF-16 units and in a
-// literate document. A fix whose span does not hold the name it replaces (a
-// struct pattern's field, reported where the arm starts) is not published.
+// literate document. A field the front end keeps no position of — a struct
+// pattern's or a destructuring `let`'s — is fixed where that statement writes
+// it; a line that writes no such name gets no fix.
 func TestSelfHostLSPCodeActionX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	dir := t.TempDir()
@@ -482,6 +483,7 @@ func TestSelfHostLSPCodeActionX86_64(t *testing.T) {
 		"member.fern":  "struct Point { x: i32, y: i32 }\nfunction (p: Point) push(n: i32): i32 { return p.x + n; }\nfunction main(): i32 {\n  let p: Point = Point { x: 1, y: 2 };\n  return p.puzh(2) + p.yy;\n}\n",
 		"utf.fern":     "function main(): i32 {\n  let s: string = \"é😀\"; let count: i32 = 1; return kount;\n}\n",
 		"pattern.fern": "struct P { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: P = P { x: 1, y: 2 };\n  match (p) {\n    P { x, yy } => { return x; }\n  }\n}\n",
+		"destr.fern":   "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: Point = Point { x: 1, y: 2 };\n  let Point { x, z } = p;\n  return x;\n}\n",
 		"type.fern":    "function main(): i32 {\n  let x: i32 = \"s\";\n  return x;\n}\n",
 		// The misspelt read is the chunk's, referenced two columns in.
 		"chunks.fern.md": "# Doc\n\n```fern\n<<*>>=\nfunction main(): i32 {\n  <<body>>\n}\n```\n\n```fern\n<<body>>=\nlet count: i32 = 1;\nreturn kount;\n```\n",
@@ -512,6 +514,8 @@ func TestSelfHostLSPCodeActionX86_64(t *testing.T) {
 		{"member.fern", fix(4, 23, 25, "y", "replace `yy` with `y`"), "+ p.y;"},
 		{"utf.fern", fix(1, 52, 57, "count", "replace `kount` with `count`"), "return count;"},
 		{"chunks.fern.md", fix(12, 7, 12, "count", "replace `kount` with `count`"), "return count;"},
+		{"pattern.fern", fix(4, 11, 13, "y", "replace `yy` with `y`"), "P { x, y } =>"},
+		{"destr.fern", fix(3, 17, 18, "x", "replace `z` with `x`"), "let Point { x, x } = p;"},
 	}
 	for _, w := range wants {
 		t.Run(w.file+"/"+w.fix.NewText, func(t *testing.T) {
@@ -571,7 +575,7 @@ func TestSelfHostLSPCodeActionX86_64(t *testing.T) {
 	}
 
 	t.Run("no-fix", func(t *testing.T) {
-		for _, file := range []string{"type.fern", "pattern.fern"} {
+		for _, file := range []string{"type.fern"} {
 			if len(published[file]) == 0 {
 				t.Fatalf("%s published no diagnostic", file)
 			}
