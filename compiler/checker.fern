@@ -4307,7 +4307,27 @@ function (s: Scope) unknown_method_advice(ns: string, method: string, recv: type
   if (s.methods_in_namespace(ns).len() > 0) {
     return s.unknown_method_message(ns, method, label, recv);
   }
+  // Option's and Result's methods live in std/option and std/result, which a
+  // program sees only when it imports them.
+  let umod: string = builtin_union_module(recv);
+  if (umod.len() > 0 && !s.module_imported(umod)) {
+    return "no method \"" + method + "\" on " + label + " — if it comes from " + umod + ", add `import \"" + umod + "\"`";
+  }
   return "field access on non-struct value of type " + label;
+}
+
+// builtin_union_module is the stdlib module that declares the methods of the
+// built-in union `t`, or "".
+function builtin_union_module(t: typeinfo.Type): string {
+  if let typeinfo.TypeUnion(u) = t {
+    if (u.name == "Option") {
+      return "std/option";
+    }
+    if (u.name == "Result") {
+      return "std/result";
+    }
+  }
+  return "";
 }
 
 // method_namespace_of: the name a receiver's methods register under — "Array"
@@ -24429,8 +24449,64 @@ function call_inst(c: ast.ExprCall, s: Scope, gens: parser.FuncDecl[], depth: i3
   return none;
 }
 
+// fn_value_inst is the instantiation a generic free function named as a value
+// asks for where the callable `dest` is expected, or one with an empty name when
+// `e` names no such function or `dest` leaves a type parameter unbound or
+// unspellable. The monomorphiser clones such a use (parser.mono_fn_value), so
+// the clone is checked as a call's would be.
+function fn_value_inst(e: ast.Expr, dest: typeinfo.Type, s: Scope, gens: parser.FuncDecl[], depth: i32): Inst {
+  let none: Inst = Inst { name: "", cts: [], depth: depth };
+  let ast.ExprIdent(id) = e else {
+    return none;
+  };
+  let typeinfo.TypeFunc(df) = dest else {
+    return none;
+  };
+  let gi: i32 = template_index(gens, id.name);
+  if (gi < 0 || !generic_fn_value_arg(e, s)) {
+    return none;
+  }
+  let (bn, bt) = fn_value_binds(s.lookup_sig(id.name), df, s);
+  let cts: string[] = [];
+  for tp in gens[gi].all_type_params {
+    let k: i32 = util.index_of_str(bn, tp);
+    if (k < 0 || !spellable(bt[k])) {
+      return none;
+    }
+    cts = cts.append(type_label(bt[k]));
+  }
+  return Inst { name: id.name, cts: cts, depth: depth };
+}
+
+// arg_value_insts appends the instantiations the arguments of `c` that name a
+// generic function as a value ask for, each against the parameter it is passed
+// to.
+function arg_value_insts(c: ast.ExprCall, s: Scope, gens: parser.FuncDecl[], depth: i32, own acc: Inst[]): Inst[] {
+  let ast.ExprIdent(cid) = c.callee else {
+    return acc;
+  };
+  if (s.defines(cid.name)) {
+    return acc;
+  }
+  let sig: FuncSig = s.lookup_sig(cid.name);
+  let out: Inst[] = acc;
+  let i: i32 = 0;
+  while (i < c.args.len() && i < sig.param_types.len()) {
+    if (generic_fn_value_arg(c.args[i], s)) {
+      let inst: Inst = fn_value_inst(c.args[i], bound_param_dest(c, i, sig.param_types[i], s), s, gens, depth);
+      if (inst.name.len() > 0) {
+        out = out.append(inst);
+      }
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
 // calls_a_generic is the syntactic test that lets a body with no call to a
-// generic free function skip inst_stmts, which types every statement.
+// generic free function skip inst_stmts, which types every statement. A
+// generic function named as a value counts: it is instantiated where it is
+// passed.
 function calls_a_generic(stmts: ast.Stmt[], s: Scope): boolean {
   function at_call(n: ast.Expr, own hit: boolean): boolean {
     if (hit) {
@@ -24438,7 +24514,14 @@ function calls_a_generic(stmts: ast.Stmt[], s: Scope): boolean {
     }
     if let ast.ExprCall(c) = n {
       if let ast.ExprIdent(id) = c.callee {
-        return s.lookup_sig(id.name).all_type_params.len() > 0;
+        if (s.lookup_sig(id.name).all_type_params.len() > 0) {
+          return true;
+        }
+      }
+      for a in c.args {
+        if (generic_fn_value_arg(a, s)) {
+          return true;
+        }
       }
     }
     return false;
@@ -24467,10 +24550,11 @@ function inst_stmt(st: ast.Stmt, cur: Scope, gens: parser.FuncDecl[], depth: i32
     match (n) {
       ast.ExprCall(c) => {
         let inst: Inst = call_inst(c, cur, gens, depth);
+        let out: Inst[] = arg_value_insts(c, cur, gens, depth, a);
         if (inst.name.len() > 0) {
-          return a.append(inst);
+          return out.append(inst);
         }
-        return a;
+        return out;
       },
       ast.ExprLambda(lm) => {
         return inst_stmts(lm.body, lambda_body_scope(lm, cur), gens, depth, a);

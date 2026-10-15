@@ -12679,6 +12679,20 @@ func (c *checker) errIdent(n *ast.Ident, s *scope, format string, args ...any) {
 // (replacing one identifier with another always re-parses). namePos is
 // the field NAME token's own position (FieldInit.NamePos /
 // FieldAccess.FieldPos); a zero position (synthetic node) skips the fix.
+// builtinUnionModule is the stdlib module that declares the methods of the
+// built-in union t, or "".
+func builtinUnionModule(t ast.Type) string {
+	if e, ok := t.(ast.EnumType); ok {
+		switch e.Name {
+		case "Option":
+			return "std/option"
+		case "Result":
+			return "std/result"
+		}
+	}
+	return ""
+}
+
 // scalarMethodModule returns the stdlib module that defines `method` on the
 // scalar type `t`, or "" when there is no such pairing. It exists so a method
 // call on a scalar whose module was not imported gets a diagnostic naming the
@@ -21008,6 +21022,12 @@ func (c *checker) fieldAccessType(n *ast.FieldAccess, s *scope, tt ast.Type) ast
 			// method does not exist. Say so, and say what does.
 			if tn, ok := collectionNamespace(tt); ok && len(c.methodsOn(tn)) > 0 {
 				c.errfCode(n.P, "E043", "%s", c.unknownMethodMessage(tn, n.Field, tt))
+				return nil
+			}
+			// Option's and Result's methods live in std/option and
+			// std/result, which a program sees only when it imports them.
+			if mod := builtinUnionModule(tt); mod != "" && !c.moduleAlreadyImports(mod) {
+				c.errfCode(n.P, "E043", "no method %q on %s — if it comes from %s, add `import %q`", n.Field, tt, mod, mod)
 				return nil
 			}
 			c.errfCode(n.P, "E043", "field access on non-struct value of type %s", tt)
