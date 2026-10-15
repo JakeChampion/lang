@@ -117,6 +117,20 @@ function pick(name: string): Case {
         let b2: ssa.SBlock = block(2, [0], [call(4, "__fern_rc_dec", [0]), const_int(5, 0)], ret(5));
         return Case { f: func(1, 6, [b0, b1, b2]), modes: [counted], returns_unit: false };
     }
+    if (name == "take-from-a-dominating-load") {
+        // A null store into the slot a load in a dominating block read takes
+        // the slot's unit for that load, which the frame then releases.
+        let b0: ssa.SBlock = block(0, [], [param(0), counted_load(1, 0, 8), const_int(2, 0)], br(1));
+        let b1: ssa.SBlock = block(1, [0], [store(0, 8, 2), call(3, "__fern_rc_dec", [1]), call(4, "__fern_rc_dec", [0]), const_int(5, 0)], ret(5));
+        return Case { f: func(1, 6, [b0, b1]), modes: [counted], returns_unit: false };
+    }
+    if (name == "take-for-the-load-read-after") {
+        // Two loads of the slot before its null store: the unit goes to the
+        // older, which a later block reads, not to the nearer, read nowhere.
+        let b0: ssa.SBlock = block(0, [], [param(0), counted_load(1, 0, 8), counted_load(2, 0, 8), const_int(3, 0), store(0, 8, 3)], br(1));
+        let b1: ssa.SBlock = block(1, [0], [call(4, "__fern_rc_dec", [1]), call(5, "__fern_rc_dec", [0]), const_int(6, 0)], ret(6));
+        return Case { f: func(1, 7, [b0, b1]), modes: [counted], returns_unit: false };
+    }
     if (name == "resumed-frame-not-certified") {
         // A body that re-enters through the task stack is left alone, leak
         // and all: its tokens come back as popped words.
@@ -443,6 +457,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"shell-slot-read-twice", nil, 0, ""},
 		{"shell-payload-kept", []string{"of v1"}, 0, ""},
 		{"null-guarded-release", nil, 0, ""},
+		{"take-from-a-dominating-load", nil, 0, ""},
+		{"take-for-the-load-read-after", nil, 0, ""},
 		{"released-on-one-arm", []string{"leaked where it dies of v1"}, 0, ""},
 		{"retained-on-one-arm-released-on-another", nil, 1, ""},
 		{"resumed-frame-not-certified", nil, 0, "resumes from a task frame"},

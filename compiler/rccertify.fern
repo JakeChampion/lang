@@ -1361,9 +1361,9 @@ function origin_of(w: Walk, c: Context, bi: i32, pos: i32, ins: ssa.SInst): Foun
   return plain(org_none());
 }
 
-function origins(w: Walk, regions: i32[][], openers: i32[][], children_box: boolean[], dom: ssadeps.Dom): Origins {
+function origins(w: Walk, stores: Stores, regions: i32[][], openers: i32[][], children_box: boolean[], dom: ssadeps.Dom): Origins {
   let f: ssa.SFunc = w.f;
-  let c: Context = Context { regions: regions, openers: openers, children_box: children_box, dom: dom, stores: stores_of(w), shells: shells_of(w) };
+  let c: Context = Context { regions: regions, openers: openers, children_box: children_box, dom: dom, stores: stores, shells: shells_of(w) };
   let out: i32[] = __alloc_i32(f.nvals);
   let why: i32[] = __alloc_i32(f.nvals);
   let opened: i32[] = util.minus_ones(f.nvals);
@@ -1506,7 +1506,7 @@ function escapes(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32): boolean {
   let none: boolean[] = [];
   if (mode != 2) {
     let no_phis: i32[] = [];
-    return escape_paths(w, ld, lb, lp, mode, none, slot_blocks(w, w.root[ld.args[0]], no_phis)).escapes;
+    return escape_paths(w, ld, lb, lp, mode, none, slot_blocks(w, w.root[ld.args[0]], no_phis), false).escapes;
   }
   return escape_fixpoint(w, ld, lb, lp).escapes;
 }
@@ -1523,16 +1523,13 @@ struct Escape { escapes: boolean, boxed: boolean[] }
 function escape_fixpoint(w: Walk, ld: ssa.SInst, lb: i32, lp: i32): Escape {
   let base: i32 = w.root[ld.args[0]];
   let cands: i32[] = token_phis_of(w, base);
-  let boxed: boolean[] = __alloc_bool(w.f.nvals);
-  for p in cands {
-    boxed = boxed.with(p, true);
-  }
+  let boxed: boolean[] = assumed_boxed(w, cands);
   // The candidates only shrink, so the blocks they mark at the start hold
   // every event a later round can find.
   let marks: boolean[] = slot_blocks(w, base, cands);
   let again: boolean = true;
   while (again) {
-    let r: Paths = escape_paths(w, ld, lb, lp, 2, boxed, marks);
+    let r: Paths = escape_paths(w, ld, lb, lp, 2, boxed, marks, cands.len() > 0);
     if (r.escapes) {
       return Escape { escapes: true, boxed: boxed };
     }
@@ -1545,6 +1542,19 @@ function escape_fixpoint(w: Walk, ld: ssa.SInst, lb: i32, lp: i32): Escape {
     }
   }
   return Escape { escapes: false, boxed: boxed };
+}
+
+// assumed_boxed flags each candidate phi, and is empty when there is none:
+// its readers check the bound.
+function assumed_boxed(w: Walk, cands: i32[]): boolean[] {
+  if (cands.len() == 0) {
+    return [];
+  }
+  let boxed: boolean[] = __alloc_bool(w.f.nvals);
+  for p in cands {
+    boxed = boxed.with(p, true);
+  }
+  return boxed;
 }
 
 // firsts_of indexes, per root, the blocks holding an instruction whose
@@ -1589,12 +1599,13 @@ function slot_blocks(w: Walk, base: i32, phis: i32[]): boolean[] {
   return out;
 }
 
-// Paths is what escape_paths walked: whether a path returned, and the
-// edges it took (block index times two, plus the successor).
+// Paths is what escape_paths walked: whether a path returned, and, when
+// asked for (`edges`), the edges it took (block index times two, plus the
+// successor).
 struct Paths { escapes: boolean, edge: boolean[] }
 
-function escape_paths(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32, boxed: boolean[], marks: boolean[]): Paths {
-  let edge: boolean[] = __alloc_bool(w.f.blocks.len() * 2);
+function escape_paths(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32, boxed: boolean[], marks: boolean[], edges: boolean): Paths {
+  let edge: boolean[] = edge_flags(w, edges);
   if (marks[lb] && settles_in(w, ld, lb, lp + 1, w.f.blocks[lb].insts.len(), mode, boxed)) {
     return Paths { escapes: false, edge: edge };
   }
@@ -1615,7 +1626,7 @@ function escape_paths(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32, boxed
         si = w.at[sid];
       }
       if (si >= 0) {
-        edge = edge.with(b * 2 + e, true);
+        edge = took_edge(edge, b * 2 + e);
       }
       if (si == lb) {
         return Paths { escapes: true, edge: edge };
@@ -1634,6 +1645,22 @@ function escape_paths(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32, boxed
     }
   }
   return Paths { escapes: false, edge: edge };
+}
+
+// edge_flags is escape_paths' record of the edges it takes: one flag per
+// edge when asked for, else empty, which took_edge leaves alone.
+function edge_flags(w: Walk, edges: boolean): boolean[] {
+  if (!edges) {
+    return [];
+  }
+  return __alloc_bool(w.f.blocks.len() * 2);
+}
+
+function took_edge(own edge: boolean[], i: i32): boolean[] {
+  if (edge.len() == 0) {
+    return edge;
+  }
+  return edge.with(i, true);
 }
 
 // carried_of indexes, per box, the phis that carry it where they are not
@@ -2014,9 +2041,9 @@ function matches_store(w: Walk, ld: ssa.SInst, st: ssa.SInst): boolean {
 // took the unit for. An older load read after it names the same object but
 // the unit is taken once, by the latest; a load read only before the store
 // takes nothing. With no load read after, the nearest one is taken, so a
-// take the lowering emits and never uses still shows as held.
-function taken_root(w: Walk, dom: ssadeps.Dom, sb: i32, si: i32, st: ssa.SInst): i32 {
-  let after: boolean[] = reached_from(w, sb);
+// take the lowering emits and never uses still shows as held. `after` is the
+// blocks reached from `sb` (reached_from).
+function taken_root(w: Walk, dom: ssadeps.Dom, after: boolean[], sb: i32, si: i32, st: ssa.SInst): i32 {
   let pick: Picked = pick_loads(w, dom, after, Picked { used: -1, any: -1 }, sb, si, sb, si, st);
   // The blocks that dominate the store's are its dominator-tree ancestors.
   let lb: i32 = sb;
@@ -2783,13 +2810,12 @@ function put_back(w: Walk, st: ssa.SInst, val: i32): boolean {
 // value's, and the store keeps it there. A reload between released the
 // slot's unit (an overwritten slot's child), so the store spends one; and a
 // child's unit is the frame's, which the store hands back to the slot.
-function put_backs(w: Walk, dom: ssadeps.Dom): boolean[] {
+function put_backs(w: Walk, st: Stores, dom: ssadeps.Dom): boolean[] {
   if (w.held < 0) {
     return [];
   }
   let out: boolean[] = __alloc_bool(w.f.nvals);
   let refused: boolean[] = __alloc_bool(w.f.nvals);
-  let st: Stores = stores_of(w);
   let k: i32 = 0;
   while (k < st.base.len()) {
     let ins: ssa.SInst = w.f.blocks[st.block[k]].insts[st.at[k]];
@@ -2845,29 +2871,39 @@ function no_takes(): Takes {
 }
 
 function takes_of(w: Walk, dom: ssadeps.Dom): Takes {
-  let f: ssa.SFunc = w.f;
-  let out: Takes = Takes { block: [], at: [], roots: [], first: util.minus_ones(f.blocks.len()) };
+  let out: Takes = Takes { block: [], at: [], roots: [], first: util.minus_ones(w.f.blocks.len()) };
   let sb: i32 = 0;
-  while (sb < f.blocks.len()) {
-    let insts: ssa.SInst[] = f.blocks[sb].insts;
-    let si: i32 = 0;
-    while (si < insts.len()) {
-      let st: ssa.SInst = insts[si];
-      if (is_take(w, st)) {
-        let r: i32 = taken_root(w, dom, sb, si, st);
-        let rs: i32[] = [];
-        if (r >= 0) {
-          rs = rs.append(r);
-        }
-        let first: i32[] = out.first;
-        if (first[sb] < 0) {
-          first = first.with(sb, out.block.len());
-        }
-        out = Takes { block: out.block.append(sb), at: out.at.append(si), roots: out.roots.append(rs), first: first };
-      }
-      si = si + 1;
-    }
+  while (sb < w.f.blocks.len()) {
+    out = block_takes(out, w, dom, sb);
     sb = sb + 1;
+  }
+  return out;
+}
+
+// block_takes adds block `sb`'s takes, finding the blocks reached from it
+// once for all of them.
+function block_takes(own out: Takes, w: Walk, dom: ssadeps.Dom, sb: i32): Takes {
+  let insts: ssa.SInst[] = w.f.blocks[sb].insts;
+  let after: boolean[] = [];
+  let si: i32 = 0;
+  while (si < insts.len()) {
+    let st: ssa.SInst = insts[si];
+    if (is_take(w, st)) {
+      if (after.len() == 0) {
+        after = reached_from(w, sb);
+      }
+      let r: i32 = taken_root(w, dom, after, sb, si, st);
+      let rs: i32[] = [];
+      if (r >= 0) {
+        rs = rs.append(r);
+      }
+      let first: i32[] = out.first;
+      if (first[sb] < 0) {
+        first = first.with(sb, out.block.len());
+      }
+      out = Takes { block: out.block.append(sb), at: out.at.append(si), roots: out.roots.append(rs), first: first };
+    }
+    si = si + 1;
   }
   return out;
 }
@@ -3427,11 +3463,12 @@ function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: 
   let rg: Regions = inherited_regions(unique_regions(w, dom, reach), f, reach, base);
   let own_children: boolean[] = children_boxes(w, rg.roots);
   let children: boolean[] = inherited_children(own_children, f, defs, base);
-  let o: Origins = inherited_origins(origins(w, rg.roots, rg.openers, children, dom), f, defs, base);
+  let st: Stores = stores_of(w);
+  let o: Origins = inherited_origins(origins(w, st, rg.roots, rg.openers, children, dom), f, defs, base);
   w = Walk { ...w, origin: o.origin, why: o.why, opened: o.opened, pair_tag: o.pair_tag, pair_mask: o.pair_mask, pair_words: o.pair_words, regions: rg.roots, openers: rg.openers, children: children };
   let takes: Takes = inherited_takes(takes_of(w, dom), w, base);
   let taken: boolean[] = null_takes(w, takes);
-  w = Walk { ...w, takes: takes, debt: debts(w, taken, hold.from), kept: put_backs(w, dom), idx: indexes(w, touches(w, taken)) };
+  w = Walk { ...w, takes: takes, debt: debts(w, taken, hold.from), kept: put_backs(w, st, dom), idx: indexes(w, touches(w, taken)) };
   let tracked: i32 = 0;
   for k in w.idx {
     if (k >= 0) {
