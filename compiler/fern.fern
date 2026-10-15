@@ -225,7 +225,7 @@ function errors_of(ds: util.Diag[]): Finding[] {
 // refusal is a rejection with no code and no position — a module that could
 // not be loaded — whose message `-check` prints as the whole line.
 function refusal(msg: string): Finding {
-  return Finding { diag: util.Diag { code: "", message: msg, line: 0, col: 0 }, warning: false, path: "" };
+  return Finding { diag: util.Diag { code: "", message: msg, line: 0, col: 0, fix: None }, warning: false, path: "" };
 }
 
 function has_error(fs: Finding[]): boolean {
@@ -346,19 +346,37 @@ function snippet(st: DiagStyle, path: string, line: i32, col: i32, sgr: string):
   if (!st.color) {
     return "\n    " + text + "\n    " + pad + mark;
   }
-  let num: string = util.i32_to_string(line);
+  return "\n " + util.i32_to_string(line) + " " + gutter_sep(st) + " " + text + "\n" + note_prefix(st, line) + pad + mark;
+}
+
+// note_prefix is what starts a line under snippet's source line for `line`:
+// four spaces, or a gutter as wide as the line number when colour is on.
+function note_prefix(st: DiagStyle, line: i32): string {
+  if (!st.color) {
+    return "    ";
+  }
   let blank: string = "";
   let b: i32 = 0;
-  while (b < num.len()) {
+  while (b < util.i32_to_string(line).len()) {
     blank = blank + " ";
     b = b + 1;
   }
-  let bar: string = "│";
+  return " " + blank + " " + gutter_sep(st) + " ";
+}
+
+function gutter_sep(st: DiagStyle): string {
   if (st.ascii) {
-    bar = "|";
+    return paint(st, "34", "|");
   }
-  let sep: string = paint(st, "34", bar);
-  return "\n " + num + " " + sep + " " + text + "\n " + blank + " " + sep + " " + pad + mark;
+  return paint(st, "34", "│");
+}
+
+// help_line is the `help:` line naming a diagnostic's fix, under its snippet.
+function help_line(st: DiagStyle, d: util.Diag): string {
+  if let Some(f) = d.fix {
+    return "\n" + note_prefix(st, util.pos_line(d.line)) + paint(st, "34", "help:") + " " + f.title;
+  }
+  return "";
 }
 
 // finding_text renders a finding as `-check` and native print it: the
@@ -392,7 +410,7 @@ function finding_text(st: DiagStyle, f: Finding, entry: string, files: string[],
   } else {
     head = util.pos_str(entry_display(entry), files, d.line, d.col);
   }
-  return head + ": " + tag + d.message + snippet(st, path, util.pos_line(d.line), d.col, sgr);
+  return head + ": " + tag + d.message + snippet(st, path, util.pos_line(d.line), d.col, sgr) + help_line(st, d);
 }
 
 // entry_display is the entry path as a diagnostic names it: the path the
@@ -1314,7 +1332,7 @@ function violation_finding(code: string, msg: string, fn_module: string, line: i
   if (fn_module.len() > 0) {
     line = 0;
   }
-  return Finding { diag: util.Diag { code: code, message: msg, line: line, col: col }, warning: false, path: "" };
+  return Finding { diag: util.Diag { code: code, message: msg, line: line, col: col, fix: None }, warning: false, path: "" };
 }
 
 // read_manifest parses `<dir>fern.toml`, or an empty manifest when the entry
@@ -2569,7 +2587,7 @@ function todo_warnings(sites: parser.TodoSite[], entry_path: string): Finding[] 
   let name: string = entry_display(entry_path);
   let out: Finding[] = [];
   for site in sites {
-    out = out.append(Finding { diag: util.Diag { code: "", message: "`todo` stub remaining", line: site.line, col: site.col }, warning: true, path: name });
+    out = out.append(Finding { diag: util.Diag { code: "", message: "`todo` stub remaining", line: site.line, col: site.col, fix: None }, warning: true, path: name });
   }
   return out;
 }
@@ -3625,12 +3643,13 @@ function lsp_symbol(q: Asked, sym: lspassist.Symbol): string {
 // lsp_doc_span is the LSP range of the bundle span from `l0`, `c0` to `l1`,
 // `c1` in the requested document; an end with no document line is the start.
 function lsp_doc_span(q: Asked, l0: i32, c0: i32, l1: i32, c1: i32): string {
-  let a: util.Diag = util.doc_diag(q.d.maps, util.Diag { code: "", message: "", line: l0, col: c0 });
-  let b: util.Diag = util.doc_diag(q.d.maps, util.Diag { code: "", message: "", line: l1, col: c1 });
-  if (b.line == 0) {
-    b = a;
+  let (al, ac) = util.doc_pos(q.d.maps, l0, c0);
+  let (bl, bc) = util.doc_pos(q.d.maps, l1, c1);
+  if (bl == 0) {
+    bl = al;
+    bc = ac;
   }
-  return lsp.span_between(q.text, util.pos_line(a.line), a.col, util.pos_line(b.line), b.col);
+  return lsp.span_between(q.text, util.pos_line(al), ac, util.pos_line(bl), bc);
 }
 
 // lsp_inlay_hints is the inlay hints of the document in a request's range.
@@ -3643,9 +3662,9 @@ function lsp_inlay_hints(q: Asked, m: lsp.Message): string {
   for mi in lsp_doc_modules(q.d, q.path) {
     let (lo, hi) = lsp_bundle_lines(q.d, mi, l0 + 1, l1 + 1);
     for h in lspassist.inlay_hints(q.d.prog, mi, lo, hi) {
-      let at: util.Diag = util.doc_diag(q.d.maps, util.Diag { code: "", message: "", line: h.line, col: h.col });
-      let (hl, hc) = lsp.lsp_position(q.text, util.pos_line(at.line), at.col);
-      if (at.line > 0 && lsp_in_range(hl, hc, l0, c0, l1, c1)) {
+      let (al, ac) = util.doc_pos(q.d.maps, h.line, h.col);
+      let (hl, hc) = lsp.lsp_position(q.text, util.pos_line(al), ac);
+      if (al > 0 && lsp_in_range(hl, hc, l0, c0, l1, c1)) {
         out = out.append(lsp.inlay_hint(hl, hc, h.label));
       }
     }
@@ -3708,8 +3727,8 @@ function lsp_into_bundle(d: Doc, path: string, line: i32, col: i32): (i32, i32) 
 // lsp_answer_range is the LSP range of an answer's span in `text`, the
 // document its module was read from.
 function lsp_answer_range(d: Doc, text: lsp.Text, a: lspquery.Answer): string {
-  let at: util.Diag = util.doc_diag(d.maps, util.Diag { code: "", message: "", line: a.line, col: a.col });
-  return lsp.span_range(text, util.pos_line(at.line), at.col, a.len);
+  let (al, ac) = util.doc_pos(d.maps, a.line, a.col);
+  return lsp.span_range(text, util.pos_line(al), ac, a.len);
 }
 
 // lsp_module_doc is the file module `m` of a check was read from — the
@@ -3873,12 +3892,12 @@ function package_findings(merged: parser.Module, pkgs: caps.Pkg[]): Finding[] {
   let vs: caps.Violation[] = caps.enforce(caps.analyze(merged, pkgs), pkgs);
   for v in vs {
     if (!v.governed) {
-      out = out.append(Finding { diag: util.Diag { code: "", message: caps.violation_message(v), line: 0, col: 0 }, warning: true, path: "" });
+      out = out.append(Finding { diag: util.Diag { code: "", message: caps.violation_message(v), line: 0, col: 0, fix: None }, warning: true, path: "" });
     }
   }
   for v in vs {
     if (v.governed) {
-      out = out.append(Finding { diag: util.Diag { code: "E070", message: caps.violation_message(v), line: 0, col: 0 }, warning: false, path: "" });
+      out = out.append(Finding { diag: util.Diag { code: "E070", message: caps.violation_message(v), line: 0, col: 0, fix: None }, warning: false, path: "" });
     }
   }
   return out;
