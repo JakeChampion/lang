@@ -833,7 +833,7 @@ beat GNU on every row. The 139 rows that lose to GNU fall into a few families:
 | family | rows lost | worst | where the time goes |
 |---|---|---|---|
 | `ls` / `dir` / `vdir` | 35 | 0.70x | the 4000-name rows, where neither side stats more than the other: the sort's comparator is called out of line and pays a full prologue for a two-load compare. `-F` and `-R` win now that `ls` stats only what GNU does |
-| the digests (`sha*sum`, `b2sum`, `cksum -a`) | 27 | 0.50x | GNU calls OpenSSL's assembly: `sha256sum` of 8 MiB is 372 M instructions to its 235 M, and on x86-64 its SHA-256 uses the SHA extensions, which the baseline does not assume. `md5sum` wins every row now; `sha1sum` still loses its three large-file rows |
+| the digests (`sha*sum`, `b2sum`, `cksum -a`) | 27 | 0.50x | GNU calls OpenSSL's assembly, and on x86-64 its SHA-256 uses the SHA extensions, which the baseline does not assume. Hashing 8 MiB was 372 M instructions to OpenSSL's 235 M on its AVX2 path; the x86-64 kernel (#12210) brings it to 296 M. `md5sum` wins every row now; `sha1sum` still loses its three large-file rows |
 | `fmt` | 9 | 0.67x | every row |
 | `stat` | 8 | 0.80x | formatting 4000 operands, most rows within noise of 1 |
 | `base32` / `base64` / `basenc` | 8 | 0.59x | encoding the 64 MiB rows, and `base32 -d`; `base64 -d` and `--base16 -d` win now |

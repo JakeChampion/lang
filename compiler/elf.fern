@@ -117,15 +117,6 @@ pub function elf_cat_u8(buf: i32[], src: u8[]): i32[] {
   return buf;
 }
 
-// elf_pad_to_8 appends zero bytes until the buffer length is a multiple
-// of 8 (so the data blob lands 8-byte aligned after .text).
-pub function elf_pad_to_8(b: i32[]): i32[] {
-  while (b.len() % 8 != 0) {
-    b = b.append(0);
-  }
-  return b;
-}
-
 // elf_u32_to_i64 zero-extends an i32 byte count to i64 (treating its bits
 // as unsigned). A .bss size can exceed 2^31 — the self-host arm64 heap is
 // 2.5 GiB — which overflows i32 into a negative bit pattern; a plain
@@ -234,7 +225,7 @@ function elf_static_executable_x86(text: i32[]): i32[] {
 // R+W+X image.
 function elf_static_executable_data_x86(text: u8[], data: i32[]): i32[] {
   let body: i32[] = elf_cat_u8([], text);
-  body = elf_pad_to_8(body);
+  body = elf_pad_to(body, elf_align16(body.len()));
   body = elf_cat(body, data);
   return elf_image(body, 7, elf_em_x86_64());  // PF_R | PF_W | PF_X
 }
@@ -268,10 +259,11 @@ pub function elf_eh_frame_vaddr_x86(text_len: i32, hdr_len: i32): i32 {
 }
 
 // elf_x86_data_base is the text-relative offset of the data blob in the
-// x86-64 program image: 8-aligned past .text and whatever unwind data
-// follows it. x86_resolve reads it so the assembler and this writer agree.
+// x86-64 program image: 16-aligned past .text and whatever unwind data
+// follows it. x86_data_base restates it so the assembler and this writer
+// agree.
 pub function elf_x86_data_base(text_len: i32, hdr_len: i32, eh_len: i32): i32 {
-  return elf_align8(elf_unwind_end(0, text_len, hdr_len, eh_len));
+  return elf_align16(elf_unwind_end(0, text_len, hdr_len, eh_len));
 }
 
 // elf_program_x86 writes the x86-64 program image: ELF header, PT_LOAD
@@ -406,7 +398,7 @@ function elf_so_phnum(wx: boolean): i32 {
 // elf_text_off_so is .text's file offset, and base-0 address, in the shared
 // object; the unwind sections follow it as in the executables.
 pub function elf_text_off_so(wx: boolean): i32 {
-  return elf_eh_size() + elf_so_phnum(wx) * elf_ph_size();
+  return elf_align16(elf_eh_size() + elf_so_phnum(wx) * elf_ph_size());
 }
 
 pub function elf_eh_hdr_off_so(wx: boolean, text_len: i32): i32 {
@@ -534,7 +526,7 @@ pub function elf_shared(machine: i32, wx: boolean, text: i32[], hdr: i32[], eh: 
   buf = elf_le32(buf, 6);
   buf = elf_pad_to(buf, buf.len() + 48);
 
-  buf = elf_cat(buf, text);
+  buf = elf_cat(elf_pad_to(buf, text_off), text);
   if (has_unwind) {
     buf = elf_cat(elf_pad_to(buf, elf_eh_hdr_off_so(wx, text.len())), hdr);
     buf = elf_cat(elf_pad_to(buf, elf_eh_frame_off_so(wx, text.len(), hdr.len())), eh);
@@ -615,6 +607,10 @@ function elf_align4(v: i32): i32 {
 
 function elf_align8(v: i32): i32 {
   return v + 7 - (v + 7) % 8;
+}
+
+function elf_align16(v: i32): i32 {
+  return v + 15 - (v + 15) % 16;
 }
 
 // elf_unwind_end is the file offset just past the unwind sections that

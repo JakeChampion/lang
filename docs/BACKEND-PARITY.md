@@ -326,9 +326,11 @@ masks (`compiler/wasm_aes.fern`).
 
 **The SHA extensions are not taken on x86-64.** Intel's client parts gained
 them only with Ice Lake (2019), so taking them would move the floor off every
-Haswell-to-Comet-Lake part. SHA-256 runs std/crypto's generated rounds there
-and on wasm, and the SHA-256 instructions on arm64, where the crypto baseline
-has them (`__sha256_hw`, #10615).
+Haswell-to-Comet-Lake part. SHA-256 runs a kernel of SSSE3 and BMI2 there
+(`__fern_sha256_hw_blocks`: the message schedule in xmm registers, the rounds
+on `rorx`, #12210), the SHA-256 instructions on arm64, where the crypto
+baseline has them (`__sha256_hw`, #10615), and std/crypto's generated rounds
+on wasm.
 
 Anything above this level (AVX-512, …) needs runtime dispatch first, and none
 of it is used. AVX-512 is deliberately not taken: Intel removed it from

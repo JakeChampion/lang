@@ -2647,9 +2647,9 @@ pub function is_aes_gcm_op(tag: i32): boolean {
   return tag == 402 || tag == 403 || tag == 404;
 }
 
-// `sha256_hw` pushes 1 where the target has the SHA-256 instructions (arm64)
-// and 0 where it has none, so std/crypto can take `sha256_hw_blocks` or its
-// own rounds.
+// `sha256_hw` pushes 1 where the target has a SHA-256 kernel (arm64's
+// instructions, x86-64's vector schedule) and 0 where it has none, so
+// std/crypto can take `sha256_hw_blocks` or its own rounds.
 pub function op_sha256_hw(): Op {
   return op0(409);
 }
