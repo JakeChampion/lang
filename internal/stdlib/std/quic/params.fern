@@ -1,0 +1,326 @@
+// std/quic/params — QUIC's transport parameters (RFC 9000 §18): what each
+// endpoint declares about itself in its quic_transport_parameters TLS
+// extension, encoded and decoded with the checks §18.2 sets.
+//
+// `decode(bytes, from_server)` refuses, as a TRANSPORT_PARAMETER_ERROR, a
+// parameter repeated, a value out of its range, and from a client any of
+// the four only a server may send. An unknown parameter, the reserved
+// ones among them (31 * N + 27), is skipped (§18.1). `encode(p, server)`
+// writes every parameter whose value differs from its default, and the
+// connection IDs a side is obliged to send.
+
+import "std/quic/frames";
+import "std/array";
+import "std/option";
+import "std/i64";
+
+pub const ORIGINAL_DESTINATION_CONNECTION_ID: i64 = 0;
+
+pub const MAX_IDLE_TIMEOUT: i64 = 1;
+
+pub const STATELESS_RESET_TOKEN: i64 = 2;
+
+pub const MAX_UDP_PAYLOAD_SIZE: i64 = 3;
+
+pub const INITIAL_MAX_DATA: i64 = 4;
+
+pub const INITIAL_MAX_STREAM_DATA_BIDI_LOCAL: i64 = 5;
+
+pub const INITIAL_MAX_STREAM_DATA_BIDI_REMOTE: i64 = 6;
+
+pub const INITIAL_MAX_STREAM_DATA_UNI: i64 = 7;
+
+pub const INITIAL_MAX_STREAMS_BIDI: i64 = 8;
+
+pub const INITIAL_MAX_STREAMS_UNI: i64 = 9;
+
+pub const ACK_DELAY_EXPONENT: i64 = 10;
+
+pub const MAX_ACK_DELAY: i64 = 11;
+
+pub const DISABLE_ACTIVE_MIGRATION: i64 = 12;
+
+pub const PREFERRED_ADDRESS: i64 = 13;
+
+pub const ACTIVE_CONNECTION_ID_LIMIT: i64 = 14;
+
+pub const INITIAL_SOURCE_CONNECTION_ID: i64 = 15;
+
+pub const RETRY_SOURCE_CONNECTION_ID: i64 = 16;
+
+// Params — one endpoint's transport parameters. Durations are in
+// milliseconds; a max_idle_timeout of 0 means none. `preferred_address` is
+// kept as its bytes (§18.2), for a client that migrates to read.
+pub struct Params {
+  original_destination_connection_id: Option[u8[]],
+  max_idle_timeout: i64,
+  stateless_reset_token: Option[u8[]],
+  max_udp_payload_size: i64,
+  initial_max_data: i64,
+  initial_max_stream_data_bidi_local: i64,
+  initial_max_stream_data_bidi_remote: i64,
+  initial_max_stream_data_uni: i64,
+  initial_max_streams_bidi: i64,
+  initial_max_streams_uni: i64,
+  ack_delay_exponent: i64,
+  max_ack_delay: i64,
+  disable_active_migration: boolean,
+  preferred_address: Option[u8[]],
+  active_connection_id_limit: i64,
+  initial_source_connection_id: Option[u8[]],
+  retry_source_connection_id: Option[u8[]],
+}
+
+// defaults are the values a parameter left out takes (§18.2): no flow-
+// control credit and no streams at all, so a useful endpoint sets them.
+pub function defaults(): Params {
+  return Params {
+    original_destination_connection_id: None,
+    max_idle_timeout: 0 as i64,
+    stateless_reset_token: None,
+    max_udp_payload_size: 65527 as i64,
+    initial_max_data: 0 as i64,
+    initial_max_stream_data_bidi_local: 0 as i64,
+    initial_max_stream_data_bidi_remote: 0 as i64,
+    initial_max_stream_data_uni: 0 as i64,
+    initial_max_streams_bidi: 0 as i64,
+    initial_max_streams_uni: 0 as i64,
+    ack_delay_exponent: 3 as i64,
+    max_ack_delay: 25 as i64,
+    disable_active_migration: false,
+    preferred_address: None,
+    active_connection_id_limit: 2 as i64,
+    initial_source_connection_id: None,
+    retry_source_connection_id: None,
+  };
+}
+
+function __bad(reason: string): frames.FrameError {
+  return frames.FrameError { code: frames.TRANSPORT_PARAMETER_ERROR, frame_type: 0 as i64, reason: reason };
+}
+
+// decode reads the parameters a peer sent; `from_server` says which side
+// the peer is.
+pub function decode(bytes: [u8], from_server: boolean): Result[Params, frames.FrameError] {
+  let p: Params = defaults();
+  let seen: i64[] = [];
+  let at: i32 = 0;
+  while (at < bytes.len()) {
+    let (id, a) = __varint(bytes, at, "parameter id")?;
+    let (len, b) = __varint(bytes, a, "parameter length")?;
+    if (len > (bytes.len() - b) as i64) {
+      return Err(__bad("parameter " + id.to_string() + " of " + len.to_string() + " bytes past the end"));
+    }
+    let n: i32 = len as i32;
+    if (id <= RETRY_SOURCE_CONNECTION_ID) {
+      if (seen.contains(id)) {
+        return Err(__bad("parameter " + id.to_string() + " sent twice"));
+      }
+      seen = seen.append(id);
+      p = __one(p, id, bytes[b:b + n], from_server)?;
+    }
+    at = b + n;
+  }
+  return Ok(p);
+}
+
+function __varint(bytes: [u8], at: i32, what: string): Result[(i64, i32), frames.FrameError] {
+  match (frames.read_varint(bytes, at)) {
+    Some(got) => {
+      return Ok(got);
+    },
+    None => {
+      return Err(__bad(what + " cut short"));
+    }
+  }
+}
+
+// __int is a parameter whose value is one integer filling it exactly.
+function __int(v: [u8], id: i64): Result[i64, frames.FrameError] {
+  match (frames.read_varint(v, 0)) {
+    Some(got) => {
+      if (got.1 == v.len()) {
+        return Ok(got.0);
+      }
+    },
+    None => {}
+  }
+  return Err(__bad("parameter " + id.to_string() + " is not one integer"));
+}
+
+function __cid(v: [u8], id: i64): Result[Option[u8[]], frames.FrameError] {
+  if (v.len() > 20) {
+    return Err(__bad("parameter " + id.to_string() + " is a connection id of " + v.len().to_string() + " bytes"));
+  }
+  return Ok(Some(__copy(v)));
+}
+
+// __one sets parameter `id` from its value `v`.
+function __one(p: Params, id: i64, v: [u8], from_server: boolean): Result[Params, frames.FrameError] {
+  if (server_only(id) && !from_server) {
+    return Err(__bad("a client sent parameter " + id.to_string() + ", which only a server may"));
+  }
+  if (__is_cid(id)) {
+    return __cid_param(p, id, v);
+  }
+  if (id == STATELESS_RESET_TOKEN || id == PREFERRED_ADDRESS || id == DISABLE_ACTIVE_MIGRATION) {
+    return __byte_param(p, id, v);
+  }
+  let n: i64 = __int(v, id)?;
+  if (id >= INITIAL_MAX_DATA && id <= INITIAL_MAX_STREAMS_UNI) {
+    return __flow(p, id, n);
+  }
+  return __timing(p, id, n);
+}
+
+// server_only reports whether only a server may send parameter `id`.
+pub function server_only(id: i64): boolean {
+  return id == ORIGINAL_DESTINATION_CONNECTION_ID || id == STATELESS_RESET_TOKEN || id == PREFERRED_ADDRESS || id == RETRY_SOURCE_CONNECTION_ID;
+}
+
+function __is_cid(id: i64): boolean {
+  return id == ORIGINAL_DESTINATION_CONNECTION_ID || id == INITIAL_SOURCE_CONNECTION_ID || id == RETRY_SOURCE_CONNECTION_ID;
+}
+
+function __cid_param(p: Params, id: i64, v: [u8]): Result[Params, frames.FrameError] {
+  let c: Option[u8[]] = __cid(v, id)?;
+  if (id == ORIGINAL_DESTINATION_CONNECTION_ID) {
+    return Ok(Params { ...p, original_destination_connection_id: c });
+  }
+  if (id == INITIAL_SOURCE_CONNECTION_ID) {
+    return Ok(Params { ...p, initial_source_connection_id: c });
+  }
+  return Ok(Params { ...p, retry_source_connection_id: c });
+}
+
+// __byte_param sets the parameters whose value is bytes of a fixed shape.
+function __byte_param(p: Params, id: i64, v: [u8]): Result[Params, frames.FrameError] {
+  if (id == STATELESS_RESET_TOKEN) {
+    if (v.len() != 16) {
+      return Err(__bad("a stateless reset token of " + v.len().to_string() + " bytes"));
+    }
+    return Ok(Params { ...p, stateless_reset_token: Some(__copy(v)) });
+  }
+  if (id == PREFERRED_ADDRESS) {
+    if (v.len() < 41) {
+      return Err(__bad("a preferred address of " + v.len().to_string() + " bytes"));
+    }
+    return Ok(Params { ...p, preferred_address: Some(__copy(v)) });
+  }
+  if (v.len() != 0) {
+    return Err(__bad("disable_active_migration with a value"));
+  }
+  return Ok(Params { ...p, disable_active_migration: true });
+}
+
+// __flow sets the flow-control credit and stream limits; a stream limit is
+// at most 2^60 (§18.2).
+function __flow(p: Params, id: i64, n: i64): Result[Params, frames.FrameError] {
+  if (id == INITIAL_MAX_DATA) {
+    return Ok(Params { ...p, initial_max_data: n });
+  }
+  if (id == INITIAL_MAX_STREAM_DATA_BIDI_LOCAL) {
+    return Ok(Params { ...p, initial_max_stream_data_bidi_local: n });
+  }
+  if (id == INITIAL_MAX_STREAM_DATA_BIDI_REMOTE) {
+    return Ok(Params { ...p, initial_max_stream_data_bidi_remote: n });
+  }
+  if (id == INITIAL_MAX_STREAM_DATA_UNI) {
+    return Ok(Params { ...p, initial_max_stream_data_uni: n });
+  }
+  if (n > 1152921504606846976) {
+    return Err(__bad("a stream limit over 2^60"));
+  }
+  if (id == INITIAL_MAX_STREAMS_BIDI) {
+    return Ok(Params { ...p, initial_max_streams_bidi: n });
+  }
+  return Ok(Params { ...p, initial_max_streams_uni: n });
+}
+
+// __timing sets the remaining integers, each within its range.
+function __timing(p: Params, id: i64, n: i64): Result[Params, frames.FrameError] {
+  if (id == MAX_IDLE_TIMEOUT) {
+    return Ok(Params { ...p, max_idle_timeout: n });
+  }
+  if (id == MAX_UDP_PAYLOAD_SIZE) {
+    return __ranged(Params { ...p, max_udp_payload_size: n }, n >= 1200, "max_udp_payload_size", n);
+  }
+  if (id == ACK_DELAY_EXPONENT) {
+    return __ranged(Params { ...p, ack_delay_exponent: n }, n <= 20, "ack_delay_exponent", n);
+  }
+  if (id == MAX_ACK_DELAY) {
+    return __ranged(Params { ...p, max_ack_delay: n }, n < 16384, "max_ack_delay", n);
+  }
+  return __ranged(Params { ...p, active_connection_id_limit: n }, n >= 2, "active_connection_id_limit", n);
+}
+
+function __ranged(p: Params, ok: boolean, name: string, n: i64): Result[Params, frames.FrameError] {
+  if (!ok) {
+    return Err(__bad(name + " of " + n.to_string()));
+  }
+  return Ok(p);
+}
+
+// encode writes `p` as `server` or client sends it: integers that differ
+// from their default, the flags set, and the connection IDs present. A
+// client's server-only parameters are left out.
+pub function encode(p: Params, server: boolean): u8[] {
+  let d: Params = defaults();
+  let out: u8[] = [];
+  if (server) {
+    out = __put_bytes(out, ORIGINAL_DESTINATION_CONNECTION_ID, p.original_destination_connection_id);
+  }
+  out = __put_int(out, MAX_IDLE_TIMEOUT, p.max_idle_timeout, d.max_idle_timeout);
+  if (server) {
+    out = __put_bytes(out, STATELESS_RESET_TOKEN, p.stateless_reset_token);
+  }
+  out = __put_int(out, MAX_UDP_PAYLOAD_SIZE, p.max_udp_payload_size, d.max_udp_payload_size);
+  out = __put_int(out, INITIAL_MAX_DATA, p.initial_max_data, d.initial_max_data);
+  out = __put_int(out, INITIAL_MAX_STREAM_DATA_BIDI_LOCAL, p.initial_max_stream_data_bidi_local, d.initial_max_stream_data_bidi_local);
+  out = __put_int(out, INITIAL_MAX_STREAM_DATA_BIDI_REMOTE, p.initial_max_stream_data_bidi_remote, d.initial_max_stream_data_bidi_remote);
+  out = __put_int(out, INITIAL_MAX_STREAM_DATA_UNI, p.initial_max_stream_data_uni, d.initial_max_stream_data_uni);
+  out = __put_int(out, INITIAL_MAX_STREAMS_BIDI, p.initial_max_streams_bidi, d.initial_max_streams_bidi);
+  out = __put_int(out, INITIAL_MAX_STREAMS_UNI, p.initial_max_streams_uni, d.initial_max_streams_uni);
+  out = __put_int(out, ACK_DELAY_EXPONENT, p.ack_delay_exponent, d.ack_delay_exponent);
+  out = __put_int(out, MAX_ACK_DELAY, p.max_ack_delay, d.max_ack_delay);
+  if (p.disable_active_migration) {
+    out = frames.put_varint(frames.put_varint(out, DISABLE_ACTIVE_MIGRATION), 0 as i64);
+  }
+  if (server) {
+    out = __put_bytes(out, PREFERRED_ADDRESS, p.preferred_address);
+  }
+  out = __put_int(out, ACTIVE_CONNECTION_ID_LIMIT, p.active_connection_id_limit, d.active_connection_id_limit);
+  out = __put_bytes(out, INITIAL_SOURCE_CONNECTION_ID, p.initial_source_connection_id);
+  if (server) {
+    out = __put_bytes(out, RETRY_SOURCE_CONNECTION_ID, p.retry_source_connection_id);
+  }
+  return out;
+}
+
+function __put_int(own out: u8[], id: i64, v: i64, unset: i64): u8[] {
+  if (v == unset) {
+    return out;
+  }
+  return frames.put_varint(frames.put_varint(frames.put_varint(out, id), frames.varint_len(v) as i64), v);
+}
+
+function __put_bytes(own out: u8[], id: i64, v: Option[u8[]]): u8[] {
+  match (v) {
+    Some(b) => {
+      return frames.put_varint(frames.put_varint(out, id), b.len() as i64).concat(b);
+    },
+    None => {
+      return out;
+    }
+  }
+}
+
+function __copy(b: [u8]): u8[] {
+  let out: u8[] = __alloc_u8(b.len());
+  let i: i32 = 0;
+  while (i < b.len()) {
+    out = out.with(i, b[i]);
+    i = i + 1;
+  }
+  return out;
+}

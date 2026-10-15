@@ -1,0 +1,566 @@
+// std/quic/packet — QUIC packets (RFC 9000 §17) and their protection
+// (RFC 9001 §5): headers read from a datagram, packet numbers truncated and
+// recovered, the Initial keys every connection derives from the client's
+// first Destination Connection ID, and packets sealed and opened under
+// them or under the keys the TLS handshake reports.
+//
+// A datagram can hold several packets (§12.2). `parse(datagram, at, n)`
+// reads the header of the packet at `at` — `n` is the length of this
+// endpoint's connection IDs, which a short header does not spell — and the
+// packet ends at the header's `end`, where the next one starts. Nothing
+// here is a connection error: a packet that does not parse or does not
+// decrypt is dropped (§12.2, §10.3), so failures are a reason, as text.
+//
+// Version 1 is the only version spoken. A long header naming another is
+// `UnknownVersion`, for a server to answer with Version Negotiation (§6).
+
+import "std/quic/frames";
+import "std/tls/keyschedule";
+import "std/crypto/aes_gcm";
+import "std/crypto/chacha20poly1305";
+import "std/array";
+import "std/i64";
+import "std/u32";
+
+// The QUIC version this module speaks.
+pub const VERSION_1: i64 = 1;
+
+// The smallest datagram a client's Initial may travel in (§14.1).
+pub const MIN_INITIAL_DATAGRAM: i32 = 1200;
+
+// The longest connection ID version 1 allows (§17.2).
+pub const MAX_CID_LEN: i32 = 20;
+
+// The bytes of a Retry's integrity tag and of a stateless reset token.
+pub const TAG_LEN: i32 = 16;
+
+// Kind — what a packet is (§17).
+pub enum Kind { Initial, ZeroRtt, Handshake, Retry, OneRtt, VersionNegotiation, UnknownVersion }
+
+// Header — a packet's header as read before decryption. `at` is where the
+// packet starts in its datagram and `end` where it stops; `pn_at` is where
+// its protected packet number starts. A Retry's `token` is the retry token
+// and its `tag` the integrity tag; Version Negotiation's `versions` are the
+// versions the server offers.
+pub struct Header { kind: Kind, version: i64, dcid: u8[], scid: u8[], token: u8[], tag: u8[], versions: i64[], at: i32, pn_at: i32, end: i32 }
+
+// Keys — one direction's packet protection at one encryption level:
+// the AEAD key and IV and the header-protection key (RFC 9001 §5.1), and
+// the secret they came from, which a key update (§6) advances.
+pub struct Keys { suite: keyschedule.CipherSuite, secret: u8[], key: u8[], iv: u8[], hp: u8[], hp_round_keys: u8[] }
+
+// Opened — a decrypted packet: its packet number, its frames' bytes, the
+// key phase and spin bits of a short header, and whether its reserved bits
+// were zero, which a receiver must check after decryption (§17.2).
+pub struct Opened { pn: i64, payload: u8[], key_phase: boolean, spin: boolean, reserved_ok: boolean }
+
+// === keys (RFC 9001 §5) ====================================================
+
+function __initial_salt(): u8[] {
+  return [56 as u8, 118 as u8, 44 as u8, 247 as u8, 245 as u8, 89 as u8, 52 as u8, 179 as u8, 77 as u8, 23 as u8, 154 as u8, 230 as u8, 164 as u8, 200 as u8, 12 as u8, 173 as u8, 204 as u8, 187 as u8, 127 as u8, 10 as u8];
+}
+
+// keys derives packet protection from a traffic secret under `suite`.
+pub function keys(suite: keyschedule.CipherSuite, secret: [u8]): Keys {
+  let h: keyschedule.Hash = suite.hash();
+  let n: i32 = suite.aead().key_len();
+  let hp: u8[] = keyschedule.hkdf_expand_label(h, secret, "quic hp", [], n);
+  let rk: u8[] = [];
+  match (suite.aead()) {
+    keyschedule.ChaCha20Poly1305 => {},
+    _ => {
+      rk = __aes_expand_key(hp);
+    }
+  }
+  return Keys { suite: suite, secret: __copy(secret), key: keyschedule.hkdf_expand_label(h, secret, "quic key", [], n), iv: keyschedule.hkdf_expand_label(h, secret, "quic iv", [], 12), hp: hp, hp_round_keys: rk };
+}
+
+// initial_secret is the Initial traffic secret of the client (`client`) or
+// the server, from the Destination Connection ID of the client's first
+// Initial (§5.2).
+pub function initial_secret(dcid: [u8], client: boolean): u8[] {
+  let h: keyschedule.Hash = keyschedule.Sha256;
+  let base: u8[] = keyschedule.hkdf_extract(h, __initial_salt(), dcid);
+  if (client) {
+    return keyschedule.hkdf_expand_label(h, base, "client in", [], 32);
+  }
+  return keyschedule.hkdf_expand_label(h, base, "server in", [], 32);
+}
+
+// initial_keys are the Initial keys of the client or the server.
+pub function initial_keys(dcid: [u8], client: boolean): Keys {
+  return keys(keyschedule.Aes128GcmSha256, initial_secret(dcid, client));
+}
+
+// updated are the keys after a key update (§6.1): a new secret from the old
+// under "quic ku", and new AEAD keys from it; header protection keeps its
+// key.
+pub function (k: Keys) updated(): Keys {
+  let h: keyschedule.Hash = k.suite.hash();
+  let secret: u8[] = keyschedule.hkdf_expand_label(h, k.secret, "quic ku", [], h.size());
+  let n: i32 = k.suite.aead().key_len();
+  return Keys { ...k, secret: secret, key: keyschedule.hkdf_expand_label(h, secret, "quic key", [], n), iv: keyschedule.hkdf_expand_label(h, secret, "quic iv", [], 12) };
+}
+
+// === packet numbers (§17.1, Appendix A) ====================================
+
+// pn_len is the bytes to send packet number `pn` in, when `largest_acked`
+// is the largest the peer has acknowledged (-1 for none): enough that the
+// peer can tell it from any packet number within twice the gap (A.2).
+pub function pn_len(pn: i64, largest_acked: i64): i32 {
+  let unacked: i64 = pn - largest_acked;
+  if (largest_acked < 0) {
+    unacked = pn + 1;
+  }
+  if (unacked < 128) {
+    return 1;
+  }
+  if (unacked < 32768) {
+    return 2;
+  }
+  if (unacked < 8388608) {
+    return 3;
+  }
+  return 4;
+}
+
+// decode_pn recovers a packet number from its `bits` low bits, nearest the
+// one after `largest`, the largest received so far (-1 for none) (A.3).
+pub function decode_pn(largest: i64, truncated: i64, bits: i32): i64 {
+  let expected: i64 = largest + 1;
+  let win: i64 = 1 as i64 << bits as i64;
+  let hwin: i64 = win / 2;
+  let candidate: i64 = expected - (expected & win - 1) | truncated;
+  if (candidate <= expected - hwin && candidate < (1 as i64 << 62) - win) {
+    return candidate + win;
+  }
+  if (candidate > expected + hwin && candidate >= win) {
+    return candidate - win;
+  }
+  return candidate;
+}
+
+// === headers (§17.2, §17.3) ================================================
+
+struct Reader { buf: [u8], at: i32 }
+
+function (r: Reader) byte(what: string): Result[(i32, Reader), string] {
+  if (r.at >= r.buf.len()) {
+    return Err(what + " cut short");
+  }
+  return Ok((r.buf[r.at] as i32, Reader { ...r, at: r.at + 1 }));
+}
+
+function (r: Reader) bytes(n: i32, what: string): Result[(u8[], Reader), string] {
+  if (n < 0 || r.at + n > r.buf.len()) {
+    return Err(what + " cut short");
+  }
+  return Ok((__slice(r.buf, r.at, r.at + n), Reader { ...r, at: r.at + n }));
+}
+
+function (r: Reader) varint(what: string): Result[(i64, Reader), string] {
+  match (frames.read_varint(r.buf, r.at)) {
+    Some(got) => {
+      return Ok((got.0, Reader { ...r, at: got.1 }));
+    },
+    None => {
+      return Err(what + " cut short");
+    }
+  }
+}
+
+function (r: Reader) cid(what: string, max: i32): Result[(u8[], Reader), string] {
+  let (n, r1) = r.byte(what + " length")?;
+  if (n > max) {
+    return Err(what + " of " + n.to_string() + " bytes");
+  }
+  return r1.bytes(n, what);
+}
+
+// parse reads the header of the packet at `at` in `datagram`; a short
+// header's Destination Connection ID is `short_dcid_len` bytes.
+pub function parse(datagram: [u8], at: i32, short_dcid_len: i32): Result[Header, string] {
+  let r: Reader = Reader { buf: datagram, at: at };
+  let (b0, r1) = r.byte("first byte")?;
+  if ((b0 & 128) == 0) {
+    return __short(b0, r1, at, short_dcid_len);
+  }
+  let (vb, r2) = r1.bytes(4, "version")?;
+  let version: i64 = __be32(vb, 0);
+  let max: i32 = MAX_CID_LEN;
+  if (version != VERSION_1) {
+    max = 255;
+  }
+  let (dcid, r3) = r2.cid("destination connection id", max)?;
+  let (scid, r4) = r3.cid("source connection id", max)?;
+  let h: Header = Header { kind: UnknownVersion, version: version, dcid: dcid, scid: scid, token: [], tag: [], versions: [], at: at, pn_at: r4.at, end: datagram.len() };
+  if (version == 0) {
+    return __version_negotiation(h, r4);
+  }
+  if (version != VERSION_1) {
+    return Ok(h);
+  }
+  return __long(h, b0, r4);
+}
+
+function __short(b0: i32, r: Reader, at: i32, dcid_len: i32): Result[Header, string] {
+  if ((b0 & 64) == 0) {
+    return Err("fixed bit not set");
+  }
+  let (dcid, r1) = r.bytes(dcid_len, "destination connection id")?;
+  return Ok(Header { kind: OneRtt, version: VERSION_1, dcid: dcid, scid: [], token: [], tag: [], versions: [], at: at, pn_at: r1.at, end: r.buf.len() });
+}
+
+function __version_negotiation(h: Header, r: Reader): Result[Header, string] {
+  let left: i32 = r.buf.len() - r.at;
+  if (left == 0 || left % 4 != 0) {
+    return Err("version negotiation of " + left.to_string() + " bytes of versions");
+  }
+  let versions: i64[] = [];
+  let at: i32 = r.at;
+  while (at < r.buf.len()) {
+    versions = versions.append(__be32(r.buf, at));
+    at = at + 4;
+  }
+  return Ok(Header { ...h, kind: VersionNegotiation, versions: versions, pn_at: r.buf.len() });
+}
+
+// __long reads what follows a version 1 long header's connection IDs.
+function __long(h: Header, b0: i32, r: Reader): Result[Header, string] {
+  if ((b0 & 64) == 0) {
+    return Err("fixed bit not set");
+  }
+  let kind: i32 = b0 >> 4 & 3;
+  if (kind == 3) {
+    return __retry_header(h, r);
+  }
+  let k: Kind = Initial;
+  let cur: Reader = r;
+  if (kind == 0) {
+    let (token, r1) = __token(r)?;
+    cur = r1;
+    h = Header { ...h, token: token };
+  } else if (kind == 1) {
+    k = ZeroRtt;
+  } else {
+    k = Handshake;
+  }
+  let (len, r3) = cur.varint("length")?;
+  if (len > (r.buf.len() - r3.at) as i64) {
+    return Err("packet of " + len.to_string() + " bytes past the end of the datagram");
+  }
+  return Ok(Header { ...h, kind: k, pn_at: r3.at, end: r3.at + len as i32 });
+}
+
+function __token(r: Reader): Result[(u8[], Reader), string] {
+  let (n, r1) = r.varint("token length")?;
+  if (n > r.buf.len() as i64) {
+    return Err("token cut short");
+  }
+  return r1.bytes(n as i32, "token");
+}
+
+function __retry_header(h: Header, r: Reader): Result[Header, string] {
+  let rest: i32 = r.buf.len() - r.at - TAG_LEN;
+  if (rest < 1) {
+    return Err("retry without a token");
+  }
+  let (token, r1) = r.bytes(rest, "retry token")?;
+  let (tag, r2) = r1.bytes(TAG_LEN, "retry integrity tag")?;
+  return Ok(Header { ...h, kind: Retry, token: token, tag: tag, pn_at: r2.at });
+}
+
+// === protection (RFC 9001 §5.3, §5.4) ======================================
+
+// mask is the header-protection mask from the 16-byte `sample` (§5.4.3,
+// §5.4.4): its first five bytes are what the header's bits are XORed with.
+pub function mask(k: Keys, sample: [u8]): u8[] {
+  let five: u8[] = [0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8];
+  match (k.suite.aead()) {
+    keyschedule.ChaCha20Poly1305 => {
+      let counter: u32 = sample[0] as u32 | sample[1] as u32 << 8 | sample[2] as u32 << 16 | sample[3] as u32 << 24;
+      match (chacha20poly1305.chacha20_xor(k.hp, sample[4:16], counter, five)) {
+        Ok(m) => {
+          return m;
+        },
+        Err(_) => {
+          return five;
+        }
+      }
+    },
+    _ => {
+      return __aes_ctr32(k.hp_round_keys, sample[0:16], five);
+    }
+  }
+}
+
+function __nonce(iv: [u8], pn: i64): u8[] {
+  let out: u8[] = __copy(iv);
+  let i: i32 = 0;
+  while (i < 8) {
+    let at: i32 = 11 - i;
+    out = out.with(at, (out[at] as i64 ^ pn >> (i * 8) as i64 & 255) as u8);
+    i = i + 1;
+  }
+  return out;
+}
+
+function __seal(k: Keys, pn: i64, plaintext: [u8], aad: [u8]): u8[] {
+  match (k.suite.aead()) {
+    keyschedule.ChaCha20Poly1305 => {
+      match (chacha20poly1305.seal(k.key, __nonce(k.iv, pn), plaintext, aad)) {
+        Ok(ct) => {
+          return ct;
+        },
+        Err(_) => {
+          return [];
+        }
+      }
+    },
+    _ => {
+      match (aes_gcm.seal(k.key, __nonce(k.iv, pn), plaintext, aad)) {
+        Ok(ct) => {
+          return ct;
+        },
+        Err(_) => {
+          return [];
+        }
+      }
+    }
+  }
+}
+
+function __open(k: Keys, pn: i64, sealed: [u8], aad: [u8]): Option[u8[]] {
+  match (k.suite.aead()) {
+    keyschedule.ChaCha20Poly1305 => {
+      match (chacha20poly1305.open(k.key, __nonce(k.iv, pn), sealed, aad)) {
+        Ok(pt) => {
+          return Some(pt);
+        },
+        Err(_) => {
+          return None;
+        }
+      }
+    },
+    _ => {
+      match (aes_gcm.open(k.key, __nonce(k.iv, pn), sealed, aad)) {
+        Ok(pt) => {
+          return Some(pt);
+        },
+        Err(_) => {
+          return None;
+        }
+      }
+    }
+  }
+}
+
+// open removes header protection from the packet `h` describes, recovers
+// its packet number against `largest`, the largest received in its packet
+// number space (-1 for none), and decrypts it under `k`.
+pub function open(datagram: [u8], h: Header, k: Keys, largest: i64): Result[Opened, string] {
+  if (h.pn_at + 4 + 16 > h.end) {
+    return Err("packet too short to sample");
+  }
+  let m: u8[] = mask(k, datagram[h.pn_at + 4:h.pn_at + 20]);
+  let long: boolean = (datagram[h.at] as i32 & 128) != 0;
+  let low: i32 = 31;
+  if (long) {
+    low = 15;
+  }
+  let b0: i32 = datagram[h.at] as i32 ^ m[0] as i32 & low;
+  let n: i32 = (b0 & 3) + 1;
+  let header: u8[] = __slice(datagram, h.at, h.pn_at + n);
+  header = header.with(0, b0 as u8);
+  let truncated: i64 = 0;
+  let i: i32 = 0;
+  while (i < n) {
+    let at: i32 = h.pn_at - h.at + i;
+    let b: u8 = (header[at] as i32 ^ m[1 + i] as i32) as u8;
+    header = header.with(at, b);
+    truncated = truncated << 8 | b as i64;
+    i = i + 1;
+  }
+  let pn: i64 = decode_pn(largest, truncated, n * 8);
+  match (__open(k, pn, datagram[h.pn_at + n:h.end], header)) {
+    Some(payload) => {
+      let reserved: i32 = 24;
+      if (long) {
+        reserved = 12;
+      }
+      return Ok(Opened { pn: pn, payload: payload, key_phase: (b0 & 4) != 0, spin: (b0 & 32) != 0, reserved_ok: (b0 & reserved) == 0 });
+    },
+    None => {
+      return Err("packet does not decrypt");
+    }
+  }
+}
+
+// Long — what a long-header packet says before its payload: its kind
+// (Initial, ZeroRtt or Handshake), the connection IDs, an Initial's token,
+// and its packet number in `pn_len` bytes (see `pn_len`).
+pub struct Long { kind: Kind, dcid: u8[], scid: u8[], token: u8[], pn: i64, pn_len: i32 }
+
+// seal_long protects a long-header packet carrying `payload`, which is
+// padded with PADDING when too short for header protection to sample.
+pub function seal_long(l: Long, payload: [u8], k: Keys): u8[] {
+  let body: u8[] = __padded(payload, l.pn_len);
+  let kind: i32 = 0;
+  match (l.kind) {
+    ZeroRtt => {
+      kind = 1;
+    },
+    Handshake => {
+      kind = 2;
+    },
+    _ => {}
+  }
+  let head: u8[] = __empty(64);
+  head = head.append((192 | kind << 4 | l.pn_len - 1) as u8);
+  head = __put_be32(head, VERSION_1);
+  head = head.append(l.dcid.len() as u8).concat(l.dcid).append(l.scid.len() as u8).concat(l.scid);
+  if (kind == 0) {
+    head = frames.put_varint(head, l.token.len() as i64).concat(l.token);
+  }
+  head = frames.put_varint(head, (l.pn_len + body.len() + 16) as i64);
+  let pn_at: i32 = head.len();
+  return __protect(__put_pn(head, l.pn, l.pn_len), pn_at, l.pn, l.pn_len, body, k, 15);
+}
+
+// seal_short protects a 1-RTT packet to `dcid` carrying `payload`.
+pub function seal_short(dcid: [u8], pn: i64, n: i32, key_phase: boolean, spin: boolean, payload: [u8], k: Keys): u8[] {
+  let body: u8[] = __padded(payload, n);
+  let b0: i32 = 64 | n - 1;
+  if (key_phase) {
+    b0 = b0 | 4;
+  }
+  if (spin) {
+    b0 = b0 | 32;
+  }
+  let head: u8[] = __empty(32).append(b0 as u8).concat(__copy(dcid));
+  let pn_at: i32 = head.len();
+  return __protect(__put_pn(head, pn, n), pn_at, pn, n, body, k, 31);
+}
+
+// __padded adds PADDING frames until the sample header protection takes
+// (four bytes past the packet number's start) is ciphertext (§5.4.2).
+function __padded(payload: [u8], n: i32): u8[] {
+  let out: u8[] = __copy(payload);
+  while (out.len() + n < 4) {
+    out = out.append(0 as u8);
+  }
+  return out;
+}
+
+// __protect seals the payload with the header as associated data, then
+// masks the first byte's low bits (`low`) and the packet number.
+function __protect(header: u8[], pn_at: i32, pn: i64, n: i32, body: [u8], k: Keys, low: i32): u8[] {
+  let packet: u8[] = header.concat(__seal(k, pn, body, header));
+  let m: u8[] = mask(k, packet[pn_at + 4:pn_at + 20]);
+  packet = packet.with(0, (packet[0] as i32 ^ m[0] as i32 & low) as u8);
+  let i: i32 = 0;
+  while (i < n) {
+    packet = packet.with(pn_at + i, (packet[pn_at + i] as i32 ^ m[1 + i] as i32) as u8);
+    i = i + 1;
+  }
+  return packet;
+}
+
+// === version negotiation and retry (§17.2.1, §17.2.5) ======================
+
+// version_negotiation answers a packet of an unsupported version: the
+// client's connection IDs swapped, and the versions this endpoint speaks.
+pub function version_negotiation(h: Header): u8[] {
+  let out: u8[] = __empty(64).append(192 as u8);
+  out = __put_be32(out, 0 as i64);
+  out = out.append(h.scid.len() as u8).concat(h.scid).append(h.dcid.len() as u8).concat(h.dcid);
+  return __put_be32(out, VERSION_1);
+}
+
+function __retry_key(): u8[] {
+  return [190 as u8, 12 as u8, 105 as u8, 11 as u8, 159 as u8, 102 as u8, 87 as u8, 90 as u8, 29 as u8, 118 as u8, 107 as u8, 84 as u8, 227 as u8, 104 as u8, 200 as u8, 78 as u8];
+}
+
+function __retry_nonce(): u8[] {
+  return [70 as u8, 21 as u8, 153 as u8, 211 as u8, 93 as u8, 99 as u8, 43 as u8, 242 as u8, 35 as u8, 152 as u8, 37 as u8, 187 as u8];
+}
+
+// __retry_tag is the integrity tag over a Retry packet without it, bound to
+// the Destination Connection ID the client first sent (RFC 9001 §5.8).
+function __retry_tag(unprotected: [u8], odcid: [u8]): u8[] {
+  let pseudo: u8[] = __empty(64).append(odcid.len() as u8).concat(__copy(odcid)).concat(__copy(unprotected));
+  match (aes_gcm.seal(__retry_key(), __retry_nonce(), [], pseudo)) {
+    Ok(tag) => {
+      return tag;
+    },
+    Err(_) => {
+      return [];
+    }
+  }
+}
+
+// retry is a Retry packet to the client at `dcid` from the new server
+// connection ID `scid`, carrying `token`, for a connection the client
+// opened toward `odcid`.
+pub function retry(dcid: [u8], scid: [u8], odcid: [u8], token: [u8]): u8[] {
+  let out: u8[] = __empty(64).append(255 as u8);
+  out = __put_be32(out, VERSION_1);
+  out = out.append(dcid.len() as u8).concat(__copy(dcid)).append(scid.len() as u8).concat(__copy(scid)).concat(__copy(token));
+  return out.concat(__retry_tag(out, odcid));
+}
+
+// retry_valid reports whether the Retry `packet` (the whole packet) carries
+// the integrity tag its client's original Destination Connection ID gives.
+pub function retry_valid(packet: [u8], odcid: [u8]): boolean {
+  if (packet.len() < TAG_LEN + 7) {
+    return false;
+  }
+  let at: i32 = packet.len() - TAG_LEN;
+  let want: u8[] = __retry_tag(packet[0:at], odcid);
+  let diff: i32 = 0;
+  let i: i32 = 0;
+  while (i < TAG_LEN) {
+    diff = diff | want[i] as i32 ^ packet[at + i] as i32;
+    i = i + 1;
+  }
+  return want.len() == TAG_LEN && diff == 0;
+}
+
+// === bytes =================================================================
+
+function __be32(buf: [u8], at: i32): i64 {
+  return buf[at] as i64 << 24 | buf[at + 1] as i64 << 16 | buf[at + 2] as i64 << 8 | buf[at + 3] as i64;
+}
+
+function __put_be32(own out: u8[], v: i64): u8[] {
+  return out.append((v >> 24 & 255) as u8).append((v >> 16 & 255) as u8).append((v >> 8 & 255) as u8).append((v & 255) as u8);
+}
+
+function __put_pn(own out: u8[], pn: i64, n: i32): u8[] {
+  let i: i32 = n;
+  while (i > 0) {
+    i = i - 1;
+    out = out.append((pn >> (i * 8) as i64 & 255) as u8);
+  }
+  return out;
+}
+
+function __empty(room: i32): u8[] {
+  let out: u8[] = __alloc_u8(room);
+  __arr_set_len(out, 0);
+  return out;
+}
+
+function __copy(b: [u8]): u8[] {
+  return __slice(b, 0, b.len());
+}
+
+function __slice(buf: [u8], from: i32, to: i32): u8[] {
+  let out: u8[] = __alloc_u8(to - from);
+  let i: i32 = 0;
+  while (from + i < to) {
+    out = out.with(i, buf[from + i]);
+    i = i + 1;
+  }
+  return out;
+}
