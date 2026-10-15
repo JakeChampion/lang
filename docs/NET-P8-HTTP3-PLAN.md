@@ -44,8 +44,12 @@ The modules, each importable on its own and sans-IO, so each runs under
   spaces and their ACKs, CRYPTO reassembly, idle timeout, closing and
   draining, the anti-amplification limit, following a Retry and Version
   Negotiation, and recognising a stateless reset landed in slices 2–3.
-  Streams and flow control, connection IDs beyond the first, path
-  validation and key update are slice 4; issuing a Retry is slice 7's.
+  Connection IDs beyond the first, path validation and key update are
+  slice 4b; issuing a Retry is slice 7's.
+- `std/quic/streams` — streams: each one's send and receive halves,
+  reassembly (CRYPTO's too), the limits on how many each side opens, flow
+  control per stream and for the connection, RESET_STREAM and
+  STOP_SENDING. Slice 4, landed.
 - `std/http/qpack` — the static and dynamic tables, the encoder and
   decoder streams, Huffman shared with `std/http/hpack`. Slice 5.
 - `std/http/h3` — frames, the control and QPACK streams, SETTINGS and
@@ -101,9 +105,18 @@ Each is a bound with a test that crosses it.
    two groups it supports (`ClientConfig.shares` in `std/tls/handshake`);
    a TCP client still sends one.
 4. **Streams.** Bidirectional and unidirectional streams, flow control,
-   RESET_STREAM and STOP_SENDING, stream limits, connection IDs, closing,
-   stateless reset, key update, path validation. Gate: two `Conn`s
-   exchanging streams under scripted loss and reordering.
+   RESET_STREAM and STOP_SENDING, stream limits. Gate:
+   `tests/stdlib/quic_streams_test.fern`, each rule frame by frame, and two
+   `Conn`s echoing a stream through small windows, then through scripted
+   loss and reordering (`tests/stdlib/quic_conn_test.fern`); nightly,
+   `scripts/net-quic-interop` echoes 300 KB through aioquic each way.
+   Landed.
+
+   4b. **Connection IDs, key update, path validation.** NEW_CONNECTION_ID
+   and RETIRE_CONNECTION_ID with active_connection_id_limit, a stateless
+   reset token per connection ID, the peer's key update answered and one
+   started, PATH_CHALLENGE on a new path. Gate: two `Conn`s rotating
+   connection IDs and keys mid-stream.
 5. **QPACK.** Gate: `tests/stdlib/http_qpack_test.fern`, with RFC 9204
    Appendix B's examples.
 6. **HTTP/3.** `std/http/h3` over a `std/quic/conn`. Gate:
