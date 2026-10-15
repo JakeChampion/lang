@@ -383,3 +383,5 @@ ring_wait=436
 tcp_ktls=437
 ring_recv=438
 ring_send_zc=439
+sha1_hw=440
+sha1_hw_blocks=441

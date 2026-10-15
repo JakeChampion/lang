@@ -2661,6 +2661,57 @@ pub function op_sha256_hw_blocks(): Op {
   return op0(410);
 }
 
+// `sha1_hw` and `sha1_hw_blocks` are the same pair for SHA-1, whose state is
+// five words, 20 bytes.
+pub function op_sha1_hw(): Op {
+  return op0(440);
+}
+
+pub function op_sha1_hw_blocks(): Op {
+  return op0(441);
+}
+
+// is_sha_hw_op is sha256_hw or sha1_hw, which push whether the target has
+// the kernel; is_sha_blocks_op is either kernel.
+pub function is_sha_hw_op(tag: i32): boolean {
+  return tag == 409 || tag == 440;
+}
+
+pub function is_sha_blocks_op(tag: i32): boolean {
+  return tag == 410 || tag == 441;
+}
+
+// sha_builtin_tag is the kind a SHA kernel builtin lowers to, or 0 for any
+// other name; sha_builtin_op builds it, the kernels answering packed bytes.
+pub function sha_builtin_tag(name: string): i32 {
+  if (name == "__sha256_hw") {
+    return 409;
+  }
+  if (name == "__sha256_hw_blocks") {
+    return 410;
+  }
+  if (name == "__sha1_hw") {
+    return 440;
+  }
+  if (name == "__sha1_hw_blocks") {
+    return 441;
+  }
+  return 0;
+}
+
+pub function sha_builtin_op(tag: i32): Op {
+  if (tag == 409) {
+    return op_sha256_hw();
+  }
+  if (tag == 440) {
+    return op_sha1_hw();
+  }
+  if (tag == 410) {
+    return packed(op_sha256_hw_blocks());
+  }
+  return packed(op_sha1_hw_blocks());
+}
+
 // `proc_exec` pops [path, args] and replaces the process image via execve. It
 // only ever pushes a FAILURE (-errno): on success there is no process left to
 // push into. Completes the crash-only trio, mirroring the native builtin, and
@@ -3826,11 +3877,21 @@ function kind_id_len7(name: string): i32 {
   if (c == b'r' && name == "rmemchr") {
     return 234;
   }
-  if (c == b's' && name == "str_len") {
+  if (c == b's') {
+    return kind_id_len7_s(name);
+  }
+  return 0;
+}
+
+function kind_id_len7_s(name: string): i32 {
+  if (name == "str_len") {
     return 97;
   }
-  if (c == b's' && name == "str_cmp") {
+  if (name == "str_cmp") {
     return 100;
+  }
+  if (name == "sha1_hw") {
+    return 440;
   }
   return 0;
 }
@@ -4608,6 +4669,9 @@ function kind_id_len13(name: string): i32 {
 function kind_id_len14(name: string): i32 {
   if (name == "setxattr_bytes") {
     return 376;
+  }
+  if (name == "sha1_hw_blocks") {
+    return 441;
   }
   if (name == "aes_expand_key") {
     return 402;
@@ -5817,6 +5881,12 @@ pub function kind_name(id: i32): string {
   if (id == 410) {
     return "sha256_hw_blocks";
   }
+  if (id == 441) {
+    return "sha1_hw_blocks";
+  }
+  if (id == 440) {
+    return "sha1_hw";
+  }
   if (id == 409) {
     return "sha256_hw";
   }
@@ -6066,7 +6136,7 @@ function pops0(t: i32): boolean {
     || t == 18  // load_local
     || t == 385  // call_word
     || t == 79 || t == 80 || t == 315  // ptr_width, heap_bump_bytes, heap_alloc_count
-    || t == 409  // sha256_hw
+    || is_sha_hw_op(t)
     || t == 341  // reactor_new
     || t == 229  // heap_mark
     || t == 147  // dyn_dispatch (args in locals)
@@ -6167,7 +6237,7 @@ function pops2_kernel(t: i32): boolean {
     || t == 390  // str_hash
     || t == 309 || t == 373  // crc32_cksum / crc32_cksum_array
     || t == 322 || t == 381  // scale_f64, outer_mul_f64
-    || t == 410;  // sha256_hw_blocks (state, data)
+    || is_sha_blocks_op(t);  // (state, data)
 }
 
 function pops2_mem(t: i32): boolean {
@@ -8826,7 +8896,7 @@ pub function op_allocates(tag: i32): boolean {
   if (tag == 381 || tag == 382 || tag == 383) {
     return true;
   }
-  if (is_aes_gcm_op(tag) || tag == 410) {  // the AES-GCM and SHA-256 kernels' fresh u8[]
+  if (is_aes_gcm_op(tag) || is_sha_blocks_op(tag)) {  // the AES-GCM and SHA kernels' fresh u8[]
     return true;
   }
   if (tag == 348 || tag == 349 || tag == 350 || tag == 352) {  // byte array plus Result wrapper
@@ -9042,5 +9112,5 @@ pub function is_str_op_kind(tag: i32): boolean {
     || tag == 99 || tag == 100 || tag == 225 || tag == 227
     || tag == 234 || tag == 235 || tag == 245 || tag == 253
     || tag == 309 || tag == 322 || tag == 324 || tag == 327 || tag == 329 || tag == 390
-    || is_aes_gcm_op(tag) || tag == 410 || tag == 433;
+    || is_aes_gcm_op(tag) || is_sha_blocks_op(tag) || tag == 433;
 }

@@ -4951,6 +4951,16 @@ function str_hash_word(s: string, at: i32, n: i32): i64 {
   return w;
 }
 
+// is_sha_hw_name and is_sha_blocks_name are the SHA kernel builtins' two
+// shapes.
+function is_sha_hw_name(name: string): boolean {
+  return name == "__sha256_hw" || name == "__sha1_hw";
+}
+
+function is_sha_blocks_name(name: string): boolean {
+  return name == "__sha256_hw_blocks" || name == "__sha1_hw_blocks";
+}
+
 // str_hash_low32 is h's low 32 bits as an i32, sign per bit 31.
 function str_hash_low32(h: i64): i32 {
   let lo: i64 = h & 4294967295i64;
@@ -5235,11 +5245,11 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   if (aes_gcm_arity(name) > 0) {
     return call_aes_gcm(name, args);
   }
-  // No SHA-256 instructions here, so std/crypto runs its own rounds.
-  if (name == "__sha256_hw" && args.len() == 0) {
+  // No SHA kernels here, so std/crypto runs its own rounds.
+  if (args.len() == 0 && is_sha_hw_name(name)) {
     return v_bool(false);
   }
-  if (name == "__sha256_hw_blocks" && args.len() == 2) {
+  if (args.len() == 2 && is_sha_blocks_name(name)) {
     return byte_value([]);
   }
   // `__memchr(s, byte, from)` / `__ascii_run(s, from)` — the two scan
