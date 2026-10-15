@@ -62,7 +62,7 @@ x86_64/ascii_scan.ir	37119510
 x86_64/call_overhead.text	88
 x86_64/call_overhead.ir	8250759
 x86_64/closure_call.text	824
-x86_64/closure_call.ir	72618106
+x86_64/closure_call.ir	63018106
 x86_64/enum_match.text	975
 x86_64/enum_match.ir	53775055
 x86_64/http_hello.text	19770
@@ -70,9 +70,9 @@ x86_64/http_hello.ir	27552835
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
 x86_64/map_int.text	5687
-x86_64/map_int.ir	38961091
+x86_64/map_int.ir	38013213
 x86_64/map_probe_chain.text	5694
-x86_64/map_probe_chain.ir	369386467
+x86_64/map_probe_chain.ir	358674901
 x86_64/map_string.text	8603
 x86_64/map_string.ir	62526498	2
 x86_64/ordmap_insert.text	5131
@@ -83,7 +83,7 @@ x86_64/pvec_with.text	2769
 x86_64/pvec_with.ir	60166754
 x86_64/record_update.ir	109849111
 x86_64/record_update.text	1392
-x86_64/sort_inplace.text	2918
+x86_64/sort_inplace.text	2887
 x86_64/sort_inplace.ir	43380614
 x86_64/sort_ints.text	3398
 x86_64/sort_ints.ir	31486537
