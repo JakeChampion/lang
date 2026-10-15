@@ -89,7 +89,7 @@ function program(source: string, name: string, arm: boolean): void {
   let target = if (arm) { "arm64-darwin" } else { "x86-64-linux" };
   let g = semlower.program(semlower.driven(parser.parse_module(lexer.tokenize(source)), target));
   require(g.ok, 200);
-  let sw = asmcore.Switches { backtrace: false, sanitize: false, var_rows: false, shared: false, size: false };
+  let sw = asmcore.Switches { backtrace: false, sanitize: false, var_rows: false, shared: false, size: false, harden: false };
   let out = if (arm) { asm_arm64_ir.emit_module_ir_unit_arm64_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_lowering, sw, true) } else { asm_ir.emit_module_ir_unit_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_lowering, 0 as usize, sw, true) };
   refusals(out, name);
 }

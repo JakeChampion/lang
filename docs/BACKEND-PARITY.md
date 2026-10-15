@@ -421,6 +421,12 @@ the way wasm serves the other raw-floor runtime helpers (`wasm_ir.fern`).
 Scope: the report loop is the work — the counter bump itself is `i64.load` /
 `add` / `store`.
 
+### Binary hardening (`-harden`) is arm64-linux executables only
+
+`-harden` adds BTI landing pads and the GNU property note that enforces them.
+Every other target, and `-shared`, refuses the flag. What is left (PAC, x86-64
+CET, the shared and Android images) is listed in `docs/HARDENING.md`.
+
 ### Heap exhaustion exits 125 on the natives, traps on wasm
 
 The native targets exit 125 when the arena runs out (`.Lalloc_oom` in

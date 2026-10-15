@@ -1778,6 +1778,21 @@ function arm64_nop(buf: i32[]): i32[] {
   return arm64_le32(buf, arm64_nop_word());
 }
 
+// arm64_bti_word is the landing pad `bti` with its operand list: `c` for
+// calls, `j` for jumps, `jc` for both, none for neither. A hint, so a NOP on
+// a core without BTI.
+pub function arm64_bti_word(ops: string[]): i64 {
+  let op2: i64 = 0;
+  if (ops.len() == 1 && ops[0] == "c") {
+    op2 = 2;
+  } else if (ops.len() == 1 && ops[0] == "j") {
+    op2 = 4;
+  } else if (ops.len() == 1 && ops[0] == "jc") {
+    op2 = 6;
+  }
+  return 0xd503241f | op2 << 5;
+}
+
 function arm64_br_word(rn: i32): i64 {
   return 0xd61f0000 | (rn & 31) as i64 << 5;
 }
@@ -5708,6 +5723,10 @@ function arm64_fam_swap(): i32 {
   return 47;
 }
 
+function arm64_fam_landing(): i32 {
+  return 48;
+}
+
 // arm64_gas_family is the index in the table of the family a mnemonic
 // belongs to, or -1: length first, then the leading bytes, then the
 // spellings left. The dispatch and arm64_gas_known read it.
@@ -5835,17 +5854,21 @@ function arm64_gas_family_len3_a_ad(mnem: string): i32 {
 }
 
 function arm64_gas_family_len3_b(mnem: string): i32 {
-  if (mnem == "brk") {
-    return arm64_fam_sys();
+  let c: u8 = mnem[1];
+  if (c == b'f' && mnem == "bfi") {
+    return arm64_fam_bitfield();
   }
-  if (mnem == "blr") {
-    return arm64_fam_indirect();
-  }
-  if (mnem == "bic") {
+  if (c == b'i' && mnem == "bic") {
     return arm64_fam_logical2();
   }
-  if (mnem == "bfi") {
-    return arm64_fam_bitfield();
+  if (c == b'l' && mnem == "blr") {
+    return arm64_fam_indirect();
+  }
+  if (c == b'r' && mnem == "brk") {
+    return arm64_fam_sys();
+  }
+  if (c == b't' && mnem == "bti") {
+    return arm64_fam_landing();
   }
   return 0 - 1;
 }
@@ -8278,6 +8301,10 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
       return a;
     }
     arm64_push_arr(a.code, arm64_nop([]));
+    return a;
+  }
+  if (fam == arm64_fam_landing()) {
+    arm64_push_arr(a.code, arm64_le32([], arm64_bti_word(ops)));
     return a;
   }
   // SIMD forms are recognised by the first operand being an arranged vector

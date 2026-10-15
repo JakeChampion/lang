@@ -237,6 +237,8 @@ var Scalar = []Family{
 		Ops: []ScalarOp{{Mnemonic: "swp"}, {Mnemonic: "swpa"}, {Mnemonic: "swpl"}, {Mnemonic: "swpal", Probe: "swpal w2, w0, [x1]"},
 			{Mnemonic: "swpb", Probe: "swpb w2, w0, [x1]"}, {Mnemonic: "swpab", Probe: "swpab w2, w0, [x1]"},
 			{Mnemonic: "swplb", Probe: "swplb w2, w0, [x1]"}, {Mnemonic: "swpalb", Probe: "swpalb w2, w0, [x1]"}}},
+	{Name: "landing", Doc: "a branch target identification landing pad: c for calls, j for jumps",
+		Probe: "%s c", Ops: []ScalarOp{{Mnemonic: "bti"}}},
 }
 
 // scalarIndex maps a mnemonic to its family and row.

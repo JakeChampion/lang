@@ -60,7 +60,7 @@ function main(): i32 {
     let pa: Arm64Asm = p.asm;
     // W^X two-segment layout (matches fern.fern's arm64_elf_binary): .text
     // R+X, data R+W on the next page boundary.
-    let tv: i64 = (elf_text_vaddr_wx()) as i64;
+    let tv: i64 = (elf_text_vaddr_wx(false)) as i64;
     let dv: i64 = (elf_data_vaddr_wx(pa.text.len())) as i64;
     p = arm64_gas_link(p, tv, dv);
     let pa2: Arm64Asm = p.asm;

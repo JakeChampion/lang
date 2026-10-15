@@ -1776,6 +1776,18 @@ function ssa_ldst_wb(s: asmcore.EmitState, load: boolean, pre: boolean, reg: str
   return s.write(m + reg + ", [sp], #" + util.i32_to_string(off) + "\n");
 }
 
+// ssa_landing_pad starts an indirect-call target under -harden: a function
+// value's `.k` entry is the only one a `blr` reaches.
+function ssa_landing_pad(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.harden) {
+    return s;
+  }
+  if (s.records()) {
+    return s.word(arm64_native.arm64_bti_word(["c"]));
+  }
+  return s.write("    bti c\n");
+}
+
 function ssa_ret(s: asmcore.EmitState): asmcore.EmitState {
   if (s.records()) {
     return s.word(arm64_native.arm64_rec_ret());
@@ -4437,7 +4449,7 @@ function ssa_entry_shim(f: ssa.SFunc, name: string, s: asmcore.EmitState): asmco
     s = ssa_ldst(s, true, ssa_reg(p), "sp", 16 * p);
     p = p + 1;
   }
-  s = s.write("__fn_" + name + ".k:\n");
+  s = ssa_landing_pad(s.write("__fn_" + name + ".k:\n"));
   p = 0;
   while (p < k) {
     if (asmcore.float_param(mask, p)) {
@@ -11534,7 +11546,9 @@ function emit_rt_signal_flags(s: asmcore.EmitState, darwin: boolean): asmcore.Em
   }
   s = s.write("    .section .bss\n    .align 3\n__fern_sig_flags: .skip 65\n    .text\n");
   if (s.has_need("signal_catch")) {
-    s = s.write("    .global __fern_sig_catcher\n    .global __fern_sig_return\n__fern_sig_catcher:\n");
+    // The kernel enters a handler as a call, so under -harden it starts with
+    // a landing pad; the restorer is reached by its `ret`.
+    s = ssa_landing_pad(s.write("    .global __fern_sig_catcher\n    .global __fern_sig_return\n__fern_sig_catcher:\n"));
     s = s.write("    adrp x1, __fern_sig_flags\n    add x1, x1, :lo12:__fern_sig_flags\n    sxtw x0, w0\n    add x1, x1, x0\n    mov w2, #1\n    strb w2, [x1]\n    ret\n");
     s = s.write("__fern_sig_return:\n");
     if (darwin) {
