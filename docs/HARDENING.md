@@ -1,8 +1,12 @@
 # Binary hardening (`-harden`)
 
 `fern -harden -target arm64-linux -o OUT FILE.fern` builds an executable that
-turns on arm64 Branch Target Identification (BTI). The flag is opt-in, and
-off by default.
+turns on two arm64 protections:
+
+- Branch Target Identification (BTI);
+- return-address signing with pointer authentication (PAC).
+
+The flag is opt-in, and off by default.
 
 ## What it does
 
@@ -33,9 +37,24 @@ indirect branch that lands anywhere but a landing pad raises SIGILL, so an
 attacker who redirects a function pointer can no longer reach the middle of
 a function.
 
-`bti` is in the hint space, so on a core without BTI it is a NOP. The ARMv8.2-A
-baseline does not change: a hardened binary runs everywhere an unhardened one
-does, with the check only where the hardware has it.
+Every function the compiler emits with a frame also signs its return
+address:
+
+- `paciasp` signs x30 against the entry sp, before the frame record stores it;
+- `autiasp` authenticates it on every exit, once the record is popped, ahead
+  of the `ret` or the tail call's `b`;
+- each flips the CFI's return-address state (`.cfi_negate_ra_state`, which
+  the in-process CFI renderer encodes as DW_CFA_AARCH64_negate_ra_state).
+
+A return address overwritten in the frame then fails authentication and
+faults, instead of being followed. Leaf functions without a frame never
+store x30, so they need no signature. The backtrace walk strips the
+signature (`xpaclri`) before printing a saved return address.
+
+`bti`, `paciasp`, `autiasp` and `xpaclri` are all in the hint space, so each
+is a NOP on a core without the feature. The ARMv8.2-A baseline does not
+change: a hardened binary runs everywhere an unhardened one does, with the
+checks only where the hardware has them.
 
 ## How it is verified
 
@@ -44,21 +63,26 @@ form linked by gcc:
 
 - each carries the property note;
 - each runs correctly under enforcement;
-- each dies with SIGILL once its pads are turned into NOPs.
+- each dies with SIGILL once its pads are turned into NOPs;
+- each faults once its `paciasp`s are removed, because every `autiasp` then
+  authenticates an address that was never signed.
 
-qemu-aarch64's linux-user mode enforces BTI for an image that asks for it,
-which is what makes the last check possible off-hardware.
+A `-backtrace` abort still prints plain code addresses, and the test would see
+a signature's high bits if one leaked through.
+
+qemu-aarch64's linux-user mode emulates both features, and enforces BTI for
+an image that asks for it, which is what makes these checks possible
+off-hardware.
 
 Every `tests/stdlib/*_test.fern` program was also built with `-harden` and
 run under qemu: 247 of 247 passed, with no SIGILL.
 
 ## Not covered yet
 
-- **PAC** (`paciasp` / `autiasp`, return-address signing). It needs:
-  - `__fern_bt_exit`'s backtrace walk to strip the signature (`xpaci`) before
-    it reads a saved return address;
-  - the CFI to state `.cfi_negate_ra_state`, which neither `ssa_cfi` nor the
-    in-process CFI parser knows.
+- **The runtime's hand-written frames** (the `__fern_*` helpers written as
+  assembly text in `asm_arm64_ir.fern`) still store an unsigned return
+  address. Compiled Fern functions, and the runtime helpers written in Fern,
+  are signed.
 - **`-shared`**: a shared object's property note is combined with its host's
   by the dynamic loader. The `.so` writer would need the note, and every
   export entry a `bti c`.

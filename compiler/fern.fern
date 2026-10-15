@@ -1187,7 +1187,7 @@ function flag_after_entry(a: string): i32 {
 
 function usage(): i32 {
   eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-target <isa>-<environment>] [-backend flat|ssa] [-emit asm|core-module|command-module] [-embed DIR] [-o OUT] <entry.fern> [stdlib-root]");
-  eprint("       fern -harden -target arm64-linux -o OUT <entry.fern> [stdlib-root]  (BTI landing pads at indirect-call targets, enforced by the kernel)");
+  eprint("       fern -harden -target arm64-linux -o OUT <entry.fern> [stdlib-root]  (BTI landing pads and signed return addresses)");
   eprint("       fern -shared [-export NAME,...] -o OUT.so <entry.fern> [stdlib-root]  (a shared object exporting the named functions, main by default)");
   eprint("       fern -fmt [-w | -d | -o OUT] FILE...          (-w overwrites each file, -d prints unified diffs; -o takes one FILE)");
   eprint("       fern -targets                                (list supported targets + capabilities)");
@@ -4676,7 +4676,8 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   let shared: boolean = false;
   let export_list: string = "";
   // -harden: BTI landing pads at every indirect-call target, enforced by the
-  // kernel through the image's GNU property note (#5549).
+  // kernel through the image's GNU property note, and return addresses
+  // signed with pointer authentication (#5549).
   let harden: boolean = false;
   // `-cover` (or FERN_COVER=1) instruments the program with line and branch
   // counters it reports to stderr at exit (cover.fern).
