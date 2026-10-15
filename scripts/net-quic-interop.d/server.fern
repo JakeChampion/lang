@@ -1,6 +1,7 @@
-// A QUIC server over UDP for one connection: accept the first Initial,
-// handshake, print what happened, and exit 0 once the connection is done
-// after completing its handshake.
+// A QUIC server over UDP for one connection on ALPN fern-echo: accept the
+// first Initial, handshake, send each stream's data back as it arrives,
+// print what happened, and exit 0 once the connection is done after
+// completing its handshake.
 //   server PORT CERT.pem KEY.pem
 // It prints a line once its socket is bound, which the script waits on.
 import "std/net";
@@ -23,17 +24,38 @@ function now(): i64 {
   return monotonic_ns();
 }
 
-function shown(evs: conn.Event[], c: conn.Conn): void {
+// shown prints what happened, and sends back what each stream has to
+// read, with its end once that arrives.
+function shown(evs: conn.Event[], c: conn.Conn): conn.Conn {
+  let cur: conn.Conn = c;
   for e in evs {
     match (e) {
+      conn.StreamReadable(id) => {
+        cur = echo(cur, id);
+      },
       conn.Connected => {
         print("fern server: connected alpn=" + c.alpn());
       },
       conn.Closed(why) => {
         print("fern server: closed code=" + why.code.to_string() + " remote=" + why.remote.to_string() + " reason=" + why.reason);
-      }
+      },
+      _ => {}
     }
   }
+  return cur;
+}
+
+function echo(c: conn.Conn, id: i64): conn.Conn {
+  let Ok(r) = c.read(id) else {
+    return c;
+  };
+  let Ok(w) = r.0.write(id, r.1, r.2) else {
+    return r.0;
+  };
+  if (r.2) {
+    print("fern server: echoed stream " + id.to_string() + " to its end");
+  }
+  return w;
 }
 
 function copied(buf: u8[], n: i32): u8[] {
@@ -79,8 +101,7 @@ function accepted(s: Server, d: u8[], from: net.SocketAddr): Server {
     return s;
   };
   let step: conn.Step = c.receive(d, now());
-  shown(step.events, step.conn);
-  return Server { ...s, current: Some(step.conn), peer: Some(from) };
+  return Server { ...s, current: Some(shown(step.events, step.conn)), peer: Some(from) };
 }
 
 function received(s: Server, d: u8[], from: net.SocketAddr): Server {
@@ -88,8 +109,7 @@ function received(s: Server, d: u8[], from: net.SocketAddr): Server {
     return accepted(s, d, from);
   };
   let step: conn.Step = c.receive(d, now());
-  shown(step.events, step.conn);
-  return Server { ...s, current: Some(step.conn) };
+  return Server { ...s, current: Some(shown(step.events, step.conn)) };
 }
 
 function drained(s: Server, buf: u8[]): Server {
@@ -108,8 +128,7 @@ function sent(s: Server, c: conn.Conn): Server {
   let cur: conn.Conn = c;
   if (cur.deadline() != 0 && now() >= cur.deadline()) {
     let step: conn.Step = cur.tick(now());
-    shown(step.events, step.conn);
-    cur = step.conn;
+    cur = shown(step.events, step.conn);
   }
   let (next, out) = cur.transmit(now());
   if let Some(to) = s.peer {
@@ -131,7 +150,7 @@ function bound(port: string, cert: string, key: string): Option[Server] {
     eprint("bad identity");
     return None;
   };
-  let cfg: conn.Config = conn.config(["h3"]).server_side(id);
+  let cfg: conn.Config = conn.config(["fern-echo"]).with_streams(16 as i64, 16 as i64, 262144 as i64, 1048576 as i64).server_side(id);
   let Some(addr) = net.socket_addr_parse("127.0.0.1:" + port) else {
     return None;
   };

@@ -91,8 +91,8 @@ name: Net nightly
 # The `quic-interop` job runs scripts/net-quic-interop: the std/quic client
 # against aioquic's server, plainly, through a Retry and on
 # ChaCha20-Poly1305 alone, and aioquic's client against the std/quic
-# server, plainly and on ChaCha20-Poly1305 alone, at the version
-# scripts/net-quic-interop.d/requirements.txt pins
+# server, plainly and on ChaCha20-Poly1305 alone, each echoing 300 KB on a
+# stream, at the version scripts/net-quic-interop.d/requirements.txt pins
 # (docs/NET-P8-HTTP3-PLAN.md). Every case passes or the job fails.
 
 on:
