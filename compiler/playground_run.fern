@@ -83,7 +83,7 @@ function embedded_stdlib(): modloader.Overlay {
       srcs = srcs.append(a.1 + "");
     }
   }
-  return modloader.Overlay { paths: paths, srcs: srcs, sealed: true };
+  return modloader.Overlay { paths: paths, srcs: srcs, sealed: true, files: modloader.no_buffers() };
 }
 
 // CHECK_FLAG selects the diagnostics-only mode. A playground wants the errors
