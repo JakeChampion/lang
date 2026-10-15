@@ -4304,6 +4304,14 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"option-methods-imported", "import \"std/option\";\nfunction main(): i32 { let x: Option[i32] = Some(3); let y: Option[i32] = x.map((v: i32): i32 => v + 1); if (x.is_some()) { return y.unwrap_or(0); } return 0; }\n"},
 		{"result-methods-imported", "import \"std/result\";\nfunction main(): i32 { let r: Result[i32, string] = Ok(2); return r.unwrap_or(0); }\n"},
 		{"option-method-missing-imported", "import \"std/option\";\nfunction main(): i32 { let x: Option[i32] = Some(3); return x.nope(); }\n"},
+		// Without the import the E043 names the module (#12458), in the body
+		// of a generic function instantiated by being passed as a value too:
+		// a handler over `platform.Platform` handed to serve.run is checked
+		// at the instance that hands it over, as a call's would be.
+		{"option-method-without-import", "function main(): i32 { let x: Option[i32] = Some(3); return x.unwrap_or(0); }\n"},
+		{"result-method-without-import", "function main(): i32 { let r: Result[i32, string] = Ok(2); return r.unwrap_or(0); }\n"},
+		{"generic-handler-passed-as-value-checks-its-instance", "import \"std/http\";\nimport \"std/serve\";\nimport \"std/platform\";\nfunction hh(req: HttpRequest, plat: platform.Platform): HttpResponse {\n    return http.plain(plat.config(\"REGION\").unwrap_or(\"local\"));\n}\nfunction main(): i32 { return serve.run(0, serve.config(), hh); }\n"},
+		{"generic-fn-value-instance-type-error", "trait Cfg { function get(self: Self, k: string): Option[string]; }\nstruct C { n: i32 }\nimpl Cfg for C { function get(self: C, k: string): Option[string] { return None; } }\nfunction hh[P: Cfg](c: P): i32 { let s: string = c.get(\"x\"); return s.len(); }\nfunction apply(f: (C) => i32): i32 { return f(C { n: 1 }); }\nfunction main(): i32 { return apply(hh); }\n"},
 		{"derived-enum-methods", "import \"core/cmp\";\n@derive(cmp.Display, cmp.Eq)\nenum Color { Red, Green }\nfunction main(): i32 { let c: Color = Color.Red; if (c.eq(Color.Green)) { return 1; } return c.to_string().len(); }\n"},
 		{"try-error-via-imported-from", "import \"std/convert\";\nstruct IoErr { code: i32 }\nstruct AppErr { code: i32 }\nimpl convert.From[IoErr] for AppErr { function from(value: IoErr): Self { return AppErr { code: value.code + 1 }; } }\nfunction read(): Result[string, IoErr] { return Err(IoErr { code: 4 }); }\nfunction run(): Result[i32, AppErr] { let s: string = read()?; return Ok(s.len()); }\nfunction main(): i32 { match (run()) { Ok(v) => { return v; }, Err(e) => { return e.code; } } }\n"},
 		{"imported-struct-unqualified-literal", "import \"std/http\";\nfunction main(): i32 {\n    let l: http.HttpLimits = HttpLimits { request_line: 1, header_bytes: 2, header_fields: 3, body: 1024 };\n    return l.body;\n}\n"},

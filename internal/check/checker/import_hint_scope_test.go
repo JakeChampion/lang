@@ -87,3 +87,29 @@ function main(): i32 { return f("abc"); }`, "std/string"},
 		})
 	}
 }
+
+// Option's and Result's methods are declared in std/option and std/result, so
+// a call on one without the import is a missing import, not a field access on
+// a non-struct (#12458).
+func TestBuiltinUnionMethodNamesItsModule(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		want string
+	}{
+		{"option", `function g(): Option[i32] { return None; }
+function main(): i32 { return g().unwrap_or(0); }`, "no method \"unwrap_or\" on Option[i32] — if it comes from std/option, add `import \"std/option\"`"},
+		{"result", `function g(): Result[i32, string] { return Ok(1); }
+function main(): i32 { return g().unwrap_or(0); }`, "no method \"unwrap_or\" on Result[i32, string] — if it comes from std/result, add `import \"std/result\"`"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkModuleSource(t, tc.src)
+			if err == nil {
+				t.Fatal("expected E043, got no error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not contain %q", err.Error(), tc.want)
+			}
+		})
+	}
+}
