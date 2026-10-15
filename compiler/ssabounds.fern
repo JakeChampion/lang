@@ -723,7 +723,7 @@ function int_const(t: typeinfo.Type, result: i32, n: i32): ssa.SInst {
 }
 
 // widening is Graph.widens for `ins`: a cast from an unsigned integer to a
-// wider signed one (1), or from i32 to i64 (2).
+// wider signed one (1), or from a signed integer to a wider one (2).
 function widening(f: ssasem.Func, ins: ssa.SInst): i32 {
   if (ins.kind_tag != ssasem.cast() || ins.args.len() != 1) {
     return 0;

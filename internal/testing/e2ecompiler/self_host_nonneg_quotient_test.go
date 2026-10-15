@@ -57,6 +57,12 @@ var nonnegQuotientTwins = []struct{ name, proven, unproven string }{
 	{"i64_widened",
 		`@noinline function lanes(x: u64): i64 { return (__ctz64(x) as i64) / 8i64; } function main(): i32 { return lanes(1u64 << 40) as i32; }`,
 		`@noinline function lanes(x: u64): i64 { return ((__ctz64(x) - 1) as i64) / 8i64; } function main(): i32 { return lanes(1u64 << 41) as i32; }`},
+	{"i64_remainder",
+		`@noinline function low(xs: i32[]): i64 { return (xs.len() as i64) % 8i64; } function main(): i32 { return low([1, 2, 3]) as i32; }`,
+		`@noinline function low(xs: i32[]): i64 { return ((xs.len() - 4) as i64) % 8i64; } function main(): i32 { return low([1, 2, 3, 4, 5, 6, 7]) as i32; }`},
+	{"widened_byte",
+		`@noinline function nib(b: u8): i32 { return (b as i32) / 16; } function main(): i32 { return nib(100u8); }`,
+		`@noinline function nib(b: u8): i32 { return ((b as i32) - 1) / 16; } function main(): i32 { return nib(100u8); }`},
 }
 
 func TestSelfHostNonnegQuotientX86_64(t *testing.T) {
