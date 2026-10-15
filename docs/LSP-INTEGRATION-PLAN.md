@@ -97,16 +97,22 @@ references, rename, semantic tokens and code actions.
   variant, a field or a method. Each kind is found where the tree has it — an
   identifier, a member after a `.` typed by the scope its statement is checked
   in, a struct literal's field (the parser now records each field name's
-  position), a match arm's or `if let`'s variant — and placed on the token
-  spelling it, so a node synthesised at a borrowed position never answers. A
-  type is found among the tokens of each module that can name it, bare or
-  behind an alias. References cover every module the document's check loaded,
-  so a name from another module is found in both; a rename edits each file.
+  position), a variant at any depth of a match arm's, `if let`'s or
+  `let … else`'s pattern (the parser flattens a nested pattern into matches
+  that all stand where the whole pattern does, so the pattern's tokens are
+  searched) — and placed on the token spelling it, so a node synthesised at a
+  borrowed position never answers. A type is found among the tokens of each
+  module that can name it, bare or behind an alias. References cover every
+  module the document's check loaded, so a name from another module is found
+  in both, and a rename edits each file; like the Go server's, they reach no
+  module that check did not load.
   The answers differ from the Go server's where it was wrong: a declaration
   is placed on its name, not at its keyword (a rename edited `fun`); a request
   on a declaration's own name answers; a local is the binding a name reads, not
   every like-named local of the function, and a parameter's declaration is one
-  of its places; `includeDeclaration` is honoured; and a rename to a name that
+  of its places; a variant inside a nested pattern is found, where the Go
+  server found one only heading an arm; `includeDeclaration` is honoured; and a
+  rename to a name that
   is not an identifier, or of something with no declaration (`Some`) or
   declared in the stdlib, is refused (null).
 - **Semantic tokens** (`compiler/lsptokens.fern`) use the Go server's
@@ -182,10 +188,8 @@ What the next slices add:
    which is what `cmd/fern-wasm` still carries; then the Go server's deletion.
 3. Completion's bindings are the whole enclosing function's, as the Go
    server's are; offering only those in scope at the cursor needs statement
-   extents the syntax tree does not record. References miss a variant a nested
-   pattern names (`Some(Circle(r))`), whose inner arms the parser synthesises
-   without positions, and a rename reaches only the modules the requesting
-   document's check loaded.
+   extents the syntax tree does not record. A rename, as the Go server's, edits
+   only the modules the requesting document's check loaded.
 
 ## Goal
 

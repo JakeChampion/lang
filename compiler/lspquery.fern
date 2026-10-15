@@ -230,7 +230,7 @@ pub function names_something(t: Tok, q: flatten.Qualifiers): boolean {
   return t.ident || util.has_str(q.aliases, t.text);
 }
 
-function text_at(toks: Tok[], i: i32): string {
+pub function text_at(toks: Tok[], i: i32): string {
   if (i < 0 || i >= toks.len()) {
     return "";
   }
@@ -1110,6 +1110,41 @@ pub function tok_at(toks: Tok[], line: i32, col: i32): i32 {
     return i;
   }
   return 0 - 1;
+}
+
+// pattern_end is the index of the token ending the pattern whose first token
+// is `from`: the `=>` of a match arm, the `if` of its guard, or the `=` of an
+// `if let` or a `let … else`, outside the pattern's brackets.
+pub function pattern_end(toks: Tok[], from: i32): i32 {
+  let depth: i32 = 0;
+  let i: i32 = from;
+  while (i < toks.len()) {
+    if (depth == 0 && ends_pattern(toks[i])) {
+      return i;
+    }
+    depth = depth + bracket_step(toks[i]);
+    i = i + 1;
+  }
+  return i;
+}
+
+function ends_pattern(t: Tok): boolean {
+  return !t.ident && (t.text == "=>" || t.text == "=" || t.text == "if");
+}
+
+// bracket_step is how far token `t` moves the bracket depth: in at an
+// opening bracket, out at a closing one.
+function bracket_step(t: Tok): i32 {
+  if (t.ident || t.text.len() != 1) {
+    return 0;
+  }
+  if (t.text == "(" || t.text == "[" || t.text == "{") {
+    return 1;
+  }
+  if (t.text == ")" || t.text == "]" || t.text == "}") {
+    return 0 - 1;
+  }
+  return 0;
 }
 
 // after is the index of the first token at or after `line`, `col`; tokens are

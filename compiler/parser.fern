@@ -7529,12 +7529,12 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
       let ilwritten: ast.MatchArm[] = [];
       let ilpi: i32 = 0;
       while (ilpi < ilpats.len()) {
-        ilwritten = ilwritten.append(ast.MatchArm { pattern: ilpats[ilpi], body: ilthen_body, line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
+        ilwritten = ilwritten.append(ast.MatchArm { pattern: ilpats[ilpi], body: ilthen_body, line: il_line, col: il_col, guard: e_bool(true), has_guard: false, alt_cont: false });
         let (fi_pat, fi_g, fi_hg) = fold_lit_cond(ilpats[ilpi], e_bool(true), false);
-        ilarms = ilarms.append(ast.MatchArm { pattern: fi_pat, body: ilthen_body, line: 0, col: 0, guard: fi_g, has_guard: fi_hg, alt_cont: false });
+        ilarms = ilarms.append(ast.MatchArm { pattern: fi_pat, body: ilthen_body, line: il_line, col: il_col, guard: fi_g, has_guard: fi_hg, alt_cont: false });
         ilpi = ilpi + 1;
       }
-      let ilwild: ast.MatchArm = ast.MatchArm { pattern: p_wildcard(), body: ilelse, line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false };
+      let ilwild: ast.MatchArm = ast.MatchArm { pattern: p_wildcard(), body: ilelse, line: il_line, col: il_col, guard: e_bool(true), has_guard: false, alt_cont: false };
       ilarms = ilarms.append(ilwild);
       ilwritten = ilwritten.append(ilwild);
       // A nested head (`if let Some(Ok(n)) = e`) flattens the same way a
