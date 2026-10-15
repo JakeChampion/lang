@@ -14,7 +14,8 @@ The arm64 backend emits only these indirect branches:
 
 - `blr` for a call through a function value, which covers closures,
   function values and the combinators that call an element function;
-- the kernel's entry into a signal handler.
+- the kernel's entry into a signal handler;
+- the FFI shim's `blr x9` (`emit_ccall_shim1_arm64`) to a C function.
 
 Dyn dispatch is a compare chain ending in a direct `bl`, and every tail call
 is a direct `b`. Nothing emits `br`.
@@ -23,6 +24,12 @@ So `-harden` puts a `bti c` landing pad at:
 
 - each function's `.k` entry, which is the address a function value holds;
 - `__fern_sig_catcher`.
+
+The FFI shim's target is C code that `-harden` does not emit. In the
+in-process image no C code is linked in, so the target lies outside the pages
+the kernel maps as guarded, and BTI does not check the branch. An `-emit asm`
+build linked with C objects is protected only if they were built with BTI:
+the linker drops the image's BTI property when any input lacks it.
 
 It also marks the image with a `.note.gnu.property` holding
 `GNU_PROPERTY_AARCH64_FEATURE_1_AND` with the BTI bit:
