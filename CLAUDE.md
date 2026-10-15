@@ -6,8 +6,10 @@ file small" at the bottom before adding to it.
 ## Name
 
 The language is **Fern**. Source files are `.fern`; the CLI is `fern`
-(`cmd/fern`), the LSP `fern-lsp`, the wasm playground bundle `cmd/fern-wasm`,
-the stdlib doc generator `cmd/ferndoc`. Emitted runtime symbols are `__fern_*`.
+(`compiler/fern_main.fern`, built by `make build`), the Go oracle `cmd/fern`
+(`bin/fern-oracle`), the LSP `fern-lsp`, the wasm playground bundle
+`cmd/fern-wasm`, the stdlib doc generator `cmd/ferndoc`. Emitted runtime
+symbols are `__fern_*`.
 
 The **only** things still on the old `lang` name are the Go module path
 `github.com/jakechampion/lang` and the GitHub repo + Pages URLs

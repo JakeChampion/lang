@@ -329,7 +329,7 @@ function negotiated(offer: string, opts: websocket.Options): string {
 }
 
 function test_deflate_negotiation(): test.TestOutcome {
-  let taken: string = "permessage-deflate; server_no_context_takeover; client_no_context_takeover; server_max_window_bits=";
+  let taken: string = "permessage-deflate; server_no_context_takeover; server_max_window_bits=";
   let got: string = negotiated("permessage-deflate; client_max_window_bits", compressing());
   got = got + "|" + negotiated("permessage-deflate; client_max_window_bits", websocket.options());
   got = got + "|" + negotiated("", compressing());
@@ -356,7 +356,25 @@ function test_deflate_session(): test.TestOutcome {
   first = first.with(0, (first[0] as i32 | 64) as u8);
   let rest: u8[] = masked(true, 0, array.slice(packed, 2, packed.len()));
   let bytes: u8[] = compressed(true, 1, text.bytes()).concat(first).concat(rest).concat(close_frame(1000, ""));
-  let got: u8[] = deflated(bytes, 5);
+  return test.assert_eq(frames_of(deflated(bytes, 5)), "193:" + hex(text.bytes()) + "|194:010203|136:03e8|");
+}
+
+// The client keeps its LZ77 window across messages, the server having
+// asked for no reset: zlib's stream for two messages under one sync-flushed
+// context, the second of which is a single match back into the first.
+function test_deflate_context_takeover(): test.TestOutcome {
+  let first: u8[] = masked(true, 1, [74 as u8, 206 as u8, 207 as u8, 43 as u8, 73 as u8, 173 as u8, 40 as u8, 81 as u8, 40 as u8, 73 as u8, 204 as u8, 78 as u8, 205 as u8, 47 as u8, 75 as u8, 45 as u8, 210 as u8, 81 as u8, 72 as u8, 70 as u8, 19 as u8, 1 as u8, 0 as u8]);
+  first = first.with(0, (first[0] as i32 | 64) as u8);
+  let second: u8[] = masked(true, 1, [66 as u8, 231 as u8, 43 as u8, 2 as u8, 0 as u8]);
+  second = second.with(0, (second[0] as i32 | 64) as u8);
+  let got: string = frames_of(deflated(first.concat(second).concat(close_frame(1000, "")), 5));
+  return test.assert_eq(got, "193:" + hex("context takeover, context takeover".bytes()) + "|193:" + hex("context takeover!".bytes()) + "|136:03e8|");
+}
+
+// `frames_of(got)` — the frames a session wrote, each as its first byte and
+// its payload in hex, a compressed one inflated on its own: the server
+// resets its window for every message.
+function frames_of(got: u8[]): string {
   let out: string = "";
   let at: i32 = 0;
   while (at + 2 <= got.len()) {
@@ -377,7 +395,7 @@ function test_deflate_session(): test.TestOutcome {
     }
     at = at + 2 + n;
   }
-  return test.assert_eq(out, "193:" + hex(text.bytes()) + "|194:010203|136:03e8|");
+  return out;
 }
 
 function test_deflate_refusals(): test.TestOutcome {
@@ -464,6 +482,7 @@ function main(): i32 {
   r = r.it("ends 1006 when the bytes end", test_ended_without_close);
   r = r.it("takes a permessage-deflate offer it can serve", test_deflate_negotiation);
   r = r.it("decodes compressed messages and compresses the echo", test_deflate_session);
+  r = r.it("decodes a message that refers back into the one before", test_deflate_context_takeover);
   r = r.it("refuses what a compressed connection cannot take", test_deflate_refusals);
   r = r.it("cuts a close reason to a whole code point", test_close_reason_boundary);
   r = r.it("closes 1002 on a non-minimal or MSB-set length", test_length_framing);

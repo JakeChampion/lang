@@ -14,16 +14,34 @@ all: build test
 
 build: bin/fern
 
+HOST_TARGET := $(shell uname -sm | sed -e 's/^Darwin.*/arm64-darwin/' -e 's/^Linux aarch64/arm64-linux/' -e 's/^Linux x86_64/x86-64-linux/')
+STDLIB_SRCS := $(shell find internal/stdlib -name '*.fern')
+
+# bin/fern is the shipped compiler: compiler/fern_main.fern, built by the
+# self-host compiler with the stdlib and the diagnostic explanations embedded
+# (scripts/fern-embed-stage), so it runs from anywhere with nothing beside it.
+bin/fern: bin/fern-selfhost $(wildcard compiler/*.fern) $(STDLIB_SRCS) $(wildcard internal/syntax/diag/explanations/*.md)
+	./scripts/fern-embed-stage build/embed
+	./bin/fern-selfhost -target $(HOST_TARGET) -embed build/embed -o $@ compiler/fern_main.fern internal/stdlib
+
+# The self-host compiler bin/fern is built with, from the pinned stage0 and no
+# Go toolchain (docs/BOOTSTRAP.md).
+bin/fern-selfhost: $(wildcard compiler/*.fern) $(STDLIB_SRCS) bootstrap/stage0.lock
+	./bootstrap/bootstrap.sh build
+
+# bin/fern-oracle is the Go front end (cmd/fern): the parser, checker and
+# interpreter the differential tests check the compiler against. It hands a
+# -target compile to the self-host compiler beside it (internal/tools/launcher).
+#
 # The stdlib, the compiler's own sources and the stage0 pin are baked in with
 # go:embed (internal/stdlib/stdlib.go, compiler/sources.go, bootstrap/lock.go),
-# so they are inputs to the binary just as the .go files are. Leaving one out
-# made an edit to it silently run against the previously embedded copy.
+# so they are inputs to the binary just as the .go files are.
 #
 # .claude/worktrees holds whole git worktrees of this repository, so a find over
 # the tree makes every OTHER checkout's sources dependencies of this one's
 # binary — and a scratch file deleted there between the find and the build stops
 # make with "No rule to make target".
-bin/fern: $(shell find . -name '*.go' -not -path './build/*' -not -path './.claude/*') $(shell find internal/stdlib -name '*.fern') $(wildcard compiler/*.fern) bootstrap/stage0.lock
+bin/fern-oracle: $(shell find . -name '*.go' -not -path './build/*' -not -path './.claude/*') $(STDLIB_SRCS) $(wildcard compiler/*.fern) bootstrap/stage0.lock
 	@mkdir -p bin
 	go build -o $@ ./cmd/fern
 
@@ -108,8 +126,8 @@ ci-selftest:
 freeze:
 	./scripts/freeze_gate.sh
 
-# Type-check the self-host sources and every stdlib module with the native
-# `fern -check` — the direct form of the question every self-host lane
+# Type-check the self-host sources and every stdlib module with `fern -check`
+# — the direct form of the question every self-host lane
 # otherwise asks only implicitly by building a driver, where a type error
 # surfaces as a build-step failure in a job named for something else (#7317).
 # Depends on bin/fern because the stdlib is embedded: a stale binary checks
@@ -161,20 +179,19 @@ check-sources: bin/fern
 #
 #   make selfhost-cli
 #   bin/fern-selfhost -target wasm32-wasi -emit asm -o p.wat /ABS/prog.fern $(PWD)/internal/stdlib
-#   wasmtime run p.wat; echo $$?        # oracle: ./bin/fern -interp /ABS/prog.fern
+#   wasmtime run p.wat; echo $$?        # oracle: ./bin/fern-oracle -interp /ABS/prog.fern
 #
 # Use ABSOLUTE paths. A relative one was unopenable from an arm64-darwin binary
 # until #6002 (AT_FDCWD is -2 on XNU, not -100), and absolute is what every
 # harness uses anyway. Note the exit code cannot carry a value >= 126: WASI
 # refuses anything outside [0..126), so wasmtime reports 1.
-HOST_TARGET := $(shell uname -sm | sed -e 's/^Darwin.*/arm64-darwin/' -e 's/^Linux aarch64/arm64-linux/' -e 's/^Linux x86_64/x86-64-linux/')
 SELFHOST_TARGET ?= $(HOST_TARGET)
-# The key marks the compiler bin/fern may run, so a cross build gets none.
-selfhost-cli: bin/fern
+# The key marks the compiler bin/fern-oracle may run, so a cross build gets none.
+selfhost-cli: bin/fern-oracle
 	@mkdir -p bin
-	./bin/fern -target $(SELFHOST_TARGET) -o bin/fern-selfhost compiler/fern.fern
+	./bin/fern-oracle -target $(SELFHOST_TARGET) -o bin/fern-selfhost compiler/fern.fern
 	@chmod +x bin/fern-selfhost
-	@if [ "$(SELFHOST_TARGET)" = "$(HOST_TARGET)" ]; then ./bin/fern -selfhost-key > bin/fern-selfhost.key; else rm -f bin/fern-selfhost.key; fi
+	@if [ "$(SELFHOST_TARGET)" = "$(HOST_TARGET)" ]; then ./bin/fern-oracle -selfhost-key > bin/fern-selfhost.key; else rm -f bin/fern-selfhost.key; fi
 	@echo "built bin/fern-selfhost ($(SELFHOST_TARGET)) — see the Makefile comment for the loop"
 
 # Build the same bin/fern-selfhost with NO Go toolchain and NO native backend:
@@ -182,7 +199,8 @@ selfhost-cli: bin/fern
 # build/bootstrap/) compiles the current source, and the result must compile
 # and run a program before it is installed. This is the path a checkout has to
 # a Fern compiler once the native backends are gone (docs/NATIVE-CONVERGENCE.md
-# §3a). Deliberately not dependent on bin/fern. `STAGE0=bin/fern-selfhost make
+# §3a), and the one bin/fern is built through. Deliberately not dependent on
+# bin/fern-oracle. `STAGE0=bin/fern-selfhost make
 # bootstrap` runs from a local candidate instead of the pin — how a refresh is
 # checked before it is published. Runbook: docs/BOOTSTRAP.md.
 bootstrap:

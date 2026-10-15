@@ -167,7 +167,7 @@ every leg. By the end, the file must pass ALL FIVE of these:
 
 ```
 ./bin/fern -check  app.fern                          # type-checks, silent
-./bin/fern -interp app.fern                          # the oracle
+./bin/fern-oracle -interp app.fern                   # the oracle
 ./bin/fern -target x86-64-linux -o /tmp/app     app.fern && /tmp/app
 ./bin/fern -target wasm32-wasi   -o /tmp/app.wasm app.fern && wasmtime run /tmp/app.wasm
 make selfhost-cli && bin/fern-selfhost -target x86-64-linux -o /tmp/app-sh \

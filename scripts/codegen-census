@@ -46,7 +46,7 @@ fi
 SRC=$1
 
 if [ ! -x "$BIN" ]; then
-  echo "codegen-census: no compiler at $BIN (go build -o bin/fern ./cmd/fern), or set FERN_BIN" >&2
+  echo "codegen-census: no compiler at $BIN (make build), or set FERN_BIN" >&2
   exit 2
 fi
 

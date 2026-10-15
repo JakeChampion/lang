@@ -17,18 +17,9 @@ fern -repl
 ```
 
 `fern` is one binary that formats, lints, type-checks, interprets,
-compiles, and manages packages. A `-target` compile runs Fern's compiler,
-which is itself written in Fern: it assembles, links, and (for Darwin)
-code-signs in-process, so no external toolchain is needed. `fern` uses
-`$FERN_SELFHOST` when it is set, else a `fern-selfhost` binary next to
-itself that was built from the same sources (its `fern-selfhost.key` says
-so), else it builds one on first use from the compiler sources it
-embeds and caches the result. That first build downloads a pinned,
-checksum-verified earlier release to do the compiling, so the very first
-compile on a machine takes longer than the rest.
-
-`-check`, `-interp`, `-repl`, `-fmt` and `-lint` do not need the
-compiler and run straight away.
+compiles, and manages packages. It is Fern's compiler, written in Fern, with
+the standard library inside it: it assembles, links, and (for Darwin)
+code-signs in-process, so no external toolchain is needed.
 
 ### Targets
 

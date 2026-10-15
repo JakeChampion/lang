@@ -43,7 +43,7 @@ case "$(uname -m)" in
   *) echo "cliff-bench: unsupported host $(uname -m)" >&2; exit 2 ;;
 esac
 
-scripts/selfhost-current
+make bin/fern >&2
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT

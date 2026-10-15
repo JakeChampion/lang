@@ -3842,6 +3842,16 @@ function parse_tool_flag(tf: ToolFlags, av: string[], i: i32): (ToolFlags, i32, 
   return (ToolFlags { ...tf, color_mode: mode }, next, 0);
 }
 
+// stdout_emit is the output form of a compile with `emit` asked for: one
+// with nowhere to write prints a native target's assembly rather than its
+// executable. A wasm module or component goes to stdout as it is.
+function stdout_emit(target: string, emit: string, has_out: boolean): string {
+  if (!has_out && emit.len() == 0 && platforms.for_target(target).isa != "wasm32") {
+    return "asm";
+  }
+  return emit;
+}
+
 // run_output is where a `-run` compile writes: the -o path when one was
 // given, else `prog` (or `prog.wasm`) in a fresh directory under $TMPDIR,
 // which the caller removes after the run. The third result is a non-zero exit
@@ -4201,7 +4211,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // Positionals past the stdlib root are the program's own, as `-interp
   // FILE ARG...` hands them to `args()` behind the entry's path.
   let prog_args: string[] = [];
-  let target: string = "x86-64-linux";
+  let target: string = "arm64-linux";
   // Output FORM, independent of the target: "" is the target's default
   // (a linked executable, or a component on wasm), "asm" the emitter's
   // text, "core-module" a raw wasm core module.
@@ -4248,6 +4258,11 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // -backtrace: whether a fatal abort walks the frame chain under its cause
   // line, as native's flag of the same name; FERN_BACKTRACE is the default.
   let backtrace: boolean = asmcore.backtrace_on();
+  let backtrace_set: boolean = false;
+  // -size: build for size over speed (asmcore.EmitState.size), and drop the
+  // backtrace walk unless -backtrace says otherwise; FERN_SIZE=1 is the
+  // default.
+  let size: boolean = asmcore.size_on();
   // -sanitize: the heap memory-safety detectors together, as native's flag;
   // FERN_SANITIZE is the other way to turn them on.
   let sanitize_flag: boolean = false;
@@ -4331,8 +4346,14 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
       emit_syms = true;
     } else if (a == "-backtrace" || a == "-backtrace=true" || a == "-backtrace=1") {
       backtrace = true;
+      backtrace_set = true;
     } else if (a == "-backtrace=false" || a == "-backtrace=0") {
       backtrace = false;
+      backtrace_set = true;
+    } else if (a == "-size" || a == "-size=true" || a == "-size=1") {
+      size = true;
+    } else if (a == "-size=false" || a == "-size=0") {
+      size = false;
     } else if (a == "-sanitize" || a == "-sanitize=true" || a == "-sanitize=1") {
       sanitize_flag = true;
     } else if (a == "-sanitize=false" || a == "-sanitize=0") {
@@ -4727,6 +4748,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     }
     return status;
   }
+  emit = stdout_emit(target, emit, out_path.len() > 0 || tf.run_it);
 
   // The parse gates the `-check` path runs (#7447), for the same reason the
   // checker gate below exists: without them a build is MORE permissive than
@@ -4873,7 +4895,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // statement, the emitter renders the marks as `.loc` rows over the `.file`
   // table prepended below, and the image writer encodes .debug_line (#11410).
   let debug_lines: boolean = emit_syms && (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin");
-  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, debug_lines), switches: asmcore.Switches { backtrace: backtrace, sanitize: sanitize_flag || asmcore.sanitize_on(), var_rows: debug_lines && emit != "asm", shared: shared } };
+  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size } };
   let out_asm: string = "";
   let emit_text: boolean = emit == "asm";
   if (target == "arm64-linux") {
