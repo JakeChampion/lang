@@ -963,8 +963,8 @@ pub function view_escape_diags(mod: parser.Module): util.Diag[] {
 
 // build_opts are the build's choices for target_substitution, for a caller
 // that does not import semsource.
-pub function build_opts(debug_lines: boolean, size: boolean): semsource.BuildOpts {
-  return semsource.BuildOpts { debug_lines: debug_lines, size: size };
+pub function build_opts(debug_lines: boolean, size: boolean, whole: boolean): semsource.BuildOpts {
+  return semsource.BuildOpts { debug_lines: debug_lines, size: size, whole: whole };
 }
 
 // target_substitution produces the typed lowering of the checker-typed `typed`
@@ -1010,8 +1010,18 @@ pub function driven(mod: parser.Module, target: string): Driven {
 // `target_os()` / `target_arch()` are folded to the target's names first, as
 // the CLI folds them: no backend emits a body for either.
 pub function driven_annotated(annotated: parser.Module, target: string): Driven {
+  return driven_with(annotated, target, semsource.plain_build());
+}
+
+// driven_shaken is driven_annotated for a whole program the caller has shaken
+// (treeshake), which the lowering may then narrow further, as the CLI's does.
+pub function driven_shaken(annotated: parser.Module, target: string): Driven {
+  return driven_with(annotated, target, build_opts(false, false, true));
+}
+
+function driven_with(annotated: parser.Module, target: string, opts: semsource.BuildOpts): Driven {
   let typed: parser.Module = checked_typed(annotated, target);
-  return Driven { full: parser.erase_view_module(typed), sub: ircore.Sub { ...target_substitution(typed, target, semsource.plain_build()), checked: true } };
+  return Driven { full: parser.erase_view_module(typed), sub: ircore.Sub { ...target_substitution(typed, target, opts), checked: true } };
 }
 
 function checked_typed(annotated: parser.Module, target: string): parser.Module {

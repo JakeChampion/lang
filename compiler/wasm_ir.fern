@@ -17136,12 +17136,16 @@ function wait_builtins(): string[] {
   ];
 }
 
-// framing_covers reports whether the framing component_shape picks from
-// `mod`'s calls imports the exit the lowered `bodies` may call: an
+// lowered_shape is component_shape, or -1 when the lowered `bodies` call an
+// exit the framing it picks from `mod`'s calls does not import: an
 // unreachable branch aborts through exit (semreach leaves such branches
 // where the source names no exit), and only the lowering shows it.
-pub function framing_covers(mod: parser.Module, sw: asmcore.Switches, bodies: irtables.LowerResult[]): boolean {
-  return host_needs(mod, census_on(sw)).ex || !module_emits_op_cached(bodies, "exit");
+pub function lowered_shape(mod: parser.Module, sw: asmcore.Switches, bodies: irtables.LowerResult[]): i32 {
+  let shape: i32 = component_shape(mod, sw);
+  if (shape >= 0 && !host_needs(mod, census_on(sw)).ex && module_emits_op_cached(bodies, "exit")) {
+    return 0 - 1;
+  }
+  return shape;
 }
 
 // component_needs_host reports whether a program reaches its WASI host at

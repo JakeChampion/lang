@@ -453,6 +453,7 @@ function (d: Dialer) probe(): i32 {
     return d.tries + 41;
 }
 struct Pinger { n: i32 }
+@noinline
 function (p: Pinger) ping(): i32 {
     return p.n * 2;
 }

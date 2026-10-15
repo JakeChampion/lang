@@ -55,6 +55,11 @@ Unsupported constructs refuse the whole function with a reason.
   - Roots are the tree-shaker's (`main`, top-level statements, exports, Drop
     finalizers, derive-carrying types' methods, async entries), plus the
     runtime helpers and live map keys' `hash` and `eq`.
+  - The pass runs only on a whole program: a module its caller has shaken
+    to what these roots reach says so (`BuildOpts.whole`), as the CLI, the
+    playground and a pruning `asm_load_run` do. A library, a unit of a
+    per-module build, or a body a tool lowers to inspect has callers outside
+    it, and keeps every function.
   - A type is opaque, with its fields any value and its variants all built,
     when a value of it can arrive other than from a body's construction: an
     extern's, a closure's or a dyn narrowing's result, or a root's

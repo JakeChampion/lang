@@ -8813,12 +8813,15 @@ function infer_ownership(all: Produced[], names: string[], table: ssasem.Contrac
 }
 
 // BuildOpts are the build's choices the lowering reads: the line table's
-// markers in every body (`debug_lines`, the `-g` build of an ELF target), and
-// a -size build's inlining (`size`, seminline.inline_leaves).
-pub struct BuildOpts { debug_lines: boolean, size: boolean }
+// markers in every body (`debug_lines`, the `-g` build of an ELF target), a
+// -size build's inlining (`size`, seminline.inline_leaves), and whether the
+// module is the whole program, shaken to what its roots reach (`whole`), so
+// that what no reachable call runs can go (semreach). A library, a unit of a
+// per-module build, or a body a tool lowers to inspect is not.
+pub struct BuildOpts { debug_lines: boolean, size: boolean, whole: boolean }
 
 pub function plain_build(): BuildOpts {
-  return BuildOpts { debug_lines: false, size: false };
+  return BuildOpts { debug_lines: false, size: false, whole: false };
 }
 
 pub function build_module(mod: parser.Module): Built {
@@ -8890,7 +8893,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     let inlined: Spliced = inline_leaves(fuse_pipelines(all, names, mod.funcs), names, mod, opts.size);
     // Reachability follows the last pass that adds a call: the ndarray
     // kernels call helpers nothing named before.
-    all = prune_dead_constructions(reached_only(scale_ndarray_maps(without_unnamed(inlined.all, names, inlined.spliced, mod), names, mod), names, mod));
+    all = prune_dead_constructions(reached_only(scale_ndarray_maps(without_unnamed(inlined.all, names, inlined.spliced, mod), names, mod), names, mod, opts.whole));
   }
   decls = [];
   instances = [];
@@ -9029,8 +9032,8 @@ function without_unnamed(all: Produced[], names: string[], spliced: boolean[], m
 // `all` with what nothing the program reaches names dropped, and each branch
 // the whole program's facts decide taken (semreach). `FERN_NO_SEM_REACH=1`
 // turns it off.
-function reached_only(all: Produced[], names: string[], mod: parser.Module): Produced[] {
-  if (!kernel_switch_on("FERN_NO_SEM_REACH")) {
+function reached_only(all: Produced[], names: string[], mod: parser.Module, whole: boolean): Produced[] {
+  if (!whole || !kernel_switch_on("FERN_NO_SEM_REACH")) {
     return all;
   }
   let funcs: ssasem.Func[] = [];
