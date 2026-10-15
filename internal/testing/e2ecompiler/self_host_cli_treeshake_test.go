@@ -270,7 +270,9 @@ function main(): i32 {
 //
 // The program below is the discriminating case in both directions — it adds two
 // `V`s and, inside `V.add`, two i32s — so it must keep `V.add`, `V.neg` and
-// `i32.add` while dropping every other type's.
+// `i32.add` while dropping every other type's. semreach is off: an i32 `+`
+// lowers to an add, so nothing calls the `i32.add` the shaker keeps, and the
+// pass would drop it.
 func TestSelfHostTreeshakeQualifiesArithmeticRootsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -303,7 +305,9 @@ function main(): i32 {
 		t.Fatalf("write program: %v", err)
 	}
 	asmPath := filepath.Join(dir, "ts_arith_prog.s")
-	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, prog, stdlib).CombinedOutput(); err != nil {
+	compile := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, prog, stdlib)
+	compile.Env = append(os.Environ(), "FERN_NO_SEM_REACH=1")
+	if out, err := compile.CombinedOutput(); err != nil {
 		t.Fatalf("self-host compile failed: %v\n%s", err, out)
 	}
 	asmBytes, err := os.ReadFile(asmPath)
