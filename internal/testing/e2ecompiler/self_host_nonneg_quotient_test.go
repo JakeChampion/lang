@@ -30,11 +30,20 @@ function main(): i32 { return at("abcde\tf"); }`},
 function main(): i32 { return q(0 - 13); }`},
 	{"guard_admits_negative", `@noinline function q(k: i32): i32 { if (k >= 0 - 1) { return (k / 2 + 10) * 10 + k % 2 + 10; } return 1; }
 function main(): i32 { return q(0 - 1); }`},
+	{"i64_ctz_lanes", `@noinline function lanes(x: u64): i64 { return (__ctz64(x) as i64) / 8i64 * 10i64 + (__ctz64(x) as i64) % (8 as i64); }
+function main(): i32 { return (lanes(1u64 << 21) + lanes(0u64)) as i32; }`},
+	{"i64_length", `@noinline function half(xs: i32[]): i64 { return (xs.len() as i64) / 2i64 + (xs.len() as i64) % 2i64 * 10i64; }
+function main(): i32 { return half([1, 2, 3, 4, 5]) as i32; }`},
+	{"widened_byte", `@noinline function nib(b: u8): i32 { return (b as i32) / 16 * 10 + (b as i32) % 16; }
+function main(): i32 { return nib(100u8); }`},
+	{"i64_negative_dividend", `@noinline function q(k: i32): i64 { return ((k as i64) / 8i64 + 10i64) * 10i64 + (k as i64) % 8i64 + 10i64; }
+function main(): i32 { return q(0 - 13) as i32; }`},
 }
 
 // nonnegQuotientTwins pairs a division by 8 whose dividend is proven at least
 // zero with one whose dividend may be negative: only the second keeps the
-// sign fixup (`sarl $31` and the bias added before the shift).
+// sign fixup (a shift by 31, or 63 for an i64, and the bias added before the
+// shift).
 var nonnegQuotientTwins = []struct{ name, proven, unproven string }{
 	{"guarded",
 		`@noinline function q(k: i32): i32 { if (k >= 0) { return k / 8; } return 0; } function main(): i32 { return q(80); }`,
@@ -45,6 +54,15 @@ var nonnegQuotientTwins = []struct{ name, proven, unproven string }{
 	{"remainder",
 		`@noinline function low(xs: i32[]): i32 { return xs.len() % 8; } function main(): i32 { return low([1, 2, 3]); }`,
 		`@noinline function low(xs: i32[]): i32 { return (xs.len() - 4) % 8; } function main(): i32 { return low([1, 2, 3, 4, 5, 6, 7]); }`},
+	{"i64_widened",
+		`@noinline function lanes(x: u64): i64 { return (__ctz64(x) as i64) / 8i64; } function main(): i32 { return lanes(1u64 << 40) as i32; }`,
+		`@noinline function lanes(x: u64): i64 { return ((__ctz64(x) - 1) as i64) / 8i64; } function main(): i32 { return lanes(1u64 << 41) as i32; }`},
+	{"i64_remainder",
+		`@noinline function low(xs: i32[]): i64 { return (xs.len() as i64) % 8i64; } function main(): i32 { return low([1, 2, 3]) as i32; }`,
+		`@noinline function low(xs: i32[]): i64 { return ((xs.len() - 4) as i64) % 8i64; } function main(): i32 { return low([1, 2, 3, 4, 5, 6, 7]) as i32; }`},
+	{"widened_byte",
+		`@noinline function nib(b: u8): i32 { return (b as i32) / 16; } function main(): i32 { return nib(100u8); }`,
+		`@noinline function nib(b: u8): i32 { return ((b as i32) - 1) / 16; } function main(): i32 { return nib(100u8); }`},
 }
 
 func TestSelfHostNonnegQuotientX86_64(t *testing.T) {
@@ -82,7 +100,8 @@ func TestSelfHostNonnegQuotientX86_64(t *testing.T) {
 		t.Run("no_sign_fixup/"+tw.name, func(t *testing.T) {
 			proven := emit(t, tw.proven)
 			unproven := emit(t, tw.unproven)
-			if got, base := strings.Count(proven, "$31,"), strings.Count(unproven, "$31,"); got >= base {
+			signs := func(asm string) int { return strings.Count(asm, "$31,") + strings.Count(asm, "$63,") }
+			if got, base := signs(proven), signs(unproven); got >= base {
 				t.Fatalf("the dividend's sign was not used: %d sign shifts against the unproven twin's %d", got, base)
 			}
 			for name, tc := range map[string]struct{ src, asm string }{"proven": {tw.proven, proven}, "unproven": {tw.unproven, unproven}} {
