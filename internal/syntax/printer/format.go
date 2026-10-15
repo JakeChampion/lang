@@ -1205,10 +1205,13 @@ func (f *formatter) formatArmBody(e ast.Expr) {
 // formatBlockExpr renders a block-expression `{ stmt; …; tail }` in a
 // compact one-line shape: each statement followed by `;`, then the
 // trailing value expression with no `;`. Used for `if`/`match`
-// expression branches (slice 1). Statements here are the simple forms
-// the branch grammar admits (var / expr-stmt / nested control), emitted
-// via formatStmtInline so no newlines / indentation are introduced.
+// expression branches. A statement that spans lines (a loop, an `if`, a
+// nested block) puts the whole block on lines of its own, one level in.
 func (f *formatter) formatBlockExpr(be *ast.BlockExpr) {
+	if f.spansLines(be.Stmts) {
+		f.formatBlockExprLines(be)
+		return
+	}
 	f.b.WriteString("{ ")
 	for _, s := range be.Stmts {
 		f.formatStmt(s, 0)
@@ -1219,6 +1222,44 @@ func (f *formatter) formatBlockExpr(be *ast.BlockExpr) {
 		f.b.WriteByte(' ')
 	}
 	f.b.WriteByte('}')
+}
+
+// formatBlockExprLines renders a block-expression one statement per line,
+// indented against the statement it sits in, the closing brace at that
+// statement's own level.
+func (f *formatter) formatBlockExprLines(be *ast.BlockExpr) {
+	depth := f.depth
+	f.b.WriteString("{\n")
+	for _, s := range be.Stmts {
+		f.indent(depth + 1)
+		f.formatStmt(s, depth+1)
+		f.b.WriteByte('\n')
+	}
+	if be.Tail != nil {
+		f.indent(depth + 1)
+		f.depth = depth + 1
+		f.formatExpr(be.Tail, 0)
+		f.depth = depth
+		f.b.WriteByte('\n')
+	}
+	f.indent(depth)
+	f.b.WriteByte('}')
+}
+
+// spansLines reports whether any of stmts prints across more than one line.
+// It renders each into a scratch buffer and leaves the output and the
+// comment cursor where they were.
+func (f *formatter) spansLines(stmts []ast.Stmt) bool {
+	saved, ci := f.b, f.ci
+	defer func() { f.b, f.ci = saved, ci }()
+	for _, s := range stmts {
+		f.b = strings.Builder{}
+		f.formatStmt(s, 0)
+		if strings.Contains(f.b.String(), "\n") {
+			return true
+		}
+	}
+	return false
 }
 
 // formatLoopLabel emits `name: ` ahead of a loop header. Dropping it also
