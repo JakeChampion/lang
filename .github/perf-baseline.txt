@@ -191,7 +191,9 @@ x86_64/utf8_ingest_validated.ir	5916087
 # time on sort_ints scaled up is 5-10% faster; struct_drop's is within
 # noise. Both arches' figures are the perf lanes'. The same change takes
 # aarch64 ordmap_insert.text and sort_strings.text down 1.0% and 1.1%,
-# measured by the perf-aarch64 lane.
+# measured by the perf-aarch64 lane. With #12402's constant index on top,
+# x86_64 sort_inplace.text falls 1.1%; neither PR's own run saw the two
+# together. The figure is the perf-x86_64 lane's.
 #
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18

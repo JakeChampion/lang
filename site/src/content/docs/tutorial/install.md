@@ -29,55 +29,25 @@ install -m755 fern ~/.local/bin/fern    # anywhere on your $PATH
 ```
 
 Each asset ships a `*.tar.gz.sha256` alongside it if you want to verify
-the download. The archive holds only the `fern` binary; the compiler it
-runs is built on your machine the first time you compile (see
-[The first compile](#the-first-compile)). [Releases](../../releases/)
-covers what the nightly channel promises and how to pin a build.
+the download. The archive holds the one `fern` binary: the compiler, written
+in Fern, with its standard library inside it, so it needs nothing beside it
+and no network. [Releases](../../releases/) covers what the nightly channel
+promises and how to pin a build.
 
 ## Option B — build from source
-
-If you have Go, install straight from the module path:
-
-```bash
-go install github.com/jakechampion/lang/cmd/fern@latest
-```
-
-Or clone and build — useful if you also want the companion tools:
 
 ```bash
 git clone https://github.com/JakeChampion/lang
 cd lang
-go build -o ~/.local/bin/fern ./cmd/fern
+make build                           # writes bin/fern
+install -m755 bin/fern ~/.local/bin/fern
 ```
 
-Building needs **Go 1.26+** ([download](https://go.dev/dl/)) and nothing
-else. Compiling a Fern program needs nothing else either — no `gcc`, no
-`clang`, no `ld`.
-
-## The first compile
-
-`fern` compiles through Fern's self-hosted compiler, which is written
-in Fern. (`fern -interp` and `fern -check` do not need it.) It uses
-`$FERN_SELFHOST` when that is set, else a `fern-selfhost` in the same
-directory as `fern` that was built from the same sources (the
-`fern-selfhost.key` beside it says so). With neither, the first compile
-downloads the stage0
-compiler pinned in `bootstrap/stage0.lock` from the project's GitHub
-releases, checks its sha256, and builds the self-hosted compiler from the
-sources inside `fern`. That takes about a minute, once per version; the
-result is cached under your user cache directory (`~/.cache/fern` on
-Linux, `~/Library/Caches/fern` on macOS).
-
-To compile on a machine without network access, build the compiler once
-from a checkout where you have it:
-
-```bash
-make bootstrap                       # writes bin/fern-selfhost
-export FERN_SELFHOST=$PWD/bin/fern-selfhost
-```
-
-or copy `bin/fern-selfhost` and `bin/fern-selfhost.key` next to a `fern`
-built from the same checkout.
+Building needs `make`, `curl` and nothing else: `make build` downloads the
+earlier compiler pinned in `bootstrap/stage0.lock` from the project's GitHub
+releases, checks its sha256, compiles the compiler with it, and builds `fern`
+with that (about two minutes). Compiling a Fern program needs nothing else
+either — no `gcc`, no `clang`, no `ld`.
 
 ## Verify the install
 
@@ -88,12 +58,11 @@ fern -targets    # every compile target and what its host provides
 
 ### Companion binaries
 
-These are built from a source checkout:
+These are built from a source checkout; all but `fern` need Go 1.26+:
 
 | Binary          | Build command              | Purpose                                                                  |
 | --------------- | -------------------------- | ------------------------------------------------------------------------ |
-| `fern`          | `go build ./cmd/fern`      | The CLI: interpreter, checker, formatter, linter, package tools; runs the compiler for `-target` builds. |
-| `fern-selfhost` | `make bootstrap`           | The compiler itself, built without Go from the pinned stage0.            |
+| `fern`          | `make build`               | The compiler and every tool it carries: interpreter, checker, formatter, linter, package tools. |
 | `fern-lsp`      | `go build ./cmd/fern-lsp`  | Language server for editors.                                             |
 | `ferndoc`       | `go build ./cmd/ferndoc`   | Generate the stdlib reference.                                           |
 

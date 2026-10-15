@@ -4,7 +4,8 @@
 toolchain and no native backend involved: a pinned earlier compiler (stage0)
 compiles `compiler/fern.fern`, the result compiles and runs a one-line
 program and `coreutils/tr`, and is installed as `bin/fern-selfhost` — the same artifact `make
-selfhost-cli` produces via `./bin/fern`. `make distcheck` is the reproducibility
+selfhost-cli` produces via `./bin/fern-oracle` — which `make build` then
+compiles `compiler/fern_main.fern` with into the shipped `bin/fern`. `make distcheck` is the reproducibility
 half: that compiler recompiles its own source, the result does so once more,
 and the last two binaries must be byte-identical. This is
 `NATIVE-CONVERGENCE.md §3a` precondition 1, the shape `BOOTSTRAP-RESEARCH.md
@@ -28,7 +29,7 @@ a one-line program and `coreutils/tr` built with `-O` and run: a stage1 that
 an old stage0 built through its AST-lowering fallback compiles the first and
 aborts on the second (#9763), so a one-liner alone installed a compiler that
 could not build real programs. Nothing here
-reads `bin/fern`; the target does not depend on it and the CI job that runs it
+reads `bin/fern-oracle`; the target does not depend on it and the CI job that runs it
 installs no Go.
 
 ## What the pin is
@@ -102,7 +103,7 @@ commit; the `verify` job on the PR then proves the pin from a Go-less runner.
 Releases are never deleted or moved: every commit that ever pinned one must
 stay bootstrappable.
 
-`make selfhost-cli` runs `bin/fern`, the launcher, which compiles with the
+`make selfhost-cli` runs `bin/fern-oracle`, the launcher, which compiles with the
 current pin: the candidate is the pin's build of the source. So a publish can
 only pin source the current pin compiles, and a new construct reaches the
 compiler's own sources in two steps: teach the compiler the construct without

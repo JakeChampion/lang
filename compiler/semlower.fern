@@ -480,8 +480,8 @@ function inferred_rows(mod: parser.Module, built: semsource.Built, declared: Pla
 }
 
 // The module built and lowered, under the inferred modes when it plans whole.
-function produced_rows(mod: parser.Module, structs: irtables.StructTab, debug_lines: boolean): Inference {
-  let built: semsource.Built = semsource.with_analyses(semsource.build_module_debug(mod, debug_lines));
+function produced_rows(mod: parser.Module, structs: irtables.StructTab, opts: semsource.BuildOpts): Inference {
+  let built: semsource.Built = semsource.with_analyses(semsource.build_module_with(mod, opts));
   util.arr_push_cliff_report("sem:built", 0);
   let records: parser.StructDecl[] = instance_records(built);
   if (records.len() > 0) {
@@ -568,8 +568,8 @@ function field_spelling(t: typeinfo.Type): string {
   return typeinfo.spelling(t);
 }
 
-pub function substitution(mod: parser.Module, structs: irtables.StructTab, debug_lines: boolean): ircore.Sub {
-  let inf: Inference = produced_rows(mod, structs, debug_lines);
+pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts: semsource.BuildOpts): ircore.Sub {
+  let inf: Inference = produced_rows(mod, structs, opts);
   let built: semsource.Built = inf.built;
   let r: Rows = inf.rows;
   report_rows(r, "");
@@ -890,7 +890,7 @@ pub function runtime_lowering(src: string): physicalbody.Lowered {
     return runtime_refused(first_name(mod), "does not type-check: " + diags[0].message);
   }
   let im: parser.Module = gated_module(checker.annotate_module(mod));
-  let inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_structs(im.structs)), false);
+  let inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_structs(im.structs)), semsource.plain_build());
   if (inf.built.instances.len() > 0) {
     return runtime_refused(first_name(im), "instantiates a generic");
   }
@@ -961,18 +961,24 @@ pub function view_escape_diags(mod: parser.Module): util.Diag[] {
   return semsource.check_views(im);
 }
 
+// build_opts are the build's choices for target_substitution, for a caller
+// that does not import semsource.
+pub function build_opts(debug_lines: boolean, size: boolean): semsource.BuildOpts {
+  return semsource.BuildOpts { debug_lines: debug_lines, size: size };
+}
+
 // target_substitution produces the typed lowering of the checker-typed `typed`
 // for whichever emit path `target` selects, against the normalisation that path
 // gates on. The register backends take the lifted module back (Sub.lifted) so
 // their emit entries read it erased rather than lifting again: lifting an
 // already-lifted body renames its locals, so what was produced would not be the
 // bodies the emit path lowers.
-pub function target_substitution(typed: parser.Module, target: string, debug_lines: boolean): ircore.Sub {
+pub function target_substitution(typed: parser.Module, target: string, opts: semsource.BuildOpts): ircore.Sub {
   if (is_wasm(target)) {
-    return substitution_of(wasm_gated(typed), false);
+    return substitution_of(wasm_gated(typed), semsource.BuildOpts { ...opts, debug_lines: false });
   }
   let lifted: parser.Module = ircore.lift_lambdas_typed(typed);
-  return ircore.Sub { ...substitution_of(gated_module(lifted), debug_lines), lifted: lifted, has_lifted: true };
+  return ircore.Sub { ...substitution_of(gated_module(lifted), opts), lifted: lifted, has_lifted: true };
 }
 
 function is_wasm(target: string): boolean {
@@ -985,10 +991,10 @@ function wasm_gated(typed: parser.Module): parser.Module {
   return lift.lift_lambdas_typed(ircore.script_normalized(ircore.scale_f64_maps_module(typed)));
 }
 
-function substitution_of(im: parser.Module, debug_lines: boolean): ircore.Sub {
+function substitution_of(im: parser.Module, opts: semsource.BuildOpts): ircore.Sub {
   let stab: irtables.StructTab = irtables.struct_tab(parser.erase_view_structs(im.structs));
   util.arr_push_cliff_report("sem:gated", 0);
-  let sub: ircore.Sub = substitution(im, stab, debug_lines);
+  let sub: ircore.Sub = substitution(im, stab, opts);
   return ircore.Sub { ...sub, rt_lower: runtime_lowering };
 }
 
@@ -1005,7 +1011,7 @@ pub function driven(mod: parser.Module, target: string): Driven {
 // the CLI folds them: no backend emits a body for either.
 pub function driven_annotated(annotated: parser.Module, target: string): Driven {
   let typed: parser.Module = checked_typed(annotated, target);
-  return Driven { full: parser.erase_view_module(typed), sub: ircore.Sub { ...target_substitution(typed, target, false), checked: true } };
+  return Driven { full: parser.erase_view_module(typed), sub: ircore.Sub { ...target_substitution(typed, target, semsource.plain_build()), checked: true } };
 }
 
 function checked_typed(annotated: parser.Module, target: string): parser.Module {
@@ -1055,7 +1061,7 @@ pub function verdict_ok(mod: parser.Module, target: string): boolean {
     return false;
   }
   let im: parser.Module = verdict_module(t.mod, target);
-  let inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_structs(im.structs)), false);
+  let inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_structs(im.structs)), semsource.plain_build());
   let i: i32 = 0;
   while (i < inf.rows.keep.len()) {
     if (!inf.rows.keep[i] && inf.rows.why[i].len() > 0) {
@@ -1081,7 +1087,7 @@ pub function verdict_annotated(annotated: parser.Module, target: string): Verdic
     return Verdict { ok: false, errors: t.errs, rows: [] };
   }
   let im: parser.Module = verdict_module(t.mod, target);
-  let inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_structs(im.structs)), false);
+  let inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_structs(im.structs)), semsource.plain_build());
   let rows: VerdictRow[] = [];
   let ok: boolean = true;
   let i: i32 = 0;

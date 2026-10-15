@@ -18,7 +18,7 @@ import (
 type compileRequest struct {
 	src, out, target, emit, backend, embed, export, qemu string
 	runIt, shared, debug, sanitize, cover, optimize      bool
-	backtrace                                            *bool
+	backtrace, size                                      *bool
 	progArgs                                             []string
 }
 
@@ -46,6 +46,9 @@ func compileArgs(r compileRequest, out, stdlib string) []string {
 		if f.on {
 			args = append(args, f.name)
 		}
+	}
+	if r.size != nil {
+		args = append(args, fmt.Sprintf("-size=%t", *r.size))
 	}
 	if r.backtrace != nil {
 		args = append(args, fmt.Sprintf("-backtrace=%t", *r.backtrace))

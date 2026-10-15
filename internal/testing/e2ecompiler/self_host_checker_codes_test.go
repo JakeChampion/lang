@@ -96,6 +96,15 @@ func uniqueSortedCodes(in []string) []string {
 	return out
 }
 
+// Programs both checkers accept that the self-host one rejected with only its
+// uncoded fallback hint (#12382). TestSelfHostCheckerDriverX86_64 holds them to
+// exit 0; the codes table holds them to Go's (empty) code set.
+const (
+	valueMatchSettledLocal     = "function f(): u8 { let t: (u8, i32) = (5u8, 4); return match (t) { (q, n) => q }; }\nfunction g(): i64 { let t: (i64, i32) = (5000000000i64, 4); let r = match (t) { (q, n) => q }; return r; }\nfunction main(): i32 { return 0; }\n"
+	methodCallableParamBinds   = "struct Box[T] { v: T }\nfunction (b: Box[T]) app[U](d: () => U, f: (T) => U): U { return f(b.v); }\nfunction g(s: Box[i32]): i32 { let a: i32 = s.app((): i32 => 0, (x: i32): i32 => x + 1); return a; }\nfunction main(): i32 { return 0; }\n"
+	genericEnumCallablePayload = "enum Fut[T] { Done(T), Wait(i32, (i32) => Fut[T]) }\nfunction run(start: Fut[i32]): i32 { let f: Fut[i32] = start; while (true) { match (f) { Done(v) => { return v; }, Wait(tok, k) => { f = k(tok); } } } return 0; }\nfunction main(): i32 { return 0; }\n"
+)
+
 // TestSelfHostCheckerCodesX86_64 is the differential gate for the
 // self-host type-checker port: it compiles the diag-printing checker
 // driver (checker_codes_run.fern) with the Go-built self-host bundle
@@ -188,6 +197,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"map-iter-has-no-next", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let it: MapIter[string, i32] = m.iter(); while (it.has_next()) { it.next(); } return 0; }\n", []string{"E043"}},
 		{"map-iter-methods", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let it: MapIter[string, i32] = m.iter(); let n: i32 = 0; while (it.has_next()) { n = n + it.value() + it.key().len(); it.advance(); } return n; }\n", nil},
 		{"view-append-is-not-a-builtin-arity-error", "function main(): i32 { let v: [u8] = \"abc\".as_bytes(); v.append(); return 0; }", []string{"E043"}},
+		// An array receiver's method binds its own type parameters from the
+		// arguments, as a nominal receiver's does (#12382).
+		{"array-recv-method-own-tparam-ret", "function (xs: string[]) echo[T](value: T): T { return value; }\nfunction main(): i32 { let w: string[] = [\"a\"]; return w.echo(\"four\").len(); }\n", nil},
+		{"view-recv-method-own-tparam-ret", "function (xs: [string]) echo[T](value: T): T { return value; }\nfunction main(): i32 { let w: string[] = [\"a\"]; return w[:].echo(\"four\").len(); }\n", nil},
+		{"array-recv-method-own-tparam-ret-mismatch", "function (xs: string[]) echo[T](value: T): T { return value; }\nfunction main(): i32 { let w: string[] = [\"a\"]; let n: i32 = w.echo(\"four\"); return n; }\n", []string{"E003"}},
+		// A method on `Map[K, V]` binds K and V from the receiver, as
+		// core/map's `merge` needs.
+		{"map-generic-method-ret", "import \"core/map\";\nfunction (m: Map[K, V]) same(): Map[K, V] { return m; }\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let mg = m.same(); if (mg.get_or(\"a\", 0) != 7) { return 1; } return 0; }\n", nil},
+		{"map-generic-method-ret-mismatch", "import \"core/map\";\nfunction (m: Map[K, V]) same(): Map[K, V] { return m; }\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let mg = m.same(); let s: string = mg.get_or(\"a\", 0); return 0; }\n", []string{"E003"}},
 		{"view-custom-append-method", "function (xs: [u8]) append(): i32 { return xs.len(); } function main(): i32 { let v: [u8] = \"abc\".as_bytes(); return v.append(); }", nil},
 		{"view-custom-with-method", "function (xs: [u8]) with(s: string): string { return s; } function main(): i32 { let v: [u8] = \"abc\".as_bytes(); return v.with(\"x\").len(); }", nil},
 		{"view-custom-append-discard", "function (xs: [u8]) append(): i32 { return xs.len(); } function main(): i32 { let v: [u8] = \"abc\".as_bytes(); v.append(); return 0; }", nil},
@@ -1155,8 +1173,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"range-expr-bounds-clean", "function main(): i32 { let n = 4; let s = 0; for i in 1..n + 1 { s = s + i; } return s; }\n", nil},
 		// Type ascription `e as T` (#2669): a zero-cost annotation. An array /
 		// string ascription draws no diagnostic from EITHER checker — the
-		// self-host only flags E033 when both sides are scalar primitives, and
-		// the Go checker accepts the cast as an upcast assignable to the target.
+		// value is assignable to the target.
 		{"asc-arr-clean", "function main(): i32 { let a = [] as i32[]; a = [1, 2]; return a[0] + a[1]; }\n", nil},
 		{"asc-str-clean", "function main(): i32 { let s = \"x\" as string; return s.len(); }\n", nil},
 		// Non-binding-position ascription (#2669) — arg / return / nested — is
@@ -1452,6 +1469,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"order-struct-struct", "struct P { x: i32 }\nfunction main(): i32 { let a = P { x: 1 }; let b = P { x: 2 }; if (a < b) { return 1; } return 0; }\n", []string{"E041"}},
 		{"order-array-array", "function main(): i32 { let a = [1]; let b = [2]; if (a <= b) { return 1; } return 0; }\n", []string{"E041"}},
 		{"order-struct-i32-mixed", "struct P { x: i32 }\nfunction main(): i32 { let a = P { x: 1 }; if (a < 3) { return 1; } return 0; }\n", []string{"E009"}},
+		// With an `Ord` impl the ordering is a bool (#12382): it was typed
+		// unknown, so the `if` fell to the uncoded "could not infer" bail.
+		{"order-struct-derived-ord", "trait Ord { function cmp(self: Self, other: Self): i32; }\nimpl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }\n@derive(Ord) struct P { x: i32 }\nfunction main(): i32 { let a = P { x: 1 }; let b = P { x: 2 }; if (a < b) { return 1; } return 0; }\n", nil},
+		{"order-enum-derived-ord", "import \"core/cmp\";\n@derive(cmp.Ord)\nenum E { A(i32), B(i32, string) }\nfunction main(): i32 { if (B(2, \"a\") < B(2, \"b\")) { return 1; } return 0; }\n", nil},
+		{"order-enum-no-ord", "import \"core/cmp\";\n@derive(cmp.Eq)\nenum E { A(i32), B(i32, string) }\nfunction main(): i32 { if (B(2, \"a\") < B(2, \"b\")) { return 1; } return 0; }\n", []string{"E041"}},
 		{"field-unknown", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; return p.y; }\n", []string{"E043"}},
 		{"field-known-ok", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; return p.x; }\n", nil},
 		{"method-call-not-field-ok", "struct P { x: i32 }\nfunction (p: P) getx(): i32 { return p.x; }\nfunction main(): i32 { let p: P = P { x: 1 }; return p.getx(); }\n", nil},
@@ -1932,11 +1954,28 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cast-numeric-ok", "function main(): i32 { let x: i32 = 1; let y: f64 = x as f64; return 0; }\n", nil},
 		{"cast-string-to-i32-ok", "function main(): i32 { let s: string = \"x\"; return s as i32; }\n", nil},
 		{"cast-i32-to-string-e069", "function main(): i32 { let x: i32 = 1; let s: string = x as string; return 0; }\n", []string{"E069"}},
+		// The string hop is to and from an i32, u32 or usize only; E069 is the
+		// 32-bit source, and any other integer is E033.
+		{"cast-u32-to-string-e069", "function f(x: u32): string { return x as string; }\nfunction main(): i32 { return 0; }\n", []string{"E069"}},
+		{"cast-usize-to-string-ok", "function f(x: usize): string { return x as string; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"cast-i64-to-string", "function f(x: i64): string { return x as string; }\nfunction main(): i32 { return 0; }\n", []string{"E033"}},
+		{"cast-u64-to-string", "function f(x: u64): string { return x as string; }\nfunction main(): i32 { return 0; }\n", []string{"E033"}},
+		{"cast-u8-to-string", "function f(x: u8): string { return x as string; }\nfunction main(): i32 { return 0; }\n", []string{"E033"}},
+		{"cast-i64-literal-to-string", "function f(): string { return 5i64 as string; }\nfunction main(): i32 { return 0; }\n", []string{"E033"}},
+		{"cast-string-to-i64", "function f(s: string): i64 { return s as i64; }\nfunction main(): i32 { return 0; }\n", []string{"E033"}},
+		{"cast-string-to-u8", "function f(s: string): u8 { return s as u8; }\nfunction main(): i32 { return 0; }\n", []string{"E033"}},
+		{"cast-string-to-u32-usize-ok", "function f(s: string): u32 { return s as u32; }\nfunction g(s: string): usize { return s as usize; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cast-bool-to-bool-ok", "function main(): i32 { let b: boolean = true; let c: boolean = b as boolean; return 0; }\n", nil},
 		{"cast-f64-to-string", "function main(): i32 { let f: f64 = 1.0; let s: string = f as string; return 0; }\n", []string{"E033"}},
 		{"cast-string-to-f64", "function main(): i32 { let s: string = \"x\"; let f: f64 = s as f64; return 0; }\n", []string{"E033"}},
 		{"cast-f64-to-i32-ok", "function main(): i32 { let f: f64 = 1.0; let x: i32 = f as i32; return 0; }\n", nil},
 		{"cast-i32-to-f64-ok", "function main(): i32 { let x: i32 = 1; let y: f64 = x as f64; return 0; }\n", nil},
+		// A non-scalar side: the target resolves through the program's types,
+		// and the cast is a pointer hop or an ascription the value must fit.
+		{"cast-struct-to-other-struct", "struct Point { x: i32, y: i32 }\nstruct Vec2 { x: i32, y: i32 }\nfunction f(p: Point): Vec2 { return p as Vec2; }\nfunction main(): i32 { return 0; }\n", []string{"E033"}},
+		{"cast-struct-to-i64", "struct Point { x: i32, y: i32 }\nfunction f(p: Point): i64 { return p as i64; }\nfunction main(): i32 { return 0; }\n", []string{"E033"}},
+		{"cast-i32-to-struct-e069", "struct Point { x: i32, y: i32 }\nfunction f(k: i32): i32 { let c: Point = k as Point; return c.x; }\nfunction main(): i32 { return 0; }\n", []string{"E069"}},
+		{"cast-struct-hops-and-ascription-ok", "struct Point { x: i32, y: i32 }\nfunction f(p: Point, n: usize, xs: i32[]): i32 { let a: Point = p as Point; let b: usize = p as usize; let c: Point = n as Point; let d: i32 = xs as i32; let e: i32[] = n as i32[]; return a.x + c.x + d + e.len(); }\nfunction main(): i32 { return 0; }\n", nil},
 		// Numeric-literal settling (#6654): an unsuffixed integer literal reads
 		// at the destination's type, so every one of these is clean on native
 		// and had been an over-reject here — the self-host types every numeric
@@ -1975,6 +2014,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// if unsettled, so the destination compare still reports it.
 		{"settle-value-if-i32-arm", "function main(): i32 { let n: i32 = 1; let x: f64 = if (1 < 2) { n } else { 2 }; return 0; }\n", []string{"E003"}},
 		{"settle-value-if-string-arm", "function main(): i32 { let x: f64 = if (1 < 2) { 1 } else { \"s\" }; return 0; }\n", []string{"E031"}},
+		// A lambda the program writes and calls in place is typed by the result
+		// it declares, whatever its body returns through: a value if of arms
+		// that return, or a block. A binding's annotation does not relabel it.
+		{"written-iife-returning-arms", "function why(b: i32): string { let w = ((): string => if (b == 0) { return \"zero\"; } else { if (b == 2) { return \"two\"; } else { return \"other\"; } })(); return w; }\nfunction main(): i32 { return why(2).len(); }\n", nil},
+		{"written-iife-into-other-annotation", "function main(): i32 { let s: string = ((): i32 => 4)(); return 0; }\n", []string{"E003"}},
+		{"written-iife-block-into-other-annotation", "function main(): i32 { let s: string = ((): i32 => { return 4; })(); return 0; }\n", []string{"E003"}},
 		// Settling is literal-only, not an i32 -> f64 widening: native rejects
 		// each of these too, and they are what stops the rule going too far. A
 		// typed suffix has already picked its width, and an identifier is not a
@@ -2475,7 +2520,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// E031: a `match` / `if` used in value position desugars to an IIFE,
 		// so its arms' result types must be mutually compatible. The predicate
 		// mirrors the Go checker's unifyIfArms — clear scalar mismatches fire;
-		// numeric (f64/i32) widen; tuples/arrays unify element-wise; two
+		// an unsuffixed literal arm settles at a numeric sibling's type, but two
+		// settled numeric types must agree; tuples/arrays unify element-wise; two
 		// structs of the SAME enum family are compatible (but struct-union
 		// members and unrelated structs are NOT); an unknown arm skips E031
 		// (E001 owns it). Cross-checked against the Go checker.
@@ -2495,8 +2541,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e031-match-three-arms-last-bad", "enum O { A, B, C }\nfunction main(): i32 { let o: O = A; let r = match (o) { A => 1, B => 2, C => \"x\" }; return 0; }\n", []string{"E031"}},
 		// A value if/match-expression has a real result type (the branches'
 		// common type): a mismatched var annotation is E003, a mismatched
-		// `return` is E002. A matching annotation, and a numeric-mix set (which
-		// this port doesn't unify), stay clean.
+		// `return` is E002. A matching annotation stays clean.
 		{"if-expr-value-assign-bad", "function main(): i32 { let x: string = if (1 < 2) { 1 } else { 2 }; return 0; }\n", []string{"E003"}},
 		{"match-expr-value-assign-bad", "enum E { A, B }\nfunction main(): i32 { let e: E = A; let x: string = match (e) { A => 1, B => 2 }; return 0; }\n", []string{"E003"}},
 		{"if-expr-value-assign-ok", "function main(): i32 { let x: i32 = if (1 < 2) { 1 } else { 2 }; return x; }\n", nil},
@@ -2516,6 +2561,102 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e031-union-members-mismatch", "struct A { x: i32 }\nstruct B { y: i32 }\npub type U = A | B;\nfunction main(): i32 { let c = true; let r = if (c) { A { x: 1 } } else { B { y: 2 } }; return 0; }\n", []string{"E031"}},
 		{"e031-same-enum-diff-payload-ok", "enum E { A(i32), B(string) }\nfunction main(): i32 { let c = true; let r = if (c) { A(1) } else { B(\"y\") }; return 0; }\n", nil},
 		{"e031-tuple-elems-ok", "function main(): i32 { let c = true; let r = if (c) { (1, \"x\") } else { (2, \"y\") }; return r.0; }\n", nil},
+		// Numeric arms (#12381): only an unsettled literal — a literal tree,
+		// arithmetic over one, a nested value if of them, or a local one
+		// initialises — takes a sibling's numeric type.
+		{"e031-if-i32-local-f64-literal", "function main(): i32 { let n: i32 = 1; let x = if (true) { n } else { 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-if-f64-literal-i32-local", "function main(): i32 { let n: i32 = 1; let x = if (true) { 2.5 } else { n }; return 0; }\n", []string{"E031"}},
+		{"e031-if-i64-i32-locals", "function main(): i32 { let a: i64 = 5; let n: i32 = 1; let x = if (true) { a } else { n }; return 0; }\n", []string{"E031"}},
+		{"e031-if-u8-local-f64-literal", "function main(): i32 { let b: u8 = 1; let x = if (true) { b } else { 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-if-arith-over-local", "function main(): i32 { let n: i32 = 1; let x = if (true) { n + 1 } else { 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-if-nested-typed-arm", "function main(): i32 { let n: i32 = 1; let x = if (true) { if (false) { n } else { 2 } } else { 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-elseif-chain-typed", "function main(): i32 { let n: i32 = 1; let x = if (true) { n } else if (false) { 2 } else { 3.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-char-local-literal", "function main(): i32 { let c: char = 'a'; let x = if (true) { c } else { 1 }; return 0; }\n", []string{"E031"}},
+		{"e031-call-arm-f64-literal", "function g(): i32 { return 1; }\nfunction main(): i32 { let x = if (true) { g() } else { 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-literal-match-typed-arm", "function main(): i32 { let k: i32 = 3; let n: i32 = 1; let x = match (k) { 1 => n, 2 => 2.5, _ => 3 }; return 0; }\n", []string{"E031"}},
+		{"e031-literal-match-widths", "function main(): i32 { let k: i32 = 3; let a: i64 = 1; let n: i32 = 2; let x = match (k) { 1 => a, _ => n }; return 0; }\n", []string{"E031"}},
+		{"e031-enum-match-typed-arm", "enum E { A, B }\nfunction main(): i32 { let e: E = E.A; let n: i32 = 1; let x = match (e) { E.A => n, E.B => 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-option-payload-f64-literal", "function main(): i32 { let o: Option[i32] = Some(1); let x = match (o) { Some(v) => v, None => 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-diverging-arm-skipped", "function main(): i32 { let k: i32 = 3; let n: i32 = 1; let x = match (k) { 1 => n, 2 => { return 3; }, _ => 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-tuple-typed-elem", "function main(): i32 { let n: i32 = 1; let t = if (true) { (n, 1) } else { (2.5, 1) }; return 0; }\n", []string{"E031"}},
+		// Array arms join element by element, so an unsettled element takes a
+		// typed sibling's numeric type as a scalar arm does.
+		{"e031-array-literal-at-float-ok", "function main(): i32 { let x = if (true) { [1] } else { [2.5] }; return 0; }\n", nil},
+		{"e031-array-literal-at-i64-ok", "function main(): i32 { let a: i64 = 1; let x = if (true) { [a] } else { [2] }; return 0; }\n", nil},
+		{"e031-array-poly-f64-at-f32-ok", "function main(): i32 { let x = if (true) { [2.5] } else { [1.0f32] }; return 0; }\n", nil},
+		{"e031-enum-match-array-at-i64-ok", "enum E { A, B }\nfunction main(): i32 { let e: E = E.A; let a: i64 = 2; let x = match (e) { E.A => [a], E.B => [3] }; return 0; }\n", nil},
+		{"e031-literal-match-array-at-f64-ok", "function main(): i32 { let k: i32 = 1; let d: f64 = 2.0; let x = match (k) { 1 => [d], _ => [3] }; return 0; }\n", nil},
+		// Past an E031 the block takes the arms joined before the failing one.
+		{"e031-then-annotation", "function main(): i32 { let n: i32 = 1; let x: f64 = if (true) { n } else { 2.5 }; return 0; }\n", []string{"E003", "E031"}},
+		{"e031-then-return", "function g(): f64 { let n: i32 = 1; return if (true) { n } else { 2.5 }; }\nfunction main(): i32 { return 0; }\n", []string{"E002", "E031"}},
+		{"e031-then-use-ok", "function main(): i32 { let n: i32 = 1; let x = if (true) { n } else { 2.5 }; return x; }\n", []string{"E031"}},
+		{"e031-literal-f64-ok", "function main(): i32 { let x = if (true) { 1 } else { 2.5 }; return 0; }\n", nil},
+		{"e031-literal-i64-suffix-ok", "function main(): i32 { let x = if (true) { 1 } else { 2i64 }; return 0; }\n", nil},
+		{"e031-literal-u8-suffix-ok", "function main(): i32 { let x = if (true) { 1 } else { 2u8 }; return 0; }\n", nil},
+		{"e031-literal-arith-ok", "function main(): i32 { let x = if (true) { 1 << 2 } else { 2.5 }; let y = if (true) { -1 } else { 2.5 }; let z = if (true) { 7 % 2 } else { 2.5 }; return 0; }\n", nil},
+		{"e031-wide-literal-f64-ok", "function main(): i32 { let x = if (true) { 3000000000 } else { 2.5 }; return 0; }\n", nil},
+		{"e031-i64-local-literal-ok", "function main(): i32 { let a: i64 = 5; let x = if (true) { a } else { 1 }; return 0; }\n", nil},
+		{"e031-u8-local-literal-ok", "function main(): i32 { let b: u8 = 1; let x = if (true) { b } else { 2 }; return 0; }\n", nil},
+		{"e031-f32-local-literals-ok", "function main(): i32 { let f: f32 = 1.0f32; let x = if (true) { f } else { 2 }; let y = if (true) { f } else { 2.5 }; return 0; }\n", nil},
+		{"e031-nested-literal-if-ok", "function main(): i32 { let x = if (true) { if (false) { 1 } else { 2 } } else { 2.5 }; return 0; }\n", nil},
+		{"e031-nested-literal-arith-ok", "function main(): i32 { let x = if (true) { (if (false) { 1 } else { 2 }) + 0 } else { 2.5 }; return 0; }\n", nil},
+		{"e031-literal-match-ok", "function main(): i32 { let k: i32 = 3; let x = match (k) { 1 => 1, 2 => 2.5, _ => 3 }; return 0; }\n", nil},
+		{"e031-enum-match-literals-ok", "enum E { A, B }\nfunction main(): i32 { let e: E = E.A; let a: i64 = 1; let x = match (e) { E.A => a, E.B => 2 }; return 0; }\n", nil},
+		{"e031-tuple-literal-elems-ok", "function main(): i32 { let n: i32 = 1; let t = if (true) { (n, 2) } else { (3, 2.5) }; let u = if (true) { (1, 2) } else { (2.5, 3i64) }; return 0; }\n", nil},
+		{"e031-block-arm-literal-ok", "function main(): i32 { let k: i32 = 3; let x = match (k) { 1 => { let q = 2; 2 }, _ => 2.5 }; return 0; }\n", nil},
+		{"e031-literal-local-ok", "function main(): i32 { let q = 2; let r = q + 1; let x = if (true) { q } else { 2.5 }; let y = if (true) { r } else { 2i64 }; return 0; }\n", nil},
+		{"e031-literal-local-payload-ok", "function main(): i32 { let q = 2; let o = Some(q); let x = match (o) { Some(v) => v, None => 2.5 }; return 0; }\n", nil},
+		{"e031-arm-literal-local-ok", "function main(): i32 { let k: i32 = 3; let x = match (k) { 1 => { let q = 2; q + 1 }, _ => 2.5 }; return 0; }\n", nil},
+		// A value block arm settles as its tail does: a typed tail does not.
+		{"e031-block-arm-typed-tail", "function main(): i32 { let x = if (true) { ({ let q: i32 = 3; q }) } else { 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-block-arm-i32-local", "function main(): i32 { let n: i32 = 1; let x = if (true) { ({ n }) } else { 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-nested-block-arm-i32-local", "function main(): i32 { let n: i32 = 1; let x = if (true) { ({ ({ n }) }) } else { 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-match-block-arm-i32-local", "function main(): i32 { let k: i32 = 1; let n: i32 = 1; let x = match (k) { 1 => ({ n }), _ => 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-block-shadows-literal-local", "function main(): i32 { let q = 2; let x = if (true) { ({ let q: i32 = 3; q }) } else { 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-pattern-shadows-literal-local", "function main(): i32 { let q = 2; let o: Option[i32] = Some(1); let x = if (true) { match (o) { Some(q) => q, None => 3 } } else { 2.5 }; return 0; }\n", []string{"E031"}},
+		{"e031-block-arm-literal-ok", "function main(): i32 { let k: i32 = 1; let x = if (true) { ({ 1 }) } else { 2.5 }; let y = if (true) { 2.5 } else { ({ let q: i32 = 3; 1 }) }; let z = match (k) { 1 => ({ ({ 1 }) }), _ => 2.5 }; return 0; }\n", nil},
+		{"e002-block-return-i32-local", "function g(): f64 { let n: i32 = 1; return if (true) { ({ n }) } else { 2 }; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"e003-block-i32-local", "function main(): i32 { let n: i32 = 1; let x: f64 = ({ n }); return 0; }\n", []string{"E003"}},
+		{"e031-wide-array-arms-ok", "function main(): i32 { let arr: i64[] = if (true) { [1234567890123, 9876543210] } else { [0, 0] }; return 0; }\n", nil},
+		{"e031-literal-match-array-assigns-ok", "function main(): i32 { let k: i32 = 1; let a: i64 = 2; let u: u8 = 1; let x = match (k) { 1 => [a], _ => [3] }; let y = match (k) { 1 => [u], _ => [3] }; let z = match (k) { 1 => [[a]], _ => [[3]] }; return 0; }\n", nil},
+		// Enum payloads join argument by argument: a typed payload still must agree.
+		{"e031-some-f64-vs-i32-local", "function main(): i32 { let n: i32 = 1; let o = if (true) { Some(1.5) } else { Some(n) }; return 0; }\n", []string{"E031"}},
+		{"e031-some-i32-local-vs-f64", "function main(): i32 { let n: i32 = 1; let o = if (true) { Some(n) } else { Some(1.5) }; return 0; }\n", []string{"E031"}},
+		{"e031-ok-i32-local-vs-f64", "function main(): i32 { let n: i32 = 1; let r = if (true) { Ok(n) } else { Ok(2.5) }; return 0; }\n", []string{"E031"}},
+		{"e031-err-i32-local-vs-f64", "function main(): i32 { let n: i32 = 1; let r = if (true) { Err(n) } else { Err(2.5) }; return 0; }\n", []string{"E031"}},
+		{"e031-generic-enum-f64-vs-i32-local", "enum Bx[T] { Full(T), Empty }\nfunction main(): i32 { let n: i32 = 3; let b = if (true) { Full(1.5) } else { Full(n) }; return 0; }\n", []string{"E031"}},
+		{"e031-match-some-i32-local-vs-f64", "function main(): i32 { let k: i32 = 1; let n: i32 = 1; let o = match (k) { 1 => Some(n), _ => Some(2.5) }; return 0; }\n", []string{"E031"}},
+		{"e031-some-tuple-typed-elem", "function main(): i32 { let n: i32 = 1; let o = if (true) { Some((n, 1)) } else { Some((2.5, 1)) }; return 0; }\n", []string{"E031"}},
+		{"e031-block-tuple-typed-elem", "function main(): i32 { let n: i32 = 1; let t = if (true) { ({ (n, 2) }) } else { (3.5, 4) }; return 0; }\n", []string{"E031"}},
+		{"e031-nested-if-tuple-typed-elem", "function main(): i32 { let n: i32 = 1; let t = if (true) { if (false) { (n, 2) } else { (1, 2) } } else { (3.5, 4) }; return 0; }\n", []string{"E031"}},
+		{"e031-block-tuple-shadows-literal-local", "function main(): i32 { let q = 2; let t = if (true) { ({ let q: i32 = 3; (q, 1) }) } else { (2.5, 1) }; return 0; }\n", []string{"E031"}},
+		{"e003-joined-tuple-elem", "function main(): i32 { let t = if (true) { (1, 2) } else { (3.5, 4) }; let s: string = t; return 0; }\n", []string{"E003"}},
+		{"e003-joined-some-payload", "function main(): i32 { let o = if (true) { Some(1) } else { Some(2.5) }; let s: string = o; return 0; }\n", []string{"E003"}},
+		{"e031-generic-enum-i32-local-vs-f64", "enum Bx[T] { Full(T), Empty }\nfunction main(): i32 { let n: i32 = 1; let b = if (true) { Full(n) } else { Full(2.5) }; return 0; }\n", []string{"E031"}},
+		// A declared enum's unsettled payload settles at the destination's instance.
+		{"e003-generic-enum-literal-payload-at-float-ok", "enum Bx[T] { Full(T), Empty }\nfunction main(): i32 { let b: Bx[f64] = Full(1); return 0; }\n", nil},
+		{"e002-generic-enum-literal-payload-at-float-ok", "enum Bx[T] { Full(T), Empty }\nfunction g(): Bx[f64] { return Full(1); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e003-two-param-enum-literal-payloads-ok", "enum Pr[A, B] { Both(A, B), Neither }\nfunction main(): i32 { let p: Pr[Option[f64], i64] = Both(Some(1), 2); return 0; }\n", nil},
+		{"e003-generic-enum-i32-local-payload-at-float", "enum Bx[T] { Full(T), Empty }\nfunction main(): i32 { let n: i32 = 1; let b: Bx[f64] = Full(n); return 0; }\n", []string{"E003"}},
+		{"e003-two-param-enum-payload-mismatch", "enum Pr[A, B] { Both(A, B), Neither }\nfunction main(): i32 { let p: Pr[f64, string] = Both(1, 2); return 0; }\n", []string{"E003"}},
+		{"e003-generic-enum-block-literal-payloads-at-i64-ok", "enum Bx[T] { Full(T), Empty }\nfunction main(): i32 { let c: boolean = true; let b: Bx[i64] = if (c) { Full(1) } else { Full(2) }; return 0; }\n", nil},
+		{"e002-generic-enum-block-literal-payloads-at-i64-ok", "enum Bx[T] { Full(T), Empty }\nfunction g(c: boolean): Bx[i64] { return if (c) { Full(1) } else { Full(2) }; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e003-generic-enum-block-i32-local-payload-at-i64", "enum Bx[T] { Full(T), Empty }\nfunction main(): i32 { let c: boolean = true; let n: i32 = 1; let b: Bx[i64] = if (c) { Full(n) } else { Full(2) }; return 0; }\n", []string{"E003"}},
+		{"e002-generic-enum-block-i32-local-payload-at-i64", "enum Bx[T] { Full(T), Empty }\nfunction g(c: boolean, n: i32): Bx[i64] { return if (c) { Full(n) } else { Full(2) }; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"e003-generic-enum-block-literal-first-i32-payload-at-i64", "enum Bx[T] { Full(T), Empty }\nfunction main(): i32 { let c: boolean = true; let n: i32 = 1; let b: Bx[i64] = if (c) { Full(2) } else { Full(n) }; return 0; }\n", []string{"E003"}},
+		{"e038-generic-enum-block-i32-payload-argument", "enum Bx[T] { Full(T), Empty }\nfunction get(b: Bx[i64]): i32 { return 0; }\nfunction f(c: boolean, n: i32): i32 { return get(if (c) { Full(1) } else { Full(n) }) + get(if (c) { Full(n) } else { Full(1) }); }\nfunction main(): i32 { return 0; }\n", []string{"E038"}},
+		{"e038-option-block-i32-payload-argument", "function get(o: Option[i64]): i32 { return 0; }\nfunction f(c: boolean, n: i32): i32 { return get(if (c) { Some(1) } else { Some(n) }); }\nfunction main(): i32 { return 0; }\n", []string{"E038"}},
+		// Two array arms join element by element, so an unsettled literal
+		// element settles at a typed sibling's, and typed elements must agree.
+		{"e031-array-arms-literal-settles-at-u64-ok", "function f(c: boolean, big: i32): i32 { let w: u64[] = if (c) { [big as u64] } else { [1] }; let v = if (c) { [1, 2] } else { [big as u64] }; return w.len() + v.len(); }\nfunction main(): i32 { return f(true, 3); }\n", nil},
+		{"e031-array-arms-literal-settles-at-float-ok", "function f(c: boolean): i32 { let v = if (c) { [1.5] } else { [1] }; let u = if (c) { [[1]] } else { [[2.5]] }; return v.len() + u.len(); }\nfunction main(): i32 { return f(true); }\n", nil},
+		{"e031-array-match-arms-literal-settles-ok", "function f(k: i32, big: i32): i32 { let w: i64[] = match (k) { 0 => [-(big as i64)], _ => [2] }; return w.len(); }\nfunction main(): i32 { return f(0, 3); }\n", nil},
+		{"e031-array-arms-enum-payload-settles-at-float-ok", "function f(c: boolean): i32 { let a = if (c) { [Some(1)] } else { [Some(2.5)] }; return a.len(); }\nfunction main(): i32 { return f(true); }\n", nil},
+		{"e031-view-arms-join-ok", "function f(c: boolean, a: i64[]): i64 { let w = if (c) { a[:] } else { a[1:] }; return w[0]; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e031-owned-array-beside-view", "function f(c: boolean, s: string): i32 { let owned: u8[] = [1 as u8]; let w = if (c) { owned } else { s.as_bytes() }; return w.len(); }\nfunction main(): i32 { return 0; }\n", []string{"E031"}},
+		{"e031-match-owned-array-beside-view", "function f(c: boolean, s: string): i32 { let owned: u8[] = [1 as u8]; let w = match (c) { true => owned, _ => s.as_bytes() }; return w.len(); }\nfunction main(): i32 { return 0; }\n", []string{"E031"}},
+		{"e031-array-arms-typed-elements-differ", "function f(c: boolean, big: i32): i32 { let w = if (c) { [big as u64] } else { [big] }; return w.len(); }\nfunction main(): i32 { return f(true, 3); }\n", []string{"E031"}},
+		{"e031-array-match-arms-literal-then-typed-differ", "function f(k: i32, n: i32, m: i64): i32 { let w = match (k) { 0 => [1], 1 => [n], _ => [m] }; return w.len(); }\nfunction main(): i32 { return f(0, 1, 2i64); }\n", []string{"E031"}},
 		// E045: a map literal's first key fixes the key type, which must be
 		// i32 or string (the only key kinds the runtime hash/compare
 		// supports). Map programs need `import "core/map";` (Go reports E001
@@ -3179,6 +3320,67 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"resource-named-like-builtin-option", "@import(\"local:test/res@0.1.0\", \"option\")\nresource Option;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"resource-named-like-builtin-map", "@import(\"local:test/res@0.1.0\", \"map\")\nresource Map;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"tuple-match-exhausts-the-function", "function f(t: (i32, i32)): i32 { match (t) { (0, b) => { return b; }, (a, _) => { return a; } } }\nfunction main(): i32 { return f((0, 7)); }\n", nil},
+		// A tuple-pattern value match whose value local the literal settle
+		// widened is still typed from its arm stores (#12382).
+		{"value-match-settled-local", valueMatchSettledLocal, nil},
+		{"value-match-settled-local-mismatch", "function f(): string { let t: (u8, i32) = (5u8, 4); return match (t) { (q, n) => q }; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		// A callable parameter of a method binds the method's own type
+		// variable, as a free function's does (#12382).
+		{"method-callable-param-binds", methodCallableParamBinds, nil},
+		{"method-callable-param-binds-mismatch", "struct Box[T] { v: T }\nfunction (b: Box[T]) app[U](f: (T) => U): U { return f(b.v); }\nfunction g(s: Box[i32]): i32 { let c: string = s.app((x: i32): i32 => x + 1); return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E003"}},
+		// A generic enum's callable payload keeps its signature (#12382).
+		{"generic-enum-callable-payload", genericEnumCallablePayload, nil},
+		{"generic-enum-callable-payload-mismatch", "enum Fut[T] { Done(T), Wait(i32, (i32) => Fut[T]) }\nfunction run(f: Fut[i32]): i32 { match (f) { Done(v) => { return v; }, Wait(tok, k) => { let s: string = k(tok); return 0; } } return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E003"}},
+		// A generic result only the destination binds reads at the
+		// destination's type, which must meet the variable's bound (#12382).
+		{"generic-result-bound-by-destination", "trait Ident { function one(): Self; }\nstruct A { v: i32 }\nimpl Ident for A { function one(): Self { return A { v: 10 }; } }\nfunction unit[T: Ident](): T { return T.one(); }\nfunction geta(): A { return unit(); }\nfunction main(): i32 { let a: A = unit(); return a.v + geta().v; }\n", nil},
+		// The callee's T is not the enclosing generic's T of the same name.
+		{"generic-result-bound-by-destination-in-generic", "trait Ident { function one(): Self; }\nstruct A { v: i32 }\nimpl Ident for A { function one(): Self { return A { v: 10 }; } }\nfunction unit[T: Ident](): T { return T.one(); }\nfunction wrap[T](x: T): A { let a: A = unit(); return a; }\nfunction wrap2[T](x: T): A { return unit(); }\nfunction main(): i32 { return wrap(1).v + wrap2(2).v; }\n", nil},
+		{"generic-result-destination-unmet-bound", "trait Ident { function one(): Self; }\nstruct A { v: i32 }\nstruct C { v: i32 }\nimpl Ident for A { function one(): Self { return A { v: 10 }; } }\nfunction unit[T: Ident](): T { return T.one(); }\nfunction main(): i32 { let c: C = unit(); return c.v; }\n", []string{"E021"}},
+		{"generic-result-return-unmet-bound", "trait Ident { function one(): Self; }\nstruct A { v: i32 }\nstruct C { v: i32 }\nimpl Ident for A { function one(): Self { return A { v: 10 }; } }\nfunction unit[T: Ident](): T { return T.one(); }\nfunction getc(): C { return unit(); }\nfunction main(): i32 { return getc().v; }\n", []string{"E021"}},
+		// A function type assigns only to the same function type: arity, each
+		// parameter, the result and every `own` slot invariant (#12384).
+		{"callable-result-mismatch", "function inc(x: i32): i32 { return x + 1; }\nfunction main(): i32 { let f: (i32) => string = inc; return 0; }\n", []string{"E003"}},
+		{"callable-param-mismatch", "function inc(x: i32): i32 { return x + 1; }\nfunction main(): i32 { let f: (i64) => i32 = inc; return 0; }\n", []string{"E003"}},
+		{"callable-arity-mismatch", "function inc(x: i32): i32 { return x + 1; }\nfunction main(): i32 { let f: (i32, i32) => i32 = inc; return 0; }\n", []string{"E003"}},
+		{"callable-void-result-mismatch", "function p(x: i32): i32 { return x; }\nfunction main(): i32 { let f: (i32) => void = p; f(1); return 0; }\n", []string{"E003"}},
+		{"callable-view-param-mismatch", "function s(x: string): i32 { return 0; }\nfunction main(): i32 { let f: (str) => i32 = s; return 0; }\n", []string{"E003"}},
+		{"callable-lambda-result-mismatch", "function main(): i32 { let f: (i32) => string = (x: i32): i32 => x + 1; return 0; }\n", []string{"E003"}},
+		{"callable-local-to-local-mismatch", "function inc(x: i32): i32 { return x + 1; }\nfunction main(): i32 { let f: (i32) => i32 = inc; let g: (i32) => string = f; return 0; }\n", []string{"E003"}},
+		{"callable-reassign-mismatch", "function inc(x: i32): i32 { return x + 1; }\nfunction bad(x: i32): string { return \"\"; }\nfunction main(): i32 { let f: (i32) => i32 = inc; f = bad; return f(1); }\n", []string{"E003"}},
+		{"callable-argument-mismatch", "function apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction inc(x: i64): i64 { return x + 1; }\nfunction main(): i32 { return apply(inc, 1); }\n", []string{"E038"}},
+		{"callable-own-slot-mismatch", "function eat(own xs: i32[]): i32 { return xs.len(); }\nfunction apply(f: (i32[]) => i32): i32 { return f([1, 2]); }\nfunction main(): i32 { return apply(eat); }\n", []string{"E038"}},
+		{"callable-field-mismatch", "struct H { f: (i32) => string }\nfunction inc(x: i32): i32 { return x + 1; }\nfunction main(): i32 { let h: H = H { f: inc }; return 0; }\n", []string{"E043"}},
+		{"callable-return-mismatch", "function ret(): (i32) => string { return inc; }\nfunction inc(x: i32): i32 { return x + 1; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"callable-nested-mismatch", "function f(x: i32): i32 { return x; }\nfunction main(): i32 { let t: ((i32) => string, i32) = (f, 1); let o: Option[(i32) => string] = Some(f); return 0; }\n", []string{"E003"}},
+		{"callable-higher-order-mismatch", "function q(f: (i32) => i32): i32 { return 0; }\nfunction main(): i32 { let g: ((i32) => string) => i32 = q; return 0; }\n", []string{"E003"}},
+		{"callable-method-arg-mismatch", "struct B { v: i32 }\nfunction (b: B) ap(f: (i32) => i32): i32 { return f(b.v); }\nfunction inc(x: i32): string { return \"\"; }\nfunction main(): i32 { let b: B = B { v: 1 }; return b.ap(inc); }\n", []string{"E038"}},
+		{"callable-method-written-type-arg-mismatch", "struct B { v: i32 }\nimpl B { function ap[U](self: B, f: (i32) => U): U { return f(self.v); } }\nfunction inc(x: i32): string { return \"\"; }\nfunction main(): i32 { let b: B = B { v: 1 }; let r: i32 = b.ap[i32](inc); return 0; }\n", []string{"E038"}},
+		{"callable-enum-method-arg-mismatch", "enum E { A, B }\nfunction (e: E) ap(f: (i32) => i32): i32 { return f(1); }\nfunction inc(x: i32): string { return \"\"; }\nfunction main(): i32 { let e: E = E.A; return e.ap(inc); }\n", []string{"E038"}},
+		// What the rule still accepts: the same signature, a lambda whose
+		// parameters or result are inferred, a capturing closure, a generic
+		// function instantiated by its destination, a void result.
+		{"callable-accepts-same-signature", "function inc(x: i32): i32 { return x + 1; }\nfunction id[T](x: T): T { return x; }\nfunction p(x: i32): void { }\nfunction apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction twice[T](f: (T) => T, v: T): T { return f(f(v)); }\nfunction mk(n: i32): (i32) => i32 { return (x: i32): i32 => x + n; }\nfunction main(): i32 { let a: (i32) => i32 = inc; return a(1); }\n", nil},
+		{"callable-accepts-inferred-result", "function inc(x: i32): i32 { return x + 1; }\nfunction id[T](x: T): T { return x; }\nfunction p(x: i32): void { }\nfunction apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction twice[T](f: (T) => T, v: T): T { return f(f(v)); }\nfunction mk(n: i32): (i32) => i32 { return (x: i32): i32 => x + n; }\nfunction main(): i32 { let b: (i32) => i32 = (x: i32) => x + 1; return b(1); }\n", nil},
+		{"callable-accepts-closure", "function inc(x: i32): i32 { return x + 1; }\nfunction id[T](x: T): T { return x; }\nfunction p(x: i32): void { }\nfunction apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction twice[T](f: (T) => T, v: T): T { return f(f(v)); }\nfunction mk(n: i32): (i32) => i32 { return (x: i32): i32 => x + n; }\nfunction main(): i32 { let k: i32 = 3; let c: (i32) => i32 = (x: i32): i32 => x + k; return c(1); }\n", nil},
+		{"callable-accepts-generic-value", "function inc(x: i32): i32 { return x + 1; }\nfunction id[T](x: T): T { return x; }\nfunction p(x: i32): void { }\nfunction apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction twice[T](f: (T) => T, v: T): T { return f(f(v)); }\nfunction mk(n: i32): (i32) => i32 { return (x: i32): i32 => x + n; }\nfunction main(): i32 { let d: (i32) => i32 = id; return d(1); }\n", nil},
+		{"callable-accepts-void-result", "function inc(x: i32): i32 { return x + 1; }\nfunction id[T](x: T): T { return x; }\nfunction p(x: i32): void { }\nfunction apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction twice[T](f: (T) => T, v: T): T { return f(f(v)); }\nfunction mk(n: i32): (i32) => i32 { return (x: i32): i32 => x + n; }\nfunction main(): i32 { let e: (i32) => void = p; e(1); return 0; }\n", nil},
+		{"callable-accepts-returned-closure", "function inc(x: i32): i32 { return x + 1; }\nfunction id[T](x: T): T { return x; }\nfunction p(x: i32): void { }\nfunction apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction twice[T](f: (T) => T, v: T): T { return f(f(v)); }\nfunction mk(n: i32): (i32) => i32 { return (x: i32): i32 => x + n; }\nfunction main(): i32 { let g: (i32) => i32 = mk(2); return g(1); }\n", nil},
+		{"callable-accepts-array", "function inc(x: i32): i32 { return x + 1; }\nfunction id[T](x: T): T { return x; }\nfunction p(x: i32): void { }\nfunction apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction twice[T](f: (T) => T, v: T): T { return f(f(v)); }\nfunction mk(n: i32): (i32) => i32 { return (x: i32): i32 => x + n; }\nfunction main(): i32 { let a: (i32) => i32 = inc; let fs: ((i32) => i32)[] = [inc, a]; return fs[0](1); }\n", nil},
+		{"callable-accepts-reassign-lambda", "function inc(x: i32): i32 { return x + 1; }\nfunction id[T](x: T): T { return x; }\nfunction p(x: i32): void { }\nfunction apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction twice[T](f: (T) => T, v: T): T { return f(f(v)); }\nfunction mk(n: i32): (i32) => i32 { return (x: i32): i32 => x + n; }\nfunction main(): i32 { let a: (i32) => i32 = inc; a = (x: i32) => x * 2; return a(1); }\n", nil},
+		{"callable-accepts-lambda-argument", "function inc(x: i32): i32 { return x + 1; }\nfunction id[T](x: T): T { return x; }\nfunction p(x: i32): void { }\nfunction apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction twice[T](f: (T) => T, v: T): T { return f(f(v)); }\nfunction mk(n: i32): (i32) => i32 { return (x: i32): i32 => x + n; }\nfunction main(): i32 { let k: i32 = 3; return apply((x: i32) => x * k, 1); }\n", nil},
+		{"callable-accepts-generic-callee", "function inc(x: i32): i32 { return x + 1; }\nfunction id[T](x: T): T { return x; }\nfunction p(x: i32): void { }\nfunction apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction twice[T](f: (T) => T, v: T): T { return f(f(v)); }\nfunction mk(n: i32): (i32) => i32 { return (x: i32): i32 => x + n; }\nfunction main(): i32 { return twice(inc, 1); }\n", nil},
+		{"callable-accepts-use-callback", "function with_doubled(n: i32, f: (i32) => i32): i32 { return f(n * 2); }\nfunction main(): i32 {\n    use v <- with_doubled(21);\n    return v;\n}\n", nil},
+		{"callable-own-slot-match", "function eat(own xs: i32[]): i32 { return xs.len(); }\nfunction apply(f: (own i32[]) => i32): i32 { return f([1, 2]); }\nfunction fo[T](own acc: T, visit: (i32, own T) => T): T { return visit(1, acc); }\nfunction v(x: i32, own a: boolean): boolean { return a; }\nfunction main(): i32 { let b: boolean = fo(false, v); return apply(eat); }\n", nil},
+		// A struct method's written type arguments beyond its parameters.
+		{"method-too-many-type-args", "struct B { v: i32 }\nfunction (b: B) ap[U](f: (i32) => U): U { return f(b.v); }\nfunction inc(x: i32): i32 { return x; }\nfunction main(): i32 { let b: B = B { v: 1 }; let r: i32 = b.ap[i32, i32](inc); return r; }\n", []string{"E040"}},
+		// A written `fn` names no type; the coarse tag a written arrow is
+		// stored as is not one (#12384).
+		{"written-fn-type-field", "struct S { f: fn }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
+		{"written-fn-type-param-array", "function ap(f: fn[]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
+		{"written-fn-type-let-array", "function main(): i32 { let fs: fn[] = []; return 0; }\n", []string{"E064"}},
+		{"written-fn-type-nested", "function main(): i32 { let f: Option[fn] = None; return 0; }\n", []string{"E064"}},
+		{"written-arrow-types-clean", "struct S { f: (i32) => void, g: ((i32) => i32)[] }\nfunction ap(f: (i32) => void, o: Option[(i32) => void]): (i32) => void { return f; }\nfunction main(): i32 { let fs: ((i32) => void)[] = []; let w: (string) => void = (s: string): void => { }; return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -4009,6 +4211,11 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// both compilers. A borrowed receiver has no donor and stays E053.
 		// Here rather than in the codes table because std/array has to be
 		// in scope for the call to be a method call at all.
+		// A map literal's values unify as arm results do: an unsettled integer
+		// takes a sibling's integer or float type, and typed values must agree.
+		{"map-literal-arms-settle-wide", "import \"core/map\";\nfunction main(): i32 { let c: boolean = true; let m: Map[string, i64] = if (c) { Map { \"a\": 1234567890123 } } else { Map { \"a\": 0 } }; return 0; }\n"},
+		{"map-literal-arms-settle-float", "import \"core/map\";\nfunction main(): i32 { let c: boolean = true; let m = if (c) { Map { \"a\": 1 } } else { Map { \"a\": 2.5 } }; return 0; }\n"},
+		{"map-literal-arms-typed-values-differ", "import \"core/map\";\nfunction main(): i32 { let c: boolean = true; let n: i32 = 1; let w: i64 = 2; let m = if (c) { Map { \"a\": n } } else { Map { \"a\": w } }; return 0; }\n"},
 		{"e053-map-on-an-own-array", "import \"std/array\";\nfip function f(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => x); }\nfunction main(): i32 { return f([1 as i64]).len(); }\n"},
 		// An array method named like a `__method_Array_<name>` helper the
 		// program imports redeclares it (E006), as a name the checker registers
@@ -4299,6 +4506,23 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// single-module driver records the import without loading it, so this
 		// row would read as an unknown method there and prove the opposite.
 		{"map-core-receiver-method-ok", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(4); m = m.insert(1, 2); return m.entries().len(); }\n"},
+		// An array-receiver method's arguments meet its parameters with the
+		// receiver's element and any written type argument bound, and a
+		// written list longer than its type parameters is E040 (#12384).
+		{"array-method-written-type-arg-mismatch", "import \"std/array\";\nfunction cat(a: string, x: i32): string { return a; }\nfunction main(): i32 { let a: i32[] = [1, 2]; let r: string = a.fold[string](0, cat); return 0; }\n"},
+		{"array-method-too-many-type-args", "import \"std/array\";\nfunction inc(x: i32): i32 { return x + 1; }\nfunction main(): i32 { let a: i32[] = [1, 2]; let r: i32[] = a.map[i32, i32, i32](inc); return 0; }\n"},
+		{"array-method-written-callable-mismatch", "import \"std/array\";\nfunction inc(x: i32): string { return \"\"; }\nfunction main(): i32 { let a: i32[] = [1, 2]; let r: i32[] = a.map[i32](inc); return r.len(); }\n"},
+		{"array-method-callable-param-mismatch", "import \"std/array\";\nfunction inc(x: i64): i32 { return 0; }\nfunction main(): i32 { let a: i32[] = [1, 2]; let r: i32[] = a.map(inc); return r.len(); }\n"},
+		{"array-method-lambda-result-mismatch", "import \"std/array\";\nfunction main(): i32 { let a: i32[] = [1, 2]; let r: i32[] = a.filter((x: i32): i32 => x); return r.len(); }\n"},
+		{"array-method-view-param-mismatch", "import \"std/array\";\nfunction main(): i32 { let a: string[] = [\"a\"]; let r: i32[] = a.map((s: str): i32 => s.len()); return r.len(); }\n"},
+		{"array-method-accepts-written-map-all", "import \"std/array\";\nfunction inc(x: i32): i32 { return x + 1; }\nfunction cat(a: string, x: i32): string { return a; }\nfunction main(): i32 { let a: i32[] = [1, 2]; let m: i32[] = a.map[i32, i32](inc); return m.len(); }\n"},
+		{"array-method-accepts-written-map-own", "import \"std/array\";\nfunction inc(x: i32): i32 { return x + 1; }\nfunction cat(a: string, x: i32): string { return a; }\nfunction main(): i32 { let a: i32[] = [1, 2]; let m: i32[] = a.map[i32](inc); return m.len(); }\n"},
+		{"array-method-accepts-written-fold", "import \"std/array\";\nfunction inc(x: i32): i32 { return x + 1; }\nfunction cat(a: string, x: i32): string { return a; }\nfunction main(): i32 { let a: i32[] = [1, 2]; let s: string = a.fold[string](\"\", cat); return s.len(); }\n"},
+		{"array-method-accepts-inferred-filter-result", "import \"std/array\";\nfunction inc(x: i32): i32 { return x + 1; }\nfunction cat(a: string, x: i32): string { return a; }\nfunction main(): i32 { let a: i32[] = [1, 2]; let k: i32 = 1; let f: i32[] = a.filter((x: i32) => x > k); return f.len(); }\n"},
+		{"array-method-accepts-inferred-fold-result", "import \"std/array\";\nfunction inc(x: i32): i32 { return x + 1; }\nfunction cat(a: string, x: i32): string { return a; }\nfunction main(): i32 { let a: i32[] = [1, 2]; return a.fold(0, (acc: i32, x: i32) => acc + x); }\n"},
+		{"array-method-accepts-inferred-map-result", "import \"std/array\";\nfunction inc(x: i32): i32 { return x + 1; }\nfunction cat(a: string, x: i32): string { return a; }\nfunction main(): i32 { let a: i32[] = [1, 2]; let m: i32[] = a.map((x: i32) => x * 2); return m.len(); }\n"},
+		{"array-method-accepts-typed-map", "import \"std/array\";\nfunction inc(x: i32): i32 { return x + 1; }\nfunction cat(a: string, x: i32): string { return a; }\nfunction main(): i32 { let w: string[] = [\"a\"]; let l: i32[] = w.map((t: string): i32 => t.len()); return l.len(); }\n"},
+		{"option-method-callables", "import \"std/option\";\nfunction main(): i32 { let o: Option[i32] = Some(1); let r: Option[string] = o.map((x: i32): string => \"a\"); let q: Option[string] = o.map((x: i64): string => \"a\"); return 0; }\n"},
 	}
 
 	for _, tc := range progs {

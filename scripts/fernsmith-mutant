@@ -34,7 +34,7 @@ esac
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-go build -o bin/fern ./cmd/fern
+make bin/fern >&2
 cp -r compiler "$work/"
 python3 - "$work/compiler/lift.fern" <<'PY'
 import sys

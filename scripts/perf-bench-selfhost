@@ -48,7 +48,7 @@ REPORT="${1:-/dev/stdout}"
 BENCH_DIR="$(cd "${FERN_BENCH_DIR:-bench}" && pwd)"
 STDLIB="$ROOT/internal/stdlib"
 
-scripts/selfhost-current
+make bin/fern >&2
 
 # The self-host CLI needs ABSOLUTE paths: a relative one is unopenable from an
 # arm64-darwin binary (AT_FDCWD is -2 on XNU, not -100), and every other harness

@@ -26,7 +26,7 @@ function emit(g: ircore.Gated, arm: boolean): ssaprepare.Output {
   let first = irtables.LowerResult { ...g.cache[0], n_params: 1, n_locals: 1, ops: ops.append(ir.op_return()) };
   let second = irtables.LowerResult { ...g.cache[1], n_params: 1, n_locals: 2, ops: ops.append(ir.op_bin("not", 32, false)).append(ir.op_if(0)).append(ir.op_const_i32(7)).append(ir.op_store_local(1)).append(ir.op_else()).append(ir.op_const_i32(9)).append(ir.op_store_local(1)).append(ir.op_end()).append(ir.op_load_local(1)).append(ir.op_return()) };
   let cache = g.cache.with(0, first).with(1, second);
-  let sw = asmcore.Switches { backtrace: false, sanitize: false, var_rows: false, shared: false };
+  let sw = asmcore.Switches { backtrace: false, sanitize: false, var_rows: false, shared: false, size: false };
   if (arm) {
     return asm_arm64_ir.emit_module_ir_unit_arm64_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, 2, cache, g.physical, semlower.runtime_lowering, sw, true);
   }
