@@ -529,10 +529,14 @@
 # links it at 8368344 (+4.9%), and #12425's checker fixes and language
 # server add 11160 bytes. Built locally with TestSelfHostWarmStockDriver,
 # which matched driver-sizes' report on run 38693262971 to the byte.
+# 2026-10-15 — asm_load_run 9642480 -> 10125912 (+5.0%): main's growth.
+# Built locally with TestSelfHostWarmStockDriver, main at 836578b5 links it
+# at 10125912, and #12443's language-server switch adds 0 bytes. Matches
+# driver-sizes' report on run 38755174188.
 
 fern.fern/stage2 11761952
 fern.fern 12339464
-drivers/asm_load_run.fern 9642480
+drivers/asm_load_run.fern 10125912
 drivers/asm_modload_run.fern 8699400
 drivers/asm_ir_run.fern 8379504
 drivers/asm_run.fern 7612208

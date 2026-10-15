@@ -155,11 +155,11 @@ that the CLI turns into a position remapper for `diag.FormatRemapped`.)
 
 ## Editor support (LSP)
 
-`fern-lsp` diagnoses `.fern.md` documents: it tangles the source,
+`fern -lsp` diagnoses `.fern.md` documents: it tangles the source,
 type-checks the generated Fern, and **remaps the diagnostics back onto
 the document** so errors are reported on the line you wrote — including
 tangle errors (missing root, undefined / cyclic chunk). Open a
-`.fern.md` in an editor wired to `fern-lsp` and a type error in a chunk
+`.fern.md` in an editor wired to `fern -lsp` and a type error in a chunk
 squiggles in place.
 
 The **cursor-driven features work too**: hover, go-to-definition,
@@ -169,8 +169,8 @@ program is queried, and any result ranges are remapped back onto the
 document — so go-to-definition on a chunk reference jumps to the chunk's
 definition line, references span every use across chunks, and so on. A
 cursor on a non-tangled line (prose, a chunk header, an unused chunk)
-simply returns nothing. Whole-document features (semantic tokens, inlay
-hints, document symbols, rename) remain inert for `.fern.md` for now.
+simply returns nothing. The whole-document features — document symbols,
+inlay hints, semantic tokens and rename — cover every chunk the same way.
 
 ## Doctests — runnable examples
 

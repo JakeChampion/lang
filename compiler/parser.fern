@@ -29084,12 +29084,35 @@ function settle_to_type(e: ast.Expr, t: TypeRef): ast.Expr {
 
 // settle_to_name is settle_to_type against a declared type NAME, the spelling
 // every decl in the AST carries. An empty name is "no annotation" and settles
-// nothing.
+// nothing, and neither does any destination an expression settle_to_type
+// cannot change, so the name is parsed only for one it can.
 pub function settle_to_name(e: ast.Expr, type_name: string): ast.Expr {
-  if (type_name.len() == 0) {
+  if (type_name.len() == 0 || !settleable(e)) {
     return e;
   }
   return settle_to_type(e, parse_type_ref(type_name));
+}
+
+// settleable says some destination changes `e` under settle_to_type: an array
+// or tuple literal, a value-position if / match (a call of a lambda), or an
+// unsettled integer literal.
+function settleable(e: ast.Expr): boolean {
+  match (e) {
+    ast.ExprArray(_) => {
+      return true;
+    },
+    ast.ExprTuple(_) => {
+      return true;
+    },
+    ast.ExprCall(c) => {
+      if let ast.ExprLambda(_) = c.callee {
+        return true;
+      }
+      return false;
+    },
+    _ => {}
+  }
+  return is_unsettled_int_literal(e);
 }
 
 // Destination lookups over the module's own declarations. A call to a function

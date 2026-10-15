@@ -8,13 +8,10 @@ import (
 	"testing"
 )
 
-// `fern -lsp`'s hover and go-to-definition (compiler/lspquery.fern). The
-// expected answers are the Go server's (internal/tools/lsp hover_test.go,
-// definition_test.go and workspace_test.go), written out as data. Where this
-// server answers differently it says so at the case: a definition lands on
-// the declared name rather than on its declaration's keyword, a definition in
-// the stdlib names the stdlib file, and a constant, a lambda's parameter and
-// an enum-qualified variant have a hover.
+// `fern -lsp`'s hover and go-to-definition (compiler/lspquery.fern), with the
+// answers written out as data: a definition lands on the declared name, a
+// definition in the stdlib names the stdlib file, and a constant, a lambda's
+// parameter and an enum-qualified variant have a hover.
 
 type lspHover struct {
 	Contents struct {
@@ -152,11 +149,10 @@ func checkDefinition(t *testing.T, dir string, a lspAsk, result json.RawMessage)
 	}
 }
 
-// TestSelfHostLSPHoverX86_64 holds hover and definition on one document to
-// the Go server's answers (hover_test.go, definition_test.go), plus the
-// shapes they leave out: non-ASCII before the name, the built-in Option, a
-// generic function, a constant, scoped bindings and a document position no
-// name covers.
+// TestSelfHostLSPHoverX86_64 holds hover and definition on one document:
+// locals, functions, structs, fields, methods and variants, non-ASCII before
+// the name, the built-in Option, a generic function, a constant, scoped
+// bindings and a document position no name covers.
 func TestSelfHostLSPHoverX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	dir := t.TempDir()
@@ -235,7 +231,6 @@ func TestSelfHostLSPHoverX86_64(t *testing.T) {
 		hoverAsk("option-variant", "builtin.fern", 3, 24, "(variant of Option) Some(T)", rng(3, 23, 27)),
 		hoverAsk("option-annotation", "builtin.fern", 3, 10, "enum Option[T] { Some(T), None }", rng(3, 9, 15)),
 		hoverAsk("generic-function", "builtin.fern", 4, 10, "function id(T): T", rng(4, 9, 11)),
-		// The Go server has no hover for a constant.
 		hoverAsk("constant", "builtin.fern", 4, 17, "(const) LIMIT: i32", rng(4, 17, 22)),
 		hoverAsk("match-arm-binding", "scoped.fern", 3, 26, "(var) r: f64", rng(3, 26, 27)),
 		hoverAsk("match-arm-other-binding", "scoped.fern", 4, 27, "(var) w: i32", rng(4, 27, 28)),
@@ -246,14 +241,13 @@ func TestSelfHostLSPHoverX86_64(t *testing.T) {
 		hoverAsk("enum-qualified-variant", "scoped.fern", 14, 24, "(variant of Shape) Circle(f64)", rng(14, 23, 29)),
 		hoverAsk("closure-local", "scoped.fern", 15, 9, "(var) f: (i32) => i32", rng(15, 9, 10)),
 
-		// The Go server lands a definition on its declaration's keyword —
-		// `let` at character 2 here — and this one on the declared name.
+		// A definition lands on the declared name, not on `let`.
 		defAsk("local", "local.fern", 2, 9, "local.fern", rng(1, 6, 7)),
 		defAsk("parameter", "param.fern", 1, 9, "param.fern", rng(0, 13, 14)),
 		defAsk("function-call", "call.fern", 1, 31, "call.fern", rng(0, 9, 12)),
 		defAsk("struct-literal", "literal.fern", 1, 34, "literal.fern", rng(0, 7, 12)),
 		defAsk("annotation", "point.fern", 2, 9, "point.fern", rng(0, 7, 12)),
-		// The Go server lands on the struct; this one on the field.
+		// On the field, not its struct.
 		defAsk("field", "point.fern", 3, 11, "point.fern", rng(0, 15, 16)),
 		defAsk("method", "method.fern", 4, 13, "method.fern", rng(1, 20, 23)),
 		defAsk("receiver", "method.fern", 1, 40, "method.fern", rng(1, 10, 11)),
@@ -263,7 +257,7 @@ func TestSelfHostLSPHoverX86_64(t *testing.T) {
 		defAsk("unknown-name", "unknown.fern", 0, 32, "", lspRange{}),
 		defAsk("local-shadows-parameter", "shadow.fern", 2, 9, "shadow.fern", rng(1, 6, 7)),
 		defAsk("non-ascii-before", "nonascii.fern", 1, naUse, "nonascii.fern", rng(1, naDecl, naDecl+1)),
-		// Some has no declaration to land on; the Go server answers 0:0.
+		// Some has no declaration to land on.
 		defAsk("option-variant", "builtin.fern", 3, 24, "", lspRange{}),
 		defAsk("generic-function", "builtin.fern", 4, 10, "builtin.fern", rng(1, 9, 11)),
 		defAsk("constant", "builtin.fern", 4, 17, "builtin.fern", rng(0, 6, 11)),
@@ -293,8 +287,8 @@ func TestSelfHostLSPHoverX86_64(t *testing.T) {
 	})
 }
 
-// TestSelfHostLSPHoverWorkspaceX86_64 is workspace_test.go's hover and
-// definition cases: a name declared in another module is described as its
+// TestSelfHostLSPHoverWorkspaceX86_64 is hover and definition across
+// modules: a name declared in another module is described as its
 // module declares it and located in that module's file, and a position is
 // only ever searched for in the document the request names.
 func TestSelfHostLSPHoverWorkspaceX86_64(t *testing.T) {
@@ -375,9 +369,8 @@ func TestSelfHostLSPHoverWorkspaceX86_64(t *testing.T) {
 }
 
 // TestSelfHostLSPHoverLiterateAndStdlibX86_64 places answers in a literate
-// document, whose positions are its tangled module's moved back onto it
-// (literate_features_test.go), and in the stdlib, whose definitions name the
-// stdlib file — the Go server names the requesting document instead.
+// document, whose positions are its tangled module's moved back onto it, and
+// in the stdlib, whose definitions name the stdlib file.
 func TestSelfHostLSPHoverLiterateAndStdlibX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	dir := t.TempDir()

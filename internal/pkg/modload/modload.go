@@ -103,12 +103,11 @@ func LoadWithLiterate(entryPath string, overrides map[string]string) (*ast.Progr
 // LoadSource loads a program whose entry source is held in memory
 // rather than on disk — the shape every in-memory compile path needs
 // now that the auto-prelude is gone and `std/…` / `core/…` imports
-// must be resolved through modload (stdin / REPL / playground / the
-// wasm bundle). The synthetic entry path is absolute so filepath.Abs
-// (here and in loadCore) short-circuits without calling os.Getwd —
-// which is unimplemented under GOOS=js, where the browser playground
-// and cmd/fern-wasm run. In-memory callers only import stdlib (served
-// from the embedded FS), so the synthetic directory is never read.
+// must be resolved through modload (stdin / REPL). The synthetic entry
+// path is absolute so filepath.Abs (here and in loadCore) short-circuits
+// without calling os.Getwd, which fails when the working directory is
+// gone. In-memory callers only import stdlib (served from the embedded
+// FS), so the synthetic directory is never read.
 func LoadSource(src string) (*ast.Program, map[string]string, error) {
 	return loadCore(SourceEntry, map[string]string{SourceEntry: src})
 }

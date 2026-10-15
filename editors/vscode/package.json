@@ -45,16 +45,18 @@
       "properties": {
         "fern.serverPath": {
           "type": "string",
-          "default": "fern-lsp",
-          "description": "Path to the fern-lsp binary. Resolved against $PATH when unqualified."
+          "default": "fern",
+          "description": "Path to the fern binary. Resolved against $PATH when unqualified."
         },
         "fern.serverArgs": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "default": [],
-          "description": "Arguments passed to the server. For the self-hosted compiler's server, set fern.serverPath to the fern-selfhost binary and this to [\"-lsp\", \"/path/to/internal/stdlib\"]."
+          "default": [
+            "-lsp"
+          ],
+          "description": "Arguments passed to the server. A compiler without an embedded stdlib, such as bin/fern-selfhost, also takes its stdlib root: [\"-lsp\", \"/path/to/internal/stdlib\"]."
         },
         "fern.trace.server": {
           "type": "string",
@@ -64,7 +66,7 @@
             "verbose"
           ],
           "default": "off",
-          "description": "Trace LSP traffic between the extension and fern-lsp."
+          "description": "Trace LSP traffic between the extension and the language server."
         }
       }
     }

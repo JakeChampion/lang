@@ -25,15 +25,15 @@ vs **which need other work first**.
 | **C) Cross-backend orchestration**        |     7 | Inherently spawn N backends per case. Need a Fern-driven multi-backend runner first (see below)   |
 | **D) Self-host Fern programs**            |    13 | The `.fern` file IS the test; Go side is a cross-backend gate. Same blocker as C.                 |
 | **E) Compiler-internal Go API tests**     |    39 | Call Go-side parser / checker / IR / codegen directly. Gated on **self-hosting the compiler**.    |
-| **F) LSP + wasm-binary infrastructure**   |    22 | Test Go service code that has no Fern counterpart (LSP, raw wasm encoding). Likely stay Go.       |
+| **F) Wasm-binary infrastructure**         |    10 | Test Go service code that has no Fern counterpart (raw wasm encoding). Likely stay Go.            |
 | **G) Test-runner gate itself**            |     1 | `internal/testing/e2e/test_runner_test.go` — collapses to a shell wrapper post-self-host.                 |
 |                                           |       |                                                                                                   |
-| **Total**                                 |    84 |                                                                                                   |
+| **Total**                                 |    72 |                                                                                                   |
 
 Roughly: ~1% (case-level: ~5 cases) actively migrated /
-in-progress; ~24% (C + D, 20 files) gated on a Fern-driven
-multi-backend runner; ~46% (39 files) gated on compiler
-self-hosting; ~26% (22 files) likely stays Go forever.
+in-progress; ~28% (C + D, 20 files) gated on a Fern-driven
+multi-backend runner; ~54% (39 files) gated on compiler
+self-hosting; ~14% (10 files) likely stays Go forever.
 
 ## A) Already migrated
 
@@ -211,26 +211,10 @@ Until then, these stay Go. There is no useful interim
 migration shape — wrapping a subprocess wouldn't
 preserve the introspection these tests rely on.
 
-## F) LSP + wasm-binary infrastructure
+## F) Wasm-binary infrastructure
 
 Service-level tests for code that has no Fern
 counterpart and probably never will:
-
-LSP server (Go-only — the LSP runs as a Go binary
-talking JSON-RPC):
-
-- `internal/tools/lsp/cache_test.go`
-- `internal/tools/lsp/completion_test.go`
-- `internal/tools/lsp/definition_test.go`
-- `internal/tools/lsp/formatting_test.go`
-- `internal/tools/lsp/hover_test.go`
-- `internal/tools/lsp/inlay_test.go`
-- `internal/tools/lsp/references_test.go`
-- `internal/tools/lsp/semantic_tokens_test.go`
-- `internal/tools/lsp/server_test.go`
-- `internal/tools/lsp/signature_test.go`
-- `internal/tools/lsp/symbols_test.go`
-- `internal/tools/lsp/workspace_test.go`
 
 Wasm binary encoding (Go-side byte-level emitter — the
 compiler invokes this from Go, not from Fern):
