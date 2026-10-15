@@ -50,65 +50,65 @@
 # lanes' measurements of the branch.
 
 x86_64/array_append.text	935
-x86_64/array_append.ir	13383897
+x86_64/array_append.ir	13383435
 x86_64/array_index.text	924
-x86_64/array_index.ir	16455548
-x86_64/array_scale_f64.text	2759
-x86_64/array_scale_f64.ir	21337821
-x86_64/array_with.ir	37762183
+x86_64/array_index.ir	16315639
+x86_64/array_scale_f64.text	1052
+x86_64/array_scale_f64.ir	21301811
+x86_64/array_with.ir	37759033
 x86_64/array_with.text	1079
-x86_64/ascii_scan.text	3038
-x86_64/ascii_scan.ir	37119510
+x86_64/ascii_scan.text	1187
+x86_64/ascii_scan.ir	37213680
 x86_64/call_overhead.text	88
 x86_64/call_overhead.ir	8250759
-x86_64/closure_call.text	824
+x86_64/closure_call.text	818
 x86_64/closure_call.ir	63018106
-x86_64/enum_match.text	975
-x86_64/enum_match.ir	53775055
-x86_64/http_hello.text	19770
-x86_64/http_hello.ir	27552835
+x86_64/enum_match.text	980
+x86_64/enum_match.ir	53325055
+x86_64/http_hello.text	16662
+x86_64/http_hello.ir	27676835
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
-x86_64/map_int.text	5687
+x86_64/map_int.text	5642
 x86_64/map_int.ir	38013213
-x86_64/map_probe_chain.text	5694
+x86_64/map_probe_chain.text	5649
 x86_64/map_probe_chain.ir	358674901
-x86_64/map_string.text	8603
-x86_64/map_string.ir	62526498	2
-x86_64/ordmap_insert.text	5131
-x86_64/ordmap_insert.ir	112624390
-x86_64/pmap_insert.text	4803
-x86_64/pmap_insert.ir	62362284
-x86_64/pvec_with.text	2769
-x86_64/pvec_with.ir	60166754
+x86_64/map_string.text	6168
+x86_64/map_string.ir	62112069	2
+x86_64/ordmap_insert.text	2808
+x86_64/ordmap_insert.ir	112046711
+x86_64/pmap_insert.text	2611
+x86_64/pmap_insert.ir	62223251
+x86_64/pvec_with.text	2762
+x86_64/pvec_with.ir	60156824
 x86_64/record_update.ir	109849111
-x86_64/record_update.text	1392
-x86_64/sort_inplace.text	2887
-x86_64/sort_inplace.ir	43380614
-x86_64/sort_ints.text	3398
-x86_64/sort_ints.ir	31486537
-x86_64/sort_strings.text	4210
-x86_64/sort_strings.ir	105692600
-x86_64/string_build.text	3263
+x86_64/record_update.text	1390
+x86_64/sort_inplace.text	1179
+x86_64/sort_inplace.ir	43386475
+x86_64/sort_ints.text	1656
+x86_64/sort_ints.ir	31486513
+x86_64/sort_strings.text	2550
+x86_64/sort_strings.ir	106413750
+x86_64/string_build.text	1364
 x86_64/string_build.ir	58089760
-x86_64/string_count_byte.text	2923
-x86_64/string_count_byte.ir	135589612
-x86_64/string_find_byte.text	3307
-x86_64/string_find_byte.ir	43567682
-x86_64/string_rfind_byte.text	3436
-x86_64/string_rfind_byte.ir	43582563
-x86_64/string_scan.text	3237
-x86_64/string_scan.ir	52966728
-x86_64/string_slice.text	739
+x86_64/string_count_byte.text	1077
+x86_64/string_count_byte.ir	135589294
+x86_64/string_find_byte.text	1444
+x86_64/string_find_byte.ir	43567332
+x86_64/string_rfind_byte.text	1513
+x86_64/string_rfind_byte.ir	43576238
+x86_64/string_scan.text	1561
+x86_64/string_scan.ir	53025531
+x86_64/string_slice.text	744
 x86_64/string_slice.ir	38700038
-x86_64/struct_drop.text	3425
+x86_64/struct_drop.text	1690
 x86_64/struct_drop.ir	308020547
-x86_64/tokenize.text	973
-x86_64/tokenize.ir	36950039
-x86_64/utf8_ingest_unchecked.text	9286
-x86_64/utf8_ingest_unchecked.ir	2833479
-x86_64/utf8_ingest_validated.text	9532
-x86_64/utf8_ingest_validated.ir	5916087
+x86_64/tokenize.text	978
+x86_64/tokenize.ir	36960039
+x86_64/utf8_ingest_unchecked.text	7022
+x86_64/utf8_ingest_unchecked.ir	2833481
+x86_64/utf8_ingest_validated.text	7284
+x86_64/utf8_ingest_validated.ir	5916089
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -195,6 +195,14 @@ x86_64/utf8_ingest_validated.ir	5916087
 # x86_64 sort_inplace.text falls 1.1%; neither PR's own run saw the two
 # together. The figure is the perf-x86_64 lane's.
 #
+# Re-pinned 2026-10-15 (#12418) on every row that moved: semreach drops code
+# no reachable construction enables, so `.text` falls by up to 63% where a
+# benchmark's imports carry what it never builds (array_scale_f64, sort_inplace,
+# string_count_byte) and by 16% on http_hello. `.ir` moves less than 1.5% on
+# every row. Rows moved a few tenths by earlier merges are re-banked to the same
+# reading. x86_64 figures are the dev container's perf-bench run; the aarch64
+# `.text` rows are cross-compiled readings, and its `.ir` rows are unchanged.
+#
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
 # (utf8_ingest_unchecked) — one ISA emitting fewer instructions than the other
@@ -205,81 +213,81 @@ aarch64/array_append.text	1120
 aarch64/array_append.ir	17893556
 aarch64/array_index.text	1118
 aarch64/array_index.ir	18548348
-aarch64/array_scale_f64.text	2801
+aarch64/array_scale_f64.text	1212
 aarch64/array_scale_f64.ir	25365579
 aarch64/array_with.text	1270
 aarch64/array_with.ir	31219422
-aarch64/ascii_scan.text	3204
+aarch64/ascii_scan.text	1461
 aarch64/ascii_scan.ir	68660210
 aarch64/call_overhead.text	148
 aarch64/call_overhead.ir	11250762
-aarch64/closure_call.text	1009
+aarch64/closure_call.text	1011
 aarch64/closure_call.ir	72624111
-aarch64/enum_match.text	1166
+aarch64/enum_match.text	1174
 aarch64/enum_match.ir	41400056
-aarch64/http_hello.text	20147
+aarch64/http_hello.text	17130
 aarch64/http_hello.ir	29648969
 aarch64/int_loop.text	90
 aarch64/int_loop.ir	18000025
-aarch64/map_int.text	6044
+aarch64/map_int.text	6048
 aarch64/map_int.ir	37932494
-aarch64/map_probe_chain.text	6055
+aarch64/map_probe_chain.text	6059
 aarch64/map_probe_chain.ir	368004126
-aarch64/map_string.text	8944
+aarch64/map_string.text	6632
 aarch64/map_string.ir	64821463	2
-aarch64/ordmap_insert.text	5386
+aarch64/ordmap_insert.text	3184
 aarch64/ordmap_insert.ir	124791436
-aarch64/pmap_insert.text	4965
+aarch64/pmap_insert.text	2899
 aarch64/pmap_insert.ir	71272111
-aarch64/pvec_with.text	3025
+aarch64/pvec_with.text	3024
 aarch64/pvec_with.ir	63238555
-aarch64/record_update.text	1567
+aarch64/record_update.text	1578
 aarch64/record_update.ir	104947544
-aarch64/sort_inplace.text	3020
+aarch64/sort_inplace.text	1382
 aarch64/sort_inplace.ir	53111058
-aarch64/sort_ints.text	3583
+aarch64/sort_ints.text	1937
 aarch64/sort_ints.ir	33759009
-aarch64/sort_strings.text	4428
+aarch64/sort_strings.text	2847
 aarch64/sort_strings.ir	106027235
-aarch64/string_build.text	3431
+aarch64/string_build.text	1653
 aarch64/string_build.ir	64717394
-aarch64/string_count_byte.text	3048
+aarch64/string_count_byte.text	1305
 aarch64/string_count_byte.ir	295398919
-aarch64/string_find_byte.text	3473
+aarch64/string_find_byte.text	1715
 aarch64/string_find_byte.ir	55807313
-aarch64/string_rfind_byte.text	3609
+aarch64/string_rfind_byte.text	1805
 aarch64/string_rfind_byte.ir	55809919
-aarch64/string_scan.text	3393
+aarch64/string_scan.text	1817
 aarch64/string_scan.ir	60275834
-aarch64/string_slice.text	939
+aarch64/string_slice.text	947
 aarch64/string_slice.ir	43620043
-aarch64/struct_drop.text	3563
+aarch64/struct_drop.text	1922
 aarch64/struct_drop.ir	348380825
-aarch64/tokenize.text	1195
+aarch64/tokenize.text	1203
 aarch64/tokenize.ir	38580038
-aarch64/utf8_ingest_unchecked.text	9679
+aarch64/utf8_ingest_unchecked.text	7402
 aarch64/utf8_ingest_unchecked.ir	2703816
-aarch64/utf8_ingest_validated.text	9944
+aarch64/utf8_ingest_validated.text	7667
 aarch64/utf8_ingest_validated.ir	6347933
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-x86_64/perceus_cfold.text	2276
-x86_64/perceus_cfold.ir	56746016
-x86_64/perceus_deriv.text	2574
-x86_64/perceus_deriv.ir	73879048
-x86_64/perceus_nqueens.text	1396
+x86_64/perceus_cfold.text	2256
+x86_64/perceus_cfold.ir	56674016
+x86_64/perceus_deriv.text	2556
+x86_64/perceus_deriv.ir	73389448
+x86_64/perceus_nqueens.text	1401
 x86_64/perceus_nqueens.ir	93164028
 x86_64/perceus_rbtree.text	2697
-x86_64/perceus_rbtree.ir	57231727
+x86_64/perceus_rbtree.ir	56980847
 x86_64/perceus_rbtree_ck.text	2960
-x86_64/perceus_rbtree_ck.ir	66352281
-aarch64/perceus_cfold.text	2523
+x86_64/perceus_rbtree_ck.ir	66064441
+aarch64/perceus_cfold.text	2527
 aarch64/perceus_cfold.ir	63319710
-aarch64/perceus_deriv.text	2842
+aarch64/perceus_deriv.text	2846
 aarch64/perceus_deriv.ir	90056988
-aarch64/perceus_nqueens.text	1619
+aarch64/perceus_nqueens.text	1627
 aarch64/perceus_nqueens.ir	106188790
-aarch64/perceus_rbtree.text	2938
+aarch64/perceus_rbtree.text	2961
 aarch64/perceus_rbtree.ir	62809232
-aarch64/perceus_rbtree_ck.text	3200
+aarch64/perceus_rbtree_ck.text	3223
 aarch64/perceus_rbtree_ck.ir	73488036

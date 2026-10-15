@@ -51,10 +51,7 @@
 # summary prints the corrected lines ready to paste. Keep the reason in the PR,
 # not here.
 
-# Re-pinned 2026-10-11 (#12117) to the selfhost-perf lane's reading of the
-# branch. main itself measures 22,989,069 on the dev container (the previous
-# pin was drift, not this change); the branch 22,941,440 there, 7,580 fewer
-# once seminline.resolvable answers in a pair instead of a record.
-
-x86_64/checker.allocs	23527753
-x86_64/checker.frees	23527753
+# Re-pinned 2026-10-15 (#12418): main measured 24,702,797 on the dev
+# container (the previous pin was drift); semreach's walk adds 803,363.
+x86_64/checker.allocs	25506160
+x86_64/checker.frees	25506160
