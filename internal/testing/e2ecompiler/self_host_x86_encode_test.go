@@ -811,9 +811,9 @@ function main(): i32 {
     d = x86_rodata_quad(d, 42i64);
     d = x86_resolve(d);
     if (d.text.len() != 10 || d.text[0] as i32 != 72 || d.text[1] as i32 != 141 || d.text[2] as i32 != 5 || d.text[3] as i32 != 9 || d.text[4] as i32 != 0 || d.text[5] as i32 != 0 || d.text[6] as i32 != 0) { return 8; }
-    if (d.rodata.len() != 8 || d.rodata[0] != 42 || d.rodata[1] != 0 || d.rodata[7] != 0) { return 11; }
-    // x86_align8 rounds up to the .text/.rodata boundary.
-    if (x86_align8(10) != 16 || x86_align8(16) != 16 || x86_align8(0) != 0) { return 12; }
+    if (d.rodata.len() != 16 || d.rodata[0] != 42 || d.rodata[1] != 0 || d.rodata[7] != 0) { return 11; }
+    // x86_align16 rounds up to the .text/.rodata boundary.
+    if (x86_align16(10) != 16 || x86_align16(16) != 16 || x86_align16(17) != 32 || x86_align16(0) != 0) { return 12; }
     // rip-relative movq load/store: movq G(%rip),%rax -> 48 8B 05 <d>;
     // movq %rcx,G(%rip) -> 48 89 0D <d>.
     let e2: X86Asm = x86_asm_new();

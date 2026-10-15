@@ -1758,13 +1758,6 @@ function emit_rt_aes_gcm(s: asmcore.EmitState): asmcore.EmitState {
 // fold's constants live in .rodata, and a label cannot be defined once per
 // call site. %rsi is the string BOX here, not an SSO string — this emitter's
 // strings are two words, [data@0, len@8].
-//
-// The three constants load with `movdqu` rather than `movdqa`, and that is
-// not a style choice: this emitter's data blob is placed EIGHT-byte aligned
-// after .text (`elf.fern`'s `elf_align8`), so a `.align 16` inside it aligns
-// the cursor within the blob and not the address. An aligned load of a
-// constant outside the loop buys nothing on any part this targets, and an
-// instruction stating a precondition the layout does not promise faults.
 function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .section .rodata\n");
   s = s.write("    .align 16\n");

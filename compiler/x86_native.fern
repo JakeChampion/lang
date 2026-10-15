@@ -1466,15 +1466,20 @@ pub function x86_eh_frame_hdr(a: X86Asm, text_vaddr: i64, eh_vaddr: i64, hdr_vad
   return cfi_eh_frame_hdr(a.cfi, cfi_profile_x86(), text_vaddr, eh_vaddr, hdr_vaddr);
 }
 
-// x86_align8 rounds `n` up to the next multiple of 8 — the .text/.rodata
-// boundary the ELF data image uses (so a rip-relative reference to .rodata
-// resolves to the same offset the loader maps it at).
+// x86_align8 rounds `n` up to the next multiple of 8, .eh_frame's
+// alignment.
 function x86_align8(n: i32): i32 {
   let p: i32 = n;
   while (p % 8 != 0) {
     p = p + 1;
   }
   return p;
+}
+
+// x86_align16 rounds `n` up to the next multiple of 16, the largest
+// alignment the image keeps (x86_gas_align).
+function x86_align16(n: i32): i32 {
+  return n + 15 - (n + 15) % 16;
 }
 
 // x86_align4 rounds `n` up to the next multiple of 4, .eh_frame_hdr's
@@ -1884,9 +1889,9 @@ function x86_unwind_eh_len(a: X86Asm): i32 {
 
 // x86_data_base is the text-relative offset the data blob starts at: past
 // `text_len` bytes of .text, then the 4-aligned .eh_frame_hdr and 8-aligned .eh_frame when the
-// program has unwind data, 8-aligned. This restates elf_program_x86's
-// layout (elf.fern cannot be imported here); TestSelfHostUnwindData holds
-// the two to the same answer.
+// program has unwind data, 16-aligned, so a .rodata `.align 16` holds. This
+// restates elf_program_x86's layout (elf.fern cannot be imported here);
+// TestSelfHostUnwindData holds the two to the same answer.
 pub function x86_data_base(a: X86Asm, text_len: i32): i32 {
   let end: i32 = text_len;
   let hdr_len: i32 = x86_unwind_hdr_len(a);
@@ -1894,7 +1899,7 @@ pub function x86_data_base(a: X86Asm, text_len: i32): i32 {
   if (hdr_len > 0 && eh_len > 0) {
     end = x86_align8(x86_align4(end) + hdr_len) + eh_len;
   }
-  return x86_align8(end);
+  return x86_align16(end);
 }
 
 // x86_symbol_addr is the address `name` loads at in an image whose .text
@@ -1984,8 +1989,12 @@ function x86_take(own a: X86Asm): X86Asm {
   return a;
 }
 
-// x86_patch applies the taken fixups to `text`.
+// x86_patch applies the taken fixups to `text`. .rodata is first padded to
+// a multiple of 16, so .bss starts 16-aligned.
 function x86_patch(own a: X86Asm): X86Asm {
+  while (a.rodata.len() % 16 != 0) {
+    a = X86Asm { ...a, rodata: a.rodata.append(0) };
+  }
   let padded_text: i32 = x86_data_base(a, a.text.len());
   let bss_base: i32 = padded_text + a.rodata.len();
   let code: u8[] = a.text;
@@ -6603,6 +6612,11 @@ function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
   }
   if (align <= 1) {
     return a;
+  }
+  // The image places the data blob 16-aligned and no more, and an aligned
+  // load from it would fault where a wider alignment did not hold.
+  if (align > 16 && section != 0) {
+    return x86_gas_bad(a, line);
   }
   if (section == 2) {
     while (a.bss_size % align != 0) {

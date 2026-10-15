@@ -377,7 +377,7 @@ function main(): i32 {
     if (x86_gas_comment_start("    movq %rax, %rcx # note") != 20) { return 28; }
     if (x86_gas_comment_start("    .ascii \"q\" # t") != 15) { return 29; }
     let sh: X86Asm = x86_gas_assemble(".section .rodata\n.S0: .ascii \"p?q#f\"\n");
-    if (sh.rodata.len() != 5 || sh.rodata[3] != 35) { return 30; }
+    if (sh.rodata.len() != 16 || sh.rodata[3] != 35) { return 30; }
     // A no-base SIB "disp(,%index,scale)" is its own addressing mode; the
     // empty base field read as register -1 and was masked to a real one.
     let nb: GasMem = x86_gas_parse_mem("0(,%rcx,8)");
@@ -410,7 +410,7 @@ function main(): i32 {
     if (dl.rodata[16] != 3 || dl.rodata[20] != 4 || dl.rodata[24] != 5 || dn < 0 || dl.lab_offs[dn] != 24) { return 108; }
     // Each symbol in a .quad list is its own relocation.
     let sl: X86Asm = x86_gas_assemble("    .section .rodata\nt: .quad t, 0, t\n");
-    if (sl.rodata.len() != 24 || sl.dfix_offs.len() != 2 || sl.dfix_offs[0] != 0 || sl.dfix_offs[1] != 16) { return 109; }
+    if (sl.rodata.len() != 32 || sl.dfix_offs.len() != 2 || sl.dfix_offs[0] != 0 || sl.dfix_offs[1] != 16) { return 109; }
     // The packed-SSE2 front end, assembled as the __memchr kernel emits it
     // (docs/ATLAS-PLATFORM-PLAN.md §3): splat, load, compare, gather, scan.
     // The expected bytes are GNU as output for this exact text — the point
@@ -666,6 +666,26 @@ function main(): i32 {
     let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
     write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.text, a.rodata))));
+    return 0;
+}
+`
+
+// TestSelfHostX86GasAlign16Runs places a .rodata and a .bss label after
+// `.align 16` behind 37 bytes of .text, which an 8-aligned data base put at an
+// address 8 past a multiple of 16. The program exits 42 plus the low four
+// bits of both addresses. A `.align 32`, which the image cannot keep, is
+// refused rather than laid down.
+func TestSelfHostX86GasAlign16Runs(t *testing.T) {
+	runX86GasNativeDriver(t, "gasalign16", x86GasAlign16DriverMain, 42)
+}
+
+const x86GasAlign16DriverMain = `
+function main(): i32 {
+    let src: string = ".text\n_start:\n\tleaq ro16(%rip), %rax\n\tleaq bs16(%rip), %rcx\n\torq %rcx, %rax\n\tandq $15, %rax\n\tmovq %rax, %rdi\n\taddq $42, %rdi\n\tmovq $60, %rax\n\tsyscall\n.section .rodata\n\t.byte 1\n\t.align 16\nro16:\n\t.quad 7\n.bss\n\t.byte 0\n\t.align 16\nbs16:\n\t.quad 0\n";
+    let a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0 || a.text.len() != 37) { return 2; }
+    if (x86_gas_assemble(".section .rodata\n\t.align 32\n").unknown.len() != 1) { return 3; }
+    write(string_from_bytes_unchecked(elf_program_x86(a.text, [], [], a.rodata, a.bss_size, 0)));
     return 0;
 }
 `
