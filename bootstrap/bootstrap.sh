@@ -58,6 +58,17 @@ sha256() {
 
 size() { wc -c < "$1" | tr -d ' '; }
 
+# stage1_key: what stage1 is built from, so a distcheck rebuilds a stage1
+# that an earlier build left behind for different sources or another stage0.
+stage1_key() {
+  local sum="sha256sum"
+  command -v sha256sum >/dev/null 2>&1 || sum="shasum -a 256"
+  {
+    echo "stage0 $(sha256 "$stage0")"
+    (cd "$ROOT" && find compiler internal/stdlib -type f -print0 | LC_ALL=C sort -z | xargs -0 $sum)
+  } | $sum | cut -d' ' -f1
+}
+
 # lock_field KEY prints the value of the lock's `KEY value` line.
 lock_field() {
   local v
@@ -206,8 +217,10 @@ smoke() {
 
 build() {
   resolve_stage0
+  rm -f "$OUT/stage1.key"
   stage stage1 "$stage0"
   smoke "$OUT/stage1"
+  stage1_key > "$OUT/stage1.key"
   mkdir -p "$ROOT/bin"
   cp "$OUT/stage1" "$ROOT/bin/fern-selfhost"
   echo "installed bin/fern-selfhost ($HOST, sha256 $(sha256 "$OUT/stage1"))"
@@ -223,7 +236,12 @@ build() {
 }
 
 distcheck() {
-  [ -x "$OUT/stage1" ] || build
+  resolve_stage0
+  if [ ! -x "$OUT/stage1" ] || [ "$(cat "$OUT/stage1.key" 2>/dev/null)" != "$(stage1_key)" ]; then
+    build
+  else
+    echo "stage1: reused, built from these sources by this stage0"
+  fi
   stage stage2 "$OUT/stage1"
   stage stage3 "$OUT/stage2"
   if ! cmp -s "$OUT/stage2" "$OUT/stage3"; then
