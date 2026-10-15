@@ -4,7 +4,7 @@ name: Pages
 # bundle. Layout:
 #
 #   /              — docs (Astro + Starlight, built from site/)
-#   /playground/   — interactive playground (web/, fern.wasm)
+#   /playground/   — interactive playground (web/, playground.wasm)
 #   /stdlib/...    — auto-generated reference (cmd/ferndoc → MDX)
 #
 # Build order:
@@ -29,9 +29,10 @@ on:
   push:
     branches: [main]
     paths:
-      - "cmd/fern-wasm/**"
-      # The self-host compiler is the playground's compiler.
+      # The self-host compiler is the playground's compiler, and the oracle
+      # (cmd/fern) builds it.
       - "compiler/**"
+      - "cmd/fern/**"
       - "cmd/ferndoc/**"
       - "web/**"
       - "site/**"
@@ -40,7 +41,7 @@ on:
       # EVERY internal package, not an enumeration of the ones somebody
       # thought mattered. The enumeration listed `internal/prelude/**`,
       # gone since the injector was removed, and covered 13 of the 50+
-      # packages the wasm build actually links, so a change to any of the
+      # packages the build actually links, so a change to any of the
       # rest landed with this lane never firing (#8627). A prefix cannot
       # go stale the way a list of leaves does.
       - "internal/**"

@@ -62,8 +62,7 @@ These are built from a source checkout; all but `fern` need Go 1.26+:
 
 | Binary          | Build command              | Purpose                                                                  |
 | --------------- | -------------------------- | ------------------------------------------------------------------------ |
-| `fern`          | `make build`               | The compiler and every tool it carries: interpreter, checker, formatter, linter, package tools. |
-| `fern-lsp`      | `go build ./cmd/fern-lsp`  | Language server for editors.                                             |
+| `fern`          | `make build`               | The compiler and every tool it carries: interpreter, checker, formatter, linter, language server, package tools. |
 | `ferndoc`       | `go build ./cmd/ferndoc`   | Generate the stdlib reference.                                           |
 
 ## Run hello, world

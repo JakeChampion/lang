@@ -117,27 +117,25 @@ func TestWorkflowPathFiltersHaveNoDeadEntries(t *testing.T) {
 }
 
 // filterCoverage names, per lane, the command whose dependency closure the
-// lane's filter must cover, and the GOOS/GOARCH it is built for. cmd/fern-wasm
-// is `//go:build js && wasm`, so a host-GOOS `go list` reports an empty
-// closure and would make the gate vacuous.
+// lane's filter must cover.
 var filterCoverage = []struct {
 	workflow string
 	pkg      string
-	goos     string
-	goarch   string
 }{
 	// The only lane that EXECUTES an arm64-darwin binary: Linux CI
 	// cross-compiles Mach-O and checks it is well-formed, which cannot catch
 	// an ABI bug.
-	{"macos.yml", "./cmd/fern", "", ""},
-	// The docs site stages the playground wasm and regenerates the stdlib
-	// reference, so it is built from both binaries' closures.
-	{"docs-build.yml", "./cmd/fern-wasm", "js", "wasm"},
-	{"docs-build.yml", "./cmd/ferndoc", "", ""},
-	{"pages.yml", "./cmd/fern-wasm", "js", "wasm"},
-	{"pages.yml", "./cmd/ferndoc", "", ""},
-	// The playground is the wasm binary plus the page that hosts it.
-	{"playground-e2e.yml", "./cmd/fern-wasm", "js", "wasm"},
+	{"macos.yml", "./cmd/fern"},
+	// The docs site stages the playground wasm, built by the compiler the
+	// oracle builds, and regenerates the stdlib reference, so it is built
+	// from both binaries' closures.
+	{"docs-build.yml", "./cmd/fern"},
+	{"docs-build.yml", "./cmd/ferndoc"},
+	{"pages.yml", "./cmd/fern"},
+	{"pages.yml", "./cmd/ferndoc"},
+	// The playground is the compiler the oracle builds plus the page that
+	// hosts it.
+	{"playground-e2e.yml", "./cmd/fern"},
 }
 
 func TestWorkflowPathFiltersCoverEveryDependency(t *testing.T) {
@@ -149,11 +147,7 @@ func TestWorkflowPathFiltersCoverEveryDependency(t *testing.T) {
 		t.Run(c.workflow+" "+c.pkg, func(t *testing.T) {
 			cmd := exec.Command("go", "list", "-deps", c.pkg)
 			cmd.Dir = root
-			if c.goos != "" {
-				cmd.Env = ciEnv("GOOS="+c.goos, "GOARCH="+c.goarch)
-			} else {
-				cmd.Env = ciEnv()
-			}
+			cmd.Env = ciEnv()
 			out, err := cmd.Output()
 			if err != nil {
 				t.Fatalf("go list -deps %s: %v", c.pkg, err)

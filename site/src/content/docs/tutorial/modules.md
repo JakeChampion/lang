@@ -95,7 +95,7 @@ The full list is under [Standard library →](../../stdlib/).
 
 ## Working with the language server
 
-`fern-lsp` resolves imports across the workspace. With the VS Code
+The language server, `fern -lsp`, resolves imports across the workspace. With the VS Code
 extension installed:
 
 - Hover over `util.run()` to see the imported function's signature.

@@ -681,7 +681,6 @@
   </section>
 </div>
 
-<script src="wasm_exec.js"></script>
 <script>
 // #4590: boot the wasm runtime in its OWN script, with NO dependency on the
 // CodeMirror ES module below (which statically imports from the esm.sh CDN).
@@ -690,26 +689,13 @@
 // "loading runtime…" forever, an opaque failure in CI and offline. Booting
 // here brings the runtime up (and flips #status to "ready") regardless of the
 // CDN; the editor module below consumes this shared boot via
-// window.__fernRuntimeReady instead of instantiating its own.
+// window.__fernDriverReady instead of instantiating its own.
 (function () {
-  // The language server (fern.wasm) runs in web/lsp-worker.js, off this
-  // thread; ready once the worker has booted it.
-  var lsp = new Worker("lsp-worker.js");
-  window.__fernLspWorker = lsp;
-  window.__fernRuntimeReady = new Promise(function (resolve, reject) {
-    function onBoot(e) {
-      if (!e.data.ready && !e.data.failed) return;
-      lsp.removeEventListener("message", onBoot);
-      if (e.data.ready) resolve();
-      else reject(new Error(e.data.failed));
-    }
-    lsp.addEventListener("message", onBoot);
-  });
   // The self-host compiler (web/playground.wasm), compiled once here and
   // instantiated afresh for every run by web/wasi-shim.js, so nothing one
   // run leaves behind reaches the next.
   window.__fernDriverReady = WebAssembly.compileStreaming(fetch("playground.wasm"));
-  Promise.all([window.__fernRuntimeReady, window.__fernDriverReady]).then(function () {
+  window.__fernDriverReady.then(function () {
     var el = document.getElementById("status");
     if (!el) return;
     // Mirror the editor module's embed detection (urlFlag "embed"/"minimal")
@@ -1197,7 +1183,6 @@ function initialSrcFromHash() {
 
 window.addEventListener("hashchange", () => {
   setSrc(initialSrcFromHash());
-  resetAndResync();
 });
 
 exampleEl.addEventListener("change", () => {
@@ -1218,7 +1203,6 @@ exampleEl.addEventListener("change", () => {
     // necessary because `history` is shadowed in this module
     // scope by the @codemirror/commands import.
     window.history.replaceState(null, "", location.pathname + location.search);
-    resetAndResync();
   }
 });
 
@@ -1251,25 +1235,29 @@ shareBtn.addEventListener("click", async () => {
 // stdout, diagnostics on stderr. It is compiled once at boot
 // (window.__fernDriverReady) and instantiated afresh for every call, in
 // web/driver-worker.js so a compile never blocks the page. Run, Run (wasm),
-// View assembly and Build component all go through it, on both worlds; the
-// language server still comes from fern.wasm, the Go toolchain.
+// View assembly, Build component and the language server all go through it,
+// on both worlds.
 let driverModule = null;
-const driverWorker = new Worker("driver-worker.js", { type: "module" });
-const driverPending = new Map();
-let driverCallId = 0;
-driverWorker.addEventListener("message", (e) => {
-  const call = driverPending.get(e.data.id);
-  driverPending.delete(e.data.id);
-  if (e.data.error !== undefined) call.reject(new Error(e.data.error));
-  else call.resolve(e.data.result);
-});
-function runDriver(src, args) {
-  return new Promise((resolve, reject) => {
-    const id = ++driverCallId;
-    driverPending.set(id, { resolve, reject });
-    driverWorker.postMessage({ id, module: driverModule, src, args: ["fern"].concat(args) });
+
+// driverClient returns a function running the compiler on `worker` with
+// `src` on stdin and `args` as its mode, one call at a time in the order they
+// were made, resolving with runCoreWasm's result.
+function driverClient(worker) {
+  const pending = new Map();
+  let callId = 0;
+  worker.addEventListener("message", (e) => {
+    const call = pending.get(e.data.id);
+    pending.delete(e.data.id);
+    if (e.data.error !== undefined) call.reject(new Error(e.data.error));
+    else call.resolve(e.data.result);
+  });
+  return (src, args) => new Promise((resolve, reject) => {
+    const id = ++callId;
+    pending.set(id, { resolve, reject });
+    worker.postMessage({ id, module: driverModule, src, args: ["fern"].concat(args) });
   });
 }
+const runDriver = driverClient(new Worker("driver-worker.js", { type: "module" }));
 
 async function runOnce() {
   if (!driverModule) {
@@ -1440,7 +1428,10 @@ function syncHttpReqVisibility() {
       : "";
   }
 }
-worldSelectEl.addEventListener("change", syncHttpReqVisibility);
+worldSelectEl.addEventListener("change", () => {
+  syncHttpReqVisibility();
+  scheduleSync();
+});
 syncHttpReqVisibility();
 
 // ---- Build a WebAssembly Component ----
@@ -1615,88 +1606,87 @@ if (embedTargetEl) {
 
 // ---- Language server wiring ----
 //
-// The language server is the in-tree LSP that `cmd/fern-lsp` runs
-// over stdio, compiled to fern.wasm and hosted in web/lsp-worker.js
-// (started by the boot script above). Requests and notifications are
-// posted to the worker in order; a request resolves with the server's
-// parsed response, or null when it sent none.
+// The language server is `fern -lsp`'s, run as playground.wasm's -lsp mode on
+// a second driver worker so a check never waits behind a compile. An instance
+// reads its stdin as one buffer, so each question is a whole session replayed
+// against the current text: initialize, open the document, ask, shut down.
+// Every session publishes the document's diagnostics, so any answer refreshes
+// the Problems panel as well.
 const LSP_URI = "file:///playground.fern";
-const lspWorker = window.__fernLspWorker;
-let lspReady = false;
-let docOpen = false;
-let docVersion = 0;
-let rpcId = 0;
+const runServer = driverClient(new Worker("driver-worker.js", { type: "module" }));
 let docSyncTimer = null;
 // Latest server-published diagnostics for the open document.
 // Re-exported into CodeMirror via the linter every time it
 // changes. publishDiagnostics is async-arrival; forceLinting
 // pokes CM to re-render.
 let currentDiagnostics = [];
-const lspPending = new Map();
 
-lspWorker.addEventListener("message", (e) => {
-  const d = e.data;
-  if (d.id !== undefined) {
-    const resolve = lspPending.get(d.id);
-    lspPending.delete(d.id);
-    if (!resolve) return;
-    try { resolve(d.resp ? JSON.parse(d.resp) : null); }
-    catch (err) { resolve(null); }
-  } else if (d.method === "textDocument/publishDiagnostics") {
-    currentDiagnostics = d.params.diagnostics || [];
-    renderProblemList(currentDiagnostics);
-    if (editorView) forceLinting(editorView);
+const utf8 = new TextEncoder();
+
+function lspFrame(msg) {
+  const body = JSON.stringify({ jsonrpc: "2.0", ...msg });
+  return "Content-Length: " + utf8.encode(body).length + "\r\n\r\n" + body;
+}
+
+// lspFrames splits a session's stdout into its messages. Content-Length
+// counts bytes, so the split is on the bytes, not the decoded text.
+function lspFrames(bytes) {
+  const text = new TextDecoder();
+  const out = [];
+  let at = 0;
+  while (at < bytes.length) {
+    let end = at;
+    while (end + 3 < bytes.length &&
+           !(bytes[end] === 13 && bytes[end + 1] === 10 && bytes[end + 2] === 13 && bytes[end + 3] === 10)) end++;
+    const len = /Content-Length:\s*(\d+)/i.exec(text.decode(bytes.subarray(at, end)));
+    if (end + 3 >= bytes.length || !len) break;
+    const start = end + 4;
+    out.push(JSON.parse(text.decode(bytes.subarray(start, start + Number(len[1])))));
+    at = start + Number(len[1]);
   }
-});
-
-function lspRequest(method, params) {
-  const id = ++rpcId;
-  return new Promise((resolve) => {
-    lspPending.set(id, resolve);
-    lspWorker.postMessage({ id, msg: JSON.stringify({ jsonrpc: "2.0", id, method, params }) });
-  });
+  return out;
 }
 
-function lspNotify(method, params) {
-  lspWorker.postMessage({ msg: JSON.stringify({ jsonrpc: "2.0", method, params }) });
-}
-
-function initLsp() {
-  lspRequest("initialize", {
-    processId: null,
-    rootUri: null,
-    capabilities: {},
-  });
-  lspNotify("initialized", {});
-  lspReady = true;
-  syncDoc(getSrc()); // initial open + first diagnostics
-}
-
-function syncDoc(text) {
-  if (!lspReady) return;
-  if (!docOpen) {
-    lspNotify("textDocument/didOpen", {
-      textDocument: {
-        uri: LSP_URI,
-        languageId: "fern",
-        version: ++docVersion,
-        text,
-      },
-    });
-    docOpen = true;
-  } else {
-    lspNotify("textDocument/didChange", {
-      textDocument: { uri: LSP_URI, version: ++docVersion },
-      contentChanges: [{ text }],
-    });
+// lspSession replays a session asking `request` ({ method, params }) about
+// the current text, or nothing, and resolves with the server's response to
+// it, or null.
+async function lspSession(request) {
+  const msgs = [
+    { id: 1, method: "initialize", params: { processId: null, rootUri: null, capabilities: {} } },
+    { method: "initialized", params: {} },
+    { method: "textDocument/didOpen",
+      params: { textDocument: { uri: LSP_URI, languageId: "fern", version: 1, text: getSrc() } } },
+  ];
+  if (request) msgs.push({ id: 2, ...request });
+  msgs.push({ id: 3, method: "shutdown" }, { method: "exit" });
+  let result;
+  try {
+    result = await runServer(msgs.map(lspFrame).join(""),
+      driverArgs(["-lsp"], worldSelectEl.value === "wasm32-wasi-http"));
+  } catch (err) {
+    return null;
   }
+  let resp = null;
+  for (const f of lspFrames(result.stdoutBytes)) {
+    if (f.method === "textDocument/publishDiagnostics" && f.params.uri === LSP_URI) {
+      currentDiagnostics = f.params.diagnostics || [];
+      renderProblemList(currentDiagnostics);
+      if (editorView) forceLinting(editorView);
+    } else if (f.id === 2) {
+      resp = f;
+    }
+  }
+  return resp;
 }
 
-// Debounce edits to avoid re-parsing on every keystroke. ~200ms
-// is fast enough to feel live without thrashing the wasm runtime.
+function syncDoc() {
+  if (driverModule) lspSession(null);
+}
+
+// Debounce edits so a check runs once typing pauses, not per keystroke.
 function scheduleSync() {
   if (docSyncTimer) clearTimeout(docSyncTimer);
-  docSyncTimer = setTimeout(() => syncDoc(getSrc()), 200);
+  docSyncTimer = setTimeout(syncDoc, 200);
 }
 
 function renderProblemList(diags) {
@@ -1725,18 +1715,6 @@ function renderProblemList(diags) {
     });
     problemListEl.appendChild(li);
   }
-}
-
-// Example / hash changes wipe the server-side document state so
-// the new content starts fresh. Called from both the hashchange
-// handler and the example-select handler above.
-function resetAndResync() {
-  if (!lspReady) return;
-  if (docOpen) {
-    lspNotify("textDocument/didClose", { textDocument: { uri: LSP_URI } });
-    docOpen = false;
-  }
-  syncDoc(getSrc());
 }
 
 // ---- CodeMirror 6 editor ----
@@ -1821,11 +1799,11 @@ function fernLinter(view) {
 
 // Hover tooltip. Returns null when the LSP says nothing.
 const fernHover = hoverTooltip(async (view, pos) => {
-  if (!lspReady) return null;
+  if (!driverModule) return null;
   const lspPos = lspPosFromOffset(view.state, pos);
-  const resp = await lspRequest("textDocument/hover", {
-    textDocument: { uri: LSP_URI },
-    position: lspPos,
+  const resp = await lspSession({
+    method: "textDocument/hover",
+    params: { textDocument: { uri: LSP_URI }, position: lspPos },
   });
   if (!resp || !resp.result || !resp.result.contents) return null;
   const value = resp.result.contents.value
@@ -1866,16 +1844,16 @@ const fernHover = hoverTooltip(async (view, pos) => {
 // declared trigger character. We send the LSP request and map
 // each item into CM's option shape.
 async function fernCompletionSource(context) {
-  if (!lspReady) return null;
+  if (!driverModule) return null;
   // Find the identifier-shaped prefix the user has typed so far
   // so CM can offer a `from` to replace on selection.
   const word = context.matchBefore(/[A-Za-z_][A-Za-z0-9_]*/);
   if (!word && !context.explicit) return null;
   const from = word ? word.from : context.pos;
   const lspPos = lspPosFromOffset(context.state, context.pos);
-  const resp = await lspRequest("textDocument/completion", {
-    textDocument: { uri: LSP_URI },
-    position: lspPos,
+  const resp = await lspSession({
+    method: "textDocument/completion",
+    params: { textDocument: { uri: LSP_URI }, position: lspPos },
   });
   if (!resp || !resp.result) return null;
   const items = resp.result.items || [];
@@ -1990,13 +1968,13 @@ editorView = new EditorView({
 });
 
 // Wire the UI to the wasm runtime booted by the standalone boot script above
-// (window.__fernRuntimeReady) — NOT a second instantiate. #status was already
+// (window.__fernDriverReady) — NOT a second instantiate. #status was already
 // flipped to "ready" there, independent of this CodeMirror module; here we
-// enable the controls, start the LSP, and autorun once the shared boot
+// enable the controls, run the first check, and autorun once the shared boot
 // resolves. Decoupling the boot from this module's esm.sh import is the #4590
 // fix: a CDN stall can no longer strand the runtime at "loading runtime…".
-Promise.all([window.__fernRuntimeReady, window.__fernDriverReady])
-  .then(([, driver]) => {
+window.__fernDriverReady
+  .then((driver) => {
     driverModule = driver;
     runBtn.disabled = false;
     runWasmBtn.disabled = false;
@@ -2010,7 +1988,7 @@ Promise.all([window.__fernRuntimeReady, window.__fernDriverReady])
     statusEl.textContent = embedMode
       ? "ready"
       : "ready · Ctrl/Cmd+Enter to run · hover for types";
-    initLsp();
+    syncDoc();
     if (autoRun) runOnce();
   })
   .catch(err => {

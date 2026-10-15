@@ -3,5 +3,3 @@
 # committing the binaries would balloon the repo per version of the
 # toolchain (what is served is the gzipped size).
 playground.wasm
-fern.wasm
-fern.wasm.gz

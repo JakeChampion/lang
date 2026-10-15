@@ -6,10 +6,10 @@ file small" at the bottom before adding to it.
 ## Name
 
 The language is **Fern**. Source files are `.fern`; the CLI is `fern`
-(`compiler/fern_main.fern`, built by `make build`), the Go oracle `cmd/fern`
-(`bin/fern-oracle`), the LSP `fern-lsp`, the wasm playground bundle
-`cmd/fern-wasm`, the stdlib doc generator `cmd/ferndoc`. Emitted runtime
-symbols are `__fern_*`.
+(`compiler/fern_main.fern`, built by `make build`), whose `-lsp` is the
+language server; the Go oracle `cmd/fern` (`bin/fern-oracle`); the browser
+playground `web/`, running `compiler/playground_run.fern` built for WASI; the
+stdlib doc generator `cmd/ferndoc`. Emitted runtime symbols are `__fern_*`.
 
 The **only** things still on the old `lang` name are the Go module path
 `github.com/jakechampion/lang` and the GitHub repo + Pages URLs
@@ -264,7 +264,7 @@ was already done. Check the code, not the issue.
 **There is no native compiler.** It froze on 2026-09-28 and its backends were
 deleted by 2026-10-05; the tracker that governed both (#4451) is closed. What
 Go keeps in `internal/` — the parser, checker and interpreter the oracle needs,
-plus `-fmt`, the LSP and the package and literate tools — accepts bugfixes,
+plus `-fmt` and the package and literate tools — accepts bugfixes,
 oracle needs, and what those tools need to read the language. A language
 feature lands in `compiler/` first; the Go front end and interpreter
 learn it so the differentials can check it, never as a feature of their own.

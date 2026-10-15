@@ -1,9 +1,11 @@
 package e2ecompiler
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -115,6 +117,88 @@ func TestSelfHostPlaygroundOverlay(t *testing.T) {
 	t.Run("interp-reaches-the-stdlib", func(t *testing.T) { playgroundInterpStdlib(t, bin) })
 	t.Run("interp-maps-the-exit-code", func(t *testing.T) { playgroundInterpExit(t, bin) })
 	t.Run("interp-dispatches-byte-methods", func(t *testing.T) { playgroundInterpByteMethods(t, bin) })
+	t.Run("lsp-publishes-diagnostics", func(t *testing.T) { playgroundLSPDiagnostics(t, bin) })
+	t.Run("lsp-answers-from-the-stdlib", func(t *testing.T) { playgroundLSPStdlibAnswers(t, bin) })
+}
+
+// playgroundLSPURI is the document the page opens.
+const playgroundLSPURI = "file:///playground.fern"
+
+// playgroundLSPSource has a type error on line 4 and calls a std/i32 method,
+// so a hover or completion on `f.` is answered from the embedded stdlib.
+const playgroundLSPSource = "import \"std/i32\";\nfunction main(): i32 {\n    let f: i32 = 5;\n    print(f.to_string());\n    let y: i32 = \"s\";\n    return f;\n}\n"
+
+// playgroundLSPSession is one session as the page replays it: open the
+// document, ask `asks`, shut down.
+func playgroundLSPSession(t *testing.T, asks ...lspMsg) string {
+	t.Helper()
+	var in []byte
+	for _, m := range session(append([]lspMsg{lspOpen(playgroundLSPURI, playgroundLSPSource)}, asks...)...) {
+		in = append(in, lspFrameBytes(t, m)...)
+	}
+	return string(in)
+}
+
+func lspAt(id int, method string, line, char int) lspMsg {
+	return lspMsg{"id": id, "method": method, "params": lspMsg{"textDocument": lspMsg{"uri": playgroundLSPURI}, "position": lspMsg{"line": line, "character": char}}}
+}
+
+// -lsp is `fern -lsp`'s server reading its stdlib from the embedded bundle:
+// the page's Problems panel is what it publishes.
+func playgroundLSPDiagnostics(t *testing.T, bin string) {
+	stdout, stderr, code := runPlayground(t, bin, t.TempDir(), playgroundLSPSession(t), "-lsp")
+	if code != 0 {
+		t.Fatalf("-lsp exited %d\n%s", code, stderr)
+	}
+	want := []lspPublish{{URI: playgroundLSPURI, Diagnostics: []lspDiag{{
+		Range: span(4, 4, 4, 5), Severity: 1, Source: "fern", Code: "E003", Message: `variable "y": expected i32, got string`,
+	}}}}
+	if got := publishes(t, parseLSPFrames(t, []byte(stdout))); !reflect.DeepEqual(got, want) {
+		t.Errorf("-lsp published %+v\nwant %+v", got, want)
+	}
+}
+
+// Hover, completion and definition on a stdlib method: the answers need
+// std/i32's declarations, which only the embedded bundle holds, and the
+// definition names its file under the bundle's root.
+func playgroundLSPStdlibAnswers(t *testing.T, bin string) {
+	stdout, stderr, code := runPlayground(t, bin, t.TempDir(), playgroundLSPSession(t,
+		lspAt(2, "textDocument/hover", 3, 13), lspAt(3, "textDocument/completion", 3, 12),
+		lspAt(4, "textDocument/definition", 3, 13)), "-lsp")
+	if code != 0 {
+		t.Fatalf("-lsp exited %d\n%s", code, stderr)
+	}
+	frames := parseLSPFrames(t, []byte(stdout))
+	var hover struct {
+		Contents struct{ Value string } `json:"contents"`
+		Range    lspRange               `json:"range"`
+	}
+	if err := json.Unmarshal(response(t, frames, "2").Result, &hover); err != nil {
+		t.Fatal(err)
+	}
+	if want := "```fern\n(method on i32) function to_string(): string\n```"; hover.Contents.Value != want || hover.Range != span(3, 12, 3, 21) {
+		t.Errorf("hover = %+v, want %q at 3:12-3:21", hover, want)
+	}
+	var completion struct {
+		Items []struct{ Label, Detail string } `json:"items"`
+	}
+	if err := json.Unmarshal(response(t, frames, "3").Result, &completion); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, it := range completion.Items {
+		found = found || it.Label == "to_string" && it.Detail == "function to_string(): string"
+	}
+	if !found {
+		t.Errorf("completion after `f.` offered %d items, none of them std/i32's to_string: %+v", len(completion.Items), completion.Items)
+	}
+	var def lspLocation
+	if err := json.Unmarshal(response(t, frames, "4").Result, &def); err != nil {
+		t.Fatal(err)
+	}
+	if def.URI != "file:///stdlib/std/i32.fern" || def.Range.Start.Line == 0 {
+		t.Errorf("definition of to_string = %+v, want a line of file:///stdlib/std/i32.fern", def)
+	}
 }
 
 // A byte is an int at runtime: `s[i]` and `b as u8` both evaluate to a VInt,
@@ -389,7 +473,8 @@ func TestSelfHostPlaygroundHostedInWasm(t *testing.T) {
 	assertWatRuns(t, wat, 12)
 
 	// Agreement with the native build, byte for byte.
-	nativeWat, _, code := runPlayground(t, buildPlaygroundDriver(t), t.TempDir(), playgroundProgram)
+	native := buildPlaygroundDriver(t)
+	nativeWat, _, code := runPlayground(t, native, t.TempDir(), playgroundProgram)
 	if code != 0 {
 		t.Fatalf("natively-hosted driver exited %d", code)
 	}
@@ -422,6 +507,24 @@ func TestSelfHostPlaygroundHostedInWasm(t *testing.T) {
 	// besides the diagnostic; an rc complaint is the #7969 regression.
 	if strings.Contains(chkErr.String(), "over-release") {
 		t.Errorf("wasm-hosted -check reported an rc over-release (#7969):\n%s", chkErr.String())
+	}
+
+	// `-lsp` hosted in wasm, as the page runs it: no preopens, so every
+	// manifest probe the server makes fails, and the session must still be
+	// answered exactly as the native build answers it.
+	in := playgroundLSPSession(t, lspAt(2, "textDocument/hover", 3, 13))
+	srv := exec.Command("wasmtime", "run", "--invoke", "main", mod, "-lsp")
+	srv.Dir = t.TempDir()
+	srv.Stdin = strings.NewReader(in)
+	var srvOut, srvErr strings.Builder
+	srv.Stdout = &srvOut
+	srv.Stderr = &srvErr
+	if err := srv.Run(); err != nil {
+		t.Fatalf("wasm-hosted -lsp failed: %v\n%s", err, srvErr.String())
+	}
+	nativeSession, _, _ := runPlayground(t, native, t.TempDir(), in, "-lsp")
+	if got := strings.TrimSuffix(srvOut.String(), "0\n"); got != nativeSession {
+		t.Errorf("wasm-hosted -lsp answered\n%s\nnatively-hosted\n%s", got, nativeSession)
 	}
 }
 

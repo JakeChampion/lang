@@ -65,7 +65,7 @@ so explicitly.
 | --- | --- | --- |
 | `BACKEND-PARITY.md` | [reference] | The targets, the syscall floor, the CPU baselines, the macOS support stance and known limitations. |
 | `NATIVE-CONVERGENCE.md` | [policy] | How `internal/` and the self-host converge; freeze preconditions in #4451. |
-| `PLAYGROUND-SELFHOST-WASM.md` | [record] | Measured answer to §3a precondition 4 (#6643): what it costs to rebuild the browser playground on the self-host compiler. Not size- or memory-bound — 2.3 MB against the current bundle's 28.5 MB, running under wasmtime at 104 MiB. The compiling driver now runs hosted in wasm with no preopens; what is left is the interpret entry point (the self-host interpreter has no I/O at all), the JS bindings, and the LSP. |
+| `PLAYGROUND-SELFHOST-WASM.md` | [record] | Measured answer to §3a precondition 4 (#6643): what it costs to rebuild the browser playground on the self-host compiler. Not size- or memory-bound — 2.3 MB against the current bundle's 28.5 MB, running under wasmtime at 104 MiB. The page now runs only the self-host compiler built for WASI, its language server included. |
 | `ROADMAP-AND-SELF-HOSTING.md` | [record] | 2026-05-15 tech-debt + self-host-readiness snapshot; live roadmap is CLAUDE.md + issues. |
 | `RESEARCH-ROADMAP.md` | [record] | Reading-order meta-index for the research docs; recommendations now filed as #4412–#4416. |
 | `FREESTANDING-CORE.md` | [policy] | Which builtins need a host and which do not; the core-vs-host rule and every judgement call (#6506). |
@@ -188,7 +188,7 @@ so explicitly.
 | --- | --- | --- |
 | `EMBED.md` | [reference] | Compile-time asset embedding (`-embed`, `__fern_asset`). |
 | `LITERATE.md` | [reference] | Literate programming (`.fern.md`, tangle/weave). |
-| `LSP-INTEGRATION-PLAN.md` | [record] | LSP MVP — shipped (`cmd/fern-lsp`); post-MVP ideas in IDE-COMPILATION-RESEARCH. |
+| `LSP-INTEGRATION-PLAN.md` | [reference] | `fern -lsp`, the language server: what each request answers, how the playground runs it, its gates; post-MVP ideas in IDE-COMPILATION-RESEARCH. |
 | `TEST-RUNNER-MIGRATION.md` | [record] | Go-test → pure-Fern runner migration audit. |
 | `TEST-GATES.md` | [policy] | Which suite proves what, which look authoritative and are not, and what nothing gates. |
 | `FUZZING.md` | [reference] | The fuzzing system: fernsmith's generator, swarm, state fold and ownership shapes; the oracles; the mutation score that measures it; the research ranked by expected yield; the roadmap. |

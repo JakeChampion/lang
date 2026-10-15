@@ -3277,9 +3277,11 @@ function check_file(st: DiagStyle, entry_path: string, root: string, target: str
 // Server is `-lsp`'s state: what every document is checked against, as
 // `-check` takes it, and the text of each document the editor has open with
 // the diagnostics last published for it ("" before the first) and what its
-// last check loaded, by URI.
+// last check loaded, by URI. `stdlib` holds the stdlib's files under `root`
+// when they are in memory rather than on disk.
 struct Server {
   root: string,
+  stdlib: modloader.Buffers,
   target: string,
   target_given: boolean,
   embed_dir: string,
@@ -3305,7 +3307,13 @@ function serve_lsp(pos: string[], embedded_root: string, target: string, target_
   if (pos.len() == 1) {
     root = util.clean_path(pos[0]);
   }
-  return run_lsp(Server { root: root, target: target, target_given: target_given, embed_dir: embed_dir, uris: [], srcs: [], published: [], docs: [], shutdown: false });
+  return run_lsp(Server { root: root, stdlib: modloader.no_buffers(), target: target, target_given: target_given, embed_dir: embed_dir, uris: [], srcs: [], published: [], docs: [], shutdown: false });
+}
+
+// serve_lsp_in_memory is the language server for a host with no filesystem:
+// the stdlib is `stdlib`, its files named under `root`.
+pub function serve_lsp_in_memory(root: string, stdlib: modloader.Buffers, target: string, target_given: boolean): i32 {
+  return run_lsp(Server { root: root, stdlib: stdlib, target: target, target_given: target_given, embed_dir: "", uris: [], srcs: [], published: [], docs: [], shutdown: false });
 }
 
 // run_lsp is a language server on stdin and stdout (lsp.fern is the wire),
@@ -3454,9 +3462,10 @@ function lsp_doc_path(uri: string): string {
   return util.clean_path(path);
 }
 
-// lsp_buffers is every open file:// document's text, read in place of its file.
+// lsp_buffers is every open file:// document's text, read in place of its
+// file, and the stdlib when it is in memory.
 function lsp_buffers(s: Server): modloader.Buffers {
-  let b: modloader.Buffers = modloader.no_buffers();
+  let b: modloader.Buffers = s.stdlib;
   let i: i32 = 0;
   while (i < s.uris.len()) {
     let path: string = lsp_doc_path(s.uris[i]);
@@ -3871,7 +3880,7 @@ function lsp_module_doc(s: Server, d: Doc, m: i32, entry: string): string {
 }
 
 // lsp_doc_text is the text of the file at `path`: its open document's, else
-// what is on disk, else "".
+// the in-memory stdlib's, else what is on disk, else "".
 function lsp_doc_text(s: Server, path: string): string {
   let i: i32 = 0;
   while (i < s.uris.len()) {
@@ -3879,6 +3888,10 @@ function lsp_doc_text(s: Server, path: string): string {
       return s.srcs[i];
     }
     i = i + 1;
+  }
+  let si: i32 = util.index_of_str(s.stdlib.paths, path);
+  if (si >= 0) {
+    return s.stdlib.srcs[si];
   }
   match (read_file(path)) {
     Ok(text) => {

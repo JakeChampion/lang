@@ -77,7 +77,7 @@ func TestSelfHostLSPWorkspaceX86_64(t *testing.T) {
 	t.Run("dependency-package-buffer-overrides-disk", func(t *testing.T) {
 		dir := t.TempDir()
 		const appMain = "import \"helper\";\nfunction main(): i32 {\n  let r: i32 = helper.save(\"x\");\n  return r;\n}\n"
-		const reachesFS = "pub function save(s: string): i32 {\n  write_file(\"/tmp/fern-lsp-e2e.txt\", s);\n  return 0;\n}\n"
+		const reachesFS = "pub function save(s: string): i32 {\n  write_file(\"/tmp/fern-e2e.txt\", s);\n  return 0;\n}\n"
 		const reachesNothing = "pub function save(s: string): i32 {\n  return s.len();\n}\n"
 		writeTree(t, dir, map[string]string{
 			"app/fern.toml":    "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../helper\", capabilities = [\"net\"] }\n",

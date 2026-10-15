@@ -1,7 +1,7 @@
 name: VS Code Extension
 
 # Validates editors/vscode/ — the language-client extension that
-# spawns fern-lsp. Two tiers, both cheap:
+# spawns `fern -lsp`. Two tiers, both cheap:
 #
 #   1. type-check + compile (tsc) — catches API breakages against
 #      the vscode-languageclient + @types/vscode surfaces within

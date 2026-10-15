@@ -119,7 +119,7 @@ jobs:
                 "go.mod"
               ] },
               "docs-build": { "paths": [
-                "cmd/fern-wasm/**",
+                "cmd/fern/**",
                 "compiler/**",
                 "cmd/ferndoc/**",
                 "web/**",
@@ -135,7 +135,7 @@ jobs:
                 ".github/workflows/ci.yml"
               ] },
               "playground-e2e": { "paths": [
-                "cmd/fern-wasm/**",
+                "cmd/fern/**",
                 "compiler/**",
                 "web/**",
                 "internal/**",
