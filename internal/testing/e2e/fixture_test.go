@@ -55,11 +55,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/check/checker"
-	"github.com/jakechampion/lang/internal/check/constfold"
 	"github.com/jakechampion/lang/internal/pkg/modload"
 	"github.com/jakechampion/lang/internal/syntax/diag"
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
+	"github.com/jakechampion/lang/internal/tools/gates"
 )
 
 type fixtureSpec struct {
@@ -320,10 +319,9 @@ func runFixtureWasm(t *testing.T, mainPath, stdin string) (string, int) {
 	return stdout, ec
 }
 
-// runFixtureCompileError runs the front-end (modload → constfold →
-// check) and returns the first error's text plus whether any stage
-// failed. Backend-agnostic: parse / module-load / type errors are the
-// same regardless of target, so this runs once per fixture.
+// runFixtureCompileError runs fixtureFrontEnd and returns the first error's
+// text plus whether it failed. Backend-agnostic: parse / module-load / type
+// errors are the same regardless of target, so this runs once per fixture.
 func runFixtureCompileError(mainPath string) (string, bool) {
 	// Rendered the way the CLI renders it, which is what puts the `error[EXXX]`
 	// code on each diagnostic. `err.Error()` alone gives "type error at L:C:
@@ -337,17 +335,22 @@ func runFixtureCompileError(mainPath string) (string, bool) {
 		}
 		return diag.Format(mainPath, string(src), err)
 	}
-	prog, _, err := modload.Load(mainPath)
-	if err != nil {
-		return render(err), true
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		return render(err), true
-	}
-	if _, err := checker.Check(prog); err != nil {
+	if err := fixtureFrontEnd(mainPath); err != nil {
 		return render(err), true
 	}
 	return "", false
+}
+
+// fixtureFrontEnd runs what `fern -check` runs: load, then gates.Check, whose
+// type check of the instantiated program after monomorph is where an error
+// only an instance shows is reported.
+func fixtureFrontEnd(mainPath string) error {
+	prog, _, err := modload.Load(mainPath)
+	if err != nil {
+		return err
+	}
+	_, err = gates.Check(mainPath, prog, "", nil)
+	return err
 }
 
 // loweringStage is which stage a lowering-error fixture actually
@@ -366,14 +369,7 @@ const (
 // and the self-host compiler to reject it. Unlike the front-end path this
 // is per-target, because lowering is where the target starts to matter.
 func runFixtureLoweringError(t *testing.T, mainPath, target string) (string, loweringStage) {
-	prog, _, err := modload.Load(mainPath)
-	if err != nil {
-		return err.Error(), frontEndRejected
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		return err.Error(), frontEndRejected
-	}
-	if _, err := checker.Check(prog); err != nil {
+	if err := fixtureFrontEnd(mainPath); err != nil {
 		return err.Error(), frontEndRejected
 	}
 	args := []string{"-target", target, "-o", filepath.Join(t.TempDir(), "prog")}

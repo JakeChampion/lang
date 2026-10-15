@@ -1,7 +1,7 @@
-// VS Code extension entry point. Spawns the `fern-lsp` binary the
-// user's PATH (or `fern.serverPath` setting) points at and wraps it
-// as a language client using stdio transport — the same wire format
-// `fern-lsp` already speaks for any generic LSP client.
+// VS Code extension entry point. Spawns `fern -lsp` — the `fern` binary
+// the user's PATH (or `fern.serverPath` setting) points at — and wraps it
+// as a language client using stdio transport, the same wire format the
+// server speaks for any generic LSP client.
 //
 // One file: keeping the extension this small means the maintenance
 // surface is small too. If we ever need to ship binaries, build a
@@ -24,15 +24,15 @@ export async function activate(context: ExtensionContext): Promise<void> {
   const serverPath = resolveServerPath();
   if (!serverPath) {
     window.showWarningMessage(
-      "fern: fern-lsp binary not found. Set `fern.serverPath` or add it to your PATH.",
+      "fern: the fern binary was not found. Set `fern.serverPath` or add it to your PATH.",
     );
     return;
   }
 
-  const args = workspace.getConfiguration("fern").get<string[]>("serverArgs", []);
+  const args = workspace.getConfiguration("fern").get<string[]>("serverArgs", ["-lsp"]);
   const serverOptions: ServerOptions = {
     run: { command: serverPath, args, transport: TransportKind.stdio },
-    // Same binary for debug — neither server has dev-only flags.
+    // Same binary for debug — the server has no dev-only flags.
     debug: { command: serverPath, args, transport: TransportKind.stdio },
   };
 
@@ -71,16 +71,16 @@ export async function deactivate(): Promise<void> {
   }
 }
 
-// resolveServerPath returns an absolute path to a fern-lsp binary the
+// resolveServerPath returns an absolute path to a fern binary the
 // extension can spawn, or undefined when nothing was found. Settings
-// take precedence; otherwise we look the unqualified `fern-lsp` up
+// take precedence; otherwise we look the unqualified `fern` up
 // on PATH. The fs.existsSync check on the configured value lets us
 // surface a clear error when the user typed a wrong path instead of
 // failing with the spawn error VS Code would otherwise show.
 function resolveServerPath(): string | undefined {
   const configured = workspace
     .getConfiguration("fern")
-    .get<string>("serverPath", "fern-lsp");
+    .get<string>("serverPath", "fern");
 
   if (path.isAbsolute(configured)) {
     return fs.existsSync(configured) ? configured : undefined;

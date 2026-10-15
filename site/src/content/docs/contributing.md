@@ -29,10 +29,10 @@ go run ../cmd/ferndoc -out src/content/docs/stdlib/
 npm run dev      # live-reload dev server
 ```
 
-`web/build.sh` writes two WebAssembly files. `playground.wasm` is Fern's
-compiler, built for WASI, and does the checking, running and compiling;
-`fern.wasm` is the Go language server behind the editor's diagnostics,
-hover and completion. The compiler build needs `bin/fern-selfhost`, and
+`web/build.sh` writes `playground.wasm`, Fern's compiler built for WASI. It
+does the checking, running and compiling, and its `-lsp` mode is the
+language server behind the editor's diagnostics, hover and completion.
+The build needs `bin/fern-selfhost`, and
 the script runs `make selfhost-cli` to build it when it is missing. Copy
 every `.html`, `.js` and `.wasm` file: `index.html` imports
 `wasi-shim.js` and `wasi-http-shim.js`, and without them the playground

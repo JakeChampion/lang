@@ -529,20 +529,23 @@
 # links it at 8368344 (+4.9%), and #12425's checker fixes and language
 # server add 11160 bytes. Built locally with TestSelfHostWarmStockDriver,
 # which matched driver-sizes' report on run 38693262971 to the byte.
+# 2026-10-15 — asm_load_run 9642480 -> 10125912 (+5.0%): main's growth.
+# Built locally with TestSelfHostWarmStockDriver, main at 836578b5 links it
+# at 10125912, and #12443's language-server switch adds 0 bytes. Matches
+# driver-sizes' report on run 38755174188.
 # 2026-10-15 — fern.fern/stage2 11761952 -> 12054832 (+2.5%), fern.fern
-# 12339464 -> 12630080 (+2.4%), asm_load_run 9642480 -> 10120120 (+5.0%),
-# asm_ir_run 8379504 -> 8418328, wasm_ir_run 7533704 -> 7833136, wasm_run
-# 7530568 -> 7835128 and wasm_runio_run 7540984 -> 7835304 (+3.9-4.0%),
-# asm_pathprobe_run 4684360 -> 4962512 (+5.9%) and checker_modload_run
-# 2747272 -> 2852304 (+3.8%): main at cd064bc0 with #12418's semreach pass
-# (compiler/semreach.fern), which every driver linking semsource carries.
-# Numbers from driver-sizes' report on run 38693049933. Only asm_ir_run's
-# split is measured: main alone links it at 8368344 there (the entry
-# above), so the pass is 49984 bytes (+0.6%) of it.
+# 12339464 -> 12630080 (+2.4%), asm_ir_run 8379504 -> 8418328, wasm_ir_run
+# 7533704 -> 7833136, wasm_run 7530568 -> 7835128 and wasm_runio_run
+# 7540984 -> 7835304 (+3.9-4.0%), asm_pathprobe_run 4684360 -> 4962512
+# (+5.9%) and checker_modload_run 2747272 -> 2852304 (+3.8%): main at
+# cd064bc0 with #12418's semreach pass (compiler/semreach.fern), which every
+# driver linking semsource carries. Numbers from driver-sizes' report on run
+# 38693049933. Only asm_ir_run's split is measured: main alone links it at
+# 8368344 there (an entry above), so the pass is 49984 bytes (+0.6%) of it.
 
 fern.fern/stage2 12054832
 fern.fern 12630080
-drivers/asm_load_run.fern 10120120
+drivers/asm_load_run.fern 10125912
 drivers/asm_modload_run.fern 8699400
 drivers/asm_ir_run.fern 8418328
 drivers/asm_run.fern 7612208

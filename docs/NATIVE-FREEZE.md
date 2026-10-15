@@ -107,7 +107,6 @@ exceptions (#4451) is closed. Two things follow:
    wasi:http world included: the self-host compiler has had
    `wasm32-wasi-http` since the same day (#6636: `std/wasi_http` is the
    entry, `wit_compose.fern` the framing, and the native component is the
-   differential's other side), and the page's http panes run on it. What
-   `cmd/fern-wasm` still carries is the language server (#6641), the Go
-   front end the freeze keeps, which does not touch the backends;
-   `cmd/fern-lsp` is the same front end.
+   differential's other side), and the page's http panes run on it. The
+   language server is the self-host's `fern -lsp`, in the editor and in the
+   page alike (#6641).

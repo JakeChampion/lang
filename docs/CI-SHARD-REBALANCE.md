@@ -118,6 +118,28 @@ are estimated from that run's case-seconds until the next refresh measures
 them. The driver build is cached, so the split adds about two
 seconds per test.
 
+## Split of the checker corpus gate (2026-10-15)
+
+`TestSelfHostCheckAgreesWithGoOnTheCorpus` landed with no weight, so the
+sharder counted it as 1 s. On #12430's run
+[38714253220](https://github.com/JakeChampion/lang/actions/runs/38714253220)
+it measured 969 s, and the shard9 worker that drew it reached the 28-minute
+timeout. That is 58% of a shard's budget, past the half that
+`scripts/ci-test-weights` reserves for a job of its own.
+
+It now runs as four tests, one per part of the corpus:
+
+| test | programs | subtest-seconds, local | weight |
+|---|--:|--:|--:|
+| `TestSelfHostCheckAgreesWithGoOnStdlibTests` (`tests/stdlib`) | 247 | 1,199 | 650 |
+| `TestSelfHostCheckAgreesWithGoOnTests` (the rest of `tests/`) | 72 | 302 | 170 |
+| `TestSelfHostCheckAgreesWithGoOnConformance` | 575 | 158 | 90 |
+| `TestSelfHostCheckAgreesWithGoOnExamples` | 118 | 156 | 90 |
+
+A stdlib test imports most of the standard library, so `tests/stdlib` costs
+seven times what the 575 conformance cases do. Each weight is CI's 969 s split
+by the local subtest-seconds, until a refresh measures it.
+
 ## Replay of training observations
 
 | Run | Original longest active-time sum | Candidate longest active-time sum | Original spread | Candidate spread |

@@ -34,6 +34,7 @@ import "./asmcore";
 import "./checker";
 import "./constfold";
 import "./emitforms";
+import "./fern";
 import "./flatten";
 import "./interp";
 import "./ircore";
@@ -85,6 +86,25 @@ function embedded_stdlib(): modloader.Overlay {
   }
   return modloader.Overlay { paths: paths, srcs: srcs, sealed: true, files: modloader.no_buffers() };
 }
+
+// embedded_stdlib_files is the `-embed` bundle as the files of a stdlib root
+// at `root`, which is how the language server reads it.
+function embedded_stdlib_files(root: string): modloader.Buffers {
+  let b: modloader.Buffers = modloader.no_buffers();
+  for a in __fern_assets() {
+    b = modloader.Buffers { paths: b.paths.append(root + "/" + a.0), srcs: b.srcs.append(a.1 + "") };
+  }
+  return b;
+}
+
+// LSP_FLAG runs `fern -lsp`'s language server on stdin and stdout. A browser
+// host feeds stdin as one buffer, so a page replays a whole session — open
+// the document, ask, shut down — per question it has.
+const LSP_FLAG: string = "-lsp";
+
+// LSP_STDLIB_ROOT is where the language server's stdlib lives: a directory no
+// host has, so a path under it is only ever an embedded file.
+const LSP_STDLIB_ROOT: string = "/stdlib";
 
 // CHECK_FLAG selects the diagnostics-only mode. A playground wants the errors
 // as the user types, long before anything is worth compiling, and running the
@@ -190,34 +210,48 @@ function interpret(merged: parser.Module): i32 {
   }
 }
 
-function run(): i32 {
-  let mode_check: boolean = false;
-  let mode_interp: boolean = false;
-  let target: string = "wasm32-wasi";
-  let form: string = "";
-  let av: string[] = args();
+// Argv is the driver's mode, read from its arguments: which of `-check`,
+// `-interp` and `-lsp` was given, the `-target` and whether one was named, and
+// the `-emit` form ("" when none was).
+struct Argv { check: boolean, interp: boolean, lsp: boolean, target: string, target_given: boolean, form: string }
+
+function parse_argv(av: string[]): Argv {
+  let o: Argv = Argv { check: false, interp: false, lsp: false, target: "wasm32-wasi", target_given: false, form: "" };
   let ai: i32 = 0;
   while (ai < av.len()) {
     let a: string = av[ai];
     if (a == CHECK_FLAG) {
-      mode_check = true;
+      o = Argv { ...o, check: true };
     }
     if (a == INTERP_FLAG) {
-      mode_interp = true;
+      o = Argv { ...o, interp: true };
+    }
+    if (a == LSP_FLAG) {
+      o = Argv { ...o, lsp: true };
     }
     if ((a == TARGET_FLAG || a == EMIT_FLAG) && ai + 1 < av.len()) {
       if (a == TARGET_FLAG) {
-        target = av[ai + 1];
+        o = Argv { ...o, target: av[ai + 1], target_given: true };
       } else {
-        form = av[ai + 1];
+        o = Argv { ...o, form: av[ai + 1] };
       }
       ai = ai + 1;
     }
     ai = ai + 1;
   }
+  return o;
+}
+
+function run(): i32 {
+  let o: Argv = parse_argv(args());
+  let target: string = o.target;
+  let form: string = o.form;
   if (!(target == "wasm32-wasi" || target == "wasm32-wasi-http" || target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin")) {
     eprint("fern: unknown -target: " + target + " (want one of: arm64-darwin arm64-linux wasm32-wasi wasm32-wasi-http x86-64-linux)");
     return 2;
+  }
+  if (o.lsp) {
+    return fern.serve_lsp_in_memory(LSP_STDLIB_ROOT, embedded_stdlib_files(LSP_STDLIB_ROOT), target, o.target_given);
   }
   if (platforms.for_target(target).isa == "wasm32") {
     if (form.len() == 0) {
@@ -265,7 +299,7 @@ function run(): i32 {
   merged = parser.fill_default_args_module(merged);
   merged = parser.resolve_variant_fields_module(merged);
 
-  if (mode_check) {
+  if (o.check) {
     return check(merged, files);
   }
   // Ahead of the emit gates below: those reject shapes the wasm EMITTER
@@ -273,7 +307,7 @@ function run(): i32 {
   // interpreter can run is worth running even where the backend would
   // decline it. It is checked first, as `fern -interp` is, so a type error
   // reads as a diagnostic rather than an evaluator failure mid-run.
-  if (mode_interp) {
+  if (o.interp) {
     let checked: i32 = check(merged, files);
     if (checked != 0) {
       return checked;

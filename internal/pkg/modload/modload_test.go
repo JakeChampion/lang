@@ -1480,13 +1480,10 @@ function main(): i32 {
 	}
 }
 
-// LoadSource must not depend on os.Getwd — it's unimplemented under
-// GOOS=js, where the browser playground / cmd/fern-wasm run every
-// in-memory compile. Regression guard for the bug where LoadSource
-// resolved a relative synthetic entry via filepath.Abs (→ os.Getwd),
-// breaking the playground with "getwd: not implemented on js". Simulate
-// a missing cwd on linux by chdir'ing into a temp dir and removing it,
-// so os.Getwd() errors; LoadSource should still succeed.
+// LoadSource must not depend on os.Getwd. Regression guard for the bug
+// where LoadSource resolved a relative synthetic entry via filepath.Abs
+// (→ os.Getwd). Simulate a missing cwd by chdir'ing into a temp dir and
+// removing it, so os.Getwd() errors; LoadSource should still succeed.
 func TestLoadSourceDoesNotNeedGetwd(t *testing.T) {
 	orig, err := os.Getwd()
 	if err != nil {

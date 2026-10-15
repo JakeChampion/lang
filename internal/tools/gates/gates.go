@@ -1,7 +1,5 @@
 // Package gates holds the checks a loaded program passes before code
-// generation, and Check, which runs them in `fern -check`'s order. Both
-// `fern -check` and fern-lsp's diagnostics are Check, so the editor reports
-// what the command line does.
+// generation, and Check, which runs them in `fern -check`'s order.
 package gates
 
 import (
