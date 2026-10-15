@@ -754,6 +754,10 @@ func TestSelfHostX86SseFloatExtGas(t *testing.T) {
 		{"aesenclast %xmm9, %xmm10", []byte{0x66, 0x45, 0x0f, 0x38, 0xdd, 0xd1}},
 		{"aeskeygenassist $1, %xmm1, %xmm0", []byte{0x66, 0x0f, 0x3a, 0xdf, 0xc1, 0x01}},
 		{"aeskeygenassist $54, %xmm11, %xmm2", []byte{0x66, 0x41, 0x0f, 0x3a, 0xdf, 0xd3, 0x36}},
+		// palignr takes the schedule words that straddle two registers in
+		// the SHA-256 kernel; SSSE3.
+		{"palignr $4, %xmm1, %xmm2", []byte{0x66, 0x0f, 0x3a, 0x0f, 0xd1, 0x04}},
+		{"palignr $8, %xmm9, %xmm10", []byte{0x66, 0x45, 0x0f, 0x3a, 0x0f, 0xd1, 0x08}},
 		// pshufb is the byte-lane shuffle the 16-byte reverse a CRC fold
 		// needs; SSSE3, and so inside the declared baseline.
 		{"pshufb %xmm1, %xmm2", []byte{0x66, 0x0f, 0x38, 0x00, 0xd1}},

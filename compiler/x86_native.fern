@@ -3402,6 +3402,9 @@ function x86_gas_imm3a_op(mnem: string): i32 {
     "aeskeygenassist" => {
       return 223;
     },
+    "palignr" => {
+      return 15;
+    },
     _ => {
       return 0 - 1;
     }

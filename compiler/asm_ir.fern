@@ -1737,6 +1737,133 @@ function emit_rt_aes_gcm(s: asmcore.EmitState): asmcore.EmitState {
   return s.write(x86_aes_expand_key() + x86_aes_ctr32() + x86_ghash());
 }
 
+// __fern_sha256_hw_blocks(%rdi = state, %rsi = data), the SHA-256 compression
+// over each whole 64-byte block of data, answering a fresh 32-byte packed u8[]
+// in %rax, or an empty one for a state under 32 bytes. The state is eight
+// little-endian words and is kept in the answer between blocks. x86-64-v3 has
+// no SHA instructions, so the message schedule runs four words at a time in
+// xmm4-xmm7 while the rounds run in GPRs with BMI2's rorx: the working
+// variables in r8d-r15d, renamed per round rather than moved. Each group of
+// four rounds reads its words plus constants from the frame at (%rsp).
+function x86_sha256_blocks(): string {
+  let o: string = "    .globl __fern_sha256_hw_blocks\n    .type __fern_sha256_hw_blocks, @function\n__fern_sha256_hw_blocks:\n"
+    + "    pushq %rbx\n    pushq %rbp\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n    subq $56, %rsp\n"
+    + x86_aes_view("%rsi", "%r8", "%r9", ".Lsha_data") + "    movq %r8, 16(%rsp)\n    movq %r9, 24(%rsp)\n"
+    + x86_aes_view("%rdi", "%r8", "%r10", ".Lsha_st") + "    movq %r8, 32(%rsp)\n"
+    + "    movl $32, %ebx\n    cmpq $32, %r10\n    jae .Lsha_stok\n    xorl %ebx, %ebx\n.Lsha_stok:\n"
+    + "    leaq 7(%rbx), %rdi\n    shrq $3, %rdi\n    call __fern_arr_box\n    movq %rbx, (%rax)\n    movq %rax, 40(%rsp)\n    testq %rbx, %rbx\n    jz .Lsha_ret\n"
+    + "    movq 32(%rsp), %r8\n    movdqu (%r8), %xmm0\n    movdqu 16(%r8), %xmm1\n    movdqu %xmm0, 8(%rax)\n    movdqu %xmm1, 24(%rax)\n"
+    + "    movdqu .Lsha_bswap(%rip), %xmm15\n    leaq .Lsha_k(%rip), %rbp\n";
+  o = o + ".Lsha_loop:\n    movq 24(%rsp), %rcx\n    cmpq $64, %rcx\n    jb .Lsha_ret\n    subq $64, %rcx\n    movq %rcx, 24(%rsp)\n    movq 16(%rsp), %rsi\n";
+  let j: i32 = 0;
+  while (j < 4) {
+    let x: string = "%xmm" + util.i32_to_string(4 + j);
+    o = o + "    movdqu " + util.i32_to_string(16 * j) + "(%rsi), " + x + "\n    pshufb %xmm15, " + x + "\n";
+    j = j + 1;
+  }
+  o = o + "    addq $64, %rsi\n    movq %rsi, 16(%rsp)\n    movq 40(%rsp), %rax\n";
+  let v: string[] = ["%r8d", "%r9d", "%r10d", "%r11d", "%r12d", "%r13d", "%r14d", "%r15d"];
+  let i: i32 = 0;
+  while (i < 8) {
+    o = o + "    movl " + util.i32_to_string(8 + 4 * i) + "(%rax), " + v[i] + "\n";
+    i = i + 1;
+  }
+  o = o + "    movl %r9d, %edi\n    xorl %r10d, %edi\n" + x86_sha256_rounds() + "    movq 40(%rsp), %rax\n";
+  i = 0;
+  while (i < 8) {
+    o = o + "    addl " + v[i] + ", " + util.i32_to_string(8 + 4 * i) + "(%rax)\n";
+    i = i + 1;
+  }
+  return o + "    jmp .Lsha_loop\n.Lsha_ret:\n    movq 40(%rsp), %rax\n    addq $56, %rsp\n"
+    + "    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbp\n    popq %rbx\n    ret\n"
+    + "    .size __fern_sha256_hw_blocks, .-__fern_sha256_hw_blocks\n";
+}
+
+// x86_sha256_rounds is one block's sixty-four rounds, four a group. A group
+// stores its words plus constants, then the first twelve extend the schedule
+// in place: w(i) from w(i), w(i+1), w(i+2) and w(i+3), the four xmm registers
+// taken in rotation. %edi carries b ^ c from one round to the next, which is
+// the next round's a ^ b, so Maj costs four instructions.
+function x86_sha256_rounds(): string {
+  let v: string[] = ["%r8d", "%r9d", "%r10d", "%r11d", "%r12d", "%r13d", "%r14d", "%r15d"];
+  let bc: string = "%edi";
+  let ab: string = "%esi";
+  let o: string = "";
+  let n: i32 = 0;
+  let g: i32 = 0;
+  while (g < 16) {
+    let x: string[] = [];
+    let j: i32 = 0;
+    while (j < 4) {
+      x = x.append("%xmm" + util.i32_to_string(4 + (g + j) % 4));
+      j = j + 1;
+    }
+    o = o + "    movdqu " + util.i32_to_string(16 * g) + "(%rbp), %xmm0\n    paddd " + x[0] + ", %xmm0\n    movdqu %xmm0, (%rsp)\n";
+    if (g < 12) {
+      o = o + x86_sha256_schedule(x);
+    }
+    let r: i32 = 0;
+    while (r < 4) {
+      let a: string = v[(64 - n) % 8];
+      let b: string = v[(65 - n) % 8];
+      let c: string = v[(66 - n) % 8];
+      let d: string = v[(67 - n) % 8];
+      let e: string = v[(68 - n) % 8];
+      let f: string = v[(69 - n) % 8];
+      let gg: string = v[(70 - n) % 8];
+      let h: string = v[(71 - n) % 8];
+      o = o + "    addl " + util.i32_to_string(4 * r) + "(%rsp), " + h + "\n"
+        + "    rorxl $6, " + e + ", %eax\n    rorxl $11, " + e + ", %ebx\n    xorl %ebx, %eax\n    rorxl $25, " + e + ", %ebx\n    xorl %ebx, %eax\n"
+        + "    movl " + f + ", %ecx\n    xorl " + gg + ", %ecx\n    andl " + e + ", %ecx\n    xorl " + gg + ", %ecx\n"
+        + "    addl %eax, " + h + "\n    addl %ecx, " + h + "\n    addl " + h + ", " + d + "\n"
+        + "    rorxl $2, " + a + ", %eax\n    rorxl $13, " + a + ", %ebx\n    xorl %ebx, %eax\n    rorxl $22, " + a + ", %ebx\n    xorl %ebx, %eax\n"
+        + "    movl " + a + ", " + ab + "\n    xorl " + b + ", " + ab + "\n    andl " + ab + ", " + bc + "\n    xorl " + b + ", " + bc + "\n"
+        + "    addl %eax, " + h + "\n    addl " + bc + ", " + h + "\n";
+      let t: string = bc;
+      bc = ab;
+      ab = t;
+      n = n + 1;
+      r = r + 1;
+    }
+    g = g + 1;
+  }
+  return o;
+}
+
+// x86_sha256_sigma is %xmm3 = (src ror r1) ^ (src ror r2) ^ (src >> sh) in
+// each lane, through %xmm0. src is left alone.
+function x86_sha256_sigma(src: string, r1: i32, r2: i32, sh: i32): string {
+  return "    movdqa " + src + ", %xmm3\n    psrld $" + util.i32_to_string(r1) + ", %xmm3\n"
+    + "    movdqa " + src + ", %xmm0\n    pslld $" + util.i32_to_string(32 - r1) + ", %xmm0\n    pxor %xmm0, %xmm3\n"
+    + "    movdqa " + src + ", %xmm0\n    psrld $" + util.i32_to_string(r2) + ", %xmm0\n    pxor %xmm0, %xmm3\n"
+    + "    movdqa " + src + ", %xmm0\n    pslld $" + util.i32_to_string(32 - r2) + ", %xmm0\n    pxor %xmm0, %xmm3\n"
+    + "    movdqa " + src + ", %xmm0\n    psrld $" + util.i32_to_string(sh) + ", %xmm0\n    pxor %xmm0, %xmm3\n";
+}
+
+// x86_sha256_schedule replaces x[0]'s four words w(t-16..t-13) with
+// w(t..t+3). w(t-7..t-4) and w(t-15..t-12) straddle two registers, so palignr
+// takes them; sigma1 reads w(t-2) and w(t-1) for the low two words, then the
+// two words just made for the high two.
+function x86_sha256_schedule(x: string[]): string {
+  return "    movdqa " + x[3] + ", %xmm1\n    palignr $4, " + x[2] + ", %xmm1\n    paddd " + x[0] + ", %xmm1\n"
+    + "    movdqa " + x[1] + ", %xmm2\n    palignr $4, " + x[0] + ", %xmm2\n"
+    + x86_sha256_sigma("%xmm2", 7, 18, 3) + "    paddd %xmm3, %xmm1\n"
+    + x86_sha256_sigma(x[3], 17, 19, 10) + "    psrldq $8, %xmm3\n    paddd %xmm3, %xmm1\n"
+    + x86_sha256_sigma("%xmm1", 17, 19, 10) + "    pslldq $8, %xmm3\n    paddd %xmm3, %xmm1\n"
+    + "    movdqa %xmm1, " + x[0] + "\n";
+}
+
+function emit_rt_sha256(s: asmcore.EmitState): asmcore.EmitState {
+  let k: u32[] = asmcore.sha256_k();
+  s = s.write("    .section .rodata\n    .align 16\n.Lsha_bswap:\n    .byte 3,2,1,0,7,6,5,4,11,10,9,8,15,14,13,12\n.Lsha_k:\n");
+  let i: i32 = 0;
+  while (i < 64) {
+    s = s.write("    .long " + util.i64_to_string(k[i] as i64) + "\n");
+    i = i + 1;
+  }
+  return s.write("    .section .text\n" + x86_sha256_blocks());
+}
+
 // emit_rt_crc32_cksum emits `__fern_crc32_cksum(crc, box) -> i32`: the bytes of
 // the string box folded into the running CRC-32 that cksum(1) prints (poly
 // 0x04C11DB7, MSB first, unreflected, no final complement).
@@ -5437,9 +5564,8 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     return emit_aes_gcm_op(o, s);
   }
   if (o.kind_tag == 410) {  // sha256_hw_blocks
-    // [state, data] -> empty, as sha256_hw's 0 promises: no SHA-256 instructions.
-    s = s.write("    addq $16, %rsp\n    xorl %edi, %edi\n    call __fern_arr_box\n    movq $0, (%rax)\n    pushq %rax\n");
-    return s.need("heap");
+    s = s.need("sha256").need("heap");
+    return s.write("    popq %rsi\n    popq %rdi\n    call __fern_sha256_hw_blocks\n    pushq %rax\n");
   }
   if (o.kind_tag == 381) {
     return emit_outer_mul_f64(s);
@@ -10238,8 +10364,8 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     // () -> heap-pointer width in bytes. 8 on x86-64.
     s = s.write("    pushq $8\n");
   } else if (o.kind_tag == 409) {  // sha256_hw
-    // () -> 0: x86-64-v3 has no SHA-256 instructions.
-    s = s.write("    pushq $0\n");
+    // () -> 1: __fern_sha256_hw_blocks is the kernel.
+    s = s.write("    pushq $1\n");
   } else if (o.kind_tag == 74) {  // memcpy
     // [dst, src, n] -> copy n bytes src->dst (rep movsb), push dummy 0.
     // n is on top, then src, then dst (the lowering order). Mirrors the
@@ -11881,6 +12007,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.has_need("aes_gcm")) {
     s = emit_rt_aes_gcm(s);
+  }
+  if (s.has_need("sha256")) {
+    s = emit_rt_sha256(s);
   }
   if (s.has_need("sum_bytes")) {
     s = emit_rt_sum_bytes(s);
