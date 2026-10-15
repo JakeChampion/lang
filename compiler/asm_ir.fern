@@ -10249,9 +10249,9 @@ function ssa_replace_all(text: string, mark: string, with: string): string {
 // is refused naming the op (ircore.ssa_refuse). Every op the lowering
 // produces has an arm, so a refusal here is a compiler bug, not a program
 // the backend does not cover.
-function emit_ssa_function(r: irtables.LowerResult, selected: physicalbody.Selected, label_name: string, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
+function emit_ssa_function(r: irtables.LowerResult, selected: physicalbody.Selected, pre: asmcore.Prelift, label_name: string, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   let t_lift: i64 = monotonic_ns();
-  let lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(s.kinds, label_name, r.n_params, r.n_locals, r.ops, r.dbg_slots.len() > 0 && s.var_rows);
+  let lifted: ssa_lift.LResult = s.lift(pre, label_name, r);
   let why: string = lifted.bail;
   if (lifted.ok) {
     let collision: i32 = ssa.repeated_block_id(lifted.func);
@@ -10265,7 +10265,7 @@ function emit_ssa_function(r: irtables.LowerResult, selected: physicalbody.Selec
   }
   let lift_ms: i64 = (monotonic_ns() - t_lift) / 1000000i64;
   let t_emit: i64 = monotonic_ns();
-  let certified: ssaprepare.Body = ssaprepare.finish(r, selected, lifted, s.leaves);
+  let certified: ssaprepare.Body = s.finish(pre, r, selected, lifted);
   // Certified in the form the emitter allocates but for its selects: the
   // leaves spliced, the trivial phis folded and the dead values pruned, so a
   // slot the lowering wrote and never read carries no phi of its own.
@@ -10286,14 +10286,14 @@ function emit_ssa_function(r: irtables.LowerResult, selected: physicalbody.Selec
 
 // emit_function_via_ir_pre emits declaration `fd`'s lowered body `r` through
 // the register path, writing through the state's builder.
-function emit_function_via_ir_pre(r: irtables.LowerResult, selected: physicalbody.Selected, fd: parser.FuncDecl, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
+function emit_function_via_ir_pre(r: irtables.LowerResult, selected: physicalbody.Selected, pre: asmcore.Prelift, fd: parser.FuncDecl, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   // Methods get the receiver-type-qualified label `__fn_<Type>.<name>` (matching
   // the lowering's dispatch); free functions stay `__fn_<name>`.
   let label_name: string = fd.name;
   if (fd.receiver_type.len() > 0) {
     label_name = util.base_type_name(fd.receiver_type) + "." + fd.name;
   }
-  return emit_function_via_ir_named(r, selected, label_name, false, s, vgate);
+  return emit_function_via_ir_named(r, selected, pre, label_name, false, s, vgate);
 }
 
 // emit_function_via_ir_named is the body of emit_function_via_ir_pre with the
@@ -10302,7 +10302,7 @@ function emit_function_via_ir_pre(r: irtables.LowerResult, selected: physicalbod
 // emits through exactly the same path. `weak` marks the definition co-linkable:
 // several per-module units may each emit an identical copy and the linker keeps
 // one.
-function emit_function_via_ir_named(r: irtables.LowerResult, selected: physicalbody.Selected, label_name: string, weak: boolean, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
+function emit_function_via_ir_named(r: irtables.LowerResult, selected: physicalbody.Selected, pre: asmcore.Prelift, label_name: string, weak: boolean, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   if (weak) {
     s = s.write(".weak __fn_" + asmcore.sanitize_label(label_name) + "\n.weak __fn_" + asmcore.sanitize_label(label_name) + ".r\n");
   }
@@ -10331,7 +10331,7 @@ function emit_function_via_ir_named(r: irtables.LowerResult, selected: physicalb
   }
 
   irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals, vgate);
-  return emit_ssa_function(r, selected, label_name, s, vgate);
+  return emit_ssa_function(r, selected, pre, label_name, s, vgate);
 }
 
 // emit_dir_op calls a Dir op's runtime leaf, __fern_<kind name>, on the stack
@@ -11535,11 +11535,11 @@ function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.Emi
   let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate_unreported(irtables.fn_sig_index(fns), s.kinds.pops, physicalbody.abis(physical)), s.memo);
   let i: i32 = 0;
   while (i < fns.len()) {
-    s = emit_function_via_ir_pre(bodies[i], physicalbody.select(physical, i), fns[i], s, vgate);
+    s = emit_function_via_ir_pre(bodies[i], physicalbody.select(physical, i), asmcore.no_prelift(), fns[i], s, vgate);
     i = i + 1;
   }
   // Past the declarations: the drop helpers the typed lowering defines.
-  s = emit_named_bodies(bodies, physical, fns.len(), s, vgate);
+  s = emit_named_bodies(bodies, physical, [], fns.len(), s, vgate);
   if (s.shape_lits.len() > sh0) {
     s = asmcore.emit_shape_lits_from(s, sh0);
     s = s.write("    .text\n");
@@ -11593,7 +11593,8 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
   if (check_claims) {
     ircore.check_fip_claims(mod.funcs, lo, hh, cache);
   }
-  s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)), leaves: asmcore.unit_leaves(mod, lo, hh, cache) };
+  let unit: asmcore.UnitLeaves = asmcore.unit_leaves(mod, lo, hh, cache);
+  s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)), leaves: unit.leaves };
   let fi: i32 = lo;
   while (fi < hh) {
     let r: irtables.LowerResult = ircore.produced(cache, fi, mod.funcs[fi]);
@@ -11614,22 +11615,22 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
       }
       s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n.globl __fn_" + asmcore.sanitize_label(gname) + ".r\n");
     }
-    s = emit_function_via_ir_pre(r, physicalbody.select(physical, fi), mod.funcs[fi], s, vgate);
+    s = emit_function_via_ir_pre(r, physicalbody.select(physical, fi), s.prelift(unit.pre, fi, r), mod.funcs[fi], s, vgate);
     fi = fi + 1;
   }
   // Cache entries past the declarations are bodies with no FuncDecl, each
   // naming the symbol it defines. `.weak`, so a shard window or a sibling
   // unit that emits the same body co-links to one definition.
-  s = emit_named_bodies(cache, physical, mod.funcs.len(), s, vgate);
+  s = emit_named_bodies(cache, physical, unit.pre, mod.funcs.len(), s, vgate);
   irverifygate.report(vgate);
   return s;
 }
 
-function emit_named_bodies(cache: irtables.LowerResult[], physical: physicalbody.Collection, from: i32, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
+function emit_named_bodies(cache: irtables.LowerResult[], physical: physicalbody.Collection, pre: asmcore.Prelift[], from: i32, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   let xi: i32 = from;
   while (xi < cache.len()) {
     if (!s.has_named(cache[xi].name)) {
-      s = emit_function_via_ir_named(cache[xi], physicalbody.select(physical, xi), cache[xi].name, true, s, vgate).with_named(cache[xi].name);
+      s = emit_function_via_ir_named(cache[xi], physicalbody.select(physical, xi), s.prelift(pre, xi, cache[xi]), cache[xi].name, true, s, vgate).with_named(cache[xi].name);
     }
     xi = xi + 1;
   }
