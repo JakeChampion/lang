@@ -28,7 +28,7 @@ func mergeEnumInference(a, b ast.EnumType) (ast.EnumType, bool) {
 		switch {
 		case unboundEnumArg(x):
 			args[i] = y
-		case unboundEnumArg(y), ast.Equal(x, y):
+		case unboundEnumArg(y):
 			args[i] = x
 		default:
 			args[i] = unifyIfArms(x, y)

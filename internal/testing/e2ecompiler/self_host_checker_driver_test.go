@@ -62,6 +62,10 @@ func TestSelfHostCheckerDriverX86_64(t *testing.T) {
 		// later as an uninferable statement in its body.
 		{"for-over-struct-e034", "struct Box { k: i32 }\nfunction main(): i32 {\n  let b: Box = Box { k: 1 };\n  let n: i32 = 0;\n  for it in b {\n    n = n + it.k;\n  }\n  return n;\n}\n", 1, "error[E034]: indexing non-array value of type Box (5:"},
 		{"destructure-field-type-e002", "struct P { x: string }\nfunction main(): i32 { let p: P = P { x: \"s\" }; let P { x } = p; return x; }\n", 1, "error[E002]"},
+		{"value-match-settled-local", valueMatchSettledLocal, 0, ""},
+		{"method-callable-param-binds", methodCallableParamBinds, 0, ""},
+		{"generic-enum-callable-payload", genericEnumCallablePayload, 0, ""},
+		{"cast-struct-to-other-struct-e033", "struct Point { x: i32, y: i32 }\nstruct Vec2 { x: i32, y: i32 }\nfunction f(p: Point): Vec2 { return p as Vec2; }\nfunction main(): i32 { return 0; }\n", 1, "error[E033]"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -21,6 +21,7 @@ func TestMatchNumericJoinRetainsConcreteArms(t *testing.T) {
 		{"float", "f32", "f64", "0.5"},
 		{"integer", "i32", "i64", "0"},
 		{"tuple-float", "(f32, i32)", "(f64, i32)", "(0.5, 0)"},
+		{"array-integer", "i32[]", "i64[]", "[0]"},
 	}
 	orders := [][3]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}}
 	for _, shape := range shapes {
@@ -41,12 +42,15 @@ func TestMatchNumericJoinRetainsConcreteArms(t *testing.T) {
 }
 
 // Equal defaults are not equal commitments: a literal's default f64/i32 must
-// not erase the other arm's concrete width, even inside a tuple result.
+// not erase the other arm's concrete width, even inside a tuple, array or enum argument.
 func TestUnifyIfArmsCommitsLiteralContext(t *testing.T) {
 	for _, pair := range [][2]ast.Type{
 		{ast.FloatType{Polymorphic: true}, ast.FloatType{Width: 64}},
 		{ast.NumberType{Polymorphic: true}, ast.NumberType{Width: 32, Signed: true}},
 		{ast.TupleType{Elems: []ast.Type{ast.FloatType{Polymorphic: true}, ast.NumberType{Polymorphic: true}}}, ast.TupleType{Elems: []ast.Type{ast.FloatType{Width: 64}, ast.NumberType{Width: 32, Signed: true}}}},
+		{ast.ArrayType{Elem: ast.NumberType{Polymorphic: true}}, ast.ArrayType{Elem: ast.NumberType{Width: 64}}},
+		{ast.SliceType{Elem: ast.NumberType{Polymorphic: true}}, ast.SliceType{Elem: ast.FloatType{Width: 32}}},
+		{ast.EnumType{Name: "Option", Args: []ast.Type{ast.NumberType{Polymorphic: true}}}, ast.EnumType{Name: "Option", Args: []ast.Type{ast.NumberType{Width: 32, Signed: true}}}},
 	} {
 		for _, order := range [][2]ast.Type{pair, {pair[1], pair[0]}} {
 			if got := unifyIfArms(order[0], order[1]); !reflect.DeepEqual(got, pair[1]) {
