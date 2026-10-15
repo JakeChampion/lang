@@ -4,6 +4,7 @@
 import "./ast";
 import "./astwalk";
 import "./parser";
+import "./lexer";
 import "./lexical";
 import "./checker";
 import "./typeinfo";
@@ -426,10 +427,7 @@ function spelled_typevar(spelling: string): boolean {
 }
 
 function ident_end(spelling: string, i: i32): i32 {
-  while (i < spelling.len() && (spelling[i] >= b'A' && spelling[i] <= b'Z' || spelling[i] >= b'a' && spelling[i] <= b'z' || spelling[i] >= b'0' && spelling[i] <= b'9' || spelling[i] == b'_')) {
-    i = i + 1;
-  }
-  return i;
+  return __scan_set(spelling, i, lexer.NOT_IDENT);
 }
 
 // Past `dyn`, the end of its `T1 + T2 + …` trait set.
