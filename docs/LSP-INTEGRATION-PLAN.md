@@ -22,9 +22,15 @@ formatting, and none of the cursor features yet.
   `util.Diag` plus whether it is a warning) instead of printing them. `-check`
   prints that list and the server publishes it, so there is one pipeline, not
   a copy. A file:// document is checked as the file it names, so its imports
-  resolve from disk beside it. A finding inside an imported module belongs to
-  that module, as in native's workspace mode, and is published only when that
-  module is itself the document checked.
+  resolve beside it.
+- **Workspace mode.** Every open file:// document stands in for its file on
+  disk wherever an import reaches it, a manifest dependency's modules
+  included (`modloader.Buffers`). A finding belongs to the module its
+  position is numbered in, a literate module's to its document. A check
+  publishes the findings in every open module it loaded, not only the
+  document that changed, so a module whose import changed under it is
+  brought up to date at the next check that loads both. An open document
+  the check did not load keeps what its own check published.
 - **Formatting is `-fmt`'s** (`format_source`). The server refuses an edit
   under `-fmt -w`'s rule, `fmt_output_is_readable`: no edit when the formatted
   text would not come back through the formatter as itself.
@@ -57,11 +63,9 @@ row). It holds the server to two references:
 
 What the next slices add:
 
-1. Open sibling buffers taking precedence over disk, and publishing findings to
-   every open module a check touched, as native's workspace mode does.
-2. Hover, go-to-definition and completion, over the self-host checker's types.
-3. Imports parsed once and reused across checks.
-4. The playground's in-process server (`fernLsp`) on the self-host wasm build,
+1. Hover, go-to-definition and completion, over the self-host checker's types.
+2. Imports parsed once and reused across checks.
+3. The playground's in-process server (`fernLsp`) on the self-host wasm build,
    which is what `cmd/fern-wasm` still carries.
 
 ## Goal
