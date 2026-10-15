@@ -276,6 +276,15 @@ func TestSelfHostLSPLifecycleX86_64(t *testing.T) {
 				DocumentFormattingProvider bool `json:"documentFormattingProvider"`
 				HoverProvider              bool `json:"hoverProvider"`
 				DefinitionProvider         bool `json:"definitionProvider"`
+				CompletionProvider         *struct {
+					TriggerCharacters []string `json:"triggerCharacters"`
+				} `json:"completionProvider"`
+				SignatureHelpProvider *struct {
+					TriggerCharacters   []string `json:"triggerCharacters"`
+					RetriggerCharacters []string `json:"retriggerCharacters"`
+				} `json:"signatureHelpProvider"`
+				DocumentSymbolProvider bool `json:"documentSymbolProvider"`
+				InlayHintProvider      bool `json:"inlayHintProvider"`
 			} `json:"capabilities"`
 			ServerInfo struct {
 				Name string `json:"name"`
@@ -285,8 +294,15 @@ func TestSelfHostLSPLifecycleX86_64(t *testing.T) {
 			t.Fatal(err)
 		}
 		c := got.Capabilities
-		if c.TextDocumentSync != 1 || !c.DocumentFormattingProvider || !c.HoverProvider || !c.DefinitionProvider || got.ServerInfo.Name != "fern" {
-			t.Errorf("initialize result = %+v, want full sync, formatting, hover, definition, server fern", got)
+		if c.TextDocumentSync != 1 || !c.DocumentFormattingProvider || !c.HoverProvider || !c.DefinitionProvider || !c.DocumentSymbolProvider || !c.InlayHintProvider || got.ServerInfo.Name != "fern" {
+			t.Errorf("initialize result = %+v, want full sync, formatting, hover, definition, document symbols, inlay hints, server fern", got)
+		}
+		// The trigger characters are the Go server's.
+		if c.CompletionProvider == nil || !reflect.DeepEqual(c.CompletionProvider.TriggerCharacters, []string{"."}) {
+			t.Errorf("completionProvider = %+v, want triggered by `.`", c.CompletionProvider)
+		}
+		if sh := c.SignatureHelpProvider; sh == nil || !reflect.DeepEqual(sh.TriggerCharacters, []string{"(", ","}) || !reflect.DeepEqual(sh.RetriggerCharacters, []string{","}) {
+			t.Errorf("signatureHelpProvider = %+v, want triggered by `(` and `,`, retriggered by `,`", sh)
 		}
 		if code != 0 {
 			t.Errorf("exit after shutdown = %d, want 0", code)
