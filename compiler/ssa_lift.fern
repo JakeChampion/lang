@@ -1167,6 +1167,8 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
   // slot's last read may sit and still run again (`read_horizon`).
   let sc_op: i32[] = [];
   let sc_n: i32 = 0;
+  // The outermost open loop's scope, -1 when no loop is open.
+  let sc_outer_loop: i32 = 0 - 1;
 
   // ---- slot writes, tracked per scope ----------------------------------
   // slot_mark[s] is the deepest open scope slot s has been written in (-1:
@@ -1536,6 +1538,9 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       }
       sc_kind = put_at_s(sc_kind, sc_n, "loop");
       sc_op = put_at(sc_op, sc_n, i);
+      if (sc_outer_loop < 0) {
+        sc_outer_loop = sc_n;
+      }
       sc_target = put_at(sc_target, sc_n, hdr_id);
       sc_else = put_at(sc_else, sc_n, 0);
       sc_seen_else = put_at(sc_seen_else, sc_n, 0);
@@ -1769,7 +1774,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         // Fold the if's writes into the enclosing scope: the else (or
         // only) arm's entries first, then the then-arm's that the
         // else arm did not write again.
-        let hq: i32 = read_horizon(sc_kind, sc_op, t2, i);
+        let hq: i32 = read_horizon(sc_outer_loop, sc_op, t2, i);
         let wq: i32 = dfrom;
         let jq: i32 = dfrom;
         while (jq < dl_n) {
@@ -1918,7 +1923,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         }
         lp_n = lfrom;
         // Fold the body's writes into the enclosing scope.
-        let hl: i32 = read_horizon(sc_kind, sc_op, t2, i);
+        let hl: i32 = read_horizon(sc_outer_loop, sc_op, t2, i);
         let wl2: i32 = sc_dl_from[t2];
         let jl: i32 = wl2;
         while (jl < dl_n) {
@@ -1936,6 +1941,9 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         }
         dl_n = wl2;
         sc_n = sc_n - 1;
+        if (sc_outer_loop == t2) {
+          sc_outer_loop = 0 - 1;
+        }
       } else {
         // block: open the exit, merging all br/brif-out edges (+ a
         // fall-through edge if the current block reaches `end` live).
@@ -2062,7 +2070,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         cur_term = STerm_none();
         cur_dead = bpreds.len() == 0;
         // Fold the block's writes into the enclosing scope.
-        let hb: i32 = read_horizon(sc_kind, sc_op, t2, i);
+        let hb: i32 = read_horizon(sc_outer_loop, sc_op, t2, i);
         let wb: i32 = dfrom_b;
         let jf: i32 = dfrom_b;
         while (jf < dl_n) {
@@ -2179,13 +2187,9 @@ function last_reads(ops: ir.Op[], nslots: i32, t_load: i32, t_dyn: i32): i32[] {
 // start of the outermost loop still open around it, whose back edge runs its
 // body again. A row whose slot's last read falls short is dead there, and a
 // closing scope drops it rather than folding it into its parent.
-function read_horizon(kinds: string[], opened: i32[], t2: i32, at: i32): i32 {
-  let k: i32 = 0;
-  while (k < t2) {
-    if (kinds[k] == "loop") {
-      return opened[k];
-    }
-    k = k + 1;
+function read_horizon(outer_loop: i32, opened: i32[], t2: i32, at: i32): i32 {
+  if (outer_loop >= 0 && outer_loop < t2) {
+    return opened[outer_loop];
   }
   return at;
 }

@@ -8704,11 +8704,12 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
     }
     k = k + 1;
   }
+  let taken_ix: util.NameIndex = util.name_index(taken);
   let rows: ownership.Escapes[] = [];
   let analyses: ssasem.Analysis[] = [];
   let i: i32 = 0;
   while (i < all.len() && i < names.len()) {
-    if (all[i].ok && !all[i].template && !closure_body_produced(all[i]) && !ownership.names_has(taken, names[i])) {
+    if (all[i].ok && !all[i].template && !closure_body_produced(all[i]) && !taken_ix.has(names[i])) {
       rows = rows.append(ownership.Escapes { name: names[i], bits: seed_bits(all[i].func.params.len()), lends: false, cycle: 0 - 1, quiet: [] });
       analyses = analyses.append(row_analysis(all[i]));
     } else {
@@ -8718,11 +8719,11 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
   }
   let produced: ownership.Index = ownership.index(rows);
   rows = quiet_cycles(rows, produced, all, names);
-  let builtins: string[] = [];
+  let builtins: util.NameIndex = util.name_index([]);
   for c in builtin_contracts() {
-    if (ownership.find(rows, produced, c.name) < 0 && !ownership.names_has(builtins, c.name)) {
+    if (ownership.find(rows, produced, c.name) < 0 && !builtins.has(c.name)) {
       rows = rows.append(builtin_row(c));
-      builtins = builtins.append(c.name);
+      builtins = builtins.added(c.name);
     }
   }
   // Valid while the rounds only rewrite a row's bits: a row appended below
