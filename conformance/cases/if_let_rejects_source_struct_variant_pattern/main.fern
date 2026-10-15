@@ -1,0 +1,4 @@
+// `if let` reads the shared pattern grammar (#5356): every pattern form a
+// `match` accepts works in its head.
+struct P { x: i32 }
+function main(): i32 { let p: P = P { x: 1 }; if let Has(v) = p { return 0; } return 0; }

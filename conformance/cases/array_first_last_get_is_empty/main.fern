@@ -1,0 +1,8 @@
+// std/array's is_empty / first / last / get: bounds-checked accessors returning
+// Option[T]; a negative index is None, not from-the-end.
+// A minimal inline body, so this pins the lowering of its shape rather than
+// the shipped module.
+//
+// is_empty on empty (1) and non-empty (0): encode 10*empty + nonempty -> 10.
+function is_empty[T](xs: T[]): boolean { return xs.len() == 0; }
+function main(): i32 { let e: i32[] = []; let xs: i32[] = [1]; let a = 0; if (is_empty(e)) { a = a + 10; } if (is_empty(xs)) { a = a + 1; } return a; }

@@ -295,12 +295,18 @@ func TestSelfHostWasmLoadRunStdlib(t *testing.T) {
 
 // TestSelfHostAsmLoadRunEmitForm pins asm_load_run's `-emit component-core`:
 // the core it emits is the component-mode core (an _lang_run export, no
-// preview1 imports), and the form is refused off wasm32-wasi.
+// preview1 imports), and the form is refused off wasm32-wasi. A program that
+// names no I/O but whose lowering aborts through exit (semreach's unreachable
+// branches) gets the I/O core the CLI emits, with exit imported.
 func TestSelfHostAsmLoadRunEmitForm(t *testing.T) {
 	l := newWasmStdlibLoader(t)
 	wat := string(l.emit(t, "function main(): i32 { write(\"hi\"); return 0; }", "-emit", "component-core"))
 	if !strings.Contains(wat, `(export "_lang_run"`) || strings.Contains(wat, "wasi_snapshot_preview1") {
 		t.Errorf("-emit component-core did not emit a component core:\n%s", wat)
+	}
+	reach := string(l.emit(t, strings.Replace(semReachProg, "OPTS", "opts()", 1), "-emit", "component-core"))
+	if !strings.Contains(reach, `(import "wasi:cli/exit@0.2.0" "exit"`) {
+		t.Errorf("-emit component-core over a decided branch did not import exit:\n%s", reach)
 	}
 	mainPath := filepath.Join(t.TempDir(), "main.fern")
 	if err := os.WriteFile(mainPath, []byte("function main(): i32 { return 0; }"), 0o644); err != nil {

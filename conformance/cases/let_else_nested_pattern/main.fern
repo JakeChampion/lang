@@ -1,0 +1,14 @@
+// `let PAT = E else { … }` reads the shared pattern grammar (#5356); the else
+// must diverge, so the bindings are live for the rest of the block.
+//
+// Nested pattern: the else block doubles as the inner fallthrough,
+// so a `Wrap(Err2)` runs it rather than falling off the merged
+// inner match.
+// exit: 3*10 + 1*2 + 1
+enum Inner { Ok2(i32), Err2 }
+enum Outer { Wrap(Inner), Bare }
+function f(o: Outer): i32 {
+  let Wrap(Ok2(n)) = o else { return 1; };
+  return n;
+}
+function main(): i32 { return f(Wrap(Ok2(3))) * 10 + f(Wrap(Err2)) * 2 + f(Bare); }

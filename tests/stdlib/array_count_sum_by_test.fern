@@ -7,15 +7,6 @@ import "std/array";
 // projection over any element type — the projection sibling of the i32[]-only
 // sum). Free-function and method forms, over i32 and string arrays, incl. the
 // empty and none-match cases.
-//
-// Interp-gated only (NOT in selfHostStdTestCases): the self-host compiler
-// miscompiles `sum_by` with an i32-identity projection — `ns.sum_by(x => x)`
-// returns -1 instead of the sum — even though `count_where`, `sum_by` over a
-// string projection, and the i32-identity case on ALL FOUR native backends
-// (interp / x86-64 / wasm / arm64, pinned by the Go-side
-// TestNativeArrayCountWhereSumBy) are correct. The gap is in the self-host
-// monomorphiser/codegen, tracked separately; mirrors the array_extremum_by /
-// iter_combinators precedent (interp-only for a self-host-compiler gap).
 
 function cs_is_even(x: i32): boolean {
   return x % 2 == 0;

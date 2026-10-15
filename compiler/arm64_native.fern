@@ -1778,6 +1778,41 @@ function arm64_nop(buf: i32[]): i32[] {
   return arm64_le32(buf, arm64_nop_word());
 }
 
+// arm64_fixed_word encodes an instruction without operands: `ret`, `nop`,
+// and the hints that sign the return address in x30 against sp (`paciasp`),
+// authenticate it (`autiasp`) and strip its signature (`xpaclri`), each a
+// NOP on a core without pointer authentication.
+pub function arm64_fixed_word(mnem: string): i64 {
+  if (mnem == "ret") {
+    return arm64_ret_word(30);
+  }
+  if (mnem == "paciasp") {
+    return 0xd503233f;
+  }
+  if (mnem == "autiasp") {
+    return 0xd50323bf;
+  }
+  if (mnem == "xpaclri") {
+    return 0xd50320ff;
+  }
+  return arm64_nop_word();
+}
+
+// arm64_bti_word is the landing pad `bti` with its operand list: `c` for
+// calls, `j` for jumps, `jc` for both, none for neither. A hint, so a NOP on
+// a core without BTI.
+pub function arm64_bti_word(ops: string[]): i64 {
+  let op2: i64 = 0;
+  if (ops.len() == 1 && ops[0] == "c") {
+    op2 = 2;
+  } else if (ops.len() == 1 && ops[0] == "j") {
+    op2 = 4;
+  } else if (ops.len() == 1 && ops[0] == "jc") {
+    op2 = 6;
+  }
+  return 0xd503241f | op2 << 5;
+}
+
 function arm64_br_word(rn: i32): i64 {
   return 0xd61f0000 | (rn & 31) as i64 << 5;
 }
@@ -5746,6 +5781,10 @@ function arm64_fam_swap(): i32 {
   return 47;
 }
 
+function arm64_fam_landing(): i32 {
+  return 48;
+}
+
 // arm64_gas_family is the index in the table of the family a mnemonic
 // belongs to, or -1: length first, then the leading bytes, then the
 // spellings left. The dispatch and arm64_gas_known read it.
@@ -5873,17 +5912,21 @@ function arm64_gas_family_len3_a_ad(mnem: string): i32 {
 }
 
 function arm64_gas_family_len3_b(mnem: string): i32 {
-  if (mnem == "brk") {
-    return arm64_fam_sys();
+  let c: u8 = mnem[1];
+  if (c == b'f' && mnem == "bfi") {
+    return arm64_fam_bitfield();
   }
-  if (mnem == "blr") {
-    return arm64_fam_indirect();
-  }
-  if (mnem == "bic") {
+  if (c == b'i' && mnem == "bic") {
     return arm64_fam_logical2();
   }
-  if (mnem == "bfi") {
-    return arm64_fam_bitfield();
+  if (c == b'l' && mnem == "blr") {
+    return arm64_fam_indirect();
+  }
+  if (c == b'r' && mnem == "brk") {
+    return arm64_fam_sys();
+  }
+  if (c == b't' && mnem == "bti") {
+    return arm64_fam_landing();
   }
   return 0 - 1;
 }
@@ -7003,6 +7046,23 @@ function arm64_gas_family_len6_u(mnem: string): i32 {
 }
 
 function arm64_gas_family_len7(mnem: string): i32 {
+  let c: u8 = mnem[0];
+  if (c == b'a' && mnem == "autiasp") {
+    return arm64_fam_fixed();
+  }
+  if (c == b'p' && mnem == "paciasp") {
+    return arm64_fam_fixed();
+  }
+  if (c == b's') {
+    return arm64_gas_family_len7_s(mnem);
+  }
+  if (c == b'x' && mnem == "xpaclri") {
+    return arm64_fam_fixed();
+  }
+  return 0 - 1;
+}
+
+function arm64_gas_family_len7_s(mnem: string): i32 {
   if (mnem == "sha256h") {
     return arm64_fam_vecext();
   }
@@ -8344,11 +8404,11 @@ function arm64_gas_bcond_suffix(mnem: string): string {
 function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
   let fam: i32 = arm64_gas_family(mnem);
   if (fam == arm64_fam_fixed()) {
-    if (mnem == "ret") {
-      arm64_push_arr(a.code, arm64_ret([], arm64_lr()));
-      return a;
-    }
-    arm64_push_arr(a.code, arm64_nop([]));
+    arm64_push_arr(a.code, arm64_le32([], arm64_fixed_word(mnem)));
+    return a;
+  }
+  if (fam == arm64_fam_landing()) {
+    arm64_push_arr(a.code, arm64_le32([], arm64_bti_word(ops)));
     return a;
   }
   // SIMD forms are recognised by the first operand being an arranged vector
@@ -11930,6 +11990,12 @@ function cfi_op_def_cfa(): i32 {
   return 12;
 }
 
+// DW_CFA_AARCH64_negate_ra_state: the return address flips between signed
+// and plain from here on.
+function cfi_op_negate_ra_state(): i32 {
+  return 45;
+}
+
 function cfi_op_def_cfa_register(): i32 {
   return 13;
 }
@@ -12217,14 +12283,18 @@ pub function cfi_directive(own s: CfiState, line: string, off: i32): CfiState {
   if (d == ".cfi_restore_state") {
     return cfi_add_rule(s, off, [cfi_op_restore_state()]);
   }
+  if (d == ".cfi_negate_ra_state") {
+    return cfi_add_rule(s, off, [cfi_op_negate_ra_state()]);
+  }
   return cfi_reg_directive(s, d, ops, rest, off);
 }
 
 // cfi_record applies a directive an emitter handed over as a record instead
 // of text: `kind` 1 is .cfi_startproc, 2 .cfi_endproc, 3 .cfi_def_cfa_offset n,
 // 4 .cfi_def_cfa_register r, 5 .cfi_def_cfa r, n, 6 .cfi_offset r, n, 7
-// .cfi_remember_state and 8 .cfi_restore_state, with `r` the DWARF register
-// number. Each records what its text would have recorded.
+// .cfi_remember_state, 8 .cfi_restore_state and 9 .cfi_negate_ra_state, with
+// `r` the DWARF register number. Each records what its text would have
+// recorded.
 pub function cfi_record(own s: CfiState, kind: i32, r: i32, n: i32, off: i32): CfiState {
   if (kind == 1) {
     return cfi_proc_directive(s, ".cfi_startproc", [], off);
@@ -12253,6 +12323,9 @@ pub function cfi_record(own s: CfiState, kind: i32, r: i32, n: i32, off: i32): C
   }
   if (kind == 8) {
     return cfi_add_rule(s, off, [cfi_op_restore_state()]);
+  }
+  if (kind == 9) {
+    return cfi_add_rule(s, off, [cfi_op_negate_ra_state()]);
   }
   return cfi_bad(s, "a cfi record of an unknown kind");
 }

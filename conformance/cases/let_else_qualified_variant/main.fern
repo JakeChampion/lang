@@ -1,0 +1,8 @@
+// `let PAT = E else { … }` reads the shared pattern grammar (#5356); the else
+// must diverge, so the bindings are live for the rest of the block.
+enum Color { Red(i32), Blue }
+function f(c: Color): i32 {
+  let Color.Red(n) = c else { return 0; };
+  return n;
+}
+function main(): i32 { return f(Red(6)); }

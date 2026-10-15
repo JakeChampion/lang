@@ -457,6 +457,7 @@ func main() {
 	coverReport := flag.Bool("cover-report", false, "read a saved `-cover` run's output (`fern -cover-report FILE`, or `-` for stdin) and print per-file line coverage plus the uncovered lines. Lines that don't carry the `fern-cover: ` prefix are ignored, so piping the program's whole stderr is fine. Add -lcov for an lcov tracefile instead. Report mode; no codegen.")
 	lcov := flag.Bool("lcov", false, "with -cover-report, write an lcov tracefile (SF/DA/LF/LH records) instead of the human summary, for the coverage viewers that already read that format.")
 	backtrace := flag.Bool("backtrace", ast.BacktraceEnabled, "emit the frame-pointer backtrace a fatal abort (bounds / arena / sanitizer) prints under its cause line, on the native x86-64 and arm64 backends. `-backtrace=false` drops the walk, the hex printer, and the \"backtrace:\" string from the binary — the size-critical opt-out; the cause line and every exit code (134 / 125 / 124) are unchanged. Same as FERN_BACKTRACE=0, which this flag defaults to.")
+	harden := flag.Bool("harden", false, "arm64-linux executables: start every indirect-call target with a BTI landing pad, mark the image so the kernel traps an indirect branch anywhere else, and sign each frame's return address with pointer authentication.")
 	size := flag.Bool("size", false, "build for size over speed on the native backends: reference-count operations call their runtime helpers rather than testing the count inline, and the backtrace walk is dropped unless -backtrace is given. Same as FERN_SIZE=1.")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: fern [-target <isa>-<environment>] [-emit core-module] [-o OUTPUT] [--run] [-qemu QEMU] FILE.fern [-- ARGS...]\n       (targets: arm64-linux, arm64-darwin, arm64-android, x86-64-linux, wasm32-wasi, wasm32-wasi-http; `fern -targets` for all)")
@@ -733,7 +734,7 @@ func main() {
 		src: srcPath, out: *out, target: *target, emit: *emit, backend: *backend,
 		embed: *embedDir, export: *export, qemu: *qemu,
 		runIt: *runIt, shared: *shared, debug: *emitDebug, sanitize: *sanitize,
-		cover: *cover, optimize: *optimize, progArgs: progArgs,
+		cover: *cover, optimize: *optimize, harden: *harden, progArgs: progArgs,
 	}
 	flag.Visit(func(f *flag.Flag) {
 		if f.Name == "backtrace" {

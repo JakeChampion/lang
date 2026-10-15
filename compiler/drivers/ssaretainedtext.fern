@@ -31,7 +31,7 @@ function emit(): ssaprepare.Output {
   require(!asmcore.refuse_parse_unknowns([m]) && !asmcore.refuse_decl_names([m]), "source parsed");
   let g = semlower.program(semlower.driven(m, "x86-64-linux"));
   require(g.ok, "source lowered");
-  let sw = asmcore.Switches { backtrace: false, sanitize: false, var_rows: false, shared: false, size: false };
+  let sw = asmcore.Switches { backtrace: false, sanitize: false, var_rows: false, shared: false, size: false, harden: false };
   return asm_ir.emit_module_ir_unit_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_lowering, 0 as usize, sw, true);
 }
 

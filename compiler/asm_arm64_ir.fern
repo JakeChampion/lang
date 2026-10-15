@@ -1516,7 +1516,7 @@ function ssa_save(saved: i32[], s: asmcore.EmitState): asmcore.EmitState {
 // ssa_cfi writes a .cfi_* directive: as a record when records are on, else
 // as its text. `kind` is cfi_record's: 1 startproc, 2 endproc, 3
 // def_cfa_offset n, 4 def_cfa_register reg, 5 def_cfa reg, n, 6 offset reg, n,
-// 7 remember_state, 8 restore_state.
+// 7 remember_state, 8 restore_state, 9 negate_ra_state.
 function ssa_cfi(s: asmcore.EmitState, kind: i32, reg: string, n: i32): asmcore.EmitState {
   if (s.records()) {
     return s.cfi(kind, ssa_dwarf(reg), n);
@@ -1542,7 +1542,10 @@ function ssa_cfi(s: asmcore.EmitState, kind: i32, reg: string, n: i32): asmcore.
   if (kind == 7) {
     return s.write("    .cfi_remember_state\n");
   }
-  return s.write("    .cfi_restore_state\n");
+  if (kind == 8) {
+    return s.write("    .cfi_restore_state\n");
+  }
+  return s.write("    .cfi_negate_ra_state\n");
 }
 
 // ssa_dwarf is a register's DWARF number: xN is N and sp is 31; 0 for the
@@ -1591,6 +1594,7 @@ function ssa_emit_unwind(saved: i32[], s: asmcore.EmitState, tail: string): asmc
   }
   s = ssa_pair(s, true, 1, "x29", "x30", 16);
   s = ssa_cfi(s, 5, "sp", 0);
+  s = ssa_sign_ra(s, "autiasp");
   if (tail == "") {
     s = ssa_ret(s);
   } else {
@@ -1774,6 +1778,35 @@ function ssa_ldst_wb(s: asmcore.EmitState, load: boolean, pre: boolean, reg: str
     return s.write(m + reg + ", [sp, #" + util.i32_to_string(off) + "]!\n");
   }
   return s.write(m + reg + ", [sp], #" + util.i32_to_string(off) + "\n");
+}
+
+// ssa_sign_ra signs the return address against the entry sp under -harden
+// (`paciasp`, before the frame record stores it) or authenticates it
+// (`autiasp`, once the record is popped and sp is back), so a return address
+// overwritten in the frame faults instead of being followed. Either flips
+// the CFI's return-address state.
+function ssa_sign_ra(s: asmcore.EmitState, op: string): asmcore.EmitState {
+  if (!s.harden) {
+    return s;
+  }
+  if (s.records()) {
+    s = s.word(arm64_native.arm64_fixed_word(op));
+  } else {
+    s = s.write("    " + op + "\n");
+  }
+  return ssa_cfi(s, 9, "", 0);
+}
+
+// ssa_landing_pad starts an indirect-call target under -harden: a function
+// value's `.k` entry is the only one a `blr` reaches.
+function ssa_landing_pad(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.harden) {
+    return s;
+  }
+  if (s.records()) {
+    return s.word(arm64_native.arm64_bti_word(["c"]));
+  }
+  return s.write("    bti c\n");
 }
 
 function ssa_ret(s: asmcore.EmitState): asmcore.EmitState {
@@ -4437,7 +4470,7 @@ function ssa_entry_shim(f: ssa.SFunc, name: string, s: asmcore.EmitState): asmco
     s = ssa_ldst(s, true, ssa_reg(p), "sp", 16 * p);
     p = p + 1;
   }
-  s = s.write("__fn_" + name + ".k:\n");
+  s = ssa_landing_pad(s.write("__fn_" + name + ".k:\n"));
   p = 0;
   while (p < k) {
     if (asmcore.float_param(mask, p)) {
@@ -4637,6 +4670,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
 
 // ssa_frame_record pushes the frame record and points x29 at it.
 function ssa_frame_record(s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_sign_ra(s, "paciasp");
   s = ssa_pair(s, false, 3, "x29", "x30", 0 - 16);
   s = ssa_cfi(ssa_cfi(ssa_cfi(s, 3, "", 16), 6, "x29", 0 - 16), 6, "x30", 0 - 8);
   s = ssa_mov_rr(s, "x29", "sp");
@@ -7401,6 +7435,16 @@ function san_report_exit(s: asmcore.EmitState): string {
 // walk rather than faulting the report, as does a return address in the low
 // 64 KiB, which is _start's frame reading the initial stack. Emitted with
 // __fern_report.
+// bt_strip_signature takes a -harden frame's signature off the return
+// address in x1 before the walk prints it. `xpaclri` works on x30, which the
+// walk's next `bl` overwrites anyway.
+function bt_strip_signature(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.harden) {
+    return s;
+  }
+  return s.write("    mov x30, x1\n    xpaclri\n    mov x1, x30\n");
+}
+
 function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .section .rodata\n");
   s = s.write(".Lmsg_bt:\n    .ascii \"backtrace:\\n\"\n");
@@ -7423,6 +7467,7 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    and x23, x20, #7\n");
   s = s.write("    cbnz x23, .Lbt_done\n");
   s = s.write("    ldr x1, [x20, #8]\n");
+  s = bt_strip_signature(s);
   s = s.write("    cmp x1, #16, lsl #12\n");
   s = s.write("    b.lo .Lbt_done\n");
   s = s.write("    bl .Lbt_hex\n");
@@ -11536,7 +11581,9 @@ function emit_rt_signal_flags(s: asmcore.EmitState, darwin: boolean): asmcore.Em
   }
   s = s.write("    .section .bss\n    .align 3\n__fern_sig_flags: .skip 65\n    .text\n");
   if (s.has_need("signal_catch")) {
-    s = s.write("    .global __fern_sig_catcher\n    .global __fern_sig_return\n__fern_sig_catcher:\n");
+    // The kernel enters a handler as a call, so under -harden it starts with
+    // a landing pad; the restorer is reached by its `ret`.
+    s = ssa_landing_pad(s.write("    .global __fern_sig_catcher\n    .global __fern_sig_return\n__fern_sig_catcher:\n"));
     s = s.write("    adrp x1, __fern_sig_flags\n    add x1, x1, :lo12:__fern_sig_flags\n    sxtw x0, w0\n    add x1, x1, x0\n    mov w2, #1\n    strb w2, [x1]\n    ret\n");
     s = s.write("__fern_sig_return:\n");
     if (darwin) {

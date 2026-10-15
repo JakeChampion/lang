@@ -2,12 +2,14 @@ package e2ecompiler
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/pkg/modload"
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // The conformance corpus' `expected.error` cases pin programs the compiler must
@@ -51,10 +53,11 @@ import (
 // lowering bail catches still counts as accepted here, because a diagnostic is
 // what the corpus asks for and a bail is not one.
 //
-// A case whose source the Go loader cannot PARSE never reaches any checker, so
-// it is outside what this gate reads. Those are pinned too, with a `parse:`
-// prefix, rather than skipped: a skip would hide the corpus shrinking, and a
-// parse case that starts parsing is a real change this should report.
+// A case whose source the Go loader cannot PARSE never reaches the Go checker.
+// Those are pinned with a `parse:` prefix rather than skipped: a skip would hide
+// the corpus shrinking, and a parse case that starts parsing is a real change
+// this should report. The self-host must still refuse each one, through its own
+// parser.
 //
 // Unlike the row-based checker corpora next door — every row a stdlib-free
 // single-file program, the weakness `docs/TEST-GATES.md` names — these are real
@@ -110,9 +113,10 @@ func TestSelfHostRejectsConformanceErrorCasesX86_64(t *testing.T) {
 			}
 			// Loaded from its directory, so a case's own modules come with it.
 			if _, _, lerr := modload.Load(entry); lerr != nil {
-				// A parse error: the program has no module set to check.
 				if !parseOnly[name] {
 					t.Errorf("the Go loader cannot parse %s (%v) — add `parse:%s` to %s, since a parse case is outside what this gate reads", name, lerr, name, rejectionGapFile)
+				} else if exec.Command(e2eharness.SelfHostCLI(t), "-check", entry, e2eharness.SelfHostStdlibRoot(t)).Run() == nil {
+					t.Errorf("the self-host's `fern -check` accepts %s, which native cannot parse: %v", name, lerr)
 				}
 				return
 			}

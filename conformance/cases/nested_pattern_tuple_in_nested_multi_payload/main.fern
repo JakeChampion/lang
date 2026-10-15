@@ -1,0 +1,16 @@
+// Nested match patterns (#5353) desugar at parse time to a flat outer arm that
+// re-matches the payload, so every backend sees only flat arms.
+//
+// A tuple in the payload slot of a multi-payload sub-pattern.
+// exit: 55 + 12 + 9
+enum P { Pr((i32, i32)), Non }
+enum W { Two(P, i32), One }
+function g(w: W): i32 {
+  match (w) {
+    Two(Pr((1, b)), k) => { return 50 + b + k; },
+    Two(Pr((a, b)), k) => { return a + b + k; },
+    _ => { return 9; },
+  }
+  return 0 - 2;
+}
+function main(): i32 { return g(W.Two(P.Pr((1, 2)), 3)) + g(W.Two(P.Pr((3, 4)), 5)) + g(W.Two(P.Non, 0)); }

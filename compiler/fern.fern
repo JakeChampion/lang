@@ -499,13 +499,13 @@ function comp_dir(): string {
 // string (written verbatim by write_file), or "" if the assembler hit an
 // instruction it doesn't yet support (the caller reports it and exits 2). The
 // arm64-darwin counterpart is the macho_executable path above.
-function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string): string {
+function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string, harden: boolean): string {
   let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program_words(asm, words);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-linux", "assembler", p.unknown);
   }
   let pa: arm64_native.Arm64Asm = p.asm;
-  // W^X two-segment layout: .text loads R+X at elf_text_vaddr_wx(), the
+  // W^X two-segment layout: .text loads R+X at elf_text_vaddr_wx, the
   // unwind data the `.cfi_*` directives rendered follows it in the same
   // segment, and the data blob (.rodata + globals + the .bss heap) loads
   // R+W on the first page boundary past those, so no mapping is both
@@ -513,13 +513,13 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name:
   // Android's). The unwind images are rendered before the link because
   // the data address depends on their size; neither depends on the data.
   let text_len: i32 = pa.text.len();
-  let tv: i64 = elf.elf_text_vaddr_wx() as i64;
+  let tv: i64 = elf.elf_text_vaddr_wx(harden) as i64;
   let hdr_len: i32 = arm64_native.arm64_eh_frame_hdr_len(p);
-  let hv: i64 = elf.elf_eh_hdr_vaddr_wx(text_len) as i64;
-  let ev: i64 = elf.elf_eh_frame_vaddr_wx(text_len, hdr_len) as i64;
+  let hv: i64 = elf.elf_eh_hdr_vaddr_wx(text_len, harden) as i64;
+  let ev: i64 = elf.elf_eh_frame_vaddr_wx(text_len, hdr_len, harden) as i64;
   let eh: i32[] = arm64_native.arm64_eh_frame(p, tv, ev);
   let hdr: i32[] = arm64_native.arm64_eh_frame_hdr(p, tv, ev, hv);
-  let dv: i64 = elf.elf_data_vaddr_wx_unwind(text_len, hdr.len(), eh.len()) as i64;
+  let dv: i64 = elf.elf_data_vaddr_wx_unwind(text_len, hdr.len(), eh.len(), harden) as i64;
   p = arm64_native.arm64_gas_link(p, tv, dv);
   // Symbol resolution happens IN the link, so its refusals land here rather
   // than in the parse check above. Reporting them matters more than it
@@ -534,7 +534,7 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name:
   if (eoff < 0) {
     eoff = 0;
   }
-  let bin: u8[] = elf.elf_image_wx_unwind(pa2.text, hdr, eh, p.data, elf.elf_em_aarch64(), eoff, p.bss_size);
+  let bin: u8[] = elf.elf_image_wx_unwind(pa2.text, hdr, eh, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, harden);
   if (!emit_syms) {
     return string_from_bytes_unchecked(bin);
   }
@@ -544,13 +544,13 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name:
   let aend: i32 = pa2.text.len();
   let nosec: i32[] = [];
   let wide: i32[] = elf.elf_append_debug(
-    elf.elf_cat_u8([], bin), elf.elf_text_vaddr_wx(), elf.elf_wx_text_off(), pa2.text.len(),
+    elf.elf_cat_u8([], bin), elf.elf_text_vaddr_wx(harden), elf.elf_wx_text_off(harden), pa2.text.len(),
     elf.elf_func_sym_names(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
     elf.elf_func_sym_offs(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
     elf.elf_func_sym_sizes(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
     cu_name, comp_dir(),
     pa2.files, pa2.loc_offs, pa2.loc_files, pa2.loc_lines, pa2.loc_cols, pa2.loc_flags,
-    arm64_native.arm64_debug_frame(p, elf.elf_text_vaddr_wx() as i64),
+    arm64_native.arm64_debug_frame(p, tv),
     arm64_var_ranges(p, tv, dv),
   );
   return string_from_bytes_unchecked(util.to_u8(wide));
@@ -1157,6 +1157,43 @@ function dw_file_table(entry: string, files: string[]): string {
   return o;
 }
 
+// bool_flag reads `a` as the boolean flag `name`: 1 for `name`, `name=true`
+// or `name=1`, 0 for `name=false` or `name=0`, -1 for any other argument.
+function bool_flag(a: string, name: string): i32 {
+  if (a == name || a == name + "=true" || a == name + "=1") {
+    return 1;
+  }
+  if (a == name + "=false" || a == name + "=0") {
+    return 0;
+  }
+  return 0 - 1;
+}
+
+// harden_refused reports, and refuses, -harden outside an arm64-linux
+// executable: BTI is an arm64 feature, and a shared object's property note
+// is the loader's to combine with its host's.
+function harden_refused(harden: boolean, target: string, shared: boolean): boolean {
+  if (!harden || target == "arm64-linux" && !shared) {
+    return false;
+  }
+  let with: string = "";
+  if (shared) {
+    with = " with -shared";
+  }
+  eprint("fern: -harden is only supported for -target arm64-linux executables (got \"" + target + "\"" + with + ")");
+  return true;
+}
+
+// bti_property_text is the `-emit asm` form of elf.elf_bti_note when `on`:
+// the .note.gnu.property section the linker turns into the PT_GNU_PROPERTY
+// that asks the kernel to enforce BTI landing pads.
+function bti_property_text(on: boolean): string {
+  if (!on) {
+    return "";
+  }
+  return "    .section .note.gnu.property,\"a\"\n    .p2align 3\n    .word 4\n    .word 16\n    .word 5\n    .asciz \"GNU\"\n    .word 0xc0000000\n    .word 4\n    .word 1\n    .word 0\n    .text\n";
+}
+
 // flag_after_entry refuses a driver flag written after the entry file, in
 // native's words (#8465): Go's flag package stops at the first positional,
 // so reading the flag here would make the two engines read one command line
@@ -1170,6 +1207,7 @@ function flag_after_entry(a: string): i32 {
 
 function usage(): i32 {
   eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-target <isa>-<environment>] [-backend flat|ssa] [-emit asm|core-module|command-module] [-embed DIR] [-o OUT] <entry.fern> [stdlib-root]");
+  eprint("       fern -harden -target arm64-linux -o OUT <entry.fern> [stdlib-root]  (BTI landing pads and signed return addresses)");
   eprint("       fern -shared [-export NAME,...] -o OUT.so <entry.fern> [stdlib-root]  (a shared object exporting the named functions, main by default)");
   eprint("       fern -fmt [-w | -d | -o OUT] FILE...          (-w overwrites each file, -d prints unified diffs; -o takes one FILE)");
   eprint("       fern -targets                                (list supported targets + capabilities)");
@@ -4803,6 +4841,10 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // one) through C-ABI entries, rather than an executable (#11483).
   let shared: boolean = false;
   let export_list: string = "";
+  // -harden: BTI landing pads at every indirect-call target, enforced by the
+  // kernel through the image's GNU property note, and return addresses
+  // signed with pointer authentication (#5549).
+  let harden: boolean = false;
   // `-cover` (or FERN_COVER=1) instruments the program with line and branch
   // counters it reports to stderr at exit (cover.fern).
   let cover_on: boolean = false;
@@ -4877,24 +4919,17 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
       // debugger reads: the compilation unit, a line table and variables
       // (ELF sections, or a __DWARF segment in the Mach-O image).
       emit_syms = true;
-    } else if (a == "-backtrace" || a == "-backtrace=true" || a == "-backtrace=1") {
-      backtrace = true;
+    } else if (bool_flag(a, "-backtrace") >= 0) {
+      backtrace = bool_flag(a, "-backtrace") == 1;
       backtrace_set = true;
-    } else if (a == "-backtrace=false" || a == "-backtrace=0") {
-      backtrace = false;
-      backtrace_set = true;
-    } else if (a == "-size" || a == "-size=true" || a == "-size=1") {
-      size = true;
-    } else if (a == "-size=false" || a == "-size=0") {
-      size = false;
-    } else if (a == "-sanitize" || a == "-sanitize=true" || a == "-sanitize=1") {
-      sanitize_flag = true;
-    } else if (a == "-sanitize=false" || a == "-sanitize=0") {
-      sanitize_flag = false;
-    } else if (a == "-shared" || a == "-shared=true" || a == "-shared=1") {
-      shared = true;
-    } else if (a == "-shared=false" || a == "-shared=0") {
-      shared = false;
+    } else if (bool_flag(a, "-size") >= 0) {
+      size = bool_flag(a, "-size") == 1;
+    } else if (bool_flag(a, "-sanitize") >= 0) {
+      sanitize_flag = bool_flag(a, "-sanitize") == 1;
+    } else if (bool_flag(a, "-harden") >= 0) {
+      harden = bool_flag(a, "-harden") == 1;
+    } else if (bool_flag(a, "-shared") >= 0) {
+      shared = bool_flag(a, "-shared") == 1;
     } else if (a == "-export") {
       i = i + 1;
       if (i >= av.len()) {
@@ -5156,6 +5191,9 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
       eprint("fern: -shared requires -o OUTPUT.so");
       return 1;
     }
+  }
+  if (harden_refused(harden, target, shared)) {
+    return 1;
   }
   if (backend != "" && backend != "ssa" && backend != "flat") {
     eprint("fern: unknown -backend: " + backend + " (want flat or ssa, or omit it for the target's default emitter)");
@@ -5428,7 +5466,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // statement, the emitter renders the marks as `.loc` rows over the `.file`
   // table prepended below, and the image writer encodes .debug_line (#11410).
   let debug_lines: boolean = emit_syms && (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin");
-  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size } };
+  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden } };
   let out_asm: string = "";
   let emit_text: boolean = emit == "asm";
   if (target == "arm64-linux") {
@@ -5457,13 +5495,14 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     if (shared) {
       out_asm = export_entries(merged, shared_roots, true) + out_asm;
     }
+    out_asm = out_asm + bti_property_text(emit_text && harden);
     if (!emit_text && shared) {
       out_asm = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target);
       if (out_asm.len() == 0) {
         return 2;
       }
     } else if (!emit_text) {
-      out_asm = arm64_elf_binary(out_asm, words_of(recs), emit_syms, entry_path);
+      out_asm = arm64_elf_binary(out_asm, words_of(recs), emit_syms, entry_path, harden);
       util.arr_push_cliff_report("arm64:image", 0);
       if (out_asm.len() == 0) {
         return 2;

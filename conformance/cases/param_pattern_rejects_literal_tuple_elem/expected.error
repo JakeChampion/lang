@@ -1,0 +1,1 @@
+a literal tuple element can fail to match, so it cannot be a parameter pattern

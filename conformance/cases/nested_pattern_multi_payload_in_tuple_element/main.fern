@@ -1,0 +1,19 @@
+// Nested match patterns (#5353) desugar at parse time to a flat outer arm that
+// re-matches the payload, so every backend sees only flat arms.
+//
+// A variant element of a tuple pattern whose own payload nests, and
+// one nesting two variant levels below the tuple.
+// exit: 5 + 18 + 5
+enum E { Val(i32), Add(E, E) }
+function g(z: E, e: E): i32 {
+  match ((z, e)) {
+    (Val(k), Add(Val(n), y)) => { return k + n; },
+    (Add(Add(Val(n), y), q), w) => { return n * 3; },
+    _ => { return 5; },
+  }
+  return 0 - 2;
+}
+function main(): i32 {
+  return g(Val(2), Add(Val(3), Val(4))) + g(Add(Add(Val(6), Val(0)), Val(0)), Val(1))
+    + g(Val(1), Val(1));
+}

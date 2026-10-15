@@ -25,6 +25,9 @@ import "./semfuse";
 import "./semoption";
 import "./semndarray";
 import "./semarrayreport";
+import "./semreach";
+import "./flatten";
+import "./treeshake";
 
 // One body's production. A TEMPLATE declaration — one spelling type variables
 // — has no body of its own: it is produced once per instantiation its callers
@@ -8814,12 +8817,15 @@ function infer_ownership(all: Produced[], names: string[], table: ssasem.Contrac
 }
 
 // BuildOpts are the build's choices the lowering reads: the line table's
-// markers in every body (`debug_lines`, the `-g` build of an ELF target), and
-// a -size build's inlining (`size`, seminline.inline_leaves).
-pub struct BuildOpts { debug_lines: boolean, size: boolean }
+// markers in every body (`debug_lines`, the `-g` build of an ELF target), a
+// -size build's inlining (`size`, seminline.inline_leaves), and whether the
+// module is the whole program, shaken to what its roots reach (`whole`), so
+// that what no reachable call runs can go (semreach). A library, a unit of a
+// per-module build, or a body a tool lowers to inspect is not.
+pub struct BuildOpts { debug_lines: boolean, size: boolean, whole: boolean }
 
 pub function plain_build(): BuildOpts {
-  return BuildOpts { debug_lines: false, size: false };
+  return BuildOpts { debug_lines: false, size: false, whole: false };
 }
 
 pub function build_module(mod: parser.Module): Built {
@@ -8889,7 +8895,9 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     // Fusion first: it recognises a pipeline by its calls to std/array's
     // combinators, which a function called once would otherwise absorb.
     let inlined: Spliced = inline_leaves(fuse_pipelines(all, names, mod.funcs), names, mod, opts.size);
-    all = prune_dead_constructions(scale_ndarray_maps(without_unnamed(inlined.all, names, inlined.spliced, mod), names, mod));
+    // Reachability follows the last pass that adds a call: the ndarray
+    // kernels call helpers nothing named before.
+    all = prune_dead_constructions(reached_only(scale_ndarray_maps(without_unnamed(inlined.all, names, inlined.spliced, mod), names, mod), names, mod, opts.whole));
   }
   decls = [];
   instances = [];
@@ -9024,6 +9032,166 @@ function without_unnamed(all: Produced[], names: string[], spliced: boolean[], m
     i = i + 1;
   }
   return out;
+}
+
+// `all` with what nothing the program reaches names dropped, and each branch
+// the whole program's facts decide taken (semreach). `FERN_NO_SEM_REACH=1`
+// turns it off.
+function reached_only(all: Produced[], names: string[], mod: parser.Module, whole: boolean): Produced[] {
+  if (!whole || !kernel_switch_on("FERN_NO_SEM_REACH")) {
+    return all;
+  }
+  let funcs: ssasem.Func[] = [];
+  let usable: boolean[] = [];
+  let blocked: boolean[] = [];
+  let entries: boolean[] = [];
+  let i: i32 = 0;
+  while (i < all.len()) {
+    let p: Produced = all[i];
+    funcs = funcs.append(p.func);
+    usable = usable.append(p.ok && !p.template && !p.bodyless);
+    blocked = blocked.append(!p.ok && !p.template && !p.bodyless && !p.dropped);
+    entries = entries.append(i < mod.funcs.len() && entry_decl(mod.funcs[i], mod));
+    i = i + 1;
+  }
+  let r: semreach.Reached = semreach.reach(funcs, names, usable, blocked, reach_roots(all, names, entries, mod));
+  if (!r.ok) {
+    return all;
+  }
+  return with_reached(all, usable, r);
+}
+
+// What nothing reached dropped, each rewritten body taken, and every closure
+// environment no box can hold any more left out of the release tables.
+function with_reached(all: Produced[], usable: boolean[], r: semreach.Reached): Produced[] {
+  let gone: util.NameIndex = util.name_index(dropped_envs(all, usable, r.live));
+  let out: Produced[] = [];
+  let i: i32 = 0;
+  while (i < all.len()) {
+    let p: Produced = all[i];
+    if (usable[i] && !r.live[i]) {
+      p = Produced { ...p, ok: false, why: "reached by nothing", func: refuse("").func, analysis: None, dropped: true };
+    } else if (r.rewritten[i]) {
+      p = Produced { ...p, func: r.funcs[i], analysis: None };
+    }
+    if (p.ok && gone.names.len() > 0) {
+      p = Produced { ...p, func: ssasem.Func { ...p.func, envs: envs_left(p.func.envs, gone) } };
+    }
+    out = out.append(p);
+    i = i + 1;
+  }
+  return out;
+}
+
+// The tree-shaker's roots, the names the backends and the runtime call by
+// themselves, and each instance of a rooted declaration.
+function reach_roots(all: Produced[], names: string[], entries: boolean[], mod: parser.Module): boolean[] {
+  let named: util.NameIndex = util.name_index(outside_names(all, mod));
+  let roots: boolean[] = [];
+  let templates: string[] = [];
+  let i: i32 = 0;
+  while (i < all.len()) {
+    let root: boolean = entries[i] || named.has(names[i]) || util.str_has_prefix(names[i], "__") || flatten.is_runtime_helper_name(names[i]);
+    if (i < mod.funcs.len() && (root || rooted_method(mod.funcs[i], mod))) {
+      root = true;
+      templates = templates.append(all[i].key);
+    }
+    roots = roots.append(root);
+    i = i + 1;
+  }
+  let rooted: util.NameIndex = util.name_index(templates);
+  i = mod.funcs.len();
+  while (i < all.len()) {
+    if (rooted.has(all[i].key)) {
+      roots = roots.with(i, true);
+    }
+    i = i + 1;
+  }
+  return roots;
+}
+
+// The environments of the closure bodies nothing reached. No box of one is
+// built, so a release need not match a box against it.
+function dropped_envs(all: Produced[], usable: boolean[], live: boolean[]): string[] {
+  let out: string[] = [];
+  let i: i32 = 0;
+  while (i < all.len()) {
+    if (usable[i] && !live[i]) {
+      for t in all[i].func.params {
+        if (semtypes.is_env(t)) {
+          out = out.append(ssasem.type_key(t));
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function envs_left(rows: ssasem.EnvRow[], gone: util.NameIndex): ssasem.EnvRow[] {
+  let out: ssasem.EnvRow[] = [];
+  for row in rows {
+    if (!gone.has(ssasem.type_key(row.env_ty))) {
+      out = out.append(row);
+    }
+  }
+  return out;
+}
+
+// The names called from outside every body: `main`, what the top-level
+// statements name, the exports, and the module's finalizers.
+function outside_names(all: Produced[], mod: parser.Module): string[] {
+  let out: string[] = treeshake.top_level_names(mod, ["main"]);
+  for x in mod.exports {
+    out = out.append(x.func_name);
+  }
+  for p in all {
+    if (p.ok) {
+      for fin in p.func.finalizers {
+        out = out.append(fin.symbol);
+      }
+      return out;
+    }
+  }
+  return out;
+}
+
+// Called from outside with arguments of its own: an export, an import's
+// declaration, or an `async function` with a body (the component export the
+// wasm path lifts it as).
+function entry_decl(fd: parser.FuncDecl, mod: parser.Module): boolean {
+  for x in mod.exports {
+    if (x.func_name == fd.name) {
+      return true;
+    }
+  }
+  return fd.import_iface != "" || fd.async;
+}
+
+// A method lowering calls with no call in any body: a Drop finalizer, which
+// the release glue calls, and every method of a type carrying a derive,
+// whose `hash` a map's key closure calls (treeshake roots both the same way).
+function rooted_method(fd: parser.FuncDecl, mod: parser.Module): boolean {
+  if (fd.receiver_type == "") {
+    return false;
+  }
+  for im in mod.impls {
+    if (im.trait_name == "Drop" && util.index_of_str(im.method_names, fd.name) >= 0) {
+      return true;
+    }
+  }
+  for sd in mod.structs {
+    if (sd.derives.len() > 0) {
+      let owner: string = sd.name;
+      if (sd.enum_owner.len() > 0) {
+        owner = sd.enum_owner;
+      }
+      if (fd.receiver_type == owner) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function unnamed(all: Produced[], names: string[], spliced: boolean[], mod: parser.Module): boolean[] {

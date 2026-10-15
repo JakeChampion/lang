@@ -2682,13 +2682,20 @@ function struct_destr_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
     return out;
   }
   let (fields, _) = struct_destr_fields(v.type_name);
-  if let typeinfo.TypeStruct(st) = check_expr(v.init, s) {
-    let sig: StructSig = s.lookup_struct(st.name);
-    for f in fields {
-      if (sig.name.len() > 0 && !util.has_str(sig.field_names, f)) {
-        let d: util.Diag = dg_at("E043", "struct " + util.demangle(st.name) + " has no field \"" + f + "\"", v.line, v.col);
-        out = out.append(with_fix(d, f, v.line, v.col, util.suggest(f, sig.field_names), ""));
+  let it: typeinfo.Type = check_expr(v.init, s);
+  match (it) {
+    typeinfo.TypeStruct(st) => {
+      let sig: StructSig = s.lookup_struct(st.name);
+      for f in fields {
+        if (sig.name.len() > 0 && !util.has_str(sig.field_names, f)) {
+          let d: util.Diag = dg_at("E043", "struct " + util.demangle(st.name) + " has no field \"" + f + "\"", v.line, v.col);
+          out = out.append(with_fix(d, f, v.line, v.col, util.suggest(f, sig.field_names), ""));
+        }
       }
+    },
+    typeinfo.TypeUnknown(_) => {},
+    _ => {
+      out = out.append(dg_at("E024", "struct destructure needs a struct expression, got " + type_label(it), v.line, v.col));
     }
   }
   return out;

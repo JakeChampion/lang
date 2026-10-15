@@ -1442,12 +1442,7 @@ func TestRunnerArrayHofExamplePasses(t *testing.T) {
 // `tests/stdlib/array_extremum_by_test.fern` covers std/array's
 // comparator-driven extremum verbs `max_by` / `min_by` (free + method forms)
 // over i32 and string-length comparators: extremum, empty → None, ties keep
-// the FIRST, single element. Interp-gated only (NOT in selfHostStdTestCases):
-// a string-element `max_by`/`min_by` crashes the arm64 self-host emitter, and
-// folding these into array_hof tips its bundle over the asm_ir 512-function
-// budget — the file's header documents both. Native compilation across all
-// four backends is pinned by the Go-side TestNativeArrayMinMaxBy. Passing →
-// exit 0.
+// the FIRST, single element. Passing → exit 0.
 func TestRunnerArrayExtremumByExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/array_extremum_by_test.fern")
@@ -1465,11 +1460,7 @@ func TestRunnerArrayExtremumByExamplePasses(t *testing.T) {
 // `tests/stdlib/array_count_sum_by_test.fern` covers std/array's
 // closure-aggregate verbs count_where (tally of matching elements) and sum_by
 // (sum of an i32 projection over any element type), free + method forms, over
-// i32 and string arrays incl. the empty and none-match cases. Interp-gated only
-// (NOT in selfHostStdTestCases): the self-host compiler miscompiles sum_by with
-// an i32-identity projection (returns -1); the file header documents it. Native
-// compilation on all four backends is pinned by the Go-side
-// TestNativeArrayCountWhereSumBy. Passing → exit 0.
+// i32 and string arrays incl. the empty and none-match cases. Passing → exit 0.
 func TestRunnerArrayCountSumByExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/array_count_sum_by_test.fern")
@@ -1486,10 +1477,7 @@ func TestRunnerArrayCountSumByExamplePasses(t *testing.T) {
 
 // `tests/stdlib/array_none_test.fern` covers std/array's none[T](xs, pred)
 // (free + method forms): true iff pred holds for no element, the complement of
-// any; short-circuits, vacuously true for empty. Closure over a generic T[], so
-// the i32 cases are on interp + the self-host x86-64 + arm64 gates; the Go-side
-// TestNativeArrayNone pins native compilation on all four backends (incl. a
-// string-closure case). Passing → exit 0.
+// any; short-circuits, vacuously true for empty. Passing → exit 0.
 func TestRunnerArrayNoneExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/array_none_test.fern")
@@ -1590,12 +1578,8 @@ func TestRunnerArrayBinarySearchExamplePasses(t *testing.T) {
 
 // `tests/stdlib/array_dedup_test.fern` covers std/array's dedup[T: cmp.Eq]
 // (free + method forms): collapse runs of CONSECUTIVE equal elements, the
-// single-pass complement of distinct. Runs / all-equal / no-dup / sorted /
-// empty (i32) cases on the interp gate and the self-host x86-64 + arm64 gates
-// (same cmp.Eq bound / monomorphisation as distinct). STRING-element dedup is
-// native-differential-only (self-host mishandles the generic cmp.Eq over
-// pointer payloads); the Go-side TestNativeArrayDedup pins native compilation on
-// all four backends. Passing → exit 0.
+// single-pass complement of distinct: runs / all-equal / no-dup / sorted /
+// empty. Passing → exit 0.
 func TestRunnerArrayDedupExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/array_dedup_test.fern")
@@ -1612,12 +1596,8 @@ func TestRunnerArrayDedupExamplePasses(t *testing.T) {
 
 // `tests/stdlib/array_accessors_test.fern` covers std/array's foundational
 // accessors is_empty / first / last / get (free + method forms): Option[T]
-// returns, None on empty / out-of-range, negative index → None. On the interp
-// gate and the self-host x86-64 + arm64 gates for the i32 cases (uses
-// assert_true + match). STRING-element first/get is native-differential-only
-// (self-host mishandles the generic Option[T] over pointer payloads); the
-// Go-side TestNativeArrayFirstLastGet pins native compilation on all four
-// backends. Passing → exit 0.
+// returns, None on empty / out-of-range, negative index → None. Passing →
+// exit 0.
 func TestRunnerArrayAccessorsExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/array_accessors_test.fern")
@@ -1635,11 +1615,7 @@ func TestRunnerArrayAccessorsExamplePasses(t *testing.T) {
 // `tests/stdlib/array_rotate_test.fern` covers std/array's structural
 // rotation verbs rotate_left / rotate_right (free + method forms): cyclic shift
 // by n (mod len), wrap when n >= len, negative n, zero / full shift, and empty.
-// On the interp gate and the self-host x86-64 + arm64 gates (i32, structural, no
-// closures; uses assert_eq_array / assert_true). The Go-side
-// TestNativeArrayRotate pins native compilation on all four backends including
-// string-element rotation (which the self-host compiler miscompiles, so it's
-// native-differential-only). Passing → exit 0.
+// Passing → exit 0.
 func TestRunnerArrayRotateExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/array_rotate_test.fern")

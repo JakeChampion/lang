@@ -1,0 +1,4 @@
+// `let PAT = E else { … }` reads the shared pattern grammar (#5356); the else
+// must diverge, so the bindings are live for the rest of the block.
+struct P { x: i32 }
+function main(): i32 { let p: P = P { x: 1 }; let Has(v) = p else { return 0; }; return 0; }

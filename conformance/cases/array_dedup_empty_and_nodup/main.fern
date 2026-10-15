@@ -1,0 +1,7 @@
+// std/array's dedup: collapse each run of consecutive equal elements to one.
+// A minimal inline body, so this pins the lowering of its shape rather than
+// the shipped module.
+//
+// empty -> empty (len 0); no-dup input unchanged.
+function dedup(xs: i32[]): i32[] { let out: i32[] = []; let i: i32 = 0; while (i < xs.len()) { if (i == 0 || !(xs[i] == xs[i - 1])) { out = out.append(xs[i]); } i = i + 1; } return out; }
+function main(): i32 { let e: i32[] = []; if (dedup(e).len() != 0) { return 0; } return dedup([1, 2, 3]).len(); }

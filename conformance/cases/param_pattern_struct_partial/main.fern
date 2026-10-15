@@ -1,0 +1,7 @@
+// A destructuring parameter reads the shared pattern grammar (#5356): struct
+// patterns (with rename and `..`), tuples, and `w @ PAT`.
+//
+// `..` documents the fields left unbound.
+struct Point { x: i32, y: i32 }
+function f(Point { x, .. }: Point): i32 { return x; }
+function main(): i32 { return f(Point { x: 7, y: 4 }); }
