@@ -57,9 +57,11 @@ Unsupported constructs refuse the whole function with a reason.
     runtime helpers and live map keys' `hash` and `eq`.
   - A type is opaque, with its fields any value and its variants all built,
     when a value of it can arrive other than from a body's construction: an
-    extern's, a closure's or a dyn narrowing's result, or an entry's
-    parameter. A closure's construction (`closure_new`) builds its
-    environment, whose fields after the body's address are the captures.
+    extern's, a closure's or a dyn narrowing's result, or a root's
+    parameter: a root is called from outside the bodies, so its arguments
+    are nothing a body here built. A closure's construction (`closure_new`)
+    builds its environment, whose fields after the body's address are the
+    captures.
   - A reached refusal leaves the module as it was.
   - A paired call's position stays a test, because the certifier settles
     its word on that branch.

@@ -9046,7 +9046,7 @@ function reached_only(all: Produced[], names: string[], mod: parser.Module): Pro
     entries = entries.append(i < mod.funcs.len() && entry_decl(mod.funcs[i], mod));
     i = i + 1;
   }
-  let r: semreach.Reached = semreach.reach(funcs, names, usable, blocked, reach_roots(all, names, entries, mod), entries);
+  let r: semreach.Reached = semreach.reach(funcs, names, usable, blocked, reach_roots(all, names, entries, mod));
   if (!r.ok) {
     return all;
   }
