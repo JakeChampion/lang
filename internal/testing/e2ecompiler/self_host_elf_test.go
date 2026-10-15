@@ -152,7 +152,7 @@ function main(): i32 {
     // and phdr2 becomes PT_GNU_EH_FRAME over the header.
     let h3: i32[] = [1, 27, 3, 59, 0, 0, 0, 0, 0, 0, 0, 0];
     let e3: i32[] = [12, 0, 0, 0, 0, 0, 0, 0, 1, 122, 82, 0, 1, 120, 30, 1];
-    let b8: u8[] = elf_image_wx_unwind(t3, h3, e3, d3, elf_em_aarch64(), 0, 0);
+    let b8: u8[] = elf_image_wx_unwind(t3, h3, e3, d3, elf_em_aarch64(), 0, 0, false);
     // p_type @176 = 0x6474e550 (LE 80,229,116,100), p_flags @180 = 4.
     if (b8[176] != 80 || b8[177] != 229 || b8[178] != 116 || b8[179] != 100) { return 54; }
     if (b8[180] != 4) { return 55; }
