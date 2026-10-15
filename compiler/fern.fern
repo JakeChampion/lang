@@ -2141,8 +2141,9 @@ struct Bundle {
 // path its imports resolve against, its text, its line map — then, for a
 // multi-file literate document, every other module the document tangles to,
 // under the cleaned path it is written to. load_bundle reads an import from
-// here before the disk.
-struct Sources { paths: string[], srcs: string[], maps: util.LineMap[] }
+// here before the disk, and from `open`, the editor's unsaved buffers, before
+// a file of its own.
+struct Sources { paths: string[], srcs: string[], maps: util.LineMap[], open: modloader.Buffers }
 
 // is_literate reports whether `path` names a literate Fern document.
 function is_literate(path: string): boolean {
@@ -2153,7 +2154,7 @@ function is_literate(path: string): boolean {
 // modules a literate `.fern.md` tangles to. The second result is why it cannot
 // be read, empty when it can.
 function entry_sources(path: string, src: string): (Sources, string) {
-  let plain: Sources = Sources { paths: [path], srcs: [src], maps: [util.no_line_map()] };
+  let plain: Sources = Sources { paths: [path], srcs: [src], maps: [util.no_line_map()], open: modloader.no_buffers() };
   if (!is_literate(path)) {
     return (plain, "");
   }
@@ -2162,7 +2163,7 @@ function entry_sources(path: string, src: string): (Sources, string) {
   }
   match (literate.tangle(src)) {
     literate.TangleOk(o) => {
-      return (Sources { paths: [path], srcs: [o.code], maps: [util.LineMap { doc: path, lits: o.lits, shifts: o.shifts }] }, "");
+      return (Sources { ...plain, srcs: [o.code], maps: [util.LineMap { doc: path, lits: o.lits, shifts: o.shifts }] }, "");
     },
     literate.TangleErr(e) => {
       return (plain, tangle_error(path, e.line, e.col, e.msg));
@@ -2175,7 +2176,7 @@ function entry_sources(path: string, src: string): (Sources, string) {
 // one module per path, beside the document, its entry first — the module
 // marked `entry`, the only one, or the one module that declares `main`.
 function multi_file_sources(path: string, src: string): (Sources, string) {
-  let none: Sources = Sources { paths: [], srcs: [], maps: [] };
+  let none: Sources = Sources { paths: [], srcs: [], maps: [], open: modloader.no_buffers() };
   let files: literate.FileResult[] = [];
   match (literate.tangle_files(src)) {
     literate.FileTangleOk(o) => {
@@ -2231,6 +2232,7 @@ function add_generated(s: Sources, doc: string, f: literate.FileResult): Sources
     mpath = modloader.dirname(doc) + mpath;
   }
   return Sources {
+    ...s,
     paths: s.paths.append(util.clean_path(mpath)),
     srcs: s.srcs.append(f.code),
     maps: s.maps.append(util.LineMap { doc: doc, lits: f.lits, shifts: f.shifts }),
@@ -2271,7 +2273,7 @@ function read_bundle_module(s: Sources, mpath: string, from: string, ipath: stri
   if (gi >= 0) {
     return modloader.Resolved { src: s.srcs[gi], ok: true, err: "", err_path: "", shown: mpath, map: s.maps[gi] };
   }
-  let r: modloader.Resolved = modloader.read_module(mpath);
+  let r: modloader.Resolved = modloader.read_module_in(s.open, mpath);
   if (r.ok || r.err.len() > 0) {
     return r;
   }
@@ -2280,7 +2282,7 @@ function read_bundle_module(s: Sources, mpath: string, from: string, ipath: stri
   // content-addressed store). It is the only way to reach a package that
   // carries its own manifest — the rules above can only name a sibling file
   // or something under the stdlib root.
-  return modloader.resolve_module(modloader.no_overlay(), from, ipath, util.module_name(ipath));
+  return modloader.resolve_module(modloader.Overlay { ...modloader.no_overlay(), files: s.open }, from, ipath, util.module_name(ipath));
 }
 
 // load_bundle loads `entry_mod`'s transitive imports off disk and flattens
@@ -2474,12 +2476,12 @@ function fold_embedded_assets(b: Bundle, embed_dir: string): (Bundle, Finding[])
 
 // check_source is `-check` on an entry's text: everything it reports, and its
 // verdict.
-function check_source(entry_path: string, src: string, root: string, target: string, target_given: boolean, embed_dir: string): Checked {
+function check_source(entry_path: string, src: string, open: modloader.Buffers, root: string, target: string, target_given: boolean, embed_dir: string): Checked {
   let (s, err) = entry_sources(entry_path, src);
   if (err.len() > 0) {
     return Checked { findings: [refusal(err)], entry: entry_path, files: [], maps: [], ok: false };
   }
-  let ld: Loaded = load_checked(s, root, target, embed_dir);
+  let ld: Loaded = load_checked(Sources { ...s, open: open }, root, target, embed_dir);
   if (ld.refused.len() > 0) {
     return Checked { findings: ld.refused, entry: entry_path, files: ld.b.files, maps: ld.b.maps, ok: false };
   }
@@ -2645,7 +2647,7 @@ function run_repl(root: string, target: string): i32 {
   print("fern REPL — Ctrl+D to exit");
   let s: interp.Session = interp.new_session();
   if (root.len() > 0) {
-    let ld: Loaded = load_checked(Sources { paths: ["repl.fern"], srcs: ["import \"std/float\";\n"], maps: [util.no_line_map()] }, root, target, "");
+    let ld: Loaded = load_checked(Sources { paths: ["repl.fern"], srcs: ["import \"std/float\";\n"], maps: [util.no_line_map()], open: modloader.no_buffers() }, root, target, "");
     if (ld.refused.len() == 0) {
       s = s.declare(ld.b.merged);
     }
@@ -2766,7 +2768,7 @@ function run_doctests(path: string, root: string, target: string, embed_dir: str
 // passed.
 function run_doctest(path: string, tc: literate.Doctest, root: string, target: string, embed_dir: string): string {
   let st: DiagStyle = DiagStyle { color: false, ascii: false };
-  let srcs: Sources = Sources { paths: [path], srcs: [tc.code], maps: [util.LineMap { doc: path, lits: tc.lits, shifts: tc.shifts }] };
+  let srcs: Sources = Sources { paths: [path], srcs: [tc.code], maps: [util.LineMap { doc: path, lits: tc.lits, shifts: tc.shifts }], open: modloader.no_buffers() };
   let ld: Loaded = load_checked(srcs, root, target, embed_dir);
   let fs: Finding[] = ld.refused;
   if (!has_error(fs)) {
@@ -3226,7 +3228,7 @@ function check_dir(st: DiagStyle, dir: string, root: string, target: string, tar
 function check_file(st: DiagStyle, entry_path: string, root: string, target: string, target_given: boolean, embed_dir: string): i32 {
   match (read_file(entry_path)) {
     Ok(src) => {
-      return report_checked(st, check_source(entry_path, src, root, target, target_given, embed_dir));
+      return report_checked(st, check_source(entry_path, src, modloader.no_buffers(), root, target, target_given, embed_dir));
     },
     Err(e) => {
       eprint(read_failure("entry file", entry_path, modloader.read_error_reason(e)));
@@ -3338,9 +3340,12 @@ function lsp_notification(s: Server, m: lsp.Message): Server {
   return s;
 }
 
-// lsp_update records a document's new text and publishes its diagnostics when
-// they differ from the last ones published for it. Text the server already
-// has — some editors resend it on focus — is no change at all.
+// lsp_update records a document's new text and checks it with every open
+// document standing in for its file on disk. The document's diagnostics are
+// published, and so are those of each other open document the check loaded:
+// that module was checked as part of this program, so what the check found in
+// it, or did not, is now its diagnostics. Text the server already has — some
+// editors resend it on focus — is no change at all.
 function lsp_update(s: Server, uri: string, src: string): Server {
   let i: i32 = util.index_of_str(s.uris, uri);
   if (i >= 0 && s.srcs[i] == src) {
@@ -3352,12 +3357,64 @@ function lsp_update(s: Server, uri: string, src: string): Server {
   } else {
     s = Server { ...s, srcs: s.srcs.with(i, src) };
   }
-  let ds: string = lsp.json_array(lsp_diagnostics(s, uri, src));
+  let path: string = lsp_doc_path(uri);
+  let c: Checked = check_source(path, src, lsp_buffers(s), s.root, s.target, s.target_given, s.embed_dir);
+  s = lsp_publish(s, i, lsp_diagnostics(c, path, src));
+  let j: i32 = 0;
+  while (j < s.uris.len()) {
+    let other: string = lsp_doc_path(s.uris[j]);
+    if (j != i && other != "-" && util.has_str(lsp_checked_files(c), other)) {
+      s = lsp_publish(s, j, lsp_diagnostics(c, other, s.srcs[j]));
+    }
+    j = j + 1;
+  }
+  return s;
+}
+
+// lsp_publish sends document `i`'s diagnostics when they differ from the last
+// ones published for it.
+function lsp_publish(s: Server, i: i32, diags: string[]): Server {
+  let ds: string = lsp.json_array(diags);
   if (ds == s.published[i]) {
     return s;
   }
-  lsp.send(lsp.publish_diagnostics(uri, ds));
+  lsp.send(lsp.publish_diagnostics(s.uris[i], ds));
   return Server { ...s, published: s.published.with(i, ds) };
+}
+
+// lsp_doc_path is the file a document is checked as: the path a file:// URI
+// names, so its imports resolve beside it, or `-`, as stdin is checked
+// against the working directory.
+function lsp_doc_path(uri: string): string {
+  let path: string = lsp.uri_path(uri);
+  if (path.len() == 0) {
+    return "-";
+  }
+  return util.clean_path(path);
+}
+
+// lsp_buffers is every open file:// document's text, read in place of its file.
+function lsp_buffers(s: Server): modloader.Buffers {
+  let b: modloader.Buffers = modloader.no_buffers();
+  let i: i32 = 0;
+  while (i < s.uris.len()) {
+    let path: string = lsp_doc_path(s.uris[i]);
+    if (path != "-") {
+      b = modloader.Buffers { paths: b.paths.append(path), srcs: b.srcs.append(s.srcs[i]) };
+    }
+    i = i + 1;
+  }
+  return b;
+}
+
+// lsp_checked_files names every file a check read: its entry, then each
+// module in the order their positions are numbered.
+function lsp_checked_files(c: Checked): string[] {
+  let out: string[] = [c.entry];
+  for f in c.files {
+    out = out.append(util.clean_path(f));
+  }
+  return out;
 }
 
 // lsp_close forgets a document and clears its diagnostics, so the editor
@@ -3379,22 +3436,18 @@ function lsp_close(s: Server, uri: string): Server {
   return Server { ...s, uris: uris, srcs: srcs, published: published };
 }
 
-// lsp_diagnostics is `-check` on a document's text, as LSP diagnostics. A
-// file:// document is checked as the file it names, so its imports resolve
-// beside it; any other is checked as stdin is, against the working directory.
-// A finding in an imported module stays with that module, as native's
-// workspace mode keeps it; one with no position lands on the document.
-function lsp_diagnostics(s: Server, uri: string, src: string): string[] {
-  let path: string = lsp.uri_path(uri);
-  if (path.len() == 0) {
-    path = "-";
-  }
-  let c: Checked = check_source(path, src, s.root, s.target, s.target_given, s.embed_dir);
+// lsp_diagnostics is the findings of check `c` that are in file `path`, as
+// LSP diagnostics placed in `text`, that file's open buffer. A finding is in
+// the module its position is numbered in (a literate module's is its
+// document's); one with no position is in the entry.
+function lsp_diagnostics(c: Checked, path: string, text: string): string[] {
+  let files: string[] = lsp_checked_files(c);
   let out: string[] = [];
   for f in c.findings {
     let d: util.Diag = util.doc_diag(c.maps, f.diag);
-    if (d.line < util.line_base(0)) {
-      out = out.append(lsp.diagnostic(src, d.line, d.col, d.code, lsp_message(d.message), f.warning));
+    let m: i32 = util.pos_file_index(d.line);
+    if (m < files.len() && files[m] == path) {
+      out = out.append(lsp.diagnostic(text, util.pos_line(d.line), d.col, d.code, lsp_message(d.message), f.warning));
     }
   }
   return out;
