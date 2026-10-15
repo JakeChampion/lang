@@ -32,6 +32,11 @@ could not build real programs. Nothing here
 reads `bin/fern-oracle`; the target does not depend on it and the CI job that runs it
 installs no Go.
 
+`make distcheck` reuses the stage1 an earlier build left only when
+`stage1.key` beside it still names the same stage0 and the same files under
+`compiler/` and `internal/stdlib`. Otherwise it builds stage1 again first, so
+a stage2 is never compiled by a stage1 of older sources.
+
 ## What the pin is
 
 `bootstrap/stage0.lock`:
