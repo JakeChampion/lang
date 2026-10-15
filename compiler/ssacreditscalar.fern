@@ -185,6 +185,8 @@ pub function zero_or_exit(f: ssa.SFunc): helper.Proof {
           }
         } else if (op.kind_tag == 7 && op.args.len() == 1 && op.imm == 0 && op.str == "") {
           value = row[op.args[0]];
+        } else if (is_select(op)) {
+          value = both_zero(row, op.args[1], op.args[2]);
         } else if (op.kind_tag == 50 && op.str == "exit" && op.args.len() == 1 && op.imm == 0) {
           value = 0;
         } else {
@@ -235,6 +237,32 @@ function joined_number(a: Number, b: Number): Number {
     return a;
   }
   return Number { known: false, value: 0 };
+}
+
+// is_select names a well-formed select: a condition and the two values it
+// picks between.
+function is_select(op: ssa.SInst): boolean {
+  return op.kind_tag == 36 && op.args.len() == 3 && op.imm == 0 && op.str == "";
+}
+
+// both_zero is 1 when values a and b are both proven zero in `row`.
+function both_zero(row: i32[], a: i32, b: i32): i32 {
+  if (row[a] == 1 && row[b] == 1) {
+    return 1;
+  }
+  return 0;
+}
+
+// picked_number is what a select on `c` gives: the operand a known
+// condition picks, or the join of both.
+function picked_number(c: Number, a: Number, b: Number): Number {
+  if (!c.known) {
+    return joined_number(a, b);
+  }
+  if (c.value != 0) {
+    return a;
+  }
+  return b;
 }
 
 pub function outcomes(f: ssa.SFunc): Outcomes {
@@ -322,6 +350,8 @@ pub function outcomes(f: ssa.SFunc): Outcomes {
             value = Number { known: true, value: op.imm };
           } else if (op.kind_tag == 7) {
             value = row[op.args[0]];
+          } else if (is_select(op)) {
+            value = picked_number(row[op.args[0]], row[op.args[1]], row[op.args[2]]);
           } else if (op.kind_tag == 50) {
             result = Outcomes { ...result, exits: result.exits.with(input, true) };
             active = false;

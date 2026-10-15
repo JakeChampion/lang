@@ -76,6 +76,28 @@ function outcome_controls(f: ssa.SFunc): void {
   expect_outcomes(ssa.SFunc { ...joined, blocks: blocks.with(3, ssa.SBlock { ...b, insts: [ssa.SInst { ...selected, args: [2, 3] }] }) }, [true, false], [false, true], 45);
   expect_outcomes(ssa.SFunc { ...joined, blocks: blocks.with(3, ssa.SBlock { ...b, insts: [ssa.SInst { ...selected, args: [1, 2] }] }) }, [false, true], [true, true], 46);
   expect_outcomes(f, [false, true], [true, false], 47);
+  select_controls(f);
+}
+
+// select_controls: a select picks the operand its known condition names and
+// joins both under an unknown one, and returns zero only when both of its
+// operands are zero.
+function select_controls(f: ssa.SFunc): void {
+  let params = [ssa.SInst { kind_tag: 6, result: 0, args: [], imm: 0, str: "" }, ssa.SInst { kind_tag: 6, result: 1, args: [], imm: 1, str: "" }, ssa.SInst { kind_tag: 1, result: 2, args: [], imm: 0, str: "" }, ssa.SInst { kind_tag: 1, result: 3, args: [], imm: -2147483648, str: "" }];
+  let pick = ssa.SInst { kind_tag: 36, result: 4, args: [0, 3, 2], imm: 0, str: "" };
+  let branch = ssa.STerm { kind_tag: 3, cond: 4, target: 0, t: 1, f: 2, value: 0 };
+  let ret = ssa.STerm { ...branch, kind_tag: 1, value: 2 };
+  let leave = ssa.SInst { kind_tag: 50, result: 5, args: [1], imm: 0, str: "exit" };
+  let blocks = [ssa.SBlock { id: 0, insts: params.append(pick), preds: [], term: branch }, ssa.SBlock { id: 1, insts: [], preds: [0], term: ret }, ssa.SBlock { id: 2, insts: [leave], preds: [0], term: ret }];
+  let picked = ssa.SFunc { ...f, blocks: blocks, entry: 0, nvals: 6 };
+  expect_outcomes(picked, [false, true], [true, false], 53);
+  let unknown = ssa.SBlock { ...blocks[0], insts: params.append(ssa.SInst { ...pick, args: [1, 3, 2] }) };
+  expect_outcomes(ssa.SFunc { ...picked, blocks: blocks.with(0, unknown) }, [true, true], [true, true], 54);
+  let zeros = ssa.SInst { kind_tag: 36, result: 4, args: [0, 2, 2], imm: 0, str: "" };
+  let returned = [ssa.SBlock { id: 0, insts: params.append(zeros), preds: [], term: ssa.STerm { ...ret, value: 4 } }];
+  expect(ssa.SFunc { ...f, blocks: returned, entry: 0, nvals: 5 }, true, "proved scalar zero-or-exit effects", 55);
+  let mixed = [ssa.SBlock { ...returned[0], insts: params.append(ssa.SInst { ...zeros, args: [0, 2, 3] }) }];
+  expect(ssa.SFunc { ...f, blocks: mixed, entry: 0, nvals: 5 }, false, "scalar helper return not proven zero", 56);
 }
 
 function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {

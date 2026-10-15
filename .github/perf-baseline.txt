@@ -86,11 +86,11 @@ x86_64/record_update.text	1392
 x86_64/sort_inplace.text	2918
 x86_64/sort_inplace.ir	43380614
 x86_64/sort_ints.text	3398
-x86_64/sort_ints.ir	29849660
+x86_64/sort_ints.ir	31486537
 x86_64/sort_strings.text	4210
 x86_64/sort_strings.ir	105692600
 x86_64/string_build.text	3263
-x86_64/string_build.ir	56829760
+x86_64/string_build.ir	58089760
 x86_64/string_count_byte.text	2923
 x86_64/string_count_byte.ir	135589612
 x86_64/string_find_byte.text	3307
@@ -102,7 +102,7 @@ x86_64/string_scan.ir	52966728
 x86_64/string_slice.text	739
 x86_64/string_slice.ir	38700038
 x86_64/struct_drop.text	3425
-x86_64/struct_drop.ir	302980547
+x86_64/struct_drop.ir	308020547
 x86_64/tokenize.text	973
 x86_64/tokenize.ir	36950039
 x86_64/utf8_ingest_unchecked.text	9286
@@ -183,6 +183,16 @@ x86_64/utf8_ingest_validated.ir	5988691
 # a caller past its budget, so the serve loop no longer builds
 # `__serve_pass_end`'s tuple on every pass. Both figures are the perf lanes'.
 #
+# Re-pinned 2026-10-14 (#12406) on sort_ints.ir, string_build.ir and
+# struct_drop.ir (x86_64 +5.5%, +2.2%, +1.7%; aarch64 +3.8%, +1.7%, +1.3%):
+# a branch between two pure values is now a conditional move, which runs
+# both arms where the branch ran one. These rows' branches are predictable,
+# so callgrind, which has no branch predictor, counts only the cost. Wall
+# time on sort_ints scaled up is 5-10% faster; struct_drop's is within
+# noise. Both arches' figures are the perf lanes'. The same change takes
+# aarch64 ordmap_insert.text and sort_strings.text down 1.0% and 1.1%,
+# measured by the perf-aarch64 lane.
+#
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
 # (utf8_ingest_unchecked) — one ISA emitting fewer instructions than the other
@@ -215,7 +225,7 @@ aarch64/map_probe_chain.text	6055
 aarch64/map_probe_chain.ir	374464985
 aarch64/map_string.text	8944
 aarch64/map_string.ir	64821463	2
-aarch64/ordmap_insert.text	5441
+aarch64/ordmap_insert.text	5386
 aarch64/ordmap_insert.ir	124791436
 aarch64/pmap_insert.text	4965
 aarch64/pmap_insert.ir	71272111
@@ -226,11 +236,11 @@ aarch64/record_update.ir	104947544
 aarch64/sort_inplace.text	3020
 aarch64/sort_inplace.ir	53111058
 aarch64/sort_ints.text	3583
-aarch64/sort_ints.ir	32514646
-aarch64/sort_strings.text	4476
+aarch64/sort_ints.ir	33759009
+aarch64/sort_strings.text	4428
 aarch64/sort_strings.ir	106027235
 aarch64/string_build.text	3431
-aarch64/string_build.ir	63637394
+aarch64/string_build.ir	64717394
 aarch64/string_count_byte.text	3048
 aarch64/string_count_byte.ir	295398919
 aarch64/string_find_byte.text	3473
@@ -242,7 +252,7 @@ aarch64/string_scan.ir	60275834
 aarch64/string_slice.text	939
 aarch64/string_slice.ir	43620043
 aarch64/struct_drop.text	3563
-aarch64/struct_drop.ir	344060825
+aarch64/struct_drop.ir	348380825
 aarch64/tokenize.text	1195
 aarch64/tokenize.ir	38580038
 aarch64/utf8_ingest_unchecked.text	9679

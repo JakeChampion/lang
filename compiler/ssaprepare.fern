@@ -96,3 +96,9 @@ pub struct Output {
 pub function finish(lowered: irtables.LowerResult, selected: physicalbody.Selected, lifted: ssa_lift.LResult, leaves: ssa.Leaf[]): Body {
   return Body { lowered: lowered, selected: selected, formed: ssa.register_form(ssa.inline_leaves(lifted.func, leaves)), seen_vals: lifted.seen_vals, seen_slots: lifted.seen_slots };
 }
+
+// with_selects is the certified body with its small branches turned into
+// selects (ssa.select_branches), the form the emitter allocates.
+pub function with_selects(b: Body): Body {
+  return Body { ...b, formed: ssa.Formed { ...b.formed, f: ssa.select_branches(b.formed.f) } };
+}

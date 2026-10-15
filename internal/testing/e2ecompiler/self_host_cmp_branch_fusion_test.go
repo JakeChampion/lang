@@ -73,10 +73,11 @@ func cmpLit(v uint64, unsigned bool) string {
 
 // cmpBranchMatrix builds a program that exits with the NUMBER of combinations
 // disagreeing with the answer written beside them — 0 when every comparison x
-// negation depth x consumer combination is right. The three consumers are the
-// three shapes the fusion sees: an `if` with no else (its jump targets the end),
-// an `if/else` (it targets a real else-label), and a `while` guard (a `br_if`,
-// which the lowering reaches through a `not` the source never wrote).
+// negation depth x consumer combination is right. The four consumers are the
+// shapes the fusion sees: an `if` with no else and an `if/else` whose arms only
+// pick a constant, which become a select reading the compare's flags; an `if`
+// whose arm calls, which stays a branch; and a `while` guard (a `br_if`, which
+// the lowering reaches through a `not` the source never wrote).
 //
 // main accumulates `(got - want)^2` rather than branching on each answer, and
 // that is required rather than a style: a check written as `if (got != want)
@@ -88,11 +89,13 @@ func cmpBranchMatrix(ty string, unsigned bool, pairs [][2]uint64) string {
 	var checks []string
 	id := 0
 	b.WriteString("@noinline function sq(x: i32): i32 { return x * x; }\n")
+	b.WriteString("@noinline function one(): i32 { return 1; }\n")
 	for _, op := range cmpOps {
 		for _, nots := range []int{0, 1, 2} {
 			cond := strings.Repeat("!", nots) + "(a " + op + " b)"
 			fmt.Fprintf(&b, "function fi%d(a: %s, b: %s): i32 { if (%s) { return 1; } return 0; }\n", id, ty, ty, cond)
 			fmt.Fprintf(&b, "function fe%d(a: %s, b: %s): i32 { if (%s) { return 1; } else { return 0; } }\n", id, ty, ty, cond)
+			fmt.Fprintf(&b, "function fc%d(a: %s, b: %s): i32 { if (%s) { return one(); } return 0; }\n", id, ty, ty, cond)
 			// The body returns on its first pass, so the loop runs at most once
 			// however the guard resolves — the answer is the guard's initial value.
 			fmt.Fprintf(&b, "function fw%d(a: %s, b: %s): i32 { let n: i32 = 0; while (%s) { n = n + 1; if (n > 0) { return n; } } return 0; }\n", id, ty, ty, cond)
@@ -101,7 +104,7 @@ func cmpBranchMatrix(ty string, unsigned bool, pairs [][2]uint64) string {
 				if cmpEval(op, p[0], p[1], unsigned) != (nots%2 == 1) {
 					want = 1
 				}
-				for _, fn := range []string{"fi", "fe", "fw"} {
+				for _, fn := range []string{"fi", "fe", "fc", "fw"} {
 					checks = append(checks, fmt.Sprintf("%s%d(%s, %s) - %d",
 						fn, id, cmpLit(p[0], unsigned), cmpLit(p[1], unsigned), want))
 				}
@@ -126,13 +129,14 @@ func cmpBooleanBranchChecks(b *strings.Builder) []string {
 		cond := strings.Repeat("!", nots) + "a"
 		fmt.Fprintf(b, "@noinline function bi%d(a: boolean): i32 { if (%s) { return 1; } return 0; }\n", nots, cond)
 		fmt.Fprintf(b, "@noinline function be%d(a: boolean): i32 { if (%s) { return 1; } else { return 0; } }\n", nots, cond)
+		fmt.Fprintf(b, "@noinline function bc%d(a: boolean): i32 { if (%s) { return one(); } return 0; }\n", nots, cond)
 		fmt.Fprintf(b, "@noinline function bw%d(a: boolean): i32 { while (%s) { return 1; } return 0; }\n", nots, cond)
 		for _, value := range []bool{false, true} {
 			want := 0
 			if value != (nots%2 == 1) {
 				want = 1
 			}
-			for _, fn := range []string{"bi", "be", "bw"} {
+			for _, fn := range []string{"bi", "be", "bc", "bw"} {
 				checks = append(checks, fmt.Sprintf("%s%d(%t) - %d", fn, nots, value, want))
 			}
 		}
@@ -190,7 +194,8 @@ func TestSelfHostCmpBranchFusion(t *testing.T) {
 
 	// Shape: one source per backend-visible decision the fusion makes — the
 	// signed mnemonic, the unsigned one, and a `not` run with no comparison in
-	// front of it (the boolean the branch tests for zero itself).
+	// front of it (the boolean the branch tests for zero itself). Each else arm
+	// calls, so the branch stays a branch rather than a select.
 	shape := []struct {
 		name string
 		src  string
@@ -201,7 +206,7 @@ func TestSelfHostCmpBranchFusion(t *testing.T) {
 	}{
 		{
 			name:    "signed",
-			src:     "@noinline function f(a: i32, b: i32): i32 { if (a < b) { return 1; } return 2; }\nfunction main(): i32 { return f(1, 2); }",
+			src:     "@noinline function two(): i32 { return 2; }\n@noinline function f(a: i32, b: i32): i32 { if (a < b) { return 1; } return two(); }\nfunction main(): i32 { return f(1, 2); }",
 			wantX86: []string{`cmpq %r[a-z0-9]+, %r[a-z0-9]+\n    jge `},
 			deadX86: []string{"setl", "movzbq"},
 			wantArm: []string{`cmp x[0-9]+, x[0-9]+\n    b.ge `},
@@ -211,7 +216,7 @@ func TestSelfHostCmpBranchFusion(t *testing.T) {
 			// u64 `<` must take the below/above family: the two disagree across
 			// the sign boundary, and a wrong pick silently miscompiles.
 			name:    "unsigned",
-			src:     "@noinline function f(a: u64, b: u64): i32 { if (a < b) { return 1; } return 2; }\nfunction main(): i32 { return f(1, 2); }",
+			src:     "@noinline function two(): i32 { return 2; }\n@noinline function f(a: u64, b: u64): i32 { if (a < b) { return 1; } return two(); }\nfunction main(): i32 { return f(1, 2); }",
 			wantX86: []string{`cmpq %r[a-z0-9]+, %r[a-z0-9]+\n    jae `},
 			deadX86: []string{"setb", "movzbq"},
 			wantArm: []string{`cmp x[0-9]+, x[0-9]+\n    b.hs `},
@@ -222,7 +227,7 @@ func TestSelfHostCmpBranchFusion(t *testing.T) {
 			// nothing. Layout may swap the fallthrough and invert the branch;
 			// the execution matrix checks both boolean inputs and all not depths.
 			name:    "not-only",
-			src:     "@noinline function f(a: boolean): i32 { if (!a) { return 1; } return 2; }\nfunction main(): i32 { return f(false); }",
+			src:     "@noinline function two(): i32 { return 2; }\n@noinline function f(a: boolean): i32 { if (!a) { return 1; } return two(); }\nfunction main(): i32 { return f(false); }",
 			wantX86: []string{`testq %r[a-z0-9]+, %r[a-z0-9]+\n    jn?z `},
 			deadX86: []string{"setz", "movzbq"},
 			wantArm: []string{`cbn?z x[0-9]+, `},

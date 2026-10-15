@@ -24,12 +24,16 @@ type ctGateCase struct {
 }
 
 var ctGateCases = []ctGateCase{
-	{"secret-branch", `function main(): i32 {
+	// The secret branches return through a call, so they stay branches: arms
+	// that only pick a constant would be a conditional move (ssa.select_branches),
+	// which steers nothing.
+	{"secret-branch", `@noinline function zero(): i32 { return 0; }
+function main(): i32 {
   let k: u8[] = __alloc_u8(16);
   k = k.with(0, 7 as u8);
   __ct_secret(k);
   if (k[0] == 7 as u8) {
-    return 0;
+    return zero();
   }
   return 1;
 }
@@ -57,12 +61,13 @@ var ctGateCases = []ctGateCase{
 `, false},
 	// A string's byte view is a tagged descriptor, not a packed array: the
 	// mark must land on the string's own bytes.
-	{"string-view-secret", `function main(): i32 {
+	{"string-view-secret", `@noinline function zero(): i32 { return 0; }
+function main(): i32 {
   let s: string = "pass" + "word";
   let v: [u8] = s.as_bytes();
   __ct_secret(v);
   if (v[4] == 119 as u8) {
-    return 0;
+    return zero();
   }
   return 1;
 }

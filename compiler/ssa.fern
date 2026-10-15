@@ -108,6 +108,11 @@ pub function kind_name(id: i32): string {
   if (id == 35) {
     return "line";
   }
+  // select: args [cond, a, b], a when cond is non-zero and b otherwise
+  // (select_branches).
+  if (id == 36) {
+    return "select";
+  }
   if (id == 1) {
     return "const_int";
   }
@@ -363,7 +368,7 @@ function semantic_kind_name(id: i32): string {
 
 // kind_count is the number of registered SInst kinds (ids 1..kind_count()).
 pub function kind_count(): i32 {
-  return 35;
+  return 36;
 }
 
 // kind_retired is an id in 1..kind_count() whose kind is gone: 23..25 (the
@@ -378,6 +383,9 @@ pub function kind_id(name: string): i32 {
   }
   if (name == "line") {
     return 35;
+  }
+  if (name == "select") {
+    return 36;
   }
   if (name == "const_bool") {
     return 2;
@@ -1247,8 +1255,13 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
         def_pos = def_pos.with(ins.result, pos);
         def_blk = def_blk.with(ins.result, bi);
         // A call reads its arguments before it writes its result, so
-        // the result may take a dying argument's register.
-        if (ins.kind_tag == 8 || ins.kind_tag == 10 || ins.kind_tag == 11 || ins.kind_tag == 9 && shares_operand_home(ins.str)) {
+        // the result may take a dying argument's register; a select may
+        // take either of the values it picks between.
+        if (ins.kind_tag == 36) {
+          reads_mate = reads_mate.with(ins.result, true);
+          def_a = def_a.with(ins.result, ins.args[1]);
+          def_b = def_b.with(ins.result, ins.args[2]);
+        } else if (ins.kind_tag == 8 || ins.kind_tag == 10 || ins.kind_tag == 11 || ins.kind_tag == 9 && shares_operand_home(ins.str)) {
           reads_mate = reads_mate.with(ins.result, true);
           if (ins.kind_tag != 8 && ins.args.len() > 0) {
             def_a = def_a.with(ins.result, ins.args[0]);
@@ -1509,16 +1522,24 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
         if (v < wish.len()) {
           pr = wish[v];
         }
-        if (pr < 0 || spans_call(cum, lo[v], hi[v]) || pr == abi_reg && !abi_ok || index_of_reg(free, pr) < 0) {
+        if (pr < 0 || spans_call(cum, lo[v], hi[v]) || pr == abi_reg && !abi_ok) {
           continue;
         }
-        free = remove_reg(free, pr);
-        reg_of = reg_of.with(v, pr);
-        act_val = act_val.append(v);
-        act_hi = act_hi.append(hi[v]);
-        act_reg = act_reg.append(pr);
-        placed = true;
-        continue;
+        if (index_of_reg(free, pr) >= 0) {
+          free = remove_reg(free, pr);
+          reg_of = reg_of.with(v, pr);
+          act_val = act_val.append(v);
+          act_hi = act_hi.append(hi[v]);
+          act_reg = act_reg.append(pr);
+          placed = true;
+          continue;
+        }
+        // Held: taken below if its holder dies at this definition.
+        let held: i32 = index_of_reg(act_reg, pr);
+        if (held < 0) {
+          continue;
+        }
+        h = act_val[held];
       }
       if (h < 0 || reg_of[h] < 0) {
         continue;
@@ -1831,6 +1852,11 @@ pub function spill_count(reg_of: i32[]): i32 {
 // operand that dies at them: both emitters read the operands before writing
 // the destination, or swap them when the right one lives there.
 function shares_operand_home(op: string): boolean {
+  return int_binary(op);
+}
+
+// int_binary names the integer operators that cannot trap.
+function int_binary(op: string): boolean {
   let ops: string[] = ["add", "sub", "mul", "and", "or", "xor", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "shl", "shr_s", "shr_u"];
   for o in ops {
     if (o == op) {
@@ -3561,6 +3587,383 @@ function arm_term(v: i32, konst: i32[], jn: BoolJoin): STerm {
   return t_brif(v, jn.t, jn.f);
 }
 
+// ---- conditional values ----------------------------------------------------
+//
+// A branch whose two arms compute a few pure integer values and then meet,
+// at a join's phis or at a return each, becomes straight-line code: the arms'
+// instructions move up into the branching block, and each value the arms
+// chose between becomes a `select` on the branch's condition, which the
+// emitters render as a conditional move. A branch the data decides at random
+// mispredicts half the time; a conditional move never does.
+//
+// An arm is the edge itself, or a block entered from the branch alone that
+// holds at most select_arm_limit() instructions, each of which may run on the
+// path that did not take it: no memory access, no call, no division, no
+// float. A join must be entered from the two arms alone. A float the
+// emitters keep in a float register stays a phi.
+//
+// The pass runs on the certified form: what it moves holds no reference
+// count operation, so it changes none of the events the certifier proved.
+
+// Diamond is a branch the pass can flatten: `head` the branching block's
+// position, `t` / `f` each arm's position or -1 for an arm that is the edge
+// itself, and `join` the join's position, or -1 when both arms return.
+struct Diamond { ok: boolean, head: i32, t: i32, f: i32, join: i32 }
+
+pub function select_arm_limit(): i32 {
+  return 3;
+}
+
+pub function select_branches(f: SFunc): SFunc {
+  let g: SFunc = f;
+  let rounds: i32 = 0;
+  while (rounds < 8) {
+    let r: Threading = select_round(g);
+    if (!r.changed) {
+      return g;
+    }
+    g = r.f;
+    rounds = rounds + 1;
+  }
+  return g;
+}
+
+// select_round flattens every diamond whose blocks no earlier one in the
+// round rewrote; the next round sees the graph that leaves, where a join
+// that became straight-line code may head a diamond of its own.
+function select_round(f: SFunc): Threading {
+  let at: i32[] = block_positions(f);
+  let fl: boolean[] = float_values(f, [], false);
+  let none: boolean[] = __alloc_bool(f.blocks.len());
+  let r: Flattening = Flattening { blocks: f.blocks, busy: none, gone: none, nvals: f.nvals, changed: false };
+  let p: i32 = 0;
+  while (p < f.blocks.len()) {
+    let d: Diamond = diamond_at(f, at, fl, p);
+    if (d.ok && !diamond_busy(r.busy, d)) {
+      r = flatten_diamond(f, d, r);
+    }
+    p = p + 1;
+  }
+  if (!r.changed) {
+    return Threading { f: f, changed: false };
+  }
+  let kept: SBlock[] = [];
+  let i: i32 = 0;
+  while (i < r.blocks.len()) {
+    if (!r.gone[i]) {
+      kept = kept.append(r.blocks[i]);
+    }
+    i = i + 1;
+  }
+  return Threading { f: SFunc { ...f, nvals: r.nvals, blocks: kept }, changed: true };
+}
+
+// Flattening is a round's rewritten blocks, the positions it rewrote (busy)
+// and dropped (gone), and the next fresh value.
+struct Flattening { blocks: SBlock[], busy: boolean[], gone: boolean[], nvals: i32, changed: boolean }
+
+// flatten_diamond rewrites diamond d: the head takes the arms' instructions
+// and a select per value they chose between, and the arms are dropped.
+function flatten_diamond(f: SFunc, d: Diamond, r: Flattening): Flattening {
+  let head: SBlock = f.blocks[d.head];
+  let insts: SInst[] = hoisted(head, util.append_all(arm_insts(f, d.t), arm_insts(f, d.f)));
+  r = drop_arm(drop_arm(Flattening { ...r, busy: r.busy.with(d.head, true), changed: true }, d.t), d.f);
+  if (d.join >= 0) {
+    let j: SBlock = f.blocks[d.join];
+    let picks: SInst[] = join_selects(j, head.term.cond, arm_source(f, head, d.t), arm_source(f, head, d.f));
+    let blocks: SBlock[] = r.blocks.with(d.head, SBlock { ...head, insts: util.append_all(insts, picks), term: t_br(j.id) });
+    return Flattening { ...r, blocks: blocks.with(d.join, SBlock { ...j, insts: without_phis(j.insts), preds: [head.id] }), busy: r.busy.with(d.join, true) };
+  }
+  let vt: i32 = f.blocks[d.t].term.value;
+  let vf: i32 = f.blocks[d.f].term.value;
+  if (vt == vf) {
+    return Flattening { ...r, blocks: r.blocks.with(d.head, SBlock { ...head, insts: insts, term: t_ret(vt) }) };
+  }
+  let pick: SInst = SInst { kind_tag: 36, result: r.nvals, args: [head.term.cond, vt, vf], imm: 0, str: "" };
+  return Flattening { ...r, blocks: r.blocks.with(d.head, SBlock { ...head, insts: insts.append(pick), term: t_ret(r.nvals) }), nvals: r.nvals + 1 };
+}
+
+function drop_arm(r: Flattening, arm: i32): Flattening {
+  if (arm < 0) {
+    return r;
+  }
+  return Flattening { ...r, busy: r.busy.with(arm, true), gone: r.gone.with(arm, true) };
+}
+
+// diamond_at is the diamond the branch ending position p heads, or one that
+// is not ok.
+function diamond_at(f: SFunc, at: i32[], fl: boolean[], p: i32): Diamond {
+  let none: Diamond = Diamond { ok: false, head: p, t: 0 - 1, f: 0 - 1, join: 0 - 1 };
+  let head: SBlock = f.blocks[p];
+  let br: STerm = head.term;
+  if (!two_way(head)) {
+    return none;
+  }
+  let tp: i32 = position_of(at, br.t);
+  let fp: i32 = position_of(at, br.f);
+  if (tp < 0 || fp < 0) {
+    return none;
+  }
+  let at_t: i32 = arm_at(f, tp, head.id);
+  let at_f: i32 = arm_at(f, fp, head.id);
+  if (!arms_fit(f, at_t, at_f)) {
+    return none;
+  }
+  if (returns_picked(f, fl, at_t) && returns_picked(f, fl, at_f)) {
+    return Diamond { ok: true, head: p, t: tp, f: fp, join: 0 - 1 };
+  }
+  let jp: i32 = join_of(f, at, p, tp, at_t, fp, at_f);
+  if (jp < 0 || !select_join(f, fl, f.blocks[jp], arm_source(f, head, at_t), arm_source(f, head, at_f))) {
+    return none;
+  }
+  return Diamond { ok: true, head: p, t: at_t, f: at_f, join: jp };
+}
+
+// arm_at is position p when its block is an arm of the branch out of `from`
+// (select_arm), and -1 when the branch goes straight to it.
+function arm_at(f: SFunc, p: i32, from: i32): i32 {
+  if (select_arm(f.blocks[p], from)) {
+    return p;
+  }
+  return 0 - 1;
+}
+
+// arms_fit says two arm blocks hold no more than select_arm_limit() + 1
+// instructions between them.
+function arms_fit(f: SFunc, at_t: i32, at_f: i32): boolean {
+  if (at_t < 0 || at_f < 0) {
+    return true;
+  }
+  return f.blocks[at_t].insts.len() + f.blocks[at_f].insts.len() <= select_arm_limit() + 1;
+}
+
+// returns_picked says the arm at position a returns a value that is no float.
+function returns_picked(f: SFunc, fl: boolean[], a: i32): boolean {
+  if (a < 0) {
+    return false;
+  }
+  let t: STerm = f.blocks[a].term;
+  return t.kind_tag == 1 && t.value >= 0 && !picks_float(fl, t.value);
+}
+
+// join_of is the position both edges out of the head at p meet at, through
+// the arm block on each side that has one, or -1. An edge with no arm block
+// goes to the join itself; at least one side has an arm.
+function join_of(f: SFunc, at: i32[], p: i32, tp: i32, at_t: i32, fp: i32, at_f: i32): i32 {
+  if (at_t < 0 && at_f < 0) {
+    return 0 - 1;
+  }
+  let jt: i32 = arm_exit(f, at, tp, at_t);
+  let jf: i32 = arm_exit(f, at, fp, at_f);
+  if (jt < 0 || jt != jf || jt == p) {
+    return 0 - 1;
+  }
+  return jt;
+}
+
+// arm_exit is where the edge to position p leads: past its arm block's plain
+// branch, or p itself when it has no arm block; -1 for an arm that returns.
+function arm_exit(f: SFunc, at: i32[], p: i32, arm: i32): i32 {
+  if (arm < 0) {
+    return p;
+  }
+  let t: STerm = f.blocks[arm].term;
+  if (t.kind_tag != 2) {
+    return 0 - 1;
+  }
+  return position_of(at, t.target);
+}
+
+// two_way says the head ends in a branch with two distinct targets on a
+// condition no call computes.
+function two_way(head: SBlock): boolean {
+  let br: STerm = head.term;
+  return br.kind_tag == 3 && br.t != br.f && !tested_by_call(head, br.cond);
+}
+
+// tested_by_call says the head computes the branch's condition with a call
+// or an inline rc primitive, or negates one. Those branch as they compute
+// it, and the uniqueness test's guard chain sets the very flags the branch
+// reads, so a select would only add a test of the value they leave.
+function tested_by_call(head: SBlock, cond: i32): boolean {
+  for ins in head.insts {
+    if (ins.result == cond && ins.kind_tag == 10 && ins.str == "!") {
+      return tested_by_call(head, ins.args[0]);
+    }
+    if (ins.result == cond) {
+      return inst_is_call(ins.kind_tag);
+    }
+  }
+  return false;
+}
+
+// select_arm says b is entered from the block `from` alone, holds no phi and
+// no more than select_arm_limit() instructions, and each may run whichever
+// way the branch goes.
+function select_arm(b: SBlock, from: i32): boolean {
+  if (b.preds.len() != 1 || b.preds[0] != from || b.insts.len() > select_arm_limit()) {
+    return false;
+  }
+  if (b.term.kind_tag != 1 && b.term.kind_tag != 2) {
+    return false;
+  }
+  for ins in b.insts {
+    if (!speculable(ins)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// speculable names an instruction that may run on a path that did not ask
+// for it: a constant, a copy, and the integer operators that cannot trap.
+function speculable(ins: SInst): boolean {
+  let k: i32 = ins.kind_tag;
+  if (k == 1 || k == 2 || k == 3 || k == 7) {
+    return true;
+  }
+  if (k == 9) {
+    return int_binary(ins.str);
+  }
+  if (k == 10) {
+    return int_unary(ins.str);
+  }
+  return false;
+}
+
+// int_unary names the integer unaries: the width casts, the rotate and the
+// bit counts, none of which reads memory or traps.
+function int_unary(op: string): boolean {
+  if (util.has_str(["!", "int_extend", "int_wrap", "u32_wrap"], op)) {
+    return true;
+  }
+  for pre in ["int_cast:", "rotr:", "bswap:", "clz:", "ctz:", "popcount:"] {
+    if (util.str_has_prefix(op, pre)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// select_join says the join j is entered from the two arms' sources alone and
+// holds at most two phis, none of a float.
+function select_join(f: SFunc, fl: boolean[], j: SBlock, from_t: i32, from_f: i32): boolean {
+  if (j.preds.len() != 2 || !has_pred(j.preds, from_t) || !has_pred(j.preds, from_f)) {
+    return false;
+  }
+  let phis: i32 = 0;
+  for ins in j.insts {
+    if (ins.kind_tag == 8) {
+      if (ins.args.len() != 2 || picks_float(fl, ins.result)) {
+        return false;
+      }
+      phis = phis + 1;
+    }
+  }
+  return phis <= 2;
+}
+
+function picks_float(fl: boolean[], v: i32): boolean {
+  return v >= 0 && v < fl.len() && fl[v];
+}
+
+// arm_source is the block an arm's edge into the join leaves from: the arm,
+// or the head when the arm is the edge itself.
+function arm_source(f: SFunc, head: SBlock, arm: i32): i32 {
+  if (arm < 0) {
+    return head.id;
+  }
+  return f.blocks[arm].id;
+}
+
+function arm_insts(f: SFunc, arm: i32): SInst[] {
+  if (arm < 0) {
+    return [];
+  }
+  return f.blocks[arm].insts;
+}
+
+function diamond_busy(busy: boolean[], d: Diamond): boolean {
+  return busy[d.head] || d.t >= 0 && busy[d.t] || d.f >= 0 && busy[d.f] || d.join >= 0 && busy[d.join];
+}
+
+// hoisted is the head's instructions with the arms' added. They go in ahead
+// of the instruction that ends the head when it computes the condition and
+// no arm reads it, so a comparison still sits beside its select; never
+// ahead of a phi, which must lead its block.
+function hoisted(head: SBlock, arms: SInst[]): SInst[] {
+  let n: i32 = head.insts.len();
+  if (n == 0 || head.insts[n - 1].result != head.term.cond || head.insts[n - 1].kind_tag == 8 || arms_read(arms, head.term.cond)) {
+    return util.append_all(head.insts, arms);
+  }
+  let out: SInst[] = util.append_all(slice_insts(head.insts, 0, n - 1), arms);
+  return out.append(head.insts[n - 1]);
+}
+
+function arms_read(arms: SInst[], v: i32): boolean {
+  for ins in arms {
+    if (reads_value(ins, v)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// select_run is the first position of the run of selects around position
+// ii that read ii's condition, and the position just past it.
+pub function select_run(blk: SBlock, ii: i32): i32[] {
+  let c: i32 = blk.insts[ii].args[0];
+  let lo: i32 = ii;
+  while (lo > 0 && blk.insts[lo - 1].kind_tag == 36 && blk.insts[lo - 1].args[0] == c) {
+    lo = lo - 1;
+  }
+  let hi: i32 = ii + 1;
+  while (hi < blk.insts.len() && blk.insts[hi].kind_tag == 36 && blk.insts[hi].args[0] == c) {
+    hi = hi + 1;
+  }
+  return [lo, hi];
+}
+
+// join_selects is a select, or a copy when both arms bring the same value,
+// for each of the join's phis. The selects come first and together, so the
+// emitters read one compare's flags for all of them.
+function join_selects(j: SBlock, cond: i32, from_t: i32, from_f: i32): SInst[] {
+  let picks: SInst[] = [];
+  let copies: SInst[] = [];
+  for ins in j.insts {
+    if (ins.kind_tag == 8) {
+      let vt: i32 = ins.args[pred_slot(j, from_t)];
+      let vf: i32 = ins.args[pred_slot(j, from_f)];
+      if (vt == vf) {
+        copies = copies.append(SInst { kind_tag: 7, result: ins.result, args: [vt], imm: 0, str: "" });
+      } else {
+        picks = picks.append(SInst { kind_tag: 36, result: ins.result, args: [cond, vt, vf], imm: 0, str: "" });
+      }
+    }
+  }
+  return util.append_all(picks, copies);
+}
+
+function without_phis(insts: SInst[]): SInst[] {
+  let out: SInst[] = [];
+  for ins in insts {
+    if (ins.kind_tag != 8) {
+      out = out.append(ins);
+    }
+  }
+  return out;
+}
+
+function slice_insts(a: SInst[], lo: i32, hi: i32): SInst[] {
+  let out: SInst[] = [];
+  let i: i32 = lo;
+  while (i < hi) {
+    out = out.append(a[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
 // Formed is a function with `repl`, the value each of the input's values was
 // replaced by (resolved, so one lookup is enough); empty when none was. A `-g`
 // build follows a variable's value through it (#11410).
@@ -4454,13 +4857,13 @@ function blocks_before(blocks: SBlock[], n: i32): SBlock[] {
 // read: params, calls, allocation and stores, and the output and buffer ops.
 function inst_has_effect(k: i32): boolean {
   // Below 19: params, calls, allocation, stores and concat. From 19 on
-  // everything but a load (40) and a label address (45..47) has one: the
+  // everything but a select (36), a load (40) and a label address (45..47) has one: the
   // output, file and buffer ops, a store, a bounds-checked read (it may
   // abort) and the box allocation.
   if (k < 19) {
     return k == 6 || k == 11 || k == 12 || k == 14 || k == 16 || k == 17;
   }
-  return k != 40 && k != 45 && k != 46 && k != 47 && k != 52 && k != 54 && k != 57 && k != 58;
+  return k != 36 && k != 40 && k != 45 && k != 46 && k != 47 && k != 52 && k != 54 && k != 57 && k != 58;
 }
 
 // prune_roots is every value an effectful instruction or a terminator reads.

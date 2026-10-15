@@ -66,11 +66,26 @@ lowered function it:
    reads to that branch's targets, on the arm's own comparison or to the side
    its constant picks (`ssa.thread_bool_joins`: a predicate spliced into its
    caller brings its `&&` or `||` as such a phi), and prunes again;
-4. allocates registers with `ssa.regalloc_linear` over two pools: the
+4. once the certifier has read that form, turns each branch whose two arms
+   compute a few pure integer values and meet again, at a join's phis or at
+   a return each, into straight-line code (`ssa.select_branches`): the arms'
+   instructions move up into the branching block and each value they chose
+   between becomes a `select`, which x86-64 emits as `cmov` and arm64 as
+   `csel`, on the flags of the compare fused into it when nothing else reads
+   that compare. An arm holds at most three instructions, none of which
+   loads, stores, calls or divides, and the join holds at most two phis; a
+   float the arms choose between stays a phi in its float register, and a
+   branch whose condition a call or an inline rc primitive computes, or
+   negates, stays a branch, since computing it already branches. What
+   moves holds no reference-count operation, so the certifier's proof of the
+   branching form holds of this one. A branch the data decides at random
+   mispredicts half the time and a conditional move never does: a min over
+   random bytes runs in a third of the time;
+5. allocates registers with `ssa.regalloc_linear` over two pools: the
    caller-saved registers (x0 and x9 to x15 on arm64; rax, rsi, rdi and r8
    to r10 on x86-64) and, for a value live across a call, the callee-saved
    ones (x19 to x28; rbx and r12 to r15);
-5. emits the function on the conventions the stack machine established:
+6. emits the function on the conventions the stack machine established:
    the same frame record, parameters read from the caller's slots
    (`[x29, #16 + 16*i]`, `16 + 8*i(%rbp)`), the result in x0 or %rax, calls
    made by pushing the arguments and calling the same `__fn_*` and runtime
