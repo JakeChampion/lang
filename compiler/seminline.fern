@@ -119,7 +119,9 @@ struct Rewrite { f: ssasem.Func, changed: boolean }
 // second copy. `rewrite[i]` says which functions may be
 // rewritten at all. `names[i]` is the key a call to `funcs[i]` carries, and
 // `modes[i]` its parameters' modes.
-pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][], inlinable: boolean[], rewrite: boolean[], unnamed: boolean[]): Inlined {
+// A -size build (`size`) splices only what is called once, which the
+// program does not grow by: no leaf and no shared body is copied.
+pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][], inlinable: boolean[], rewrite: boolean[], unnamed: boolean[], size: boolean): Inlined {
   let ix: util.NameIndex = util.name_index(names);
   let calls: i32[] = call_counts(funcs0, ix);
   let cycle: i32[] = ownership.cycles(callees_of_all(funcs0, ix));
@@ -129,8 +131,8 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
   let small: boolean[] = [];
   let i: i32 = 0;
   while (i < funcs0.len()) {
-    let is_leaf: boolean = inlinable[i] && leaf(funcs0[i]);
-    let is_shared: boolean = !is_leaf && inlinable[i] && unnamed[i] && shared_spliceable(funcs0[i], calls[i], cycle[i]);
+    let is_leaf: boolean = !size && inlinable[i] && leaf(funcs0[i]);
+    let is_shared: boolean = !size && !is_leaf && inlinable[i] && unnamed[i] && shared_spliceable(funcs0[i], calls[i], cycle[i]);
     small = small.append(is_shared && count_insts(funcs0[i].graph) <= max_shared_insts());
     leaves = leaves.append(is_leaf);
     shared = shared.append(is_shared);
@@ -516,7 +518,7 @@ pub function inline_closures(funcs: ssasem.Func[], names: string[], modes: i32[]
   // resulting callback to satisfy the small scalar-leaf limit. This scratch
   // view does not replace non-fused callers or remove any function body.
   let ix: util.NameIndex = util.name_index(names);
-  let candidates: ssasem.Func[] = inline_leaves(funcs, names, modes, inlinable, inlinable, inlinable).funcs;
+  let candidates: ssasem.Func[] = inline_leaves(funcs, names, modes, inlinable, inlinable, inlinable, false).funcs;
   // A shared helper cannot take the single-use path. The first pass can
   // expose its leaf body, so rebuild the leaf table before preparing its
   // callback callers. Only callback bodies change in this second scratch pass.
@@ -526,7 +528,7 @@ pub function inline_closures(funcs: ssasem.Func[], names: string[], modes: i32[]
     callbacks = callbacks.append(inlinable[ci] && unused_environment(candidates[ci]) >= 0);
     ci = ci + 1;
   }
-  candidates = inline_leaves(candidates, names, modes, inlinable, callbacks, inlinable).funcs;
+  candidates = inline_leaves(candidates, names, modes, inlinable, callbacks, inlinable, false).funcs;
   let leaves: boolean[] = [];
   let i: i32 = 0;
   while (i < funcs.len()) {
