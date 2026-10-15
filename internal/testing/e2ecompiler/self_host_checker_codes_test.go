@@ -486,7 +486,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// never fresh at a call site, and one taking one may still build a fresh
 		// scrutinee.
 		{"e051-generic-returning-its-type-parameter-is-not-fresh", "function keep(own ys: i32[]): i32 { return ys.len(); }\nfunction mk(): i32[] { return [1]; }\nfunction call[T](f: () => T): T { return f(); }\nfunction main(): i32 { return keep(call(mk)); }\n", []string{"E051"}},
-		{"own-accepts-a-payload-of-a-generic-factory", "enum Bag { Full(i32[]), Empty }\nfunction keep(own ys: i32[]): i32 { return ys.len(); }\nfunction mk[T](n: i32, t: T): Bag { return Full([1]); }\nfunction main(): i32 {\n  match (mk(1, 2)) {\n    Full(xs) => { return keep(xs); },\n    Empty => { return 0; }\n  }\n}\n", nil},
+		{"own-accepts-a-payload-of-a-generic-factory", "enum Bag { Full(i32[]), Empty }\nfunction keep(own ys: i32[]): i32 { return ys.len(); }\nfunction mk[T](n: i32, t: T): Bag { return Full([1]); }\nfunction first(): i32 {\n  match (mk(1, 2)) {\n    Full(xs) => { return keep(xs); },\n    Empty => { return 0; }\n  }\n}\nfunction main(): i32 { return first(); }\n", nil},
+		// A written IIFE has a value block's shape but is an ordinary call: an
+		// argument-less one is fresh.
+		{"own-accepts-a-written-iife-result", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction id(xs: i32[]): i32[] { return ((): i32[] => xs)(); }\nfunction main(): i32 { let xs: i32[] = [1]; return keep(id(xs)); }\n", nil},
 		// An element read out of a view of values is a copy, so an
 		// accumulator that appends it stays fresh; an element that is itself
 		// a pointer still borrows (#11877).

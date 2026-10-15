@@ -20400,6 +20400,13 @@ function ow_call_may_borrow(c: ast.ExprCall, ofuncs: OwnFuncs, borrows: util.Nam
   return true;
 }
 
+function ow_value_block_call(c: ast.ExprCall, lm: ast.ExprLambda): boolean {
+  if (c.args.len() > 0 || lm.params.len() > 0) {
+    return false;
+  }
+  return lm.origin == parser.ORIGIN_IF_EXPR || lm.origin == parser.ORIGIN_MATCH_EXPR || lm.origin == parser.ORIGIN_BLOCK;
+}
+
 function ow_value_if_origin(origin: string): boolean {
   return origin == parser.ORIGIN_IF_EXPR || origin == parser.ORIGIN_IF_DEAD_THEN || origin == parser.ORIGIN_IF_DEAD_ELSE || origin == parser.ORIGIN_IF_DEAD_BOTH;
 }
@@ -20407,7 +20414,8 @@ function ow_value_if_origin(origin: string): boolean {
 // ow_value_block_borrows answers for a value `if`, `match` or block, which the
 // parser lowers to a call of an argument-less lambda. Native reads an `if`
 // whose arms are each a bare value arm by arm, and assumes any arm with
-// statements, any `match` and any block can borrow.
+// statements, any `match` and any block can borrow. A written IIFE or a
+// comprehension has the same shape but is an ordinary call (ow_value_block_call).
 function ow_value_block_borrows(lm: ast.ExprLambda, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
   if (lm.origin != parser.ORIGIN_IF_EXPR || lm.body.len() != 1) {
     return true;
@@ -20507,7 +20515,7 @@ function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], loca
 // one of those arguments is one.
 function ow_call_borrows(c: ast.ExprCall, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
   if let ast.ExprLambda(lm) = c.callee {
-    if (c.args.len() == 0 && lm.params.len() == 0) {
+    if (ow_value_block_call(c, lm)) {
       return ow_value_block_borrows(lm, ofuncs, borrowed, locals, values, borrows, builtins);
     }
   }
