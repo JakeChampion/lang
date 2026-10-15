@@ -1726,6 +1726,7 @@ func New() *Interp {
 	i.Builtins["tcp_recv_into"] = &Builtin{Fn: builtinTcpRecvInto}
 	i.Builtins["tcp_ktls"] = &Builtin{Fn: builtinKtlsUnsupported}
 	i.Builtins["udp_bind"] = &Builtin{Fn: builtinUdpBind}
+	i.Builtins["udp_bind_with"] = &Builtin{Fn: builtinUdpBindWith}
 	i.Builtins["udp_connect"] = &Builtin{Fn: builtinUdpConnect}
 	i.Builtins["udp_sendto"] = &Builtin{Fn: builtinUdpSendto}
 	i.Builtins["udp_sendto_bytes"] = &Builtin{Fn: builtinUdpSendtoBytes}
@@ -1984,10 +1985,6 @@ var soReusePort = func() int {
 	return 15
 }()
 
-// builtinTcpListenWith is the interpreter's `tcp_listen_with(addr, port,
-// backlog, reuse_port)`: SO_REUSEPORT goes on the socket before the bind,
-// as the native helper sets it; the backlog is Go's own (somaxconn), since
-// the net package does not take one.
 // negErrno is the -errno a socket builtin answers for err: the errno it
 // wraps, or -1 when it wraps none.
 func negErrno(err error) Value {
@@ -2017,6 +2014,10 @@ func (i *Interp) inheritListener() {
 	i.tcpNextHandle = 3
 }
 
+// builtinTcpListenWith is the interpreter's `tcp_listen_with(addr, port,
+// backlog, reuse_port)`: SO_REUSEPORT goes on the socket before the bind,
+// as the native helper sets it; the backlog is Go's own (somaxconn), since
+// the net package does not take one.
 func builtinTcpListenWith(i *Interp, args []Value) (Value, error) {
 	if len(args) != 4 {
 		return nil, fmt.Errorf("tcp_listen_with: expected 4 args, got %d", len(args))

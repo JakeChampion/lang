@@ -385,3 +385,4 @@ ring_recv=438
 ring_send_zc=439
 sha1_hw=440
 sha1_hw_blocks=441
+udp_bind_with=442

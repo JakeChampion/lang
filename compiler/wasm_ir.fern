@@ -309,7 +309,7 @@ pub function need_ops(): string[] {
     "truncate", "sleep_ms", "sleep_ns", "stat", "lstat", "str_bytes", "str_from_bytes", "str_from_bytes_range",
     "str_split", "tcp_accept", "tcp_close", "tcp_connect", "tcp_listen", "tcp_listen_with",
     "tcp_local_port", "tcp_pollable", "tcp_recv", "tcp_send", "tcp_send_bytes", "tcp_socket_ctl", "temp_dir",
-    "udp_bind", "udp_connect", "udp_recvfrom", "udp_send", "udp_send_bytes", "udp_sendto", "udp_sendto_bytes", "tcp_connect_with", "wasm_block",
+    "udp_bind", "udp_bind_with", "udp_connect", "udp_recvfrom", "udp_send", "udp_send_bytes", "udp_sendto", "udp_sendto_bytes", "tcp_connect_with", "wasm_block",
     "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv", "ring_send_zc", "tcp_recv_into", "tcp_ktls", "tcp_sendfile", "tcp_send_buf",
     "wasm_poll", "wasm_pollable_drop", "wasm_timer_pollable", "write_file", "write_file_bytes", "open_file",
     "writer_write", "write_some", "write_bytes", "write_some_bytes", "buf_take_bytes", "buf_push_bytes_range",
@@ -345,6 +345,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   }
   if (module_emits_op_cached(cache, "open_reader_with") || module_emits_op_cached(cache, "open_writer_with")) {
     out = out.append("open_with");
+  }
+  if (module_emits_op_cached(cache, "udp_bind_with") && !module_emits_op_cached(cache, "udp_bind")) {
+    out = out.append("udp_bind");  // $__fern_udp_bind_with binds through it
   }
   if (module_calls_direct(cache, "__fern_set_args")) {
     out = out.append("@calls_set_args");
@@ -5047,6 +5050,13 @@ function udp_errno(into: string, err_at: i32): string {
   return "(local.set " + into + " (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=" + util.i32_to_string(err_at) + " (local.get $ret)))))";
 }
 
+// $__fern_udp_bind_with(addr, port, reuse_port) is $__fern_udp_bind:
+// reuse_port has no wasi:sockets control and is not read, as for
+// tcp_listen_with, and wasi:sockets has no IPV6_V6ONLY to clear.
+pub function udp_bind_with_func(): string {
+  return "  (func $__fern_udp_bind_with (param $addr i32) (param $port i32) (param $reuse i32) (result i32)\n    (call $__fern_udp_bind (local.get $addr) (local.get $port)))\n";
+}
+
 // $__fern_udp_bind(addr, port) -> a datagram socket record bound to the
 // u8[] address with its streams open to any peer, or -errno. The 16-byte
 // return area of the setup calls becomes the record: stream(none) lands
@@ -6334,7 +6344,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     // udp_send(host, port, data) -> bytes accepted, or -errno / -1 on a
     // malformed host literal. All three args are on the stack (#4375).
     parts = parts.append("    call $__fern_udp_send\n");
-  } else if (o.kind_tag >= 334 && o.kind_tag <= 338 || o.kind_tag >= 341 && o.kind_tag <= 344 || o.kind_tag >= 434 && o.kind_tag <= 439) {  // udp_*, tcp_connect_with, reactor_*, tcp_recv_into, ring_*, tcp_ktls
+  } else if (o.kind_tag >= 334 && o.kind_tag <= 338 || o.kind_tag >= 341 && o.kind_tag <= 344 || o.kind_tag >= 434 && o.kind_tag <= 439 || o.kind_tag == 442) {  // udp_*, tcp_connect_with, reactor_*, tcp_recv_into, ring_*, tcp_ktls
     // The datagram sockets, the started connect and the reactor floor:
     // every arg is on the stack, the helper's i32 answer replaces them.
     parts = parts.append("    call $__fern_" + ir.kind_name(o.kind_tag) + "\n");
@@ -13359,6 +13369,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need_any(needs, ["udp_send", "udp_send_bytes", "udp_bind"])) {
     parts = parts.append(udp_bind_func());
   }
+  if (need(needs, "udp_bind_with")) {
+    parts = parts.append(udp_bind_with_func());
+  }
   if (need(needs, "udp_connect")) {
     parts = parts.append(udp_connect_func());
   }
@@ -17125,7 +17138,7 @@ function socket_builtins(): string[] {
   return [
     "tcp_accept", "tcp_close", "tcp_connect", "tcp_connect_with", "tcp_listen", "tcp_listen_with",
     "tcp_local_port", "tcp_pollable", "tcp_recv", "tcp_recv_into", "tcp_send", "tcp_send_bytes", "tcp_send_buf", "tcp_sendfile", "tcp_socket_ctl",
-    "udp_bind", "udp_connect", "udp_recvfrom", "udp_send", "udp_send_bytes", "udp_sendto", "udp_sendto_bytes",
+    "udp_bind", "udp_bind_with", "udp_connect", "udp_recvfrom", "udp_send", "udp_send_bytes", "udp_sendto", "udp_sendto_bytes",
   ];
 }
 

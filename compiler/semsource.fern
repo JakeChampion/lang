@@ -7630,6 +7630,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "tcp_sendfile", params: [t_i32(), t_i32(), t_i32()], modes: [v, v, v], result: t_i32() },
     ssasem.Contract { name: "tcp_send_buf", params: [t_i32(), t_usize(), t_i32()], modes: [v, v, v], result: t_i32() },
     ssasem.Contract { name: "udp_bind", params: [bytes, t_i32()], modes: [b, v], result: t_i32() },
+    ssasem.Contract { name: "udp_bind_with", params: [bytes, t_i32(), t_bool()], modes: [b, v, v], result: t_i32() },
     ssasem.Contract { name: "udp_connect", params: [t_i32(), bytes, t_i32()], modes: [v, b, v], result: t_i32() },
     ssasem.Contract { name: "udp_sendto", params: [t_i32(), bytes, t_i32(), t_string()], modes: [v, b, v, b], result: t_i32() },
     ssasem.Contract { name: "udp_sendto_bytes", params: [t_i32(), bytes, t_i32(), bytes], modes: [v, b, v, b], result: t_i32() },

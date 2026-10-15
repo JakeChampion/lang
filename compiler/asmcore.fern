@@ -3639,6 +3639,15 @@ pub function rt_src_udp_bind(t: string, packed: boolean): string {
   return "function __fern_udp_bind" + packed_suffix(packed) + "(addr: i32[], port: i32): i32 { " + af_of_addr(t) + " let fd: i32 = __syscall3(" + sysno(t, "socket") + ", af as i64, 2, 0) as i32; if (fd < 0) { return fd; } let sa: usize = __raw_scratch(28); " + sockaddr_of(t, "sa", packed) + " let r: i32 = __syscall3(" + sysno(t, "bind") + ", fd as i64, sa as i64, salen as i64) as i32; if (r < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return r; } return fd; }";
 }
 
+// rt_src_udp_bind_with backs `udp_bind_with(addr, port, reuse_port)`:
+// rt_src_udp_bind with IPV6_V6ONLY cleared on an IPv6 socket, as
+// rt_src_tcp_listen_with clears it, and SO_REUSEPORT set before the bind when
+// asked. No SO_REUSEADDR: on a Linux datagram socket it lets two sockets share
+// a port with no load balancing.
+pub function rt_src_udp_bind_with(t: string, packed: boolean): string {
+  return "function __fern_udp_bind_with" + packed_suffix(packed) + "(addr: i32[], port: i32, reuse_port: boolean): i32 { " + af_of_addr(t) + " let fd: i32 = __syscall3(" + sysno(t, "socket") + ", af as i64, 2, 0) as i32; if (fd < 0) { return fd; } let sa: usize = __raw_scratch(32); let r: i32 = 0; if (af == " + sockopt(t, "af_inet6") + ") { __raw_store8(sa, 28, 0); __raw_store8(sa, 29, 0); __raw_store8(sa, 30, 0); __raw_store8(sa, 31, 0); r = __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, 41, " + sockopt(t, "ipv6_v6only") + ", (sa + 28) as i64, 4) as i32; } if (r >= 0 && reuse_port) { __raw_store8(sa, 28, 1); __raw_store8(sa, 29, 0); __raw_store8(sa, 30, 0); __raw_store8(sa, 31, 0); r = __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_reuseport") + ", (sa + 28) as i64, 4) as i32; } " + sockaddr_of(t, "sa", packed) + " if (r >= 0) { r = __syscall3(" + sysno(t, "bind") + ", fd as i64, sa as i64, salen as i64) as i32; } if (r < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return r; } return fd; }";
+}
+
 pub function rt_src_udp_connect(t: string, packed: boolean): string {
   return "function __fern_udp_connect" + packed_suffix(packed) + "(fd: i32, addr: i32[], port: i32): i32 { " + af_of_addr(t) + " let sa: usize = __raw_scratch(28); " + sockaddr_of(t, "sa", packed) + " return __syscall3(" + sysno(t, "connect") + ", fd as i64, sa as i64, salen as i64) as i32; }";
 }
@@ -7945,6 +7954,7 @@ function builtin_i32_names(): string[] {
     // The datagram sockets: a socket fd, 0, and two byte counts, each
     // -errno when refused.
     "udp_bind",
+    "udp_bind_with",
     "udp_connect",
     "udp_sendto",
     "udp_recvfrom",
@@ -11337,7 +11347,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_udp_send", "__fn___fern_tcp_recv", "__fn___fern_tcp_send", "__fn___fern_tcp_listen", "__fn___fern_tcp_accept", "__fn___fern_tcp_local_port",
     "__fn___fern_tcp_send_bytes", "__fn___fern_tcp_send_bytes_u8",
     "__fn___fern_udp_send_bytes", "__fn___fern_udp_send_bytes_u8", "__fn___fern_udp_sendto_bytes", "__fn___fern_udp_sendto_bytes_u8",
-    "__fn___fern_udp_bind", "__fn___fern_udp_connect", "__fn___fern_udp_sendto", "__fn___fern_udp_recvfrom",
+    "__fn___fern_udp_bind", "__fn___fern_udp_bind_with", "__fn___fern_udp_connect", "__fn___fern_udp_sendto", "__fn___fern_udp_recvfrom",
     "__fn___fern_tcp_connect_with", "__fn___fern_unix_listen", "__fn___fern_unix_connect",
     "__fn___fern_reactor_new", "__fn___fern_reactor_ctl", "__fn___fern_reactor_wait", "__fn___fern_tcp_recv_into", "__fn___fern_tcp_sendfile", "__fn___fern_tcp_send_buf",
     "__fn___fern_open_res", "__fn___fern_writer_write",

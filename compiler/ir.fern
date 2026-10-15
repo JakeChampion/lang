@@ -1669,6 +1669,13 @@ pub function op_udp_bind(): Op {
   return op0(334);
 }
 
+// `udp_bind_with` [addr, port, reuse_port] -> i32 socket (or -errno):
+// `udp_bind` with IPV6_V6ONLY cleared on an IPv6 socket and SO_REUSEPORT set
+// before the bind when asked.
+pub function op_udp_bind_with(): Op {
+  return op0(442);
+}
+
 pub function op_udp_connect(): Op {
   return op0(335);
 }
@@ -4647,6 +4654,9 @@ function kind_id_len13(name: string): i32 {
   if (c == b't' && name == "tcp_recv_into") {
     return 344;
   }
+  if (c == b'u' && name == "udp_bind_with") {
+    return 442;
+  }
   if (c == b'm' && name == "map_hash_seed") {
     return 222;
   }
@@ -5477,6 +5487,9 @@ function kind_name_4(id: i32): string {
   if (id == 334) {
     return "udp_bind";
   }
+  if (id == 442) {
+    return "udp_bind_with";
+  }
   if (id == 335) {
     return "udp_connect";
   }
@@ -6285,6 +6298,7 @@ function pops3(t: i32): boolean {
     || t == 89 || t == 96 || t == 102 || t == 111  // arr_set, arr_slice, str_slice, str_replace
     || t == 177 || t == 208 || t == 225 || t == 234  // subprocess, udp_send, memchr, rmemchr
     || t == 333 || t == 335 || t == 337 || t == 338  // tcp_socket_ctl, udp_connect, udp_recvfrom, tcp_connect_with
+    || t == 442  // udp_bind_with (addr, port, reuse_port)
     || t == 346  // tcp_sendfile (fd, file, max)
     || t == 387  // tcp_send_buf (fd, handle, from)
     || t == 354  // udp_send_bytes (host, port, data)

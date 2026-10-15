@@ -84,8 +84,8 @@ The Darwin legs run in the Apple Silicon lane.
 
 `tcp_listen`, `tcp_listen_with`, `tcp_connect`, `tcp_accept`,
 `tcp_local_port`, `tcp_close`, `tcp_socket_ctl`, `tcp_recv`, `tcp_send`,
-`udp_send`, `udp_bind`, `udp_connect`, `udp_sendto` and `udp_recvfrom` are
-one Fern body each in `asmcore.fern` over this floor, on x86-64-linux,
+`udp_send`, `udp_bind`, `udp_bind_with`, `udp_connect`, `udp_sendto` and
+`udp_recvfrom` are one Fern body each in `asmcore.fern` over this floor, on x86-64-linux,
 arm64-linux and arm64-darwin (the sockaddr's leading `sin_len` byte, the
 option numbers and `MSG_NOSIGNAL` are the Darwin differences); wasm has
 wasi:sockets bodies in `wasm_ir.fern`, and the interpreter Go ones.
@@ -153,6 +153,16 @@ a `udp_sendto` naming an address on a connected socket is refused with
 `EISCONN` where Linux sends it, so a connected socket sends with an empty
 address on every target; and the interpreter keeps a raw descriptor per
 datagram socket, so its errnos are the host's like the natives'.
+
+`udp_bind_with(addr, port, reuse_port)` is `udp_bind` with `IPV6_V6ONLY`
+cleared on an IPv6 socket, so `::` takes both families, and `SO_REUSEPORT`
+set before the bind when `reuse_port`, so each worker process can bind its
+own socket on one port; Linux then hashes each sender's address and port
+to one of them. It sets no `SO_REUSEADDR`, which on a Linux datagram socket
+lets two sockets share a port with no balancing, so with `reuse_port` false
+a held port is refused as `udp_bind` refuses it. On wasm `reuse_port` is
+not read, as for `tcp_listen_with`: wasi:sockets has neither control, and
+a port is one socket's.
 
 `tcp_connect_with(addr, port, nonblocking)` is a connect to addr:port, or
 with `nonblocking` a non-blocking socket whose connect is only started: the
@@ -253,6 +263,7 @@ of these at check time there.
 | `tcp_send_buf` | Fern body, one `sendto(2)` of the builder's bytes from `from` | Fern body | the builder's bytes written to the output stream in place, as `tcp_send_bytes` writes an array | E066 | one socket write of the builder's bytes |
 | `udp_send` | Fern body, dotted-quad parse | Fern body | `udp_bind` then `udp_sendto` then close | E066 | net package |
 | `udp_bind`, `udp_connect`, `udp_sendto`, `udp_recvfrom` (byte address) | Fern body | Fern body; `EISCONN` for a named address on a connected socket | wasi:sockets/udp bodies (`wasm_ir.fern`); `recvfrom` blocks on the incoming pollable | E066 | raw descriptors, the kernel's errnos |
+| `udp_bind_with` | Fern body | Fern body, Darwin's option numbers | `udp_bind`; `reuse_port` not read | E066 | raw descriptor, the options set before the bind |
 | `unix_listen`, `unix_connect` | Fern body | Fern body, `sun_len` head | E066: no `unix` | E066 | net package |
 | `reactor_new`, `reactor_ctl`, `reactor_wait` | Fern body, epoll | Fern body, kqueue | a table of wasi:io pollables; signals `-ENOTSUP` | E066: no `reactor` | an epoll or kqueue set over the handles; signals through a pipe |
 | `ring_new`, `ring_ctl`, `ring_wait`, `ring_recv`, `ring_send_zc` | Fern body, io_uring (kernel 6.1 setup flags), `-ENOSYS` or `-EPERM` where the kernel refuses it | `-ENOSYS` | `-ENOSYS` | E066: no `reactor` | `-ENOSYS` |

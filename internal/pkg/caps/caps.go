@@ -56,6 +56,7 @@ var BuiltinCaps = map[string]string{
 	"udp_send":         "net",
 	"udp_send_bytes":   "net",
 	"udp_bind":         "net",
+	"udp_bind_with":    "net",
 	"udp_connect":      "net",
 	"udp_sendto":       "net",
 	"udp_sendto_bytes": "net",
