@@ -260,7 +260,7 @@ function embedded_stdlib(): modloader.Overlay {
       srcs = srcs.append(a.1 + "");
     }
   }
-  return modloader.Overlay { paths: paths, srcs: srcs, sealed: false };
+  return modloader.Overlay { ...modloader.no_overlay(), paths: paths, srcs: srcs };
 }
 
 function main(): i32 {

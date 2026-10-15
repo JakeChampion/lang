@@ -95,6 +95,7 @@ import "./emitforms";
 import "./semlower";
 import "./cover";
 import "./lsp";
+import "./lspquery";
 
 // blank_line_map marks the 1-based source lines that hold nothing but
 // whitespace, indexed by line number so the formatter can ask about one in
@@ -2121,10 +2122,10 @@ function is_vendorable(name: string): boolean {
 // Bundle is a loaded program: the entry module, the modules its imports
 // pulled in, the flattened whole, and the packages the capability layers
 // attribute to. `files` names each loaded module for a diagnostic, in load
-// order, which is the order of their line bases (util.pos_str); `maps` is each
-// module's line map, the entry's first (util.doc_diag). `err` is the line
-// `-check` prints when the program could not be loaded, and is empty when it
-// was.
+// order, which is the order of their line bases (util.pos_str); `maps` and
+// `srcs` are each module's line map and text, the entry's first
+// (util.doc_diag). `err` is the line `-check` prints when the program could
+// not be loaded, and is empty when it was.
 struct Bundle {
   entry: parser.Module,
   entry_ident: string,
@@ -2134,6 +2135,7 @@ struct Bundle {
   pkgs: caps.Pkg[],
   files: string[],
   maps: util.LineMap[],
+  srcs: string[],
   err: string,
 }
 
@@ -2141,8 +2143,9 @@ struct Bundle {
 // path its imports resolve against, its text, its line map — then, for a
 // multi-file literate document, every other module the document tangles to,
 // under the cleaned path it is written to. load_bundle reads an import from
-// here before the disk.
-struct Sources { paths: string[], srcs: string[], maps: util.LineMap[] }
+// here before the disk, and from `open`, the editor's unsaved buffers, before
+// a file of its own.
+struct Sources { paths: string[], srcs: string[], maps: util.LineMap[], open: modloader.Buffers }
 
 // is_literate reports whether `path` names a literate Fern document.
 function is_literate(path: string): boolean {
@@ -2153,7 +2156,7 @@ function is_literate(path: string): boolean {
 // modules a literate `.fern.md` tangles to. The second result is why it cannot
 // be read, empty when it can.
 function entry_sources(path: string, src: string): (Sources, string) {
-  let plain: Sources = Sources { paths: [path], srcs: [src], maps: [util.no_line_map()] };
+  let plain: Sources = Sources { paths: [path], srcs: [src], maps: [util.no_line_map()], open: modloader.no_buffers() };
   if (!is_literate(path)) {
     return (plain, "");
   }
@@ -2162,7 +2165,7 @@ function entry_sources(path: string, src: string): (Sources, string) {
   }
   match (literate.tangle(src)) {
     literate.TangleOk(o) => {
-      return (Sources { paths: [path], srcs: [o.code], maps: [util.LineMap { doc: path, lits: o.lits, shifts: o.shifts }] }, "");
+      return (Sources { ...plain, srcs: [o.code], maps: [util.LineMap { doc: path, lits: o.lits, shifts: o.shifts }] }, "");
     },
     literate.TangleErr(e) => {
       return (plain, tangle_error(path, e.line, e.col, e.msg));
@@ -2175,7 +2178,7 @@ function entry_sources(path: string, src: string): (Sources, string) {
 // one module per path, beside the document, its entry first — the module
 // marked `entry`, the only one, or the one module that declares `main`.
 function multi_file_sources(path: string, src: string): (Sources, string) {
-  let none: Sources = Sources { paths: [], srcs: [], maps: [] };
+  let none: Sources = Sources { paths: [], srcs: [], maps: [], open: modloader.no_buffers() };
   let files: literate.FileResult[] = [];
   match (literate.tangle_files(src)) {
     literate.FileTangleOk(o) => {
@@ -2231,6 +2234,7 @@ function add_generated(s: Sources, doc: string, f: literate.FileResult): Sources
     mpath = modloader.dirname(doc) + mpath;
   }
   return Sources {
+    ...s,
     paths: s.paths.append(util.clean_path(mpath)),
     srcs: s.srcs.append(f.code),
     maps: s.maps.append(util.LineMap { doc: doc, lits: f.lits, shifts: f.shifts }),
@@ -2271,7 +2275,7 @@ function read_bundle_module(s: Sources, mpath: string, from: string, ipath: stri
   if (gi >= 0) {
     return modloader.Resolved { src: s.srcs[gi], ok: true, err: "", err_path: "", shown: mpath, map: s.maps[gi] };
   }
-  let r: modloader.Resolved = modloader.read_module(mpath);
+  let r: modloader.Resolved = modloader.read_module(s.open, mpath);
   if (r.ok || r.err.len() > 0) {
     return r;
   }
@@ -2280,7 +2284,7 @@ function read_bundle_module(s: Sources, mpath: string, from: string, ipath: stri
   // content-addressed store). It is the only way to reach a package that
   // carries its own manifest — the rules above can only name a sibling file
   // or something under the stdlib root.
-  return modloader.resolve_module(modloader.no_overlay(), from, ipath, util.module_name(ipath));
+  return modloader.resolve_module(modloader.Overlay { ...modloader.no_overlay(), files: s.open }, from, ipath, util.module_name(ipath));
 }
 
 // load_bundle loads `entry_mod`'s transitive imports off disk and flattens
@@ -2304,9 +2308,10 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   let no_mods: flatten.LoadedModule[] = [];
   let no_files: string[] = [];
   let maps: util.LineMap[] = [s.maps[0]];
+  let srcs: string[] = [s.srcs[0]];
   let missing: string = emitforms.http_entry_refused(entry_mod, target, entry_display(entry_path));
   if (missing.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, err: missing };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, srcs: srcs, err: missing };
   }
 
   let q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [], importers: [], unrooted: "" }, entry_mod, entry_path, dir_slash, root, deps);
@@ -2338,7 +2343,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
         if (rm.err.len() > 0) {
           bad = rm.err_path;
         }
-        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, err: "fern: " + modloader.unresolved_import(ipath, importer, bad, rm.err) };
+        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: " + modloader.unresolved_import(ipath, importer, bad, rm.err) };
       }
       // A module's own imports resolve beside its file — a module in lib/
       // writing `import "./gnu"` means lib/gnu.fern — wherever it was found.
@@ -2355,6 +2360,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
       }
       files = files.append(shown);
       maps = maps.append(rm.map);
+      srcs = srcs.append(rm.src);
       // Identity is the FILE, not its basename: two modules can share a
       // basename (`std/sort` and `coreutils/sort`) and the bundler has
       // to tell them apart to give each its own prefix (#9762).
@@ -2367,12 +2373,12 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
     }
   }
   if (q.unrooted.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, err: "fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file" };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file" };
   }
   let entry_r: parser.Module = flatten.resolve_imports(entry_mod, dir_slash, root);
   let cycle: i32 = flatten.import_cycle(entry_r, loaded, root);
   if (cycle >= 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, err: "fern: import cycle detected including " + files[cycle] };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: import cycle detected including " + files[cycle] };
   }
   let merged: parser.Module = flatten.bundle(entry_r, loaded, target);
   // Fill omitted trailing args from default parameter values up front, so the
@@ -2382,7 +2388,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   // settle against until the bundle exists; parse_module resolved the
   // same-module ones already, and the pass is idempotent.
   merged = parser.resolve_variant_fields_module(merged);
-  return Bundle { entry: entry_r, entry_ident: flatten.module_ident(entry_path), root: root, loaded: loaded, merged: merged, pkgs: pkgs, files: files, maps: maps, err: "" };
+  return Bundle { entry: entry_r, entry_ident: flatten.module_ident(entry_path), root: root, loaded: loaded, merged: merged, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "" };
 }
 
 // Loaded is a program read for checking or building, and the findings that
@@ -2474,12 +2480,23 @@ function fold_embedded_assets(b: Bundle, embed_dir: string): (Bundle, Finding[])
 
 // check_source is `-check` on an entry's text: everything it reports, and its
 // verdict.
-function check_source(entry_path: string, src: string, root: string, target: string, target_given: boolean, embed_dir: string): Checked {
+function check_source(entry_path: string, src: string, open: modloader.Buffers, root: string, target: string, target_given: boolean, embed_dir: string): Checked {
+  return check_loaded(load_source(entry_path, src, open, root, target, embed_dir), entry_path, target, target_given);
+}
+
+// load_source is load_checked on an entry's text, which is refused before
+// anything loads when it is a literate document that does not tangle.
+function load_source(entry_path: string, src: string, open: modloader.Buffers, root: string, target: string, embed_dir: string): Loaded {
   let (s, err) = entry_sources(entry_path, src);
   if (err.len() > 0) {
-    return Checked { findings: [refusal(err)], entry: entry_path, files: [], maps: [], ok: false };
+    let none: parser.Module = parser.parse_module(lexer.tokenize(""));
+    return Loaded { b: Bundle { entry: none, entry_ident: "", root: root, loaded: [], merged: none, pkgs: [], files: [], maps: [], srcs: [], err: err }, refused: [refusal(err)] };
   }
-  let ld: Loaded = load_checked(s, root, target, embed_dir);
+  return load_checked(Sources { ...s, open: open }, root, target, embed_dir);
+}
+
+// check_loaded is what `-check` reports for a program load_source read.
+function check_loaded(ld: Loaded, entry_path: string, target: string, target_given: boolean): Checked {
   if (ld.refused.len() > 0) {
     return Checked { findings: ld.refused, entry: entry_path, files: ld.b.files, maps: ld.b.maps, ok: false };
   }
@@ -2645,7 +2662,7 @@ function run_repl(root: string, target: string): i32 {
   print("fern REPL — Ctrl+D to exit");
   let s: interp.Session = interp.new_session();
   if (root.len() > 0) {
-    let ld: Loaded = load_checked(Sources { paths: ["repl.fern"], srcs: ["import \"std/float\";\n"], maps: [util.no_line_map()] }, root, target, "");
+    let ld: Loaded = load_checked(Sources { paths: ["repl.fern"], srcs: ["import \"std/float\";\n"], maps: [util.no_line_map()], open: modloader.no_buffers() }, root, target, "");
     if (ld.refused.len() == 0) {
       s = s.declare(ld.b.merged);
     }
@@ -2766,7 +2783,7 @@ function run_doctests(path: string, root: string, target: string, embed_dir: str
 // passed.
 function run_doctest(path: string, tc: literate.Doctest, root: string, target: string, embed_dir: string): string {
   let st: DiagStyle = DiagStyle { color: false, ascii: false };
-  let srcs: Sources = Sources { paths: [path], srcs: [tc.code], maps: [util.LineMap { doc: path, lits: tc.lits, shifts: tc.shifts }] };
+  let srcs: Sources = Sources { paths: [path], srcs: [tc.code], maps: [util.LineMap { doc: path, lits: tc.lits, shifts: tc.shifts }], open: modloader.no_buffers() };
   let ld: Loaded = load_checked(srcs, root, target, embed_dir);
   let fs: Finding[] = ld.refused;
   if (!has_error(fs)) {
@@ -3226,7 +3243,7 @@ function check_dir(st: DiagStyle, dir: string, root: string, target: string, tar
 function check_file(st: DiagStyle, entry_path: string, root: string, target: string, target_given: boolean, embed_dir: string): i32 {
   match (read_file(entry_path)) {
     Ok(src) => {
-      return report_checked(st, check_source(entry_path, src, root, target, target_given, embed_dir));
+      return report_checked(st, check_source(entry_path, src, modloader.no_buffers(), root, target, target_given, embed_dir));
     },
     Err(e) => {
       eprint(read_failure("entry file", entry_path, modloader.read_error_reason(e)));
@@ -3238,7 +3255,8 @@ function check_file(st: DiagStyle, entry_path: string, root: string, target: str
 
 // Server is `-lsp`'s state: what every document is checked against, as
 // `-check` takes it, and the text of each document the editor has open with
-// the diagnostics last published for it ("" before the first), by URI.
+// the diagnostics last published for it ("" before the first) and what its
+// last check loaded, by URI.
 struct Server {
   root: string,
   target: string,
@@ -3247,8 +3265,14 @@ struct Server {
   uris: string[],
   srcs: string[],
   published: string[],
+  docs: Doc[],
   shutdown: boolean,
 }
+
+// Doc is what a document's last check loaded, which hover and definition
+// answer from: the program, and the module files and line maps its positions
+// index, as Checked carries them. `loaded` is false when nothing loaded.
+struct Doc { loaded: boolean, prog: lspquery.Program, files: string[], maps: util.LineMap[] }
 
 // serve_lsp is `fern -lsp [stdlib-root]`; a build carrying its stdlib passes
 // it as `embedded_root` and takes no positional.
@@ -3260,14 +3284,15 @@ function serve_lsp(pos: string[], embedded_root: string, target: string, target_
   if (pos.len() == 1) {
     root = util.clean_path(pos[0]);
   }
-  return run_lsp(Server { root: root, target: target, target_given: target_given, embed_dir: embed_dir, uris: [], srcs: [], published: [], shutdown: false });
+  return run_lsp(Server { root: root, target: target, target_given: target_given, embed_dir: embed_dir, uris: [], srcs: [], published: [], docs: [], shutdown: false });
 }
 
 // run_lsp is a language server on stdin and stdout (lsp.fern is the wire),
 // until the client sends `exit` or hangs up. It publishes `-check`'s findings
-// for a document whenever the editor opens or changes it, and formats one as
-// `-fmt` would. The exit code is the spec's: 0 for an `exit` after
-// `shutdown`, 1 for one without, and 2 for a stream that could not be framed.
+// for a document whenever the editor opens or changes it, formats one as
+// `-fmt` would, and answers hover and go-to-definition (lspquery.fern). The
+// exit code is the spec's: 0 for an `exit` after `shutdown`, 1 for one
+// without, and 2 for a stream that could not be framed.
 function run_lsp(s: Server): i32 {
   let inp: lsp.Input = lsp.stdin_input();
   while (true) {
@@ -3309,6 +3334,10 @@ function lsp_handle(s: Server, m: lsp.Message): Server {
     lsp.send(lsp.response(m.id, "null"));
   } else if (m.method == "textDocument/formatting") {
     lsp.send(lsp.response(m.id, lsp_formatting(s, lsp.document_uri(m.params))));
+  } else if (m.method == "textDocument/hover" || m.method == "textDocument/definition") {
+    let (next, result) = lsp_query(s, m);
+    s = next;
+    lsp.send(lsp.response(m.id, result));
   } else {
     lsp.send(lsp.method_not_found(m.id, m.method));
   }
@@ -3338,26 +3367,94 @@ function lsp_notification(s: Server, m: lsp.Message): Server {
   return s;
 }
 
-// lsp_update records a document's new text and publishes its diagnostics when
-// they differ from the last ones published for it. Text the server already
-// has — some editors resend it on focus — is no change at all.
+// lsp_update records a document's new text and checks it with every open
+// document standing in for its file on disk. The document's diagnostics are
+// published, and so are those of each other open document the check loaded:
+// that module was checked as part of this program, so what the check found in
+// it, or did not, is now its diagnostics. Text the server already has — some
+// editors resend it on focus — is no change at all.
 function lsp_update(s: Server, uri: string, src: string): Server {
   let i: i32 = util.index_of_str(s.uris, uri);
   if (i >= 0 && s.srcs[i] == src) {
     return s;
   }
-  if (i < 0) {
+  let opened: boolean = i < 0;
+  if (opened) {
     s = Server { ...s, uris: s.uris.append(uri), srcs: s.srcs.append(src), published: s.published.append("") };
     i = s.uris.len() - 1;
   } else {
     s = Server { ...s, srcs: s.srcs.with(i, src) };
   }
-  let ds: string = lsp.json_array(lsp_diagnostics(s, uri, src));
+  let path: string = lsp_doc_path(uri);
+  let ld: Loaded = load_source(path, src, lsp_buffers(s), s.root, s.target, s.embed_dir);
+  let c: Checked = check_loaded(ld, path, s.target, s.target_given);
+  if (opened) {
+    s = Server { ...s, docs: s.docs.append(lsp_doc(ld)) };
+  } else {
+    s = Server { ...s, docs: s.docs.with(i, lsp_doc(ld)) };
+  }
+  let files: string[] = lsp_checked_files(c, s.root);
+  s = lsp_publish(s, i, lsp_diagnostics(c, files, path, src));
+  let j: i32 = 0;
+  while (j < s.uris.len()) {
+    let other: string = lsp_doc_path(s.uris[j]);
+    if (j != i && other != "-" && util.has_str(files, other)) {
+      s = lsp_publish(s, j, lsp_diagnostics(c, files, other, s.srcs[j]));
+    }
+    j = j + 1;
+  }
+  return s;
+}
+
+// lsp_publish sends document `i`'s diagnostics when they differ from the last
+// ones published for it.
+function lsp_publish(s: Server, i: i32, diags: string[]): Server {
+  let ds: string = lsp.json_array(diags);
   if (ds == s.published[i]) {
     return s;
   }
-  lsp.send(lsp.publish_diagnostics(uri, ds));
+  lsp.send(lsp.publish_diagnostics(s.uris[i], ds));
   return Server { ...s, published: s.published.with(i, ds) };
+}
+
+// lsp_doc_path is the file a document is checked as: the path a file:// URI
+// names, so its imports resolve beside it, or `-`, as stdin is checked
+// against the working directory.
+function lsp_doc_path(uri: string): string {
+  let path: string = lsp.uri_path(uri);
+  if (path.len() == 0) {
+    return "-";
+  }
+  return util.clean_path(path);
+}
+
+// lsp_buffers is every open file:// document's text, read in place of its file.
+function lsp_buffers(s: Server): modloader.Buffers {
+  let b: modloader.Buffers = modloader.no_buffers();
+  let i: i32 = 0;
+  while (i < s.uris.len()) {
+    let path: string = lsp_doc_path(s.uris[i]);
+    if (path != "-") {
+      b = modloader.Buffers { paths: b.paths.append(path), srcs: b.srcs.append(s.srcs[i]) };
+    }
+    i = i + 1;
+  }
+  return b;
+}
+
+// lsp_checked_files names every file a check read: its entry, then each
+// module in the order their positions are numbered. A module under the stdlib
+// root is named by its file there, not its `stdlib://` display name.
+function lsp_checked_files(c: Checked, root: string): string[] {
+  let out: string[] = [c.entry];
+  for f in c.files {
+    if (root.len() > 0 && util.str_has_prefix(f, "stdlib://")) {
+      out = out.append(util.clean_path(root + "/" + slice_unchecked(f, 9, f.len())));
+    } else {
+      out = out.append(util.clean_path(f));
+    }
+  }
+  return out;
 }
 
 // lsp_close forgets a document and clears its diagnostics, so the editor
@@ -3366,35 +3463,140 @@ function lsp_close(s: Server, uri: string): Server {
   let uris: string[] = [];
   let srcs: string[] = [];
   let published: string[] = [];
+  let docs: Doc[] = [];
   let i: i32 = 0;
   while (i < s.uris.len()) {
     if (s.uris[i] != uri) {
       uris = uris.append(s.uris[i]);
       srcs = srcs.append(s.srcs[i]);
       published = published.append(s.published[i]);
+      docs = docs.append(s.docs[i]);
     }
     i = i + 1;
   }
   lsp.send(lsp.publish_diagnostics(uri, "[]"));
-  return Server { ...s, uris: uris, srcs: srcs, published: published };
+  return Server { ...s, uris: uris, srcs: srcs, published: published, docs: docs };
 }
 
-// lsp_diagnostics is `-check` on a document's text, as LSP diagnostics. A
-// file:// document is checked as the file it names, so its imports resolve
-// beside it; any other is checked as stdin is, against the working directory.
-// A finding in an imported module stays with that module, as native's
-// workspace mode keeps it; one with no position lands on the document.
-function lsp_diagnostics(s: Server, uri: string, src: string): string[] {
-  let path: string = lsp.uri_path(uri);
-  if (path.len() == 0) {
-    path = "-";
+// lsp_doc keeps what load_source loaded for the requests that answer from it.
+function lsp_doc(ld: Loaded): Doc {
+  let b: Bundle = ld.b;
+  return Doc { loaded: b.err.len() == 0, prog: lspquery.program(b.merged, b.entry, b.loaded, b.srcs), files: b.files, maps: b.maps };
+}
+
+// lsp_query answers a hover or definition request from its document's last
+// check, building what requests read of that program on the first one. The
+// answer is null when the document is not open or nothing is named at the
+// position.
+function lsp_query(s: Server, m: lsp.Message): (Server, string) {
+  let uri: string = lsp.document_uri(m.params);
+  let i: i32 = util.index_of_str(s.uris, uri);
+  let (pl, pc) = lsp.position(m.params);
+  if (i < 0 || pl < 0 || !s.docs[i].loaded) {
+    return (s, "null");
   }
-  let c: Checked = check_source(path, src, s.root, s.target, s.target_given, s.embed_dir);
+  let d: Doc = Doc { ...s.docs[i], prog: lspquery.viewed(s.docs[i].prog) };
+  s = Server { ...s, docs: s.docs.with(i, d) };
+  let path: string = lsp_doc_path(uri);
+  let (line, col) = lsp_into_bundle(d, path, pl + 1, lsp.byte_col(lsp.line_text(s.srcs[i], pl + 1), pc));
+  if (line <= 0) {
+    return (s, "null");
+  }
+  if (m.method == "textDocument/hover") {
+    let h: lspquery.Answer = lspquery.hover(d.prog, line, col);
+    if (!h.found) {
+      return (s, "null");
+    }
+    return (s, lsp.hover_result(h.text, lsp_answer_range(d, s.srcs[i], h)));
+  }
+  let a: lspquery.Answer = lspquery.definition(d.prog, line, col);
+  if (!a.found) {
+    return (s, "null");
+  }
+  let target: string = lsp_module_doc(s, d, util.pos_file_index(a.line), path);
+  if (target == path) {
+    return (s, lsp.location(uri, lsp_answer_range(d, s.srcs[i], a)));
+  }
+  return (s, lsp.location(lsp.file_uri(target), lsp_answer_range(d, lsp_doc_text(s, target), a)));
+}
+
+// lsp_into_bundle is the bundle position of line `line`, byte column `col` of
+// the document at `path`: in a module tangled from it, for a literate
+// document, else in its entry. Line 0 when no module holds the position.
+function lsp_into_bundle(d: Doc, path: string, line: i32, col: i32): (i32, i32) {
+  let m: i32 = 0;
+  while (m < d.maps.len()) {
+    let lm: util.LineMap = d.maps[m];
+    if (lm.doc == path) {
+      let k: i32 = util.index_of_i32(lm.lits, line);
+      if (k >= 0) {
+        return (util.line_base(m - 1) + k + 1, col + lm.shifts[k]);
+      }
+    }
+    m = m + 1;
+  }
+  if (d.maps.len() > 0 && d.maps[0].doc.len() == 0) {
+    return (line, col);
+  }
+  return (0, 0);
+}
+
+// lsp_answer_range is the LSP range of an answer's span in `text`, the
+// document its module was read from.
+function lsp_answer_range(d: Doc, text: string, a: lspquery.Answer): string {
+  let at: util.Diag = util.doc_diag(d.maps, util.Diag { code: "", message: "", line: a.line, col: a.col });
+  return lsp.span_range(text, util.pos_line(at.line), at.col, a.len);
+}
+
+// lsp_module_doc is the file module `m` of a check was read from — the
+// document it was tangled from, for a literate module — where `entry` is the
+// path of the document checked. A stdlib module is its file under the root.
+function lsp_module_doc(s: Server, d: Doc, m: i32, entry: string): string {
+  if (m < d.maps.len() && d.maps[m].doc.len() > 0) {
+    return d.maps[m].doc;
+  }
+  if (m == 0 || m > d.files.len()) {
+    return entry;
+  }
+  let f: string = d.files[m - 1];
+  let std: string = "stdlib://";
+  if (util.str_has_prefix(f, std)) {
+    return util.clean_path(s.root + "/" + slice_unchecked(f, std.len(), f.len()));
+  }
+  return util.clean_path(f);
+}
+
+// lsp_doc_text is the text of the file at `path`: its open document's, else
+// what is on disk, else "".
+function lsp_doc_text(s: Server, path: string): string {
+  let i: i32 = 0;
+  while (i < s.uris.len()) {
+    if (lsp_doc_path(s.uris[i]) == path) {
+      return s.srcs[i];
+    }
+    i = i + 1;
+  }
+  match (read_file(path)) {
+    Ok(text) => {
+      return text;
+    },
+    Err(_) => {}
+  }
+  return "";
+}
+
+// lsp_diagnostics is the findings of check `c` that are in file `path`, as
+// LSP diagnostics placed in `text`, that file's open buffer. `files` is
+// lsp_checked_files: a finding is in the module its position is numbered in
+// (a literate module's is its document's), and one with no position is in
+// the entry.
+function lsp_diagnostics(c: Checked, files: string[], path: string, text: string): string[] {
   let out: string[] = [];
   for f in c.findings {
     let d: util.Diag = util.doc_diag(c.maps, f.diag);
-    if (d.line < util.line_base(0)) {
-      out = out.append(lsp.diagnostic(src, d.line, d.col, d.code, lsp_message(d.message), f.warning));
+    let m: i32 = util.pos_file_index(d.line);
+    if (m < files.len() && files[m] == path) {
+      out = out.append(lsp.diagnostic(text, util.pos_line(d.line), d.col, d.code, lsp_message(d.message), f.warning));
     }
   }
   return out;
