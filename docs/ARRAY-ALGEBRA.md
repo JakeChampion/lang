@@ -365,14 +365,37 @@ Refusals use the closed tags `reuse-disabled`, `shape-unsupported`,
 `element-fn-effectful` and `aliased-arguments`. Each names the map's semantic
 value. `combinator-buffer` means R7 kept the ordinary combinator.
 
+The `append storage` section names every array `.append` site and what the
+physical lowering does with its receiver's buffer, read from the same plan and
+in the same order `ssarc.append_push` takes its cases:
+
+| reason | storage | meaning |
+|---|---|---|
+| `sole-owner` | `in-place` | the receiver is moved and statically the box's only unit; the push grows it with no test |
+| `guarded` | `unique-grow/shared-copy` | the receiver is moved; the push grows it when the box's count is one and copies it otherwise |
+| `receiver-still-live` | `copy` | the receiver is read after the append, so it is retained and the push copies every time |
+| `receiver-retained` | `copy` | the frame borrows the receiver (an element or a field it does not own) and retains it for the push, which then copies |
+| `receiver-borrowed` | `unique-grow/shared-copy` | a borrowed parameter, pushed without a retain; it grows in place when the caller holds no other binding |
+| `field-grow` | `unique-grow/shared-copy` | a field buffer of a record the frame reads no further through that field; it grows in place when the record is sole |
+| `borrow-linked` | `unique-grow/shared-copy` | a link in a chain of appends on a borrowed parameter; after the first push the chain owns its box |
+
+`receiver-still-live` is the quadratic case: an append in a loop whose old
+array is read again copies the whole array on every iteration. Each site names
+its result and receiver values. Under `-g` it also names the statement's line
+and every source binding of the receiver, so the binding whose later read
+forces the copy is in the list (`(xs, keep)` for `let keep = xs;
+xs = xs.append(i);`). The report is static. A `guarded` site still copies
+when an upstream retain leaves the box shared, and `FERN_CLIFF_REPORT=1`
+counts those copies at run time.
+
 The `ndarray kernels` section records kernel rewrites and refusals from the
 actual planner, with receiver layouts, element functions and axis/rank
 arguments. Its closed tags and scope are in `ARRAY-SHAPES.md` §6. A recognized
 algebra operation does not imply a kernel was selected.
 
 This report covers the map/filter/fold/reduce fusion planner, recognized
-unsupported combinators, R7 map storage and ndarray kernels. It is not an
-all-allocation report.
+unsupported combinators, R7 map storage, scale storage, append storage and
+ndarray kernels. It is not an all-allocation report.
 
 Disabling a pass preserves each site's intrinsic refusal and failing stage.
 `disabled` or `reuse-disabled` is reported only when the site satisfies all
