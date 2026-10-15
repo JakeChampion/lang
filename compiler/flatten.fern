@@ -203,16 +203,20 @@ function resolve_prefix(qualifier: string, ctx: RewriteCtx): string {
 // re-exports (`a` re-exports `b`'s re-export of `c`) are followed to the
 // end; the bounded loop guards against a cyclic table. See bundle.
 function lookup_reexport(mangled: string, ctx: RewriteCtx): string {
+  return follow_reexports(mangled, ctx.reexport_keys, ctx.reexport_targets);
+}
+
+function follow_reexports(mangled: string, keys: string[], targets: string[]): string {
   let cur: string = mangled;
   let steps: i32 = 0;
-  while (steps < ctx.reexport_keys.len() + 1) {
+  while (steps < keys.len() + 1) {
     let i: i32 = 0;
     let hit: boolean = false;
-    while (i < ctx.reexport_keys.len()) {
-      if (ctx.reexport_keys[i] == cur) {
-        cur = ctx.reexport_targets[i];
+    while (i < keys.len()) {
+      if (keys[i] == cur) {
+        cur = targets[i];
         hit = true;
-        i = ctx.reexport_keys.len();
+        i = keys.len();
       } else {
         i = i + 1;
       }
@@ -1938,6 +1942,38 @@ function desugar_imported_trait_params(imports: LoadedModule[]): LoadedModule[] 
     out = out.append(LoadedModule { ...lm, mod: parser.desugar_trait_params(lm.mod, imported_trait_spellings(lm.mod, imports), true) });
   }
   return out;
+}
+
+// Qualifiers is how one module of a bundle names others: `aliases` are the
+// qualifiers its imports are written with, `prefixes` the bundle prefix of the
+// module each names (parallel), `own` the prefix its own declarations carry
+// ("" for the entry), and the re-export table every qualified name follows.
+pub struct Qualifiers { aliases: string[], prefixes: string[], own: string, reexport_keys: string[], reexport_targets: string[] }
+
+// bundle_qualifiers is each module's Qualifiers in a bundle of `entry` and
+// `imports`: the entry's, then each import's in order.
+pub function bundle_qualifiers(entry: parser.Module, imports: LoadedModule[]): Qualifiers[] {
+  let ids: string[] = module_ids(imports);
+  let pfxs: string[] = assign_prefixes(imports);
+  let rx: ReexportTable = build_reexports(imports, ids, pfxs);
+  let out: Qualifiers[] = [Qualifiers { aliases: mod_names(entry), prefixes: import_prefixes(entry, ids, pfxs), own: "", reexport_keys: rx.keys, reexport_targets: rx.targets }];
+  let i: i32 = 0;
+  while (i < imports.len()) {
+    let m: parser.Module = imports[i].mod;
+    out = out.append(Qualifiers { aliases: mod_names(m), prefixes: import_prefixes(m, ids, pfxs), own: pfxs[i], reexport_keys: rx.keys, reexport_targets: rx.targets });
+    i = i + 1;
+  }
+  return out;
+}
+
+// qualified_name is the bundled name `alias.name` resolves to, or "" when
+// `alias` is not one of the module's imports.
+pub function qualified_name(q: Qualifiers, alias: string, name: string): string {
+  let i: i32 = index_of_str(alias, q.aliases);
+  if (i < 0) {
+    return "";
+  }
+  return follow_reexports(q.prefixes[i] + "__" + name, q.reexport_keys, q.reexport_targets);
 }
 
 // bundle merges an entry module with its imported modules into one
