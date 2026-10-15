@@ -254,13 +254,79 @@ function quote(s: string): string {
 // initialize_result advertises what this server does: full-document sync
 // (every didChange carries the whole text), diagnostics, formatting, hover,
 // go-to-definition, completion (asked again after a `.`), signature help (after
-// a `(` or `,`), the document's outline and inlay hints.
+// a `(` or `,`), the document's outline, inlay hints, quick fixes, references,
+// renaming, and semantic tokens of the types semantic_token_types() lists.
 pub function initialize_result(): string {
+  let types: string[] = [];
+  for t in semantic_token_types() {
+    types = types.append(quote(t));
+  }
   let caps: string = "\"textDocumentSync\":1,\"documentFormattingProvider\":true,\"hoverProvider\":true,\"definitionProvider\":true,"
     + "\"completionProvider\":{\"triggerCharacters\":[\".\"]},"
     + "\"signatureHelpProvider\":{\"triggerCharacters\":[\"(\",\",\"],\"retriggerCharacters\":[\",\"]},"
-    + "\"documentSymbolProvider\":true,\"inlayHintProvider\":true";
+    + "\"documentSymbolProvider\":true,\"inlayHintProvider\":true,\"codeActionProvider\":true,\"referencesProvider\":true,\"renameProvider\":true,"
+    + "\"semanticTokensProvider\":{\"legend\":{\"tokenTypes\":" + json_array(types) + ",\"tokenModifiers\":[]},\"full\":true}";
   return "{\"capabilities\":{" + caps + "},\"serverInfo\":{\"name\":\"fern\"}}";
+}
+
+// semantic_token_types is the legend of semantic token types: a token's type
+// is its index here.
+pub function semantic_token_types(): string[] {
+  return ["function", "method", "struct", "enum", "enumMember", "parameter", "variable", "property", "type", "keyword", "namespace"];
+}
+
+// SemanticToken is a token to send: its 0-based line, its start and length in
+// UTF-16 units, and its type's index in semantic_token_types().
+pub struct SemanticToken { line: i32, start: i32, len: i32, kind: i32 }
+
+// semantic_tokens is SemanticTokens holding `toks` in position order, each
+// token's line and start relative to the token before it, as LSP encodes them.
+pub function semantic_tokens(toks: SemanticToken[]): string {
+  let out: string[] = [];
+  let line: i32 = 0;
+  let start: i32 = 0;
+  for t in sorted_tokens(toks) {
+    if (t.line != line) {
+      start = 0;
+    }
+    out = out.append(util.i32_to_string(t.line - line) + "," + util.i32_to_string(t.start - start) + "," + util.i32_to_string(t.len) + "," + util.i32_to_string(t.kind) + ",0");
+    line = t.line;
+    start = t.start;
+  }
+  return "{\"data\":" + json_array(out) + "}";
+}
+
+// sorted_tokens is `toks` in position order, by merging sorted halves.
+function sorted_tokens(toks: SemanticToken[]): SemanticToken[] {
+  if (toks.len() <= 1) {
+    return toks;
+  }
+  let half: i32 = toks.len() / 2;
+  let a: SemanticToken[] = sorted_tokens(token_range(toks, 0, half));
+  let b: SemanticToken[] = sorted_tokens(token_range(toks, half, toks.len()));
+  let out: SemanticToken[] = [];
+  let i: i32 = 0;
+  let j: i32 = 0;
+  while (i < a.len() || j < b.len()) {
+    if (j >= b.len() || i < a.len() && (a[i].line < b[j].line || a[i].line == b[j].line && a[i].start <= b[j].start)) {
+      out = out.append(a[i]);
+      i = i + 1;
+    } else {
+      out = out.append(b[j]);
+      j = j + 1;
+    }
+  }
+  return out;
+}
+
+function token_range(toks: SemanticToken[], from: i32, to: i32): SemanticToken[] {
+  let out: SemanticToken[] = [];
+  let i: i32 = from;
+  while (i < to) {
+    out = out.append(toks[i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // completion_list is a CompletionList holding every item there is.
@@ -351,8 +417,9 @@ pub function json_array(items: string[]): string {
 // document; otherwise it covers the one character the position names, as
 // native's does when an error carries no width. `code` is sent only when it
 // is a real diagnostic code — the code a client deep-links, so the checker's
-// "type" marker is not one.
-pub function diagnostic(src: Text, line: i32, col: i32, code: string, message: string, warning: boolean): string {
+// "type" marker is not one. `data`, when not empty, is a fix (fix_data) for a
+// code action to apply.
+pub function diagnostic(src: Text, line: i32, col: i32, code: string, message: string, warning: boolean, data: string): string {
   let r: string = range_json(0, 0, 0, 0);
   if (line > 0) {
     let c: i32 = utf16_col(line_text(src, line), col);
@@ -366,7 +433,74 @@ pub function diagnostic(src: Text, line: i32, col: i32, code: string, message: s
   if (util.is_diagnostic_code(code)) {
     out = out + ",\"code\":" + quote(code);
   }
-  return out + ",\"message\":" + quote(message) + "}";
+  out = out + ",\"message\":" + quote(message);
+  if (data.len() > 0) {
+    out = out + ",\"data\":" + data;
+  }
+  return out + "}";
+}
+
+// fix_data is a diagnostic's `data` for a fix replacing `range` with
+// `new_text`, which a client echoes back in a codeAction request: the request
+// alone then says what to apply.
+pub function fix_data(range: string, new_text: string, title: string): string {
+  return "{\"range\":" + range + ",\"newText\":" + quote(new_text) + ",\"title\":" + quote(title) + "}";
+}
+
+// code_actions answers a codeAction request: a quick fix for each diagnostic
+// in its context whose `data` is a fix_data, editing the request's document.
+// The diagnostic is named in the action as the client sent it.
+pub function code_actions(params: json.JsonValue): string {
+  let uri: string = document_uri(params);
+  let out: string[] = [];
+  match (json.json_get_array(get_value(params, "context"), "diagnostics")) {
+    Some(ds) => {
+      for d in ds {
+        let data: json.JsonValue = get_value(d, "data");
+        let title: string = get_string(data, "title");
+        let text: string = get_string(data, "newText");
+        let range: json.JsonValue = get_value(data, "range");
+        if (title.len() > 0 && text.len() > 0 && !json.json_is_null(range)) {
+          let edit: string = text_edit(json.json_encode(range), text);
+          out = out.append("{\"title\":" + quote(title) + ",\"kind\":\"quickfix\",\"diagnostics\":[" + json.json_encode(d) + "],\"edit\":" + workspace_edit([uri], [[edit]]) + "}");
+        }
+      }
+    },
+    None => {}
+  }
+  return json_array(out);
+}
+
+// text_edit is a TextEdit replacing `range` with `text`.
+pub function text_edit(range: string, text: string): string {
+  return "{\"range\":" + range + ",\"newText\":" + quote(text) + "}";
+}
+
+// include_declaration is a references request's
+// `context.includeDeclaration`, true when it is not given.
+pub function include_declaration(params: json.JsonValue): boolean {
+  match (json.json_get_bool(get_value(params, "context"), "includeDeclaration")) {
+    Some(b) => {
+      return b;
+    },
+    None => {}
+  }
+  return true;
+}
+
+// workspace_edit is a WorkspaceEdit making `edits[i]`, TextEdits, in the
+// document `uris[i]` names.
+pub function workspace_edit(uris: string[], edits: string[][]): string {
+  let out: string = "{\"changes\":{";
+  let i: i32 = 0;
+  while (i < uris.len()) {
+    if (i > 0) {
+      out = out + ",";
+    }
+    out = out + quote(uris[i]) + ":" + json_array(edits[i]);
+    i = i + 1;
+  }
+  return out + "}}";
 }
 
 // span_range is the range of the `len` bytes at Fern's 1-based `line` and
@@ -402,7 +536,7 @@ pub function whole_document_edit(src: string, text: string): string {
   let t: Text = text_of(src);
   let last: i32 = t.starts.len() - 1;
   let tail: string = slice_unchecked(src, t.starts[last], src.len()) + "";
-  return "{\"range\":" + range_json(0, 0, last, utf16_units(tail, tail.len())) + ",\"newText\":" + quote(text) + "}";
+  return text_edit(range_json(0, 0, last, utf16_units(tail, tail.len())), text);
 }
 
 // Text is a document's text and the offset each of its lines starts at, so a

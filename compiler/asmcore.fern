@@ -9417,26 +9417,26 @@ function parse_unknown_error(where: string, kind: string, line: i32, col: i32): 
   // An out-of-range float literal is P002, the numeric-literal code native's
   // parser reports for it, not the generic parser-side-unknown P001 (#6842).
   if (util.is_f64_range_kind(kind)) {
-    return util.Diag { code: "P002", message: where + ": " + util.f64_range_message(kind), line: line, col: col };
+    return util.Diag { code: "P002", message: where + ": " + util.f64_range_message(kind), line: line, col: col, fix: None };
   }
   // The parser refused to recurse further rather than run the stack out.
   // P005, matching native, so both front ends name the same code for it.
   // The statement-level scan prefixes the kind, so match either spelling.
   if (kind == "nest:too-deep" || kind == "stmt: nest:too-deep") {
-    return util.Diag { code: "P005", message: where + ": input nests too deeply", line: line, col: col };
+    return util.Diag { code: "P005", message: where + ": input nests too deeply", line: line, col: col, fix: None };
   }
   // A value-position block ending in a `;`-terminated statement: E061, the
   // code native and the self-host checker report for it.
   if (kind == "value branch has no trailing expression" || kind == "stmt: value branch has no trailing expression") {
-    return util.Diag { code: "E061", message: where + ": block-expression has no trailing value", line: line, col: col };
+    return util.Diag { code: "E061", message: where + ": block-expression has no trailing value", line: line, col: col, fix: None };
   }
   // A declaration the parser discarded (a local function's) carries the
   // declaration gate's own text, so it reads as check_decl_names' would.
   let decl: string = decl_sentinel_text(kind);
   if (decl.len() > 0) {
-    return util.Diag { code: "P001", message: where + ": " + decl, line: line, col: col };
+    return util.Diag { code: "P001", message: where + ": " + decl, line: line, col: col, fix: None };
   }
-  return util.Diag { code: "P001", message: where + ": " + sentinel_message(kind), line: line, col: col };
+  return util.Diag { code: "P001", message: where + ": " + sentinel_message(kind), line: line, col: col, fix: None };
 }
 
 // sentinel_message words a parser sentinel's kind the way native's parser
@@ -9713,6 +9713,7 @@ pub function parse_unknown_errors_module(mod: parser.Module): util.Diag[] {
       errs = errs.append(util.Diag {
         code: "P001", message: parser.malformed_fn_decl_message(),
         line: mod.funcs[fi].line, col: mod.funcs[fi].col,
+        fix: None,
       });
       where = "in malformed function declaration";
     }
@@ -9806,6 +9807,7 @@ function display_arg_errs(e: ast.Expr, fname: string, st: EmitState): util.Diag[
                 + " — give " + an + " a `to_string(): string` method, or "
                 + util.derive_hint(tn, "cmp.Display", "cmp.Display"),
               line: id.line, col: id.col,
+              fix: None,
             }];
           }
           return [];
@@ -9875,6 +9877,7 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
               + "': return value: expected " + ty_friendly(want)
               + ", got " + ty_friendly(got),
             line: r.line, col: r.col,
+            fix: None,
           }),
         };
       }
@@ -9911,6 +9914,7 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
                 + ty_friendly(declared) + ", got "
                 + ty_friendly(got),
               line: v.line, col: v.col,
+              fix: None,
             }),
           };
         }
@@ -9932,6 +9936,7 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
               + ty_friendly(tt) + ", got "
               + ty_friendly(got),
             line: a.line, col: a.col,
+            fix: None,
           }),
         };
       }
@@ -10202,6 +10207,7 @@ function map_chain_check_expr(e: ast.Expr, fname: string, errs: util.Diag[]): ut
                     + " ctor's key/value types are not inferable through a method"
                     + " chain; bind it first (let m: Map[K, V] = " + mroot + "(n))",
                   line: 0, col: 0,
+                  fix: None,
                 });
               }
             }
@@ -10476,7 +10482,7 @@ function callgate_undefined_error(g: CallGate, where: string, name: string, line
     out = out + " — no module '" + ns + "' was loaded (a std/ or core/ import is"
       + " skipped when no stdlib was given, so every call into it dangles)";
   }
-  return util.Diag { code: "E001", message: out, line: line, col: col };
+  return util.Diag { code: "E001", message: out, line: line, col: col, fix: None };
 }
 
 // callgate_expr walks one expression, appending a diagnostic line for each
@@ -10494,6 +10500,7 @@ function callgate_expr(e: ast.Expr, g: CallGate, where: string, bound: string[],
               errs = errs.append(util.Diag {
                 code: "E004", message: util.arity_message("function \"" + id.name + "\"", g.argc[ti], c.args.len(), "argument"),
                 line: id.line, col: id.col,
+                fix: None,
               });
             }
             if (g.check_undef && !found && !callgate_known_callee(id.name, g.known)) {
@@ -10739,12 +10746,14 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
       errs = errs.append(util.Diag {
         code: "P001", message: malformed_type_decl_message("const"),
         line: mod.funcs[i].line, col: mod.funcs[i].col,
+        fix: None,
       });
     } else if (mod.funcs[i].name.len() == 0) {
       errs = errs.append(util.Diag {
         code: "P001",
         message: parser.malformed_fn_decl_message(),
         line: mod.funcs[i].line, col: mod.funcs[i].col,
+        fix: None,
       });
     }
     errs = untyped_param_errs(mod.funcs[i], errs);
@@ -10752,11 +10761,11 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
   }
   for td in mod.trait_decls {
     if (td.name.len() == 0) {
-      errs = errs.append(util.Diag { code: "P001", message: malformed_type_decl_message("trait"), line: td.line, col: td.col });
+      errs = errs.append(util.Diag { code: "P001", message: malformed_type_decl_message("trait"), line: td.line, col: td.col, fix: None });
     }
     for tm in td.methods {
       if (tm.name.len() == 0) {
-        errs = errs.append(util.Diag { code: "P001", message: parser.malformed_fn_decl_message(), line: tm.line, col: tm.col });
+        errs = errs.append(util.Diag { code: "P001", message: parser.malformed_fn_decl_message(), line: tm.line, col: tm.col, fix: None });
       }
       errs = untyped_param_errs(tm, errs);
     }
@@ -10767,18 +10776,19 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
       errs = errs.append(util.Diag {
         code: "P001", message: malformed_type_decl_message("struct"),
         line: mod.structs[si].line, col: mod.structs[si].col,
+        fix: None,
       });
     }
     si = si + 1;
   }
   for en in mod.enums {
     if (en.name.len() == 0) {
-      errs = errs.append(util.Diag { code: "P001", message: malformed_type_decl_message("enum"), line: en.line, col: en.col });
+      errs = errs.append(util.Diag { code: "P001", message: malformed_type_decl_message("enum"), line: en.line, col: en.col, fix: None });
     }
   }
   for al in mod.aliases {
     if (al.name.len() == 0) {
-      errs = errs.append(util.Diag { code: "P001", message: malformed_type_decl_message("type alias"), line: al.line, col: al.col });
+      errs = errs.append(util.Diag { code: "P001", message: malformed_type_decl_message("type alias"), line: al.line, col: al.col, fix: None });
     }
   }
   return errs;
@@ -10834,6 +10844,7 @@ function untyped_param_errs(fd: parser.FuncDecl, errs: util.Diag[]): util.Diag[]
       out = out.append(util.Diag {
         code: "P001", message: "parameter \"" + param.name + "\" of \"" + fd.name + "\" has no type: expected \":\" after its name",
         line: fd.line, col: fd.col,
+        fix: None,
       });
     }
   }
@@ -10884,6 +10895,7 @@ pub function check_top_level_stmts(mod: parser.Module): util.Diag[] {
       code: "P001",
       message: "statement at top level: a module declaring `main` runs that, so this never executes — move it inside a function",
       line: ast.stmt_line(st), col: 0,
+      fix: None,
     });
   }
   return errs;
