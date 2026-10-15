@@ -1,0 +1,4 @@
+// A destructuring parameter reads the shared pattern grammar (#5356): struct
+// patterns (with rename and `..`), tuples, and `w @ PAT`.
+function f(w @ (a, b): (i32, i32)): i32 { return w.0 * 100 + a * 10 + b; }
+function main(): i32 { return f((1, 2)) - 100; }

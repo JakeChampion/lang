@@ -1977,6 +1977,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"method-struct-receiver-ok", "struct P { x: i32 }\nfunction (p: P) m(): i32 { return p.x; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"method-builtin-receiver-ok", "function (n: i32) twice(): i32 { return n * 2; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"tuple-destructure-non-tuple", "function main(): i32 { let n = 5; let (a, b) = n; return 0; }\n", []string{"E024"}},
+		{"struct-destructure-non-struct", "struct P { x: i32, y: i32 }\nfunction main(): i32 { let n = 5; let P { x, y } = n; return x + y; }\n", []string{"E024"}},
+		{"struct-destructure-param-non-struct", "struct P { x: i32, y: i32 }\nfunction f(P { x, y }: i32): i32 { return x + y; }\nfunction main(): i32 { return f(1); }\n", []string{"E024"}},
 		{"tuple-destructure-ok", "function main(): i32 { let t = (1, 2); let (a, b) = t; return a + b; }\n", nil},
 		{"cast-bool-to-i32", "function main(): i32 { let b: boolean = true; return b as i32; }\n", []string{"E033"}},
 		{"cast-i32-to-bool", "function main(): i32 { let x: i32 = 1; let b: boolean = x as boolean; return 0; }\n", []string{"E033"}},

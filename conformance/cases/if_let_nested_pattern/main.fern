@@ -1,0 +1,14 @@
+// `if let` reads the shared pattern grammar (#5356): every pattern form a
+// `match` accepts works in its head.
+//
+// Nested pattern: the else branch doubles as the outer fallthrough,
+// so a `Some(Err(_))` payload runs it rather than falling off the
+// merged inner match.
+// exit: 3*10 + 1*2 + 1
+enum Inner { Ok2(i32), Err2 }
+enum Outer { Wrap(Inner), Bare }
+function f(o: Outer): i32 {
+  if let Wrap(Ok2(n)) = o { return n; } else { return 1; }
+  return 99;
+}
+function main(): i32 { return f(Wrap(Ok2(3))) * 10 + f(Wrap(Err2)) * 2 + f(Bare); }

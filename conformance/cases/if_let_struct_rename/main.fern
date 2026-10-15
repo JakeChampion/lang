@@ -1,0 +1,10 @@
+// `if let` reads the shared pattern grammar (#5356): every pattern form a
+// `match` accepts works in its head.
+//
+// Field rename in the struct pattern head.
+struct Point { x: i32, y: i32 }
+function main(): i32 {
+  let p: Point = Point { x: 3, y: 4 };
+  if let Point { x: a, y: b } = p { return a * 10 + b; }
+  return 99;
+}

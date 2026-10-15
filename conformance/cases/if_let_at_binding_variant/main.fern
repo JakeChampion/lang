@@ -1,0 +1,9 @@
+// `if let` reads the shared pattern grammar (#5356): every pattern form a
+// `match` accepts works in its head.
+enum Box { Full(i32), Empty }
+function total(b: Box): i32 { match (b) { Full(v) => { return v; }, Empty => { return 0; } } return 0; }
+function main(): i32 {
+  let b: Box = Full(3);
+  if let n @ Full(v) = b { return total(n) * 10 + v; }
+  return 99;
+}

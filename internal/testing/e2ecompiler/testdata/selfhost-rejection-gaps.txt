@@ -21,9 +21,15 @@
 
 diag_e073
 
+parse:destructure_rejects_empty_struct_pattern
+parse:destructure_rejects_enum_variant
+parse:destructure_rejects_literal_tuple_elem
 parse:diag_p001
 parse:diag_p002
 parse:diag_p003
 parse:diag_p004
 parse:diag_p005
 parse:diag_p006
+parse:param_pattern_rejects_enum_variant
+parse:param_pattern_rejects_literal_tuple_elem
+parse:param_pattern_rejects_qualified_variant

@@ -1,0 +1,4 @@
+// A `let` destructure has no else, so a refutable pattern is not a destructure
+// (#5356); `let PAT = E else { … }` is the refutable form.
+struct P { x: i32 }
+function main(): i32 { let P {} = P { x: 1 }; return 0; }

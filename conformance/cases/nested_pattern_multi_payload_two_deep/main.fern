@@ -1,0 +1,23 @@
+// Nested match patterns (#5353) desugar at parse time to a flat outer arm that
+// re-matches the payload, so every backend sees only flat arms.
+//
+// A multi-payload sub-pattern two levels deep, in either slot, with
+// a literal at the bottom: every slot of the inner `Add` keeps its
+// binder (#11918).
+// exit: 7 + 90 + 40 + 105 + 0
+enum E { Val(i32), Add(E, E), Neg(E) }
+function g(e: E): i32 {
+  match (e) {
+    Add(Add(Val(1), y), z) => { return 90; },
+    Add(Add(Val(n), y), z) => { return n; },
+    Add(z, Add(Val(n), y)) => { return n * 10; },
+    Neg(Add(x, Neg(Val(m)))) => { return m + 100; },
+    _ => { return 0; },
+  }
+  return 0 - 2;
+}
+function main(): i32 {
+  return g(Add(Add(Val(7), Val(1)), Val(2))) + g(Add(Add(Val(1), Val(0)), Val(0)))
+    + g(Add(Val(3), Add(Val(4), Val(1)))) + g(Neg(Add(Val(0), Neg(Val(5)))))
+    + g(Neg(Add(Val(0), Val(5))));
+}

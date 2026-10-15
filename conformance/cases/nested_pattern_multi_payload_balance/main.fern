@@ -1,0 +1,22 @@
+// Nested match patterns (#5353) desugar at parse time to a flat outer arm that
+// re-matches the payload, so every backend sees only flat arms.
+//
+// The red-black tree's balance shape: a five-payload node whose
+// child is matched on its colour and all four of its fields.
+// exit: 23 + 15 + 1
+enum C { R, B }
+enum T { Leaf, Node(C, T, i32, T) }
+function g(t: T): i32 {
+  match (t) {
+    Node(B(), Node(R(), Node(R(), a, x, b), y, c), z, d) => { return x * 100 + y * 10 + z; },
+    Node(B(), Node(R(), a, x, Node(R(), b, y, c)), z, d) => { return x + y + z; },
+    _ => { return 1; },
+  }
+  return 0 - 2;
+}
+function main(): i32 {
+  let l: T = Leaf;
+  let ll: T = Node(B, Node(R, Node(R, l, 1, l), 2, l), 3, l);
+  let lr: T = Node(B, Node(R, l, 4, Node(R, l, 5, l)), 6, l);
+  return (g(ll) - 100) + g(lr) + g(l);
+}

@@ -1,0 +1,8 @@
+// A destructuring parameter reads the shared pattern grammar (#5356): struct
+// patterns (with rename and `..`), tuples, and `w @ PAT`.
+//
+// Two destructured params in one signature: the synthetic holders
+// are uniqued by source position, so they can't collide.
+struct Point { x: i32, y: i32 }
+function f(Point { x, y }: Point, (a, b): (i32, i32)): i32 { return x * 1000 + y * 100 + a * 10 + b; }
+function main(): i32 { return f(Point { x: 1, y: 2 }, (3, 4)) - 1000; }

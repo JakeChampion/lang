@@ -1281,11 +1281,9 @@ Worth knowing so you do not assume coverage you do not have:
   enumerates the language's surface, so parity is only ever tested at the
   shapes some case happens to use. `conformance/cases/` is the one corpus that
   reaches the self-host on all three targets — and whether a form appears
-  there is up to whoever added it. A Go-inline e2e test does not count:
-  `internal/testing/e2e/param_pattern_test.go` builds its sources as Go string
-  literals, so the struct-pattern and `@` parameters it covers are invisible
-  to every self-host leg, and those two forms have been native-only since they
-  landed.
+  there is up to whoever added it. A Go-inline e2e test does not count: its
+  sources are Go string literals, which none of the corpus-reading gates
+  (the checker agreement, the leak census, the rejection gate) can see.
 
   The failure this hides is not a spurious rejection, which someone would
   notice. It is a self-host parser that reads the form as something ELSE and
