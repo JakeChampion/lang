@@ -1,0 +1,10 @@
+// A module destructuring its own struct, in a `let`, a parameter and a `for`
+// head. The struct is mangled once the module is imported, so the name the
+// pattern writes has to be resolved through the module the way an annotation
+// is (#12446).
+import "./geo";
+
+function main(): i32 {
+    let p: geo.P = geo.P { x: 3, y: 4 };
+    return geo.sum(p) * 10 + geo.product(p) + geo.drift([p, p]);
+}

@@ -1245,12 +1245,28 @@ pub function rewrite_block(stmts: ast.Stmt[], ctx: RewriteCtx): ast.Stmt[] {
   return out;
 }
 
+// rewrite_var_type is rewrite_type_name for a `let`'s type channel, which for a
+// struct destructure carries the `@sd:<Struct>:<fields>` marker instead: the
+// struct it names is mangled as an annotation's would be.
+function rewrite_var_type(tn: string, ctx: RewriteCtx): string {
+  if (!parser.is_struct_destr_marker(tn)) {
+    return rewrite_type_name(tn, ctx);
+  }
+  let at: i32 = util.index_of_sub(tn, "@sd:") + 4;
+  let rest: string = slice_unchecked(tn, at, tn.len()) + "";
+  let colon: i32 = util.index_of_sub(rest, ":");
+  if (colon < 0) {
+    return tn;
+  }
+  return slice_unchecked(tn, 0, at) + rewrite_type_name(slice_unchecked(rest, 0, colon) + "", ctx) + slice_unchecked(rest, colon, rest.len());
+}
+
 function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
       return ast.StmtVar {
         name: v.name,
-        type_name: rewrite_type_name(v.type_name, ctx),
+        type_name: rewrite_var_type(v.type_name, ctx),
         init: rewrite_expr(v.init, ctx),
         line: v.line, col: v.col,
         fn_ret: rewrite_type_name(v.fn_ret, ctx),
