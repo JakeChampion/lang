@@ -3483,18 +3483,9 @@ function (s: Scope) array_method_ret_type(c: ast.ExprCall, recv_ty: typeinfo.Typ
       if (array.view) {
         return s.arr_recv_ret_type(c, recv_ty, s.array_recv_method(field, true));
       }
-      let target: string = "__method_Array_" + field;
-      let tn: i32 = target.len();
-      let i: i32 = s.sigs.am_head[sig_name_bucket(target)];
-      while (i >= 0) {
-        let nm: string = s.sigs.sigs[i].name;
-        if (nm == target) {
-          return s.sigs.sigs[i].ret_type;
-        }
-        if (nm.len() > tn && slice_unchecked(nm, nm.len() - tn, nm.len()) == target) {
-          return s.sigs.sigs[i].ret_type;
-        }
-        i = s.sigs.am_next[i];
+      let af: FuncSig = array_method_func(s, field);
+      if (af.name.len() > 0) {
+        return af.ret_type;
       }
       let arm: MethodSig = s.array_recv_method(field, false);
       if (arm.name.len() > 0) {
@@ -3506,6 +3497,29 @@ function (s: Scope) array_method_ret_type(c: ast.ExprCall, recv_ty: typeinfo.Typ
       return t_unknown("array_method_ret_type: receiver isn't an array");
     }
   }
+}
+
+// array_method_func is std/array's `__method_Array_<field>`, which `field`
+// called on an array runs, under the bare name or the one the bundle mangled;
+// the empty-named sentinel when it is not in scope.
+pub function array_method_func(s: Scope, field: string): FuncSig {
+  let target: string = "__method_Array_" + field;
+  let tn: i32 = target.len();
+  let i: i32 = s.sigs.am_head[sig_name_bucket(target)];
+  while (i >= 0) {
+    let nm: string = s.sigs.sigs[i].name;
+    if (nm == target || nm.len() > tn && slice_unchecked(nm, nm.len() - tn, nm.len()) == target) {
+      return s.sigs.sigs[i];
+    }
+    i = s.sigs.am_next[i];
+  }
+  return s.lookup_sig("");
+}
+
+// array_method_sig is the method an array receiver (a view's, when `view`)
+// declares under `field`, or the empty-named sentinel.
+pub function array_method_sig(s: Scope, field: string, view: boolean): MethodSig {
+  return s.array_recv_method(field, view);
 }
 
 // arr_recv_ret_type is an array-receiver method call's result, its type
@@ -5235,7 +5249,7 @@ pub function builtin_sig(name: string): typeinfo.Type {
 
 // builtin_method_sig is a builtin method's callable without its receiver, or
 // unknown when `recv_name` has no builtin method `name`.
-function builtin_method_sig(recv_name: string, name: string): typeinfo.Type {
+pub function builtin_method_sig(recv_name: string, name: string): typeinfo.Type {
   if let typeinfo.TypeFunc(bm) = builtin_sig("__method_" + recv_name + "_" + name) {
     let params: typeinfo.Type[] = [];
     let i: i32 = 1;
@@ -5367,6 +5381,41 @@ function literal_insert_columns(c: ast.ExprCall, mt: typeinfo.TypeMap, recv_ty: 
     iv = check_expr(c.args[1], s);
   }
   return t_map(ik, iv);
+}
+
+// receiver_key is the receiver type name a method on a value of type `t` is
+// looked up under (lookup_method), or "" when `t` names no receiver type. A
+// primitive is keyed by its type keyword; an enum or struct-union by the
+// union's own name, its generic arguments dropped, the way the lowering keys
+// `<Union>.<method>`.
+pub function receiver_key(t: typeinfo.Type): string {
+  match (t) {
+    typeinfo.TypeStruct(sn) => {
+      return sn.name;
+    },
+    typeinfo.TypeString(_) => {
+      return "string";
+    },
+    typeinfo.TypeI32(it) => {
+      return int_label(it);
+    },
+    typeinfo.TypeBool(_) => {
+      return "boolean";
+    },
+    typeinfo.TypeFloat(f) => {
+      return float_label(f);
+    },
+    typeinfo.TypeMap(_) => {
+      return "Map";
+    },
+    typeinfo.TypeUnion(un) => {
+      return un.name;
+    },
+    _ => {
+      return "";
+    }
+  }
+  return "";
 }
 
 function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
@@ -5516,47 +5565,18 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
         if (!is_unknown(arr_mt)) {
           return arr_mt;
         }
-        // Receiver type-name comes from the receiver
-        // expression's static type. Primitive types
-        // use their type-keyword spelling so methods
-        // declared on them dispatch correctly.
-        match (recv_ty) {
-          typeinfo.TypeStruct(sn) => {
-            recv_type_name = sn.name;
-          },
-          typeinfo.TypeString(_) => {
-            recv_type_name = "string";
-          },
-          typeinfo.TypeI32(it) => {
-            recv_type_name = int_label(it);
-          },
-          typeinfo.TypeBool(_) => {
-            recv_type_name = "boolean";
-          },
-          typeinfo.TypeFloat(f) => {
-            recv_type_name = float_label(f);
-          },
-          typeinfo.TypeMap(_) => {
-            recv_type_name = "Map";
-          },
-          typeinfo.TypeUnion(un) => {
-            // An enum or struct-union receiver dispatches under the union's
-            // own name, the way the lowering keys `<Union>.<method>`. A generic
-            // union carries its args separately, so the bare name is the key.
-            recv_type_name = un.name;
-          },
-          typeinfo.TypeDyn(d) => {
+        recv_type_name = receiver_key(recv_ty);
+        if (recv_type_name.len() == 0) {
+          if let typeinfo.TypeDyn(d) = recv_ty {
             return dyn_method_type(d.traits, name, s);
-          },
-          _ => {
-            // `t.0()` — a numeric field access whose element is a fn value is
-            // a call THROUGH that value, not a method on the tuple.
-            let tvr: typeinfo.Type = call_through_fn_value(c, s);
-            if (!is_unknown(tvr)) {
-              return tvr;
-            }
-            return t_unknown("method call: receiver isn't a typed value");
           }
+          // `t.0()` — a numeric field access whose element is a fn value is
+          // a call THROUGH that value, not a method on the tuple.
+          let tvr: typeinfo.Type = call_through_fn_value(c, s);
+          if (!is_unknown(tvr)) {
+            return tvr;
+          }
+          return t_unknown("method call: receiver isn't a typed value");
         }
       }
     },
@@ -9043,7 +9063,7 @@ function name_with_args_label(name: string, args: typeinfo.Type[]): string {
 //
 // It returns the name as DECLARED, so a cross-module type arrives mangled.
 // A hint has to demangle it — `mod__Name` is not writable Fern.
-function type_label(t: typeinfo.Type): string {
+pub function type_label(t: typeinfo.Type): string {
   match (t) {
     typeinfo.TypeI32(it) => {
       return int_label(it);
@@ -25101,12 +25121,70 @@ pub function arm_scope(arm: ast.MatchArm, s: Scope, whole: typeinfo.Type): Scope
 }
 
 pub function module_scopes(mod: parser.Module): Scope[] {
-  let env: ModuleEnv = module_env(mod);
+  let v: QueryView = QueryView { mod: mod, env: module_env(mod) };
   let out: Scope[] = [];
   for fd in mod.funcs {
-    out = out.append(build_func_scope(fd, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs));
+    out = out.append(func_scope(v, fd));
   }
-  return out.append(new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs));
+  return out.append(module_scope(v));
+}
+
+// QueryView is a module and the tables it is typed against: what the language
+// server asks the type and declaration of a name in.
+pub struct QueryView { mod: parser.Module, env: ModuleEnv }
+
+// query_view is `raw_mod` as check_module types it, default arguments filled
+// and the module prepared.
+pub function query_view(raw_mod: parser.Module): QueryView {
+  let (filled, _) = parser.fill_default_args_with_diags(raw_mod);
+  let mod: parser.Module = prepared_module(filled);
+  return QueryView { mod: mod, env: module_env(mod) };
+}
+
+// func_scope is the scope check_module walks the body of `fd`, a function of
+// `v.mod`, in; module_scope the one it walks the top-level statements in.
+pub function func_scope(v: QueryView, fd: parser.FuncDecl): Scope {
+  return build_func_scope(fd, v.env.sigs, v.env.structs, v.env.unions, v.env.methods, v.env.imports, v.env.impls, v.env.trait_reqs);
+}
+
+pub function module_scope(v: QueryView): Scope {
+  return new_scope_full(v.env.sigs, v.env.structs, v.env.unions, v.env.methods, v.env.imports, v.env.impls, v.env.trait_reqs);
+}
+
+// func_sig is the signature of function `name`, and method_sig that of method
+// `name` on receiver type `recv` (receiver_key), or the empty-named sentinel.
+pub function func_sig(s: Scope, name: string): FuncSig {
+  return s.lookup_sig(name);
+}
+
+pub function method_sig(s: Scope, name: string, recv: string): MethodSig {
+  return s.lookup_method(name, recv);
+}
+
+// enum_sig is enum `name`'s signature, a built-in Option's or Result's
+// included; the empty-named sentinel when `name` is no enum.
+pub function enum_sig(s: Scope, name: string): UnionSig {
+  let u: UnionSig = s.lookup_union(name);
+  if (u.name.len() > 0) {
+    return u;
+  }
+  return builtin_union_sig(name);
+}
+
+// variant_enum is the enum declaring variant `name`, a built-in one's
+// included, or "".
+pub function variant_enum(s: Scope, name: string): string {
+  let owner: string = union_of_variant(name, s.unions);
+  if (owner.len() > 0) {
+    return owner;
+  }
+  return mx_builtin_enum_of(name);
+}
+
+// payload_slot is which of enum `owner`'s type parameters payload `k` of its
+// variant `name` is, or -1 when it is none.
+pub function payload_slot(s: Scope, owner: string, name: string, k: i32): i32 {
+  return ctor_payload_slot(s, owner, name, k);
 }
 
 // The innermost statement of a body whose type the checker could not infer,

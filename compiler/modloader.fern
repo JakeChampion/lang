@@ -93,16 +93,34 @@ function res_none(): Resolved {
   return Resolved { src: "", ok: false, err: "", err_path: "", shown: "", map: util.no_line_map() };
 }
 
-// res_read reads `<dir><rel>.fern`.
-function res_read(dir: string, rel: string): Resolved {
-  return read_module(dir + rel + ".fern");
+// res_read reads `<dir><rel>.fern`, from its buffer when `ov` holds one.
+function res_read(ov: Overlay, dir: string, rel: string): Resolved {
+  return read_module(ov.files, dir + rel + ".fern");
+}
+
+// Buffers is the text of the files an editor holds open, keyed by file path,
+// read in place of what is on disk (the language server's unsaved buffers).
+pub struct Buffers { paths: string[], srcs: string[] }
+
+pub function no_buffers(): Buffers {
+  return Buffers { paths: [], srcs: [] };
+}
+
+// read_text is file `path`'s text: its buffer when one is open, else the disk's.
+function read_text(bufs: Buffers, path: string): Result[string, IoError] {
+  let i: i32 = util.index_of_str(bufs.paths, util.clean_path(path));
+  if (i >= 0) {
+    return Ok(bufs.srcs[i]);
+  }
+  return read_file(path);
 }
 
 // read_module reads the module file `path`, a `.fern`, or — when there is no
-// such file — the literate document `path.md`, tangled to one module. A plain
-// `.fern` wins over a `.fern.md` of the same name.
-pub function read_module(path: string): Resolved {
-  match (read_file(path)) {
+// such file — the literate document `path.md`, tangled to one module, each
+// from its buffer in `bufs` when one is open. A plain `.fern` wins over a
+// `.fern.md` of the same name.
+pub function read_module(bufs: Buffers, path: string): Resolved {
+  match (read_text(bufs, path)) {
     Ok(s) => {
       return Resolved { ...res_none(), src: s, ok: true, shown: path };
     },
@@ -114,7 +132,7 @@ pub function read_module(path: string): Resolved {
     }
   }
   let doc: string = path + ".md";
-  match (read_file(doc)) {
+  match (read_text(bufs, doc)) {
     Ok(s) => {
       return tangle_module(path, doc, s);
     },
@@ -166,7 +184,11 @@ function tangle_module(path: string, doc: string, src: string): Resolved {
 // CWD-RELATIVE path, and then to try_manifest, which opens `fern.toml` and can
 // reach the user's package cache. For a playground that is not a fallback, it
 // is an escape.
-pub struct Overlay { paths: string[], srcs: string[], sealed: boolean }
+//
+// `files` is the other half of native's override map: the editor's unsaved
+// buffers, keyed by FILE path and read in place of those files wherever the
+// disk resolution below reaches.
+pub struct Overlay { paths: string[], srcs: string[], sealed: boolean, files: Buffers }
 
 // no_overlay is the "resolve from disk exactly as before" value. Every caller
 // that has a real filesystem passes it, and it costs one `len()` per import:
@@ -174,7 +196,7 @@ pub struct Overlay { paths: string[], srcs: string[], sealed: boolean }
 // and `sealed` is false, so control reaches res_read with the same arguments
 // it had before this existed.
 pub function no_overlay(): Overlay {
-  return Overlay { paths: [], srcs: [], sealed: false };
+  return Overlay { paths: [], srcs: [], sealed: false, files: no_buffers() };
 }
 
 // resolve_module finds the source for import `path` and the directory it
@@ -200,11 +222,11 @@ pub function resolve_module(ov: Overlay, dir: string, path: string, name: string
   if (ov.sealed) {
     return Resolved { ...res_none(), err_path: "stdlib://" + rel_path(path) + ".fern" };
   }
-  let direct: Resolved = res_read(dir, rel_path(path));
+  let direct: Resolved = res_read(ov, dir, rel_path(path));
   if (direct.ok || direct.err.len() > 0) {
     return direct;
   }
-  let flat: Resolved = res_read(dir, name);
+  let flat: Resolved = res_read(ov, dir, name);
   if (flat.ok || flat.err.len() > 0) {
     return flat;
   }
@@ -213,7 +235,7 @@ pub function resolve_module(ov: Overlay, dir: string, path: string, name: string
   // deps resolved from the per-machine content-addressed store via the
   // `env` runtime builtin. Dormant when no fern.toml is present, so a
   // manifest-less build (every current compiler source) is unchanged.
-  let man: Resolved = try_manifest(dir, path);
+  let man: Resolved = try_manifest(ov, dir, path);
   if (man.ok || man.err.len() > 0) {
     return man;
   }
@@ -227,7 +249,7 @@ pub function resolve_module(ov: Overlay, dir: string, path: string, name: string
 // lib module, `helper/extra` its `extra.fern`. Not-ok when there is no
 // manifest, the segment is not a declared dep, or its form is not
 // disk-resolvable.
-function try_manifest(from: string, path: string): Resolved {
+function try_manifest(ov: Overlay, from: string, path: string): Resolved {
   let dir: string = manifest_dir(from);
   match (read_file(dir + "fern.toml")) {
     Ok(src) => {
@@ -241,9 +263,9 @@ function try_manifest(from: string, path: string): Resolved {
           }
           let rest: string = util.dep_subpath(path);
           if (rest.len() == 0) {
-            return load_lib(dd);
+            return load_lib(ov, dd);
           }
-          return res_read(dd, rest);
+          return res_read(ov, dd, rest);
         },
         None => {}
       }
@@ -336,7 +358,7 @@ pub function find_manifest(dir: string): Option[string] {
 
 // load_lib reads a dependency directory's own fern.toml for its `lib`
 // module (default lib.fern) and loads that file.
-function load_lib(depdir: string): Resolved {
+function load_lib(ov: Overlay, depdir: string): Resolved {
   let deplib: string = "lib.fern";
   match (read_file(depdir + "fern.toml")) {
     Ok(src) => {
@@ -344,7 +366,7 @@ function load_lib(depdir: string): Resolved {
     },
     Err(e) => {}
   }
-  return res_read(depdir, strip_fern_ext(deplib));
+  return res_read(ov, depdir, strip_fern_ext(deplib));
 }
 
 // up_dir is the directory above `dir` (both end in '/', "" naming the working

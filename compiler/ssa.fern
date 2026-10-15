@@ -1261,7 +1261,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
           reads_mate = reads_mate.with(ins.result, true);
           def_a = def_a.with(ins.result, ins.args[1]);
           def_b = def_b.with(ins.result, ins.args[2]);
-        } else if (ins.kind_tag == 8 || ins.kind_tag == 10 || ins.kind_tag == 11 || ins.kind_tag == 9 && shares_operand_home(ins.str)) {
+        } else if (ins.kind_tag == 8 || ins.kind_tag == 10 || ins.kind_tag == 11 || ins.kind_tag == 56 || ins.kind_tag == 60 || ins.kind_tag == 9 && shares_operand_home(ins.str)) {
           reads_mate = reads_mate.with(ins.result, true);
           if (ins.kind_tag != 8 && ins.args.len() > 0) {
             def_a = def_a.with(ins.result, ins.args[0]);
