@@ -18,6 +18,7 @@ site/
 │   │   ├── index.mdx           Landing page
 │   │   ├── *.md                Cookbook, why Fern, releases, contributing
 │   │   ├── tutorial/*.md(x)    Narrative learn-the-language
+│   │   ├── http/*.md(x)        The HTTP guide, basic to advanced
 │   │   ├── reference/*.md      Syntax, types, traits, packages, tooling
 │   │   └── stdlib/*.md         Auto-generated (gitignored) except index.md
 │   ├── assets/
@@ -150,6 +151,13 @@ so URLs are interchangeable.
    `sidebar.order: N` to control sidebar position.
 3. The sidebar regenerates on the next `npm run dev` / `npm run
    build`.
+
+Every complete program in a ```` ```fern ```` fence — one that imports
+something and defines `main` or `handle` — is compiled by
+`scripts/check-site-examples` in the Docs build lane, so an example that
+stops building fails the PR. Run it locally after `make build`; a fence
+written ```` ```fern target=wasm32-wasi-http ```` is compiled for that
+target.
 
 ## Stdlib reference is auto-generated
 

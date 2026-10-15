@@ -1,0 +1,198 @@
+---
+title: Your first server
+description: One function becomes a native HTTP server or a WebAssembly component — handlers, responses, requests, and how to build and run them.
+sidebar:
+  order: 1
+---
+
+import FernPlayground from "../../../components/FernPlayground.astro";
+
+## A handler and nothing else
+
+```fern
+import "std/http";
+import "std/serve";
+import "std/platform";
+
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+    return http.ok("hello, world\n");
+}
+```
+
+That is a whole program. A file with a `handle` and no `main` gets one
+generated for it, which is why it imports `std/serve`:
+
+- **Native targets** serve `handle` under a supervisor on `$PORT`
+  (default `8080`): one worker process per CPU, each with its own accept
+  loop, and a worker that dies is replaced while the others keep
+  answering.
+- **`wasm32-wasi-http`** drops the generated `main` and exports
+  `wasi:http/incoming-handler`, the interface `wasmtime serve` and edge
+  hosts call.
+
+```bash
+fern -target x86-64-linux -o hello hello.fern     # or arm64-linux, arm64-darwin
+./hello &
+curl localhost:8080/                              # → hello, world
+
+fern -target wasm32-wasi-http -o hello.wasm hello.fern
+wasmtime serve hello.wasm                         # same handler, as a component
+```
+
+The native binary is static and needs nothing installed; the component
+is self-contained and needs no adapter.
+
+## Try it in the browser
+
+The playground runs handlers too. Set its world selector to
+**`wasi:http/incoming-handler`** and a request editor appears; **Run
+(wasm)** compiles the handler and sends it the request.
+
+<FernPlayground
+  code={`import "std/http";
+import "std/serve";
+import "std/platform";
+
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+    if (req.path == "/hello") {
+        return http.plain("hello, world\\n")
+            .with_header("x-served-by", "fern");
+    }
+    if (req.method == "POST") {
+        match (req.body_string()) {
+            Ok(body) => { return http.ok("you sent: " + body); },
+            Err(e) => { return e.to_response(); }
+        }
+    }
+    return http.not_found();
+}`}
+  autoRun={false}
+/>
+
+## Responses
+
+`std/http` builds the common responses, so an `HttpResponse { … }`
+literal is rarely needed:
+
+| Constructor | Status | `Content-Type` |
+|---|---|---|
+| `http.ok(body)` | 200 | none |
+| `http.plain(body)` | 200 | `text/plain; charset=utf-8` |
+| `http.html(body)` | 200 | `text/html; charset=utf-8` |
+| `http.json(body)` | 200 | `application/json` |
+| `http.json_status(status, body)` | any | `application/json` |
+| `http.text(status, body)` | any | none |
+| `http.created(body)` | 201 | none |
+| `http.no_content()` | 204 | — |
+| `http.redirect(location)` | 302 | sets `Location` |
+| `http.bad_request(body)` | 400 | none |
+| `http.not_found()` | 404 | none |
+| `http.internal_error(body)` | 500 | none |
+| `http.problem(status, title, detail)` | any | `application/problem+json` (RFC 9457) |
+| `http.bytes(status, bs)` | any | none — a `u8[]` body |
+| `http.file(path)` | 200 | none — streamed from disk, [see Streaming](../streaming/) |
+
+Responses are values. `with_header` returns a new response with the
+header replaced; `with_appended_header` adds another value (what
+`Set-Cookie` wants); `with_content_type` is a shorthand.
+
+```fern
+import "std/http";
+import "std/serve";
+import "std/platform";
+
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+    return http.html("<h1>hi</h1>")
+        .with_header("cache-control", "no-store")
+        .with_appended_header("set-cookie", "a=1")
+        .with_appended_header("set-cookie", "b=2");
+}
+```
+
+The server adds `Date` and the framing headers itself, and sends no body
+on `HEAD`, 1xx, 204 and 304.
+
+## Requests
+
+`HttpRequest` is what came off the wire:
+
+| Access | Type | What it is |
+|---|---|---|
+| `req.method` | `string` | `"GET"`, `"POST"`, … |
+| `req.path` | `string` | Path **and** query, e.g. `/s?q=hi` |
+| `req.headers.get(name)` | `Option[string]` | First value of a header, matched without regard to case |
+| `req.headers.get_all(name)` | `string[]` | Every value of a repeated header |
+| `req.body_string()` | `Result[string, http.BodyError]` | The body as UTF-8 text |
+| `req.body_bytes()` | `u8[]` | The body as bytes |
+| `req.body_len()` | `i32` | Body length; `-1` for a chunked body still arriving |
+| `req.body` | `Stream` | The body as a stream to read in pieces |
+| `req.trailers` | `HeaderMap` | Trailer fields after a chunked body |
+
+## The platform argument
+
+The second parameter is the handler's platform: every host effect the
+handler may use, as methods. Logging is `plat.log(line)`, not `eprint`;
+an upstream call is `plat.http(request)`; the clock is `plat.now_ms()`.
+
+```fern
+import "std/http";
+import "std/serve";
+import "std/option";
+import "std/platform";
+
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+    plat.log(req.method + " " + req.path);
+    let region: string = plat.config("REGION").unwrap_or("local");
+    return http.plain("served from " + region + " at " + plat.now_ms().to_string() + "\n");
+}
+```
+
+| Method | What it gives |
+|---|---|
+| `log(msg)` | A line on the host's log (stderr natively) |
+| `now_ms()` / `elapsed_ns()` | Wall clock / monotonic clock |
+| `config(name)` / `secret(name)` / `env(name)` | Configuration; `config` reads the environment natively and `wasi:config/store` under wasi-http |
+| `random_i32()` | A CSPRNG value |
+| `sleep(d)` | Wait; parks the handler under the server loop |
+| `http(req)` | An outgoing request — [Calling other services](../client/) |
+| `stat(path)` | File metadata |
+| `peer()` | The client's socket address |
+| `deadline()` / `cancelled()` | The handler's deadline, and whether it has passed or the client left |
+| `trace()` | The request's trace context, when tracing is on |
+
+Two rules make this useful. A function given a platform that reaches
+around it for an ambient effect is a check error (E080), so everything a
+handler does is visible in its signature. And a method the target cannot
+provide is a build error (E066) rather than a runtime surprise: a
+`wasm32-wasi-http` handler has `log`, clocks, `random_i32`, `http` and
+`config`, but no `env` or `stat`.
+
+Because effects go through `plat`, a test passes a mock or a simulated
+platform instead; [Testing HTTP code](../testing/) shows how.
+
+## Writing your own `main`
+
+The generated `main` is the default; write one when you want to pick the
+port, the configuration or the shutdown behaviour:
+
+```fern
+import "std/http";
+import "std/serve";
+import "std/platform";
+
+function hello(req: HttpRequest, plat: platform.Host): HttpResponse {
+    return http.ok("hello\n");
+}
+
+function main(): i32 {
+    let opts: serve.Config = serve.Config { ...serve.config(), workers: 4 };
+    return serve.supervise(3000, opts, hello);
+}
+```
+
+`serve.supervise` forks workers under a supervisor; `serve.run` serves
+in the current process. Both return an exit code: `98` when the port
+cannot be bound, `0` after a clean drain. [State and the
+server](../server/) covers the rest of `serve.Config`.
+
+Next: [Requests and responses →](../requests-responses/)

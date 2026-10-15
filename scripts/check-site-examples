@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""Compile every complete Fern program on the docs site.
+
+A ```fern fence counts as a complete program when it imports something and
+defines `main` or `handle`; fragments are skipped. A program that imports a
+sibling module by relative path ("./x", "../x") is skipped too, since the
+other file is not on the page. Each program is compiled, not just checked,
+for x86-64-linux, or for T when the fence's info string carries `target=T`.
+
+  scripts/check-site-examples                 # every page under site/src/content/docs
+  scripts/check-site-examples PAGE.md ...     # just these pages
+
+FERN names the compiler (default bin/fern-selfhost, then bin/fern).
+"""
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from concurrent.futures import ThreadPoolExecutor
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FENCE = re.compile(r"^```fern([^\n]*)\n(.*?)^```", re.S | re.M)
+RELATIVE = re.compile(r'^\s*import\s+"\.{1,2}/', re.M)
+PROGRAM = re.compile(r"\bfunction (main|handle)\b")
+
+
+def compiler():
+    named = os.environ.get("FERN")
+    if named:
+        return named
+    for cand in ("bin/fern-selfhost", "bin/fern"):
+        path = os.path.join(ROOT, cand)
+        if os.access(path, os.X_OK):
+            return path
+    sys.exit("check-site-examples: no compiler; run `make build` or set FERN")
+
+
+def pages(args):
+    if args:
+        return args
+    found = []
+    for d, _, files in os.walk(os.path.join(ROOT, "site/src/content/docs")):
+        if os.path.basename(d) == "stdlib":
+            continue
+        found += [os.path.join(d, f) for f in files if f.endswith((".md", ".mdx"))]
+    return sorted(found)
+
+
+def programs(paths):
+    for page in pages(paths):
+        text = open(page, encoding="utf-8").read()
+        for m in FENCE.finditer(text):
+            info, body = m.group(1), m.group(2)
+            if "import" not in body or not PROGRAM.search(body) or RELATIVE.search(body):
+                continue
+            target = re.search(r"\btarget=(\S+)", info)
+            where = os.path.relpath(page, ROOT) + ":" + str(text.count("\n", 0, m.start()) + 1)
+            yield where, body, target.group(1) if target else "x86-64-linux"
+
+
+def compile_one(fern, tmp, i, prog):
+    where, body, target = prog
+    d = os.path.join(tmp, str(i))
+    os.mkdir(d)
+    src = os.path.join(d, "main.fern")
+    with open(src, "w", encoding="utf-8") as f:
+        f.write(body)
+    stdlib = os.path.join(ROOT, "internal/stdlib")
+    r = subprocess.run([fern, "-target", target, "-o", os.path.join(d, "out"), src, stdlib],
+                       capture_output=True, text=True)
+    return where, r.returncode, (r.stdout + r.stderr).replace(src, where)
+
+
+def main():
+    fern = compiler()
+    progs = list(programs(sys.argv[1:]))
+    failed = 0
+    with tempfile.TemporaryDirectory() as tmp, ThreadPoolExecutor(os.cpu_count() or 1) as pool:
+        for where, code, out in pool.map(lambda a: compile_one(fern, tmp, *a), enumerate(progs)):
+            if code != 0:
+                failed += 1
+                print("FAIL " + where)
+                print(out)
+    print(f"check-site-examples: {len(progs)} programs, {failed} failed")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

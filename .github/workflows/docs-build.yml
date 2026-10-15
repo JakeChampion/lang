@@ -38,7 +38,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -60,6 +60,11 @@ jobs:
 
       - name: Build playground wasm
         run: ./web/build.sh
+
+      - name: Compile the site's example programs
+        # web/build.sh left bin/fern-selfhost behind; every complete
+        # program on a page must still build against today's stdlib.
+        run: scripts/check-site-examples
 
       - name: Stage playground into site/public/playground/
         # Stage every runtime asset the playground loads, not just the

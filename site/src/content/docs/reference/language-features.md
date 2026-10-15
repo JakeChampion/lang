@@ -533,6 +533,63 @@ function render(width: i32): string {
 That compiles, and the checker won't ask for the missing `return` — so
 you can sketch a module's shape and fill it in afterwards.
 
+## Concurrency — tasks that park
+
+Fern has no `async`/`await` and no threads. Code that waits — on a
+socket, a timer, an HTTP response — is written as straight-line code,
+and runs concurrently when it is run as a **task**. A task that reaches a
+wait parks: it saves where it was and the event loop runs other tasks
+until its wait is answered. The compiler makes every function that can
+reach a wait resumable, so nothing is marked at the call site.
+
+`std/async`'s task combinators take plain closures and run each as a
+task:
+
+```fern
+import "std/async";
+import "std/fetch";
+import "std/http";
+
+function status(url: string): string {
+    match (fetch.send(fetch.get(url))) {
+        Ok(resp) => { return url + " " + resp.status.to_string(); },
+        Err(e) => { return url + " " + e.message(); }
+    }
+}
+
+function main(): i32 {
+    let calls: (() => string)[] = [
+        () => status("https://example.com/"),
+        () => status("https://example.org/"),
+        () => status("https://example.net/"),
+    ];
+    // All three requests are in flight at once; the results come back in order.
+    for line in async.gather_tasks(calls, "cancelled") {
+        print(line);
+    }
+    return 0;
+}
+```
+
+| Combinator | Answers |
+|---|---|
+| `async.gather_tasks(entries, on_incomplete)` | Every result, in input order |
+| `async.race_tasks(entries, none)` | `(index, value)` of the first to finish; the rest are cancelled |
+| `async.with_deadline_tasks(d, entries)` | `Some(value)` for each that finished within `d`, `None` for each cancelled |
+
+A cancelled task is not abandoned: its waits answer "cancelled" and it
+leaves through its own control flow, so its `defer`s run. The HTTP
+server is a scheduler of the same kind — a handler waiting on an
+upstream parks while its worker serves other requests (see the [HTTP
+guide](../../http/server/#concurrency-inside-a-worker)). Calling the
+task combinators from inside a handler is not yet accepted
+([#12456](https://github.com/JakeChampion/lang/issues/12456)).
+
+`std/sim` runs tasks in virtual time, so concurrent code can be tested
+deterministically, and `std/async` also has `Future[T]` combinators
+(`gather`, `race`, `with_deadline`) for lower-level readiness-driven
+code.
+
 ## See also
 
 - [Error handling](../error-handling/) — `Option`, `Result`, and `?`.

@@ -27,6 +27,16 @@ test("tutorial sidebar group lists the install page", async ({ page }) => {
   await expect(sidebar.getByText("First steps", { exact: true })).toBeVisible();
 });
 
+test("HTTP guide sidebar group lists its pages in order", async ({ page }) => {
+  await page.goto("http/");
+  await expect(page.locator("h1")).toContainText("HTTP in Fern");
+  const sidebar = page.locator("nav, aside").first();
+  await expect(sidebar.getByText("Your first server", { exact: true })).toBeVisible();
+  await expect(sidebar.getByText("Testing HTTP code", { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Routing and middleware" }).first().click();
+  await expect(page.locator("main")).toContainText("router.new()");
+});
+
 test("reference > tooling page describes the language server", async ({ page }) => {
   await page.goto("reference/tooling/");
   await expect(page.locator("main")).toContainText("fern -lsp");

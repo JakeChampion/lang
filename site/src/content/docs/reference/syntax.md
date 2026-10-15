@@ -260,7 +260,7 @@ function main(): i32 {
 | -------- | ------- |
 | `pub` | exported from the module; `pub(package)` limits that to modules in the same directory |
 | `fip` / `fbip` | the compiler checks that the function updates in place: no fresh heap allocation, only reuse of memory it consumes (`E053`). A `fip` function may call only `fip` functions; an `fbip` one may also call `fbip` ones. See [`docs/MODE-LATTICE.md`](https://github.com/JakeChampion/lang/blob/main/docs/MODE-LATTICE.md) |
-| `async` | marks a WebAssembly component export as asynchronous (WASI Preview 3); it changes nothing about how the body is written or run. There is no `await` keyword: concurrency is the [`std/async`](../../stdlib/async/) combinators over `Future[T]` |
+| `async` | marks a WebAssembly component export as asynchronous (WASI Preview 3); it changes nothing about how the body is written or run. There is no `await` keyword: code that waits parks inside a task — see [Concurrency](../language-features/#concurrency--tasks-that-park) |
 
 ## Statement builtins
 

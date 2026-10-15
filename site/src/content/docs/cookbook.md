@@ -424,7 +424,8 @@ fern -target wasm32-wasi-http -o server.wasm server.fern && wasmtime serve serve
 ```
 
 The [HTTP tutorial](../tutorial/http-server/) covers routing, JSON bodies
-and headers.
+and headers; the [HTTP guide](../http/) goes on to middleware, streaming,
+TLS, HTTP/2, gRPC, metrics and testing against a simulated network.
 
 ## Write a test
 

@@ -109,6 +109,48 @@ so a second `impl Sink[string] for Counter` is a redeclaration (`E006`).
 [`std/convert`](../../stdlib/convert/)'s `From[T]` and `Into[T]` are
 generic traits.
 
+### Impls for every instantiation — `impl[T: Bound]`
+
+An impl can itself take type parameters, so one impl covers every
+instantiation of a generic type. Bounds on the impl's parameters say
+which instantiations qualify:
+
+```fern
+import "std/i32";
+
+trait Describe {
+    function describe(self: Self): string;
+}
+
+impl Describe for i32 {
+    function describe(self: i32): string { return "the number " + self.to_string(); }
+}
+
+struct Boxed[T] { inner: T }
+
+// Boxed[i32], Boxed[Boxed[i32]], … — every Boxed[T] whose T is Describe.
+impl[T: Describe] Describe for Boxed[T] {
+    function describe(self: Boxed[T]): string { return "a box holding " + self.inner.describe(); }
+}
+
+function main(): i32 {
+    let b: Boxed[Boxed[i32]] = Boxed { inner: Boxed { inner: 7 } };
+    print(b.describe());   // a box holding a box holding the number 7
+    return 0;
+}
+```
+
+The impl's parameters can also appear in the trait's own arguments:
+`impl[I: Iterator[T], T, U] Iterator[U] for Mapped[I, T, U]` is how
+`core/iter`'s adapters are written. Inherent impls take parameters the
+same way (`impl[T] Boxed[T] { … }`), and `@derive` on a generic struct
+produces this kind of impl.
+
+Bounds belong on the impl, not on the type: `struct W[T: Describe]` is a
+parse error that points you at `impl[T: Describe] … for W[T]`. A type
+declares its shape; what it can do under which conditions is the impls'
+business.
+
 ### Associated types
 
 A trait can declare a type that each impl fixes, and refer to it as
@@ -397,6 +439,25 @@ compiler's release point: never before the value's last use, but often
 earlier than the end of the enclosing block. The interpreter
 (`fern -interp`) never runs it at all. For cleanup that must happen at a known point, use
 [`defer`](../language-features/#deferred-cleanup--defer-and-errdefer).
+
+## How a method call is resolved
+
+A type may get a method of one name from more than one trait. That is
+legal; the *call* must be unambiguous. A call ranks the traits that
+could provide the method:
+
+1. a trait declared in the calling module, or in a module it imports
+   directly;
+2. a trait that is only reachable through some other module's imports.
+
+Exactly one candidate at the best rank resolves the call; two at the
+same rank is `E074`. So a trait of your own always beats one that
+arrived transitively, and adding an import can turn a working call into
+an error but never silently change which method it runs. An inherent
+method and a trait method with the same name on one type is `E074` at the
+declaration. Inside a trait's default method, the trait's own method
+outranks another trait's. `fern -explain E074` has the details and the
+ways out.
 
 ## Coherence (the orphan rule)
 

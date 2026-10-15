@@ -124,6 +124,7 @@ jobs:
                 "cmd/ferndoc/**",
                 "web/**",
                 "site/**",
+                "scripts/check-site-examples",
                 "editors/vscode/syntaxes/**",
                 "internal/**",
                 "mise.toml",

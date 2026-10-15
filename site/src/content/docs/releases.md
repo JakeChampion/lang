@@ -35,13 +35,12 @@ Installing or updating is the same command either way; see the
 
 ```bash
 $ fern -version
-fern 4ae53835f86e (2026-10-07T15:33:26Z)
-built with go1.27.1 for linux/amd64
+fern f7b214e0f4e4
+built for x86-64-linux
 ```
 
-Because the tag rolls, the commit is the answer — quote that line in a
-bug report. A binary installed with `go install` prints its module
-version instead, and a build from a modified checkout says so.
+Because the tag rolls, the commit is the answer — quote those lines in a
+bug report.
 
 ## Pinning a build
 
@@ -52,11 +51,10 @@ tag later will not necessarily give you the same bytes. The archives
 built for every commit are also attached to its run of the
 [`Build & release` workflow][runs].
 
-The first native compile with a new `fern` builds the compiler it runs,
-once, from a stage0 it downloads and verifies (see
-[Install](../tutorial/install/)). For a machine without network access,
-keep the `fern-selfhost` that `make bootstrap` produces alongside the
-pinned `fern`.
+A pinned `fern` needs nothing else, network included: it is the compiler,
+with the standard library inside it. On first use it unpacks that library
+into a `stdlib-<digest>` directory under `$FERN_CACHE_DIR`,
+`$XDG_CACHE_HOME` or `~/.cache`.
 
 The same applies to dependencies: `fern -resolve` writes the versions it
 chose to a `fern.lock`, and `fern -vendor` flattens the resolved graph
