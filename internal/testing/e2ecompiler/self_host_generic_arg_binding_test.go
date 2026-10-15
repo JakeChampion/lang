@@ -36,6 +36,27 @@ function main(): i32 {
     return 0;
 }
 `},
+	// The binders of a destructuring loop header: a map's key and value, and
+	// an element of an array of tuples.
+	{"map-loop-key-and-value", answerPrelude + `import "core/map";
+function get[T: Answer](x: T): i32 { return x.answer(); }
+function main(): i32 {
+    let m: Map[i32, Boom] = Map { 1: Boom { n: 7 } };
+    let t: i32 = 0;
+    for (k, v) in m { t = t + k + get(v); }
+    if (t != 8) { return 1; }
+    return 0;
+}
+`},
+	{"tuple-array-loop-element", answerPrelude + `function get[T: Answer](x: T): i32 { return x.answer(); }
+function main(): i32 {
+    let xs: (i32, Boom)[] = [(1, Boom { n: 7 })];
+    let t: i32 = 0;
+    for (a, b) in xs { t = t + a + get(b); }
+    if (t != 8) { return 1; }
+    return 0;
+}
+`},
 }
 
 func TestSelfHostGenericArgBinding(t *testing.T) {
