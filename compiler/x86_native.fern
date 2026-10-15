@@ -6838,6 +6838,12 @@ function x86_events_before(starts: i32[], off: i32): i32 {
   return lo;
 }
 
+// x86_relax_fresh is the state before the first pass over `n` events, its
+// tables sized for every event and each branch's form `short`.
+function x86_relax_fresh(n: i32, short: boolean[]): RelaxPass {
+  return RelaxPass { new_start: __alloc_i32(n), new_size: __alloc_i32(n), prefix: __alloc_i32(n), before: __alloc_i32(n), short: short };
+}
+
 // One relaxation pass's state: each event's planned start and size, the
 // growth up to and including each event this pass (`prefix`) and the last
 // pass's (`before`), and each branch's form.
@@ -6866,7 +6872,7 @@ function x86_relax_settle(a: X86Asm): RelaxPlan {
     short = short.append(t.off[k] >= 0);
     k = k + 1;
   }
-  let st: RelaxPass = RelaxPass { new_start: [], new_size: [], prefix: [], before: [], short: short };
+  let st: RelaxPass = x86_relax_fresh(n, short);
   let laid: RelaxStep = x86_relax_pass(a, l, t, st, false);
   st = laid.st;
   let iter: i32 = 0;
@@ -6887,7 +6893,7 @@ function x86_relax_settle(a: X86Asm): RelaxPlan {
     longs = longs.append(false);
     k = k + 1;
   }
-  let all: RelaxPass = RelaxPass { new_start: [], new_size: [], prefix: [], before: [], short: longs };
+  let all: RelaxPass = x86_relax_fresh(n, longs);
   return RelaxPlan { l: l, st: x86_relax_pass(a, l, t, all, false).st };
 }
 
@@ -7108,10 +7114,10 @@ function x86_relax_pass(a: X86Asm, l: RelaxLayout, t: RelaxTargets, own st: Rela
         size = 2 + l.grow[e];
       }
     }
-    new_start = x86_put(new_start, i, at);
-    new_size = x86_put(new_size, i, size);
+    new_start = new_start.with(i, at);
+    new_size = new_size.with(i, size);
     cum = cum + size - l.size[i];
-    prefix = x86_put(prefix, i, cum);
+    prefix = prefix.with(i, cum);
     i = i + 1;
   }
   return RelaxStep { st: RelaxPass { new_start: new_start, new_size: new_size, prefix: prefix, before: st.before, short: short }, changed: changed };
@@ -7151,14 +7157,6 @@ function x86_relax_carried(l: RelaxLayout, stretch: i32, j: i32, i: i32): i32 {
     return stretch;
   }
   return 0;
-}
-
-// x86_put sets xs[i] to v, appending when i is the next index.
-function x86_put(own xs: i32[], i: i32, v: i32): i32[] {
-  if (i < xs.len()) {
-    return xs.with(i, v);
-  }
-  return xs.append(v);
 }
 
 // The arms of x86_gas_emit_op, numbered in the order x86_gas_classify tries
