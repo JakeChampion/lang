@@ -83,6 +83,7 @@ func newProxyWorld(t *testing.T) proxyWorld {
 const proxyServeSource = `import "std/http";
 import "std/platform";
 import "std/serve";
+import "std/time";
 import "std/tls/identity";
 import "std/tls/server";
 
@@ -119,7 +120,9 @@ function with_tls(cfg: serve.Config): serve.Config {
 }
 
 function main(): i32 {
-  let cfg: serve.Config = serve.Config { ...serve.config(), proxy_protocol: true };
+  // The interpreted TLS handshake runs inside the read deadline, which
+  // defaults to 10 s; a loaded runner can spend longer on it.
+  let cfg: serve.Config = serve.Config { ...serve.config(), proxy_protocol: true, recv_deadline: time.duration_seconds(60 as i64) };
   match (env("PROXY_TLS")) {
     Some(_) => {
       cfg = with_tls(cfg);
@@ -161,10 +164,14 @@ func proxyExchange(t *testing.T, addr string, parts ...[]byte) string {
 	return readProxyAnswer(t, conn)
 }
 
+// readProxyAnswer is the response body, or "" when there is none; the read
+// error is logged, so a missing answer says whether the server closed or the
+// deadline passed.
 func readProxyAnswer(t *testing.T, conn net.Conn) string {
 	t.Helper()
 	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 	if err != nil {
+		t.Logf("no response: %v", err)
 		return ""
 	}
 	defer resp.Body.Close()
@@ -213,6 +220,9 @@ func checkProxyTLS(t *testing.T, addr string, pool *x509.CertPool) {
 	if err := tc.Handshake(); err != nil {
 		t.Fatalf("TLS behind PROXY: %v", err)
 	}
+	// The request and its answer run interpreted too, so they get a budget
+	// of their own rather than what the handshake left.
+	tc.SetDeadline(time.Now().Add(60 * time.Second))
 	if _, err := tc.Write([]byte(proxyRequest)); err != nil {
 		t.Fatal(err)
 	}
