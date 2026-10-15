@@ -1023,6 +1023,31 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
   return out;
 }
 
+// The supplies of every operation of `f`, made once for the passes that read
+// them: the operation at `pos` in block `bi` is rows[from[bi] + pos]. A
+// parameter or a phi supplies nothing here.
+struct SupplyTable { from: i32[], rows: Supply[][] }
+
+function supply_table(f: ssasem.Func): SupplyTable {
+  let from: i32[] = [];
+  let rows: Supply[][] = [];
+  for b in f.graph.blocks {
+    from = from.append(rows.len());
+    for ins in b.insts {
+      if (ins.kind_tag == 6 || ins.kind_tag == 8) {
+        rows = rows.append([]);
+      } else {
+        rows = rows.append(operation_supplies(f, ins));
+      }
+    }
+  }
+  return SupplyTable { from: from, rows: rows };
+}
+
+function (t: SupplyTable) at(bi: i32, pos: i32): Supply[] {
+  return t.rows[t.from[bi] + pos];
+}
+
 // A `+` on a counted string: the runtime appends onto the left operand's
 // buffer when the frame hands it the only unit and its block has room, so the
 // operand is taken rather than lent. A view has no unit to hand over, and a
@@ -1036,12 +1061,11 @@ pub function string_append(f: ssasem.Func, ins: ssa.SInst): boolean {
 
 // The operands a call lends rather than counts. The callee reads them for the
 // whole call, and it may release a unit it is handed before it does.
-function lent_operands(f: ssasem.Func, ins: ssa.SInst): i32[] {
+function lent_operands(ins: ssa.SInst, counted: Supply[]): i32[] {
   let out: i32[] = [];
   if (ins.kind_tag != ssasem.call() && ins.kind_tag != ssasem.call_value()) {
     return out;
   }
-  let counted: Supply[] = operation_supplies(f, ins);
   let i: i32 = 0;
   while (i < ins.args.len()) {
     let slot_counted: boolean = false;
@@ -1060,9 +1084,9 @@ function lent_operands(f: ssasem.Func, ins: ssa.SInst): i32[] {
 
 // What a call's lent operands borrow from: none of it may move into the call
 // (#10832).
-function lent_owners(f: ssasem.Func, ins: ssa.SInst, deps: i32[][]): i32[] {
+function lent_owners(ins: ssa.SInst, counted: Supply[], deps: i32[][]): i32[] {
   let out: i32[] = [];
-  for v in lent_operands(f, ins) {
+  for v in lent_operands(ins, counted) {
     for dep in deps[v] {
       if (dep != v && !has_id(out, dep)) {
         out = out.append(dep);
@@ -1800,7 +1824,7 @@ struct Units { owned: boolean[], parents: i32[][], deps: i32[][], takes: i32[], 
 // borrow, and an element read of one then pins the array it came out of
 // rather than taking its own unit — which is the whole of what a hold exists
 // to prevent (#9891).
-function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa.SInst[]): Units {
+function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa.SInst[], sup: SupplyTable): Units {
   let pt: PayloadTakes = payload_takes(f, a, base, defs);
   let payloads: boolean[] = pt.taken;
   let likely: boolean[] = pt.likely;
@@ -1813,7 +1837,7 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
     i = i + 1;
   }
   let takes: i32[] = tuple_takes(f, a, owned, defs);
-  let held: boolean[] = held_elements(f, a, owned, defs);
+  let held: boolean[] = held_elements(f, a, owned, defs, sup);
   // A taken payload or tuple element is a unit of its own at the read
   // already, moved out of the box or retained there by the lowering's
   // uniqueness test (ssarc.steal); the hold read it as still anchored to its
@@ -1968,21 +1992,21 @@ function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned:
 // source donates its box to, is not in hand past it. A read only borrowed to
 // its death leaves the source to die with it. A held read is a unit of its
 // own, so what it is consumed beside is asked again until no read is added.
-function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[]): boolean[] {
+function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], sup: SupplyTable): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
   let direct: ssalive.Flow = ssalive.compute_checked(f.graph, a.parents);
-  let consumed: boolean[] = consumed_values(f, owned);
+  let consumed: boolean[] = consumed_values(f, owned, sup);
   let before: i32 = 0 - 1;
   let count: i32 = 0;
   while (count != before) {
     before = count;
-    out = hold_pass(f, a, defs, direct, consumed, owned, out);
+    out = hold_pass(f, a, defs, direct, consumed, owned, out, sup);
     count = count_true(out);
   }
   return out;
 }
 
-function hold_pass(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], direct: ssalive.Flow, consumed: boolean[], owned: boolean[], own out: boolean[]): boolean[] {
+function hold_pass(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], direct: ssalive.Flow, consumed: boolean[], owned: boolean[], own out: boolean[], sup: SupplyTable): boolean[] {
   let bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
     let b: ssa.SBlock = f.graph.blocks[bi];
@@ -1990,7 +2014,7 @@ function hold_pass(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], direct
     while (pos < b.insts.len()) {
       let ins: ssa.SInst = b.insts[pos];
       if (ins.kind_tag != 6 && ins.kind_tag != 8) {
-        out = hold_at(f, a, defs, direct, consumed, owned, out, ins, bi, pos);
+        out = hold_at(f, a, defs, direct, consumed, owned, out, ins, bi, pos, sup.at(bi, pos));
       }
       pos = pos + 1;
     }
@@ -2001,8 +2025,7 @@ function hold_pass(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], direct
 }
 
 // hold_pass at the instruction `ins`, `pos` in block `bi`.
-function hold_at(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], direct: ssalive.Flow, consumed: boolean[], owned: boolean[], own out: boolean[], ins: ssa.SInst, bi: i32, pos: i32): boolean[] {
-  let supplies: Supply[] = operation_supplies(f, ins);
+function hold_at(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], direct: ssalive.Flow, consumed: boolean[], owned: boolean[], own out: boolean[], ins: ssa.SInst, bi: i32, pos: i32, supplies: Supply[]): boolean[] {
   for got in supplies {
     if (owned[got.value] || out[got.value]) {
       let past: i32[] = outliving(f, a, defs, owned, out, got.value, bi, pos, 0 - 1, ins.args);
@@ -2085,23 +2108,27 @@ function supplied(supplies: Supply[], v: i32): boolean {
 
 // The values some operation consumes: a supply of an operation, of an owned
 // phi along an edge, or of a return.
-function consumed_values(f: ssasem.Func, owned: boolean[]): boolean[] {
+function consumed_values(f: ssasem.Func, owned: boolean[], sup: SupplyTable): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
+  let bi: i32 = 0;
   for b in f.graph.blocks {
+    let pos: i32 = 0;
     for ins in b.insts {
       if (ins.kind_tag == 8) {
         if (owned[ins.result]) {
           out = mark_all(out, ins.args);
         }
       } else if (ins.kind_tag != 6) {
-        for got in operation_supplies(f, ins) {
+        for got in sup.at(bi, pos) {
           out = out.with(got.value, true);
         }
       }
+      pos = pos + 1;
     }
     if (b.term.kind_tag == 1 && b.term.value >= 0) {
       out = out.with(b.term.value, true);
     }
+    bi = bi + 1;
   }
   return out;
 }
@@ -2757,7 +2784,8 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
   let defs: ssa.SInst[] = definitions(f);
   let owned: boolean[] = owned_values(f, modes, defs);
   let reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
-  let units: Units = units_of(f, owned, analysis, defs);
+  let sup: SupplyTable = supply_table(f);
+  let units: Units = units_of(f, owned, analysis, defs, sup);
   owned = units.owned;
   let takes: i32[] = units.takes;
   analysis = units_analysis(f, analysis, units);
@@ -2828,7 +2856,8 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
               }
             }
           }
-          steps = steps.append(steals(f, analysis, owned, defs, bi, pos, hands(f, analysis, owned, defs, bi, pos, choose_ids(step(b.id, pos, 0 - 1), operation_supplies(f, ins), dead, owned, lent_owners(f, ins, analysis.dependencies)))));
+          let supplies: Supply[] = sup.at(bi, pos);
+          steps = steps.append(steals(f, analysis, owned, defs, bi, pos, hands(f, analysis, owned, defs, bi, pos, choose_ids(step(b.id, pos, 0 - 1), supplies, dead, owned, lent_owners(ins, supplies, analysis.dependencies)))));
           let root: i32 = field_grow_root(f, analysis, owned, defs, bi, pos);
           if (root >= 0) {
             grows = grows.with(ins.result, root);
@@ -3553,11 +3582,12 @@ function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: ReplayIn
       if (at < 0) {
         return progress_error("missing or duplicate operation step");
       }
-      let lent: string = lent_error(next, p.steps[at], f, ins, owned, deps);
+      let supplies: Supply[] = operation_supplies(f, ins);
+      let lent: string = lent_error(next, p.steps[at], ins, supplies, owned, deps);
       if (lent != "") {
         return progress_error(lent);
       }
-      let why: string = replay_error(next, p.steps[at], operation_supplies(f, ins), ins.result, owned, deps);
+      let why: string = replay_error(next, p.steps[at], supplies, ins.result, owned, deps);
       if (why != "") {
         return progress_error(why);
       }
@@ -3573,7 +3603,7 @@ function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: ReplayIn
 // The units the step's moves clear are listed rather than replayed into a
 // copy of the row; a move the row cannot supply is move_supplies' rejection,
 // reported by the replay that follows, not here.
-function lent_error(state: boolean[], s: Step, f: ssasem.Func, ins: ssa.SInst, owned: boolean[], deps: i32[][]): string {
+function lent_error(state: boolean[], s: Step, ins: ssa.SInst, counted: Supply[], owned: boolean[], deps: i32[][]): string {
   let cleared: i32[] = [];
   for got in s.supplies {
     if (got.mode == move_unit()) {
@@ -3583,7 +3613,7 @@ function lent_error(state: boolean[], s: Step, f: ssasem.Func, ins: ssa.SInst, o
       cleared = cleared.append(got.value);
     }
   }
-  for v in lent_operands(f, ins) {
+  for v in lent_operands(ins, counted) {
     for dep in deps[v] {
       if (dep != v && owned[dep] && (!state[dep] || util.index_of_i32(cleared, dep) >= 0)) {
         return "a lent call operand borrows from a unit moved into the call";
@@ -3765,7 +3795,7 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
   // for the function and modes it was planned with they are its own.
   let owned: boolean[] = p.owned;
   if (whole || !same_i32s(modes, p.modes)) {
-    let units: Units = units_of(f, owned_values(f, modes, defs), analysis, defs);
+    let units: Units = units_of(f, owned_values(f, modes, defs), analysis, defs, supply_table(f));
     owned = units.owned;
     if (!same_i32s(units.takes, p.takes)) {
       return "tuple take disagrees with the plan";
