@@ -48,6 +48,27 @@ function main(): i32 {
     return 0;
 }
 `},
+	// A map literal with no annotation is typed by its entries (#12457).
+	{"unannotated-map-loop-key-and-value", answerPrelude + `import "core/map";
+function get[T: Answer](x: T): i32 { return x.answer(); }
+function main(): i32 {
+    let m = Map { 1: Boom { n: 7 } };
+    let t: i32 = 0;
+    for (k, v) in m { t = t + k + get(v); }
+    if (t != 8) { return 1; }
+    return 0;
+}
+`},
+	{"unannotated-map-values-loop", answerPrelude + `import "core/map";
+function get[T: Answer](x: T): i32 { return x.answer(); }
+function main(): i32 {
+    let m = Map { 1: Boom { n: 7 }, 2: Boom { n: 5 } };
+    let t: i32 = 0;
+    for v in m.values() { t = t + get(v); }
+    if (t != 12) { return 1; }
+    return 0;
+}
+`},
 	{"tuple-array-loop-element", answerPrelude + `function get[T: Answer](x: T): i32 { return x.answer(); }
 function main(): i32 {
     let xs: (i32, Boom)[] = [(1, Boom { n: 7 })];
