@@ -319,10 +319,9 @@ func runFixtureWasm(t *testing.T, mainPath, stdin string) (string, int) {
 	return stdout, ec
 }
 
-// runFixtureCompileError runs the front-end (modload → constfold →
-// check) and returns the first error's text plus whether any stage
-// failed. Backend-agnostic: parse / module-load / type errors are the
-// same regardless of target, so this runs once per fixture.
+// runFixtureCompileError runs fixtureFrontEnd and returns the first error's
+// text plus whether it failed. Backend-agnostic: parse / module-load / type
+// errors are the same regardless of target, so this runs once per fixture.
 func runFixtureCompileError(mainPath string) (string, bool) {
 	// Rendered the way the CLI renders it, which is what puts the `error[EXXX]`
 	// code on each diagnostic. `err.Error()` alone gives "type error at L:C:
