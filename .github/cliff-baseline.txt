@@ -116,6 +116,9 @@
 # a split construction, and a carried reuse donor held past an arm's body.
 # docs/rc-log/2026-10-11-c-the-state-is-not-held-past-an-attempt.md attributes
 # what is left: semsource.define 4.7 MB, seminline.part_of 2.6 MB.
+#
+# Re-pinned 2026-10-15 (#12418): 33,052,304 / 236,323 on main (the previous
+# pin was drift) to 33,306,720 / 239,924, semreach's facts grown per function.
 
-x86_64/checker.cliff_bytes	22670472
-x86_64/checker.cliff_count	193696
+x86_64/checker.cliff_bytes	33306720
+x86_64/checker.cliff_count	239924

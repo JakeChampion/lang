@@ -42,6 +42,15 @@ function shaken_program(typed: parser.Module, prune: boolean): parser.Module {
   return treeshake.treeshake(typed);
 }
 
+// lowered is the typed lowering of `typed`, narrowed as the CLI's is when
+// `shaken` says the module is the whole program.
+function lowered(typed: parser.Module, target: string, shaken: boolean): semlower.Driven {
+  if (shaken) {
+    return semlower.driven_shaken(typed, target);
+  }
+  return semlower.driven_annotated(typed, target);
+}
+
 // emit_per_module_concat compiles a program's modules as separate units and
 // concatenates them into one linkable asm stream. `d` is the merged emit's
 // program and the units are cut from its lowering; only the entry unit emits
@@ -318,7 +327,7 @@ function main(): i32 {
     }
     // The typed lowering lowers the program the merged emit reads, whole,
     // and this unit is cut from it.
-    let pd: semlower.Driven = semlower.driven_annotated(checked_or_exit(flatten.bundle(entry_mod, loaded, target), prune, target), target);
+    let pd: semlower.Driven = lowered(checked_or_exit(flatten.bundle(entry_mod, loaded, target), prune, target), target, prune);
     let pg: ircore.Gated = semlower.program(pd);
     let pu: ircore.Units = ircore.split_units(pg, part_mods(parts), entry_index(parts));
     write(asm_ir.emit_module_ir_unit_flat(pu.mods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, pg.im.funcs, pg.stab, 0, 0 - 1, pu.caches[pm_index], pu.physical[pm_index], pd.sub.rt_lower, 0 as usize, asmcore.env_switches()));
@@ -346,14 +355,15 @@ function main(): i32 {
 
   if (target == "wasm32-wasi") {
     // The preview1 command core, or the component core, as the CLI emits it.
-    let dw: semlower.Driven = semlower.driven_annotated(merged, target);
+    let dw: semlower.Driven = lowered(merged, target, prune);
     if (emit_form == "component-core") {
       let shape: i32 = wasm_ir.component_shape(dw.full, dw.sub.switches);
       if (shape < 0) {
         eprint("asm_load_run: the program uses WASI imports the component wrapper does not frame");
         return 1;
       }
-      write(wasm_ir.emit_module_mode_or_error_sub(dw.full, true, shape != 0, dw.sub));
+      let io: boolean = wasm_ir.lowered_shape(dw.full, dw.sub.switches, util.append_all(dw.sub.bodies, dw.sub.extra)) != 0;
+      write(wasm_ir.emit_module_mode_or_error_sub(dw.full, true, io, dw.sub));
       return 0;
     }
     write(wasm_ir.emit_module_mode_or_error_sub(dw.full, false, false, dw.sub));
@@ -366,7 +376,7 @@ function main(): i32 {
     // merged path shares the 512-function budget (#5949 corrected the old "arm64
     // needs none of this"), so an over-budget program errors here exactly as it
     // does on x86 — the per-module path is what compiles those.
-    let d64: semlower.Driven = semlower.driven_annotated(merged, target);
+    let d64: semlower.Driven = lowered(merged, target, prune);
     write(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub, 0 as usize));
     return 0;
   }
@@ -375,7 +385,7 @@ function main(): i32 {
     // to the Mach-O dialect — the GAS text `fern.fern -target arm64-darwin`
     // hands to its in-process assembler. Emitted here so a harness can
     // inspect the darwinized output without building the whole CLI.
-    let dd: semlower.Driven = semlower.driven_annotated(merged, target);
+    let dd: semlower.Driven = lowered(merged, target, prune);
     write(asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error_sub(dd.full, true, dd.sub, 0 as usize)));
     return 0;
   }
@@ -386,7 +396,7 @@ function main(): i32 {
   // the upper bound keeps the whole-compiler self-compile (~2040 funcs, driven
   // through this same default) OUT — a single-process per-module concat of that
   // many funcs OOMs, and it has the batched file-based per-module path instead.
-  let d: semlower.Driven = semlower.driven_annotated(merged, target);
+  let d: semlower.Driven = lowered(merged, target, prune);
   let nfuncs: i32 = ircore.lift_lambdas(parser.module_with_builtins(merged)).funcs.len();
   if (nfuncs > 512 && nfuncs < 1500) {
     write(emit_per_module_concat(entry_mod, loaded, target, d));
