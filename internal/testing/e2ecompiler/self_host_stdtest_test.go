@@ -311,6 +311,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"http_respond", langSrcAbs(t, "tests/stdlib/http_respond_test.fern"), ""},
 		{"http_router", langSrcAbs(t, "tests/stdlib/http_router_test.fern"), ""},
 		{"http_hpack", langSrcAbs(t, "tests/stdlib/http_hpack_test.fern"), ""},
+		{"http_qpack", langSrcAbs(t, "tests/stdlib/http_qpack_test.fern"), ""},
 		{"http_h2_frame", langSrcAbs(t, "tests/stdlib/http_h2_frame_test.fern"), ""},
 		{"http_h2", langSrcAbs(t, "tests/stdlib/http_h2_test.fern"), ""},
 		{"quic_frames", langSrcAbs(t, "tests/stdlib/quic_frames_test.fern"), ""},
