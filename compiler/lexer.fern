@@ -559,9 +559,9 @@ function skip_trivia(own l: Lex, keep: boolean): Lex {
     } else if (b == 47 && i + 1 < l.n && l.src[i + 1] == b'/') {
       // `//` line comment — consume to the newline, which the newline arm
       // takes next.
-      let ce: i32 = i + 2;
-      while (ce < l.n && l.src[ce] != b'\n') {
-        ce = ce + 1;
+      let ce: i32 = __memchr(l.src, 10, i + 2);
+      if (ce < 0) {
+        ce = l.n;
       }
       if (keep) {
         l = Lex { ...l, comments: l.comments.append(comment_tok(line, col, slice_unchecked(l.src, i + 2, ce), code_before(l.src, i))) };
