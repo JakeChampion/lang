@@ -53,7 +53,8 @@ pub function semantic_tokens(p: lspquery.Program, m: i32): SemTok[] {
   for t in x.toks {
     kinds = kinds.append(0 - 1);
   }
-  kinds = applied(kinds, decl_classes(p, m, x, body_classes(v.types, m, x)));
+  let body: Mark[] = body_classes(v.types, m, x);
+  kinds = applied(kinds, decl_classes(p, m, x, body));
   let types: Mark[] = type_classes(v, type_params(lspquery.parsed_module(p, m)), m, x, kinds);
   kinds = applied(kinds, types);
   let out: SemTok[] = [];
