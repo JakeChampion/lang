@@ -41,3 +41,13 @@ actionlint = "1.7.10"
 gotestsum = "1.13.0"
 # The HTTP load generator of the net-nightly lane (scripts/net-bench).
 oha = "1.16.0"
+# The SMT solver the translation-validation oracle proves rewrites with
+# (internal/testing/tv). Only tests run it; nothing the compiler or a compiled
+# program does reaches it.
+[tools."http:z3"]
+version = "4.15.3"
+bin_path = "bin"
+strip_components = 1
+platforms.linux-x64 = { url = "https://github.com/Z3Prover/z3/releases/download/z3-{{ version }}/z3-{{ version }}-x64-glibc-2.39.zip" }
+platforms.linux-arm64 = { url = "https://github.com/Z3Prover/z3/releases/download/z3-{{ version }}/z3-{{ version }}-arm64-glibc-2.34.zip" }
+platforms.macos-arm64 = { url = "https://github.com/Z3Prover/z3/releases/download/z3-{{ version }}/z3-{{ version }}-arm64-osx-13.7.6.zip" }

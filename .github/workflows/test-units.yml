@@ -139,6 +139,8 @@ jobs:
           FERN_CI_UNIT_PACKAGE_GROUP: ${{ matrix.group }}
           FERN_REQUIRE_ARM64_TOOLING: "1"
           FERN_REQUIRE_X86_64_TOOLING: ${{ matrix.host == 'x86_64' && '1' || '' }}
+          # internal/testing/tv's tests prove with z3, which setup-fern installs.
+          FERN_REQUIRE_Z3: "1"
         # The package set is DERIVED, not enumerated — see
         # scripts/unit-test-packages, which is also what the Netlify smoke
         # lane's `units` stage runs, so the two cannot cover different sets.
