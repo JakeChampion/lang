@@ -224,7 +224,7 @@ aarch64/int_loop.ir	18000025
 aarch64/map_int.text	6044
 aarch64/map_int.ir	37932494
 aarch64/map_probe_chain.text	6055
-aarch64/map_probe_chain.ir	368004126
+aarch64/map_probe_chain.ir	361845532
 aarch64/map_string.text	8944
 aarch64/map_string.ir	64821463	2
 aarch64/ordmap_insert.text	5386

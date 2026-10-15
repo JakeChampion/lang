@@ -520,13 +520,18 @@
 # local build, which matched driver-sizes' report on run 38523949330 to the
 # byte for the commit before; fern.fern adds the same difference to that
 # run's figure.
+# 2026-10-15 — asm_modload_run 8271632 -> 8697312 (+5.1%) and asm_run
+# 7237248 -> 7612224 (+5.2%): main's commits since the 10-13 refresh left
+# both at +4.9% on run 38666960774, and #12409's slot_calls pass, linked into
+# every driver that registers a function, took them over. Numbers from
+# driver-sizes' report on run 38672461254; the other rows stay inside 4.9%.
 
 fern.fern/stage2 11761952
 fern.fern 12339464
 drivers/asm_load_run.fern 9642480
-drivers/asm_modload_run.fern 8271632
+drivers/asm_modload_run.fern 8697312
 drivers/asm_ir_run.fern 7975200
-drivers/asm_run.fern 7237248
+drivers/asm_run.fern 7612224
 drivers/wasm_ir_run.fern 7533704
 drivers/wasm_run.fern 7530568
 drivers/wasm_runio_run.fern 7540984
