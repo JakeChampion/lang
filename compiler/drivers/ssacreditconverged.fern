@@ -158,7 +158,7 @@ pub function run(source: string, target: string): void {
   let g = ircore.gate_program(ircore.sub_lifted(driven.sub, driven.full), driven.sub);
   require(g.ok, 97);
   let cache = ircore.inline_tiny_leaves(g.im, g.cache);
-  let leaves = asmcore.unit_leaves(g.im, 0, g.im.funcs.len(), cache);
+  let leaves = asmcore.unit_leaves(g.im, 0, g.im.funcs.len(), cache).leaves;
   let fs: ssa.SFunc[] = [];
   for r in cache {
     if (r.ok && !r.superseded) {
