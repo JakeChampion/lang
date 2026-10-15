@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/syntax/lexer"
 )
 
 type cacheEntry[T any] struct {
@@ -78,10 +80,31 @@ func linkCacheBaseDir() (string, error) {
 	return linkCacheDir, linkCacheDirErr
 }
 
-// fernImportRe matches a module import — `import "./lexer";`, `import
-// "lexer";`, or `import "std/io";`. The captured path is classified by
-// isExternalFernImport and, when local, resolved to a sibling `.fern` file.
+// fernImportRe is the legacy best-effort module filler for deliberately
+// malformed modload fixtures. It must NOT define a cached driver's closure.
 var fernImportRe = regexp.MustCompile(`(?m)^\s*import\s+"([^"]+)"`)
+
+// fernSourceImports uses the source lexer rather than physical-line matching:
+// imports can share a line or have intervening comments, and reexports also
+// compile a dependency. Import-like text inside comments and literals is not
+// a module edge. String paths are decoded exactly as the parser decodes them.
+// Do not publish a partial closure when the source cannot be tokenized.
+func fernSourceImports(src string) ([]string, error) {
+	tokens, _, err := lexer.Tokenize(src)
+	if err != nil {
+		return nil, err
+	}
+	var imports []string
+	for i, tok := range tokens {
+		moduleImport := tok.Kind == lexer.Keyword && tok.Text == "import"
+		reexport := tok.Kind == lexer.Keyword && tok.Text == "use" && i > 0 &&
+			tokens[i-1].Kind == lexer.Keyword && tokens[i-1].Text == "pub"
+		if (moduleImport || reexport) && i+1 < len(tokens) && tokens[i+1].Kind == lexer.String {
+			imports = append(imports, tokens[i+1].Text)
+		}
+	}
+	return imports, nil
+}
 
 // isExternalFernImport reports whether an import path names a module OUTSIDE
 // the driver's project dir — `std/io`, `core/int` — which is deliberately not
@@ -139,11 +162,15 @@ func selfHostImportClosures(dir string, fernNames ...string) ([]string, error) {
 			return fmt.Errorf("self-host import closure: read %s: %w", path, err)
 		}
 		base := filepath.Dir(path)
-		for _, m := range fernImportRe.FindAllStringSubmatch(string(src), -1) {
-			if isExternalFernImport(m[1]) {
+		imports, err := fernSourceImports(string(src))
+		if err != nil {
+			return fmt.Errorf("self-host import closure: tokenize %s: %w", path, err)
+		}
+		for _, imported := range imports {
+			if isExternalFernImport(imported) {
 				continue
 			}
-			imp := strings.TrimPrefix(m[1], "./")
+			imp := strings.TrimPrefix(imported, "./")
 			cand := filepath.Join(base, imp+".fern")
 			if _, statErr := os.Stat(cand); statErr != nil {
 				// A LOCAL import that does not resolve is a staging bug — the
@@ -157,7 +184,7 @@ func selfHostImportClosures(dir string, fernNames ...string) ([]string, error) {
 				// anyway, and this fails naming the missing file.
 				return fmt.Errorf("self-host import closure: %s imports %q but %s does not exist "+
 					"(the driver's project dir is missing a source; it would be silently "+
-					"omitted from the build-cache key)", path, m[1], cand)
+					"omitted from the build-cache key)", path, imported, cand)
 			}
 			if err := visit(cand); err != nil {
 				return err
