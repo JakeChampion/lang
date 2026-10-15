@@ -3633,7 +3633,7 @@ function settle(own p: Progress, w: Walk, lv: Live, order: i32[], reach: boolean
   let rounds: i32 = 0;
   let changed: boolean = true;
   let once: boolean = acyclic(w, order);
-  let memos: Memo[] = no_memos(w.f.blocks.len());
+  let memos: Memo[] = no_memos(memo_count(w.f.blocks.len(), once));
   while (changed && rounds < round_limit()) {
     changed = false;
     // Findings and the census accumulate across rounds; only the final
@@ -3676,6 +3676,15 @@ function settle(own p: Progress, w: Walk, lv: Live, order: i32[], reach: boolean
 // redo exactly that run, so settle replays it instead.
 struct Memo { ran: boolean, inputs: i32[], findings: Finding[], opaque: string[], unproved: i32[], maybe: i32[] }
 
+// memo_count is how many memos a settle keeps: one per block in a cyclic
+// settle, none in an acyclic one, whose single round never reads them.
+function memo_count(n: i32, once: boolean): i32 {
+  if (once) {
+    return 0;
+  }
+  return n;
+}
+
 function no_memos(n: i32): Memo[] {
   let out: Memo[] = [];
   let i: i32 = 0;
@@ -3686,10 +3695,11 @@ function no_memos(n: i32): Memo[] {
   return out;
 }
 
-// block_inputs is everything block bi's run reads from other blocks: whether
+// block_inputs is what block bi's run reads from other blocks' rows: whether
 // each predecessor has run, and if so the row on its edge, then the inputs
-// of each tracked phi. The rest of a run reads only the walk's tables and
-// the block's own scratch row.
+// of each tracked phi. The run also reads maybe_at, which replay reproduces
+// by re-applying the memo's slots in block order. The rest of a run reads
+// only the walk's tables and the block's own scratch row.
 function block_inputs(p: Progress, w: Walk, lv: Live, bi: i32): i32[] {
   let b: ssa.SBlock = w.f.blocks[bi];
   let out: i32[] = [];

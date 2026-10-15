@@ -14581,12 +14581,68 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 	}
 
+	// joinInto merges a branch's post-state into `dst` IFF the branch does not
+	// diverge (a diverging branch — return / break / continue — never reaches
+	// the join, so its consumes don't constrain the fall-through path).
+	joinInto := func(dst, branch movedSet, diverges bool) {
+		if diverges {
+			return
+		}
+		for k, v := range branch {
+			if _, ok := dst[k]; !ok {
+				dst[k] = v
+			}
+		}
+	}
+	cloneMoved := func(m movedSet) movedSet {
+		n := make(movedSet, len(m))
+		for k, v := range m {
+			n[k] = v
+		}
+		return n
+	}
+
+	// bindArm makes an arm's pointer bindings owned when the scrutinee is
+	// owned, and lent when it is borrowed: a field moved out of a borrowed
+	// scrutinee's box would be read back, as out of a borrowed parameter. It
+	// returns the names it added to each set, for unbindArm.
+	bindArm := func(bindings []string, types []ast.Type, scrutOwned bool) (added, lent []string) {
+		for i, bname := range bindings {
+			if bname == "" || bname == "_" || i >= len(types) || types[i] == nil || !ast.IsPointerType(types[i]) {
+				continue
+			}
+			if scrutOwned {
+				if !owned[bname] {
+					owned[bname] = true
+					added = append(added, bname)
+				}
+			} else if !borrowedParam[bname] {
+				borrowedParam[bname] = true
+				lent = append(lent, bname)
+			}
+		}
+		return added, lent
+	}
+	// unbindArm undoes bindArm. A binding is arm-local, so its consumed state
+	// is dropped before the join: a sibling match reusing the name would
+	// otherwise see a phantom use-after-move.
+	unbindArm := func(added, lent []string, armMoved movedSet) {
+		for _, bname := range lent {
+			delete(borrowedParam, bname)
+		}
+		for _, bname := range added {
+			delete(owned, bname)
+			delete(armMoved, bname)
+		}
+	}
+
 	// recordExprUses classifies every owned-param occurrence in `e` and reports
 	// E050 on a use after move; a fresh consume records into `moved`. Borrows
 	// are the projection-target / call-callee idents; every other owned-ident
 	// occurrence is a consume. Occurrences are visited in source (left-to-right
 	// pre-order) order so `f(x) + x.len` flags the second use.
-	recordExprUses := func(e ast.Expr, moved movedSet) {
+	var recordExprUses func(e ast.Expr, moved movedSet)
+	recordExprUses = func(e ast.Expr, moved movedSet) {
 		if e == nil {
 			return
 		}
@@ -14600,10 +14656,16 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		// below descends into one; walkNested takes them after both, in
 		// source order.
 		var lambdas []*ast.Lambda
+		// A match expression's arms bind its payloads, so they are walked
+		// after both walks below, as a match statement's arms are.
+		var matches []*ast.MatchExpr
 		ast.Walk(e, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.Lambda:
 				lambdas = append(lambdas, x)
+				return false
+			case *ast.MatchExpr:
+				matches = append(matches, x)
 				return false
 			case *ast.FieldAccess:
 				if id, ok := x.Target.(*ast.Ident); ok {
@@ -14640,12 +14702,6 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				}
 			case *ast.Unary:
 				if id, ok := x.Operand.(*ast.Ident); ok {
-					borrow[id] = true
-				}
-			case *ast.MatchExpr:
-				// A match no arm of which takes a pointer payload out of its
-				// scrutinee reads it: the value stays whole (#9539).
-				if id, ok := x.Tag.(*ast.Ident); ok && !ast.MatchExprTakesPointerPayload(x.Arms) {
 					borrow[id] = true
 				}
 			case *ast.SliceExpr:
@@ -14733,7 +14789,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			delete(borrow, id)
 		}
 		ast.Walk(e, func(n ast.Node) bool {
-			if _, isLam := n.(*ast.Lambda); isLam {
+			switch n.(type) {
+			case *ast.Lambda, *ast.MatchExpr:
 				return false
 			}
 			id, ok := n.(*ast.Ident)
@@ -14749,30 +14806,33 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 			return true
 		})
+		for _, m := range matches {
+			scrutOwned := c.isOwnedScrutinee(m.Tag, isOwnedExpr)
+			// A match no arm of which takes a pointer payload out of its
+			// scrutinee reads it: the value stays whole (#9539).
+			if id, ok := m.Tag.(*ast.Ident); ok && !ast.MatchExprTakesPointerPayload(m.Arms) {
+				prev, had := moved[id.Name]
+				recordExprUses(m.Tag, moved)
+				if had {
+					moved[id.Name] = prev
+				} else {
+					delete(moved, id.Name)
+				}
+			} else {
+				recordExprUses(m.Tag, moved)
+			}
+			for _, arm := range m.Arms {
+				armMoved := cloneMoved(moved)
+				added, lent := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned)
+				recordExprUses(arm.Guard, armMoved)
+				recordExprUses(arm.Body, armMoved)
+				unbindArm(added, lent, armMoved)
+				joinInto(moved, armMoved, false)
+			}
+		}
 		for _, lam := range lambdas {
 			walkNested(lam.Params, lam.Body, moved)
 		}
-	}
-
-	// joinInto merges a branch's post-state into `dst` IFF the branch does not
-	// diverge (a diverging branch — return / break / continue — never reaches
-	// the join, so its consumes don't constrain the fall-through path).
-	joinInto := func(dst, branch movedSet, diverges bool) {
-		if diverges {
-			return
-		}
-		for k, v := range branch {
-			if _, ok := dst[k]; !ok {
-				dst[k] = v
-			}
-		}
-	}
-	cloneMoved := func(m movedSet) movedSet {
-		n := make(movedSet, len(m))
-		for k, v := range m {
-			n[k] = v
-		}
-		return n
 	}
 
 	// loopBody walks a loop body/step on a copy and flags any owned param it
@@ -14894,41 +14954,11 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 			for _, arm := range x.Arms {
 				armMoved := cloneMoved(moved)
-				var added, lent []string
-				for i, bname := range arm.Bindings {
-					if bname == "" || bname == "_" || i >= len(arm.BindingTypes) || arm.BindingTypes[i] == nil ||
-						!ast.IsPointerType(arm.BindingTypes[i]) {
-						continue
-					}
-					if scrutOwned {
-						if !owned[bname] {
-							owned[bname] = true
-							added = append(added, bname)
-						}
-					} else if !borrowedParam[bname] {
-						// A pointer binding of a BORROWED scrutinee reads the
-						// caller's box: a field moved out of it would be read
-						// back, as out of a borrowed parameter.
-						borrowedParam[bname] = true
-						lent = append(lent, bname)
-					}
-				}
+				added, lent := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned)
 				if arm.Body != nil {
 					walkStmts(arm.Body.Stmts, armMoved)
 				}
-				for _, bname := range lent {
-					delete(borrowedParam, bname)
-				}
-				for _, bname := range added {
-					delete(owned, bname)
-					// The binding is arm-local: it does not exist outside this arm,
-					// so its consumed-state must NOT escape into the parent `moved`.
-					// Otherwise a sibling match that reuses the same binding name
-					// (`match (a) { Err(e) => ... }` then `match (b) { Err(e) => ...
-					// }`) would see a phantom use-after-move on the second `e`. Drop
-					// it before the join so only genuine own-param moves propagate.
-					delete(armMoved, bname)
-				}
+				unbindArm(added, lent, armMoved)
 				joinInto(moved, armMoved, arm.Body != nil && blockDiverges(arm.Body))
 			}
 		default:

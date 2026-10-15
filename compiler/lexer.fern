@@ -2439,6 +2439,12 @@ function test_comments(): i32 {
   if (tokenize_full("// kept\nlet s: string = \"oops\n").comments.len() != 1) {
     return 2106;
   }
+  // A comment that ends the source, with no newline after it, runs to the
+  // end of the text.
+  let tail: LexResult = tokenize_full("let x: i32 = 1; // tail");
+  if (tail.comments.len() != 1 || !check_comment(tail.comments[0], 1, 17, " tail")) {
+    return 2107;
+  }
   return 0;
 }
 

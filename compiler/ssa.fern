@@ -4246,6 +4246,9 @@ function shape_load(ins: SInst, nvals: i32): boolean {
 // base-plus-index form rather than computing the sum and a zero index. The
 // register backends only: on wasm an extension changes the value's type.
 pub function fold_byte_access(f: SFunc): Formed {
+  if (!has_byte_access(f)) {
+    return Formed { f: f, repl: [] };
+  }
   let def_b: i32[] = __alloc_i32(f.nvals);
   let def_k: i32[] = __alloc_i32(f.nvals);
   let i: i32 = 0;
@@ -4331,6 +4334,20 @@ pub function fold_byte_access(f: SFunc): Formed {
     repl = identity_repl(f.nvals);
   }
   return formed_by(SFunc { ...f, blocks: nblocks }, repl);
+}
+
+// has_byte_access says `f` holds an instruction fold_byte_access can start
+// from: a byte load or store, or one byte_source may call a byte.
+function has_byte_access(f: SFunc): boolean {
+  for blk in f.blocks {
+    for ins in blk.insts {
+      let k: i32 = ins.kind_tag;
+      if (k == 54 || k == 55 || k == 44 || k == 42 && ins.str == "u8" || k == 9 && ins.str == "and") {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 // byte_source is an instruction whose value is a byte, 0..255 zero-extended

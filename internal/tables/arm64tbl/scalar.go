@@ -59,7 +59,8 @@ func (f Family) ProbeFor(o ScalarOp) string {
 // Every probe is checked against `aarch64-linux-gnu-as` by
 // internal/testing/e2ecompiler's TestSelfHostArm64TableRowsMatchGas.
 var Scalar = []Family{
-	{Name: "fixed", Doc: "no operands", Probe: "%s", Ops: []ScalarOp{{Mnemonic: "ret"}, {Mnemonic: "nop"}}},
+	{Name: "fixed", Doc: "no operands", Probe: "%s",
+		Ops: []ScalarOp{{Mnemonic: "ret"}, {Mnemonic: "nop"}, {Mnemonic: "paciasp"}, {Mnemonic: "autiasp"}, {Mnemonic: "xpaclri"}}},
 	{Name: "sys", Doc: "an imm16 exception class", Probe: "%s #1", Ops: []ScalarOp{{Mnemonic: "svc"}, {Mnemonic: "brk"}}},
 	{Name: "indirect", Doc: "branch to a register", Probe: "%s x5", Ops: []ScalarOp{{Mnemonic: "br"}, {Mnemonic: "blr"}}},
 	{Name: "branch", Doc: "a label", Probe: "%s l0\nl0:", Ops: []ScalarOp{{Mnemonic: "b"}, {Mnemonic: "bl"}}},
@@ -240,6 +241,8 @@ var Scalar = []Family{
 		Ops: []ScalarOp{{Mnemonic: "swp"}, {Mnemonic: "swpa"}, {Mnemonic: "swpl"}, {Mnemonic: "swpal", Probe: "swpal w2, w0, [x1]"},
 			{Mnemonic: "swpb", Probe: "swpb w2, w0, [x1]"}, {Mnemonic: "swpab", Probe: "swpab w2, w0, [x1]"},
 			{Mnemonic: "swplb", Probe: "swplb w2, w0, [x1]"}, {Mnemonic: "swpalb", Probe: "swpalb w2, w0, [x1]"}}},
+	{Name: "landing", Doc: "a branch target identification landing pad: c for calls, j for jumps",
+		Probe: "%s c", Ops: []ScalarOp{{Mnemonic: "bti"}}},
 }
 
 // scalarIndex maps a mnemonic to its family and row.
