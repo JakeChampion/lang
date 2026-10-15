@@ -1101,7 +1101,8 @@ side then owns its own copy. `final_*` reads the state without consuming it.
   `__sha256_hw_blocks` builtins: the SHA-256 instructions on arm64 (#10615),
   and on x86-64 a message schedule four words at a time in xmm registers
   with the rounds in general registers on `rorx` (#12210). wasm runs the
-  generated rounds.
+  generated rounds. SHA-1 runs on arm64's SHA-1 instructions through
+  `__sha1_hw` / `__sha1_hw_blocks`, and on the generated rounds elsewhere.
 
 Bytes are `u8[]`, not `string` (#5730): digests, derived keys, and every
 key / salt / IKM / info input. The `*_hex` variants still return a

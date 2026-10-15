@@ -4694,6 +4694,75 @@ pub function scale_report(f: ssasem.Func, p: ssaunits.Plan): semarrayreport.Site
   return out;
 }
 
+// Every array append's receiver storage, from the plan as `lower` prepares
+// it. Under `-g` a site also names the statement's line and the source
+// bindings of its receiver, the ones whose later reads force a copy.
+pub function append_report(f: ssasem.Func, p: ssaunits.Plan): semarrayreport.Site[] {
+  let out: semarrayreport.Site[] = [];
+  let q: ssaunits.Plan = ssaunits.without_constant_drops(ssaunits.with_reuse(f, p));
+  let idx: i32[][] = ssaunits.step_index(q);
+  for b in f.graph.blocks {
+    let pos: i32 = 0;
+    let line: string = "";
+    for ins in b.insts {
+      if (ins.kind_tag == 35) {
+        line = " line=" + util.i32_to_string(util.pos_line(ins.imm)) + ":" + ins.str;
+      }
+      if (ins.kind_tag == ssasem.append()) {
+        let why: i32 = append_reason(f, q, at(q, idx, b.id, pos, 0 - 1), ins);
+        let stage: string = "append@v" + util.i32_to_string(ins.result) + " receiver=v" + util.i32_to_string(ins.args[0]) + bound_names(f, ins.args[0]) + line;
+        out = out.append(semarrayreport.Site { owner: f.graph.name, stage: stage, plan: "append; ownership lowering", reason: why, storage: semarrayreport.append_storage(why) });
+      }
+      pos = pos + 1;
+    }
+  }
+  return out;
+}
+
+// The order append_push takes its cases in.
+function append_reason(f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, ins: ssa.SInst): i32 {
+  if (link_at(f, p.links, ins).root >= 0) {
+    return semarrayreport.append_borrow_linked();
+  }
+  let defer0: boolean = ssaunits.deferred_retain(f, p, step, ins);
+  if (defer0 && p.grows[ins.result] >= 0) {
+    return semarrayreport.append_field_grow();
+  }
+  if (defer0) {
+    return semarrayreport.append_receiver_borrowed();
+  }
+  if (p.unique_receivers[ins.result]) {
+    return semarrayreport.append_sole_owner();
+  }
+  if (!ssaunits.receiver_retained(step)) {
+    return semarrayreport.append_guarded();
+  }
+  if (p.kept[ins.result]) {
+    return semarrayreport.append_receiver_still_live();
+  }
+  return semarrayreport.append_receiver_retained();
+}
+
+function bound_names(f: ssasem.Func, v: i32): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < f.dbg_vals.len() && i < f.dbg_names.len()) {
+    if (f.dbg_vals[i] == v) {
+      if (out == "") {
+        out = " (";
+      } else {
+        out = out + ", ";
+      }
+      out = out + f.dbg_names[i];
+    }
+    i = i + 1;
+  }
+  if (out == "") {
+    return "";
+  }
+  return out + ")";
+}
+
 function same_wide_array(a: typeinfo.Type, b: typeinfo.Type): boolean {
   if let typeinfo.TypeArray(arr) = a {
     return !arr.view && ssasem.is_wide(arr.elem) && semtypes.equal(a, b);
@@ -6123,11 +6192,9 @@ function byte_scan_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "__ghash") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_ghash())) };
   }
-  if (ins.str == "__sha256_hw") {
-    return Lowered { found: true, r: emit(r, ir.op_sha256_hw()) };
-  }
-  if (ins.str == "__sha256_hw_blocks") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_sha256_hw_blocks())) };
+  let sha: i32 = ir.sha_builtin_tag(ins.str);
+  if (sha != 0) {
+    return Lowered { found: true, r: emit(r, ir.sha_builtin_op(sha)) };
   }
   if (ins.str == "__sum_bytes") {
     return Lowered { found: true, r: emit(r, ir.op_sum_bytes()) };

@@ -8037,7 +8037,8 @@ function load_store_contracts(): ssasem.Contract[] {
 }
 
 // The AES-GCM and SHA-256 kernels are lent their byte views and answer a
-// fresh u8[]; `__sha256_hw` says whether the target has the SHA-256 one.
+// fresh u8[]; `__sha256_hw` and `__sha1_hw` say whether the target has the
+// SHA ones.
 function aes_gcm_contracts(): ssasem.Contract[] {
   let b: i32 = ssaunits.borrow_mode();
   let view: typeinfo.Type = typeinfo.TypeArray { elem: t_u8(), view: true };
@@ -8048,6 +8049,8 @@ function aes_gcm_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__ghash", params: [view, view, view], modes: [b, b, b], result: bytes },
     ssasem.Contract { name: "__sha256_hw", params: [], modes: [], result: t_bool() },
     ssasem.Contract { name: "__sha256_hw_blocks", params: [view, view], modes: [b, b], result: bytes },
+    ssasem.Contract { name: "__sha1_hw", params: [], modes: [], result: t_bool() },
+    ssasem.Contract { name: "__sha1_hw_blocks", params: [view, view], modes: [b, b], result: bytes },
   ];
 }
 
