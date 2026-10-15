@@ -306,6 +306,20 @@ function test_deflate_flushed(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
+// `inflate_after` decodes a stream that goes on from earlier output:
+// zlib's second sync-flushed message of one context, a single match back
+// into the first message, closed by a final empty block. The cap counts
+// only the new output, and without the history the match reaches before
+// the start.
+function test_inflate_after(): test.TestOutcome {
+  let history: u8[] = "context takeover, context takeover".bytes();
+  let stream: u8[] = hex.hex_decode("42e72b0200" + "0000ffff" + "010000ffff");
+  let got: string = text(deflate.inflate_after(history, stream, 17));
+  got = got + "|" + text(deflate.inflate_after(history, stream, 16));
+  got = got + "|" + text(deflate.inflate(stream, 1024));
+  return test.assert_eq(got, "context takeover!|error: the decompressed data is past its limit|error: malformed compressed data: a distance before the start of the output");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/deflate");
   r = r.it("stored block", test_stored_block);
@@ -324,6 +338,7 @@ function main(): i32 {
   r = r.it("hand-rolled refusals", test_hand_rolled_refusals);
   r = r.it("the encoder's streams read back", test_deflate_round_trip);
   r = r.it("a flushed stream ends open", test_deflate_flushed);
+  r = r.it("a stream goes on from earlier output", test_inflate_after);
   r = r.it("every match length reads back", test_deflate_varied);
   r = r.it("blocks of each kind in one stream", test_deflate_blocks);
   r = r.it("gzip reads back", test_gzip_round_trip);

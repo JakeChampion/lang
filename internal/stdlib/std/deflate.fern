@@ -69,7 +69,28 @@ pub function inflate(input: u8[], max_out: i32): Result[Inflated, InflateError] 
 
 // `inflate_from(input, from, max_out)` — `inflate` over input[from, len).
 pub function inflate_from(input: u8[], from: i32, max_out: i32): Result[Inflated, InflateError] {
-  let s: __State = __State { pos: from, bitbuf: 0, bitcnt: 0, out: [], max_out: max_out, last: 0, distance: 0, failed: false, error: Truncated, lengths: [] };
+  return __inflated(input, from, [], max_out);
+}
+
+// `inflate_after(history, input, max_out)` — `inflate` of a stream that
+// goes on from `history`, the output that came before it: a match may
+// reach back into `history`, which is not part of the output. What a
+// message framing that keeps its LZ77 window across messages decodes
+// with (RFC 7692's context takeover).
+pub function inflate_after(history: u8[], input: u8[], max_out: i32): Result[Inflated, InflateError] {
+  match (__inflated(input, 0, history, max_out)) {
+    Ok(got) => {
+      return Ok(Inflated { ...got, out: array.drop(got.out, history.len()) });
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
+  return Err(Truncated);
+}
+
+function __inflated(input: u8[], from: i32, history: u8[], max_out: i32): Result[Inflated, InflateError] {
+  let s: __State = __State { pos: from, bitbuf: 0, bitcnt: 0, out: history, max_out: max_out + history.len(), last: 0, distance: 0, failed: false, error: Truncated, lengths: [] };
   let done: boolean = false;
   while (!done && !s.failed) {
     s = __bits(s, input, 1);

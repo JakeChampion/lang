@@ -8,8 +8,7 @@
 #
 #   REPORT  where the summary goes ("-" or nothing for stdout).
 #   CASE    a case spec as the suite spells it ("1.*", "9.1.1"); the
-#           default is the conformance sections (1-8, 10), excluding 9, 12
-#           and 13 (see below).
+#           default is every section, run in groups (see below).
 #
 # The suite runs from its Docker image, pinned by digest below, on the
 # host's network so it reaches the server on loopback; docker is
@@ -33,52 +32,61 @@ IMAGE=crossbario/autobahn-testsuite@sha256:519915fb568b04c9383f70a1c405ae3ff44ab
 report="${1:--}"
 shift || true
 out="${FERN_AUTOBAHN_OUT:-$work/autobahn}"
+rm -rf "$out/reports"
 mkdir -p "$out/config" "$out/reports"
 chmod 777 "$out/reports"
-# The conformance sections by default: framing, fragmentation, pings,
-# reserved bits, opcodes, close handshakes, UTF-8, and auto-fragmentation
-# (sections 1-8 and 10). These do not cover compression: the Autobahn
-# fuzzing client offers permessage-deflate only in the compression
-# sections (12 and 13), so the conformance run negotiates no extension and
-# the compressor is exercised only when a compression section is run on
-# demand (below). The
-# performance and compression-volume sections (9, 12, 13) are EXCLUDED:
-# each case passes in seconds in isolation, but any high-frame-count case
-# late in the full suite stalls once a few hundred connections have run
-# before it — an accumulation tracked in issue #12136 — and no subset of
-# those sections is reliably under the budget. The wstest run below is
-# bounded by `timeout` so a hang fails the job rather than burning it. Pass
-# an explicit case list to run any excluded case, e.g.
-# `net-autobahn - "13.*"`.
-cases='["*"]'
-exclude='["9.*", "12.*", "13.*"]'
+# Every section by default, in groups, each run by a wstest process of its
+# own: the conformance sections (1-8, 10) together, then the performance
+# section (9), then each subsection of the compression sections (12, 13).
+# The Autobahn client is PyPy, whose zlib objects hold native memory its
+# collector does not count, so every compressor or decompressor the client
+# makes stays resident until the process exits: about 60 KB for each
+# message the server asks it not to carry context across, and section 13
+# asks that of every server it offers to. One process running the whole
+# suite grows past 10 GB through the compression sections and slows to a
+# crawl that reads as a stall (#12136); a process per group starts each
+# with an empty heap. Every group runs against the one server. Pass case
+# specs to run those alone, as one group, e.g. `net-autobahn - "13.*"`.
+groups=('["1.*", "2.*", "3.*", "4.*", "5.*", "6.*", "7.*", "8.*", "10.*"]' '["9.*"]')
+for sub in 12.1 12.2 12.3 12.4 12.5 13.1 13.2 13.3 13.4 13.5 13.6 13.7; do
+  groups+=("[\"$sub.*\"]")
+done
 if [ $# -gt 0 ]; then
-  cases="$(printf '%s\n' "$@" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read().split()))')"
-  exclude='[]'
+  groups=("$(printf '%s\n' "$@" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read().split()))')")
 fi
 port="$(free_port)"
-cat > "$out/config/fuzzingclient.json" <<JSON
-{
-  "outdir": "/reports",
-  "servers": [{"agent": "fern", "url": "ws://127.0.0.1:$port/ws"}],
-  "cases": $cases,
-  "exclude-cases": $exclude,
-  "exclude-agent-cases": {}
-}
-JSON
 bin/fern -target "$TARGET" -o "$work/server" scripts/net-autobahn.d/server.fern
 PORT="$port" start_server "$work/server.log" "$work/server"
 await_server fern "$port" "$work/server.log"
-echo "== autobahn fuzzingclient, cases $cases, server on port $port"
-timeout 1500 docker run --rm --network host -v "$out/config:/config:ro" -v "$out/reports:/reports" "$IMAGE" wstest -m fuzzingclient -s /config/fuzzingclient.json > "$out/wstest.log" 2>&1 || {
-  tail -20 "$out/wstest.log" >&2
-  echo "net-autobahn: wstest failed" >&2
-  exit 1
+n=0
+for cases in "${groups[@]}"; do
+  n=$((n + 1))
+  mkdir -p "$out/reports/$n"
+  chmod 777 "$out/reports/$n"
+  cat > "$out/config/fuzzingclient.json" <<JSON
+{
+  "outdir": "/reports/$n",
+  "servers": [{"agent": "fern", "url": "ws://127.0.0.1:$port/ws"}],
+  "cases": $cases,
+  "exclude-cases": [],
+  "exclude-agent-cases": {}
 }
-python3 - "$out/reports/index.json" "$report" "$ARCH" "$TARGET" <<'PY'
-import json, sys
-index, report, arch, target = sys.argv[1:5]
-results = json.load(open(index))["fern"]
+JSON
+  echo "== autobahn fuzzingclient, cases $cases, server on port $port"
+  # Bounded so a hang fails the job rather than burning it; unbuffered so
+  # the log names the case that is running, not one the buffer held back.
+  timeout 900 docker run --rm --network host -e PYTHONUNBUFFERED=1 -v "$out/config:/config:ro" -v "$out/reports:/reports" "$IMAGE" wstest -m fuzzingclient -s /config/fuzzingclient.json > "$out/wstest-$n.log" 2>&1 || {
+    tail -20 "$out/wstest-$n.log" >&2
+    echo "net-autobahn: wstest failed on $cases" >&2
+    exit 1
+  }
+done
+python3 - "$out/reports" "$report" "$ARCH" "$TARGET" <<'PY'
+import glob, json, sys
+reports, report, arch, target = sys.argv[1:5]
+results = {}
+for index in glob.glob(reports + "/*/index.json"):
+    results.update(json.load(open(index))["fern"])
 bad = []
 counts = {}
 for case in sorted(results, key=lambda c: [int(p) for p in c.split(".")]):
