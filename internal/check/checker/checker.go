@@ -1182,6 +1182,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		}
 	}
 	c := &checker{
+		funcSources: map[string]string{},
 		info: &Info{
 			VarTypes:            map[*ast.Var]ast.Type{},
 			Locals:              map[*ast.FuncDecl][]*ast.Var{},
@@ -5224,6 +5225,12 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			owns[i] = p.Own
 		}
 		c.info.FuncSigs[fn.Name] = &ast.FuncType{Params: params, ParamOwn: ast.OwnFlags(owns, len(params)), Result: fn.ReturnType}
+		// Method dispatch already checks visibility, including calls from a
+		// trait default to methods on its implementing type. The trait's
+		// module need not import that type's module.
+		if fn.MethodRecv == "" {
+			c.funcSources[fn.Name] = fn.SourceModule
+		}
 		if len(fn.TypeParams) > 0 {
 			// Track generic decls so the call-site inference path
 			// can spot them and the monomorphisation pass knows
@@ -8758,6 +8765,9 @@ func (c *checker) typeImplementsDisplay(t ast.Type) bool {
 }
 
 type checker struct {
+	// funcSources scopes free-function lookup to the referring module's
+	// imports. Builtins and synthetic functions have no source module.
+	funcSources map[string]string
 	// consts are the program's const declarations by name, for a program
 	// checked before constfold substitutes them; constTypes caches each one's
 	// type and constBusy guards a const whose value names itself.
@@ -12890,7 +12900,7 @@ func (c *checker) collectNames(s *scope) []string {
 		}
 	}
 	for name := range c.info.FuncSigs {
-		if !seen[name] {
+		if !seen[name] && c.funcVisibleHere(name) {
 			seen[name] = true
 			out = append(out, name)
 		}
@@ -12906,10 +12916,19 @@ func (c *checker) isUserFuncOrLocal(name string, s *scope) bool {
 	if _, ok := s.lookup(name); ok {
 		return true
 	}
-	if _, ok := c.info.FuncSigs[name]; ok {
+	if _, ok := c.visibleFuncSig(name); ok {
 		return true
 	}
 	return false
+}
+
+func (c *checker) funcVisibleHere(name string) bool {
+	return c.moduleSees(c.currentModule(), c.funcSources[name])
+}
+
+func (c *checker) visibleFuncSig(name string) (*ast.FuncType, bool) {
+	sig, ok := c.info.FuncSigs[name]
+	return sig, ok && c.funcVisibleHere(name)
 }
 
 // scope is an environment of named bindings plus a pointer to its parent.
@@ -17624,8 +17643,8 @@ func (c *checker) inferUseParam(fn *ast.FuncDecl, outer *scope) {
 	var sig *ast.FuncType
 	if t, isValue := c.identValueBinding(id.Name, outer); isValue {
 		sig, _ = t.(*ast.FuncType)
-	} else {
-		sig = c.info.FuncSigs[id.Name]
+	} else if f, visible := c.visibleFuncSig(id.Name); visible {
+		sig = f
 	}
 	if sig == nil || len(sig.Params) == 0 {
 		c.errfCode(fn.P, "E032", "use: callee %q has no signature; add an explicit `: TYPE` annotation", id.Name)
@@ -17677,7 +17696,7 @@ func (c *checker) inferUseParam(fn *ast.FuncDecl, outer *scope) {
 // parameter, not a module-level `id[T]` (#6302). identValueBinding is the
 // existing answer to exactly that question.
 func (c *checker) calleeIsGenericFunc(id *ast.Ident, s *scope) bool {
-	if _, isGen := c.info.GenericFuncs[id.Name]; !isGen {
+	if _, isGen := c.info.GenericFuncs[id.Name]; !isGen || !c.funcVisibleHere(id.Name) {
 		return false
 	}
 	_, bound := c.identValueBinding(id.Name, s)
@@ -18456,17 +18475,17 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// monomorph's collectCalls only walks *ast.Call, so a generic named
 		// outside callee position is never queued. Until it exists this is
 		// a refusal with a code, not a miscompile reported as a compiler bug.
-		if gf, isGen := c.info.GenericFuncs[n.Name]; isGen {
+		if gf, isGen := c.info.GenericFuncs[n.Name]; isGen && c.funcVisibleHere(n.Name) {
 			if t, ok := c.instantiateFuncValue(n, gf); ok {
 				return t
 			}
 			c.errE040GenericFuncAsValue(n.P, n.Name, gf)
 			return nil
 		}
-		if sig, ok := c.info.FuncSigs[n.Name]; ok {
+		if sig, ok := c.visibleFuncSig(n.Name); ok {
 			return sig
 		}
-		if cd, ok := c.consts[n.Name]; ok {
+		if cd, ok := c.consts[n.Name]; ok && c.moduleSeesVariant(c.currentModule(), cd.SourceModule) {
 			return c.constType(cd)
 		}
 		// A bare name might be a payload-less enum variant.
