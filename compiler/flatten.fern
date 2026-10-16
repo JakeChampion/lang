@@ -2430,7 +2430,7 @@ function mangle_source(src: string, prefix: string): parser.Module {
   return mangle_module(parser.parse_module(lexer.tokenize(src)), prefix, none, none, none, none, none, none, none);
 }
 
-function main(): i32 {
+function check_prefix_collisions(): boolean {
   // Prefixes follow canonical path order, with stdlib first, even when
   // imports arrive in reverse order and a real name contains a suffix.
   let empty: parser.Module = parser.parse_module([]);
@@ -2441,7 +2441,11 @@ function main(): i32 {
     LoadedModule { name: "frame_1", ident: "std/frame_1", mod: empty },
   ];
   let prefixes: string[] = assign_prefixes(collisions);
-  if (prefixes[0] != "frame_3" || prefixes[1] != "frame_2" || prefixes[2] != "frame" || prefixes[3] != "frame_1") {
+  return prefixes[0] == "frame_3" && prefixes[1] == "frame_2" && prefixes[2] == "frame" && prefixes[3] == "frame_1";
+}
+
+function main(): i32 {
+  if (!check_prefix_collisions()) {
     return 115;
   }
   // --- Brick 1: qualified-reference flattening (entry module) ---
