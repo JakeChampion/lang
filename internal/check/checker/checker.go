@@ -12287,6 +12287,19 @@ func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) s
 	return msg
 }
 
+// errUnknownMethod attaches the same respelling suggested in the message at
+// the method token. Retired spellings carry migration advice instead: changing
+// just their name can leave the returned collection unassigned.
+func (c *checker) errUnknownMethod(n *ast.FieldAccess, namespace string, recv ast.Type) {
+	e := &Error{Pos: n.P, Msg: c.unknownMethodMessage(namespace, n.Field, recv), Path: c.currentModule(), ErrCode: "E043"}
+	_, retired := retiredCollectionSpellings[namespace+"."+n.Field]
+	if suggestion := diag.Suggest(n.Field, c.methodsFor(namespace, recv)); suggestion != "" && !retired && n.FieldPos.Line > 0 {
+		e.Fix = &diag.Suggestion{Pos: n.FieldPos, Length: len(n.Field), Replacement: suggestion,
+			Title: fmt.Sprintf("replace `%s` with `%s`", n.Field, suggestion)}
+	}
+	c.errors = append(c.errors, e)
+}
+
 // hoistReceiver moves a method's receiver onto Params[0], the shape the rest
 // of the pipeline expects, and clears it. Registration does this for a method
 // it accepts; a REJECTED one needs it too, or the body walk finds no binding
@@ -21073,7 +21086,7 @@ func (c *checker) fieldAccessType(n *ast.FieldAccess, s *scope, tt ast.Type) ast
 			// array, a map, a slice — reaching here means the
 			// method does not exist. Say so, and say what does.
 			if tn, ok := collectionNamespace(tt); ok && len(c.methodsOn(tn)) > 0 {
-				c.errfCode(n.P, "E043", "%s", c.unknownMethodMessage(tn, n.Field, tt))
+				c.errUnknownMethod(n, tn, tt)
 				return nil
 			}
 			// Option's and Result's methods live in std/option and

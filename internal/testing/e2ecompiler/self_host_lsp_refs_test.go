@@ -459,16 +459,21 @@ func TestSelfHostLSPCodeActionX86_64(t *testing.T) {
 	s := buildLSPServers(t)
 	dir := t.TempDir()
 	files := map[string]string{
-		"kount.fern":   "function main(): i32 { let count = 1; return kount; }\n",
-		"call.fern":    "function helper(n: i32): i32 { return n; }\nfunction main(): i32 { return halper(1); }\n",
-		"assign.fern":  "function main(): i32 {\n  let count: i32 = 1;\n  kount = 2;\n  return count;\n}\n",
-		"retired.fern": "function main(): i32 { return string_from_bytes([]).len(); }\n",
-		"literal.fern": "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: Point = Point { x: 1, yy: 2 };\n  return p.x;\n}\n",
-		"member.fern":  "struct Point { x: i32, y: i32 }\nfunction (p: Point) push(n: i32): i32 { return p.x + n; }\nfunction main(): i32 {\n  let p: Point = Point { x: 1, y: 2 };\n  return p.puzh(2) + p.yy;\n}\n",
-		"utf.fern":     "function main(): i32 {\n  let s: string = \"é😀\"; let count: i32 = 1; return kount;\n}\n",
-		"pattern.fern": "struct P { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: P = P { x: 1, y: 2 };\n  match (p) {\n    P { x, yy } => { return x; }\n  }\n}\n",
-		"destr.fern":   "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: Point = Point { x: 1, y: 2 };\n  let Point { x, z } = p;\n  return x;\n}\n",
-		"type.fern":    "function main(): i32 {\n  let x: i32 = \"s\";\n  return x;\n}\n",
+		"kount.fern":          "function main(): i32 { let count = 1; return kount; }\n",
+		"call.fern":           "function helper(n: i32): i32 { return n; }\nfunction main(): i32 { return halper(1); }\n",
+		"assign.fern":         "function main(): i32 {\n  let count: i32 = 1;\n  kount = 2;\n  return count;\n}\n",
+		"retired.fern":        "function main(): i32 { return string_from_bytes([]).len(); }\n",
+		"literal.fern":        "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: Point = Point { x: 1, yy: 2 };\n  return p.x;\n}\n",
+		"member.fern":         "struct Point { x: i32, y: i32 }\nfunction (p: Point) push(n: i32): i32 { return p.x + n; }\nfunction main(): i32 {\n  let p: Point = Point { x: 1, y: 2 };\n  return p.puzh(2) + p.yy;\n}\n",
+		"utf.fern":            "function main(): i32 {\n  let s: string = \"é😀\"; let count: i32 = 1; return kount;\n}\n",
+		"pattern.fern":        "struct P { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: P = P { x: 1, y: 2 };\n  match (p) {\n    P { x, yy } => { return x; }\n  }\n}\n",
+		"destr.fern":          "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: Point = Point { x: 1, y: 2 };\n  let Point { x, z } = p;\n  return x;\n}\n",
+		"array-method.fern":   "function main(): i32 {\n  let xs = [1];\n  let ys = xs.appendd(2);\n  return ys.len();\n}\n",
+		"slice-method.fern":   "function main(): i32 {\n  let xs = [1, 2];\n  let ys = xs[0:1];\n  return ys.lenn();\n}\n",
+		"string-method.fern":  "function main(): i32 {\n  let s = \"abc\";\n  return s.lenn();\n}\n",
+		"retired-method.fern": "function main(): i32 { let xs = [1]; xs.push(2); return 0; }\n",
+		"unknown-method.fern": "function main(): i32 { let xs = [1]; xs.frobnicate(); return 0; }\n",
+		"type.fern":           "function main(): i32 {\n  let x: i32 = \"s\";\n  return x;\n}\n",
 		// The misspelt read is the chunk's, referenced two columns in.
 		"chunks.fern.md": "# Doc\n\n```fern\n<<*>>=\nfunction main(): i32 {\n  <<body>>\n}\n```\n\n```fern\n<<body>>=\nlet count: i32 = 1;\nreturn kount;\n```\n",
 	}
@@ -489,6 +494,9 @@ func TestSelfHostLSPCodeActionX86_64(t *testing.T) {
 		return lspFix{rng(line, c0, c1), text, title}
 	}
 	wants := []want{
+		{"array-method.fern", fix(2, 14, 21, "append", "replace `appendd` with `append`"), "let ys = xs.append(2);"},
+		{"slice-method.fern", fix(3, 12, 16, "len", "replace `lenn` with `len`"), "return ys.len();"},
+		{"string-method.fern", fix(2, 11, 15, "len", "replace `lenn` with `len`"), "return s.len();"},
 		{"kount.fern", fix(0, 45, 50, "count", "replace `kount` with `count`"), "return count;"},
 		{"call.fern", fix(1, 30, 36, "helper", "replace `halper` with `helper`"), "return helper(1);"},
 		{"assign.fern", fix(2, 2, 7, "count", "replace `kount` with `count`"), "  count = 2;"},
@@ -555,11 +563,20 @@ func TestSelfHostLSPCodeActionX86_64(t *testing.T) {
 			if !strings.Contains(fixed, w.fixed) {
 				t.Errorf("applied edit gives %q, want it to hold %q", fixed, w.fixed)
 			}
+			if strings.HasSuffix(w.file, "-method.fern") {
+				lines[e.Range.Start.Line] = fixed
+				name := "applied-" + w.file
+				writeTree(t, dir, map[string]string{name: strings.Join(lines, "\n")})
+				check := runX86_64Bin(s.runner, s.driver, "-check", filepath.Join(dir, name), s.stdlib)
+				if out, err := check.CombinedOutput(); err != nil {
+					t.Fatalf("applied method fix does not check: %v\n%s", err, out)
+				}
+			}
 		})
 	}
 
 	t.Run("no-fix", func(t *testing.T) {
-		for _, file := range []string{"type.fern"} {
+		for _, file := range []string{"type.fern", "retired-method.fern", "unknown-method.fern"} {
 			if len(published[file]) == 0 {
 				t.Fatalf("%s published no diagnostic", file)
 			}
