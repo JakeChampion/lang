@@ -1,0 +1,17 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Map-value reclamation: i32[] values (valKind 2 = plain-elem
+// array → arr_dec). Fresh literals transfer rc=1 to the map;
+// get_or results bind to locals (inc-on-get balanced by the
+// local's exit-sweep dec); map_drop_values frees each value.
+import "core/int";
+import "core/map";
+function main(): i32 {
+    let m: Map[i32, i32[]] = map_new(4);
+    m = m.insert(1, [10, 20, 30]);
+    m = m.insert(2, [40, 50]);
+    let v1: i32[] = m.get_or(1, []);
+    let v2: i32[] = m.get_or(2, []);
+    return (v1[2] + v2[0] - 70) + __rc_underflow_count();
+}

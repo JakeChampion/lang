@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# net-quic-interop — std/quic's connection against aioquic, an independent
+# QUIC implementation (docs/NET-P8-HTTP3-PLAN.md): the Fern client of
+# scripts/net-quic-interop.d/client.fern, built by bin/fern for the host,
+# handshakes with an aioquic server, plainly, through a Retry, and on
+# ChaCha20-Poly1305 alone; then aioquic's client handshakes with the Fern
+# server of scripts/net-quic-interop.d/server.fern, plainly and on
+# ChaCha20-Poly1305 alone, and has a PING acknowledged. In each case the
+# client sends $SIZE bytes on a stream, the server sends them back as they
+# arrive, and the client checks them; each side closes with an application
+# close the other must report.
+#
+# Usage: net-quic-interop
+#
+# aioquic and its dependencies are pinned in
+# scripts/net-quic-interop.d/requirements.txt and installed in a venv under
+# $FERN_QUIC_TOOLS (default ~/.cache/fern-quic-interop), keyed by the pins'
+# hash so a changed pin builds a fresh one.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+for tool in openssl python3; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "net-quic-interop: $tool not found" >&2
+    exit 2
+  fi
+done
+. scripts/net-lib
+
+d=scripts/net-quic-interop.d
+tools="${FERN_QUIC_TOOLS:-$HOME/.cache/fern-quic-interop}"
+venv="$tools/venv-$(sha256sum "$d/requirements.txt" | cut -c1-16)"
+if [ ! -x "$venv/bin/python" ]; then
+  echo "net-quic-interop: installing aioquic and its dependencies" >&2
+  mkdir -p "$tools"
+  python3 -m venv "$venv"
+  "$venv/bin/pip" install --quiet --require-virtualenv -r "$d/requirements.txt"
+fi
+
+# Larger than every window either side starts with, so flow control has to
+# open them again.
+SIZE=300000
+
+certs="$work/certs"
+mkdir -p "$certs"
+tls_certificate ca prime256v1 "/CN=fern quic interop CA" "" "basicConstraints=critical,CA:TRUE" "keyUsage=critical,keyCertSign"
+tls_certificate leaf prime256v1 "/CN=localhost" ca "subjectAltName=DNS:localhost" "basicConstraints=critical,CA:FALSE"
+
+bin/fern -target "$TARGET" -o "$work/client" "$d/client.fern"
+bin/fern -target "$TARGET" -o "$work/server" "$d/server.fern"
+
+# await_line LOG TEXT — once LOG holds TEXT, or the run fails with LOG.
+await_line() {
+  local tries=0
+  until grep -qF "$2" "$1" 2>/dev/null; do
+    tries=$((tries + 1))
+    if [ "$tries" -ge 100 ]; then
+      echo "net-quic-interop: no \"$2\" in $1" >&2
+      cat "$1" >&2
+      exit 1
+    fi
+    sleep 0.1
+  done
+}
+
+failed=0
+# expect NAME LOG TEXT... — the case passes when LOG holds every TEXT.
+expect() {
+  local name="$1" log="$2"
+  shift 2
+  local text
+  for text in "$@"; do
+    if ! grep -qF "$text" "$log"; then
+      echo "FAIL $name: no \"$text\""
+      sed 's/^/     /' "$log"
+      failed=1
+      return
+    fi
+  done
+  echo "ok   $name"
+  sed 's/^/     /' "$log"
+}
+
+# fern_client MODE — the Fern client against an aioquic server in MODE.
+fern_client() {
+  local mode="$1" port log="$work/fern-client-$1.log"
+  port="$(free_port)"
+  start_server "$work/aioquic-server-$mode.log" "$venv/bin/python" "$d/aioquic_server.py" "$port" "$certs/leaf.pem" "$certs/leaf.key" "$mode"
+  await_line "$work/aioquic-server-$mode.log" "aioquic server: listening"
+  "$work/client" "$port" localhost "$certs/ca.pem" "$SIZE" > "$log" 2>&1 || echo "fern client: exit $?" >> "$log"
+  sleep 0.5
+  stop_server
+  cat "$work/aioquic-server-$mode.log" >> "$log"
+  expect "fern client, aioquic server ($mode)" "$log" "fern client: connected alpn=fern-echo" "aioquic server: handshake completed alpn=fern-echo" "fern client: echo of $SIZE bytes matches" "aioquic server: terminated code=0 reason='fern done'"
+}
+
+# aioquic_client MODE — aioquic's client against the Fern server, the
+# client offering MODE's cipher suites.
+aioquic_client() {
+  local mode="$1" port log="$work/aioquic-client-$1.log"
+  port="$(free_port)"
+  start_server "$work/fern-server-$mode.log" "$work/server" "$port" "$certs/leaf.pem" "$certs/leaf.key"
+  await_line "$work/fern-server-$mode.log" "fern server: listening"
+  "$venv/bin/python" "$d/aioquic_client.py" "$port" "$certs/ca.pem" "$mode" "$SIZE" > "$log" 2>&1 || echo "aioquic client: exit $?" >> "$log"
+  await_line "$work/fern-server-$mode.log" "fern server: closed"
+  stop_server
+  cat "$work/fern-server-$mode.log" >> "$log"
+  expect "aioquic client, fern server ($mode)" "$log" "aioquic client: connected alpn=fern-echo" "aioquic client: echo of $SIZE bytes matches" "aioquic client: ping answered" "fern server: connected alpn=fern-echo" "fern server: echoed stream 0 to its end" "fern server: closed code=0 remote=true reason=aioquic done"
+}
+
+echo "== aioquic $("$venv/bin/python" -c 'import aioquic; print(aioquic.__version__)'), $ARCH"
+fern_client plain
+fern_client retry
+fern_client chacha20
+aioquic_client plain
+aioquic_client chacha20
+if [ "$failed" -ne 0 ]; then
+  echo "net-quic-interop: a case failed" >&2
+  exit 1
+fi

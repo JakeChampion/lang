@@ -1,0 +1,24 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Slice 2 (string locals): a fresh string local from concat / slice
+// gets dec'd at scope exit on native single-word (x86_64) just
+// like wasm. Before Slice 2 lands on natives, the buffer leaked
+// every iteration; with the predicate enabled (needsRcIncOnAlias
+// + rcTracked + emitDec branch widened to ptrW=8 + !TwoWord),
+// each iter's fresh concat result frees through __fern_rc_dec
+// at scope exit. uf=0 + heap stays bounded confirms the reclaim.
+// (arm64 boxed excluded — no native str_dec runtime helper.)
+// Per iter: s.len() = 28; 500x → 14000.
+import "core/int";
+import "std/string";
+function mk(): i32 {
+    let s: string = "value-aaaaaaaaaaaaaaaaaaaa-" + "1";
+    return s.len();
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 14000) + __rc_underflow_count();
+}

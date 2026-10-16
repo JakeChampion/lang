@@ -1,0 +1,27 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The SELF-ASSIGNMENT: the projected result is stored back into the
+// receiver's own binding, and on the in-place COW branch that is the
+// same handle the assignment is about to overwrite-dec. The distinct
+// shape of the four, and the one the #8276 retain does not fix.
+// Per iter: surviving "other" 3; 500x → 1500.
+import "core/int";
+import "core/map";
+import "std/string";
+function mk(): i32 {
+    let acc: i32 = 0;
+    let sm: Map[string, i32] = map_new(8);
+    sm = sm.insert("ke" + "y", 7);
+    sm = sm.insert("ot" + "her", 3);
+    sm = sm.insert("th" + "ird", 10);
+    sm = sm.without("th" + "ird").0;
+    acc = acc + sm.get_or("ot" + "her", 0);
+    return acc;
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 1500) + __rc_underflow_count();
+}

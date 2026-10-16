@@ -1,0 +1,31 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// `.append` on an array bound out of a NON-consuming match of a
+// borrowed enum grew the caller's buffer in place when it had room
+// (`.with` had the guard, `.append` did not): 33 is right, 34 was
+// the bug. Interpreter and natives now agree.
+enum N { L(i32), B(i32, N[]) }
+function grow(n: N, v: i32): N {
+    match (n) {
+        L(x) => { return n; },
+        B(c, kids) => { return B(c + 1, kids.append(L(v))); }
+    }
+}
+function count(n: N): i32 {
+    match (n) {
+        L(x) => { return 1; },
+        B(c, kids) => { return kids.len(); }
+    }
+}
+function main(): i32 {
+    let ks: N[] = [];
+    ks = ks.append(L(1));
+    ks = ks.append(L(2));
+    ks = ks.append(L(3));
+    let a: N = B(0, ks);
+    let before: i32 = count(a);
+    let c: N = grow(a, 4);
+    let after: i32 = count(a);
+    return (before * 10 + after - 33) + __rc_underflow_count();
+}

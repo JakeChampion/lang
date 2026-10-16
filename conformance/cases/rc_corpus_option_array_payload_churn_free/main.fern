@@ -1,0 +1,22 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Transitive reclamation — enum with an ARRAY payload now frees
+// the array buffer. Widening the enum drop gate from
+// "struct payload" to "pointer-shaped payload" steers an
+// array-payload enum to the tag-dispatch variant-plan, whose arm
+// drops the i32[] via __fern_arr_dec (frees the buffer) instead
+// of the flat dec the uniform path used. Generic Option[i32[]],
+// churned. sum_{0..99}(i+1) = 5050.
+import "core/int";
+function mk(n: i32): Option[i32[]] { return Some([n, n + 1]); }
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) {
+        let o: Option[i32[]] = mk(i);
+        match (o) { Some(a) => { acc = acc + a[1]; }, None => { acc = acc + 0; } }
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}

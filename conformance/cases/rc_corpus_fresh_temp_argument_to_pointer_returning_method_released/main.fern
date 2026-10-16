@@ -1,0 +1,47 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// A fresh struct temp passed to a POINTER-returning method —
+// `s.concat(mk(2))` — has only the per-position admission to
+// release it, which asks whether the callee retains that parameter
+// counted. `other.tail[0]` and `other.get_or(i, …)` were refused:
+// a scalar element read out of an array field, and the receiver of
+// a method whose own reads are the same shape. Two blocks per call
+// (the struct box and its array) until both reads counted as the
+// value copies they are (#8057).
+struct Vec { len: i32, tail: i32[] }
+
+@noinline
+function mk(n: i32): Vec {
+    let xs: i32[] = [];
+    let i: i32 = 0;
+    while (i < n) { xs = xs.append(i); i = i + 1; }
+    return Vec { len: n, tail: xs };
+}
+
+@noinline
+function (v: Vec) get_or(i: i32, fallback: i32): i32 {
+    if (i < 0 || i >= v.len) { return fallback; }
+    return v.tail[i];
+}
+
+@noinline
+function (v: Vec) append(x: i32): Vec {
+    return Vec { len: v.len + 1, tail: v.tail.append(x) };
+}
+
+@noinline
+function (v: Vec) concat(other: Vec): Vec {
+    let out: Vec = v;
+    let i: i32 = 0;
+    while (i < other.len) { out = out.append(other.get_or(i, other.tail[0])); i = i + 1; }
+    return out;
+}
+
+function main(): i32 {
+    let s: Vec = mk(3);
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 4) { let c: Vec = s.concat(mk(2)); t = t + c.len; i = i + 1; }
+    return (t - 20) + __rc_underflow_count();
+}

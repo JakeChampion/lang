@@ -1,0 +1,19 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The same class one binding form later: a destructuring PARAMETER
+// pattern inside a LAMBDA body, whose names shadow an enclosing
+// local. The checker registers a lambda body's locals against the
+// lambda's synthetic FuncDecl, not the enclosing function, so the
+// rename found no synthetic Var to follow and the compiler failed with
+// the same `has no slot` refusal as the case above. Reached once the
+// pass started walking lambda bodies at all (#7151); before that a
+// shadowed name inside a lambda was never renamed, which was a wrong
+// ANSWER rather than a refusal.
+struct Point { x: i32, y: i32 }
+function main(): i32 {
+    let x: i32 = 1;
+    let f = (Point { x, y }: Point): i32 => { return x * 10 + y; };
+    let g = ((x, y): (i32, i32)): i32 => { return x + y; };
+    return f(Point { x: 3, y: 4 }) + g((2, 3)) - 39 + x - 1 + __rc_underflow_count();
+}

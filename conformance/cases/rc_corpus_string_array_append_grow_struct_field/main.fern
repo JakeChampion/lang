@@ -1,0 +1,38 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// string[] grown through repeated `.append` inside a struct functional
+// update (`S{f: s.f.append(v)}` — the EmitState.needed threading shape,
+// #3425). Each append's grow COPY duplicates the element pointers; the
+// old struct's drop then walk-frees its buffer at rc==1
+// (__fern_drop_arr_str), so without the __fern_arr_push_grow_ptr/_str
+// element retain the copied elements were freed under the live grown
+// buffer — the self-host-driver SIGSEGV / poison-mode UAF. 40 elements
+// force multiple grows; every element's length + prefix is verified
+// after all the intermediate structs have been dropped. 0 when correct.
+struct St {
+    needed: string[],
+    n: i32
+}
+function need(s: St, name: string): St {
+    return St { needed: s.needed.append(name), n: s.n + 1 };
+}
+function main(): i32 {
+    let s: St = St { needed: [], n: 0 };
+    let base: string = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN";
+    let i: i32 = 0;
+    while (i < 40) {
+        let piece: str = slice_unchecked(base, 0, 20 + (i - (i / 30) * 30));
+        s = need(s, "structdroptestprefix:" + piece);
+        i = i + 1;
+    }
+    let bad: i32 = 0;
+    let j: i32 = 0;
+    while (j < 40) {
+        let want: i32 = 21 + 20 + (j - (j / 30) * 30);
+        if (s.needed[j].len() != want) { bad = bad + 1; }
+        if (slice_unchecked(s.needed[j], 0, 20) != "structdroptestprefix") { bad = bad + 1; }
+        j = j + 1;
+    }
+    return bad + __rc_underflow_count();
+}

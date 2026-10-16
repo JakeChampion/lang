@@ -1233,6 +1233,29 @@ func TestRunnerQUICParamsExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "quic_params", "std/quic/params", 4)
 }
 
+// `tests/stdlib/quic_recovery_test.fern` runs RFC 9002's loss detection
+// and congestion control in virtual time: the RTT estimate, both loss
+// thresholds, the probe timeout, the window and persistent congestion.
+func TestRunnerQUICRecoveryExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "quic_recovery", "std/quic/recovery", 5)
+}
+
+// `tests/stdlib/quic_conn_test.fern` handshakes a std/quic client with a
+// std/quic server in memory: the anti-amplification limit, a lost datagram
+// and a lost flight, a refused certificate and ALPN, a close, a Retry and
+// the idle timeout; then a stream echoed through small windows, and again
+// through loss and reordering.
+func TestRunnerQUICConnExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "quic_conn", "std/quic/conn", 12)
+}
+
+// `tests/stdlib/quic_streams_test.fern` drives std/quic/streams frame by
+// frame: reassembly, stream limits, each half's direction, flow control and
+// final sizes, window updates, retransmission, and resets both ways.
+func TestRunnerQUICStreamsExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "quic_streams", "std/quic/streams", 11)
+}
+
 // `tests/stdlib/http_grpc_test.fern` reads the gRPC message framing back
 // whole and in parts, parses grpc-timeout's units, tells a gRPC request
 // from another and builds the status trailers.
@@ -1350,7 +1373,7 @@ func TestRunnerTLSServerExamplePasses(t *testing.T) {
 // byte for byte, the server to the trace's ServerHello, and the two against
 // each other across suites and groups.
 func TestRunnerTLSHandshakeExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_handshake", "std/tls/handshake", 19)
+	runnerSuitePasses(t, "tls_handshake", "std/tls/handshake", 20)
 }
 
 // `tests/stdlib/tls_keyshare_test.fern` checks X25519 against RFC 8448's key

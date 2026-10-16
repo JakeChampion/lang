@@ -53,5 +53,7 @@
 
 # Re-pinned 2026-10-15 (#12418): main measured 24,702,797 on the dev
 # container (the previous pin was drift); semreach's walk adds 803,363.
-x86_64/checker.allocs	25506160
-x86_64/checker.frees	25506160
+# Re-pinned 2026-10-15 again: semreach no longer walks the `__` folds
+# nothing calls, 1.8% fewer.
+x86_64/checker.allocs	25053646
+x86_64/checker.frees	25053646

@@ -1,0 +1,36 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The move-out itself: the root is a struct the frame BUILDS, the CoW
+// stores into its buffer at rc 1, and the result outlives the box. The
+// field is nulled behind the store, so the box's exit drop finds
+// nothing to free — without the move the box and the returned array
+// both name one buffer at rc 1 and the drop frees it under the
+// caller. A pointer-element field runs beside the scalar one, since
+// that is the arm whose overwritten element the store releases.
+import "core/int";
+import "std/i32";
+import "std/string";
+struct Box { xs: i32[], names: string[] }
+function build(n: i32): i32[] {
+    let b: Box = Box { xs: [0, 0, 0], names: [] };
+    let ys: i32[] = b.xs.with(0, n);
+    return ys;
+}
+function build_str(n: i32): string[] {
+    let b: Box = Box { xs: [], names: ["a", "b"] };
+    let ns: string[] = b.names.with(0, "v" + n.to_string());
+    return ns;
+}
+function main(): i32 {
+    let bad: i32 = 0;
+    let i: i32 = 0;
+    while (i < 50) {
+        let ys: i32[] = build(i);
+        if (ys[0] != i || ys[1] != 0 || ys.len() != 3) { bad = bad + 1; }
+        let ns: string[] = build_str(i);
+        if (ns[0] != "v" + i.to_string() || ns[1] != "b") { bad = bad + 2; }
+        i = i + 1;
+    }
+    return bad + __rc_underflow_count();
+}

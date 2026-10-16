@@ -156,6 +156,37 @@ type Enum struct {
 	VariantName string
 	Index       int
 	Payloads    []Value
+	// counts caches whether any payload reaches a value adjustRC counts:
+	// 0 not yet known, countsSome, countsNone. Payloads never change after
+	// construction, so the answer never does either.
+	counts uint8
+}
+
+const (
+	countsSome uint8 = 1
+	countsNone uint8 = 2
+)
+
+// reachesCounted reports whether v holds a Map or an Array, the values
+// adjustRC keeps counts for. A struct is assumed to, since its fields can
+// be reassigned after it is stored.
+func reachesCounted(v Value) bool {
+	switch x := v.(type) {
+	case *Map, Array, *Struct:
+		return true
+	case *Enum:
+		if x.counts == 0 {
+			x.counts = countsNone
+			for _, p := range x.Payloads {
+				if reachesCounted(p) {
+					x.counts = countsSome
+					break
+				}
+			}
+		}
+		return x.counts == countsSome
+	}
+	return false
 }
 
 // Map is the interpreter's `Map[K, V]` value. Two parallel slices
@@ -202,8 +233,8 @@ func (m *Map) clone() *Map {
 // dies (scope exit, reassignment of the old value, function return). The
 // net count is what set/delete/clear consult to decide mutate-in-place
 // vs copy. See docs/INTERP-MAP-COW-PLAN.md (M1).
-// rcWalked counts the array elements adjustRC has visited, so a test can
-// pin how much a shape of program walks.
+// rcWalked counts the array elements and enum payloads adjustRC has
+// visited, so a test can pin how much a shape of program walks.
 var rcWalked atomic.Int64
 
 func retain(v Value)  { adjustRC(v, +1) }
@@ -301,6 +332,10 @@ func adjustRC(v Value, delta int) {
 			adjustRC(f, delta)
 		}
 	case *Enum:
+		if !reachesCounted(x) {
+			return
+		}
+		rcWalked.Add(int64(len(x.Payloads)))
 		for _, p := range x.Payloads {
 			adjustRC(p, delta)
 		}

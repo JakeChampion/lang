@@ -1,0 +1,22 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Destructured ARRAY bindings reclaim their buffers. `let (a, b) =
+// ([..], [..])` extracts two array pointers; dup-on-projection
+// makes a/b owned array locals that arr_dec-free their buffers at
+// scope exit, while the tuple's deep-drop dec's its own element
+// refs + frees the box. Tainting the bindings leaks every buffer.
+// Churned 200x — a leak would grow the heap
+// and a miscount would drift the underflow detector. a[1] = k+1,
+// b[2] = k+4; sum_{0..199}(2k+5) = 2*19900 + 1000 = 40800.
+import "core/int";
+function mk(k: i32): i32 {
+    let (a, b) = ([k, k + 1], [k + 2, k + 3, k + 4]);
+    return a[1] + b[2];
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { total = total + mk(i); i = i + 1; }
+    return (total - 40800) + __rc_underflow_count();
+}

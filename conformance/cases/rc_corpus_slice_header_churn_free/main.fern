@@ -1,0 +1,45 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// #8406: a `[T]` slice header is an rc1 block the IR releases like a
+// tuple box — the exit sweep for a local, the arg-temp release for
+// `f(s.as_bytes())`, the receiver stash for `.len()` / `[i]`, the
+// cast for `as usize` (std/string.bytes), and the parent of a
+// sub-slice. Every consumer shape in one 10k loop; before the
+// header carried an rc it bumped 16 bytes per call that nothing
+// could free. Heap-form strings only: `as_bytes` on an inline
+// string promotes the bytes into an unowned copy, a separate gap.
+import "std/string";
+function sum_view(b: [u8]): i32 {
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < b.len()) { t = t + (b[i] as i32); i = i + 1; }
+    return t;
+}
+function main(): i32 {
+    let s: string = "hello world, this is a heap string";
+    let want_sum: i32 = 0;
+    let k: i32 = 0;
+    while (k < s.len()) { want_sum = want_sum + (s[k] as i32); k = k + 1; }
+    let per: i32 = (s[0] as i32) + want_sum + s.len() + (s[1] as i32) + (s[1] as i32) + s.len();
+    let xs: i32[] = [10, 20, 30, 40, 50];
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 10000) {
+        let b: [u8] = s.as_bytes();
+        acc = acc + (b[0] as i32);
+        acc = acc + sum_view(s.as_bytes());
+        acc = acc + s.as_bytes().len();
+        acc = acc + (s.as_bytes()[1] as i32);
+        let c: [u8] = b[1:3];
+        acc = acc + (c[0] as i32);
+        let copy: u8[] = s.bytes();
+        acc = acc + copy.len();
+        let v: [i32] = xs[1:4];
+        let w: [i32] = v[1:2];
+        acc = acc + v[0] + w[0] + xs[2:5].len();
+        i = i + 1;
+    }
+    if (acc != 10000 * (per + 53)) { return 1; }
+    return __rc_underflow_count();
+}

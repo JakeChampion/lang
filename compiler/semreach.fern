@@ -14,16 +14,20 @@
 // HTTP/2 is not in a program that never calls `with_h2`.
 //
 // Facts are kept for the bool and i32 fields of records, the variants of
-// declared enums, and what scalar, if any, each function returns. A type a
-// value of which can arrive other than by a construction in a reached body
-// is opaque, its fields any value and its variants all built: an extern's,
-// a closure's or a dyn narrowing's result, a root's parameter, and
-// everything such a value holds. A closure's construction builds its
+// declared enums, what scalar, if any, each function returns, and whether
+// any value of a record type exists: an array of one with none is empty. A
+// type a value of which can arrive other than by a construction in a reached
+// body is opaque, its fields any value and its variants all built: an
+// extern's or a dyn narrowing's result, the result of a function value that
+// itself arrived, a root's parameter, and everything such a value holds. A
+// closure's result is what its body built, and a paired call's payload read
+// back (sempair) what its callee built. A closure's construction builds its
 // environment, the captures in the slots after the body's address.
 import "./ssa";
 import "./ssadeps";
 import "./ssasem";
 import "./semrecords";
+import "./sempair";
 import "./semthread";
 import "./typeinfo";
 import "./util";
@@ -40,7 +44,7 @@ pub function reach(funcs: ssasem.Func[], names: string[], usable: boolean[], blo
   let ix: util.NameIndex = util.name_index(names);
   let u: Universe = universe(funcs, usable);
   let op: util.NameIndex = opaque_types(funcs, ix, usable, roots, u);
-  let ctx: Ctx = Ctx { funcs: funcs, ix: ix, usable: usable, u: u, callers: callers_of(funcs, ix, usable), freaders: readers_of(funcs, usable, u), vtesters: testers_of(funcs, usable, u), keys: keys_of(funcs, usable, u) };
+  let ctx: Ctx = Ctx { funcs: funcs, ix: ix, usable: usable, u: u, callers: callers_of(funcs, ix, usable), freaders: readers_of(funcs, usable, u), vtesters: testers_of(funcs, usable, u), keys: keys_of(funcs, usable, u), counters: counters_of(funcs, usable, u) };
   let w: World = start(ctx, roots, op, zeroed(funcs, usable));
   // A function's last walk is under the final facts: a fact it read that
   // widened after would have queued it again.
@@ -216,12 +220,14 @@ function opaque_types(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[
 }
 
 // Whether `ins` makes its `result` other than from the values a body built:
-// a call to what has no body here, a closure's result, a dyn narrowing, an
-// enum's widening from its member, a zero that is not a record's (a zero
-// record is its fields' zeros, `zeroed`), or any physical operation.
+// a call to what has no body here, or a function value naming one, a dyn
+// narrowing, an enum's widening from its member, a zero that is not a
+// record's (a zero record is its fields' zeros, `zeroed`), or any physical
+// operation. A closure's result is what its body built, unless the
+// function value itself arrived, which makes its result type opaque.
 function arrives(ins: ssa.SInst, result: typeinfo.Type, ix: util.NameIndex, usable: boolean[]): boolean {
   let k: i32 = ins.kind_tag;
-  if (k == ssasem.call()) {
+  if (k == ssasem.call() || k == ssasem.closure_new() || k == 13) {
     return call_arrives(ins, ix, usable);
   }
   if (k < 0) {
@@ -230,8 +236,10 @@ function arrives(ins: ssa.SInst, result: typeinfo.Type, ix: util.NameIndex, usab
   return !(k >= 1 && k <= 10 || k == 35 || k == 36);
 }
 
+// A paired call's payload read back (sempair) is the value its callee
+// built, so it arrives no more than the call's result would.
 function call_arrives(ins: ssa.SInst, ix: util.NameIndex, usable: boolean[]): boolean {
-  if (ssasem.is_dyn_call(ins.str)) {
+  if (ssasem.is_dyn_call(ins.str) || util.str_has_prefix(ins.str, sempair.word_as_prefix())) {
     return false;
   }
   let g: i32 = ix.find(ins.str);
@@ -242,7 +250,7 @@ function semantic_arrives(k: i32, result: typeinfo.Type): boolean {
   if (k == ssasem.zero()) {
     return !is_record(result);
   }
-  return k == ssasem.call_value() || k == ssasem.dyn_as() || k == ssasem.variant_up();
+  return k == ssasem.dyn_as() || k == ssasem.variant_up();
 }
 
 function is_record(t: typeinfo.Type): boolean {
@@ -269,6 +277,9 @@ function opaque_add(t: typeinfo.Type, op: util.NameIndex, u: Universe): util.Nam
     },
     typeinfo.TypeMap(m) => {
       return opaque_add(m.value, opaque_add(m.key, op, u), u);
+    },
+    typeinfo.TypeFunc(fn) => {
+      return opaque_add(fn.ret_type, op, u);
     },
     _ => {}
   }
@@ -335,7 +346,9 @@ function zeroed(funcs: ssasem.Func[], usable: boolean[]): typeinfo.Type[] {
 // reads or builds: a projection's field, a variant test's or construction's
 // variant, a record or closure construction's record (an index into
 // `u.recs`); -1 for any other.
-struct Ctx { funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[], u: Universe, callers: i32[][], freaders: i32[][], vtesters: i32[][], keys: i32[][] }
+// `counters[r]` are the functions taking the length of an array of the
+// record `u.recs[r]`.
+struct Ctx { funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[], u: Universe, callers: i32[][], freaders: i32[][], vtesters: i32[][], keys: i32[][], counters: i32[][] }
 
 function lists(n: i32): i32[][] {
   let out: i32[][] = [];
@@ -418,6 +431,39 @@ function testers_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[]
   return out;
 }
 
+function counters_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[][] {
+  let out: i32[][] = lists(u.recs.len());
+  let i: i32 = 0;
+  while (i < funcs.len()) {
+    if (usable[i]) {
+      let f: ssasem.Func = funcs[i];
+      for b in f.graph.blocks {
+        for ins in b.insts {
+          if (ins.kind_tag == ssasem.length()) {
+            let r: i32 = element_record(u, f.values[ins.args[0]]);
+            if (r >= 0) {
+              out = noted(out, r, i);
+            }
+          }
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// The record an array of which `t` is, by its index in `u.recs`; -1 for
+// any other type.
+function element_record(u: Universe, t: typeinfo.Type): i32 {
+  if let typeinfo.TypeArray(a) = t {
+    if let typeinfo.TypeStruct(_) = a.elem {
+      return u.rec_ix.find(ssasem.type_key(a.elem));
+    }
+  }
+  return 0 - 1;
+}
+
 function keys_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[][] {
   let out: i32[][] = [];
   let i: i32 = 0;
@@ -454,6 +500,9 @@ function key_of(u: Universe, f: ssasem.Func, ins: ssa.SInst): i32 {
   if (k == ssasem.record_new()) {
     return u.rec_ix.find(ssasem.type_key(f.values[ins.result]));
   }
+  if (k == ssasem.length()) {
+    return element_record(u, f.values[ins.args[0]]);
+  }
   if (k == ssasem.closure_new()) {
     let at: i32 = ssasem.find_contract_in(f.calls, ins.str);
     if (at >= 0 && f.calls[at].params.len() > 0) {
@@ -465,7 +514,9 @@ function key_of(u: Universe, f: ssasem.Func, ins: ssa.SInst): i32 {
 
 // ---- the whole program's facts ---------------------------------------------
 
-struct World { reach: boolean[], fields: i64[], built: boolean[], rets: i64[], queue: i32[], next: i32, queued: boolean[] }
+// `inhabited[r]` says whether some value of the record `u.recs[r]` exists:
+// a reached body built one, or one can arrive (opaque) or be a zero.
+struct World { reach: boolean[], fields: i64[], built: boolean[], rets: i64[], inhabited: boolean[], queue: i32[], next: i32, queued: boolean[] }
 
 function start(ctx: Ctx, roots: boolean[], op: util.NameIndex, zeros: typeinfo.Type[]): World {
   let built: boolean[] = [];
@@ -476,7 +527,7 @@ function start(ctx: Ctx, roots: boolean[], op: util.NameIndex, zeros: typeinfo.T
   while (rets.len() < ctx.funcs.len()) {
     rets = rets.append(none());
   }
-  let w: World = World { reach: __alloc_bool(ctx.funcs.len()), fields: zero_fields(ctx.u, opaque_fields(ctx.u, op), zeros), built: built, rets: rets, queue: [], next: 0, queued: __alloc_bool(ctx.funcs.len()) };
+  let w: World = World { reach: __alloc_bool(ctx.funcs.len()), fields: zero_fields(ctx.u, opaque_fields(ctx.u, op), zeros), built: built, rets: rets, inhabited: inhabited_at_start(ctx.u, op, zeros), queue: [], next: 0, queued: __alloc_bool(ctx.funcs.len()) };
   let i: i32 = 0;
   while (i < roots.len()) {
     if (roots[i]) {
@@ -485,6 +536,22 @@ function start(ctx: Ctx, roots: boolean[], op: util.NameIndex, zeros: typeinfo.T
     i = i + 1;
   }
   return w;
+}
+
+// The records with a value before any body runs: the opaque ones and those
+// a body builds as a zero.
+function inhabited_at_start(u: Universe, op: util.NameIndex, zeros: typeinfo.Type[]): boolean[] {
+  let out: boolean[] = [];
+  for r in u.recs {
+    out = out.append(op.has(ssasem.type_key(r.ty)));
+  }
+  for t in zeros {
+    let r: i32 = u.rec_ix.find(ssasem.type_key(t));
+    if (r >= 0) {
+      out = out.with(r, true);
+    }
+  }
+  return out;
 }
 
 // Every field unknown yet, but an opaque record's, which is any value.
@@ -759,6 +826,12 @@ function semantic_value(ctx: Ctx, w: World, wk: Walk, ins: ssa.SInst): i64 {
   if (k == ssasem.call()) {
     return call_value(ctx, w, ins);
   }
+  if (k == ssasem.length()) {
+    let r: i32 = wk.keys[ins.result];
+    if (r >= 0 && !w.inhabited[r]) {
+      return konst(0);
+    }
+  }
   return any();
 }
 
@@ -773,7 +846,8 @@ function call_value(ctx: Ctx, w: World, ins: ssa.SInst): i64 {
   return w.rets[g];
 }
 
-// The comparisons of two bool or i32 constants.
+// The comparisons of two bool or i32 constants, and the sum and difference
+// of two i32 ones that fit an i32.
 function binary(f: ssasem.Func, wk: Walk, ins: ssa.SInst): i64 {
   let a: i64 = wk.vals[ins.args[0]];
   let b: i64 = wk.vals[ins.args[1]];
@@ -787,7 +861,21 @@ function binary(f: ssasem.Func, wk: Walk, ins: ssa.SInst): i64 {
   if (!comparable(t, f.values[ins.args[1]])) {
     return any();
   }
+  if (ssasem.is_i32(t) && (ins.str == "+" || ins.str == "-")) {
+    return summed(ins.str, a, b);
+  }
   return compared(ins.str, a as i32, b as i32, ssasem.is_i32(t));
+}
+
+function summed(op: string, x: i64, y: i64): i64 {
+  let r: i64 = x + y;
+  if (op == "-") {
+    r = x - y;
+  }
+  if (r < (0 - 2147483647 - 1) as i64 || r > 2147483647 as i64) {
+    return any();
+  }
+  return konst(r as i32);
 }
 
 function compared(op: string, x: i32, y: i32, ordered: boolean): i64 {
@@ -893,13 +981,16 @@ function named(ctx: Ctx, w: World, name: string): World {
   return w;
 }
 
-// Each tracked field of the record `u.recs[r]` built from `args`, field
-// `first + k` from `args[k]`, widened by the operand's lattice: a record from
-// its fields, or a closure's environment from its captures (slot 0 is the
-// body's address).
+// The record `u.recs[r]` built from `args`: inhabited, and each tracked
+// field, `first + k` from `args[k]`, widened by the operand's lattice: a
+// record from its fields, or a closure's environment from its captures (slot
+// 0 is the body's address).
 function built_record(ctx: Ctx, w: World, r: i32, wk: Walk, args: i32[], first: i32): World {
   if (r < 0) {
     return w;
+  }
+  if (!w.inhabited[r]) {
+    w = queued_all(World { ...w, inhabited: w.inhabited.with(r, true) }, ctx.counters[r]);
   }
   let at: i32[] = ctx.u.rec_fields[r];
   let k: i32 = 0;
