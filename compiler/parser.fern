@@ -248,15 +248,14 @@ pub function with_stdlib_origin(mod: Module, path: string): Module {
 // in one of them can name the trait, so its method outranks another
 // trait's of the same name (the Go checker's traitInScope). Empty, with
 // `module` empty, for a trait the entry declares, which every module sees.
-pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[], supertraits: string[], assoc_sigs: FuncDecl[], provided: string[], assoc_types: string[], module: string, default_sigs: FuncDecl[], visible_from: string[] }
+pub struct TraitReq { trait_name: string, type_params: string[], methods: string[], req_sigs: FuncDecl[], supertraits: string[], assoc_sigs: FuncDecl[], provided: string[], assoc_types: string[], module: string, default_sigs: FuncDecl[], visible_from: string[] }
 
 // TraitDecl is the `trait` block as WRITTEN, retained for the formatter
-// (#6773) and, since it is the only record of a trait's TYPE PARAMETERS, for
-// the E021 conformance check. The compile path reads two DERIVED views of it
+// (#6773). The compile path reads two DERIVED views of it
 // and neither can be printed from: TraitReq keeps the abstract method set for
 // E021, with names simplified past any `mod.` qualifier, and TraitDefault
 // keeps the bodied methods so they can be synthesised onto impls that omit
-// them. Between them they drop the `pub`, the type parameters, the source
+// them. Between them they drop the `pub`, the source
 // position, and the order the methods were written in — so a formatted file
 // lost its `trait` blocks entirely and every `impl` of one then named a trait
 // the file no longer declared. A method's body is empty when it was written
@@ -2864,6 +2863,8 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
   // Carries the explicit type arguments from a `[...]` instantiation to the
   // call `(...)` that immediately follows (`f[i32](x)`). Reset after each call.
   let pending_type_arg_list: string[] = [];
+  let pending_type_line: i32 = 0;
+  let pending_type_col: i32 = 0;
   // The same instantiation AS WRITTEN, for `-fmt` only (Par.verbatim). The
   // count alone cannot be printed, so a formatted `empty[i32]()` came back as
   // `empty()` — E040, the formatter deleting the syntax the diagnostic asks
@@ -2877,6 +2878,10 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
       // (`Call{P: open.Pos}`), so E004 (arity) lands here.
       let oline: i32 = p.peek_line();
       let ocol: i32 = p.peek_col();
+      if (pending_type_arg_list.len() > 0) {
+        oline = pending_type_line;
+        ocol = pending_type_col;
+      }
       p = p.advance();
       let args: ast.Expr[] = [];
       if (p.peek_punct() != ")") {
@@ -3013,6 +3018,8 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
         }
         if (ta_saw) {
           pending_type_arg_list = written_type_arg_list(wta_text, wta_n, ta_commas + 1);
+          pending_type_line = bline;
+          pending_type_col = bcol;
         }
         if (p.peek_punct() == "]") {
           p = p.advance();
@@ -8354,7 +8361,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
   let is_fn: boolean = false;
   let top_comma: boolean = false;
   let tprev_word: boolean = false;
-  let tprev_dyn: boolean = false;
+  let tprev_prefix: boolean = false;
   // telem_empty: no type has been read since the last `(` or `,`, so a `,`
   // here leaves an element empty, which native refuses; so does a `)` after a
   // `,`. A `)` right after `(` is a function type's empty parameter list.
@@ -8369,7 +8376,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       p = p.advance();
       p = p.advance();
       tprev_word = false;
-      tprev_dyn = false;
+      tprev_prefix = false;
       telem_empty = false;
       continue;
     }
@@ -8380,7 +8387,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       tbuf = tbuf + "(";
       p = p.advance();
       tprev_word = false;
-      tprev_dyn = false;
+      tprev_prefix = false;
       continue;
     }
     if (tpk == ")") {
@@ -8392,7 +8399,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       tbuf = tbuf + ")";
       p = p.advance();
       tprev_word = false;
-      tprev_dyn = false;
+      tprev_prefix = false;
       if (td == 0) {
         break;
       }
@@ -8410,7 +8417,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       tbuf = tbuf + ", ";
       p = p.advance();
       tprev_word = false;
-      tprev_dyn = false;
+      tprev_prefix = false;
       continue;
     }
     // A `=>` *inside* the parens with NO depth-1 comma means the
@@ -8431,7 +8438,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       tbuf = tbuf + " => ";
       p = p.advance();
       tprev_word = false;
-      tprev_dyn = false;
+      tprev_prefix = false;
       telem_empty = true;
       continue;
     }
@@ -8442,7 +8449,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       tbuf = tbuf + " + ";
       p = p.advance();
       tprev_word = false;
-      tprev_dyn = false;
+      tprev_prefix = false;
       telem_empty = true;
       continue;
     }
@@ -8450,7 +8457,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       tbuf = tbuf + tpk;
       p = p.advance();
       tprev_word = false;
-      tprev_dyn = false;
+      tprev_prefix = false;
       telem_empty = false;
       continue;
     }
@@ -8462,19 +8469,14 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       p = p.expected_type().advance();
       continue;
     }
-    // Two adjacent word tokens have no separator of their own, so
-    // `dyn Speak` would collect as `dynSpeak`. `-fmt` reinserts the space
-    // everywhere; the compile parse reinserts it only after `dyn`, because
-    // every consumer matches on that prefix and a mashed element resolves
-    // to no type at all, slipping past every checker rule that would have
-    // judged it (#10085). Other adjacent words keep the mashed spelling
-    // the consumers were written against.
-    if (tprev_word && (p.verbatim || tprev_dyn)) {
+    // Word prefixes must stay separate from their type: dyn Speak, own T,
+    // and borrow Socket. The formatter preserves every word boundary.
+    if (tprev_word && (p.verbatim || tprev_prefix)) {
       tbuf = tbuf + " ";
     }
     tbuf = tbuf + tseg;
     tprev_word = true;
-    tprev_dyn = tseg == "dyn";
+    tprev_prefix = tseg == "dyn" || tseg == "own" || tseg == "borrow";
     telem_empty = false;
     p = p.advance();
   }
@@ -13000,7 +13002,7 @@ pub function number_literal_tree(e: ast.Expr): boolean {
 pub function settle_int_tree(e: ast.Expr, tag: string): ast.Expr {
   match (e) {
     ast.ExprNumber(n) => {
-      return ast.ExprNumber { ...n, suffix: tag };
+      return ast.ExprNumber { ...n, suffix: tag, is_float: n.is_float || tag == "f32" || tag == "f64" };
     },
     ast.ExprUnary(u) => {
       return ast.ExprUnary { ...u, operand: settle_int_tree(u.operand, tag), ty: tag };
@@ -16847,7 +16849,7 @@ function ms_expr_to(e: ast.Expr, dest: string, env: MEnv, gstructs: StructDecl[]
       let els: ast.Expr[] = [];
       let cur: Insts = ins;
       for x in a.elements {
-        let re: RExpr = ms_expr_to(x, el, env, gstructs, funcs, cur);
+        let re: RExpr = ms_expr_to(x, array_element_expected(x, el), env, gstructs, funcs, cur);
         cur = re.rins;
         els = els.append(re.rexpr);
       }
@@ -16855,6 +16857,19 @@ function ms_expr_to(e: ast.Expr, dest: string, env: MEnv, gstructs: StructDecl[]
     }
   }
   return ms_expr(e, env, gstructs, funcs, ins);
+}
+
+// Tuple-valued blocks join their components before an array receives them.
+// An array's annotation must not change that join during monomorphisation.
+function array_element_expected(e: ast.Expr, expected: string): string {
+  if (expected.len() > 0 && expected[0] == b'(' && parse_type_ref(expected).is_tuple) {
+    if let ast.ExprCall(c) = e {
+      if (is_value_block(c)) {
+        return "";
+      }
+    }
+  }
+  return expected;
 }
 
 // ms_call_to rewrites a call whose value goes to `dest`: an immediately
@@ -18567,7 +18582,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
       let cur: Insts = ins;
       let i: i32 = 0;
       while (i < a.elements.len()) {
-        let re: RExpr = me_expr(a.elements[i], elexp, env, enums, structs, funcs, cur);
+        let re: RExpr = me_expr(a.elements[i], array_element_expected(a.elements[i], elexp), env, enums, structs, funcs, cur);
         cur = re.rins;
         nels = nels.append(re.rexpr);
         i = i + 1;
@@ -24069,7 +24084,7 @@ function stamp_value_block_ret(e: ast.Expr, decl_ty: string): ast.Expr {
         let nels: ast.Expr[] = [];
         let ai: i32 = 0;
         while (ai < al.elements.len()) {
-          nels = nels.append(stamp_value_block_ret(al.elements[ai], elem_ty));
+          nels = nels.append(stamp_value_block_ret(al.elements[ai], array_element_expected(al.elements[ai], elem_ty)));
           ai = ai + 1;
         }
         return ast.ExprArray { ...al, elements: nels };
@@ -28752,7 +28767,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
       p = p.advance();
     }
   }
-  return (defaults, TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs, supertraits: supertraits, assoc_sigs: assoc_sigs, provided: provided, assoc_types: assoc_types, module: "", default_sigs: default_sigs, visible_from: [] }, TraitDecl { name: tname, type_params: trait_tps.tnames, supertraits: decl_supers, methods: decl_methods, line: tline, col: tcol, is_pub: false, assoc_types: assoc_types, is_package: false }, trait_bad, p);
+  return (defaults, TraitReq { trait_name: simple, type_params: trait_tps.tnames, methods: required, req_sigs: required_sigs, supertraits: supertraits, assoc_sigs: assoc_sigs, provided: provided, assoc_types: assoc_types, module: "", default_sigs: default_sigs, visible_from: [] }, TraitDecl { name: tname, type_params: trait_tps.tnames, supertraits: decl_supers, methods: decl_methods, line: tline, col: tcol, is_pub: false, assoc_types: assoc_types, is_package: false }, trait_bad, p);
 }
 
 // skip_decl_modifier consumes a contextual declaration modifier `name`

@@ -41,6 +41,10 @@ func TestSelfHostConstGrammarX86_64(t *testing.T) {
 		{"struct-literal-call-field", "struct Cfg { n: i32 }\nfunction f(): i32 { return 1; }\nconst C: Cfg = Cfg { n: f() };\nfunction main(): i32 { return C.n; }\n"},
 		{"struct-update", "struct Cfg { n: i32, m: i32 }\nconst A: Cfg = Cfg { n: 1, m: 2 };\nconst C: Cfg = Cfg { ...A, n: 41 };\nfunction main(): i32 { return C.n; }\n"},
 		{"call", "function f(): i32 { return 1; }\nconst C: i32 = f();\nfunction main(): i32 { return C; }\n"},
+		{"cast-array-element", "const ZERO: u8[] = [0 as u8, 0 as u8];\nfunction main(): i32 { return ZERO[0] as i32; }\n"},
+		{"cast-scalar", "const N: u8 = 7 as u8;\nfunction main(): i32 { return N as i32; }\n"},
+		{"cast-earlier-const", "const A: i32 = 7;\nconst N: u8 = A as u8;\nfunction main(): i32 { return N as i32; }\n"},
+		{"cast-arithmetic", "const N: i32 = (2.5 as i32) + 1;\nfunction main(): i32 { return N; }\n"},
 		// Native words the non-earlier IDENT case differently, so these pin
 		// that the second message is reproduced rather than folded into the
 		// generic one.
@@ -60,6 +64,7 @@ func TestSelfHostConstGrammarX86_64(t *testing.T) {
 		// Accepted — what stops the rule being a blanket rejection of consts.
 		{"struct-literal-ok", "struct Cfg { n: i32 }\nconst B: i32 = 40;\nconst C: Cfg = Cfg { n: B + 1 };\nfunction main(): i32 { return C.n; }\n"},
 		{"array-literal-ok", "const XS: i32[] = [1, 2];\nfunction main(): i32 { return 0; }\n"},
+		{"typed-array-literal-ok", "const XS: u8[] = [0u8, 7u8];\nfunction main(): i32 { return XS[1] as i32; }\n"},
 		{"plain-literal-ok", "const N: i32 = 41;\nfunction main(): i32 { return N; }\n"},
 		{"arith-over-earlier-const-ok", "const A: i32 = 2;\nconst B: i32 = A * 3 + 1;\nfunction main(): i32 { return B; }\n"},
 		{"unary-ok", "const A: i32 = 0 - 5;\nfunction main(): i32 { return A; }\n"},

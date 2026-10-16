@@ -779,9 +779,11 @@ pub function inlay_hints(p: lspquery.Program, m: i32, lo: i32, hi: i32): Hint[] 
 // share their declaration's positions.
 function func_hints(toks: lspquery.Tok[], quals: flatten.Qualifiers, bs: Bound[], own out: Hint[]): Hint[] {
   for b in bs {
-    if (b.let_line > 0 && !b.annotated && visible(b.name) && known(b.t)) {
+    if (b.let_line > 0 && visible(b.name) && known(b.t)) {
       let i: i32 = lspquery.first_ident(toks, lspquery.after(toks, b.let_line, b.let_col), b.name);
-      if (i >= 0 && !hinted(out, toks[i].line, toks[i].col + b.name.len())) {
+      // Literal settlement writes inferred types into the checked AST. The
+      // source tokens still distinguish those from a written annotation.
+      if (i >= 0 && (!b.annotated || i + 1 < toks.len() && toks[i + 1].text == "=") && !hinted(out, toks[i].line, toks[i].col + b.name.len())) {
         out = out.append(Hint { line: toks[i].line, col: toks[i].col + b.name.len(), label: ": " + written(quals, type_text(b.t)) });
       }
     }

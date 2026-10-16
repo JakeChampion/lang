@@ -1265,7 +1265,10 @@ function main(): i32 {
 	// a generic bound, on a `str[]` element, and on a `string` receiver, which
 	// widens to the view. Keyed as the unerased `str.shout`, every call is
 	// refused (#10883).
-	{name: "a-trait-method-implemented-for-str", atLeast: 48, want: "3|bc! bc!bc! yz! a!bc!\n\n", src: `
+	// Resolving the bound method's return type lets early reachability discard
+	// the unused std/i32 import. All four live declarations still produce;
+	// the previous tally included 44 declarations removed before emission.
+	{name: "a-trait-method-implemented-for-str", atLeast: 4, want: "3|bc! bc!bc! yz! a!bc!\n\n", src: `
 import "std/i32";
 trait Shout { function shout(self: Self): string; }
 impl Shout for str { function shout(self: Self): string { return self + "!"; } }
