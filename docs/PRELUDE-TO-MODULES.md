@@ -390,6 +390,12 @@ everywhere. Without this a `Kind { Text }` anywhere in the program made every
 module's bare `Text` ambiguous, including stdlib source the author cannot edit
 (#6951).
 
+The self-host compiler mangles variant names like everything else, so it
+carries the closure instead: `flatten` stamps each imported enum with the
+modules whose closure reaches it (`EnumDecl.visible_from`), and the checker
+counts a bare reference's candidates from the module of the function it is in
+(#12467).
+
 The qualified spelling depends on where the enum lives. An enum of the
 referring module and a built-in enum are qualified by the enum (`Kind.Text`,
 `IoError.Other(p, m, n)`). An imported module's enum is qualified by the MODULE
