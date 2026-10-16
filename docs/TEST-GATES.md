@@ -215,9 +215,9 @@ as data and pin its Linux, Darwin and WASI errno lists to
 `internal/tables/strerror` row for row, and the `NetError` variant order to the
 errno-name list.
 
-`TestSocketCtl{Interp,X86_64,Arm64,Wasm}` run six probes over loopback,
-two on the socket controls, two on the datagram sockets and two on the
-started connect:
+`TestSocketCtl{Interp,X86_64,Arm64,Wasm}` and `TestSelfHostSocketCtl` run
+probes over loopback on the socket controls, the datagram sockets and the
+started connect, among them:
 `e2eharness.SocketCtlProbe` on the raw `tcp_listen_with` /
 `tcp_socket_ctl` builtins (a chosen backlog, `SO_REUSEPORT` with a second
 listener on Linux, no-delay and keep-alive, a non-blocking read that
@@ -238,18 +238,24 @@ second bind of a held port, the would-block of a non-blocking receive, and
 the close of both), and `e2eharness.NetUdpProbe` through std/net's
 `udp_socket`, `send_to`, `recv_from`, `set_peer`, `send`, `recv`,
 `local_port` and `close`, plus the `AddrInUse` and the `WouldBlock`;
+`e2eharness.UdpReuseProbe` on `udp_bind_with` (a second `SO_REUSEPORT`
+socket on a held port, a datagram that arrives on exactly one of the two
+and a second from the same sender on the same one, and the refusal of a
+plain bind and of one with `reuse_port` false; on wasm the second
+`reuse_port` bind refused too, since the flag is not read there);
 `e2eharness.ConnectProbe` on `tcp_connect_with` and
 control op 5 (a started connect settled by asking until it is no longer
 `-EINPROGRESS`, then accepted and used both ways, and the
 `-ECONNREFUSED` a connect to the closed port ends with, whether it fails
 as it starts or once it settles), and `e2eharness.NetConnectProbe` through
-`connect_start`, `connect_result` and `connect`. All six check the
+`connect_start`, `connect_result` and `connect`. Each checks the
 received bytes, not only their count. `TestSocketV6{Interp,X86_64,Arm64,Wasm}`,
 `TestArm64DarwinSocketV6`, `TestSelfHostSocketV6` (x86-64, arm64 and wasm)
 and its Darwin twin run `e2eharness.SocketV6Probe` and `NetV6Probe` over
 `::1`: a listener, a dial and the reply read back, two datagram sockets
 whose sender comes back as family 6 with its sixteen bytes, and a
-connected reply. The IPv6 leg is the one gate with a skip rule: where Go
+connected reply; off wasm, a `::` listener and a `::` datagram socket from
+`udp_bind_with` each take an IPv4 peer, reported v4-mapped. The IPv6 leg is the one gate with a skip rule: where Go
 itself cannot listen on `::1` the probe must answer "nov6" and the test
 skips, and everywhere else it must pass. `TestUnixSocket{Interp,X86_64,Arm64}`,
 `TestArm64DarwinUnixSocket`, `TestSelfHostUnixSocket` and its Darwin twin

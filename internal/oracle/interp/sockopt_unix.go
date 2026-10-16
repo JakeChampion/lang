@@ -11,6 +11,8 @@ const (
 	solSocket   = syscall.SOL_SOCKET
 	soKeepalive = syscall.SO_KEEPALIVE
 	tcpNodelay  = syscall.TCP_NODELAY
+	ipprotoIPv6 = syscall.IPPROTO_IPV6
+	ipv6V6only  = syscall.IPV6_V6ONLY
 )
 
 func getsockname(fd int) (syscall.Sockaddr, error) {

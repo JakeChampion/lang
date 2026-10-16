@@ -2447,6 +2447,14 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{u8s, ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
+	// udp_bind_with(addr, port, reuse_port): udp_bind with IPV6_V6ONLY
+	// cleared on an IPv6 socket, so `::` takes both families, and
+	// SO_REUSEPORT set before the bind when asked, so each worker can bind
+	// its own socket on one port.
+	c.info.FuncSigs["udp_bind_with"] = &ast.FuncType{
+		Params: []ast.Type{u8s, ast.NumberType{}, ast.BoolType{}},
+		Result: ast.NumberType{},
+	}
 	// udp_connect(fd, addr, port): fixes the peer a bound socket sends to
 	// and receives from. 0, or -errno.
 	c.info.FuncSigs["udp_connect"] = &ast.FuncType{

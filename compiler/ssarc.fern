@@ -5737,6 +5737,9 @@ function os_floor_process_site(own r: irtables.LowerResult, ins: ssa.SInst): Low
   if (ins.str == "udp_bind") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_udp_bind())) };
   }
+  if (ins.str == "udp_bind_with") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_udp_bind_with())) };
+  }
   if (ins.str == "udp_connect") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_udp_connect())) };
   }

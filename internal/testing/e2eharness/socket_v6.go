@@ -5,7 +5,9 @@ package e2eharness
 // datagram sockets on ::1 exchanging datagrams, the sender reported with
 // the family byte 6 and its sixteen address bytes, and a connected reply;
 // then a `::` listener taking a 127.0.0.1 peer, reported v4-mapped by
-// op 10 (not on wasi:sockets, whose IPv6 socket stays IPv6-only).
+// op 10, and a `::` datagram socket from udp_bind_with taking a 127.0.0.1
+// sender the same way (neither on wasi:sockets, whose IPv6 socket stays
+// IPv6-only).
 // Exit 42 with "ok" on stdout when every check holds; when the host has no
 // IPv6 the first bind answers -EAFNOSUPPORT (wasmtime reports the missing
 // family as not-supported, -ENOTSUP) and the probe prints "nov6" and
@@ -113,6 +115,18 @@ function main(): i32 {
         tcp_close(da);
         tcp_close(dc);
         tcp_close(dl);
+        // A :: datagram socket from udp_bind_with takes an IPv4 sender
+        // too, reported v4-mapped: ::ffff:127.0.0.1.
+        let du: i32 = udp_bind_with(zeros(16), 0, false);
+        if (du < 0) { return fail(39); }
+        let lo4: u8[] = [127u8, 0u8, 0u8, 1u8];
+        let d4: i32 = udp_bind(lo4, 0);
+        if (d4 < 0) { return fail(40); }
+        if (udp_sendto(d4, lo4, tcp_local_port(du), "ping") != 4) { return fail(41); }
+        if (udp_recvfrom(du, buf, from) != 4 || buf[0] != 112u8) { return fail(42); }
+        if (from[0] != 6u8 || from[10] != 0u8 || from[11] != 255u8 || from[12] != 255u8 || from[13] != 127u8 || from[16] != 1u8) { return fail(43); }
+        if (port_of(from) != tcp_local_port(d4)) { return fail(44); }
+        if (tcp_close(du) != 0 || tcp_close(d4) != 0) { return fail(45); }
     }
     print("ok");
     return 42;

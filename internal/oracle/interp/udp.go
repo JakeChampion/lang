@@ -90,11 +90,31 @@ func builtinUdpBind(i *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("udp_bind: expected 2 args, got %d", len(args))
 	}
-	n, err := numberArgs("udp_bind", args[1:], 1)
+	return i.udpBind("udp_bind", args[0], args[1], false, false)
+}
+
+// builtinUdpBindWith is `udp_bind_with(addr, port, reuse_port)`: udp_bind
+// with IPV6_V6ONLY cleared on an IPv6 socket and SO_REUSEPORT set before the
+// bind when asked, as the native runtimes set them.
+func builtinUdpBindWith(i *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("udp_bind_with: expected 3 args, got %d", len(args))
+	}
+	reuse, ok := args[2].(Bool)
+	if !ok {
+		return nil, fmt.Errorf("udp_bind_with: expected boolean reuse_port arg, got %T", args[2])
+	}
+	return i.udpBind("udp_bind_with", args[0], args[1], true, bool(reuse))
+}
+
+// udpBind opens a datagram socket bound to addr:port; dual clears
+// IPV6_V6ONLY on an IPv6 one, and reuse sets SO_REUSEPORT.
+func (i *Interp) udpBind(name string, addr, port Value, dual, reuse bool) (Value, error) {
+	n, err := numberArgs(name, []Value{port}, 1)
 	if err != nil {
 		return nil, err
 	}
-	sa, err := sockaddrOf("udp_bind", args[0], n[0])
+	sa, err := sockaddrOf(name, addr, n[0])
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +129,16 @@ func builtinUdpBind(i *Interp, args []Value) (Value, error) {
 	if err != nil {
 		return negErrno(err), nil
 	}
-	if err := syscall.Bind(fd, sa); err != nil {
+	if dual && family == syscall.AF_INET6 {
+		err = syscall.SetsockoptInt(fd, ipprotoIPv6, ipv6V6only, 0)
+	}
+	if err == nil && reuse {
+		err = syscall.SetsockoptInt(fd, solSocket, soReusePort, 1)
+	}
+	if err == nil {
+		err = syscall.Bind(fd, sa)
+	}
+	if err != nil {
 		syscall.Close(fd)
 		return negErrno(err), nil
 	}

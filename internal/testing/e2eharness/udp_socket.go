@@ -87,6 +87,91 @@ function main(): i32 {
 `
 }
 
+// UdpReuseProbe exercises `udp_bind_with` over loopback: a socket that
+// asks for SO_REUSEPORT, the refusal of a second plain bind of its port and
+// of one with reuse_port false, then (not on wasi:sockets, which has no
+// SO_REUSEPORT and leaves the port one socket's) a second reuse_port socket
+// on the same port, a datagram that arrives on exactly one of the two, and
+// a second datagram from the same sender that arrives on the same one. The
+// same verdict channel as UdpSocketProbe: exit 42 and "ok", or the number
+// of the first failing check.
+func UdpReuseProbe() string {
+	return `import "core/int";
+
+function fail(n: i32): i32 {
+    print(int.int_to_string(n));
+    return n;
+}
+
+function zeros(n: i32): u8[] {
+    let b: u8[] = [];
+    let i: i32 = 0;
+    while (i < n) {
+        b = b.append(0u8);
+        i = i + 1;
+    }
+    return b;
+}
+
+function port_of(from: u8[]): i32 {
+    return ((from[17] as i32) << 8) | (from[18] as i32);
+}
+
+// arrival waits for a datagram of n bytes on non-blocking a or b and
+// answers 1 or 2 for the socket that took it, 0 if none did, 3 if both did.
+function arrival(a: i32, b: i32, n: i32, from: u8[]): i32 {
+    let buf: u8[] = zeros(16);
+    let tries: i32 = 0;
+    while (tries < 400) {
+        let got_a: boolean = udp_recvfrom(a, buf, from) == n;
+        let got_b: boolean = udp_recvfrom(b, buf, from) == n;
+        if (got_a && got_b) { return 3; }
+        if (got_a) { return 1; }
+        if (got_b) { return 2; }
+        sleep_ms(5);
+        tries = tries + 1;
+    }
+    return 0;
+}
+
+function main(): i32 {
+    let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
+    let a: i32 = udp_bind_with(lo, 0, true);
+    if (a < 0) { return fail(1); }
+    let port: i32 = tcp_local_port(a);
+    if (port <= 0) { return fail(2); }
+    if (udp_bind(lo, port) >= 0) { return fail(3); }
+    if (udp_bind_with(lo, port, false) >= 0) { return fail(4); }
+    let s: i32 = udp_bind(lo, 0);
+    if (s < 0) { return fail(5); }
+    let from: u8[] = zeros(19);
+    if (target_os() == "wasi") {
+        if (udp_bind_with(lo, port, true) >= 0) { return fail(6); }
+        if (udp_sendto(s, lo, port, "ping") != 4) { return fail(7); }
+        let buf: u8[] = zeros(16);
+        if (udp_recvfrom(a, buf, from) != 4 || buf[0] != 112u8 || buf[3] != 103u8) { return fail(8); }
+        if (port_of(from) != tcp_local_port(s)) { return fail(9); }
+        if (tcp_close(a) != 0 || tcp_close(s) != 0) { return fail(10); }
+        print("ok");
+        return 42;
+    }
+    let b: i32 = udp_bind_with(lo, port, true);
+    if (b < 0) { return fail(6); }
+    if (tcp_local_port(b) != port) { return fail(11); }
+    if (tcp_socket_ctl(a, 3, 1) != 0 || tcp_socket_ctl(b, 3, 1) != 0) { return fail(12); }
+    if (udp_sendto(s, lo, port, "ping") != 4) { return fail(7); }
+    let first: i32 = arrival(a, b, 4, from);
+    if (first != 1 && first != 2) { return fail(13); }
+    if (port_of(from) != tcp_local_port(s)) { return fail(9); }
+    if (udp_sendto(s, lo, port, "again") != 5) { return fail(14); }
+    if (arrival(a, b, 5, from) != first) { return fail(15); }
+    if (tcp_close(a) != 0 || tcp_close(b) != 0 || tcp_close(s) != 0) { return fail(10); }
+    print("ok");
+    return 42;
+}
+`
+}
+
 // NetUdpProbe is UdpSocketProbe through std/net's typed faces:
 // `udp_socket`, `local_port`, `send_to`, `recv_from`, `set_peer`,
 // `local_addr` (on the connected datagram socket, the shape
