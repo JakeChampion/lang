@@ -1,0 +1,993 @@
+// std/http/h3 — HTTP/3 (RFC 9114) as a value with no IO, over any QUIC
+// connection: the caller hands it each stream's bytes as they arrive and
+// each stream the peer resets, and takes back what to write, what to
+// abort, and what happened.
+//
+//   let s: h3.Session = h3.server(h3.config()).start(control, encoder, decoder);
+//   s = s.on_stream(id, bytes, fin);          // any stream's bytes
+//   s = s.send_headers(id, fields, false);    // a response
+//   let (s2, actions, events) = s.take();
+//
+// `start` takes the IDs of the three unidirectional streams this side
+// opened (control, QPACK encoder, QPACK decoder): the transport assigns
+// IDs, so it opens them. A client opens a bidirectional stream for each
+// request the same way and names it to `send_headers`.
+//
+// Server push is never enabled: a client sends no MAX_PUSH_ID, so a server
+// that pushes is in error, and a server never pushes. Extensions are not
+// negotiated; unknown frames, settings and stream types are ignored as
+// §9 requires.
+//
+// A request or response is checked as §4.1.2 and §4.3 require: pseudo-
+// header fields first and only the ones its kind has, field names in
+// lowercase, no connection-specific fields, `te` only "trailers", a
+// content-length that matches what arrives. A malformed one is a stream
+// error (H3_MESSAGE_ERROR); a frame where §7.2 does not allow it is the
+// connection's (H3_FRAME_UNEXPECTED).
+
+import "std/quic/frames";
+import "std/http/qpack";
+import "std/string";
+import "std/option";
+
+// Frame types (§7.2).
+const DATA: i64 = 0;
+
+const HEADERS: i64 = 1;
+
+const CANCEL_PUSH: i64 = 3;
+
+const SETTINGS: i64 = 4;
+
+const PUSH_PROMISE: i64 = 5;
+
+const GOAWAY: i64 = 7;
+
+const MAX_PUSH_ID: i64 = 13;
+
+// Unidirectional stream types (§6.2).
+const CONTROL_STREAM: i64 = 0;
+
+const PUSH_STREAM: i64 = 1;
+
+const ENCODER_STREAM: i64 = 2;
+
+const DECODER_STREAM: i64 = 3;
+
+// Settings (§7.2.4.1, RFC 9204 §5).
+const SETTING_QPACK_MAX_TABLE_CAPACITY: i64 = 1;
+
+const SETTING_MAX_FIELD_SECTION_SIZE: i64 = 6;
+
+const SETTING_QPACK_BLOCKED_STREAMS: i64 = 7;
+
+// Error codes (§8.1).
+pub const H3_NO_ERROR: i64 = 256;
+
+pub const H3_GENERAL_PROTOCOL_ERROR: i64 = 257;
+
+pub const H3_INTERNAL_ERROR: i64 = 258;
+
+pub const H3_STREAM_CREATION_ERROR: i64 = 259;
+
+pub const H3_CLOSED_CRITICAL_STREAM: i64 = 260;
+
+pub const H3_FRAME_UNEXPECTED: i64 = 261;
+
+pub const H3_FRAME_ERROR: i64 = 262;
+
+pub const H3_EXCESSIVE_LOAD: i64 = 263;
+
+pub const H3_ID_ERROR: i64 = 264;
+
+pub const H3_SETTINGS_ERROR: i64 = 265;
+
+pub const H3_MISSING_SETTINGS: i64 = 266;
+
+pub const H3_REQUEST_REJECTED: i64 = 267;
+
+pub const H3_REQUEST_CANCELLED: i64 = 268;
+
+pub const H3_REQUEST_INCOMPLETE: i64 = 269;
+
+pub const H3_MESSAGE_ERROR: i64 = 270;
+
+// Config — what this side advertises: the QPACK table it keeps for the
+// peer, how many streams may wait on it, and the largest field section it
+// takes (each field's name, value and 32).
+pub struct Config { max_table_capacity: i64, blocked_streams: i32, max_field_section_size: i64 }
+
+pub function config(): Config {
+  return Config { max_table_capacity: 4096 as i64, blocked_streams: 16, max_field_section_size: 65536 as i64 };
+}
+
+// Settings — what the peer advertised; 0 for each it did not, and
+// `max_field_section_size` -1 for no limit.
+pub struct Settings { max_table_capacity: i64, blocked_streams: i64, max_field_section_size: i64 }
+
+// Event — what the peer did: the field section of a request or response
+// on a stream (an interim response first, perhaps), body bytes, trailers,
+// the stream's end, the stream reset with the peer's error code, or
+// GOAWAY with the first stream ID it will not process.
+pub enum Event {
+  HeadersReceived(i64, qpack.Field[]),
+  DataReceived(i64, u8[]),
+  TrailersReceived(i64, qpack.Field[]),
+  StreamEnded(i64),
+  StreamAborted(i64, i64),
+  GoawayReceived(i64),
+}
+
+// Action — what the transport must do: write bytes to a stream (and end
+// it), reset a stream's sending half or ask the peer to stop sending, or
+// close the connection with an HTTP/3 error code.
+pub enum Action { Write(i64, u8[], boolean), Abort(i64, i64), Stop(i64, i64), CloseConnection(i64, string) }
+
+// Frames — a stream's bytes read as frames: what has not yet made a
+// frame, and how much of a DATA or skipped frame is still to come.
+struct Frames { buf: u8[], data_left: i64, skip_left: i64 }
+
+// The phases of a request stream: before the first field section, in the
+// body, after trailers.
+const BEFORE_HEADERS: i32 = 0;
+
+const IN_BODY: i32 = 1;
+
+const AFTER_TRAILERS: i32 = 2;
+
+// Req — one request stream: its frames, phase, the HEADERS payload held
+// while QPACK is blocked on it, the content-length and what has arrived,
+// whether the peer has ended it and this side has, and, at a client,
+// whether it asked HEAD, whose response has no body whatever its
+// content-length says.
+struct Req { id: i64, frames: Frames, phase: i32, held: u8[], blocked: boolean, length: i64, received: i64, fin: boolean, done: boolean, sent_fin: boolean, head: boolean }
+
+// Uni — one of the peer's unidirectional streams: its type once read (-1
+// before), and its frames.
+struct Uni { id: i64, kind: i64, frames: Frames }
+
+// Session — one side of an HTTP/3 connection.
+pub struct Session {
+  server: boolean,
+  config: Config,
+  control: i64,
+  decoder_stream: i64,
+  peer_control: i64,
+  peer_encoder: i64,
+  peer_decoder: i64,
+  peer: Settings,
+  settings_seen: boolean,
+  dec: qpack.Decoder,
+  enc: qpack.Encoder,
+  reqs: Req[],
+  unis: Uni[],
+  goaway: i64,
+  closed: boolean,
+  actions: Action[],
+  events: Event[],
+}
+
+function __session(server: boolean, c: Config): Session {
+  return Session { server: server, config: c, control: 0 - 1 as i64, decoder_stream: 0 - 1 as i64, peer_control: 0 - 1 as i64, peer_encoder: 0 - 1 as i64, peer_decoder: 0 - 1 as i64, peer: Settings { max_table_capacity: 0 as i64, blocked_streams: 0 as i64, max_field_section_size: 0 - 1 as i64 }, settings_seen: false, dec: qpack.decoder(c.max_table_capacity, c.blocked_streams, c.max_field_section_size), enc: qpack.encoder(), reqs: [], unis: [], goaway: 0 - 1 as i64, closed: false, actions: [], events: [] };
+}
+
+pub function client(c: Config): Session {
+  return __session(false, c);
+}
+
+pub function server(c: Config): Session {
+  return __session(true, c);
+}
+
+// start writes the stream type on each of this side's unidirectional
+// streams, and SETTINGS on the control stream (§6.2.1).
+pub function (s: Session) start(control: i64, encoder: i64, decoder: i64): Session {
+  let settings: u8[] = [];
+  settings = frames.put_varint(frames.put_varint(settings, SETTING_QPACK_MAX_TABLE_CAPACITY), s.config.max_table_capacity);
+  settings = frames.put_varint(frames.put_varint(settings, SETTING_QPACK_BLOCKED_STREAMS), s.config.blocked_streams as i64);
+  settings = frames.put_varint(frames.put_varint(settings, SETTING_MAX_FIELD_SECTION_SIZE), s.config.max_field_section_size);
+  let on_control: u8[] = __frame(frames.put_varint([], CONTROL_STREAM), SETTINGS, settings);
+  let acts: Action[] = s.actions.append(Write(control, on_control, false)).append(Write(encoder, frames.put_varint([], ENCODER_STREAM), false)).append(Write(decoder, frames.put_varint([], DECODER_STREAM), false));
+  return Session { ...s, control: control, decoder_stream: decoder, actions: acts };
+}
+
+// take answers what the transport must do and what happened, in order.
+pub function (s: Session) take(): (Session, Action[], Event[]) {
+  return (Session { ...s, actions: [], events: [] }, s.actions, s.events);
+}
+
+// peer_settings is what the peer advertised, once its SETTINGS arrived.
+pub function (s: Session) peer_settings(): Option[Settings] {
+  if (!s.settings_seen) {
+    return None;
+  }
+  return Some(s.peer);
+}
+
+// goaway_received is the first request stream the peer will not process,
+// or -1 before its GOAWAY.
+pub function (s: Session) goaway_received(): i64 {
+  return s.goaway;
+}
+
+// === sending ================================================================
+
+// send_headers sends a field section on a request stream: a client's
+// request on a stream it opened, a server's response (interim or final).
+pub function (s: Session) send_headers(id: i64, fields: qpack.Field[], fin: boolean): Session {
+  let cur: Session = s;
+  if (!s.server && s.__find(id) < 0) {
+    cur = Session { ...s, reqs: s.reqs.append(Req { ...__req(id), head: __value(fields, ":method") == "HEAD" }) };
+  }
+  return cur.__write(id, __frame([], HEADERS, cur.enc.encode(fields)), fin);
+}
+
+// send_data sends body bytes, and with `fin` ends the stream.
+pub function (s: Session) send_data(id: i64, data: [u8], fin: boolean): Session {
+  if (data.len() == 0) {
+    return s.__write(id, [], fin);
+  }
+  return s.__write(id, __frame([], DATA, __copy(data)), fin);
+}
+
+// send_trailers sends the trailer section, which ends the stream.
+pub function (s: Session) send_trailers(id: i64, fields: qpack.Field[]): Session {
+  return s.__write(id, __frame([], HEADERS, s.enc.encode(fields)), true);
+}
+
+// abort resets a request stream in both directions with `code`, as when
+// a response is abandoned or a request cancelled (H3_REQUEST_CANCELLED).
+pub function (s: Session) abort(id: i64, code: i64): Session {
+  let cur: Session = Session { ...s, dec: s.dec.cancel(id), actions: s.actions.append(Abort(id, code)).append(Stop(id, code)) };
+  return cur.__forget(id).__decoder_instructions();
+}
+
+// send_goaway tells a client which request streams will be processed:
+// those below `id` (§5.2). A client's GOAWAY names push IDs, and this one
+// accepts no pushes, so it sends 0.
+pub function (s: Session) send_goaway(id: i64): Session {
+  return Session { ...s, actions: s.actions.append(Write(s.control, __frame([], GOAWAY, frames.put_varint([], id)), false)) };
+}
+
+function (s: Session) __write(id: i64, bytes: u8[], fin: boolean): Session {
+  let cur: Session = Session { ...s, actions: s.actions.append(Write(id, bytes, fin)) };
+  if (!fin) {
+    return cur;
+  }
+  let i: i32 = cur.__find(id);
+  if (i < 0) {
+    return cur;
+  }
+  return cur.__put_req(i, Req { ...cur.reqs[i], sent_fin: true }).__collect(id);
+}
+
+// __frame appends a frame of `kind` holding `payload` to `out`.
+function __frame(own out: u8[], kind: i64, payload: u8[]): u8[] {
+  out = frames.put_varint(frames.put_varint(out, kind), payload.len() as i64);
+  return out.concat(payload);
+}
+
+// === receiving ==============================================================
+
+// on_stream takes bytes that arrived on stream `id`, and with `fin`, its
+// end.
+pub function (s: Session) on_stream(id: i64, bytes: [u8], fin: boolean): Session {
+  if (s.closed) {
+    return s;
+  }
+  if ((id & 2) == 0) {
+    return s.__on_request(id, bytes, fin);
+  }
+  return s.__on_uni(id, bytes, fin);
+}
+
+// on_reset takes the peer's reset of a stream's sending half.
+pub function (s: Session) on_reset(id: i64, code: i64): Session {
+  if (s.closed) {
+    return s;
+  }
+  if (id == s.peer_control || id == s.peer_encoder || id == s.peer_decoder) {
+    return s.__fail(H3_CLOSED_CRITICAL_STREAM, "a critical stream was reset");
+  }
+  if (s.__find(id) < 0) {
+    return s;
+  }
+  let cur: Session = Session { ...s, dec: s.dec.cancel(id), events: s.events.append(StreamAborted(id, code)) };
+  return cur.__forget(id).__decoder_instructions();
+}
+
+function (s: Session) __fail(code: i64, reason: string): Session {
+  if (s.closed) {
+    return s;
+  }
+  return Session { ...s, closed: true, actions: s.actions.append(CloseConnection(code, reason)) };
+}
+
+// === unidirectional streams =================================================
+
+// __on_uni takes a unidirectional stream's bytes: its type first, then
+// what that type carries. The stream keeps only bytes not yet a frame,
+// which only the control stream has; QPACK's streams hold their own.
+function (s: Session) __on_uni(id: i64, bytes: [u8], fin: boolean): Session {
+  let i: i32 = s.__find_uni(id);
+  let u: Uni = Uni { id: id, kind: 0 - 1 as i64, frames: __frames() };
+  if (i >= 0) {
+    u = s.unis[i];
+  }
+  let buf: u8[] = u.frames.buf.concat(__copy(bytes));
+  let kept: Uni = Uni { ...u, frames: Frames { ...u.frames, buf: [] } };
+  if (u.kind >= 0) {
+    return s.__put_uni(i, kept).__uni_bytes(kept, buf, fin);
+  }
+  let Some(read) = frames.read_varint(buf, 0) else {
+    return s.__put_uni(i, Uni { ...u, frames: Frames { ...u.frames, buf: buf } });
+  };
+  let typed: Uni = Uni { ...kept, kind: read.0 };
+  let cur: Session = s.__claim(typed).__put_uni(i, typed);
+  if (cur.closed) {
+    return cur;
+  }
+  return cur.__uni_bytes(typed, __copy(buf[read.1:buf.len()]), fin);
+}
+
+// __claim takes a new unidirectional stream of the peer's: one each of
+// control, encoder and decoder (§6.2.1, RFC 9204 §4.2), no push stream
+// (§6.2.2), and anything else ignored, with STOP_SENDING (§6.2.3).
+function (s: Session) __claim(u: Uni): Session {
+  if (u.kind == CONTROL_STREAM || u.kind == ENCODER_STREAM || u.kind == DECODER_STREAM) {
+    if (s.__critical_of(u.kind) >= 0) {
+      return s.__fail(H3_STREAM_CREATION_ERROR, "a second critical stream of one type");
+    }
+    return s.__with_critical(u.kind, u.id);
+  }
+  if (u.kind == PUSH_STREAM) {
+    if (s.server) {
+      return s.__fail(H3_STREAM_CREATION_ERROR, "a push stream from a client");
+    }
+    return s.__fail(H3_ID_ERROR, "a push stream without MAX_PUSH_ID");
+  }
+  return Session { ...s, actions: s.actions.append(Stop(u.id, H3_STREAM_CREATION_ERROR)) };
+}
+
+function (s: Session) __critical_of(kind: i64): i64 {
+  if (kind == CONTROL_STREAM) {
+    return s.peer_control;
+  }
+  if (kind == ENCODER_STREAM) {
+    return s.peer_encoder;
+  }
+  return s.peer_decoder;
+}
+
+function (s: Session) __with_critical(kind: i64, id: i64): Session {
+  if (kind == CONTROL_STREAM) {
+    return Session { ...s, peer_control: id };
+  }
+  if (kind == ENCODER_STREAM) {
+    return Session { ...s, peer_encoder: id };
+  }
+  return Session { ...s, peer_decoder: id };
+}
+
+// __uni_bytes acts on a unidirectional stream's bytes by its type.
+function (s: Session) __uni_bytes(u: Uni, buf: u8[], fin: boolean): Session {
+  if (u.kind != CONTROL_STREAM && u.kind != ENCODER_STREAM && u.kind != DECODER_STREAM) {
+    return s;
+  }
+  if (fin) {
+    return s.__fail(H3_CLOSED_CRITICAL_STREAM, "a critical stream ended");
+  }
+  if (u.kind == ENCODER_STREAM) {
+    return s.__encoder_bytes(buf);
+  }
+  if (u.kind == DECODER_STREAM) {
+    match (s.enc.on_decoder_stream(buf)) {
+      Ok(e) => {
+        return Session { ...s, enc: e };
+      },
+      Err(e) => {
+        return s.__fail(e.code(), e.message());
+      }
+    }
+  }
+  return s.__control_bytes(u, buf);
+}
+
+// __encoder_bytes feeds the peer's encoder stream to the QPACK decoder,
+// then retries the sections that were waiting on it.
+function (s: Session) __encoder_bytes(buf: u8[]): Session {
+  match (s.dec.on_encoder_stream(buf)) {
+    Ok(d) => {
+      let cur: Session = Session { ...s, dec: d }.__decoder_instructions();
+      for r in cur.reqs {
+        if (r.blocked) {
+          cur = cur.__on_request(r.id, [], false);
+        }
+      }
+      return cur;
+    },
+    Err(e) => {
+      return s.__fail(e.code(), e.message());
+    }
+  }
+}
+
+// __decoder_instructions writes what the QPACK decoder owes on this
+// side's decoder stream.
+function (s: Session) __decoder_instructions(): Session {
+  let (d, out) = s.dec.take_instructions();
+  if (out.len() == 0 || s.decoder_stream < 0) {
+    return Session { ...s, dec: d };
+  }
+  return Session { ...s, dec: d, actions: s.actions.append(Write(s.decoder_stream, out, false)) };
+}
+
+// __control_bytes reads the control stream's frames: SETTINGS first and
+// only once, then GOAWAY, and nothing that belongs on a request stream
+// (§6.2.1, §7.2).
+function (s: Session) __control_bytes(u: Uni, buf: u8[]): Session {
+  let cur: Session = s;
+  let f: Frames = Frames { ...u.frames, buf: buf };
+  while (!cur.closed) {
+    match (__next_frame(f)) {
+      Ok(r) => {
+        f = r.frames;
+        if (r.kind < 0) {
+          return cur.__put_uni(cur.__find_uni(u.id), Uni { ...u, frames: f });
+        }
+        cur = cur.__control_frame(r.kind, r.payload);
+      },
+      Err(why) => {
+        return cur.__fail(H3_FRAME_ERROR, why);
+      }
+    }
+  }
+  return cur;
+}
+
+function (s: Session) __control_frame(kind: i64, payload: u8[]): Session {
+  if (!s.settings_seen && kind != SETTINGS) {
+    return s.__fail(H3_MISSING_SETTINGS, "the control stream did not open with SETTINGS");
+  }
+  if (kind == SETTINGS) {
+    if (s.settings_seen) {
+      return s.__fail(H3_FRAME_UNEXPECTED, "a second SETTINGS");
+    }
+    return s.__settings(payload);
+  }
+  if (kind == GOAWAY) {
+    return s.__on_goaway(payload);
+  }
+  if (__control_forbids(kind, s.server)) {
+    return s.__fail(H3_FRAME_UNEXPECTED, "a frame not allowed on the control stream");
+  }
+  return s;
+}
+
+// __control_forbids is a frame the control stream may not carry, MAX_PUSH_ID
+// from a server among them.
+function __control_forbids(kind: i64, server: boolean): boolean {
+  return kind == MAX_PUSH_ID && !server || kind == DATA || kind == HEADERS || kind == PUSH_PROMISE || __http2_frame(kind);
+}
+
+// __http2_frame is a frame type HTTP/2 has and HTTP/3 reserves (§7.2.8).
+function __http2_frame(kind: i64): boolean {
+  return kind == 2 || kind == 6 || kind == 8 || kind == 9;
+}
+
+// __settings reads SETTINGS: each identifier once, none of HTTP/2's, the
+// unknown ignored (§7.2.4).
+function (s: Session) __settings(payload: u8[]): Session {
+  let p: Settings = s.peer;
+  let seen: i64[] = [];
+  let at: i32 = 0;
+  while (at < payload.len()) {
+    let Some(k) = frames.read_varint(payload, at) else {
+      return s.__fail(H3_FRAME_ERROR, "a truncated setting");
+    };
+    let Some(v) = frames.read_varint(payload, k.1) else {
+      return s.__fail(H3_FRAME_ERROR, "a truncated setting");
+    };
+    if (seen.contains(k.0) || k.0 >= 2 && k.0 <= 5) {
+      return s.__fail(H3_SETTINGS_ERROR, "a repeated setting, or one of HTTP/2's");
+    }
+    seen = seen.append(k.0);
+    p = __setting(p, k.0, v.0);
+    at = v.1;
+  }
+  return Session { ...s, peer: p, settings_seen: true };
+}
+
+function __setting(p: Settings, id: i64, v: i64): Settings {
+  if (id == SETTING_QPACK_MAX_TABLE_CAPACITY) {
+    return Settings { ...p, max_table_capacity: v };
+  }
+  if (id == SETTING_QPACK_BLOCKED_STREAMS) {
+    return Settings { ...p, blocked_streams: v };
+  }
+  if (id == SETTING_MAX_FIELD_SECTION_SIZE) {
+    return Settings { ...p, max_field_section_size: v };
+  }
+  return p;
+}
+
+// __on_goaway takes GOAWAY (§5.2): at a client, a request stream ID that
+// may only fall; the requests at or above it will not be processed, so
+// they end as rejected.
+function (s: Session) __on_goaway(payload: u8[]): Session {
+  let Some(r) = frames.read_varint(payload, 0) else {
+    return s.__fail(H3_FRAME_ERROR, "a truncated GOAWAY");
+  };
+  if (s.server) {
+    return s;
+  }
+  if (r.0 % 4 != 0 || s.goaway >= 0 && r.0 > s.goaway) {
+    return s.__fail(H3_ID_ERROR, "a GOAWAY stream ID that is not a request stream's, or that rose");
+  }
+  let cur: Session = Session { ...s, goaway: r.0, events: s.events.append(GoawayReceived(r.0)) };
+  for q in s.reqs {
+    if (q.id >= r.0) {
+      cur = Session { ...cur, events: cur.events.append(StreamAborted(q.id, H3_REQUEST_REJECTED)) }.__forget(q.id);
+    }
+  }
+  return cur;
+}
+
+// === request streams ========================================================
+
+function __req(id: i64): Req {
+  return Req { id: id, frames: __frames(), phase: BEFORE_HEADERS, held: [], blocked: false, length: 0 - 1 as i64, received: 0 as i64, fin: false, done: false, sent_fin: false, head: false };
+}
+
+// __on_request takes a request stream's bytes: a client's request at a
+// server, which opens it, or the response to one of a client's.
+function (s: Session) __on_request(id: i64, bytes: [u8], fin: boolean): Session {
+  let i: i32 = s.__find(id);
+  let cur: Session = s;
+  if (i < 0) {
+    if (!s.server || (id & 1) != 0) {
+      return s;
+    }
+    cur = Session { ...s, reqs: s.reqs.append(__req(id)) };
+    i = cur.reqs.len() - 1;
+  }
+  let r: Req = cur.reqs[i];
+  r = Req { ...r, frames: Frames { ...r.frames, buf: r.frames.buf.concat(__copy(bytes)) }, fin: r.fin || fin };
+  return cur.__put_req(i, r).__request_frames(id);
+}
+
+// __request_frames reads what a request stream's bytes hold, until they
+// run out or a field section waits on QPACK.
+function (s: Session) __request_frames(id: i64): Session {
+  let cur: Session = s;
+  while (!cur.closed) {
+    let i: i32 = cur.__find(id);
+    if (i < 0) {
+      return cur;
+    }
+    let r: Req = cur.reqs[i];
+    if (r.blocked) {
+      return cur.__retry_held(i);
+    }
+    if (r.frames.data_left > 0 && r.frames.buf.len() > 0) {
+      cur = cur.__body_bytes(i);
+      continue;
+    }
+    match (__next_frame(r.frames)) {
+      Ok(f) => {
+        cur = cur.__put_req(i, Req { ...r, frames: f.frames });
+        if (f.kind < 0) {
+          return cur.__request_end(id);
+        }
+        cur = cur.__request_frame(id, f.kind, f.payload);
+      },
+      Err(why) => {
+        return cur.__fail(H3_FRAME_ERROR, why);
+      }
+    }
+  }
+  return cur;
+}
+
+// __body_bytes delivers the part of a DATA frame that has arrived.
+function (s: Session) __body_bytes(i: i32): Session {
+  let r: Req = s.reqs[i];
+  let n: i32 = r.frames.buf.len();
+  if (r.frames.data_left < n as i64) {
+    n = r.frames.data_left as i32;
+  }
+  let data: u8[] = __copy(r.frames.buf[0:n]);
+  let f: Frames = Frames { ...r.frames, buf: __copy(r.frames.buf[n:r.frames.buf.len()]), data_left: r.frames.data_left - n as i64 };
+  let next: Req = Req { ...r, frames: f, received: r.received + n as i64 };
+  if (next.length >= 0 && next.received > next.length) {
+    return s.__malformed(r.id, "more body than its content-length");
+  }
+  return Session { ...s, events: s.events.append(DataReceived(r.id, data)) }.__put_req(i, next);
+}
+
+// __request_frame acts on a whole frame on a request stream (§4.1, §7.2).
+function (s: Session) __request_frame(id: i64, kind: i64, payload: u8[]): Session {
+  let i: i32 = s.__find(id);
+  let r: Req = s.reqs[i];
+  if (kind == HEADERS) {
+    if (r.phase == AFTER_TRAILERS) {
+      return s.__fail(H3_FRAME_UNEXPECTED, "a frame after the trailers");
+    }
+    return s.__put_req(i, Req { ...r, held: payload, blocked: true }).__retry_held(i);
+  }
+  if (kind == DATA) {
+    if (r.phase != IN_BODY) {
+      return s.__fail(H3_FRAME_UNEXPECTED, "DATA outside a message's body");
+    }
+    return s;
+  }
+  return s.__request_other(kind);
+}
+
+// __request_other takes the frames a request stream may not carry: a
+// PUSH_PROMISE at a client that allowed no pushes, and every control frame.
+function (s: Session) __request_other(kind: i64): Session {
+  if (kind == PUSH_PROMISE && !s.server) {
+    return s.__fail(H3_ID_ERROR, "PUSH_PROMISE without MAX_PUSH_ID");
+  }
+  if (kind == SETTINGS || kind == GOAWAY || kind == MAX_PUSH_ID || kind == CANCEL_PUSH || kind == PUSH_PROMISE || __http2_frame(kind)) {
+    return s.__fail(H3_FRAME_UNEXPECTED, "a frame not allowed on a request stream");
+  }
+  return s;
+}
+
+// __retry_held decodes a HEADERS payload, which QPACK may block until
+// the inserts it needs arrive.
+function (s: Session) __retry_held(i: i32): Session {
+  let r: Req = s.reqs[i];
+  match (s.dec.decode(r.id, r.held)) {
+    Ok(got) => {
+      let cur: Session = Session { ...s, dec: got.decoder };
+      if (got.blocked) {
+        return cur;
+      }
+      cur = cur.__put_req(i, Req { ...r, held: [], blocked: false }).__decoder_instructions();
+      return cur.__section(r.id, got.fields).__request_frames(r.id);
+    },
+    Err(e) => {
+      return s.__fail(e.code(), e.message());
+    }
+  }
+}
+
+// __section takes a decoded field section: the message's head, an
+// interim response's, or its trailers.
+function (s: Session) __section(id: i64, fields: qpack.Field[]): Session {
+  let i: i32 = s.__find(id);
+  if (i < 0) {
+    return s;
+  }
+  let r: Req = s.reqs[i];
+  if (r.phase == IN_BODY) {
+    if (__has_pseudo(fields)) {
+      return s.__malformed(id, "a pseudo-header field in trailers");
+    }
+    return Session { ...s, events: s.events.append(TrailersReceived(id, fields)) }.__put_req(i, Req { ...r, phase: AFTER_TRAILERS });
+  }
+  match (__check_head(fields, s.server)) {
+    Ok(length) => {
+      return Session { ...s, events: s.events.append(HeadersReceived(id, fields)) }.__put_req(i, s.__headed(r, fields, length));
+    },
+    Err(why) => {
+      return s.__malformed(id, why);
+    }
+  }
+}
+
+// __request_end acts on a stream's end once its frames are all read: the
+// message must be whole, and its body the content-length's size.
+function (s: Session) __request_end(id: i64): Session {
+  let i: i32 = s.__find(id);
+  if (i < 0) {
+    return s;
+  }
+  let r: Req = s.reqs[i];
+  if (!r.fin || r.done) {
+    return s;
+  }
+  if (r.frames.buf.len() > 0) {
+    return s.__fail(H3_FRAME_ERROR, "a stream that ends inside a frame");
+  }
+  if (__incomplete(r)) {
+    if (s.server) {
+      return Session { ...s, actions: s.actions.append(Abort(id, H3_REQUEST_INCOMPLETE)) }.__forget(id);
+    }
+    return s.__malformed(id, "a response that ends before it is whole");
+  }
+  if (r.length >= 0 && r.received != r.length) {
+    return s.__malformed(id, "a body that is not its content-length");
+  }
+  return Session { ...s, events: s.events.append(StreamEnded(id)) }.__put_req(i, Req { ...r, done: true }).__collect(id);
+}
+
+// __incomplete reports whether a stream ended before its message's head,
+// or inside a DATA or skipped frame.
+function __incomplete(r: Req): boolean {
+  return r.phase == BEFORE_HEADERS || r.frames.data_left > 0 || r.frames.skip_left > 0;
+}
+
+// __malformed is a stream error (§4.1.2): the stream is reset both ways
+// with H3_MESSAGE_ERROR, and the application told.
+function (s: Session) __malformed(id: i64, why: string): Session {
+  let cur: Session = Session { ...s, events: s.events.append(StreamAborted(id, H3_MESSAGE_ERROR)), actions: s.actions.append(Abort(id, H3_MESSAGE_ERROR)).append(Stop(id, H3_MESSAGE_ERROR)) };
+  return cur.__forget(id);
+}
+
+// === message checks =========================================================
+
+// __check_head checks a request's or response's field section (§4.1.2,
+// §4.3), answering its content-length, -1 when it has none.
+function __check_head(fields: qpack.Field[], request: boolean): Result[i64, string] {
+  let pseudo: string[] = [];
+  let regular: boolean = false;
+  let length: i64 = 0 - 1;
+  for f in fields {
+    if (f.name.starts_with(":")) {
+      if (regular || pseudo.contains(f.name) || !__allowed_pseudo(f.name, request)) {
+        return Err("a pseudo-header field out of place, repeated, or unknown");
+      }
+      pseudo = pseudo.append(f.name);
+    } else {
+      regular = true;
+      length = __field_ok(f, length)?;
+    }
+  }
+  if (request) {
+    __request_pseudo(fields, pseudo)?;
+  } else if (!pseudo.contains(":status")) {
+    return Err("a response without :status");
+  }
+  return Ok(length);
+}
+
+function __allowed_pseudo(name: string, request: boolean): boolean {
+  if (!request) {
+    return name == ":status";
+  }
+  return name == ":method" || name == ":scheme" || name == ":authority" || name == ":path" || name == ":protocol";
+}
+
+// __field_ok checks a regular field, answering the content-length so far.
+function __field_ok(f: qpack.Field, length: i64): Result[i64, string] {
+  if (f.name.len() == 0 || f.name != f.name.to_lower()) {
+    return Err("a field name that is empty or not lowercase");
+  }
+  if (__connection_specific(f.name)) {
+    return Err("a connection-specific field");
+  }
+  if (f.name == "te" && f.value != "trailers") {
+    return Err("te other than trailers");
+  }
+  if (f.name != "content-length") {
+    return Ok(length);
+  }
+  return __content_length(f.value, length);
+}
+
+function __connection_specific(name: string): boolean {
+  return name == "connection" || name == "keep-alive" || name == "proxy-connection" || name == "transfer-encoding" || name == "upgrade";
+}
+
+// __content_length reads a content-length, which must agree with any
+// before it.
+function __content_length(value: string, length: i64): Result[i64, string] {
+  let Some(n) = __digits(value) else {
+    return Err("a content-length that is not a number");
+  };
+  if (length >= 0 && n != length) {
+    return Err("content-length fields that differ");
+  }
+  return Ok(n);
+}
+
+// __request_pseudo checks a request has what its method needs: CONNECT
+// :authority and no :scheme or :path, the rest :method, :scheme and a
+// non-empty :path.
+function __request_pseudo(fields: qpack.Field[], present: string[]): Result[void, string] {
+  if (!present.contains(":method")) {
+    return Err("a request without :method");
+  }
+  let connect: boolean = __value(fields, ":method") == "CONNECT" && !present.contains(":protocol");
+  if (connect) {
+    if (!present.contains(":authority") || present.contains(":scheme") || present.contains(":path")) {
+      return Err("a CONNECT request without :authority, or with :scheme or :path");
+    }
+    return Ok(());
+  }
+  if (!present.contains(":scheme") || __value(fields, ":path").len() == 0) {
+    return Err("a request without :scheme or :path");
+  }
+  return Ok(());
+}
+
+function __value(fields: qpack.Field[], name: string): string {
+  for f in fields {
+    if (f.name == name) {
+      return f.value;
+    }
+  }
+  return "";
+}
+
+function __has_pseudo(fields: qpack.Field[]): boolean {
+  for f in fields {
+    if (f.name.starts_with(":")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// __headed is a stream once its message's head arrives: in the body, or,
+// after an interim response, waiting for the final one; a response to HEAD
+// or with a status that forbids a body is held to none.
+function (s: Session) __headed(r: Req, fields: qpack.Field[], length: i64): Req {
+  if (s.server) {
+    return Req { ...r, phase: IN_BODY, length: length };
+  }
+  if (__interim(fields)) {
+    return Req { ...r, phase: BEFORE_HEADERS };
+  }
+  if (r.head || __bodiless(fields)) {
+    return Req { ...r, phase: IN_BODY, length: 0 as i64 };
+  }
+  return Req { ...r, phase: IN_BODY, length: length };
+}
+
+// __bodiless reports whether a response's status forbids a body (204,
+// 304), so its content-length describes a body it does not carry.
+function __bodiless(fields: qpack.Field[]): boolean {
+  let status: string = __value(fields, ":status");
+  return status == "204" || status == "304";
+}
+
+// __interim reports whether a response is a 1xx, which a final one
+// follows (§4.1).
+function __interim(fields: qpack.Field[]): boolean {
+  let status: string = __value(fields, ":status");
+  return status.len() == 3 && status.starts_with("1");
+}
+
+function __digits(s: string): Option[i64] {
+  if (s.len() == 0 || s.len() > 18) {
+    return None;
+  }
+  let n: i64 = 0;
+  for b in s.bytes() {
+    if (b < 48 || b > 57) {
+      return None;
+    }
+    n = n * 10 + (b - 48) as i64;
+  }
+  return Some(n);
+}
+
+// === frames =================================================================
+
+function __frames(): Frames {
+  return Frames { buf: [], data_left: 0 as i64, skip_left: 0 as i64 };
+}
+
+// Next — the next frame read from a stream: its type and payload, or
+// kind -1 when the bytes end before one does. A DATA frame answers at its
+// header, its payload left to arrive (`data_left`); a frame of an unknown
+// type is skipped as it arrives.
+struct Next { frames: Frames, kind: i64, payload: u8[] }
+
+// The largest frame other than DATA this side reads whole.
+const MAX_FRAME: i64 = 1048576;
+
+function __next_frame(f: Frames): Result[Next, string] {
+  let cur: Frames = f;
+  if (cur.skip_left > 0) {
+    let n: i64 = __min(cur.skip_left, cur.buf.len() as i64);
+    cur = Frames { ...cur, buf: __copy(cur.buf[n as i32:cur.buf.len()]), skip_left: cur.skip_left - n };
+    if (cur.skip_left > 0) {
+      return Ok(Next { frames: cur, kind: 0 - 1 as i64, payload: [] });
+    }
+  }
+  let none: Next = Next { frames: cur, kind: 0 - 1 as i64, payload: [] };
+  let Some(t) = frames.read_varint(cur.buf, 0) else {
+    return Ok(none);
+  };
+  let Some(l) = frames.read_varint(cur.buf, t.1) else {
+    return Ok(none);
+  };
+  let rest: u8[] = __copy(cur.buf[l.1:cur.buf.len()]);
+  if (t.0 == DATA) {
+    return Ok(Next { frames: Frames { ...cur, buf: rest, data_left: l.0 }, kind: DATA, payload: [] });
+  }
+  if (!__known(t.0)) {
+    return __next_frame(Frames { ...cur, buf: rest, skip_left: l.0 });
+  }
+  if (l.0 > MAX_FRAME) {
+    return Err("a frame larger than this side reads");
+  }
+  if (l.0 > rest.len() as i64) {
+    return Ok(none);
+  }
+  let n: i32 = l.0 as i32;
+  return Ok(Next { frames: Frames { ...cur, buf: __copy(rest[n:rest.len()]) }, kind: t.0, payload: __copy(rest[0:n]) });
+}
+
+// __known is a frame type this side reads; the rest, reserved for
+// extensions or greasing, are skipped (§9).
+function __known(kind: i64): boolean {
+  return kind == HEADERS || kind == CANCEL_PUSH || kind == SETTINGS || kind == PUSH_PROMISE || kind == GOAWAY || kind == MAX_PUSH_ID || __http2_frame(kind);
+}
+
+// === the tables of streams ==================================================
+
+function (s: Session) __find(id: i64): i32 {
+  let i: i32 = 0;
+  while (i < s.reqs.len()) {
+    if (s.reqs[i].id == id) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+function (s: Session) __put_req(i: i32, r: Req): Session {
+  return Session { ...s, reqs: s.reqs.with(i, r) };
+}
+
+function (s: Session) __forget(id: i64): Session {
+  let kept: Req[] = [];
+  for r in s.reqs {
+    if (r.id != id) {
+      kept = kept.append(r);
+    }
+  }
+  return Session { ...s, reqs: kept };
+}
+
+// __collect forgets a request stream once both sides have ended it.
+function (s: Session) __collect(id: i64): Session {
+  let i: i32 = s.__find(id);
+  if (i < 0 || !s.reqs[i].done || !s.reqs[i].sent_fin) {
+    return s;
+  }
+  return s.__forget(id);
+}
+
+function (s: Session) __find_uni(id: i64): i32 {
+  let i: i32 = 0;
+  while (i < s.unis.len()) {
+    if (s.unis[i].id == id) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+function (s: Session) __put_uni(i: i32, u: Uni): Session {
+  if (i < 0) {
+    return Session { ...s, unis: s.unis.append(u) };
+  }
+  return Session { ...s, unis: s.unis.with(i, u) };
+}
+
+function __min(a: i64, b: i64): i64 {
+  if (a < b) {
+    return a;
+  }
+  return b;
+}
+
+function __copy(b: [u8]): u8[] {
+  let out: u8[] = __alloc_u8(b.len());
+  let i: i32 = 0;
+  while (i < b.len()) {
+    out = out.with(i, b[i]);
+    i = i + 1;
+  }
+  return out;
+}
