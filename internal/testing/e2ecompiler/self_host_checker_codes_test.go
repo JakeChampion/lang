@@ -4002,6 +4002,18 @@ function main(): i32 { return 0; }`},
 		// oracle for all of them; each destination the rule reaches gets a row,
 		// with the accepting neighbour beside it so the rule cannot become a
 		// blanket refusal of every wide literal.
+		{"literal-float-local-arm", `function f(c: boolean): void { let q = 2; let x = if (c) { q } else { 2.5 }; }`},
+		{"literal-float-local-block", `function f(c: boolean): void { let x = if (c) { ({ let q = 2; q }) } else { 2.5 }; }`},
+		{"literal-float-generic-arm", `function pick[T](a: T, b: T): T { return a; } function f(c: boolean): void { let x = if (c) { pick(1, 2) } else { 2.5 }; }`},
+		{"literal-float-local-f32", `function f(): void { let y = 2.5; let z: f32 = y; }`},
+		{"literal-float-overflow-arm", `function f(c: boolean): void { let x = if (c) { 99999999999999999999 } else { 2.5 }; }`},
+		{"literal-float-tuple-local", `function f(c: boolean): void { let t = (1, 2); let x = if (c) { t } else { (3.5, 4) }; }`},
+		{"literal-float-tuple-element", `function f(c: boolean): void { let q = 2; let x = if (c) { (q, 2) } else { (3.5, 4) }; }`},
+		{"literal-float-enum-payload", `function f(c: boolean): void { let q = 2; let x = if (c) { Some(q) } else { Some(3.5) }; }`},
+		{"literal-float-value-array", `function f(c: boolean): void { let a: (f64, i32)[] = [if (c) { (1, 2) } else { (3, 4) }]; }`},
+		{"literal-float-block-tail", `function f(c: boolean): void { let x: string = { let q = 1; if (c) { q } else { 2.5 } }; }`},
+		{"literal-float-already-pinned", `function f(c: boolean): void { let q = 2; let n: i32 = q; let x = if (c) { q } else { 2.5 }; }`},
+		{"literal-array-local-width", `function f(): void { let xs = [1]; let w: u64[] = xs; }`},
 		{"wide-lit-beside-i32-operand", "function main(): i32 { let a: i32 = 3; let t = a - 4611686018427387904; return 0; }\n"},
 		{"wide-lit-i32-annotated-arith", "function main(): i32 { let t: i32 = 3 - 4611686018427387904; return 0; }\n"},
 		{"wide-lit-past-i64-unannotated", "function main(): i32 { let t = 3 - 18446744073709551616; return 0; }\n"},
@@ -4226,7 +4238,7 @@ function main(): i32 { return 0; }`},
 			got := driverCodes(out)
 			want := goCheckerCodes(t, dir, tc.src)
 			if !equalStrings(got, want) {
-				t.Errorf("%s: self-host codes %v disagree with Go checker %v (unfiltered)\nsrc: %s", tc.name, got, want, tc.src)
+				t.Errorf("%s: self-host codes %v disagree with Go checker %v (unfiltered)\nsrc: %s", tc.name, got, want, tc.src+"\nself-host output:\n"+out)
 			}
 		})
 	}
@@ -4634,7 +4646,7 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 			got := driverCodes(out)
 			want := goCheckerCodes(t, t.TempDir(), tc.src)
 			if !equalStrings(got, want) {
-				t.Errorf("%s: self-host file-loader codes %v disagree with Go checker %v (unfiltered)\nsrc: %s", tc.name, got, want, tc.src)
+				t.Errorf("%s: self-host file-loader codes %v disagree with Go checker %v (unfiltered)\nsrc: %s", tc.name, got, want, tc.src+"\nself-host output:\n"+out)
 			}
 		})
 	}

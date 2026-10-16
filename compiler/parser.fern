@@ -12999,7 +12999,7 @@ pub function number_literal_tree(e: ast.Expr): boolean {
 pub function settle_int_tree(e: ast.Expr, tag: string): ast.Expr {
   match (e) {
     ast.ExprNumber(n) => {
-      return ast.ExprNumber { ...n, suffix: tag };
+      return ast.ExprNumber { ...n, suffix: tag, is_float: n.is_float || tag == "f32" || tag == "f64" };
     },
     ast.ExprUnary(u) => {
       return ast.ExprUnary { ...u, operand: settle_int_tree(u.operand, tag), ty: tag };
@@ -16846,7 +16846,7 @@ function ms_expr_to(e: ast.Expr, dest: string, env: MEnv, gstructs: StructDecl[]
       let els: ast.Expr[] = [];
       let cur: Insts = ins;
       for x in a.elements {
-        let re: RExpr = ms_expr_to(x, el, env, gstructs, funcs, cur);
+        let re: RExpr = ms_expr_to(x, array_element_expected(x, el), env, gstructs, funcs, cur);
         cur = re.rins;
         els = els.append(re.rexpr);
       }
@@ -16854,6 +16854,19 @@ function ms_expr_to(e: ast.Expr, dest: string, env: MEnv, gstructs: StructDecl[]
     }
   }
   return ms_expr(e, env, gstructs, funcs, ins);
+}
+
+// Tuple-valued blocks join their components before an array receives them.
+// An array's annotation must not change that join during monomorphisation.
+function array_element_expected(e: ast.Expr, expected: string): string {
+  if (expected.len() > 0 && expected[0] == b'(' && parse_type_ref(expected).is_tuple) {
+    if let ast.ExprCall(c) = e {
+      if (is_value_block(c)) {
+        return "";
+      }
+    }
+  }
+  return expected;
 }
 
 // ms_call_to rewrites a call whose value goes to `dest`: an immediately
@@ -18566,7 +18579,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
       let cur: Insts = ins;
       let i: i32 = 0;
       while (i < a.elements.len()) {
-        let re: RExpr = me_expr(a.elements[i], elexp, env, enums, structs, funcs, cur);
+        let re: RExpr = me_expr(a.elements[i], array_element_expected(a.elements[i], elexp), env, enums, structs, funcs, cur);
         cur = re.rins;
         nels = nels.append(re.rexpr);
         i = i + 1;
@@ -24068,7 +24081,7 @@ function stamp_value_block_ret(e: ast.Expr, decl_ty: string): ast.Expr {
         let nels: ast.Expr[] = [];
         let ai: i32 = 0;
         while (ai < al.elements.len()) {
-          nels = nels.append(stamp_value_block_ret(al.elements[ai], elem_ty));
+          nels = nels.append(stamp_value_block_ret(al.elements[ai], array_element_expected(al.elements[ai], elem_ty)));
           ai = ai + 1;
         }
         return ast.ExprArray { ...al, elements: nels };

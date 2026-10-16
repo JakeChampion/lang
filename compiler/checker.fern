@@ -11353,7 +11353,7 @@ function mx_joined_literal(el: VbStore, e: ast.Expr): ast.Expr {
 
 // MxFold is a value if's or match's arms joined in order: `ok` until an arm,
 // typed `bad`, fails to join `acc`, the arms joined before it.
-struct MxFold { ok: boolean, acc: VbStore, bad: typeinfo.Type }
+struct MxFold { ok: boolean, acc: VbStore, bad: typeinfo.Type, bad_index: i32 }
 
 // mx_fold_arms joins arm results the way unifyIfArms does. An arm that did not
 // type, or results that do not line up with their expressions, leave nothing
@@ -11363,7 +11363,7 @@ struct MxFold { ok: boolean, acc: VbStore, bad: typeinfo.Type }
 // an enum, whose arms do not (`assigns`).
 function mx_fold_arms(types: typeinfo.Type[], exprs: ast.Expr[], unions: UnionSig[], enums: parser.EnumDecl[], if_form: boolean, assigns: boolean): MxFold {
   let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
-  let unjudged: MxFold = MxFold { ok: true, acc: VbStore { t: t_unknown("value block arms unjudged"), e: none }, bad: t_unknown("") };
+  let unjudged: MxFold = MxFold { ok: true, acc: VbStore { t: t_unknown("value block arms unjudged"), e: none }, bad: t_unknown(""), bad_index: 0 };
   if (types.len() == 0 || types.len() != exprs.len()) {
     return unjudged;
   }
@@ -11377,12 +11377,12 @@ function mx_fold_arms(types: typeinfo.Type[], exprs: ast.Expr[], unions: UnionSi
   while (j < types.len()) {
     let arm: VbStore = VbStore { t: types[j], e: exprs[j] };
     if (!mx_arm_compatible(acc, arm, false, assigns, unions, enums) || if_form && is_dyn_slot(acc.t) != is_dyn_slot(arm.t)) {
-      return MxFold { ok: false, acc: acc, bad: arm.t };
+      return MxFold { ok: false, acc: acc, bad: arm.t, bad_index: j };
     }
     acc = mx_arm_join(acc, arm);
     j = j + 1;
   }
-  return MxFold { ok: true, acc: acc, bad: acc.t };
+  return MxFold { ok: true, acc: acc, bad: acc.t, bad_index: 0 };
 }
 
 // vb_arms_fold is mx_fold_arms over a value block's arms. The scope carries no
@@ -11394,12 +11394,38 @@ function vb_arms_fold(types: typeinfo.Type[], exprs: ast.Expr[], s: Scope): MxFo
 
 // mx_e031 emits one E031 if a value if's or match's arms do not all join.
 function mx_e031(types: typeinfo.Type[], exprs: ast.Expr[], unions: UnionSig[], enums: parser.EnumDecl[], if_form: boolean, assigns: boolean, line: i32, col: i32): util.Diag[] {
-  let out: util.Diag[] = [];
   let f: MxFold = mx_fold_arms(types, exprs, unions, enums, if_form, assigns);
+  return mx_fold_diags(f, line, col);
+}
+
+function mx_fold_diags(f: MxFold, line: i32, col: i32): util.Diag[] {
+  let out: util.Diag[] = [];
   if (!f.ok) {
     out = out.append(dg_at("E031", "match/if-expression arms have incompatible types: " + type_label(f.acc.t) + " vs " + type_label(f.bad), line, col));
   }
   return out;
+}
+
+// A literal match is an if chain whose conditions are synthetic. Its
+// preserved arm positions identify the failing arm, as a real match does.
+function mx_if_diags(f: ast.StmtIf, types: typeinfo.Type[], exprs: ast.Expr[], unions: UnionSig[], enums: parser.EnumDecl[], origin: string): util.Diag[] {
+  let fold: MxFold = mx_fold_arms(types, exprs, unions, enums, origin == parser.ORIGIN_IF_EXPR, origin == parser.ORIGIN_MATCH_EXPR);
+  let line: i32 = expr_line(f.cond);
+  let col: i32 = expr_col(f.cond);
+  if (!fold.ok && f.sugar.lits.len() > 0) {
+    let at: i32 = 0;
+    for arm in f.sugar.lits {
+      if (mx_branch_yields(arm.body)) {
+        if (at == fold.bad_index) {
+          return mx_fold_diags(fold, arm.line, arm.col);
+        }
+        at = at + 1;
+      }
+    }
+    line = f.sugar.line;
+    col = f.sugar.col;
+  }
+  return mx_fold_diags(fold, line, col);
 }
 
 // mx_branch_yields: does a value branch reach its terminal value? One whose
@@ -11428,6 +11454,11 @@ function mx_arm_result_type(e: ast.Expr, s: Scope): typeinfo.Type {
   let (block, is_block) = value_block_body(e);
   if (is_unknown(t) && is_block) {
     return block_tail_arm_type(block, s);
+  }
+  if (is_integer(t) && gcall_open(e, s)) {
+    if let typeinfo.TypeI32(n) = t {
+      return typeinfo.TypeI32 { ...n, polymorphic: true };
+    }
   }
   return unsettled_marked(t, e, s.lit_locals, false);
 }
@@ -11614,7 +11645,7 @@ function mx_expr(e: ast.Expr, s: Scope, unions: UnionSig[], enums: parser.EnumDe
                 },
                 ast.StmtIf(f) => {
                   let fts: typeinfo.Type[] = mx_if_branch_types(f, s);
-                  out = util.append_diags(out, mx_e031(fts, arms, unions, enums, lm.origin == parser.ORIGIN_IF_EXPR, lm.origin == parser.ORIGIN_MATCH_EXPR, expr_line(f.cond), expr_col(f.cond)));
+                  out = util.append_diags(out, mx_if_diags(f, fts, arms, unions, enums, lm.origin));
                   out = util.append_diags(out, vb_pinned_ranges(fts, arms));
                 },
                 _ => {}
@@ -13026,6 +13057,9 @@ function numeral_spelling(n: ast.ExprNumber): string {
 // numeral, so it is left alone.
 function suffix_range_diag(num: ast.ExprNumber, negated: boolean): util.Diag[] {
   let out: util.Diag[] = [];
+  if ((!num.is_float && num.suffix.len() == 0 || parser.float_settled_int(num)) && !parser.is_quoted_literal(num) && !parser.is_unit_literal(num) && !int_lit_fits(num.text, "u64", false)) {
+    return out.append(dg_at("E047", "literal " + num.text + " does not fit in any integer type; write it as a float for f64", num.line, num.col));
+  }
   if (num.is_float || parser.is_quoted_literal(num) || num.suffix.len() == 0) {
     return out;
   }
@@ -13395,7 +13429,7 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
             return true;
           }
           for element in arr.elements {
-            if (!settles_or_assignable(element, wa.elem, s)) {
+            if (!array_element_settles(element, wa.elem, s)) {
               return false;
             }
           }
@@ -13437,6 +13471,19 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
     }
   }
   return false;
+}
+
+// A value block producing a tuple has already joined its elements. An
+// enclosing array cannot settle those components again at another width.
+function array_element_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
+  if let typeinfo.TypeTuple(_) = want {
+    if let ast.ExprCall(c) = e {
+      if (parser.is_value_block(c)) {
+        return nested_assignable(check_expr(e, s), want, s.unions.unions);
+      }
+    }
+  }
+  return settles_or_assignable(e, want, s);
 }
 
 // ctor_boxes_into: a variant construction is a coercion site, so its payload
@@ -16243,8 +16290,12 @@ function array_elem_type_of(t: typeinfo.Type): typeinfo.Type {
 // and a `T[]` call argument.
 function array_elem_check(elem_ty: typeinfo.Type, init: ast.Expr, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
-  if (is_unknown(elem_ty) || is_primitive_type(elem_ty)) {
-    return out;
+  if (!is_dyn_slot(elem_ty) && !is_str_view(elem_ty)) {
+    if let typeinfo.TypeUnion(_) = elem_ty {} else {
+      if let typeinfo.TypeStruct(_) = elem_ty {} else {
+        return out;
+      }
+    }
   }
   match (init) {
     ast.ExprArray(arr) => {
@@ -25504,11 +25555,6 @@ function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
       i = i + 1;
     }
     let t: typeinfo.Type = check_expr(r.value, bs);
-    if let typeinfo.TypeFloat(f) = t {
-      if (f.polymorphic) {
-        return t_unknown("value block tail");
-      }
-    }
     if (!names_whole_type(t, bs)) {
       return t_unknown("value block tail");
     }
@@ -28406,7 +28452,7 @@ function pretype_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): pa
 // AST, so settle_literal_locals infers each local's width first and writes it
 // into the source: an annotation on the `let`, a suffix on the literals of the
 // range bounds. The checker and the lowering then read one declared type. An
-// i32 local is left as written.
+// local whose class stays open is left as written.
 //
 // The inference is union-find over the literal locals of one function. Two
 // locals an untyped expression joins (`let y = x + 1`, `x < y`, `x = y`) share
@@ -28421,6 +28467,9 @@ function pretype_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): pa
 // 2)` is `both(1u64, 2u64)`. The pass records that width against each literal
 // argument (cargs / ctags) and writes it as the literal's suffix. A call no
 // position types keeps its default: i32, or i64 for a wide literal argument.
+// Float locals and tuple/array components keep classes too. Integer locals
+// read by a float arm keep their integer representation: the rewrite converts
+// that read, including arithmetic over it, instead of changing other uses.
 
 // pend holds the open generic reads a literal local was compared or combined
 // with: each takes the width pend_id's class settles at, once the body is walked.
@@ -28430,7 +28479,10 @@ function pretype_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): pa
 // bound). sargs and sids are flat; sfirst[j] is struct j's first argument.
 // wkeys / wtags are the declarations whose whole type a widening already
 // decided: an array of generic struct literals a typed sibling widened.
-struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: string[], ctags: string[], pend: ast.Expr[], pend_id: i32[], pend_scope: Scope[], skeys: string[], snames: string[], sfirst: i32[], sargs: string[], sids: i32[], wkeys: string[], wtags: string[], eargs: string[], eids: i32[] }
+// tkeys / ttypes keep tuple, array and float locals with classes in their
+// component types. cargs / ctags also carry float conversions keyed by the
+// expression's position; generic argument keys use a separate `c` prefix.
+struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: string[], ctags: string[], pend: ast.Expr[], pend_id: i32[], pend_scope: Scope[], skeys: string[], snames: string[], sfirst: i32[], sargs: string[], sids: i32[], wkeys: string[], wtags: string[], eargs: string[], eids: i32[], tkeys: string[], ttypes: typeinfo.Type[] }
 
 struct LitRewrite { keys: string[], tags: string[], cargs: string[], ctags: string[] }
 
@@ -28623,15 +28675,16 @@ function lit_new(st: LitInfer, key: string): LitInfer {
   return LitInfer { ...st, parent: st.parent.append(st.parent.len()), width: st.width.append(t_unknown("open")), keys: st.keys.append(key) };
 }
 
-// lit_fix gives every open class among `ids` the integer type `w`.
+// lit_fix fixes open integer classes, or a float class at a concrete float
+// width. An integer local cannot acquire a float representation here.
 function lit_fix(st: LitInfer, ids: i32[], w: typeinfo.Type): LitInfer {
-  if (!is_integer(w)) {
+  if (!is_integer(w) && !is_float(w)) {
     return st;
   }
   let out: LitInfer = st;
   for k in ids {
     let r: i32 = lit_find(out, k);
-    if (is_unknown(out.width[r])) {
+    if (is_unknown(out.width[r]) && is_integer(w) || is_poly_float(out.width[r]) && is_float(w)) {
       out = LitInfer { ...out, width: out.width.with(r, w) };
     }
   }
@@ -28646,13 +28699,16 @@ function lit_link(st: LitInfer, ids: i32[]): LitInfer {
   while (i < ids.len()) {
     let ra: i32 = lit_find(out, ids[0]);
     let rb: i32 = lit_find(out, ids[i]);
-    let afixed: boolean = !is_unknown(out.width[ra]);
-    let bfixed: boolean = !is_unknown(out.width[rb]);
+    let afixed: boolean = !is_unknown(out.width[ra]) && !is_poly_float(out.width[ra]);
+    let bfixed: boolean = !is_unknown(out.width[rb]) && !is_poly_float(out.width[rb]);
     if (ra != rb && !(afixed && bfixed)) {
       if (bfixed) {
         out = LitInfer { ...out, parent: out.parent.with(ra, rb) };
       } else {
         out = LitInfer { ...out, parent: out.parent.with(rb, ra) };
+        if (is_unknown(out.width[ra]) && is_poly_float(out.width[rb])) {
+          out = LitInfer { ...out, width: out.width.with(ra, out.width[rb]) };
+        }
       }
     }
     i = i + 1;
@@ -28666,76 +28722,111 @@ function lit_is_cmp(op: string): boolean {
 
 // lit_demand: `e` is read at `want`, so an untyped tree takes it.
 function lit_demand(e: ast.Expr, want: typeinfo.Type, s: Scope, st: LitInfer): LitInfer {
-  if (is_integer(want) && open_tree(e, s)) {
+  if let ast.ExprIdent(id) = e {
+    st = lit_type_demand(s.lookup(id.name), want, st);
+  }
+  if ((is_integer(want) || is_float(want)) && open_tree(e, s)) {
     return demand_open(e, want, s, st);
   }
   match (want) {
     typeinfo.TypeUnion(wu) => {
-      let sig: UnionSig = s.lookup_union(wu.name);
-      if (sig.instance != "") {
-        return lit_demand(e, s.resolve_type(sig.instance), s, st);
-      }
-      if let typeinfo.TypeUnion(have) = check_expr(e, s) {
-        if (have.name == wu.name && have.args.len() == wu.args.len()) {
-          let out: LitInfer = st;
-          let j: i32 = 0;
-          while (j < have.args.len()) {
-            let k: i32 = lit_id(have.args[j]);
-            if (k >= 0) {
-              out = lit_fix(out, [k], wu.args[j]);
-            }
-            j = j + 1;
-          }
-          return out;
-        }
-      }
+      return lit_union_demand(e, wu, s, st);
     },
     typeinfo.TypeStruct(ws) => {
-      if let ast.ExprIdent(sid) = e {
-        let (name, ids) = lit_struct_of(s.lookup(sid.name));
-        if (name == ws.name && ids.len() == ws.args.len()) {
-          let outs: LitInfer = st;
-          let j: i32 = 0;
-          while (j < ids.len()) {
-            if (ids[j] >= 0) {
-              outs = lit_fix(outs, [ids[j]], ws.args[j]);
-            }
-            j = j + 1;
-          }
-          return outs;
-        }
-      }
+      return lit_struct_demand(e, ws, s, st);
     },
     typeinfo.TypeTuple(wt) => {
-      if let ast.ExprTuple(tl) = e {
-        if (tl.elements.len() == wt.elements.len()) {
-          let out: LitInfer = st;
-          let i: i32 = 0;
-          while (i < tl.elements.len()) {
-            out = lit_demand(tl.elements[i], wt.elements[i], s, out);
-            i = i + 1;
-          }
-          return out;
-        }
-      }
+      return lit_tuple_demand(e, wt, s, st);
     },
     typeinfo.TypeArray(wa) => {
-      if let ast.ExprArray(arr) = e {
-        let out: LitInfer = st;
-        for el in arr.elements {
-          out = lit_demand(el, wa.elem, s, out);
-        }
-        return out;
-      }
+      return lit_array_demand(e, wa, s, st);
     },
     _ => {}
   }
+  return lit_other_demand(e, want, s, st);
+}
+
+function lit_other_demand(e: ast.Expr, want: typeinfo.Type, s: Scope, st: LitInfer): LitInfer {
   if let ast.ExprCall(c) = e {
     if (parser.is_value_block(c)) {
       return lit_value_block(c, want, s, st);
     }
   }
   return lit_expr(e, s, gcall_demand(e, want, s, st));
+}
+
+function lit_union_demand(e: ast.Expr, wu: typeinfo.TypeUnion, s: Scope, st: LitInfer): LitInfer {
+  let sig: UnionSig = s.lookup_union(wu.name);
+  if (sig.instance != "") {
+    return lit_demand(e, s.resolve_type(sig.instance), s, st);
+  }
+  if let typeinfo.TypeUnion(have) = check_expr(e, s) {
+    if (have.name == wu.name && have.args.len() == wu.args.len()) {
+      let out: LitInfer = st;
+      let j: i32 = 0;
+      while (j < have.args.len()) {
+        let k: i32 = lit_id(have.args[j]);
+        if (k >= 0) {
+          out = lit_fix(out, [k], wu.args[j]);
+        }
+        j = j + 1;
+      }
+      return out;
+    }
+  }
+  return lit_other_demand(e, wu, s, st);
+}
+
+function lit_struct_demand(e: ast.Expr, ws: typeinfo.TypeStruct, s: Scope, st: LitInfer): LitInfer {
+  if let ast.ExprIdent(sid) = e {
+    let (name, ids) = lit_struct_of(s.lookup(sid.name));
+    if (name == ws.name && ids.len() == ws.args.len()) {
+      let outs: LitInfer = st;
+      let j: i32 = 0;
+      while (j < ids.len()) {
+        if (ids[j] >= 0) {
+          outs = lit_fix(outs, [ids[j]], ws.args[j]);
+        }
+        j = j + 1;
+      }
+      return outs;
+    }
+  }
+  return lit_other_demand(e, ws, s, st);
+}
+
+function lit_tuple_demand(e: ast.Expr, wt: typeinfo.TypeTuple, s: Scope, st: LitInfer): LitInfer {
+  if let ast.ExprTuple(tl) = e {
+    if (tl.elements.len() == wt.elements.len()) {
+      let out: LitInfer = st;
+      let i: i32 = 0;
+      while (i < tl.elements.len()) {
+        out = lit_demand(tl.elements[i], wt.elements[i], s, out);
+        i = i + 1;
+      }
+      return out;
+    }
+  }
+  return lit_other_demand(e, wt, s, st);
+}
+
+function lit_array_demand(e: ast.Expr, wa: typeinfo.TypeArray, s: Scope, st: LitInfer): LitInfer {
+  if let ast.ExprArray(arr) = e {
+    let out: LitInfer = st;
+    for el in arr.elements {
+      if let typeinfo.TypeTuple(_) = wa.elem {
+        if let ast.ExprCall(c) = el {
+          if (parser.is_value_block(c)) {
+            out = lit_expr(el, s, out);
+            continue;
+          }
+        }
+      }
+      out = lit_demand(el, wa.elem, s, out);
+    }
+    return out;
+  }
+  return lit_other_demand(e, wa, s, st);
 }
 
 // lit_arg: `e` stands alone — an untyped tree's members share one type, and
@@ -29008,7 +29099,7 @@ function gcall_demand(e: ast.Expr, want: typeinfo.Type, s: Scope, st: LitInfer):
     let out: LitInfer = st;
     let i: i32 = 0;
     while (i < bn.len()) {
-      if (is_integer(bt[i]) && lit_bound_typevar(sig, c, bn[i], s)) {
+      if ((is_integer(bt[i]) || is_float(bt[i])) && lit_bound_typevar(sig, c, bn[i], s)) {
         out = gcall_settle(c, sig, bn[i], bt[i], s, out);
       }
       i = i + 1;
@@ -29030,7 +29121,7 @@ function gcall_settle(c: ast.ExprCall, sig: FuncSig, tp: string, w: typeinfo.Typ
     if (sig.param_type_names[k] == tp) {
       let (seed, ids) = lit_tree(c.args[k], s, []);
       out = lit_fix(out, ids, w);
-      if (int_literal_tree(c.args[k]) && (tag == "i32" || lit_suffix_spelled(tag))) {
+      if (int_literal_tree(c.args[k]) && (tag == "i32" || is_float(w) || lit_suffix_spelled(tag))) {
         out = LitInfer { ...out, cargs: out.cargs.append(gcall_arg_key(c, k)), ctags: out.ctags.append(tag) };
       }
       out = gcall_demand(c.args[k], w, s, out);
@@ -29076,6 +29167,9 @@ function lit_call(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
 // lit_value_block walks a value block whose value is read at `want`. Every
 // return, including returns in match arms, shares that destination type.
 function lit_value_block(c: ast.ExprCall, want: typeinfo.Type, s: Scope, st: LitInfer): LitInfer {
+  if (is_unknown(want) || is_float(want)) {
+    want = check_expr(c, lit_typed_scope(s, st));
+  }
   if let ast.ExprLambda(vb) = c.callee {
     // Match-expression arms return before the final statement. They share
     // the value block's destination just as its final return does.
@@ -29093,12 +29187,249 @@ function lit_value_block(c: ast.ExprCall, want: typeinfo.Type, s: Scope, st: Lit
       return out;
     }
     if let ast.StmtReturn(r) = vb.body[last] {
-      return lit_demand(r.value, want, cur, out);
+      return lit_demand(r.value, want, cur, lit_float_demand(r.value, want, cur, out));
     }
-    let (ls, lst) = lit_stmt(vb.body[last], cur, out);
-    return lst;
+    return lit_value_branch(vb.body[last], want, cur, out);
   }
   return st;
+}
+
+function lit_value_branch(stmt: ast.Stmt, want: typeinfo.Type, s: Scope, st: LitInfer): LitInfer {
+  if let ast.StmtIf(f) = stmt {
+    st = lit_expr(f.cond, s, st);
+    return lit_value_body(f.else_body, want, s, lit_value_body(f.then_body, want, s, st));
+  }
+  if let ast.StmtMatch(m) = stmt {
+    st = lit_arg(m.scrutinee, s, st);
+    for arm in m.arms {
+      let cur: Scope = annotate_arm_scope(arm, s, check_expr(m.scrutinee, s));
+      if (arm.has_guard) {
+        st = lit_expr(arm.guard, cur, st);
+      }
+      st = lit_value_body(arm.body, want, cur, st);
+    }
+    return st;
+  }
+  let (scope, out) = lit_stmt(stmt, s, st);
+  return out;
+}
+
+function lit_value_body(body: ast.Stmt[], want: typeinfo.Type, s: Scope, st: LitInfer): LitInfer {
+  let cur: Scope = s;
+  let i: i32 = 0;
+  while (i + 1 < body.len()) {
+    let (next, out) = lit_stmt(body[i], cur, st);
+    cur = next;
+    st = out;
+    i = i + 1;
+  }
+  if (body.len() == 0) {
+    return st;
+  }
+  if let ast.StmtReturn(r) = body[i] {
+    return lit_demand(r.value, want, cur, lit_float_demand(r.value, want, cur, st));
+  }
+  return lit_value_branch(body[i], want, cur, st);
+}
+
+function lit_float_needed(have: typeinfo.Type, want: typeinfo.Type): boolean {
+  if (is_poly_int(have) && is_float(want)) {
+    return true;
+  }
+  if let typeinfo.TypeTuple(h) = have {
+    if let typeinfo.TypeTuple(w) = want {
+      let i: i32 = 0;
+      while (i < h.elements.len() && i < w.elements.len()) {
+        if (lit_float_needed(h.elements[i], w.elements[i])) {
+          return true;
+        }
+        i = i + 1;
+      }
+    }
+  }
+  return false;
+}
+
+function lit_float_key(e: ast.Expr): string {
+  return "f" + util.i32_to_string(expr_line(e)) + ":" + util.i32_to_string(expr_col(e));
+}
+
+// An integer literal local stays an integer. A float arm promotes the read,
+// so earlier arithmetic and a later integer-width demand keep their meaning.
+function lit_float_demand(e: ast.Expr, want: typeinfo.Type, s: Scope, st: LitInfer): LitInfer {
+  if let ast.ExprTuple(t) = e {
+    if let typeinfo.TypeTuple(w) = want {
+      let i: i32 = 0;
+      while (i < t.elements.len() && i < w.elements.len()) {
+        st = lit_float_demand(t.elements[i], w.elements[i], s, st);
+        i = i + 1;
+      }
+      return st;
+    }
+  }
+  if let ast.ExprCall(c) = e {
+    if (parser.is_value_block(c)) {
+      return lit_value_body(parser.vb_body(c), want, s, st);
+    }
+    st = lit_float_constructor(c, want, s, st);
+  }
+  let have: typeinfo.Type = mx_arm_result_type(e, lit_typed_scope(s, st));
+  if (lit_float_needed(have, want) && !int_literal_tree(e)) {
+    return LitInfer { ...st, cargs: st.cargs.append(lit_float_key(e)), ctags: st.ctags.append(typeinfo.spelling(want)) };
+  }
+  return st;
+}
+
+function lit_float_constructor(c: ast.ExprCall, want: typeinfo.Type, s: Scope, st: LitInfer): LitInfer {
+  if (constructor_destination(c, want, s)) {
+    let index: i32 = builtin_payload_index(ctor_variant_name(c), want);
+    let args: typeinfo.Type[] = nominal_args(want);
+    if (index >= 0 && index < args.len() && c.args.len() == 1) {
+      return lit_float_demand(c.args[0], args[index], s, st);
+    }
+  }
+  return st;
+}
+
+// The inference walk binds locals to class markers. Read their current
+// numeric types when joining value arms, retaining polymorphism only for
+// classes that no earlier use has fixed.
+function lit_typed_scope(s: Scope, st: LitInfer): Scope {
+  let types: typeinfo.Type[] = s.types;
+  let lits: string[] = s.lit_locals;
+  let i: i32 = 0;
+  while (i < types.len()) {
+    let original: typeinfo.Type = types[i];
+    types = types.with(i, lit_typed_type(original, st, true));
+    let k: i32 = lit_id(original);
+    if (k >= 0) {
+      let w: typeinfo.Type = st.width[lit_find(st, k)];
+      if (is_unknown(w)) {
+        w = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: true };
+        lits = lits.append(s.names[i]);
+      }
+      types = types.with(i, w);
+    }
+    i = i + 1;
+  }
+  return Scope { ...s, types: types, lit_locals: lits };
+}
+
+function lit_typed_type(t: typeinfo.Type, st: LitInfer, poly: boolean): typeinfo.Type {
+  let k: i32 = lit_id(t);
+  if (k >= 0) {
+    let w: typeinfo.Type = st.width[lit_find(st, k)];
+    if (is_unknown(w)) {
+      return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: poly };
+    }
+    return w;
+  }
+  if let typeinfo.TypeTuple(tt) = t {
+    let elems: typeinfo.Type[] = [];
+    for el in tt.elements {
+      elems = elems.append(lit_typed_type(el, st, poly));
+    }
+    return t_tuple(elems);
+  }
+  if let typeinfo.TypeArray(a) = t {
+    return typeinfo.TypeArray { ...a, elem: lit_typed_type(a.elem, st, poly) };
+  }
+  return t;
+}
+
+function lit_type_demand(have: typeinfo.Type, want: typeinfo.Type, st: LitInfer): LitInfer {
+  let k: i32 = lit_id(have);
+  if (k >= 0) {
+    return lit_fix(st, [k], want);
+  }
+  if let typeinfo.TypeTuple(h) = have {
+    if let typeinfo.TypeTuple(w) = want {
+      if (h.elements.len() == w.elements.len()) {
+        let i: i32 = 0;
+        while (i < h.elements.len()) {
+          st = lit_type_demand(h.elements[i], w.elements[i], st);
+          i = i + 1;
+        }
+      }
+    }
+  }
+  if let typeinfo.TypeArray(h) = have {
+    if let typeinfo.TypeArray(w) = want {
+      st = lit_type_demand(h.elem, w.elem, st);
+    }
+  }
+  return st;
+}
+
+function lit_type_link(a: typeinfo.Type, b: typeinfo.Type, st: LitInfer): LitInfer {
+  let left: i32 = lit_id(a);
+  let right: i32 = lit_id(b);
+  if (left >= 0 && right >= 0) {
+    return lit_link(st, [left, right]);
+  }
+  if (left >= 0) {
+    return lit_fix(st, [left], b);
+  }
+  if (right >= 0) {
+    return lit_fix(st, [right], a);
+  }
+  if let typeinfo.TypeTuple(at) = a {
+    if let typeinfo.TypeTuple(bt) = b {
+      if (at.elements.len() == bt.elements.len()) {
+        let i: i32 = 0;
+        while (i < at.elements.len()) {
+          st = lit_type_link(at.elements[i], bt.elements[i], st);
+          i = i + 1;
+        }
+      }
+    }
+  }
+  if let typeinfo.TypeArray(at) = a {
+    if let typeinfo.TypeArray(bt) = b {
+      st = lit_type_link(at.elem, bt.elem, st);
+    }
+  }
+  return st;
+}
+
+// Keep a class for each literal component, so a later whole-tuple or
+// whole-array demand reaches the original initialiser as well as its uses.
+function lit_composite_local(e: ast.Expr, s: Scope, st: LitInfer): (typeinfo.Type, LitInfer, boolean) {
+  let (seed, ids) = lit_tree(e, s, []);
+  if (seed || float_literal_tree(e)) {
+    let k: i32 = st.parent.len();
+    st = lit_new(st, "");
+    if (float_literal_tree(e)) {
+      st = LitInfer { ...st, width: st.width.with(k, typeinfo.TypeFloat { width: 64, polymorphic: true }) };
+    }
+    return (lit_marker(k), lit_link(st, ids.append(k)), true);
+  }
+  if let ast.ExprTuple(t) = e {
+    let elems: typeinfo.Type[] = [];
+    let any: boolean = false;
+    for el in t.elements {
+      let (ty, next, found) = lit_composite_local(el, s, st);
+      st = next;
+      any = any || found;
+      elems = elems.append(ty);
+    }
+    return (t_tuple(elems), st, any);
+  }
+  if let ast.ExprArray(a) = e {
+    if (a.elements.len() > 0) {
+      let (elem, next, any) = lit_composite_local(a.elements[0], s, st);
+      st = next;
+      let i: i32 = 1;
+      while (i < a.elements.len()) {
+        let (ty, more, found) = lit_composite_local(a.elements[i], s, st);
+        st = more;
+        st = lit_type_link(elem, ty, st);
+        i = i + 1;
+      }
+      return (t_array(elem), st, any);
+    }
+  }
+  return (check_expr(e, lit_typed_scope(s, st)), st, false);
 }
 
 function lit_composite(e: ast.Expr): boolean {
@@ -29425,6 +29756,12 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
             return (s.bind(v.name, lit_struct_marker(ss, own_ids)), sst);
           }
         }
+        if (lit_composite(v.init) || float_literal_tree(v.init)) {
+          let (ct, cs, found) = lit_composite_local(v.init, s, st);
+          if (found) {
+            return (s.bind(v.name, ct), LitInfer { ...cs, tkeys: cs.tkeys.append(lit_var_key(v)), ttypes: cs.ttypes.append(ct) });
+          }
+        }
         return (bind_stmt(stmt, s), lit_expr(v.init, s, st));
       }
       let k: i32 = st.parent.len();
@@ -29642,8 +29979,8 @@ function lit_struct_tags(st: LitInfer): (string[], string[]) {
   return (keys, tags);
 }
 
-// lit_rewrites lists the declarations whose class settled at a type other
-// than i32, with the spelling to write. A key two candidates share — two
+// lit_rewrites lists the declarations whose class a use fixed, with the
+// spelling to write. A key two candidates share — two
 // synthesized declarations at one position — is dropped when they disagree.
 function lit_rewrites(st: LitInfer): LitRewrite {
   let keys: string[] = [];
@@ -29672,13 +30009,19 @@ function lit_rewrites(st: LitInfer): LitRewrite {
   let ot: string[] = [];
   let i: i32 = 0;
   while (i < keys.len()) {
-    if (tags[i].len() > 0 && tags[i] != "i32") {
+    if (tags[i].len() > 0 && (tags[i] != "i32" || !is_unknown(st.width[lit_find(st, util.index_of_str(st.keys, keys[i]))]))) {
       ok = ok.append(keys[i]);
       ot = ot.append(tags[i]);
     }
     i = i + 1;
   }
   let (sk, stg) = lit_struct_tags(st);
+  let ti: i32 = 0;
+  while (ti < st.tkeys.len()) {
+    ok = ok.append(st.tkeys[ti]);
+    ot = ot.append(typeinfo.spelling(lit_typed_type(st.ttypes[ti], st, false)));
+    ti = ti + 1;
+  }
   let si: i32 = 0;
   while (si < sk.len()) {
     ok = ok.append(sk[si]);
@@ -29786,12 +30129,44 @@ function lit_rewrite_stmt(st: ast.Stmt, rw: LitRewrite): (ast.Stmt, LitRewrite, 
 }
 
 function lit_rewrite_expr(e: ast.Expr, rw: LitRewrite): (ast.Expr, LitRewrite, boolean) {
+  let at: i32 = util.index_of_str(rw.cargs, lit_float_key(e));
+  if (at >= 0) {
+    return (lit_float_read(e, parser.parse_type_ref(rw.ctags[at])), rw, true);
+  }
   if let ast.ExprCall(c) = e {
     if (lit_call_settled(c, rw)) {
       return (lit_rewrite_call(c, rw), rw, true);
     }
   }
   return (e, rw, false);
+}
+
+function lit_float_read(e: ast.Expr, want: parser.TypeRef): ast.Expr {
+  if (want.is_tuple) {
+    let elems: ast.Expr[] = [];
+    let i: i32 = 0;
+    while (i < want.args.len()) {
+      let part: ast.Expr = ast.ExprFieldAccess { obj: e, field: util.i32_to_string(i), line: expr_line(e), col: expr_col(e), ty: "" };
+      elems = elems.append(lit_float_read(part, want.args[i]));
+      i = i + 1;
+    }
+    return ast.ExprTuple { elements: elems, line: expr_line(e), col: expr_col(e) };
+  }
+  if (want.base != "f32" && want.base != "f64") {
+    return e;
+  }
+  if let ast.ExprNumber(n) = e {
+    return ast.ExprNumber { ...n, is_float: true, suffix: want.base };
+  }
+  if let ast.ExprBinary(b) = e {
+    return ast.ExprBinary { ...b, left: lit_float_read(b.left, want), right: lit_float_read(b.right, want), ty: want.base };
+  }
+  if let ast.ExprUnary(u) = e {
+    if (u.op == "-" || u.op == "+") {
+      return ast.ExprUnary { ...u, operand: lit_float_read(u.operand, want), ty: want.base };
+    }
+  }
+  return ast.ExprUnary { op: "as_" + want.base, operand: e, line: expr_line(e), col: expr_col(e), ty: want.base };
 }
 
 function lit_call_settled(c: ast.ExprCall, rw: LitRewrite): boolean {
@@ -29874,7 +30249,7 @@ function widened_array_tag(ea: ast.ExprArray, s: Scope): string {
 }
 
 function lit_holds_int_literal(e: ast.Expr): boolean {
-  if (int_literal_tree(e)) {
+  if (int_literal_tree(e) || float_literal_tree(e)) {
     return true;
   }
   if let ast.ExprArray(ea) = e {
@@ -29970,7 +30345,7 @@ function lit_resolve_pending(st: LitInfer): LitInfer {
 }
 
 function settle_lit_body(stmts: ast.Stmt[], s: Scope): ast.Stmt[] {
-  let st: LitInfer = lit_resolve_pending(lit_stmts(stmts, s, LitInfer { parent: [LIT_WIDE], width: [t_i64()], keys: [""], cargs: [], ctags: [], pend: [], pend_id: [], pend_scope: [], skeys: [], snames: [], sfirst: [], sargs: [], sids: [], wkeys: [], wtags: [], eargs: [], eids: [] }));
+  let st: LitInfer = lit_resolve_pending(lit_stmts(stmts, s, LitInfer { parent: [LIT_WIDE], width: [t_i64()], keys: [""], cargs: [], ctags: [], pend: [], pend_id: [], pend_scope: [], skeys: [], snames: [], sfirst: [], sargs: [], sids: [], wkeys: [], wtags: [], eargs: [], eids: [], tkeys: [], ttypes: [] }));
   let rw: LitRewrite = lit_rewrites(st);
   if (rw.keys.len() == 0 && rw.cargs.len() == 0) {
     return stmts;
