@@ -148,8 +148,14 @@ Each is a bound with a test that crosses it.
    `TestServeH3SocketX86_64`, two requests on each connection over IPv4
    and IPv6, and independent connections reaching both supervised workers.
    `TestServeH3PeerLimitX86_64` pins per-IP admission independently of the
-   peer's UDP port. File bodies remain a follow-up to HTTP/2's part
-   producer in #12484.
+   peer's UDP port. File bodies use HTTP/2's existing part producer from
+   #12484: 64 KiB reads with file-identity checks, under the same HTTP/3
+   unacknowledged-byte cap as other chunk producers. Gate:
+   `TestServeH3FileInterp`, `TestServeH3FileX86_64`, and
+   `TestServeH3FileArm64`: whole binary files, ranges and seams, HEAD,
+   missing/invalid/empty files, bodyless statuses and trailers. The x86-64
+   transfer exceeds three times the cap and compares every byte by SHA-256.
+   ARM64 under QEMU is correctness coverage, not native performance.
 8. **Interop nightly.** h3spec, and more HTTP/3 peers beside aioquic
    (`scripts/net-quic-interop` has carried HTTP/3 both ways since 7a).
    Gate: the nightly job.

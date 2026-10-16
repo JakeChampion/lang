@@ -795,7 +795,7 @@ function __ranges_held(size: i64, ranges: i64[]): i64[] {
 }
 
 // __file_chunks(resp) — a response with a file body as a protocol that
-// frames its own body (HTTP/2) sends it: the body the file's
+// frames its own body (HTTP/2 or HTTP/3) sends it: the body the file's
 // ranges and seams as chunks (`__file_chunk`) under a `content-length` of
 // their total, or 404 and 500 in its place as `__serve_wire` answers them;
 // any other response as it is. The file is measured here, before the head
@@ -6569,7 +6569,8 @@ function __h3_at(q: __Quic, serial: i32): i32 {
 
 // __h3_respond(drv, c, fls, serial, id, method, resp) — the response on
 // stream `id` of connection `serial`: whole; its head now and its chunks as
-// a producer answers them (`BodyChunks`); its head alone for HEAD or a
+// a producer answers them (`BodyChunks`, including file ranges and seams);
+// its head alone for HEAD or a
 // status that forbids a body, without starting its producer.
 function __h3_respond[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], serial: i32, id: i64, method: string, resp: HttpResponse): (__Conns, __Flight[]) {
   let q: __Quic = c.quic;
@@ -6578,6 +6579,7 @@ function __h3_respond[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], seri
     return (c, fls);
   }
   let cur: __Conns = __stage_background(c, resp);
+  resp = __file_chunks(resp);
   let conn: h3q.Conn = q.conns[i];
   match (resp.body) {
     BodyChunks(producer) => {
