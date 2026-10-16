@@ -379,9 +379,7 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_uses_arr_slice_u8(cache)) {
     out = out.append("@uses_arr_slice_u8");
   }
-  if (module_calls_arr_str_join(cache)) {
-    out = out.append("@uses_arr_str_join");
-  }
+  out = array_helper_needs(cache, out);
   if (module_uses_divrem(cache)) {
     out = out.append("@uses_divrem");
   }
@@ -1625,11 +1623,29 @@ pub function module_uses_u32_to_string(cache: irtables.LowerResult[]): boolean {
   return module_calls_direct(cache, "__fern_u32_to_string");
 }
 
-// module_calls_arr_str_join reports whether any function emits the xs.join(sep)
-// runtime call (#5328) — so needs_of can pull in the $__fern_str_join WAT
-// helper (@uses_arr_str_join).
-pub function module_calls_arr_str_join(cache: irtables.LowerResult[]): boolean {
-  return module_calls_direct(cache, "__fern_arr_str_join");
+// The array helpers the module calls: the xs.join(sep) runtime call (#5328),
+// which pulls in the $__fern_str_join WAT helper, and a scalar xs.concat(ys).
+function array_helper_needs(cache: irtables.LowerResult[], own out: string[]): string[] {
+  if (module_calls_direct(cache, "__fern_arr_str_join")) {
+    out = out.append("@uses_arr_str_join");
+  }
+  if (module_calls_direct(cache, "__fern_arr_concat")) {
+    out = out.append("@uses_arr_concat");
+  }
+  return out;
+}
+
+// $__fern_arr_str_join (a shim over $__fern_str_join) backs xs.join(sep), the
+// register backends' __fern_arr_str_join runtime call, and $__fern_arr_concat a
+// scalar xs.concat(ys). Each is self-contained and emitted only when used.
+function array_helper_parts(needs: string[], own parts: string[]): string[] {
+  if (need(needs, "@uses_arr_str_join")) {
+    parts = parts.append(arr_str_join_helper());
+  }
+  if (need(needs, "@uses_arr_concat")) {
+    parts = parts.append(arr_concat_helper());
+  }
+  return parts;
 }
 
 // module_uses_buf reports whether any function emits one of the capacity-
@@ -12183,6 +12199,27 @@ pub function arr_slice8_helper(): string {
   return o;
 }
 
+// arr_concat_helper emits $__fern_arr_concat, `xs.concat(ys)` over scalar
+// elements: one box sized for both and two copies. `width` is the element's
+// bits, so its stride is width / 8 bytes, a u8[] packed a byte an element.
+// The parameters are in push order, the reverse of the native signature.
+pub function arr_concat_helper(): string {
+  let o: string = "";
+  o = o + "  (func $__fern_arr_concat (param $width i32) (param $b i32) (param $a i32) (result i32)\n";
+  o = o + "    (local $na i32) (local $nb i32) (local $n i32) (local $stride i32) (local $r i32)\n";
+  o = o + "    (local.set $stride (i32.shr_u (local.get $width) (i32.const 3)))\n";
+  o = o + "    (local.set $na (i32.load (local.get $a)))\n";
+  o = o + "    (local.set $nb (i32.load (local.get $b)))\n";
+  o = o + "    (local.set $n (i32.add (local.get $na) (local.get $nb)))\n";
+  o = o + "    (local.set $r (call $__fern_arr_elems (local.get $n) (local.get $stride)))\n";
+  o = o + "    (i32.store (local.get $r) (local.get $n))\n";
+  o = o + "    (i32.store offset=4 (local.get $r) (local.get $n))\n";
+  o = o + "    (memory.copy (i32.add (local.get $r) (i32.const 8)) (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride)))\n";
+  o = o + "    (memory.copy (i32.add (i32.add (local.get $r) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride))) (i32.add (local.get $b) (i32.const 8)) (i32.mul (local.get $nb) (local.get $stride)))\n";
+  o = o + "    (local.get $r))\n";
+  return o;
+}
+
 // arr_slice_u8_helper emits ONLY $__fern_arr_slice_u8, $__fern_arr_slice for a
 // packed u8[] (ir.packed): a fresh array holding a[start:end) a byte an
 // element.
@@ -13526,12 +13563,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need(needs, "str_split") || need(needs, "@uses_str_lines")) {
     parts = parts.append(str_split_helper());
   }
-  // $__fern_arr_str_join (a shim over $__fern_str_join) backs xs.join(sep) — the
-  // register backends' __fern_arr_str_join runtime call. Self-contained (only
-  // $__fern_str_box), emitted only when used.
-  if (need(needs, "@uses_arr_str_join")) {
-    parts = parts.append(arr_str_join_helper());
-  }
+  parts = array_helper_parts(needs, parts);
   // Scalar string search predicates (starts_with / ends_with / index_of /
   // contains) — self-contained, emitted only when used.
   // ASCII case transforms (to_upper / to_lower) — self-contained, emitted
