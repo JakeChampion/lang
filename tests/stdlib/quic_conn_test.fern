@@ -104,8 +104,8 @@ function noted(who: string, evs: conn.Event[]): string {
 function to_server(p: Pair, d: u8[]): Pair {
   match (p.server) {
     Some(s) => {
-      let step: conn.Step = s.receive(d, p.now);
-      return Pair { ...p, server: Some(step.conn), log: p.log + noted("server", step.events) };
+      let step: conn.Conn = s.receive(d, p.now);
+      return Pair { ...p, server: Some(step.events_taken()), log: p.log + noted("server", step.events) };
     },
     None => {
       match (packet.parse(d, 0, 8)) {
@@ -128,14 +128,16 @@ function to_server(p: Pair, d: u8[]): Pair {
 }
 
 function to_client(p: Pair, d: u8[]): Pair {
-  let step: conn.Step = p.client.receive(d, p.now);
-  return Pair { ...p, client: step.conn, log: p.log + noted("client", step.events) };
+  let step: conn.Conn = p.client.receive(d, p.now);
+  return Pair { ...p, client: step.events_taken(), log: p.log + noted("client", step.events) };
 }
 
 // exchange sends what each end has, client first; answers the pair and
 // whether anything moved.
 function exchange(p: Pair): (Pair, boolean) {
-  let (c, out) = p.client.transmit(p.now);
+  let c: conn.Conn = p.client.transmit(p.now);
+  let out: u8[][] = c.datagrams();
+  c = c.sent();
   let cur: Pair = Pair { ...p, client: c, client_sent: p.client_sent + out.len() };
   for d in in_order(cur, out) {
     let (next, lost) = carried(cur);
@@ -147,7 +149,9 @@ function exchange(p: Pair): (Pair, boolean) {
   let moved: boolean = out.len() > 0;
   match (cur.server) {
     Some(s) => {
-      let (s2, sout) = s.transmit(cur.now);
+      let s2: conn.Conn = s.transmit(cur.now);
+      let sout: u8[][] = s2.datagrams();
+      s2 = s2.sent();
       cur = Pair { ...cur, server: Some(s2), server_sent: cur.server_sent + sout.len() };
       for d in in_order(cur, sout) {
         let (next, lost) = carried(cur);
@@ -219,12 +223,12 @@ function tick(p: Pair, until: i64): Pair {
   if (now < p.now) {
     now = p.now;
   }
-  let cs: conn.Step = p.client.tick(now);
-  let cur: Pair = Pair { ...p, now: now, client: cs.conn, log: p.log + noted("client", cs.events) };
+  let cs: conn.Conn = p.client.tick(now);
+  let cur: Pair = Pair { ...p, now: now, client: cs.events_taken(), log: p.log + noted("client", cs.events) };
   match (cur.server) {
     Some(s) => {
-      let ss: conn.Step = s.tick(now);
-      return Pair { ...cur, server: Some(ss.conn), log: cur.log + noted("server", ss.events) };
+      let ss: conn.Conn = s.tick(now);
+      return Pair { ...cur, server: Some(ss.events_taken()), log: cur.log + noted("server", ss.events) };
     },
     None => {
       return cur;
@@ -265,10 +269,14 @@ function test_handshake(): test.TestOutcome {
 function test_amplification(): test.TestOutcome {
   match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
     Ok(p0) => {
-      let (c, out) = p0.client.transmit(0 as i64);
+      let c: conn.Conn = p0.client.transmit(0 as i64);
+      let out: u8[][] = c.datagrams();
+      c = c.sent();
       let p: Pair = to_server(Pair { ...p0, client: c }, out[0]);
       let s: conn.Conn = server_of(p);
-      let (s2, sout) = s.transmit(0 as i64);
+      let s2: conn.Conn = s.transmit(0 as i64);
+      let sout: u8[][] = s2.datagrams();
+      s2 = s2.sent();
       let total: i32 = 0;
       for d in sout {
         total = total + d.len();
@@ -359,12 +367,16 @@ function test_retry(): test.TestOutcome {
   let cc: conn.Config = client_config("tls.example", ["h3"]);
   match (start(cc, server_config(["h3"]))) {
     Ok(p0) => {
-      let (c, out) = p0.client.transmit(0 as i64);
+      let c: conn.Conn = p0.client.transmit(0 as i64);
+      let out: u8[][] = c.datagrams();
+      c = c.sent();
       let first: packet.Header = header_of(out[0]);
       let r: u8[] = packet.retry(first.scid, hex.hex_decode("0102030405060708"), first.dcid, "fern-token".bytes());
       let bad: u8[] = packet.retry(first.scid, hex.hex_decode("0a0b0c0d0e0f0001"), hex.hex_decode("00"), "nope".bytes());
-      let c2: conn.Conn = c.receive(bad, 0 as i64).conn.receive(r, 0 as i64).conn;
-      let (c3, out2) = c2.tick(1000 * MS).conn.transmit(1000 * MS);
+      let c2: conn.Conn = c.receive(bad, 0 as i64).receive(r, 0 as i64);
+      let c3: conn.Conn = c2.tick(1000 * MS).transmit(1000 * MS);
+      let out2: u8[][] = c3.datagrams();
+      c3 = c3.sent();
       let again: packet.Header = header_of(out2[0]);
       let opened: string = "no";
       match (packet.open(out2[0], again, packet.initial_keys(again.dcid, true), 0 - 1 as i64)) {
@@ -575,8 +587,10 @@ function test_peer_key_update_ack(): test.TestOutcome {
     return test.fail("start");
   };
   let p: Pair = settle(p0, 12, 10000 * MS);
-  let step: conn.Step = server_of(p).receive(peer_update(p, frames.encode(frames.Ping)), p.now);
-  let (_, out) = step.conn.transmit(p.now);
+  let step: conn.Conn = server_of(p).receive(peer_update(p, frames.encode(frames.Ping)), p.now);
+  let after: conn.Conn = step.transmit(p.now);
+  let out: u8[][] = after.datagrams();
+  after = after.sent();
   return test.assert_eq(updated_ack(p, out).to_string(), "true");
 }
 
@@ -587,8 +601,8 @@ function test_peer_key_update_stream(): test.TestOutcome {
   };
   let p: Pair = settle(p0, 12, 10000 * MS);
   let f: frames.Frame = frames.StreamFrame(frames.StreamData { stream: 0 as i64, offset: 0 as i64, data: entropy(5, 3), fin: true });
-  let step: conn.Step = server_of(p).receive(peer_update(p, frames.encode(f)), p.now);
-  let Ok(r) = step.conn.read(0 as i64) else {
+  let step: conn.Conn = server_of(p).receive(peer_update(p, frames.encode(f)), p.now);
+  let Ok(r) = step.read(0 as i64) else {
     return test.fail("updated-key STREAM was not delivered");
   };
   return test.assert_eq(hex.hex_encode(r.1) + " " + r.2.to_string(), "050c13 true");
@@ -662,18 +676,18 @@ function test_key_update_reordering(): test.TestOutcome {
   };
   let pn: i64 = p.client.spaces[2].next_pn;
   let old: conn.Conn = server_of(p);
-  let promoted: conn.Conn = old.receive(phase_packet(p, pn + 3, 1), p.now).conn;
-  let reordered: conn.Conn = promoted.receive(phase_packet(p, pn + 1, 0), p.now).conn;
+  let promoted: conn.Conn = old.receive(phase_packet(p, pn + 3, 1), p.now);
+  let reordered: conn.Conn = promoted.receive(phase_packet(p, pn + 1, 0), p.now);
   if (reordered.failed_auth != 0 || !received_pn(reordered, pn + 1) || close_code(reordered) != 0 - 1 as i64) {
     return test.fail("old reordered packet refused");
   }
-  let expired: conn.Conn = reordered.tick(reordered.key_discard_at).conn;
-  let without_tick: conn.Conn = reordered.receive(phase_packet(p, pn + 2, 0), reordered.key_discard_at).conn;
+  let expired: conn.Conn = reordered.tick(reordered.key_discard_at);
+  let without_tick: conn.Conn = reordered.receive(phase_packet(p, pn + 2, 0), reordered.key_discard_at);
   if (without_tick.failed_auth != 1 || received_pn(without_tick, pn + 2)) {
     return test.fail("expired old keys used before tick");
   }
-  let dropped: conn.Conn = expired.receive(phase_packet(p, pn + 2, 0), reordered.key_discard_at).conn;
-  let boundary: conn.Conn = expired.receive(phase_packet(p, pn, 1), reordered.key_discard_at).conn;
+  let dropped: conn.Conn = expired.receive(phase_packet(p, pn + 2, 0), reordered.key_discard_at);
+  let boundary: conn.Conn = expired.receive(phase_packet(p, pn, 1), reordered.key_discard_at);
   return test.assert_eq(reordered.key_phase.to_string() + " " + reordered.key_previous_max.to_string() + " " + expired.key_previous_recv.is_none().to_string() + " " + dropped.failed_auth.to_string() + " " + old.key_phase.to_string() + " " + close_code(boundary).to_string(), "true " + (pn + 1).to_string() + " true 1 false 14");
 }
 
@@ -684,7 +698,7 @@ function test_forged_key_phase(): test.TestOutcome {
   let s: conn.Conn = server_of(p);
   let wire: u8[] = phase_packet(p, p.client.spaces[2].next_pn, 1);
   let corrupt: u8[] = wire.with(wire.len() - 1, (wire[wire.len() - 1] as i32 ^ 1) as u8);
-  let rejected: conn.Conn = s.receive(corrupt, p.now).conn;
+  let rejected: conn.Conn = s.receive(corrupt, p.now);
   let Some(before) = s.key_next_recv else {
     return test.fail("uncached next key");
   };
@@ -700,7 +714,7 @@ function test_unconfirmed_key_update(): test.TestOutcome {
   };
   let s: conn.Conn = server_of(p);
   let unconfirmed: conn.Conn = conn.Conn { ...s, recovery: recovery.Recovery { ...s.recovery, handshake_confirmed: false } };
-  let rejected: conn.Conn = unconfirmed.receive(peer_update(p, frames.encode(frames.Ping)), p.now).conn;
+  let rejected: conn.Conn = unconfirmed.receive(peer_update(p, frames.encode(frames.Ping)), p.now);
   return test.assert_eq(close_code(rejected).to_string(), "14");
 }
 
@@ -708,9 +722,9 @@ function test_double_key_update(): test.TestOutcome {
   let Ok(p) = key_pair() else {
     return test.fail("pair");
   };
-  let first: conn.Conn = server_of(p).receive(peer_update(p, frames.encode(frames.Ping)), p.now).conn;
-  let ready: conn.Conn = first.tick(first.key_generate_at).conn;
-  let rejected: conn.Conn = ready.receive(phase_packet(p, p.client.spaces[2].next_pn + 1, 2), first.key_generate_at).conn;
+  let first: conn.Conn = server_of(p).receive(peer_update(p, frames.encode(frames.Ping)), p.now);
+  let ready: conn.Conn = first.tick(first.key_generate_at);
+  let rejected: conn.Conn = ready.receive(phase_packet(p, p.client.spaces[2].next_pn + 1, 2), first.key_generate_at);
   return test.assert_eq(first.key_unacked.to_string() + " " + close_code(rejected).to_string(), "true 14");
 }
 
@@ -718,10 +732,12 @@ function test_second_key_update(): test.TestOutcome {
   let Ok(p) = key_pair() else {
     return test.fail("pair");
   };
-  let first: conn.Conn = server_of(p).receive(peer_update(p, frames.encode(frames.Ping)), p.now).conn;
-  let (acked, _) = first.transmit(p.now);
-  let ready: conn.Conn = acked.tick(first.key_generate_at).conn;
-  let second: conn.Conn = ready.receive(phase_packet(p, p.client.spaces[2].next_pn + 1, 2), first.key_generate_at).conn;
+  let first: conn.Conn = server_of(p).receive(peer_update(p, frames.encode(frames.Ping)), p.now);
+  let acked: conn.Conn = first.transmit(p.now);
+  let _: u8[][] = acked.datagrams();
+  acked = acked.sent();
+  let ready: conn.Conn = acked.tick(first.key_generate_at);
+  let second: conn.Conn = ready.receive(phase_packet(p, p.client.spaces[2].next_pn + 1, 2), first.key_generate_at);
   return test.assert_eq(acked.key_unacked.to_string() + " " + ready.key_next_recv.is_some().to_string() + " " + second.key_phase.to_string() + " " + second.spaces[2].largest_recv.to_string() + " " + close_code(second).to_string(), "false true false " + (p.client.spaces[2].next_pn + 1).to_string() + " -1");
 }
 
@@ -729,9 +745,9 @@ function test_key_generation_timer(): test.TestOutcome {
   let Ok(p) = key_pair() else {
     return test.fail("pair");
   };
-  let first: conn.Conn = server_of(p).receive(peer_update(p, frames.encode(frames.Ping)), p.now).conn;
-  let invalid: conn.Conn = first.receive(phase_packet(p, p.client.spaces[2].next_pn + 1, 2), p.now).conn;
-  let ready: conn.Conn = invalid.tick(first.key_generate_at).conn;
+  let first: conn.Conn = server_of(p).receive(peer_update(p, frames.encode(frames.Ping)), p.now);
+  let invalid: conn.Conn = first.receive(phase_packet(p, p.client.spaces[2].next_pn + 1, 2), p.now);
+  let ready: conn.Conn = invalid.tick(first.key_generate_at);
   return test.assert_eq(first.key_next_recv.is_none().to_string() + " " + invalid.key_next_recv.is_none().to_string() + " " + (invalid.key_generate_at == first.key_generate_at).to_string() + " " + invalid.failed_auth.to_string() + " " + ready.key_next_recv.is_some().to_string() + " " + ready.key_generate_at.to_string(), "true true true 1 true 0");
 }
 
@@ -740,7 +756,7 @@ function test_nonmonotonic_key_update(): test.TestOutcome {
     return test.fail("pair");
   };
   let s: conn.Conn = server_of(p);
-  let rejected: conn.Conn = s.receive(phase_packet(p, s.spaces[2].largest_recv, 1), p.now).conn;
+  let rejected: conn.Conn = s.receive(phase_packet(p, s.spaces[2].largest_recv, 1), p.now);
   return test.assert_eq(close_code(rejected).to_string(), "14");
 }
 
@@ -751,8 +767,8 @@ function test_key_authentication_limit(): test.TestOutcome {
   let s: conn.Conn = conn.Conn { ...server_of(p), failed_auth: 4503599627370495 as i64 };
   let bytes: u8[] = phase_packet(p, p.client.spaces[2].next_pn, 1);
   let bad: u8[] = bytes.with(bytes.len() - 1, (bytes[bytes.len() - 1] as i32 ^ 1) as u8);
-  let closed: conn.Conn = s.receive(bad, p.now).conn;
-  let again: conn.Conn = closed.receive(bytes, p.now).conn;
+  let closed: conn.Conn = s.receive(bad, p.now);
+  let again: conn.Conn = closed.receive(bytes, p.now);
   return test.assert_eq(closed.failed_auth.to_string() + " " + close_code(closed).to_string() + " " + again.key_phase.to_string() + " " + s.failed_auth.to_string(), "4503599627370496 15 false 4503599627370495");
 }
 
@@ -762,13 +778,18 @@ function test_key_encryption_limit(): test.TestOutcome {
   };
   let s: conn.Conn = server_of(p);
   let near: conn.Conn = conn.Conn { ...s, key_sent: 8388607 as i64, pending: s.pending.append(frames.Ping) };
-  let (rotated, out) = near.transmit(p.now);
+  let rotated: conn.Conn = near.transmit(p.now);
+  let out: u8[][] = rotated.datagrams();
+  rotated = rotated.sent();
   if (out.len() == 0 || !rotated.key_phase || rotated.key_sent != 1) {
     return test.fail("did not rotate before confidentiality limit");
   }
   let blocked: conn.Conn = conn.Conn { ...near, recovery: recovery.Recovery { ...near.recovery, handshake_confirmed: false } };
-  let (closed, last) = blocked.transmit(p.now);
-  let (exhausted, extra) = closed.receive([], p.now).conn.transmit(p.now);
+  let closed: conn.Conn = blocked.transmit(p.now);
+  let last: u8[][] = closed.datagrams();
+  closed = closed.sent();
+  let exhausted: conn.Conn = closed.receive([], p.now).transmit(p.now);
+  let extra: u8[][] = exhausted.datagrams();
   return test.assert_eq(close_code(closed).to_string() + " " + closed.key_sent.to_string() + " " + (last.len() > 0).to_string() + " " + extra.len().to_string() + " " + exhausted.key_sent.to_string() + " " + near.key_sent.to_string(), "15 8388608 true 0 8388608 8388607");
 }
 
@@ -780,7 +801,7 @@ function test_chacha_authentication_limit(): test.TestOutcome {
   };
   let chacha: packet.Keys = packet.keys(keyschedule.ChaCha20Poly1305Sha256, entropy(9, 32));
   let s: conn.Conn = conn.Conn { ...server_of(p), key_next_recv: Some(chacha), failed_auth: 68719476735 as i64 };
-  let closed: conn.Conn = s.receive(peer_update(p, frames.encode(frames.Ping)), p.now).conn;
+  let closed: conn.Conn = s.receive(peer_update(p, frames.encode(frames.Ping)), p.now);
   return test.assert_eq(closed.failed_auth.to_string() + " " + close_code(closed).to_string() + " " + closed.key_phase.to_string() + " " + s.failed_auth.to_string(), "68719476736 15 false 68719476735");
 }
 

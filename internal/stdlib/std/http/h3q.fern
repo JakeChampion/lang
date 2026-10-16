@@ -6,9 +6,15 @@
 //
 //   let c: h3q.Conn = h3q.server(quic_conn, h3.config());
 //   c = c.receive(datagram, now);                 // each datagram
-//   let (c2, events) = c.take_events();           // h3q.Requested(id, req), ...
-//   c2 = c2.respond(id, resp);
-//   let (c3, out) = c2.transmit(now);             // datagrams to send
+//   let events: h3q.Event[] = c.events;           // h3q.Requested(id, req), ...
+//   c = c.events_taken().respond(id, resp);
+//   c = c.transmit(now);                          // c.datagrams() to send
+//   c = c.sent();
+//
+// Each step hands the connection back whole, what it produced in fields,
+// so a step on a connection held in a record or an array updates it in
+// place; a connection returned inside a tuple would be copied on the way
+// out.
 //
 // Once the handshake completes it opens this side's control and QPACK
 // streams. A request's body and trailers are gathered until the stream
@@ -80,25 +86,33 @@ pub function (c: Conn) ready(): boolean {
   return c.started && c.quic.connected() && c.session.goaway_received() < 0;
 }
 
-pub function (c: Conn) take_events(): (Conn, Event[]) {
-  return (Conn { ...c, events: [] }, c.events);
+// events_taken is the connection with its events handed on: read `events`
+// first, then take them.
+pub function (c: Conn) events_taken(): Conn {
+  return Conn { ...c, events: [] };
+}
+
+// datagrams is what `transmit` built, until `sent` takes it.
+pub function (c: Conn) datagrams(): u8[][] {
+  return c.quic.out;
+}
+
+pub function (c: Conn) sent(): Conn {
+  return Conn { ...c, quic: c.quic.sent() };
 }
 
 // === the connection =========================================================
 
 pub function (c: Conn) receive(datagram: [u8], now: i64): Conn {
-  let step: conn.Step = c.quic.receive(datagram, now);
-  return Conn { ...c, quic: step.conn }.__stepped(step.events, now);
+  return Conn { ...c, quic: c.quic.receive(datagram, now) }.__stepped(now);
 }
 
 pub function (c: Conn) tick(now: i64): Conn {
-  let step: conn.Step = c.quic.tick(now);
-  return Conn { ...c, quic: step.conn }.__stepped(step.events, now);
+  return Conn { ...c, quic: c.quic.tick(now) }.__stepped(now);
 }
 
-pub function (c: Conn) transmit(now: i64): (Conn, u8[][]) {
-  let (q, out) = c.quic.transmit(now);
-  return (Conn { ...c, quic: q }, out);
+pub function (c: Conn) transmit(now: i64): Conn {
+  return Conn { ...c, quic: c.quic.transmit(now) };
 }
 
 // shutdown begins a graceful close (§5.2): GOAWAY names the first request
@@ -118,8 +132,12 @@ pub function (c: Conn) close(now: i64): Conn {
 }
 
 // __stepped acts on what the QUIC connection reported.
-function (c: Conn) __stepped(evs: conn.Event[], now: i64): Conn {
-  let cur: Conn = c;
+function (c: Conn) __stepped(now: i64): Conn {
+  let evs: conn.Event[] = c.quic.events;
+  if (evs.len() == 0) {
+    return c.__applied(now);
+  }
+  let cur: Conn = Conn { ...c, quic: c.quic.events_taken() };
   for e in evs {
     cur = cur.__quic_event(e, now);
   }

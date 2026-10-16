@@ -112,9 +112,6 @@ pub struct Close { code: i64, frame_type: i64, reason: string, app: boolean, rem
 // to stop sending, which resets this side's sending half with that code.
 pub enum Event { Connected, Closed(Close), StreamOpened(i64), StreamReadable(i64), StreamReset(i64, i64), StreamStopped(i64, i64) }
 
-// Step — a connection and what happened to it.
-pub struct Step { conn: Conn, events: Event[] }
-
 // Space — one packet number space (§12.3).
 struct Space {
   send: Option[packet.Keys],
@@ -163,7 +160,12 @@ pub struct Conn {
   pending: frames.Frame[],
   held: u8[][],
   streams: streams.Streams,
+  // What the connection reported since `events_taken`, and the datagrams
+  // `transmit` built since `sent`. A connection handed back inside a
+  // result or a tuple would be copied on the way out, so each step hands
+  // it back whole and these carry what it produced.
   events: Event[],
+  out: u8[][],
   // Only 1-RTT keys rotate. Cached next keys are made at installation or
   // by a timer, never in response to an unauthenticated Key Phase bit.
   key_phase: boolean,
@@ -212,7 +214,7 @@ function __tls_server_config(c: Config, chain: u8[][], schemes: i32[], params_by
 
 function __base(c: Config, server: boolean, scid: u8[], dcid: u8[], odcid: u8[], now: i64): Conn {
   let r: recovery.Recovery = recovery.new(c.max_datagram, server).with_max_ack_delay(25000000 as i64);
-  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: 0 - 1 as i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64 };
+  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], out: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: 0 - 1 as i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64 };
 }
 
 // client starts a connection: its first Initial is ready to `transmit`.
@@ -333,14 +335,33 @@ function __earliest(a: i64, b: i64): i64 {
 
 // __stepped hands back the connection with what happened to it, the
 // streams' events after the connection's own.
-function (c: Conn) __stepped(): Step {
+// __stepped moves what the streams reported into the connection's events.
+function (c: Conn) __stepped(): Conn {
   let notes: streams.Event[] = c.streams.events;
+  if (notes.len() == 0) {
+    return c;
+  }
   let table: streams.Streams = c.streams.events_taken();
   let events: Event[] = c.events;
   for n in notes {
     events = events.append(__stream_event(n));
   }
-  return Step { conn: Conn { ...c, streams: table, events: [] }, events: events };
+  return Conn { ...c, streams: table, events: events };
+}
+
+// events_taken is the connection with its events handed on: read `events`
+// first, then take them.
+pub function (c: Conn) events_taken(): Conn {
+  return Conn { ...c, events: [] };
+}
+
+// datagrams is what `transmit` built, until `sent` takes it.
+pub function (c: Conn) datagrams(): u8[][] {
+  return c.out;
+}
+
+pub function (c: Conn) sent(): Conn {
+  return Conn { ...c, out: [] };
 }
 
 function __stream_event(n: streams.Event): Event {
@@ -481,11 +502,11 @@ function (c: Conn) __drain(why: Close, now: i64): Conn {
 
 // tick runs whatever was due at `now`: the end of closing or draining, the
 // idle timeout, and loss detection's timer.
-pub function (c: Conn) tick(now: i64): Step {
+pub function (c: Conn) tick(now: i64): Conn {
   return c.__key_timers(now).__tick(now);
 }
 
-function (c: Conn) __tick(now: i64): Step {
+function (c: Conn) __tick(now: i64): Conn {
   if (c.state == CLOSING || c.state == DRAINING) {
     if (now >= c.close_until) {
       return Conn { ...c, state: CLOSED }.__stepped();
@@ -629,7 +650,7 @@ function (c: Conn) __key_current(pn: i64, now: i64): Conn {
 // === receiving ==============================================================
 
 // receive takes one datagram that arrived at `now`.
-pub function (c: Conn) receive(datagram: [u8], now: i64): Step {
+pub function (c: Conn) receive(datagram: [u8], now: i64): Conn {
   if (c.state == CLOSED) {
     return c.__stepped();
   }
@@ -1317,23 +1338,23 @@ function __param_error(reason: string): frames.FrameError {
 // transmit is the datagrams to send at `now`, up to what congestion control
 // and, at a server not yet sure of the client's address, the
 // anti-amplification limit allow.
-pub function (c: Conn) transmit(now: i64): (Conn, u8[][]) {
-  let out: u8[][] = [];
-  let cur: Conn = c;
+pub function (c: Conn) transmit(now: i64): Conn {
+  let out: u8[][] = c.out;
+  let cur: Conn = Conn { ...c, out: [] };
   let guard: i32 = 0;
   while (guard < 64) {
     let (next, d) = cur.__datagram_out(now);
     if (d.len() == 0) {
-      return (next, out);
+      return Conn { ...next, out: out };
     }
     if (!next.validated && next.sent_bytes + d.len() as i64 > 3 * next.received_bytes) {
-      return (cur, out);
+      return Conn { ...cur, out: out };
     }
     cur = Conn { ...next, sent_bytes: next.sent_bytes + d.len() as i64 };
     out = out.append(d);
     guard = guard + 1;
   }
-  return (cur, out);
+  return Conn { ...cur, out: out };
 }
 
 // Plan — one packet before it is sealed: its space, its frames' bytes,
