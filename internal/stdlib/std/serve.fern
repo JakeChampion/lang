@@ -5323,7 +5323,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
         continue;
       }
       if (fd == conns.quic.sock) {
-        let datagrams: (__Conns, __Flight[], __H3Req[]) = __h3_event(drv, conns, flights, opts, stop);
+        let datagrams: (__Conns, __Flight[], __H3Burst) = __h3_event(drv, conns, flights, opts, stop);
         let started: (__Conns, __Flight[]) = __h3_start_all(drv, datagrams.0, datagrams.1, datagrams.2, handler, host_for, opts, stop);
         conns = started.0;
         flights = started.1;
@@ -5368,7 +5368,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
     let woken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts, plat.pool);
     conns = woken.0;
     flights = woken.1;
-    let ticked: (__Conns, __Flight[], __H3Req[]) = __h3_pass(drv, conns, flights, opts, stop);
+    let ticked: (__Conns, __Flight[], __H3Burst) = __h3_pass(drv, conns, flights, opts, stop);
     let started_late: (__Conns, __Flight[]) = __h3_start_all(drv, ticked.0, ticked.1, ticked.2, handler, host_for, opts, stop);
     conns = started_late.0;
     flights = started_late.1;
@@ -5518,7 +5518,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
         continue;
       }
       if (fd == conns.quic.sock) {
-        let datagrams: (__Conns, __Flight[], __H3Req[]) = __h3_event(drv, conns, flights, opts, stop);
+        let datagrams: (__Conns, __Flight[], __H3Burst) = __h3_event(drv, conns, flights, opts, stop);
         let answered: (__Conns, __Flight[], S) = __h3_start_all_with(drv, datagrams.0, datagrams.1, datagrams.2, st, handler, host_for);
         conns = answered.0;
         flights = answered.1;
@@ -5596,7 +5596,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
     let woken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts, plat.pool);
     conns = woken.0;
     flights = woken.1;
-    let ticked: (__Conns, __Flight[], __H3Req[]) = __h3_pass(drv, conns, flights, opts, stop);
+    let ticked: (__Conns, __Flight[], __H3Burst) = __h3_pass(drv, conns, flights, opts, stop);
     let answered: (__Conns, __Flight[], S) = __h3_start_all_with(drv, ticked.0, ticked.1, ticked.2, st, handler, host_for);
     conns = answered.0;
     flights = answered.1;
@@ -6374,34 +6374,47 @@ function __h3_sent(sock: i32, out: u8[][], to: net.SocketAddr): void {
 // start with its handler (`__h3_start_all`, `__h3_start_all_with`).
 struct __H3Req { serial: i32, id: i64, req: HttpRequest, peer: net.SocketAddr }
 
+// __H3Burst — what one readiness of the socket, or one pass of the timers,
+// left to do: the requests completed, and the connections touched, each
+// flushed once after the requests are started so their acknowledgements
+// and the responses share datagrams.
+struct __H3Burst { reqs: __H3Req[], touched: i32[] }
+
+function __h3_touched(b: __H3Burst, serial: i32): __H3Burst {
+  if (b.touched.contains(serial)) {
+    return b;
+  }
+  return __H3Burst { ...b, touched: b.touched.append(serial) };
+}
+
 // __h3_event(drv, c, fls, opts, stop) — the datagrams the socket holds,
-// each to its connection, up to a burst, and the requests they completed.
-function __h3_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: Config, stop: __Stop): (__Conns, __Flight[], __H3Req[]) {
+// each to its connection, up to a burst.
+function __h3_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: Config, stop: __Stop): (__Conns, __Flight[], __H3Burst) {
   let cur: __Conns = c;
   let fs: __Flight[] = fls;
-  let reqs: __H3Req[] = [];
+  let burst: __H3Burst = __H3Burst { reqs: [], touched: [] };
   let n: i32 = 0;
   while (n < __h3_burst()) {
     let Ok(got) = net.recv_from(cur.quic.sock, cur.quic.buf) else {
-      return (cur, fs, reqs);
+      return (cur, fs, burst);
     };
     let d: u8[] = __bytes_range(cur.quic.buf, 0, got.0);
-    let r: (__Conns, __Flight[], __H3Req[]) = __h3_datagram(drv, cur, fs, d, got.1, opts, stop);
+    let r: (__Conns, __Flight[], __H3Burst) = __h3_datagram(drv, cur, fs, d, got.1, burst, opts, stop);
     cur = r.0;
     fs = r.1;
-    reqs = reqs.concat(r.2);
+    burst = r.2;
     n = n + 1;
   }
-  return (cur, fs, reqs);
+  return (cur, fs, burst);
 }
 
-// __h3_datagram(drv, c, fls, d, from, opts, stop) — one datagram to the
-// connection whose ID it carries, or, when it is a client's first Initial
-// and the loop is accepting, to a new one; anything else is dropped.
-function __h3_datagram[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], d: u8[], from: net.SocketAddr, opts: Config, stop: __Stop): (__Conns, __Flight[], __H3Req[]) {
-  let none: __H3Req[] = [];
+// __h3_datagram(drv, c, fls, d, from, burst, opts, stop) — one datagram to
+// the connection whose ID it carries, or, when it is a client's first
+// Initial and the loop is accepting, to a new one; anything else is
+// dropped.
+function __h3_datagram[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], d: u8[], from: net.SocketAddr, burst: __H3Burst, opts: Config, stop: __Stop): (__Conns, __Flight[], __H3Burst) {
   let Ok(h) = packet.parse(d, 0, c.quic.cfg.cid_len) else {
-    return (c, fls, none);
+    return (c, fls, burst);
   };
   let i: i32 = __h3_find(c.quic, h.dcid);
   let cur: __Conns = c;
@@ -6410,7 +6423,7 @@ function __h3_datagram[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], d: 
     cur = made.0;
     i = made.1;
     if (i < 0) {
-      return (cur, fls, none);
+      return (cur, fls, burst);
     }
   }
   let q: __Quic = cur.quic;
@@ -6418,7 +6431,7 @@ function __h3_datagram[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], d: 
   cur = __Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].receive(d, monotonic_ns())) } };
   let taken: (__Conns, __H3Req[]) = __h3_events(cur, i);
   let more: (__Conns, __Flight[]) = __h3_more(drv, taken.0, fls, serial);
-  return (__h3_flush(more.0, serial), more.1, taken.1);
+  return (more.0, more.1, __h3_touched(__H3Burst { ...burst, reqs: burst.reqs.concat(taken.1) }, serial));
 }
 
 // __h3_find(q, dcid) — the connection a Destination Connection ID names:
@@ -6507,36 +6520,44 @@ function __h3_events(c: __Conns, i: i32): (__Conns, __H3Req[]) {
   return (__Conns { ...c, quic: __Quic { ...q, conns: q.conns.with(i, conn), producers: producers } }, reqs);
 }
 
-// __h3_start_all(drv, c, fls, reqs, handler, host_for, opts, stop) — each
+// __h3_start_all(drv, c, fls, burst, handler, host_for, opts, stop) — each
 // request's handler started, answered or parked, as the stateless loop
-// starts one.
-function __h3_start_all[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], reqs: __H3Req[], handler: (HttpRequest, platform.Host) => HttpResponse, host_for: (Option[net.SocketAddr]) => platform.Host, opts: Config, stop: __Stop): (__Conns, __Flight[]) {
+// starts one, then every connection the burst touched flushed.
+function __h3_start_all[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], burst: __H3Burst, handler: (HttpRequest, platform.Host) => HttpResponse, host_for: (Option[net.SocketAddr]) => platform.Host, opts: Config, stop: __Stop): (__Conns, __Flight[]) {
   let cur: __Conns = c;
   let fs: __Flight[] = fls;
-  for r in reqs {
+  for r in burst.reqs {
     let started: __Started = __serve_start(handler, host_for(Some(r.peer)), __h3_framed(r.req), true, Idle, opts, stop);
     let done: (__Conns, __Flight[]) = __h3_request(drv, cur, fs, r.serial, r.id, r.req, started);
-    cur = __h3_flush(done.0, r.serial);
+    cur = done.0;
     fs = done.1;
   }
-  return (cur, fs);
+  return (__h3_flush_all(cur, burst.touched), fs);
 }
 
-// __h3_start_all_with(drv, c, fls, reqs, st, handler, host_for) — each
+// __h3_start_all_with(drv, c, fls, burst, st, handler, host_for) — each
 // request answered in turn by the stateful loop's handler, the state
-// threaded through.
-function __h3_start_all_with[D: async.Driver, S](drv: D, c: __Conns, fls: __Flight[], reqs: __H3Req[], st: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), host_for: (Option[net.SocketAddr]) => platform.Host): (__Conns, __Flight[], S) {
+// threaded through, then every connection the burst touched flushed.
+function __h3_start_all_with[D: async.Driver, S](drv: D, c: __Conns, fls: __Flight[], burst: __H3Burst, st: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), host_for: (Option[net.SocketAddr]) => platform.Host): (__Conns, __Flight[], S) {
   let cur: __Conns = c;
   let fs: __Flight[] = fls;
   let state: S = st;
-  for r in reqs {
+  for r in burst.reqs {
     let (next, resp) = handler(state, r.req, host_for(Some(r.peer)));
     state = next;
     let done: (__Conns, __Flight[]) = __h3_request(drv, cur, fs, r.serial, r.id, r.req, HandlerDone(resp));
-    cur = __h3_flush(done.0, r.serial);
+    cur = done.0;
     fs = done.1;
   }
-  return (cur, fs, state);
+  return (__h3_flush_all(cur, burst.touched), fs, state);
+}
+
+function __h3_flush_all(c: __Conns, serials: i32[]): __Conns {
+  let cur: __Conns = c;
+  for s in serials {
+    cur = __h3_flush(cur, s);
+  }
+  return cur;
 }
 
 // __h3_request(drv, c, fls, serial, id, req, started) — a request's handler
@@ -6800,14 +6821,14 @@ function __h3_flush(c: __Conns, serial: i32): __Conns {
 // __h3_pass(drv, c, fls, opts, stop) — each connection whose timer is due
 // ticked and what it has to send sent, GOAWAY on every connection once the
 // loop is stopping, the connections that are done forgotten; and the
-// requests the ticks completed.
-function __h3_pass[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: Config, stop: __Stop): (__Conns, __Flight[], __H3Req[]) {
-  let none: __H3Req[] = [];
+// requests the ticks completed, as a burst whose connections are flushed
+// again once they are answered.
+function __h3_pass[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: Config, stop: __Stop): (__Conns, __Flight[], __H3Burst) {
+  let burst: __H3Burst = __H3Burst { reqs: [], touched: [] };
   if (c.quic.sock < 0) {
-    return (c, fls, none);
+    return (c, fls, burst);
   }
   let cur: __Conns = __h3_goaway(c, stop);
-  let reqs: __H3Req[] = [];
   let now: i64 = monotonic_ns();
   let i: i32 = 0;
   while (i < cur.quic.conns.len()) {
@@ -6817,11 +6838,13 @@ function __h3_pass[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: C
       cur = __Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].tick(now)) } };
       let taken: (__Conns, __H3Req[]) = __h3_events(cur, i);
       cur = __h3_flush(taken.0, q.serials[i]);
-      reqs = reqs.concat(taken.1);
+      if (taken.1.len() > 0) {
+        burst = __h3_touched(__H3Burst { ...burst, reqs: burst.reqs.concat(taken.1) }, q.serials[i]);
+      }
     }
     i = i + 1;
   }
-  return (__h3_forget_done(cur), fls, reqs);
+  return (__h3_forget_done(cur), fls, burst);
 }
 
 // __h3_goaway(c, stop) — GOAWAY on every connection, once, as the loop

@@ -7,6 +7,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"os/exec"
 	"strconv"
 	"testing"
 	"time"
@@ -175,3 +176,212 @@ func serveAllocsRounds(t *testing.T, get func(path string) string, rounds int) (
 	t.Logf("counts %d, %d, %d: %d allocations over %d requests in %d s", c0, c1, c2, total, rounds, seconds-2)
 	return total, seconds
 }
+
+// ServeAllocsH3ServerSource is ServeAllocsServerSource under TLS and
+// `with_h3()`, for the requests to arrive on one HTTP/3 connection. The
+// identity is the Ed25519 leaf tests/stdlib/http_h3q_test.fern uses, so no
+// file is written.
+func ServeAllocsH3ServerSource(port, rounds int) string {
+	return fmt.Sprintf(`import "std/http";
+import "std/serve";
+import "std/platform";
+import "std/hex";
+import "std/tls/identity";
+import "std/tls/server";
+%s
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+    if (req.path == "/count") {
+        return http.ok(__heap_alloc_count().to_string());
+    }
+    return http.ok("hello");
+}
+function main(): i32 {
+    let Ok(k) = identity.private_key_from_pem(ED_PKCS8) else { return 2; };
+    let Ok(id) = identity.pair([hex.hex_decode(ED_LEAF)], k) else { return 3; };
+    return serve.run(%d, serve.Config { ...serve.config().with_tls(server.config(id)).with_h3(), keep_alive_requests: %d }, handle);
+}
+`, serveAllocsH3Identity, port, serveAllocsWarm+rounds+8)
+}
+
+// ServeAllocsH3ClientSource is the client of CheckServeAllocsH3: one
+// HTTP/3 connection to 127.0.0.1 on the port in its first argument, the
+// warm-up, then its second argument's rounds of hello requests one at a
+// time, counted as serveAllocsRounds counts them. It prints
+// `allocs TOTAL SECONDS`.
+var ServeAllocsH3ClientSource = `import "std/net";
+import "std/quic/conn";
+import "std/http/h3";
+import "std/http/h3q";
+import "std/tls/verify";
+import "std/headers";
+import "std/async";
+import "std/option";
+import "std/string";
+import "std/hex";
+import "std/i64";
+` + serveAllocsH3Identity + `
+function now(): i64 {
+  return monotonic_ns();
+}
+
+function request(path: string): HttpRequest {
+  return HttpRequest { method: "GET", path: path, body: Stream { data: [], pos: 0, source: None }, headers: headers.header_map_new().append("host", "tls.example"), trailers: headers.header_map_new() };
+}
+
+struct Cli { c: h3q.Conn, sock: i32, peer: net.SocketAddr, buf: u8[] }
+
+function pump(k: Cli, ms: i32): Cli {
+  let (c2, out) = k.c.transmit(now());
+  let c: h3q.Conn = c2;
+  for d in out {
+    let r: Result[i32, net.NetError] = net.send_to(k.sock, d, k.peer);
+  }
+  let woke: i32 = async.wait_any([k.sock, 1], ms);
+  let going: boolean = true;
+  while (going) {
+    match (net.recv_from(k.sock, k.buf)) {
+      Ok(got) => {
+        c = c.receive(k.buf[0:got.0], now());
+      },
+      Err(_) => {
+        going = false;
+      }
+    }
+  }
+  if (c.deadline() != 0 && now() >= c.deadline()) {
+    c = c.tick(now());
+  }
+  return Cli { ...k, c: c };
+}
+
+// get sends one request and pumps until its response arrives.
+function get(k0: Cli, path: string): (Cli, string) {
+  let Ok(sent) = k0.c.request(request(path), "https") else {
+    return (k0, "ERR request");
+  };
+  let k: Cli = Cli { ...k0, c: sent.0 };
+  let id: i64 = sent.1;
+  let started: i64 = now();
+  while (now() - started < 30000000000) {
+    k = pump(k, 10);
+    let (c, evs) = k.c.take_events();
+    k = Cli { ...k, c: c };
+    for e in evs {
+      match (e) {
+        h3q.Responded(rid, resp) => {
+          if (rid == id) {
+            return (k, string_from_bytes_unchecked(resp.body_bytes()));
+          }
+        },
+        _ => {}
+      }
+    }
+  }
+  return (k, "ERR timeout");
+}
+
+function count(k: Cli): (Cli, i64) {
+  let (k2, body) = get(k, "/count");
+  return (k2, body.parse_int().unwrap_or(0 - 1) as i64);
+}
+
+function main(): i32 {
+  let argv: string[] = args();
+  let Some(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
+    return 2;
+  };
+  let Some(rounds) = argv[2].parse_int() else {
+    return 2;
+  };
+  let cfg: conn.Config = h3q.transport(conn.config([]).client_side("tls.example", verify.roots([hex.hex_decode(ROOT)])));
+  let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now()) else {
+    return 2;
+  };
+  let Some(any) = net.socket_addr_parse("127.0.0.1:0") else {
+    return 2;
+  };
+  let Ok(sock) = net.udp_socket(any) else {
+    return 2;
+  };
+  let nb: Result[void, net.NetError] = net.set_nonblocking(sock, true);
+  let k: Cli = Cli { c: h3q.client(q, h3.config()), sock: sock, peer: peer, buf: __alloc_u8(65536) };
+  let started: i64 = now();
+  while (!k.c.ready() && now() - started < 30000000000) {
+    k = pump(k, 10);
+  }
+  if (!k.c.ready()) {
+    print("handshake failed");
+    return 1;
+  }
+  let i: i32 = 0;
+  while (i < ` + strconv.Itoa(serveAllocsWarm) + `) {
+    let r: (Cli, string) = get(k, "/");
+    k = r.0;
+    if (r.1 != "hello") {
+      print("warm request " + i.to_string() + " answered " + r.1);
+      return 1;
+    }
+    i = i + 1;
+  }
+  let (k1, c0) = count(k);
+  let (k2, c1) = count(k1);
+  k = k2;
+  let t0: i64 = now();
+  i = 0;
+  while (i < rounds) {
+    let r: (Cli, string) = get(k, "/");
+    k = r.0;
+    if (r.1 != "hello") {
+      print("request " + i.to_string() + " answered " + r.1);
+      return 1;
+    }
+    i = i + 1;
+  }
+  let seconds: i64 = (now() - t0) / 1000000000 + 2;
+  let (k3, c2) = count(k);
+  k = k3;
+  if (c0 < 0 || c1 < 0 || c2 < 0) {
+    print("count failed");
+    return 1;
+  }
+  print("allocs " + (c2 - c1 - (c1 - c0)).to_string() + " " + seconds.to_string());
+  let (closed, out) = k.c.close(now()).transmit(now());
+  for d in out {
+    let r: Result[i32, net.NetError] = net.send_to(sock, d, peer);
+  }
+  return 0;
+}
+`
+
+// CheckServeAllocsH3 runs `client`, a ServeAllocsH3ClientSource build with
+// its arguments set, and holds the mean it reports under `ceiling` as
+// CheckServeAllocsH2 does: above it is a regression, and a mean
+// serveAllocsH2Drift or more under it lowers the ceiling.
+func CheckServeAllocsH3(t *testing.T, addr string, client *exec.Cmd, ceiling int64, rounds int) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	out, err := client.CombinedOutput()
+	if err != nil {
+		t.Fatalf("h3 client: %v\n%s", err, out)
+	}
+	var total, seconds int64
+	if _, err := fmt.Sscanf(string(out), "allocs %d %d", &total, &seconds); err != nil {
+		t.Fatalf("h3 client printed %q, want `allocs TOTAL SECONDS`", out)
+	}
+	mean := float64(total) / float64(rounds)
+	t.Logf("%d allocations over %d HTTP/3 requests in %d s: %.2f per request", total, rounds, seconds-2, mean)
+	if total > ceiling*int64(rounds)+serveAllocsSlackPerSecond*seconds {
+		t.Errorf("the serve loop allocates %.2f times per HTTP/3 hello request; the ceiling is %d. Above it is a regression.", mean, ceiling)
+	}
+	if total < (ceiling-serveAllocsH2Drift)*int64(rounds) {
+		t.Errorf("the serve loop allocates %.2f times per HTTP/3 hello request, %d or more under the ceiling of %d: lower the ceiling in the same change.", mean, serveAllocsH2Drift, ceiling)
+	}
+}
+
+// serveAllocsH3Identity is the test root, the Ed25519 leaf for tls.example
+// it signed, and the leaf's key, as tests/stdlib/http_h3q_test.fern holds
+// them.
+const serveAllocsH3Identity = `const ROOT: string = "3082011c3081cfa00302010202020201300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30243122302006035504030c194665726e20544c5320536572766572205465737420526f6f74302a300506032b6570032100d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737a3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300506032b65700341007353a91b5ad2e713d51d2fa08f3e800b99afa9e5725cfd746269d03210b1faadccfc942258bb8151da41be07943a4e8a14bd615e96692c8b896872460e827c0a";
+const ED_LEAF: string = "3082013e3081f1a00302010202020204300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b746c732e6578616d706c65302a300506032b6570032100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0a3533051300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301301c0603551d1104153013820b746c732e6578616d706c658704c0000207300506032b6570034100bdd423797a497344c22bf704b418f31b7b6d0d884b517a57d1421c064fa68de8266518e0ddedfbdf189a71a2bb5bd2ffb7ca885f2a7f9ac0e96cb6d07d83e802";
+const ED_PKCS8: string = "-----BEGIN PRIVATE KEY-----\n" + "MC4CAQAwBQYDK2VwBCIEICIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIi\n" + "-----END PRIVATE KEY-----\n";
+`
