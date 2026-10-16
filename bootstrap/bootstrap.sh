@@ -222,6 +222,9 @@ build() {
   smoke "$OUT/stage1"
   stage1_key > "$OUT/stage1.key"
   mkdir -p "$ROOT/bin"
+  # A fresh file, never a write into the old one: macOS refuses to run an
+  # executable that was overwritten in place after it last ran (SIGKILL).
+  rm -f "$ROOT/bin/fern-selfhost"
   cp "$OUT/stage1" "$ROOT/bin/fern-selfhost"
   echo "installed bin/fern-selfhost ($HOST, sha256 $(sha256 "$OUT/stage1"))"
   # bin/fern compiles with this only when the key beside it names the sources

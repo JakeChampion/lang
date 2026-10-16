@@ -3,9 +3,11 @@ package e2ecompiler
 import (
 	"bytes"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
@@ -105,4 +107,35 @@ func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
 	bin := cli.x86Binary(t, src, "FERN_STRICT_IR=1")
 	addr, _ := e2eharness.StartInheritedServer(t, runX86_64Bin(cli.runner, bin))
 	e2eharness.CheckServeAllocsH2(t, addr, ServeAllocsH2Ceiling, e2eharness.ServeAllocsRounds)
+}
+
+// ServeAllocsH3Ceiling bounds what the loop allocates per hello request
+// on one HTTP/3 connection (docs/NET-P8-HTTP3-PLAN.md slice 10), a ratchet
+// like the HTTP/2 one: the datagram's packet opened and its frames read,
+// the stream table and the HTTP/3 session stepped, the request handed
+// over, the response's fields encoded, and its packet planned and sealed.
+// The first reading was 632 on arm64-darwin with the stream table rebuilt
+// on every packet; with idle streams left alone and the loop flushing a
+// connection once per burst, 421 there.
+const ServeAllocsH3Ceiling = 430
+
+func TestSelfHostServeAllocsPerRequestH3(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(src, []byte(e2eharness.ServeAllocsH3ServerSource(0, e2eharness.ServeAllocsRounds)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	clientSrc := filepath.Join(dir, "client.fern")
+	if err := os.WriteFile(clientSrc, []byte(e2eharness.ServeAllocsH3ClientSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := cli.x86Binary(t, src, "FERN_STRICT_IR=1")
+	client := cli.x86Binary(t, clientSrc, "FERN_STRICT_IR=1")
+	addr, _ := e2eharness.StartInheritedServer(t, runX86_64Bin(cli.runner, bin))
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e2eharness.CheckServeAllocsH3(t, addr, runX86_64Bin(cli.runner, client, port, strconv.Itoa(e2eharness.ServeAllocsRounds)), ServeAllocsH3Ceiling, e2eharness.ServeAllocsRounds)
 }

@@ -2130,6 +2130,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"variant-payload-widths-ok", "enum W { Wrap(i64), Empty }\nfunction f(): W { return Wrap(5); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"variant-payload-float-literal-ok", "enum W { Wrap(f64), Empty }\nfunction f(): W { return Wrap(1); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"variant-payload-generic-ok", "enum Box[T] { Wrap(T), Empty }\nfunction f(): Box[i32] { return Wrap(5); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"variant-payload-generic-closure-ok", "enum G[T] { P(T, (i32) => T), N }\nfunction make(n: i32): G[i32] { return P(n, (x: i32) => x + n); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"variant-payload-qualified-generic-closure-ok", "enum G[T] { P(T, (i32) => T), N }\nfunction make(n: i32): G[i32] { return G.P(n, (x: i32) => x + n); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"variant-payload-generic-closure-result-conflict", "enum G[T] { P(T, (i32) => T), N }\nfunction main(): i32 { let n: i32 = 1; let g = P(n, (x: i32) => \"bad\"); return 0; }\n", []string{"E036"}},
+		{"variant-payload-generic-closure-parameter-conflict", "enum G[T] { P(T, (i32) => T), N }\nfunction main(): i32 { let n: i32 = 1; let g = P(n, (x: string) => n); return 0; }\n", []string{"E036"}},
+		{"variant-payload-generic-closure-only-ok", "enum G[T] { P((i32) => T), N }\nfunction make(): G[i32] { return P((x: i32) => x); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"variant-payload-builtin-ok", "function f(): Option[i32] { return Some(3); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"variant-payload-struct-ok", "struct S { x: i32 }\nenum W { Wrap(S), Empty }\nfunction f(): W { return Wrap(S { x: 1 }); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"variant-payload-array-ok", "enum W { Wrap(i32[]), Empty }\nfunction f(): W { return Wrap([1, 2]); }\nfunction main(): i32 { return 0; }\n", nil},
@@ -3590,6 +3595,46 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 
 	progs := []struct{ name, src string }{
+		{"bound-method-unused-result-variable", `trait Cfg { function get(self: Self, k: string): Option[string]; }
+function f[P: Cfg](c: P): i32 { let s: string = c.get("x"); return 0; }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-result-return", `trait Cfg { function get(self: Self, k: string): Option[string]; }
+function f[P: Cfg](c: P): string { return c.get("x"); }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-result-argument", `trait Cfg { function get(self: Self, k: string): Option[string]; }
+function take(s: string): i32 { return 0; }
+function f[P: Cfg](c: P): i32 { return take(c.get("x")); }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-argument-type", `trait Cfg { function get(self: Self, k: string): i32; }
+function f[P: Cfg](c: P): i32 { return c.get(1); }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-arity", `trait Cfg { function get(self: Self, k: string): i32; }
+function f[P: Cfg](c: P): i32 { return c.get(); }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-generic-trait", `trait Cfg[V] { function get(self: Self): Option[V]; }
+function f[P: Cfg[string]](c: P): i32 { let s: string = c.get(); return 0; }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-default", `trait Cfg { function get(self: Self): Option[string] { return None; } }
+function f[P: Cfg](c: P): string { return c.get(); }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-supertrait", `trait Base { function get(self: Self): Option[string]; } trait Cfg: Base {}
+function f[P: Cfg](c: P): string { return c.get(); }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-valid", `trait Cfg[V] { function get(self: Self, k: string): Option[V]; }
+function f[P: Cfg[string]](c: P): Option[string] { let d: P = c; return d.get("x"); }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-generic-default-result", `trait Cfg { function wrap[U](self: Self, x: U): Option[U] { return Some(x); } }
+function f[P: Cfg](c: P): string { return c.wrap(2); }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-generic-default-argument", `trait Cfg { function wrap[U](self: Self, x: U): Option[U] { return Some(x); } }
+function f[P: Cfg](c: P): Option[string] { return c.wrap[string](2); }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-generic-default-type-arity", `trait Cfg { function wrap[U](self: Self, x: U): Option[U] { return Some(x); } }
+function f[P: Cfg](c: P): i32 { let x = c.wrap[string, i32](2); return 0; }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-generic-default-valid", `trait Cfg { function wrap[U](self: Self, x: U): Option[U] { return Some(x); } }
+function f[P: Cfg](c: P): Option[string] { return c.wrap("ok"); }
+function main(): i32 { return 0; }`},
 		{"result-conversion-ok-narrow", `function f(n: i64): Result[i32, string] { return Ok(n); }`},
 		{"result-conversion-err-literal-overflow", `function f(): Result[string, u8] { return Err(300); }`},
 		{"result-conversion-qualified-literal-overflow", `function f(): Result[u8, string] { return Result.Ok(300); }`},
@@ -3962,6 +4007,46 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		// oracle for all of them; each destination the rule reaches gets a row,
 		// with the accepting neighbour beside it so the rule cannot become a
 		// blanket refusal of every wide literal.
+		{"literal-float-local-arm", `function f(c: boolean): void { let q = 2; let x = if (c) { q } else { 2.5 }; }`},
+		{"literal-float-local-block", `function f(c: boolean): void { let x = if (c) { ({ let q = 2; q }) } else { 2.5 }; }`},
+		{"literal-float-generic-arm", `function pick[T](a: T, b: T): T { return a; } function f(c: boolean): void { let x = if (c) { pick(1, 2) } else { 2.5 }; }`},
+		{"literal-float-local-f32", `function f(): void { let y = 2.5; let z: f32 = y; }`},
+		{"literal-float-overflow-arm", `function f(c: boolean): void { let x = if (c) { 99999999999999999999 } else { 2.5 }; }`},
+		{"literal-float-tuple-local", `function f(c: boolean): void { let t = (1, 2); let x = if (c) { t } else { (3.5, 4) }; }`},
+		{"literal-float-tuple-element", `function f(c: boolean): void { let q = 2; let x = if (c) { (q, 2) } else { (3.5, 4) }; }`},
+		{"literal-float-enum-payload", `function f(c: boolean): void { let q = 2; let x = if (c) { Some(q) } else { Some(3.5) }; }`},
+		{"literal-float-value-array", `function f(c: boolean): void { let a: (f64, i32)[] = [if (c) { (1, 2) } else { (3, 4) }]; }`},
+		{"literal-float-block-tail", `function f(c: boolean): void { let x: string = { let q = 1; if (c) { q } else { 2.5 } }; }`},
+		{"literal-float-already-pinned", `function f(c: boolean): void { let q = 2; let n: i32 = q; let x = if (c) { q } else { 2.5 }; }`},
+		{"literal-array-local-width", `function f(): void { let xs = [1]; let w: u64[] = xs; }`},
+		{"call-consistency-generic-ok", `function k[T](a: T, b: T): T { return a; } function id[T](x: T): T { return x; } function main(): i32 { let f: (i32) => i32 = id; return k(f(1), 2); }`},
+		{"call-consistency-own-scalar-ok", `function f(own b: boolean): boolean { return b; } function main(): i32 { let g: (own boolean) => boolean = f; if (g(true)) { return 0; } return 1; }`},
+		{"call-consistency-float-recovery", `function f(c: boolean): void { let x: f64 = if (c) { 1 } else { "a" }; }`},
+		{"call-consistency-integer-recovery", `function f(c: boolean): void { let x: i64 = if (c) { 1 } else { "a" }; }`},
+		{"call-consistency-tuple-array-mixed", `function main(): i32 { let fs = [(1, true), (2, "s")]; return 0; }`},
+		{"call-consistency-nested-irrefutable-tuple", `function f(t: (i32, (i32, i32))): void { let x = match (t) { (a, (b, c)) => a, _ => 0 }; }`},
+		{"call-consistency-guarded-tuple", `function f(t: (i32, i32)): void { let x = match (t) { (a, b) when a > 0 => a, _ => 0 }; }`},
+		{"call-consistency-guarded-struct", `struct P { x: i32 } function f(p: P): void { let x = match (p) { P { x } when x > 0 => x, _ => 0 }; }`},
+		{"call-consistency-unresolved-callable-param", `function f(a: (Missing) => i32): void {}`},
+		{"call-consistency-unresolved-callable-result", `function f(): (i32) => Missing { return (n: i32): i32 => n; }`},
+		{"call-consistency-two-types", `function k[T](a: T, b: T): i32 { return 0; } function main(): i32 { return k(1, "s"); }`},
+		{"call-consistency-callable", `function apply[T](f: (T) => T, v: T): i32 { return 0; } function inc(n: i32): string { return "s"; } function main(): i32 { return apply(inc, 1); }`},
+		{"call-consistency-function-value", `function id[T](x: T): T { return x; } function main(): i32 { let f: (i32) => string = id; return 0; }`},
+		{"call-consistency-own-scalar-binding", `function f(n: i32, own b: boolean): boolean { return b; } function main(): i32 { let g: (i32, boolean) => boolean = f; return 0; }`},
+		{"call-consistency-own-scalar-argument", `function f(n: i32, own b: boolean): boolean { return b; } function take(g: (i32, boolean) => boolean): i32 { return 0; } function main(): i32 { return take(f); }`},
+		{"call-consistency-function-array-typed", `function f(n: i32): i32 { return n; } function main(): i32 { let fs: ((i32) => string)[] = [f]; return 0; }`},
+		{"call-consistency-function-array-mixed", `function f(n: i32): i32 { return n; } function g(n: i32): string { return "s"; } function main(): i32 { let fs = [f, g]; return 0; }`},
+		{"call-consistency-never-result", `function f(a: () => never): void { let b: () => i32 = a; }`},
+		{"call-consistency-erased-parameter", `function f(x: fn): void {} function main(): i32 { f(1); return 0; }`},
+		{"call-consistency-erased-binding", `function main(): i32 { let f: fn = 1; return 0; }`},
+		{"call-consistency-erased-return", `function f(): fn { return 1; } function main(): i32 { return 0; }`},
+		{"call-consistency-array-wide-arm", `function f(c: boolean, n: i64): void { let a = if (c) { [1234567890123] } else { [n] }; }`},
+		{"call-consistency-str-arm", `function f(c: boolean): void { let s: str = "a"; let a = if (c) { s } else { "b" }; }`},
+		{"call-consistency-mismatch-branch-and-dest", `function f(c: boolean): void { let x: string = if (c) { 1 } else { "a" }; }`},
+		{"call-consistency-unsupported-cast-i8", `function main(): i32 { let n = 1 as i8; return 0; }`},
+		{"call-consistency-unsupported-cast-i16", `function main(): i32 { let n = 1 as i16; return 0; }`},
+		{"call-consistency-irrefutable-tuple", `function f(t: (i32, i32)): void { let x = match (t) { (a, b) => a, _ => 0 }; }`},
+		{"call-consistency-irrefutable-struct", `struct P { x: i32 } function f(p: P): void { let x = match (p) { P { x } => x, _ => 0 }; }`},
 		{"wide-lit-beside-i32-operand", "function main(): i32 { let a: i32 = 3; let t = a - 4611686018427387904; return 0; }\n"},
 		{"wide-lit-i32-annotated-arith", "function main(): i32 { let t: i32 = 3 - 4611686018427387904; return 0; }\n"},
 		{"wide-lit-past-i64-unannotated", "function main(): i32 { let t = 3 - 18446744073709551616; return 0; }\n"},
@@ -4186,7 +4271,7 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 			got := driverCodes(out)
 			want := goCheckerCodes(t, dir, tc.src)
 			if !equalStrings(got, want) {
-				t.Errorf("%s: self-host codes %v disagree with Go checker %v (unfiltered)\nsrc: %s", tc.name, got, want, tc.src)
+				t.Errorf("%s: self-host codes %v disagree with Go checker %v (unfiltered)\nsrc: %s", tc.name, got, want, tc.src+"\nself-host output:\n"+out)
 			}
 		})
 	}
@@ -4594,7 +4679,7 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 			got := driverCodes(out)
 			want := goCheckerCodes(t, t.TempDir(), tc.src)
 			if !equalStrings(got, want) {
-				t.Errorf("%s: self-host file-loader codes %v disagree with Go checker %v (unfiltered)\nsrc: %s", tc.name, got, want, tc.src)
+				t.Errorf("%s: self-host file-loader codes %v disagree with Go checker %v (unfiltered)\nsrc: %s", tc.name, got, want, tc.src+"\nself-host output:\n"+out)
 			}
 		})
 	}

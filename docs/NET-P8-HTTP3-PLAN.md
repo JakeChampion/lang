@@ -177,8 +177,36 @@ Each is a bound with a test that crosses it.
 9. **Client.** `std/fetch` speaks HTTP/3 to an origin that offers it by
    Alt-Svc, and `std/sim_fetch` scripts datagrams. Gate: fetch against
    aioquic's server, and the simulated network.
-10. **Speed.** Packet protection with the AES round keys kept, `sendmmsg`
-    and UDP GSO/GRO, ECN. Gate: the alloc and throughput ratchets.
+10. **Speed.** Measured first (`docs/benchmarks/net-h3-2026-10-16.md`):
+    632 allocations per hello request in the serve loop against HTTP/1.1's
+    zero and HTTP/2's 60, and one datagram sent per response. The gate is
+    `TestSelfHostServeAllocsPerRequestH3`, a ratchet on the mean like
+    HTTP/2's; throughput is recorded, not gated. In the order the
+    allocation sites rank:
+
+    - **The stream table (landed).** `std/quic/streams` rebuilt every
+      stream's sending half and the whole list on every packet. A
+      transmit now leaves a stream with nothing to send untouched and
+      writes back only the streams it changed; the loop flushes a
+      connection once per burst of datagrams and once after their
+      requests are answered, so acknowledgements and responses share
+      datagrams. 632 to 421 allocations per request; with 32 requests in
+      flight on one connection, 34,698 to 114,057 responses per second on
+      one worker.
+    - **The wire.** `std/quic/frames` reads each varint through a cursor
+      record and a result; `std/quic/packet` copies the connection IDs out
+      of every header. Scalar readers and views.
+    - **Packet protection.** `std/crypto/aes_gcm` expands the key and
+      derives the GHASH key on every seal and open, and builds the
+      counter, lengths and tag blocks fresh: a prepared key kept in
+      `packet.Keys` (and `std/tls/record`'s `Protection`), then the GCM
+      temporaries folded into the kernels.
+    - **The connection's plans** (`conn.__plan`, `__seal`) and the HTTP/3
+      session's request path (`h3`, `qpack`, `h3q`): fields written
+      straight into the encoder as HTTP/2 does, the request handed over
+      without the partial copied.
+    - **The socket.** `sendmmsg`, UDP GSO and GRO, ECN: new builtins, so
+      four classifications each, reported Unsupported on Darwin and WASI.
 
 0-RTT waits on early data in `std/tls/handshake`, which does not derive
 an early traffic secret yet.

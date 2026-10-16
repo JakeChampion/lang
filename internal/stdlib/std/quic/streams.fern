@@ -590,17 +590,19 @@ function __add(out: u8[], room: i32, f: frames.Frame, resend: recovery.Resend[])
 
 // __signals adds each stream's owed RESET_STREAM and STOP_SENDING.
 function (s: Streams) __signals(out: u8[], room: i32): (Streams, u8[], recovery.Resend[]) {
+  let cur: Streams = s;
   let o: u8[] = out;
   let resend: recovery.Resend[] = [];
-  let list: Stream[] = [];
-  for st in s.list {
-    let next: Stream = st;
+  let i: i32 = 0;
+  while (i < cur.list.len()) {
+    let st: Stream = cur.list[i];
     if (st.send.reset_state == TO_SEND) {
       let (o2, r2, ok) = __add(o, room, frames.ResetStreamFrame(frames.ResetStream { stream: st.id, code: st.send.reset, final_size: st.send.sent }), resend);
       o = o2;
       resend = r2;
       if (ok) {
-        next = Stream { ...next, send: Send { ...next.send, reset_state: SENT } };
+        cur = cur.__put(i, Stream { ...st, send: Send { ...st.send, reset_state: SENT } });
+        st = cur.list[i];
       }
     }
     if (st.recv.stop_state == TO_SEND) {
@@ -608,12 +610,12 @@ function (s: Streams) __signals(out: u8[], room: i32): (Streams, u8[], recovery.
       o = o3;
       resend = r3;
       if (ok) {
-        next = Stream { ...next, recv: Recv { ...next.recv, stop_state: SENT } };
+        cur = cur.__put(i, Stream { ...st, recv: Recv { ...st.recv, stop_state: SENT } });
       }
     }
-    list = list.append(next);
+    i = i + 1;
   }
-  return (Streams { ...s, list: list }, o, resend);
+  return (cur, o, resend);
 }
 
 // __window_updates opens the windows again once half of one has been read
@@ -648,34 +650,37 @@ function (s: Streams) __opened_windows(): Streams {
   if (want - s.recv_max >= s.recv_window / 2 && s.recv_window > 0) {
     cur = Streams { ...cur, recv_max: want, recv_max_dirty: true };
   }
-  let list: Stream[] = [];
-  for st in cur.list {
+  let i: i32 = 0;
+  while (i < cur.list.len()) {
+    let st: Stream = cur.list[i];
     let r: Recv = st.recv;
     let open: i64 = r.data.taken + r.window;
     if (st.has_recv && r.final_size < 0 && r.reset < 0 && r.stop < 0 && r.window > 0 && open - r.max >= r.window / 2) {
-      list = list.append(Stream { ...st, recv: Recv { ...r, max: open, max_dirty: true } });
-    } else {
-      list = list.append(st);
+      cur = cur.__put(i, Stream { ...st, recv: Recv { ...r, max: open, max_dirty: true } });
     }
+    i = i + 1;
   }
-  return Streams { ...cur, list: list };
+  return cur;
 }
 
 function (s: Streams) __stream_windows(out: u8[], room: i32, resend: recovery.Resend[]): (Streams, u8[], recovery.Resend[]) {
+  let cur: Streams = s;
   let o: u8[] = out;
   let rs: recovery.Resend[] = resend;
-  let list: Stream[] = [];
-  for st in s.list {
+  let i: i32 = 0;
+  while (i < cur.list.len()) {
+    let st: Stream = cur.list[i];
     if (st.recv.max_dirty) {
       let (o2, r2, ok) = __add(o, room, frames.MaxStreamData(st.id, st.recv.max), rs);
       o = o2;
       rs = r2;
-      list = list.append(Stream { ...st, recv: Recv { ...st.recv, max_dirty: !ok } });
-    } else {
-      list = list.append(st);
+      if (ok) {
+        cur = cur.__put(i, Stream { ...st, recv: Recv { ...st.recv, max_dirty: false } });
+      }
     }
+    i = i + 1;
   }
-  return (Streams { ...s, list: list }, o, rs);
+  return (cur, o, rs);
 }
 
 // __data adds stream data, starting each packet at the stream after the
@@ -705,7 +710,7 @@ function (s: Streams) __data(out: u8[], room: i32, resend: recovery.Resend[]): (
 // both windows allow, then a FIN not yet sent.
 function (s: Streams) __stream_data(i: i32, out: u8[], room: i32, resend: recovery.Resend[]): (Streams, u8[], recovery.Resend[]) {
   let st: Stream = s.list[i];
-  if (!st.has_send || st.send.reset >= 0) {
+  if (!st.has_send || st.send.reset >= 0 || !__sendable(st.send)) {
     return (s, out, resend);
   }
   let (snd, o1, r1) = __resend_lost(st.id, st.send, out, room, resend);
@@ -720,6 +725,12 @@ function __written(snd: Send): i64 {
   return snd.base + snd.buf.len() as i64;
 }
 
+// __sendable reports whether a sending half has anything for a packet: a
+// lost range, bytes not yet sent, or a FIN not yet sent.
+function __sendable(snd: Send): boolean {
+  return snd.lost.len() > 0 || __written(snd) > snd.sent || snd.fin && !snd.fin_sent;
+}
+
 // __bytes is the written bytes from `offset`, `n` of them.
 function __bytes(snd: Send, offset: i64, n: i32): u8[] {
   let at: i32 = (offset - snd.base) as i32;
@@ -728,6 +739,9 @@ function __bytes(snd: Send, offset: i64, n: i32): u8[] {
 
 // __resend_lost sends the lost ranges that fit, keeping the rest.
 function __resend_lost(id: i64, snd: Send, out: u8[], room: i32, resend: recovery.Resend[]): (Send, u8[], recovery.Resend[]) {
+  if (snd.lost.len() == 0) {
+    return (snd, out, resend);
+  }
   let o: u8[] = out;
   let rs: recovery.Resend[] = resend;
   let kept: i64[] = [];
@@ -784,23 +798,24 @@ function __held(st: Stream): boolean {
 }
 
 function (s: Streams) __stream_data_blocked(out: u8[], room: i32, resend: recovery.Resend[]): (Streams, u8[], recovery.Resend[]) {
+  let cur: Streams = s;
   let o: u8[] = out;
   let rs: recovery.Resend[] = resend;
-  let list: Stream[] = [];
-  for st in s.list {
+  let i: i32 = 0;
+  while (i < cur.list.len()) {
+    let st: Stream = cur.list[i];
     let snd: Send = st.send;
-    let next: Stream = st;
     if (__held(st) && snd.sent >= snd.max && snd.blocked_at != snd.max) {
       let (o2, r2, ok) = __add(o, room, frames.StreamDataBlocked(st.id, snd.max), rs);
       o = o2;
       rs = r2;
       if (ok) {
-        next = Stream { ...st, send: Send { ...snd, blocked_at: snd.max } };
+        cur = cur.__put(i, Stream { ...st, send: Send { ...snd, blocked_at: snd.max } });
       }
     }
-    list = list.append(next);
+    i = i + 1;
   }
-  return (Streams { ...s, list: list }, o, rs);
+  return (cur, o, rs);
 }
 
 function (s: Streams) __data_blocked(out: u8[], room: i32, resend: recovery.Resend[]): (Streams, u8[], recovery.Resend[]) {
@@ -994,6 +1009,9 @@ function (s: Streams) __restate(id: i64, send: boolean): Streams {
 // __collect forgets the streams both of whose halves are done; each of the
 // peer's lets it open one more (§4.6).
 function (s: Streams) __collect(): Streams {
+  if (!s.list.any(__done)) {
+    return s;
+  }
   let list: Stream[] = [];
   let cur: Streams = s;
   for st in s.list {
@@ -1007,6 +1025,10 @@ function (s: Streams) __collect(): Streams {
     }
   }
   return Streams { ...cur, list: list };
+}
+
+function __done(st: Stream): boolean {
+  return __send_done(st) && __recv_done(st);
 }
 
 function __send_done(st: Stream): boolean {
