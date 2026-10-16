@@ -103,7 +103,9 @@ function ordered(e: Ends, out: u8[][]): u8[][] {
 // round moves each side's datagrams to the other, takes what each
 // reported, and answers whether anything moved.
 function round(e: Ends): (Ends, boolean) {
-  let (c, out) = e.client.transmit(e.now);
+  let c: h3q.Conn = e.client.transmit(e.now);
+  let out: u8[][] = c.datagrams();
+  c = c.sent();
   let cur: Ends = Ends { ...e, client: c };
   for d in ordered(cur, out) {
     let (next, lost) = carried(cur);
@@ -114,7 +116,9 @@ function round(e: Ends): (Ends, boolean) {
   }
   let moved: boolean = out.len() > 0;
   if let Some(s) = cur.server {
-    let (s2, sout) = s.transmit(cur.now);
+    let s2: h3q.Conn = s.transmit(cur.now);
+    let sout: u8[][] = s2.datagrams();
+    s2 = s2.sent();
     cur = Ends { ...cur, server: Some(s2) };
     for d in ordered(cur, sout) {
       let (next, lost) = carried(cur);
@@ -131,13 +135,15 @@ function round(e: Ends): (Ends, boolean) {
 // noticed takes each side's events: the server keeps the requests, the
 // client notes the responses.
 function noticed(e: Ends): Ends {
-  let (c, cevs) = e.client.take_events();
+  let cevs: h3q.Event[] = e.client.events;
+  let c: h3q.Conn = e.client.events_taken();
   let cur: Ends = Ends { ...e, client: c };
   for ev in cevs {
     cur = Ends { ...cur, log: cur.log + "client " + event_text(ev) + "; " };
   }
   if let Some(s) = cur.server {
-    let (s2, sevs) = s.take_events();
+    let sevs: h3q.Event[] = s.events;
+    let s2: h3q.Conn = s.events_taken();
     cur = Ends { ...cur, server: Some(s2) };
     for ev in sevs {
       cur = Ends { ...cur, log: cur.log + "server " + event_text(ev) + "; " };

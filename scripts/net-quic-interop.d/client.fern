@@ -16,7 +16,9 @@ function now(): i64 {
 }
 
 function pump(c: conn.Conn, sock: i32, peer: net.SocketAddr): conn.Conn {
-  let (c2, out) = c.transmit(now());
+  let c2: conn.Conn = c.transmit(now());
+  let out: u8[][] = c2.datagrams();
+  c2 = c2.sent();
   for d in out {
     let r: Result[i32, net.NetError] = net.send_to(sock, d, peer);
   }
@@ -29,8 +31,8 @@ function drain(c: conn.Conn, sock: i32, buf: u8[]): conn.Conn {
   while (going) {
     match (net.recv_from(sock, buf)) {
       Ok(got) => {
-        let step: conn.Step = cur.receive(buf[0:got.0], now());
-        cur = step.conn;
+        let step: conn.Conn = cur.receive(buf[0:got.0], now());
+        cur = step.events_taken();
         for e in step.events {
           match (e) {
             conn.Connected => {
@@ -137,7 +139,7 @@ function ran(c0: conn.Conn, sock: i32, peer: net.SocketAddr, size: i32): boolean
     let woke: i32 = async.wait_any([sock, 1], wait_ms(c));
     c = drain(c, sock, buf);
     if (c.deadline() != 0 && now() >= c.deadline()) {
-      c = c.tick(now()).conn;
+      c = c.tick(now());
     }
     let (c2, e2) = echoed(c, e);
     c = c2;

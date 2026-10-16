@@ -94,7 +94,9 @@ function driven(cs: h3q.Conn[], socks: i32[], peer: net.SocketAddr, buf: u8[], n
   let i: i32 = 0;
   while (i < cur.len()) {
     let c: h3q.Conn = cur[i];
-    let (next, out) = c.transmit(now);
+    let next: h3q.Conn = c.transmit(now);
+    let out: u8[][] = next.datagrams();
+    next = next.sent();
     c = next;
     for d in out {
       let sent: Result[i32, net.NetError] = net.send_to(socks[i], d, peer);
