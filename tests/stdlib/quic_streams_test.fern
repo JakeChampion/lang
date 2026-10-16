@@ -44,16 +44,49 @@ function data(id: i64, offset: i64, n: i32, fin: boolean): frames.Frame {
 function fed(s: streams.Streams, fs: frames.Frame[]): Result[streams.Streams, string] {
   let cur: streams.Streams = s;
   for f in fs {
-    match (cur.on_frame(f)) {
-      Ok(t) => {
-        cur = t;
-      },
-      Err(e) => {
-        return Err(e.code.to_string() + "/" + e.frame_type.to_string());
-      }
+    cur = cur.on_frame(f);
+    if let Some(e) = cur.failed {
+      return Err(e.code.to_string() + "/" + e.frame_type.to_string());
     }
   }
   return Ok(cur);
+}
+
+// The table's operations answer the table with the outcome in its fields;
+// these read them back as results, which the cases below match on.
+function open_on(s: streams.Streams, uni: boolean): Result[(streams.Streams, i64), string] {
+  let t: streams.Streams = s.open(uni);
+  if (t.refused != "") {
+    return Err(t.refused);
+  }
+  let id: i64 = t.last_opened;
+  return Ok((t, id));
+}
+
+function write_on(s: streams.Streams, id: i64, data: u8[], fin: boolean): Result[streams.Streams, string] {
+  let t: streams.Streams = s.write(id, data, fin);
+  if (t.refused != "") {
+    return Err(t.refused);
+  }
+  return Ok(t);
+}
+
+function read_on(s: streams.Streams, id: i64): Result[(streams.Streams, u8[], boolean), string] {
+  let t: streams.Streams = s.read(id);
+  if (t.refused != "") {
+    return Err(t.refused);
+  }
+  let data: u8[] = t.read_data;
+  let fin: boolean = t.read_fin;
+  return Ok((t, data, fin));
+}
+
+function stop_on(s: streams.Streams, id: i64, code: i64): Result[streams.Streams, string] {
+  let t: streams.Streams = s.stop(id, code);
+  if (t.refused != "") {
+    return Err(t.refused);
+  }
+  return Ok(t);
 }
 
 function outcome(r: Result[streams.Streams, string]): string {
@@ -185,7 +218,7 @@ function test_peer_opens(): test.TestOutcome {
 function test_directions(): test.TestOutcome {
   let s: streams.Streams = server(2 as i64);
   let mine: i64 = 3;
-  match (s.open(true)) {
+  match (open_on(s, true)) {
     Ok(pair) => {
       s = pair.0;
       mine = pair.1;
@@ -221,7 +254,7 @@ function test_send_windows(): test.TestOutcome {
   let s: streams.Streams = server(2 as i64);
   let a: i64 = 0;
   let b: i64 = 0;
-  match (s.open(false)) {
+  match (open_on(s, false)) {
     Ok(p) => {
       s = p.0;
       a = p.1;
@@ -230,7 +263,7 @@ function test_send_windows(): test.TestOutcome {
       return test.fail(e);
     }
   }
-  match (s.open(false)) {
+  match (open_on(s, false)) {
     Ok(p) => {
       s = p.0;
       b = p.1;
@@ -239,7 +272,7 @@ function test_send_windows(): test.TestOutcome {
       return test.fail(e);
     }
   }
-  match (s.write(a, bytes(60, 0), true)) {
+  match (write_on(s, a, bytes(60, 0), true)) {
     Ok(t) => {
       s = t;
     },
@@ -247,7 +280,7 @@ function test_send_windows(): test.TestOutcome {
       return test.fail(e);
     }
   }
-  match (s.write(b, bytes(40, 0), false)) {
+  match (write_on(s, b, bytes(40, 0), false)) {
     Ok(t) => {
       s = t;
     },
@@ -283,7 +316,7 @@ function test_window_updates(): test.TestOutcome {
     }
   }
   let (quiet, before, _) = s.fill([], 1200);
-  match (quiet.read(0 as i64)) {
+  match (read_on(quiet, 0 as i64)) {
     Ok(r) => {
       let (_, after, _) = r.0.fill([], 1200);
       return test.assert_eq("[" + sent(before) + "] " + int.int_to_string(r.1.len()) + " " + r.2.to_string() + " " + sent(after), "[] 60 false MAX_STREAM_DATA 0 160 ");
@@ -306,7 +339,7 @@ function test_stream_credit(): test.TestOutcome {
       return test.fail(e);
     }
   }
-  match (s.write(0 as i64, bytes(2, 0), true)) {
+  match (write_on(s, 0 as i64, bytes(2, 0), true)) {
     Ok(t) => {
       s = t;
     },
@@ -316,7 +349,7 @@ function test_stream_credit(): test.TestOutcome {
   }
   let refused: string = outcome(fed(s, [data(4 as i64, 0 as i64, 1, false)]));
   let (s1, out1, resend) = s.fill([], 1200);
-  match (s1.read(0 as i64)) {
+  match (read_on(s1, 0 as i64)) {
     Ok(r) => {
       let cur: streams.Streams = r.0;
       for item in resend {
@@ -335,7 +368,7 @@ function test_stream_credit(): test.TestOutcome {
 // A lost range is sent again; acknowledged data leaves the buffer.
 function test_loss(): test.TestOutcome {
   let s: streams.Streams = server(2 as i64);
-  match (s.open(false)) {
+  match (open_on(s, false)) {
     Ok(p) => {
       s = p.0;
     },
@@ -343,7 +376,7 @@ function test_loss(): test.TestOutcome {
       return test.fail(e);
     }
   }
-  match (s.write(1 as i64, bytes(30, 0), false)) {
+  match (write_on(s, 1 as i64, bytes(30, 0), false)) {
     Ok(t) => {
       s = t;
     },
@@ -381,7 +414,7 @@ function test_resets(): test.TestOutcome {
       return test.fail(e);
     }
   }
-  match (s.write(0 as i64, bytes(10, 0), false)) {
+  match (write_on(s, 0 as i64, bytes(10, 0), false)) {
     Ok(t) => {
       s = t;
     },
@@ -395,7 +428,7 @@ function test_resets(): test.TestOutcome {
       let note: string = events(t);
       let (_, out2, _) = t.fill([], 1200);
       let stopping: string = "-";
-      match (s1.stop(0 as i64, 3 as i64)) {
+      match (stop_on(s1, 0 as i64, 3 as i64)) {
         Ok(st) => {
           let (_, out3, _) = st.fill([], 1200);
           stopping = sent(out3);
@@ -425,7 +458,7 @@ function test_stop_after_read(): test.TestOutcome {
       return test.fail(e);
     }
   }
-  match (s.read(0 as i64)) {
+  match (read_on(s, 0 as i64)) {
     Ok(r) => {
       s = r.0;
     },
@@ -442,7 +475,7 @@ function test_stop_after_read(): test.TestOutcome {
     }
   }
   let alias: streams.Streams = s;
-  match (s.stop(0 as i64, 3 as i64)) {
+  match (stop_on(s, 0 as i64, 3 as i64)) {
     Ok(t) => {
       s = t;
     },
@@ -451,7 +484,7 @@ function test_stop_after_read(): test.TestOutcome {
     }
   }
   let old_ready: i32 = 0;
-  match (alias.read(0 as i64)) {
+  match (read_on(alias, 0 as i64)) {
     Ok(r) => {
       old_ready = r.1.len();
     },
@@ -476,13 +509,13 @@ function test_stop_after_read(): test.TestOutcome {
 // requests STREAMS_BLOCKED, once for each direction, then receives more credit.
 function test_blocked_open(): test.TestOutcome {
   let s: streams.Streams = streams.table(true, limits(2 as i64, 1 as i64, 100 as i64, 150 as i64)).with_peer(limits(0 as i64, 0 as i64, 50 as i64, 80 as i64));
-  match (s.open(false)) {
+  match (open_on(s, false)) {
     Ok(_) => {
       return test.fail("opened a bidirectional stream without credit");
     },
     Err(_) => {}
   }
-  match (s.open(true)) {
+  match (open_on(s, true)) {
     Ok(_) => {
       return test.fail("opened a unidirectional stream without credit");
     },
@@ -498,7 +531,7 @@ function test_blocked_open(): test.TestOutcome {
       return test.fail(e);
     }
   }
-  match (s.open(false)) {
+  match (open_on(s, false)) {
     Ok(p) => {
       s = p.0;
     },
@@ -506,7 +539,7 @@ function test_blocked_open(): test.TestOutcome {
       return test.fail(e);
     }
   }
-  match (s.open(false)) {
+  match (open_on(s, false)) {
     Ok(_) => {
       return test.fail("opened another stream without new credit");
     },
@@ -524,14 +557,14 @@ function test_consumed_fin_replay(): test.TestOutcome {
     return test.fail("initial FIN");
   };
   let (quiet, _) = s.take_events();
-  let Ok(read) = quiet.read(0 as i64) else {
+  let Ok(read) = read_on(quiet, 0 as i64) else {
     return test.fail("read FIN");
   };
   let old: streams.Streams = read.0;
   let Ok(replayed) = fed(read.0, [data(0 as i64, 0 as i64, 3, true), data(0 as i64, 3 as i64, 0, true)]) else {
     return test.fail("valid retransmission");
   };
-  let Ok(again) = replayed.read(0 as i64) else {
+  let Ok(again) = read_on(replayed, 0 as i64) else {
     return test.fail("read after replay");
   };
   let moved: string = outcome(fed(replayed, [data(0 as i64, 0 as i64, 4, true)]));
@@ -546,7 +579,7 @@ function test_late_fin_once(): test.TestOutcome {
     return test.fail("initial bytes");
   };
   let (quiet, _) = s.take_events();
-  let Ok(read) = quiet.read(0 as i64) else {
+  let Ok(read) = read_on(quiet, 0 as i64) else {
     return test.fail("read bytes");
   };
   let Ok(ended) = fed(read.0, [data(0 as i64, 3 as i64, 0, true)]) else {
@@ -554,7 +587,7 @@ function test_late_fin_once(): test.TestOutcome {
   };
   let first: string = events(ended);
   let (quiet_end, _) = ended.take_events();
-  let Ok(fin) = quiet_end.read(0 as i64) else {
+  let Ok(fin) = read_on(quiet_end, 0 as i64) else {
     return test.fail("read late FIN");
   };
   let Ok(replayed) = fed(fin.0, [data(0 as i64, 3 as i64, 0, true)]) else {

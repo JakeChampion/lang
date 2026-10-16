@@ -200,13 +200,22 @@ function (c: Conn) __applied(now: i64): Conn {
 function __act(q: conn.Conn, a: h3.Action, now: i64): conn.Conn {
   match (a) {
     h3.Write(id, bytes, fin) => {
-      return q.write(id, bytes, fin).unwrap_or(q);
+      let Ok(w) = q.write(id, bytes, fin) else {
+        return q;
+      };
+      return w;
     },
     h3.Abort(id, code) => {
-      return q.reset_stream(id, code).unwrap_or(q);
+      let Ok(w) = q.reset_stream(id, code) else {
+        return q;
+      };
+      return w;
     },
     h3.Stop(id, code) => {
-      return q.stop_sending(id, code).unwrap_or(q);
+      let Ok(w) = q.stop_sending(id, code) else {
+        return q;
+      };
+      return w;
     },
     h3.CloseConnection(code, why) => {
       return q.close(code, why, true, now);
