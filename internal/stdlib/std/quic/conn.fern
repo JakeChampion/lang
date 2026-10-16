@@ -347,8 +347,8 @@ function __stream_event(n: streams.Event): Event {
 // === streams ================================================================
 
 // open_stream opens a stream of this side's once the handshake is complete,
-// answering its ID, or refuses when the peer's limit on streams is reached;
-// the peer is then told this side is blocked (STREAMS_BLOCKED).
+// answering its ID, or refuses when the peer's limit on streams is reached.
+// Call blocked_open after a refusal to request STREAMS_BLOCKED on transmit.
 pub function (c: Conn) open_stream(uni: boolean): Result[(Conn, i64), string] {
   if (c.state != ESTABLISHED) {
     return Err("quic: the connection is not established");

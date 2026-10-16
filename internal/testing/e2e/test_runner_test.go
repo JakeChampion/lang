@@ -1253,7 +1253,7 @@ func TestRunnerQUICConnExamplePasses(t *testing.T) {
 // frame: reassembly, stream limits, each half's direction, flow control and
 // final sizes, window updates, retransmission, and resets both ways.
 func TestRunnerQUICStreamsExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "quic_streams", "std/quic/streams", 9)
+	runnerSuitePasses(t, "quic_streams", "std/quic/streams", 11)
 }
 
 // `tests/stdlib/http_grpc_test.fern` reads the gRPC message framing back

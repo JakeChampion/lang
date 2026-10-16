@@ -52,6 +52,12 @@ pub function (r: Reassembly) take(): (Reassembly, u8[]) {
   return (Reassembly { ...r, taken: r.delivered(), ready: [] }, r.ready);
 }
 
+// __discard forgets buffered bytes, not the bytes the application already
+// took: a later RESET_STREAM credits only final_size - taken to the connection.
+function (r: Reassembly) __discard(): Reassembly {
+  return Reassembly { ...r, ready: [], held_at: [], held: [], held_bytes: 0 as i64 };
+}
+
 // __hold inserts the parts of a segment past the delivered offset that no
 // held segment covers yet.
 function __hold(r: Reassembly, offset: i64, data: [u8]): Reassembly {
@@ -282,8 +288,8 @@ pub function (s: Streams) can_open(uni: boolean): boolean {
   return s.opened[t] < s.limits[t];
 }
 
-// open starts a stream of this side's, or, when the peer's limit is
-// reached, notes that STREAMS_BLOCKED is owed and refuses.
+// open starts a stream of this side's, or refuses when the peer's limit is
+// reached. The caller can then use blocked_open to request STREAMS_BLOCKED.
 pub function (s: Streams) open(uni: boolean): Result[(Streams, i64), string] {
   let t: i32 = s.__local_type(uni);
   if (s.opened[t] >= s.limits[t]) {
@@ -343,7 +349,7 @@ pub function (s: Streams) stop(id: i64, code: i64): Result[Streams, string] {
   if (st.recv.stop >= 0 || st.recv.reset >= 0 || st.recv.fin_read) {
     return Ok(s);
   }
-  return Ok(s.__put(i, Stream { ...st, recv: Recv { ...st.recv, stop: code, stop_state: TO_SEND, data: reassembly() } }));
+  return Ok(s.__put(i, Stream { ...st, recv: Recv { ...st.recv, stop: code, stop_state: TO_SEND, data: st.recv.data.__discard() } }));
 }
 
 // buffered is how many bytes written to a stream the peer has not yet
@@ -675,7 +681,7 @@ function (s: Streams) __stream_windows(out: u8[], room: i32, resend: recovery.Re
 function (s: Streams) __data(out: u8[], room: i32, resend: recovery.Resend[]): (Streams, u8[], recovery.Resend[]) {
   let n: i32 = s.list.len();
   if (n == 0) {
-    return (s, out, resend);
+    return s.__blocked(out, room, resend);
   }
   let cur: Streams = s;
   let o: u8[] = out;
