@@ -289,3 +289,8 @@ bootstrap/x86-64-linux/stage2.size_bytes	12207088
 bootstrap/x86-64-linux/stage3.wall_s	15
 bootstrap/x86-64-linux/stage3.peak_rss_mb	1901
 bootstrap/x86-64-linux/stage3.size_bytes	12207088
+
+# lane: net-h2spec
+h2spec/passed	146
+h2spec/failed	0
+h2spec/skipped	0
