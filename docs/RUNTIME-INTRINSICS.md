@@ -113,7 +113,11 @@ retired the op: `.chars()` is std/string's codepoint decoder, not a builtin.
 > array/map core should follow. (`xs.reverse()` and `xs.concat(ys)` moved with
 > it and were later deleted outright — #7451: their lowering intercepts fired
 > only for a program that imports nothing, which E043 rejects, so nothing the
-> compiler accepts could reach them.)
+> compiler accepts could reach them.) `xs.concat(ys)` over scalar elements is
+> a runtime helper again, `asmcore.rt_src_arr_concat`, keyed this time on the
+> call std/array's method folds to (`__arrm_concat__<elem>`), so it is what an
+> importing program reaches: one box sized for both operands and two copies,
+> where the std/array body grew its result an element at a time.
 >
 > Two properties make one `i32[]`-typed body serve every element type. The copy
 > is a raw 8-byte SLOT copy, so a `string[]`'s box pointers ride through

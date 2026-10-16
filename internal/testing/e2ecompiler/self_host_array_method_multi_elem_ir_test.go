@@ -53,6 +53,7 @@ function main(): i32 {
 
 	// concat — a 2-param `T[]`-only helper. This is the shape the old guard
 	// named as crashing at two element types; it lowers and runs correctly now.
+	// The i32 call takes the runtime's sized copy and the string call the clone.
 	{"concat-i32-string", `import "std/array";
 function main(): i32 {
     let xs: i32[] = [1, 2];
@@ -62,7 +63,7 @@ function main(): i32 {
     let a: i32[] = xs.concat(ys);
     let b: string[] = ss.concat(ts);
     return a.len() * 10 + b.len();
-}`, []string{"__arrm_concat__i32", "__arrm_concat__string"}},
+}`, []string{"__fern_arr_concat", "__arrm_concat__string"}},
 
 	// An Ord-BOUNDED receiver method at two element types: the bound resolves
 	// `i32.cmp` in one clone and `string.cmp` in the other.

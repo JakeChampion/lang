@@ -5942,13 +5942,9 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_slice_abort") {
     s = s.need("heap");
   }
-  // arr.join(sep) (#5328): mark_arr_str_join sets the arr_str_join + heap
-  // needs; the bodies come from asm_arm64.emit_runtime
-  // (which asm_arm64_ir reuses verbatim — the arr_str_join block already
-  // exists there), so only the call site needs marking here.
-  if (name == "__fern_arr_str_join") {
-    s = s.mark_arr_str_join();
-  }
+  // arr.join(sep) and a scalar xs.concat(ys) (#5328): mark_array_helper
+  // sets each one's need and the heap's.
+  s = s.mark_array_helper(name);
   // arr-of-arr reclaim helpers (#4355 slice 9) — bodies gated on these
   // needs in asm_arm64's runtime writer, mirroring the x86 asm_ir
   // gating: an unrelated binary must not carry the strarrarr body's
@@ -6437,6 +6433,20 @@ function emit_named_bodies(cache: irtables.LowerResult[], physical: physicalbody
       s = emit_function_via_ir_named(cache[xi], physicalbody.select(physical, xi), s.prelift(pre, xi, cache[xi]), cache[xi].name, true, s, vgate).with_named(cache[xi].name);
     }
     xi = xi + 1;
+  }
+  return s;
+}
+
+// arr.join(sep) and a scalar xs.concat(ys) are Fern runtime functions
+// (#2649, asmcore.rt_src_arr_str_join and rt_src_arr_concat). Each fills one
+// exact-size block, so the heap is its only dep and mark_array_helper
+// declares it.
+function emit_array_helpers(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.has_need("arr_str_join")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_join(), s);
+  }
+  if (s.has_need("arr_concat")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_concat(), s);
   }
   return s;
 }
@@ -10838,12 +10848,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   // section over the __raw_arr_box + __raw_array pair. It takes a `tgt`, and
   // only because its bounds trap (#5419) is exit(134) through __syscall3 and
   // the exit number is per-target.
-  // __fern_arr_str_join is now a Fern runtime function (#2649): see
-  // asmcore.rt_src_arr_str_join. It fills one exact-size block, so the heap
-  // is its only dep and mark_arr_str_join declares it.
-  if (s.has_need("arr_str_join")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_join(), s);
-  }
+  s = emit_array_helpers(s);
   // __fern_str_trim — Fern runtime function (#2649), Tier-1: returns the
   // zero-copy sub-slice s[start:end] after skipping leading/trailing
   // whitespace. The slice box allocates (heap dep via mark_str_trim).
