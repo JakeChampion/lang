@@ -46,8 +46,10 @@ pub struct Header { kind: Kind, version: i64, dcid: u8[], scid: u8[], token: u8[
 
 // Keys — one direction's packet protection at one encryption level:
 // the AEAD key and IV and the header-protection key (RFC 9001 §5.1), and
-// the secret they came from, which a key update (§6) advances.
-pub struct Keys { suite: keyschedule.CipherSuite, secret: u8[], key: u8[], iv: u8[], hp: u8[], hp_round_keys: u8[] }
+// the secret they came from, which a key update (§6) advances. Under an
+// AES suite `gcm` is the AEAD key prepared once, and `hp_round_keys` the
+// header-protection key's schedule.
+pub struct Keys { suite: keyschedule.CipherSuite, secret: u8[], key: u8[], iv: u8[], hp: u8[], hp_round_keys: u8[], gcm: Option[aes_gcm.Key] }
 
 // Opened — a decrypted packet: its packet number, its frames' bytes, the
 // key phase and spin bits of a short header, and whether its reserved bits
@@ -72,7 +74,26 @@ pub function keys(suite: keyschedule.CipherSuite, secret: [u8]): Keys {
       rk = __aes_expand_key(hp);
     }
   }
-  return Keys { suite: suite, secret: __copy(secret), key: keyschedule.hkdf_expand_label(h, secret, "quic key", [], n), iv: keyschedule.hkdf_expand_label(h, secret, "quic iv", [], 12), hp: hp, hp_round_keys: rk };
+  let key: u8[] = keyschedule.hkdf_expand_label(h, secret, "quic key", [], n);
+  return Keys { suite: suite, secret: __copy(secret), key: key, iv: keyschedule.hkdf_expand_label(h, secret, "quic iv", [], 12), hp: hp, hp_round_keys: rk, gcm: __gcm(suite, key) };
+}
+
+// __gcm is the AEAD key prepared under an AES suite, None under ChaCha20.
+function __gcm(suite: keyschedule.CipherSuite, key: [u8]): Option[aes_gcm.Key] {
+  match (suite.aead()) {
+    keyschedule.ChaCha20Poly1305 => {
+      return None;
+    },
+    _ => {}
+  }
+  match (aes_gcm.key(key)) {
+    Ok(k) => {
+      return Some(k);
+    },
+    Err(_) => {
+      return None;
+    }
+  }
 }
 
 // initial_secret is the Initial traffic secret of the client (`client`) or
@@ -99,7 +120,8 @@ pub function (k: Keys) updated(): Keys {
   let h: keyschedule.Hash = k.suite.hash();
   let secret: u8[] = keyschedule.hkdf_expand_label(h, k.secret, "quic ku", [], h.size());
   let n: i32 = k.suite.aead().key_len();
-  return Keys { ...k, secret: secret, key: keyschedule.hkdf_expand_label(h, secret, "quic key", [], n), iv: keyschedule.hkdf_expand_label(h, secret, "quic iv", [], 12) };
+  let key: u8[] = keyschedule.hkdf_expand_label(h, secret, "quic key", [], n);
+  return Keys { ...k, secret: secret, key: key, iv: keyschedule.hkdf_expand_label(h, secret, "quic iv", [], 12), gcm: __gcm(k.suite, key) };
 }
 
 // === packet numbers (§17.1, Appendix A) ====================================
@@ -268,24 +290,26 @@ function __retry_header(h: Header, datagram: [u8], at: i32): Result[Header, stri
 // mask is the header-protection mask from the 16-byte `sample` (§5.4.3,
 // §5.4.4): its first five bytes are what the header's bits are XORed with.
 pub function mask(k: Keys, sample: [u8]): u8[] {
-  let five: u8[] = [0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8];
   match (k.suite.aead()) {
     keyschedule.ChaCha20Poly1305 => {
       let counter: u32 = sample[0] as u32 | sample[1] as u32 << 8 | sample[2] as u32 << 16 | sample[3] as u32 << 24;
-      match (chacha20poly1305.chacha20_xor(k.hp, sample[4:16], counter, five)) {
+      match (chacha20poly1305.chacha20_xor(k.hp, sample[4:16], counter, ZERO_MASK)) {
         Ok(m) => {
           return m;
         },
         Err(_) => {
-          return five;
+          return __copy(ZERO_MASK);
         }
       }
     },
     _ => {
-      return __aes_ctr32(k.hp_round_keys, sample[0:16], five);
+      return __aes_ctr32(k.hp_round_keys, sample[0:16], ZERO_MASK);
     }
   }
 }
+
+// The five bytes the keystream is taken over for a header's mask.
+const ZERO_MASK: u8[] = [0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8];
 
 function __nonce(iv: [u8], pn: i64): u8[] {
   let out: u8[] = __copy(iv);
@@ -311,7 +335,10 @@ function __seal(k: Keys, pn: i64, plaintext: [u8], aad: [u8]): u8[] {
       }
     },
     _ => {
-      match (aes_gcm.seal(k.key, __nonce(k.iv, pn), plaintext, aad)) {
+      let Some(g) = k.gcm else {
+        return [];
+      };
+      match (g.seal(__nonce(k.iv, pn), plaintext, aad)) {
         Ok(ct) => {
           return ct;
         },
@@ -336,7 +363,10 @@ function __open(k: Keys, pn: i64, sealed: [u8], aad: [u8]): Option[u8[]] {
       }
     },
     _ => {
-      match (aes_gcm.open(k.key, __nonce(k.iv, pn), sealed, aad)) {
+      let Some(g) = k.gcm else {
+        return None;
+      };
+      match (g.open(__nonce(k.iv, pn), sealed, aad)) {
         Ok(pt) => {
           return Some(pt);
         },

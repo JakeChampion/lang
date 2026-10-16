@@ -1111,7 +1111,7 @@ func TestRunnerChaCha20Poly1305ExamplePasses(t *testing.T) {
 // GCM specification's AES-128 and AES-256 test cases, vectors from Go's
 // crypto/cipher and the refusals.
 func TestRunnerAESGCMExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "aes_gcm", "std/crypto/aes_gcm", 18)
+	runnerSuitePasses(t, "aes_gcm", "std/crypto/aes_gcm", 19)
 }
 
 // `tests/stdlib/x25519_test.fern` covers RFC 7748's vectors, a
