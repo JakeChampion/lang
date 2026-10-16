@@ -1,0 +1,35 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The two refusals the move needs. loop_host: a body-scope .with
+// inside a loop would read its own moved-out field on the next pass,
+// so the site keeps the copy. alias_root: the root is a local bound
+// from another container's FIELD, so the box is not this frame's and
+// emptying its field would take the buffer from the container that
+// still reads it — a read the analysis cannot see, since it is rooted
+// at a different name.
+struct Inner { xs: i32[] }
+struct Outer { inner: Inner, n: i32 }
+function loop_host(k: i32): i32 {
+    let b: Inner = Inner { xs: [1, 2, 3] };
+    let acc: i32 = 0;
+    let j: i32 = 0;
+    while (j < k) {
+        let zs: i32[] = b.xs.with(0, j);
+        acc = acc + zs[0] + zs.len();
+        j = j + 1;
+    }
+    return acc;
+}
+function alias_root(): i32 {
+    let o: Outer = Outer { inner: Inner { xs: [1, 2, 3] }, n: 0 };
+    let t: Inner = o.inner;
+    let ys: i32[] = t.xs.with(0, 9);
+    return ys[0] + o.inner.xs[0];
+}
+function main(): i32 {
+    let bad: i32 = 0;
+    if (loop_host(3) != 12) { bad = bad + 1; }
+    if (alias_root() != 10) { bad = bad + 2; }
+    return bad + __rc_underflow_count();
+}

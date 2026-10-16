@@ -1,0 +1,23 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Slice 6 (string closure captures): a closure that captures a
+// string reclaims the capture from the env block on the closure's
+// last reference, on native single-word (x86_64). hasRcCapture now
+// counts string captures on natives, genClosureDropThunk emits
+// WidthPtr + __fern_rc_dec for them, and thunkSafe widens to
+// require the same MakeEnv inc invariant.
+// Per iter: s.len() = 26; 500x → 13000.
+import "core/int";
+import "std/string";
+function mk(): i32 {
+    let s: string = "value-aaaaaaaaaaaaaaaaaa-" + "1";
+    let f = (): i32 => { return s.len(); };
+    return f();
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 13000) + __rc_underflow_count();
+}

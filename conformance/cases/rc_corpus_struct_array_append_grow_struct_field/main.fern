@@ -1,0 +1,40 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// struct[] grown through repeated `.append` inside a struct functional
+// update — the parser `Par{toks: Token[]}` shape (#3425). Same grow-copy
+// element-share as the string[] case, but the freeing walk is the deep
+// struct-element drop (__drop_arr_struct_<E> / element arr_dec), which
+// freed the shared Tok boxes (and their string fields) under the live
+// grown buffer. Pre-fix this segfaulted outright on x86-64. 0 when
+// correct.
+struct Tok {
+    kind: i32,
+    text: string
+}
+struct Par {
+    toks: Tok[],
+    pos: i32
+}
+function push_tok(p: Par, t: Tok): Par {
+    return Par { toks: p.toks.append(t), pos: p.pos + 1 };
+}
+function main(): i32 {
+    let p: Par = Par { toks: [], pos: 0 };
+    let base: string = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN";
+    let i: i32 = 0;
+    while (i < 40) {
+        let t: Tok = Tok { kind: i, text: "tokentextprefixvalue:" + slice_unchecked(base, 0, 20 + (i - (i / 30) * 30)) };
+        p = push_tok(p, t);
+        i = i + 1;
+    }
+    let bad: i32 = 0;
+    let j: i32 = 0;
+    while (j < 40) {
+        if (p.toks[j].kind != j) { bad = bad + 1; }
+        let want: i32 = 21 + 20 + (j - (j / 30) * 30);
+        if (p.toks[j].text.len() != want) { bad = bad + 1; }
+        j = j + 1;
+    }
+    return bad + __rc_underflow_count();
+}

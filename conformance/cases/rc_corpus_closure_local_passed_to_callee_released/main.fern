@@ -1,0 +1,42 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// A closure LOCAL handed to a callee keeps its pair: the slot has a
+// reader ElideClosurePair cannot elide, so the exit sweep's
+// per-closure thunk — which reads a bare env — cannot run on the
+// slot directly. It is dispatched through the drop-fn pointer the
+// pair carries instead (#8545), which reaches the same thunk with
+// the env. Both the named nested function and the lambda bound to
+// a local reclaim their pair, env and captures; the leak gates
+// hold this at zero on all three backends.
+@noinline
+function each(n: i32, f: (i32) => i32): void {
+    let i: i32 = 0;
+    while (i < n) { f(i); i = i + 1; }
+}
+
+@noinline
+function run_named(): i32 {
+    let seen: i32 = 0;
+    function visit(x: i32): i32 {
+        seen = seen * 10 + x;
+        return seen;
+    }
+    each(3, visit);
+    return seen;
+}
+
+@noinline
+function run_lambda_local(): i32 {
+    let seen: i32 = 0;
+    let visit: (i32) => i32 = (x: i32) => { seen = seen * 10 + x; seen };
+    each(3, visit);
+    return seen;
+}
+
+function main(): i32 {
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 4) { t = t + run_named() + run_lambda_local(); i = i + 1; }
+    return (t - 96) + __rc_underflow_count();
+}

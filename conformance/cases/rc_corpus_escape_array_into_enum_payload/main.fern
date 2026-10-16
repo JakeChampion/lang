@@ -1,0 +1,31 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Escape into an enum payload (variant constructor arg):
+// the json `JArray(inner)` shape. emitEnumNew stores the
+// payload WITHOUT an inc (unlike StructLit), so an owned
+// array passed in escapes uncounted into the box and must
+// not be freed at the helper's exit. The churn loop both
+// reclaims same-size blocks and accumulates a distinctive
+// value so a reused-block corruption reads back wrong.
+import "core/int";
+import "std/string";
+enum Wrap { Arr(i32[]), Empty }
+function mk(n: i32): Wrap {
+    let arr: i32[] = [n, n + 1, n + 2, n + 3];
+    return Arr(arr);
+}
+function main(): i32 {
+    let w: Wrap = mk(1000);
+    let c: i32 = 0;
+    while (c < 300) {
+        let junk: i32[] = [c, c, c, c];
+        c = c + 1;
+    }
+    let got: i32 = 0;
+    match (w) {
+        Arr(a) => { got = (a.len() - 4) + (a[0] - 1000) + (a[3] - 1003); },
+        Empty => { got = 100; }
+    }
+    return got + __rc_underflow_count();
+}

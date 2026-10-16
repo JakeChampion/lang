@@ -1,0 +1,34 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// A loop element RETURNED out of the iteration: the returned guard
+// (with bindingConfinedToArm and movedLocals behind it) refuses the
+// borrow, so sd keeps the owned model. Pinned here as cross-backend
+// value correctness — content compare after the container dies, with
+// same-size churn after the drop. Measured with every walk-3 guard
+// knocked out: this still exits 0 on all three backends, because a
+// wrongly-borrowed return goes uncounted through move-on-return and
+// the caller's may-alias-result conservatism degrades its container
+// drops to FLAT decs — a leak, which this corpus reads as 0 by
+// design.
+struct S { name: string, fields: string[] }
+function mkstr(p: string): string { return p + "!"; }
+function pick(xs: S[]): S {
+    for sd in xs {
+        if (sd.fields.len() == 1) { return sd; }
+    }
+    return S{ name: mkstr("z"), fields: [] };
+}
+function use_returned(): i32 {
+    let src: S[] = [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] }];
+    let hit: S = pick(src);
+    src = [];
+    let churn: S[] = [S{ name: mkstr("zzzzzzzzzz"), fields: [mkstr("g")] }];
+    let ok: i32 = 0;
+    if (hit.name == "aaaaaaaaaa!") { ok = 1; }
+    return ok + churn.len() - 1;
+}
+function main(): i32 {
+    let c: i32 = use_returned();
+    return (c - 1) + __rc_underflow_count();
+}

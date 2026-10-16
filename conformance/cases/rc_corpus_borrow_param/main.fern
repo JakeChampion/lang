@@ -1,0 +1,13 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Borrowed parameter: function reads an array through a
+// borrow; caller still owns it afterward.
+import "core/int";
+function sum3(a: i32[]): i32 { return a[0] + a[1] + a[2]; }
+function main(): i32 {
+    let xs: i32[] = [4, 5, 6];
+    let s: i32 = sum3(xs);
+    let t: i32 = sum3(xs);
+    return (s - 15) + (t - 15) + __rc_underflow_count();
+}

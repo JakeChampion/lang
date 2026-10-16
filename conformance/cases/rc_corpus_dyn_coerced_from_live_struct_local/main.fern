@@ -1,0 +1,30 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// `dyn Trait` coerced from a struct LOCAL that stays live past the
+// coercion. The retain the alias site owes belongs on the concrete
+// `data` word: a plain __fern_rc_inc lands on the dyn representation
+// (the natives' headerless {data,vtable} cell, wasm's static vtable
+// word) instead. The top-level pair is the discriminator — the source
+// is at its last use there, so the coercion is a MOVE and no retain is
+// emitted at all — while the loop pair takes the retain and needs it:
+// `s` and the aliasing `d` are both reclaimed at scope exit.
+// 9 flat + 3 × (9 + 3) in the loop.
+import "core/int";
+trait Shape { function area(self: Self): i32; }
+struct Square { side: i32 }
+impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
+function main(): i32 {
+    let s0: Square = Square { side: 3 };
+    let d0: dyn Shape = s0;
+    let flat: i32 = d0.area();
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 3) {
+        let s: Square = Square { side: 3 };
+        let d: dyn Shape = s;
+        acc = acc + d.area() + s.side;
+        i = i + 1;
+    }
+    return (flat - 9) + (acc - 36) + __rc_underflow_count();
+}

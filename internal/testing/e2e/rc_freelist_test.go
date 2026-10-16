@@ -212,7 +212,7 @@ func TestX86_64ArrayDropFree(t *testing.T) {
 	if _, code := compileAndRunX86_64FreeOn(t, pushLoopFreeSrc); code != 0 {
 		t.Errorf("push-loop free+reuse: got %d, want 0", code)
 	}
-	for _, c := range rcCorpus {
+	for _, c := range rcCorpusCases(t) {
 		t.Run(c.name, func(t *testing.T) {
 			if _, code := compileAndRunX86_64FreeOn(t, c.src); code != 0 {
 				t.Errorf("%s (free-on): got %d, want 0 (UAF / corruption when blocks are freed+reused)", c.name, code)
@@ -228,7 +228,7 @@ func TestArm64ArrayDropFree(t *testing.T) {
 	if _, code := compileAndRunArm64FreeOn(t, pushLoopFreeSrc); code != 0 {
 		t.Errorf("push-loop free+reuse: got %d, want 0", code)
 	}
-	for _, c := range rcCorpus {
+	for _, c := range rcCorpusCases(t) {
 		t.Run(c.name, func(t *testing.T) {
 			if _, code := compileAndRunArm64FreeOn(t, c.src); code != 0 {
 				t.Errorf("%s (free-on): got %d, want 0 (UAF / corruption)", c.name, code)
@@ -244,11 +244,8 @@ func TestWASMArrayDropFree(t *testing.T) {
 	if got := runWasm(t, pushLoopFreeSrc); got != 0 {
 		t.Errorf("push-loop free+reuse: got %d, want 0", got)
 	}
-	for _, c := range rcCorpus {
+	for _, c := range rcCorpusCases(t) {
 		t.Run(c.name, func(t *testing.T) {
-			if c.skipWasm != "" {
-				t.Skip(c.skipWasm)
-			}
 			if got := runWasm(t, c.src); got != 0 {
 				t.Errorf("%s (free-on): got %d, want 0 (UAF / corruption)", c.name, got)
 			}

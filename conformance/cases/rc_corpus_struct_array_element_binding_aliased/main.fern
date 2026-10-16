@@ -1,0 +1,25 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// A struct element of an array bound to a local, whose string fields
+// ALIAS a live local (#6499). The exit sweep's inline struct-box
+// reclaim frees each string field with __fern_str_dec, so this is the
+// case that says the free is guarded by the field's own count: `s`
+// and the array element are read for their CONTENT after both the
+// bound copy and the argument temp have been swept, which a premature
+// free turns into wrong bytes rather than a wrong length.
+import "core/int";
+import "std/string";
+struct E { key: string, value: string }
+function cat(a: string, b: string): string { return a + b; }
+function take(e: E): i32 { return e.key.len(); }
+function main(): i32 {
+    let s: string = cat("abcd", "efgh");
+    let es: E[] = [E { key: s, value: s }];
+    let a: E = es[0];
+    let n: i32 = a.key.len() + a.value.len() + take(es[0]);
+    let ok: i32 = 0;
+    if (s == "abcdefgh") { ok = ok + 1; }
+    if (es[0].value == "abcdefgh") { ok = ok + 1; }
+    return (n - 24) + (2 - ok) + __rc_underflow_count();
+}

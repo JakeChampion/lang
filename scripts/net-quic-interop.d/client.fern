@@ -1,0 +1,111 @@
+// A QUIC client over UDP: handshake with a server, print what it agreed,
+// close, and exit 0 when the handshake completed.
+//   client PORT NAME CA.pem
+import "std/net";
+import "std/quic/conn";
+import "std/tls/verify";
+import "std/async";
+import "std/option";
+import "std/i64";
+
+function now(): i64 {
+  return monotonic_ns();
+}
+
+function pump(c: conn.Conn, sock: i32, peer: net.SocketAddr): conn.Conn {
+  let (c2, out) = c.transmit(now());
+  for d in out {
+    let r: Result[i32, net.NetError] = net.send_to(sock, d, peer);
+  }
+  return c2;
+}
+
+function drain(c: conn.Conn, sock: i32, buf: u8[]): conn.Conn {
+  let cur: conn.Conn = c;
+  let going: boolean = true;
+  while (going) {
+    match (net.recv_from(sock, buf)) {
+      Ok(got) => {
+        let step: conn.Step = cur.receive(buf[0:got.0], now());
+        cur = step.conn;
+        for e in step.events {
+          match (e) {
+            conn.Connected => {
+              print("fern client: connected alpn=" + cur.alpn());
+            },
+            conn.Closed(why) => {
+              print("fern client: closed code=" + why.code.to_string() + " reason=" + why.reason);
+            }
+          }
+        }
+      },
+      Err(_) => {
+        going = false;
+      }
+    }
+  }
+  return cur;
+}
+
+function wait_ms(c: conn.Conn): i32 {
+  let d: i64 = c.deadline();
+  if (d == 0) {
+    return 100;
+  }
+  let ms: i64 = (d - now()) / 1000000 + 1;
+  if (ms < 1) {
+    return 1;
+  }
+  if (ms > 100) {
+    return 100;
+  }
+  return ms as i32;
+}
+
+// ran drives the connection until it is done or ten seconds pass, closing
+// it once the handshake is confirmed; true when it was.
+function ran(c0: conn.Conn, sock: i32, peer: net.SocketAddr): boolean {
+  let buf: u8[] = __alloc_u8(65536);
+  let c: conn.Conn = c0;
+  let started: i64 = now();
+  let closing: boolean = false;
+  while (!c.done() && now() - started < 10000000000) {
+    c = pump(c, sock, peer);
+    let woke: i32 = async.wait_any([sock, 1], wait_ms(c));
+    c = drain(c, sock, buf);
+    if (c.deadline() != 0 && now() >= c.deadline()) {
+      c = c.tick(now()).conn;
+    }
+    if (c.confirmed() && !closing) {
+      closing = true;
+      c = c.close(0 as i64, "fern done", true, now());
+    }
+  }
+  return closing;
+}
+
+function main(): i32 {
+  let argv: string[] = args();
+  let Some(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
+    return 2;
+  };
+  let Ok(roots) = verify.roots_from_file(argv[3]) else {
+    eprint("no roots");
+    return 2;
+  };
+  let cfg: conn.Config = conn.config(["h3"]).client_side(argv[2], roots);
+  let Ok(c0) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now()) else {
+    return 2;
+  };
+  let Some(any) = net.socket_addr_parse("127.0.0.1:0") else {
+    return 2;
+  };
+  let Ok(sock) = net.udp_socket(any) else {
+    return 2;
+  };
+  let nb: Result[void, net.NetError] = net.set_nonblocking(sock, true);
+  if (ran(c0, sock, peer)) {
+    return 0;
+  }
+  return 1;
+}

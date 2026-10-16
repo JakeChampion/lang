@@ -1,0 +1,16 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Escaping closure: a factory returns its closure past its own
+// frame. The factory must NOT free the env (move-on-return);
+// main owns the surviving closure and frees it at exit. f(5)
+// with n=10 → 15.
+import "core/int";
+function makeAdder(n: i32): (i32) => i32 {
+    function add(x: i32): i32 { return x + n; }
+    return add;
+}
+function main(): i32 {
+    let f = makeAdder(10);
+    return (f(5) - 15) + __rc_underflow_count();
+}

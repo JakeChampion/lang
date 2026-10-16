@@ -1,0 +1,20 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// An f-string reassigned in a loop. The classifiers that decide
+// whether a destination local may release its superseded value read
+// the raw expression, and an f-string reached each one's
+// conservative default, so the store left the old buffer unfreed:
+// 32 bytes a round on x86-64 and wasm, and arm64 clean, which
+// is why only a three-backend gate catches it (#8697).
+//
+// `f"{i}"` alone never leaked — it desugars to a bare to_string()
+// with no concat — so the literal tail is essential.
+import "core/int";
+import "std/i32";
+function main(): i32 {
+    let s: string = "";
+    let i: i32 = 0;
+    while (i < 50) { s = f"{i}-iteration"; i = i + 1; }
+    return (s.len() - 12) + __rc_underflow_count();
+}

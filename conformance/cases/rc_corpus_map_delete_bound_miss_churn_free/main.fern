@@ -1,0 +1,28 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Delete MISS. Worth its own case because it leaks identically to a
+// hit — nothing about what the delete did to the table matters, which
+// is what ruled the deleted entry out as the cause (#8434).
+// Per iter: surviving "other" 3; 500x → 1500.
+import "core/int";
+import "core/map";
+import "std/string";
+function mk(): i32 {
+    let acc: i32 = 0;
+    let sm: Map[string, i32] = map_new(8);
+    sm = sm.insert("ke" + "y", 7);
+    sm = sm.insert("ot" + "her", 3);
+    sm = sm.insert("th" + "ird", 10);
+    let sm2 = sm.without("zz" + "zz");
+    sm = sm2.0;
+    if (sm2.1) { acc = acc + 100; }
+    acc = acc + sm.get_or("ot" + "her", 0);
+    return acc;
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 1500) + __rc_underflow_count();
+}

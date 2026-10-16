@@ -1,0 +1,25 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// A LIVE `continue` before the element's declaration, so the declaration
+// is genuinely skipped on half the iterations. That is the path the
+// widened guard rests on: the element's slot then still holds the
+// previous iteration's pointer, which the buffer already owns, and the
+// suppressed drop must leave it alone. i = 1, 3, 5 are stored, so
+// (1+1) + (2+3) + (3+5) = 15.
+import "core/int";
+struct Val { kind: i32, kids: i32[] }
+function build(n: i32): i32 {
+    let vals: Val[] = [];
+    let total: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) {
+        i = i + 1;
+        if (i % 2 == 0) { continue; }
+        let v: Val = Val { kind: i, kids: [i] };
+        vals = vals.append(v);
+        total = total + vals.len() + vals[vals.len() - 1].kids[0];
+    }
+    return total;
+}
+function main(): i32 { return (build(6) - 15) + __rc_underflow_count(); }

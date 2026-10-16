@@ -1,0 +1,22 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Escape into a struct field: an owned array stored in a
+// returned struct escapes the helper; freeing it at exit
+// would strand the field. Churn forces reuse of a freed block.
+import "core/int";
+import "std/string";
+struct Box { items: i32[] }
+function mk(n: i32): Box {
+    let arr: i32[] = [n, n + 1, n + 2];
+    return Box { items: arr };
+}
+function main(): i32 {
+    let b: Box = mk(5);
+    let c: i32 = 0;
+    while (c < 90) {
+        let junk: i32[] = [c, c, c];
+        c = c + junk.len();
+    }
+    return (b.items.len() - 3) + (b.items[2] - 7) + __rc_underflow_count();
+}

@@ -1,0 +1,22 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// String ARRAY ELEMENT reclamation (wasm). A string[] frees each
+// element string via the two-word walk in __fern_drop_arr_str
+// before returning the buffer, instead of leaking the elements
+// (buffer-only __fern_arr_dec). Built from a literal of two fresh
+// concats; 200x churn. A leaked / double-freed element buffer
+// drifts the checksum or trips the underflow detector.
+// arr[0].len()+arr[1].len() = 2+2 = 4; 200*4=800.
+function mk(seed: i32): i32 {
+    let a: string = "a" + "x";
+    let b: string = "b" + "y";
+    let arr: string[] = [a, b];
+    return arr[0].len() + arr[1].len();
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 800) + __rc_underflow_count();
+}
