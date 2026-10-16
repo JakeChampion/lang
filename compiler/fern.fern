@@ -623,17 +623,20 @@ function arm64_elf_binary_pie(asm: string, words: u8[]): string {
 // arm64_elf_binary. Returns the binary bytes packed into a string, or "" if
 // the assembler could not encode something (the caller exits 2).
 //
-// Single R+W+X PT_LOAD, not the two-segment W^X image arm64 uses:
-// x86_resolve fixes .rodata references against the 8-byte-padded .text
-// length, which is exactly this layout. W^X would need the assembler to
-// resolve against a page-aligned data vaddr, as arm64_gas_link does.
+// Code and unwind data load R+X; constant boxes, globals and BSS load R+W.
+// Resolve both relative and absolute references against those final addresses.
 function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string): string {
   util.arr_push_cliff_report("x86:emitted", 0);
-  let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words(asm, words);
+  let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words_unlinked(asm, words);
   util.arr_push_cliff_report("x86:assembled", 0);
-  // Absolute `.quad <label>` pointers need the load address, which the ELF
-  // container picks — the analogue of arm64_gas_link's data-vaddr argument.
-  a = x86_native.x86_resolve_data(a, elf.elf_text_vaddr_x86());
+  let tv: i64 = elf.elf_x86_wx_text_vaddr() as i64;
+  let hdr_len: i32 = x86_native.x86_eh_frame_hdr_len(a);
+  let hv: i64 = elf.elf_x86_wx_eh_hdr_vaddr(a.text.len()) as i64;
+  let ev: i64 = elf.elf_x86_wx_eh_frame_vaddr(a.text.len(), hdr_len) as i64;
+  let eh: i32[] = x86_native.x86_eh_frame(a, tv, ev);
+  let hdr: i32[] = x86_native.x86_eh_frame_hdr(a, tv, ev, hv);
+  let dv: i32 = elf.elf_x86_wx_data_vaddr(a.text.len(), hdr.len(), eh.len());
+  a = x86_native.x86_link(a, tv as i32, dv);
   util.arr_push_cliff_report("x86:resolved", 0);
   // Anything unencodable means bytes were dropped, so every offset past
   // the first is wrong — refuse rather than write it (SH-005, #6045).
@@ -646,17 +649,8 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: s
     eprint("fern: -target x86-64: no _start symbol in the emitted program");
     return "";
   }
-  // The unwind data the `.cfi_*` directives rendered, at the addresses the
-  // image places it — .text's size is final here, and the data base the
-  // assembler resolved against already accounts for these sections.
-  let tv: i64 = elf.elf_text_vaddr_x86() as i64;
-  let hdr_len: i32 = x86_native.x86_eh_frame_hdr_len(a);
-  let hv: i64 = elf.elf_eh_hdr_vaddr_x86(a.text.len()) as i64;
-  let ev: i64 = elf.elf_eh_frame_vaddr_x86(a.text.len(), hdr_len) as i64;
-  let eh: i32[] = x86_native.x86_eh_frame(a, tv, ev);
-  let hdr: i32[] = x86_native.x86_eh_frame_hdr(a, tv, ev, hv);
   util.arr_push_cliff_report("x86:unwind", 0);
-  let bin: u8[] = elf.elf_program_x86(a.text, hdr, eh, a.rodata, a.bss_size, eoff);
+  let bin: u8[] = elf.elf_program_x86_wx(a.text, hdr, eh, a.rodata, a.bss_size, eoff);
   util.arr_push_cliff_report("x86:image", 0);
   if (!emit_syms) {
     return string_from_bytes_unchecked(bin);
@@ -669,14 +663,14 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: s
   // entry point.
   let end: i32 = a.text.len();
   let wide: i32[] = elf.elf_append_debug(
-    elf.elf_cat_u8([], bin), elf.elf_text_vaddr_x86(), elf.elf_text_off_x86(), a.text.len(),
+    elf.elf_cat_u8([], bin), tv as i32, elf.elf_x86_wx_text_off(), a.text.len(),
     elf.elf_func_sym_names(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
     elf.elf_func_sym_offs(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
     elf.elf_func_sym_sizes(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
     cu_name, comp_dir(),
     a.files, a.loc_offs, a.loc_files, a.loc_lines, a.loc_cols, a.loc_flags,
-    x86_native.x86_debug_frame(a, elf.elf_text_vaddr_x86() as i64),
-    x86_var_ranges(a, elf.elf_text_vaddr_x86()),
+    x86_native.x86_debug_frame(a, tv),
+    x86_var_ranges(a, tv as i32),
   );
   return string_from_bytes_unchecked(util.to_u8(wide));
 }
