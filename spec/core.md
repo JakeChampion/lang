@@ -464,6 +464,7 @@ is the number of slots it leaves.
 | `ring_send_zc` | 439 | 4 | 1 |
 | `sha1_hw` | 440 | 0 | 1 |
 | `sha1_hw_blocks` | 441 | 2 | 1 |
+| `udp_bind_with` | 442 | 3 | 1 |
 <!-- END ir_effects_run -->
 
 ## How this is kept true
