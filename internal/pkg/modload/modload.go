@@ -1257,7 +1257,7 @@ func sortedPaths(loaded map[string]*module) []string {
 // entry module gets "" (its decls keep their original names). Every
 // other module defaults to `name + "__"`, preserving the historical
 // basename scheme — which stdlib dispatch and interp interop depend on
-// (e.g. `int__int_to_string`). The one adjustment: when two NON-stdlib
+// (e.g. `int__int_to_string`). The one adjustment: when two
 // modules share a basename (a common `util.fern` / `types.fern`
 // per-directory layout), the later one in sorted-path order gets a
 // numeric disambiguator (`util_1__`, `util_2__`, …) so the two distinct
@@ -1265,8 +1265,8 @@ func sortedPaths(loaded map[string]*module) []string {
 // error. Processing in sorted-path order makes the assignment
 // deterministic (the common root prefix doesn't affect relative order),
 // so the combined Program — and the self-host byte-identical gate — stays
-// reproducible. stdlib modules are never disambiguated (they keep the
-// bare prefix); a colliding user module is what moves.
+// reproducible. Stdlib prefixes are assigned first, so a colliding user
+// module moves rather than taking a stdlib module's bare prefix.
 func assignManglePrefixes(loaded map[string]*module, entryPath string) {
 	paths := sortedPaths(loaded)
 
@@ -1280,7 +1280,11 @@ func assignManglePrefixes(loaded map[string]*module, entryPath string) {
 			continue
 		}
 		if strings.HasPrefix(m.path, stdlibPrefix) {
-			m.manglePrefix = sanitizeManglePrefix(m.name) + "__"
+			base := sanitizeManglePrefix(m.name)
+			m.manglePrefix = base + "__"
+			for k := 1; used[m.manglePrefix]; k++ {
+				m.manglePrefix = fmt.Sprintf("%s_%d__", base, k)
+			}
 			used[m.manglePrefix] = true
 		}
 	}

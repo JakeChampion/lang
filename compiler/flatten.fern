@@ -875,21 +875,51 @@ function import_prefixes(mod: parser.Module, ids: string[], pfxs: string[]): str
 
 // assign_prefixes gives every loaded module its one mangle prefix, unique
 // across the bundle, parallel to the identities it returns them against.
+// Assign standard-library modules first, then user modules, each in path
+// order, matching modload.assignManglePrefixes regardless of import order.
 function assign_prefixes(imports: LoadedModule[]): string[] {
   let pfxs: string[] = [];
-  let used: string[] = [];
+  let order: i32[] = [];
   let i: i32 = 0;
   while (i < imports.len()) {
-    let base: string = imports[i].name;
-    if (imports[i].ident.len() > 0) {
-      base = basename(imports[i].ident);
+    pfxs = pfxs.append("");
+    order = order.append(i);
+    let j: i32 = order.len() - 1;
+    while (j > 0 && prefix_before(imports[order[j]], imports[order[j - 1]])) {
+      let prev: i32 = order[j - 1];
+      order = order.with(j - 1, order[j]).with(j, prev);
+      j = j - 1;
+    }
+    i = i + 1;
+  }
+  let used: string[] = [];
+  for k in order {
+    let base: string = imports[k].name;
+    if (imports[k].ident.len() > 0) {
+      base = basename(imports[k].ident);
     }
     let pf: string = unique_prefix(util.mangle_prefix(base), used);
     used = used.append(pf);
-    pfxs = pfxs.append(pf);
-    i = i + 1;
+    pfxs = pfxs.with(k, pf);
   }
   return pfxs;
+}
+
+function prefix_before(a: LoadedModule, b: LoadedModule): boolean {
+  let ak: string = a.ident;
+  let bk: string = b.ident;
+  if (ak.len() == 0) {
+    ak = a.name;
+  }
+  if (bk.len() == 0) {
+    bk = b.name;
+  }
+  let a_std: boolean = is_stdlib_ident(ak);
+  let b_std: boolean = is_stdlib_ident(bk);
+  if (a_std != b_std) {
+    return a_std;
+  }
+  return util.str_less(ak, bk);
 }
 
 // module_ids returns each loaded module's identity, for import_prefixes.
@@ -2401,6 +2431,19 @@ function mangle_source(src: string, prefix: string): parser.Module {
 }
 
 function main(): i32 {
+  // Prefixes follow canonical path order, with stdlib first, even when
+  // imports arrive in reverse order and a real name contains a suffix.
+  let empty: parser.Module = parser.parse_module([]);
+  let collisions: LoadedModule[] = [
+    LoadedModule { name: "frame", ident: "/project/frame", mod: empty },
+    LoadedModule { name: "frame", ident: "std/http/h3/frame", mod: empty },
+    LoadedModule { name: "frame", ident: "std/http/h2/frame", mod: empty },
+    LoadedModule { name: "frame_1", ident: "std/frame_1", mod: empty },
+  ];
+  let prefixes: string[] = assign_prefixes(collisions);
+  if (prefixes[0] != "frame_3" || prefixes[1] != "frame_2" || prefixes[2] != "frame" || prefixes[3] != "frame_1") {
+    return 115;
+  }
   // --- Brick 1: qualified-reference flattening (entry module) ---
   let src: string = "import \"./lexer\";"
     + " function f(): i32 {"

@@ -978,10 +978,10 @@ function main(): i32 { return _test_empty.stdlib_test_marker(); }`,
 		t.Fatal(err)
 	}
 	// After flattening, the std module's function lands at the
-	// mangled name `_test_empty__stdlib_test_marker`. The entry
+	// mangled name `_test_empty_1__stdlib_test_marker`. The entry
 	// module's `_test_empty.stdlib_test_marker()` call should be
 	// rewritten to a direct call to that name.
-	if findFunc(prog, "_test_empty__stdlib_test_marker") == nil {
+	if findFunc(prog, "_test_empty_1__stdlib_test_marker") == nil {
 		t.Errorf("expected mangled stdlib function in combined program; got %v", funcNames(prog))
 	}
 }
