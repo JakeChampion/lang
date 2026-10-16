@@ -1,0 +1,383 @@
+import "std/test";
+import "std/quic/conn";
+import "std/quic/packet";
+import "std/quic/frames";
+import "std/tls/identity";
+import "std/tls/verify";
+import "std/hex";
+import "std/i64";
+import "std/option";
+import "core/int";
+
+// tests/stdlib/quic_conn_test.fern — std/quic/conn: a client and a server
+// connection handshaking in memory on a virtual clock, then the ways that
+// goes wrong — a lost first flight, an untrusted certificate, no protocol
+// in common, a close, a Retry, an idle peer — and the anti-amplification
+// limit a server keeps before it knows the client's address.
+
+const ROOT: string = "3082011c3081cfa00302010202020201300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30243122302006035504030c194665726e20544c5320536572766572205465737420526f6f74302a300506032b6570032100d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737a3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300506032b65700341007353a91b5ad2e713d51d2fa08f3e800b99afa9e5725cfd746269d03210b1faadccfc942258bb8151da41be07943a4e8a14bd615e96692c8b896872460e827c0a";
+
+const ED_LEAF: string = "3082013e3081f1a00302010202020204300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b746c732e6578616d706c65302a300506032b6570032100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0a3533051300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301301c0603551d1104153013820b746c732e6578616d706c658704c0000207300506032b6570034100bdd423797a497344c22bf704b418f31b7b6d0d884b517a57d1421c064fa68de8266518e0ddedfbdf189a71a2bb5bd2ffb7ca885f2a7f9ac0e96cb6d07d83e802";
+
+const ED_PKCS8: string = "-----BEGIN PRIVATE KEY-----\n"
+  + "MC4CAQAwBQYDK2VwBCIEICIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIi\n"
+  + "-----END PRIVATE KEY-----\n";
+
+const MS: i64 = 1000000;
+
+function server_config(alpn: string[]): conn.Config {
+  match (identity.private_key_from_pem(ED_PKCS8)) {
+    Ok(k) => {
+      match (identity.pair([hex.hex_decode(ED_LEAF)], k)) {
+        Ok(id) => {
+          return conn.config(alpn).server_side(id);
+        },
+        Err(_) => {}
+      }
+    },
+    Err(_) => {}
+  }
+  return conn.config(alpn);
+}
+
+function client_config(name: string, alpn: string[]): conn.Config {
+  return conn.config(alpn).client_side(name, verify.roots([hex.hex_decode(ROOT)]));
+}
+
+// entropy is `n` bytes counting up from `seed`.
+function entropy(seed: i32, n: i32): u8[] {
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append((seed + i * 7 & 255) as u8);
+    i = i + 1;
+  }
+  return out;
+}
+
+// Pair — the two ends and the virtual clock, what happened to each as
+// text, and how many of the server's datagrams to lose before delivering.
+struct Pair { client: conn.Conn, server: Option[conn.Conn], now: i64, log: string, drop_server: i32, server_cfg: conn.Config, client_sent: i32, server_sent: i32 }
+
+function start(cc: conn.Config, sc: conn.Config): Result[Pair, string] {
+  let c: conn.Conn = conn.client(cc, entropy(1, conn.client_entropy(cc)), 0 as i64)?;
+  return Ok(Pair { client: c, server: None, now: 0 as i64, log: "", drop_server: 0, server_cfg: sc, client_sent: 0, server_sent: 0 });
+}
+
+function noted(who: string, evs: conn.Event[]): string {
+  let out: string = "";
+  for e in evs {
+    match (e) {
+      conn.Connected => {
+        out = out + who + " connected; ";
+      },
+      conn.Closed(why) => {
+        let side: string = "local";
+        if (why.remote) {
+          side = "remote";
+        }
+        out = out + who + " closed " + side + " " + why.code.to_string() + " " + why.reason + "; ";
+      }
+    }
+  }
+  return out;
+}
+
+// to_server delivers one datagram, making the server's connection from
+// the first.
+function to_server(p: Pair, d: u8[]): Pair {
+  match (p.server) {
+    Some(s) => {
+      let step: conn.Step = s.receive(d, p.now);
+      return Pair { ...p, server: Some(step.conn), log: p.log + noted("server", step.events) };
+    },
+    None => {
+      match (packet.parse(d, 0, 8)) {
+        Ok(h) => {
+          match (conn.accept(p.server_cfg, entropy(2, conn.server_entropy(p.server_cfg)), h, p.now)) {
+            Ok(s) => {
+              return to_server(Pair { ...p, server: Some(s) }, d);
+            },
+            Err(e) => {
+              return Pair { ...p, log: p.log + "accept: " + e + "; " };
+            }
+          }
+        },
+        Err(e) => {
+          return Pair { ...p, log: p.log + "parse: " + e + "; " };
+        }
+      }
+    }
+  }
+}
+
+function to_client(p: Pair, d: u8[]): Pair {
+  let step: conn.Step = p.client.receive(d, p.now);
+  return Pair { ...p, client: step.conn, log: p.log + noted("client", step.events) };
+}
+
+// exchange sends what each end has, client first; answers the pair and
+// whether anything moved.
+function exchange(p: Pair): (Pair, boolean) {
+  let (c, out) = p.client.transmit(p.now);
+  let cur: Pair = Pair { ...p, client: c, client_sent: p.client_sent + out.len() };
+  for d in out {
+    cur = to_server(cur, d);
+  }
+  let moved: boolean = out.len() > 0;
+  match (cur.server) {
+    Some(s) => {
+      let (s2, sout) = s.transmit(cur.now);
+      cur = Pair { ...cur, server: Some(s2), server_sent: cur.server_sent + sout.len() };
+      for d in sout {
+        if (cur.drop_server > 0) {
+          cur = Pair { ...cur, drop_server: cur.drop_server - 1 };
+        } else {
+          cur = to_client(cur, d);
+        }
+      }
+      moved = moved || sout.len() > 0;
+    },
+    None => {}
+  }
+  return (cur, moved);
+}
+
+// settle exchanges until neither end has anything to send, then moves the
+// clock to the earlier deadline, if it falls before `until`, and ticks
+// both; `rounds` times at most.
+function settle(p: Pair, rounds: i32, until: i64): Pair {
+  let cur: Pair = p;
+  let i: i32 = 0;
+  while (i < rounds) {
+    let (next, moved) = exchange(cur);
+    cur = next;
+    if (!moved) {
+      cur = tick(cur, until);
+    }
+    i = i + 1;
+  }
+  return cur;
+}
+
+function tick(p: Pair, until: i64): Pair {
+  let due: i64 = p.client.deadline();
+  match (p.server) {
+    Some(s) => {
+      let d: i64 = s.deadline();
+      if (d != 0 && (due == 0 || d < due)) {
+        due = d;
+      }
+    },
+    None => {}
+  }
+  if (due == 0 || due > until) {
+    return p;
+  }
+  let now: i64 = due;
+  if (now < p.now) {
+    now = p.now;
+  }
+  let cs: conn.Step = p.client.tick(now);
+  let cur: Pair = Pair { ...p, now: now, client: cs.conn, log: p.log + noted("client", cs.events) };
+  match (cur.server) {
+    Some(s) => {
+      let ss: conn.Step = s.tick(now);
+      return Pair { ...cur, server: Some(ss.conn), log: cur.log + noted("server", ss.events) };
+    },
+    None => {
+      return cur;
+    }
+  }
+}
+
+function server_of(p: Pair): conn.Conn {
+  match (p.server) {
+    Some(s) => {
+      return s;
+    },
+    None => {
+      return p.client;
+    }
+  }
+}
+
+function test_handshake(): test.TestOutcome {
+  match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
+    Ok(p0) => {
+      let p: Pair = settle(p0, 12, 10000 * MS);
+      let s: conn.Conn = server_of(p);
+      let idle: string = "-";
+      if let Some(pp) = p.client.peer_params() {
+        idle = pp.max_idle_timeout.to_string();
+      }
+      return test.assert_eq(p.log + "| " + p.client.connected().to_string() + " " + s.connected().to_string() + " " + p.client.alpn() + " " + s.alpn() + " idle " + idle, "client connected; server connected; | true true h3 h3 idle 30000");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+// The client's first Initial is all the server has heard: it sends at most
+// three times its 1200 bytes until the client's address is validated.
+function test_amplification(): test.TestOutcome {
+  match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
+    Ok(p0) => {
+      let (c, out) = p0.client.transmit(0 as i64);
+      let p: Pair = to_server(Pair { ...p0, client: c }, out[0]);
+      let s: conn.Conn = server_of(p);
+      let (s2, sout) = s.transmit(0 as i64);
+      let total: i32 = 0;
+      for d in sout {
+        total = total + d.len();
+      }
+      return test.assert_eq(int.int_to_string(out[0].len()) + " in, at most " + (total <= 3 * out[0].len()).to_string(), "1200 in, at most true");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+// The server's first datagram is lost. The client acknowledges the second,
+// and the server, finding the first unacknowledged after 9/8 of an RTT
+// (at least 1 ms), declares it lost by time threshold and resends it.
+function test_lost_datagram(): test.TestOutcome {
+  match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
+    Ok(p0) => {
+      let p: Pair = settle(Pair { ...p0, drop_server: 1 }, 20, 10000 * MS);
+      return test.assert_eq(p.log + "| resent at " + (p.now / MS).to_string() + "ms", "client connected; server connected; | resent at 1ms");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+// The server's whole first flight is lost. Nothing is acknowledged, so the
+// probe timeouts fire: three initial RTTs of 333 ms in, the client resends
+// its Initial and the server its flight.
+function test_lost_flight(): test.TestOutcome {
+  match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
+    Ok(p0) => {
+      let p: Pair = settle(Pair { ...p0, drop_server: 2 }, 30, 10000 * MS);
+      return test.assert_eq(p.log + "| after a probe " + (p.now >= 999 * MS).to_string(), "client connected; server connected; | after a probe true");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+function test_untrusted(): test.TestOutcome {
+  match (start(client_config("other.example", ["h3"]), server_config(["h3"]))) {
+    Ok(p0) => {
+      let p: Pair = settle(p0, 12, 10000 * MS);
+      return test.assert_eq(p.log, "client closed local 298 tls handshake: the peer's certificate was refused; server closed remote 298 tls handshake: the peer's certificate was refused; ");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+function test_no_protocol(): test.TestOutcome {
+  match (start(client_config("tls.example", ["h3"]), server_config(["hq-interop"]))) {
+    Ok(p0) => {
+      let p: Pair = settle(p0, 12, 10000 * MS);
+      return test.assert_eq(p.log, "server closed local 376 tls handshake: no application protocol in common; client closed remote 376 tls handshake: no application protocol in common; ");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+// A close reaches the peer, which drains; both are done three probe
+// timeouts later.
+function test_close(): test.TestOutcome {
+  match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
+    Ok(p0) => {
+      let p: Pair = settle(p0, 12, 10000 * MS);
+      p = Pair { ...p, client: p.client.close(256 as i64, "bye", true, p.now), log: "" };
+      p = settle(p, 12, 20000 * MS);
+      return test.assert_eq(p.log + "| " + p.client.done().to_string() + " " + server_of(p).done().to_string(), "server closed remote 256 bye; client closed local 256 bye; | true true");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+// A Retry sends the client's next Initial to the new connection ID with the
+// token, under keys from that ID, and its packet numbers carry on: the
+// ClientHello took packets 0 and 1, so the next is 2 (RFC 9000 §17.2.5.3).
+// A Retry with a bad tag is ignored.
+function test_retry(): test.TestOutcome {
+  let cc: conn.Config = client_config("tls.example", ["h3"]);
+  match (start(cc, server_config(["h3"]))) {
+    Ok(p0) => {
+      let (c, out) = p0.client.transmit(0 as i64);
+      let first: packet.Header = header_of(out[0]);
+      let r: u8[] = packet.retry(first.scid, hex.hex_decode("0102030405060708"), first.dcid, "fern-token".bytes());
+      let bad: u8[] = packet.retry(first.scid, hex.hex_decode("0a0b0c0d0e0f0001"), hex.hex_decode("00"), "nope".bytes());
+      let c2: conn.Conn = c.receive(bad, 0 as i64).conn.receive(r, 0 as i64).conn;
+      let (c3, out2) = c2.tick(1000 * MS).conn.transmit(1000 * MS);
+      let again: packet.Header = header_of(out2[0]);
+      let opened: string = "no";
+      match (packet.open(out2[0], again, packet.initial_keys(again.dcid, true), 0 - 1 as i64)) {
+        Ok(o) => {
+          opened = "pn " + o.pn.to_string();
+        },
+        Err(e) => {
+          opened = e;
+        }
+      }
+      return test.assert_eq(hex.hex_encode(again.dcid) + " " + string_from_bytes_unchecked(again.token) + " " + opened, "0102030405060708 fern-token pn 2");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+function header_of(d: u8[]): packet.Header {
+  match (packet.parse(d, 0, 8)) {
+    Ok(h) => {
+      return h;
+    },
+    Err(_) => {
+      return packet.Header { kind: packet.UnknownVersion, version: 0 as i64, dcid: [], scid: [], token: [], tag: [], versions: [], at: 0, pn_at: 0, end: 0 };
+    }
+  }
+}
+
+// An idle connection closes itself once the idle timeout passes.
+function test_idle(): test.TestOutcome {
+  match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
+    Ok(p0) => {
+      let p: Pair = settle(p0, 12, 10000 * MS);
+      p = Pair { ...p, log: "" };
+      p = settle(p, 20, 100000 * MS);
+      return test.assert_eq(p.log + "| " + (p.now >= 30000 * MS).to_string(), "client closed local 0 idle timeout; server closed local 0 idle timeout; | true");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/quic/conn");
+  r = r.it("a handshake in memory", test_handshake);
+  r = r.it("the anti-amplification limit", test_amplification);
+  r = r.it("a lost datagram, by time threshold", test_lost_datagram);
+  r = r.it("a lost flight, by probe timeout", test_lost_flight);
+  r = r.it("an untrusted certificate", test_untrusted);
+  r = r.it("no protocol in common", test_no_protocol);
+  r = r.it("closing", test_close);
+  r = r.it("following a Retry", test_retry);
+  r = r.it("the idle timeout", test_idle);
+  return r.finish();
+}

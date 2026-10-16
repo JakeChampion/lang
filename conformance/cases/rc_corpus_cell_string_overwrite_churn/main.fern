@@ -1,0 +1,26 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Cell[string] full rc cycle with HEAP strings: cell_new moves a
+// fresh concat in; set OVERWRITES (pre-drops the old heap buffer,
+// moves the new one in); get RETAINS the returned string into a
+// local that drops at scope exit; the cell's own drop reclaims its
+// slot buffer + box via __fern_drop_arr_str on every backend.
+// Churned 100x so any unbalanced
+// retain/release drifts the underflow counter (over-release) — a
+// leak would read 0 too, but the buffers here are all reclaimed.
+// "y0".."y9" len 2 (10) + "y10".."y99" len 3 (90) = 20 + 270 = 290.
+import "std/string";
+function main(): i32 {
+    let n: i32 = 0;
+    let base: string = "hello";
+    let i: i32 = 0;
+    while (i < 100) {
+        let c = cell_new(base + "_a");
+        c.set(base + "_bb");
+        let s = c.get();
+        n = n + s.len();
+        i = i + 1;
+    }
+    return (n - 800) + __rc_underflow_count();
+}

@@ -1,0 +1,18 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Control: a read of the receiver AFTER the `.with` makes the call a
+// borrow, so the receiver keeps its own reference and BOTH releases
+// are owed. The re-init drop must still fire here.
+struct P { a: i32, b: i32 }
+function mk_arr(): P[] { return [P{a:0,b:0}, P{a:1,b:1}]; }
+function f(n: i32): i32 {
+    let t: i32 = 0;
+    for i in 0..n {
+        let it: P[] = mk_arr();
+        let a: P[] = it.with(0, P{a:i,b:i});
+        t = t + a[0].a + it[1].b;
+    }
+    return t;
+}
+function main(): i32 { return (f(20) - 210) + __rc_underflow_count(); }

@@ -1,0 +1,12 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Closure capturing a struct (pointer capture; leaks under
+// no-free, must not over-release).
+import "core/int";
+struct S { v: i32 }
+function main(): i32 {
+    let s: S = S { v: 21 };
+    let f = (d: i32): i32 => { return s.v + d; };
+    return (f(0) - 21) + __rc_underflow_count();
+}

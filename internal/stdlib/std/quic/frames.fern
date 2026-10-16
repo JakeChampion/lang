@@ -1,0 +1,790 @@
+// std/quic/frames — QUIC's variable-length integers (RFC 9000 §16) and its
+// frames (§19), read from and written to bytes.
+//
+// A frame has no length of its own and arrives inside a decrypted packet,
+// so `read(payload, at)` either takes the whole frame starting at `at` or
+// answers the FRAME_ENCODING_ERROR the truncated or malformed frame is
+// (§12.4). `read_all(payload)` reads a packet's whole payload, and
+// `encode(frame)` is one frame's bytes. Neither keeps state: what a
+// connection remembers across frames (stream offsets, flow-control limits,
+// which packet numbers it has acknowledged) is std/quic/conn's.
+//
+// Values on the wire are 62-bit, so stream ids, offsets, limits and error
+// codes are i64 here.
+
+import "core/int";
+import "std/i64";
+import "std/array";
+import "std/option";
+import "std/utf8";
+
+// The largest value a variable-length integer holds, 2^62-1.
+pub const MAX_VARINT: i64 = 4611686018427387903;
+
+// The frame types (§19, table 3). STREAM is 0x08..0x0f, its low three bits
+// the OFF, LEN and FIN flags.
+pub const PADDING: i64 = 0;
+
+pub const PING: i64 = 1;
+
+pub const ACK: i64 = 2;
+
+pub const ACK_ECN: i64 = 3;
+
+pub const RESET_STREAM: i64 = 4;
+
+pub const STOP_SENDING: i64 = 5;
+
+pub const CRYPTO: i64 = 6;
+
+pub const NEW_TOKEN: i64 = 7;
+
+pub const STREAM: i64 = 8;
+
+pub const MAX_DATA: i64 = 16;
+
+pub const MAX_STREAM_DATA: i64 = 17;
+
+pub const MAX_STREAMS_BIDI: i64 = 18;
+
+pub const MAX_STREAMS_UNI: i64 = 19;
+
+pub const DATA_BLOCKED: i64 = 20;
+
+pub const STREAM_DATA_BLOCKED: i64 = 21;
+
+pub const STREAMS_BLOCKED_BIDI: i64 = 22;
+
+pub const STREAMS_BLOCKED_UNI: i64 = 23;
+
+pub const NEW_CONNECTION_ID: i64 = 24;
+
+pub const RETIRE_CONNECTION_ID: i64 = 25;
+
+pub const PATH_CHALLENGE: i64 = 26;
+
+pub const PATH_RESPONSE: i64 = 27;
+
+pub const CONNECTION_CLOSE: i64 = 28;
+
+pub const CONNECTION_CLOSE_APP: i64 = 29;
+
+pub const HANDSHAKE_DONE: i64 = 30;
+
+// The transport error codes (§20.1). A TLS alert `a` is CRYPTO_ERROR + a.
+pub const NO_ERROR: i64 = 0;
+
+pub const INTERNAL_ERROR: i64 = 1;
+
+pub const CONNECTION_REFUSED: i64 = 2;
+
+pub const FLOW_CONTROL_ERROR: i64 = 3;
+
+pub const STREAM_LIMIT_ERROR: i64 = 4;
+
+pub const STREAM_STATE_ERROR: i64 = 5;
+
+pub const FINAL_SIZE_ERROR: i64 = 6;
+
+pub const FRAME_ENCODING_ERROR: i64 = 7;
+
+pub const TRANSPORT_PARAMETER_ERROR: i64 = 8;
+
+pub const CONNECTION_ID_LIMIT_ERROR: i64 = 9;
+
+pub const PROTOCOL_VIOLATION: i64 = 10;
+
+pub const INVALID_TOKEN: i64 = 11;
+
+pub const APPLICATION_ERROR: i64 = 12;
+
+pub const CRYPTO_BUFFER_EXCEEDED: i64 = 13;
+
+pub const KEY_UPDATE_ERROR: i64 = 14;
+
+pub const AEAD_LIMIT_REACHED: i64 = 15;
+
+pub const NO_VIABLE_PATH: i64 = 16;
+
+pub const CRYPTO_ERROR: i64 = 256;
+
+// The packet types a frame may travel in (§12.4, table 3's "Pkts" column).
+pub const IN_INITIAL: i32 = 0;
+
+pub const IN_ZERO_RTT: i32 = 1;
+
+pub const IN_HANDSHAKE: i32 = 2;
+
+pub const IN_ONE_RTT: i32 = 3;
+
+// === variable-length integers (§16) ========================================
+
+// varint_len is the bytes `v` takes on the wire in its shortest form.
+pub function varint_len(v: i64): i32 {
+  if (v < 64) {
+    return 1;
+  }
+  if (v < 16384) {
+    return 2;
+  }
+  if (v < 1073741824) {
+    return 4;
+  }
+  return 8;
+}
+
+// put_varint appends `v`, which is at most MAX_VARINT, in its shortest form.
+pub function put_varint(own out: u8[], v: i64): u8[] {
+  let n: i32 = varint_len(v);
+  if (n == 1) {
+    return out.append(v as u8);
+  }
+  if (n == 2) {
+    return out.append((v >> 8 | 64) as u8).append((v & 255) as u8);
+  }
+  if (n == 4) {
+    return out.append((v >> 24 | 128) as u8).append((v >> 16 & 255) as u8).append((v >> 8 & 255) as u8).append((v & 255) as u8);
+  }
+  let i: i32 = 7;
+  out = out.append((v >> 56 | 192) as u8);
+  while (i > 1) {
+    i = i - 1;
+    out = out.append((v >> (i * 8) as i64 & 255) as u8);
+  }
+  return out.append((v & 255) as u8);
+}
+
+// put_varint_n appends `v` in exactly `n` bytes (1, 2, 4 or 8), which must
+// hold it: the form a length written before its value is known takes.
+pub function put_varint_n(own out: u8[], v: i64, n: i32): u8[] {
+  let prefix: i64 = 0;
+  if (n == 2) {
+    prefix = 64;
+  } else if (n == 4) {
+    prefix = 128;
+  } else if (n == 8) {
+    prefix = 192;
+  }
+  let i: i32 = n;
+  while (i > 0) {
+    i = i - 1;
+    let b: i64 = v >> (i * 8) as i64 & 255;
+    if (i == n - 1) {
+      b = b | prefix;
+    }
+    out = out.append(b as u8);
+  }
+  return out;
+}
+
+// read_varint is the integer at `at` and the offset after it, or None when
+// `buf` ends inside it.
+pub function read_varint(buf: [u8], at: i32): Option[(i64, i32)] {
+  if (at >= buf.len()) {
+    return None;
+  }
+  let first: i32 = buf[at] as i32;
+  let n: i32 = 1 << (first >> 6);
+  if (at + n > buf.len()) {
+    return None;
+  }
+  let v: i64 = (first & 63) as i64;
+  let i: i32 = 1;
+  while (i < n) {
+    v = v << 8 | buf[at + i] as i64;
+    i = i + 1;
+  }
+  return Some((v, at + n));
+}
+
+// === frames ================================================================
+
+// AckRange — the packet numbers `low` through `high`, both acknowledged.
+pub struct AckRange { low: i64, high: i64 }
+
+// Ecn — the ECN counts an ACK_ECN frame carries (§19.3.2).
+pub struct Ecn { ect0: i64, ect1: i64, ce: i64 }
+
+// Ack — an ACK frame (§19.3), its ranges absolute and largest first.
+// `delay` is as sent, before the ack_delay_exponent scales it.
+pub struct Ack { delay: i64, ranges: AckRange[], ecn: Option[Ecn] }
+
+pub struct ResetStream { stream: i64, code: i64, final_size: i64 }
+
+pub struct StreamData { stream: i64, offset: i64, data: u8[], fin: boolean }
+
+pub struct NewConnectionId { sequence: i64, retire_prior_to: i64, id: u8[], reset_token: u8[] }
+
+pub struct ConnectionClose { code: i64, frame_type: i64, reason: string, app: boolean }
+
+// Frame — one frame as a value. `Padding(n)` is a run of n PADDING bytes,
+// which `read` takes as one frame.
+pub enum Frame {
+  Padding(i32),
+  Ping,
+  AckFrame(Ack),
+  ResetStreamFrame(ResetStream),
+  StopSending(i64, i64),
+  Crypto(i64, u8[]),
+  NewToken(u8[]),
+  StreamFrame(StreamData),
+  MaxData(i64),
+  MaxStreamData(i64, i64),
+  MaxStreams(boolean, i64),
+  DataBlocked(i64),
+  StreamDataBlocked(i64, i64),
+  StreamsBlocked(boolean, i64),
+  NewConnectionIdFrame(NewConnectionId),
+  RetireConnectionId(i64),
+  PathChallenge(u8[]),
+  PathResponse(u8[]),
+  ConnectionCloseFrame(ConnectionClose),
+  HandshakeDone,
+}
+
+// FrameError — a frame that is not one (§12.4): the transport error to
+// close with, the frame type it was found in, and why.
+pub struct FrameError { code: i64, frame_type: i64, reason: string }
+
+pub function (e: FrameError) message(): string {
+  return "quic frame: error " + e.code.to_string() + " in frame type " + e.frame_type.to_string() + ": " + e.reason;
+}
+
+function __bad(kind: i64, reason: string): FrameError {
+  return FrameError { code: FRAME_ENCODING_ERROR, frame_type: kind, reason: reason };
+}
+
+// Cursor — where the reading of one frame has got to.
+struct Cursor { buf: u8[], at: i32, kind: i64 }
+
+function (c: Cursor) varint(what: string): Result[(i64, Cursor), FrameError] {
+  match (read_varint(c.buf, c.at)) {
+    Some(got) => {
+      return Ok((got.0, Cursor { ...c, at: got.1 }));
+    },
+    None => {
+      return Err(__bad(c.kind, what + " cut short"));
+    }
+  }
+}
+
+function (c: Cursor) bytes(n: i64, what: string): Result[(u8[], Cursor), FrameError] {
+  if (n < 0 || n > (c.buf.len() - c.at) as i64) {
+    return Err(__bad(c.kind, what + " of " + n.to_string() + " bytes past the end of the packet"));
+  }
+  let k: i32 = n as i32;
+  return Ok((__slice(c.buf, c.at, c.at + k), Cursor { ...c, at: c.at + k }));
+}
+
+// read takes the frame at `at` in a packet's decrypted `payload`, and the
+// offset after it.
+pub function read(payload: u8[], at: i32): Result[(Frame, i32), FrameError] {
+  let c: Cursor = Cursor { buf: payload, at: at, kind: 0 };
+  let (kind, c1) = c.varint("frame type")?;
+  let cur: Cursor = Cursor { ...c1, kind: kind };
+  if (kind == PADDING) {
+    return Ok(__padding(cur, at));
+  }
+  if (kind == PING) {
+    return Ok((Ping, cur.at));
+  }
+  if (kind == HANDSHAKE_DONE) {
+    return Ok((HandshakeDone, cur.at));
+  }
+  if (kind == ACK || kind == ACK_ECN) {
+    return __ack(cur);
+  }
+  return __carrying(cur);
+}
+
+// __padding takes a run of PADDING bytes as one frame.
+function __padding(c: Cursor, at: i32): (Frame, i32) {
+  let end: i32 = c.at;
+  while (end < c.buf.len() && c.buf[end] == 0) {
+    end = end + 1;
+  }
+  return (Padding(end - at), end);
+}
+
+// __carrying reads the frame types with fields beyond ACK's.
+function __carrying(c: Cursor): Result[(Frame, i32), FrameError] {
+  if (c.kind >= STREAM && c.kind <= 15) {
+    return __stream(c);
+  }
+  if (c.kind <= STOP_SENDING) {
+    return __stream_control(c);
+  }
+  if (c.kind <= NEW_TOKEN) {
+    return __handshake_data(c);
+  }
+  if (c.kind <= STREAMS_BLOCKED_UNI) {
+    return __limits(c);
+  }
+  return __rest(c);
+}
+
+// read_all reads every frame of a packet's payload. A packet with no
+// frames is a PROTOCOL_VIOLATION (§12.4).
+pub function read_all(payload: u8[]): Result[Frame[], FrameError] {
+  if (payload.len() == 0) {
+    return Err(FrameError { code: PROTOCOL_VIOLATION, frame_type: 0, reason: "a packet with no frames" });
+  }
+  let out: Frame[] = [];
+  let at: i32 = 0;
+  while (at < payload.len()) {
+    let (f, next) = read(payload, at)?;
+    out = out.append(f);
+    at = next;
+  }
+  return Ok(out);
+}
+
+// __ack reads an ACK frame's ranges, each converted from the gap-and-length
+// form of §19.3.1 to absolute packet numbers; a range below zero is an error.
+function __ack(c: Cursor): Result[(Frame, i32), FrameError] {
+  let (largest, c1) = c.varint("largest acknowledged")?;
+  let (delay, c2) = c1.varint("ack delay")?;
+  let (count, c3) = c2.varint("ack range count")?;
+  let (first, c4) = c3.varint("first ack range")?;
+  if (first > largest) {
+    return Err(__bad(c.kind, "first ack range below packet 0"));
+  }
+  let (ranges, c5) = __ack_ranges(c4, count, [AckRange { low: largest - first, high: largest }])?;
+  let (ecn, c6) = __ecn(c5)?;
+  return Ok((AckFrame(Ack { delay: delay, ranges: ranges, ecn: ecn }), c6.at));
+}
+
+// __ecn reads the ECN counts that end an ACK_ECN frame.
+function __ecn(c: Cursor): Result[(Option[Ecn], Cursor), FrameError] {
+  if (c.kind == ACK) {
+    return Ok((None, c));
+  }
+  let (e0, a) = c.varint("ECT(0) count")?;
+  let (e1, b) = a.varint("ECT(1) count")?;
+  let (ce, d) = b.varint("ECN-CE count")?;
+  return Ok((Some(Ecn { ect0: e0, ect1: e1, ce: ce }), d));
+}
+
+// __ack_ranges reads `count` more ranges below those in `ranges`.
+function __ack_ranges(c: Cursor, count: i64, ranges: AckRange[]): Result[(AckRange[], Cursor), FrameError] {
+  let out: AckRange[] = ranges;
+  let cur: Cursor = c;
+  let i: i64 = 0;
+  while (i < count) {
+    let (gap, g) = cur.varint("ack gap")?;
+    let (len, l) = g.varint("ack range length")?;
+    let high: i64 = out[out.len() - 1].low - gap - 2;
+    if (high < 0 || len > high) {
+      return Err(__bad(c.kind, "ack range below packet 0"));
+    }
+    out = out.append(AckRange { low: high - len, high: high });
+    cur = l;
+    i = i + 1;
+  }
+  return Ok((out, cur));
+}
+
+function __stream(c: Cursor): Result[(Frame, i32), FrameError] {
+  let (id, c1) = c.varint("stream id")?;
+  let offset: i64 = 0;
+  let cur: Cursor = c1;
+  if ((c.kind & 4) != 0) {
+    let (o, c2) = cur.varint("stream offset")?;
+    offset = o;
+    cur = c2;
+  }
+  let len: i64 = (c.buf.len() - cur.at) as i64;
+  if ((c.kind & 2) != 0) {
+    let (l, c3) = cur.varint("stream length")?;
+    len = l;
+    cur = c3;
+  }
+  if (offset + len > MAX_VARINT) {
+    return Err(FrameError { code: FRAME_ENCODING_ERROR, frame_type: c.kind, reason: "stream data past 2^62-1" });
+  }
+  let (data, c4) = cur.bytes(len, "stream data")?;
+  return Ok((StreamFrame(StreamData { stream: id, offset: offset, data: data, fin: (c.kind & 1) != 0 }), c4.at));
+}
+
+// __stream_control reads RESET_STREAM and STOP_SENDING.
+function __stream_control(c: Cursor): Result[(Frame, i32), FrameError] {
+  let (id, a) = c.varint("stream id")?;
+  let (code, b) = a.varint("error code")?;
+  if (c.kind == STOP_SENDING) {
+    return Ok((StopSending(id, code), b.at));
+  }
+  let (size, d) = b.varint("final size")?;
+  return Ok((ResetStreamFrame(ResetStream { stream: id, code: code, final_size: size }), d.at));
+}
+
+// __handshake_data reads CRYPTO and NEW_TOKEN.
+function __handshake_data(c: Cursor): Result[(Frame, i32), FrameError] {
+  if (c.kind == CRYPTO) {
+    let (offset, a) = c.varint("crypto offset")?;
+    let (len, b) = a.varint("crypto length")?;
+    if (offset + len > MAX_VARINT) {
+      return Err(__bad(c.kind, "crypto data past 2^62-1"));
+    }
+    let (data, d) = b.bytes(len, "crypto data")?;
+    return Ok((Crypto(offset, data), d.at));
+  }
+  let (len, a) = c.varint("token length")?;
+  if (len == 0) {
+    return Err(__bad(c.kind, "an empty NEW_TOKEN"));
+  }
+  let (token, b) = a.bytes(len, "token")?;
+  return Ok((NewToken(token), b.at));
+}
+
+// __limits reads the flow-control frame types MAX_DATA through
+// STREAMS_BLOCKED.
+function __limits(c: Cursor): Result[(Frame, i32), FrameError] {
+  let (v, a) = c.varint("value")?;
+  if (c.kind == MAX_DATA) {
+    return Ok((MaxData(v), a.at));
+  }
+  if (c.kind == DATA_BLOCKED) {
+    return Ok((DataBlocked(v), a.at));
+  }
+  if (c.kind == MAX_STREAM_DATA || c.kind == STREAM_DATA_BLOCKED) {
+    return __stream_limit(c, v, a);
+  }
+  return __stream_count(c, v, a);
+}
+
+function __stream_limit(c: Cursor, id: i64, a: Cursor): Result[(Frame, i32), FrameError] {
+  let (w, b) = a.varint("value")?;
+  if (c.kind == MAX_STREAM_DATA) {
+    return Ok((MaxStreamData(id, w), b.at));
+  }
+  return Ok((StreamDataBlocked(id, w), b.at));
+}
+
+// __stream_count reads MAX_STREAMS and STREAMS_BLOCKED, whose count is at
+// most 2^60 (§19.11, §19.14).
+function __stream_count(c: Cursor, v: i64, a: Cursor): Result[(Frame, i32), FrameError] {
+  if (v > 1152921504606846976) {
+    return Err(__bad(c.kind, "a stream count over 2^60"));
+  }
+  let bidi: boolean = c.kind == MAX_STREAMS_BIDI || c.kind == STREAMS_BLOCKED_BIDI;
+  if (c.kind == MAX_STREAMS_BIDI || c.kind == MAX_STREAMS_UNI) {
+    return Ok((MaxStreams(bidi, v), a.at));
+  }
+  return Ok((StreamsBlocked(bidi, v), a.at));
+}
+
+// __rest reads NEW_CONNECTION_ID through CONNECTION_CLOSE; any other type
+// is unknown, which no frame may be (§12.4).
+function __rest(c: Cursor): Result[(Frame, i32), FrameError] {
+  if (c.kind == NEW_CONNECTION_ID) {
+    return __new_connection_id(c);
+  }
+  if (c.kind == RETIRE_CONNECTION_ID) {
+    let (seq, a) = c.varint("sequence number")?;
+    return Ok((RetireConnectionId(seq), a.at));
+  }
+  if (c.kind == PATH_CHALLENGE || c.kind == PATH_RESPONSE) {
+    return __path(c);
+  }
+  if (c.kind == CONNECTION_CLOSE || c.kind == CONNECTION_CLOSE_APP) {
+    return __close(c);
+  }
+  return Err(__bad(c.kind, "unknown frame type"));
+}
+
+function __path(c: Cursor): Result[(Frame, i32), FrameError] {
+  let (data, a) = c.bytes(8 as i64, "path data")?;
+  if (c.kind == PATH_CHALLENGE) {
+    return Ok((PathChallenge(data), a.at));
+  }
+  return Ok((PathResponse(data), a.at));
+}
+
+function __close(c: Cursor): Result[(Frame, i32), FrameError] {
+  let (code, a) = c.varint("error code")?;
+  let frame_type: i64 = 0;
+  let cur: Cursor = a;
+  if (c.kind == CONNECTION_CLOSE) {
+    let (ft, b) = a.varint("frame type")?;
+    frame_type = ft;
+    cur = b;
+  }
+  let (len, d) = cur.varint("reason length")?;
+  let (reason, e) = d.bytes(len, "reason phrase")?;
+  return Ok((ConnectionCloseFrame(ConnectionClose { code: code, frame_type: frame_type, reason: utf8.from_bytes_lossy(reason), app: c.kind == CONNECTION_CLOSE_APP }), e.at));
+}
+
+function __new_connection_id(c: Cursor): Result[(Frame, i32), FrameError] {
+  let (seq, a) = c.varint("sequence number")?;
+  let (prior, b) = a.varint("retire prior to")?;
+  if (prior > seq) {
+    return Err(__bad(c.kind, "retire prior to " + prior.to_string() + " past sequence number " + seq.to_string()));
+  }
+  let (len, d) = b.bytes(1 as i64, "connection id length")?;
+  let n: i64 = len[0] as i64;
+  if (n < 1 || n > 20) {
+    return Err(__bad(c.kind, "a connection id of " + n.to_string() + " bytes"));
+  }
+  let (id, e) = d.bytes(n, "connection id")?;
+  let (token, f) = e.bytes(16 as i64, "stateless reset token")?;
+  return Ok((NewConnectionIdFrame(NewConnectionId { sequence: seq, retire_prior_to: prior, id: id, reset_token: token }), f.at));
+}
+
+// === encoding ==============================================================
+
+// encode is one frame's bytes. A STREAM frame is written with its offset
+// when it is not 0 and always with its length, so frames can follow it.
+pub function encode(f: Frame): u8[] {
+  return put(__alloc_empty(), f);
+}
+
+// put appends one frame's bytes.
+pub function put(own out: u8[], f: Frame): u8[] {
+  match (f) {
+    Padding(n) => {
+      let i: i32 = 0;
+      while (i < n) {
+        out = out.append(0 as u8);
+        i = i + 1;
+      }
+      return out;
+    },
+    Ping => {
+      return out.append(1 as u8);
+    },
+    HandshakeDone => {
+      return out.append(30 as u8);
+    },
+    AckFrame(a) => {
+      return __put_ack(out, a);
+    },
+    StreamFrame(s) => {
+      return put_stream_head(out, s.stream, s.offset, s.data.len(), s.fin).concat(s.data);
+    },
+    Crypto(offset, data) => {
+      return put_varint(put_varint(put_varint(out, CRYPTO), offset), data.len() as i64).concat(data);
+    },
+    _ => {
+      return __put_rest(out, f);
+    }
+  }
+  return out;
+}
+
+function __put_rest(own out: u8[], f: Frame): u8[] {
+  match (f) {
+    ResetStreamFrame(r) => {
+      return put_varint(put_varint(put_varint(put_varint(out, RESET_STREAM), r.stream), r.code), r.final_size);
+    },
+    StopSending(id, code) => {
+      return put_varint(put_varint(put_varint(out, STOP_SENDING), id), code);
+    },
+    NewToken(token) => {
+      return put_varint(put_varint(out, NEW_TOKEN), token.len() as i64).concat(token);
+    },
+    MaxData(v) => {
+      return put_varint(put_varint(out, MAX_DATA), v);
+    },
+    MaxStreamData(id, v) => {
+      return put_varint(put_varint(put_varint(out, MAX_STREAM_DATA), id), v);
+    },
+    MaxStreams(bidi, v) => {
+      return put_varint(put_varint(out, __pick(bidi, MAX_STREAMS_BIDI, MAX_STREAMS_UNI)), v);
+    },
+    DataBlocked(v) => {
+      return put_varint(put_varint(out, DATA_BLOCKED), v);
+    },
+    StreamDataBlocked(id, v) => {
+      return put_varint(put_varint(put_varint(out, STREAM_DATA_BLOCKED), id), v);
+    },
+    StreamsBlocked(bidi, v) => {
+      return put_varint(put_varint(out, __pick(bidi, STREAMS_BLOCKED_BIDI, STREAMS_BLOCKED_UNI)), v);
+    },
+    _ => {
+      return __put_ids(out, f);
+    }
+  }
+  return out;
+}
+
+function __put_ids(own out: u8[], f: Frame): u8[] {
+  match (f) {
+    NewConnectionIdFrame(n) => {
+      out = put_varint(put_varint(put_varint(out, NEW_CONNECTION_ID), n.sequence), n.retire_prior_to);
+      return out.append(n.id.len() as u8).concat(n.id).concat(n.reset_token);
+    },
+    RetireConnectionId(seq) => {
+      return put_varint(put_varint(out, RETIRE_CONNECTION_ID), seq);
+    },
+    PathChallenge(data) => {
+      return put_varint(out, PATH_CHALLENGE).concat(data);
+    },
+    PathResponse(data) => {
+      return put_varint(out, PATH_RESPONSE).concat(data);
+    },
+    ConnectionCloseFrame(cc) => {
+      let reason: u8[] = cc.reason.bytes();
+      if (cc.app) {
+        return put_varint(put_varint(put_varint(out, CONNECTION_CLOSE_APP), cc.code), reason.len() as i64).concat(reason);
+      }
+      return put_varint(put_varint(put_varint(put_varint(out, CONNECTION_CLOSE), cc.code), cc.frame_type), reason.len() as i64).concat(reason);
+    },
+    _ => {
+      return out;
+    }
+  }
+  return out;
+}
+
+// put_stream_head appends a STREAM frame's type, id, offset (when not 0)
+// and length, for a sender to follow with `len` bytes of data.
+pub function put_stream_head(own out: u8[], stream: i64, offset: i64, len: i32, fin: boolean): u8[] {
+  let kind: i64 = STREAM | 2;
+  if (offset > 0) {
+    kind = kind | 4;
+  }
+  if (fin) {
+    kind = kind | 1;
+  }
+  out = put_varint(put_varint(out, kind), stream);
+  if (offset > 0) {
+    out = put_varint(out, offset);
+  }
+  return put_varint(out, len as i64);
+}
+
+// stream_overhead is the bytes put_stream_head writes before `len` bytes of
+// data: what a sender subtracts from the room left in a packet.
+pub function stream_overhead(stream: i64, offset: i64, len: i32): i32 {
+  let n: i32 = 1 + varint_len(stream) + varint_len(len as i64);
+  if (offset > 0) {
+    n = n + varint_len(offset);
+  }
+  return n;
+}
+
+// __put_ack writes `a`'s ranges, largest first, back into the gap-and-length
+// form (§19.3.1).
+function __put_ack(own out: u8[], a: Ack): u8[] {
+  let kind: i64 = ACK;
+  if (a.ecn.is_some()) {
+    kind = ACK_ECN;
+  }
+  let top: AckRange = a.ranges[0];
+  out = put_varint(put_varint(put_varint(put_varint(put_varint(out, kind), top.high), a.delay), (a.ranges.len() - 1) as i64), top.high - top.low);
+  let i: i32 = 1;
+  while (i < a.ranges.len()) {
+    out = put_varint(put_varint(out, a.ranges[i - 1].low - a.ranges[i].high - 2), a.ranges[i].high - a.ranges[i].low);
+    i = i + 1;
+  }
+  match (a.ecn) {
+    Some(e) => {
+      return put_varint(put_varint(put_varint(out, e.ect0), e.ect1), e.ce);
+    },
+    None => {
+      return out;
+    }
+  }
+  return out;
+}
+
+// === what a frame is to a connection =======================================
+
+// ack_eliciting reports whether receiving `f` obliges the peer to
+// acknowledge its packet (§13.2.1): everything but ACK, PADDING and
+// CONNECTION_CLOSE.
+pub function (f: Frame) ack_eliciting(): boolean {
+  match (f) {
+    AckFrame(_) => {
+      return false;
+    },
+    Padding(_) => {
+      return false;
+    },
+    ConnectionCloseFrame(_) => {
+      return false;
+    },
+    _ => {
+      return true;
+    }
+  }
+  return true;
+}
+
+// permitted reports whether `f` may travel in a packet of type `space`
+// (IN_INITIAL, IN_ZERO_RTT, IN_HANDSHAKE or IN_ONE_RTT), as table 3 of §12.4
+// says; anything else is a PROTOCOL_VIOLATION.
+pub function (f: Frame) permitted(space: i32): boolean {
+  if (space == IN_ONE_RTT) {
+    return true;
+  }
+  match (f) {
+    Padding(_) => {
+      return true;
+    },
+    Ping => {
+      return true;
+    },
+    ConnectionCloseFrame(cc) => {
+      return space == IN_ZERO_RTT || !cc.app;
+    },
+    AckFrame(_) => {
+      return space != IN_ZERO_RTT;
+    },
+    Crypto(_, _) => {
+      return space != IN_ZERO_RTT;
+    },
+    _ => {
+      return space == IN_ZERO_RTT && __zero_rtt_ok(f);
+    }
+  }
+  return false;
+}
+
+// __zero_rtt_ok: the frames other than those above that 0-RTT may carry —
+// all but HANDSHAKE_DONE, NEW_TOKEN, PATH_RESPONSE and RETIRE_CONNECTION_ID.
+function __zero_rtt_ok(f: Frame): boolean {
+  match (f) {
+    HandshakeDone => {
+      return false;
+    },
+    NewToken(_) => {
+      return false;
+    },
+    PathResponse(_) => {
+      return false;
+    },
+    RetireConnectionId(_) => {
+      return false;
+    },
+    _ => {
+      return true;
+    }
+  }
+  return true;
+}
+
+// === bytes =================================================================
+
+function __pick(cond: boolean, a: i64, b: i64): i64 {
+  if (cond) {
+    return a;
+  }
+  return b;
+}
+
+function __alloc_empty(): u8[] {
+  let out: u8[] = __alloc_u8(64);
+  __arr_set_len(out, 0);
+  return out;
+}
+
+function __slice(buf: u8[], from: i32, to: i32): u8[] {
+  let out: u8[] = __alloc_u8(to - from);
+  let i: i32 = 0;
+  while (from + i < to) {
+    out = out.with(i, buf[from + i]);
+    i = i + 1;
+  }
+  return out;
+}

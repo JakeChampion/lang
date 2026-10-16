@@ -120,8 +120,7 @@ function with_tls(cfg: serve.Config): serve.Config {
 }
 
 function main(): i32 {
-  // The interpreted TLS handshake runs inside the read deadline, which
-  // defaults to 10 s; a loaded runner can spend longer on it.
+  // The interpreted TLS handshake can outlast the default 10 s read deadline.
   let cfg: serve.Config = serve.Config { ...serve.config(), proxy_protocol: true, recv_deadline: time.duration_seconds(60 as i64) };
   match (env("PROXY_TLS")) {
     Some(_) => {

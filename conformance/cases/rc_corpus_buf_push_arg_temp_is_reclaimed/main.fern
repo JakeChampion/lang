@@ -1,0 +1,27 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The literal motivating builtin. buf_push memcpys the bytes
+// past the builder's tail and returns void, so the fresh concat
+// argument nets to zero owners after the caller's dec
+// (measured 101/1 before, 101/101 after).
+struct St { h: usize }
+
+@noinline
+function mk(pad: string, i: i32): string { return pad + "0123456789abcdef"; }
+
+@noinline
+function wr(s: St, text: string): St { buf_push(s.h, text); return s; }
+
+function main(): i32 {
+    let pad: string = "xyzw";
+    let st: St = St { h: buf_new(16) };
+    let i: i32 = 0;
+    while (i < 4) {
+        st = wr(st, mk(pad, i));
+        i = i + 1;
+    }
+    let got: string = buf_take(st.h);
+    buf_free(st.h);
+    return (got.len() - 80) + __rc_underflow_count();
+}

@@ -1,0 +1,26 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// `.with` functional-update loop where the struct element carries a
+// STRING field. On the CoW copy branch the old element being replaced is
+// deep-dropped (__drop_struct_ frees its string when it is the last
+// reference) and the carried elements are inc'd — so the string field's
+// rc stays balanced (no double-free of "x"/"y", no over-release). sum =
+// 0+1+..+29 = 435; -435 → 0 when correct.
+struct Op { a: i32, b: string }
+struct R { ops: Op[], p: i32 }
+function upd(r: R, i: i32, v: i32): R {
+    return R { ops: r.ops.with(i, Op { a: v, b: "y" }), p: r.p };
+}
+function main(): i32 {
+    let ops: Op[] = [];
+    let k: i32 = 0;
+    while (k < 30) { ops = ops.append(Op { a: 0, b: "x" }); k = k + 1; }
+    let r: R = R { ops: ops, p: 0 };
+    let i: i32 = 0;
+    while (i < 30) { r = upd(r, i, i); i = i + 1; }
+    let s: i32 = 0;
+    let j: i32 = 0;
+    while (j < 30) { s = s + r.ops[j].a; j = j + 1; }
+    return (s - 435) + __rc_underflow_count();
+}

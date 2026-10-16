@@ -1,0 +1,30 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Transitive reclamation Stage A — escaped struct with a nested
+// struct field, churned. `o` escapes into the array (owned-but-
+// not-free-eligible), so its drop takes the non-eligible branch,
+// which keeps the flat one-level field dec — deep recursion (and
+// the free it implies) fires only in the eligible branch. The
+// shared inner is also held by a live local, so its rc stays > 1
+// and the is_unique gate is exercised too. (The non-eligible
+// deep-free regression itself is caught end-to-end by the
+// self-host suite, whose parser threads structs through result
+// shapes in a way no small corpus program reproduces.)
+import "core/int";
+import "std/array";
+import "std/string";
+struct Inner { vals: i32[] }
+struct Outer { inner: Inner }
+function main(): i32 {
+    let shared: Inner = Inner { vals: [1, 2, 3] };
+    let keep: Outer[] = [];
+    let o: Outer = Outer { inner: shared };
+    keep = keep.append(o);
+    let c: i32 = 0;
+    while (c < 200) {
+        let junk: i32[] = [c, c, c];
+        c = c + 1;
+    }
+    return (keep[0].inner.vals[1] - 2) + (keep.len() - 1) + __rc_underflow_count();
+}

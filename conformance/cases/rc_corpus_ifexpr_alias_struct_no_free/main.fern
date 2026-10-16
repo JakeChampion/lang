@@ -1,0 +1,22 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Conditional alias via an if-expression: `v1` aliases the
+// struct `v0` through an arm, so v0 must NOT be freed at scope
+// exit (the alias-inc doesn't fire through a conditional). The
+// escape walk taints v0; the churn loop forces same-size reuse
+// that would corrupt a strayed read. Reads both to keep the
+// alias live.
+import "core/int";
+struct Pt { xs: i32[], y: i32 }
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) {
+        let v0: Pt = Pt { xs: [i, i + 1], y: i };
+        let v1: Pt = if (i < 50) { v0 } else { v0 };
+        acc = acc + v1.xs[1] + v0.y;
+        i = i + 1;
+    }
+    return (acc - 10000) + __rc_underflow_count();
+}

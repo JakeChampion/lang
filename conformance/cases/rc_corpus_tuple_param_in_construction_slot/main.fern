@@ -1,0 +1,25 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The same for a TUPLE parameter, the other arm the switch was
+// missing. A tuple has no nominal declaration, so only the slot
+// / argument / return rules can credit it — the projection arms
+// never fire. Before: 8 allocs / 4 frees, 128 bytes.
+struct Node { ty: (i32, string), n: i32 }
+
+@noinline
+function t_i32(): (i32, string) { return (32, "x"); }
+
+@noinline
+function mknode(t: (i32, string), n: i32): Node { return Node { ty: t, n: n }; }
+
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 4) {
+        let nd: Node = mknode(t_i32(), i);
+        acc = acc + nd.n;
+        i = i + 1;
+    }
+    return (acc - 6) + __rc_underflow_count();
+}

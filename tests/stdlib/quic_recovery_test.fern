@@ -1,0 +1,137 @@
+import "std/test";
+import "std/quic/recovery";
+import "std/quic/frames";
+import "std/i64";
+import "core/int";
+
+// tests/stdlib/quic_recovery_test.fern — std/quic/recovery driven in
+// virtual time through RFC 9002's rules: the RTT estimate, loss by packet
+// and by time threshold, the probe timeout and its backoff, the congestion
+// window through slow start, recovery and persistent congestion, and the
+// ACK of a packet never sent.
+
+const MS: i64 = 1000000;
+
+function sent(pn: i64, at: i64): recovery.Sent {
+  return recovery.Sent { pn: pn, at: at, size: 1200, ack_eliciting: true, in_flight: true, resend: [] };
+}
+
+function ack(low: i64, high: i64): frames.Ack {
+  return frames.Ack { delay: 0 as i64, ranges: [frames.AckRange { low: low, high: high }], ecn: None };
+}
+
+function pns(ps: recovery.Sent[]): string {
+  let out: string = "";
+  for p in ps {
+    out = out + p.pn.to_string() + ",";
+  }
+  return out;
+}
+
+// sending records packets `from` through `to` at `at` in the application
+// space.
+function sending(r: recovery.Recovery, from: i64, to: i64, at: i64): recovery.Recovery {
+  let cur: recovery.Recovery = r;
+  let pn: i64 = from;
+  while (pn <= to) {
+    cur = cur.on_sent(recovery.APPLICATION, sent(pn, at));
+    pn = pn + 1;
+  }
+  return cur;
+}
+
+function acked(r: recovery.Recovery, a: frames.Ack, now: i64, largest: i64): recovery.Outcome {
+  match (r.on_ack(recovery.APPLICATION, a, 0 as i64, now, largest)) {
+    Ok(o) => {
+      return o;
+    },
+    Err(code) => {
+      return recovery.Outcome { recovery: r, acked: [], lost: [], probe: code as i32 };
+    }
+  }
+}
+
+// The first sample sets the estimate outright (§5.3); later ones move it
+// by 1/8 and the variation by 1/4.
+function test_rtt(): test.TestOutcome {
+  let r: recovery.Recovery = recovery.new(1200, true).confirmed();
+  let before: string = (r.pto(recovery.INITIAL) / MS).to_string();
+  r = sending(r, 0 as i64, 0 as i64, 0 as i64);
+  r = acked(r, ack(0 as i64, 0 as i64), 100 * MS, 0 as i64).recovery;
+  let first: string = (r.smoothed() / MS).to_string() + "/" + (r.pto(recovery.INITIAL) / MS).to_string();
+  r = sending(r, 1 as i64, 1 as i64, 100 * MS);
+  r = acked(r, ack(0 as i64, 1 as i64), 300 * MS, 1 as i64).recovery;
+  return test.assert_eq(before + " | " + first + " | " + (r.smoothed() / MS).to_string(), "999 | 100/300 | 112");
+}
+
+// Five packets, only the last acknowledged: the two three or more below it
+// are lost by packet threshold (§6.1.1), the other two wait on the loss
+// timer, and are lost by time threshold when it fires (§6.1.2).
+function test_thresholds(): test.TestOutcome {
+  let r: recovery.Recovery = sending(recovery.new(1200, true).confirmed(), 0 as i64, 4 as i64, 0 as i64);
+  let o: recovery.Outcome = acked(r, ack(4 as i64, 4 as i64), 10 * MS, 4 as i64);
+  let timer: i64 = o.recovery.timer();
+  let later: recovery.Outcome = o.recovery.on_timeout(timer);
+  return test.assert_eq("acked " + pns(o.acked) + " lost " + pns(o.lost) + " timer " + (timer / 1000).to_string() + "us then lost " + pns(later.lost), "acked 4, lost 0,1, timer 11250us then lost 2,3,");
+}
+
+// With nothing acknowledged the probe timeout fires a PTO after the last
+// ack-eliciting packet, asks for a probe in that space, and doubles.
+function test_probe_timeout(): test.TestOutcome {
+  let r: recovery.Recovery = recovery.new(1200, true).on_sent(recovery.INITIAL, sent(0 as i64, 0 as i64));
+  let t1: i64 = r.timer();
+  let o: recovery.Outcome = r.on_timeout(t1);
+  let t2: i64 = o.recovery.timer();
+  let early: recovery.Outcome = r.on_timeout(t1 - 1);
+  return test.assert_eq((t1 / MS).to_string() + "ms probe " + int.int_to_string(o.probe) + ", then " + (t2 / MS).to_string() + "ms; early " + int.int_to_string(early.probe), "999ms probe 0, then 1998ms; early -1");
+}
+
+// The window opens by each acknowledged packet in slow start, halves once
+// per loss event, and collapses to two datagrams under persistent
+// congestion: ack-eliciting losses spanning more than three PTOs (§7.6).
+// `window` is what may be sent now, the window less what is in flight: 7200
+// halved less 2400 still out, then 2400 collapsed less 2400 still out.
+function test_window(): test.TestOutcome {
+  let r: recovery.Recovery = recovery.new(1200, true).confirmed();
+  let start: string = r.window().to_string();
+  r = sending(r, 0 as i64, 0 as i64, 0 as i64);
+  r = acked(r, ack(0 as i64, 0 as i64), 20 * MS, 0 as i64).recovery;
+  let grown: string = r.window().to_string();
+  r = sending(r, 1 as i64, 4 as i64, 20 * MS);
+  r = acked(r, ack(4 as i64, 4 as i64), 40 * MS, 4 as i64).recovery;
+  let halved: string = r.window().to_string();
+  let p: recovery.Recovery = sending(recovery.new(1200, true).confirmed(), 0 as i64, 0 as i64, 0 as i64);
+  p = acked(p, ack(0 as i64, 0 as i64), 10 * MS, 0 as i64).recovery;
+  p = p.on_sent(recovery.APPLICATION, sent(1 as i64, 10 * MS)).on_sent(recovery.APPLICATION, sent(2 as i64, 900 * MS));
+  p = sending(p, 3 as i64, 5 as i64, 900 * MS);
+  p = acked(p, ack(5 as i64, 5 as i64), 910 * MS, 5 as i64).recovery;
+  return test.assert_eq(start + " " + grown + " " + halved + " " + p.window().to_string(), "12000 13200 4800 0");
+}
+
+// An ACK naming a packet never sent is a PROTOCOL_VIOLATION (RFC 9000
+// §13.1); discarding a space takes its packets out of flight.
+function test_refusal_and_discard(): test.TestOutcome {
+  let r: recovery.Recovery = sending(recovery.new(1200, false), 0 as i64, 1 as i64, 0 as i64);
+  let bad: string = "";
+  match (r.on_ack(recovery.APPLICATION, ack(0 as i64, 5 as i64), 0 as i64, MS, 1 as i64)) {
+    Ok(_) => {
+      bad = "accepted";
+    },
+    Err(code) => {
+      bad = code.to_string();
+    }
+  }
+  let in_flight: string = r.in_flight().to_string() + " " + r.window().to_string();
+  let d: recovery.Recovery = r.discard(recovery.APPLICATION);
+  return test.assert_eq(bad + " | " + in_flight + " | " + d.in_flight().to_string() + " " + d.window().to_string(), "10 | true 9600 | false 12000");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/quic/recovery");
+  r = r.it("the RTT estimate", test_rtt);
+  r = r.it("packet and time thresholds", test_thresholds);
+  r = r.it("the probe timeout", test_probe_timeout);
+  r = r.it("the congestion window", test_window);
+  r = r.it("a bad ACK, and discarding a space", test_refusal_and_discard);
+  return r.finish();
+}

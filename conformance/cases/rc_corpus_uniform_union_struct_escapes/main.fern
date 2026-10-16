@@ -1,0 +1,22 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Uniform union whose struct payload ESCAPES (returned): the
+// enum is tainted (not free-eligible), so the variant struct
+// payload must NOT be deep-freed; the caller still holds it.
+import "core/int";
+struct VInt { v: i32[] }
+struct VArr { v: i32[] }
+type Value = VInt | VArr;
+function mk(n: i32): Value { return VArr { v: [n, n + 1, n + 2] }; }
+function main(): i32 {
+    let x: Value = mk(9);
+    let c: i32 = 0;
+    while (c < 200) {
+        let junk: i32[] = [c, c];
+        c = c + 1;
+    }
+    let got: i32 = 0;
+    match (x) { VInt(a) => { got = a.v[1]; }, VArr(b) => { got = b.v[2]; } }
+    return (got - 11) + __rc_underflow_count();
+}

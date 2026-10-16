@@ -1,0 +1,16 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Returned tuple: mk builds an owned tuple box and returns it.
+// Move-on-return (isOwnedRcLocal now covers tuples) must skip the
+// exit dec so mk's box_free does NOT free the box out from under
+// the caller. Churn forces same-size reuse that would corrupt a
+// strayed read. t.0 + t.1 = 7 + 8 = 15.
+import "core/int";
+function mk(n: i32): (i32, i32) { return (n, n + 1); }
+function main(): i32 {
+    let t: (i32, i32) = mk(7);
+    let c: i32 = 0;
+    while (c < 200) { let junk: i32[] = [c, c]; c = c + 1; }
+    return (t.0 + t.1 - 15) + __rc_underflow_count();
+}

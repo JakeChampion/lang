@@ -1,0 +1,25 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Non-uniform enum: I(i32) and A(i32[]) differ in droppable
+// layout AND box size, so reclamation needs the per-tag size
+// dispatch (the JsonValue shape). Churns both distinctly-sized
+// boxes; a wrong-size free or over-release drifts the checksum.
+// v=A => xs[1]=seed+1; w=I => +seed; got=2*seed+1;
+// sum_{0..199}(2k+1) = 2*19900 + 200 = 40000.
+import "core/int";
+enum V { I(i32), A(i32[]) }
+function mk(seed: i32): i32 {
+    let v: V = A([seed, seed + 1]);
+    let w: V = I(seed);
+    let got: i32 = 0;
+    match (v) { I(n) => { got = n; }, A(xs) => { got = xs[1]; } }
+    match (w) { I(n) => { got = got + n; }, A(xs) => { got = got + xs[0]; } }
+    return got;
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 40000) + __rc_underflow_count();
+}

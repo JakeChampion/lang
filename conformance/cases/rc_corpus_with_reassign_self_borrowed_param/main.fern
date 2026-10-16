@@ -1,0 +1,12 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Same borrow hazard via reassign-to-self on the param (`xs = xs.with`):
+// the local rebind is fine but the buffer is still the caller's, so it
+// must copy, not mutate in place. 99 + 1 - 100 → 0 when correct.
+function bump(xs: i32[]): i32[] { xs = xs.with(0, 99); return xs; }
+function main(): i32 {
+    let a: i32[] = [1, 2];
+    let b: i32[] = bump(a);
+    return (b[0] + a[0] - 100) + __rc_underflow_count();
+}

@@ -1,0 +1,31 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// `root = ins(root, .., k, v)` carries k into root, which is
+// returned: the escape analysis followed only `let` initialisers,
+// so k read as borrowable and the caller's fresh key temp was never
+// released (one key box per insert). Leak-only.
+struct CK { bucket: i32, id: i32 }
+enum H { E, L(i32, CK, i32) }
+struct PM { root: H }
+function ins(n: H, k: CK, v: i32): H {
+    match (n) {
+        E => { return L(0, k, v); },
+        L(lh, lk, lv) => { return L(lh, k, v); }
+    }
+}
+function (m: PM) insert(k: CK, v: i32): PM {
+    let root: H = m.root;
+    m = PM { ...m, root: E };
+    root = ins(root, k, v);
+    return PM { ...m, root: root };
+}
+function main(): i32 {
+    let c: PM = PM { root: E };
+    let i: i32 = 0;
+    while (i < 50) { c = c.insert(CK { bucket: i, id: i }, i); i = i + 1; }
+    match (c.root) {
+        E => { return 1; },
+        L(lh, lk, lv) => { return (lk.id - 49) + __rc_underflow_count(); }
+    }
+}

@@ -1,0 +1,30 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// #7876, the temp half. `slice_unchecked`'s result is a FRESH
+// string — `emitStrSliceRuntime` says so, and `rcResultOwned`
+// records that a release is right for all three of its shapes
+// — but `freshOwnedRcTempType` had no arm for the builtin
+// spelling, so the argument-position temp was stranded on
+// every call.
+//
+// The slice here is 16 bytes, above the 7-byte inline
+// threshold, so it is a heap copy on native. Before: 5 allocs
+// / 1 free at four rounds. The two-word ABIs have no inline
+// packing and leaked one per call at ANY length, which is why
+// the sibling case above uses a 4-byte slice and this one does
+// not — between them they cover both.
+@noinline
+function eat(s: str): i32 { return s.len(); }
+
+function main(): i32 {
+    let pad: string = "wxyz";
+    let line: string = pad + "0123456789abcdef0123456789";
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 4) {
+        t = t + eat(slice_unchecked(line, 4, 20));
+        i = i + 1;
+    }
+    return (t - 64) + __rc_underflow_count();
+}

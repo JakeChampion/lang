@@ -1,0 +1,49 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// #8523, the field-place .with in place: the hash-index shape, where
+// every read of the bucket array precedes the store that replaces one
+// of its slots, so the analysis admits the site and the CoW stores
+// into the field's own buffer. The chain has to read back — a store
+// through the wrong buffer, or a bucket array left behind by a move
+// that did not happen, changes what lookup finds.
+import "core/int";
+import "std/i32";
+import "std/string";
+struct RefSet { names: string[], head: i32[], next: i32[] }
+function bucket_of(name: string, n: i32): i32 {
+    let h: i32 = 0;
+    let i: i32 = 0;
+    while (i < name.len()) { h = h * 31 + (name[i] as i32); i = i + 1; }
+    if (h < 0) { h = 0 - h; }
+    return h % n;
+}
+function refset_add(rs: RefSet, name: string): RefSet {
+    let bk: i32 = bucket_of(name, rs.head.len());
+    let names: string[] = rs.names.append(name);
+    let next: i32[] = rs.next.append(rs.head[bk]);
+    let head: i32[] = rs.head.with(bk, names.len() - 1);
+    return RefSet { names: names, head: head, next: next };
+}
+function refset_has(rs: RefSet, name: string): boolean {
+    let i: i32 = rs.head[bucket_of(name, rs.head.len())];
+    while (i >= 0) {
+        if (rs.names[i] == name) { return true; }
+        i = rs.next[i];
+    }
+    return false;
+}
+function main(): i32 {
+    let rs: RefSet = RefSet { names: [], head: [0 - 1, 0 - 1, 0 - 1, 0 - 1], next: [] };
+    let i: i32 = 0;
+    while (i < 40) {
+        rs = refset_add(rs, "sym" + i.to_string());
+        i = i + 1;
+    }
+    let bad: i32 = 0;
+    if (rs.names.len() != 40) { bad = bad + 1; }
+    if (!refset_has(rs, "sym0")) { bad = bad + 2; }
+    if (!refset_has(rs, "sym39")) { bad = bad + 4; }
+    if (refset_has(rs, "sym40")) { bad = bad + 8; }
+    return bad + __rc_underflow_count();
+}

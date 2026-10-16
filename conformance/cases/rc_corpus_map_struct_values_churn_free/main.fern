@@ -1,0 +1,27 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Map with STRUCT values (valKind 4). Without retain-on-set/get and
+// a drop, struct map values leak entirely. They route through the
+// generated __drop_map_struct_<Item> loop
+// (deep-dropping each value via __drop_struct_Item → its box + xs
+// buffer) at the map's last reference, with set/get retains
+// balancing it. Churned 200x: a leak grows the heap, a miscount
+// drifts the underflow detector. it.xs[1] = seed+1;
+// sum_{0..199}(k+1) = 19900 + 200 = 20100.
+import "core/int";
+import "core/map";
+struct Item { xs: i32[] }
+function mk(seed: i32): i32 {
+    let m: Map[i32, Item] = map_new(8);
+    m = m.insert(seed, Item { xs: [seed, seed + 1] });
+    m = m.insert(seed + 1, Item { xs: [seed + 2] });
+    let it: Item = m.get_or(seed, Item { xs: [0] });
+    return it.xs[1];
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 20100) + __rc_underflow_count();
+}

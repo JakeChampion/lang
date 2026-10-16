@@ -1,0 +1,36 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The same callee with a LIVE caller local at the position: the
+// #4873 bracket holds the local at rc 2 across the call, so the
+// callee's return-position append copies and the caller's buffer —
+// which has spare capacity and would otherwise grow in place — is
+// unchanged. The result is therefore fresh and its binding is
+// credited; the local is not a temp and is not released at the
+// call. Value semantics are the check: `g` stays at three elements
+// after two appends through the callee.
+@noinline
+function acc_i(xs: i32[], s: i32): i32[] { return xs.append(s); }
+@noinline
+function acc_chain(xs: i32[], s: i32): i32[] { return xs.append(s).append(s + 1); }
+
+function main(): i32 {
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 8) {
+        let g: i32[] = [];
+        g = g.append(1);
+        g = g.append(2);
+        g = g.append(3);
+        let a: i32[] = acc_i(g, i);
+        let b: i32[] = acc_i(g, i + 1);
+        let c: i32[] = acc_chain(g, i);
+        if (g.len() != 3) { return 90; }
+        if (a[3] != i) { return 91; }
+        if (b[3] != i + 1) { return 92; }
+        if (c.len() != 5) { return 93; }
+        t = t + a.len() + b.len() + c.len();
+        i = i + 1;
+    }
+    return (t - 104) + __rc_underflow_count();
+}

@@ -1,0 +1,14 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Map with i32 keys and array values (rc-tracked values).
+import "core/int";
+import "core/map";
+import "std/string";
+function main(): i32 {
+    let m: Map[i32, i32[]] = map_new(8);
+    m = m.insert(1, [10, 20]);
+    m = m.insert(2, [30, 40, 50]);
+    let v: i32[] = m.get_or(2, []);
+    return (v.len() - 3) + __rc_underflow_count();
+}

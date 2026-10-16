@@ -1,0 +1,24 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Struct-box reclamation: each mk() owns two structs (one with
+// an rc-tracked array field, one all-scalar), freed at the
+// function's exit — fields dropped then the box returned to the
+// freelist. 200 build/free cycles churn the size classes; a
+// corrupted reuse or over-release drifts the checksum.
+// per mk(seed): (a+b) + xs[2] + n = (2*seed+1) + (seed+2) + seed
+//   = 4*seed + 3.  sum_{0..199} (4k+3) = 4*19900 + 600 = 80200.
+import "core/int";
+struct Pair { a: i32, b: i32 }
+struct Holder { xs: i32[], n: i32 }
+function mk(seed: i32): i32 {
+    let p: Pair = Pair { a: seed, b: seed + 1 };
+    let h: Holder = Holder { xs: [seed, seed + 1, seed + 2], n: seed };
+    return p.a + p.b + h.xs[2] + h.n;
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 80200) + __rc_underflow_count();
+}

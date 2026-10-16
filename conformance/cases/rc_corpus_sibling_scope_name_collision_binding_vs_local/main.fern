@@ -1,0 +1,42 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// A match payload binding and a differently-TYPED local in a SIBLING
+// arm, both named `a`. Neither shadows the other — their scopes are
+// disjoint — so shadowrename left both bare, and the IR builder's flat
+// `locals[string]int32` map collapsed them onto one slot. The
+// name-keyed type lookups then answer for whichever declaration they
+// reach first, so one arm's value is released with the other's drop
+// plan.
+//
+// The AST lowering's alias_names_in_stmt was this shape
+// verbatim (`parser.StmtAssign(a)` beside `let a: string[]` in the
+// StmtIf / StmtMatch arms), which cost one over-release per ASSIGNMENT
+// STATEMENT in every program it compiled — the largest single
+// contributor to the driver's over-release count after #6021.
+struct Asg { k: i32 }
+struct Vr { k: i32 }
+enum St { SVar(Vr), SAssign(Asg), SIf(i32) }
+function vals(x: i32, acc: string[]): string[] { return acc.append("z"); }
+function walk(st: St, acc: string[]): string[] {
+    match (st) {
+        SVar(v) => { return vals(v.k, acc); },
+        SAssign(a) => { return vals(a.k, acc); },
+        SIf(n) => {
+            let a: string[] = acc;
+            a = vals(n, a);
+            return a;
+        }
+    }
+    return acc;
+}
+function work(body: St[]): i32 {
+    let acc: string[] = [];
+    let i: i32 = 0;
+    while (i < body.len()) { acc = walk(body[i], acc); i = i + 1; }
+    return acc.len();
+}
+function main(): i32 {
+    let n: i32 = work([SVar(Vr{k:1}), SAssign(Asg{k:2}), SIf(3)]);
+    return (n - 3) + __rc_underflow_count();
+}

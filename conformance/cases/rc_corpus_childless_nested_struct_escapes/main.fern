@@ -1,0 +1,19 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Childless struct field that ESCAPES (Outer returned): the Pt
+// box must NOT be freed at the constructor's exit; the returned
+// Outer still references it. Churn forces same-size reuse.
+import "core/int";
+struct Pt { x: i32, y: i32 }
+struct Outer { inner: Pt, tag: i32 }
+function mk(n: i32): Outer { return Outer { inner: Pt { x: n, y: n + 1 }, tag: n }; }
+function main(): i32 {
+    let o: Outer = mk(42);
+    let c: i32 = 0;
+    while (c < 200) {
+        let junk: i32[] = [c, c];
+        c = c + 1;
+    }
+    return (o.inner.y - 43) + (o.tag - 42) + __rc_underflow_count();
+}

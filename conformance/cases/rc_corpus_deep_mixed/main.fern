@@ -1,0 +1,13 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Mixed deep nesting: array of structs that hold arrays +
+// a union, exercised then dropped.
+import "core/int";
+import "std/string";
+struct Row { cells: i32[] }
+struct Grid { rows: Row[] }
+function main(): i32 {
+    let g: Grid = Grid { rows: [Row { cells: [1, 2] }, Row { cells: [3, 4, 5] }] };
+    return (g.rows[1].cells[2] - 5) + (g.rows.len() - 2) + __rc_underflow_count();
+}

@@ -1,0 +1,58 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// `?` is an exit, so a move claimed textually AFTER one is a leak on
+// the error path (#8442): the TryOp lowering runs the owned-local dec
+// sweep, and that sweep skips locals marked moved. Both move kinds
+// the dominance guard admits are covered — the bare-ident alias
+// (computeMovedLocals) and the `own` argument (walkDominatingExprs) —
+// and each is driven down BOTH paths so an Ok-only case cannot pass
+// vacuously. Before the fix: 32 bytes live on each Err path, clean on
+// each Ok path.
+@noinline
+function take(own a: i32[]): i32 { return a[0]; }
+
+@noinline
+function g(c: i32): Result[i32, i32] {
+    if (c == 0) { return Err(7); }
+    return Ok(c * 2);
+}
+
+@noinline
+function aliased(c: i32): Result[i32, i32] {
+    let x: i32[] = [1, 2, 3];
+    let r: i32 = g(c)?;
+    let y: i32[] = x;
+    return Ok(y[0] + r);
+}
+
+@noinline
+function owned(own a: i32[], c: i32): Result[i32, i32] {
+    let r: i32 = g(c)?;
+    return Ok(take(a) + r);
+}
+
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 50) {
+        match (aliased(0)) {
+            Ok(v) => { acc = acc + 1000; },
+            Err(e) => { acc = acc + e; }
+        }
+        match (aliased(3)) {
+            Ok(v) => { acc = acc + v; },
+            Err(e) => { acc = acc + 1000; }
+        }
+        match (owned([4, 5, 6], 0)) {
+            Ok(v) => { acc = acc + 1000; },
+            Err(e) => { acc = acc + e; }
+        }
+        match (owned([4, 5, 6], 3)) {
+            Ok(v) => { acc = acc + v; },
+            Err(e) => { acc = acc + 1000; }
+        }
+        i = i + 1;
+    }
+    return (acc - 1550) + __rc_underflow_count();
+}

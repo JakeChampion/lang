@@ -1,0 +1,34 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// An enum's drop recursed once per level of its own type, so the last
+// reference to a 300k-node list overflowed the stack on every backend.
+// A variant's last self-typed payload is now the next turn of a loop
+// in the drop (#9046). The shared tail checks that loop stops at a
+// node someone else still holds, and the tree that a non-tail child
+// still recurses.
+enum L { Nil, Cons(i32, L) }
+enum T { Leaf, Node(T, i32, T) }
+@noinline
+function build(n: i32): L {
+    let l: L = Nil;
+    let i: i32 = 0;
+    while (i < n) { l = Cons(i, l); i = i + 1; }
+    return l;
+}
+@noinline
+function head(l: L): i32 {
+    match (l) { Cons(h, t) => { return h; }, Nil => { return 0 - 1; } }
+}
+@noinline
+function mid(t: T): i32 {
+    match (t) { Node(a, v, b) => { return v; }, Leaf => { return 0 - 1; } }
+}
+function main(): i32 {
+    let shared: L = build(1000);
+    let a: L = Cons(7, shared);
+    let b: L = Cons(9, shared);
+    let long: L = build(300000);
+    let tr: T = Node(Node(Leaf, 1, Leaf), 2, Node(Leaf, 3, Node(Leaf, 4, Leaf)));
+    return (head(a) - 7) + (head(b) - 9) + (head(shared) - 999) + (head(long) - 299999) + (mid(tr) - 2) + __rc_underflow_count();
+}

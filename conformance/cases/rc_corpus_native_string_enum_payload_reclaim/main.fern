@@ -1,0 +1,26 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Slice 5 (string enum payloads): an enum variant carrying a
+// string payload reclaims the payload buffer on native single-word
+// (x86_64), mirroring wasm. The dropKind classifier now returns 4
+// for native single-word strings, so payloadDropLoadsFor /
+// enumVariantDropPlan include them; the existing decValueOnStack
+// / appendChildDrop emitters handle the actual __fern_rc_dec.
+// Per iter: s.len() = 26; 500x → 13000.
+import "core/int";
+import "std/string";
+enum Msg { Text(string), Number(i32) }
+function mk(): i32 {
+    let m: Msg = Msg.Text("value-aaaaaaaaaaaaaaaaaa-" + "1");
+    match (m) {
+        Text(s) => { return s.len(); },
+        Number(n) => { return n; }
+    }
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 13000) + __rc_underflow_count();
+}

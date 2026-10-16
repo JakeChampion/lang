@@ -1,0 +1,26 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The reclaiming shape: a struct holding a capturing closure, built
+// and discarded in a loop so the freed pair / env / capture blocks are
+// recycled into the next round. An over-release here hands a live
+// block to the freelist and the next round reads it back — which the
+// value check catches even when the underflow counter does not.
+import "core/int";
+import "std/i32";
+import "std/string";
+struct P { name: string, f: (i32) => i32 }
+function mkP(n: i32): P { return P { name: "provider" + n.to_string(), f: (x: i32) => x + n }; }
+function main(): i32 {
+    let t: i32 = 0;
+    let r: i32 = 0;
+    while (r < 20) {
+        let ps: P[] = [];
+        let i: i32 = 0;
+        while (i < 4) { ps = ps.append(mkP(i)); i = i + 1; }
+        let j: i32 = 0;
+        while (j < ps.len()) { t = t + (ps[j].f)(1) + ps[j].name.len(); j = j + 1; }
+        r = r + 1;
+    }
+    return (t - 920) + __rc_underflow_count();
+}

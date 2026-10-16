@@ -1,0 +1,109 @@
+import "std/test";
+import "std/quic/params";
+import "std/quic/frames";
+import "std/hex";
+import "std/i64";
+import "std/option";
+
+// tests/stdlib/quic_params_test.fern — std/quic/params: the client's
+// transport parameters from RFC 9001 Appendix A.2's ClientHello decoded,
+// a server's written and read back, unknown and reserved parameters
+// skipped, and each of §18.2's refusals.
+
+function cid(o: Option[u8[]]): string {
+  match (o) {
+    Some(b) => {
+      return hex.hex_encode(b);
+    },
+    None => {
+      return "-";
+    }
+  }
+}
+
+function shown(p: params.Params): string {
+  return "odcid " + cid(p.original_destination_connection_id) + " idle " + p.max_idle_timeout.to_string() + " token " + cid(p.stateless_reset_token) + " udp " + p.max_udp_payload_size.to_string() + " data " + p.initial_max_data.to_string() + " local " + p.initial_max_stream_data_bidi_local.to_string() + " remote " + p.initial_max_stream_data_bidi_remote.to_string() + " uni " + p.initial_max_stream_data_uni.to_string() + " streams " + p.initial_max_streams_bidi.to_string() + "/" + p.initial_max_streams_uni.to_string() + " ack " + p.ack_delay_exponent.to_string() + "/" + p.max_ack_delay.to_string() + " migration " + (!p.disable_active_migration).to_string() + " cids " + p.active_connection_id_limit.to_string() + " iscid " + cid(p.initial_source_connection_id) + " rscid " + cid(p.retry_source_connection_id);
+}
+
+function decoded(block: string, from_server: boolean): string {
+  match (params.decode(hex.hex_decode(block), from_server)) {
+    Ok(p) => {
+      return shown(p);
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function test_rfc9001_client(): test.TestOutcome {
+  let got: string = decoded("0408ffffffffffffffff05048000ffff07048000ffff0801100104800075300901100f088394c8f03e51570806048000ffff", false);
+  return test.assert_eq(got, "odcid - idle 30000 token - udp 65527 data 4611686018427387903 local 65535 remote 65535 uni 65535 streams 16/16 ack 3/25 migration true cids 2 iscid 8394c8f03e515708 rscid -");
+}
+
+function test_round_trip(): test.TestOutcome {
+  let p: params.Params = params.Params {
+    ...params.defaults(),
+    original_destination_connection_id: Some(hex.hex_decode("8394c8f03e515708")),
+    max_idle_timeout: 30000 as i64,
+    stateless_reset_token: Some(hex.hex_decode("00112233445566778899aabbccddeeff")),
+    max_udp_payload_size: 1472 as i64,
+    initial_max_data: 1048576 as i64,
+    initial_max_stream_data_bidi_local: 262144 as i64,
+    initial_max_stream_data_bidi_remote: 262144 as i64,
+    initial_max_stream_data_uni: 262144 as i64,
+    initial_max_streams_bidi: 100 as i64,
+    initial_max_streams_uni: 3 as i64,
+    max_ack_delay: 20 as i64,
+    disable_active_migration: true,
+    active_connection_id_limit: 4 as i64,
+    initial_source_connection_id: Some(hex.hex_decode("f067a5502a4262b5")),
+  };
+  let server: string = decoded(hex.hex_encode(params.encode(p, true)), true);
+  let client: string = decoded(hex.hex_encode(params.encode(p, false)), false);
+  let empty: string = hex.hex_encode(params.encode(params.defaults(), false));
+  return test.assert_eq(server + "\n" + client + "\n[" + empty + "]", "odcid 8394c8f03e515708 idle 30000 token 00112233445566778899aabbccddeeff udp 1472 data 1048576 local 262144 remote 262144 uni 262144 streams 100/3 ack 3/20 migration false cids 4 iscid f067a5502a4262b5 rscid -\nodcid - idle 30000 token - udp 1472 data 1048576 local 262144 remote 262144 uni 262144 streams 100/3 ack 3/20 migration false cids 4 iscid f067a5502a4262b5 rscid -\n[]");
+}
+
+// A reserved parameter (31 * 2 + 27 = 89 = 0x4059) and an unknown one are
+// skipped, whatever they hold.
+function test_unknown_skipped(): test.TestOutcome {
+  return test.assert_eq(decoded("4059" + "03" + "aabbcc" + "4100" + "00" + "0801" + "05", false), "odcid - idle 0 token - udp 65527 data 0 local 0 remote 0 uni 0 streams 5/0 ack 3/25 migration true cids 2 iscid - rscid -");
+}
+
+function test_refusals(): test.TestOutcome {
+  let cases: string[] = [
+    "080105" + "080106",
+    "0008" + "0102030405060708",
+    "0210" + "00112233445566778899aabbccddeeff",
+    "1001" + "00",
+    "0d01" + "00",
+    "0302" + "4000",
+    "0a01" + "15",
+    "0b02" + "8000",
+    "0b04" + "80004000",
+    "0e01" + "01",
+    "0c01" + "00",
+    "0802" + "0505",
+    "0808" + "d000000000000001",
+    "0f15" + "000102030405060708090a0b0c0d0e0f1011121314",
+    "0405" + "01",
+    "04",
+  ];
+  let got: string = "";
+  for c in cases {
+    got = got + decoded(c, false) + "\n";
+  }
+  got = got + decoded("0204" + "01020304", true);
+  return test.assert_eq(got, "quic frame: error 8 in frame type 0: parameter 8 sent twice\nquic frame: error 8 in frame type 0: a client sent parameter 0, which only a server may\nquic frame: error 8 in frame type 0: a client sent parameter 2, which only a server may\nquic frame: error 8 in frame type 0: a client sent parameter 16, which only a server may\nquic frame: error 8 in frame type 0: a client sent parameter 13, which only a server may\nquic frame: error 8 in frame type 0: max_udp_payload_size of 0\nquic frame: error 8 in frame type 0: ack_delay_exponent of 21\nquic frame: error 8 in frame type 0: parameter 11 is not one integer\nquic frame: error 8 in frame type 0: max_ack_delay of 16384\nquic frame: error 8 in frame type 0: active_connection_id_limit of 1\nquic frame: error 8 in frame type 0: disable_active_migration with a value\nquic frame: error 8 in frame type 0: parameter 8 is not one integer\nquic frame: error 8 in frame type 0: a stream limit over 2^60\nquic frame: error 8 in frame type 0: parameter 15 is a connection id of 21 bytes\nquic frame: error 8 in frame type 0: parameter 4 of 5 bytes past the end\nquic frame: error 8 in frame type 0: parameter length cut short\nquic frame: error 8 in frame type 0: a stateless reset token of 4 bytes");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/quic/params");
+  r = r.it("the client parameters of RFC 9001 A.2", test_rfc9001_client);
+  r = r.it("a server's parameters round-trip", test_round_trip);
+  r = r.it("unknown and reserved parameters are skipped", test_unknown_skipped);
+  r = r.it("refusals (RFC 9000 §18.2)", test_refusals);
+  return r.finish();
+}
