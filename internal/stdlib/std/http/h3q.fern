@@ -199,15 +199,17 @@ function (c: Conn) __readable(id: i64): Conn {
 function (c: Conn) __applied(now: i64): Conn {
   let cur: Conn = c;
   while (true) {
-    let (s, acts, evs) = cur.session.take();
+    let acts: h3.Action[] = cur.session.actions;
+    let evs: h3.Event[] = cur.session.events;
     if (acts.len() == 0 && evs.len() == 0) {
-      return Conn { ...cur, session: s };
+      return cur;
     }
+    cur = Conn { ...cur, session: cur.session.taken() };
     let q: conn.Conn = cur.quic;
     for a in acts {
       q = __act(q, a, now);
     }
-    cur = Conn { ...cur, quic: q, session: s };
+    cur = Conn { ...cur, quic: q };
     for e in evs {
       cur = cur.__session_event(e);
     }
