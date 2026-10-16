@@ -6070,32 +6070,20 @@ function sig_call_type(sig: FuncSig, name: string, c: ast.ExprCall, s: Scope): t
       return rtv;
     }
   }
-  // The NESTED case that rule leaves open: the return names a type parameter
-  // somewhere inside a container rather than being one — `enum2[T](xs: T[]):
-  // (i32, T)[]`. The guard above is `is_unknown`, which tests the TOP level
-  // only, so a `(i32, T)[]` return (a TypeArray at top level) never reaches
-  // it; this is a separate block rather than a widened guard so the existing
-  // rule's behaviour is untouched.
-  //
-  // Left unresolved, the type var reaches the annotate pass, and
-  // `type_to_irtag` yields "" for a tuple with an unserialisable element — so
-  // `ExprIndex.ty` is EMPTY (measured, not inferred: see
-  // docs/SELFHOST-GENERIC-CALL-ELEMENT-TAG.md) and lowering falls back to an
-  // untyped 4-byte read. `array.enumerate` at an `f64[]` returned 255 for 45.
-  //
-  // Only a FULLY concrete substitution is returned. If any variable stays
-  // unbound the result still contains unknown, and falling through preserves
-  // exactly what the caller saw before — so this can add type information but
-  // never change an answer that was already complete.
-  //
-  // A DECLARED type parameter is not the precondition: a spelling that resolves
-  // to nothing is. `clone_bg` substitutes only the BOUNDED parameters, so the
-  // instance of `filter[T, I: Iterator[T]]` at `I = ArrayIter[i32]` declares
-  // none and still returns `T[]` — that `T` is erased in the callee and must
-  // still be concrete at the call site. A spelling that DOES resolve never
-  // binds, so a call with no variable in it reaches the fallthrough as before.
+  return inferred_sig_ret(sig, c, s, bn, bt);
+}
+
+// Erased return variables can survive inside containers even when the callee
+// no longer declares them; bind those from its arguments before substitution.
+function inferred_sig_ret(sig: FuncSig, c: ast.ExprCall, s: Scope, names: string[], types: typeinfo.Type[]): typeinfo.Type {
+  let bn: string[] = names;
+  let bt: typeinfo.Type[] = types;
   if (type_contains_unknown(sig.ret_type) && sig.ret_type_name.len() > 0) {
-    let (bn, bt) = call_type_bindings(sig, c, s);
+    if (sig.all_type_params.len() == 0) {
+      let (names, types) = call_type_bindings(sig, c, s);
+      bn = names;
+      bt = types;
+    }
     // A declared type parameter no argument bound stays a VARIABLE in the
     // substitution. Resolving it by name instead would find a same-named
     // declared type and hand the call site a concrete result it never had.
@@ -8136,6 +8124,9 @@ function method_binding(c: ast.ExprCall, msig: MethodSig, recv: typeinfo.Type, s
     wi = wi + 1;
   }
   let (n2, t2) = gc_bind_param(rref, recv, full, s.type_names(), names, types);
+  if (full.len() == 0) {
+    return MethodBinding { names: n2, types: t2, full: full };
+  }
   let mi: i32 = 0;
   while (mi < c.args.len() && mi < msig.param_type_names.len()) {
     let (n3, t3) = gc_bind_param(parser.parse_type_ref(msig.param_type_names[mi]), check_expr(c.args[mi], s), full, s.type_names(), n2, t2);
@@ -8215,13 +8206,7 @@ function generic_method_ret(c: ast.ExprCall, msig: MethodSig, mb: MethodBinding,
   }
   let bn: string[] = mb.names;
   let bt: typeinfo.Type[] = mb.types;
-  let i: i32 = 0;
-  while (i < msig.param_type_names.len() && i < c.args.len()) {
-    let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(msig.param_type_names[i]), check_expr(c.args[i], s), mb.full, s.type_names(), bn, bt);
-    bn = bn2;
-    bt = bt2;
-    i = i + 1;
-  }
+  // method_binding already inferred every argument against this same scope.
   let (bn3, bt3) = bounds_bindings(msig.type_params, msig.type_bounds, msig.module, s, bn, bt);
   bn = bn3;
   bt = bt3;
