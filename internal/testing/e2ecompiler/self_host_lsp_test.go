@@ -493,6 +493,7 @@ func TestSelfHostLSPFormattingX86_64(t *testing.T) {
 		want      []lspEdit
 	}{
 		{"tabs", "function main(): i32 {\n\t\treturn 0;\n}\n", []lspEdit{{span(0, 0, 3, 0), "function main(): i32 {\n  return 0;\n}\n"}}},
+		{"authored-diagnostic-marker", "// The parser prints /*unknown-stmt*/.\nfunction main(): i32 {return 0;}\n", []lspEdit{{span(0, 0, 2, 0), "// The parser prints /*unknown-stmt*/.\nfunction main(): i32 {\n  return 0;\n}\n"}}},
 		{"comments", "// header\nfunction main(): i32 {\n  // inside\n  let x: i32 = 7;   // trailing\n  return x;\n}\n",
 			[]lspEdit{{span(0, 0, 6, 0), "// header\nfunction main(): i32 {\n  // inside\n  let x: i32 = 7;  // trailing\n  return x;\n}\n"}}},
 		{"blank-lines", "function a(): i32 { return 1; }\n\n\n\nfunction main(): i32 {   return a(); }\n",
