@@ -22,29 +22,34 @@ import (
 // whole and as ranges the loop seeks to and sends (one large enough to take
 // several pieces), the 416, a 304 from its own ETag, HEAD, a precompressed
 // sibling, the directory redirect, and paths that would leave the
-// directory. The interpreter and the x86-64 backend.
+// directory; and `http.file`'s whole-file body, and its 404 for a file that
+// is not there. The interpreter and the x86-64 backend; serve_h2_test.go
+// runs the same over HTTP/2.
 func TestStaticServeInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src, big := writeStaticServeSource(t)
+	src, big := writeStaticServeSource(t, "serve.config()")
 	addr, _ := e2eharness.StartInheritedServer(t, exec.Command(bin, "-interp", src))
-	checkStaticServe(t, addr, big)
+	checkStaticServe(t, addr, big, &http.Transport{}, 1)
+	checkStaticPaths(t, addr)
 }
 
 func TestStaticServeX86_64(t *testing.T) {
 	bin := buildFernCLI(t)
 	qemu := x86QemuOrEmpty(t)
-	src, big := writeStaticServeSource(t)
+	src, big := writeStaticServeSource(t, "serve.config()")
 	out := filepath.Join(filepath.Dir(src), "static_serve.bin")
 	if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", out, src).CombinedOutput(); err != nil {
 		t.Fatalf("build failed: %v\n%s", err, o)
 	}
 	addr, _ := e2eharness.StartInheritedServer(t, runX86Bin(qemu, out))
-	checkStaticServe(t, addr, big)
+	checkStaticServe(t, addr, big, &http.Transport{}, 1)
+	checkStaticPaths(t, addr)
 }
 
 // writeStaticServeSource writes the served directory and the program
-// serving it, and returns the program's path and big.bin's bytes.
-func writeStaticServeSource(t *testing.T) (string, []byte) {
+// serving it under the serve.Config `config`, and returns the program's
+// path and big.bin's bytes.
+func writeStaticServeSource(t *testing.T, config string) (string, []byte) {
 	t.Helper()
 	dir := t.TempDir()
 	root := filepath.Join(dir, "www")
@@ -70,7 +75,7 @@ func writeStaticServeSource(t *testing.T) (string, []byte) {
 		}
 	}
 	src := filepath.Join(dir, "static_serve.fern")
-	prog := strings.ReplaceAll(staticServeSource, "@ROOT@", root)
+	prog := strings.ReplaceAll(strings.ReplaceAll(staticServeSource, "@ROOT@", root), "@CONFIG@", config)
 	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -83,17 +88,25 @@ import "std/platform";
 import "std/serve";
 
 function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
+  if (req.path == "/file/whole") {
+    return http.file("@ROOT@/big.bin");
+  }
+  if (req.path == "/file/gone") {
+    return http.file("@ROOT@/gone.bin");
+  }
   return static.serve(req, static.dir("@ROOT@"), plat);
 }
 
 function main(): i32 {
-  return serve.run(0, serve.config(), handle);
+  return serve.run(0, @CONFIG@, handle);
 }
 `
 
-func checkStaticServe(t *testing.T, addr string, big []byte) {
+// checkStaticServe makes its requests through `tr`, and every response
+// must come under HTTP major version `major`.
+func checkStaticServe(t *testing.T, addr string, big []byte, tr http.RoundTripper, major int) {
 	t.Helper()
-	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{Transport: tr, Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	do := func(method, path string, fields ...string) (*http.Response, []byte) {
 		t.Helper()
 		req, err := http.NewRequest(method, "http://"+addr+path, nil)
@@ -113,6 +126,9 @@ func checkStaticServe(t *testing.T, addr string, big []byte) {
 		if err != nil {
 			t.Fatalf("%s %s: reading the body: %v", method, path, err)
 		}
+		if resp.ProtoMajor != major {
+			t.Fatalf("%s %s: HTTP/%d, want HTTP/%d", method, path, resp.ProtoMajor, major)
+		}
 		return resp, body
 	}
 	expect := func(what string, resp *http.Response, body []byte, status int, want []byte) {
@@ -127,6 +143,9 @@ func checkStaticServe(t *testing.T, addr string, big []byte) {
 
 	resp, body := do("GET", "/big.bin")
 	expect("whole", resp, body, 200, big)
+	if resp.ContentLength != int64(len(big)) {
+		t.Errorf("whole: Content-Length %d, want %d", resp.ContentLength, len(big))
+	}
 	etag := resp.Header.Get("ETag")
 	if etag == "" || resp.Header.Get("Accept-Ranges") != "bytes" || resp.Header.Get("Last-Modified") == "" {
 		t.Errorf("whole: validators %q / %q / %q", etag, resp.Header.Get("Accept-Ranges"), resp.Header.Get("Last-Modified"))
@@ -134,13 +153,16 @@ func checkStaticServe(t *testing.T, addr string, big []byte) {
 
 	resp, body = do("GET", "/big.bin", "Range", "bytes=100000-250000")
 	expect("range", resp, body, 206, big[100000:250001])
-	if got := resp.Header.Get("Content-Range"); got != "bytes 100000-250000/300000" {
-		t.Errorf("range: Content-Range %q", got)
+	if got := resp.Header.Get("Content-Range"); got != "bytes 100000-250000/300000" || resp.ContentLength != 150001 {
+		t.Errorf("range: Content-Range %q, Content-Length %d", got, resp.ContentLength)
 	}
 	resp, body = do("GET", "/big.bin", "Range", "bytes=-10")
 	expect("suffix", resp, body, 206, big[len(big)-10:])
 	resp, body = do("GET", "/big.bin", "Range", "bytes=10-20, 100000-250000, -10")
 	expect("multipart", resp, nil, 206, nil)
+	if resp.ContentLength != int64(len(body)) {
+		t.Errorf("multipart: Content-Length %d, %d bytes", resp.ContentLength, len(body))
+	}
 	want := []string{"bytes 10-20/300000", "bytes 100000-250000/300000", "bytes 299990-299999/300000"}
 	wantBytes := [][]byte{big[10:21], big[100000:250001], big[299990:]}
 	parts := byteranges(t, resp.Header, body)
@@ -165,6 +187,19 @@ func checkStaticServe(t *testing.T, addr string, big []byte) {
 		t.Errorf("head: Content-Length %d, want %d", resp.ContentLength, len(big))
 	}
 
+	resp, body = do("GET", "/file/whole")
+	expect("http.file", resp, body, 200, big)
+	if resp.ContentLength != int64(len(big)) {
+		t.Errorf("http.file: Content-Length %d, want %d", resp.ContentLength, len(big))
+	}
+	resp, body = do("HEAD", "/file/whole")
+	expect("http.file head", resp, body, 200, []byte{})
+	if resp.ContentLength != int64(len(big)) {
+		t.Errorf("http.file head: Content-Length %d, want %d", resp.ContentLength, len(big))
+	}
+	resp, _ = do("GET", "/file/gone")
+	expect("http.file gone", resp, nil, 404, nil)
+
 	resp, body = do("GET", "/a.txt", "Accept-Encoding", "gzip")
 	expect("precompressed", resp, body, 200, []byte("GZ-BYTES"))
 	if resp.Header.Get("Content-Encoding") != "gzip" || resp.Header.Get("Vary") != "Accept-Encoding" {
@@ -180,17 +215,38 @@ func checkStaticServe(t *testing.T, addr string, big []byte) {
 	}
 	resp, body = do("GET", "/docs/")
 	expect("index", resp, body, 200, []byte("<h1>docs</h1>"))
-	resp, body = do("GET", "/100%25.txt")
-	expect("decoded once", resp, body, 200, []byte("percent"))
 	for _, p := range []string{"/.env", "/missing", "/docs/%2e%2e/.env"} {
 		resp, _ = do("GET", p)
 		expect(p, resp, nil, 404, nil)
 	}
-	// The loop refuses these before the handler: a path climbing above the
-	// root, and an escaped slash.
+}
+
+// checkStaticPaths checks the paths the loop decodes before the handler
+// sees them: an escape decoded once, and a path climbing above the root and
+// an escaped slash refused. HTTP/1.1 only until HTTP/2 decodes :path the
+// same way (#12482).
+func checkStaticPaths(t *testing.T, addr string) {
+	t.Helper()
+	get := func(path string) (int, []byte) {
+		t.Helper()
+		resp, err := http.Get("http://" + addr + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			t.Fatalf("GET %s: reading the body: %v", path, err)
+		}
+		return resp.StatusCode, body
+	}
+	if status, body := get("/100%25.txt"); status != 200 || string(body) != "percent" {
+		t.Errorf("decoded once: %d %q, want 200 \"percent\"", status, body)
+	}
 	for _, p := range []string{"/%2e%2e/static_serve.fern", "/docs/..%2f..%2fstatic_serve.fern"} {
-		resp, _ = do("GET", p)
-		expect(p, resp, nil, 400, nil)
+		if status, _ := get(p); status != 400 {
+			t.Errorf("%s: status %d, want 400", p, status)
+		}
 	}
 }
 
@@ -257,7 +313,7 @@ func contentShape(t *testing.T, h http.Header, body []byte) string {
 // std/http/static answers 405).
 func TestStaticPreconditionsMatchGo(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src, _ := writeStaticServeSource(t)
+	src, _ := writeStaticServeSource(t, "serve.config()")
 	addr, _ := e2eharness.StartInheritedServer(t, exec.Command(bin, "-interp", src))
 	file := filepath.Join(filepath.Dir(src), "www", "a.txt")
 	st, err := os.Stat(file)

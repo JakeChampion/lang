@@ -1229,10 +1229,10 @@ func TestRunnerHTTPH2FrameExamplePasses(t *testing.T) {
 // `tests/stdlib/http_h2_test.fern` drives the server's HTTP/2 connection as
 // a client does: the preface and settings, a request answered, bodies and
 // trailers each way, flow control at both levels, the four attack classes
-// refused, malformed requests reset and malformed connections closed, and
-// the control frames.
+// refused, malformed requests reset and malformed connections closed, HEAD
+// answered without a body, and the control frames.
 func TestRunnerHTTPH2ExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_h2", "std/http/h2", 16)
+	runnerSuitePasses(t, "http_h2", "std/http/h2", 17)
 }
 
 // `tests/stdlib/quic_frames_test.fern` reads and writes every QUIC frame,
