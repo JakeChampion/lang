@@ -1,0 +1,30 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// An enum parameter the callee only MATCHES on was already clean
+// and must stay so: a match reads the payload out and retains
+// nothing, so there is no counted store for the credit to rest
+// on and the caller's is_unique-gated drop is the only owner.
+enum Ty { I32(i32), Str(string), Unk(string) }
+
+@noinline
+function t_str(): Ty { return Ty.Str("abcdefghij"); }
+
+@noinline
+function width(t: Ty): i32 {
+    match (t) {
+        Ty.I32(w) => { return w; },
+        Ty.Str(s) => { return s.len(); },
+        Ty.Unk(r) => { return 0; }
+    }
+}
+
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 4) {
+        acc = acc + width(t_str());
+        i = i + 1;
+    }
+    return (acc - 40) + __rc_underflow_count();
+}

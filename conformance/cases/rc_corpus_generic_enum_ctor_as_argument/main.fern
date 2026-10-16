@@ -1,0 +1,37 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// A GENERIC enum built inline in ARGUMENT position. The construction
+// expression typed as the bare `Holder` — the variant table knows the
+// enum's name, not the instantiation — so its drop took dropFnNameFor's
+// concrete path, where enumNeedsDrop declines the un-cloned decl's
+// ParamType payload, and the flat dec that followed reclaimed neither
+// the box nor its payload. 2 blocks stranded per call, scaling with the
+// payload: 19200 B over 200 rounds at 8 elements, 316800 B at 256
+// (#9313).
+//
+// The same value bound to an ANNOTATED LOCAL first was always clean —
+// the local's declared type carries the Args — so it is the control
+// here, in the same program, and both spellings must reclaim.
+import "core/int";
+enum Holder[T] { Has(T), Empty }
+function mk(n: i32): i32[] {
+    let a: i32[] = [];
+    let i: i32 = 0;
+    while (i < n) { a = a.append(i); i = i + 1; }
+    return a;
+}
+function probe(h: Holder[i32[]]): i32 {
+    match (h) { Has(xs) => { return xs[1]; }, Empty => { return 0; } }
+}
+function main(): i32 {
+    let got: i32 = 0;
+    let r: i32 = 0;
+    while (r < 60) {
+        got = got + probe(Has(mk(8)));
+        let bound: Holder[i32[]] = Has(mk(8));
+        got = got + probe(bound);
+        r = r + 1;
+    }
+    return (got - 120) + __rc_underflow_count();
+}

@@ -1,0 +1,22 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// String struct field ESCAPES into an array, then the array's
+// array-of-struct deep drop (__drop_arr_struct_Holder →
+// __drop_struct_Holder) reclaims each struct's string field. 50
+// structs pushed; arr's last-reference drop frees every element box
+// + its field buffer. A missed / double field-free drifts the
+// checksum or underflow count. arr[10].name.len() = 2.
+struct Holder { name: string }
+function main(): i32 {
+    let arr: Holder[] = [];
+    let k: i32 = 0;
+    while (k < 50) {
+        let pre: string = "x";
+        let s: string = pre + "y";
+        arr = arr.append(Holder { name: s });
+        k = k + 1;
+    }
+    let got: i32 = arr[10].name.len();
+    return (got - 2) + __rc_underflow_count();
+}

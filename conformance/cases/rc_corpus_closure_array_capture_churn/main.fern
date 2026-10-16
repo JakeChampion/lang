@@ -1,0 +1,20 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Stage 3: closure capturing an ARRAY, churned 100x. The
+// per-closure drop thunk frees the captured array (arr_dec) at
+// each closure's death so the freelist recycles; the counter
+// must stay 0 (the array was inc'd once on capture, dropped
+// once on closure death). acc = sum_{i=0..99}(i+2) = 5150.
+import "core/int";
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) {
+        let xs: i32[] = [i, i + 1, i + 2];
+        let f = (d: i32): i32 => { return xs[2] + d; };
+        acc = acc + f(0);
+        i = i + 1;
+    }
+    return (acc - 5150) + __rc_underflow_count();
+}

@@ -1,0 +1,19 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Destructure temp box reclamation: `let (a, b) = (i, i+1)`
+// builds a tuple box, extracts the elements, and the box is pure
+// overhead afterward. The temp is an owned tuple local, so its
+// box frees at scope exit — extracting a/b (scalar here) doesn't
+// alias the box. a + b = 2i + 1; sum_{0..199} = 40000.
+import "core/int";
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) {
+        let (a, b) = (i, i + 1);
+        acc = acc + a + b;
+        i = i + 1;
+    }
+    return (acc - 40000) + __rc_underflow_count();
+}

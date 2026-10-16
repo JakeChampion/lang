@@ -1,0 +1,29 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// DESTRUCTURING the tuple — the spelling computeMapCowBindSites'
+// `*ast.Destructure` arm was written for, and which nothing covered.
+// It is the one shape the seam retain already reaches, so it isolates
+// what that retain does and does not buy.
+// Per iter: hit 2 + surviving "other" 3 = 5; 500x → 2500.
+import "core/int";
+import "core/map";
+import "std/string";
+function mk(): i32 {
+    let acc: i32 = 0;
+    let sm: Map[string, i32] = map_new(8);
+    sm = sm.insert("ke" + "y", 7);
+    sm = sm.insert("ot" + "her", 3);
+    sm = sm.insert("th" + "ird", 10);
+    let (m2, ok) = sm.without("ke" + "y");
+    sm = m2;
+    if (ok) { acc = acc + 2; }
+    acc = acc + sm.get_or("ot" + "her", 0);
+    return acc;
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 2500) + __rc_underflow_count();
+}

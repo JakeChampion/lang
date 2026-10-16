@@ -1,0 +1,15 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Non-uniform enum: pointer payload in one arm, scalar in
+// another (falls through to plain dec — leaks, no underflow).
+import "core/int";
+import "std/string";
+enum E { Arr(i32[]), Num(i32) }
+function main(): i32 {
+    let e: E = Arr([1, 2, 3, 4]);
+    let n: E = Num(99);
+    let got: i32 = 0;
+    match (e) { Arr(a) => { got = a.len(); }, Num(_) => { got = 0; } }
+    return (got - 4) + __rc_underflow_count();
+}

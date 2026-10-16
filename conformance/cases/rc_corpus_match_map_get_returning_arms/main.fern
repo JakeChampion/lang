@@ -1,0 +1,17 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The `m.get(k)` rebox reaches the same join. Its free must stay
+// SHALLOW wherever it is emitted — the payload belongs to the map.
+import "core/map";
+function pick(m: Map[string, string], k: string): i32 {
+    match (m.get(k)) { Some(v) => { return v.len(); }, None => { return 0; } }
+}
+function main(): i32 {
+    let m: Map[string, string] = map_new(8);
+    m = m.insert("a", "xy" + "zw");
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { t = t + pick(m, "a"); i = i + 1; }
+    return (t - 800) + m.get_or("a", "").len() - 4 + __rc_underflow_count();
+}

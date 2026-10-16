@@ -1,0 +1,25 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The four shapes the loop-body push move must NOT fire on (#6533).
+// Widening its dominance guard trades a leak for a use-after-free when
+// it is wrong, and every one of these would free an element something
+// still reads: only the leak direction is recoverable, so each shape
+// gets a value check that a freed-and-recycled box would fail.
+//
+// The element is loop-carried, so it outlives the buffer's drop.
+// 4 pushes + kind 7 + the stored element's kind 7 = 18.
+import "core/int";
+struct Val { kind: i32, kids: i32[] }
+function build(n: i32): i32 {
+    let vals: Val[] = [];
+    let v: Val = Val { kind: 7, kids: [1] };
+    let i: i32 = 0;
+    while (i < n) {
+        if (i == 9999) { continue; }
+        vals = vals.append(v);
+        i = i + 1;
+    }
+    return vals.len() + v.kind + vals[0].kind;
+}
+function main(): i32 { return (build(4) - 18) + __rc_underflow_count(); }

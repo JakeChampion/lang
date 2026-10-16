@@ -1,0 +1,25 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Escape into a struct field via struct-update
+// (`Box { ...b, items: arr }`): the new box stores the owned
+// `arr` (override-pointer-field path), and the old base box —
+// whose own `items` array is now unreferenced — is dropped.
+// The escaped array must survive the helper's exit, and the
+// base's array must be freed exactly once.
+import "core/int";
+struct Box { items: i32[] }
+function fill(b: Box, n: i32): Box {
+    let arr: i32[] = [n, n + 1, n + 2, n + 3];
+    return Box { ...b, items: arr };
+}
+function main(): i32 {
+    let b: Box = Box { items: [0, 0, 0, 0] };
+    b = fill(b, 7000);
+    let c: i32 = 0;
+    while (c < 300) {
+        let junk: i32[] = [c, c, c, c];
+        c = c + 1;
+    }
+    return (b.items[0] - 7000) + (b.items[3] - 7003) + __rc_underflow_count();
+}

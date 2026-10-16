@@ -78,3 +78,44 @@ func TestTypedScalarBindingAllocatesNothing(t *testing.T) {
 		t.Errorf("binding an i32[] did not skip its walk")
 	}
 }
+
+// An enum whose payloads reach no Map or Array is not walked: consing an
+// n-node list of scalars reassigns the list n times, and a walk per store
+// would visit every node so far, n²/2 payloads in all.
+func TestScalarEnumListSkipsWalk(t *testing.T) {
+	const n = 4000
+	src := fmt.Sprintf(`enum L { Nil, Cons(i32, L) }
+	function main(): i32 {
+		let l: L = Nil;
+		let i: i32 = 0;
+		while (i < %d) { l = Cons(i, l); i = i + 1; }
+		match (l) { Cons(h, t) => { return h; }, Nil => { return 0 - 1; } }
+	}`, n)
+	before := rcWalked.Load()
+	v, _ := evalProgram(t, src)
+	walked := rcWalked.Load() - before
+	if v != Number(n-1) {
+		t.Fatalf("got %v, want %d", v, n-1)
+	}
+	if walked > n {
+		t.Errorf("walked %d payloads, want at most %d", walked, n)
+	}
+}
+
+// An enum carrying a Map is still walked, so the map's count sees the
+// enum's slot and a write through another alias copies it.
+func TestEnumCarryingMapIsCounted(t *testing.T) {
+	src := `import "core/map";
+	enum Box { Full(Map[string, i32]), Empty }
+	function main(): i32 {
+		let m: Map[string, i32] = map_new(4);
+		m = m.insert("a", 1);
+		let b: Box = Full(m);
+		m = m.insert("a", 2);
+		match (b) { Full(inner) => { return inner.get_or("a", 0) * 10 + m.get_or("a", 0); }, Empty => { return 0; } }
+	}`
+	v, _ := evalProgram(t, src)
+	if v != Number(12) {
+		t.Fatalf("got %v, want 12: the enum's map changed when the alias was written", v)
+	}
+}
