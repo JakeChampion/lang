@@ -484,7 +484,9 @@ function (s: Streams) __on_stream(d: frames.StreamData): Result[Streams, frames.
   }
   let before: i64 = r.data.delivered();
   let data: Reassembly = r.data.add(d.offset, d.data);
-  let readable: boolean = data.delivered() > before || d.fin && data.delivered() == r.final_size;
+  // A retransmitted FIN is still checked above, but an EOF the application
+  // already consumed must not make its retired message parser run again.
+  let readable: boolean = data.delivered() > before || d.fin && !r.fin_read && data.delivered() == r.final_size;
   let events: Event[] = next.events;
   if (readable) {
     events = events.append(Readable(d.stream));

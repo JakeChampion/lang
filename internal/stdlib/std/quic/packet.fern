@@ -355,10 +355,15 @@ function __open(k: Keys, pn: i64, sealed: [u8], aad: [u8]): Option[u8[]] {
   }
 }
 
-// open removes header protection from the packet `h` describes, recovers
-// its packet number against `largest`, the largest received in its packet
-// number space (-1 for none), and decrypts it under `k`.
-pub function open(datagram: [u8], h: Header, k: Keys, largest: i64): Result[Opened, string] {
+// Unprotected is a recovered header, NOT authenticated packet metadata.
+// It may select cached receive keys; nothing it says may affect connection
+// state until open_unprotected authenticates the packet (§9.5).
+pub struct Unprotected { header: u8[], body_at: i32, pn: i64, key_phase: boolean, spin: boolean, reserved_ok: boolean }
+
+// unprotect removes the header mask and recovers the packet number. QUIC
+// key updates keep the header-protection key, so this work is shared by
+// the previous, current and next AEAD key generations.
+pub function unprotect(datagram: [u8], h: Header, k: Keys, largest: i64): Result[Unprotected, string] {
   if (h.pn_at + 4 + 16 > h.end) {
     return Err("packet too short to sample");
   }
@@ -382,18 +387,32 @@ pub function open(datagram: [u8], h: Header, k: Keys, largest: i64): Result[Open
     i = i + 1;
   }
   let pn: i64 = decode_pn(largest, truncated, n * 8);
-  match (__open(k, pn, datagram[h.pn_at + n:h.end], header)) {
+  let reserved: i32 = 24;
+  if (long) {
+    reserved = 12;
+  }
+  return Ok(Unprotected { header: header, body_at: h.pn_at + n, pn: pn, key_phase: (b0 & 4) != 0, spin: (b0 & 32) != 0, reserved_ok: (b0 & reserved) == 0 });
+}
+
+// open_unprotected authenticates a recovered header and its payload with
+// the selected AEAD key. A failed authentication does not authorize any
+// interpretation of the header (including its packet number or phase).
+pub function open_unprotected(datagram: [u8], h: Header, u: Unprotected, k: Keys): Result[Opened, string] {
+  match (__open(k, u.pn, datagram[u.body_at:h.end], u.header)) {
     Some(payload) => {
-      let reserved: i32 = 24;
-      if (long) {
-        reserved = 12;
-      }
-      return Ok(Opened { pn: pn, payload: payload, key_phase: (b0 & 4) != 0, spin: (b0 & 32) != 0, reserved_ok: (b0 & reserved) == 0 });
+      return Ok(Opened { pn: u.pn, payload: payload, key_phase: u.key_phase, spin: u.spin, reserved_ok: u.reserved_ok });
     },
     None => {
       return Err("packet does not decrypt");
     }
   }
+}
+
+// open removes header protection, recovers the packet number against the
+// largest received in its space (-1 for none), and authenticates under k.
+pub function open(datagram: [u8], h: Header, k: Keys, largest: i64): Result[Opened, string] {
+  let u: Unprotected = unprotect(datagram, h, k, largest)?;
+  return open_unprotected(datagram, h, u, k);
 }
 
 // Long — what a long-header packet says before its payload: its kind

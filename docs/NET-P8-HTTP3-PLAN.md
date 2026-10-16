@@ -44,8 +44,10 @@ The modules, each importable on its own and sans-IO, so each runs under
   spaces and their ACKs, CRYPTO reassembly, idle timeout, closing and
   draining, the anti-amplification limit, following a Retry and Version
   Negotiation, and recognising a stateless reset landed in slices 2–3.
-  Connection IDs beyond the first, path validation and key update are
-  slice 4b; issuing a Retry is slice 7's.
+  Key updates use cached current, next and previous receive generations,
+  with handshake/acknowledgement gates and bounded old-key retention.
+  Connection IDs beyond the first and path validation remain slice 4b;
+  issuing a Retry is slice 7's.
 - `std/quic/streams` — streams: each one's send and receive halves,
   reassembly (CRYPTO's too), the limits on how many each side opens, flow
   control per stream and for the connection, RESET_STREAM and
@@ -126,6 +128,19 @@ Each is a bound with a test that crosses it.
    reset token per connection ID, the peer's key update answered and one
    started, PATH_CHALLENGE on a new path. Gate: two `Conn`s rotating
    connection IDs and keys mid-stream.
+
+   The key-update portion is implemented independently of connection-ID
+   rotation and path validation, which remain follow-ups. `Conn.update_keys(now)`
+   requires handshake confirmation and acknowledgement in the current phase.
+   A peer's authenticated update advances sending keys before its ACK; old
+   receive keys allow reordering for at most three PTOs after the first new-phase
+   packet. `deadline()` includes key-generation and expiry timers, so sans-IO
+   callers must continue to call `tick(now)` when due. Keys are prepared on
+   installation or timer expiry, not derived in response to forged phase bits.
+   Encryption limits trigger a safe rotation or `AEAD_LIMIT_REACHED`; failed
+   authentications are counted across generations, with the RFC 9001 limits
+   for AES-GCM and ChaCha20-Poly1305. The connection suite covers these guards,
+   repeated rotations, reordered/expired packets, and unchanged old aliases.
 5. **QPACK.** Gate: `tests/stdlib/http_qpack_test.fern`, with RFC 9204
    Appendix B's examples.
 6. **HTTP/3.** `std/http/h3`. Gate: `tests/stdlib/http_h3_test.fern`, a
