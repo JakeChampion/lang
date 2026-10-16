@@ -1,12 +1,15 @@
-// A QUIC client over UDP: handshake with a server, print what it agreed,
-// close, and exit 0 when the handshake completed.
-//   client PORT NAME CA.pem
+// A QUIC client over UDP: handshake with a server on ALPN fern-echo, send
+// SIZE bytes on a bidirectional stream, check they come back with the
+// stream's end, close, and exit 0 when they did.
+//   client PORT NAME CA.pem SIZE
 import "std/net";
 import "std/quic/conn";
 import "std/tls/verify";
 import "std/async";
 import "std/option";
 import "std/i64";
+import "std/string";
+import "core/int";
 
 function now(): i64 {
   return monotonic_ns();
@@ -35,7 +38,8 @@ function drain(c: conn.Conn, sock: i32, buf: u8[]): conn.Conn {
             },
             conn.Closed(why) => {
               print("fern client: closed code=" + why.code.to_string() + " reason=" + why.reason);
-            }
+            },
+            _ => {}
           }
         }
       },
@@ -62,26 +66,84 @@ function wait_ms(c: conn.Conn): i32 {
   return ms as i32;
 }
 
-// ran drives the connection until it is done or ten seconds pass, closing
-// it once the handshake is confirmed; true when it was.
-function ran(c0: conn.Conn, sock: i32, peer: net.SocketAddr): boolean {
+function payload(n: i32): u8[] {
+  let out: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.with(i, (i * 7 + 3 & 255) as u8);
+    i = i + 1;
+  }
+  return out;
+}
+
+function same(a: u8[], b: u8[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < a.len()) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// Echo — the stream sent, once the handshake is confirmed, and what has
+// come back on it.
+struct Echo { id: i64, sent: u8[], got: u8[], matched: boolean, closing: boolean }
+
+// echoed opens the stream and writes the payload once the handshake is
+// confirmed, reads what came back, and closes once its end has.
+function echoed(c: conn.Conn, e: Echo): (conn.Conn, Echo) {
+  if (!c.confirmed() || e.closing) {
+    return (c, e);
+  }
+  if (e.id < 0) {
+    let Ok(opened) = c.open_stream(false) else {
+      return (c, e);
+    };
+    let Ok(w) = opened.0.write(opened.1, e.sent, true) else {
+      return (c, e);
+    };
+    return (w, Echo { ...e, id: opened.1 });
+  }
+  let Ok(r) = c.read(e.id) else {
+    return (c, e);
+  };
+  let got: u8[] = e.got.concat(r.1);
+  if (!r.2) {
+    return (r.0, Echo { ...e, got: got });
+  }
+  let matched: boolean = same(got, e.sent);
+  let verdict: string = "DIFFERS";
+  if (matched) {
+    verdict = "matches";
+  }
+  print("fern client: echo of " + int.int_to_string(got.len()) + " bytes " + verdict);
+  return (r.0.close(0 as i64, "fern done", true, now()), Echo { ...e, got: got, matched: matched, closing: true });
+}
+
+// ran drives the connection until it is done or twenty seconds pass; true
+// when the echo came back whole.
+function ran(c0: conn.Conn, sock: i32, peer: net.SocketAddr, size: i32): boolean {
   let buf: u8[] = __alloc_u8(65536);
   let c: conn.Conn = c0;
+  let e: Echo = Echo { id: 0 - 1 as i64, sent: payload(size), got: [], matched: false, closing: false };
   let started: i64 = now();
-  let closing: boolean = false;
-  while (!c.done() && now() - started < 10000000000) {
+  while (!c.done() && now() - started < 20000000000) {
     c = pump(c, sock, peer);
     let woke: i32 = async.wait_any([sock, 1], wait_ms(c));
     c = drain(c, sock, buf);
     if (c.deadline() != 0 && now() >= c.deadline()) {
       c = c.tick(now()).conn;
     }
-    if (c.confirmed() && !closing) {
-      closing = true;
-      c = c.close(0 as i64, "fern done", true, now());
-    }
+    let (c2, e2) = echoed(c, e);
+    c = c2;
+    e = e2;
   }
-  return closing;
+  return e.matched;
 }
 
 function main(): i32 {
@@ -93,7 +155,7 @@ function main(): i32 {
     eprint("no roots");
     return 2;
   };
-  let cfg: conn.Config = conn.config(["h3"]).client_side(argv[2], roots);
+  let cfg: conn.Config = conn.config(["fern-echo"]).with_streams(16 as i64, 16 as i64, 262144 as i64, 1048576 as i64).client_side(argv[2], roots);
   let Ok(c0) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now()) else {
     return 2;
   };
@@ -104,7 +166,10 @@ function main(): i32 {
     return 2;
   };
   let nb: Result[void, net.NetError] = net.set_nonblocking(sock, true);
-  if (ran(c0, sock, peer)) {
+  let Some(size) = argv[4].parse_int() else {
+    return 2;
+  };
+  if (ran(c0, sock, peer, size)) {
     return 0;
   }
   return 1;
