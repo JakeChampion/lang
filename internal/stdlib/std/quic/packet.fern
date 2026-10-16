@@ -309,7 +309,7 @@ pub function mask(k: Keys, sample: [u8]): u8[] {
 }
 
 // The five bytes the keystream is taken over for a header's mask.
-const ZERO_MASK: u8[] = [0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8];
+const ZERO_MASK: u8[] = [0, 0, 0, 0, 0];
 
 function __nonce(iv: [u8], pn: i64): u8[] {
   let out: u8[] = __copy(iv);

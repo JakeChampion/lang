@@ -101,7 +101,8 @@ function outcome(r: Result[streams.Streams, string]): string {
 }
 
 function events(s: streams.Streams): string {
-  let (_, evs) = s.take_events();
+  let evs: streams.Event[] = s.events;
+  let _: streams.Streams = s.events_taken();
   let out: string = "";
   for e in evs {
     match (e) {
@@ -288,8 +289,10 @@ function test_send_windows(): test.TestOutcome {
       return test.fail(e);
     }
   }
-  let (s1, out1, _) = s.fill([], 1200);
-  let (s2, out2, _) = s1.fill([], 1200);
+  let s1: streams.Streams = s.fill([], 1200);
+  let out1: u8[] = s1.filled;
+  let s2: streams.Streams = s1.fill([], 1200);
+  let out2: u8[] = s2.filled;
   let s3: streams.Streams = s2;
   match (fed(s2, [frames.MaxStreamData(a, 100 as i64), frames.MaxData(200 as i64)])) {
     Ok(t) => {
@@ -299,7 +302,8 @@ function test_send_windows(): test.TestOutcome {
       return test.fail(e);
     }
   }
-  let (_, out3, _) = s3.fill([], 1200);
+  let t3: streams.Streams = s3.fill([], 1200);
+  let out3: u8[] = t3.filled;
   return test.assert_eq(sent(out1) + "| " + sent(out2) + "| " + sent(out3), "STREAM 1@0+50 STREAM 5@0+30 STREAM_DATA_BLOCKED 1 50 DATA_BLOCKED 80 | | STREAM 1@50+10 fin STREAM 5@30+10 ");
 }
 
@@ -315,10 +319,12 @@ function test_window_updates(): test.TestOutcome {
       return test.fail(e);
     }
   }
-  let (quiet, before, _) = s.fill([], 1200);
+  let quiet: streams.Streams = s.fill([], 1200);
+  let before: u8[] = quiet.filled;
   match (read_on(quiet, 0 as i64)) {
     Ok(r) => {
-      let (_, after, _) = r.0.fill([], 1200);
+      let t5: streams.Streams = r.0.fill([], 1200);
+      let after: u8[] = t5.filled;
       return test.assert_eq("[" + sent(before) + "] " + int.int_to_string(r.1.len()) + " " + r.2.to_string() + " " + sent(after), "[] 60 false MAX_STREAM_DATA 0 160 ");
     },
     Err(e) => {
@@ -348,14 +354,17 @@ function test_stream_credit(): test.TestOutcome {
     }
   }
   let refused: string = outcome(fed(s, [data(4 as i64, 0 as i64, 1, false)]));
-  let (s1, out1, resend) = s.fill([], 1200);
+  let s1: streams.Streams = s.fill([], 1200);
+  let out1: u8[] = s1.filled;
+  let resend: recovery.Resend[] = s1.resend;
   match (read_on(s1, 0 as i64)) {
     Ok(r) => {
       let cur: streams.Streams = r.0;
       for item in resend {
         cur = cur.acked(item);
       }
-      let (s2, out2, _) = cur.fill([], 1200);
+      let s2: streams.Streams = cur.fill([], 1200);
+      let out2: u8[] = s2.filled;
       let opened: string = outcome(fed(s2, [data(4 as i64, 0 as i64, 1, false)]));
       return test.assert_eq(refused + " | " + sent(out1) + "| " + r.2.to_string() + " " + sent(out2) + "| " + opened, "4/8 | STREAM 0@0+2 fin | true MAX_STREAMS true 2 | ok");
     },
@@ -384,8 +393,10 @@ function test_loss(): test.TestOutcome {
       return test.fail(e);
     }
   }
-  let (s1, _, first) = s.fill([], 25);
-  let (s2, _, second) = s1.fill([], 1200);
+  let s1: streams.Streams = s.fill([], 25);
+  let first: recovery.Resend[] = s1.resend;
+  let s2: streams.Streams = s1.fill([], 1200);
+  let second: recovery.Resend[] = s2.resend;
   let cur: streams.Streams = s2;
   for item in first {
     cur = cur.lost(item);
@@ -394,7 +405,9 @@ function test_loss(): test.TestOutcome {
     cur = cur.acked(item);
   }
   let held: string = cur.buffered(1 as i64).to_string();
-  let (s3, again, third) = cur.fill([], 1200);
+  let s3: streams.Streams = cur.fill([], 1200);
+  let again: u8[] = s3.filled;
+  let third: recovery.Resend[] = s3.resend;
   for item in third {
     s3 = s3.acked(item);
   }
@@ -422,15 +435,18 @@ function test_resets(): test.TestOutcome {
       return test.fail(e);
     }
   }
-  let (s1, out1, _) = s.fill([], 1200);
+  let s1: streams.Streams = s.fill([], 1200);
+  let out1: u8[] = s1.filled;
   match (fed(s1, [frames.StopSending(0 as i64, 7 as i64), frames.ResetStreamFrame(frames.ResetStream { stream: 0 as i64, code: 9 as i64, final_size: 100 as i64 })])) {
     Ok(t) => {
       let note: string = events(t);
-      let (_, out2, _) = t.fill([], 1200);
+      let t12: streams.Streams = t.fill([], 1200);
+      let out2: u8[] = t12.filled;
       let stopping: string = "-";
       match (stop_on(s1, 0 as i64, 3 as i64)) {
         Ok(st) => {
-          let (_, out3, _) = st.fill([], 1200);
+          let t13: streams.Streams = st.fill([], 1200);
+          let out3: u8[] = t13.filled;
           stopping = sent(out3);
         },
         Err(e) => {
@@ -495,8 +511,10 @@ function test_stop_after_read(): test.TestOutcome {
   let rs: frames.Frame = frames.ResetStreamFrame(frames.ResetStream { stream: 0 as i64, code: 9 as i64, final_size: 100 as i64 });
   match (fed(s, [data(0 as i64, 95 as i64, 5, false), rs, rs])) {
     Ok(t) => {
-      let (next, out, _) = t.fill([], 1200);
-      let (_, again, _) = next.fill([], 1200);
+      let next: streams.Streams = t.fill([], 1200);
+      let out: u8[] = next.filled;
+      let t15: streams.Streams = next.fill([], 1200);
+      let again: u8[] = t15.filled;
       return test.assert_eq(old_ready.to_string() + " " + sent(out) + "| " + sent(again), "10 STOP_SENDING 0 3 MAX_DATA 250 | ");
     },
     Err(e) => {
@@ -521,8 +539,10 @@ function test_blocked_open(): test.TestOutcome {
     },
     Err(_) => {}
   }
-  let (s1, first, _) = s.blocked_open(false).blocked_open(true).fill([], 1200);
-  let (s2, quiet, _) = s1.fill([], 1200);
+  let s1: streams.Streams = s.blocked_open(false).blocked_open(true).fill([], 1200);
+  let first: u8[] = s1.filled;
+  let s2: streams.Streams = s1.fill([], 1200);
+  let quiet: u8[] = s2.filled;
   match (fed(s2, [frames.MaxStreams(true, 1 as i64)])) {
     Ok(t) => {
       s = t;
@@ -545,7 +565,8 @@ function test_blocked_open(): test.TestOutcome {
     },
     Err(_) => {}
   }
-  let (_, second, _) = s.blocked_open(false).fill([], 1200);
+  let t18: streams.Streams = s.blocked_open(false).fill([], 1200);
+  let second: u8[] = t18.filled;
   return test.assert_eq(sent(first) + "| " + sent(quiet) + "| " + sent(second), "STREAMS_BLOCKED true 0 STREAMS_BLOCKED false 0 | | STREAMS_BLOCKED true 1 ");
 }
 
@@ -556,7 +577,7 @@ function test_consumed_fin_replay(): test.TestOutcome {
   let Ok(s) = fed(server(1 as i64), [data(0 as i64, 0 as i64, 3, true)]) else {
     return test.fail("initial FIN");
   };
-  let (quiet, _) = s.take_events();
+  let quiet: streams.Streams = s.events_taken();
   let Ok(read) = read_on(quiet, 0 as i64) else {
     return test.fail("read FIN");
   };
@@ -578,7 +599,7 @@ function test_late_fin_once(): test.TestOutcome {
   let Ok(s) = fed(server(1 as i64), [data(0 as i64, 0 as i64, 3, false)]) else {
     return test.fail("initial bytes");
   };
-  let (quiet, _) = s.take_events();
+  let quiet: streams.Streams = s.events_taken();
   let Ok(read) = read_on(quiet, 0 as i64) else {
     return test.fail("read bytes");
   };
@@ -586,7 +607,7 @@ function test_late_fin_once(): test.TestOutcome {
     return test.fail("late FIN");
   };
   let first: string = events(ended);
-  let (quiet_end, _) = ended.take_events();
+  let quiet_end: streams.Streams = ended.events_taken();
   let Ok(fin) = read_on(quiet_end, 0 as i64) else {
     return test.fail("read late FIN");
   };
