@@ -70,7 +70,7 @@ function __prepared(bytes: [u8], nonce: [u8]): Result[Key, AeadError] {
   return key(bytes);
 }
 
-const ZERO_BLOCK: u8[] = [0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8];
+const ZERO_BLOCK: u8[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
 // __counter is the counter block nonce || 0^24 || `last`: J0 with 1, and the
 // first block of keystream with 2.

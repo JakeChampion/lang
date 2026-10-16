@@ -6398,8 +6398,7 @@ function __h3_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: 
     let Ok(got) = net.recv_from(cur.quic.sock, cur.quic.buf) else {
       return (cur, fs, burst);
     };
-    let d: u8[] = __bytes_range(cur.quic.buf, 0, got.0);
-    let r: (__Conns, __Flight[], __H3Burst) = __h3_datagram(drv, cur, fs, d, got.1, burst, opts, stop);
+    let r: (__Conns, __Flight[], __H3Burst) = __h3_datagram(drv, cur, fs, cur.quic.buf[0:got.0], got.1, burst, opts, stop);
     cur = r.0;
     fs = r.1;
     burst = r.2;
@@ -6412,7 +6411,7 @@ function __h3_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: 
 // the connection whose ID it carries, or, when it is a client's first
 // Initial and the loop is accepting, to a new one; anything else is
 // dropped.
-function __h3_datagram[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], d: u8[], from: net.SocketAddr, burst: __H3Burst, opts: Config, stop: __Stop): (__Conns, __Flight[], __H3Burst) {
+function __h3_datagram[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], d: [u8], from: net.SocketAddr, burst: __H3Burst, opts: Config, stop: __Stop): (__Conns, __Flight[], __H3Burst) {
   let Ok(h) = packet.parse(d, 0, c.quic.cfg.cid_len) else {
     return (c, fls, burst);
   };
@@ -6475,7 +6474,7 @@ function __h3_from_ip(q: __Quic, ip: net.IpAddr): i32 {
 // __h3_accept(c, h, d, from, opts, stop) — a new connection from a
 // client's first Initial, which must fill a datagram of 1200 bytes (RFC
 // 9000 §14.1); none while stopping or at the connection cap.
-function __h3_accept(c: __Conns, h: packet.Header, d: u8[], from: net.SocketAddr, opts: Config, stop: __Stop): (__Conns, i32) {
+function __h3_accept(c: __Conns, h: packet.Header, d: [u8], from: net.SocketAddr, opts: Config, stop: __Stop): (__Conns, i32) {
   let q: __Quic = c.quic;
   let initial: boolean = false;
   match (h.kind) {

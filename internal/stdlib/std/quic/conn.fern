@@ -334,7 +334,8 @@ function __earliest(a: i64, b: i64): i64 {
 // __stepped hands back the connection with what happened to it, the
 // streams' events after the connection's own.
 function (c: Conn) __stepped(): Step {
-  let (table, notes) = c.streams.take_events();
+  let notes: streams.Event[] = c.streams.events;
+  let table: streams.Streams = c.streams.events_taken();
   let events: Event[] = c.events;
   for n in notes {
     events = events.append(__stream_event(n));
@@ -1534,9 +1535,11 @@ function (c: Conn) __streams_out(space: i32, p: Plan, room: i32): (Conn, Plan) {
     return (c, p);
   }
   let before: i32 = p.payload.len();
-  let (t, payload, resend) = c.streams.fill(p.payload, room);
+  let t: streams.Streams = c.streams.fill(p.payload, room);
+  let payload: u8[] = t.filled;
+  let resend: recovery.Resend[] = t.resend;
   let plan: Plan = Plan { ...p, payload: payload, eliciting: p.eliciting || payload.len() > before, resend: p.resend.concat(resend) };
-  return (Conn { ...c, streams: t }, plan);
+  return (Conn { ...c, streams: t.fill_taken() }, plan);
 }
 
 // __probe_out answers a probe timeout for this space (§6.2.4): if nothing

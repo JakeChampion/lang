@@ -207,10 +207,21 @@ Each is a bound with a test that crosses it.
       and tag blocks and the three GHASH results, which a fused kernel
       would fold into one, and the zero block, which #12499 (a constant
       array allocates per use) would make free.
+    - **Records handed back bare (first part landed).** A record returned
+      inside a Result or a tuple is copied on the way out (#12501). The
+      stream table's operations and its packet-filling chain now hand the
+      table back with their outcome in fields; done streams are retired
+      lazily; byte ranges go through the byte builder; a datagram reaches
+      its connection as a view. 383 to 369 allocations per request. What
+      remains is the serve loop reaching each connection through an array
+      element, which copies the connection record and its table per
+      datagram: an `Option` placeholder taken out of the slot and the
+      connection's own steps (`receive`, `tick`, `transmit`) returning
+      the connection bare.
     - **The connection's plans** (`conn.__plan`, `__seal`) and the HTTP/3
       session's request path (`h3`, `qpack`, `h3q`): fields written
       straight into the encoder as HTTP/2 does, the request handed over
-      without the partial copied.
+      without the partial copied; Huffman decoding by table.
     - **The socket.** `sendmmsg`, UDP GSO and GRO, ECN: new builtins, so
       four classifications each, reported Unsupported on Darwin and WASI.
 
