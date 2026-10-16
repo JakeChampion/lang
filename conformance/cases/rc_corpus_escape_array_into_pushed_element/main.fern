@@ -1,0 +1,26 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Escape into a pushed array element: emitArrayPush stores
+// the element without an inc, so an owned inner array
+// pushed into a grid escapes uncounted and must survive the
+// helper's exit. Churn forces reuse of any freed block.
+import "core/int";
+import "std/array";
+import "std/string";
+function add_row(grid: i32[][], n: i32): i32[][] {
+    let row: i32[] = [n, n + 1, n + 2, n + 3];
+    return grid.append(row);
+}
+function main(): i32 {
+    let grid: i32[][] = [];
+    grid = add_row(grid, 5000);
+    let c: i32 = 0;
+    while (c < 300) {
+        let junk: i32[] = [c, c, c, c];
+        c = c + 1;
+    }
+    if (grid.len() != 1) { return 90; }
+    let r: i32[] = grid[0];
+    return (r.len() - 4) + (r[0] - 5000) + (r[3] - 5003) + __rc_underflow_count();
+}

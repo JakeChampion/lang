@@ -1,0 +1,23 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Transitive reclamation Stage B — array of structs that
+// ESCAPES (returned from mk): the array must not be freed at the
+// constructor's exit, so its element boxes survive. The churn
+// loop forces same-size reuse that would corrupt a strayed read.
+import "core/int";
+import "std/string";
+struct Item { tags: i32[] }
+function mk(n: i32): Item[] {
+    let xs: Item[] = [Item { tags: [n, n + 1] }, Item { tags: [n + 2] }];
+    return xs;
+}
+function main(): i32 {
+    let keep: Item[] = mk(7);
+    let c: i32 = 0;
+    while (c < 200) {
+        let junk: i32[] = [c, c];
+        c = c + 1;
+    }
+    return (keep[0].tags[1] - 8) + (keep[1].tags[0] - 9) + (keep.len() - 2) + __rc_underflow_count();
+}

@@ -1,0 +1,18 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Overwrite-dec is rc-aware: an outstanding get-borrow of the
+// old value (inc-on-get → rc 2) must NOT be freed by the
+// overwrite (rc 2→1, no free). The borrow stays readable; the
+// counter stays 0.
+import "core/int";
+import "core/map";
+function main(): i32 {
+    let m: Map[i32, i32[]] = map_new(4);
+    m = m.insert(1, [10, 11]);
+    let borrow: i32[] = m.get_or(1, []);
+    m = m.insert(1, [20, 21]);
+    let x: i32 = borrow[1];
+    let y: i32 = m.get_or(1, [])[0];
+    return (x + y - 31) + __rc_underflow_count();
+}

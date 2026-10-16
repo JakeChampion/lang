@@ -1,0 +1,22 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Enum-typed field that ESCAPES (Holder returned): the enum box
+// + payload must survive the constructor. Churn forces reuse.
+import "core/int";
+struct VInt { v: i32[] }
+struct VArr { v: i32[] }
+type Value = VInt | VArr;
+struct Holder { val: Value, n: i32 }
+function mk(n: i32): Holder { return Holder { val: VArr { v: [n, n + 1] }, n: n }; }
+function main(): i32 {
+    let h: Holder = mk(9);
+    let c: i32 = 0;
+    while (c < 200) {
+        let junk: i32[] = [c, c];
+        c = c + 1;
+    }
+    let got: i32 = 0;
+    match (h.val) { VInt(a) => { got = a.v[0]; }, VArr(b) => { got = b.v[1]; } }
+    return (got - 10) + __rc_underflow_count();
+}

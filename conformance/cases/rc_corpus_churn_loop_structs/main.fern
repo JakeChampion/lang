@@ -1,0 +1,19 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Churn: build + discard an array-of-structs every
+// iteration. Stresses the dec-on-overwrite + drop paths
+// repeatedly; the underflow counter must stay 0 across all
+// iterations (a per-iteration over-release would accumulate).
+import "core/int";
+struct P { x: i32 }
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 64) {
+        let ps: P[] = [P{x: i}, P{x: i + 1}];
+        acc = acc + ps[1].x;
+        i = i + 1;
+    }
+    return (acc - 2080) + __rc_underflow_count();
+}

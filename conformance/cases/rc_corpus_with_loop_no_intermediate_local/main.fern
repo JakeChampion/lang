@@ -1,0 +1,16 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Control: the `.with` receiver is a fresh temp with no binding at
+// all, so there is no slot to re-initialise.
+struct P { a: i32, b: i32 }
+function mk_arr(): P[] { return [P{a:0,b:0}, P{a:1,b:1}]; }
+function f(n: i32): i32 {
+    let t: i32 = 0;
+    for i in 0..n {
+        let a: P[] = mk_arr().with(0, P{a:i,b:i});
+        t = t + a[0].a;
+    }
+    return t;
+}
+function main(): i32 { return (f(20) - 190) + __rc_underflow_count(); }

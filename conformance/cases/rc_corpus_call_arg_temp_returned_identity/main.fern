@@ -1,0 +1,30 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The identity-return shape the reclaim gate exists to refuse,
+// pinned on the ANSWER and the underflow counter rather than on
+// a byte count. That distinction is the point: an over-releasing
+// build reads BETTER on live_bytes, so only the value check and
+// __rc_underflow_count catch it.
+//
+// `keepf(o) -> o` is admitted today and is correct: the
+// return-transfer inc puts the temp at rc 2, and the caller's
+// is_unique-gated drop nets it to exactly one owner.
+struct Op { a: i32, s: string }
+
+@noinline
+function mkop(i: i32): Op { return Op { a: i, s: "keep" }; }
+
+@noinline
+function keepf(o: Op): Op { return o; }
+
+function main(): i32 {
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 4) {
+        let r: Op = keepf(mkop(i));
+        t = t + r.a + r.s.len();
+        i = i + 1;
+    }
+    return (t - 22) + __rc_underflow_count();
+}

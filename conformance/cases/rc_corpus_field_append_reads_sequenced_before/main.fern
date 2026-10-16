@@ -1,0 +1,33 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// #8523 arm 2, the sequenced no-overlap arm, on the .append it was
+// written for: the length and the element read both precede the grow,
+// so the site is admitted where the flow-insensitive rule refused it.
+// The value is the same either way — what this pins is that admitting
+// it neither corrupts the buffer those reads produced nor unbalances
+// the container's own reference.
+import "core/int";
+import "std/i32";
+import "std/string";
+struct S { xs: i32[], ys: string[], n: i32 }
+function grow(s: S, v: i32): S {
+    let k: i32 = s.xs.len();
+    let e: i32 = s.xs[0];
+    let zs: i32[] = s.xs.append(v + e);
+    let ws: string[] = s.ys.append("n" + k.to_string());
+    return S { xs: zs, ys: ws, n: k };
+}
+function main(): i32 {
+    let s: S = S { xs: [7], ys: [], n: 0 };
+    let i: i32 = 0;
+    while (i < 40) {
+        s = grow(s, i);
+        i = i + 1;
+    }
+    let bad: i32 = 0;
+    if (s.xs.len() != 41 || s.n != 40) { bad = bad + 1; }
+    if (s.xs[0] != 7 || s.xs[40] != 46) { bad = bad + 2; }
+    if (s.ys.len() != 40 || s.ys[39] != "n40") { bad = bad + 4; }
+    return bad + __rc_underflow_count();
+}

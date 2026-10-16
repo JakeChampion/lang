@@ -1,0 +1,45 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// #7867 slice 1. `structParamProjectionsSafe` credited
+// `__method_Array_push`'s RECEIVER and never its ELEMENT, so a
+// fresh temp handed to a callee that pushes it was stranded: the
+// callee inc'd the element into the buffer and nothing gave the
+// caller's own reference back. 2 blocks a round here (the Op box
+// and its heap string), linear and unbounded — 12 allocs / 6
+// frees at three rounds before, 12 / 12 after.
+//
+// @noinline on both is essential. `inline.go` inlines a
+// single-reference callee at a loop call site, and an inlined
+// callee has no argument temp to reclaim, so the shape measures
+// clean without it whether or not the bug is present.
+//
+// The string is built by concatenation rather than written as a
+// literal: a literal is a static .rodata cell with an immortal
+// header, so the element's second block would not exist and the
+// case would understate itself.
+struct Op { a: i32, s: string, b: i32 }
+struct St { ops: Op[] }
+
+@noinline
+function mkop(i: i32, pad: string): Op { return Op { a: i, s: pad + "0123456789abcdef", b: i * 2 }; }
+
+@noinline
+function emit(s: St, o: Op): St { return St { ops: s.ops.append(o) }; }
+
+function main(): i32 {
+    let pad: string = "xyzw";
+    let st: St = St { ops: [] };
+    let i: i32 = 0;
+    while (i < 3) {
+        st = emit(st, mkop(i, pad));
+        i = i + 1;
+    }
+    let t: i32 = 0;
+    let k: i32 = 0;
+    while (k < st.ops.len()) {
+        t = t * 10 + st.ops[k].a + (st.ops[k].s.len() - 20);
+        k = k + 1;
+    }
+    return (t - 12) + __rc_underflow_count();
+}

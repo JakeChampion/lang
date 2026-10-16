@@ -1,0 +1,29 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// A param that is pushed AND returned bare: the push's element
+// retain and the return-transfer inc each give their holder a
+// count of its own, so the caller may release its temp and the
+// returned string stays live through the caller's read (#11479).
+@noinline
+function mk(pad: string, i: i32): string { return pad + "0123456789abcdef"; }
+
+@noinline
+function keep(xs: string[], nm: string): string {
+    let ys: string[] = xs.append(nm);
+    if (ys.len() > 99) { return "x"; }
+    return nm;
+}
+
+function main(): i32 {
+    let pad: string = "xyzw";
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 4) {
+        let base: string[] = [];
+        let got: string = keep(base, mk(pad, i));
+        t = t + got.len();
+        i = i + 1;
+    }
+    return (t - 80) + __rc_underflow_count();
+}

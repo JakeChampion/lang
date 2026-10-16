@@ -1,0 +1,24 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Map struct field that ESCAPES (struct returned): the map must
+// survive the constructor — the returned struct still owns it.
+// Churn forces same-size reuse that would corrupt a strayed read.
+import "core/int";
+import "core/map";
+import "std/string";
+struct Req { headers: Map[string, string], n: i32 }
+function mk(): Req {
+    let m: Map[string, string] = map_new(8);
+    m = m.insert("k", "vv");
+    return Req { headers: m, n: 1 };
+}
+function main(): i32 {
+    let r: Req = mk();
+    let c: i32 = 0;
+    while (c < 100) {
+        let junk: i32[] = [c, c];
+        c = c + 1;
+    }
+    return (r.headers.get_or("k", "x").len() - 2) + __rc_underflow_count();
+}

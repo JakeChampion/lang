@@ -28,8 +28,8 @@ import (
 //
 // Each program also checks its own ANSWER and `__rc_underflow_count()`. The
 // borrow-soundness half — that a value read out is one the CONTAINER still
-// owns — is in `rcCorpus` (map_get_string_value_borrowed_repeatedly,
-// accumulator_seeded_from_array_element), which runs the free-off legs too.
+// owns — is in the rc corpus (rc_corpus_map_get_string_value_borrowed_repeatedly,
+// rc_corpus_accumulator_seeded_from_array_element), which runs the free-off legs too.
 //
 // arm64 has no seeded-accumulator bound: the seed taint is fixed there as
 // well, but that backend still defers the accumulator's intermediates under

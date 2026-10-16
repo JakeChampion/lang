@@ -1,0 +1,33 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// A slice header stored in a struct field, an array element and a
+// tuple is retained on the store (needsRcIncOnAlias) and released by
+// the container's own drop — the same counted-alias protocol every
+// other rc-tracked shape runs. The source local's exit dec only decs
+// the shared header; the last container to let go frees it. The
+// `[u8][]` element walk is the per-element __fern_closure_drop of
+// __drop_arr_slice; a bare __fern_rc_dec would strand the fresh
+// second element at rc 0. Closure captures are exercised by the
+// correctness-only view program (closure churn is a pinned gap of
+// its own).
+struct View { v: [u8], n: i32 }
+function first(v: View): i32 { return v.v[0] as i32; }
+function main(): i32 {
+    let s: string = "hello world, this is a heap string";
+    let bad: i32 = 0;
+    let i: i32 = 0;
+    while (i < 2000) {
+        let b: [u8] = s.as_bytes();
+        let w: View = View { v: b, n: i };
+        let arr: [u8][] = [b, s.as_bytes()];
+        let pair: ([u8], i32) = (b, 7);
+        let c: [u8] = arr[1];
+        if (first(w) != 104) { bad = bad + 1; }
+        if (arr[1].len() != s.len() || c.len() != s.len()) { bad = bad + 2; }
+        if (pair.0.len() != s.len() || pair.1 != 7) { bad = bad + 4; }
+        if (w.n != i) { bad = bad + 16; }
+        i = i + 1;
+    }
+    return bad + __rc_underflow_count();
+}
