@@ -5,6 +5,58 @@ import (
 	"testing"
 )
 
+func TestEntryValuesDoNotCaptureImportedVariants(t *testing.T) {
+	for _, decl := range []string{
+		`function Hit(x: i32): i32 { return x; }`,
+		`function Hit[T](x: T): T { return x; }`,
+		`const Hit: i32 = 2;`,
+	} {
+		t.Run(decl, func(t *testing.T) {
+			err, _ := checkFiles(t, map[string]string{
+				"a.fern": `pub enum A { Hit, Miss }
+pub enum B { Data(i32) }
+pub function f(): A { return Hit; }
+pub function g(): B { return Data(7); }`,
+				"main.fern": "import \"./a\";\n" + decl + `
+function Data(x: string): string { return x; }
+function main(): i32 { let a: a.A = a.f(); let b: a.B = a.g(); return 0; }`,
+			}, "main.fern")
+			if err != nil {
+				t.Fatalf("an imported module cannot see the entry's values: %v", err)
+			}
+		})
+	}
+}
+
+func TestImportedModuleCannotCallEntryFunction(t *testing.T) {
+	for _, decl := range []string{
+		`function hidden(x: i32): i32 { return x; }`,
+		`function hidden[T](x: T): T { return x; }`,
+	} {
+		t.Run(decl, func(t *testing.T) {
+			err, _ := checkFiles(t, map[string]string{
+				"a.fern": `pub function f(): i32 { return hidden(2); }`,
+				"main.fern": "import \"./a\";\n" + decl + `
+function main(): i32 { return hidden(3); }`,
+			}, "main.fern")
+			if err == nil || !strings.Contains(err.Error(), `cannot find "hidden" in this scope`) {
+				t.Fatalf("want an undefined name in a.fern, got %v", err)
+			}
+		})
+	}
+}
+
+func TestEntryFunctionDoesNotCaptureStdlibVariant(t *testing.T) {
+	err, _ := checkFiles(t, map[string]string{
+		"main.fern": `import "std/dns";
+function Malformed(s: string): i32 { return 0; }
+function main(): i32 { return Malformed("entry"); }`,
+	}, "main.fern")
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 // A bare variant name resolves among the enums the REFERRING module can
 // name, not every enum in the program (#6951).
 //
