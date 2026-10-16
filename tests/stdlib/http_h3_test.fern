@@ -1,0 +1,297 @@
+import "std/test";
+import "std/http/h3";
+import "std/http/qpack";
+import "std/hex";
+import "std/string";
+import "std/option";
+
+// tests/stdlib/http_h3_test.fern — std/http/h3: a client and a server
+// session joined in memory, each one's writes delivered to the other as
+// stream bytes (whole, or a byte at a time), and what each side reports.
+// Requests and responses with bodies, interim responses and trailers,
+// QPACK blocking, GOAWAY, and the stream and connection errors §4.1.2,
+// §6 and §7 require.
+
+// Link — the two sessions and what happened, as text; with `trickle`
+// every write is delivered a byte at a time.
+struct Link { c: h3.Session, s: h3.Session, log: string, trickle: boolean }
+
+function linked(): Link {
+  let c: h3.Session = h3.client(h3.config()).start(2 as i64, 6 as i64, 10 as i64);
+  let s: h3.Session = h3.server(h3.config()).start(3 as i64, 7 as i64, 11 as i64);
+  return flow(Link { c: c, s: s, log: "", trickle: false });
+}
+
+// flow moves each side's actions to the other until neither has any.
+function flow(p: Link): Link {
+  let cur: Link = p;
+  let rounds: i32 = 0;
+  while (rounds < 20) {
+    let (c, cacts, cevs) = cur.c.take();
+    let (s, sacts, sevs) = cur.s.take();
+    cur = Link { ...cur, c: c, s: s, log: cur.log + noted("client", cevs) + noted("server", sevs) };
+    if (cacts.len() == 0 && sacts.len() == 0) {
+      return cur;
+    }
+    for a in cacts {
+      cur = Link { ...cur, s: deliver(cur.s, a, cur.trickle), log: cur.log + acted("client", a) };
+    }
+    for a in sacts {
+      cur = Link { ...cur, c: deliver(cur.c, a, cur.trickle), log: cur.log + acted("server", a) };
+    }
+    rounds = rounds + 1;
+  }
+  return cur;
+}
+
+function deliver(to: h3.Session, a: h3.Action, trickle: boolean): h3.Session {
+  match (a) {
+    h3.Write(id, bytes, fin) => {
+      if (!trickle || bytes.len() <= 1) {
+        return to.on_stream(id, bytes, fin);
+      }
+      let cur: h3.Session = to;
+      let i: i32 = 0;
+      while (i < bytes.len()) {
+        cur = cur.on_stream(id, bytes[i:i + 1], fin && i == bytes.len() - 1);
+        i = i + 1;
+      }
+      return cur;
+    },
+    h3.Abort(id, code) => {
+      return to.on_reset(id, code);
+    },
+    _ => {
+      return to;
+    }
+  }
+}
+
+// acted notes the actions worth seeing: resets, STOP_SENDING and closes.
+function acted(who: string, a: h3.Action): string {
+  match (a) {
+    h3.Abort(id, code) => {
+      return who + " aborts " + id.to_string() + " " + code.to_string() + "; ";
+    },
+    h3.Stop(id, code) => {
+      return who + " stops " + id.to_string() + " " + code.to_string() + "; ";
+    },
+    h3.CloseConnection(code, why) => {
+      return who + " closes " + code.to_string() + " " + why + "; ";
+    },
+    _ => {
+      return "";
+    }
+  }
+}
+
+function noted(who: string, evs: h3.Event[]): string {
+  let out: string = "";
+  for e in evs {
+    out = out + who + " " + event_text(e) + "; ";
+  }
+  return out;
+}
+
+function event_text(e: h3.Event): string {
+  match (e) {
+    h3.HeadersReceived(id, fs) => {
+      return "headers " + id.to_string() + " " + fields_text(fs);
+    },
+    h3.DataReceived(id, data) => {
+      return "data " + id.to_string() + " " + string_from_bytes_unchecked(data);
+    },
+    h3.TrailersReceived(id, fs) => {
+      return "trailers " + id.to_string() + " " + fields_text(fs);
+    },
+    h3.StreamEnded(id) => {
+      return "end " + id.to_string();
+    },
+    h3.StreamAborted(id, code) => {
+      return "aborted " + id.to_string() + " " + code.to_string();
+    },
+    h3.GoawayReceived(id) => {
+      return "goaway " + id.to_string();
+    }
+  }
+}
+
+function fields_text(fs: qpack.Field[]): string {
+  let out: string = "[";
+  for f in fs {
+    out = out + f.name + "=" + f.value + " ";
+  }
+  return out + "]";
+}
+
+function get(path: string): qpack.Field[] {
+  return [qpack.field(":method", "GET"), qpack.field(":scheme", "https"), qpack.field(":authority", "example.com"), qpack.field(":path", path)];
+}
+
+function post(length: string): qpack.Field[] {
+  return [qpack.field(":method", "POST"), qpack.field(":scheme", "https"), qpack.field(":authority", "example.com"), qpack.field(":path", "/upload"), qpack.field("content-length", length)];
+}
+
+// A GET and its response, with each side's SETTINGS read first.
+function test_request_response(): test.TestOutcome {
+  let p: Link = linked();
+  let settings: string = "-";
+  if let Some(ps) = p.c.peer_settings() {
+    settings = ps.max_table_capacity.to_string() + "/" + ps.blocked_streams.to_string() + "/" + ps.max_field_section_size.to_string();
+  }
+  p = flow(Link { ...p, c: p.c.send_headers(0 as i64, get("/"), true), log: "" });
+  p = flow(Link { ...p, s: p.s.send_headers(0 as i64, [qpack.field(":status", "200"), qpack.field("content-type", "text/plain")], false).send_data(0 as i64, "hello".bytes(), true) });
+  return test.assert_eq(settings + " | " + p.log, "4096/16/65536 | server headers 0 [:method=GET :scheme=https :authority=example.com :path=/ ]; server end 0; client headers 0 [:status=200 content-type=text/plain ]; client data 0 hello; client end 0; ");
+}
+
+// A POST whose body and trailers arrive a byte at a time; a 103 before
+// the final response.
+function test_body_trailers_interim(): test.TestOutcome {
+  let p: Link = linked();
+  p = Link { ...p, trickle: true, log: "" };
+  let c: h3.Session = p.c.send_headers(0 as i64, post("6"), false).send_data(0 as i64, "abc".bytes(), false).send_data(0 as i64, "def".bytes(), false).send_trailers(0 as i64, [qpack.field("x-sum", "ok")]);
+  p = flow(Link { ...p, c: c });
+  let body: string = count(p.log, "server data 0 ");
+  p = flow(Link { ...p, log: "", s: p.s.send_headers(0 as i64, [qpack.field(":status", "103"), qpack.field("link", "</a>")], false).send_headers(0 as i64, [qpack.field(":status", "204")], true) });
+  return test.assert_eq(body + " | " + p.log, "6 | client headers 0 [:status=103 link=</a> ]; client headers 0 [:status=204 ]; client end 0; ");
+}
+
+// count is how many times `needle` is in `s`, as text.
+function count(s: string, needle: string): string {
+  let n: i32 = 0;
+  let rest: string = s;
+  let at: i32 = rest.index_of(needle);
+  while (at >= 0) {
+    n = n + 1;
+    rest = rest.drop(at + needle.len());
+    at = rest.index_of(needle);
+  }
+  return n.to_string();
+}
+
+// A response to HEAD, and a 304, carry a content-length but no body (RFC
+// 9110 §8.6); one with no content-length for a GET carries what it has.
+function test_bodiless(): test.TestOutcome {
+  let p: Link = linked();
+  let head: qpack.Field[] = [qpack.field(":method", "HEAD"), qpack.field(":scheme", "https"), qpack.field(":authority", "example.com"), qpack.field(":path", "/")];
+  p = flow(Link { ...p, c: p.c.send_headers(0 as i64, head, true).send_headers(4 as i64, get("/cached"), true) });
+  p = flow(Link { ...p, log: "", s: p.s.send_headers(0 as i64, [qpack.field(":status", "200"), qpack.field("content-length", "12")], true).send_headers(4 as i64, [qpack.field(":status", "304"), qpack.field("content-length", "40")], true) });
+  return test.assert_eq(p.log, "client headers 0 [:status=200 content-length=12 ]; client end 0; client headers 4 [:status=304 content-length=40 ]; client end 4; ");
+}
+
+// Each malformed request is a stream error: the server resets it both
+// ways with H3_MESSAGE_ERROR and the connection carries on.
+function test_malformed(): test.TestOutcome {
+  let cases: qpack.Field[][] = [
+    [qpack.field(":method", "GET"), qpack.field(":scheme", "https"), qpack.field(":path", "/"), qpack.field("X-Upper", "1")],
+    [qpack.field(":method", "GET"), qpack.field(":scheme", "https")],
+    [qpack.field(":method", "GET"), qpack.field(":scheme", "https"), qpack.field(":path", "/"), qpack.field("connection", "close")],
+    [qpack.field(":method", "GET"), qpack.field(":scheme", "https"), qpack.field(":path", "/"), qpack.field("te", "gzip")],
+    [qpack.field(":method", "GET"), qpack.field("accept", "*/*"), qpack.field(":scheme", "https"), qpack.field(":path", "/")],
+    [qpack.field(":method", "CONNECT"), qpack.field(":scheme", "https"), qpack.field(":authority", "example.com")],
+  ];
+  let out: string = "";
+  let id: i64 = 0;
+  for fs in cases {
+    let p: Link = linked();
+    p = flow(Link { ...p, log: "", c: p.c.send_headers(id, fs, true) });
+    out = out + p.log + "\n";
+  }
+  let len: Link = linked();
+  len = flow(Link { ...len, log: "", c: len.c.send_headers(0 as i64, post("5"), false).send_data(0 as i64, "abc".bytes(), true) });
+  out = out + len.log;
+  let want: string = "";
+  let i: i32 = 0;
+  while (i < 6) {
+    want = want + "server aborted 0 270; server aborts 0 270; server stops 0 270; client aborted 0 270; \n";
+    i = i + 1;
+  }
+  return test.assert_eq(out, want + "server headers 0 [:method=POST :scheme=https :authority=example.com :path=/upload content-length=5 ]; server data 0 abc; server aborted 0 270; server aborts 0 270; server stops 0 270; client aborted 0 270; ");
+}
+
+// Frames out of place close the connection (§7.2): DATA before HEADERS,
+// a control stream without SETTINGS first, a second control stream, an
+// HTTP/2 setting, a critical stream ending, a client's push stream. A
+// stream type no one knows is stopped; a frame type no one knows on a
+// request stream is skipped.
+function test_connection_errors(): test.TestOutcome {
+  let p: Link = linked();
+  let out: string = closes(p.s.on_stream(0 as i64, hex.hex_decode("000161"), false));
+  out = out + closes(h3.server(h3.config()).on_stream(2 as i64, hex.hex_decode("00070100"), false));
+  out = out + closes(p.s.on_stream(14 as i64, hex.hex_decode("000400"), false));
+  out = out + closes(h3.server(h3.config()).on_stream(2 as i64, hex.hex_decode("0004020300"), false));
+  out = out + closes(p.s.on_stream(6 as i64, [], true));
+  out = out + closes(p.s.on_stream(18 as i64, hex.hex_decode("01"), false));
+  out = out + closes(p.s.on_stream(22 as i64, hex.hex_decode("21"), false));
+  let (_, cacts, _) = p.c.send_headers(4 as i64, get("/g"), true).take();
+  let request: u8[] = [];
+  for a in cacts {
+    if let h3.Write(id, bytes, _) = a {
+      if (id == 4) {
+        request = bytes;
+      }
+    }
+  }
+  let (_, _, evs) = p.s.on_stream(4 as i64, hex.hex_decode("2103abcdef").concat(request), true).take();
+  return test.assert_eq(out + "| " + noted("server", evs), "261 DATA outside a message's body; 266 the control stream did not open with SETTINGS; 259 a second critical stream of one type; 265 a repeated setting, or one of HTTP/2's; 260 a critical stream ended; 259 a push stream from a client; stop 22 259; | server headers 4 [:method=GET :scheme=https :authority=example.com :path=/g ]; server end 4; ");
+}
+
+// closes is how a session ended, or the stream it stopped.
+function closes(s: h3.Session): string {
+  let (_, acts, _) = s.take();
+  for a in acts {
+    match (a) {
+      h3.CloseConnection(code, why) => {
+        return code.to_string() + " " + why + "; ";
+      },
+      h3.Stop(id, code) => {
+        return "stop " + id.to_string() + " " + code.to_string() + "; ";
+      },
+      _ => {}
+    }
+  }
+  return "open; ";
+}
+
+// GOAWAY tells the client which of its requests will not be processed.
+function test_goaway(): test.TestOutcome {
+  let p: Link = linked();
+  p = flow(Link { ...p, log: "", c: p.c.send_headers(0 as i64, get("/a"), true).send_headers(4 as i64, get("/b"), true) });
+  p = flow(Link { ...p, log: "", s: p.s.send_goaway(4 as i64) });
+  return test.assert_eq(p.log + p.c.goaway_received().to_string(), "client goaway 4; client aborted 4 267; 4");
+}
+
+// A request whose field section refers to inserts the encoder stream has
+// not yet delivered waits for them, then arrives whole.
+function test_qpack_blocked(): test.TestOutcome {
+  let s: h3.Session = h3.server(h3.config()).start(3 as i64, 7 as i64, 11 as i64);
+  let (s0, _, _) = s.take();
+  let section: string = "03811011d1d7";
+  let headers: string = "0106" + section;
+  let (s1, acts1, evs1) = s0.on_stream(0 as i64, hex.hex_decode(headers), true).take();
+  let encoder: string = "02" + "3fbd01c00f7777772e6578616d706c652e636f6dc10c2f73616d706c652f70617468";
+  let (_, acts2, evs2) = s1.on_stream(6 as i64, hex.hex_decode(encoder), false).take();
+  let written: string = "";
+  for a in acts2 {
+    if let h3.Write(id, bytes, _) = a {
+      written = written + id.to_string() + ":" + hex.hex_encode(bytes) + " ";
+    }
+  }
+  return test.assert_eq(int_text(acts1.len()) + " " + int_text(evs1.len()) + " | " + noted("server", evs2) + "| " + written, "0 0 | server headers 0 [:authority=www.example.com :path=/sample/path :method=GET :scheme=https ]; server end 0; | 11:02 11:80 ");
+}
+
+function int_text(n: i32): string {
+  return n.to_string();
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/http/h3");
+  r = r.it("a request and its response", test_request_response);
+  r = r.it("a body and trailers a byte at a time, and an interim response", test_body_trailers_interim);
+  r = r.it("HEAD and 304 responses carry no body", test_bodiless);
+  r = r.it("malformed messages are stream errors", test_malformed);
+  r = r.it("frames out of place are connection errors", test_connection_errors);
+  r = r.it("GOAWAY", test_goaway);
+  r = r.it("a field section blocked on QPACK", test_qpack_blocked);
+  return r.finish();
+}
