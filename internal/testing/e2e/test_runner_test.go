@@ -1268,14 +1268,14 @@ func TestRunnerQUICRecoveryExamplePasses(t *testing.T) {
 // the idle timeout; then a stream echoed through small windows, and again
 // through loss and reordering.
 func TestRunnerQUICConnExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "quic_conn", "std/quic/conn", 12)
+	runnerSuitePasses(t, "quic_conn", "std/quic/conn", 25)
 }
 
 // `tests/stdlib/quic_streams_test.fern` drives std/quic/streams frame by
 // frame: reassembly, stream limits, each half's direction, flow control and
 // final sizes, window updates, retransmission, and resets both ways.
 func TestRunnerQUICStreamsExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "quic_streams", "std/quic/streams", 11)
+	runnerSuitePasses(t, "quic_streams", "std/quic/streams", 13)
 }
 
 // `tests/stdlib/http_grpc_test.fern` reads the gRPC message framing back

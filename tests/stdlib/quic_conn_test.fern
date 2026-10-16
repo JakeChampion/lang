@@ -2,6 +2,10 @@ import "std/test";
 import "std/quic/conn";
 import "std/quic/packet";
 import "std/quic/frames";
+import "std/quic/recovery";
+import "std/tls/keyschedule";
+import "std/array";
+import "std/result";
 import "std/tls/identity";
 import "std/tls/verify";
 import "std/hex";
@@ -528,6 +532,258 @@ function test_no_streams(): test.TestOutcome {
   }
 }
 
+// An independent peer can rotate without calling any local API: the
+// next traffic secret and changed Key Phase bit are enough (§6.2).
+function peer_update(p: Pair, payload: u8[]): u8[] {
+  let Some(k) = p.client.spaces[2].send else {
+    return [];
+  };
+  return packet.seal_short(server_of(p).scid, p.client.spaces[2].next_pn, 2, true, false, payload, k.updated());
+}
+
+function updated_ack(p: Pair, datagrams: u8[][]): boolean {
+  let Some(k) = p.client.spaces[2].recv else {
+    return false;
+  };
+  let want: i64 = p.client.spaces[2].next_pn;
+  for d in datagrams {
+    let Ok(h) = packet.parse(d, 0, 8) else {
+      continue;
+    };
+    let Ok(o) = packet.open(d, h, k.updated(), p.client.spaces[2].largest_recv) else {
+      continue;
+    };
+    let Ok(fs) = frames.read_all(o.payload) else {
+      continue;
+    };
+    for f in fs {
+      if let frames.AckFrame(a) = f {
+        for r in a.ranges {
+          if (o.key_phase && r.low <= want && want <= r.high) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function test_peer_key_update_ack(): test.TestOutcome {
+  let (cc, sc) = stream_configs();
+  let Ok(p0) = start(cc, sc) else {
+    return test.fail("start");
+  };
+  let p: Pair = settle(p0, 12, 10000 * MS);
+  let step: conn.Step = server_of(p).receive(peer_update(p, frames.encode(frames.Ping)), p.now);
+  let (_, out) = step.conn.transmit(p.now);
+  return test.assert_eq(updated_ack(p, out).to_string(), "true");
+}
+
+function test_peer_key_update_stream(): test.TestOutcome {
+  let (cc, sc) = stream_configs();
+  let Ok(p0) = start(cc, sc) else {
+    return test.fail("start");
+  };
+  let p: Pair = settle(p0, 12, 10000 * MS);
+  let f: frames.Frame = frames.StreamFrame(frames.StreamData { stream: 0 as i64, offset: 0 as i64, data: entropy(5, 3), fin: true });
+  let step: conn.Step = server_of(p).receive(peer_update(p, frames.encode(f)), p.now);
+  let Ok(r) = step.conn.read(0 as i64) else {
+    return test.fail("updated-key STREAM was not delivered");
+  };
+  return test.assert_eq(hex.hex_encode(r.1) + " " + r.2.to_string(), "050c13 true");
+}
+
+// Build authenticated wire packets independently of Conn's update API.
+function phase_packet(p: Pair, pn: i64, generations: i32): u8[] {
+  let Some(k) = p.client.spaces[2].send else {
+    return [];
+  };
+  let i: i32 = 0;
+  while (i < generations) {
+    k = k.updated();
+    i = i + 1;
+  }
+  return packet.seal_short(server_of(p).scid, pn, 2, generations % 2 == 1, false, frames.encode(frames.Ping), k);
+}
+
+function key_pair(): Result[Pair, string] {
+  let (cc, sc) = stream_configs();
+  return Ok(settle(start(cc, sc)?, 12, 10000 * MS));
+}
+
+function close_code(c: conn.Conn): i64 {
+  if let Some(why) = c.close {
+    return why.code;
+  }
+  return 0 - 1 as i64;
+}
+
+function received_pn(c: conn.Conn, pn: i64): boolean {
+  for r in c.spaces[2].ranges {
+    if (r.low <= pn && pn <= r.high) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function test_local_key_update(): test.TestOutcome {
+  let (cc, sc) = stream_configs();
+  let Ok(initial) = start(cc, sc) else {
+    return test.fail("start");
+  };
+  if (initial.client.update_keys(initial.now).is_ok()) {
+    return test.fail("updated before confirmation");
+  }
+  let p: Pair = settle(initial, 12, 10000 * MS);
+  let old: conn.Conn = server_of(p);
+  let Ok(updated) = old.update_keys(p.now) else {
+    return test.fail("confirmed, acknowledged update refused");
+  };
+  if (updated.update_keys(p.now).is_ok()) {
+    return test.fail("second update before acknowledgement");
+  }
+  let queued: conn.Conn = conn.Conn { ...updated, pending: updated.pending.append(frames.Ping) };
+  let cur: Pair = Pair { ...p, server: Some(queued) };
+  let i: i32 = 0;
+  while (i < 4) {
+    let (next, _) = exchange(cur);
+    cur = next;
+    i = i + 1;
+  }
+  let s: conn.Conn = server_of(cur);
+  return test.assert_eq(s.key_phase.to_string() + " " + cur.client.key_phase.to_string() + " " + s.key_awaiting_peer.to_string() + " " + old.key_phase.to_string(), "true true false false");
+}
+
+function test_key_update_reordering(): test.TestOutcome {
+  let Ok(p) = key_pair() else {
+    return test.fail("pair");
+  };
+  let pn: i64 = p.client.spaces[2].next_pn;
+  let old: conn.Conn = server_of(p);
+  let promoted: conn.Conn = old.receive(phase_packet(p, pn + 3, 1), p.now).conn;
+  let reordered: conn.Conn = promoted.receive(phase_packet(p, pn + 1, 0), p.now).conn;
+  if (reordered.failed_auth != 0 || !received_pn(reordered, pn + 1) || close_code(reordered) != 0 - 1 as i64) {
+    return test.fail("old reordered packet refused");
+  }
+  let expired: conn.Conn = reordered.tick(reordered.key_discard_at).conn;
+  let without_tick: conn.Conn = reordered.receive(phase_packet(p, pn + 2, 0), reordered.key_discard_at).conn;
+  if (without_tick.failed_auth != 1 || received_pn(without_tick, pn + 2)) {
+    return test.fail("expired old keys used before tick");
+  }
+  let dropped: conn.Conn = expired.receive(phase_packet(p, pn + 2, 0), reordered.key_discard_at).conn;
+  let boundary: conn.Conn = expired.receive(phase_packet(p, pn, 1), reordered.key_discard_at).conn;
+  return test.assert_eq(reordered.key_phase.to_string() + " " + reordered.key_previous_max.to_string() + " " + expired.key_previous_recv.is_none().to_string() + " " + dropped.failed_auth.to_string() + " " + old.key_phase.to_string() + " " + close_code(boundary).to_string(), "true " + (pn + 1).to_string() + " true 1 false 14");
+}
+
+function test_forged_key_phase(): test.TestOutcome {
+  let Ok(p) = key_pair() else {
+    return test.fail("pair");
+  };
+  let s: conn.Conn = server_of(p);
+  let wire: u8[] = phase_packet(p, p.client.spaces[2].next_pn, 1);
+  let corrupt: u8[] = wire.with(wire.len() - 1, (wire[wire.len() - 1] as i32 ^ 1) as u8);
+  let rejected: conn.Conn = s.receive(corrupt, p.now).conn;
+  let Some(before) = s.key_next_recv else {
+    return test.fail("uncached next key");
+  };
+  let Some(after) = rejected.key_next_recv else {
+    return test.fail("forgery removed next key");
+  };
+  return test.assert_eq(rejected.key_phase.to_string() + " " + rejected.key_previous_recv.is_none().to_string() + " " + rejected.key_generate_at.to_string() + " " + rejected.failed_auth.to_string() + " " + (hex.hex_encode(before.secret) == hex.hex_encode(after.secret)).to_string() + " " + close_code(rejected).to_string(), "false true 0 1 true -1");
+}
+
+function test_unconfirmed_key_update(): test.TestOutcome {
+  let Ok(p) = key_pair() else {
+    return test.fail("pair");
+  };
+  let s: conn.Conn = server_of(p);
+  let unconfirmed: conn.Conn = conn.Conn { ...s, recovery: recovery.Recovery { ...s.recovery, handshake_confirmed: false } };
+  let rejected: conn.Conn = unconfirmed.receive(peer_update(p, frames.encode(frames.Ping)), p.now).conn;
+  return test.assert_eq(close_code(rejected).to_string(), "14");
+}
+
+function test_double_key_update(): test.TestOutcome {
+  let Ok(p) = key_pair() else {
+    return test.fail("pair");
+  };
+  let first: conn.Conn = server_of(p).receive(peer_update(p, frames.encode(frames.Ping)), p.now).conn;
+  let ready: conn.Conn = first.tick(first.key_generate_at).conn;
+  let rejected: conn.Conn = ready.receive(phase_packet(p, p.client.spaces[2].next_pn + 1, 2), first.key_generate_at).conn;
+  return test.assert_eq(first.key_unacked.to_string() + " " + close_code(rejected).to_string(), "true 14");
+}
+
+function test_second_key_update(): test.TestOutcome {
+  let Ok(p) = key_pair() else {
+    return test.fail("pair");
+  };
+  let first: conn.Conn = server_of(p).receive(peer_update(p, frames.encode(frames.Ping)), p.now).conn;
+  let (acked, _) = first.transmit(p.now);
+  let ready: conn.Conn = acked.tick(first.key_generate_at).conn;
+  let second: conn.Conn = ready.receive(phase_packet(p, p.client.spaces[2].next_pn + 1, 2), first.key_generate_at).conn;
+  return test.assert_eq(acked.key_unacked.to_string() + " " + ready.key_next_recv.is_some().to_string() + " " + second.key_phase.to_string() + " " + second.spaces[2].largest_recv.to_string() + " " + close_code(second).to_string(), "false true false " + (p.client.spaces[2].next_pn + 1).to_string() + " -1");
+}
+
+function test_key_generation_timer(): test.TestOutcome {
+  let Ok(p) = key_pair() else {
+    return test.fail("pair");
+  };
+  let first: conn.Conn = server_of(p).receive(peer_update(p, frames.encode(frames.Ping)), p.now).conn;
+  let invalid: conn.Conn = first.receive(phase_packet(p, p.client.spaces[2].next_pn + 1, 2), p.now).conn;
+  let ready: conn.Conn = invalid.tick(first.key_generate_at).conn;
+  return test.assert_eq(first.key_next_recv.is_none().to_string() + " " + invalid.key_next_recv.is_none().to_string() + " " + (invalid.key_generate_at == first.key_generate_at).to_string() + " " + invalid.failed_auth.to_string() + " " + ready.key_next_recv.is_some().to_string() + " " + ready.key_generate_at.to_string(), "true true true 1 true 0");
+}
+
+function test_nonmonotonic_key_update(): test.TestOutcome {
+  let Ok(p) = key_pair() else {
+    return test.fail("pair");
+  };
+  let s: conn.Conn = server_of(p);
+  let rejected: conn.Conn = s.receive(phase_packet(p, s.spaces[2].largest_recv, 1), p.now).conn;
+  return test.assert_eq(close_code(rejected).to_string(), "14");
+}
+
+function test_key_authentication_limit(): test.TestOutcome {
+  let Ok(p) = key_pair() else {
+    return test.fail("pair");
+  };
+  let s: conn.Conn = conn.Conn { ...server_of(p), failed_auth: 4503599627370495 as i64 };
+  let bytes: u8[] = phase_packet(p, p.client.spaces[2].next_pn, 1);
+  let bad: u8[] = bytes.with(bytes.len() - 1, (bytes[bytes.len() - 1] as i32 ^ 1) as u8);
+  let closed: conn.Conn = s.receive(bad, p.now).conn;
+  let again: conn.Conn = closed.receive(bytes, p.now).conn;
+  return test.assert_eq(closed.failed_auth.to_string() + " " + close_code(closed).to_string() + " " + again.key_phase.to_string() + " " + s.failed_auth.to_string(), "4503599627370496 15 false 4503599627370495");
+}
+
+function test_key_encryption_limit(): test.TestOutcome {
+  let Ok(p) = key_pair() else {
+    return test.fail("pair");
+  };
+  let s: conn.Conn = server_of(p);
+  let near: conn.Conn = conn.Conn { ...s, key_sent: 8388607 as i64, pending: s.pending.append(frames.Ping) };
+  let (rotated, out) = near.transmit(p.now);
+  if (out.len() == 0 || !rotated.key_phase || rotated.key_sent != 1) {
+    return test.fail("did not rotate before confidentiality limit");
+  }
+  let blocked: conn.Conn = conn.Conn { ...near, recovery: recovery.Recovery { ...near.recovery, handshake_confirmed: false } };
+  let (closed, last) = blocked.transmit(p.now);
+  let (exhausted, extra) = closed.receive([], p.now).conn.transmit(p.now);
+  return test.assert_eq(close_code(closed).to_string() + " " + closed.key_sent.to_string() + " " + (last.len() > 0).to_string() + " " + extra.len().to_string() + " " + exhausted.key_sent.to_string() + " " + near.key_sent.to_string(), "15 8388608 true 0 8388608 8388607");
+}
+
+// A synthetic near-limit cache exercises the ChaCha failure counter, not
+// cipher negotiation. Independent peers separately negotiate every suite.
+function test_chacha_authentication_limit(): test.TestOutcome {
+  let Ok(p) = key_pair() else {
+    return test.fail("pair");
+  };
+  let chacha: packet.Keys = packet.keys(keyschedule.ChaCha20Poly1305Sha256, entropy(9, 32));
+  let s: conn.Conn = conn.Conn { ...server_of(p), key_next_recv: Some(chacha), failed_auth: 68719476735 as i64 };
+  let closed: conn.Conn = s.receive(peer_update(p, frames.encode(frames.Ping)), p.now).conn;
+  return test.assert_eq(closed.failed_auth.to_string() + " " + close_code(closed).to_string() + " " + closed.key_phase.to_string() + " " + s.failed_auth.to_string(), "68719476736 15 false 68719476735");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/quic/conn");
   r = r.it("a handshake in memory", test_handshake);
@@ -542,5 +798,18 @@ function main(): i32 {
   r = r.it("a stream echoed through small windows", test_stream_echo);
   r = r.it("a stream echoed through loss and reordering", test_stream_echo_lossy);
   r = r.it("no streams allowed", test_no_streams);
+  r = r.it("a peer key update is acknowledged under updated keys", test_peer_key_update_ack);
+  r = r.it("a peer key update carries stream bytes", test_peer_key_update_stream);
+  r = r.it("local updates require confirmation and acknowledgement", test_local_key_update);
+  r = r.it("old read keys allow reordering then expire", test_key_update_reordering);
+  r = r.it("forged phases do not advance keys", test_forged_key_phase);
+  r = r.it("a peer cannot update before confirmation", test_unconfirmed_key_update);
+  r = r.it("a peer cannot update twice before an acknowledgement", test_double_key_update);
+  r = r.it("an acknowledged second key update succeeds", test_second_key_update);
+  r = r.it("only the timer prepares another generation", test_key_generation_timer);
+  r = r.it("authenticated updates require increasing packet numbers", test_nonmonotonic_key_update);
+  r = r.it("the cumulative authentication limit closes the connection", test_key_authentication_limit);
+  r = r.it("the encryption limit rotates or closes before overuse", test_key_encryption_limit);
+  r = r.it("the ChaCha authentication limit is cumulative", test_chacha_authentication_limit);
   return r.finish();
 }

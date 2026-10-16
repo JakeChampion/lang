@@ -164,6 +164,21 @@ pub struct Conn {
   held: u8[][],
   streams: streams.Streams,
   events: Event[],
+  // Only 1-RTT keys rotate. Cached next keys are made at installation or
+  // by a timer, never in response to an unauthenticated Key Phase bit.
+  key_phase: boolean,
+  key_next_send: Option[packet.Keys],
+  key_next_recv: Option[packet.Keys],
+  key_previous_recv: Option[packet.Keys],
+  key_first_recv: i64,
+  key_previous_max: i64,
+  key_first_sent: i64,
+  key_unacked: boolean,
+  key_awaiting_peer: boolean,
+  key_generate_at: i64,
+  key_discard_at: i64,
+  key_sent: i64,
+  failed_auth: i64,
 }
 
 function __space(): Space {
@@ -197,7 +212,7 @@ function __tls_server_config(c: Config, chain: u8[][], schemes: i32[], params_by
 
 function __base(c: Config, server: boolean, scid: u8[], dcid: u8[], odcid: u8[], now: i64): Conn {
   let r: recovery.Recovery = recovery.new(c.max_datagram, server).with_max_ack_delay(25000000 as i64);
-  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [] };
+  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: 0 - 1 as i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64 };
 }
 
 // client starts a connection: its first Initial is ready to `transmit`.
@@ -306,7 +321,7 @@ pub function (c: Conn) deadline(): i64 {
   if (c.state == CLOSING || c.state == DRAINING) {
     return c.close_until;
   }
-  return __earliest(c.recovery.timer(), c.idle_until);
+  return __earliest(__earliest(c.recovery.timer(), c.idle_until), __earliest(c.key_generate_at, c.key_discard_at));
 }
 
 function __earliest(a: i64, b: i64): i64 {
@@ -472,6 +487,10 @@ function (c: Conn) __drain(why: Close, now: i64): Conn {
 // tick runs whatever was due at `now`: the end of closing or draining, the
 // idle timeout, and loss detection's timer.
 pub function (c: Conn) tick(now: i64): Step {
+  return c.__key_timers(now).__tick(now);
+}
+
+function (c: Conn) __tick(now: i64): Step {
   if (c.state == CLOSING || c.state == DRAINING) {
     if (now >= c.close_until) {
       return Conn { ...c, state: CLOSED }.__stepped();
@@ -497,6 +516,121 @@ pub function (c: Conn) tick(now: i64): Step {
   return after.__stepped();
 }
 
+// === 1-RTT key updates (RFC 9001, §6) ========================================
+
+// update_keys initiates a rotation only after handshake confirmation and
+// acknowledgement of a packet sent in this phase. A caller may try again
+// after the next deadline when the next keys are not prepared yet.
+pub function (c: Conn) update_keys(now: i64): Result[Conn, string] {
+  if (c.state != ESTABLISHED || !c.recovery.handshake_confirmed) {
+    return Err("quic: key update before handshake confirmation");
+  }
+  if (c.key_awaiting_peer || c.key_unacked || c.recovery.spaces[recovery.APPLICATION].largest_acked < c.key_first_sent) {
+    return Err("quic: current key phase is not acknowledged");
+  }
+  let Some(send) = c.key_next_send else {
+    return Err("quic: next keys are not prepared");
+  };
+  let Some(recv) = c.key_next_recv else {
+    return Err("quic: next keys are not prepared");
+  };
+  return Ok(c.__promote_keys(send, recv, 0 - 1 as i64, now, false));
+}
+
+// Promotion uses already prepared keys. Old read keys live through the
+// peer's response and at most three PTOs after its first new-phase packet.
+function (c: Conn) __promote_keys(send: packet.Keys, recv: packet.Keys, pn: i64, now: i64, remote: boolean): Conn {
+  let s: Space = c.spaces[recovery.APPLICATION];
+  let pto: i64 = c.recovery.pto(recovery.APPLICATION);
+  let discard: i64 = 0;
+  if (remote) {
+    discard = now + 3 * pto;
+  }
+  return Conn { ...c, spaces: c.spaces.with(recovery.APPLICATION, Space { ...s, send: Some(send), recv: Some(recv) }), key_phase: !c.key_phase, key_previous_recv: s.recv, key_previous_max: s.largest_recv, key_first_recv: pn, key_first_sent: s.next_pn, key_next_send: None, key_next_recv: None, key_unacked: remote, key_awaiting_peer: !remote, key_generate_at: now + pto, key_discard_at: discard, key_sent: 0 as i64 };
+}
+
+// Key derivation is timer work, not a response to a guessed protected bit
+// (§6.3, §9.5). Keeping previous/current/next read keys is bounded to three
+// generations, and generation and expiry deadlines cannot be postponed by
+// traffic. The previous generation is never used to send.
+function (c: Conn) __key_timers(now: i64): Conn {
+  let cur: Conn = c;
+  if (cur.key_discard_at > 0 && now >= cur.key_discard_at) {
+    cur = Conn { ...cur, key_previous_recv: None, key_discard_at: 0 as i64 };
+  }
+  if (cur.key_generate_at > 0 && now >= cur.key_generate_at) {
+    cur = Conn { ...cur, key_generate_at: 0 as i64 };
+    if (cur.state == ESTABLISHED) {
+      if let Some(send) = cur.spaces[recovery.APPLICATION].send {
+        if let Some(recv) = cur.spaces[recovery.APPLICATION].recv {
+          cur = Conn { ...cur, key_next_send: Some(send.updated()), key_next_recv: Some(recv.updated()) };
+        }
+      }
+    }
+  }
+  return cur;
+}
+
+// Header protection is unchanged by rotation. Select one cached AEAD key
+// and perform one authentication for every recoverable short header; do
+// not generate keys or reject a phase/packet number before authenticating.
+// -1 is the previous generation, 0 current, 1 next, 2 an unavailable phase.
+function (c: Conn) __receive_key(u: packet.Unprotected, current: packet.Keys, now: i64): (packet.Keys, i32) {
+  if (u.key_phase == c.key_phase) {
+    return (current, 0);
+  }
+  if let Some(old) = c.key_previous_recv {
+    if ((c.key_discard_at == 0 || now < c.key_discard_at) && (c.key_awaiting_peer || u.pn < c.key_first_recv)) {
+      return (old, 0 - 1);
+    }
+  }
+  if let Some(next) = c.key_next_recv {
+    return (next, 1);
+  }
+  if let Some(old) = c.key_previous_recv {
+    if (c.key_discard_at == 0 || now < c.key_discard_at) {
+      return (old, 2);
+    }
+  }
+  return (current, 2);
+}
+
+function (c: Conn) __key_authenticated(o: packet.Opened, generation: i32, now: i64): Conn {
+  if (generation == 2) {
+    return c.__fail(frames.KEY_UPDATE_ERROR, 0 as i64, "key update before next keys are available", now);
+  }
+  if (generation == 1) {
+    if (!c.recovery.handshake_confirmed || c.key_unacked || o.pn <= c.spaces[recovery.APPLICATION].largest_recv) {
+      return c.__fail(frames.KEY_UPDATE_ERROR, 0 as i64, "premature or nonmonotonic key update", now);
+    }
+    let Some(send) = c.key_next_send else {
+      return c.__fail(frames.KEY_UPDATE_ERROR, 0 as i64, "send keys unavailable", now);
+    };
+    let Some(recv) = c.key_next_recv else {
+      return c.__fail(frames.KEY_UPDATE_ERROR, 0 as i64, "receive keys unavailable", now);
+    };
+    return c.__promote_keys(send, recv, o.pn, now, true);
+  }
+  if (generation < 0) {
+    return Conn { ...c, key_previous_max: __max(c.key_previous_max, o.pn) };
+  }
+  return c.__key_current(o.pn, now);
+}
+
+function (c: Conn) __key_current(pn: i64, now: i64): Conn {
+  if (c.key_awaiting_peer || pn < c.key_first_recv) {
+    if (pn <= c.key_previous_max) {
+      return c.__fail(frames.KEY_UPDATE_ERROR, 0 as i64, "new keys used below an old-phase packet number", now);
+    }
+    let discard: i64 = c.key_discard_at;
+    if (c.key_awaiting_peer) {
+      discard = now + 3 * c.recovery.pto(recovery.APPLICATION);
+    }
+    return Conn { ...c, key_first_recv: pn, key_awaiting_peer: false, key_discard_at: discard };
+  }
+  return c;
+}
+
 // === receiving ==============================================================
 
 // receive takes one datagram that arrived at `now`.
@@ -516,7 +650,7 @@ pub function (c: Conn) receive(datagram: [u8], now: i64): Step {
 function (c: Conn) __datagram(datagram: [u8], now: i64): Conn {
   let cur: Conn = c;
   let at: i32 = 0;
-  while (at < datagram.len() && cur.state < DRAINING) {
+  while (at < datagram.len() && cur.state < CLOSING) {
     match (packet.parse(datagram, at, cur.config.cid_len)) {
       Ok(h) => {
         cur = cur.__packet(datagram, h, now);
@@ -594,14 +728,63 @@ function (c: Conn) __protected(datagram: [u8], h: packet.Header, space: i32, kin
   let Some(keys) = s.recv else {
     return c.__hold(datagram[h.at:h.end]);
   };
+  if (space == recovery.APPLICATION) {
+    return c.__protected_application(datagram, h, keys, now);
+  }
   match (packet.open(datagram, h, keys, s.largest_recv)) {
     Ok(o) => {
       return c.__opened(h, o, space, kind, now);
     },
-    Err(_) => {
-      return c.__maybe_reset(datagram, h, now);
+    Err(why) => {
+      return c.__opening_failed(datagram, h, keys, why, now);
     }
   }
+}
+
+function (c: Conn) __protected_application(datagram: [u8], h: packet.Header, keys: packet.Keys, now: i64): Conn {
+  let Ok(u) = packet.unprotect(datagram, h, keys, c.spaces[recovery.APPLICATION].largest_recv) else {
+    return c.__maybe_reset(datagram, h, now);
+  };
+  let (selected, generation) = c.__receive_key(u, keys, now);
+  match (packet.open_unprotected(datagram, h, u, selected)) {
+    Ok(o) => {
+      if (!o.reserved_ok) {
+        return c.__opened(h, o, recovery.APPLICATION, frames.IN_ONE_RTT, now);
+      }
+      let cur: Conn = c.__key_authenticated(o, generation, now);
+      if (cur.state >= CLOSING) {
+        return cur;
+      }
+      return cur.__opened(h, o, recovery.APPLICATION, frames.IN_ONE_RTT, now);
+    },
+    Err(why) => {
+      return c.__opening_failed(datagram, h, selected, why, now);
+    }
+  }
+}
+
+// Count only failed authentications, not headers too short to authenticate.
+// Limits are per connection across all generations (RFC 9001, §6.6).
+function (c: Conn) __opening_failed(datagram: [u8], h: packet.Header, keys: packet.Keys, why: string, now: i64): Conn {
+  let cur: Conn = c;
+  if (why == "packet does not decrypt") {
+    let limit: i64 = 4503599627370496;
+    match (keys.suite.aead()) {
+      keyschedule.ChaCha20Poly1305 => {
+        limit = 68719476736;
+      },
+      _ => {}
+    }
+    let failed: i64 = c.failed_auth;
+    if (failed < limit) {
+      failed = failed + 1;
+    }
+    cur = Conn { ...c, failed_auth: failed };
+    if (failed >= limit) {
+      return cur.__fail(frames.AEAD_LIMIT_REACHED, 0 as i64, "packet authentication limit reached", now);
+    }
+  }
+  return cur.__maybe_reset(datagram, h, now);
 }
 
 // __hold keeps a packet whose keys are not here yet, for `__retry_held`.
@@ -619,7 +802,7 @@ function (c: Conn) __retry_held(now: i64): Conn {
   let held: u8[][] = c.held;
   let cur: Conn = Conn { ...c, held: [] };
   for p in held {
-    if (cur.state < DRAINING) {
+    if (cur.state < CLOSING) {
       cur = cur.__datagram(p, now);
     }
   }
@@ -990,7 +1173,15 @@ function (c: Conn) __secret(t: handshake.TrafficSecret): Conn {
   } else {
     s = Space { ...s, recv: Some(k) };
   }
-  return Conn { ...c, spaces: c.spaces.with(t.level, s) };
+  let cur: Conn = Conn { ...c, spaces: c.spaces.with(t.level, s) };
+  if (t.level == recovery.APPLICATION) {
+    if (t.write) {
+      cur = Conn { ...cur, key_next_send: Some(k.updated()) };
+    } else {
+      cur = Conn { ...cur, key_next_recv: Some(k.updated()) };
+    }
+  }
+  return cur;
 }
 
 function __suite(c: Conn): keyschedule.CipherSuite {
@@ -1161,6 +1352,54 @@ struct Plan { space: i32, payload: u8[], eliciting: boolean, resend: recovery.Re
 // something to send, coalesced in order, the Initial-bearing ones padded to
 // 1200 bytes (§14.1).
 function (c: Conn) __datagram_out(now: i64): (Conn, u8[]) {
+  let guarded: Conn = c.__aead_guard(now);
+  return guarded.__datagram_guarded(now);
+}
+
+// Reserve the last permitted encryption for CONNECTION_CLOSE. An
+// established endpoint rotates before exhausting an application key;
+// Initial and Handshake keys cannot be updated.
+function __seal_limit(keys: packet.Keys): i64 {
+  match (keys.suite.aead()) {
+    keyschedule.ChaCha20Poly1305 => {
+      return 4611686018427387904;
+    },
+    _ => {}
+  }
+  return 8388608 as i64;
+}
+
+function (c: Conn) __aead_guard(now: i64): Conn {
+  if (c.state >= CLOSING) {
+    return c;
+  }
+  let cur: Conn = c;
+  let space: i32 = 0;
+  while (space < 3) {
+    let s: Space = cur.spaces[space];
+    if let Some(keys) = s.send {
+      let used: i64 = s.next_pn;
+      if (space == recovery.APPLICATION) {
+        used = cur.key_sent;
+      }
+      if (s.next_pn >= frames.MAX_VARINT || used >= __seal_limit(keys) - 1) {
+        if (space == recovery.APPLICATION && s.next_pn < frames.MAX_VARINT) {
+          if let Ok(updated) = cur.update_keys(now) {
+            cur = updated;
+          } else {
+            return cur.__fail(frames.AEAD_LIMIT_REACHED, 0 as i64, "packet encryption limit reached", now);
+          }
+        } else {
+          return cur.__fail(frames.AEAD_LIMIT_REACHED, 0 as i64, "packet encryption limit reached", now);
+        }
+      }
+    }
+    space = space + 1;
+  }
+  return cur;
+}
+
+function (c: Conn) __datagram_guarded(now: i64): (Conn, u8[]) {
   if (c.state == DRAINING || c.state == CLOSED) {
     return (c, []);
   }
@@ -1217,7 +1456,11 @@ function (c: Conn) __acked_out(space: i32, p: Plan): Conn {
     return c;
   }
   let s: Space = c.spaces[space];
-  return Conn { ...c, spaces: c.spaces.with(space, Space { ...s, ack_wanted: false }) };
+  let unacked: boolean = c.key_unacked;
+  if (space == recovery.APPLICATION && s.ack_wanted) {
+    unacked = false;
+  }
+  return Conn { ...c, key_unacked: unacked, spaces: c.spaces.with(space, Space { ...s, ack_wanted: false }) };
 }
 
 function __ack_of(s: Space, space: i32, now: i64): frames.Ack {
@@ -1380,6 +1623,13 @@ function (c: Conn) __seal_one(p: Plan, now: i64, extra: i32): (Conn, u8[]) {
   let Some(keys) = s.send else {
     return (c, []);
   };
+  let used: i64 = s.next_pn;
+  if (p.space == recovery.APPLICATION) {
+    used = c.key_sent;
+  }
+  if (used >= __seal_limit(keys) || s.next_pn > frames.MAX_VARINT) {
+    return (c, []);
+  }
   let payload: u8[] = p.payload;
   if (extra > 0) {
     payload = frames.put(payload, frames.Padding(extra));
@@ -1387,7 +1637,7 @@ function (c: Conn) __seal_one(p: Plan, now: i64, extra: i32): (Conn, u8[]) {
   let n: i32 = packet.pn_len(s.next_pn, 0 - 1 as i64);
   let bytes: u8[] = [];
   if (p.space == recovery.APPLICATION) {
-    bytes = packet.seal_short(c.dcid, s.next_pn, n, false, false, payload, keys);
+    bytes = packet.seal_short(c.dcid, s.next_pn, n, c.key_phase, false, payload, keys);
   } else {
     let kind: packet.Kind = packet.Initial;
     if (p.space == recovery.HANDSHAKE) {
@@ -1401,7 +1651,11 @@ function (c: Conn) __seal_one(p: Plan, now: i64, extra: i32): (Conn, u8[]) {
   }
   let sent: recovery.Sent = recovery.Sent { pn: s.next_pn, at: now, size: bytes.len(), ack_eliciting: p.eliciting, in_flight: p.eliciting || extra > 0, resend: p.resend };
   let r: recovery.Recovery = c.recovery.on_sent(p.space, sent);
-  return (Conn { ...c, recovery: r, spaces: c.spaces.with(p.space, Space { ...s, next_pn: s.next_pn + 1 }) }, bytes);
+  let sent_count: i64 = c.key_sent;
+  if (p.space == recovery.APPLICATION) {
+    sent_count = sent_count + 1;
+  }
+  return (Conn { ...c, key_sent: sent_count, recovery: r, spaces: c.spaces.with(p.space, Space { ...s, next_pn: s.next_pn + 1 }) }, bytes);
 }
 
 // __close_datagram sends CONNECTION_CLOSE once per `close_pending`, in

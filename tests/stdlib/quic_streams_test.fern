@@ -516,6 +516,53 @@ function test_blocked_open(): test.TestOutcome {
   return test.assert_eq(sent(first) + "| " + sent(quiet) + "| " + sent(second), "STREAMS_BLOCKED true 0 STREAMS_BLOCKED false 0 | | STREAMS_BLOCKED true 1 ");
 }
 
+// A request's FIN can be retransmitted in a new packet while its response
+// is still in flight. Once read, it must not wake the application again:
+// HTTP/3 may already have retired its message parser for that stream.
+function test_consumed_fin_replay(): test.TestOutcome {
+  let Ok(s) = fed(server(1 as i64), [data(0 as i64, 0 as i64, 3, true)]) else {
+    return test.fail("initial FIN");
+  };
+  let (quiet, _) = s.take_events();
+  let Ok(read) = quiet.read(0 as i64) else {
+    return test.fail("read FIN");
+  };
+  let old: streams.Streams = read.0;
+  let Ok(replayed) = fed(read.0, [data(0 as i64, 0 as i64, 3, true), data(0 as i64, 3 as i64, 0, true)]) else {
+    return test.fail("valid retransmission");
+  };
+  let Ok(again) = replayed.read(0 as i64) else {
+    return test.fail("read after replay");
+  };
+  let moved: string = outcome(fed(replayed, [data(0 as i64, 0 as i64, 4, true)]));
+  let past: string = outcome(fed(replayed, [data(0 as i64, 3 as i64, 1, false)]));
+  return test.assert_eq("[" + events(replayed) + "] " + int.int_to_string(read.1.len()) + " " + read.2.to_string() + " " + int.int_to_string(again.1.len()) + " " + again.2.to_string() + " " + old.recv_taken.to_string() + " " + replayed.recv_taken.to_string() + " " + old.list[0].recv.data.taken.to_string() + " " + moved + " " + past, "[] 3 true 0 true 3 3 3 6/8 6/8");
+}
+
+// A FIN arriving after the application took the preceding bytes must
+// still notify it once, even though the FIN carries no new body bytes.
+function test_late_fin_once(): test.TestOutcome {
+  let Ok(s) = fed(server(1 as i64), [data(0 as i64, 0 as i64, 3, false)]) else {
+    return test.fail("initial bytes");
+  };
+  let (quiet, _) = s.take_events();
+  let Ok(read) = quiet.read(0 as i64) else {
+    return test.fail("read bytes");
+  };
+  let Ok(ended) = fed(read.0, [data(0 as i64, 3 as i64, 0, true)]) else {
+    return test.fail("late FIN");
+  };
+  let first: string = events(ended);
+  let (quiet_end, _) = ended.take_events();
+  let Ok(fin) = quiet_end.read(0 as i64) else {
+    return test.fail("read late FIN");
+  };
+  let Ok(replayed) = fed(fin.0, [data(0 as i64, 3 as i64, 0, true)]) else {
+    return test.fail("replayed late FIN");
+  };
+  return test.assert_eq(read.2.to_string() + " " + first + " " + int.int_to_string(fin.1.len()) + " " + fin.2.to_string() + " [" + events(replayed) + "] " + replayed.recv_taken.to_string(), "false read 0, 0 true [] 3");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/quic/streams");
   r = r.it("reassembly holds no byte twice", test_reassembly);
@@ -529,5 +576,7 @@ function main(): i32 {
   r = r.it("STOP_SENDING and RESET_STREAM", test_resets);
   r = r.it("a reset after stopping credits previously read bytes only once", test_stop_after_read);
   r = r.it("explicit STREAMS_BLOCKED in each direction", test_blocked_open);
+  r = r.it("a consumed FIN retransmission does not wake the application", test_consumed_fin_replay);
+  r = r.it("a late FIN wakes the application once", test_late_fin_once);
   return r.finish();
 }
