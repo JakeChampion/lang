@@ -1196,6 +1196,28 @@ func TestRunnerHTTPHpackExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "http_hpack", "std/http/hpack", 10)
 }
 
+// `tests/stdlib/http_qpack_test.fern` decodes RFC 9204 Appendix B's
+// examples byte for byte, a trace ls-qpack's encoder wrote, and refuses
+// what the advertised limits rule out.
+func TestRunnerHTTPQPACKExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_qpack", "std/http/qpack", 10)
+}
+
+// `tests/stdlib/http_h3_test.fern` joins an HTTP/3 client and server
+// session in memory: requests and responses, bodies and trailers a byte
+// at a time, interim responses, QPACK blocking, GOAWAY, and the stream and
+// connection errors.
+func TestRunnerHTTPH3ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_h3", "std/http/h3", 7)
+}
+
+// `tests/stdlib/http_h3q_test.fern` runs HTTP/3 over std/quic connections
+// in memory: a GET, an upload through loss and reordering answered with a
+// trailer, requests answered out of order, and a graceful shutdown.
+func TestRunnerHTTPH3QExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_h3q", "std/http/h3q", 6)
+}
+
 // `tests/stdlib/http_h2_frame_test.fern` writes and reads back every HTTP/2
 // frame type, takes padding and priority off DATA and HEADERS, reads a
 // frame as it arrives in pieces, and answers each malformed shape RFC 9113

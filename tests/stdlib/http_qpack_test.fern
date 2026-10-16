@@ -1,0 +1,454 @@
+import "std/test";
+import "std/http/qpack";
+import "std/hex";
+import "std/option";
+import "core/int";
+
+// tests/stdlib/http_qpack_test.fern — std/http/qpack against RFC 9204
+// Appendix B's examples, byte for byte: the encoder stream's instructions,
+// each field section, and what the decoder owes on its decoder stream.
+// Then the encoder, the bounds the decoder keeps, the errors, and a trace
+// another implementation's encoder wrote.
+
+function fields_text(fs: qpack.Field[]): string {
+  let out: string = "";
+  for f in fs {
+    out = out + f.name + "=" + f.value;
+    if (f.sensitive) {
+      out = out + " (never)";
+    }
+    out = out + "; ";
+  }
+  return out;
+}
+
+function error_text(e: qpack.QpackError): string {
+  return e.code().to_string() + " " + e.message();
+}
+
+// fed takes encoder stream bytes, given as hex.
+function fed(d: qpack.Decoder, encoder_stream: string): Result[qpack.Decoder, string] {
+  match (d.on_encoder_stream(hex.hex_decode(encoder_stream))) {
+    Ok(next) => {
+      return Ok(next);
+    },
+    Err(e) => {
+      return Err(error_text(e));
+    }
+  }
+}
+
+// section decodes a field section given as hex, answering its fields (or
+// "blocked") and what the decoder then owes on its stream.
+function section(d: qpack.Decoder, stream: i64, bytes: string): Result[(qpack.Decoder, string), string] {
+  match (d.decode(stream, hex.hex_decode(bytes))) {
+    Ok(got) => {
+      let (next, owed) = got.decoder.take_instructions();
+      let text: string = fields_text(got.fields);
+      if (got.blocked) {
+        text = "blocked";
+      }
+      return Ok((next, text + "| " + hex.hex_encode(owed)));
+    },
+    Err(e) => {
+      return Err(error_text(e));
+    }
+  }
+}
+
+function owed(d: qpack.Decoder): (qpack.Decoder, string) {
+  let (next, out) = d.take_instructions();
+  return (next, hex.hex_encode(out));
+}
+
+// B.1: a literal with a static name reference, no dynamic table.
+function test_b1(): test.TestOutcome {
+  match (section(qpack.decoder(220 as i64, 2, 16384 as i64), 0 as i64, "0000510b2f696e6465782e68746d6c")) {
+    Ok(r) => {
+      return test.assert_eq(r.1, ":path=/index.html; | ");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+// B.2 to B.5 in order, one decoder throughout.
+function test_b2_to_b5(): test.TestOutcome {
+  let log: string = "";
+  let d: qpack.Decoder = qpack.decoder(220 as i64, 2, 16384 as i64);
+  let steps: string[] = [
+    "e 3fbd01c00f7777772e6578616d706c652e636f6dc10c2f73616d706c652f70617468",
+    "s 4 03811011",
+    "e 4a637573746f6d2d6b65790c637573746f6d2d76616c7565",
+    "e 02",
+    "s 8 050080c181",
+    "e 810d637573746f6d2d76616c756532",
+  ];
+  for step in steps {
+    match (b_step(d, step)) {
+      Ok(r) => {
+        d = r.0;
+        log = log + r.1 + "\n";
+      },
+      Err(e) => {
+        return test.fail(log + e);
+      }
+    }
+  }
+  let want: string = "inserted 2 size 106 owes 02\n"
+    + "4: :authority=www.example.com; :path=/sample/path; | 84\n"
+    + "inserted 3 size 160 owes 01\n"
+    + "inserted 4 size 217 owes 01\n"
+    + "8: :authority=www.example.com; :path=/; custom-key=custom-value; | 88\n"
+    + "inserted 5 size 215 owes 01\n";
+  return test.assert_eq(log, want);
+}
+
+function b_step(d: qpack.Decoder, step: string): Result[(qpack.Decoder, string), string] {
+  if (step.starts_with("e ")) {
+    let fed_d: qpack.Decoder = fed(d, step.drop(2))?;
+    let (next, out) = owed(fed_d);
+    return Ok((next, "inserted " + next.insert_count().to_string() + " size " + next.table_size().to_string() + " owes " + out));
+  }
+  let space: i32 = step.drop(2).index_of(" ");
+  let id: string = step.drop(2).take(space);
+  let (next, text) = section(d, id.parse_int().unwrap_or(0) as i64, step.drop(3 + space))?;
+  return Ok((next, id + ": " + text));
+}
+
+// A section whose inserts have not arrived waits, and decodes once they
+// do; past the blocked-streams limit, a section is an error.
+function test_blocked(): test.TestOutcome {
+  let d: qpack.Decoder = qpack.decoder(220 as i64, 1, 16384 as i64);
+  let first: string = "";
+  let second: string = "";
+  match (section(d, 4 as i64, "0381" + "1011")) {
+    Ok(r) => {
+      d = r.0;
+      first = r.1;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  match (section(d, 8 as i64, "0381" + "1011")) {
+    Ok(r) => {
+      second = r.1;
+    },
+    Err(e) => {
+      second = e;
+    }
+  }
+  match (fed(d, "3fbd01c00f7777772e6578616d706c652e636f6dc10c2f73616d706c652f70617468")) {
+    Ok(d2) => {
+      let (d3, _) = owed(d2);
+      match (section(d3, 4 as i64, "03811011")) {
+        Ok(r) => {
+          return test.assert_eq(first + " / " + second + " / " + r.1, "blocked| " + " / 512 qpack: more streams blocked than allowed / :authority=www.example.com; :path=/sample/path; | 84");
+        },
+        Err(e) => {
+          return test.fail(e);
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+// An instruction split across reads is taken once its last byte arrives.
+function test_split_instruction(): test.TestOutcome {
+  let d: qpack.Decoder = qpack.decoder(220 as i64, 2, 16384 as i64);
+  let parts: string[] = ["3f", "bd01c0", "0f7777772e6578", "616d706c652e636f6d"];
+  let counts: string = "";
+  for p in parts {
+    match (fed(d, p)) {
+      Ok(next) => {
+        d = next;
+        counts = counts + d.insert_count().to_string();
+      },
+      Err(e) => {
+        return test.fail(e);
+      }
+    }
+  }
+  return test.assert_eq(counts, "0001");
+}
+
+// The encoder indexes a static entry, references a static name, writes a
+// literal otherwise, never indexes a sensitive field, and what it writes
+// decodes back, Huffman-coded or not.
+function test_encoder(): test.TestOutcome {
+  let fs: qpack.Field[] = [qpack.field(":method", "GET"), qpack.field(":path", "/index.html"), qpack.field("x-fern", "yes"), qpack.sensitive("authorization", "secret"), qpack.field("content-type", "text/plain")];
+  let plain: u8[] = qpack.encoder().without_huffman().encode(fs);
+  let coded: u8[] = qpack.encoder().encode(fs);
+  let d: qpack.Decoder = qpack.decoder(0 as i64, 0, 16384 as i64);
+  let back: string = "";
+  for bytes in [plain, coded] {
+    match (d.decode(0 as i64, bytes)) {
+      Ok(got) => {
+        back = back + fields_text(got.fields) + "| ";
+      },
+      Err(e) => {
+        return test.fail(error_text(e));
+      }
+    }
+  }
+  return test.assert_eq(hex.hex_encode(plain) + " " + int.int_to_string(coded.len()) + " " + back, "0000d1510b2f696e6465782e68746d6c26782d6665726e03796573"
+    + "7f4506736563726574f5 " + int.int_to_string(coded.len()) + " :method=GET; :path=/index.html; x-fern=yes; authorization=secret (never); content-type=text/plain; | :method=GET; :path=/index.html; x-fern=yes; authorization=secret (never); content-type=text/plain; | ");
+}
+
+// The decoder refuses what the settings rule out: a section past the
+// field section size, a capacity past the maximum, a dynamic reference
+// past the Required Insert Count, a static index past the table, a Base
+// below zero; and the encoder refuses acknowledgments it cannot have
+// earned.
+function test_errors(): test.TestOutcome {
+  let d: qpack.Decoder = qpack.decoder(220 as i64, 2, 40 as i64);
+  let too_big: string = result_text(section(d, 0 as i64, "0000510b2f696e6465782e68746d6c"));
+  let capacity: string = result_text_d(fed(d, "3fde01"));
+  let past_ric: string = "-";
+  match (fed(qpack.decoder(220 as i64, 2, 16384 as i64), "3fbd01c00f7777772e6578616d706c652e636f6d")) {
+    Ok(d1) => {
+      past_ric = result_text(section(d1, 0 as i64, "020011"));
+    },
+    Err(e) => {
+      past_ric = e;
+    }
+  }
+  let no_static: string = result_text(section(d, 0 as i64, "0000ff24"));
+  let negative_base: string = result_text(section(d, 0 as i64, "0281"));
+  let enc_ack: string = "-";
+  match (qpack.encoder().on_decoder_stream(hex.hex_decode("84"))) {
+    Ok(_) => {
+      enc_ack = "accepted";
+    },
+    Err(e) => {
+      enc_ack = error_text(e);
+    }
+  }
+  return test.assert_eq(too_big + "\n" + capacity + "\n" + past_ric + "\n" + no_static + "\n" + negative_base + "\n" + enc_ack, "512 qpack: a field section larger than allowed\n"
+    + "513 qpack: encoder stream: a capacity over the maximum advertised\n"
+    + "512 qpack: a reference past the Required Insert Count\n"
+    + "512 qpack: no static table entry 99\n"
+    + "512 qpack: a Base below zero\n"
+    + "514 qpack: decoder stream: a Section Acknowledgment for a section with no dynamic references");
+}
+
+function result_text(r: Result[(qpack.Decoder, string), string]): string {
+  match (r) {
+    Ok(v) => {
+      return "ok " + v.1;
+    },
+    Err(e) => {
+      return e;
+    }
+  }
+}
+
+function result_text_d(r: Result[qpack.Decoder, string]): string {
+  match (r) {
+    Ok(_) => {
+      return "ok";
+    },
+    Err(e) => {
+      return e;
+    }
+  }
+}
+
+// LSQPACK_TRACE is what ls-qpack (pylsqpack 1.0.0, aioquic's QPACK) wrote
+// encoding 20 request field sections into a 512-byte table, its own decoder
+// acknowledging each so it kept referencing the table: "E" lines its
+// encoder stream, "S" lines a stream's section. The Required Insert Counts
+// wrap and entries are evicted along the way.
+const LSQPACK_TRACE: string[] = [
+  "E 3fe103",
+  "S 0 0000d4d750882f91d35d055c87a7518860d5485f2bce9a685f50a7d07f66a281b0dae053fafc087ed4ce6aadf2a7979c89c6bfb521aeba0bc8b1e632586d975765cf2f01f2b585ed69509581a5efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdf558f4150831ea801f6a2672d258241d9d7",
+  "E c0882f91d35d055c87a7",
+  "S 4 0280d1d710c15f508825b650c3cbbeb87f2f01f2b585ed695095830776767676767676558f4150831ea803f6a2672d258241d9d7",
+  "S 8 0200d4d7805197606c772d9e98a0f54cc5634cec2671a58b0b594694302f5f508994b654b24a84b015c12f01f2b585ed69509585b4efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf558f4150831ea805f6a2672d258241d9d7",
+  "E ff208994b654b24a84b015c1",
+  "S 12 0380d5d780518860d5485f2bce9a68102f01f2b585ed6950959906767676767676558f4150831ea819fb51339692c120eceb",
+  "S 16 0300d4d781518c61091a4c46075d6bb4bf447f802f01f2b585ed6950959a8eefdfbf7efdfbf7efdfbf7efdfbf7558f4150831ea81afb51339692c120eceb",
+  "S 20 0201d1d7815197606c772d9e98a0f54cc5634cec2671a58b0b59469430df5f50a7d07f66a281b0dae053fafc087ed4ce6aadf2a7979c89c6bfb521aeba0bc8b1e632586d975765cf2f01f2b585ed6950959b0476767676558f4150831ea801f6a2672d258241d9d7",
+  "S 24 0300d5d781c1802f01f2b585ed6950959ca4efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7ef558f4150831ea803f6a2672d258241d9d7",
+  "S 28 0300d5d7815197606c772d9e98a0f54cc5634cec2671a58b0b59469430ef802f01f2b585ed69509581a1efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7eff558f4150831ea805f6a2672d258241d9d7",
+  "S 32 0300d5d781518c61091a4c46075d6bbcbf447f802f01f2b585ed695095838eefdfbf7efdfbf7efdfbf7efdfbff558f4150831ea819fb51339692c120eceb",
+  "S 36 0300d1d7815197606c772d9e98a0f54cc5634cec2671a58b0b59469430ff802f01f2b585ed6950958591efdfbf7efdfbf7efdfbf7efdfbf7efdfbf558f4150831ea81afb51339692c120eceb",
+  "S 40 0201d4d781518860d5485f2bce9a685f508825b650c3cbbeb87f2f01f2b585ed6950959987efdfbf7efdfbf7558f4150831ea801f6a2672d258241d9d7",
+  "E ff208825b650c3cbbeb87f",
+  "S 44 0480d5d781518c6075998ee162d416c43010ff102f01f2b585ed6950959aafefdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7eff558f4150831ea803f6a2672d258241d9d7",
+  "E c18860d5485f2bce9a68",
+  "S 48 0580d5d78210812f01f2b585ed6950959ba2efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdff558f4150831ea805f6a2672d258241d9d7",
+  "S 52 0500d5d783805f50a7d07f66a281b0dae053fafc087ed4ce6aadf2a7979c89c6bfb521aeba0bc8b1e632586d975765cf2f01f2b585ed6950959c0776767676767676558f4150831ea819fb51339692c120eceb",
+  "S 56 0401d5d783c1812f01f2b585ed695095810476767676558f4150831ea81afb51339692c120eceb",
+  "E ff20a7d07f66a281b0dae053fafc087ed4ce6aadf2a7979c89c6bfb521aeba0bc8b1e632586d975765cf",
+  "S 60 0680d5d78380102f01f2b585ed69509583a7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7f558f4150831ea801f6a2672d258241d9d7",
+  "S 64 0600d5d784518c61091a4c46075d6b85c5fa23802f01f2b585ed695095859befdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdff558f4150831ea803f6a2672d258241d9d7",
+  "S 68 0600d5d784518c61091a4c46075d6b85d5fa23802f01f2b585ed6950959992efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7f558f4150831ea805f6a2672d258241d9d7",
+  "S 72 0501d1d78481822f01f2b585ed6950959aacefdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdf558f4150831ea819fb51339692c120eceb",
+  "S 76 0402d1d784c1822f01f2b585ed6950959b92efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7f558f4150831ea81afb51339692c120eceb",
+];
+
+const LSQPACK_FIELDS: string[] = [
+  "0: :method=POST; :scheme=https; :authority=example.com; :path=/index.html; user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36; x-request-0=vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv; cookie=session=0; theme=dark; ",
+  "4: :method=GET; :scheme=https; :authority=example.com; :path=/; user-agent=curl/8.9.1; x-request-1=vvvvvvv; cookie=session=1; theme=dark; ",
+  "8: :method=POST; :scheme=https; :authority=example.com; :path=/a/very/long/path/that/repeats/2; user-agent=fern-test/1.0; x-request-2=vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv; cookie=session=2; theme=dark; ",
+  "12: :method=PUT; :scheme=https; :authority=example.com; :path=/index.html; user-agent=fern-test/1.0; x-request-3=vvvvvv; cookie=session=3; theme=dark; ",
+  "16: :method=POST; :scheme=https; :authority=example.com; :path=/static/app.4.js; user-agent=fern-test/1.0; x-request-4=vvvvvvvvvvvvvvvv; cookie=session=4; theme=dark; ",
+  "20: :method=GET; :scheme=https; :authority=example.com; :path=/a/very/long/path/that/repeats/5; user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36; x-request-5=vvvv; cookie=session=0; theme=dark; ",
+  "24: :method=PUT; :scheme=https; :authority=example.com; :path=/; user-agent=fern-test/1.0; x-request-6=vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv; cookie=session=1; theme=dark; ",
+  "28: :method=PUT; :scheme=https; :authority=example.com; :path=/a/very/long/path/that/repeats/7; user-agent=fern-test/1.0; x-request-0=vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv; cookie=session=2; theme=dark; ",
+  "32: :method=PUT; :scheme=https; :authority=example.com; :path=/static/app.8.js; user-agent=fern-test/1.0; x-request-1=vvvvvvvvvvvvvvv; cookie=session=3; theme=dark; ",
+  "36: :method=GET; :scheme=https; :authority=example.com; :path=/a/very/long/path/that/repeats/9; user-agent=fern-test/1.0; x-request-2=vvvvvvvvvvvvvvvvvvv; cookie=session=4; theme=dark; ",
+  "40: :method=POST; :scheme=https; :authority=example.com; :path=/index.html; user-agent=curl/8.9.1; x-request-3=vvvvvvvv; cookie=session=0; theme=dark; ",
+  "44: :method=PUT; :scheme=https; :authority=example.com; :path=/api/v1/users/11; user-agent=curl/8.9.1; x-request-4=vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv; cookie=session=1; theme=dark; ",
+  "48: :method=PUT; :scheme=https; :authority=example.com; :path=/index.html; user-agent=fern-test/1.0; x-request-5=vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv; cookie=session=2; theme=dark; ",
+  "52: :method=PUT; :scheme=https; :authority=example.com; :path=/index.html; user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36; x-request-6=vvvvvvv; cookie=session=3; theme=dark; ",
+  "56: :method=PUT; :scheme=https; :authority=example.com; :path=/; user-agent=curl/8.9.1; x-request-0=vvvv; cookie=session=4; theme=dark; ",
+  "60: :method=PUT; :scheme=https; :authority=example.com; :path=/index.html; user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36; x-request-1=vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv; cookie=session=0; theme=dark; ",
+  "64: :method=PUT; :scheme=https; :authority=example.com; :path=/static/app.16.js; user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36; x-request-2=vvvvvvvvvvvvvvvvvvvvvvvvvvvvvv; cookie=session=1; theme=dark; ",
+  "68: :method=PUT; :scheme=https; :authority=example.com; :path=/static/app.17.js; user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36; x-request-3=vvvvvvvvvvvvvvvvvvvv; cookie=session=2; theme=dark; ",
+  "72: :method=GET; :scheme=https; :authority=example.com; :path=/index.html; user-agent=curl/8.9.1; x-request-4=vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv; cookie=session=3; theme=dark; ",
+  "76: :method=GET; :scheme=https; :authority=example.com; :path=/; user-agent=curl/8.9.1; x-request-5=vvvvvvvvvvvvvvvvvvvv; cookie=session=4; theme=dark; ",
+];
+
+// An independent encoder's output, decoded field for field.
+function test_lsqpack_trace(): test.TestOutcome {
+  let d: qpack.Decoder = qpack.decoder(512 as i64, 16, 65536 as i64);
+  let got: string = "";
+  for line in LSQPACK_TRACE {
+    if (line.starts_with("E ")) {
+      match (fed(d, line.drop(2))) {
+        Ok(next) => {
+          d = next;
+        },
+        Err(e) => {
+          return test.fail(e);
+        }
+      }
+    } else {
+      match (b_step(d, line)) {
+        Ok(r) => {
+          d = r.0;
+          let text: string = r.1;
+          got = got + text.take(text.index_of("| ")) + "\n";
+        },
+        Err(e) => {
+          return test.fail(e);
+        }
+      }
+    }
+  }
+  let want: string = "";
+  for f in LSQPACK_FIELDS {
+    want = want + f + "\n";
+  }
+  return test.assert_eq(got, want);
+}
+
+// A terminal chunk at shift 56 can wrap an i64 after adding the prefix.
+function overflowing_integer(first: u8): u8[] {
+  let out: u8[] = [first];
+  let i: i32 = 0;
+  while (i < 8) {
+    out = out.append(255u8);
+    i = i + 1;
+  }
+  return out.append(127u8);
+}
+
+// Canonical encoding of the largest integer QPACK must support (62 bits).
+function largest_integer(first: u8, prefix: i64): u8[] {
+  let out: u8[] = [first];
+  let rest: i64 = 4611686018427387903 as i64 - prefix;
+  while (rest >= 128 as i64) {
+    out = out.append((rest & 127 as i64 | 128 as i64) as u8);
+    rest = rest >> 7;
+  }
+  return out.append(rest as u8);
+}
+
+function test_integer_overflow(): test.TestOutcome {
+  let d: qpack.Decoder = qpack.decoder(220 as i64, 2, 16384 as i64);
+  let capacity: string = result_text_d(fed(d, hex.hex_encode(overflowing_integer(63u8))));
+  let want: string = "513 qpack: encoder stream: an integer over 2^62";
+  if (capacity != want) {
+    return test.assert_eq(capacity, want);
+  }
+  let section_err: string = "accepted";
+  match (d.decode(0 as i64, overflowing_integer(255u8).append(0u8))) {
+    Ok(_) => {},
+    Err(e) => {
+      section_err = error_text(e);
+    }
+  }
+  let string_err: string = "accepted";
+  match (d.decode(0 as i64, [0u8, 0u8, 81u8].concat(overflowing_integer(127u8)))) {
+    Ok(_) => {},
+    Err(e) => {
+      string_err = error_text(e);
+    }
+  }
+  let decoder_err: string = "accepted";
+  match (qpack.encoder().on_decoder_stream(overflowing_integer(127u8))) {
+    Ok(_) => {},
+    Err(e) => {
+      decoder_err = error_text(e);
+    }
+  }
+  return test.assert_eq(section_err + "\n" + string_err + "\n" + decoder_err, "512 qpack: an integer over 2^62\n512 qpack: an integer over 2^62\n514 qpack: decoder stream: an integer over 2^62");
+}
+
+function test_largest_integer(): test.TestOutcome {
+  let d: qpack.Decoder = qpack.decoder(4611686018427387903 as i64, 0, 16384 as i64);
+  let capacity: string = result_text_d(fed(d, hex.hex_encode(largest_integer(63u8, 31 as i64))));
+  let short: string = "accepted";
+  match (d.decode(0 as i64, [0u8, 0u8, 81u8].concat(largest_integer(127u8, 127 as i64)))) {
+    Ok(_) => {},
+    Err(e) => {
+      short = error_text(e);
+    }
+  }
+  let cancelled: string = "ok";
+  match (qpack.encoder().on_decoder_stream(largest_integer(127u8, 63 as i64))) {
+    Ok(_) => {},
+    Err(e) => {
+      cancelled = error_text(e);
+    }
+  }
+  return test.assert_eq(capacity + " " + short + " " + cancelled, "ok 512 qpack: truncated ok");
+}
+
+function test_cancellation(): test.TestOutcome {
+  match (section(qpack.decoder(220 as i64, 1, 16384 as i64), 4 as i64, "03811011")) {
+    Ok(r) => {
+      let (d1, first) = r.0.cancel(4 as i64).take_instructions();
+      let (d2, second) = d1.cancel(132 as i64).take_instructions();
+      let again: string = result_text(section(d2, 8 as i64, "03811011"));
+      let (_, empty) = qpack.decoder(0 as i64, 0, 16384 as i64).cancel(4 as i64).take_instructions();
+      return test.assert_eq(hex.hex_encode(first) + " " + hex.hex_encode(second) + " " + again + "[" + hex.hex_encode(empty) + "]", "44 7f45 ok blocked| []");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/http/qpack");
+  r = r.it("B.1: a literal with a static name reference", test_b1);
+  r = r.it("B.2 to B.5: the dynamic table", test_b2_to_b5);
+  r = r.it("a blocked section, and the blocked-streams limit", test_blocked);
+  r = r.it("an instruction split across reads", test_split_instruction);
+  r = r.it("the encoder", test_encoder);
+  r = r.it("errors", test_errors);
+  r = r.it("a trace from ls-qpack", test_lsqpack_trace);
+  r = r.it("oversized integers are typed errors rather than wrapped values", test_integer_overflow);
+  r = r.it("the largest 62-bit integer is still supported", test_largest_integer);
+  r = r.it("stream cancellation encoding and blocked-slot release", test_cancellation);
+  return r.finish();
+}
