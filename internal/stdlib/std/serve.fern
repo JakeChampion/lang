@@ -5405,7 +5405,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
 // the burst lasts: each started, then answered or parked; an upgrade
 // handed to its session; an incomplete one waited on; an ill-formed one
 // refused.
-function __serve_burst[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32, eof: boolean, handler: (HttpRequest, platform.Host) => HttpResponse, start: (http.HttpFramed, boolean, __Stop, platform.Host) => __Started, opts: Config, stop: __Stop, clk: __Clock): (__Conns, __Flight[]) {
+function __serve_burst[D: async.Driver](drv: D, own c: __Conns, own fls: __Flight[], at: i32, eof: boolean, handler: (HttpRequest, platform.Host) => HttpResponse, start: (http.HttpFramed, boolean, __Stop, platform.Host) => __Started, opts: Config, stop: __Stop, clk: __Clock): (__Conns, __Flight[]) {
   let conns: __Conns = c;
   let flights: __Flight[] = fls;
   let more: boolean = true;

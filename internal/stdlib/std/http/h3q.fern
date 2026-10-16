@@ -319,7 +319,7 @@ function __response(p: Partial): HttpResponse {
   let hs: HeaderMap = headers.header_map_new();
   for f in p.fields {
     if (f.name == ":status") {
-      status = f.value.parse_int().unwrap_or(0);
+      status = f.value.parse_int_or(0);
     } else if (!f.name.starts_with(":")) {
       hs = hs.append(f.name, f.value);
     }
