@@ -350,6 +350,94 @@ function test_lsqpack_trace(): test.TestOutcome {
   return test.assert_eq(got, want);
 }
 
+// A terminal chunk at shift 56 can wrap an i64 after adding the prefix.
+function overflowing_integer(first: u8): u8[] {
+  let out: u8[] = [first];
+  let i: i32 = 0;
+  while (i < 8) {
+    out = out.append(255u8);
+    i = i + 1;
+  }
+  return out.append(127u8);
+}
+
+// Canonical encoding of the largest integer QPACK must support (62 bits).
+function largest_integer(first: u8, prefix: i64): u8[] {
+  let out: u8[] = [first];
+  let rest: i64 = 4611686018427387903 as i64 - prefix;
+  while (rest >= 128 as i64) {
+    out = out.append((rest & 127 as i64 | 128 as i64) as u8);
+    rest = rest >> 7;
+  }
+  return out.append(rest as u8);
+}
+
+function test_integer_overflow(): test.TestOutcome {
+  let d: qpack.Decoder = qpack.decoder(220 as i64, 2, 16384 as i64);
+  let capacity: string = result_text_d(fed(d, hex.hex_encode(overflowing_integer(63u8))));
+  let want: string = "513 qpack: encoder stream: an integer over 2^62";
+  if (capacity != want) {
+    return test.assert_eq(capacity, want);
+  }
+  let section_err: string = "accepted";
+  match (d.decode(0 as i64, overflowing_integer(255u8).append(0u8))) {
+    Ok(_) => {},
+    Err(e) => {
+      section_err = error_text(e);
+    }
+  }
+  let string_err: string = "accepted";
+  match (d.decode(0 as i64, [0u8, 0u8, 81u8].concat(overflowing_integer(127u8)))) {
+    Ok(_) => {},
+    Err(e) => {
+      string_err = error_text(e);
+    }
+  }
+  let decoder_err: string = "accepted";
+  match (qpack.encoder().on_decoder_stream(overflowing_integer(127u8))) {
+    Ok(_) => {},
+    Err(e) => {
+      decoder_err = error_text(e);
+    }
+  }
+  return test.assert_eq(section_err + "\n" + string_err + "\n" + decoder_err, "512 qpack: an integer over 2^62\n512 qpack: an integer over 2^62\n514 qpack: decoder stream: an integer over 2^62");
+}
+
+function test_largest_integer(): test.TestOutcome {
+  let d: qpack.Decoder = qpack.decoder(4611686018427387903 as i64, 0, 16384 as i64);
+  let capacity: string = result_text_d(fed(d, hex.hex_encode(largest_integer(63u8, 31 as i64))));
+  let short: string = "accepted";
+  match (d.decode(0 as i64, [0u8, 0u8, 81u8].concat(largest_integer(127u8, 127 as i64)))) {
+    Ok(_) => {},
+    Err(e) => {
+      short = error_text(e);
+    }
+  }
+  let cancelled: string = "ok";
+  match (qpack.encoder().on_decoder_stream(largest_integer(127u8, 63 as i64))) {
+    Ok(_) => {},
+    Err(e) => {
+      cancelled = error_text(e);
+    }
+  }
+  return test.assert_eq(capacity + " " + short + " " + cancelled, "ok 512 qpack: truncated ok");
+}
+
+function test_cancellation(): test.TestOutcome {
+  match (section(qpack.decoder(220 as i64, 1, 16384 as i64), 4 as i64, "03811011")) {
+    Ok(r) => {
+      let (d1, first) = r.0.cancel(4 as i64).take_instructions();
+      let (d2, second) = d1.cancel(132 as i64).take_instructions();
+      let again: string = result_text(section(d2, 8 as i64, "03811011"));
+      let (_, empty) = qpack.decoder(0 as i64, 0, 16384 as i64).cancel(4 as i64).take_instructions();
+      return test.assert_eq(hex.hex_encode(first) + " " + hex.hex_encode(second) + " " + again + "[" + hex.hex_encode(empty) + "]", "44 7f45 ok blocked| []");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/http/qpack");
   r = r.it("B.1: a literal with a static name reference", test_b1);
@@ -359,5 +447,8 @@ function main(): i32 {
   r = r.it("the encoder", test_encoder);
   r = r.it("errors", test_errors);
   r = r.it("a trace from ls-qpack", test_lsqpack_trace);
+  r = r.it("oversized integers are typed errors rather than wrapped values", test_integer_overflow);
+  r = r.it("the largest 62-bit integer is still supported", test_largest_integer);
+  r = r.it("stream cancellation encoding and blocked-slot release", test_cancellation);
   return r.finish();
 }
