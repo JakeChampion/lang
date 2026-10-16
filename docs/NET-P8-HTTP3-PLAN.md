@@ -207,21 +207,21 @@ Each is a bound with a test that crosses it.
       and tag blocks and the three GHASH results, which a fused kernel
       would fold into one, and the zero block, which #12499 (a constant
       array allocates per use) would make free.
-    - **Records handed back bare (first part landed).** A record returned
-      inside a Result or a tuple is copied on the way out (#12501). The
-      stream table's operations and its packet-filling chain now hand the
-      table back with their outcome in fields; done streams are retired
-      lazily; byte ranges go through the byte builder; a datagram reaches
-      its connection as a view. 383 to 369 allocations per request. What
-      remains is the serve loop reaching each connection through an array
-      element, which copies the connection record and its table per
-      datagram: an `Option` placeholder taken out of the slot and the
-      connection's own steps (`receive`, `tick`, `transmit`) returning
-      the connection bare.
-    - **The connection's plans** (`conn.__plan`, `__seal`) and the HTTP/3
-      session's request path (`h3`, `qpack`, `h3q`): fields written
-      straight into the encoder as HTTP/2 does, the request handed over
-      without the partial copied; Huffman decoding by table.
+    - **Records handed back bare (landed).** A record returned inside a
+      Result or a tuple is copied on the way out (#12501). The stream
+      table, the connection's steps (`receive`, `tick`, `transmit`), the
+      datagram planner, QPACK's decoder and the HTTP/3 session now hand
+      themselves back with their outcome in fields, and the serve loop
+      steps each connection inside the construction that stores it back.
+      Huffman decoding goes four bits at a time through a state table.
+      383 to 308 allocations per request; 118,646 to 145,400 responses
+      per second.
+    - **What remains per request**, by the x86-64 trace: packet receive
+      and AEAD open, the HTTP/3 request path (each request record bound
+      before it is rebuilt, a field section's partial copied), the AEAD
+      blocks a fused kernel would fold, and `concat`, which builds its
+      result an element at a time; a runtime kernel sizing it once is a
+      compiler change that every program gains from.
     - **The socket.** `sendmmsg`, UDP GSO and GRO, ECN: new builtins, so
       four classifications each, reported Unsupported on Darwin and WASI.
 
