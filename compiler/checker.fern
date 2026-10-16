@@ -15066,27 +15066,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           // at codegen, in the language of an internal invariant
           // (#7221). A receiver method, and a `T.f(...)` written the
           // way it is meant to be, are resolved elsewhere and untouched.
-          let tpn: string = tp_receiver(mfa.obj, recv, s);
-          if (tpn.len() > 0) {
-            let tph: AssocHit = tp_assoc_req(s, tpn, mfa.field);
-            if (tph.found) {
-              out = out.append(dg_at("E021", "\"" + mfa.field + "\" is an associated function of trait " + tph.owner + ", not a method; call it as " + tpn + "." + mfa.field + "(...)", c.line, c.col));
-            } else if (!tp_bound_provides(s, tpn, mfa.field)) {
-              out = out.append(dg_at("E021", "no method \"" + mfa.field + "\" on type parameter " + tpn + "; add a trait bound such as [" + tpn + ": SomeTrait] that provides it", c.line, c.col));
-            } else {
-              match (bound_method(s, tpn, mfa.field)) {
-                Some(msig) => {
-                  if (c.args.len() != msig.param_types.len()) {
-                    out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
-                  } else {
-                    out = util.append_diags(out, method_arg_diags(c, mfa.field, msig, recv, s));
-                    out = util.append_diags(out, method_type_arg_diags(c, mfa.field, msig, recv, s));
-                  }
-                },
-                None => {}
-              }
-            }
-          }
+          out = util.append_diags(out, type_param_method_diags(c, mfa, recv, s));
         }
       }
     },
@@ -15095,6 +15075,32 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
     }
   }
 
+  return out;
+}
+
+function type_param_method_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, recv: typeinfo.Type, s: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  let tpn: string = tp_receiver(mfa.obj, recv, s);
+  if (tpn.len() > 0) {
+    let tph: AssocHit = tp_assoc_req(s, tpn, mfa.field);
+    if (tph.found) {
+      out = out.append(dg_at("E021", "\"" + mfa.field + "\" is an associated function of trait " + tph.owner + ", not a method; call it as " + tpn + "." + mfa.field + "(...)", c.line, c.col));
+    } else if (!tp_bound_provides(s, tpn, mfa.field)) {
+      out = out.append(dg_at("E021", "no method \"" + mfa.field + "\" on type parameter " + tpn + "; add a trait bound such as [" + tpn + ": SomeTrait] that provides it", c.line, c.col));
+    } else {
+      match (bound_method(s, tpn, mfa.field)) {
+        Some(msig) => {
+          if (c.args.len() != msig.param_types.len()) {
+            out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
+          } else {
+            out = util.append_diags(out, method_arg_diags(c, mfa.field, msig, recv, s));
+            out = util.append_diags(out, method_type_arg_diags(c, mfa.field, msig, recv, s));
+          }
+        },
+        None => {}
+      }
+    }
+  }
   return out;
 }
 
