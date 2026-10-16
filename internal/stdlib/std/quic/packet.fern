@@ -142,132 +142,125 @@ pub function decode_pn(largest: i64, truncated: i64, bits: i32): i64 {
 
 // === headers (§17.2, §17.3) ================================================
 
-struct Reader { buf: [u8], at: i32 }
-
-function (r: Reader) byte(what: string): Result[(i32, Reader), string] {
-  if (r.at >= r.buf.len()) {
-    return Err(what + " cut short");
-  }
-  return Ok((r.buf[r.at] as i32, Reader { ...r, at: r.at + 1 }));
-}
-
-function (r: Reader) bytes(n: i32, what: string): Result[(u8[], Reader), string] {
-  if (n < 0 || r.at + n > r.buf.len()) {
-    return Err(what + " cut short");
-  }
-  return Ok((__slice(r.buf, r.at, r.at + n), Reader { ...r, at: r.at + n }));
-}
-
-function (r: Reader) varint(what: string): Result[(i64, Reader), string] {
-  match (frames.read_varint(r.buf, r.at)) {
-    Some(got) => {
-      return Ok((got.0, Reader { ...r, at: got.1 }));
-    },
-    None => {
-      return Err(what + " cut short");
-    }
-  }
-}
-
-function (r: Reader) cid(what: string, max: i32): Result[(u8[], Reader), string] {
-  let (n, r1) = r.byte(what + " length")?;
-  if (n > max) {
-    return Err(what + " of " + n.to_string() + " bytes");
-  }
-  return r1.bytes(n, what);
-}
-
 // parse reads the header of the packet at `at` in `datagram`; a short
-// header's Destination Connection ID is `short_dcid_len` bytes.
+// header's Destination Connection ID is `short_dcid_len` bytes. A short
+// header costs its record and the ID's copy; the reads themselves are
+// scalar.
 pub function parse(datagram: [u8], at: i32, short_dcid_len: i32): Result[Header, string] {
-  let r: Reader = Reader { buf: datagram, at: at };
-  let (b0, r1) = r.byte("first byte")?;
-  if ((b0 & 128) == 0) {
-    return __short(b0, r1, at, short_dcid_len);
+  if (at >= datagram.len()) {
+    return Err("first byte cut short");
   }
-  let (vb, r2) = r1.bytes(4, "version")?;
-  let version: i64 = __be32(vb, 0);
+  let b0: i32 = datagram[at] as i32;
+  if ((b0 & 128) == 0) {
+    return __short(datagram, b0, at, short_dcid_len);
+  }
+  if (at + 5 > datagram.len()) {
+    return Err("version cut short");
+  }
+  let version: i64 = __be32(datagram, at + 1);
   let max: i32 = MAX_CID_LEN;
   if (version != VERSION_1) {
     max = 255;
   }
-  let (dcid, r3) = r2.cid("destination connection id", max)?;
-  let (scid, r4) = r3.cid("source connection id", max)?;
-  let h: Header = Header { kind: UnknownVersion, version: version, dcid: dcid, scid: scid, token: [], tag: [], versions: [], at: at, pn_at: r4.at, end: datagram.len() };
+  let dl: i32 = __cid_len(datagram, at + 5, max, "destination connection id")?;
+  let dcid_at: i32 = at + 6;
+  let sl: i32 = __cid_len(datagram, dcid_at + dl, max, "source connection id")?;
+  let scid_at: i32 = dcid_at + dl + 1;
+  let rest: i32 = scid_at + sl;
+  let h: Header = Header { kind: UnknownVersion, version: version, dcid: __slice(datagram, dcid_at, dcid_at + dl), scid: __slice(datagram, scid_at, scid_at + sl), token: [], tag: [], versions: [], at: at, pn_at: rest, end: datagram.len() };
   if (version == 0) {
-    return __version_negotiation(h, r4);
+    return __version_negotiation(h, datagram, rest);
   }
   if (version != VERSION_1) {
     return Ok(h);
   }
-  return __long(h, b0, r4);
+  return __long(h, datagram, b0, rest);
 }
 
-function __short(b0: i32, r: Reader, at: i32, dcid_len: i32): Result[Header, string] {
+// __cid_len reads a connection ID's length byte at `p` and checks the ID
+// fits the datagram and `max`.
+function __cid_len(datagram: [u8], p: i32, max: i32, what: string): Result[i32, string] {
+  if (p >= datagram.len()) {
+    return Err(what + " length cut short");
+  }
+  let n: i32 = datagram[p] as i32;
+  if (n > max) {
+    return Err(what + " of " + n.to_string() + " bytes");
+  }
+  if (p + 1 + n > datagram.len()) {
+    return Err(what + " cut short");
+  }
+  return Ok(n);
+}
+
+function __short(datagram: [u8], b0: i32, at: i32, dcid_len: i32): Result[Header, string] {
   if ((b0 & 64) == 0) {
     return Err("fixed bit not set");
   }
-  let (dcid, r1) = r.bytes(dcid_len, "destination connection id")?;
-  return Ok(Header { kind: OneRtt, version: VERSION_1, dcid: dcid, scid: [], token: [], tag: [], versions: [], at: at, pn_at: r1.at, end: r.buf.len() });
+  if (dcid_len < 0 || at + 1 + dcid_len > datagram.len()) {
+    return Err("destination connection id cut short");
+  }
+  return Ok(Header { kind: OneRtt, version: VERSION_1, dcid: __slice(datagram, at + 1, at + 1 + dcid_len), scid: [], token: [], tag: [], versions: [], at: at, pn_at: at + 1 + dcid_len, end: datagram.len() });
 }
 
-function __version_negotiation(h: Header, r: Reader): Result[Header, string] {
-  let left: i32 = r.buf.len() - r.at;
+function __version_negotiation(h: Header, datagram: [u8], at: i32): Result[Header, string] {
+  let left: i32 = datagram.len() - at;
   if (left == 0 || left % 4 != 0) {
     return Err("version negotiation of " + left.to_string() + " bytes of versions");
   }
   let versions: i64[] = [];
-  let at: i32 = r.at;
-  while (at < r.buf.len()) {
-    versions = versions.append(__be32(r.buf, at));
-    at = at + 4;
+  let p: i32 = at;
+  while (p < datagram.len()) {
+    versions = versions.append(__be32(datagram, p));
+    p = p + 4;
   }
-  return Ok(Header { ...h, kind: VersionNegotiation, versions: versions, pn_at: r.buf.len() });
+  return Ok(Header { ...h, kind: VersionNegotiation, versions: versions, pn_at: datagram.len() });
 }
 
 // __long reads what follows a version 1 long header's connection IDs.
-function __long(h: Header, b0: i32, r: Reader): Result[Header, string] {
+function __long(h: Header, datagram: [u8], b0: i32, at: i32): Result[Header, string] {
   if ((b0 & 64) == 0) {
     return Err("fixed bit not set");
   }
   let kind: i32 = b0 >> 4 & 3;
   if (kind == 3) {
-    return __retry_header(h, r);
+    return __retry_header(h, datagram, at);
   }
   let k: Kind = Initial;
-  let cur: Reader = r;
+  let p: i32 = at;
   if (kind == 0) {
-    let (token, r1) = __token(r)?;
-    cur = r1;
-    h = Header { ...h, token: token };
+    let n: i64 = frames.varint_at(datagram, p);
+    if (n < 0) {
+      return Err("token length cut short");
+    }
+    let token_at: i32 = frames.varint_end(datagram, p);
+    if (n > (datagram.len() - token_at) as i64) {
+      return Err("token cut short");
+    }
+    p = token_at + n as i32;
+    h = Header { ...h, token: __slice(datagram, token_at, p) };
   } else if (kind == 1) {
     k = ZeroRtt;
   } else {
     k = Handshake;
   }
-  let (len, r3) = cur.varint("length")?;
-  if (len > (r.buf.len() - r3.at) as i64) {
+  let len: i64 = frames.varint_at(datagram, p);
+  if (len < 0) {
+    return Err("length cut short");
+  }
+  let body: i32 = frames.varint_end(datagram, p);
+  if (len > (datagram.len() - body) as i64) {
     return Err("packet of " + len.to_string() + " bytes past the end of the datagram");
   }
-  return Ok(Header { ...h, kind: k, pn_at: r3.at, end: r3.at + len as i32 });
+  return Ok(Header { ...h, kind: k, pn_at: body, end: body + len as i32 });
 }
 
-function __token(r: Reader): Result[(u8[], Reader), string] {
-  let (n, r1) = r.varint("token length")?;
-  if (n > r.buf.len() as i64) {
-    return Err("token cut short");
-  }
-  return r1.bytes(n as i32, "token");
-}
-
-function __retry_header(h: Header, r: Reader): Result[Header, string] {
-  let rest: i32 = r.buf.len() - r.at - TAG_LEN;
+function __retry_header(h: Header, datagram: [u8], at: i32): Result[Header, string] {
+  let rest: i32 = datagram.len() - at - TAG_LEN;
   if (rest < 1) {
     return Err("retry without a token");
   }
-  let (token, r1) = r.bytes(rest, "retry token")?;
-  let (tag, r2) = r1.bytes(TAG_LEN, "retry integrity tag")?;
-  return Ok(Header { ...h, kind: Retry, token: token, tag: tag, pn_at: r2.at });
+  return Ok(Header { ...h, kind: Retry, token: __slice(datagram, at, at + rest), tag: __slice(datagram, at + rest, datagram.len()), pn_at: datagram.len() });
 }
 
 // === protection (RFC 9001 §5.3, §5.4) ======================================

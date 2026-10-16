@@ -116,8 +116,9 @@ func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
 // over, the response's fields encoded, and its packet planned and sealed.
 // The first reading was 632 on arm64-darwin with the stream table rebuilt
 // on every packet; with idle streams left alone and the loop flushing a
-// connection once per burst, 421 there.
-const ServeAllocsH3Ceiling = 430
+// connection once per burst, 421 there and 423.25 on x86-64; with the
+// varints and headers read as scalars, 387.25 on x86-64.
+const ServeAllocsH3Ceiling = 392
 
 func TestSelfHostServeAllocsPerRequestH3(t *testing.T) {
 	cli := buildSelfHostCLI(t)

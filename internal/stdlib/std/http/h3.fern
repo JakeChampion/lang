@@ -323,15 +323,16 @@ function (s: Session) __on_uni(id: i64, bytes: [u8], fin: boolean): Session {
   if (u.kind >= 0) {
     return s.__put_uni(i, kept).__uni_bytes(kept, buf, fin);
   }
-  let Some(read) = frames.read_varint(buf, 0) else {
+  let read: i64 = frames.varint_at(buf, 0);
+  if (read < 0) {
     return s.__put_uni(i, Uni { ...u, frames: Frames { ...u.frames, buf: buf } });
-  };
-  let typed: Uni = Uni { ...kept, kind: read.0 };
+  }
+  let typed: Uni = Uni { ...kept, kind: read };
   let cur: Session = s.__claim(typed).__put_uni(i, typed);
   if (cur.closed) {
     return cur;
   }
-  return cur.__uni_bytes(typed, __copy(buf[read.1:buf.len()]), fin);
+  return cur.__uni_bytes(typed, __copy(buf[frames.varint_end(buf, 0):buf.len()]), fin);
 }
 
 // __claim takes a new unidirectional stream of the peer's: one each of
@@ -486,18 +487,21 @@ function (s: Session) __settings(payload: u8[]): Session {
   let seen: i64[] = [];
   let at: i32 = 0;
   while (at < payload.len()) {
-    let Some(k) = frames.read_varint(payload, at) else {
+    let k: i64 = frames.varint_at(payload, at);
+    if (k < 0) {
       return s.__fail(H3_FRAME_ERROR, "a truncated setting");
-    };
-    let Some(v) = frames.read_varint(payload, k.1) else {
+    }
+    let vat: i32 = frames.varint_end(payload, at);
+    let v: i64 = frames.varint_at(payload, vat);
+    if (v < 0) {
       return s.__fail(H3_FRAME_ERROR, "a truncated setting");
-    };
-    if (seen.contains(k.0) || k.0 >= 2 && k.0 <= 5) {
+    }
+    if (seen.contains(k) || k >= 2 && k <= 5) {
       return s.__fail(H3_SETTINGS_ERROR, "a repeated setting, or one of HTTP/2's");
     }
-    seen = seen.append(k.0);
-    p = __setting(p, k.0, v.0);
-    at = v.1;
+    seen = seen.append(k);
+    p = __setting(p, k, v);
+    at = frames.varint_end(payload, vat);
   }
   return Session { ...s, peer: p, settings_seen: true };
 }
@@ -519,18 +523,19 @@ function __setting(p: Settings, id: i64, v: i64): Settings {
 // may only fall; the requests at or above it will not be processed, so
 // they end as rejected.
 function (s: Session) __on_goaway(payload: u8[]): Session {
-  let Some(r) = frames.read_varint(payload, 0) else {
+  let id: i64 = frames.varint_at(payload, 0);
+  if (id < 0) {
     return s.__fail(H3_FRAME_ERROR, "a truncated GOAWAY");
-  };
+  }
   if (s.server) {
     return s;
   }
-  if (r.0 % 4 != 0 || s.goaway >= 0 && r.0 > s.goaway) {
+  if (id % 4 != 0 || s.goaway >= 0 && id > s.goaway) {
     return s.__fail(H3_ID_ERROR, "a GOAWAY stream ID that is not a request stream's, or that rose");
   }
-  let cur: Session = Session { ...s, goaway: r.0, events: s.events.append(GoawayReceived(r.0)) };
+  let cur: Session = Session { ...s, goaway: id, events: s.events.append(GoawayReceived(id)) };
   for q in s.reqs {
-    if (q.id >= r.0) {
+    if (q.id >= id) {
       cur = Session { ...cur, events: cur.events.append(StreamAborted(q.id, H3_REQUEST_REJECTED)) }.__forget(q.id);
     }
   }
@@ -896,27 +901,30 @@ function __next_frame(f: Frames): Result[Next, string] {
     }
   }
   let none: Next = Next { frames: cur, kind: 0 - 1 as i64, payload: [] };
-  let Some(t) = frames.read_varint(cur.buf, 0) else {
+  let kind: i64 = frames.varint_at(cur.buf, 0);
+  if (kind < 0) {
     return Ok(none);
-  };
-  let Some(l) = frames.read_varint(cur.buf, t.1) else {
+  }
+  let lat: i32 = frames.varint_end(cur.buf, 0);
+  let len: i64 = frames.varint_at(cur.buf, lat);
+  if (len < 0) {
     return Ok(none);
-  };
-  let rest: u8[] = __copy(cur.buf[l.1:cur.buf.len()]);
-  if (t.0 == DATA) {
-    return Ok(Next { frames: Frames { ...cur, buf: rest, data_left: l.0 }, kind: DATA, payload: [] });
   }
-  if (!__known(t.0)) {
-    return __next_frame(Frames { ...cur, buf: rest, skip_left: l.0 });
+  let rest: u8[] = __copy(cur.buf[frames.varint_end(cur.buf, lat):cur.buf.len()]);
+  if (kind == DATA) {
+    return Ok(Next { frames: Frames { ...cur, buf: rest, data_left: len }, kind: DATA, payload: [] });
   }
-  if (l.0 > MAX_FRAME) {
+  if (!__known(kind)) {
+    return __next_frame(Frames { ...cur, buf: rest, skip_left: len });
+  }
+  if (len > MAX_FRAME) {
     return Err("a frame larger than this side reads");
   }
-  if (l.0 > rest.len() as i64) {
+  if (len > rest.len() as i64) {
     return Ok(none);
   }
-  let n: i32 = l.0 as i32;
-  return Ok(Next { frames: Frames { ...cur, buf: __copy(rest[n:rest.len()]) }, kind: t.0, payload: __copy(rest[0:n]) });
+  let n: i32 = len as i32;
+  return Ok(Next { frames: Frames { ...cur, buf: __copy(rest[n:rest.len()]) }, kind: kind, payload: __copy(rest[0:n]) });
 }
 
 // __known is a frame type this side reads; the rest, reserved for

@@ -10,14 +10,12 @@ import "core/int";
 // type may carry (§12.4), and every malformed shape answered with its error.
 
 function varint_of(block: string): string {
-  match (frames.read_varint(hex.hex_decode(block), 0)) {
-    Some(got) => {
-      return got.0.to_string() + " [" + int.int_to_string(got.1) + "]";
-    },
-    None => {
-      return "short";
-    }
+  let bytes: u8[] = hex.hex_decode(block);
+  let v: i64 = frames.varint_at(bytes, 0);
+  if (v < 0) {
+    return "short";
   }
+  return v.to_string() + " [" + int.int_to_string(frames.varint_end(bytes, 0)) + "]";
 }
 
 function test_varints(): test.TestOutcome {
