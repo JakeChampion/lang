@@ -1,0 +1,18 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Array-of-array struct field (i32[][]): the OUTER buffer is now
+// freed via __fern_drop_arr_ptr (inner buffers are array-of-array,
+// a later slice — still leak, no over-release). sum_{0..99}(i+1).
+import "core/int";
+struct Mat { rows: i32[][], n: i32 }
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) {
+        let m: Mat = Mat { rows: [[i, i + 1], [i + 2]], n: i };
+        acc = acc + m.rows[0][1];
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}

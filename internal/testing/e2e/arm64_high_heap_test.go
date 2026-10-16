@@ -34,7 +34,7 @@ var compileAndRunArm64HighHeap = e2eharness.CompileAndRunArm64HighHeap
 // map case added later joins this gate without anyone remembering to.
 func TestArm64HighHeapMapCorpus(t *testing.T) {
 	ran := 0
-	for _, c := range rcCorpus {
+	for _, c := range rcCorpusCases(t) {
 		if !strings.Contains(c.name, "map") {
 			continue
 		}

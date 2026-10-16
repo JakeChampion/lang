@@ -1,0 +1,21 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Nested-tuple reclamation: a tuple captured by a CLOSURE
+// reaches __drop_tuple_<mangled> through the generated
+// __closure_drop_<name> thunk, which dispatches captures via
+// dropFnNameFor (already did for arrays/structs/enums; post-fix
+// now also for tuples). Per iter: 33; 500x → 16500.
+import "core/int";
+import "std/string";
+function mk(): i32 {
+    let p: (string, i32) = ("value-aaaaaaaaaaaaaaaaaa-" + "1", 7);
+    let f: () => i32 = (): i32 => { return p.0.len() + p.1; };
+    return f();
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 16500) + __rc_underflow_count();
+}

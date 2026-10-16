@@ -1,0 +1,19 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Union: build a variant, match it, drop at exit.
+import "core/int";
+import "std/string";
+struct VInt { v: i32 }
+struct VArr { v: i32[] }
+type Value = VInt | VArr;
+function wrap(xs: i32[]): Value { return VArr { v: xs }; }
+function main(): i32 {
+    let a: Value = wrap([10, 20, 30]);
+    let got: i32 = 0;
+    match (a) {
+        VInt(n) => { got = n.v; },
+        VArr(arr) => { got = arr.v.len(); }
+    }
+    return (got - 3) + __rc_underflow_count();
+}

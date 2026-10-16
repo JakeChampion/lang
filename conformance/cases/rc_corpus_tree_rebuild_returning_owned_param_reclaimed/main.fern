@@ -1,0 +1,79 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// A tree walk's `Tip => return t` arm returns its OWNED-BY-DEFAULT
+// parameter bare: the caller retained the argument on the way in
+// and the callee's sweep releases it, so the return-transfer inc is
+// the caller's own. returnsOwnBox refused every bare parameter, so
+// `filter` never counted as fresh and each caller's `fl` / `fr`
+// binding kept the conservative call taint — the nodes `join`
+// rebuilt around them were never released (std/ordmap union /
+// filter: 960 and 1,368 blocks on 1,000-entry maps, #8057).
+enum Node { Tip, Bin(Node, i32, i32, Node, i32) }
+
+@noinline
+function size(t: Node): i32 {
+    match (t) {
+        Tip => { return 0; },
+        Bin(l, k, v, r, s) => { return s; }
+    }
+}
+
+@noinline
+function mk(l: Node, k: i32, v: i32, r: Node): Node {
+    return Bin(l, k, v, r, size(l) + size(r) + 1);
+}
+
+@noinline
+function ins(t: Node, k: i32, v: i32): Node {
+    match (t) {
+        Tip => { return Bin(Tip, k, v, Tip, 1); },
+        Bin(l, nk, nv, r, s) => {
+            if (k < nk) { let nl: Node = ins(l, k, v); return mk(nl, nk, nv, r); }
+            if (k > nk) { let nr: Node = ins(r, k, v); return mk(l, nk, nv, nr); }
+            return Bin(l, k, v, r, s);
+        }
+    }
+}
+
+@noinline
+function insert_min(k: i32, v: i32, t: Node): Node {
+    match (t) {
+        Tip => { return Bin(Tip, k, v, Tip, 1); },
+        Bin(l, nk, nv, r, s) => {
+            let nl: Node = insert_min(k, v, l);
+            return mk(nl, nk, nv, r);
+        }
+    }
+}
+
+@noinline
+function join(l: Node, k: i32, v: i32, r: Node): Node {
+    match (l) {
+        Tip => { return insert_min(k, v, r); },
+        Bin(ll, lk, lv, lr, ls) => { return mk(l, k, v, r); }
+    }
+}
+
+@noinline
+function filter(t: Node, keep_even: boolean): Node {
+    match (t) {
+        Tip => { return t; },
+        Bin(l, k, v, r, s) => {
+            let fl: Node = filter(l, keep_even);
+            let fr: Node = filter(r, keep_even);
+            if (k % 2 == 0) {
+                return join(fl, k, v, fr);
+            }
+            return join(fr, k, v, fl);
+        }
+    }
+}
+
+function main(): i32 {
+    let t: Node = Tip;
+    let i: i32 = 0;
+    while (i < 64) { t = ins(t, (i * 37) % 64, i); i = i + 1; }
+    let f: Node = filter(t, true);
+    return (size(f) - 64) + __rc_underflow_count();
+}

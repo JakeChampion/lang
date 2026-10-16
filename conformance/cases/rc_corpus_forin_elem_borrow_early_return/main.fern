@@ -1,0 +1,24 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// A mid-loop early return whose value never names the element is the
+// one shape where the borrow is TAKEN and a function exit runs mid-
+// iteration: the sweep at that return releases the iterand while the
+// element stays unswept (borrowed), which is the ordering the design
+// leans on ("exit sweeps run at returns, after any read on that
+// path"). 11+1 = 12 crosses the threshold on the first element.
+struct S { name: string, fields: string[] }
+function mkstr(p: string): string { return p + "!"; }
+function scan_early(xs: S[]): i32 {
+    let n: i32 = 0;
+    for sd in xs {
+        n = n + sd.name.len() + sd.fields.len();
+        if (n > 11) { return n; }
+    }
+    return n;
+}
+function main(): i32 {
+    let c: i32 = scan_early([S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] },
+                             S{ name: mkstr("b"), fields: [] }]);
+    return (c - 12) + __rc_underflow_count();
+}

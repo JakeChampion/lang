@@ -1,0 +1,24 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Transitive reclamation Stage B — array of structs (each
+// holding an array), built + discarded every iteration. The
+// eligible array drop now recurses through __drop_arr_struct_Item
+// → __drop_struct_Item per element, freeing each element box AND
+// its array buffer, where the pre-Stage-B __fern_drop_arr_ptr
+// only flat-dec'd the element pointers (leaking the boxes). A
+// per-iteration over-release of a now-freed element box would
+// accumulate on the underflow counter. sum_{i=0..99}((i+1)+(i+2))
+// = 2*4950 + 300 = 10200.
+import "core/int";
+struct Item { tags: i32[] }
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) {
+        let items: Item[] = [Item { tags: [i, i + 1] }, Item { tags: [i + 2] }];
+        acc = acc + items[0].tags[1] + items[1].tags[0];
+        i = i + 1;
+    }
+    return (acc - 10200) + __rc_underflow_count();
+}

@@ -1,0 +1,20 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Struct-literal locals are now free-eligible (rhsTainted no
+// longer taints a StructLit RHS — a fresh struct is owned, not
+// an alias). A struct local built from a literal and churned now
+// frees its box each iteration; an over-release would drift the
+// counter. sum_{i=0..99}(i+1) = 5050.
+import "core/int";
+struct Pt { xs: i32[], y: i32 }
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) {
+        let p: Pt = Pt { xs: [i, i + 1], y: i };
+        acc = acc + p.xs[1];
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}

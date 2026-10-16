@@ -1,0 +1,22 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Nested-tuple destructure: `let (a, b) = t; var (c, d) = b` where
+// b is an inner tuple extracted from t. Each destructure temp
+// aliases a distinct box (t's outer, b's inner), so each needs its
+// own alias inc; a missing inc double-frees the outer or inner box
+// (the TestWASMTupleNestedTuple OOB regression). Churned to surface
+// freelist corruption. a + c + d = 3*seed + 3; sum_{0..199} = 60300.
+import "core/int";
+function mk(seed: i32): i32 {
+    let t: (i32, (i32, i32)) = (seed, (seed + 1, seed + 2));
+    let (a, b) = t;
+    let (c, d) = b;
+    return a + c + d;
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 60300) + __rc_underflow_count();
+}

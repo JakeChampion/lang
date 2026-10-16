@@ -1,0 +1,21 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Transitive reclamation — a PLAIN-array struct FIELD (i32[]).
+// dropStructField has to deep-drop plain arrays too, not only
+// array-OF-struct fields: a flat-dec'd `data: i32[]` leaks its
+// buffer. It frees the buffer via __fern_arr_dec on the
+// owner's last reference (is_unique-gated). Churned 100x.
+// sum_{0..99}(i+1) = 5050.
+import "core/int";
+struct Buf { data: i32[], n: i32 }
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) {
+        let b: Buf = Buf { data: [i, i + 1, i + 2], n: i };
+        acc = acc + b.data[1];
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}

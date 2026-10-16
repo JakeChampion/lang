@@ -1,0 +1,20 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Transitive reclamation Stage B — array of CHILDLESS structs:
+// the element struct has no rc fields, so __drop_struct_P just
+// frees the element box on its last reference (the loop now
+// reclaims element boxes that drop_arr_ptr's flat dec leaked).
+// sum_{i=0..99}(i+1) = 5050.
+import "core/int";
+struct P { x: i32 }
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) {
+        let ps: P[] = [P { x: i }, P { x: i + 1 }];
+        acc = acc + ps[1].x;
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}

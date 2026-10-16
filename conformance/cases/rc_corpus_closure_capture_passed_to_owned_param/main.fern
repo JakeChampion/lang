@@ -1,0 +1,31 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// A closure forwards its captured struct to a callee that keeps the
+// param (owned), and runs more than once: the env's reference is
+// retained at each call, or the second run reads a freed ctx.
+struct Ctx { decls: string[] }
+struct Txn { headers: string[] }
+struct Out { ctx: Ctx, txn: Txn, n: i32 }
+function run_sub(ctx: Ctx, t: Txn, name: string): Out {
+    let hs: string[] = t.headers.append(name);
+    return Out { ctx: ctx, txn: Txn { headers: hs }, n: hs.len() };
+}
+function driver(decls: string[]): (string, Txn) => Out {
+    let ctx: Ctx = Ctx { decls: decls };
+    let runner: (string, Txn) => Out = (name: string, t: Txn): Out => { return run_sub(ctx, t, name); };
+    return runner;
+}
+function main(): i32 {
+    let run: (string, Txn) => Out = driver(["a", "b"]);
+    let t: Txn = Txn { headers: ["h"] };
+    let i: i32 = 0;
+    let total: i32 = 0;
+    while (i < 4) {
+        let out: Out = run("s", t);
+        t = out.txn;
+        total = total + out.n + out.ctx.decls.len();
+        i = i + 1;
+    }
+    return (total - 22) + __rc_underflow_count();
+}

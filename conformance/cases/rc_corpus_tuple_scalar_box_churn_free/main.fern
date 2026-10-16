@@ -1,0 +1,21 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Tuple BOX reclamation: a scalar tuple (i32, i32) leaked its
+// whole heap box entirely (tuples carried no rc header and were
+// never swept). It now carries an rc=1 header and returns the
+// box to the freelist at the owning local's last reference. 200
+// build/free cycles churn the box size class; a corrupted reuse
+// or over-release drifts the checksum / underflow count.
+// mk(seed) = 2*seed + 1; sum_{0..199}(2k+1) = 2*19900 + 200.
+import "core/int";
+function mk(seed: i32): i32 {
+    let t: (i32, i32) = (seed, seed + 1);
+    return t.0 + t.1;
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 40000) + __rc_underflow_count();
+}

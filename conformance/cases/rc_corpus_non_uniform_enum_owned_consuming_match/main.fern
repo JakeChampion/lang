@@ -1,0 +1,61 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The HAMT shape: a NON-uniform enum (Leaf is a 16-byte box, Br 24)
+// is owned by default too — each consuming arm frees the box at its
+// own variant's size — and the wrapper takes the root out of the
+// handle before descending.
+struct CK { bucket: i32, id: i32 }
+enum H { E, L(i32, CK, i32), Br(i32, H[]) }
+struct PM { root: H }
+function ck_eq(a: CK, b: CK): boolean { return a.bucket == b.bucket && a.id == b.id; }
+function ins(n: H, h: i32, shift: i32, k: CK, v: i32): H {
+    match (n) {
+        E => { return L(h, k, v); },
+        L(lh, lk, lv) => {
+            if (lh == h && ck_eq(lk, k)) { return L(h, k, v); }
+            let kids: H[] = [L(lh, lk, lv), L(h, k, v)];
+            return Br(0, kids);
+        },
+        Br(bm, kids) => {
+            let idx: i32 = h >> shift & 3;
+            if (idx >= kids.len()) { return Br(bm, kids.append(L(h, k, v))); }
+            let child: H = kids[idx];
+            let rest: H[] = kids.with(idx, E);
+            child = ins(child, h, shift + 2, k, v);
+            return Br(bm, rest.with(idx, child));
+        }
+    }
+}
+function find(n: H, h: i32, shift: i32, k: CK): i32 {
+    match (n) {
+        E => { return -1; },
+        L(lh, lk, lv) => { if (ck_eq(lk, k)) { return lv; } return -1; },
+        Br(bm, kids) => {
+            let idx: i32 = h >> shift & 3;
+            if (idx >= kids.len()) { return -1; }
+            return find(kids[idx], h, shift + 2, k);
+        }
+    }
+}
+function (m: PM) insert(k: CK, v: i32): PM {
+    let root: H = m.root;
+    m = PM { ...m, root: E };
+    root = ins(root, k.bucket, 0, k, v);
+    return PM { ...m, root: root };
+}
+function main(): i32 {
+    let c: PM = PM { root: E };
+    let i: i32 = 0;
+    while (i < 64) { c = c.insert(CK { bucket: i, id: i }, i); i = i + 1; }
+    let r: i32 = 0;
+    while (r < 5) {
+        let j: i32 = 0;
+        while (j < 64) { c = c.insert(CK { bucket: j, id: j }, j + r); j = j + 1; }
+        r = r + 1;
+    }
+    let sum: i32 = 0;
+    i = 0;
+    while (i < 64) { sum = sum + find(c.root, i, 0, CK { bucket: i, id: i }); i = i + 1; }
+    return (sum - 2272) + __rc_underflow_count();
+}

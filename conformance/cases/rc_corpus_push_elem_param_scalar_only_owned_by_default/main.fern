@@ -1,0 +1,34 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The interlock the element credit must not disturb. A
+// scalar-only element type is isOwnedByDefaultType, so the
+// CALLEE reclaims the argument at exit and the caller must not —
+// `ownedByCalleeAt` suppresses the stage-(b) dec at that
+// position. This shape was already clean (9 allocs / 9 frees)
+// and stays clean; it is what would double-free first if the
+// credit ever reached an owned-by-default position.
+struct Op { a: i32, b: i32 }
+struct St { ops: Op[] }
+
+@noinline
+function mkop(i: i32): Op { return Op { a: i, b: i * 2 }; }
+
+@noinline
+function emit(s: St, o: Op): St { return St { ops: s.ops.append(o) }; }
+
+function main(): i32 {
+    let st: St = St { ops: [] };
+    let i: i32 = 0;
+    while (i < 3) {
+        st = emit(st, mkop(i));
+        i = i + 1;
+    }
+    let t: i32 = 0;
+    let k: i32 = 0;
+    while (k < st.ops.len()) {
+        t = t * 10 + st.ops[k].a;
+        k = k + 1;
+    }
+    return (t - 12) + __rc_underflow_count();
+}

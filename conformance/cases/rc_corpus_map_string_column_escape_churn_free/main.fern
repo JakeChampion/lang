@@ -1,0 +1,32 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// String-keyed / string-valued keys()/values() go through
+// __map_string_column, which builds a `string[]` local and
+// returns `out as usize`. That cast severs the escape analysis,
+// so the rc pass dropped `out` at function exit even though it
+// escapes via the return — the caller then double-freed the
+// buffer (one underflow per snapshot call, regardless of entry
+// count). __map_string_column now retains the buffer once before
+// returning so the exit-drop balances. Long keys/values force
+// real heap strings (short strings inline with no buffer).
+// Exercises keys + values + string->string, unused + consumed.
+// Consumed anchors: ks.len()=2 + ks[0].len()=24 + ks[1].len()=24
+// = 50 per iter; 500x → 25000.
+import "core/int";
+import "core/map";
+import "std/string";
+function mk(): i32 {
+    let m: Map[string, string] = map_new(8);
+    m = m.insert("longkeyaaaaaaaaaaaaaaaa1", "longvalbbbbbbbbbbbbbbbb1");
+    m = m.insert("longkeyaaaaaaaaaaaaaaaa2", "longvalbbbbbbbbbbbbbbbb2");
+    let vs = m.values();    // unused string[] snapshot, dropped at exit
+    let ks = m.keys();      // consumed snapshot anchors the value
+    return ks.len() + ks[0].len() + ks[1].len();
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 25000) + __rc_underflow_count();
+}

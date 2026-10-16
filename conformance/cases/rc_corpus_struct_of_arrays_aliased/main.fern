@@ -1,0 +1,12 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Struct holding arrays, aliased then reassigned.
+import "core/int";
+struct Holder { a: i32[], b: i32[] }
+function main(): i32 {
+    let h1: Holder = Holder { a: [1, 2], b: [3, 4, 5] };
+    let h2: Holder = h1;
+    let sum: i32 = h2.a[1] + h2.b[2];
+    return (sum - 7) + __rc_underflow_count();
+}

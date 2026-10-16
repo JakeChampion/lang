@@ -1,0 +1,56 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Recursive `(T, Cur)` tuple reader threading a SCALAR-ONLY struct
+// cursor with `c = c2;` in a loop. Borrow inference demotes the
+// non-escaping `c` param; before the computeConsumedParams fix the
+// reassignment's overwrite dec released the caller's reference, the
+// caller's destructure-temp deep drop then freed the cursor box
+// early, and the still-live aliases double-freed it — freelist
+// corruption that crashed __fern_alloc at recursion depth 4.
+// Scalar-only cursors were the exact gap: string/array-bearing ones
+// were already consumed-promoted.
+// 3^5 = 243 per build.
+struct Leaf { x: i32 }
+struct Node { kids: T[] }
+type T = Leaf | Node;
+struct Cur { pos: i32 }
+function build(c: Cur, depth: i32): (T, Cur) {
+    if (depth == 0) {
+        return (Leaf { x: 1 }, Cur { pos: c.pos + 1 });
+    }
+    let kids: T[] = [];
+    let i: i32 = 0;
+    while (i < 3) {
+        let (k, c2) = build(c, depth - 1);
+        c = c2;
+        kids = kids.append(k);
+        i = i + 1;
+    }
+    return (Node { kids: kids }, Cur { pos: c.pos + 1 });
+}
+function count(t: T): i32 {
+    match (t) {
+        Leaf(l) => { return l.x; },
+        Node(n) => {
+            let s: i32 = 0;
+            let i: i32 = 0;
+            while (i < n.kids.len()) {
+                s = s + count(n.kids[i]);
+                i = i + 1;
+            }
+            return s;
+        }
+    }
+    return 0;
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let r: i32 = 0;
+    while (r < 20) {
+        let (t, c2) = build(Cur { pos: 0 }, 5);
+        total = total + count(t);
+        r = r + 1;
+    }
+    return (total / 20) - 243 + __rc_underflow_count();
+}

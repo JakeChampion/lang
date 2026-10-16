@@ -1,0 +1,18 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The same undercount through a Map field, the shape
+// typeDeepDropWired still rejects.
+import "core/map";
+struct Ctx { m: Map[string, i32], n: i32 }
+function step(ctx: Ctx): Ctx { return Ctx { m: ctx.m, n: ctx.n + 1 }; }
+function steps(ctx: Ctx): Ctx {
+    ctx = step(ctx);
+    return ctx;
+}
+function main(): i32 {
+    let m: Map[string, i32] = map_new(4);
+    let ctx: Ctx = Ctx { m: m.insert("a", 1), n: 0 };
+    ctx = steps(ctx);
+    return (ctx.n - 1) + (ctx.m.len() - 1) + __rc_underflow_count();
+}

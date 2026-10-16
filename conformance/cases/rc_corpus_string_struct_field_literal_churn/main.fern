@@ -1,0 +1,20 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// String struct field from a LITERAL (wasm). The field is moved a
+// heap-form string literal (no construction inc); the struct drop's
+// __fern_str_dec must be a no-op on it (the 0x80000000 data-segment
+// sentinel header short-circuits), never freeing the immortal
+// literal. 200x churn; an over-release of the literal trips the
+// underflow detector. "a literal value" = 15 bytes.
+struct Holder { name: string }
+function mk(seed: i32): i32 {
+    let h: Holder = Holder { name: "a literal value" };
+    return h.name.len();
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 3000) + __rc_underflow_count();
+}

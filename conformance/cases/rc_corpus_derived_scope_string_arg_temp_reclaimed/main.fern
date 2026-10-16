@@ -1,0 +1,43 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// #7914 frontier. A fresh string built in argument position for a
+// callee that stores its parameter via `.append` stranded once per
+// call — the checker's derived block-scope shape, one 64 B temp per
+// `child(w(...))` (14/round measured, 44,800 B over 50 rounds).
+// The push element is a COUNTED store, so stringParamCounted now
+// credits the position (the array tier's #7867 slice-1/4 argument)
+// and the caller's stage-(b) release fires. The bare-return
+// hazard keeps its refusal (h_ret_bare probe, leak-safe).
+struct Tab { xs: i32[], n: i32 }
+struct Env { names: string[], t: Tab, depth: i32 }
+
+@noinline
+function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
+
+@noinline
+function (e: Env) child(nm: string): Env {
+    return Env { names: e.names.append(nm), t: e.t, depth: e.depth + 1 };
+}
+
+@noinline
+function walk(e: Env, d: i32): i32 {
+    if (d == 0) { return e.depth + e.t.n + e.names.len(); }
+    let acc: i32 = 0;
+    acc = acc + walk(e.child(w("a")), d - 1);
+    acc = acc + walk(e.child(w("b")), d - 1);
+    return acc + e.depth;
+}
+
+@noinline
+function round(i: i32): i32 {
+    let tab: Tab = Tab { xs: [i, i + 1, i + 2], n: i };
+    let root: Env = Env { names: [], t: tab, depth: 0 };
+    return walk(root, 3) % 97;
+}
+function main(): i32 {
+    let t: i32 = 0;
+    let r: i32 = 0;
+    while (r < 50) { t = t + round(r); r = r + 1; }
+    return (t % 89) - 15 + __rc_underflow_count();
+}

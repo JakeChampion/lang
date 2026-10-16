@@ -1,0 +1,27 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The caller-side half of the same admission: the callee's .with is
+// admitted on its own body, and the container it reads through is the
+// CALLER's, still live across the call. The #4873 grow bracket holds
+// the buffer above rc 1 there, so the CoW copies and the field keeps
+// its buffer — the branch that pays the inc the helper's copy path
+// consumes. A missing inc over-releases; a missing bracket rewrites
+// the caller's array.
+struct Box { xs: i32[], n: i32 }
+function setter(b: Box, i: i32, v: i32): i32[] {
+    return b.xs.with(i, v);
+}
+function main(): i32 {
+    let bad: i32 = 0;
+    let i: i32 = 0;
+    while (i < 30) {
+        let b: Box = Box { xs: [1, 2, 3], n: i };
+        let ys: i32[] = setter(b, 0, 9);
+        if (b.xs[0] != 1) { bad = bad + 1; }
+        if (ys[0] != 9) { bad = bad + 2; }
+        if (b.xs.len() != 3 || ys.len() != 3) { bad = bad + 4; }
+        i = i + 1;
+    }
+    return bad + __rc_underflow_count();
+}

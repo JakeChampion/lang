@@ -1,0 +1,32 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Map[string, V] key reclamation — the symmetric slice to
+// map_string_value_reclaim_churn_free, for the KEY column. The
+// generated __drop_map_str_keys column walk reclaims each key's
+// string buffer at map drop. Set retains an aliased string key
+// so the column co-owns the buffer; fresh keys move in with
+// rc=1. An OVERWRITE with the same key keeps the original key
+// in place and discards the (freshly-boxed-on-wasm /
+// rc-inc-on-native) new key, which leaks the inc on wasm but is
+// bounded (accepted leak, documented in the plan).
+//
+// Coverage: aliased set + fresh set + overwrite + drop. Per iter:
+// key.len()=31; 500x → 15500.
+import "core/int";
+import "core/map";
+import "std/string";
+function mk(): i32 {
+    let key: string = "key-aaaaaaaaaaaaaaaaaaaa-shared";
+    let m: Map[string, i32] = map_new(8);
+    m = m.insert(key, 1);                                // aliased key
+    m = m.insert(key, 2);                                // re-set same key (overwrite)
+    m = m.insert("key-bbbbbbbbbbbbbbbbbbbb-fresh", 3);   // fresh key (moves in)
+    return key.len();
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 15500) + __rc_underflow_count();
+}
