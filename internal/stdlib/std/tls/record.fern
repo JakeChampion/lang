@@ -291,57 +291,49 @@ function __seal(p: Protection, plaintext: [u8], aad: [u8]): Result[u8[], RecordE
       let Some(g) = p.gcm else {
         return Err(BadKeys(p.key.len(), p.iv.len()));
       };
-      match (g.seal(__nonce(p), plaintext, aad)) {
-        Ok(sealed) => {
-          return Ok(sealed);
-        },
-        Err(e) => {
-          return Err(__gcm_error(p, e));
-        }
-      }
+      return __gcm_sealed(p, g.seal(__nonce(p), plaintext, aad));
     },
     keyschedule.ChaCha20Poly1305 => {
-      match (chacha20poly1305.seal(p.key, __nonce(p), plaintext, aad)) {
-        Ok(sealed) => {
-          return Ok(sealed);
-        },
-        Err(e) => {
-          return Err(__chacha_error(p, e));
-        }
-      }
+      return __chacha_sealed(p, chacha20poly1305.seal(p.key, __nonce(p), plaintext, aad));
     }
   }
   return Err(BadKeys(p.key.len(), p.iv.len()));
 }
 
-function __gcm_error(p: Protection, e: aes_gcm.AeadError): RecordError {
-  match (e) {
-    aes_gcm.KeyLength(n) => {
-      return BadKeys(n, p.iv.len());
+function __gcm_sealed(p: Protection, r: Result[u8[], aes_gcm.AeadError]): Result[u8[], RecordError] {
+  match (r) {
+    Ok(sealed) => {
+      return Ok(sealed);
     },
-    aes_gcm.NonceLength(n) => {
-      return BadKeys(p.key.len(), n);
+    Err(aes_gcm.KeyLength(n)) => {
+      return Err(BadKeys(n, p.iv.len()));
     },
-    aes_gcm.Forged => {
-      return BadRecordMac;
+    Err(aes_gcm.NonceLength(n)) => {
+      return Err(BadKeys(p.key.len(), n));
+    },
+    Err(aes_gcm.Forged()) => {
+      return Err(BadRecordMac);
     }
   }
-  return BadRecordMac;
+  return Err(BadRecordMac);
 }
 
-function __chacha_error(p: Protection, e: chacha20poly1305.AeadError): RecordError {
-  match (e) {
-    chacha20poly1305.KeyLength(n) => {
-      return BadKeys(n, p.iv.len());
+function __chacha_sealed(p: Protection, r: Result[u8[], chacha20poly1305.AeadError]): Result[u8[], RecordError] {
+  match (r) {
+    Ok(sealed) => {
+      return Ok(sealed);
     },
-    chacha20poly1305.NonceLength(n) => {
-      return BadKeys(p.key.len(), n);
+    Err(chacha20poly1305.KeyLength(n)) => {
+      return Err(BadKeys(n, p.iv.len()));
     },
-    chacha20poly1305.Forged => {
-      return BadRecordMac;
+    Err(chacha20poly1305.NonceLength(n)) => {
+      return Err(BadKeys(p.key.len(), n));
+    },
+    Err(chacha20poly1305.Forged()) => {
+      return Err(BadRecordMac);
     }
   }
-  return BadRecordMac;
+  return Err(BadRecordMac);
 }
 
 function __open(p: Protection, sealed: [u8], aad: [u8]): Result[u8[], RecordError] {
@@ -350,24 +342,16 @@ function __open(p: Protection, sealed: [u8], aad: [u8]): Result[u8[], RecordErro
       let Some(g) = p.gcm else {
         return Err(BadKeys(p.key.len(), p.iv.len()));
       };
-      match (g.open(__nonce(p), sealed, aad)) {
-        Ok(inner) => {
-          return Ok(inner);
-        },
-        Err(e) => {
-          return Err(BadRecordMac);
-        }
-      }
+      let Ok(inner) = g.open(__nonce(p), sealed, aad) else {
+        return Err(BadRecordMac);
+      };
+      return Ok(inner);
     },
     keyschedule.ChaCha20Poly1305 => {
-      match (chacha20poly1305.open(p.key, __nonce(p), sealed, aad)) {
-        Ok(inner) => {
-          return Ok(inner);
-        },
-        Err(e) => {
-          return Err(BadRecordMac);
-        }
-      }
+      let Ok(inner) = chacha20poly1305.open(p.key, __nonce(p), sealed, aad) else {
+        return Err(BadRecordMac);
+      };
+      return Ok(inner);
     }
   }
   return Err(BadRecordMac);
