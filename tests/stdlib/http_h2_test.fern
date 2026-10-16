@@ -228,6 +228,50 @@ function test_request_and_response(): test.TestOutcome {
   return test.assert_eq(got, "request 1 GET /hello?x=1 host=example.test body= trailer=-\nhandling 1\nHEADERS 1 END_HEADERS :status=200 content-type=text/plain content-length=2\nDATA 1 END_STREAM hi\nopen 0 handling 0");
 }
 
+// Every request uses the HTTP target decoder, before either body mode
+// hands it to a handler. Refusal leaves the connection usable.
+function test_request_targets(): test.TestOutcome {
+  let got: string = "";
+  let want: string = "";
+  for streaming in [false, true] {
+    let cfg: h2.Config = h2.Config { ...h2.config(), stream_bodies: streaming };
+    for pair in [("/100%25.txt", "/100%.txt"), ("/a/%2e/b/../c?q=%2F", "/a/c?q=%2F"), ("/%252e%252e/x", "/%2e%2e/x")] {
+      let o: Opened = opened(cfg);
+      let (cl, bytes) = request(o.client, 1, get(pair.0), true);
+      let step: h2.Step = o.conn.read(bytes);
+      got = got + events_text(step.events);
+      want = want + "request 1 GET " + pair.1 + " host=example.test body= trailer=-\n";
+    }
+    for path in ["/%2e%2e/x", "/docs/..%2f..%2f/x", "/%00", "/%zz", "/%", "/../x"] {
+      for ended in [false, true] {
+        let o: Opened = opened(cfg);
+        let (cl, bytes) = request(o.client, 1, get(path), ended);
+        let step: h2.Step = o.conn.read(bytes);
+        got = got + events_text(step.events) + shown(cl, step.output).text + int.int_to_string(step.conn.streams_open()) + "/" + int.int_to_string(step.conn.handling()) + "\n";
+        want = want + "HEADERS 1 END_STREAM END_HEADERS :status=400\n";
+        if (!ended) {
+          want = want + "RST_STREAM 1 0\n";
+        }
+        want = want + "0/0\n";
+        let (next_cl, next_bytes) = request(cl, 3, get("/100%25.txt"), true);
+        got = got + events_text(step.conn.read(next_bytes).events);
+        want = want + "request 3 GET /100%.txt host=example.test body= trailer=-\n";
+      }
+    }
+    let o: Opened = opened(cfg);
+    let (cl, bytes) = request(o.client, 1, post("/a/%62", "1"), false);
+    let step: h2.Step = o.conn.read(bytes);
+    if (streaming) {
+      got = got + events_text(step.events);
+      want = want + "streamed 1 POST /a/b host=example.test\n";
+    } else {
+      got = got + events_text(step.events) + events_text(step.conn.read(data(1, "x", true)).events);
+      want = want + "request 1 POST /a/b host=example.test body=x trailer=-\n";
+    }
+  }
+  return test.assert_eq(got, want);
+}
+
 // A POST's body arrives in DATA frames and ends with trailers; a body
 // that is not its content-length is a stream error; a response carrying
 // trailers ends with a HEADERS frame.
@@ -656,6 +700,7 @@ function main(): i32 {
   let r: test.TestRunner = test.test_new("std/http/h2");
   r = r.it("the preface and settings", test_preface_and_settings);
   r = r.it("a request and its response", test_request_and_response);
+  r = r.it("request targets decode once and refuse unsafe paths", test_request_targets);
   r = r.it("bodies and trailers", test_bodies_and_trailers);
   r = r.it("flow control", test_flow_control);
   r = r.it("a header block over CONTINUATION frames", test_continuation_out);

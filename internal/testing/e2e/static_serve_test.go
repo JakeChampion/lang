@@ -30,7 +30,7 @@ func TestStaticServeInterp(t *testing.T) {
 	src, big := writeStaticServeSource(t, "serve.config()")
 	addr, _ := e2eharness.StartInheritedServer(t, exec.Command(bin, "-interp", src))
 	checkStaticServe(t, addr, big, &http.Transport{}, 1)
-	checkStaticPaths(t, addr)
+	checkStaticPaths(t, addr, &http.Transport{}, 1)
 }
 
 func TestStaticServeX86_64(t *testing.T) {
@@ -43,7 +43,7 @@ func TestStaticServeX86_64(t *testing.T) {
 	}
 	addr, _ := e2eharness.StartInheritedServer(t, runX86Bin(qemu, out))
 	checkStaticServe(t, addr, big, &http.Transport{}, 1)
-	checkStaticPaths(t, addr)
+	checkStaticPaths(t, addr, &http.Transport{}, 1)
 }
 
 // writeStaticServeSource writes the served directory and the program
@@ -223,15 +223,19 @@ func checkStaticServe(t *testing.T, addr string, big []byte, tr http.RoundTrippe
 
 // checkStaticPaths checks the paths the loop decodes before the handler
 // sees them: an escape decoded once, and a path climbing above the root and
-// an escaped slash refused. HTTP/1.1 only until HTTP/2 decodes :path the
-// same way (#12482).
-func checkStaticPaths(t *testing.T, addr string) {
+// an escaped slash refused, on both HTTP/1.1 and HTTP/2.
+func checkStaticPaths(t *testing.T, addr string, tr *http.Transport, major int) {
 	t.Helper()
+	defer tr.CloseIdleConnections()
+	client := &http.Client{Transport: tr, Timeout: 30 * time.Second}
 	get := func(path string) (int, []byte) {
 		t.Helper()
-		resp, err := http.Get("http://" + addr + path)
+		resp, err := client.Get("http://" + addr + path)
 		if err != nil {
 			t.Fatalf("GET %s: %v", path, err)
+		}
+		if resp.ProtoMajor != major {
+			t.Errorf("GET %s: HTTP/%d, want HTTP/%d", path, resp.ProtoMajor, major)
 		}
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()

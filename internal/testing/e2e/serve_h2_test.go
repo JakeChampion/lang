@@ -275,6 +275,7 @@ func driveFiles(t *testing.T, cmd *exec.Cmd, big []byte) {
 	protocols.SetUnencryptedHTTP2(true)
 	tr := &http.Transport{Protocols: protocols, HTTP2: &http.HTTP2Config{MaxReceiveBufferPerStream: 16 << 10, MaxReceiveBufferPerConnection: 64 << 10}}
 	checkStaticServe(t, addr, big, tr, 2)
+	checkStaticPaths(t, addr, tr, 2)
 }
 
 // drivePrefix sends a strict prefix of the HTTP/2 connection preface and
