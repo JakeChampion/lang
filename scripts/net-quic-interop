@@ -10,6 +10,11 @@
 # arrive, and the client checks them; each side closes with an application
 # close the other must report.
 #
+# Then HTTP/3 (std/http/h3q) each way against aioquic's own HTTP/3
+# (aioquic.h3): a GET and a POST of $SIZE bytes on one connection, each
+# answered with a body naming the request and a trailer, which the client
+# checks.
+#
 # Usage: net-quic-interop
 #
 # aioquic and its dependencies are pinned in
@@ -47,6 +52,8 @@ tls_certificate leaf prime256v1 "/CN=localhost" ca "subjectAltName=DNS:localhost
 
 bin/fern -target "$TARGET" -o "$work/client" "$d/client.fern"
 bin/fern -target "$TARGET" -o "$work/server" "$d/server.fern"
+bin/fern -target "$TARGET" -o "$work/h3_client" "$d/h3_client.fern"
+bin/fern -target "$TARGET" -o "$work/h3_server" "$d/h3_server.fern"
 
 # await_line LOG TEXT — once LOG holds TEXT, or the run fails with LOG.
 await_line() {
@@ -107,12 +114,41 @@ aioquic_client() {
   expect "aioquic client, fern server ($mode)" "$log" "aioquic client: connected alpn=fern-echo" "aioquic client: echo of $SIZE bytes matches" "aioquic client: ping answered" "fern server: connected alpn=fern-echo" "fern server: echoed stream 0 to its end" "fern server: closed code=0 remote=true reason=aioquic done"
 }
 
+# fern_h3_client — the Fern HTTP/3 client against aioquic's HTTP/3 server.
+fern_h3_client() {
+  local port log="$work/fern-h3-client.log"
+  port="$(free_port)"
+  start_server "$work/aioquic-h3-server.log" "$venv/bin/python" "$d/aioquic_h3_server.py" "$port" "$certs/leaf.pem" "$certs/leaf.key"
+  await_line "$work/aioquic-h3-server.log" "aioquic h3 server: listening"
+  "$work/h3_client" "$port" localhost "$certs/ca.pem" "$SIZE" > "$log" 2>&1 || echo "fern h3 client: exit $?" >> "$log"
+  sleep 0.5
+  stop_server
+  cat "$work/aioquic-h3-server.log" >> "$log"
+  expect "fern h3 client, aioquic h3 server" "$log" "fern h3 client: stream 0 -> 200 GET /hello 0 | x-served-by=aioquic" "fern h3 client: stream 4 -> 200 POST /upload $SIZE | x-served-by=aioquic"
+}
+
+# aioquic_h3_client — aioquic's HTTP/3 client against the Fern HTTP/3
+# server.
+aioquic_h3_client() {
+  local port log="$work/aioquic-h3-client.log"
+  port="$(free_port)"
+  start_server "$work/fern-h3-server.log" "$work/h3_server" "$port" "$certs/leaf.pem" "$certs/leaf.key"
+  await_line "$work/fern-h3-server.log" "fern h3 server: listening"
+  "$venv/bin/python" "$d/aioquic_h3_client.py" "$port" "$certs/ca.pem" "$SIZE" > "$log" 2>&1 || echo "aioquic h3 client: exit $?" >> "$log"
+  await_line "$work/fern-h3-server.log" "fern h3 server: ended"
+  stop_server
+  cat "$work/fern-h3-server.log" >> "$log"
+  expect "aioquic h3 client, fern h3 server" "$log" "aioquic h3 client: GET /hello -> 200 GET /hello 0 | x-served-by=fern" "aioquic h3 client: POST /upload -> 200 POST /upload $SIZE | x-served-by=fern" "fern h3 server: ended code=256 remote=true"
+}
+
 echo "== aioquic $("$venv/bin/python" -c 'import aioquic; print(aioquic.__version__)'), $ARCH"
 fern_client plain
 fern_client retry
 fern_client chacha20
 aioquic_client plain
 aioquic_client chacha20
+fern_h3_client
+aioquic_h3_client
 if [ "$failed" -ne 0 ]; then
   echo "net-quic-interop: a case failed" >&2
   exit 1

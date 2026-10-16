@@ -1211,6 +1211,13 @@ func TestRunnerHTTPH3ExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "http_h3", "std/http/h3", 7)
 }
 
+// `tests/stdlib/http_h3q_test.fern` runs HTTP/3 over std/quic connections
+// in memory: a GET, an upload through loss and reordering answered with a
+// trailer, requests answered out of order, and a graceful shutdown.
+func TestRunnerHTTPH3QExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_h3q", "std/http/h3q", 6)
+}
+
 // `tests/stdlib/http_h2_frame_test.fern` writes and reads back every HTTP/2
 // frame type, takes padding and priority off DATA and HEADERS, reads a
 // frame as it arrives in pieces, and answers each malformed shape RFC 9113

@@ -204,6 +204,10 @@ pub function (s: Session) peer_settings(): Option[Settings] {
   return Some(s.peer);
 }
 
+pub function (s: Session) is_server(): boolean {
+  return s.server;
+}
+
 // goaway_received is the first request stream the peer will not process,
 // or -1 before its GOAWAY.
 pub function (s: Session) goaway_received(): i64 {
