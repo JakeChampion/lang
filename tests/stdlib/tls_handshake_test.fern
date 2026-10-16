@@ -529,6 +529,58 @@ function test_hello_retry(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
+// A client sharing in two groups — the hybrid and X25519 — is answered on
+// its first ClientHello by a server that takes only X25519, agrees with one
+// that prefers the hybrid, and refuses a HelloRetryRequest for a group it
+// already sent a share in.
+function test_two_shares(): test.TestOutcome {
+  let cc: handshake.ClientConfig = handshake.ClientConfig { ...handshake.client_config("example.com"), shares: 2 };
+  let only_x25519: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), groups: [keyshare.X25519] };
+  let answered: string = "";
+  match (handshake.client_start(cc, pattern(1, handshake.client_entropy(cc)))) {
+    Ok(start) => {
+      match (handshake.server_new(only_x25519, pattern(2, handshake.server_entropy(only_x25519)))) {
+        Ok(s) => {
+          match (s.read(start.output)) {
+            Ok(s1) => {
+              answered = event_names(s1.events);
+            },
+            Err(e) => {
+              answered = e.message();
+            }
+          }
+        },
+        Err(e) => {
+          answered = e.message();
+        }
+      }
+      answered = answered + " | " + client_outcome(start.client.read(retry_record(0x001d, [])));
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  let x25519: string = "";
+  match (handshake_between(cc, only_x25519)) {
+    Ok(p) => {
+      x25519 = exchange(p);
+    },
+    Err(e) => {
+      x25519 = e.message();
+    }
+  }
+  let hybrid: string = "";
+  match (handshake_between(cc, handshake.server_config([ed_public()], [0x0807]))) {
+    Ok(p) => {
+      hybrid = exchange(p);
+    },
+    Err(e) => {
+      hybrid = e.message();
+    }
+  }
+  return test.assert_eq(answered + " | " + x25519 + " | " + hybrid, " sign | 47 tls handshake: illegal HelloRetryRequest group | ping pong | ping pong");
+}
+
 // A HelloRetryRequest from the trace's server for the given group, with a
 // cookie when one is given.
 function retry_record(group: i32, cookie: u8[]): u8[] {
@@ -1338,6 +1390,7 @@ function main(): i32 {
   r = r.it("client and server across suites and groups", test_round_trips);
   r = r.it("defaults, server name and ALPN", test_defaults_and_alpn);
   r = r.it("HelloRetryRequest", test_hello_retry);
+  r = r.it("key shares in two groups", test_two_shares);
   r = r.it("HelloRetryRequest cookie and a second one", test_retry_cookie);
   r = r.it("HelloRetryRequest refusals", test_retry_refusals);
   r = r.it("no suite, group or protocol in common", test_no_common_ground);

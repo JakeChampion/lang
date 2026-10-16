@@ -1,0 +1,18 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Pair-form Option[i32] (scalar payload, no heap box) must be
+// untouched by the generic-enum substitution — it has no struct
+// payload, so it keeps the generic decl and the flat dec. A
+// stray box_free here would corrupt. sum_{0..99}(i) = 4950.
+import "core/int";
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) {
+        let o: Option[i32] = Some(i);
+        match (o) { Some(n) => { acc = acc + n; }, None => { acc = acc + 0; } }
+        i = i + 1;
+    }
+    return (acc - 4950) + __rc_underflow_count();
+}

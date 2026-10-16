@@ -1,0 +1,16 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Generic enum (Option) wrapping a pointer — falls through
+// to plain dec (leaks, no underflow).
+import "core/int";
+import "std/string";
+function pick(xs: i32[]): Option[i32[]] {
+    if (xs.len() > 0) { return Some(xs); }
+    return None;
+}
+function main(): i32 {
+    let got: i32 = 0;
+    match (pick([7, 8, 9])) { Some(a) => { got = a[2]; }, None => { got = 0; } }
+    return (got - 9) + __rc_underflow_count();
+}

@@ -1,0 +1,25 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Transitive reclamation Stage A — uniform-enum-of-struct
+// churn: a union whose variants each carry a struct holding
+// an array, built + matched + discarded every iteration. The
+// enum drop now recurses into __drop_struct_VInt (freeing the
+// struct box + its array) rather than flat-dec'ing the
+// payload. sum_{i=0..99}(i+1) = 4950 + 100 = 5050.
+import "core/int";
+import "core/int";
+struct VInt { v: i32[] }
+struct VArr { v: i32[] }
+type Value = VInt | VArr;
+function mk(n: i32): Value { return VInt { v: [n, n + 1] }; }
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) {
+        let x: Value = mk(i);
+        match (x) { VInt(a) => { acc = acc + a.v[1]; }, VArr(b) => { acc = acc + b.v[0]; } }
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}

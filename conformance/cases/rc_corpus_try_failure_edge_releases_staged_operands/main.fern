@@ -1,0 +1,104 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// #8719: a `?` inside a construction leaves through the exit sweep,
+// which sees named locals only, so the operands the literal had
+// already staged — a fresh temp, a moved local, an array, tuple or
+// payload element — were abandoned on Err. The field placed AFTER
+// the `?` is the analysis half: its move was claimed for the whole
+// statement, so the sweep skipped a local nothing had consumed.
+// Every shape runs down both paths. Before: 2240 bytes live on
+// arm64 and wasm, clean on each Ok path.
+struct Pair { a: i32[], b: i32 }
+enum Two { Both(i32[], i32), Neither }
+
+@noinline
+function g(c: i32): Result[i32, i32] {
+    if (c == 0) { return Err(7); }
+    return Ok(c * 2);
+}
+
+@noinline
+function mk(c: i32): i32[] { return [c, c + 1, c + 2]; }
+
+@noinline
+function field_temp(c: i32): Result[i32, i32] {
+    let p: Pair = Pair { a: [1, 2, 3], b: g(c)? };
+    return Ok(p.a[0] + p.b);
+}
+
+@noinline
+function field_moved_before(c: i32): Result[i32, i32] {
+    let x: i32[] = mk(c);
+    let p: Pair = Pair { a: x, b: g(c)? };
+    return Ok(p.a[0] + p.b);
+}
+
+@noinline
+function field_moved_after(c: i32): Result[i32, i32] {
+    let x: i32[] = mk(c);
+    let p: Pair = Pair { b: g(c)?, a: x };
+    return Ok(p.a[0] + p.b);
+}
+
+@noinline
+function array_elem(c: i32): Result[i32, i32] {
+    let xs: i32[][] = [mk(c), [g(c)?]];
+    return Ok(xs[0][0] + xs[1][0]);
+}
+
+@noinline
+function tuple_elem(c: i32): Result[i32, i32] {
+    let t: (i32[], i32) = (mk(c), g(c)?);
+    return Ok(t.0[0] + t.1);
+}
+
+@noinline
+function enum_payload(c: i32): Result[i32, i32] {
+    let e: Two = Both(mk(c), g(c)?);
+    match (e) {
+        Both(a, b) => { return Ok(a[0] + b); },
+        Neither => { return Ok(0); }
+    }
+}
+
+@noinline
+function in_loop(c: i32): Result[i32, i32] {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 3) {
+        let p: Pair = Pair { a: mk(i), b: g(c)? };
+        acc = acc + p.a[0] + p.b;
+        i = i + 1;
+    }
+    return Ok(acc);
+}
+
+function run(k: i32, c: i32): i32 {
+    let r: Result[i32, i32] = Err(0);
+    if (k == 0) { r = field_temp(c); }
+    if (k == 1) { r = field_moved_before(c); }
+    if (k == 2) { r = field_moved_after(c); }
+    if (k == 3) { r = array_elem(c); }
+    if (k == 4) { r = tuple_elem(c); }
+    if (k == 5) { r = enum_payload(c); }
+    if (k == 6) { r = in_loop(c); }
+    match (r) {
+        Ok(v) => { return v; },
+        Err(e) => { return e; }
+    }
+}
+
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 20) {
+        let k: i32 = 0;
+        while (k < 7) {
+            acc = acc + run(k, i % 2);
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    return (acc - 760) + __rc_underflow_count();
+}

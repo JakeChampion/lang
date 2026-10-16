@@ -1,0 +1,26 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Returned map: make_map builds an owned map and returns it.
+// The return-inc (maps inc as structs in needsRcIncOnAlias)
+// must protect it so make_map's exit drop does NOT free the
+// buf/handle out from under the caller. sum_{k=0..49}(k+2k) =
+// 3*1225 = 3675.
+import "core/int";
+import "core/map";
+function make_map(n: i32): Map[i32, i32] {
+    let m: Map[i32, i32] = map_new(4);
+    m = m.insert(1, n);
+    m = m.insert(2, n * 2);
+    return m;
+}
+function main(): i32 {
+    let got: i32 = 0;
+    let k: i32 = 0;
+    while (k < 50) {
+        let m: Map[i32, i32] = make_map(k);
+        got = got + m.get_or(1, -1) + m.get_or(2, -1);
+        k = k + 1;
+    }
+    return (got - 3675) + __rc_underflow_count();
+}

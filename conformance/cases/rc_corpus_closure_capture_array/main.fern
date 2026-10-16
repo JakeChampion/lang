@@ -1,0 +1,12 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Closure capturing an array (capture leaks under no-free —
+// must not over-release).
+import "core/int";
+function main(): i32 {
+    let xs: i32[] = [5, 6, 7];
+    let f = (d: i32): i32 => { return xs[2] + d; };
+    let got: i32 = f(0);
+    return (got - 7) + __rc_underflow_count();
+}

@@ -1,0 +1,36 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// #8003: a function that forwards another's pair-form payload
+// (tcp's __read_request over http_parse_request) releases its own
+// count after the re-wrap takes one, and its caller may then free
+// what it receives.
+struct Req { path: string, n: i32 }
+@noinline
+function parse(i: i32): Option[Req] {
+    if (i % 6 == 0) { return None; }
+    let p: string = "";
+    let j: i32 = 0;
+    while (j < 4) { p = p + "ab"; j = j + 1; }
+    return Some(Req { path: p, n: i });
+}
+@noinline
+function read(i: i32): Option[Req] {
+    match (parse(i)) {
+        Some(parsed) => { return Some(parsed); },
+        None => {}
+    }
+    return None;
+}
+function main(): i32 {
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 50) {
+        match (read(i)) {
+            Some(req) => { t = t + req.path.len(); },
+            None => {}
+        }
+        i = i + 1;
+    }
+    return (t % 97 - 37) + __rc_underflow_count();
+}

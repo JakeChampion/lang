@@ -1,0 +1,21 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Closure-capture composite — a closure capturing an ARRAY OF
+// STRUCTS deep-drops each element box via __drop_arr_struct_Item
+// (Stage B loop) at the closure's death, not just the buffer.
+// Two elements per iter → f() returns len 2.
+import "core/int";
+import "std/string";
+struct Item { tags: i32[] }
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) {
+        let items: Item[] = [Item { tags: [i, i + 1] }, Item { tags: [i + 2] }];
+        let f = (d: i32): i32 => { return items.len() + d; };
+        acc = acc + f(0);
+        i = i + 1;
+    }
+    return (acc - 200) + __rc_underflow_count();
+}

@@ -12,10 +12,8 @@ import (
 // --- The wasm leak census (#7912) ---------------------------------
 //
 // Until this landed, wasm was the one shipped backend with NO leak
-// detector: `TestWASMRcCorrectnessCorpus` ran the same 216 programs as
-// its two native siblings and could only ever see a wrong ANSWER, never
-// a block the program never gave back. docs/TEST-GATES.md named that
-// blindness on the rc corpus's row.
+// detector: the rc corpus ran there for its exit code and could only ever
+// see a wrong ANSWER, never a block the program never gave back.
 //
 // The census is the register backends' contract, byte for byte:
 //

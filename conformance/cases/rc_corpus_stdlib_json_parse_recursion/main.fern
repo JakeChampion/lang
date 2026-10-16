@@ -1,0 +1,39 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The json parser's mutually recursive functions share one
+// position cell. This case drives every path through them —
+// numbers, \uXXXX escapes, nested arrays + objects (recursion),
+// and malformed inputs whose failure unwinds through the
+// recursion to None — with the underflow counter required to
+// stay 0 under free-on.
+import "core/int";
+import "std/json";
+import "std/string";
+function main(): i32 {
+    let bad: i32 = 0;
+    // nested arrays + objects + \uXXXX escape round-trip
+    match (json.json_parse("{\"nums\":[-1,2.5,3e2],\"k\":\"a\\u0041b\",\"o\":{\"d\":[true,null,false]}}")) {
+        Some(v) => {
+            match (json.json_get_string(v, "k")) {
+                Some(s) => { if (s != "aAb") { bad = bad + 1; } },
+                None => { bad = bad + 2; }
+            }
+            match (json.json_get_array(v, "nums")) {
+                Some(a) => { if (a.len() != 3) { bad = bad + 4; } },
+                None => { bad = bad + 8; }
+            }
+        },
+        None => { bad = bad + 100; }
+    }
+    // malformed: the failure unwinds to None
+    match (json.json_parse("{\"a\":}")) {
+        Some(v) => { bad = bad + 1000; },
+        None => { }
+    }
+    match (json.json_parse("[1,2")) {
+        Some(v) => { bad = bad + 2000; },
+        None => { }
+    }
+    return bad + __rc_underflow_count();
+}

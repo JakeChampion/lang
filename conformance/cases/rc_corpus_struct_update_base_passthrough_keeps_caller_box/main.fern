@@ -1,0 +1,28 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The interlock for the case above: the base is the CALLER's live
+// struct, handed straight back by a passthrough. `returnsOwnBox`
+// credits the bare returned parameter because it is owned-by-default
+// — the caller retained it on the way in — so the base is released
+// here, and `base` must survive it. Every round reads through both
+// the copy and `base`, and the post-loop read pins the string
+// contents rather than just the shape.
+struct Reg2 { names: string[], tag: string, n: i32 }
+
+@noinline
+function thread(r: Reg2): Reg2 { return r; }
+
+function main(): i32 {
+    let pad: string = "xyzw";
+    let base: Reg2 = Reg2 { names: [pad + "0123456789abcdef"], tag: pad + "0123456789abcdef", n: 1 };
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 3) {
+        let r: Reg2 = Reg2 { ...thread(base), tag: pad + "fedcba9876543210" };
+        t = t + r.names.len() + r.tag.len() + base.names.len() + base.tag.len();
+        i = i + 1;
+    }
+    let last: i32 = base.names[0].len() + base.tag.len();
+    return (t - 126) + (last - 40) + __rc_underflow_count();
+}

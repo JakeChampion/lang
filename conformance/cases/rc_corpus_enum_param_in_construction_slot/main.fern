@@ -1,0 +1,34 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// #7867 slice 3. `inferParamCountedRetain`'s type switch had arms
+// for StringType, ArrayType and StructType and none for
+// EnumType, so an enum parameter was never credited, and a fresh
+// enum temp handed to a callee that stores it was stranded.
+//
+// This is the shape the parser is built from — `e_binary(op, l,
+// r)` and its siblings take `ast.Expr` payloads, and `ast.Expr`
+// is an enum. Before: 8 allocs / 4 frees at four rounds.
+//
+// Sound for the same reason the struct arm is: needsRcIncOnAlias
+// is true for an enum, so the struct construction inc's the
+// argument, and a parameter is never a move site.
+enum Ty { I32(i32), Str(string), Unk(string) }
+struct Node { ty: Ty, n: i32 }
+
+@noinline
+function t_i32(): Ty { return Ty.I32(32); }
+
+@noinline
+function mknode(t: Ty, n: i32): Node { return Node { ty: t, n: n }; }
+
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 4) {
+        let nd: Node = mknode(t_i32(), i);
+        acc = acc + nd.n;
+        i = i + 1;
+    }
+    return (acc - 6) + __rc_underflow_count();
+}

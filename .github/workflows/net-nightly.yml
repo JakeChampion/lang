@@ -87,6 +87,13 @@ name: Net nightly
 # (#9859). A note it rates BAD fails the job; the count of BAD and WARN
 # notes per case is recorded like the bench's, and every note is in the
 # log.
+#
+# The `quic-interop` job runs scripts/net-quic-interop: the std/quic client
+# against aioquic's server, plainly, through a Retry and on
+# ChaCha20-Poly1305 alone, and aioquic's client against the std/quic
+# server, plainly and on ChaCha20-Poly1305 alone, at the version
+# scripts/net-quic-interop.d/requirements.txt pins
+# (docs/NET-P8-HTTP3-PLAN.md). Every case passes or the job fails.
 
 on:
   schedule:
@@ -312,6 +319,21 @@ jobs:
           name: httplint-report-x86_64
           path: ${{ runner.temp }}/httplint-report.txt
           if-no-files-found: warn
+
+  quic-interop:
+    name: net-quic-interop-x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - name: Restore aioquic's venv
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/fern-quic-interop
+          key: quic-interop-${{ runner.os }}-${{ hashFiles('scripts/net-quic-interop.d/requirements.txt') }}
+      - name: Handshake with aioquic each way
+        run: scripts/net-quic-interop
 
   h2spec:
     name: net-h2spec-x86_64

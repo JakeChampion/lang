@@ -38,11 +38,14 @@ The modules, each importable on its own and sans-IO, so each runs under
 - `std/quic/params` — transport parameters, with §18.2's checks. Slice 1,
   landed.
 - `std/quic/recovery` — RTT estimation, loss detection, PTO, NewReno
-  congestion control and pacing (RFC 9002). Slice 3.
+  congestion control and persistent congestion (RFC 9002). Slices 2–3,
+  landed together. Pacing is slice 10's.
 - `std/quic/conn` — the connection: the handshake, three packet number
-  spaces and their ACKs, CRYPTO reassembly, streams and flow control,
-  connection IDs, idle timeout, closing and draining, address validation,
-  stateless reset, path validation, key update. Slices 2–4.
+  spaces and their ACKs, CRYPTO reassembly, idle timeout, closing and
+  draining, the anti-amplification limit, following a Retry and Version
+  Negotiation, and recognising a stateless reset landed in slices 2–3.
+  Streams and flow control, connection IDs beyond the first, path
+  validation and key update are slice 4; issuing a Retry is slice 7's.
 - `std/http/qpack` — the static and dynamic tables, the encoder and
   decoder streams, Huffman shared with `std/http/hpack` through
   `std/http/huffman`. The encoder uses the static table and literals only,
@@ -86,12 +89,22 @@ Each is a bound with a test that crosses it.
    Initial, Handshake and 1-RTT: CRYPTO frames in and out of
    `std/tls/handshake`, ACKs per space, Initial and Handshake keys
    discarded, HANDSHAKE_DONE, transport parameters authenticated (§7.3).
-   Gate: a client and a server `Conn` handshaking in memory, and against
-   aioquic over a socket.
+   Gate: a client and a server `Conn` handshaking in memory
+   (`tests/stdlib/quic_conn_test.fern`), and `scripts/net-quic-interop`
+   nightly: the Fern client against aioquic's server plainly, through a
+   Retry and on ChaCha20-Poly1305 alone, and aioquic's client against the
+   Fern server. Landed with slice 3.
 3. **Recovery.** `std/quic/recovery` and its use in `std/quic/conn`.
-   Gate: RFC 9002's algorithms driven in virtual time — loss by packet and
-   by time threshold, PTO and its backoff, the congestion window across
-   slow start, recovery and congestion avoidance.
+   Gate: RFC 9002's algorithms driven in virtual time
+   (`tests/stdlib/quic_recovery_test.fern`) — loss by packet and by time
+   threshold, PTO and its backoff, the congestion window across slow
+   start, recovery and persistent congestion — and a lost datagram and a
+   lost flight recovered between two `Conn`s. Landed with slice 2.
+
+   aioquic offers no X25519MLKEM768 and does not answer a HelloRetryRequest
+   on the server side, so the QUIC client sends key shares for the first
+   two groups it supports (`ClientConfig.shares` in `std/tls/handshake`);
+   a TCP client still sends one.
 4. **Streams.** Bidirectional and unidirectional streams, flow control,
    RESET_STREAM and STOP_SENDING, stream limits, connection IDs, closing,
    stateless reset, key update, path validation. Gate: two `Conn`s
@@ -108,9 +121,8 @@ Each is a bound with a test that crosses it.
    `SO_REUSEPORT` and dual-stack on UDP sockets, and the datagram's local
    address. Gate: `TestServeH3Interp` and `TestServeH3X86_64` against an
    aioquic client.
-8. **Interop nightly.** `scripts/net-h3-interop`: aioquic's client and
-   server against Fern's in both directions, pinned by requirements file;
-   h3spec. Gate: the nightly job.
+8. **Interop nightly.** `scripts/net-quic-interop` grows HTTP/3 requests
+   both ways, and h3spec. Gate: the nightly job.
 9. **Client.** `std/fetch` speaks HTTP/3 to an origin that offers it by
    Alt-Svc, and `std/sim_fetch` scripts datagrams. Gate: fetch against
    aioquic's server, and the simulated network.

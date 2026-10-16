@@ -20,9 +20,9 @@ import (
 //     path — and every later one grows the replacement in place at rc 1.
 //
 // The aliasing half (that the caller's string is NOT lengthened under it)
-// lives in rcCorpus, which runs on all three backends; these two gates are
-// x86-64 + wasm, the ABIs with a __fern_str_append at all (arm64 has none,
-// #8414, so its codegen for the append is unchanged).
+// lives in the rc corpus (conformance/cases/rc_corpus_*), which runs on every
+// backend; these two gates are x86-64 + wasm, the ABIs with a __fern_str_append
+// at all (arm64 has none, #8414, so its codegen for the append is unchanged).
 
 // strParamAccumulatorSrc: the parameter IS the accumulator. n appends of 8
 // bytes with the loop inside the callee.
