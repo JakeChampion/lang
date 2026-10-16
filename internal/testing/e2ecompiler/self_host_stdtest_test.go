@@ -320,6 +320,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"quic_packet", langSrcAbs(t, "tests/stdlib/quic_packet_test.fern"), ""},
 		{"quic_params", langSrcAbs(t, "tests/stdlib/quic_params_test.fern"), ""},
 		{"quic_recovery", langSrcAbs(t, "tests/stdlib/quic_recovery_test.fern"), ""},
+		{"quic_streams", langSrcAbs(t, "tests/stdlib/quic_streams_test.fern"), ""},
 		{"http_grpc", langSrcAbs(t, "tests/stdlib/http_grpc_test.fern"), ""},
 		{"protobuf", langSrcAbs(t, "tests/stdlib/protobuf_test.fern"), ""},
 		{"http_cache", langSrcAbs(t, "tests/stdlib/http_cache_test.fern"), ""},

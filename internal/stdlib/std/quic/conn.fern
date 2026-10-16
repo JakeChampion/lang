@@ -14,17 +14,22 @@
 // level's packet protection. Loss detection and congestion control are
 // std/quic/recovery's.
 //
-// This slice carries the handshake and the connection's life around it:
-// ACKs and retransmission, the transport parameters checked against the
-// connection IDs actually used (§7.3), Retry and Version Negotiation at the
-// client, a server's anti-amplification limit (§8.1), Initial padding, the
-// idle timeout, closing and draining (§10), and stateless reset. Streams
-// follow; until then a peer opening one is refused with STREAM_LIMIT_ERROR.
+// Streams and their flow control are std/quic/streams', reached through
+// `open_stream`, `write`, `read`, `reset_stream` and `stop_sending`; the
+// limits a side declares (`Config.with_streams`) bound what the peer may
+// open and send.
+//
+// Around them: ACKs and retransmission, the transport parameters checked
+// against the connection IDs actually used (§7.3), Retry and Version
+// Negotiation at the client, a server's anti-amplification limit (§8.1),
+// Initial padding, the idle timeout, closing and draining (§10), and
+// stateless reset.
 
 import "std/quic/frames";
 import "std/quic/packet";
 import "std/quic/params";
 import "std/quic/recovery";
+import "std/quic/streams";
 import "std/tls/handshake";
 import "std/tls/keyschedule";
 import "std/tls/identity";
@@ -49,7 +54,7 @@ const CLOSED: i32 = 4;
 // CRYPTO bytes held per level (§7.5).
 const MAX_ACK_RANGES: i32 = 32;
 
-const MAX_CRYPTO_HELD: i32 = 65536;
+const MAX_CRYPTO_HELD: i64 = 65536;
 
 // The most packets held for keys not yet available.
 const MAX_UNDECRYPTED: i32 = 8;
@@ -70,7 +75,7 @@ pub struct Config {
 }
 
 // config declares a 30-second idle timeout and no streams; a protocol on
-// QUIC raises the stream limits it needs.
+// QUIC raises the stream limits it needs with `with_streams`.
 pub function config(alpn: string[]): Config {
   let p: params.Params = params.Params { ...params.defaults(), max_idle_timeout: 30000 as i64, max_udp_payload_size: 1472 as i64, disable_active_migration: true };
   return Config { alpn: alpn, params: p, cid_len: 8, max_datagram: 1200, server_name: "", roots: verify.roots([]), identity: None };
@@ -80,6 +85,14 @@ pub function config(alpn: string[]): Config {
 // certificate must chain to.
 pub function (c: Config) client_side(server_name: string, roots: verify.Roots): Config {
   return Config { ...c, server_name: server_name, roots: roots };
+}
+
+// with_streams declares how many bidirectional and unidirectional streams
+// the peer may open at once, how much it may send on each before reading
+// opens the window again, and how much on all of them together.
+pub function (c: Config) with_streams(bidi: i64, uni: i64, stream_window: i64, connection_window: i64): Config {
+  let p: params.Params = params.Params { ...c.params, initial_max_streams_bidi: bidi, initial_max_streams_uni: uni, initial_max_stream_data_bidi_local: stream_window, initial_max_stream_data_bidi_remote: stream_window, initial_max_stream_data_uni: stream_window, initial_max_data: connection_window };
+  return Config { ...c, params: p };
 }
 
 // server_side gives a server its certificate chain and key.
@@ -92,15 +105,15 @@ pub function (c: Config) server_side(id: identity.Identity): Config {
 // application's, and whether the peer was the one to close.
 pub struct Close { code: i64, frame_type: i64, reason: string, app: boolean, remote: boolean }
 
-// Event — what changed while the connection took a datagram or the time.
-pub enum Event { Connected, Closed(Close) }
+// Event — what changed while the connection took a datagram or the time:
+// the handshake completed, the connection ended, the peer opened a stream,
+// a stream has data or its end to `read`, the peer reset a stream it was
+// sending (with its application error code), or the peer asked this side
+// to stop sending, which resets this side's sending half with that code.
+pub enum Event { Connected, Closed(Close), StreamOpened(i64), StreamReadable(i64), StreamReset(i64, i64), StreamStopped(i64, i64) }
 
 // Step — a connection and what happened to it.
 pub struct Step { conn: Conn, events: Event[] }
-
-// Reassembly — one level's CRYPTO stream as it arrives: the bytes delivered
-// in order so far, and the segments held past a gap.
-struct Reassembly { delivered: i64, held_at: i64[], held: u8[][], held_bytes: i32 }
 
 // Space — one packet number space (§12.3).
 struct Space {
@@ -114,7 +127,7 @@ struct Space {
   crypto_out: u8[],
   crypto_sent: i64,
   crypto_lost: i64[],
-  crypto_in: Reassembly,
+  crypto_in: streams.Reassembly,
   discarded: boolean,
 }
 
@@ -149,11 +162,12 @@ pub struct Conn {
   probes: i32[],
   pending: frames.Frame[],
   held: u8[][],
+  streams: streams.Streams,
   events: Event[],
 }
 
 function __space(): Space {
-  return Space { send: None, recv: None, next_pn: 0 as i64, largest_recv: 0 - 1 as i64, largest_recv_at: 0 as i64, ranges: [], ack_wanted: false, crypto_out: [], crypto_sent: 0 as i64, crypto_lost: [], crypto_in: Reassembly { delivered: 0 as i64, held_at: [], held: [], held_bytes: 0 }, discarded: false };
+  return Space { send: None, recv: None, next_pn: 0 as i64, largest_recv: 0 - 1 as i64, largest_recv_at: 0 as i64, ranges: [], ack_wanted: false, crypto_out: [], crypto_sent: 0 as i64, crypto_lost: [], crypto_in: streams.reassembly(), discarded: false };
 }
 
 // === making a connection ===================================================
@@ -183,7 +197,7 @@ function __tls_server_config(c: Config, chain: u8[][], schemes: i32[], params_by
 
 function __base(c: Config, server: boolean, scid: u8[], dcid: u8[], odcid: u8[], now: i64): Conn {
   let r: recovery.Recovery = recovery.new(c.max_datagram, server).with_max_ack_delay(25000000 as i64);
-  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], events: [] };
+  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [] };
 }
 
 // client starts a connection: its first Initial is ready to `transmit`.
@@ -302,8 +316,120 @@ function __earliest(a: i64, b: i64): i64 {
   return a;
 }
 
+// __stepped hands back the connection with what happened to it, the
+// streams' events after the connection's own.
 function (c: Conn) __stepped(): Step {
-  return Step { conn: Conn { ...c, events: [] }, events: c.events };
+  let (table, notes) = c.streams.take_events();
+  let events: Event[] = c.events;
+  for n in notes {
+    events = events.append(__stream_event(n));
+  }
+  return Step { conn: Conn { ...c, streams: table, events: [] }, events: events };
+}
+
+function __stream_event(n: streams.Event): Event {
+  match (n) {
+    streams.Opened(id) => {
+      return StreamOpened(id);
+    },
+    streams.Readable(id) => {
+      return StreamReadable(id);
+    },
+    streams.ResetByPeer(id, code) => {
+      return StreamReset(id, code);
+    },
+    streams.StopRequested(id, code) => {
+      return StreamStopped(id, code);
+    }
+  }
+}
+
+// === streams ================================================================
+
+// open_stream opens a stream of this side's once the handshake is complete,
+// answering its ID, or refuses when the peer's limit on streams is reached.
+// Call blocked_open after a refusal to request STREAMS_BLOCKED on transmit.
+pub function (c: Conn) open_stream(uni: boolean): Result[(Conn, i64), string] {
+  if (c.state != ESTABLISHED) {
+    return Err("quic: the connection is not established");
+  }
+  match (c.streams.open(uni)) {
+    Ok(pair) => {
+      return Ok((Conn { ...c, streams: pair.0 }, pair.1));
+    },
+    Err(e) => {
+      return Err("quic: " + e);
+    }
+  }
+}
+
+// can_open reports whether `open_stream` would succeed.
+pub function (c: Conn) can_open(uni: boolean): boolean {
+  return c.state == ESTABLISHED && c.streams.can_open(uni);
+}
+
+// blocked_open tells the peer, on the next `transmit`, that this side wants
+// to open another stream of the kind and its limit refuses.
+pub function (c: Conn) blocked_open(uni: boolean): Conn {
+  return Conn { ...c, streams: c.streams.blocked_open(uni) };
+}
+
+// write queues `data` on a stream, and with `fin` ends this side of it;
+// `transmit` sends it as the windows allow.
+pub function (c: Conn) write(id: i64, data: [u8], fin: boolean): Result[Conn, string] {
+  match (c.streams.write(id, data, fin)) {
+    Ok(t) => {
+      return Ok(Conn { ...c, streams: t });
+    },
+    Err(e) => {
+      return Err("quic: " + e);
+    }
+  }
+}
+
+// read takes what has arrived on a stream, in order, and whether that is
+// its end.
+pub function (c: Conn) read(id: i64): Result[(Conn, u8[], boolean), string] {
+  match (c.streams.read(id)) {
+    Ok(r) => {
+      return Ok((Conn { ...c, streams: r.0 }, r.1, r.2));
+    },
+    Err(e) => {
+      return Err("quic: " + e);
+    }
+  }
+}
+
+// reset_stream abandons this side of a stream with an application error
+// code (RESET_STREAM).
+pub function (c: Conn) reset_stream(id: i64, code: i64): Result[Conn, string] {
+  match (c.streams.reset(id, code)) {
+    Ok(t) => {
+      return Ok(Conn { ...c, streams: t });
+    },
+    Err(e) => {
+      return Err("quic: " + e);
+    }
+  }
+}
+
+// stop_sending asks the peer to stop sending on a stream, with an
+// application error code (STOP_SENDING).
+pub function (c: Conn) stop_sending(id: i64, code: i64): Result[Conn, string] {
+  match (c.streams.stop(id, code)) {
+    Ok(t) => {
+      return Ok(Conn { ...c, streams: t });
+    },
+    Err(e) => {
+      return Err("quic: " + e);
+    }
+  }
+}
+
+// buffered is how many bytes written to a stream the peer has not yet
+// acknowledged: what a writer paces itself by.
+pub function (c: Conn) buffered(id: i64): i64 {
+  return c.streams.buffered(id);
 }
 
 // === closing ================================================================
@@ -643,20 +769,20 @@ function (c: Conn) __frame(f: frames.Frame, space: i32, now: i64): Conn {
   }
 }
 
-// __frame_rest takes the frames this slice has nothing to do with yet:
-// streams are refused, as the limits this endpoint declared say they must
-// be, and the rest of the connection-level frames are noted and dropped.
+// __frame_rest takes the streams' frames, and the connection-level frames
+// this side does not act on yet, which are dropped.
 function (c: Conn) __frame_rest(f: frames.Frame, now: i64): Conn {
+  if (streams.owns(f)) {
+    match (c.streams.on_frame(f)) {
+      Ok(t) => {
+        return Conn { ...c, streams: t };
+      },
+      Err(e) => {
+        return c.__fail(e.code, e.frame_type, e.reason, now);
+      }
+    }
+  }
   match (f) {
-    frames.StreamFrame(_) => {
-      return c.__fail(frames.STREAM_LIMIT_ERROR, frames.STREAM, "no streams are open to the peer", now);
-    },
-    frames.ResetStreamFrame(_) => {
-      return c.__fail(frames.STREAM_STATE_ERROR, frames.RESET_STREAM, "no such stream", now);
-    },
-    frames.StopSending(_, _) => {
-      return c.__fail(frames.STREAM_STATE_ERROR, frames.STOP_SENDING, "no such stream", now);
-    },
     frames.NewToken(_) => {
       if (c.server) {
         return c.__fail(frames.PROTOCOL_VIOLATION, frames.NEW_TOKEN, "a client sent NEW_TOKEN", now);
@@ -682,12 +808,23 @@ function (c: Conn) __ack(a: frames.Ack, space: i32, now: i64): Conn {
       if (!c.server && space == recovery.HANDSHAKE) {
         r = r.validated();
       }
-      return Conn { ...c, recovery: r }.__requeue(o.lost);
+      return Conn { ...c, recovery: r }.__delivered(o.acked).__requeue(o.lost);
     },
     Err(code) => {
       return c.__fail(code, frames.ACK, "an ACK of a packet never sent", now);
     }
   }
+}
+
+// __delivered tells the streams what acknowledged packets carried.
+function (c: Conn) __delivered(acked: recovery.Sent[]): Conn {
+  let t: streams.Streams = c.streams;
+  for p in acked {
+    for item in p.resend {
+      t = t.acked(item);
+    }
+  }
+  return Conn { ...c, streams: t };
 }
 
 // __requeue puts back what lost packets carried, to be sent again.
@@ -706,10 +843,12 @@ function (c: Conn) __resend(items: recovery.Resend[]): Conn {
       recovery.CryptoRange(offset, len) => {
         cur = cur.__crypto_lost(offset, len);
       },
+      recovery.StreamRange(_, _, _, _) => {
+        cur = Conn { ...cur, streams: cur.streams.lost(item) };
+      },
       recovery.Again(f) => {
         cur = cur.__again(f);
-      },
-      _ => {}
+      }
     }
   }
   return cur;
@@ -727,6 +866,9 @@ function (c: Conn) __crypto_lost(offset: i64, len: i32): Conn {
 }
 
 function (c: Conn) __again(f: frames.Frame): Conn {
+  if (streams.owns(f)) {
+    return Conn { ...c, streams: c.streams.lost(recovery.Again(f)) };
+  }
   match (f) {
     frames.HandshakeDone => {
       return Conn { ...c, handshake_done_pending: true };
@@ -761,18 +903,15 @@ function (c: Conn) __discard(space: i32): Conn {
 // what is contiguous to the handshake.
 function (c: Conn) __crypto(space: i32, offset: i64, data: u8[], now: i64): Conn {
   let s: Space = c.spaces[space];
-  match (__reassemble(s.crypto_in, offset, data)) {
-    Ok(pair) => {
-      let cur: Conn = Conn { ...c, spaces: c.spaces.with(space, Space { ...s, crypto_in: pair.0 }) };
-      if (pair.1.len() == 0) {
-        return cur;
-      }
-      return cur.__tls_read(space, pair.1, now);
-    },
-    Err(_) => {
-      return c.__fail(frames.CRYPTO_BUFFER_EXCEEDED, frames.CRYPTO, "too much CRYPTO data held out of order", now);
-    }
+  let (r, bytes) = s.crypto_in.add(offset, data).take();
+  if (r.held_bytes > MAX_CRYPTO_HELD) {
+    return c.__fail(frames.CRYPTO_BUFFER_EXCEEDED, frames.CRYPTO, "too much CRYPTO data held out of order", now);
   }
+  let cur: Conn = Conn { ...c, spaces: c.spaces.with(space, Space { ...s, crypto_in: r }) };
+  if (bytes.len() == 0) {
+    return cur;
+  }
+  return cur.__tls_read(space, bytes, now);
 }
 
 function (c: Conn) __tls_read(level: i32, bytes: u8[], now: i64): Conn {
@@ -938,7 +1077,7 @@ function __trusted(cfg: Config, v: handshake.Verification, now: i64): boolean {
 function (c: Conn) __connected(now: i64): Conn {
   match (c.__peer_transport_params()) {
     Ok(p) => {
-      let cur: Conn = Conn { ...c, state: ESTABLISHED, peer_params: Some(p), recovery: c.recovery.with_max_ack_delay(p.max_ack_delay * 1000000), events: c.events.append(Event.Connected) };
+      let cur: Conn = Conn { ...c, state: ESTABLISHED, peer_params: Some(p), streams: c.streams.with_peer(p), recovery: c.recovery.with_max_ack_delay(p.max_ack_delay * 1000000), events: c.events.append(Event.Connected) };
       if (cur.server) {
         cur = Conn { ...cur, handshake_done_pending: true, recovery: cur.recovery.confirmed() }.__discard(recovery.HANDSHAKE);
       }
@@ -1049,7 +1188,8 @@ function (c: Conn) __datagram_out(now: i64): (Conn, u8[]) {
 
 // __plan chooses one space's frames: an ACK if one is owed, then what
 // must be resent, then new CRYPTO data, then, in the application space,
-// HANDSHAKE_DONE and pending control frames, then a probe if asked for.
+// HANDSHAKE_DONE, pending control frames and the streams', then a probe if
+// asked for.
 function (c: Conn) __plan(space: i32, room: i32, now: i64): (Conn, Plan) {
   let empty: Plan = Plan { space: space, payload: [], eliciting: false, resend: [] };
   let s: Space = c.spaces[space];
@@ -1066,8 +1206,9 @@ function (c: Conn) __plan(space: i32, room: i32, now: i64): (Conn, Plan) {
   }
   let (c1, p1) = c.__crypto_out(space, plan, room);
   let (c2, p2) = c1.__control_out(space, p1, room);
-  let (c3, p3) = c2.__probe_out(space, p2);
-  return (c3.__acked_out(space, p3), p3);
+  let (c3, p3) = c2.__streams_out(space, p2, room);
+  let (c4, p4) = c3.__probe_out(space, p3);
+  return (c4.__acked_out(space, p4), p4);
 }
 
 // __acked_out notes that an ACK just planned answers what was owed.
@@ -1150,6 +1291,18 @@ function (c: Conn) __control_out(space: i32, p: Plan, room: i32): (Conn, Plan) {
     }
   }
   return (Conn { ...cur, pending: kept }, plan);
+}
+
+// __streams_out adds, in the application space once the handshake is
+// complete, what the streams have to send.
+function (c: Conn) __streams_out(space: i32, p: Plan, room: i32): (Conn, Plan) {
+  if (space != recovery.APPLICATION || c.state != ESTABLISHED) {
+    return (c, p);
+  }
+  let before: i32 = p.payload.len();
+  let (t, payload, resend) = c.streams.fill(p.payload, room);
+  let plan: Plan = Plan { ...p, payload: payload, eliciting: p.eliciting || payload.len() > before, resend: p.resend.concat(resend) };
+  return (Conn { ...c, streams: t }, plan);
 }
 
 // __probe_out answers a probe timeout for this space (§6.2.4): if nothing
@@ -1283,57 +1436,6 @@ function __close_frame(why: Close, space: i32): frames.ConnectionClose {
 }
 
 // === helpers ================================================================
-
-// __reassemble adds a CRYPTO segment and answers the bytes now contiguous
-// with what was delivered, or Err when too much is held past a gap.
-function __reassemble(r: Reassembly, offset: i64, data: u8[]): Result[(Reassembly, u8[]), i32] {
-  let end: i64 = offset + data.len() as i64;
-  if (end <= r.delivered) {
-    return Ok((r, []));
-  }
-  if (offset > r.delivered) {
-    if (r.held_bytes + data.len() > MAX_CRYPTO_HELD) {
-      return Err(0);
-    }
-    return Ok((Reassembly { ...r, held_at: r.held_at.append(offset), held: r.held.append(data), held_bytes: r.held_bytes + data.len() }, []));
-  }
-  let skip: i32 = (r.delivered - offset) as i32;
-  let out: u8[] = __copy(data[skip:data.len()]);
-  return Ok(__drain_held(Reassembly { ...r, delivered: end }, out));
-}
-
-// __drain_held appends held segments that the delivered offset now reaches.
-function __drain_held(r: Reassembly, out: u8[]): (Reassembly, u8[]) {
-  let cur: Reassembly = r;
-  let bytes: u8[] = out;
-  let moved: boolean = true;
-  while (moved) {
-    moved = false;
-    let at: i64[] = [];
-    let held: u8[][] = [];
-    let i: i32 = 0;
-    while (i < cur.held.len()) {
-      let off: i64 = cur.held_at[i];
-      let seg: u8[] = cur.held[i];
-      let end: i64 = off + seg.len() as i64;
-      if (off <= cur.delivered && end > cur.delivered) {
-        bytes = bytes.concat(__copy(seg[(cur.delivered - off) as i32:seg.len()]));
-        cur = Reassembly { ...cur, delivered: end };
-        moved = true;
-      } else if (end > cur.delivered) {
-        at = at.append(off);
-        held = held.append(seg);
-      }
-      i = i + 1;
-    }
-    let n: i32 = 0;
-    for h in held {
-      n = n + h.len();
-    }
-    cur = Reassembly { ...cur, held_at: at, held: held, held_bytes: n };
-  }
-  return (cur, bytes);
-}
 
 // __add_range adds packet number `pn` to ranges kept largest first, merging
 // neighbours and keeping at most MAX_ACK_RANGES.
