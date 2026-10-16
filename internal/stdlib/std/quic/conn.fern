@@ -368,14 +368,12 @@ pub function (c: Conn) open_stream(uni: boolean): Result[(Conn, i64), string] {
   if (c.state != ESTABLISHED) {
     return Err("quic: the connection is not established");
   }
-  match (c.streams.open(uni)) {
-    Ok(pair) => {
-      return Ok((Conn { ...c, streams: pair.0 }, pair.1));
-    },
-    Err(e) => {
-      return Err("quic: " + e);
-    }
+  let t: streams.Streams = c.streams.open(uni);
+  if (t.refused != "") {
+    return Err("quic: " + t.refused);
   }
+  let id: i64 = t.last_opened;
+  return Ok((Conn { ...c, streams: t }, id));
 }
 
 // can_open reports whether `open_stream` would succeed.
@@ -392,53 +390,49 @@ pub function (c: Conn) blocked_open(uni: boolean): Conn {
 // write queues `data` on a stream, and with `fin` ends this side of it;
 // `transmit` sends it as the windows allow.
 pub function (c: Conn) write(id: i64, data: [u8], fin: boolean): Result[Conn, string] {
-  match (c.streams.write(id, data, fin)) {
-    Ok(t) => {
-      return Ok(Conn { ...c, streams: t });
-    },
-    Err(e) => {
-      return Err("quic: " + e);
-    }
+  let t: streams.Streams = c.streams.write(id, data, fin);
+  if (t.refused != "") {
+    return Err("quic: " + t.refused);
   }
+  return Ok(Conn { ...c, streams: t });
 }
 
 // read takes what has arrived on a stream, in order, and whether that is
 // its end.
 pub function (c: Conn) read(id: i64): Result[(Conn, u8[], boolean), string] {
-  match (c.streams.read(id)) {
-    Ok(r) => {
-      return Ok((Conn { ...c, streams: r.0 }, r.1, r.2));
-    },
-    Err(e) => {
-      return Err("quic: " + e);
-    }
+  let t: streams.Streams = c.streams.read(id);
+  if (t.refused != "") {
+    return Err("quic: " + t.refused);
   }
+  let data: u8[] = t.read_data;
+  let fin: boolean = t.read_fin;
+  return Ok((Conn { ...c, streams: __read_taken(t) }, data, fin));
+}
+
+// __read_taken is the table with the bytes `read` took handed on,
+// so the table does not keep a second reference to them.
+function __read_taken(own t: streams.Streams): streams.Streams {
+  return streams.Streams { ...t, read_data: [] };
 }
 
 // reset_stream abandons this side of a stream with an application error
 // code (RESET_STREAM).
 pub function (c: Conn) reset_stream(id: i64, code: i64): Result[Conn, string] {
-  match (c.streams.reset(id, code)) {
-    Ok(t) => {
-      return Ok(Conn { ...c, streams: t });
-    },
-    Err(e) => {
-      return Err("quic: " + e);
-    }
+  let t: streams.Streams = c.streams.reset(id, code);
+  if (t.refused != "") {
+    return Err("quic: " + t.refused);
   }
+  return Ok(Conn { ...c, streams: t });
 }
 
 // stop_sending asks the peer to stop sending on a stream, with an
 // application error code (STOP_SENDING).
 pub function (c: Conn) stop_sending(id: i64, code: i64): Result[Conn, string] {
-  match (c.streams.stop(id, code)) {
-    Ok(t) => {
-      return Ok(Conn { ...c, streams: t });
-    },
-    Err(e) => {
-      return Err("quic: " + e);
-    }
+  let t: streams.Streams = c.streams.stop(id, code);
+  if (t.refused != "") {
+    return Err("quic: " + t.refused);
   }
+  return Ok(Conn { ...c, streams: t });
 }
 
 // buffered is how many bytes written to a stream the peer has not yet
@@ -956,14 +950,11 @@ function (c: Conn) __frame(f: frames.Frame, space: i32, now: i64): Conn {
 // this side does not act on yet, which are dropped.
 function (c: Conn) __frame_rest(f: frames.Frame, now: i64): Conn {
   if (streams.owns(f)) {
-    match (c.streams.on_frame(f)) {
-      Ok(t) => {
-        return Conn { ...c, streams: t };
-      },
-      Err(e) => {
-        return c.__fail(e.code, e.frame_type, e.reason, now);
-      }
+    let t: streams.Streams = c.streams.on_frame(f);
+    if let Some(e) = t.failed {
+      return Conn { ...c, streams: t }.__fail(e.code, e.frame_type, e.reason, now);
     }
+    return Conn { ...c, streams: t };
   }
   match (f) {
     frames.NewToken(_) => {

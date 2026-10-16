@@ -164,6 +164,13 @@ pub enum Event { Opened(i64), Readable(i64), ResetByPeer(i64, i64), StopRequeste
 // the ID's low two bits: for the peer's types, how many it may open and
 // has opened; for this side's, how many the peer allows and have been
 // opened.
+//
+// Every operation hands the table back whole, with its outcome in the
+// fields after `events`: `refused` says why an `open`, `write`, `read`,
+// `reset` or `stop` did nothing ("" when it was done), `failed` is the
+// transport error a frame drew, `last_opened` the stream `open` made, and
+// `read_data` and `read_fin` what `read` took. A table returned inside a
+// Result or a tuple would be copied with its list on the way out.
 pub struct Streams {
   server: boolean,
   list: Stream[],
@@ -183,13 +190,18 @@ pub struct Streams {
   blocked_at: i64,
   next: i32,
   events: Event[],
+  refused: string,
+  failed: Option[frames.FrameError],
+  last_opened: i64,
+  read_data: u8[],
+  read_fin: boolean,
 }
 
 // table is a side's streams before the peer's transport parameters are
 // known: the peer may open what `local` allows, and this side nothing yet.
 pub function table(server: boolean, local: params.Params): Streams {
   let none: params.Params = params.defaults();
-  let s: Streams = Streams { server: server, list: [], local: local, peer: none, limits: [0 as i64, 0 as i64, 0 as i64, 0 as i64], opened: [0 as i64, 0 as i64, 0 as i64, 0 as i64], limits_dirty: [false, false, false, false], open_blocked: [0 - 1 as i64, 0 - 1 as i64, 0 - 1 as i64, 0 - 1 as i64], recv_max: local.initial_max_data, recv_window: local.initial_max_data, recv_highest: 0 as i64, recv_taken: 0 as i64, recv_max_dirty: false, send_max: 0 as i64, send_sent: 0 as i64, blocked_at: 0 - 1 as i64, next: 0, events: [] };
+  let s: Streams = Streams { server: server, list: [], local: local, peer: none, limits: [0 as i64, 0 as i64, 0 as i64, 0 as i64], opened: [0 as i64, 0 as i64, 0 as i64, 0 as i64], limits_dirty: [false, false, false, false], open_blocked: [0 - 1 as i64, 0 - 1 as i64, 0 - 1 as i64, 0 - 1 as i64], recv_max: local.initial_max_data, recv_window: local.initial_max_data, recv_highest: 0 as i64, recv_taken: 0 as i64, recv_max_dirty: false, send_max: 0 as i64, send_sent: 0 as i64, blocked_at: 0 - 1 as i64, next: 0, events: [], refused: "", failed: None, last_opened: 0 - 1 as i64, read_data: [], read_fin: false };
   let bidi: i32 = s.__peer_type(false);
   return Streams { ...s, limits: s.limits.with(bidi, local.initial_max_streams_bidi).with(bidi + 2, local.initial_max_streams_uni) };
 }
@@ -288,68 +300,75 @@ pub function (s: Streams) can_open(uni: boolean): boolean {
   return s.opened[t] < s.limits[t];
 }
 
-// open starts a stream of this side's, or refuses when the peer's limit is
-// reached. The caller can then use blocked_open to request STREAMS_BLOCKED.
-pub function (s: Streams) open(uni: boolean): Result[(Streams, i64), string] {
+// __refuse records why an operation did nothing.
+function (s: Streams) __refuse(why: string): Streams {
+  return Streams { ...s, refused: why };
+}
+
+// open starts a stream of this side's, its ID in `last_opened`, or refuses
+// when the peer's limit is reached. The caller can then use blocked_open
+// to request STREAMS_BLOCKED.
+pub function (s: Streams) open(uni: boolean): Streams {
   let t: i32 = s.__local_type(uni);
   if (s.opened[t] >= s.limits[t]) {
-    return Err("the peer's limit on streams is reached");
+    return Streams { ...s, refused: "the peer's limit on streams is reached", last_opened: 0 - 1 as i64 };
   }
   let id: i64 = s.opened[t] * 4 + t as i64;
-  return Ok((Streams { ...s, list: s.list.append(s.__new_stream(id)), opened: s.opened.with(t, s.opened[t] + 1) }, id));
+  return Streams { ...s, list: s.list.append(s.__new_stream(id)), opened: s.opened.with(t, s.opened[t] + 1), refused: "", last_opened: id };
 }
 
 // write queues `data` on a stream's sending half, and with `fin` ends it.
-pub function (s: Streams) write(id: i64, data: [u8], fin: boolean): Result[Streams, string] {
+pub function (s: Streams) write(id: i64, data: [u8], fin: boolean): Streams {
   let i: i32 = s.__find(id);
   if (i < 0 || !s.list[i].has_send) {
-    return Err("no stream to write to");
+    return s.__refuse("no stream to write to");
   }
   let st: Stream = s.list[i];
   if (st.send.fin || st.send.reset >= 0) {
-    return Err("the stream's sending half is closed");
+    return s.__refuse("the stream's sending half is closed");
   }
-  return Ok(s.__put(i, Stream { ...st, send: Send { ...st.send, buf: st.send.buf.concat(__copy(data)), fin: fin } }));
+  return s.__refuse("").__put(i, Stream { ...st, send: Send { ...st.send, buf: st.send.buf.concat(__copy(data)), fin: fin } });
 }
 
-// read takes what can be read of a stream, in order, and whether its end
-// has been reached; reading opens the windows again.
-pub function (s: Streams) read(id: i64): Result[(Streams, u8[], boolean), string] {
+// read takes what can be read of a stream, in order, into `read_data`, and
+// whether its end has been reached into `read_fin`; reading opens the
+// windows again.
+pub function (s: Streams) read(id: i64): Streams {
   let i: i32 = s.__find(id);
   if (i < 0 || !s.list[i].has_recv) {
-    return Err("no stream to read from");
+    return s.__refuse("no stream to read from");
   }
   let st: Stream = s.list[i];
   if (st.recv.reset >= 0) {
-    return Err("the peer reset the stream");
+    return s.__refuse("the peer reset the stream");
   }
   let (data, bytes) = st.recv.data.take();
   let fin: boolean = st.recv.final_size >= 0 && data.taken == st.recv.final_size;
-  let cur: Streams = Streams { ...s, recv_taken: s.recv_taken + bytes.len() as i64 }.__put(i, Stream { ...st, recv: Recv { ...st.recv, data: data, fin_read: fin } });
-  return Ok((cur.__collect(), bytes, fin));
+  let cur: Streams = Streams { ...s, recv_taken: s.recv_taken + bytes.len() as i64, refused: "", read_data: bytes, read_fin: fin }.__put(i, Stream { ...st, recv: Recv { ...st.recv, data: data, fin_read: fin } });
+  return cur.__collect();
 }
 
 // reset abandons a stream's sending half with an application error code.
-pub function (s: Streams) reset(id: i64, code: i64): Result[Streams, string] {
+pub function (s: Streams) reset(id: i64, code: i64): Streams {
   let i: i32 = s.__find(id);
   if (i < 0 || !s.list[i].has_send) {
-    return Err("no stream to reset");
+    return s.__refuse("no stream to reset");
   }
-  return Ok(s.__put(i, __reset_send(s.list[i], code)));
+  return s.__refuse("").__put(i, __reset_send(s.list[i], code));
 }
 
 // stop asks the peer to stop sending on a stream, with an application
 // error code; what arrives after is dropped.
-pub function (s: Streams) stop(id: i64, code: i64): Result[Streams, string] {
+pub function (s: Streams) stop(id: i64, code: i64): Streams {
   let i: i32 = s.__find(id);
   if (i < 0 || !s.list[i].has_recv) {
-    return Err("no stream to stop");
+    return s.__refuse("no stream to stop");
   }
   let st: Stream = s.list[i];
   if (st.recv.stop >= 0 || st.recv.reset >= 0 || st.recv.fin_read) {
-    return Ok(s);
+    return s.__refuse("");
   }
-  return Ok(s.__put(i, Stream { ...st, recv: Recv { ...st.recv, stop: code, stop_state: TO_SEND, data: st.recv.data.__discard() } }));
+  return s.__refuse("").__put(i, Stream { ...st, recv: Recv { ...st.recv, stop: code, stop_state: TO_SEND, data: st.recv.data.__discard() } });
 }
 
 // buffered is how many bytes written to a stream the peer has not yet
@@ -388,29 +407,35 @@ pub function owns(f: frames.Frame): boolean {
   }
 }
 
-// on_frame takes one of the frames `owns` names.
-pub function (s: Streams) on_frame(f: frames.Frame): Result[Streams, frames.FrameError] {
+// on_frame takes one of the frames `owns` names; a frame the table refuses
+// leaves the error in `failed`.
+pub function (s: Streams) on_frame(f: frames.Frame): Streams {
+  let cur: Streams = Streams { ...s, failed: None };
   match (f) {
     frames.StreamFrame(d) => {
-      return s.__on_stream(d);
+      return cur.__on_stream(d);
     },
     frames.ResetStreamFrame(r) => {
-      return s.__on_reset(r);
+      return cur.__on_reset(r);
     },
     frames.StopSending(id, code) => {
-      return s.__on_stop(id, code);
+      return cur.__on_stop(id, code);
     },
     frames.MaxStreamData(id, v) => {
-      return s.__on_max_stream_data(id, v);
+      return cur.__on_max_stream_data(id, v);
     },
     frames.StreamDataBlocked(id, _) => {
-      let (cur, _) = s.__stream_for(id, true, frames.STREAM_DATA_BLOCKED)?;
-      return Ok(cur);
+      let (next, _) = cur.__stream_for(id, true, frames.STREAM_DATA_BLOCKED);
+      return next;
     },
     _ => {
-      return Ok(s.__on_connection_frame(f));
+      return cur.__on_connection_frame(f);
     }
   }
+}
+
+function (s: Streams) __fail(e: frames.FrameError): Streams {
+  return Streams { ...s, failed: Some(e) };
 }
 
 // __on_connection_frame takes the frames about the connection as a whole:
@@ -434,25 +459,27 @@ function (s: Streams) __on_connection_frame(f: frames.Frame): Streams {
 // __stream_for finds the stream a frame names, opening the peer's streams
 // up to it (§3.2), and checks it has the half the frame acts on: `recv`
 // for one carrying data to this side, else the sending half. A stream
-// already closed answers -1. `kind` is the frame type, for the error.
-function (s: Streams) __stream_for(id: i64, recv: boolean, kind: i64): Result[(Streams, i32), frames.FrameError] {
+// already closed answers -1, and so does a frame the table refuses, with
+// the error in `failed`. `kind` is the frame type, for the error.
+function (s: Streams) __stream_for(id: i64, recv: boolean, kind: i64): (Streams, i32) {
   let local: boolean = s.__is_local(id);
   if (__is_uni(id) && local == recv) {
-    return Err(__error(frames.STREAM_STATE_ERROR, kind, "a frame for the half of a unidirectional stream that does not exist"));
+    return (s.__fail(__error(frames.STREAM_STATE_ERROR, kind, "a frame for the half of a unidirectional stream that does not exist")), 0 - 1);
   }
   let t: i32 = (id & 3) as i32;
   let n: i64 = id / 4;
   if (local && n >= s.opened[t]) {
-    return Err(__error(frames.STREAM_STATE_ERROR, kind, "a frame for a stream this side has not opened"));
+    return (s.__fail(__error(frames.STREAM_STATE_ERROR, kind, "a frame for a stream this side has not opened")), 0 - 1);
   }
   if (!local && n >= s.limits[t]) {
-    return Err(__error(frames.STREAM_LIMIT_ERROR, kind, "a stream past the limit advertised"));
+    return (s.__fail(__error(frames.STREAM_LIMIT_ERROR, kind, "a stream past the limit advertised")), 0 - 1);
   }
   let cur: Streams = s;
   if (!local && n >= s.opened[t]) {
     cur = s.__peer_opens(t, n);
   }
-  return Ok((cur, cur.__find(id)));
+  let i: i32 = cur.__find(id);
+  return (cur, i);
 }
 
 // __peer_opens opens the peer's streams of type `t` up to number `n`.
@@ -469,18 +496,24 @@ function (s: Streams) __peer_opens(t: i32, n: i64): Streams {
   return Streams { ...s, list: list, events: events, opened: s.opened.with(t, n + 1) };
 }
 
-function (s: Streams) __on_stream(d: frames.StreamData): Result[Streams, frames.FrameError] {
-  let (cur, i) = s.__stream_for(d.stream, true, frames.STREAM)?;
+function (s: Streams) __on_stream(d: frames.StreamData): Streams {
+  let (cur, i) = s.__stream_for(d.stream, true, frames.STREAM);
   if (i < 0) {
-    return Ok(cur);
+    return cur;
   }
   let st: Stream = cur.list[i];
   let end: i64 = d.offset + d.data.len() as i64;
-  let r: Recv = __final(st.recv, end, d.fin, frames.STREAM)?;
-  let more: i64 = cur.__credit(r, end, frames.STREAM)?;
+  if let Some(e) = __final_error(st.recv, end, d.fin, frames.STREAM) {
+    return cur.__fail(e);
+  }
+  if let Some(e) = cur.__credit_error(st.recv, end, frames.STREAM) {
+    return cur.__fail(e);
+  }
+  let r: Recv = __with_final(st.recv, end, d.fin);
+  let more: i64 = __max(0 as i64, end - r.highest);
   let next: Streams = Streams { ...cur, recv_highest: cur.recv_highest + more };
   if (r.reset >= 0 || r.stop >= 0) {
-    return Ok(next.__put(i, Stream { ...st, recv: Recv { ...r, highest: r.highest + more } }));
+    return next.__put(i, Stream { ...st, recv: Recv { ...r, highest: r.highest + more } });
   }
   let before: i64 = r.data.delivered();
   let data: Reassembly = r.data.add(d.offset, d.data);
@@ -491,76 +524,89 @@ function (s: Streams) __on_stream(d: frames.StreamData): Result[Streams, frames.
   if (readable) {
     events = events.append(Readable(d.stream));
   }
-  return Ok(Streams { ...next, events: events }.__put(i, Stream { ...st, recv: Recv { ...r, data: data, highest: r.highest + more } }));
+  return Streams { ...next, events: events }.__put(i, Stream { ...st, recv: Recv { ...r, data: data, highest: r.highest + more } });
 }
 
-// __final checks data ending at `end` against the stream's final size
-// (§4.5): nothing may pass it, and a FIN may not move it.
-function __final(r: Recv, end: i64, fin: boolean, kind: i64): Result[Recv, frames.FrameError] {
+// __final_error checks data ending at `end` against the stream's final
+// size (§4.5): nothing may pass it, and a FIN may not move it.
+function __final_error(r: Recv, end: i64, fin: boolean, kind: i64): Option[frames.FrameError] {
   if (r.final_size >= 0 && (end > r.final_size || fin && end != r.final_size)) {
-    return Err(__error(frames.FINAL_SIZE_ERROR, kind, "data past the stream's final size, or a different final size"));
+    return Some(__error(frames.FINAL_SIZE_ERROR, kind, "data past the stream's final size, or a different final size"));
   }
   if (fin && end < r.highest) {
-    return Err(__error(frames.FINAL_SIZE_ERROR, kind, "a final size below data already received"));
+    return Some(__error(frames.FINAL_SIZE_ERROR, kind, "a final size below data already received"));
   }
-  if (fin) {
-    return Ok(Recv { ...r, final_size: end });
-  }
-  return Ok(r);
+  return None;
 }
 
-// __credit is how far data ending at `end` raises the stream's highest
-// offset, checked against the stream's window and the connection's (§4.1).
-function (s: Streams) __credit(r: Recv, end: i64, kind: i64): Result[i64, frames.FrameError] {
+// __with_final is the receiving half with its final size set by a FIN at
+// `end`, once `__final_error` has allowed it.
+function __with_final(r: Recv, end: i64, fin: boolean): Recv {
+  if (fin) {
+    return Recv { ...r, final_size: end };
+  }
+  return r;
+}
+
+// __credit_error refuses data ending at `end` that passes the stream's
+// window or the connection's (§4.1); the highest offset rises by
+// `end - r.highest` when it does not.
+function (s: Streams) __credit_error(r: Recv, end: i64, kind: i64): Option[frames.FrameError] {
   if (end > r.max) {
-    return Err(__error(frames.FLOW_CONTROL_ERROR, kind, "stream data past the stream's window"));
+    return Some(__error(frames.FLOW_CONTROL_ERROR, kind, "stream data past the stream's window"));
   }
   let more: i64 = __max(0 as i64, end - r.highest);
   if (s.recv_highest + more > s.recv_max) {
-    return Err(__error(frames.FLOW_CONTROL_ERROR, kind, "stream data past the connection's window"));
+    return Some(__error(frames.FLOW_CONTROL_ERROR, kind, "stream data past the connection's window"));
   }
-  return Ok(more);
+  return None;
 }
 
 // __on_reset takes RESET_STREAM: the receiving half ends at its final size,
 // which counts as read for the connection's window.
-function (s: Streams) __on_reset(rs: frames.ResetStream): Result[Streams, frames.FrameError] {
-  let (cur, i) = s.__stream_for(rs.stream, true, frames.RESET_STREAM)?;
+function (s: Streams) __on_reset(rs: frames.ResetStream): Streams {
+  let (cur, i) = s.__stream_for(rs.stream, true, frames.RESET_STREAM);
   if (i < 0) {
-    return Ok(cur);
+    return cur;
   }
   let st: Stream = cur.list[i];
   if (st.recv.reset >= 0) {
-    return Ok(cur);
+    return cur;
   }
-  let r: Recv = __final(st.recv, rs.final_size, true, frames.RESET_STREAM)?;
-  let more: i64 = cur.__credit(r, rs.final_size, frames.RESET_STREAM)?;
+  if let Some(e) = __final_error(st.recv, rs.final_size, true, frames.RESET_STREAM) {
+    return cur.__fail(e);
+  }
+  if let Some(e) = cur.__credit_error(st.recv, rs.final_size, frames.RESET_STREAM) {
+    return cur.__fail(e);
+  }
+  let r: Recv = __with_final(st.recv, rs.final_size, true);
+  let more: i64 = __max(0 as i64, rs.final_size - r.highest);
   let unread: i64 = rs.final_size - r.data.taken;
   let next: Streams = Streams { ...cur, recv_highest: cur.recv_highest + more, recv_taken: cur.recv_taken + unread, events: cur.events.append(ResetByPeer(rs.stream, rs.code)) };
-  return Ok(next.__put(i, Stream { ...st, recv: Recv { ...r, highest: r.highest + more, reset: rs.code, data: reassembly() } }).__collect());
+  return next.__put(i, Stream { ...st, recv: Recv { ...r, highest: r.highest + more, reset: rs.code, data: reassembly() } }).__collect();
 }
 
 // __on_stop takes STOP_SENDING: the sending half is reset with the code
 // the peer gave (§3.5).
-function (s: Streams) __on_stop(id: i64, code: i64): Result[Streams, frames.FrameError] {
-  let (cur, i) = s.__stream_for(id, false, frames.STOP_SENDING)?;
+function (s: Streams) __on_stop(id: i64, code: i64): Streams {
+  let (cur, i) = s.__stream_for(id, false, frames.STOP_SENDING);
   if (i < 0) {
-    return Ok(cur);
+    return cur;
   }
   let st: Stream = cur.list[i];
   if (st.send.reset >= 0) {
-    return Ok(cur);
+    return cur;
   }
-  return Ok(Streams { ...cur, events: cur.events.append(StopRequested(id, code)) }.__put(i, __reset_send(st, code)));
+  return Streams { ...cur, events: cur.events.append(StopRequested(id, code)) }.__put(i, __reset_send(st, code));
 }
 
-function (s: Streams) __on_max_stream_data(id: i64, v: i64): Result[Streams, frames.FrameError] {
-  let (cur, i) = s.__stream_for(id, false, frames.MAX_STREAM_DATA)?;
+function (s: Streams) __on_max_stream_data(id: i64, v: i64): Streams {
+  let (cur, i) = s.__stream_for(id, false, frames.MAX_STREAM_DATA);
   if (i < 0) {
-    return Ok(cur);
+    return cur;
   }
   let st: Stream = cur.list[i];
-  return Ok(cur.__put(i, Stream { ...st, send: Send { ...st.send, max: __max(st.send.max, v) } }));
+  return cur.__put(i, Stream { ...st, send: Send { ...st.send, max: __max(st.send.max, v) } });
 }
 
 function __error(code: i64, kind: i64, reason: string): frames.FrameError {
