@@ -313,7 +313,7 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], sp: Spliceable
     let ready: boolean[] = [];
     let j: i32 = 0;
     while (j < out.funcs.len()) {
-      ready = ready.append(s.leaves[j] || ctors[j] || once[j] && !awaits(out.funcs[j], s.ix, once, s.shared, j));
+      ready = ready.append(s.leaves[j] || ctors[j] || once[j] && !awaits(out.funcs[j], s.ix, once, s.shared, s.small, j));
       j = j + 1;
     }
     let next: Round = splice_round(out, sizes, callees, rewrite, s.ix, ready, ctors, if (folded) { s.shared } else { none_of(s.shared.len()) }, s.small);
@@ -469,9 +469,10 @@ function called(ins: ssa.SInst, ix: util.NameIndex): i32 {
 }
 
 // Whether `f` still calls a function in `once` a round may splice into it:
-// any but a `shared` one whose result `f` keeps whole, which is never
-// spliced there.
-function awaits(f: ssasem.Func, ix: util.NameIndex, once: boolean[], shared: boolean[], self: i32): boolean {
+// a shared call must also satisfy splice_calls' use-site rules. A large
+// shared body is only spliced where its result replaces a dying box;
+// merely inspecting its result must not keep this caller waiting forever.
+function awaits(f: ssasem.Func, ix: util.NameIndex, once: boolean[], shared: boolean[], small: boolean[], self: i32): boolean {
   let whole: boolean[] = [];
   for b in f.graph.blocks {
     for ins in b.insts {
@@ -483,7 +484,7 @@ function awaits(f: ssasem.Func, ix: util.NameIndex, once: boolean[], shared: boo
         if (whole.len() == 0) {
           whole = sempair.whole_values(f, ix, shared, false);
         }
-        if (!whole_at(whole, ins.result)) {
+        if (small[j] && !whole_at(whole, ins.result) || returned_only(f, ins.result) && takes_apart(f, ins.result)) {
           return true;
         }
       }

@@ -769,6 +769,21 @@ function __request(r: __Run, stream: i32, fields: hpack.Field[], end_stream: boo
   }
   match (__parsed(fields, stream, c.peer_initial_window, c.config.initial_window)) {
     Ok(s) => {
+      if (s.method != "CONNECT") {
+        match (http.http_request_target(s.method, s.path)) {
+          Ok(path) => {
+            s = __Stream { ...s, path: path };
+          },
+          Err(status) => {
+            let encoded: hpack.Encoded = c.encoder.encode([hpack.field(":status", int.int_to_string(status))]);
+            let rejected: __Run = __header_frames(__Run { conn: Conn { ...c, encoder: encoded.encoder }, out: out, events: events }, stream, encoded.bytes, true);
+            if (!end_stream) {
+              return __send(rejected, frame.RstStream(stream, frame.NO_ERROR));
+            }
+            return rejected;
+          }
+        }
+      }
       let streaming: boolean = c.config.stream_bodies;
       c = Conn { ...c, streams: c.streams.append(s) };
       let at: i32 = c.streams.len() - 1;
