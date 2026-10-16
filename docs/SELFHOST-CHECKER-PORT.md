@@ -215,32 +215,18 @@ same code(s) the Go checker does — restricted to
   reference to one — a qualified `Enum.Variant` is an `ExprFieldAccess`,
   so it's not flagged. Fires only on reference, matching the Go checker.
 
-  **Not module-scoped, unlike the Go checker since #6951.** Native narrows
-  the candidates to the enums the referring module can name, so a user enum
-  cannot make another module's bare reference ambiguous;
-  `ambiguous_variants(mod.enums)` runs over the whole bundled program and
-  still reports those. Measured on the file-based checker driver: the #6951
-  repro (`import "core/int"` + `enum Opt { Some, None }`) draws 5 E036 from
-  the self-host and none from native.
-
-  `conformance/cases/module_scoped_variant` + `shadowed_builtin_variant`
-  pass all three self-host fixture legs, and neither draws a code. The #6951
-  repro itself does not: the self-host refuses it, and has since before E036
-  gated — the same misresolution that makes the bare reference ambiguous
-  types the imported module's `Some` / `None` against the user's enum, and
-  the five **E002** that follows never was exempt. So gating E036 (#8461)
-  does not change the verdict on any program; what is still open is the
-  module scoping, which no differential covers (both corpora are
-  cross-module only for stdlib imports, and neither declares a colliding
-  enum).
-
-  Closing it needs module attribution the self-host AST does not carry:
-  `parser.EnumDecl` and `parser.FuncDecl` gaining a source module (107
-  `FuncDecl {` literal sites), `flatten` stamping it, and the modloader's
-  import graph reaching `check_module` as a closure table. Note the
-  self-host is already half-way there by accident — `mangle_enum_decls`
-  renames an imported module's variants to `<mod>__Variant`, so only entry
-  and built-in variants share a namespace at all.
+  **Module-scoped, as the Go checker is since #6951** (#12467). The
+  candidates are the enums the referring module can name: its own, those of
+  every module in its import closure, and the built-in ones. `flatten` stamps
+  each imported enum with the modules whose closure reaches it
+  (`EnumDecl.visible_from`), and `variant_ambiguous` counts candidates by
+  the variant's unprefixed name from the function's module (`fn_module`).
+  `flatten` resolves a bare value reference to an imported variant only when
+  one enum the module sees declares it; otherwise the reference keeps its
+  module's own spelling for the checker to report. Patterns are left to
+  the scrutinee, as in Go. `TestSelfHostCheckerVariantScopeDifferentialX86_64`
+  covers it over a program's own modules, and the bundle differential over
+  stdlib ones.
 - **Slice 22 (done): structural match-arm errors** (E026, E028).
   `match_diags` walks each `match` (no types needed): E026 when a wildcard
   `_` arm isn't last, E028 when a variant pattern repeats one an earlier

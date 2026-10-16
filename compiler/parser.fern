@@ -429,7 +429,11 @@ pub struct ExportBinding { func_name: string, iface: string, wit: string, c_abi:
 // round-trips and lowering can key on it. See docs/TRY.md.
 // A clone retains its original instantiated type spelling. Typed lowering
 // uses this provenance when context completes a partially inferred enum.
-pub struct EnumDecl { name: string, variant_names: string[], type_params: string[], line: i32, col: i32, must_consume: boolean, try_marker: boolean, is_pub: boolean, is_package: boolean, module: string, instance: string }
+// `visible_from` is the other modules, by bundle prefix ("" for the entry),
+// whose bare variant references may resolve to this enum: those whose import
+// closure reaches `module`. flatten fills it on the bundle; the declaring
+// module always sees its own enums, and no import sees the entry's.
+pub struct EnumDecl { name: string, variant_names: string[], type_params: string[], line: i32, col: i32, must_consume: boolean, try_marker: boolean, is_pub: boolean, is_package: boolean, module: string, instance: string, visible_from: string[] }
 
 // enum_variant_names extracts the variant names from an enum's desugared
 // variant structs.
@@ -10422,6 +10426,26 @@ pub function is_builtin_function(name: string): boolean {
   return util.index_of_str(builtin_function_names(), name) >= 0;
 }
 
+// builtin_enum_of returns the built-in enum a variant name belongs to
+// (Option / Result / IoError / Body), or "" if it isn't a built-in variant.
+// Every module sees these enums, so they are a candidate for every bare
+// variant reference.
+pub function builtin_enum_of(name: string): string {
+  if (name == "Some" || name == "None") {
+    return "Option";
+  }
+  if (name == "Ok" || name == "Err") {
+    return "Result";
+  }
+  if (name == "NotFound" || name == "PermissionDenied" || name == "AlreadyExists" || name == "InvalidUtf8" || name == "Interrupted" || name == "Unsupported" || name == "Other") {
+    return "IoError";
+  }
+  if (name == "BodyText" || name == "BodyBytes" || name == "BodyStream" || name == "BodyFile" || name == "BodyChunks" || name == "BodyFileRanges") {
+    return "Body";
+  }
+  return "";
+}
+
 // inject_builtin_enums adds the variant structs for the enums the
 // reference front-end auto-injects — IoError and Body — unless the
 // program already declares them. This is the self-host analogue of the
@@ -19670,7 +19694,7 @@ pub function monomorphize_enums(mod: Module): Module {
         }
         vi2 = vi2 + 1;
       }
-      cl_enums = cl_enums.append(EnumDecl { name: mname, variant_names: nvn, type_params: [], line: ed.line, col: ed.col, must_consume: ed.must_consume, try_marker: ed.try_marker, is_pub: true, is_package: false, module: ed.module, instance: ed.name + "[" + subst_ty_join(cts, ",", [], []) + "]" });
+      cl_enums = cl_enums.append(EnumDecl { name: mname, variant_names: nvn, type_params: [], line: ed.line, col: ed.col, must_consume: ed.must_consume, try_marker: ed.try_marker, is_pub: true, is_package: false, module: ed.module, instance: ed.name + "[" + subst_ty_join(cts, ",", [], []) + "]", visible_from: ed.visible_from });
       let mi: i32 = 0;
       while (mi < mod.funcs.len()) {
         let mm: FuncDecl = mod.funcs[mi];
@@ -22037,7 +22061,7 @@ pub function desugar_union_aliases(mod: Module): Module {
       structs = structs.append(StructDecl { name: member, fields: [StructFieldDecl { name: "__ev", type_name: payload, fn_ret: "", fn_param_types: "" }], type_params: [], derives: [], line: 0, col: 0, enum_owner: al.name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
       vi = vi + 1;
     }
-    enums = enums.append(EnumDecl { name: al.name, variant_names: al.variants, type_params: al.type_params, line: al.line, col: al.col, must_consume: false, try_marker: false, is_pub: al.is_pub, is_package: al.is_package, module: al.module, instance: "" });
+    enums = enums.append(EnumDecl { name: al.name, variant_names: al.variants, type_params: al.type_params, line: al.line, col: al.col, must_consume: false, try_marker: false, is_pub: al.is_pub, is_package: al.is_package, module: al.module, instance: "", visible_from: [] });
     i = i + 1;
   }
   return Module { ...mod, aliases: aliases, structs: structs, enums: enums };
@@ -29789,7 +29813,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
           let (tme_name, tme_variants, tme_type_params, tme_vlines, tme_p) = parse_enum_decl(p);
           p = tme_p;
           flines = record_field_lines(flines, verbatim, tme_name, tmeline, tme_vlines);
-          enums = enums.append(EnumDecl { name: tme_name, variant_names: enum_variant_names(tme_variants), type_params: tme_type_params, line: tmeline, col: tmecol, must_consume: false, try_marker: true, is_pub: decl_pub, is_package: decl_package, module: "", instance: "" });
+          enums = enums.append(EnumDecl { name: tme_name, variant_names: enum_variant_names(tme_variants), type_params: tme_type_params, line: tmeline, col: tmecol, must_consume: false, try_marker: true, is_pub: decl_pub, is_package: decl_package, module: "", instance: "", visible_from: [] });
           let tmei: i32 = 0;
           while (tmei < tme_variants.len()) {
             structs = structs.append(tme_variants[tmei]);
@@ -29835,7 +29859,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
           let (mce_name, mce_variants, mce_type_params, mce_vlines, mce_p) = parse_enum_decl(p);
           p = mce_p;
           flines = record_field_lines(flines, verbatim, mce_name, mceline, mce_vlines);
-          enums = enums.append(EnumDecl { name: mce_name, variant_names: enum_variant_names(mce_variants), type_params: mce_type_params, line: mceline, col: mcecol, must_consume: true, try_marker: false, is_pub: decl_pub, is_package: decl_package, module: "", instance: "" });
+          enums = enums.append(EnumDecl { name: mce_name, variant_names: enum_variant_names(mce_variants), type_params: mce_type_params, line: mceline, col: mcecol, must_consume: true, try_marker: false, is_pub: decl_pub, is_package: decl_package, module: "", instance: "", visible_from: [] });
           let mcei: i32 = 0;
           while (mcei < mce_variants.len()) {
             structs = structs.append(mce_variants[mcei]);
@@ -29881,7 +29905,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         let (denr_name, denr_variants, denr_type_params, denr_vlines, denr_p) = parse_enum_decl(p);
         p = denr_p;
         flines = record_field_lines(flines, verbatim, denr_name, deline, denr_vlines);
-        enums = enums.append(EnumDecl { name: denr_name, variant_names: enum_variant_names(denr_variants), type_params: denr_type_params, line: deline, col: decol, must_consume: false, try_marker: false, is_pub: decl_pub, is_package: decl_package, module: "", instance: "" });
+        enums = enums.append(EnumDecl { name: denr_name, variant_names: enum_variant_names(denr_variants), type_params: denr_type_params, line: deline, col: decol, must_consume: false, try_marker: false, is_pub: decl_pub, is_package: decl_package, module: "", instance: "", visible_from: [] });
         let dei: i32 = 0;
         while (dei < denr_variants.len()) {
           structs = structs.append(StructDecl { ...denr_variants[dei], derives: dr_derives });
@@ -30004,7 +30028,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
       let (enr_name, enr_variants, enr_type_params, enr_vlines, enr_p) = parse_enum_decl(p);
       p = enr_p;
       flines = record_field_lines(flines, verbatim, enr_name, eline, enr_vlines);
-      enums = enums.append(EnumDecl { name: enr_name, variant_names: enum_variant_names(enr_variants), type_params: enr_type_params, line: eline, col: ecol, must_consume: false, try_marker: false, is_pub: decl_pub, is_package: decl_package, module: "", instance: "" });
+      enums = enums.append(EnumDecl { name: enr_name, variant_names: enum_variant_names(enr_variants), type_params: enr_type_params, line: eline, col: ecol, must_consume: false, try_marker: false, is_pub: decl_pub, is_package: decl_package, module: "", instance: "", visible_from: [] });
       let ei: i32 = 0;
       while (ei < enr_variants.len()) {
         structs = structs.append(enr_variants[ei]);
