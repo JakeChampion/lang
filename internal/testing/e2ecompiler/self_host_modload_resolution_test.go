@@ -65,6 +65,18 @@ func TestSelfHostModloadResolvesBesideImporter(t *testing.T) {
 			},
 		},
 		{
+			name: "stdlib-and-user-basename-collisions",
+			files: map[string]string{
+				"main.fern": `import "./frame";
+import "std/http/h3/frame" as h3;
+import "std/http/h2/frame" as h2;
+function main(): i32 { let a: i32 = h2.value(); let b: string = h3.value(); let c: boolean = frame.value(); return a; }`,
+				"frame.fern":             `pub function value(): boolean { return true; }`,
+				"std/http/h2/frame.fern": `pub const PING: i32 = 1; pub function value(): i32 { return PING; }`,
+				"std/http/h3/frame.fern": `pub const PING: i32 = 2; pub function value(): string { return "h3"; }`,
+			},
+		},
+		{
 			name: "missing-beside-importer",
 			files: map[string]string{
 				"main.fern":  "import \"./lib/a\";\nfunction main(): i32 { return a.f(); }\n",
