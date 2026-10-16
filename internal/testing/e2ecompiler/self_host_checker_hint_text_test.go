@@ -93,6 +93,14 @@ type hintTextCase struct {
 }
 
 var hintTextCases = []hintTextCase{
+	{
+		name: "E040 method type argument count names the receiver",
+		src: `struct B { v: i32 }
+function (b: B) ap[U](f: (i32) => U): U { return f(b.v); }
+function main(): i32 { let b = B { v: 1 }; let n = b.ap[i32, i32]((v: i32): i32 => v); return 0; }`,
+		code:     "E040",
+		spelling: "B.ap takes 1 type argument",
+	},
 	// A generic struct literal's clash names the field that breaks what the
 	// earlier ones bound, and what to write there (#10453): a typed integer
 	// binds ahead of a literal, nothing else does.

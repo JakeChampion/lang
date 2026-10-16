@@ -462,7 +462,7 @@ function dyn_set_end(spelling: string, i: i32): i32 {
 // its arguments, so each instance builds the record at its own types.
 function resolved(t: typeinfo.Type, template: boolean, b: ssasem.Binding, scope: checker.Scope): typeinfo.Type {
   if (!template) {
-    return t;
+    return runtime_callable_type(t);
   }
   if let typeinfo.TypeUnknown(u) = t {
     let name: string = checker.typevar_reason_name(u.reason);
@@ -472,6 +472,93 @@ function resolved(t: typeinfo.Type, template: boolean, b: ssasem.Binding, scope:
     return t;
   }
   return resolved_within(t, b, scope);
+}
+
+// Source callable types retain written own flags on scalar slots. The
+// semantic ABI transfers only RC units, so those flags disappear here too
+// for concrete functions, just as resolved_within removes them in templates.
+function runtime_callable_type(t: typeinfo.Type): typeinfo.Type {
+  if (!runtime_callable_changes(t)) {
+    return t;
+  }
+  if let typeinfo.TypeFunc(f) = t {
+    let params: typeinfo.Type[] = runtime_callable_types(f.param_types);
+    return typeinfo.TypeFunc { ...f, param_types: params, param_own: typeinfo.own_flags(f.param_own, params), ret_type: runtime_callable_type(f.ret_type) };
+  }
+  if let typeinfo.TypeArray(a) = t {
+    return typeinfo.TypeArray { ...a, elem: runtime_callable_type(a.elem) };
+  }
+  if let typeinfo.TypeTuple(a) = t {
+    return typeinfo.TypeTuple { ...a, elements: runtime_callable_types(a.elements) };
+  }
+  if let typeinfo.TypeStruct(a) = t {
+    return typeinfo.TypeStruct { ...a, args: runtime_callable_types(a.args) };
+  }
+  if let typeinfo.TypeUnion(a) = t {
+    return typeinfo.TypeUnion { ...a, args: runtime_callable_types(a.args) };
+  }
+  if let typeinfo.TypeMap(a) = t {
+    return typeinfo.TypeMap { ...a, key: runtime_callable_type(a.key), value: runtime_callable_type(a.value) };
+  }
+  return t;
+}
+
+function runtime_callable_changes(t: typeinfo.Type): boolean {
+  match (t) {
+    typeinfo.TypeFunc(f) => {
+      return runtime_callable_flags_change(f) || runtime_callable_list_changes(f.param_types) || runtime_callable_changes(f.ret_type);
+    },
+    typeinfo.TypeArray(a) => {
+      return runtime_callable_changes(a.elem);
+    },
+    typeinfo.TypeTuple(a) => {
+      return runtime_callable_list_changes(a.elements);
+    },
+    typeinfo.TypeStruct(a) => {
+      return runtime_callable_list_changes(a.args);
+    },
+    typeinfo.TypeUnion(a) => {
+      return runtime_callable_list_changes(a.args);
+    },
+    typeinfo.TypeMap(a) => {
+      return runtime_callable_changes(a.key) || runtime_callable_changes(a.value);
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function runtime_callable_flags_change(f: typeinfo.TypeFunc): boolean {
+  let i: i32 = 0;
+  while (i < f.param_types.len()) {
+    if (typeinfo.fn_own_at(f, i) && !typeinfo.ownable(f.param_types[i])) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+function runtime_callable_list_changes(ts: typeinfo.Type[]): boolean {
+  for t in ts {
+    if (runtime_callable_changes(t)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function runtime_callable_types(ts: typeinfo.Type[]): typeinfo.Type[] {
+  if (!runtime_callable_list_changes(ts)) {
+    return ts;
+  }
+  let out: typeinfo.Type[] = [];
+  for t in ts {
+    out = out.append(runtime_callable_type(t));
+  }
+  return out;
 }
 
 function resolved_within(t: typeinfo.Type, b: ssasem.Binding, scope: checker.Scope): typeinfo.Type {
@@ -978,7 +1065,7 @@ function arm_payloads(s: State, whole: typeinfo.Type, name: string, layout: i32)
     return builtin_payloads(whole, name);
   }
   let sig: checker.StructSig = checker.instantiated_variant(checker.variant_shape_sig(s.scope, name, union_name(whole)), s.scope, whole);
-  return Payloads { found: sig.name.len() > 0, types: sig.field_types, unit: false };
+  return Payloads { found: sig.name.len() > 0, types: runtime_callable_types(sig.field_types), unit: false };
 }
 
 function literal_payloads(s: State, whole: typeinfo.Type, name: string, layout: i32): Payloads {
@@ -986,7 +1073,7 @@ function literal_payloads(s: State, whole: typeinfo.Type, name: string, layout: 
     return builtin_payloads(whole, name);
   }
   let sig: checker.StructSig = checker.instantiated_variant(checker.variant_sig(s.scope, name, union_name(whole)), s.scope, whole);
-  return Payloads { found: sig.name.len() > 0, types: sig.field_types, unit: false };
+  return Payloads { found: sig.name.len() > 0, types: runtime_callable_types(sig.field_types), unit: false };
 }
 
 // The union a variant literal builds. The checker types a declared enum's
@@ -1349,7 +1436,7 @@ function record_schema(name: string, s: State): checker.StructSig {
   if (sig.type_params.len() > 0 || sig.enum_owner.len() > 0) {
     return checker.struct_sig(s.scope, "");
   }
-  return sig;
+  return checker.StructSig { ...sig, field_types: runtime_callable_types(sig.field_types) };
 }
 
 // The schema of record type `t`: its declaration's, read at the arguments a
@@ -6554,7 +6641,7 @@ function fields_of(sig: checker.StructSig): semrecords.Field[] {
   let fields: semrecords.Field[] = [];
   let i: i32 = 0;
   while (i < sig.field_names.len()) {
-    fields = fields.append(semrecords.Field { name: sig.field_names[i], ty: sig.field_types[i] });
+    fields = fields.append(semrecords.Field { name: sig.field_names[i], ty: runtime_callable_type(sig.field_types[i]) });
     i = i + 1;
   }
   return fields;

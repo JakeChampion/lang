@@ -2863,6 +2863,8 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
   // Carries the explicit type arguments from a `[...]` instantiation to the
   // call `(...)` that immediately follows (`f[i32](x)`). Reset after each call.
   let pending_type_arg_list: string[] = [];
+  let pending_type_line: i32 = 0;
+  let pending_type_col: i32 = 0;
   // The same instantiation AS WRITTEN, for `-fmt` only (Par.verbatim). The
   // count alone cannot be printed, so a formatted `empty[i32]()` came back as
   // `empty()` — E040, the formatter deleting the syntax the diagnostic asks
@@ -2876,6 +2878,10 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
       // (`Call{P: open.Pos}`), so E004 (arity) lands here.
       let oline: i32 = p.peek_line();
       let ocol: i32 = p.peek_col();
+      if (pending_type_arg_list.len() > 0) {
+        oline = pending_type_line;
+        ocol = pending_type_col;
+      }
       p = p.advance();
       let args: ast.Expr[] = [];
       if (p.peek_punct() != ")") {
@@ -3012,6 +3018,8 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
         }
         if (ta_saw) {
           pending_type_arg_list = written_type_arg_list(wta_text, wta_n, ta_commas + 1);
+          pending_type_line = bline;
+          pending_type_col = bcol;
         }
         if (p.peek_punct() == "]") {
           p = p.advance();
@@ -8353,7 +8361,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
   let is_fn: boolean = false;
   let top_comma: boolean = false;
   let tprev_word: boolean = false;
-  let tprev_dyn: boolean = false;
+  let tprev_prefix: boolean = false;
   // telem_empty: no type has been read since the last `(` or `,`, so a `,`
   // here leaves an element empty, which native refuses; so does a `)` after a
   // `,`. A `)` right after `(` is a function type's empty parameter list.
@@ -8368,7 +8376,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       p = p.advance();
       p = p.advance();
       tprev_word = false;
-      tprev_dyn = false;
+      tprev_prefix = false;
       telem_empty = false;
       continue;
     }
@@ -8379,7 +8387,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       tbuf = tbuf + "(";
       p = p.advance();
       tprev_word = false;
-      tprev_dyn = false;
+      tprev_prefix = false;
       continue;
     }
     if (tpk == ")") {
@@ -8391,7 +8399,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       tbuf = tbuf + ")";
       p = p.advance();
       tprev_word = false;
-      tprev_dyn = false;
+      tprev_prefix = false;
       if (td == 0) {
         break;
       }
@@ -8409,7 +8417,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       tbuf = tbuf + ", ";
       p = p.advance();
       tprev_word = false;
-      tprev_dyn = false;
+      tprev_prefix = false;
       continue;
     }
     // A `=>` *inside* the parens with NO depth-1 comma means the
@@ -8430,7 +8438,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       tbuf = tbuf + " => ";
       p = p.advance();
       tprev_word = false;
-      tprev_dyn = false;
+      tprev_prefix = false;
       telem_empty = true;
       continue;
     }
@@ -8441,7 +8449,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       tbuf = tbuf + " + ";
       p = p.advance();
       tprev_word = false;
-      tprev_dyn = false;
+      tprev_prefix = false;
       telem_empty = true;
       continue;
     }
@@ -8449,7 +8457,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       tbuf = tbuf + tpk;
       p = p.advance();
       tprev_word = false;
-      tprev_dyn = false;
+      tprev_prefix = false;
       telem_empty = false;
       continue;
     }
@@ -8461,19 +8469,14 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
       p = p.expected_type().advance();
       continue;
     }
-    // Two adjacent word tokens have no separator of their own, so
-    // `dyn Speak` would collect as `dynSpeak`. `-fmt` reinserts the space
-    // everywhere; the compile parse reinserts it only after `dyn`, because
-    // every consumer matches on that prefix and a mashed element resolves
-    // to no type at all, slipping past every checker rule that would have
-    // judged it (#10085). Other adjacent words keep the mashed spelling
-    // the consumers were written against.
-    if (tprev_word && (p.verbatim || tprev_dyn)) {
+    // Word prefixes must stay separate from their type: dyn Speak, own T,
+    // and borrow Socket. The formatter preserves every word boundary.
+    if (tprev_word && (p.verbatim || tprev_prefix)) {
       tbuf = tbuf + " ";
     }
     tbuf = tbuf + tseg;
     tprev_word = true;
-    tprev_dyn = tseg == "dyn";
+    tprev_prefix = tseg == "dyn" || tseg == "own" || tseg == "borrow";
     telem_empty = false;
     p = p.advance();
   }
