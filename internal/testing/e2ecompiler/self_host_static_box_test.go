@@ -178,6 +178,13 @@ function seven(): i32 { return 7; }
     while (i < 100) { let b: u8[] = [1 as u8, 2 as u8, 3 as u8]; let w: u32[] = [7 as u32, 8 as u32]; t = t + b.len() + b[2] as i32 + w[1] as i32; i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
+@noinline function rounded_casts(): i32 {
+    let f: f32 = 16777217;
+    let ints: i32[] = [f as i32];
+    let uints: u32[] = [f as u32];
+    let bytes: u8[] = [f as u8];
+    return ints[0] - 16777216 + (uints[0] - 16777216u32) as i32 + bytes[0] as i32;
+}
 function print_int(n: i32): i32 {
     if (n > 9) { print_int(n / 10); }
     putchar(48 + n % 10);
@@ -200,6 +207,7 @@ function main(): i32 {
     print_int(name_rounds()); print("");
     print_int(spliced_rounds()); print("");
     print_int(cast_rounds()); print("");
+    print_int(rounded_casts()); print("");
     return 0;
 }
 `
@@ -208,13 +216,13 @@ func TestSelfHostStaticBoxes(t *testing.T) {
 	// Before static boxes the first three lines ended 100, 200 and 100, and
 	// leaf_rounds ended 200. cast_rounds' literals are written with casts
 	// of literals, `1 as u8`, and are placed like bare literals.
-	want := "500000\n3300000\n2000000\n10100000\n4950100\n5450100\n4950100\n800200\n301200100\n3000\n800100\n10400100\n300000\n200000\n700000\n1400000\n"
+	want := "500000\n3300000\n2000000\n10100000\n4950100\n5450100\n4950100\n800200\n301200100\n3000\n800100\n10400100\n300000\n200000\n700000\n1400000\n0\n"
 	runSemanticProgram(t, "staticbox", staticBoxProgram,
 		[]string{"origin", "t_int", "t_void", "named", "mixed", "fresh", "width", "shade", "rebuild",
 			"origin_rounds", "member_rounds", "shade_rounds", "named_rounds", "fresh_rounds", "rebuild_rounds",
 			"leaf", "later", "leaf_rounds", "later_rounds", "u_small", "u_big", "unsigned_rounds",
 			"lookup", "table", "flags", "names", "lookup_rounds", "pushed_rounds", "set_rounds", "flag_rounds", "name_rounds",
-			"seven", "spliced", "spliced_rounds", "cast_rounds"},
+			"seven", "spliced", "spliced_rounds", "cast_rounds", "rounded_casts"},
 		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want, "wasm32-wasi": want})
 }
 
