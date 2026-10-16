@@ -213,6 +213,38 @@ function test_lengths(): test.TestOutcome {
   return test.assert_eq(shown(aes_gcm.seal(zeros(16), zeros(8), zeros(0), zeros(0))), "aes_gcm: the nonce is 8 bytes, want 12");
 }
 
+// A key prepared once seals and opens as the one-shot calls do, under
+// both key sizes, and is refused at the wrong length.
+function test_prepared_key(): test.TestOutcome {
+  let Ok(k) = aes_gcm.key(hex.hex_decode(k3())) else {
+    return test.fail("a 16-byte key was refused");
+  };
+  if (shown(k.seal(iv3(), p60(), aad3())) != sealed4()) {
+    return test.fail("the prepared key sealed differently");
+  }
+  if (shown(k.open(iv3(), hex.hex_decode(sealed4()), aad3())) != hex.hex_encode(p60())) {
+    return test.fail("the prepared key opened differently");
+  }
+  let Ok(k2) = aes_gcm.key(hex.hex_decode(k3() + k3())) else {
+    return test.fail("a 32-byte key was refused");
+  };
+  if (shown(k2.seal(iv3(), p60(), aad3())) != sealed16()) {
+    return test.fail("the prepared AES-256 key sealed differently");
+  }
+  if (shown(k.seal(zeros(8), zeros(0), zeros(0))) != "aes_gcm: the nonce is 8 bytes, want 12") {
+    return test.fail("the prepared key took an 8-byte nonce");
+  }
+  match (aes_gcm.key(zeros(24))) {
+    Ok(_) => {
+      return test.fail("a 24-byte key was prepared");
+    },
+    Err(e) => {
+      return test.assert_eq(e.message(), "aes_gcm: the key is 24 bytes, want 16 or 32");
+    }
+  }
+  return test.fail("unreachable");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/crypto/aes_gcm");
   r = r.it("aes-128 block, FIPS-197 C.1", test_block128);
@@ -233,5 +265,6 @@ function main(): i32 {
   r = r.it("seal and open, 255 bytes", test_255_bytes);
   r = r.it("open refuses a forgery", test_open_refuses);
   r = r.it("key and nonce lengths", test_lengths);
+  r = r.it("a key prepared once", test_prepared_key);
   return r.finish();
 }

@@ -199,11 +199,14 @@ Each is a bound with a test that crosses it.
       (`frames.varint_at`, `varint_end`), a payload is read through one
       record updated in place, and a header's fields are read by offset.
       421 to 385 allocations per request.
-    - **Packet protection.** `std/crypto/aes_gcm` expands the key and
-      derives the GHASH key on every seal and open, and builds the
-      counter, lengths and tag blocks fresh: a prepared key kept in
-      `packet.Keys` (and `std/tls/record`'s `Protection`), then the GCM
-      temporaries folded into the kernels.
+    - **Packet protection (first part landed).** `std/crypto/aes_gcm`
+      expanded the key and derived the GHASH key on every seal and open.
+      `aes_gcm.key` prepares both once and `packet.Keys` and
+      `std/tls/record`'s `Protection` keep it, two allocations fewer per
+      AEAD operation. What remains per operation is the counter, lengths
+      and tag blocks and the three GHASH results, which a fused kernel
+      would fold into one, and the zero block, which #12499 (a constant
+      array allocates per use) would make free.
     - **The connection's plans** (`conn.__plan`, `__seal`) and the HTTP/3
       session's request path (`h3`, `qpack`, `h3q`): fields written
       straight into the encoder as HTTP/2 does, the request handed over
