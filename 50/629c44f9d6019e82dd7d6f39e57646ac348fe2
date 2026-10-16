@@ -324,3 +324,18 @@ httplint/range.bad	0
 httplint/range.warn	1
 httplint/fresh.bad	0
 httplint/fresh.warn	0
+
+# lane: net-grpc-interop
+grpc/passed	11
+grpc/failed	0
+grpc/empty_unary	1
+grpc/large_unary	1
+grpc/client_streaming	1
+grpc/server_streaming	1
+grpc/ping_pong	1
+grpc/timeout_on_sleeping_server	1
+grpc/status_code_and_message	1
+grpc/special_status_message	1
+grpc/custom_metadata	1
+grpc/unimplemented_method	1
+grpc/unimplemented_service	1
