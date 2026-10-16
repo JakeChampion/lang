@@ -1,0 +1,769 @@
+// std/http/qpack — QPACK, the field compression of HTTP/3 (RFC 9204).
+//
+// A `Decoder` turns a field section into fields, and keeps the dynamic
+// table the peer's encoder fills through its encoder stream; an `Encoder`
+// turns fields into a section. Both are values, like std/http/hpack's: a
+// step returns the next decoder or encoder with its result.
+//
+//   let d: qpack.Decoder = qpack.decoder(4096, 16, 65536);
+//   d = d.on_encoder_stream(bytes)?;            // the peer's encoder stream
+//   let got: qpack.Decoded = d.decode(stream_id, section)?;
+//   // got.fields, or got.blocked: decode again once more inserts arrive
+//   let (d2, ack) = got.decoder.take_instructions();   // for the decoder stream
+//
+// The decoder is bounded by what this side advertised: the table by
+// SETTINGS_QPACK_MAX_TABLE_CAPACITY, the streams waiting on inserts by
+// SETTINGS_QPACK_BLOCKED_STREAMS, and a section's fields by
+// SETTINGS_MAX_FIELD_SECTION_SIZE, each counting name, value and 32 as it
+// is decoded, a Huffman string included. Every error is the connection's,
+// answered with the HTTP/3 code `code()` gives (§6).
+//
+// The encoder writes from the static table and literals only: it never
+// inserts into the peer's table, so the peer is never blocked on it and
+// nothing need be acknowledged.
+
+import "core/int";
+import "std/http/huffman";
+import "std/string";
+
+// Field — one field line; `sensitive` asks every intermediary never to
+// index it (the N bit, §4.5.4).
+pub struct Field { name: string, value: string, sensitive: boolean }
+
+pub function field(name: string, value: string): Field {
+  return Field { name: name, value: value, sensitive: false };
+}
+
+pub function sensitive(name: string, value: string): Field {
+  return Field { name: name, value: value, sensitive: true };
+}
+
+// QpackError — what the peer got wrong: a field section that cannot be
+// decoded, an instruction on its encoder stream, or one on its decoder
+// stream.
+pub enum QpackError { DecompressionFailed(string), EncoderStreamError(string), DecoderStreamError(string) }
+
+// The HTTP/3 error codes (§6).
+pub const QPACK_DECOMPRESSION_FAILED: i64 = 512;
+
+pub const QPACK_ENCODER_STREAM_ERROR: i64 = 513;
+
+pub const QPACK_DECODER_STREAM_ERROR: i64 = 514;
+
+pub function (e: QpackError) code(): i64 {
+  match (e) {
+    DecompressionFailed(_) => {
+      return QPACK_DECOMPRESSION_FAILED;
+    },
+    EncoderStreamError(_) => {
+      return QPACK_ENCODER_STREAM_ERROR;
+    },
+    DecoderStreamError(_) => {
+      return QPACK_DECODER_STREAM_ERROR;
+    }
+  }
+}
+
+pub function (e: QpackError) message(): string {
+  match (e) {
+    DecompressionFailed(why) => {
+      return "qpack: " + why;
+    },
+    EncoderStreamError(why) => {
+      return "qpack: encoder stream: " + why;
+    },
+    DecoderStreamError(why) => {
+      return "qpack: decoder stream: " + why;
+    }
+  }
+}
+
+// === reading ================================================================
+
+// The ways a read stops short: the bytes end inside it, an integer is too
+// large, or a Huffman string is not one or decodes past the room given.
+const SHORT: i32 = 0;
+
+const TOO_BIG: i32 = 1;
+
+const BAD_HUFFMAN: i32 = 2;
+
+const TOO_LONG: i32 = 3;
+
+// __int reads an integer with an N-bit prefix (RFC 7541 §5.1) at `at`,
+// answering it and the offset past it; at most 2^62 - 1.
+function __int(buf: [u8], at: i32, prefix: i32): Result[(i64, i32), i32] {
+  if (at >= buf.len()) {
+    return Err(SHORT);
+  }
+  let limit: i64 = ((1 << prefix) - 1) as i64;
+  let value: i64 = buf[at] as i64 & limit;
+  let i: i32 = at + 1;
+  if (value < limit) {
+    return Ok((value, i));
+  }
+  let shift: i32 = 0;
+  while (i < buf.len()) {
+    let b: i64 = buf[i] as i64;
+    i = i + 1;
+    if (shift > 56) {
+      return Err(TOO_BIG);
+    }
+    let part: i64 = (b & 127) << shift;
+    if (part > 4611686018427387903 as i64 - value) {
+      return Err(TOO_BIG);
+    }
+    value = value + part;
+    shift = shift + 7;
+    if (b < 128) {
+      return Ok((value, i));
+    }
+  }
+  return Err(SHORT);
+}
+
+// __str reads a string literal whose length has an N-bit prefix, Huffman
+// coded when the bit above the prefix is set, in at most `room` bytes.
+function __str(buf: [u8], at: i32, prefix: i32, room: i64): Result[(string, i32), i32] {
+  if (at >= buf.len()) {
+    return Err(SHORT);
+  }
+  let coded: boolean = (buf[at] as i32 & 1 << prefix) != 0;
+  let (n, from) = __int(buf, at, prefix)?;
+  if (n > (buf.len() - from) as i64) {
+    return Err(SHORT);
+  }
+  let end: i32 = from + n as i32;
+  if (!coded) {
+    if (n > room) {
+      return Err(TOO_LONG);
+    }
+    return Ok((string_from_bytes_unchecked(__copy(buf[from:end])), end));
+  }
+  let cap: i32 = 2147483647;
+  if (room < cap as i64) {
+    cap = room as i32;
+  }
+  match (huffman.decode(buf[from:end], cap)) {
+    Ok(bytes) => {
+      return Ok((string_from_bytes_unchecked(bytes), end));
+    },
+    Err(huffman.ExceedsRoom()) => {
+      return Err(TOO_LONG);
+    },
+    Err(_) => {
+      return Err(BAD_HUFFMAN);
+    }
+  }
+}
+
+function __why(code: i32): string {
+  if (code == SHORT) {
+    return "truncated";
+  }
+  if (code == TOO_BIG) {
+    return "an integer over 2^62";
+  }
+  if (code == BAD_HUFFMAN) {
+    return "a bad Huffman string";
+  }
+  return "a field section larger than allowed";
+}
+
+// === the tables =============================================================
+
+// Table — the dynamic table: entries oldest first, the absolute index of
+// the oldest, the size they take (name, value and 32 each, §3.2.1), the
+// capacity the encoder set and the most this side allows.
+struct Table { names: string[], values: string[], dropped: i64, size: i64, capacity: i64, max_capacity: i64 }
+
+// inserted is the Insert Count: every entry ever added.
+function (t: Table) __inserted(): i64 {
+  return t.dropped + t.names.len() as i64;
+}
+
+function __entry_size(name: string, value: string): i64 {
+  return (name.len() + value.len() + 32) as i64;
+}
+
+// __evicted drops the oldest entries until `room` more bytes fit.
+function (t: Table) __evicted(room: i64): Table {
+  let cur: Table = t;
+  let k: i32 = 0;
+  let size: i64 = t.size;
+  while (k < t.names.len() && size + room > t.capacity) {
+    size = size - __entry_size(t.names[k], t.values[k]);
+    k = k + 1;
+  }
+  return Table { ...cur, names: __from(t.names, k), values: __from(t.values, k), dropped: t.dropped + k as i64, size: size };
+}
+
+function (t: Table) __insert(name: string, value: string): Result[Table, QpackError] {
+  let n: i64 = __entry_size(name, value);
+  if (n > t.capacity) {
+    return Err(EncoderStreamError("an entry larger than the table's capacity"));
+  }
+  let room: Table = t.__evicted(n);
+  return Ok(Table { ...room, names: room.names.append(name), values: room.values.append(value), size: room.size + n });
+}
+
+// __entry is the entry at absolute index `a`, if the table still has it.
+function (t: Table) __entry(a: i64): Result[Field, QpackError] {
+  if (a < t.dropped || a >= t.__inserted()) {
+    return Err(DecompressionFailed("a reference to a dynamic table entry that is not there"));
+  }
+  let k: i32 = (a - t.dropped) as i32;
+  return Ok(field(t.names[k], t.values[k]));
+}
+
+function __static(i: i64): Result[Field, QpackError] {
+  if (i < 0 || i >= STATIC_NAMES.len() as i64) {
+    return Err(DecompressionFailed("no static table entry " + i.to_string()));
+  }
+  return Ok(field(STATIC_NAMES[i as i32], STATIC_VALUES[i as i32]));
+}
+
+// === decoding ===============================================================
+
+// Decoder — the dynamic table, the limits this side advertised, the
+// streams whose sections wait on inserts, the encoder stream's bytes not
+// yet a whole instruction, the decoder stream's bytes to send, and the
+// Insert Count the peer has been told of.
+pub struct Decoder { table: Table, max_blocked: i32, blocked: i64[], max_list: i64, pending: u8[], out: u8[], reported: i64 }
+
+// decoder(max_capacity, max_blocked, max_list) — the values this side
+// advertises as SETTINGS_QPACK_MAX_TABLE_CAPACITY,
+// SETTINGS_QPACK_BLOCKED_STREAMS and SETTINGS_MAX_FIELD_SECTION_SIZE. The
+// table holds nothing until the encoder sets its capacity (§3.2.3).
+pub function decoder(max_capacity: i64, max_blocked: i32, max_list: i64): Decoder {
+  let t: Table = Table { names: [], values: [], dropped: 0 as i64, size: 0 as i64, capacity: 0 as i64, max_capacity: max_capacity };
+  return Decoder { table: t, max_blocked: max_blocked, blocked: [], max_list: max_list, pending: [], out: [], reported: 0 as i64 };
+}
+
+// insert_count is how many entries the encoder has added.
+pub function (d: Decoder) insert_count(): i64 {
+  return d.table.__inserted();
+}
+
+// table_size is the bytes the dynamic table's entries take.
+pub function (d: Decoder) table_size(): i64 {
+  return d.table.size;
+}
+
+// take_instructions answers the bytes owed on this side's decoder stream:
+// Section Acknowledgments, Stream Cancellations, Insert Count Increments.
+pub function (d: Decoder) take_instructions(): (Decoder, u8[]) {
+  return (Decoder { ...d, out: [] }, d.out);
+}
+
+// on_encoder_stream takes bytes from the peer's encoder stream; an
+// instruction they end inside of waits for the next.
+pub function (d: Decoder) on_encoder_stream(bytes: [u8]): Result[Decoder, QpackError] {
+  let buf: u8[] = d.pending.concat(__copy(bytes));
+  let t: Table = d.table;
+  let at: i32 = 0;
+  while (at < buf.len()) {
+    match (__instruction(t, buf, at)) {
+      Ok(step) => {
+        t = step.0;
+        at = step.1;
+      },
+      Err(Some(e)) => {
+        return Err(e);
+      },
+      Err(None()) => {
+        return Ok(Decoder { ...d, table: t, pending: __copy(buf[at:buf.len()]) }.__increment());
+      }
+    }
+  }
+  return Ok(Decoder { ...d, table: t, pending: [] }.__increment());
+}
+
+// __increment owes an Insert Count Increment for the inserts the peer has
+// not yet been told of (§4.4.3).
+function (d: Decoder) __increment(): Decoder {
+  let n: i64 = d.table.__inserted() - d.reported;
+  if (n <= 0) {
+    return d;
+  }
+  return Decoder { ...d, out: __put_int(d.out, 0, 6, n), reported: d.table.__inserted() };
+}
+
+// __instruction reads one encoder instruction at `at` (§4.3): Err(None)
+// when the bytes end inside it.
+function __instruction(t: Table, buf: [u8], at: i32): Result[(Table, i32), Option[QpackError]] {
+  let b: i32 = buf[at] as i32;
+  if (b >= 128) {
+    return __insert_named(t, buf, at);
+  }
+  if (b >= 64) {
+    return __insert_literal(t, buf, at);
+  }
+  if (b >= 32) {
+    let (cap, next) = __enc_int(buf, at, 5)?;
+    if (cap > t.max_capacity) {
+      return Err(Some(EncoderStreamError("a capacity over the maximum advertised")));
+    }
+    let shrunk: Table = Table { ...t, capacity: cap }.__evicted(0 as i64);
+    return Ok((shrunk, next));
+  }
+  let (rel, after) = __enc_int(buf, at, 5)?;
+  let e: Field = __enc_entry(t, t.__inserted() - 1 - rel)?;
+  return Ok((__enc_insert(t, e.name, e.value)?, after));
+}
+
+// __insert_named reads Insert with Name Reference: a static name, or a
+// dynamic one relative to the Insert Count.
+function __insert_named(t: Table, buf: [u8], at: i32): Result[(Table, i32), Option[QpackError]] {
+  let is_static: boolean = (buf[at] as i32 & 64) != 0;
+  let (i, next) = __enc_int(buf, at, 6)?;
+  let name: string = "";
+  if (is_static) {
+    name = __enc_static(i)?.name;
+  } else {
+    name = __enc_entry(t, t.__inserted() - 1 - i)?.name;
+  }
+  let (value, end) = __enc_str(buf, next, 7)?;
+  return Ok((__enc_insert(t, name, value)?, end));
+}
+
+function __insert_literal(t: Table, buf: [u8], at: i32): Result[(Table, i32), Option[QpackError]] {
+  let (name, next) = __enc_str(buf, at, 5)?;
+  let (value, end) = __enc_str(buf, next, 7)?;
+  return Ok((__enc_insert(t, name, value)?, end));
+}
+
+// The encoder stream's reads, a short read Err(None) and anything else
+// the stream's error.
+function __enc_int(buf: [u8], at: i32, prefix: i32): Result[(i64, i32), Option[QpackError]] {
+  match (__int(buf, at, prefix)) {
+    Ok(r) => {
+      return Ok(r);
+    },
+    Err(code) => {
+      return Err(__enc_error(code));
+    }
+  }
+}
+
+function __enc_str(buf: [u8], at: i32, prefix: i32): Result[(string, i32), Option[QpackError]] {
+  match (__str(buf, at, prefix, 2147483647 as i64)) {
+    Ok(r) => {
+      return Ok(r);
+    },
+    Err(code) => {
+      return Err(__enc_error(code));
+    }
+  }
+}
+
+function __enc_error(code: i32): Option[QpackError] {
+  if (code == SHORT) {
+    return None;
+  }
+  return Some(EncoderStreamError(__why(code)));
+}
+
+function __enc_static(i: i64): Result[Field, Option[QpackError]] {
+  if (i < 0 || i >= STATIC_NAMES.len() as i64) {
+    return Err(Some(EncoderStreamError("no static table entry " + i.to_string())));
+  }
+  return Ok(field(STATIC_NAMES[i as i32], ""));
+}
+
+function __enc_entry(t: Table, a: i64): Result[Field, Option[QpackError]] {
+  match (t.__entry(a)) {
+    Ok(f) => {
+      return Ok(f);
+    },
+    Err(_) => {
+      return Err(Some(EncoderStreamError("a reference to a dynamic table entry that is not there")));
+    }
+  }
+}
+
+function __enc_insert(t: Table, name: string, value: string): Result[Table, Option[QpackError]] {
+  match (t.__insert(name, value)) {
+    Ok(next) => {
+      return Ok(next);
+    },
+    Err(e) => {
+      return Err(Some(e));
+    }
+  }
+}
+
+// Decoded — the decoder after a section, and the section's fields; or,
+// when `blocked`, none yet: the section needs inserts that have not
+// arrived, and is decoded again once `insert_count` reaches them.
+pub struct Decoded { decoder: Decoder, fields: Field[], blocked: boolean }
+
+// decode reads the field section `section` of stream `stream`.
+pub function (d: Decoder) decode(stream: i64, section: [u8]): Result[Decoded, QpackError] {
+  let (required, base, at) = d.__prefix(section)?;
+  if (required > d.table.__inserted()) {
+    return d.__blocked_on(stream);
+  }
+  let fields: Field[] = d.__lines(section, at, required, base)?;
+  let cur: Decoder = Decoder { ...d, blocked: __without(d.blocked, stream) };
+  if (required > 0) {
+    cur = Decoder { ...cur, out: __put_int(cur.out, 128, 7, stream), reported: __max(cur.reported, required) };
+  }
+  return Ok(Decoded { decoder: cur, fields: fields, blocked: false });
+}
+
+// cancel forgets a stream whose section will not be read, as when the
+// stream is reset, and tells the encoder (§4.4.2).
+pub function (d: Decoder) cancel(stream: i64): Decoder {
+  if (d.table.max_capacity == 0) {
+    return d;
+  }
+  return Decoder { ...d, blocked: __without(d.blocked, stream), out: __put_int(d.out, 64, 6, stream) };
+}
+
+function (d: Decoder) __blocked_on(stream: i64): Result[Decoded, QpackError] {
+  if (d.blocked.contains(stream)) {
+    return Ok(Decoded { decoder: d, fields: [], blocked: true });
+  }
+  if (d.blocked.len() >= d.max_blocked) {
+    return Err(DecompressionFailed("more streams blocked than allowed"));
+  }
+  return Ok(Decoded { decoder: Decoder { ...d, blocked: d.blocked.append(stream) }, fields: [], blocked: true });
+}
+
+// __prefix reads the section's Required Insert Count and Base (§4.5.1),
+// and the offset of its first field line.
+function (d: Decoder) __prefix(section: [u8]): Result[(i64, i64, i32), QpackError] {
+  let (encoded, next) = __sec_int(section, 0, 8)?;
+  let required: i64 = d.__required(encoded)?;
+  if (next >= section.len()) {
+    return Err(DecompressionFailed("truncated"));
+  }
+  let negative: boolean = section[next] as i32 >= 128;
+  let (delta, at) = __sec_int(section, next, 7)?;
+  if (!negative) {
+    return Ok((required, required + delta, at));
+  }
+  if (delta >= required) {
+    return Err(DecompressionFailed("a Base below zero"));
+  }
+  return Ok((required, required - delta - 1, at));
+}
+
+// __required undoes the Required Insert Count's encoding modulo twice the
+// most entries the table can hold (§4.5.1.1).
+function (d: Decoder) __required(encoded: i64): Result[i64, QpackError] {
+  if (encoded == 0) {
+    return Ok(0 as i64);
+  }
+  let max_entries: i64 = d.table.max_capacity / 32;
+  let full: i64 = 2 * max_entries;
+  if (encoded > full) {
+    return Err(DecompressionFailed("a Required Insert Count out of range"));
+  }
+  let max_value: i64 = d.table.__inserted() + max_entries;
+  let required: i64 = max_value / full * full + encoded - 1;
+  if (required > max_value) {
+    if (required <= full) {
+      return Err(DecompressionFailed("a Required Insert Count out of range"));
+    }
+    required = required - full;
+  }
+  if (required == 0) {
+    return Err(DecompressionFailed("a Required Insert Count out of range"));
+  }
+  return Ok(required);
+}
+
+// __lines reads the field lines from `at` to the end.
+function (d: Decoder) __lines(section: [u8], from: i32, required: i64, base: i64): Result[Field[], QpackError] {
+  let fields: Field[] = [];
+  let total: i64 = 0;
+  let at: i32 = from;
+  while (at < section.len()) {
+    let (f, next) = d.__line(section, at, required, base, d.max_list - total)?;
+    total = total + __entry_size(f.name, f.value);
+    if (total > d.max_list) {
+      return Err(DecompressionFailed(__why(TOO_LONG)));
+    }
+    fields = fields.append(f);
+    at = next;
+  }
+  return Ok(fields);
+}
+
+// __line reads one field line (§4.5.2–§4.5.6).
+function (d: Decoder) __line(section: [u8], at: i32, required: i64, base: i64, room: i64): Result[(Field, i32), QpackError] {
+  let b: i32 = section[at] as i32;
+  if (b >= 128 || b >= 16 && b < 32) {
+    return d.__line_indexed(section, at, required, base);
+  }
+  if (b >= 32 && b < 64) {
+    let (name, next) = __sec_str(section, at, 3, room)?;
+    return __valued(name, (b & 16) != 0, section, next, room);
+  }
+  let (name, next) = d.__line_name(section, at, required, base)?;
+  return __valued(name, (b & 32) != 0 || b < 16 && (b & 8) != 0, section, next, room);
+}
+
+// __line_indexed reads an indexed field line, by the static table, the
+// Base, or past the Base.
+function (d: Decoder) __line_indexed(section: [u8], at: i32, required: i64, base: i64): Result[(Field, i32), QpackError] {
+  let b: i32 = section[at] as i32;
+  if (b >= 128) {
+    let (i, next) = __sec_int(section, at, 6)?;
+    return Ok((d.__indexed((b & 64) != 0, i, required, base)?, next));
+  }
+  let (i, next) = __sec_int(section, at, 4)?;
+  return Ok((d.__dynamic(base + i, required)?, next));
+}
+
+// __line_name reads the name a literal references, by the static table,
+// the Base, or past the Base.
+function (d: Decoder) __line_name(section: [u8], at: i32, required: i64, base: i64): Result[(string, i32), QpackError] {
+  let b: i32 = section[at] as i32;
+  if (b >= 64) {
+    let (i, next) = __sec_int(section, at, 4)?;
+    return Ok((d.__indexed((b & 16) != 0, i, required, base)?.name, next));
+  }
+  let (i, next) = __sec_int(section, at, 3)?;
+  return Ok((d.__dynamic(base + i, required)?.name, next));
+}
+
+// __indexed is a static entry, or a dynamic one relative to the Base.
+function (d: Decoder) __indexed(is_static: boolean, i: i64, required: i64, base: i64): Result[Field, QpackError] {
+  if (is_static) {
+    return __static(i);
+  }
+  return d.__dynamic(base - 1 - i, required);
+}
+
+// __dynamic is the dynamic entry at absolute index `a`, which the section
+// must have counted in its Required Insert Count (§2.2.3).
+function (d: Decoder) __dynamic(a: i64, required: i64): Result[Field, QpackError] {
+  if (a < 0 || a >= required) {
+    return Err(DecompressionFailed("a reference past the Required Insert Count"));
+  }
+  return d.table.__entry(a);
+}
+
+// __valued reads the value that follows a name.
+function __valued(name: string, never: boolean, section: [u8], at: i32, room: i64): Result[(Field, i32), QpackError] {
+  let (value, next) = __sec_str(section, at, 7, room - name.len() as i64)?;
+  return Ok((Field { name: name, value: value, sensitive: never }, next));
+}
+
+function __sec_int(buf: [u8], at: i32, prefix: i32): Result[(i64, i32), QpackError] {
+  match (__int(buf, at, prefix)) {
+    Ok(r) => {
+      return Ok(r);
+    },
+    Err(code) => {
+      return Err(DecompressionFailed(__why(code)));
+    }
+  }
+}
+
+function __sec_str(buf: [u8], at: i32, prefix: i32, room: i64): Result[(string, i32), QpackError] {
+  match (__str(buf, at, prefix, room)) {
+    Ok(r) => {
+      return Ok(r);
+    },
+    Err(code) => {
+      return Err(DecompressionFailed(__why(code)));
+    }
+  }
+}
+
+// === encoding ===============================================================
+
+// Encoder — whether strings are Huffman-coded when that is shorter, and
+// the decoder stream's bytes not yet a whole instruction.
+pub struct Encoder { huffman: boolean, pending: u8[] }
+
+pub function encoder(): Encoder {
+  return Encoder { huffman: true, pending: [] };
+}
+
+// without_huffman writes every string as its bytes.
+pub function (e: Encoder) without_huffman(): Encoder {
+  return Encoder { ...e, huffman: false };
+}
+
+// encode is `fields` as one field section: an entry of the static table
+// indexed, a name in it referenced, the rest literal. Names are written
+// as given; HTTP/3 requires them lowercase (RFC 9114 §4.2).
+pub function (e: Encoder) encode(fields: Field[]): u8[] {
+  let out: u8[] = [0 as u8, 0 as u8];
+  for f in fields {
+    out = e.__put_field(out, f);
+  }
+  return out;
+}
+
+function (e: Encoder) __put_field(out: u8[], f: Field): u8[] {
+  let (exact, named) = __find_static(f.name, f.value);
+  if (exact >= 0 && !f.sensitive) {
+    return __put_int(out, 192, 6, exact as i64);
+  }
+  let never: i32 = 0;
+  if (f.sensitive) {
+    never = 32;
+  }
+  if (named >= 0) {
+    return e.__put_str(__put_int(out, 80 | never, 4, named as i64), 0, 7, f.value);
+  }
+  let o: u8[] = e.__put_str(out, 32 | never / 2, 3, f.name);
+  return e.__put_str(o, 0, 7, f.value);
+}
+
+// on_decoder_stream takes bytes from the peer's decoder stream. This
+// encoder never inserts, so a Section Acknowledgment or an Insert Count
+// Increment is an error (§4.4); a Stream Cancellation needs nothing.
+pub function (e: Encoder) on_decoder_stream(bytes: [u8]): Result[Encoder, QpackError] {
+  let buf: u8[] = e.pending.concat(__copy(bytes));
+  let at: i32 = 0;
+  while (at < buf.len()) {
+    let b: i32 = buf[at] as i32;
+    if (b >= 128) {
+      return Err(DecoderStreamError("a Section Acknowledgment for a section with no dynamic references"));
+    }
+    if (b < 64) {
+      return Err(DecoderStreamError("an Insert Count Increment past the entries inserted"));
+    }
+    match (__int(buf, at, 6)) {
+      Ok(r) => {
+        at = r.1;
+      },
+      Err(code) => {
+        if (code != SHORT) {
+          return Err(DecoderStreamError(__why(code)));
+        }
+        return Ok(Encoder { ...e, pending: __copy(buf[at:buf.len()]) });
+      }
+    }
+  }
+  return Ok(Encoder { ...e, pending: [] });
+}
+
+// __find_static answers the static entry holding both name and value, and
+// one holding the name, each -1 when there is none.
+function __find_static(name: string, value: string): (i32, i32) {
+  let named: i32 = 0 - 1;
+  let i: i32 = 0;
+  while (i < STATIC_NAMES.len()) {
+    if (STATIC_NAMES[i] == name) {
+      if (STATIC_VALUES[i] == value) {
+        return (i, i);
+      }
+      if (named < 0) {
+        named = i;
+      }
+    }
+    i = i + 1;
+  }
+  return (0 - 1, named);
+}
+
+// __put_int writes `value` with a `prefix`-bit prefix after the `pattern`
+// bits of the first byte.
+function __put_int(out: u8[], pattern: i32, prefix: i32, value: i64): u8[] {
+  let limit: i64 = ((1 << prefix) - 1) as i64;
+  if (value < limit) {
+    return out.append((pattern as i64 | value) as u8);
+  }
+  let o: u8[] = out.append((pattern as i64 | limit) as u8);
+  let rest: i64 = value - limit;
+  while (rest >= 128) {
+    o = o.append((rest & 127 | 128) as u8);
+    rest = rest >> 7;
+  }
+  return o.append(rest as u8);
+}
+
+// __put_str writes a string literal whose length has a `prefix`-bit
+// prefix after `pattern`, Huffman-coded, with the bit above the prefix
+// set, when that is shorter.
+function (e: Encoder) __put_str(out: u8[], pattern: i32, prefix: i32, s: string): u8[] {
+  let bytes: u8[] = s.bytes();
+  if (e.huffman) {
+    let coded: i32 = huffman.encoded_len(bytes);
+    if (coded < bytes.len()) {
+      return huffman.encode(__put_int(out, pattern | 1 << prefix, prefix, coded as i64), bytes);
+    }
+  }
+  return __put_int(out, pattern, prefix, bytes.len() as i64).concat(bytes);
+}
+
+// === helpers ================================================================
+
+function __without(xs: i64[], x: i64): i64[] {
+  let out: i64[] = [];
+  for y in xs {
+    if (y != x) {
+      out = out.append(y);
+    }
+  }
+  return out;
+}
+
+function __from(xs: string[], k: i32): string[] {
+  let out: string[] = [];
+  let i: i32 = k;
+  while (i < xs.len()) {
+    out = out.append(xs[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+function __max(a: i64, b: i64): i64 {
+  if (a > b) {
+    return a;
+  }
+  return b;
+}
+
+function __copy(b: [u8]): u8[] {
+  let out: u8[] = __alloc_u8(b.len());
+  let i: i32 = 0;
+  while (i < b.len()) {
+    out = out.with(i, b[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// === RFC 9204 Appendix A: the static table, entry 0 first ==================
+
+const STATIC_NAMES: string[] = [
+  ":authority", ":path", "age", "content-disposition", "content-length", "cookie", "date", "etag",
+  "if-modified-since", "if-none-match", "last-modified", "link", "location", "referer", "set-cookie", ":method",
+  ":method", ":method", ":method", ":method", ":method", ":method", ":scheme", ":scheme",
+  ":status", ":status", ":status", ":status", ":status", "accept", "accept", "accept-encoding",
+  "accept-ranges", "access-control-allow-headers", "access-control-allow-headers", "access-control-allow-origin", "cache-control", "cache-control", "cache-control", "cache-control",
+  "cache-control", "cache-control", "content-encoding", "content-encoding", "content-type", "content-type", "content-type", "content-type",
+  "content-type", "content-type", "content-type", "content-type", "content-type", "content-type", "content-type", "range",
+  "strict-transport-security", "strict-transport-security", "strict-transport-security", "vary", "vary", "x-content-type-options", "x-xss-protection", ":status",
+  ":status", ":status", ":status", ":status", ":status", ":status", ":status", ":status",
+  "accept-language", "access-control-allow-credentials", "access-control-allow-credentials", "access-control-allow-headers", "access-control-allow-methods", "access-control-allow-methods", "access-control-allow-methods", "access-control-expose-headers",
+  "access-control-request-headers", "access-control-request-method", "access-control-request-method", "alt-svc", "authorization", "content-security-policy", "early-data", "expect-ct",
+  "forwarded", "if-range", "origin", "purpose", "server", "timing-allow-origin", "upgrade-insecure-requests", "user-agent",
+  "x-forwarded-for", "x-frame-options", "x-frame-options",
+];
+
+const STATIC_VALUES: string[] = [
+  "", "/", "0", "", "0", "", "", "",
+  "", "", "", "", "", "", "", "CONNECT",
+  "DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT", "http", "https",
+  "103", "200", "304", "404", "503", "*/*", "application/dns-message", "gzip, deflate, br",
+  "bytes", "cache-control", "content-type", "*", "max-age=0", "max-age=2592000", "max-age=604800", "no-cache",
+  "no-store", "public, max-age=31536000", "br", "gzip", "application/dns-message", "application/javascript", "application/json", "application/x-www-form-urlencoded",
+  "image/gif", "image/jpeg", "image/png", "text/css", "text/html; charset=utf-8", "text/plain", "text/plain;charset=utf-8", "bytes=0-",
+  "max-age=31536000", "max-age=31536000; includesubdomains", "max-age=31536000; includesubdomains; preload", "accept-encoding", "origin", "nosniff", "1; mode=block", "100",
+  "204", "206", "302", "400", "403", "421", "425", "500",
+  "", "FALSE", "TRUE", "*", "get", "get, post, options", "options", "content-length",
+  "content-type", "get", "post", "clear", "", "script-src 'none'; object-src 'none'; base-uri 'none'", "1", "",
+  "", "", "", "prefetch", "", "*", "1", "",
+  "", "deny", "sameorigin",
+];

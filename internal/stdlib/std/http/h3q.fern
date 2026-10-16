@@ -1,0 +1,467 @@
+// std/http/h3q — HTTP/3 over std/quic: one QUIC connection and the
+// HTTP/3 session on it, speaking `HttpRequest` and `HttpResponse` the way
+// std/http/h2's `Conn` does. A value with no IO: the caller feeds it
+// datagrams and the time, sends what `transmit` gives, and acts on the
+// requests or responses it reports.
+//
+//   let c: h3q.Conn = h3q.server(quic_conn, h3.config());
+//   c = c.receive(datagram, now);                 // each datagram
+//   let (c2, events) = c.take_events();           // h3q.Requested(id, req), ...
+//   c2 = c2.respond(id, resp);
+//   let (c3, out) = c2.transmit(now);             // datagrams to send
+//
+// Once the handshake completes it opens this side's control and QPACK
+// streams. A request's body and trailers are gathered until the stream
+// ends, up to `max_body` bytes; past that the stream is refused with
+// H3_REQUEST_REJECTED. A response's body is sent whole with `respond`, or
+// in parts with `respond_head`, `write` and `end`.
+
+import "std/quic/conn";
+import "std/http/h3";
+import "std/http/qpack";
+import "std/headers";
+import "std/http";
+import "std/string";
+import "std/option";
+import "std/result";
+import "core/int";
+
+// Event — what the peer asked or answered: a request whole (at a server),
+// the final response to one of this side's requests (at a client), a
+// stream that failed with the error code it was reset with, and the
+// connection's end.
+pub enum Event { Requested(i64, HttpRequest), Responded(i64, HttpResponse), StreamDropped(i64, i64), Ended(conn.Close) }
+
+// Partial — a message on one stream as it arrives.
+struct Partial { id: i64, fields: qpack.Field[], body: u8[], trailers: qpack.Field[] }
+
+// `next` is one past the highest request stream whose headers arrived;
+// shutdown fixes that GOAWAY boundary and refuses new requests above it.
+pub struct Conn { quic: conn.Conn, session: h3.Session, started: boolean, stopping: boolean, max_body: i64, partials: Partial[], next: i64, events: Event[] }
+
+// transport is QUIC configured for HTTP/3: ALPN h3, 100 request streams
+// at once and room for the peer's control and QPACK streams (and a few
+// for extensions it may open, which are stopped), 1 MiB per stream and
+// 16 MiB in all.
+pub function transport(c: conn.Config): conn.Config {
+  return conn.Config { ...c, alpn: ["h3"] }.with_streams(100 as i64, 8 as i64, 1048576 as i64, 16777216 as i64);
+}
+
+// server serves HTTP/3 on a QUIC connection `accept` made.
+pub function server(q: conn.Conn, c: h3.Config): Conn {
+  return Conn { quic: q, session: h3.server(c), started: false, stopping: false, max_body: 1048576 as i64, partials: [], next: 0 as i64, events: [] };
+}
+
+// client speaks HTTP/3 on a QUIC connection `conn.client` made.
+pub function client(q: conn.Conn, c: h3.Config): Conn {
+  return Conn { quic: q, session: h3.client(c), started: false, stopping: false, max_body: 1048576 as i64, partials: [], next: 0 as i64, events: [] };
+}
+
+// with_max_body bounds a request or response body held whole.
+pub function (c: Conn) with_max_body(n: i64): Conn {
+  return Conn { ...c, max_body: n };
+}
+
+pub function (c: Conn) quic(): conn.Conn {
+  return c.quic;
+}
+
+pub function (c: Conn) deadline(): i64 {
+  return c.quic.deadline();
+}
+
+pub function (c: Conn) done(): boolean {
+  return c.quic.done();
+}
+
+// ready reports whether requests may be sent: the handshake is complete
+// and the server has not said GOAWAY.
+pub function (c: Conn) ready(): boolean {
+  return c.started && c.quic.connected() && c.session.goaway_received() < 0;
+}
+
+pub function (c: Conn) take_events(): (Conn, Event[]) {
+  return (Conn { ...c, events: [] }, c.events);
+}
+
+// === the connection =========================================================
+
+pub function (c: Conn) receive(datagram: [u8], now: i64): Conn {
+  let step: conn.Step = c.quic.receive(datagram, now);
+  return Conn { ...c, quic: step.conn }.__stepped(step.events, now);
+}
+
+pub function (c: Conn) tick(now: i64): Conn {
+  let step: conn.Step = c.quic.tick(now);
+  return Conn { ...c, quic: step.conn }.__stepped(step.events, now);
+}
+
+pub function (c: Conn) transmit(now: i64): (Conn, u8[][]) {
+  let (q, out) = c.quic.transmit(now);
+  return (Conn { ...c, quic: q }, out);
+}
+
+// shutdown begins a graceful close (§5.2): GOAWAY names the first request
+// stream not seen yet, so the peer sends no more and retries those
+// elsewhere, while the requests already here are answered. `close` ends
+// the connection once they are.
+pub function (c: Conn) shutdown(): Conn {
+  if (!c.started || c.stopping) {
+    return c;
+  }
+  return Conn { ...c, session: c.session.send_goaway(c.next), stopping: true }.__applied(0 as i64);
+}
+
+// close ends the connection with H3_NO_ERROR.
+pub function (c: Conn) close(now: i64): Conn {
+  return Conn { ...c, quic: c.quic.close(h3.H3_NO_ERROR, "", true, now) };
+}
+
+// __stepped acts on what the QUIC connection reported.
+function (c: Conn) __stepped(evs: conn.Event[], now: i64): Conn {
+  let cur: Conn = c;
+  for e in evs {
+    cur = cur.__quic_event(e, now);
+  }
+  return cur.__applied(now);
+}
+
+function (c: Conn) __quic_event(e: conn.Event, now: i64): Conn {
+  match (e) {
+    conn.Connected => {
+      return c.__started();
+    },
+    conn.StreamReadable(id) => {
+      return c.__readable(id);
+    },
+    conn.StreamReset(id, code) => {
+      return Conn { ...c, session: c.session.on_reset(id, code) };
+    },
+    conn.StreamStopped(id, code) => {
+      return Conn { ...c, session: c.session.on_reset(id, code) };
+    },
+    conn.Closed(why) => {
+      return Conn { ...c, events: c.events.append(Ended(why)) };
+    },
+    _ => {
+      return c;
+    }
+  }
+}
+
+// __started opens this side's control and QPACK streams.
+function (c: Conn) __started(): Conn {
+  let Ok(a) = c.quic.open_stream(true) else {
+    return c.__fatal("the peer allows too few unidirectional streams");
+  };
+  let Ok(b) = a.0.open_stream(true) else {
+    return c.__fatal("the peer allows too few unidirectional streams");
+  };
+  let Ok(d) = b.0.open_stream(true) else {
+    return c.__fatal("the peer allows too few unidirectional streams");
+  };
+  return Conn { ...c, quic: d.0, session: c.session.start(a.1, b.1, d.1), started: true };
+}
+
+function (c: Conn) __fatal(why: string): Conn {
+  return Conn { ...c, quic: c.quic.close(h3.H3_GENERAL_PROTOCOL_ERROR, why, true, 0 as i64) };
+}
+
+// __readable hands what a stream has to the session.
+function (c: Conn) __readable(id: i64): Conn {
+  let Ok(r) = c.quic.read(id) else {
+    return c;
+  };
+  return Conn { ...c, quic: r.0, session: c.session.on_stream(id, r.1, r.2) };
+}
+
+// __applied carries out what the session asked of the connection and
+// turns its events into requests and responses, until it has nothing
+// more: an event can ask for more, as a body past `max_body` does.
+function (c: Conn) __applied(now: i64): Conn {
+  let cur: Conn = c;
+  while (true) {
+    let (s, acts, evs) = cur.session.take();
+    if (acts.len() == 0 && evs.len() == 0) {
+      return Conn { ...cur, session: s };
+    }
+    let q: conn.Conn = cur.quic;
+    for a in acts {
+      q = __act(q, a, now);
+    }
+    cur = Conn { ...cur, quic: q, session: s };
+    for e in evs {
+      cur = cur.__session_event(e);
+    }
+  }
+  return cur;
+}
+
+function __act(q: conn.Conn, a: h3.Action, now: i64): conn.Conn {
+  match (a) {
+    h3.Write(id, bytes, fin) => {
+      return q.write(id, bytes, fin).unwrap_or(q);
+    },
+    h3.Abort(id, code) => {
+      return q.reset_stream(id, code).unwrap_or(q);
+    },
+    h3.Stop(id, code) => {
+      return q.stop_sending(id, code).unwrap_or(q);
+    },
+    h3.CloseConnection(code, why) => {
+      return q.close(code, why, true, now);
+    }
+  }
+}
+
+function (c: Conn) __session_event(e: h3.Event): Conn {
+  match (e) {
+    h3.HeadersReceived(id, fields) => {
+      return c.__headers(id, fields);
+    },
+    h3.DataReceived(id, data) => {
+      return c.__data(id, data);
+    },
+    h3.TrailersReceived(id, fields) => {
+      return c.__with_partial(id, (p: Partial): Partial => Partial { ...p, trailers: fields });
+    },
+    h3.StreamEnded(id) => {
+      return c.__ended(id);
+    },
+    h3.StreamAborted(id, code) => {
+      return Conn { ...c, partials: __without(c.partials, id), events: c.events.append(StreamDropped(id, code)) };
+    },
+    h3.GoawayReceived(_) => {
+      return c;
+    }
+  }
+}
+
+// __headers starts a message, or, at a client, replaces an interim
+// response's head with the final one.
+function (c: Conn) __headers(id: i64, fields: qpack.Field[]): Conn {
+  let next: i64 = c.next;
+  if (c.session.is_server()) {
+    if (c.stopping && id >= next) {
+      return Conn { ...c, session: c.session.abort(id, h3.H3_REQUEST_REJECTED) };
+    }
+    if (id + 4 > next) {
+      next = id + 4;
+    }
+  }
+  let kept: Partial[] = __without(c.partials, id);
+  return Conn { ...c, partials: kept.append(Partial { id: id, fields: fields, body: [], trailers: [] }), next: next };
+}
+
+function (c: Conn) __data(id: i64, data: u8[]): Conn {
+  let i: i32 = __find(c.partials, id);
+  if (i < 0) {
+    return c;
+  }
+  let p: Partial = c.partials[i];
+  if ((p.body.len() + data.len()) as i64 > c.max_body) {
+    let s: h3.Session = c.session.abort(id, h3.H3_REQUEST_REJECTED);
+    return Conn { ...c, session: s, partials: __without(c.partials, id), events: c.events.append(StreamDropped(id, h3.H3_REQUEST_REJECTED)) };
+  }
+  return Conn { ...c, partials: c.partials.with(i, Partial { ...p, body: p.body.concat(data) }) };
+}
+
+function (c: Conn) __with_partial(id: i64, f: (Partial) => Partial): Conn {
+  let i: i32 = __find(c.partials, id);
+  if (i < 0) {
+    return c;
+  }
+  return Conn { ...c, partials: c.partials.with(i, f(c.partials[i])) };
+}
+
+// __ended reports a message whose stream has ended.
+function (c: Conn) __ended(id: i64): Conn {
+  let i: i32 = __find(c.partials, id);
+  if (i < 0) {
+    return c;
+  }
+  let p: Partial = c.partials[i];
+  let rest: Partial[] = __without(c.partials, id);
+  if (c.session.is_server()) {
+    return Conn { ...c, partials: rest, events: c.events.append(Requested(id, __request(p))) };
+  }
+  return Conn { ...c, partials: rest, events: c.events.append(Responded(id, __response(p))) };
+}
+
+// === messages ===============================================================
+
+// __request is a request as HttpRequest: the pseudo-header fields its
+// method and path, :authority its host when it has none.
+function __request(p: Partial): HttpRequest {
+  let hs: HeaderMap = headers.header_map_new();
+  let authority: string = "";
+  let method: string = "";
+  let path: string = "";
+  for f in p.fields {
+    if (f.name == ":method") {
+      method = f.value;
+    } else if (f.name == ":path") {
+      path = f.value;
+    } else if (f.name == ":authority") {
+      authority = f.value;
+    } else if (!f.name.starts_with(":")) {
+      hs = hs.append(f.name, f.value);
+    }
+  }
+  if (authority.len() > 0 && !hs.has("host")) {
+    hs = hs.append("host", authority);
+  }
+  return HttpRequest { method: method, path: path, body: Stream { data: p.body, pos: 0, source: None }, headers: hs, trailers: __map(p.trailers) };
+}
+
+function __response(p: Partial): HttpResponse {
+  let status: i32 = 0;
+  let hs: HeaderMap = headers.header_map_new();
+  for f in p.fields {
+    if (f.name == ":status") {
+      status = f.value.parse_int().unwrap_or(0);
+    } else if (!f.name.starts_with(":")) {
+      hs = hs.append(f.name, f.value);
+    }
+  }
+  return HttpResponse { status: status, body: BodyBytes(p.body), headers: hs, trailers: __map(p.trailers), background: None };
+}
+
+function __map(fields: qpack.Field[]): HeaderMap {
+  let hs: HeaderMap = headers.header_map_new();
+  for f in fields {
+    hs = hs.append(f.name, f.value);
+  }
+  return hs;
+}
+
+// __response_fields is a response's head as HTTP/3 fields: :status, the
+// headers in lowercase less HTTP/1.1's connection-specific ones, and a
+// content-length for a body of `length` bytes (-1 for one not yet known).
+function __response_fields(resp: HttpResponse, length: i64): qpack.Field[] {
+  let fs: qpack.Field[] = [qpack.field(":status", int.int_to_string(resp.status))];
+  let has_length: boolean = false;
+  let i: i32 = 0;
+  while (i < resp.headers.names.len()) {
+    let name: string = resp.headers.names[i].to_lower();
+    has_length = has_length || name == "content-length";
+    if (!__connection_specific(name)) {
+      fs = fs.append(qpack.field(name, resp.headers.values[i]));
+    }
+    i = i + 1;
+  }
+  if (!has_length && length >= 0 && !http.http_bodiless(resp.status)) {
+    fs = fs.append(qpack.field("content-length", length.to_string()));
+  }
+  return fs;
+}
+
+function __connection_specific(name: string): boolean {
+  return name == "connection" || name == "keep-alive" || name == "proxy-connection" || name == "transfer-encoding" || name == "upgrade";
+}
+
+// __request_fields is a request's head as HTTP/3 fields, :authority from
+// its host header.
+function __request_fields(req: HttpRequest, scheme: string): qpack.Field[] {
+  let authority: string = req.headers.get("host").unwrap_or("");
+  let fs: qpack.Field[] = [qpack.field(":method", req.method), qpack.field(":scheme", scheme), qpack.field(":authority", authority), qpack.field(":path", req.path)];
+  let i: i32 = 0;
+  while (i < req.headers.names.len()) {
+    let name: string = req.headers.names[i].to_lower();
+    if (name != "host" && !__connection_specific(name)) {
+      fs = fs.append(qpack.field(name, req.headers.values[i]));
+    }
+    i = i + 1;
+  }
+  return fs;
+}
+
+function __trailer_fields(t: HeaderMap): qpack.Field[] {
+  let fs: qpack.Field[] = [];
+  let i: i32 = 0;
+  while (i < t.names.len()) {
+    fs = fs.append(qpack.field(t.names[i].to_lower(), t.values[i]));
+    i = i + 1;
+  }
+  return fs;
+}
+
+// === answering and asking ===================================================
+
+// respond answers the request on stream `id` with `resp`, its body whole.
+pub function (c: Conn) respond(id: i64, resp: HttpResponse): Conn {
+  let body: u8[] = resp.body_bytes();
+  if (http.http_bodiless(resp.status)) {
+    body = [];
+  }
+  let head: Conn = c.respond_head(id, resp, body.len() as i64);
+  let w: Conn = head.write(id, body);
+  return w.end(id, resp.trailers);
+}
+
+// respond_head sends a response's head; its body follows with `write` and
+// `end`. `length` is the body's size when known, -1 otherwise.
+pub function (c: Conn) respond_head(id: i64, resp: HttpResponse, length: i64): Conn {
+  return Conn { ...c, session: c.session.send_headers(id, __response_fields(resp, length), false) }.__applied(0 as i64);
+}
+
+// write sends body bytes on stream `id`.
+pub function (c: Conn) write(id: i64, bytes: [u8]): Conn {
+  if (bytes.len() == 0) {
+    return c;
+  }
+  return Conn { ...c, session: c.session.send_data(id, bytes, false) }.__applied(0 as i64);
+}
+
+// end ends a message's body, with trailers when there are any.
+pub function (c: Conn) end(id: i64, trailers: HeaderMap): Conn {
+  if (trailers.names.len() > 0) {
+    return Conn { ...c, session: c.session.send_trailers(id, __trailer_fields(trailers)) }.__applied(0 as i64);
+  }
+  return Conn { ...c, session: c.session.send_data(id, [], true) }.__applied(0 as i64);
+}
+
+// abort resets stream `id` both ways with `code`, as when a response
+// cannot be finished.
+pub function (c: Conn) abort(id: i64, code: i64): Conn {
+  return Conn { ...c, session: c.session.abort(id, code), partials: __without(c.partials, id) }.__applied(0 as i64);
+}
+
+// request sends `req` on a new stream, its body whole, and answers the
+// stream's ID; the response arrives as `Responded` on it.
+pub function (c: Conn) request(req: HttpRequest, scheme: string): Result[(Conn, i64), string] {
+  if (!c.ready()) {
+    return Err("h3: the connection takes no requests");
+  }
+  let (q, id) = c.quic.open_stream(false)?;
+  let body: u8[] = req.body.data;
+  let s: h3.Session = c.session.send_headers(id, __request_fields(req, scheme), body.len() == 0 && req.trailers.names.len() == 0);
+  let cur: Conn = Conn { ...c, quic: q, session: s };
+  if (body.len() > 0 || req.trailers.names.len() > 0) {
+    cur = cur.write(id, body).end(id, req.trailers);
+  }
+  return Ok((cur.__applied(0 as i64), id));
+}
+
+// === helpers ================================================================
+
+function __find(ps: Partial[], id: i64): i32 {
+  let i: i32 = 0;
+  while (i < ps.len()) {
+    if (ps[i].id == id) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+function __without(ps: Partial[], id: i64): Partial[] {
+  let out: Partial[] = [];
+  for p in ps {
+    if (p.id != id) {
+      out = out.append(p);
+    }
+  }
+  return out;
+}

@@ -51,10 +51,19 @@ The modules, each importable on its own and sans-IO, so each runs under
   control per stream and for the connection, RESET_STREAM and
   STOP_SENDING. Slice 4, landed.
 - `std/http/qpack` — the static and dynamic tables, the encoder and
-  decoder streams, Huffman shared with `std/http/hpack`. Slice 5.
+  decoder streams, Huffman shared with `std/http/hpack` through
+  `std/http/huffman`. The encoder uses the static table and literals only,
+  so a peer never blocks on it. Slice 5.
 - `std/http/h3` — frames, the control and QPACK streams, SETTINGS and
-  GOAWAY, request streams as `HttpRequest` events, responses and trailers.
-  Slice 6.
+  GOAWAY, request and response streams with interim responses and
+  trailers, and §4.1.2's message checks. It runs over stream bytes, not
+  over `std/quic/conn`: the caller hands it each stream's bytes and resets
+  and takes back writes, resets and events, so it is tested in memory and
+  any QUIC implementation can carry it. Slice 6.
+- `std/http/h3q` — HTTP/3 over `std/quic/conn`: one connection and its
+  session, speaking `HttpRequest` and `HttpResponse` as `std/http/h2`'s
+  `Conn` does, with `transport` giving QUIC the settings HTTP/3 needs.
+  Slice 7a.
 
 ## The attacks, designed in
 
@@ -119,17 +128,31 @@ Each is a bound with a test that crosses it.
    connection IDs and keys mid-stream.
 5. **QPACK.** Gate: `tests/stdlib/http_qpack_test.fern`, with RFC 9204
    Appendix B's examples.
-6. **HTTP/3.** `std/http/h3` over a `std/quic/conn`. Gate:
-   `tests/stdlib/http_h3_test.fern`, a client and a server in memory.
-7. **Serving.** `serve.Config.with_h3()`: a UDP socket per worker beside
-   the TCP listener, connections routed by connection ID, QUIC's timers in
-   the loop's wait, handlers parked per stream as for HTTP/2, and Alt-Svc on
-   the TCP responses. The runtime gains what UDP serving needs:
-   `SO_REUSEPORT` and dual-stack on UDP sockets, and the datagram's local
-   address. Gate: `TestServeH3Interp` and `TestServeH3X86_64` against an
-   aioquic client.
-8. **Interop nightly.** `scripts/net-quic-interop` grows HTTP/3 requests
-   both ways, and h3spec. Gate: the nightly job.
+6. **HTTP/3.** `std/http/h3`. Gate: `tests/stdlib/http_h3_test.fern`, a
+   client and a server session joined in memory, bytes delivered whole or
+   one at a time.
+7a. **HTTP/3 over QUIC.** `std/http/h3q`. Gate:
+   `tests/stdlib/http_h3q_test.fern` in memory under loss and reordering,
+   and `scripts/net-quic-interop` against aioquic's HTTP/3 each way.
+7. **Serving.** `serve.Config.with_h3()`: a UDP socket beside the TCP
+   listener, connections routed by connection ID, QUIC's timers in the
+   loop's wait, handlers parked per stream as for HTTP/2 (keyed by the
+   connection's serial, since one socket carries every connection), chunked
+   bodies produced as tasks under a cap on what the client has not
+   acknowledged, GOAWAY on shutdown, and Alt-Svc on the TCP responses.
+   `run_with`'s stateful loop serves HTTP/3 too, its state threaded through
+   each request in turn. Gate: `TestServeH3Interp` and `TestServeH3X86_64`,
+   a std/http/h3q client against the served program. Each worker binds its
+   own socket with `udp_bind_with` (#12480), SO_REUSEPORT and native
+   dual-stack, including when the TCP listener is inherited. Gate:
+   `TestServeH3SocketX86_64`, two requests on each connection over IPv4
+   and IPv6, and independent connections reaching both supervised workers.
+   `TestServeH3PeerLimitX86_64` pins per-IP admission independently of the
+   peer's UDP port. File bodies remain a follow-up to HTTP/2's part
+   producer in #12484.
+8. **Interop nightly.** h3spec, and more HTTP/3 peers beside aioquic
+   (`scripts/net-quic-interop` has carried HTTP/3 both ways since 7a).
+   Gate: the nightly job.
 9. **Client.** `std/fetch` speaks HTTP/3 to an origin that offers it by
    Alt-Svc, and `std/sim_fetch` scripts datagrams. Gate: fetch against
    aioquic's server, and the simulated network.
