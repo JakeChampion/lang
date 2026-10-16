@@ -432,3 +432,26 @@ net/hyper-twofetch/c4096.failed	0
 net/fern/held.bytes_per_connection	992
 net/fern/held.bytes_per_suspended_handler	6628
 net/fern/held.bytes_per_stream	7844
+
+# lane: net-soak
+soak/static.requests	21941364
+soak/static.failed	0
+soak/static.rss_warm_kb	3252
+soak/static.rss_end_kb	3252
+soak/static.rss_growth_kb	0
+soak/static.allocs	3148229
+soak/static.live_bytes	0
+soak/echo.requests	16559868
+soak/echo.failed	0
+soak/echo.rss_warm_kb	3284
+soak/echo.rss_end_kb	3284
+soak/echo.rss_growth_kb	0
+soak/echo.allocs	886451689
+soak/echo.live_bytes	0
+soak/recent.requests	13407009
+soak/recent.failed	0
+soak/recent.rss_warm_kb	3212
+soak/recent.rss_end_kb	3212
+soak/recent.rss_growth_kb	0
+soak/recent.allocs	356649712
+soak/recent.live_bytes	0
