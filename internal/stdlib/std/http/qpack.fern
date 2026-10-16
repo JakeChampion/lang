@@ -109,10 +109,11 @@ function __int(buf: [u8], at: i32, prefix: i32): Result[(i64, i32), i32] {
     if (shift > 56) {
       return Err(TOO_BIG);
     }
-    value = value + ((b & 127) << shift);
-    if (value > 4611686018427387903) {
+    let part: i64 = (b & 127) << shift;
+    if (part > 4611686018427387903 as i64 - value) {
       return Err(TOO_BIG);
     }
+    value = value + part;
     shift = shift + 7;
     if (b < 128) {
       return Ok((value, i));

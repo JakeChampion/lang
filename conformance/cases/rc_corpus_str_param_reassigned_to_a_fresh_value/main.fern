@@ -1,0 +1,33 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The reassignment with no append in it at all: the RHS is a fresh
+// concat of the OTHER parameter, so nothing can grow in place and the
+// only question is who owns the value the slot was overwritten with.
+// The callee does, and must release it — that is the promotion's leak
+// half. Returning the param on one path and not the other keeps the
+// exit sweep's move-on-return exclusion correct at the same time.
+function mk(n: i32): string {
+    let s: string = "";
+    let i: i32 = 0;
+    while (i < n) { s = s + "abcd"; i = i + 1; }
+    return s;
+}
+function pick(a: string, s: string, keep: boolean): string {
+    a = s + s;
+    if (keep) { return a; }
+    return "fixed";
+}
+function main(): i32 {
+    let base: string = mk(4);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 64) {
+        acc = acc + pick(base, "12345678", true).len();
+        acc = acc + pick(base, "12345678", false).len();
+        if (base.len() != 16) { return 1; }
+        i = i + 1;
+    }
+    if (acc != 64 * (16 + 5)) { return 2; }
+    return __rc_underflow_count();
+}

@@ -1,0 +1,22 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Closure-capture composite — a closure capturing a STRUCT now
+// deep-drops it (the per-closure drop thunk routes the struct
+// capture through __drop_struct_Item, freeing its box) instead
+// of the flat one-level rc_dec. The thunk only runs when every
+// capture was inc'd at MakeEnv, so this is balanced. Churned:
+// an over-release would accumulate. sum_{i=0..99}(i+1) = 5050.
+import "core/int";
+struct Item { tags: i32[] }
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) {
+        let it: Item = Item { tags: [i, i + 1] };
+        let f = (d: i32): i32 => { return it.tags[1] + d; };
+        acc = acc + f(0);
+        i = i + 1;
+    }
+    return (acc - 5050) + __rc_underflow_count();
+}

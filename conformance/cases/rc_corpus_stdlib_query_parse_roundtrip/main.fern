@@ -1,0 +1,25 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Real stdlib hot path: query_parse builds a
+// Map[string, string[]] (map-structural reclamation + the
+// escape-out path + string[] values). Round-trips a few keys
+// and checks the underflow counter stays 0 under free.
+import "core/int";
+import "core/map";
+import "std/string";
+import "std/url";
+function main(): i32 {
+    let bad: i32 = 0;
+    let m: Map[string, string[]] = url.query_parse("a=1&b=2&tag=x&tag=y");
+    if (m.len() != 3) { bad = bad + 1; }
+    match (m.get("tag")) {
+        Some(arr) => { if (arr.len() != 2) { bad = bad + 10; } },
+        None => { bad = bad + 100; }
+    }
+    match (m.get("a")) {
+        Some(arr) => { if (arr[0] != "1") { bad = bad + 1000; } },
+        None => { bad = bad + 10000; }
+    }
+    return bad + __rc_underflow_count();
+}

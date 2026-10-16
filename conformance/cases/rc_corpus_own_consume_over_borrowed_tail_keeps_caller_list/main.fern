@@ -1,0 +1,40 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// A consuming (`own`) walk over a list whose spine the CALLER still
+// holds (#6720). `Cons(7, shared)` is a fresh construction — so E051
+// admits it as an owned argument — but its tail is borrowed, and the
+// construction retains it, so the walk meets a cell at rc 2 one level
+// in.
+//
+// The walk decides reuse per level from that cell's own refcount, and
+// a cell reached only through a surviving box's tail field counts 1.
+// So declining at the shared cell was not enough: the level below saw
+// 1, called itself unique, and reused a cell `shared` still reaches.
+// `sum(shared)` then read the rebuilt list — 8 rather than 6, off a
+// block the allocator had already handed back out.
+//
+// The stop has to propagate down the spine, which is what the decline
+// branch's retain of the moved-out payloads buys.
+import "core/int";
+enum List { Cons(i32, List), Nil }
+function build(n: i32): List {
+    if (n == 0) { return Nil; }
+    return Cons(n, build(n - 1));
+}
+function inc_all(own xs: List): List {
+    match (xs) {
+        Cons(h, t) => { return Cons(h + 1, inc_all(t)); },
+        Nil => { return Nil; },
+    }
+}
+function sum(l: List): i32 {
+    match (l) { Cons(h, t) => { return h + sum(t); }, Nil => { return 0; } }
+}
+function main(): i32 {
+    let shared: List = build(3);
+    let ys: List = inc_all(Cons(7, shared));
+    let a: i32 = sum(ys);
+    let b: i32 = sum(shared);
+    return (a - 17) + (b - 6) + __rc_underflow_count();
+}

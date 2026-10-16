@@ -1,0 +1,22 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Conditional alias via a match-expression — the shape that was
+// a latent use-after-free even for arrays before the escape-walk
+// fix. `a1` aliases `a0` through the match arms; a0 must survive
+// until both are read. Churned to force block reuse.
+import "core/int";
+function pick_arr(o: Option[i32], a0: i32[]): i32[] {
+    return match (o) { Some(x) => a0, None => a0 };
+}
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) {
+        let a0: i32[] = [i, i + 1, i + 2];
+        let a1: i32[] = match (Some(i)) { Some(x) => a0, None => a0 };
+        acc = acc + a1[2] + a0[0];
+        i = i + 1;
+    }
+    return (acc - 10100) + __rc_underflow_count();
+}

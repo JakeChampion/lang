@@ -1,0 +1,50 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The tree-walk read path (`let cur = root; cur = kids[..]`) taints
+// `root` through the alias, which used to keep an owned parameter's
+// count forever: one whole trie stranded per lookup. An owned
+// parameter now spends its count unless it ESCAPED into an uncounted
+// sink. Leak-only; the leak gate holds it at zero.
+enum N { E, L(i32[]), B(N[]) }
+struct PV { len: i32, root: N, tail: i32[] }
+function leaf_for(root: N, shift: i32, i: i32): i32[] {
+    let cur: N = root;
+    let level: i32 = shift;
+    let descending: boolean = true;
+    while (descending) {
+        match (cur) {
+            B(kids) => { cur = kids[i >> level & 31]; level = level - 5; },
+            L(xs) => { return xs; },
+            E => { descending = false; }
+        }
+    }
+    let none: i32[] = [];
+    return none;
+}
+function (v: PV) get_or(i: i32, fallback: i32): i32 {
+    if (i < 0 || i >= v.len) { return fallback; }
+    let leaf: i32[] = leaf_for(v.root, 5, i);
+    return leaf[i & 31];
+}
+function build(): PV {
+    let kids: N[] = [];
+    let a: i32 = 0;
+    while (a < 4) {
+        let xs: i32[] = [];
+        let b: i32 = 0;
+        while (b < 32) { xs = xs.append(a * 32 + b); b = b + 1; }
+        kids = kids.append(L(xs));
+        a = a + 1;
+    }
+    let t: i32[] = [];
+    t = t.append(7);
+    return PV { len: 128, root: B(kids), tail: t };
+}
+function main(): i32 {
+    let v: PV = build();
+    let sum: i32 = 0;
+    let i: i32 = 0;
+    while (i < 128) { sum = sum + v.get_or(i, -1); i = i + 1; }
+    return (sum - 8128) + __rc_underflow_count();
+}

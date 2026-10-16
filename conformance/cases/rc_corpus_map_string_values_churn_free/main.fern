@@ -1,0 +1,30 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Map[K, string] VALUE reclamation (wasm). String values are stored
+// boxed (an 8-byte (data, len) cell); the map's drop walks the value
+// column via __drop_map_str_values and __fern_str_dec's each value
+// buffer. set retains an aliased value, get retains the returned
+// string, and a key OVERWRITE pre-drops the replaced buffer. Here
+// key 1 is overwritten (firstval → secondvalue) and the surviving
+// value is gotten into an outliving binding. 200x churn; a double-
+// free / UAF / leak on a value buffer trips the checksum or the
+// underflow detector. out.len()=11 ("secondvalue"); 200*11=2200.
+import "core/int";
+import "core/map";
+import "std/string";
+function mk(seed: i32): i32 {
+    let m: Map[i32, string] = map_new(8);
+    m = m.insert(1, "first" + "val");
+    m = m.insert(2, "other" + "entry");
+    m = m.insert(1, "second" + "value");
+    let out: string = "";
+    match (m.get(1)) { Some(v) => { out = v; }, None => { out = "z"; } }
+    return out.len();
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 2200) + __rc_underflow_count();
+}

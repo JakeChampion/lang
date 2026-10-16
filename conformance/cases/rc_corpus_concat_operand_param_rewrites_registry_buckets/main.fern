@@ -1,0 +1,47 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The same credit through `.with` instead of `.append` — the
+// self-host's own borrow registry, whose buckets are rewritten
+// rather than grown. The x86-64 pin is NOT this credit's
+// residue: it went 4032 -> 384 with it. What is left is a
+// separate defect one layer down — __fern_arr_cow_inplace_ptr
+// INCS each element into the copy it hands back, while the
+// caller's dec-on-overwrite for an array local is the
+// buffer-only __fern_arr_dec, so the old buffer dies without
+// releasing the element references the copy retained. One
+// element per rewritten bucket, and the plain `a = f(...)`
+// overwrite has it too.
+@noinline
+function put(reg: string[], key: string, flags: string): string[] {
+    let b: i32 = key.len() % reg.len();
+    return reg.with(b, reg[b] + key + "|" + flags);
+}
+
+@noinline
+function newreg(): string[] {
+    let out: string[] = [];
+    let i: i32 = 0;
+    while (i < 8) { out = out.append(""); i = i + 1; }
+    return out;
+}
+
+function main(): i32 {
+    let keys: string[] = ["alpha-key-one", "beta-key-two", "gamma-key-three"];
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 4) {
+        let reg: string[] = newreg();
+        let k: i32 = 0;
+        while (k < keys.len()) {
+            let flags: string = "";
+            let f: i32 = 0;
+            while (f < 12) { flags = flags + "1"; f = f + 1; }
+            reg = put(reg, keys[k], flags);
+            k = k + 1;
+        }
+        t = t + reg.len();
+        i = i + 1;
+    }
+    return (t - 32) + __rc_underflow_count();
+}

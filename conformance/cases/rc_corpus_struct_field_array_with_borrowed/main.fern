@@ -1,0 +1,11 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Same borrow hazard through a STRUCT FIELD: `s.xs.with(0, 9)` must not
+// mutate `s.xs` in place. r[0]=9, s.xs[0]=1 → 10; -10 → 0 when correct.
+struct S { xs: i32[] }
+function main(): i32 {
+    let s: S = S { xs: [1, 2, 3] };
+    let r: i32[] = s.xs.with(0, 9);
+    return (r[0] + s.xs[0] - 10) + __rc_underflow_count();
+}

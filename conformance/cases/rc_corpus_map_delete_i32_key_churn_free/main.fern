@@ -1,0 +1,29 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The i32-KEY half, hit and miss. No key column to walk, so it
+// separates what the delete shapes cost from what the string key
+// column costs — the split that showed the leak is ABI-independent.
+// Per iter: hit 2 + surviving 2-entry 6 = 8; 500x → 4000.
+import "core/int";
+import "core/map";
+function mk(): i32 {
+    let acc: i32 = 0;
+    let im: Map[i32, i32] = map_new(8);
+    im = im.insert(1, 4);
+    im = im.insert(2, 6);
+    let it = im.without(1);
+    im = it.0;
+    if (it.1) { acc = acc + 2; }
+    let im2 = im.without(9);
+    im = im2.0;
+    if (im2.1) { acc = acc + 100; }
+    acc = acc + im.get_or(2, 0);
+    return acc;
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 4000) + __rc_underflow_count();
+}

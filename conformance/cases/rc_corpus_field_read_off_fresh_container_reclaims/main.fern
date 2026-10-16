@@ -1,0 +1,30 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The claiming shape, looping so the container's freed blocks are
+// recycled into the next round. Every field kind the retain has to
+// know about is extracted from a fresh container: an array, a heap
+// string past SSO, and a scalar (which takes the no-retain path).
+// An unbalanced retain leaks — invisible here — but an unbalanced
+// DROP hands a live block to the freelist, and the next round's
+// construction reads it back.
+import "core/int";
+import "std/i32";
+import "std/string";
+struct P { a: i32, b: i32 }
+struct Box { items: P[], tag: i32, name: string }
+function mk(i: i32): Box {
+    return Box { items: [P { a: i, b: i + 1 }, P { a: i + 2, b: i + 3 }], tag: i, name: "boxed-name-" + i.to_string() };
+}
+function main(): i32 {
+    let t: i32 = 0;
+    let r: i32 = 0;
+    while (r < 20) {
+        let a: P[] = mk(r).items;
+        let s: string = mk(r).name;
+        let g: i32 = mk(r).tag;
+        t = t + a[0].a + a[1].b + s.len() + g;
+        r = r + 1;
+    }
+    return (t - 880) + __rc_underflow_count();
+}

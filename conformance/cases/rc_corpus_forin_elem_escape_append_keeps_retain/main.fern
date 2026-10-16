@@ -1,0 +1,31 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// A loop element STORED into an accumulator array: movedLocals and
+// bindingConfinedToArm (append is a retain sink per
+// calleeRetainsAnyArg) refuse the borrow. Same as the return
+// case above: pinned as cross-backend value correctness with
+// in-function container death and churn; the escape site takes its
+// own transfer inc, so even a wrongly-taken borrow shows up as a
+// leak-shaped imbalance, not an exit-code failure — the IR tests
+// carry the guard-removal net.
+struct S { name: string, fields: string[] }
+function mkstr(p: string): string { return p + "!"; }
+function collect(): i32 {
+    let xs: S[] = [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] },
+                   S{ name: mkstr("b"), fields: [] }];
+    let acc: S[] = [];
+    for sd in xs {
+        if (sd.fields.len() == 1) { acc = acc.append(sd); }
+    }
+    xs = [];
+    let churn: S[] = [S{ name: mkstr("zzzzzzzzzz"), fields: [mkstr("y")] },
+                      S{ name: mkstr("xxxxxxxxxx"), fields: [mkstr("w")] }];
+    let ok: i32 = 0;
+    if (acc[0].name == "aaaaaaaaaa!") { ok = 1; }
+    return ok + churn.len() - 2;
+}
+function main(): i32 {
+    let c: i32 = collect();
+    return (c - 1) + __rc_underflow_count();
+}

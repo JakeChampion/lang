@@ -1,0 +1,26 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Transitive reclamation Stage C — enum carrying a struct
+// payload that ESCAPES (pushed into an array): the enum is
+// tainted (not free-eligible), so its struct payload must NOT be
+// deep-freed; the array still references it after the local is
+// swept. Churn forces same-size reuse that would corrupt a
+// strayed read.
+import "core/int";
+import "std/array";
+import "std/string";
+struct Item { tags: i32[] }
+enum Node { Leaf(Item), Branch(i32) }
+function main(): i32 {
+    let keep: Node[] = [];
+    keep = keep.append(Leaf(Item { tags: [5, 6] }));
+    let c: i32 = 0;
+    while (c < 200) {
+        let junk: i32[] = [c, c];
+        c = c + 1;
+    }
+    let got: i32 = 0;
+    match (keep[0]) { Leaf(it) => { got = it.tags[1]; }, Branch(b) => { got = b; } }
+    return (got - 6) + (keep.len() - 1) + __rc_underflow_count();
+}

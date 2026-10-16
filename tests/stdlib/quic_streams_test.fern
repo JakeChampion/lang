@@ -412,6 +412,110 @@ function test_resets(): test.TestOutcome {
   }
 }
 
+// Bytes already read must not be credited again when a stopped stream is
+// reset. Discard both ready and out-of-order bytes without changing an old
+// alias of the table, and count bytes arriving after STOP_SENDING only once.
+function test_stop_after_read(): test.TestOutcome {
+  let s: streams.Streams = server(2 as i64);
+  match (fed(s, [data(0 as i64, 0 as i64, 60, false)])) {
+    Ok(t) => {
+      s = t;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  match (s.read(0 as i64)) {
+    Ok(r) => {
+      s = r.0;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  match (fed(s, [data(0 as i64, 60 as i64, 10, false), data(0 as i64, 90 as i64, 5, false)])) {
+    Ok(t) => {
+      s = t;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  let alias: streams.Streams = s;
+  match (s.stop(0 as i64, 3 as i64)) {
+    Ok(t) => {
+      s = t;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  let old_ready: i32 = 0;
+  match (alias.read(0 as i64)) {
+    Ok(r) => {
+      old_ready = r.1.len();
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  let rs: frames.Frame = frames.ResetStreamFrame(frames.ResetStream { stream: 0 as i64, code: 9 as i64, final_size: 100 as i64 });
+  match (fed(s, [data(0 as i64, 95 as i64, 5, false), rs, rs])) {
+    Ok(t) => {
+      let (next, out, _) = t.fill([], 1200);
+      let (_, again, _) = next.fill([], 1200);
+      return test.assert_eq(old_ready.to_string() + " " + sent(out) + "| " + sent(again), "10 STOP_SENDING 0 3 MAX_DATA 250 | ");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+// A refused open cannot return a changed table. The application explicitly
+// requests STREAMS_BLOCKED, once for each direction, then receives more credit.
+function test_blocked_open(): test.TestOutcome {
+  let s: streams.Streams = streams.table(true, limits(2 as i64, 1 as i64, 100 as i64, 150 as i64)).with_peer(limits(0 as i64, 0 as i64, 50 as i64, 80 as i64));
+  match (s.open(false)) {
+    Ok(_) => {
+      return test.fail("opened a bidirectional stream without credit");
+    },
+    Err(_) => {}
+  }
+  match (s.open(true)) {
+    Ok(_) => {
+      return test.fail("opened a unidirectional stream without credit");
+    },
+    Err(_) => {}
+  }
+  let (s1, first, _) = s.blocked_open(false).blocked_open(true).fill([], 1200);
+  let (s2, quiet, _) = s1.fill([], 1200);
+  match (fed(s2, [frames.MaxStreams(true, 1 as i64)])) {
+    Ok(t) => {
+      s = t;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  match (s.open(false)) {
+    Ok(p) => {
+      s = p.0;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  match (s.open(false)) {
+    Ok(_) => {
+      return test.fail("opened another stream without new credit");
+    },
+    Err(_) => {}
+  }
+  let (_, second, _) = s.blocked_open(false).fill([], 1200);
+  return test.assert_eq(sent(first) + "| " + sent(quiet) + "| " + sent(second), "STREAMS_BLOCKED true 0 STREAMS_BLOCKED false 0 | | STREAMS_BLOCKED true 1 ");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/quic/streams");
   r = r.it("reassembly holds no byte twice", test_reassembly);
@@ -423,5 +527,7 @@ function main(): i32 {
   r = r.it("a closed stream lets the peer open another", test_stream_credit);
   r = r.it("loss and acknowledgement", test_loss);
   r = r.it("STOP_SENDING and RESET_STREAM", test_resets);
+  r = r.it("a reset after stopping credits previously read bytes only once", test_stop_after_read);
+  r = r.it("explicit STREAMS_BLOCKED in each direction", test_blocked_open);
   return r.finish();
 }

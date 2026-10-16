@@ -1,0 +1,44 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// #7867 class C: a fresh array temp handed to a callee that appends
+// to its parameter and returns the result without reassigning the
+// parameter. The receiver of an append is a counted occurrence —
+// the grow bumps the buffer to rc 2 before handing it back in
+// place, and leaves it at rc 1 beside a fresh copy otherwise — so
+// the position is counted-retain: the caller releases the temp
+// unconditionally after the call and credits the binding of the
+// result. `seed()` is the identity path: its buffer has spare
+// capacity, so the callee grows it in place and returns the very
+// temp the caller then releases — at rc 2, down to the result's
+// one. Nothing was released before (400 allocs / 0 frees on the
+// i32 form), and a pointer-guarded release would have stranded the
+// identity path.
+@noinline
+function acc_i(xs: i32[], s: i32): i32[] { return xs.append(s); }
+@noinline
+function acc_s(xs: string[], s: string): string[] { return xs.append(s); }
+@noinline
+function acc_chain(xs: i32[], s: i32): i32[] { return xs.append(s).append(s + 1); }
+@noinline
+function seed(): i32[] { let s: i32[] = []; s = s.append(1); return s; }
+
+function main(): i32 {
+    let pad: string = "wide-payload-";
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 8) {
+        let ys: i32[] = acc_i([], i);
+        let zs: i32[] = acc_i([1, 2], i);
+        let ss: string[] = acc_s([], pad + "x");
+        let ws: string[] = acc_s([pad + "a", pad + "b"], pad + "y");
+        let ch: i32[] = acc_chain([], i);
+        let sd: i32[] = acc_i(seed(), i);
+        if (sd[0] != 1) { return 90; }
+        if (sd[1] != i) { return 91; }
+        if (ch[1] != i + 1) { return 92; }
+        t = t + ys.len() + zs.len() + ss.len() + ws.len() + ch.len() + sd.len();
+        i = i + 1;
+    }
+    return (t - 96) + __rc_underflow_count();
+}

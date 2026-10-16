@@ -1,6 +1,7 @@
 import "std/test";
 import "std/http/h3q";
 import "std/http/h3";
+import "std/http/qpack";
 import "std/quic/conn";
 import "std/quic/packet";
 import "std/tls/identity";
@@ -341,11 +342,71 @@ function test_close(): test.TestOutcome {
   }
 }
 
+// Open a request but leave its body unfinished across server shutdown.
+function streaming(e: Ends): Result[(Ends, i64), string] {
+  let (q, id) = e.client.quic().open_stream(false)?;
+  let fields: qpack.Field[] = [qpack.field(":method", "POST"), qpack.field(":scheme", "https"), qpack.field(":authority", "tls.example"), qpack.field(":path", "/partial"), qpack.field("content-length", "3")];
+  let s: h3.Session = e.client.session.send_headers(id, fields, false);
+  let c: h3q.Conn = h3q.Conn { ...e.client, quic: q, session: s }.write(id, "a".bytes());
+  return Ok((Ends { ...e, client: c }, id));
+}
+
+function test_shutdown_inflight(): test.TestOutcome {
+  let Ok(e0) = begin() else {
+    return test.fail("no client");
+  };
+  let e: Ends = Ends { ...settled(e0, 12), log: "" };
+  let Ok(opened) = streaming(e) else {
+    return test.fail("could not open request");
+  };
+  let id: i64 = opened.1;
+  e = settled(opened.0, 4);
+  if (e.requests.len() != 0) {
+    return test.fail("unfinished request was already delivered");
+  }
+  let Some(s) = e.server else {
+    return test.fail("no server");
+  };
+  e = settled(Ends { ...e, server: Some(s.shutdown()) }, 6);
+  let boundary: i64 = e.client.session.goaway_received();
+  if (boundary != id + 4) {
+    return test.assert_eq(boundary.to_string(), (id + 4).to_string());
+  }
+  e = settled(Ends { ...e, client: e.client.write(id, "bc".bytes()).end(id, headers.header_map_new()) }, 8);
+  if (e.requests.len() != 1) {
+    return test.assert_eq(e.requests.len().to_string(), "1");
+  }
+  let body: string = string_from_bytes_unchecked(e.requests[0].body.data);
+  e = settled(answered(e, 0, text(200, "finished")), 8);
+  return test.assert_eq(body + " | " + e.log, "abc | server request 0 POST /partial 3b host=tls.example; client response 0 200 finished; ");
+}
+
+// A request already in flight can arrive after the server fixed its
+// GOAWAY boundary; it must not be handed to the application for retry.
+function test_shutdown_late(): test.TestOutcome {
+  let Ok(e0) = begin() else {
+    return test.fail("no client");
+  };
+  let e: Ends = Ends { ...settled(e0, 12), log: "" };
+  let Some(s) = e.server else {
+    return test.fail("no server");
+  };
+  // The client has not received GOAWAY yet, so this request is legal.
+  e = Ends { ...e, server: Some(s.shutdown()) };
+  let Ok(asked_late) = asked(e, get("/late")) else {
+    return test.fail("client learned GOAWAY before it was transmitted");
+  };
+  e = settled(asked_late, 8);
+  return test.assert_eq(e.requests.len().to_string() + " " + e.client.ready().to_string(), "0 false");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/http/h3q");
   r = r.it("a GET and its response", test_get);
   r = r.it("an upload through loss and reordering, answered with a trailer", test_upload_lossy);
   r = r.it("three requests answered out of order", test_concurrent);
   r = r.it("a graceful close", test_close);
+  r = r.it("shutdown finishes a request whose body is still arriving", test_shutdown_inflight);
+  r = r.it("shutdown refuses an in-flight request above its boundary", test_shutdown_late);
   return r.finish();
 }

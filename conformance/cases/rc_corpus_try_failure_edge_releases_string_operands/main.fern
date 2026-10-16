@@ -1,0 +1,78 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// #8719: string operands. A string field staged ahead of a `?`,
+// and the left operand a concat or comparison stashed, are released
+// on Err; the extracted string payload a borrowing string op reads is
+// released on Ok (isOwnedStringTemp's TryOp case). Before: 3360
+// bytes live on arm64 and wasm, from both paths.
+import "core/int";
+import "std/i32";
+import "std/string";
+
+struct Named { s: string, b: i32 }
+
+@noinline
+function g(c: i32): Result[i32, i32] {
+    if (c == 0) { return Err(7); }
+    return Ok(c * 2);
+}
+
+@noinline
+function gs(c: i32): Result[string, i32] {
+    if (c == 0) { return Err(7); }
+    return Ok(c.to_string() + " is past the inline-string threshold");
+}
+
+@noinline
+function mks(c: i32): string { return c.to_string() + " is also past the inline threshold"; }
+
+@noinline
+function string_field(c: i32): Result[i32, i32] {
+    let n: Named = Named { s: mks(c), b: g(c)? };
+    return Ok(n.s.len() + n.b);
+}
+
+@noinline
+function concat_left(c: i32): Result[i32, i32] {
+    let s: string = mks(c) + gs(c)?;
+    return Ok(s.len());
+}
+
+@noinline
+function concat_chain(c: i32): Result[i32, i32] {
+    let s: string = mks(c) + "-" + gs(c)?;
+    return Ok(s.len());
+}
+
+@noinline
+function compare(c: i32): Result[i32, i32] {
+    if (mks(c) == gs(c)?) { return Ok(1); }
+    return Ok(2);
+}
+
+function run(k: i32, c: i32): i32 {
+    let r: Result[i32, i32] = Err(0);
+    if (k == 0) { r = string_field(c); }
+    if (k == 1) { r = concat_left(c); }
+    if (k == 2) { r = concat_chain(c); }
+    if (k == 3) { r = compare(c); }
+    match (r) {
+        Ok(v) => { return v; },
+        Err(e) => { return e; }
+    }
+}
+
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 20) {
+        let k: i32 = 0;
+        while (k < 4) {
+            acc = acc + run(k, i % 2);
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    return (acc - 2120) + __rc_underflow_count();
+}

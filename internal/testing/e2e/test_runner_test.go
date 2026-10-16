@@ -1200,7 +1200,7 @@ func TestRunnerHTTPHpackExamplePasses(t *testing.T) {
 // examples byte for byte, a trace ls-qpack's encoder wrote, and refuses
 // what the advertised limits rule out.
 func TestRunnerHTTPQPACKExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_qpack", "std/http/qpack", 7)
+	runnerSuitePasses(t, "http_qpack", "std/http/qpack", 10)
 }
 
 // `tests/stdlib/http_h3_test.fern` joins an HTTP/3 client and server
@@ -1215,7 +1215,7 @@ func TestRunnerHTTPH3ExamplePasses(t *testing.T) {
 // in memory: a GET, an upload through loss and reordering answered with a
 // trailer, requests answered out of order, and a graceful shutdown.
 func TestRunnerHTTPH3QExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_h3q", "std/http/h3q", 4)
+	runnerSuitePasses(t, "http_h3q", "std/http/h3q", 6)
 }
 
 // `tests/stdlib/http_h2_frame_test.fern` writes and reads back every HTTP/2
@@ -1275,7 +1275,7 @@ func TestRunnerQUICConnExamplePasses(t *testing.T) {
 // frame: reassembly, stream limits, each half's direction, flow control and
 // final sizes, window updates, retransmission, and resets both ways.
 func TestRunnerQUICStreamsExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "quic_streams", "std/quic/streams", 9)
+	runnerSuitePasses(t, "quic_streams", "std/quic/streams", 11)
 }
 
 // `tests/stdlib/http_grpc_test.fern` reads the gRPC message framing back

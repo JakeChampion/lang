@@ -1,0 +1,9 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Deeply nested arrays.
+import "core/int";
+function main(): i32 {
+    let cube: i32[][][] = [[[1, 2], [3]], [[4, 5, 6]]];
+    return (cube[1][0][2] - 6) + __rc_underflow_count();
+}

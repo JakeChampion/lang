@@ -1,0 +1,21 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The per-ITERATION half of the same collision, which pins the
+// arraySetConsumedReinit side of the guard: the declaration, the
+// alias and the consuming `.with` all sit inside the loop body, so
+// each iteration re-runs them. The straight-line cases below exercise
+// arraySetConsumed only, and would pass with half the guard removed.
+// Before the fix: interpreter 30, x86-64 54.
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 3) {
+        let xs: i32[] = [1, 2, 3];
+        let y: i32[] = xs;
+        let zs: i32[] = xs.with(0, 9);
+        acc = acc + y[0] + zs[0];
+        i = i + 1;
+    }
+    return (acc - 30) + __rc_underflow_count();
+}

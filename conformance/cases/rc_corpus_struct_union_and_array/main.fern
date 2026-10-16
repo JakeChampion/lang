@@ -1,0 +1,14 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Struct holding both a union and an array.
+import "core/int";
+import "std/string";
+struct VInt { v: i32 }
+struct VArr { v: i32[] }
+type Value = VInt | VArr;
+struct Box { tag: Value, data: i32[] }
+function main(): i32 {
+    let b: Box = Box { tag: VArr { v: [9, 9] }, data: [1, 2, 3] };
+    return (b.data.len() - 3) + __rc_underflow_count();
+}

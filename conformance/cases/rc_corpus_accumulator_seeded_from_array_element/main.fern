@@ -1,0 +1,22 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// An accumulator SEEDED from a container read, with the source array
+// read again afterwards (#6567). The seed is a counted alias of the
+// element, so reclaiming the accumulator's intermediates must leave
+// every element intact: 200 * 25 for the lines, 19 for the elements.
+function build(words: string[]): string {
+    let line: string = words[0];
+    let g: i32 = 1;
+    while (g < words.len()) { line = line + "  " + words[g]; g = g + 1; }
+    return line;
+}
+function main(): i32 {
+    let words: string[] = ["alpha", "beta", "gamma", "delta"];
+    let i: i32 = 0;
+    let acc: i32 = 0;
+    while (i < 200) { acc = acc + build(words).len(); i = i + 1; }
+    let j: i32 = 0;
+    while (j < words.len()) { acc = acc + words[j].len(); j = j + 1; }
+    return (acc - 5019) + __rc_underflow_count();
+}

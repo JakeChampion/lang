@@ -1,0 +1,10 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Array of structs: build, read back, drop at exit.
+import "core/int";
+struct P { x: i32, y: i32 }
+function main(): i32 {
+    let ps: P[] = [P{x: 1, y: 2}, P{x: 3, y: 4}];
+    return (ps[1].y - 4) + __rc_underflow_count();
+}

@@ -1,0 +1,23 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// A LIVE `break` before the declaration: the loop leaves with the slot
+// holding the last stored element, which the buffer owns. 3 stored,
+// kinds 0 + 1 + 2 = 3, so 3 + 3 = 6.
+import "core/int";
+struct Val { kind: i32, kids: i32[] }
+function build(n: i32): i32 {
+    let vals: Val[] = [];
+    let i: i32 = 0;
+    while (i < n) {
+        if (i == 3) { break; }
+        let v: Val = Val { kind: i, kids: [i] };
+        vals = vals.append(v);
+        i = i + 1;
+    }
+    let sum: i32 = 0;
+    let k: i32 = 0;
+    while (k < vals.len()) { sum = sum + vals[k].kids[0]; k = k + 1; }
+    return vals.len() + sum;
+}
+function main(): i32 { return (build(9) - 6) + __rc_underflow_count(); }

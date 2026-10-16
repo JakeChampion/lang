@@ -1,0 +1,18 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Plain-array field that ESCAPES (Buf returned): the buffer must
+// survive the constructor. Churn forces same-size reuse.
+import "core/int";
+import "std/string";
+struct Buf { data: i32[], n: i32 }
+function mk(n: i32): Buf { return Buf { data: [n, n + 1, n + 2], n: n }; }
+function main(): i32 {
+    let b: Buf = mk(7);
+    let c: i32 = 0;
+    while (c < 200) {
+        let junk: i32[] = [c, c];
+        c = c + 1;
+    }
+    return (b.data[2] - 9) + (b.data.len() - 3) + __rc_underflow_count();
+}
