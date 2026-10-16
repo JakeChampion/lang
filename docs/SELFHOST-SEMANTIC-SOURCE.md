@@ -62,11 +62,17 @@ Unsupported constructs refuse the whole function with a reason.
     it, and keeps every function.
   - A type is opaque, with its fields any value and its variants all built,
     when a value of it can arrive other than from a body's construction: an
-    extern's, a closure's or a dyn narrowing's result, or a root's
-    parameter: a root is called from outside the bodies, so its arguments
-    are nothing a body here built. A closure's construction (`closure_new`)
-    builds its environment, whose fields after the body's address are the
-    captures.
+    extern's or a dyn narrowing's result, the result of a function value
+    that itself arrived, or a root's parameter: a root is called from
+    outside the bodies, so its arguments are nothing a body here built. A
+    closure's construction (`closure_new`) builds its environment, whose
+    fields after the body's address are the captures, and a closure's
+    result is what its body built, as a paired call's payload read back
+    (`sempair`) is what its callee built.
+  - Whether any value of a record type exists is a fact too: an array of a
+    record nothing builds is empty, so its `len()` is 0 and a loop over it
+    never runs. Facts also fold the sum and difference of two i32
+    constants that fit an i32.
   - A reached refusal leaves the module as it was.
   - A paired call's position stays a test, because the certifier settles
     its word on that branch.

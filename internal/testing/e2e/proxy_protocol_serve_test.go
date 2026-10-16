@@ -83,6 +83,7 @@ func newProxyWorld(t *testing.T) proxyWorld {
 const proxyServeSource = `import "std/http";
 import "std/platform";
 import "std/serve";
+import "std/time";
 import "std/tls/identity";
 import "std/tls/server";
 
@@ -119,7 +120,9 @@ function with_tls(cfg: serve.Config): serve.Config {
 }
 
 function main(): i32 {
-  let cfg: serve.Config = serve.Config { ...serve.config(), proxy_protocol: true };
+  // An interpreted TLS handshake can outlast the 10 s read deadline on a busy
+  // runner, so the server waits as long as the client does.
+  let cfg: serve.Config = serve.Config { ...serve.config(), proxy_protocol: true, recv_deadline: time.duration_seconds(60 as i64) };
   match (env("PROXY_TLS")) {
     Some(_) => {
       cfg = with_tls(cfg);
