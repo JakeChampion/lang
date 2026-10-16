@@ -128,9 +128,9 @@ function blank_line_map(src: string): boolean[] {
 // — so re-formatting is the check that reaches both halves at once, an
 // unreadable node and a printer that is not a fixed point on its own output.
 function fmt_output_is_readable(formatted: string): boolean {
-  if (util.contains(formatted, "/*unknown")) {
-    return false;
-  }
+  // Marker text can be authored in a comment or string. Only the parse and
+  // print round trip distinguishes it from an unreadable node the printer
+  // emitted: those markers are not Fern syntax and do not round-trip.
   return format_source(formatted) == formatted;
 }
 
