@@ -3,9 +3,17 @@
 // back is datagrams to send, events, and when it next needs the time.
 //
 //     let c: conn.Conn = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now)?;
-//     c = c.receive(datagram, now).conn;     // each datagram that arrives
-//     let (c2, out) = c.transmit(now);       // datagrams to send now
-//     c2.deadline()                          // when to call `tick`
+//     c = c.receive(datagram, now);          // each datagram that arrives
+//     let evs: conn.Event[] = c.events;      // what happened
+//     c = c.events_taken();
+//     c = c.transmit(now);
+//     let out: u8[][] = c.datagrams();       // datagrams to send now
+//     c = c.sent();
+//     c.deadline()                           // when to call `tick`
+//
+// Each step hands the connection back whole, with its outcome in fields:
+// read them, then take them, so a connection held in a table updates in
+// place.
 //
 // A server makes its connection from the first Initial it receives
 // (`accept`), after `packet.parse` has read its header. The TLS handshake
@@ -334,9 +342,8 @@ function __earliest(a: i64, b: i64): i64 {
   return a;
 }
 
-// __stepped hands back the connection with what happened to it, the
-// streams' events after the connection's own.
-// __stepped moves what the streams reported into the connection's events.
+// __stepped moves what the streams reported into the connection's events,
+// after its own.
 function (c: Conn) __stepped(): Conn {
   let notes: streams.Event[] = c.streams.events;
   if (notes.len() == 0) {
