@@ -38,14 +38,24 @@ func HTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	if start < 0 {
 		t.Fatal("production accept loop not found")
 	}
-	end := strings.Index(src[start:], "\n// __serve_loop_with")
-	if end < 0 {
+	burstStart := strings.Index(src[start:], "\n// __serve_burst(")
+	if burstStart < 0 {
 		t.Fatal("production accept loop boundary not found")
 	}
-	end += start
-	body := src[start:end]
+	burstStart += start
+	end := strings.Index(src[burstStart:], "\n// __serve_loop_with")
+	if end < 0 {
+		t.Fatal("production request burst boundary not found")
+	}
+	end += burstStart
+	body, burst := src[start:burstStart], src[burstStart:end]
 	const answered = "more = answered.1;"
-	if strings.Count(body, "while (true)") != 1 || strings.Count(body, answered) != 1 {
+	const burstCall = "let burst: (__Conns, __Flight[]) = __serve_burst(drv, conns, flights, at, ev.2, handler, start, opts, stop, clk);"
+	const burstSignature = "stop: __Stop, clk: __Clock): (__Conns, __Flight[]) {"
+	const burstReturn = "return (conns, flights);"
+	if strings.Count(body, "while (true)") != 1 || strings.Count(burst, answered) != 1 ||
+		strings.Count(body, burstCall) != 1 || strings.Count(body, "flights = burst.1;") != 1 ||
+		strings.Count(burst, burstSignature) != 1 || strings.Count(burst, burstReturn) != 1 {
 		t.Fatal("accept loop changed; update its bounded census fixture")
 	}
 	// The loop runs until the bound is met AND every connection is gone: a
@@ -54,20 +64,30 @@ func HTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	// loop that stopped on the count alone left the last one to the exit
 	// sweep and the census unbalanced.
 	body = strings.Replace(body, "while (true)", fmt.Sprintf("let completed: i32 = 0;\n    while (completed < %d || conns.fds.len() > 0)", rounds), 1)
-	body = strings.Replace(body, answered, answered+"\n                        completed = completed + 1;", 1)
+	// The production loop delegates parsing/answering to __serve_burst. Thread
+	// only the fixture's bound through that helper; the increment stays at the
+	// same answered-response site, and every production protocol path remains.
+	body = strings.Replace(body, burstCall, "let burst: (__Conns, __Flight[], i32) = __serve_burst(drv, conns, flights, at, ev.2, handler, start, opts, stop, clk, completed);", 1)
+	body = strings.Replace(body, "flights = burst.1;", "flights = burst.1;\n      completed = burst.2;", 1)
+	burst = strings.Replace(burst, burstSignature, "stop: __Stop, clk: __Clock, census_completed: i32): (__Conns, __Flight[], i32) {\n  let completed: i32 = census_completed;", 1)
+	burst = strings.Replace(burst, answered, answered+"\n                        completed = completed + 1;", 1)
+	burst = strings.Replace(burst, burstReturn, "return (conns, flights, completed);", 1)
 	// A handler may not sleep around its Platform bag (E080), so the slow
-	// paths burn pure work: 12M steps is 19 ms on wasm, 42 ms on x86-64
-	// and 55 ms under qemu, so a burst of 32 outlasts the 300 ms read
-	// deadline everywhere, and 33 of them stay near a second on the
-	// slowest backend; /gone burns five times that, the window in which
-	// the client resets the connection.
-	return src[:start] + body + src[end:] + `
-function census_burn(n: i32): i32 {
+	// paths burn CPU against a monotonic clock: 20 ms per /slow request makes
+	// the burst cross the unchanged 300 ms read deadline; /gone burns 100 ms
+	// so the client's reset after 50 ms arrives during that work. Fixed
+	// iteration counts depend on code layout under emulation (even identical
+	// loops differ when one crosses a QEMU translation-page boundary).
+	return src[:start] + body + burst + src[end:] + `
+function census_burn(n: i32, plat: platform.Platform): i32 {
+    let started: i64 = plat.elapsed_ns();
     let x: i32 = 12345;
-    let i: i32 = 0;
-    while (i < n) {
-        x = (x * 1103515245 + 12345) & 2147483647;
-        i = i + 1;
+    while (plat.elapsed_ns() - started < n as i64) {
+        let i: i32 = 0;
+        while (i < 1024) {
+            x = (x * 1103515245 + 12345) & 2147483647;
+            i = i + 1;
+        }
     }
     return x;
 }
@@ -79,11 +99,13 @@ function census_handle(req: HttpRequest, plat: platform.Platform): HttpResponse 
         }
     }
     if (req.path == "/nocontent") { return http.no_content(); }
-    let work: i32 = 0;
-    if (req.path.starts_with("/slow")) { work = 12000000; }
-    if (req.path.starts_with("/gone")) { work = 60000000; }
+    // None needs no work; Some holds the slow/reset delay. This exercises
+    // the i32 Option fallback as well as the timing and leak checks.
+    let work: Option[i32] = None;
+    if (req.path.starts_with("/slow")) { work = Some(20000000); }
+    if (req.path.starts_with("/gone")) { work = Some(100000000); }
     if (req.path == "/behind-a-failed-write") { plat.log("answered /behind-a-failed-write"); }
-    if (census_burn(work) == 0 - 1) { return http.ok("never"); }
+    if (census_burn(work.unwrap_or(0), plat) == 0 - 1) { return http.ok("never"); }
     return http.ok("ok");
 }
 function main(): i32 {
@@ -353,6 +375,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		for i := 0; i < 33; i++ {
 			fmt.Fprintf(&pipeline, "GET /slow%d HTTP/1.1\r\nHost: localhost\r\n\r\n", i)
 		}
+		slowStarted := time.Now()
 		write(conn, pipeline.String())
 		halfClose(conn)
 		for i := 0; i < 32; i++ {
@@ -360,6 +383,9 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		}
 		read(conn, r, "slow pipeline, last", "close")
 		eof(conn, r, "after the slow pipeline")
+		if elapsed := time.Since(slowStarted); elapsed < 300*time.Millisecond {
+			t.Fatalf("slow pipeline completed in %v; it must cross the unchanged 300 ms read deadline", elapsed)
+		}
 		// A full burst, 28 requests and four slow ones, and a 33rd behind
 		// it in one write. The burst's responses are corked into one write
 		// at its end, and the peer resets the connection while the slow
