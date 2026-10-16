@@ -18078,6 +18078,9 @@ function const_expr_err(e: ast.Expr, earlier: string[]): string {
       return "\"" + id.name + "\" is not a constant (must reference an earlier `const` declaration)";
     },
     ast.ExprUnary(u) => {
+      if (util.str_has_prefix(u.op, "as_")) {
+        return "expression is not a constant (only literals, earlier consts, and arithmetic / comparison / logical operations on them are allowed)";
+      }
       return const_expr_err(u.operand, earlier);
     },
     ast.ExprArray(a) => {
@@ -29454,12 +29457,43 @@ function lit_float_needed(have: typeinfo.Type, want: typeinfo.Type): boolean {
 }
 
 function lit_float_key(e: ast.Expr): string {
-  return "f" + util.i32_to_string(expr_line(e)) + ":" + util.i32_to_string(expr_col(e));
+  let shape: string = "";
+  match (e) {
+    ast.ExprIdent(id) => {
+      shape = "id:" + id.name;
+    },
+    ast.ExprFieldAccess(fa) => {
+      shape = "field:" + fa.field;
+    },
+    ast.ExprIndex(_) => {
+      shape = "index";
+    },
+    ast.ExprUnary(u) => {
+      shape = "unary:" + u.op;
+    },
+    ast.ExprBinary(b) => {
+      shape = "binary:" + b.op;
+    },
+    ast.ExprCall(_) => {
+      shape = "call";
+    },
+    _ => {
+      return "";
+    }
+  }
+  return "f" + util.i32_to_string(expr_line(e)) + ":" + util.i32_to_string(expr_col(e)) + ":" + shape;
 }
 
 // An integer literal local stays an integer. A float arm promotes the read,
 // so earlier arithmetic and a later integer-width demand keep their meaning.
 function lit_float_demand(e: ast.Expr, want: typeinfo.Type, s: Scope, st: LitInfer): LitInfer {
+  // The value-block pretype pass derives this synthetic slot from its stores.
+  // Its initial integer zero is a placeholder, not a literal local to convert.
+  if let ast.ExprIdent(id) = e {
+    if (parser.is_value_local_name(id.name)) {
+      return st;
+    }
+  }
   if let ast.ExprTuple(t) = e {
     if let typeinfo.TypeTuple(w) = want {
       let i: i32 = 0;
