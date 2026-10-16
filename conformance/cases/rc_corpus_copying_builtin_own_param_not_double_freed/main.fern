@@ -1,0 +1,24 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// The own-param interlock: inferParamCountedRetain skips `own`
+// parameters before any classifier runs, and ownedByCalleeAt
+// suppresses the caller-side stash — so a copying use inside
+// an own callee must not become a second release of the same
+// temp.
+@noinline
+function mk(pad: string, i: i32): string { return pad + "0123456789abcdef"; }
+
+@noinline
+function eat(own text: string): i32 { return __count_byte(text, 97); }
+
+function main(): i32 {
+    let pad: string = "xyzw";
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 4) {
+        t = t + eat(pad + "0123456789abcdef");
+        i = i + 1;
+    }
+    return (t - 4) + __rc_underflow_count();
+}

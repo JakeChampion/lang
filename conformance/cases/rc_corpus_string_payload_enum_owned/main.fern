@@ -1,0 +1,27 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// A string-carrying enum is owned by default: the rebuilt value and
+// a snapshot both read back right.
+enum S { A(string, i32), Z }
+function bump(s: S, tag: string): S {
+    match (s) {
+        A(txt, n) => { return A(txt + tag, n + 1); },
+        Z => { return Z; }
+    }
+}
+function len_of(s: S): i32 {
+    match (s) {
+        A(txt, n) => { return txt.len() + n; },
+        Z => { return 0; }
+    }
+}
+function main(): i32 {
+    let s: S = A("x", 0);
+    let i: i32 = 0;
+    while (i < 200) { s = bump(s, "y"); i = i + 1; }
+    let snap: S = s;
+    s = bump(s, "zz");
+    if (len_of(snap) != 401) { return 1; }
+    return (len_of(s) - 404) + __rc_underflow_count();
+}

@@ -2558,11 +2558,30 @@ function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
 // bind_inferred binds an unannotated local at its initialiser's type `t`, as a
 // literal local where an unsettled integer initialises it.
 function (s: Scope) bind_inferred(v: ast.StmtVar, t: typeinfo.Type): Scope {
-  let b: Scope = s.bind(v.name, t);
+  let b: Scope = s.bind(v.name, cell_new_settled(v.init, t, s));
   if (is_integer(t) && unsettled_tree(v.init, s.lit_locals)) {
     return Scope { ...b, lit_locals: b.lit_locals.append(v.name) };
   }
   return b;
+}
+
+// cell_new_settled is the type an unannotated `let c = cell_new(v);` binds:
+// with no destination to name the element, `v`'s type does.
+function cell_new_settled(init: ast.Expr, t: typeinfo.Type, s: Scope): typeinfo.Type {
+  if (!is_cell_type(t) || !is_unknown(cell_elem_type(t))) {
+    return t;
+  }
+  if let ast.ExprCall(c) = init {
+    if let ast.ExprIdent(id) = c.callee {
+      if (id.name == "cell_new" && c.args.len() == 1) {
+        let et: typeinfo.Type = check_expr(c.args[0], s);
+        if (!is_unknown(et)) {
+          return t_struct_g("Cell", [et]);
+        }
+      }
+    }
+  }
+  return t;
 }
 
 // with_tparams attaches the enclosing function's type parameters and their
@@ -7540,7 +7559,7 @@ function check_lambda_expr(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
   check_block(lm.body, body_scope);
   // A lambda that spells no result returns what its body returns: the
   // first value-carrying `return`, typed in the scope at that statement.
-  // A body returning nothing keeps the empty annotation's reading.
+  // A written lambda returning no value is void, as native infers it.
   if (lm.ret_type.len() == 0) {
     let (returned, at) = first_returned(lm.body, body_scope);
     if (!parser.bare_return(returned)) {
@@ -7548,6 +7567,8 @@ function check_lambda_expr(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
       if (!is_unknown(inferred)) {
         rt = inferred;
       }
+    } else if (!parser.is_value_block_origin(lm.origin)) {
+      rt = t_void();
     }
   }
   return t_func_own(pts, lambda_owns(lm), rt);

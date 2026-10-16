@@ -1,0 +1,189 @@
+// A QUIC server over UDP for one connection on ALPN fern-echo: accept the
+// first Initial, handshake, send each stream's data back as it arrives,
+// print what happened, and exit 0 once the connection is done after
+// completing its handshake.
+//   server PORT CERT.pem KEY.pem
+// It prints a line once its socket is bound, which the script waits on.
+import "std/net";
+import "std/quic/conn";
+import "std/quic/packet";
+import "std/tls/identity";
+import "std/async";
+import "std/option";
+import "std/i64";
+
+struct Server {
+  cfg: conn.Config,
+  sock: i32,
+  current: Option[conn.Conn],
+  peer: Option[net.SocketAddr],
+  connected: boolean,
+}
+
+function now(): i64 {
+  return monotonic_ns();
+}
+
+// shown prints what happened, and sends back what each stream has to
+// read, with its end once that arrives.
+function shown(evs: conn.Event[], c: conn.Conn): conn.Conn {
+  let cur: conn.Conn = c;
+  for e in evs {
+    match (e) {
+      conn.StreamReadable(id) => {
+        cur = echo(cur, id);
+      },
+      conn.Connected => {
+        print("fern server: connected alpn=" + c.alpn());
+      },
+      conn.Closed(why) => {
+        print("fern server: closed code=" + why.code.to_string() + " remote=" + why.remote.to_string() + " reason=" + why.reason);
+      },
+      _ => {}
+    }
+  }
+  return cur;
+}
+
+function echo(c: conn.Conn, id: i64): conn.Conn {
+  let Ok(r) = c.read(id) else {
+    return c;
+  };
+  let Ok(w) = r.0.write(id, r.1, r.2) else {
+    return r.0;
+  };
+  if (r.2) {
+    print("fern server: echoed stream " + id.to_string() + " to its end");
+  }
+  return w;
+}
+
+function copied(buf: u8[], n: i32): u8[] {
+  let out: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.with(i, buf[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// wait_ms is how long to sleep for a datagram: until the connection's next
+// deadline, between 1 and 100 ms.
+function wait_ms(s: Server): i32 {
+  let Some(c) = s.current else {
+    return 100;
+  };
+  let d: i64 = c.deadline();
+  if (d == 0) {
+    return 100;
+  }
+  let ms: i64 = (d - now()) / 1000000 + 1;
+  if (ms < 1) {
+    return 1;
+  }
+  if (ms > 100) {
+    return 100;
+  }
+  return ms as i32;
+}
+
+// accepted starts the connection on a client's first Initial, which must
+// arrive in a datagram of at least 1200 bytes; anything else is dropped.
+function accepted(s: Server, d: u8[], from: net.SocketAddr): Server {
+  if (d.len() < packet.MIN_INITIAL_DATAGRAM) {
+    return s;
+  }
+  let Ok(h) = packet.parse(d, 0, 8) else {
+    return s;
+  };
+  let Ok(c) = conn.accept(s.cfg, random_bytes(conn.server_entropy(s.cfg)), h, now()) else {
+    return s;
+  };
+  let step: conn.Step = c.receive(d, now());
+  return Server { ...s, current: Some(shown(step.events, step.conn)), peer: Some(from) };
+}
+
+function received(s: Server, d: u8[], from: net.SocketAddr): Server {
+  let Some(c) = s.current else {
+    return accepted(s, d, from);
+  };
+  let step: conn.Step = c.receive(d, now());
+  return Server { ...s, current: Some(shown(step.events, step.conn)) };
+}
+
+function drained(s: Server, buf: u8[]): Server {
+  let cur: Server = s;
+  while (true) {
+    let Ok(got) = net.recv_from(cur.sock, buf) else {
+      return cur;
+    };
+    cur = received(cur, copied(buf, got.0), got.1);
+  }
+  return cur;
+}
+
+// sent runs the connection's timer if it is due and sends what it has.
+function sent(s: Server, c: conn.Conn): Server {
+  let cur: conn.Conn = c;
+  if (cur.deadline() != 0 && now() >= cur.deadline()) {
+    let step: conn.Step = cur.tick(now());
+    cur = shown(step.events, step.conn);
+  }
+  let (next, out) = cur.transmit(now());
+  if let Some(to) = s.peer {
+    for d in out {
+      let r: Result[i32, net.NetError] = net.send_to(s.sock, d, to);
+    }
+  }
+  return Server { ...s, current: Some(next), connected: s.connected || next.connected() };
+}
+
+function bound(port: string, cert: string, key: string): Option[Server] {
+  let Ok(chain) = read_file(cert) else {
+    return None;
+  };
+  let Ok(pem) = read_file(key) else {
+    return None;
+  };
+  let Ok(id) = identity.from_pem(chain, pem) else {
+    eprint("bad identity");
+    return None;
+  };
+  let cfg: conn.Config = conn.config(["fern-echo"]).with_streams(16 as i64, 16 as i64, 262144 as i64, 1048576 as i64).server_side(id);
+  let Some(addr) = net.socket_addr_parse("127.0.0.1:" + port) else {
+    return None;
+  };
+  let Ok(sock) = net.udp_socket(addr) else {
+    return None;
+  };
+  let nb: Result[void, net.NetError] = net.set_nonblocking(sock, true);
+  return Some(Server { cfg: cfg, sock: sock, current: None, peer: None, connected: false });
+}
+
+function main(): i32 {
+  let argv: string[] = args();
+  let Some(s0) = bound(argv[1], argv[2], argv[3]) else {
+    return 2;
+  };
+  print("fern server: listening");
+  let buf: u8[] = __alloc_u8(65536);
+  let s: Server = s0;
+  let started: i64 = now();
+  while (now() - started < 20000000000) {
+    let woke: i32 = async.wait_any([s.sock, 1], wait_ms(s));
+    s = drained(s, buf);
+    if let Some(c) = s.current {
+      s = sent(s, c);
+      if let Some(after) = s.current {
+        if (after.done() && s.connected) {
+          return 0;
+        }
+        if (after.done()) {
+          return 1;
+        }
+      }
+    }
+  }
+  return 1;
+}

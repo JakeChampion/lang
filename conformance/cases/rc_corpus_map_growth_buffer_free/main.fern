@@ -1,0 +1,19 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Map growth reclamation: inserting 100 keys into one map
+// triggers several __map_grow doublings (cap 4→8→…→128), each
+// freeing the previous kv buffer. The read-back checksum + the
+// underflow counter catch a corrupted copy or a freed buffer
+// that was still referenced. sum_{0..99} 2i = 2*4950 = 9900.
+import "core/int";
+import "core/map";
+function main(): i32 {
+    let m: Map[i32, i32] = map_new(4);
+    let i: i32 = 0;
+    while (i < 100) { m = m.insert(i, i * 2); i = i + 1; }
+    let sum: i32 = 0;
+    let j: i32 = 0;
+    while (j < 100) { sum = sum + m.get_or(j, -1); j = j + 1; }
+    return (sum - 9900) + __rc_underflow_count();
+}

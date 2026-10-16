@@ -1,0 +1,45 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// MapIter.value() / MapIter.key() returning a string K/V: the
+// returned string must survive the map drop. Each helper builds
+// a fresh map, iterates collecting strings into an outer array,
+// and returns the array — the map dies at scope exit; without
+// per-iter retain the column walk frees the strings the outer
+// array now holds (UAF). The wasm boxed branches str_inc the
+// (data, len); natives single-word rc_inc the returned data
+// pointer at the call dispatch.
+//
+// Per iter: vs[0].len()=28 + ks[0].len()=26 = 54; 300x → 16200.
+import "core/int";
+import "core/map";
+import "std/string";
+function collect_values(): string[] {
+    let m: Map[i32, string] = map_new(8);
+    m = m.insert(1, "value-aaaaaaaaaaaaaaaaaaaa-1");
+    m = m.insert(2, "value-aaaaaaaaaaaaaaaaaaaa-2");
+    let out: string[] = [];
+    let it = m.iter();
+    while (it.has_next()) { out = out.append(it.value()); it.advance(); }
+    return out;
+}
+function collect_keys(): string[] {
+    let m: Map[string, i32] = map_new(8);
+    m = m.insert("key-aaaaaaaaaaaaaaaaaaaa-1", 10);
+    m = m.insert("key-aaaaaaaaaaaaaaaaaaaa-2", 20);
+    let out: string[] = [];
+    let it = m.iter();
+    while (it.has_next()) { out = out.append(it.key()); it.advance(); }
+    return out;
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 300) {
+        let vs = collect_values();
+        let ks = collect_keys();
+        total = total + vs[0].len() + ks[0].len();
+        k = k + 1;
+    }
+    return (total - 16200) + __rc_underflow_count();
+}

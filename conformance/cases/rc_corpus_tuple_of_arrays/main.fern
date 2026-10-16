@@ -1,0 +1,9 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Tuple of arrays, destructured.
+import "core/int";
+function main(): i32 {
+    let t: (i32[], i32[]) = ([1, 2], [3, 4, 5]);
+    return (t.0[1] - 2) + (t.1[2] - 5) + __rc_underflow_count();
+}

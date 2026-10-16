@@ -1,0 +1,533 @@
+import "std/test";
+import "std/quic/streams";
+import "std/quic/frames";
+import "std/quic/params";
+import "std/quic/recovery";
+import "std/option";
+import "std/i64";
+import "core/int";
+
+// tests/stdlib/quic_streams_test.fern — std/quic/streams driven frame by
+// frame: reassembly that holds no byte twice, the peer opening streams up
+// to the limit advertised, each half's direction, flow control per stream
+// and for the connection, final sizes, windows opened again as data is
+// read, the limit raised as the peer's streams close, retransmission, and
+// RESET_STREAM and STOP_SENDING both ways.
+
+function limits(bidi: i64, uni: i64, stream_window: i64, conn_window: i64): params.Params {
+  return params.Params { ...params.defaults(), initial_max_streams_bidi: bidi, initial_max_streams_uni: uni, initial_max_stream_data_bidi_local: stream_window, initial_max_stream_data_bidi_remote: stream_window, initial_max_stream_data_uni: stream_window, initial_max_data: conn_window };
+}
+
+// server is a server's table: the peer may open `bidi` streams of 100
+// bytes each and 150 in all; the peer lets this side open 2 of each kind
+// and send 50 bytes on each stream, 80 in all.
+function server(bidi: i64): streams.Streams {
+  return streams.table(true, limits(bidi, 1 as i64, 100 as i64, 150 as i64)).with_peer(limits(2 as i64, 2 as i64, 50 as i64, 80 as i64));
+}
+
+function bytes(n: i32, seed: i32): u8[] {
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append((seed + i) as u8);
+    i = i + 1;
+  }
+  return out;
+}
+
+function data(id: i64, offset: i64, n: i32, fin: boolean): frames.Frame {
+  return frames.StreamFrame(frames.StreamData { stream: id, offset: offset, data: bytes(n, offset as i32), fin: fin });
+}
+
+// fed takes frames in order, answering the table, or the code and frame
+// type of the first refused.
+function fed(s: streams.Streams, fs: frames.Frame[]): Result[streams.Streams, string] {
+  let cur: streams.Streams = s;
+  for f in fs {
+    match (cur.on_frame(f)) {
+      Ok(t) => {
+        cur = t;
+      },
+      Err(e) => {
+        return Err(e.code.to_string() + "/" + e.frame_type.to_string());
+      }
+    }
+  }
+  return Ok(cur);
+}
+
+function outcome(r: Result[streams.Streams, string]): string {
+  match (r) {
+    Ok(_) => {
+      return "ok";
+    },
+    Err(e) => {
+      return e;
+    }
+  }
+}
+
+function events(s: streams.Streams): string {
+  let (_, evs) = s.take_events();
+  let out: string = "";
+  for e in evs {
+    match (e) {
+      streams.Opened(id) => {
+        out = out + "open " + id.to_string() + ",";
+      },
+      streams.Readable(id) => {
+        out = out + "read " + id.to_string() + ",";
+      },
+      streams.ResetByPeer(id, code) => {
+        out = out + "reset " + id.to_string() + "/" + code.to_string() + ",";
+      },
+      streams.StopRequested(id, code) => {
+        out = out + "stop " + id.to_string() + "/" + code.to_string() + ",";
+      }
+    }
+  }
+  return out;
+}
+
+// sent reads back the frames `fill` wrote, as text.
+function sent(out: u8[]): string {
+  if (out.len() == 0) {
+    return "";
+  }
+  match (frames.read_all(out)) {
+    Ok(fs) => {
+      let text: string = "";
+      for f in fs {
+        text = text + frame_text(f) + " ";
+      }
+      return text;
+    },
+    Err(e) => {
+      return "unreadable: " + e.reason;
+    }
+  }
+}
+
+function frame_text(f: frames.Frame): string {
+  match (f) {
+    frames.StreamFrame(d) => {
+      let fin: string = "";
+      if (d.fin) {
+        fin = " fin";
+      }
+      return "STREAM " + d.stream.to_string() + "@" + d.offset.to_string() + "+" + int.int_to_string(d.data.len()) + fin;
+    },
+    frames.MaxData(v) => {
+      return "MAX_DATA " + v.to_string();
+    },
+    frames.MaxStreamData(id, v) => {
+      return "MAX_STREAM_DATA " + id.to_string() + " " + v.to_string();
+    },
+    frames.MaxStreams(bidi, v) => {
+      return "MAX_STREAMS " + bidi.to_string() + " " + v.to_string();
+    },
+    frames.DataBlocked(v) => {
+      return "DATA_BLOCKED " + v.to_string();
+    },
+    frames.StreamDataBlocked(id, v) => {
+      return "STREAM_DATA_BLOCKED " + id.to_string() + " " + v.to_string();
+    },
+    frames.StreamsBlocked(bidi, v) => {
+      return "STREAMS_BLOCKED " + bidi.to_string() + " " + v.to_string();
+    },
+    frames.ResetStreamFrame(r) => {
+      return "RESET_STREAM " + r.stream.to_string() + " " + r.code.to_string() + " " + r.final_size.to_string();
+    },
+    frames.StopSending(id, code) => {
+      return "STOP_SENDING " + id.to_string() + " " + code.to_string();
+    },
+    _ => {
+      return "other";
+    }
+  }
+}
+
+// A segment past a gap is held once however often it is resent, overlaps
+// are trimmed, and filling the gap delivers everything in order.
+function test_reassembly(): test.TestOutcome {
+  let r: streams.Reassembly = streams.reassembly().add(10 as i64, bytes(10, 10)).add(10 as i64, bytes(10, 10)).add(15 as i64, bytes(10, 15));
+  let held: string = r.held_bytes.to_string();
+  r = r.add(0 as i64, bytes(12, 0));
+  let (r2, out) = r.take();
+  let ordered: boolean = true;
+  let i: i32 = 0;
+  while (i < out.len()) {
+    ordered = ordered && out[i] == i as u8;
+    i = i + 1;
+  }
+  return test.assert_eq(held + " " + int.int_to_string(out.len()) + " " + ordered.to_string() + " " + r2.held_bytes.to_string() + " " + r2.delivered().to_string(), "15 25 true 0 25");
+}
+
+// Data on the peer's bidirectional stream 8 opens 0, 4 and 8 (§3.2); with
+// two allowed, stream 8 is past the limit.
+function test_peer_opens(): test.TestOutcome {
+  let three: string = "-";
+  match (fed(server(3 as i64), [data(8 as i64, 0 as i64, 5, false)])) {
+    Ok(s) => {
+      three = events(s);
+    },
+    Err(e) => {
+      three = e;
+    }
+  }
+  let two: string = outcome(fed(server(2 as i64), [data(8 as i64, 0 as i64, 5, false)]));
+  return test.assert_eq(three + " | " + two, "open 0,open 4,open 8,read 8, | 4/8");
+}
+
+// Each frame needs the half it acts on: no data on this side's
+// unidirectional stream, no MAX_STREAM_DATA or STOP_SENDING for the
+// peer's, nothing for a stream this side has not opened (§19.4–§19.10).
+function test_directions(): test.TestOutcome {
+  let s: streams.Streams = server(2 as i64);
+  let mine: i64 = 3;
+  match (s.open(true)) {
+    Ok(pair) => {
+      s = pair.0;
+      mine = pair.1;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  let on_mine: string = outcome(fed(s, [data(mine, 0 as i64, 1, false)]));
+  let max_on_theirs: string = outcome(fed(s, [frames.MaxStreamData(2 as i64, 10 as i64)]));
+  let stop_on_theirs: string = outcome(fed(s, [frames.StopSending(2 as i64, 0 as i64)]));
+  let unopened: string = outcome(fed(s, [frames.MaxStreamData(1 as i64, 10 as i64)]));
+  return test.assert_eq(mine.to_string() + " " + on_mine + " " + max_on_theirs + " " + stop_on_theirs + " " + unopened, "3 5/8 5/17 5/5 5/17");
+}
+
+// Data past a stream's window or the connection's is FLOW_CONTROL_ERROR
+// (§4.1); a final size may not move, and nothing may pass it (§4.5).
+function test_limits(): test.TestOutcome {
+  let s: streams.Streams = server(3 as i64);
+  let stream_window: string = outcome(fed(s, [data(0 as i64, 90 as i64, 11, false)]));
+  let conn_window: string = outcome(fed(s, [data(0 as i64, 0 as i64, 100, false), data(4 as i64, 0 as i64, 51, false)]));
+  let moved: string = outcome(fed(s, [data(0 as i64, 0 as i64, 10, true), data(0 as i64, 0 as i64, 12, true)]));
+  let past: string = outcome(fed(s, [data(0 as i64, 0 as i64, 10, true), data(0 as i64, 10 as i64, 1, false)]));
+  let below: string = outcome(fed(s, [data(0 as i64, 0 as i64, 10, false), data(0 as i64, 0 as i64, 5, true)]));
+  let same: string = outcome(fed(s, [data(0 as i64, 0 as i64, 10, true), data(0 as i64, 5 as i64, 5, true)]));
+  return test.assert_eq(stream_window + " " + conn_window + " " + moved + " " + past + " " + below + " " + same, "3/8 3/8 6/8 6/8 6/8 ok");
+}
+
+// Sending stops at the peer's stream window (50) and connection window
+// (80), each owed a blocked signal once; MAX_STREAM_DATA and MAX_DATA let
+// the rest go, the FIN with the last of it.
+function test_send_windows(): test.TestOutcome {
+  let s: streams.Streams = server(2 as i64);
+  let a: i64 = 0;
+  let b: i64 = 0;
+  match (s.open(false)) {
+    Ok(p) => {
+      s = p.0;
+      a = p.1;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  match (s.open(false)) {
+    Ok(p) => {
+      s = p.0;
+      b = p.1;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  match (s.write(a, bytes(60, 0), true)) {
+    Ok(t) => {
+      s = t;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  match (s.write(b, bytes(40, 0), false)) {
+    Ok(t) => {
+      s = t;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  let (s1, out1, _) = s.fill([], 1200);
+  let (s2, out2, _) = s1.fill([], 1200);
+  let s3: streams.Streams = s2;
+  match (fed(s2, [frames.MaxStreamData(a, 100 as i64), frames.MaxData(200 as i64)])) {
+    Ok(t) => {
+      s3 = t;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  let (_, out3, _) = s3.fill([], 1200);
+  return test.assert_eq(sent(out1) + "| " + sent(out2) + "| " + sent(out3), "STREAM 1@0+50 STREAM 5@0+30 STREAM_DATA_BLOCKED 1 50 DATA_BLOCKED 80 | | STREAM 1@50+10 fin STREAM 5@30+10 ");
+}
+
+// Reading half a window opens it again (§4.2): 60 of the stream's 100 is
+// past half, 60 of the connection's 150 is not.
+function test_window_updates(): test.TestOutcome {
+  let s: streams.Streams = server(2 as i64);
+  match (fed(s, [data(0 as i64, 0 as i64, 60, false)])) {
+    Ok(t) => {
+      s = t;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  let (quiet, before, _) = s.fill([], 1200);
+  match (quiet.read(0 as i64)) {
+    Ok(r) => {
+      let (_, after, _) = r.0.fill([], 1200);
+      return test.assert_eq("[" + sent(before) + "] " + int.int_to_string(r.1.len()) + " " + r.2.to_string() + " " + sent(after), "[] 60 false MAX_STREAM_DATA 0 160 ");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+// A stream of the peer's both read to its end and finished from this
+// side is forgotten, and the peer may open one more (§4.6).
+function test_stream_credit(): test.TestOutcome {
+  let s: streams.Streams = server(1 as i64);
+  match (fed(s, [data(0 as i64, 0 as i64, 3, true)])) {
+    Ok(t) => {
+      s = t;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  match (s.write(0 as i64, bytes(2, 0), true)) {
+    Ok(t) => {
+      s = t;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  let refused: string = outcome(fed(s, [data(4 as i64, 0 as i64, 1, false)]));
+  let (s1, out1, resend) = s.fill([], 1200);
+  match (s1.read(0 as i64)) {
+    Ok(r) => {
+      let cur: streams.Streams = r.0;
+      for item in resend {
+        cur = cur.acked(item);
+      }
+      let (s2, out2, _) = cur.fill([], 1200);
+      let opened: string = outcome(fed(s2, [data(4 as i64, 0 as i64, 1, false)]));
+      return test.assert_eq(refused + " | " + sent(out1) + "| " + r.2.to_string() + " " + sent(out2) + "| " + opened, "4/8 | STREAM 0@0+2 fin | true MAX_STREAMS true 2 | ok");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+// A lost range is sent again; acknowledged data leaves the buffer.
+function test_loss(): test.TestOutcome {
+  let s: streams.Streams = server(2 as i64);
+  match (s.open(false)) {
+    Ok(p) => {
+      s = p.0;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  match (s.write(1 as i64, bytes(30, 0), false)) {
+    Ok(t) => {
+      s = t;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  let (s1, _, first) = s.fill([], 25);
+  let (s2, _, second) = s1.fill([], 1200);
+  let cur: streams.Streams = s2;
+  for item in first {
+    cur = cur.lost(item);
+  }
+  for item in second {
+    cur = cur.acked(item);
+  }
+  let held: string = cur.buffered(1 as i64).to_string();
+  let (s3, again, third) = cur.fill([], 1200);
+  for item in third {
+    s3 = s3.acked(item);
+  }
+  return test.assert_eq(held + " " + sent(again) + "| " + s3.buffered(1 as i64).to_string(), "30 STREAM 1@0+22 | 0");
+}
+
+// STOP_SENDING resets this side's half with the peer's code, final size
+// what was sent; RESET_STREAM ends the peer's, its unread bytes counted
+// as read for the connection's window.
+function test_resets(): test.TestOutcome {
+  let s: streams.Streams = server(2 as i64);
+  match (fed(s, [data(0 as i64, 0 as i64, 10, false)])) {
+    Ok(t) => {
+      s = t;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  match (s.write(0 as i64, bytes(10, 0), false)) {
+    Ok(t) => {
+      s = t;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  let (s1, out1, _) = s.fill([], 1200);
+  match (fed(s1, [frames.StopSending(0 as i64, 7 as i64), frames.ResetStreamFrame(frames.ResetStream { stream: 0 as i64, code: 9 as i64, final_size: 100 as i64 })])) {
+    Ok(t) => {
+      let note: string = events(t);
+      let (_, out2, _) = t.fill([], 1200);
+      let stopping: string = "-";
+      match (s1.stop(0 as i64, 3 as i64)) {
+        Ok(st) => {
+          let (_, out3, _) = st.fill([], 1200);
+          stopping = sent(out3);
+        },
+        Err(e) => {
+          stopping = e;
+        }
+      }
+      return test.assert_eq(note + " " + sent(out1) + "| " + sent(out2) + "| " + stopping, "open 0,read 0,stop 0/7,reset 0/9, STREAM 0@0+10 | RESET_STREAM 0 7 10 MAX_DATA 250 | STOP_SENDING 0 3 ");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+// Bytes already read must not be credited again when a stopped stream is
+// reset. Discard both ready and out-of-order bytes without changing an old
+// alias of the table, and count bytes arriving after STOP_SENDING only once.
+function test_stop_after_read(): test.TestOutcome {
+  let s: streams.Streams = server(2 as i64);
+  match (fed(s, [data(0 as i64, 0 as i64, 60, false)])) {
+    Ok(t) => {
+      s = t;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  match (s.read(0 as i64)) {
+    Ok(r) => {
+      s = r.0;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  match (fed(s, [data(0 as i64, 60 as i64, 10, false), data(0 as i64, 90 as i64, 5, false)])) {
+    Ok(t) => {
+      s = t;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  let alias: streams.Streams = s;
+  match (s.stop(0 as i64, 3 as i64)) {
+    Ok(t) => {
+      s = t;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  let old_ready: i32 = 0;
+  match (alias.read(0 as i64)) {
+    Ok(r) => {
+      old_ready = r.1.len();
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  let rs: frames.Frame = frames.ResetStreamFrame(frames.ResetStream { stream: 0 as i64, code: 9 as i64, final_size: 100 as i64 });
+  match (fed(s, [data(0 as i64, 95 as i64, 5, false), rs, rs])) {
+    Ok(t) => {
+      let (next, out, _) = t.fill([], 1200);
+      let (_, again, _) = next.fill([], 1200);
+      return test.assert_eq(old_ready.to_string() + " " + sent(out) + "| " + sent(again), "10 STOP_SENDING 0 3 MAX_DATA 250 | ");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+// A refused open cannot return a changed table. The application explicitly
+// requests STREAMS_BLOCKED, once for each direction, then receives more credit.
+function test_blocked_open(): test.TestOutcome {
+  let s: streams.Streams = streams.table(true, limits(2 as i64, 1 as i64, 100 as i64, 150 as i64)).with_peer(limits(0 as i64, 0 as i64, 50 as i64, 80 as i64));
+  match (s.open(false)) {
+    Ok(_) => {
+      return test.fail("opened a bidirectional stream without credit");
+    },
+    Err(_) => {}
+  }
+  match (s.open(true)) {
+    Ok(_) => {
+      return test.fail("opened a unidirectional stream without credit");
+    },
+    Err(_) => {}
+  }
+  let (s1, first, _) = s.blocked_open(false).blocked_open(true).fill([], 1200);
+  let (s2, quiet, _) = s1.fill([], 1200);
+  match (fed(s2, [frames.MaxStreams(true, 1 as i64)])) {
+    Ok(t) => {
+      s = t;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  match (s.open(false)) {
+    Ok(p) => {
+      s = p.0;
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  match (s.open(false)) {
+    Ok(_) => {
+      return test.fail("opened another stream without new credit");
+    },
+    Err(_) => {}
+  }
+  let (_, second, _) = s.blocked_open(false).fill([], 1200);
+  return test.assert_eq(sent(first) + "| " + sent(quiet) + "| " + sent(second), "STREAMS_BLOCKED true 0 STREAMS_BLOCKED false 0 | | STREAMS_BLOCKED true 1 ");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/quic/streams");
+  r = r.it("reassembly holds no byte twice", test_reassembly);
+  r = r.it("the peer opens streams up to the limit", test_peer_opens);
+  r = r.it("each frame needs its half", test_directions);
+  r = r.it("windows and final sizes", test_limits);
+  r = r.it("sending within the peer's windows", test_send_windows);
+  r = r.it("reading opens the windows again", test_window_updates);
+  r = r.it("a closed stream lets the peer open another", test_stream_credit);
+  r = r.it("loss and acknowledgement", test_loss);
+  r = r.it("STOP_SENDING and RESET_STREAM", test_resets);
+  r = r.it("a reset after stopping credits previously read bytes only once", test_stop_after_read);
+  r = r.it("explicit STREAMS_BLOCKED in each direction", test_blocked_open);
+  return r.finish();
+}

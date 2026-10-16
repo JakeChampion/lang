@@ -1,0 +1,24 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// String CLOSURE CAPTURE reclamation (wasm). A closure captures a
+// fresh string; MakeClosure retains it (__fern_str_inc) and the
+// per-closure __closure_drop_<name> thunk dec's it (__fern_str_dec)
+// when the closure's env frees at its last reference. The closure
+// ESCAPES (returned from make_box), so the capture must survive
+// until the returned closure is dropped by the caller. 200x churn;
+// "ab"+"cd" = 4. 200*4=800.
+function make_box(seed: i32): () => i32 {
+    let s: string = "ab" + "cd";
+    return (): i32 => { return s.len(); };
+}
+function mk(seed: i32): i32 {
+    let f: () => i32 = make_box(seed);
+    return f();
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 800) + __rc_underflow_count();
+}

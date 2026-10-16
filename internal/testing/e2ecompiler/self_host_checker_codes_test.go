@@ -236,6 +236,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"string-len-redeclares-builtin", "function (s: string) len(): i32 { return 1; }\nfunction main(): i32 { return \"ab\".len(); }\n", []string{"E006"}},
 		{"map-iter-key-redeclares-builtin", "import \"core/map\";\nfunction (it: MapIter[string, i32]) key(): string { return \"k\"; }\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let it: MapIter[string, i32] = m.iter(); return it.key().len(); }\n", []string{"E006"}},
 		{"cell-get-redeclares-builtin", "function (c: Cell[i32]) get(): i32 { return 1; }\nfunction main(): i32 { let c: Cell[i32] = cell_new(3); return c.get(); }\n", []string{"E006"}},
+		{"cell-new-unannotated-get", "function main(): i32 { let c = cell_new(1); c.set(c.get() + 1); return c.get(); }\n", nil},
+		{"cell-new-unannotated-get-wrong-type", "function main(): i32 { let c = cell_new(1); let s: string = c.get(); return 0; }\n", []string{"E003"}},
+		{"void-lambda-called-directly", "function main(): i32 { let n: i32 = 0; let log = (x: i32) => { n = n + x; }; log(4); return n - 4; }\n", nil},
+		{"void-lambda-result-used", "function main(): i32 { let f = (x: i32) => { let y = x; }; let v: i32 = f(1); return v; }\n", []string{"E003"}},
 		// A method an enum or union does not have (#11852): Option's and
 		// Result's live in std/option and std/result, so without the import
 		// they have none. The bundle differential holds the imported side.

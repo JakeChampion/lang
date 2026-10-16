@@ -1,0 +1,33 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Struct VALUES under the field drop: the value column routes to
+// the generated __drop_map_via___drop_struct_Pt walk, which
+// deep-drops each value (array field + string field + box) before
+// the key column and the buf + handle go.
+import "core/map";
+import "std/i32";
+
+struct Pt { xs: i32[], tag: string }
+struct Tbl { m: Map[string, Pt], count: i32 }
+
+@noinline
+function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
+
+@noinline
+function build(n: i32): Tbl {
+    let m: Map[string, Pt] = map_new(8);
+    let i: i32 = 0;
+    while (i < n) {
+        m = m.insert(w("k") + i.to_string(), Pt { xs: [i, i + 1], tag: w("t") + i.to_string() });
+        i = i + 1;
+    }
+    return Tbl { m: m, count: n };
+}
+
+function main(): i32 {
+    let t: i32 = 0;
+    let r: i32 = 0;
+    while (r < 3) { t = t + build(6).count; r = r + 1; }
+    return (t - 18) + __rc_underflow_count();
+}

@@ -1,0 +1,34 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// An append whose receiver is itself an owned temp — the inner
+// result of a chain, a literal, a fresh call result — consumes that
+// reference: released after the outer grow, where before it was
+// stranded at rc 2 (the inner grew in place, so the outer copied
+// at rc 2 and nothing released the original) or at rc 1 (the inner
+// copied). `x = x.append(k).append(k + 1)` leaked eight of its nine
+// buffers per round. The string chain exercises the deep drop: the
+// outer grow's copy path retains the elements, so the superseded
+// buffer still owns its own and the walk is right.
+@noinline
+function mk(p: string): string[] { return [p + "seed"]; }
+
+function main(): i32 {
+    let pad: string = "wide-payload-";
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 8) {
+        let x: i32[] = [];
+        let k: i32 = 0;
+        while (k < 6) { x = x.append(k).append(k + 1); k = k + 1; }
+        let a: i32[] = [7].append(i);
+        let b: string[] = mk(pad).append(pad + "lit").append(pad + "more");
+        if (x[11] != 6) { return 90; }
+        if (a[0] != 7) { return 91; }
+        if (a[1] != i) { return 92; }
+        if (b[2].len() != 17) { return 93; }
+        t = t + x.len() + a.len() + b.len();
+        i = i + 1;
+    }
+    return (t - 136) + __rc_underflow_count();
+}

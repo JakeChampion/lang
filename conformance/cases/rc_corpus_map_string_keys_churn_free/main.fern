@@ -1,0 +1,23 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+import "core/int";
+import "core/map";
+import "std/string";
+function mk(seed: i32): i32 {
+    let m: Map[string, string] = map_new(8);
+    let key: string = "k" + "ey";
+    m = m.insert(key, "va" + "lue");
+    m = m.insert("other" + "k", "x" + "yz");
+    m = m.insert(key, "val" + "ue");
+    let out: string = "";
+    match (m.get(key)) { Some(v) => { out = v; }, None => { out = "zz"; } }
+    let other: string = "";
+    match (m.get("otherk")) { Some(v) => { other = v; }, None => { other = "q"; } }
+    return out.len() + key.len() + other.len();
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 2200) + __rc_underflow_count();
+}

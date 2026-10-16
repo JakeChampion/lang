@@ -1,0 +1,268 @@
+import "std/test";
+import "std/quic/frames";
+import "std/hex";
+import "std/i64";
+import "core/int";
+
+// tests/stdlib/quic_frames_test.fern — std/quic/frames: RFC 9000 Appendix
+// A.1's variable-length integers, every frame type written and read back
+// byte for byte, ACK ranges in both directions, which frames each packet
+// type may carry (§12.4), and every malformed shape answered with its error.
+
+function varint_of(block: string): string {
+  match (frames.read_varint(hex.hex_decode(block), 0)) {
+    Some(got) => {
+      return got.0.to_string() + " [" + int.int_to_string(got.1) + "]";
+    },
+    None => {
+      return "short";
+    }
+  }
+}
+
+function test_varints(): test.TestOutcome {
+  let got: string = varint_of("c2197c5eff14e88c") + " " + varint_of("9d7f3e7d") + " " + varint_of("7bbd") + " " + varint_of("25") + " " + varint_of("4025") + " " + varint_of("9d7f3e") + " " + varint_of("");
+  let enc: string = hex.hex_encode(frames.put_varint([], 151288809941952652i64)) + " " + hex.hex_encode(frames.put_varint([], 494878333 as i64)) + " " + hex.hex_encode(frames.put_varint([], 15293 as i64)) + " " + hex.hex_encode(frames.put_varint([], 37 as i64)) + " " + hex.hex_encode(frames.put_varint_n([], 37 as i64, 2)) + " " + hex.hex_encode(frames.put_varint([], frames.MAX_VARINT));
+  return test.assert_eq(got + " | " + enc, "151288809941952652 [8] 494878333 [4] 15293 [2] 37 [1] 37 [2] short short | c2197c5eff14e88c 9d7f3e7d 7bbd 25 4025 ffffffffffffffff");
+}
+
+function flag(on: boolean, name: string): string {
+  if (on) {
+    return " " + name;
+  }
+  return "";
+}
+
+function ranges(a: frames.Ack): string {
+  let out: string = "";
+  for r in a.ranges {
+    out = out + " " + r.low.to_string() + "-" + r.high.to_string();
+  }
+  return out;
+}
+
+function describe(f: frames.Frame): string {
+  match (f) {
+    frames.Padding(n) => {
+      return "PADDING " + int.int_to_string(n);
+    },
+    frames.Ping => {
+      return "PING";
+    },
+    frames.HandshakeDone => {
+      return "HANDSHAKE_DONE";
+    },
+    frames.AckFrame(a) => {
+      let e: string = "";
+      if let Some(ecn) = a.ecn {
+        e = " ecn " + ecn.ect0.to_string() + "/" + ecn.ect1.to_string() + "/" + ecn.ce.to_string();
+      }
+      return "ACK delay " + a.delay.to_string() + ranges(a) + e;
+    },
+    frames.ResetStreamFrame(r) => {
+      return "RESET_STREAM " + r.stream.to_string() + " code " + r.code.to_string() + " size " + r.final_size.to_string();
+    },
+    frames.StopSending(id, code) => {
+      return "STOP_SENDING " + id.to_string() + " code " + code.to_string();
+    },
+    frames.Crypto(offset, data) => {
+      return "CRYPTO " + offset.to_string() + " " + hex.hex_encode(data);
+    },
+    frames.NewToken(token) => {
+      return "NEW_TOKEN " + hex.hex_encode(token);
+    },
+    frames.StreamFrame(s) => {
+      return "STREAM " + s.stream.to_string() + " at " + s.offset.to_string() + flag(s.fin, "FIN") + " " + hex.hex_encode(s.data);
+    },
+    _ => {
+      return describe_rest(f);
+    }
+  }
+  return "";
+}
+
+function describe_rest(f: frames.Frame): string {
+  match (f) {
+    frames.MaxData(v) => {
+      return "MAX_DATA " + v.to_string();
+    },
+    frames.MaxStreamData(id, v) => {
+      return "MAX_STREAM_DATA " + id.to_string() + " " + v.to_string();
+    },
+    frames.MaxStreams(bidi, v) => {
+      return "MAX_STREAMS" + flag(bidi, "bidi") + " " + v.to_string();
+    },
+    frames.DataBlocked(v) => {
+      return "DATA_BLOCKED " + v.to_string();
+    },
+    frames.StreamDataBlocked(id, v) => {
+      return "STREAM_DATA_BLOCKED " + id.to_string() + " " + v.to_string();
+    },
+    frames.StreamsBlocked(bidi, v) => {
+      return "STREAMS_BLOCKED" + flag(bidi, "bidi") + " " + v.to_string();
+    },
+    frames.NewConnectionIdFrame(n) => {
+      return "NEW_CONNECTION_ID " + n.sequence.to_string() + " prior " + n.retire_prior_to.to_string() + " " + hex.hex_encode(n.id) + " token " + hex.hex_encode(n.reset_token);
+    },
+    frames.RetireConnectionId(seq) => {
+      return "RETIRE_CONNECTION_ID " + seq.to_string();
+    },
+    frames.PathChallenge(d) => {
+      return "PATH_CHALLENGE " + hex.hex_encode(d);
+    },
+    frames.PathResponse(d) => {
+      return "PATH_RESPONSE " + hex.hex_encode(d);
+    },
+    frames.ConnectionCloseFrame(c) => {
+      return "CONNECTION_CLOSE" + flag(c.app, "app") + " code " + c.code.to_string() + " in " + c.frame_type.to_string() + " \"" + c.reason + "\"";
+    },
+    _ => {
+      return "?";
+    }
+  }
+  return "";
+}
+
+// shown reads one frame from hex, as text, with the bytes it took.
+function shown(block: string): string {
+  match (frames.read(hex.hex_decode(block), 0)) {
+    Ok(got) => {
+      return describe(got.0) + " [" + int.int_to_string(got.1) + "]";
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+// trip encodes `f`, reads it back, and answers the bytes and the reading.
+function trip(f: frames.Frame): string {
+  let bytes: u8[] = frames.encode(f);
+  return hex.hex_encode(bytes) + " -> " + shown(hex.hex_encode(bytes));
+}
+
+function token(): u8[] {
+  return hex.hex_decode("00112233445566778899aabbccddeeff");
+}
+
+function test_round_trips(): test.TestOutcome {
+  let cases: frames.Frame[] = [
+    frames.Padding(3),
+    frames.Ping,
+    frames.HandshakeDone,
+    frames.ResetStreamFrame(frames.ResetStream { stream: 4 as i64, code: 258 as i64, final_size: 1000 as i64 }),
+    frames.StopSending(8 as i64, 1 as i64),
+    frames.Crypto(0 as i64, hex.hex_decode("010203")),
+    frames.NewToken(hex.hex_decode("abcd")),
+    frames.StreamFrame(frames.StreamData { stream: 0 as i64, offset: 0 as i64, data: hex.hex_decode("6869"), fin: false }),
+    frames.StreamFrame(frames.StreamData { stream: 4 as i64, offset: 100 as i64, data: hex.hex_decode("6869"), fin: true }),
+    frames.MaxData(1048576 as i64),
+    frames.MaxStreamData(4 as i64, 65536 as i64),
+    frames.MaxStreams(true, 100 as i64),
+    frames.MaxStreams(false, 3 as i64),
+    frames.DataBlocked(7 as i64),
+    frames.StreamDataBlocked(4 as i64, 9 as i64),
+    frames.StreamsBlocked(true, 10 as i64),
+    frames.StreamsBlocked(false, 11 as i64),
+    frames.NewConnectionIdFrame(frames.NewConnectionId { sequence: 2 as i64, retire_prior_to: 1 as i64, id: hex.hex_decode("0102030405060708"), reset_token: token() }),
+    frames.RetireConnectionId(1 as i64),
+    frames.PathChallenge(hex.hex_decode("0102030405060708")),
+    frames.PathResponse(hex.hex_decode("0807060504030201")),
+    frames.ConnectionCloseFrame(frames.ConnectionClose { code: frames.PROTOCOL_VIOLATION, frame_type: 6 as i64, reason: "bad", app: false }),
+    frames.ConnectionCloseFrame(frames.ConnectionClose { code: 256 as i64, frame_type: 0 as i64, reason: "", app: true }),
+  ];
+  let got: string = "";
+  for f in cases {
+    got = got + trip(f) + "\n";
+  }
+  return test.assert_eq(got, "000000 -> PADDING 3 [3]\n01 -> PING [1]\n1e -> HANDSHAKE_DONE [1]\n04044102" + "4" + "3e8 -> RESET_STREAM 4 code 258 size 1000 [6]\n050801 -> STOP_SENDING 8 code 1 [3]\n060003010203 -> CRYPTO 0 010203 [6]\n0702abcd -> NEW_TOKEN abcd [4]\n0a00026869 -> STREAM 0 at 0 6869 [5]\n0f04406402" + "6869 -> STREAM 4 at 100 FIN 6869 [7]\n1080100000 -> MAX_DATA 1048576 [5]\n110480010000 -> MAX_STREAM_DATA 4 65536 [6]\n124064 -> MAX_STREAMS bidi 100 [3]\n1303 -> MAX_STREAMS 3 [2]\n1407 -> DATA_BLOCKED 7 [2]\n150409 -> STREAM_DATA_BLOCKED 4 9 [3]\n160a -> STREAMS_BLOCKED bidi 10 [2]\n170b -> STREAMS_BLOCKED 11 [2]\n180201080102030405060708" + "00112233445566778899aabbccddeeff -> NEW_CONNECTION_ID 2 prior 1 0102030405060708 token 00112233445566778899aabbccddeeff [28]\n1901 -> RETIRE_CONNECTION_ID 1 [2]\n1a0102030405060708 -> PATH_CHALLENGE 0102030405060708 [9]\n1b0807060504030201 -> PATH_RESPONSE 0807060504030201 [9]\n1c0a0603626164 -> CONNECTION_CLOSE code 10 in 6 \"bad\" [7]\n1d410000 -> CONNECTION_CLOSE app code 256 in 0 \"\" [4]\n");
+}
+
+// An ACK's gap-and-length form (§19.3.1) both ways: largest 100 with a first
+// range of 5 (95..100), then a gap of 2 (two missing: 92, 93) and a range of
+// 1 (90..91), then a gap of 0 (one missing: 89) and a range of 0 (88).
+function test_ack(): test.TestOutcome {
+  let wire: string = "02" + "4064" + "19" + "02" + "05" + "02" + "01" + "00" + "00";
+  let a: frames.Ack = frames.Ack { delay: 25 as i64, ranges: [frames.AckRange { low: 95 as i64, high: 100 as i64 }, frames.AckRange { low: 90 as i64, high: 91 as i64 }, frames.AckRange { low: 88 as i64, high: 88 as i64 }], ecn: None };
+  let ecn: frames.Ack = frames.Ack { ...a, ecn: Some(frames.Ecn { ect0: 1 as i64, ect1: 2 as i64, ce: 3 as i64 }) };
+  let got: string = shown(wire) + "\n" + hex.hex_encode(frames.encode(frames.AckFrame(a))) + "\n" + trip(frames.AckFrame(ecn));
+  return test.assert_eq(got, "ACK delay 25 95-100 90-91 88-88 [10]\n" + wire + "\n03406419020502010000010203 -> ACK delay 25 95-100 90-91 88-88 ecn 1/2/3 [13]");
+}
+
+function test_read_all(): test.TestOutcome {
+  let payload: u8[] = frames.encode(frames.Ping).concat(frames.encode(frames.Crypto(5 as i64, hex.hex_decode("aa")))).concat(frames.encode(frames.Padding(4)));
+  let got: string = "";
+  match (frames.read_all(payload)) {
+    Ok(fs) => {
+      for f in fs {
+        got = got + describe(f) + ";";
+      }
+    },
+    Err(e) => {
+      got = e.message();
+    }
+  }
+  match (frames.read_all([])) {
+    Ok(_) => {
+      got = got + " empty read";
+    },
+    Err(e) => {
+      got = got + " " + e.message();
+    }
+  }
+  return test.assert_eq(got, "PING;CRYPTO 5 aa;PADDING 4; quic frame: error 10 in frame type 0: a packet with no frames");
+}
+
+function test_malformed(): test.TestOutcome {
+  let got: string = "";
+  got = got + shown("1f") + "\n";
+  got = got + shown("0201") + "\n";
+  got = got + shown("0205000006") + "\n";
+  got = got + shown("02050001000004") + "\n";
+  got = got + shown("0a0005ab") + "\n";
+  got = got + shown("06000201") + "\n";
+  got = got + shown("0700") + "\n";
+  got = got + shown("12d000000000000001") + "\n";
+  got = got + shown("180102" + "08" + "0102030405060708" + "00112233445566778899aabbccddeeff") + "\n";
+  got = got + shown("180100" + "00" + "00112233445566778899aabbccddeeff") + "\n";
+  got = got + shown("180100" + "15") + "\n";
+  got = got + shown("1a01020304") + "\n";
+  got = got + shown("1c0a0605") + "\n";
+  got = got + shown("0c" + "40" + "ff");
+  return test.assert_eq(got, "quic frame: error 7 in frame type 31: unknown frame type\nquic frame: error 7 in frame type 2: ack delay cut short\nquic frame: error 7 in frame type 2: first ack range below packet 0\nquic frame: error 7 in frame type 2: ack range below packet 0\nquic frame: error 7 in frame type 10: stream data of 5 bytes past the end of the packet\nquic frame: error 7 in frame type 6: crypto data of 2 bytes past the end of the packet\nquic frame: error 7 in frame type 7: an empty NEW_TOKEN\nquic frame: error 7 in frame type 18: a stream count over 2^60\nquic frame: error 7 in frame type 24: retire prior to 2 past sequence number 1\nquic frame: error 7 in frame type 24: a connection id of 0 bytes\nquic frame: error 7 in frame type 24: a connection id of 21 bytes\nquic frame: error 7 in frame type 26: path data of 8 bytes past the end of the packet\nquic frame: error 7 in frame type 28: reason phrase of 5 bytes past the end of the packet\nquic frame: error 7 in frame type 12: stream offset cut short");
+}
+
+// Which frames each packet type may carry (§12.4, table 3).
+function test_permitted(): test.TestOutcome {
+  let fs: frames.Frame[] = [frames.Padding(1), frames.Ping, frames.AckFrame(frames.Ack { delay: 0 as i64, ranges: [frames.AckRange { low: 0 as i64, high: 0 as i64 }], ecn: None }), frames.Crypto(0 as i64, []), frames.StreamFrame(frames.StreamData { stream: 0 as i64, offset: 0 as i64, data: [], fin: false }), frames.NewToken([1 as u8]), frames.HandshakeDone, frames.PathResponse([]), frames.ConnectionCloseFrame(frames.ConnectionClose { code: 0 as i64, frame_type: 0 as i64, reason: "", app: false }), frames.ConnectionCloseFrame(frames.ConnectionClose { code: 0 as i64, frame_type: 0 as i64, reason: "", app: true })];
+  let got: string = "";
+  for f in fs {
+    let row: string = "";
+    let space: i32 = 0;
+    while (space < 4) {
+      if (f.permitted(space)) {
+        row = row + "y";
+      } else {
+        row = row + "n";
+      }
+      space = space + 1;
+    }
+    if (f.ack_eliciting()) {
+      row = row + " e";
+    }
+    got = got + row + ";";
+  }
+  return test.assert_eq(got, "yyyy;yyyy e;ynyy;ynyy e;nyny e;nnny e;nnny e;nnny e;yyyy;nyny;");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/quic/frames");
+  r = r.it("variable-length integers (RFC 9000 A.1)", test_varints);
+  r = r.it("every frame type round-trips", test_round_trips);
+  r = r.it("ACK ranges both ways", test_ack);
+  r = r.it("a payload's frames", test_read_all);
+  r = r.it("malformed frames", test_malformed);
+  r = r.it("which packets carry which frames", test_permitted);
+  return r.finish();
+}

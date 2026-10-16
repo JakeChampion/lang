@@ -1,0 +1,464 @@
+// std/quic/recovery — loss detection and congestion control (RFC 9002),
+// as values: the packets sent in each packet number space and not yet
+// acknowledged or lost, the RTT estimate, the probe timeout, and NewReno's
+// congestion window.
+//
+// A connection reports each packet it sends (`on_sent`), each ACK frame it
+// receives (`on_ack`), and the passing of the deadline `timer` names
+// (`on_timeout`); what comes back is which packets were acknowledged and
+// which were lost, for the connection to retransmit what they carried.
+// Times are nanoseconds from any fixed origin; nothing here reads a clock.
+// The constants are Appendix A.2's.
+
+import "std/quic/frames";
+import "std/array";
+import "std/i64";
+
+// The packet number spaces (RFC 9000 §12.3).
+pub const INITIAL: i32 = 0;
+
+pub const HANDSHAKE: i32 = 1;
+
+pub const APPLICATION: i32 = 2;
+
+pub const PACKET_THRESHOLD: i64 = 3;
+
+pub const GRANULARITY: i64 = 1000000;
+
+pub const INITIAL_RTT: i64 = 333000000;
+
+pub const PERSISTENT_CONGESTION_THRESHOLD: i64 = 3;
+
+// Resend — what a lost packet carried that must be sent again: a range of
+// CRYPTO data, a range of a stream's data, or a frame to repeat as it was.
+pub enum Resend {
+  CryptoRange(i64, i32),
+  StreamRange(i64, i64, i32, boolean),
+  Again(frames.Frame),
+}
+
+// Sent — one packet sent and not yet acknowledged or declared lost. A
+// packet carrying only ACK, PADDING or CONNECTION_CLOSE is not in flight
+// for congestion control's purposes, nor ack-eliciting.
+pub struct Sent { pn: i64, at: i64, size: i32, ack_eliciting: boolean, in_flight: boolean, resend: Resend[] }
+
+struct Space { sent: Sent[], largest_acked: i64, loss_time: i64, last_ack_eliciting: i64 }
+
+// Recovery — the loss-detection and congestion state of one connection.
+pub struct Recovery {
+  spaces: Space[],
+  latest_rtt: i64,
+  smoothed_rtt: i64,
+  rttvar: i64,
+  min_rtt: i64,
+  first_rtt_sample: i64,
+  pto_count: i32,
+  max_ack_delay: i64,
+  max_datagram: i64,
+  bytes_in_flight: i64,
+  cwnd: i64,
+  ssthresh: i64,
+  recovery_start: i64,
+  handshake_confirmed: boolean,
+  peer_validated: boolean,
+}
+
+// new is a connection's recovery before anything is sent: the initial
+// window of §7.2 for datagrams of `max_datagram` bytes.
+pub function new(max_datagram: i32, server: boolean): Recovery {
+  let empty: Space = Space { sent: [], largest_acked: 0 - 1 as i64, loss_time: 0 as i64, last_ack_eliciting: 0 as i64 };
+  let md: i64 = max_datagram as i64;
+  let window: i64 = 14720;
+  if (window < 2 * md) {
+    window = 2 * md;
+  }
+  if (window > 10 * md) {
+    window = 10 * md;
+  }
+  return Recovery { spaces: [empty, empty, empty], latest_rtt: 0 as i64, smoothed_rtt: INITIAL_RTT, rttvar: INITIAL_RTT / 2, min_rtt: 0 as i64, first_rtt_sample: 0 as i64, pto_count: 0, max_ack_delay: 0 as i64, max_datagram: md, bytes_in_flight: 0 as i64, cwnd: window, ssthresh: frames.MAX_VARINT, recovery_start: 0 - 1 as i64, handshake_confirmed: false, peer_validated: server };
+}
+
+// with_max_ack_delay records the peer's max_ack_delay, in nanoseconds,
+// which governs the application space's probe timeout.
+pub function (r: Recovery) with_max_ack_delay(ns: i64): Recovery {
+  return Recovery { ...r, max_ack_delay: ns };
+}
+
+// confirmed records that the handshake is confirmed (RFC 9001 §4.1.2),
+// after which the application space's probe timeout counts.
+pub function (r: Recovery) confirmed(): Recovery {
+  return Recovery { ...r, handshake_confirmed: true, peer_validated: true };
+}
+
+// validated records, at a client, that the server has validated its
+// address: it has acknowledged a Handshake packet or the handshake is done.
+pub function (r: Recovery) validated(): Recovery {
+  return Recovery { ...r, peer_validated: true };
+}
+
+// window is what congestion control lets be sent now.
+pub function (r: Recovery) window(): i64 {
+  let room: i64 = r.cwnd - r.bytes_in_flight;
+  if (room < 0) {
+    return 0 as i64;
+  }
+  return room;
+}
+
+// in_flight reports whether any ack-eliciting packet awaits an ACK.
+pub function (r: Recovery) in_flight(): boolean {
+  for s in r.spaces {
+    for p in s.sent {
+      if (p.ack_eliciting) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// on_sent records packet `p` sent in `space` (A.5).
+pub function (r: Recovery) on_sent(space: i32, p: Sent): Recovery {
+  let s: Space = r.spaces[space];
+  s = Space { ...s, sent: s.sent.append(p) };
+  if (p.ack_eliciting) {
+    s = Space { ...s, last_ack_eliciting: p.at };
+  }
+  let flight: i64 = r.bytes_in_flight;
+  if (p.in_flight) {
+    flight = flight + p.size as i64;
+  }
+  return Recovery { ...r, spaces: r.spaces.with(space, s), bytes_in_flight: flight };
+}
+
+// Outcome — what an ACK or a timeout changed: the packets now known
+// delivered and those declared lost, for the connection to resend what the
+// lost ones carried, and whether a probe must be sent in `probe`'s space
+// (-1 for none).
+pub struct Outcome { recovery: Recovery, acked: Sent[], lost: Sent[], probe: i32 }
+
+// on_ack takes an ACK frame received in `space` at `now`; `ack_delay` is the
+// frame's delay already scaled to nanoseconds. Acknowledging a packet
+// number never sent is a PROTOCOL_VIOLATION (RFC 9000 §13.1), answered as
+// the error code.
+pub function (r: Recovery) on_ack(space: i32, ack: frames.Ack, ack_delay: i64, now: i64, largest_sent: i64): Result[Outcome, i64] {
+  let largest: i64 = ack.ranges[0].high;
+  if (largest > largest_sent) {
+    return Err(frames.PROTOCOL_VIOLATION);
+  }
+  let s: Space = r.spaces[space];
+  if (largest > s.largest_acked) {
+    s = Space { ...s, largest_acked: largest };
+  }
+  let (acked, kept) = __split_acked(s.sent, ack);
+  if (acked.len() == 0) {
+    return Ok(Outcome { recovery: Recovery { ...r, spaces: r.spaces.with(space, s) }, acked: [], lost: [], probe: 0 - 1 });
+  }
+  let cur: Recovery = Recovery { ...r, spaces: r.spaces.with(space, Space { ...s, sent: kept }) };
+  let newest: Sent = acked[acked.len() - 1];
+  if (newest.pn == largest && __any_eliciting(acked)) {
+    cur = cur.__rtt_sample(now - newest.at, ack_delay, space);
+  }
+  cur = cur.__on_acked(acked);
+  let (after, lost) = cur.__detect_lost(space, now);
+  after = after.__on_lost(lost, now);
+  if (!(space == INITIAL && !after.peer_validated)) {
+    after = Recovery { ...after, pto_count: 0 };
+  }
+  return Ok(Outcome { recovery: after, acked: acked, lost: lost, probe: 0 - 1 });
+}
+
+// __split_acked divides the packets of a space into those `ack` covers and
+// the rest, both in packet number order.
+function __split_acked(sent: Sent[], ack: frames.Ack): (Sent[], Sent[]) {
+  let acked: Sent[] = [];
+  let kept: Sent[] = [];
+  for p in sent {
+    if (__covers(ack, p.pn)) {
+      acked = acked.append(p);
+    } else {
+      kept = kept.append(p);
+    }
+  }
+  return (acked, kept);
+}
+
+function __covers(ack: frames.Ack, pn: i64): boolean {
+  for range in ack.ranges {
+    if (pn >= range.low && pn <= range.high) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function __any_eliciting(ps: Sent[]): boolean {
+  for p in ps {
+    if (p.ack_eliciting) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// __rtt_sample updates the RTT estimate (§5.3); the peer's ack delay counts
+// only once the handshake is confirmed, and only up to max_ack_delay.
+function (r: Recovery) __rtt_sample(latest: i64, ack_delay: i64, space: i32): Recovery {
+  if (r.first_rtt_sample == 0) {
+    return Recovery { ...r, latest_rtt: latest, min_rtt: latest, smoothed_rtt: latest, rttvar: latest / 2, first_rtt_sample: 1 as i64 };
+  }
+  let min: i64 = r.min_rtt;
+  if (latest < min) {
+    min = latest;
+  }
+  let delay: i64 = 0;
+  if (space == APPLICATION && r.handshake_confirmed) {
+    delay = ack_delay;
+    if (delay > r.max_ack_delay) {
+      delay = r.max_ack_delay;
+    }
+  }
+  let adjusted: i64 = latest;
+  if (latest >= min + delay) {
+    adjusted = latest - delay;
+  }
+  let diff: i64 = r.smoothed_rtt - adjusted;
+  if (diff < 0) {
+    diff = 0 - diff;
+  }
+  return Recovery { ...r, latest_rtt: latest, min_rtt: min, rttvar: (3 * r.rttvar + diff) / 4, smoothed_rtt: (7 * r.smoothed_rtt + adjusted) / 8 };
+}
+
+// __on_acked grows the window for each in-flight packet delivered (B.5):
+// by its size in slow start, by a datagram per window in avoidance, not at
+// all for a packet sent before the current recovery began.
+function (r: Recovery) __on_acked(acked: Sent[]): Recovery {
+  let flight: i64 = r.bytes_in_flight;
+  let cwnd: i64 = r.cwnd;
+  for p in acked {
+    if (!p.in_flight) {
+      continue;
+    }
+    flight = flight - p.size as i64;
+    if (p.at <= r.recovery_start) {
+      continue;
+    }
+    if (cwnd < r.ssthresh) {
+      cwnd = cwnd + p.size as i64;
+    } else {
+      cwnd = cwnd + r.max_datagram * (p.size as i64) / cwnd;
+    }
+  }
+  return Recovery { ...r, bytes_in_flight: flight, cwnd: cwnd };
+}
+
+// __loss_delay is how long after a later packet's acknowledgement an
+// earlier one is taken as lost (§6.1.2): 9/8 of the larger RTT, at least
+// the timer granularity.
+function (r: Recovery) __loss_delay(): i64 {
+  let rtt: i64 = r.latest_rtt;
+  if (r.smoothed_rtt > rtt) {
+    rtt = r.smoothed_rtt;
+  }
+  let d: i64 = rtt * 9 / 8;
+  if (d < GRANULARITY) {
+    return GRANULARITY;
+  }
+  return d;
+}
+
+// __detect_lost declares lost each packet in `space` sent long enough
+// before the largest acknowledged, by packet count or by time (§6.1), and
+// arms the loss timer for the earliest that is not yet.
+function (r: Recovery) __detect_lost(space: i32, now: i64): (Recovery, Sent[]) {
+  let s: Space = r.spaces[space];
+  let lost_before: i64 = now - r.__loss_delay();
+  let lost: Sent[] = [];
+  let kept: Sent[] = [];
+  let loss_time: i64 = 0;
+  for p in s.sent {
+    if (p.pn > s.largest_acked) {
+      kept = kept.append(p);
+    } else if (p.at <= lost_before || s.largest_acked >= p.pn + PACKET_THRESHOLD) {
+      lost = lost.append(p);
+    } else {
+      kept = kept.append(p);
+      let due: i64 = p.at + r.__loss_delay();
+      if (loss_time == 0 || due < loss_time) {
+        loss_time = due;
+      }
+    }
+  }
+  return (Recovery { ...r, spaces: r.spaces.with(space, Space { ...s, sent: kept, loss_time: loss_time }) }, lost);
+}
+
+// __on_lost takes lost packets out of flight and, once per round trip,
+// halves the window (B.6); a run of losses spanning the persistent
+// congestion duration collapses it to the minimum (§7.6).
+function (r: Recovery) __on_lost(lost: Sent[], now: i64): Recovery {
+  if (lost.len() == 0) {
+    return r;
+  }
+  let flight: i64 = r.bytes_in_flight;
+  let newest: i64 = 0;
+  for p in lost {
+    if (p.in_flight) {
+      flight = flight - p.size as i64;
+    }
+    if (p.at > newest) {
+      newest = p.at;
+    }
+  }
+  let cur: Recovery = Recovery { ...r, bytes_in_flight: flight };
+  if (newest > cur.recovery_start) {
+    let half: i64 = cur.cwnd / 2;
+    if (half < 2 * cur.max_datagram) {
+      half = 2 * cur.max_datagram;
+    }
+    cur = Recovery { ...cur, recovery_start: now, ssthresh: half, cwnd: half };
+  }
+  if (cur.__persistent(lost)) {
+    cur = Recovery { ...cur, cwnd: 2 * cur.max_datagram, recovery_start: 0 - 1 as i64 };
+  }
+  return cur;
+}
+
+// __persistent reports persistent congestion (§7.6.2): two ack-eliciting
+// packets declared lost further apart than three probe timeouts, once an
+// RTT sample exists.
+function (r: Recovery) __persistent(lost: Sent[]): boolean {
+  if (r.first_rtt_sample == 0) {
+    return false;
+  }
+  let first: i64 = 0 - 1 as i64;
+  let last: i64 = 0 - 1 as i64;
+  for p in lost {
+    if (!p.ack_eliciting) {
+      continue;
+    }
+    if (first < 0 || p.at < first) {
+      first = p.at;
+    }
+    if (p.at > last) {
+      last = p.at;
+    }
+  }
+  let duration: i64 = (r.smoothed_rtt + __max(4 * r.rttvar, GRANULARITY) + r.max_ack_delay) * PERSISTENT_CONGESTION_THRESHOLD;
+  return first >= 0 && last - first > duration;
+}
+
+function __max(a: i64, b: i64): i64 {
+  if (a > b) {
+    return a;
+  }
+  return b;
+}
+
+// pto is the probe timeout's base for `space` (§6.2.1): the smoothed RTT,
+// four deviations, and in the application space the peer's ack delay.
+pub function (r: Recovery) pto(space: i32): i64 {
+  let d: i64 = r.smoothed_rtt + __max(4 * r.rttvar, GRANULARITY);
+  if (space == APPLICATION) {
+    d = d + r.max_ack_delay;
+  }
+  return d;
+}
+
+// timer is when loss detection next needs `on_timeout`, or 0 for never
+// (A.8): the earliest loss time, else the probe timeout of the space whose
+// ack-eliciting packets have waited longest, doubled per probe sent.
+pub function (r: Recovery) timer(): i64 {
+  let (loss, _) = r.__earliest_loss();
+  if (loss > 0) {
+    return loss;
+  }
+  let (pto, _) = r.__pto_time();
+  return pto;
+}
+
+function (r: Recovery) __earliest_loss(): (i64, i32) {
+  let at: i64 = 0;
+  let space: i32 = 0 - 1;
+  let i: i32 = 0;
+  while (i < 3) {
+    let t: i64 = r.spaces[i].loss_time;
+    if (t > 0 && (at == 0 || t < at)) {
+      at = t;
+      space = i;
+    }
+    i = i + 1;
+  }
+  return (at, space);
+}
+
+// __pto_time is when the probe timeout fires and in which space, or 0. A
+// client whose address the server has not validated keeps a probe armed
+// even with nothing in flight, so a lost Handshake flight cannot deadlock
+// the amplification limit (§6.2.2.1).
+function (r: Recovery) __pto_time(): (i64, i32) {
+  let backoff: i64 = 1 as i64 << r.pto_count as i64;
+  let at: i64 = 0;
+  let space: i32 = 0 - 1;
+  let i: i32 = 0;
+  while (i < 3) {
+    let s: Space = r.spaces[i];
+    if (__eliciting_in(s) && !(i == APPLICATION && !r.handshake_confirmed)) {
+      let t: i64 = s.last_ack_eliciting + r.pto(i) * backoff;
+      if (at == 0 || t < at) {
+        at = t;
+        space = i;
+      }
+    }
+    i = i + 1;
+  }
+  return (at, space);
+}
+
+function __eliciting_in(s: Space): boolean {
+  for p in s.sent {
+    if (p.ack_eliciting) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// on_timeout runs the loss-detection timer (A.9): time-threshold losses if
+// a loss time passed, otherwise a probe timeout, which asks for a probe in
+// the space it fired for and backs the next one off.
+pub function (r: Recovery) on_timeout(now: i64): Outcome {
+  let (loss, space) = r.__earliest_loss();
+  if (loss > 0 && loss <= now) {
+    let (after, lost) = r.__detect_lost(space, now);
+    return Outcome { recovery: after.__on_lost(lost, now), acked: [], lost: lost, probe: 0 - 1 };
+  }
+  let (pto, pspace) = r.__pto_time();
+  if (pto == 0 || pto > now) {
+    return Outcome { recovery: r, acked: [], lost: [], probe: 0 - 1 };
+  }
+  return Outcome { recovery: Recovery { ...r, pto_count: r.pto_count + 1 }, acked: [], lost: [], probe: pspace };
+}
+
+// unacked are the packets of `space` still awaiting acknowledgement, oldest
+// first: what a probe resends from when it has nothing new.
+pub function (r: Recovery) unacked(space: i32): Sent[] {
+  return r.spaces[space].sent;
+}
+
+// discard forgets a space whose keys are gone (§6.4): its packets leave
+// flight without counting as lost.
+pub function (r: Recovery) discard(space: i32): Recovery {
+  let s: Space = r.spaces[space];
+  let flight: i64 = r.bytes_in_flight;
+  for p in s.sent {
+    if (p.in_flight) {
+      flight = flight - p.size as i64;
+    }
+  }
+  return Recovery { ...r, spaces: r.spaces.with(space, Space { sent: [], largest_acked: s.largest_acked, loss_time: 0 as i64, last_ack_eliciting: 0 as i64 }), bytes_in_flight: flight, pto_count: 0 };
+}
+
+// smoothed is the smoothed RTT, for timers outside loss detection.
+pub function (r: Recovery) smoothed(): i64 {
+  return r.smoothed_rtt;
+}

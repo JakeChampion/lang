@@ -1,0 +1,86 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// #8719: the argument half. An argument evaluated ahead of a later
+// `?` — a temp for an `own` or a borrowed parameter, an `own`
+// parameter passed on, a closure call's temp — is released when the
+// `?` leaves. An `own` parameter passed AFTER the `?` is the
+// walkDominatingExprs half: its move is not claimed past the exit.
+// Before: 2240 bytes live on arm64 and wasm.
+@noinline
+function g(c: i32): Result[i32, i32] {
+    if (c == 0) { return Err(7); }
+    return Ok(c * 2);
+}
+
+@noinline
+function mk(c: i32): i32[] { return [c, c + 1, c + 2]; }
+
+@noinline
+function take(own a: i32[], r: i32): i32 { return a[0] + r; }
+
+@noinline
+function take_last(r: i32, own a: i32[]): i32 { return a[0] + r; }
+
+@noinline
+function peek(a: i32[], r: i32): i32 { return a[0] + r; }
+
+@noinline
+function own_temp(c: i32): Result[i32, i32] {
+    return Ok(take(mk(c), g(c)?));
+}
+
+@noinline
+function own_param_before(own x: i32[], c: i32): Result[i32, i32] {
+    return Ok(take(x, g(c)?));
+}
+
+@noinline
+function own_param_after(own x: i32[], c: i32): Result[i32, i32] {
+    return Ok(take_last(g(c)?, x));
+}
+
+@noinline
+function borrowed_temp(c: i32): Result[i32, i32] {
+    return Ok(peek(mk(c), g(c)?));
+}
+
+@noinline
+function closure_temp(c: i32): Result[i32, i32] {
+    let f: (i32[], i32) => i32 = (a: i32[], r: i32): i32 => { return a[0] + r; };
+    return Ok(f(mk(c), g(c)?));
+}
+
+@noinline
+function nested(c: i32): Result[i32, i32] {
+    let xs: i32[][] = [mk(c), [take(mk(c), g(c)?)]];
+    return Ok(xs[0][0] + xs[1][0]);
+}
+
+function run(k: i32, c: i32): i32 {
+    let r: Result[i32, i32] = Err(0);
+    if (k == 0) { r = own_temp(c); }
+    if (k == 1) { r = own_param_before(mk(c), c); }
+    if (k == 2) { r = own_param_after(mk(c), c); }
+    if (k == 3) { r = borrowed_temp(c); }
+    if (k == 4) { r = closure_temp(c); }
+    if (k == 5) { r = nested(c); }
+    match (r) {
+        Ok(v) => { return v; },
+        Err(e) => { return e; }
+    }
+}
+
+function main(): i32 {
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 20) {
+        let k: i32 = 0;
+        while (k < 6) {
+            acc = acc + run(k, i % 2);
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    return (acc - 610) + __rc_underflow_count();
+}

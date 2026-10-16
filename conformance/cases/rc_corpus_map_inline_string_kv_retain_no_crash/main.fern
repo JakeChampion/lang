@@ -1,0 +1,32 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// Inline-tagged strings (SSO ≤7 bytes) used as Map keys + values
+// on natives. A fresh slice / concat result with len ≤ 7 packs
+// into the "pointer" word with bit 0 set, so it's NOT a real heap
+// pointer. Without an inline-tag guard in __fern_rc_inc /
+// __fern_rc_dec the Map.set retain would deref the packed value
+// as if it were a pointer and corrupt unrelated heap memory
+// (segfault). Both Slice 7 (V retain) and Slice 8 (K retain) had
+// this latent crash; long-string corpus cases hid it because >7
+// chars take the heap path.
+//
+// Per iter: short_key.len()=1 + short_val.len()=2 = 3; 500x → 1500.
+import "core/int";
+import "core/map";
+import "std/string";
+function mk(): i32 {
+    let src: string = "a=hi";
+    let short_key: str = slice_unchecked(src, 0, 1);   // inline (1 byte, tagged)
+    let short_val: str = slice_unchecked(src, 2, 4);   // inline (2 bytes, tagged)
+    let m: Map[string, string] = map_new(8);
+    m = m.insert(short_key.to_owned(), short_val.to_owned());    // inline K + V — retains must skip tagged
+    let n = m.len();
+    return short_key.len() + short_val.len();
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 1500) + __rc_underflow_count();
+}

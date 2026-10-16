@@ -1,0 +1,25 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+//
+// An array whose elements are Maps drops each through the map's own
+// chain — value column, string keys, buf and handle — not the flat
+// element dec, which took each handle to zero and stranded all four
+// (#8845).
+import "core/map";
+import "std/i32";
+struct P { name: string, n: i32 }
+function main(): i32 {
+    let ms: Map[string, string][] = [];
+    let ps: Map[i32, P][] = [];
+    let i: i32 = 0;
+    while (i < 5) {
+        let m: Map[string, string] = map_new(2);
+        m = m.insert("k" + i.to_string(), "v" + i.to_string());
+        ms = ms.append(m);
+        let q: Map[i32, P] = map_new(2);
+        q = q.insert(i, P { name: "p" + i.to_string(), n: i });
+        ps = ps.append(q);
+        i = i + 1;
+    }
+    return (ms[2].len() - 1) + (ps[3].len() - 1) + (ms.len() - 5) + __rc_underflow_count();
+}

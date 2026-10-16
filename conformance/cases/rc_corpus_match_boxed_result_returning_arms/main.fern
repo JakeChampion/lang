@@ -1,0 +1,15 @@
+// rc correctness: the program tears its values down and folds
+// __rc_underflow_count() into its exit code, so 0 means no over-release.
+function make(i: i64): Result[i64, i64] {
+    if (i % 2i64 == 0i64) { return Ok(i); }
+    return Err(i);
+}
+function pick(i: i64): i32 {
+    match (make(i)) { Ok(v) => { return (v as i32) + 1; }, Err(_) => { return 0; } }
+}
+function main(): i32 {
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { t = t + pick(i as i64); i = i + 1; }
+    return (t - 10000) + __rc_underflow_count();
+}
