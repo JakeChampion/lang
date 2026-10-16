@@ -248,15 +248,14 @@ pub function with_stdlib_origin(mod: Module, path: string): Module {
 // in one of them can name the trait, so its method outranks another
 // trait's of the same name (the Go checker's traitInScope). Empty, with
 // `module` empty, for a trait the entry declares, which every module sees.
-pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[], supertraits: string[], assoc_sigs: FuncDecl[], provided: string[], assoc_types: string[], module: string, default_sigs: FuncDecl[], visible_from: string[] }
+pub struct TraitReq { trait_name: string, type_params: string[], methods: string[], req_sigs: FuncDecl[], supertraits: string[], assoc_sigs: FuncDecl[], provided: string[], assoc_types: string[], module: string, default_sigs: FuncDecl[], visible_from: string[] }
 
 // TraitDecl is the `trait` block as WRITTEN, retained for the formatter
-// (#6773) and, since it is the only record of a trait's TYPE PARAMETERS, for
-// the E021 conformance check. The compile path reads two DERIVED views of it
+// (#6773). The compile path reads two DERIVED views of it
 // and neither can be printed from: TraitReq keeps the abstract method set for
 // E021, with names simplified past any `mod.` qualifier, and TraitDefault
 // keeps the bodied methods so they can be synthesised onto impls that omit
-// them. Between them they drop the `pub`, the type parameters, the source
+// them. Between them they drop the `pub`, the source
 // position, and the order the methods were written in — so a formatted file
 // lost its `trait` blocks entirely and every `impl` of one then named a trait
 // the file no longer declared. A method's body is empty when it was written
@@ -28752,7 +28751,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
       p = p.advance();
     }
   }
-  return (defaults, TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs, supertraits: supertraits, assoc_sigs: assoc_sigs, provided: provided, assoc_types: assoc_types, module: "", default_sigs: default_sigs, visible_from: [] }, TraitDecl { name: tname, type_params: trait_tps.tnames, supertraits: decl_supers, methods: decl_methods, line: tline, col: tcol, is_pub: false, assoc_types: assoc_types, is_package: false }, trait_bad, p);
+  return (defaults, TraitReq { trait_name: simple, type_params: trait_tps.tnames, methods: required, req_sigs: required_sigs, supertraits: supertraits, assoc_sigs: assoc_sigs, provided: provided, assoc_types: assoc_types, module: "", default_sigs: default_sigs, visible_from: [] }, TraitDecl { name: tname, type_params: trait_tps.tnames, supertraits: decl_supers, methods: decl_methods, line: tline, col: tcol, is_pub: false, assoc_types: assoc_types, is_package: false }, trait_bad, p);
 }
 
 // skip_decl_modifier consumes a contextual declaration modifier `name`

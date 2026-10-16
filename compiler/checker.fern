@@ -5700,6 +5700,12 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
           if let typeinfo.TypeDyn(d) = recv_ty {
             return dyn_method_type(d.traits, name, s);
           }
+          match (bound_method(s, tp_receiver(fa.obj, recv_ty, s), name)) {
+            Some(msig) => {
+              return generic_method_ret(c, msig, method_binding(c, msig, recv_ty, s), s);
+            },
+            None => {}
+          }
           // `t.0()` — a numeric field access whose element is a fn value is
           // a call THROUGH that value, not a method on the tuple.
           let tvr: typeinfo.Type = call_through_fn_value(c, s);
@@ -8040,8 +8046,13 @@ function method_binding(c: ast.ExprCall, msig: MethodSig, recv: typeinfo.Type, s
   let names: string[] = [];
   let types: typeinfo.Type[] = [];
   let offset: i32 = full.len() - c.type_args.len();
+  // Keep the in-range bindings even when E040 reports surplus arguments,
+  // so a bad value argument still gets its own type diagnostic.
+  if (offset < 0) {
+    offset = 0;
+  }
   let wi: i32 = 0;
-  while (offset >= 0 && wi < c.type_args.len()) {
+  while (wi < c.type_args.len() && offset + wi < full.len()) {
     if (c.type_args[wi].len() > 0) {
       names = names.append(full[offset + wi]);
       types = types.append(type_from_spelling(c.type_args[wi], s.type_names()));
@@ -8057,7 +8068,7 @@ function method_binding(c: ast.ExprCall, msig: MethodSig, recv: typeinfo.Type, s
 function ref_type_vars(r: parser.TypeRef, tparams: string[], s: Scope, acc: string[]): string[] {
   let out: string[] = acc;
   if (r.args.len() == 0) {
-    if (gc_is_typevar_name(r.base, tparams, s.type_names()) && !util.has_str(out, r.base)) {
+    if (gc_is_typevar_name(r.base, tparams, s.type_names()) && (util.has_str(tparams, r.base) || !util.has_str(s.tparams, r.base)) && !util.has_str(out, r.base)) {
       out = out.append(r.base);
     }
     return out;
@@ -13919,6 +13930,68 @@ function tp_bound_provides(s: Scope, tname: string, field: string): boolean {
   return false;
 }
 
+// A generic body knows a bound method's signature before any concrete
+// instance exists. Preserve the trait arguments and substitute Self with
+// the receiver parameter, then use ordinary method typing and diagnostics.
+function bound_method(s: Scope, tname: string, field: string): Option[MethodSig] {
+  let k: i32 = util.index_of_str(s.tparams, tname);
+  if (tname.len() == 0 || k < 0 || k >= s.tbounds.len()) {
+    return None;
+  }
+  for bound in parser.split_plus_bounds(s.tbounds[k]) {
+    match (trait_bound_method(s, bound, tname, field, [])) {
+      Some(sig) => {
+        return Some(sig);
+      },
+      None => {}
+    }
+  }
+  return None;
+}
+
+function trait_bound_method(s: Scope, bound: string, self: string, field: string, seen: string[]): Option[MethodSig] {
+  let ref: parser.TypeRef = parser.parse_type_ref(bound);
+  let idx: i32 = trait_req_idx(ref.base, s.trait_reqs);
+  if (idx < 0) {
+    return None;
+  }
+  let req: parser.TraitReq = s.trait_reqs[idx];
+  let key: string = req.module + "." + req.trait_name;
+  if (util.has_str(seen, key)) {
+    return None;
+  }
+  let args: string[] = [];
+  for arg in ref.args {
+    args = args.append(parser.render_type_ref(arg));
+  }
+  for m in util.append_all(req.req_sigs, req.default_sigs) {
+    if (m.name == field && m.params.len() > 0 && m.params[0].name == "self") {
+      let pts: typeinfo.Type[] = [];
+      let ptn: string[] = [];
+      let tps: string[] = util.append_all(s.tparams, m.all_type_params);
+      let i: i32 = 1;
+      while (i < m.params.len()) {
+        let p: ast.ParamDecl = m.params[i];
+        let spelling: string = parser.subst_ty(parser.subst_self(parser.fn_tag_spelling(p.type_name, p.fn_ret, p.fn_param_types), self), req.type_params, args);
+        ptn = ptn.append(spelling);
+        pts = pts.append(type_from_name_erasing_tparams(spelling, tps, s.type_names()));
+        i = i + 1;
+      }
+      let rt: string = parser.subst_ty(parser.subst_self(parser.fn_tag_spelling(m.ret_type, m.ret_fn_ret, m.ret_fn_param_types), self), req.type_params, args);
+      return Some(MethodSig { name: m.name, receiver_type: self, param_types: pts, ret_type: type_from_name_erasing_tparams(rt, tps, s.type_names()), ret_type_name: rt, param_type_names: ptn, all_type_params: m.all_type_params, type_params: m.type_params, type_bounds: m.bound_traits, module: m.module, impl_trait: req.trait_name, line: m.line, col: m.col, file: decl_file_label(m) });
+    }
+  }
+  for parent in req.supertraits {
+    match (trait_bound_method(s, parser.subst_ty(parent, req.type_params, args), self, field, seen.append(key))) {
+      Some(sig) => {
+        return Some(sig);
+      },
+      None => {}
+    }
+  }
+  return None;
+}
+
 function trait_provides(reqs: parser.TraitReq[], tr: string, field: string, seen: string[]): boolean {
   let idx: i32 = trait_req_idx(tr, reqs);
   if (idx < 0) {
@@ -15000,6 +15073,18 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
               out = out.append(dg_at("E021", "\"" + mfa.field + "\" is an associated function of trait " + tph.owner + ", not a method; call it as " + tpn + "." + mfa.field + "(...)", c.line, c.col));
             } else if (!tp_bound_provides(s, tpn, mfa.field)) {
               out = out.append(dg_at("E021", "no method \"" + mfa.field + "\" on type parameter " + tpn + "; add a trait bound such as [" + tpn + ": SomeTrait] that provides it", c.line, c.col));
+            } else {
+              match (bound_method(s, tpn, mfa.field)) {
+                Some(msig) => {
+                  if (c.args.len() != msig.param_types.len()) {
+                    out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
+                  } else {
+                    out = util.append_diags(out, method_arg_diags(c, mfa.field, msig, recv, s));
+                    out = util.append_diags(out, method_type_arg_diags(c, mfa.field, msig, recv, s));
+                  }
+                },
+                None => {}
+              }
             }
           }
         }

@@ -19198,15 +19198,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					c.errfCode(n.P, "E004", "%s", arityMsg(fmt.Sprintf("method %q", fa.Field), len(wantParams), len(n.Args), "argument"))
 					return ast.SubstSelf(tm.Result, tt)
 				}
-				for i, arg := range n.Args {
-					at := c.checkExpr(arg, s)
-					want := ast.SubstSelf(wantParams[i].Type, tt)
-					if at != nil && !c.argOK(&n.Args[i], want, at, wantParams[i].Own) {
-						c.errfCode(arg.Pos(), "E038", "argument %d to %q: expected %s, got %s", i+1, fa.Field, want, at)
-					}
-				}
 				n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: tt, OwnerTrait: boundTrait}
-				return ast.SubstSelf(tm.Result, tt)
+				return c.checkBoundTraitCall(n, tm, wantParams, tt, callExpected, s)
 			}
 			// Trait object: `d.m(...)` where `d: dyn Trait`. Resolve the
 			// method against the TRAIT's signature (not a concrete

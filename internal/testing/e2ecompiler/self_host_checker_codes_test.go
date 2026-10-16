@@ -3590,6 +3590,46 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 
 	progs := []struct{ name, src string }{
+		{"bound-method-unused-result-variable", `trait Cfg { function get(self: Self, k: string): Option[string]; }
+function f[P: Cfg](c: P): i32 { let s: string = c.get("x"); return 0; }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-result-return", `trait Cfg { function get(self: Self, k: string): Option[string]; }
+function f[P: Cfg](c: P): string { return c.get("x"); }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-result-argument", `trait Cfg { function get(self: Self, k: string): Option[string]; }
+function take(s: string): i32 { return 0; }
+function f[P: Cfg](c: P): i32 { return take(c.get("x")); }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-argument-type", `trait Cfg { function get(self: Self, k: string): i32; }
+function f[P: Cfg](c: P): i32 { return c.get(1); }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-arity", `trait Cfg { function get(self: Self, k: string): i32; }
+function f[P: Cfg](c: P): i32 { return c.get(); }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-generic-trait", `trait Cfg[V] { function get(self: Self): Option[V]; }
+function f[P: Cfg[string]](c: P): i32 { let s: string = c.get(); return 0; }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-default", `trait Cfg { function get(self: Self): Option[string] { return None; } }
+function f[P: Cfg](c: P): string { return c.get(); }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-supertrait", `trait Base { function get(self: Self): Option[string]; } trait Cfg: Base {}
+function f[P: Cfg](c: P): string { return c.get(); }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-valid", `trait Cfg[V] { function get(self: Self, k: string): Option[V]; }
+function f[P: Cfg[string]](c: P): Option[string] { let d: P = c; return d.get("x"); }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-generic-default-result", `trait Cfg { function wrap[U](self: Self, x: U): Option[U] { return Some(x); } }
+function f[P: Cfg](c: P): string { return c.wrap(2); }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-generic-default-argument", `trait Cfg { function wrap[U](self: Self, x: U): Option[U] { return Some(x); } }
+function f[P: Cfg](c: P): Option[string] { return c.wrap[string](2); }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-generic-default-type-arity", `trait Cfg { function wrap[U](self: Self, x: U): Option[U] { return Some(x); } }
+function f[P: Cfg](c: P): i32 { let x = c.wrap[string, i32](2); return 0; }
+function main(): i32 { return 0; }`},
+		{"bound-method-unused-generic-default-valid", `trait Cfg { function wrap[U](self: Self, x: U): Option[U] { return Some(x); } }
+function f[P: Cfg](c: P): Option[string] { return c.wrap("ok"); }
+function main(): i32 { return 0; }`},
 		{"result-conversion-ok-narrow", `function f(n: i64): Result[i32, string] { return Ok(n); }`},
 		{"result-conversion-err-literal-overflow", `function f(): Result[string, u8] { return Err(300); }`},
 		{"result-conversion-qualified-literal-overflow", `function f(): Result[u8, string] { return Result.Ok(300); }`},
