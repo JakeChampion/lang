@@ -120,7 +120,7 @@ func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
 // varints and headers read as scalars, 387.25; with the stream table
 // handed back bare through its operations and its filling chain, done
 // streams retired lazily and byte ranges copied whole, 348.72.
-const ServeAllocsH3Ceiling = 354
+const ServeAllocsH3Ceiling = 342
 
 func TestSelfHostServeAllocsPerRequestH3(t *testing.T) {
 	cli := buildSelfHostCLI(t)

@@ -6,7 +6,9 @@
 //   let s: h3.Session = h3.server(h3.config()).start(control, encoder, decoder);
 //   s = s.on_stream(id, bytes, fin);          // any stream's bytes
 //   s = s.send_headers(id, fields, false);    // a response
-//   let (s2, actions, events) = s.take();
+//   let actions: h3.Action[] = s.actions;    // what to write and abort
+//   let events: h3.Event[] = s.events;       // what happened
+//   s = s.taken();
 //
 // `start` takes the IDs of the three unidirectional streams this side
 // opened (control, QPACK encoder, QPACK decoder): the transport assigns
@@ -191,9 +193,10 @@ pub function (s: Session) start(control: i64, encoder: i64, decoder: i64): Sessi
   return Session { ...s, control: control, decoder_stream: decoder, actions: acts };
 }
 
-// take answers what the transport must do and what happened, in order.
-pub function (s: Session) take(): (Session, Action[], Event[]) {
-  return (Session { ...s, actions: [], events: [] }, s.actions, s.events);
+// taken is the session with its actions and events handed on: read
+// `actions` and `events` first, then take them.
+pub function (s: Session) taken(): Session {
+  return Session { ...s, actions: [], events: [] };
 }
 
 // peer_settings is what the peer advertised, once its SETTINGS arrived.
@@ -420,11 +423,11 @@ function (s: Session) __encoder_bytes(buf: u8[]): Session {
 // __decoder_instructions writes what the QPACK decoder owes on this
 // side's decoder stream.
 function (s: Session) __decoder_instructions(): Session {
-  let (d, out) = s.dec.take_instructions();
+  let out: u8[] = s.dec.out;
   if (out.len() == 0 || s.decoder_stream < 0) {
-    return Session { ...s, dec: d };
+    return s;
   }
-  return Session { ...s, dec: d, actions: s.actions.append(Write(s.decoder_stream, out, false)) };
+  return Session { ...s, dec: s.dec.instructions_taken(), actions: s.actions.append(Write(s.decoder_stream, out, false)) };
 }
 
 // __control_bytes reads the control stream's frames: SETTINGS first and
@@ -649,19 +652,16 @@ function (s: Session) __request_other(kind: i64): Session {
 // the inserts it needs arrive.
 function (s: Session) __retry_held(i: i32): Session {
   let r: Req = s.reqs[i];
-  match (s.dec.decode(r.id, r.held)) {
-    Ok(got) => {
-      let cur: Session = Session { ...s, dec: got.decoder };
-      if (got.blocked) {
-        return cur;
-      }
-      cur = cur.__put_req(i, Req { ...r, held: [], blocked: false }).__decoder_instructions();
-      return cur.__section(r.id, got.fields).__request_frames(r.id);
-    },
-    Err(e) => {
-      return s.__fail(e.code(), e.message());
-    }
+  let cur: Session = Session { ...s, dec: s.dec.decode(r.id, r.held) };
+  if let Some(e) = cur.dec.failed {
+    return cur.__fail(e.code(), e.message());
   }
+  if (cur.dec.waiting) {
+    return cur;
+  }
+  let fields: qpack.Field[] = cur.dec.fields;
+  cur = cur.__put_req(i, Req { ...r, held: [], blocked: false }).__decoder_instructions();
+  return cur.__section(r.id, fields).__request_frames(r.id);
 }
 
 // __section takes a decoded field section: the message's head, an

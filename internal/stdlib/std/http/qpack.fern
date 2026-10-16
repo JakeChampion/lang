@@ -7,9 +7,14 @@
 //
 //   let d: qpack.Decoder = qpack.decoder(4096, 16, 65536);
 //   d = d.on_encoder_stream(bytes)?;            // the peer's encoder stream
-//   let got: qpack.Decoded = d.decode(stream_id, section)?;
-//   // got.fields, or got.blocked: decode again once more inserts arrive
-//   let (d2, ack) = got.decoder.take_instructions();   // for the decoder stream
+//   d = d.decode(stream_id, section);
+//   // d.failed, else d.fields, or d.waiting: decode again once more inserts arrive
+//   let ack: u8[] = d.out;                      // for the decoder stream
+//   d = d.instructions_taken();
+//
+// `decode` hands the decoder back whole with its outcome in fields, so a
+// decoder held in a session updates in place; one returned inside a
+// result would be copied with its table on the way out.
 //
 // The decoder is bounded by what this side advertised: the table by
 // SETTINGS_QPACK_MAX_TABLE_CAPACITY, the streams waiting on inserts by
@@ -228,8 +233,9 @@ function __static(i: i64): Result[Field, QpackError] {
 // Decoder — the dynamic table, the limits this side advertised, the
 // streams whose sections wait on inserts, the encoder stream's bytes not
 // yet a whole instruction, the decoder stream's bytes to send, and the
-// Insert Count the peer has been told of.
-pub struct Decoder { table: Table, max_blocked: i32, blocked: i64[], max_list: i64, pending: u8[], out: u8[], reported: i64 }
+// Insert Count the peer has been told of; then `decode`'s outcome: the
+// fields of the section, whether it waits on inserts, and the error.
+pub struct Decoder { table: Table, max_blocked: i32, blocked: i64[], max_list: i64, pending: u8[], out: u8[], reported: i64, fields: Field[], waiting: boolean, failed: Option[QpackError] }
 
 // decoder(max_capacity, max_blocked, max_list) — the values this side
 // advertises as SETTINGS_QPACK_MAX_TABLE_CAPACITY,
@@ -237,7 +243,7 @@ pub struct Decoder { table: Table, max_blocked: i32, blocked: i64[], max_list: i
 // table holds nothing until the encoder sets its capacity (§3.2.3).
 pub function decoder(max_capacity: i64, max_blocked: i32, max_list: i64): Decoder {
   let t: Table = Table { names: [], values: [], dropped: 0 as i64, size: 0 as i64, capacity: 0 as i64, max_capacity: max_capacity };
-  return Decoder { table: t, max_blocked: max_blocked, blocked: [], max_list: max_list, pending: [], out: [], reported: 0 as i64 };
+  return Decoder { table: t, max_blocked: max_blocked, blocked: [], max_list: max_list, pending: [], out: [], reported: 0 as i64, fields: [], waiting: false, failed: None };
 }
 
 // insert_count is how many entries the encoder has added.
@@ -250,10 +256,12 @@ pub function (d: Decoder) table_size(): i64 {
   return d.table.size;
 }
 
-// take_instructions answers the bytes owed on this side's decoder stream:
-// Section Acknowledgments, Stream Cancellations, Insert Count Increments.
-pub function (d: Decoder) take_instructions(): (Decoder, u8[]) {
-  return (Decoder { ...d, out: [] }, d.out);
+// `out` holds the bytes owed on this side's decoder stream: Section
+// Acknowledgments, Stream Cancellations, Insert Count Increments.
+// instructions_taken is the decoder with them handed on: read `out`
+// first, then take them.
+pub function (d: Decoder) instructions_taken(): Decoder {
+  return Decoder { ...d, out: [] };
 }
 
 // on_encoder_stream takes bytes from the peer's encoder stream; an
@@ -393,23 +401,49 @@ function __enc_insert(t: Table, name: string, value: string): Result[Table, Opti
   }
 }
 
-// Decoded — the decoder after a section, and the section's fields; or,
-// when `blocked`, none yet: the section needs inserts that have not
-// arrived, and is decoded again once `insert_count` reaches them.
-pub struct Decoded { decoder: Decoder, fields: Field[], blocked: boolean }
-
 // decode reads the field section `section` of stream `stream`.
-pub function (d: Decoder) decode(stream: i64, section: [u8]): Result[Decoded, QpackError] {
-  let (required, base, at) = d.__prefix(section)?;
-  if (required > d.table.__inserted()) {
-    return d.__blocked_on(stream);
+pub function (d: Decoder) decode(stream: i64, section: [u8]): Decoder {
+  let cur: Decoder = Decoder { ...d, fields: [], waiting: false, failed: None };
+  let prefix: Result[(i64, i64, i32), QpackError] = cur.__prefix(section);
+  let Ok(p) = prefix else {
+    return cur.__failed_prefix(prefix);
+  };
+  let (required, base, at) = p;
+  if (required > cur.table.__inserted()) {
+    return cur.__blocked_on(stream);
   }
-  let fields: Field[] = d.__lines(section, at, required, base)?;
-  let cur: Decoder = Decoder { ...d, blocked: __without(d.blocked, stream) };
+  let lines: Result[Field[], QpackError] = cur.__lines(section, at, required, base);
+  let Ok(fields) = lines else {
+    return cur.__failed_lines(lines);
+  };
+  cur = Decoder { ...cur, blocked: __without(cur.blocked, stream), fields: fields };
   if (required > 0) {
     cur = Decoder { ...cur, out: __put_int(cur.out, 128, 7, stream), reported: __max(cur.reported, required) };
   }
-  return Ok(Decoded { decoder: cur, fields: fields, blocked: false });
+  return cur;
+}
+
+// The decoder with a refused section's error in `failed`.
+function (d: Decoder) __failed_prefix(r: Result[(i64, i64, i32), QpackError]): Decoder {
+  match (r) {
+    Err(e) => {
+      return Decoder { ...d, failed: Some(e) };
+    },
+    Ok(_) => {
+      return d;
+    }
+  }
+}
+
+function (d: Decoder) __failed_lines(r: Result[Field[], QpackError]): Decoder {
+  match (r) {
+    Err(e) => {
+      return Decoder { ...d, failed: Some(e) };
+    },
+    Ok(_) => {
+      return d;
+    }
+  }
 }
 
 // cancel forgets a stream whose section will not be read, as when the
@@ -421,14 +455,14 @@ pub function (d: Decoder) cancel(stream: i64): Decoder {
   return Decoder { ...d, blocked: __without(d.blocked, stream), out: __put_int(d.out, 64, 6, stream) };
 }
 
-function (d: Decoder) __blocked_on(stream: i64): Result[Decoded, QpackError] {
+function (d: Decoder) __blocked_on(stream: i64): Decoder {
   if (d.blocked.contains(stream)) {
-    return Ok(Decoded { decoder: d, fields: [], blocked: true });
+    return Decoder { ...d, waiting: true };
   }
   if (d.blocked.len() >= d.max_blocked) {
-    return Err(DecompressionFailed("more streams blocked than allowed"));
+    return Decoder { ...d, failed: Some(DecompressionFailed("more streams blocked than allowed")) };
   }
-  return Ok(Decoded { decoder: Decoder { ...d, blocked: d.blocked.append(stream) }, fields: [], blocked: true });
+  return Decoder { ...d, blocked: d.blocked.append(stream), waiting: true };
 }
 
 // __prefix reads the section's Required Insert Count and Base (§4.5.1),
