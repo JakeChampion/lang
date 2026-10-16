@@ -1,0 +1,41 @@
+import "../ssa";
+import "../util";
+
+function inst(kind: i32, v: i32, args: i32[]): ssa.SInst {
+  return ssa.SInst { kind_tag: kind, result: v, args: args, imm: 7, str: "clz" };
+}
+
+function probe(reads: i32): ssa.Alloc {
+  let ops: ssa.SInst[] = [inst(1, 0, []), inst(1, 1, []), inst(1, 2, []), inst(1, 3, []), inst(10, 4, [1])];
+  let i: i32 = 5;
+  while (i < 100) {
+    if (i < 5 + reads) {
+      ops = ops.append(inst(10, i, [0]));
+    } else {
+      ops = ops.append(inst(1, i, []));
+    }
+    i = i + 1;
+  }
+  let f: ssa.SFunc = ssa.SFunc { name: "spill", nparams: 0, nvals: 100, entry: 0, takes_env: false, blocks: [ssa.SBlock { id: 0, insts: ops, preds: [], term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 0 } }] };
+  let no_home: boolean[] = [false, false];
+  i = 2;
+  while (i < 100) {
+    no_home = no_home.append(true);
+    i = i + 1;
+  }
+  return ssa.regalloc_linear(f, 1, 0, 0 - 1, false, no_home, [], [], 0, 0);
+}
+
+function main(): i32 {
+  let failures: i32 = 0;
+  let hot: ssa.Alloc = probe(9);
+  if (hot.reg_of[0] < 0 || hot.reg_of[1] >= 0) {
+    failures = failures + 1;
+  }
+  let cold: ssa.Alloc = probe(1);
+  if (cold.reg_of[0] >= 0 || cold.reg_of[1] < 0) {
+    failures = failures + 1;
+  }
+  print("failures=" + util.i32_to_string(failures));
+  return failures;
+}

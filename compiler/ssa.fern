@@ -876,8 +876,7 @@ function forbidden_abi(abi_reg: i32, allowed: boolean): i32 {
 // register of the class this value needs, whose spill costs least per
 // position it covers (the latest ending on a tie), or -1. A spilled value pays
 // at every reference and frees its register for its whole interval, so what is
-// spilled should be what is referenced least for the span it holds, weighted
-// by loop depth.
+// spilled should minimize weighted reference cost for its lifetime.
 function cheapest_active(act_val: i32[], act_reg: i32[], act_hi: i32[], shared_with: i32[], weight: i32[], lo: i32[], hi: i32[], now: i32, nregs: i32, need_saved: boolean, forbidden: i32): i32 {
   let best: i32 = 0 - 1;
   let best_w: i32 = 0;
@@ -887,7 +886,7 @@ function cheapest_active(act_val: i32[], act_reg: i32[], act_hi: i32[], shared_w
     if (act_reg[i] >= nregs == need_saved && act_reg[i] != forbidden) {
       let w: i32 = chain_weight(act_val[i], shared_with, weight, hi, now);
       let len: i32 = act_hi[i] - chain_lo(act_val[i], shared_with, lo, hi, now) + 1;
-      let cmp: i32 = cmp_density(w, len, best_w, best_len);
+      let cmp: i32 = cmp_spill_cost(w, len, best_w, best_len);
       if (best < 0 || cmp < 0 || cmp == 0 && act_hi[i] > act_hi[best]) {
         best = i;
         best_w = w;
@@ -899,11 +898,12 @@ function cheapest_active(act_val: i32[], act_reg: i32[], act_hi: i32[], shared_w
   return best;
 }
 
-// cmp_density orders two spill costs by weight per position covered:
-// negative when w1 / len1 is the smaller.
-function cmp_density(w1: i32, len1: i32, w2: i32, len2: i32): i32 {
-  let a: i64 = w1 as i64 * (len2 as i64);
-  let b: i64 = w2 as i64 * (len1 as i64);
+// Compare squared reference weight per position. Squaring protects values
+// expensive to spill without ignoring how long they occupy a register.
+// f64 products avoid overflowing when weights or intervals are large.
+function cmp_spill_cost(w1: i32, len1: i32, w2: i32, len2: i32): i32 {
+  let a: f64 = w1 as f64 * (w1 as f64) * (len2 as f64);
+  let b: f64 = w2 as f64 * (w2 as f64) * (len1 as f64);
   if (a < b) {
     return 0 - 1;
   }
@@ -1621,7 +1621,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
       let cmp: i32 = 0;
       if (fa >= 0) {
         let fw: i32 = chain_weight(act_val[fa], shared_with, weight, hi, lo[v]);
-        cmp = cmp_density(fw, act_hi[fa] - chain_lo(act_val[fa], shared_with, lo, hi, lo[v]) + 1, weight[v], hi[v] - lo[v] + 1);
+        cmp = cmp_spill_cost(fw, act_hi[fa] - chain_lo(act_val[fa], shared_with, lo, hi, lo[v]) + 1, weight[v], hi[v] - lo[v] + 1);
       }
       if (fa >= 0 && (cmp < 0 || cmp == 0 && act_hi[fa] > hi[v])) {
         let taken: i32 = act_reg[fa];
