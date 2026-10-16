@@ -193,9 +193,12 @@ Each is a bound with a test that crosses it.
       datagrams. 632 to 421 allocations per request; with 32 requests in
       flight on one connection, 34,698 to 114,057 responses per second on
       one worker.
-    - **The wire.** `std/quic/frames` reads each varint through a cursor
-      record and a result; `std/quic/packet` copies the connection IDs out
-      of every header. Scalar readers and views.
+    - **The wire (landed).** `std/quic/frames` read each varint through a
+      cursor record and a result, and `std/quic/packet` each header field
+      through a reader record. A varint is now a scalar read
+      (`frames.varint_at`, `varint_end`), a payload is read through one
+      record updated in place, and a header's fields are read by offset.
+      421 to 385 allocations per request.
     - **Packet protection.** `std/crypto/aes_gcm` expands the key and
       derives the GHASH key on every seal and open, and builds the
       counter, lengths and tag blocks fresh: a prepared key kept in
