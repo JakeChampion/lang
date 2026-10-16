@@ -13880,10 +13880,13 @@ function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag
   if (c.args.len() != want) {
     out = out.append(dg_at("E036", util.arity_message("variant " + vname, want, c.args.len(), "argument"), c.line, c.col));
   }
+  // Callable payloads can contain the enum's type variables too. Compare
+  // their instantiated contracts, just as a match reads their payloads.
+  let whole: typeinfo.Type = variant_ctor_type(s, variant_payload_struct(s, qname).enum_owner, qname, c);
   let i: i32 = 0;
   while (i < c.args.len() && i < want) {
     let at: typeinfo.Type = check_expr(c.args[i], s);
-    let pt: typeinfo.Type = variant_payload_type_at(s, qname, i);
+    let pt: typeinfo.Type = variant_pattern_payload_type(s, qname, whole, i);
     out = util.append_diags(out, int_dest_range_diags(c.args[i], pt));
     if (!is_unknown(at) && !is_unknown(pt) && !settles_to(c.args[i], pt, s) && !coercible(at, pt, s)) {
       out = out.append(dg_at("E036", "variant " + vname + " payload " + util.i32_to_string(i) + " type " + type_label(at) + ", expected " + type_label(pt), expr_line(c.args[i]), expr_col(c.args[i])));
