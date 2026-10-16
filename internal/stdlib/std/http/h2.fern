@@ -1167,7 +1167,8 @@ function __fail(r: __Run, code: i32, reason: string): __Run {
 // respond answers the request on `stream`: its handler's slot is freed,
 // the headers go now, the body as the windows allow, and the trailers
 // last. A stream the client reset, or one the server never opened,
-// takes no response.
+// takes no response. A response to HEAD sends no body, under the length
+// the body would have.
 pub function (c: Conn) respond(stream: i32, resp: HttpResponse): Step {
   let at: i32 = __stream_at(c, stream);
   if (at < 0 || c.phase == CLOSED) {
@@ -1182,10 +1183,10 @@ pub function (c: Conn) respond(stream: i32, resp: HttpResponse): Step {
     return Step { conn: Conn { ...c, streams: __without(c.streams, at) }, output: [], events: [] };
   }
   let body: u8[] = resp.body_bytes();
-  if (http.http_bodiless(resp.status)) {
+  let length: i32 = body.len();
+  if (__headless(s, resp)) {
     body = [];
   }
-  let length: i32 = body.len();
   if (resp.trailers.len() > 0) {
     length = 0 - 1;
   }
@@ -1204,6 +1205,7 @@ pub function (c: Conn) respond(stream: i32, resp: HttpResponse): Step {
 // response's status and headers, its body to follow through `write` and
 // `end`: for a body produced in parts, under the windows as they open.
 // `resp.body` is ignored, and the stream takes no response until `end`.
+// A response that carries no body (`producing` false after) ends here.
 pub function (c: Conn) respond_head(stream: i32, resp: HttpResponse): Step {
   let at: i32 = __stream_at(c, stream);
   if (at < 0 || c.phase == CLOSED) {
@@ -1217,10 +1219,29 @@ pub function (c: Conn) respond_head(stream: i32, resp: HttpResponse): Step {
   if (s.reset) {
     return Step { conn: Conn { ...freed, streams: __without(freed.streams, at) }, output: [], events: [] };
   }
+  let headless: boolean = __headless(s, resp);
   let enc: hpack.Encoded = __response_block(freed.encoder, resp, 0 - 1);
-  let r: __Run = __header_frames(__run(Conn { ...freed, encoder: enc.encoder }), stream, enc.bytes, false);
-  let owed: __Stream = __Stream { ...s, handling: false, pending: [], trailers: headers.header_map_new(), owes_end: true, producing: true };
-  return __step(__Run { ...r, conn: Conn { ...r.conn, streams: r.conn.streams.with(at, owed) } });
+  let r: __Run = __header_frames(__run(Conn { ...freed, encoder: enc.encoder }), stream, enc.bytes, headless);
+  let owed: __Stream = __Stream { ...s, handling: false, pending: [], trailers: headers.header_map_new(), owes_end: !headless, producing: !headless };
+  r = __Run { ...r, conn: Conn { ...r.conn, streams: r.conn.streams.with(at, owed) } };
+  if (headless) {
+    return __step(__ended(r, at));
+  }
+  return __step(r);
+}
+
+// __headless is whether the response on `s` carries no body: one to HEAD,
+// or a 1xx, 204 or 304.
+function __headless(s: __Stream, resp: HttpResponse): boolean {
+  return s.method == "HEAD" || http.http_bodiless(resp.status);
+}
+
+// producing is whether `stream` takes the body a `respond_head` began
+// through `write`: false once that body has ended, for a response that
+// carries none, and for a stream the client reset or that is gone.
+pub function (c: Conn) producing(stream: i32): boolean {
+  let at: i32 = __stream_at(c, stream);
+  return at >= 0 && c.phase != CLOSED && c.streams[at].producing;
 }
 
 // write adds `bytes` to the body a `respond_head` began, sent as the
@@ -1404,6 +1425,9 @@ function __flush_stream(r: __Run, at: i32): __Run {
     if (s.pending.len() == 0) {
       if (s.producing) {
         return out;
+      }
+      if (s.trailers.len() == 0) {
+        out = __send_bytes(out, frame.data_bytes(s.id, true, []));
       }
       return __ended(out, at);
     }

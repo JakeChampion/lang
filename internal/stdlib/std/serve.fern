@@ -724,7 +724,13 @@ function __serve_wire(out: usize, method: string, version: string, answer: HttpR
 function __wire_file(out: usize, method: string, version: string, resp: HttpResponse, path: string, body: __Spans, headless: boolean, keep_alive: boolean, clk: __Clock, date: string): __Tail {
   match (open_reader(path)) {
     Ok(r) => {
-      let ranges: i64[] = __ranges_held(r, body.ranges);
+      let ranges: i64[] = [];
+      match (r.stat()) {
+        Ok(st) => {
+          ranges = __ranges_held(st.size, body.ranges);
+        },
+        Err(e) => {}
+      }
       if (ranges.len() == 0) {
         r.close();
         return __serve_wire(out, method, version, http.not_found(), keep_alive, clk);
@@ -753,20 +759,11 @@ function __wire_file(out: usize, method: string, version: string, resp: HttpResp
   return NoTail;
 }
 
-// __ranges_held(r, ranges) — `ranges` when the file holds every one of
-// them, the whole file as one range when there are none; empty when the
-// file cannot be measured or ends before a range does.
-function __ranges_held(r: Reader, ranges: i64[]): i64[] {
+// __ranges_held(size, ranges) — `ranges` when a file of `size` bytes
+// holds every one of them, the whole file as one range when there are
+// none; empty when the file ends before a range does.
+function __ranges_held(size: i64, ranges: i64[]): i64[] {
   let none: i64[] = [];
-  let size: i64 = 0 - 1 as i64;
-  match (r.stat()) {
-    Ok(st) => {
-      size = st.size;
-    },
-    Err(e) => {
-      return none;
-    }
-  }
   if (ranges.len() == 0) {
     return [0 as i64, size];
   }
@@ -778,6 +775,187 @@ function __ranges_held(r: Reader, ranges: i64[]): i64[] {
     i = i + 2;
   }
   return ranges;
+}
+
+// __file_chunks(resp) — a response with a file body as a protocol that
+// frames its own body (HTTP/2) sends it: the body the file's
+// ranges and seams as chunks (`__file_chunk`) under a `content-length` of
+// their total, or 404 and 500 in its place as `__serve_wire` answers them;
+// any other response as it is. The file is measured here, before the head
+// goes, and read a piece at a time as the chunks are asked for.
+function __file_chunks(resp: HttpResponse): HttpResponse {
+  let none: u8[] = [];
+  let whole: i64[] = [];
+  match (resp.body) {
+    BodyFile(path) => {
+      return __file_measured(resp, path, whole, [none, none]);
+    },
+    BodyFileRanges(path, ranges, seams) => {
+      if (ranges.len() == 0 || !http.file_ranges_ok(ranges, seams)) {
+        return http.internal_error("");
+      }
+      return __file_measured(resp, path, ranges, seams);
+    },
+    _ => {
+      return resp;
+    }
+  }
+  return resp;
+}
+
+// __file_measured(resp, path, ranges, seams) — `__file_chunks` for the
+// file at `path`: 404 when it cannot be opened or measured, or ends
+// before a range does.
+function __file_measured(resp: HttpResponse, path: string, ranges: i64[], seams: u8[][]): HttpResponse {
+  match (__file_stat(path)) {
+    Some(st) => {
+      let held: i64[] = __ranges_held(st.size, ranges);
+      if (held.len() == 0) {
+        return http.not_found();
+      }
+      let f: __FileBody = __FileBody { path: path, id: st, ranges: held, seams: seams };
+      let fields: HeaderMap = resp.headers;
+      if (!http.http_bodiless(resp.status)) {
+        fields = fields.set("content-length", http.file_ranges_len(held, seams).to_string());
+      }
+      let none: u8[] = [];
+      let producer: ChunkProducer = ChunkProducer { next: (i: i32): Option[u8[]] => __file_chunk(f, i), idle_ms: 0, filler: none, trailers: (): HeaderMap => HeaderMap { names: [], values: [] } };
+      return HttpResponse { ...resp, body: BodyChunks(producer), headers: fields };
+    },
+    None => {
+      return http.not_found();
+    }
+  }
+  return http.not_found();
+}
+
+// __file_stat(path) — the file at `path` measured through a descriptor,
+// so a file that cannot be opened counts as absent; None then.
+function __file_stat(path: string): Option[FileStat] {
+  match (open_reader(path)) {
+    Ok(r) => {
+      let measured: Result[FileStat, IoError] = r.stat();
+      r.close();
+      match (measured) {
+        Ok(st) => {
+          return Some(st);
+        },
+        Err(e) => {
+          return None;
+        }
+      }
+    },
+    Err(e) => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// __FileBody — a file body as `__file_chunks` measured it: the path, the
+// file's identity then, its ranges (the whole file's for a `BodyFile`) and
+// its seams.
+struct __FileBody { path: string, id: FileStat, ranges: i64[], seams: u8[][] }
+
+// __file_chunk(f, i) — chunk `i` of a file body: its seams and its ranges
+// in pieces of at most 64 KiB, in order, an empty seam taking no index.
+// None past the last, and once the file cannot be read or is no longer the
+// one measured, which ends the body short of its `content-length`.
+function __file_chunk(f: __FileBody, i: i32): Option[u8[]] {
+  let piece: i64 = 65536 as i64;
+  let at: i64 = i as i64;
+  let k: i32 = 0;
+  while (true) {
+    if (f.seams[k].len() > 0) {
+      if (at == 0 as i64) {
+        return Some(f.seams[k]);
+      }
+      at = at - 1 as i64;
+    }
+    if (2 * k >= f.ranges.len()) {
+      return None;
+    }
+    let len: i64 = f.ranges[2 * k + 1];
+    let pieces: i64 = (len + piece - 1 as i64) / piece;
+    if (at < pieces) {
+      let from: i64 = at * piece;
+      let want: i64 = len - from;
+      if (want > piece) {
+        want = piece;
+      }
+      return __file_read(f, f.ranges[2 * k] + from, want as i32);
+    }
+    at = at - pieces;
+    k = k + 1;
+  }
+  return None;
+}
+
+// __file_read(f, offset, n) — `n` bytes of the file from `offset`, through a
+// descriptor opened for them alone, so an abandoned body holds none; None
+// when the file cannot be read, ends before them, or is no longer the one
+// measured.
+function __file_read(f: __FileBody, offset: i64, n: i32): Option[u8[]] {
+  match (open_reader(f.path)) {
+    Ok(r) => {
+      let got: Option[u8[]] = __read_from(r, f.id, offset, n);
+      r.close();
+      return got;
+    },
+    Err(e) => {
+      return None;
+    }
+  }
+  return None;
+}
+
+function __read_from(r: Reader, id: FileStat, offset: i64, n: i32): Option[u8[]] {
+  if (!__same_file(r, id)) {
+    return None;
+  }
+  match (r.seek(offset, 0)) {
+    Ok(at) => {
+      return __read_n(r, n);
+    },
+    Err(e) => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// __same_file(r, id) — whether `r` is the file `id` measured, unchanged
+// since: the same device and inode, size and modification time.
+function __same_file(r: Reader, id: FileStat): boolean {
+  match (r.stat()) {
+    Ok(st) => {
+      return st.dev == id.dev && st.ino == id.ino && st.size == id.size && st.mtime == id.mtime && st.mtime_nsec == id.mtime_nsec;
+    },
+    Err(e) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// __read_n(r, n) — the next `n` bytes of `r`, None when it ends first or
+// cannot be read.
+function __read_n(r: Reader, n: i32): Option[u8[]] {
+  let out: u8[] = [];
+  while (out.len() < n) {
+    match (r.read_chunk_bytes(n - out.len())) {
+      Ok(bytes) => {
+        if (bytes.len() == 0) {
+          return None;
+        }
+        out = __joined(out, bytes);
+      },
+      Err(e) => {
+        return None;
+      }
+    }
+  }
+  return Some(out);
 }
 
 // __wire_chunks(out, version, resp, producer, headless, keep_alive, date) —
@@ -2720,22 +2898,28 @@ function __joined(a: u8[], b: u8[]): u8[] {
 
 // __h2_respond(drv, a, at, sid, resp) — the response written on `sid`:
 // whole, as `respond` writes it; or, for a body produced in parts
-// (`BodyChunks`), its head now and its chunks as the producer answers and
-// the windows allow (`__h2_produce`).
+// (`BodyChunks`, and a file's, `__file_chunks`), its head now and its
+// chunks as the producer answers and the windows allow (`__h2_produce`),
+// the producer never asked when the response carries no body.
 function __h2_respond[D: async.Driver](drv: D, a: __H2Answered, at: i32, sid: i32, resp: HttpResponse): __H2Answered {
   let conn: h2.Conn = a.conn;
   let conns: __Conns = a.conns;
   let fls: __Flight[] = a.fls;
   let out: u8[] = a.out;
-  match (resp.body) {
+  let answer: HttpResponse = __file_chunks(resp);
+  match (answer.body) {
     BodyChunks(producer) => {
-      let step: h2.Step = conn.respond_head(sid, resp);
+      let step: h2.Step = conn.respond_head(sid, answer);
+      let headed: __H2Answered = __H2Answered { conn: step.conn, conns: conns, fls: fls, out: __joined(out, step.output) };
+      if (!step.conn.producing(sid)) {
+        return __h2_responded(headed, at, sid);
+      }
       let fd: i32 = conns.fds[at];
-      conns = __Conns { ...conns, producers: conns.producers.append(__H2Producer { fd: fd, stream: sid, producer: producer, index: 0, trailers: resp.trailers, running: false }) };
-      return __h2_produce(drv, __H2Answered { conn: step.conn, conns: conns, fls: fls, out: __joined(out, step.output) }, at, sid);
+      conns = __Conns { ...conns, producers: conns.producers.append(__H2Producer { fd: fd, stream: sid, producer: producer, index: 0, trailers: answer.trailers, running: false }) };
+      return __h2_produce(drv, __H2Answered { ...headed, conns: conns }, at, sid);
     },
     _ => {
-      let step: h2.Step = conn.respond(sid, resp);
+      let step: h2.Step = conn.respond(sid, answer);
       return __h2_responded(__H2Answered { conn: step.conn, conns: conns, fls: fls, out: __joined(out, step.output) }, at, sid);
     }
   }
