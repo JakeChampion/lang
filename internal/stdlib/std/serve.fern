@@ -6385,7 +6385,8 @@ function __h3_at(q: __Quic, serial: i32): i32 {
 
 // __h3_respond(drv, c, fls, serial, id, method, resp) — the response on
 // stream `id` of connection `serial`: whole; its head now and its chunks as
-// a producer answers them (`BodyChunks`); its head alone for HEAD.
+// a producer answers them (`BodyChunks`); its head alone for HEAD or a
+// status that forbids a body, without starting its producer.
 function __h3_respond[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], serial: i32, id: i64, method: string, resp: HttpResponse): (__Conns, __Flight[]) {
   let q: __Quic = c.quic;
   let i: i32 = __h3_at(q, serial);
@@ -6396,7 +6397,7 @@ function __h3_respond[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], seri
   let conn: h3q.Conn = q.conns[i];
   match (resp.body) {
     BodyChunks(producer) => {
-      if (method == "HEAD") {
+      if (method == "HEAD" || http.http_bodiless(resp.status)) {
         conn = conn.respond_head(id, resp, 0 - 1 as i64).end(id, HeaderMap { names: [], values: [] });
         return (__Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, conn) } }, fls);
       }

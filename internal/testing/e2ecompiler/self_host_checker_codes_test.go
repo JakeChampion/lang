@@ -4298,6 +4298,18 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// entry and never reaches the importing module's bodies (#11143).
 		{"entry-const-named-like-imported-variant", "import \"std/dns\";\nconst A: i32 = 1;\nfunction main(): i32 { print(A.to_string()); return 0; }\n"},
 		{"entry-const-named-like-imported-variant-e003", "import \"std/dns\";\nconst A: i32 = 1;\nfunction main(): i32 { let s: string = A; return 0; }\n"},
+		// A bare variant reference resolves among the enums its module can
+		// name — its own, its import closure's, the built-in ones — and two
+		// of them make it E036 (#12467). std/dns and std/deflate both
+		// declare `Malformed`; std/pmap and std/pvec both declare `Empty`
+		// and do not import each other (#8189).
+		{"bare-variant-own-enum-and-imported", "import \"std/dns\";\nenum Mine { Malformed, Quiet }\nfunction main(): i32 { let m: Mine = Malformed; return 0; }\n"},
+		{"bare-variant-two-imported-enums", "import \"std/dns\";\nimport \"std/deflate\";\nfunction main(): i32 { let e = Malformed; return 0; }\n"},
+		{"bare-variant-qualified-both", "import \"std/dns\";\nimport \"std/deflate\";\nenum Mine { Malformed, Quiet }\nfunction main(): i32 { let m: Mine = Mine.Malformed; let d: dns.DnsError = dns.Malformed; return 0; }\n"},
+		{"bare-variant-const-shadows-two-imported", "import \"std/dns\";\nimport \"std/deflate\";\nconst Malformed: i32 = 4;\nfunction main(): i32 { return Malformed; }\n"},
+		{"bare-variant-local-shadows-two-imported", "import \"std/dns\";\nimport \"std/deflate\";\nfunction main(): i32 { let Malformed: i32 = 4; return Malformed; }\n"},
+		{"bare-variant-pattern-settled-by-scrutinee", "import \"std/dns\";\nimport \"std/deflate\";\nfunction f(e: dns.DnsError): i32 { match (e) { Malformed => { return 1; }, _ => { return 0; } } }\nfunction main(): i32 { return f(dns.Malformed); }\n"},
+		{"bare-variant-modules-that-do-not-see-each-other", "import \"std/pmap\";\nimport \"std/pvec\";\nfunction main(): i32 { return 0; }\n"},
 		// An imported module's struct named without its qualifier (#10965):
 		// E064 on the annotation with E003 beside it, and E043 on the literal,
 		// never a clean pass that the lowering then refuses.
@@ -4583,6 +4595,80 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 			want := goCheckerCodes(t, t.TempDir(), tc.src)
 			if !equalStrings(got, want) {
 				t.Errorf("%s: self-host file-loader codes %v disagree with Go checker %v (unfiltered)\nsrc: %s", tc.name, got, want, tc.src)
+			}
+		})
+	}
+}
+
+// TestSelfHostCheckerVariantScopeDifferentialX86_64 holds both checkers to the
+// module scoping of bare variant references (#12467,
+// docs/PRELUDE-TO-MODULES.md): a bare variant resolves among the enums the
+// referring module declares or reaches through its imports, plus the built-in
+// ones, and two of them make the reference E036 wherever it is written — the
+// entry or an imported module. A binding, const or function of the name
+// shadows the variant. The bundle differential above reaches only stdlib
+// modules; these are the program's own, which is where the entry, an import
+// and a module neither of them sees can each be the one declaring the enum.
+// Each row pins its expected codes as well, since a pure differential cannot
+// tell both checkers reporting E036 from neither reporting it.
+func TestSelfHostCheckerVariantScopeDifferentialX86_64(t *testing.T) {
+	_, runner, driverBin := buildCheckerModloadDriverX86(t)
+	modules := map[string]string{
+		"ev.fern":           "pub enum Ev { Connected, Gone }\npub function make(): Ev { return Connected; }\n",
+		"a.fern":            "pub enum A { Hit, Miss }\n",
+		"b.fern":            "pub enum B { Hit, Stay }\n",
+		"third.fern":        "pub enum T { Go, Stop }\n",
+		"own_closure.fern":  "import \"./third\";\npub enum O { Go, Wait }\npub function f(): O { return Go; }\n",
+		"own_builtin.fern":  "pub enum O { Some(i32), None }\npub function f(): O { return None; }\n",
+		"own_call.fern":     "import \"./a\";\npub enum M { Hit(i32), Q }\npub function h(): M { return Hit(3); }\n",
+		"builtin_twin.fern": "pub enum O { Some(i32), None }\n",
+		"via_ab.fern":       "import \"./a\";\nimport \"./b\";\npub function h(): i32 { let v = Hit; return 0; }\n",
+		"reaches_a.fern":    "import \"./a\";\npub function h(): i32 { return 0; }\n",
+		"indep_a.fern":      "pub enum IA { Hit, Miss }\npub function f(): IA { return Hit; }\n",
+		"indep_b.fern":      "pub enum IB { Hit, Stay }\npub function g(): IB { return Hit; }\n",
+	}
+	e036 := []string{"E036"}
+	cases := []struct {
+		name, main string
+		want       []string
+	}{
+		{"own-enum-and-imported-enum", "import \"./ev\";\nenum Mine { Connected, Closed }\nfunction main(): i32 { let m: Mine = Connected; return 0; }\n", e036},
+		{"two-imported-enums", "import \"./a\";\nimport \"./b\";\nfunction main(): i32 { let v = Hit; return 0; }\n", e036},
+		{"two-imported-enums-in-a-lambda", "import \"./a\";\nimport \"./b\";\nfunction main(): i32 { let f = (): i32 => { let v = Hit; return 0; }; return f(); }\n", e036},
+		{"imported-module-own-enum-and-its-import", "import \"./own_closure\";\nfunction main(): i32 { let o: own_closure.O = own_closure.f(); return 0; }\n", e036},
+		{"imported-module-own-enum-and-builtin", "import \"./own_builtin\";\nfunction main(): i32 { let o: own_builtin.O = own_builtin.f(); return 0; }\n", e036},
+		{"imported-module-own-payload-variant-and-its-import", "import \"./own_call\";\nfunction main(): i32 { let m: own_call.M = own_call.h(); return 0; }\n", e036},
+		{"entry-builtin-and-imported-enum", "import \"./builtin_twin\";\nfunction main(): i32 { let o: Option[i32] = None; return 0; }\n", e036},
+		{"imported-module-sees-two-imports", "import \"./via_ab\";\nfunction main(): i32 { return via_ab.h(); }\n", e036},
+		{"own-enum-and-transitively-imported-enum", "import \"./reaches_a\";\nenum Mine { Hit, Q }\nfunction main(): i32 { let v: Mine = Hit; return reaches_a.h(); }\n", e036},
+		{"block-local-does-not-shadow-outside-its-block", "import \"./ev\";\nenum Mine { Connected, Closed }\nfunction main(): i32 { if (true) { let Connected: i32 = 4; let k: i32 = Connected; } let m: Mine = Connected; return 0; }\n", e036},
+		{"qualified-own-and-imported", "import \"./ev\";\nenum Mine { Connected, Closed }\nfunction main(): i32 { let m: Mine = Mine.Connected; let e: ev.Ev = ev.Connected; return 0; }\n", nil},
+		{"qualified-two-imported", "import \"./a\";\nimport \"./b\";\nfunction main(): i32 { let x: a.A = a.Hit; let y: b.B = b.Hit; return 0; }\n", nil},
+		{"const-shadows-imported-variants", "import \"./a\";\nimport \"./b\";\nconst Hit: i32 = 3;\nfunction main(): i32 { return Hit; }\n", nil},
+		{"function-shadows-imported-variants", "import \"./a\";\nimport \"./b\";\nfunction Hit(x: i32): i32 { return x; }\nfunction main(): i32 { return Hit(2); }\n", nil},
+		{"local-shadows-imported-variants", "import \"./a\";\nimport \"./b\";\nfunction main(): i32 { let Hit: i32 = 1; return Hit; }\n", nil},
+		{"pattern-settled-by-scrutinee", "import \"./a\";\nimport \"./b\";\nfunction pick(): b.B { return b.Stay; }\nfunction main(): i32 { match (pick()) { Hit => { return 1; }, Stay => { return 0; } } }\n", nil},
+		{"modules-that-do-not-see-each-other", "import \"./indep_a\";\nimport \"./indep_b\";\nfunction main(): i32 { let x: indep_a.IA = indep_a.f(); let y: indep_b.IB = indep_b.g(); return 0; }\n", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for name, src := range modules {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			entry := filepath.Join(dir, "main.fern")
+			if err := os.WriteFile(entry, []byte(tc.main), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			goCodes := goCheckerCodes(t, dir, tc.main)
+			if !equalStrings(goCodes, tc.want) {
+				t.Errorf("Go checker codes %v, want %v\nsrc: %s", goCodes, tc.want, tc.main)
+			}
+			shCodes := driverCodes(checkFileModload(t, runner, driverBin, entry))
+			if !equalStrings(shCodes, tc.want) {
+				t.Errorf("self-host checker codes %v, want %v\nsrc: %s", shCodes, tc.want, tc.main)
 			}
 		})
 	}

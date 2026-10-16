@@ -22,17 +22,21 @@ import (
 // std/serve with `Config.with_h3` (docs/NET-P8-HTTP3-PLAN.md slice 7): the
 // server answers HTTP/3 on a UDP socket beside its TCP listener, and names
 // it in Alt-Svc on every TCP response. A client built on std/http/h3q
-// sends eight requests at once on one connection: one answered at once, an
+// sends ten requests at once on one connection: one answered at once, an
 // upload, one whose handler parks, a chunked body with trailers, a chunked
 // body larger than a producer may leave unacknowledged, and HEAD requests
-// for a whole body and two chunk producers. Go's
+// for a whole body and two chunk producers, plus 204/304 chunked responses. Go's
 // net/http checks the Alt-Svc header over TCP. The server runs under the
 // interpreter and natively on x86-64; the client is native. The
 // interpreter seals and opens every packet in interpreted AES-GCM, so it
 // gets a smaller upload and a stream under the producer's cap.
 func TestServeH3Interp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	w := newServeH3World(t)
+	// Pure interpreted TLS can spend more than the production default's
+	// 10-second receive window doing crypto before this positive protocol
+	// check begins. Give this fixture a bounded 60 seconds; the native case
+	// and deadline/slow-client gates keep the production defaults.
+	w := newServeH3WorldWithConfig(t, "serve.Config { ...serve.config(), recv_deadline: time.duration_seconds(60 as i64) }")
 	w.drive(t, exec.Command(bin, "-interp", w.src), 20000, 4)
 }
 
@@ -51,6 +55,10 @@ type serveH3World struct {
 }
 
 func newServeH3World(t *testing.T) *serveH3World {
+	return newServeH3WorldWithConfig(t, "serve.config()")
+}
+
+func newServeH3WorldWithConfig(t *testing.T, config string) *serveH3World {
 	t.Helper()
 	w := &serveH3World{dir: t.TempDir(), fern: buildFernCLI(t), qemu: x86QemuOrEmpty(t)}
 	ca := newTestCA(t, mustKey(t, "p384"), "Fern Serve H3 CA")
@@ -70,7 +78,7 @@ func newServeH3World(t *testing.T) *serveH3World {
 		t.Fatal(err)
 	}
 	w.src = filepath.Join(w.dir, "serve_h3.fern")
-	if err := os.WriteFile(w.src, []byte(strings.NewReplacer("@CERT@", certPath, "@KEY@", keyPath).Replace(serveH3Source)), 0o644); err != nil {
+	if err := os.WriteFile(w.src, []byte(strings.NewReplacer("@CERT@", certPath, "@KEY@", keyPath, "@CONFIG@", config).Replace(serveH3Source)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	clientSrc := filepath.Join(w.dir, "h3_client.fern")
@@ -126,6 +134,12 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
     plat.sleep(time.duration_millis(30 as i64));
     return http.ok("slept");
   }
+  if (req.path == "/no-content-chunks") {
+    return http.chunks(204, part);
+  }
+  if (req.path == "/not-modified-chunks") {
+    return http.chunks(304, part);
+  }
   if (req.path == "/chunks") {
     return http.chunks_with_trailers(200, part, parts_trailers);
   }
@@ -146,11 +160,11 @@ function main(): i32 {
   let Ok(id) = identity.from_pem(cert, key) else {
     return 4;
   };
-  return serve.run(0, serve.config().with_tls(server.config(id)).with_h3(), handle);
+  return serve.run(0, @CONFIG@.with_tls(server.config(id)).with_h3(), handle);
 }
 `
 
-// The client: eight requests at once on one HTTP/3 connection, each answer
+// The client: ten requests at once on one HTTP/3 connection, each answer
 // printed in the order asked once all are in, then a close.
 const serveH3ClientSource = `import "std/net";
 import "std/quic/conn";
@@ -173,7 +187,7 @@ function request(method: string, path: string, body: u8[]): HttpRequest {
 function summary(method: string, resp: HttpResponse): string {
   let body: u8[] = resp.body_bytes();
   let out: string = resp.status.to_string() + " ";
-  if (body.len() > 64 || method == "HEAD") {
+  if (body.len() > 64 || method == "HEAD" || resp.status == 204 || resp.status == 304) {
     out = out + body.len().to_string() + " bytes";
   } else {
     out = out + string_from_bytes_unchecked(body);
@@ -247,8 +261,8 @@ function main(): i32 {
   let Some(upload) = argv[3].parse_int() else {
     return 2;
   };
-  let reqs: HttpRequest[] = [request("GET", "/hello", []), request("POST", "/upload", __alloc_u8(upload)), request("GET", "/slow", []), request("GET", "/chunks", []), request("GET", "/stream?n=" + argv[4], []), request("HEAD", "/hello", []), request("HEAD", "/chunks", []), request("HEAD", "/stream?n=2", [])];
-  let a: Asked = Asked { reqs: reqs, ids: [], answers: ["", "", "", "", "", "", "", ""], got: 0, sent: false };
+  let reqs: HttpRequest[] = [request("GET", "/hello", []), request("POST", "/upload", __alloc_u8(upload)), request("GET", "/slow", []), request("GET", "/chunks", []), request("GET", "/stream?n=" + argv[4], []), request("HEAD", "/hello", []), request("HEAD", "/chunks", []), request("HEAD", "/stream?n=2", []), request("GET", "/no-content-chunks", []), request("GET", "/not-modified-chunks", [])];
+  let a: Asked = Asked { reqs: reqs, ids: [], answers: ["", "", "", "", "", "", "", "", "", ""], got: 0, sent: false };
   let c: h3q.Conn = h3q.client(q, h3.config()).with_max_body(4194304 as i64);
   let buf: u8[] = __alloc_u8(65536);
   let started: i64 = now();
@@ -303,6 +317,8 @@ GET /stream?n=%d -> 200 %d bytes
 HEAD /hello -> 200 0 bytes content-length=12
 HEAD /chunks -> 200 0 bytes content-length=-
 HEAD /stream?n=2 -> 200 0 bytes content-length=-
+GET /no-content-chunks -> 204 0 bytes
+GET /not-modified-chunks -> 304 0 bytes
 `, upload, chunks, chunks*8192)
 }
 
