@@ -69,6 +69,16 @@ which needs both that `fork` and a `pipe()` that reports its second fd in `x1`
 too. Everywhere else `subprocess` is Fern — the first COMPOSITE to move, and
 the one that showed length is not the same thing as floor distance.
 
+`cpu_count` is Fern on every native target. Darwin's body reads
+`hw.activecpu` with the existing six-argument syscall intrinsic: a two-word
+MIB, an eight-byte output length and a four-byte result fit in 32 bytes of
+raw scratch. Success returns the kernel's count and refusal returns zero,
+without allocating. Linux keeps its affinity-mask implementation.
+`TestSelfHostDarwinCPUCountSource` runs the generated Darwin body against a
+fake sysctl on x86-64 and ARM64, checking all six arguments, positive and
+zero counts, refusal and allocation count. The Darwin sysinfo and Mach-O
+gates check the real target's lowering.
+
 ## The map runtime — retired
 
 The self-host's own map runtime, an association list with `__fern_map_find` as

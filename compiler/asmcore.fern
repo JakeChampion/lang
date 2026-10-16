@@ -6264,13 +6264,17 @@ pub function rt_src_getcwd(t: string): string {
   return "function __fern_getcwd(): Result[string, IoError] { let buf: usize = __raw_alloc(4096); let rc: i32 = __syscall3(" + sysno(t, "getcwd") + ", buf as i64, 4096, 0) as i32; let buf_own: string = __raw_string(buf, 4096); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } if (buf_own[0] != 47) { return Err(__fern_io_error(2, \"\")); } return Ok(__fern_path_copy(buf_own, rc - 1)); }";
 }
 
-// rt_src_cpu_count backs `cpu_count()` on Linux → the population count of the
+// rt_src_cpu_count backs `cpu_count()`: Darwin reads hw.activecpu through
+// sysctl; Linux counts the population of the
 // affinity mask sched_getaffinity(2) writes, which is how many processing
 // units the process may actually run on. The syscall answers the mask's size
 // in bytes; a refusal answers 0, which is the builtin's "cannot say". The
 // count is byte-wise rather than a popcount op so the body stays inside the
 // runtime-function subset.
 pub function rt_src_cpu_count(t: string): string {
+  if (t == "arm64-darwin") {
+    return "function __fern_cpu_count(): i32 { let buf: usize = __raw_scratch(32); __store_i32(buf, 6); __store_i32(buf + 4, 25); __store_i64(buf + 8, 4i64); let rc: i64 = __syscall6(" + sysno(t, "sysctl") + ", buf as i64, 2, (buf + 16) as i64, (buf + 8) as i64, 0, 0); if (rc < 0i64) { return 0; } return __load_i32(buf + 16); }";
+  }
   return "function __fern_cpu_count(): i32 { let buf: usize = __raw_alloc(128); let i: i32 = 0; while (i < 128) { __raw_store8(buf, i, 0); i = i + 1; } let rc: i32 = __syscall3(" + sysno(t, "sched_getaffinity") + ", 0, 128, buf as i64) as i32; if (rc <= 0) { let buf_own0: string = __raw_string(buf, 128); return 0; } if (rc > 128) { rc = 128; } let total: i32 = 0; let k: i32 = 0; while (k < rc) { let b: i32 = __raw_load8(buf, k); while (b != 0) { total = total + (b & 1); b = b >> 1; } k = k + 1; } let buf_own: string = __raw_string(buf, 128); return total; }";
 }
 
