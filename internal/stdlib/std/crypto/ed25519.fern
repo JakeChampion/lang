@@ -171,21 +171,39 @@ function __signed_digits(s: [u8]): i64[] {
 function __base_entry(j: i32, d: i64): Cached {
   let sign: i64 = d >> 63;
   let a: i64 = (d ^ sign) - sign;
-  let w: u64[] = [1u64, 0u64, 0u64, 0u64, 1u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64];
+  let w0: u64 = 1u64;
+  let w1: u64 = 0u64;
+  let w2: u64 = 0u64;
+  let w3: u64 = 0u64;
+  let w4: u64 = 1u64;
+  let w5: u64 = 0u64;
+  let w6: u64 = 0u64;
+  let w7: u64 = 0u64;
+  let w8: u64 = 0u64;
+  let w9: u64 = 0u64;
+  let w10: u64 = 0u64;
+  let w11: u64 = 0u64;
   let k: i32 = 1;
   while (k <= 8) {
     let m: u64 = 0u64 - ((a ^ k as i64) - 1 >> 63 & 1) as u64;
     let o: i32 = (j * 8 + k - 1) * 12;
-    let c: i32 = 0;
-    while (c < 12) {
-      w = w.with(c, w[c] ^ (w[c] ^ BASE[o + c]) & m);
-      c = c + 1;
-    }
+    w0 = w0 ^ (w0 ^ BASE[o]) & m;
+    w1 = w1 ^ (w1 ^ BASE[o + 1]) & m;
+    w2 = w2 ^ (w2 ^ BASE[o + 2]) & m;
+    w3 = w3 ^ (w3 ^ BASE[o + 3]) & m;
+    w4 = w4 ^ (w4 ^ BASE[o + 4]) & m;
+    w5 = w5 ^ (w5 ^ BASE[o + 5]) & m;
+    w6 = w6 ^ (w6 ^ BASE[o + 6]) & m;
+    w7 = w7 ^ (w7 ^ BASE[o + 7]) & m;
+    w8 = w8 ^ (w8 ^ BASE[o + 8]) & m;
+    w9 = w9 ^ (w9 ^ BASE[o + 9]) & m;
+    w10 = w10 ^ (w10 ^ BASE[o + 10]) & m;
+    w11 = w11 ^ (w11 ^ BASE[o + 11]) & m;
     k = k + 1;
   }
-  let ypx: fe.Fe = fe.Fe { l0: w[0], l1: w[1], l2: w[2], l3: w[3] };
-  let ymx: fe.Fe = fe.Fe { l0: w[4], l1: w[5], l2: w[6], l3: w[7] };
-  let t2d: fe.Fe = fe.Fe { l0: w[8], l1: w[9], l2: w[10], l3: w[11] };
+  let ypx: fe.Fe = fe.Fe { l0: w0, l1: w1, l2: w2, l3: w3 };
+  let ymx: fe.Fe = fe.Fe { l0: w4, l1: w5, l2: w6, l3: w7 };
+  let t2d: fe.Fe = fe.Fe { l0: w8, l1: w9, l2: w10, l3: w11 };
   let neg: i64 = sign & 1;
   let swapped: (fe.Fe, fe.Fe) = fe.cswap(ypx, ymx, neg);
   return Cached { ypx: swapped.0, ymx: swapped.1, z2: fe.from_i64(2), t2d: fe.cmov(t2d, fe.neg(t2d), neg) };
