@@ -1938,9 +1938,16 @@ function __tls_taken[D: async.Driver](drv: D, c: __Conns, at: i32, sess: server.
 
 // __bytes_from(buf, from) — buf[from, len) as its own array: the bytes
 // behind an answered request, the next pipelined request's, or the shared
-// empty array.
+// empty array. A loop rather than __bytes_range, which costs one more
+// allocation a request on Linux (#12541).
 function __bytes_from(buf: u8[], from: i32): u8[] {
-  return __bytes_range(buf, from, buf.len());
+  let out: u8[] = __alloc_u8(buf.len() - from);
+  let i: i32 = 0;
+  while (from + i < buf.len()) {
+    out = out.with(i, buf[from + i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // __Behind — what the bytes behind an answered request hold, as the loop
