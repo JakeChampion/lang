@@ -107,6 +107,11 @@ pub trait Driver {
   function drop_token(self: Self, tok: i32): i32;
   function watch(self: Self, fd: i32, interest: i32): i32;
   function unwatch(self: Self, fd: i32): i32;
+  // Whether `watch` honours ONESHOT, so a descriptor watched that way
+  // reports once and needs no `unwatch` after it fired.
+  function oneshot(self: Self): boolean {
+    return false;
+  }
   function wait_into(self: Self, own events: i32[], timeout_ms: i32): i32[];
   function wait(self: Self, max: i32, timeout_ms: i32): i32[] {
     let got: i32[] = self.wait_into(event_room(max), timeout_ms);
@@ -171,6 +176,11 @@ pub function end_pairs(own events: i32[], n: i32): i32[] {
 // for the unwatch. `ring` is the io_uring set (`ring_*`) a driver asked for
 // it uses in the reactor's place, -1 when it has none.
 pub struct RealDriver { reactor: Cell[i32], signals: Cell[string], ring: Cell[i64] }
+
+// ONESHOT, or'd into a `watch`'s interest, reports the descriptor once and
+// then holds it disarmed until it is watched again, on a driver whose
+// `oneshot` says so; elsewhere it is ignored.
+pub const ONESHOT: i32 = 16;
 
 // __eintr() — the errno a wait a signal interrupted fails with.
 function __eintr(): i32 {
@@ -288,6 +298,9 @@ impl Driver for RealDriver {
   }
   function watch(self: RealDriver, fd: i32, interest: i32): i32 {
     return __real_ctl(self, 1, fd, interest);
+  }
+  function oneshot(self: RealDriver): boolean {
+    return self.ring.get() < 0 as i64 && target_os() != "wasi" && target_os() != "wasi-http";
   }
   function unwatch(self: RealDriver, fd: i32): i32 {
     if (self.ring.get() < 0 as i64 && self.reactor.get() < 0) {

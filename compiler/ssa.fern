@@ -113,6 +113,12 @@ pub function kind_name(id: i32): string {
   if (id == 36) {
     return "select";
   }
+  // carry: args [x, y] or [x, y, c], the carry out of x + y (+ c) when imm is
+  // 0 and the borrow out of x - y (- c) when it is 1, as 0 or 1; c is 0 or 1
+  // (fuse_carries).
+  if (id == 37) {
+    return "carry";
+  }
   if (id == 1) {
     return "const_int";
   }
@@ -368,7 +374,7 @@ function semantic_kind_name(id: i32): string {
 
 // kind_count is the number of registered SInst kinds (ids 1..kind_count()).
 pub function kind_count(): i32 {
-  return 36;
+  return 37;
 }
 
 // kind_retired is an id in 1..kind_count() whose kind is gone: 23..25 (the
@@ -386,6 +392,9 @@ pub function kind_id(name: string): i32 {
   }
   if (name == "select") {
     return 36;
+  }
+  if (name == "carry") {
+    return 37;
   }
   if (name == "const_bool") {
     return 2;
@@ -4767,11 +4776,33 @@ pub function fuse_rotates(f: SFunc): SFunc {
   if (!has_or(f)) {
     return f;
   }
+  let defs: SInst[] = inst_defs(f);
+  return rewrite_insts(f, defs, rotate_of).f;
+}
+
+// rotate_of is the rotate an `or` computes, or an instruction of kind 0.
+function rotate_of(defs: SInst[], ins: SInst): SInst {
+  if (ins.kind_tag != 9 || ins.str != "or" || ins.args.len() != 2) {
+    return no_inst();
+  }
+  let m: SInst = rotate_half_pair(defs, ins, ins.args[0], ins.args[1]);
+  if (m.kind_tag == 0) {
+    m = rotate_half_pair(defs, ins, ins.args[1], ins.args[0]);
+  }
+  return m;
+}
+
+// no_inst is the kind-0 instruction a matcher answers for no match.
+function no_inst(): SInst {
+  return SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+}
+
+// inst_defs is each value's defining instruction, kind 0 where none is.
+function inst_defs(f: SFunc): SInst[] {
   let defs: SInst[] = [];
-  let none: SInst = SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
   let i: i32 = 0;
   while (i < f.nvals) {
-    defs = defs.append(none);
+    defs = defs.append(no_inst());
     i = i + 1;
   }
   for blk in f.blocks {
@@ -4781,42 +4812,38 @@ pub function fuse_rotates(f: SFunc): SFunc {
       }
     }
   }
-  // `nblocks` is written from the first block that fuses a rotate on, and a
-  // block's `ninsts` from its first fused instruction on.
+  return defs;
+}
+
+// rewrite_insts replaces each instruction `rewrite` answers one of a nonzero
+// kind for, given the function's definitions. `nblocks` is written from the first block that changes on, and a
+// block's `ninsts` from its first changed instruction on, so what keeps
+// every instruction keeps its record.
+function rewrite_insts(f: SFunc, defs: SInst[], rewrite: (SInst[], SInst) => SInst): Threading {
   let nblocks: SBlock[] = [];
   let copying: boolean = false;
   let bi: i32 = 0;
   while (bi < f.blocks.len()) {
     let blk: SBlock = f.blocks[bi];
     let ninsts: SInst[] = [];
-    let fused: boolean = false;
+    let changed: boolean = false;
     let k: i32 = 0;
     while (k < blk.insts.len()) {
-      let ins: SInst = blk.insts[k];
-      let r: SInst = ins;
-      if (ins.kind_tag == 9 && ins.str == "or" && ins.args.len() == 2) {
-        let m: SInst = rotate_half_pair(defs, ins, ins.args[0], ins.args[1]);
-        if (m.kind_tag == 0) {
-          m = rotate_half_pair(defs, ins, ins.args[1], ins.args[0]);
-        }
-        if (m.kind_tag != 0) {
-          r = m;
-          if (!fused) {
-            ninsts = insts_before(blk.insts, k);
-            fused = true;
-          }
-        }
+      let m: SInst = rewrite(defs, blk.insts[k]);
+      if (m.kind_tag != 0 && !changed) {
+        ninsts = insts_before(blk.insts, k);
+        changed = true;
       }
-      if (fused) {
-        ninsts = ninsts.append(r);
+      if (changed) {
+        ninsts = ninsts.append(if (m.kind_tag != 0) { m } else { blk.insts[k] });
       }
       k = k + 1;
     }
-    if (fused) {
-      if (!copying) {
-        nblocks = blocks_before(f.blocks, bi);
-        copying = true;
-      }
+    if (changed && !copying) {
+      nblocks = blocks_before(f.blocks, bi);
+      copying = true;
+    }
+    if (changed) {
       nblocks = nblocks.append(SBlock { ...blk, insts: ninsts });
     } else if (copying) {
       nblocks = nblocks.append(blk);
@@ -4824,9 +4851,9 @@ pub function fuse_rotates(f: SFunc): SFunc {
     bi = bi + 1;
   }
   if (!copying) {
-    return f;
+    return Threading { f: f, changed: false };
   }
-  return SFunc { ...f, blocks: nblocks };
+  return Threading { f: SFunc { ...f, blocks: nblocks }, changed: true };
 }
 
 // has_or reports whether `f` holds a two-operand `or`, the only instruction
@@ -4845,7 +4872,7 @@ function has_or(f: SFunc): boolean {
 // rotate_half_pair is the rotate `or` computes when `rv` is the logical right
 // shift and `lv` the left one, or an instruction of kind 0 when it is not one.
 function rotate_half_pair(defs: SInst[], or: SInst, rv: i32, lv: i32): SInst {
-  let no: SInst = SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  let no: SInst = no_inst();
   let rs: SInst = def_of(defs, rv);
   let ls: SInst = def_of(defs, lv);
   let w: i32 = 64;
@@ -4868,6 +4895,201 @@ function rotate_half_pair(defs: SInst[], or: SInst, rv: i32, lv: i32): SInst {
     return no;
   }
   return SInst { kind_tag: 10, result: or.result, args: [rs.args[0]], imm: 0, str: "rotr:" + util.i32_to_string(w) + ":" + util.i64_to_string(n) };
+}
+
+// fuse_carries rewrites the branch-free carry out of a 64-bit add,
+// `(x & y | (x | y) & (s ^ -1)) >> 63` over s = x + y or s = x + y + c, and
+// the borrow out of a subtract, `((x ^ -1) & y | ((x ^ -1) | y) & d) >> 63`
+// over d = x - y or d = x - y - b, into one `carry` (kind 37), which the
+// emitters read off the flags (#12558). The incoming c or b must be 0 or 1
+// for the flags to agree with the formula: a right shift by 63, an and with
+// 1, or another carry. The formula's ands and ors are pruned when nothing
+// else reads them.
+pub function fuse_carries(f: SFunc): SFunc {
+  if (!has_carry_shift(f)) {
+    return f;
+  }
+  let defs: SInst[] = inst_defs(f);
+  let t: Threading = rewrite_insts(f, defs, carry_of);
+  if (!t.changed) {
+    return f;
+  }
+  return prune_dead(t.f);
+}
+
+function has_carry_shift(f: SFunc): boolean {
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == 9 && ins.str == "shr_u" && ins.imm == 64) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// is_top_bit is a 64-bit logical right shift by 63.
+function is_top_bit(defs: SInst[], ins: SInst): boolean {
+  return ins.kind_tag == 9 && ins.str == "shr_u" && ins.imm == 64 && ins.args.len() == 2 && is_const(defs, ins.args[1], 63i64);
+}
+
+function is_const(defs: SInst[], v: i32, want: i64): boolean {
+  let d: SInst = def_of(defs, copy_root(defs, v));
+  if (d.kind_tag == 1) {
+    return d.imm as i64 == want;
+  }
+  return d.kind_tag == 3 && util.lit_to_i64(d.str) == want;
+}
+
+// bin_of is v's defining binary `op`, or an instruction of kind 0.
+function bin_of(defs: SInst[], v: i32, op: string): SInst {
+  let d: SInst = def_of(defs, copy_root(defs, v));
+  if (d.kind_tag == 9 && d.str == op && d.args.len() == 2) {
+    return d;
+  }
+  return no_inst();
+}
+
+// wide_of is v's defining 64-bit add or sub (`op`), or an instruction of
+// kind 0.
+function wide_of(defs: SInst[], v: i32, op: string): SInst {
+  let d: SInst = bin_of(defs, v, op);
+  return if (d.imm == 64) { d } else { no_inst() };
+}
+
+// not_of is the value v inverts as `v ^ -1`, or -1.
+function not_of(defs: SInst[], v: i32): i32 {
+  let d: SInst = bin_of(defs, v, "xor");
+  if (d.kind_tag == 0) {
+    return 0 - 1;
+  }
+  if (is_const(defs, d.args[1], 0i64 - 1i64)) {
+    return copy_root(defs, d.args[0]);
+  }
+  if (is_const(defs, d.args[0], 0i64 - 1i64)) {
+    return copy_root(defs, d.args[1]);
+  }
+  return 0 - 1;
+}
+
+// same_pair is whether a and b are the roots of x and y in either order.
+function same_pair(defs: SInst[], a: i32, b: i32, x: i32, y: i32): boolean {
+  let ra: i32 = copy_root(defs, a);
+  let rb: i32 = copy_root(defs, b);
+  return ra == x && rb == y || ra == y && rb == x;
+}
+
+// zero_one is a value known to be 0 or 1.
+function zero_one(defs: SInst[], v: i32): boolean {
+  let d: SInst = def_of(defs, copy_root(defs, v));
+  if (d.kind_tag == 37 || is_top_bit(defs, d)) {
+    return true;
+  }
+  return d.kind_tag == 9 && d.str == "and" && d.args.len() == 2 && (is_const(defs, d.args[0], 1i64) || is_const(defs, d.args[1], 1i64));
+}
+
+// carry_of is the carry a shift by 63 computes, or an instruction of kind 0.
+function carry_of(defs: SInst[], shr: SInst): SInst {
+  if (!is_top_bit(defs, shr)) {
+    return no_inst();
+  }
+  let o: SInst = bin_of(defs, shr.args[0], "or");
+  if (o.kind_tag == 0) {
+    return no_inst();
+  }
+  let m: SInst = carry_halves(defs, shr, o.args[0], o.args[1]);
+  if (m.kind_tag == 0) {
+    m = carry_halves(defs, shr, o.args[1], o.args[0]);
+  }
+  return m;
+}
+
+// carry_halves matches `p | q`: p the and the operands' own top bits carry
+// out of, q the and a carry into the top bit does.
+function carry_halves(defs: SInst[], shr: SInst, p: i32, q: i32): SInst {
+  let pa: SInst = bin_of(defs, p, "and");
+  let qa: SInst = bin_of(defs, q, "and");
+  if (pa.kind_tag == 0 || qa.kind_tag == 0) {
+    return no_inst();
+  }
+  let k: i32 = 0;
+  while (k < 2) {
+    let m: SInst = add_carry(defs, shr, pa, qa.args[k], qa.args[1 - k]);
+    if (m.kind_tag == 0) {
+      m = sub_borrow(defs, shr, pa, qa.args[k], qa.args[1 - k]);
+    }
+    if (m.kind_tag != 0) {
+      return m;
+    }
+    k = k + 1;
+  }
+  return no_inst();
+}
+
+// add_carry matches p = x & y and q = (x | y) & (s ^ -1), s the sum.
+function add_carry(defs: SInst[], shr: SInst, p: SInst, either: i32, inv: i32): SInst {
+  let x: i32 = copy_root(defs, p.args[0]);
+  let y: i32 = copy_root(defs, p.args[1]);
+  let e: SInst = bin_of(defs, either, "or");
+  if (e.kind_tag == 0 || !same_pair(defs, e.args[0], e.args[1], x, y)) {
+    return no_inst();
+  }
+  let s: SInst = wide_of(defs, not_of(defs, inv), "add");
+  if (s.kind_tag == 0) {
+    return no_inst();
+  }
+  if (same_pair(defs, s.args[0], s.args[1], x, y)) {
+    return SInst { kind_tag: 37, result: shr.result, args: [x, y], imm: 0, str: "" };
+  }
+  let k: i32 = 0;
+  while (k < 2) {
+    let inner: SInst = wide_of(defs, s.args[k], "add");
+    if (inner.kind_tag != 0 && same_pair(defs, inner.args[0], inner.args[1], x, y) && zero_one(defs, s.args[1 - k])) {
+      return SInst { kind_tag: 37, result: shr.result, args: [x, y, copy_root(defs, s.args[1 - k])], imm: 0, str: "" };
+    }
+    k = k + 1;
+  }
+  return no_inst();
+}
+
+// sub_borrow matches p = (x ^ -1) & y and q = ((x ^ -1) | y) & d, d the
+// difference.
+function sub_borrow(defs: SInst[], shr: SInst, p: SInst, either: i32, diff: i32): SInst {
+  let k: i32 = 0;
+  while (k < 2) {
+    let x: i32 = not_of(defs, p.args[k]);
+    let y: i32 = copy_root(defs, p.args[1 - k]);
+    if (x >= 0 && inverted_or(defs, either, x, y)) {
+      return borrow_from(defs, shr, diff, x, y);
+    }
+    k = k + 1;
+  }
+  return no_inst();
+}
+
+// inverted_or is whether v is `(x ^ -1) | y`, in either order.
+function inverted_or(defs: SInst[], v: i32, x: i32, y: i32): boolean {
+  let e: SInst = bin_of(defs, v, "or");
+  if (e.kind_tag == 0) {
+    return false;
+  }
+  return not_of(defs, e.args[0]) == x && copy_root(defs, e.args[1]) == y || not_of(defs, e.args[1]) == x && copy_root(defs, e.args[0]) == y;
+}
+
+// borrow_from is the borrow when diff is x - y or x - y - b, b 0 or 1.
+function borrow_from(defs: SInst[], shr: SInst, diff: i32, x: i32, y: i32): SInst {
+  let d: SInst = wide_of(defs, diff, "sub");
+  if (d.kind_tag == 0) {
+    return no_inst();
+  }
+  if (copy_root(defs, d.args[0]) == x && copy_root(defs, d.args[1]) == y) {
+    return SInst { kind_tag: 37, result: shr.result, args: [x, y], imm: 1, str: "" };
+  }
+  let inner: SInst = wide_of(defs, d.args[0], "sub");
+  if (inner.kind_tag != 0 && copy_root(defs, inner.args[0]) == x && copy_root(defs, inner.args[1]) == y && zero_one(defs, d.args[1])) {
+    return SInst { kind_tag: 37, result: shr.result, args: [x, y, copy_root(defs, d.args[1])], imm: 1, str: "" };
+  }
+  return no_inst();
 }
 
 // zero_extends_u32 is a unary the emitters render as a 32-bit zero extension.
