@@ -89,16 +89,6 @@ func CapabilityRows(entry string, prog *ast.Program) ([]caps.Row, map[string]cap
 	return rows, grants
 }
 
-// PackageResolver maps a FuncDecl.SourceModule onto its report
-// package name — see packageInfoResolver for the resolution rules.
-func PackageResolver(entry string) func(string) string {
-	resolve := packageInfoResolver(entry)
-	return func(module string) string {
-		name, _, _ := resolve(module)
-		return name
-	}
-}
-
 // packageInfoResolver maps a FuncDecl.SourceModule onto its package
 // identity: the nearest governing fern.toml's [package] name and
 // directory, plus whether the module belongs to the ROOT package —
@@ -107,7 +97,7 @@ func PackageResolver(entry string) func(string) string {
 // are exempt from enforcement). Stdlib modules resolve to ("", "",
 // false): caps.Analyze folds them into whichever package calls them.
 // The root package of a program with no fern.toml reports as "(root)".
-func packageInfoResolver(entry string, grantTables ...map[string][]string) func(module string) (name, dir string, root bool) {
+func packageInfoResolver(entry string, grants map[string][]string) func(module string) (name, dir string, root bool) {
 	rootName, rootDir := "(root)", ""
 	if abs, err := filepath.Abs(entry); err == nil {
 		rootDir = filepath.Dir(abs)
@@ -144,13 +134,11 @@ func packageInfoResolver(entry string, grantTables ...map[string][]string) func(
 		}
 		// A declared grant remains a boundary even without a manifest in
 		// the dependency directory. Prefer the closest applicable boundary.
-		for _, table := range grantTables {
-			for boundary := range table {
-				within := mdir == boundary || strings.HasPrefix(mdir, boundary+string(filepath.Separator))
-				ownerContains := mdir == id.dir || strings.HasPrefix(mdir, id.dir+string(filepath.Separator))
-				if within && (!ownerContains || len(boundary) > len(id.dir)) {
-					id = pkgID{name: filepath.Base(boundary), dir: boundary, root: boundary == rootDir}
-				}
+		for boundary := range grants {
+			within := mdir == boundary || strings.HasPrefix(mdir, boundary+string(filepath.Separator))
+			ownerContains := mdir == id.dir || strings.HasPrefix(mdir, id.dir+string(filepath.Separator))
+			if within && (!ownerContains || len(boundary) > len(id.dir)) {
+				id = pkgID{name: filepath.Base(boundary), dir: boundary, root: boundary == rootDir}
 			}
 		}
 		cache[mdir] = id
