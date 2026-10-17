@@ -1670,7 +1670,96 @@ function x86_final_target(a: X86Asm, name: string, idx: i32, padded_text: i32, b
   if (idx >= 0) {
     return x86_final_off_at(a, idx, padded_text, bss_base);
   }
-  return x86_final_off(a, name, padded_text, bss_base);
+  let direct: i32 = x86_final_off(a, name, padded_text, bss_base);
+  if (direct >= 0) {
+    return direct;
+  }
+  let split: i32 = x86_symbol_addend_at(name);
+  if (split < 0) {
+    return 0 - 1;
+  }
+  let symbol: string = x86_gas_trimmed(slice_unchecked(name, 0, split) + "") + "";
+  let target: i32 = x86_final_off(a, symbol, padded_text, bss_base);
+  let addend: i64 = x86_symbol_addend_value(slice_unchecked(name, split + 1, name.len()) + "");
+  if (target < 0 || addend < 0) {
+    return 0 - 1;
+  }
+  if (name[split] == 45) {
+    addend = 0 - addend;
+  }
+  let value: i64 = target as i64 + addend;
+  if (value < 0 as i64 || value > 2147483647i64) {
+    return 0 - 1;
+  }
+  return value as i32;
+}
+
+// A signed constant follows the first unquoted +/-. A quoted symbol can
+// itself contain those characters; an exact symbol match takes precedence.
+function x86_symbol_addend_at(name: string): i32 {
+  let quoted: boolean = false;
+  let escaped: boolean = false;
+  let i: i32 = 0;
+  while (i < name.len()) {
+    let c: i32 = name[i] as i32;
+    if (escaped) {
+      escaped = false;
+    } else if (quoted && c == 92) {
+      escaped = true;
+    } else if (c == 34) {
+      quoted = !quoted;
+    } else if (!quoted && i > 0 && (c == 43 || c == 45)) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+function x86_addend_digit(c: i32): i32 {
+  if (c >= 48 && c <= 57) {
+    return c - 48;
+  }
+  if (c >= 65 && c <= 70) {
+    return c - 55;
+  }
+  if (c >= 97 && c <= 102) {
+    return c - 87;
+  }
+  return 0 - 1;
+}
+
+// Unlike the historical permissive immediate reader, an addend must be a
+// whole GAS integer (decimal, hex, octal or binary), without skipped bytes
+// or overflow.
+function x86_symbol_addend_value(token: string): i64 {
+  let s: str = x86_gas_trimmed(token);
+  let radix: i64 = 10;
+  let i: i32 = 0;
+  if (s.len() >= 2 && s[0] == 48) {
+    radix = 8;
+    i = 1;
+    if (s[1] == 120 || s[1] == 88) {
+      radix = 16;
+      i = 2;
+    } else if (s[1] == 98 || s[1] == 66) {
+      radix = 2;
+      i = 2;
+    }
+  }
+  if (i == s.len()) {
+    return 0 - 1;
+  }
+  let value: i64 = 0;
+  while (i < s.len()) {
+    let d: i64 = x86_addend_digit(s[i] as i32) as i64;
+    if (d < 0 as i64 || d >= radix || value > (2147483647i64 - d) / radix) {
+      return 0 - 1;
+    }
+    value = value * radix + d;
+    i = i + 1;
+  }
+  return value;
 }
 
 function x86_queue_rel32_at(own a: X86Asm, name: string, idx: i32): X86Asm {
