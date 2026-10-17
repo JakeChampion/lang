@@ -1640,8 +1640,15 @@ function x86_aes_next_counter(reg: string): string {
 }
 
 function x86_aes_ctr_blocks(): string {
+  return x86_aes_ctr_blocks_at(".Lctr", ".Lctr_ret", "-64");
+}
+
+// x86_aes_ctr_blocks_at is the CTR loop under its own labels (`p`), going to
+// `done` once %rdx bytes from %rsi have gone to %rdi and keeping a partial
+// last block's keystream at `tail`(%rbp).
+function x86_aes_ctr_blocks_at(p: string, done: string, tail: string): string {
   let regs: string[] = ["%xmm0", "%xmm1", "%xmm2", "%xmm3"];
-  let o: string = ".Lctr_loop4:\n    cmpq $64, %rdx\n    jb .Lctr_loop1\n";
+  let o: string = p + "_loop4:\n    cmpq $64, %rdx\n    jb " + p + "_loop1\n";
   for reg in regs {
     o = o + x86_aes_next_counter(reg);
   }
@@ -1652,16 +1659,16 @@ function x86_aes_ctr_blocks(): string {
     o = o + "    movdqu " + off + "(%rsi), %xmm5\n    pxor %xmm5, " + regs[j] + "\n    movdqu " + regs[j] + ", " + off + "(%rdi)\n";
     j = j + 1;
   }
-  o = o + "    addq $64, %rsi\n    addq $64, %rdi\n    subq $64, %rdx\n    jmp .Lctr_loop4\n";
-  o = o + ".Lctr_loop1:\n    cmpq $16, %rdx\n    jb .Lctr_tail\n" + x86_aes_next_counter("%xmm0") + "    call .Lctr_enc1\n";
-  o = o + "    movdqu (%rsi), %xmm5\n    pxor %xmm5, %xmm0\n    movdqu %xmm0, (%rdi)\n    addq $16, %rsi\n    addq $16, %rdi\n    subq $16, %rdx\n    jmp .Lctr_loop1\n";
+  o = o + "    addq $64, %rsi\n    addq $64, %rdi\n    subq $64, %rdx\n    jmp " + p + "_loop4\n";
+  o = o + p + "_loop1:\n    cmpq $16, %rdx\n    jb " + p + "_tail\n" + x86_aes_next_counter("%xmm0") + "    call .Lctr_enc1\n";
+  o = o + "    movdqu (%rsi), %xmm5\n    pxor %xmm5, %xmm0\n    movdqu %xmm0, (%rdi)\n    addq $16, %rsi\n    addq $16, %rdi\n    subq $16, %rdx\n    jmp " + p + "_loop1\n";
   // The last partial block: its keystream goes through the frame and the
   // bytes are combined one at a time, so nothing reads or writes past either
   // buffer.
-  o = o + ".Lctr_tail:\n    testq %rdx, %rdx\n    jz .Lctr_ret\n" + x86_aes_next_counter("%xmm0") + "    call .Lctr_enc1\n";
-  o = o + "    movdqu %xmm0, -64(%rbp)\n    xorq %r9, %r9\n.Lctr_tailb:\n";
-  return o + "    movzbl (%rsi,%r9), %eax\n    movzbl -64(%rbp,%r9), %ecx\n    xorl %ecx, %eax\n    movb %al, (%rdi,%r9)\n"
-    + "    addq $1, %r9\n    cmpq %rdx, %r9\n    jb .Lctr_tailb\n    jmp .Lctr_ret\n";
+  o = o + p + "_tail:\n    testq %rdx, %rdx\n    jz " + done + "\n" + x86_aes_next_counter("%xmm0") + "    call .Lctr_enc1\n";
+  o = o + "    movdqu %xmm0, " + tail + "(%rbp)\n    xorq %r9, %r9\n" + p + "_tailb:\n";
+  return o + "    movzbl (%rsi,%r9), %eax\n    movzbl " + tail + "(%rbp,%r9), %ecx\n    xorl %ecx, %eax\n    movb %al, (%rdi,%r9)\n"
+    + "    addq $1, %r9\n    cmpq %rdx, %r9\n    jb " + p + "_tailb\n    jmp " + done + "\n";
 }
 
 function x86_aes_ctr32(): string {
@@ -1691,13 +1698,119 @@ function x86_ghash_mul(): string {
   return ".Lgh_mul:\n"
     + "    movdqa %xmm0, %xmm3\n    pclmulqdq $0, %xmm1, %xmm3\n    movdqa %xmm0, %xmm4\n    pclmulqdq $16, %xmm1, %xmm4\n"
     + "    movdqa %xmm0, %xmm5\n    pclmulqdq $1, %xmm1, %xmm5\n    movdqa %xmm0, %xmm6\n    pclmulqdq $17, %xmm1, %xmm6\n"
-    + "    pxor %xmm5, %xmm4\n    movdqa %xmm4, %xmm5\n    pslldq $8, %xmm5\n    psrldq $8, %xmm4\n    pxor %xmm5, %xmm3\n    pxor %xmm4, %xmm6\n"
+    + "    pxor %xmm5, %xmm4\n" + x86_ghash_reduce() + "    ret\n";
+}
+
+// x86_ghash_reduce is %xmm0 = the 256-bit product whose low, middle and high
+// terms are in %xmm3, %xmm4 and %xmm6, shifted for the reflected order and
+// reduced. Both steps are linear, so a sum of products reduces as one.
+function x86_ghash_reduce(): string {
+  return "    movdqa %xmm4, %xmm5\n    pslldq $8, %xmm5\n    psrldq $8, %xmm4\n    pxor %xmm5, %xmm3\n    pxor %xmm4, %xmm6\n"
     + "    movdqa %xmm3, %xmm7\n    psrld $31, %xmm7\n    movdqa %xmm6, %xmm8\n    psrld $31, %xmm8\n    pslld $1, %xmm3\n    pslld $1, %xmm6\n"
     + "    movdqa %xmm7, %xmm9\n    psrldq $12, %xmm9\n    pslldq $4, %xmm8\n    pslldq $4, %xmm7\n    por %xmm7, %xmm3\n    por %xmm8, %xmm6\n    por %xmm9, %xmm6\n"
     + "    movdqa %xmm3, %xmm7\n    pslld $31, %xmm7\n    movdqa %xmm3, %xmm8\n    pslld $30, %xmm8\n    movdqa %xmm3, %xmm9\n    pslld $25, %xmm9\n"
     + "    pxor %xmm8, %xmm7\n    pxor %xmm9, %xmm7\n    movdqa %xmm7, %xmm8\n    psrldq $4, %xmm8\n    pslldq $12, %xmm7\n    pxor %xmm7, %xmm3\n"
     + "    movdqa %xmm3, %xmm2\n    psrld $1, %xmm2\n    movdqa %xmm3, %xmm4\n    psrld $2, %xmm4\n    movdqa %xmm3, %xmm5\n    psrld $7, %xmm5\n"
-    + "    pxor %xmm4, %xmm2\n    pxor %xmm5, %xmm2\n    pxor %xmm8, %xmm2\n    pxor %xmm2, %xmm3\n    pxor %xmm3, %xmm6\n    movdqa %xmm6, %xmm0\n    ret\n";
+    + "    pxor %xmm4, %xmm2\n    pxor %xmm5, %xmm2\n    pxor %xmm8, %xmm2\n    pxor %xmm2, %xmm3\n    pxor %xmm3, %xmm6\n    movdqa %xmm6, %xmm0\n";
+}
+
+// x86_ghash_prod adds the block in %xmm2 times hk into the product terms
+// %xmm3, %xmm4 and %xmm6, writing them when `first`; %xmm2 is consumed.
+function x86_ghash_prod(hk: string, first: boolean): string {
+  let mv: string = if (first) { "movdqa" } else { "pxor" };
+  return "    movdqa %xmm2, %xmm5\n    pclmulqdq $0, " + hk + ", %xmm5\n    " + mv + " %xmm5, %xmm3\n"
+    + "    movdqa %xmm2, %xmm5\n    pclmulqdq $17, " + hk + ", %xmm5\n    " + mv + " %xmm5, %xmm6\n"
+    + "    movdqa %xmm2, %xmm5\n    pclmulqdq $16, " + hk + ", %xmm5\n    " + mv + " %xmm5, %xmm4\n"
+    + "    pclmulqdq $1, " + hk + ", %xmm2\n    pxor %xmm2, %xmm4\n";
+}
+
+// x86_ghash_blocks4_at folds four blocks a pass while at least 64 bytes
+// remain: ((y ^ x1) H^4) ^ (x2 H^3) ^ (x3 H^2) ^ (x4 H), one reduction for
+// the four, with H^2, H^3 and H^4 computed first into %xmm10-%xmm12.
+function x86_ghash_blocks4_at(p: string): string {
+  let o: string = "    cmpq $64, %rdx\n    jb " + p + "_loop\n    movdqa %xmm0, %xmm13\n    movdqa %xmm1, %xmm0\n"
+    + "    call .Lgh_mul\n    movdqa %xmm0, %xmm10\n    call .Lgh_mul\n    movdqa %xmm0, %xmm11\n    call .Lgh_mul\n    movdqa %xmm0, %xmm12\n    movdqa %xmm13, %xmm0\n"
+    + p + "_loop4:\n    cmpq $64, %rdx\n    jb " + p + "_loop\n";
+  let hs: string[] = ["%xmm12", "%xmm11", "%xmm10", "%xmm1"];
+  let j: i32 = 0;
+  while (j < 4) {
+    o = o + "    movdqu " + util.i32_to_string(16 * j) + "(%rsi), %xmm2\n    pshufb %xmm15, %xmm2\n";
+    if (j == 0) {
+      o = o + "    pxor %xmm0, %xmm2\n";
+    }
+    o = o + x86_ghash_prod(hs[j], j == 0);
+    j = j + 1;
+  }
+  return o + x86_ghash_reduce() + "    addq $64, %rsi\n    subq $64, %rdx\n    jmp " + p + "_loop4\n";
+}
+
+// x86_ghash_blocks_at folds the %rdx bytes at %rsi into the state in %xmm0
+// under its own labels (`p`), H in %xmm1 and the byte reversal in %xmm15,
+// four blocks a pass and then one at a time, a short last block zero-padded through `pad`(%rbp); it goes to `done` when
+// nothing is left over and falls through to it after the last block.
+function x86_ghash_blocks_at(p: string, done: string, pad: string): string {
+  let o: string = x86_ghash_blocks4_at(p) + p + "_loop:\n    cmpq $16, %rdx\n    jb " + p + "_tail\n    movdqu (%rsi), %xmm2\n    pshufb %xmm15, %xmm2\n    pxor %xmm2, %xmm0\n    call .Lgh_mul\n"
+    + "    addq $16, %rsi\n    subq $16, %rdx\n    jmp " + p + "_loop\n";
+  // A short last block is zero-padded through the frame.
+  return o + p + "_tail:\n    testq %rdx, %rdx\n    jz " + done + "\n    pxor %xmm2, %xmm2\n    movdqu %xmm2, " + pad + "(%rbp)\n    xorq %r9, %r9\n"
+    + p + "_tailb:\n    movzbl (%rsi,%r9), %eax\n    movb %al, " + pad + "(%rbp,%r9)\n    addq $1, %r9\n    cmpq %rdx, %r9\n    jb " + p + "_tailb\n"
+    + "    movdqu " + pad + "(%rbp), %xmm2\n    pshufb %xmm15, %xmm2\n    pxor %xmm2, %xmm0\n    call .Lgh_mul\n";
+}
+
+// x86_aes_gcm is __fern_aes_gcm_seal(%rdi = round keys, %rsi = h, %rdx =
+// nonce, %rcx = aad, %r8 = plaintext), answering the ciphertext and its tag
+// in one fresh packed u8[], or __fern_aes_gcm_open over a ciphertext,
+// answering the plaintext and the tag the ciphertext should carry, for the
+// caller to compare. Seal encrypts first and hashes its output; open hashes
+// its input first. A short key schedule or h, or a nonce that is not 12
+// bytes, answers the empty array. The frame holds the views' pointers and
+// lengths, the counter block at -112, the scratch block at -128, the length
+// block at -144 and the hash at -160.
+function x86_aes_gcm(seal: boolean): string {
+  let name: string = if (seal) { "__fern_aes_gcm_seal" } else { "__fern_aes_gcm_open" };
+  let p: string = if (seal) { ".Lxgs" } else { ".Lxgo" };
+  let o: string = "    .globl " + name + "\n    .type " + name + ", @function\n" + name + ":\n    pushq %rbp\n    movq %rsp, %rbp\n    subq $160, %rsp\n"
+    + x86_aes_view("%r8", "%r10", "%r11", p + "_d") + "    movq %r10, -24(%rbp)\n    movq %r11, -32(%rbp)\n"
+    + x86_aes_view("%rcx", "%r10", "%r11", p + "_a") + "    movq %r10, -64(%rbp)\n    movq %r11, -72(%rbp)\n"
+    + x86_aes_view("%rdx", "%r10", "%r11", p + "_n") + "    movq %r10, -56(%rbp)\n    movq %r11, -80(%rbp)\n"
+    + x86_aes_view("%rsi", "%r10", "%r11", p + "_h") + "    movq %r10, -16(%rbp)\n    movq %r11, -88(%rbp)\n"
+    + x86_aes_view("%rdi", "%r10", "%r11", p + "_k") + "    movq %r10, -8(%rbp)\n";
+  // The round count as __fern_aes_ctr32 reads it, none for a nonce that is
+  // not 96 bits or an h shorter than a block.
+  o = o + "    xorl %ecx, %ecx\n    cmpq $176, %r11\n    jb " + p + "_r\n    movl $10, %ecx\n    cmpq $240, %r11\n    jb " + p + "_r\n    movl $14, %ecx\n" + p + "_r:\n"
+    + "    cmpq $12, -80(%rbp)\n    je " + p + "_nok\n    xorl %ecx, %ecx\n" + p + "_nok:\n    cmpq $16, -88(%rbp)\n    jae " + p + "_hok\n    xorl %ecx, %ecx\n" + p + "_hok:\n"
+    + "    movq %rcx, -40(%rbp)\n    movq -32(%rbp), %rdi\n    addq $16, %rdi\n    testq %rcx, %rcx\n    jnz " + p + "_box\n    xorl %edi, %edi\n" + p + "_box:\n"
+    + x86_aes_alloc() + "    testq %rdi, %rdi\n    jz " + p + "_ret\n";
+  // The nonce in the counter block, its last word 2 for the data.
+  o = o + "    movq -56(%rbp), %r9\n    movq (%r9), %rax\n    movl 8(%r9), %r10d\n    movq %rax, -112(%rbp)\n    movl %r10d, -104(%rbp)\n    movl $33554432, -100(%rbp)\n";
+  if (seal) {
+    o = o + x86_aes_gcm_ctr(p) + x86_aes_gcm_hash(p, "    movq -48(%rbp), %rsi\n    addq $8, %rsi\n");
+  } else {
+    o = o + x86_aes_gcm_hash(p, "    movq -24(%rbp), %rsi\n") + x86_aes_gcm_ctr(p);
+  }
+  // The tag: E(K, J0), J0 the nonce with a last word of 1, xor the hash.
+  o = o + "    movl $16777216, -100(%rbp)\n    movdqu -112(%rbp), %xmm0\n    movq -8(%rbp), %r8\n    movq -40(%rbp), %rcx\n    call .Lctr_enc1\n"
+    + "    movdqu -160(%rbp), %xmm5\n    pxor %xmm5, %xmm0\n    movq -48(%rbp), %rax\n    movq -32(%rbp), %r9\n    movdqu %xmm0, 8(%rax,%r9)\n";
+  return o + p + "_ret:\n" + x86_aes_epilogue() + "    .size " + name + ", .-" + name + "\n";
+}
+
+// x86_aes_gcm_ctr runs the data through CTR from the counter block, into the
+// array after its length word.
+function x86_aes_gcm_ctr(p: string): string {
+  return "    movdqu .Laes_ctr_swap(%rip), %xmm15\n    movdqu .Laes_ctr_one(%rip), %xmm14\n    movdqu -112(%rbp), %xmm13\n    pshufb %xmm15, %xmm13\n"
+    + "    movq -8(%rbp), %r8\n    movq -40(%rbp), %rcx\n    movq -24(%rbp), %rsi\n    movq -32(%rbp), %rdx\n    movq -48(%rbp), %rdi\n    addq $8, %rdi\n"
+    + x86_aes_ctr_blocks_at(p + "_c", p + "_cdone", "-128") + p + "_cdone:\n";
+}
+
+// x86_aes_gcm_hash is GHASH over the aad and then the ciphertext, which `ct`
+// points %rsi at, and the two bit lengths, saved at -160(%rbp).
+function x86_aes_gcm_hash(p: string, ct: string): string {
+  return "    movdqu .Laes_gh_bswap(%rip), %xmm15\n    movq -16(%rbp), %r8\n    movdqu (%r8), %xmm1\n    pshufb %xmm15, %xmm1\n    pxor %xmm0, %xmm0\n"
+    + "    movq -64(%rbp), %rsi\n    movq -72(%rbp), %rdx\n" + x86_ghash_blocks_at(p + "_ga", p + "_gadone", "-128") + p + "_gadone:\n"
+    + ct + "    movq -32(%rbp), %rdx\n" + x86_ghash_blocks_at(p + "_gc", p + "_gcdone", "-128") + p + "_gcdone:\n"
+    + "    movq -72(%rbp), %rax\n    shlq $3, %rax\n    bswapq %rax\n    movq %rax, -144(%rbp)\n"
+    + "    movq -32(%rbp), %rax\n    shlq $3, %rax\n    bswapq %rax\n    movq %rax, -136(%rbp)\n"
+    + "    movdqu -144(%rbp), %xmm2\n    pshufb %xmm15, %xmm2\n    pxor %xmm2, %xmm0\n    call .Lgh_mul\n    pshufb %xmm15, %xmm0\n    movdqu %xmm0, -160(%rbp)\n";
 }
 
 function x86_ghash(): string {
@@ -1710,22 +1823,21 @@ function x86_ghash(): string {
     + x86_aes_alloc() + "    testq %rdi, %rdi\n    jz .Lgh_ret\n"
     + "    movdqu .Laes_gh_bswap(%rip), %xmm15\n    movq -8(%rbp), %r8\n    movdqu (%r8), %xmm1\n    pshufb %xmm15, %xmm1\n"
     + "    movq -16(%rbp), %r8\n    movdqu (%r8), %xmm0\n    pshufb %xmm15, %xmm0\n    movq -24(%rbp), %rsi\n    movq -32(%rbp), %rdx\n";
-  o = o + ".Lgh_loop:\n    cmpq $16, %rdx\n    jb .Lgh_tail\n    movdqu (%rsi), %xmm2\n    pshufb %xmm15, %xmm2\n    pxor %xmm2, %xmm0\n    call .Lgh_mul\n"
-    + "    addq $16, %rsi\n    subq $16, %rdx\n    jmp .Lgh_loop\n";
-  // A short last block is zero-padded through the frame.
-  o = o + ".Lgh_tail:\n    testq %rdx, %rdx\n    jz .Lgh_out\n    pxor %xmm2, %xmm2\n    movdqu %xmm2, -64(%rbp)\n    xorq %r9, %r9\n"
-    + ".Lgh_tailb:\n    movzbl (%rsi,%r9), %eax\n    movb %al, -64(%rbp,%r9)\n    addq $1, %r9\n    cmpq %rdx, %r9\n    jb .Lgh_tailb\n"
-    + "    movdqu -64(%rbp), %xmm2\n    pshufb %xmm15, %xmm2\n    pxor %xmm2, %xmm0\n    call .Lgh_mul\n";
+  o = o + x86_ghash_blocks_at(".Lgh", ".Lgh_out", "-64");
   return o + ".Lgh_out:\n    pshufb %xmm15, %xmm0\n    movq -48(%rbp), %rax\n    movdqu %xmm0, 8(%rax)\n.Lgh_ret:\n" + x86_aes_epilogue()
     + x86_ghash_mul() + "    .size __fern_ghash, .-__fern_ghash\n";
 }
 
 // emit_aes_gcm_op calls a kernel: [key] for aes_expand_key, three views for
-// aes_ctr32 and ghash.
+// aes_ctr32 and ghash, five for aes_gcm_seal and aes_gcm_open.
 function emit_aes_gcm_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   s = s.need("aes_gcm").need("heap");
   if (o.kind_tag == 402) {
     return s.write("    popq %rdi\n    call __fern_aes_expand_key\n    pushq %rax\n");
+  }
+  if (o.kind_tag == 444 || o.kind_tag == 445) {
+    let fused: string = if (o.kind_tag == 444) { "__fern_aes_gcm_seal" } else { "__fern_aes_gcm_open" };
+    return s.write("    popq %r8\n    popq %rcx\n    popq %rdx\n    popq %rsi\n    popq %rdi\n    call " + fused + "\n    pushq %rax\n");
   }
   let callee: string = "__fern_aes_ctr32";
   if (o.kind_tag == 404) {
@@ -1737,7 +1849,7 @@ function emit_aes_gcm_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 function emit_rt_aes_gcm(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .section .rodata\n    .align 16\n.Laes_ctr_swap:\n    .byte 0,1,2,3,4,5,6,7,8,9,10,11,15,14,13,12\n");
   s = s.write(".Laes_ctr_one:\n    .long 0,0,0,1\n.Laes_gh_bswap:\n    .byte 15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0\n    .section .text\n");
-  return s.write(x86_aes_expand_key() + x86_aes_ctr32() + x86_ghash());
+  return s.write(x86_aes_expand_key() + x86_aes_ctr32() + x86_ghash() + x86_aes_gcm(true) + x86_aes_gcm(false));
 }
 
 // __fern_sha256_hw_blocks(%rdi = state, %rsi = data), the SHA-256 compression

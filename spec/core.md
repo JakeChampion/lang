@@ -466,6 +466,8 @@ is the number of slots it leaves.
 | `sha1_hw_blocks` | 441 | 2 | 1 |
 | `udp_bind_with` | 442 | 3 | 1 |
 | `raw_vdso` | 443 | 0 | 1 |
+| `aes_gcm_seal` | 444 | 5 | 1 |
+| `aes_gcm_open` | 445 | 5 | 1 |
 <!-- END ir_effects_run -->
 
 ## How this is kept true

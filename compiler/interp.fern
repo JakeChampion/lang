@@ -4393,6 +4393,9 @@ function aes_gcm_arity(name: string): i32 {
   if (name == "__aes_ctr32" || name == "__ghash") {
     return 3;
   }
+  if (name == "__aes_gcm_seal" || name == "__aes_gcm_open") {
+    return 5;
+  }
   return 0;
 }
 
@@ -4409,6 +4412,9 @@ function call_aes_gcm(name: string, args: Value[]): Value {
   }
   if (name == "__ghash") {
     return byte_value(aesref.ghash(bs[0], bs[1], bs[2]));
+  }
+  if (want == 5) {
+    return byte_value(aesref.gcm(bs[0], bs[1], bs[2], bs[3], bs[4], name == "__aes_gcm_seal"));
   }
   return byte_value(aesref.ctr32(bs[0], bs[1], bs[2]));
 }

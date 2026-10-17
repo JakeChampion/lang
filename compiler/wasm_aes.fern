@@ -1,6 +1,7 @@
 // wasm_aes — the AES-GCM kernels on wasm, which has neither AES nor
 // carry-less multiply instructions: $__fern_aes_expand_key,
-// $__fern_aes_ctr32 and $__fern_ghash, each answering a fresh packed u8[].
+// $__fern_aes_ctr32, $__fern_ghash, $__fern_aes_gcm_seal and
+// $__fern_aes_gcm_open, each answering a fresh packed u8[].
 //
 // Both are constant time with no table at all. AES is bitsliced over i64:
 // four blocks a pass, each of eight words holding one bit of every byte, the
@@ -423,8 +424,46 @@ function ghash_func(): string {
     + "    (i64.store offset=16 (local.get $out) (call $__fern_bswap64 (local.get $yl)))\n    (local.get $out))\n";
 }
 
-// kernel_name is the function an aes_expand_key (402), aes_ctr32 (403) or
-// ghash (404) op calls.
+// block16_wat sets $<dst> to a fresh 16-byte array holding the two 64-bit
+// words `hi` and `lo` in that order.
+function block16_wat(dst: string, hi: string, lo: string): string {
+  return "    (local.set $" + dst + " (call $__fern_aes_bytes (i32.const 16)))\n"
+    + "    (i64.store offset=8 (local.get $" + dst + ") " + hi + ")\n    (i64.store offset=16 (local.get $" + dst + ") " + lo + ")\n";
+}
+
+// $__fern_aes_gcm(rk, h, nonce, aad, data, seal) is GCM over a 96-bit nonce
+// from the kernels above: CTR from J0 + 1, then GHASH over the aad, the
+// ciphertext (the output when sealing, data when opening) and the lengths,
+// and E(K, J0) xor that hash as the tag, after the output in one array.
+function gcm_func(): string {
+  return "  (func $__fern_aes_gcm (param $rk i32) (param $h i32) (param $nonce i32) (param $aad i32) (param $data i32) (param $seal i32) (result i32)\n"
+    + "    (local $np i32) (local $cb i32) (local $out i32) (local $ct i32) (local $y i32) (local $t i32) (local $tag i32) (local $all i32) (local $n i32)\n"
+    + "    (if (i32.or (i32.or (i32.lt_u (call $__fern_aes_view_len (local.get $rk)) (i32.const 176)) (i32.lt_u (call $__fern_aes_view_len (local.get $h)) (i32.const 16)))\n"
+    + "        (i32.ne (call $__fern_aes_view_len (local.get $nonce)) (i32.const 12)))\n      (then (return (call $__fern_aes_bytes (i32.const 0)))))\n"
+    + "    (local.set $np (call $__fern_aes_view_data (local.get $nonce)))\n"
+    + block16_wat("cb", "(i64.load (local.get $np))", "(i64.or (i64.extend_i32_u (i32.load offset=8 (local.get $np))) (i64.const 0x0200000000000000))")
+    + "    (local.set $out (call $__fern_aes_ctr32 (local.get $rk) (local.get $cb) (local.get $data)))\n"
+    + "    (local.set $ct (if (result i32) (local.get $seal) (then (local.get $out)) (else (local.get $data))))\n"
+    + "    (local.set $n (call $__fern_aes_view_len (local.get $data)))\n"
+    + block16_wat("y", "(i64.const 0)", "(i64.const 0)")
+    + "    (local.set $t (call $__fern_ghash (local.get $h) (local.get $y) (local.get $aad)))\n    (drop (call $__fern_arr_dec (local.get $y)))\n"
+    + "    (local.set $y (call $__fern_ghash (local.get $h) (local.get $t) (local.get $ct)))\n    (drop (call $__fern_arr_dec (local.get $t)))\n"
+    + block16_wat("t", "(call $__fern_bswap64 (i64.shl (i64.extend_i32_u (call $__fern_aes_view_len (local.get $aad))) (i64.const 3)))", "(call $__fern_bswap64 (i64.shl (i64.extend_i32_u (local.get $n)) (i64.const 3)))")
+    + "    (local.set $tag (call $__fern_ghash (local.get $h) (local.get $y) (local.get $t)))\n    (drop (call $__fern_arr_dec (local.get $y)))\n    (drop (call $__fern_arr_dec (local.get $t)))\n"
+    + "    (i32.store offset=20 (local.get $cb) (i32.const 0x01000000))\n"
+    + "    (local.set $t (call $__fern_aes_ctr32 (local.get $rk) (local.get $cb) (local.get $tag)))\n    (drop (call $__fern_arr_dec (local.get $tag)))\n    (drop (call $__fern_arr_dec (local.get $cb)))\n"
+    + "    (local.set $all (call $__fern_aes_bytes (i32.add (local.get $n) (i32.const 16))))\n"
+    + "    (memory.copy (i32.add (local.get $all) (i32.const 8)) (i32.add (local.get $out) (i32.const 8)) (local.get $n))\n"
+    + "    (memory.copy (i32.add (i32.add (local.get $all) (i32.const 8)) (local.get $n)) (i32.add (local.get $t) (i32.const 8)) (i32.const 16))\n"
+    + "    (drop (call $__fern_arr_dec (local.get $out)))\n    (drop (call $__fern_arr_dec (local.get $t)))\n    (local.get $all))\n"
+    + "  (func $__fern_aes_gcm_seal (param $rk i32) (param $h i32) (param $nonce i32) (param $aad i32) (param $data i32) (result i32)\n"
+    + "    (call $__fern_aes_gcm (local.get $rk) (local.get $h) (local.get $nonce) (local.get $aad) (local.get $data) (i32.const 1)))\n"
+    + "  (func $__fern_aes_gcm_open (param $rk i32) (param $h i32) (param $nonce i32) (param $aad i32) (param $data i32) (result i32)\n"
+    + "    (call $__fern_aes_gcm (local.get $rk) (local.get $h) (local.get $nonce) (local.get $aad) (local.get $data) (i32.const 0)))\n";
+}
+
+// kernel_name is the function an aes_expand_key (402), aes_ctr32 (403),
+// ghash (404), aes_gcm_seal (444) or aes_gcm_open (445) op calls.
 pub function kernel_name(tag: i32): string {
   if (tag == 402) {
     return "$__fern_aes_expand_key";
@@ -432,13 +471,19 @@ pub function kernel_name(tag: i32): string {
   if (tag == 403) {
     return "$__fern_aes_ctr32";
   }
+  if (tag == 444) {
+    return "$__fern_aes_gcm_seal";
+  }
+  if (tag == 445) {
+    return "$__fern_aes_gcm_open";
+  }
   return "$__fern_ghash";
 }
 
-// funcs is every function the three kernels need but the byte swaps, emitted
+// funcs is every function the kernels need but the byte swaps, emitted
 // once when any of them is used. They call the runtime's $__fern_arr_elems
 // and $__fern_arr_dec.
 pub function funcs(): string {
   return view_funcs() + sbox_func() + ortho_func() + interleave_funcs() + shift_rows_func() + mix_columns_func()
-    + encrypt_func() + sub_word_func() + expand_key_func() + ctr32_func() + ghash_func();
+    + encrypt_func() + sub_word_func() + expand_key_func() + ctr32_func() + ghash_func() + gcm_func();
 }

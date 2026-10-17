@@ -301,6 +301,8 @@ var Ungated = map[string]bool{
 	"__aes_expand_key": true,
 	"__aes_ctr32":      true,
 	"__ghash":          true,
+	"__aes_gcm_seal":   true,
+	"__aes_gcm_open":   true,
 	// So does the SHA-256 kernel, and its predicate reads the target.
 	"__sha256_hw":        true,
 	"__sha256_hw_blocks": true,

@@ -772,13 +772,15 @@ runner gates its own ISA. It proves only what the probes execute: a
 secret-dependent path the inputs do not take is not reported. Every later
 crypto kernel adds its own case.
 
-The AES-GCM kernels (`__aes_expand_key`, `__aes_ctr32`, `__ghash`) are
-checked on their own against known answers on every target by
-`TestSelfHostAESGCMKernelsX86_64`, `…Arm64` (qemu), `…Wasm` and
-`TestSelfHostInterpAESGCMKernels` (both interpreters): FIPS-197's key
-schedules and blocks, GCM's test case 2 GHASH, a counter whose low word
-wraps, and every length to 80 bytes, which crosses each kernel's unrolled
-stride and partial last block. A wrong kernel on one backend fails that
+The AES-GCM kernels (`__aes_expand_key`, `__aes_ctr32`, `__ghash`,
+`__aes_gcm_seal`, `__aes_gcm_open`) are checked on their own against known
+answers on every target by `TestSelfHostAESGCMKernelsX86_64`, `…Arm64`
+(qemu), `…Wasm` and `TestSelfHostInterpAESGCMKernels` (both interpreters).
+The answers are FIPS-197's key schedules and blocks, GCM's test case 2
+GHASH and test case 4 seal, and a counter whose low word wraps. Every
+length to 80 bytes is also covered, which crosses each kernel's unrolled
+stride and partial last block. Seal and open are held to what the separate
+kernels compose to. A wrong kernel on one backend fails that
 backend's leg even when the others agree.
 
 ## Netlify deploys and the standalone smoke script

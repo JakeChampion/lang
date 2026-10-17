@@ -11823,7 +11823,14 @@ function a64_aes_xor_out(j: i32): string {
 }
 
 function a64_aes_ctr_blocks(): string {
-  let o: string = ".Lctr_loop4:\n    cmp x4, #64\n    b.lo .Lctr_loop1\n";
+  return a64_aes_ctr_blocks_at(".Lctr", ".Lctr_ret", 80);
+}
+
+// a64_aes_ctr_blocks_at is the CTR loop under its own labels (`p`), going to
+// `done` once x4 bytes from x1 have gone to x2 and keeping a partial last
+// block's keystream at [x29, #tail].
+function a64_aes_ctr_blocks_at(p: string, done: string, tail: i32): string {
+  let o: string = p + "_loop4:\n    cmp x4, #64\n    b.lo " + p + "_loop1\n";
   let j: i32 = 0;
   while (j < 4) {
     o = o + a64_aes_counter(j);
@@ -11835,25 +11842,31 @@ function a64_aes_ctr_blocks(): string {
     o = o + a64_aes_xor_out(j);
     j = j + 1;
   }
-  o = o + "    sub x4, x4, #64\n    b .Lctr_loop4\n.Lctr_loop1:\n    cmp x4, #16\n    b.lo .Lctr_tail\n" + a64_aes_counter(0) + "    bl .Lctr_enc1\n"
-    + a64_aes_xor_out(0) + "    sub x4, x4, #16\n    b .Lctr_loop1\n";
+  o = o + "    sub x4, x4, #64\n    b " + p + "_loop4\n" + p + "_loop1:\n    cmp x4, #16\n    b.lo " + p + "_tail\n" + a64_aes_counter(0) + "    bl .Lctr_enc1\n"
+    + a64_aes_xor_out(0) + "    sub x4, x4, #16\n    b " + p + "_loop1\n";
   // The last partial block's keystream goes through the frame, combined a
   // byte at a time.
-  return o + ".Lctr_tail:\n    cbz x4, .Lctr_ret\n" + a64_aes_counter(0) + "    bl .Lctr_enc1\n    add x5, x29, #80\n    st1 {v0.16b}, [x5]\n    mov x6, #0\n"
-    + ".Lctr_tailb:\n    ldrb w9, [x1, x6]\n    ldrb w10, [x5, x6]\n    eor w9, w9, w10\n    strb w9, [x2, x6]\n    add x6, x6, #1\n    cmp x6, x4\n    b.lo .Lctr_tailb\n    b .Lctr_ret\n";
+  return o + p + "_tail:\n    cbz x4, " + done + "\n" + a64_aes_counter(0) + "    bl .Lctr_enc1\n    add x5, x29, #" + util.i32_to_string(tail) + "\n    st1 {v0.16b}, [x5]\n    mov x6, #0\n"
+    + p + "_tailb:\n    ldrb w9, [x1, x6]\n    ldrb w10, [x5, x6]\n    eor w9, w9, w10\n    strb w9, [x2, x6]\n    add x6, x6, #1\n    cmp x6, x4\n    b.lo " + p + "_tailb\n    b " + done + "\n";
 }
 
 function a64_aes_load_keys(): string {
+  return a64_aes_load_keys_at(".Lctr_keys");
+}
+
+// a64_aes_load_keys_at loads the round keys at x8 into v16..v30, x7 rounds,
+// ending at `label`.
+function a64_aes_load_keys_at(label: string): string {
   let o: string = "";
   let r: i32 = 0;
   while (r < 15) {
     if (r == 11) {
-      o = o + "    cmp x7, #14\n    b.ne .Lctr_keys\n";
+      o = o + "    cmp x7, #14\n    b.ne " + label + "\n";
     }
     o = o + "    ld1 {v" + util.i32_to_string(16 + r) + ".16b}, [x8]\n    add x8, x8, #16\n";
     r = r + 1;
   }
-  return o + ".Lctr_keys:\n";
+  return o + label + ":\n";
 }
 
 function a64_aes_ctr32(): string {
@@ -11883,15 +11896,119 @@ function a64_ghash_rev(v: string): string {
 // byte shifts. Clobbers v2-v7, v16, v17 and v20.
 function a64_ghash_mul(): string {
   return ".Lgh_mul:\n    ext v20.16b, v1.16b, v1.16b, #8\n    pmull v3.1q, v0.1d, v1.1d\n    pmull v4.1q, v0.1d, v20.1d\n"
-    + "    pmull2 v5.1q, v0.2d, v20.2d\n    pmull2 v6.1q, v0.2d, v1.2d\n    eor v4.16b, v4.16b, v5.16b\n"
-    + "    ext v5.16b, v31.16b, v4.16b, #8\n    ext v4.16b, v4.16b, v31.16b, #8\n    eor v3.16b, v3.16b, v5.16b\n    eor v6.16b, v6.16b, v4.16b\n"
+    + "    pmull2 v5.1q, v0.2d, v20.2d\n    pmull2 v6.1q, v0.2d, v1.2d\n    eor v4.16b, v4.16b, v5.16b\n" + a64_ghash_reduce() + "    ret\n";
+}
+
+// a64_ghash_reduce is v0 = the 256-bit product whose low, middle and high
+// terms are in v3, v4 and v6, shifted for the reflected order and reduced.
+// Both steps are linear, so a sum of products reduces as one.
+function a64_ghash_reduce(): string {
+  return "    ext v5.16b, v31.16b, v4.16b, #8\n    ext v4.16b, v4.16b, v31.16b, #8\n    eor v3.16b, v3.16b, v5.16b\n    eor v6.16b, v6.16b, v4.16b\n"
     + "    ushr v7.4s, v3.4s, #31\n    ushr v16.4s, v6.4s, #31\n    shl v3.4s, v3.4s, #1\n    shl v6.4s, v6.4s, #1\n"
     + "    ext v17.16b, v7.16b, v31.16b, #12\n    ext v16.16b, v31.16b, v16.16b, #12\n    ext v7.16b, v31.16b, v7.16b, #12\n"
     + "    orr v3.16b, v3.16b, v7.16b\n    orr v6.16b, v6.16b, v16.16b\n    orr v6.16b, v6.16b, v17.16b\n"
     + "    shl v7.4s, v3.4s, #31\n    shl v16.4s, v3.4s, #30\n    shl v17.4s, v3.4s, #25\n    eor v7.16b, v7.16b, v16.16b\n    eor v7.16b, v7.16b, v17.16b\n"
     + "    ext v16.16b, v7.16b, v31.16b, #4\n    ext v7.16b, v31.16b, v7.16b, #4\n    eor v3.16b, v3.16b, v7.16b\n"
     + "    ushr v2.4s, v3.4s, #1\n    ushr v4.4s, v3.4s, #2\n    ushr v5.4s, v3.4s, #7\n    eor v2.16b, v2.16b, v4.16b\n    eor v2.16b, v2.16b, v5.16b\n"
-    + "    eor v2.16b, v2.16b, v16.16b\n    eor v3.16b, v3.16b, v2.16b\n    eor v0.16b, v6.16b, v3.16b\n    ret\n";
+    + "    eor v2.16b, v2.16b, v16.16b\n    eor v3.16b, v3.16b, v2.16b\n    eor v0.16b, v6.16b, v3.16b\n";
+}
+
+// a64_ghash_prod adds x times hk into the product terms v3, v4 and v6,
+// writing them when `first`.
+function a64_ghash_prod(x: string, hk: string, first: boolean): string {
+  let o: string = "    pmull v2.1q, " + x + ".1d, " + hk + ".1d\n    pmull2 v5.1q, " + x + ".2d, " + hk + ".2d\n    ext v20.16b, " + hk + ".16b, " + hk + ".16b, #8\n"
+    + "    pmull v7.1q, " + x + ".1d, v20.1d\n    pmull2 v16.1q, " + x + ".2d, v20.2d\n";
+  if (first) {
+    return o + "    mov v3.16b, v2.16b\n    mov v6.16b, v5.16b\n    eor v4.16b, v7.16b, v16.16b\n";
+  }
+  return o + "    eor v3.16b, v3.16b, v2.16b\n    eor v6.16b, v6.16b, v5.16b\n    eor v4.16b, v4.16b, v7.16b\n    eor v4.16b, v4.16b, v16.16b\n";
+}
+
+// a64_ghash_blocks4_at folds four blocks a pass while at least 64 bytes
+// remain: ((y ^ x1) H^4) ^ (x2 H^3) ^ (x3 H^2) ^ (x4 H), one reduction for
+// the four. H^2, H^3 and H^4 go to v21-v23 first, and the blocks to
+// v24-v27, which overwrites any round keys there.
+function a64_ghash_blocks4_at(p: string): string {
+  let o: string = "    cmp x4, #64\n    b.lo " + p + "_loop\n    mov v19.16b, v0.16b\n    mov v0.16b, v1.16b\n"
+    + "    bl .Lgh_mul\n    mov v21.16b, v0.16b\n    bl .Lgh_mul\n    mov v22.16b, v0.16b\n    bl .Lgh_mul\n    mov v23.16b, v0.16b\n    mov v0.16b, v19.16b\n"
+    + p + "_loop4:\n    cmp x4, #64\n    b.lo " + p + "_loop\n    ldp q24, q25, [x1]\n    ldp q26, q27, [x1, #32]\n    add x1, x1, #64\n    sub x4, x4, #64\n"
+    + a64_ghash_rev("v24") + a64_ghash_rev("v25") + a64_ghash_rev("v26") + a64_ghash_rev("v27") + "    eor v24.16b, v24.16b, v0.16b\n";
+  return o + a64_ghash_prod("v24", "v23", true) + a64_ghash_prod("v25", "v22", false) + a64_ghash_prod("v26", "v21", false) + a64_ghash_prod("v27", "v1", false)
+    + a64_ghash_reduce() + "    b " + p + "_loop4\n";
+}
+
+// a64_ghash_blocks_at folds the x4 bytes at x1 into the state in v0 under
+// its own labels (`p`), H in v1 and v31 zero, four blocks a pass and then
+// one at a time, a short last block zero-padded
+// through [x29, #pad]; it goes to `done` when nothing is left over and falls
+// through to it after the last block otherwise.
+function a64_ghash_blocks_at(p: string, done: string, pad: i32): string {
+  let o: string = a64_ghash_blocks4_at(p) + p + "_loop:\n    cmp x4, #16\n    b.lo " + p + "_tail\n    ld1 {v2.16b}, [x1]\n" + a64_ghash_rev("v2") + "    eor v0.16b, v0.16b, v2.16b\n    bl .Lgh_mul\n"
+    + "    add x1, x1, #16\n    sub x4, x4, #16\n    b " + p + "_loop\n";
+  // A short last block is zero-padded through the frame.
+  return o + p + "_tail:\n    cbz x4, " + done + "\n    add x5, x29, #" + util.i32_to_string(pad) + "\n    st1 {v31.16b}, [x5]\n    mov x6, #0\n"
+    + p + "_tailb:\n    ldrb w9, [x1, x6]\n    strb w9, [x5, x6]\n    add x6, x6, #1\n    cmp x6, x4\n    b.lo " + p + "_tailb\n"
+    + "    ld1 {v2.16b}, [x5]\n" + a64_ghash_rev("v2") + "    eor v0.16b, v0.16b, v2.16b\n    bl .Lgh_mul\n";
+}
+
+// a64_aes_gcm is __fern_aes_gcm_seal(x0 = round keys, x1 = h, x2 = nonce,
+// x3 = aad, x4 = plaintext), answering the ciphertext and its 16-byte tag in
+// one fresh packed u8[], or __fern_aes_gcm_open over a ciphertext, answering
+// the plaintext and the tag the ciphertext should carry, for the caller to
+// compare. Seal encrypts first and hashes its output; open hashes its input
+// first. The round keys are loaded again for E(K, J0), since the hash's
+// multiply runs over v16 and v17. A short key schedule or H, or a nonce that
+// is not 12 bytes, answers the empty array.
+function a64_aes_gcm(seal: boolean): string {
+  let name: string = if (seal) { "__fern_aes_gcm_seal" } else { "__fern_aes_gcm_open" };
+  let p: string = if (seal) { ".Lgcs" } else { ".Lgco" };
+  let o: string = "    .global " + name + "\n    .type " + name + ", %function\n" + name + ":\n    stp x29, x30, [sp, #-192]!\n    mov x29, sp\n"
+    + a64_aes_view("x4", "x5", "x6", p + "_d") + "    str x5, [x29, #16]\n    str x6, [x29, #24]\n"
+    + a64_aes_view("x3", "x5", "x6", p + "_a") + "    str x5, [x29, #64]\n    str x6, [x29, #72]\n"
+    + a64_aes_view("x2", "x5", "x6", p + "_n") + "    str x5, [x29, #56]\n    str x6, [x29, #176]\n"
+    + a64_aes_view("x1", "x5", "x6", p + "_h") + "    str x5, [x29, #48]\n    str x6, [x29, #184]\n"
+    + a64_aes_view("x0", "x5", "x6", p + "_k") + "    str x5, [x29, #32]\n";
+  // The rounds from the schedule's size as __fern_aes_ctr32 reads it, none
+  // for a nonce that is not 96 bits or an H shorter than a block.
+  o = o + "    mov x7, #0\n    cmp x6, #176\n    b.lo " + p + "_r\n    mov x7, #10\n    cmp x6, #240\n    b.lo " + p + "_r\n    mov x7, #14\n" + p + "_r:\n"
+    + "    ldr x9, [x29, #176]\n    cmp x9, #12\n    b.eq " + p + "_nok\n    mov x7, #0\n" + p + "_nok:\n"
+    + "    ldr x9, [x29, #184]\n    cmp x9, #16\n    b.hs " + p + "_hok\n    mov x7, #0\n" + p + "_hok:\n    str x7, [x29, #40]\n"
+    + "    ldr x0, [x29, #24]\n    add x0, x0, #16\n    cbnz x7, " + p + "_box\n    mov x0, #0\n" + p + "_box:\n"
+    + a64_aes_alloc("96") + "    ldr x9, [x0]\n    cbz x9, " + p + "_ret\n";
+  // The nonce in the counter block, its last word 2 for the data.
+  o = o + "    ldr x5, [x29, #56]\n    ldr x9, [x5]\n    ldr w10, [x5, #8]\n    str x9, [x29, #112]\n    str w10, [x29, #120]\n"
+    + "    mov w11, #33554432\n    str w11, [x29, #124]\n";
+  if (seal) {
+    o = o + a64_aes_gcm_ctr(p) + a64_aes_gcm_hash(p, "    ldr x1, [x29, #96]\n    add x1, x1, #8\n");
+  } else {
+    o = o + a64_aes_gcm_hash(p, "    ldr x1, [x29, #16]\n") + a64_aes_gcm_ctr(p);
+  }
+  // The tag: E(K, J0), J0 the nonce with a last word of 1, xor the hash.
+  o = o + "    mov w11, #16777216\n    str w11, [x29, #124]\n    ldr x8, [x29, #32]\n    ldr x7, [x29, #40]\n" + a64_aes_load_keys_at(p + "_k2")
+    + "    add x5, x29, #112\n    ld1 {v0.16b}, [x5]\n    bl .Lctr_enc1\n    add x5, x29, #160\n    ld1 {v1.16b}, [x5]\n    eor v0.16b, v0.16b, v1.16b\n"
+    + "    ldr x3, [x29, #96]\n    add x3, x3, #8\n    ldr x9, [x29, #24]\n    add x3, x3, x9\n    st1 {v0.16b}, [x3]\n";
+  return o + p + "_ret:\n    ldr x0, [x29, #96]\n    ldp x29, x30, [sp], #192\n    ret\n    .size " + name + ", .-" + name + "\n";
+}
+
+// a64_aes_gcm_ctr runs the data through CTR from the counter block, into the
+// array after its length word.
+function a64_aes_gcm_ctr(p: string): string {
+  return "    add x5, x29, #112\n    ld1 {v6.16b}, [x5]\n    rev32 v6.16b, v6.16b\n    movi v7.2d, #0\n    mov w9, #1\n    ins v7.s[3], w9\n"
+    + "    ldr x8, [x29, #32]\n    ldr x7, [x29, #40]\n" + a64_aes_load_keys_at(p + "_k1")
+    + "    ldr x1, [x29, #16]\n    ldr x4, [x29, #24]\n    ldr x2, [x29, #96]\n    add x2, x2, #8\n"
+    + a64_aes_ctr_blocks_at(p + "_c", p + "_cdone", 80) + p + "_cdone:\n";
+}
+
+// a64_aes_gcm_hash is GHASH over the aad and then the ciphertext, which
+// `ct` points x1 at, and the two bit lengths, saved at [x29, #160].
+function a64_aes_gcm_hash(p: string, ct: string): string {
+  return "    movi v31.2d, #0\n    ldr x5, [x29, #48]\n    ld1 {v1.16b}, [x5]\n" + a64_ghash_rev("v1") + "    movi v0.2d, #0\n"
+    + "    ldr x1, [x29, #64]\n    ldr x4, [x29, #72]\n" + a64_ghash_blocks_at(p + "_ga", p + "_gadone", 128) + p + "_gadone:\n"
+    + ct + "    ldr x4, [x29, #24]\n" + a64_ghash_blocks_at(p + "_gc", p + "_gcdone", 128) + p + "_gcdone:\n"
+    + "    ldr x9, [x29, #72]\n    lsl x9, x9, #3\n    rev x9, x9\n    str x9, [x29, #144]\n"
+    + "    ldr x9, [x29, #24]\n    lsl x9, x9, #3\n    rev x9, x9\n    str x9, [x29, #152]\n"
+    + "    add x5, x29, #144\n    ld1 {v2.16b}, [x5]\n" + a64_ghash_rev("v2") + "    eor v0.16b, v0.16b, v2.16b\n    bl .Lgh_mul\n"
+    + a64_ghash_rev("v0") + "    add x5, x29, #160\n    st1 {v0.16b}, [x5]\n";
 }
 
 function a64_ghash(): string {
@@ -11903,22 +12020,21 @@ function a64_ghash(): string {
     + a64_aes_alloc("48") + "    ldr x4, [x0]\n    cbz x4, .Lgh_ret\n    movi v31.2d, #0\n"
     + "    ldr x3, [x29, #40]\n    ld1 {v1.16b}, [x3]\n" + a64_ghash_rev("v1") + "    ldr x3, [x29, #32]\n    ld1 {v0.16b}, [x3]\n" + a64_ghash_rev("v0")
     + "    ldr x1, [x29, #16]\n    ldr x4, [x29, #24]\n";
-  o = o + ".Lgh_loop:\n    cmp x4, #16\n    b.lo .Lgh_tail\n    ld1 {v2.16b}, [x1]\n" + a64_ghash_rev("v2") + "    eor v0.16b, v0.16b, v2.16b\n    bl .Lgh_mul\n"
-    + "    add x1, x1, #16\n    sub x4, x4, #16\n    b .Lgh_loop\n";
-  // A short last block is zero-padded through the frame.
-  o = o + ".Lgh_tail:\n    cbz x4, .Lgh_out\n    add x5, x29, #64\n    st1 {v31.16b}, [x5]\n    mov x6, #0\n"
-    + ".Lgh_tailb:\n    ldrb w9, [x1, x6]\n    strb w9, [x5, x6]\n    add x6, x6, #1\n    cmp x6, x4\n    b.lo .Lgh_tailb\n"
-    + "    ld1 {v2.16b}, [x5]\n" + a64_ghash_rev("v2") + "    eor v0.16b, v0.16b, v2.16b\n    bl .Lgh_mul\n";
+  o = o + a64_ghash_blocks_at(".Lgh", ".Lgh_out", 64);
   return o + ".Lgh_out:\n" + a64_ghash_rev("v0") + "    ldr x0, [x29, #48]\n    add x3, x0, #8\n    st1 {v0.16b}, [x3]\n"
     + ".Lgh_ret:\n    ldr x0, [x29, #48]\n    ldp x29, x30, [sp], #80\n    ret\n" + a64_ghash_mul() + "    .size __fern_ghash, .-__fern_ghash\n";
 }
 
 // emit_aes_gcm_op calls a kernel: [key] for aes_expand_key, three views for
-// aes_ctr32 and ghash.
+// aes_ctr32 and ghash, five for aes_gcm_seal and aes_gcm_open.
 function emit_aes_gcm_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   s = s.need("aes_gcm").need("heap");
   if (o.kind_tag == 402) {
     return s.write("    ldr x0, [sp], #16\n    bl __fern_aes_expand_key\n    str x0, [sp, #-16]!\n");
+  }
+  if (o.kind_tag == 444 || o.kind_tag == 445) {
+    let fused: string = if (o.kind_tag == 444) { "__fern_aes_gcm_seal" } else { "__fern_aes_gcm_open" };
+    return s.write("    ldr x4, [sp], #16\n    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl " + fused + "\n    str x0, [sp, #-16]!\n");
   }
   let callee: string = "__fern_aes_ctr32";
   if (o.kind_tag == 404) {
@@ -11928,7 +12044,7 @@ function emit_aes_gcm_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_rt_aes_gcm(s: asmcore.EmitState): asmcore.EmitState {
-  return s.write("    .arch_extension aes\n" + a64_aes_expand_key() + a64_aes_ctr32() + a64_ghash());
+  return s.write("    .arch_extension aes\n" + a64_aes_expand_key() + a64_aes_ctr32() + a64_ghash() + a64_aes_gcm(true) + a64_aes_gcm(false));
 }
 
 // __fern_sha256_hw_blocks(x0 = state, x1 = data), the SHA-256 compression
