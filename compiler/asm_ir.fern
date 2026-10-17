@@ -9203,7 +9203,7 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
   return ssa_store(reg_of, ins.result, d, s);
 }
 
-// ssa_line_loc renders a source-position marker (ir.op_line, ssa kind 35) as
+// ssa_line_loc renders a prepared source position as
 // a `.loc` row: the file number the CLI's `.file` table gives the marker's
 // module (util.pos_file_index + 1), its line and its column, and
 // prologue_end on a function's first, which is where a breakpoint on the

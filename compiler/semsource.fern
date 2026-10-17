@@ -5436,7 +5436,8 @@ function stmt(st: ast.Stmt, s: State): State {
 
 // line_mark emits the source-position marker (ssa kind 35) a `-g` build
 // carries ahead of each statement: imm the merged module's line, str the
-// column, and a void value nothing reads. ssarc hands it on as ir.op_line.
+// column, and a void value nothing reads. Renumbering consumes these markers
+// into side tables before assigning executable value IDs.
 function line_mark(st: ast.Stmt, s: State): State {
   let v: Value = define(s, 35, [], ast.stmt_line(st), util.i32_to_string(stmt_col(st)), t_void());
   return v.s;
