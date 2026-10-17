@@ -56,3 +56,23 @@ contains every timing, allocation count, checksum, source and compiler hash, plu
 a reproduction script. Three-target ordinary and sanitized tests cover the ABI
 and boxed controls. Scalar-only field multiplication callers remove 30,000 boxes;
 the complete X25519 control preserves its existing 107,520 allocations.
+
+## Integration with main 3260020a0
+
+After the next main update, the compiler reaches the same stage-2/stage-3
+fixed point at 12,699,472 bytes, SHA-256
+`f395df09bc0d2fb9fa77c410384411708ac7fe941e7d56b3d6e3aeab6c5eb6b7`.
+The focused scalar, sanitized, donor, path-identity, inventory and complexity
+suite passes in 35.631 seconds. Declaration and instance body collection are
+separate functions, as is bare-frame restoration; the complexity limits remain
+unchanged. The complete strict driver-size repeat is in progress.
+
+The tracked-size baseline moves from 12,054,832 to 12,699,472 bytes (+5.35%).
+A separate checkout of main `3260020a010d15615407a7d58d917f6f0a6df8be`, built
+with the previous compiler and then twice with itself, reaches identical
+12,671,152-byte outputs, SHA-256
+`f5539d74a09bdf471614f8e84935cdce44a5273e6e46950ac804c3652a7f83b5`.
+Main already exceeds the old baseline by 5.11%; this change adds 28,320 bytes,
+0.22% against that measured main. The other ten baselines and the 5% tolerance
+remain unchanged. The earlier allocation comparison retains its exact original
+source/compiler scope; it is not relabeled as this integrated build.
