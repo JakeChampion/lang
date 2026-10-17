@@ -20,6 +20,7 @@
 import "./lexer";
 import "./parser";
 import "./asmcore";
+import "./rtprofile";
 import "./x86_native";
 import "./checker";
 import "./util";
@@ -431,7 +432,7 @@ function san_poison_check(reg: string, on: boolean): string {
 // (str_grow_census). Every emission site below is gated on it, so a build
 // with both off is byte-identical to one from a compiler without the feature.
 function hev_on(s: asmcore.EmitState): boolean {
-  return rc_trace_on() || s.leak_check;
+  return rc_trace_on() || s.leak_check || rtprofile.allocation(s.profile);
 }
 
 // str_grow_census charges an in-place string growth to the leak census as
@@ -849,6 +850,7 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq 120(%rsp), %r12\n");  // ptr
   s = s.write("    movq 128(%rsp), %r13\n");  // words
   s = s.write("    shlq $3, %r13\n");  // bytes = words * 8
+  s = emit_profile_alloc_hook(s);
   s = s.write("    movq $97, %rbx\n");  // 'a'
   // A box shim's claim outranks __fern_alloc's own caller: it names the code
   // that wanted the box rather than the shim that built it. Consume it, so
@@ -9873,11 +9875,11 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let dbg: asmcore.DbgVars = dbg_out.dbg;
   let views: i32[] = ssa_view_slots(f);
   let nspill: i32 = ssa.spill_count(reg_of);
-  let tails: boolean = r.dbg_slots.len() == 0 && !ssa_source_lines(f);
+  let tails: boolean = s.profile == 0 && r.dbg_slots.len() == 0 && !ssa_source_lines(f);
   // A function with no frame slots that might make no call but a tail call is
   // emitted into a buffer first, behind placeholders for its exits; its text
   // decides whether it needs %rbp at all.
-  let leaf: boolean = nspill == 0 && ssa_view_count(views) == 0 && !hev_on(s) && !ssa_calls_besides_tails(f, s, tails);
+  let leaf: boolean = s.profile == 0 && nspill == 0 && ssa_view_count(views) == 0 && !hev_on(s) && !ssa_calls_besides_tails(f, s, tails);
   // One that calls but addresses no slot and takes every parameter in a
   // register needs no %rbp: it pushes what it saves and pads %rsp to a
   // call's alignment.
@@ -11823,6 +11825,9 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
     if (asmcore.vdso_wanted(s, "x86_64")) {
       s = emit_vdso_scan(s);
     }
+    if (s.profile > 0) {
+      s = s.write("    leaq .Lprofile_ring(%rip), %rax\n    movq %rsp, %rsi\n    leaq .Lprofile_action(%rip), %rdi\n    leaq .Lprofile_timer(%rip), %r8\n    call __fn___fern_profile_start.r\n");
+    }
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
     // A MAIN-LESS module (a library compiled standalone — util.fern et al.
@@ -12020,6 +12025,42 @@ function emit_entry_runtime_settled(s0: asmcore.EmitState): asmcore.EmitState {
   return out;
 }
 
+// SIGPROF's C entry serializes captures with a TID-owned mutex. A handler
+// never waits: contention increments the dropped count. Flush disables new
+// samples, waits for another thread's capture, and recognizes a reentrant
+// exit on its own thread so shutdown cannot deadlock in the signal handler.
+// The heap-event hook has already saved all registers. Keep the call aligned.
+function emit_profile_alloc_hook(s: asmcore.EmitState): asmcore.EmitState {
+  if (!rtprofile.allocation(s.profile)) {
+    return s;
+  }
+  return s.write("    subq $8, %rsp\n    call __fern_profile_alloc\n    addq $8, %rsp\n");
+}
+
+function emit_profile_alloc_runtime(s: asmcore.EmitState): asmcore.EmitState {
+  if (!rtprofile.allocation(s.profile)) {
+    return s;
+  }
+  return s.write("__fern_profile_alloc:\n    cmpq $0, .Lprofile_ring+24(%rip)\n    je .Lprofile_alloc_return\n    movq $1, %rax\n    lock xaddq %rax, .Lprofile_ring+144(%rip)\n    addq $1, %rax\n    testq $63, %rax\n    jne .Lprofile_alloc_return\n    movq $39, %rax\n    syscall\n    cmpq .Lprofile_ring+128(%rip), %rax\n    jne .Lprofile_alloc_return\n    movq $186, %rax\n    syscall\n    movq %rax, %r10\n    xorl %eax, %eax\n    lock cmpxchgq %r10, .Lprofile_ring+40(%rip)\n    jne .Lprofile_busy\n    subq $8, %rsp\n    leaq -1(%r14), %rax\n    movq %rbp, %rsi\n    movq %rsp, %rdi\n    leaq .Lprofile_ring(%rip), %r8\n    movq %r13, %r9\n    shlq $6, %r9\n    call __fn___fern_profile_sample.r\n    testl %eax, %eax\n    je .Lprofile_alloc_unlock\n    lock addq $1, .Lprofile_ring+8(%rip)\n.Lprofile_alloc_unlock:\n    addq $8, %rsp\n    movq $0, .Lprofile_ring+40(%rip)\n.Lprofile_alloc_return:\n    ret\n");
+}
+
+function emit_profile_runtime(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .section .bss\n    .balign 8\n.Lprofile_ring: .zero 4337824\n    .data\n    .balign 8\n.Lprofile_action: .quad __fern_profile_signal, 335544324, __fern_profile_restorer, 0\n.Lprofile_timer: .quad 0, 10000, 0, 10000\n    .text\n");
+  s = emit_ir_runtime_fern_fn(rtprofile.source("x86-64-linux", s.profile), s);
+  s = s.write("__fern_profile_signal:\n    cmpq $0, .Lprofile_ring+24(%rip)\n    je .Lprofile_signal_return\n    movq $39, %rax\n");
+  s = s.syscall(39);
+  s = s.write("    cmpq .Lprofile_ring+128(%rip), %rax\n    jne .Lprofile_signal_return\n    movq $186, %rax\n");
+  s = s.syscall(186);
+  s = s.write("    movq %rax, %r10\n    xorl %eax, %eax\n    lock cmpxchgq %r10, .Lprofile_ring+40(%rip)\n    jne .Lprofile_busy\n    subq $8, %rsp\n    movq 168(%rdx), %rax\n    movq 120(%rdx), %rsi\n    movq 160(%rdx), %rdi\n    leaq .Lprofile_ring(%rip), %r8\n    movq $1, %r9\n    call __fn___fern_profile_sample.r\n    testl %eax, %eax\n    je .Lprofile_capture_ok\n    lock addq $1, .Lprofile_ring+8(%rip)\n.Lprofile_capture_ok:\n    addq $8, %rsp\n    movq $0, .Lprofile_ring+40(%rip)\n.Lprofile_signal_return:\n    ret\n.Lprofile_busy:\n    lock addq $1, .Lprofile_ring+8(%rip)\n    ret\n__fern_profile_restorer:\n    movq $15, %rax\n");
+  s = s.syscall(15);
+  s = s.write("    ud2\n__fern_profile_flush:\n    cmpq $2, .Lprofile_ring+32(%rip)\n    je .Lprofile_flush_return\n    movq $39, %rax\n");
+  s = s.syscall(39);
+  s = s.write("    cmpq .Lprofile_ring+128(%rip), %rax\n    jne .Lprofile_flush_return\n    movq $186, %rax\n");
+  s = s.syscall(186);
+  s = s.write("    movq %rax, %rdx\n.Lprofile_flush_lock:\n    xorl %eax, %eax\n    lock cmpxchgq %rdx, .Lprofile_ring+40(%rip)\n    je .Lprofile_flush_owned\n    cmpq %rdx, %rax\n    je .Lprofile_flush_reentrant\n    pause\n    jmp .Lprofile_flush_lock\n.Lprofile_flush_reentrant:\n    cmpq $1, .Lprofile_ring+32(%rip)\n    je .Lprofile_flush_return\n.Lprofile_flush_owned:\n    cmpq $2, .Lprofile_ring+32(%rip)\n    je .Lprofile_flush_unlock\n    movq $0, .Lprofile_ring+24(%rip)\n    movq $1, .Lprofile_ring+32(%rip)\n    subq $8, %rsp\n    leaq .Lprofile_ring(%rip), %rax\n    call __fn___fern_profile_finish.r\n    addq $8, %rsp\n    movq $2, .Lprofile_ring+32(%rip)\n.Lprofile_flush_unlock:\n    movq $0, .Lprofile_ring+40(%rip)\n.Lprofile_flush_return:\n    ret\n");
+  return emit_profile_alloc_runtime(s);
+}
+
 // The shared `__fern_*` runtime the entry module emits.
 // emit_vdso_scan walks the entry stack past envp's terminator to the
 // auxiliary vector and keeps AT_SYSINFO_EHDR (33), the vDSO's base, in
@@ -12066,6 +12107,9 @@ function emit_rt_clocks(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.profile > 0) {
+    s = emit_profile_runtime(s);
+  }
   // __fern_str_cmp (#2649): string-ordering helper, hosted on the IR path
   // as a Fern function. Self-contained (two borrowed strings, byte compare, no
   // alloc / no other helper call), so emit_ir_runtime_fern_fn's singleton

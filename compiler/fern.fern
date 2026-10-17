@@ -79,6 +79,7 @@ import "./caps";
 import "./modloader";
 import "./visibility";
 import "./asmcore";
+import "./rtprofile";
 import "./fern_toml";
 import "./literate";
 import "./weave";
@@ -5281,6 +5282,13 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
       return 1;
     }
   }
+  let profile_mode: i32 = rtprofile.mode();
+  let profile_error: string = rtprofile.error(profile_mode, target, shared);
+  if (profile_error.len() > 0) {
+    eprint(profile_error);
+    return 1;
+  }
+  emit_syms = rtprofile.symbols(emit_syms, profile_mode);
   if (harden_refused(harden, target, shared)) {
     return 1;
   }
