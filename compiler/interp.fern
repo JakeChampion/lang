@@ -5242,6 +5242,13 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   if (name == "__ct_secret" || name == "__ct_public") {
     return v_void();
   }
+  if (name == "__bytes_owned") {
+    let bs: u8[][] = byte_args(args);
+    if (args.len() != 1 || bs.len() != 1) {
+      return v_err("__bytes_owned: expected one byte array");
+    }
+    return byte_value(bs[0]);
+  }
   if (aes_gcm_arity(name) > 0) {
     return call_aes_gcm(name, args);
   }

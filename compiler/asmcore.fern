@@ -6345,11 +6345,14 @@ pub function (s: EmitState) mark_array_helper(name: string): EmitState {
   if (name == "__fern_arr_concat") {
     return s.need("heap").need("arr_concat");
   }
+  if (name == "__fern_bytes_owned") {
+    return s.need("heap").need("bytes_owned");
+  }
   return s;
 }
 
 function array_helper_need(name: string): boolean {
-  return name == "arr_str_join" || name == "arr_concat";
+  return name == "arr_str_join" || name == "arr_concat" || name == "bytes_owned";
 }
 
 // str_lines's helper builds its string[] with .append() → arr_push /
@@ -6566,6 +6569,14 @@ pub function rt_src_arr_concat(): string {
   let packed: string = "if (width == 8) { " + packed_box("p", "m") + " __memcpy(p + 8, __raw_arr_ptr(a) + 8, na); __memcpy(p + 8 + na, __raw_arr_ptr(b) + 8, nb); return __raw_array(p); }";
   let words: string = "let p: usize = __raw_arr_box(m); let dst: usize = p + 8; let src: usize = __raw_arr_ptr(a) + 8; let left: i32 = na; let part: i32 = 0; while (part < 2) { while (left > 0) { let cc: i32 = left; if (cc > 134217728) { cc = 134217728; } __memcpy(dst, src, cc * 8); dst = dst + cc * 8; src = src + cc * 8; left = left - cc; } src = __raw_arr_ptr(b) + 8; left = nb; part = part + 1; } return __raw_array(p);";
   return "function __fern_arr_concat(a: i32[], b: i32[], width: i32): i32[] { let na: i32 = a.len(); let nb: i32 = b.len(); let m: i32 = na + nb; " + packed + " " + words + " }";
+}
+
+// rt_src_bytes_owned backs `__bytes_owned(b)`: the view's bytes in a fresh
+// packed u8[], one box and one copy. A view is a packed array or a string
+// descriptor tagged with bit 1, decoded as rt_src_ct_mark does.
+pub function rt_src_bytes_owned(): string {
+  return "function __fern_bytes_owned(bytes: usize): i32[] { let n: i32 = 0; let p: usize = 0; if (((bytes as i32) & 2) != 0) { let base: usize = bytes - 2; n = __load_i32(base + 8); p = __raw_load_ptr(base, 0); } else { n = __load_i32(bytes); p = bytes + 8; } "
+    + packed_box("b", "n") + " __memcpy(b + 8, p, n); return __raw_array(b); }";
 }
 
 pub function rt_src_arr_slice_u8(): string {
@@ -11522,7 +11533,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     // xs.reverse() / xs.concat(ys) / a[start:end] (#3457): a LIBRARY module's
     // call resolves against the entry module's single definition, exactly
     // like the heap helpers above.
-    "__fn___fern_arr_slice", "__fn___fern_arr_str_join", "__fn___fern_arr_concat",
+    "__fn___fern_arr_slice", "__fn___fern_arr_str_join", "__fn___fern_arr_concat", "__fn___fern_bytes_owned",
     "__fn___fern_str_concat", "__fn___fern_str_eq",
     "__fn___fern_string_from_bytes", "__fn___fern_str_bytes",
     "__fn___fern_str_lines", "__fn___fern_str_split", "__fn___fern_str_repeat",

@@ -226,6 +226,8 @@ pub function ungated(): string[] {
     "rlimit_nofile", "disable_core_dumps",
     // The constant-time marks only tell valgrind which bytes are secret.
     "__ct_secret", "__ct_public",
+    // A byte view copied into a fresh array reaches nothing.
+    "__bytes_owned",
     // The AES-GCM and SHA-256 kernels compute over bytes in memory and reach nothing.
     "__aes_expand_key", "__aes_ctr32", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks",
     "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64",

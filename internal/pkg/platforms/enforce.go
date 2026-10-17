@@ -447,6 +447,8 @@ var coreBuiltins = map[string]bool{
 	// wherever valgrind is not running.
 	"__ct_secret": true,
 	"__ct_public": true,
+	// A byte view copied into a fresh array needs only the allocator.
+	"__bytes_owned": true,
 	// The AES-GCM kernels compute over bytes in memory and nothing else.
 	"__aes_expand_key": true,
 	"__aes_ctr32":      true,

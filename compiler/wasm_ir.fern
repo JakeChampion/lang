@@ -1632,6 +1632,9 @@ function array_helper_needs(cache: irtables.LowerResult[], own out: string[]): s
   if (module_calls_direct(cache, "__fern_arr_concat")) {
     out = out.append("@uses_arr_concat");
   }
+  if (module_calls_direct(cache, "__fern_bytes_owned")) {
+    out = out.append("@uses_bytes_owned");
+  }
   return out;
 }
 
@@ -1644,6 +1647,9 @@ function array_helper_parts(needs: string[], own parts: string[]): string[] {
   }
   if (need(needs, "@uses_arr_concat")) {
     parts = parts.append(arr_concat_helper());
+  }
+  if (need(needs, "@uses_bytes_owned")) {
+    parts = parts.append(bytes_owned_helper());
   }
   return parts;
 }
@@ -12196,6 +12202,25 @@ pub function arr_slice8_helper(): string {
   o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
   o = o + "      (br $c)))\n";
   o = o + "    (local.get $na))\n";
+  return o;
+}
+
+// bytes_owned_helper emits $__fern_bytes_owned, `__bytes_owned(b)`: the
+// view's bytes in a fresh packed u8[]. A view is a packed array ([len] then
+// the bytes at +8) or a string tagged with bit 1 ([len] then the bytes at +4,
+// at v - 2).
+pub function bytes_owned_helper(): string {
+  let o: string = "";
+  o = o + "  (func $__fern_bytes_owned (param $v i32) (result i32)\n";
+  o = o + "    (local $n i32) (local $p i32) (local $r i32)\n";
+  o = o + "    (local.set $n (i32.load (i32.and (local.get $v) (i32.const -3))))\n";
+  o = o + "    (local.set $p (i32.add (local.get $v) (i32.const 8)))\n";
+  o = o + "    (if (i32.and (local.get $v) (i32.const 2)) (then (local.set $p (i32.add (local.get $v) (i32.const 2)))))\n";
+  o = o + "    (local.set $r (call $__fern_arr_elems (local.get $n) (i32.const 1)))\n";
+  o = o + "    (i32.store (local.get $r) (local.get $n))\n";
+  o = o + "    (i32.store offset=4 (local.get $r) (local.get $n))\n";
+  o = o + "    (memory.copy (i32.add (local.get $r) (i32.const 8)) (local.get $p) (local.get $n))\n";
+  o = o + "    (local.get $r))\n";
   return o;
 }
 

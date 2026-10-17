@@ -865,6 +865,14 @@ func New() *Interp {
 	ctMark := &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Void{}, nil }}
 	i.Builtins["__ct_secret"] = ctMark
 	i.Builtins["__ct_public"] = ctMark
+	// __bytes_owned(b): a fresh array of the view's bytes.
+	i.Builtins["__bytes_owned"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		v, err := byteViews("__bytes_owned", args, 1)
+		if err != nil {
+			return nil, err
+		}
+		return byteArray(v[0]), nil
+	}}
 	registerAESGCM(i)
 	// __rc_underflow_count(): the runtime's over-release counter, for the same
 	// reason — the interpreter has no refcounts to underflow, so it reports the

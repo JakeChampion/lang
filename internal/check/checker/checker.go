@@ -1769,6 +1769,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// bitsliced AES; every one runs in constant time.
 	u8View := ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}}
 	u8Arr := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
+	// __bytes_owned(b): the view's bytes copied into a fresh u8[].
+	c.info.FuncSigs["__bytes_owned"] = &ast.FuncType{Params: []ast.Type{u8View}, Result: u8Arr}
 	c.info.FuncSigs["__aes_expand_key"] = &ast.FuncType{Params: []ast.Type{u8View}, Result: u8Arr}
 	c.info.FuncSigs["__aes_ctr32"] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View}, Result: u8Arr}
 	c.info.FuncSigs["__ghash"] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View}, Result: u8Arr}
