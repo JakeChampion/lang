@@ -1370,11 +1370,11 @@ function __send_closing(policy: Policy, req: Request): Result[HttpResponse, Fetc
   }
 }
 
-// `__proxies()` — the environment's proxy configuration where this
+// `proxies()` — the environment's proxy configuration where this
 // client dials: none on wasi-http, where the host dials and a proxy is
 // the host's own to go through. The `else` arm is what the fold drops,
 // so a wasi-http build imports no configuration store for it.
-function __proxies(): ProxyEnv {
+pub function proxies(): ProxyEnv {
   if (target_os() == "wasi-http") {
     return ProxyEnv { http_proxy: "", https_proxy: "", no_proxy: "" };
   } else {
@@ -1384,8 +1384,9 @@ function __proxies(): ProxyEnv {
 
 // `Policy` — what a route may reach: `public_only` refuses a host that
 // resolves to an address `net.is_global` does not admit; `proxies` is the
-// proxy configuration, which `send` and `plat.http` read from the
-// environment once per request; `roots` are the roots a server's chain
+// proxy configuration, which `send` reads from the environment once per
+// request and `plat.http` once per platform, since nothing changes the
+// environment while the program runs; `roots` are the roots a server's chain
 // must reach, the machine's (`verify.system_roots()`) when None; `jar` is
 // the cookie jar (std/http/cookie) every hop reads its `Cookie` header
 // from and stores its `Set-Cookie` into, none when None.
@@ -1394,7 +1395,7 @@ pub struct Policy { public_only: boolean, proxies: ProxyEnv, roots: Option[verif
 // `public_policy()` — the route `plat.http` takes: global addresses only,
 // the environment's proxies, the machine's roots, no jar, any host.
 pub function public_policy(): Policy {
-  return public_policy_via(__proxies());
+  return public_policy_via(proxies());
 }
 
 // `public_policy_via(proxies)` — `public_policy()` through `proxies` in
@@ -1551,9 +1552,9 @@ pub function send_on[T: Transport](tr: T, req: Request, policy: Policy): Result[
   let cur: Request = req;
   let hops: i32 = 0;
   while (true) {
-    let hop: Request = __with_jar(cur, policy.jar, tr.wall_ms());
+    let hop: Request = __with_jar(tr, cur, policy.jar);
     let resp: HttpResponse = __send_once(tr, hop, started, policy)?;
-    __stored(policy.jar, hop.url, resp.headers, tr.wall_ms());
+    __stored(tr, policy.jar, hop.url, resp.headers);
     if (!__redirects(resp.status) || req.redirects == 0) {
       return Ok(resp);
     }
@@ -1566,12 +1567,13 @@ pub function send_on[T: Transport](tr: T, req: Request, policy: Policy): Result[
   return Err(Redirect("unreachable"));
 }
 
-// `__with_jar(req, jar, now)` — the request with the jar's cookies for
-// its URL after any `Cookie` header it already carries.
-function __with_jar(req: Request, jar: Option[cookie.Jar], now: i64): Request {
+// `__with_jar(tr, req, jar)` — the request with the jar's cookies for
+// its URL after any `Cookie` header it already carries, judged at `tr`'s
+// wall clock, which is read only when there is a jar.
+function __with_jar[T: Transport](tr: T, req: Request, jar: Option[cookie.Jar]): Request {
   match (jar) {
     Some(j) => {
-      match (j.header(req.url, now)) {
+      match (j.header(req.url, tr.wall_ms())) {
         Some(v) => {
           let all: string = v;
           match (req.headers.get("cookie")) {
@@ -1594,12 +1596,12 @@ function __with_jar(req: Request, jar: Option[cookie.Jar], now: i64): Request {
   return req;
 }
 
-// `__stored(jar, url, headers, now)` — what the response to `url` set,
-// stored in the jar when there is one.
-function __stored(jar: Option[cookie.Jar], request_url: string, h: HeaderMap, now: i64): void {
+// `__stored(tr, jar, url, headers)` — what the response to `url` set,
+// stored in the jar when there is one, at `tr`'s wall clock.
+function __stored[T: Transport](tr: T, jar: Option[cookie.Jar], request_url: string, h: HeaderMap): void {
   match (jar) {
     Some(j) => {
-      j.store(request_url, h, now);
+      j.store(request_url, h, tr.wall_ms());
     },
     None => {}
   }
