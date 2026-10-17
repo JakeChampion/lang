@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -142,7 +143,7 @@ type lane struct {
 }
 
 func (l lane) selects(tc goTest) bool {
-	if !contains(l.pkgs, tc.pkg) {
+	if !slices.Contains(l.pkgs, tc.pkg) {
 		return false
 	}
 	if l.all {
