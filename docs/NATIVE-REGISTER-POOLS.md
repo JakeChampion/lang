@@ -8,7 +8,7 @@ implementing one instruction. Expanding a home pool must account for all three.
 
 | Role | Registers |
 | --- | --- |
-| Caller-saved homes | x0, x9–x15, x1–x3, x8 |
+| Caller-saved homes | x0, x9–x15, x1–x3, x8, x30 |
 | Callee-saved integer homes | x19–x28 |
 | Emitter temporaries | x4–x7 |
 | Address/frame expansion temporaries | x16–x17 |
@@ -25,6 +25,11 @@ treats those instruction kinds as calls, including their inlined fast paths,
 so a value live across one takes a saved home or a spill. Release entry guards
 run before parameter homes are initialized. x4–x7 and x16–x17 remain reserved
 because ordinary memory and arithmetic emission uses them between SSA values.
+
+A function using x30 as a value home saves its incoming return address in a
+frame record first, even when it makes no calls. Profiling and hardened
+frames preserve the same saved control address. A thirteen-parameter leaf
+regression executes such a function and checks its save and home.
 
 Runtime calls pass operands in x0–x2. These now overlap multiple homes, so
 `ssa_load_abi_args` uses the same parallel-move resolver as phi and call

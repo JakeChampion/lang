@@ -14,6 +14,7 @@ func TestSelfHostArm64ExtraCallerRegisters(t *testing.T) {
 	for name, source := range map[string]string{
 		"runtime-argument-cycle":  armRuntimeArgumentCycle,
 		"float-argument-boundary": armFloatArgumentBoundary,
+		"link-register-home":      armLinkRegisterHome,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if stderr, code := cli.exitOf(t, source, "arm64-linux"); code != 0 {
@@ -35,6 +36,22 @@ func TestSelfHostArm64ExtraCallerRegisters(t *testing.T) {
 	if regexp.MustCompile(`(?m)^\s+(?:stp|str)\s+x(?:19|2[0-8])\b`).MatchString(body) {
 		t.Fatalf("short-lived parameters unnecessarily consume callee-saved registers:\n%s", body)
 	}
+	src = filepath.Join(t.TempDir(), "leaf.fern")
+	if err := os.WriteFile(src, []byte(armLinkRegisterHome), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	asm, err = os.ReadFile(cli.emit(t, src, "arm64-linux"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = tailCallBody(t, string(asm), "sum13")
+	if !regexp.MustCompile(`(?m)^\s+(?:ldr|mov)\s+x30,`).MatchString(body) {
+		t.Fatalf("the pressure case no longer exercises a link-register home:\n%s", body)
+	}
+	if !regexp.MustCompile(`(?m)^\s+stp x29, x30,`).MatchString(body) {
+		t.Fatalf("a link-register home overwrites the unsaved return address:\n%s", body)
+	}
+
 }
 
 const armRuntimeArgumentCycle = `@noinline function wrap(n: i32, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, p: usize): string {
@@ -66,6 +83,17 @@ function main(): i32 {
   let salt = args().len() as f64;
   let got = indirect(sum9, salt + 10.5);
   if (got != salt + 55.5) { return 1; }
+  return 0;
+}
+`
+
+const armLinkRegisterHome = `@noinline function sum13(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, i: i64, j: i64, k: i64, l: i64, m: i64): i64 {
+  return a + b + c + d + e + f + g + h + i + j + k + l + m;
+}
+function main(): i32 {
+  let seed = args().len() as i64;
+  let result = sum13(seed, seed + 1, seed + 2, seed + 3, seed + 4, seed + 5, seed + 6, seed + 7, seed + 8, seed + 9, seed + 10, seed + 11, seed + 12);
+  if (result != seed * 13 + 78) { return 1; }
   return 0;
 }
 `
