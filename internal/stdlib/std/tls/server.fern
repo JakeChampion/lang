@@ -565,16 +565,17 @@ function __u32_of(b: u8[]): u32 {
 }
 
 function __cat(own a: u8[], b: [u8]): u8[] {
-  let i: i32 = 0;
-  while (i < b.len()) {
-    a = a.append(b[i]);
-    i = i + 1;
+  if (b.len() == 0) {
+    return a;
   }
-  return a;
+  if (a.len() == 0) {
+    return __bytes_owned(b);
+  }
+  return a.concat(__bytes_owned(b));
 }
 
 function __copy(b: [u8]): u8[] {
-  return __cat([], b);
+  return __bytes_owned(b);
 }
 
 function __same(a: [u8], b: [u8]): boolean {

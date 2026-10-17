@@ -124,13 +124,7 @@ function __needs_content(t: ContentType): boolean {
 }
 
 function __copy(src: [u8], from: i32, len: i32): u8[] {
-  let out: u8[] = __alloc_u8(len);
-  let i: i32 = 0;
-  while (i < len) {
-    out = out.with(i, src[from + i]);
-    i = i + 1;
-  }
-  return out;
+  return __bytes_range(src, from, from + len);
 }
 
 function __put(own dst: u8[], at: i32, src: [u8]): u8[] {
