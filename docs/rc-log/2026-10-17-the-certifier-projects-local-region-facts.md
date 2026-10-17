@@ -52,3 +52,15 @@ above the 15% target. This is a partial improvement, not closure of #12181.
 
 A census found no repeated exact assumed-region shape across 5,367 walks, so
 this change shares outside facts directly rather than caching whole walks.
+
+## Main integration verification
+
+After integrating main `38735b2b2` and the consuming-call alias fix, all
+certifier tests and the complexity ratchet pass again (33.098 s). Bootstrap
+stages 2 and 3 agree at 12,576,400 bytes, SHA-256
+`7c85699f16fe203d67a2c4e0c3c6aaaf8a713e2d4c1a6decb65b78116bf9f793`.
+The [refreshed baseline and candidate](data/region-projection-2026-10-17/main-387-parity.json)
+again emit the identical 7,509-line full report and executable. Their report
+and output hashes also match the earlier measurement. The timing and
+instruction counts above remain measurements of the explicitly identified
+earlier compiler binaries.
