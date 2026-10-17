@@ -537,9 +537,9 @@ pub function map_cleared(): i32 {
 
 // The zero of a type: what a declaration the defer desugar lifted to the top
 // of its scope starts at, before the assignment left behind at the declaration
-// site runs. A reference type's zero is the null word — it allocates nothing,
-// and the frame's release of it is the null guard every drop helper already
-// carries — so the lift costs a slot rather than a box.
+// site runs. A reference type's zero is the null word: it allocates nothing,
+// and the lowering emits no release for it, so the lift costs a slot rather
+// than a box.
 pub function zero(): i32 {
   return 0 - 35;
 }
