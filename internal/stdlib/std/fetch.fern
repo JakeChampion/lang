@@ -610,9 +610,12 @@ pub trait Transport {
 // same place: at most `max` of them, none reused once idle past `idle`.
 // `kept` shares the table through a Cell. `shared`, under a serve loop,
 // is the HTTP/2 connections the loop drives for the handlers it runs, so
-// their requests to one origin go over one connection at once. `proxies`
-// is the environment's proxy configuration once `proxy_env` read it.
-pub struct Idle { kept: Cell[Kept[]], max: i32, idle: Duration, shared: Option[Shared], proxies: Cell[Option[ProxyEnv]] }
+// their requests to one origin go over one connection at once. `names` is
+// the machine's resolver as the transport last read it (`dns.Resolver`),
+// kept with the connections so a request reads no file to find a host.
+// `proxies` is the environment's proxy configuration once `proxy_env` read
+// it.
+pub struct Idle { kept: Cell[Kept[]], max: i32, idle: Duration, shared: Option[Shared], names: dns.Resolver, proxies: Cell[Option[ProxyEnv]] }
 
 // `(p).proxy_env()` — the environment's proxy configuration (`__proxies()`),
 // read on the pool's first request and kept, since nothing changes the
@@ -645,7 +648,7 @@ pub function idle(): Idle {
 // connections, each for `idle`; a `max` of 0 keeps none.
 pub function idle_limited(max: i32, idle: Duration): Idle {
   let none: Kept[] = [];
-  return Idle { kept: cell_new(none), max: max, idle: idle, shared: None, proxies: cell_new(None) };
+  return Idle { kept: cell_new(none), max: max, idle: idle, shared: None, names: dns.resolver(), proxies: cell_new(None) };
 }
 
 // `idle_shared()` — `idle()` with a `Shared` table beside it, for a loop
@@ -1309,14 +1312,15 @@ impl Transport for Sockets {
   }
   function lookup(self: Sockets, host: string, checked: boolean): Result[Lookup, dns.DnsError] {
     let none: net.IpAddr[] = [];
+    let names: dns.Resolver = self.pool.names;
     if (!checked) {
-      let found: net.IpAddr[] = dns.resolve(host)?;
+      let found: net.IpAddr[] = names.resolve(host)?;
       return Ok(Lookup { dial: found, named: none, judged: none });
     }
-    let plain: net.IpAddr[] = dns.resolve_plain(host)?;
+    let plain: net.IpAddr[] = names.resolve_plain(host)?;
     let carried: net.IpAddr[] = [];
     for a in plain {
-      match (dns.nat64_carried(a)) {
+      match (names.nat64_carried(a)) {
         Some(v4) => {
           carried = carried.append(v4);
         },
@@ -1325,7 +1329,7 @@ impl Transport for Sockets {
         }
       }
     }
-    return Ok(Lookup { dial: dns.synthesized(plain), named: plain, judged: carried });
+    return Ok(Lookup { dial: names.synthesized(plain), named: plain, judged: carried });
   }
   function connect(self: Sockets, addrs: net.IpAddr[], port: i32, timeout_ms: i32): Result[i32, net.NetError] {
     return dns.connect_race(addrs, port, dns.DialOptions { ...dns.dial_options(), timeout: time.duration_millis(timeout_ms as i64) });

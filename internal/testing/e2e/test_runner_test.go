@@ -5115,8 +5115,9 @@ func TestRunnerCoreutilsResolvExamplePasses(t *testing.T) {
 // chain with each rcode, the hosts file of both families, resolv.conf's
 // defaults, caps and floors, res_search's candidate order and its
 // reaction to each failure of a scripted nameserver, and the search walk
-// over a name's plan. Two live cases run against this machine's own
-// /etc/hosts. Passing suite -> exit 0.
+// over a name's plan. Three live cases run against this machine's own
+// /etc/hosts, the last through a Resolver that keeps what it read.
+// Passing suite -> exit 0.
 func TestRunnerDnsExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/dns_test.fern")
@@ -5124,7 +5125,7 @@ func TestRunnerDnsExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/dns", "1..35", "# pass 35", "# fail 0"} {
+	for _, w := range []string{"# Suite: std/dns", "1..36", "# pass 36", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
