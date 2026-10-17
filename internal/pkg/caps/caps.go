@@ -293,6 +293,9 @@ var Ungated = map[string]bool{
 	// The constant-time marks only tell valgrind which bytes are secret.
 	"__ct_secret": true,
 	"__ct_public": true,
+	// A byte view copied into a fresh array reaches nothing.
+	"__bytes_owned": true,
+	"__bytes_range": true,
 	// The AES-GCM kernels compute over bytes in memory and reach nothing.
 	"__aes_expand_key": true,
 	"__aes_ctr32":      true,

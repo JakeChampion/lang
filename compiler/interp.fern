@@ -4343,6 +4343,26 @@ function byte_value(b: u8[]): Value {
   return v_arr(out);
 }
 
+// call_bytes_range is __bytes_range(b, from, to): b[from:to] in a fresh array.
+function call_bytes_range(args: Value[]): Value {
+  if (args.len() != 3) {
+    return v_err("__bytes_range: expected 3 arguments");
+  }
+  let bs: u8[][] = byte_args([args[0]]);
+  let from: i32 = vint_as_i64(args[1]) as i32;
+  let to: i32 = vint_as_i64(args[2]) as i32;
+  if (bs.len() != 1 || from < 0 || to < from || to > bs[0].len()) {
+    return v_err("__bytes_range: range out of bounds");
+  }
+  let out: u8[] = [];
+  let i: i32 = from;
+  while (i < to) {
+    out = out.append(bs[0][i]);
+    i = i + 1;
+  }
+  return byte_value(out);
+}
+
 // aes_gcm_arity is how many byte arrays an AES-GCM kernel takes, or 0.
 function aes_gcm_arity(name: string): i32 {
   if (name == "__aes_expand_key") {
@@ -5241,6 +5261,16 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   // Only valgrind sees the constant-time marks.
   if (name == "__ct_secret" || name == "__ct_public") {
     return v_void();
+  }
+  if (name == "__bytes_owned") {
+    let bs: u8[][] = byte_args(args);
+    if (args.len() != 1 || bs.len() != 1) {
+      return v_err("__bytes_owned: expected one byte array");
+    }
+    return byte_value(bs[0]);
+  }
+  if (name == "__bytes_range") {
+    return call_bytes_range(args);
   }
   if (aes_gcm_arity(name) > 0) {
     return call_aes_gcm(name, args);

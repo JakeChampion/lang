@@ -117,6 +117,8 @@ pub function provided_names(): string[] {
     "__fern_u64_to_string",
     "__fern_arr_str_join",
     "__fern_arr_concat",
+    "__fern_bytes_owned",
+    "__fern_bytes_range",
   ];
 }
 
