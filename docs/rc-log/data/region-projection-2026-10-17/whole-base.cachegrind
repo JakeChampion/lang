@@ -1,0 +1,6 @@
+cmd: /workspace/scratch/fern-byte-copy-report -target x86-64-linux -o /workspace/scratch/lang-certifier-region-final-whole-base.bin /workspace/lang-coreutils-parity/compiler/fern.fern /workspace/lang-coreutils-parity/internal/stdlib
+events: Ir
+fl=???
+fn=???
+0 127823867653
+summary: 127823867653
