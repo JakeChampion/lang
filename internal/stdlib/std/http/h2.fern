@@ -1396,7 +1396,7 @@ function __header_frames(r: __Run, stream: i32, block: u8[], end_stream: boolean
   }
   let head: u8[] = block;
   if (first < block.len()) {
-    head = __slice(block, 0, first);
+    head = __bytes_range(block, 0, first);
   }
   let out: __Run = __send_bytes(r, frame.headers_bytes(stream, end_stream, first == block.len(), head));
   let at: i32 = first;
@@ -1405,7 +1405,7 @@ function __header_frames(r: __Run, stream: i32, block: u8[], end_stream: boolean
     if (to > block.len()) {
       to = block.len();
     }
-    out = __send(out, frame.Continuation(stream, to == block.len(), __slice(block, at, to)));
+    out = __send(out, frame.Continuation(stream, to == block.len(), __bytes_range(block, at, to)));
     at = to;
   }
   return out;
@@ -1452,7 +1452,7 @@ function __flush_stream(r: __Run, at: i32): __Run {
     }
     let final: boolean = n == s.pending.len() && s.trailers.len() == 0 && !s.producing;
     let sent: __Stream = __Stream { ...s, pending: __rest(s.pending, n), send_window: s.send_window - n };
-    out = __send_bytes(__Run { ...out, conn: Conn { ...c, send_window: c.send_window - n, streams: c.streams.with(at, sent) } }, frame.data_bytes(s.id, final, __slice(s.pending, 0, n)));
+    out = __send_bytes(__Run { ...out, conn: Conn { ...c, send_window: c.send_window - n, streams: c.streams.with(at, sent) } }, frame.data_bytes(s.id, final, __bytes_range(s.pending, 0, n)));
     if (final) {
       return __ended(out, at);
     }
@@ -1564,19 +1564,9 @@ function __min(a: i32, b: i32): i32 {
   return b;
 }
 
-function __slice(buf: u8[], from: i32, to: i32): u8[] {
-  let out: u8[] = __alloc_u8(to - from);
-  let i: i32 = 0;
-  while (from + i < to) {
-    out = out.with(i, buf[from + i]);
-    i = i + 1;
-  }
-  return out;
-}
-
 function __rest(buf: u8[], from: i32): u8[] {
   if (from >= buf.len()) {
     return [];
   }
-  return __slice(buf, from, buf.len());
+  return __bytes_range(buf, from, buf.len());
 }

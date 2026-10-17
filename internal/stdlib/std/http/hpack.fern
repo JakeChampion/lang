@@ -402,7 +402,7 @@ function __string(d: Decoder, st: __Dec, block: u8[]): Result[__Dec, HpackError]
     if (n > room) {
       return Err(TooLarge(d.max_list));
     }
-    return Ok(__Dec { ...st, text: string_from_bytes_unchecked(__copy(block, from, from + n)), at: from + n });
+    return Ok(__Dec { ...st, text: string_from_bytes_unchecked(__bytes_range(block, from, from + n)), at: from + n });
   }
   match (huffman.decode(block[from:from + n], room)) {
     Ok(out) => {
@@ -415,16 +415,6 @@ function __string(d: Decoder, st: __Dec, block: u8[]): Result[__Dec, HpackError]
       return Err(BadHuffman);
     }
   }
-}
-
-function __copy(block: u8[], from: i32, to: i32): u8[] {
-  let out: u8[] = __alloc_u8(to - from);
-  let i: i32 = 0;
-  while (from + i < to) {
-    out = out.with(i, block[from + i]);
-    i = i + 1;
-  }
-  return out;
 }
 
 // === encoding ==============================================================
