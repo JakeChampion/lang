@@ -669,7 +669,7 @@ function __parsed_response(s: __Stream, fields: hpack.Field[]): Result[__Stream,
     if (f.name.len() == 0) {
       return Err("empty field name");
     }
-    if (f.name.bytes()[0] == 58 as u8) {
+    if (f.name[0] == b':') {
       status = __status_of(f, regular || status != 0)?;
     } else {
       regular = true;
@@ -754,7 +754,7 @@ function __trailers(r: __Run, at: i32, fields: hpack.Field[], end_stream: boolea
   }
   let trailers: HeaderMap = headers.header_map_new();
   for f in fields {
-    if (f.name.len() > 0 && f.name.bytes()[0] == 58 as u8) {
+    if (f.name.len() > 0 && f.name[0] == b':') {
       return __reset_stream(r, s.id, frame.PROTOCOL_ERROR);
     }
     trailers = trailers.append(f.name, f.value);
@@ -843,7 +843,7 @@ function __parsed(fields: hpack.Field[], id: i32, send_window: i32, recv_window:
     if (f.name.len() == 0) {
       return Err("empty field name");
     }
-    if (f.name.bytes()[0] == 58 as u8) {
+    if (f.name[0] == b':') {
       if (regular) {
         return Err("pseudo-header after a regular field");
       }

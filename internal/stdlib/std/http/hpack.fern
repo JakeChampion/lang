@@ -190,20 +190,12 @@ function __value_at(t: Table, index: i32): string {
 // the index of one with the name alone, or 0: the static table is
 // searched first, then the dynamic one newest first.
 function __find(t: Table, name: string, value: string): i32 {
-  let name_only: i32 = 0;
-  let i: i32 = 0;
-  while (i < STATIC_LEN) {
-    if (STATIC_NAMES[i] == name) {
-      if (STATIC_VALUES[i] == value) {
-        return i + 1;
-      }
-      if (name_only == 0) {
-        name_only = i + 1;
-      }
-    }
-    i = i + 1;
+  let found: i32 = __find_static(name, value);
+  if (found > 0) {
+    return found;
   }
-  i = 0;
+  let name_only: i32 = 0 - found;
+  let i: i32 = 0;
   while (i < t.names.len()) {
     if (t.names[i] == name) {
       if (t.values[i] == value) {
@@ -216,6 +208,32 @@ function __find(t: Table, name: string, value: string): i32 {
     i = i + 1;
   }
   return 0 - name_only;
+}
+
+// __find_static is __find over the static table alone. Only the names as
+// long as `name` are compared, and a name's entries are adjacent, so its
+// values are the ones after the first.
+function __find_static(name: string, value: string): i32 {
+  let n: i32 = name.len();
+  if (n + 1 >= STATIC_LENGTH_FROM.len()) {
+    return 0;
+  }
+  let k: i32 = STATIC_LENGTH_FROM[n];
+  while (k < STATIC_LENGTH_FROM[n + 1]) {
+    let i: i32 = STATIC_BY_LENGTH[k];
+    if (STATIC_NAMES[i] == name) {
+      let first: i32 = i;
+      while (i < STATIC_LEN && STATIC_NAMES[i] == name) {
+        if (STATIC_VALUES[i] == value) {
+          return i + 1;
+        }
+        i = i + 1;
+      }
+      return 0 - (first + 1);
+    }
+    k = k + 1;
+  }
+  return 0;
 }
 
 // === decoding ==============================================================
@@ -565,6 +583,19 @@ const STATIC_NAMES: string[] = [
   "retry-after", "server", "set-cookie", "strict-transport-security",
   "transfer-encoding", "user-agent", "vary", "via",
   "www-authenticate",
+];
+
+// The first index of each distinct static name, shortest names first, and
+// where the names of each length start among them: those of length n are
+// STATIC_BY_LENGTH[STATIC_LENGTH_FROM[n]] up to STATIC_LENGTH_FROM[n + 1].
+const STATIC_BY_LENGTH: i32[] = [
+  20, 59, 32, 33, 36, 37, 44, 58, 3, 21, 49, 18, 31, 34, 53, 1, 5, 7, 35, 50, 51, 38, 41, 45, 0, 54,
+  57, 52, 30, 46, 17, 22, 23, 29, 40, 43, 14, 27, 15, 16, 25, 26, 28, 60, 39, 56, 47, 24, 42, 48, 55, 19,
+];
+
+const STATIC_LENGTH_FROM: i32[] = [
+  0, 0, 0, 0, 2, 8, 11, 15, 21, 24, 24, 27, 28, 30, 36, 38, 40, 44, 46, 47, 50, 50, 50, 50, 50, 50,
+  51, 51, 52,
 ];
 
 const STATIC_VALUES: string[] = [

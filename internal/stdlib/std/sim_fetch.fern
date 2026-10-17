@@ -834,7 +834,7 @@ function __refused_entry(): string {
 function __answer(n: Net, route: i32, i: i32): Answer {
   if (route <= 0 - 3) {
     let entry: string = __journal_all(n.made.get())[0 - 3 - route];
-    return Answer { bytes: hex.hex_decode(slice_unchecked(entry, 1, entry.len()).to_owned()), first_ms: 0, chunk_ms: 0, chunk: 0, close: entry.bytes()[0] == 99 as u8 };
+    return Answer { bytes: hex.hex_decode(slice_unchecked(entry, 1, entry.len()).to_owned()), first_ms: 0, chunk_ms: 0, chunk: 0, close: entry[0] == b'c' };
   }
   if (route < 0) {
     return reply(404, "");
@@ -898,7 +898,7 @@ function __field(row: string[], i: i32): i32 {
 }
 
 function __int(s: string): i32 {
-  if (s.len() > 0 && s.bytes()[0] == 45 as u8) {
+  if (s.len() > 0 && s[0] == b'-') {
     return 0 - __int(s.split("-")[1]);
   }
   match (int.parse_int_radix(s, 10)) {
