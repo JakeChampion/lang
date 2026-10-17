@@ -5,17 +5,10 @@ import (
 	"testing"
 )
 
-// TestSelfHostTimerFdIRArm64 is the arm64 half of slice 3 (docs/ASYNC-SELFHOST-IR.md):
-// timer_fd / wasm_timer_pollable / wasm_pollable_drop now lower to dedicated IR
-// ops on the self-host arm64 IR backend, emitting `bl __fn___fern_timer_fd` (the
-// timerfd_create/settime #85/#86 mirror), `bl __fern_wasm_timer_pollable` (-1),
-// and `bl __fern_wasm_pollable_drop` (0). A module using them is IR-eligible
-// rather than bailing.
-//
-// Same two programs as the x86-64 sibling: (a) a 1 ms timerfd polled with a
-// 500 ms budget returns index 0 (also exercises slice-2 arm64 poll over a REAL
-// fd), and (b) the portability shims compose to a known exit code. Runs under
-// qemu (CI-gated). An asm-content check confirms the timerfd syscall body.
+// Native ARM64 timer_fd creates a real timer descriptor; the portable WASI
+// adapters select constants. Check both a timer becoming ready and the
+// constant values composing correctly. The runtime calls are absent from
+// emitted assembly. Execution runs on native ARM64 CI or under qemu.
 func TestSelfHostTimerFdIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -38,7 +31,7 @@ func TestSelfHostTimerFdIRArm64(t *testing.T) {
     let p: i32 = wasm_timer_pollable(0);
     let d: i32 = wasm_pollable_drop(p);
     return d - p;
-}`, 1, "bl __fern_wasm_timer_pollable"},
+}`, 1, ""},
 	}
 
 	for _, tc := range cases {
@@ -47,8 +40,13 @@ func TestSelfHostTimerFdIRArm64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}
-			if !strings.Contains(string(asm), tc.asmNeedle) {
+			if tc.asmNeedle != "" && !strings.Contains(string(asm), tc.asmNeedle) {
 				t.Errorf("%s: emitted arm64 asm missing %q (did not lower through the IR path)", tc.name, tc.asmNeedle)
+			}
+			for _, name := range []string{"wasm_timer_pollable", "wasm_pollable_drop", "wasm_block", "wasm_poll"} {
+				if strings.Contains(string(asm), "__fern_"+name) {
+					t.Errorf("native constant adapter %s still has a runtime helper", name)
+				}
 			}
 			bin := buildBinArm64(t, arm64gcc, dir, "tfd_"+tc.name+"_arm64", string(asm))
 			cmd := runArm64Bin(qemu, bin)

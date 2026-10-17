@@ -163,7 +163,6 @@ random_bytes=185
 random_i32=186
 poll=187
 timer_fd=188
-struct_copy=198
 store_i64=199
 tcp_listen=200
 tcp_accept=201

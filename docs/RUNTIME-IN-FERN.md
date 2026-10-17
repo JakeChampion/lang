@@ -79,6 +79,14 @@ fake sysctl on x86-64 and ARM64, checking all six arguments, positive and
 zero counts, refusal and allocation count. The Darwin sysinfo and Mach-O
 gates check the real target's lowering.
 
+## Native pollable adapters — selected directly
+
+Native `tcp_pollable` preserves the descriptor. The portable timer and poll
+operations return -1, and pollable drop/block return zero: native readiness
+uses descriptors and poll timeouts. Instruction selection produces these
+values directly, so the five native runtime helper bodies and exports are
+retired. Their public IR operations still provide WASI's host resources.
+
 ## The map runtime — retired
 
 The self-host's own map runtime, an association list with `__fern_map_find` as
@@ -109,6 +117,11 @@ WASI's `$__fern_arr_dec_ptr` also remains for its live runtime callers.
 The reclaim tests cover scalar and string rows, struct arrays, optional
 arrays, aliasing and escaped payloads through the typed pipeline. They no
 longer describe those three retired helpers as the implementation.
+
+Functional struct updates also use the typed lowering and explicit field
+operations. No production lowering emits the old shallow `struct_copy` op.
+Its native runtime bodies, WASI lowering, SSA lift, registrations and
+allocation classifier are retired together. IR id 198 stays reserved.
 
 ## The hot core needs better codegen first, not better expressiveness
 
