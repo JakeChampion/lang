@@ -16,10 +16,12 @@ The combined branch includes typed bulk byte copies, local certifier fact projec
 | Three cold certification enabled/disabled pairs | Median 1.455592; still above the 15% overhead target |
 | Native macOS ARM workflow 39039319474, fifteen pairs | X25519 ratio 1.039977; compiler ratio 1.022351; all outputs agree |
 
-The macOS comparison uses current four-limb crypto input from main 91d0, unlike the older register-pool measurements. Its raw paired ratios span substantial shared-runner noise. The first run shows no native timing improvement; a repeat is in progress to check the apparent regression. The x86 development runs also overlapped other builds and cannot establish a timing improvement. No performance tolerance was widened.
+The macOS comparison uses current four-limb crypto input from main 91d0, unlike the older register-pool measurements. Its raw paired ratios span substantial shared-runner noise. The repeat (workflow 39040149686) uses the identical compiler binaries. Its median ratios are 0.979759 for X25519 and 0.934419 for the compiler. Pooling all thirty paired observations gives 0.996332 for X25519 and 0.982080 for the compiler. These two runs do not show a consistent crypto regression; shared-host variation prevents a strong elapsed-speed claim. The x86 development runs also overlapped other builds and cannot establish a timing improvement. No performance tolerance was widened.
 
 The cold-certification comparison compiles the whole compiler with memoization disabled. Enabled and disabled outputs match. The local projection change does not satisfy #12181's cold-cost target; its measured component instruction-count improvement and original use-after-free rejection remain documented in the certifier history.
 
 ## Integration with the byte-range intrinsic
 
 Main `e3f2b854e3bc63349ad90b7457e2361c6290ce3a` adds `__bytes_into`. The merge retains its runtime roots and exports alongside both private loop-copy kernels. The refreshed byte-copy/intrinsic, certifier, ANDNOT, ARM-register, complexity and inventory checks pass (115.479 seconds). Bootstrap stages 2 and 3 match: 12,591,744 bytes, SHA-256 `da2f0975d9a31954d5a210d11ee58422142734cef0f5d6f946e8d8dc139ef0ed`. The earlier e65 timing rows above remain scoped to their original compiler.
+
+All eleven refreshed driver-size budgets pass after the intrinsic integration (137.849 seconds), with complete coverage and unchanged limits.

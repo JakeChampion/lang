@@ -437,14 +437,14 @@ Recognition mirrors the existing bare-name runtime calls:
 Because each lowers to one instruction, there is **no new runtime symbol** for
 the load/store intrinsics — they vanish into the helper's body. Only
 `__raw_alloc`/`__raw_string` touch `__fern_alloc`, which is always present when
-`heap` is needed (every Tier-2 helper allocates, so `mark_*` pulls `heap`).
+`heap` is needed (every Tier-2 helper allocates, so `need` pulls `heap`).
 
 ## What this retires
 
 Once the Tier-2 helpers are Fern, the hand-written runtime shrinks to exactly:
 `__fern_alloc` + the freestanding scaffolding (`_start`, the `.bss` heap, the
-syscall leaves). At that point the `mark_*` / `runtime_need_deps` /
-`close_needs` / `all_runtime_need_roots` / `emit_runtime_globls` apparatus has
+syscall leaves). At that point the `runtime_need_deps` /
+`all_runtime_need_roots` / `emit_runtime_globls` apparatus has
 only the floor left to track — and the project can take the final #2649 step:
 lift the `rt_src_*` strings into real importable `core/runtime` modules
 (see `RUNTIME-IN-FERN.md` §"How the runtime module reaches every program"),

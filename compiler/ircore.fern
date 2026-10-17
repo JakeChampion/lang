@@ -647,8 +647,8 @@ function with_builtin_enums(lifted: parser.Module): parser.Module {
 }
 
 // all_runtime_need_roots is the closed set of runtime-need ROOT names — every
-// string the codegen ever passes to `s.need("…")` (the mark_* helpers all bottom
-// out in one of these). It is the over-approximation the per-module driver feeds
+// string the codegen ever passes to `s.need("…")`. It is the over-approximation
+// the per-module driver feeds
 // the ENTRY module's shared runtime instead of the exact union computed by
 // running module_runtime_needs over every loaded module.
 //
@@ -662,7 +662,7 @@ function with_builtin_enums(lifted: parser.Module): parser.Module {
 // IR-only bootstrap #3456 needs to retire the AST emitters, #3457).
 //
 // Feeding the entry every root instead makes it emit the full `__fern_*` runtime
-// (close_needs still pulls each root's transitive deps). It is SOUND — the entry's
+// (registration pulls each root's transitive deps). It is SOUND — the entry's
 // runtime is a superset of what any module references, so no `call __fern_*` extern
 // dangles at link — and DETERMINISTIC, so the byte-identical per-module fixpoint is
 // preserved (every generation emits the same full runtime). The cost is a handful
