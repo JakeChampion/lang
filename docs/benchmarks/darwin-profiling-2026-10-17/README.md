@@ -38,3 +38,14 @@ explicitly includes TestSelfHostDarwinProfile, which executes all four modes,
 checks sampled hot stacks/allocation weights and asks Go pprof to parse the
 files. Native Darwin execution must pass there before merging. WASI allocation
 profiling remains separate work under #5547.
+
+
+Starting fresh from main `792940195` after certifier compaction, source
+`15a3d7315` reaches identical stages 2 and 3 at 12,687,392 bytes, SHA-256
+`121d9c01772bd38ce1f2be69acaf2ef667e83a70d21fc5cccf4ccb5469852e2c`.
+Linux profiling execution, all Darwin cross-build modes, real Mach-O symbol
+lookup, header relocation, certification, import-free inventory and complexity
+checks pass in 46.182 seconds. All eleven strict size checks pass with complete
+coverage and unchanged baselines/tolerance (119.844 seconds). Current raw logs
+use the `main-7929-` prefix. This integration repeat does not execute Darwin;
+that remains an explicit macOS CI gate.
