@@ -11615,18 +11615,9 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     // owns the single definition (emit_ir_runtime), so export it for the
     // per-module link like every other shared runtime helper.
     "__fn___fern_str_free",
-    // string[] ELEMENT reclaim (#4355): a library module whose exit sweep
-    // frees a fresh-element string[] references this symbol; the entry owns
-    // the single definition (emit_ir_runtime).
+    // Raw string-array release is shared by argument replacement and the
+    // diagnostic exit path. The entry owns its Fern source definition.
     "__fn___fern_str_arr_free",
-    // compact base copy (#4650): a LIBRARY module doing `T { ...base, f: v }`
-    // on a struct_copy_eligible T emits `call __fn___fern_struct_copy`; the
-    // entry owns the single definition (emit_ir_runtime's heap block). Every
-    // eligible spread used to sit in the entry, so this went unnoticed until
-    // synth_script_main spread a `parser.Module` — whose fields are
-    // ALL arrays, making it eligible where the string-carrying EmitState /
-    // FuncDecl spreads take the inline per-field path and never call out.
-    "__fn___fern_struct_copy",
     // The register entries of the helpers that have one (ssa_reg_helper),
     // called from every unit like the stack entries they sit beside, and
     // the two entries past the floor test the inline release guard enters.

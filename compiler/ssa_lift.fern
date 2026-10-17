@@ -444,7 +444,7 @@ function prod_mem_kind(k: string): boolean {
     "struct_get", "struct_set", "tuple_set", "arr_len", "str_len", "str_data", "tuple_get", "opt_tag", "opt_payload",
     "arr_get", "arr_set", "str_index", "const_func", "const_str", "variant_is", "struct_set_shape",
     "struct_make", "arr_make", "tuple_make", "opt_make", "str_slice",
-    "raw_load_ptr", "raw_store_ptr", "raw_load8", "raw_store8", "struct_copy", "const_struct", "call_indirect",
+    "raw_load_ptr", "raw_store_ptr", "raw_load8", "raw_store8", "const_struct", "call_indirect",
   ];
   for x in mem {
     if (x == k) {
@@ -774,9 +774,6 @@ function lift_prod_make(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   if (k == "opt_make") {
     return lift_opt_make_prod(op.i32_imm, lv);
   }
-  if (k == "struct_copy") {
-    return lift_struct_copy_prod(op, lv);
-  }
   return LiftVals { ...lv, ok: false };
 }
 
@@ -802,13 +799,6 @@ function lift_store_keep(lv: LiftVals, kind: i32): LiftVals {
     return stored;
   }
   return LiftVals { ...stored, stack: stored.stack.append(val) };
-}
-
-// struct_copy(box) copies `imm` fields through the runtime; the field count
-// travels as a constant in the second register argument.
-function lift_struct_copy_prod(op: ir.Op, lv: LiftVals): LiftVals {
-  let n: LiftVals = lift_pop_push(lv, 0, 1, op.i32_imm, "");
-  return lift_pop_push(n, 2, 50, 0, "struct_copy");
 }
 
 // lift_prod_read is the value-producing half: the single loads, the checked
@@ -2108,8 +2098,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
     }
     // Record the offending op kind the first time the lift bails (any
     // branch above — unhandled op, width-64, stack underflow, …). A tag
-    // ir.kind_name can't render carries its raw id (#5452 — a bare
-    // "invalid" hid the registry skew that unnamed struct_copy=198).
+    // ir.kind_name cannot render carries its raw numeric id.
     if (!ok && bail == "") {
       bail = k;
       if (k == "invalid") {

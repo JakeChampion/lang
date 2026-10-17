@@ -110,6 +110,11 @@ The reclaim tests cover scalar and string rows, struct arrays, optional
 arrays, aliasing and escaped payloads through the typed pipeline. They no
 longer describe those three retired helpers as the implementation.
 
+Functional struct updates also use the typed lowering and explicit field
+operations. No production lowering emits the old shallow `struct_copy` op.
+Its native runtime bodies, WASI lowering, SSA lift, registrations and
+allocation classifier are retired together. IR id 198 stays reserved.
+
 ## The hot core needs better codegen first, not better expressiveness
 
 `__fern_arr_push` was attempted and **backed out** (#6446). It is worth reading
