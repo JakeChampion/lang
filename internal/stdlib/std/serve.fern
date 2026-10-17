@@ -518,7 +518,10 @@ function __recv_scratch(): u8[] {
   return __alloc_u8(__recv_room());
 }
 
-// __Conns — the open connections of a serve loop, by position: the
+// __Conns — the open connections of a serve loop, `open` of them, by
+// position, which a connection keeps while it is open. A slot whose
+// descriptor is -1 is free: the free slots are linked through `offs` from
+// `free` (-1 for none), and `__conns_add` takes the first. Per slot: the
 // descriptor, the request bytes read and not yet answered, how many of
 // them the requests answered in the current event occupied (0 between
 // events: the answered bytes are dropped once per event, not per
@@ -565,7 +568,12 @@ function __recv_scratch(): u8[] {
 // descriptor that is not open (`__slot_of`). It covers the descriptors
 // under SLOT_LIMIT; a larger one, as a wasm descriptor (an address) may
 // be, and a position too large for two bytes, are found by scanning `fds`.
-struct __Conns { fds: i32[], slots: u8[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], hosts: platform.Host[], tails: __Tail[], tls: __Tls[], framing: __Framing[], last: http.HttpFramed, out: usize, lent: i32, parked: __Flight[], later: (() => void)[], metrics: metrics.ServerMetrics, pulls: __H2Pull[], producers: __H2Producer[], tls_reads: i32, zc_bytes: i32, zc_held: u8[][], zc_slots: i32[], zc_free: boolean[], quic: __Quic, date: string }
+// `queued` is the descriptors whose `backlog` is set, and `due` is no later
+// than the deadline of any connection without a backlog (-1 with none), so
+// a pass costs what is ready rather than what is open: the wait's timeout
+// and `__with_backlog` read these, and `__serve_expire` sweeps the table
+// only once `due` has passed.
+struct __Conns { open: i32, free: i32, fds: i32[], slots: u8[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], due: i64, keep: boolean[], served: i32[], backlog: boolean[], queued: i32[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], hosts: platform.Host[], tails: __Tail[], tls: __Tls[], framing: __Framing[], last: http.HttpFramed, out: usize, lent: i32, parked: __Flight[], later: (() => void)[], metrics: metrics.ServerMetrics, pulls: __H2Pull[], producers: __H2Producer[], tls_reads: i32, zc_bytes: i32, zc_held: u8[][], zc_slots: i32[], zc_free: boolean[], quic: __Quic, date: string }
 
 // __Tls — a connection's TLS: none; its session, through which every
 // byte read and written passes; lent to the handler pulling a streamed
@@ -1275,7 +1283,7 @@ function __tail_park[D: async.Driver](drv: D, c: __Conns, at: i32, producer: Chu
       drv.watch(c.fds[at], __read_interest(c, c.tls[at]));
     }
   }
-  return __Conns { ...c, tails: c.tails.with(at, ParkedTail(producer, index, end)), deadlines: c.deadlines.with(at, __held_deadline()), parked: c.parked.append(fl) };
+  return __Conns { ...c, tails: c.tails.with(at, ParkedTail(producer, index, end)), deadlines: c.deadlines.with(at, __held_deadline()), due: __sooner(c.due, __held_deadline()), parked: c.parked.append(fl) };
 }
 
 // __producer_done(drv, c, fd, chunk, opts, clk) — the producer parked on
@@ -1315,7 +1323,7 @@ function __producer_done[D: async.Driver](drv: D, c: __Conns, fd: i32, chunk: Op
   let drained: (__Conns, i32) = __serve_drain(drv, c, at, opts, clk);
   c = drained.0;
   if (drained.1 >= 0) {
-    return __Conns { ...c, backlog: c.backlog.with(drained.1, true) };
+    return __backlog_on(c, drained.1);
   }
   return c;
 }
@@ -1447,7 +1455,7 @@ function __slot_of(slots: u8[], fd: i32): i32 {
 // __slot_set(slots, fd, v) — `slots` grown to hold `fd`, with `v` there
 // (SLOT_FULL past it), or as it was for a descriptor the table does not
 // cover.
-function __slot_set(own slots: u8[], fd: i32, v: i32): u8[] {
+function __slot_set(slots: u8[], fd: i32, v: i32): u8[] {
   if (fd < 0 || fd >= SLOT_LIMIT) {
     return slots;
   }
@@ -1482,86 +1490,55 @@ function __conns_add(c: __Conns, fd: i32, deadline: i64, peer: i32, host: platfo
     },
     _ => {}
   }
-  let slots: u8[] = c.slots;
-  slots = __slot_set(slots, fd, c.fds.len() + 1);
-  return __Conns { fds: c.fds.append(fd), slots: slots, bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), keep: c.keep.append(keep), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), hosts: c.hosts.append(host), tails: c.tails.append(NoTail), tls: c.tls.append(tls), framing: c.framing.append(Http1), last: c.last, out: c.out, lent: c.lent, parked: c.parked, later: c.later, metrics: c.metrics, pulls: c.pulls, producers: c.producers, tls_reads: c.tls_reads, zc_bytes: c.zc_bytes, zc_held: c.zc_held, zc_slots: c.zc_slots, zc_free: c.zc_free, quic: c.quic, date: c.date };
+  let k: i32 = c.free;
+  if (k >= 0) {
+    let next: i32 = c.offs[k];
+    return __Conns { ...c, open: c.open + 1, free: next, fds: c.fds.with(k, fd), slots: __slot_set(c.slots, fd, k + 1), bufs: c.bufs.with(k, empty), offs: c.offs.with(k, 0), pending: c.pending.with(k, empty), deadlines: c.deadlines.with(k, deadline), due: __sooner(c.due, deadline), keep: c.keep.with(k, keep), served: c.served.with(k, 0), backlog: c.backlog.with(k, false), continued: c.continued.with(k, false), rate_since: c.rate_since.with(k, 0 - 1 as i64), rate_base: c.rate_base.with(k, 0), send_since: c.send_since.with(k, 0 - 1 as i64), send_base: c.send_base.with(k, 0), peers: c.peers.with(k, peer), hosts: c.hosts.with(k, host), tails: c.tails.with(k, NoTail), tls: c.tls.with(k, tls), framing: c.framing.with(k, Http1) };
+  }
+  return __Conns { open: c.open + 1, free: c.free, fds: c.fds.append(fd), slots: __slot_set(c.slots, fd, c.fds.len() + 1), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), due: __sooner(c.due, deadline), keep: c.keep.append(keep), served: c.served.append(0), backlog: c.backlog.append(false), queued: c.queued, continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), hosts: c.hosts.append(host), tails: c.tails.append(NoTail), tls: c.tls.append(tls), framing: c.framing.append(Http1), last: c.last, out: c.out, lent: c.lent, parked: c.parked, later: c.later, metrics: c.metrics, pulls: c.pulls, producers: c.producers, tls_reads: c.tls_reads, zc_bytes: c.zc_bytes, zc_held: c.zc_held, zc_slots: c.zc_slots, zc_free: c.zc_free, quic: c.quic, date: c.date };
 }
 
 // __conns_from_peer(c, peer) — how many open connections the peer holds.
 function __conns_from_peer(c: __Conns, peer: i32): i32 {
   let n: i32 = 0;
-  for p in c.peers {
-    if (p == peer) {
+  let i: i32 = 0;
+  while (i < c.fds.len()) {
+    if (c.fds[i] >= 0 && c.peers[i] == peer) {
       n = n + 1;
     }
+    i = i + 1;
   }
   return n;
 }
 
+// __conns_remove(c, at) — the table without the connection at `at`: its
+// slot cleared and made the first free one, so a close costs the same
+// however many connections are open and no other connection moves.
 function __conns_remove(c: __Conns, at: i32): __Conns {
-  let fds: i32[] = [];
-  let slots: u8[] = c.slots;
-  slots = __slot_set(slots, c.fds[at], 0);
-  let bufs: u8[][] = [];
-  let offs: i32[] = [];
-  let pending: u8[][] = [];
-  let deadlines: i64[] = [];
-  let keep: boolean[] = [];
-  let served: i32[] = [];
-  let backlog: boolean[] = [];
-  let continued: boolean[] = [];
-  let rate_since: i64[] = [];
-  let rate_base: i32[] = [];
-  let send_since: i64[] = [];
-  let send_base: i32[] = [];
-  let peers: i32[] = [];
-  let hosts: platform.Host[] = [];
-  let tails: __Tail[] = [];
-  let tls: __Tls[] = [];
-  let framing: __Framing[] = [];
-  let i: i32 = 0;
-  while (i < c.fds.len()) {
-    if (i != at) {
-      slots = __slot_set(slots, c.fds[i], fds.len() + 1);
-      fds = fds.append(c.fds[i]);
-      bufs = bufs.append(c.bufs[i]);
-      offs = offs.append(c.offs[i]);
-      pending = pending.append(c.pending[i]);
-      deadlines = deadlines.append(c.deadlines[i]);
-      keep = keep.append(c.keep[i]);
-      served = served.append(c.served[i]);
-      backlog = backlog.append(c.backlog[i]);
-      continued = continued.append(c.continued[i]);
-      rate_since = rate_since.append(c.rate_since[i]);
-      rate_base = rate_base.append(c.rate_base[i]);
-      send_since = send_since.append(c.send_since[i]);
-      send_base = send_base.append(c.send_base[i]);
-      peers = peers.append(c.peers[i]);
-      hosts = hosts.append(c.hosts[i]);
-      tails = tails.append(c.tails[i]);
-      tls = tls.append(c.tls[i]);
-      framing = framing.append(c.framing[i]);
-    }
-    i = i + 1;
+  let fd: i32 = c.fds[at];
+  let was: boolean = c.backlog[at];
+  let next: i32 = c.free;
+  let lent: i32 = c.lent;
+  if (lent == at) {
+    lent = 0 - 1;
   }
-  return __Conns { fds: fds, slots: slots, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base, send_since: send_since, send_base: send_base, peers: peers, hosts: hosts, tails: tails, tls: tls, framing: framing, last: c.last, out: c.out, lent: 0 - 1, parked: c.parked, later: c.later, metrics: c.metrics, pulls: __pulls_without(c.pulls, c.fds[at]), producers: __producers_without(c.producers, c.fds[at]), tls_reads: c.tls_reads, zc_bytes: c.zc_bytes, zc_held: c.zc_held, zc_slots: c.zc_slots, zc_free: c.zc_free, quic: c.quic, date: c.date };
+  let empty: u8[] = [];
+  // Every array is updated in the one record update that takes `c`, so
+  // each is written in place; what is derived from `c` is applied to the
+  // result. A Host has no empty value, so the slot keeps the one it held
+  // until a connection takes it again.
+  let r: __Conns = __Conns { ...c, open: c.open - 1, free: at, fds: c.fds.with(at, 0 - 1), slots: __slot_set(c.slots, fd, 0), bufs: c.bufs.with(at, empty), offs: c.offs.with(at, next), pending: c.pending.with(at, empty), backlog: c.backlog.with(at, false), tails: c.tails.with(at, NoTail), tls: c.tls.with(at, Plain), framing: c.framing.with(at, Http1), lent: lent };
+  return __Conns { ...r, queued: __unqueued(r.queued, fd, was), pulls: __pulls_without(r.pulls, fd), producers: __producers_without(r.producers, fd) };
 }
 
-// __conns_timeout(c, now) — the wait's timeout: the milliseconds until the
-// earliest read deadline (0 once one is due, or while a connection has a
-// request its event's burst left unanswered), or -1 with nothing open.
+// __conns_timeout(c, now) — the wait's timeout: the milliseconds until
+// `due` (0 once it has passed, or while a connection has a request its
+// event's burst left unanswered), or -1 with nothing to wait for.
 function __conns_timeout(c: __Conns, now: i64): i32 {
-  for b in c.backlog {
-    if (b) {
-      return 0;
-    }
+  if (c.queued.len() > 0) {
+    return 0;
   }
-  let best: i64 = -(1 as i64);
-  for d in c.deadlines {
-    if (best < 0 as i64 || d < best) {
-      best = d;
-    }
-  }
+  let best: i64 = c.due;
   if (best < 0 as i64) {
     return -1;
   }
@@ -1573,6 +1550,41 @@ function __conns_timeout(c: __Conns, now: i64): i32 {
     return 2147483647;
   }
   return ms as i32;
+}
+
+// __backlog_on(c, at) — the connection at `at` with a request its burst
+// left unanswered, for the next pass to answer.
+function __backlog_on(c: __Conns, at: i32): __Conns {
+  if (c.backlog[at]) {
+    return c;
+  }
+  let fd: i32 = c.fds[at];
+  return __Conns { ...c, backlog: c.backlog.with(at, true), queued: c.queued.append(fd) };
+}
+
+// __unqueued(queued, fd, was) — `queued` without `fd`, which is in it when
+// its connection `was` backlogged.
+function __unqueued(queued: i32[], fd: i32, was: boolean): i32[] {
+  if (!was) {
+    return queued;
+  }
+  let out: i32[] = [];
+  for q in queued {
+    if (q != fd) {
+      out = out.append(q);
+    }
+  }
+  return out;
+}
+
+// __backlog_due(c, at) — `due` once the connection at `at` has no backlog:
+// `__serve_expire` passes over a connection with one, so its deadline
+// counts again from here.
+function __backlog_due(c: __Conns, at: i32): i64 {
+  if (!c.backlog[at]) {
+    return c.due;
+  }
+  return __sooner(c.due, c.deadlines[at]);
 }
 
 // __serve_accept(drv, listener, c, opts, host_for) — one accepted connection,
@@ -1734,7 +1746,7 @@ function __serve_read_proxy[D: async.Driver](drv: D, c: __Conns, at: i32, next: 
   if (lent == at) {
     lent = 0 - 1;
   }
-  c = __Conns { ...read.0, bufs: read.0.bufs.with(at, empty), lent: lent, deadlines: read.0.deadlines.with(at, deadline) };
+  c = __Conns { ...read.0, bufs: read.0.bufs.with(at, empty), lent: lent, deadlines: read.0.deadlines.with(at, deadline), due: __sooner(read.0.due, deadline) };
   match (forwarded.proxy_header(bytes, 0)) {
     HeaderRead(src, n) => {
       return __proxied(drv, c, at, next, src, __bytes_from(bytes, n), opts, read.1);
@@ -1820,7 +1832,7 @@ function __serve_read_plain[D: async.Driver](drv: D, c: __Conns, at: i32, scratc
   if (was_idle && buf.len() > 0) {
     deadline = monotonic_ns() + opts.recv_deadline.as_nanos();
   }
-  c = __Conns { ...c, deadlines: c.deadlines.with(at, deadline) };
+  c = __Conns { ...c, deadlines: c.deadlines.with(at, deadline), due: __sooner(c.due, deadline) };
   return (__body_deadline(c, at, opts, monotonic_ns()), false);
 }
 
@@ -1868,7 +1880,7 @@ function __serve_read_tls[D: async.Driver](drv: D, c: __Conns, at: i32, sess: se
   if (was_idle && buf.len() > 0) {
     deadline = monotonic_ns() + opts.recv_deadline.as_nanos();
   }
-  c = __Conns { ...c, deadlines: c.deadlines.with(at, deadline) };
+  c = __Conns { ...c, deadlines: c.deadlines.with(at, deadline), due: __sooner(c.due, deadline) };
   return (__body_deadline(c, at, opts, monotonic_ns()), false);
 }
 
@@ -2066,7 +2078,9 @@ function __tail_persists(behind: __Behind, eof: boolean): boolean {
 function __serve_took(c: __Conns, at: i32, f: http.HttpFramed, opts: Config, eof: boolean, stop: __Stop): (__Conns, boolean, __Behind, http.HttpFramed) {
   let served: i32 = c.served[at] + 1;
   let keep: boolean = f.keep_alive && served < opts.keep_alive_requests && !__serve_stopping(stop);
-  c = __Conns { ...c, offs: c.offs.with(at, c.offs[at] + f.len), served: c.served.with(at, served), backlog: c.backlog.with(at, false), continued: c.continued.with(at, false), last: http.http_framed_kept(f) };
+  let due: i64 = __backlog_due(c, at);
+  let queued: i32[] = __unqueued(c.queued, c.fds[at], c.backlog[at]);
+  c = __Conns { ...c, offs: c.offs.with(at, c.offs[at] + f.len), served: c.served.with(at, served), due: due, queued: queued, backlog: c.backlog.with(at, false), continued: c.continued.with(at, false), last: http.http_framed_kept(f) };
   let parsed: (__Behind, http.HttpFramed) = __serve_behind(http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits, c.last), f);
   if (keep) {
     keep = __tail_persists(parsed.0, eof);
@@ -2109,7 +2123,7 @@ function __serve_next(c: __Conns, at: i32, opts: Config): __Conns {
   if (c.bufs[at].len() > c.offs[at]) {
     span = opts.recv_deadline;
   }
-  c = __Conns { ...c, deadlines: c.deadlines.with(at, now + span.as_nanos()), rate_since: c.rate_since.with(at, 0 - 1 as i64) };
+  c = __Conns { ...c, deadlines: c.deadlines.with(at, now + span.as_nanos()), due: __sooner(c.due, now + span.as_nanos()), rate_since: c.rate_since.with(at, 0 - 1 as i64) };
   return __body_deadline(c, at, opts, now);
 }
 
@@ -2138,7 +2152,7 @@ function __body_deadline(c: __Conns, at: i32, opts: Config, now: i64): __Conns {
   if (earned > deadline) {
     deadline = earned;
   }
-  return __Conns { ...c, deadlines: c.deadlines.with(at, deadline), rate_since: c.rate_since.with(at, since), rate_base: c.rate_base.with(at, base) };
+  return __Conns { ...c, deadlines: c.deadlines.with(at, deadline), due: __sooner(c.due, deadline), rate_since: c.rate_since.with(at, since), rate_base: c.rate_base.with(at, base) };
 }
 
 // __serve_ready(drv, c, at, opts, behind) — a persisting connection whose
@@ -2271,7 +2285,7 @@ function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, method: s
     return (c, false);
   }
   if (answered >= __pipeline_burst()) {
-    return (__Conns { ...c, backlog: c.backlog.with(at, true) }, false);
+    return (__backlog_on(c, at), false);
   }
   return (c, true);
 }
@@ -2652,7 +2666,7 @@ function __h2_flushed[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: 
   }
   c = __serve_next(c, at, opts);
   if (__flight_at(fls, c.fds[at]) >= 0) {
-    c = __Conns { ...c, deadlines: c.deadlines.with(at, __held_deadline()) };
+    c = __Conns { ...c, deadlines: c.deadlines.with(at, __held_deadline()), due: __sooner(c.due, __held_deadline()) };
   }
   return (c, fls);
 }
@@ -3295,17 +3309,15 @@ function __serve_finish[D: async.Driver](drv: D, c: __Conns, fd: i32, eof: boole
 function __with_backlog(c: __Conns, own events: i32[]): i32[] {
   let n: i32 = async.ready_pairs(events);
   let reported: i32 = n * 2;
-  let i: i32 = 0;
-  while (i < c.fds.len()) {
-    if (c.backlog[i] && !__reported(events, reported, c.fds[i])) {
+  for fd in c.queued {
+    if (!__reported(events, reported, fd)) {
       if (n * 2 + 1 < events.len()) {
-        events = events.with(n * 2, c.fds[i]).with(n * 2 + 1, 0);
+        events = events.with(n * 2, fd).with(n * 2 + 1, 0);
       } else {
-        events = events.append(c.fds[i]).append(0);
+        events = events.append(fd).append(0);
       }
       n = n + 1;
     }
-    i = i + 1;
   }
   return async.end_pairs(events, n);
 }
@@ -3819,7 +3831,7 @@ function __drain_deadline(c: __Conns, at: i32, opts: Config, first: boolean): __
   if (opts.response_min_data_rate > 0) {
     deadline = since + opts.response_data_rate_grace.as_nanos() + (base - outstanding) as i64 * (1000000000 as i64) / (opts.response_min_data_rate as i64);
   }
-  return __Conns { ...c, deadlines: c.deadlines.with(at, deadline), send_since: c.send_since.with(at, since), send_base: c.send_base.with(at, base) };
+  return __Conns { ...c, deadlines: c.deadlines.with(at, deadline), due: __sooner(c.due, deadline), send_since: c.send_since.with(at, since), send_base: c.send_base.with(at, base) };
 }
 
 // LISTENER_INTEREST — how a loop watches its listener: for reads, and
@@ -3945,7 +3957,7 @@ function __serve_stop_step[D: async.Driver](drv: D, listener: i32, c: __Conns, o
 // every connection closed, and the flights left, which with no connection
 // are responses' background work, ended or cut off at the drain deadline.
 function __stop_done(c: __Conns, parked: i32, past_drain: boolean): boolean {
-  return c.fds.len() == 0 && (parked == 0 || past_drain);
+  return c.open == 0 && (parked == 0 || past_drain);
 }
 
 // __stop_sweep(drv, c, stop, past_drain) — the connections with nothing
@@ -3954,15 +3966,16 @@ function __stop_done(c: __Conns, parked: i32, past_drain: boolean): boolean {
 function __stop_sweep[D: async.Driver](drv: D, c: __Conns, stop: __Stop, past_drain: boolean): (__Conns, __Stop) {
   let i: i32 = 0;
   while (i < c.fds.len()) {
-    let idle: boolean = c.bufs[i].len() == 0 && !__in_flight(c, i) && !c.backlog[i];
-    if (idle || past_drain) {
-      if (!idle) {
-        stop = __Stop { ...stop, aborted: true };
+    if (c.fds[i] >= 0) {
+      let idle: boolean = c.bufs[i].len() == 0 && !__in_flight(c, i) && !c.backlog[i];
+      if (idle || past_drain) {
+        if (!idle) {
+          stop = __Stop { ...stop, aborted: true };
+        }
+        c = __serve_close(drv, c, i);
       }
-      c = __serve_close(drv, c, i);
-    } else {
-      i = i + 1;
     }
+    i = i + 1;
   }
   return (c, stop);
 }
@@ -4009,7 +4022,7 @@ function __serve_gate[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: 
   if (cap < 1) {
     cap = 1;
   }
-  let full: boolean = c.fds.len() >= cap || parked >= opts.max_in_flight;
+  let full: boolean = c.open >= cap || parked >= opts.max_in_flight;
   if (accepting && full) {
     drv.unwatch(listener);
     return false;
@@ -4026,20 +4039,29 @@ function __serve_gate[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: 
 // peer's progress shows in the socket's queue and not only in a
 // readiness event. A connection whose backlog holds a request is not
 // waiting on the peer: its deadline is stale from the read that filled
-// the backlog, and it stays open for the next wait to answer it.
+// the backlog, and it stays open for the next wait to answer it. The
+// table is swept only once `due` has passed, and the sweep sets `due` to
+// the earliest deadline it leaves.
 function __serve_expire[D: async.Driver](drv: D, c: __Conns, opts: Config, now: i64): __Conns {
+  if (c.due < 0 as i64 || c.due > now) {
+    return c;
+  }
+  let due: i64 = 0 - 1 as i64;
   let i: i32 = 0;
   while (i < c.fds.len()) {
-    if (c.deadlines[i] <= now && !c.backlog[i] && __in_flight(c, i)) {
-      c = __drain_deadline(c, i, opts, false);
+    if (c.fds[i] >= 0 && !c.backlog[i]) {
+      if (c.deadlines[i] <= now && __in_flight(c, i)) {
+        c = __drain_deadline(c, i, opts, false);
+      }
+      if (c.deadlines[i] <= now) {
+        c = __serve_close(drv, c, i);
+      } else {
+        due = __sooner(due, c.deadlines[i]);
+      }
     }
-    if (c.deadlines[i] <= now && !c.backlog[i]) {
-      c = __serve_close(drv, c, i);
-    } else {
-      i = i + 1;
-    }
+    i = i + 1;
   }
-  return c;
+  return __Conns { ...c, due: due };
 }
 
 // ---- Streamed request bodies (docs/NET-P3-SUSPENSION-PLAN.md §3.9) ------
@@ -4522,7 +4544,9 @@ function __serve_stream[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at
   let req: HttpRequest = HttpRequest { ...h.request, body: stream.stream_from_source(src) };
   let served: i32 = c.served[at] + 1;
   let keep: boolean = h.keep_alive && served < opts.keep_alive_requests && !__serve_stopping(stop);
-  c = __Conns { ...c, offs: c.offs.with(at, buf.len()), served: c.served.with(at, served), backlog: c.backlog.with(at, false), continued: c.continued.with(at, false), keep: c.keep.with(at, keep), framing: c.framing.with(at, Pulling(body)) };
+  let due: i64 = __backlog_due(c, at);
+  let queued: i32[] = __unqueued(c.queued, c.fds[at], c.backlog[at]);
+  c = __Conns { ...c, offs: c.offs.with(at, buf.len()), served: c.served.with(at, served), due: due, queued: queued, backlog: c.backlog.with(at, false), continued: c.continued.with(at, false), keep: c.keep.with(at, keep), framing: c.framing.with(at, Pulling(body)) };
   let f: http.HttpFramed = http.HttpFramed { request: req, len: 0, keep_alive: keep, version: h.version };
   c = __serve_started(c, at);
   match (start(f, keep, stop, c.hosts[at])) {
@@ -4721,7 +4745,7 @@ function __serve_park[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: 
       _ => {}
     }
   }
-  return (__Conns { ...c, deadlines: c.deadlines.with(at, __held_deadline()) }, fls.append(__Flight { ...fl, fd: fd, since: c.rate_since[at] }));
+  return (__Conns { ...c, deadlines: c.deadlines.with(at, __held_deadline()), due: __sooner(c.due, __held_deadline()) }, fls.append(__Flight { ...fl, fd: fd, since: c.rate_since[at] }));
 }
 
 // __held_deadline() — the read deadline of a connection whose handler is
@@ -4756,7 +4780,7 @@ function __serve_held_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[]
   if (read.1) {
     c = __serve_parked_eof(c, fd);
   }
-  return (__Conns { ...c, deadlines: c.deadlines.with(at, __held_deadline()) }, fls);
+  return (__Conns { ...c, deadlines: c.deadlines.with(at, __held_deadline()), due: __sooner(c.due, __held_deadline()) }, fls);
 }
 
 // __serve_settle(drv, c, fls, fd, eof, opts, clk) — `__serve_finish` after
@@ -5330,7 +5354,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts, true);
   let host_for: (Option[net.SocketAddr]) => platform.Host = (peer: Option[net.SocketAddr]): platform.Host => plat.with_peer(peer);
-  let conns: __Conns = __Conns { fds: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none(), date: "" };
+  let conns: __Conns = __Conns { open: 0, free: 0 - 1, fds: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], due: 0 - 1 as i64, keep: [], served: [], backlog: [], queued: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none(), date: "" };
   let flights: __Flight[] = [];
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, date: "", line: "" };
@@ -5533,7 +5557,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts, false);
   let host_for: (Option[net.SocketAddr]) => platform.Host = (peer: Option[net.SocketAddr]): platform.Host => plat.with_peer(peer);
-  let conns: __Conns = __Conns { fds: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none(), date: "" };
+  let conns: __Conns = __Conns { open: 0, free: 0 - 1, fds: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], due: 0 - 1 as i64, keep: [], served: [], backlog: [], queued: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none(), date: "" };
   let flights: __Flight[] = [];
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, date: "", line: "" };
