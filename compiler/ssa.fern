@@ -4977,6 +4977,40 @@ function and_not_of(defs: SInst[], ins: SInst): SInst {
   return no_inst();
 }
 
+// carry_triple reports instruction ii of blk as a 64-bit sum or difference,
+// the carry or borrow out of it (fuse_carries) next, and after that the one
+// add or subtract that reads the carry (`uses` counts each value's readers).
+// The emitters keep such a carry in the flags: the sum sets them and the
+// reader adds or subtracts them with zero, and only loads, moves and stores
+// come between.
+pub function carry_triple(blk: SBlock, ii: i32, uses: i32[]): boolean {
+  if (ii < 0 || ii + 2 >= blk.insts.len()) {
+    return false;
+  }
+  let sum: SInst = blk.insts[ii];
+  let c: SInst = blk.insts[ii + 1];
+  let reader: SInst = blk.insts[ii + 2];
+  if (c.kind_tag != 37 || c.args.len() != 2 || sum.kind_tag != 9 || reader.kind_tag != 9 || sum.args.len() != 2 || reader.args.len() != 2) {
+    return false;
+  }
+  let sub: boolean = c.imm == 1;
+  let op: string = if (sub) { "sub" } else { "add" };
+  if (sum.str != op || reader.str != op || uses[c.result] != 1) {
+    return false;
+  }
+  let same: boolean = sum.args[0] == c.args[0] && sum.args[1] == c.args[1];
+  if (!sub && sum.args[0] == c.args[1] && sum.args[1] == c.args[0]) {
+    same = true;
+  }
+  if (!same) {
+    return false;
+  }
+  if (sub) {
+    return reader.args[1] == c.result && reader.args[0] != c.result;
+  }
+  return reader.args[0] == c.result != (reader.args[1] == c.result);
+}
+
 // fuse_carries rewrites the branch-free carry out of a 64-bit add,
 // `(x & y | (x | y) & (s ^ -1)) >> 63` over s = x + y or s = x + y + c, and
 // the borrow out of a subtract, `((x ^ -1) & y | ((x ^ -1) | y) & d) >> 63`

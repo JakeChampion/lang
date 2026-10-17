@@ -13,8 +13,10 @@ import (
 // incoming carry known to be 0 or 1, with the formula's operands commuted,
 // chained through four limbs as multi-word addition does, and in a body busy
 // enough to spill. An incoming carry that may exceed 1 keeps the formula, as
-// the flags would answer differently. Every input pair runs from 0 to all
-// ones through the top bit's edges.
+// the flags would answer differently. A carry or borrow whose one reader is
+// the add or subtract right after it never leaves the flags
+// (ssa.carry_triple). Every input pair runs from 0 to all ones through the
+// top bit's edges.
 const ssaCarryProg = `import "std/u64";
 
 const ALL: u64 = 0xffffffffffffffffu64;
@@ -66,6 +68,21 @@ const ALL: u64 = 0xffffffffffffffffu64;
     let q1: u64 = __mulhi_u64(a3, b3);
     return s0 * 3u64 + s1 * 5u64 + s2 * 7u64 + s3 * 11u64 + c3 * 13u64 + (p0 ^ p1 ^ p2 ^ p3) + q0 * 17u64 + q1 * 19u64 + a0 + a1 + a2 + a3 + b0 + b1 + b2 + b3;
 }
+@noinline function add_carried(x: u64, y: u64, h: u64): u64 {
+    let s: u64 = x + y;
+    let c: u64 = (x & y | (x | y) & (s ^ ALL)) >> 63u64;
+    return h + c ^ s;
+}
+@noinline function add_carried_left(x: u64, y: u64, h: u64): u64 {
+    let s: u64 = x + y;
+    let c: u64 = (x & y | (x | y) & (s ^ ALL)) >> 63u64;
+    return c + h ^ s;
+}
+@noinline function sub_borrowed(x: u64, y: u64, h: u64): u64 {
+    let d: u64 = x - y;
+    let b: u64 = ((x ^ ALL) & y | ((x ^ ALL) | y) & d) >> 63u64;
+    return h - b ^ d;
+}
 function main(): i32 {
     let edges: u64[] = [0u64, 1u64, 2u64, 0x7fffffffffffffffu64, 0x8000000000000000u64, 0xfffffffffffffffeu64, 0xffffffffffffffffu64, 0x123456789abcdef0u64, 0xedcba98765432110u64];
     let acc: u64 = 0u64;
@@ -77,6 +94,9 @@ function main(): i32 {
             r = r + 128u64 * wide_in(x, y, 0x8000000000000001u64) + 256u64 * wide_in(x, y, 3u64);
             acc = acc * 1000003u64 + r;
             acc = acc ^ add4(x, y, x ^ y, y - x, y, x, x + 1u64, ALL - y);
+            for h in [0u64, x ^ y, ALL] {
+                acc = acc * 31u64 + add_carried(x, y, h) + 3u64 * add_carried_left(x, y, h) + 5u64 * sub_borrowed(x, y, h);
+            }
         }
     }
     print(acc.to_string());
@@ -117,9 +137,10 @@ func TestSelfHostSSACarriesReadTheFlags(t *testing.T) {
 		target string
 		flags  *regexp.Regexp
 		shift  *regexp.Regexp
+		kept   *regexp.Regexp
 	}{
-		{"x86-64-linux", regexp.MustCompile(`(?m)^\s+setb `), regexp.MustCompile(`(?m)^\s+shrq \$63, `)},
-		{"arm64-linux", regexp.MustCompile(`(?m)^\s+cset x\d+, (hs|lo)$`), regexp.MustCompile(`(?m)^\s+lsr x\d+, x\d+, #63$`)},
+		{"x86-64-linux", regexp.MustCompile(`(?m)^\s+setb `), regexp.MustCompile(`(?m)^\s+shrq \$63, `), regexp.MustCompile(`(?m)^\s+(adcq|sbbq) \$0, `)},
+		{"arm64-linux", regexp.MustCompile(`(?m)^\s+cset x\d+, (hs|lo)$`), regexp.MustCompile(`(?m)^\s+lsr x\d+, x\d+, #63$`), regexp.MustCompile(`(?m)^\s+(adc|sbc) x\d+, x\d+, xzr$`)},
 	}
 	for _, c := range cases {
 		out := filepath.Join(dir, "carries-"+c.target+".s")
@@ -137,6 +158,12 @@ func TestSelfHostSSACarriesReadTheFlags(t *testing.T) {
 			}
 			if !c.flags.MatchString(fn) || c.shift.MatchString(fn) {
 				t.Errorf("%s: %s should read its carries off the flags, with no shift by 63:\n%s", c.target, name, fn)
+			}
+		}
+		for _, name := range []string{"add_carried", "add_carried_left", "sub_borrowed"} {
+			fn := functionListing(string(asm), "__fn_"+name)
+			if !c.kept.MatchString(fn) || c.flags.MatchString(fn) || c.shift.MatchString(fn) {
+				t.Errorf("%s: %s's carry should stay in the flags for the add or subtract that reads it:\n%s", c.target, name, fn)
 			}
 		}
 		// addc_top's incoming carry is itself a shift by 63.
