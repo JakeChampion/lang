@@ -91,13 +91,18 @@ func checkRoundsSaves(t *testing.T, dump string) {
 	if array < 0 || locals == 0 {
 		t.Fatalf("no array slot or local count in the dump of rounds:\n%s", before)
 	}
+	// A saved slot is loaded, widened to a word, and stored to the save area.
 	var saved []int
 	lines = strings.Split(after, "\n")
 	for i, line := range lines {
-		if !strings.Contains(line, "__fern_task_push_") || i == 0 {
+		if f := strings.Fields(line); len(f) < 2 || f[1] != "store_i64" {
 			continue
 		}
-		if f := strings.Fields(lines[i-1]); len(f) >= 3 && f[1] == "load_local" {
+		j := i - 1
+		for j > 0 && (strings.Contains(lines[j], " int_extend") || strings.Contains(lines[j], " f64_bits")) {
+			j--
+		}
+		if f := strings.Fields(lines[j]); len(f) >= 3 && f[1] == "load_local" {
 			n, _ := strconv.Atoi(f[2])
 			saved = append(saved, n)
 		}
