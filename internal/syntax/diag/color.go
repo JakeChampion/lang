@@ -24,7 +24,7 @@ func SetColor(on bool) bool {
 }
 
 // ColorEnabled reports whether colour rendering is currently on.
-func ColorEnabled() bool { return enableColor }
+func ColorEnabled() bool { return enableColor && !terse }
 
 // useASCII forces the rich renderer's connectors to ASCII (`|`) instead of
 // the box-drawing `│`, for terminals whose locale isn't UTF-8. Like
@@ -69,7 +69,7 @@ const (
 // and returns s untouched otherwise — so a colour-off render is byte-for-byte
 // the historical plain output.
 func paint(sgr, s string) string {
-	if !enableColor {
+	if !enableColor || terse {
 		return s
 	}
 	return sgr + s + ansiReset

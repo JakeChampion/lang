@@ -414,16 +414,19 @@ pub function json_array(items: string[]): string {
 
 // diagnostic is one LSP Diagnostic in document `src`, at Fern's 1-based
 // `line` and byte `col`. With no line it covers nothing at the start of the
-// document; otherwise it covers the one character the position names, as
-// native's does when an error carries no width. `code` is sent only when it
+// document; otherwise it covers the source character the position names,
+// or an empty range at EOF. `code` is sent only when it
 // is a real diagnostic code — the code a client deep-links, so the checker's
 // "type" marker is not one. `data`, when not empty, is a fix (fix_data) for a
 // code action to apply.
 pub function diagnostic(src: Text, line: i32, col: i32, code: string, message: string, warning: boolean, data: string): string {
+  return diagnostic_with_related(src, line, col, code, message, warning, data, []);
+}
+
+pub function diagnostic_with_related(src: Text, line: i32, col: i32, code: string, message: string, warning: boolean, data: string, related: string[]): string {
   let r: string = range_json(0, 0, 0, 0);
   if (line > 0) {
-    let c: i32 = utf16_col(line_text(src, line), col);
-    r = range_json(line - 1, c, line - 1, c + 1);
+    r = span_range(src, line, col, 1);
   }
   let severity: string = "1";
   if (warning) {
@@ -437,7 +440,19 @@ pub function diagnostic(src: Text, line: i32, col: i32, code: string, message: s
   if (data.len() > 0) {
     out = out + ",\"data\":" + data;
   }
+  if (related.len() > 0) {
+    out = out + ",\"relatedInformation\":" + json_array(related);
+  }
   return out + "}";
+}
+
+pub function related_information(uri: string, src: Text, r: util.Related): string {
+  let length: i32 = r.length;
+  if (length <= 0) {
+    length = 1;
+  }
+  let range: string = span_range(src, util.pos_line(r.line), r.col, length);
+  return "{\"location\":{\"uri\":" + quote(uri) + ",\"range\":" + range + "},\"message\":" + quote(r.message) + "}";
 }
 
 // fix_data is a diagnostic's `data` for a fix replacing `range` with

@@ -22,28 +22,31 @@ import (
 // the IR path and matches the interpreter. (This flipped
 // array_structural_verbs_test.fern from AST to IR.)
 //
-// The cases here are single-element-type per program; `concat` at two element
-// types is covered by TestSelfHostArrayMethodMultiElemIR. Each case is checked
-// against the interpreter oracle.
+// A scalar element type takes the runtime's sized copy, `__fern_arr_concat`,
+// instead of the clone; a string array, whose elements are counted, keeps the
+// clone. The cases here are single-element-type per program; `concat` at two
+// element types is covered by TestSelfHostArrayMethodMultiElemIR. Each case is
+// checked against the interpreter oracle.
 var arrayConcatMethodIRCases = []struct {
-	name string
-	src  string
+	name   string
+	src    string
+	kernel bool
 }{
 	// i32[] concat, indexed back to a scalar: [1,2,3]+[4,5] -> len 5, c[4]=5.
 	{"i32", `import "std/array";
-function main(): i32 { let a: i32[] = [1, 2, 3]; let b: i32[] = [4, 5]; let c: i32[] = a.concat(b); return c.len() * 10 + c[4]; }`},
+function main(): i32 { let a: i32[] = [1, 2, 3]; let b: i32[] = [4, 5]; let c: i32[] = a.concat(b); return c.len() * 10 + c[4]; }`, true},
 	// string[] concat: the joined array's length (the element kind exercises
 	// the string-width array path, distinct from i32).
 	{"string", `import "std/array";
-function main(): i32 { let a: string[] = ["ab", "c"]; let b: string[] = ["de", "f"]; let c: string[] = a.concat(b); return c.len(); }`},
+function main(): i32 { let a: string[] = ["ab", "c"]; let b: string[] = ["de", "f"]; let c: string[] = a.concat(b); return c.len(); }`, false},
 	// concat of a fresh array literal argument (receiver is still a bare local).
 	{"literal-arg", `import "std/array";
-function main(): i32 { let a: i32[] = [7, 8]; let c: i32[] = a.concat([9]); return c.len() * 10 + c[2]; }`},
+function main(): i32 { let a: i32[] = [7, 8]; let c: i32[] = a.concat([9]); return c.len() * 10 + c[2]; }`, true},
 	// chained: the outer receiver is itself an array-method call, so mono_infer
 	// must recover `a.concat(b)`'s return type for the outer `.concat(a)` to
 	// rewrite onto the IR path too. Single element type → one instantiation.
 	{"chained", `import "std/array";
-function main(): i32 { let a: i32[] = [1]; let b: i32[] = [2, 3]; let c: i32[] = a.concat(b).concat(a); return c.len(); }`},
+function main(): i32 { let a: i32[] = [1]; let b: i32[] = [2, 3]; let c: i32[] = a.concat(b).concat(a); return c.len(); }`, true},
 }
 
 func TestSelfHostArrayConcatMethodIR(t *testing.T) {
@@ -82,7 +85,10 @@ func TestSelfHostArrayConcatMethodIR(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatalf("%s: driver emitted 0 bytes", tc.name)
 			}
-			if !strings.Contains(asm, "__arrm_concat__") {
+			if tc.kernel && !strings.Contains(asm, "__fern_arr_concat") {
+				t.Errorf("%s: no call to __fern_arr_concat in asm (a scalar concat did not take the runtime copy)", tc.name)
+			}
+			if !tc.kernel && !strings.Contains(asm, "__arrm_concat__") {
 				t.Errorf("%s: no monomorphised __arrm_concat__ clone in asm (method did not ride the IR array-method path)", tc.name)
 			}
 			bin := buildBin(t, gcc, dir, "arrcat_"+tc.name+"_bin", asm)

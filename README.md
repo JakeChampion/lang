@@ -97,6 +97,10 @@ inside it. It assembles, links and (for Darwin) code-signs in-process with no
 external toolchain. `fern -targets` lists every target with the capabilities
 its host provides; `fern -explain E030` explains an error code.
 
+Diagnostics include source context, related locations and applicable fixes.
+Use `fern -q -check FILE.fern` or `FERN_DIAG_FORMAT=terse` for one plain line per
+diagnostic, without source context, notes, fixes or colour.
+
 ### Targets
 
 | Target | Output | Baseline |

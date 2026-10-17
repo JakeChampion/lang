@@ -5942,13 +5942,9 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_slice_abort") {
     s = s.need("heap");
   }
-  // arr.join(sep) (#5328): mark_arr_str_join sets the arr_str_join + heap
-  // needs; the bodies come from asm_arm64.emit_runtime
-  // (which asm_arm64_ir reuses verbatim — the arr_str_join block already
-  // exists there), so only the call site needs marking here.
-  if (name == "__fern_arr_str_join") {
-    s = s.mark_arr_str_join();
-  }
+  // arr.join(sep) and a scalar xs.concat(ys) (#5328): mark_array_helper
+  // sets each one's need and the heap's.
+  s = s.mark_array_helper(name);
   // arr-of-arr reclaim helpers (#4355 slice 9) — bodies gated on these
   // needs in asm_arm64's runtime writer, mirroring the x86 asm_ir
   // gating: an unrelated binary must not carry the strarrarr body's
@@ -6441,6 +6437,20 @@ function emit_named_bodies(cache: irtables.LowerResult[], physical: physicalbody
   return s;
 }
 
+// arr.join(sep) and a scalar xs.concat(ys) are Fern runtime functions
+// (#2649, asmcore.rt_src_arr_str_join and rt_src_arr_concat). Each fills one
+// exact-size block, so the heap is its only dep and mark_array_helper
+// declares it.
+function emit_array_helpers(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.has_need("arr_str_join")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_join(), s);
+  }
+  if (s.has_need("arr_concat")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_concat(), s);
+  }
+  return s;
+}
+
 // emit_ir_runtime_fern_fn emits a runtime helper written in Fern (an
 // asmcore.rt_src_* body) from its typed lowering (EmitState.rt_lower), the
 // arm64 sibling of asm_ir.emit_ir_runtime_fern_fn. The literals, shapes and
@@ -6853,40 +6863,6 @@ function emit_rt_uname_field_darwin(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    add sp, sp, #416\n");
   s = s.write("    ldr x21, [sp], #16\n");
   s = s.write("    ldp x19, x20, [sp], #16\n");
-  s = s.write("    ldp x29, x30, [sp], #16\n");
-  s = s.write("    ret\n");
-  return s;
-}
-
-// emit_rt_cpu_count_darwin is `cpu_count()` on arm64-darwin. XNU has no
-// affinity mask; `hw.activecpu` is the same question there, and is what
-// sysconf(_SC_NPROCESSORS_ONLN) reads. A refused sysctl answers 0, which is
-// the builtin's "cannot say".
-//
-// Frame: mib (8) + oldlen (8) + the int (4, padded) = 32.
-function emit_rt_cpu_count_darwin(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("__fn___fern_cpu_count:\n");
-  s = s.write("    stp x29, x30, [sp, #-16]!\n");
-  s = s.write("    mov x29, sp\n");
-  s = s.write("    sub sp, sp, #32\n");
-  s = s.write("    mov w0, #6\n");  // CTL_HW
-  s = s.write("    mov w1, #25\n");  // HW_AVAILCPU
-  s = s.write("    stp w0, w1, [sp]\n");  // mib[2]
-  s = s.write("    mov x0, #4\n");
-  s = s.write("    str x0, [sp, #8]\n");  // oldlen = sizeof(int)
-  s = s.write("    mov x0, sp\n");  // name
-  s = s.write("    mov x1, #2\n");  // namelen
-  s = s.write("    add x2, sp, #16\n");  // oldp
-  s = s.write("    add x3, sp, #8\n");  // oldlenp
-  s = s.write("    mov x4, #0\n");  // newp
-  s = s.write("    mov x5, #0\n");  // newlen
-  s = s.write("    mov x16, #202\n");
-  s = s.write("    svc #0x80\n");
-  s = s.write("    mov w0, #0\n");
-  s = s.write("    b.cs .Lcpucount_done\n");  // carry set = error: 0
-  s = s.write("    ldr w0, [sp, #16]\n");
-  s = s.write(".Lcpucount_done:\n");
-  s = s.write("    add sp, sp, #32\n");
   s = s.write("    ldp x29, x30, [sp], #16\n");
   s = s.write("    ret\n");
   return s;
@@ -10838,12 +10814,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   // section over the __raw_arr_box + __raw_array pair. It takes a `tgt`, and
   // only because its bounds trap (#5419) is exit(134) through __syscall3 and
   // the exit number is per-target.
-  // __fern_arr_str_join is now a Fern runtime function (#2649): see
-  // asmcore.rt_src_arr_str_join. It fills one exact-size block, so the heap
-  // is its only dep and mark_arr_str_join declares it.
-  if (s.has_need("arr_str_join")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_join(), s);
-  }
+  s = emit_array_helpers(s);
   // __fern_str_trim — Fern runtime function (#2649), Tier-1: returns the
   // zero-copy sub-slice s[start:end] after skipping leading/trailing
   // whitespace. The slice box allocates (heap dep via mark_str_trim).
@@ -11295,11 +11266,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     }
   }
   if (s.has_need("cpu_count")) {
-    if (darwin) {
-      s = emit_rt_cpu_count_darwin(s);
-    } else {
-      s = emit_ir_runtime_fern_fn(asmcore.rt_src_cpu_count(tgt), s);
-    }
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_cpu_count(tgt), s);
   }
   if (s.has_need("isatty")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_isatty(tgt), s);

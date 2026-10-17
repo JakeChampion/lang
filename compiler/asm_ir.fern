@@ -11302,11 +11302,9 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
     s = s.need("heap");
     s = s.need("u64_to_string");
   }
-  // arr.join(sep) needs its own body + the heap runtime it fills its
-  // exact-size block from (mark_arr_str_join sets both). #5328.
-  if (name == "__fern_arr_str_join") {
-    s = s.mark_arr_str_join();
-  }
+  // arr.join(sep) and a scalar xs.concat(ys) need their own bodies + the
+  // heap runtime they fill one exact-size block from. #5328.
+  s = s.mark_array_helper(name);
   // arr-of-arr reclaim helpers (#4355 slice 9): bodies gated on these
   // needs in emit_ir_runtime — a binary with no arr-of-arr reclaim
   // must not carry them, since the strarrarr body's inner
@@ -11507,6 +11505,21 @@ function ir_i2f_rax(width: i32, unsigned: boolean, lb: string, d: string): strin
     return "    movl " + ssa_r32(d) + ", " + ssa_r32(d) + "\n    cvtsi2sd " + d + ", %xmm0\n    movq %xmm0, " + d + "\n";
   }
   return "    cvtsi2sd " + d + ", %xmm0\n    movq %xmm0, " + d + "\n";
+}
+
+// arr.join(sep) and a scalar xs.concat(ys): Fern runtime functions (#5328)
+// that fill one exact-size block. Heap-dependent (present above). .text since
+// the heap runtime left us in .bss.
+function emit_array_helpers(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.has_need("arr_str_join")) {
+    s = s.write("    .text\n");
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_join(), s);
+  }
+  if (s.has_need("arr_concat")) {
+    s = s.write("    .text\n");
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_concat(), s);
+  }
+  return s;
 }
 
 // emit_ir_runtime_fern_fn lowers a runtime helper WRITTEN IN FERN through the
@@ -12191,14 +12204,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_concat(), s);
   }
-  // arr.join(sep) — a Fern runtime function (#5328) lowered through the IR
-  // pipeline: two passes over an exact-size block, summing the lengths and
-  // then memcpy'ing each piece in. Heap-dependent (present above). .text
-  // since the heap runtime left us in .bss.
-  if (s.has_need("arr_str_join")) {
-    s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_join(), s);
-  }
+  s = emit_array_helpers(s);
   // i32_to_string — backs (n).to_string(), Tier-2 via the intrinsics (#2649):
   // digit-buffer build. Heap-dependent (present above).
   if (s.has_need("i32_to_string")) {

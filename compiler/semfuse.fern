@@ -258,8 +258,9 @@ function report_verb(cx: Context, callee: string): string {
 //
 // The semantic kinds are numbered downward without gaps, so the pure ones are
 // two runs: `array_new` through `arr_slice` less the call through a value and
-// the cell write, and `dyn_up` through `dyn_as`. The map iterator kinds sit
-// between the runs; the holes and anything newer sit past the second.
+// the cell write, and `dyn_up` through `dyn_as`, and then `arr_concat`. The
+// map iterator kinds sit between the runs; the holes and anything newer
+// sit past the second.
 function pure_kind(k: i32): boolean {
   if (k >= 1) {
     return k <= 10;
@@ -267,7 +268,7 @@ function pure_kind(k: i32): boolean {
   if (k == ssasem.call_value() || k == ssasem.cell_set()) {
     return false;
   }
-  return k >= ssasem.arr_slice() || k <= ssasem.dyn_up() && k >= ssasem.dyn_as();
+  return k >= ssasem.arr_slice() || k <= ssasem.dyn_up() && k >= ssasem.dyn_as() || k == ssasem.arr_concat();
 }
 
 function direct_effect(f: ssasem.Func): boolean {

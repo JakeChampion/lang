@@ -1235,7 +1235,12 @@ pub function str_join_chunks(parts: string[]): string {
 // renders `line:col: error[E0XX]: …` like the Go checker, the rest still
 // render `error[E0XX]: …`. See docs/SELFHOST-CHECKER-PORT.md. `fix` is a
 // machine-applicable fix, when there is one.
-pub struct Diag { code: string, message: string, line: i32, col: i32, fix: Option[Fix] }
+pub struct Diag { code: string, message: string, line: i32, col: i32, fix: Option[Fix], related: Related[] }
+
+// Related adds context at another source position. Lines carry the same module
+// index as a diagnostic's primary position; length is a byte count, or zero
+// for a single caret.
+pub struct Related { line: i32, col: i32, length: i32, message: string }
 
 // Fix replaces the identifier `old` with `new_text`: a respelling, which always
 // re-parses. `old` is the first identifier so spelled from `line`, `col` on
@@ -1330,14 +1335,26 @@ pub function no_line_map(): LineMap {
 // pos_file_index numbers modules: the entry, then files[k] at k + 1.
 pub function doc_diag(maps: LineMap[], d: Diag): Diag {
   let (line, col) = doc_pos(maps, d.line, d.col);
+  let out: Diag = Diag { ...d, line: line, col: col, related: doc_related(maps, d.related) };
   if let Some(f) = d.fix {
     let (fl, fc) = doc_pos(maps, f.line, f.col);
     if (fl == 0) {
-      return Diag { ...d, line: line, col: col, fix: None };
+      return Diag { ...out, fix: None };
     }
-    return Diag { ...d, line: line, col: col, fix: Some(Fix { ...f, line: fl, col: fc }) };
+    return Diag { ...out, fix: Some(Fix { ...f, line: fl, col: fc }) };
   }
-  return Diag { ...d, line: line, col: col };
+  return out;
+}
+
+function doc_related(maps: LineMap[], related: Related[]): Related[] {
+  let out: Related[] = [];
+  for r in related {
+    let (line, col) = doc_pos(maps, r.line, r.col);
+    if (line > 0) {
+      out = out.append(Related { ...r, line: line, col: col });
+    }
+  }
+  return out;
 }
 
 // doc_pos is doc_diag for a bare position.
@@ -1378,6 +1395,9 @@ pub function format_diags_in(diags: Diag[], files: string[]): string {
       out = out + "\n";
     }
     out = out + tag + d.message + " (" + pos_str("", files, d.line, d.col) + ")";
+    for r in d.related {
+      out = out + "\n    note: " + r.message + " (" + pos_str("", files, r.line, r.col) + ")";
+    }
     i = i + 1;
   }
   return out;
