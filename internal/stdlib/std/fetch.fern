@@ -1411,8 +1411,9 @@ function __proxies(): ProxyEnv {
 // from and stores its `Set-Cookie` into, none when None.
 pub struct Policy { public_only: boolean, proxies: ProxyEnv, roots: Option[verify.Roots], jar: Option[cookie.Jar], allow: Option[Allow] }
 
-// `public_policy()` — the route `plat.http` takes: global addresses only,
-// the environment's proxies, the machine's roots, no jar, any host.
+// `public_policy()` — global addresses only, the environment's proxies,
+// the machine's roots, no jar, any host: the route `plat.http` takes, with
+// the proxies its pool keeps (`proxy_env`).
 pub function public_policy(): Policy {
   return public_policy_via(__proxies());
 }
