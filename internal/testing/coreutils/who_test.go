@@ -134,9 +134,8 @@ func whoCases(t *testing.T) []invocation {
 	text := utmpRaw(t, dir, "text", []byte(strings.Repeat("not a utmp file\n", utmpRecordSize/16)))
 	missing := filepath.Join(dir, "nosuch")
 
-	// Exercise both ends of the stored seconds field. GNU interprets the
-	// x86-64 Linux compatibility layout as unsigned (through 2106), while
-	// Darwin's 32-bit and ARM64 Linux's 64-bit fields retain signed dates.
+	// The seconds field is a SIGNED 32-bit count, so the corpus holds
+	// both ends of it and both sides of the epoch.
 	times := utmpFile(t, dir, "times",
 		utmpRec{typ: utUserProcess, pid: 4, line: "t0", user: "e", sec: 0},
 		utmpRec{typ: utUserProcess, pid: 5, line: "t1", user: "e", sec: 2147483647},
