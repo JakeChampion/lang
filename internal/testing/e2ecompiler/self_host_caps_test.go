@@ -44,6 +44,43 @@ func TestSelfHostCapsRules(t *testing.T) {
 	}
 }
 
+func TestSelfHostCapsPathIdentityWithoutProcessDirectory(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	dir := copySelfHostTree(t)
+	entry := filepath.Join(dir, "caps_path_identity.fern")
+	src := `import "./pkggrants";
+function main(): i32 {
+  if (pkggrants.canonical_dir("/one/../two") != "/two") { return 1; }
+  let relative = pkggrants.canonical_dir("./one/../two");
+  if (target_os() == "wasi") {
+    if (relative != "two") { return 2; }
+  } else {
+    match (getcwd()) {
+      Ok(cwd) => { if (relative != cwd + "/two") { return 3; } },
+      Err(_) => { return 4; }
+    }
+  }
+  return 0;
+}`
+	if err := os.WriteFile(entry, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("native", func(t *testing.T) {
+		if out, err := runX86_64Bin(cli.runner, cli.x86Binary(t, entry)).CombinedOutput(); err != nil {
+			t.Fatalf("path identity: %v\n%s", err, out)
+		}
+	})
+	t.Run("wasi", func(t *testing.T) {
+		wat, err := os.ReadFile(cli.emit(t, entry, "wasm32-wasi"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if code, out := runWasm(t, string(wat)); code != 0 {
+			t.Fatalf("path identity: exit %d\n%s", code, out)
+		}
+	})
+}
+
 // writeCapsProject lays out the two-package tree both compilers are run over:
 // an `app` root package depending on a path dependency `helper` whose lib
 // reaches for the filesystem, with `helper`'s dependency entry carrying
