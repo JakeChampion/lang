@@ -6733,6 +6733,12 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
   if (s.has_need("eprint")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_eprint_str(ctgt), s);
   }
+  return emit_rt_clocks(s, darwin, ctgt);
+}
+
+// emit_rt_clocks writes the clocks the module reads and, on Linux, the vDSO
+// slot and lookup they call clock_gettime through.
+function emit_rt_clocks(s: asmcore.EmitState, darwin: boolean, ctgt: string): asmcore.EmitState {
   if (s.has_need("now_unix_ms")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_unix_ms", ctgt), s);
   }

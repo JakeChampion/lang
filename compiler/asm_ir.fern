@@ -12055,7 +12055,11 @@ function emit_profile_alloc_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (!rtprofile.allocation(s.profile)) {
     return s;
   }
-  return s.write("__fern_profile_alloc:\n    cmpq $0, .Lprofile_ring+24(%rip)\n    je .Lprofile_alloc_return\n    movq $1, %rax\n    lock xaddq %rax, .Lprofile_ring+144(%rip)\n    addq $1, %rax\n    testq $63, %rax\n    jne .Lprofile_alloc_return\n    movq $39, %rax\n    syscall\n    cmpq .Lprofile_ring+128(%rip), %rax\n    jne .Lprofile_alloc_return\n    movq $186, %rax\n    syscall\n    movq %rax, %r10\n    xorl %eax, %eax\n    lock cmpxchgq %r10, .Lprofile_ring+40(%rip)\n    jne .Lprofile_busy\n    subq $8, %rsp\n    leaq -1(%r14), %rax\n    movq %rbp, %rsi\n    movq %rsp, %rdi\n    leaq .Lprofile_ring(%rip), %r8\n    movq %r13, %r9\n    shlq $6, %r9\n    call __fn___fern_profile_sample.r\n    testl %eax, %eax\n    je .Lprofile_alloc_unlock\n    lock addq $1, .Lprofile_ring+8(%rip)\n.Lprofile_alloc_unlock:\n    addq $8, %rsp\n    movq $0, .Lprofile_ring+40(%rip)\n.Lprofile_alloc_return:\n    ret\n");
+  s = s.write("__fern_profile_alloc:\n    cmpq $0, .Lprofile_ring+24(%rip)\n    je .Lprofile_alloc_return\n    movq $1, %rax\n    lock xaddq %rax, .Lprofile_ring+144(%rip)\n    addq $1, %rax\n    testq $63, %rax\n    jne .Lprofile_alloc_return\n    movq $39, %rax\n");
+  s = s.syscall(39);
+  s = s.write("    cmpq .Lprofile_ring+128(%rip), %rax\n    jne .Lprofile_alloc_return\n    movq $186, %rax\n");
+  s = s.syscall(186);
+  return s.write("    movq %rax, %r10\n    xorl %eax, %eax\n    lock cmpxchgq %r10, .Lprofile_ring+40(%rip)\n    jne .Lprofile_busy\n    subq $8, %rsp\n    leaq -1(%r14), %rax\n    movq %rbp, %rsi\n    movq %rsp, %rdi\n    leaq .Lprofile_ring(%rip), %r8\n    movq %r13, %r9\n    shlq $6, %r9\n    call __fn___fern_profile_sample.r\n    testl %eax, %eax\n    je .Lprofile_alloc_unlock\n    lock addq $1, .Lprofile_ring+8(%rip)\n.Lprofile_alloc_unlock:\n    addq $8, %rsp\n    movq $0, .Lprofile_ring+40(%rip)\n.Lprofile_alloc_return:\n    ret\n");
 }
 
 function emit_profile_runtime(s: asmcore.EmitState): asmcore.EmitState {
