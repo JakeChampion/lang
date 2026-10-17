@@ -328,9 +328,11 @@ What changed, in the order it matters:
   compile.
 - **`test-e2e-other` runs two workers per shard.** Its aarch64 leg was a single
   15-minute serial process, the longest job outside the self-host lane. Its
-  x86_64 leg is three shards: at two, each worker ran 24-25 of its 25 minutes,
-  and the interpreter's `tls_verify` suite (over three minutes alone) tipped
-  one over.
+  x86_64 leg is four shards. With three, run 39034198170 exhausted the
+  unchanged 25-minute worker budget: shard 2's first worker ran out of time
+  while the other finished in 16m22s. The active tests had only just started.
+  Four disjoint selections reduce the work assigned to each runner; the
+  test selection and per-worker timeout stay unchanged.
 - **The seven `diff-selfhost-*` jobs are three**, one per target, each running
   the AST and the semantic leg. Four of the seven were 0.6-3 minute jobs paying
   ~40 s of setup each.
