@@ -2556,6 +2556,22 @@ function load_checked(s: Sources, root: string, target: string, embed_dir: strin
 //   code the self-host used to discard in silence (#8738). Last, because a
 //   malformed declaration parses on as top-level statements, so its debris must
 //   be named by the gate that understands it.
+// imported_parse_findings is what failed to parse at the top level of an
+// imported module. The merge keeps the entry's top-level statements only,
+// so these are not in the module parse_findings reads; each module's
+// lines are already based where the bundle's maps place them.
+function imported_parse_findings(b: Bundle): Finding[] {
+  let none: parser.FuncDecl[] = [];
+  for lm in b.loaded {
+    let fs: Finding[] = errors_of(asmcore.parse_unknown_errors_module(parser.Module { ...lm.mod, funcs: none }));
+    if (fs.len() > 0) {
+      return fs;
+    }
+  }
+  let ok: Finding[] = [];
+  return ok;
+}
+
 function parse_findings(mod: parser.Module): Finding[] {
   let fs: Finding[] = errors_of(asmcore.check_decl_names(mod));
   if (fs.len() == 0) {
@@ -2636,7 +2652,7 @@ function check_bundle(b: Bundle, entry_path: string, target: string, target_give
   // Native stops at its parse error and prints only that, so reporting the
   // parse gates alone is both the correct diagnostic and the code-set parity —
   // anything downstream of a declaration that did not parse is noise.
-  let parsed: Finding[] = parse_findings(merged);
+  let parsed: Finding[] = util.append_all(parse_findings(merged), imported_parse_findings(b));
   if (parsed.len() > 0) {
     return Checked { findings: parsed, entry: entry_path, files: b.files, maps: b.maps, ok: false };
   }
@@ -5377,7 +5393,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   }
 
   if (mode_interp) {
-    if (eprint_findings(st, interp_findings(merged, pkgs), entry_path, b.files, b.maps)) {
+    if (eprint_findings(st, util.append_all(imported_parse_findings(b), interp_findings(merged, pkgs)), entry_path, b.files, b.maps)) {
       return 1;
     }
     let argv: string[] = [entry_path];
@@ -5398,7 +5414,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // checker gate below exists: without them a build is MORE permissive than
   // `-check`, and a keyword-named function reaches codegen as a nameless
   // declaration.
-  if (eprint_findings(st, parse_findings(merged), entry_path, b.files, b.maps)) {
+  if (eprint_findings(st, util.append_all(parse_findings(merged), imported_parse_findings(b)), entry_path, b.files, b.maps)) {
     return 1;
   }
 
