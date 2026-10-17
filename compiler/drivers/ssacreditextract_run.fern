@@ -78,8 +78,9 @@ function freed_parent(ops: ir.Op[], i: i32): boolean {
   return i > 0 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec" && ops[i - 1].kind_tag == ir.kind_id("load_local") && ops[i - 1].i32_imm == 0;
 }
 
+// Five scalar fields retain the boxed result this credit proof checks.
 function target_checks(target: string): void {
-  let source = "struct Leaf { n: i32 }\nstruct Parent { child: Leaf }\n@noinline\nfunction extract(own p: Parent): Leaf { return p.child; }\nfunction main(): i32 { let p = Parent { child: Leaf { n: 7 } }; return extract(p).n; }\n";
+  let source = "struct Leaf { n: i32, a:i32, b:i32, c:i32, d:i32 }\nstruct Parent { child: Leaf }\n@noinline\nfunction extract(own p: Parent): Leaf { return p.child; }\nfunction main(): i32 { let p = Parent { child: Leaf { n: 7, a:7, b:7, c:7, d:7 } }; return extract(p).n; }\n";
   let driven = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
   let bodies: irtables.LowerResult[] = [];
   let drops: irtables.LowerResult[] = [];
@@ -246,7 +247,7 @@ function sibling_mutated(f: ssa.SFunc, other: i32, mode: i32, release: string): 
 }
 
 function sibling_checks(target: string): void {
-  let source = "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, marker: i32, right: Leaf }\n@noinline\nfunction left(own p: Parent): Leaf { return p.left; }\n@noinline\nfunction right(own p: Parent): Leaf { return p.right; }\nfunction main(): i32 { return 0; }\n";
+  let source = "struct Leaf { n: i32, a:i32, b:i32, c:i32, d:i32 }\nstruct Parent { left: Leaf, marker: i32, right: Leaf }\n@noinline\nfunction left(own p: Parent): Leaf { return p.left; }\n@noinline\nfunction right(own p: Parent): Leaf { return p.right; }\nfunction main(): i32 { return 0; }\n";
   let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
   let drops: irtables.LowerResult[] = [];
   let releases: irtables.LowerResult[] = [];

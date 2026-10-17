@@ -7,8 +7,9 @@ import "testing"
 // one is a constant too. Each probe runs 100 rounds and prints its result times 1000
 // plus the heap allocations the rounds made. origin, the TInt and TVoid
 // members, the Shade payload, named's string field and names' string elements
-// allocate nothing; fresh holds a parameter and rebuild's first record a loop
-// counter, so each still allocates once a round; rebuild hands that record to
+// allocate nothing. The small scalar return ABI also removes fresh and the
+// unsigned scalar result boxes. Rebuild's first record holds a loop counter
+// and still allocates once a round; rebuild hands that record to
 // px, since one only read would never be built. rebuild's second record is
 // constant, so the first one's box is
 // released where it dies rather than held for a construction that no longer
@@ -16,9 +17,9 @@ import "testing"
 // allocates and its args do not, and later's push onto those args makes the
 // allocation the literal no longer does. later's update counts its base, so
 // it writes into leaf's fresh box rather than taking another. An unsigned
-// literal arrives as its source text: u_small's 12 is placed, and u_big's
-// 3000000000, past 2^31, is left to the heap, where its word is written at
-// the field's width.
+// scalar return preserves both u_small's 12 and u_big's 3000000000, past
+// 2^31, without allocating a result box. The value still uses its unsigned
+// field width.
 const staticBoxProgram = `struct P { x: i32, y: i32, on: boolean }
 struct TInt { width: i32, signed: boolean }
 struct TVoid {}
@@ -216,7 +217,7 @@ func TestSelfHostStaticBoxes(t *testing.T) {
 	// Before static boxes the first three lines ended 100, 200 and 100, and
 	// leaf_rounds ended 200. cast_rounds' literals are written with casts
 	// of literals, `1 as u8`, and are placed like bare literals.
-	want := "500000\n3300000\n2000000\n10100000\n4950100\n5450100\n4950100\n800200\n301200100\n3000\n800100\n10400100\n300000\n200000\n700000\n1400000\n0\n"
+	want := "500000\n3300000\n2000000\n10100000\n4950000\n5450100\n4950100\n800200\n301200000\n3000\n800100\n10400100\n300000\n200000\n700000\n1400000\n0\n"
 	runSemanticProgram(t, "staticbox", staticBoxProgram,
 		[]string{"origin", "t_int", "t_void", "named", "mixed", "fresh", "width", "shade", "rebuild",
 			"origin_rounds", "member_rounds", "shade_rounds", "named_rounds", "fresh_rounds", "rebuild_rounds",

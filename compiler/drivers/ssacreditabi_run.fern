@@ -392,6 +392,7 @@ function expect(sub: ircore.Sub, ok: boolean, reason: string, id: i32): void {
   }
 }
 
+// Five scalar fields keep the child boxed across a physical extraction.
 function source(mode: i32): string {
   if (mode >= 6) {
     let finalizer = "";
@@ -404,13 +405,13 @@ function source(mode: i32): string {
     if (mode == 8) {
       finalizer = "impl[T] Leaf[T] { function drop(self: Self): void {} }\n";
     }
-    return "struct Leaf[T] { n: T }\nstruct Parent { child: Leaf[i32] }\n" + finalizer
+    return "struct Leaf[T] { n: T, a:T, b:T, c:T, d:T }\nstruct Parent { child: Leaf[i32] }\n" + finalizer
       + "@noinline\nfunction extract(own p: Parent): Leaf[i32] { return p.child; }\n"
-      + "function main(): i32 { let l: Leaf[i32] = Leaf { n: 7 }; let p = Parent { child: l }; return extract(p).n; }\n";
+      + "function main(): i32 { let l: Leaf[i32] = Leaf { n: 7, a:7, b:7, c:7, d:7 }; let p = Parent { child: l }; return extract(p).n; }\n";
   }
-  let leaf = "struct Leaf { n: i32 }\n";
+  let leaf = "struct Leaf { n: i32, a:i32, b:i32, c:i32, d:i32 }\n";
   let parent = "struct Parent { child: Leaf }\n";
-  let value = "Leaf { n: 7 }";
+  let value = "Leaf { n: 7, a:7, b:7, c:7, d:7 }";
   let init = "Parent { child: l }";
   let result = "extract(p).n";
   let finalizer = "";
@@ -601,8 +602,8 @@ function selected_source(mode: i32): string {
   let value = "l";
   if (mode > 0) {
     other = "Other";
-    declarations = "struct Other { n: i32 }\n";
-    value = "Other { n: 8 }";
+    declarations = "struct Other { n: i32, a:i32, b:i32, c:i32, d:i32 }\n";
+    value = "Other { n: 8, a:8, b:8, c:8, d:8 }";
   }
   if (mode == 2) {
     declarations = declarations + "trait Drop { function drop(self: Self): void; }\nimpl Drop for Other { function drop(self: Self): void {} }\n";
@@ -611,11 +612,11 @@ function selected_source(mode: i32): string {
     declarations = "struct Other { n: string }\n";
     value = "Other { n: \"eight\" }";
   }
-  return "struct Leaf { n: i32 }\n" + declarations
+  return "struct Leaf { n: i32, a:i32, b:i32, c:i32, d:i32 }\n" + declarations
     + "struct Parent { left: Leaf, marker: i32, right: " + other + " }\n"
     + "@noinline\nfunction extract_left(own p: Parent): Leaf { return p.left; }\n"
     + "@noinline\nfunction extract_right(own p: Parent): " + other + " { return p.right; }\n"
-    + "function main(): i32 { let l = Leaf { n: 7 }; let p = Parent { left: l, marker: 9, right: " + value + " }; return extract_left(p).n; }\n";
+    + "function main(): i32 { let l = Leaf { n: 7, a:7, b:7, c:7, d:7 }; let p = Parent { left: l, marker: 9, right: " + value + " }; return extract_left(p).n; }\n";
 }
 
 function selected_checks(target: string): void {

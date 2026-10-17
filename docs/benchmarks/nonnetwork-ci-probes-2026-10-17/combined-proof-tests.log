@@ -1,0 +1,26 @@
+--- FAIL: TestSelfHostTypedPhysicalExtraction (62.99s)
+    --- FAIL: TestSelfHostTypedPhysicalExtraction/arm64-linux (22.98s)
+        self_host_ssa_credit_abi_test.go:18: typed physical extraction exited 130: leakcheck: allocs=1594039 frees=1592283 live_bytes=124072 from=exit
+            fern-sanitizer: leak 124072 bytes in 1756 blocks
+    --- FAIL: TestSelfHostTypedPhysicalExtraction/x86-64-linux (13.29s)
+        self_host_ssa_credit_abi_test.go:18: typed physical extraction exited 130: leakcheck: allocs=1594039 frees=1592283 live_bytes=124072 from=exit
+            fern-sanitizer: leak 124072 bytes in 1756 blocks
+    --- FAIL: TestSelfHostTypedPhysicalExtraction/wasm32-wasi (25.38s)
+        self_host_ssa_credit_abi_test.go:18: typed physical extraction exited 1: leakcheck: allocs=1668283 frees=1666527 live_bytes=89272 from=exit
+            fern-sanitizer: leak 89272 bytes in 1756 blocks
+            Error: failed to run main module `/tmp/TestSelfHostTypedPhysicalExtractionwasm32-wasi3098301036/001/out.wat`
+            
+            Caused by:
+                0: failed to invoke command default
+                1: error while executing at wasm backtrace:
+                0: 0x3f9b82 - <unknown>!__fern_proc_exit
+                1: 0x37f4e9 - <unknown>!selected_expect
+                2: 0x37f8ed - <unknown>!selected_checks
+                3: 0x393bb4 - <unknown>!main
+                4: 0x3f9b89 - <unknown>!__fern_main_reporting
+                5: 0x3f9b96 - <unknown>!__fern_start
+                2: exit with invalid exit status outside of [0..126)
+            
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	441.155s
+FAIL
