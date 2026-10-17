@@ -18,15 +18,15 @@ import (
 // second pass. A function carrying neither annotation returns before a single
 // op is examined.
 const (
-	fipUnpairedFbipSrc = `struct State { count: i32, total: i64 }
+	fipUnpairedFbipSrc = `struct State { count: i32, total: i64, label: string }
 fbip function make(n: i32): State {
-	return State { count: n, total: 0 as i64 };
+	return State { count: n, total: 0 as i64, label: "boxed" };
 }
 function main(): i32 { return make(3).count; }
 `
-	fipUnpairedFipSrc = `struct State { count: i32, total: i64 }
+	fipUnpairedFipSrc = `struct State { count: i32, total: i64, label: string }
 fip function make(n: i32): State {
-	return State { count: n, total: 0 as i64 };
+	return State { count: n, total: 0 as i64, label: "boxed" };
 }
 function main(): i32 { return make(3).count; }
 `
@@ -146,6 +146,8 @@ func TestSelfHostCompilePathEnforcesFipBudget(t *testing.T) {
 				{"paired array-field spread", fipArrayFieldSpreadSrc},
 				{"event_loop_fbip", string(eventLoop)},
 				{"graded claim", fipGradedSrc},
+				{"scalar result holds fip without a donor", strings.Replace(fipNoClaimSrc, "function make", "fip function make", 1)},
+				{"scalar result holds fbip without a donor", strings.Replace(fipNoClaimSrc, "function make", "fbip function make", 1)},
 				// Guard against the check becoming a blanket refusal of
 				// anything that allocates: an unannotated function may
 				// construct freely.

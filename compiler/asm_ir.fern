@@ -5429,11 +5429,15 @@ function emit_inner_mul_add_f64(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
-  if (o.kind_tag == 384) {
-    return s.write("    popq %rdx\n    pushq %rdx\n");
-  }
-  if (o.kind_tag == 385) {
-    return s.write("    pushq %rdx\n");
+  if (o.kind_tag == 384 || o.kind_tag == 385) {
+    let reg: string = "rdx";
+    if (o.width == 64) {
+      reg = ["rdx", "rcx", "r11"][o.i32_imm];
+    }
+    if (o.kind_tag == 384) {
+      return s.write("    popq %" + reg + "\n    pushq %" + reg + "\n");
+    }
+    return s.write("    pushq %" + reg + "\n");
   }
   if (o.kind_tag == 383) {
     s = s.write("    popq %rdi\n    testl %edi, %edi\n    js __fern_oob_abort\n    movl %edi, %edi\n");
@@ -6356,6 +6360,18 @@ function ssa_emit_epilogue(fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitStat
   return ssa_emit_exit(fr, s, "");
 }
 
+function ssa_restore_bare(fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
+  if (fr.pad > 0) {
+    s = ssa_cfi(ssa_lea_rm(s, "%rsp", "%rsp", 8), 3, "", 8 + 8 * fr.saved.len());
+  }
+  let j: i32 = fr.saved.len() - 1;
+  while (j >= 0) {
+    s = ssa_cfi(ssa_pop_r(s, ssa_reg(fr.saved[j])), 3, "", 8 + 8 * j);
+    j = j - 1;
+  }
+  return s;
+}
+
 // ssa_emit_exit is ssa_emit_epilogue leaving through a jump to `tail` where
 // the return would be, or returning when `tail` is empty.
 function ssa_emit_exit(fr: SsaFrame, s: asmcore.EmitState, tail: string): asmcore.EmitState {
@@ -6367,14 +6383,7 @@ function ssa_emit_exit(fr: SsaFrame, s: asmcore.EmitState, tail: string): asmcor
   }
   s = ssa_cfi(s, 7, "", 0);
   if (fr.bare) {
-    if (fr.pad > 0) {
-      s = ssa_cfi(ssa_pop_r(s, "%rcx"), 3, "", 8 + 8 * fr.saved.len());
-    }
-    let j: i32 = fr.saved.len() - 1;
-    while (j >= 0) {
-      s = ssa_cfi(ssa_pop_r(s, ssa_reg(fr.saved[j])), 3, "", 8 + 8 * j);
-      j = j - 1;
-    }
+    s = ssa_restore_bare(fr, s);
   } else if (fr.saved.len() == 0) {
     s = ssa_leave(s);
   } else {
@@ -9978,11 +9987,12 @@ function ssa_bare_frame(s: asmcore.EmitState, saved: i32[], pad: i32): asmcore.E
   return ssa_cfi(ssa_push_r(s, "%rcx"), 3, "", off);
 }
 
-// ssa_bare_epilogue takes down what ssa_bare_frame put up and returns.
+// The alignment word is padding, not a saved register. Discard it without
+// changing any return lane or a tail call's already-positioned arguments.
 function ssa_bare_epilogue(saved: i32[], pad: i32): string {
   let out: string = "    .cfi_remember_state\n";
   if (pad > 0) {
-    out = out + "    popq %rcx\n    .cfi_def_cfa_offset " + util.i32_to_string(8 + 8 * saved.len()) + "\n";
+    out = out + "    leaq 8(%rsp), %rsp\n    .cfi_def_cfa_offset " + util.i32_to_string(8 + 8 * saved.len()) + "\n";
   }
   let i: i32 = saved.len() - 1;
   while (i >= 0) {

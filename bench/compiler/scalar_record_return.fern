@@ -1,0 +1,26 @@
+// A closed record-return ABI: every call only projects its four scalar fields.
+// Print the allocations in the loop and a full-width checksum independently.
+import "std/i64";
+import "std/u64";
+
+struct Quad { a: u64, b: u64, c: u64, d: u64 }
+
+@noinline
+function quad(x: u64): Quad {
+  return Quad { a: x, b: x + 1u64, c: x ^ 0x123456789abcdef0u64, d: x * 1664525u64 };
+}
+
+function main(): i32 {
+  let before = __heap_alloc_count();
+  let sum = 0u64;
+  let i = 0;
+  while (i < 1000000) {
+    let q = quad((i + 1) as u64);
+    sum = sum + q.a + q.b + q.c + q.d;
+    i = i + 1;
+  }
+  let allocations = __heap_alloc_count() - before;
+  print(allocations.to_string());
+  print(sum.to_string());
+  return 0;
+}

@@ -20,6 +20,7 @@ import "./ssasem";
 import "./typeinfo";
 import "./semtypes";
 import "./semrecords";
+import "./semscalarreturn";
 
 pub struct Paired { funcs: ssasem.Func[], changed: boolean[] }
 
@@ -47,7 +48,11 @@ pub function pair_returns(funcs: ssasem.Func[], names: string[], rewrite: boolea
     let f: ssasem.Func = funcs[i];
     let c: boolean = false;
     if (paired[i]) {
-      f = pair_callee(f, shape_of(f, f.result));
+      if (semscalarreturn.eligible(f, f.result)) {
+        f = semscalarreturn.callee(f);
+      } else {
+        f = pair_callee(f, shape_of(f, f.result));
+      }
       c = true;
     }
     if (rewrite[i] && calls_paired(f, ix, paired)) {
@@ -95,15 +100,17 @@ function taken_apart(funcs: ssasem.Func[], ix: util.NameIndex, ok0: boolean[], d
         continue;
       }
       let whole: boolean[] = [];
+      let scalar_whole: boolean[] = [];
       let computed: boolean = false;
       for b in funcs[j].graph.blocks {
         for ins in b.insts {
           let at: i32 = paired_callee(ins, ix, ok);
           if (at >= 0 && !computed) {
             whole = whole_values(funcs[j], ix, ok, ok[j]);
+            scalar_whole = semscalarreturn.donors(funcs[j], defs_of(funcs[j].graph), whole);
             computed = true;
           }
-          if (at >= 0 && whole[ins.result]) {
+          if (at >= 0 && keeps_result(funcs[at], ins.result, whole, scalar_whole)) {
             ok = ok.with(at, false);
             changed = true;
           }
@@ -113,6 +120,13 @@ function taken_apart(funcs: ssasem.Func[], ix: util.NameIndex, ok0: boolean[], d
     }
   }
   return ok;
+}
+
+// A scalar record also stays boxed when a caller can donate its existing
+// storage to another kept record. Its scalar projections alone do not show
+// that use; the ownership planner can infer it without an explicit spread.
+function keeps_result(callee: ssasem.Func, value: i32, whole: boolean[], scalar_whole: boolean[]): boolean {
+  return whole[value] || semscalarreturn.eligible(callee, callee.result) && scalar_whole[value];
 }
 
 // The function a call to a candidate names, or -1.
@@ -148,6 +162,13 @@ function seeded(f: ssasem.Func, ix: util.NameIndex, ok: boolean[], paired: boole
       }
       if (ins.kind_tag == 8 && !joins_apart(ins, defs, ix, ok)) {
         whole = marked_all(whole, [ins.result]);
+      }
+      // Reusing an existing record is a whole-box use even though its base
+      // lives in metadata, outside the field operands. Scalarizing the donor
+      // would require materializing a replacement box in this caller.
+      let donor: i32 = ssasem.update_base(ins);
+      if (donor >= 0) {
+        whole = marked_all(whole, [donor]);
       }
     }
     if (b.term.kind_tag == 1 && !paired) {
@@ -186,7 +207,7 @@ function joins_apart(phi: ssa.SInst, defs: ssa.SInst[], ix: util.NameIndex, ok: 
   for a in phi.args {
     let d: ssa.SInst = through_copies(defs, a);
     let k: i32 = d.kind_tag;
-    if (k != ssasem.variant_new() && k != ssasem.tuple_new() && k != ssasem.zero() && k != 8 && paired_callee(d, ix, ok) < 0) {
+    if (k != ssasem.variant_new() && k != ssasem.tuple_new() && k != ssasem.record_new() && k != ssasem.zero() && k != 8 && paired_callee(d, ix, ok) < 0) {
       return false;
     }
   }
@@ -244,7 +265,7 @@ function refs_of(funcs: ssasem.Func[], ix: util.NameIndex, rewrite: boolean[]): 
 // Whether `f`'s result is a union whose every variant carries at most one
 // payload a word holds, and which no finalizer watches, or a pair.
 function shaped(f: ssasem.Func): boolean {
-  if (pair_type(f, f.result)) {
+  if (pair_type(f, f.result) || semscalarreturn.eligible(f, f.result)) {
     return true;
   }
   let at: i32 = semrecords.find_enum(f.enums, f.result);
@@ -487,6 +508,9 @@ function rebuild_calls(f0: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex
 }
 
 function rebuild_at(f0: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Func {
+  if (semscalarreturn.eligible(callee, callee.result)) {
+    return semscalarreturn.caller(f0, bi, k, callee);
+  }
   let f: ssasem.Func = f0;
   let b: ssa.SBlock = f.graph.blocks[bi];
   let call: ssa.SInst = b.insts[k];
