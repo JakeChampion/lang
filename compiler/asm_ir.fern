@@ -11926,7 +11926,7 @@ function emit_entry_runtime_settled(s0: asmcore.EmitState): asmcore.EmitState {
   return out;
 }
 
-function emit_process_entry(mod: parser.Module, s: asmcore.EmitState): asmcore.EmitState {
+function emit_process_entry(mod: parser.Module, own s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("_start:\n");
   // The sandbox is installed before anything else runs, so the filter
   // covers the whole program, the arena mmap included.
@@ -11961,6 +11961,10 @@ function emit_process_entry(mod: parser.Module, s: asmcore.EmitState): asmcore.E
   }
   s = s.write("    pushq %rbp\n");
   s = s.write("    movq %rsp, %rbp\n");
+  return emit_process_finish(mod, s);
+}
+
+function emit_process_finish(mod: parser.Module, own s: asmcore.EmitState): asmcore.EmitState {
   // A MAIN-LESS module (a library compiled standalone — util.fern et al.
   // under the bootstrap self-compile) has no __fn_main to call, so `_start`
   // exits 0 directly. Mirrors the retired x86 AST emitter's own no-main branch, minus the
@@ -11994,13 +11998,13 @@ function emit_process_entry(mod: parser.Module, s: asmcore.EmitState): asmcore.E
   return s;
 }
 
-function intern_runtime_shapes(s: asmcore.EmitState): asmcore.EmitState {
+function intern_runtime_shapes(own s: asmcore.EmitState): asmcore.EmitState {
   // Pre-intern "FileStat" so the __fern_stat runtime helper (emitted after this
   // literal pool, inside the heap/stat block) can reference its shape label. The
   // helper's own shape_ref dedups to this slot; without the early intern the label
   // would be undefined (the runtime emits AFTER the pool). Mirrors the
   // retired AST emitters' FileStat pre-intern. Gated on the stat need.
-  if (s.has_need("stat") || s.has_need("lstat") || s.has_need("access") || s.has_need("fd_stat")) {
+  if (s.any_need(["stat", "lstat", "access", "fd_stat"])) {
     let fsPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "FileStat");
     s = fsPre.state;
   }
