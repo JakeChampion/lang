@@ -30,3 +30,10 @@ Thirty-two paired emissions (eight benchmarks on four targets) change
 only the deleted native helper and its export declaration. WASI outputs
 are byte-identical. The previous compiler's listings still contain the
 helper, so they fail the new absence assertions.
+
+The native performance gate requires recording improvements as well as
+regressions. Run 39057822953 measured smaller x86-64 static instruction counts;
+all 29 rows outside the tolerance match a local emission cross-check exactly.
+The same cross-check measures the complete corpus on x86-64 and ARM64. The
+smaller static ceilings are lowered to those measured counts, retaining every
+dynamic instruction baseline and tolerance. No ceiling is raised.
