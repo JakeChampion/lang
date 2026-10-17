@@ -1,0 +1,136 @@
+// A block that reads the same slot of the same value twice reads it once: a
+// value is immutable, so the second read is the first. One read gives the
+// slot one holder, so the plan can hold or take it where the box it came from
+// is consumed, rather than borrow one copy past the consumer while the other
+// is what the consumer was handed. semsink's re-reads at a block's head are
+// what most often repeat a read the block makes further down.
+import "./ssa";
+import "./ssasem";
+import "./semtypes";
+import "./typeinfo";
+
+pub struct Merged { f: ssasem.Func, merged: i32 }
+
+// Each value's stand-in, itself unless a read it repeats replaces it, and
+// how many reads were replaced.
+struct Same { of: i32[], merged: i32 }
+
+pub function merge(f: ssasem.Func): Merged {
+  let same: Same = Same { of: identity(f.values.len()), merged: 0 };
+  let before: i32 = 0 - 1;
+  while (same.merged != before) {
+    before = same.merged;
+    for b in f.graph.blocks {
+      same = merge_block(b, f.values, same);
+    }
+  }
+  if (same.merged == 0) {
+    return Merged { f: f, merged: 0 };
+  }
+  let blocks: ssa.SBlock[] = [];
+  for b in f.graph.blocks {
+    blocks = blocks.append(rewritten(b, same.of));
+  }
+  return Merged { f: ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks } }, merged: same.merged };
+}
+
+function identity(n: i32): i32[] {
+  let out: i32[] = __alloc_i32(n);
+  let k: i32 = 0;
+  while (k < n) {
+    out = out.with(k, k);
+    k = k + 1;
+  }
+  return out;
+}
+
+// `same` with each read of `b` that repeats an earlier one in the block
+// standing for it.
+function merge_block(b: ssa.SBlock, values: typeinfo.Type[], own same: Same): Same {
+  let seen: ssa.SInst[] = [];
+  for ins in b.insts {
+    if (read(ins.kind_tag) && ins.result >= 0 && ins.result < same.of.len() && same.of[ins.result] == ins.result) {
+      let args: i32[] = renamed(ins.args, same.of);
+      let first: i32 = earlier(seen, ins, args, values);
+      if (first >= 0) {
+        same = Same { of: same.of.with(ins.result, first), merged: same.merged + 1 };
+      } else {
+        seen = seen.append(ssa.SInst { ...ins, args: args });
+      }
+    }
+  }
+  return same;
+}
+
+// The block without its repeated reads, every operand naming its stand-in.
+function rewritten(b: ssa.SBlock, same: i32[]): ssa.SBlock {
+  let insts: ssa.SInst[] = [];
+  for ins in b.insts {
+    if (ins.result < 0 || ins.result >= same.len() || same[ins.result] == ins.result) {
+      insts = insts.append(ssa.SInst { ...ins, args: renamed(ins.args, same) });
+    }
+  }
+  return ssa.SBlock { ...b, insts: insts, term: renamed_term(b.term, same) };
+}
+
+function read(kind: i32): boolean {
+  return kind == ssasem.record_get() || kind == ssasem.tuple_get() || kind == ssasem.variant_get() || kind == ssasem.array_get();
+}
+
+// The block's earlier read of the slot `ins` reads, -1 for none.
+function earlier(seen: ssa.SInst[], ins: ssa.SInst, args: i32[], values: typeinfo.Type[]): i32 {
+  for s in seen {
+    if (s.kind_tag == ins.kind_tag && s.imm == ins.imm && s.str == ins.str && same_args(s.args, args) && semtypes.equal(values[s.result], values[ins.result])) {
+      return s.result;
+    }
+  }
+  return 0 - 1;
+}
+
+function same_args(a: i32[], b: i32[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < a.len()) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function renamed(args: i32[], same: i32[]): i32[] {
+  let out: i32[] = args;
+  let i: i32 = 0;
+  while (i < args.len()) {
+    let v: i32 = stand_in(same, args[i]);
+    if (v != args[i]) {
+      out = out.with(i, v);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function stand_in(same: i32[], v: i32): i32 {
+  if (v < 0 || v >= same.len()) {
+    return v;
+  }
+  while (same[v] != v) {
+    v = same[v];
+  }
+  return v;
+}
+
+// A terminator names its condition and its returned value.
+function renamed_term(t: ssa.STerm, same: i32[]): ssa.STerm {
+  if (t.kind_tag == 3) {
+    return ssa.STerm { ...t, cond: stand_in(same, t.cond) };
+  }
+  if (t.kind_tag == 1) {
+    return ssa.STerm { ...t, value: stand_in(same, t.value) };
+  }
+  return t;
+}

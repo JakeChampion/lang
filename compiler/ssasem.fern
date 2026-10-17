@@ -3933,10 +3933,10 @@ function same_known(a: Known, b: Known): boolean {
 struct Guards { dom: ssadeps.Dom, at: i32[], defs: ssa.SInst[], tests: i32[], same: i32[] }
 
 // Each value's twin: one value standing for every read of the same
-// projection of the same box, else itself. A value never changes, so two
-// reads of one slot of one box are one value, and a test of either settles
-// both: semsink re-reads a projection where its parent dies, below the test
-// of the first read. The reads it rewrites name the re-read, so a child can
+// projection of the same box (of one array at the same index), else itself.
+// A value never changes, so two reads of one slot of one box are one value,
+// and a test of either settles both: semsink re-reads a projection where its
+// parent dies, below the test of the first read. The reads it rewrites name the re-read, so a child can
 // have a lower id than its parent.
 function twins(defs: ssa.SInst[]): i32[] {
   let t: Twins = Twins { same: [], kids: [] };
@@ -3963,18 +3963,29 @@ function twin_into(defs: ssa.SInst[], own t: Twins, v: i32): Twins {
     return t;
   }
   let d: ssa.SInst = defs[v];
-  if (d.result != v || d.args.len() != 1 || d.args[0] < 0 || d.args[0] >= defs.len()
-    || d.kind_tag != variant_get() && d.kind_tag != record_get() && d.kind_tag != tuple_get()) {
+  if (d.result != v || twin_arity(d.kind_tag) == 0 || d.args.len() != twin_arity(d.kind_tag) || d.args[0] < 0 || d.args[0] >= defs.len()) {
     return Twins { ...t, same: t.same.with(v, v) };
   }
   t = twin_into(defs, t, d.args[0]);
   let p: i32 = t.same[d.args[0]];
   for k in t.kids[p] {
-    if (defs[k].kind_tag == d.kind_tag && defs[k].imm == d.imm && defs[k].str == d.str) {
+    if (defs[k].kind_tag == d.kind_tag && defs[k].imm == d.imm && defs[k].str == d.str && (d.args.len() == 1 || defs[k].args[1] == d.args[1])) {
       return Twins { ...t, same: t.same.with(v, k) };
     }
   }
   return Twins { same: t.same.with(v, v), kids: t.kids.with(p, t.kids[p].append(v)) };
+}
+
+// The operands of a projection that can have a twin: its box, and an array
+// read's index; 0 for any other instruction.
+function twin_arity(kind: i32): i32 {
+  if (kind == variant_get() || kind == record_get() || kind == tuple_get()) {
+    return 1;
+  }
+  if (kind == array_get()) {
+    return 2;
+  }
+  return 0;
 }
 
 function twin_of(g: Guards, v: i32): i32 {
