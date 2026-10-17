@@ -1133,6 +1133,12 @@ func TestRunnerMontgomeryExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "montgomery", "std/crypto/montgomery", 4)
 }
 
+// `tests/stdlib/field25519_test.fern` checks std/crypto/field25519's
+// arithmetic and encoding at the edges, unreduced inputs included.
+func TestRunnerField25519ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "field25519", "std/crypto/field25519", 5)
+}
+
 // `tests/stdlib/p256_test.fern` checks std/crypto/p256's [k]G, [k]Q and
 // scalar range and reduction at their edges.
 func TestRunnerP256ExamplePasses(t *testing.T) {
