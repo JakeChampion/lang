@@ -79,15 +79,30 @@ function main(): i32 {
 // it lowers the pin.
 func CheckServeAllocs(t *testing.T, addr string, want int64, rounds int) {
 	t.Helper()
+	total, seconds := serveAllocsRounds(t, serveAllocsHTTP1(t, addr), rounds)
+	got := int64(math.Round(float64(total) / float64(rounds)))
+	if d := total - got*int64(rounds); d < -serveAllocsSlackPerSecond*seconds || d > serveAllocsSlackPerSecond*seconds {
+		t.Fatalf("%d allocations over %d requests is %d from a whole number per request", total, rounds, d)
+	}
+	if got != want {
+		t.Errorf("the serve loop allocates %d times per hello request; pinned %d.\n"+
+			"Above the pin is a regression. Below it, lower the pin in the same change.", got, want)
+	}
+}
+
+// serveAllocsHTTP1 opens one keep-alive HTTP/1.1 connection to the server
+// at addr, closed when the test ends, and answers a GET's body over it.
+func serveAllocsHTTP1(t *testing.T, addr string) func(path string) string {
+	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	t.Cleanup(func() { conn.Close() })
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Minute))
 	reader := bufio.NewReader(conn)
-	get := func(path string) string {
+	return func(path string) string {
 		if _, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: localhost:8080\r\nUser-Agent: curl/8.5.0\r\nAccept: */*\r\n\r\n", path); err != nil {
 			t.Fatalf("GET %s: %v", path, err)
 		}
@@ -102,15 +117,44 @@ func CheckServeAllocs(t *testing.T, addr string, want int64, rounds int) {
 		}
 		return string(body)
 	}
-	total, seconds := serveAllocsRounds(t, get, rounds)
-	got := int64(math.Round(float64(total) / float64(rounds)))
-	if d := total - got*int64(rounds); d < -serveAllocsSlackPerSecond*seconds || d > serveAllocsSlackPerSecond*seconds {
-		t.Fatalf("%d allocations over %d requests is %d from a whole number per request", total, rounds, d)
-	}
-	if got != want {
-		t.Errorf("the serve loop allocates %d times per hello request; pinned %d.\n"+
-			"Above the pin is a regression. Below it, lower the pin in the same change.", got, want)
-	}
+}
+
+// ServeFetchAllocsServerSource is ServeAllocsServerSource with a handler
+// that makes two requests through `plat.http` before it answers "hello",
+// the nightly two-fetch profile (scripts/net-bench.d/twofetch.fern). The
+// origin is reached through the forward proxy `http_proxy` names, since a
+// handler's fetch refuses a loopback address.
+func ServeFetchAllocsServerSource(port, rounds int) string {
+	return fmt.Sprintf(`import "std/http";
+import "std/serve";
+import "std/platform";
+import "std/fetch";
+function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse, fetch.FetchError] {
+    if (req.path == "/count") {
+        return Ok(http.ok(__heap_alloc_count().to_string()));
+    }
+    let first: HttpResponse = plat.http(fetch.get("http://8.8.8.8/"))?;
+    let second: HttpResponse = plat.http(fetch.get("http://8.8.8.8/"))?;
+    if (first.status != 200 || second.status != 200) {
+        return Ok(http.text(502, ""));
+    }
+    return Ok(http.ok("hello"));
+}
+function main(): i32 {
+    return serve.run(%d, serve.Config { ...serve.config(), keep_alive_requests: %d }, handle);
+}
+`, port, serveAllocsWarm+rounds+8)
+}
+
+// CheckServeFetchAllocs drives ServeFetchAllocsServerSource at addr for
+// rounds requests over one keep-alive connection and bounds the mean
+// allocations per request by `ceiling`, as CheckServeAllocsH2 does: what
+// the two fetches cost moves with the fetch client, so a ceiling rather
+// than a pin.
+func CheckServeFetchAllocs(t *testing.T, addr string, ceiling int64, rounds int) {
+	t.Helper()
+	total, seconds := serveAllocsRounds(t, serveAllocsHTTP1(t, addr), rounds)
+	checkAllocsCeiling(t, "two-fetch", total, seconds, rounds, ceiling)
 }
 
 // CheckServeAllocsH2 is CheckServeAllocs over one prior-knowledge HTTP/2
@@ -137,12 +181,20 @@ func CheckServeAllocsH2(t *testing.T, addr string, ceiling int64, rounds int) {
 		return body
 	}
 	total, seconds := serveAllocsRounds(t, get, rounds)
+	checkAllocsCeiling(t, "HTTP/2 hello", total, seconds, rounds, ceiling)
+}
+
+// checkAllocsCeiling holds `total` allocations over `rounds` requests of
+// kind `what` under `ceiling` per request, and less than
+// serveAllocsH2Drift under it, so a gain lowers the ceiling.
+func checkAllocsCeiling(t *testing.T, what string, total, seconds int64, rounds int, ceiling int64) {
+	t.Helper()
 	mean := float64(total) / float64(rounds)
 	if total > ceiling*int64(rounds)+serveAllocsSlackPerSecond*seconds {
-		t.Errorf("the serve loop allocates %.2f times per HTTP/2 hello request; the ceiling is %d. Above it is a regression.", mean, ceiling)
+		t.Errorf("the serve loop allocates %.2f times per %s request; the ceiling is %d. Above it is a regression.", mean, what, ceiling)
 	}
 	if total < (ceiling-serveAllocsH2Drift)*int64(rounds) {
-		t.Errorf("the serve loop allocates %.2f times per HTTP/2 hello request, %d or more under the ceiling of %d: lower the ceiling in the same change.", mean, serveAllocsH2Drift, ceiling)
+		t.Errorf("the serve loop allocates %.2f times per %s request, %d or more under the ceiling of %d: lower the ceiling in the same change.", mean, what, serveAllocsH2Drift, ceiling)
 	}
 }
 

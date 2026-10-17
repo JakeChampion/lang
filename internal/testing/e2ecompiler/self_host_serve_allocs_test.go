@@ -3,7 +3,10 @@ package e2ecompiler
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -133,4 +136,26 @@ func TestSelfHostServeAllocsPerRequestH3(t *testing.T) {
 		t.Fatal(err)
 	}
 	e2eharness.CheckServeAllocsH3(t, addr, runX86_64Bin(cli.runner, client, port, strconv.Itoa(e2eharness.ServeAllocsRounds)), ServeAllocsH3Ceiling, e2eharness.ServeAllocsRounds)
+}
+
+// ServeFetchAllocsCeiling bounds what a handler making two requests
+// through `plat.http` allocates per request, the serve loop's share
+// included (e2eharness.ServeFetchAllocsServerSource, the nightly two-fetch
+// profile; docs/benchmarks/net-twofetch-2026-10-17.md).
+const ServeFetchAllocsCeiling = 171
+
+func TestSelfHostServeAllocsPerRequestTwoFetch(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "upstream")
+	}))
+	t.Cleanup(up.Close)
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(e2eharness.ServeFetchAllocsServerSource(0, e2eharness.ServeAllocsRoundsEmulated)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := runX86_64Bin(cli.runner, cli.x86Binary(t, src, "FERN_STRICT_IR=1"))
+	cmd.Env = append(os.Environ(), "http_proxy=http://u@"+up.Listener.Addr().String())
+	addr, _ := e2eharness.StartInheritedServer(t, cmd)
+	e2eharness.CheckServeFetchAllocs(t, addr, ServeFetchAllocsCeiling, e2eharness.ServeAllocsRoundsEmulated)
 }
