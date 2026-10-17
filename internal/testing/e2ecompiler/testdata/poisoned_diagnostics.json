@@ -1,0 +1,171 @@
+[
+  {
+    "name": "undefined initialiser, read once",
+    "source": "function main(): i32 {\n    let b = nosuch();\n    return b;\n}",
+    "codes": [
+      "E001"
+    ]
+  },
+  {
+    "name": "read in every shape a value fits",
+    "source": "struct S { n: i32 }\nfunction take(x: i32): i32 { return x; }\nfunction main(): i32 {\n    let b = nosuch();\n    let s = S { n: b };\n    let t = take(b);\n    let u = b as i64;\n    print(f\"{b}\\n\");\n    if (b) { return 1; }\n    while (b) { }\n    return b;\n}",
+    "codes": [
+      "E001"
+    ]
+  },
+  {
+    "name": "poison transfers to the bindings that read it",
+    "source": "function main(): i32 {\n    let b = nosuch();\n    let c = b + 1;\n    let d = c * 2;\n    return d;\n}",
+    "codes": [
+      "E001"
+    ]
+  },
+  {
+    "name": "captured by a local function and a lambda",
+    "source": "function main(): i32 {\n    let b = nosuch();\n    function inner(): i32 { return b; }\n    let f = (x: i32) => x + b;\n    return inner();\n}",
+    "codes": [
+      "E001"
+    ]
+  },
+  {
+    "name": "un-annotated empty array",
+    "source": "function main(): i32 {\n    let xs = [];\n    return xs.len();\n}",
+    "codes": [
+      "E020"
+    ]
+  },
+  {
+    "name": "array literal whose elements failed to check",
+    "source": "function main(): i32 {\n    let xs = [nosuch(), 1];\n    return xs.len();\n}",
+    "codes": [
+      "E001"
+    ]
+  },
+  {
+    "name": "failed arithmetic, then assigned and passed",
+    "source": "function f(s: string): i32 { return s.len(); }\nfunction main(): i32 {\n    let b = 1 + \"x\";\n    let c: string = b;\n    return f(b);\n}",
+    "codes": [
+      "E009"
+    ]
+  },
+  {
+    "name": "failed arithmetic, then compared and multiplied",
+    "source": "function main(): i32 {\n    let b = 2 * \"x\";\n    let c: i32 = b * 2;\n    if (b > 3) { return c; }\n    return b;\n}",
+    "codes": [
+      "E009"
+    ]
+  },
+  {
+    "name": "tuple pattern, undefined initialiser",
+    "source": "function main(): i32 {\n    let (a, b) = nosuch();\n    return a + b;\n}",
+    "codes": [
+      "E001"
+    ]
+  },
+  {
+    "name": "tuple pattern, init is not a tuple",
+    "source": "function main(): i32 {\n    let (a, b) = 5;\n    return a + b;\n}",
+    "codes": [
+      "E024"
+    ]
+  },
+  {
+    "name": "tuple pattern, arity mismatch",
+    "source": "function pair(): (i32, i32) { return (1, 2); }\nfunction main(): i32 {\n    let (a, b, c) = pair();\n    return a + b + c;\n}",
+    "codes": [
+      "E024"
+    ]
+  },
+  {
+    "name": "struct pattern, undefined initialiser",
+    "source": "struct S { n: i32 }\nfunction main(): i32 {\n    let S { n } = nosuch();\n    return n;\n}",
+    "codes": [
+      "E001"
+    ]
+  },
+  {
+    "name": "struct pattern, unknown field",
+    "source": "struct S { n: i32 }\nfunction mk(): S { return S { n: 1 }; }\nfunction main(): i32 {\n    let S { q } = mk();\n    return q;\n}",
+    "codes": [
+      "E043"
+    ]
+  },
+  {
+    "name": "struct pattern names another struct",
+    "source": "struct S { n: i32 }\nstruct T { n: i32 }\nfunction mk(): S { return S { n: 1 }; }\nfunction main(): i32 {\n    let T { n } = mk();\n    return n;\n}",
+    "codes": [
+      "E024"
+    ]
+  },
+  {
+    "name": "independent errors remain visible",
+    "source": "function main(): i32 {\n    let b = nosuch();\n    let d = alsonosuch();\n    let e: i32 = \"hi\";\n    return 0;\n}\n",
+    "codes": [
+      "E001",
+      "E001",
+      "E003"
+    ]
+  },
+  {
+    "name": "poisoned binding still redeclares",
+    "source": "function main(): i32 {\n    let b = nosuch();\n    let b: i32 = 1;\n    return b;\n}\n",
+    "codes": [
+      "E001",
+      "E013"
+    ]
+  },
+  {
+    "name": "match bindings remain poisoned",
+    "source": "function take(x: i32): i32 { return x; }\nfunction main(): i32 { let b = nosuch(); match (b) { Some(x) => { take(x); }, None => {} } return 0; }\n",
+    "codes": [
+      "E001"
+    ]
+  },
+  {
+    "name": "match statement keeps independent calls",
+    "source": "function take(x: i32): i32 { return x; }\nfunction main(): i32 { let b = nosuch(); match (b) { Some(x) => { another_missing(); }, None => {} } return 0; }\n",
+    "codes": [
+      "E001",
+      "E001"
+    ]
+  },
+  {
+    "name": "match statement keeps known call arity",
+    "source": "function take(x: i32): i32 { return x; }\nfunction main(): i32 { let b = nosuch(); match (b) { Some(x) => { take(x, x); }, None => {} } return 0; }\n",
+    "codes": [
+      "E001",
+      "E004"
+    ]
+  },
+  {
+    "name": "match guard keeps independent errors",
+    "source": "function take(x: i32): i32 { return x; }\nfunction main(): i32 { let b = nosuch(); match (b) { Some(x) when another_missing() => { take(x); }, _ => {} } return 0; }\n",
+    "codes": [
+      "E001",
+      "E001"
+    ]
+  },
+  {
+    "name": "match expression keeps independent errors",
+    "source": "function take(x: i32): i32 { return x; }\nfunction main(): i32 { let b = nosuch(); let y = match (b) { Some(x) => another_missing(), None => 0 }; return 0; }\n",
+    "codes": [
+      "E001",
+      "E001"
+    ]
+  },
+  {
+    "name": "match expression binds nested patterns",
+    "source": "function take(x: i32): i32 { return x; }\nfunction main(): i32 { let b = nosuch(); let y = match (b) { Some((x, z)) => take(x) + take(z), None => 0 }; return 0; }\n",
+    "codes": [
+      "E001"
+    ]
+  },
+  {
+    "name": "match guard keeps a concrete type error",
+    "source": "function take(x: i32): i32 { return x; }\nfunction main(): i32 { let b = nosuch(); match (b) { Some(x) when 1 => { take(x); }, _ => {} } return 0; }\n",
+    "codes": [
+      "E001",
+      "E027"
+    ]
+  }
+]
