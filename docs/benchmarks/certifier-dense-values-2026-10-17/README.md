@@ -54,3 +54,17 @@ python3 docs/benchmarks/certifier-dense-values-2026-10-17/reproduce.py \
 
 The script takes several minutes and can resume the same compiler/source
 comparison from its completed parity rows. Use an idle host for timing.
+
+After integrating the scalar ABI branch and main 3260020a0, source
+`41bfc9cf314b9c83e6c8e7c7ead5d032d2d58b49` reaches an identical stage-2/stage-3
+fixed point of 12,703,568 bytes, SHA-256
+`4e9a2d4780364cf334a18f95f8731ac54d06eda8130119e0d14cd234d5b2e9fe`.
+The combined RC-certifier, scalar-return, donor, inventory and complexity suite
+passes (32.383 seconds). All eleven strict driver-size checks pass with complete
+coverage (123.952 seconds); the raw report is archived here.
+
+`integrated-parity.json` compares that compiler against the integrated scalar
+baseline `f395df09bc0d2fb9fa77c410384411708ac7fe941e7d56b3d6e3aeab6c5eb6b7`
+on the same final sources. Both native compiler outputs, the WASI playground,
+and all three full reports match exactly. Native reports have 7,641 lines,
+WASI 7,067. No earlier timing is relabeled as this integrated comparison.
