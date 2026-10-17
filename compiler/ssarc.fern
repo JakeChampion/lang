@@ -1226,11 +1226,19 @@ function drop_record_fields(own r: irtables.LowerResult, slot: i32, fields: semr
   return r;
 }
 
-function drops(own r: irtables.LowerResult, step: ssaunits.Step, f: ssasem.Func, links: i32[]): irtables.LowerResult {
+function drops(own r: irtables.LowerResult, step: ssaunits.Step, f: ssasem.Func, p: ssaunits.Plan, links: i32[]): irtables.LowerResult {
   for value in step.drops {
-    r = drop_linked(r, value, links, f);
+    if (!null_unit(p, value)) {
+      r = drop_linked(r, value, links, f);
+    }
   }
   return r;
+}
+
+// A zero's unit is the null word, so its drop would be a call that tests the
+// null and returns.
+function null_unit(p: ssaunits.Plan, value: i32): boolean {
+  return value < p.defs.len() && p.defs[value].kind_tag == ssasem.zero();
 }
 
 // The drops of a step less the one a construction took as its box: that value's
@@ -1241,7 +1249,7 @@ function drops_less(own r: irtables.LowerResult, step: ssaunits.Step, f: ssasem.
   for value in step.drops {
     if (value == shell) {
       r = shell_release(release(r, value, f.values[value], f));
-    } else if (value != taken && value != took && value != held) {
+    } else if (value != taken && value != took && value != held && !null_unit(p, value)) {
       r = drop_known(r, value, links, f, known_fields(f, p, b, value));
     }
   }
@@ -1675,7 +1683,7 @@ function edge(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx
       r = emit(r, ir.op_load_local(ins.args[pi]));
     }
   }
-  r = drops(r, step, f, links);
+  r = drops(r, step, f, p, links);
   let i: i32 = dest.insts.len() - 1;
   while (i >= 0) {
     let ins: ssa.SInst = dest.insts[i];
@@ -6650,7 +6658,7 @@ function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[],
     if (b.term.kind_tag == 1 && b.term.value >= 0 && e.links[b.term.value] >= 0) {
       e = Emit { ...e, r: take_owed(e.r, b.term.value, e.links[b.term.value]) };
     }
-    e = Emit { ...e, r: drops(e.r, ret, f, e.links) };
+    e = Emit { ...e, r: drops(e.r, ret, f, p, e.links) };
     // The unreachable end aborts as a failed bounds check does, then
     // returns a zero the abort never lets the stack shape reach.
     if (b.term.kind_tag == 4) {

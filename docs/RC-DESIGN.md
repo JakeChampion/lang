@@ -250,7 +250,9 @@ locals sit above `nvals`. It emits:
   `__sem_release_<T>` helpers, and `__sem_drop_<T>` for children only); a
   value whose variant a payload read fixes (`ssaunits.known_variant`) is
   released by what that variant holds, in place, and a variant holding no
-  counted field by its box alone (`drop_known`, `token_children`);
+  counted field by its box alone (`drop_known`, `token_children`); a
+  `zero` (the null word the inliner passes for the payloads of a variant a
+  path did not build) is dropped with no code at all (`null_unit`);
 - **takes and steals** as a uniqueness test, a slot store of zero and the
   value in its local (`steal`); a kept or classified donor's takes read the
   token slot instead, and on its unique arm leave the slot as it is: its
