@@ -1,0 +1,39 @@
+// Three callers keep the real field multiply behind a call boundary. Each
+// reads only scalar limbs; the input elements stay live across all calls.
+import "std/crypto/field25519" as fe;
+import "std/i64";
+import "std/u64";
+
+@noinline
+function sum(a: fe.Fe, b: fe.Fe): u64 {
+  let q = fe.mul(a, b);
+  return q.l0 + q.l1 + q.l2 + q.l3;
+}
+
+@noinline
+function xor(a: fe.Fe, b: fe.Fe): u64 {
+  let q = fe.mul(a, b);
+  return q.l0 ^ q.l1 ^ q.l2 ^ q.l3;
+}
+
+@noinline
+function weighted(a: fe.Fe, b: fe.Fe): u64 {
+  let q = fe.mul(a, b);
+  return q.l0 + 3u64 * q.l1 + 5u64 * q.l2 + 7u64 * q.l3;
+}
+
+function main(): i32 {
+  let a = fe.from_i64(5);
+  let b = fe.from_i64(7);
+  let before = __heap_alloc_count();
+  let checksum = 0u64;
+  let i = 0;
+  while (i < 10000) {
+    checksum = checksum + sum(a, b) + xor(a, b) + weighted(a, b);
+    i = i + 1;
+  }
+  let allocations = __heap_alloc_count() - before;
+  print(allocations.to_string());
+  print(checksum.to_string());
+  return 0;
+}
