@@ -63,6 +63,20 @@ trend. `scripts/perf-history metrics` lists what the newest note holds and
 the last 50 main commits (`show METRIC N REV` widens or moves the window). Both
 fetch the notes ref first, so they need the remote; nothing else is hosted.
 
+## Native compiler and X25519 comparisons
+
+Build two compiler snapshots with `bootstrap/bootstrap.sh distcheck`, then run
+`scripts/native-pair-bench BASE_COMPILER CANDIDATE_COMPILER FIXED_SOURCE_ROOT REPORT`.
+It measures X25519 programs emitted by each compiler and the native compilers
+compiling the same checker source. It alternates execution order on one host,
+checks program results, and records every timing and compiler hash in JSON.
+Timing ratios are informational; instruction-count baselines remain the gates.
+
+For an Apple Silicon measurement, dispatch the Perf workflow on the candidate
+branch with `native_baseline` set to the baseline commit. That optional mode
+builds both fixpoints sequentially on one `macos-15` runner and uploads the
+paired timings. An empty `native_baseline` runs the ordinary Perf jobs.
+
 ## `make bootstrap`: the Go-less build, and `make distcheck`
 
 `make bootstrap` (pinned stage0 compiling the whole compiler, then the smoke
