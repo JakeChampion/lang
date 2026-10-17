@@ -12297,7 +12297,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     "fd_stat", "raw_scratch",
     "clock_resolution", "clock_set", "ct_mark",
   ])) {
-    s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip " + asmcore.scratch_size("x86_64", s.has_need("statfs")) + "\n    .text\n");
+    s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip " + asmcore.scratch_size("x86_64", s.has_need("statfs"), 256) + "\n    .text\n");
   }
   if (s.any_need(["reader_splice", "raw_splice_pipe"])) {
     s = s.write("    .section .bss\n    .align 8\n__fern_splice_pipe: .quad 0, 0\n    .text\n");

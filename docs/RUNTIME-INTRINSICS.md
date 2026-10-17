@@ -199,6 +199,25 @@ retired the op: `.chars()` is std/string's codepoint decoder, not a builtin.
 > Option-returning Reader leaves, Darwin's `monotonic_ns` and `fork`, the wasm
 > bundles, `__fern_alloc` itself, and the map/array mutator core.
 >
+> **Status update (2026-10, Darwin sysinfo):** `hostname`, `uname_field` and
+> `cpu_count` use Fern source through the existing six-argument syscall floor.
+> XNU's sysctl receives both MIB words, the old-value pointer and length
+> pointer, and zero for both new-value arguments. Failures are normalized to
+> negative errno by the syscall emitter. The string queries retain their
+> 384-byte result limit and allocate only the returned string; an invalid
+> uname index or refused query returns an empty string. CPU count reads
+> `hw.activecpu`, returns zero on refusal, and allocates nothing.
+>
+> The string queries share a source builder and use 400 bytes of static scratch:
+> eight for the MIB, eight for the length, and 384 for the value. That larger
+> minimum is reserved only for Darwin images reaching either string query;
+> a larger `statfs` reservation still wins. The kernel result is copied before
+> any other scratch-using helper runs. Linux's uname bodies are unchanged.
+> Mock-kernel tests run the generated bodies on x86-64 and arm64, including
+> refused calls, all field selectors, invalid indices, UTF-8, a full buffer,
+> allocation counts and a scratch guard. The Darwin emission and native macOS
+> sysinfo gates check the actual target path.
+>
 > **Status update (2026-07, user-typed returns): `stat` migrated.** `stat` is the
 > first leaf returning a **user-typed** value — `Result[FileStat, IoError]` — and
 > it lowers as a Fern function (`asmcore.rt_src_stat`): a stat syscall into

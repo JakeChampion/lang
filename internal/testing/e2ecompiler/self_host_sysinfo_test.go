@@ -145,6 +145,7 @@ func TestSelfHostSysinfoIRArm64Darwin(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	const src = `function main(): i32 {
+    print(hostname());
     print(uname_field(4));
     match (getcwd()) {
         Ok(wd) => { print(wd); },
@@ -161,6 +162,7 @@ func TestSelfHostSysinfoIRArm64Darwin(t *testing.T) {
 	}
 	text := string(asm)
 	for _, want := range []string{
+		"__fn___fern_hostname:",
 		"__fn___fern_uname_field:",
 		"__fn___fern_getcwd:",
 		"__fn___fern_cpu_count:",
@@ -169,10 +171,12 @@ func TestSelfHostSysinfoIRArm64Darwin(t *testing.T) {
 			t.Errorf("arm64-darwin emit is missing %s", want)
 		}
 	}
-	// BSD sysctl is 202. uname_field loads x16 directly; cpu_count's Fern
-	// body passes the same number through the syscall intrinsic.
-	if n := strings.Count(text, "#202"); n != 2 {
-		t.Errorf("arm64-darwin emit issues sysctl %d times, want 2 (uname_field and cpu_count)", n)
+	if !strings.Contains(text, "__fern_scratch: .skip 400") {
+		t.Error("Darwin sysinfo needs space for its MIB, length and 384-byte value")
+	}
+	// All three Fern bodies pass BSD sysctl 202 through the intrinsic.
+	if n := strings.Count(text, "#202"); n != 3 {
+		t.Errorf("arm64-darwin emit issues sysctl %d times, want 3 (hostname, uname_field and cpu_count)", n)
 	}
 	// The one syscall number XNU does not have. `sysno` answers -1 for
 	// it, so its appearance is a Linux body reaching a darwin build.
@@ -182,9 +186,8 @@ func TestSelfHostSysinfoIRArm64Darwin(t *testing.T) {
 	// getcwd's darwin body, named by the numbers only it issues: openat
 	// (BSD 463) on ".", then fcntl (BSD 92) with F_GETPATH (50), then
 	// close (BSD 6). These land in x0 and reach x16 through the stack,
-	// because a Fern body passes its syscall number as a value where the
-	// hand-written uname body above writes `mov x16` literally — so their
-	// absence is the Linux body having reached this target.
+	// because a Fern body passes its syscall number as a value. Their absence
+	// is the Linux body having reached this target.
 	for _, want := range []string{"463", "92", "50"} {
 		if !arm64Imm(text, want) {
 			t.Errorf("arm64-darwin emit does not materialise %s — getcwd's darwin body did not reach it", want)
