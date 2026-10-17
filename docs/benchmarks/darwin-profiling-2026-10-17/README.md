@@ -65,3 +65,13 @@ SHA-256 `928251f041e38056ad57661b4a6cd47056f968d09da46424b0ad3e185e3dc0ac`.
 All eleven strict size checks pass with complete coverage and unchanged
 baselines/tolerance (131.390 seconds). Raw evidence uses `main-4fdf-`.
 Both the profiling and new native-pollable macOS tests remain selected.
+
+After integrating main `bbadbc3ff` (source `88378906e`), preserving the
+owner's element-re-read optimization, the profiling, Mach-O, certification,
+element-re-read, inventory and complexity suite passes in 51.680 seconds.
+Stages 2 and 3 are identical at 12,701,040 bytes, SHA-256
+`9adf34fa31131c3ca8408ec0479d845015eb78c773c2656de777d51f3c958bda`.
+All eleven strict size checks pass with complete coverage and unchanged
+baselines/tolerance (127.017 seconds). Raw evidence uses `main-bbad-`.
+These are Linux integration results. Native Darwin execution remains a
+separate required macOS CI gate for all four profiling modes.
