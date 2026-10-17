@@ -562,7 +562,7 @@ function __recv_scratch(): u8[] {
 // descriptor that is not open (`__slot_of`). It covers the descriptors
 // under SLOT_LIMIT; a larger one, as a wasm descriptor (an address) may
 // be, and a position too large for two bytes, are found by scanning `fds`.
-struct __Conns { fds: i32[], slots: u8[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], hosts: platform.Host[], tails: __Tail[], tls: __Tls[], framing: __Framing[], last: http.HttpFramed, out: usize, lent: i32, parked: __Flight[], later: (() => void)[], metrics: metrics.ServerMetrics, pulls: __H2Pull[], producers: __H2Producer[], tls_reads: i32, zc_bytes: i32, zc_held: u8[][], zc_slots: i32[], zc_free: boolean[], quic: __Quic }
+struct __Conns { fds: i32[], slots: u8[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], hosts: platform.Host[], tails: __Tail[], tls: __Tls[], framing: __Framing[], last: http.HttpFramed, out: usize, lent: i32, parked: __Flight[], later: (() => void)[], metrics: metrics.ServerMetrics, pulls: __H2Pull[], producers: __H2Producer[], tls_reads: i32, zc_bytes: i32, zc_held: u8[][], zc_slots: i32[], zc_free: boolean[], quic: __Quic, date: string }
 
 // __Tls — a connection's TLS: none; its session, through which every
 // byte read and written passes; lent to the handler pulling a streamed
@@ -675,8 +675,9 @@ function __tail_keeps(t: __Tail): boolean {
 
 // __Clock — the `Date` every response carries (RFC 9110 §6.6.1),
 // formatted once per second: the wall-clock second it was formatted for,
-// and the field line, `Date: ` and the IMF-fixdate text and CRLF.
-struct __Clock { sec: i64, line: string }
+// the IMF-fixdate text, and the HTTP/1.1 field line, `Date: ` and the
+// text and CRLF.
+struct __Clock { sec: i64, date: string, line: string }
 
 // __clock_tick(clk) — the clock brought to the current second, the date
 // reformatted only when the second has changed. Read once per wait, so
@@ -686,7 +687,8 @@ function __clock_tick(clk: __Clock): __Clock {
   if (sec == clk.sec && clk.line.len() > 0) {
     return clk;
   }
-  return __Clock { sec: sec, line: "Date: " + time.instant_from_unix(sec).format_http_date() + "\r\n" };
+  let date: string = time.instant_from_unix(sec).format_http_date();
+  return __Clock { sec: sec, date: date, line: "Date: " + date + "\r\n" };
 }
 
 // __serve_wire(out, method, version, answer, keep_alive, clk) — the
@@ -1479,7 +1481,7 @@ function __conns_add(c: __Conns, fd: i32, deadline: i64, peer: i32, host: platfo
   }
   let slots: u8[] = c.slots;
   slots = __slot_set(slots, fd, c.fds.len() + 1);
-  return __Conns { fds: c.fds.append(fd), slots: slots, bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), keep: c.keep.append(keep), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), hosts: c.hosts.append(host), tails: c.tails.append(NoTail), tls: c.tls.append(tls), framing: c.framing.append(Http1), last: c.last, out: c.out, lent: c.lent, parked: c.parked, later: c.later, metrics: c.metrics, pulls: c.pulls, producers: c.producers, tls_reads: c.tls_reads, zc_bytes: c.zc_bytes, zc_held: c.zc_held, zc_slots: c.zc_slots, zc_free: c.zc_free, quic: c.quic };
+  return __Conns { fds: c.fds.append(fd), slots: slots, bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), keep: c.keep.append(keep), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), hosts: c.hosts.append(host), tails: c.tails.append(NoTail), tls: c.tls.append(tls), framing: c.framing.append(Http1), last: c.last, out: c.out, lent: c.lent, parked: c.parked, later: c.later, metrics: c.metrics, pulls: c.pulls, producers: c.producers, tls_reads: c.tls_reads, zc_bytes: c.zc_bytes, zc_held: c.zc_held, zc_slots: c.zc_slots, zc_free: c.zc_free, quic: c.quic, date: c.date };
 }
 
 // __conns_from_peer(c, peer) — how many open connections the peer holds.
@@ -1539,7 +1541,7 @@ function __conns_remove(c: __Conns, at: i32): __Conns {
     }
     i = i + 1;
   }
-  return __Conns { fds: fds, slots: slots, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base, send_since: send_since, send_base: send_base, peers: peers, hosts: hosts, tails: tails, tls: tls, framing: framing, last: c.last, out: c.out, lent: 0 - 1, parked: c.parked, later: c.later, metrics: c.metrics, pulls: __pulls_without(c.pulls, c.fds[at]), producers: __producers_without(c.producers, c.fds[at]), tls_reads: c.tls_reads, zc_bytes: c.zc_bytes, zc_held: c.zc_held, zc_slots: c.zc_slots, zc_free: c.zc_free, quic: c.quic };
+  return __Conns { fds: fds, slots: slots, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base, send_since: send_since, send_base: send_base, peers: peers, hosts: hosts, tails: tails, tls: tls, framing: framing, last: c.last, out: c.out, lent: 0 - 1, parked: c.parked, later: c.later, metrics: c.metrics, pulls: __pulls_without(c.pulls, c.fds[at]), producers: __producers_without(c.producers, c.fds[at]), tls_reads: c.tls_reads, zc_bytes: c.zc_bytes, zc_held: c.zc_held, zc_slots: c.zc_slots, zc_free: c.zc_free, quic: c.quic, date: c.date };
 }
 
 // __conns_timeout(c, now) — the wait's timeout: the milliseconds until the
@@ -2619,7 +2621,7 @@ function __h2_step_with[S](c: __Conns, at: i32, conn: h2.Conn, stream: i32, req:
     stepped = __serve_step(handler, st, req, c.hosts[at], opts);
   }
   c = __serve_count(c, at, req.method, stepped.1.status);
-  let r: h2.Step = conn.respond(stream, __with_alt_svc(c, stepped.1));
+  let r: h2.Step = conn.respond(stream, __dated(c, __with_alt_svc(c, stepped.1)));
   return (c, r.conn, stepped.0, r.output);
 }
 
@@ -2955,7 +2957,7 @@ function __joined(a: u8[], b: u8[]): u8[] {
 // chunks as the producer answers and the windows allow (`__h2_produce`),
 // the producer never asked when the response carries no body.
 function __h2_respond[D: async.Driver](drv: D, a: __H2Answered, at: i32, sid: i32, resp: HttpResponse): __H2Answered {
-  resp = __with_alt_svc(a.conns, resp);
+  resp = __dated(a.conns, __with_alt_svc(a.conns, resp));
   let conn: h2.Conn = a.conn;
   let conns: __Conns = a.conns;
   let fls: __Flight[] = a.fls;
@@ -5207,7 +5209,7 @@ function __shared_event[D: async.Driver](drv: D, pool: fetch.Idle, c: __Conns, f
 // a woken flight that answers reformats the Date itself, as a late pass
 // would.
 function __clock_none(): __Clock {
-  return __Clock { sec: 0 as i64, line: "" };
+  return __Clock { sec: 0 as i64, date: "", line: "" };
 }
 
 // __shared_woken(drv, s, c, fls, opts) — every flight parked on a slot whose
@@ -5325,10 +5327,10 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts, true);
   let host_for: (Option[net.SocketAddr]) => platform.Host = (peer: Option[net.SocketAddr]): platform.Host => plat.with_peer(peer);
-  let conns: __Conns = __Conns { fds: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none() };
+  let conns: __Conns = __Conns { fds: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none(), date: "" };
   let flights: __Flight[] = [];
   let scratch: u8[] = __recv_scratch();
-  let clk: __Clock = __Clock { sec: 0 as i64, line: "" };
+  let clk: __Clock = __Clock { sec: 0 as i64, date: "", line: "" };
   let events: i32[] = async.event_room(64);
   let ex: Option[metrics.Exporter] = __exporter(drv, opts, snap);
   // The streamed-body start, with the handler and platform bound once:
@@ -5347,6 +5349,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
     let second: i64 = clk.sec;
     clk = __clock_tick(clk);
     if (clk.sec != second) {
+      conns = __Conns { ...conns, date: clk.date };
       __snapshot_send(snap, conns.metrics, opts);
     }
     let k: i32 = 0;
@@ -5527,10 +5530,10 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts, false);
   let host_for: (Option[net.SocketAddr]) => platform.Host = (peer: Option[net.SocketAddr]): platform.Host => plat.with_peer(peer);
-  let conns: __Conns = __Conns { fds: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none() };
+  let conns: __Conns = __Conns { fds: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], hosts: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: buf_new(4096), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none(), date: "" };
   let flights: __Flight[] = [];
   let scratch: u8[] = __recv_scratch();
-  let clk: __Clock = __Clock { sec: 0 as i64, line: "" };
+  let clk: __Clock = __Clock { sec: 0 as i64, date: "", line: "" };
   let events: i32[] = async.event_room(64);
   let ex: Option[metrics.Exporter] = __exporter(drv, opts, snap);
   conns = __Conns { ...conns, quic: __quic_open(drv, listener, opts) };
@@ -5542,6 +5545,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
     let second: i64 = clk.sec;
     clk = __clock_tick(clk);
     if (clk.sec != second) {
+      conns = __Conns { ...conns, date: clk.date };
       __snapshot_send(snap, conns.metrics, opts);
     }
     let k: i32 = 0;
@@ -6407,6 +6411,16 @@ function __with_alt_svc(c: __Conns, resp: HttpResponse): HttpResponse {
   return HttpResponse { ...resp, headers: resp.headers.append("alt-svc", "h3=\":" + int.int_to_string(c.quic.port) + "\"; ma=86400") };
 }
 
+// __dated(c, resp) — the response with the loop's `Date` (RFC 9110
+// §6.6.1) unless the handler set one: HTTP/2 and HTTP/3 carry it as a
+// field, where HTTP/1.1 writes the clock's line into the head.
+function __dated(c: __Conns, resp: HttpResponse): HttpResponse {
+  if (c.date.len() == 0 || resp.headers.has("date")) {
+    return resp;
+  }
+  return HttpResponse { ...resp, headers: resp.headers.append("date", c.date) };
+}
+
 // __h3_sent(sock, out, to) — datagrams sent; one the socket will not take
 // now is lost, as on the wire, and QUIC recovers it.
 function __h3_sent(sock: i32, out: u8[][], to: net.SocketAddr): void {
@@ -6644,7 +6658,7 @@ function __h3_respond[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], seri
   }
   let cur: __Conns = __stage_background(c, resp);
   let q: __Quic = cur.quic;
-  resp = __file_chunks(resp);
+  resp = __file_chunks(__dated(cur, resp));
   match (resp.body) {
     BodyChunks(producer) => {
       if (method == "HEAD" || http.http_bodiless(resp.status)) {
