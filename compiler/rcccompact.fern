@@ -1,0 +1,127 @@
+import "./ssa";
+import "./util";
+
+pub struct Dense { f: ssa.SFunc, original: i32[] }
+
+function worthwhile(f: ssa.SFunc): boolean {
+  if (f.nvals < 256 || f.nparams < 0 || f.nparams > f.nvals) {
+    return false;
+  }
+  let upper = f.nparams;
+  for b in f.blocks {
+    if (b.insts.len() > f.nvals - upper) {
+      return false;
+    }
+    upper = upper + b.insts.len();
+  }
+  return upper <= f.nvals - f.nvals / 4;
+}
+
+function renamed(ids: i32[], v: i32): i32 {
+  if (v < 0) {
+    return v;
+  }
+  return ids[v];
+}
+
+function term_value(term: ssa.STerm): i32 {
+  if (term.kind_tag == 1) {
+    return term.value;
+  }
+  if (term.kind_tag == 3) {
+    return term.cond;
+  }
+  return 0 - 1;
+}
+
+function term_ids(own ids: i32[], term: ssa.STerm): i32[] {
+  let used = term_value(term);
+  if (used >= ids.len()) {
+    return [];
+  }
+  if (used >= 0) {
+    ids = ids.with(used, 0);
+  }
+  // The certifier's use counts also read an inactive value field.
+  if (term.value >= 0 && term.value < ids.len()) {
+    ids = ids.with(term.value, 0);
+  }
+  return ids;
+}
+
+function renamed_field(ids: i32[], v: i32): i32 {
+  if (v < 0 || v >= ids.len()) {
+    return v;
+  }
+  return ids[v];
+}
+
+function marked(f: ssa.SFunc): i32[] {
+  let ids = util.minus_ones(f.nvals);
+  let v = 0;
+  while (v < f.nparams) {
+    ids = ids.with(v, 0);
+    v = v + 1;
+  }
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.result >= f.nvals) {
+        return [];
+      }
+      if (ins.result >= 0) {
+        ids = ids.with(ins.result, 0);
+      }
+      for arg in ins.args {
+        if (arg >= f.nvals) {
+          return [];
+        }
+        if (arg >= 0) {
+          ids = ids.with(arg, 0);
+        }
+      }
+    }
+    ids = term_ids(ids, b.term);
+    if (ids.len() == 0) {
+      return [];
+    }
+  }
+  return ids;
+}
+
+// Preserve numeric ordering, parameters and undefined operands. Only unused
+// slots disappear; even an unused allocation must remain a possible leak.
+pub function compact(f: ssa.SFunc): Dense {
+  if (!worthwhile(f)) {
+    return Dense { f: f, original: [] };
+  }
+  let ids = marked(f);
+  if (ids.len() == 0) {
+    return Dense { f: f, original: [] };
+  }
+  let v = 0;
+  let original: i32[] = [];
+  while (v < ids.len()) {
+    if (ids[v] >= 0) {
+      ids = ids.with(v, original.len());
+      original = original.append(v);
+    }
+    v = v + 1;
+  }
+  let blocks: ssa.SBlock[] = [];
+  for b in f.blocks {
+    let insts: ssa.SInst[] = [];
+    for ins in b.insts {
+      let args: i32[] = [];
+      for arg in ins.args {
+        args = args.append(renamed(ids, arg));
+      }
+      insts = insts.append(ssa.SInst { kind_tag: ins.kind_tag, result: renamed(ids, ins.result), args: args, imm: ins.imm, str: ins.str });
+    }
+    let term = ssa.STerm { ...b.term, value: renamed_field(ids, b.term.value) };
+    if (term.kind_tag == 3) {
+      term = ssa.STerm { kind_tag: term.kind_tag, cond: renamed(ids, term.cond), target: term.target, t: term.t, f: term.f, value: term.value };
+    }
+    blocks = blocks.append(ssa.SBlock { id: b.id, insts: insts, term: term, preds: b.preds });
+  }
+  return Dense { f: ssa.SFunc { name: f.name, nparams: f.nparams, nvals: original.len(), blocks: blocks, entry: f.entry, takes_env: f.takes_env }, original: original };
+}
