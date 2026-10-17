@@ -25,3 +25,10 @@ The unchanged main baseline is 12,669,440 bytes. All eleven strict size checks
 pass with complete coverage and unchanged baselines/tolerance (82.148 seconds).
 The bootstrap record includes the compiler/stdlib content fingerprint because
 the fix was built before its source commit was created.
+
+A separate 24-run before/after probe uses the actual current-main compiler
+(`c7a08b71fdf8e9150c2e15e3bbf4fc194698ffd47f61139af74a13cdbf43b2d2`)
+and fixed compiler above. It reproduces the large mismatched-donor leak on
+both x86-64 and QEMU ARM64, while small donors and capacity matches balance.
+Every fixed case balances. All counts and diagnostic text are retained in
+`before-after.json`; these runs use the sanitizer, not elapsed-time measures.
