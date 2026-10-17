@@ -49,10 +49,13 @@ Source 457382f7a also signs the mismatch path's saved return address under
 ARM64 hardening and authenticates it after the destructor returns. Null
 and matching donors keep their existing paths. The ABI matrix now executes
 80 probes, including all eight capacity cases under ARM64 hardening. With
-PAC enforcement, replacing only this frame's signing instruction with a
-NOP makes the large mismatch probe fault. Its normal counterpart balances.
-The existing hardening, image, backtrace and refusal tests also pass
-(22.407 seconds for the focused run).
+PAC enforcement, flipping a bit in this frame's saved PAC makes the large
+mismatch probe fault. Replacing authentication with signature stripping
+restores its balanced normal return, proving that the fault comes from
+authentication rather than damage to the address bits. The existing
+hardening, image, backtrace and refusal tests also pass. The final focused
+runs pass with both the pinned producer (3.765 seconds) and the self-built
+stage-3 producer (3.777 seconds).
 
 The follow-up reuse, loop reuse including WASI, certifier, C-call,
 inventory and complexity suite passes in 59.303 seconds. Stages 2 and 3
@@ -64,6 +67,10 @@ limits (50.322 seconds).
 
 The uninstrumented allocator probe is byte-identical before and after this
 hardening follow-up on both native Linux targets. Commands, compiler and
-program hashes, the missing-signature regression, its passing run, and all
-bootstrap and size evidence are retained in hardened-main-bbad/. The earlier
-large-donor leak comparisons retain their recorded source scope.
+program hashes, the initial missing-signature regression, final PAC controls,
+and all bootstrap and size evidence are retained in hardened-main-bbad/.
+The initial remove-signature control assumed an unsigned address could never
+authenticate; a zero PAC can make that assumption false. Its self-hosted
+failure is retained as stage3-producer-unsigned-collision.log. The final
+bit-flip and stripping controls avoid that assumption. The earlier large-donor
+leak comparisons retain their recorded source scope.

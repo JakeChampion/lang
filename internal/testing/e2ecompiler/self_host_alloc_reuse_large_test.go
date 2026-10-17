@@ -122,7 +122,7 @@ func TestSelfHostAllocReuseLargeDonor(t *testing.T) {
 									if err != nil {
 										t.Fatal(err)
 									}
-									checkAllocReuseDonorPAC(t, gcc, armRunner, dir, string(assembly), hardenedFrame)
+									checkAllocReuseDonorPAC(t, gcc, armRunner, dir, string(assembly), hardenedFrame, want)
 								}
 							})
 						}
@@ -133,23 +133,35 @@ func TestSelfHostAllocReuseLargeDonor(t *testing.T) {
 	}
 }
 
-func checkAllocReuseDonorPAC(t *testing.T, gcc, runner, dir, assembly, frame string) {
+func checkAllocReuseDonorPAC(t *testing.T, gcc, runner, dir, assembly, frame, want string) {
 	t.Helper()
-	unsigned := strings.Replace(assembly, frame, strings.Replace(frame, "    paciasp\n", "    nop\n", 1), 1)
-	if unsigned == assembly {
-		t.Fatal("failed to remove the mismatch frame's signature")
+	call := "    bl __fn___fern_arr_dec.r\n"
+	corrupt := call + "    ldr x4, [sp, #8]\n    eor x4, x4, #0x40000000000000\n    str x4, [sp, #8]\n"
+	changed := strings.Replace(frame, call, corrupt, 1)
+	if changed == frame {
+		t.Fatal("failed to corrupt the mismatch frame's saved signature")
 	}
-	asm, bin := filepath.Join(dir, "unsigned.s"), filepath.Join(dir, "unsigned")
-	if err := os.WriteFile(asm, []byte(unsigned), 0o644); err != nil {
-		t.Fatal(err)
+	for _, strip := range []bool{false, true} {
+		body := changed
+		if strip {
+			body = strings.Replace(body, "    autiasp\n", "    xpaclri\n", 1)
+		}
+		asm, bin := filepath.Join(dir, fmt.Sprintf("pac-%t.s", strip)), filepath.Join(dir, fmt.Sprintf("pac-%t", strip))
+		if err := os.WriteFile(asm, []byte(strings.Replace(assembly, frame, body, 1)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asm, "-o", bin).CombinedOutput(); err != nil {
+			t.Fatalf("PAC control link: %v\n%s", err, out)
+		}
+		out, err := runArm64Bin(runner, bin).CombinedOutput()
+		if !strip && err == nil {
+			t.Fatalf("mismatch authenticated a corrupted saved signature:\n%s", out)
+		}
+		if strip && (err != nil || !strings.Contains(string(out), want)) {
+			t.Fatalf("stripping the corrupted signature changed its return address: %v\n%s", err, out)
+		}
 	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asm, "-o", bin).CombinedOutput(); err != nil {
-		t.Fatalf("unsigned link: %v\n%s", err, out)
-	}
-	if out, err := runArm64Bin(runner, bin).CombinedOutput(); err == nil {
-		t.Fatalf("mismatch returned with an unsigned saved return address:\n%s", out)
-	}
-	t.Log("removing only the mismatch frame's PAC signature faults")
+	t.Log("a corrupted saved PAC faults; stripping it restores the balanced return")
 }
 
 func allocReuseDonorProbe(target string, cap, want int, stack, quarantine bool) string {
