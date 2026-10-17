@@ -10334,6 +10334,16 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
       rest = arm64_gas_trim(slice_unchecked(line, sp + 1, line.len()));
     }
     let ops: string[] = arm64_gas_operands(rest);
+    // `mov Vd.T, Vn.T` is `orr Vd.T, Vn.T, Vn.T`. The scalar mov encoder
+    // reads no vector register, so any other vector form is refused.
+    if (mnem == "mov" && arm64_gas_routes_vec(mnem, ops)) {
+      if (ops.len() == 2 && arm64_gas_is_vecarr(ops[1])) {
+        mnem = "orr";
+        ops = [ops[0], ops[1], ops[1]];
+      } else {
+        p = Arm64GasProg { ...p, unknown: p.unknown.append("mov:vec") };
+      }
+    }
     if (mnem == "yield" && ops.len() != 0) {
       p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":operands") };
     }
