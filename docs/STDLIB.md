@@ -1224,6 +1224,8 @@ against the RFC's vectors, including the 1,000-step iterated one
 
 - `public_key(scalar): Result[u8[], X25519Error]` — the 32-byte public key
   of a 32-byte secret.
+  It reads Ed25519's fixed-base table and converts the point to its
+  u-coordinate, about 30 µs on Apple Silicon against the ladder's 53 µs.
 - `x25519(scalar, point): Result[u8[], X25519Error]` — the shared secret,
   refused as `LowOrder` when it is all zeros, as TLS 1.3 requires.
 - `X25519Error` is `ScalarLength(i32)`, `PointLength(i32)` or `LowOrder`,
@@ -1258,11 +1260,12 @@ Ed25519 signatures (RFC 8032 §5.1, the pure variant), for TLS 1.3 handshake
 and certificate signatures (#9858). Points are extended twisted Edwards
 coordinates over `std/crypto/field25519`, and scalars mod the group order L
 are reduced in 8-bit digits without a branch. Signing is constant time: the
-base-point multiplication reads every table entry and keeps one by mask, and
-the constant-time gate runs it under valgrind's memcheck with the seed marked
-secret. Verified against RFC 8032 §7.1's vectors and Go's crypto/ed25519
-(`tests/stdlib/ed25519_test.fern`). About 0.54 ms per signature and 0.28 ms
-per verification on x86-64.
+base-point multiplication sums one entry per signed radix-16 digit from a
+table of k * 256^j * B that `scripts/gen-ed25519.py` generates, reading every
+entry of a row and keeping one by mask, and the constant-time gate runs it
+under valgrind's memcheck with the seed marked secret. Verified against RFC
+8032 §7.1's vectors and Go's crypto/ed25519 (`tests/stdlib/ed25519_test.fern`).
+About 57 µs per signature on Apple Silicon (arm64-darwin).
 
 - `public_key(seed): Result[u8[], Ed25519Error]` — the 32-byte public key of
   a 32-byte secret seed.

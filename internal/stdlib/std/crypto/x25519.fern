@@ -13,6 +13,7 @@
 // (`__ct_secret`, docs/TEST-GATES.md) checks this.
 
 import "core/int";
+import "std/crypto/ed25519";
 import "std/crypto/field25519" as fe;
 
 // X25519Error — a scalar or a point of the wrong length (the length it had),
@@ -111,11 +112,19 @@ pub function x25519(scalar: [u8], point: [u8]): Result[u8[], X25519Error] {
   return Ok(out);
 }
 
-// public_key(scalar) — the public key of a 32-byte secret: the scalar times
-// the base point, u = 9.
+// public_key(scalar) — the public key of a 32-byte secret: the scalar,
+// clamped, times the base point u = 9, taken from Ed25519's fixed-base table
+// rather than the ladder.
 pub function public_key(scalar: [u8]): Result[u8[], X25519Error] {
   if (scalar.len() != 32) {
     return Err(ScalarLength(scalar.len()));
   }
-  return Ok(fe.to_bytes(__ladder(scalar, fe.from_i64(9))));
+  let k: u8[] = __alloc_u8(32);
+  let i: i32 = 0;
+  while (i < 32) {
+    k = k.with(i, scalar[i]);
+    i = i + 1;
+  }
+  k = k.with(0, k[0] & 248 as u8).with(31, k[31] & 127 as u8 | 64 as u8);
+  return Ok(ed25519.montgomery_base(k));
 }
