@@ -247,7 +247,7 @@ func format(filename, src string, remap func(ast.Position) ast.Position, err err
 
 	pe, ok := err.(Positioned)
 	if !ok {
-		return err.Error()
+		return diagnosticText(err.Error())
 	}
 	pos := pe.Position()
 	if remap != nil {
@@ -261,10 +261,10 @@ func format(filename, src string, remap func(ast.Position) ast.Position, err err
 		// carries the attribution a caret cannot.
 		if cd, ok := err.(Coded); ok {
 			if code := cd.Code(); code != "" {
-				return paint(ansiRedBld, "error["+code+"]") + ": " + stripPrefix(pe.Error())
+				return diagnosticText(paint(ansiRedBld, "error["+code+"]") + ": " + stripPrefix(pe.Error()))
 			}
 		}
-		return err.Error()
+		return diagnosticText(err.Error())
 	}
 
 	// `error[E001]: …` shape when the error carries a stable
@@ -280,6 +280,9 @@ func format(filename, src string, remap func(ast.Position) ast.Position, err err
 	header := fmt.Sprintf("%d:%d: %s: %s", pos.Line, pos.Col, paint(ansiRedBld, prefix), stripPrefix(pe.Error()))
 	if filename != "" {
 		header = filename + ":" + header
+	}
+	if terse {
+		return diagnosticText(header)
 	}
 
 	pad := strings.Repeat(" ", clamp(pos.Col-1, 0, len(line)))

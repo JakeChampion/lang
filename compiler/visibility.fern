@@ -208,6 +208,7 @@ function package_scope(cx: VisCtx, qual: string, name: string): (boolean, boolea
 function package_diag(cx: VisCtx, qual: string, name: string, line: i32, col: i32): util.Diag {
   let m: string = base_name_of(owner_ident(cx.src, qual));
   return util.Diag {
+    related: [],
     code: "",
     message: m + "." + name + " is `pub(package)` — only modules in the same package as " + m + " may use it",
     line: line,
@@ -243,6 +244,7 @@ function module_diags(cx: VisCtx): util.Diag[] {
         kw = "const";
       }
       out = out.append(util.Diag {
+        related: [],
         code: "",
         message: key + " is not exported (declare it as `pub " + kw + " " + r.name + " …` to make it accessible from other modules)",
         line: r.line,
@@ -411,6 +413,7 @@ function check_type_name(tn: string, cx: VisCtx, line: i32, col: i32, acc: util.
   }
   let kind: string = type_kind_word(cx.loaded[mi].mod, base);
   return acc.append(util.Diag {
+    related: [],
     code: "",
     message: q + "." + base + " is not exported (declare it as `pub " + kind + " " + base + " …` to make it accessible from other modules)",
     line: line,

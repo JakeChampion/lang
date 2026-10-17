@@ -2437,7 +2437,7 @@ function container_op(k: i32): boolean {
       ssasem.array_new(), ssasem.array_reserve(), ssasem.tuple_new(), ssasem.record_new(), ssasem.dyn_box(),
       ssasem.array_get(), ssasem.tuple_get(), ssasem.record_get(),
       ssasem.length(), ssasem.append(), ssasem.with(), ssasem.slice(), ssasem.str_index(),
-      ssasem.str_bytes(), ssasem.str_byte_view(), ssasem.arr_join(), ssasem.arr_slice(),
+      ssasem.str_bytes(), ssasem.str_byte_view(), ssasem.arr_join(), ssasem.arr_slice(), ssasem.arr_concat(),
     ],
     k,
   ) || variant_op(k) || ssasem.is_cell_op(k) || ssasem.is_hole_op(k);
@@ -3909,8 +3909,8 @@ function instruction(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
     r = function_site(r, f, ins);
     return emit(r, ir.op_store_local(ins.result));
   }
-  if (ins.kind_tag == ssasem.arr_join()) {
-    r = join_call(r, ins);
+  if (ssasem.is_arr_helper_op(ins.kind_tag)) {
+    r = array_helper_call(r, f, ins);
     return emit(r, ir.op_store_local(ins.result));
   }
   if (ins.kind_tag == ssasem.append()) {
@@ -4048,10 +4048,26 @@ function held(own r: irtables.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): ir
 // first. The instruction spells the receiver first, as every other operation
 // here does, which is why this loads the two in reverse rather than leaving
 // them to the generic push.
+function array_helper_call(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  if (ins.kind_tag == ssasem.arr_concat()) {
+    return concat_call(r, f, ins);
+  }
+  return join_call(r, ins);
+}
+
 function join_call(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   r = emit(r, ir.op_load_local(ins.args[1]));
   r = emit(r, ir.op_load_local(ins.args[0]));
   return emit(r, ir.op_call_direct("__fern_arr_str_join", 2));
+}
+
+// The element width tells the runtime how the boxes store their elements.
+// Arguments go on in reverse, the last parameter first, as join's do.
+function concat_call(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  r = emit(r, ir.op_const_i32(elem_width(elem_type(f.values[ins.result]))));
+  r = emit(r, ir.op_load_local(ins.args[1]));
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  return emit(r, ir.op_call_direct("__fern_arr_concat", 3));
 }
 
 function took(own r: irtables.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {

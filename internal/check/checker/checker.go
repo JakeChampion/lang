@@ -33,7 +33,8 @@ type Error struct {
 	// Fix is an optional machine-applicable suggestion rendered as a
 	// `help:` line (diag.Suggestion — span + replacement + title). Only
 	// attached when applying the replacement is guaranteed to re-parse.
-	Fix *diag.Suggestion
+	Fix     *diag.Suggestion
+	Related []diag.Label
 }
 
 func (e *Error) Error() string          { return fmt.Sprintf("type error at %s: %s", e.Pos, e.Msg) }
@@ -45,6 +46,12 @@ func (e *Error) SetFile(p string)       { e.Path = p }
 func (e *Error) Code() string           { return e.ErrCode }
 
 func (e *Error) Suggestion() *diag.Suggestion { return e.Fix }
+func (e *Error) Labels() []diag.Label {
+	if len(e.Related) == 0 {
+		return nil
+	}
+	return append([]diag.Label{{Pos: e.Pos, Length: e.Span, Kind: diag.LabelPrimary}}, e.Related...)
+}
 
 var _ diag.FileSetter = (*Error)(nil)
 
@@ -12041,7 +12048,7 @@ func firstTryOp(e ast.Expr) (ast.Position, bool) {
 }
 
 // report records one diagnostic against the module at path.
-func (c *checker) report(path string, pos ast.Position, code, msg string) {
+func (c *checker) report(path string, pos ast.Position, code, msg string) *Error {
 	// Identical diagnostics at the same position are dropped. Several
 	// checks reach the same expression by different routes — a string
 	// `a < b` produced the same E009 twice, byte for byte — and a reader
@@ -12053,10 +12060,12 @@ func (c *checker) report(path string, pos ast.Position, code, msg string) {
 		c.seenDiags = map[diagKey]bool{}
 	}
 	if c.seenDiags[key] {
-		return
+		return nil
 	}
 	c.seenDiags[key] = true
-	c.errors = append(c.errors, &Error{Pos: pos, Msg: msg, Path: path, ErrCode: code})
+	err := &Error{Pos: pos, Msg: msg, Path: path, ErrCode: code}
+	c.errors = append(c.errors, err)
+	return err
 }
 
 // diagKey identifies a diagnostic for the duplicate check above: same
@@ -12276,6 +12285,19 @@ func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) s
 		return fmt.Sprintf("%s (it has: %s)", msg, strings.Join(names, ", "))
 	}
 	return msg
+}
+
+// errUnknownMethod attaches the same respelling suggested in the message at
+// the method token. Retired spellings carry migration advice instead: changing
+// just their name can leave the returned collection unassigned.
+func (c *checker) errUnknownMethod(n *ast.FieldAccess, namespace string, recv ast.Type) {
+	e := &Error{Pos: n.P, Msg: c.unknownMethodMessage(namespace, n.Field, recv), Path: c.currentModule(), ErrCode: "E043"}
+	_, retired := retiredCollectionSpellings[namespace+"."+n.Field]
+	if suggestion := diag.Suggest(n.Field, c.methodsFor(namespace, recv)); suggestion != "" && !retired && n.FieldPos.Line > 0 {
+		e.Fix = &diag.Suggestion{Pos: n.FieldPos, Length: len(n.Field), Replacement: suggestion,
+			Title: fmt.Sprintf("replace `%s` with `%s`", n.Field, suggestion)}
+	}
+	c.errors = append(c.errors, e)
 }
 
 // hoistReceiver moves a method's receiver onto Params[0], the shape the rest
@@ -15500,7 +15522,10 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		}
 	case *ast.Var:
 		if _, dup := s.names[n.Name]; dup {
-			c.errfCode(n.P, "E013", "variable %q already declared in this scope", n.Name)
+			err := c.report(c.currentModule(), n.P, "E013", fmt.Sprintf("variable %q already declared in this scope", n.Name))
+			if prior := s.vars[n.Name]; prior != nil && err != nil {
+				err.Related = []diag.Label{{Pos: prior.P, Message: "previous declaration is here", Kind: diag.LabelSecondary}}
+			}
 		}
 		unannotated := n.Type == nil
 		c.setElemHintFor(n.Init, n.Type)
@@ -15527,7 +15552,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		}
 		if n.Type == nil {
 			if got == nil {
-				s.poison(n.Name)
+				s.bindVar(n.Name, nil, n)
 				return
 			}
 			// Polymorphic empty array `[]` with no annotation
@@ -15536,7 +15561,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			// recording a nil-elem type.
 			if at, ok := got.(ast.ArrayType); ok && at.Elem == nil {
 				c.errfCode(n.P, "E020", "empty array literal needs a type annotation")
-				s.poison(n.Name)
+				s.bindVar(n.Name, nil, n)
 				return
 			}
 			// An unannotated binding whose init is still polymorphic
@@ -16495,10 +16520,24 @@ func stampRemainderExprArms(arms []*ast.MatchExprArm, ed *ast.EnumDecl) {
 	stampRemainderArm(wrapped, ed)
 }
 
-// checkMatch type-checks a `match` statement. The scrutinee must be an enum
-// value; each arm's pattern variant must belong to that enum and supply the
-// right number of binding names; the arm list must cover every variant of
-// the enum (or end in a `_` arm).
+// A failed scrutinee leaves its pattern binders poisoned while independent
+// errors in guards and bodies can still be checked.
+func (c *checker) poisonedMatchScope(s *scope, binders []string, guard ast.Expr) *scope {
+	armScope := newScope(s)
+	for _, name := range binders {
+		armScope.poison(name)
+	}
+	if guard != nil {
+		gt := c.checkExpr(guard, armScope)
+		if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+			c.errfCode(guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+		}
+	}
+	return armScope
+}
+
+// checkMatch type-checks a match statement against its scrutinee's type,
+// checking pattern membership, bindings, guards and exhaustiveness.
 func (c *checker) checkMatch(n *ast.Match, s *scope) {
 	// A `let … else` binds for the rest of its block — the desugar's
 	// success arm — so the else branch (the synthesised trailing wildcard)
@@ -16511,6 +16550,9 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 	}
 	tagT := c.checkExpr(n.Tag, s)
 	if tagT == nil {
+		for _, arm := range n.Arms {
+			c.checkBlock(arm.Body, c.poisonedMatchScope(s, arm.Binders(), arm.Guard))
+		}
 		return
 	}
 	tagT = c.widenGenericScrutinee(n.Tag, tagT)
@@ -17428,6 +17470,9 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 	tagT := c.checkExpr(n.Tag, s)
 	if tagT == nil {
+		for _, arm := range n.Arms {
+			c.checkExpr(arm.Body, c.poisonedMatchScope(s, arm.Binders(), arm.Guard))
+		}
 		return nil
 	}
 	tagT = c.widenGenericScrutinee(n.Tag, tagT)
@@ -21041,7 +21086,7 @@ func (c *checker) fieldAccessType(n *ast.FieldAccess, s *scope, tt ast.Type) ast
 			// array, a map, a slice — reaching here means the
 			// method does not exist. Say so, and say what does.
 			if tn, ok := collectionNamespace(tt); ok && len(c.methodsOn(tn)) > 0 {
-				c.errfCode(n.P, "E043", "%s", c.unknownMethodMessage(tn, n.Field, tt))
+				c.errUnknownMethod(n, tn, tt)
 				return nil
 			}
 			// Option's and Result's methods live in std/option and

@@ -553,7 +553,15 @@ func expectedFromCheck(t *testing.T, path, src, out string) []lspDiag {
 			ln, _ := strconv.Atoi(m[1])
 			col, _ := strconv.Atoi(m[2])
 			ch := utf16Column(lines, ln, col)
-			d.Range = lspRange{lspPos{ln - 1, ch}, lspPos{ln - 1, ch + 1}}
+			width := 0
+			if ln > 0 && ln <= len(lines) && col > 0 && col <= len(lines[ln-1]) {
+				r, _ := utf8.DecodeRuneInString(lines[ln-1][col-1:])
+				width = 1
+				if r > 0xffff {
+					width = 2
+				}
+			}
+			d.Range = lspRange{lspPos{ln - 1, ch}, lspPos{ln - 1, ch + width}}
 			rest = m[3]
 		} else if checkLineElsewhere.MatchString(line) {
 			continue

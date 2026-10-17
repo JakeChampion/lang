@@ -11,6 +11,33 @@ static semantics. The *rules* they enforce still live only in
 pinned by something an independent implementation could be measured
 against, not what each rule is.
 
+## Rendering and editor data
+
+The compiler retains the code, message, primary location, related locations
+and any replacement edit as structured data. The terminal renderer and LSP
+consume those fields directly. Related locations can belong to another
+module; literate source locations map back to the document. A redeclared
+local variable points to its previous declaration.
+
+Normal terminal output includes source context, related notes and applicable
+fixes. `-color auto|always|never`, `NO_COLOR` and `-ascii` control colour and
+the gutter; automatic box drawing requires a UTF-8 locale. `-q` or
+`FERN_DIAG_FORMAT=terse` selects one plain physical line per diagnostic,
+without context, notes, fixes or colour. Carriage returns and newlines in a
+diagnostic header are escaped in this mode, including those in filenames.
+The choice of terminal format does not remove editor metadata.
+
+The LSP publishes secondary locations as `relatedInformation` and exposes
+replacement edits as quickfix code actions. Its ranges use UTF-16 positions,
+including supplementary Unicode characters and the end of a file. A textual
+hint is not necessarily an applicable edit: migration advice that requires
+restructuring a statement must not offer a name-only replacement.
+
+A failed initializer poisons the binding in its scope, suppressing errors
+that depend on its missing type. Independent errors still appear, including
+errors in a match arm whose scrutinee failed to check. A later declaration of
+the same name still reports the collision and its previous location.
+
 ## Why conformance coverage, when the Go tests already pass
 
 Almost every code here is exercised by a Go test under

@@ -555,6 +555,14 @@ pub function arr_slice(): i32 {
   return 0 - 38;
 }
 
+// `xs.concat(ys)` on two arrays of the same scalar element type: a fresh
+// array holding both, sized once and copied by the runtime. It keeps
+// neither operand. An array whose elements own something is not admitted,
+// for the reason a slice's is not.
+pub function arr_concat(): i32 {
+  return 0 - 54;
+}
+
 // Map iteration. `map_iter` hands back the cursor: a fresh counted block that
 // the frame owns and releases, and that is still anchored to the map, since
 // every read through it reads the map's own columns. The other four take that
@@ -1984,6 +1992,30 @@ function append_range_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): str
   return "";
 }
 
+function arr_helper_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+  if (ins.kind_tag == arr_concat()) {
+    return arr_concat_error(ins, f, result);
+  }
+  return arr_join_error(ins, f, result);
+}
+
+// Both operands and the result are the same non-view array of a scalar
+// element.
+function arr_concat_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+  if (ins.args.len() != 2) {
+    return "array concat arity";
+  }
+  if (!semtypes.equal(f.values[ins.args[0]], result) || !semtypes.equal(f.values[ins.args[1]], result)) {
+    return "array concat operand type";
+  }
+  if let typeinfo.TypeArray(a) = result {
+    if (!a.view && !reference(a.elem)) {
+      return "";
+    }
+  }
+  return "array concat result";
+}
+
 // A window has a view type with the source's element type. Physical lowering
 // currently copies its storage; that does not erase its semantic view type.
 function arr_slice_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
@@ -2038,7 +2070,7 @@ function is_builtin_op(kind: i32): boolean {
 }
 
 pub function is_arr_helper_op(kind: i32): boolean {
-  return kind == arr_join();
+  return kind == arr_join() || kind == arr_concat();
 }
 
 pub function is_cell_op(kind: i32): boolean {
@@ -2088,8 +2120,8 @@ function arr_join_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string 
 }
 
 function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
-  if (ins.kind_tag == arr_join()) {
-    return arr_join_error(ins, f, result);
+  if (is_arr_helper_op(ins.kind_tag)) {
+    return arr_helper_error(ins, f, result);
   }
   if (ins.kind_tag == length()) {
     return length_error(ins, f, result);
