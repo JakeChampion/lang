@@ -3,7 +3,10 @@ package e2ecompiler
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -94,9 +97,11 @@ func TestSelfHostServeAllocsPerRequestWasm(t *testing.T) {
 // encoder, 72.0 to 72.4 here; with the loop closing an incomplete
 // preface at EOF, an arm that hands the table on, 60.0 (the loop's
 // splices unchanged, so the plan's doing: the table through the HTTP/2
-// turn no longer copied); the CI runner reads a few lower, as the note on
-// serveAllocsH2Drift says.
-const ServeAllocsH2Ceiling = 62
+// turn no longer copied); with the connection, its stream array and a
+// stream rebuilt in their own boxes when a stream read in one block is
+// updated in another, 55.0 on arm64; the CI runner reads a few lower, as
+// the note on serveAllocsH2Drift says.
+const ServeAllocsH2Ceiling = 56
 
 func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
 	cli := buildSelfHostCLI(t)
@@ -111,8 +116,9 @@ func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
 
 // ServeAllocsH3Ceiling bounds allocations per hello request over one HTTP/3
 // connection. The 100,000-request measurement and ratchet are recorded in
-// docs/benchmarks/net-h3-2026-10-17.md.
-const ServeAllocsH3Ceiling = 281
+// docs/benchmarks/net-h3-2026-10-17.md; 265.2 on arm64 since elements are
+// re-read where their record dies.
+const ServeAllocsH3Ceiling = 267
 
 func TestSelfHostServeAllocsPerRequestH3(t *testing.T) {
 	cli := buildSelfHostCLI(t)
@@ -133,4 +139,26 @@ func TestSelfHostServeAllocsPerRequestH3(t *testing.T) {
 		t.Fatal(err)
 	}
 	e2eharness.CheckServeAllocsH3(t, addr, runX86_64Bin(cli.runner, client, port, strconv.Itoa(e2eharness.ServeAllocsRounds)), ServeAllocsH3Ceiling, e2eharness.ServeAllocsRounds)
+}
+
+// ServeFetchAllocsCeiling bounds what a handler making two requests
+// through `plat.http` allocates per request, the serve loop's share
+// included (e2eharness.ServeFetchAllocsServerSource, the nightly two-fetch
+// profile; docs/benchmarks/net-twofetch-2026-10-17.md).
+const ServeFetchAllocsCeiling = 171
+
+func TestSelfHostServeAllocsPerRequestTwoFetch(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "upstream")
+	}))
+	t.Cleanup(up.Close)
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(e2eharness.ServeFetchAllocsServerSource(0, e2eharness.ServeAllocsRoundsEmulated)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := runX86_64Bin(cli.runner, cli.x86Binary(t, src, "FERN_STRICT_IR=1"))
+	cmd.Env = append(os.Environ(), "http_proxy=http://u@"+up.Listener.Addr().String())
+	addr, _ := e2eharness.StartInheritedServer(t, cmd)
+	e2eharness.CheckServeFetchAllocs(t, addr, ServeFetchAllocsCeiling, e2eharness.ServeAllocsRoundsEmulated)
 }

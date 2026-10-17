@@ -97,7 +97,13 @@ and 10k on arm64 under qemu and on wasm under wasmtime, pinned at 0 on all
 three (`docs/NET-P0-MESSAGE-LAYER-PLAN.md` §6). The pin is a ratchet the same
 way: a count above it fails as a regression and one below it fails until
 the pin is lowered. The slack it allows is per second of the run, for the
-Date the loop reformats once a second. `TestHTTPHandlerCensus` and its wasm and self-host twins are the leak
+Date the loop reformats once a second.
+`TestSelfHostServeAllocsPerRequestTwoFetch` counts the same way around a
+handler that makes two `plat.http` requests through a proxy, the nightly
+two-fetch profile, over 10k requests on x86-64: the fetch client's
+allocations with the loop's. It is a ceiling rather than a pin, like the
+HTTP/2 leg, and fails both above it and eight or more below it.
+`TestHTTPHandlerCensus` and its wasm and self-host twins are the leak
 half: a bounded serve loop under `FERN_LEAKCHECK` frees what it allocated.
 `TestServeListenFailure` and `TestSelfHostServeListenFailure` pin a server
 whose port is taken: exit 98 and the reason in words, from the single loop
