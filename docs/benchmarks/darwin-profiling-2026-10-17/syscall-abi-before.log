@@ -1,0 +1,76 @@
+--- FAIL: TestSelfHostProfileSyscallABI (0.26s)
+    --- FAIL: TestSelfHostProfileSyscallABI/arm64-darwin/1 (0.00s)
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 64 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 172 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 134 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 135 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 103 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 94 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 103 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 135 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 56 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 57 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:52: missing profiling syscall 4 for arm64-darwin
+        self_host_profile_syscall_abi_test.go:52: missing profiling syscall 20 for arm64-darwin
+        self_host_profile_syscall_abi_test.go:52: missing profiling syscall 46 for arm64-darwin
+        self_host_profile_syscall_abi_test.go:52: missing profiling syscall 83 for arm64-darwin
+        self_host_profile_syscall_abi_test.go:52: missing profiling syscall 48 for arm64-darwin
+        self_host_profile_syscall_abi_test.go:65: __fern_profile_write_fd first syscall = 64 (present true), want 4
+        self_host_profile_syscall_abi_test.go:65: __fern_profile_start first syscall = 172 (present true), want 20
+    --- FAIL: TestSelfHostProfileSyscallABI/arm64-darwin/2 (0.00s)
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 64 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 172 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 134 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 135 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 103 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 94 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 103 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 135 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 56 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 57 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:52: missing profiling syscall 4 for arm64-darwin
+        self_host_profile_syscall_abi_test.go:52: missing profiling syscall 20 for arm64-darwin
+        self_host_profile_syscall_abi_test.go:52: missing profiling syscall 46 for arm64-darwin
+        self_host_profile_syscall_abi_test.go:52: missing profiling syscall 83 for arm64-darwin
+        self_host_profile_syscall_abi_test.go:52: missing profiling syscall 48 for arm64-darwin
+        self_host_profile_syscall_abi_test.go:65: __fern_profile_write_fd first syscall = 64 (present true), want 4
+        self_host_profile_syscall_abi_test.go:65: __fern_profile_start first syscall = 172 (present true), want 20
+    --- FAIL: TestSelfHostProfileSyscallABI/arm64-darwin/3 (0.00s)
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 64 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 172 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 134 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 135 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 103 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 94 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 103 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 135 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 56 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 57 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:52: missing profiling syscall 4 for arm64-darwin
+        self_host_profile_syscall_abi_test.go:52: missing profiling syscall 20 for arm64-darwin
+        self_host_profile_syscall_abi_test.go:52: missing profiling syscall 46 for arm64-darwin
+        self_host_profile_syscall_abi_test.go:52: missing profiling syscall 83 for arm64-darwin
+        self_host_profile_syscall_abi_test.go:52: missing profiling syscall 48 for arm64-darwin
+        self_host_profile_syscall_abi_test.go:65: __fern_profile_write_fd first syscall = 64 (present true), want 4
+        self_host_profile_syscall_abi_test.go:65: __fern_profile_start first syscall = 172 (present true), want 20
+    --- FAIL: TestSelfHostProfileSyscallABI/arm64-darwin/4 (0.00s)
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 64 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 172 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 134 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 135 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 103 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 94 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 103 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 135 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 56 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:46: raw profiling syscall 57 is outside arm64-darwin's ABI
+        self_host_profile_syscall_abi_test.go:52: missing profiling syscall 4 for arm64-darwin
+        self_host_profile_syscall_abi_test.go:52: missing profiling syscall 20 for arm64-darwin
+        self_host_profile_syscall_abi_test.go:52: missing profiling syscall 46 for arm64-darwin
+        self_host_profile_syscall_abi_test.go:52: missing profiling syscall 83 for arm64-darwin
+        self_host_profile_syscall_abi_test.go:52: missing profiling syscall 48 for arm64-darwin
+        self_host_profile_syscall_abi_test.go:65: __fern_profile_write_fd first syscall = 64 (present true), want 4
+        self_host_profile_syscall_abi_test.go:65: __fern_profile_start first syscall = 172 (present true), want 20
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	0.269s
+FAIL

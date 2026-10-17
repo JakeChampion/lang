@@ -75,3 +75,22 @@ All eleven strict size checks pass with complete coverage and unchanged
 baselines/tolerance (127.017 seconds). Raw evidence uses `main-bbad-`.
 These are Linux integration results. Native Darwin execution remains a
 separate required macOS CI gate for all four profiling modes.
+
+Raw syscall operands now select the actual target kernel ABI. Darwin's
+assembly retargeting rewrites the syscall register and trap; it does not
+translate a number supplied through the raw syscall operand. The profiling
+source therefore selects Darwin getpid 20, write 4, sigaction 46, setitimer
+83, sigprocmask 48, openat 463, lseek 199, mmap 197, close 6, munmap 73 and
+exit 1. These match Apple's bsd/kern/syscalls.master.
+
+Native macOS job 117512531154 on source 9a1a730f0 exposed the original
+Linux-number operands: all four modes died with SIGSYS before their workload.
+The new source-level syscall ABI regression reproduces that bug locally,
+including startup's getpid 172 versus Darwin's 20. After correction, all
+12 target/mode ABI combinations and the profiling, Mach-O, certification,
+field-re-read, inventory and complexity integration checks pass (47.421s).
+Generated Linux runtime source for all eight variants remains byte-identical;
+syscall-fix-linux-parity.json records its exact byte count and hash.
+This correction still requires a new native macOS execution run. Fresh
+bootstrap and size checks for the corrected source are in progress; older
+hashes above retain their original source versions.

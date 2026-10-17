@@ -73,8 +73,11 @@ pub function symbols(requested: boolean, mode: i32): boolean {
   return requested || mode > 0;
 }
 
-function nr(target: string, x86: i32, arm: i32): string {
-  if (target == "arm64-linux" || target == "arm64-darwin") {
+function nr(target: string, x86: i32, arm: i32, darwin: i32): string {
+  if (target == "arm64-darwin") {
+    return util.i32_to_string(darwin);
+  }
+  if (target == "arm64-linux") {
     return util.i32_to_string(arm);
   }
   return util.i32_to_string(x86);
@@ -100,17 +103,17 @@ pub function source(target: string, mode: i32): string {
     s = s.replace("PROFILE_AT_FDCWD", "100");
   }
   s = s.replace("PROFILE_MODE", util.i32_to_string(mode));
-  s = s.replace("SYS_WRITE", nr(target, 1, 64));
-  s = s.replace("SYS_SIGACTION", nr(target, 13, 134));
-  s = s.replace("SYS_SETITIMER", nr(target, 38, 103));
-  s = s.replace("SYS_EXIT", nr(target, 231, 94));
-  s = s.replace("SYS_SIGMASK", nr(target, 14, 135));
-  s = s.replace("SYS_OPENAT", nr(target, 257, 56));
-  s = s.replace("SYS_LSEEK", nr(target, 8, 62));
-  s = s.replace("SYS_MMAP", nr(target, 9, 222));
-  s = s.replace("SYS_CLOSE", nr(target, 3, 57));
-  s = s.replace("SYS_MUNMAP", nr(target, 11, 215));
-  s = s.replace("SYS_GETPID", nr(target, 39, 172));
+  s = s.replace("SYS_WRITE", nr(target, 1, 64, 4));
+  s = s.replace("SYS_SIGACTION", nr(target, 13, 134, 46));
+  s = s.replace("SYS_SETITIMER", nr(target, 38, 103, 83));
+  s = s.replace("SYS_EXIT", nr(target, 231, 94, 1));
+  s = s.replace("SYS_SIGMASK", nr(target, 14, 135, 48));
+  s = s.replace("SYS_OPENAT", nr(target, 257, 56, 463));
+  s = s.replace("SYS_LSEEK", nr(target, 8, 62, 199));
+  s = s.replace("SYS_MMAP", nr(target, 9, 222, 197));
+  s = s.replace("SYS_CLOSE", nr(target, 3, 57, 6));
+  s = s.replace("SYS_MUNMAP", nr(target, 11, 215, 73));
+  s = s.replace("SYS_GETPID", nr(target, 39, 172, 20));
   s = s.replace("PROFILE_PATH", "\"" + output().escape_c() + "\"");
   return s;
 }

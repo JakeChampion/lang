@@ -1,0 +1,17 @@
+{
+  "before_git": "9a1a730f03018c02f70b38d4e21976d542d055ba",
+  "targets": [
+    "x86-64-linux",
+    "arm64-linux"
+  ],
+  "modes": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "bytes": 122104,
+  "sha256": "5936c68e01ba49696bc66f6cc86a18d7a02c302cba320a506723a502f28d114d",
+  "generator_sha256": "1cb27695aa88a98cd0924c97891584936b814ccf5d9bcea42a3d66ea2594bbbe",
+  "rtprofile_after_sha256": "1a38d34dcbcbc518dad1644638ef42c22c4a6de133e8f9d5fb549b173be87352"
+}
