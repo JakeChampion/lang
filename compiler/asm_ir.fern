@@ -6317,16 +6317,119 @@ function ssa_nargs(): i32 {
   return 6;
 }
 
-function ssa_fixed_registers(f: ssa.SFunc): ssafixed.Table {
+// Negative means the instruction has no audited register-only form. A
+// comparison retains all scratch homes because a branch/select may defer it.
+function ssa_nospill_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
+  let k = ins.kind_tag;
+  if (k == 1 || k == 3 || k == 7 || k == 35) {
+    return 0;
+  }
+  if (k == 6 || k == 8) {
+    return 7;
+  }
+  if (k == 9) {
+    return ssa_binary_nospill_mask(ins, imm);
+  }
+  if (k == 10 && ssa_integer_unary(ins.str)) {
+    return 0;
+  }
+  return 0 - 1;
+}
+
+function ssa_binary_nospill_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
+  if (ins.str == "and_not") {
+    return 0;
+  }
+  let tag = ir.kind_id(ins.str);
+  if (ircore.is_int_cmp_kind(tag)) {
+    return 7;
+  }
+  // A subtraction whose result shares its right operand computes in r11.
+  if (tag == 22) {
+    return 4;
+  }
+  if (ssa_direct_bin(tag)) {
+    return 0;
+  }
+  if (ssa_shift_tag(tag) && imm.is_imm[ins.args[1]]) {
+    return 0;
+  }
+  return 0 - 1;
+}
+
+function ssa_integer_unary(what: string): boolean {
+  return what == "!" || what == "int_extend" || what == "int_wrap"
+    || what == "u32_wrap" || what == "int_cast:u32" || what == "int_cast:i32"
+    || util.str_has_prefix(what, "rotr:");
+}
+
+function ssa_fixed_mask(ins: ssa.SInst, imm: ssa.Imms, no_spills: boolean): i32 {
+  let mask = ssa_nospill_mask(ins, imm);
+  if (mask < 0) {
+    return 7;
+  }
+  if (no_spills) {
+    return mask;
+  }
+  if (ins.kind_tag == 9 && ins.str == "and_not") {
+    return 7;
+  }
+  return mask | 4;
+}
+
+function ssa_fixed_registers(f: ssa.SFunc, imm: ssa.Imms, no_spills: boolean): ssafixed.Table {
   let masks: i32[] = [];
   for b in f.blocks {
-    let i = 0;
-    while (i <= b.insts.len()) {
-      masks = masks.append(7);
-      i = i + 1;
+    for ins in b.insts {
+      let mask = ssa_fixed_mask(ins, imm, no_spills);
+      if (masks.len() == 0) {
+        mask = 7;
+      }
+      masks = masks.append(mask);
     }
+    masks = masks.append(7);
   }
   return ssafixed.table(6, 3, masks);
+}
+
+function ssa_can_borrow_r11(f: ssa.SFunc, imm: ssa.Imms, floats: boolean[]): boolean {
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ssa_nospill_mask(ins, imm) < 0) {
+        return false;
+      }
+    }
+  }
+  for floating in floats {
+    if (floating) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function ssa_has_integer_saved(reg_of: i32[]): boolean {
+  for r in reg_of {
+    if (r >= ssa_nregs() && r < ssa_fbase()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function ssa_allocate(f: ssa.SFunc, imm: ssa.Imms, s: asmcore.EmitState): ssa.Alloc {
+  let prefs = ssa_arg_prefs(f, s);
+  let floats = ssa.float_values(f, [], false);
+  let kept = ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false));
+  if (!ssa_can_borrow_r11(f, imm, floats) || !ssa_has_integer_saved(kept.reg_of) || ssa.spill_count(kept.reg_of) > 0) {
+    return kept;
+  }
+  let borrowed = ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true));
+  // Only the absence of spills proves these forms need no r11 scratch.
+  if (ssa.spill_count(borrowed.reg_of) > 0) {
+    return kept;
+  }
+  return borrowed;
 }
 
 function ssa_nsaved(): i32 {
@@ -6482,6 +6585,9 @@ function ssa_load(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asm
     return ssa_mov_slot(s, true, reg, ssa_slot_disp(ssa.spill_slot(reg_of[v]), s.ssa_save));
   }
   let home: string = ssa_reg(reg_of[v]);
+  if (home == "%r11") {
+    s = asmcore.EmitState { ...s, ssa_x0: v };
+  }
   if (home == reg) {
     return s;
   }
@@ -7230,7 +7336,7 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
   let b: i32 = ins.args[1];
   let dh: string = ssa_dst(reg_of, ins.result);
   let swap: boolean = fr.imm.is_imm[a] && !ssa_shift_tag(tag);
-  if (!swap && !fr.imm.is_imm[b] && ssa_src(reg_of, b, "%rcx") == dh) {
+  if (!swap && !fr.imm.is_imm[b] && ssa_in_x(reg_of, b) && ssa_reg(reg_of[b]) == dh) {
     if (ssa_commutative(tag) || ircore.flip_int_cmp_kind(tag) != tag) {
       swap = true;
     } else {
@@ -9869,7 +9975,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
     imm = ssa.with_sym(imm, shapes.vals[si], asmcore.shape_label(s, shapes.names[si]));
     si = si + 1;
   }
-  let alloc: ssa.Alloc = ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, ssa_arg_prefs(f, s), ssa.float_values(f, [], false), ssa_nfregs(), 0, ssa_fixed_registers(f));
+  let alloc: ssa.Alloc = ssa_allocate(f, imm, s);
   let reg_of: i32[] = alloc.reg_of;
   let lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
   s = ssa_cfi(s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n"), 1, "", 0);

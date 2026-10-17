@@ -23,6 +23,9 @@ func TestSelfHostDebugPreservesNativeCode(t *testing.T) {
 		"abort-chain":            deepAbortSrc,
 		"tail-call":              ssaTailCallProg,
 		"register-pressure":      dwarfVarsSrc,
+		"extra-caller-registers": extraCallerSource(9, false),
+		"extra-caller-spills":    extraCallerSource(20, false),
+		"extra-caller-rhs":       extraCallerSource(20, true),
 		"enum-locals":            dwarfEnumsSrc,
 		"partial-enum": `enum Direction { North, East, South, West }
 @noinline function pick(d: Direction): i32 { match (d) { South => { return 2; }, _ => { return 3; }, } return 0; }
