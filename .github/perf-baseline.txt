@@ -230,7 +230,7 @@ aarch64/http_hello.ir	29648969
 aarch64/int_loop.text	90
 aarch64/int_loop.ir	18000025
 aarch64/map_int.text	6048
-aarch64/map_int.ir	37932494
+aarch64/map_int.ir	37531450
 aarch64/map_probe_chain.text	6059
 aarch64/map_probe_chain.ir	361845532
 aarch64/map_string.text	6632
