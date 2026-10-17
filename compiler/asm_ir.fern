@@ -8673,6 +8673,9 @@ function sym_addr_need(sym: string): string {
   if (sym == "__fern_task_state") {
     return "task";
   }
+  if (sym == "__fern_vdso") {
+    return "vdso";
+  }
   return "";
 }
 
@@ -11813,6 +11816,9 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
       s = s.write("    leaq 16(%rsp,%rax,8), %rax\n");
       s = s.write("    movq %rax, __fern_envp(%rip)\n");
     }
+    if (asmcore.vdso_wanted(s, "x86_64")) {
+      s = emit_vdso_scan(s);
+    }
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
     // A MAIN-LESS module (a library compiled standalone — util.fern et al.
@@ -12011,6 +12017,50 @@ function emit_entry_runtime_settled(s0: asmcore.EmitState): asmcore.EmitState {
 }
 
 // The shared `__fern_*` runtime the entry module emits.
+// emit_vdso_scan walks the entry stack past envp's terminator to the
+// auxiliary vector and keeps AT_SYSINFO_EHDR (33), the vDSO's base, in
+// __fern_vdso's first word; the word stays zero when the kernel maps none.
+function emit_vdso_scan(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    movq (%rsp), %rax\n");
+  s = s.write("    leaq 16(%rsp,%rax,8), %rax\n");
+  s = s.write(".Lfern_auxv_env:\n");
+  s = s.write("    movq (%rax), %rcx\n");
+  s = s.write("    addq $8, %rax\n");
+  s = s.write("    testq %rcx, %rcx\n");
+  s = s.write("    jnz .Lfern_auxv_env\n");
+  s = s.write(".Lfern_auxv_scan:\n");
+  s = s.write("    movq (%rax), %rcx\n");
+  s = s.write("    testq %rcx, %rcx\n");
+  s = s.write("    jz .Lfern_auxv_done\n");
+  s = s.write("    addq $16, %rax\n");
+  s = s.write("    cmpq $33, %rcx\n");
+  s = s.write("    jne .Lfern_auxv_scan\n");
+  s = s.write("    movq -8(%rax), %rcx\n");
+  s = s.write("    movq %rcx, __fern_vdso(%rip)\n");
+  s = s.write(".Lfern_auxv_done:\n");
+  return s;
+}
+
+// emit_rt_clocks writes the clocks the module reads and, when they read
+// through the vDSO, its lookup, its slot and the __c_call2 shim they call it
+// with unless the module's own calls already brought that in.
+function emit_rt_clocks(s: asmcore.EmitState): asmcore.EmitState {
+  let vdso: boolean = asmcore.vdso_wanted(s, "x86_64");
+  if (vdso && !s.has_need("ccall:__c_call2")) {
+    s = emit_ccall_shim1(s.write("    .text\n").need("ccall:__c_call2"), "__c_call2", 2);
+  }
+  for which in ["monotonic_ns", "now_unix_ms", "now_ns"] {
+    if (s.has_need(which)) {
+      s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock(which, "x86_64"), s.write("    .text\n"));
+    }
+  }
+  if (vdso) {
+    s = s.write("    .section .bss\n    .align 8\n__fern_vdso: .quad 0, 0\n    .text\n");
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_vdso("x86_64"), s);
+  }
+  return s;
+}
+
 function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // __fern_str_cmp (#2649): string-ordering helper, hosted on the IR path
   // as a Fern function. Self-contained (two borrowed strings, byte compare, no
@@ -12327,18 +12377,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_eprint_str("x86_64"), s);
   }
-  if (s.has_need("monotonic_ns")) {
-    s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("monotonic_ns", "x86_64"), s);
-  }
-  if (s.has_need("now_unix_ms")) {
-    s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_unix_ms", "x86_64"), s);
-  }
-  if (s.has_need("now_ns")) {
-    s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_ns", "x86_64"), s);
-  }
+  s = emit_rt_clocks(s);
   // The fs-syscall leaves (stat / read_file / remove_file / write_file /
   // temp_dir / read_dir / remove_dir_all) are now Fern runtime functions (#2649) that share ONE errno→IoError
   // classifier, __fern_io_error, instead of each inlining the five-way branch.

@@ -1196,6 +1196,7 @@ pub function raw_floor_sigs(): RawFloorSig[] {
     RawFloorSig { name: "__raw_splice_pipe", params: [], result: p },
     RawFloorSig { name: "__raw_cover", params: [], result: p },
     RawFloorSig { name: "__raw_task_state", params: [], result: p },
+    RawFloorSig { name: "__raw_vdso", params: [], result: p },
     RawFloorSig { name: "__raw_call1", params: [p, p], result: n },
     RawFloorSig { name: "__raw_call2", params: [p, p, p], result: n },
     RawFloorSig { name: "__fern_str_eq", params: [p, p], result: t_bool() },
@@ -1205,6 +1206,8 @@ pub function raw_floor_sigs(): RawFloorSig[] {
     // The slice-range abort the __fern_arr_slice bodies call (#11405): the
     // emitters' reporter, so it never returns.
     RawFloorSig { name: "__fern_slice_abort", params: [], result: t_void() },
+    // The vDSO's clock_gettime the Linux clocks call, 1 when there is none.
+    RawFloorSig { name: "__fern_vdso_clock", params: [], result: p },
     RawFloorSig { name: "__syscall3", params: [n, w, w, w], result: w },
     RawFloorSig { name: "__syscall4", params: [n, w, w, w, w], result: w },
     RawFloorSig { name: "__syscall5", params: [n, w, w, w, w, w], result: w },

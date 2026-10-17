@@ -763,6 +763,13 @@ pub function op_raw_task_state(): Op {
   return op0(367);
 }
 
+// raw_vdso: pops nothing → the address of __fern_vdso, two words: the base of
+// the kernel's vDSO image as _start found it in the auxiliary vector (zero
+// without one), and its clock_gettime once looked up (1 when it has none).
+pub function op_raw_vdso(): Op {
+  return op0(443);
+}
+
 // raw_cover: pops nothing → the address of __fern_cov_counters, the word
 // holding the `-cover` counter table's address (zero before the first hit).
 pub function op_raw_cover(): Op {
@@ -3923,6 +3930,9 @@ function kind_id_len7_a(name: string): i32 {
 
 function kind_id_len8(name: string): i32 {
   let c: u8 = name[0];
+  if (c == b'r' && name == "raw_vdso") {
+    return 443;
+  }
   if (c == b'a') {
     return kind_id_len8_a(name);
   }
@@ -5562,6 +5572,9 @@ function kind_name_4(id: i32): string {
   if (id == 367) {
     return "raw_task_state";
   }
+  if (id == 443) {
+    return "raw_vdso";
+  }
   if (id == 380) {
     return "str_from_bytes_range";
   }
@@ -6167,6 +6180,7 @@ function pops0(t: i32): boolean {
     || t == 287  // raw_cover
     || t == 288  // line
     || t == 367  // raw_task_state
+    || t == 443  // raw_vdso
     || t == 216 || t == 217 || t == 218  // arr_push_shared_*, const_struct
     || t == 222  // map_hash_seed
     || t == 238 || t == 239 || t == 240  // geteuid, getegid, hostname

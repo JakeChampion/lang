@@ -5519,7 +5519,45 @@ function clock_read(t: string, clk: string): string {
   if (t == "arm64-darwin") {
     return "let ts: usize = __raw_scratch(16); __syscall3(" + sysno(t, "gettimeofday") + ", ts as i64, 0, 0); let sec: i64 = __load_i64(ts); let sub: i64 = __load_i32(ts + 8) as i64;";
   }
-  return "let ts: usize = __raw_scratch(16); __syscall3(" + sysno(t, "clock_gettime") + ", " + clk + ", ts as i64, 0); let sec: i64 = __load_i64(ts); let sub: i64 = __load_i64(ts + 8);";
+  return "let ts: usize = __raw_scratch(16); let vf: usize = __fern_vdso_clock(); if (vf != 1 as usize) { let r: usize = __c_call2(vf, " + clk + " as usize, ts); } else { __syscall3(" + sysno(t, "clock_gettime") + ", " + clk + ", ts as i64, 0); } let sec: i64 = __load_i64(ts); let sub: i64 = __load_i64(ts + 8);";
+}
+
+// vdso_wanted reports a Linux build that reads its clocks through the vDSO:
+// _start keeps the image's base and rt_src_vdso looks up clock_gettime in it.
+pub function vdso_wanted(s: EmitState, t: string): boolean {
+  return t != "arm64-darwin" && s.any_need(["monotonic_ns", "now_unix_ms", "now_ns"]);
+}
+
+// rt_src_vdso backs the Linux clocks' __fern_vdso_clock: the vDSO's
+// clock_gettime, found once through the image's DT_HASH symbol table and kept
+// in __fern_vdso's second word, or 1 when there is no image or no symbol, and
+// the clocks then make the syscall. The name is matched byte by byte so a
+// heap-free program needs no string box.
+pub function rt_src_vdso(t: string): string {
+  let name: string = "__kernel_clock_gettime";
+  if (t == "x86_64") {
+    name = "__vdso_clock_gettime";
+  }
+  let matched: string = "";
+  let i: i32 = 0;
+  while (i < name.len()) {
+    matched = matched + "__raw_load8(at, " + util.i32_to_string(i) + ") == " + util.i32_to_string(name[i] as i32) + " && ";
+    i = i + 1;
+  }
+  matched = matched + "__raw_load8(at, " + util.i32_to_string(name.len()) + ") == 0";
+  return "function __fern_vdso_clock(): usize { let slot: usize = __raw_vdso(); let f: usize = __raw_load_ptr(slot, 1); if (f == 0 as usize) { f = __fern_vdso_find(__raw_load_ptr(slot, 0)); __raw_store_ptr(slot, 1, f); } return f; } "
+    + "function __fern_vdso_find(image: usize): usize { if (image == 0 as usize) { return 1 as usize; } "
+    + "if (__raw_load8(image, 0) != 127 || __raw_load8(image, 1) != 69 || __raw_load8(image, 2) != 76 || __raw_load8(image, 3) != 70 || __raw_load8(image, 4) != 2) { return 1 as usize; } "
+    + "let base: i64 = image as i64; let phoff: i64 = __load_i64(image + 32); let phsize: i32 = __raw_load8(image, 54) + __raw_load8(image, 55) * 256; let phnum: i32 = __raw_load8(image, 56) + __raw_load8(image, 57) * 256; "
+    + "let bias: i64 = 0 as i64; let loaded: boolean = false; let dynv: i64 = 0 as i64; let i: i32 = 0; "
+    + "while (i < phnum) { let ph: i64 = base + phoff + (i * phsize) as i64; let kind: i32 = __load_i32(ph as usize); if (kind == 1 && !loaded) { bias = base + __load_i64((ph + 8 as i64) as usize) - __load_i64((ph + 16 as i64) as usize); loaded = true; } if (kind == 2) { dynv = __load_i64((ph + 16 as i64) as usize); } i = i + 1; } "
+    + "if (!loaded || dynv == 0 as i64) { return 1 as usize; } "
+    + "let d: i64 = bias + dynv; let strtab: i64 = 0 as i64; let symtab: i64 = 0 as i64; let hash: i64 = 0 as i64; let tag: i64 = __load_i64(d as usize); "
+    + "while (tag != 0 as i64) { let val: i64 = __load_i64((d + 8 as i64) as usize); if (tag == 4 as i64) { hash = bias + val; } if (tag == 5 as i64) { strtab = bias + val; } if (tag == 6 as i64) { symtab = bias + val; } d = d + 16 as i64; tag = __load_i64(d as usize); } "
+    + "if (hash == 0 as i64 || strtab == 0 as i64 || symtab == 0 as i64) { return 1 as usize; } "
+    + "let nsyms: i32 = __load_i32((hash + 4 as i64) as usize); let k: i32 = 0; "
+    + "while (k < nsyms) { let sym: usize = (symtab + (k as i64) * (24 as i64)) as usize; if (__raw_load8(sym, 6) != 0 || __raw_load8(sym, 7) != 0) { let at: usize = (strtab + __load_i32(sym) as i64) as usize; if (" + matched + ") { return (bias + __load_i64(sym + 8)) as usize; } } k = k + 1; } "
+    + "return 1 as usize; }";
 }
 
 // subsec_ns / subsec_per_ms convert `sub` for the two arithmetic shapes below:
