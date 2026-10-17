@@ -1,0 +1,40 @@
+# Keeping the compiler's fusion helpers separate
+
+The fusion pass's context construction, chain search, rewrite and remaining-site
+report are separate operations. Inlining them into `fuse_pipelines` makes a large
+control-flow graph that the ownership certifier must walk under each reuse-token
+assumption. Keep these four compiler-internal boundaries with `@noinline`:
+`context`, `find_chain`, `fuse` and `remaining_sites`.
+
+This changes no global inlining rule or fusion admission rule.
+
+## Cold whole-compiler measurement
+
+The control is main at `1a91fc49aae61ea1d0091e364ae2fe98ea47bd25`. Both
+compilers were built by that revision's stage 2, then compiled their respective
+`compiler/fern.fern` and matching stdlib for x86-64 Linux. Valgrind 3.24
+Callgrind counted guest instructions. `FERN_RC_CERTIFY_MEMO=0` disables the
+certifier's persistent memo; each measurement starts a new compiler process.
+
+| Certification | Control instructions | Four boundaries | Change |
+| --- | ---: | ---: | ---: |
+| `FERN_RC_CERTIFY=1` | 127,342,044,044 | 123,371,420,697 | -3.12% |
+| `FERN_RC_CERTIFY=0` | 70,582,813,122 | 70,499,277,866 | -0.12% |
+
+Enabling certification produces byte-identical output to disabling it within
+each variant. The control output is 12,289,104 bytes, SHA-256
+`af2931836bc31181dc1683e44d4d08a9d26cf73001addc79d8da949d9420e4d2`;
+the candidate is 12,287,136 bytes, SHA-256
+`cb0e03410f07c5567d735514f8161101b01b2a6e1f75c2dda7a9394fd7810dcd`.
+
+The difference between enabled and disabled runs is 44.57% of the control's
+enabled count and 42.86% of the candidate's. This improves #12181's cost, but
+does not meet its roughly 15% target. These are instruction counts, not native
+wall-time measurements.
+
+## Correctness
+
+The control and candidate emit byte-identical x86 executables for all 35 frozen
+performance programs and `compiler/checker.fern`. Program output and exit status
+also agree. The fusion execution, allocation, effect-order and reporting tests,
+including the ARM64 and WASI legs, and the unchanged complexity gate pass.
