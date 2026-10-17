@@ -3869,25 +3869,31 @@ function kevent_change_src(ch: string, fd: string, filter: string, flags: string
 
 // One struct kevent per filter: EV_ADD with EV_ENABLE (5) for a filter
 // wanted, EV_DELETE (2) for one not, where deleting a filter never added
-// is ENOENT and not an error.
+// is ENOENT and not an error. A one-shot watch (16) adds only the filters
+// wanted, with EV_ONESHOT (21), which the kernel deletes when it fires.
 function kqueue_watch_src(t: string): string {
   return "let ch: usize = __raw_scratch(32); let r: i32 = 0; let filter: i32 = 0 - 1; let bit: i32 = 1; "
-    + "while (bit <= 2 && r >= 0) { let flags: i32 = 2; if ((interest & bit) != 0) { flags = 5; } "
+    + "while (bit <= 2 && r >= 0) { let flags: i32 = 2; if ((interest & bit) != 0) { flags = 5; if ((interest & 16) != 0) { flags = 21; } } "
+    + "if ((interest & bit) != 0 || (interest & 16) == 0) { "
     + kevent_change_src("ch", "fd", "filter", "flags")
     + " let e: i32 = __syscall6(" + sysno(t, "kevent") + ", r_fd as i64, ch as i64, 1, 0, 0, 0) as i32; "
-    + "if (e < 0 && !(flags == 2 && e == 0 - 2)) { r = e; } filter = filter - 1; bit = bit + bit; } return r;";
+    + "if (e < 0 && !(flags == 2 && e == 0 - 2)) { r = e; } } filter = filter - 1; bit = bit + bit; } return r;";
 }
 
 // struct epoll_event is packed on x86-64 (12 bytes, the data at 4) and
 // aligned on arm64 (16 bytes, the data at 8). EPOLL_CTL_ADD, or MOD once
-// the fd is in the set (EEXIST), for an interest; DEL for none.
+// the fd is in the set (EEXIST), for an interest; DEL for none. A one-shot
+// watch (16) sets EPOLLONESHOT and tries MOD first, since the fd usually
+// sits disarmed in the set from its last one, and ADD when it is not there.
 function epoll_watch_src(t: string): string {
   let data_at: string = epoll_ev_data(t);
-  return "let ev: usize = __raw_scratch(16); let bits: i32 = 0; if ((interest & 1) != 0) { bits = bits | 1; } if ((interest & 2) != 0) { bits = bits | 4; } if ((interest & 4) != 0) { bits = bits | 268435456; } "
+  return "let ev: usize = __raw_scratch(16); let bits: i32 = 0; if ((interest & 1) != 0) { bits = bits | 1; } if ((interest & 2) != 0) { bits = bits | 4; } if ((interest & 4) != 0) { bits = bits | 268435456; } if ((interest & 16) != 0) { bits = bits | 1073741824; } "
     + "__raw_store8(ev, 0, bits & 255); __raw_store8(ev, 1, (bits >> 8) & 255); __raw_store8(ev, 2, (bits >> 16) & 255); __raw_store8(ev, 3, (bits >> 24) & 255); "
     + "__raw_store8(ev, " + data_at + ", fd & 255); __raw_store8(ev, " + data_at + " + 1, (fd >> 8) & 255); __raw_store8(ev, " + data_at + " + 2, (fd >> 16) & 255); __raw_store8(ev, " + data_at + " + 3, (fd >> 24) & 255); "
     + "__raw_store8(ev, " + data_at + " + 4, 0); __raw_store8(ev, " + data_at + " + 5, 0); __raw_store8(ev, " + data_at + " + 6, 0); __raw_store8(ev, " + data_at + " + 7, 0); "
-    + "let r: i32 = 0; if (interest == 0) { r = __syscall4(" + sysno(t, "epoll_ctl") + ", r_fd as i64, 2, fd as i64, ev as i64) as i32; } else { "
+    + "let r: i32 = 0; if (interest == 0) { r = __syscall4(" + sysno(t, "epoll_ctl") + ", r_fd as i64, 2, fd as i64, ev as i64) as i32; } else if ((interest & 16) != 0) { "
+    + "r = __syscall4(" + sysno(t, "epoll_ctl") + ", r_fd as i64, 3, fd as i64, ev as i64) as i32; "
+    + "if (r == 0 - 2) { r = __syscall4(" + sysno(t, "epoll_ctl") + ", r_fd as i64, 1, fd as i64, ev as i64) as i32; } } else { "
     + "r = __syscall4(" + sysno(t, "epoll_ctl") + ", r_fd as i64, 1, fd as i64, ev as i64) as i32; "
     + "if (r == 0 - 17) { r = __syscall4(" + sysno(t, "epoll_ctl") + ", r_fd as i64, 3, fd as i64, ev as i64) as i32; } } return r;";
 }
@@ -3939,7 +3945,7 @@ pub function rt_src_reactor_ctl(t: string): string {
     + "if (op == 3) { return __syscall3(" + sysno(t, "close") + ", r_fd as i64, 0, 0) as i32; } "
     + signal_watch_src(t)
     + parent_watch_src(t)
-    + "if (op != 1 && op != 2) { return 0 - 22; } let interest: i32 = arg & 7; if (op == 2) { interest = 0; } " + watch + " }";
+    + "if (op != 1 && op != 2) { return 0 - 22; } let interest: i32 = arg & 23; if (op == 2) { interest = 0; } " + watch + " }";
 }
 
 // The kernel writes its events into the caller's array itself, behind the
@@ -6411,14 +6417,17 @@ pub function (s: EmitState) mark_array_helper(name: string): EmitState {
   if (name == "__fern_arr_concat") {
     return s.need("heap").need("arr_concat");
   }
-  if (name == "__fern_bytes_owned" || name == "__fern_bytes_range") {
+  if (name == "__fern_bytes_owned") {
     return s.need("heap").need("bytes_owned");
+  }
+  if (name == "__fern_bytes_range") {
+    return s.need("heap").need("bytes_range");
   }
   return s;
 }
 
 function array_helper_need(name: string): boolean {
-  return name == "arr_str_join" || name == "arr_concat" || name == "bytes_owned";
+  return name == "arr_str_join" || name == "arr_concat" || name == "bytes_owned" || name == "bytes_range";
 }
 
 // str_lines's helper builds its string[] with .append() → arr_push /
@@ -6639,15 +6648,19 @@ pub function rt_src_arr_concat(): string {
 
 // rt_src_bytes_owned backs `__bytes_owned(b)`: the view's bytes in a fresh
 // packed u8[], one box and one copy; an empty view answers the static empty
-// array, as `__alloc_u8(0)` does. `__bytes_range(b, from, to)` copies
-// b[from:to] the same way, with the slice's bounds trap, so no view of the
-// window is built first; its arguments arrive in reverse, the last pushed
-// first, which wasm's helper takes in push order. A view is a packed array or a string
+// array, as `__alloc_u8(0)` does. A view is a packed array or a string
 // descriptor tagged with bit 1, decoded as rt_src_ct_mark does.
 pub function rt_src_bytes_owned(): string {
   return "function __fern_bytes_owned(bytes: usize): i32[] { let n: i32 = 0; let p: usize = 0; if (((bytes as i32) & 2) != 0) { let base: usize = bytes - 2; n = __load_i32(base + 8); p = __raw_load_ptr(base, 0); } else { n = __load_i32(bytes); p = bytes + 8; } if (n == 0) { return []; } "
-    + packed_box("b", "n") + " __memcpy(b + 8, p, n); return __raw_array(b); }"
-    + " function __fern_bytes_range(to: i32, from: i32, bytes: usize): i32[] { let n: i32 = 0; let p: usize = 0; if (((bytes as i32) & 2) != 0) { let base: usize = bytes - 2; n = __load_i32(base + 8); p = __raw_load_ptr(base, 0); } else { n = __load_i32(bytes); p = bytes + 8; } if (from < 0 || to < from || to > n) { __fern_slice_abort(); } let m: i32 = to - from; if (m == 0) { return []; } "
+    + packed_box("b", "n") + " __memcpy(b + 8, p, n); return __raw_array(b); }";
+}
+
+// rt_src_bytes_range backs `__bytes_range(b, from, to)`: b[from:to] copied
+// as rt_src_bytes_owned copies a whole view, with the slice's bounds trap, so
+// no view of the window is built first. Its arguments arrive in reverse, the
+// last pushed first, which wasm's helper takes in push order.
+pub function rt_src_bytes_range(): string {
+  return "function __fern_bytes_range(to: i32, from: i32, bytes: usize): i32[] { let n: i32 = 0; let p: usize = 0; if (((bytes as i32) & 2) != 0) { let base: usize = bytes - 2; n = __load_i32(base + 8); p = __raw_load_ptr(base, 0); } else { n = __load_i32(bytes); p = bytes + 8; } if (from < 0 || to < from || to > n) { __fern_slice_abort(); } let m: i32 = to - from; if (m == 0) { return []; } "
     + packed_box("b", "m") + " __memcpy(b + 8, p + from, m); return __raw_array(b); }";
 }
 

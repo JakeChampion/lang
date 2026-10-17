@@ -548,20 +548,10 @@ function __find_byte(buf: u8[], from: i32, end: i32, b: u8): i32 {
   return -1;
 }
 
-// __copy_range copies buf[from, end) into a fresh array, and __bytes_string
-// copies the same range into a fresh string. The parser's outputs are owned
+// __bytes_string copies buf[from, end) into a fresh string, as
+// __bytes_range does into a fresh array. The parser's outputs are owned
 // copies of what the handler keeps, so the wire buffer can be reused once the
 // parse is done.
-function __copy_range(buf: u8[], from: i32, end: i32): u8[] {
-  let out: u8[] = __alloc_u8(end - from);
-  let i: i32 = 0;
-  while (from + i < end) {
-    out = out.with(i, buf[from + i]);
-    i = i + 1;
-  }
-  return out;
-}
-
 function __bytes_string(buf: u8[], from: i32, end: i32): string {
   return string_from_bytes_range_unchecked(buf, from, end);
 }
@@ -1316,7 +1306,7 @@ function __framed_body(buf: u8[], at: i32, framing: __BodyFraming, version: stri
       if (at + content_length > buf.len()) {
         return (1, empty, 0, none);
       }
-      return (2, __copy_range(buf, at, at + content_length), at + content_length, none);
+      return (2, __bytes_range(buf, at, at + content_length), at + content_length, none);
     },
     Chunked => {
       if (version != "HTTP/1.1") {
@@ -1378,10 +1368,10 @@ pub function (d: ChunkDecoder) feed(bytes: u8[]): ChunkStep {
     at = step.2;
     out = step.3;
     if (step.0 == 1) {
-      return ChunkData(ChunkDecoder { ...cur, held: __copy_range(buf, at, buf.len()) }, out);
+      return ChunkData(ChunkDecoder { ...cur, held: __bytes_range(buf, at, buf.len()) }, out);
     }
     if (step.0 == 2) {
-      return ChunkEnd(out, cur.trailers, __copy_range(buf, at, buf.len()));
+      return ChunkEnd(out, cur.trailers, __bytes_range(buf, at, buf.len()));
     }
     if (step.0 >= 400) {
       return ChunkRefused(step.0);
@@ -1423,7 +1413,7 @@ function __chunk_data_step(d: ChunkDecoder, buf: u8[], at: i32, out: u8[]): (i32
   if (take > buf.len() - at) {
     take = buf.len() - at;
   }
-  let passed: u8[] = out.concat(__copy_range(buf, at, at + take));
+  let passed: u8[] = out.concat(__bytes_range(buf, at, at + take));
   let next: ChunkDecoder = ChunkDecoder { ...d, left: d.left - take };
   if (next.left > 0) {
     return (1, next, at + take, passed);
@@ -3216,7 +3206,7 @@ function __response_payload(buf: u8[], at: i32, h: HeaderMap, status: i32, metho
     if (buf.len() - at > limits.body) {
       return (413, empty, 0, none);
     }
-    return (2, __copy_range(buf, at, buf.len()), buf.len(), none);
+    return (2, __bytes_range(buf, at, buf.len()), buf.len(), none);
   }
   match (__http_body_framing(h)) {
     Ok(framing) => {

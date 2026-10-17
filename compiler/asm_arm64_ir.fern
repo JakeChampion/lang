@@ -2368,12 +2368,71 @@ function ssa_wreg(x: string): string {
 }
 
 // ssa_const_reg materialises an integer literal in `d`: one MOVZ for a small
-// decimal, one MOVN for a small negative one, the pool otherwise.
+// decimal, one MOVN for a small negative one, one move-wide for any other
+// value a single shifted halfword spells (movwide_text), the pool otherwise.
 function ssa_const_reg(text: string, d: string, s: asmcore.EmitState): asmcore.EmitState {
   if (movz_text_ok(text) || movn_text_ok(text)) {
     return ssa_mov_imm(s, d, text);
   }
+  if (lit_text_exact(text)) {
+    let w: string = movwide_text(util.lit_to_i64(text), d);
+    if (w != "") {
+      return s.write(w);
+    }
+  }
   return s.write("    ldr " + d + ", =" + text + "\n");
+}
+
+// movwide_text is the one move-wide instruction that loads v into the x
+// register d, or "": a movz when every halfword but one is zero, a movn when
+// every halfword but one is all ones, and a 32-bit movn, which zeroes the high
+// word, when the high word is zero and the low word's halfwords but one are
+// all ones.
+function movwide_text(v: i64, d: string): string {
+  let ones: i64 = 0i64 - 1i64;
+  let inv: i64 = v ^ ones;
+  let sh: i32 = 0;
+  while (sh < 64) {
+    let rest: i64 = 65535i64 << sh as i64 ^ ones;
+    if ((v & rest) == 0i64) {
+      return "    movz " + d + ", #" + util.i64_to_string(v >> sh as i64 & 65535i64) + ", lsl #" + util.i32_to_string(sh) + "\n";
+    }
+    if ((inv & rest) == 0i64) {
+      return "    movn " + d + ", #" + util.i64_to_string(inv >> sh as i64 & 65535i64) + ", lsl #" + util.i32_to_string(sh) + "\n";
+    }
+    sh = sh + 16;
+  }
+  if (v >> 32i64 != 0i64) {
+    return "";
+  }
+  let low: i64 = inv & 4294967295i64;
+  if (low >> 16i64 == 0i64) {
+    return "    movn " + ssa_wreg(d) + ", #" + util.i64_to_string(low) + "\n";
+  }
+  if ((low & 65535i64) == 0i64) {
+    return "    movn " + ssa_wreg(d) + ", #" + util.i64_to_string(low >> 16i64) + ", lsl #16\n";
+  }
+  return "";
+}
+
+// lit_text_exact is a literal util.lit_to_i64 reads whole: a canonical
+// decimal, or 0x and at most sixteen hex digits.
+function lit_text_exact(text: string): boolean {
+  if (text.len() > 2 && text[0] == b'0' && (text[1] == b'x' || text[1] == b'X')) {
+    if (text.len() > 18) {
+      return false;
+    }
+    let i: i32 = 2;
+    while (i < text.len()) {
+      let c: u8 = text[i];
+      if (!(c >= b'0' && c <= b'9' || c >= b'a' && c <= b'f' || c >= b'A' && c <= b'F')) {
+        return false;
+      }
+      i = i + 1;
+    }
+    return true;
+  }
+  return util.i64_to_string(util.lit_to_i64(text)) == text;
 }
 
 // ssa_mov_imm writes `mov d, #text`: as one move-wide word when the decimal
@@ -3703,6 +3762,9 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   if (ins.kind_tag == 36) {
     return ssa_select(ins, reg_of, fr, ssa_select_fuse(fr, blk, ii), s);
   }
+  if (ins.kind_tag == 37) {
+    return ssa_carry(ins, reg_of, s);
+  }
   if (ins.kind_tag == 6 || ins.kind_tag == 8 || ssa_select_fuse(fr, blk, ii + 1).fu.n > 0) {
     return s;
   }
@@ -3768,6 +3830,42 @@ function ssa_select(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, sc: SelectCond,
   s = ssa_select_load(reg_of, ins.args[2], b, s);
   let d: string = ssa_dst(reg_of, ins.result);
   s = s.write("    csel " + d + ", " + a + ", " + b + ", " + arm64_native.arm64_cond_name(cc) + "\n");
+  return ssa_store(reg_of, ins.result, d, s);
+}
+
+// ssa_carry reads a carry (ssa.fuse_carries) off the flags: cmn or cmp sets
+// them for two operands; an incoming carry sets C first (a borrow clears
+// it), and adcs or sbcs, discarding the sum, carries it through. Loads and
+// moves leave the flags alone.
+function ssa_carry(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (reg_of[ins.result] == 0 - 1) {
+    return s;
+  }
+  let sub: boolean = ins.imm == 1;
+  if (ins.args.len() == 3) {
+    let c: string = ssa_src(reg_of, ins.args[2], "x4");
+    s = ssa_load(reg_of, ins.args[2], c, s);
+    if (sub) {
+      s = s.write("    negs xzr, " + c + "\n");
+    } else {
+      s = s.write("    cmp " + c + ", #1\n");
+    }
+  }
+  let x: string = ssa_src(reg_of, ins.args[0], "x5");
+  s = ssa_load(reg_of, ins.args[0], x, s);
+  let y: string = ssa_src(reg_of, ins.args[1], "x6");
+  s = ssa_load(reg_of, ins.args[1], y, s);
+  if (ins.args.len() == 3) {
+    let op: string = if (sub) { "sbcs" } else { "adcs" };
+    s = s.write("    " + op + " xzr, " + x + ", " + y + "\n");
+  } else if (sub) {
+    s = s.write("    cmp " + x + ", " + y + "\n");
+  } else {
+    s = s.write("    cmn " + x + ", " + y + "\n");
+  }
+  let d: string = ssa_dst(reg_of, ins.result);
+  let cc: string = if (sub) { "lo" } else { "hs" };
+  s = s.write("    cset " + d + ", " + cc + "\n");
   return ssa_store(reg_of, ins.result, d, s);
 }
 
@@ -6481,11 +6579,11 @@ function emit_named_bodies(cache: irtables.LowerResult[], physical: physicalbody
   return s;
 }
 
-// arr.join(sep), a scalar xs.concat(ys) and __bytes_owned(b) are Fern
-// runtime functions (#2649, asmcore.rt_src_arr_str_join, rt_src_arr_concat
-// and rt_src_bytes_owned). Each fills one
-// exact-size block, so the heap is its only dep and mark_array_helper
-// declares it.
+// arr.join(sep), a scalar xs.concat(ys), __bytes_owned(b) and
+// __bytes_range(b, from, to) are Fern runtime functions (#2649,
+// asmcore.rt_src_arr_str_join, rt_src_arr_concat, rt_src_bytes_owned and
+// rt_src_bytes_range). Each fills one exact-size block, so the heap is its
+// only dep and mark_array_helper declares it.
 function emit_array_helpers(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("arr_str_join")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_join(), s);
@@ -6495,6 +6593,9 @@ function emit_array_helpers(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.has_need("bytes_owned")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_bytes_owned(), s);
+  }
+  if (s.has_need("bytes_range")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_bytes_range(), s);
   }
   return s;
 }

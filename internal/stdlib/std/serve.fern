@@ -4783,7 +4783,7 @@ function __serve_parked_eof(c: __Conns, fd: i32): __Conns {
 // connection went away is cancelled rather than run on.
 function __flight_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fi: i32, ready: i32, opts: Config, clk: __Clock): (__Conns, __Flight[]) {
   let fl: __Flight = fls[fi];
-  __flight_unwatch(drv, fl);
+  __flight_unwatch(drv, fl, ready);
   fls = __flights_remove(fls, fi);
   match (fl.job) {
     Handler(call) => {
@@ -4944,13 +4944,18 @@ function __serve_abandon[D: async.Driver](drv: D, c: __Conns, fd: i32): __Conns 
 }
 
 // __flight_watch(drv, fl, now) — the flight waiting on `fl.wait`: each pair
-// watched with its interest, the bound kept as the flight's due time.
+// watched with its interest, once where the driver can, since the flight
+// runs on at the first event; the bound kept as the flight's due time.
 function __flight_watch[D: async.Driver](drv: D, fl: __Flight, now: i64): __Flight {
   let w: async.Wait = fl.wait;
+  let once: i32 = 0;
+  if (drv.oneshot()) {
+    once = async.ONESHOT;
+  }
   let i: i32 = 0;
   while (i + 1 < w.set.len()) {
     if (!__own_connection(fl, w.set[i]) && w.set[i + 1] != fetch.MAIL_INTEREST) {
-      let watched: i32 = drv.watch(w.set[i], w.set[i + 1]);
+      let watched: i32 = drv.watch(w.set[i], w.set[i + 1] | once);
     }
     i = i + 2;
   }
@@ -4961,12 +4966,17 @@ function __flight_watch[D: async.Driver](drv: D, fl: __Flight, now: i64): __Flig
   return __Flight { ...fl, set: w.set, due: due };
 }
 
-// __flight_unwatch(drv, fl) — the flight's pairs unwatched before it runs
-// on or goes.
-function __flight_unwatch[D: async.Driver](drv: D, fl: __Flight): void {
+// __flight_unwatch(drv, fl, fired) — the flight's pairs unwatched before it
+// runs on or goes, but for pair `fired` (-1 for none) on a driver that
+// watched it once: the event that woke the flight disarmed it.
+function __flight_unwatch[D: async.Driver](drv: D, fl: __Flight, fired: i32): void {
+  let spent: i32 = 0 - 1;
+  if (drv.oneshot()) {
+    spent = fired;
+  }
   let i: i32 = 0;
   while (i + 1 < fl.set.len()) {
-    if (!__own_connection(fl, fl.set[i]) && fl.set[i + 1] != fetch.MAIL_INTEREST) {
+    if (!__own_connection(fl, fl.set[i]) && fl.set[i + 1] != fetch.MAIL_INTEREST && i / 2 != spent) {
       let unwatched: i32 = drv.unwatch(fl.set[i]);
     }
     i = i + 2;
@@ -4986,7 +4996,7 @@ function __own_connection(fl: __Flight, fd: i32): boolean {
 // __flight_cancel(drv, fl) — the flight run on to its end with every wait
 // answering `async.cancelled()`, and its record freed.
 function __flight_cancel[D: async.Driver](drv: D, fl: __Flight): void {
-  __flight_unwatch(drv, fl);
+  __flight_unwatch(drv, fl, 0 - 1);
   match (fl.job) {
     Handler(call) => {
       let st: async.TaskStatus[HttpResponse] = async.call_cancel(call);

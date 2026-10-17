@@ -1277,9 +1277,10 @@ per verification on x86-64.
 ECDSA over NIST P-256 and P-384 (FIPS 186-5), the curves TLS certificates and
 handshake signatures use. Verification handles only public values, so it is
 built on `core/bigint` in Jacobian coordinates: about 7 ms per P-256
-verification and 16 ms per P-384 one on x86-64. Signing runs over
-`std/crypto/montgomery`, constant time, with RFC 6979's deterministic nonce,
-and the valgrind gate checks it (`TestSelfHostCtGateX86_64/ecdsa`).
+verification and 16 ms per P-384 one on x86-64. Signing, public points and
+ECDH run over `std/crypto/p256` for P-256 and `std/crypto/montgomery` for
+P-384, constant time, with RFC 6979's deterministic nonce, and the valgrind
+gate checks them (`TestSelfHostCtGateX86_64/ecdsa`).
 
 - `public_key(curve, point: [u8]): Result[PublicKey, EcdsaError]` — `curve`
   `P256` or `P384`, `point` an uncompressed SEC 1 point of that curve's size,
@@ -1293,22 +1294,42 @@ and the valgrind gate checks it (`TestSelfHostCtGateX86_64/ecdsa`).
 - `ecdh(key, peer: [u8]): Result[u8[], EcdsaError]` is the x-coordinate of
   the key's scalar times the peer's uncompressed SEC 1 point, big-endian at
   the curve's size: ECDHE's shared secret (RFC 8446 §7.4.1). The peer's
-  point is checked as `public_key` checks one; the multiplication is the
-  signer's, constant time in the scalar
+  point is checked as `public_key` checks one; the multiplication is
+  constant time in the scalar
   (`TestSelfHostCtGateX86_64/p256-ecdh`). RFC 5903 §8.1's P-256 exchange
   is the vector (`tests/stdlib/ecdsa_test.fern`).
 - `sign(key, hash, msg): Result[u8[], EcdsaError]` is the DER signature,
   the same bytes for the same key and message (RFC 6979). It takes `Sha256`
   or `Sha384`, the hashes TLS 1.3 pairs with these curves, and refuses
   `Sha512` with `SigningHash`. Points are projective and added by the
-  complete formula for a = -3 (eprint 2015/1060); the base-point
-  multiplication reads all sixteen table entries for each 4-bit digit and
-  keeps one by mask. About 4 ms per P-256 signature on x86-64.
+  complete formula for a = -3 (eprint 2015/1060); a table lookup reads
+  every entry and keeps one by mask. About 70 µs per P-256 signature on
+  Apple Silicon (M-series, arm64-darwin), down from 2.3 ms over
+  `std/crypto/montgomery`.
+
+### `std/crypto/p256`
+
+P-256's constant-time arithmetic for `std/crypto/ecdsa`. A field element or
+scalar is four 64-bit limbs in Montgomery form; the multiplications,
+additions and subtractions mod p and mod n are straight-line code generated
+by `scripts/gen-p256.py`, which checks what it emits against Python's
+integers before writing it. `[k]G` sums one entry per nibble of k from a
+table of j * 16^i * G, so it takes no doublings; `[k]Q` doubles four times
+and adds once per nibble. `tests/stdlib/p256_test.fern` holds both against
+Python's affine arithmetic.
+
+- `base_point(d)` is `[d]G` as an uncompressed SEC 1 point.
+- `scalar_mul_x(k, point)` is the x-coordinate of `[k]Q`, the point already
+  checked to lie on the curve.
+- `sign_rs(d, e, k)` is the signature `(r, s)` for the reduced digest `e`
+  and the nonce `k`.
+- `in_scalar_range(b)` (1 when b is in [1, n), else 0) and
+  `scalar_reduce(b)` (b mod n) take 32 big-endian bytes.
 
 ### `std/crypto/montgomery`
 
 Constant-time arithmetic modulo an odd modulus of up to 390 bits, in
-Montgomery form, for ECDSA signing over the NIST fields and orders. An
+Montgomery form, for ECDSA signing over P-384's field and order. An
 element is 26-bit limbs in `i64` (ten for 256 bits, fifteen for 384), so a
 product of limbs fits with room to accumulate; nothing branches on or
 indexes by an element's value.
