@@ -6656,7 +6656,11 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     "fd_stat", "raw_scratch", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
     "clock_resolution", "clock_set", "ct_mark",
   ])) {
-    s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip " + asmcore.scratch_size(ctgt, s.has_need("statfs")) + "\n    .section .text\n");
+    let minimum: i32 = 256;
+    if (darwin && s.any_need(["hostname", "uname_field"])) {
+      minimum = 400;
+    }
+    s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip " + asmcore.scratch_size(ctgt, s.has_need("statfs"), minimum) + "\n    .section .text\n");
   }
   if (!darwin && s.any_need(["reader_splice", "raw_splice_pipe"])) {
     s = s.write("    .section .bss\n    .p2align 3\n__fern_splice_pipe: .quad 0, 0\n    .text\n");
@@ -6720,156 +6724,6 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
   return s;
 }
 
-// emit_rt_hostname_darwin is `hostname()` on arm64-darwin, under the __fn___
-// name the Fern-compiled Linux body carries so the call site cannot tell
-// them apart. XNU has no uname syscall — libc builds one out of sysctl — so
-// this asks sysctl({CTL_KERN, KERN_HOSTNAME}) (BSD 202) directly, six
-// arguments and the carry flag for failure, which is why it is not a
-// __syscallN body: the widest intrinsic takes five. The name lands in a
-// stack buffer; the box is built exactly as `__raw_alloc` + `__raw_string`
-// compile — one 24-byte-headed block from __fern_alloc, bytes copied in,
-// __fern_str_box_hdr stamping the fused header. A refused sysctl is an
-// empty name.
-//
-// Frame: mib (8) + oldlen (8) + 400 bytes of name = 416 below the saved
-// callee registers.
-function emit_rt_hostname_darwin(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("__fn___fern_hostname:\n");
-  s = s.write("    stp x29, x30, [sp, #-16]!\n");
-  s = s.write("    mov x29, sp\n");
-  s = s.write("    stp x19, x20, [sp, #-16]!\n");
-  s = s.write("    sub sp, sp, #416\n");
-  s = s.write("    mov w0, #1\n");  // CTL_KERN
-  s = s.write("    mov w1, #10\n");  // KERN_HOSTNAME
-  s = s.write("    stp w0, w1, [sp]\n");  // mib[2]
-  s = s.write("    mov x0, #384\n");
-  s = s.write("    str x0, [sp, #8]\n");  // oldlen = buffer room
-  s = s.write("    mov x0, sp\n");  // name
-  s = s.write("    mov x1, #2\n");  // namelen
-  s = s.write("    add x2, sp, #16\n");  // oldp
-  s = s.write("    add x3, sp, #8\n");  // oldlenp
-  s = s.write("    mov x4, #0\n");  // newp
-  s = s.write("    mov x5, #0\n");  // newlen
-  s = s.write("    mov x16, #202\n");
-  s = s.write("    svc #0x80\n");
-  s = s.write("    mov x20, #0\n");  // length
-  s = s.write("    b.cs .Lhostname_box\n");  // carry set = error: empty
-  s = s.write("    add x19, sp, #16\n");  // name bytes
-  s = s.write(".Lhostname_strlen:\n");
-  s = s.write("    ldrb w0, [x19, x20]\n");
-  s = s.write("    cbz w0, .Lhostname_box\n");
-  s = s.write("    add x20, x20, #1\n");
-  s = s.write("    b .Lhostname_strlen\n");
-  s = s.write(".Lhostname_box:\n");
-  s = s.write("    add x0, x20, #24\n");
-  s = s.write("    bl __fern_alloc\n");
-  s = s.write("    add x0, x0, #24\n");  // data (raw_alloc's shape)
-  s = s.write("    mov x1, #0\n");
-  s = s.write(".Lhostname_copy:\n");
-  s = s.write("    cmp x1, x20\n");
-  s = s.write("    b.hs .Lhostname_copied\n");
-  s = s.write("    ldrb w2, [x19, x1]\n");
-  s = s.write("    strb w2, [x0, x1]\n");
-  s = s.write("    add x1, x1, #1\n");
-  s = s.write("    b .Lhostname_copy\n");
-  s = s.write(".Lhostname_copied:\n");
-  s = s.write("    mov x1, x20\n");
-  s = s.write("    bl __fern_str_box_hdr\n");  // x0 = box
-  s = s.write("    add sp, sp, #416\n");
-  s = s.write("    ldp x19, x20, [sp], #16\n");
-  s = s.write("    ldp x29, x30, [sp], #16\n");
-  s = s.write("    ret\n");
-  return s;
-}
-
-// emit_rt_uname_field_darwin is `uname_field(i)` on arm64-darwin, the sibling
-// of emit_rt_hostname_darwin: XNU has no uname syscall, so the record is five
-// sysctl names and the index picks one. Six arguments and the carry flag for
-// failure, which is why it is not a __syscallN body. The argument arrives on
-// the operand stack, at #48 once the three callee-saved slots are pushed. An
-// index naming no field leaves the length at zero, so the copy is skipped and
-// the answer is the empty string — the same answer a refused sysctl gets.
-//
-// Frame: mib (8) + oldlen (8) + 400 bytes of value = 416 below the saved
-// callee registers.
-function emit_rt_uname_field_darwin(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("__fn___fern_uname_field:\n");
-  s = s.write("    stp x29, x30, [sp, #-16]!\n");
-  s = s.write("    mov x29, sp\n");
-  s = s.write("    stp x19, x20, [sp, #-16]!\n");
-  s = s.write("    str x21, [sp, #-16]!\n");
-  s = s.write("    ldr x21, [sp, #48]\n");  // the field index
-  s = s.write("    sub sp, sp, #416\n");
-  s = s.write("    mov x20, #0\n");  // length
-  s = s.write("    cmp w21, #0\n");
-  s = s.write("    b.lt .Lunamef_box\n");
-  s = s.write("    cmp w21, #5\n");
-  s = s.write("    b.ge .Lunamef_box\n");
-  s = s.write("    mov w0, #1\n");  // CTL_KERN
-  s = s.write("    mov w1, #1\n");  // 0: kern.ostype
-  s = s.write("    cmp w21, #1\n");
-  s = s.write("    b.ne .Lunamef_m2\n");
-  s = s.write("    mov w1, #10\n");  // 1: kern.hostname
-  s = s.write("    b .Lunamef_mib\n");
-  s = s.write(".Lunamef_m2:\n");
-  s = s.write("    cmp w21, #2\n");
-  s = s.write("    b.ne .Lunamef_m3\n");
-  s = s.write("    mov w1, #2\n");  // 2: kern.osrelease
-  s = s.write("    b .Lunamef_mib\n");
-  s = s.write(".Lunamef_m3:\n");
-  s = s.write("    cmp w21, #3\n");
-  s = s.write("    b.ne .Lunamef_m4\n");
-  s = s.write("    mov w1, #4\n");  // 3: kern.version
-  s = s.write("    b .Lunamef_mib\n");
-  s = s.write(".Lunamef_m4:\n");
-  s = s.write("    cmp w21, #4\n");
-  s = s.write("    b.ne .Lunamef_mib\n");
-  s = s.write("    mov w0, #6\n");  // 4: hw.machine
-  s = s.write("    mov w1, #1\n");
-  s = s.write(".Lunamef_mib:\n");
-  s = s.write("    stp w0, w1, [sp]\n");  // mib[2]
-  s = s.write("    mov x0, #384\n");
-  s = s.write("    str x0, [sp, #8]\n");  // oldlen = buffer room
-  s = s.write("    mov x0, sp\n");  // name
-  s = s.write("    mov x1, #2\n");  // namelen
-  s = s.write("    add x2, sp, #16\n");  // oldp
-  s = s.write("    add x3, sp, #8\n");  // oldlenp
-  s = s.write("    mov x4, #0\n");  // newp
-  s = s.write("    mov x5, #0\n");  // newlen
-  s = s.write("    mov x16, #202\n");
-  s = s.write("    svc #0x80\n");
-  s = s.write("    b.cs .Lunamef_box\n");  // carry set = error: empty
-  s = s.write("    add x19, sp, #16\n");
-  s = s.write(".Lunamef_strlen:\n");
-  s = s.write("    ldrb w0, [x19, x20]\n");
-  s = s.write("    cbz w0, .Lunamef_box\n");
-  s = s.write("    add x20, x20, #1\n");
-  s = s.write("    b .Lunamef_strlen\n");
-  s = s.write(".Lunamef_box:\n");
-  s = s.write("    add x0, x20, #24\n");
-  s = s.write("    bl __fern_alloc\n");
-  s = s.write("    add x0, x0, #24\n");  // data (raw_alloc's shape)
-  s = s.write("    mov x1, #0\n");
-  s = s.write(".Lunamef_copy:\n");
-  s = s.write("    cmp x1, x20\n");
-  s = s.write("    b.hs .Lunamef_copied\n");
-  s = s.write("    ldrb w2, [x19, x1]\n");
-  s = s.write("    strb w2, [x0, x1]\n");
-  s = s.write("    add x1, x1, #1\n");
-  s = s.write("    b .Lunamef_copy\n");
-  s = s.write(".Lunamef_copied:\n");
-  s = s.write("    mov x1, x20\n");
-  s = s.write("    bl __fern_str_box_hdr\n");  // x0 = box
-  s = s.write("    add sp, sp, #416\n");
-  s = s.write("    ldr x21, [sp], #16\n");
-  s = s.write("    ldp x19, x20, [sp], #16\n");
-  s = s.write("    ldp x29, x30, [sp], #16\n");
-  s = s.write("    ret\n");
-  return s;
-}
-
-// emit_rt_readiness emits the readiness primitives — poll, timer_fd, and the wasm
-// pollable shims (timer_pollable, pollable_drop, block, poll).
 function emit_rt_readiness(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   // poll: builds the pollfd[] and calls ppoll (arm64 Linux has no poll(2)).
   // Fern now — asmcore.rt_src_poll, need-gated below with the other migrated
@@ -11252,18 +11106,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_getgroups(tgt), s);
   }
   if (s.has_need("hostname")) {
-    if (darwin) {
-      s = emit_rt_hostname_darwin(s);
-    } else {
-      s = emit_ir_runtime_fern_fn(asmcore.rt_src_hostname(tgt), s);
-    }
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_hostname(tgt), s);
   }
   if (s.has_need("uname_field")) {
-    if (darwin) {
-      s = emit_rt_uname_field_darwin(s);
-    } else {
-      s = emit_ir_runtime_fern_fn(asmcore.rt_src_uname_field(tgt), s);
-    }
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_uname_field(tgt), s);
   }
   if (s.has_need("cpu_count")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_cpu_count(tgt), s);
