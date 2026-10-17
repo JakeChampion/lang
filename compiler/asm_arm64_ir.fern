@@ -3790,6 +3790,9 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   if (ins.kind_tag == 36) {
     return ssa_select(ins, reg_of, fr, ssa_select_fuse(fr, blk, ii), s);
   }
+  if (ins.kind_tag == 9 && ins.str == "and_not") {
+    return ssa_and_not(ins, reg_of, s);
+  }
   if (ins.kind_tag == 37) {
     return ssa_carry(ins, reg_of, s);
   }
@@ -3858,6 +3861,17 @@ function ssa_select(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, sc: SelectCond,
   s = ssa_select_load(reg_of, ins.args[2], b, s);
   let d: string = ssa_dst(reg_of, ins.result);
   s = s.write("    csel " + d + ", " + a + ", " + b + ", " + arm64_native.arm64_cond_name(cc) + "\n");
+  return ssa_store(reg_of, ins.result, d, s);
+}
+
+// The integer and-not reads both inputs before writing any result home.
+function ssa_and_not(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let a: string = ssa_src(reg_of, ins.args[0], "x5");
+  s = ssa_load(reg_of, ins.args[0], a, s);
+  let b: string = ssa_src(reg_of, ins.args[1], "x6");
+  s = ssa_load(reg_of, ins.args[1], b, s);
+  let d: string = ssa_dst(reg_of, ins.result);
+  s = s.write("    bic " + d + ", " + a + ", " + b + "\n");
   return ssa_store(reg_of, ins.result, d, s);
 }
 

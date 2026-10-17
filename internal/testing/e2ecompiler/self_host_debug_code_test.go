@@ -15,6 +15,7 @@ func TestSelfHostDebugPreservesNativeCode(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for name, source := range map[string]string{
 		"leaf-frame":        leafFrameSource(),
+		"and-not":           andNotProgram,
 		"append-report":     selfHostAppendReportSrc,
 		"abort-chain":       deepAbortSrc,
 		"tail-call":         ssaTailCallProg,
