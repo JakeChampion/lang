@@ -12,7 +12,7 @@ import "../ir";
 import "../util";
 
 function op_of(id: i32, imm: i32): ir.Op {
-  return ir.Op { kind_tag: id, i32_imm: imm, i64_imm: 0 as i64, f64_imm: 0.0, width: 0, unsigned: false, str: "", decl: 0 - 1 };
+  return ir.Op { source: 0,  kind_tag: id, i32_imm: imm, i64_imm: 0 as i64, f64_imm: 0.0, width: 0, unsigned: false, str: "", decl: 0 - 1 };
 }
 
 function pops_cell(id: i32): string {

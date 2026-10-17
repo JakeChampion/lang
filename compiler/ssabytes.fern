@@ -171,6 +171,7 @@ function data_name(): string {
 
 function body(name: string, params: i32, locals: i32, ops: ir.Op[]): irtables.LowerResult {
   return irtables.LowerResult {
+    source_positions: irtables.no_source(),
     ok: true, why: "", ops: ops, n_locals: locals, n_params: params,
     erased_wide: false, superseded: false, arr_slots: [], i64_slots: [],
     f64_slots: [], str_slots: [], name: name, result_kind: irtables.result_i32(),

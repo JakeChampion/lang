@@ -1,3 +1,5 @@
+import "./util";
+import "./sourcepos";
 // The native allocator and emitter consume this same prepared body. This is
 // not a certificate: target-specific release entry paths also have effects.
 import "./irtables";
@@ -11,6 +13,7 @@ pub struct Body {
   formed: ssa.Formed,
   seen_vals: i32[],
   seen_slots: i32[],
+  source: SourceLines,
 }
 
 // The pre-emission context needed to interpret target-specific entry paths.
@@ -100,11 +103,99 @@ pub function finish(lowered: irtables.LowerResult, selected: physicalbody.Select
 // finish_formed is finish for a lift whose register form is already made:
 // one that calls no leaf, so inlining the leaves would not change it.
 pub function finish_formed(lowered: irtables.LowerResult, selected: physicalbody.Selected, lifted: ssa_lift.LResult, formed: ssa.Formed): Body {
-  return Body { lowered: lowered, selected: selected, formed: formed, seen_vals: lifted.seen_vals, seen_slots: lifted.seen_slots };
+  return Body { lowered: lowered, selected: selected, formed: formed, seen_vals: lifted.seen_vals, seen_slots: lifted.seen_slots, source: source_lines(lowered, lifted, formed) };
 }
 
 // with_selects is the certified body with its small branches turned into
 // selects (ssa.select_branches), the form the emitter allocates.
 pub function with_selects(b: Body): Body {
   return Body { ...b, formed: ssa.Formed { ...b.formed, f: ssa.select_branches(b.formed.f) } };
+}
+
+pub struct SourceLines { values: sourcepos.SourcePos[], terms: sourcepos.SourcePos[] }
+
+function blank_positions(n: i32): sourcepos.SourcePos[] {
+  let out: sourcepos.SourcePos[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(sourcepos.SourcePos { line: 0, col: "0" });
+    i = i + 1;
+  }
+  return out;
+}
+
+function source_lines(r: irtables.LowerResult, lifted: ssa_lift.LResult, formed: ssa.Formed): SourceLines {
+  if (r.source_positions.entry.line == 0) {
+    return SourceLines { values: [], terms: [] };
+  }
+  let top: i32 = 0;
+  for b in formed.f.blocks {
+    if (b.id >= top) {
+      top = b.id + 1;
+    }
+  }
+  let out = SourceLines { values: blank_positions(formed.f.nvals), terms: blank_positions(top) };
+  out = source_values(out, lifted.source_values, formed.repl);
+  for row in lifted.source_returns {
+    if (row.block < out.terms.len()) {
+      out = SourceLines { ...out, terms: out.terms.with(row.block, sourcepos.SourcePos { line: row.line, col: row.col }) };
+    }
+  }
+  if (!has_source_instruction(formed.f, out.values)) {
+    out = first_source(out, formed.f, r.source_positions.entry);
+  }
+  return out;
+}
+
+function has_source_instruction(f: ssa.SFunc, values: sourcepos.SourcePos[]): boolean {
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.result >= 0 && ins.result < values.len() && values[ins.result].line > 0) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function source_value(own out: SourceLines, value: i32, repl: i32[], pos: sourcepos.SourcePos): SourceLines {
+  let original = value;
+  if (value < repl.len()) {
+    value = repl[value];
+  }
+  if (value < 0 || value >= out.values.len()) {
+    return out;
+  }
+  // An eliminated alias must not move its surviving definition to a later
+  // statement: a breakpoint there would precede the definition itself.
+  if (value != original && out.values[value].line > 0) {
+    return out;
+  }
+  return SourceLines { ...out, values: out.values.with(value, pos) };
+}
+
+function first_source(own out: SourceLines, f: ssa.SFunc, pos: sourcepos.SourcePos): SourceLines {
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.result >= 0 && ins.kind_tag != 6 && ins.kind_tag != 8) {
+        return SourceLines { ...out, values: out.values.with(ins.result, pos) };
+      }
+    }
+  }
+  if (out.terms[f.entry].line == 0) {
+    return SourceLines { ...out, terms: out.terms.with(f.entry, pos) };
+  }
+  return out;
+}
+
+function source_values(own out: SourceLines, positions: i64[], repl: i32[]): SourceLines {
+  let i: i32 = 0;
+  while (i < positions.len()) {
+    let packed = positions[i];
+    if (packed > 0) {
+      out = source_value(out, i, repl, sourcepos.SourcePos { line: (packed >> 32) as i32, col: util.i64_to_string(packed & 4294967295i64) });
+    }
+    i = i + 1;
+  }
+  return out;
 }

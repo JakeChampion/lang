@@ -15,7 +15,7 @@ func rcmemoKeyCasesSource() string {
 	return `import "./ir"; import "./rccertify"; import "./rcmemo"; import "./ssa"; import "./util";
 
 function base(): ir.Op {
-    return ir.Op { kind_tag: 7, i32_imm: 3, i64_imm: 9i64, f64_imm: 1.5, width: 4, unsigned: false, str: "x", decl: 2 };
+    return ir.Op { source: 0,  kind_tag: 7, i32_imm: 3, i64_imm: 9i64, f64_imm: 1.5, width: 4, unsigned: false, str: "x", decl: 2 };
 }
 
 function key_of(op: ir.Op): string {

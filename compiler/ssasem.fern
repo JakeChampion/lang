@@ -1,6 +1,7 @@
 // Typed semantic values before RC. Reuse SSA's graph, never lift ownership
 // facts from physical load/store/alloc or runtime helper names.
 import "./ssa";
+import "./sourcepos";
 import "./util";
 import "./ssalive";
 import "./ssadeps";
@@ -58,6 +59,7 @@ pub struct Func {
   // parallel (semsource.note_binding). Empty otherwise.
   dbg_vals: i32[],
   dbg_names: string[],
+  source_positions: sourcepos.SourceInfo,
 }
 
 // The parameters whose storage a callee's result reads, so a caller keeps
@@ -5783,4 +5785,8 @@ function phi_over(result: i32, first: i32, rows: i32[][], at: i32): ssa.SInst {
     ops = ops.append(row[at]);
   }
   return ssa.SInst { kind_tag: 8, result: result, args: ops, imm: 0, str: "" };
+}
+
+pub function no_source(): sourcepos.SourceInfo {
+  return sourcepos.no_source();
 }

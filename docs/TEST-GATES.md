@@ -1820,6 +1820,12 @@ answer, these are the tools, in the order they are usually reached for:
   `prologue_end` across every module, and `.debug_frame`), without which a
   gdb backtrace through a Fern binary is addresses only. Unwind data itself
   (`.eh_frame` + `PT_GNU_EH_FRAME`) is in every native image, `-g` or not.
+  Debug information leaves native instructions and optimization choices
+  unchanged. Positions travel beside executable values rather than occupying
+  value IDs or acting as optimization barriers. Locals have location lists
+  while their values have live homes; eliminated values are optimized out.
+  `TestSelfHostDebugPreservesNativeCode` compares executable code with and
+  without `-g` on both Linux targets and ARM64 Darwin.
   `-g` is also what resolves the abort backtrace the
   natives print under a fatal abort (#5538); `-backtrace=false` /
   `FERN_BACKTRACE=0` suppresses that walk at compile time, so leave it alone

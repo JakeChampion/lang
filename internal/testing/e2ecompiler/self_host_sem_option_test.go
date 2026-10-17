@@ -64,7 +64,7 @@ function fixture(row: i32): ssasem.Func {
   if (row == 4) { debug = [1]; names = ["out"]; }
   let finalizers: ssasem.Finalizer[] = [];
   if (row == 5) { finalizers = [ssasem.Finalizer { receiver: "Option", symbol: "Option.drop" }]; }
-  return ssasem.Func { graph: ssa.SFunc { name: "option", nparams: params.len(), nvals: values.len(), entry: 0, takes_env: false, blocks: blocks },
+  return ssasem.Func { source_positions: ssasem.no_source(),  graph: ssa.SFunc { name: "option", nparams: params.len(), nvals: values.len(), entry: 0, takes_env: false, blocks: blocks },
     values: values, params: params, result: result, records: semrecords.no_records(), enums: enums,
     calls: calls, envs: [], anchors: [], dyns: [], shadows: [], finalizers: finalizers,
     map_module: false, dbg_vals: debug, dbg_names: names };
@@ -78,7 +78,8 @@ function main(): i32 {
     let after = semoption.split(before);
     checked = ssasem.analyze(after);
     if (!checked.ok) { print(checked.why); return row + 11; }
-    if ((after.graph.nvals > before.graph.nvals) != (row == 0)) { return row + 21; }
+    if ((after.graph.nvals > before.graph.nvals) != (row == 0 || row == 4)) { return row + 21; }
+    if (row == 4 && (after.dbg_vals.len() != 0 || after.dbg_names.len() != 0)) { return 40; }
     row = row + 1;
   }
   return 0;

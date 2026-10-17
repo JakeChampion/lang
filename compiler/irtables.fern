@@ -9,6 +9,7 @@
 //   - the AST predicates lift uses.
 
 import "./ast";
+import "./sourcepos";
 import "./ir";
 import "./irverify";
 import "./parser";
@@ -1118,6 +1119,7 @@ pub struct LowerResult {
   dbg_slots: i32[],
   dbg_names: string[],
   dbg_types: string[],
+  source_positions: sourcepos.SourceInfo,
 }
 
 // result_from_decl marks a body whose return type is read from its
@@ -1516,4 +1518,8 @@ pub function is_iife_callee(c: ast.ExprCall): boolean {
       return false;
     }
   }
+}
+
+pub function no_source(): sourcepos.SourceInfo {
+  return sourcepos.no_source();
 }

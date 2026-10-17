@@ -11203,10 +11203,10 @@ function macho_load_cmds_len(has_data: boolean, has_eh: boolean, dwarf: boolean)
 // macho_text_off is the file offset of code within __TEXT (after the
 // Mach-O header + load commands). A native assembler needs this to
 // resolve @PAGE / @PAGEOFF references before the same blobs are laid out
-// here at the same address. The __eh_frame section header is one of those
-// load commands, so unwind data shifts the first code byte.
+// here at the same address. Reserve the optional DWARF command space in
+// both builds so debug metadata never changes linked instructions.
 function macho_text_off(has_data: boolean, has_eh: boolean, dwarf: boolean): i32 {
-  return 32 + macho_load_cmds_len(has_data, has_eh, dwarf);
+  return 32 + macho_load_cmds_len(has_data, has_eh, true);
 }
 
 // macho_dwarf_sects names the __DWARF segment's sections, in the order a
@@ -11251,8 +11251,8 @@ function macho_needs_data(data_len: i32, bss: i32): boolean {
 // macho_text_vaddr returns the address of the first code byte (== entry)
 // for the given code/unwind/data/bss sizes. eh_len is 0 for an image with no
 // unwind data; a nonzero one shifts every address, so an assembler resolving
-// @PAGE / @PAGEOFF must pass the same answer the writer will. A `-g` image's
-// __DWARF segment shifts them too; the _dw forms take that as `dwarf`.
+// @PAGE / @PAGEOFF must pass the same answer the writer will. DWARF commands
+// have reserved space, so enabling them leaves the loaded code unchanged.
 pub function macho_text_vaddr(text_len: i32, eh_len: i32, data_len: i32, bss: i32): i64 {
   return macho_text_vaddr_dw(text_len, eh_len, data_len, bss, false);
 }
@@ -11896,8 +11896,7 @@ pub function macho_executable_binds(text: u8[], eh: i32[], data: i32[], ident: s
   buf = macho_le32(buf, sig_len);  // datasize
 
   // ---- code + data ----
-  // pad_to closes the 48-byte slack macho_load_cmds_len reserves past
-  // the last load command, so code starts at text_off.
+  // Close the layout slack and unused DWARF command space before the code.
   buf = macho_pad_to(buf, text_off);
   for b in text {
     buf = buf.append(b as i32);

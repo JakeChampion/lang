@@ -1,0 +1,73 @@
+// Source positions are side facts, independent of executable value identities.
+pub struct SourcePos { line: i32, col: string }
+
+pub struct SourceInfo { values: SourcePos[], terms: SourcePos[], entry: SourcePos }
+
+pub function no_source(): SourceInfo {
+  return SourceInfo { values: [], terms: [], entry: SourcePos { line: 0, col: "0" } };
+}
+
+pub function blanks(n: i32): SourcePos[] {
+  let out: SourcePos[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(SourcePos { line: 0, col: "0" });
+    i = i + 1;
+  }
+  return out;
+}
+
+pub function merge(a: SourceInfo, b: SourceInfo, map: i32[]): SourceInfo {
+  if (b.entry.line == 0) {
+    return a;
+  }
+  let out = a;
+  out = grow_values(out, map);
+  let i: i32 = 0;
+  while (i < b.values.len() && i < map.len()) {
+    let v = map[i];
+    if (v >= 0 && b.values[i].line > 0) {
+      out = SourceInfo { ...out, values: out.values.with(v, b.values[i]) };
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+pub function renamed(source: SourceInfo, map: i32[]): SourceInfo {
+  if (source.entry.line == 0) {
+    return source;
+  }
+  return merge(SourceInfo { ...source, values: blanks(source.values.len()) }, source, map);
+}
+
+pub function continued(source: SourceInfo, block: i32, cont: i32): SourceInfo {
+  if (source.entry.line == 0 || block < 0 || block >= source.terms.len()) {
+    return source;
+  }
+  let out = source;
+  while (out.terms.len() <= cont) {
+    out = SourceInfo { ...out, terms: out.terms.append(SourcePos { line: 0, col: "0" }) };
+  }
+  return SourceInfo { ...out, terms: out.terms.with(cont, source.terms[block]) };
+}
+
+pub function at(rows: SourcePos[], id: i32): SourcePos {
+  if (id < 0 || id >= rows.len()) {
+    return SourcePos { line: 0, col: "0" };
+  }
+  return rows[id];
+}
+
+function grow_values(own out: SourceInfo, map: i32[]): SourceInfo {
+  let n = out.values.len();
+  for v in map {
+    if (v >= n) {
+      n = v + 1;
+    }
+  }
+  while (out.values.len() < n) {
+    out = SourceInfo { ...out, values: out.values.append(SourcePos { line: 0, col: "0" }) };
+  }
+  return out;
+}

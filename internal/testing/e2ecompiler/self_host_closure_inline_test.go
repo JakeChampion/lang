@@ -23,7 +23,7 @@ function body(name: string, params: typeinfo.Type[], types: typeinfo.Type[], ops
   let term = ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: ret };
   let graph = ssa.SFunc { name: name, nparams: params.len(), nvals: types.len(), entry: 0, takes_env: params.len() > 0,
     blocks: [ssa.SBlock { id: 0, preds: [], insts: ops, term: term }] };
-  return ssasem.Func { graph: graph, values: types, params: params, result: word(), records: semrecords.no_records(),
+  return ssasem.Func { source_positions: ssasem.no_source(),  graph: graph, values: types, params: params, result: word(), records: semrecords.no_records(),
     enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [] };
 }
 function callback(captured: boolean, reads_env: boolean, size: i32): ssasem.Func {

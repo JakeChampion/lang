@@ -389,7 +389,7 @@ const dwarfVarsSrc = `@noinline function bump(x: i64): i64 { return x + 1; }
     let o: i64 = bump(l) + k + j + h + g + e + d + c + b + a;
     let p: i64 = bump(o) + l + k + j + h + g + e + d + c + b + a;
     let q: i64 = bump(p) + o + l + k + j + h + g + e + d + c + b + a;
-    return q + p + o + l + k + j + h + g + e + d + c + b + a;
+    return (bump(q) - q) + q + p + o + l + k + j + h + g + e + d + c + b + a - 1;
 }
 function main(): i32 {
     return f("hi", 41) + sum(10) + (many(1) % 100) as i32;
@@ -576,13 +576,14 @@ func TestSelfHostDWARFLocalVars(t *testing.T) {
 const dwarfStructsSrc = `struct Point { x: i32, y: i32 }
 struct Person { name: string, age: i32, score: i32 }
 struct Rect { origin: Point, w: i32, h: i32 }
+@noinline function point_sum(p: Point): i32 { return p.x + p.y; }
 @noinline function describe(p: Person): i32 { return p.age + p.score; }
 @noinline function area(r: Rect): i32 { return r.w * r.h; }
 function main(): i32 {
     let pt: Point = Point { x: 7, y: 35 };
     let p: Person = Person { name: "Ada", age: 36, score: 99 };
     let r: Rect = Rect { origin: Point { x: 3, y: 4 }, w: 5, h: 6 };
-    return pt.x + pt.y + describe(p) + area(r) + r.origin.x;
+    return point_sum(pt) + describe(p) + area(r) + r.origin.x;
 }
 `
 

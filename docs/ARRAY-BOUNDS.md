@@ -97,9 +97,9 @@ backtrace:
 Under the header is a frame-pointer walk (the `x29` / `rbp` chain,
 bounded to 64 frames). The addresses are raw; build with `-g` and
 `addr2line` / `nm` resolve them to functions against the emitted
-`.symtab`. A `-g` build also keeps every frame. Without it, an x86-64
-function with no frame slot keeps no `%rbp` and the walk passes over
-it, so the call site that leads out of it is listed, not the one that
+`.symtab`. Debug metadata leaves the generated instructions unchanged.
+An x86-64 function with no frame slot keeps no `%rbp` and the walk passes
+over it, so the call site that leads out of it is listed, not the one that
 led in. Every trap such a function reaches (an array or string bounds
 check, a slice range, a negative allocation size) first builds the frame
 it lacks, so the function it fired in is still listed.

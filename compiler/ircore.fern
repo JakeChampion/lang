@@ -1,3 +1,4 @@
+import "./sourcepos";
 // compiler/ircore.fern — the target-independent core of the IR
 // backends: everything asm_ir (x86-64), asm_arm64_ir and wasm_ir all need and
 // none of them gets to own. Instruction selection stays in the three backend
@@ -1217,10 +1218,28 @@ pub function lowered_digest(cache: irtables.LowerResult[]): string {
     for o in r.ops {
       d = util.roll(util.roll(util.roll(util.roll(util.roll(d, o.kind_tag), o.i32_imm), o.width), o.decl), digest_flags(o.unsigned, false));
       d = util.roll_text(util.roll_wide(util.roll_wide(d, o.i64_imm), f64_bits(o.f64_imm)), o.str);
+      if (o.source != 0i64) {
+        d = util.roll_wide(d, o.source);
+      }
     }
     d = util.roll_words(util.roll_words(util.roll_words(util.roll_words(d, r.arr_slots), r.i64_slots), r.f64_slots), r.str_slots);
+    d = source_digest(d, r.source_positions);
   }
   return util.digest_text(d);
+}
+
+function source_digest(d: i64, source: sourcepos.SourceInfo): i64 {
+  if (source.entry.line == 0) {
+    return d;
+  }
+  d = util.roll_text(util.roll(d, source.entry.line), source.entry.col);
+  for pos in source.values {
+    d = util.roll_text(util.roll(d, pos.line), pos.col);
+  }
+  for pos in source.terms {
+    d = util.roll_text(util.roll(d, pos.line), pos.col);
+  }
+  return d;
 }
 
 function digest_flags(x: boolean, y: boolean): i32 {

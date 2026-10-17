@@ -1,3 +1,4 @@
+import "./sourcepos";
 // Verified semantic ownership to the production stack IR. No AST ownership
 // facts or alternate backend ABI enter this boundary.
 import "./ir";
@@ -18,6 +19,7 @@ import "./sempair";
 
 function empty(why: string): irtables.LowerResult {
   return irtables.LowerResult {
+    source_positions: irtables.no_source(),
     ok: false, why: why, ops: [], n_locals: 0,
     n_params: 0, erased_wide: false, superseded: false, arr_slots: [], i64_slots: [],
     f64_slots: [], str_slots: [], name: "", result_kind: irtables.result_i32(),
@@ -2476,7 +2478,7 @@ function result_kind(t: typeinfo.Type): i32 {
 function frame(f: ssasem.Func): irtables.LowerResult {
   let r: irtables.LowerResult = empty("");
   r = irtables.LowerResult {
-    ...r, ok: true, n_params: f.params.len(), n_locals: f.graph.nvals,
+    ...r, source_positions: f.source_positions, ok: true, n_params: f.params.len(), n_locals: f.graph.nvals,
     name: f.graph.name, result_kind: result_kind(f.result),
   };
   let di: i32 = 0;
@@ -3885,11 +3887,41 @@ function constant_op(k: i32): boolean {
 }
 
 function instruction(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, structs: irtables.StructTab, defer0: boolean, link: Link, kept: boolean): irtables.LowerResult {
+  if (r.source_positions.entry.line == 0) {
+    return instruction_body(r, f, p, ins, structs, defer0, link, kept);
+  }
+  let begin = r.ops.len();
+  let pos = source_position(r, ins.result);
+  return source_tagged(instruction_body(r, f, p, ins, structs, defer0, link, kept), begin, pos);
+}
+
+function source_position(r: irtables.LowerResult, value: i32): sourcepos.SourcePos {
+  if (value >= 0 && value < r.source_positions.values.len()) {
+    return r.source_positions.values[value];
+  }
+  return sourcepos.SourcePos { line: 0, col: "0" };
+}
+
+function source_tagged(own r: irtables.LowerResult, begin: i32, pos: sourcepos.SourcePos): irtables.LowerResult {
+  if (pos.line == 0) {
+    return r;
+  }
+  let packed = pos.line as i64 << 32 | util.digits_to_i32(pos.col) as i64;
+  let ops = r.ops;
+  r = irtables.LowerResult { ...r, ops: [] };
+  let i = begin;
+  while (i < ops.len()) {
+    ops = ops.with(i, ir.Op { ...ops[i], source: packed });
+    i = i + 1;
+  }
+  return irtables.LowerResult { ...r, ops: ops };
+}
+
+function instruction_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, structs: irtables.StructTab, defer0: boolean, link: Link, kept: boolean): irtables.LowerResult {
   r = negation_zero(r, f, ins);
   if (ins.kind_tag == 35) {
-    // The source-position marker: no operands and a value nothing reads, so
-    // neither a load nor the store below.
-    return emit(r, ir.op_line(ins.imm, util.digits_to_i32(ins.str)));
+    // The frame's position table carries this metadata past IR optimization.
+    return r;
   }
   if (ins.kind_tag == ssasem.with()) {
     r = with_update(r, f, p, ins, defer0, link);
@@ -6521,7 +6553,8 @@ function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[],
     } else {
       e = Emit { ...e, r: emit(e.r, zero(f.result)) };
     }
-    return Emit { ...e, r: emit(e.r, ir.op_return()) };
+    let return_op = located_return(e.r, b.id);
+    return Emit { ...e, r: emit(e.r, return_op) };
   }
   if (b.term.kind_tag == 2) {
     return jump(e, f, p, order, position, b.term.target);
@@ -6767,4 +6800,12 @@ function aligned_rc(own r: irtables.LowerResult, f: ssasem.Func): irtables.Lower
     i = i + 1;
   }
   return irtables.LowerResult { ...r, ops: ops };
+}
+
+function located_return(r: irtables.LowerResult, block: i32): ir.Op {
+  if (block < 0 || block >= r.source_positions.terms.len()) {
+    return ir.op_return();
+  }
+  let pos = r.source_positions.terms[block];
+  return ir.Op { ...ir.op_return(), source: pos.line as i64 << 32 | util.digits_to_i32(pos.col) as i64 };
 }

@@ -1,3 +1,4 @@
+import "./sourcepos";
 // compiler/asm_ir.fern — the x86-64 backend
 // (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3). emit_module_ir lowers each
 // function AST -> stack IR -> SSA -> asm: `__fn_<name>:` label, rbp frame +
@@ -9208,7 +9209,20 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
 // prologue_end on a function's first, which is where a breakpoint on the
 // function belongs. GNU as and the in-process assembler alike turn the rows
 // into .debug_line.
+function ssa_prepared_loc(rows: sourcepos.SourcePos[], id: i32, s: asmcore.EmitState): asmcore.EmitState {
+  if (id < 0 || id >= rows.len() || rows[id].line <= 0) {
+    return s;
+  }
+  let pos = rows[id];
+  return ssa_line_loc(ssa.SInst { kind_tag: 35, result: -1, args: [], imm: pos.line, str: pos.col }, s);
+}
+
 function ssa_line_loc(ins: ssa.SInst, s: asmcore.EmitState): asmcore.EmitState {
+  let pos = ins.imm as i64 << 32 | util.digits_to_i32(ins.str) as i64;
+  if (s.dw_pos == pos) {
+    return s;
+  }
+  s = asmcore.EmitState { ...s, dw_pos: pos };
   let row: string = "    .loc " + util.i32_to_string(util.pos_file_index(ins.imm) + 1) + " " + util.i32_to_string(util.pos_line(ins.imm)) + " " + ins.str;
   if (s.dw_first) {
     row = row + " prologue_end";
@@ -9850,7 +9864,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let r = prepared.lowered;
   let seen_vals = prepared.seen_vals;
   let seen_slots = prepared.seen_slots;
-  s = asmcore.EmitState { ...s, dw_first: true };
+  s = asmcore.EmitState { ...s, dw_first: true, dw_pos: 0 };
   let formed: ssa.Formed = prepared.formed;
   let f: ssa.SFunc = formed.f;
   let imm: ssa.Imms = ssa.imm_operands(f, 0i64 - 2147483648i64, 2147483647i64, ssa_imm_right(), ssa_imm_left());
@@ -9870,12 +9884,10 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let saved: i32[] = ssa_saved_regs(reg_of);
   let save: i32 = 8 * saved.len();
   let fn_label: string = "__fn_" + asmcore.sanitize_label(label_name);
-  let dbg_out: asmcore.DbgOut = asmcore.dbg_shaped_vars(s, fn_label, alloc, r, formed.repl, seen_vals, seen_slots, ssa_dbg_locs(reg_of, save, seen_vals.len() > 0), ssa.position_count(f));
-  s = dbg_out.state;
-  let dbg: asmcore.DbgVars = dbg_out.dbg;
+  let dbg: asmcore.DbgVars = asmcore.dbg_vars(fn_label, alloc, r, formed.repl, if (s.var_rows) { seen_vals } else { [] }, seen_slots, ssa_dbg_locs(reg_of, save, seen_vals.len() > 0), ssa.position_count(f));
   let views: i32[] = ssa_view_slots(f);
   let nspill: i32 = ssa.spill_count(reg_of);
-  let tails: boolean = s.profile == 0 && r.dbg_slots.len() == 0 && !ssa_source_lines(f);
+  let tails: boolean = s.profile == 0;
   // A function with no frame slots that might make no call but a tail call is
   // emitted into a buffer first, behind placeholders for its exits; its text
   // decides whether it needs %rbp at all.
@@ -9939,14 +9951,17 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
       s = asmcore.dbg_label(s, dbg, fn_label, pos + ii);
       let ins: ssa.SInst = blk.insts[ii];
       if (ii == blk.insts.len() - 1 && ssa_tail_call(blk, ins, s, tails)) {
-        s = ssa_emit_tail_call(ins, reg_of, fr, s);
+        s = ssa_prepared_loc(prepared.source.values, ins.result, s);
+        s = ssa_emit_tail_call(ins, reg_of, fr, sourcepos.at(prepared.source.terms, blk.id), s);
         tailed = true;
       } else {
+        s = ssa_prepared_loc(prepared.source.values, ins.result, s);
         s = ssa_block_inst(blk, ii, reg_of, lp, fr, r, s);
       }
       ii = ii + 1;
     }
     s = asmcore.dbg_labels(s, dbg, fn_label, pos + ii, pos + blk.insts.len());
+    s = ssa_fused_loc(prepared.source, blk, ii, tailed, s);
     s = ssa_fused_test(fr, reg_of, fu, ssa_join(lp, blk.id), s);
     s = asmcore.dbg_label(s, dbg, fn_label, pos + blk.insts.len());
     if (!tailed) {
@@ -10118,24 +10133,9 @@ function ssa_resolve_tails(text: string, epilogue: string): string {
 
 // ssa_tail_call reports the call `ins` at the end of `blk` that it returns
 // as it is, through a register entry: the function can leave through a jump
-// to it, which returns to this function's caller. A `-g` build keeps every
-// frame, so it takes none.
+// to it, which returns to this function's caller.
 function ssa_tail_call(blk: ssa.SBlock, ins: ssa.SInst, s: asmcore.EmitState, tails: boolean): boolean {
   return tails && blk.insts.len() > 0 && ssa.returns_call(blk, blk.insts.len() - 1) && blk.insts[blk.insts.len() - 1].result == ins.result && ssa_reg_call(ins, s);
-}
-
-// A debug build carries source positions even where no variable has a
-// debugger type, so an empty dbg_slots list does not let a tail call discard
-// the frame.
-function ssa_source_lines(f: ssa.SFunc): boolean {
-  for blk in f.blocks {
-    for ins in blk.insts {
-      if (ins.kind_tag == 35) {
-        return true;
-      }
-    }
-  }
-  return false;
 }
 
 // ssa_calls_besides_tails reports a call in `f` that is not a tail call.
@@ -10155,7 +10155,7 @@ function ssa_calls_besides_tails(f: ssa.SFunc, s: asmcore.EmitState, tails: bool
 
 // ssa_emit_tail_call moves a tail call's arguments into the register entry's
 // registers and leaves through a jump to it.
-function ssa_emit_tail_call(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_emit_tail_call(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, pos: sourcepos.SourcePos, s: asmcore.EmitState): asmcore.EmitState {
   let srcs: i32[] = [];
   let dsts: i32[] = [];
   let a: i32 = 0;
@@ -10165,6 +10165,9 @@ function ssa_emit_tail_call(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmc
     a = a + 1;
   }
   s = ssa_parallel_moves(srcs, dsts, ssa_x0_forget(s));
+  if (pos.line > 0) {
+    s = ssa_line_loc(ssa.SInst { kind_tag: 35, result: -1, args: [], imm: pos.line, str: pos.col }, s);
+  }
   return ssa_emit_exit(fr, s, "__fn_" + asmcore.sanitize_label(ins.str) + ".r");
 }
 
@@ -11799,6 +11802,7 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
     s = emit_process_entry(mod, s);
   }
   s = intern_runtime_shapes(s);
+  s = asmcore.emit_debug_rows(s);
   // .rodata: each interned string literal as a labelled `.ascii` directive
   // (GAS interprets the escapes), matching asm.fern's emit_module so the box's
   // .S<idx> data pointer resolves. string_lits was populated by const_str.
@@ -12998,6 +13002,18 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("sleep_ns")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ns("x86_64"), s);
+  }
+  return s;
+}
+
+function ssa_fused_loc(source: ssaprepare.SourceLines, blk: ssa.SBlock, begin: i32, tailed: boolean, s: asmcore.EmitState): asmcore.EmitState {
+  let mi: i32 = begin;
+  while (mi < blk.insts.len()) {
+    s = ssa_prepared_loc(source.values, blk.insts[mi].result, s);
+    mi = mi + 1;
+  }
+  if (!tailed) {
+    s = ssa_prepared_loc(source.terms, blk.id, s);
   }
   return s;
 }

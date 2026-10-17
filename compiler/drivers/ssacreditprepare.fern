@@ -1,3 +1,4 @@
+import "../sourcepos";
 // Preparation retains the supplied effects and debug mappings, not an old body.
 import "../ir";
 import "../irtables";
@@ -67,6 +68,11 @@ pub function run(): void {
   let selected = physicalbody.select(physical, 0);
   require(selected.origin.symbol == "leaf" && selected.origin.producer == 0 && selected.producers.len() == 1, 194);
   let leaf = lowered.bodies[0];
+  let entry = sourcepos.SourcePos { line: 43, col: "2" };
+  let located = irtables.LowerResult { ...leaf, source_positions: sourcepos.SourceInfo { entry: entry, values: [entry], terms: [] } };
+  let shifted = irtables.LowerResult { ...located, source_positions: sourcepos.SourceInfo { ...located.source_positions, values: [sourcepos.SourcePos { line: 44, col: "2" }] } };
+  require(ircore.lowered_digest([located]) != ircore.lowered_digest([leaf]), 200);
+  require(ircore.lowered_digest([located]) != ircore.lowered_digest([shifted]), 201);
   let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), "leaf", leaf.n_params, leaf.n_locals, leaf.ops, false);
   require(lifted.ok, 195);
   let leaves = ssa.leaf_of("leaf", lifted.func);

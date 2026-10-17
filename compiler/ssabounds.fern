@@ -994,7 +994,7 @@ function scalar(f: ssasem.Func, v: i32): boolean {
 // the same as the probe's.
 function silent(f: ssasem.Func, ins: ssa.SInst): boolean {
   let k: i32 = ins.kind_tag;
-  if (k == 1 || k == 2 || k == 3 || k == 7 || k == 8 || k == ssasem.param()) {
+  if (k == 1 || k == 2 || k == 3 || k == 7 || k == 8 || k == 35 || k == ssasem.param()) {
     return true;
   }
   if (k == ssasem.array_get() || k == ssasem.str_index() || k == ssasem.length()) {
