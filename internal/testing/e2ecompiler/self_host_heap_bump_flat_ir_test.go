@@ -100,8 +100,8 @@ var heapBumpFlatCases = []heapBumpFlatCase{
 	// A discarded call RESULT, in both of the shapes that carry rc: a struct box
 	// and an array buffer.
 	{name: "discarded-call-struct", src: func(n string) string {
-		return `struct P { x: i32, y: i32 }
-@noinline function mk(v: i32): P { return P { x: v, y: v }; }
+		return `struct P { x: i32, y: i32, a:i32, b:i32, c:i32 }
+@noinline function mk(v: i32): P { return P { x: v, y: v, a:0, b:0, c:0 }; }
 function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
     let i: i32 = 0;

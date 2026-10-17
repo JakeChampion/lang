@@ -212,7 +212,7 @@ func TestSelfHostFipETLRejectsAllocatingDecode(t *testing.T) {
 			t.Run(claim+"/"+target, func(t *testing.T) {
 				dir := t.TempDir()
 				etlCoreForTest(t, dir)
-				src := fmt.Sprintf("import \"./etl_core\";\n%s function decode(data: u8[], at: i32): etl_core.Record { return etl_core.Record { sensor: data[at] as i32, quality: data[at+1] as i32, value: etl_core.reading(data,at) }; }\nfunction main(): i32 { let data: u8[] = etl_core.dataset(1); return decode(data,0).sensor; }\n", claim)
+				src := fmt.Sprintf("import \"./etl_core\";\nstruct Decoded { sensor:i32, quality:i32, value:i32, at:i32, size:i32 }\n%s function decode(data: u8[], at: i32): Decoded { return Decoded { sensor: data[at] as i32, quality: data[at+1] as i32, value: etl_core.reading(data,at), at:at, size:data.len() }; }\nfunction main(): i32 { let data: u8[] = etl_core.dataset(1); return decode(data,0).sensor; }\n", claim)
 				path := filepath.Join(dir, "main.fern")
 				if err := os.WriteFile(path, []byte(src), 0600); err != nil {
 					t.Fatal(err)

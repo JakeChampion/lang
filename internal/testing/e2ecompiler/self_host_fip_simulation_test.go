@@ -511,7 +511,7 @@ func TestSelfHostFipSimulationRejectsAllocatingEntity(t *testing.T) {
 		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 			t.Run(claim+"/"+target, func(t *testing.T) {
 				dir := t.TempDir()
-				src := fmt.Sprintf("struct Entity { x: i32, y: i32 }\n%s function spawn(x: i32): Entity { return Entity { x: x, y: 0 }; }\nfunction main(): i32 { return spawn(0).x; }\n", claim)
+				src := fmt.Sprintf("struct Entity { x: i32, y: i32, a:i32, b:i32, c:i32 }\n%s function spawn(x: i32): Entity { return Entity { x: x, y: 0, a:x, b:x, c:x }; }\nfunction main(): i32 { return spawn(0).x; }\n", claim)
 				path := filepath.Join(dir, "main.fern")
 				if err := os.WriteFile(path, []byte(src), 0600); err != nil {
 					t.Fatal(err)

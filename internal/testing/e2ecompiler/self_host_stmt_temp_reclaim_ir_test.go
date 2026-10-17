@@ -99,8 +99,8 @@ function main(): i32 {
 // box that leaks if merely dropped, so the statement must release it. `mk`
 // returns a fresh no-base `P { … }`.
 func stmtTempFreshCallBumpSrc(n string) string {
-	return `struct P { x: i32, y: i32 }
-@noinline function mk(a: i32): P { return P { x: a, y: a + 1 }; }
+	return `struct P { x: i32, y: i32, a:i32, b:i32, c:i32 }
+@noinline function mk(a: i32): P { return P { x: a, y: a + 1, a:0, b:0, c:0 }; }
 function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
     let i: i32 = 0;

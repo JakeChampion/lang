@@ -67,9 +67,9 @@ x86_64/call_overhead.text	88
 x86_64/call_overhead.ir	8250759
 x86_64/closure_call.text	774
 x86_64/closure_call.ir	63018106
-x86_64/enum_match.text	935
-x86_64/enum_match.ir	51750055
-x86_64/http_hello.text	16813
+x86_64/enum_match.text	891
+x86_64/enum_match.ir	50850037
+x86_64/http_hello.text	14458
 x86_64/http_hello.ir	27676835
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
@@ -236,9 +236,9 @@ aarch64/call_overhead.text	148
 aarch64/call_overhead.ir	11250762
 aarch64/closure_call.text	965
 aarch64/closure_call.ir	72624111
-aarch64/enum_match.text	1128
+aarch64/enum_match.text	1085
 aarch64/enum_match.ir	41400056
-aarch64/http_hello.text	17130
+aarch64/http_hello.text	14914
 aarch64/http_hello.ir	29648969
 aarch64/int_loop.text	90
 aarch64/int_loop.ir	18000025

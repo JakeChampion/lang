@@ -1,7 +1,6 @@
 package e2ecompiler
 
 import (
-	"bytes"
 	"os/exec"
 	"strings"
 	"testing"
@@ -87,7 +86,7 @@ func TestSelfHostLetElseIRX86_64(t *testing.T) {
 							t.Errorf("probe missing %s:\n%s", call, body)
 						}
 					}
-				} else if got := bytes.Contains(asm, []byte("call __fn___fern_arr_dec")); got != tc.staticReclaim {
+				} else if got := strings.Contains(selfHostFnBody(t, asm, "main"), "call __fn___fern_arr_dec"); got != tc.staticReclaim {
 					t.Errorf("original reclaim call = %v, want %v:\n%s", got, tc.staticReclaim, asm)
 				}
 				progBin := buildBin(t, gcc, dir, tc.name, string(asm))
