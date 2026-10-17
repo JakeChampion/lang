@@ -1,0 +1,139 @@
+{
+  "source_sha256": "5d5f30e393890bb897f7ae11b0b7ce0d63944211845e83c4d00d5a41a63d8798",
+  "cpu": [
+    0
+  ],
+  "builds": {
+    "baseline": {
+      "compiler_sha256": "a0cd57950240bd9c171e7a7de7113972581c40e2d574e233834212b2da1d2013",
+      "binary_sha256": "dc7e827ac5c7033d4f1d74027a2ce9837214b126081d5e2b0ebfacf47d44ead0",
+      "instructions": 940001438,
+      "saved_register_pushes": 5,
+      "frame_references": 2
+    },
+    "arithmetic": {
+      "compiler_sha256": "fd7edafabc48b92c2f6895f4c37dcba9051bb5d5bb44e6bdd0892640b7ce0291",
+      "binary_sha256": "dc7e827ac5c7033d4f1d74027a2ce9837214b126081d5e2b0ebfacf47d44ead0",
+      "instructions": 940001450,
+      "saved_register_pushes": 5,
+      "frame_references": 2
+    },
+    "reads": {
+      "compiler_sha256": "b69e61b2190fccac49e80b8d1bc596994c608a6c6770a0f4f138a1ef8f8133ad",
+      "binary_sha256": "88da5a35d6652fb6fd91961d58f06fd294e8267e787785c46b610ba09048c25c",
+      "instructions": 780001420,
+      "saved_register_pushes": 4,
+      "frame_references": 0
+    }
+  },
+  "pairs": [
+    {
+      "baseline": 0.08459020400187,
+      "arithmetic": 0.08581802400294691,
+      "reads": 0.07698347100085812,
+      "reads_vs_baseline": 0.9100754857992336,
+      "reads_vs_arithmetic": 0.8970548074867649
+    },
+    {
+      "reads": 0.07744475900108228,
+      "arithmetic": 0.08460110500163864,
+      "baseline": 0.08699123100086581,
+      "reads_vs_baseline": 0.8902593756870906,
+      "reads_vs_arithmetic": 0.9154107266043657
+    },
+    {
+      "baseline": 0.08905827400303679,
+      "arithmetic": 0.08752255800209241,
+      "reads": 0.07886311200127238,
+      "reads_vs_baseline": 0.8855225736643317,
+      "reads_vs_arithmetic": 0.9010604100417974
+    },
+    {
+      "reads": 0.07864473699737573,
+      "arithmetic": 0.08459537099406589,
+      "baseline": 0.08384894900518702,
+      "reads_vs_baseline": 0.9379334855170415,
+      "reads_vs_arithmetic": 0.9296576878053106
+    },
+    {
+      "baseline": 0.08249122699635336,
+      "arithmetic": 0.08334684099827427,
+      "reads": 0.07708070700027747,
+      "reads_vs_baseline": 0.9344109647403466,
+      "reads_vs_arithmetic": 0.9248185783294829
+    },
+    {
+      "reads": 0.07735282299836399,
+      "arithmetic": 0.08390516299550654,
+      "baseline": 0.08279144400148652,
+      "reads_vs_baseline": 0.9343093834306733,
+      "reads_vs_arithmetic": 0.9219077853708066
+    },
+    {
+      "baseline": 0.0825307650011382,
+      "arithmetic": 0.08286898100050166,
+      "reads": 0.07727100999909453,
+      "reads_vs_baseline": 0.9362691597252111,
+      "reads_vs_arithmetic": 0.9324479324613242
+    },
+    {
+      "reads": 0.07745375300146407,
+      "arithmetic": 0.08312029400258325,
+      "baseline": 0.08436911500029964,
+      "reads_vs_baseline": 0.9180344371419444,
+      "reads_vs_arithmetic": 0.9318272262013043
+    },
+    {
+      "baseline": 0.08309304300200893,
+      "arithmetic": 0.08288738700503018,
+      "reads": 0.07760578899615211,
+      "reads_vs_baseline": 0.9339625339545676,
+      "reads_vs_arithmetic": 0.9362798346079176
+    },
+    {
+      "reads": 0.07829202200082364,
+      "arithmetic": 0.08234973599610385,
+      "baseline": 0.08258125100110192,
+      "reads_vs_baseline": 0.948060498620673,
+      "reads_vs_arithmetic": 0.950725840876136
+    },
+    {
+      "baseline": 0.08248249399912311,
+      "arithmetic": 0.0834091750002699,
+      "reads": 0.07769410000037169,
+      "reads_vs_baseline": 0.9419465420286355,
+      "reads_vs_arithmetic": 0.9314814587258571
+    },
+    {
+      "reads": 0.07654126299894415,
+      "arithmetic": 0.08324688299762784,
+      "baseline": 0.08384543500142172,
+      "reads_vs_baseline": 0.912885275121374,
+      "reads_vs_arithmetic": 0.919448996079832
+    },
+    {
+      "baseline": 0.0840219470046577,
+      "arithmetic": 0.08305379599914886,
+      "reads": 0.07749263099685777,
+      "reads_vs_baseline": 0.9222903510265242,
+      "reads_vs_arithmetic": 0.9330414108664211
+    },
+    {
+      "reads": 0.0764189709952916,
+      "arithmetic": 0.08291185399866663,
+      "baseline": 0.08301912300521508,
+      "reads_vs_baseline": 0.9204984132449957,
+      "reads_vs_arithmetic": 0.9216893280003189
+    },
+    {
+      "baseline": 0.08485788200050592,
+      "arithmetic": 0.08289291599794524,
+      "reads": 0.07779638200008776,
+      "reads_vs_baseline": 0.9167843948735833,
+      "reads_vs_arithmetic": 0.9385166520383501
+    }
+  ],
+  "checksum": "4339612313273984",
+  "median_reads_vs_baseline": 0.9222903510265242,
+  "median_reads_vs_arithmetic": 0.9296576878053106
+}

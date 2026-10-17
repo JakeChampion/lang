@@ -1,0 +1,17 @@
+{
+  "memo": "FERN_RC_CERTIFY_MEMO=0",
+  "old_compiler_sha256": "8d2d0c59bd20500f351c59334022ab856090c9e39ec3811aab26527837dd044d",
+  "new_compiler_sha256": "ae2bf8b79fa4379eb4a722515285bfa585462e4fe45cf5ecc67033a97a5fc506",
+  "input": "compiler/checker.fern",
+  "rows": {
+    "old": {
+      "instructions": 23707943634,
+      "asm_sha256": "3ae7913748604bca34579897a7324432b0cee1e649b30764dbb6fd0da7a4b52b"
+    },
+    "new": {
+      "instructions": 23704476855,
+      "asm_sha256": "3ae7913748604bca34579897a7324432b0cee1e649b30764dbb6fd0da7a4b52b"
+    }
+  },
+  "ratio": 0.9998537714171453
+}
