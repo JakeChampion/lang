@@ -95,33 +95,39 @@ func TestSelfHostDuplicateVariableRelatedLabels(t *testing.T) {
 			if c.file != c.entry {
 				msgs = append(msgs, lspOpen(fileURI(entry), files[c.entry]))
 			}
-			frames, code := runLSP(t, s.selfHost(), session(msgs...))
-			if code != 0 {
-				t.Fatalf("LSP exited %d", code)
-			}
-			var found []relatedLabel
-			for _, f := range frames {
-				if f.Method != "textDocument/publishDiagnostics" {
-					continue
+			for _, terse := range []bool{false, true} {
+				command := s.selfHost()
+				if terse {
+					command.Env = append(os.Environ(), "FERN_DIAG_FORMAT=terse")
 				}
-				var p struct {
-					URI         string `json:"uri"`
-					Diagnostics []struct {
-						Code    string         `json:"code"`
-						Related []relatedLabel `json:"relatedInformation"`
-					} `json:"diagnostics"`
+				frames, code := runLSP(t, command, session(msgs...))
+				if code != 0 {
+					t.Fatalf("LSP exited %d", code)
 				}
-				if err := json.Unmarshal(f.Params, &p); err != nil {
-					t.Fatal(err)
-				}
-				for _, d := range p.Diagnostics {
-					if p.URI == fileURI(path) && d.Code == "E013" {
-						found = d.Related
+				var found []relatedLabel
+				for _, f := range frames {
+					if f.Method != "textDocument/publishDiagnostics" {
+						continue
+					}
+					var p struct {
+						URI         string `json:"uri"`
+						Diagnostics []struct {
+							Code    string         `json:"code"`
+							Related []relatedLabel `json:"relatedInformation"`
+						} `json:"diagnostics"`
+					}
+					if err := json.Unmarshal(f.Params, &p); err != nil {
+						t.Fatal(err)
+					}
+					for _, d := range p.Diagnostics {
+						if p.URI == fileURI(path) && d.Code == "E013" {
+							found = d.Related
+						}
 					}
 				}
-			}
-			if len(found) != 1 || found[0].Location.URI != fileURI(path) || found[0].Location.Range.Start != (lspPos{Line: c.line, Character: c.character}) || found[0].Message != "previous declaration is here" {
-				t.Fatalf("wrong related declaration: %#v", found)
+				if len(found) != 1 || found[0].Location.URI != fileURI(path) || found[0].Location.Range.Start != (lspPos{Line: c.line, Character: c.character}) || found[0].Message != "previous declaration is here" {
+					t.Fatalf("wrong related declaration: %#v", found)
+				}
 			}
 		})
 	}
