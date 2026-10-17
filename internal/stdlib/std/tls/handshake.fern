@@ -1577,7 +1577,7 @@ function __rest(records: record.Record[], from: i32): record.Record[] {
 }
 
 function __deframe(c: Conn, input: [u8]): Result[Conn, HandshakeError] {
-  match (record.deframe(__cat(__copy(c.inbox), input))) {
+  match (__records(c.inbox, input)) {
     Ok(d) => {
       let held: record.Record[] = c.held;
       let i: i32 = 0;
@@ -1592,6 +1592,15 @@ function __deframe(c: Conn, input: [u8]): Result[Conn, HandshakeError] {
     }
   }
   return Err(Misuse("deframe"));
+}
+
+// __records deframes input after the partial record held in inbox, copying
+// only when one is held.
+function __records(inbox: u8[], input: [u8]): Result[record.Deframed, record.RecordError] {
+  if (inbox.len() == 0) {
+    return record.deframe(input);
+  }
+  return record.deframe(__cat(__copy(inbox), input));
 }
 
 // read takes bytes from the server.

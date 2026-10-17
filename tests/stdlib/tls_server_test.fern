@@ -469,6 +469,38 @@ function test_close(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
+// Records arrive however the reads cut them: two whole records in one read
+// and a third split across two are each opened once and in order.
+function test_records_across_reads(): test.TestOutcome {
+  match (connect(client.config("tls.example", roots()), server.config(identity_of(ED_LEAF, ED_PKCS8)))) {
+    Ok(p) => {
+      match (records_across(p)) {
+        Ok(t) => {
+          return test.assert_eq(t, "onetwo|three");
+        },
+        Err(e) => {
+          return test.fail(e);
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function records_across(p: Pair): Result[string, string] {
+  let a: client.Step = cwrite(p.client, "one")?;
+  let b: client.Step = cwrite(a.session, "two")?;
+  let c: client.Step = cwrite(b.session, "three")?;
+  let all: u8[] = a.output.concat(b.output).concat(c.output);
+  let cut: i32 = a.output.len() + b.output.len() + 4;
+  let first: server.Step = srd(p.server, __first(all, cut))?;
+  let second: server.Step = srd(first.session, __bytes_range(all, cut, all.len()))?;
+  return Ok(string_from_bytes_unchecked(first.data) + "|" + string_from_bytes_unchecked(second.data));
+}
+
 function close_both(p: Pair): Result[string, string] {
   let sc: server.Step = sclose(p.server)?;
   let seen: client.Step = crd(p.client, sc.output)?;
@@ -944,6 +976,7 @@ function main(): i32 {
   r = r.it("no signature scheme in common", test_no_common_scheme);
   r = r.it("a key that is not the chain's", test_wrong_key);
   r = r.it("close_notify", test_close);
+  r = r.it("records across reads", test_records_across_reads);
   r = r.it("KeyUpdate both ways", test_key_update);
   r = r.it("offloaded to the kernel's record layer", test_offload);
   r = r.it("resumption", test_resumption);

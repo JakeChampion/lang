@@ -178,9 +178,17 @@ pub function start(config: Config): Result[Session, TlsError] {
 // the keys change only between records, so a failure's alert is sealed
 // under the keys the records before it left.
 pub function (s: Session) read(input: [u8]): Result[Step, Failure] {
-  let buf: u8[] = __copy(s.held);
-  buf = __cat(buf, input);
-  let session: Session = Session { ...s, held: [] };
+  // Only a partial record held from the last read is copied; otherwise the
+  // records are read where the caller's bytes are.
+  if (s.held.len() == 0) {
+    return __read(s, input);
+  }
+  return __read(Session { ...s, held: [] }, __cat(__copy(s.held), input));
+}
+
+// __read takes each whole record in buf and holds what is left.
+function __read(s: Session, buf: [u8]): Result[Step, Failure] {
+  let session: Session = s;
   let output: u8[] = [];
   let data: u8[] = [];
   let closed: boolean = false;
@@ -193,13 +201,25 @@ pub function (s: Session) read(input: [u8]): Result[Step, Failure] {
     }
     let next: Step = __record(session, buf[at:end])?;
     session = next.session;
-    output = __cat(output, next.output);
-    data = __cat(data, next.data);
+    output = __then(output, next.output);
+    data = __then(data, next.data);
     closed = next.closed;
     keys = keys.then(next.rekeyed);
     at = end;
   }
-  return Ok(Step { session: Session { ...session, held: __copy(buf[at:buf.len()]) }, output: output, data: data, closed: closed, rekeyed: keys });
+  let held: u8[] = [];
+  if (at < buf.len()) {
+    held = __copy(buf[at:buf.len()]);
+  }
+  return Ok(Step { session: Session { ...session, held: held }, output: output, data: data, closed: closed, rekeyed: keys });
+}
+
+// __then is a followed by b, b itself when a is empty.
+function __then(own a: u8[], b: u8[]): u8[] {
+  if (a.len() == 0) {
+    return b;
+  }
+  return __cat(a, b);
 }
 
 function __record(s: Session, record: [u8]): Result[Step, Failure] {

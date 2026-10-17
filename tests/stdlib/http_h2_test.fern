@@ -228,6 +228,20 @@ function test_request_and_response(): test.TestOutcome {
   return test.assert_eq(got, "request 1 GET /hello?x=1 host=example.test body= trailer=-\nhandling 1\nHEADERS 1 END_HEADERS :status=200 content-type=text/plain content-length=2\nDATA 1 END_STREAM hi\nopen 0 handling 0");
 }
 
+// Frames arrive however the reads cut them: several whole frames in one
+// read, and a frame split across two, are each acted on once and in order.
+function test_frames_across_reads(): test.TestOutcome {
+  let o: Opened = opened(h2.config());
+  let (c1, a) = request(o.client, 1, get("/a"), true);
+  let (c2, b) = request(c1, 3, get("/b"), true);
+  let (_, c) = request(c2, 5, get("/c"), true);
+  let cut: i32 = 4;
+  let first: h2.Step = o.conn.read(a.concat(b).concat(__bytes_range(c, 0, cut)));
+  let second: h2.Step = first.conn.read(__bytes_range(c, cut, c.len()));
+  let want: string = "request 1 GET /a host=example.test body= trailer=-\nrequest 3 GET /b host=example.test body= trailer=-\n--\nrequest 5 GET /c host=example.test body= trailer=-\n";
+  return test.assert_eq(events_text(first.events) + "--\n" + events_text(second.events), want);
+}
+
 // Every request uses the HTTP target decoder, before either body mode
 // hands it to a handler. Refusal leaves the connection usable.
 function test_request_targets(): test.TestOutcome {
@@ -699,6 +713,7 @@ function test_client_goaway_and_push(): test.TestOutcome {
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/http/h2");
   r = r.it("the preface and settings", test_preface_and_settings);
+  r = r.it("frames across reads", test_frames_across_reads);
   r = r.it("a request and its response", test_request_and_response);
   r = r.it("request targets decode once and refuse unsafe paths", test_request_targets);
   r = r.it("bodies and trailers", test_bodies_and_trailers);

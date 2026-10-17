@@ -154,7 +154,12 @@ const CLOSED: i32 = 3;
 pub struct Conn {
   config: Config,
   phase: i32,
+  // Bytes read and not yet framed, the next frame at `inbox_at`. Within one
+  // `read` the frames are taken by moving inbox_at; a frame that ends the
+  // inbox empties it, and a partial frame left over is cut off once at the
+  // read's end, so it is 0 between calls.
   inbox: u8[],
+  inbox_at: i32,
   decoder: hpack.Decoder,
   encoder: hpack.Encoder,
   peer_max_frame: i32,
@@ -203,7 +208,7 @@ function __opened(cfg: Config, client: boolean): Step {
   if (client) {
     phase = AWAITING_SETTINGS;
   }
-  let c: Conn = Conn { config: cfg, phase: phase, inbox: [], decoder: hpack.decoder(cfg.header_table_size, cfg.max_header_list), encoder: hpack.encoder(4096), peer_max_frame: frame.MIN_FRAME_SIZE, peer_initial_window: 65535, settings_acked: false, send_window: 65535, recv_window: 65535, streams: [], last_stream: 0, handling: 0, block_stream: 0, block: [], block_end: false, block_frames: 0, resets: 0, empty_data: 0, frames: 0, peer_going_away: false, client: client, next_stream: 1 };
+  let c: Conn = Conn { config: cfg, phase: phase, inbox: [], inbox_at: 0, decoder: hpack.decoder(cfg.header_table_size, cfg.max_header_list), encoder: hpack.encoder(4096), peer_max_frame: frame.MIN_FRAME_SIZE, peer_initial_window: 65535, settings_acked: false, send_window: 65535, recv_window: 65535, streams: [], last_stream: 0, handling: 0, block_stream: 0, block: [], block_end: false, block_frames: 0, resets: 0, empty_data: 0, frames: 0, peer_going_away: false, client: client, next_stream: 1 };
   let settings: frame.Setting[] = [frame.Setting { id: frame.SETTINGS_HEADER_TABLE_SIZE, value: cfg.header_table_size }, frame.Setting { id: frame.SETTINGS_ENABLE_PUSH, value: 0 }, frame.Setting { id: frame.SETTINGS_MAX_CONCURRENT_STREAMS, value: cfg.max_concurrent_streams }, frame.Setting { id: frame.SETTINGS_INITIAL_WINDOW_SIZE, value: cfg.initial_window }, frame.Setting { id: frame.SETTINGS_MAX_FRAME_SIZE, value: cfg.max_frame_size }, frame.Setting { id: frame.SETTINGS_MAX_HEADER_LIST_SIZE, value: cfg.max_header_list }];
   let out: u8[] = frame.encode(frame.Settings(false, settings));
   if (cfg.initial_window > 65535) {
@@ -344,11 +349,14 @@ pub function (c: Conn) read(bytes: u8[]): Step {
     r = __preface(r);
   }
   while (r.conn.phase == AWAITING_SETTINGS || r.conn.phase == RUNNING) {
-    let before: i32 = r.conn.inbox.len();
+    let before: i32 = r.conn.inbox.len() - r.conn.inbox_at;
     r = __next_frame(r);
-    if (r.conn.inbox.len() == before) {
+    if (r.conn.inbox.len() - r.conn.inbox_at == before) {
       break;
     }
+  }
+  if (r.conn.inbox_at > 0) {
+    r = __Run { ...r, conn: Conn { ...r.conn, inbox: __rest(r.conn.inbox, r.conn.inbox_at), inbox_at: 0 } };
   }
   return __step(r);
 }
@@ -372,20 +380,20 @@ function __preface(r: __Run): __Run {
   if (have.len() < want.len()) {
     return r;
   }
-  return __Run { ...r, conn: Conn { ...r.conn, phase: AWAITING_SETTINGS, inbox: __rest(have, want.len()) } };
+  return __Run { ...r, conn: Conn { ...r.conn, phase: AWAITING_SETTINGS, inbox_at: want.len() } };
 }
 
 // __next_frame takes one frame off the inbox and acts on it; with no
 // whole frame there, the inbox is left as it is.
 function __next_frame(r: __Run): __Run {
-  match (frame.read(r.conn.inbox, 0, r.conn.config.max_frame_size)) {
+  match (frame.read(r.conn.inbox, r.conn.inbox_at, r.conn.config.max_frame_size)) {
     Ok(got) => {
       match (got) {
         frame.Got(f, n) => {
           let out: u8[] = r.out;
           let events: Event[] = r.events;
           let c: Conn = r.conn;
-          c = __counted(Conn { ...c, inbox: __rest(c.inbox, n) });
+          c = __counted(__taken(c, n));
           return __frame(__Run { conn: c, out: out, events: events }, f);
         },
         frame.More => {
@@ -398,17 +406,26 @@ function __next_frame(r: __Run): __Run {
         return __fail(r, e.code, e.reason);
       }
       // A stream error in a frame's shape: the frame is dropped whole.
-      let dropped: __Run = __Run { ...r, conn: Conn { ...r.conn, inbox: __drop_frame(r.conn.inbox) } };
+      let dropped: __Run = __Run { ...r, conn: Conn { ...r.conn, inbox_at: __past_frame(r.conn.inbox, r.conn.inbox_at) } };
       return __reset_stream(dropped, e.stream, e.code);
     }
   }
   return r;
 }
 
-// __drop_frame removes the frame at the head of the inbox by its header.
-function __drop_frame(inbox: u8[]): u8[] {
-  let len: i32 = inbox[0] as i32 << 16 | inbox[1] as i32 << 8 | inbox[2] as i32;
-  return __rest(inbox, frame.HEADER_LEN + len);
+// __taken is c with the n bytes at inbox_at taken: the inbox emptied when
+// they were the last, which spares the read its cut at the end.
+function __taken(c: Conn, n: i32): Conn {
+  if (c.inbox_at + n >= c.inbox.len()) {
+    return Conn { ...c, inbox: [], inbox_at: 0 };
+  }
+  return Conn { ...c, inbox_at: c.inbox_at + n };
+}
+
+// __past_frame is where the frame at `at` in the inbox ends, by its header.
+function __past_frame(inbox: u8[], at: i32): i32 {
+  let len: i32 = inbox[at] as i32 << 16 | inbox[at + 1] as i32 << 8 | inbox[at + 2] as i32;
+  return at + frame.HEADER_LEN + len;
 }
 
 // __counted counts a frame against the budgets' span, resetting them
@@ -1174,7 +1191,7 @@ function __reset_stream(r: __Run, stream: i32, code: i32): __Run {
 function __fail(r: __Run, code: i32, reason: string): __Run {
   let c: Conn = r.conn;
   let out: __Run = __send(r, frame.GoAway(frame.GoAwayFrame { last_stream: c.last_stream, code: code, debug: reason.bytes() }));
-  return __Run { ...out, conn: Conn { ...c, phase: CLOSED, streams: [], handling: 0, inbox: [] }, events: out.events.append(Closed(code, reason)) };
+  return __Run { ...out, conn: Conn { ...c, phase: CLOSED, streams: [], handling: 0, inbox: [], inbox_at: 0 }, events: out.events.append(Closed(code, reason)) };
 }
 
 // === responding ============================================================
