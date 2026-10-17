@@ -32,3 +32,13 @@ and fixed compiler above. It reproduces the large mismatched-donor leak on
 both x86-64 and QEMU ARM64, while small donors and capacity matches balance.
 Every fixed case balances. All counts and diagnostic text are retained in
 `before-after.json`; these runs use the sanitizer, not elapsed-time measures.
+
+Fresh integration on main bbadbc3ff (source 18b830692) passes the combined
+reuse, loop-reuse, sanitizer, semantic-differential, certification and
+calling-convention suite in 115.594 seconds. Stages 2 and 3 are identical
+at 12,693,904 bytes, SHA-256
+8481cb259fe98e9695e294d719272c0aa964d3ebc0ecf812319860b8d8e9ac63.
+All eleven strict size checks pass with complete coverage, unchanged
+baselines and the same five-percent tolerance (84.538 seconds).
+Raw integration evidence uses the main-bbad- prefix. Earlier before/after
+measurements retain their original 4fdf2e7ee source and compiler hashes.
