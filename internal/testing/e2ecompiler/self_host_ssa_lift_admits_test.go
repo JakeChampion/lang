@@ -55,10 +55,11 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	// three, and ring_send_zc (439) one with four. sha1_hw (440) and
 	// sha1_hw_blocks (441) are two more. udp_bind_with (442) adds one
 	// admitted kind with three inputs and one result.
+	// raw_vdso (443) adds one admitted nullary operation returning a word.
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
-		"registered=388 declined=3\n"
+		"registered=389 declined=3\n"
 
 	cmd := runX86_64Bin(runner, bin)
 	out, err := cmd.Output()
