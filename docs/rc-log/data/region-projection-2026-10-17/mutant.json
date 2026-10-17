@@ -1,0 +1,5 @@
+{
+  "enabled_exit": 5,
+  "diagnostic": "FERN_RC_CERTIFY: run emits unbalanced reference counting (#11908):\n    run: spent without a unit of v59 (borrow ld_at) in b20: moved into wrap\n",
+  "disabled_exit": 0
+}
