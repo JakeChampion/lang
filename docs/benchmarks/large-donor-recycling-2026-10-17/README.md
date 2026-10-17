@@ -42,3 +42,28 @@ All eleven strict size checks pass with complete coverage, unchanged
 baselines and the same five-percent tolerance (84.538 seconds).
 Raw integration evidence uses the main-bbad- prefix. Earlier before/after
 measurements retain their original 4fdf2e7ee source and compiler hashes.
+
+## Hardened ARM64 release frame
+
+Source 457382f7a also signs the mismatch path's saved return address under
+ARM64 hardening and authenticates it after the destructor returns. Null
+and matching donors keep their existing paths. The ABI matrix now executes
+80 probes, including all eight capacity cases under ARM64 hardening. With
+PAC enforcement, replacing only this frame's signing instruction with a
+NOP makes the large mismatch probe fault. Its normal counterpart balances.
+The existing hardening, image, backtrace and refusal tests also pass
+(22.407 seconds for the focused run).
+
+The follow-up reuse, loop reuse including WASI, certifier, C-call,
+inventory and complexity suite passes in 59.303 seconds. Stages 2 and 3
+match at 12,693,936 bytes, SHA-256
+f80d5b3c0de1a56a97f3089a0cc98bf3bced4a66ca95c04fd39c1b7e2f415d3f.
+Stage 1 differs; the full bootstrap metadata records all three hashes.
+All eleven strict size checks pass with complete coverage and unchanged
+limits (50.322 seconds).
+
+The uninstrumented allocator probe is byte-identical before and after this
+hardening follow-up on both native Linux targets. Commands, compiler and
+program hashes, the missing-signature regression, its passing run, and all
+bootstrap and size evidence are retained in hardened-main-bbad/. The earlier
+large-donor leak comparisons retain their recorded source scope.
