@@ -6366,7 +6366,7 @@ function ssa_integer_unary(what: string): boolean {
 function ssa_fixed_mask(ins: ssa.SInst, imm: ssa.Imms, no_spills: boolean): i32 {
   let mask = ssa_nospill_mask(ins, imm);
   if (mask < 0) {
-    return 7;
+    return ssa_read_fixed_mask(ins, imm);
   }
   if (no_spills) {
     return mask;
@@ -6375,6 +6375,22 @@ function ssa_fixed_mask(ins: ssa.SInst, imm: ssa.Imms, no_spills: boolean): i32 
     return 7;
   }
   return mask | 4;
+}
+
+// Reads use r11 for a spilled base/result. Array indexing also needs rcx
+// for a spilled variable index; string indexing stages its data in rdx.
+// Stores and every other unaudited form retain all three scratch registers.
+function ssa_read_fixed_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
+  if (ins.kind_tag == 40) {
+    return 4;
+  }
+  if (ins.kind_tag == 42) {
+    return if (imm.is_imm[ins.args[1]]) { 4 } else { 5 };
+  }
+  if (ins.kind_tag == 44 && imm.is_imm[ins.args[1]]) {
+    return 6;
+  }
+  return 7;
 }
 
 function ssa_fixed_registers(f: ssa.SFunc, imm: ssa.Imms, no_spills: boolean): ssafixed.Table {
