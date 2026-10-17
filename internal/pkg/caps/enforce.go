@@ -31,6 +31,7 @@ type Grant struct {
 // chain, ending in the tagged builtin.
 type Violation struct {
 	Package    string
+	Name       string
 	Capability string
 	Chain      []string
 	Governed   bool
@@ -40,14 +41,18 @@ type Violation struct {
 // `error[E070]:` / `warning:` label — the caller owns severity
 // rendering).
 func (v Violation) Message() string {
+	name := v.Name
+	if name == "" {
+		name = v.Package
+	}
 	builtin := v.Chain[len(v.Chain)-1]
 	chain := strings.Join(v.Chain, " → ")
 	if v.Governed {
 		return fmt.Sprintf("package %q reaches '%s' (%s) without a capability grant: %s; add %q to its capabilities in fern.toml or remove the call",
-			v.Package, v.Capability, builtin, chain, v.Capability)
+			name, v.Capability, builtin, chain, v.Capability)
 	}
 	return fmt.Sprintf("package %q reaches '%s' (%s) but no capabilities key governs it: %s; add capabilities = [...] to its dependency entry in fern.toml (ungoverned packages will become errors once default-deny lands)",
-		v.Package, v.Capability, builtin, chain)
+		name, v.Capability, builtin, chain)
 }
 
 // Enforce filters Analyze's report rows against the per-package grants
@@ -69,9 +74,9 @@ func Enforce(rows []Row, grants map[string]Grant) (errs, warns []Violation) {
 		for _, u := range r.Uses {
 			switch {
 			case g.Governed && !allowed[u.Capability]:
-				errs = append(errs, Violation{Package: r.Package, Capability: u.Capability, Chain: u.Chain, Governed: true})
+				errs = append(errs, Violation{Package: r.Package, Name: r.Name, Capability: u.Capability, Chain: u.Chain, Governed: true})
 			case !g.Governed:
-				warns = append(warns, Violation{Package: r.Package, Capability: u.Capability, Chain: u.Chain})
+				warns = append(warns, Violation{Package: r.Package, Name: r.Name, Capability: u.Capability, Chain: u.Chain})
 			}
 		}
 	}

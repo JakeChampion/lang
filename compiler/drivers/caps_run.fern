@@ -21,7 +21,12 @@ import "../caps";
 import "../util";
 
 function parse(src: string): parser.Module {
-  return parser.parse_module(lexer.tokenize(src));
+  let mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+  let funcs: parser.FuncDecl[] = [];
+  for f in mod.funcs {
+    funcs = funcs.append(parser.FuncDecl { ...f, module: util.mangled_module(f.name) });
+  }
+  return parser.Module { ...mod, funcs: funcs };
 }
 
 // app_pkgs is the two-package layout the analysis cases run in: an entry
@@ -30,8 +35,8 @@ function parse(src: string): parser.Module {
 function app_pkgs(governed: boolean, grants: string[]): caps.Pkg[] {
   let none: string[] = [];
   return [
-    caps.Pkg { module: "", name: "app", root: true, governed: false, grants: none },
-    caps.Pkg { module: "helper", name: "helper", root: false, governed: governed, grants: grants },
+    caps.Pkg { module: "", dir: "app", name: "app", root: true, governed: false, grants: none },
+    caps.Pkg { module: "helper", dir: "helper", name: "helper", root: false, governed: governed, grants: grants },
   ];
 }
 

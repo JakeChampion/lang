@@ -21,6 +21,7 @@
 // source) is byte-for-byte unchanged.
 
 import "./util";
+import "./capvocab";
 
 // Dep is one declared dependency. `kind` tags the form the loader must
 // resolve: "path" (dir given by `path`), "workspace" (a sibling
@@ -44,6 +45,7 @@ pub struct Dep {
   version: string,
   governed: boolean,
   caps: string[],
+  cap_error: string,
 }
 
 // Manifest is the subset the loader reads: the [package] name + lib
@@ -323,19 +325,9 @@ pub function validate_hash(hash: string): HashResult {
 // is a path dep. Anything else (url/hash) parses to kind "" (native-only;
 // the loader falls back to on-disk resolution).
 function parse_dep(name: string, val: string): Dep {
-  let governed: boolean = false;
-  let caps: string[] = [];
-  let cp: i32 = index_of_str(val, "capabilities");
-  if (cp >= 0) {
-    let open: i32 = index_of(val, b'[', cp);  // after the key
-    if (open >= 0) {
-      let close: i32 = index_of(val, b']', open);
-      if (close > open) {
-        governed = true;
-        caps = parse_str_array(slice_unchecked(val, open, close) + "");
-      }
-    }
-  }
+  let grant: CapGrant = capability_grant(val);
+  let governed: boolean = grant.governed;
+  let caps: string[] = grant.values;
   // Bare quoted string ⇒ version dep.
   if (val.len() > 0 && val[0] == b'"') {
     let bare: string = "";
@@ -345,10 +337,10 @@ function parse_dep(name: string, val: string): Dep {
       },
       None => {}
     }
-    return Dep { name: name, kind: "version", path: "", url: "", hash: "", version: bare, governed: governed, caps: caps };
+    return Dep { name: name, kind: "version", path: "", url: "", hash: "", version: bare, governed: governed, caps: caps, cap_error: grant.err };
   }
   if (index_of_str(val, "workspace") >= 0 && index_of_str(val, "true") >= 0) {
-    return Dep { name: name, kind: "workspace", path: "", url: "", hash: "", version: "", governed: governed, caps: caps };
+    return Dep { name: name, kind: "workspace", path: "", url: "", hash: "", version: "", governed: governed, caps: caps, cap_error: grant.err };
   }
   // url+hash dep: `{ url = "https://…", hash = "sha256:…" }` (#4949).
   // Checked before the `version`/`path` substring probes because a URL
@@ -363,7 +355,7 @@ function parse_dep(name: string, val: string): Dep {
       match (quoted_value(val, heq)) {
         Some(hv) => {
           if (validate_hash(hv).err.len() == 0) {
-            return Dep { name: name, kind: "url", path: "", url: dep_url(val), hash: hv, version: "", governed: governed, caps: caps };
+            return Dep { name: name, kind: "url", path: "", url: dep_url(val), hash: hv, version: "", governed: governed, caps: caps, cap_error: grant.err };
           }
         },
         None => {}
@@ -382,7 +374,7 @@ function parse_dep(name: string, val: string): Dep {
         None => {}
       }
     }
-    return Dep { name: name, kind: "version", path: "", url: "", hash: "", version: vv, governed: governed, caps: caps };
+    return Dep { name: name, kind: "version", path: "", url: "", hash: "", version: vv, governed: governed, caps: caps, cap_error: grant.err };
   }
   let p: i32 = index_of_str(val, "path");
   if (p >= 0) {
@@ -390,13 +382,134 @@ function parse_dep(name: string, val: string): Dep {
     if (eq2 >= 0) {
       match (quoted_value(val, eq2)) {
         Some(pv) => {
-          return Dep { name: name, kind: "path", path: pv, url: "", hash: "", version: "", governed: governed, caps: caps };
+          return Dep { name: name, kind: "path", path: pv, url: "", hash: "", version: "", governed: governed, caps: caps, cap_error: grant.err };
         },
         None => {}
       }
     }
   }
-  return Dep { name: name, kind: "", path: "", url: "", hash: "", version: "", governed: governed, caps: caps };  // unrecognised form
+  return Dep { name: name, kind: "", path: "", url: "", hash: "", version: "", governed: governed, caps: caps, cap_error: grant.err };  // unrecognised form
+}
+
+struct CapGrant { governed: boolean, values: string[], err: string }
+
+struct CapName { value: string, err: string }
+
+function array_depth(depth: i32, c: u8): i32 {
+  if (c == b'[') {
+    return depth + 1;
+  }
+  if (c == b']' && depth > 0) {
+    return depth - 1;
+  }
+  return depth;
+}
+
+// Split only at field boundaries. A quoted path containing "capabilities"
+// or brackets is not a grant. An unclosed array stays one malformed value.
+function inline_parts(val: string): string[] {
+  let out: string[] = [];
+  if (val.len() == 0 || val[0] != b'{') {
+    return out;
+  }
+  let end: i32 = val.len();
+  if (val[end - 1] == b'}') {
+    end = end - 1;
+  }
+  let start: i32 = 1;
+  let depth: i32 = 0;
+  let quoted: boolean = false;
+  let i: i32 = start;
+  while (i < end) {
+    let c: u8 = val[i];
+    if (c == b'"') {
+      quoted = !quoted;
+    } else if (!quoted) {
+      depth = array_depth(depth, c);
+      if (c == b',' && depth == 0) {
+        out = out.append(util.trim(slice_unchecked(val, start, i)));
+        start = i + 1;
+      }
+    }
+    i = i + 1;
+  }
+  return out.append(util.trim(slice_unchecked(val, start, end)));
+}
+
+function capability_name(raw: string): CapName {
+  if (raw.len() < 2 || raw[0] != b'"' || raw[raw.len() - 1] != b'"') {
+    return CapName { value: "", err: "expected a double-quoted capability name" };
+  }
+  let name: string = slice_unchecked(raw, 1, raw.len() - 1) + "";
+  for c in name {
+    if (c == b'"' || c == b'\\') {
+      return CapName { value: "", err: "escapes and embedded quotes are not supported in capability names" };
+    }
+  }
+  if (!util.has_str(capvocab.capabilities(), name)) {
+    return CapName { value: "", err: "unknown capability \"" + name + "\" (valid capabilities: " + capability_choices() + ")" };
+  }
+  return CapName { value: name, err: "" };
+}
+
+function capability_choices(): string {
+  let out: string = "";
+  for cap in capvocab.capabilities() {
+    if (out.len() > 0) {
+      out = out + ", ";
+    }
+    out = out + cap;
+  }
+  return out;
+}
+
+function ordered_caps(values: string[]): string[] {
+  let out: string[] = [];
+  for cap in capvocab.capabilities() {
+    if (util.has_str(values, cap)) {
+      out = out.append(cap);
+    }
+  }
+  return out;
+}
+
+function capability_array(raw: string): CapGrant {
+  if (raw.len() < 2 || raw[0] != b'[' || raw[raw.len() - 1] != b']') {
+    return CapGrant { governed: true, values: [], err: "expected an array of double-quoted capability names" };
+  }
+  let body: string = slice_unchecked(raw, 1, raw.len() - 1) + "";
+  let values: string[] = [];
+  let from: i32 = 0;
+  while (from < body.len()) {
+    let end: i32 = index_of(body, b',', from);
+    if (end < 0) {
+      end = body.len();
+    }
+    let part: string = util.trim(slice_unchecked(body, from, end));
+    if (part.len() > 0) {
+      let name: CapName = capability_name(part);
+      if (name.err.len() > 0) {
+        return CapGrant { governed: true, values: [], err: name.err };
+      }
+      values = values.append(name.value);
+    }
+    from = end + 1;
+  }
+  return CapGrant { governed: true, values: ordered_caps(values), err: "" };
+}
+
+function capability_grant(val: string): CapGrant {
+  let grant: CapGrant = CapGrant { governed: false, values: [], err: "" };
+  for field in inline_parts(val) {
+    let eq: i32 = index_of(field, b'=', 0);
+    if (eq >= 0 && util.trim(slice_unchecked(field, 0, eq)) == "capabilities") {
+      grant = capability_array(util.trim(slice_unchecked(field, eq + 1, field.len())));
+      if (grant.err.len() > 0) {
+        return grant;
+      }
+    }
+  }
+  return grant;
 }
 
 // dep_url is the `url = "…"` value of an inline dependency table.

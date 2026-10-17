@@ -76,6 +76,7 @@ import "./platforms";
 import "./coverreport";
 import "./lint";
 import "./caps";
+import "./pkggrants";
 import "./modloader";
 import "./visibility";
 import "./asmcore";
@@ -1130,7 +1131,7 @@ function var_range(r: elf.VarRanges, f: string[], lo: i32, hi: i32): elf.VarRang
 // that wrote each path, for the diagnostic when it resolves to nothing.
 // `unrooted` is the first `std/…` or `core/…` import met with no stdlib root
 // to load it from.
-struct ImportQueue { paths: string[], dirs: string[], importers: string[], unrooted: string }
+struct ImportQueue { paths: string[], dirs: string[], importers: string[], stdlibs: boolean[], unrooted: string }
 
 // queued reports whether this import path has already been queued FROM this
 // same directory.
@@ -1148,10 +1149,11 @@ function queued(paths: string[], dirs: string[], ip: string, from_dir: string): 
 // queue_imports appends each of mod's loadable import paths, deduped by path
 // AND directory, each tagged with `from_dir` — mod's own directory, which is
 // what its imports resolve against — and with `importer`, mod's file.
-function queue_imports(q: ImportQueue, mod: parser.Module, importer: string, from_dir: string, root: string, deps: string[]): ImportQueue {
+function queue_imports(q: ImportQueue, mod: parser.Module, importer: string, from_dir: string, root: string, deps: string[], parent_stdlib: boolean): ImportQueue {
   let paths: string[] = q.paths;
   let dirs: string[] = q.dirs;
   let importers: string[] = q.importers;
+  let stdlibs: boolean[] = q.stdlibs;
   let unrooted: string = q.unrooted;
   let i: i32 = 0;
   while (i < mod.imports.len()) {
@@ -1168,10 +1170,11 @@ function queue_imports(q: ImportQueue, mod: parser.Module, importer: string, fro
       paths = paths.append(ip);
       dirs = dirs.append(from_dir + "");
       importers = importers.append(importer + "");
+      stdlibs = stdlibs.append(util.is_stdlib_path(ip) || parent_stdlib && !util.has_str(deps, util.dep_name(ip)));
     }
     i = i + 1;
   }
-  return ImportQueue { paths: paths, dirs: dirs, importers: importers, unrooted: unrooted };
+  return ImportQueue { paths: paths, dirs: dirs, importers: importers, stdlibs: stdlibs, unrooted: unrooted };
 }
 
 // is_flag is true for an argument that begins with '-'. A bare `-` is not a
@@ -1470,11 +1473,17 @@ function manifest_reqs(man: fern_toml.Manifest): mvs.Req[] {
 // or above it, as import resolution finds it (modloader.manifest_dir) — and
 // the directory holding it, slash-terminated; with no manifest, an empty one
 // and the directory itself.
-struct Governed { man: fern_toml.Manifest, dir: string }
+struct Governed { man: fern_toml.Manifest, dir: string, found: boolean }
 
 function governing_manifest(dir_slash: string): Governed {
-  let mdir: string = modloader.manifest_dir(dir_slash);
-  return Governed { man: read_manifest(mdir), dir: mdir };
+  match (modloader.find_manifest(dir_slash)) {
+    Some(mdir) => {
+      return Governed { man: read_manifest(mdir), dir: mdir, found: true };
+    },
+    None => {
+      return Governed { man: read_manifest(dir_slash), dir: dir_slash, found: false };
+    }
+  }
 }
 
 // find_manifest_dir walks up from `dir` to the first directory holding a
@@ -2404,6 +2413,23 @@ function read_bundle_module(s: Sources, mpath: string, from: string, ipath: stri
   return modloader.resolve_module(modloader.Overlay { ...modloader.no_overlay(), files: s.open }, from, ipath, util.module_name(ipath));
 }
 
+// Package provenance is collected while loading, before symbol mangling.
+function module_package_at(mdir: string, module_gov: Governed, root_gov_dir: string, root_package: caps.Pkg, is_stdlib: boolean): pkggrants.ModuleAt {
+  let package_dir: string = root_package.dir;
+  let package_name: string = root_package.name;
+  if (module_gov.found && module_gov.dir != root_gov_dir) {
+    package_dir = pkggrants.canonical_dir(module_gov.dir);
+    if (module_gov.man.name.len() > 0) {
+      package_name = module_gov.man.name;
+    }
+  }
+  let actual_dir: string = package_dir;
+  if (mdir != module_gov.dir || !module_gov.found) {
+    actual_dir = pkggrants.canonical_dir(mdir);
+  }
+  return pkggrants.ModuleAt { dir: actual_dir, owner_dir: package_dir, name: package_name, stdlib: is_stdlib };
+}
+
 // load_bundle loads `entry_mod`'s transitive imports off disk and flattens
 // them into one module (the import-driven scheme from asm_load_run), or says
 // why it cannot: an import that does not resolve or forms a cycle, or an entry
@@ -2421,7 +2447,10 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   }
   let gov: Governed = governing_manifest(dir_slash);
   let deps: string[] = fern_toml.dep_names(gov.man);
-  let pkgs: caps.Pkg[] = [root_pkg(gov.man)];
+  let root_package: caps.Pkg = root_pkg(gov.man, pkggrants.canonical_dir(gov.dir));
+  let pkgs: caps.Pkg[] = [root_package];
+  let module_packages: pkggrants.ModuleAt[] = [];
+  let grant_mans: pkggrants.ManifestAt[] = pkggrants.with_manifest([], gov.dir, gov.man);
   let no_mods: flatten.LoadedModule[] = [];
   let no_files: string[] = [];
   let maps: util.LineMap[] = [s.maps[0]];
@@ -2431,7 +2460,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
     return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, srcs: srcs, err: missing };
   }
 
-  let q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [], importers: [], unrooted: "" }, entry_mod, entry_path, dir_slash, root, deps);
+  let q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [], importers: [], stdlibs: [], unrooted: "" }, entry_mod, entry_path, dir_slash, root, deps, false);
   let loaded: flatten.LoadedModule[] = [];
   let files: string[] = [];
   let done_paths: string[] = [];
@@ -2440,6 +2469,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
     let ipath: string = q.paths[j];
     let from: string = q.dirs[j];
     let importer: string = q.importers[j];
+    let is_stdlib: boolean = q.stdlibs[j];
     j = j + 1;
     let from_dir: string = from;
     if (from_dir.len() > 1) {
@@ -2483,21 +2513,29 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
       // to tell them apart to give each its own prefix (#9762).
       m = flatten.resolve_imports(m, mdir, root);
       loaded = loaded.append(flatten.LoadedModule { name: util.module_name(ipath), ident: flatten.module_ident(mpath), mod: m });
-      // Attribute and expand against the manifest GOVERNING the importer,
-      // which is the entry's only for a direct import.
-      pkgs = add_pkg(pkgs, governing_manifest(from), ipath);
-      q = queue_imports(q, m, shown, mdir, root, fern_toml.dep_names(governing_manifest(mdir).man));
+      // Attribute this file to its own governing package, including
+      // local modules imported from a dependency.
+      let module_gov: Governed = governing_manifest(mdir);
+      module_packages = module_packages.append(module_package_at(mdir, module_gov, gov.dir, root_package, is_stdlib));
+      grant_mans = pkggrants.with_manifest(grant_mans, module_gov.dir, module_gov.man);
+      q = queue_imports(q, m, shown, mdir, root, fern_toml.dep_names(module_gov.man), is_stdlib);
     }
   }
   if (q.unrooted.len() > 0) {
     return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file" };
   }
   let entry_r: parser.Module = flatten.resolve_imports(entry_mod, dir_slash, root);
-  let cycle: i32 = flatten.import_cycle(entry_r, loaded, root);
-  if (cycle >= 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: import cycle detected including " + files[cycle] };
+  let import_err: string = bundle_import_error(entry_r, loaded, root, files);
+  if (import_err.len() > 0) {
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: import_err };
   }
-  let merged: parser.Module = flatten.bundle(entry_r, loaded, target);
+  let prefixes: string[] = flatten.assign_prefixes(loaded);
+  let checked: pkggrants.Checked = pkggrants.checked(grant_mans, root_package, module_packages, prefixes);
+  pkgs = checked.pkgs;
+  if (checked.err.len() > 0) {
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: " + checked.err };
+  }
+  let merged: parser.Module = flatten.bundle_with_prefixes(entry_r, loaded, target, prefixes);
   // Fill omitted trailing args from default parameter values up front, so the
   // checker, SSA, and interpreter all see complete calls.
   merged = parser.fill_default_args_module(merged);
@@ -2506,6 +2544,15 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   // same-module ones already, and the pass is idempotent.
   merged = parser.resolve_variant_fields_module(merged);
   return Bundle { entry: entry_r, entry_ident: flatten.module_ident(entry_path), root: root, loaded: loaded, merged: merged, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "" };
+}
+
+// Check the completed import graph before flattening or checking its code.
+function bundle_import_error(entry: parser.Module, loaded: flatten.LoadedModule[], root: string, files: string[]): string {
+  let cycle: i32 = flatten.import_cycle(entry, loaded, root);
+  if (cycle >= 0) {
+    return "fern: import cycle detected including " + files[cycle];
+  }
+  return "";
 }
 
 // Loaded is a program read for checking or building, and the findings that
@@ -4087,63 +4134,13 @@ function lsp_formatting(s: Server, uri: string): string {
 // `(root)` when nothing governs the program. It is never enforced or warned —
 // grants restrict DEPENDENCIES, and the program's author is trusting
 // themselves.
-function root_pkg(man: fern_toml.Manifest): caps.Pkg {
+function root_pkg(man: fern_toml.Manifest, dir: string): caps.Pkg {
   let name: string = "(root)";
   if (man.name.len() > 0) {
     name = man.name;
   }
   let no_grants: string[] = [];
-  return caps.Pkg { module: "", name: name, root: true, governed: false, grants: no_grants };
-}
-
-// dep_pkg_name is a dependency's REPORT name: the [package] name in its own
-// manifest, falling back to the key that declared it. Native attributes by the
-// governing manifest, so a dep declared under a different key still reports
-// under its own name.
-function dep_pkg_name(man: fern_toml.Manifest, dir_slash: string, dep: string): string {
-  match (fern_toml.dep_path(man, dep)) {
-    Some(dp) => {
-      match (read_file(dir_slash + dp + "/fern.toml")) {
-        Ok(src) => {
-          let dm: fern_toml.Manifest = fern_toml.parse(src);
-          if (dm.name.len() > 0) {
-            return dm.name;
-          }
-        },
-        Err(e) => {}
-      }
-    },
-    None => {}
-  }
-  return dep;
-}
-
-// add_pkg records the package a just-loaded module belongs to. Three cases,
-// matching native's resolver: a local sibling folds into the root package, a
-// declared dependency is its own package carrying that entry's grant, and
-// anything else (the stdlib) gets no entry at all — caps.analyze folds a
-// module with no entry into whichever package calls it.
-//
-// `importer` is the manifest governing the importing module; a dependency's
-// path is relative to its directory. `helper/extra` is a module of `helper`.
-function add_pkg(pkgs: caps.Pkg[], importer: Governed, import_path: string): caps.Pkg[] {
-  let mod: string = util.module_name(import_path);
-  let no_grants: string[] = [];
-  if (util.is_local(import_path)) {
-    return pkgs.append(caps.Pkg { module: mod, name: pkgs[0].name, root: true, governed: false, grants: no_grants });
-  }
-  let man: fern_toml.Manifest = importer.man;
-  let dep: string = util.dep_name(import_path);
-  if (fern_toml.dep_kind(man, dep).len() == 0) {
-    return pkgs;
-  }
-  return pkgs.append(caps.Pkg {
-    module: mod,
-    name: dep_pkg_name(man, importer.dir, dep),
-    root: false,
-    governed: fern_toml.dep_governed(man, dep),
-    grants: fern_toml.dep_caps(man, dep),
-  });
+  return caps.Pkg { module: "", dir: dir, name: name, root: true, governed: false, grants: no_grants };
 }
 
 // package_findings is phase 2 of docs/PACKAGE-CAPABILITIES-BRIEF.md: hold

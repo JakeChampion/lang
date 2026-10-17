@@ -190,7 +190,7 @@ func (c *checker) calleeResultBorrows(x *ast.Call) bool {
 // look.
 var freshResultBuiltins = map[string]bool{
 	"__bytes_owned": true, "__bytes_range": true, "__bytes_into": true, "__aes_expand_key": true, "__aes_ctr32": true,
-	"__ghash": true, "__sha256_hw_blocks": true, "__sha1_hw_blocks": true,
+	"__ghash": true, "__aes_gcm_seal": true, "__aes_gcm_open": true, "__sha256_hw_blocks": true, "__sha1_hw_blocks": true,
 }
 
 // signatureResultBorrows is the approximation used where no body is available:

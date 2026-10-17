@@ -877,7 +877,7 @@ function import_prefixes(mod: parser.Module, ids: string[], pfxs: string[]): str
 // across the bundle, parallel to the identities it returns them against.
 // Assign standard-library modules first, then user modules, each in path
 // order, matching modload.assignManglePrefixes regardless of import order.
-function assign_prefixes(imports: LoadedModule[]): string[] {
+pub function assign_prefixes(imports: LoadedModule[]): string[] {
   let pfxs: string[] = [];
   let order: i32[] = [];
   let i: i32 = 0;
@@ -2108,6 +2108,11 @@ pub function qualified_name(q: Qualifiers, alias: string, name: string): string 
 // a multi-module program — the compiler itself — lowers to a single
 // namespace and self-compiles.
 pub function bundle(entry0: parser.Module, imports0: LoadedModule[], target: string): parser.Module {
+  return bundle_with_prefixes(entry0, imports0, target, assign_prefixes(imports0));
+}
+
+// The loader uses this same prefix table to attach package provenance.
+pub function bundle_with_prefixes(entry0: parser.Module, imports0: LoadedModule[], target: string, pfxs: string[]): parser.Module {
   let imports: LoadedModule[] = desugar_imported_trait_params(imports0);
   let entry: parser.Module = parser.desugar_trait_params(with_handler_main(entry0, target), imported_trait_spellings(entry0, imports0), true);
   let funcs: parser.FuncDecl[] = [];
@@ -2131,7 +2136,6 @@ pub function bundle(entry0: parser.Module, imports0: LoadedModule[], target: str
   // every importer's references -- reads these rather than deriving a
   // prefix of its own (#9762).
   let ids: string[] = module_ids(imports);
-  let pfxs: string[] = assign_prefixes(imports);
   let ivar_names: string[] = [];
   let ivar_mangled: string[] = [];
   let iv: i32 = 0;
