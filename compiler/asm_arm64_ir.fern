@@ -6868,40 +6868,6 @@ function emit_rt_uname_field_darwin(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
-// emit_rt_cpu_count_darwin is `cpu_count()` on arm64-darwin. XNU has no
-// affinity mask; `hw.activecpu` is the same question there, and is what
-// sysconf(_SC_NPROCESSORS_ONLN) reads. A refused sysctl answers 0, which is
-// the builtin's "cannot say".
-//
-// Frame: mib (8) + oldlen (8) + the int (4, padded) = 32.
-function emit_rt_cpu_count_darwin(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("__fn___fern_cpu_count:\n");
-  s = s.write("    stp x29, x30, [sp, #-16]!\n");
-  s = s.write("    mov x29, sp\n");
-  s = s.write("    sub sp, sp, #32\n");
-  s = s.write("    mov w0, #6\n");  // CTL_HW
-  s = s.write("    mov w1, #25\n");  // HW_AVAILCPU
-  s = s.write("    stp w0, w1, [sp]\n");  // mib[2]
-  s = s.write("    mov x0, #4\n");
-  s = s.write("    str x0, [sp, #8]\n");  // oldlen = sizeof(int)
-  s = s.write("    mov x0, sp\n");  // name
-  s = s.write("    mov x1, #2\n");  // namelen
-  s = s.write("    add x2, sp, #16\n");  // oldp
-  s = s.write("    add x3, sp, #8\n");  // oldlenp
-  s = s.write("    mov x4, #0\n");  // newp
-  s = s.write("    mov x5, #0\n");  // newlen
-  s = s.write("    mov x16, #202\n");
-  s = s.write("    svc #0x80\n");
-  s = s.write("    mov w0, #0\n");
-  s = s.write("    b.cs .Lcpucount_done\n");  // carry set = error: 0
-  s = s.write("    ldr w0, [sp, #16]\n");
-  s = s.write(".Lcpucount_done:\n");
-  s = s.write("    add sp, sp, #32\n");
-  s = s.write("    ldp x29, x30, [sp], #16\n");
-  s = s.write("    ret\n");
-  return s;
-}
-
 // emit_rt_readiness emits the readiness primitives — poll, timer_fd, and the wasm
 // pollable shims (timer_pollable, pollable_drop, block, poll).
 function emit_rt_readiness(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
@@ -11300,11 +11266,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     }
   }
   if (s.has_need("cpu_count")) {
-    if (darwin) {
-      s = emit_rt_cpu_count_darwin(s);
-    } else {
-      s = emit_ir_runtime_fern_fn(asmcore.rt_src_cpu_count(tgt), s);
-    }
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_cpu_count(tgt), s);
   }
   if (s.has_need("isatty")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_isatty(tgt), s);

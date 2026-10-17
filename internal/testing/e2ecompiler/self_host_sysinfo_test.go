@@ -126,9 +126,8 @@ func mustGetwd(t *testing.T) string {
 }
 
 // The arm64-darwin leg is an EMIT check, not a run: XNU has no uname
-// syscall and no affinity mask, so `uname_field` and `cpu_count` are
-// hand-written sysctl bodies there rather than the Fern sources the
-// Linux targets compile, and nothing on this host can execute a Mach-O.
+// syscall and no affinity mask, so `uname_field` and `cpu_count` issue sysctl
+// there rather than the Linux calls. Nothing on this host executes a Mach-O.
 // What it pins is that the darwin fork is taken at all — the failure it
 // exists to catch is a helper added on the Linux side only, which emits
 // a `__syscall3` of the -1 `sysno` returns for a call XNU does not have.
@@ -170,9 +169,9 @@ func TestSelfHostSysinfoIRArm64Darwin(t *testing.T) {
 			t.Errorf("arm64-darwin emit is missing %s", want)
 		}
 	}
-	// BSD sysctl is 202, and both hand-written bodies issue it. A Fern
-	// body compiled for darwin instead would carry neither.
-	if n := strings.Count(text, "mov x16, #202"); n != 2 {
+	// BSD sysctl is 202. uname_field loads x16 directly; cpu_count's Fern
+	// body passes the same number through the syscall intrinsic.
+	if n := strings.Count(text, "#202"); n != 2 {
 		t.Errorf("arm64-darwin emit issues sysctl %d times, want 2 (uname_field and cpu_count)", n)
 	}
 	// The one syscall number XNU does not have. `sysno` answers -1 for
@@ -184,7 +183,7 @@ func TestSelfHostSysinfoIRArm64Darwin(t *testing.T) {
 	// (BSD 463) on ".", then fcntl (BSD 92) with F_GETPATH (50), then
 	// close (BSD 6). These land in x0 and reach x16 through the stack,
 	// because a Fern body passes its syscall number as a value where the
-	// two hand-written bodies above write `mov x16` literally — so their
+	// hand-written uname body above writes `mov x16` literally — so their
 	// absence is the Linux body having reached this target.
 	for _, want := range []string{"463", "92", "50"} {
 		if !arm64Imm(text, want) {

@@ -711,7 +711,39 @@ pub function elf_image_wx(text: u8[], data: i32[], machine: i32, entry_off: i32,
 // nothing scans for a section. Empty hdr/eh leave the slot as PT_NULL, which
 // the loader ignores, so .text sits at the same address either way.
 pub function elf_image_wx_unwind(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, note: boolean): u8[] {
-  return elf_image_two_seg(text, hdr, eh, data, machine, entry_off, bss, elf_base_vaddr(), 2, true, note);  // ET_EXEC
+  return elf_image_two_seg(text, hdr, eh, data, machine, entry_off, bss, elf_base_vaddr(), 2, true, note, false, elf_page_align());  // ET_EXEC
+}
+
+// The x86 executable also declares its stack non-executable. Four program
+// headers put .text on a 16-byte boundary, preserving GAS code alignment.
+pub function elf_x86_wx_text_off(): i32 {
+  return elf_eh_size() + 4 * elf_ph_size();
+}
+
+pub function elf_x86_wx_text_vaddr(): i32 {
+  return elf_base_vaddr() + elf_x86_wx_text_off();
+}
+
+pub function elf_x86_wx_eh_hdr_vaddr(text_len: i32): i32 {
+  return elf_align4(elf_x86_wx_text_vaddr() + text_len);
+}
+
+pub function elf_x86_wx_eh_frame_vaddr(text_len: i32, hdr_len: i32): i32 {
+  return elf_align8(elf_x86_wx_eh_hdr_vaddr(text_len) + hdr_len);
+}
+
+function elf_x86_page_align(): i32 {
+  return 4096;
+}
+
+pub function elf_x86_wx_data_vaddr(text_len: i32, hdr_len: i32, eh_len: i32): i32 {
+  let end: i32 = elf_unwind_end(elf_x86_wx_text_off(), text_len, hdr_len, eh_len);
+  let page: i32 = elf_x86_page_align();
+  return elf_base_vaddr() + (end + page - 1) / page * page;
+}
+
+pub function elf_program_x86_wx(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss: i32, entry_off: i32): u8[] {
+  return elf_image_two_seg(text, hdr, eh, data, elf_em_x86_64(), entry_off, bss, elf_base_vaddr(), 2, true, false, true, elf_x86_page_align());
 }
 
 // elf_image_two_seg is the shared W^X / PIE two-segment writer: an R+X code
@@ -721,17 +753,14 @@ pub function elf_image_wx_unwind(text: u8[], hdr: i32[], eh: i32[], data: i32[],
 // fixed-address W^X image, 0 for the position-independent ET_DYN image) and
 // `e_type` is ET_EXEC (2) or ET_DYN (3). `unwind_ph` reserves the third
 // program header slot (PT_GNU_EH_FRAME, or PT_NULL without unwind data);
-// the PIE image keeps two. `note` adds a PT_GNU_PROPERTY header over the
+// the PIE image keeps two. `nx_stack` adds a non-executable PT_GNU_STACK.
+// `note` adds a PT_GNU_PROPERTY header over the
 // BTI property note (elf_bti_note), placed in the code segment after the
 // unwind data. All vaddrs are base + offset, so the page-aligned data offset
 // stays congruent to its load address mod the page.
-function elf_image_two_seg(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, base: i32, e_type: i32, unwind_ph: boolean, note: boolean): u8[] {
-  let nph: i32 = 2;
-  if (unwind_ph) {
-    nph = 3;
-  }
-  nph = nph + elf_property_phs(note);
-  let headers: i32 = elf_eh_size() + nph * elf_ph_size();  // 176, 232 or 288
+function elf_image_two_seg(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, base: i32, e_type: i32, unwind_ph: boolean, note: boolean, nx_stack: boolean, page_align: i32): u8[] {
+  let nph: i32 = elf_image_phnum(unwind_ph, note, nx_stack);
+  let headers: i32 = elf_eh_size() + nph * elf_ph_size();
   let has_unwind: boolean = hdr.len() > 0 && eh.len() > 0;
   let hdr_off: i32 = 0;
   let eh_off: i32 = 0;
@@ -742,7 +771,7 @@ function elf_image_two_seg(text: u8[], hdr: i32[], eh: i32[], data: i32[], machi
   let unwind_end: i32 = elf_unwind_end(headers, text.len(), hdr.len(), eh.len());
   let note_off: i32 = elf_align8(unwind_end);
   let text_end: i32 = elf_code_end(unwind_end, note);  // end of R+X segment
-  let data_off: i32 = elf_page_up(text_end);  // file offset == vaddr offset of data
+  let data_off: i32 = (text_end + page_align - 1) / page_align * page_align;  // file offset == vaddr offset of data
   let code_sz: i64 = text_end as i64;  // headers + .text (+ unwind) in one segment
   let data_filesz: i64 = data.len() as i64;
   let data_memsz: i64 = data_filesz + elf_u32_to_i64(bss);
@@ -776,7 +805,7 @@ function elf_image_two_seg(text: u8[], hdr: i32[], eh: i32[], data: i32[], machi
   buf = elf_le32(buf, 0);  // e_flags
   buf = elf_le16(buf, elf_eh_size());  // e_ehsize
   buf = elf_le16(buf, elf_ph_size());  // e_phentsize
-  buf = elf_le16(buf, nph);  // e_phnum (code + data [+ unwind] [+ property])
+  buf = elf_le16(buf, nph);  // code + data [+ unwind] [+ property] [+ stack]
   buf = elf_le16(buf, 0);  // e_shentsize
   buf = elf_le16(buf, 0);  // e_shnum
   buf = elf_le16(buf, 0);  // e_shstrndx
@@ -789,7 +818,7 @@ function elf_image_two_seg(text: u8[], hdr: i32[], eh: i32[], data: i32[], machi
   buf = elf_le64(buf, code_vaddr);  // p_paddr
   buf = elf_le64(buf, code_sz);  // p_filesz
   buf = elf_le64(buf, code_sz);  // p_memsz
-  buf = elf_le64(buf, elf_page_align() as i64);  // p_align
+  buf = elf_le64(buf, page_align as i64);  // p_align
 
   // ---- Program header 1 (56 bytes): R+W data (.rodata + globals + .bss) ----
   buf = elf_le32(buf, 1);  // p_type  = PT_LOAD
@@ -799,7 +828,7 @@ function elf_image_two_seg(text: u8[], hdr: i32[], eh: i32[], data: i32[], machi
   buf = elf_le64(buf, data_vaddr);  // p_paddr
   buf = elf_le64(buf, data_filesz);  // p_filesz
   buf = elf_le64(buf, data_memsz);  // p_memsz (incl. .bss)
-  buf = elf_le64(buf, elf_page_align() as i64);  // p_align
+  buf = elf_le64(buf, page_align as i64);  // p_align
 
   // ---- Program header 2 (56 bytes): PT_GNU_EH_FRAME over .eh_frame_hdr,
   // or PT_NULL when the image carries no unwind data ----
@@ -823,6 +852,7 @@ function elf_image_two_seg(text: u8[], hdr: i32[], eh: i32[], data: i32[], machi
   }
 
   buf = elf_property_ph(buf, note, base, note_off);
+  buf = elf_stack_ph(buf, nx_stack);
 
   // ---- body: .text, the unwind sections, then page padding, then the
   // data blob, laid down in a byte builder so .text goes in as one range
@@ -842,6 +872,32 @@ function elf_image_two_seg(text: u8[], hdr: i32[], eh: i32[], data: i32[], machi
   let out: u8[] = buf_take_bytes(img);
   buf_free(img);
   return out;
+}
+
+// The two load segments plus their optional metadata and stack headers.
+function elf_image_phnum(unwind: boolean, note: boolean, stack: boolean): i32 {
+  let n: i32 = 2 + elf_property_phs(note);
+  if (unwind) {
+    n = n + 1;
+  }
+  if (stack) {
+    n = n + 1;
+  }
+  return n;
+}
+
+function elf_stack_ph(own buf: i32[], enabled: boolean): i32[] {
+  if (!enabled) {
+    return buf;
+  }
+  buf = elf_le32(buf, 1685382481);  // PT_GNU_STACK (0x6474e551)
+  buf = elf_le32(buf, 6);  // PF_R | PF_W, no PF_X
+  let z: i32 = 0;
+  while (z < 5) {
+    buf = elf_le64(buf, 0i64);
+    z = z + 1;
+  }
+  return elf_le64(buf, 16i64);
 }
 
 // elf_property_phs is how many program headers the BTI note adds.
@@ -905,7 +961,7 @@ pub function elf_data_vaddr_pie(text_len: i32): i32 {
 // uses 64-bit pointers and maps its heap separately from the image, so the
 // loader may choose a high address without truncating image or heap pointers.
 pub function elf_image_pie(text: u8[], data: i32[], machine: i32, entry_off: i32, bss: i32): u8[] {
-  return elf_image_two_seg(text, [], [], data, machine, entry_off, bss, 0, 3, false, false);  // base 0, ET_DYN
+  return elf_image_two_seg(text, [], [], data, machine, entry_off, bss, 0, 3, false, false, false, elf_page_align());  // base 0, ET_DYN
 }
 
 // elf_static_executable_data_wx is the W^X arm64 (EM_AARCH64) image: entry at the first

@@ -1284,6 +1284,9 @@ pub struct X86Asm {
   text: u8[],
   rodata: i32[],
   bss_size: i32,
+  // The linked data blob's offset relative to .text, or -1 until the
+  // container chooses its layout. The default assembler uses adjacent data.
+  data_offset: i32,
   // Absolute 8-byte data relocations — a `.quad <label>` in .rodata, how
   // a constant aggregate holds a pointer to a string literal. Unlike the
   // rel32 code fixups these need the virtual address, so x86_resolve_data
@@ -1422,7 +1425,7 @@ function x86_empty_buckets(): i32[] {
 // x86_asm_new returns an empty assembler state for the raw encoder API,
 // which emits every branch rel32 and never relaxes.
 function x86_asm_new(): X86Asm {
-  return X86Asm { code: buf_new(4096), text: [], rodata: [], bss_size: 0, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: false, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
+  return X86Asm { code: buf_new(4096), text: [], rodata: [], bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: false, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
 }
 
 // x86_asm_new_prepared is the state for the round over text whose labels
@@ -1431,7 +1434,7 @@ function x86_asm_new(): X86Asm {
 // round reaches its definition.
 function x86_asm_new_prepared(labs: GasLabels): X86Asm {
   let n: i32 = labs.names.len() + labs.nids;
-  return X86Asm { code: buf_new(4096), text: [], rodata: [], bss_size: 0, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
+  return X86Asm { code: buf_new(4096), text: [], rodata: [], bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
 }
 
 // x86_filled is n copies of v.
@@ -1893,6 +1896,9 @@ function x86_unwind_eh_len(a: X86Asm): i32 {
 // restates elf_program_x86's layout (elf.fern cannot be imported here);
 // TestSelfHostUnwindData holds the two to the same answer.
 pub function x86_data_base(a: X86Asm, text_len: i32): i32 {
+  if (a.data_offset >= 0) {
+    return a.data_offset;
+  }
   let end: i32 = text_len;
   let hdr_len: i32 = x86_unwind_hdr_len(a);
   let eh_len: i32 = x86_unwind_eh_len(a);
@@ -1918,9 +1924,9 @@ pub function x86_symbol_addr(a: X86Asm, name: string, text_vaddr: i32): i32 {
 // the virtual address the image loads at. They are the `.quad <label>` words
 // in .rodata and the imm32 code operands that hold a symbol's address, which
 // the address must fit as a sign-extended 32-bit value. Call after x86_resolve
-// with the .text vaddr; body offsets map linearly onto virtual addresses from
-// there, because .text and the data blob share one PT_LOAD. An unresolvable
-// name is recorded, not patched as 0.
+// with the .text vaddr; x86_data_base supplies the linked data displacement
+// for both adjacent and separately mapped data. An unresolvable name is
+// recorded, not patched as 0.
 pub function x86_resolve_data(own a: X86Asm, text_vaddr: i32): X86Asm {
   let padded_text: i32 = x86_data_base(a, a.text.len());
   let bss_base: i32 = padded_text + a.rodata.len();
@@ -1958,6 +1964,13 @@ pub function x86_resolve_data(own a: X86Asm, text_vaddr: i32): X86Asm {
     i = i + 1;
   }
   return X86Asm { ...a, rodata: rodata, text: text };
+}
+
+// Link both PC-relative and absolute references after the container picks
+// the code and data addresses. Branch relaxation has already fixed .text's
+// size; moving the data segment changes no instruction lengths.
+pub function x86_link(a: X86Asm, text_vaddr: i32, data_vaddr: i32): X86Asm {
+  return x86_resolve_data(x86_patch(X86Asm { ...a, data_offset: data_vaddr - text_vaddr }), text_vaddr);
 }
 
 // x86_resolve patches every queued fixup (forward branches and all
@@ -6726,6 +6739,12 @@ pub function x86_gas_assemble(src: string): X86Asm {
 // line names, patched as a call's is, and \x08 one whose last four bytes
 // are that symbol's absolute address, patched by x86_resolve_data.
 pub function x86_gas_assemble_words(src: string, words: u8[]): X86Asm {
+  return x86_patch(x86_gas_assemble_words_unlinked(src, words));
+}
+
+// A relaxed image with its relocations still pending, for a container that
+// places data independently of code (the executable's W^X mapping).
+pub function x86_gas_assemble_words_unlinked(src: string, words: u8[]): X86Asm {
   let prog: GasText = x86_gas_prepare(src, words);
   // Every reference reads its target through the label index rather than
   // hashing the name.
@@ -6739,7 +6758,7 @@ pub function x86_gas_assemble_words(src: string, words: u8[]): X86Asm {
   if (x86_plan_long(plan)) {
     a = x86_relax_apply(a, plan);
   }
-  return x86_patch(a);
+  return a;
 }
 
 // The first round's .text layout as relaxation sees it: its relaxable

@@ -8,6 +8,25 @@ turns on two arm64 protections:
 
 The flag is opt-in, and off by default.
 
+## Executable memory mappings
+
+The in-process x86-64 Linux and arm64 Linux linkers separate executable
+code from writable data by default, independently of `-harden`. The code
+and unwind tables load read-execute; constant boxes, globals and BSS load
+read-write. Neither load segment is both writable and executable.
+The x86 image also declares a non-executable stack with `PT_GNU_STACK`.
+
+The x86-64 assembler relaxes branches before the linker chooses the
+4 KiB-aligned data address, then resolves both RIP-relative references and
+absolute pointers against that address. Debug symbols and variable
+locations use the same final addresses. This also lets Valgrind associate
+the executable mapping with the binary's function symbols under `-g`.
+
+`TestSelfHostX86WXExecutable` runs relocated data and function pointers,
+checks the mappings and symbols, and requires SIGSEGV for a write into
+code and for execution from data. The unwind and bootstrap gates cover
+the shared writer's layout and the compiler compiling itself.
+
 ## What it does
 
 The arm64 backend emits only these indirect branches:
