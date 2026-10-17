@@ -317,6 +317,13 @@ function dep_dir(m: fern_toml.Manifest, dir: string, name: string): Option[strin
   return None;
 }
 
+// dependency_dir is the loader's declared-dependency identity, shared with
+// package grant attenuation so path, workspace, lock, store and vendor
+// resolution cannot disagree about the package a grant governs.
+pub function dependency_dir(m: fern_toml.Manifest, dir: string, name: string): Option[string] {
+  return dep_dir(m, dir, name);
+}
+
 // manifest_dir is the nearest directory at or above `dir` holding a fern.toml,
 // as native's manifest.FindForDir walks, or `dir` itself when none does.
 pub function manifest_dir(dir: string): string {

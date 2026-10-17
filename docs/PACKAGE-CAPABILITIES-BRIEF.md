@@ -192,9 +192,19 @@ side:
   `internal/testing/e2ecompiler/self_host_caps_test.go` compares those and
   normalises the chain.
 
-Phases 3 and 4 have no self-host counterpart yet: attenuation is a
-load-time check over a dependency graph the self-host loader does not
-build.
+Phase 3 also runs in the self-host loader. `pkggrants.fern` collects every
+consulted manifest with explicit grants, resolves its dependency directories
+through the module loader's own resolver, and unions incoming grants by
+resolved directory. Each outgoing grant is checked against its own grantor's
+holdings. Empty grants deny everything; an ungoverned grantor imposes no
+ceiling. All violations are reported in manifest, dependency and capability
+order, before flattening and checking, including grants to unused dependencies.
+The independent Go loader is the differential oracle for the chain, diamond,
+workspace and vendor cases.
+
+Phase 4 remains open: the component composer derives requested imports from
+the core module and the selected WIT world, rather than the package capability
+inventory.
 
 ## Non-goals
 

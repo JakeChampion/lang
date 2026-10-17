@@ -1,0 +1,156 @@
+// Load-time package grant attenuation (#5361). Resolve grant identities with
+// the same dependency-directory function the module loader uses.
+import "./fern_toml";
+import "./modloader";
+import "./util";
+
+pub struct ManifestAt { dir: string, man: fern_toml.Manifest }
+
+struct Holding { dir: string, grants: string[] }
+
+function canonical_dir(dir: string): string {
+  if (dir.len() > 0 && dir[0] == b'/') {
+    return util.clean_path(dir);
+  }
+  match (getcwd()) {
+    Ok(cwd) => {
+      return util.clean_path(cwd + "/" + dir);
+    },
+    Err(_) => {
+      return util.clean_path(dir);
+    }
+  }
+}
+
+// A manifest with no explicit grants has neither a contribution to the union
+// nor an outgoing edge to check. Grant-free builds keep the empty table.
+pub function with_manifest(own mans: ManifestAt[], dir: string, man: fern_toml.Manifest): ManifestAt[] {
+  let explicit: boolean = false;
+  for dep in man.deps {
+    if (dep.governed) {
+      explicit = true;
+    }
+  }
+  if (!explicit) {
+    return mans;
+  }
+  let key: string = canonical_dir(dir);
+  for m in mans {
+    if (m.dir == key) {
+      return mans;
+    }
+  }
+  return mans.append(ManifestAt { dir: key, man: man });
+}
+
+function union_grant(own held: Holding[], dir: string, grants: string[]): Holding[] {
+  let at: i32 = -1;
+  let i: i32 = 0;
+  while (i < held.len()) {
+    if (held[i].dir == dir) {
+      at = i;
+    }
+    i = i + 1;
+  }
+  if (at < 0) {
+    at = held.len();
+    held = held.append(Holding { dir: dir, grants: [] });
+  }
+  let merged: string[] = held[at].grants;
+  for cap in grants {
+    if (!util.has_str(merged, cap)) {
+      merged = merged.append(cap);
+    }
+  }
+  return held.with(at, Holding { dir: dir, grants: merged });
+}
+
+function holdings(mans: ManifestAt[]): Holding[] {
+  let held: Holding[] = [];
+  for m in mans {
+    for dep in m.man.deps {
+      if (dep.governed) {
+        match (modloader.dependency_dir(m.man, m.dir + "/", dep.name)) {
+          Some(dir) => {
+            held = union_grant(held, canonical_dir(dir), dep.caps);
+          },
+          None => {}
+        }
+      }
+    }
+  }
+  return held;
+}
+
+function sorted_unique(input: string[]): string[] {
+  let xs: string[] = [];
+  for x in input {
+    xs = xs.append(x);
+  }
+  let i: i32 = 1;
+  while (i < xs.len()) {
+    let j: i32 = i;
+    while (j > 0 && util.str_less(xs[j], xs[j - 1])) {
+      let a: string = xs[j];
+      let b: string = xs[j - 1];
+      xs = xs.with(j - 1, a).with(j, b);
+      j = j - 1;
+    }
+    i = i + 1;
+  }
+  let out: string[] = [];
+  for x in xs {
+    if (out.len() == 0 || out[out.len() - 1] != x) {
+      out = out.append(x);
+    }
+  }
+  return out;
+}
+
+function joined(xs: string[], sep: string): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    if (i > 0) {
+      out = out + sep;
+    }
+    out = out + xs[i];
+    i = i + 1;
+  }
+  return out;
+}
+
+function violations(m: ManifestAt, held: string[]): string[] {
+  let out: string[] = [];
+  for dep in m.man.deps {
+    if (dep.governed) {
+      for cap in dep.caps {
+        if (!util.has_str(held, cap)) {
+          out = out.append(m.dir + "/fern.toml: dependency \"" + dep.name + "\" of \"" + m.man.name + "\" is granted '" + cap + "' but \"" + m.man.name + "\" itself holds only [" + joined(sorted_unique(held), ", ") + "] (attenuation: a dependency may grant at most what it holds)");
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// The union determines what each package holds. Every edge is then checked
+// against its own grantor, so a sibling cannot excuse an amplifying edge.
+// An absent holding is ungoverned; a present empty one denies every grant.
+pub function attenuation_error(mans: ManifestAt[]): string {
+  if (mans.len() == 0) {
+    return "";
+  }
+  let held: Holding[] = holdings(mans);
+  let errors: string[] = [];
+  for m in mans {
+    for h in held {
+      if (h.dir == m.dir) {
+        for err in violations(m, h.grants) {
+          errors = errors.append(err);
+        }
+      }
+    }
+  }
+  return joined(sorted_unique(errors), "\n");
+}

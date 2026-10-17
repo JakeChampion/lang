@@ -76,6 +76,7 @@ import "./platforms";
 import "./coverreport";
 import "./lint";
 import "./caps";
+import "./pkggrants";
 import "./modloader";
 import "./visibility";
 import "./asmcore";
@@ -2422,6 +2423,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   let gov: Governed = governing_manifest(dir_slash);
   let deps: string[] = fern_toml.dep_names(gov.man);
   let pkgs: caps.Pkg[] = [root_pkg(gov.man)];
+  let grant_mans: pkggrants.ManifestAt[] = pkggrants.with_manifest([], gov.dir, gov.man);
   let no_mods: flatten.LoadedModule[] = [];
   let no_files: string[] = [];
   let maps: util.LineMap[] = [s.maps[0]];
@@ -2486,16 +2488,18 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
       // Attribute and expand against the manifest GOVERNING the importer,
       // which is the entry's only for a direct import.
       pkgs = add_pkg(pkgs, governing_manifest(from), ipath);
-      q = queue_imports(q, m, shown, mdir, root, fern_toml.dep_names(governing_manifest(mdir).man));
+      let module_gov: Governed = governing_manifest(mdir);
+      grant_mans = pkggrants.with_manifest(grant_mans, module_gov.dir, module_gov.man);
+      q = queue_imports(q, m, shown, mdir, root, fern_toml.dep_names(module_gov.man));
     }
   }
   if (q.unrooted.len() > 0) {
     return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file" };
   }
   let entry_r: parser.Module = flatten.resolve_imports(entry_mod, dir_slash, root);
-  let cycle: i32 = flatten.import_cycle(entry_r, loaded, root);
-  if (cycle >= 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: import cycle detected including " + files[cycle] };
+  let import_err: string = bundle_import_error(entry_r, loaded, root, files, grant_mans);
+  if (import_err.len() > 0) {
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: import_err };
   }
   let merged: parser.Module = flatten.bundle(entry_r, loaded, target);
   // Fill omitted trailing args from default parameter values up front, so the
@@ -2506,6 +2510,19 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   // same-module ones already, and the pass is idempotent.
   merged = parser.resolve_variant_fields_module(merged);
   return Bundle { entry: entry_r, entry_ident: flatten.module_ident(entry_path), root: root, loaded: loaded, merged: merged, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "" };
+}
+
+// Check the completed import graph before flattening or checking its code.
+function bundle_import_error(entry: parser.Module, loaded: flatten.LoadedModule[], root: string, files: string[], mans: pkggrants.ManifestAt[]): string {
+  let cycle: i32 = flatten.import_cycle(entry, loaded, root);
+  if (cycle >= 0) {
+    return "fern: import cycle detected including " + files[cycle];
+  }
+  let grants: string = pkggrants.attenuation_error(mans);
+  if (grants.len() > 0) {
+    return "fern: " + grants;
+  }
+  return "";
 }
 
 // Loaded is a program read for checking or building, and the findings that
