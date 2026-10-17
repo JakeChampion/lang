@@ -543,7 +543,13 @@
 # 38693049933. Only asm_ir_run's split is measured: main alone links it at
 # 8368344 there (an entry above), so the pass is 49984 bytes (+0.6%) of it.
 
-fern.fern/stage2 12054832
+# 2026-10-17 — fern.fern/stage2 12054832 -> 12699472 (+5.35%). Main at
+# 3260020a0 already self-builds at 12671152 (+5.11%); scalar record returns
+# add 28320 bytes (+0.22% against main). Both use their own compiler's
+# output for the tracked artifact. The source, fixpoint hashes and complete
+# driver report are recorded in docs/rc-log/2026-10-17-scalar-record-returns.md.
+# The other ten baselines and the 5% tolerance are unchanged.
+fern.fern/stage2 12699472
 fern.fern 12630080
 drivers/asm_load_run.fern 10125912
 drivers/asm_modload_run.fern 8699400

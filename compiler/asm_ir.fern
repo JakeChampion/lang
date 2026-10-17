@@ -6589,6 +6589,18 @@ function ssa_emit_epilogue(fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitStat
   return ssa_emit_exit(fr, s, "");
 }
 
+function ssa_restore_bare(fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
+  if (fr.pad > 0) {
+    s = ssa_cfi(ssa_lea_rm(s, "%rsp", "%rsp", 8), 3, "", 8 + 8 * fr.saved.len());
+  }
+  let j: i32 = fr.saved.len() - 1;
+  while (j >= 0) {
+    s = ssa_cfi(ssa_pop_r(s, ssa_reg(fr.saved[j])), 3, "", 8 + 8 * j);
+    j = j - 1;
+  }
+  return s;
+}
+
 // ssa_emit_exit is ssa_emit_epilogue leaving through a jump to `tail` where
 // the return would be, or returning when `tail` is empty.
 function ssa_emit_exit(fr: SsaFrame, s: asmcore.EmitState, tail: string): asmcore.EmitState {
@@ -6600,14 +6612,7 @@ function ssa_emit_exit(fr: SsaFrame, s: asmcore.EmitState, tail: string): asmcor
   }
   s = ssa_cfi(s, 7, "", 0);
   if (fr.bare) {
-    if (fr.pad > 0) {
-      s = ssa_cfi(ssa_lea_rm(s, "%rsp", "%rsp", 8), 3, "", 8 + 8 * fr.saved.len());
-    }
-    let j: i32 = fr.saved.len() - 1;
-    while (j >= 0) {
-      s = ssa_cfi(ssa_pop_r(s, ssa_reg(fr.saved[j])), 3, "", 8 + 8 * j);
-      j = j - 1;
-    }
+    s = ssa_restore_bare(fr, s);
   } else if (fr.saved.len() == 0) {
     s = ssa_leave(s);
   } else {

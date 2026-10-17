@@ -570,16 +570,14 @@ function field_spelling(t: typeinfo.Type): string {
   return typeinfo.spelling(t);
 }
 
-pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts: semsource.BuildOpts): ircore.Sub {
-  let inf: Inference = produced_rows(mod, structs, opts);
-  let built: semsource.Built = inf.built;
-  let r: Rows = inf.rows;
-  report_rows(r, "");
+struct DeclarationBodies { helpers: ssarc.Helpers, bodies: irtables.LowerResult[], count: i32 }
+
+function declaration_bodies(built: semsource.Built, r: Rows): DeclarationBodies {
   let helpers: ssarc.Helpers = ssarc.no_helpers();
   let bodies: irtables.LowerResult[] = [];
   let n: i32 = 0;
   let i: i32 = 0;
-  while (i < mod.funcs.len()) {
+  while (i < built.decls.len()) {
     if (built.decls[i].dropped) {
       bodies = bodies.append(superseded());
       n = n + 1;
@@ -603,6 +601,12 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts:
     }
     i = i + 1;
   }
+  return DeclarationBodies { helpers: helpers, bodies: bodies, count: n };
+}
+
+struct InstanceBodies { helpers: ssarc.Helpers, bodies: irtables.LowerResult[], origins: physicalbody.Origin[], unspliced: i32 }
+
+function instance_bodies(built: semsource.Built, r: Rows, helpers: ssarc.Helpers): InstanceBodies {
   let instances: irtables.LowerResult[] = [];
   let instance_origins: physicalbody.Origin[] = [];
   let unspliced: i32 = 0;
@@ -610,13 +614,29 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts:
   while (at < built.instances.len()) {
     if (built.instances[at].dropped) {
       unspliced = unspliced + 1;
-    } else if (r.keep[mod.funcs.len() + at]) {
+    } else if (r.keep[built.decls.len() + at]) {
       helpers = ssarc.with_drop_helpers(helpers, built.instances[at].func);
-      instances = instances.append(r.body[mod.funcs.len() + at]);
-      instance_origins = instance_origins.append(physicalbody.Origin { producer: 0, symbol: built.names[mod.funcs.len() + at], helper: None });
+      instances = instances.append(r.body[built.decls.len() + at]);
+      instance_origins = instance_origins.append(physicalbody.Origin { producer: 0, symbol: built.names[built.decls.len() + at], helper: None });
     }
     at = at + 1;
   }
+  return InstanceBodies { helpers: helpers, bodies: instances, origins: instance_origins, unspliced: unspliced };
+}
+
+pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts: semsource.BuildOpts): ircore.Sub {
+  let inf: Inference = produced_rows(mod, structs, opts);
+  let built: semsource.Built = inf.built;
+  let r: Rows = inf.rows;
+  report_rows(r, "");
+  let decl = declaration_bodies(built, r);
+  let inst = instance_bodies(built, r, decl.helpers);
+  let helpers = inst.helpers;
+  let bodies = decl.bodies;
+  let n = decl.count;
+  let instances = inst.bodies;
+  let instance_origins = inst.origins;
+  let unspliced = inst.unspliced;
   util.arr_push_cliff_report("sem:substituted", 0);
   // A refused declaration or instance fails the compile.
   let refused_n: i32 = mod.funcs.len() - n + built.instances.len() - instances.len() - unspliced;
@@ -645,7 +665,7 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts:
   let extra_origins = util.append_all(instance_origins, physicalbody.select_origins(selected.origins, merged.helper_indices));
   let kept = semndprune.unused_adapter_mapped(mod, bodies, merged.bodies);
   let declarations: string[] = [];
-  i = 0;
+  let i = 0;
   while (i < bodies.len()) {
     declarations = declarations.append(built.names[i]);
     i = i + 1;
