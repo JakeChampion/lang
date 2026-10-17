@@ -81,13 +81,46 @@ func TestSelfHostAbortReportsArm64(t *testing.T) {
 	checkAbortReports(t, buildSelfHostCLI(t), "arm64-linux")
 }
 
-// deepAbortSrc traps three frames deep. @noinline keeps the chain, since the
-// subject is the walk: inlined into main there would be one frame to report.
+// deepAbortSrc traps three frames deep. @noinline and arithmetic after calls
+// keep the chain. Thirteen live values crossing calls force spill frames in
+// mid and main, independently of debug information.
 // inner is a leaf the x86-64 emitter runs without a frame, which is the case
 // the walk has to recover the immediate caller for.
-const deepAbortSrc = `@noinline function inner(xs: i32[]): i32 { return xs[7]; }
-@noinline function mid(xs: i32[]): i32 { return inner(xs); }
-function main(): i32 { let xs: i32[] = [1, 2, 3]; return mid(xs); }
+const deepAbortSrc = `@noinline function step(n: i64): i64 { return n + 1; }
+@noinline function inner(xs: i32[]): i32 { return xs[7]; }
+@noinline function mid(xs: i32[]): i32 {
+  let a: i64 = step(xs.len() as i64);
+  let b: i64 = step(a);
+  let c: i64 = step(b);
+  let d: i64 = step(c);
+  let e: i64 = step(d);
+  let f: i64 = step(e);
+  let g: i64 = step(f);
+  let h: i64 = step(g);
+  let i: i64 = step(h);
+  let j: i64 = step(i);
+  let k: i64 = step(j);
+  let l: i64 = step(k);
+  let m: i64 = step(l);
+  return ((inner(xs)) as i64 + a + b + c + d + e + f + g + h + i + j + k + l + m) as i32;
+}
+function main(): i32 {
+  let a: i64 = step(args().len() as i64);
+  let b: i64 = step(a);
+  let c: i64 = step(b);
+  let d: i64 = step(c);
+  let e: i64 = step(d);
+  let f: i64 = step(e);
+  let g: i64 = step(f);
+  let h: i64 = step(g);
+  let i: i64 = step(h);
+  let j: i64 = step(i);
+  let k: i64 = step(j);
+  let l: i64 = step(k);
+  let m: i64 = step(l);
+  let xs: i32[] = [1, 2, 3];
+  return ((mid(xs)) as i64 + a + b + c + d + e + f + g + h + i + j + k + l + m) as i32;
+}
 `
 
 // abortFrames runs bin (through runner, if any) and returns the functions its

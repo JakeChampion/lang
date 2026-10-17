@@ -3,6 +3,7 @@ package e2ecompiler
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -27,13 +28,18 @@ function sole(n: i32): i32[] {
 }
 
 @noinline
+function preserved(xs: i32[], n: i32): boolean {
+  return xs.len() == n && (n == 0 || xs[n - 1] == n - 1);
+}
+
+@noinline
 function live(n: i32): i32 {
   let xs: i32[] = [];
   let i: i32 = 0;
   while (i < n) {
     let keep: i32[] = xs;
     xs = xs.append(i);
-    if (keep.len() > n) {
+    if (!preserved(keep, i)) {
       return 7;
     }
     i = i + 1;
@@ -128,7 +134,8 @@ func TestSelfHostAppendReport(t *testing.T) {
 			t.Fatalf("%s: want append site %d, have %d\n%s", tc.owner, tc.nth, len(got), report)
 		}
 		row := got[tc.nth]
-		if !strings.Contains(row, " reason="+tc.reason+" storage="+tc.storage) || !strings.Contains(row, " line=") {
+		line := appendReportSourceLine(t, tc.owner, tc.nth)
+		if !strings.Contains(row, " reason="+tc.reason+" storage="+tc.storage) || !strings.Contains(row, " line="+strconv.Itoa(line)+":") {
 			t.Errorf("%s site %d: want reason=%s storage=%s with a line, got %q", tc.owner, tc.nth, tc.reason, tc.storage, row)
 		}
 		if tc.names != "" && !strings.Contains(row, " "+tc.names+" ") {
@@ -138,7 +145,7 @@ func TestSelfHostAppendReport(t *testing.T) {
 	if out, err := runX86_64Bin(cli.runner, buildBin(t, cli.gcc, t.TempDir(), "append-report", asm)).CombinedOutput(); err != nil {
 		t.Fatalf("reported program: %v\n%s", err, out)
 	}
-	// Without -g there are no line markers and no binding names to read.
+	// Without -g there are no source positions or binding names to read.
 	_, plain := compile("1")
 	for owner, got := range appendReportRows(t, plain) {
 		for _, row := range got {
@@ -147,6 +154,24 @@ func TestSelfHostAppendReport(t *testing.T) {
 			}
 		}
 	}
+}
+
+func appendReportSourceLine(t *testing.T, owner string, nth int) int {
+	t.Helper()
+	inside := false
+	for i, line := range strings.Split(selfHostAppendReportSrc, "\n") {
+		if strings.HasPrefix(line, "function ") {
+			inside = strings.HasPrefix(line, "function "+owner+"(")
+		}
+		if inside && strings.Contains(line, ".append(") {
+			if nth == 0 {
+				return i + 1
+			}
+			nth--
+		}
+	}
+	t.Fatalf("no append source position for %s", owner)
+	return 0
 }
 
 // appendReportRows reads the append storage section into each owner's
