@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# h3tools — build the HTTP/3 load client and the HTTP/3 server scripts/net-bench
+# compares Fern's with, and print the directory holding bin/h2load and bin/h2o.
+#
+# Usage: h3tools [DIR]   (default: $FERN_H3_TOOLS, else ~/.cache/fern-h3-tools)
+#
+# Neither has an HTTP/3 build in the distributions: Ubuntu's and Debian's
+# h2o is 2.2, from before QUIC, and their nghttp2 is built without
+# HTTP/3. So both are built here from source at the pins below, each
+# tarball checked against its SHA-256, into DIR/<pins' hash>, once: a new
+# pin is a new build, and net-nightly.yml caches DIR on this file's hash.
+#
+# - h2load is nghttp2's load client, built with HTTP/3 over ngtcp2 and
+#   nghttp3. Both take their QUIC TLS from OpenSSL 3.5, the first
+#   OpenSSL release with a QUIC TLS API.
+# - h2o is built from its main branch, the only line with HTTP/3 (quicly),
+#   without mruby, so net-bench answers its hello from a file.
+#
+# Needs a C and C++ compiler, make, cmake, perl, pkg-config, and libev
+# zlib and c-ares (which nghttp2's applications require) with their headers.
+set -euo pipefail
+
+OPENSSL_VERSION=3.5.0
+OPENSSL_SHA256=344d0a79f1a9b08029b0744e2cc401a43f9c90acd1044d09a530b4885a8e9fc0
+NGHTTP3_VERSION=1.11.0
+NGHTTP3_SHA256=3cd20bda2a2de87b3715724a0c1633156b9926e93935a7f24a5daa7b0504ba11
+NGTCP2_VERSION=1.14.0
+NGTCP2_SHA256=25272473f12eaf7a04f8f437edd892753e5e772f490f469609609b75693d4910
+NGHTTP2_VERSION=1.66.0
+NGHTTP2_SHA256=e178687730c207f3a659730096df192b52d3752786c068b8e5ee7aeb8edae05a
+H2O_COMMIT=cac7e6568ad98a848f099ecd0a18b881f632479a
+H2O_SHA256=be4a7792211ab0d70513e5a2eea4e360b223dd1f8e43af4eacac214d1fba011b
+
+root="${1:-${FERN_H3_TOOLS:-$HOME/.cache/fern-h3-tools}}"
+pins="$(printf '%s\n' "$OPENSSL_VERSION" "$NGHTTP3_VERSION" "$NGTCP2_VERSION" "$NGHTTP2_VERSION" "$H2O_COMMIT" | sha256sum | cut -c1-16)"
+prefix="$root/$pins"
+if [ -x "$prefix/bin/h2load" ] && [ -x "$prefix/bin/h2o" ]; then
+  echo "$prefix"
+  exit 0
+fi
+
+src="$(mktemp -d)"
+trap 'rm -rf "$src"' EXIT
+jobs="$(nproc)"
+mkdir -p "$prefix"
+
+# fetch URL SHA256 — the tarball at URL unpacked into $src, after its hash
+# is checked.
+fetch() {
+  curl -fsSL -o "$src/download.tar.gz" "$1"
+  echo "$2  $src/download.tar.gz" | sha256sum -c --quiet -
+  tar -xzf "$src/download.tar.gz" -C "$src"
+  rm "$src/download.tar.gz"
+}
+
+gh=https://github.com
+echo "h3tools: building OpenSSL $OPENSSL_VERSION, nghttp3 $NGHTTP3_VERSION, ngtcp2 $NGTCP2_VERSION, nghttp2 $NGHTTP2_VERSION and h2o ${H2O_COMMIT:0:12} into $prefix" >&2
+fetch "$gh/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/openssl-$OPENSSL_VERSION.tar.gz" "$OPENSSL_SHA256"
+fetch "$gh/ngtcp2/nghttp3/releases/download/v$NGHTTP3_VERSION/nghttp3-$NGHTTP3_VERSION.tar.gz" "$NGHTTP3_SHA256"
+fetch "$gh/ngtcp2/ngtcp2/releases/download/v$NGTCP2_VERSION/ngtcp2-$NGTCP2_VERSION.tar.gz" "$NGTCP2_SHA256"
+fetch "$gh/nghttp2/nghttp2/releases/download/v$NGHTTP2_VERSION/nghttp2-$NGHTTP2_VERSION.tar.gz" "$NGHTTP2_SHA256"
+fetch "https://codeload.github.com/h2o/h2o/tar.gz/$H2O_COMMIT" "$H2O_SHA256"
+
+# Every library lands in $prefix/lib and every binary finds it there. The
+# steps are chained with && because `set -e` does not reach into a
+# subshell whose status is tested.
+export PKG_CONFIG_PATH="$prefix/lib/pkgconfig" LDFLAGS="-Wl,-rpath,$prefix/lib"
+log="$src/build.log"
+(
+  cd "$src/openssl-$OPENSSL_VERSION" &&
+    ./config --prefix="$prefix" --libdir=lib no-docs no-tests "-Wl,-rpath,$prefix/lib" &&
+    make -j"$jobs" && make install_sw &&
+    cd "$src/nghttp3-$NGHTTP3_VERSION" &&
+    ./configure --prefix="$prefix" --enable-lib-only && make -j"$jobs" install &&
+    cd "$src/ngtcp2-$NGTCP2_VERSION" &&
+    ./configure --prefix="$prefix" --enable-lib-only --with-openssl && make -j"$jobs" install &&
+    cd "$src/nghttp2-$NGHTTP2_VERSION" &&
+    ./configure --prefix="$prefix" --enable-app --enable-http3 && make -j"$jobs" install &&
+    cmake -S "$src/h2o-$H2O_COMMIT" -B "$src/h2o-build" -DCMAKE_BUILD_TYPE=Release -DWITH_MRUBY=OFF \
+      -DOPENSSL_ROOT_DIR="$prefix" -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath,$prefix/lib" &&
+    make -C "$src/h2o-build" -j"$jobs" h2o &&
+    cp "$src/h2o-build/h2o" "$prefix/bin/h2o"
+) > "$log" 2>&1 || {
+  echo "h3tools: the build failed; the end of its log:" >&2
+  tail -40 "$log" >&2
+  rm -rf "$prefix"
+  exit 1
+}
+"$prefix/bin/h2load" --version | grep -q "nghttp2/$NGHTTP2_VERSION"
+echo "$prefix"

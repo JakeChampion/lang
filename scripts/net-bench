@@ -14,6 +14,12 @@
 #                               Default: "64 4096", the two points #9854's
 #                               exit criterion names.
 #   FERN_OHA                    the oha binary. Default: `oha` on PATH.
+#   FERN_NET_BENCH_H3_SHAPES    the HTTP/3 loads, each CONNECTIONSxSTREAMS
+#                               (streams in flight per connection).
+#                               Default: "1x1 1x32 1x256 64x1 64x32".
+#   FERN_H3_TOOLS               where scripts/net-bench.d/h3tools keeps the
+#                               h2load and h2o it builds. Default:
+#                               ~/.cache/fern-h3-tools.
 #
 # WHAT IS MEASURED. Four hello servers answering the same five-byte body
 # on a loopback port: scripts/net-bench.d/hello.fern, built by bin/fern
@@ -41,6 +47,18 @@
 # the server queues at saturation, not what a client at a given rate
 # would see.
 #
+# HTTP/3. The Fern hello with H3 set serves HTTP/3 beside TCP; h2o
+# serves it through quicly with a thread per core, answering from a
+# five-byte file since its HTTP/3 build has no mruby. Both use one P-256
+# certificate. h2load, nghttp2's load client built with HTTP/3, holds
+# CONNECTIONS connections each keeping STREAMS requests in flight. The
+# rows give its throughput, the p50 and p99 of its per-request log, and
+# its failures. h2load sends a connection's next request only once the
+# server has acknowledged the previous one, and h2o delays that
+# acknowledgement up to 25 ms when a connection sends one packet at a
+# time. So h2o's rows with one stream per connection, and any of its rows
+# whose p50 is near 25 ms, measure that delay, not its speed. scripts/net-bench.d/h3tools builds both from source.
+#
 # RECORDED, NOT GATED. Wall-clock throughput on a shared runner moves by
 # tens of percent between runs, which is why perf.yml counts instructions
 # instead; nothing compares this report to a baseline. net-nightly.yml
@@ -65,6 +83,10 @@
 #                               per second
 #   net/<server>/p<N>.failed    connections that failed under it, other
 #                               than closed by the server between answers
+#   net/<server>/c<N>m<M>.rps   HTTP/3: N connections with M requests in
+#                               flight on each, responses per second;
+#                               <server> is fern-h3 or h2o-h3
+#   net/<server>/c<N>m<M>.p50_us, .p99_us, .failed   as above
 #   net/fern/held.bytes_per_connection          (x86-64 only)
 #   net/fern/held.bytes_per_suspended_handler   (x86-64 only)
 #   net/fern/held.bytes_per_stream              (x86-64 only)
@@ -76,6 +98,7 @@ cd "$(dirname "$0")/.."
 REPORT="${1:-/dev/stdout}"
 SECONDS_PER="${FERN_NET_BENCH_SECONDS:-10}"
 CONNECTIONS="${FERN_NET_BENCH_CONNECTIONS:-64 4096}"
+H3_SHAPES="${FERN_NET_BENCH_H3_SHAPES:-1x1 1x32 1x256 64x1 64x32}"
 OHA="${FERN_OHA:-oha}"
 
 . scripts/net-lib
@@ -107,6 +130,12 @@ make selfhost-cli >&2
 bin/fern-selfhost -target "$TARGET" -o "$work/fern-twofetch" "$PWD/scripts/net-bench.d/twofetch.fern" "$PWD/internal/stdlib"
 hyper_version="$(sed -n '/^name = "hyper"$/{n;s/^version = "\(.*\)"/\1/p}' scripts/net-bench.d/hyperhello/Cargo.lock)"
 h2o_version="$(h2o --version | sed -n 's/^h2o version \(.*\)/\1/p')"
+h3tools="$(scripts/net-bench.d/h3tools)"
+h2load_version="$("$h3tools/bin/h2load" --version | sed -n 's/^h2load nghttp2\/\(.*\)/\1/p')"
+certs="$work/certs"
+mkdir -p "$certs"
+tls_certificate h3 P-256 '/CN=localhost' '' 'subjectAltName=DNS:localhost,IP:127.0.0.1'
+printf 'hello' > "$work/hello.txt"
 
 # start NAME PORT — the hello server NAME answering on PORT.
 start() {
@@ -133,6 +162,57 @@ start_twofetch() {
   await_server "$1" "$2" "$work/server.log"
 }
 
+# start_h3 NAME PORT — the HTTP/3 server NAME on PORT, TCP and UDP.
+start_h3() {
+  if [ "$1" = h2o-h3 ]; then
+    cat > "$work/h2o-h3.conf" <<EOF
+listen: &tls
+  host: 127.0.0.1
+  port: $2
+  ssl:
+    certificate-file: $certs/h3.pem
+    key-file: $certs/h3.key
+    min-version: TLSv1.3
+listen:
+  <<: *tls
+  type: quic
+num-threads: $(nproc)
+hosts:
+  default:
+    paths:
+      /:
+        file.file: $work/hello.txt
+EOF
+    start_server "$work/server.log" "$h3tools/bin/h2o" -c "$work/h2o-h3.conf"
+  else
+    TLS_CERT="$certs/h3.pem" TLS_KEY="$certs/h3.key" H3=1 PORT="$2" start_server "$work/server.log" "$work/fern-hello"
+  fi
+  await_port "$1" "$2" "$work/server.log"
+}
+
+# h3_rows NAME N M OUT LOG — the report rows for one HTTP/3 load, from
+# h2load's output and its per-request log.
+h3_rows() {
+  python3 - "$@" <<'PY'
+import re, sys
+name, n, m, out, log = sys.argv[1:6]
+text = open(out).read()
+rps = re.search(r"finished in [^,]*, ([0-9.]+) req/s", text)
+req = re.search(r"requests: (\d+) total, \d+ started, \d+ done, (\d+) succeeded, (\d+) failed, (\d+) errored, (\d+) timeout", text)
+if not rps or not req:
+    sys.exit("net-bench: no h2load summary for %s c%sm%s:\n%s" % (name, n, m, text))
+times = sorted(int(line.split()[2]) for line in open(log) if len(line.split()) == 3)
+def pct(p):
+    return times[min(len(times) - 1, int(len(times) * p))] if times else 0
+failed = int(req.group(3)) + int(req.group(4)) + int(req.group(5))
+row = f"net/{name}/c{n}m{m}"
+print(f"{row}.rps\t{int(float(rps.group(1)))}")
+print(f"{row}.p50_us\t{pct(0.50)}")
+print(f"{row}.p99_us\t{pct(0.99)}")
+print(f"{row}.failed\t{failed}")
+PY
+}
+
 # rows NAME N JSON — the report rows for one load, from oha's JSON.
 rows() {
   python3 - "$1" "$2" "$3" <<'PY'
@@ -153,6 +233,7 @@ PY
 {
   echo "# scripts/net-bench report — arch $ARCH, target $TARGET, $(nproc) cpus"
   echo "# ${SECONDS_PER}s per load, connections: $CONNECTIONS, $("$OHA" --version), $(go version | cut -d' ' -f3), hyper $hyper_version ($(rustc --version | cut -d' ' -f2)), h2o $h2o_version"
+  echo "# HTTP/3 loads (connections x streams): $H3_SHAPES, h2load $h2load_version, h2o $("$h3tools/bin/h2o" --version | sed -n 's/^h2o version //p') from scripts/net-bench.d/h3tools"
   for server in fern fern-ring go hyper h2o; do
     port="$(free_port)"
     start "$server" "$port"
@@ -177,6 +258,26 @@ PY
     stop_server
   done
   stop_upstream
+  for server in fern-h3 h2o-h3; do
+    port="$(free_port)"
+    start_h3 "$server" "$port"
+    for shape in $H3_SHAPES; do
+      n="${shape%x*}"
+      m="${shape#*x}"
+      threads="$(nproc)"
+      [ "$n" -lt "$threads" ] && threads="$n"
+      # h2load appends to its log rather than starting it afresh.
+      rm -f "$work/h3.log"
+      "$h3tools/bin/h2load" --alpn-list=h3 -c "$n" -m "$m" -t "$threads" -D "$SECONDS_PER" --warm-up-time=1 \
+        --log-file="$work/h3.log" "https://127.0.0.1:$port/" > "$work/h3.out" 2>&1 || {
+        echo "net-bench: h2load failed against $server:" >&2
+        cat "$work/h3.out" >&2
+        exit 1
+      }
+      h3_rows "$server" "$n" "$m" "$work/h3.out" "$work/h3.log"
+    done
+    stop_server
+  done
   if [ "$ARCH" = x86_64 ]; then
     # The per-connection heap cost, read off the test that bounds it.
     go test ./internal/testing/e2ecompiler -run 'TestSelfHostHeldConnectionsHeapBoundX86_64$' -count=1 -v > "$work/held.log" 2>&1 || {
