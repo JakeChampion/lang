@@ -2103,6 +2103,11 @@ serializer.
   `(req).body_bytes()` is the whole body as it came; `(req).body_len()` its
   length, the declared `Content-Length` for a streamed body (-1 when
   chunked).
+- **Query parameters:** `(req).query(name): Option[string]` is the first
+  value the request-target's query gives `name` and `(req).query_all(name):
+  string[]` every one, in order, each decoded as a form field is (`+` a
+  space, `%XX` a byte), so `?q=a%26b` reads `a&b`. A bare `?flag` gives
+  `Some("")`.
 - **Typed JSON body:** `body_json[T](req): Result[T, BodyError]` decodes the
   body as a `T: json.FromJson` and tells the failures apart:
   `UnsupportedMediaType(ct)` when the `Content-Type` is not
