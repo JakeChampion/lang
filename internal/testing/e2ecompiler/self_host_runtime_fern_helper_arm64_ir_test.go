@@ -375,10 +375,10 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 			t.Errorf("the Darwin %s constant (%s) was not baked into the helper source", c.what, c.imm)
 		}
 	}
-	// Constants above 65535 do not reach `mov x0, #N` at all:
-	// emit_const_i32_push only takes that path for 0..65535 (a single movz),
-	// and puts everything wider in the literal pool. O_DIRECTORY is the one
-	// operand in this helper set that crosses the line.
+	// Constants above 65535 do not reach `mov x0, #N` at all: one a single
+	// shifted halfword spells is a `movz` with its shift, and everything wider
+	// goes in the literal pool. O_DIRECTORY is the one operand in this helper
+	// set that crosses the line.
 	//
 	// It is also the one whose value is NOT shared across targets — 0x100000 on
 	// XNU, 65536 on x86-64 Linux, 16384 on arm64 Linux. Every wrong choice is a
@@ -386,9 +386,9 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	// O_NDELAY|O_ASYNC (the open succeeds, the first read fails), and 65536 on
 	// arm64 Linux means O_RDONLY|O_DIRECT (EINVAL on /tmp).
 	for _, c := range []struct{ what, imm string }{
-		{"O_RDONLY|O_DIRECTORY", "1048576"},
+		{"O_RDONLY|O_DIRECTORY", "#16, lsl #16"},
 	} {
-		if !matchShape(asm, `\n    ldr x[0-9]+, =`+c.imm+`\n`) {
+		if !matchShape(asm, `\n    movz x[0-9]+, `+c.imm+`\n`) {
 			t.Errorf("the Darwin %s constant (%s) was not baked into the helper source", c.what, c.imm)
 		}
 	}
