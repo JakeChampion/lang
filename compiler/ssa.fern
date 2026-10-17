@@ -4897,6 +4897,54 @@ function rotate_half_pair(defs: SInst[], or: SInst, rv: i32, lv: i32): SInst {
   return SInst { kind_tag: 10, result: or.result, args: [rs.args[0]], imm: 0, str: "rotr:" + util.i32_to_string(w) + ":" + util.i64_to_string(n) };
 }
 
+// fuse_and_not combines a full inversion feeding an and into one binary
+// `and_not`: args [a, b] compute a & ~b. It runs after carry recognition so
+// the carry matcher still sees its original formula. Shared inversions stay
+// live for their other uses; only newly dead scalar definitions disappear.
+pub function fuse_and_not(f: SFunc): SFunc {
+  if (!has_and_xor(f)) {
+    return f;
+  }
+  let t: Threading = rewrite_insts(f, inst_defs(f), and_not_of);
+  return if (t.changed) { prune_dead(t.f) } else { f };
+}
+
+function has_and_xor(f: SFunc): boolean {
+  let has_and: boolean = false;
+  let has_xor: boolean = false;
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == 9) {
+        if (ins.str == "and") {
+          has_and = true;
+        }
+        if (ins.str == "xor") {
+          has_xor = true;
+        }
+        if (has_and && has_xor) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function and_not_of(defs: SInst[], ins: SInst): SInst {
+  if (ins.kind_tag != 9 || ins.str != "and" || ins.args.len() != 2) {
+    return no_inst();
+  }
+  let v: i32 = not_of(defs, ins.args[1]);
+  if (v >= 0) {
+    return SInst { ...ins, args: [ins.args[0], v], str: "and_not" };
+  }
+  v = not_of(defs, ins.args[0]);
+  if (v >= 0) {
+    return SInst { ...ins, args: [ins.args[1], v], str: "and_not" };
+  }
+  return no_inst();
+}
+
 // fuse_carries rewrites the branch-free carry out of a 64-bit add,
 // `(x & y | (x | y) & (s ^ -1)) >> 63` over s = x + y or s = x + y + c, and
 // the borrow out of a subtract, `((x ^ -1) & y | ((x ^ -1) | y) & d) >> 63`
