@@ -1117,7 +1117,7 @@ func TestRunnerAESGCMExamplePasses(t *testing.T) {
 // `tests/stdlib/x25519_test.fern` covers RFC 7748's vectors, a
 // non-canonical u-coordinate and the low-order refusal.
 func TestRunnerX25519ExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "x25519", "std/crypto/x25519", 8)
+	runnerSuitePasses(t, "x25519", "std/crypto/x25519", 9)
 }
 
 // `tests/stdlib/mlkem768_test.fern` covers FIPS 203 known answers from Go's
