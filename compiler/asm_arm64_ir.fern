@@ -2379,12 +2379,71 @@ function ssa_wreg(x: string): string {
 }
 
 // ssa_const_reg materialises an integer literal in `d`: one MOVZ for a small
-// decimal, one MOVN for a small negative one, the pool otherwise.
+// decimal, one MOVN for a small negative one, one move-wide for any other
+// value a single shifted halfword spells (movwide_text), the pool otherwise.
 function ssa_const_reg(text: string, d: string, s: asmcore.EmitState): asmcore.EmitState {
   if (movz_text_ok(text) || movn_text_ok(text)) {
     return ssa_mov_imm(s, d, text);
   }
+  if (lit_text_exact(text)) {
+    let w: string = movwide_text(util.lit_to_i64(text), d);
+    if (w != "") {
+      return s.write(w);
+    }
+  }
   return s.write("    ldr " + d + ", =" + text + "\n");
+}
+
+// movwide_text is the one move-wide instruction that loads v into the x
+// register d, or "": a movz when every halfword but one is zero, a movn when
+// every halfword but one is all ones, and a 32-bit movn, which zeroes the high
+// word, when the high word is zero and the low word's halfwords but one are
+// all ones.
+function movwide_text(v: i64, d: string): string {
+  let ones: i64 = 0i64 - 1i64;
+  let inv: i64 = v ^ ones;
+  let sh: i32 = 0;
+  while (sh < 64) {
+    let rest: i64 = 65535i64 << sh as i64 ^ ones;
+    if ((v & rest) == 0i64) {
+      return "    movz " + d + ", #" + util.i64_to_string(v >> sh as i64 & 65535i64) + ", lsl #" + util.i32_to_string(sh) + "\n";
+    }
+    if ((inv & rest) == 0i64) {
+      return "    movn " + d + ", #" + util.i64_to_string(inv >> sh as i64 & 65535i64) + ", lsl #" + util.i32_to_string(sh) + "\n";
+    }
+    sh = sh + 16;
+  }
+  if (v >> 32i64 != 0i64) {
+    return "";
+  }
+  let low: i64 = inv & 4294967295i64;
+  if (low >> 16i64 == 0i64) {
+    return "    movn " + ssa_wreg(d) + ", #" + util.i64_to_string(low) + "\n";
+  }
+  if ((low & 65535i64) == 0i64) {
+    return "    movn " + ssa_wreg(d) + ", #" + util.i64_to_string(low >> 16i64) + ", lsl #16\n";
+  }
+  return "";
+}
+
+// lit_text_exact is a literal util.lit_to_i64 reads whole: a canonical
+// decimal, or 0x and at most sixteen hex digits.
+function lit_text_exact(text: string): boolean {
+  if (text.len() > 2 && text[0] == b'0' && (text[1] == b'x' || text[1] == b'X')) {
+    if (text.len() > 18) {
+      return false;
+    }
+    let i: i32 = 2;
+    while (i < text.len()) {
+      let c: u8 = text[i];
+      if (!(c >= b'0' && c <= b'9' || c >= b'a' && c <= b'f' || c >= b'A' && c <= b'F')) {
+        return false;
+      }
+      i = i + 1;
+    }
+    return true;
+  }
+  return util.i64_to_string(util.lit_to_i64(text)) == text;
 }
 
 // ssa_mov_imm writes `mov d, #text`: as one move-wide word when the decimal
