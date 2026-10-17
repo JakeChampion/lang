@@ -1086,10 +1086,13 @@ function lent_operands(ins: ssa.SInst, counted: Supply[]): i32[] {
 // (#10832).
 function lent_owners(ins: ssa.SInst, counted: Supply[], deps: i32[][]): i32[] {
   let out: i32[] = [];
+  if (counted.len() == 0) {
+    return out;
+  }
   for v in lent_operands(ins, counted) {
-    for dep in deps[v] {
-      if (dep != v && !has_id(out, dep)) {
-        out = out.append(dep);
+    for supply in counted {
+      if ((supply.value == v || has_id(deps[v], supply.value)) && !has_id(out, supply.value)) {
+        out = out.append(supply.value);
       }
     }
   }
@@ -3647,6 +3650,9 @@ function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: ReplayIn
 // copy of the row; a move the row cannot supply is move_supplies' rejection,
 // reported by the replay that follows, not here.
 function lent_error(state: boolean[], s: Step, ins: ssa.SInst, counted: Supply[], owned: boolean[], deps: i32[][]): string {
+  if (s.supplies.len() != counted.len()) {
+    return "";
+  }
   let cleared: i32[] = [];
   for got in s.supplies {
     if (got.mode == move_unit()) {
@@ -3657,13 +3663,20 @@ function lent_error(state: boolean[], s: Step, ins: ssa.SInst, counted: Supply[]
     }
   }
   for v in lent_operands(ins, counted) {
+    if (lent_cleared(v, state, owned, cleared)) {
+      return "a lent call operand borrows from a unit moved into the call";
+    }
     for dep in deps[v] {
-      if (dep != v && owned[dep] && (!state[dep] || util.index_of_i32(cleared, dep) >= 0)) {
+      if (dep != v && lent_cleared(dep, state, owned, cleared)) {
         return "a lent call operand borrows from a unit moved into the call";
       }
     }
   }
   return "";
+}
+
+function lent_cleared(value: i32, state: boolean[], owned: boolean[], cleared: i32[]): boolean {
+  return owned[value] && (!state[value] || has_id(cleared, value));
 }
 
 // step_clears: the step moves or drops `value`.

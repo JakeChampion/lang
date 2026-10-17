@@ -228,9 +228,10 @@ if (!supply(find(p, 27, ssaunits.edge_point(), 17), 0, 4, 0, ssaunits.retain_uni
 let first = find(p, 7, 2, 0 - 1);
 if (first.supplies.len() != 1 || !supply(first, 0, 1, 1, ssaunits.move_unit()) || !drops(first, [2])) { return 24; }
 let second = find(p, 7, 3, 0 - 1);
-if (second.supplies.len() != 1 || !supply(second, 0, 0, 1, ssaunits.move_unit()) || !drops(second, [])) { return 25; }
+if (second.supplies.len() != 1 || !supply(second, 0, 0, 1, ssaunits.retain_unit()) || !drops(second, [0])) { return 25; }
 if (!supply(find(p, 7, ssaunits.return_point(), 0 - 1), 0, 3, 0, ssaunits.move_unit())) { return 26; }
 `, "", ""},
+		{"call-moves-lent-alias", unitCall, "", `let c = find(p, 7, 3, 0 - 1); let a = c.supplies[0]; p = replace(p, ssaunits.Step { ...c, supplies: [ssaunits.Supply { ...a, mode: 2 }], drops: [] });`, "a lent call operand borrows from a unit moved into the call"},
 		{"call-borrowed-argument", unitCall + "modes = [2, 3];", `
 let second = find(p, 7, 3, 0 - 1);
 if (!supply(second, 0, 0, 1, ssaunits.retain_unit()) || !drops(second, [])) { return 27; }
