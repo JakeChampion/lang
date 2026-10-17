@@ -3,9 +3,17 @@
 // back is datagrams to send, events, and when it next needs the time.
 //
 //     let c: conn.Conn = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now)?;
-//     c = c.receive(datagram, now).conn;     // each datagram that arrives
-//     let (c2, out) = c.transmit(now);       // datagrams to send now
-//     c2.deadline()                          // when to call `tick`
+//     c = c.receive(datagram, now);          // each datagram that arrives
+//     let evs: conn.Event[] = c.events;      // what happened
+//     c = c.events_taken();
+//     c = c.transmit(now);
+//     let out: u8[][] = c.datagrams();       // datagrams to send now
+//     c = c.sent();
+//     c.deadline()                           // when to call `tick`
+//
+// Each step hands the connection back whole, with its outcome in fields:
+// read them, then take them, so a connection held in a table updates in
+// place.
 //
 // A server makes its connection from the first Initial it receives
 // (`accept`), after `packet.parse` has read its header. The TLS handshake
@@ -112,9 +120,6 @@ pub struct Close { code: i64, frame_type: i64, reason: string, app: boolean, rem
 // to stop sending, which resets this side's sending half with that code.
 pub enum Event { Connected, Closed(Close), StreamOpened(i64), StreamReadable(i64), StreamReset(i64, i64), StreamStopped(i64, i64) }
 
-// Step — a connection and what happened to it.
-pub struct Step { conn: Conn, events: Event[] }
-
 // Space — one packet number space (§12.3).
 struct Space {
   send: Option[packet.Keys],
@@ -156,6 +161,7 @@ pub struct Conn {
   close_until: i64,
   idle_until: i64,
   validated: boolean,
+  plan: Plan,
   received_bytes: i64,
   sent_bytes: i64,
   handshake_done_pending: boolean,
@@ -163,7 +169,12 @@ pub struct Conn {
   pending: frames.Frame[],
   held: u8[][],
   streams: streams.Streams,
+  // What the connection reported since `events_taken`, and the datagrams
+  // `transmit` built since `sent`. A connection handed back inside a
+  // result or a tuple would be copied on the way out, so each step hands
+  // it back whole and these carry what it produced.
   events: Event[],
+  out: u8[][],
   // Only 1-RTT keys rotate. Cached next keys are made at installation or
   // by a timer, never in response to an unauthenticated Key Phase bit.
   key_phase: boolean,
@@ -212,7 +223,7 @@ function __tls_server_config(c: Config, chain: u8[][], schemes: i32[], params_by
 
 function __base(c: Config, server: boolean, scid: u8[], dcid: u8[], odcid: u8[], now: i64): Conn {
   let r: recovery.Recovery = recovery.new(c.max_datagram, server).with_max_ack_delay(25000000 as i64);
-  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: 0 - 1 as i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64 };
+  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, plan: __no_plan(0), received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], out: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: 0 - 1 as i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64 };
 }
 
 // client starts a connection: its first Initial is ready to `transmit`.
@@ -331,15 +342,33 @@ function __earliest(a: i64, b: i64): i64 {
   return a;
 }
 
-// __stepped hands back the connection with what happened to it, the
-// streams' events after the connection's own.
-function (c: Conn) __stepped(): Step {
-  let (table, notes) = c.streams.take_events();
+// __stepped moves what the streams reported into the connection's events,
+// after its own.
+function (c: Conn) __stepped(): Conn {
+  let notes: streams.Event[] = c.streams.events;
+  if (notes.len() == 0) {
+    return c;
+  }
   let events: Event[] = c.events;
   for n in notes {
     events = events.append(__stream_event(n));
   }
-  return Step { conn: Conn { ...c, streams: table, events: [] }, events: events };
+  return Conn { ...c, streams: c.streams.events_taken(), events: events };
+}
+
+// events_taken is the connection with its events handed on: read `events`
+// first, then take them.
+pub function (c: Conn) events_taken(): Conn {
+  return Conn { ...c, events: [] };
+}
+
+// datagrams is what `transmit` built, until `sent` takes it.
+pub function (c: Conn) datagrams(): u8[][] {
+  return c.out;
+}
+
+pub function (c: Conn) sent(): Conn {
+  return Conn { ...c, out: [] };
 }
 
 function __stream_event(n: streams.Event): Event {
@@ -368,14 +397,12 @@ pub function (c: Conn) open_stream(uni: boolean): Result[(Conn, i64), string] {
   if (c.state != ESTABLISHED) {
     return Err("quic: the connection is not established");
   }
-  match (c.streams.open(uni)) {
-    Ok(pair) => {
-      return Ok((Conn { ...c, streams: pair.0 }, pair.1));
-    },
-    Err(e) => {
-      return Err("quic: " + e);
-    }
+  let cur: Conn = Conn { ...c, streams: c.streams.open(uni) };
+  if (cur.streams.refused != "") {
+    return Err("quic: " + cur.streams.refused);
   }
+  let id: i64 = cur.streams.last_opened;
+  return Ok((cur, id));
 }
 
 // can_open reports whether `open_stream` would succeed.
@@ -392,53 +419,44 @@ pub function (c: Conn) blocked_open(uni: boolean): Conn {
 // write queues `data` on a stream, and with `fin` ends this side of it;
 // `transmit` sends it as the windows allow.
 pub function (c: Conn) write(id: i64, data: [u8], fin: boolean): Result[Conn, string] {
-  match (c.streams.write(id, data, fin)) {
-    Ok(t) => {
-      return Ok(Conn { ...c, streams: t });
-    },
-    Err(e) => {
-      return Err("quic: " + e);
-    }
+  let cur: Conn = Conn { ...c, streams: c.streams.write(id, data, fin) };
+  if (cur.streams.refused != "") {
+    return Err("quic: " + cur.streams.refused);
   }
+  return Ok(cur);
 }
 
 // read takes what has arrived on a stream, in order, and whether that is
 // its end.
 pub function (c: Conn) read(id: i64): Result[(Conn, u8[], boolean), string] {
-  match (c.streams.read(id)) {
-    Ok(r) => {
-      return Ok((Conn { ...c, streams: r.0 }, r.1, r.2));
-    },
-    Err(e) => {
-      return Err("quic: " + e);
-    }
+  let cur: Conn = Conn { ...c, streams: c.streams.read(id) };
+  if (cur.streams.refused != "") {
+    return Err("quic: " + cur.streams.refused);
   }
+  let data: u8[] = cur.streams.read_data;
+  let fin: boolean = cur.streams.read_fin;
+  cur = Conn { ...cur, streams: streams.Streams { ...cur.streams, read_data: [] } };
+  return Ok((cur, data, fin));
 }
 
 // reset_stream abandons this side of a stream with an application error
 // code (RESET_STREAM).
 pub function (c: Conn) reset_stream(id: i64, code: i64): Result[Conn, string] {
-  match (c.streams.reset(id, code)) {
-    Ok(t) => {
-      return Ok(Conn { ...c, streams: t });
-    },
-    Err(e) => {
-      return Err("quic: " + e);
-    }
+  let cur: Conn = Conn { ...c, streams: c.streams.reset(id, code) };
+  if (cur.streams.refused != "") {
+    return Err("quic: " + cur.streams.refused);
   }
+  return Ok(cur);
 }
 
 // stop_sending asks the peer to stop sending on a stream, with an
 // application error code (STOP_SENDING).
 pub function (c: Conn) stop_sending(id: i64, code: i64): Result[Conn, string] {
-  match (c.streams.stop(id, code)) {
-    Ok(t) => {
-      return Ok(Conn { ...c, streams: t });
-    },
-    Err(e) => {
-      return Err("quic: " + e);
-    }
+  let cur: Conn = Conn { ...c, streams: c.streams.stop(id, code) };
+  if (cur.streams.refused != "") {
+    return Err("quic: " + cur.streams.refused);
   }
+  return Ok(cur);
 }
 
 // buffered is how many bytes written to a stream the peer has not yet
@@ -486,11 +504,11 @@ function (c: Conn) __drain(why: Close, now: i64): Conn {
 
 // tick runs whatever was due at `now`: the end of closing or draining, the
 // idle timeout, and loss detection's timer.
-pub function (c: Conn) tick(now: i64): Step {
+pub function (c: Conn) tick(now: i64): Conn {
   return c.__key_timers(now).__tick(now);
 }
 
-function (c: Conn) __tick(now: i64): Step {
+function (c: Conn) __tick(now: i64): Conn {
   if (c.state == CLOSING || c.state == DRAINING) {
     if (now >= c.close_until) {
       return Conn { ...c, state: CLOSED }.__stepped();
@@ -634,7 +652,7 @@ function (c: Conn) __key_current(pn: i64, now: i64): Conn {
 // === receiving ==============================================================
 
 // receive takes one datagram that arrived at `now`.
-pub function (c: Conn) receive(datagram: [u8], now: i64): Step {
+pub function (c: Conn) receive(datagram: [u8], now: i64): Conn {
   if (c.state == CLOSED) {
     return c.__stepped();
   }
@@ -956,14 +974,11 @@ function (c: Conn) __frame(f: frames.Frame, space: i32, now: i64): Conn {
 // this side does not act on yet, which are dropped.
 function (c: Conn) __frame_rest(f: frames.Frame, now: i64): Conn {
   if (streams.owns(f)) {
-    match (c.streams.on_frame(f)) {
-      Ok(t) => {
-        return Conn { ...c, streams: t };
-      },
-      Err(e) => {
-        return c.__fail(e.code, e.frame_type, e.reason, now);
-      }
+    let cur: Conn = Conn { ...c, streams: c.streams.on_frame(f) };
+    if let Some(e) = cur.streams.failed {
+      return cur.__fail(e.code, e.frame_type, e.reason, now);
     }
+    return cur;
   }
   match (f) {
     frames.NewToken(_) => {
@@ -1325,35 +1340,52 @@ function __param_error(reason: string): frames.FrameError {
 // transmit is the datagrams to send at `now`, up to what congestion control
 // and, at a server not yet sure of the client's address, the
 // anti-amplification limit allow.
-pub function (c: Conn) transmit(now: i64): (Conn, u8[][]) {
-  let out: u8[][] = [];
+pub function (c: Conn) transmit(now: i64): Conn {
   let cur: Conn = c;
   let guard: i32 = 0;
   while (guard < 64) {
-    let (next, d) = cur.__datagram_out(now);
-    if (d.len() == 0) {
-      return (next, out);
+    let before: i32 = cur.out.len();
+    cur = cur.__datagram_sent(now);
+    if (cur.out.len() == before) {
+      return cur;
     }
-    if (!next.validated && next.sent_bytes + d.len() as i64 > 3 * next.received_bytes) {
-      return (cur, out);
-    }
-    cur = Conn { ...next, sent_bytes: next.sent_bytes + d.len() as i64 };
-    out = out.append(d);
     guard = guard + 1;
   }
-  return (cur, out);
+  return cur;
+}
+
+// __datagram_sent is the connection with its next datagram added to `out`,
+// or as it was when there is none, or when the peer's address is not yet
+// validated and the datagram would exceed three times the bytes received
+// (§8.1): that path keeps the connection from before the datagram, so it
+// alone pays for a copy.
+function (c: Conn) __datagram_sent(now: i64): Conn {
+  if (c.validated) {
+    return c.__datagram_out(now);
+  }
+  let before: Conn = c;
+  let next: Conn = c.__datagram_out(now);
+  if (next.sent_bytes > 3 * next.received_bytes) {
+    return before;
+  }
+  return next;
 }
 
 // Plan — one packet before it is sealed: its space, its frames' bytes,
-// whether it elicits an ACK, and what to resend if it is lost.
+// whether it elicits an ACK, and what to resend if it is lost. The
+// connection carries the one being planned in `plan`, so each stage adds
+// to it in place; between datagrams it is empty.
 struct Plan { space: i32, payload: u8[], eliciting: boolean, resend: recovery.Resend[] }
+
+function __no_plan(space: i32): Plan {
+  return Plan { space: space, payload: [], eliciting: false, resend: [] };
+}
 
 // __datagram_out builds the next datagram: a packet from each space with
 // something to send, coalesced in order, the Initial-bearing ones padded to
 // 1200 bytes (§14.1).
-function (c: Conn) __datagram_out(now: i64): (Conn, u8[]) {
-  let guarded: Conn = c.__aead_guard(now);
-  return guarded.__datagram_guarded(now);
+function (c: Conn) __datagram_out(now: i64): Conn {
+  return c.__aead_guard(now).__datagram_guarded(now);
 }
 
 // Reserve the last permitted encryption for CONNECTION_CLOSE. An
@@ -1399,9 +1431,9 @@ function (c: Conn) __aead_guard(now: i64): Conn {
   return cur;
 }
 
-function (c: Conn) __datagram_guarded(now: i64): (Conn, u8[]) {
+function (c: Conn) __datagram_guarded(now: i64): Conn {
   if (c.state == DRAINING || c.state == CLOSED) {
-    return (c, []);
+    return c;
   }
   if (c.state == CLOSING) {
     return c.__close_datagram();
@@ -1411,16 +1443,16 @@ function (c: Conn) __datagram_guarded(now: i64): (Conn, u8[]) {
   let room: i32 = c.config.max_datagram;
   let space: i32 = 0;
   while (space < 3) {
-    let (next, plan) = cur.__plan(space, room - 64, now);
-    cur = next;
-    if (plan.payload.len() > 0) {
-      plans = plans.append(plan);
-      room = room - plan.payload.len() - 64;
+    cur = cur.__plan(space, room - 64, now);
+    if (cur.plan.payload.len() > 0) {
+      plans = plans.append(cur.plan);
+      room = room - cur.plan.payload.len() - 64;
+      cur = Conn { ...cur, plan: __no_plan(space) };
     }
     space = space + 1;
   }
   if (plans.len() == 0) {
-    return (cur, []);
+    return cur;
   }
   return cur.__seal(plans, now);
 }
@@ -1429,38 +1461,50 @@ function (c: Conn) __datagram_guarded(now: i64): (Conn, u8[]) {
 // must be resent, then new CRYPTO data, then, in the application space,
 // HANDSHAKE_DONE, pending control frames and the streams', then a probe if
 // asked for.
-function (c: Conn) __plan(space: i32, room: i32, now: i64): (Conn, Plan) {
-  let empty: Plan = Plan { space: space, payload: [], eliciting: false, resend: [] };
+function (c: Conn) __plan(space: i32, room: i32, now: i64): Conn {
   let s: Space = c.spaces[space];
   if (s.discarded || s.send.is_none() || room < 40) {
-    return (c, empty);
+    return c;
   }
-  let plan: Plan = empty;
+  let cur: Conn = Conn { ...c, plan: Plan { ...c.plan, space: space } };
   if (s.ack_wanted) {
-    plan = Plan { ...plan, payload: frames.put(plan.payload, frames.AckFrame(__ack_of(s, space, now))) };
+    cur = cur.__planned(frames.AckFrame(__ack_of(s, space, now)), false);
   }
-  let window: boolean = c.recovery.window() >= c.config.max_datagram as i64 || c.probes.contains(space);
+  let window: boolean = cur.recovery.window() >= cur.config.max_datagram as i64 || cur.probes.contains(space);
   if (!window) {
-    return (c.__acked_out(space, plan), plan);
+    return cur.__acked_out(space);
   }
-  let (c1, p1) = c.__crypto_out(space, plan, room);
-  let (c2, p2) = c1.__control_out(space, p1, room);
-  let (c3, p3) = c2.__streams_out(space, p2, room);
-  let (c4, p4) = c3.__probe_out(space, p3);
-  return (c4.__acked_out(space, p4), p4);
+  return cur.__crypto_out(space, room).__control_out(space, room).__streams_out(space, room).__probe_out(space).__acked_out(space);
+}
+
+// __planned adds a frame to the plan, `again` resending it if lost.
+function (c: Conn) __planned(f: frames.Frame, again: boolean): Conn {
+  let cur: Conn = c.__pushed(f);
+  if (!again) {
+    return cur;
+  }
+  return Conn { ...cur, plan: Plan { ...cur.plan, eliciting: true, resend: cur.plan.resend.append(recovery.Again(f)) } };
+}
+
+// __pushed appends a frame's bytes to the plan's payload. The payload is
+// taken out of the plan first, so the push extends it in place.
+function (c: Conn) __pushed(f: frames.Frame): Conn {
+  let payload: u8[] = c.plan.payload;
+  let cur: Conn = Conn { ...c, plan: Plan { ...c.plan, payload: [] } };
+  payload = frames.put(payload, f);
+  return Conn { ...cur, plan: Plan { ...cur.plan, payload: payload } };
 }
 
 // __acked_out notes that an ACK just planned answers what was owed.
-function (c: Conn) __acked_out(space: i32, p: Plan): Conn {
-  if (p.payload.len() == 0) {
+function (c: Conn) __acked_out(space: i32): Conn {
+  if (c.plan.payload.len() == 0) {
     return c;
   }
-  let s: Space = c.spaces[space];
   let unacked: boolean = c.key_unacked;
-  if (space == recovery.APPLICATION && s.ack_wanted) {
+  if (space == recovery.APPLICATION && c.spaces[space].ack_wanted) {
     unacked = false;
   }
-  return Conn { ...c, key_unacked: unacked, spaces: c.spaces.with(space, Space { ...s, ack_wanted: false }) };
+  return Conn { ...c, key_unacked: unacked, spaces: c.spaces.with(space, Space { ...c.spaces[space], ack_wanted: false }) };
 }
 
 function __ack_of(s: Space, space: i32, now: i64): frames.Ack {
@@ -1472,15 +1516,19 @@ function __ack_of(s: Space, space: i32, now: i64): frames.Ack {
 }
 
 // __crypto_out adds CRYPTO frames: lost ranges first, then unsent data.
-function (c: Conn) __crypto_out(space: i32, p: Plan, room: i32): (Conn, Plan) {
+function (c: Conn) __crypto_out(space: i32, room: i32): Conn {
+  if (c.spaces[space].crypto_lost.len() == 0 && c.spaces[space].crypto_out.len() as i64 == c.spaces[space].crypto_sent) {
+    return c;
+  }
   let s: Space = c.spaces[space];
-  let plan: Plan = p;
+  let cur: Conn = c;
   let lost: i64[] = s.crypto_lost;
   let kept: i64[] = [];
   let i: i32 = 0;
   while (i + 1 < lost.len()) {
-    let (next, rest) = __crypto_frame(plan, s, lost[i], lost[i + 1] as i32, room);
-    plan = next;
+    let n: i32 = __crypto_fit(cur.plan.payload.len(), lost[i], lost[i + 1] as i32, room);
+    cur = cur.__crypto_planned(space, lost[i], n);
+    let rest: i32 = lost[i + 1] as i32 - n;
     if (rest > 0) {
       kept = kept.append(lost[i] + (lost[i + 1] - rest as i64)).append(rest as i64);
     }
@@ -1489,113 +1537,136 @@ function (c: Conn) __crypto_out(space: i32, p: Plan, room: i32): (Conn, Plan) {
   let unsent: i32 = (s.crypto_out.len() as i64 - s.crypto_sent) as i32;
   let sent: i64 = s.crypto_sent;
   if (unsent > 0) {
-    let (next, rest) = __crypto_frame(plan, s, s.crypto_sent, unsent, room);
-    plan = next;
-    sent = s.crypto_sent + (unsent - rest) as i64;
+    let n: i32 = __crypto_fit(cur.plan.payload.len(), s.crypto_sent, unsent, room);
+    cur = cur.__crypto_planned(space, s.crypto_sent, n);
+    sent = s.crypto_sent + n as i64;
   }
-  return (Conn { ...c, spaces: c.spaces.with(space, Space { ...s, crypto_lost: kept, crypto_sent: sent }) }, plan);
+  return Conn { ...cur, spaces: cur.spaces.with(space, Space { ...cur.spaces[space], crypto_lost: kept, crypto_sent: sent }) };
 }
 
-// __crypto_frame adds as much of `len` CRYPTO bytes at `offset` as fits,
-// and answers how many did not.
-function __crypto_frame(p: Plan, s: Space, offset: i64, len: i32, room: i32): (Plan, i32) {
-  let free: i32 = room - p.payload.len() - 1 - frames.varint_len(offset) - 2;
+// __crypto_fit is how many of `len` CRYPTO bytes at `offset` fit after
+// `used` bytes of payload.
+function __crypto_fit(used: i32, offset: i64, len: i32, room: i32): i32 {
+  let free: i32 = room - used - 1 - frames.varint_len(offset) - 2;
   if (free <= 0) {
-    return (p, len);
+    return 0;
   }
-  let n: i32 = len;
-  if (n > free) {
-    n = free;
+  if (len > free) {
+    return free;
+  }
+  return len;
+}
+
+// __crypto_planned adds a CRYPTO frame of `n` bytes at `offset` to the plan.
+function (c: Conn) __crypto_planned(space: i32, offset: i64, n: i32): Conn {
+  if (n <= 0) {
+    return c;
   }
   let at: i32 = offset as i32;
-  let f: frames.Frame = frames.Crypto(offset, __copy(s.crypto_out[at:at + n]));
-  return (Plan { ...p, payload: p.payload.concat(frames.encode(f)), eliciting: true, resend: p.resend.append(recovery.CryptoRange(offset, n)) }, len - n);
+  let cur: Conn = c.__pushed(frames.Crypto(offset, __copy(c.spaces[space].crypto_out[at:at + n])));
+  return Conn { ...cur, plan: Plan { ...cur.plan, eliciting: true, resend: cur.plan.resend.append(recovery.CryptoRange(offset, n)) } };
 }
 
 // __control_out adds, in the application space, HANDSHAKE_DONE and the
 // pending control frames.
-function (c: Conn) __control_out(space: i32, p: Plan, room: i32): (Conn, Plan) {
+function (c: Conn) __control_out(space: i32, room: i32): Conn {
   if (space != recovery.APPLICATION) {
-    return (c, p);
+    return c;
   }
-  let plan: Plan = p;
   let cur: Conn = c;
   if (cur.handshake_done_pending) {
-    plan = Plan { ...plan, payload: frames.put(plan.payload, frames.HandshakeDone), eliciting: true, resend: plan.resend.append(recovery.Again(frames.HandshakeDone)) };
-    cur = Conn { ...cur, handshake_done_pending: false };
+    cur = Conn { ...cur, handshake_done_pending: false }.__planned(frames.HandshakeDone, true);
   }
+  if (cur.pending.len() == 0) {
+    return cur;
+  }
+  let pending: frames.Frame[] = cur.pending;
+  cur = Conn { ...cur, pending: [] };
   let kept: frames.Frame[] = [];
-  for f in cur.pending {
-    let bytes: u8[] = frames.encode(f);
-    if (plan.payload.len() + bytes.len() <= room) {
-      plan = Plan { ...plan, payload: plan.payload.concat(bytes), eliciting: true, resend: plan.resend.append(recovery.Again(f)) };
+  for f in pending {
+    if (cur.plan.payload.len() + frames.encode(f).len() <= room) {
+      cur = cur.__planned(f, true);
     } else {
       kept = kept.append(f);
     }
   }
-  return (Conn { ...cur, pending: kept }, plan);
+  return Conn { ...cur, pending: kept };
 }
 
 // __streams_out adds, in the application space once the handshake is
 // complete, what the streams have to send.
-function (c: Conn) __streams_out(space: i32, p: Plan, room: i32): (Conn, Plan) {
+function (c: Conn) __streams_out(space: i32, room: i32): Conn {
   if (space != recovery.APPLICATION || c.state != ESTABLISHED) {
-    return (c, p);
+    return c;
   }
-  let before: i32 = p.payload.len();
-  let (t, payload, resend) = c.streams.fill(p.payload, room);
-  let plan: Plan = Plan { ...p, payload: payload, eliciting: p.eliciting || payload.len() > before, resend: p.resend.concat(resend) };
-  return (Conn { ...c, streams: t }, plan);
+  let before: i32 = c.plan.payload.len();
+  let payload: u8[] = c.plan.payload;
+  let cur: Conn = Conn { ...c, plan: Plan { ...c.plan, payload: [] } };
+  cur = Conn { ...cur, streams: cur.streams.fill(payload, room) };
+  payload = cur.streams.filled;
+  let resend: recovery.Resend[] = cur.streams.resend;
+  cur = Conn { ...cur, streams: cur.streams.fill_taken() };
+  return Conn { ...cur, plan: Plan { ...cur.plan, payload: payload, eliciting: cur.plan.eliciting || payload.len() > before, resend: cur.plan.resend.concat(resend) } };
 }
 
 // __probe_out answers a probe timeout for this space (§6.2.4): if nothing
 // ack-eliciting is already planned, the oldest unacknowledged CRYPTO data
 // again, or a PING.
-function (c: Conn) __probe_out(space: i32, p: Plan): (Conn, Plan) {
+function (c: Conn) __probe_out(space: i32): Conn {
   if (!c.probes.contains(space)) {
-    return (c, p);
+    return c;
   }
   let cur: Conn = Conn { ...c, probes: __without(c.probes, space) };
-  if (p.eliciting) {
-    return (cur, p);
+  if (cur.plan.eliciting) {
+    return cur;
   }
-  for sent in c.recovery.unacked(space) {
+  for sent in cur.recovery.unacked(space) {
     for item in sent.resend {
       if let recovery.CryptoRange(offset, len) = item {
-        let (plan, _) = __crypto_frame(p, c.spaces[space], offset, len, c.config.max_datagram - 64);
-        if (plan.eliciting) {
-          return (cur, plan);
+        let n: i32 = __crypto_fit(cur.plan.payload.len(), offset, len, cur.config.max_datagram - 64);
+        if (n > 0) {
+          return cur.__crypto_planned(space, offset, n);
         }
       }
     }
   }
-  return (cur, Plan { ...p, payload: p.payload.concat(frames.encode(frames.Ping)), eliciting: true });
+  cur = cur.__pushed(frames.Ping);
+  return Conn { ...cur, plan: Plan { ...cur.plan, eliciting: true } };
 }
 
 // __seal protects each planned packet into one datagram, padding the last
 // when an Initial packet that must reach 1200 bytes is aboard, and records
 // each as sent.
-function (c: Conn) __seal(plans: Plan[], now: i64): (Conn, u8[]) {
+function (c: Conn) __seal(plans: Plan[], now: i64): Conn {
   let pad: boolean = __needs_padding(plans, c.server);
   let cur: Conn = c;
   let out: u8[] = [];
   let i: i32 = 0;
   while (i < plans.len()) {
     let plan: Plan = plans[i];
-    let (next, bytes) = cur.__seal_one(plan, now, 0);
+    let extra: i32 = 0;
+    let bytes: u8[] = cur.__sealed(plan, 0);
     if (pad && i == plans.len() - 1 && out.len() + bytes.len() < packet.MIN_INITIAL_DATAGRAM) {
-      let (padded, again) = cur.__seal_one(plan, now, packet.MIN_INITIAL_DATAGRAM - out.len() - bytes.len());
-      next = padded;
-      bytes = again;
+      extra = packet.MIN_INITIAL_DATAGRAM - out.len() - bytes.len();
+      bytes = cur.__sealed(plan, extra);
     }
-    cur = next;
-    out = out.concat(bytes);
+    if (bytes.len() > 0) {
+      cur = cur.__recorded(plan, now, bytes.len(), extra > 0);
+    }
+    if (out.len() == 0) {
+      out = bytes;
+    } else {
+      out = out.concat(bytes);
+    }
     i = i + 1;
   }
   if (!cur.server && __has_space(plans, recovery.HANDSHAKE)) {
     cur = cur.__discard(recovery.INITIAL);
   }
-  return (cur, out);
+  if (out.len() == 0) {
+    return cur;
+  }
+  return Conn { ...cur, out: cur.out.append(out), sent_bytes: cur.sent_bytes + out.len() as i64 };
 }
 
 function __needs_padding(plans: Plan[], server: boolean): boolean {
@@ -1616,58 +1687,62 @@ function __has_space(plans: Plan[], space: i32): boolean {
   return false;
 }
 
-// __seal_one seals one packet, `extra` bytes of PADDING added, and records
-// it with loss detection.
-function (c: Conn) __seal_one(p: Plan, now: i64, extra: i32): (Conn, u8[]) {
+// __sealed is one packet sealed, `extra` bytes of PADDING added; empty
+// when the space has no keys, or has used up what they may protect.
+function (c: Conn) __sealed(p: Plan, extra: i32): u8[] {
   let s: Space = c.spaces[p.space];
   let Some(keys) = s.send else {
-    return (c, []);
+    return [];
   };
   let used: i64 = s.next_pn;
   if (p.space == recovery.APPLICATION) {
     used = c.key_sent;
   }
   if (used >= __seal_limit(keys) || s.next_pn > frames.MAX_VARINT) {
-    return (c, []);
+    return [];
   }
   let payload: u8[] = p.payload;
   if (extra > 0) {
     payload = frames.put(payload, frames.Padding(extra));
   }
   let n: i32 = packet.pn_len(s.next_pn, 0 - 1 as i64);
-  let bytes: u8[] = [];
   if (p.space == recovery.APPLICATION) {
-    bytes = packet.seal_short(c.dcid, s.next_pn, n, c.key_phase, false, payload, keys);
-  } else {
-    let kind: packet.Kind = packet.Initial;
-    if (p.space == recovery.HANDSHAKE) {
-      kind = packet.Handshake;
-    }
-    let token: u8[] = [];
-    if (p.space == recovery.INITIAL) {
-      token = c.token;
-    }
-    bytes = packet.seal_long(packet.Long { kind: kind, dcid: c.dcid, scid: c.scid, token: token, pn: s.next_pn, pn_len: n }, payload, keys);
+    return packet.seal_short(c.dcid, s.next_pn, n, c.key_phase, false, payload, keys);
   }
-  let sent: recovery.Sent = recovery.Sent { pn: s.next_pn, at: now, size: bytes.len(), ack_eliciting: p.eliciting, in_flight: p.eliciting || extra > 0, resend: p.resend };
-  let r: recovery.Recovery = c.recovery.on_sent(p.space, sent);
+  let kind: packet.Kind = packet.Initial;
+  if (p.space == recovery.HANDSHAKE) {
+    kind = packet.Handshake;
+  }
+  let token: u8[] = [];
+  if (p.space == recovery.INITIAL) {
+    token = c.token;
+  }
+  return packet.seal_long(packet.Long { kind: kind, dcid: c.dcid, scid: c.scid, token: token, pn: s.next_pn, pn_len: n }, payload, keys);
+}
+
+// __recorded notes a sealed packet of `size` bytes with loss detection
+// and takes its packet number.
+function (c: Conn) __recorded(p: Plan, now: i64, size: i32, padded: boolean): Conn {
+  let pn: i64 = c.spaces[p.space].next_pn;
+  let sent: recovery.Sent = recovery.Sent { pn: pn, at: now, size: size, ack_eliciting: p.eliciting, in_flight: p.eliciting || padded, resend: p.resend };
   let sent_count: i64 = c.key_sent;
   if (p.space == recovery.APPLICATION) {
     sent_count = sent_count + 1;
   }
-  return (Conn { ...c, key_sent: sent_count, recovery: r, spaces: c.spaces.with(p.space, Space { ...s, next_pn: s.next_pn + 1 }) }, bytes);
+  let cur: Conn = Conn { ...c, key_sent: sent_count, recovery: c.recovery.on_sent(p.space, sent) };
+  return Conn { ...cur, spaces: cur.spaces.with(p.space, Space { ...cur.spaces[p.space], next_pn: pn + 1 }) };
 }
 
 // __close_datagram sends CONNECTION_CLOSE once per `close_pending`, in
 // every space with keys: before the handshake completes the peer may read
 // only some of them (§10.2.3). An application close is sent as a transport
 // APPLICATION_ERROR outside 1-RTT packets.
-function (c: Conn) __close_datagram(): (Conn, u8[]) {
+function (c: Conn) __close_datagram(): Conn {
   if (!c.close_pending) {
-    return (c, []);
+    return c;
   }
   let Some(why) = c.close else {
-    return (c, []);
+    return c;
   };
   let plans: Plan[] = [];
   let space: i32 = 0;
@@ -1678,8 +1753,7 @@ function (c: Conn) __close_datagram(): (Conn, u8[]) {
     }
     space = space + 1;
   }
-  let (sealed, bytes) = Conn { ...c, close_pending: false }.__seal(plans, 0 as i64);
-  return (sealed, bytes);
+  return Conn { ...c, close_pending: false }.__seal(plans, 0 as i64);
 }
 
 function __close_frame(why: Close, space: i32): frames.ConnectionClose {

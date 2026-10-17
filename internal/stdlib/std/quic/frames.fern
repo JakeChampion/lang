@@ -177,16 +177,17 @@ pub function put_varint_n(own out: u8[], v: i64, n: i32): u8[] {
   return out;
 }
 
-// read_varint is the integer at `at` and the offset after it, or None when
-// `buf` ends inside it.
-pub function read_varint(buf: [u8], at: i32): Option[(i64, i32)] {
+// varint_at is the integer at `at`, or -1 when `buf` ends inside it;
+// `varint_end` is the offset after it, from its first byte. Neither
+// allocates.
+pub function varint_at(buf: [u8], at: i32): i64 {
   if (at >= buf.len()) {
-    return None;
+    return 0 - 1 as i64;
   }
   let first: i32 = buf[at] as i32;
   let n: i32 = 1 << (first >> 6);
   if (at + n > buf.len()) {
-    return None;
+    return 0 - 1 as i64;
   }
   let v: i64 = (first & 63) as i64;
   let i: i32 = 1;
@@ -194,7 +195,13 @@ pub function read_varint(buf: [u8], at: i32): Option[(i64, i32)] {
     v = v << 8 | buf[at + i] as i64;
     i = i + 1;
   }
-  return Some((v, at + n));
+  return v;
+}
+
+// varint_end is the offset after the varint at `at`, which `varint_at`
+// has read.
+pub function varint_end(buf: [u8], at: i32): i32 {
+  return at + (1 << (buf[at] as i32 >> 6));
 }
 
 // === frames ================================================================
@@ -254,73 +261,60 @@ function __bad(kind: i64, reason: string): FrameError {
   return FrameError { code: FRAME_ENCODING_ERROR, frame_type: kind, reason: reason };
 }
 
-// Cursor — where the reading of one frame has got to.
-struct Cursor { buf: u8[], at: i32, kind: i64 }
+// Reading — one payload being read: the offset reached, the type of the
+// frame being read (for its error), the last integer and bytes read, the
+// frames so far, and the first error. Each read updates it in place, so a
+// frame costs its own box and nothing per field.
+struct Reading { buf: u8[], at: i32, kind: i64, n: i64, bytes: u8[], frames: Frame[], ok: boolean, failed: Option[FrameError] }
 
-function (c: Cursor) varint(what: string): Result[(i64, Cursor), FrameError] {
-  match (read_varint(c.buf, c.at)) {
-    Some(got) => {
-      return Ok((got.0, Cursor { ...c, at: got.1 }));
-    },
-    None => {
-      return Err(__bad(c.kind, what + " cut short"));
-    }
-  }
+function __reading(payload: u8[], at: i32): Reading {
+  return Reading { buf: payload, at: at, kind: 0, n: 0, bytes: [], frames: [], ok: true, failed: None };
 }
 
-function (c: Cursor) bytes(n: i64, what: string): Result[(u8[], Cursor), FrameError] {
-  if (n < 0 || n > (c.buf.len() - c.at) as i64) {
-    return Err(__bad(c.kind, what + " of " + n.to_string() + " bytes past the end of the packet"));
+function __fail(own r: Reading, reason: string): Reading {
+  return Reading { ...r, ok: false, failed: Some(__bad(r.kind, reason)) };
+}
+
+// __int reads the varint at the offset into `n`; after a failure the
+// reading stands, so the first error is the one reported.
+function __int(own r: Reading, what: string): Reading {
+  if (!r.ok) {
+    return r;
+  }
+  let v: i64 = varint_at(r.buf, r.at);
+  if (v < 0) {
+    return __fail(r, what + " cut short");
+  }
+  return Reading { ...r, at: varint_end(r.buf, r.at), n: v };
+}
+
+// __take copies `n` bytes at the offset into `bytes`.
+function __take(own r: Reading, n: i64, what: string): Reading {
+  if (!r.ok) {
+    return r;
+  }
+  if (n < 0 || n > (r.buf.len() - r.at) as i64) {
+    return __fail(r, what + " of " + n.to_string() + " bytes past the end of the packet");
   }
   let k: i32 = n as i32;
-  return Ok((__slice(c.buf, c.at, c.at + k), Cursor { ...c, at: c.at + k }));
+  return Reading { ...r, at: r.at + k, bytes: __slice(r.buf, r.at, r.at + k) };
+}
+
+function __done(own r: Reading, f: Frame): Reading {
+  return Reading { ...r, frames: r.frames.append(f) };
 }
 
 // read takes the frame at `at` in a packet's decrypted `payload`, and the
 // offset after it.
 pub function read(payload: u8[], at: i32): Result[(Frame, i32), FrameError] {
-  let c: Cursor = Cursor { buf: payload, at: at, kind: 0 };
-  let (kind, c1) = c.varint("frame type")?;
-  let cur: Cursor = Cursor { ...c1, kind: kind };
-  if (kind == PADDING) {
-    return Ok(__padding(cur, at));
+  let r: Reading = __frame(__reading(payload, at));
+  match (r.failed) {
+    Some(e) => {
+      return Err(e);
+    },
+    None => {}
   }
-  if (kind == PING) {
-    return Ok((Ping, cur.at));
-  }
-  if (kind == HANDSHAKE_DONE) {
-    return Ok((HandshakeDone, cur.at));
-  }
-  if (kind == ACK || kind == ACK_ECN) {
-    return __ack(cur);
-  }
-  return __carrying(cur);
-}
-
-// __padding takes a run of PADDING bytes as one frame.
-function __padding(c: Cursor, at: i32): (Frame, i32) {
-  let end: i32 = c.at;
-  while (end < c.buf.len() && c.buf[end] == 0) {
-    end = end + 1;
-  }
-  return (Padding(end - at), end);
-}
-
-// __carrying reads the frame types with fields beyond ACK's.
-function __carrying(c: Cursor): Result[(Frame, i32), FrameError] {
-  if (c.kind >= STREAM && c.kind <= 15) {
-    return __stream(c);
-  }
-  if (c.kind <= STOP_SENDING) {
-    return __stream_control(c);
-  }
-  if (c.kind <= NEW_TOKEN) {
-    return __handshake_data(c);
-  }
-  if (c.kind <= STREAMS_BLOCKED_UNI) {
-    return __limits(c);
-  }
-  return __rest(c);
+  return Ok((r.frames[0], r.at));
 }
 
 // read_all reads every frame of a packet's payload. A packet with no
@@ -329,205 +323,343 @@ pub function read_all(payload: u8[]): Result[Frame[], FrameError] {
   if (payload.len() == 0) {
     return Err(FrameError { code: PROTOCOL_VIOLATION, frame_type: 0, reason: "a packet with no frames" });
   }
-  let out: Frame[] = [];
-  let at: i32 = 0;
-  while (at < payload.len()) {
-    let (f, next) = read(payload, at)?;
-    out = out.append(f);
-    at = next;
+  let r: Reading = __reading(payload, 0);
+  while (r.ok && r.at < r.buf.len()) {
+    r = __frame(r);
   }
-  return Ok(out);
+  match (r.failed) {
+    Some(e) => {
+      return Err(e);
+    },
+    None => {}
+  }
+  return Ok(r.frames);
+}
+
+// __frame reads one frame at the offset.
+function __frame(own r: Reading): Reading {
+  let start: i32 = r.at;
+  r = __int(Reading { ...r, kind: 0 }, "frame type");
+  if (!r.ok) {
+    return r;
+  }
+  r = Reading { ...r, kind: r.n };
+  if (r.kind == PADDING) {
+    return __padding(r, start);
+  }
+  if (r.kind == PING) {
+    return __done(r, Ping);
+  }
+  if (r.kind == HANDSHAKE_DONE) {
+    return __done(r, HandshakeDone);
+  }
+  if (r.kind == ACK || r.kind == ACK_ECN) {
+    return __ack(r);
+  }
+  return __carrying(r);
+}
+
+// __padding takes a run of PADDING bytes as one frame.
+function __padding(own r: Reading, start: i32): Reading {
+  let end: i32 = r.at;
+  while (end < r.buf.len() && r.buf[end] == 0) {
+    end = end + 1;
+  }
+  return __done(Reading { ...r, at: end }, Padding(end - start));
+}
+
+// __carrying reads the frame types with fields beyond ACK's.
+function __carrying(own r: Reading): Reading {
+  if (r.kind >= STREAM && r.kind <= 15) {
+    return __stream(r);
+  }
+  if (r.kind <= STOP_SENDING) {
+    return __stream_control(r);
+  }
+  if (r.kind <= NEW_TOKEN) {
+    return __handshake_data(r);
+  }
+  if (r.kind <= STREAMS_BLOCKED_UNI) {
+    return __limits(r);
+  }
+  return __rest(r);
 }
 
 // __ack reads an ACK frame's ranges, each converted from the gap-and-length
 // form of §19.3.1 to absolute packet numbers; a range below zero is an error.
-function __ack(c: Cursor): Result[(Frame, i32), FrameError] {
-  let (largest, c1) = c.varint("largest acknowledged")?;
-  let (delay, c2) = c1.varint("ack delay")?;
-  let (count, c3) = c2.varint("ack range count")?;
-  let (first, c4) = c3.varint("first ack range")?;
-  if (first > largest) {
-    return Err(__bad(c.kind, "first ack range below packet 0"));
+function __ack(own r: Reading): Reading {
+  r = __int(r, "largest acknowledged");
+  let largest: i64 = r.n;
+  r = __int(r, "ack delay");
+  let delay: i64 = r.n;
+  r = __int(r, "ack range count");
+  let count: i64 = r.n;
+  r = __int(r, "first ack range");
+  let first: i64 = r.n;
+  if (!r.ok) {
+    return r;
   }
-  let (ranges, c5) = __ack_ranges(c4, count, [AckRange { low: largest - first, high: largest }])?;
-  let (ecn, c6) = __ecn(c5)?;
-  return Ok((AckFrame(Ack { delay: delay, ranges: ranges, ecn: ecn }), c6.at));
+  if (first > largest) {
+    return __fail(r, "first ack range below packet 0");
+  }
+  let (r1, ranges) = __ack_ranges(r, count, [AckRange { low: largest - first, high: largest }]);
+  let (r2, ecn) = __ecn(r1);
+  if (!r2.ok) {
+    return r2;
+  }
+  return __done(r2, AckFrame(Ack { delay: delay, ranges: ranges, ecn: ecn }));
 }
 
 // __ecn reads the ECN counts that end an ACK_ECN frame.
-function __ecn(c: Cursor): Result[(Option[Ecn], Cursor), FrameError] {
-  if (c.kind == ACK) {
-    return Ok((None, c));
+function __ecn(own r: Reading): (Reading, Option[Ecn]) {
+  if (!r.ok || r.kind == ACK) {
+    return (r, None);
   }
-  let (e0, a) = c.varint("ECT(0) count")?;
-  let (e1, b) = a.varint("ECT(1) count")?;
-  let (ce, d) = b.varint("ECN-CE count")?;
-  return Ok((Some(Ecn { ect0: e0, ect1: e1, ce: ce }), d));
+  r = __int(r, "ECT(0) count");
+  let e0: i64 = r.n;
+  r = __int(r, "ECT(1) count");
+  let e1: i64 = r.n;
+  r = __int(r, "ECN-CE count");
+  if (!r.ok) {
+    return (r, None);
+  }
+  let ce: i64 = r.n;
+  return (r, Some(Ecn { ect0: e0, ect1: e1, ce: ce }));
 }
 
 // __ack_ranges reads `count` more ranges below those in `ranges`.
-function __ack_ranges(c: Cursor, count: i64, ranges: AckRange[]): Result[(AckRange[], Cursor), FrameError] {
-  let out: AckRange[] = ranges;
-  let cur: Cursor = c;
+function __ack_ranges(own r: Reading, count: i64, own ranges: AckRange[]): (Reading, AckRange[]) {
   let i: i64 = 0;
   while (i < count) {
-    let (gap, g) = cur.varint("ack gap")?;
-    let (len, l) = g.varint("ack range length")?;
-    let high: i64 = out[out.len() - 1].low - gap - 2;
-    if (high < 0 || len > high) {
-      return Err(__bad(c.kind, "ack range below packet 0"));
+    r = __int(r, "ack gap");
+    let gap: i64 = r.n;
+    r = __int(r, "ack range length");
+    let len: i64 = r.n;
+    if (!r.ok) {
+      return (r, ranges);
     }
-    out = out.append(AckRange { low: high - len, high: high });
-    cur = l;
+    let high: i64 = ranges[ranges.len() - 1].low - gap - 2;
+    if (high < 0 || len > high) {
+      return (__fail(r, "ack range below packet 0"), ranges);
+    }
+    ranges = ranges.append(AckRange { low: high - len, high: high });
     i = i + 1;
   }
-  return Ok((out, cur));
+  return (r, ranges);
 }
 
-function __stream(c: Cursor): Result[(Frame, i32), FrameError] {
-  let (id, c1) = c.varint("stream id")?;
+function __stream(own r: Reading): Reading {
+  let kind: i64 = r.kind;
+  r = __int(r, "stream id");
+  let id: i64 = r.n;
   let offset: i64 = 0;
-  let cur: Cursor = c1;
-  if ((c.kind & 4) != 0) {
-    let (o, c2) = cur.varint("stream offset")?;
-    offset = o;
-    cur = c2;
+  if ((kind & 4) != 0) {
+    r = __int(r, "stream offset");
+    offset = r.n;
   }
-  let len: i64 = (c.buf.len() - cur.at) as i64;
-  if ((c.kind & 2) != 0) {
-    let (l, c3) = cur.varint("stream length")?;
-    len = l;
-    cur = c3;
+  let len: i64 = (r.buf.len() - r.at) as i64;
+  if ((kind & 2) != 0) {
+    r = __int(r, "stream length");
+    len = r.n;
+  }
+  if (!r.ok) {
+    return r;
   }
   if (offset + len > MAX_VARINT) {
-    return Err(FrameError { code: FRAME_ENCODING_ERROR, frame_type: c.kind, reason: "stream data past 2^62-1" });
+    return __fail(r, "stream data past 2^62-1");
   }
-  let (data, c4) = cur.bytes(len, "stream data")?;
-  return Ok((StreamFrame(StreamData { stream: id, offset: offset, data: data, fin: (c.kind & 1) != 0 }), c4.at));
+  r = __take(r, len, "stream data");
+  if (!r.ok) {
+    return r;
+  }
+  let data: u8[] = r.bytes;
+  return __done(r, StreamFrame(StreamData { stream: id, offset: offset, data: data, fin: (kind & 1) != 0 }));
 }
 
 // __stream_control reads RESET_STREAM and STOP_SENDING.
-function __stream_control(c: Cursor): Result[(Frame, i32), FrameError] {
-  let (id, a) = c.varint("stream id")?;
-  let (code, b) = a.varint("error code")?;
-  if (c.kind == STOP_SENDING) {
-    return Ok((StopSending(id, code), b.at));
+function __stream_control(own r: Reading): Reading {
+  r = __int(r, "stream id");
+  let id: i64 = r.n;
+  r = __int(r, "error code");
+  let code: i64 = r.n;
+  if (r.kind == STOP_SENDING) {
+    if (!r.ok) {
+      return r;
+    }
+    return __done(r, StopSending(id, code));
   }
-  let (size, d) = b.varint("final size")?;
-  return Ok((ResetStreamFrame(ResetStream { stream: id, code: code, final_size: size }), d.at));
+  r = __int(r, "final size");
+  if (!r.ok) {
+    return r;
+  }
+  let size: i64 = r.n;
+  return __done(r, ResetStreamFrame(ResetStream { stream: id, code: code, final_size: size }));
 }
 
 // __handshake_data reads CRYPTO and NEW_TOKEN.
-function __handshake_data(c: Cursor): Result[(Frame, i32), FrameError] {
-  if (c.kind == CRYPTO) {
-    let (offset, a) = c.varint("crypto offset")?;
-    let (len, b) = a.varint("crypto length")?;
-    if (offset + len > MAX_VARINT) {
-      return Err(__bad(c.kind, "crypto data past 2^62-1"));
+function __handshake_data(own r: Reading): Reading {
+  if (r.kind == CRYPTO) {
+    r = __int(r, "crypto offset");
+    let offset: i64 = r.n;
+    r = __int(r, "crypto length");
+    let len: i64 = r.n;
+    if (!r.ok) {
+      return r;
     }
-    let (data, d) = b.bytes(len, "crypto data")?;
-    return Ok((Crypto(offset, data), d.at));
+    if (offset + len > MAX_VARINT) {
+      return __fail(r, "crypto data past 2^62-1");
+    }
+    r = __take(r, len, "crypto data");
+    if (!r.ok) {
+      return r;
+    }
+    let data: u8[] = r.bytes;
+    return __done(r, Crypto(offset, data));
   }
-  let (len, a) = c.varint("token length")?;
-  if (len == 0) {
-    return Err(__bad(c.kind, "an empty NEW_TOKEN"));
+  r = __int(r, "token length");
+  if (!r.ok) {
+    return r;
   }
-  let (token, b) = a.bytes(len, "token")?;
-  return Ok((NewToken(token), b.at));
+  if (r.n == 0) {
+    return __fail(r, "an empty NEW_TOKEN");
+  }
+  let n: i64 = r.n;
+  r = __take(r, n, "token");
+  if (!r.ok) {
+    return r;
+  }
+  let token: u8[] = r.bytes;
+  return __done(r, NewToken(token));
 }
 
 // __limits reads the flow-control frame types MAX_DATA through
 // STREAMS_BLOCKED.
-function __limits(c: Cursor): Result[(Frame, i32), FrameError] {
-  let (v, a) = c.varint("value")?;
-  if (c.kind == MAX_DATA) {
-    return Ok((MaxData(v), a.at));
+function __limits(own r: Reading): Reading {
+  r = __int(r, "value");
+  if (!r.ok) {
+    return r;
   }
-  if (c.kind == DATA_BLOCKED) {
-    return Ok((DataBlocked(v), a.at));
+  let v: i64 = r.n;
+  if (r.kind == MAX_DATA) {
+    return __done(r, MaxData(v));
   }
-  if (c.kind == MAX_STREAM_DATA || c.kind == STREAM_DATA_BLOCKED) {
-    return __stream_limit(c, v, a);
+  if (r.kind == DATA_BLOCKED) {
+    return __done(r, DataBlocked(v));
   }
-  return __stream_count(c, v, a);
+  if (r.kind == MAX_STREAM_DATA || r.kind == STREAM_DATA_BLOCKED) {
+    return __stream_limit(r, v);
+  }
+  return __stream_count(r, v);
 }
 
-function __stream_limit(c: Cursor, id: i64, a: Cursor): Result[(Frame, i32), FrameError] {
-  let (w, b) = a.varint("value")?;
-  if (c.kind == MAX_STREAM_DATA) {
-    return Ok((MaxStreamData(id, w), b.at));
+function __stream_limit(own r: Reading, id: i64): Reading {
+  r = __int(r, "value");
+  if (!r.ok) {
+    return r;
   }
-  return Ok((StreamDataBlocked(id, w), b.at));
+  let w: i64 = r.n;
+  if (r.kind == MAX_STREAM_DATA) {
+    return __done(r, MaxStreamData(id, w));
+  }
+  return __done(r, StreamDataBlocked(id, w));
 }
 
 // __stream_count reads MAX_STREAMS and STREAMS_BLOCKED, whose count is at
 // most 2^60 (§19.11, §19.14).
-function __stream_count(c: Cursor, v: i64, a: Cursor): Result[(Frame, i32), FrameError] {
+function __stream_count(own r: Reading, v: i64): Reading {
   if (v > 1152921504606846976) {
-    return Err(__bad(c.kind, "a stream count over 2^60"));
+    return __fail(r, "a stream count over 2^60");
   }
-  let bidi: boolean = c.kind == MAX_STREAMS_BIDI || c.kind == STREAMS_BLOCKED_BIDI;
-  if (c.kind == MAX_STREAMS_BIDI || c.kind == MAX_STREAMS_UNI) {
-    return Ok((MaxStreams(bidi, v), a.at));
+  let bidi: boolean = r.kind == MAX_STREAMS_BIDI || r.kind == STREAMS_BLOCKED_BIDI;
+  if (r.kind == MAX_STREAMS_BIDI || r.kind == MAX_STREAMS_UNI) {
+    return __done(r, MaxStreams(bidi, v));
   }
-  return Ok((StreamsBlocked(bidi, v), a.at));
+  return __done(r, StreamsBlocked(bidi, v));
 }
 
 // __rest reads NEW_CONNECTION_ID through CONNECTION_CLOSE; any other type
 // is unknown, which no frame may be (§12.4).
-function __rest(c: Cursor): Result[(Frame, i32), FrameError] {
-  if (c.kind == NEW_CONNECTION_ID) {
-    return __new_connection_id(c);
+function __rest(own r: Reading): Reading {
+  if (r.kind == NEW_CONNECTION_ID) {
+    return __new_connection_id(r);
   }
-  if (c.kind == RETIRE_CONNECTION_ID) {
-    let (seq, a) = c.varint("sequence number")?;
-    return Ok((RetireConnectionId(seq), a.at));
+  if (r.kind == RETIRE_CONNECTION_ID) {
+    r = __int(r, "sequence number");
+    if (!r.ok) {
+      return r;
+    }
+    let seq: i64 = r.n;
+    return __done(r, RetireConnectionId(seq));
   }
-  if (c.kind == PATH_CHALLENGE || c.kind == PATH_RESPONSE) {
-    return __path(c);
+  if (r.kind == PATH_CHALLENGE || r.kind == PATH_RESPONSE) {
+    return __path(r);
   }
-  if (c.kind == CONNECTION_CLOSE || c.kind == CONNECTION_CLOSE_APP) {
-    return __close(c);
+  if (r.kind == CONNECTION_CLOSE || r.kind == CONNECTION_CLOSE_APP) {
+    return __close(r);
   }
-  return Err(__bad(c.kind, "unknown frame type"));
+  return __fail(r, "unknown frame type");
 }
 
-function __path(c: Cursor): Result[(Frame, i32), FrameError] {
-  let (data, a) = c.bytes(8 as i64, "path data")?;
-  if (c.kind == PATH_CHALLENGE) {
-    return Ok((PathChallenge(data), a.at));
+function __path(own r: Reading): Reading {
+  r = __take(r, 8 as i64, "path data");
+  if (!r.ok) {
+    return r;
   }
-  return Ok((PathResponse(data), a.at));
+  let data: u8[] = r.bytes;
+  if (r.kind == PATH_CHALLENGE) {
+    return __done(r, PathChallenge(data));
+  }
+  return __done(r, PathResponse(data));
 }
 
-function __close(c: Cursor): Result[(Frame, i32), FrameError] {
-  let (code, a) = c.varint("error code")?;
+function __close(own r: Reading): Reading {
+  r = __int(r, "error code");
+  let code: i64 = r.n;
   let frame_type: i64 = 0;
-  let cur: Cursor = a;
-  if (c.kind == CONNECTION_CLOSE) {
-    let (ft, b) = a.varint("frame type")?;
-    frame_type = ft;
-    cur = b;
+  if (r.kind == CONNECTION_CLOSE) {
+    r = __int(r, "frame type");
+    frame_type = r.n;
   }
-  let (len, d) = cur.varint("reason length")?;
-  let (reason, e) = d.bytes(len, "reason phrase")?;
-  return Ok((ConnectionCloseFrame(ConnectionClose { code: code, frame_type: frame_type, reason: utf8.from_bytes_lossy(reason), app: c.kind == CONNECTION_CLOSE_APP }), e.at));
+  r = __int(r, "reason length");
+  if (!r.ok) {
+    return r;
+  }
+  let len: i64 = r.n;
+  r = __take(r, len, "reason phrase");
+  if (!r.ok) {
+    return r;
+  }
+  let reason: string = utf8.from_bytes_lossy(r.bytes);
+  let app: boolean = r.kind == CONNECTION_CLOSE_APP;
+  return __done(r, ConnectionCloseFrame(ConnectionClose { code: code, frame_type: frame_type, reason: reason, app: app }));
 }
 
-function __new_connection_id(c: Cursor): Result[(Frame, i32), FrameError] {
-  let (seq, a) = c.varint("sequence number")?;
-  let (prior, b) = a.varint("retire prior to")?;
+function __new_connection_id(own r: Reading): Reading {
+  r = __int(r, "sequence number");
+  let seq: i64 = r.n;
+  r = __int(r, "retire prior to");
+  let prior: i64 = r.n;
+  if (!r.ok) {
+    return r;
+  }
   if (prior > seq) {
-    return Err(__bad(c.kind, "retire prior to " + prior.to_string() + " past sequence number " + seq.to_string()));
+    return __fail(r, "retire prior to " + prior.to_string() + " past sequence number " + seq.to_string());
   }
-  let (len, d) = b.bytes(1 as i64, "connection id length")?;
-  let n: i64 = len[0] as i64;
+  if (r.at >= r.buf.len()) {
+    return __fail(r, "connection id length cut short");
+  }
+  let n: i64 = r.buf[r.at] as i64;
   if (n < 1 || n > 20) {
-    return Err(__bad(c.kind, "a connection id of " + n.to_string() + " bytes"));
+    return __fail(r, "a connection id of " + n.to_string() + " bytes");
   }
-  let (id, e) = d.bytes(n, "connection id")?;
-  let (token, f) = e.bytes(16 as i64, "stateless reset token")?;
-  return Ok((NewConnectionIdFrame(NewConnectionId { sequence: seq, retire_prior_to: prior, id: id, reset_token: token }), f.at));
+  r = __take(Reading { ...r, at: r.at + 1 }, n, "connection id");
+  let id: u8[] = r.bytes;
+  r = __take(r, 16 as i64, "stateless reset token");
+  if (!r.ok) {
+    return r;
+  }
+  let token: u8[] = r.bytes;
+  return __done(r, NewConnectionIdFrame(NewConnectionId { sequence: seq, retire_prior_to: prior, id: id, reset_token: token }));
 }
 
 // === encoding ==============================================================

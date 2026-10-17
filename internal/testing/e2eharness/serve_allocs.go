@@ -231,7 +231,9 @@ function request(path: string): HttpRequest {
 struct Cli { c: h3q.Conn, sock: i32, peer: net.SocketAddr, buf: u8[] }
 
 function pump(k: Cli, ms: i32): Cli {
-  let (c2, out) = k.c.transmit(now());
+  let c2: h3q.Conn = k.c.transmit(now());
+  let out: u8[][] = c2.datagrams();
+  c2 = c2.sent();
   let c: h3q.Conn = c2;
   for d in out {
     let r: Result[i32, net.NetError] = net.send_to(k.sock, d, k.peer);
@@ -264,7 +266,8 @@ function get(k0: Cli, path: string): (Cli, string) {
   let started: i64 = now();
   while (now() - started < 30000000000) {
     k = pump(k, 10);
-    let (c, evs) = k.c.take_events();
+    let evs: h3q.Event[] = k.c.events;
+    let c: h3q.Conn = k.c.events_taken();
     k = Cli { ...k, c: c };
     for e in evs {
       match (e) {
@@ -345,7 +348,9 @@ function main(): i32 {
     return 1;
   }
   print("allocs " + (c2 - c1 - (c1 - c0)).to_string() + " " + seconds.to_string());
-  let (closed, out) = k.c.close(now()).transmit(now());
+  let closed: h3q.Conn = k.c.close(now()).transmit(now());
+  let out: u8[][] = closed.datagrams();
+  closed = closed.sent();
   for d in out {
     let r: Result[i32, net.NetError] = net.send_to(sock, d, peer);
   }

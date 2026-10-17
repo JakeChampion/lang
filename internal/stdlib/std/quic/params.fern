@@ -125,25 +125,18 @@ pub function decode(bytes: [u8], from_server: boolean): Result[Params, frames.Fr
 }
 
 function __varint(bytes: [u8], at: i32, what: string): Result[(i64, i32), frames.FrameError] {
-  match (frames.read_varint(bytes, at)) {
-    Some(got) => {
-      return Ok(got);
-    },
-    None => {
-      return Err(__bad(what + " cut short"));
-    }
+  let v: i64 = frames.varint_at(bytes, at);
+  if (v < 0) {
+    return Err(__bad(what + " cut short"));
   }
+  return Ok((v, frames.varint_end(bytes, at)));
 }
 
 // __int is a parameter whose value is one integer filling it exactly.
 function __int(v: [u8], id: i64): Result[i64, frames.FrameError] {
-  match (frames.read_varint(v, 0)) {
-    Some(got) => {
-      if (got.1 == v.len()) {
-        return Ok(got.0);
-      }
-    },
-    None => {}
+  let n: i64 = frames.varint_at(v, 0);
+  if (n >= 0 && frames.varint_end(v, 0) == v.len()) {
+    return Ok(n);
   }
   return Err(__bad("parameter " + id.to_string() + " is not one integer"));
 }

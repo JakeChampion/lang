@@ -207,13 +207,33 @@ pub function frame(t: ContentType, legacy_version: i32, data: [u8]): u8[] {
 }
 
 // Protection — one direction's record protection: the suite, the traffic
-// key and IV, and the sequence number of the next record.
-pub struct Protection { suite: keyschedule.CipherSuite, key: u8[], iv: u8[], seq: u64 }
+// key and IV, the sequence number of the next record, and under an AES
+// suite the key prepared once for every record.
+pub struct Protection { suite: keyschedule.CipherSuite, key: u8[], iv: u8[], seq: u64, gcm: Option[aes_gcm.Key] }
 
 // protection is the state for the first record under a traffic secret.
 pub function protection(suite: keyschedule.CipherSuite, traffic_secret: [u8]): Protection {
   let k: keyschedule.TrafficKeys = keyschedule.traffic_keys(suite, traffic_secret);
-  return Protection { suite: suite, key: k.key, iv: k.iv, seq: 0 as u64 };
+  return Protection { suite: suite, key: k.key, iv: k.iv, seq: 0 as u64, gcm: __gcm(suite, k.key) };
+}
+
+// __gcm is the AEAD key prepared under an AES suite, None under ChaCha20
+// or a key of the wrong length, which `__advance` refuses.
+function __gcm(suite: keyschedule.CipherSuite, key: [u8]): Option[aes_gcm.Key] {
+  match (suite.aead()) {
+    keyschedule.ChaCha20Poly1305 => {
+      return None;
+    },
+    _ => {}
+  }
+  match (aes_gcm.key(key)) {
+    Ok(k) => {
+      return Some(k);
+    },
+    Err(_) => {
+      return None;
+    }
+  }
 }
 
 // kernel_info is the protection as Linux's TLS record layer takes it for one
@@ -268,80 +288,70 @@ function __nonce(p: Protection): u8[] {
 function __seal(p: Protection, plaintext: [u8], aad: [u8]): Result[u8[], RecordError] {
   match (p.suite.aead()) {
     keyschedule.Aes128Gcm | keyschedule.Aes256Gcm => {
-      match (aes_gcm.seal(p.key, __nonce(p), plaintext, aad)) {
-        Ok(sealed) => {
-          return Ok(sealed);
-        },
-        Err(e) => {
-          return Err(__gcm_error(p, e));
-        }
-      }
+      let Some(g) = p.gcm else {
+        return Err(BadKeys(p.key.len(), p.iv.len()));
+      };
+      return __gcm_sealed(p, g.seal(__nonce(p), plaintext, aad));
     },
     keyschedule.ChaCha20Poly1305 => {
-      match (chacha20poly1305.seal(p.key, __nonce(p), plaintext, aad)) {
-        Ok(sealed) => {
-          return Ok(sealed);
-        },
-        Err(e) => {
-          return Err(__chacha_error(p, e));
-        }
-      }
+      return __chacha_sealed(p, chacha20poly1305.seal(p.key, __nonce(p), plaintext, aad));
     }
   }
   return Err(BadKeys(p.key.len(), p.iv.len()));
 }
 
-function __gcm_error(p: Protection, e: aes_gcm.AeadError): RecordError {
-  match (e) {
-    aes_gcm.KeyLength(n) => {
-      return BadKeys(n, p.iv.len());
+function __gcm_sealed(p: Protection, r: Result[u8[], aes_gcm.AeadError]): Result[u8[], RecordError] {
+  match (r) {
+    Ok(sealed) => {
+      return Ok(sealed);
     },
-    aes_gcm.NonceLength(n) => {
-      return BadKeys(p.key.len(), n);
+    Err(aes_gcm.KeyLength(n)) => {
+      return Err(BadKeys(n, p.iv.len()));
     },
-    aes_gcm.Forged => {
-      return BadRecordMac;
+    Err(aes_gcm.NonceLength(n)) => {
+      return Err(BadKeys(p.key.len(), n));
+    },
+    Err(aes_gcm.Forged()) => {
+      return Err(BadRecordMac);
     }
   }
-  return BadRecordMac;
+  return Err(BadRecordMac);
 }
 
-function __chacha_error(p: Protection, e: chacha20poly1305.AeadError): RecordError {
-  match (e) {
-    chacha20poly1305.KeyLength(n) => {
-      return BadKeys(n, p.iv.len());
+function __chacha_sealed(p: Protection, r: Result[u8[], chacha20poly1305.AeadError]): Result[u8[], RecordError] {
+  match (r) {
+    Ok(sealed) => {
+      return Ok(sealed);
     },
-    chacha20poly1305.NonceLength(n) => {
-      return BadKeys(p.key.len(), n);
+    Err(chacha20poly1305.KeyLength(n)) => {
+      return Err(BadKeys(n, p.iv.len()));
     },
-    chacha20poly1305.Forged => {
-      return BadRecordMac;
+    Err(chacha20poly1305.NonceLength(n)) => {
+      return Err(BadKeys(p.key.len(), n));
+    },
+    Err(chacha20poly1305.Forged()) => {
+      return Err(BadRecordMac);
     }
   }
-  return BadRecordMac;
+  return Err(BadRecordMac);
 }
 
 function __open(p: Protection, sealed: [u8], aad: [u8]): Result[u8[], RecordError] {
   match (p.suite.aead()) {
     keyschedule.Aes128Gcm | keyschedule.Aes256Gcm => {
-      match (aes_gcm.open(p.key, __nonce(p), sealed, aad)) {
-        Ok(inner) => {
-          return Ok(inner);
-        },
-        Err(e) => {
-          return Err(BadRecordMac);
-        }
-      }
+      let Some(g) = p.gcm else {
+        return Err(BadKeys(p.key.len(), p.iv.len()));
+      };
+      let Ok(inner) = g.open(__nonce(p), sealed, aad) else {
+        return Err(BadRecordMac);
+      };
+      return Ok(inner);
     },
     keyschedule.ChaCha20Poly1305 => {
-      match (chacha20poly1305.open(p.key, __nonce(p), sealed, aad)) {
-        Ok(inner) => {
-          return Ok(inner);
-        },
-        Err(e) => {
-          return Err(BadRecordMac);
-        }
-      }
+      let Ok(inner) = chacha20poly1305.open(p.key, __nonce(p), sealed, aad) else {
+        return Err(BadRecordMac);
+      };
+      return Ok(inner);
     }
   }
   return Err(BadRecordMac);

@@ -19,7 +19,9 @@ function now(): i64 {
 }
 
 function pump(c: h3q.Conn, sock: i32, peer: net.SocketAddr): h3q.Conn {
-  let (c2, out) = c.transmit(now());
+  let c2: h3q.Conn = c.transmit(now());
+  let out: u8[][] = c2.datagrams();
+  c2 = c2.sent();
   for d in out {
     let r: Result[i32, net.NetError] = net.send_to(sock, d, peer);
   }
@@ -73,7 +75,8 @@ function shown(resp: HttpResponse): string {
 // stepped sends the next request once the last is answered, reports each
 // response, and closes after the last.
 function stepped(c: h3q.Conn, f: Fetches): (h3q.Conn, Fetches) {
-  let (cur, evs) = c.take_events();
+  let evs: h3q.Event[] = c.events;
+  let cur: h3q.Conn = c.events_taken();
   let next: Fetches = noted(evs, f);
   if (!cur.ready() || next.owed > 0 || next.closing) {
     return (cur, next);

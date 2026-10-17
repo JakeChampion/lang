@@ -193,18 +193,35 @@ Each is a bound with a test that crosses it.
       datagrams. 632 to 421 allocations per request; with 32 requests in
       flight on one connection, 34,698 to 114,057 responses per second on
       one worker.
-    - **The wire.** `std/quic/frames` reads each varint through a cursor
-      record and a result; `std/quic/packet` copies the connection IDs out
-      of every header. Scalar readers and views.
-    - **Packet protection.** `std/crypto/aes_gcm` expands the key and
-      derives the GHASH key on every seal and open, and builds the
-      counter, lengths and tag blocks fresh: a prepared key kept in
-      `packet.Keys` (and `std/tls/record`'s `Protection`), then the GCM
-      temporaries folded into the kernels.
-    - **The connection's plans** (`conn.__plan`, `__seal`) and the HTTP/3
-      session's request path (`h3`, `qpack`, `h3q`): fields written
-      straight into the encoder as HTTP/2 does, the request handed over
-      without the partial copied.
+    - **The wire (landed).** `std/quic/frames` read each varint through a
+      cursor record and a result, and `std/quic/packet` each header field
+      through a reader record. A varint is now a scalar read
+      (`frames.varint_at`, `varint_end`), a payload is read through one
+      record updated in place, and a header's fields are read by offset.
+      421 to 385 allocations per request.
+    - **Packet protection (first part landed).** `std/crypto/aes_gcm`
+      expanded the key and derived the GHASH key on every seal and open.
+      `aes_gcm.key` prepares both once and `packet.Keys` and
+      `std/tls/record`'s `Protection` keep it, two allocations fewer per
+      AEAD operation. What remains per operation is the counter, lengths
+      and tag blocks and the three GHASH results, which a fused kernel
+      would fold into one, and the zero block, which #12499 (a constant
+      array allocates per use) would make free.
+    - **Records handed back bare (landed).** A record returned inside a
+      Result or a tuple is copied on the way out (#12501). The stream
+      table, the connection's steps (`receive`, `tick`, `transmit`), the
+      datagram planner, QPACK's decoder and the HTTP/3 session now hand
+      themselves back with their outcome in fields, and the serve loop
+      steps each connection inside the construction that stores it back.
+      Huffman decoding goes four bits at a time through a state table.
+      383 to 308 allocations per request; 118,646 to 145,400 responses
+      per second.
+    - **What remains per request**, by the x86-64 trace: packet receive
+      and AEAD open, the HTTP/3 request path (each request record bound
+      before it is rebuilt, a field section's partial copied), the AEAD
+      blocks a fused kernel would fold, and `concat`, which builds its
+      result an element at a time; a runtime kernel sizing it once is a
+      compiler change that every program gains from.
     - **The socket.** `sendmmsg`, UDP GSO and GRO, ECN: new builtins, so
       four classifications each, reported Unsupported on Darwin and WASI.
 
