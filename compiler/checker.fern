@@ -13078,6 +13078,21 @@ function dupvar_stmt_own_lambdas(st: ast.Stmt): util.Diag[] {
 // `let x = []` whose empty-array initializer can't infer an element type.
 // A literal's RANGE is judged where its type settles instead — off the
 // destination type (int_dest_range_diags), not off the annotation's spelling.
+function duplicate_var_diag(stmts: ast.Stmt[], v: ast.StmtVar): util.Diag {
+  let d: util.Diag = dg_at("E013", "variable \"" + v.name + "\" already declared in this scope", v.line, v.col);
+  for stmt in stmts {
+    if let ast.StmtVar(prior) = stmt {
+      if (prior.line == v.line && prior.col == v.col) {
+        return d;
+      }
+      if (prior.name == v.name && prior.line > 0) {
+        d = util.Diag { ...d, related: [util.Related { line: prior.line, col: prior.col, length: 0, message: "previous declaration is here" }] };
+      }
+    }
+  }
+  return d;
+}
+
 function dupvar_diags(stmts: ast.Stmt[]): util.Diag[] {
   let out: util.Diag[] = [];
   let declared: string[] = [];
@@ -13085,7 +13100,7 @@ function dupvar_diags(stmts: ast.Stmt[]): util.Diag[] {
     match (stmt) {
       ast.StmtVar(v) => {
         if (util.has_str(declared, v.name)) {
-          out = out.append(dg_at("E013", "variable \"" + v.name + "\" already declared in this scope", v.line, v.col));
+          out = out.append(duplicate_var_diag(stmts, v));
         } else {
           declared = declared.append(v.name);
         }
@@ -17860,7 +17875,7 @@ function dg(code: string, message: string): util.Diag {
 }
 
 function dg_at(code: string, message: string, line: i32, col: i32): util.Diag {
-  return util.Diag { code: code, message: util.show_type_vars(message), line: line, col: col, fix: None };
+  return util.Diag { related: [], code: code, message: util.show_type_vars(message), line: line, col: col, fix: None };
 }
 
 // with_fix is `d` fixed by respelling `old`, written at `line`, `col`, as `to`,
