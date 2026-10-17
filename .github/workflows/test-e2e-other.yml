@@ -66,12 +66,14 @@ jobs:
         include:
           # The aarch64 leg was one shard of 9.9-12.2 minutes in two workers,
           # the longest job outside the self-host lane (docs/CI-PERFORMANCE.md).
-          # x86_64 is three shards: at two, each worker of a shard ran 24-25
-          # of its 25 minutes, and the interpreter's tls_verify suite (over
-          # three minutes alone) tipped one over.
-          - { runner: ubuntu-latest,    host: x86_64,  nshard: 3, shard: 0 }
-          - { runner: ubuntu-latest,    host: x86_64,  nshard: 3, shard: 1 }
-          - { runner: ubuntu-latest,    host: x86_64,  nshard: 3, shard: 2 }
+          # Four x86_64 shards keep the catch-all within its unchanged 25m
+          # worker budget. With three, run 39034198170's shard2 reached
+          # 25m while its other worker finished at 16m22s; the tests still
+          # active at the alarm had run for only 0-4s.
+          - { runner: ubuntu-latest,    host: x86_64,  nshard: 4, shard: 0 }
+          - { runner: ubuntu-latest,    host: x86_64,  nshard: 4, shard: 1 }
+          - { runner: ubuntu-latest,    host: x86_64,  nshard: 4, shard: 2 }
+          - { runner: ubuntu-latest,    host: x86_64,  nshard: 4, shard: 3 }
           - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 0 }
           - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 1 }
     name: test-e2e-other-${{ matrix.host }}-shard${{ matrix.shard }}
@@ -109,9 +111,9 @@ jobs:
         # this package's arm64 selection), each with half the runner's CPUs.
         # Process isolation is what the package needs — tests here mutate
         # compiler globals, so `t.Parallel` is not an option — and one serial
-        # test process leaves most of a four-core runner idle. That is why the
-        # aarch64 leg stays ONE shard: the workers take it from ~15 to ~9
-        # minutes without spending a second runner slot on job setup.
+        # test process leaves most of a four-core runner idle. Each
+        # architecture keeps two workers per shard; the matrix above
+        # controls how many disjoint selections share that work.
         #
         # The partition is scripts/shard-tests, the same greedy LPT the
         # self-host lane uses — it reads names on stdin and is not specific to
