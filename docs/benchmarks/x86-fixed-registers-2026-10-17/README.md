@@ -1,6 +1,7 @@
 # x86 SSA fixed-register constraints
 
-Source `99285a95357849b6d2db317f71cdc9df012bf228` adds `rcx`, `rdx` and
+The initial comparison uses source
+`99285a95357849b6d2db317f71cdc9df012bf228`, which adds `rcx`, `rdx` and
 `r11` to the caller pool. The six argument registers remain a separate ABI
 constant. Saved-register and floating-register indices move with the pool.
 No target CPU requirement changes.
@@ -99,3 +100,55 @@ constraint, inventory and complexity checks pass in 49.398 seconds. All eleven
 strict driver-size checks pass with complete coverage and the unchanged 5%
 tolerance (90.896 seconds). The CI lane-coverage check passes too (1.222
 seconds). Raw size results are archived in this directory.
+
+The subsequent direct-read audit is source
+`663625d2e1aa3f5225a7d3eef18ba7fa22fde6eb`, including the existing #12590 ARM
+helper fix. It also permits homes across field loads, array reads, and constant
+string reads. Field and constant-array reads reserve `r11`; variable-array reads
+also reserve `rcx`; constant-string reads also reserve `rdx`. Variable-string
+reads, stores, and the other unaudited paths retain the full reservation.
+Functions with memory operations remain ineligible to borrow `r11`.
+
+Ten additional record/array/string cases execute both nine- and twenty-value
+pressure in GNU-linked assembly, native output, and sanitized output, with two
+argument counts. The record case pins both `rcx` and `rdx` as product homes
+across its reads; the larger cases require real spills. The combined focused
+suite passes in 30.965 seconds. All eleven strict size checks pass in 77.090
+seconds. The matching stage-2/stage-3 image is 12,703,936 bytes, SHA-256
+`b69e61b2190fccac49e80b8d1bc596994c608a6c6770a0f4f138a1ef8f8133ad`.
+`read-policy-scope.json` records individual source hashes.
+
+The fresh comparison uses scalar baseline
+`a0cd57950240bd9c171e7a7de7113972581c40e2d574e233834212b2da1d2013`
+and pins all processes to CPU 0 on an otherwise idle local host. Hardware
+SHA-256 remains essentially unchanged; software SHA-256 uses 380,850,070 versus
+376,655,752 instructions and its 21-pair native median ratio is 0.9310.
+The pure nine-value benchmark remains slower (1.1087). Seven alternating
+whole-compiler pairs have median ratio 0.9942, with individual ratios from
+0.9424 to 1.1043; no whole-compiler elapsed-time improvement is claimed.
+
+`nine-live-record.fern` isolates the additional read policy. The scalar baseline
+and arithmetic-only compiler emit identical native binaries. The read policy
+removes their two frame references and reduces saved-register pushes from five
+to four. Across twenty million calls, Cachegrind counts 940,001,438 instructions
+for the baseline, 940,001,450 for arithmetic-only, and 780,001,420 for reads
+(about 17% fewer). All print `4339612313273984`. Fifteen alternating native
+triples have median read/baseline ratio 0.9223 and read/arithmetic ratio 0.9297.
+These observations support the additional read cases. The pure multiplication
+counterexample remains a measured tradeoff.
+
+Reproduce the read-policy comparison on an idle host with:
+
+```sh
+python3 docs/benchmarks/x86-fixed-registers-2026-10-17/measure-reads.py \
+  /absolute/path/to/scalar-baseline /absolute/path/to/arithmetic-only \
+  /absolute/path/to/read-policy . /tmp/read-results
+```
+
+Set `FERN_BENCH_CPU=0` for the general `reproduce.py` comparison to pin it too.
+Raw results for this source use the `read-policy-` filename prefix.
+
+The final broad x86 semantic/SSA/float/call/division/shift/scalar integration
+suite passes in 58.702 seconds. An explicit run of all six added debug corpus
+entries on the three native targets passes in 1.938 seconds; CI test-lane
+coverage passes in 1.276 seconds.

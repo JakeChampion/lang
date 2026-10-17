@@ -2,6 +2,7 @@
 """Run on an idle host: reproduce.py BASELINE CANDIDATE ROOT OUTPUT."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import platform
 import re
@@ -12,6 +13,8 @@ import sys
 import time
 
 baseline, candidate, root, out = map(lambda x: Path(x).resolve(), sys.argv[1:])
+if "FERN_BENCH_CPU" in os.environ:
+    os.sched_setaffinity(0, {int(os.environ["FERN_BENCH_CPU"])})
 out.mkdir(parents=True, exist_ok=True)
 input_file = out / "input"
 input_file.write_bytes(bytes(range(256)) * 32768)
@@ -24,7 +27,9 @@ assert text.count("if (!__sha256_hw()) {") == 1
 crypto.write_text(text.replace("if (!__sha256_hw()) {", "if (true) {"))
 compilers = {"baseline": baseline, "candidate": candidate}
 result = {
+    "source_head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
     "host": platform.platform(),
+    "cpu_affinity": sorted(os.sched_getaffinity(0)),
     "valgrind": subprocess.check_output(["valgrind", "--version"], text=True).strip(),
     "compiler_sha256": {
         name: hashlib.sha256(path.read_bytes()).hexdigest()
