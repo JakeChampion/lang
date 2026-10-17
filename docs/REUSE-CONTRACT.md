@@ -315,6 +315,24 @@ the nine `emitAliasInc` call sites is gated on `moveSites`
 
 ## Known gaps (deliberate, tracked)
 
+- **A step through a field or an element must be nested in the
+  construction that writes it back** (#12501). Measured on 2026-10-16
+  with `__heap_alloc_count` over a connection-shaped record (an outer
+  record holding an array of inner records that hold a table of
+  records): `q.conns.with(i, q.conns[i].step())` and
+  `Conn { ...c, streams: c.streams.step() }` update the inner records in
+  place; binding the element or the field first (`let x = q.conns[i];
+  x.step()`), binding the call's result before writing it back, or
+  taking the result out of a tuple, a `Result` or a wrapper record,
+  copies the inner record with its arrays and retains and releases
+  every element. The same holds for `let Ok(y) = f() else` (moves) against
+  `match (f()) { Ok(y) => … }` (copies) on a plain local. Until the
+  planner takes payloads from a dying call result, a record that must
+  update in place hands itself back bare, its outcome in fields, and is
+  stepped inside the construction that stores it; `std/quic/streams`,
+  `std/quic/conn`, `std/http/h3q` and the HTTP/3 half of `std/serve` are
+  written that way.
+
 - **5f** — cross-local reuse through aliases needs the alias
   analysis the borrow model postponed.
 - **5g** — string reuse is hard-blocked on the SSO native flip.

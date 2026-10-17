@@ -206,7 +206,8 @@ function summary(method: string, resp: HttpResponse): string {
 struct Asked { reqs: HttpRequest[], ids: i64[], answers: string[], got: i32, sent: boolean }
 
 function asked(c: h3q.Conn, a: Asked): (h3q.Conn, Asked) {
-  let (cur, evs) = c.take_events();
+  let evs: h3q.Event[] = c.events;
+  let cur: h3q.Conn = c.events_taken();
   let next: Asked = a;
   for e in evs {
     match (e) {
@@ -267,7 +268,9 @@ function main(): i32 {
   let buf: u8[] = __alloc_u8(65536);
   let started: i64 = now();
   while (a.got < reqs.len() && !c.done() && now() - started < 60000000000) {
-    let (c2, out) = c.transmit(now());
+    let c2: h3q.Conn = c.transmit(now());
+    let out: u8[][] = c2.datagrams();
+    c2 = c2.sent();
     c = c2;
     for d in out {
       let r: Result[i32, net.NetError] = net.send_to(sock, d, peer);
@@ -295,7 +298,9 @@ function main(): i32 {
   for line in a.answers {
     print(line);
   }
-  let (closed, out) = c.close(now()).transmit(now());
+  let closed: h3q.Conn = c.close(now()).transmit(now());
+  let out: u8[][] = closed.datagrams();
+  closed = closed.sent();
   for d in out {
     let r: Result[i32, net.NetError] = net.send_to(sock, d, peer);
   }

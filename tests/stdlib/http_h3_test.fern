@@ -27,8 +27,14 @@ function flow(p: Link): Link {
   let cur: Link = p;
   let rounds: i32 = 0;
   while (rounds < 20) {
-    let (c, cacts, cevs) = cur.c.take();
-    let (s, sacts, sevs) = cur.s.take();
+    let step1: h3.Session = cur.c;
+    let cacts: h3.Action[] = step1.actions;
+    let cevs: h3.Event[] = step1.events;
+    let c: h3.Session = step1.taken();
+    let step2: h3.Session = cur.s;
+    let sacts: h3.Action[] = step2.actions;
+    let sevs: h3.Event[] = step2.events;
+    let s: h3.Session = step2.taken();
     cur = Link { ...cur, c: c, s: s, log: cur.log + noted("client", cevs) + noted("server", sevs) };
     if (cacts.len() == 0 && sacts.len() == 0) {
       return cur;
@@ -223,7 +229,8 @@ function test_connection_errors(): test.TestOutcome {
   out = out + closes(p.s.on_stream(6 as i64, [], true));
   out = out + closes(p.s.on_stream(18 as i64, hex.hex_decode("01"), false));
   out = out + closes(p.s.on_stream(22 as i64, hex.hex_decode("21"), false));
-  let (_, cacts, _) = p.c.send_headers(4 as i64, get("/g"), true).take();
+  let step3: h3.Session = p.c.send_headers(4 as i64, get("/g"), true);
+  let cacts: h3.Action[] = step3.actions;
   let request: u8[] = [];
   for a in cacts {
     if let h3.Write(id, bytes, _) = a {
@@ -232,13 +239,15 @@ function test_connection_errors(): test.TestOutcome {
       }
     }
   }
-  let (_, _, evs) = p.s.on_stream(4 as i64, hex.hex_decode("2103abcdef").concat(request), true).take();
+  let step4: h3.Session = p.s.on_stream(4 as i64, hex.hex_decode("2103abcdef").concat(request), true);
+  let evs: h3.Event[] = step4.events;
   return test.assert_eq(out + "| " + noted("server", evs), "261 DATA outside a message's body; 266 the control stream did not open with SETTINGS; 259 a second critical stream of one type; 265 a repeated setting, or one of HTTP/2's; 260 a critical stream ended; 259 a push stream from a client; stop 22 259; | server headers 4 [:method=GET :scheme=https :authority=example.com :path=/g ]; server end 4; ");
 }
 
 // closes is how a session ended, or the stream it stopped.
 function closes(s: h3.Session): string {
-  let (_, acts, _) = s.take();
+  let step5: h3.Session = s;
+  let acts: h3.Action[] = step5.actions;
   for a in acts {
     match (a) {
       h3.CloseConnection(code, why) => {
@@ -265,12 +274,18 @@ function test_goaway(): test.TestOutcome {
 // not yet delivered waits for them, then arrives whole.
 function test_qpack_blocked(): test.TestOutcome {
   let s: h3.Session = h3.server(h3.config()).start(3 as i64, 7 as i64, 11 as i64);
-  let (s0, _, _) = s.take();
+  let step6: h3.Session = s;
+  let s0: h3.Session = step6.taken();
   let section: string = "03811011d1d7";
   let headers: string = "0106" + section;
-  let (s1, acts1, evs1) = s0.on_stream(0 as i64, hex.hex_decode(headers), true).take();
+  let step7: h3.Session = s0.on_stream(0 as i64, hex.hex_decode(headers), true);
+  let acts1: h3.Action[] = step7.actions;
+  let evs1: h3.Event[] = step7.events;
+  let s1: h3.Session = step7.taken();
   let encoder: string = "02" + "3fbd01c00f7777772e6578616d706c652e636f6dc10c2f73616d706c652f70617468";
-  let (_, acts2, evs2) = s1.on_stream(6 as i64, hex.hex_decode(encoder), false).take();
+  let step8: h3.Session = s1.on_stream(6 as i64, hex.hex_decode(encoder), false);
+  let acts2: h3.Action[] = step8.actions;
+  let evs2: h3.Event[] = step8.events;
   let written: string = "";
   for a in acts2 {
     if let h3.Write(id, bytes, _) = a {

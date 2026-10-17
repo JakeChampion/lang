@@ -100,16 +100,16 @@ function accepted(s: Server, d: u8[], from: net.SocketAddr): Server {
   let Ok(c) = conn.accept(s.cfg, random_bytes(conn.server_entropy(s.cfg)), h, now()) else {
     return s;
   };
-  let step: conn.Step = c.receive(d, now());
-  return Server { ...s, current: Some(shown(step.events, step.conn)), peer: Some(from) };
+  let step: conn.Conn = c.receive(d, now());
+  return Server { ...s, current: Some(shown(step.events, step.events_taken())), peer: Some(from) };
 }
 
 function received(s: Server, d: u8[], from: net.SocketAddr): Server {
   let Some(c) = s.current else {
     return accepted(s, d, from);
   };
-  let step: conn.Step = c.receive(d, now());
-  return Server { ...s, current: Some(shown(step.events, step.conn)) };
+  let step: conn.Conn = c.receive(d, now());
+  return Server { ...s, current: Some(shown(step.events, step.events_taken())) };
 }
 
 function drained(s: Server, buf: u8[]): Server {
@@ -127,10 +127,12 @@ function drained(s: Server, buf: u8[]): Server {
 function sent(s: Server, c: conn.Conn): Server {
   let cur: conn.Conn = c;
   if (cur.deadline() != 0 && now() >= cur.deadline()) {
-    let step: conn.Step = cur.tick(now());
-    cur = shown(step.events, step.conn);
+    let step: conn.Conn = cur.tick(now());
+    cur = shown(step.events, step.events_taken());
   }
-  let (next, out) = cur.transmit(now());
+  let next: conn.Conn = cur.transmit(now());
+  let out: u8[][] = next.datagrams();
+  next = next.sent();
   if let Some(to) = s.peer {
     for d in out {
       let r: Result[i32, net.NetError] = net.send_to(s.sock, d, to);

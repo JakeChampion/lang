@@ -133,7 +133,9 @@ function main(): i32 {
   let started: i64 = monotonic_ns();
   while (!c.done() && monotonic_ns() - started < 15000000000) {
     let now: i64 = monotonic_ns();
-    let (next, out) = c.transmit(now);
+    let next: h3q.Conn = c.transmit(now);
+    let out: u8[][] = next.datagrams();
+    next = next.sent();
     c = next;
     for d in out { let r: Result[i32, net.NetError] = net.send_to(sock, d, peer); }
     let woke: i32 = async.wait_any([sock, 1], 10);
@@ -145,7 +147,8 @@ function main(): i32 {
       }
     }
     if (c.deadline() != 0 && monotonic_ns() >= c.deadline()) { c = c.tick(monotonic_ns()); }
-    let (after, evs) = c.take_events();
+    let evs: h3q.Event[] = c.events;
+    let after: h3q.Conn = c.events_taken();
     c = after;
     for e in evs {
       match (e) {
@@ -160,7 +163,9 @@ function main(): i32 {
       }
     }
     if (got == 2) {
-      let (closed, final) = c.close(monotonic_ns()).transmit(monotonic_ns());
+      let closed: h3q.Conn = c.close(monotonic_ns()).transmit(monotonic_ns());
+      let final: u8[][] = closed.datagrams();
+      closed = closed.sent();
       for d in final { let r: Result[i32, net.NetError] = net.send_to(sock, d, peer); }
       let shut: Result[void, net.NetError] = net.close(sock);
       print(first);

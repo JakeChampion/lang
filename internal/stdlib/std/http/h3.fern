@@ -6,7 +6,9 @@
 //   let s: h3.Session = h3.server(h3.config()).start(control, encoder, decoder);
 //   s = s.on_stream(id, bytes, fin);          // any stream's bytes
 //   s = s.send_headers(id, fields, false);    // a response
-//   let (s2, actions, events) = s.take();
+//   let actions: h3.Action[] = s.actions;    // what to write and abort
+//   let events: h3.Event[] = s.events;       // what happened
+//   s = s.taken();
 //
 // `start` takes the IDs of the three unidirectional streams this side
 // opened (control, QPACK encoder, QPACK decoder): the transport assigns
@@ -191,9 +193,10 @@ pub function (s: Session) start(control: i64, encoder: i64, decoder: i64): Sessi
   return Session { ...s, control: control, decoder_stream: decoder, actions: acts };
 }
 
-// take answers what the transport must do and what happened, in order.
-pub function (s: Session) take(): (Session, Action[], Event[]) {
-  return (Session { ...s, actions: [], events: [] }, s.actions, s.events);
+// taken is the session with its actions and events handed on: read
+// `actions` and `events` first, then take them.
+pub function (s: Session) taken(): Session {
+  return Session { ...s, actions: [], events: [] };
 }
 
 // peer_settings is what the peer advertised, once its SETTINGS arrived.
@@ -323,15 +326,16 @@ function (s: Session) __on_uni(id: i64, bytes: [u8], fin: boolean): Session {
   if (u.kind >= 0) {
     return s.__put_uni(i, kept).__uni_bytes(kept, buf, fin);
   }
-  let Some(read) = frames.read_varint(buf, 0) else {
+  let read: i64 = frames.varint_at(buf, 0);
+  if (read < 0) {
     return s.__put_uni(i, Uni { ...u, frames: Frames { ...u.frames, buf: buf } });
-  };
-  let typed: Uni = Uni { ...kept, kind: read.0 };
+  }
+  let typed: Uni = Uni { ...kept, kind: read };
   let cur: Session = s.__claim(typed).__put_uni(i, typed);
   if (cur.closed) {
     return cur;
   }
-  return cur.__uni_bytes(typed, __copy(buf[read.1:buf.len()]), fin);
+  return cur.__uni_bytes(typed, __slice_range(buf, frames.varint_end(buf, 0), buf.len()), fin);
 }
 
 // __claim takes a new unidirectional stream of the peer's: one each of
@@ -419,11 +423,11 @@ function (s: Session) __encoder_bytes(buf: u8[]): Session {
 // __decoder_instructions writes what the QPACK decoder owes on this
 // side's decoder stream.
 function (s: Session) __decoder_instructions(): Session {
-  let (d, out) = s.dec.take_instructions();
+  let out: u8[] = s.dec.out;
   if (out.len() == 0 || s.decoder_stream < 0) {
-    return Session { ...s, dec: d };
+    return s;
   }
-  return Session { ...s, dec: d, actions: s.actions.append(Write(s.decoder_stream, out, false)) };
+  return Session { ...s, dec: s.dec.instructions_taken(), actions: s.actions.append(Write(s.decoder_stream, out, false)) };
 }
 
 // __control_bytes reads the control stream's frames: SETTINGS first and
@@ -486,18 +490,21 @@ function (s: Session) __settings(payload: u8[]): Session {
   let seen: i64[] = [];
   let at: i32 = 0;
   while (at < payload.len()) {
-    let Some(k) = frames.read_varint(payload, at) else {
+    let k: i64 = frames.varint_at(payload, at);
+    if (k < 0) {
       return s.__fail(H3_FRAME_ERROR, "a truncated setting");
-    };
-    let Some(v) = frames.read_varint(payload, k.1) else {
+    }
+    let vat: i32 = frames.varint_end(payload, at);
+    let v: i64 = frames.varint_at(payload, vat);
+    if (v < 0) {
       return s.__fail(H3_FRAME_ERROR, "a truncated setting");
-    };
-    if (seen.contains(k.0) || k.0 >= 2 && k.0 <= 5) {
+    }
+    if (seen.contains(k) || k >= 2 && k <= 5) {
       return s.__fail(H3_SETTINGS_ERROR, "a repeated setting, or one of HTTP/2's");
     }
-    seen = seen.append(k.0);
-    p = __setting(p, k.0, v.0);
-    at = v.1;
+    seen = seen.append(k);
+    p = __setting(p, k, v);
+    at = frames.varint_end(payload, vat);
   }
   return Session { ...s, peer: p, settings_seen: true };
 }
@@ -519,18 +526,19 @@ function __setting(p: Settings, id: i64, v: i64): Settings {
 // may only fall; the requests at or above it will not be processed, so
 // they end as rejected.
 function (s: Session) __on_goaway(payload: u8[]): Session {
-  let Some(r) = frames.read_varint(payload, 0) else {
+  let id: i64 = frames.varint_at(payload, 0);
+  if (id < 0) {
     return s.__fail(H3_FRAME_ERROR, "a truncated GOAWAY");
-  };
+  }
   if (s.server) {
     return s;
   }
-  if (r.0 % 4 != 0 || s.goaway >= 0 && r.0 > s.goaway) {
+  if (id % 4 != 0 || s.goaway >= 0 && id > s.goaway) {
     return s.__fail(H3_ID_ERROR, "a GOAWAY stream ID that is not a request stream's, or that rose");
   }
-  let cur: Session = Session { ...s, goaway: r.0, events: s.events.append(GoawayReceived(r.0)) };
+  let cur: Session = Session { ...s, goaway: id, events: s.events.append(GoawayReceived(id)) };
   for q in s.reqs {
-    if (q.id >= r.0) {
+    if (q.id >= id) {
       cur = Session { ...cur, events: cur.events.append(StreamAborted(q.id, H3_REQUEST_REJECTED)) }.__forget(q.id);
     }
   }
@@ -600,8 +608,8 @@ function (s: Session) __body_bytes(i: i32): Session {
   if (r.frames.data_left < n as i64) {
     n = r.frames.data_left as i32;
   }
-  let data: u8[] = __copy(r.frames.buf[0:n]);
-  let f: Frames = Frames { ...r.frames, buf: __copy(r.frames.buf[n:r.frames.buf.len()]), data_left: r.frames.data_left - n as i64 };
+  let data: u8[] = __slice_range(r.frames.buf, 0, n);
+  let f: Frames = Frames { ...r.frames, buf: __slice_range(r.frames.buf, n, r.frames.buf.len()), data_left: r.frames.data_left - n as i64 };
   let next: Req = Req { ...r, frames: f, received: r.received + n as i64 };
   if (next.length >= 0 && next.received > next.length) {
     return s.__malformed(r.id, "more body than its content-length");
@@ -644,19 +652,16 @@ function (s: Session) __request_other(kind: i64): Session {
 // the inserts it needs arrive.
 function (s: Session) __retry_held(i: i32): Session {
   let r: Req = s.reqs[i];
-  match (s.dec.decode(r.id, r.held)) {
-    Ok(got) => {
-      let cur: Session = Session { ...s, dec: got.decoder };
-      if (got.blocked) {
-        return cur;
-      }
-      cur = cur.__put_req(i, Req { ...r, held: [], blocked: false }).__decoder_instructions();
-      return cur.__section(r.id, got.fields).__request_frames(r.id);
-    },
-    Err(e) => {
-      return s.__fail(e.code(), e.message());
-    }
+  let cur: Session = Session { ...s, dec: s.dec.decode(r.id, r.held) };
+  if let Some(e) = cur.dec.failed {
+    return cur.__fail(e.code(), e.message());
   }
+  if (cur.dec.waiting) {
+    return cur;
+  }
+  let fields: qpack.Field[] = cur.dec.fields;
+  cur = cur.__put_req(i, Req { ...r, held: [], blocked: false }).__decoder_instructions();
+  return cur.__section(r.id, fields).__request_frames(r.id);
 }
 
 // __section takes a decoded field section: the message's head, an
@@ -890,33 +895,36 @@ function __next_frame(f: Frames): Result[Next, string] {
   let cur: Frames = f;
   if (cur.skip_left > 0) {
     let n: i64 = __min(cur.skip_left, cur.buf.len() as i64);
-    cur = Frames { ...cur, buf: __copy(cur.buf[n as i32:cur.buf.len()]), skip_left: cur.skip_left - n };
+    cur = Frames { ...cur, buf: __slice_range(cur.buf, n as i32, cur.buf.len()), skip_left: cur.skip_left - n };
     if (cur.skip_left > 0) {
       return Ok(Next { frames: cur, kind: 0 - 1 as i64, payload: [] });
     }
   }
   let none: Next = Next { frames: cur, kind: 0 - 1 as i64, payload: [] };
-  let Some(t) = frames.read_varint(cur.buf, 0) else {
+  let kind: i64 = frames.varint_at(cur.buf, 0);
+  if (kind < 0) {
     return Ok(none);
-  };
-  let Some(l) = frames.read_varint(cur.buf, t.1) else {
+  }
+  let lat: i32 = frames.varint_end(cur.buf, 0);
+  let len: i64 = frames.varint_at(cur.buf, lat);
+  if (len < 0) {
     return Ok(none);
-  };
-  let rest: u8[] = __copy(cur.buf[l.1:cur.buf.len()]);
-  if (t.0 == DATA) {
-    return Ok(Next { frames: Frames { ...cur, buf: rest, data_left: l.0 }, kind: DATA, payload: [] });
   }
-  if (!__known(t.0)) {
-    return __next_frame(Frames { ...cur, buf: rest, skip_left: l.0 });
+  let rest: u8[] = __slice_range(cur.buf, frames.varint_end(cur.buf, lat), cur.buf.len());
+  if (kind == DATA) {
+    return Ok(Next { frames: Frames { ...cur, buf: rest, data_left: len }, kind: DATA, payload: [] });
   }
-  if (l.0 > MAX_FRAME) {
+  if (!__known(kind)) {
+    return __next_frame(Frames { ...cur, buf: rest, skip_left: len });
+  }
+  if (len > MAX_FRAME) {
     return Err("a frame larger than this side reads");
   }
-  if (l.0 > rest.len() as i64) {
+  if (len > rest.len() as i64) {
     return Ok(none);
   }
-  let n: i32 = l.0 as i32;
-  return Ok(Next { frames: Frames { ...cur, buf: __copy(rest[n:rest.len()]) }, kind: t.0, payload: __copy(rest[0:n]) });
+  let n: i32 = len as i32;
+  return Ok(Next { frames: Frames { ...cur, buf: __slice_range(rest, n, rest.len()) }, kind: kind, payload: __slice_range(rest, 0, n) });
 }
 
 // __known is a frame type this side reads; the rest, reserved for
@@ -927,13 +935,15 @@ function __known(kind: i64): boolean {
 
 // === the tables of streams ==================================================
 
+// __find scans from the end: the requests in flight are the latest, and
+// the finished ones leave from the front.
 function (s: Session) __find(id: i64): i32 {
-  let i: i32 = 0;
-  while (i < s.reqs.len()) {
+  let i: i32 = s.reqs.len() - 1;
+  while (i >= 0) {
     if (s.reqs[i].id == id) {
       return i;
     }
-    i = i + 1;
+    i = i - 1;
   }
   return 0 - 1;
 }
@@ -984,6 +994,16 @@ function __min(a: i64, b: i64): i64 {
     return a;
   }
   return b;
+}
+
+// __slice_range is a fresh copy of `src[from:to]`, filled by the byte
+// builder's copy rather than a byte at a time.
+function __slice_range(src: u8[], from: i32, to: i32): u8[] {
+  let b: usize = buf_new(to - from);
+  buf_push_bytes_range(b, src, from, to);
+  let out: u8[] = buf_take_bytes(b);
+  buf_free(b);
+  return out;
 }
 
 function __copy(b: [u8]): u8[] {

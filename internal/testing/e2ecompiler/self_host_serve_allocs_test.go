@@ -116,8 +116,13 @@ func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
 // over, the response's fields encoded, and its packet planned and sealed.
 // The first reading was 632 on arm64-darwin with the stream table rebuilt
 // on every packet; with idle streams left alone and the loop flushing a
-// connection once per burst, 421 there.
-const ServeAllocsH3Ceiling = 430
+// connection once per burst, 421 there and 423.25 on x86-64; with the
+// varints and headers read as scalars, 387.25; with the stream table
+// handed back bare through its operations and its filling chain, done
+// streams retired lazily and byte ranges copied whole, 348.72; with the
+// connection, QPACK's decoder, the session and the datagram planner handed
+// back bare, 309.03.
+const ServeAllocsH3Ceiling = 315
 
 func TestSelfHostServeAllocsPerRequestH3(t *testing.T) {
 	cli := buildSelfHostCLI(t)

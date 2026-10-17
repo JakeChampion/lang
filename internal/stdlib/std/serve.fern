@@ -6321,8 +6321,8 @@ function __quic_close[D: async.Driver](drv: D, q: __Quic): void {
   let now: i64 = monotonic_ns();
   let i: i32 = 0;
   while (i < q.conns.len()) {
-    let (c, out) = q.conns[i].close(now).transmit(now);
-    __h3_sent(q.sock, out, q.peers[i]);
+    let closing: h3q.Conn = q.conns[i].close(now).transmit(now);
+    __h3_sent(q.sock, closing.datagrams(), q.peers[i]);
     i = i + 1;
   }
   drv.unwatch(q.sock);
@@ -6398,8 +6398,7 @@ function __h3_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: 
     let Ok(got) = net.recv_from(cur.quic.sock, cur.quic.buf) else {
       return (cur, fs, burst);
     };
-    let d: u8[] = __bytes_range(cur.quic.buf, 0, got.0);
-    let r: (__Conns, __Flight[], __H3Burst) = __h3_datagram(drv, cur, fs, d, got.1, burst, opts, stop);
+    let r: (__Conns, __Flight[], __H3Burst) = __h3_datagram(drv, cur, fs, cur.quic.buf[0:got.0], got.1, burst, opts, stop);
     cur = r.0;
     fs = r.1;
     burst = r.2;
@@ -6412,7 +6411,7 @@ function __h3_event[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: 
 // the connection whose ID it carries, or, when it is a client's first
 // Initial and the loop is accepting, to a new one; anything else is
 // dropped.
-function __h3_datagram[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], d: u8[], from: net.SocketAddr, burst: __H3Burst, opts: Config, stop: __Stop): (__Conns, __Flight[], __H3Burst) {
+function __h3_datagram[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], d: [u8], from: net.SocketAddr, burst: __H3Burst, opts: Config, stop: __Stop): (__Conns, __Flight[], __H3Burst) {
   let Ok(h) = packet.parse(d, 0, c.quic.cfg.cid_len) else {
     return (c, fls, burst);
   };
@@ -6475,7 +6474,7 @@ function __h3_from_ip(q: __Quic, ip: net.IpAddr): i32 {
 // __h3_accept(c, h, d, from, opts, stop) — a new connection from a
 // client's first Initial, which must fill a datagram of 1200 bytes (RFC
 // 9000 §14.1); none while stopping or at the connection cap.
-function __h3_accept(c: __Conns, h: packet.Header, d: u8[], from: net.SocketAddr, opts: Config, stop: __Stop): (__Conns, i32) {
+function __h3_accept(c: __Conns, h: packet.Header, d: [u8], from: net.SocketAddr, opts: Config, stop: __Stop): (__Conns, i32) {
   let q: __Quic = c.quic;
   let initial: boolean = false;
   match (h.kind) {
@@ -6502,7 +6501,7 @@ function __h3_accept(c: __Conns, h: packet.Header, d: u8[], from: net.SocketAddr
 // producers of the streams it dropped forgotten.
 function __h3_events(c: __Conns, i: i32): (__Conns, __H3Req[]) {
   let q: __Quic = c.quic;
-  let (conn, evs) = q.conns[i].take_events();
+  let evs: h3q.Event[] = q.conns[i].events;
   let producers: __H3Producer[] = q.producers;
   let reqs: __H3Req[] = [];
   let serial: i32 = q.serials[i];
@@ -6517,7 +6516,7 @@ function __h3_events(c: __Conns, i: i32): (__Conns, __H3Req[]) {
       _ => {}
     }
   }
-  return (__Conns { ...c, quic: __Quic { ...q, conns: q.conns.with(i, conn), producers: producers } }, reqs);
+  return (__Conns { ...c, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].events_taken()), producers: producers } }, reqs);
 }
 
 // __h3_start_all(drv, c, fls, burst, handler, host_for, opts, stop) — each
@@ -6594,32 +6593,27 @@ function __h3_at(q: __Quic, serial: i32): i32 {
 // its head alone for HEAD or a
 // status that forbids a body, without starting its producer.
 function __h3_respond[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], serial: i32, id: i64, method: string, resp: HttpResponse): (__Conns, __Flight[]) {
-  let q: __Quic = c.quic;
-  let i: i32 = __h3_at(q, serial);
+  let i: i32 = __h3_at(c.quic, serial);
   if (i < 0) {
     return (c, fls);
   }
   let cur: __Conns = __stage_background(c, resp);
+  let q: __Quic = cur.quic;
   resp = __file_chunks(resp);
-  let conn: h3q.Conn = q.conns[i];
   match (resp.body) {
     BodyChunks(producer) => {
       if (method == "HEAD" || http.http_bodiless(resp.status)) {
-        conn = conn.respond_head(id, resp, 0 - 1 as i64).end(id, HeaderMap { names: [], values: [] });
-        return (__Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, conn) } }, fls);
+        return (__Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].respond_head(id, resp, 0 - 1 as i64).end(id, HeaderMap { names: [], values: [] })) } }, fls);
       }
-      conn = conn.respond_head(id, resp, 0 - 1 as i64);
       let p: __H3Producer = __H3Producer { serial: serial, stream: id, producer: producer, index: 0, trailers: resp.trailers, running: false };
-      cur = __Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, conn), producers: q.producers.append(p) } };
+      cur = __Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].respond_head(id, resp, 0 - 1 as i64)), producers: q.producers.append(p) } };
       return __h3_produce(drv, cur, fls, cur.quic.producers.len() - 1);
     },
     _ => {
       if (method == "HEAD") {
-        conn = conn.respond_head(id, resp, resp.body_bytes().len() as i64).end(id, HeaderMap { names: [], values: [] });
-      } else {
-        conn = conn.respond(id, resp);
+        return (__Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].respond_head(id, resp, resp.body_bytes().len() as i64).end(id, HeaderMap { names: [], values: [] })) } }, fls);
       }
-      return (__Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, conn) } }, fls);
+      return (__Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].respond(id, resp)) } }, fls);
     }
   }
   return (cur, fls);
@@ -6676,12 +6670,10 @@ function __h3_chunk(c: __Conns, pi: i32, chunk: Option[u8[]]): (__Conns, boolean
   }
   match (chunk) {
     Some(bytes) => {
-      let conn: h3q.Conn = q.conns[i].write(p.stream, bytes);
-      return (__Conns { ...c, quic: __Quic { ...q, conns: q.conns.with(i, conn), producers: q.producers.with(pi, __H3Producer { ...p, index: p.index + 1, running: false }) } }, false);
+      return (__Conns { ...c, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].write(p.stream, bytes)), producers: q.producers.with(pi, __H3Producer { ...p, index: p.index + 1, running: false }) } }, false);
     },
     None => {
-      let conn: h3q.Conn = q.conns[i].end(p.stream, __trailers_joined(p.trailers, p.producer.trailers()));
-      return (__Conns { ...c, quic: __Quic { ...q, conns: q.conns.with(i, conn), producers: __h3_producers_without(q.producers, pi) } }, true);
+      return (__Conns { ...c, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].end(p.stream, __trailers_joined(p.trailers, p.producer.trailers()))), producers: __h3_producers_without(q.producers, pi) } }, true);
     }
   }
   return (c, true);
@@ -6802,8 +6794,7 @@ function __h3_abandon(c: __Conns, fl: __Flight): __Conns {
   if (i < 0) {
     return c;
   }
-  let conn: h3q.Conn = q.conns[i].abort(fl.stream as i64, h3.H3_REQUEST_CANCELLED);
-  return __h3_flush(__Conns { ...c, quic: __Quic { ...q, conns: q.conns.with(i, conn) } }, fl.quic);
+  return __h3_flush(__Conns { ...c, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].abort(fl.stream as i64, h3.H3_REQUEST_CANCELLED)) } }, fl.quic);
 }
 
 // __h3_flush(c, serial) — what connection `serial` has to send, sent.
@@ -6813,9 +6804,9 @@ function __h3_flush(c: __Conns, serial: i32): __Conns {
   if (i < 0) {
     return c;
   }
-  let (conn, out) = q.conns[i].transmit(monotonic_ns());
-  __h3_sent(q.sock, out, q.peers[i]);
-  return __Conns { ...c, quic: __Quic { ...q, conns: q.conns.with(i, conn) } };
+  let built: __Conns = __Conns { ...c, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].transmit(monotonic_ns())) } };
+  __h3_sent(built.quic.sock, built.quic.conns[i].datagrams(), built.quic.peers[i]);
+  return __Conns { ...built, quic: __Quic { ...built.quic, conns: built.quic.conns.with(i, built.quic.conns[i].sent()) } };
 }
 
 // __h3_pass(drv, c, fls, opts, stop) — each connection whose timer is due

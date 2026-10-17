@@ -31,7 +31,8 @@ function answer(req: HttpRequest): HttpResponse {
 // served answers the requests the connection reported, and prints how it
 // ended.
 function served(s: Server, c: h3q.Conn): Server {
-  let (cur, evs) = c.take_events();
+  let evs: h3q.Event[] = c.events;
+  let cur: h3q.Conn = c.events_taken();
   let answered: i32 = s.answered;
   for e in evs {
     match (e) {
@@ -115,7 +116,9 @@ function sent(s: Server, c: h3q.Conn): Server {
   let Some(ticked) = cur.current else {
     return cur;
   };
-  let (next, out) = ticked.transmit(now());
+  let next: h3q.Conn = ticked.transmit(now());
+  let out: u8[][] = next.datagrams();
+  next = next.sent();
   if let Some(to) = cur.peer {
     for d in out {
       let r: Result[i32, net.NetError] = net.send_to(cur.sock, d, to);
