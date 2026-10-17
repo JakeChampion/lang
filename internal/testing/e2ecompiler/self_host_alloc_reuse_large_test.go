@@ -1,0 +1,154 @@
+package e2ecompiler
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/jakechampion/lang/internal/syntax/ast"
+)
+
+// Exercise the runtime ABI directly: ordinary record shapes do not reach the
+// large tier. Keep the emitted allocator, release and diagnostic bodies intact.
+func TestSelfHostAllocReuseLargeDonor(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte("function main(): i32 { let p: usize = __raw_arr_box(1); __fern_rc_dec(p); return 0; }"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		cap, want int
+	}{
+		{0, 1}, {3, 1}, {65532, 1}, {65533, 1},
+		{65534, 1}, {70000, 1}, {65533, 65533}, {3, 70000},
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			gcc, runner := x86_64Tooling(t)
+			if target == "arm64-linux" {
+				var qemu string
+				gcc, qemu = arm64Tooling(t)
+				runner = nil
+				if qemu != "" {
+					runner = []string{qemu}
+				}
+			}
+			for _, mode := range []string{"normal", "quarantine", "sanitized"} {
+				t.Run(mode, func(t *testing.T) {
+					env := []string{"FERN_LEAKCHECK=1"}
+					if mode == "quarantine" {
+						env = append(env, "FERN_RC_FREE_DEBUG=1")
+					}
+					if mode == "sanitized" {
+						env = append(env, "FERN_SANITIZE=1")
+					}
+					raw, err := os.ReadFile(cli.emit(t, src, target, env...))
+					if err != nil {
+						t.Fatal(err)
+					}
+					text := string(raw)
+					start := strings.Index(text, "\n_start:\n")
+					if start < 0 {
+						t.Fatal("missing entry")
+					}
+					start++
+					section := regexp.MustCompile(`(?m)^\s*\.(section|bss|data|text)\b`).FindStringIndex(text[start:])
+					if section == nil {
+						t.Fatal("missing section after entry")
+					}
+					entries := []bool{false}
+					if target == "x86-64-linux" {
+						entries = append(entries, true)
+					}
+					for _, stack := range entries {
+						for _, tc := range cases {
+							t.Run(fmt.Sprintf("%d-to-%d-stack-%t", tc.cap, tc.want, stack), func(t *testing.T) {
+								entry := allocReuseDonorProbe(target, tc.cap, tc.want, stack, mode != "normal")
+								dir := t.TempDir()
+								asm, bin := filepath.Join(dir, "probe.s"), filepath.Join(dir, "probe")
+								if err := os.WriteFile(asm, []byte(text[:start]+entry+text[start+section[0]:]), 0o644); err != nil {
+									t.Fatal(err)
+								}
+								if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asm, "-o", bin).CombinedOutput(); err != nil {
+									t.Fatalf("link: %v\n%s", err, out)
+								}
+								stderr, code := runCapturingStderr(t, ssaBackendTarget{runner: runner}, bin)
+								count := 2
+								if tc.cap == 0 || tc.cap == tc.want {
+									count = 1
+								}
+								if tc.cap > 0 && tc.cap != tc.want {
+									count++ // Reallocate the donor's capacity to check its pool.
+								}
+								want := fmt.Sprintf("leakcheck: allocs=%d frees=%d live_bytes=0", count, count)
+								if code != 0 || !strings.Contains(stderr, want) || strings.Contains(stderr, "fern-sanitizer:") {
+									t.Fatalf("exit=%d, want balanced %q\n%s", code, want, stderr)
+								}
+							})
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+func allocReuseDonorProbe(target string, cap, want int, stack, quarantine bool) string {
+	mismatch := cap > 0 && cap != want
+	if target == "x86-64-linux" {
+		s := "_start:\n    pushq %rbp\n    movq %rsp, %rbp\n    xorq %r12, %r12\n"
+		if cap > 0 {
+			s += fmt.Sprintf("    movq $%d, %%rdi\n    call __fern_arr_box\n    movq %%rax, %%r12\n", cap)
+		}
+		s += fmt.Sprintf("    movq %%r12, %%rax\n    movq $%d, %%rsi\n", want)
+		if stack {
+			s += "    pushq %rax\n    pushq %rsi\n    call __fn___fern_alloc_reuse\n    addq $16, %rsp\n"
+		} else {
+			s += "    call __fn___fern_alloc_reuse.r\n"
+		}
+		s += fmt.Sprintf("    cmpq $%d, -16(%%rax)\n    jne .Lprobe_fail\n    cmpl $1, -8(%%rax)\n    jne .Lprobe_fail\n", want)
+		if cap == want {
+			s += "    cmpq %r12, %rax\n    jne .Lprobe_fail\n"
+		}
+		if mismatch && quarantine {
+			s += fmt.Sprintf("    cmpl $%d, -8(%%r12)\n    jne .Lprobe_fail\n", ast.RcPoison)
+		}
+		s += "    call __fn___fern_arr_dec.r\n"
+		if mismatch {
+			s += fmt.Sprintf("    movq $%d, %%rdi\n    call __fern_arr_box\n    cmpq %%r12, %%rax\n", cap)
+			if quarantine {
+				s += "    je .Lprobe_fail\n"
+			} else {
+				s += "    jne .Lprobe_fail\n"
+			}
+			s += "    call __fn___fern_arr_dec.r\n"
+		}
+		return s + "    xorq %r13, %r13\n    jmp .Lprobe_report\n.Lprobe_fail:\n    movq $91, %r13\n.Lprobe_report:\n    call __fern_lc_report\n    movq %r13, %rdi\n    movq $231, %rax\n    syscall\n"
+	}
+	s := "_start:\n    mov x20, #0\n"
+	if cap > 0 {
+		s += fmt.Sprintf("    movz x0, #%d\n    movk x0, #%d, lsl #16\n    bl __fern_arr_box\n    mov x20, x0\n", cap&65535, cap>>16)
+	}
+	s += fmt.Sprintf("    movz x1, #%d\n    movk x1, #%d, lsl #16\n    sub sp, sp, #32\n    str x20, [sp, #16]\n    str x1, [sp]\n    bl __fn___fern_alloc_reuse\n    add sp, sp, #32\n    ldur x2, [x0, #-16]\n    movz x3, #%d\n    movk x3, #%d, lsl #16\n    cmp x2, x3\n    b.ne .Lprobe_fail\n    ldur w2, [x0, #-8]\n    cmp w2, #1\n    b.ne .Lprobe_fail\n", want&65535, want>>16, want&65535, want>>16)
+	if cap == want {
+		s += "    cmp x0, x20\n    b.ne .Lprobe_fail\n"
+	}
+	if mismatch && quarantine {
+		s += fmt.Sprintf("    ldur w2, [x20, #-8]\n    movz w3, #%d\n    movk w3, #%d, lsl #16\n    cmp w2, w3\n    b.ne .Lprobe_fail\n", ast.RcPoison&65535, ast.RcPoison>>16)
+	}
+	s += "    bl __fn___fern_arr_dec.r\n"
+	if mismatch {
+		s += fmt.Sprintf("    movz x0, #%d\n    movk x0, #%d, lsl #16\n    bl __fern_arr_box\n    cmp x0, x20\n", cap&65535, cap>>16)
+		if quarantine {
+			s += "    b.eq .Lprobe_fail\n"
+		} else {
+			s += "    b.ne .Lprobe_fail\n"
+		}
+		s += "    bl __fn___fern_arr_dec.r\n"
+	}
+	return s + "    mov x19, #0\n    b .Lprobe_report\n.Lprobe_fail:\n    mov x19, #91\n.Lprobe_report:\n    bl __fern_lc_report\n    mov x0, x19\n    mov x8, #93\n    svc #0\n"
+}
