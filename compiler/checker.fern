@@ -16658,9 +16658,10 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
       return true;
     },
     typeinfo.TypeUnion(un) => {
-      // Option and Result are declared by no module unless imported; any
-      // other union must be declared here for its method table to be whole.
-      let declared: boolean = un.name == "Option" || un.name == "Result" || s.lookup_union(un.name).name.len() > 0;
+      // The built-in unions (Option, Result, IoError, Body) are declared by
+      // no module; any other union must be declared here for its method
+      // table to be whole.
+      let declared: boolean = un.name == "Option" || un.name == "Result" || un.name == "IoError" || un.name == "Body" || s.lookup_union(un.name).name.len() > 0;
       return declared && s.lookup_method(field, un.name).name.len() == 0 && is_unknown(builtin_method_sig(un.name, field));
     },
     _ => {
