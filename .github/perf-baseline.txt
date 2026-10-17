@@ -59,6 +59,10 @@ x86_64/array_with.ir	37759033
 x86_64/array_with.text	1079
 x86_64/ascii_scan.text	1187
 x86_64/ascii_scan.ir	37213680
+x86_64/byte_copy_append.text	1050
+x86_64/byte_copy_append.ir	50303032
+x86_64/byte_copy_with.text	1003
+x86_64/byte_copy_with.ir	49705206
 x86_64/call_overhead.text	88
 x86_64/call_overhead.ir	8250759
 x86_64/closure_call.text	818
@@ -219,6 +223,10 @@ aarch64/array_with.text	1270
 aarch64/array_with.ir	31219422
 aarch64/ascii_scan.text	1461
 aarch64/ascii_scan.ir	68660210
+aarch64/byte_copy_append.text	1301
+aarch64/byte_copy_append.ir	31956591
+aarch64/byte_copy_with.text	1244
+aarch64/byte_copy_with.ir	31304907
 aarch64/call_overhead.text	148
 aarch64/call_overhead.ir	11250762
 aarch64/closure_call.text	1011

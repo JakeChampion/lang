@@ -257,7 +257,7 @@ function body_escapes(b: ssa.SBlock, ix: Index, body: i32): boolean {
 }
 
 pub function rewrite(f: ssasem.Func, contracts: ssasem.Contract[]): Rewritten {
-  if (!any_byte_update(f)) {
+  if (!may_have_copy_loop(f.graph) || !any_byte_update(f)) {
     return Rewritten { func: f, changed: false };
   }
   let out = f;
@@ -277,6 +277,19 @@ pub function rewrite(f: ssasem.Func, contracts: ssasem.Contract[]): Rewritten {
     h = h + 1;
   }
   return Rewritten { func: out, changed: changed };
+}
+
+function may_have_copy_loop(g: ssa.SFunc): boolean {
+  // The outside block, header, body and exit are distinct.
+  if (g.blocks.len() < 4) {
+    return false;
+  }
+  for b in g.blocks {
+    if (b.term.kind_tag == 3 && b.preds.len() == 2) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function copy(result: i32, v: i32): ssa.SInst {
