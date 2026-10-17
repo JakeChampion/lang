@@ -1,0 +1,7 @@
+{
+  "removed": "distinguish a spilled RHS from a register-homed rcx operand",
+  "correct_stdout": "122\\n",
+  "mutant_exit": 0,
+  "mutant_stdout": "33\n",
+  "mutant_stderr": ""
+}

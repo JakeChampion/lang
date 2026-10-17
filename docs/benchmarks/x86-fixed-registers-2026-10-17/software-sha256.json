@@ -1,0 +1,139 @@
+{
+  "flags": [
+    "-O",
+    "-target",
+    "x86-64-linux"
+  ],
+  "stdlib_mode": "software",
+  "input_sha256": "7d212b9c884f5c77896de960ae17cc341cda43b14d6a971f34ca29ebd4badf7f",
+  "builds": {
+    "baseline": {
+      "compiler_sha256": "f395df09bc0d2fb9fa77c410384411708ac7fe941e7d56b3d6e3aeab6c5eb6b7",
+      "binary_sha256": "67b837413483c827506dafd92f150bda9d13e950ed45ee07aafe53499e1cb8e7",
+      "binary_bytes": 219440,
+      "instructions": 3022,
+      "frame_refs": 1136
+    },
+    "candidate": {
+      "compiler_sha256": "fd7edafabc48b92c2f6895f4c37dcba9051bb5d5bb44e6bdd0892640b7ce0291",
+      "binary_sha256": "16dc2de7a559dd7566522248f19e43c40349516b3ab277e28d9c1be223615363",
+      "binary_bytes": 211248,
+      "instructions": 2991,
+      "frame_refs": 868
+    }
+  },
+  "cachegrind": {
+    "baseline": 380848323,
+    "candidate": 376653933
+  },
+  "native_pairs": [
+    {
+      "baseline": 0.029389381998043973,
+      "candidate": 0.02675535799789941,
+      "ratio": 0.9103749782720891
+    },
+    {
+      "candidate": 0.02760460200079251,
+      "baseline": 0.04187937800452346,
+      "ratio": 0.6591454629008792
+    },
+    {
+      "baseline": 0.029123554995749146,
+      "candidate": 0.028894123999634758,
+      "ratio": 0.9921221500552431
+    },
+    {
+      "candidate": 0.026761406996229198,
+      "baseline": 0.042734702001325786,
+      "ratio": 0.6262219166849218
+    },
+    {
+      "baseline": 0.029528418999689166,
+      "candidate": 0.03886730600061128,
+      "ratio": 1.3162677622875922
+    },
+    {
+      "candidate": 0.02693585700035328,
+      "baseline": 0.02933312299865065,
+      "ratio": 0.9182744367721212
+    },
+    {
+      "baseline": 0.029588338002213277,
+      "candidate": 0.026478284002223518,
+      "ratio": 0.8948891958799065
+    },
+    {
+      "candidate": 0.02674152699910337,
+      "baseline": 0.02912189299968304,
+      "ratio": 0.9182619756000897
+    },
+    {
+      "baseline": 0.02931298300245544,
+      "candidate": 0.026741541994852014,
+      "ratio": 0.9122763791256582
+    },
+    {
+      "candidate": 0.02741811500163749,
+      "baseline": 0.029834535002009943,
+      "ratio": 0.9190059439434983
+    },
+    {
+      "baseline": 0.029348710995691363,
+      "candidate": 0.02632948300015414,
+      "ratio": 0.8971257035451925
+    },
+    {
+      "candidate": 0.026968480000505224,
+      "baseline": 0.028720605005219113,
+      "ratio": 0.9389941470802758
+    },
+    {
+      "baseline": 0.029994602999067865,
+      "candidate": 0.027016831998480484,
+      "ratio": 0.9007231067309035
+    },
+    {
+      "candidate": 0.027758468000683933,
+      "baseline": 0.03018170699942857,
+      "ratio": 0.9197116651225024
+    },
+    {
+      "baseline": 0.03636080800060881,
+      "candidate": 0.028518674000224564,
+      "ratio": 0.7843245397557462
+    },
+    {
+      "candidate": 0.029122043000825215,
+      "baseline": 0.029879517001973,
+      "ratio": 0.9746490546986497
+    },
+    {
+      "baseline": 0.029048753996903542,
+      "candidate": 0.027982791005342733,
+      "ratio": 0.9633043471787315
+    },
+    {
+      "candidate": 0.02987194100569468,
+      "baseline": 0.03036018699640408,
+      "ratio": 0.9839182153006096
+    },
+    {
+      "baseline": 0.028491944998677354,
+      "candidate": 0.027409992995671928,
+      "ratio": 0.9620260391821038
+    },
+    {
+      "candidate": 0.025930889998562634,
+      "baseline": 0.047709612001199275,
+      "ratio": 0.5435150048571095
+    },
+    {
+      "baseline": 0.03117170699988492,
+      "candidate": 0.026603301004797686,
+      "ratio": 0.8534438298453114
+    }
+  ],
+  "instruction_ratio": 0.9889867179486045,
+  "median_native_ratio": 0.9182619756000897,
+  "note": "Native timing overlapped local targeted Go tests; instruction counts deterministic. Software stdlib changes only the sha256 hardware selection guard to true, identically for both compilers."
+}

@@ -5756,9 +5756,14 @@ function parse_block_body_nested(p: Par, tail_value: boolean): (ast.Stmt[], Par)
       let uline: i32 = p.peek_line();
       let ucol: i32 = p.peek_col();
       p = p.advance();  // consume `use`
+      // The first malformed token of the `use` line, reported in place of
+      // the desugared call once the rest of the block is consumed.
+      let ubad: ast.Stmt[] = [];
       let uname: string = p.peek_ident();
       if (uname.len() > 0) {
         p = p.advance();
+      } else {
+        ubad = [s_unknown(p, "expected a name, got " + tok_desc(p.peek()))];
       }
       let utype: string = "";
       if (p.peek_punct() == ":") {
@@ -5770,9 +5775,13 @@ function parse_block_body_nested(p: Par, tail_value: boolean): (ast.Stmt[], Par)
       // `<-` lexes as `<` then `-`.
       if (p.peek_punct() == "<") {
         p = p.advance();
+      } else if (ubad.len() == 0) {
+        ubad = [s_unknown(p, "expected \"<\", got " + tok_desc(p.peek()))];
       }
       if (p.peek_punct() == "-") {
         p = p.advance();
+      } else if (ubad.len() == 0) {
+        ubad = [s_unknown(p, "expected \"-\", got " + tok_desc(p.peek()))];
       }
       let (usrc_expr, usrc_p) = parse_expr(p);
       p = usrc_p;
@@ -5788,6 +5797,9 @@ function parse_block_body_nested(p: Par, tail_value: boolean): (ast.Stmt[], Par)
       // type is inferrable from the callee's signature (native
       // inferUseParam). An annotated `use n: T <- …` never draws E032.
       let cb: ast.Expr = ast.ExprLambda { params: cbparams, ret_type: "", body: rest_body, use_infer: utype.len() == 0, origin: ORIGIN_USE, line: uline, col: ucol, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
+      if (ubad.len() > 0) {
+        return (body.append(ubad[0]), p);
+      }
       match (usrc_expr) {
         ast.ExprCall(c) => {
           let newargs: ast.Expr[] = c.args.append(cb);
@@ -5796,7 +5808,7 @@ function parse_block_body_nested(p: Par, tail_value: boolean): (ast.Stmt[], Par)
           body = body.append(s_return_at(e_call(c.callee, newargs), uline, ucol));
         },
         _ => {
-          body = body.append(s_unknown(p, "use source must be a function call"));
+          body = body.append(s_unknown_at("use expression must be a function call (so the callback can be appended as the last arg)", uline, ucol));
         }
       }
       return (body, p);

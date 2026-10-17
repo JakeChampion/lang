@@ -1,0 +1,56 @@
+{
+  "pairs": [
+    {
+      "baseline": 18.70062195599894,
+      "baseline_output_sha256": "b242c67210fe06400e0790e77d5255150507ff2b4fac471b773c269577cfcf8c",
+      "candidate": 18.53408257499541,
+      "candidate_output_sha256": "ae2bf8b79fa4379eb4a722515285bfa585462e4fe45cf5ecc67033a97a5fc506",
+      "ratio": 0.991094446944311
+    },
+    {
+      "candidate": 18.679605935998552,
+      "candidate_output_sha256": "ae2bf8b79fa4379eb4a722515285bfa585462e4fe45cf5ecc67033a97a5fc506",
+      "baseline": 18.82547726100165,
+      "baseline_output_sha256": "b242c67210fe06400e0790e77d5255150507ff2b4fac471b773c269577cfcf8c",
+      "ratio": 0.9922513876816668
+    },
+    {
+      "baseline": 19.478768365996075,
+      "baseline_output_sha256": "b242c67210fe06400e0790e77d5255150507ff2b4fac471b773c269577cfcf8c",
+      "candidate": 19.01341295799648,
+      "candidate_output_sha256": "ae2bf8b79fa4379eb4a722515285bfa585462e4fe45cf5ecc67033a97a5fc506",
+      "ratio": 0.9761096082023357
+    },
+    {
+      "candidate": 18.799774126004195,
+      "candidate_output_sha256": "ae2bf8b79fa4379eb4a722515285bfa585462e4fe45cf5ecc67033a97a5fc506",
+      "baseline": 18.438232399996195,
+      "baseline_output_sha256": "b242c67210fe06400e0790e77d5255150507ff2b4fac471b773c269577cfcf8c",
+      "ratio": 1.0196082638598305
+    },
+    {
+      "baseline": 17.811910150005133,
+      "baseline_output_sha256": "b242c67210fe06400e0790e77d5255150507ff2b4fac471b773c269577cfcf8c",
+      "candidate": 18.714947900996776,
+      "candidate_output_sha256": "ae2bf8b79fa4379eb4a722515285bfa585462e4fe45cf5ecc67033a97a5fc506",
+      "ratio": 1.050698535046865
+    },
+    {
+      "candidate": 19.599836175002565,
+      "candidate_output_sha256": "ae2bf8b79fa4379eb4a722515285bfa585462e4fe45cf5ecc67033a97a5fc506",
+      "baseline": 19.066920119003044,
+      "baseline_output_sha256": "b242c67210fe06400e0790e77d5255150507ff2b4fac471b773c269577cfcf8c",
+      "ratio": 1.0279497712621344
+    },
+    {
+      "baseline": 19.034981028999027,
+      "baseline_output_sha256": "b242c67210fe06400e0790e77d5255150507ff2b4fac471b773c269577cfcf8c",
+      "candidate": 21.047555103003106,
+      "candidate_output_sha256": "ae2bf8b79fa4379eb4a722515285bfa585462e4fe45cf5ecc67033a97a5fc506",
+      "ratio": 1.1057302905076714
+    }
+  ],
+  "source_head": "dcf31bd8a7e93fbabdc2a1ee2bc7367754527d24",
+  "note": "The baseline and candidate use different register allocators, so output native instructions differ as expected. Candidate stage2 equals stage3. Timings taken after targeted tests ended; no other local heavy build active.",
+  "median_ratio": 1.0196082638598305
+}

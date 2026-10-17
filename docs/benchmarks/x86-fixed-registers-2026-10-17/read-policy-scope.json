@@ -1,0 +1,14 @@
+{
+  "source_head": "663625d2e1aa3f5225a7d3eef18ba7fa22fde6eb",
+  "files": {
+    "compiler/asm_ir.fern": "cefb6c9b87fe908b515d30a1ca358a361b6aed43ddc321cb2c8ee189e646b5ab",
+    "compiler/ssa.fern": "795ce83aa67ca751a3d90b17d39de4ee968f0b91c6808494f0115454f9c6ff0d",
+    "compiler/ssafixed.fern": "9cc49f1f5623763b929e9b0098772a100d37a92374f2c906e799dc63c11e9268",
+    "docs/benchmarks/x86-fixed-registers-2026-10-17/nine-live-values.fern": "96b531aa8409dfab094797f25bb7f24b136f02dc178fe6b462827700fd7831d0",
+    "docs/benchmarks/x86-fixed-registers-2026-10-17/nine-live-record.fern": "5d5f30e393890bb897f7ae11b0b7ce0d63944211845e83c4d00d5a41a63d8798"
+  },
+  "fixedpoint": {
+    "bytes": 12703936,
+    "sha256": "b69e61b2190fccac49e80b8d1bc596994c608a6c6770a0f4f138a1ef8f8133ad"
+  }
+}

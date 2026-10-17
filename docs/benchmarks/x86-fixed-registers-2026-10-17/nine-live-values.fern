@@ -1,0 +1,27 @@
+import "std/u64";
+
+@noinline
+function combine(seed: u64): u64 {
+  let v0 = seed * 3u64;
+  let v1 = seed * 5u64;
+  let v2 = seed * 7u64;
+  let v3 = seed * 11u64;
+  let v4 = seed * 13u64;
+  let v5 = seed * 17u64;
+  let v6 = seed * 19u64;
+  let v7 = seed * 23u64;
+  let v8 = seed * 29u64;
+  return v0 ^ v1 ^ v2 ^ v3 ^ v4 ^ v5 ^ v6 ^ v7 ^ v8;
+}
+
+function main(): i32 {
+  let n = args().len() * 20000000;
+  let i = 0;
+  let checksum = 0u64;
+  while (i < n) {
+    checksum = checksum + combine(i as u64);
+    i = i + 1;
+  }
+  print(checksum.to_string());
+  return 0;
+}
