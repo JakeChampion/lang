@@ -91,6 +91,11 @@ including startup's getpid 172 versus Darwin's 20. After correction, all
 field-re-read, inventory and complexity integration checks pass (47.421s).
 Generated Linux runtime source for all eight variants remains byte-identical;
 syscall-fix-linux-parity.json records its exact byte count and hash.
-This correction still requires a new native macOS execution run. Fresh
-bootstrap and size checks for the corrected source are in progress; older
-hashes above retain their original source versions.
+The corrected source 6cf17d3aa has identical stages 1, 2 and 3 at
+12,701,040 bytes, SHA-256
+1a4a0d84c8904ec9fa8af2b250a4240d22c3137ae5167b14ffb5199c0b77f2b2.
+All eleven strict size checks pass with complete coverage and unchanged
+baselines/tolerance (126.957 seconds). Raw evidence uses syscall-fixed-.
+The native macOS run remains a separate execution gate; its exact commit
+and four-mode results belong to the PR validation record. Older hashes
+above retain their original source versions.
