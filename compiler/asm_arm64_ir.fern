@@ -3795,6 +3795,15 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   if (ins.kind_tag == 9 && ins.str == "and_not") {
     return ssa_and_not(ins, reg_of, s);
   }
+  if (ssa.carry_triple(blk, ii, fr.uses)) {
+    return ssa_carried_sum(ins, reg_of, s);
+  }
+  if (ssa.carry_triple(blk, ii - 1, fr.uses)) {
+    return s;
+  }
+  if (ssa.carry_triple(blk, ii - 2, fr.uses)) {
+    return ssa_carry_reader(ins, blk.insts[ii - 1].result, reg_of, s);
+  }
   if (ins.kind_tag == 37) {
     return ssa_carry(ins, reg_of, s);
   }
@@ -3874,6 +3883,33 @@ function ssa_and_not(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
   s = ssa_load(reg_of, ins.args[1], b, s);
   let d: string = ssa_dst(reg_of, ins.result);
   s = s.write("    bic " + d + ", " + a + ", " + b + "\n");
+  return ssa_store(reg_of, ins.result, d, s);
+}
+
+// ssa_carried_sum is a carry triple's sum or difference, setting the flags.
+function ssa_carried_sum(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let x: string = ssa_src(reg_of, ins.args[0], "x5");
+  s = ssa_load(reg_of, ins.args[0], x, s);
+  let y: string = ssa_src(reg_of, ins.args[1], "x6");
+  s = ssa_load(reg_of, ins.args[1], y, s);
+  let d: string = ssa_dst(reg_of, ins.result);
+  let op: string = if (ins.str == "sub") { "subs" } else { "adds" };
+  s = s.write("    " + op + " " + d + ", " + x + ", " + y + "\n");
+  return ssa_store(reg_of, ins.result, d, s);
+}
+
+// ssa_carry_reader is a carry triple's reader: its other operand plus the
+// carry, or less the borrow, read off the flags the sum left.
+function ssa_carry_reader(ins: ssa.SInst, carry: i32, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let other: i32 = ins.args[0];
+  if (other == carry) {
+    other = ins.args[1];
+  }
+  let h: string = ssa_src(reg_of, other, "x5");
+  s = ssa_load(reg_of, other, h, s);
+  let d: string = ssa_dst(reg_of, ins.result);
+  let op: string = if (ins.str == "sub") { "sbc" } else { "adc" };
+  s = s.write("    " + op + " " + d + ", " + h + ", xzr\n");
   return ssa_store(reg_of, ins.result, d, s);
 }
 

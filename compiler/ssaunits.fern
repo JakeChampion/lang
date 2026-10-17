@@ -769,9 +769,9 @@ function taken(t: typeinfo.Type): boolean {
 }
 
 // A zero is a unit this frame holds, not one it allocated: at a reference type
-// it is the null word, so the release it owes is the null guard every drop
-// helper carries, and the replacement the declaration site assigns drops
-// exactly that nothing. It is deliberately NOT a `construction` — no box was
+// it is the null word, so the release it owes is nothing (`ssarc.null_unit`
+// emits none), and the replacement the declaration site assigns drops exactly
+// that nothing. It is deliberately NOT a `construction` — no box was
 // made, so nothing may take a field out of one.
 //
 // A string literal (kind 5) is not a unit either: its static box carries the

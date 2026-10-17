@@ -199,6 +199,16 @@ func TestSelfHostServeConfig(t *testing.T) {
 	e2eharness.CheckReusePortReachesListener(t, port)
 }
 
+// The default accept queue holds a burst of connections the loop has not
+// reached yet, rather than dropping their SYNs into a retransmit (#12505).
+func TestSelfHostServeDefaultBacklogHoldsBurst(t *testing.T) {
+	port := e2eharness.ReservedPort(t)
+	bin, runner := selfHostServer(t, e2eharness.DefaultBacklogServerSource(port))
+	cmd := binCmd(runner, bin)
+	e2eharness.StartServerProcess(t, cmd)
+	e2eharness.CheckDefaultBacklogHoldsBurst(t, cmd, port)
+}
+
 func TestSelfHostServeMaxConnectionsFloor(t *testing.T) {
 	bin, runner := selfHostServer(t, e2eharness.MaxConnectionsFloorServerSource())
 	cmd := binCmd(runner, bin)

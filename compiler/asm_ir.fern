@@ -30,6 +30,7 @@ import "./irtables";
 import "./irverifygate";
 import "./ircore";
 import "./ssa";
+import "./ssafixed";
 import "./ssa_lift";
 import "./physicalbody";
 import "./ssaprepare";
@@ -6165,7 +6166,8 @@ function emit_scan_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 //
 // Registers: %rax, %rsi, %rdi, %r8, %r9 and %r10 are the caller-saved pool;
 // %rbx and %r12-%r15 are the callee-saved pool a value live across a call
-// takes, saved once per function. %r11, %rcx and %rdx are scratch. A spilled
+// takes, saved once per function. Fixed-register constraints protect scratch
+// uses of %r11, %rcx and %rdx. A spilled
 // value lives below the save area by its allocator slot (ssa_slot).
 
 // Pool index 0 is %rax, the register the ABI returns a call's result in, so a
@@ -6175,6 +6177,13 @@ function ssa_reg(k: i32): string {
   if (k >= ssa_fbase()) {
     return "%xmm" + util.i32_to_string(3 + k - ssa_fbase());
   }
+  if (k < ssa_nregs()) {
+    return ssa_caller_reg(k);
+  }
+  return ssa_saved_reg(k - ssa_nregs());
+}
+
+function ssa_caller_reg(k: i32): string {
   if (k == 0) {
     return "%rax";
   }
@@ -6194,22 +6203,199 @@ function ssa_reg(k: i32): string {
     return "%r10";
   }
   if (k == 6) {
-    return "%rbx";
+    return "%rcx";
   }
   if (k == 7) {
+    return "%rdx";
+  }
+  return "%r11";
+}
+
+function ssa_saved_reg(k: i32): string {
+  if (k == 0) {
+    return "%rbx";
+  }
+  if (k == 1) {
     return "%r12";
   }
-  if (k == 8) {
+  if (k == 2) {
     return "%r13";
   }
-  if (k == 9) {
+  if (k == 3) {
     return "%r14";
   }
   return "%r15";
 }
 
 function ssa_nregs(): i32 {
+  return 9;
+}
+
+// Fern's register-argument ABI is independent of the allocator's pool.
+function ssa_nargs(): i32 {
   return 6;
+}
+
+// Negative means the instruction has no audited register-only form. A
+// comparison retains all scratch homes because a branch/select may defer it.
+function ssa_nospill_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
+  let k = ins.kind_tag;
+  if (k == 1 || k == 3 || k == 7 || k == 35) {
+    return 0;
+  }
+  if (k == 6 || k == 8) {
+    return 7;
+  }
+  if (k == 9) {
+    return ssa_binary_nospill_mask(ins, imm);
+  }
+  if (k == 10 && ssa_integer_unary(ins.str)) {
+    return 0;
+  }
+  return 0 - 1;
+}
+
+function ssa_binary_nospill_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
+  if (ins.str == "and_not") {
+    return 0;
+  }
+  let tag = ir.kind_id(ins.str);
+  if (ircore.is_int_cmp_kind(tag)) {
+    return 7;
+  }
+  // A subtraction whose result shares its right operand computes in r11.
+  if (tag == 22) {
+    return 4;
+  }
+  if (ssa_direct_bin(tag)) {
+    return 0;
+  }
+  if (ssa_shift_tag(tag) && imm.is_imm[ins.args[1]]) {
+    return 0;
+  }
+  return 0 - 1;
+}
+
+function ssa_integer_unary(what: string): boolean {
+  return what == "!" || what == "int_extend" || what == "int_wrap"
+    || what == "u32_wrap" || what == "int_cast:u32" || what == "int_cast:i32"
+    || util.str_has_prefix(what, "rotr:");
+}
+
+function ssa_fixed_mask(ins: ssa.SInst, imm: ssa.Imms, no_spills: boolean): i32 {
+  let mask = ssa_nospill_mask(ins, imm);
+  if (mask < 0) {
+    return ssa_read_fixed_mask(ins, imm);
+  }
+  if (no_spills) {
+    return mask;
+  }
+  if (ins.kind_tag == 9 && ins.str == "and_not") {
+    return 7;
+  }
+  return mask | 4;
+}
+
+// Reads use r11 for a spilled base/result. Array indexing also needs rcx
+// for a spilled variable index; string indexing stages its data in rdx.
+// Stores and every other unaudited form retain all three scratch registers.
+function ssa_read_fixed_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
+  if (ins.kind_tag == 40) {
+    return 4;
+  }
+  if (ins.kind_tag == 42) {
+    return if (imm.is_imm[ins.args[1]]) { 4 } else { 5 };
+  }
+  if (ins.kind_tag == 44 && imm.is_imm[ins.args[1]]) {
+    return 6;
+  }
+  return 7;
+}
+
+function ssa_fixed_registers(f: ssa.SFunc, imm: ssa.Imms, no_spills: boolean, extra: boolean): ssafixed.Table {
+  let masks: i32[] = [];
+  for b in f.blocks {
+    for ins in b.insts {
+      let mask = 7;
+      if (extra) {
+        mask = ssa_fixed_mask(ins, imm, no_spills);
+      }
+      if (masks.len() == 0) {
+        mask = 7;
+      }
+      masks = masks.append(mask);
+    }
+    masks = masks.append(7);
+  }
+  return ssafixed.table(6, 3, masks);
+}
+
+function ssa_can_borrow_r11(f: ssa.SFunc, imm: ssa.Imms, floats: boolean[]): boolean {
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ssa_nospill_mask(ins, imm) < 0) {
+        return false;
+      }
+    }
+  }
+  for floating in floats {
+    if (floating) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function ssa_has_integer_saved(reg_of: i32[]): boolean {
+  for r in reg_of {
+    if (r >= ssa_nregs() && r < ssa_fbase()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function ssa_allocate(f: ssa.SFunc, imm: ssa.Imms, s: asmcore.EmitState): ssa.Alloc {
+  let prefs = ssa_arg_prefs(f, s);
+  let floats = ssa.float_values(f, [], false);
+  let kept = ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true));
+  let audited = ssa_can_borrow_r11(f, imm, floats);
+  // Small arithmetic graphs can lose throughput after recoloring despite
+  // fewer saves. Keep their existing homes when the old pool suffices.
+  if (audited && ssa.spill_count(kept.reg_of) == 0 && ssa_small_extra_homes(kept.reg_of)) {
+    return ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, false));
+  }
+  if (!audited || !ssa_has_integer_saved(kept.reg_of) || ssa.spill_count(kept.reg_of) > 0) {
+    return kept;
+  }
+  let borrowed = ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true, true));
+  // Only the absence of spills proves these forms need no r11 scratch.
+  if (ssa.spill_count(borrowed.reg_of) > 0) {
+    return kept;
+  }
+  return borrowed;
+}
+
+function ssa_small_extra_homes(regs: i32[]): boolean {
+  let seen = 0;
+  let count = 0;
+  let extra = false;
+  for r in regs {
+    if (r >= 0 && r < ssa_fbase()) {
+      let bit = 1 << r;
+      if ((seen & bit) == 0) {
+        seen = seen | bit;
+        count = count + 1;
+      }
+      if (r >= 6 && r < ssa_nregs()) {
+        extra = true;
+      }
+      if (count > ssa_nregs() - 3 + ssa_nsaved()) {
+        return false;
+      }
+    }
+  }
+  return extra;
 }
 
 function ssa_nsaved(): i32 {
@@ -6365,6 +6551,9 @@ function ssa_load(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asm
     return ssa_mov_slot(s, true, reg, ssa_slot_disp(ssa.spill_slot(reg_of[v]), s.ssa_save));
   }
   let home: string = ssa_reg(reg_of[v]);
+  if (home == "%r11") {
+    s = asmcore.EmitState { ...s, ssa_x0: v };
+  }
   if (home == reg) {
     return s;
   }
@@ -7113,7 +7302,7 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
   let b: i32 = ins.args[1];
   let dh: string = ssa_dst(reg_of, ins.result);
   let swap: boolean = fr.imm.is_imm[a] && !ssa_shift_tag(tag);
-  if (!swap && !fr.imm.is_imm[b] && ssa_src(reg_of, b, "%rcx") == dh) {
+  if (!swap && !fr.imm.is_imm[b] && ssa_in_x(reg_of, b) && ssa_reg(reg_of[b]) == dh) {
     if (ssa_commutative(tag) || ircore.flip_int_cmp_kind(tag) != tag) {
       swap = true;
     } else {
@@ -8841,6 +9030,15 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   if (ins.kind_tag == 9 && ins.str == "and_not") {
     return ssa_and_not(ins, reg_of, s);
   }
+  if (ssa.carry_triple(blk, ii, fr.uses)) {
+    return ssa_carried_sum(ins, reg_of, s);
+  }
+  if (ssa.carry_triple(blk, ii - 1, fr.uses)) {
+    return s;
+  }
+  if (ssa.carry_triple(blk, ii - 2, fr.uses)) {
+    return ssa_carry_reader(ins, blk.insts[ii - 1].result, reg_of, s);
+  }
   if (ins.kind_tag == 37) {
     return ssa_carry(ins, reg_of, s);
   }
@@ -8933,6 +9131,40 @@ function ssa_and_not(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
 // ssa_carry reads a carry (ssa.fuse_carries) off CF: x goes to %r11 and y is
 // added or subtracted in place, an incoming carry first set into CF by bt
 // for adc or sbb to take. Loads and moves leave the flags alone.
+// ssa_carried_sum is a carry triple's (ssa.carry_triple) sum or difference,
+// which sets the flags: computed in its home register unless that holds the
+// right operand, else in %r11.
+function ssa_carried_sum(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let op: string = if (ins.str == "sub") { "subq" } else { "addq" };
+  let d: string = ssa_dst(reg_of, ins.result);
+  if (ssa_in_x(reg_of, ins.args[1]) && reg_of[ins.args[1]] == reg_of[ins.result]) {
+    d = "%r11";
+  }
+  s = ssa_load(reg_of, ins.args[0], d, s);
+  s = s.write("    " + op + " " + ssa_operand(reg_of, ins.args[1], s) + ", " + d + "\n");
+  if (d == "%r11") {
+    s = ssa_x0_forget(s);
+  }
+  return ssa_store(reg_of, ins.result, d, s);
+}
+
+// ssa_carry_reader is a carry triple's reader: its other operand plus the
+// carry, or less the borrow, read off the flags the sum left.
+function ssa_carry_reader(ins: ssa.SInst, carry: i32, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let other: i32 = ins.args[0];
+  if (other == carry) {
+    other = ins.args[1];
+  }
+  let op: string = if (ins.str == "sub") { "sbbq" } else { "adcq" };
+  let d: string = ssa_dst(reg_of, ins.result);
+  s = ssa_load(reg_of, other, d, s);
+  s = s.write("    " + op + " $0, " + d + "\n");
+  if (d == "%r11") {
+    s = ssa_x0_forget(s);
+  }
+  return ssa_store(reg_of, ins.result, d, s);
+}
+
 function ssa_carry(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   if (reg_of[ins.result] == 0 - 1) {
     return s;
@@ -9018,7 +9250,7 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
 }
 
 // ssa_call_ind is a call through a function value, which names the callee's
-// `.r` entry: the first ssa_nregs() arguments in the pool registers, as a
+// `.r` entry: the first ssa_nargs() arguments in the pool registers, as a
 // register call passes them, and when there are more, every argument pushed
 // as well, with the first on top, where `.r` reads the rest. The target is
 // read into %rdx first, which is neither a pool register nor a scratch the
@@ -9031,14 +9263,14 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     s = ssa_load(reg_of, ins.args[0], "%rdx", s);
   }
   let i: i32 = argc;
-  while (argc > ssa_nregs() && i >= 1) {
+  while (argc > ssa_nargs() && i >= 1) {
     s = ssa_push_operand(reg_of, ins.args[i], s);
     i = i - 1;
   }
   let srcs: i32[] = [];
   let dsts: i32[] = [];
   let a: i32 = 0;
-  while (a < argc && a < ssa_nregs()) {
+  while (a < argc && a < ssa_nargs()) {
     srcs = srcs.append(reg_of[ins.args[a + 1]]);
     dsts = dsts.append(a);
     a = a + 1;
@@ -9049,7 +9281,7 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   } else {
     s = s.write("    call *%rdx\n");
   }
-  if (argc > ssa_nregs()) {
+  if (argc > ssa_nargs()) {
     s = ssa_alu_ir(s, 0, 64, (argc * 8) as i64, "%rsp");
   }
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
@@ -9567,7 +9799,7 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
 }
 
 // ssa_load_params moves each parameter to its home; value p is parameter p.
-// The first ssa_nregs() arrive in the pool's registers, in order (a stack
+// The first ssa_nargs() arrive in the pool's registers, in order (a stack
 // caller's are loaded there by the entry shim); the rest stay in the caller's
 // slots. The register moves go first, since a later parameter's home may be a
 // register still holding an earlier one.
@@ -9597,10 +9829,10 @@ function ssa_load_params(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): asm
 
 // ssa_reg_params is how many of f's parameters arrive in registers.
 function ssa_reg_params(f: ssa.SFunc): i32 {
-  if (f.nparams < ssa_nregs()) {
+  if (f.nparams < ssa_nargs()) {
     return f.nparams;
   }
-  return ssa_nregs();
+  return ssa_nargs();
 }
 
 // ssa_entry_shim is a function's two entries. `__fn_<name>`, the stack-ABI
@@ -9631,10 +9863,10 @@ function ssa_reg_helper(sym: string, argc: i32): boolean {
 
 // ssa_reg_call reports whether a direct call passes its arguments in
 // registers: the callee has a register entry in this unit and takes between
-// one and ssa_nregs() arguments.
+// one and ssa_nargs() arguments.
 function ssa_reg_call(ins: ssa.SInst, s: asmcore.EmitState): boolean {
   let argc: i32 = ins.args.len();
-  if (ins.kind_tag != 11 || argc == 0 || argc > ssa_nregs() || ssa.rc_inlined(ins)) {
+  if (ins.kind_tag != 11 || argc == 0 || argc > ssa_nargs() || ssa.rc_inlined(ins)) {
     return false;
   }
   if (ircore.is_fern_helper(ins.str) || ircore.is_c_call(ins.str)) {
@@ -9765,7 +9997,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
     imm = ssa.with_sym(imm, shapes.vals[si], asmcore.shape_label(s, shapes.names[si]));
     si = si + 1;
   }
-  let alloc: ssa.Alloc = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, ssa_arg_prefs(f, s), ssa.float_values(f, [], false), ssa_nfregs(), 0);
+  let alloc: ssa.Alloc = ssa_allocate(f, imm, s);
   let reg_of: i32[] = alloc.reg_of;
   let lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
   s = ssa_cfi(s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n"), 1, "", 0);
@@ -9785,7 +10017,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   // One that calls but addresses no slot and takes every parameter in a
   // register needs no %rbp: it pushes what it saves and pads %rsp to a
   // call's alignment.
-  let bare: boolean = !leaf && nspill == 0 && ssa_view_count(views) == 0 && !hev_on(s) && tails && f.nparams <= ssa_nregs();
+  let bare: boolean = !leaf && nspill == 0 && ssa_view_count(views) == 0 && !hev_on(s) && tails && f.nparams <= ssa_nargs();
   let pad: i32 = 0;
   if (saved.len() % 2 == 0) {
     pad = 8;

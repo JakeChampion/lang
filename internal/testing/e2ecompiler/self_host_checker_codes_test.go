@@ -2237,6 +2237,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cell-get-too-many", "function f(c: Cell[i32]): i32 { let v: i32 = c.get(3); return 0; }\nfunction main(): i32 { let c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E004"}},
 		{"cell-unknown-method", "function f(c: Cell[i32]): i32 { c.nosuch(); return 0; }\nfunction main(): i32 { let c: Cell[i32] = cell_new(0); return f(c); }\n", []string{"E043"}},
 		{"cell-set-ok", "function f(c: Cell[i32]): i32 { c.set(5); return 0; }\nfunction main(): i32 { let c: Cell[i32] = cell_new(0); return f(c); }\n", nil},
+		// IoError and Body are built-in unions no module declares, so their
+		// method table was taken as incomplete and any call was accepted,
+		// reaching lowering as "no semantic contract".
+		{"ioerror-unknown-method", "function main(): i32 { match (read_file(\"x\")) { Ok(t) => { return 0; }, Err(e) => { print(e.message()); return 1; } } return 0; }\n", []string{"E043"}},
+		{"ioerror-variant-unknown-method", "function main(): i32 { let e: IoError = Interrupted; let s: string = e.nosuch(); return 0; }\n", []string{"E043"}},
 		{"cell-get-ok", "function f(c: Cell[i32]): i32 { let v: i32 = c.get(); return 0; }\nfunction main(): i32 { let c: Cell[i32] = cell_new(0); return f(c); }\n", nil},
 		{"callee-undefined", "function main(): i32 { return foo(1); }\n", []string{"E001"}},
 		{"callee-user-fn-ok", "function g(): i32 { return 1; }\nfunction main(): i32 { return g(); }\n", nil},

@@ -1,0 +1,717 @@
+{
+  "source_head": "99285a95357849b6d2db317f71cdc9df012bf228",
+  "file_sha256": "88b3c1b9f385153a3e1d78ebab6b915b18d93331251e362ad90f1f2dd55fecce",
+  "roots": [
+    "ssa_block_inst",
+    "ssa_emit_exit",
+    "ssa_parallel_moves",
+    "emit_ssa_allocated_x86"
+  ],
+  "reachable_local_functions": 272,
+  "mentioning_scratch": 78,
+  "note": "Lexical local call graph and textual register mentions, including reads, comments, and emitted runtime strings. This is an inventory, not a clobber proof. The fixed-mask policy independently reserves all three registers for unaudited instructions and all terminators.",
+  "rows": [
+    {
+      "function": "emit_aes_gcm_op",
+      "line": 1834,
+      "mentions": {
+        "rcx": 1,
+        "rdx": 2,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ir_bin_asm",
+      "line": 4819,
+      "mentions": {
+        "rcx": 1,
+        "rdx": 2,
+        "r11": 0
+      }
+    },
+    {
+      "function": "div_regs",
+      "line": 4985,
+      "mentions": {
+        "rcx": 2,
+        "rdx": 1,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ir_div_guarded",
+      "line": 4999,
+      "mentions": {
+        "rcx": 1,
+        "rdx": 0,
+        "r11": 0
+      }
+    },
+    {
+      "function": "mask_low_bits",
+      "line": 5171,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 1,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ir_div_const_magic",
+      "line": 5196,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 2,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ir_div_const_generic",
+      "line": 5272,
+      "mentions": {
+        "rcx": 2,
+        "rdx": 0,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ir_fround_rax",
+      "line": 5303,
+      "mentions": {
+        "rcx": 9,
+        "rdx": 6,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ir_f2i_sat_rax",
+      "line": 5324,
+      "mentions": {
+        "rcx": 6,
+        "rdx": 0,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ir_f2u_sat_rax",
+      "line": 5356,
+      "mentions": {
+        "rcx": 8,
+        "rdx": 0,
+        "r11": 1
+      }
+    },
+    {
+      "function": "emit_scan_set_blocks",
+      "line": 5401,
+      "mentions": {
+        "rcx": 12,
+        "rdx": 4,
+        "r11": 2
+      }
+    },
+    {
+      "function": "scan_set_setup",
+      "line": 5459,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 0,
+        "r11": 7
+      }
+    },
+    {
+      "function": "scan_set_classify_nibble",
+      "line": 5498,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 1,
+        "r11": 0
+      }
+    },
+    {
+      "function": "set_entry_test",
+      "line": 5510,
+      "mentions": {
+        "rcx": 1,
+        "rdx": 3,
+        "r11": 0
+      }
+    },
+    {
+      "function": "emit_mismatch_x86",
+      "line": 5543,
+      "mentions": {
+        "rcx": 17,
+        "rdx": 27,
+        "r11": 0
+      }
+    },
+    {
+      "function": "emit_outer_mul_f64",
+      "line": 5618,
+      "mentions": {
+        "rcx": 7,
+        "rdx": 6,
+        "r11": 5
+      }
+    },
+    {
+      "function": "emit_inner_mul_add_f64",
+      "line": 5641,
+      "mentions": {
+        "rcx": 8,
+        "rdx": 8,
+        "r11": 5
+      }
+    },
+    {
+      "function": "emit_str_op",
+      "line": 5661,
+      "mentions": {
+        "rcx": 45,
+        "rdx": 120,
+        "r11": 13
+      }
+    },
+    {
+      "function": "emit_scan_set",
+      "line": 6357,
+      "mentions": {
+        "rcx": 15,
+        "rdx": 3,
+        "r11": 4
+      }
+    },
+    {
+      "function": "ssa_caller_reg",
+      "line": 6468,
+      "mentions": {
+        "rcx": 1,
+        "rdx": 1,
+        "r11": 1
+      }
+    },
+    {
+      "function": "ssa_load",
+      "line": 6778,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 0,
+        "r11": 2
+      }
+    },
+    {
+      "function": "ssa_alu_rhs",
+      "line": 7368,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 0,
+        "r11": 1
+      }
+    },
+    {
+      "function": "ssa_test_bit",
+      "line": 7412,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 0,
+        "r11": 2
+      }
+    },
+    {
+      "function": "ssa_store",
+      "line": 7428,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 0,
+        "r11": 2
+      }
+    },
+    {
+      "function": "ssa_dst",
+      "line": 7453,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 0,
+        "r11": 1
+      }
+    },
+    {
+      "function": "ssa_read",
+      "line": 7469,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 1,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ssa_imm_left",
+      "line": 7500,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 0,
+        "r11": 2
+      }
+    },
+    {
+      "function": "ssa_rhs",
+      "line": 7508,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 0,
+        "r11": 1
+      }
+    },
+    {
+      "function": "ssa_bin_in_place",
+      "line": 7534,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 0,
+        "r11": 3
+      }
+    },
+    {
+      "function": "ssa_r32",
+      "line": 7629,
+      "mentions": {
+        "rcx": 1,
+        "rdx": 1,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ssa_r8",
+      "line": 7651,
+      "mentions": {
+        "rcx": 1,
+        "rdx": 1,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ssa_fmath_asm",
+      "line": 7879,
+      "mentions": {
+        "rcx": 4,
+        "rdx": 0,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ssa_bin_work",
+      "line": 8039,
+      "mentions": {
+        "rcx": 1,
+        "rdx": 0,
+        "r11": 1
+      }
+    },
+    {
+      "function": "ssa_binary",
+      "line": 8051,
+      "mentions": {
+        "rcx": 1,
+        "rdx": 0,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ssa_push_operand",
+      "line": 8093,
+      "mentions": {
+        "rcx": 1,
+        "rdx": 1,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ssa_rc_prim_emit",
+      "line": 8126,
+      "mentions": {
+        "rcx": 8,
+        "rdx": 2,
+        "r11": 2
+      }
+    },
+    {
+      "function": "ssa_rc_guard",
+      "line": 8169,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 2,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ssa_rc_dec",
+      "line": 8210,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 0,
+        "r11": 2
+      }
+    },
+    {
+      "function": "ssa_release_entry",
+      "line": 8308,
+      "mentions": {
+        "rcx": 1,
+        "rdx": 1,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ssa_mem_inst",
+      "line": 8341,
+      "mentions": {
+        "rcx": 1,
+        "rdx": 3,
+        "r11": 1
+      }
+    },
+    {
+      "function": "ssa_mem_at",
+      "line": 8405,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 3,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ssa_str_eq",
+      "line": 8464,
+      "mentions": {
+        "rcx": 2,
+        "rdx": 6,
+        "r11": 2
+      }
+    },
+    {
+      "function": "ssa_host_call",
+      "line": 8617,
+      "mentions": {
+        "rcx": 2,
+        "rdx": 1,
+        "r11": 6
+      }
+    },
+    {
+      "function": "ir_memcpy_asm",
+      "line": 8655,
+      "mentions": {
+        "rcx": 1,
+        "rdx": 0,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ir_memset_asm",
+      "line": 8659,
+      "mentions": {
+        "rcx": 1,
+        "rdx": 0,
+        "r11": 1
+      }
+    },
+    {
+      "function": "ssa_dyn_dispatch",
+      "line": 8667,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 0,
+        "r11": 2
+      }
+    },
+    {
+      "function": "ssa_arg_regs",
+      "line": 8860,
+      "mentions": {
+        "rcx": 2,
+        "rdx": 2,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ssa_rt_call",
+      "line": 8967,
+      "mentions": {
+        "rcx": 1,
+        "rdx": 0,
+        "r11": 0
+      }
+    },
+    {
+      "function": "lc_rt_uncount",
+      "line": 9039,
+      "mentions": {
+        "rcx": 5,
+        "rdx": 0,
+        "r11": 0
+      }
+    },
+    {
+      "function": "arr_push_inline",
+      "line": 9052,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 2,
+        "r11": 0
+      }
+    },
+    {
+      "function": "arr_push_inline_u8",
+      "line": 9061,
+      "mentions": {
+        "rcx": 3,
+        "rdx": 2,
+        "r11": 0
+      }
+    },
+    {
+      "function": "arr_push_tail",
+      "line": 9083,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 4,
+        "r11": 0
+      }
+    },
+    {
+      "function": "push_count_test",
+      "line": 9097,
+      "mentions": {
+        "rcx": 4,
+        "rdx": 0,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ssa_str_view",
+      "line": 9152,
+      "mentions": {
+        "rcx": 7,
+        "rdx": 13,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ssa_select",
+      "line": 9305,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 0,
+        "r11": 2
+      }
+    },
+    {
+      "function": "ssa_and_not",
+      "line": 9333,
+      "mentions": {
+        "rcx": 1,
+        "rdx": 1,
+        "r11": 1
+      }
+    },
+    {
+      "function": "ssa_carry",
+      "line": 9347,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 0,
+        "r11": 3
+      }
+    },
+    {
+      "function": "ssa_operand",
+      "line": 9367,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 0,
+        "r11": 1
+      }
+    },
+    {
+      "function": "ssa_raw_inst",
+      "line": 9401,
+      "mentions": {
+        "rcx": 1,
+        "rdx": 2,
+        "r11": 1
+      }
+    },
+    {
+      "function": "ssa_call_ind",
+      "line": 9438,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 2,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ssa_inst",
+      "line": 9535,
+      "mentions": {
+        "rcx": 2,
+        "rdx": 1,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ssa_imm_to",
+      "line": 9690,
+      "mentions": {
+        "rcx": 3,
+        "rdx": 0,
+        "r11": 1
+      }
+    },
+    {
+      "function": "ssa_parallel_moves",
+      "line": 9710,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 0,
+        "r11": 2
+      }
+    },
+    {
+      "function": "ssa_move",
+      "line": 9757,
+      "mentions": {
+        "rcx": 2,
+        "rdx": 0,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ssa_brif",
+      "line": 9800,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 0,
+        "r11": 3
+      }
+    },
+    {
+      "function": "ssa_fused_test_emit",
+      "line": 9865,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 0,
+        "r11": 3
+      }
+    },
+    {
+      "function": "ssa_unique_flags",
+      "line": 9898,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 3,
+        "r11": 2
+      }
+    },
+    {
+      "function": "ssa_rc_is_one",
+      "line": 9916,
+      "mentions": {
+        "rcx": 0,
+        "rdx": 2,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ssa_bare_frame",
+      "line": 10351,
+      "mentions": {
+        "rcx": 2,
+        "rdx": 0,
+        "r11": 0
+      }
+    },
+    {
+      "function": "emit_dir_op",
+      "line": 10650,
+      "mentions": {
+        "rcx": 1,
+        "rdx": 1,
+        "r11": 0
+      }
+    },
+    {
+      "function": "emit_stack_op",
+      "line": 10679,
+      "mentions": {
+        "rcx": 7,
+        "rdx": 35,
+        "r11": 0
+      }
+    },
+    {
+      "function": "emit_ir_op_heap_bump_bytes",
+      "line": 11491,
+      "mentions": {
+        "rcx": 8,
+        "rdx": 5,
+        "r11": 0
+      }
+    },
+    {
+      "function": "emit_ir_op_heap_mark",
+      "line": 11527,
+      "mentions": {
+        "rcx": 2,
+        "rdx": 0,
+        "r11": 0
+      }
+    },
+    {
+      "function": "emit_ir_op_heap_release_to",
+      "line": 11554,
+      "mentions": {
+        "rcx": 2,
+        "rdx": 0,
+        "r11": 0
+      }
+    },
+    {
+      "function": "dyn_arg_operand",
+      "line": 11667,
+      "mentions": {
+        "rcx": 1,
+        "rdx": 1,
+        "r11": 0
+      }
+    },
+    {
+      "function": "emit_dyn_dispatch_chain",
+      "line": 11680,
+      "mentions": {
+        "rcx": 3,
+        "rdx": 4,
+        "r11": 0
+      }
+    },
+    {
+      "function": "emit_ir_op_dyn_box",
+      "line": 11773,
+      "mentions": {
+        "rcx": 4,
+        "rdx": 0,
+        "r11": 0
+      }
+    },
+    {
+      "function": "ir_i2f_rax",
+      "line": 11804,
+      "mentions": {
+        "rcx": 4,
+        "rdx": 0,
+        "r11": 0
+      }
+    }
+  ]
+}

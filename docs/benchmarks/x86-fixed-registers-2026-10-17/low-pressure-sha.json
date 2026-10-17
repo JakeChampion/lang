@@ -1,0 +1,70 @@
+{
+  "source_head": "0de33a0d675ab31b66386ebf406a56ca1c30e680",
+  "host": "Linux-6.18.55-x86_64-with-glibc2.41",
+  "cpu_affinity": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "valgrind": "valgrind-3.24.0",
+  "compiler_sha256": {
+    "baseline": "c7d93477a830d5c5359bef48269cff32f54410416b689ea7b2dd3fd2d457fd9f",
+    "candidate": "ae2bf8b79fa4379eb4a722515285bfa585462e4fe45cf5ecc67033a97a5fc506"
+  },
+  "input_sha256": "7d212b9c884f5c77896de960ae17cc341cda43b14d6a971f34ca29ebd4badf7f",
+  "input_bytes": 8388608,
+  "sha256": {
+    "hardware": {
+      "builds": {
+        "baseline": {
+          "binary_sha256": "94fe295524389f2092187e694b1b08386d6c198b1efebe821a2e3b6b8d1022a3",
+          "binary_bytes": 227904,
+          "software_function_instructions": 3022,
+          "software_function_frame_references": 1136
+        },
+        "candidate": {
+          "binary_sha256": "d926f172c5e807acf4904d4717860f29110bf53aeb2b185ecdfe7f4b27ee787e",
+          "binary_bytes": 223808,
+          "software_function_instructions": 2991,
+          "software_function_frame_references": 868
+        }
+      },
+      "instructions": {
+        "baseline": 295988023,
+        "candidate": 295988041
+      },
+      "native_files_per_run": 16,
+      "native_bytes_per_run": 134217728,
+      "native": {
+        "scope": "Not measured: instruction-only integration repeat"
+      }
+    },
+    "software": {
+      "builds": {
+        "baseline": {
+          "binary_sha256": "64281f1ee032acd110356898e31d05efdc1bc7f3250e203d2fdd46a5bfae9d8d",
+          "binary_bytes": 219440,
+          "software_function_instructions": 3022,
+          "software_function_frame_references": 1136
+        },
+        "candidate": {
+          "binary_sha256": "61adbde75381b939d831806792a61c5c13fe3ba014234ed8d9ca6bb9d3d87af2",
+          "binary_bytes": 211248,
+          "software_function_instructions": 2991,
+          "software_function_frame_references": 868
+        }
+      },
+      "instructions": {
+        "baseline": 380849131,
+        "candidate": 376654813
+      },
+      "native_files_per_run": 16,
+      "native_bytes_per_run": 134217728,
+      "native": {
+        "scope": "Not measured: instruction-only integration repeat"
+      }
+    }
+  }
+}
