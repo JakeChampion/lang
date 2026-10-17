@@ -89,16 +89,6 @@ func CapabilityRows(entry string, prog *ast.Program) ([]caps.Row, map[string]cap
 	return rows, grants
 }
 
-// PackageResolver maps a FuncDecl.SourceModule onto its report
-// package name — see packageInfoResolver for the resolution rules.
-func PackageResolver(entry string) func(string) string {
-	resolve := packageInfoResolver(entry)
-	return func(module string) string {
-		name, _, _ := resolve(module)
-		return name
-	}
-}
-
 // packageInfoResolver maps a FuncDecl.SourceModule onto its package
 // identity: the nearest governing fern.toml's [package] name and
 // directory, plus whether the module belongs to the ROOT package —
