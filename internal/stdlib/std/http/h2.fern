@@ -155,8 +155,9 @@ pub struct Conn {
   config: Config,
   phase: i32,
   // Bytes read and not yet framed, the next frame at `inbox_at`. Within one
-  // `read` the frames are taken by moving inbox_at; the rest is cut off once
-  // at its end, so it is 0 between calls.
+  // `read` the frames are taken by moving inbox_at; a frame that ends the
+  // inbox empties it, and a partial frame left over is cut off once at the
+  // read's end, so it is 0 between calls.
   inbox: u8[],
   inbox_at: i32,
   decoder: hpack.Decoder,
@@ -348,9 +349,9 @@ pub function (c: Conn) read(bytes: u8[]): Step {
     r = __preface(r);
   }
   while (r.conn.phase == AWAITING_SETTINGS || r.conn.phase == RUNNING) {
-    let before: i32 = r.conn.inbox_at;
+    let before: i32 = r.conn.inbox.len() - r.conn.inbox_at;
     r = __next_frame(r);
-    if (r.conn.inbox_at == before) {
+    if (r.conn.inbox.len() - r.conn.inbox_at == before) {
       break;
     }
   }
@@ -392,7 +393,7 @@ function __next_frame(r: __Run): __Run {
           let out: u8[] = r.out;
           let events: Event[] = r.events;
           let c: Conn = r.conn;
-          c = __counted(Conn { ...c, inbox_at: c.inbox_at + n });
+          c = __counted(__taken(c, n));
           return __frame(__Run { conn: c, out: out, events: events }, f);
         },
         frame.More => {
@@ -410,6 +411,15 @@ function __next_frame(r: __Run): __Run {
     }
   }
   return r;
+}
+
+// __taken is c with the n bytes at inbox_at taken: the inbox emptied when
+// they were the last, which spares the read its cut at the end.
+function __taken(c: Conn, n: i32): Conn {
+  if (c.inbox_at + n >= c.inbox.len()) {
+    return Conn { ...c, inbox: [], inbox_at: 0 };
+  }
+  return Conn { ...c, inbox_at: c.inbox_at + n };
 }
 
 // __past_frame is where the frame at `at` in the inbox ends, by its header.
