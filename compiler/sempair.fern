@@ -154,6 +154,13 @@ function seeded(f: ssasem.Func, ix: util.NameIndex, ok: boolean[], paired: boole
       if (ins.kind_tag == 8 && !joins_apart(ins, defs, ix, ok)) {
         whole = marked_all(whole, [ins.result]);
       }
+      // Reusing an existing record is a whole-box use even though its base
+      // lives in metadata, outside the field operands. Scalarizing the donor
+      // would require materializing a replacement box in this caller.
+      let donor: i32 = ssasem.update_base(ins);
+      if (donor >= 0) {
+        whole = marked_all(whole, [donor]);
+      }
     }
     if (b.term.kind_tag == 1 && !paired) {
       whole = marked_all(whole, [b.term.value]);

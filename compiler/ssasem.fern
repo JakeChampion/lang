@@ -1515,6 +1515,13 @@ function tuple_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type):
 }
 
 function record_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+  let donor: i32 = update_base(ins);
+  if (ins.imm < 0 || donor >= f.values.len()) {
+    return "record update donor index";
+  }
+  if (donor >= 0 && !semtypes.equal(f.values[donor], result)) {
+    return "record update donor type";
+  }
   let at: i32 = semrecords.find(f.records, result);
   if (at < 0) {
     return "missing record construction schema";

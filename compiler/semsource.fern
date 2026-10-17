@@ -9804,7 +9804,14 @@ function renumber_block(b: ssa.SBlock, map: i32[], ids: i32[]): ssa.SBlock {
     for a in mapped_args(ins.args, map) {
       args = args.append(ids[a]);
     }
-    insts = insts.append(ssa.SInst { ...ins, result: ids[ins.result], args: args });
+    // A spread's donor is a value reference too, encoded outside `args`.
+    // It follows collapsed phis and the dense numbering with its field reads.
+    let immediate: i32 = ins.imm;
+    let donor: i32 = ssasem.update_base(ins);
+    if (donor >= 0) {
+      immediate = ids[resolve(map, donor)] + 1;
+    }
+    insts = insts.append(ssa.SInst { ...ins, result: ids[ins.result], args: args, imm: immediate });
   }
   let term = renumber_term(b.term, map, ids);
   return ssa.SBlock { ...b, insts: insts, term: term };

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"testing"
 )
 
@@ -119,6 +120,7 @@ var scalarReturnCases = []struct{ name, source, want string }{
 	{"reference-field", scalarRecordReference, "1000\n"},
 	{"five-fields", scalarRecordFive, "1000\n"},
 	{"escaping-result", scalarRecordEscapes, "1000\n"},
+	{"update-donor", scalarRecordUpdateDonor, "1000\n"},
 	{"function-value", scalarRecordFunctionValue, "1000\n"},
 	{"finalizer", scalarRecordFinalizer, "1000\n"},
 }
@@ -216,3 +218,38 @@ const scalarPaddingTail = `@noinline function increment(c:i64):i64{return c+1i64
 @noinline function tail(a:i64,b:i64,c:i64):i64{let d=increment(c);return sum(a,b,d);}
 function main():i32{if(tail(1i64,2i64,3i64)!=7i64){return 31;}print("0");return 0;}
 `
+
+// The update's donor is encoded in record_new.imm, not in its field operands.
+// Passing a box back to a caller that reuses it must keep that existing box.
+const scalarRecordUpdateDonor = `import "std/i64";
+struct Quad {a:i64,b:i64,c:i64,d:i64}
+@noinline function make(i:i32):Quad{return Quad {a:i as i64,b:2i64,c:3i64,d:4i64};}
+@noinline function pass(own q:Quad):Quad{return q;}
+@noinline function consume(q:Quad):i64{return q.a+q.b+q.c+q.d;}
+function main():i32{let before=__heap_alloc_count();let i=0;while(i<1000){let q=pass(make(i));let r=Quad {...q,a:q.a+1i64};if(consume(r)!=(i as i64)+10i64){return 32;}i=i+1;}let count=__heap_alloc_count()-before;print(count.to_string());return 0;}
+`
+
+func TestSelfHostRecordUpdateDonorMetadata(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(src, []byte(scalarRecordUpdateDonor), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "x86-64-linux", "-emit", "asm", "-o", filepath.Join(dir, "main.s"), src, cli.stdlib)
+	cmd.Env = childEnv("FERN_SEM_DUMP=main")
+	dump, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("compile: %v: %s", err, dump)
+	}
+	call := regexp.MustCompile(`(?m)^\s+v(\d+) = k-7 \[[0-9,]+\] imm=0 pass$`).FindSubmatch(dump)
+	update := regexp.MustCompile(`(?m)^\s+v\d+ = k-5 \[[0-9,]+\] imm=(\d+) *$`).FindSubmatch(dump)
+	if len(call) != 2 || len(update) != 2 {
+		t.Fatalf("missing call/update witnesses: %s", dump)
+	}
+	value, _ := strconv.Atoi(string(call[1]))
+	immediate, _ := strconv.Atoi(string(update[1]))
+	if immediate != value+1 {
+		t.Fatalf("record update names v%d, want returned box v%d: %s", immediate-1, value, dump)
+	}
+}
