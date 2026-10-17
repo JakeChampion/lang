@@ -260,7 +260,7 @@ impl Platform for Host {
   }
 
   function http(self: Host, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
-    return fetch.send_on(fetch.sockets_with(self.pool), traced(req, self.trace, (): i32 => random_i32()), fetch.Policy { ...fetch.public_policy(), jar: self.jar, allow: self.allow });
+    return fetch.send_on(fetch.sockets_with(self.pool), traced(req, self.trace, (): i32 => random_i32()), fetch.Policy { ...fetch.public_policy_via(self.pool.proxy_env()), jar: self.jar, allow: self.allow });
   }
 
   function stat(self: Host, path: string): Result[FileStat, IoError] {

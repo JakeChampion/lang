@@ -613,7 +613,24 @@ pub trait Transport {
 // their requests to one origin go over one connection at once. `names` is
 // the machine's resolver as the transport last read it (`dns.Resolver`),
 // kept with the connections so a request reads no file to find a host.
-pub struct Idle { kept: Cell[Kept[]], max: i32, idle: Duration, shared: Option[Shared], names: dns.Resolver }
+// `proxies` is the environment's proxy configuration once `proxy_env` read
+// it.
+pub struct Idle { kept: Cell[Kept[]], max: i32, idle: Duration, shared: Option[Shared], names: dns.Resolver, proxies: Cell[Option[ProxyEnv]] }
+
+// `(p).proxy_env()` — the environment's proxy configuration (`__proxies()`),
+// read on the pool's first request and kept, since nothing changes the
+// environment while the program runs.
+pub function (p: Idle) proxy_env(): ProxyEnv {
+  match (p.proxies.get()) {
+    Some(env) => {
+      return env;
+    },
+    None => {}
+  }
+  let env: ProxyEnv = __proxies();
+  p.proxies.set(Some(env));
+  return env;
+}
 
 // `Kept` — a connection the pool holds: where it reaches (`key`), the
 // transport's number for it, the nanosecond it went idle, its TLS session
@@ -631,7 +648,7 @@ pub function idle(): Idle {
 // connections, each for `idle`; a `max` of 0 keeps none.
 pub function idle_limited(max: i32, idle: Duration): Idle {
   let none: Kept[] = [];
-  return Idle { kept: cell_new(none), max: max, idle: idle, shared: None, names: dns.resolver() };
+  return Idle { kept: cell_new(none), max: max, idle: idle, shared: None, names: dns.resolver(), proxies: cell_new(None) };
 }
 
 // `idle_shared()` — `idle()` with a `Shared` table beside it, for a loop
@@ -1387,15 +1404,16 @@ function __proxies(): ProxyEnv {
 
 // `Policy` — what a route may reach: `public_only` refuses a host that
 // resolves to an address `net.is_global` does not admit; `proxies` is the
-// proxy configuration, which `send` and `plat.http` read from the
-// environment once per request; `roots` are the roots a server's chain
+// proxy configuration, which `send` reads from the environment once per
+// request and `plat.http` once per pool (`proxy_env`); `roots` are the roots a server's chain
 // must reach, the machine's (`verify.system_roots()`) when None; `jar` is
 // the cookie jar (std/http/cookie) every hop reads its `Cookie` header
 // from and stores its `Set-Cookie` into, none when None.
 pub struct Policy { public_only: boolean, proxies: ProxyEnv, roots: Option[verify.Roots], jar: Option[cookie.Jar], allow: Option[Allow] }
 
-// `public_policy()` — the route `plat.http` takes: global addresses only,
-// the environment's proxies, the machine's roots, no jar, any host.
+// `public_policy()` — global addresses only, the environment's proxies,
+// the machine's roots, no jar, any host: the route `plat.http` takes, with
+// the proxies its pool keeps (`proxy_env`).
 pub function public_policy(): Policy {
   return public_policy_via(__proxies());
 }
@@ -1554,9 +1572,9 @@ pub function send_on[T: Transport](tr: T, req: Request, policy: Policy): Result[
   let cur: Request = req;
   let hops: i32 = 0;
   while (true) {
-    let hop: Request = __with_jar(cur, policy.jar, tr.wall_ms());
+    let hop: Request = __with_jar(tr, cur, policy.jar);
     let resp: HttpResponse = __send_once(tr, hop, started, policy)?;
-    __stored(policy.jar, hop.url, resp.headers, tr.wall_ms());
+    __stored(tr, policy.jar, hop.url, resp.headers);
     if (!__redirects(resp.status) || req.redirects == 0) {
       return Ok(resp);
     }
@@ -1569,12 +1587,13 @@ pub function send_on[T: Transport](tr: T, req: Request, policy: Policy): Result[
   return Err(Redirect("unreachable"));
 }
 
-// `__with_jar(req, jar, now)` — the request with the jar's cookies for
-// its URL after any `Cookie` header it already carries.
-function __with_jar(req: Request, jar: Option[cookie.Jar], now: i64): Request {
+// `__with_jar(tr, req, jar)` — the request with the jar's cookies for
+// its URL after any `Cookie` header it already carries, judged at `tr`'s
+// wall clock, which is read only when there is a jar.
+function __with_jar[T: Transport](tr: T, req: Request, jar: Option[cookie.Jar]): Request {
   match (jar) {
     Some(j) => {
-      match (j.header(req.url, now)) {
+      match (j.header(req.url, tr.wall_ms())) {
         Some(v) => {
           let all: string = v;
           match (req.headers.get("cookie")) {
@@ -1597,12 +1616,12 @@ function __with_jar(req: Request, jar: Option[cookie.Jar], now: i64): Request {
   return req;
 }
 
-// `__stored(jar, url, headers, now)` — what the response to `url` set,
-// stored in the jar when there is one.
-function __stored(jar: Option[cookie.Jar], request_url: string, h: HeaderMap, now: i64): void {
+// `__stored(tr, jar, url, headers)` — what the response to `url` set,
+// stored in the jar when there is one, at `tr`'s wall clock.
+function __stored[T: Transport](tr: T, jar: Option[cookie.Jar], request_url: string, h: HeaderMap): void {
   match (jar) {
     Some(j) => {
-      j.store(request_url, h, now);
+      j.store(request_url, h, tr.wall_ms());
     },
     None => {}
   }
