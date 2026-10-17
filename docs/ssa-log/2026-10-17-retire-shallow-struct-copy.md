@@ -37,3 +37,10 @@ all 29 rows outside the tolerance match a local emission cross-check exactly.
 The same cross-check measures the complete corpus on x86-64 and ARM64. The
 smaller static ceilings are lowered to those measured counts, retaining every
 dynamic instruction baseline and tolerance. No ceiling is raised.
+
+Main's scalar-return changes also require aligning retained-body fixtures.
+The constructor frame now discards its alignment word with `leaq`; its controls
+still reject missing or incorrectly sized restoration and accept equivalent
+`addq` and `popq` forms. The caller fixture exports its constructor so it
+continues to exercise boxed allocations and releases. Both failures reproduce
+without this cleanup; corrected x86-64 and WASI retained controls pass.
