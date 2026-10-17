@@ -12,8 +12,8 @@ import (
 )
 
 // machoDwarfSrc gives helper's statements lines 2 and 3 and main's call line
-// 6; f carries two scalar locals for the variable DIEs, and pick's bounds
-// check a numeric local label (`1:`) in the emitted text.
+// 6; f keeps its wide local across a call for the variable DIEs, and pick's
+// bounds check a numeric local label (`1:`) in the emitted text.
 const machoDwarfSrc = `@noinline function helper(x: i32): i32 {
     let y: i32 = x * 2;
     return y + 1;
@@ -25,7 +25,7 @@ function main(): i32 {
 @noinline function f(n: i32): i32 {
     let m: i32 = n + 1;
     let k: i64 = (m as i64) * 3;
-    return m + (k as i32) - 168;
+    return helper(m) + (k as i32) - 211;
 }
 @noinline function pick(xs: i32[], i: i32): i32 {
     return xs[i];

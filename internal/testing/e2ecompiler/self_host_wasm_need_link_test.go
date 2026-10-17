@@ -23,7 +23,7 @@ import "./util";
 import "./wasm_ir";
 
 function unit(o: ir.Op): irtables.LowerResult[] {
-    return [irtables.LowerResult { ok: true, why: "", ops: [o], n_locals: 0,
+    return [irtables.LowerResult { source_positions: irtables.no_source(),  ok: true, why: "", ops: [o], n_locals: 0,
         n_params: 0, erased_wide: false, superseded: false, arr_slots: [], i64_slots: [],
         f64_slots: [], str_slots: [], name: "", result_kind: irtables.result_i32(), dbg_slots: [], dbg_names: [], dbg_types: [] }];
 }
@@ -32,7 +32,7 @@ function main(): i32 {
     let mod: parser.Module = parser.parse_module(lexer.tokenize("function main(): i32 { return 0; }"));
     let text: wasm_ir.WasmUnit = wasm_ir.WasmUnit { ns: "", text: "  (func $main (result i32) (i32.const 0))\n", strs: [], caggs: [], fns: [] };
     for op in wasm_ir.need_ops() {
-        let o: ir.Op = ir.Op { decl: 0 - 1, kind_tag: ir.kind_id(op), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+        let o: ir.Op = ir.Op { source: 0,  decl: 0 - 1, kind_tag: ir.kind_id(op), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
         let needs: string[] = wasm_ir.needs_of(unit(o));
         if (util.index_of_str(needs, op) < 0) {
             print("=== unrecorded: " + op);

@@ -204,6 +204,8 @@ pub struct EmitState {
   // Set at a function's start and cleared by its first `.loc` row, which
   // carries prologue_end: the address a breakpoint on the function belongs at.
   dw_first: boolean,
+  dw_pos: i64,
+  debug_rows: string[],
   // rt_owned_allocs: set while the task runtime's functions are being
   // emitted. Their __alloc blocks (the record table, the records, the save
   // areas and wait sets) are runtime state the program never holds or frees,
@@ -481,7 +483,7 @@ pub struct Prelift { lifted: Option[ssa_lift.LResult], formed: Option[ssa.Formed
 // `pre` was made from. A body whose emit tracks its slots lifts again, since
 // its lift records them.
 pub function (s: EmitState) prelift(pre: Prelift[], i: i32, r: irtables.LowerResult): Prelift {
-  if (i >= pre.len() || r.dbg_slots.len() > 0 && s.var_rows) {
+  if (i >= pre.len() || r.source_positions.entry.line > 0 || r.dbg_slots.len() > 0 && s.var_rows) {
     return no_prelift();
   }
   return pre[i];
@@ -497,7 +499,7 @@ pub function (s: EmitState) lift(pre: Prelift, label_name: string, r: irtables.L
   if let Some(l) = pre.lifted {
     return l;
   }
-  return ssa_lift.lift_from_ir_prod(s.kinds, label_name, r.n_params, r.n_locals, r.ops, r.dbg_slots.len() > 0 && s.var_rows);
+  return ssa_lift.lift_from_ir_prod(s.kinds, label_name, r.n_params, r.n_locals, r.ops, r.source_positions.entry.line > 0 || r.dbg_slots.len() > 0 && s.var_rows);
 }
 
 // finish is ssaprepare.finish over the unit's leaves, taking the register
@@ -564,6 +566,8 @@ pub function new_state(): EmitState {
     harden: false,
     var_rows: false,
     dw_first: false,
+    dw_pos: 0,
+    debug_rows: [],
     rt_owned_allocs: false,
     syscalls: [],
     raw_syscall: "",
@@ -11815,54 +11819,58 @@ pub function dbg_vars(fn_label: string, a: ssa.Alloc, r: irtables.LowerResult, r
   return d;
 }
 
-// DbgOut is dbg_shaped_vars' result: the state after naming the shapes, and
-// the variables.
-pub struct DbgOut { state: EmitState, dbg: DbgVars }
-
-// dbg_shaped_vars is dbg_vars after each enum type's variants are given the
-// label of their shape (`%Name{North=.S3,...}`), the address the link
-// resolves each enumerator's value from.
-pub function dbg_shaped_vars(s: EmitState, fn_label: string, a: ssa.Alloc, r: irtables.LowerResult, repl: i32[], seen_vals: i32[], seen_slots: i32[], locs: string[], npos: i32): DbgOut {
-  let st: EmitState = s;
-  let types: string[] = [];
-  for t in r.dbg_types {
-    let one: DbgShape = dbg_shape_type(st, t);
-    st = one.state;
-    types = types.append(one.text);
-  }
-  let shaped: irtables.LowerResult = irtables.LowerResult { ...r, dbg_types: types };
-  return DbgOut { state: st, dbg: dbg_vars(fn_label, a, shaped, repl, seen_vals, seen_slots, locs, npos) };
-}
-
-struct DbgShape { state: EmitState, text: string }
-
-// dbg_shape_type names the shape of each variant in an enum's description.
-function dbg_shape_type(own s: EmitState, t: string): DbgShape {
+// Debug enums name only shapes materialized by program code. Unused variants
+// have no address in the image and must not change its pools or relocations.
+function dbg_shape_type(s: EmitState, t: string): string {
   let out: string = "";
-  let enum_at: boolean = false;
   let i: i32 = 0;
   while (i < t.len()) {
-    let c: u8 = t[i];
-    if (c == b'%') {
-      enum_at = true;
-    }
-    if (enum_at && (c == b'{' || c == b',')) {
-      let j: i32 = i + 1;
-      while (t[j] != b',' && t[j] != b'}') {
-        j = j + 1;
+    if (t[i] == b'%') {
+      let a = __memchr(t, 123, i + 1);
+      let b = __memchr(t, 125, a + 1);
+      if (a < 0 || b < 0) {
+        return t;
       }
-      let name: string = slice_unchecked(t, i + 1, j) + "";
-      let sr: ShapeRefOut = shape_ref(s, name);
-      s = sr.state;
-      out = out + slice_unchecked(t, i, i + 1) + name + "=" + sr.label;
-      i = j;
+      out = out + slice_unchecked(t, i, a + 1) + dbg_enum_members(s, t, a + 1, b) + "}";
+      i = b + 1;
     } else {
-      enum_at = enum_at && c != b'}';
       out = out + slice_unchecked(t, i, i + 1);
       i = i + 1;
     }
   }
-  return DbgShape { state: s, text: out };
+  return out;
+}
+
+function dbg_enum_members(s: EmitState, t: string, i: i32, end: i32): string {
+  let out: string = "";
+  while (i < end) {
+    let j = __memchr(t, 44, i);
+    if (j < 0 || j > end) {
+      j = end;
+    }
+    let name = slice_unchecked(t, i, j) + "";
+    let label = dbg_shape_label(s, name);
+    if (label != "") {
+      if (out != "") {
+        out = out + ",";
+      }
+      out = out + name + "=" + label;
+    }
+    i = j + 1;
+  }
+  return out;
+}
+
+function dbg_shape_label(s: EmitState, name: string): string {
+  if (s.str_ns == "") {
+    let at = string_lit_index(s, name);
+    if (at >= 0) {
+      return str_lit_label(s, at);
+    }
+  } else if (util.index_of_str(s.shape_lits, name) >= 0) {
+    return shape_sym(name);
+  }
+  return "";
 }
 
 // dbg_var adds the rows of variable `i`: one per distinct value its slot held
@@ -11927,12 +11935,35 @@ pub function dbg_labels(s: EmitState, d: DbgVars, fn_label: string, lo: i32, hi:
   return s;
 }
 
-// dbg_rows writes the record's rows for the assembler to keep.
+// Resolve debug types after program code has settled its shape labels.
 pub function dbg_rows(s: EmitState, d: DbgVars): EmitState {
-  for row in d.rows {
-    s = s.write("    .fern_var " + row + "\n");
+  if (d.rows.len() == 0) {
+    return s;
   }
-  return s;
+  let rows = s.debug_rows;
+  for row in d.rows {
+    rows = rows.append(row);
+  }
+  return EmitState { ...s, debug_rows: rows };
+}
+
+pub function emit_debug_rows(s: EmitState): EmitState {
+  if (s.debug_rows.len() == 0) {
+    return s;
+  }
+  let out = EmitState { ...s, debug_rows: [] };
+  for row in s.debug_rows {
+    out = emit_debug_row(out, row);
+  }
+  return out;
+}
+
+function emit_debug_row(own s: EmitState, row: string): EmitState {
+  let a = __memchr(row, 124, 0);
+  let b = __memchr(row, 124, a + 1);
+  let c = __memchr(row, 124, b + 1);
+  let shaped = dbg_shape_type(s, slice_unchecked(row, b + 1, c) + "");
+  return s.write("    .fern_var " + slice_unchecked(row, 0, b + 1) + shaped + slice_unchecked(row, c, row.len()) + "\n");
 }
 
 // dbg_hex spells DWARF location bytes as the hex a row carries.

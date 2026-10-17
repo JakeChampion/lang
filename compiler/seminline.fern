@@ -19,6 +19,7 @@
 // called from a few places that returns a box at every return is spliced
 // into the callers that read it apart (`shared_spliceable`).
 import "./ssa";
+import "./sourcepos";
 import "./util";
 import "./ssasem";
 import "./typeinfo";
@@ -1194,7 +1195,7 @@ function splice(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Fu
   }
   blocks = blocks.append(ssa.SBlock { id: cont, insts: tail, term: b.term, preds: rets });
   let joined: ssasem.Func = with_tables(f, callee, vmap);
-  return ssasem.Func { ...joined, graph: ssa.SFunc { ...g, blocks: swapped_blocks(blocks, swap), nvals: base + callee.graph.nvals }, values: values, dbg_vals: swapped_all(swap, joined.dbg_vals) };
+  return ssasem.Func { ...joined, graph: ssa.SFunc { ...g, blocks: swapped_blocks(blocks, swap), nvals: base + callee.graph.nvals }, values: values, dbg_vals: swapped_all(swap, joined.dbg_vals), source_positions: renamed_source(sourcepos.continued(joined.source_positions, b.id, cont), swap) };
 }
 
 // Whether `f` is one block that returns: spliced, its instructions take the
@@ -1261,7 +1262,7 @@ function splice_in_place(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): 
 
 // `f` with the renames `swap` holds made in every use.
 function renamed(f: ssasem.Func, swap: i32[]): ssasem.Func {
-  return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: swapped_blocks(f.graph.blocks, swap) }, dbg_vals: swapped_all(swap, f.dbg_vals) };
+  return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: swapped_blocks(f.graph.blocks, swap) }, dbg_vals: swapped_all(swap, f.dbg_vals), source_positions: renamed_source(f.source_positions, swap) };
 }
 
 // `f` with the tables `callee`'s body reads added to its own: the contracts of
@@ -1310,7 +1311,7 @@ function with_tables(f: ssasem.Func, callee: ssasem.Func, vmap: i32[]): ssasem.F
     dbg_names = dbg_names.append(callee.dbg_names[i]);
     i = i + 1;
   }
-  return ssasem.Func { ...f, calls: calls, records: table, enums: enums, envs: with_rows(f.envs, callee.envs), anchors: anchors, dyns: with_rows(f.dyns, callee.dyns), dbg_vals: dbg_vals, dbg_names: dbg_names };
+  return ssasem.Func { ...f, calls: calls, records: table, enums: enums, envs: with_rows(f.envs, callee.envs), anchors: anchors, dyns: with_rows(f.dyns, callee.dyns), dbg_vals: dbg_vals, dbg_names: dbg_names, source_positions: sourcepos.merge(f.source_positions, callee.source_positions, vmap) };
 }
 
 function with_rows(rows: ssasem.EnvRow[], more: ssasem.EnvRow[]): ssasem.EnvRow[] {
@@ -1622,7 +1623,7 @@ function resolve(f: ssasem.Func, own e: Edits, read: ssa.SInst): Edits {
 function resolvable(f: ssasem.Func, e: Edits, read: ssa.SInst, v: i32, depth: i32, phis: i32[]): (boolean, i32[]) {
   let x: i32 = through_copies(e.defs, v);
   let d: ssa.SInst = def_inst(e.defs, x);
-  if (depth > 32 || blocked(f, e, read, v, x)) {
+  if (depth > 32 || blocked(f, e, read, x)) {
     return (false, phis);
   }
   if (builds(d.kind_tag)) {
@@ -1642,11 +1643,10 @@ function resolvable(f: ssasem.Func, e: Edits, read: ssa.SInst, v: i32, depth: i3
   return (true, seen);
 }
 
-// Where no read resolves: a kept value read other than as a scalar field, a
-// chained rebuild, or a value a debug binding names.
-function blocked(f: ssasem.Func, e: Edits, read: ssa.SInst, v: i32, x: i32): boolean {
-  return marked(e.kept, x) && !scalar_field(read, f.values[read.result]) || marked(e.chained, x)
-    || index_of(f.dbg_vals, v) >= 0 || index_of(f.dbg_vals, x) >= 0;
+// Where no read resolves: a kept value read other than as a scalar field,
+// or a chained rebuild.
+function blocked(f: ssasem.Func, e: Edits, read: ssa.SInst, x: i32): boolean {
+  return marked(e.kept, x) && !scalar_field(read, f.values[read.result]) || marked(e.chained, x);
 }
 
 // One step of a read's resolution: the edits so far, the value found, and
@@ -2050,8 +2050,7 @@ function built_types(g: ssa.SFunc, f: ssasem.Func): typeinfo.Type[] {
   return built;
 }
 
-// How often each value is read: as an operand, by a terminator, or as a
-// source variable under `-g`, which a debugger reads.
+// How often each value is read as an operand or by a terminator.
 function read_counts(f: ssasem.Func): i32[] {
   let g: ssa.SFunc = f.graph;
   let reads: i32[] = [];
@@ -2073,9 +2072,6 @@ function read_counts(f: ssasem.Func): i32[] {
       reads = counted(reads, b.term.cond);
     }
   }
-  for v in f.dbg_vals {
-    reads = counted(reads, v);
-  }
   return reads;
 }
 
@@ -2091,7 +2087,6 @@ function unread_build(f: ssasem.Func, built: typeinfo.Type[], reads: i32[], ins:
     return false;
   }
   // Capture-free closure constants have no capture lifetime to preserve.
-  // read_counts includes debug bindings, so those remain visible under -g.
   if (ins.kind_tag == ssasem.closure_new() && ins.args.len() == 0) {
     return true;
   }
@@ -2099,4 +2094,17 @@ function unread_build(f: ssasem.Func, built: typeinfo.Type[], reads: i32[], ins:
     return false;
   }
   return built_type(f, built, f.values[ins.result]) && !ssasem.has_finalizer(f, f.values[ins.result]);
+}
+
+function renamed_source(source: sourcepos.SourceInfo, swap: i32[]): sourcepos.SourceInfo {
+  if (source.entry.line == 0 || swap.len() == 0) {
+    return source;
+  }
+  let map: i32[] = [];
+  let i: i32 = 0;
+  while (i < source.values.len()) {
+    map = map.append(swapped(swap, i));
+    i = i + 1;
+  }
+  return sourcepos.renamed(source, map);
 }

@@ -1,3 +1,4 @@
+import "./sourcepos";
 // compiler/asm_arm64_ir.fern — the arm64 instruction-selector for
 // the target-agnostic stack IR (ir.fern's Op[]). The arm64 sibling of
 // asm_ir.fern: it lowers the SAME lowered op stream to arm64 in asm_arm64's
@@ -1693,24 +1694,9 @@ function ssa_resolve_exits(text: string, framed: boolean, saved: i32[], s: asmco
 
 // ssa_tail_call reports the call `ins` at the end of `blk` that it returns
 // as it is, through a register entry: the function can leave through a
-// branch to it, which returns to this function's caller. A `-g` build keeps
-// every frame, so it takes none.
+// branch to it, which returns to this function's caller.
 function ssa_tail_call(blk: ssa.SBlock, ins: ssa.SInst, s: asmcore.EmitState, tails: boolean): boolean {
   return tails && blk.insts.len() > 0 && ssa.returns_call(blk, blk.insts.len() - 1) && blk.insts[blk.insts.len() - 1].result == ins.result && ssa_reg_call(ins, s);
-}
-
-// Debug builds carry source positions even when no variable has a supported
-// debugger type or the function has no bindings. An empty dbg_slots list
-// therefore does not establish that tail calls may discard its frame.
-function ssa_source_lines(f: ssa.SFunc): boolean {
-  for blk in f.blocks {
-    for ins in blk.insts {
-      if (ins.kind_tag == 35) {
-        return true;
-      }
-    }
-  }
-  return false;
 }
 
 // ssa_calls_besides_tails reports a call in `f` that is not a tail call.
@@ -1730,7 +1716,7 @@ function ssa_calls_besides_tails(f: ssa.SFunc, s: asmcore.EmitState, tails: bool
 
 // ssa_emit_tail_call moves a tail call's arguments into the register entry's
 // registers and leaves through a branch to it.
-function ssa_emit_tail_call(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_emit_tail_call(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, pos: sourcepos.SourcePos, s: asmcore.EmitState): asmcore.EmitState {
   let mask: string = s.float_mask(asmcore.sanitize_label(ins.str));
   let srcs: i32[] = [];
   let dsts: i32[] = [];
@@ -1741,6 +1727,9 @@ function ssa_emit_tail_call(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmc
     a = a + 1;
   }
   s = ssa_parallel_moves(srcs, dsts, ssa_x0_forget(s));
+  if (pos.line > 0) {
+    s = ssa_line_loc(ssa.SInst { kind_tag: 35, result: -1, args: [], imm: pos.line, str: pos.col }, s);
+  }
   return ssa_exit(fr, s, "__fn_" + asmcore.sanitize_label(ins.str) + ".r");
 }
 
@@ -3934,13 +3923,26 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
   return ssa_store(reg_of, ins.result, d, s);
 }
 
-// ssa_line_loc renders a source-position marker (ir.op_line, ssa kind 35) as
+// ssa_line_loc renders a prepared source position as
 // a `.loc` row: the file number the CLI's `.file` table gives the marker's
 // module (util.pos_file_index + 1), its line and its column, and
 // prologue_end on a function's first, which is where a breakpoint on the
 // function belongs. GNU as and the in-process assembler alike turn the rows
 // into .debug_line.
+function ssa_prepared_loc(rows: sourcepos.SourcePos[], id: i32, s: asmcore.EmitState): asmcore.EmitState {
+  if (id < 0 || id >= rows.len() || rows[id].line <= 0) {
+    return s;
+  }
+  let pos = rows[id];
+  return ssa_line_loc(ssa.SInst { kind_tag: 35, result: -1, args: [], imm: pos.line, str: pos.col }, s);
+}
+
 function ssa_line_loc(ins: ssa.SInst, s: asmcore.EmitState): asmcore.EmitState {
+  let pos = ins.imm as i64 << 32 | util.digits_to_i32(ins.str) as i64;
+  if (s.dw_pos == pos) {
+    return s;
+  }
+  s = asmcore.EmitState { ...s, dw_pos: pos };
   let row: string = "    .loc " + util.i32_to_string(util.pos_file_index(ins.imm) + 1) + " " + util.i32_to_string(util.pos_line(ins.imm)) + " " + ins.str;
   if (s.dw_first) {
     row = row + " prologue_end";
@@ -4579,7 +4581,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let r = prepared.lowered;
   let seen_vals = prepared.seen_vals;
   let seen_slots = prepared.seen_slots;
-  s = asmcore.EmitState { ...s, dw_first: true };
+  s = asmcore.EmitState { ...s, dw_first: true, dw_pos: 0 };
   let formed: ssa.Formed = prepared.formed;
   let f: ssa.SFunc = formed.f;
   let imm: ssa.Imms = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left());
@@ -4592,7 +4594,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let saved: i32[] = ssa_saved_regs(reg_of);
   let save: i32 = ssa_save_bytes(saved);
   let views: i32[] = ssa_view_slots(f);
-  let tails: boolean = s.profile == 0 && r.dbg_slots.len() == 0 && !ssa_source_lines(f);
+  let tails: boolean = s.profile == 0;
   // A function with no frame slots and no call but a tail call is emitted into
   // a buffer first, its exits marked; its text decides whether it needs a frame
   // at all.
@@ -4607,9 +4609,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
     s = ssa_save(saved, s);
   }
   let fn_label: string = "__fn_" + asmcore.sanitize_label(label_name);
-  let dbg_out: asmcore.DbgOut = asmcore.dbg_shaped_vars(s, fn_label, alloc, r, formed.repl, seen_vals, seen_slots, ssa_dbg_locs(reg_of, save, seen_vals.len() > 0), ssa.position_count(f));
-  s = dbg_out.state;
-  let dbg: asmcore.DbgVars = dbg_out.dbg;
+  let dbg: asmcore.DbgVars = asmcore.dbg_vars(fn_label, alloc, r, formed.repl, if (s.var_rows) { seen_vals } else { [] }, seen_slots, ssa_dbg_locs(reg_of, save, seen_vals.len() > 0), ssa.position_count(f));
   // The blocks' labels take one id each, from lbase.
   let bp: i32[] = ssa.block_positions(f);
   let lbase: i32 = s.nlab;
@@ -4645,14 +4645,17 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
       s = asmcore.dbg_label(s, dbg, fn_label, pos + ii);
       let ins: ssa.SInst = blk.insts[ii];
       if (ii == blk.insts.len() - 1 && ssa_tail_call(blk, ins, s, tails)) {
-        s = ssa_emit_tail_call(ins, reg_of, fr, s);
+        s = ssa_prepared_loc(prepared.source.values, ins.result, s);
+        s = ssa_emit_tail_call(ins, reg_of, fr, sourcepos.at(prepared.source.terms, blk.id), s);
         tailed = true;
       } else {
+        s = ssa_prepared_loc(prepared.source.values, ins.result, s);
         s = ssa_block_inst(blk, ii, reg_of, lp, fr, r, s);
       }
       ii = ii + 1;
     }
     s = asmcore.dbg_labels(s, dbg, fn_label, pos + ii, pos + blk.insts.len());
+    s = ssa_fused_loc(prepared.source, blk, ii, tailed, s);
     s = ssa_fused_test(fr, reg_of, fu, ssa_join(lp, blk.id), s);
     s = asmcore.dbg_label(s, dbg, fn_label, pos + blk.insts.len());
     if (!tailed) {
@@ -6592,6 +6595,7 @@ function emit_ccall_shims_arm64(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 pub function emit_rodata_pools_arm64(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+  s = asmcore.emit_debug_rows(s);
   if (s.string_lits.len() > 0) {
     s = s.write("    .section .rodata\n");
     let li: i32 = 0;
@@ -12810,4 +12814,16 @@ pub function darwinize(asm: string): string {
   let text: string = buf_take(h);
   buf_free(h);
   return text;
+}
+
+function ssa_fused_loc(source: ssaprepare.SourceLines, blk: ssa.SBlock, begin: i32, tailed: boolean, s: asmcore.EmitState): asmcore.EmitState {
+  let mi: i32 = begin;
+  while (mi < blk.insts.len()) {
+    s = ssa_prepared_loc(source.values, blk.insts[mi].result, s);
+    mi = mi + 1;
+  }
+  if (!tailed) {
+    s = ssa_prepared_loc(source.terms, blk.id, s);
+  }
+  return s;
 }

@@ -40,7 +40,9 @@ import "./util";
 // and `seen_slots` pair each value stored to or read from a local slot with
 // that slot, which is how a `-g` build finds the values a source variable
 // holds (#11410).
-pub struct LResult { func: ssa.SFunc, ok: boolean, bail: string, seen_vals: i32[], seen_slots: i32[] }
+pub struct ReturnPos { block: i32, line: i32, col: string }
+
+pub struct LResult { func: ssa.SFunc, ok: boolean, bail: string, seen_vals: i32[], seen_slots: i32[], source_returns: ReturnPos[], source_values: i64[] }
 
 // ---- small array helpers (value-semantics, no slice syntax) -------------
 
@@ -1116,6 +1118,8 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
   let nvals: i32 = 0;
   let seen_vals: i32[] = [];
   let seen_slots: i32[] = [];
+  let source_returns: ReturnPos[] = [];
+  let source_values: i64[] = [];
   let next_blk: i32 = 0;
   let bail: string = "";  // the op kind that forced a fall-back (scan diagnostic)
 
@@ -1266,6 +1270,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       continue;
     }
 
+    let old_vals = nvals;
     if (tag == t_ptr_width) {
       // Both lifted ISAs are 64-bit, so the width is a known constant.
       let pv: i32 = nvals;
@@ -1404,6 +1409,9 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         let rv: i32 = stack[stack.len() - 1];
         stack = drop_last(stack);
         cur_term = STerm_ret(rv);
+        if (op.source > 0) {
+          source_returns = source_returns.append(ReturnPos { block: cur_id, line: (op.source >> 32) as i32, col: util.i64_to_string(op.source & 4294967295i64) });
+        }
       }
     } else if (tag == t_if) {
       if (op.i32_imm != 0) {
@@ -2095,6 +2103,9 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
     } else {
       ok = false;  // outside the slice — caller falls back.
     }
+    if (op.source > 0) {
+      source_values = located_values(source_values, old_vals, nvals, op.source);
+    }
     // Record the offending op kind the first time the lift bails (any
     // branch above — unhandled op, width-64, stack underflow, …). A tag
     // ir.kind_name can't render carries its raw id (#5452 — a bare
@@ -2136,7 +2147,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
   }
 
   let f: ssa.SFunc = ssa.SFunc { name: name, nparams: nparams, nvals: nvals, blocks: blocks, entry: 0, takes_env: false };
-  return LResult { func: f, ok: ok, bail: bail, seen_vals: seen_vals, seen_slots: seen_slots };
+  return LResult { func: f, ok: ok, bail: bail, seen_vals: seen_vals, seen_slots: seen_slots, source_returns: source_returns, source_values: source_values };
 }
 
 // filled is n copies of v.
@@ -2330,4 +2341,14 @@ function STerm_brif(cond: i32, t: i32, f: i32): ssa.STerm {
 
 function STerm_none(): ssa.STerm {
   return ssa.STerm { kind_tag: 0, cond: 0, target: 0, t: 0, f: 0, value: 0 };
+}
+
+function located_values(own values: i64[], begin: i32, end: i32, pos: i64): i64[] {
+  while (values.len() < begin) {
+    values = values.append(0i64);
+  }
+  while (values.len() < end) {
+    values = values.append(pos);
+  }
+  return values;
 }

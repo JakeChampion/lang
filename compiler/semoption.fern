@@ -92,13 +92,6 @@ function candidates(f: ssasem.Func): boolean[] {
       bad = bad.with(b.term.cond, true);
     }
   }
-  // Keep source-level debug bindings truthful until debug locations can
-  // describe a split aggregate. Unbound temporaries remain eligible.
-  for v in f.dbg_vals {
-    if (member(active, v)) {
-      bad = bad.with(v, true);
-    }
-  }
   let queue: i32[] = [];
   let v: i32 = 0;
   while (v < active.len()) {
@@ -193,5 +186,22 @@ pub function split(f: ssasem.Func): ssasem.Func {
     }
     blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
   }
-  return ssasem.Func { ...f, values: values, graph: ssa.SFunc { ...f.graph, nvals: values.len(), blocks: blocks } };
+  return unsplit_debug_bindings(ssasem.Func { ...f, values: values, graph: ssa.SFunc { ...f.graph, nvals: values.len(), blocks: blocks } }, active);
+}
+
+// A split aggregate has no single source-level home. Omit its location until
+// debug expressions can describe both the tag and payload together.
+function unsplit_debug_bindings(f: ssasem.Func, split: boolean[]): ssasem.Func {
+  let vals: i32[] = [];
+  let names: string[] = [];
+  let i: i32 = 0;
+  while (i < f.dbg_vals.len()) {
+    let v: i32 = f.dbg_vals[i];
+    if (!member(split, v)) {
+      vals = vals.append(v);
+      names = names.append(f.dbg_names[i]);
+    }
+    i = i + 1;
+  }
+  return ssasem.Func { ...f, dbg_vals: vals, dbg_names: names };
 }

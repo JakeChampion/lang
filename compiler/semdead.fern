@@ -2,15 +2,13 @@
 // (#11912): its box, the stores into it and its release would be the whole
 // of its effect. Each operand loses a reader and is released where it dies,
 // which is where the construction stood. A construction is kept when its
-// type has a finalizer (the drop is the point of building it) and under
-// `-g` when a source variable is bound to it. A record update names its
+// type has a finalizer (the drop is the point of building it). A record update names its
 // base in `imm` rather than as an operand, and that counts as a read: the
 // update consumes the base's box, so the base stays built while the update
 // does. Removing one construction can leave another unread, so the pass
 // runs to a fixpoint.
 import "./ssa";
 import "./ssasem";
-import "./util";
 
 pub struct Pruned { f: ssasem.Func, removed: i32 }
 
@@ -72,9 +70,6 @@ function unread_construction(f: ssasem.Func, uses: i32[], ins: ssa.SInst): boole
     return false;
   }
   if (ins.result < 0 || ins.result >= uses.len() || uses[ins.result] != 0) {
-    return false;
-  }
-  if (util.index_of_i32(f.dbg_vals, ins.result) >= 0) {
     return false;
   }
   return !ssasem.has_finalizer(f, f.values[ins.result]);

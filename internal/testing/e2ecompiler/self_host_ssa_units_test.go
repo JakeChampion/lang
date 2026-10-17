@@ -325,7 +325,7 @@ func unitSource(indices []int) (string, string) {
 		tc := unitCases()[i]
 		fmt.Fprintf(&source, "function unit_case_%d(): i32 {\n%s\nlet modes: i32[] = [3, 1];\n%s\n", i, semanticFixture, tc.setup)
 		source.WriteString(`
-let f = ssasem.Func { envs: [], anchors: anchors, dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: graph, values: types, params: params, result: result, records: semrecords.records_of(records), enums: enums, calls: calls };
+let f = ssasem.Func { source_positions: ssasem.no_source(),  envs: [], anchors: anchors, dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: graph, values: types, params: params, result: result, records: semrecords.records_of(records), enums: enums, calls: calls };
 let p = ssaunits.plan(f, modes, ssaunits.no_view());
 if (!p.ok) { print(p.why); return 1; }
 // A taken payload is a unit of its own at the read; a hold on the same
@@ -346,7 +346,7 @@ for opaque in opaque_types {
     let g = ssa.SFunc { name: "opaque", nparams: 1, nvals: 1, entry: 7, takes_env: false, blocks: [
         ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }
     ] };
-    bad = ssaunits.plan(ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: g, values: [opaque], params: [opaque], result: opaque, records: semrecords.no_records(), enums: [], calls: [] }, [3], ssaunits.no_view());
+    bad = ssaunits.plan(ssasem.Func { source_positions: ssasem.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: g, values: [opaque], params: [opaque], result: opaque, records: semrecords.no_records(), enums: [], calls: [] }, [3], ssaunits.no_view());
     if (bad.ok || bad.steps.len() != 0 || bad.why != "unsupported counted-unit type") { return 34; }
 }
 `)

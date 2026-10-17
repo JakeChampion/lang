@@ -30,7 +30,7 @@ function main(): i32 {
 
 // A function whose only call is a register call it returns as it is leaves
 // through a jump to the callee's register entry and builds no frame, on both
-// native targets; a -g build keeps the frame and the call.
+// native targets, including debug builds.
 func TestSelfHostSSATailCall(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
@@ -61,7 +61,7 @@ func TestSelfHostSSATailCall(t *testing.T) {
 			}
 		})
 	}
-	t.Run("debug keeps the frame", func(t *testing.T) {
+	t.Run("debug keeps the tail call", func(t *testing.T) {
 		out := filepath.Join(t.TempDir(), "out.s")
 		cmd := runX86_64Bin(cli.runner, cli.bin, "-g", "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, cli.stdlib)
 		if msg, err := cmd.CombinedOutput(); err != nil {
@@ -72,8 +72,8 @@ func TestSelfHostSSATailCall(t *testing.T) {
 			t.Fatal(err)
 		}
 		body := tailCallBody(t, string(asm), "pick")
-		if !strings.Contains(body, "call __fn_scale.r") || strings.Contains(body, "jmp __fn_scale.r") {
-			t.Fatalf("a -g build does not keep pick's call:\n%s", body)
+		if strings.Contains(body, "call __fn_scale.r") || !strings.Contains(body, "jmp __fn_scale.r") {
+			t.Fatalf("a -g build does not keep pick's tail call:\n%s", body)
 		}
 	})
 }

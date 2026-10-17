@@ -63,9 +63,8 @@ impl mem.Drop for G { function drop(self: Self): void { eprint("dropped"); } }
 @noinline function f(i: i32): i32 { let g: G = G { n: i }; return i * 2; }
 function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 4) { s = s + f(i); i = i + 1; } return s; }`, 12, 4, "dropped\ndropped\ndropped\ndropped\n"},
 	}
-	// Under -g the value a source variable is bound to stays built, so the
-	// variable can be shown; the same program without -g builds nothing.
-	t.Run("debug-binding-kept", func(t *testing.T) {
+	// Debug bindings must not keep otherwise unread allocations alive.
+	t.Run("debug-binding-eliminated", func(t *testing.T) {
 		src := filepath.Join(t.TempDir(), "main.fern")
 		if err := os.WriteFile(src, []byte(cases[0].src), 0o644); err != nil {
 			t.Fatal(err)
@@ -73,7 +72,7 @@ function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 4) { s = s + f
 		for _, tc := range []struct {
 			flags  []string
 			allocs int64
-		}{{[]string{"-g"}, 4}, {nil, 0}} {
+		}{{[]string{"-g"}, 0}, {nil, 0}} {
 			asm := filepath.Join(t.TempDir(), "out.s")
 			args := append(append([]string{}, tc.flags...), "-target", "x86-64-linux", "-emit", "asm", "-o", asm, src, cli.stdlib)
 			cmd := runX86_64Bin(cli.runner, cli.bin, args...)
@@ -89,7 +88,7 @@ function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 4) { s = s + f
 			run := runX86_64Bin(cli.runner, bin)
 			run.Stderr = &eb
 			_ = run.Run()
-			allocs, frees, _ := parseLeakcheck(t, "debug-binding-kept", eb.String())
+			allocs, frees, _ := parseLeakcheck(t, "debug-binding-eliminated", eb.String())
 			if allocs != tc.allocs || frees != allocs {
 				t.Errorf("flags %v: allocs=%d frees=%d, want %d balanced", tc.flags, allocs, frees, tc.allocs)
 			}

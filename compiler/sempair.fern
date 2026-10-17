@@ -129,7 +129,7 @@ function paired_callee(ins: ssa.SInst, ix: util.NameIndex, ok: boolean[]): i32 {
 
 // The values of `f` something needs whole: an operand of anything but a
 // variant test or projection, a copy or a phi; a return, unless `f` is paired
-// itself and so returns its variant apart; a source variable under `-g`; and
+// itself and so returns its variant apart; and
 // what a copy or phi needed whole copies. A phi is needed whole too where it
 // joins anything split cannot read through: only constructions, calls to
 // candidates and other such phis can be read apart.
@@ -154,7 +154,7 @@ function seeded(f: ssasem.Func, ix: util.NameIndex, ok: boolean[], paired: boole
       whole = marked_all(whole, [b.term.value]);
     }
   }
-  return marked_all(whole, f.dbg_vals);
+  return whole;
 }
 
 // `whole` with what each copy or phi needed whole copies marked too.

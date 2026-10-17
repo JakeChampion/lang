@@ -20,12 +20,60 @@ var backtraceHexRe = regexp.MustCompile(`0x[0-9a-f]{16}`)
 // deepAbortSrc is the shared inner→mid→main chain: `inner` indexes past the
 // end of a 3-element array, so the abort fires three frames deep and a walk
 // has something to report.
-// @noinline holds the chain together: the subject here is the frame WALK and
-// its symbolisation, and ir.Inline would otherwise substitute both helpers into
-// main and leave a correct one-frame backtrace with nothing to walk.
-const deepAbortSrc = `@noinline function inner(xs: i32[]): i32 { return xs[7]; }
-@noinline function mid(xs: i32[]): i32 { return inner(xs); }
-function main(): i32 { let xs: i32[] = [1, 2, 3]; return mid(xs); }
+// @noinline prevents inlining and arithmetic after calls prevents tail calls.
+// Thirteen distinct live values cross calls in every function: they exceed
+// both native saved-register pools, so spill slots require real frame pointers
+// even when an optimized x86 caller could otherwise use a bare frame.
+const deepAbortSrc = `@noinline function step(n: i64): i64 { return n + 1; }
+@noinline function inner(xs: i32[]): i32 {
+  let a: i64 = step(xs.len() as i64);
+  let b: i64 = step(a);
+  let c: i64 = step(b);
+  let d: i64 = step(c);
+  let e: i64 = step(d);
+  let f: i64 = step(e);
+  let g: i64 = step(f);
+  let h: i64 = step(g);
+  let i: i64 = step(h);
+  let j: i64 = step(i);
+  let k: i64 = step(j);
+  let l: i64 = step(k);
+  let m: i64 = step(l);
+  return ((xs[7]) as i64 + a + b + c + d + e + f + g + h + i + j + k + l + m) as i32;
+}
+@noinline function mid(xs: i32[]): i32 {
+  let a: i64 = step(xs.len() as i64);
+  let b: i64 = step(a);
+  let c: i64 = step(b);
+  let d: i64 = step(c);
+  let e: i64 = step(d);
+  let f: i64 = step(e);
+  let g: i64 = step(f);
+  let h: i64 = step(g);
+  let i: i64 = step(h);
+  let j: i64 = step(i);
+  let k: i64 = step(j);
+  let l: i64 = step(k);
+  let m: i64 = step(l);
+  return ((inner(xs)) as i64 + a + b + c + d + e + f + g + h + i + j + k + l + m) as i32;
+}
+function main(): i32 {
+  let a: i64 = step(args().len() as i64);
+  let b: i64 = step(a);
+  let c: i64 = step(b);
+  let d: i64 = step(c);
+  let e: i64 = step(d);
+  let f: i64 = step(e);
+  let g: i64 = step(f);
+  let h: i64 = step(g);
+  let i: i64 = step(h);
+  let j: i64 = step(i);
+  let k: i64 = step(j);
+  let l: i64 = step(k);
+  let m: i64 = step(l);
+  let xs: i32[] = [1, 2, 3];
+  return ((mid(xs)) as i64 + a + b + c + d + e + f + g + h + i + j + k + l + m) as i32;
+}
 `
 
 // buildAndAbort compiles deepAbortSrc with `-g` for target (plus extraArgs,
@@ -146,15 +194,18 @@ func TestArm64AbortBacktrace(t *testing.T) {
 	})
 }
 
-// Source positions, not the availability of debugger variable types, keep
-// debug callers in the frame chain. The normal build still takes tail calls.
-func TestArm64DebugTailFrames(t *testing.T) {
+// Debug metadata preserves the normal build's tail-call decisions for both
+// register and stack entries. Non-tail physical walks are exercised above.
+func TestArm64DebugPreservesTailCalls(t *testing.T) {
 	bin := buildFernCLI(t)
 	for _, tc := range []struct {
 		name, source string
 		register     bool
 	}{
-		{"array_parameter", deepAbortSrc, true},
+		{"array_parameter", `@noinline function inner(xs: i32[]): i32 { return xs[7]; }
+@noinline function mid(xs: i32[]): i32 { return inner(xs); }
+function main(): i32 { let xs: i32[] = [1, 2, 3]; return mid(xs); }
+`, true},
 		{"no_parameters", `@noinline function inner(): i32 { return 7; }
 @noinline function mid(): i32 { return inner(); }
 function main(): i32 { return mid(); }
@@ -185,7 +236,7 @@ function main(): i32 { return mid(); }
 						symbol += ".r"
 					}
 					// Zero-argument calls use the stack entry in both modes.
-					wantTail := tc.register && !debug
+					wantTail := tc.register
 					tail := "    b " + symbol + "\n"
 					call := "    bl " + symbol + "\n"
 					if strings.Contains(string(data), tail) != wantTail || strings.Contains(string(data), call) == wantTail {

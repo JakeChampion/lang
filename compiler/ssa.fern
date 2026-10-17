@@ -4031,7 +4031,7 @@ function compose_repl(a: i32[], b: i32[]): i32[] {
 // Dead values are pruned before the wraps too: a fused rotate's right shift
 // would otherwise still read its operand's high half.
 pub function register_form(f: SFunc): Formed {
-  let folded: Formed = prune_trivial_phis(slot_calls(f));
+  let folded: Formed = prune_trivial_phis(slot_calls(without_lines(f)));
   let merged: Formed = merge_duplicates(folded.f);
   let shared: Formed = share_shape_loads(merged.f);
   // drop_low_wraps deletes each wrap it replaces, and the wrap's operand
@@ -4053,6 +4053,24 @@ pub function register_form(f: SFunc): Formed {
     g = prune_dead(g);
   }
   return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), shared.repl), unwrapped.repl), bytes.repl) };
+}
+
+// Source positions describe code; they are not allocator or optimizer inputs.
+function without_lines(f: SFunc): SFunc {
+  if (!has_kind(f, 35)) {
+    return f;
+  }
+  let blocks: SBlock[] = [];
+  for b in f.blocks {
+    let insts: SInst[] = [];
+    for ins in b.insts {
+      if (ins.kind_tag != 35) {
+        insts = insts.append(ins);
+      }
+    }
+    blocks = blocks.append(SBlock { ...b, insts: insts });
+  }
+  return SFunc { ...f, blocks: blocks };
 }
 
 // slot_call is a call through a function value that reads the body's address
@@ -4092,7 +4110,7 @@ function slot_calls(f: SFunc): SFunc {
   return SFunc { ...f, blocks: out };
 }
 
-function has_kind(f: SFunc, k: i32): boolean {
+pub function has_kind(f: SFunc, k: i32): boolean {
   for blk in f.blocks {
     for ins in blk.insts {
       if (ins.kind_tag == k) {
