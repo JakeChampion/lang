@@ -450,6 +450,7 @@ var coreBuiltins = map[string]bool{
 	// A byte view copied into a fresh array needs only the allocator.
 	"__bytes_owned": true,
 	"__bytes_range": true,
+	"__bytes_into":  true,
 	// The AES-GCM kernels compute over bytes in memory and nothing else.
 	"__aes_expand_key": true,
 	"__aes_ctr32":      true,

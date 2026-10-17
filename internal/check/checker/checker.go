@@ -1779,6 +1779,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// a view of the window in between.
 	rangeBound := ast.NumberType{Width: 32, Signed: true}
 	c.info.FuncSigs["__bytes_range"] = &ast.FuncType{Params: []ast.Type{u8View, rangeBound, rangeBound}, Result: u8Arr}
+	// __bytes_into(dst, at, src, from, n): src[from:from+n] written over dst
+	// from `at`, dst handed back.
+	c.info.FuncSigs["__bytes_into"] = &ast.FuncType{Params: []ast.Type{u8Arr, rangeBound, u8View, rangeBound, rangeBound}, Result: u8Arr}
 	c.info.FuncSigs["__aes_expand_key"] = &ast.FuncType{Params: []ast.Type{u8View}, Result: u8Arr}
 	c.info.FuncSigs["__aes_ctr32"] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View}, Result: u8Arr}
 	c.info.FuncSigs["__ghash"] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View}, Result: u8Arr}

@@ -889,6 +889,26 @@ func New() *Interp {
 		}
 		return byteArray(v[0][int(from):int(to)]), nil
 	}}
+	// __bytes_into(dst, at, src, from, n): dst with src[from:from+n] written
+	// over it from `at`.
+	i.Builtins["__bytes_into"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 5 {
+			return nil, fmt.Errorf("__bytes_into: expected 5 arguments, got %d", len(args))
+		}
+		v, err := byteViews("__bytes_into", []Value{args[0], args[2]}, 2)
+		if err != nil {
+			return nil, err
+		}
+		at, ok1 := args[1].(Number)
+		from, ok2 := args[3].(Number)
+		n, ok3 := args[4].(Number)
+		if !ok1 || !ok2 || !ok3 || n < 0 || at < 0 || from < 0 || int(at)+int(n) > len(v[0]) || int(from)+int(n) > len(v[1]) {
+			return nil, fmt.Errorf("__bytes_into: range out of bounds")
+		}
+		out := append([]byte(nil), v[0]...)
+		copy(out[int(at):int(at)+int(n)], v[1][int(from):int(from)+int(n)])
+		return byteArray(out), nil
+	}}
 	registerAESGCM(i)
 	// __rc_underflow_count(): the runtime's over-release counter, for the same
 	// reason — the interpreter has no refcounts to underflow, so it reports the

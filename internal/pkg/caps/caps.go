@@ -296,6 +296,7 @@ var Ungated = map[string]bool{
 	// A byte view copied into a fresh array reaches nothing.
 	"__bytes_owned": true,
 	"__bytes_range": true,
+	"__bytes_into":  true,
 	// The AES-GCM kernels compute over bytes in memory and reach nothing.
 	"__aes_expand_key": true,
 	"__aes_ctr32":      true,

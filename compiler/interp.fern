@@ -4343,6 +4343,28 @@ function byte_value(b: u8[]): Value {
   return v_arr(out);
 }
 
+// call_bytes_into is __bytes_into(dst, at, src, from, n): dst with
+// src[from .. from + n) written over it from `at`.
+function call_bytes_into(args: Value[]): Value {
+  if (args.len() != 5) {
+    return v_err("__bytes_into: expected 5 arguments");
+  }
+  let bs: u8[][] = byte_args([args[0], args[2]]);
+  let at: i32 = vint_as_i64(args[1]) as i32;
+  let from: i32 = vint_as_i64(args[3]) as i32;
+  let n: i32 = vint_as_i64(args[4]) as i32;
+  if (bs.len() != 2 || n < 0 || at < 0 || from < 0 || at > bs[0].len() - n || from > bs[1].len() - n) {
+    return v_err("__bytes_into: range out of bounds");
+  }
+  let out: u8[] = bs[0];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.with(at + i, bs[1][from + i]);
+    i = i + 1;
+  }
+  return byte_value(out);
+}
+
 // call_bytes_range is __bytes_range(b, from, to): b[from:to] in a fresh array.
 function call_bytes_range(args: Value[]): Value {
   if (args.len() != 3) {
@@ -5277,6 +5299,9 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   }
   if (name == "__bytes_range") {
     return call_bytes_range(args);
+  }
+  if (name == "__bytes_into") {
+    return call_bytes_into(args);
   }
   if (aes_gcm_arity(name) > 0) {
     return call_aes_gcm(name, args);
