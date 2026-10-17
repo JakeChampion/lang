@@ -209,6 +209,16 @@ func TestSelfHostServeDefaultBacklogHoldsBurst(t *testing.T) {
 	e2eharness.CheckDefaultBacklogHoldsBurst(t, cmd, port)
 }
 
+// A loop pass, an accept and a close cost the same with thousands of idle
+// connections open as with none (#12505).
+func TestSelfHostServePerConnectionCostFlat(t *testing.T) {
+	e2eharness.RaiseConnCostLimit(t)
+	bin, runner := selfHostServer(t, e2eharness.PerConnectionCostServerSource())
+	cmd := binCmd(runner, bin)
+	addr, _ := e2eharness.StartInheritedServer(t, cmd)
+	e2eharness.CheckPerConnectionCostFlat(t, cmd.Process.Pid, addr)
+}
+
 func TestSelfHostServeMaxConnectionsFloor(t *testing.T) {
 	bin, runner := selfHostServer(t, e2eharness.MaxConnectionsFloorServerSource())
 	cmd := binCmd(runner, bin)

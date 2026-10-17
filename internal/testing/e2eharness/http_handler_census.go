@@ -63,7 +63,7 @@ func HTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	// arrives, and on wasm an open connection owns a heap record, so a
 	// loop that stopped on the count alone left the last one to the exit
 	// sweep and the census unbalanced.
-	body = strings.Replace(body, "while (true)", fmt.Sprintf("let completed: i32 = 0;\n    while (completed < %d || conns.fds.len() > 0)", rounds), 1)
+	body = strings.Replace(body, "while (true)", fmt.Sprintf("let completed: i32 = 0;\n    while (completed < %d || conns.open > 0)", rounds), 1)
 	// The production loop delegates parsing/answering to __serve_burst. Thread
 	// only the fixture's bound through that helper; the increment stays at the
 	// same answered-response site, and every production protocol path remains.
