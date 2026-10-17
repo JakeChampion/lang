@@ -1406,18 +1406,22 @@ struct Spliced { r: irtables.LowerResult, changed: boolean, budget: i32 }
 // fresh slot and loaded after the block.
 function splice_leaves(r: irtables.LowerResult, self: string, reg: irtables.SigReg, names: string[], at: i32[], cache: irtables.LowerResult[], budget: i32): Spliced {
   let k_calld: i32 = ir.K_CALL_DIRECT;
-  let k_ret_word: i32 = ir.op_ret_word().kind_tag;
-  let k_call_word: i32 = ir.op_call_word().kind_tag;
   let out: ir.Op[] = [];
   let n_locals: i32 = r.n_locals;
   let changed: boolean = false;
   // A paired leaf's word (sempair) lands in a local of the caller's, which
   // the read after the call takes in place of the word register.
   let word: i32 = 0 - 1;
+  let scalar_words: i32[] = [0 - 1, 0 - 1, 0 - 1];
   for o in r.ops {
-    if (o.kind_tag == k_call_word && word >= 0) {
-      out = out.append(ir.op_load_local(word));
-      word = 0 - 1;
+    let captured: i32 = captured_leaf_word(o, word, scalar_words);
+    if (captured >= 0) {
+      out = out.append(ir.op_load_local(captured));
+      if (o.width == 64) {
+        scalar_words = scalar_words.with(o.i32_imm, 0 - 1);
+      } else {
+        word = 0 - 1;
+      }
       continue;
     }
     if (o.kind_tag != k_calld || o.str == self || !irtables.sig_reg_has_exact(reg, o.str)) {
@@ -1444,38 +1448,76 @@ function splice_leaves(r: irtables.LowerResult, self: string, reg: irtables.SigR
       z = z + 1;
     }
     out = out.append(ir.op_block(0));
-    let depth: i32 = 0;
-    for b in leaf.ops {
-      let k: i32 = b.kind_tag;
-      if (k == ir.K_LOAD_LOCAL || k == ir.K_STORE_LOCAL || k == ir.K_TEE_LOCAL) {
-        out = out.append(ir.Op { ...b, i32_imm: b.i32_imm + base });
-      } else if (k == ir.K_RETURN) {
-        out = out.append(ir.op_store_local(ret));
-        out = out.append(ir.op_br(depth));
-      } else if (k == k_ret_word) {
-        out = out.append(ir.op_store_local(ret + 1));
-        out = out.append(ir.op_const_i32(0));
-        word = ret + 1;
-      } else {
-        if (k == ir.K_BLOCK || k == ir.K_LOOP || k == ir.K_IF) {
-          depth = depth + 1;
-        }
-        if (k == ir.K_END) {
-          depth = depth - 1;
-        }
-        out = out.append(b);
-      }
-    }
+    let body: SpliceBody = splice_leaf_body(leaf, base, ret, word, scalar_words);
+    out = util.append_all(out, body.ops);
+    word = body.word;
+    scalar_words = body.scalar_words;
     out = out.append(ir.op_end());
     out = out.append(ir.op_load_local(ret));
     n_locals = ret + 1;
     if (word == ret + 1) {
       n_locals = ret + 2;
     }
+    for lane in scalar_words {
+      if (lane >= n_locals) {
+        n_locals = lane + 1;
+      }
+    }
     budget = budget - leaf.ops.len();
     changed = true;
   }
   return Spliced { r: irtables.LowerResult { ...r, ops: out, n_locals: n_locals }, changed: changed, budget: budget };
+}
+
+function captured_leaf_word(o: ir.Op, word: i32, scalar_words: i32[]): i32 {
+  if (o.kind_tag != ir.op_call_word().kind_tag) {
+    return 0 - 1;
+  }
+  if (o.width == 64) {
+    return scalar_words[o.i32_imm];
+  }
+  return word;
+}
+
+function spliced_scope_depth(k: i32, depth: i32): i32 {
+  if (k == ir.K_BLOCK || k == ir.K_LOOP || k == ir.K_IF) {
+    return depth + 1;
+  }
+  if (k == ir.K_END) {
+    return depth - 1;
+  }
+  return depth;
+}
+
+struct SpliceBody { ops: ir.Op[], word: i32, scalar_words: i32[] }
+
+function splice_leaf_body(leaf: irtables.LowerResult, base: i32, ret: i32, word: i32, scalar_words: i32[]): SpliceBody {
+  let out: ir.Op[] = [];
+  let k_ret_word: i32 = ir.op_ret_word().kind_tag;
+  let depth: i32 = 0;
+  for b in leaf.ops {
+    let k: i32 = b.kind_tag;
+    if (k == ir.K_LOAD_LOCAL || k == ir.K_STORE_LOCAL || k == ir.K_TEE_LOCAL) {
+      out = out.append(ir.Op { ...b, i32_imm: b.i32_imm + base });
+    } else if (k == ir.K_RETURN) {
+      out = out.append(ir.op_store_local(ret));
+      out = out.append(ir.op_br(depth));
+    } else if (k == k_ret_word) {
+      let target: i32 = ret + 1;
+      if (b.width == 64) {
+        target = ret + 2 + b.i32_imm;
+        scalar_words = scalar_words.with(b.i32_imm, target);
+      } else {
+        word = target;
+      }
+      out = out.append(ir.op_store_local(target));
+      out = out.append(ir.op_const_i32(0));
+    } else {
+      depth = spliced_scope_depth(k, depth);
+      out = out.append(b);
+    }
+  }
+  return SpliceBody { ops: out, word: word, scalar_words: scalar_words };
 }
 
 // check_fip_claims refuses a window of declarations whose `fip` / `fbip` claim

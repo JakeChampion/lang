@@ -14,13 +14,16 @@ import (
 func TestSelfHostDebugPreservesNativeCode(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for name, source := range map[string]string{
-		"leaf-frame":        leafFrameSource(),
-		"and-not":           andNotProgram,
-		"append-report":     selfHostAppendReportSrc,
-		"abort-chain":       deepAbortSrc,
-		"tail-call":         ssaTailCallProg,
-		"register-pressure": dwarfVarsSrc,
-		"enum-locals":       dwarfEnumsSrc,
+		"leaf-frame":             leafFrameSource(),
+		"and-not":                andNotProgram,
+		"scalar-record-wide":     scalarRecordWide,
+		"scalar-record-phis":     scalarRecordSmallPhis,
+		"scalar-record-pressure": scalarRecordPressure,
+		"append-report":          selfHostAppendReportSrc,
+		"abort-chain":            deepAbortSrc,
+		"tail-call":              ssaTailCallProg,
+		"register-pressure":      dwarfVarsSrc,
+		"enum-locals":            dwarfEnumsSrc,
 		"partial-enum": `enum Direction { North, East, South, West }
 @noinline function pick(d: Direction): i32 { match (d) { South => { return 2; }, _ => { return 3; }, } return 0; }
 function main(): i32 { let d: Direction = South; return pick(d); }`,

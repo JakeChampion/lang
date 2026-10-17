@@ -1,0 +1,218 @@
+// Private, closed-call scalar record returns. sempair proves that every caller
+// projects the result before this changes its ABI. Each lane holds scalar bits;
+// none carries an ownership unit. References and finalizers stay boxed.
+import "./ssa";
+import "./ssasem";
+import "./semrecords";
+import "./typeinfo";
+import "./util";
+
+pub function eligible(f: ssasem.Func, ty: typeinfo.Type): boolean {
+  let at: i32 = semrecords.find(f.records, ty);
+  if (at < 0 || ssasem.has_finalizer(f, ty)) {
+    return false;
+  }
+  let fields: semrecords.Field[] = f.records.list[at].fields;
+  if (fields.len() == 0 || fields.len() > 4) {
+    return false;
+  }
+  for field in fields {
+    if (!scalar(field.ty)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function scalar(t: typeinfo.Type): boolean {
+  return ssasem.is_integer(t) || ssasem.is_bool(t) || ssasem.is_char(t) || ssasem.is_float(t);
+}
+
+pub function bits_name(): string {
+  return "__scalar_bits";
+}
+
+pub function as_name(): string {
+  return "__scalar_as";
+}
+
+pub function set_prefix(): string {
+  return "__scalar_set:";
+}
+
+pub function word_prefix(): string {
+  return "__scalar_word:";
+}
+
+pub function word_type(): typeinfo.Type {
+  return typeinfo.TypeI32 { width: 64, unsigned: true, is_char: false, polymorphic: false };
+}
+
+function dummy_type(): typeinfo.Type {
+  return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
+}
+
+function value(f: ssasem.Func, t: typeinfo.Type): ssasem.Func {
+  return ssasem.Func { ...f, values: f.values.append(t), graph: ssa.SFunc { ...f.graph, nvals: f.values.len() + 1 } };
+}
+
+function contract(f: ssasem.Func, name: string, from: typeinfo.Type, to: typeinfo.Type): ssasem.Func {
+  // Type spellings distinguish signatures in the semantic call registry.
+  let row: ssasem.Contract = ssasem.Contract { name: name, params: [from], modes: [ssasem.value_mode()], result: to };
+  let at: i32 = ssasem.find_contract_in(f.calls, name);
+  if (at >= 0) {
+    return f;
+  }
+  return ssasem.Func { ...f, calls: f.calls.append(row) };
+}
+
+function conversion(prefix: string, t: typeinfo.Type): string {
+  return prefix + ":" + typeinfo.spelling(t);
+}
+
+struct Build { f: ssasem.Func, insts: ssa.SInst[], result: i32 }
+
+function call(b: Build, name: string, arg: i32, from: typeinfo.Type, to: typeinfo.Type): Build {
+  let v: i32 = b.f.values.len();
+  let f: ssasem.Func = contract(value(b.f, to), name, from, to);
+  return Build { f: f, result: v, insts: b.insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v, args: [arg], imm: 0, str: name }) };
+}
+
+function lower_return(f: ssasem.Func, b: ssa.SBlock, fields: semrecords.Field[]): Build {
+  let out: Build = Build { f: f, insts: b.insts, result: 0 - 1 };
+  let primary: i32 = 0 - 1;
+  let i: i32 = 0;
+  while (i < fields.len()) {
+    let v: i32 = out.f.values.len();
+    out = Build { ...out, f: value(out.f, fields[i].ty), insts: out.insts.append(ssa.SInst { kind_tag: ssasem.record_get(), result: v, args: [b.term.value], imm: i, str: fields[i].name }) };
+    out = call(out, conversion(bits_name(), fields[i].ty), v, fields[i].ty, word_type());
+    if (i == 0) {
+      primary = out.result;
+    } else {
+      out = call(out, set_prefix() + util.i32_to_string(i - 1), out.result, word_type(), dummy_type());
+    }
+    i = i + 1;
+  }
+  return Build { ...out, result: primary };
+}
+
+pub function callee(f0: ssasem.Func): ssasem.Func {
+  let fields: semrecords.Field[] = f0.records.list[semrecords.find(f0.records, f0.result)].fields;
+  let f: ssasem.Func = f0;
+  let bi: i32 = 0;
+  while (bi < f.graph.blocks.len()) {
+    let b: ssa.SBlock = f.graph.blocks[bi];
+    if (b.term.kind_tag == 1 && b.term.value >= 0) {
+      let out: Build = lower_return(f, b, fields);
+      let block: ssa.SBlock = ssa.SBlock { ...b, insts: out.insts, term: ssa.STerm { ...b.term, value: out.result } };
+      f = ssasem.Func { ...out.f, graph: ssa.SFunc { ...out.f.graph, blocks: out.f.graph.blocks.with(bi, block) } };
+    }
+    bi = bi + 1;
+  }
+  return ssasem.Func { ...f, result: word_type() };
+}
+
+// Negative call metadata packs contiguous capture locals and the number of
+// auxiliary lanes: -(base*4+count). Positive metadata remains sempair's legacy
+// pointer-sized second word. Capture runs before any ownership cleanup call.
+pub function capture_base(imm: i32): i32 {
+  return ssasem.scalar_capture_base(imm);
+}
+
+pub function capture_count(imm: i32): i32 {
+  return ssasem.scalar_capture_count(imm);
+}
+
+function rebuilt(f: ssasem.Func, call_ins: ssa.SInst, fields: semrecords.Field[]): Build {
+  let first: i32 = f.values.len();
+  let out: Build = Build { f: f, insts: [], result: first };
+  for field in fields {
+    out = Build { ...out, f: value(out.f, word_type()) };
+  }
+  let count: i32 = fields.len() - 1;
+  out = Build { ...out, insts: [ssa.SInst { ...call_ins, result: first, imm: 0 - ((first + 1) * 4 + count) }] };
+  let args: i32[] = [];
+  let i: i32 = 0;
+  while (i < fields.len()) {
+    let lane: i32 = first + i;
+    if (i > 0) {
+      let name: string = word_prefix() + util.i32_to_string(i - 1);
+      out = Build { ...out, f: contract(out.f, name, word_type(), word_type()), insts: out.insts.append(ssa.SInst { kind_tag: ssasem.call(), result: lane, args: [first], imm: 0, str: name }) };
+    }
+    out = call(out, conversion(as_name(), fields[i].ty), lane, word_type(), fields[i].ty);
+    args = args.append(out.result);
+    i = i + 1;
+  }
+  return Build { ...out, insts: out.insts.append(ssa.SInst { kind_tag: ssasem.record_new(), result: call_ins.result, args: args, imm: 0, str: "" }) };
+}
+
+pub function caller(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Func {
+  let b: ssa.SBlock = f.graph.blocks[bi];
+  let ins: ssa.SInst = b.insts[k];
+  let fields: semrecords.Field[] = callee.records.list[semrecords.find(callee.records, callee.result)].fields;
+  let out: Build = rebuilt(f, ins, fields);
+  let insts: ssa.SInst[] = [];
+  let p: i32 = 0;
+  while (p < b.insts.len()) {
+    if (p == k) {
+      insts = util.append_all(insts, out.insts);
+    } else {
+      insts = insts.append(b.insts[p]);
+    }
+    p = p + 1;
+  }
+  let at: i32 = ssasem.find_contract_in(out.f.calls, ins.str);
+  let calls: ssasem.Contract[] = out.f.calls.with(at, ssasem.Contract { ...out.f.calls[at], result: word_type() });
+  let graph: ssa.SFunc = ssa.SFunc { ...out.f.graph, blocks: out.f.graph.blocks.with(bi, ssa.SBlock { ...b, insts: insts }) };
+  return ssasem.Func { ...out.f, calls: calls, graph: graph };
+}
+
+// The caller's kept record constructions can reuse boxes read through their
+// scalar fields. Trace those fields back to reference values before changing
+// a return ABI: throwing away such a donor can add an allocation in the caller.
+pub function donors(f: ssasem.Func, defs: ssa.SInst[], whole0: boolean[]): boolean[] {
+  let pending: i32[] = kept_fields(f.graph, whole0);
+  if (pending.len() == 0) {
+    return whole0;
+  }
+  let whole: boolean[] = whole0;
+  let seen: boolean[] = __alloc_bool(f.values.len());
+  let at: i32 = 0;
+  while (at < pending.len()) {
+    let v: i32 = pending[at];
+    at = at + 1;
+    if (v < 0 || v >= seen.len() || seen[v]) {
+      continue;
+    }
+    seen = seen.with(v, true);
+    let ref: boolean = ssasem.reference(f.values[v]);
+    if (ref) {
+      whole = whole.with(v, true);
+    }
+    let d: ssa.SInst = defs[v];
+    if (donation_edges(ref, d.kind_tag)) {
+      for a in d.args {
+        pending = pending.append(a);
+      }
+    }
+  }
+  return whole;
+}
+
+function kept_fields(g: ssa.SFunc, whole: boolean[]): i32[] {
+  let out: i32[] = [];
+  for b in g.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.record_new() && whole[ins.result]) {
+        for a in ins.args {
+          out = out.append(a);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function donation_edges(reference: boolean, kind: i32): boolean {
+  return !reference || kind == 7 || kind == 8 || kind == ssasem.record_new();
+}

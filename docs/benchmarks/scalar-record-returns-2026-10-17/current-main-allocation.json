@@ -1,0 +1,161 @@
+{
+  "source_head": "21bdce987d9aa3ee17361d4112fb43847d57ec11",
+  "compilers": {
+    "baseline": "f5539d74a09bdf471614f8e84935cdce44a5273e6e46950ac804c3652a7f83b5",
+    "candidate": "f395df09bc0d2fb9fa77c410384411708ac7fe941e7d56b3d6e3aeab6c5eb6b7"
+  },
+  "rows": [
+    {
+      "program": "scalar-record",
+      "target": "x86-64-linux",
+      "compiler": "baseline",
+      "allocations": 1000000,
+      "checksum": "2881902258175262656",
+      "binary_sha256": "20ce31daa15fc0a1ddcad4c34c15b70fdea59f5be93398a7b2f746b8172a45f7"
+    },
+    {
+      "program": "scalar-record",
+      "target": "x86-64-linux",
+      "compiler": "candidate",
+      "allocations": 0,
+      "checksum": "2881902258175262656",
+      "binary_sha256": "a43bd9d62716d5fe4659d914a1edf0efb2401dd9dfc576e31fea320a74b2c96e"
+    },
+    {
+      "program": "scalar-record",
+      "target": "arm64-linux",
+      "compiler": "baseline",
+      "allocations": 1000000,
+      "checksum": "2881902258175262656",
+      "binary_sha256": "c407a4139d08a2d15ab15bdaebb6c253856b8c24d6d837514ce034d3291b6d84"
+    },
+    {
+      "program": "scalar-record",
+      "target": "arm64-linux",
+      "compiler": "candidate",
+      "allocations": 0,
+      "checksum": "2881902258175262656",
+      "binary_sha256": "ba5f1d054a22f0f45f00ee2e1c852b7ab50ea13caee540ba3eb9f2b250341d20"
+    },
+    {
+      "program": "scalar-record",
+      "target": "wasm32-wasi",
+      "compiler": "baseline",
+      "allocations": 1000000,
+      "checksum": "2881902258175262656",
+      "binary_sha256": "acb450e2e7048ba6bc7971a1499de5dce2c1bf94e13983d821ded33f49684729"
+    },
+    {
+      "program": "scalar-record",
+      "target": "wasm32-wasi",
+      "compiler": "candidate",
+      "allocations": 0,
+      "checksum": "2881902258175262656",
+      "binary_sha256": "aa0022d1109d8f7e2a9f1549c9e0bbdab3c192a1b28e0d3f32fe0ba60896dc0f"
+    },
+    {
+      "program": "field25519",
+      "target": "x86-64-linux",
+      "compiler": "baseline",
+      "allocations": 30000,
+      "checksum": "1050000",
+      "binary_sha256": "a18b6de5019ae2bcb212b158512a8adcb36013f42d7c0fdad5b7222dd4a078a9"
+    },
+    {
+      "program": "field25519",
+      "target": "x86-64-linux",
+      "compiler": "candidate",
+      "allocations": 0,
+      "checksum": "1050000",
+      "binary_sha256": "dd847ac86a6d4e93d09a751697b4e57eca574d1e42a4945b6199f07a9fa15707"
+    },
+    {
+      "program": "field25519",
+      "target": "arm64-linux",
+      "compiler": "baseline",
+      "allocations": 30000,
+      "checksum": "1050000",
+      "binary_sha256": "8600567b9bd47436f585a1fdb2e4f8b3f330e92cbd56e0d6baa61c19f47c01a2"
+    },
+    {
+      "program": "field25519",
+      "target": "arm64-linux",
+      "compiler": "candidate",
+      "allocations": 0,
+      "checksum": "1050000",
+      "binary_sha256": "e329f647bb5e8fd904aa9e50236580b4d4f2f169aecd0853bda5a557ff47d08f"
+    },
+    {
+      "program": "field25519",
+      "target": "wasm32-wasi",
+      "compiler": "baseline",
+      "allocations": 30000,
+      "checksum": "1050000",
+      "binary_sha256": "7edc09e1047ddda0475aa8e7fd986dc7b45c5e24ad8eecd471ebc51a880a896e"
+    },
+    {
+      "program": "field25519",
+      "target": "wasm32-wasi",
+      "compiler": "candidate",
+      "allocations": 0,
+      "checksum": "1050000",
+      "binary_sha256": "bf54e9b24320bf37e958d5b4556ae3da6498ef9fd5823bc37f24f27699b54bb7"
+    },
+    {
+      "program": "x25519",
+      "target": "x86-64-linux",
+      "compiler": "baseline",
+      "allocations": 107520,
+      "checksum": "7774",
+      "binary_sha256": "8e9d6eae3e9988941f6788d41c2bf2c2cea1fe0fe7380d096108cacf082d0f56"
+    },
+    {
+      "program": "x25519",
+      "target": "x86-64-linux",
+      "compiler": "candidate",
+      "allocations": 107520,
+      "checksum": "7774",
+      "binary_sha256": "e965ba405491d4bd3b38cfde4b80ed72f7bd10bef4bdcf5ba1692aa561f025a9"
+    },
+    {
+      "program": "x25519",
+      "target": "arm64-linux",
+      "compiler": "baseline",
+      "allocations": 107520,
+      "checksum": "7774",
+      "binary_sha256": "c92050acc2afc365f4c05f58c04ff3b5e6086bccdc4e2378d7342d3c671d21b3"
+    },
+    {
+      "program": "x25519",
+      "target": "arm64-linux",
+      "compiler": "candidate",
+      "allocations": 107520,
+      "checksum": "7774",
+      "binary_sha256": "c92050acc2afc365f4c05f58c04ff3b5e6086bccdc4e2378d7342d3c671d21b3"
+    },
+    {
+      "program": "x25519",
+      "target": "wasm32-wasi",
+      "compiler": "baseline",
+      "allocations": 107520,
+      "checksum": "7774",
+      "binary_sha256": "c1f4e2919f6b6c3382381426750a0c36313544f337186004262e471ed85db736"
+    },
+    {
+      "program": "x25519",
+      "target": "wasm32-wasi",
+      "compiler": "candidate",
+      "allocations": 107520,
+      "checksum": "7774",
+      "binary_sha256": "1b7811d4c36bfcfa325fd25c30cec0f2004f7b7f09dc25540aad01f61bacd0ca"
+    }
+  ],
+  "timings": {},
+  "baseline_source": "3260020a010d15615407a7d58d917f6f0a6df8be",
+  "input_sha256": {
+    "bench/compiler/scalar_record_return.fern": "d0bb6c149da80ee5e6f5580f98c97bc80a2fc3db89d4c1dba39e664fcd1d2957",
+    "bench/crypto/field_scalar_result.fern": "6486208ebe236cdd291fd88247e522135758d7bb4302b3bba4d7e1b034ff5c6c",
+    "bench/crypto/scalar_return_allocations.fern": "1d04d22c37da8359c0b148e75e120fce34e2986657cc6316880a00df3b2d8404"
+  },
+  "byte_identical_to_previous_measurement": true
+}

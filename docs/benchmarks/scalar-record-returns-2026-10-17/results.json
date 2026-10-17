@@ -1,0 +1,412 @@
+{
+  "source_head": "5abb1838ba101266f6a8f6ce59b6df2f14d266ba",
+  "compilers": {
+    "baseline": "6ba6e1d017f1e95c8c6137f91ab78c38145f5d62c8760de1ab2d86b94902e624",
+    "candidate": "dc58f74584b2490ec619cfba527aa69c8b58c15be9cd9015279b2f497b3adb0f"
+  },
+  "rows": [
+    {
+      "program": "scalar-record",
+      "target": "x86-64-linux",
+      "compiler": "baseline",
+      "allocations": 1000000,
+      "checksum": "2881902258175262656",
+      "binary_sha256": "20ce31daa15fc0a1ddcad4c34c15b70fdea59f5be93398a7b2f746b8172a45f7"
+    },
+    {
+      "program": "scalar-record",
+      "target": "x86-64-linux",
+      "compiler": "candidate",
+      "allocations": 0,
+      "checksum": "2881902258175262656",
+      "binary_sha256": "a43bd9d62716d5fe4659d914a1edf0efb2401dd9dfc576e31fea320a74b2c96e"
+    },
+    {
+      "program": "scalar-record",
+      "target": "arm64-linux",
+      "compiler": "baseline",
+      "allocations": 1000000,
+      "checksum": "2881902258175262656",
+      "binary_sha256": "c407a4139d08a2d15ab15bdaebb6c253856b8c24d6d837514ce034d3291b6d84"
+    },
+    {
+      "program": "scalar-record",
+      "target": "arm64-linux",
+      "compiler": "candidate",
+      "allocations": 0,
+      "checksum": "2881902258175262656",
+      "binary_sha256": "ba5f1d054a22f0f45f00ee2e1c852b7ab50ea13caee540ba3eb9f2b250341d20"
+    },
+    {
+      "program": "scalar-record",
+      "target": "wasm32-wasi",
+      "compiler": "baseline",
+      "allocations": 1000000,
+      "checksum": "2881902258175262656",
+      "binary_sha256": "acb450e2e7048ba6bc7971a1499de5dce2c1bf94e13983d821ded33f49684729"
+    },
+    {
+      "program": "scalar-record",
+      "target": "wasm32-wasi",
+      "compiler": "candidate",
+      "allocations": 0,
+      "checksum": "2881902258175262656",
+      "binary_sha256": "aa0022d1109d8f7e2a9f1549c9e0bbdab3c192a1b28e0d3f32fe0ba60896dc0f"
+    },
+    {
+      "program": "field25519",
+      "target": "x86-64-linux",
+      "compiler": "baseline",
+      "allocations": 30000,
+      "checksum": "1050000",
+      "binary_sha256": "a18b6de5019ae2bcb212b158512a8adcb36013f42d7c0fdad5b7222dd4a078a9"
+    },
+    {
+      "program": "field25519",
+      "target": "x86-64-linux",
+      "compiler": "candidate",
+      "allocations": 0,
+      "checksum": "1050000",
+      "binary_sha256": "dd847ac86a6d4e93d09a751697b4e57eca574d1e42a4945b6199f07a9fa15707"
+    },
+    {
+      "program": "field25519",
+      "target": "arm64-linux",
+      "compiler": "baseline",
+      "allocations": 30000,
+      "checksum": "1050000",
+      "binary_sha256": "8600567b9bd47436f585a1fdb2e4f8b3f330e92cbd56e0d6baa61c19f47c01a2"
+    },
+    {
+      "program": "field25519",
+      "target": "arm64-linux",
+      "compiler": "candidate",
+      "allocations": 0,
+      "checksum": "1050000",
+      "binary_sha256": "e329f647bb5e8fd904aa9e50236580b4d4f2f169aecd0853bda5a557ff47d08f"
+    },
+    {
+      "program": "field25519",
+      "target": "wasm32-wasi",
+      "compiler": "baseline",
+      "allocations": 30000,
+      "checksum": "1050000",
+      "binary_sha256": "7edc09e1047ddda0475aa8e7fd986dc7b45c5e24ad8eecd471ebc51a880a896e"
+    },
+    {
+      "program": "field25519",
+      "target": "wasm32-wasi",
+      "compiler": "candidate",
+      "allocations": 0,
+      "checksum": "1050000",
+      "binary_sha256": "bf54e9b24320bf37e958d5b4556ae3da6498ef9fd5823bc37f24f27699b54bb7"
+    },
+    {
+      "program": "x25519",
+      "target": "x86-64-linux",
+      "compiler": "baseline",
+      "allocations": 107520,
+      "checksum": "7774",
+      "binary_sha256": "8e9d6eae3e9988941f6788d41c2bf2c2cea1fe0fe7380d096108cacf082d0f56"
+    },
+    {
+      "program": "x25519",
+      "target": "x86-64-linux",
+      "compiler": "candidate",
+      "allocations": 107520,
+      "checksum": "7774",
+      "binary_sha256": "e965ba405491d4bd3b38cfde4b80ed72f7bd10bef4bdcf5ba1692aa561f025a9"
+    },
+    {
+      "program": "x25519",
+      "target": "arm64-linux",
+      "compiler": "baseline",
+      "allocations": 107520,
+      "checksum": "7774",
+      "binary_sha256": "c92050acc2afc365f4c05f58c04ff3b5e6086bccdc4e2378d7342d3c671d21b3"
+    },
+    {
+      "program": "x25519",
+      "target": "arm64-linux",
+      "compiler": "candidate",
+      "allocations": 107520,
+      "checksum": "7774",
+      "binary_sha256": "c92050acc2afc365f4c05f58c04ff3b5e6086bccdc4e2378d7342d3c671d21b3"
+    },
+    {
+      "program": "x25519",
+      "target": "wasm32-wasi",
+      "compiler": "baseline",
+      "allocations": 107520,
+      "checksum": "7774",
+      "binary_sha256": "c1f4e2919f6b6c3382381426750a0c36313544f337186004262e471ed85db736"
+    },
+    {
+      "program": "x25519",
+      "target": "wasm32-wasi",
+      "compiler": "candidate",
+      "allocations": 107520,
+      "checksum": "7774",
+      "binary_sha256": "1b7811d4c36bfcfa325fd25c30cec0f2004f7b7f09dc25540aad01f61bacd0ca"
+    }
+  ],
+  "timings": {
+    "scalar-record": {
+      "rows": [
+        {
+          "pair": 0,
+          "compiler": "baseline",
+          "seconds": 0.006792831001803279
+        },
+        {
+          "pair": 0,
+          "compiler": "candidate",
+          "seconds": 0.0024742269961279817
+        },
+        {
+          "pair": 1,
+          "compiler": "candidate",
+          "seconds": 0.0020652870007324964
+        },
+        {
+          "pair": 1,
+          "compiler": "baseline",
+          "seconds": 0.008349800998985302
+        },
+        {
+          "pair": 2,
+          "compiler": "baseline",
+          "seconds": 0.007197334001830313
+        },
+        {
+          "pair": 2,
+          "compiler": "candidate",
+          "seconds": 0.0022437630032072775
+        },
+        {
+          "pair": 3,
+          "compiler": "candidate",
+          "seconds": 0.0026886659979936667
+        },
+        {
+          "pair": 3,
+          "compiler": "baseline",
+          "seconds": 0.0069158830010565
+        },
+        {
+          "pair": 4,
+          "compiler": "baseline",
+          "seconds": 0.007060540003294591
+        },
+        {
+          "pair": 4,
+          "compiler": "candidate",
+          "seconds": 0.002565802999015432
+        },
+        {
+          "pair": 5,
+          "compiler": "candidate",
+          "seconds": 0.00207583299925318
+        },
+        {
+          "pair": 5,
+          "compiler": "baseline",
+          "seconds": 0.006756595998012926
+        },
+        {
+          "pair": 6,
+          "compiler": "baseline",
+          "seconds": 0.00861657800123794
+        },
+        {
+          "pair": 6,
+          "compiler": "candidate",
+          "seconds": 0.001991206001548562
+        }
+      ],
+      "paired_ratios": [
+        0.3642409174423968,
+        0.24734565542142592,
+        0.3117491841613407,
+        0.3887668425829261,
+        0.3634003911624573,
+        0.3072305936101063,
+        0.2310901150389965
+      ],
+      "median_ratio": 0.3117491841613407
+    },
+    "field25519": {
+      "rows": [
+        {
+          "pair": 0,
+          "compiler": "baseline",
+          "seconds": 0.0012659259955398738
+        },
+        {
+          "pair": 0,
+          "compiler": "candidate",
+          "seconds": 0.00136120699608
+        },
+        {
+          "pair": 1,
+          "compiler": "candidate",
+          "seconds": 0.0010370049931225367
+        },
+        {
+          "pair": 1,
+          "compiler": "baseline",
+          "seconds": 0.0011577050026971847
+        },
+        {
+          "pair": 2,
+          "compiler": "baseline",
+          "seconds": 0.0011110449995612726
+        },
+        {
+          "pair": 2,
+          "compiler": "candidate",
+          "seconds": 0.0009944419944076799
+        },
+        {
+          "pair": 3,
+          "compiler": "candidate",
+          "seconds": 0.0009777770028449595
+        },
+        {
+          "pair": 3,
+          "compiler": "baseline",
+          "seconds": 0.001117275001888629
+        },
+        {
+          "pair": 4,
+          "compiler": "baseline",
+          "seconds": 0.001142442000855226
+        },
+        {
+          "pair": 4,
+          "compiler": "candidate",
+          "seconds": 0.0009548629968776368
+        },
+        {
+          "pair": 5,
+          "compiler": "candidate",
+          "seconds": 0.0010663180000847206
+        },
+        {
+          "pair": 5,
+          "compiler": "baseline",
+          "seconds": 0.0011652969988062978
+        },
+        {
+          "pair": 6,
+          "compiler": "baseline",
+          "seconds": 0.0012486109990277328
+        },
+        {
+          "pair": 6,
+          "compiler": "candidate",
+          "seconds": 0.0010700950006139465
+        }
+      ],
+      "paired_ratios": [
+        1.0752658535142032,
+        0.8957419987877353,
+        0.8950510508578531,
+        0.8751444373069623,
+        0.835808729163346,
+        0.9150611399300188,
+        0.8570283310392164
+      ],
+      "median_ratio": 0.8950510508578531
+    },
+    "x25519": {
+      "rows": [
+        {
+          "pair": 0,
+          "compiler": "baseline",
+          "seconds": 0.0035011060026590712
+        },
+        {
+          "pair": 0,
+          "compiler": "candidate",
+          "seconds": 0.002859074003936257
+        },
+        {
+          "pair": 1,
+          "compiler": "candidate",
+          "seconds": 0.003415753999433946
+        },
+        {
+          "pair": 1,
+          "compiler": "baseline",
+          "seconds": 0.0029164239967940375
+        },
+        {
+          "pair": 2,
+          "compiler": "baseline",
+          "seconds": 0.003495286997349467
+        },
+        {
+          "pair": 2,
+          "compiler": "candidate",
+          "seconds": 0.0030417509988183156
+        },
+        {
+          "pair": 3,
+          "compiler": "candidate",
+          "seconds": 0.0030426719968090765
+        },
+        {
+          "pair": 3,
+          "compiler": "baseline",
+          "seconds": 0.0032684289981261827
+        },
+        {
+          "pair": 4,
+          "compiler": "baseline",
+          "seconds": 0.003245074003643822
+        },
+        {
+          "pair": 4,
+          "compiler": "candidate",
+          "seconds": 0.00349342299887212
+        },
+        {
+          "pair": 5,
+          "compiler": "candidate",
+          "seconds": 0.0031877380024525337
+        },
+        {
+          "pair": 5,
+          "compiler": "baseline",
+          "seconds": 0.0030010699992999434
+        },
+        {
+          "pair": 6,
+          "compiler": "baseline",
+          "seconds": 0.0029893329992773943
+        },
+        {
+          "pair": 6,
+          "compiler": "candidate",
+          "seconds": 0.0028522479988168925
+        }
+      ],
+      "paired_ratios": [
+        0.816620234224501,
+        1.1712131031663473,
+        0.8702435597205394,
+        0.9309279774942228,
+        1.0765310729275919,
+        1.0622004828931462,
+        0.954141943873888
+      ],
+      "median_ratio": 0.954141943873888
+    }
+  },
+  "input_sha256": {
+    "bench/compiler/scalar_record_return.fern": "d0bb6c149da80ee5e6f5580f98c97bc80a2fc3db89d4c1dba39e664fcd1d2957",
+    "bench/crypto/field_scalar_result.fern": "6486208ebe236cdd291fd88247e522135758d7bb4302b3bba4d7e1b034ff5c6c",
+    "bench/crypto/scalar_return_allocations.fern": "1d04d22c37da8359c0b148e75e120fce34e2986657cc6316880a00df3b2d8404"
+  }
+}
