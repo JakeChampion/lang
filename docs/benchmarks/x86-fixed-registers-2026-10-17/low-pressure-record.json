@@ -1,0 +1,24 @@
+{
+  "source_sha256": "5d5f30e393890bb897f7ae11b0b7ce0d63944211845e83c4d00d5a41a63d8798",
+  "cpu": [
+    0
+  ],
+  "builds": {
+    "baseline": {
+      "compiler_sha256": "c7d93477a830d5c5359bef48269cff32f54410416b689ea7b2dd3fd2d457fd9f",
+      "binary_sha256": "24a4e46351e1166bea962979f8eb3c87060b0ac8c75ba4035d32d0fba1ed2ba9",
+      "instructions": 940001366,
+      "saved_register_pushes": 5,
+      "frame_references": 2
+    },
+    "reads": {
+      "compiler_sha256": "ae2bf8b79fa4379eb4a722515285bfa585462e4fe45cf5ecc67033a97a5fc506",
+      "binary_sha256": "ac498131fe348e86c18211e983dbd649ec2736d3e758c871bef8f68eab5437cb",
+      "instructions": 780001348,
+      "saved_register_pushes": 4,
+      "frame_references": 0
+    }
+  },
+  "pairs": [],
+  "checksum": "4339612313273984"
+}

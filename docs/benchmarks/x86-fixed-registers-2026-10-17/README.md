@@ -1,5 +1,13 @@
 # x86 SSA fixed-register constraints
 
+The current policy is source `dcf31bd8a`, compiler SHA-256
+`ae2bf8b79fa4379eb4a722515285bfa585462e4fe45cf5ecc67033a97a5fc506`.
+It preserves the existing allocation for small arithmetic graphs that fit the
+old eleven-register pool; expanding that class reduced saves but hurt native
+throughput. Higher-pressure arithmetic and audited memory reads still use the
+additional caller registers. The historical measurements below retain their
+original source scope; the current-policy evidence is at the end.
+
 The initial comparison uses source
 `99285a95357849b6d2db317f71cdc9df012bf228`, which adds `rcx`, `rdx` and
 `r11` to the caller pool. The six argument registers remain a separate ABI
@@ -180,3 +188,47 @@ The fixed-register, memory-read, extra-caller, scalar-return, certification,
 ARM-helper and complexity suite passes in 37.202 seconds. All six extra-caller
 debug fixtures pass in 2.076 seconds. The preceding performance observations
 retain their exact source and compiler scopes; this repeat adds no timings.
+
+## Preserve small arithmetic allocation
+
+On current main, the preceding nine-caller policy makes the nine-live-value
+arithmetic benchmark 11.49% slower; disabling only r11 still loses 11.08%.
+The 21 alternating triples are in `pure-current-policy-comparison.json`.
+The revised policy checks the distinct integer homes after the first allocation.
+For a wholly audited, unspilled arithmetic graph that still fits the old
+six-caller/five-saved pool, it keeps that pool's allocation. This avoids an
+additional allocation attempt for functions that never used an extra home.
+Other functions retain the audited clobber constraints and expanded pool.
+
+The revised compiler emits the entire nine-value benchmark byte-identically
+to main. A further 21-pair repeat has median 0.977, which is timing variation
+between identical binaries, not a speed improvement. `low-pressure-pure.json`
+records the compiler hash, byte-identity check, checksum and every observation.
+A twelve-value arithmetic fixture now pins actual rcx/rdx/r11 homes without
+frame spills, while the nine-value fixture pins the retained saved homes.
+
+The final compiler reaches identical stages 2 and 3 at 12,680,720 bytes,
+SHA-256 `ae2bf8b79fa4379eb4a722515285bfa585462e4fe45cf5ecc67033a97a5fc506`.
+Focused allocator/arithmetic/memory/complexity tests pass in 24.777 seconds,
+all seven extra-caller debug fixtures in 2.113 seconds, and the broader
+SSA/scalar/semantic suite in 48.549 seconds. All eleven strict driver-size
+checks pass with complete coverage and unchanged baselines/tolerance
+(81.845 seconds). Raw logs use the `low-pressure-*` prefix.
+
+The fresh read-heavy program remains byte-identical to the preceding current-main
+candidate, with 940,001,312 baseline instructions versus 780,001,294 candidate
+instructions and the same checksum. The current software SHA repeat uses
+380,849,131 versus 376,654,813 instructions; its hot function still has 2,991
+instructions and 868 frame references versus 3,022 and 1,136. The production
+hardware path's instruction count is effectively unchanged. These integration
+repeats add no SHA or read-heavy elapsed timing observations.
+
+
+Seven alternating full-compiler pairs under the normal persistent memo have
+median candidate/baseline ratio 1.01961, spanning 0.97611–1.10573. They do not
+establish an elapsed compile-time improvement. A separate cold instruction
+comparison isolates the heuristic: with `FERN_RC_CERTIFY_MEMO=0` for both
+compilers, checker compilation takes 23,707,943,634 instructions before the
+refinement and 23,704,476,855 after it (-0.015%), with byte-identical assembly.
+The raw observations and hashes are `low-pressure-compiler-cost.json` and
+`low-pressure-cold-policy-cost.json`.
