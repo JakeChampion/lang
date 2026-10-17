@@ -41,10 +41,13 @@ pub function with_manifest(own mans: ManifestAt[], dir: string, man: fern_toml.M
     return mans;
   }
   let key: string = canonical_dir(dir);
-  for m in mans {
-    if (m.dir == key) {
+  // Indexed reads borrow the cache that this function returns.
+  let i: i32 = 0;
+  while (i < mans.len()) {
+    if (mans[i].dir == key) {
       return mans;
     }
+    i = i + 1;
   }
   return mans.append(ManifestAt { dir: key, man: man });
 }

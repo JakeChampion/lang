@@ -5,22 +5,9 @@ import (
 	"testing"
 )
 
-// --- Index row reads keep the arr-of-arr deep release (#7805) ---------------
-//
-// A fresh, non-escaping arr-of-arr local is released deeply when it dies
-// (__fern_arrarr_free): each row buffer is rc-dec'd, then the outer one freed.
-// A bare single-index row read — `let row = g[i]` or `row = g[i]` — takes a
-// counted reference at the bind, so it must not cost the local that release:
-// an outer-only dec strands every row, 88 B/round.
-//
-// `for row in g` takes no dup, but it is a TRANSIENT borrow — the loop ends
-// before the exit release — so it keeps the deep release unless the body lets
-// the loop var escape. TestSelfHostArrArrRowReadHazardsX86_64 pins that the
-// escaping shapes stay CORRECT, which is the half a wrongly-granted deep release
-// would break: an over-release is a use-after-free, not a leak.
-//
-// The reclaim cases assert live_bytes 0; the hazard cases assert the self-host
-// driver's answer agrees with the `fern` CLI build of the same program.
+// Reading a row from a nested array retains the row while allowing the
+// outer array to release its own references. The reclaim cases require zero
+// live bytes; the escape cases compare the driver with the full CLI.
 
 // arrarrRowBindChurnSrc: the minimal shape — a row bound out of a fresh
 // arr-of-arr and read locally. Nothing escapes the frame.

@@ -4,13 +4,8 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructArrReclaimIRArm64 is the arm64 port of
-// TestSelfHostStructArrReclaimIRX86_64 (#4355 struct-array element-box reclaim):
-// a fresh, non-escaping `let g = [P { .. }, P { .. }]` frees its element struct
-// boxes + outer buffer via the arm64 __fn___fern_arrarr_free (one rc-guarded
-// arr_dec per element pointer, which is exactly a struct-box free), instead of
-// the shallow outer-only dec that leaked every element box per iteration. No new
-// runtime — reuses the existing helper. Lighter churn under qemu.
+// TestSelfHostStructArrReclaimIRArm64 runs the shared struct-array reclaim
+// cases on ARM64, exercising the typed release pipeline.
 func TestSelfHostStructArrReclaimIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

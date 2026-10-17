@@ -458,118 +458,6 @@ function str_grow_census(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
-// hev_free emits one heap-FREE event hook: the block at `ptr` is `words`
-// 8-byte words. Both operands are pushed, never moved through a scratch
-// register, so the hook clobbers nothing the surrounding free site still
-// needs — the self-host's free sites are open-coded freelist pushes with 15
-// different live-register sets, and a hook that had to pick a scratch at each
-// would be 15 chances to corrupt a reclamation path.
-//
-// `ptr` is a register operand; `words` is a register or an immediate ($2 for
-// a 16-byte map box, $3 for a 24-byte string box). The pushes are undone
-// before control returns to the site, so a site that later reads its stack
-// argument (__fn___fern_alloc_reuse's `8(%rsp)`) is unaffected.
-// emit_ir_arr_deep_free_variant writes one member of the array DEEP-FREE family
-// (#2649): the rc guard chain, the sole-owner per-element walk, and the buffer
-// free back to its size class. The four members — string[], arr-of-arr,
-// string[][], Option[]-array — differ ONLY in the symbol, the local-label stem
-// keeping their guard jumps distinct, and `elem`: the asm that consumes the
-// element the loop has already loaded into %rax.
-//
-// Array layout (__fern_arr_box): cap@[arr-16], rc@[arr-8], len@[arr], element
-// i @ [arr+8+i*8]. Stack-arg ABI (arr at 8(%rsp)); %rbx/%r12/%r13 hold
-// arr/len/i across the per-element calls, so `elem` may call any helper that
-// preserves the callee-saved set.
-function emit_ir_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl: string, elem: string): asmcore.EmitState {
-  s = s.write("__fn___fern_" + sym + ":\n");
-  s = s.write("    movq 8(%rsp), %rax\n");  // arr
-  s = s.write("    cmpq $0x10000, %rax\n");  // low-addr guard
-  s = s.write("    jb .L" + lbl + "_ret\n");
-  s = s.write("    movl -8(%rax), %ecx\n");  // rc
-  s = s.write(san_poison_check("%ecx", s.rc_free_debug));
-  s = s.write("    testl %ecx, %ecx\n");
-  s = s.write("    js .L" + lbl + "_ret\n");  // negative = immortal -> skip
-  s = s.write("    cmpl $1, %ecx\n");
-  s = s.write("    jg .L" + lbl + "_dec\n");  // rc>1 -> dec, keep
-  s = s.write("    jl .L" + lbl + "_uf\n");  // rc==0 -> underflow (double free)
-  // rc==1: sole owner -> release every element, then the buffer.
-  s = s.write("    pushq %rbx\n");
-  s = s.write("    pushq %r12\n");
-  s = s.write("    pushq %r13\n");
-  s = s.write("    movq %rax, %rbx\n");  // arr
-  s = s.write("    movq (%rbx), %r12\n");  // len @ [arr]
-  s = s.write("    movq $0, %r13\n");  // i
-  s = s.write(".L" + lbl + "_loop:\n");
-  s = s.write("    cmpq %r12, %r13\n");
-  s = s.write("    jge .L" + lbl + "_freebuf\n");
-  s = s.write("    movq 8(%rbx,%r13,8), %rax\n");  // element i @ [arr+8+i*8]
-  s = s.write(elem);
-  s = s.write("    incq %r13\n");
-  s = s.write("    jmp .L" + lbl + "_loop\n");
-  s = s.write(".L" + lbl + "_freebuf:\n");
-  // buffer free: __fn___fern_arr_dec's rc==1 path (base=arr-16, class=cap+3).
-  s = s.write(quarantine_rc("-8(%rbx)", s.rc_free_debug));
-  s = s.write("    movl -16(%rbx), %ecx\n");  // cap
-  s = s.write("    addq $3, %rcx\n");  // class = cap + 3 words
-  s = s.write("    cmpq $65536, %rcx\n");
-  s = s.write("    jae .L" + lbl + "_large\n");  // large tier -> __fern_large_push
-  s = s.write("    leaq -16(%rbx), %rdx\n");  // base = arr - 16
-  s = hev_free(s, "%rdx", "%rcx");
-  if (!s.rc_free_debug) {
-    s = freelist_push(s, "%rdx", "%rcx", "%rdi");
-  }
-  s = s.write(".L" + lbl + "_pop:\n");
-  s = s.write("    popq %r13\n");
-  s = s.write("    popq %r12\n");
-  s = s.write("    popq %rbx\n");
-  s = s.write("    jmp .L" + lbl + "_ret\n");
-  s = s.write(".L" + lbl + "_dec:\n");
-  s = s.write("    subl $1, %ecx\n");
-  s = s.write("    movl %ecx, -8(%rax)\n");
-  s = s.write("    jmp .L" + lbl + "_ret\n");
-  s = s.write(".L" + lbl + "_uf:\n");
-  s = s.write("    incl __fern_rc_underflow(%rip)\n");
-  s = s.write(san_underflow_abort(s));
-  s = s.write(".L" + lbl + "_ret:\n");
-  s = s.write("    ret\n");
-  // Large tier (#3425): recycle the >=512 KiB outer buffer (base = arr-16,
-  // bytes = words*8) via __fern_large_push instead of leaking. A leaked
-  // buffer dies with the process in the per-window serial emit, but in the
-  // single-process -per-module-emit-all mode it ACCUMULATES across the batch
-  // and exhausts the arena. %rbx/%r12/%r13 are callee-saved across the call.
-  s = s.write(".L" + lbl + "_large:\n");
-  s = s.write("    leaq -16(%rbx), %r8\n");  // base = arr - 16
-  s = s.write("    leaq 0(,%rcx,8), %rsi\n");  // bytes = words*8
-  s = s.write("    call __fern_large_push\n");
-  s = s.write("    jmp .L" + lbl + "_pop\n");
-  return s;
-}
-
-// arr_deep_free_call is the one-element body shared by the three simple members:
-// hand the element to `target` under the stack ABI and drop the slot.
-// optarrarr_elem is the Option[]-array element body: unwrap a SOLE-OWNED Some
-// far enough to release its payload buffer, then release the Option box. A
-// shared box (rc>1) skips the payload — another owner still reads it — and the
-// box's own arr_dec does the decrement.
-function optarrarr_elem(): string {
-  let e: string = "    cmpq $0x10000, %rax\n    jb .Loaf_next\n";
-  e = e + "    pushq %rax\n    call __fn___fern_rc_is_unique\n    addq $8, %rsp\n";
-  e = e + "    testq %rax, %rax\n    jz .Loaf_box\n";
-  e = e + "    movq 8(%rbx,%r13,8), %rax\n";  // reload e
-  e = e + "    movl (%rax), %ecx\n";  // tag @ e+0 (0 = Some/Ok)
-  e = e + "    testl %ecx, %ecx\n    jnz .Loaf_box\n";
-  e = e + "    movq 8(%rax), %rdi\n";  // payload buffer @ e+8
-  e = e + "    pushq %rdi\n    call __fn___fern_arr_dec\n    addq $8, %rsp\n";
-  e = e + ".Loaf_box:\n";
-  e = e + "    movq 8(%rbx,%r13,8), %rax\n";  // reload e
-  e = e + "    pushq %rax\n    call __fn___fern_arr_dec\n    addq $8, %rsp\n";
-  return e + ".Loaf_next:\n";
-}
-
-function arr_deep_free_call(target: string): string {
-  return "    pushq %rax\n    call __fn___fern_" + target + "\n    addq $8, %rsp\n";
-}
-
 // freelist_push emits the push of the block at `ptr` onto the small-tier
 // freelist. `words` holds the block's logical size and comes out as its class,
 // the capacity __fern_capw rounds it to, which is the size __fern_alloc bumped
@@ -3524,52 +3412,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   s = s.write(".Lstrvfree_ret:\n");
   s = s.write("    ret\n");
-  // __fern_str_arr_free(arr) — string[] ELEMENT reclaim (#4355), the
-  // element-walking sibling of __fn___fern_arr_dec. rc word at [arr-8]:
-  // negative = immortal (skip); rc>1 = shared -> dec, elements untouched
-  // (they live on through the other owner); rc==0 = double free -> underflow
-  // detector; rc==1 = sole owner -> __fn___fern_str_free every element box
-  // (each fully rc-guarded: a shared element decs, a literal's .rodata data
-  // is heap-guard-skipped, an immortal view is skipped, a null slot is a
-  // no-op) then return the buffer to its size-class freelist exactly as
-  // __fn___fern_arr_dec's free path does (base = arr-16, class = cap+3).
-  // Array layout (__fern_arr_box): cap@[arr-16], rc@[arr-8], len@[arr],
-  // element i @ [arr+8+i*8]. Called ONLY on compile-time-proven fresh,
-  // non-escaping string[] locals with fresh/static elements.
-  // Stack-arg ABI (arr at 8(%rsp));
-  // %rbx/%r12/%r13 (callee-saved) hold arr/len/i across the per-element
-  // calls (__fn___fern_str_free clobbers only %rax/%rcx/%rdx/%rsi/%r8).
-  s = emit_ir_arr_deep_free_variant(s, "str_arr_free", "saf", arr_deep_free_call("str_free"));
-  // __fern_arrarr_free(arr) — one rc-guarded dec per element, then the buffer
-  // (#4355 slice 9): the sibling of __fn___fern_str_arr_free with the identical
-  // guard chain and buffer free; only the per-element call differs — each
-  // element is released fully by one __fn___fern_arr_dec (rc-guarded: a shared
-  // element decs, null no-ops). Gated on need: a binary that never calls it
-  // must not carry these bodies — the strarrarr one's inner
-  // `call __fn___fern_str_arr_free` text trips the negative asm-grep
-  // contracts (strarr-elem-alias-excluded) in every unrelated program.
-  if (s.has_need("arrarr_free")) {
-    s = emit_ir_arr_deep_free_variant(s, "arrarr_free", "aaf", arr_deep_free_call("arr_dec"));
-  }
-  // __fern_strarrarr_free(arr) — STRING-array-of-arrays reclaim (#4355
-  // slice 9): each element is a string[] INNER buffer released fully by
-  // __fn___fern_str_arr_free (its string boxes + the inner buffer, all
-  // rc-guarded). Same shell as __fn___fern_arrarr_free above; same
-  // need-gating rationale.
-  if (s.has_need("strarrarr_free")) {
-    s = emit_ir_arr_deep_free_variant(s, "strarrarr_free", "ssaf", arr_deep_free_call("str_arr_free"));
-  }
-  // __fern_optarrarr_free(arr) — Option[<scalar-arr>][] reclaim (#4365):
-  // walks a fresh, sole-owned array of OPTION boxes. Per element (an
-  // rc-headered [tag@0, payload@8] box): a UNIQUELY-owned box first decs
-  // its Some-payload buffer (tag 0; None/Err skip), then the box itself is
-  // arr_dec'd (rc-guarded — a shared box just decs, leaving its payload to
-  // the surviving owner), then the outer buffer is freed exactly like
-  // __fn___fern_arrarr_free. Called ONLY on a fresh, non-escaping
-  // Option array. Same need-gating rationale as the arrarr bodies above.
-  if (s.has_need("optarrarr_free")) {
-    s = emit_ir_arr_deep_free_variant(s, "optarrarr_free", "oaf", optarrarr_elem());
-  }
+  s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_arr_free(), s);
   // __fern_rc_is_unique(ptr) -> i32 — 1 iff a live heap object with rc == 1.
   // Gates the struct/enum-array field-drop's element walk (walk + free the
   // element boxes only when THIS drop frees the buffer, i.e. the sole owner).
@@ -3997,50 +3840,6 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jmp __fern_arr_box\n");
   s = s.write(".Lsarelo_ret:\n");
   s = s.write("    ret\n");
-  // __fern_snapshot_dec(new, old, snap) -> new — the snapshot-param consume-
-  // rebind reclaim (#3456 slice 2). Stack-arg ABI: 24(%rsp)=new, 16=old,
-  // 8=snap. Frees `old` (rc-guarded SHALLOW box release, the __fern_arr_dec free
-  // path) only when it differs from BOTH `new` (cow) AND `snap` (never freed).
-  // Returns `new` in %rax. %rcx/%rdx/%rsi/%rdi/%r8/%r9 are scratch.
-  s = s.write("__fn___fern_snapshot_dec:\n");
-  s = s.write("    movq 24(%rsp), %rax\n");  // new (return value)
-  s = s.write("    movq 16(%rsp), %rcx\n");  // old
-  s = s.write("    cmpq %rax, %rcx\n");  // old == new? (cow)
-  s = s.write("    je .Lsd_ret\n");
-  s = s.write("    movq 8(%rsp), %rdx\n");  // snap
-  s = s.write("    cmpq %rdx, %rcx\n");  // old == snap? (caller's original)
-  s = s.write("    je .Lsd_ret\n");
-  s = s.write("    cmpq $0x10000, %rcx\n");  // low-addr / SSO sentinel
-  s = s.write("    jb .Lsd_ret\n");
-  s = s.write("    movl -8(%rcx), %esi\n");  // old rc
-  s = s.write(san_poison_check("%esi", s.rc_free_debug));
-  s = s.write("    testl %esi, %esi\n");
-  s = s.write("    js .Lsd_ret\n");  // static sentinel (rc<0)
-  s = s.write("    cmpl $1, %esi\n");
-  s = s.write("    jne .Lsd_ret\n");  // shared — leave (defensive)
-  s = s.write("    movl -16(%rcx), %esi\n");  // old cap
-  s = s.write("    addq $3, %rsi\n");  // words = cap + 3 (header)
-  s = s.write("    cmpq $65536, %rsi\n");
-  s = s.write("    jae .Lsd_large\n");  // large tier -> recycle via __fern_large_push
-  s = s.write(quarantine_rc("-8(%rcx)", s.rc_free_debug));
-  s = s.write("    leaq -16(%rcx), %rdi\n");  // old box base
-  s = hev_free(s, "%rdi", "%rsi");
-  if (!s.rc_free_debug) {
-    s = freelist_push(s, "%rdi", "%rsi", "%r9");
-  }
-  s = s.write(".Lsd_ret:\n");
-  s = s.write("    ret\n");  // %rax = new
-  // Large tier (#3425): recycle the >=512 KiB old box (base = old-16, bytes =
-  // words*8) instead of leaking. %rax holds the return value `new` and
-  // __fern_large_push clobbers it, so preserve it across the call.
-  s = s.write(".Lsd_large:\n");
-  s = s.write(quarantine_rc("-8(%rcx)", s.rc_free_debug));
-  s = s.write("    leaq -16(%rcx), %r8\n");  // base = old - 16
-  s = s.write("    leaq 0(,%rsi,8), %rsi\n");  // bytes = words*8
-  s = s.write("    pushq %rax\n");  // preserve return value (new)
-  s = s.write("    call __fern_large_push\n");
-  s = s.write("    popq %rax\n");
-  s = s.write("    ret\n");  // %rax = new
   // __fern_print_str is a Fern runtime function (#2649):
   // asmcore.rt_src_print_str, lowered through the IR pipeline via
   // emit_ir_runtime_fern_fn in the entry block, not a hand-written body here.
@@ -11473,16 +11272,6 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   // arr.join(sep) and a scalar xs.concat(ys) need their own bodies + the
   // heap runtime they fill one exact-size block from. #5328.
   s = s.need_array_helper(name);
-  // arr-of-arr reclaim helpers (#4355 slice 9): bodies gated on these
-  // needs in emit_ir_runtime — a binary with no arr-of-arr reclaim
-  // must not carry them, since the strarrarr body's inner
-  // `call __fn___fern_str_arr_free` text would trip the negative
-  // asm-grep contracts (e.g. strarr-elem-alias-excluded). Both free
-  // through the freelist, so they need the heap runtime.
-  if (name == "__fern_arrarr_free") {
-    s = s.need("heap");
-    s = s.need("arrarr_free");
-  }
   if (name == "__fern_arr_inc_elems") {
     s = s.need("arr_inc_elems");
   }
@@ -11503,19 +11292,6 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   }
   if (name == "__fern_set_args") {
     s = s.need("set_args");
-  }
-  // The VIEW-aware string[] element walk (#6544) is gated the same way
-  // and for the same reason: its body's inner
-  // `call __fn___fern_str_view_free` must not appear in a binary that
-  // never reclaims a builtin string[]. Frees through the freelist, so
-  // it needs the heap runtime.
-  if (name == "__fern_strarrarr_free") {
-    s = s.need("heap");
-    s = s.need("strarrarr_free");
-  }
-  if (name == "__fern_optarrarr_free") {
-    s = s.need("heap");
-    s = s.need("optarrarr_free");
   }
   return s;
 }

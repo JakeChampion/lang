@@ -109,21 +109,10 @@ func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
 	e2eharness.CheckServeAllocsH2(t, addr, ServeAllocsH2Ceiling, e2eharness.ServeAllocsRounds)
 }
 
-// ServeAllocsH3Ceiling bounds what the loop allocates per hello request
-// on one HTTP/3 connection (docs/NET-P8-HTTP3-PLAN.md slice 10), a ratchet
-// like the HTTP/2 one: the datagram's packet opened and its frames read,
-// the stream table and the HTTP/3 session stepped, the request handed
-// over, the response's fields encoded, and its packet planned and sealed.
-// The first reading was 632 on arm64-darwin with the stream table rebuilt
-// on every packet; with idle streams left alone and the loop flushing a
-// connection once per burst, 421 there and 423.25 on x86-64; with the
-// varints and headers read as scalars, 387.25; with the stream table
-// handed back bare through its operations and its filling chain, done
-// streams retired lazily and byte ranges copied whole, 348.72; with the
-// connection, QPACK's decoder, the session and the datagram planner handed
-// back bare, 309.03; with a byte kernel's result known to be fresh
-// (#12552), 297.19.
-const ServeAllocsH3Ceiling = 303
+// ServeAllocsH3Ceiling bounds allocations per hello request over one HTTP/3
+// connection. The 100,000-request measurement and ratchet are recorded in
+// docs/benchmarks/net-h3-2026-10-17.md.
+const ServeAllocsH3Ceiling = 281
 
 func TestSelfHostServeAllocsPerRequestH3(t *testing.T) {
 	cli := buildSelfHostCLI(t)

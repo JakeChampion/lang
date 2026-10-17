@@ -467,8 +467,7 @@ function main(): i32 {
     return 0;
 }`, 0},
 
-	// A pure-scalar element takes the plain __fern_arrarr_free half of the
-	// split — no field routing, no rc-array field.
+	// A scalar element needs no field routing or nested reference release.
 	{"structarr-scalar-producer-len-recv", `struct Q { a: i32, b: i32 }
 function mkq(): Q[] { return [Q { a: 1, b: 2 }, Q { a: 3, b: 4 }]; }
 function churn(n: i32): i32 {

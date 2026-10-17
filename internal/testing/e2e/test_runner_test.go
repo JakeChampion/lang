@@ -1244,7 +1244,7 @@ func TestRunnerHTTPH2FrameExamplePasses(t *testing.T) {
 // refused, malformed requests reset and malformed connections closed, HEAD
 // answered without a body, and the control frames.
 func TestRunnerHTTPH2ExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_h2", "std/http/h2", 18)
+	runnerSuitePasses(t, "http_h2", "std/http/h2", 19)
 }
 
 // `tests/stdlib/quic_frames_test.fern` reads and writes every QUIC frame,
@@ -1400,7 +1400,7 @@ func TestRunnerTLSClientExamplePasses(t *testing.T) {
 // from the tickets it issues, requires client certificates, updates keys
 // both ways, and checks the contract of offloading to the kernel.
 func TestRunnerTLSServerExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_server", "std/tls/server", 14)
+	runnerSuitePasses(t, "tls_server", "std/tls/server", 15)
 }
 
 // `tests/stdlib/tls_handshake_test.fern` runs the client through RFC 8448 §3

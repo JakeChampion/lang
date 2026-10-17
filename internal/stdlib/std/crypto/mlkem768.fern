@@ -116,15 +116,6 @@ function __zeros(n: i32): i32[] {
   return a;
 }
 
-function __copy(own dst: u8[], at: i32, src: [u8], from: i32, len: i32): u8[] {
-  let i: i32 = 0;
-  while (i < len) {
-    dst = dst.with(at + i, src[from + i]);
-    i = i + 1;
-  }
-  return dst;
-}
-
 // __add adds the count coefficients of g to those of f.
 function __add(own f: i32[], g: [i32], count: i32): i32[] {
   let i: i32 = 0;
@@ -246,7 +237,7 @@ function __dot(a: [i32], v: [i32]): i32[] {
 // SHAKE128(rho || j || i) by rejection (Algorithm 7). The seed is public,
 // so the rejection may branch.
 function __sample_ntt(own a: i32[], at: i32, rho: [u8], j: i32, i: i32): i32[] {
-  let seed: u8[] = __copy(__alloc_u8(34), 0, rho, 0, 32).with(32, j as u8).with(33, i as u8);
+  let seed: u8[] = __bytes_into(__alloc_u8(34), 0, rho, 0, 32).with(32, j as u8).with(33, i as u8);
   let x: crypto.ShakeReader = crypto.shake128_new().update_bytes(seed).reader();
   let n: i32 = 0;
   while (n < 256) {
@@ -297,7 +288,7 @@ function __matrix(rho: [u8], transposed: boolean): i32[] {
 // its bits summed in pairs, and a coefficient is one pair sum minus the
 // next.
 function __cbd(own f: i32[], at: i32, s: [u8], n: i32): i32[] {
-  let b: u8[] = crypto.shake256(__copy(__alloc_u8(33), 0, s, 0, 32).with(32, n as u8), 128);
+  let b: u8[] = crypto.shake256(__bytes_into(__alloc_u8(33), 0, s, 0, 32).with(32, n as u8), 128);
   let i: i32 = 0;
   while (i < 128) {
     let x: i32 = b[i] as i32;
@@ -403,7 +394,7 @@ function __keygen(d: [u8], z: [u8]): KeyPair {
   let rs: u8[] = __g(d, [3 as u8]);
   // rho is published in the encapsulation key, so the matrix sampling may
   // branch on it.
-  let rho: u8[] = __copy(__alloc_u8(32), 0, rs, 0, 32);
+  let rho: u8[] = __bytes_into(__alloc_u8(32), 0, rs, 0, 32);
   __ct_public(rho);
   let sigma: [u8] = rs[32:64];
   let a: i32[] = __matrix(rho, false);
@@ -416,10 +407,10 @@ function __keygen(d: [u8], z: [u8]): KeyPair {
     i = i + 1;
   }
   let t: i32[] = __mat_vec(a, s, e);
-  let ek: u8[] = __copy(__encode(__alloc_u8(1184), 0, t, 768, 12), 1152, rho, 0, 32);
-  let dk: u8[] = __copy(__encode(__alloc_u8(2400), 0, s, 768, 12), 1152, ek, 0, 1184);
-  dk = __copy(dk, 2336, __h(ek), 0, 32);
-  dk = __copy(dk, 2368, z, 0, 32);
+  let ek: u8[] = __bytes_into(__encode(__alloc_u8(1184), 0, t, 768, 12), 1152, rho, 0, 32);
+  let dk: u8[] = __bytes_into(__encode(__alloc_u8(2400), 0, s, 768, 12), 1152, ek, 0, 1184);
+  dk = __bytes_into(dk, 2336, __h(ek), 0, 32);
+  dk = __bytes_into(dk, 2368, z, 0, 32);
   return KeyPair { encapsulation_key: ek, decapsulation_key: dk };
 }
 
@@ -507,7 +498,7 @@ pub function encaps_derand(ek: [u8], m: [u8]): Result[Encapsulation, MlKemError]
     return Err(EncapsulationKeyModulus);
   }
   let kr: u8[] = __g(m, __h(ek));
-  return Ok(Encapsulation { shared_secret: __copy(__alloc_u8(32), 0, kr, 0, 32), ciphertext: __encrypt(t, ek[1152:1184], m, kr[32:64]) });
+  return Ok(Encapsulation { shared_secret: __bytes_into(__alloc_u8(32), 0, kr, 0, 32), ciphertext: __encrypt(t, ek[1152:1184], m, kr[32:64]) });
 }
 
 // decaps(dk, c) — the shared secret the ciphertext c carries under the
@@ -522,8 +513,8 @@ pub function decaps(dk: [u8], c: [u8]): Result[u8[], MlKemError] {
     return Err(CiphertextLength(c.len()));
   }
   // The encapsulation key and its hash inside dk are public.
-  let ek: u8[] = __copy(__alloc_u8(1184), 0, dk, 1152, 1184);
-  let h: u8[] = __copy(__alloc_u8(32), 0, dk, 2336, 32);
+  let ek: u8[] = __bytes_into(__alloc_u8(1184), 0, dk, 1152, 1184);
+  let h: u8[] = __bytes_into(__alloc_u8(32), 0, dk, 2336, 32);
   __ct_public(ek);
   __ct_public(h);
   if (!__same(__h(ek), h, 32)) {

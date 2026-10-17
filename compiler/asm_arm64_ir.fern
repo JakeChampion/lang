@@ -6120,13 +6120,6 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   // arr.join(sep) and a scalar xs.concat(ys) (#5328): need_array_helper
   // sets each one's need and the heap's.
   s = s.need_array_helper(name);
-  // arr-of-arr reclaim helpers (#4355 slice 9) — bodies gated on these
-  // needs in asm_arm64's runtime writer, mirroring the x86 asm_ir
-  // gating: an unrelated binary must not carry the strarrarr body's
-  // inner `bl __fn___fern_str_arr_free` (negative asm-grep contracts).
-  if (name == "__fern_arrarr_free") {
-    s = s.need("arrarr_free");
-  }
   if (name == "__fern_arr_inc_elems") {
     s = s.need("arr_inc_elems");
   }
@@ -6147,16 +6140,6 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   }
   if (name == "__fern_set_args") {
     s = s.need("set_args");
-  }
-  // The VIEW-aware string[] element walk (#6544), gated the same way:
-  // a binary that never reclaims a builtin string[] must not carry a
-  // body whose inner `bl __fn___fern_str_view_free` the negative
-  // asm-grep contracts would see.
-  if (name == "__fern_strarrarr_free") {
-    s = s.need("strarrarr_free");
-  }
-  if (name == "__fern_optarrarr_free") {
-    s = s.need("optarrarr_free");
   }
   return s;
 }
@@ -9429,7 +9412,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   // block back (rc stays 1 — the caller's __fern_rc_is_unique gate
   // guaranteed sole ownership; the caller overwrites the shape slot before
   // any read); cap mismatch -> return the donor block to its word-indexed
-  // freelist class (the __fn___fern_snapshot_dec free idiom: clear rc,
+  // freelist class (clear rc,
   // *base = head, freelist[cap+3] = base; >= 65536 words leaks, matching
   // __fern_alloc's no-freelist tier) and alloc fresh. Clobbers x0..x6, x9.
   s = s.write("__fn___fern_alloc_reuse:\n");
@@ -9466,52 +9449,6 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    add x10, x10, :lo12:__fern_rc_underflow\n");
   s = s.write("    ldr w0, [x10]\n");
   s = s.write("    ret\n");
-  // __fern_snapshot_dec(new, old, snap) -> new (#3456 slice 2). Frees `old`
-  // (rc-guarded SHALLOW box release, the __fern_arr_dec free path) only when
-  // it differs from BOTH `new` (cow) AND `snap` (the caller's original, never
-  // freed). Returns `new` in x0. arm64 mirror of asm_ir.emit_ir_runtime's
-  // body — same heap layout as __fern_arr_dec below (rc @ [old-8], cap @
-  // [old-16], base = old-16, idx = cap+3, freelist word-indexed, class cap
-  // 65536). Stack-arg ABI: [sp]=snap, [sp+16]=old, [sp+32]=new. Clobbers
-  // x0..x6, x9.
-  s = s.write("__fn___fern_snapshot_dec:\n");
-  s = s.write("    ldr x0, [sp, #32]\n");  // new (return value)
-  s = s.write("    ldr x1, [sp, #16]\n");  // old
-  s = s.write("    cmp x1, x0\n");  // old == new? (cow)
-  s = s.write("    beq .Lsd_ret\n");
-  s = s.write("    ldr x2, [sp]\n");  // snap
-  s = s.write("    cmp x1, x2\n");  // old == snap? (caller's original)
-  s = s.write("    beq .Lsd_ret\n");
-  s = s.write("    mov x9, #0x10000\n");
-  s = s.write("    cmp x1, x9\n");  // old < 0x10000? (low-addr / SSO)
-  s = s.write("    blo .Lsd_ret\n");
-  s = s.write("    ldur w3, [x1, #-8]\n");  // old rc
-  s = s.write(san_poison_check("w3", "w9", ".Lsd_live", s.rc_free_debug));
-  s = s.write("    tbnz w3, #31, .Lsd_ret\n");  // static sentinel (rc<0)
-  s = s.write("    cmp w3, #1\n");
-  s = s.write("    bne .Lsd_ret\n");  // shared/other — leave (defensive)
-  s = s.write("    ldur x4, [x1, #-16]\n");  // old cap
-  s = s.write("    add x4, x4, #3\n");  // idx = cap + 3
-  s = s.write("    mov x9, #0x10000\n");  // freelist class cap (65536)
-  s = s.write("    cmp x4, x9\n");
-  s = s.write("    bhs .Lsd_large\n");  // large tier -> recycle via __fern_large_push
-  s = s.write(quarantine_rc("[x1, #-8]", "w9", s.rc_free_debug));  // release the rc word
-  s = s.write("    sub x5, x1, #16\n");  // base = old - 16
-  s = lc_bump_free_words(s, "x4", "x2", "x3");
-  if (!s.rc_free_debug) {
-    s = freelist_push(s, "x5", "x4", "x6", "x9");
-  }
-  s = s.write(".Lsd_ret:\n");
-  s = s.write("    ret\n");  // x0 = new
-  // Large tier (#3425): recycle the >=512 KiB old box (base = old-16, bytes =
-  // idx*8) instead of leaking. snapshot_dec is a leaf, but the large path is
-  // terminal, so TAIL-branch: __fern_large_push preserves x0 (= new, the
-  // return value) and its ret returns to snapshot_dec's caller (x30 untouched).
-  s = s.write(".Lsd_large:\n");
-  s = s.write(quarantine_rc("[x1, #-8]", "w9", s.rc_free_debug));  // release the rc word (x1 = old)
-  s = s.write("    lsl x2, x4, #3\n");  // bytes = idx*8
-  s = s.write("    sub x1, x1, #16\n");  // base = old-16
-  s = s.write("    b __fern_large_push\n");  // tail: rets to caller, x0 = new preserved
   return s;
 }
 
@@ -9852,160 +9789,11 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   }
   s = s.write(".Lstrvfree_ret:\n");
   s = s.write("    ret\n");
-  // __fern_str_arr_free(arr) — string[] ELEMENT reclaim (#4355), the arm64
-  // sibling of the x86-64 body in asm_ir.emit_ir_runtime and the element-
-  // walking sibling of __fn___fern_arr_dec. rc@[arr-8]: negative = immortal
-  // (skip); rc>1 -> dec, elements untouched; rc==0 -> underflow detector;
-  // rc==1 -> __fn___fern_str_free every element box (each fully rc-guarded)
-  // then free the buffer to its size-class freelist (base=arr-16,
-  // class=cap+3), exactly as __fn___fern_arr_dec's free path. Array layout
-  // (__fern_arr_box): cap@[arr-16], rc@[arr-8], len@[arr], element i @
-  // [arr+8+i*8]. Called ONLY on compile-time-proven fresh string[] locals
-  // Stack-arg ABI (arr at [sp]); x19/x20/x21
-  // hold arr/len/i across the bl calls (callee-saved; x30 saved too —
-  // __fn___fern_str_free is a leaf and preserves them).
-  s = emit_arm64_arr_deep_free_variant(s, "str_arr_free", "saf", arm64_arr_deep_free_call("str_free"));
-  // __fern_arrarr_free(arr) — one rc-guarded dec per element, then the buffer
-  // (#4355 slice 9), the arm64 sibling of the x86-64 body in
-  // asm_ir.emit_ir_runtime: identical shell to __fn___fern_str_arr_free above,
-  // but each element is released fully by one rc-guarded __fn___fern_arr_dec.
-  // Same register discipline (x19/x20/x21 + x30 saved across the bl). Gated on
-  // need, mirroring the x86 gating: an unrelated binary must not carry the
-  // strarrarr body's `bl __fn___fern_str_arr_free` (negative asm-grep
-  // contracts, e.g. strarr-elem-alias-excluded).
-  if (s.has_need("arrarr_free")) {
-    s = emit_arm64_arr_deep_free_variant(s, "arrarr_free", "aaf", arm64_arr_deep_free_call("arr_dec"));
-  }
-  // __fern_strarrarr_free(arr) — string[][] reclaim (#4355 slice 9): each
-  // element is a string[] INNER buffer released fully by
-  // __fn___fern_str_arr_free (string boxes + inner buffer, rc-guarded).
-  // Same need-gating rationale as __fn___fern_arrarr_free above.
-  if (s.has_need("strarrarr_free")) {
-    s = emit_arm64_arr_deep_free_variant(s, "strarrarr_free", "ssaf", arm64_arr_deep_free_call("str_arr_free"));
-  }
-  // __fern_optarrarr_free(arr) — Option[<scalar-arr>][] reclaim (#4365),
-  // the arm64 sibling of the x86-64 body: per element (an rc-headered
-  // [tag@0, payload@8] option box), a UNIQUELY-owned box first decs its
-  // Some-payload buffer (tag 0), then the box is arr_dec'd (rc-guarded),
-  // then the outer buffer is freed like __fn___fern_arrarr_free. Same
-  // register discipline and need-gating rationale as the bodies above.
-  if (s.has_need("optarrarr_free")) {
-    s = emit_arm64_arr_deep_free_variant(s, "optarrarr_free", "oaf", arm64_optarrarr_elem());
-  }
+  s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_arr_free(), s);
   s = s.write("__fn___fern_drop_arr_ptr:\n");
   s = s.write("    ret\n");
 
   return s;
-}
-
-// emit_rt_fs emits the filesystem and environment surface: the chunked reader,
-// read/write_file, envp / env, temp_dir, stat, read_dir, and the
-// remove_file / remove_dir_all walkers.
-// emit_arm64_arr_deep_free_variant writes one member of the array DEEP-FREE
-// family (#2649) — the arm64 twin of asm_ir.emit_ir_arr_deep_free_variant. The
-// four members (string[], arr-of-arr, string[][], Option[]-array) differ ONLY in
-// the symbol, the local-label stem keeping their guard jumps distinct, and
-// `elem`: the asm consuming the element the loop has already loaded into x0
-// (with its slot index in x9).
-//
-// Array layout: cap@[arr-16], rc@[arr-8], len@[arr], element i @ [arr+(i+1)*8].
-// Stack-arg ABI (arr at [sp]); x19/x20/x21 hold arr/len/i across the
-// per-element calls and x30 is saved in the frame, so `elem` may `bl` freely.
-function emit_arm64_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl: string, elem: string): asmcore.EmitState {
-  s = s.write("__fn___fern_" + sym + ":\n");
-  s = s.write("    ldr x0, [sp]\n");  // arr
-  s = s.write("    mov x9, #0x10000\n");
-  s = s.write("    cmp x0, x9\n");
-  s = s.write("    blo .L" + lbl + "_ret\n");  // low-addr guard
-  s = s.write("    ldur w1, [x0, #-8]\n");  // rc
-  s = s.write(san_poison_check("w1", "w10", ".L" + lbl + "_sanlive", s.rc_free_debug));
-  s = s.write("    tbnz w1, #31, .L" + lbl + "_ret\n");  // negative = immortal -> skip
-  s = s.write("    cmp w1, #1\n");
-  s = s.write("    bgt .L" + lbl + "_dec\n");  // rc>1 -> dec, keep
-  s = s.write("    blt .L" + lbl + "_uf\n");  // rc==0 -> underflow (double free)
-  // rc==1: sole owner -> release every element, then the buffer.
-  s = s.write("    stp x19, x30, [sp, #-16]!\n");  // save callee-saved + link
-  s = s.write("    stp x20, x21, [sp, #-16]!\n");
-  s = s.write("    mov x19, x0\n");  // arr
-  s = s.write("    ldr x20, [x19]\n");  // len @ [arr]
-  s = s.write("    mov x21, #0\n");  // i
-  s = s.write(".L" + lbl + "_loop:\n");
-  s = s.write("    cmp x21, x20\n");
-  s = s.write("    bge .L" + lbl + "_freebuf\n");
-  s = s.write("    add x9, x21, #1\n");
-  s = s.write(elem);
-  s = s.write("    add x21, x21, #1\n");
-  s = s.write("    b .L" + lbl + "_loop\n");
-  s = s.write(".L" + lbl + "_freebuf:\n");
-  // buffer free: __fn___fern_arr_dec's rc==1 path (base=arr-16, class=cap+3).
-  s = s.write(quarantine_rc("[x19, #-8]", "w10", s.rc_free_debug));  // release the rc word (defensive vs re-free)
-  s = s.write("    ldur x1, [x19, #-16]\n");  // cap
-  s = s.write("    add x1, x1, #3\n");  // class = cap + 3 words
-  s = s.write("    mov x9, #0x10000\n");
-  s = s.write("    cmp x1, x9\n");
-  s = s.write("    bhs .L" + lbl + "_large\n");  // large tier -> __fern_large_push
-  s = s.write("    sub x2, x19, #16\n");  // base = arr - 16
-  s = lc_bump_free_words(s, "x1", "x3", "x9");
-  if (!s.rc_free_debug) {
-    s = freelist_push(s, "x2", "x1", "x3", "x9");
-  }
-  s = s.write(".L" + lbl + "_pop:\n");
-  s = s.write("    ldp x20, x21, [sp], #16\n");
-  s = s.write("    ldp x19, x30, [sp], #16\n");
-  s = s.write("    b .L" + lbl + "_ret\n");
-  s = s.write(".L" + lbl + "_dec:\n");
-  s = s.write("    sub w1, w1, #1\n");
-  s = s.write("    stur w1, [x0, #-8]\n");
-  s = s.write("    b .L" + lbl + "_ret\n");
-  s = s.write(".L" + lbl + "_uf:\n");
-  s = s.write("    adrp x2, __fern_rc_underflow\n");
-  s = s.write("    add x2, x2, :lo12:__fern_rc_underflow\n");
-  s = s.write("    ldr w3, [x2]\n");
-  s = s.write("    add w3, w3, #1\n");
-  s = s.write("    str w3, [x2]\n");
-  s = s.write(san_underflow_abort(s));
-  s = s.write(".L" + lbl + "_ret:\n");
-  s = s.write("    ret\n");
-  // Large tier (#3425): recycle the >=512 KiB outer buffer (base = arr-16,
-  // bytes = class*8) via __fern_large_push instead of leaking. x30 is saved in
-  // the frame (restored at _pop), so the bl is safe; large_push preserves
-  // x19/x20/x21. Accumulates across a -per-module-emit-all batch otherwise.
-  s = s.write(".L" + lbl + "_large:\n");
-  s = s.write("    lsl x2, x1, #3\n");  // bytes = class*8
-  s = s.write("    sub x1, x19, #16\n");  // base = arr-16
-  s = s.write("    bl __fern_large_push\n");
-  s = s.write("    b .L" + lbl + "_pop\n");
-  return s;
-}
-
-// arm64_arr_deep_free_call is the one-element body shared by the three simple
-// members: hand the element to `target` under the stack ABI and drop the slot.
-function arm64_arr_deep_free_call(target: string): string {
-  let e: string = "    ldr x0, [x19, x9, lsl #3]\n";  // element i @ [arr+(i+1)*8]
-  e = e + "    str x0, [sp, #-16]!\n";  // push stack arg (16-aligned)
-  e = e + "    bl __fn___fern_" + target + "\n";
-  return e + "    add sp, sp, #16\n";
-}
-
-// arm64_optarrarr_elem is the Option[]-array element body: unwrap a SOLE-OWNED
-// Some far enough to release its payload buffer, then release the Option box. A
-// shared box (rc>1) skips the payload — another owner still reads it.
-function arm64_optarrarr_elem(): string {
-  let e: string = "    ldr x0, [x19, x9, lsl #3]\n";  // e = option box
-  e = e + "    mov x9, #0x10000\n    cmp x0, x9\n    blo .Loaf_next\n";
-  e = e + "    str x0, [sp, #-16]!\n    bl __fn___fern_rc_is_unique\n    add sp, sp, #16\n";
-  e = e + "    cbz x0, .Loaf_box\n";
-  e = e + "    add x9, x21, #1\n";
-  e = e + "    ldr x0, [x19, x9, lsl #3]\n";  // reload e
-  e = e + "    ldr w1, [x0]\n";  // tag @ e+0 (0 = Some/Ok)
-  e = e + "    cbnz w1, .Loaf_box\n";
-  e = e + "    ldr x0, [x0, #8]\n";  // payload buffer @ e+8
-  e = e + "    str x0, [sp, #-16]!\n    bl __fn___fern_arr_dec\n    add sp, sp, #16\n";
-  e = e + ".Loaf_box:\n";
-  e = e + "    add x9, x21, #1\n";
-  e = e + "    ldr x0, [x19, x9, lsl #3]\n";
-  e = e + "    str x0, [sp, #-16]!\n    bl __fn___fern_arr_dec\n    add sp, sp, #16\n";
-  return e + ".Loaf_next:\n";
 }
 
 function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {

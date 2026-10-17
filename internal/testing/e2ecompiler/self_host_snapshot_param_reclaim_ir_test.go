@@ -8,22 +8,10 @@ import (
 	"testing"
 )
 
-// TestSelfHostSnapshotParamReclaimIRX86_64 covers the snapshot-param reclaim
-// (#3456 slice 2): the dominant builder pattern
-// `function f(s: S): R { s = s.step(x); ...; return ... }`, where a struct PARAM
-// (or method receiver) is threaded through a consume-rebind. Such a param is not
-// reclaimable the normal way (params are caller-owned, and the final value may
-// share the caller's fields), so lower_func snapshotted the param's ENTRY box into
-// a hidden `$snap$<name>` local and each reassign freed the old box only when it
-// differed from BOTH the new value (cow) AND the snapshot — via the helper
-// __fern_snapshot_dec(new, old, snap) -> new. A function thus reclaims its OWN
-// intermediate builder boxes but never the caller's original.
-//
-// Two contracts:
-//   - churn-no-OOM: a function threads a struct param hundreds of times; without
-//     the per-rebind reclaim the dead boxes exhaust the bump heap (exit 137).
-//   - caller-original-intact: the caller's struct, passed into a threading
-//     function, is read AFTER the call — a wrong free of the snapshot corrupts it.
+// TestSelfHostSnapshotParamReclaimIRX86_64 checks that threaded struct
+// parameters release their intermediate boxes while preserving the caller's
+// original value and any shared fields. The typed ownership pipeline handles
+// these releases without the legacy snapshot runtime helper.
 func TestSelfHostSnapshotParamReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -41,6 +29,9 @@ func TestSelfHostSnapshotParamReclaimIRX86_64(t *testing.T) {
 		asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host compiler emitted 0 bytes", name)
+		}
+		if strings.Contains(string(asm), "__fern_snapshot_dec") {
+			t.Errorf("%s: retired snapshot runtime is still emitted", name)
 		}
 		bin := buildBin(t, gcc, dir, name, string(asm))
 		var cmd *exec.Cmd
@@ -104,13 +95,8 @@ function main(): i32 {
 }`, "snap_param_heapfield", 9)
 }
 
-// TestSelfHostSnapshotParamReclaimArm64 is the arm64 mirror: __fern_snapshot_dec
-// is a REAL rc-guarded shallow free on arm64, not a leak-safe pass-through.
-// The heavy OOM-churn is x86-only (it needs ~240M allocations to
-// exhaust the bump heap, far too slow under qemu); arm64 is verified by
-// CORRECTNESS — a wrong free of the caller's snapshot or a shared field buffer
-// corrupts the result — plus an asm-content check that the real freelist-push
-// body is emitted (the pass-through had no `str x5, [x6, x4, lsl #3]`).
+// TestSelfHostSnapshotParamReclaimArm64 checks the same ownership behavior
+// on ARM64, without the long churn loop used by the x86-64 leg.
 func TestSelfHostSnapshotParamReclaimArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -118,17 +104,14 @@ func TestSelfHostSnapshotParamReclaimArm64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	run := func(t *testing.T, prog, name string, want int, wantFree bool) {
+	run := func(t *testing.T, prog, name string, want int) {
 		t.Helper()
 		asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-target", "arm64-linux")
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host arm64 compiler emitted 0 bytes", name)
 		}
-		// The real snapshot_dec body ends with the freelist push `str x5, [x6,
-		// x4, lsl #3]`; the old leak-safe pass-through (`ldr x0,[sp,#32]; ret`)
-		// had no such store. Proves the reclaim body — not the stub — is emitted.
-		if wantFree && !strings.Contains(string(asm), "str x5, [x6, x4, lsl #3]") {
-			t.Errorf("%s: real __fern_snapshot_dec free body not found in arm64 asm (still the pass-through?)", name)
+		if strings.Contains(string(asm), "__fern_snapshot_dec") {
+			t.Errorf("%s: retired snapshot runtime is still emitted", name)
 		}
 		bin := buildBinArm64(t, arm64gcc, dir, name, string(asm))
 		cmd := runArm64Bin(qemu, bin)
@@ -146,7 +129,7 @@ function main(): i32 {
     let seed: C = C { a: 5, n: 0 };
     let t: i32 = thread(seed);
     return seed.a + t;
-}`, "snap_param_caller_intact_arm64", 40, true)
+}`, "snap_param_caller_intact_arm64", 40)
 
 	// SCALAR-STRUCT CHURN: threads a scalar struct param 50x via a method
 	// receiver (`c = c.step(k)`), so each rebind releases the intermediate box
@@ -163,7 +146,7 @@ function (c: C) step(v: i32): C { return C { a: c.a + v, n: c.n + 1 }; }
 function main(): i32 {
     let seed: C = C { a: 0, n: 0 };
     return build(seed) - 1218;
-}`, "snap_param_scalar_churn_arm64", 7, true)
+}`, "snap_param_scalar_churn_arm64", 7)
 }
 
 // TestSelfHostSnapshotParamReclaimWasm is the wasm32 correctness gate for

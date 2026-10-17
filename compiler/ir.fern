@@ -8987,7 +8987,7 @@ pub function call_needs_heap(name: string): boolean {
   if (name == "__fern_rc_underflow_count" || name == "__fern_rc_underflow_get") {
     return true;
   }
-  if (name == "__fern_snapshot_dec" || name == "__fern_struct_copy" || name == "__fern_set_args") {
+  if (name == "__fern_struct_copy" || name == "__fern_set_args") {
     return true;
   }
   return name == "__fern_str_free" || name == "__fern_str_view_free" || name == "__fern_str_arr_free";
