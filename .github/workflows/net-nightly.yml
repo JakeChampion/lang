@@ -7,7 +7,10 @@ name: Net nightly
 # built by the self-host compiler), with oha at 64 and 4,096 connections
 # and appends throughput, p50 and p99 per server and count, plus the heap
 # one held connection and one suspended handler cost the Fern loop, to
-# the main commit's note under refs/notes/perf.
+# the main commit's note under refs/notes/perf. Then the HTTP/3 hello
+# servers, Fern's and h2o's built with QUIC, under h2load built with
+# HTTP/3 (#12507), both from source by scripts/net-bench.d/h3tools and
+# cached on its hash.
 # `scripts/perf-history show net/fern/c64.rps` reads the trend back.
 #
 # RECORDED, NOT GATED, and nightly rather than per pull request: wall-clock
@@ -123,7 +126,8 @@ jobs:
   bench:
     name: net-nightly-x86_64
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Room for the HTTP/3 tools' first build, before the cache holds them.
+    timeout-minutes: 45
     # The Rust toolchain that builds the hyper server is pinned in
     # mise.net-nightly.toml, which this env selects on top of mise.toml.
     env:
@@ -140,6 +144,16 @@ jobs:
         run: mise install oha rust
       - name: Install h2o
         run: sudo apt-get install -y --no-install-recommends h2o
+      # h2load and h2o with HTTP/3, built by scripts/net-bench.d/h3tools
+      # at the pins it holds; libev is h2load's event loop and c-ares the
+      # resolver nghttp2's applications require.
+      - name: Install the HTTP/3 tools' build dependencies
+        run: sudo apt-get install -y --no-install-recommends libev-dev libc-ares-dev zlib1g-dev cmake pkg-config
+      - name: Cache the HTTP/3 tools
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/fern-h3-tools
+          key: h3-tools-${{ runner.os }}-${{ hashFiles('scripts/net-bench.d/h3tools') }}
 
       - name: Load the hello servers
         env:

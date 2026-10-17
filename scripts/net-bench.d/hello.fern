@@ -7,8 +7,9 @@
 // TLS_CERT and TLS_KEY set it speaks TLS, requiring a client certificate
 // under the roots TLS_CLIENT_CA names when that is set too, and /bulk is
 // a 16 MiB body: scripts/net-tls-interop's server cases and its
-// throughput record. The caps are lifted for the load generator, which
-// is one client holding thousands of connections.
+// throughput record. With H3 set as well it serves HTTP/3 beside TCP:
+// scripts/net-bench's HTTP/3 rows. The caps are lifted for the load
+// generator, which is one client holding thousands of connections.
 import "std/http";
 import "std/serve";
 import "std/platform";
@@ -86,7 +87,8 @@ function identity_from(cert_path: string, key_path: string): Result[identity.Ide
 }
 
 // secured is opts serving TLS when TLS_CERT and TLS_KEY name the
-// certificate chain and key, opts itself when neither is set.
+// certificate chain and key, and HTTP/3 too when H3 is set; opts itself
+// when neither is set.
 function secured(opts: serve.Config): Result[serve.Config, string] {
   let cert_path: string = "";
   match (env("TLS_CERT")) {
@@ -100,7 +102,11 @@ function secured(opts: serve.Config): Result[serve.Config, string] {
   match (env("TLS_KEY")) {
     Some(key_path) => {
       let id: identity.Identity = identity_from(cert_path, key_path)?;
-      return Ok(opts.with_tls(client_roots(server.config(id))?));
+      let tls: serve.Config = opts.with_tls(client_roots(server.config(id))?);
+      if (env("H3").is_some()) {
+        return Ok(tls.with_h3());
+      }
+      return Ok(tls);
     },
     None => {
       return Err("TLS_CERT is set without TLS_KEY");
