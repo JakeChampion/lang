@@ -13,7 +13,8 @@
 //
 // Signing is constant time by construction: points are extended twisted
 // Edwards coordinates over `std/crypto/field25519`, the base-point
-// multiplication picks every table entry by mask from all sixteen, and
+// multiplication reads each entry it adds by mask from all eight in its row
+// of the fixed table, and
 // scalars mod L are reduced in 8-bit digits without a branch. Verification
 // handles only public values, so it indexes its tables directly. The
 // valgrind gate (`__ct_secret`, docs/TEST-GATES.md) checks signing.
@@ -118,20 +119,6 @@ function __table(p: Point): Cached[] {
     i = i + 1;
   }
   return t;
-}
-
-// __select is t[n], read by mask from every entry so that n, which may be
-// secret, picks no address.
-function __select(t: Cached[], n: i64): Cached {
-  let r: Cached = t[0];
-  let j: i32 = 1;
-  while (j < 16) {
-    let hit: i64 = (n ^ j as i64) - 1 >> 63 & 1;
-    let e: Cached = t[j];
-    r = Cached { ypx: fe.cmov(r.ypx, e.ypx, hit), ymx: fe.cmov(r.ymx, e.ymx, hit), z2: fe.cmov(r.z2, e.z2, hit), t2d: fe.cmov(r.t2d, e.t2d, hit) };
-    j = j + 1;
-  }
-  return r;
 }
 
 // __nibble is the 4-bit digit i of the 32-byte little-endian scalar s.
