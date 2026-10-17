@@ -13307,6 +13307,10 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           if (crt.len() == 0) {
             crt = func_ret_of(funcs.decls, cid.name);
           }
+          // A call through a fn-typed local answers what its spelling says.
+          if (crt.len() == 0) {
+            crt = fn_spelling_ret(env.elook(cid.name));
+          }
           // A bare type variable as the inferred call type — `A` from a
           // generic whose return type IS an UNBOUNDED type param
           // (`fold[T, A, I]: A`): `A` is erased from `type_params`, so
