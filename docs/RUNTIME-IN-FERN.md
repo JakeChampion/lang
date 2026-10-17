@@ -112,9 +112,8 @@ corruption rather than as a crash:
   retires `__field_reclaim_`'s borrow-and-restore of two live registers, which
   existed only because the inline walk needed scratch that survived its calls.
 - **The gating reaches.** Both sites seed the `arrarr_free` need, which they can
-  because the struct-drop and field-reclaim bodies are emitted before
-  `close_needs()` on both routes; `all_runtime_need_roots` and the exported-symbol
-  list already carried the name, so the per-module link needed nothing. The need
+  because registering the need immediately includes its dependencies;
+  `all_runtime_need_roots` and the exported-symbol list already carried the name, so the per-module link needed nothing. The need
   graph now declares the deep-free family's `heap` edge rather than leaving it to
   the coincidence that anything with such a field also allocates.
 
@@ -313,7 +312,7 @@ constant: 65536 on arm64 Linux is `O_RDONLY|O_DIRECT`, EINVAL on `/tmp`. This is
 [#2649](https://github.com/JakeChampion/lang/issues/2649) needs as more helpers
 move; see the "Slice 1 / Slice 2 (landed)" sections at the end for what the
 first migrations actually took, which was simpler than first proposed. The near-term stepping stone it references
-(declarative `runtime_need_deps` table + `close_needs` transitive closure +
+(declarative `runtime_need_deps` table + transitive closure +
 the symbol-closure link check) has already landed (PRs #2650, #3697); this
 doc picks up where that left off.
 
@@ -362,7 +361,7 @@ The backend runtime helpers — `__fern_alloc`, `__fern_str_eq`,
 
 | Backend | Emitter | Gating |
 | --- | --- | --- |
-| self-host x86-64 | `asm_ir.fern` `emit_ir_runtime` | `need`/`has_need` + `runtime_need_deps`/`close_needs`, shared via `asmcore.fern` |
+| self-host x86-64 | `asm_ir.fern` `emit_ir_runtime` | `need`/`has_need` + `runtime_need_deps`, shared via `asmcore.fern` |
 | self-host arm64 | `asm_arm64_ir.fern` | same |
 | self-host wasm | `wasm_ir.fern` helper bundles | `module_uses_*` + ad-hoc `if` coupling |
 
@@ -372,24 +371,22 @@ statically owns. The declarative table made that edge *declared* and
 *transitively closed*, but it is still a parallel artifact that can drift
 from the asm, and the wasm side still couples helpers with ad-hoc `if`s.
 
-**It had drifted, in three places, and the drift is structural rather than
-careless.** The graph is declared TWICE: `mark_<X>()` marks the root plus
-whatever its body links against, and `runtime_need_deps("<X>")` declares the
-same edges for `close_needs`. Both exist because a need arrives by either door
-— most emit sites call the wrapper, but an op site's own `.need(...)` and the
-driver's `-ir-extra-need` reach only the table — so an edge in one and not the
-other is a helper that links or not depending on which door was used.
-`str_trim`, `str_lines` and `str_split` each had a `str_concat` edge in the
-wrapper and not in the table, every one of them added after a real link
-failure. All three were latent only because those needs happen to arrive
-through the wrapper today.
+**Registration closes the set immediately.** `EmitState.need(root)` adds the
+root, then walks only newly added needs through `runtime_need_deps` until no
+new dependency remains. Both register backends use that one entry point;
+`has_need` always sees a closed set. Repeated registration is a no-op, and a
+need without declared dependencies adds only itself.
 
-`internal/testing/sourcelint` now fails when a wrapper knows an edge the table does
-not. Its own first version is worth recording: it matched 36 wrappers, passed,
-and had silently skipped `mark_str_trim` — the single wrapper it was written
-for — because that one opens with comment lines before its `return`. A count
-threshold looked like coverage and was not. It now asserts that every
-`mark_*` DEFINITION parsed, which is what turned up the other two.
+The `mark_*` wrappers and the separate `close_needs` phase are gone. They
+used to duplicate the table's edges and impose an ordering rule on every
+runtime gate. In particular, a direct root from `-ir-extra-need` could see a
+different dependency set from an emit-site wrapper. The registration test
+executes the immediate, transitive and duplicate-root cases, including
+`buf_text → buf → heap` and the shared dependencies of `str_split`.
+
+The table still describes the dependencies of hand-written helpers. Retiring
+it requires the runtime call graph described below; this change does not
+complete #2649.
 
 ### What the wasm half is actually blocked on
 
@@ -445,7 +442,7 @@ The principled end-state: **write the helpers as ordinary Fern functions in a
   an unused helper is dropped for free, per program, per backend;
 - **a missing dependency is a compile error, not a link error**;
 - the hand-maintained per-backend asm and the manual dependency machinery
-  (`runtime_need_deps`, `close_needs`, `module_uses_*`, the OR-gates)
+  (`runtime_need_deps`, `module_uses_*`, the OR-gates)
   disappear.
 
 ## The hard part: circularity and the primitive floor
@@ -560,23 +557,17 @@ Once helpers are reachable Fern functions, `treeshake` (already a CI-gated
 pass, `compiler/treeshake.fern`) prunes `mod.funcs` to those
 reachable from `main`. A helper calling another helper is an ordinary
 identifier reference the collector already follows — so the transitive
-closure that `close_needs` computes by hand becomes the reachability walk for
+closure that `need` computes from the table becomes the reachability walk for
 free, **per backend**, with no table. As each helper moves to Fern, its entry
 is deleted from `runtime_need_deps` and its `has_need`/OR-gate from the
-emitter; when the table is empty, `runtime_need_deps`/`close_needs`/`need`/
+emitter; when the table is empty, `runtime_need_deps`/`need`/
 `has_need` and the wasm `module_uses_*` couplings are deleted outright.
 
-Until then the machinery has an ordering rule that is easy to get wrong,
-because breaking it produces no diagnostic: **a route seeds needs, then closes,
-then gates.** `close_needs` is what turns a root into its declared deps — a gate
-reading the set before it sees a subset of what the runtime actually emits.
-arm64 had `_start` (which gates its envp save on `heap`) ahead of the closure on
-both routes; it stayed latent only because every op site that seeds a
-heap-implying root marks `heap` alongside it, so `heap` never arrived by the
-closure alone. `internal/testing/sourcelint` now pins the order, deriving the
-"volatile" need set — the names `runtime_need_deps` can add — from the table
-itself. An emitted-asm test cannot cover this: the fix is byte-neutral against
-every program that compiles today, which is the same property that hid the bug.
+Until then each registration expands dependencies before returning, so a gate
+cannot run between adding a root and discovering its dependencies. The
+runtime-emission retry loop remains: lowering a Fern helper can discover new
+roots after an earlier bundle was emitted, and that requires emitting again
+with the expanded set.
 
 ## Constraints the migration must hold
 
@@ -1151,8 +1142,8 @@ Key mechanics that made it safe:
   that confirms this.
 - **Entry-only, in `.text`, after need-aggregation.** The shared runtime is
   emitted only by the entry unit, after sibling `extra_needs` are folded and
-  `close_needs` runs, so the call is placed there gated on the `str_to_i32`
-  need (writing `.text` first, since the literal pools left us in `.rodata`).
+  runtime dependencies are available, so the call is placed there gated on the
+  `str_to_i32` need (writing `.text` first, since the literal pools left us in `.rodata`).
   `emit_runtime_globls` already `.globl`s `__fn___fern_str_to_i32`, so the
   per-module link resolves it across units.
 

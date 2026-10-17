@@ -307,7 +307,7 @@ function main(): i32 {
       // module_runtime_needs (a full emit) over EVERY module in one process,
       // which OOMs a self-host-built driver (#3425) — the one thing blocking a
       // self-host per-module self-compile. The entry over-emits a few unused
-      // helpers; close_needs still pulls each root's transitive deps.
+      // helpers; registration pulls each root's transitive deps.
       let needs: string[] = ircore.all_runtime_need_roots();
       let no: i32 = 0;
       while (no < needs.len()) {
