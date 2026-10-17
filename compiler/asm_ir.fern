@@ -11515,8 +11515,9 @@ function ir_i2f_rax(width: i32, unsigned: boolean, lb: string, d: string): strin
   return "    cvtsi2sd " + d + ", %xmm0\n    movq %xmm0, " + d + "\n";
 }
 
-// arr.join(sep), a scalar xs.concat(ys) and __bytes_owned(b): Fern runtime
-// functions (#5328) that fill one exact-size block. Heap-dependent (present above). .text since
+// arr.join(sep), a scalar xs.concat(ys), __bytes_owned(b) and
+// __bytes_range(b, from, to): Fern runtime functions (#5328) that fill one
+// exact-size block. Heap-dependent (present above). .text since
 // the heap runtime left us in .bss.
 function emit_array_helpers(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("arr_str_join")) {
@@ -11530,6 +11531,10 @@ function emit_array_helpers(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("bytes_owned")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_bytes_owned(), s);
+  }
+  if (s.has_need("bytes_range")) {
+    s = s.write("    .text\n");
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_bytes_range(), s);
   }
   return s;
 }

@@ -6481,11 +6481,11 @@ function emit_named_bodies(cache: irtables.LowerResult[], physical: physicalbody
   return s;
 }
 
-// arr.join(sep), a scalar xs.concat(ys) and __bytes_owned(b) are Fern
-// runtime functions (#2649, asmcore.rt_src_arr_str_join, rt_src_arr_concat
-// and rt_src_bytes_owned). Each fills one
-// exact-size block, so the heap is its only dep and mark_array_helper
-// declares it.
+// arr.join(sep), a scalar xs.concat(ys), __bytes_owned(b) and
+// __bytes_range(b, from, to) are Fern runtime functions (#2649,
+// asmcore.rt_src_arr_str_join, rt_src_arr_concat, rt_src_bytes_owned and
+// rt_src_bytes_range). Each fills one exact-size block, so the heap is its
+// only dep and mark_array_helper declares it.
 function emit_array_helpers(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("arr_str_join")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_join(), s);
@@ -6495,6 +6495,9 @@ function emit_array_helpers(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.has_need("bytes_owned")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_bytes_owned(), s);
+  }
+  if (s.has_need("bytes_range")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_bytes_range(), s);
   }
   return s;
 }
