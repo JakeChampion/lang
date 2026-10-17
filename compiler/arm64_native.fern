@@ -10632,7 +10632,7 @@ struct Arm64SymAddr { found: boolean, addr: i64 }
 // `data_len` is passed rather than read off `p`: the data-word loop lifts the
 // blob out of the struct to patch it in place, so `p.data.len()` is 0 there and
 // the .bss base would silently come out wrong.
-function arm64_gas_sym_addr(p: Arm64GasProg, aw: Arm64Asm, name: string, text_vaddr: i64, data_vaddr: i64, data_len: i32): Arm64SymAddr {
+function arm64_gas_sym_addr(p: Arm64GasProg, aw: Arm64Asm, name: string, text_vaddr: i64, data_vaddr: i64, data_len: i32, image_header: i64): Arm64SymAddr {
   let doff: i32 = arm64_gas_dlabel_off(p, name);
   if (doff >= 0) {
     return Arm64SymAddr { found: true, addr: data_vaddr + doff as i64 };
@@ -10645,13 +10645,13 @@ function arm64_gas_sym_addr(p: Arm64GasProg, aw: Arm64Asm, name: string, text_va
   if (toff >= 0) {
     return Arm64SymAddr { found: true, addr: text_vaddr + toff as i64 };
   }
-  return Arm64SymAddr { found: false, addr: 0 };
+  return Arm64SymAddr { found: image_header != 0 && name == "__mh_execute_header", addr: image_header };
 }
 
 // arm64_symbol_addr is the address `name` loads at once the program is
 // linked at `text_vaddr` / `data_vaddr`, -1 for a name with no place.
 pub function arm64_symbol_addr(p: Arm64GasProg, name: string, text_vaddr: i64, data_vaddr: i64): i64 {
-  let res: Arm64SymAddr = arm64_gas_sym_addr(p, p.asm, name, text_vaddr, data_vaddr, p.data.len());
+  let res: Arm64SymAddr = arm64_gas_sym_addr(p, p.asm, name, text_vaddr, data_vaddr, p.data.len(), 0i64);
   if (!res.found) {
     return 0 - 1 as i64;
   }
@@ -10705,6 +10705,16 @@ function arm64_import_sym(name: string): boolean {
 // enclosing structs before the loop: patched in place inside them, each fixup
 // cloned the whole .text.
 pub function arm64_gas_link(own p: Arm64GasProg, text_vaddr: i64, data_vaddr: i64): Arm64GasProg {
+  return arm64_gas_link_image(p, text_vaddr, data_vaddr, 0i64);
+}
+
+// Match the Mach-O linker's image-header symbol. PC-relative references track
+// ASLR; absolute data references participate in the usual dyld rebases.
+pub function arm64_gas_link_macho(own p: Arm64GasProg, text_vaddr: i64, data_vaddr: i64): Arm64GasProg {
+  return arm64_gas_link_image(p, text_vaddr, data_vaddr, macho_base_vaddr());
+}
+
+function arm64_gas_link_image(own p: Arm64GasProg, text_vaddr: i64, data_vaddr: i64, image_header: i64): Arm64GasProg {
   let aw: Arm64Asm = p.asm;
   p = Arm64GasProg { ...p, asm: arm64_asm_vacant() };
   let code: u8[] = aw.text;
@@ -10725,7 +10735,7 @@ pub function arm64_gas_link(own p: Arm64GasProg, text_vaddr: i64, data_vaddr: i6
     // segment, and calling one was a SEGV on `blr`. That is the second half
     // of #6045 — invisible until the numeric-local-label fix above stopped
     // the program dying on SIGILL before it ever reached an indirect call.
-    let res: Arm64SymAddr = arm64_gas_sym_addr(p, aw, p.pf_syms[i], text_vaddr, data_vaddr, p.data.len());
+    let res: Arm64SymAddr = arm64_gas_sym_addr(p, aw, p.pf_syms[i], text_vaddr, data_vaddr, p.data.len(), image_header);
     if (!res.found) {
       p = Arm64GasProg { ...p, unknown: p.unknown.append("symbol:" + p.pf_syms[i]) };
     }
@@ -10760,7 +10770,7 @@ pub function arm64_gas_link(own p: Arm64GasProg, text_vaddr: i64, data_vaddr: i6
   p = Arm64GasProg { ...p, data: [] };
   let di: i32 = 0;
   while (di < p.dref_offs.len()) {
-    let dres: Arm64SymAddr = arm64_gas_sym_addr(p, aw, p.dref_syms[di], text_vaddr, data_vaddr, data_len);
+    let dres: Arm64SymAddr = arm64_gas_sym_addr(p, aw, p.dref_syms[di], text_vaddr, data_vaddr, data_len, image_header);
     if (!dres.found && arm64_import_sym(p.dref_syms[di])) {
       // dyld fills the slot; it stays zero here.
       p = Arm64GasProg { ...p, bind_offs: p.bind_offs.append(p.dref_offs[di]), bind_syms: p.bind_syms.append(p.dref_syms[di]) };
