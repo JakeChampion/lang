@@ -31,6 +31,11 @@ frame record first, even when it makes no calls. Profiling and hardened
 frames preserve the same saved control address. A thirteen-parameter leaf
 regression executes such a function and checks its save and home.
 
+The fused carry uses only reserved x4–x6 temporaries. Paired-return
+transport operations remain kind 59 caller-clobber sites: values held across
+a word transfer take saved homes or spills, protecting the auxiliary x1
+result. A thirteen-argument paired call exercises that boundary.
+
 Runtime calls pass operands in x0–x2. These now overlap multiple homes, so
 `ssa_load_abi_args` uses the same parallel-move resolver as phi and call
 moves. Loading just the x0 argument first is insufficient: swapping a pointer

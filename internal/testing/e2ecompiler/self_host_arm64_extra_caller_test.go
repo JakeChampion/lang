@@ -15,6 +15,7 @@ func TestSelfHostArm64ExtraCallerRegisters(t *testing.T) {
 		"runtime-argument-cycle":  armRuntimeArgumentCycle,
 		"float-argument-boundary": armFloatArgumentBoundary,
 		"link-register-home":      armLinkRegisterHome,
+		"paired-result-pressure":  armPairedResultPressure,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if stderr, code := cli.exitOf(t, source, "arm64-linux"); code != 0 {
@@ -120,6 +121,21 @@ function main(): i32 {
   let seed = args().len() as i64;
   let result = sum13(seed, seed + 1, seed + 2, seed + 3, seed + 4, seed + 5, seed + 6, seed + 7, seed + 8, seed + 9, seed + 10, seed + 11, seed + 12);
   if (result != seed * 13 + 78) { return 1; }
+  return 0;
+}
+`
+
+const armPairedResultPressure = `@noinline function pair13(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, i: i64, j: i64, k: i64, l: i64, m: i64): (i64, i32) {
+  return (a+b+c+d+e+f+g+h+i+j+k+l+m,77);
+}
+@noinline function caller13(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, i: i64, j: i64, k: i64, l: i64, m: i64): i64 {
+  let (value,tag) = pair13(m,l,k,j,i,h,g,f,e,d,c,b,a);
+  return value + (tag as i64);
+}
+function main(): i32 {
+  let seed = args().len() as i64;
+  let got = caller13(seed,seed+1,seed+2,seed+3,seed+4,seed+5,seed+6,seed+7,seed+8,seed+9,seed+10,seed+11,seed+12);
+  if (got != seed*13+155) { return 1; }
   return 0;
 }
 `
