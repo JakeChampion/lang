@@ -4332,28 +4332,16 @@ function (s: Scope) unknown_method_message(ns: string, method: string, label: st
     return base + " — the in-place spelling was removed; use \"" + repl
       + "\", which returns the updated " + ns + " (assign the result back)";
   }
-  let exact: boolean = s.namespace_is_exact(ns);
-  let names: string[] = s.methods_in_namespace(ns);
-  if (view) {
-    exact = true;
-    names = ["len"];
-    for candidate in s.methods.methods {
-      if (parser.spelling_is_view(candidate.receiver_type)) {
-        names = push_str_unique_sorted(names, candidate.name);
-      }
-    }
-  }
-  if (exact) {
-    let did: string = util.suggest(method, names);
-    if (did.len() > 0) {
-      return base + " — did you mean \"" + did + "\"?";
-    }
+  let names: string[] = s.method_fix_candidates(ns, recv);
+  let did: string = util.suggest(method, names);
+  if (did.len() > 0) {
+    return base + " — did you mean \"" + did + "\"?";
   }
   let mod: string = scalar_module_for(recv);
   if (mod.len() > 0 && !s.module_imported(mod)) {
     return base + " — if it comes from " + mod + ", add `import \"" + mod + "\"`";
   }
-  if (exact && names.len() > 0) {
+  if (names.len() > 0) {
     let listed: string = "";
     for n in names {
       if (listed.len() > 0) {
@@ -4364,6 +4352,27 @@ function (s: Scope) unknown_method_message(ns: string, method: string, label: st
     return base + " (it has: " + listed + ")";
   }
   return base;
+}
+
+// A suggestion and an editor fix use the same receiver-specific candidates.
+// Generic array methods need the receiver filter this checker cannot yet
+// express, so they keep the existing conservative no-suggestion rule.
+function (s: Scope) method_fix_candidates(ns: string, recv: typeinfo.Type): string[] {
+  if let typeinfo.TypeArray(a) = recv {
+    if (a.view) {
+      let names: string[] = ["len"];
+      for candidate in s.methods.methods {
+        if (parser.spelling_is_view(candidate.receiver_type)) {
+          names = push_str_unique_sorted(names, candidate.name);
+        }
+      }
+      return names;
+    }
+  }
+  if (!s.namespace_is_exact(ns)) {
+    return [];
+  }
+  return s.methods_in_namespace(ns);
 }
 
 // unknown_method_advice: the E043 text for a method call on a non-struct
@@ -13078,6 +13087,21 @@ function dupvar_stmt_own_lambdas(st: ast.Stmt): util.Diag[] {
 // `let x = []` whose empty-array initializer can't infer an element type.
 // A literal's RANGE is judged where its type settles instead — off the
 // destination type (int_dest_range_diags), not off the annotation's spelling.
+function duplicate_var_diag(stmts: ast.Stmt[], v: ast.StmtVar): util.Diag {
+  let d: util.Diag = dg_at("E013", "variable \"" + v.name + "\" already declared in this scope", v.line, v.col);
+  for stmt in stmts {
+    if let ast.StmtVar(prior) = stmt {
+      if (prior.line == v.line && prior.col == v.col) {
+        return d;
+      }
+      if (prior.name == v.name && prior.line > 0) {
+        d = util.Diag { ...d, related: [util.Related { line: prior.line, col: prior.col, length: 0, message: "previous declaration is here" }] };
+      }
+    }
+  }
+  return d;
+}
+
 function dupvar_diags(stmts: ast.Stmt[]): util.Diag[] {
   let out: util.Diag[] = [];
   let declared: string[] = [];
@@ -13085,7 +13109,7 @@ function dupvar_diags(stmts: ast.Stmt[]): util.Diag[] {
     match (stmt) {
       ast.StmtVar(v) => {
         if (util.has_str(declared, v.name)) {
-          out = out.append(dg_at("E013", "variable \"" + v.name + "\" already declared in this scope", v.line, v.col));
+          out = out.append(duplicate_var_diag(stmts, v));
         } else {
           declared = declared.append(v.name);
         }
@@ -15060,13 +15084,13 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           // A declared method, and string / array / map receivers
           // (whose builtin methods route elsewhere), stay clean.
           if (s.method_missing(recv, mfa.field)) {
-            out = out.append(dg_at("E043", s.unknown_method_advice(int_label(it), mfa.field, recv), mfa.line, mfa.col));
+            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(int_label(it), mfa.field, recv), mfa.line, mfa.col), mfa, recv));
           }
           out = util.append_diags(out, uninferred_method_diags(c, int_label(it), mfa.field, s.lookup_method(mfa.field, int_label(it))));
         },
         typeinfo.TypeFloat(f) => {
           if (s.method_missing(recv, mfa.field)) {
-            out = out.append(dg_at("E043", s.unknown_method_advice(float_label(f), mfa.field, recv), mfa.line, mfa.col));
+            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(float_label(f), mfa.field, recv), mfa.line, mfa.col), mfa, recv));
           }
           out = util.append_diags(out, uninferred_method_diags(c, float_label(f), mfa.field, s.lookup_method(mfa.field, float_label(f))));
         },
@@ -15083,7 +15107,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           // non-existent method — same shape as the numeric-
           // scalar case above.
           if (s.method_missing(recv, mfa.field)) {
-            out = out.append(dg_at("E043", s.unknown_method_advice("string", mfa.field, recv), mfa.line, mfa.col));
+            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("string", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
           }
           // E004 (#7311): the two string builtins take no arguments. A wrong
           // count used to fall through to IR lowering and surface as the
@@ -15135,7 +15159,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           // method name, so there is no per-element match to
           // make here either.
           if (s.method_missing(recv, mfa.field)) {
-            out = out.append(dg_at("E043", s.unknown_method_advice("Array", mfa.field, recv), mfa.line, mfa.col));
+            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("Array", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
           }
           let arr_label: string = "Array";
           if (ar.view) {
@@ -15184,7 +15208,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           if (s.method_missing(recv, mfa.field)) {
             // Labelled "Map", not the parameterised spelling: native models a
             // Map as a struct of that name, so that is what its message says.
-            out = out.append(dg_at("E043", s.unknown_method_message("Map", mfa.field, "Map", recv), mfa.line, mfa.col));
+            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_message("Map", mfa.field, "Map", recv), mfa.line, mfa.col), mfa, recv));
           }
         },
         typeinfo.TypeDyn(d) => {
@@ -15268,7 +15292,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
             out = util.append_diags(out, uninferred_method_diags(c, un.name, mfa.field, umsig));
           }
           if (s.method_missing(recv, mfa.field)) {
-            out = out.append(dg_at("E043", s.unknown_method_advice("", mfa.field, recv), mfa.line, mfa.col));
+            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
           }
         },
         _ => {
@@ -16012,7 +16036,7 @@ function call_diags_field_access(fa: ast.ExprFieldAccess, s: Scope, out: util.Di
       // genuine read; method calls (`x.m()`) are an ExprCall callee and
       // never reach here.
       if (!is_unknown(ot)) {
-        out = out.append(dg_at("E043", s.unknown_method_advice(method_namespace_of(ot), fa.field, ot), fa.line, fa.col));
+        out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(method_namespace_of(ot), fa.field, ot), fa.line, fa.col), fa, ot));
       }
     }
   }
@@ -17860,7 +17884,7 @@ function dg(code: string, message: string): util.Diag {
 }
 
 function dg_at(code: string, message: string, line: i32, col: i32): util.Diag {
-  return util.Diag { code: code, message: util.show_type_vars(message), line: line, col: col, fix: None };
+  return util.Diag { related: [], code: code, message: util.show_type_vars(message), line: line, col: col, fix: None };
 }
 
 // with_fix is `d` fixed by respelling `old`, written at `line`, `col`, as `to`,
@@ -17894,6 +17918,14 @@ function (s: Scope) member_fix(d: util.Diag, fa: ast.ExprFieldAccess, st: Struct
 // of `members`.
 function access_fix(d: util.Diag, fa: ast.ExprFieldAccess, members: string[]): util.Diag {
   return with_fix(d, fa.field, fa.line, fa.col + 1, util.suggest(fa.field, members), "");
+}
+
+function (s: Scope) method_fix(d: util.Diag, fa: ast.ExprFieldAccess, recv: typeinfo.Type): util.Diag {
+  let ns: string = method_namespace_of(recv);
+  if (retired_collection_spelling(ns, fa.field).len() > 0) {
+    return d;
+  }
+  return access_fix(d, fa, s.method_fix_candidates(ns, recv));
 }
 
 // undefined_name is E001 for `name`, written at `line`, `col`, where nothing

@@ -243,7 +243,10 @@ function is_text_helper(name: string): boolean {
     // ssarc emits the call. wasm emits a matching
     // $__fern_arr_str_join shim over the hand-written $__fern_str_join WAT
     // (wasm.arr_str_join_helper).
-    || name == "__fern_arr_str_join";
+    || name == "__fern_arr_str_join"
+    // xs.concat(ys) over scalar elements (asmcore.rt_src_arr_concat): one
+    // sized box and two copies; wasm's $__fern_arr_concat is hand-written.
+    || name == "__fern_arr_concat";
 }
 
 // is_c_call reports whether a call_direct callee is an FFI shim of the
@@ -664,7 +667,7 @@ function with_builtin_enums(lifted: parser.Module): parser.Module {
 pub function all_runtime_need_roots(): string[] {
   return [
     "alloc_u8", "args", "set_args", "arr_push", "arr_push_owned", "arr_slice",
-    "arr_str_join", "arr_inc_elems", "arr_own_elems", "str_own", "str_borrow", "str_grow", "account", "arrarr_free", "env", "eprint", "heap",
+    "arr_str_join", "arr_concat", "arr_inc_elems", "arr_own_elems", "str_own", "str_borrow", "str_grow", "account", "arrarr_free", "env", "eprint", "heap",
     "i32_to_string", "u32_to_string", "monotonic_ns", "now_ns", "now_unix_ms",
     "map_hash_seed",
     "chdir", "chroot", "setuid", "setgid", "setgroups",
@@ -1513,7 +1516,7 @@ function fip_claim_diags(fn: parser.FuncDecl, r: irtables.LowerResult, acc: util
   let res: irfipverify.FipResult = irfipverify.verify_fip_fn(claim, r.ops);
   let out: util.Diag[] = acc;
   for p in res.problems {
-    out = out.append(util.Diag { code: "E068", message: irverify.problem_str(p), line: fn.line, col: fn.col, fix: None });
+    out = out.append(util.Diag { related: [], code: "E068", message: irverify.problem_str(p), line: fn.line, col: fn.col, fix: None });
   }
   return out;
 }

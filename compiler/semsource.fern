@@ -2390,6 +2390,37 @@ function is_string_array(t: typeinfo.Type): boolean {
   return false;
 }
 
+// `xs.concat(ys)`, which the parser folds to `__arrm_concat__<elem>(xs, ys)`,
+// on two arrays of one scalar element type is the runtime's sized copy
+// rather than std/array's element-at-a-time body.
+function concat_kernel(name: string, c: ast.ExprCall, s: State): boolean {
+  if (c.args.len() != 2 || !util.str_has_prefix(name, "__arrm_concat__")) {
+    return false;
+  }
+  let t: typeinfo.Type = checked(c.args[0], s);
+  if let typeinfo.TypeArray(a) = t {
+    return !a.view && !ssasem.reference(a.elem) && semtypes.concrete(a.elem, false) && semtypes.equal(checked(c.args[1], s), t);
+  }
+  return false;
+}
+
+function builtin_concat(c: ast.ExprCall, s: State): Value {
+  let t: typeinfo.Type = checked(c.args[0], s);
+  let a: Value = expr(c.args[0], s, t);
+  if (!a.s.ok) {
+    return a;
+  }
+  let b: Value = expr(c.args[1], a.s, t);
+  s = b.s;
+  if (!s.ok) {
+    return b;
+  }
+  if (!semtypes.equal(s.values[a.id], t) || !semtypes.equal(s.values[b.id], t)) {
+    return refused(s, "concat operand type");
+  }
+  return define(s, ssasem.arr_concat(), [a.id, b.id], 0, "", t);
+}
+
 // `xs.join(sep)` reads the array and the separator and answers a fresh string.
 // A view is a legal separator — the joined bytes are copied out of it — so the
 // element rule an append carries does not apply here.
@@ -3731,6 +3762,9 @@ function qualified_call(e: ast.Expr, head: string, name: string, c: ast.ExprCall
 function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
   if (is_slice_call(name, c)) {
     return string_slice(c, s);
+  }
+  if (concat_kernel(name, c, s)) {
+    return builtin_concat(c, s);
   }
   if (name == "cell_new" && c.args.len() == 1) {
     return cell_construction(c, s, expected);
@@ -9045,6 +9079,7 @@ pub function view_escape_diags(mod: parser.Module, built: Built): util.Diag[] {
       }
       if (!reported) {
         out = out.append(util.Diag {
+          related: [],
           code: code,
           message: "the returned view's source cannot be kept alive beyond this function: return owned storage or a view of a parameter instead",
           line: fd.line, col: fd.col,

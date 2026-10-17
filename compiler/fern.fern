@@ -227,7 +227,7 @@ function errors_of(ds: util.Diag[]): Finding[] {
 // refusal is a rejection with no code and no position — a module that could
 // not be loaded — whose message `-check` prints as the whole line.
 function refusal(msg: string): Finding {
-  return Finding { diag: util.Diag { code: "", message: msg, line: 0, col: 0, fix: None }, warning: false, path: "" };
+  return Finding { diag: util.Diag { related: [], code: "", message: msg, line: 0, col: 0, fix: None }, warning: false, path: "" };
 }
 
 function has_error(fs: Finding[]): boolean {
@@ -239,18 +239,21 @@ function has_error(fs: Finding[]): boolean {
   return false;
 }
 
-// DiagStyle is how diagnostics render on stderr: `color` paints the label and
-// caret and draws a line-number gutter, whose separator is `|` under `ascii`.
-pub struct DiagStyle { color: boolean, ascii: boolean }
+// DiagStyle selects colour and gutter characters, or terse headers without
+// source context, notes, fixes or colour.
+pub struct DiagStyle { color: boolean, ascii: boolean, terse: boolean }
 
 pub function plain_style(): DiagStyle {
-  return DiagStyle { color: false, ascii: true };
+  return DiagStyle { color: false, ascii: true, terse: false };
 }
 
 // diag_style resolves `-color auto|always|never` and `-ascii`: auto colours
 // only a terminal stderr with NO_COLOR unset, and the gutter is box-drawing
 // only when the locale (LC_ALL, LC_CTYPE, LANG — the first one set) says UTF-8.
-function diag_style(mode: string, force_ascii: boolean): DiagStyle {
+function diag_style(mode: string, force_ascii: boolean, terse: boolean): DiagStyle {
+  if (terse) {
+    return DiagStyle { color: false, ascii: true, terse: true };
+  }
   let color: boolean = mode == "always";
   if (mode == "auto") {
     color = isatty(2);
@@ -278,7 +281,18 @@ function diag_style(mode: string, force_ascii: boolean): DiagStyle {
       }
     }
   }
-  return DiagStyle { color: color, ascii: ascii };
+  return DiagStyle { color: color, ascii: ascii, terse: false };
+}
+
+function terse_from_env(): boolean {
+  match (env("FERN_DIAG_FORMAT")) {
+    Some(value) => {
+      return value == "terse";
+    },
+    None => {
+      return false;
+    }
+  }
 }
 
 function paint(st: DiagStyle, sgr: string, text: string): string {
@@ -331,6 +345,10 @@ function source_line(path: string, n: i32): string {
 // column, laid out as native's renderer does: indented four spaces, or behind
 // a line-number gutter when colour is on.
 function snippet(st: DiagStyle, path: string, line: i32, col: i32, sgr: string): string {
+  return marked_snippet(st, path, line, col, sgr, -1);
+}
+
+function marked_snippet(st: DiagStyle, path: string, line: i32, col: i32, sgr: string, length: i32): string {
   let text: string = source_line(path, line);
   if (text.len() == 0) {
     return "";
@@ -340,15 +358,39 @@ function snippet(st: DiagStyle, path: string, line: i32, col: i32, sgr: string):
   if (w > text.len()) {
     w = text.len();
   }
+  let room: i32 = text.len() - w;
   while (w > 0) {
     pad = pad + " ";
     w = w - 1;
   }
-  let mark: string = paint(st, sgr, "^");
+  let mark: string = paint(st, sgr, snippet_mark(length, room));
+  let indent: string = "    ";
+  if (length >= 0) {
+    indent = "        ";
+  }
   if (!st.color) {
-    return "\n    " + text + "\n    " + pad + mark;
+    return "\n" + indent + text + "\n" + indent + pad + mark;
   }
   return "\n " + util.i32_to_string(line) + " " + gutter_sep(st) + " " + text + "\n" + note_prefix(st, line) + pad + mark;
+}
+
+function snippet_mark(length: i32, room: i32): string {
+  if (length < 0) {
+    return "^";
+  }
+  let n: i32 = length;
+  if (n <= 0) {
+    n = 1;
+  }
+  if (n > room) {
+    n = room;
+  }
+  let mark: string = "-";
+  while (n > 1) {
+    mark = mark + "-";
+    n = n - 1;
+  }
+  return mark;
 }
 
 // note_prefix is what starts a line under snippet's source line for `line`:
@@ -381,30 +423,16 @@ function help_line(st: DiagStyle, d: util.Diag): string {
   return "";
 }
 
-// finding_text renders a finding as `-check` and native print it: the
-// position (util.pos_str, naming the entry file as the command line did, and
-// moved onto the document a literate module was tangled from) when it is
-// known, then `warning: `, or `error[…]: ` for a coded error — an uncoded one
-// (the const-grammar rule, a visibility error) has no tag — and, under a
-// position, the source line with a caret.
-function finding_text(st: DiagStyle, f: Finding, entry: string, files: string[], maps: util.LineMap[]): string {
+// finding_header renders the structured position, severity, code and message.
+function finding_header(st: DiagStyle, f: Finding, entry: string, files: string[], d: util.Diag): string {
   let tag: string = "";
-  let sgr: string = "31";
   if (f.warning) {
     tag = paint(st, "1;33", "warning") + ": ";
-    sgr = "33";
   } else if (f.diag.code.len() > 0) {
     tag = paint(st, "1;31", "error[" + f.diag.code + "]") + ": ";
   }
-  let d: util.Diag = util.doc_diag(maps, f.diag);
   if (d.line <= 0) {
     return tag + d.message;
-  }
-  let path: string = util.pos_file(files, d.line);
-  if (f.path.len() > 0) {
-    path = f.path;
-  } else if (path.len() == 0) {
-    path = entry_display(entry);
   }
   let head: string = "";
   if (f.path.len() > 0) {
@@ -412,7 +440,42 @@ function finding_text(st: DiagStyle, f: Finding, entry: string, files: string[],
   } else {
     head = util.pos_str(entry_display(entry), files, d.line, d.col);
   }
-  return head + ": " + tag + d.message + snippet(st, path, util.pos_line(d.line), d.col, sgr) + help_line(st, d);
+  return head + ": " + tag + d.message;
+}
+
+// finding_text adds source context and related locations, or returns one
+// escaped header in terse mode.
+function finding_text(st: DiagStyle, f: Finding, entry: string, files: string[], maps: util.LineMap[]): string {
+  let d: util.Diag = util.doc_diag(maps, f.diag);
+  let head: string = finding_header(st, f, entry, files, d);
+  if (st.terse) {
+    return head.replace("\r", "\\r").replace("\n", "\\n");
+  }
+  let related: string = related_text(st, d.related, entry, files);
+  if (d.line <= 0) {
+    return head + related;
+  }
+  let path: string = util.pos_file(files, d.line);
+  if (f.path.len() > 0) {
+    path = f.path;
+  } else if (path.len() == 0) {
+    path = entry_display(entry);
+  }
+  let sgr: string = if (f.warning) { "33" } else { "31" };
+  return head + snippet(st, path, util.pos_line(d.line), d.col, sgr) + related + help_line(st, d);
+}
+
+function related_text(st: DiagStyle, related: util.Related[], entry: string, files: string[]): string {
+  let out: string = "";
+  for r in related {
+    let path: string = util.pos_file(files, r.line);
+    if (path.len() == 0) {
+      path = entry_display(entry);
+    }
+    out = out + "\n    " + util.pos_str(entry_display(entry), files, r.line, r.col) + ": " + paint(st, "34", "note:") + " " + r.message;
+    out = out + marked_snippet(st, path, util.pos_line(r.line), r.col, "34", r.length);
+  }
+  return out;
 }
 
 // entry_display is the entry path as a diagnostic names it: the path the
@@ -623,17 +686,20 @@ function arm64_elf_binary_pie(asm: string, words: u8[]): string {
 // arm64_elf_binary. Returns the binary bytes packed into a string, or "" if
 // the assembler could not encode something (the caller exits 2).
 //
-// Single R+W+X PT_LOAD, not the two-segment W^X image arm64 uses:
-// x86_resolve fixes .rodata references against the 8-byte-padded .text
-// length, which is exactly this layout. W^X would need the assembler to
-// resolve against a page-aligned data vaddr, as arm64_gas_link does.
+// Code and unwind data load R+X; constant boxes, globals and BSS load R+W.
+// Resolve both relative and absolute references against those final addresses.
 function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string): string {
   util.arr_push_cliff_report("x86:emitted", 0);
-  let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words(asm, words);
+  let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words_unlinked(asm, words);
   util.arr_push_cliff_report("x86:assembled", 0);
-  // Absolute `.quad <label>` pointers need the load address, which the ELF
-  // container picks — the analogue of arm64_gas_link's data-vaddr argument.
-  a = x86_native.x86_resolve_data(a, elf.elf_text_vaddr_x86());
+  let tv: i64 = elf.elf_x86_wx_text_vaddr() as i64;
+  let hdr_len: i32 = x86_native.x86_eh_frame_hdr_len(a);
+  let hv: i64 = elf.elf_x86_wx_eh_hdr_vaddr(a.text.len()) as i64;
+  let ev: i64 = elf.elf_x86_wx_eh_frame_vaddr(a.text.len(), hdr_len) as i64;
+  let eh: i32[] = x86_native.x86_eh_frame(a, tv, ev);
+  let hdr: i32[] = x86_native.x86_eh_frame_hdr(a, tv, ev, hv);
+  let dv: i32 = elf.elf_x86_wx_data_vaddr(a.text.len(), hdr.len(), eh.len());
+  a = x86_native.x86_link(a, tv as i32, dv);
   util.arr_push_cliff_report("x86:resolved", 0);
   // Anything unencodable means bytes were dropped, so every offset past
   // the first is wrong — refuse rather than write it (SH-005, #6045).
@@ -646,17 +712,8 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: s
     eprint("fern: -target x86-64: no _start symbol in the emitted program");
     return "";
   }
-  // The unwind data the `.cfi_*` directives rendered, at the addresses the
-  // image places it — .text's size is final here, and the data base the
-  // assembler resolved against already accounts for these sections.
-  let tv: i64 = elf.elf_text_vaddr_x86() as i64;
-  let hdr_len: i32 = x86_native.x86_eh_frame_hdr_len(a);
-  let hv: i64 = elf.elf_eh_hdr_vaddr_x86(a.text.len()) as i64;
-  let ev: i64 = elf.elf_eh_frame_vaddr_x86(a.text.len(), hdr_len) as i64;
-  let eh: i32[] = x86_native.x86_eh_frame(a, tv, ev);
-  let hdr: i32[] = x86_native.x86_eh_frame_hdr(a, tv, ev, hv);
   util.arr_push_cliff_report("x86:unwind", 0);
-  let bin: u8[] = elf.elf_program_x86(a.text, hdr, eh, a.rodata, a.bss_size, eoff);
+  let bin: u8[] = elf.elf_program_x86_wx(a.text, hdr, eh, a.rodata, a.bss_size, eoff);
   util.arr_push_cliff_report("x86:image", 0);
   if (!emit_syms) {
     return string_from_bytes_unchecked(bin);
@@ -669,14 +726,14 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: s
   // entry point.
   let end: i32 = a.text.len();
   let wide: i32[] = elf.elf_append_debug(
-    elf.elf_cat_u8([], bin), elf.elf_text_vaddr_x86(), elf.elf_text_off_x86(), a.text.len(),
+    elf.elf_cat_u8([], bin), tv as i32, elf.elf_x86_wx_text_off(), a.text.len(),
     elf.elf_func_sym_names(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
     elf.elf_func_sym_offs(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
     elf.elf_func_sym_sizes(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
     cu_name, comp_dir(),
     a.files, a.loc_offs, a.loc_files, a.loc_lines, a.loc_cols, a.loc_flags,
-    x86_native.x86_debug_frame(a, elf.elf_text_vaddr_x86() as i64),
-    x86_var_ranges(a, elf.elf_text_vaddr_x86()),
+    x86_native.x86_debug_frame(a, tv),
+    x86_var_ranges(a, tv as i32),
   );
   return string_from_bytes_unchecked(util.to_u8(wide));
 }
@@ -1372,7 +1429,7 @@ function violation_finding(code: string, msg: string, fn_module: string, line: i
   if (fn_module.len() > 0) {
     line = 0;
   }
-  return Finding { diag: util.Diag { code: code, message: msg, line: line, col: col, fix: None }, warning: false, path: "" };
+  return Finding { diag: util.Diag { related: [], code: code, message: msg, line: line, col: col, fix: None }, warning: false, path: "" };
 }
 
 // read_manifest parses `<dir>fern.toml`, or an empty manifest when the entry
@@ -2627,7 +2684,7 @@ function todo_warnings(sites: parser.TodoSite[], entry_path: string): Finding[] 
   let name: string = entry_display(entry_path);
   let out: Finding[] = [];
   for site in sites {
-    out = out.append(Finding { diag: util.Diag { code: "", message: "`todo` stub remaining", line: site.line, col: site.col, fix: None }, warning: true, path: name });
+    out = out.append(Finding { diag: util.Diag { related: [], code: "", message: "`todo` stub remaining", line: site.line, col: site.col, fix: None }, warning: true, path: name });
   }
   return out;
 }
@@ -2841,7 +2898,7 @@ function run_doctests(path: string, root: string, target: string, embed_dir: str
 // run_doctest runs one example, returning why it failed, or "" when it
 // passed.
 function run_doctest(path: string, tc: literate.Doctest, root: string, target: string, embed_dir: string): string {
-  let st: DiagStyle = DiagStyle { color: false, ascii: false };
+  let st: DiagStyle = DiagStyle { color: false, ascii: false, terse: false };
   let srcs: Sources = Sources { paths: [path], srcs: [tc.code], maps: [util.LineMap { doc: path, lits: tc.lits, shifts: tc.shifts }], open: modloader.no_buffers() };
   let ld: Loaded = load_checked(srcs, root, target, embed_dir);
   let fs: Finding[] = ld.refused;
@@ -3466,12 +3523,12 @@ function lsp_update(s: Server, uri: string, src: string): Server {
     s = Server { ...s, docs: s.docs.with(i, lsp_doc(ld)) };
   }
   let files: string[] = lsp_checked_files(c, s.root);
-  s = lsp_publish(s, i, lsp_diagnostics(c, files, path, src));
+  s = lsp_publish(s, i, lsp_diagnostics(s, c, files, path, src));
   let j: i32 = 0;
   while (j < s.uris.len()) {
     let other: string = lsp_doc_path(s.uris[j]);
     if (j != i && other != "-" && util.has_str(files, other)) {
-      s = lsp_publish(s, j, lsp_diagnostics(c, files, other, s.srcs[j]));
+      s = lsp_publish(s, j, lsp_diagnostics(s, c, files, other, s.srcs[j]));
     }
     j = j + 1;
   }
@@ -3945,14 +4002,26 @@ function lsp_doc_text(s: Server, path: string): string {
 // lsp_checked_files: a finding is in the module its position is numbered in
 // (a literate module's is its document's), and one with no position is in
 // the entry.
-function lsp_diagnostics(c: Checked, files: string[], path: string, text: string): string[] {
+function lsp_diagnostics(s: Server, c: Checked, files: string[], path: string, text: string): string[] {
   let t: lsp.Text = lsp.text_of(text);
   let out: string[] = [];
   for f in c.findings {
     let d: util.Diag = util.doc_diag(c.maps, f.diag);
     let m: i32 = util.pos_file_index(d.line);
     if (m < files.len() && files[m] == path) {
-      out = out.append(lsp.diagnostic(t, util.pos_line(d.line), d.col, d.code, lsp_message(d.message), f.warning, lsp_fix_data(t, d)));
+      out = out.append(lsp.diagnostic_with_related(t, util.pos_line(d.line), d.col, d.code, lsp_message(d.message), f.warning, lsp_fix_data(t, d), lsp_related(s, files, d.related)));
+    }
+  }
+  return out;
+}
+
+function lsp_related(s: Server, files: string[], related: util.Related[]): string[] {
+  let out: string[] = [];
+  for r in related {
+    let m: i32 = util.pos_file_index(r.line);
+    if (m < files.len()) {
+      let path: string = files[m];
+      out = out.append(lsp.related_information(lsp.file_uri(path), lsp.text_of(lsp_doc_text(s, path)), r));
     }
   }
   return out;
@@ -4077,12 +4146,12 @@ function package_findings(merged: parser.Module, pkgs: caps.Pkg[]): Finding[] {
   let vs: caps.Violation[] = caps.enforce(caps.analyze(merged, pkgs), pkgs);
   for v in vs {
     if (!v.governed) {
-      out = out.append(Finding { diag: util.Diag { code: "", message: caps.violation_message(v), line: 0, col: 0, fix: None }, warning: true, path: "" });
+      out = out.append(Finding { diag: util.Diag { related: [], code: "", message: caps.violation_message(v), line: 0, col: 0, fix: None }, warning: true, path: "" });
     }
   }
   for v in vs {
     if (v.governed) {
-      out = out.append(Finding { diag: util.Diag { code: "E070", message: caps.violation_message(v), line: 0, col: 0, fix: None }, warning: false, path: "" });
+      out = out.append(Finding { diag: util.Diag { related: [], code: "E070", message: caps.violation_message(v), line: 0, col: 0, fix: None }, warning: false, path: "" });
     }
   }
   return out;
@@ -4306,7 +4375,7 @@ function cover_report(path: string, have_path: boolean, as_lcov: boolean): i32 {
 
 // ToolFlags are the flags of the modes beside compiling: `-run` / `-qemu`,
 // `-version`, `-explain`, `-cover-report` / `-lcov`, and how diagnostics
-// render (`-color`, `-ascii`).
+// render (`-color`, `-ascii`, `-q`).
 struct ToolFlags {
   run_it: boolean,
   qemu: string,
@@ -4317,6 +4386,7 @@ struct ToolFlags {
   lcov: boolean,
   color_mode: string,
   ascii: boolean,
+  terse: boolean,
   lint: boolean,
   lint_rules: boolean,
   lint_sets: string[],
@@ -4329,7 +4399,7 @@ struct ToolFlags {
 function tool_flag(a: string): boolean {
   return a == "-run" || a == "--run" || a == "-qemu" || a == "-version" || a == "-explain"
     || util.str_has_prefix(a, "-explain=") || a == "-cover-report" || a == "-lcov"
-    || a == "-color" || util.str_has_prefix(a, "-color=") || a == "-ascii"
+    || a == "-color" || util.str_has_prefix(a, "-color=") || a == "-ascii" || a == "-q"
     || a == "-lint" || a == "-lint-rules" || a == "-lint-set" || a == "-lint-opt"
     || a == "-weave" || a == "-html" || a == "-doctest";
 }
@@ -4354,6 +4424,9 @@ function parse_tool_flag(tf: ToolFlags, av: string[], i: i32): (ToolFlags, i32, 
   }
   if (a == "-ascii") {
     return (ToolFlags { ...tf, ascii: true }, i, 0);
+  }
+  if (a == "-q") {
+    return (ToolFlags { ...tf, terse: true }, i, 0);
   }
   if (a == "-lint") {
     return (ToolFlags { ...tf, lint: true }, i, 0);
@@ -4792,7 +4865,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // `-run`: build to a temporary binary (or -o) and execute it with the
   // program's arguments; `-qemu` names the emulator for a foreign ISA.
   let no_strs: string[] = [];
-  let tf: ToolFlags = ToolFlags { run_it: false, qemu: "qemu-aarch64", version: false, explain: false, explain_code: "", cover_report: false, lcov: false, color_mode: "auto", ascii: false, lint: false, lint_rules: false, lint_sets: no_strs, lint_opts: no_strs, weave: false, html: false, doctest: false };
+  let tf: ToolFlags = ToolFlags { run_it: false, qemu: "qemu-aarch64", version: false, explain: false, explain_code: "", cover_report: false, lcov: false, color_mode: "auto", ascii: false, terse: terse_from_env(), lint: false, lint_rules: false, lint_sets: no_strs, lint_opts: no_strs, weave: false, html: false, doctest: false };
   let mode_fmt: boolean = false;
   // `-fmt` output destination, mirroring native: stdout by default, the input
   // file under `-w`, a unified diff (exit 1 when it is non-empty) under `-d`.
@@ -5013,7 +5086,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     i = i + 1;
   }
 
-  let st: DiagStyle = diag_style(tf.color_mode, tf.ascii);
+  let st: DiagStyle = diag_style(tf.color_mode, tf.ascii, tf.terse);
 
   // `-targets` answers from the table alone; it needs no entry file.
   if (mode_targets) {

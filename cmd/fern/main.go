@@ -452,6 +452,7 @@ func main() {
 	explain := flag.String("explain", "", "print the long-form explanation for an error code (e.g. -explain E001) and exit. Pass an empty string with no other args to list the available codes.")
 	colorMode := flag.String("color", "auto", "colourise diagnostics: auto (default — colour only when stderr is a terminal and NO_COLOR is unset), always, or never.")
 	asciiBoxes := flag.Bool("ascii", false, "with coloured diagnostics, draw the gutter with a plain `|` instead of the box-drawing `│` (also selected automatically when the locale isn't UTF-8).")
+	terseDiagnostics := flag.Bool("q", os.Getenv("FERN_DIAG_FORMAT") == "terse", "print one line per diagnostic without source context, notes, fixes or colour")
 	sanitize := flag.Bool("sanitize", false, "debug build: turn on the heap memory-safety detectors together (native x86-64/arm64). Reports an rc over-release (double free) and a use-after-free of a quarantined block as a named `fern-sanitizer:` line on stderr followed by a fatal SIGILL, and prints a leak census at exit. Costs allocation throughput and never recycles a freed block, so it is for debugging, not for shipping; an unsanitized build is byte-identical to one from a compiler without the feature. Same as FERN_SANITIZE=1.")
 	cover := flag.Bool("cover", false, "measurement build: instrument every executable source line with a hit counter, and every conditional (`if`, `while`, `&&`, `||`) with a second pair, then write the whole table to stderr at exit — one `fern-cover: <file>:<line> <count>` row per instrumented line, hit or not, plus `fern-branch:` rows carrying each conditional's evaluations and true-arm entries. Feed the saved stream to `fern -cover-report` for per-file line AND branch totals, the uncovered lists, or lcov. Costs an increment per line and per branch edge, and keeps functions nothing calls (so they report 0), so it is for measuring a test run, not for shipping; a build without it is byte-identical to one from a compiler without the feature. Native x86-64 and arm64 only — any other target errors rather than emitting an uninstrumented binary. Same as FERN_COVER=1.")
 	coverReport := flag.Bool("cover-report", false, "read a saved `-cover` run's output (`fern -cover-report FILE`, or `-` for stdin) and print per-file line coverage plus the uncovered lines. Lines that don't carry the `fern-cover: ` prefix are ignored, so piping the program's whole stderr is fine. Add -lcov for an lcov tracefile instead. Report mode; no codegen.")
@@ -497,6 +498,7 @@ func main() {
 	// same text as always.
 	diag.SetColor(shouldColorize(*colorMode))
 	diag.SetASCII(shouldUseASCII(*asciiBoxes))
+	diag.SetTerse(*terseDiagnostics)
 
 	if *showVersion {
 		fmt.Println(versionString())

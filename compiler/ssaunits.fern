@@ -793,7 +793,7 @@ function hands_out(kind: i32): boolean {
     || kind == ssasem.append() || kind == ssasem.with() || kind == ssasem.slice() || kind == ssasem.cell_get()
     || kind == ssasem.map_insert() || kind == ssasem.map_get_or() || kind == ssasem.map_get()
     || kind == ssasem.map_keys() || kind == ssasem.map_values() || kind == ssasem.map_delete()
-    || kind == ssasem.str_bytes() || kind == ssasem.str_byte_view() || kind == ssasem.arr_join() || kind == ssasem.arr_slice()
+    || kind == ssasem.str_bytes() || kind == ssasem.str_byte_view() || ssasem.is_arr_helper_op(kind) || kind == ssasem.arr_slice()
     || kind == ssasem.map_iter() || kind == ssasem.hole_fill();
 }
 
@@ -1299,7 +1299,7 @@ function box_words(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], out: strin
   let words: string = "|";
   let j: i32 = 0;
   while (j < fields.len()) {
-    let w: string = constant_word(defs, ins.args[j], fields[j].ty);
+    let w: string = constant_word(f, defs, ins.args[j], fields[j].ty);
     if (w == "" && ins.kind_tag == ssasem.array_new()) {
       w = wide_word(defs, ins.args[j], fields[j].ty);
     }
@@ -1452,11 +1452,15 @@ function built_fields(f: ssasem.Func, ins: ssa.SInst): Construction {
 // place. A u32 literal carries its text rather than an immediate, as
 // `ssarc.constant` reads it. A copy reads through to what it copies, which is
 // how a spliced accessor's constant arrives.
-function constant_word(defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
+function constant_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
   if (!narrow_scalar(t)) {
     return "";
   }
   let d: ssa.SInst = through_copies(defs, v);
+  let arg: i32 = constant_cast_arg(d);
+  if (arg >= 0) {
+    return cast_word(f, defs, arg, t);
+  }
   if (d.kind_tag == 1 && d.str != "") {
     return small_decimal(d.str);
   }
@@ -1467,6 +1471,45 @@ function constant_word(defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
     return "";
   }
   return negated_word(defs, d);
+}
+
+// A non-negative integer literal cast to u8, i32 or u32, `7 as u8`, is the
+// literal; the checker has already refused one that does not fit (E047).
+// A byte table is written with such casts, and placing it keeps it from
+// being built on every evaluation.
+function cast_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
+  if (!ssasem.is_u8(t) && !ssasem.is_i32(t) && !ssasem.is_u32(t)) {
+    return "";
+  }
+  let src: ssa.SInst = through_copies(defs, v);
+  if (!integer_literal(f, src)) {
+    return "";
+  }
+  if (src.str != "") {
+    return small_decimal(src.str);
+  }
+  if (src.imm < 0) {
+    return "";
+  }
+  return util.i32_to_string(src.imm);
+}
+
+function constant_cast_arg(ins: ssa.SInst): i32 {
+  if (ins.kind_tag == ssasem.cast() && ins.args.len() == 1 && ins.args[0] >= 0) {
+    return ins.args[0];
+  }
+  return -1;
+}
+
+// Float literals also use kind 1, but their source text is not an integer
+// conversion's value: an f32 may already have rounded it (16777217 ->
+// 16777216). Only integer source values can reuse their literal spelling.
+function integer_literal(f: ssasem.Func, ins: ssa.SInst): boolean {
+  if (ins.kind_tag != 1 || ins.result < 0 || ins.result >= f.values.len()) {
+    return false;
+  }
+  let from: typeinfo.Type = f.values[ins.result];
+  return ssasem.is_integer(from) || ssasem.is_char(from);
 }
 
 // A 64-bit element's word: an i64 or u64 literal's value, or an f64 literal's
