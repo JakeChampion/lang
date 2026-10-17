@@ -3467,31 +3467,39 @@ function __mac_block(hlen: i32): i32 {
   return 64;
 }
 
-// __block_key is the key as one zero-padded block, hashed first when it is
-// longer than a block.
-function __block_key(hlen: i32, key: [u8]): u8[] {
-  let bs: i32 = __mac_block(hlen);
-  if (key.len() > bs) {
-    return __bytes_into(__zero_u8(bs), 0, __mac_digest(hlen, key), 0, hlen);
-  }
-  return __bytes_into(__zero_u8(bs), 0, key, 0, key.len());
-}
-
-// __hmac is H((k0 ^ opad) || H((k0 ^ ipad) || msg)).
-function __hmac(hlen: i32, key: [u8], msg: [u8]): u8[] {
-  let bs: i32 = __mac_block(hlen);
-  let k0: u8[] = __block_key(hlen, key);
-  let inner: u8[] = __alloc_u8(bs + msg.len());
-  let outer: u8[] = __alloc_u8(bs + hlen);
+// __pad_block is the key zero-padded to a block, each byte exclusive-ored
+// with `pad`: one pass, with nothing padded or copied first.
+function __pad_block(bs: i32, key: [u8], pad: i32): u8[] {
+  let out: u8[] = __alloc_u8(bs);
   let i: i32 = 0;
   while (i < bs) {
-    inner = inner.with(i, (k0[i] as i32 ^ 0x36) as u8);
-    outer = outer.with(i, (k0[i] as i32 ^ 0x5c) as u8);
+    let b: i32 = 0;
+    if (i < key.len()) {
+      b = key[i] as i32;
+    }
+    out = out.with(i, (b ^ pad) as u8);
     i = i + 1;
   }
-  inner = __bytes_into(inner, bs, msg, 0, msg.len());
-  outer = __bytes_into(outer, bs, __mac_digest(hlen, inner), 0, hlen);
-  return __mac_digest(hlen, outer);
+  return out;
+}
+
+// __mac_digest2 is the digest of a then b, streamed with no join.
+function __mac_digest2(hlen: i32, a: [u8], b: [u8]): u8[] {
+  if (hlen == 48) {
+    return sha384_new().update_bytes(a).update_bytes(b).final_bytes();
+  }
+  return sha256_new().update_bytes(a).update_bytes(b).final_bytes();
+}
+
+// __hmac is H((k0 ^ opad) || H((k0 ^ ipad) || msg)), k0 the key padded to a
+// block, hashed first when it is longer than one.
+function __hmac(hlen: i32, key: [u8], msg: [u8]): u8[] {
+  let bs: i32 = __mac_block(hlen);
+  if (key.len() > bs) {
+    return __hmac(hlen, __mac_digest(hlen, key), msg);
+  }
+  let inner: u8[] = __mac_digest2(hlen, __pad_block(bs, key, 0x36), msg);
+  return __mac_digest2(hlen, __pad_block(bs, key, 0x5c), inner);
 }
 
 // hmac_sha256 / hmac_sha384 — the 32- and 48-byte HMAC of a byte message.
