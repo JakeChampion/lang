@@ -4,11 +4,8 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrArrReclaimIRArm64 is the arm64 port of
-// TestSelfHostArrArrReclaimIRX86_64 (#4355 slice 9): the arm64
-// __fn___fern_arrarr_free / __fn___fern_strarrarr_free runtime bodies (the
-// str_arr_free siblings — x19/x20/x21 + x30 register discipline across the
-// per-element bl). Lighter churn under qemu.
+// TestSelfHostArrArrReclaimIRArm64 runs the shared nested-array reclaim
+// cases on ARM64, exercising the typed release pipeline.
 func TestSelfHostArrArrReclaimIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

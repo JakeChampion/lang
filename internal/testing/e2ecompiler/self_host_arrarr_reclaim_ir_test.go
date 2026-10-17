@@ -7,12 +7,9 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrArrReclaimIRX86_64 pins #4355 slice 9: an arr-of-arr local
-// (`let g = [[..], [..]]`) is released whole per iteration — the outer buffer,
-// every inner buffer and every string element (__fern_arrarr_free for scalar
-// rows, __fern_strarrarr_free for string rows) — so the churn loops stay flat.
-// A row bound out of it (`let row = g[i]`) and a live string local stored as an
-// element must survive intact, with no underflow.
+// TestSelfHostArrArrReclaimIRX86_64 checks typed release of nested arrays:
+// row buffers, string elements and the outer buffer are reclaimed while
+// borrowed rows and strings remain readable, with no underflow.
 func TestSelfHostArrArrReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

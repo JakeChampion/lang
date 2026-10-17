@@ -8,12 +8,8 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrArrReclaimWasmIR is the wasm port of
-// TestSelfHostArrArrReclaimIRX86_64 (#4355 slice 9): __fern_arrarr_free maps
-// to the existing $__fern_arr_dec_ptr (scalar inners — one dec fully frees a
-// scalar-element row) and __fern_strarrarr_free to the new two-level
-// $__fern_arr_dec_ptr2 (string inners: per-row arr_dec_ptr frees the row's
-// string blocks + its buffer, then the outer frees).
+// TestSelfHostArrArrReclaimWasmIR runs the shared nested-array reclaim
+// cases on WASI, exercising the typed release pipeline.
 func TestSelfHostArrArrReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arrarr-reclaim wasm IR e2e")

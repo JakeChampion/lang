@@ -6,19 +6,9 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructArrReclaimIRX86_64 pins the #4355 struct-array element-box
-// reclaim: a fresh, non-escaping `let g = [P { .. }, P { .. }]` had NO element
-// reclaim on the self-host IR path — the slot is a plain is_arr array whose exit
-// sweep did a SHALLOW __fern_rc_dec of the OUTER buffer only, leaking every
-// element struct box per iteration (the outer buffer was freed; the P{} boxes
-// were not). The reclaim routes such a slot through the EXISTING
-// __fern_arrarr_free helper (one rc-guarded arr_dec per element pointer — which
-// is exactly a struct-box free — then the outer buffer), so no new backend
-// runtime is needed. Admission: every element must be a fresh no-base struct
-// LITERAL ("STRUCTARR:"); a bare element bind (`let q = g[0]`) or a `for p in g`
-// whose body lets `p` escape rejects the candidate (the element pointer would
-// dangle). These fixtures use scalar-field structs. Every run must also leave a
-// balanced census.
+// TestSelfHostStructArrReclaimIRX86_64 checks that typed release of a struct
+// array reclaims its element boxes and outer buffer. Borrowed or escaped
+// elements remain readable, and every run leaves a balanced census.
 func TestSelfHostStructArrReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	t.Setenv("FERN_LEAKCHECK", "1")

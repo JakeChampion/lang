@@ -5,15 +5,9 @@ import (
 	"testing"
 )
 
-// --- Append-built arr-of-arr row reclaim (#6092) -------------------
-//
-// A fresh, non-escaping arr-of-arr local is deep-released
-// (__fern_arrarr_free / __fern_strarrarr_free): the inner row buffers, then the
-// outer one. `g = g.append(row)` is a reassignment, and an append-BUILT `T[][]`
-// must still get that release; without it the program leaks one row buffer per
-// append, unbounded in a loop. The churn tests assert live_bytes 0 under
-// FERN_LEAKCHECK; the hazard rows pin that the release is still refused where
-// a live reference would dangle.
+// Append-built nested arrays release their row buffers and outer buffer.
+// The churn cases require zero live bytes; the alias and escape cases check
+// that every surviving reference remains readable.
 
 // arrarrAppendChurnSrc builds and drops an arr-of-arr by append, 200 times. If
 // the rows are not reclaimed the leak scales with the iteration count, so a
