@@ -171,3 +171,12 @@ current main `c7d93477…` takes 940,001,312 instructions and the candidate
 The hot function changes from five callee-saved pushes and two frame accesses
 to four pushes and no frame accesses. This integration repeat records no
 elapsed timings; the earlier speed measurements retain their original scope.
+
+
+After the certifier compaction merges as main `792940195`, source `0966656bc`
+reaches identical stages 2 and 3 at 12,680,720 bytes, SHA-256
+`c2557ea2c297dcfbc3edf76fc16d02016fe5c49402550e6a532c92455a1b8842`.
+The fixed-register, memory-read, extra-caller, scalar-return, certification,
+ARM-helper and complexity suite passes in 37.202 seconds. All six extra-caller
+debug fixtures pass in 2.076 seconds. The preceding performance observations
+retain their exact source and compiler scopes; this repeat adds no timings.
