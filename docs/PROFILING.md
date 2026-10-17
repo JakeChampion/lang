@@ -1,6 +1,6 @@
 # Profiling native programs
 
-Compile a Linux executable with CPU sampling enabled:
+Compile a native executable with CPU sampling enabled:
 
 ```sh
 FERN_PROFILE=cpu fern -o program program.fern
@@ -10,8 +10,8 @@ rg -v '^#' cpu.folded | flamegraph.pl >cpu.svg
 
 The compiler includes function symbols and preserves generated frame pointers.
 The executable needs no profiler library or external symbolizer. Both x86-64
-and ARM64 Linux are supported, including ARM64 `-harden` builds. Darwin, Android,
-WASI and shared libraries are refused. `FERN_PROFILE=0`, an empty value, or an
+and ARM64 Linux are supported, including ARM64 `-harden` builds, together with
+ARM64 Darwin. Android, WASI and shared libraries are refused. `FERN_PROFILE=0`, an empty value, or an
 unset variable leaves profiling disabled; the variable controls compilation,
 not execution.
 
@@ -45,7 +45,7 @@ while profiling.
 ## Allocation profiles
 
 Use `FERN_PROFILE=alloc` when compiling to collect allocation stacks instead of
-CPU samples. The same Linux targets, frame pointers, symbolization and exit
+CPU samples. The same native targets, frame pointers, symbolization and exit
 behavior apply. Allocation mode does not install a signal handler or CPU timer.
 
 Every 64th allocation records a stack. Each row's weight is that allocation's
@@ -94,4 +94,8 @@ scaled to estimate the observations represented by retained samples. Its comment
 records retained and dropped counts. Contention losses and systematic allocation
 sampling can still bias those estimates.
 
-Darwin profiles and WASI allocation profiles remain follow-ups tracked by #5547.
+On Darwin the profiler reads symbols from the running Mach-O image, accounting
+for ASLR and the virtual-memory gap occupied by zero-initialized data. It uses
+the native signal trampoline and signal-context layout for CPU sampling.
+
+WASI allocation profiles remain a follow-up tracked by #5547.
