@@ -6619,6 +6619,23 @@ function jump(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], posit
   return Emit { ...e, r: emit(e.r, ir.op_br(d)) };
 }
 
+function set_return_words(own e: Emit, b: ssa.SBlock): Emit {
+  if (b.term.kind_tag != 1) {
+    return e;
+  }
+  e = Emit { ...e, r: return_scalar_words(e.r, b) };
+  let payload: i32 = pair_payload(b);
+  if (payload == 0 - 2) {
+    return Emit { ...e, why: "a paired return sets its word twice" };
+  }
+  if (payload >= 0) {
+    e = Emit { ...e, r: emit(e.r, ir.op_load_local(payload)) };
+    e = Emit { ...e, r: emit(e.r, ir.op_ret_word()) };
+    e = Emit { ...e, r: emit(e.r, ir.op_drop()) };
+  }
+  return e;
+}
+
 function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], position: i32): Emit {
   let b: ssa.SBlock = f.graph.blocks[order[position]];
   if (b.term.kind_tag == 1 || b.term.kind_tag == 4) {
@@ -6634,17 +6651,9 @@ function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[],
       e = Emit { ...e, r: emit(e.r, ir.op_const_i32(134)) };
       e = Emit { ...e, r: emit(e.r, ir.op_exit()) };
     }
-    if (b.term.kind_tag == 1) {
-      e = Emit { ...e, r: return_scalar_words(e.r, b) };
-    }
-    let payload: i32 = pair_payload(b);
-    if (payload == 0 - 2) {
-      return Emit { ...e, why: "a paired return sets its word twice" };
-    }
-    if (b.term.kind_tag == 1 && payload >= 0) {
-      e = Emit { ...e, r: emit(e.r, ir.op_load_local(payload)) };
-      e = Emit { ...e, r: emit(e.r, ir.op_ret_word()) };
-      e = Emit { ...e, r: emit(e.r, ir.op_drop()) };
+    e = set_return_words(e, b);
+    if (e.why != "") {
+      return e;
     }
     if (b.term.kind_tag == 1 && b.term.value >= 0) {
       e = Emit { ...e, r: emit(e.r, ir.op_load_local(b.term.value)) };
