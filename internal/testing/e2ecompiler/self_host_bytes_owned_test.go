@@ -40,13 +40,14 @@ function main(): i32 {
     t = t + owned(arr[1:9]).len();
     i = i + 1;
   }
-  print(t.to_string() + " " + (__heap_alloc_count() - before).to_string());
+  let n: i64 = __heap_alloc_count() - before;
+  print(t.to_string() + " " + n.to_string());
   return 0;
 }
 `
 
 func TestSelfHostBytesOwned(t *testing.T) {
-	want := "5 8869 18 721642 0 10 6 3\n800 202\n"
+	want := "5 8869 18 721642 0 10 6 3\n800 200\n"
 	runSemanticProgram(t, "bytesowned", bytesOwnedProgram, []string{"owned"},
 		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want, "wasm32-wasi": want})
 }
