@@ -38,7 +38,7 @@ var primNameNotEnumCases = []struct {
 		"    if (xs[1] != (4294967296 as u64)) { return 6; }\n" +
 		"    return 0;\n}"},
 	// A `u64[]` ENUM PAYLOAD must not be dropped as an array of enum boxes:
-	// that path (`__fern_arrarr_free`) dereferences each u64 limb as an rc box.
+	// that would dereference each u64 limb as an rc box.
 	// 18446744073709551615 is not a plausible address, so a wrong drop
 	// SIGSEGVs — a limb holding a real address would silently decrement
 	// whatever it pointed at instead. The arm reads only `.len()`: the crash is

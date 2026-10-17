@@ -8,13 +8,8 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructArrReclaimWasmIR is the wasm port of
-// TestSelfHostStructArrReclaimIRX86_64 (#4355 struct-array element-box reclaim).
-// __fern_arrarr_free maps to the existing $__fern_arr_dec_ptr on wasm, which at
-// rc==1 $__fern_arr_dec's every element pointer (exactly the wasm struct-box
-// free — __fern_rc_dec also maps to $__fern_arr_dec) then frees the outer
-// buffer. So a fresh, non-escaping `let g = [P { .. }, P { .. }]` reclaims its
-// element boxes with no new wasm runtime.
+// TestSelfHostStructArrReclaimWasmIR runs the shared struct-array reclaim
+// cases on WASI, exercising the typed release pipeline.
 func TestSelfHostStructArrReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host structarr-reclaim wasm IR e2e")

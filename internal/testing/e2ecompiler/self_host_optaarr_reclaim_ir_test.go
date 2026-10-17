@@ -7,17 +7,9 @@ import (
 	"testing"
 )
 
-// optAarrReclaimCases pin the Option[<scalar-arr>][] whole-structure reclaim
-// (#4365's generic-enum-array heap-bump gap): `let xs: Option[i32[]][] =
-// [Some([..]), None]` rebuilt per loop iteration leaked all three levels —
-// payload buffers, option boxes, and the outer buffer — on the self-host IR
-// path (native bounds the shape). The "OPTAARR:" credit (fresh literal of
-// None / Some(<array literal>) elements, non-escaping, not reassigned, no
-// element alias, no Some-arm payload escape) routes the exit sweep and the
-// loop-rebind through __fern_optarrarr_free: per element a UNIQUELY-owned
-// option box first decs its Some-payload buffer, then the box is arr_dec'd
-// (rc-guarded), then the outer buffer is freed. The alias / escape negatives
-// stay un-credited (leak-mode) and must remain CORRECT at detector zero.
+// optAarrReclaimCases cover typed release of Option[i32[]][]: payload buffers,
+// option boxes and the outer buffer. Churn stays bounded; borrowed or escaped
+// elements and payloads remain live, with no reference-count underflow.
 var optAarrReclaimCases = []struct {
 	name string
 	src  string

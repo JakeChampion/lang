@@ -4,13 +4,8 @@ import (
 	"testing"
 )
 
-// TestSelfHostOptAarrReclaimWasmIR is the wasm port of
-// TestSelfHostOptAarrReclaimIRX86_64: the "OPTAARR:" crediting lives in shared
-// lowering; the wasm release is the dedicated $__fern_optarrarr_free WAT
-// body (wasm.optarrarr_free_func — per element, a uniquely-owned [tag@0,
-// payload@4] option box decs its Some payload then itself, then the outer
-// buffer), emitted only when the module lowers the call
-// (module_calls_optarrarr_free). Case table shared with the x86-64 leg.
+// TestSelfHostOptAarrReclaimWasmIR runs the shared Option-array reclaim
+// cases on WASI, exercising the typed release pipeline.
 func TestSelfHostOptAarrReclaimWasmIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range optAarrReclaimCases {

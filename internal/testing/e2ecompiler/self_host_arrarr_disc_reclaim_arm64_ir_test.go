@@ -4,11 +4,8 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrArrDiscReclaimIRArm64 is the arm64 port of
-// TestSelfHostArrArrDiscReclaimIRX86_64: which discarded literals are freed,
-// and the __fern_arrarr_free routing, live in shared lowering; the arm64 leg
-// differs only in the release-helper body (__fn___fern_arrarr_free, need-
-// seeded from the op-scan). Case table shared with the x86-64 leg.
+// TestSelfHostArrArrDiscReclaimIRArm64 runs the shared discarded nested-array reclaim
+// cases on ARM64, exercising the typed release pipeline.
 func TestSelfHostArrArrDiscReclaimIRArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range arrArrDiscReclaimCases {

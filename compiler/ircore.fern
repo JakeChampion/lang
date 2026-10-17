@@ -180,14 +180,10 @@ function is_rc_helper(name: string): boolean {
     || name == "__fern_account_entry"
     // `set_args`: retains the array it is lent and releases the one it
     // replaces, so later args() calls report it.
-    || name == "__fern_set_args"
-    // snapshot-param consume-rebind reclaim (#3456 slice 2): frees the
-    // superseded old box (rc-guarded shallow free) unless it is `new` or the
-    // caller's snapshot; passes `new` back through. Body in emit_ir_runtime.
-    || name == "__fern_snapshot_dec";
+    || name == "__fern_set_args";
 }
 
-// The releases of strings and nested arrays.
+// The legacy string releases still called by hand-written runtime helpers.
 function is_release_helper(name: string): boolean {
   // string RC reclaim (#2649): frees a fresh, non-escaping heap string's
   // data buffer + 16-byte box. Default ir_helper_symbol maps it to
@@ -211,16 +207,7 @@ function is_release_helper(name: string): boolean {
     // walk — wasm strings are single inline rc-headered blocks, so the plain
     // per-element $__fern_arr_dec IS the wasm string free). Never
     // user-callable — only the lowering's exit sweep emits it.
-    || name == "__fern_str_arr_free"
-    // arr-of-arr reclaim (#4355 slice 9): __fern_arrarr_free walks a fresh
-    // arr-of-arr's elements (each a scalar-element inner buffer, one
-    // rc-guarded __fern_arr_dec apiece) then frees the outer buffer;
-    // __fern_strarrarr_free is the string[][] sibling (each element a
-    // string[] released fully by __fern_str_arr_free). Only the lowering's
-    // exit sweep / rebind emits them.
-    || name == "__fern_arrarr_free"
-    || name == "__fern_strarrarr_free"
-    || name == "__fern_optarrarr_free";
+    || name == "__fern_str_arr_free";
 }
 
 // The helpers that convert to and from text.
@@ -674,7 +661,7 @@ function with_builtin_enums(lifted: parser.Module): parser.Module {
 pub function all_runtime_need_roots(): string[] {
   return [
     "alloc_u8", "args", "set_args", "arr_push", "arr_push_owned", "arr_slice",
-    "arr_str_join", "arr_concat", "bytes_owned", "bytes_range", "bytes_into", "byte_append", "byte_write", "arr_inc_elems", "arr_own_elems", "str_own", "str_borrow", "str_grow", "account", "arrarr_free", "env", "eprint", "heap",
+    "arr_str_join", "arr_concat", "bytes_owned", "bytes_range", "bytes_into", "byte_append", "byte_write", "arr_inc_elems", "arr_own_elems", "str_own", "str_borrow", "str_grow", "account", "env", "eprint", "heap",
     "i32_to_string", "u32_to_string", "monotonic_ns", "now_ns", "now_unix_ms",
     "map_hash_seed",
     "chdir", "chroot", "setuid", "setgid", "setgroups",
@@ -684,7 +671,7 @@ pub function all_runtime_need_roots(): string[] {
     "sleep_ms", "sleep_ns", "str_bytes", "str_case", "str_cmp", "task", "vdso",
     "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
     "str_read_line", "str_repeat", "str_replace",
-    "optarrarr_free", "str_split", "str_trim", "strarrarr_free", "buf",
+    "str_split", "str_trim", "buf",
     // The platform helpers. These were absent for as long as the list
     // existed, which made the "closed set" claim above false: the
     // bootstrap compiler marks none of them, so nothing noticed until a

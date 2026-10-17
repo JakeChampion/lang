@@ -4,11 +4,8 @@ import (
 	"testing"
 )
 
-// TestSelfHostOptAarrReclaimIRArm64 is the arm64 port of
-// TestSelfHostOptAarrReclaimIRX86_64: the "OPTAARR:" crediting lives in shared
-// lowering and the arm64 __fn___fern_optarrarr_free body mirrors the
-// x86-64 one (uniqueness-gated payload dec + rc-guarded box dec + buffer
-// free). Case table shared with the x86-64 leg.
+// TestSelfHostOptAarrReclaimIRArm64 runs the shared Option-array reclaim
+// cases on ARM64, exercising the typed release pipeline.
 func TestSelfHostOptAarrReclaimIRArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range optAarrReclaimCases {
