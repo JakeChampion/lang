@@ -1,0 +1,87 @@
+[
+  {
+    "algorithm": "sha256",
+    "bytes": 4194304,
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 206643491,
+        "digest": "299285fc41a44cdb038b9fdaf494c76ca9d0c866672b2b266c1a0c17dda60a05"
+      },
+      {
+        "tag": "new",
+        "instructions": 206642739,
+        "digest": "299285fc41a44cdb038b9fdaf494c76ca9d0c866672b2b266c1a0c17dda60a05"
+      }
+    ],
+    "change_percent": -0.0003639117769238531
+  },
+  {
+    "algorithm": "sha512",
+    "bytes": 4194304,
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 177941879,
+        "digest": "71bcbc3c7ebc8f42624eafee00f74ff46f28f44e1a46cbc71d4610d4724a780be5f7dcd7212d79549562f760a9c63c6dfbf4db0ede8e197198c2454235c76bd8"
+      },
+      {
+        "tag": "new",
+        "instructions": 177941103,
+        "digest": "71bcbc3c7ebc8f42624eafee00f74ff46f28f44e1a46cbc71d4610d4724a780be5f7dcd7212d79549562f760a9c63c6dfbf4db0ede8e197198c2454235c76bd8"
+      }
+    ],
+    "change_percent": -0.0004360974517947369
+  },
+  {
+    "algorithm": "sm3",
+    "bytes": 4194304,
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 255597970,
+        "digest": "76a45921077a8b9bc1d7090df9f6c74d1f648ae0f0b7963753daa82599f79595"
+      },
+      {
+        "tag": "new",
+        "instructions": 255597701,
+        "digest": "76a45921077a8b9bc1d7090df9f6c74d1f648ae0f0b7963753daa82599f79595"
+      }
+    ],
+    "change_percent": -0.0001052434023596227
+  },
+  {
+    "algorithm": "sha1",
+    "bytes": 4194304,
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 150410470,
+        "digest": "ec10fafa5de7a233c22a26d491f308876b41ae3f"
+      },
+      {
+        "tag": "new",
+        "instructions": 150410294,
+        "digest": "ec10fafa5de7a233c22a26d491f308876b41ae3f"
+      }
+    ],
+    "change_percent": -0.00011701313079592879
+  },
+  {
+    "algorithm": "md5",
+    "bytes": 4194304,
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 107090187,
+        "digest": "bdbcf02ee0aa977795a79d25fcfdccb1"
+      },
+      {
+        "tag": "new",
+        "instructions": 107090061,
+        "digest": "bdbcf02ee0aa977795a79d25fcfdccb1"
+      }
+    ],
+    "change_percent": -0.00011765783918260553
+  }
+]

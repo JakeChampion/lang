@@ -1,0 +1,15 @@
+import "std/json";
+function main(): i32 {
+  let av = args();
+  if (av.len() != 2) { return 1; }
+  let Ok(source) = read_file(av[1]) else { return 2; };
+  let before = __heap_alloc_count();
+  let Ok(doc) = json.parse_document(source) else { return 3; };
+  let allocs = __heap_alloc_count() - before;
+  let checksum: u64 = 0u64;
+  for word in doc.tape { checksum = checksum * 33u64 ^ word; }
+  print(doc.tape.len().to_string());
+  print(checksum.to_string());
+  print(allocs.to_string());
+  return 0;
+}

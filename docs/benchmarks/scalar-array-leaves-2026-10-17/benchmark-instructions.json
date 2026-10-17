@@ -1,0 +1,807 @@
+[
+  {
+    "source": "array_append.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 13383435,
+        "bytes": 4304,
+        "sha256": "4d175af19b35843d0dc91cf2b0da4bdabb2a5f386eae16a8bc978558d8c760e8",
+        "exit": 7,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 13383435,
+        "bytes": 4304,
+        "sha256": "4d175af19b35843d0dc91cf2b0da4bdabb2a5f386eae16a8bc978558d8c760e8",
+        "exit": 7,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "array_index.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 16315639,
+        "bytes": 4304,
+        "sha256": "db2e61ba636afabbf58ffcc44eed90bcac17a29a01b71d981e9c288a04d67f19",
+        "exit": 71,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 16315639,
+        "bytes": 4304,
+        "sha256": "db2e61ba636afabbf58ffcc44eed90bcac17a29a01b71d981e9c288a04d67f19",
+        "exit": 71,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "array_scale_f64.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 21301811,
+        "bytes": 4304,
+        "sha256": "d7d97cd92cb086baf31974cbfef3b8307f4e639549f6ba795d37b443c7ad7042",
+        "exit": 34,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 21301811,
+        "bytes": 4304,
+        "sha256": "d7d97cd92cb086baf31974cbfef3b8307f4e639549f6ba795d37b443c7ad7042",
+        "exit": 34,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "array_with.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 37759033,
+        "bytes": 4304,
+        "sha256": "e04d40e1da81750ba23f799d7814209bad08e135749a348be0f0f2fe6f342916",
+        "exit": 27,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 37759033,
+        "bytes": 4304,
+        "sha256": "e04d40e1da81750ba23f799d7814209bad08e135749a348be0f0f2fe6f342916",
+        "exit": 27,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "ascii_scan.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 37213680,
+        "bytes": 8432,
+        "sha256": "cc07e09e53c23453756a112299220d0321db3f86cffe80c9be83f6ae7660b570",
+        "exit": 45,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 37213680,
+        "bytes": 8432,
+        "sha256": "cc07e09e53c23453756a112299220d0321db3f86cffe80c9be83f6ae7660b570",
+        "exit": 45,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "call_overhead.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 8250759,
+        "bytes": 4096,
+        "sha256": "1fd433bfccdf013615a9cf98576368cb02dcdc08547c6c47038305ee79998b70",
+        "exit": 58,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 8250759,
+        "bytes": 4096,
+        "sha256": "1fd433bfccdf013615a9cf98576368cb02dcdc08547c6c47038305ee79998b70",
+        "exit": 58,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "closure_call.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 63018106,
+        "bytes": 4320,
+        "sha256": "1ec923b202bdb18d5af092f51fcc6194b884da250205d9513332a4851998115b",
+        "exit": 60,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 63018106,
+        "bytes": 4320,
+        "sha256": "1ec923b202bdb18d5af092f51fcc6194b884da250205d9513332a4851998115b",
+        "exit": 60,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "enum_match.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 51750055,
+        "bytes": 4352,
+        "sha256": "d67dff1a927bc026034126866c6a4535eea99b92dcf35ff88dce1e4de588725f",
+        "exit": 76,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 51750055,
+        "bytes": 4352,
+        "sha256": "d67dff1a927bc026034126866c6a4535eea99b92dcf35ff88dce1e4de588725f",
+        "exit": 76,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "http_hello.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 27604835,
+        "bytes": 67488,
+        "sha256": "00cc47950f4bcaa32a9e18305badc7d046987db00a353f13b975d35ad04f63d7",
+        "exit": 30,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 27604835,
+        "bytes": 67488,
+        "sha256": "00cc47950f4bcaa32a9e18305badc7d046987db00a353f13b975d35ad04f63d7",
+        "exit": 30,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "int_loop.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 12000022,
+        "bytes": 4096,
+        "sha256": "8f2119351f43a772e79af05e45be7067fc8067df1a9873b0e49133f6e41f6240",
+        "exit": 39,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 12000022,
+        "bytes": 4096,
+        "sha256": "8f2119351f43a772e79af05e45be7067fc8067df1a9873b0e49133f6e41f6240",
+        "exit": 39,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "map_int.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 37704682,
+        "bytes": 25040,
+        "sha256": "b990a4707055d07c8db335f6b8cef6c4a18744912bd80b8bbbab42c34cfb23b4",
+        "exit": 32,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 37704682,
+        "bytes": 25040,
+        "sha256": "b990a4707055d07c8db335f6b8cef6c4a18744912bd80b8bbbab42c34cfb23b4",
+        "exit": 32,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "map_probe_chain.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 356109061,
+        "bytes": 25040,
+        "sha256": "e28df9655fd0ac00f2e4ebe5a459fc55e4ac2460cc65206285dab48937ef41fd",
+        "exit": 24,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 356109061,
+        "bytes": 25040,
+        "sha256": "e28df9655fd0ac00f2e4ebe5a459fc55e4ac2460cc65206285dab48937ef41fd",
+        "exit": 24,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "map_string.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 61918262,
+        "bytes": 25344,
+        "sha256": "0c4d6c63b7f797d7e52de1f86d71f33718892d3bd6706a57e0d71353e28e7465",
+        "exit": 32,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 62058263,
+        "bytes": 25344,
+        "sha256": "0c4d6c63b7f797d7e52de1f86d71f33718892d3bd6706a57e0d71353e28e7465",
+        "exit": 32,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.22610615265654666
+  },
+  {
+    "source": "ordmap_insert.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 109992304,
+        "bytes": 12672,
+        "sha256": "9d8c1c695a8fb292046b497d699676947860551ed87b8b72a6bd533419668ef7",
+        "exit": 11,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 109992304,
+        "bytes": 12672,
+        "sha256": "9d8c1c695a8fb292046b497d699676947860551ed87b8b72a6bd533419668ef7",
+        "exit": 11,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "perceus_cfold.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 56096816,
+        "bytes": 12608,
+        "sha256": "ceb061916395339186a442bcb5acbcc823dabfd6f723ad4bc08e48a4df0b2da6",
+        "exit": 84,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 56096816,
+        "bytes": 12608,
+        "sha256": "ceb061916395339186a442bcb5acbcc823dabfd6f723ad4bc08e48a4df0b2da6",
+        "exit": 84,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "perceus_deriv.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 73286248,
+        "bytes": 12736,
+        "sha256": "fb2c7dc845995a8e9aaf2f28a5e22f04daffe8e0cbb723158e8a63b0bd5d8ff0",
+        "exit": 57,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 73286248,
+        "bytes": 12736,
+        "sha256": "fb2c7dc845995a8e9aaf2f28a5e22f04daffe8e0cbb723158e8a63b0bd5d8ff0",
+        "exit": 57,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "perceus_nqueens.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 93164028,
+        "bytes": 8640,
+        "sha256": "f91c80475067f4a6cbf743bd07ff76fb23b4a8e1ab2f191fdf97a2123970c8ea",
+        "exit": 71,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 93164028,
+        "bytes": 8640,
+        "sha256": "f91c80475067f4a6cbf743bd07ff76fb23b4a8e1ab2f191fdf97a2123970c8ea",
+        "exit": 71,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "perceus_rbtree.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 56729967,
+        "bytes": 12720,
+        "sha256": "3e88f92ea65170a3345572af82feb71cfe391b83f58a0cb0f05a9aafc894564f",
+        "exit": 86,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 56729967,
+        "bytes": 12720,
+        "sha256": "3e88f92ea65170a3345572af82feb71cfe391b83f58a0cb0f05a9aafc894564f",
+        "exit": 86,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "perceus_rbtree_ck.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 65400121,
+        "bytes": 12848,
+        "sha256": "5ca631f9e89131955f4e44cc50eb29ad6afc92785f421153548cddd9790e4cf2",
+        "exit": 23,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 65400121,
+        "bytes": 12848,
+        "sha256": "5ca631f9e89131955f4e44cc50eb29ad6afc92785f421153548cddd9790e4cf2",
+        "exit": 23,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "pmap_insert.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 61190282,
+        "bytes": 12784,
+        "sha256": "d53c017eca1b82e61e8822f4233d063a9693a72a7b7fc1244a2e7932f9b4c07a",
+        "exit": 11,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 61190282,
+        "bytes": 12784,
+        "sha256": "d53c017eca1b82e61e8822f4233d063a9693a72a7b7fc1244a2e7932f9b4c07a",
+        "exit": 11,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "pvec_with.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 59205267,
+        "bytes": 12736,
+        "sha256": "fb8a60a8f4afe8432ad3102c775c0a743d3b0ac5f06f468e3d17f21cca5ad428",
+        "exit": 83,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 59205267,
+        "bytes": 12736,
+        "sha256": "fb8a60a8f4afe8432ad3102c775c0a743d3b0ac5f06f468e3d17f21cca5ad428",
+        "exit": 83,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "record_update.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 109849111,
+        "bytes": 8496,
+        "sha256": "90a8f8cfa3f4d340c4ad25e81f4ee4716379f8e90e2ca1591ea7c38f5f6c4475",
+        "exit": 27,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 109849111,
+        "bytes": 8496,
+        "sha256": "90a8f8cfa3f4d340c4ad25e81f4ee4716379f8e90e2ca1591ea7c38f5f6c4475",
+        "exit": 27,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "sort_inplace.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 43386475,
+        "bytes": 8400,
+        "sha256": "3cc7c516744d761da6dd5bf68eadd14dd8fbf66fd7f1cba379dc7d761418aa65",
+        "exit": 91,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 43386475,
+        "bytes": 8400,
+        "sha256": "3cc7c516744d761da6dd5bf68eadd14dd8fbf66fd7f1cba379dc7d761418aa65",
+        "exit": 91,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "sort_ints.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 31333639,
+        "bytes": 8400,
+        "sha256": "0829fce645942f1cf30c58d934c069369e1363d3dbb783ded178c1afa8acf91d",
+        "exit": 44,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 31333639,
+        "bytes": 8400,
+        "sha256": "0829fce645942f1cf30c58d934c069369e1363d3dbb783ded178c1afa8acf91d",
+        "exit": 44,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "sort_strings.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 105209600,
+        "bytes": 12816,
+        "sha256": "e7bb700d99baed3a7a6ca2aab009d38496c9730b163bcb84f6544aef08867296",
+        "exit": 23,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 105209600,
+        "bytes": 12816,
+        "sha256": "e7bb700d99baed3a7a6ca2aab009d38496c9730b163bcb84f6544aef08867296",
+        "exit": 23,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "string_build.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 58089760,
+        "bytes": 8720,
+        "sha256": "dff3e6e89fbf1c81c960519301a4ecc4288f68fb2732fc5771c7b0cce38a6ac2",
+        "exit": 6,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 58089760,
+        "bytes": 8720,
+        "sha256": "dff3e6e89fbf1c81c960519301a4ecc4288f68fb2732fc5771c7b0cce38a6ac2",
+        "exit": 6,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "string_count_byte.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 135589294,
+        "bytes": 8432,
+        "sha256": "f6211e14363cc7b7a2ed10d51cc4f7baa68dac957889758e8d792ae077844066",
+        "exit": 40,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 135589294,
+        "bytes": 8432,
+        "sha256": "f6211e14363cc7b7a2ed10d51cc4f7baa68dac957889758e8d792ae077844066",
+        "exit": 40,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "string_find_byte.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 43567332,
+        "bytes": 8464,
+        "sha256": "5837773a778c5bdffb3166f70669a69ce9090c06ba436a4879c715a769d17b90",
+        "exit": 58,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 43567332,
+        "bytes": 8464,
+        "sha256": "5837773a778c5bdffb3166f70669a69ce9090c06ba436a4879c715a769d17b90",
+        "exit": 58,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "string_rfind_byte.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 43576238,
+        "bytes": 8496,
+        "sha256": "789a57b5771183a9d8fc9fa375908cdc78f25b953a11834d0e6465e0c0fd9f86",
+        "exit": 55,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 43576238,
+        "bytes": 8496,
+        "sha256": "789a57b5771183a9d8fc9fa375908cdc78f25b953a11834d0e6465e0c0fd9f86",
+        "exit": 55,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "string_scan.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 53025531,
+        "bytes": 8752,
+        "sha256": "e6cccdacf0692245a1b1b7a7d3d85c5e303058bb26810afbeec973c63e153201",
+        "exit": 58,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 53025531,
+        "bytes": 8752,
+        "sha256": "e6cccdacf0692245a1b1b7a7d3d85c5e303058bb26810afbeec973c63e153201",
+        "exit": 58,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "string_slice.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 38700038,
+        "bytes": 4384,
+        "sha256": "944fa294c0bfd2bea961f50341191d3b0afcff1f744ce3c623f392faf99e0f46",
+        "exit": 68,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 38700038,
+        "bytes": 4384,
+        "sha256": "944fa294c0bfd2bea961f50341191d3b0afcff1f744ce3c623f392faf99e0f46",
+        "exit": 68,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "struct_drop.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 307980547,
+        "bytes": 8784,
+        "sha256": "0da7bc6ea9e5f2ef20e2127f897a3a290b4f135ef4c03b501a6c279984c5f9cd",
+        "exit": 13,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 307980547,
+        "bytes": 8784,
+        "sha256": "0da7bc6ea9e5f2ef20e2127f897a3a290b4f135ef4c03b501a6c279984c5f9cd",
+        "exit": 13,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "tokenize.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 36960039,
+        "bytes": 4608,
+        "sha256": "8680910e1c0d3d3e79fe472f217c46094540efb58104b8c0343e587be1d986e1",
+        "exit": 63,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 36960039,
+        "bytes": 4608,
+        "sha256": "8680910e1c0d3d3e79fe472f217c46094540efb58104b8c0343e587be1d986e1",
+        "exit": 63,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "utf8_ingest_unchecked.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 2820881,
+        "bytes": 27824,
+        "sha256": "17ca72126190add41e9ee8bd9f71aeefaf4a787ab1f1b02de62b3d73bcc0ec4f",
+        "exit": 0,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 2820881,
+        "bytes": 27824,
+        "sha256": "17ca72126190add41e9ee8bd9f71aeefaf4a787ab1f1b02de62b3d73bcc0ec4f",
+        "exit": 0,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  },
+  {
+    "source": "utf8_ingest_validated.fern",
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 5903489,
+        "bytes": 31920,
+        "sha256": "c7cfd0ae468a6ca4273c9cdbe233523c059c1caa5c530e545977b8139e10f58c",
+        "exit": 0,
+        "stdout": ""
+      },
+      {
+        "tag": "new",
+        "instructions": 5903489,
+        "bytes": 31920,
+        "sha256": "c7cfd0ae468a6ca4273c9cdbe233523c059c1caa5c530e545977b8139e10f58c",
+        "exit": 0,
+        "stdout": ""
+      }
+    ],
+    "output_equal": true,
+    "change_percent": 0.0
+  }
+]
