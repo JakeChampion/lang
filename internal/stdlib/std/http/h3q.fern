@@ -187,10 +187,13 @@ function (c: Conn) __fatal(why: string): Conn {
 
 // __readable hands what a stream has to the session.
 function (c: Conn) __readable(id: i64): Conn {
-  let Ok(r) = c.quic.read(id) else {
-    return c;
-  };
-  return Conn { ...c, quic: r.0, session: c.session.on_stream(id, r.1, r.2) };
+  let cur: Conn = Conn { ...c, quic: c.quic.read_into(id) };
+  if (cur.quic.refused() != "") {
+    return cur;
+  }
+  let data: u8[] = cur.quic.read_data();
+  let fin: boolean = cur.quic.read_fin();
+  return Conn { ...cur, quic: cur.quic.read_taken(), session: cur.session.on_stream(id, data, fin) };
 }
 
 // __applied carries out what the session asked of the connection and
@@ -204,12 +207,7 @@ function (c: Conn) __applied(now: i64): Conn {
     if (acts.len() == 0 && evs.len() == 0) {
       return cur;
     }
-    cur = Conn { ...cur, session: cur.session.taken() };
-    let q: conn.Conn = cur.quic;
-    for a in acts {
-      q = __act(q, a, now);
-    }
-    cur = Conn { ...cur, quic: q };
+    cur = Conn { ...cur, session: cur.session.taken(), quic: __acts(cur.quic, acts, now) };
     for e in evs {
       cur = cur.__session_event(e);
     }
@@ -217,25 +215,26 @@ function (c: Conn) __applied(now: i64): Conn {
   return cur;
 }
 
+function __acts(q: conn.Conn, acts: h3.Action[], now: i64): conn.Conn {
+  let cur: conn.Conn = q;
+  for a in acts {
+    cur = __act(cur, a, now);
+  }
+  return cur;
+}
+
+// __act carries out one action; one the stream refuses leaves the
+// connection as it was.
 function __act(q: conn.Conn, a: h3.Action, now: i64): conn.Conn {
   match (a) {
     h3.Write(id, bytes, fin) => {
-      let Ok(w) = q.write(id, bytes, fin) else {
-        return q;
-      };
-      return w;
+      return q.written(id, bytes, fin);
     },
     h3.Abort(id, code) => {
-      let Ok(w) = q.reset_stream(id, code) else {
-        return q;
-      };
-      return w;
+      return q.stream_reset(id, code);
     },
     h3.Stop(id, code) => {
-      let Ok(w) = q.stop_sending(id, code) else {
-        return q;
-      };
-      return w;
+      return q.sending_stopped(id, code);
     },
     h3.CloseConnection(code, why) => {
       return q.close(code, why, true, now);

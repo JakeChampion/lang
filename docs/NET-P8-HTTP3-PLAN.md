@@ -216,6 +216,12 @@ Each is a bound with a test that crosses it.
       Huffman decoding goes four bits at a time through a state table.
       383 to 308 allocations per request; 118,646 to 145,400 responses
       per second.
+    - **The QUIC connection stepped in place (landed).** `h3q` applied
+      the session's writes through `conn.write`'s `Result`, copying the
+      connection and its stream table per action; it now uses the bare
+      steps (`written`, `read_into`). A fifth fewer instructions per
+      request with 64 requests in flight per connection
+      (`docs/benchmarks/net-h3-2026-10-17.md`).
     - **What remains per request**, by the x86-64 trace: packet receive
       and AEAD open, the HTTP/3 request path (each request record bound
       before it is rebuilt, a field section's partial copied), the AEAD

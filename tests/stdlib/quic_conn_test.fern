@@ -446,13 +446,17 @@ function echoed(e: Echo, s: conn.Conn): Echo {
   if (e.server_done) {
     return e;
   }
-  let Ok(r) = s.read(0 as i64) else {
+  let r: conn.Conn = s.read_into(0 as i64);
+  if (r.refused() != "") {
     return e;
-  };
-  let Ok(w) = r.0.write(0 as i64, r.1, r.2) else {
+  }
+  let data: u8[] = r.read_data();
+  let fin: boolean = r.read_fin();
+  let w: conn.Conn = r.read_taken().written(0 as i64, data, fin);
+  if (w.refused() != "") {
     return e;
-  };
-  return Echo { ...e, p: Pair { ...e.p, server: Some(w) }, server_done: r.2 };
+  }
+  return Echo { ...e, p: Pair { ...e.p, server: Some(w) }, server_done: fin };
 }
 
 // streamed opens the client's stream, writes `size` bytes and its end, and
@@ -516,6 +520,47 @@ function test_stream_echo_lossy(): test.TestOutcome {
     Ok(p0) => {
       let p: Pair = settle(p0, 12, 10000 * MS);
       return test.assert_eq(echo_report(streamed(Pair { ...p, lose_every: 7, reorder: true }, 20000, 2000)), "20000 back, same true, fin true, streams left 0");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+// The bare stream steps say in `refused` why one did nothing, and clear it
+// when the next does what was asked; the Result forms report the same.
+function test_bare_refusals(): test.TestOutcome {
+  let (cc, sc) = stream_configs();
+  match (start(cc, sc)) {
+    Ok(p0) => {
+      let p: Pair = settle(p0, 12, 10000 * MS);
+      let Ok(o) = p.client.open_stream(false) else {
+        return test.fail("no stream");
+      };
+      let id: i64 = o.1;
+      let none: i64 = 1000 as i64;
+      let seen: string[] = [];
+      let c: conn.Conn = o.0.written(none, [1u8], false);
+      seen = seen.append(c.refused());
+      c = c.read_into(none);
+      seen = seen.append(c.refused());
+      c = c.stream_reset(none, 1 as i64);
+      seen = seen.append(c.refused());
+      c = c.sending_stopped(none, 1 as i64);
+      seen = seen.append(c.refused());
+      c = c.written(id, [1u8, 2u8], true);
+      seen = seen.append("[" + c.refused() + "] " + c.buffered(id).to_string());
+      c = c.written(id, [3u8], false);
+      seen = seen.append(c.refused());
+      match (c.write(id, [3u8], false)) {
+        Ok(_) => {
+          seen = seen.append("written after the end");
+        },
+        Err(why) => {
+          seen = seen.append(why);
+        }
+      }
+      return test.assert_eq(seen.join("; "), "no stream to write to; no stream to read from; no stream to reset; no stream to stop; [] 2; the stream's sending half is closed; quic: the stream's sending half is closed");
     },
     Err(e) => {
       return test.fail(e);
@@ -818,6 +863,7 @@ function main(): i32 {
   r = r.it("the idle timeout", test_idle);
   r = r.it("a stream echoed through small windows", test_stream_echo);
   r = r.it("a stream echoed through loss and reordering", test_stream_echo_lossy);
+  r = r.it("the bare stream steps report refusals", test_bare_refusals);
   r = r.it("no streams allowed", test_no_streams);
   r = r.it("a peer key update is acknowledged under updated keys", test_peer_key_update_ack);
   r = r.it("a peer key update carries stream bytes", test_peer_key_update_stream);
