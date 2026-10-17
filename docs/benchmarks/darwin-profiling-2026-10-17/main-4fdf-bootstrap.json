@@ -1,0 +1,20 @@
+[
+  {
+    "stage": "stage1",
+    "seconds": 18.796481482000672,
+    "bytes": 12692816,
+    "sha256": "424ecebd14d2802cdab9bb8bd8d5ae794f266f099514c2afc5a6eff60f0867a6"
+  },
+  {
+    "stage": "stage2",
+    "seconds": 18.723690075996274,
+    "bytes": 12680528,
+    "sha256": "928251f041e38056ad57661b4a6cd47056f968d09da46424b0ad3e185e3dc0ac"
+  },
+  {
+    "stage": "stage3",
+    "seconds": 18.682587914998294,
+    "bytes": 12680528,
+    "sha256": "928251f041e38056ad57661b4a6cd47056f968d09da46424b0ad3e185e3dc0ac"
+  }
+]

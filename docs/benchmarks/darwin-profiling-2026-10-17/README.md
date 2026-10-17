@@ -57,3 +57,11 @@ suite passes in 90.456 seconds (`main-1d74-tests.log`). The macOS profiling
 test fails on a non-ARM64 Darwin runner so a mismatched runner cannot silently
 skip native validation. Updated bootstrap and size checks are in progress;
 the earlier fixed-point hashes above identify their original source versions.
+
+After integrating main `4fdf2e7ee` (source `2a4d6e40c`), including the
+owner's runtime retirement and zero-drop changes, the extended targeted suite
+passes in 95.228 seconds. Stages 2 and 3 are identical at 12,680,528 bytes,
+SHA-256 `928251f041e38056ad57661b4a6cd47056f968d09da46424b0ad3e185e3dc0ac`.
+All eleven strict size checks pass with complete coverage and unchanged
+baselines/tolerance (131.390 seconds). Raw evidence uses `main-4fdf-`.
+Both the profiling and new native-pollable macOS tests remain selected.
