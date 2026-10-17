@@ -24,12 +24,36 @@ function add_char(own xs: char[], x: char): char[] { return xs.append(x); }
   return xs.append(x).append(x + 1u64);
 }
 function add_text(own xs: string[], x: string): string[] { return xs.append(x); }
+enum ArrayBox { Have(u64[]) }
+function append_tuple(pair: (u64[], i32), x: u64): u64[] { return pair.0.append(x); }
+function append_box(box: ArrayBox, x: u64): u64[] {
+  match (box) { Have(xs) => { return xs.append(x); } }
+}
+@noinline function nested_cases(seed: u64): i32 {
+  let pair = (add_pair([], seed), 42);
+  let a = append_tuple(pair, seed + 2u64);
+  let b = append_tuple(pair, seed + 3u64);
+  if (pair.0.len() != 2 || a.len() != 3 || b.len() != 3 || a[2] != seed + 2u64) { return 11; }
+  let boxed = Have(add_pair([], seed));
+  let c = append_box(boxed, seed + 2u64);
+  let d = append_box(boxed, seed + 3u64);
+  match (boxed) { Have(xs) => { if (xs.len() != 2 || xs[1] != seed + 1u64) { return 12; } } }
+  if (c.len() != 3 || d.len() != 3 || c[2] != seed + 2u64 || d[2] != seed + 3u64) { return 13; }
+  return 0;
+}
 @noinline function exercise(): i32 {
   let first: u64[] = [1u64, 2u64];
   let old = first;
   let next = add_pair(first, 3u64);
   let last = add_pair(next, 5u64);
   if (old.len() != 2 || old[0] != 1u64 || last.len() != 6 || last[5] != 6u64) { return 1; }
+  let seed: u64 = args().len() as u64;
+  let nested = nested_cases(seed);
+  if (nested != 0) { return nested; }
+  let heap = add_pair([], seed);
+  let snapshot = heap;
+  let grown = add_pair(heap, seed + 2u64);
+  if (snapshot.len() != 2 || snapshot[1] != seed + 1u64 || grown.len() != 4) { return 10; }
   let bytes: u8[] = [1u8, 2u8, 3u8];
   let previous = bytes;
   let marked = mark_byte(bytes, 1, 9u8);
@@ -47,8 +71,9 @@ function add_text(own xs: string[], x: string): string[] { return xs.append(x); 
   let more = add_text(text, "c");
   if (saved_text.len() != 2 || saved_text[1] != "b" || more.len() != 3 || more[2] != "c") { return 5; }
   let packed = add_byte([], 255u8);
+  let old_packed = packed;
   let packed2 = add_byte(packed, 0u8);
-  if (packed2.len() != 2 || packed2[0] != 255u8 || packed2[1] != 0u8) { return 6; }
+  if (old_packed.len() != 1 || old_packed[0] != 255u8 || packed2.len() != 2 || packed2[0] != 255u8 || packed2[1] != 0u8) { return 6; }
   let floats = add_float([], 16777217.0 as f32);
   let floats2 = add_float(floats, 1.5 as f32);
   if (floats2[0] != (16777216.0 as f32) || floats2[1] != (1.5 as f32)) { return 7; }
@@ -69,7 +94,7 @@ function main(): i32 {
 
 func TestSelfHostInlineScalarArrayLeaf(t *testing.T) {
 	runSemanticProgram(t, "array-leaves", inlineArrayLeafProgram,
-		[]string{"add_pair", "mark_byte", "add_byte", "add_float", "add_bool", "add_char", "kept_pair", "add_text", "exercise"},
+		[]string{"add_pair", "mark_byte", "add_byte", "add_float", "add_bool", "add_char", "kept_pair", "add_text", "append_tuple", "append_box", "nested_cases", "exercise"},
 		semInlineWants("ok\n"), "kept_pair", "add_text")
 
 	h := selfHostCLIForHost(t)
@@ -101,6 +126,12 @@ func TestSelfHostInlineScalarArrayLeaf(t *testing.T) {
 		for _, name := range []string{"kept_pair", "add_text"} {
 			if !strings.Contains(body, call+name) {
 				t.Errorf("%s unexpectedly inlined %s", target, name)
+			}
+		}
+		nested := condBranchBody(t, string(asm), "nested_cases")
+		for _, name := range []string{"append_tuple", "append_box"} {
+			if strings.Contains(nested, call+name) {
+				t.Errorf("%s still calls tiny helper %s on a nested shared array", target, name)
 			}
 		}
 	}

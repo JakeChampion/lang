@@ -1,0 +1,12 @@
+import "std/crypto";
+import "std/string";
+function main(): i32 {
+  let av = args(); if (av.len() != 2) { return 1; }
+  let input = "a".repeat(4194304);
+  if (av[1] == "sha256") { print(crypto.sha256_hex(input)); return 0; }
+  if (av[1] == "sha512") { print(crypto.sha512_hex(input)); return 0; }
+  if (av[1] == "sm3") { print(crypto.sm3_hex(input)); return 0; }
+  if (av[1] == "sha1") { print(crypto.sha1_hex(input)); return 0; }
+  if (av[1] == "md5") { print(crypto.md5_hex(input)); return 0; }
+  return 2;
+}

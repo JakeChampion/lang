@@ -1,0 +1,38 @@
+[
+  {
+    "algorithm": "sha256",
+    "path": "forced software in an isolated stdlib copy",
+    "bytes": 4194304,
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 249109843,
+        "digest": "299285fc41a44cdb038b9fdaf494c76ca9d0c866672b2b266c1a0c17dda60a05"
+      },
+      {
+        "tag": "new",
+        "instructions": 249109573,
+        "digest": "299285fc41a44cdb038b9fdaf494c76ca9d0c866672b2b266c1a0c17dda60a05"
+      }
+    ],
+    "change_percent": -0.00010838592194861718
+  },
+  {
+    "algorithm": "sha1",
+    "path": "forced software in an isolated stdlib copy",
+    "bytes": 4194304,
+    "results": [
+      {
+        "tag": "base",
+        "instructions": 150410446,
+        "digest": "ec10fafa5de7a233c22a26d491f308876b41ae3f"
+      },
+      {
+        "tag": "new",
+        "instructions": 150410270,
+        "digest": "ec10fafa5de7a233c22a26d491f308876b41ae3f"
+      }
+    ],
+    "change_percent": -0.00011701314946988006
+  }
+]

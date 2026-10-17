@@ -1,0 +1,83 @@
+{
+  "date": "2026-10-17",
+  "target": "x86-64-linux",
+  "host_model": "AMD EPYC 9V74 80-Core Processor",
+  "profiler": "Valgrind Callgrind 3.24.0",
+  "stage0": "stage0-20261009-823f7b1",
+  "stage0_sha256": "9e94047df7120c0527840ee34235f4bbb88c309466c890d41e4d655955fbd80a",
+  "control_source_revision": "8b08453d8e560db5941f97bc62da7fb33898b69e",
+  "candidate_source_revision": "de9bf396db1c1a724371f78c4da81417ef33ac82",
+  "stdlib_tree": "7936436477386b6eb1bf0f52b74f47fc2b5cfbe0",
+  "frozen_compiler_and_benchmark_sources": "1a91fc49aae61ea1d0091e364ae2fe98ea47bd25",
+  "control_compiler": {
+    "bytes": 12278800,
+    "sha256": "097d955d04442da04d2af425237fa38711157ded8cc7d0c5bf948c4329dc8234"
+  },
+  "candidate_built_by_control": {
+    "bytes": 12278800,
+    "sha256": "0b40ff31921db1f58569e0b08a50d4fcf11316b360fb32bc977870e48bfb4d6b"
+  },
+  "candidate_self_built": {
+    "bytes": 12393520,
+    "sha256": "343550c5a184aba0d920ce7bddf5f2f86c6f595baa6e664617aefe33e08fc0af"
+  },
+  "compiler_profile": {
+    "input": "frozen compiler/checker.fern and stdlib",
+    "environment": {
+      "FERN_RC_CERTIFY": "1",
+      "FERN_RC_CERTIFY_MEMO": "0"
+    },
+    "control_instructions": 24629023821,
+    "candidate_same_producer_instructions": 24629044710,
+    "candidate_self_built_instructions": 24619161265,
+    "output_identical": true,
+    "output_bytes": 2612688,
+    "output_sha256": "93e19c6ff384dda4b9321a3cad84eb73b1c6ace664cc6b69485a7ac22aea9ffa"
+  },
+  "native_timing": {
+    "cpu": 0,
+    "rounds_per_process": 200,
+    "interleaved_pairs": 5,
+    "warmups_per_variant": 1,
+    "includes": "launch, file read, parse and tape checksum; both variants identical workload",
+    "other_local_heavy_tasks": "none"
+  },
+  "corpora": {
+    "twitter.json": {
+      "repository": "simdjson/simdjson",
+      "revision": "v3.10.1",
+      "path": "jsonexamples/twitter.json"
+    },
+    "canada.json": {
+      "repository": "simdjson/simdjson-data",
+      "revision": "4197c425e857f0ec38e89822fdd0bd9ea21f4daf",
+      "path": "jsonexamples/canada.json"
+    },
+    "citm_catalog.json": {
+      "repository": "simdjson/simdjson-data",
+      "revision": "4197c425e857f0ec38e89822fdd0bd9ea21f4daf",
+      "path": "jsonexamples/citm_catalog.json"
+    }
+  },
+  "software_digest_fixture": "An isolated copy of the unchanged stdlib, with the single __sha1_hw and __sha256_hw dispatch conditions replaced by true to force the existing software routines; no production stdlib edits.",
+  "retained_sources": {
+    "json-probe.fern.txt": {
+      "bytes": 501,
+      "sha256": "48703aaa878a4bb8956596ce5135038b2c451e8c29a00345f0a45ff55ee1531a"
+    },
+    "json-loop-probe.fern.txt": {
+      "bytes": 609,
+      "sha256": "5f2b0fd310ab13e984e278632c9d069b392528b055fb4b6b382cf24718dd61aa"
+    },
+    "crypto-probe.fern.txt": {
+      "bytes": 510,
+      "sha256": "b8d861f0b53203bf66444afae9212b0405973638a49c7f0349a0ffb99660ff50"
+    }
+  },
+  "notes": [
+    "Both JSON variants use the same parser API and emit equal tape checksums and allocation counts.",
+    "All 35 frozen benchmark binaries are byte-identical; the map_string instruction variation is from randomized per-process hashing in the same binary.",
+    "Native samples vary by several percent; Canada is inconclusive for runtime benefit.",
+    "Instruction profiles and native timings are separate runs; timings ran with no other local heavy tasks."
+  ]
+}
