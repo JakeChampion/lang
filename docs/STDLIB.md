@@ -1170,12 +1170,15 @@ let opened: u8[] = chacha20poly1305.open(key, nonce, sealed, aad)?;
 ### `std/crypto/aes_gcm`
 
 AES-128-GCM and AES-256-GCM, the AEAD of NIST SP 800-38D with a 12-byte
-nonce and a 16-byte tag (#9858). The cipher and GHASH are three builtins,
-`__aes_expand_key`, `__aes_ctr32` and `__ghash`: AES-NI and `pclmulqdq` on
-x86-64, `aese`/`aesmc` and `pmull` on arm64, and on wasm a bitsliced AES and
-a GHASH multiplied a bit at a time under masks, so nothing branches on or
-indexes memory with a key or data byte on any target. The tag compare has no
-early exit. Verified against FIPS-197 and the GCM specification's test cases
+nonce and a 16-byte tag (#9858). A key is expanded once by
+`__aes_expand_key`, and each message is one call of `__aes_gcm_seal` or
+`__aes_gcm_open`, which answer the data and the tag in one array (#12515).
+`__aes_ctr32` and `__ghash` remain as the separate CTR and GHASH steps, and
+`std/quic`'s header protection calls `__aes_ctr32`. The kernels use AES-NI and `pclmulqdq` on x86-64, and
+`aese`/`aesmc` and `pmull` on arm64, with GHASH folding four blocks per
+reduction. On wasm they are a bitsliced AES and a GHASH multiplied a bit at
+a time under masks. On no target does anything branch on or index memory
+with a key or data byte. The tag compare has no early exit. Verified against FIPS-197 and the GCM specification's test cases
 (`tests/stdlib/aes_gcm_test.fern`), and run under valgrind's memcheck with
 the key and plaintext marked secret by the constant-time gate
 (`docs/TEST-GATES.md`).

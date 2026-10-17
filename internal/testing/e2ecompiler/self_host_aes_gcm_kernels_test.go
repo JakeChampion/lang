@@ -10,8 +10,8 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// The three AES-GCM kernels std/crypto/aes_gcm is built on, each checked on
-// its own against known answers on every target: AES-NI and PCLMULQDQ on
+// The AES-GCM kernels std/crypto/aes_gcm is built on, each checked on its
+// own against known answers on every target: AES-NI and PCLMULQDQ on
 // x86-64, AESE and PMULL on arm64 (under qemu), the bitsliced AES and the
 // masked carry-less multiply on wasm, and the two interpreters' reference
 // spellings.
@@ -20,8 +20,9 @@ import (
 // C.1 and C.3, and the GHASH pin GCM's test case 2. The rest were computed
 // by Go's crypto/aes and a reference GHASH checked against crypto/cipher's
 // GCM: a counter whose low word wraps, partial last blocks, and lengths that
-// cross every unrolled stride. Each failure answers its own code; 0 means
-// every comparison matched.
+// cross every unrolled stride. The fused seal and open answer GCM's test
+// case 4 and, at every length to 80, what the separate kernels compose to.
+// Each failure answers its own code; 0 means every comparison matched.
 const aesGCMKernelsProg = `function hex(s: string): u8[] {
   let out: u8[] = __alloc_u8(s.len() / 2);
   let i: i32 = 0;
@@ -171,6 +172,90 @@ function hashes(): i32 {
   return 0;
 }
 
+function counter(nonce: [u8], last: u8): u8[] {
+  let b: u8[] = __alloc_u8(16);
+  let i: i32 = 0;
+  while (i < 12) {
+    b = b.with(i, nonce[i]);
+    i = i + 1;
+  }
+  return b.with(15, last);
+}
+
+// composed is GCM from the separate kernels: the data through CTR from J0 + 1
+// and the tag over the ciphertext, which is data itself when opening.
+function composed(rk: [u8], h: [u8], nonce: [u8], aad: [u8], data: [u8], seal: boolean): u8[] {
+  let out: u8[] = __aes_ctr32(rk, counter(nonce, 2 as u8), data);
+  let y: u8[] = __ghash(h, __alloc_u8(16), aad);
+  if (seal) {
+    y = __ghash(h, y, out);
+  } else {
+    y = __ghash(h, y, data);
+  }
+  let lens: u8[] = __alloc_u8(16).with(6, (aad.len() >> 5) as u8).with(7, (aad.len() << 3 & 255) as u8)
+    .with(14, (data.len() >> 5) as u8).with(15, (data.len() << 3 & 255) as u8);
+  y = __ghash(h, y, lens);
+  let tag: u8[] = __aes_ctr32(rk, counter(nonce, 1 as u8), y);
+  let all: u8[] = __alloc_u8(out.len() + 16);
+  let i: i32 = 0;
+  while (i < all.len()) {
+    if (i < out.len()) {
+      all = all.with(i, out[i]);
+    } else {
+      all = all.with(i, tag[i - out.len()]);
+    }
+    i = i + 1;
+  }
+  return all;
+}
+
+function fused(): i32 {
+  let rk: u8[] = __aes_expand_key(hex("feffe9928665731c6d6a8f9467308308"));
+  let h: u8[] = __aes_ctr32(rk, __alloc_u8(16), __alloc_u8(16));
+  let nonce: u8[] = hex("cafebabefacedbaddecaf888");
+  let aad: u8[] = hex("feedfacedeadbeeffeedfacedeadbeefabaddad2");
+  let pt: u8[] = hex("` + gcmCase4PT + `");
+  let sealed: u8[] = __aes_gcm_seal(rk, h, nonce, aad, pt);
+  if (!same(sealed, hex("` + gcmCase4Sealed + `"))) {
+    return 40;
+  }
+  let opened: u8[] = __aes_gcm_open(rk, h, nonce, aad, sealed[0:60]);
+  if (!same(opened[0:60], pt) || !same(opened[60:76], sealed[60:76])) {
+    return 41;
+  }
+  // Every length to 80 under both key sizes, the aad's length varying too
+  // and the nonce a string's bytes.
+  let r256: u8[] = __aes_expand_key(pattern(32, 7, 3));
+  let h256: u8[] = __aes_ctr32(r256, __alloc_u8(16), __alloc_u8(16));
+  let n: i32 = 0;
+  while (n <= 80) {
+    let data: u8[] = pattern(n, 3, 2);
+    let a: u8[] = pattern(n * 7 % 37, 5, 1);
+    let iv: [u8] = "\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c".as_bytes();
+    if (!same(__aes_gcm_seal(rk, h, iv, a, data), composed(rk, h, iv, a, data, true))) {
+      return 42;
+    }
+    if (!same(__aes_gcm_open(rk, h, iv, a, data), composed(rk, h, iv, a, data, false))) {
+      return 43;
+    }
+    if (!same(__aes_gcm_seal(r256, h256, iv, a, data), composed(r256, h256, iv, a, data, true))) {
+      return 44;
+    }
+    if (!same(__aes_gcm_open(r256, h256, iv, a, data), composed(r256, h256, iv, a, data, false))) {
+      return 45;
+    }
+    n = n + 1;
+  }
+  // A short key schedule or h, or a nonce that is not 12 bytes, answers empty.
+  if (__aes_gcm_seal(rk[0:175], h, nonce, aad, pt).len() != 0 || __aes_gcm_seal(rk, h[0:15], nonce, aad, pt).len() != 0) {
+    return 46;
+  }
+  if (__aes_gcm_open(rk, h, nonce[0:11], aad, pt).len() != 0 || __aes_gcm_open(rk, h, pattern(13, 1, 0), aad, pt).len() != 0) {
+    return 47;
+  }
+  return 0;
+}
+
 function main(): i32 {
   let r: i32 = schedules();
   if (r == 0) {
@@ -182,11 +267,16 @@ function main(): i32 {
   if (r == 0) {
     r = hashes();
   }
+  if (r == 0) {
+    r = fused();
+  }
   return r;
 }
 `
 
 const (
+	gcmCase4PT       = "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39"
+	gcmCase4Sealed   = "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e0915bc94fbc3221a5db94fae95ae7121a47"
 	aesKATCtr128Wrap = "5261f7439cb239734ad239c63d4ed9a38c514451afce7c8b7a847f7e8e38ec52ceacb4c7ff57d15ca56b37375774a824bc59"
 	aesKATCtr128Long = "5922f813dfd110fade6b86b5239d7b3efed6fc1ffd3bfd19816366e23957aa2c1e1b972a9663e913c333111c917ef4c9a8ae6a32805e52da1b6fb69a5b3ae0aca7367f5c57691c8cad91b5d83a43739d9b02de52c045762a1853d844f1d36666c16793d96a129bc98fb30bdedf5008fd6aa1f0aef3905e6c9d690374d630ec09ecb0beccd634057885bcb40a82fe779696c44ee629a9c3e617e8a23b22ab483722f5e4648e131f9ede3a5c22b5edf44ff57c45db32c54425105e49e5c297b11c29c62cd3fa07525f4a9bd9655faf3bbdab3c8323279f9a9643f8e234a34452a7cbcf2fc415f584eb3a741817ac063bf17b5c7f5f02a89f54e1bdbde3963b7461f9714476506125f07e7a9aa76c4e7a8f702de5437ec8c518c8c5398019107165754ec2ae207c1d881f1a16bd"
 	aesKATCtr256Long = "ff56feaa6d804759f03c320d54b0ddaa1f861681450c6b175d0bf7f08913563e8fb24b5317c376b527ea56bf644e1890139ed3b31ffbce0eb48c10396bf2f33a08d1895094b7388d0802f7224bc2a24fe30b0fe6d514b72e813b9e0d8462263082317bc6785a570d1c00a1756f44e658e6cac967bf2e9e5f5f20d582d96dd521292abc33779b235d7513e4a49de50a8ea380f3a8b4495523d698980ae697ed71c112dd0734e3b85c507624994d088c42dbc7050fe998396518ace8f6905be9bf659b3773856472d6586f3b40a67aeea10d7d98c8d952c350dd6e634af5ee02b34f79627149f82ed8c1ec842f77036162afbe7cda134c625858dbde52daf1e5f1147b3c5228a42b20281b0640978addab460fc9f29045f9aeacd21d9ae1554957c78b383970297a22e231414e"

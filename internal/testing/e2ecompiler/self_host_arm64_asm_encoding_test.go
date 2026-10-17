@@ -384,6 +384,10 @@ _start:
     orr v23.8b, v9.8b, v28.8b
     orn v23.16b, v9.16b, v28.16b
     eor v23.16b, v9.16b, v28.16b
+    // mov between vector registers is the orr alias; the scalar mov
+    // encoder once took these and wrote a general-register move.
+    mov v21.16b, v0.16b
+    mov v3.8b, v28.8b
     cmeq v23.4s, v9.4s, #0
     cmge v23.16b, v9.16b, #0
     cmle v23.2d, v9.2d, #0
@@ -611,6 +615,19 @@ func TestSelfHostArm64AsmUnresolvedBranchRefused(t *testing.T) {
 			t.Errorf("refusals = %v, want exactly [label:1#none] — a `1b` before any `1:` must not silently resolve to the `1:` that follows", got)
 		}
 	})
+}
+
+// TestSelfHostArm64AsmVectorMovLaneRefused pins that a vector mov the
+// assembler has no encoding for is refused: the register-to-register form is
+// the orr alias, and the lane forms (ins and umov) used to fall to the scalar
+// mov encoder, which read no vector register and wrote a wrong instruction.
+func TestSelfHostArm64AsmVectorMovLaneRefused(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	bin := buildAsmBenchDriver(t, gcc)
+	got := refusalsFor(t, bin, runner, ".text\n_start:\n    mov v0.s[1], w0\n    ret\n")
+	if len(got) != 1 || got[0] != "mov:vec" {
+		t.Errorf("refusals = %v, want exactly [mov:vec]", got)
+	}
 }
 
 // TestSelfHostArm64AsmNumericLocalLabels pins GAS numeric local labels — `1:`

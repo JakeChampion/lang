@@ -1,5 +1,5 @@
 // aesref — the interpreter's AES-GCM kernels, `__aes_expand_key`,
-// `__aes_ctr32` and `__ghash`, spelled from their definitions: FIPS-197's key
+// `__aes_ctr32`, `__ghash`, `__aes_gcm_seal` and `__aes_gcm_open`, spelled from their definitions: FIPS-197's key
 // schedule and cipher over an S-box computed from the field inverse, and SP
 // 800-38D's bit-at-a-time GHASH. The compiled backends answer to these.
 // Nothing here is constant time; the interpreter is not under the gate.
@@ -272,4 +272,40 @@ pub function ghash(h: u8[], y: u8[], data: u8[]): u8[] {
     at = at + 16;
   }
   return acc;
+}
+
+// gcm is `__aes_gcm_seal` (`seal`) or `__aes_gcm_open` over data: SP
+// 800-38D's GCM with a 96-bit nonce, answering the data run through CTR from
+// J0 + 1 followed by the tag over the ciphertext, data when opening. A short
+// key schedule or h, or a nonce that is not 12 bytes, answers empty.
+pub function gcm(rk: u8[], h: u8[], nonce: u8[], aad: u8[], data: u8[], seal: boolean): u8[] {
+  if (rk.len() < 176 || h.len() < 16 || nonce.len() != 12) {
+    return __alloc_u8(0);
+  }
+  let j0: u8[] = block_at(nonce, 0, 12).with(15, 1 as u8);
+  let out: u8[] = ctr32(rk, inc32(j0), data);
+  let ct: u8[] = if (seal) { out } else { data };
+  let y: u8[] = ghash(h, ghash(h, __alloc_u8(16), aad), ct);
+  let lens: u8[] = __alloc_u8(16);
+  let abits: i64 = aad.len() as i64 * 8;
+  let cbits: i64 = ct.len() as i64 * 8;
+  let k: i32 = 0;
+  while (k < 8) {
+    lens = lens.with(7 - k, (abits >> (8 * k) as i64 & 255) as u8);
+    lens = lens.with(15 - k, (cbits >> (8 * k) as i64 & 255) as u8);
+    k = k + 1;
+  }
+  let tag: u8[] = ctr32(rk, j0, ghash(h, y, lens));
+  let all: u8[] = __alloc_u8(out.len() + 16);
+  k = 0;
+  while (k < out.len()) {
+    all = all.with(k, out[k]);
+    k = k + 1;
+  }
+  k = 0;
+  while (k < 16) {
+    all = all.with(out.len() + k, tag[k]);
+    k = k + 1;
+  }
+  return all;
 }
