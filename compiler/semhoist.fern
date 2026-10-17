@@ -1,0 +1,157 @@
+// A read of an array placed after the update that consumes it moves ahead of
+// the update. `xs.with(i, a).with(j, xs[j] + b)` reads `xs` after the first
+// `with` took it, which keeps `xs` alive across that update and makes it copy
+// every element; read first, the update finds `xs` unique and writes in
+// place. A read moves with the arithmetic that computes its index, and only
+// past instructions whose order cannot show: values and operators that cannot
+// trap, and array reads and updates, whose one trap is the same bounds abort
+// whichever comes first. A call, or anything else with an effect or a trap of
+// its own, stops the search.
+import "./ssa";
+import "./ssasem";
+import "./util";
+
+pub struct Hoisted { f: ssasem.Func, moved: i32 }
+
+pub function hoist(f: ssasem.Func): Hoisted {
+  let g: ssa.SFunc = f.graph;
+  let moved: i32 = 0;
+  let blocks: ssa.SBlock[] = [];
+  for b in g.blocks {
+    let (insts, n) = hoist_block(b.insts);
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
+    moved = moved + n;
+  }
+  if (moved == 0) {
+    return Hoisted { f: f, moved: 0 };
+  }
+  return Hoisted { f: ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks } }, moved: moved };
+}
+
+// hoist_block moves, for each update in turn, the later reads of the array it
+// consumes ahead of it.
+function hoist_block(insts: ssa.SInst[]): (ssa.SInst[], i32) {
+  let moved: i32 = 0;
+  let p: i32 = 0;
+  while (p < insts.len()) {
+    let v: i32 = consumed(insts[p]);
+    let lifted: i32[] = [];
+    if (v >= 0) {
+      lifted = first_read(insts, p, v);
+    }
+    if (lifted.len() > 0) {
+      insts = move_before(insts, p, lifted);
+      moved = moved + 1;
+      p = p + lifted.len();
+    } else {
+      p = p + 1;
+    }
+  }
+  return (insts, moved);
+}
+
+// consumed is the array an update takes, or -1 for any other instruction.
+function consumed(ins: ssa.SInst): i32 {
+  if ((ins.kind_tag == ssasem.with() || ins.kind_tag == ssasem.append()) && ins.args.len() > 0) {
+    return ins.args[0];
+  }
+  return 0 - 1;
+}
+
+// first_read is the positions to move ahead of the update at `p`: the first
+// read of `v` after it and the instructions between that compute its
+// operands, in order; empty when there is no such read or it cannot move.
+function first_read(insts: ssa.SInst[], p: i32, v: i32): i32[] {
+  let q: i32 = p + 1;
+  while (q < insts.len() && passable(insts[q])) {
+    if (reads(insts[q], v)) {
+      return feeders(insts, p, q);
+    }
+    q = q + 1;
+  }
+  return [];
+}
+
+// reads reports an instruction that reads the array `v` without taking it.
+function reads(ins: ssa.SInst, v: i32): boolean {
+  let k: i32 = ins.kind_tag;
+  return (k == ssasem.array_get() || k == ssasem.length()) && ins.args.len() > 0 && ins.args[0] == v;
+}
+
+// passable reports an instruction a read may move ahead of: one whose order
+// against the read cannot show.
+function passable(ins: ssa.SInst): boolean {
+  let k: i32 = ins.kind_tag;
+  return ssasem.reorderable(ins) || k == ssasem.array_get() || k == ssasem.with() || k == ssasem.append();
+}
+
+// feeders is the read at `q` and, transitively, the instructions after `p`
+// that define its operands, each of which has to be an operator that cannot
+// trap; empty when an operand comes from the update itself or from anything
+// else after it.
+function feeders(insts: ssa.SInst[], p: i32, q: i32): i32[] {
+  let keep: boolean[] = [];
+  let i: i32 = 0;
+  while (i < insts.len()) {
+    keep = keep.append(i == q);
+    i = i + 1;
+  }
+  let at: i32 = q;
+  while (at > p) {
+    if (keep[at]) {
+      for a in insts[at].args {
+        let d: i32 = defined_at(insts, p, at, a);
+        if (d == p || d > p && !ssasem.reorderable(insts[d])) {
+          return [];
+        }
+        if (d > p) {
+          keep = keep.with(d, true);
+        }
+      }
+    }
+    at = at - 1;
+  }
+  let out: i32[] = [];
+  i = p + 1;
+  while (i <= q) {
+    if (keep[i]) {
+      out = out.append(i);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// defined_at is the position in [p, before) of the instruction whose result
+// is `v`, or -1 when `v` is defined elsewhere.
+function defined_at(insts: ssa.SInst[], p: i32, before: i32, v: i32): i32 {
+  let i: i32 = p;
+  while (i < before) {
+    if (insts[i].result == v) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// move_before puts the instructions at `lifted`, in their order, just ahead
+// of the one at `p`.
+function move_before(insts: ssa.SInst[], p: i32, lifted: i32[]): ssa.SInst[] {
+  let out: ssa.SInst[] = [];
+  let i: i32 = 0;
+  while (i < p) {
+    out = out.append(insts[i]);
+    i = i + 1;
+  }
+  for at in lifted {
+    out = out.append(insts[at]);
+  }
+  while (i < insts.len()) {
+    if (util.index_of_i32(lifted, i) < 0) {
+      out = out.append(insts[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}

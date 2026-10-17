@@ -21122,8 +21122,10 @@ function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs:
 // builtins in the same FuncSigs table it reads user functions from, so
 // `__alloc_u8(n)` is derived there; here they carry no declaration to derive it
 // from, so the ones that pass the test (pointer result, no pointer parameter)
-// are listed. TestSelfHostFreshOwnedBuiltinsMatchChecker recomputes the list
-// from native's table and fails when the two drift.
+// are listed, and the byte kernels native's freshResultBuiltins names, which
+// are lent views and answer an array they built.
+// TestSelfHostFreshOwnedBuiltinsMatchChecker recomputes the list from
+// native's table and fails when the two drift.
 function ow_fresh_builtins(): string[] {
   let out: string[] = [
     "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_u8", "__task_wait", "args", "buf_take", "buf_take_bytes", "cell_new", "clock_set", "environ", "getcwd", "getgroups",
@@ -21132,6 +21134,7 @@ function ow_fresh_builtins(): string[] {
     "signal_send", "set_extproc", "set_process_group", "set_window_size",
     "stderr", "stdin", "stdout", "target_arch", "target_os",
     "tcp_recv", "termios_get", "uname_field", "window_size",
+    "__bytes_owned", "__bytes_range", "__aes_expand_key", "__aes_ctr32", "__ghash", "__sha256_hw_blocks", "__sha1_hw_blocks",
   ];
   // `termios_set` is deliberately absent beside its read half: it TAKES the
   // word array, and a pointer parameter is what the rule excludes. `chroot`

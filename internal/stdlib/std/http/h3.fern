@@ -999,19 +999,9 @@ function __min(a: i64, b: i64): i64 {
 // __slice_range is a fresh copy of `src[from:to]`, filled by the byte
 // builder's copy rather than a byte at a time.
 function __slice_range(src: u8[], from: i32, to: i32): u8[] {
-  let b: usize = buf_new(to - from);
-  buf_push_bytes_range(b, src, from, to);
-  let out: u8[] = buf_take_bytes(b);
-  buf_free(b);
-  return out;
+  return __bytes_range(src, from, to);
 }
 
 function __copy(b: [u8]): u8[] {
-  let out: u8[] = __alloc_u8(b.len());
-  let i: i32 = 0;
-  while (i < b.len()) {
-    out = out.with(i, b[i]);
-    i = i + 1;
-  }
-  return out;
+  return __bytes_owned(b);
 }

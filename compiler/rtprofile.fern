@@ -1,0 +1,94 @@
+// Self-contained native profiling. The signal path uses only the raw-memory
+// floor; file I/O and symbolization run after sampling stops (#5547).
+import "./util";
+import "std/string";
+
+pub function mode(): i32 {
+  match (env("FERN_PROFILE")) {
+    Some(v) => {
+      if (v == "cpu") {
+        return 1;
+      }
+      if (v == "alloc") {
+        return 2;
+      }
+      if (v == "cpu-pprof") {
+        return 3;
+      }
+      if (v == "alloc-pprof") {
+        return 4;
+      }
+      if (v != "" && v != "0") {
+        return 0 - 1;
+      }
+    },
+    None => {}
+  }
+  return 0;
+}
+
+pub function allocation(mode: i32): boolean {
+  return mode == 2 || mode == 4;
+}
+
+function output(): string {
+  match (env("FERN_PROFILE_FILE")) {
+    Some(p) => {
+      return p;
+    },
+    None => {
+      return "";
+    }
+  }
+}
+
+function file_error(mode: i32): string {
+  if (mode <= 2) {
+    return "";
+  }
+  let p: string = output();
+  if (p.len() == 0 || p.len() >= 4096 || p.contains("\x00")) {
+    return "fern: pprof profiling requires FERN_PROFILE_FILE with a nonempty path shorter than 4096 bytes and no NUL";
+  }
+  return "";
+}
+
+// Keep command-line policy separate from the target emitters.
+pub function error(mode: i32, target: string, shared: boolean): string {
+  if (mode < 0) {
+    return "fern: FERN_PROFILE must be cpu, alloc, cpu-pprof, alloc-pprof, 0 or empty";
+  }
+  if (mode > 0 && (target != "x86-64-linux" && target != "arm64-linux" || shared)) {
+    return "fern: profiling requires a native Linux executable";
+  }
+  return file_error(mode);
+}
+
+pub function symbols(requested: boolean, mode: i32): boolean {
+  return requested || mode > 0;
+}
+
+function nr(target: string, x86: i32, arm: i32): string {
+  if (target == "arm64-linux") {
+    return util.i32_to_string(arm);
+  }
+  return util.i32_to_string(x86);
+}
+
+pub function source(target: string, mode: i32): string {
+  let s: string = "function __fern_profile_write_fd(fd: i64, p: usize, n: usize): void {\n  while (n > 0) {\n    let w: i64 = __syscall3(SYS_WRITE, fd, p as i64, n as i64);\n    if (w == (0 - 4) as i64) { continue; }\n    if (w <= (0 as i64)) { return; }\n    p = p + (w as usize); n = n - (w as usize);\n  }\n}\nfunction __fern_profile_write(p: usize, n: usize): void {\n  __fern_profile_write_fd(2, p, n);\n}\nfunction __fern_profile_number(buf: usize, n: usize): void {\n  let i: i32 = 31;\n  while (true) {\n    __raw_store8(buf, i, ((n % 10) as i32) + 48);\n    n = n / 10;\n    if (n == 0) { break; }\n    i = i - 1;\n  }\n  __fern_profile_write(buf + i, (32 - i) as usize);\n}\nfunction __fern_profile_sample(pc: usize, fp: usize, sp: usize, base: usize, weight: usize): i32 {\n  if (__load_i64(base + 24) == (0 as i64)) { return 0; }\n  let n: usize = __load_i64(base) as usize;\n  let seen: usize = (__load_i64(base + 152) as usize) + 1;\n  __raw_store_ptr(base + 152, 0, seen);\n  let slot: usize = n;\n  let replaced: i32 = 0;\n  if (n >= 8192) {\n    // Algorithm R reservoir selection. SplitMix64 mixes the event ordinal;\n    // storage remains bounded while late execution can replace earlier stacks.\n    let x: usize = seen + (11400714819323198485u64 as usize);\n    x = (x ^ (x >> 30)) * (13787848793156543929u64 as usize);\n    x = (x ^ (x >> 27)) * (10723151780598845931u64 as usize);\n    x = x ^ (x >> 31);\n    slot = x % seen;\n    if (slot >= 8192) { return 1; }\n    replaced = 1;\n  }\n  let row: usize = base + 160 + slot * 528;\n  __raw_store_ptr(row + 8, 0, weight);\n  __raw_store_ptr(row + 16, 0, pc & (281474976710655u64 as usize));\n  let depth: usize = 1;\n  let hi: usize = __load_i64(base + 16) as usize;\n  while (depth < 64 && fp >= sp && fp <= hi && (fp & 7) == 0) {\n    // The static native image lies below 2^48; PAC/top-byte tags are not code-address bits.\n    let ret: usize = (__load_i64(fp + 8) as usize) & (281474976710655u64 as usize);\n    if (ret < 65536) { break; }\n    __raw_store_ptr(row + 16 + depth * 8, 0, ret - 1);\n    depth = depth + 1;\n    let next: usize = __load_i64(fp) as usize;\n    if (next <= fp) { break; }\n    fp = next;\n  }\n  __raw_store_ptr(row, 0, depth);\n  if (replaced == 0) { __raw_store_ptr(base, 0, n + 1); }\n  return replaced;\n}\nfunction __fern_profile_start(base: usize, hi: usize, act: usize, timer: usize): void {\n  __raw_store_ptr(base + 128, 0, __syscall3(SYS_GETPID, 0, 0, 0) as usize);\n  __raw_store_ptr(base + 16, 0, hi);\n  __raw_store_ptr(base + 24, 0, 1);\n  __raw_store_ptr(base + 136, 0, PROFILE_MODE);\n  if (PROFILE_MODE != 1 && PROFILE_MODE != 3) { return; }\n  let a: i64 = __syscall4(SYS_SIGACTION, 27, act as i64, 0, 8);\n  let b: i64 = 0 - 1;\n  if (a >= (0 as i64)) {\n    __raw_store_ptr(base + 48, 0, 67108864);\n    let unblocked: i64 = __syscall4(SYS_SIGMASK, 1, (base + 48) as i64, 0, 8);\n    if (unblocked < (0 as i64)) { b = unblocked; }\n    else { b = __syscall3(SYS_SETITIMER, 2, timer as i64, 0); }\n  }\n  if (a < (0 as i64) || b < (0 as i64)) {\n    __raw_store_ptr(base + 24, 0, 0);\n    __raw_store_ptr(base + 32, 0, 2);\n    let msg: string = \"fern profile: cannot install CPU sampler\\n\";\n    __fern_profile_write(__raw_data(msg), msg.len() as usize);\n    __syscall3(SYS_EXIT, 2, 0, 0);\n  }\n}\nfunction __fern_profile_name(pc: usize, im: usize, size: usize): usize {\n  if (im == 0 || size < 64) { return 0; }\n  let tab: usize = __load_i64(im + 40) as usize;\n  let ents: usize = __load_u8(im + 58) as usize;\n  ents = ents + ((__load_u8(im + 59) as usize) << 8);\n  let n: usize = __load_u8(im + 60) as usize;\n  n = n + ((__load_u8(im + 61) as usize) << 8);\n  if (ents < 64 || tab > size || n > (size - tab) / ents) { return 0; }\n  let k: usize = 0;\n  while (k < n) {\n    let sh: usize = im + tab + k * ents;\n    if (__load_i32(sh + 4) == 2) {\n      let off: usize = __load_i64(sh + 24) as usize;\n      let bytes: usize = __load_i64(sh + 32) as usize;\n      let link: usize = (__load_i32(sh + 40) as u32) as usize;\n      let step: usize = __load_i64(sh + 56) as usize;\n      if (off <= size && bytes <= size - off && step >= 24 && link < n) {\n        let st: usize = im + tab + link * ents;\n        let names: usize = __load_i64(st + 24) as usize;\n        let names_size: usize = __load_i64(st + 32) as usize;\n        let i: usize = 0;\n        while (i + step <= bytes && names <= size && names_size <= size - names) {\n          let sym: usize = im + off + i;\n          let addr: usize = __load_i64(sym + 8) as usize;\n          let len: usize = __load_i64(sym + 16) as usize;\n          let name: usize = (__load_i32(sym) as u32) as usize;\n          if ((__load_u8(sym + 4) & 15) == 2 && pc >= addr && pc - addr < len && name < names_size) {\n            let p: usize = im + names + name;\n            let end: usize = im + names + names_size;\n            let q: usize = p;\n            while (q < end && __load_u8(q) != 0) { q = q + 1; }\n            if (q < end) { return p; }\n          }\n          i = i + step;\n        }\n      }\n    }\n    k = k + 1;\n  }\n  return 0;\n}\nfunction __fern_profile_symbol(pc: usize, im: usize, size: usize): usize {\n  let name: usize = __fern_profile_name(pc, im, size);\n  if (name == 0) { return 0; }\n  let q: usize = name;\n  while (__load_u8(q) != 0) { q = q + 1; }\n  __fern_profile_write(name, q - name);\n  return 1;\n}\nfunction __fern_profile_hex_buf(buf: usize, pc: usize): void {\n  let digits: string = \"0123456789abcdef\";\n  let i: i32 = 17;\n  while (i >= 2) {\n    __raw_store8(buf, i, __load_u8(__raw_data(digits) + (pc & 15)));\n    pc = pc >> 4; i = i - 1;\n  }\n  __raw_store8(buf, 0, 48); __raw_store8(buf, 1, 120);\n}\nfunction __fern_profile_hex(buf: usize, pc: usize): void {\n  __fern_profile_hex_buf(buf, pc);\n  __fern_profile_write(buf, 18);\n}\nfunction __fern_profile_finish(base: usize): void {\n  let mask: usize = 4096;\n  if (PROFILE_MODE == 1 || PROFILE_MODE == 3) {\n    __syscall3(SYS_SETITIMER, 2, (base + 96) as i64, 0);\n    mask = 67112960;\n  }\n  __raw_store_ptr(base + 48, 0, mask);\n  __syscall4(SYS_SIGMASK, 0, (base + 48) as i64, 0, 8);\n  __raw_store_ptr(base + 24, 0, 0);\n  let path: string = \"/proc/self/exe\";\n  let j: i32 = 0;\n  while (j < path.len()) { __raw_store8(base + 48, j, __load_u8(__raw_data(path) + j)); j = j + 1; }\n  __raw_store8(base + 48, j, 0);\n  let fd: i64 = __syscall4(SYS_OPENAT, 0 - 100, (base + 48) as i64, 0, 0);\n  let size: usize = 0;\n  let im: usize = 0;\n  if (fd >= (0 as i64)) {\n    let len: i64 = __syscall3(SYS_LSEEK, fd, 0, 2);\n    if (len > (0 as i64)) {\n      let mapped: i64 = __syscall6(SYS_MMAP, 0, len, 1, 2, fd, 0);\n      if (mapped > (0 as i64)) { im = mapped as usize; size = len as usize; }\n    }\n    __syscall3(SYS_CLOSE, fd, 0, 0);\n  }\n  if (PROFILE_MODE > 2) {\n    __fern_profile_pprof(base, im, size);\n  } else {\n  let header: string = \"# fern CPU profile samples=\";\n  if (PROFILE_MODE == 2) { header = \"# fern allocation profile samples=\"; }\n  __fern_profile_write(__raw_data(header), header.len() as usize);\n  let count: usize = __load_i64(base) as usize;\n  __fern_profile_number(base + 64, count);\n  let lost: string = \" dropped=\";\n  __fern_profile_write(__raw_data(lost), lost.len() as usize);\n  __fern_profile_number(base + 64, __load_i64(base + 8) as usize);\n  if (PROFILE_MODE == 2) {\n    let units: string = \" interval=64 weight=rounded-bytes\";\n    __fern_profile_write(__raw_data(units), units.len() as usize);\n  }\n  let nl: string = \"\\n\";\n  __fern_profile_write(__raw_data(nl), 1);\n  let i: usize = 0;\n  while (i < count) {\n    let row: usize = base + 160 + i * 528;\n    let depth: usize = __load_i64(row) as usize;\n    let k: usize = depth;\n    while (k > 0) {\n      k = k - 1;\n      let pc: usize = __load_i64(row + 16 + k * 8) as usize;\n      if (__fern_profile_symbol(pc, im, size) == 0) { __fern_profile_hex(base + 64, pc); }\n      if (k > 0) { let semi: string = \";\"; __fern_profile_write(__raw_data(semi), 1); }\n    }\n    let space: string = \" \"; __fern_profile_write(__raw_data(space), 1);\n    __fern_profile_number(base + 64, __load_i64(row + 8) as usize);\n    __fern_profile_write(__raw_data(nl), 1);\n    i = i + 1;\n  }\n  }\n  if (im != 0) { __syscall3(SYS_MUNMAP, im as i64, size as i64, 0); }\n}\n\n// Buffered, allocation-free protobuf output. Only the exit-time writer calls it.\nfunction __fern_pp_flush(out: usize): void {\n  let n: usize = __load_i64(out) as usize;\n  if (n > 0) { __fern_profile_write_fd(__load_i64(out + 8), out + 16, n); __raw_store_ptr(out, 0, 0); }\n}\nfunction __fern_pp_byte(out: usize, b: i32): void {\n  let n: usize = __load_i64(out) as usize;\n  __raw_store8(out + 16, n as i32, b);\n  __raw_store_ptr(out, 0, n + 1);\n  if (n + 1 == 4096) { __fern_pp_flush(out); }\n}\nfunction __fern_pp_uint(out: usize, n: usize): void {\n  while (n >= 128) { __fern_pp_byte(out, ((n & 127) | 128) as i32); n = n >> 7; }\n  __fern_pp_byte(out, n as i32);\n}\nfunction __fern_pp_message(out: usize, tag: usize, buf: usize, n: usize): void {\n  __fern_pp_uint(out, tag); __fern_pp_uint(out, n);\n  let i: usize = 0;\n  while (i < n) { __fern_pp_byte(out, __load_u8(buf + i)); i = i + 1; }\n}\nfunction __fern_pp_uint_at(buf: usize, at: usize, n: usize): usize {\n  while (n >= 128) {\n    __raw_store8(buf + at, 0, ((n & 127) | 128) as i32);\n    at = at + 1; n = n >> 7;\n  }\n  __raw_store8(buf + at, 0, n as i32);\n  return at + 1;\n}\nfunction __fern_pp_field(buf: usize, at: usize, tag: usize, n: usize): usize {\n  at = __fern_pp_uint_at(buf, at, tag);\n  return __fern_pp_uint_at(buf, at, n);\n}\nfunction __fern_pp_copy(buf: usize, at: usize, src: usize, n: usize): usize {\n  let i: usize = 0;\n  while (i < n) { __raw_store8(buf + at + i, 0, __load_u8(src + i)); i = i + 1; }\n  return at + n;\n}\nfunction __fern_pp_text(buf: usize, at: usize, s: string): usize {\n  return __fern_pp_copy(buf, at, __raw_data(s), s.len() as usize);\n}\nfunction __fern_pp_decimal(buf: usize, at: usize, n: usize): usize {\n  let k: usize = at + 31;\n  let end: usize = k + 1;\n  while (true) {\n    __raw_store8(buf + k, 0, ((n % 10) + 48) as i32);\n    n = n / 10;\n    if (n == 0) { break; }\n    k = k - 1;\n  }\n  return __fern_pp_copy(buf, at, buf + k, end - k);\n}\nfunction __fern_pp_string(out: usize, s: string): void {\n  __fern_pp_message(out, 50, __raw_data(s), s.len() as usize);\n}\nfunction __fern_pp_type(out: usize, buf: usize, tag: usize, kind: usize, unit: usize): void {\n  let n: usize = __fern_pp_field(buf, 0, 8, kind);\n  n = __fern_pp_field(buf, n, 16, unit);\n  __fern_pp_message(out, tag, buf, n);\n}\nfunction __fern_pp_sample(base: usize, out: usize, buf: usize, i: usize): void {\n  let row: usize = base + 160 + i * 528;\n  let depth: usize = __load_i64(row) as usize;\n  let locs: usize = buf + 512;\n  let loclen: usize = 0;\n  let k: usize = 0;\n  while (k < depth) {\n    loclen = __fern_pp_uint_at(locs, loclen, i * 64 + k + 1);\n    k = k + 1;\n  }\n  let count: usize = __load_i64(base) as usize;\n  let seen: usize = __load_i64(base + 152) as usize;\n  let units: usize = seen;\n  let weight: usize = (10000000 * seen) / count;\n  if (PROFILE_MODE == 4) {\n    units = 64 * seen;\n    weight = ((__load_i64(row + 8) as usize) * seen) / count;\n  }\n  // Preserve the represented event total when integer sample values round.\n  let objects: usize = units / count;\n  if (i < units % count) { objects = objects + 1; }\n  let vals: usize = buf + 768;\n  let vallen: usize = __fern_pp_uint_at(vals, 0, objects);\n  vallen = __fern_pp_uint_at(vals, vallen, weight);\n  let n: usize = __fern_pp_field(buf, 0, 10, loclen);\n  n = __fern_pp_copy(buf, n, locs, loclen);\n  n = __fern_pp_field(buf, n, 18, vallen);\n  n = __fern_pp_copy(buf, n, vals, vallen);\n  __fern_pp_message(out, 18, buf, n);\n}\nfunction __fern_pp_location(out: usize, buf: usize, id: usize, pc: usize): void {\n  let line: usize = buf + 512;\n  let len: usize = __fern_pp_field(line, 0, 8, id);\n  let n: usize = __fern_pp_field(buf, 0, 8, id);\n  n = __fern_pp_field(buf, n, 24, pc);\n  n = __fern_pp_field(buf, n, 34, len);\n  n = __fern_pp_copy(buf, n, line, len);\n  __fern_pp_message(out, 34, buf, n);\n}\nfunction __fern_pp_function(out: usize, buf: usize, id: usize, name: usize): void {\n  let n: usize = __fern_pp_field(buf, 0, 8, id);\n  n = __fern_pp_field(buf, n, 16, name);\n  __fern_pp_message(out, 42, buf, n);\n}\nfunction __fern_pp_tables(base: usize, out: usize, buf: usize): void {\n  let count: usize = __load_i64(base) as usize;\n  let name: usize = 9;\n  let i: usize = 0;\n  while (i < count) {\n    let row: usize = base + 160 + i * 528;\n    let depth: usize = __load_i64(row) as usize;\n    let k: usize = 0;\n    while (k < depth) {\n      let id: usize = i * 64 + k + 1;\n      __fern_pp_location(out, buf, id, __load_i64(row + 16 + k * 8) as usize);\n      __fern_pp_function(out, buf, id, name);\n      k = k + 1; name = name + 1;\n    }\n    i = i + 1;\n  }\n}\nfunction __fern_pp_names(base: usize, out: usize, buf: usize, im: usize, size: usize): void {\n  let count: usize = __load_i64(base) as usize;\n  let i: usize = 0;\n  while (i < count) {\n    let row: usize = base + 160 + i * 528;\n    let depth: usize = __load_i64(row) as usize;\n    let k: usize = 0;\n    while (k < depth) {\n      let pc: usize = __load_i64(row + 16 + k * 8) as usize;\n      let name: usize = __fern_profile_name(pc, im, size);\n      if (name == 0) {\n        __fern_profile_hex_buf(buf, pc);\n        __fern_pp_message(out, 50, buf, 18);\n      } else {\n        let q: usize = name;\n        while (__load_u8(q) != 0) { q = q + 1; }\n        __fern_pp_message(out, 50, name, q - name);\n      }\n      k = k + 1;\n    }\n    i = i + 1;\n  }\n}\nfunction __fern_profile_pprof(base: usize, im: usize, size: usize): void {\n  let out: usize = base + 4325536;\n  let buf: usize = out + 4112;\n  let path: string = PROFILE_PATH;\n  let j: i32 = 0;\n  while (j < path.len()) { __raw_store8(buf, j, __load_u8(__raw_data(path) + j)); j = j + 1; }\n  __raw_store8(buf, j, 0);\n  let fd: i64 = __syscall4(SYS_OPENAT, 0 - 100, buf as i64, 524865, 420);\n  if (fd < (0 as i64)) {\n    let msg: string = \"fern profile: cannot create pprof output file\\n\";\n    __fern_profile_write(__raw_data(msg), msg.len() as usize);\n    return;\n  }\n  __raw_store_ptr(out, 0, 0);\n  __raw_store_ptr(out + 8, 0, fd as usize);\n  if (PROFILE_MODE == 3) {\n    __fern_pp_type(out, buf, 10, 1, 2);\n    __fern_pp_type(out, buf, 10, 3, 4);\n    __fern_pp_type(out, buf, 90, 3, 4);\n    __fern_pp_uint(out, 96); __fern_pp_uint(out, 10000000);\n    __fern_pp_uint(out, 112); __fern_pp_uint(out, 3);\n  } else {\n    __fern_pp_type(out, buf, 10, 5, 2);\n    __fern_pp_type(out, buf, 10, 6, 7);\n    __fern_pp_type(out, buf, 90, 5, 2);\n    __fern_pp_uint(out, 96); __fern_pp_uint(out, 64);\n    __fern_pp_uint(out, 112); __fern_pp_uint(out, 6);\n  }\n  let count: usize = __load_i64(base) as usize;\n  let i: usize = 0;\n  while (i < count) { __fern_pp_sample(base, out, buf, i); i = i + 1; }\n  __fern_pp_tables(base, out, buf);\n  __fern_pp_string(out, \"\");\n  __fern_pp_string(out, \"samples\"); __fern_pp_string(out, \"count\");\n  __fern_pp_string(out, \"cpu\"); __fern_pp_string(out, \"nanoseconds\");\n  __fern_pp_string(out, \"alloc_objects\"); __fern_pp_string(out, \"alloc_space\");\n  __fern_pp_string(out, \"bytes\");\n  let n: usize = __fern_pp_text(buf, 0, \"Fern bounded reservoir: retained=\");\n  n = __fern_pp_decimal(buf, n, count);\n  n = __fern_pp_text(buf, n, \" dropped=\");\n  n = __fern_pp_decimal(buf, n, __load_i64(base + 8) as usize);\n  __fern_pp_message(out, 50, buf, n);\n  __fern_pp_uint(out, 104); __fern_pp_uint(out, 8);\n  __fern_pp_names(base, out, buf, im, size);\n  __fern_pp_flush(out);\n  __syscall3(SYS_CLOSE, fd, 0, 0);\n}\n";
+  s = s.replace("PROFILE_MODE", util.i32_to_string(mode));
+  s = s.replace("SYS_WRITE", nr(target, 1, 64));
+  s = s.replace("SYS_SIGACTION", nr(target, 13, 134));
+  s = s.replace("SYS_SETITIMER", nr(target, 38, 103));
+  s = s.replace("SYS_EXIT", nr(target, 231, 94));
+  s = s.replace("SYS_SIGMASK", nr(target, 14, 135));
+  s = s.replace("SYS_OPENAT", nr(target, 257, 56));
+  s = s.replace("SYS_LSEEK", nr(target, 8, 62));
+  s = s.replace("SYS_MMAP", nr(target, 9, 222));
+  s = s.replace("SYS_CLOSE", nr(target, 3, 57));
+  s = s.replace("SYS_MUNMAP", nr(target, 11, 215));
+  s = s.replace("SYS_GETPID", nr(target, 39, 172));
+  s = s.replace("PROFILE_PATH", "\"" + output().escape_c() + "\"");
+  return s;
+}

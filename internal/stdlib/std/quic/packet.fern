@@ -594,15 +594,9 @@ function __empty(room: i32): u8[] {
 }
 
 function __copy(b: [u8]): u8[] {
-  return __slice(b, 0, b.len());
+  return __bytes_owned(b);
 }
 
 function __slice(buf: [u8], from: i32, to: i32): u8[] {
-  let out: u8[] = __alloc_u8(to - from);
-  let i: i32 = 0;
-  while (from + i < to) {
-    out = out.with(i, buf[from + i]);
-    i = i + 1;
-  }
-  return out;
+  return __bytes_range(buf, from, to);
 }

@@ -399,6 +399,14 @@ pub function call(): i32 {
   return 0 - 7;
 }
 
+// fresh_result_builtin names the builtins that are lent byte views and answer
+// an array they built, so their result keeps no borrow of an argument. The
+// checkers' fresh-result lists name the same kernels.
+pub function fresh_result_builtin(name: string): boolean {
+  return name == "__bytes_owned" || name == "__bytes_range" || name == "__aes_expand_key" || name == "__aes_ctr32"
+    || name == "__ghash" || name == "__sha256_hw_blocks" || name == "__sha1_hw_blocks";
+}
+
 // The builtins each of which is one machine operation on scalars, with no
 // effect (semsource's bit-count, high-multiply and float primitive contracts):
 // a body calling one computes as if it used an operator.
@@ -5465,7 +5473,7 @@ function cons_hole(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: 
 
 // Reads of values nothing can change, and operators that cannot stop the
 // program: a division or remainder can trap, so it stays behind the call.
-function reorderable(ins: ssa.SInst): boolean {
+pub function reorderable(ins: ssa.SInst): boolean {
   let k: i32 = ins.kind_tag;
   if (k == 9) {
     return ins.str != "/" && ins.str != "%";
