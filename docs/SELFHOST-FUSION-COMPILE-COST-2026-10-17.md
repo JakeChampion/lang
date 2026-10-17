@@ -34,10 +34,11 @@ wall-time measurements.
 
 ## Correctness
 
-The control and candidate emit byte-identical x86 executables for all 35 frozen
-performance programs and `compiler/checker.fern`. Program output and exit status
-also agree. The fusion execution, allocation, effect-order and reporting tests,
-including the ARM64 and WASI legs, and the unchanged complexity gate pass.
+With the scope reuse below included, the control and candidate emit byte-identical
+executables for all 35 frozen performance programs and `compiler/checker.fern`
+on x86-64, ARM64 and WASI: 108 comparisons. Native benchmark output and exit
+status also agree. The fusion execution, allocation, effect-order and reporting
+tests, including the ARM64 and WASI legs, and the unchanged complexity gate pass.
 
 ## Reusing the checker's initial scopes
 
@@ -53,3 +54,8 @@ byte-identical. Checker diagnostic differentials, view-escape tests and the
 unchanged complexity gate pass, and bootstrap stages 2 and 3 agree. This removes
 a duplicate scope build; it does not supply the per-node fact tables proposed in
 #11534 or complete the walk consolidation in #11303.
+
+The combined branch reaches a bootstrap fixed point at 12,287,200 bytes,
+SHA-256 `5a06fc6a29dc276a7e1a2ccdd7757776cd29d4d2f4d1e4f4c49015981add678f`.
+The two instruction measurements above isolate their respective changes; they
+are not a measurement of their combination.
