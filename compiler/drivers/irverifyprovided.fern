@@ -117,6 +117,9 @@ pub function provided_names(): string[] {
     "__fern_bytes_owned",
     "__fern_bytes_range",
     "__fern_bytes_into",
+    // the bulk byte copies a copy loop lowers to (rtbytecopy)
+    "__fern_bytes_append_range",
+    "__fern_bytes_write_range",
   ];
 }
 

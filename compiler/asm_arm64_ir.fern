@@ -5913,13 +5913,31 @@ function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.Emi
   } else if (util.str_has_suffix(sym, "_u8")) {
     s = s.need("buf_u8");
   }
-  let i: i32 = ins.args.len() - 1;
-  while (i >= 0) {
-    s = ssa_load(reg_of, ins.args[i], "x" + util.i32_to_string(i), s);
-    i = i - 1;
-  }
+  s = ssa_load_helper_args(reg_of, ins.args, s);
   s = ssa_bl_sym(s, sym);
   return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+}
+
+// ssa_load_helper_args puts a runtime helper's arguments in x0, x1, ... in
+// order. x1-x3 are value homes too, so their loads are one parallel move:
+// loading them in turn would overwrite an argument still waiting in one of
+// them. Arguments from x4 on are scratch registers, loaded after it.
+function ssa_load_helper_args(reg_of: i32[], args: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let homes: i32[] = [0, 8, 9, 10];
+  let srcs: i32[] = [];
+  let dsts: i32[] = [];
+  let i: i32 = 0;
+  while (i < args.len() && i < homes.len()) {
+    srcs = srcs.append(reg_of[args[i]]);
+    dsts = dsts.append(homes[i]);
+    i = i + 1;
+  }
+  s = ssa_parallel_moves(srcs, dsts, s);
+  while (i < args.len()) {
+    s = ssa_load(reg_of, args[i], "x" + util.i32_to_string(i), s);
+    i = i + 1;
+  }
+  return s;
 }
 
 function emit_arm64_op_memcpy(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
