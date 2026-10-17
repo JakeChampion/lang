@@ -29,7 +29,7 @@ func runCapabilities(srcPath string, w io.Writer) error {
 	if _, err := checker.Check(prog); err != nil {
 		return e.format(err)
 	}
-	rows := caps.Analyze(prog, gates.PackageResolver(srcPath))
+	rows, _ := gates.CapabilityRows(srcPath, prog)
 	_, err = io.WriteString(w, caps.Format(rows))
 	return err
 }

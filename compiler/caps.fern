@@ -288,10 +288,11 @@ pub function classified(name: string): boolean {
 // ---- packages ----------------------------------------------------------
 
 // Pkg is one bundle module's package identity, assembled by the caller (the
-// driver) from the entry manifest:
+// driver) from resolved module and manifest directories:
 //
 //   - `module` is the bundle prefix flatten mangles that module's functions
 //     with — "" for the entry module, whose own names stay bare.
+//   - `dir` is the authority identity; `name` is only a report label.
 //   - `root` marks the root package (the entry's own module and every local
 //     sibling), which is never enforced or warned: the program's author is
 //     trusting themselves, and grants restrict DEPENDENCIES.
@@ -304,30 +305,31 @@ pub function classified(name: string): boolean {
 // whichever package calls into it.
 pub struct Pkg {
   module: string,
+  dir: string,
   name: string,
   root: boolean,
   governed: boolean,
   grants: string[],
 }
 
-// pkg_of names the package owning a bundle module prefix, or "" for a
+// pkg_of identifies the package owning a bundle module prefix, or "" for a
 // fold-through module.
 pub function pkg_of(pkgs: Pkg[], module: string): string {
   let i: i32 = 0;
   while (i < pkgs.len()) {
     if (pkgs[i].module == module) {
-      return pkgs[i].name;
+      return pkgs[i].dir;
     }
     i = i + 1;
   }
   return "";
 }
 
-// pkg_index finds a package by NAME (several modules can share one), or -1.
-function pkg_index(pkgs: Pkg[], name: string): i32 {
+// pkg_index finds a package by resolved directory, independently of its name.
+function pkg_index(pkgs: Pkg[], dir: string): i32 {
   let i: i32 = 0;
   while (i < pkgs.len()) {
-    if (pkgs[i].name == name) {
+    if (pkgs[i].dir == dir) {
       return i;
     }
     i = i + 1;
@@ -340,9 +342,18 @@ function pkg_index(pkgs: Pkg[], name: string): i32 {
 // skipped: there is no dependency to enforce or warn about, which is the
 // common single-package compile.
 pub function enforceable(mod: parser.Module, pkgs: Pkg[]): boolean {
+  let non_root: boolean = false;
+  for p in pkgs {
+    if (!p.root) {
+      non_root = true;
+    }
+  }
+  if (!non_root) {
+    return false;
+  }
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
-    let p: string = pkg_of(pkgs, util.mangled_module(mod.funcs[i].name));
+    let p: string = pkg_of(pkgs, mod.funcs[i].module);
     if (p.len() > 0) {
       let k: i32 = pkg_index(pkgs, p);
       if (k >= 0 && !pkgs[k].root) {
@@ -363,7 +374,7 @@ pub function enforceable(mod: parser.Module, pkgs: Pkg[]): boolean {
 pub struct Use { capability: string, chain: string[] }
 
 // Row is one package's report line: its uses, in capability order.
-pub struct Row { pkg: string, uses: Use[] }
+pub struct Row { key: string, pkg: string, uses: Use[] }
 
 function has_i32(xs: i32[], v: i32): boolean {
   let i: i32 = 0;
@@ -578,7 +589,7 @@ pub function analyze(mod: parser.Module, pkgs: Pkg[]): Row[] {
   let names: string[] = [];
   let fi: i32 = 0;
   while (fi < mod.funcs.len()) {
-    let p: string = pkg_of(pkgs, util.mangled_module(mod.funcs[fi].name));
+    let p: string = pkg_of(pkgs, mod.funcs[fi].module);
     if (p.len() > 0 && !util.has_str(names, p)) {
       names = names.append(p);
     }
@@ -591,12 +602,24 @@ pub function analyze(mod: parser.Module, pkgs: Pkg[]): Row[] {
     let roots: i32[] = [];
     let fj: i32 = 0;
     while (fj < mod.funcs.len()) {
-      if (pkg_of(pkgs, util.mangled_module(mod.funcs[fj].name)) == names[pi]) {
+      if (pkg_of(pkgs, mod.funcs[fj].module) == names[pi]) {
         roots = roots.append(fj);
       }
       fj = fj + 1;
     }
-    rows = rows.append(Row { pkg: names[pi], uses: walk(mod, roots, want) });
+    let k: i32 = pkg_index(pkgs, names[pi]);
+    let label: string = pkgs[k].name;
+    let duplicate: boolean = false;
+    for other in names {
+      let oi: i32 = pkg_index(pkgs, other);
+      if (other != names[pi] && pkgs[oi].name == label) {
+        duplicate = true;
+      }
+    }
+    if (duplicate) {
+      label = label + " (" + names[pi] + ")";
+    }
+    rows = rows.append(Row { key: names[pi], pkg: label, uses: walk(mod, roots, want) });
     pi = pi + 1;
   }
   return sort_rows(rows);
@@ -666,7 +689,7 @@ pub function enforce(rows: Row[], pkgs: Pkg[]): Violation[] {
   let out: Violation[] = [];
   let ri: i32 = 0;
   while (ri < rows.len()) {
-    let k: i32 = pkg_index(pkgs, rows[ri].pkg);
+    let k: i32 = pkg_index(pkgs, rows[ri].key);
     let is_root: boolean = k >= 0 && pkgs[k].root;
     if (!is_root) {
       let governed: boolean = k >= 0 && pkgs[k].governed;

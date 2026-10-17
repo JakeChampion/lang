@@ -39,6 +39,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -146,7 +147,7 @@ func loadCoreLit(entryPath string, overrides map[string]string) (*ast.Program, m
 	if err != nil {
 		return nil, srcs, lit, err
 	}
-	if prog.CapGrants, err = capGrants(mans); err != nil {
+	if prog.CapGrants, err = capGrants(mans, entryAbs); err != nil {
 		return nil, srcs, lit, err
 	}
 	return prog, srcs, lit, nil
@@ -427,6 +428,12 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 	dir := ""
 	if !strings.HasPrefix(path, stdlibPrefix) {
 		dir = filepath.Dir(path)
+		// Grants also govern modules reached by relative imports. Collect
+		// every loaded module's manifest, even when no bare dependency
+		// spelling asked resolveImport to consult it.
+		if _, err := manifestFor(dir, mans); err != nil {
+			return err
+		}
 	}
 	childPaths := make([]string, len(prog.Imports))
 	for i, imp := range prog.Imports {
@@ -764,9 +771,9 @@ func declaredDepDir(man *manifest.Manifest, seg string, mans map[string]*manifes
 // (docs/PACKAGE-CAPABILITIES-BRIEF.md phase 2) from every manifest the
 // load consulted: each dependency entry whose `capabilities` key is
 // present contributes its grant to the entry's resolved directory —
-// unioned when several manifests grant the same package. Unused or
-// unresolvable declared deps are skipped silently (a dep that never
-// loaded contributes no code to enforce against). Returns nil when no
+// unioned only when the grantors hold that authority. Unresolvable
+// target directories contribute no code, but their outgoing declarations
+// are still checked against the grantor's holdings. Returns nil when no
 // manifest grants anything, so grant-free programs stay allocation-free.
 //
 // It also enforces the ATTENUATION rule (brief phase 3): a governed
@@ -776,10 +783,10 @@ func declaredDepDir(man *manifest.Manifest, seg string, mans map[string]*manifes
 // against ITS grantor's holdings independently (a sibling's legitimate
 // grant of the same capability never excuses an amplifying edge), and
 // any violation is a load error. An ungoverned grantor — no
-// `capabilities` key anywhere declares it, which includes the root —
-// imposes no ceiling. Violations are reported all at once, sorted by
+// `capabilities` key anywhere declares it — imposes no ceiling. The
+// root is always exempt, including a back edge that declares it. Violations are reported all at once, sorted by
 // granting manifest dir, then dependency name, then capability.
-func capGrants(mans map[string]*manifest.Manifest) (map[string][]string, error) {
+func capGrants(mans map[string]*manifest.Manifest, entry string) (map[string][]string, error) {
 	byDir := map[string]*manifest.Manifest{}
 	for _, m := range mans {
 		if m != nil {
@@ -791,6 +798,17 @@ func capGrants(mans map[string]*manifest.Manifest) (map[string][]string, error) 
 		dirs = append(dirs, d)
 	}
 	sort.Strings(dirs)
+	rootDir := filepath.Dir(entry)
+	if m, err := manifestFor(rootDir, mans); err != nil {
+		return nil, err
+	} else if m != nil {
+		rootDir = m.Dir
+	}
+	type edge struct {
+		from, to string
+		caps     []string
+	}
+	var edges []edge
 	var out map[string][]string
 	for _, mdir := range dirs {
 		man := byDir[mdir]
@@ -805,26 +823,39 @@ func capGrants(mans map[string]*manifest.Manifest) (map[string][]string, error) 
 			if out == nil {
 				out = map[string][]string{}
 			}
-			merged := map[string]bool{}
-			for _, c := range out[dir] {
-				merged[c] = true
+			if _, seen := out[dir]; !seen {
+				out[dir] = []string{}
 			}
-			for _, c := range d.Capabilities {
-				merged[c] = true
-			}
-			union := make([]string, 0, len(merged))
-			for c := range merged {
-				union = append(union, c)
-			}
-			sort.Strings(union)
-			out[dir] = union
+			edges = append(edges, edge{man.Dir, dir, d.Capabilities})
 		}
+	}
+	// Least fixed point: a cycle cannot create a capability. Start each
+	// governed package empty, then propagate only authority already held
+	// by the grantor. The root and ungoverned grantors have no ceiling.
+	changed := true
+	for changed {
+		changed = false
+		for _, e := range edges {
+			held, governed := out[e.from]
+			for _, c := range e.caps {
+				if governed && e.from != rootDir && !slices.Contains(held, c) {
+					continue
+				}
+				if !slices.Contains(out[e.to], c) {
+					out[e.to] = append(out[e.to], c)
+					changed = true
+				}
+			}
+		}
+	}
+	for dir := range out {
+		sort.Strings(out[dir])
 	}
 	var viols []string
 	for _, mdir := range dirs {
 		man := byDir[mdir]
 		held, governed := out[man.Dir]
-		if !governed {
+		if !governed || man.Dir == rootDir {
 			continue
 		}
 		heldSet := map[string]bool{}

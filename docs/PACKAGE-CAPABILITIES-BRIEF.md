@@ -139,19 +139,21 @@ Rules:
    vendored — so one check covers them all. Each granting edge is
    held to ITS grantor's holdings independently: a manifest whose own
    package is governed (some parent's dependency entry grants it a
-   `capabilities` key; holdings = the union of those grants) granting
+   `capabilities` key; holdings = the union of authorized incoming grants) granting
    a dependency a capability outside that union is a load error in
    the manifest-error family, naming the granting `fern.toml` —
    `dependency "b" of "a" is granted 'net' but "a" itself holds only
    [fs] (attenuation: a dependency may grant at most what it holds)`
    — with all violations reported at once in deterministic order
    (manifest dir, dep name, capability). An ungoverned grantor
-   imposes no ceiling (that's the warn-and-allow era; the root, which
-   nothing declares, falls out as ungoverned and stays unrestricted).
+   imposes no ceiling (the warn-and-allow migration policy). The root
+   stays unrestricted even if another manifest declares a back edge to it.
    Diamonds keep phase 2's union: a package granted by several
    parents holds the union of the granting edges, but each edge must
    pass its own grantor's ceiling — a sibling's legitimate grant of
-   the same capability never excuses an amplifying edge.
+   the same capability never excuses an amplifying edge. Holdings are
+   the least fixed point starting governed packages empty: an unseeded
+   cycle cannot invent authority, while a legitimately seeded cycle works.
 4. **Runtime alignment.** When the WASI component path matures
    (#4315–#4320 lane), derive the component's requested WASI imports
    from the same table, so the compile-time story and the runtime
@@ -177,13 +179,15 @@ side:
   native counterpart: names the self-host front end registers as
   builtins that native's checker does not (`__map_new_i32`), each held
   to being absent from native's registry.
-- **Package identity comes from the importer's own directory.** Native
-  resolves a module's package from the nearest governing `fern.toml`;
-  the self-host attributes from the manifest in the importing module's
-  own directory only, so a module below its package root has no package
-  to attribute. Deps resolve through the nearest governing manifest
-  (path / workspace / lock / vendor / store) in `modloader.try_manifest`
-  — before #6634 the driver could not load a manifest dependency at all.
+- **Package identity is the resolved directory, not the display name.**
+  Both compilers use the nearest governing manifest for each loaded module.
+  Local imports remain in that package; an explicit grant also establishes
+  a boundary for a dependency without its own manifest. Equal package names
+  cannot share grants or inherit the root exemption. Reports qualify
+  duplicate names with their directory. The self-host records module
+  provenance using the bundler's assigned prefixes and `FuncDecl.module`,
+  including when basenames collide; it never infers authority from a
+  function's mangled-looking name. Stdlib modules fold into their callers.
 - **The example chain is spelled differently.** Both compilers mangle
   an imported function as `<module>__<name>`, but native's module is
   the dependency's lib FILE (`lib__save`) and the self-host's is the
@@ -194,13 +198,15 @@ side:
 
 Phase 3 also runs in the self-host loader. `pkggrants.fern` collects every
 consulted manifest with explicit grants, resolves its dependency directories
-through the module loader's own resolver, and unions incoming grants by
-resolved directory. Each outgoing grant is checked against its own grantor's
+through the module loader's own resolver, and propagates only authorized
+incoming grants to a least fixed point by resolved directory. Each outgoing grant is checked against its own grantor's
 holdings. Empty grants deny everything; an ungoverned grantor imposes no
 ceiling. All violations are reported in manifest, dependency and capability
 order, before flattening and checking, including grants to unused dependencies.
 The independent Go loader is the differential oracle for the chain, diamond,
-workspace and vendor cases.
+workspace and vendor cases. Identity and cycle regressions also state their
+expected outcomes independently, since both implementations previously
+accepted same-name and cyclic authority escalation (#12569–#12571).
 
 Manifest capability grants must be arrays of known names. The parser keeps
 an explicit malformed key governed and records a manifest error, so it cannot

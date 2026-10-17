@@ -18,10 +18,11 @@ type Use struct {
 	Chain      []string
 }
 
-// Row is one package's report line: the package name and its
-// capability uses, sorted by capability.
+// Row is one package's report line: its stable identity, optional display
+// name and capability uses, sorted by capability.
 type Row struct {
-	Package string
+	Package string // Stable identity; callers may use a resolved directory.
+	Name    string // Optional display name.
 	Uses    []Use
 }
 
@@ -34,8 +35,8 @@ type Row struct {
 // through the stdlib and through deeper packages — mirroring the
 // brief's enforcement rule.
 //
-// pkgOf maps a FuncDecl.BodyModule to the owning package's report
-// name; returning "" marks the module as fold-through (the stdlib):
+// pkgOf maps a FuncDecl.BodyModule to the owning package's stable
+// identity; returning "" marks the module as fold-through (the stdlib):
 // its functions are traversal nodes, never roots, so `std/fetch`'s
 // tcp_connect shows up on the row of whichever package calls into
 // std/fetch.
@@ -156,18 +157,25 @@ func walk(roots []string, g *effects.Graph) []Use {
 //
 // with the example chain belonging to the row's first (alphabetical)
 // capability, and `-` for a package that reaches none.
+func (r Row) DisplayName() string {
+	if r.Name != "" {
+		return r.Name
+	}
+	return r.Package
+}
+
 func Format(rows []Row) string {
 	var b strings.Builder
 	for _, r := range rows {
 		if len(r.Uses) == 0 {
-			fmt.Fprintf(&b, "%s  -\n", r.Package)
+			fmt.Fprintf(&b, "%s  -\n", r.DisplayName())
 			continue
 		}
 		names := make([]string, len(r.Uses))
 		for i, u := range r.Uses {
 			names[i] = u.Capability
 		}
-		fmt.Fprintf(&b, "%s  %s  (example: %s)\n", r.Package, strings.Join(names, ","), strings.Join(r.Uses[0].Chain, " → "))
+		fmt.Fprintf(&b, "%s  %s  (example: %s)\n", r.DisplayName(), strings.Join(names, ","), strings.Join(r.Uses[0].Chain, " → "))
 	}
 	return b.String()
 }
