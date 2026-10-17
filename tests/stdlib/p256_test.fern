@@ -1,0 +1,99 @@
+import "std/test";
+import "std/hex";
+import "std/crypto/p256";
+
+// tests/stdlib/p256_test.fern: std/crypto/p256 at its edges, against values
+// computed with Python's integers. [k]G from the fixed-base table and [k]Q
+// from the window agree with the affine formulas for scalars whose nibbles
+// run through every value, for 1, 2 and n - 1, and for a lone top bit; the
+// scalar range check and reduction hold at n. std/crypto/ecdsa's suite holds
+// the signatures to RFC 6979.
+
+const G: string = "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
+
+const N: string = "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551";
+
+const N_MINUS_1: string = "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632550";
+
+// Every nibble value, in both halves of a byte.
+const MIXED: string = "0123456789abcdeffedcba98765432100f1e2d3c4b5a69788796a5b4c3d2e1f0";
+
+const TOP_BIT: string = "8000000000000000000000000000000000000000000000000000000000000000";
+
+function one_hot(at: i32, v: u8): string {
+  return hex.hex_encode(__alloc_u8(32).with(at, v));
+}
+
+function base(k: string): string {
+  return hex.hex_encode(p256.base_point(hex.hex_decode(k)));
+}
+
+function test_base_point(): test.TestOutcome {
+  if (base(one_hot(31, 1 as u8)) != G) {
+    return test.fail("[1]G: " + base(one_hot(31, 1 as u8)));
+  }
+  if (base(one_hot(31, 2 as u8)) != "047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1") {
+    return test.fail("[2]G");
+  }
+  // [n - 1]G is -G: G's x, p - G's y.
+  if (base(N_MINUS_1) != "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296b01cbd1c01e58065711814b583f061e9d431cca994cea1313449bf97c840ae0a") {
+    return test.fail("[n - 1]G");
+  }
+  if (base(MIXED) != "04bab47346ed163f061ac6d2191c3deea7bd5070ca32f929656837d6ba05d64b27c14cf0f1f6041d29ee085d4a6a2b9df4665a45cdb50ec7dbf89f6130b49c8aed") {
+    return test.fail("every nibble value");
+  }
+  return test.assert_eq(base(TOP_BIT), "0477b20a912e6b23135066e911891524bc4efe3560e3e92350b52dec8f375f2b54a3dc291825cea3f7f7b10bfcdd038a72df623da1e850e0f1caa801fcd6cc67ff");
+}
+
+function times_x(k: string, point: string): string {
+  return hex.hex_encode(p256.scalar_mul_x(hex.hex_decode(k), hex.hex_decode(point)));
+}
+
+function test_scalar_mul(): test.TestOutcome {
+  if (times_x(one_hot(31, 1 as u8), G) != "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296") {
+    return test.fail("[1]G");
+  }
+  if (times_x(N_MINUS_1, G) != "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296") {
+    return test.fail("[n - 1]G");
+  }
+  // [k]([7]G) is [7k mod n]G.
+  let seven: string = "048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4";
+  if (base(one_hot(31, 7 as u8)) != seven) {
+    return test.fail("[7]G");
+  }
+  return test.assert_eq(times_x(MIXED, seven), "c4ccdcb662d2d661f39c978bdc1aee18134f25c596b32e343461adc7c6b75871");
+}
+
+function range(k: string): i64 {
+  return p256.in_scalar_range(hex.hex_decode(k));
+}
+
+function test_scalar_range(): test.TestOutcome {
+  if (range(one_hot(0, 0 as u8)) != 0 as i64 || range(N) != 0 as i64 || range("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff") != 0 as i64) {
+    return test.fail("0, n or 2^256 - 1 is in range");
+  }
+  if (range(one_hot(31, 1 as u8)) != 1 as i64 || range(N_MINUS_1) != 1 as i64) {
+    return test.fail("1 or n - 1 is out of range");
+  }
+  return test.assert_eq(range(TOP_BIT), 1 as i64);
+}
+
+function reduced(k: string): string {
+  return hex.hex_encode(p256.scalar_reduce(hex.hex_decode(k)));
+}
+
+function test_scalar_reduce(): test.TestOutcome {
+  if (reduced(N) != one_hot(0, 0 as u8) || reduced(N_MINUS_1) != N_MINUS_1) {
+    return test.fail("n or n - 1");
+  }
+  return test.assert_eq(reduced("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"), "00000000ffffffff00000000000000004319055258e8617b0c46353d039cdaae");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/crypto/p256");
+  r = r.it("[k]G", test_base_point);
+  r = r.it("[k]Q", test_scalar_mul);
+  r = r.it("scalar range", test_scalar_range);
+  r = r.it("scalar reduction", test_scalar_reduce);
+  return r.finish();
+}

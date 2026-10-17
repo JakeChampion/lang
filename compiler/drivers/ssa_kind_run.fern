@@ -64,6 +64,7 @@ function main(): i32 {
   out = out + "store_elem=" + util.i32_to_string(ssa.kind_id("store_elem")) + "\n";
   out = out + "write_file=" + util.i32_to_string(ssa.kind_id("write_file")) + "\n";
   out = out + "select=" + util.i32_to_string(ssa.kind_id("select")) + "\n";
+  out = out + "carry=" + util.i32_to_string(ssa.kind_id("carry")) + "\n";
 
   // 4. Full-table STerm bijection sweep + the none sentinel.
   let tn: i32 = ssa.term_count();
