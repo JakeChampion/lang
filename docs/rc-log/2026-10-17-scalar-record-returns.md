@@ -65,7 +65,7 @@ fixed point at 12,699,472 bytes, SHA-256
 The focused scalar, sanitized, donor, path-identity, inventory and complexity
 suite passes in 35.631 seconds. Declaration and instance body collection are
 separate functions, as is bare-frame restoration; the complexity limits remain
-unchanged. The complete strict driver-size repeat is in progress.
+unchanged. The complete strict driver-size repeat passes; its raw report is archived alongside the benchmark data.
 
 The tracked-size baseline moves from 12,054,832 to 12,699,472 bytes (+5.35%).
 A separate checkout of main `3260020a010d15615407a7d58d917f6f0a6df8be`, built
@@ -76,3 +76,8 @@ Main already exceeds the old baseline by 5.11%; this change adds 28,320 bytes,
 0.22% against that measured main. The other ten baselines and the 5% tolerance
 remain unchanged. The earlier allocation comparison retains its exact original
 source/compiler scope; it is not relabeled as this integrated build.
+
+A fresh allocation-only comparison against that measured main preserves all
+eighteen executable byte sequences from the earlier comparison. Allocation
+counts and checksums agree for every program and target; the raw repeat is
+`docs/benchmarks/scalar-record-returns-2026-10-17/current-main-allocation.json`.

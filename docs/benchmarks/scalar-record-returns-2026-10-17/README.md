@@ -38,3 +38,11 @@ counts for one through four fields, full-width integers and usize, NaN and
 signed zero, ownership cleanup, padding and tail calls, and boxed controls
 (reference fields, five fields, finalizers, escaping values and function values).
 Both explicit spread updates and inferred field donations retain their boxes.
+
+The allocation-only repeat in `current-main-allocation.json` uses main
+`3260020a0` (compiler `f5539d74a09bdf471614f8e84935cdce44a5273e6e46950ac804c3652a7f83b5`)
+and the integrated candidate
+`f395df09bc0d2fb9fa77c410384411708ac7fe941e7d56b3d6e3aeab6c5eb6b7`.
+All eighteen executables are byte-identical to the corresponding earlier
+outputs, and every allocation count and checksum agrees. This repeat records
+no elapsed timings.

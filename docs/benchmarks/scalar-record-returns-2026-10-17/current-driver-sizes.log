@@ -1,0 +1,17 @@
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	161.486s
+### self-host driver sizes
+| driver | linked | baseline | delta |
+| --- | --- | --- | --- |
+| fern.fern/stage2 (tracked artifact) | 12.7 MB | 12.7 MB | +0.0% |
+| fern.fern | 12.7 MB | 12.6 MB | +0.6% |
+| drivers/asm_load_run.fern | 10.1 MB | 10.1 MB | +0.2% |
+| drivers/asm_modload_run.fern | 8.8 MB | 8.7 MB | +0.7% |
+| drivers/asm_ir_run.fern | 8.4 MB | 8.4 MB | +0.1% |
+| drivers/asm_run.fern | 7.7 MB | 7.6 MB | +0.5% |
+| drivers/wasm_ir_run.fern | 7.7 MB | 7.8 MB | -1.5% |
+| drivers/wasm_run.fern | 7.7 MB | 7.8 MB | -1.5% |
+| drivers/wasm_runio_run.fern | 7.7 MB | 7.8 MB | -1.5% |
+| drivers/asm_pathprobe_run.fern | 4.9 MB | 5.0 MB | -1.2% |
+| drivers/checker_modload_run.fern | 2.8 MB | 2.9 MB | -1.1% |
+Coverage: 11 of 11 baselined drivers measured — this report is the union of every job's, so it is meant to name them all.
+Every driver measured here is within 5% of its baseline.
