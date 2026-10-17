@@ -50,3 +50,37 @@ func TestSelfHostBytesOwned(t *testing.T) {
 	runSemanticProgram(t, "bytesowned", bytesOwnedProgram, []string{"owned"},
 		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want, "wasm32-wasi": want})
 }
+
+// bytesRangeProgram copies windows with `__bytes_range`: of a packed u8[], of
+// a string's bytes, and an empty one. A window costs one box: no view of it
+// is built first, so 100 copies of five bytes allocate 100 times.
+const bytesRangeProgram = `import "std/i64";
+
+@noinline function ranged(b: [u8], from: i32, to: i32): u8[] {
+  return __bytes_range(b, from, to);
+}
+
+function main(): i32 {
+  let arr: u8[] = [10, 20, 30, 40, 50, 60];
+  let s: string = "abcdefgh";
+  let a: u8[] = ranged(arr, 1, 4);
+  let b: u8[] = ranged(s.as_bytes(), 2, 5);
+  let c: u8[] = ranged(arr, 3, 3);
+  let before: i64 = __heap_alloc_count();
+  let i: i32 = 0;
+  let t: i32 = 0;
+  while (i < 100) {
+    t = t + ranged(arr, 0, 5).len();
+    i = i + 1;
+  }
+  let n: i64 = __heap_alloc_count() - before;
+  print((a.len() as i64).to_string() + " " + (a[0] as i64).to_string() + " " + (a[2] as i64).to_string() + " " + (b.len() as i64).to_string() + " " + (b[0] as i64).to_string() + " " + (c.len() as i64).to_string() + " " + (t as i64).to_string() + " " + n.to_string());
+  return 0;
+}
+`
+
+func TestSelfHostBytesRange(t *testing.T) {
+	want := "3 20 40 3 99 0 500 100\n"
+	runSemanticProgram(t, "bytesrange", bytesRangeProgram, []string{"ranged"},
+		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want, "wasm32-wasi": want})
+}

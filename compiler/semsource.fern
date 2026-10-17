@@ -8165,6 +8165,7 @@ function aes_gcm_contracts(): ssasem.Contract[] {
   let bytes: typeinfo.Type = typeinfo.TypeArray { elem: t_u8(), view: false };
   return [
     ssasem.Contract { name: "__bytes_owned", params: [view], modes: [b], result: bytes },
+    ssasem.Contract { name: "__bytes_range", params: [view, t_i32(), t_i32()], modes: [b, ssaunits.value_mode(), ssaunits.value_mode()], result: bytes },
     ssasem.Contract { name: "__aes_expand_key", params: [view], modes: [b], result: bytes },
     ssasem.Contract { name: "__aes_ctr32", params: [view, view, view], modes: [b, b, b], result: bytes },
     ssasem.Contract { name: "__ghash", params: [view, view, view], modes: [b, b, b], result: bytes },

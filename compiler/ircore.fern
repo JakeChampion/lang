@@ -249,7 +249,8 @@ function is_text_helper(name: string): boolean {
     || name == "__fern_arr_concat"
     // __bytes_owned(b): a byte view copied into a fresh packed u8[]
     // (asmcore.rt_src_bytes_owned; wasm's $__fern_bytes_owned).
-    || name == "__fern_bytes_owned";
+    || name == "__fern_bytes_owned"
+    || name == "__fern_bytes_range";
 }
 
 // is_c_call reports whether a call_direct callee is an FFI shim of the
