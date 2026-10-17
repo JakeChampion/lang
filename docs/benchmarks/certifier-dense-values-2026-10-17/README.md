@@ -85,3 +85,26 @@ and all three complete reports match byte for byte. Report lengths remain
 7,641 native and 7,067 WASI lines. This integration adds 4,096 bytes to that
 baseline; the performance and allocation observations earlier in this file
 retain their original compiler and source hashes.
+
+
+After starting from merged main `2c23674c2`, source `793ae506e` reaches identical
+stages 2 and 3 at 12,676,304 bytes, SHA-256
+`58764bc1865144e57dbd1b1be3f8a0a199206e7a97636fe6c06e7cc4e73cfb49`.
+The baseline compiler is current main's fixed point
+`c7d93477a830d5c5359bef48269cff32f54410416b689ea7b2dd3fd2d457fd9f`;
+its compiler sources were checked identical to the pre-squash integrated build.
+The candidate adds 4,096 bytes. Focused certification, scalar-return, donor,
+ARM-helper, inventory and complexity tests pass in 51.518 seconds; formatter
+interpreter regressions pass in 103.664 seconds.
+
+All eleven strict driver-size checks pass with complete coverage, keeping every
+baseline and the 5% tolerance unchanged. The first warm-driver invocation built
+the drivers but set the wrong report environment variable, so the strict gate
+correctly failed for missing measurements. Repeating with
+`FERN_DRIVER_SIZE_REPORT` records all eleven rows and passes (34.622 seconds).
+
+`main-2c23-parity.json` records fresh byte-identical executables and complete
+certification reports on x86-64 Linux, ARM64 Linux and the WASI playground.
+The native reports have 7,633 lines and WASI 7,060; the reports are identical
+between compilers for each target, including all original diagnostic IDs.
+No elapsed performance observations are added by this integration repeat.
