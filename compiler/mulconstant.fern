@@ -1,0 +1,18 @@
+// Constants with short modular multiplication sequences. No intermediate
+// overflows differ from multiplication: every operation uses the same word.
+pub function shifted_add(c: i64): boolean {
+  if (c == 19i64) {
+    return true;
+  }
+  return c > 2i64 && c <= 2049i64 && (c - 1i64 & c - 2i64) == 0i64;
+}
+
+pub function shift(c: i64): i32 {
+  let n = c - 1i64;
+  let shift: i32 = 0;
+  while (n > 1i64) {
+    n = n >> 1;
+    shift = shift + 1;
+  }
+  return shift;
+}

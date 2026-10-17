@@ -19,6 +19,7 @@ import "./ast";
 import "./parser";
 import "./astwalk";
 import "./util";
+import "./mulconstant";
 
 // digits_to_i32 parses a decimal literal's text (non-negative; unary minus
 // is a separate ExprUnary). Mirrors the private helper in the emitters.
@@ -2636,7 +2637,9 @@ function imm_use(ins: SInst, a: i32, konst: boolean[], c: i64, right: string[], 
       return true;
     }
   }
-  return false;
+  // A target may request shifted-add multiplication forms without claiming
+  // that its multiply instruction accepts every integer immediate.
+  return ins.str == "mul" && mulconstant.shifted_add(c) && util.index_of_str(names, "mul_shifted_add") >= 0;
 }
 
 // literal_first_bytes is, per value, the first byte of the string literal

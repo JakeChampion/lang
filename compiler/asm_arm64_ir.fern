@@ -27,6 +27,7 @@ import "./rtprofile";
 import "./arm64_native";
 import "./checker";
 import "./util";
+import "./mulconstant";
 import "./ir";
 import "./irtables";
 import "./irverifygate";
@@ -2308,11 +2309,11 @@ function ssa_bin3_asm(tag: i32, d: string, a: string, b: string): string {
 // compares. mul has no immediate form and the logical ops take bitmask
 // immediates, which a 12-bit range does not describe.
 function ssa_imm_right(): string[] {
-  return ["add", "sub", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "shl", "shr_s", "shr_u"];
+  return ["mul_shifted_add", "add", "sub", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "shl", "shr_s", "shr_u"];
 }
 
 function ssa_imm_left(): string[] {
-  return ["add", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u"];
+  return ["mul_shifted_add", "add", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u"];
 }
 
 // ssa_rhs is a right operand as the instruction reads it: the immediate for a
@@ -2360,6 +2361,9 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
   s = ssa_read(reg_of, a, "x4", s);
   let bx: string = ssa_rhs_scratch(reg_of, b, s);
   s = ssa_read_rhs(fr, reg_of, b, bx, s);
+  if (tag == 23 && fr.imm.is_imm[b]) {
+    return ssa_store(reg_of, ins.result, dh, ssa_mul_add_constant(s, dh, ssa_src(reg_of, a, "x4"), fr.imm.value[b]));
+  }
   if (ssa_shift_tag(tag) && fr.imm.is_imm[b]) {
     s = s.write(shift_imm_asm(tag, ins.imm, fr.imm.value[b], dh, ssa_src(reg_of, a, "x4")));
     return ssa_store(reg_of, ins.result, dh, s);
@@ -12848,4 +12852,13 @@ function ssa_fused_loc(source: ssaprepare.SourceLines, blk: ssa.SBlock, begin: i
     s = ssa_prepared_loc(source.terms, blk.id, s);
   }
   return s;
+}
+
+// x5 remains a reserved temporary. Keeping the original operand until the
+// last add also permits the result to reuse its home.
+function ssa_mul_add_constant(s: asmcore.EmitState, d: string, a: string, c: i64): asmcore.EmitState {
+  if (c == 19i64) {
+    return s.write("    add x5, " + a + ", " + a + ", lsl #3\n    add " + d + ", " + a + ", x5, lsl #1\n");
+  }
+  return s.write("    add " + d + ", " + a + ", " + a + ", lsl #" + util.i32_to_string(mulconstant.shift(c)) + "\n");
 }
