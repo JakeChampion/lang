@@ -8703,7 +8703,7 @@ function builtin_row(c: ssasem.Contract): ownership.Escapes {
   for m in c.modes {
     bits = bits.append(m == ssaunits.counted_mode());
   }
-  return ownership.Escapes { name: c.name, bits: bits, lends: reference(c.result), cycle: 0 - 1, quiet: [] };
+  return ownership.Escapes { name: c.name, bits: bits, lends: reference(c.result) && !ssasem.fresh_result_builtin(c.name), cycle: 0 - 1, quiet: [] };
 }
 
 // with_analyses gives each row a plan reads the analysis of its graph as it
