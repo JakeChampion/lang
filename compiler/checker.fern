@@ -25245,12 +25245,9 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
       i = i + 1;
       continue;
     }
-    // build_func_scope is a pure function of (fd, st, structs, unions,
-    // methods), none of which change across this loop body, so the body
-    // passes below share one build instead of repeating it per pass. It
-    // carries the impl table: the call walk reads it for E021, and every
-    // coercion into a `dyn` slot reads it for the traits the value implements.
-    let fsc: Scope = build_func_scope(mod.funcs[i], st, stt, ut, methods, import_paths, call_impls, mod.trait_reqs);
+    // The view-summary pass built the same initial scope for this body.
+    // Every diagnostic pass threads its own bindings from that scope.
+    let fsc: Scope = slc_scopes[i];
     if (!check_func_body(mod.funcs[i], fsc)) {
       well_typed = false;
     }
