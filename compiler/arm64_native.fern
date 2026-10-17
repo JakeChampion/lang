@@ -1778,13 +1778,16 @@ function arm64_nop(buf: i32[]): i32[] {
   return arm64_le32(buf, arm64_nop_word());
 }
 
-// arm64_fixed_word encodes an instruction without operands: `ret`, `nop`,
+// arm64_fixed_word encodes an instruction without operands: `ret`, `nop`, `yield`,
 // and the hints that sign the return address in x30 against sp (`paciasp`),
 // authenticate it (`autiasp`) and strip its signature (`xpaclri`), each a
 // NOP on a core without pointer authentication.
 pub function arm64_fixed_word(mnem: string): i64 {
   if (mnem == "ret") {
     return arm64_ret_word(30);
+  }
+  if (mnem == "yield") {
+    return 0xd503203f;
   }
   if (mnem == "paciasp") {
     return 0xd503233f;
@@ -6549,6 +6552,9 @@ function arm64_gas_family_len5(mnem: string): i32 {
   if (c == b'u') {
     return arm64_gas_family_len5_u(mnem);
   }
+  if (c == b'y' && mnem == "yield") {
+    return arm64_fam_fixed();
+  }
   return 0 - 1;
 }
 
@@ -10328,6 +10334,9 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
       rest = arm64_gas_trim(slice_unchecked(line, sp + 1, line.len()));
     }
     let ops: string[] = arm64_gas_operands(rest);
+    if (mnem == "yield" && ops.len() != 0) {
+      p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":operands") };
+    }
     // The line's memory operand, parsed once: the vet steps and the
     // encoders below each used to re-parse it, three times over on a
     // plain ldr/str.

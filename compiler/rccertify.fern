@@ -2330,12 +2330,10 @@ function row_slots(w: Walk, takes: Takes, own m: Marked, bi: i32): Marked {
   for ins in b.insts {
     m = add_value(m, w, ins.result);
   }
-  let i: i32 = 0;
-  while (i < takes.block.len()) {
-    if (takes.block[i] == bi) {
-      for r in takes.roots[i] {
-        m = add_slot(m, w.idx[r]);
-      }
+  let i: i32 = takes.first[bi];
+  while (i >= 0 && i < takes.block.len() && takes.block[i] == bi) {
+    for r in takes.roots[i] {
+      m = add_slot(m, w.idx[r]);
     }
     i = i + 1;
   }
@@ -3455,10 +3453,15 @@ function resumes(f: ssa.SFunc): boolean {
 function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: rcsigs.Table, ops: rcsigs.OpTable, at: i32[], dom: ssadeps.Dom, reach: boolean[], hold: Hold, base: Base): Walk {
   let defs: Defs = definitions(f);
   let rt: Roots = roots_over(f, defs, sigs, inherited_roots(own_roots(f.nvals), f, defs, base));
-  let w: Walk = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: returns_pair(f) || base.paired, why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [], uses: use_counts(f), dom: dom, regions: [], openers: [], held: hold.box, reused: hold.reused, phis: phis_of(f), outer: outer_of(base), firsts: firsts_of(f, rt.root), carried: [], children: [], takes: no_takes(), params_at_entry: !base.on, debt: [], kept: [] };
-  if (base.on) {
-    w = Walk { ...w, uses: base.uses };
+  let uses: i32[] = base.uses;
+  // A region keeps the whole function's paired-return convention. Pruning
+  // removes instructions and edges; it cannot introduce a second return word.
+  let paired: boolean = base.paired;
+  if (!base.on) {
+    uses = use_counts(f);
+    paired = returns_pair(f);
   }
+  let w: Walk = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: paired, why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [], uses: uses, dom: dom, regions: [], openers: [], held: hold.box, reused: hold.reused, phis: phis_of(f), outer: outer_of(base), firsts: firsts_of(f, rt.root), carried: [], children: [], takes: no_takes(), params_at_entry: !base.on, debt: [], kept: [] };
   w = Walk { ...w, carried: carried_of(w) };
   let rg: Regions = inherited_regions(unique_regions(w, dom, reach), f, reach, base);
   let own_children: boolean[] = children_boxes(w, rg.roots);
@@ -4087,7 +4090,8 @@ function token_phis(b: ssa.SBlock, phis: i32[], box: i32, hold: boolean): ssa.SB
 // emitted for that. A payload read before the box's children-only drop is
 // not the shell's (shell_taken): the drop released it.
 function box_ops(w: Walk, f: ssa.SFunc, box: i32): BoxOps {
-  let root: i32[] = roots(f, definitions(f), w.sigs).root;
+  // Pruning changes instructions in place and preserves every result position.
+  let root: i32[] = roots(f, w.defs, w.sigs).root;
   let ops: BoxOps = BoxOps { f: f, reused: __alloc_bool(f.nvals) };
   let bi: i32 = 0;
   while (bi < f.blocks.len()) {

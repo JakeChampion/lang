@@ -2121,8 +2121,8 @@ function sysno_arm64_linux(name: string): string {
   if (name == "statfs") {
     return "43";
   }
-  // No Darwin row: XNU has no uname syscall (libc builds it from sysctl),
-  // so asm_arm64_ir keeps a hand-written kern.hostname body for that target.
+  // XNU has no uname syscall: its hostname and uname fields use the sysctl
+  // source bodies rather than asking this Linux-only row.
   if (name == "uname") {
     return "160";
   }
@@ -3983,7 +3983,8 @@ function kqueue_wait_src(t: string): string {
 
 // rt_src_task backs the task primitives (docs/NET-P3-SUSPENSION-PLAN.md
 // §3.4). The state block __fern_task_state holds the current task's id, the
-// record table and its capacity; a record is twelve words: mode (0 running,
+// record table and its capacity, and the current task's record, which the
+// per-word save and restore read without going through the table; a record is twelve words: mode (0 running,
 // 1 unwinding, 2 rewinding), the timeout a parked task gave, the readiness
 // word its scheduler set, the cancelled flag, the save area's pointer, length
 // and capacity in words, the free flag a released id leaves for reuse, the
@@ -4003,17 +4004,17 @@ pub function rt_src_task(t: string): string {
     + " function __fern_task_new(): i32 { let st: usize = __raw_task_state(); let tab: usize = __fern_task_tab(); let cap: i32 = __raw_load_ptr(st, 2) as i32; let id: i32 = 1; while (id < cap) { let rec: usize = __raw_load_ptr(tab, id); if (rec == 0 as usize) { __raw_store_ptr(tab, id, __fern_task_blank()); return id; } if (__raw_load_ptr(rec, 7) != 0 as usize) { __raw_store_ptr(rec, 7, 0 as usize); __raw_store_ptr(rec, 0, 0 as usize); __raw_store_ptr(rec, 1, 0 as usize); __raw_store_ptr(rec, 2, 0 as usize); __raw_store_ptr(rec, 3, 0 as usize); __raw_store_ptr(rec, 5, 0 as usize); __raw_store_ptr(rec, 9, 0 as usize); return id; } id = id + 1; } let ntab: usize = __alloc(cap * 16); let j: i32 = 0; while (j < cap * 2) { let v: usize = 0 as usize; if (j < cap) { v = __raw_load_ptr(tab, j); } __raw_store_ptr(ntab, j, v); j = j + 1; } __free(tab, cap * 8); __raw_store_ptr(st, 1, ntab); __raw_store_ptr(st, 2, (cap * 2) as usize); __raw_store_ptr(ntab, cap, __fern_task_blank()); return cap; }"
     + " function __fern_task_free(id: i32): i32 { let rec: usize = __fern_task_rec(id); if (rec != 0 as usize) { __raw_store_ptr(rec, 7, 1 as usize); } return 0; }"
     + " function __fern_task_cur(): i32 { let st: usize = __raw_task_state(); return __raw_load_ptr(st, 0) as i32; }"
-    + " function __fern_task_enter(id: i32, mode: i32): i32 { let st: usize = __raw_task_state(); let prev: usize = __raw_load_ptr(st, 0); __raw_store_ptr(st, 0, id as usize); let rec: usize = __fern_task_rec(id); __raw_store_ptr(rec, 0, mode as usize); __raw_store_ptr(rec, 11, prev); return 0; }"
-    + " function __fern_task_leave(): i32 { let st: usize = __raw_task_state(); let id: i32 = __raw_load_ptr(st, 0) as i32; if (id == 0) { return 0; } let rec: usize = __fern_task_rec(id); __raw_store_ptr(st, 0, __raw_load_ptr(rec, 11)); return __raw_load_ptr(rec, 0) as i32; }"
-    + " function __fern_task_mode(): i32 { let st: usize = __raw_task_state(); let id: i32 = __raw_load_ptr(st, 0) as i32; if (id == 0) { return 0; } let rec: usize = __fern_task_rec(id); return __raw_load_ptr(rec, 0) as i32; }"
-    + " function __fern_task_park(set: i32[], timeout_ms: i32): i32 { let st: usize = __raw_task_state(); let id: i32 = __raw_load_ptr(st, 0) as i32; if (id == 0) { return 0 - 1; } let rec: usize = __fern_task_rec(id); let mode: i32 = __raw_load_ptr(rec, 0) as i32; if (mode == 2) { __raw_store_ptr(rec, 0, 0 as usize); if (__raw_load_ptr(rec, 3) != 0 as usize) { return 0 - 2; } return __raw_load_ptr(rec, 2) as i32; } if (__raw_load_ptr(rec, 3) != 0 as usize) { return 0 - 2; } __raw_store_ptr(rec, 0, 1 as usize); __raw_store_ptr(rec, 1, timeout_ms as usize); let n: i32 = set.len(); let buf: usize = __raw_load_ptr(rec, 8); if (n > (__raw_load_ptr(rec, 10) as i32)) { if (buf != 0 as usize) { __free(buf, (__raw_load_ptr(rec, 10) as i32) * 8); } buf = __alloc(n * 8); __raw_store_ptr(rec, 8, buf); __raw_store_ptr(rec, 10, n as usize); } let i: i32 = 0; while (i < n) { __raw_store_ptr(buf, i, set[i] as usize); i = i + 1; } __raw_store_ptr(rec, 9, n as usize); return 0; }"
+    + " function __fern_task_enter(id: i32, mode: i32): i32 { let st: usize = __raw_task_state(); let prev: usize = __raw_load_ptr(st, 0); __raw_store_ptr(st, 0, id as usize); let rec: usize = __fern_task_rec(id); __raw_store_ptr(rec, 0, mode as usize); __raw_store_ptr(rec, 11, prev); __raw_store_ptr(st, 3, rec); return 0; }"
+    + " function __fern_task_leave(): i32 { let st: usize = __raw_task_state(); let id: i32 = __raw_load_ptr(st, 0) as i32; if (id == 0) { return 0; } let rec: usize = __raw_load_ptr(st, 3); let prev: i32 = __raw_load_ptr(rec, 11) as i32; __raw_store_ptr(st, 0, prev as usize); let outer: usize = 0 as usize; if (prev != 0) { outer = __fern_task_rec(prev); } __raw_store_ptr(st, 3, outer); return __raw_load_ptr(rec, 0) as i32; }"
+    + " function __fern_task_mode(): i32 { let st: usize = __raw_task_state(); let id: i32 = __raw_load_ptr(st, 0) as i32; if (id == 0) { return 0; } let rec: usize = __raw_load_ptr(st, 3); return __raw_load_ptr(rec, 0) as i32; }"
+    + " function __fern_task_park(set: i32[], timeout_ms: i32): i32 { let st: usize = __raw_task_state(); let id: i32 = __raw_load_ptr(st, 0) as i32; if (id == 0) { return 0 - 1; } let rec: usize = __raw_load_ptr(st, 3); let mode: i32 = __raw_load_ptr(rec, 0) as i32; if (mode == 2) { __raw_store_ptr(rec, 0, 0 as usize); if (__raw_load_ptr(rec, 3) != 0 as usize) { return 0 - 2; } return __raw_load_ptr(rec, 2) as i32; } if (__raw_load_ptr(rec, 3) != 0 as usize) { return 0 - 2; } __raw_store_ptr(rec, 0, 1 as usize); __raw_store_ptr(rec, 1, timeout_ms as usize); let n: i32 = set.len(); let buf: usize = __raw_load_ptr(rec, 8); if (n > (__raw_load_ptr(rec, 10) as i32)) { if (buf != 0 as usize) { __free(buf, (__raw_load_ptr(rec, 10) as i32) * 8); } buf = __alloc(n * 8); __raw_store_ptr(rec, 8, buf); __raw_store_ptr(rec, 10, n as usize); } let i: i32 = 0; while (i < n) { __raw_store_ptr(buf, i, set[i] as usize); i = i + 1; } __raw_store_ptr(rec, 9, n as usize); return 0; }"
     + " function __fern_task_wait(id: i32): i32[] { let rec: usize = __fern_task_rec(id); let n: i32 = __raw_load_ptr(rec, 9) as i32; let buf: usize = __raw_load_ptr(rec, 8); let out: i32[] = []; let i: i32 = 0; while (i < n) { out = out.append(__raw_load_ptr(buf, i) as i32); i = i + 1; } return out; }"
     + " function __fern_task_timeout(id: i32): i32 { let rec: usize = __fern_task_rec(id); return __raw_load_ptr(rec, 1) as i32; }"
     + " function __fern_task_set_ready(id: i32, w: i32): i32 { let rec: usize = __fern_task_rec(id); __raw_store_ptr(rec, 2, w as usize); return 0; }"
     + " function __fern_task_set_cancelled(id: i32): i32 { let rec: usize = __fern_task_rec(id); __raw_store_ptr(rec, 3, 1 as usize); return 0; }"
-    + " function __fern_task_cancelled(): i32 { let st: usize = __raw_task_state(); let id: i32 = __raw_load_ptr(st, 0) as i32; if (id == 0) { return 0; } let rec: usize = __fern_task_rec(id); return __raw_load_ptr(rec, 3) as i32; }"
-    + " function __fern_task_push_w(x: usize): i32 { let st: usize = __raw_task_state(); let rec: usize = __fern_task_rec(__raw_load_ptr(st, 0) as i32); let len: i32 = __raw_load_ptr(rec, 5) as i32; let cap: i32 = __raw_load_ptr(rec, 6) as i32; let buf: usize = __raw_load_ptr(rec, 4); if (len >= cap) { let ncap: i32 = 64; if (cap > 0) { ncap = cap * 2; } let nbuf: usize = __alloc(ncap * 8); let i: i32 = 0; while (i < len) { __raw_store_ptr(nbuf, i, __raw_load_ptr(buf, i)); i = i + 1; } if (buf != 0 as usize) { __free(buf, cap * 8); } buf = nbuf; __raw_store_ptr(rec, 4, buf); __raw_store_ptr(rec, 6, ncap as usize); } __raw_store_ptr(buf, len, x); __raw_store_ptr(rec, 5, (len + 1) as usize); return 0; }"
-    + " function __fern_task_pop_w(): usize { let st: usize = __raw_task_state(); let rec: usize = __fern_task_rec(__raw_load_ptr(st, 0) as i32); let len: i32 = (__raw_load_ptr(rec, 5) as i32) - 1; __raw_store_ptr(rec, 5, len as usize); let buf: usize = __raw_load_ptr(rec, 4); return __raw_load_ptr(buf, len); }"
+    + " function __fern_task_cancelled(): i32 { let st: usize = __raw_task_state(); let id: i32 = __raw_load_ptr(st, 0) as i32; if (id == 0) { return 0; } let rec: usize = __raw_load_ptr(st, 3); return __raw_load_ptr(rec, 3) as i32; }"
+    + " function __fern_task_push_w(x: usize): i32 { let st: usize = __raw_task_state(); let rec: usize = __raw_load_ptr(st, 3); let len: i32 = __raw_load_ptr(rec, 5) as i32; let cap: i32 = __raw_load_ptr(rec, 6) as i32; let buf: usize = __raw_load_ptr(rec, 4); if (len >= cap) { let ncap: i32 = 64; if (cap > 0) { ncap = cap * 2; } let nbuf: usize = __alloc(ncap * 8); let i: i32 = 0; while (i < len) { __raw_store_ptr(nbuf, i, __raw_load_ptr(buf, i)); i = i + 1; } if (buf != 0 as usize) { __free(buf, cap * 8); } buf = nbuf; __raw_store_ptr(rec, 4, buf); __raw_store_ptr(rec, 6, ncap as usize); } __raw_store_ptr(buf, len, x); __raw_store_ptr(rec, 5, (len + 1) as usize); return 0; }"
+    + " function __fern_task_pop_w(): usize { let st: usize = __raw_task_state(); let rec: usize = __raw_load_ptr(st, 3); let len: i32 = (__raw_load_ptr(rec, 5) as i32) - 1; __raw_store_ptr(rec, 5, len as usize); let buf: usize = __raw_load_ptr(rec, 4); return __raw_load_ptr(buf, len); }"
     + " function __fern_task_push_i64(x: i64): i32 { return __fern_task_push_w(x as usize); }"
     + " function __fern_task_pop_i64(): i64 { return __fern_task_pop_w() as i64; }"
     + " function __fern_task_push_f64(x: f64): i32 { return __fern_task_push_w(f64_bits(x) as usize); }"
@@ -5975,11 +5976,13 @@ function statfs_bufsize_n(t: string): i32 {
 // scratch_size is how large `__fern_scratch` must be on `t`. 256 bytes serves
 // every other syscall leaf that writes into it (the widest is `stat`'s 160-byte
 // record); Darwin's `struct statfs` is the one record that does not fit, so a
-// module reaching statfs there reserves the whole thing. The buffer is reused
+// module reaching statfs there reserves the whole thing. `minimum` is 400
+// when Darwin's hostname or uname fields need their larger result buffer,
+// otherwise 256. The buffer is reused
 // and non-reentrant by construction — each leaf reads it fully before the next
 // runs — so the reservation is the MAXIMUM, not a sum.
-pub function scratch_size(t: string, needs_statfs: boolean): string {
-  let n: i32 = 256;
+pub function scratch_size(t: string, needs_statfs: boolean, minimum: i32): string {
+  let n: i32 = minimum;
   if (needs_statfs && statfs_bufsize_n(t) > n) {
     n = statfs_bufsize_n(t);
   }
@@ -6223,8 +6226,11 @@ function faccessat_src(t: string, dirfd: string): string {
 // fresh string. uname(2) fills a 390-byte struct utsname of six 65-byte fields;
 // nodename is the second, NUL-terminated within its field. A refused uname is
 // an empty name. The buffer is a heap block rather than __raw_scratch, which
-// is 256 bytes.
+// is 256 bytes on Linux. Darwin uses the shared sysctl source below instead.
 pub function rt_src_hostname(t: string): string {
+  if (t == "arm64-darwin") {
+    return rt_src_darwin_sysinfo("__fern_hostname", "", "let domain: i32 = 1; let field: i32 = 10; let valid: boolean = true;");
+  }
   return "function __fern_hostname(): string { let buf: usize = __raw_alloc(390); let n: i32 = 0; if (__syscall3(" + sysno(t, "uname") + ", buf as i64, 0, 0) == 0) { while (n < 65 && __raw_load8(buf, 65 + n) != 0) { n = n + 1; } } let p: usize = __raw_alloc(n); __memcpy(p, buf + 65, n); let buf_own: string = __raw_string(buf, 390); return __raw_string(p, n); }";
 }
 
@@ -6233,8 +6239,20 @@ pub function rt_src_hostname(t: string): string {
 // rt_src_hostname reads; the index selects the field rather than pinning
 // nodename. An index naming no field leaves the length at zero, which is the
 // same empty answer a refused uname gets.
+// Darwin selects the corresponding sysctl MIB instead of a utsname offset.
 pub function rt_src_uname_field(t: string): string {
+  if (t == "arm64-darwin") {
+    return rt_src_darwin_sysinfo("__fern_uname_field", "idx: i32", "let domain: i32 = 1; let field: i32 = 1; let valid: boolean = idx >= 0 && idx < 5; if (idx == 1) { field = 10; } if (idx == 2) { field = 2; } if (idx == 3) { field = 4; } if (idx == 4) { domain = 6; }");
+  }
   return "function __fern_uname_field(idx: i32): string { let buf: usize = __raw_alloc(390); let n: i32 = 0; let off: i32 = 0; if (idx >= 0 && idx < 5) { off = idx * 65; if (__syscall3(" + sysno(t, "uname") + ", buf as i64, 0, 0) == 0) { while (n < 65 && __raw_load8(buf, off + n) != 0) { n = n + 1; } } } let p: usize = __raw_alloc(n); __memcpy(p, buf + off, n); let buf_own: string = __raw_string(buf, 390); return __raw_string(p, n); }";
+}
+
+// XNU reads these strings through sysctl, not uname. The scratch layout is
+// mib[2] at 0, oldlen at 8, then 384 bytes of output at 16, matching the
+// retired stack buffer. Nothing re-enters scratch before the result is copied.
+// Only the returned string allocates; a refused call or invalid index is empty.
+function rt_src_darwin_sysinfo(name: string, params: string, mib_source: string): string {
+  return "function " + name + "(" + params + "): string { let buf: usize = __raw_scratch(400); " + mib_source + " let n: i32 = 0; if (valid) { __store_i32(buf, domain); __store_i32(buf + 4, field); __store_i64(buf + 8, 384i64); if (__syscall6(202, buf as i64, 2, (buf + 16) as i64, (buf + 8) as i64, 0, 0) >= 0i64) { while (n < 384 && __raw_load8(buf, 16 + n) != 0) { n = n + 1; } } } let p: usize = __raw_alloc(n); __memcpy(p, buf + 16, n); return __raw_string(p, n); }";
 }
 
 // rt_src_getcwd backs `getcwd()` → Result[string, IoError]: the process's

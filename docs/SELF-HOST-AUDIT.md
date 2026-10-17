@@ -989,6 +989,13 @@ appendix §6.)
   since a parameter default binds no parameters. Pure CSE: no pass mutates the
   scope it is handed. The `Scope` doc comment conceding the nine rebuilds is
   deleted.
+
+  _2026-10-17:_ the initial scopes built for view summaries in `slc_scopes`
+  are also reused by the body-diagnostic loop. That loop had grown a second
+  identical `build_func_scope` call. This does not merge scopes built for
+  distinct analyses or promise that the entire compiler builds each scope
+  only once. The cold-checker measurement and differential coverage are in
+  `SELFHOST-FUSION-COMPILE-COST-2026-10-17.md`.
 - [x] **SH-046 — builtin function / enum-variant membership as hand-kept `||`
   chains.** _Done:_ `is_builtin_variant` (`checker.fern:1048`) derives from the
   single variant→enum table in `mx_builtin_enum_of`, and `is_builtin_function`
@@ -1056,7 +1063,7 @@ appendix §6.)
   its own sequence with the SSA suite and the fixture legs as the gate — not a
   batch item.
 
-- [~] **SH-050 — the two giants are split; one builtin chain remains.**
+- [x] **SH-050 — the original giants were split; the legacy lowering is retired.**
   _Done:_ `build_expr` was 524 lines (not the 790 this row long quoted), all
   but 17 of them a single `ExprCall` arm — twelve `build_expr_*` helpers
   already existed for every other shape. It splits on the boundary already
@@ -1074,13 +1081,13 @@ appendix §6.)
   that; the remaining parallel arrays are the scan's own working set and are
   local to 82 lines.
 
-  _Still open, and a trap worth naming:_ `build_call_named` is 326 lines, a
-  chain of 17 self-contained builtin lowerings. **Regrouping them behind
-  name-keyed predicates is not the tidy-up it looks like** — every arm tests
-  NAME AND ARITY and falls through to the generic call when the arity is
-  wrong, so a group helper keyed on the name alone silently changes what
-  `write(a, b)` lowers to. Any regrouping has to end each group with the
-  generic fallthrough.
+  _2026-10-17 verification:_ the remaining `build_call_named` builtin chain,
+  `build_expr` and `irlower.fern` itself were deleted by the typed semantic
+  lowering cutover (`SELFHOST-SEMANTIC-SOURCE.md`). There is no surviving
+  function to split under this row. Its name-and-arity fallthrough warning
+  described that deleted pipeline, not a task to recreate it. The allocator
+  has continued to evolve since its historical split above; the 82-line
+  count is not a measurement of today's `regalloc_linear`.
 - [x] **SH-051 — the premise was wrong: `env_put` has no aliasing hazard.**
   This row asked for a `ScratchVec` type or an `env_put_unsafe_owned` rename to
   fence off an in-place write. There is nothing to fence. `env_put` is
