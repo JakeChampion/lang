@@ -247,7 +247,10 @@ pub struct Config {
   h3: boolean,
 }
 
-// config() — the defaults: a backlog of 128, the port held
+// config() — the defaults: an accept queue as deep as the host allows
+// (65535, which Linux clamps to `net.core.somaxconn` and Darwin to
+// `kern.ipc.somaxconn`; at 128 a burst of new connections overflows it
+// and each one dropped waits out a SYN retransmit), the port held
 // by one listener, the 10 s read deadline, a 130 s keep-alive idle span,
 // 1000 requests per connection, 1024 connections open and 100 of them per
 // client, 1024 handlers or chunk producers parked at once, a worker per
@@ -255,7 +258,7 @@ pub struct Config {
 // 30 s, no tracing, and
 // the parser's `http_limits()`, bodies read whole before the handler runs.
 pub function config(): Config {
-  return Config { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), background_deadline: time.duration_seconds(30 as i64), trace: false, proxy_protocol: false, metrics: metrics.registry(), metrics_port: 0, h2: false, io_uring: false, io_uring_zc_bytes: 3072, ktls: false, h3: false };
+  return Config { backlog: 65535, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), background_deadline: time.duration_seconds(30 as i64), trace: false, proxy_protocol: false, metrics: metrics.registry(), metrics_port: 0, h2: false, io_uring: false, io_uring_zc_bytes: 3072, ktls: false, h3: false };
 }
 
 // (c).with_tls(cfg) — every connection speaks TLS 1.3 under `cfg`
