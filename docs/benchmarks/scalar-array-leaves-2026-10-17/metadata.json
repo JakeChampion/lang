@@ -84,6 +84,6 @@
   "candidate_source_recipe": "Checkout control_source_revision and apply compiler-source.patch; the retained patch reconstructs the measured compiler sources independently of rebased commit IDs.",
   "compiler_source_patch": {
     "bytes": 2689,
-    "sha256": "e5cca34fc1c309bd111131d38a16ddf19c449a38710585102aa8395d692e89ce"
+    "sha256": "d8fefe14073a5e80e6bb9836be9cf272a719924ef53e91c05c76f35039b88aa5"
   }
 }
