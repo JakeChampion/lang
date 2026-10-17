@@ -68,3 +68,20 @@ baseline `f395df09bc0d2fb9fa77c410384411708ac7fe941e7d56b3d6e3aeab6c5eb6b7`
 on the same final sources. Both native compiler outputs, the WASI playground,
 and all three full reports match exactly. Native reports have 7,641 lines,
 WASI 7,067. No earlier timing is relabeled as this integrated comparison.
+
+After integrating the existing #12590 ARM buffer-helper argument fix, source
+`abfcd5b383b6f88b8adf3c7d0cb119d76ac565bb` has identical stage 2 and stage 3,
+12,703,616 bytes, SHA-256
+`7eb44bdde788f66c0db3b859d5e998a112d9fd9e2bcdc38873d0c36bf517ee7a`.
+The combined certifier, scalar-return, donor, actual ARM buffer-helper,
+provided-symbol inventory and complexity tests pass in 44.932 seconds.
+All eleven strict size checks pass in 51.689 seconds, with complete coverage
+and the existing 5% tolerance.
+
+`after-arm-fix-parity.json` compares against scalar baseline
+`a0cd57950240bd9c171e7a7de7113972581c40e2d574e233834212b2da1d2013`
+on those same sources. Both native compiler binaries, the WASI playground,
+and all three complete reports match byte for byte. Report lengths remain
+7,641 native and 7,067 WASI lines. This integration adds 4,096 bytes to that
+baseline; the performance and allocation observations earlier in this file
+retain their original compiler and source hashes.
