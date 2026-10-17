@@ -3452,7 +3452,8 @@ function resumes(f: ssa.SFunc): boolean {
 // walked does not define.
 function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: rcsigs.Table, ops: rcsigs.OpTable, at: i32[], dom: ssadeps.Dom, reach: boolean[], hold: Hold, base: Base): Walk {
   let defs: Defs = definitions(f);
-  let rt: Roots = roots_over(f, defs, sigs, inherited_roots(own_roots(f.nvals), f, defs, base));
+  let local: i32[] = region_values(f, base.on);
+  let rt: Roots = roots_over(f, defs, sigs, starting_roots(f, local, base));
   let uses: i32[] = base.uses;
   // A region keeps the whole function's paired-return convention. Pruning
   // removes instructions and edges; it cannot introduce a second return word.
@@ -3465,9 +3466,9 @@ function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: 
   w = Walk { ...w, carried: carried_of(w) };
   let rg: Regions = inherited_regions(unique_regions(w, dom, reach), f, reach, base);
   let own_children: boolean[] = children_boxes(w, rg.roots);
-  let children: boolean[] = inherited_children(own_children, f, defs, base);
+  let children: boolean[] = inherited_children(own_children, local, base);
   let st: Stores = stores_of(w);
-  let o: Origins = inherited_origins(origins(w, st, rg.roots, rg.openers, children, dom), f, defs, base);
+  let o: Origins = inherited_origins(origins(w, st, rg.roots, rg.openers, children, dom), f, defs, base, local);
   w = Walk { ...w, origin: o.origin, why: o.why, opened: o.opened, pair_tag: o.pair_tag, pair_mask: o.pair_mask, pair_words: o.pair_words, regions: rg.roots, openers: rg.openers, children: children };
   let takes: Takes = inherited_takes(takes_of(w, dom), w, base);
   let taken: boolean[] = null_takes(w, takes);
@@ -3486,14 +3487,14 @@ function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: 
 // not define, the regions its tests opened, and its null stores' takes.
 // `at` maps a block id to its position in it. `on` is false for the walk
 // without an assumption itself.
-struct Base { on: boolean, at: i32[], root: i32[], derived: boolean[], origin: i32[], why: i32[], opened: i32[], pair_tag: i32[], pair_mask: i32[], children: boolean[], regions: i32[][], openers: i32[][], uses: i32[], paired: boolean, takes: Takes, defs: Defs, f: ssa.SFunc, phis: i32[] }
+struct Base { on: boolean, at: i32[], root: i32[], derived: boolean[], origin: i32[], why: i32[], opened: i32[], pair_tag: i32[], pair_mask: i32[], pair_words: i32[], children: boolean[], regions: i32[][], openers: i32[][], uses: i32[], paired: boolean, takes: Takes, defs: Defs, f: ssa.SFunc, phis: i32[] }
 
 function no_base(): Base {
-  return Base { on: false, at: [], root: [], derived: [], origin: [], why: [], opened: [], pair_tag: [], pair_mask: [], children: [], regions: [], openers: [], uses: [], paired: false, takes: no_takes(), defs: Defs { block: [], at: [] }, f: ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false }, phis: [] };
+  return Base { on: false, at: [], root: [], derived: [], origin: [], why: [], opened: [], pair_tag: [], pair_mask: [], pair_words: [], children: [], regions: [], openers: [], uses: [], paired: false, takes: no_takes(), defs: Defs { block: [], at: [] }, f: ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false }, phis: [] };
 }
 
 function base_of(w: Walk): Base {
-  return Base { on: true, at: w.at, root: w.root, derived: w.derived, origin: w.origin, why: w.why, opened: w.opened, pair_tag: w.pair_tag, pair_mask: w.pair_mask, children: w.children, regions: w.regions, openers: w.openers, uses: w.uses, paired: w.paired, takes: w.takes, defs: w.defs, f: w.f, phis: w.phis };
+  return Base { on: true, at: w.at, root: w.root, derived: w.derived, origin: w.origin, why: w.why, opened: w.opened, pair_tag: w.pair_tag, pair_mask: w.pair_mask, pair_words: w.pair_words, children: w.children, regions: w.regions, openers: w.openers, uses: w.uses, paired: w.paired, takes: w.takes, defs: w.defs, f: w.f, phis: w.phis };
 }
 
 // Outer is the base walk's tables as a walk under an assumption reads a
@@ -3522,20 +3523,45 @@ function outside(f: ssa.SFunc, defs: Defs, v: i32): boolean {
   return v >= f.nparams && v < defs.block.len() && defs.block[v] < 0;
 }
 
-// inherited_roots gives each value the region uses but does not define the
-// base's root; the region's own copies of it are resolved through that after.
-function inherited_roots(own rt: Roots, f: ssa.SFunc, defs: Defs, base: Base): Roots {
-  if (!base.on) {
-    return rt;
+// Parameters and local definitions are the complement of outside(). Sharing
+// the parent's facts and replacing these slots avoids walking every value of
+// the whole function for each small region. Alias resolution still starts
+// local values at their own roots, exactly as in the walk without a base.
+function region_values(f: ssa.SFunc, on: boolean): i32[] {
+  let out: i32[] = [];
+  if (!on) {
+    return out;
   }
-  let v: i32 = 0;
-  while (v < f.nvals && v < base.root.len()) {
-    if (outside(f, defs, v)) {
-      rt = Roots { root: rt.root.with(v, base.root[v]), derived: rt.derived.with(v, base.derived[v]) };
+  let p: i32 = 0;
+  while (p < f.nparams && p < f.nvals) {
+    out = out.append(p);
+    p = p + 1;
+  }
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.result >= f.nparams && ins.result >= 0 && ins.result < f.nvals) {
+        out = out.append(ins.result);
+      }
     }
-    v = v + 1;
   }
-  return rt;
+  return out;
+}
+
+function starting_roots(f: ssa.SFunc, local: i32[], base: Base): Roots {
+  if (!base.on) {
+    return own_roots(f.nvals);
+  }
+  let root: i32[] = base.root;
+  let derived: boolean[] = base.derived;
+  for v in local {
+    if (root[v] != v) {
+      root = root.with(v, v);
+    }
+    if (derived[v]) {
+      derived = derived.with(v, false);
+    }
+  }
+  return Roots { root: root, derived: derived };
 }
 
 // inherited_regions adds the base's regions to the region walk's: the
@@ -3563,31 +3589,56 @@ function inherited_regions(own rg: Regions, f: ssa.SFunc, reach: boolean[], base
   return rg;
 }
 
-function inherited_children(own out: boolean[], f: ssa.SFunc, defs: Defs, base: Base): boolean[] {
+function inherited_children(local_children: boolean[], local: i32[], base: Base): boolean[] {
   if (!base.on) {
-    return out;
+    return local_children;
   }
-  let v: i32 = 0;
-  while (v < out.len() && v < base.children.len()) {
-    if (outside(f, defs, v) && base.children[v]) {
-      out = out.with(v, true);
+  // children_boxes sets only parameters and locally defined phi results;
+  // every outside slot of local_children is false.
+  let out: boolean[] = base.children;
+  for v in local {
+    if (out[v] != local_children[v]) {
+      out = out.with(v, local_children[v]);
     }
-    v = v + 1;
   }
   return out;
 }
 
-function inherited_origins(own o: Origins, f: ssa.SFunc, defs: Defs, base: Base): Origins {
+function inherited_origins(o: Origins, f: ssa.SFunc, defs: Defs, base: Base, local: i32[]): Origins {
   if (!base.on) {
+    return o;
+  }
+  let out: Origins = Origins { origin: base.origin, why: base.why, opened: base.opened, pair_tag: base.pair_tag, pair_mask: base.pair_mask, pair_words: o.pair_words };
+  for v in local {
+    if (out.origin[v] != o.origin[v]) {
+      out = Origins { ...out, origin: out.origin.with(v, o.origin[v]) };
+    }
+    if (out.why[v] != o.why[v]) {
+      out = Origins { ...out, why: out.why.with(v, o.why[v]) };
+    }
+    if (out.opened[v] != o.opened[v]) {
+      out = Origins { ...out, opened: out.opened.with(v, o.opened[v]) };
+    }
+    if (out.pair_tag[v] != o.pair_tag[v]) {
+      out = Origins { ...out, pair_tag: out.pair_tag.with(v, o.pair_tag[v]) };
+    }
+    if (out.pair_mask[v] != o.pair_mask[v]) {
+      out = Origins { ...out, pair_mask: out.pair_mask.with(v, o.pair_mask[v]) };
+    }
+  }
+  return inherited_pair_words(out, f, defs, base);
+}
+
+// Keep the original order: local paired words first, then outside words in
+// ascending value order. Most functions contain no paired words at all.
+function inherited_pair_words(own o: Origins, f: ssa.SFunc, defs: Defs, base: Base): Origins {
+  if (base.pair_words.len() == 0) {
     return o;
   }
   let v: i32 = 0;
   while (v < o.origin.len() && v < base.origin.len()) {
-    if (outside(f, defs, v)) {
-      o = Origins { ...o, origin: o.origin.with(v, base.origin[v]), why: o.why.with(v, base.why[v]), opened: o.opened.with(v, base.opened[v]) };
-      if (v < base.pair_tag.len() && base.pair_tag[v] >= 0) {
-        o = Origins { ...o, pair_tag: o.pair_tag.with(v, base.pair_tag[v]), pair_mask: o.pair_mask.with(v, base.pair_mask[v]), pair_words: o.pair_words.append(v) };
-      }
+    if (outside(f, defs, v) && v < base.pair_tag.len() && base.pair_tag[v] >= 0) {
+      o = Origins { ...o, pair_words: o.pair_words.append(v) };
     }
     v = v + 1;
   }

@@ -1,0 +1,355 @@
+{
+  "target": "arm64-darwin",
+  "platform": "macOS-15.7.9-arm64-arm-64bit-Mach-O",
+  "fixed_source_root": "/Users/runner/work/lang/lang/baseline",
+  "compiler_sha256": {
+    "baseline": "82b6fa9c1422b5bbee6c5f6ceb0db5a6fe3e36e3339871cb1e67c09fa50092e2",
+    "candidate": "db13c4373395f9209cb6d41cbf1ef0a113e6fc28948f0d020a80a3fdb4020edb"
+  },
+  "x25519": {
+    "rows": [
+      {
+        "pair": 0,
+        "compiler": "baseline",
+        "seconds": 1.4462512500000457
+      },
+      {
+        "pair": 0,
+        "compiler": "candidate",
+        "seconds": 1.3571942909999848
+      },
+      {
+        "pair": 1,
+        "compiler": "candidate",
+        "seconds": 1.2763320419999786
+      },
+      {
+        "pair": 1,
+        "compiler": "baseline",
+        "seconds": 1.4386813339999662
+      },
+      {
+        "pair": 2,
+        "compiler": "baseline",
+        "seconds": 1.363511791999997
+      },
+      {
+        "pair": 2,
+        "compiler": "candidate",
+        "seconds": 1.2095389999999497
+      },
+      {
+        "pair": 3,
+        "compiler": "candidate",
+        "seconds": 1.0935531669999818
+      },
+      {
+        "pair": 3,
+        "compiler": "baseline",
+        "seconds": 1.1927404159999924
+      },
+      {
+        "pair": 4,
+        "compiler": "baseline",
+        "seconds": 1.0750103749999766
+      },
+      {
+        "pair": 4,
+        "compiler": "candidate",
+        "seconds": 1.236524583000005
+      },
+      {
+        "pair": 5,
+        "compiler": "candidate",
+        "seconds": 1.485483208000005
+      },
+      {
+        "pair": 5,
+        "compiler": "baseline",
+        "seconds": 1.3630911669999932
+      },
+      {
+        "pair": 6,
+        "compiler": "baseline",
+        "seconds": 1.5234170420000055
+      },
+      {
+        "pair": 6,
+        "compiler": "candidate",
+        "seconds": 1.5197509170000103
+      },
+      {
+        "pair": 7,
+        "compiler": "candidate",
+        "seconds": 1.2443238339999994
+      },
+      {
+        "pair": 7,
+        "compiler": "baseline",
+        "seconds": 1.4528616659999898
+      },
+      {
+        "pair": 8,
+        "compiler": "baseline",
+        "seconds": 1.5863080830000058
+      },
+      {
+        "pair": 8,
+        "compiler": "candidate",
+        "seconds": 1.358233666999979
+      },
+      {
+        "pair": 9,
+        "compiler": "candidate",
+        "seconds": 1.2453694160000168
+      },
+      {
+        "pair": 9,
+        "compiler": "baseline",
+        "seconds": 1.3932713749999834
+      },
+      {
+        "pair": 10,
+        "compiler": "baseline",
+        "seconds": 1.3464665829999944
+      },
+      {
+        "pair": 10,
+        "compiler": "candidate",
+        "seconds": 1.1455532909999988
+      },
+      {
+        "pair": 11,
+        "compiler": "candidate",
+        "seconds": 1.1948025410000014
+      },
+      {
+        "pair": 11,
+        "compiler": "baseline",
+        "seconds": 1.123670790999995
+      },
+      {
+        "pair": 12,
+        "compiler": "baseline",
+        "seconds": 1.1466878749999978
+      },
+      {
+        "pair": 12,
+        "compiler": "candidate",
+        "seconds": 1.1049877500000207
+      },
+      {
+        "pair": 13,
+        "compiler": "candidate",
+        "seconds": 1.1357903749999991
+      },
+      {
+        "pair": 13,
+        "compiler": "baseline",
+        "seconds": 1.0529306249999877
+      },
+      {
+        "pair": 14,
+        "compiler": "baseline",
+        "seconds": 1.0492422500000202
+      },
+      {
+        "pair": 14,
+        "compiler": "candidate",
+        "seconds": 1.0732987090000279
+      }
+    ],
+    "paired_ratios": [
+      0.9384222077595037,
+      0.8871540985739992,
+      0.8870763033342013,
+      0.9168408752906625,
+      1.150244324851313,
+      1.0897900624426924,
+      0.9975934856320222,
+      0.8564640826582371,
+      0.8562231268665698,
+      0.8938455482156387,
+      0.8507847914410539,
+      1.0633030159453585,
+      0.9636342845257894,
+      1.0786944059111325,
+      1.0229274593164803
+    ],
+    "median_paired_ratio": 0.9384222077595037,
+    "stdout": "995072\n"
+  },
+  "compiler": {
+    "rows": [
+      {
+        "pair": 0,
+        "compiler": "baseline",
+        "seconds": 4.110157125000001
+      },
+      {
+        "pair": 0,
+        "compiler": "candidate",
+        "seconds": 5.141420707999998
+      },
+      {
+        "pair": 1,
+        "compiler": "candidate",
+        "seconds": 5.040622167000038
+      },
+      {
+        "pair": 1,
+        "compiler": "baseline",
+        "seconds": 5.653611624999996
+      },
+      {
+        "pair": 2,
+        "compiler": "baseline",
+        "seconds": 6.38516204199999
+      },
+      {
+        "pair": 2,
+        "compiler": "candidate",
+        "seconds": 6.319357000000025
+      },
+      {
+        "pair": 3,
+        "compiler": "candidate",
+        "seconds": 5.465205874999981
+      },
+      {
+        "pair": 3,
+        "compiler": "baseline",
+        "seconds": 5.680274250000025
+      },
+      {
+        "pair": 4,
+        "compiler": "baseline",
+        "seconds": 5.327147458000013
+      },
+      {
+        "pair": 4,
+        "compiler": "candidate",
+        "seconds": 5.567686207999998
+      },
+      {
+        "pair": 5,
+        "compiler": "candidate",
+        "seconds": 4.924403541999993
+      },
+      {
+        "pair": 5,
+        "compiler": "baseline",
+        "seconds": 4.57260041699999
+      },
+      {
+        "pair": 6,
+        "compiler": "baseline",
+        "seconds": 4.510236833000022
+      },
+      {
+        "pair": 6,
+        "compiler": "candidate",
+        "seconds": 4.512491125000054
+      },
+      {
+        "pair": 7,
+        "compiler": "candidate",
+        "seconds": 4.35154399999999
+      },
+      {
+        "pair": 7,
+        "compiler": "baseline",
+        "seconds": 4.290223667000021
+      },
+      {
+        "pair": 8,
+        "compiler": "baseline",
+        "seconds": 4.043915040999991
+      },
+      {
+        "pair": 8,
+        "compiler": "candidate",
+        "seconds": 3.790750833000004
+      },
+      {
+        "pair": 9,
+        "compiler": "candidate",
+        "seconds": 3.753930749999995
+      },
+      {
+        "pair": 9,
+        "compiler": "baseline",
+        "seconds": 3.658456583999964
+      },
+      {
+        "pair": 10,
+        "compiler": "baseline",
+        "seconds": 3.7344718330000433
+      },
+      {
+        "pair": 10,
+        "compiler": "candidate",
+        "seconds": 3.883729374999973
+      },
+      {
+        "pair": 11,
+        "compiler": "candidate",
+        "seconds": 4.168729417000009
+      },
+      {
+        "pair": 11,
+        "compiler": "baseline",
+        "seconds": 3.793836208000016
+      },
+      {
+        "pair": 12,
+        "compiler": "baseline",
+        "seconds": 4.061403582999958
+      },
+      {
+        "pair": 12,
+        "compiler": "candidate",
+        "seconds": 3.870304417
+      },
+      {
+        "pair": 13,
+        "compiler": "candidate",
+        "seconds": 4.858646333000024
+      },
+      {
+        "pair": 13,
+        "compiler": "baseline",
+        "seconds": 4.080008541999973
+      },
+      {
+        "pair": 14,
+        "compiler": "baseline",
+        "seconds": 3.9977469159999828
+      },
+      {
+        "pair": 14,
+        "compiler": "candidate",
+        "seconds": 4.127583415999993
+      }
+    ],
+    "paired_ratios": [
+      1.2509061215025927,
+      0.8915755982796291,
+      0.9896940685973016,
+      0.9621376775954008,
+      1.045153386854114,
+      1.0769372114152096,
+      1.00049981676872,
+      1.014293038722349,
+      0.9373962594581652,
+      1.026096842700712,
+      1.0399675104471267,
+      1.0988163928135484,
+      0.9529475064236776,
+      1.1908421962808862,
+      1.0324774185880483
+    ],
+    "median_paired_ratio": 1.026096842700712,
+    "stdout": ""
+  }
+}

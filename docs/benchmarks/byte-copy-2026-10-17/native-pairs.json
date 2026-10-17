@@ -1,0 +1,406 @@
+{
+  "compiler_sha256": {
+    "base": "e22746a45222120478e5cbb563bb761557d642840777abd8068169a109147ab1",
+    "new": "23ff3a54d1b4c70add94c360ef8f9faaae551261513f0daea88801768b67cdc6"
+  },
+  "fixed_source_root": "/workspace/lang-coreutils-parity",
+  "micro_workload_bytes_per_process": 49152000,
+  "micro_batch_processes": 3,
+  "certification_cache": "Isolated per-compiler disk memo, warmed before each target timing series.",
+  "put": {
+    "rows": [
+      {
+        "pair": 0,
+        "compiler": "base",
+        "seconds": 0.14252969899825985
+      },
+      {
+        "pair": 0,
+        "compiler": "new",
+        "seconds": 0.0029050130033283494
+      },
+      {
+        "pair": 1,
+        "compiler": "new",
+        "seconds": 0.0023529059981228784
+      },
+      {
+        "pair": 1,
+        "compiler": "base",
+        "seconds": 0.13107760300044902
+      },
+      {
+        "pair": 2,
+        "compiler": "base",
+        "seconds": 0.14990228199894773
+      },
+      {
+        "pair": 2,
+        "compiler": "new",
+        "seconds": 0.0034315120028622914
+      },
+      {
+        "pair": 3,
+        "compiler": "new",
+        "seconds": 0.0035979000022052787
+      },
+      {
+        "pair": 3,
+        "compiler": "base",
+        "seconds": 0.14599702399937087
+      },
+      {
+        "pair": 4,
+        "compiler": "base",
+        "seconds": 0.13736249200155726
+      },
+      {
+        "pair": 4,
+        "compiler": "new",
+        "seconds": 0.0027844879987242166
+      },
+      {
+        "pair": 5,
+        "compiler": "new",
+        "seconds": 0.002771158000541618
+      },
+      {
+        "pair": 5,
+        "compiler": "base",
+        "seconds": 0.12795008899774984
+      },
+      {
+        "pair": 6,
+        "compiler": "base",
+        "seconds": 0.12749600199822453
+      },
+      {
+        "pair": 6,
+        "compiler": "new",
+        "seconds": 0.0028754340019077063
+      }
+    ],
+    "paired_ratios": [
+      0.020381808309044538,
+      0.017950480816427642,
+      0.022891659533818037,
+      0.024643653025562925,
+      0.020271094082165087,
+      0.021658117022414516,
+      0.022553130740113315
+    ],
+    "median_paired_ratio": 0.021658117022414516,
+    "binary_sha256": {
+      "base": "11b9168396661e6194a877a3699507157cf9c1b44e49f5208dc82bdb796f668b",
+      "new": "7d2d609194e6b5b25645a139465c4566b84dc55b7728eacfd9d5cecd4a28c1fa"
+    }
+  },
+  "append": {
+    "rows": [
+      {
+        "pair": 0,
+        "compiler": "base",
+        "seconds": 0.2633463509991998
+      },
+      {
+        "pair": 0,
+        "compiler": "new",
+        "seconds": 0.002856155999324983
+      },
+      {
+        "pair": 1,
+        "compiler": "new",
+        "seconds": 0.0028127799996582326
+      },
+      {
+        "pair": 1,
+        "compiler": "base",
+        "seconds": 0.26414254599876585
+      },
+      {
+        "pair": 2,
+        "compiler": "base",
+        "seconds": 0.2713600269999006
+      },
+      {
+        "pair": 2,
+        "compiler": "new",
+        "seconds": 0.003307115999632515
+      },
+      {
+        "pair": 3,
+        "compiler": "new",
+        "seconds": 0.0027578289991652127
+      },
+      {
+        "pair": 3,
+        "compiler": "base",
+        "seconds": 0.2780835829980788
+      },
+      {
+        "pair": 4,
+        "compiler": "base",
+        "seconds": 0.28180041999803507
+      },
+      {
+        "pair": 4,
+        "compiler": "new",
+        "seconds": 0.003113988001132384
+      },
+      {
+        "pair": 5,
+        "compiler": "new",
+        "seconds": 0.002972567999677267
+      },
+      {
+        "pair": 5,
+        "compiler": "base",
+        "seconds": 0.28110810900034267
+      },
+      {
+        "pair": 6,
+        "compiler": "base",
+        "seconds": 0.3102286600005755
+      },
+      {
+        "pair": 6,
+        "compiler": "new",
+        "seconds": 0.0030387769984372426
+      }
+    ],
+    "paired_ratios": [
+      0.010845625878194385,
+      0.010648719951655856,
+      0.012187189234152481,
+      0.009917266490284923,
+      0.011050331298846527,
+      0.010574465497449038,
+      0.009795281320660721
+    ],
+    "median_paired_ratio": 0.010648719951655856,
+    "binary_sha256": {
+      "base": "7869859e988658113522953eed2e61d47725376ebdd16cbcf2dd7fdae2f7dfea",
+      "new": "820a2996eb019f196352476ec81a0f5860132e0379193edda3ac473aa3b59c64"
+    }
+  },
+  "compiler-x86-64-linux": {
+    "rows": [
+      {
+        "pair": 0,
+        "compiler": "base",
+        "seconds": 3.549088515999756
+      },
+      {
+        "pair": 0,
+        "compiler": "new",
+        "seconds": 3.5137541399999463
+      },
+      {
+        "pair": 1,
+        "compiler": "new",
+        "seconds": 3.5300478839999414
+      },
+      {
+        "pair": 1,
+        "compiler": "base",
+        "seconds": 3.6947997759998543
+      },
+      {
+        "pair": 2,
+        "compiler": "base",
+        "seconds": 3.5395215259995894
+      },
+      {
+        "pair": 2,
+        "compiler": "new",
+        "seconds": 3.675911026999529
+      },
+      {
+        "pair": 3,
+        "compiler": "new",
+        "seconds": 3.376004440997349
+      },
+      {
+        "pair": 3,
+        "compiler": "base",
+        "seconds": 3.503394441999262
+      },
+      {
+        "pair": 4,
+        "compiler": "base",
+        "seconds": 3.866149346999009
+      },
+      {
+        "pair": 4,
+        "compiler": "new",
+        "seconds": 3.6330408199974045
+      },
+      {
+        "pair": 5,
+        "compiler": "new",
+        "seconds": 3.4080668020033045
+      },
+      {
+        "pair": 5,
+        "compiler": "base",
+        "seconds": 3.3980359150009463
+      },
+      {
+        "pair": 6,
+        "compiler": "base",
+        "seconds": 3.250392281999666
+      },
+      {
+        "pair": 6,
+        "compiler": "new",
+        "seconds": 3.429637396002363
+      }
+    ],
+    "paired_ratios": [
+      0.9900440984099107,
+      0.9554097916022177,
+      1.0385333158728063,
+      0.9636381220810477,
+      0.939705245173069,
+      1.00295196615141,
+      1.0551456865669222
+    ],
+    "median_paired_ratio": 0.9900440984099107
+  },
+  "compiler-arm64-linux": {
+    "rows": [
+      {
+        "pair": 0,
+        "compiler": "base",
+        "seconds": 3.485992866997549
+      },
+      {
+        "pair": 0,
+        "compiler": "new",
+        "seconds": 3.312910202999774
+      },
+      {
+        "pair": 1,
+        "compiler": "new",
+        "seconds": 3.4587922489990888
+      },
+      {
+        "pair": 1,
+        "compiler": "base",
+        "seconds": 3.501665050000156
+      },
+      {
+        "pair": 2,
+        "compiler": "base",
+        "seconds": 3.3459282259973406
+      },
+      {
+        "pair": 2,
+        "compiler": "new",
+        "seconds": 3.7399997799984703
+      },
+      {
+        "pair": 3,
+        "compiler": "new",
+        "seconds": 3.5720469590014545
+      },
+      {
+        "pair": 3,
+        "compiler": "base",
+        "seconds": 3.874200017999101
+      },
+      {
+        "pair": 4,
+        "compiler": "base",
+        "seconds": 3.6671094929988612
+      },
+      {
+        "pair": 4,
+        "compiler": "new",
+        "seconds": 3.41835220899884
+      },
+      {
+        "pair": 5,
+        "compiler": "new",
+        "seconds": 3.2737220199996955
+      },
+      {
+        "pair": 5,
+        "compiler": "base",
+        "seconds": 3.5206310790017596
+      },
+      {
+        "pair": 6,
+        "compiler": "base",
+        "seconds": 3.2954612569992605
+      },
+      {
+        "pair": 6,
+        "compiler": "new",
+        "seconds": 3.171889952998754
+      }
+    ],
+    "paired_ratios": [
+      0.9503491055198717,
+      0.9877564528905854,
+      1.1177764516701987,
+      0.9220089160100468,
+      0.9321652968162142,
+      0.9298679545054539,
+      0.9625025772225201
+    ],
+    "median_paired_ratio": 0.9503491055198717
+  },
+  "certifier-cold-compiler-cost": {
+    "rows": [
+      {
+        "pair": 0,
+        "mode": "disabled",
+        "seconds": 17.415314065998245,
+        "fresh_memo": "/workspace/scratch/lang-byte-copy-prefilter-native-perf/cold-gom16auv",
+        "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+      },
+      {
+        "pair": 0,
+        "mode": "enabled",
+        "seconds": 26.26116626500152,
+        "fresh_memo": "/workspace/scratch/lang-byte-copy-prefilter-native-perf/cold-xq6q1j3m",
+        "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+      },
+      {
+        "pair": 1,
+        "mode": "enabled",
+        "seconds": 25.559207877999143,
+        "fresh_memo": "/workspace/scratch/lang-byte-copy-prefilter-native-perf/cold-w76rsqsj",
+        "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+      },
+      {
+        "pair": 1,
+        "mode": "disabled",
+        "seconds": 17.06892960999903,
+        "fresh_memo": "/workspace/scratch/lang-byte-copy-prefilter-native-perf/cold-9r843mz9",
+        "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+      },
+      {
+        "pair": 2,
+        "mode": "disabled",
+        "seconds": 17.221729397999297,
+        "fresh_memo": "/workspace/scratch/lang-byte-copy-prefilter-native-perf/cold-hjs07xy8",
+        "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+      },
+      {
+        "pair": 2,
+        "mode": "enabled",
+        "seconds": 25.799774627997976,
+        "fresh_memo": "/workspace/scratch/lang-byte-copy-prefilter-native-perf/cold-481kfrqx",
+        "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+      }
+    ],
+    "paired_ratios": [
+      1.507935266942671,
+      1.4974112883461936,
+      1.4980942988800658
+    ],
+    "median_paired_ratio": 1.4980942988800658
+  }
+}

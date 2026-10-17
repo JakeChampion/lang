@@ -50,9 +50,15 @@ name: Perf
 on:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      native_baseline:
+        description: "Baseline ref for an optional same-host macOS native comparison"
+        type: string
+        default: ""
 
 jobs:
   bench:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_baseline == '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -137,6 +143,7 @@ jobs:
   # compiler. That costs nothing, because these metrics are keyed by TARGET
   # rather than host — one binary cross-emits x86-64, arm64 and wasm.
   selfhost-perf:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_baseline == '' }}
     name: selfhost-perf-x86_64
     permissions:
       contents: write
@@ -248,3 +255,36 @@ jobs:
             ${{ runner.temp }}/selfhost-size-report.txt
             ${{ runner.temp }}/alloc-report.txt
           if-no-files-found: warn
+
+  native-pair:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.native_baseline != '' }}
+    runs-on: macos-15
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.native_baseline }}
+          path: baseline
+      - uses: actions/checkout@v7
+        with:
+          path: candidate
+      - name: Build the baseline fixpoint
+        working-directory: baseline
+        run: ./bootstrap/bootstrap.sh distcheck
+      - name: Build the candidate fixpoint
+        working-directory: candidate
+        run: ./bootstrap/bootstrap.sh distcheck
+      - name: Compare on the same native host
+        run: >-
+          candidate/scripts/native-pair-bench
+          baseline/build/bootstrap/stage2 candidate/build/bootstrap/stage2
+          baseline "${{ runner.temp }}/native-pair.json"
+      - name: Upload every timing
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-pair-macos-arm64
+          path: ${{ runner.temp }}/native-pair.json
+          if-no-files-found: error

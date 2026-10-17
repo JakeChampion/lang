@@ -18,6 +18,8 @@ import "./ssasem";
 import "./ssaunits";
 import "./ownership";
 import "./util";
+import "./rtbytecopy";
+import "./sembytecopy";
 import "./seminline";
 import "./sourcepos";
 import "./semdead";
@@ -7862,9 +7864,19 @@ function dir_contracts(): ssasem.Contract[] {
   ];
 }
 
-// The runtime builtins with a contract here, each a stack IR op of its own
-// rather than a call. What each hands back is the op's own value; a void one
-// pushes the dummy every statement op pushes.
+function byte_copy_contracts(): ssasem.Contract[] {
+  let bytes = typeinfo.TypeArray { elem: t_u8(), view: false };
+  let counted = ssaunits.counted_mode();
+  let borrow = ssaunits.borrow_mode();
+  let value = ssaunits.value_mode();
+  return [
+    ssasem.Contract { name: "__fern_bytes_append_range", params: [bytes, bytes, t_i32(), t_i32()], modes: [counted, borrow, value, value], result: bytes },
+    ssasem.Contract { name: "__fern_bytes_write_range", params: [bytes, t_i32(), bytes, t_i32(), t_i32()], modes: [counted, value, borrow, value, value], result: bytes },
+  ];
+}
+
+// The runtime builtins with a contract here. Private byte-copy calls are
+// inserted after typing; their rows also participate in ownership inference.
 function builtin_contracts(): ssasem.Contract[] {
   let out: ssasem.Contract[] = union_result_contracts();
   for c in handle_contracts() {
@@ -7889,6 +7901,9 @@ function builtin_contracts(): ssasem.Contract[] {
     out = out.append(c);
   }
   for c in string_method_contracts() {
+    out = out.append(c);
+  }
+  for c in byte_copy_contracts() {
     out = out.append(c);
   }
   return out;
@@ -8702,7 +8717,7 @@ function builtin_row(c: ssasem.Contract): ownership.Escapes {
   for m in c.modes {
     bits = bits.append(m == ssaunits.counted_mode());
   }
-  return ownership.Escapes { name: c.name, bits: bits, lends: reference(c.result) && !ssasem.fresh_result_builtin(c.name), cycle: 0 - 1, quiet: [] };
+  return ownership.Escapes { name: c.name, bits: bits, lends: reference(c.result) && !ssasem.fresh_result_builtin(c.name) && !rtbytecopy.is_helper(c.name), cycle: 0 - 1, quiet: [] };
 }
 
 // with_analyses gives each row a plan reads the analysis of its graph as it
@@ -9018,7 +9033,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     let inlined: Spliced = inline_leaves(fuse_pipelines(all, names, mod.funcs), names, mod, opts.size);
     // Reachability follows the last pass that adds a call: the ndarray
     // kernels call helpers nothing named before.
-    all = prune_dead_constructions(reached_only(scale_ndarray_maps(without_unnamed(inlined.all, names, inlined.spliced, mod), names, mod), names, mod, opts.whole));
+    all = prune_dead_constructions(reached_only(scale_ndarray_maps(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod)), names, mod), names, mod, opts.whole));
   }
   decls = [];
   instances = [];
@@ -9099,6 +9114,22 @@ pub function view_escape_diags(mod: parser.Module, built: Built): util.Diag[] {
 // does a `fip` or `fbip` one, whose allocation claim is checked on its body. `FERN_SEM_INLINE=`
 // (set but empty) turns the pass off, for comparing a build against itself.
 struct Spliced { all: Produced[], spliced: boolean[] }
+
+function byte_copy_loops(all: Produced[]): Produced[] {
+  let out: Produced[] = [];
+  let contracts = byte_copy_contracts();
+  for old in all {
+    let p = old;
+    if (p.ok && !p.template) {
+      let r = sembytecopy.rewrite(p.func, contracts);
+      if (r.changed) {
+        p = Produced { ...p, func: r.func, analysis: None };
+      }
+    }
+    out = out.append(p);
+  }
+  return out;
+}
 
 function inline_leaves(all: Produced[], names: string[], mod: parser.Module, size: boolean): Spliced {
   if (!inline_on()) {
