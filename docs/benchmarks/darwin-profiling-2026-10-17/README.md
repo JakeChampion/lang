@@ -49,3 +49,11 @@ checks pass in 46.182 seconds. All eleven strict size checks pass with complete
 coverage and unchanged baselines/tolerance (119.844 seconds). Current raw logs
 use the `main-7929-` prefix. This integration repeat does not execute Darwin;
 that remains an explicit macOS CI gate.
+
+The publication branch starts fresh from main `1d74b81b4`, including the
+expanded x86 register policy and carry-flag optimization. Its profiling,
+Mach-O, certification, carry, register-constraint, inventory and complexity
+suite passes in 90.456 seconds (`main-1d74-tests.log`). The macOS profiling
+test fails on a non-ARM64 Darwin runner so a mismatched runner cannot silently
+skip native validation. Updated bootstrap and size checks are in progress;
+the earlier fixed-point hashes above identify their original source versions.
