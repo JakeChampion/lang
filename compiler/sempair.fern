@@ -100,15 +100,17 @@ function taken_apart(funcs: ssasem.Func[], ix: util.NameIndex, ok0: boolean[], d
         continue;
       }
       let whole: boolean[] = [];
+      let scalar_whole: boolean[] = [];
       let computed: boolean = false;
       for b in funcs[j].graph.blocks {
         for ins in b.insts {
           let at: i32 = paired_callee(ins, ix, ok);
           if (at >= 0 && !computed) {
             whole = whole_values(funcs[j], ix, ok, ok[j]);
+            scalar_whole = semscalarreturn.donors(funcs[j], defs_of(funcs[j].graph), whole);
             computed = true;
           }
-          if (at >= 0 && whole[ins.result]) {
+          if (at >= 0 && keeps_result(funcs[at], ins.result, whole, scalar_whole)) {
             ok = ok.with(at, false);
             changed = true;
           }
@@ -118,6 +120,13 @@ function taken_apart(funcs: ssasem.Func[], ix: util.NameIndex, ok0: boolean[], d
     }
   }
   return ok;
+}
+
+// A scalar record also stays boxed when a caller can donate its existing
+// storage to another kept record. Its scalar projections alone do not show
+// that use; the ownership planner can infer it without an explicit spread.
+function keeps_result(callee: ssasem.Func, value: i32, whole: boolean[], scalar_whole: boolean[]): boolean {
+  return whole[value] || semscalarreturn.eligible(callee, callee.result) && scalar_whole[value];
 }
 
 // The function a call to a candidate names, or -1.

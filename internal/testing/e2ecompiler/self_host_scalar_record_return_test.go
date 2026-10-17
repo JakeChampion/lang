@@ -121,6 +121,7 @@ var scalarReturnCases = []struct{ name, source, want string }{
 	{"five-fields", scalarRecordFive, "1000\n"},
 	{"escaping-result", scalarRecordEscapes, "1000\n"},
 	{"update-donor", scalarRecordUpdateDonor, "1000\n"},
+	{"inferred-donor", scalarRecordInferredDonor, "1000\n"},
 	{"function-value", scalarRecordFunctionValue, "1000\n"},
 	{"finalizer", scalarRecordFinalizer, "1000\n"},
 }
@@ -253,3 +254,11 @@ func TestSelfHostRecordUpdateDonorMetadata(t *testing.T) {
 		t.Fatalf("record update names v%d, want returned box v%d: %s", immediate-1, value, dump)
 	}
 }
+
+const scalarRecordInferredDonor = `import "std/i64";
+struct Quad {a:i64,b:i64,c:i64,d:i64}
+@noinline function make(i:i32):Quad{return Quad {a:i as i64,b:2i64,c:3i64,d:4i64};}
+@noinline function pass(own q:Quad):Quad{return q;}
+@noinline function consume(q:Quad):i64{return q.a+q.b+q.c+q.d;}
+function main():i32{let before=__heap_alloc_count();let i=0;while(i<1000){let q=pass(make(i));let r=Quad {a:q.a+1i64,b:q.b,c:q.c,d:q.d};if(consume(r)!=(i as i64)+10i64){return 32;}i=i+1;}let count=__heap_alloc_count()-before;print(count.to_string());return 0;}
+`

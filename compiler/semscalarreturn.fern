@@ -166,3 +166,53 @@ pub function caller(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssase
   let graph: ssa.SFunc = ssa.SFunc { ...out.f.graph, blocks: out.f.graph.blocks.with(bi, ssa.SBlock { ...b, insts: insts }) };
   return ssasem.Func { ...out.f, calls: calls, graph: graph };
 }
+
+// The caller's kept record constructions can reuse boxes read through their
+// scalar fields. Trace those fields back to reference values before changing
+// a return ABI: throwing away such a donor can add an allocation in the caller.
+pub function donors(f: ssasem.Func, defs: ssa.SInst[], whole0: boolean[]): boolean[] {
+  let pending: i32[] = kept_fields(f.graph, whole0);
+  if (pending.len() == 0) {
+    return whole0;
+  }
+  let whole: boolean[] = whole0;
+  let seen: boolean[] = __alloc_bool(f.values.len());
+  let at: i32 = 0;
+  while (at < pending.len()) {
+    let v: i32 = pending[at];
+    at = at + 1;
+    if (v < 0 || v >= seen.len() || seen[v]) {
+      continue;
+    }
+    seen = seen.with(v, true);
+    let ref: boolean = ssasem.reference(f.values[v]);
+    if (ref) {
+      whole = whole.with(v, true);
+    }
+    let d: ssa.SInst = defs[v];
+    if (donation_edges(ref, d.kind_tag)) {
+      for a in d.args {
+        pending = pending.append(a);
+      }
+    }
+  }
+  return whole;
+}
+
+function kept_fields(g: ssa.SFunc, whole: boolean[]): i32[] {
+  let out: i32[] = [];
+  for b in g.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.record_new() && whole[ins.result]) {
+        for a in ins.args {
+          out = out.append(a);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function donation_edges(reference: boolean, kind: i32): boolean {
+  return !reference || kind == 7 || kind == 8 || kind == ssasem.record_new();
+}
