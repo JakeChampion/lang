@@ -1,14 +1,21 @@
 // Constants with short modular multiplication sequences. No intermediate
 // overflows differ from multiplication: every operation uses the same word.
-pub function shifted_add(c: i64): boolean {
+pub function short_form(c: i64): boolean {
   if (c == 19i64) {
     return true;
   }
-  return c > 2i64 && c <= 2049i64 && (c - 1i64 & c - 2i64) == 0i64;
+  return c >= 2i64 && c <= 2049i64 && (power_of_two(c) || power_of_two(c - 1i64));
+}
+
+pub function power_of_two(c: i64): boolean {
+  return c > 0i64 && (c & c - 1i64) == 0i64;
 }
 
 pub function shift(c: i64): i32 {
-  let n = c - 1i64;
+  let n = c;
+  if (!power_of_two(c)) {
+    n = c - 1i64;
+  }
   let shift: i32 = 0;
   while (n > 1i64) {
     n = n >> 1;

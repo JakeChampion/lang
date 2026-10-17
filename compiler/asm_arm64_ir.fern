@@ -2309,11 +2309,11 @@ function ssa_bin3_asm(tag: i32, d: string, a: string, b: string): string {
 // compares. mul has no immediate form and the logical ops take bitmask
 // immediates, which a 12-bit range does not describe.
 function ssa_imm_right(): string[] {
-  return ["mul_shifted_add", "add", "sub", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "shl", "shr_s", "shr_u"];
+  return ["mul_short", "add", "sub", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "shl", "shr_s", "shr_u"];
 }
 
 function ssa_imm_left(): string[] {
-  return ["mul_shifted_add", "add", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u"];
+  return ["mul_short", "add", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u"];
 }
 
 // ssa_rhs is a right operand as the instruction reads it: the immediate for a
@@ -3732,6 +3732,9 @@ function ssa_fusable_cmp(cmp: ssa.SInst): boolean {
 // parameter, a phi or a compare a select after it reads as flags.
 function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.LowerResult, own s: asmcore.EmitState): asmcore.EmitState {
   let ins: ssa.SInst = blk.insts[ii];
+  if (ssa_mul_literal(ins, fr.imm) == 19i64) {
+    return ssa_mul_cached(ins, reg_of, fr.imm, ssa_previous_mul_literal(blk, ii, fr.imm) == 19i64, s);
+  }
   if (ins.kind_tag == 36) {
     return ssa_select(ins, reg_of, fr, ssa_select_fuse(fr, blk, ii), s);
   }
@@ -12854,11 +12857,51 @@ function ssa_fused_loc(source: ssaprepare.SourceLines, blk: ssa.SBlock, begin: i
   return s;
 }
 
-// x5 remains a reserved temporary. Keeping the original operand until the
-// last add also permits the result to reuse its home.
+// The same word-width wrap applies to shifts, shifted adds and multiplication.
 function ssa_mul_add_constant(s: asmcore.EmitState, d: string, a: string, c: i64): asmcore.EmitState {
-  if (c == 19i64) {
-    return s.write("    add x5, " + a + ", " + a + ", lsl #3\n    add " + d + ", " + a + ", x5, lsl #1\n");
+  if (mulconstant.power_of_two(c)) {
+    return s.write("    lsl " + d + ", " + a + ", #" + util.i32_to_string(mulconstant.shift(c)) + "\n");
   }
   return s.write("    add " + d + ", " + a + ", " + a + ", lsl #" + util.i32_to_string(mulconstant.shift(c)) + "\n");
+}
+
+function ssa_mul_literal(ins: ssa.SInst, imm: ssa.Imms): i64 {
+  if (ins.kind_tag != 9 || ins.str != "mul") {
+    return 0i64;
+  }
+  for arg in ins.args {
+    if (imm.is_imm[arg]) {
+      return imm.value[arg];
+    }
+  }
+  return 0i64;
+}
+
+// Only elided immediate definitions may separate the multiplies. Every other
+// instruction and every block boundary ends the reserved x5's known lifetime.
+function ssa_previous_mul_literal(blk: ssa.SBlock, ii: i32, imm: ssa.Imms): i64 {
+  let at = ii - 1;
+  while (at >= 0) {
+    let prev = blk.insts[at];
+    if ((prev.kind_tag == 1 || prev.kind_tag == 3) && imm.is_imm[prev.result]) {
+      at = at - 1;
+    } else {
+      return ssa_mul_literal(prev, imm);
+    }
+  }
+  return 0i64;
+}
+
+function ssa_mul_cached(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, cached: boolean, own s: asmcore.EmitState): asmcore.EmitState {
+  let a = ins.args[0];
+  if (imm.is_imm[a]) {
+    a = ins.args[1];
+  }
+  s = ssa_read(reg_of, a, "x4", s);
+  if (!cached) {
+    s = s.write("    mov x5, #19\n");
+  }
+  let d = ssa_dst(reg_of, ins.result);
+  s = s.write("    mul " + d + ", " + ssa_src(reg_of, a, "x4") + ", x5\n");
+  return ssa_store(reg_of, ins.result, d, s);
 }
