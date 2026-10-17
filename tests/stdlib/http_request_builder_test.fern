@@ -2,6 +2,8 @@ import "std/test";
 import "std/http";
 import "std/mock_platform";
 import "std/platform";
+import "std/option";
+import "std/string";
 
 // tests/stdlib/http_request_builder_test.fern — testing a handler without
 // a socket (#9854): `http.request(method, path)` builds the request, a
@@ -118,11 +120,28 @@ function test_bare_request_has_nothing(): test.TestOutcome {
   return test.assert_status(handle(req, m), 401);
 }
 
+// The query a request-target carries is read by name, decoded as a form
+// field is; an escaped `&` or `=` stays inside its value, and the path
+// before the `?` takes no part.
+function test_query_reads_by_name(): test.TestOutcome {
+  let req: HttpRequest = http.request("GET", "/search?q=a%26b%3Dc&tag=x&page=2&tag=y+z&flag");
+  let got: string = req.query("q").unwrap_or("-") + "|" + req.query("page").unwrap_or("-") + "|" + req.query("flag").unwrap_or("-") + "|" + req.query("missing").unwrap_or("-") + "|" + req.query_all("tag").join(",") + "|" + req.query_all("missing").len().to_string();
+  match (test.assert_eq(got, "a&b=c|2||-|x,y z|0")) {
+    Fail(msg) => {
+      return test.fail(msg);
+    },
+    Pass => {}
+  }
+  let bare: HttpRequest = http.request("GET", "/search");
+  return test.assert_eq(bare.query("search").unwrap_or("-") + bare.query_all("q").len().to_string(), "-0");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("HTTP request builder");
   r = r.it("a JSON body is created", test_json_body_is_created);
   r = r.it("a body without its type is refused", test_body_without_its_type_is_refused);
   r = r.it("a header names the caller", test_header_names_the_caller);
   r = r.it("a bare request has nothing", test_bare_request_has_nothing);
+  r = r.it("the query reads by name", test_query_reads_by_name);
   return r.finish();
 }
