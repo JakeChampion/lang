@@ -309,11 +309,5 @@ function __put_bytes(own out: u8[], id: i64, v: Option[u8[]]): u8[] {
 }
 
 function __copy(b: [u8]): u8[] {
-  let out: u8[] = __alloc_u8(b.len());
-  let i: i32 = 0;
-  while (i < b.len()) {
-    out = out.with(i, b[i]);
-    i = i + 1;
-  }
-  return out;
+  return __bytes_owned(b);
 }

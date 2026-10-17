@@ -594,7 +594,7 @@ function __empty(room: i32): u8[] {
 }
 
 function __copy(b: [u8]): u8[] {
-  return __slice(b, 0, b.len());
+  return __bytes_owned(b);
 }
 
 function __slice(buf: [u8], from: i32, to: i32): u8[] {
