@@ -419,44 +419,80 @@ pub function (c: Conn) blocked_open(uni: boolean): Conn {
 // write queues `data` on a stream, and with `fin` ends this side of it;
 // `transmit` sends it as the windows allow.
 pub function (c: Conn) write(id: i64, data: [u8], fin: boolean): Result[Conn, string] {
-  let cur: Conn = Conn { ...c, streams: c.streams.write(id, data, fin) };
-  if (cur.streams.refused != "") {
-    return Err("quic: " + cur.streams.refused);
-  }
-  return Ok(cur);
+  return c.written(id, data, fin).__checked();
 }
 
 // read takes what has arrived on a stream, in order, and whether that is
 // its end.
 pub function (c: Conn) read(id: i64): Result[(Conn, u8[], boolean), string] {
-  let cur: Conn = Conn { ...c, streams: c.streams.read(id) };
-  if (cur.streams.refused != "") {
-    return Err("quic: " + cur.streams.refused);
+  let cur: Conn = c.read_into(id);
+  if (cur.refused() != "") {
+    return Err("quic: " + cur.refused());
   }
-  let data: u8[] = cur.streams.read_data;
-  let fin: boolean = cur.streams.read_fin;
-  cur = Conn { ...cur, streams: streams.Streams { ...cur.streams, read_data: [] } };
-  return Ok((cur, data, fin));
+  let data: u8[] = cur.read_data();
+  let fin: boolean = cur.read_fin();
+  return Ok((cur.read_taken(), data, fin));
 }
 
 // reset_stream abandons this side of a stream with an application error
 // code (RESET_STREAM).
 pub function (c: Conn) reset_stream(id: i64, code: i64): Result[Conn, string] {
-  let cur: Conn = Conn { ...c, streams: c.streams.reset(id, code) };
-  if (cur.streams.refused != "") {
-    return Err("quic: " + cur.streams.refused);
-  }
-  return Ok(cur);
+  return c.stream_reset(id, code).__checked();
 }
 
 // stop_sending asks the peer to stop sending on a stream, with an
 // application error code (STOP_SENDING).
 pub function (c: Conn) stop_sending(id: i64, code: i64): Result[Conn, string] {
-  let cur: Conn = Conn { ...c, streams: c.streams.stop(id, code) };
-  if (cur.streams.refused != "") {
-    return Err("quic: " + cur.streams.refused);
+  return c.sending_stopped(id, code).__checked();
+}
+
+function (c: Conn) __checked(): Result[Conn, string] {
+  if (c.refused() != "") {
+    return Err("quic: " + c.refused());
   }
-  return Ok(cur);
+  return Ok(c);
+}
+
+// written, read_into, stream_reset and sending_stopped are write, read,
+// reset_stream and stop_sending handing the connection back bare, why
+// one did nothing in `refused`, for a caller that steps the connection
+// inside the construction that stores it (docs/REUSE-CONTRACT.md, known
+// gaps): a Result's caller keeps the connection for its error path, so
+// the step copies it.
+pub function (c: Conn) written(id: i64, data: [u8], fin: boolean): Conn {
+  return Conn { ...c, streams: c.streams.write(id, data, fin) };
+}
+
+// read_into leaves what `read` returns in `read_data` and `read_fin`,
+// until `read_taken`.
+pub function (c: Conn) read_into(id: i64): Conn {
+  return Conn { ...c, streams: c.streams.read(id) };
+}
+
+pub function (c: Conn) stream_reset(id: i64, code: i64): Conn {
+  return Conn { ...c, streams: c.streams.reset(id, code) };
+}
+
+pub function (c: Conn) sending_stopped(id: i64, code: i64): Conn {
+  return Conn { ...c, streams: c.streams.stop(id, code) };
+}
+
+// refused is why the last stream operation did nothing, "" when it did
+// what was asked.
+pub function (c: Conn) refused(): string {
+  return c.streams.refused;
+}
+
+pub function (c: Conn) read_data(): u8[] {
+  return c.streams.read_data;
+}
+
+pub function (c: Conn) read_fin(): boolean {
+  return c.streams.read_fin;
+}
+
+pub function (c: Conn) read_taken(): Conn {
+  return Conn { ...c, streams: streams.Streams { ...c.streams, read_data: [] } };
 }
 
 // buffered is how many bytes written to a stream the peer has not yet
