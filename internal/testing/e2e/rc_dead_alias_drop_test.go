@@ -41,7 +41,8 @@ function main(): i32 {
 }`
 
 // liveAliasAppendSrc: the control. Same program with the read moved AFTER the
-// append, so `keep` is still live across it and every copy is required.
+// append, so `keep` is still live across it and every copy is required. The
+// read is a call because semhoist moves a bare `keep.len()` ahead of the append.
 const liveAliasAppendSrc = `@noinline function observed_length(xs: i32[]): i32 { return xs.len(); }
 function main(): i32 {
     let acc: i32[] = [];
