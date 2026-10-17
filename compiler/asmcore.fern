@@ -871,6 +871,18 @@ pub function dedupe_weak_defs(asm_text: string): string {
   return text;
 }
 
+// Native deadlines use poll's timeout, and native pollables own no host
+// resource. An empty result means the op is not a constant adapter.
+pub function native_pollable_result(kind: i32): string {
+  if (kind == 148 || kind == 167) {
+    return "-1";
+  }
+  if (kind == 161 || kind == 162) {
+    return "0";
+  }
+  return "";
+}
+
 // shape_sym is the deterministic global symbol for a shape name (the linker-merged
 // weak symbol the per-module path uses for shape pointers). Stable across units so
 // two units' references to the same shape resolve to one address.
@@ -11583,9 +11595,8 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fern_monotonic_ns", "__fern_now_ns",
     "__fn___fern_monotonic_ns", "__fn___fern_now_ns", "__fn___fern_now_unix_ms",
     "__fn___fern_poll",
-    "__fn___fern_timer_fd", "__fern_wasm_timer_pollable", "__fern_wasm_pollable_drop",
-    "__fern_wasm_block", "__fern_wasm_poll",
-    "__fn___fern_tcp_connect", "__fern_tcp_pollable", "__fn___fern_tcp_close",
+    "__fn___fern_timer_fd",
+    "__fn___fern_tcp_connect", "__fn___fern_tcp_close",
     "__fn___fern_udp_send", "__fn___fern_tcp_recv", "__fn___fern_tcp_send", "__fn___fern_tcp_listen", "__fn___fern_tcp_accept", "__fn___fern_tcp_local_port",
     "__fn___fern_tcp_send_bytes", "__fn___fern_tcp_send_bytes_u8",
     "__fn___fern_udp_send_bytes", "__fn___fern_udp_send_bytes_u8", "__fn___fern_udp_sendto_bytes", "__fn___fern_udp_sendto_bytes_u8",

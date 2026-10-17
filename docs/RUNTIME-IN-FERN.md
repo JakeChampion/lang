@@ -79,6 +79,14 @@ fake sysctl on x86-64 and ARM64, checking all six arguments, positive and
 zero counts, refusal and allocation count. The Darwin sysinfo and Mach-O
 gates check the real target's lowering.
 
+## Native pollable adapters — selected directly
+
+Native `tcp_pollable` preserves the descriptor. The portable timer and poll
+operations return -1, and pollable drop/block return zero: native readiness
+uses descriptors and poll timeouts. Instruction selection produces these
+values directly, so the five native runtime helper bodies and exports are
+retired. Their public IR operations still provide WASI's host resources.
+
 ## The map runtime — retired
 
 The self-host's own map runtime, an association list with `__fern_map_find` as
