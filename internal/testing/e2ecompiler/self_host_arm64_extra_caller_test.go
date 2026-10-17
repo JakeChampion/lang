@@ -52,6 +52,32 @@ func TestSelfHostArm64ExtraCallerRegisters(t *testing.T) {
 		t.Fatalf("a link-register home overwrites the unsaved return address:\n%s", body)
 	}
 
+	t.Run("link-register-home-instrumented", func(t *testing.T) {
+		_, qemu := arm64Tooling(t)
+		t.Setenv("QEMU_CPU", "max")
+		for _, mode := range []string{"", "cpu", "alloc"} {
+			for _, harden := range []bool{false, true} {
+				label := mode
+				if label == "" {
+					label = "plain"
+				}
+				if harden {
+					label += "-harden"
+				}
+				t.Run(label, func(t *testing.T) {
+					var flags []string
+					if harden {
+						flags = append(flags, "-harden")
+					}
+					bin := compileCPUProfile(t, cli, armLinkRegisterHome, "arm64-linux", mode, flags...)
+					if out, err := runArm64Bin(qemu, bin).CombinedOutput(); err != nil {
+						t.Fatalf("link-register return failed: %v: %s", err, out)
+					}
+				})
+			}
+		}
+	})
+
 }
 
 const armRuntimeArgumentCycle = `@noinline function wrap(n: i32, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, p: usize): string {
