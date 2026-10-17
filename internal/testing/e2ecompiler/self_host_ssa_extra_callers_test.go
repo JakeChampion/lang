@@ -85,6 +85,7 @@ func TestSelfHostSSAExtraCallerRegisters(t *testing.T) {
 		colored bool
 	}{
 		{"nine-values", 9, false},
+		{"twelve-values", 12, false},
 		{"spilled-values", 20, false},
 		{"spilled-rhs-into-rcx", 20, true},
 	} {
@@ -108,14 +109,18 @@ func TestSelfHostSSAExtraCallerRegisters(t *testing.T) {
 				t.Fatal("no combine end")
 			}
 			body := string(text[a : a+b])
-			if c.n == 9 {
+			if c.n == 12 {
 				for _, reg := range []string{"%rcx", "%rdx", "%r11"} {
 					if !strings.Contains(body, reg) {
 						t.Errorf("missing caller home %s:\n%s", reg, body)
 					}
 				}
-				if strings.Contains(body, "pushq") || strings.Contains(body, "(%rbp)") {
-					t.Fatalf("register-only leaf saves or spills:\n%s", body)
+				if strings.Contains(body, "(%rbp)") {
+					t.Fatalf("expanded arithmetic leaf spills:\n%s", body)
+				}
+			} else if c.n == 9 {
+				if !strings.Contains(body, "pushq %") || strings.Contains(body, "(%rbp)") {
+					t.Fatalf("small arithmetic leaf changed its allocation or spilled:\n%s", body)
 				}
 			} else if !strings.Contains(body, "(%rbp)") {
 				t.Fatalf("fixture no longer exercises spills:\n%s", body)

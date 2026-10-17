@@ -24,6 +24,7 @@ func TestSelfHostDebugPreservesNativeCode(t *testing.T) {
 		"tail-call":              ssaTailCallProg,
 		"register-pressure":      dwarfVarsSrc,
 		"extra-caller-registers": extraCallerSource(9, false),
+		"extra-caller-twelve":    extraCallerSource(12, false),
 		"extra-caller-spills":    extraCallerSource(20, false),
 		"extra-caller-rhs":       extraCallerSource(20, true),
 		"extra-caller-record":    extraCallerReadSource(9, "record"),
