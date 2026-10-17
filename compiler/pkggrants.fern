@@ -1,0 +1,258 @@
+// Load-time package grant attenuation (#5361). Resolve grant identities with
+// the same dependency-directory function the module loader uses.
+import "./fern_toml";
+import "./caps";
+import "./modloader";
+import "./util";
+
+pub struct ManifestAt { dir: string, man: fern_toml.Manifest }
+
+struct Holding { dir: string, grants: string[] }
+
+pub function canonical_dir(dir: string): string {
+  if (dir.len() > 0 && dir[0] == b'/') {
+    return util.clean_path(dir);
+  }
+  match (getcwd()) {
+    Ok(cwd) => {
+      return util.clean_path(cwd + "/" + dir);
+    },
+    Err(_) => {
+      return util.clean_path(dir);
+    }
+  }
+}
+
+// A manifest with no explicit grants has neither a contribution to the union
+// nor an outgoing edge to check. Grant-free builds keep the empty table.
+pub function with_manifest(own mans: ManifestAt[], dir: string, man: fern_toml.Manifest): ManifestAt[] {
+  let explicit: boolean = false;
+  for dep in man.deps {
+    if (dep.governed) {
+      explicit = true;
+    }
+  }
+  if (!explicit) {
+    return mans;
+  }
+  let key: string = canonical_dir(dir);
+  for m in mans {
+    if (m.dir == key) {
+      return mans;
+    }
+  }
+  return mans.append(ManifestAt { dir: key, man: man });
+}
+
+function union_grant(own held: Holding[], dir: string, grants: string[]): Holding[] {
+  let at: i32 = -1;
+  let i: i32 = 0;
+  while (i < held.len()) {
+    if (held[i].dir == dir) {
+      at = i;
+    }
+    i = i + 1;
+  }
+  if (at < 0) {
+    at = held.len();
+    held = held.append(Holding { dir: dir, grants: [] });
+  }
+  let merged: string[] = held[at].grants;
+  for cap in grants {
+    if (!util.has_str(merged, cap)) {
+      merged = merged.append(cap);
+    }
+  }
+  return held.with(at, Holding { dir: dir, grants: merged });
+}
+
+struct GrantEdge { from: string, to: string, grants: string[] }
+
+function holding_index(held: Holding[], dir: string): i32 {
+  let i: i32 = 0;
+  while (i < held.len()) {
+    if (held[i].dir == dir) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// A least fixed point admits seeded cycles without letting cycles create
+// authority. Every governed target starts empty; only a capability already
+// held by the grantor can propagate. Root and ungoverned grantors are exempt.
+function grant_edges(mans: ManifestAt[]): GrantEdge[] {
+  let edges: GrantEdge[] = [];
+  for m in mans {
+    for dep in m.man.deps {
+      if (dep.governed) {
+        match (modloader.dependency_dir(m.man, m.dir + "/", dep.name)) {
+          Some(dir) => {
+            let to: string = canonical_dir(dir);
+            edges = edges.append(GrantEdge { from: m.dir, to: to, grants: dep.caps });
+          },
+          None => {}
+        }
+      }
+    }
+  }
+  return edges;
+}
+
+function empty_holdings(edges: GrantEdge[]): Holding[] {
+  let held: Holding[] = [];
+  for edge in edges {
+    held = union_grant(held, edge.to, []);
+  }
+  return held;
+}
+
+function holdings(mans: ManifestAt[], root_dir: string): Holding[] {
+  let edges: GrantEdge[] = grant_edges(mans);
+  let held: Holding[] = empty_holdings(edges);
+  let changed: boolean = true;
+  while (changed) {
+    changed = false;
+    for edge in edges {
+      let from: i32 = holding_index(held, edge.from);
+      let to: i32 = holding_index(held, edge.to);
+      let allowed: string[] = [];
+      for cap in edge.grants {
+        if (from < 0 || edge.from == root_dir || util.has_str(held[from].grants, cap)) {
+          if (!util.has_str(held[to].grants, cap)) {
+            allowed = allowed.append(cap);
+            changed = true;
+          }
+        }
+      }
+      if (allowed.len() > 0) {
+        held = union_grant(held, edge.to, allowed);
+      }
+    }
+  }
+  return held;
+}
+
+function sorted_unique(input: string[]): string[] {
+  let xs: string[] = [];
+  for x in input {
+    xs = xs.append(x);
+  }
+  let i: i32 = 1;
+  while (i < xs.len()) {
+    let j: i32 = i;
+    while (j > 0 && util.str_less(xs[j], xs[j - 1])) {
+      let a: string = xs[j];
+      let b: string = xs[j - 1];
+      xs = xs.with(j - 1, a).with(j, b);
+      j = j - 1;
+    }
+    i = i + 1;
+  }
+  let out: string[] = [];
+  for x in xs {
+    if (out.len() == 0 || out[out.len() - 1] != x) {
+      out = out.append(x);
+    }
+  }
+  return out;
+}
+
+function joined(xs: string[], sep: string): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    if (i > 0) {
+      out = out + sep;
+    }
+    out = out + xs[i];
+    i = i + 1;
+  }
+  return out;
+}
+
+function violations(m: ManifestAt, held: string[]): string[] {
+  let out: string[] = [];
+  for dep in m.man.deps {
+    if (dep.governed) {
+      for cap in dep.caps {
+        if (!util.has_str(held, cap)) {
+          out = out.append(m.dir + "/fern.toml: dependency \"" + dep.name + "\" of \"" + m.man.name + "\" is granted '" + cap + "' but \"" + m.man.name + "\" itself holds only [" + joined(sorted_unique(held), ", ") + "] (attenuation: a dependency may grant at most what it holds)");
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// ModuleAt records the resolved file and nearest manifest, before bundling.
+// Prefixes come from flatten's single assignment table, never basenames.
+pub struct ModuleAt { dir: string, owner_dir: string, name: string, stdlib: boolean }
+
+pub struct Checked { pkgs: caps.Pkg[], err: string }
+
+function within(dir: string, parent: string): boolean {
+  return dir == parent || dir.len() > parent.len() && slice_unchecked(dir, 0, parent.len()) == parent && dir[parent.len()] == b'/';
+}
+
+// Check every edge against its grantor, then apply the authorized union to
+// each module of the same package. Display names carry no authority.
+pub function checked(mans: ManifestAt[], root: caps.Pkg, modules: ModuleAt[], prefixes: string[]): Checked {
+  let invalid: string = manifest_errors(mans);
+  if (invalid.len() > 0) {
+    return Checked { pkgs: [root], err: invalid };
+  }
+  let held: Holding[] = holdings(mans, root.dir);
+  let errors: string[] = [];
+  for m in mans {
+    let at: i32 = holding_index(held, m.dir);
+    if (at >= 0 && m.dir != root.dir) {
+      for err in violations(m, held[at].grants) {
+        errors = errors.append(err);
+      }
+    }
+  }
+  let pkgs: caps.Pkg[] = [root];
+  let i: i32 = 0;
+  while (i < modules.len()) {
+    let m: ModuleAt = modules[i];
+    if (!m.stdlib) {
+      pkgs = pkgs.append(module_package(m, prefixes[i], root, held));
+    }
+    i = i + 1;
+  }
+  return Checked { pkgs: pkgs, err: joined(sorted_unique(errors), "\n") };
+}
+
+function manifest_errors(mans: ManifestAt[]): string {
+  let errors: string[] = [];
+  for m in mans {
+    for dep in m.man.deps {
+      if (dep.cap_error.len() > 0) {
+        errors = errors.append(m.dir + "/fern.toml: dependency \"" + dep.name + "\": capabilities: " + dep.cap_error);
+      }
+    }
+  }
+  return joined(sorted_unique(errors), "\n");
+}
+
+// Resolve a module's boundary independently of its display name.
+function module_package(m: ModuleAt, prefix: string, root: caps.Pkg, held: Holding[]): caps.Pkg {
+  let dir: string = m.owner_dir;
+  let name: string = m.name;
+  // Explicit grants define a package boundary even when the dependency
+  // has no manifest. Local imports inside that boundary remain governed.
+  for h in held {
+    if (within(m.dir, h.dir) && (!within(m.dir, dir) || h.dir.len() > dir.len())) {
+      dir = h.dir;
+      name = slice_unchecked(dir, modloader.dirname(dir).len(), dir.len()) + "";
+    }
+  }
+  let at: i32 = holding_index(held, dir);
+  let grants: string[] = [];
+  if (at >= 0) {
+    grants = held[at].grants;
+  }
+  return caps.Pkg { module: prefix, dir: dir, name: name, root: dir == root.dir, governed: at >= 0, grants: grants };
+}
