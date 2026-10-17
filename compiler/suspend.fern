@@ -471,11 +471,14 @@ function prologue(t: Tx, r: irtables.LowerResult): ir.Op[] {
     let slots: i32[] = t.saves[k];
     if (slots.len() > 0) {
       out = util.append_all(out, [ir.op_load_local(t.ci), ir.op_const_i32(k), ir.op_bin("eq", 0, false), ir.op_if(0)]);
-      let i: i32 = slots.len() - 1;
-      while (i >= 0) {
-        out = out.append(ir.op_call_direct("__fern_task_pop_" + slot_class(t, r, slots[i]), 0));
+      out = util.append_all(out, [ir.op_const_i32(slots.len()), ir.op_call_direct("__fern_task_take", 1), ir.op_store_local(t.tc)]);
+      let i: i32 = 0;
+      while (i < slots.len()) {
+        out = util.append_all(out, word_at(t, i));
+        out = out.append(ir.op_load_i64());
+        out = util.append_all(out, from_word(slot_class(t, r, slots[i])));
         out = out.append(ir.op_store_local(slots[i]));
-        i = i - 1;
+        i = i + 1;
       }
       out = out.append(ir.op_end());
     }
@@ -542,18 +545,57 @@ function site(t: Tx, r: irtables.LowerResult, set: Set, ops: ir.Op[], at: i32, k
   // Unwinding: save what the rewind reads, then this site's index, and leave.
   let saved: i32[] = site_saves(t2, r, at, call, util.append_all(args, c.carried));
   out = util.append_all(out, [ir.op_call_direct("__fern_task_mode", 0), ir.op_const_i32(1), ir.op_bin("eq", 0, false), ir.op_if(0)]);
-  for s in saved {
-    out = out.append(ir.op_load_local(s));
-    out = out.append(ir.op_call_direct("__fern_task_push_" + slot_class(t2, r, s), 1));
-    out = out.append(ir.op_drop());
-  }
-  out = out.append(ir.op_const_i32(k));
-  out = out.append(ir.op_call_direct("__fern_task_push_w", 1));
-  out = out.append(ir.op_drop());
+  out = util.append_all(out, save_ops(t2, r, saved, k));
   out = out.append(dummy(r));
   out = out.append(ir.op_return());
   out = out.append(ir.op_end());
   return Tx { ...t2, out: out, seg: c.carried, saves: t2.saves.append(saved) };
+}
+
+// save_ops puts a suspending site's saved slots and then its index in the
+// task's save area: one reservation, whose address the scratch slot holds,
+// and a word stored for each.
+function save_ops(t: Tx, r: irtables.LowerResult, saved: i32[], k: i32): ir.Op[] {
+  let out: ir.Op[] = [ir.op_const_i32(saved.len() + 1), ir.op_call_direct("__fern_task_reserve", 1), ir.op_store_local(t.tc)];
+  let i: i32 = 0;
+  while (i < saved.len()) {
+    out = util.append_all(out, word_at(t, i));
+    out = out.append(ir.op_load_local(saved[i]));
+    out = util.append_all(out, to_word(slot_class(t, r, saved[i])));
+    out = util.append_all(out, [ir.op_store_i64(), ir.op_drop()]);
+    i = i + 1;
+  }
+  out = util.append_all(out, word_at(t, saved.len()));
+  return util.append_all(out, [ir.op_const_i64(k as i64), ir.op_store_i64(), ir.op_drop()]);
+}
+
+// word_at is the address of word i of the reservation the scratch slot holds.
+function word_at(t: Tx, i: i32): ir.Op[] {
+  if (i == 0) {
+    return [ir.op_load_local(t.tc)];
+  }
+  return [ir.op_load_local(t.tc), ir.op_const_i32(i * 8), ir.op_bin("add", ir.width_ptr(), true)];
+}
+
+// A save-area word holds a slot of each class as 64 bits.
+function to_word(class: string): ir.Op[] {
+  if (class == "f64") {
+    return [ir.op_f64_bits()];
+  }
+  if (class == "i64") {
+    return [];
+  }
+  return [ir.op_int_extend_ptr()];
+}
+
+function from_word(class: string): ir.Op[] {
+  if (class == "f64") {
+    return [ir.op_f64_from_bits()];
+  }
+  if (class == "i64") {
+    return [];
+  }
+  return [ir.op_int_wrap_ptr()];
 }
 
 // The op past a site's group: the call, its result's store and, for a call
