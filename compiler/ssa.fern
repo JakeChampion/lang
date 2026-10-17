@@ -4759,7 +4759,7 @@ pub function fuse_rotates(f: SFunc): SFunc {
     return f;
   }
   let defs: SInst[] = inst_defs(f);
-  return rewrite_insts(f, (ins: SInst): SInst => rotate_of(defs, ins)).f;
+  return rewrite_insts(f, defs, rotate_of).f;
 }
 
 // rotate_of is the rotate an `or` computes, or an instruction of kind 0.
@@ -4798,10 +4798,10 @@ function inst_defs(f: SFunc): SInst[] {
 }
 
 // rewrite_insts replaces each instruction `rewrite` answers one of a nonzero
-// kind for. `nblocks` is written from the first block that changes on, and a
+// kind for, given the function's definitions. `nblocks` is written from the first block that changes on, and a
 // block's `ninsts` from its first changed instruction on, so what keeps
 // every instruction keeps its record.
-function rewrite_insts(f: SFunc, rewrite: (SInst) => SInst): Threading {
+function rewrite_insts(f: SFunc, defs: SInst[], rewrite: (SInst[], SInst) => SInst): Threading {
   let nblocks: SBlock[] = [];
   let copying: boolean = false;
   let bi: i32 = 0;
@@ -4811,7 +4811,7 @@ function rewrite_insts(f: SFunc, rewrite: (SInst) => SInst): Threading {
     let changed: boolean = false;
     let k: i32 = 0;
     while (k < blk.insts.len()) {
-      let m: SInst = rewrite(blk.insts[k]);
+      let m: SInst = rewrite(defs, blk.insts[k]);
       if (m.kind_tag != 0 && !changed) {
         ninsts = insts_before(blk.insts, k);
         changed = true;
@@ -4892,7 +4892,7 @@ pub function fuse_carries(f: SFunc): SFunc {
     return f;
   }
   let defs: SInst[] = inst_defs(f);
-  let t: Threading = rewrite_insts(f, (ins: SInst): SInst => carry_of(defs, ins));
+  let t: Threading = rewrite_insts(f, defs, carry_of);
   if (!t.changed) {
     return f;
   }
