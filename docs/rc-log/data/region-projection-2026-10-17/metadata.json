@@ -1,0 +1,14 @@
+{
+  "candidate_source_commit": "cc17925a39bac3f4ad1b7850550665b50b7ef7c3",
+  "baseline_source_commit": "e8075e025f73035a57859aa055f0afeaf7f8dfa3",
+  "base_compiler_sha256": "0b4f7cba2f58bf0e2325a0e936ff6cacd17d6dc10a1a0cbd3262117e9c99ffaf",
+  "candidate_compiler_sha256": "b17eef564b315f7771555104255bcd4527df8f2becad8dfd5c85ed407cedabff",
+  "input_tree_sha256": "deaa2742a802f8735f07dffdd9ceacf2e2cfb77a8091360618e9cd298e3849e9",
+  "target": "x86-64-linux",
+  "profiler": "Valgrind 3.24.0 Cachegrind; --cache-sim=no --branch-sim=no",
+  "memo": "FERN_RC_CERTIFY_MEMO=0",
+  "whole_base_instructions": 127823867653,
+  "whole_new_instructions": 123757257913,
+  "whole_instruction_ratio": 0.9681858340334412,
+  "whole_output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+}

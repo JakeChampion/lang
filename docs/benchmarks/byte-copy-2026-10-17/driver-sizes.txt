@@ -1,0 +1,11 @@
+fern.fern/stage2	12555360
+fern.fern	12555360
+drivers/asm_load_run.fern	10021856
+drivers/asm_modload_run.fern	8646240
+drivers/asm_ir_run.fern	8324480
+drivers/asm_run.fern	7576960
+drivers/wasm_ir_run.fern	7668176
+drivers/wasm_run.fern	7668144
+drivers/wasm_runio_run.fern	7668496
+drivers/asm_pathprobe_run.fern	4873216
+drivers/checker_modload_run.fern	2815968

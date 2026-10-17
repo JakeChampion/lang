@@ -28,7 +28,7 @@ import "./util";
 pub struct Memo { on: boolean, path: string, known: util.NameIndex, adds: usize, hits: usize, misses: usize, call_kind: i32 }
 
 function version(): string {
-  return "7";
+  return "8";
 }
 
 // keep is how many digests the file keeps when it is rewritten: the newest.

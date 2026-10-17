@@ -1,0 +1,105 @@
+{
+  "memo": "disabled; cold certification in every process",
+  "input_root": "/workspace/lang-compiler-kernels-current",
+  "compilers": {
+    "base": "cc58899661530f0e562beb8b6ed585e53d21180693b42cd7ccd8288d91f12190",
+    "new": "e65e665567d2a91fa82fc6587808736cea2cb94bc3246a1dab8104c43e7461c4"
+  },
+  "rows": [
+    {
+      "pair": 0,
+      "compiler": "base",
+      "seconds": 28.59411788900252,
+      "output_sha256": "5104eb6de1c32e167f287f5647ba38a9609a6afbd726ce64ef645868bc3f55a8"
+    },
+    {
+      "pair": 0,
+      "compiler": "new",
+      "seconds": 26.850839011000062,
+      "output_sha256": "e65e665567d2a91fa82fc6587808736cea2cb94bc3246a1dab8104c43e7461c4"
+    },
+    {
+      "pair": 1,
+      "compiler": "new",
+      "seconds": 28.652310970002873,
+      "output_sha256": "e65e665567d2a91fa82fc6587808736cea2cb94bc3246a1dab8104c43e7461c4"
+    },
+    {
+      "pair": 1,
+      "compiler": "base",
+      "seconds": 28.82722479900258,
+      "output_sha256": "5104eb6de1c32e167f287f5647ba38a9609a6afbd726ce64ef645868bc3f55a8"
+    },
+    {
+      "pair": 2,
+      "compiler": "base",
+      "seconds": 28.509596212999895,
+      "output_sha256": "5104eb6de1c32e167f287f5647ba38a9609a6afbd726ce64ef645868bc3f55a8"
+    },
+    {
+      "pair": 2,
+      "compiler": "new",
+      "seconds": 32.15511587000219,
+      "output_sha256": "e65e665567d2a91fa82fc6587808736cea2cb94bc3246a1dab8104c43e7461c4"
+    },
+    {
+      "pair": 3,
+      "compiler": "new",
+      "seconds": 29.200832903003175,
+      "output_sha256": "e65e665567d2a91fa82fc6587808736cea2cb94bc3246a1dab8104c43e7461c4"
+    },
+    {
+      "pair": 3,
+      "compiler": "base",
+      "seconds": 27.475462233000144,
+      "output_sha256": "5104eb6de1c32e167f287f5647ba38a9609a6afbd726ce64ef645868bc3f55a8"
+    },
+    {
+      "pair": 4,
+      "compiler": "base",
+      "seconds": 26.575799939000717,
+      "output_sha256": "5104eb6de1c32e167f287f5647ba38a9609a6afbd726ce64ef645868bc3f55a8"
+    },
+    {
+      "pair": 4,
+      "compiler": "new",
+      "seconds": 26.40560733700113,
+      "output_sha256": "e65e665567d2a91fa82fc6587808736cea2cb94bc3246a1dab8104c43e7461c4"
+    },
+    {
+      "pair": 5,
+      "compiler": "new",
+      "seconds": 27.242106020999927,
+      "output_sha256": "e65e665567d2a91fa82fc6587808736cea2cb94bc3246a1dab8104c43e7461c4"
+    },
+    {
+      "pair": 5,
+      "compiler": "base",
+      "seconds": 33.119746284999565,
+      "output_sha256": "5104eb6de1c32e167f287f5647ba38a9609a6afbd726ce64ef645868bc3f55a8"
+    },
+    {
+      "pair": 6,
+      "compiler": "base",
+      "seconds": 28.61519469599807,
+      "output_sha256": "5104eb6de1c32e167f287f5647ba38a9609a6afbd726ce64ef645868bc3f55a8"
+    },
+    {
+      "pair": 6,
+      "compiler": "new",
+      "seconds": 27.373847901999397,
+      "output_sha256": "e65e665567d2a91fa82fc6587808736cea2cb94bc3246a1dab8104c43e7461c4"
+    }
+  ],
+  "ratios": [
+    0.9390336542372257,
+    0.9939323389532191,
+    1.1278699154406122,
+    1.0627967841039896,
+    0.9935959556291728,
+    0.822533656706733,
+    0.9566193133687719
+  ],
+  "median_ratio": 0.9935959556291728,
+  "environment_note": "Other compiler builds and tests ran concurrently on this four-core development container. These elapsed-time samples are noisy; no improvement is claimed."
+}

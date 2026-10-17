@@ -4600,6 +4600,41 @@ function x86_gas_vex_three(own a: X86Asm, mnem: string, rest: string): X86Asm {
   return x86_gas_vex_rm(a, mnem, mo / 256, 1, v1 & 15, mo & 255, vd & 15, ops[0], vd >= 16);
 }
 
+// BMI1 ANDN: AT&T `other, inverted, dst`, or dst = ~inverted & other.
+function x86_gas_andn(own a: X86Asm, mnem: string, size: i32, rest: string): X86Asm {
+  let ops: string[] = x86_gas_split_ops(rest);
+  if (ops.len() != 3) {
+    return x86_gas_bad(a, mnem + " " + rest);
+  }
+  let inv: i32 = x86_gas_reg_w(ops[1], size);
+  let dst: i32 = x86_gas_reg_w(ops[2], size);
+  if (inv < 0 || dst < 0) {
+    return x86_gas_bad(a, mnem + " " + rest);
+  }
+  if (x86_gas_has_paren(ops[0])) {
+    let m: GasMem = x86_gas_parse_mem(ops[0]);
+    if (!x86_gas_mem_ok(m)) {
+      return x86_gas_bad(a, mnem + " " + rest);
+    }
+    let ix: boolean = !m.is_rip && m.has_index && m.index >= 8;
+    let bs: boolean = !m.is_rip && m.base >= 8;
+    x86_push_arr(a.code, x86_vex([], dst >= 8, ix, bs, 2, size == 64, inv, false, 0));
+    buf_push_byte(a.code, 242);
+    return x86_gas_membytes(a, dst, m, 0);
+  }
+  let other: i32 = x86_gas_reg_w(ops[0], size);
+  if (other < 0) {
+    return x86_gas_bad(a, mnem + " " + rest);
+  }
+  x86_push_arr(a.code, x86_rec_andn_rr(size, dst, inv, other));
+  return a;
+}
+
+pub function x86_rec_andn_rr(size: i32, dst: i32, inverted: i32, other: i32): i32[] {
+  let b: i32[] = x86_vex([], dst >= 8, false, other >= 8, 2, size == 64, inverted, false, 0);
+  return b.append(242).append(x86_modrm(3, dst, other));
+}
+
 // x86_gas_rorx: BMI2's `rorx $imm8, r/m, %reg` (VEX.LZ.F2.0F3A.W0/W1 F0
 // /r ib), a rotate right by a constant that leaves its source alone.
 function x86_gas_rorx(own a: X86Asm, mnem: string, size: i32, rest: string): X86Asm {
@@ -6209,6 +6244,9 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   if (k == GK_VEX_THREE) {
     return x86_gas_vex_three(a, mnem, rest);
   }
+  if (k == GK_ANDN) {
+    return x86_gas_andn(a, mnem, l.ext, rest);
+  }
   if (k == GK_RORX) {
     return x86_gas_rorx(a, mnem, l.ext, rest);
   }
@@ -7391,6 +7429,8 @@ const GK_UNKNOWN2: i32 = 45;
 
 const GK_RORX: i32 = 46;
 
+const GK_ANDN: i32 = 47;
+
 // The kinds of a prepared op (GasText.ops), each three i32s: the kind and
 // two operands.
 //   GP_TEXT   a text line: its index in `lines`
@@ -7622,6 +7662,20 @@ function x86_line_memoable(l: GasLine): boolean {
 // it once per distinct mnemonic.
 struct MnemVerdict { vz: boolean, fixed: i32, a_kind: i32, a_ext: i32, a_sfx: i32, sfx: i32, b_kind: i32, b_ext: i32, vshift: i32, c_kind: i32, c_ext: i32 }
 
+// BMI instructions use VEX operand fields but integer register names.
+function x86_gas_bmi_verdict(v: MnemVerdict, mnem: string): MnemVerdict {
+  if (mnem == "andnl" || mnem == "andnq") {
+    return MnemVerdict { ...v, a_kind: GK_ANDN, a_ext: if (mnem == "andnq") { 64 } else { 32 } };
+  }
+  if (mnem == "rorxl") {
+    return MnemVerdict { ...v, a_kind: GK_RORX, a_ext: 32 };
+  }
+  if (mnem == "rorxq") {
+    return MnemVerdict { ...v, a_kind: GK_RORX, a_ext: 64 };
+  }
+  return v;
+}
+
 // x86_gas_mnem_verdict runs the mnemonic-only tests of the classification,
 // in the order x86_gas_emit_op once tried its arms inline.
 function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
@@ -7629,11 +7683,9 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   if (x86_vex_three_op(mnem) >= 0 || mnem == "vpsrlw") {
     return MnemVerdict { ...v, a_kind: GK_VEX_THREE };
   }
-  if (mnem == "rorxl") {
-    return MnemVerdict { ...v, a_kind: GK_RORX, a_ext: 32 };
-  }
-  if (mnem == "rorxq") {
-    return MnemVerdict { ...v, a_kind: GK_RORX, a_ext: 64 };
+  let bmi: MnemVerdict = x86_gas_bmi_verdict(v, mnem);
+  if (bmi.a_kind != GK_NONE) {
+    return bmi;
   }
   let rpfx: i32 = x86_gas_rep_pfx(mnem);
   if (rpfx >= 0) {

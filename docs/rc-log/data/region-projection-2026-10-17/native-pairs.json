@@ -1,0 +1,104 @@
+{
+  "memo": "disabled; cold certification in every process",
+  "input_root": "/workspace/lang-coreutils-parity",
+  "compilers": {
+    "base": "0b4f7cba2f58bf0e2325a0e936ff6cacd17d6dc10a1a0cbd3262117e9c99ffaf",
+    "new": "b17eef564b315f7771555104255bcd4527df8f2becad8dfd5c85ed407cedabff"
+  },
+  "rows": [
+    {
+      "pair": 0,
+      "compiler": "base",
+      "seconds": 27.462023047999537,
+      "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+    },
+    {
+      "pair": 0,
+      "compiler": "new",
+      "seconds": 25.48010485499981,
+      "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+    },
+    {
+      "pair": 1,
+      "compiler": "new",
+      "seconds": 26.461987786002283,
+      "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+    },
+    {
+      "pair": 1,
+      "compiler": "base",
+      "seconds": 27.33095712299837,
+      "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+    },
+    {
+      "pair": 2,
+      "compiler": "base",
+      "seconds": 26.611748160998104,
+      "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+    },
+    {
+      "pair": 2,
+      "compiler": "new",
+      "seconds": 27.120014084001014,
+      "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+    },
+    {
+      "pair": 3,
+      "compiler": "new",
+      "seconds": 26.80524251099996,
+      "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+    },
+    {
+      "pair": 3,
+      "compiler": "base",
+      "seconds": 27.379006654002296,
+      "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+    },
+    {
+      "pair": 4,
+      "compiler": "base",
+      "seconds": 26.92576136400021,
+      "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+    },
+    {
+      "pair": 4,
+      "compiler": "new",
+      "seconds": 27.084700313000212,
+      "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+    },
+    {
+      "pair": 5,
+      "compiler": "new",
+      "seconds": 26.778949736999493,
+      "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+    },
+    {
+      "pair": 5,
+      "compiler": "base",
+      "seconds": 26.157525943999644,
+      "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+    },
+    {
+      "pair": 6,
+      "compiler": "base",
+      "seconds": 26.5282109960026,
+      "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+    },
+    {
+      "pair": 6,
+      "compiler": "new",
+      "seconds": 26.463147285998275,
+      "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+    }
+  ],
+  "ratios": [
+    0.9278305830005448,
+    0.9682056748658513,
+    1.0190993060631701,
+    0.9790436464604729,
+    1.0059028581161127,
+    1.0237569789409842,
+    0.9975473766393773
+  ],
+  "median_ratio": 0.9975473766393773
+}
