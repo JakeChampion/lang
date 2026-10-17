@@ -25,7 +25,7 @@
 # handler with a worker thread per core. Then two servers whose handler
 # fetches an upstream twice per request, P3's exit case
 # (docs/NET-P3-SUSPENSION-PLAN.md §1): scripts/net-bench.d/twofetch.fern,
-# one loop built by the self-host compiler (bin/fern-selfhost, whose
+# a worker per core built by the self-host compiler (bin/fern-selfhost, whose
 # suspension pass parks the handler on the upstream) reaching it through
 # the forward proxy `http_proxy` names, since a handler's fetch refuses a
 # loopback address; and the hyper crate's `twofetch` binary, hyper-util's
