@@ -16507,10 +16507,24 @@ func stampRemainderExprArms(arms []*ast.MatchExprArm, ed *ast.EnumDecl) {
 	stampRemainderArm(wrapped, ed)
 }
 
-// checkMatch type-checks a `match` statement. The scrutinee must be an enum
-// value; each arm's pattern variant must belong to that enum and supply the
-// right number of binding names; the arm list must cover every variant of
-// the enum (or end in a `_` arm).
+// A failed scrutinee leaves its pattern binders poisoned while independent
+// errors in guards and bodies can still be checked.
+func (c *checker) poisonedMatchScope(s *scope, binders []string, guard ast.Expr) *scope {
+	armScope := newScope(s)
+	for _, name := range binders {
+		armScope.poison(name)
+	}
+	if guard != nil {
+		gt := c.checkExpr(guard, armScope)
+		if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+			c.errfCode(guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+		}
+	}
+	return armScope
+}
+
+// checkMatch type-checks a match statement against its scrutinee's type,
+// checking pattern membership, bindings, guards and exhaustiveness.
 func (c *checker) checkMatch(n *ast.Match, s *scope) {
 	// A `let … else` binds for the rest of its block — the desugar's
 	// success arm — so the else branch (the synthesised trailing wildcard)
@@ -16523,6 +16537,9 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 	}
 	tagT := c.checkExpr(n.Tag, s)
 	if tagT == nil {
+		for _, arm := range n.Arms {
+			c.checkBlock(arm.Body, c.poisonedMatchScope(s, arm.Binders(), arm.Guard))
+		}
 		return
 	}
 	tagT = c.widenGenericScrutinee(n.Tag, tagT)
@@ -17440,6 +17457,9 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 	tagT := c.checkExpr(n.Tag, s)
 	if tagT == nil {
+		for _, arm := range n.Arms {
+			c.checkExpr(arm.Body, c.poisonedMatchScope(s, arm.Binders(), arm.Guard))
+		}
 		return nil
 	}
 	tagT = c.widenGenericScrutinee(n.Tag, tagT)
