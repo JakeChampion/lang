@@ -69,7 +69,7 @@ x86_64/closure_call.text	818
 x86_64/closure_call.ir	63018106
 x86_64/enum_match.text	980
 x86_64/enum_match.ir	51750055
-x86_64/http_hello.text	16662
+x86_64/http_hello.text	16857
 x86_64/http_hello.ir	27676835
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
@@ -206,6 +206,11 @@ x86_64/utf8_ingest_validated.ir	5916089
 # every row. Rows moved a few tenths by earlier merges are re-banked to the same
 # reading. x86_64 figures are the dev container's perf-bench run; the aarch64
 # `.text` rows are cross-compiled readings, and its `.ir` rows are unchanged.
+#
+# Re-pinned 2026-10-17 (#12582) on x86_64/http_hello.text (+1.17%): the
+# chunked-body join and the TLS record writer call __bytes_into, so the hello
+# server carries its runtime helper where it inlined a byte loop. The figure is
+# the perf-x86_64 lane's.
 #
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18

@@ -65,18 +65,6 @@ function __zero_u64(n: i32): u64[] {
   return a;
 }
 
-// __copy_in writes src[from .. from+len) over dst[at ..] and returns dst,
-// consumed and rewritten in place. A `u8[]` argument lends itself as the
-// `[u8]` view without a copy.
-function __copy_in(own dst: u8[], at: i32, src: [u8], from: i32, len: i32): u8[] {
-  let i: i32 = 0;
-  while (i < len) {
-    dst = dst.with(at + i, src[from + i]);
-    i = i + 1;
-  }
-  return dst;
-}
-
 // Fixed-width word stores, big- and little-endian, in place.
 function __put_be32(own d: u8[], at: i32, v: u32): u8[] {
   d = d.with(at, (v >> 24) as u8);
@@ -318,7 +306,7 @@ function __md5_absorb(own h: Md5, bs: [u8]): Md5 {
     if (take > n) {
       take = n;
     }
-    h = Md5 { ...h, buf: __copy_in(h.buf, bl, bs, 0, take) };
+    h = Md5 { ...h, buf: __bytes_into(h.buf, bl, bs, 0, take) };
     bl = bl + take;
     pos = take;
     if (bl == 64) {
@@ -332,7 +320,7 @@ function __md5_absorb(own h: Md5, bs: [u8]): Md5 {
     pos = pos + nb * 64;
   }
   if (pos < n) {
-    h = Md5 { ...h, buf: __copy_in(h.buf, bl, bs, pos, n - pos) };
+    h = Md5 { ...h, buf: __bytes_into(h.buf, bl, bs, pos, n - pos) };
     bl = bl + (n - pos);
   }
   return Md5 { ...h, buf_len: bl, total: h.total + n as u64 };
@@ -364,7 +352,7 @@ pub function (h: Md5) final_bytes(): u8[] {
   if (bl >= 56) {
     plen = 128;
   }
-  let pad: u8[] = __copy_in(__zero_u8(plen), 0, h.buf, 0, bl);
+  let pad: u8[] = __bytes_into(__zero_u8(plen), 0, h.buf, 0, bl);
   pad = pad.with(bl, 0x80 as u8);
   let bits: u64 = h.total << 3 as u64;
   pad = __put_le64(pad, plen - 8, bits);
@@ -725,7 +713,7 @@ function __sha1_absorb(own h: Sha1, bs: [u8]): Sha1 {
     if (take > n) {
       take = n;
     }
-    h = Sha1 { ...h, buf: __copy_in(h.buf, bl, bs, 0, take) };
+    h = Sha1 { ...h, buf: __bytes_into(h.buf, bl, bs, 0, take) };
     bl = bl + take;
     pos = take;
     if (bl == 64) {
@@ -739,7 +727,7 @@ function __sha1_absorb(own h: Sha1, bs: [u8]): Sha1 {
     pos = pos + nb * 64;
   }
   if (pos < n) {
-    h = Sha1 { ...h, buf: __copy_in(h.buf, bl, bs, pos, n - pos) };
+    h = Sha1 { ...h, buf: __bytes_into(h.buf, bl, bs, pos, n - pos) };
     bl = bl + (n - pos);
   }
   return Sha1 { ...h, buf_len: bl, total: h.total + n as u64 };
@@ -771,7 +759,7 @@ pub function (h: Sha1) final_bytes(): u8[] {
   if (bl >= 56) {
     plen = 128;
   }
-  let pad: u8[] = __copy_in(__zero_u8(plen), 0, h.buf, 0, bl);
+  let pad: u8[] = __bytes_into(__zero_u8(plen), 0, h.buf, 0, bl);
   pad = pad.with(bl, 0x80 as u8);
   let bits: u64 = h.total << 3 as u64;
   pad = __put_be64(pad, plen - 8, bits);
@@ -1169,7 +1157,7 @@ function __sha256_absorb(own h: Sha256, bs: [u8]): Sha256 {
     if (take > n) {
       take = n;
     }
-    h = Sha256 { ...h, buf: __copy_in(h.buf, bl, bs, 0, take) };
+    h = Sha256 { ...h, buf: __bytes_into(h.buf, bl, bs, 0, take) };
     bl = bl + take;
     pos = take;
     if (bl == 64) {
@@ -1183,7 +1171,7 @@ function __sha256_absorb(own h: Sha256, bs: [u8]): Sha256 {
     pos = pos + nb * 64;
   }
   if (pos < n) {
-    h = Sha256 { ...h, buf: __copy_in(h.buf, bl, bs, pos, n - pos) };
+    h = Sha256 { ...h, buf: __bytes_into(h.buf, bl, bs, pos, n - pos) };
     bl = bl + (n - pos);
   }
   return Sha256 { ...h, buf_len: bl, total: h.total + n as u64 };
@@ -1215,7 +1203,7 @@ pub function (h: Sha256) final_bytes(): u8[] {
   if (bl >= 56) {
     plen = 128;
   }
-  let pad: u8[] = __copy_in(__zero_u8(plen), 0, h.buf, 0, bl);
+  let pad: u8[] = __bytes_into(__zero_u8(plen), 0, h.buf, 0, bl);
   pad = pad.with(bl, 0x80 as u8);
   let bits: u64 = h.total << 3 as u64;
   pad = __put_be64(pad, plen - 8, bits);
@@ -1671,7 +1659,7 @@ function __sha512_absorb(own h: Sha512, bs: [u8]): Sha512 {
     if (take > n) {
       take = n;
     }
-    h = Sha512 { ...h, buf: __copy_in(h.buf, bl, bs, 0, take) };
+    h = Sha512 { ...h, buf: __bytes_into(h.buf, bl, bs, 0, take) };
     bl = bl + take;
     pos = take;
     if (bl == 128) {
@@ -1685,7 +1673,7 @@ function __sha512_absorb(own h: Sha512, bs: [u8]): Sha512 {
     pos = pos + nb * 128;
   }
   if (pos < n) {
-    h = Sha512 { ...h, buf: __copy_in(h.buf, bl, bs, pos, n - pos) };
+    h = Sha512 { ...h, buf: __bytes_into(h.buf, bl, bs, pos, n - pos) };
     bl = bl + (n - pos);
   }
   return Sha512 { ...h, buf_len: bl, total: h.total + n as u64 };
@@ -1717,7 +1705,7 @@ pub function (h: Sha512) final_bytes(): u8[] {
   if (bl >= 112) {
     plen = 256;
   }
-  let pad: u8[] = __copy_in(__zero_u8(plen), 0, h.buf, 0, bl);
+  let pad: u8[] = __bytes_into(__zero_u8(plen), 0, h.buf, 0, bl);
   pad = pad.with(bl, 0x80 as u8);
   let bits: u64 = h.total << 3 as u64;
   pad = __put_be64(pad, plen - 8, bits);
@@ -2424,7 +2412,7 @@ function __sm3_absorb(own h: Sm3, bs: [u8]): Sm3 {
     if (take > n) {
       take = n;
     }
-    h = Sm3 { ...h, buf: __copy_in(h.buf, bl, bs, 0, take) };
+    h = Sm3 { ...h, buf: __bytes_into(h.buf, bl, bs, 0, take) };
     bl = bl + take;
     pos = take;
     if (bl == 64) {
@@ -2438,7 +2426,7 @@ function __sm3_absorb(own h: Sm3, bs: [u8]): Sm3 {
     pos = pos + nb * 64;
   }
   if (pos < n) {
-    h = Sm3 { ...h, buf: __copy_in(h.buf, bl, bs, pos, n - pos) };
+    h = Sm3 { ...h, buf: __bytes_into(h.buf, bl, bs, pos, n - pos) };
     bl = bl + (n - pos);
   }
   return Sm3 { ...h, buf_len: bl, total: h.total + n as u64 };
@@ -2470,7 +2458,7 @@ pub function (h: Sm3) final_bytes(): u8[] {
   if (bl >= 56) {
     plen = 128;
   }
-  let pad: u8[] = __copy_in(__zero_u8(plen), 0, h.buf, 0, bl);
+  let pad: u8[] = __bytes_into(__zero_u8(plen), 0, h.buf, 0, bl);
   pad = pad.with(bl, 0x80 as u8);
   let bits: u64 = h.total << 3 as u64;
   pad = __put_be64(pad, plen - 8, bits);
@@ -3388,7 +3376,7 @@ function __blake2b_absorb(own h: Blake2b, bs: [u8]): Blake2b {
   if (bl + n > 128) {
     let take: i32 = 128 - bl;
     if (take > 0) {
-      h = Blake2b { ...h, buf: __copy_in(h.buf, bl, bs, 0, take) };
+      h = Blake2b { ...h, buf: __bytes_into(h.buf, bl, bs, 0, take) };
     }
     total = total + 128 as u64;
     h = __blake2b_blocks(h, h.buf, 0, 1, total, false);
@@ -3401,7 +3389,7 @@ function __blake2b_absorb(own h: Blake2b, bs: [u8]): Blake2b {
       pos = pos + nb * 128;
     }
   }
-  h = Blake2b { ...h, buf: __copy_in(h.buf, bl, bs, pos, n - pos) };
+  h = Blake2b { ...h, buf: __bytes_into(h.buf, bl, bs, pos, n - pos) };
   return Blake2b { ...h, buf_len: bl + (n - pos), total: total };
 }
 
@@ -3428,7 +3416,7 @@ pub function (h: Blake2b) update_array(chunk: u8[]): Blake2b {
 pub function (h: Blake2b) final_bytes(): u8[] {
   let bl: i32 = h.buf_len;
   // The tail of the block must be zero; the buffer may hold stale bytes.
-  let pad: u8[] = __copy_in(__zero_u8(128), 0, h.buf, 0, bl);
+  let pad: u8[] = __bytes_into(__zero_u8(128), 0, h.buf, 0, bl);
   let st: Blake2b = __blake2b_blocks(h, pad, 0, 1, h.total + bl as u64, true);
   let full: u8[] = __alloc_u8(64);
   full = __put_le64(full, 0, st.h0);
@@ -3442,7 +3430,7 @@ pub function (h: Blake2b) final_bytes(): u8[] {
   if (st.out_len == 64) {
     return full;
   }
-  return __copy_in(__alloc_u8(st.out_len), 0, full, 0, st.out_len);
+  return __bytes_into(__alloc_u8(st.out_len), 0, full, 0, st.out_len);
 }
 
 pub function (h: Blake2b) final_hex(): string {
@@ -3484,9 +3472,9 @@ function __mac_block(hlen: i32): i32 {
 function __block_key(hlen: i32, key: [u8]): u8[] {
   let bs: i32 = __mac_block(hlen);
   if (key.len() > bs) {
-    return __copy_in(__zero_u8(bs), 0, __mac_digest(hlen, key), 0, hlen);
+    return __bytes_into(__zero_u8(bs), 0, __mac_digest(hlen, key), 0, hlen);
   }
-  return __copy_in(__zero_u8(bs), 0, key, 0, key.len());
+  return __bytes_into(__zero_u8(bs), 0, key, 0, key.len());
 }
 
 // __hmac is H((k0 ^ opad) || H((k0 ^ ipad) || msg)).
@@ -3501,8 +3489,8 @@ function __hmac(hlen: i32, key: [u8], msg: [u8]): u8[] {
     outer = outer.with(i, (k0[i] as i32 ^ 0x5c) as u8);
     i = i + 1;
   }
-  inner = __copy_in(inner, bs, msg, 0, msg.len());
-  outer = __copy_in(outer, bs, __mac_digest(hlen, inner), 0, hlen);
+  inner = __bytes_into(inner, bs, msg, 0, msg.len());
+  outer = __bytes_into(outer, bs, __mac_digest(hlen, inner), 0, hlen);
   return __mac_digest(hlen, outer);
 }
 
@@ -3682,15 +3670,15 @@ function __hkdf_expand(hlen: i32, prk: [u8], info: [u8], length: i32): u8[] {
   let i: i32 = 1;
   while (offset < length) {
     let msg: u8[] = __alloc_u8(t.len() + info.len() + 1);
-    msg = __copy_in(msg, 0, t, 0, t.len());
-    msg = __copy_in(msg, t.len(), info, 0, info.len());
+    msg = __bytes_into(msg, 0, t, 0, t.len());
+    msg = __bytes_into(msg, t.len(), info, 0, info.len());
     msg = msg.with(t.len() + info.len(), (i & 255) as u8);
     t = __hmac(hlen, prk, msg);
     let n: i32 = hlen;
     if (length - offset < n) {
       n = length - offset;
     }
-    okm = __copy_in(okm, offset, t, 0, n);
+    okm = __bytes_into(okm, offset, t, 0, n);
     offset = offset + hlen;
     i = i + 1;
   }
@@ -4054,7 +4042,7 @@ function __sha3_absorb(own h: Sha3, bs: [u8]): Sha3 {
     if (take > n) {
       take = n;
     }
-    h = Sha3 { ...h, buf: __copy_in(h.buf, bl, bs, 0, take) };
+    h = Sha3 { ...h, buf: __bytes_into(h.buf, bl, bs, 0, take) };
     bl = bl + take;
     pos = take;
     if (bl == h.rate) {
@@ -4068,7 +4056,7 @@ function __sha3_absorb(own h: Sha3, bs: [u8]): Sha3 {
     pos = pos + nb * h.rate;
   }
   if (pos < n) {
-    h = Sha3 { ...h, buf: __copy_in(h.buf, bl, bs, pos, n - pos) };
+    h = Sha3 { ...h, buf: __bytes_into(h.buf, bl, bs, pos, n - pos) };
     bl = bl + (n - pos);
   }
   return Sha3 { ...h, buf_len: bl };
@@ -4094,7 +4082,7 @@ pub function (h: Sha3) update_array(chunk: u8[]): Sha3 {
 // (`0x06` for SHA-3, `0x1f` for SHAKE) and `0x80` in the last byte, which
 // the domain byte shares when one byte is left.
 function __sha3_pad(h: Sha3, domain: u8): Sha3 {
-  let pad: u8[] = __copy_in(__zero_u8(h.rate), 0, h.buf, 0, h.buf_len);
+  let pad: u8[] = __bytes_into(__zero_u8(h.rate), 0, h.buf, 0, h.buf_len);
   pad = pad.with(h.buf_len, domain);
   pad = pad.with(h.rate - 1, (pad[h.rate - 1] | 0x80) as u8);
   return __sha3_blocks(h, pad, 0, 1);
@@ -4205,7 +4193,7 @@ pub function (r: ShakeReader) squeeze(n: i32): (u8[], ShakeReader) {
     if (take > n - at) {
       take = n - at;
     }
-    out = __copy_in(out, at, st.buf, st.buf_len, take);
+    out = __bytes_into(out, at, st.buf, st.buf_len, take);
     st = Sha3 { ...st, buf_len: st.buf_len + take };
     at = at + take;
   }
