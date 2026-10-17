@@ -3,6 +3,7 @@ import "./lexer";
 import "./parser";
 import "./astwalk";
 import "./util";
+import "./rtprofile";
 import "./ir";
 import "./irtables";
 import "./ssa";
@@ -187,6 +188,7 @@ pub struct EmitState {
   // Whether a fatal abort's report walks the frame-pointer chain under its
   // cause line.
   backtrace: boolean,
+  profile: i32,
   // Whether a `-g` build's variable rows (`.fern_var`) are written: only
   // the in-process assembler reads them, so never into `-emit asm` text.
   var_rows: boolean,
@@ -263,6 +265,9 @@ pub function finish_native_text(s: EmitState, h: usize, outer: usize, sites: ssa
 // syscall writes an x86-64 `syscall` that issues `nr`, already in %rax, and
 // records nr in the sandbox allowlist, which it keeps sorted.
 pub function (s: EmitState) syscall(nr: i32): EmitState {
+  if (s.profile > 0 && nr == 231) {
+    s = s.write("    pushq %rax\n    pushq %rdi\n    call __fern_profile_flush\n    popq %rdi\n    popq %rax\n");
+  }
   let t: EmitState = s.write("    syscall\n");
   let at: i32 = 0;
   while (at < t.syscalls.len() && t.syscalls[at] < nr) {
@@ -553,6 +558,7 @@ pub function new_state(): EmitState {
     sanitize: false,
     leak_check: false,
     backtrace: false,
+    profile: rtprofile.mode(),
     shared: false,
     size: false,
     harden: false,

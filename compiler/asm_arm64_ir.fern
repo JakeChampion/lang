@@ -22,6 +22,7 @@
 
 import "./parser";
 import "./asmcore";
+import "./rtprofile";
 import "./arm64_native";
 import "./checker";
 import "./util";
@@ -3342,7 +3343,7 @@ function ssa_host_kind(op: string): boolean {
 // syscall pushes its operands and then runs the flat arm's exact pop
 // sequence: its `ldr x8, [sp], #16` is the line darwinize keys the Mach-O
 // syscall rewrite off, so the text must not change.
-function ssa_host_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   if (util.str_has_prefix(ins.str, "syscall")) {
     let i: i32 = 0;
@@ -3355,7 +3356,12 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
       s = s.write("    ldr x" + util.i32_to_string(a) + ", [sp], #16\n");
       a = a - 1;
     }
-    s = s.write("    ldr x8, [sp], #16\n    svc #0\n");
+    s = s.write("    ldr x8, [sp], #16\n");
+    if (s.profile > 0 && imm.konst[ins.args[0]] && imm.value[ins.args[0]] == 94i64) {
+      s = s.write(profile_exit_asm(s.profile));
+      s = s.write("    mov x8, #94\n");
+    }
+    s = s.write("    svc #0\n");
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
   }
   if (ins.str == "exit") {
@@ -3363,6 +3369,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
     if (s.leak_check) {
       s = s.write("    mov x19, x0\n    bl __fern_lc_report_exit\n    mov x0, x19\n");
     }
+    s = s.write(profile_exit_asm(s.profile));
     s = s.write("    mov x8, #94\n    svc #0\n    mov x0, #0\n");
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
   }
@@ -3969,7 +3976,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     return ssa_str_call(ins, reg_of, s);
   }
   if (k == 50 && ssa_host_kind(ins.str)) {
-    return ssa_host_call(ins, reg_of, s);
+    return ssa_host_call(ins, reg_of, fr.imm, s);
   }
   if (k == 50) {
     return ssa_rt_call(ins, reg_of, lp, s);
@@ -4585,11 +4592,11 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let saved: i32[] = ssa_saved_regs(reg_of);
   let save: i32 = ssa_save_bytes(saved);
   let views: i32[] = ssa_view_slots(f);
-  let tails: boolean = r.dbg_slots.len() == 0 && !ssa_source_lines(f);
+  let tails: boolean = s.profile == 0 && r.dbg_slots.len() == 0 && !ssa_source_lines(f);
   // A function with no frame slots and no call but a tail call is emitted into
   // a buffer first, its exits marked; its text decides whether it needs a frame
   // at all.
-  let leaf: boolean = ssa.spill_count(reg_of) == 0 && ssa_view_count(views) == 0 && saved.len() == 0 && !ssa_calls_besides_tails(f, s, tails);
+  let leaf: boolean = s.profile == 0 && ssa.spill_count(reg_of) == 0 && ssa_view_count(views) == 0 && saved.len() == 0 && !ssa_calls_besides_tails(f, s, tails);
   let outer: usize = s.capture;
   let body: usize = 0 as usize;
   if (leaf) {
@@ -6097,6 +6104,7 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], i: i32, l
   }
   // No arm matched. Unreachable for a well-typed dyn value, so abort
   // (exit 134, like __fern_oob_abort) rather than answer 0.
+  s = s.write(profile_exit_asm(s.profile));
   s = s.write("    mov x8, #94\n    mov x0, #134\n    svc #0\n");
   s = s.write(dend + ":\n");
   return s;
@@ -6347,6 +6355,9 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
       s = emit_vdso_scan(s);
     }
   }
+  if (s.profile > 0) {
+    s = s.write("    adrp x0, .Lprofile_ring\n    add x0, x0, :lo12:.Lprofile_ring\n    mov x9, sp\n    adrp x10, .Lprofile_action\n    add x10, x10, :lo12:.Lprofile_action\n    adrp x11, .Lprofile_timer\n    add x11, x11, :lo12:.Lprofile_timer\n    bl __fn___fern_profile_start.r\n    mov x29, xzr\n    mov x30, xzr\n");
+  }
   s = s.write("    stp x29, x30, [sp, #-16]!\n");
   s = s.write("    mov x29, sp\n");
   s = s.write("    bl __fn_main\n");
@@ -6357,6 +6368,7 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
     s = s.write("    bl __fern_lc_report\n");
     s = s.write("    mov x0, x19\n");
   }
+  s = s.write(profile_exit_asm(s.profile));
   s = s.write("    mov x8, #94\n");  // exit_group (Linux arm64); darwinize remaps the number + svc
   s = s.write("    svc #0\n");
   return s;
@@ -7297,7 +7309,7 @@ function san_report_exit(s: asmcore.EmitState): string {
   if (s.backtrace) {
     return "    mov x19, #124\n    b __fern_bt_exit\n";
   }
-  return "    mov x0, #124\n    mov x8, #94\n    svc #0\n";
+  return profile_exit_asm(s.profile) + "    mov x0, #124\n    mov x8, #94\n    svc #0\n";
 }
 
 // emit_bt_exit emits __fern_bt_exit: "backtrace:" and then each return
@@ -7349,6 +7361,7 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    b .Lbt_loop\n");
   s = s.write(".Lbt_done:\n");
   s = s.write("    mov x0, x19\n");
+  s = s.write(profile_exit_asm(s.profile));
   s = s.write("    mov x8, #94\n");
   s = s.write("    svc #0\n");
   // .Lbt_hex(x1 = value): one "  0x<16 hex>\n" line on stderr, nibbles
@@ -7992,6 +8005,7 @@ function emit_rt_report(s: asmcore.EmitState): asmcore.EmitState {
     return emit_bt_exit(s);
   }
   s = s.write("    mov x0, x19\n");
+  s = s.write(profile_exit_asm(s.profile));
   s = s.write("    mov x8, #94\n");
   s = s.write("    svc #0\n");
   return s.write(".size __fern_report, .-__fern_report\n");
@@ -8125,6 +8139,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    add x0, x0, #7\n");
   s = s.write("    lsr x3, x0, #3\n");  // idx = roundup8(size)/8
   s = s.write("    lsl x0, x3, #3\n");  // rounded size = idx*8
+  s = emit_profile_alloc_hook(s);
   s = lc_bump_alloc(s);
   s = alloc_count_bump(s);
   s = s.write("    mov x2, #0x10000\n");  // freelist class cap (65536); reg form (shifted cmp imm may be unsupported)
@@ -8305,7 +8320,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   // x0/x1/x2 — exactly what __fern_alloc already clobbers — so it
   // is a drop-in at every call site.
   s = s.write("__fern_arr_box:\n");
-  if (!s.leak_check && !s.has_need("alloc_count")) {
+  if (profile_alloc_fast(s)) {
     // The allocator's small-class pop, with no frame: the byte count is
     // already a multiple of 8, so it indexes the freelist as it is. A miss
     // or a block over 256 words takes the call below. x3 is free here: every
@@ -10490,7 +10505,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // would, and only an empty class calls the shim. A static literal can
     // hold elements at cap 0, hence the length test too. The debug, census
     // and counter builds keep the frame path, whose hooks count and check.
-    if (!s.rc_free_debug && !s.leak_check && !s.has_need("alloc_count")) {
+    if (!s.rc_free_debug && profile_alloc_fast(s)) {
       s = s.write("    ldr x2, [x0]\n");
       s = s.write("    cbnz x2, .Larr_push_frame\n");
       s = s.write("    ldur x2, [x0, #-16]\n");
@@ -12141,6 +12156,67 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
   ]);
 }
 
+// Preserve the process exit's status and link register while flushing.
+function profile_exit_asm(mode: i32): string {
+  if (mode <= 0) {
+    return "";
+  }
+  return "    stp x0, x30, [sp, #-16]!\n    bl __fern_profile_flush\n    ldp x0, x30, [sp], #16\n";
+}
+
+function profile_frame(s: asmcore.EmitState, name: string): asmcore.EmitState {
+  s = s.write(name + ":\n");
+  if (s.harden) {
+    s = s.write("    bti c\n    paciasp\n");
+  }
+  return s.write("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n");
+}
+
+function profile_return(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    ldp x29, x30, [sp], #16\n");
+  if (s.harden) {
+    s = s.write("    autiasp\n");
+  }
+  return s.write("    ret\n");
+}
+
+// The C signal entry reads Linux's arm64 ucontext, saves the vDSO-restorer
+// link and calls the same raw-memory Fern sampler as x86. TID-owned
+// acquire/release exclusives serialize captures; a busy handler never waits.
+// Profiling routes freelist shortcuts through the instrumented allocator.
+function profile_alloc_fast(s: asmcore.EmitState): boolean {
+  return !s.leak_check && !s.has_need("alloc_count") && !rtprofile.allocation(s.profile);
+}
+
+function emit_profile_alloc_hook(s: asmcore.EmitState): asmcore.EmitState {
+  if (!rtprofile.allocation(s.profile)) {
+    return s;
+  }
+  return s.write("    bl __fern_profile_alloc\n");
+}
+
+function emit_profile_alloc_runtime(s: asmcore.EmitState): asmcore.EmitState {
+  if (!rtprofile.allocation(s.profile)) {
+    return s;
+  }
+  s = profile_frame(s, "__fern_profile_alloc");
+  s = s.write("    stp x0, x1, [sp, #-16]!\n    stp x2, x3, [sp, #-16]!\n    stp x4, x5, [sp, #-16]!\n    stp x6, x7, [sp, #-16]!\n    stp x8, x9, [sp, #-16]!\n    stp x10, x11, [sp, #-16]!\n    stp x12, x13, [sp, #-16]!\n    stp x14, x15, [sp, #-16]!\n    stp x16, x17, [sp, #-16]!\n    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    ldr x13, [x12, #24]\n    cbz x13, .Lprofile_alloc_return\n    add x15, x12, #144\n.Lprofile_alloc_counter:\n    ldaxr x13, [x15]\n    add x13, x13, #1\n    stlxr w16, x13, [x15]\n    cbnz w16, .Lprofile_alloc_counter\n    and x13, x13, #63\n    cbnz x13, .Lprofile_alloc_return\n    mov x8, #172\n    svc #0\n    ldr x13, [x12, #128]\n    cmp x0, x13\n    b.ne .Lprofile_alloc_return\n    mov x8, #178\n    svc #0\n    mov x14, x0\n    add x15, x12, #40\n.Lprofile_alloc_lock:\n    ldaxr x13, [x15]\n    cbnz x13, .Lprofile_alloc_drop\n    stlxr w16, x14, [x15]\n    cbnz w16, .Lprofile_alloc_lock\n    ldr x13, [x29]\n    ldr x0, [x13, #8]\n    sub x0, x0, #1\n    ldr x9, [x13]\n    add x10, x29, #16\n    mov x11, x12\n    ldr x12, [sp, #128]\n    lsl x12, x12, #6\n    bl __fn___fern_profile_sample.r\n    cbz x0, .Lprofile_alloc_unlock\n    bl .Lprofile_drop\n.Lprofile_alloc_unlock:\n    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    add x15, x12, #40\n    stlr xzr, [x15]\n    b .Lprofile_alloc_return\n.Lprofile_alloc_drop:\n    bl .Lprofile_drop\n.Lprofile_alloc_return:\n    ldp x16, x17, [sp], #16\n    ldp x14, x15, [sp], #16\n    ldp x12, x13, [sp], #16\n    ldp x10, x11, [sp], #16\n    ldp x8, x9, [sp], #16\n    ldp x6, x7, [sp], #16\n    ldp x4, x5, [sp], #16\n    ldp x2, x3, [sp], #16\n    ldp x0, x1, [sp], #16\n");
+  return profile_return(s);
+}
+
+function emit_profile_runtime(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .bss\n    .p2align 3\n.Lprofile_ring: .zero 4337824\n    .data\n    .p2align 3\n.Lprofile_action: .quad __fern_profile_signal, 268435460, 0, 0\n.Lprofile_timer: .quad 0, 10000, 0, 10000\n    .text\n");
+  s = emit_ir_runtime_fern_fn(rtprofile.source("arm64-linux", s.profile), s);
+  s = profile_frame(s, "__fern_profile_signal");
+  s = s.write("    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    ldr x13, [x12, #24]\n    cbz x13, .Lprofile_signal_return\n    mov x8, #172\n    svc #0\n    ldr x13, [x12, #128]\n    cmp x0, x13\n    b.ne .Lprofile_signal_return\n    mov x8, #178\n    svc #0\n    mov x14, x0\n    add x15, x12, #40\n.Lprofile_signal_lock:\n    ldaxr x13, [x15]\n    cbnz x13, .Lprofile_busy\n    stlxr w16, x14, [x15]\n    cbnz w16, .Lprofile_signal_lock\n    ldr x0, [x2, #440]\n    ldr x9, [x2, #416]\n    ldr x10, [x2, #432]\n    mov x11, x12\n    mov x12, #1\n    bl __fn___fern_profile_sample.r\n    cbz x0, .Lprofile_signal_unlock\n    bl .Lprofile_drop\n.Lprofile_signal_unlock:\n    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    add x15, x12, #40\n    stlr xzr, [x15]\n    b .Lprofile_signal_return\n.Lprofile_busy:\n    bl .Lprofile_drop\n.Lprofile_signal_return:\n");
+  s = profile_return(s);
+  s = s.write(".Lprofile_drop:\n    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    add x15, x12, #8\n.Lprofile_drop_retry:\n    ldaxr x13, [x15]\n    add x13, x13, #1\n    stlxr w16, x13, [x15]\n    cbnz w16, .Lprofile_drop_retry\n    ret\n");
+  s = profile_frame(s, "__fern_profile_flush");
+  s = s.write("    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    ldr x13, [x12, #32]\n    cmp x13, #2\n    b.eq .Lprofile_flush_return\n    mov x8, #172\n    svc #0\n    ldr x13, [x12, #128]\n    cmp x0, x13\n    b.ne .Lprofile_flush_return\n    mov x8, #178\n    svc #0\n    mov x14, x0\n    add x15, x12, #40\n.Lprofile_flush_lock:\n    ldaxr x13, [x15]\n    cbnz x13, .Lprofile_flush_locked\n    stlxr w16, x14, [x15]\n    cbnz w16, .Lprofile_flush_lock\n    b .Lprofile_flush_owned\n.Lprofile_flush_locked:\n    cmp x13, x14\n    b.eq .Lprofile_flush_reentrant\n    yield\n    b .Lprofile_flush_lock\n.Lprofile_flush_reentrant:\n    stlxr w16, x13, [x15]\n    ldr x13, [x12, #32]\n    cmp x13, #1\n    b.eq .Lprofile_flush_return\n.Lprofile_flush_owned:\n    ldr x13, [x12, #32]\n    cmp x13, #2\n    b.eq .Lprofile_flush_unlock\n    str xzr, [x12, #24]\n    mov x13, #1\n    str x13, [x12, #32]\n    mov x0, x12\n    bl __fn___fern_profile_finish.r\n    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    mov x13, #2\n    str x13, [x12, #32]\n.Lprofile_flush_unlock:\n    add x15, x12, #40\n    stlr xzr, [x15]\n.Lprofile_flush_return:\n");
+  s = profile_return(s);
+  return emit_profile_alloc_runtime(s);
+}
+
 // A typed runtime body can call a need-gated runtime block emitted before it,
 // so the runtime is emitted into a capture and emitted again, from the state
 // before it, with the needs it added, until they stop growing.
@@ -12166,6 +12242,9 @@ function emit_ir_runtime_settled(s0: asmcore.EmitState, darwin: boolean): asmcor
 }
 
 pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+  if (s.profile > 0 && !darwin) {
+    s = emit_profile_runtime(s);
+  }
   s = emit_rt_clock_and_print(s, darwin);
   s = emit_rt_readiness(s, darwin);
   s = emit_rt_io_and_string(s);

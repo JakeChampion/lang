@@ -134,6 +134,10 @@ ISAs. Per-backend support and known gaps: `docs/BACKEND-PARITY.md`.
 - **Debugging.** `fern -sanitize` catches double frees and use-after-free and
   prints a leak census at exit; `-g` emits a symbol table; fatal aborts print
   a frame-pointer backtrace by default. `docs/SANITIZER.md`.
+- **Profiling.** On Linux, `FERN_PROFILE=cpu` and `FERN_PROFILE=alloc` include
+  self-contained CPU or allocation sampling in native builds, with collapsed
+  stacks at exit. The `cpu-pprof` and `alloc-pprof` modes write pprof files.
+  See [profiling](docs/PROFILING.md).
 - **Literate programming.** A `.fern.md` file is a Markdown document whose
   named code chunks are tangled into a program and works anywhere a `.fern`
   file does, `-target` compiles and imports included; `fern -weave -html`
