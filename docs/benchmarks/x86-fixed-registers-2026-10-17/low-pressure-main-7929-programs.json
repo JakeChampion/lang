@@ -1,0 +1,29 @@
+{
+  "source_head": "225e2e322c8d350b46636e5a81fc5aa5d26d211b",
+  "compilers": {
+    "baseline": "58764bc1865144e57dbd1b1be3f8a0a199206e7a97636fe6c06e7cc4e73cfb49",
+    "candidate": "8e7094c82ba304fcf09ac96be46a0e286d45be1ce012336e4b9ab60702a3ac1e"
+  },
+  "programs": {
+    "nine-live-values": {
+      "baseline": {
+        "sha256": "7f31c3ea52c48646fe80cca2dd9d89c9e6e922981450314b7e615eea233c60ee",
+        "bytes": 4576
+      },
+      "candidate": {
+        "sha256": "7f31c3ea52c48646fe80cca2dd9d89c9e6e922981450314b7e615eea233c60ee",
+        "bytes": 4576
+      }
+    },
+    "nine-live-record": {
+      "baseline": {
+        "sha256": "24a4e46351e1166bea962979f8eb3c87060b0ac8c75ba4035d32d0fba1ed2ba9",
+        "bytes": 8688
+      },
+      "candidate": {
+        "sha256": "ac498131fe348e86c18211e983dbd649ec2736d3e758c871bef8f68eab5437cb",
+        "bytes": 8688
+      }
+    }
+  }
+}

@@ -4,25 +4,9 @@ import (
 	"testing"
 )
 
-// TestSelfHostTimerFdIRX86_64 is slice 3 of putting async on the self-hosted
-// compiler's IR path (docs/ASYNC-SELFHOST-IR.md): the timer / pollable-lifecycle
-// readiness builtins lower to dedicated IR ops on the self-host x86-64 IR
-// backend:
-//
-//   - timer_fd(ms)             -> __fern_timer_fd: a CLOCK_MONOTONIC one-shot
-//     timerfd readable after `ms` ms.
-//   - wasm_timer_pollable(ns)  -> __fern_wasm_timer_pollable: -1 on native (a
-//     deadline is carried in poll(2)'s timeout arg).
-//   - wasm_pollable_drop(p)    -> __fern_wasm_pollable_drop: 0 on native (a
-//     pollable is just an fd; nothing to drop).
-//   - wasm_poll(pollables)     -> __fern_wasm_poll: -1 on native (no real
-//     pollables; readiness uses poll(2) directly). On wasm this is the real
-//     wasi:io/poll.poll(list<pollable>) multiplexer.
-//
-// Two programs: (a) a with_deadline-shape readiness case — arm a 1 ms timerfd,
-// poll it with a 500 ms budget, and expect index 0 (the timer fires) — which
-// also exercises slice-1 poll over a REAL fd; (b) the portability shims, whose
-// native values (-1 / 0) compose to a known exit code without any syscall.
+// Native timer_fd creates a real timer descriptor. Polling it checks timer
+// readiness; the portable WASI operations select their native constants
+// without calling a runtime helper.
 func TestSelfHostTimerFdIRX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 

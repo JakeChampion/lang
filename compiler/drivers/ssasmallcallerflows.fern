@@ -22,6 +22,9 @@ function require(ok: boolean, group: string): void {
 function emit(single: boolean): ssaprepare.Output {
   let record = if (single) { "struct Parent { only: i32 } @noinline function parent(value: i32): Parent { return Parent { only: value }; } @noinline function caller(value: i32): i32 { let p = parent(value); let a = p.only; let q = parent(a); return q.only; }" } else { "struct Parent { left: i32, right: i32 } @noinline function parent(left: i32, right: i32): Parent { return Parent { left: left, right: right }; } @noinline function caller(value: i32, other: i32): i32 { let p = parent(value, other); let a = p.left; let q = parent(other, a); return q.right; }" };
   let m = parser.parse_module(lexer.tokenize(record + " function main(): i32 { return 0; }"));
+  // This machine models boxed constructor calls, including their releases.
+  // An exported ABI keeps the scalar-return pass from erasing those boxes.
+  m = parser.Module { ...m, exports: [parser.ExportBinding { func_name: "parent", iface: "", wit: "", c_abi: true }] };
   let g = semlower.program(semlower.driven(m, "x86-64-linux"));
   require(g.ok, "lowered");
   let sw = asmcore.Switches { backtrace: false, sanitize: false, var_rows: false, shared: false, size: false, harden: false };

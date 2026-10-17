@@ -6,7 +6,7 @@ import "std/string";
 
 function require(ok: boolean, group: string): void {
   if (!ok) {
-    print("small caller instruction controls failed: " + group);
+    eprint("small caller instruction controls failed: " + group);
     exit(180);
   }
 }

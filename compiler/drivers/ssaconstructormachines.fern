@@ -14,7 +14,7 @@ import "std/string";
 
 function require(ok: boolean, group: string): void {
   if (!ok) {
-    print("constructor machine controls failed: " + group);
+    eprint("constructor machine controls failed: " + group);
     exit(180);
   }
 }
@@ -85,17 +85,19 @@ function stores(output: ssaprepare.Output, single: boolean): void {
 
 function frame(output: ssaprepare.Output, single: boolean): void {
   // The body keeps no %rbp: it pushes its saves against %rsp, the two-field
-  // body a pad word after them, and pops them before the return.
+  // body a pad word after them. It discards the padding before restoring saves.
   let pairs = ["pushq %rbx", "popq %rbx"];
   if (!single) {
-    pairs = pairs.append("pushq %r12").append("popq %r12").append("pushq %rcx").append("popq %rcx");
+    pairs = pairs.append("pushq %r12").append("popq %r12").append("pushq %rcx").append("leaq 8(%rsp), %rsp");
   }
   for from in pairs {
     altered(output, from, "", false);
   }
   altered(output, "popq %rbx", "movq (%rsp), %rbx\naddq $8, %rsp", true);
   if (!single) {
-    altered(output, "popq %rcx", "addq $8, %rsp", true);
+    altered(output, "leaq 8(%rsp), %rsp", "addq $8, %rsp", true);
+    altered(output, "leaq 8(%rsp), %rsp", "popq %rcx", true);
+    altered(output, "leaq 8(%rsp), %rsp", "leaq 16(%rsp), %rsp", false);
   }
   for to in ["movq $0, (%rsp)\nret", "movq $0, 8(%rsp)\nret", "movq -64(%rsp), %rbx\nret", "ret $8", "unknown_instruction\nret"] {
     altered(output, "ret\n", to + "\n", false);

@@ -76,7 +76,7 @@ func TestSelfHostAllocFastPath(t *testing.T) {
 		t.Fatal("no __fern_arr_box in the listing")
 	}
 	shim := string(asm)[box:]
-	shim = shim[:strings.Index(shim, "__fn___fern_struct_copy:")]
+	shim = shim[:strings.Index(shim, "__fern_str_box:")]
 	fast := shim[:strings.Index(shim, "ret\n")]
 	if strings.Contains(fast, "pushq %rbp") || strings.Contains(fast, "call") || !strings.Contains(fast, "pushq (%rax)") {
 		t.Errorf("__fern_arr_box's fast path builds a frame or calls out instead of popping its class:\n%s", fast)

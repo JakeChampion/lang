@@ -38,6 +38,7 @@ import "std/json";
 import "std/stream";
 import "std/error";
 import "std/platform";
+import "std/url";
 import "std/utf8" as utf8;
 
 // `http_status_text(code)` — the IANA reason phrase for every status
@@ -2557,6 +2558,30 @@ pub function (r: HttpRequest) with_body(body: string): HttpRequest {
 // `Content-Type` of JSON.
 pub function (r: HttpRequest) with_json(body: string): HttpRequest {
   return r.with_body(body).with_header("Content-Type", "application/json");
+}
+
+// `(r: HttpRequest).query(name)` — the first value the request's query
+// string gives `name`, decoded as a form field is (`+` a space, `%XX` a
+// byte), or None when the query does not name it; a bare `?flag` gives
+// Some(""). The path a handler is handed keeps its query as the client
+// sent it, so `%26` here is a literal `&` in the value, not a separator.
+pub function (r: HttpRequest) query(name: string): Option[string] {
+  return url.query_get(__query_of(r.path), name);
+}
+
+// `(r: HttpRequest).query_all(name)` — every value the query string gives
+// `name`, decoded, in order: `?tag=a&tag=b` gives ["a", "b"].
+pub function (r: HttpRequest) query_all(name: string): string[] {
+  return url.query_get_all(__query_of(r.path), name);
+}
+
+// `__query_of(path)` — the request-target's query, without its `?`.
+function __query_of(path: string): string {
+  let q: i32 = path.index_of("?");
+  if (q < 0) {
+    return "";
+  }
+  return slice_unchecked(path, q + 1, path.len()) + "";
 }
 
 // `(r: HttpRequest).body_stream()` — the body as a Stream,

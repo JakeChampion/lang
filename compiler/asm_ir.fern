@@ -30,6 +30,7 @@ import "./irtables";
 import "./irverifygate";
 import "./ircore";
 import "./ssa";
+import "./ssafixed";
 import "./ssa_lift";
 import "./physicalbody";
 import "./ssaprepare";
@@ -116,61 +117,8 @@ function emit_ir_map_hash_seed(s: asmcore.EmitState): asmcore.EmitState {
 // __fern_timer_fd is a Fern runtime function (#2649): asmcore.rt_src_timer_fd —
 // timerfd_create then timerfd_settime over an itimerspec in __fern_scratch.
 
-// emit_ir_wasm_timer_pollable appends __fern_wasm_timer_pollable(ns) -> -1: on
-// native there's no pollable (a deadline uses poll(2)'s timeout arg), so it
-// returns -1 (an fd poll(2) ignores). Portability shim for with_deadline.
-function emit_ir_wasm_timer_pollable(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("__fern_wasm_timer_pollable:\n");
-  s = s.write("    movq $-1, %rax\n");
-  s = s.write("    ret\n");
-  return s;
-}
-
-// emit_ir_wasm_pollable_drop appends __fern_wasm_pollable_drop(p) -> 0: on
-// native a pollable is just an fd (closed via tcp_close), so there's nothing to
-// drop. Portability shim so std/async's fetch_future drops the wasm pollable
-// portably.
-function emit_ir_wasm_pollable_drop(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("__fern_wasm_pollable_drop:\n");
-  s = s.write("    xorq %rax, %rax\n");
-  s = s.write("    ret\n");
-  return s;
-}
-
-// emit_ir_wasm_block appends __fern_wasm_block(p) -> 0: on native there's no
-// pollable to wait on (a deadline uses poll(2)'s timeout arg — wasm_timer_pollable
-// returned -1), so blocking is a 0 no-op. On wasm this is a real
-// wasi:io/poll.[method]pollable.block. Portability shim for the reactor's
-// with_deadline.
-function emit_ir_wasm_block(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("__fern_wasm_block:\n");
-  s = s.write("    xorq %rax, %rax\n");
-  s = s.write("    ret\n");
-  return s;
-}
-
-// emit_ir_wasm_poll appends __fern_wasm_poll(pollables) -> -1: on native there
-// are no real pollables (readiness uses poll(2) directly), so it returns -1
-// (nothing ready), ignoring its array arg. On wasm this is the real
-// wasi:io/poll.poll(list<pollable>) multiplexer.
-function emit_ir_wasm_poll(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("__fern_wasm_poll:\n");
-  s = s.write("    movq $-1, %rax\n");
-  s = s.write("    ret\n");
-  return s;
-}
-
 // __fern_tcp_connect is a Fern runtime function (#2649):
 // asmcore.rt_src_tcp_connect — socket + connect over the shared sockaddr_head.
-
-// emit_ir_tcp_pollable appends __fern_tcp_pollable(%rdi = fd) -> fd: on native a
-// socket's readiness token IS its fd (poll(2) takes fds directly), so identity.
-function emit_ir_tcp_pollable(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("__fern_tcp_pollable:\n");
-  s = s.write("    movl %edi, %eax\n");  // return the fd unchanged
-  s = s.write("    ret\n");
-  return s;
-}
 
 // __fern_tcp_close is a Fern runtime function (#2649): asmcore.rt_src_tcp_close — close(2).
 
@@ -1182,7 +1130,7 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
 // do. Measured on a three-array retain probe: every unpaired alloc attributed
 // to `__fern_arr_box + 18`.
 //
-// First writer wins, so a nested shim chain (struct_copy -> arr_box -> alloc)
+// First writer wins, so a nested shim chain (arr_box -> alloc)
 // reports the OUTERMOST caller, which is the one in user code.
 // __fern_hev_a consumes the slot and clears it, so a stale value cannot leak
 // into a later unrelated allocation: every shim here calls __fern_alloc
@@ -2969,34 +2917,6 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    call __fern_alloc\n");
     s = s.write("    jmp .Larrbox_hdr\n");
   }
-  // __fn___fern_struct_copy(%rdi = src box data, %rsi = nf) -> %rax = fresh box that is
-  // a shallow word-for-word copy of src (shape@0 + nf field slots). Allocates via
-  // __fern_arr_box(cap = nf+1) so the copy has a fresh rc=1 header + the same free
-  // size, byte-identical to struct_make's box; then copies nf+1 words src -> dst
-  // (field pointers shared, matching the inline base-copy path). The compact base
-  // copy of `T { ...base, f: v }` (#4650): one call instead of nf struct_get/store.
-  s = s.write("__fn___fern_struct_copy:\n");
-  s = hev_shim_site(s, "scopy");
-  s = s.write("    pushq %rbp\n");
-  s = s.write("    movq %rsp, %rbp\n");
-  s = s.write("    pushq %rdi\n");  // save src            [-8(%rbp)]
-  s = s.write("    pushq %rsi\n");  // save nf             [-16(%rbp)]
-  s = s.write("    leaq 1(%rsi), %rdi\n");  // cap = nf+1 words
-  s = s.write("    call __fern_arr_box\n");  // %rax = dst data (rc=1)
-  s = s.write("    movq -8(%rbp), %rsi\n");  // src
-  s = s.write("    movq -16(%rbp), %rcx\n");  // nf
-  s = s.write("    incq %rcx\n");  // nf+1 words (shape + fields)
-  s = s.write("    xorq %rdx, %rdx\n");  // i = 0
-  s = s.write(".Lfern_scp_loop:\n");
-  s = s.write("    cmpq %rcx, %rdx\n");
-  s = s.write("    jge .Lfern_scp_done\n");
-  s = s.write("    movq (%rsi,%rdx,8), %r8\n");
-  s = s.write("    movq %r8, (%rax,%rdx,8)\n");
-  s = s.write("    incq %rdx\n");
-  s = s.write("    jmp .Lfern_scp_loop\n");
-  s = s.write(".Lfern_scp_done:\n");
-  s = s.write("    leave\n");
-  s = s.write("    ret\n");
   // __fern_str_box(%rdi = data ptr, %rsi = len) -> %rax = box (rc-HEADERED, #2649
   // Option A). Block = [rc=1@base, fused=0@base+4, data@base+8, len@base+16]
   // (24 bytes, freelist class 3); box = base+8, so data@box+0 / len@box+8
@@ -6246,7 +6166,8 @@ function emit_scan_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 //
 // Registers: %rax, %rsi, %rdi, %r8, %r9 and %r10 are the caller-saved pool;
 // %rbx and %r12-%r15 are the callee-saved pool a value live across a call
-// takes, saved once per function. %r11, %rcx and %rdx are scratch. A spilled
+// takes, saved once per function. Fixed-register constraints protect scratch
+// uses of %r11, %rcx and %rdx. A spilled
 // value lives below the save area by its allocator slot (ssa_slot).
 
 // Pool index 0 is %rax, the register the ABI returns a call's result in, so a
@@ -6256,6 +6177,13 @@ function ssa_reg(k: i32): string {
   if (k >= ssa_fbase()) {
     return "%xmm" + util.i32_to_string(3 + k - ssa_fbase());
   }
+  if (k < ssa_nregs()) {
+    return ssa_caller_reg(k);
+  }
+  return ssa_saved_reg(k - ssa_nregs());
+}
+
+function ssa_caller_reg(k: i32): string {
   if (k == 0) {
     return "%rax";
   }
@@ -6275,22 +6203,199 @@ function ssa_reg(k: i32): string {
     return "%r10";
   }
   if (k == 6) {
-    return "%rbx";
+    return "%rcx";
   }
   if (k == 7) {
+    return "%rdx";
+  }
+  return "%r11";
+}
+
+function ssa_saved_reg(k: i32): string {
+  if (k == 0) {
+    return "%rbx";
+  }
+  if (k == 1) {
     return "%r12";
   }
-  if (k == 8) {
+  if (k == 2) {
     return "%r13";
   }
-  if (k == 9) {
+  if (k == 3) {
     return "%r14";
   }
   return "%r15";
 }
 
 function ssa_nregs(): i32 {
+  return 9;
+}
+
+// Fern's register-argument ABI is independent of the allocator's pool.
+function ssa_nargs(): i32 {
   return 6;
+}
+
+// Negative means the instruction has no audited register-only form. A
+// comparison retains all scratch homes because a branch/select may defer it.
+function ssa_nospill_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
+  let k = ins.kind_tag;
+  if (k == 1 || k == 3 || k == 7 || k == 35) {
+    return 0;
+  }
+  if (k == 6 || k == 8) {
+    return 7;
+  }
+  if (k == 9) {
+    return ssa_binary_nospill_mask(ins, imm);
+  }
+  if (k == 10 && ssa_integer_unary(ins.str)) {
+    return 0;
+  }
+  return 0 - 1;
+}
+
+function ssa_binary_nospill_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
+  if (ins.str == "and_not") {
+    return 0;
+  }
+  let tag = ir.kind_id(ins.str);
+  if (ircore.is_int_cmp_kind(tag)) {
+    return 7;
+  }
+  // A subtraction whose result shares its right operand computes in r11.
+  if (tag == 22) {
+    return 4;
+  }
+  if (ssa_direct_bin(tag)) {
+    return 0;
+  }
+  if (ssa_shift_tag(tag) && imm.is_imm[ins.args[1]]) {
+    return 0;
+  }
+  return 0 - 1;
+}
+
+function ssa_integer_unary(what: string): boolean {
+  return what == "!" || what == "int_extend" || what == "int_wrap"
+    || what == "u32_wrap" || what == "int_cast:u32" || what == "int_cast:i32"
+    || util.str_has_prefix(what, "rotr:");
+}
+
+function ssa_fixed_mask(ins: ssa.SInst, imm: ssa.Imms, no_spills: boolean): i32 {
+  let mask = ssa_nospill_mask(ins, imm);
+  if (mask < 0) {
+    return ssa_read_fixed_mask(ins, imm);
+  }
+  if (no_spills) {
+    return mask;
+  }
+  if (ins.kind_tag == 9 && ins.str == "and_not") {
+    return 7;
+  }
+  return mask | 4;
+}
+
+// Reads use r11 for a spilled base/result. Array indexing also needs rcx
+// for a spilled variable index; string indexing stages its data in rdx.
+// Stores and every other unaudited form retain all three scratch registers.
+function ssa_read_fixed_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
+  if (ins.kind_tag == 40) {
+    return 4;
+  }
+  if (ins.kind_tag == 42) {
+    return if (imm.is_imm[ins.args[1]]) { 4 } else { 5 };
+  }
+  if (ins.kind_tag == 44 && imm.is_imm[ins.args[1]]) {
+    return 6;
+  }
+  return 7;
+}
+
+function ssa_fixed_registers(f: ssa.SFunc, imm: ssa.Imms, no_spills: boolean, extra: boolean): ssafixed.Table {
+  let masks: i32[] = [];
+  for b in f.blocks {
+    for ins in b.insts {
+      let mask = 7;
+      if (extra) {
+        mask = ssa_fixed_mask(ins, imm, no_spills);
+      }
+      if (masks.len() == 0) {
+        mask = 7;
+      }
+      masks = masks.append(mask);
+    }
+    masks = masks.append(7);
+  }
+  return ssafixed.table(6, 3, masks);
+}
+
+function ssa_can_borrow_r11(f: ssa.SFunc, imm: ssa.Imms, floats: boolean[]): boolean {
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ssa_nospill_mask(ins, imm) < 0) {
+        return false;
+      }
+    }
+  }
+  for floating in floats {
+    if (floating) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function ssa_has_integer_saved(reg_of: i32[]): boolean {
+  for r in reg_of {
+    if (r >= ssa_nregs() && r < ssa_fbase()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function ssa_allocate(f: ssa.SFunc, imm: ssa.Imms, s: asmcore.EmitState): ssa.Alloc {
+  let prefs = ssa_arg_prefs(f, s);
+  let floats = ssa.float_values(f, [], false);
+  let kept = ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true));
+  let audited = ssa_can_borrow_r11(f, imm, floats);
+  // Small arithmetic graphs can lose throughput after recoloring despite
+  // fewer saves. Keep their existing homes when the old pool suffices.
+  if (audited && ssa.spill_count(kept.reg_of) == 0 && ssa_small_extra_homes(kept.reg_of)) {
+    return ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, false));
+  }
+  if (!audited || !ssa_has_integer_saved(kept.reg_of) || ssa.spill_count(kept.reg_of) > 0) {
+    return kept;
+  }
+  let borrowed = ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true, true));
+  // Only the absence of spills proves these forms need no r11 scratch.
+  if (ssa.spill_count(borrowed.reg_of) > 0) {
+    return kept;
+  }
+  return borrowed;
+}
+
+function ssa_small_extra_homes(regs: i32[]): boolean {
+  let seen = 0;
+  let count = 0;
+  let extra = false;
+  for r in regs {
+    if (r >= 0 && r < ssa_fbase()) {
+      let bit = 1 << r;
+      if ((seen & bit) == 0) {
+        seen = seen | bit;
+        count = count + 1;
+      }
+      if (r >= 6 && r < ssa_nregs()) {
+        extra = true;
+      }
+      if (count > ssa_nregs() - 3 + ssa_nsaved()) {
+        return false;
+      }
+    }
+  }
+  return extra;
 }
 
 function ssa_nsaved(): i32 {
@@ -6446,6 +6551,9 @@ function ssa_load(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asm
     return ssa_mov_slot(s, true, reg, ssa_slot_disp(ssa.spill_slot(reg_of[v]), s.ssa_save));
   }
   let home: string = ssa_reg(reg_of[v]);
+  if (home == "%r11") {
+    s = asmcore.EmitState { ...s, ssa_x0: v };
+  }
   if (home == reg) {
     return s;
   }
@@ -7194,7 +7302,7 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
   let b: i32 = ins.args[1];
   let dh: string = ssa_dst(reg_of, ins.result);
   let swap: boolean = fr.imm.is_imm[a] && !ssa_shift_tag(tag);
-  if (!swap && !fr.imm.is_imm[b] && ssa_src(reg_of, b, "%rcx") == dh) {
+  if (!swap && !fr.imm.is_imm[b] && ssa_in_x(reg_of, b) && ssa_reg(reg_of[b]) == dh) {
     if (ssa_commutative(tag) || ircore.flip_int_cmp_kind(tag) != tag) {
       swap = true;
     } else {
@@ -8349,6 +8457,21 @@ function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
 // treats the op as a call, so the registers the arm writes hold nothing live;
 // its labels take the op's index under the SSA function's prefix.
 function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
+  let kind: i32 = r.ops[ins.imm].kind_tag;
+  let pollable: string = asmcore.native_pollable_result(kind);
+  if (kind == 112 || pollable != "") {
+    // Arguments have already been evaluated. Select the native identity or
+    // constant directly; the generic adapter still models a call clobber.
+    s = ssa_x0_forget(s);
+    let d: string = ssa_dst(reg_of, ins.result);
+    if (kind == 112) {
+      s = ssa_load(reg_of, ins.args[0], d, s);
+    } else {
+      s = ssa_const_reg(pollable, false, d, s);
+    }
+    return ssa_store(reg_of, ins.result, d, s);
+  }
+
   if (asmcore.buf_helper(r.ops[ins.imm].kind_tag) != "") {
     return ssa_buf_call(ins, reg_of, asmcore.buf_table_helper(r.ops[ins.imm].kind_tag, ir.is_packed(r.ops[ins.imm])), s);
   }
@@ -8637,8 +8760,6 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
   } else if (ins.str == "arr_push_u8") {
     s = s.need("arr_push_u8");
     sym = "__fern_arr_push_u8";
-  } else if (ins.str == "struct_copy") {
-    sym = "__fn___fern_struct_copy";
   } else if (ins.str == "raw_arr_box") {
     sym = "__fern_arr_box";
   } else if (ins.str == "args") {
@@ -8909,6 +9030,15 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   if (ins.kind_tag == 9 && ins.str == "and_not") {
     return ssa_and_not(ins, reg_of, s);
   }
+  if (ssa.carry_triple(blk, ii, fr.uses)) {
+    return ssa_carried_sum(ins, reg_of, s);
+  }
+  if (ssa.carry_triple(blk, ii - 1, fr.uses)) {
+    return s;
+  }
+  if (ssa.carry_triple(blk, ii - 2, fr.uses)) {
+    return ssa_carry_reader(ins, blk.insts[ii - 1].result, reg_of, s);
+  }
   if (ins.kind_tag == 37) {
     return ssa_carry(ins, reg_of, s);
   }
@@ -9001,6 +9131,40 @@ function ssa_and_not(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
 // ssa_carry reads a carry (ssa.fuse_carries) off CF: x goes to %r11 and y is
 // added or subtracted in place, an incoming carry first set into CF by bt
 // for adc or sbb to take. Loads and moves leave the flags alone.
+// ssa_carried_sum is a carry triple's (ssa.carry_triple) sum or difference,
+// which sets the flags: computed in its home register unless that holds the
+// right operand, else in %r11.
+function ssa_carried_sum(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let op: string = if (ins.str == "sub") { "subq" } else { "addq" };
+  let d: string = ssa_dst(reg_of, ins.result);
+  if (ssa_in_x(reg_of, ins.args[1]) && reg_of[ins.args[1]] == reg_of[ins.result]) {
+    d = "%r11";
+  }
+  s = ssa_load(reg_of, ins.args[0], d, s);
+  s = s.write("    " + op + " " + ssa_operand(reg_of, ins.args[1], s) + ", " + d + "\n");
+  if (d == "%r11") {
+    s = ssa_x0_forget(s);
+  }
+  return ssa_store(reg_of, ins.result, d, s);
+}
+
+// ssa_carry_reader is a carry triple's reader: its other operand plus the
+// carry, or less the borrow, read off the flags the sum left.
+function ssa_carry_reader(ins: ssa.SInst, carry: i32, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let other: i32 = ins.args[0];
+  if (other == carry) {
+    other = ins.args[1];
+  }
+  let op: string = if (ins.str == "sub") { "sbbq" } else { "adcq" };
+  let d: string = ssa_dst(reg_of, ins.result);
+  s = ssa_load(reg_of, other, d, s);
+  s = s.write("    " + op + " $0, " + d + "\n");
+  if (d == "%r11") {
+    s = ssa_x0_forget(s);
+  }
+  return ssa_store(reg_of, ins.result, d, s);
+}
+
 function ssa_carry(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   if (reg_of[ins.result] == 0 - 1) {
     return s;
@@ -9086,7 +9250,7 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
 }
 
 // ssa_call_ind is a call through a function value, which names the callee's
-// `.r` entry: the first ssa_nregs() arguments in the pool registers, as a
+// `.r` entry: the first ssa_nargs() arguments in the pool registers, as a
 // register call passes them, and when there are more, every argument pushed
 // as well, with the first on top, where `.r` reads the rest. The target is
 // read into %rdx first, which is neither a pool register nor a scratch the
@@ -9099,14 +9263,14 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     s = ssa_load(reg_of, ins.args[0], "%rdx", s);
   }
   let i: i32 = argc;
-  while (argc > ssa_nregs() && i >= 1) {
+  while (argc > ssa_nargs() && i >= 1) {
     s = ssa_push_operand(reg_of, ins.args[i], s);
     i = i - 1;
   }
   let srcs: i32[] = [];
   let dsts: i32[] = [];
   let a: i32 = 0;
-  while (a < argc && a < ssa_nregs()) {
+  while (a < argc && a < ssa_nargs()) {
     srcs = srcs.append(reg_of[ins.args[a + 1]]);
     dsts = dsts.append(a);
     a = a + 1;
@@ -9117,7 +9281,7 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   } else {
     s = s.write("    call *%rdx\n");
   }
-  if (argc > ssa_nregs()) {
+  if (argc > ssa_nargs()) {
     s = ssa_alu_ir(s, 0, 64, (argc * 8) as i64, "%rsp");
   }
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
@@ -9635,7 +9799,7 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
 }
 
 // ssa_load_params moves each parameter to its home; value p is parameter p.
-// The first ssa_nregs() arrive in the pool's registers, in order (a stack
+// The first ssa_nargs() arrive in the pool's registers, in order (a stack
 // caller's are loaded there by the entry shim); the rest stay in the caller's
 // slots. The register moves go first, since a later parameter's home may be a
 // register still holding an earlier one.
@@ -9665,10 +9829,10 @@ function ssa_load_params(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): asm
 
 // ssa_reg_params is how many of f's parameters arrive in registers.
 function ssa_reg_params(f: ssa.SFunc): i32 {
-  if (f.nparams < ssa_nregs()) {
+  if (f.nparams < ssa_nargs()) {
     return f.nparams;
   }
-  return ssa_nregs();
+  return ssa_nargs();
 }
 
 // ssa_entry_shim is a function's two entries. `__fn_<name>`, the stack-ABI
@@ -9699,10 +9863,10 @@ function ssa_reg_helper(sym: string, argc: i32): boolean {
 
 // ssa_reg_call reports whether a direct call passes its arguments in
 // registers: the callee has a register entry in this unit and takes between
-// one and ssa_nregs() arguments.
+// one and ssa_nargs() arguments.
 function ssa_reg_call(ins: ssa.SInst, s: asmcore.EmitState): boolean {
   let argc: i32 = ins.args.len();
-  if (ins.kind_tag != 11 || argc == 0 || argc > ssa_nregs() || ssa.rc_inlined(ins)) {
+  if (ins.kind_tag != 11 || argc == 0 || argc > ssa_nargs() || ssa.rc_inlined(ins)) {
     return false;
   }
   if (ircore.is_fern_helper(ins.str) || ircore.is_c_call(ins.str)) {
@@ -9833,7 +9997,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
     imm = ssa.with_sym(imm, shapes.vals[si], asmcore.shape_label(s, shapes.names[si]));
     si = si + 1;
   }
-  let alloc: ssa.Alloc = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, ssa_arg_prefs(f, s), ssa.float_values(f, [], false), ssa_nfregs(), 0);
+  let alloc: ssa.Alloc = ssa_allocate(f, imm, s);
   let reg_of: i32[] = alloc.reg_of;
   let lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
   s = ssa_cfi(s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n"), 1, "", 0);
@@ -9853,7 +10017,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   // One that calls but addresses no slot and takes every parameter in a
   // register needs no %rbp: it pushes what it saves and pads %rsp to a
   // call's alignment.
-  let bare: boolean = !leaf && nspill == 0 && ssa_view_count(views) == 0 && !hev_on(s) && tails && f.nparams <= ssa_nregs();
+  let bare: boolean = !leaf && nspill == 0 && ssa_view_count(views) == 0 && !hev_on(s) && tails && f.nparams <= ssa_nargs();
   let pad: i32 = 0;
   if (saved.len() % 2 == 0) {
     pad = 8;
@@ -10334,6 +10498,14 @@ function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 // fern-lint: allow cyclomatic-complexity
 // One guard per IR op and no multi-line body left to move: the op table itself.
 function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
+  let pollable: string = asmcore.native_pollable_result(o.kind_tag);
+  if (pollable != "") {
+    return s.write("    movq $" + pollable + ", (%rsp)\n");
+  }
+  if (o.kind_tag == 112) {
+    return s;
+  }
+
   if (o.kind_tag == 79) {  // ptr_width
     // () -> heap-pointer width in bytes. 8 on x86-64.
     s = s.write("    pushq $8\n");
@@ -10645,27 +10817,6 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    call __fn___fern_environ\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need("environ");
-  } else if (o.kind_tag == 148) {  // wasm_timer_pollable
-    // [ns]; __fern_wasm_timer_pollable(%rdi=ns) -> -1 on native (no
-    // pollable; the deadline comes from poll(2)'s timeout). Portability
-    // shim for std/async's with_deadline.
-    s = s.write("    popq %rdi\n    call __fern_wasm_timer_pollable\n    pushq %rax\n");
-    s = s.need("wasm_timer_pollable");
-  } else if (o.kind_tag == 161) {  // wasm_pollable_drop
-    // [p]; __fern_wasm_pollable_drop(%rdi=p) -> 0 on native (a pollable
-    // is just an fd; nothing to drop). Portability shim.
-    s = s.write("    popq %rdi\n    call __fern_wasm_pollable_drop\n    pushq %rax\n");
-    s = s.need("wasm_pollable_drop");
-  } else if (o.kind_tag == 162) {  // wasm_block
-    // [p]; __fern_wasm_block(%rdi=p) -> 0 on native (no pollable to wait
-    // on; a deadline uses poll(2)). Push the 0 result.
-    s = s.write("    popq %rdi\n    call __fern_wasm_block\n    pushq %rax\n");
-    s = s.need("wasm_block");
-  } else if (o.kind_tag == 167) {  // wasm_poll
-    // [pollables ptr]; __fern_wasm_poll(%rdi=ptr) -> -1 on native (no real
-    // pollables; readiness uses poll(2)). Push the -1 result.
-    s = s.write("    popq %rdi\n    call __fern_wasm_poll\n    pushq %rax\n");
-    s = s.need("wasm_poll");
   } else if (o.kind_tag == 110) {  // tcp_connect
     // [host_be, port]; __fern_tcp_connect(%rdi=host_be, %rsi=port) -> fd
     // (or -errno) in %rax.
@@ -10729,11 +10880,6 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     // call, drop the arg slot, push the result. 0 / -errno.
     s = s.write("    call __fn___fern_tcp_close\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("tcp_close");
-  } else if (o.kind_tag == 112) {  // tcp_pollable
-    // [fd]; __fern_tcp_pollable(%rdi=fd) -> the fd unchanged (native's
-    // readiness token IS the fd).
-    s = s.write("    popq %rdi\n    call __fern_tcp_pollable\n    pushq %rax\n");
-    s = s.need("tcp_pollable");
   } else if (o.kind_tag == 200) {  // tcp_listen (#4371)
     // [port]; __fern_tcp_listen(%rdi=port) -> listener fd / -errno in %rax.
     // [port] IS param[0] already; the stack ABI needs no marshalling.
@@ -12773,18 +12919,6 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_cpu_count("x86_64"), s);
   }
-  if (s.has_need("wasm_timer_pollable")) {
-    s = emit_ir_wasm_timer_pollable(s);
-  }
-  if (s.has_need("wasm_pollable_drop")) {
-    s = emit_ir_wasm_pollable_drop(s);
-  }
-  if (s.has_need("wasm_block")) {
-    s = emit_ir_wasm_block(s);
-  }
-  if (s.has_need("wasm_poll")) {
-    s = emit_ir_wasm_poll(s);
-  }
   if (s.has_need("udp_send")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_send("x86_64"), s);
@@ -12897,9 +13031,6 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("tcp_connect")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect("x86_64"), s);
-  }
-  if (s.has_need("tcp_pollable")) {
-    s = emit_ir_tcp_pollable(s);
   }
   if (s.has_need("tcp_close")) {
     s = s.write("    .text\n");

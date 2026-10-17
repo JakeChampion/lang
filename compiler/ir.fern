@@ -2978,23 +2978,6 @@ pub function const_struct_fn_body(packed: string): string {
   return slice_unchecked(t, 4, t.len()) + "";
 }
 
-// struct_copy pops [src box] and pushes a FRESH box that is a shallow, word-for-
-// word copy of src (the same shape ptr @0 + all `nfields` field slots). It is the
-// compact lowering of a functional struct-update's base copy: `T { ...base, f: v }`
-// becomes struct_copy(base) then one struct_set per overridden field, so the copy
-// of the N unchanged fields is a single O(1) `call __fn___fern_struct_copy` instead of N
-// inline struct_get/store pairs per update site (#4650 — the self-host compiler's
-// working set on the x86_encode/x86_gas encoders, ~90 update sites on an 8-field
-// struct, otherwise scales ~1.75x the compact __set_field form and OOMs the wasm
-// driver). The copy shares every field pointer (arrays / strings / nested boxes)
-// exactly as the inline base-copy path does — same heap topology, same absence of
-// per-field rc-inc — so it is gated to structs whose base copy emits no retain
-// (struct_copy_eligible): the fresh box's rc header is 1 (from __fern_arr_box),
-// matching struct_make. Layout-agnostic: the helper copies `nfields`+1 words.
-pub function op_struct_copy(nfields: i32): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 198, i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
-}
-
 // width selects the field's load/store size on width-typed backends (wasm): 64
 // for an f64 field, 0 (i32-shaped) otherwise. The register backends use 8-byte
 // slots for every field and ignore it.
@@ -3367,22 +3350,18 @@ pub const K_BSWAP: i32 = 411;
 // chunk stays near render_op's proven-safe size. kind_id's length/first-byte
 // dispatch keeps every function far smaller than that.
 
-// kind_count is the number of registered op kinds (ids 1..kind_count()), which
-// must stay DENSE — ir_kind_run sweeps every id in that range and a hole reads
-// as a half-registered op. Retiring one therefore moves the last entry into its
-// slot rather than leaving a gap; the moved op's membership in every id-keyed
-// classifier below has to move with it, or it lands in the wrong emitter.
+// kind_count bounds the original op-id range. Its registered entries and
+// retired slots are checked together by the registry driver. Extension ids
+// are checked separately and never renumbered when one is retired.
 pub function kind_count(): i32 {
   return 188;
 }
 
-// kind_retired is an id in 1..kind_count() whose op is gone: 62..66 (the
-// transcendentals, which std/float computes in Fern), 117..119 (the strbuf
-// singleton, which the buf_* builder replaced), 121 (opt_none) and 124..137
-// (the runtime map and map-cursor ops, which core/map replaced). The number is
-// not reused, so the dense ids around it keep their meaning.
+// Retired op ids remain reserved. The original range includes the former
+// transcendentals, string builder and map ops; 198 was the shallow struct
+// copy replaced by the typed lowering.
 pub function kind_retired(id: i32): boolean {
-  return id >= 62 && id <= 66 || id >= 117 && id <= 119 || id == 121 || id >= 124 && id <= 137;
+  return id >= 62 && id <= 66 || id >= 117 && id <= 119 || id == 121 || id >= 124 && id <= 137 || id == 198;
 }
 
 // kind_id maps an op-kind tag to its stable integer id (0 = KIND_INVALID for
@@ -3406,7 +3385,7 @@ pub function kind_retired(id: i32): boolean {
 // retired. The 1..kind_count() sweep requires the id space to stay dense, and
 // moving the last entry into the hole beats renumbering every id above it.
 //
-// Extension tags beyond kind_count() (struct_copy=198 … buf_free=297): not
+// Extension tags beyond kind_count() (store_i64=199 … buf_free=297): not
 // in the 1..kind_count() bijection sweep (ir_kind_run sweeps them separately
 // by name), but nameable so module_emits_op_cached / the backends see them.
 // The id space is NOT dense up here: 253..259 are left for slices in flight,
@@ -4550,9 +4529,6 @@ function kind_id_len11_s(name: string): i32 {
   if (name == "struct_make") {
     return 138;
   }
-  if (name == "struct_copy") {
-    return 198;
-  }
   if (name == "signal_mask") {
     return 278;
   }
@@ -5503,9 +5479,6 @@ function kind_name_4(id: i32): string {
   if (id == 188) {
     return "timer_fd";
   }
-  if (id == 198) {
-    return "struct_copy";
-  }
   if (id == 199) {
     return "store_i64";
   }
@@ -5942,7 +5915,7 @@ function buf_kind_name(id: i32): string {
 // kind_name maps an integer id back to its op-kind tag ("invalid" for an
 // out-of-range / KIND_INVALID id). The inverse of kind_id. A cheap range
 // check routes to the owning chunk; everything past 160 — including the
-// extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
+// extension tags beyond kind_count() (store_i64=199 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
   if (id == 411) {
@@ -6255,7 +6228,7 @@ function pops1_mem(t: i32): boolean {
     || t == 113  // str_lines
     || t == 120 || t == 122 || t == 123  // opt_make, opt_tag, opt_payload
     || t == 139 || t == 141 || t == 143 || t == 145  // struct_get, struct_set_shape, tuple_get, variant_is
-    || t == 146 || t == 198;  // dyn_box, struct_copy
+    || t == 146;  // dyn_box
 }
 
 function pops1_io(t: i32): boolean {
@@ -8910,9 +8883,6 @@ pub function render_op(o: Op): string {
   if (o.kind_tag == 140) {
     return "struct_set " + util.i32_to_string(o.i32_imm);
   }
-  if (o.kind_tag == 198) {
-    return "struct_copy " + util.i32_to_string(o.i32_imm);
-  }
   if (o.kind_tag == 145) {
     return "variant_is " + o.str;
   }
@@ -8987,7 +8957,7 @@ pub function call_needs_heap(name: string): boolean {
   if (name == "__fern_rc_underflow_count" || name == "__fern_rc_underflow_get") {
     return true;
   }
-  if (name == "__fern_struct_copy" || name == "__fern_set_args") {
+  if (name == "__fern_set_args") {
     return true;
   }
   return name == "__fern_str_free" || name == "__fern_str_view_free" || name == "__fern_str_arr_free";
@@ -9028,14 +8998,8 @@ pub function op_allocates(tag: i32): boolean {
   if (tag == 5 || tag == 98 || tag == 102 || tag == 103 || tag == 380) {
     return true;
   }
-  // Composite boxes. struct_copy (198) allocates the fresh box a functional
-  // update copies its base into (`__fn___fern_struct_copy`), so it needs the
-  // heap runtime exactly as struct_make does. It was absent here and got away
-  // with it only because a module containing an update always ALSO contained a
-  // struct_make that claimed the need; #6149's static aggregate constants took
-  // that struct_make away and the link broke on an undefined
-  // __fn___fern_struct_copy / __fn___fern_arr_dec.
-  if (tag == 138 || tag == 142 || tag == 198) {
+  // Composite constructors allocate their boxes in the heap runtime.
+  if (tag == 138 || tag == 142) {
     return true;
   }
   if (tag == 120) {

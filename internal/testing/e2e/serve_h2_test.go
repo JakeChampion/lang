@@ -451,6 +451,10 @@ func (w *serveH2World) driveTLS(t *testing.T, cmd *exec.Cmd) {
 	if first.ProtoMajor != 2 {
 		t.Fatalf("GET /first: HTTP/%d.%d, want HTTP/2", first.ProtoMajor, first.ProtoMinor)
 	}
+	// RFC 9110 §6.6.1: an origin server with a clock sends Date, over HTTP/2 as over HTTP/1.1.
+	if _, err := http.ParseTime(first.Header.Get("Date")); err != nil {
+		t.Fatalf("GET /first over HTTP/2: Date %q: %v", first.Header.Get("Date"), err)
+	}
 	var wg sync.WaitGroup
 	errs := make(chan error, 8)
 	for i := 0; i < 8; i++ {
