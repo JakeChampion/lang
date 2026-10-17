@@ -13,14 +13,16 @@ import (
 // count inline (asm_ir / asm_arm64_ir ssa_call): `g` releases the string it
 // built through __fern_str_free's register entry, with none of the inline
 // guard's labels, and `h` retains the array it goes on reading through
-// __fern_rc_inc. The leaf `mix` is spliced into `k` by default and called
+// __fern_rc_inc, reading it through a call semhoist cannot move ahead of the
+// append. The leaf `mix` is spliced into `k` by default and called
 // under -size, which splices only what is called once (seminline); so is
 // `wrap`, a leaf only once `mix2`, called from it alone, folds in. The
 // program answers the same either way, -size drops the
 // backtrace walk unless -backtrace asks for it, and the net-bench hello
 // server, std/serve whole, builds smaller.
 const sizeModeProg = `@noinline function g(a: string): i32 { let t: string = a + "x"; return t.len(); }
-@noinline function h(xs: i32[]): i32 { let ys: i32[] = xs; let zs: i32[] = ys.append(1); return zs.len() + xs.len(); }
+@noinline function size(xs: i32[]): i32 { return xs.len(); }
+@noinline function h(xs: i32[]): i32 { let ys: i32[] = xs; let zs: i32[] = ys.append(1); return zs.len() + size(xs); }
 function mix(x: i32): i32 {
   let a: i32 = x * 31 + 7;
   let b: i32 = (a ^ (a >> 3)) * 17;
