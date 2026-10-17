@@ -703,7 +703,7 @@ function __status_of(f: hpack.Field, late: boolean): Result[i32, string] {
 // __response_regular is `out` with a response's regular field appended,
 // the field checked as a request's is.
 function __response_regular(out: HeaderMap, f: hpack.Field): Result[HeaderMap, string] {
-  if (f.name.to_lower() != f.name || !http.http_field_name_ok(f.name) || !http.http_field_value_ok(f.value) || __connection_specific(f.name)) {
+  if (__has_upper(f.name) || !http.http_field_name_ok(f.name) || !http.http_field_value_ok(f.value) || __connection_specific(f.name)) {
     return Err("field " + f.name);
   }
   return Ok(out.append(f.name, f.value));
@@ -890,7 +890,7 @@ function __pseudo(s: __Stream, name: string, value: string): Result[__Stream, st
 }
 
 function __regular(s: __Stream, name: string, value: string): Result[__Stream, string] {
-  if (name.to_lower() != name || !http.http_field_name_ok(name) || !http.http_field_value_ok(value)) {
+  if (__has_upper(name) || !http.http_field_name_ok(name) || !http.http_field_value_ok(value)) {
     return Err("field " + name);
   }
   if (__connection_specific(name)) {
@@ -903,6 +903,19 @@ function __regular(s: __Stream, name: string, value: string): Result[__Stream, s
     return __with_length(s, value);
   }
   return Ok(__Stream { ...s, fields: s.fields.append(name, value) });
+}
+
+// __has_upper is whether a field name has an ASCII capital, which HTTP/2
+// refuses (§8.2.1).
+function __has_upper(name: string): boolean {
+  let i: i32 = 0;
+  while (i < name.len()) {
+    if (name[i] >= b'A' && name[i] <= b'Z') {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
 }
 
 // __connection_specific names the fields HTTP/2 has no place for (§8.2.2).

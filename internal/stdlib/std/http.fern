@@ -3266,8 +3266,13 @@ pub function (r: HttpResponse) body_text(): Option[string] {
 
 // `http_method_ok(method)` — whether `method` is a token (RFC 9110 §9.1).
 pub function http_method_ok(method: string): boolean {
-  let b: u8[] = method.bytes();
-  return __is_token(b, 0, b.len());
+  return __str_is_token(method);
+}
+
+// `__str_is_token(s)` — whether all of `s` is a non-empty token, read in
+// place.
+function __str_is_token(s: string): boolean {
+  return s.len() > 0 && __scan_set(s, 0, NOT_TCHAR) == s.len();
 }
 
 // `http_method_idempotent(method)` — whether a request with `method` may
@@ -3299,8 +3304,7 @@ pub function http_target_ok(target: string): boolean {
 // `http_field_name_ok(name)` — whether `name` is a field name, a token
 // (RFC 9110 §5.1).
 pub function http_field_name_ok(name: string): boolean {
-  let n: u8[] = name.bytes();
-  return __is_token(n, 0, n.len());
+  return __str_is_token(name);
 }
 
 // `http_fields_ok(fields)` — whether every field of the map can be written
