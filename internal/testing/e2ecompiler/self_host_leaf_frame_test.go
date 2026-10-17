@@ -13,7 +13,7 @@ import (
 // the callee-saved registers it uses and pops them before each return. mix
 // loops, early returns before its loop, and wide keeps enough values live to
 // need callee-saved registers. outer calls, so it also keeps %rsp aligned for
-// its calls, and a -g build gives it its frame back.
+// its calls. Debug information preserves those same frame choices.
 const leafFrameProg = `@noinline function mix(s: string, n: i32): i32 {
     if (n <= 1) { return 0; }
     let a: i32 = 208357;
@@ -75,11 +75,15 @@ func leafFunction(t *testing.T, asm, fn string) string {
 	return body[:strings.Index(body, ".cfi_endproc")]
 }
 
+func leafFrameSource() string {
+	prog := fmt.Sprintf(leafFrameProg, leafMix("leaf-frame", 1009), leafWide(3, -5, 7, 11), leafMix("abc", 97)+leafMix("abc!", 89))
+	return strings.ReplaceAll(prog, "I64", "i64")
+}
+
 func TestSelfHostLeafFrame(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
-	prog := fmt.Sprintf(leafFrameProg, leafMix("leaf-frame", 1009), leafWide(3, -5, 7, 11), leafMix("abc", 97)+leafMix("abc!", 89))
-	prog = strings.ReplaceAll(prog, "I64", "i64")
+	prog := leafFrameSource()
 	src := filepath.Join(dir, "leaf.fern")
 	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
 		t.Fatal(err)
@@ -116,8 +120,13 @@ func TestSelfHostLeafFrame(t *testing.T) {
 	}
 	if raw, err := os.ReadFile(debug); err != nil {
 		t.Fatal(err)
-	} else if !strings.Contains(leafFunction(t, string(raw), "outer"), "pushq %rbp") {
-		t.Errorf("a -g build of outer builds no frame")
+	} else {
+		for _, fn := range []string{"mix", "wide", "outer"} {
+			body := leafFunction(t, string(raw), fn)
+			if strings.Contains(body, "%rbp") || strings.Contains(body, "leave") {
+				t.Errorf("-g adds a frame to %s:\n%s", fn, body)
+			}
+		}
 	}
 
 	for _, tg := range h.targets {

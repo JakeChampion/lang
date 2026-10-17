@@ -53,12 +53,14 @@ func TestSelfHostRcRuntimeArm64(t *testing.T) {
 }
 
 // An alias that outlives an update of its source; both answer 1 + 5 = 6 when
-// the alias holds its own reference, and the underflow count is added in.
+// the alias holds its own reference, and the underflow count is added in. The
+// alias is read through a call because semhoist moves a bare `ys[0]` ahead of
+// the update.
 const (
-	rcAliasUpdateSrc = "@noinline\nfunction mk(n: i32): i32[] { return [n, n + 1]; }\n" +
-		"function main(): i32 { let xs: i32[] = mk(1); let ys = xs; xs = xs.with(0, 5); return ys[0] + xs[0] + __rc_underflow_count(); }"
-	rcReassignUpdateSrc = "@noinline\nfunction mk(n: i32): i32[] { return [n, n + 1]; }\n" +
-		"function main(): i32 { let xs: i32[] = mk(1); let ys: i32[] = mk(3); ys = xs; xs = xs.with(0, 5); return ys[0] + xs[0] + __rc_underflow_count(); }"
+	rcAliasUpdateSrc = "@noinline\nfunction mk(n: i32): i32[] { return [n, n + 1]; }\n@noinline\nfunction first(a: i32[]): i32 { return a[0]; }\n" +
+		"function main(): i32 { let xs: i32[] = mk(1); let ys = xs; xs = xs.with(0, 5); return first(ys) + xs[0] + __rc_underflow_count(); }"
+	rcReassignUpdateSrc = "@noinline\nfunction mk(n: i32): i32[] { return [n, n + 1]; }\n@noinline\nfunction first(a: i32[]): i32 { return a[0]; }\n" +
+		"function main(): i32 { let xs: i32[] = mk(1); let ys: i32[] = mk(3); ys = xs; xs = xs.with(0, 5); return first(ys) + xs[0] + __rc_underflow_count(); }"
 )
 
 // A `let y = x` binding of an rc-tracked array: aliasing programs compute the
