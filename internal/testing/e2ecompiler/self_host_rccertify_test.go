@@ -37,6 +37,28 @@ function func(nparams: i32, nvals: i32, blocks: ssa.SBlock[]): ssa.SFunc {
 
 struct Case { f: ssa.SFunc, modes: i32[], returns_unit: boolean }
 
+function sparse_value(v: i32, nparams: i32): i32 {
+    if (v < nparams) { return v; }
+    return 256 + v * 3;
+}
+
+function sparse(c: Case): Case {
+    let blocks: ssa.SBlock[] = [];
+    for b in c.f.blocks {
+        let insts: ssa.SInst[] = [];
+        for x in b.insts {
+            let args: i32[] = [];
+            for arg in x.args { args = args.append(sparse_value(arg, c.f.nparams)); }
+            insts = insts.append(inst(x.kind_tag, sparse_value(x.result, c.f.nparams), args, x.imm, x.str));
+        }
+        let term = b.term;
+        if (term.kind_tag == 1) { term = ret(sparse_value(term.value, c.f.nparams)); }
+        if (term.kind_tag == 3) { term = brif(sparse_value(term.cond, c.f.nparams), term.t, term.f); }
+        blocks = blocks.append(block(b.id, b.preds, insts, term));
+    }
+    return Case { f: func(c.f.nparams, 256 + c.f.nvals * 3, blocks), modes: c.modes, returns_unit: c.returns_unit };
+}
+
 function pair_word_case(callee: string): ssa.SFunc {
     let b0: ssa.SBlock = block(0, [], [call(0, callee, []), inst(59, 1, [], 0, "call_word"), const_int(2, 0), inst(9, 3, [0, 2], 0, "eq")], brif(3, 1, 2));
     let b1: ssa.SBlock = block(1, [0], [call(4, "__fern_rc_dec", [1])], br(4));
@@ -51,6 +73,19 @@ function one_block(nparams: i32, nvals: i32, insts: ssa.SInst[], term: ssa.STerm
 }
 
 function pick(name: string): Case {
+    if (name == "sparse-unused-terminator-field") {
+        // A branch's inactive value field must not turn the unused retain
+        // result into a use when the first defined ID is compacted to zero.
+        let end = ssa.STerm { kind_tag: 2, cond: 0, target: 1, t: 0, f: 0, value: 0 };
+        let b0 = block(0, [], [fresh_box(400), fresh_box(450), store(400, 8, 450), counted_load(300, 400, 8), call(200, "__fern_rc_inc", [300]), call(410, "__fern_rc_dec", [400])], end);
+        let b1 = block(1, [0], [const_int(500, 0)], ret(500));
+        return Case { f: func(0, 600, [b0, b1]), modes: [], returns_unit: false };
+    }
+    if (name == "sparse-leak") { return sparse(pick("leak")); }
+    if (name == "sparse-counted-param") { return sparse(pick("counted-param-kept")); }
+    if (name == "sparse-token") { return sparse(pick("token-retain-under-test-consumed-after-join")); }
+    if (name == "sparse-null-phi") { return sparse(pick("null-tested-against-an-outside-null")); }
+    if (name == "sparse-loop-leak") { return sparse(pick("leak-in-a-loop-body")); }
     let value: i32 = rccertify.value_mode();
     let borrow: i32 = rccertify.borrow_mode();
     let counted: i32 = rccertify.counted_mode();
@@ -445,6 +480,12 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 	}{
 		{"balanced", nil, 0, ""},
 		{"leak", []string{"leaked at return of v0"}, 0, ""},
+		{"sparse-leak", []string{"leaked at return of v256"}, 0, ""},
+		{"sparse-unused-terminator-field", nil, 0, ""},
+		{"sparse-counted-param", []string{"leaked at return of v0"}, 0, ""},
+		{"sparse-token", []string{"spent without a unit of v268"}, 0, ""},
+		{"sparse-null-phi", nil, 1, ""},
+		{"sparse-loop-leak", []string{"leaked where it dies of v259"}, 0, ""},
 		{"double-release", []string{"spent without a unit of v0"}, 0, ""},
 		{"fresh-returned", nil, 0, ""},
 		{"borrowed-param-released", []string{"spent without a unit of v0"}, 0, ""},

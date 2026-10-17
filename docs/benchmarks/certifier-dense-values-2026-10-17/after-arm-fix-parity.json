@@ -1,0 +1,63 @@
+{
+  "source_head": "abfcd5b383b6f88b8adf3c7d0cb119d76ac565bb",
+  "compilers": {
+    "base": "a0cd57950240bd9c171e7a7de7113972581c40e2d574e233834212b2da1d2013",
+    "new": "7eb44bdde788f66c0db3b859d5e998a112d9fd9e2bcdc38873d0c36bf517ee7a"
+  },
+  "parity": [
+    {
+      "target": "x86-64-linux",
+      "entry": "compiler/fern.fern",
+      "compiler": "base",
+      "output_sha256": "7eb44bdde788f66c0db3b859d5e998a112d9fd9e2bcdc38873d0c36bf517ee7a",
+      "report_sha256": "046098f35fb2c1b6f577f4ba4bfff3983b35b6e9c7ba79c59278f1d9e81987f9",
+      "report_lines": 7641
+    },
+    {
+      "target": "x86-64-linux",
+      "entry": "compiler/fern.fern",
+      "compiler": "new",
+      "output_sha256": "7eb44bdde788f66c0db3b859d5e998a112d9fd9e2bcdc38873d0c36bf517ee7a",
+      "report_sha256": "046098f35fb2c1b6f577f4ba4bfff3983b35b6e9c7ba79c59278f1d9e81987f9",
+      "report_lines": 7641
+    },
+    {
+      "target": "arm64-linux",
+      "entry": "compiler/fern.fern",
+      "compiler": "base",
+      "output_sha256": "8536438901157200579d1e44f9bb8da57cbaab720e5e8f2f621a4fb943226e4c",
+      "report_sha256": "046098f35fb2c1b6f577f4ba4bfff3983b35b6e9c7ba79c59278f1d9e81987f9",
+      "report_lines": 7641
+    },
+    {
+      "target": "arm64-linux",
+      "entry": "compiler/fern.fern",
+      "compiler": "new",
+      "output_sha256": "8536438901157200579d1e44f9bb8da57cbaab720e5e8f2f621a4fb943226e4c",
+      "report_sha256": "046098f35fb2c1b6f577f4ba4bfff3983b35b6e9c7ba79c59278f1d9e81987f9",
+      "report_lines": 7641
+    },
+    {
+      "target": "wasm32-wasi",
+      "entry": "compiler/playground_run.fern",
+      "compiler": "base",
+      "output_sha256": "cd07ea87260824999b4185ef8fb1443539d76b262a129e371caf4c9fc0d60f36",
+      "report_sha256": "0e6425b3b2f4868872505001b949ed6766ea3673b32ca60f9de062409d31ff92",
+      "report_lines": 7067
+    },
+    {
+      "target": "wasm32-wasi",
+      "entry": "compiler/playground_run.fern",
+      "compiler": "new",
+      "output_sha256": "cd07ea87260824999b4185ef8fb1443539d76b262a129e371caf4c9fc0d60f36",
+      "report_sha256": "0e6425b3b2f4868872505001b949ed6766ea3673b32ca60f9de062409d31ff92",
+      "report_lines": 7067
+    }
+  ],
+  "instructions": [],
+  "times": [],
+  "fixedpoint": {
+    "bytes": 12703616,
+    "sha256": "7eb44bdde788f66c0db3b859d5e998a112d9fd9e2bcdc38873d0c36bf517ee7a"
+  }
+}
