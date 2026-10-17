@@ -123,3 +123,14 @@ selfhost/wasm32-wasi/utf8_ingest_validated.emit	8268
 # lane: selfhost-alloc-x86_64
 x86_64/checker.allocs	25883251
 x86_64/checker.frees	25883251
+
+# lane: bootstrap-x86-64-linux
+bootstrap/x86-64-linux/stage1.wall_s	17
+bootstrap/x86-64-linux/stage1.peak_rss_mb	1948
+bootstrap/x86-64-linux/stage1.size_bytes	12864744
+bootstrap/x86-64-linux/stage2.wall_s	26
+bootstrap/x86-64-linux/stage2.peak_rss_mb	1960
+bootstrap/x86-64-linux/stage2.size_bytes	12285040
+bootstrap/x86-64-linux/stage3.wall_s	15
+bootstrap/x86-64-linux/stage3.peak_rss_mb	1945
+bootstrap/x86-64-linux/stage3.size_bytes	12285040
