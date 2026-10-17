@@ -52,6 +52,10 @@ func TestSelfHostArm64MultiplyConstants(t *testing.T) {
 	if err := os.WriteFile(src, []byte(source.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	_, runner := arm64Tooling(t)
+	if output, err := runArm64Bin(runner, cli.arm64Binary(t, src)).CombinedOutput(); err != nil {
+		t.Fatalf("native encoder constant multiplication: %v\n%s", err, output)
+	}
 	data, err := os.ReadFile(cli.emit(t, src, "arm64-linux"))
 	if err != nil {
 		t.Fatal(err)

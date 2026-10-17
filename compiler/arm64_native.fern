@@ -202,6 +202,32 @@ pub function arm64_rec_addsub_reg(is_sub: boolean, sets: boolean, d: string, n: 
   return arm64_addsub_reg_word(is_sub, sets, n[0] == b'w', rd, rn, rm, 0, 0);
 }
 
+pub function arm64_rec_add_lsl(d: string, n: string, m: string, sh: i32): i64 {
+  let word = arm64_rec_addsub_reg(false, false, d, n, m);
+  let top = 63;
+  if (d.len() > 0 && d[0] == b'w') {
+    top = 31;
+  }
+  if (word < 0 || sh < 0 || sh > top) {
+    return 0 - 1;
+  }
+  return word | sh as i64 << 10;
+}
+
+pub function arm64_rec_mul(d: string, n: string, m: string): i64 {
+  let rd = arm64_rec_gpr(d);
+  let rn = arm64_rec_gpr(n);
+  let rm = arm64_rec_gpr(m);
+  if (rd < 0 || rn < 0 || rm < 0 || d[0] != n[0] || n[0] != m[0]) {
+    return 0 - 1;
+  }
+  let word: i64 = 0x9b007c00;
+  if (d[0] == b'w') {
+    word = 0x1b007c00;
+  }
+  return word | rm as i64 << 16 | rn as i64 << 5 | rd as i64;
+}
+
 // arm64_rec_label reports whether a branch target can travel as a record: a
 // symbol name the emitter composed itself, from its label prefix or through
 // sanitize_label, never a numeric local (`1f`), which the text path resolves.

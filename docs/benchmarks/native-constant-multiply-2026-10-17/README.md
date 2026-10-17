@@ -17,9 +17,13 @@ lifetime. This does not reserve an additional allocatable register.
 [The revised run, 39019596804](https://github.com/JakeChampion/lang/actions/runs/39019596804),
 measures 0.906505 for X25519 (9.3% faster) and 1.032369 for the compiler
 (3.2% slower), again with 15 alternating pairs each. [Its raw report](cached-literal-v2.json)
-retains every timing. The compiler cost is under investigation; the next
-candidate avoids asking the multiply-literal helper about every non-multiply
-instruction. No compiler-time regression is accepted on this evidence.
+retains every timing. The next run,
+[39020554239](https://github.com/JakeChampion/lang/actions/runs/39020554239),
+avoids that probe on non-multiply instructions. It measures 0.932010 for
+X25519 and 1.023274 for the compiler ([raw report](cached-literal-v3.json)).
+The compiler cost remains unacceptable. The current candidate emits these
+instruction forms as encoded records and keeps the policy marker after the
+common immediate operations. Native timing for those changes is pending.
 
 These paired timings remain separate from instruction-count, allocation,
 constant-time and size gates.

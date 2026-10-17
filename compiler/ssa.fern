@@ -2639,7 +2639,7 @@ function imm_use(ins: SInst, a: i32, konst: boolean[], c: i64, right: string[], 
   }
   // A target may request short multiplication forms without claiming
   // that its multiply instruction accepts every integer immediate.
-  return ins.str == "mul" && mulconstant.short_form(c) && util.index_of_str(names, "mul_short") >= 0;
+  return ins.str == "mul" && mulconstant.short_form(c) && names.len() > 0 && names[names.len() - 1] == "mul_short";
 }
 
 // literal_first_bytes is, per value, the first byte of the string literal

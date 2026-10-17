@@ -2309,11 +2309,11 @@ function ssa_bin3_asm(tag: i32, d: string, a: string, b: string): string {
 // compares. mul has no immediate form and the logical ops take bitmask
 // immediates, which a 12-bit range does not describe.
 function ssa_imm_right(): string[] {
-  return ["mul_short", "add", "sub", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "shl", "shr_s", "shr_u"];
+  return ["add", "sub", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "shl", "shr_s", "shr_u", "mul_short"];
 }
 
 function ssa_imm_left(): string[] {
-  return ["mul_short", "add", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u"];
+  return ["add", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "mul_short"];
 }
 
 // ssa_rhs is a right operand as the instruction reads it: the immediate for a
@@ -2367,6 +2367,9 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
   if (ssa_shift_tag(tag) && fr.imm.is_imm[b]) {
     s = s.write(shift_imm_asm(tag, ins.imm, fr.imm.value[b], dh, ssa_src(reg_of, a, "x4")));
     return ssa_store(reg_of, ins.result, dh, s);
+  }
+  if (tag == 23) {
+    return ssa_store(reg_of, ins.result, dh, ssa_mul_reg(s, dh, ssa_src(reg_of, a, "x4"), ssa_src(reg_of, b, bx)));
   }
   if (s.records() && (tag == 21 || tag == 22)) {
     let w: i64 = ssa_addsub_word(tag == 22, dh, ssa_src(reg_of, a, "x4"), fr, reg_of, b, bx);
@@ -12859,10 +12862,37 @@ function ssa_fused_loc(source: ssaprepare.SourceLines, blk: ssa.SBlock, begin: i
 
 // The same word-width wrap applies to shifts, shifted adds and multiplication.
 function ssa_mul_add_constant(s: asmcore.EmitState, d: string, a: string, c: i64): asmcore.EmitState {
-  if (mulconstant.power_of_two(c)) {
-    return s.write("    lsl " + d + ", " + a + ", #" + util.i32_to_string(mulconstant.shift(c)) + "\n");
+  if (c == 19i64) {
+    return ssa_mul_reg(ssa_mov_imm(s, "x5", "19"), d, a, "x5");
   }
-  return s.write("    add " + d + ", " + a + ", " + a + ", lsl #" + util.i32_to_string(mulconstant.shift(c)) + "\n");
+  let sh = mulconstant.shift(c);
+  if (s.records()) {
+    let word = ssa_mul_short_word(d, a, sh, mulconstant.power_of_two(c));
+    if (word >= 0) {
+      return s.word(word);
+    }
+  }
+  if (mulconstant.power_of_two(c)) {
+    return s.write("    lsl " + d + ", " + a + ", #" + util.i32_to_string(sh) + "\n");
+  }
+  return s.write("    add " + d + ", " + a + ", " + a + ", lsl #" + util.i32_to_string(sh) + "\n");
+}
+
+function ssa_mul_short_word(d: string, a: string, sh: i32, power: boolean): i64 {
+  if (power) {
+    return arm64_native.arm64_rec_lsl_imm(d, a, sh);
+  }
+  return arm64_native.arm64_rec_add_lsl(d, a, a, sh);
+}
+
+function ssa_mul_reg(s: asmcore.EmitState, d: string, a: string, b: string): asmcore.EmitState {
+  if (s.records()) {
+    let word = arm64_native.arm64_rec_mul(d, a, b);
+    if (word >= 0) {
+      return s.word(word);
+    }
+  }
+  return s.write("    mul " + d + ", " + a + ", " + b + "\n");
 }
 
 function ssa_mul_literal(ins: ssa.SInst, imm: ssa.Imms): i64 {
@@ -12899,9 +12929,9 @@ function ssa_mul_cached(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, cached: bo
   }
   s = ssa_read(reg_of, a, "x4", s);
   if (!cached) {
-    s = s.write("    mov x5, #19\n");
+    s = ssa_mov_imm(s, "x5", "19");
   }
   let d = ssa_dst(reg_of, ins.result);
-  s = s.write("    mul " + d + ", " + ssa_src(reg_of, a, "x4") + ", x5\n");
+  s = ssa_mul_reg(s, d, ssa_src(reg_of, a, "x4"), "x5");
   return ssa_store(reg_of, ins.result, d, s);
 }
