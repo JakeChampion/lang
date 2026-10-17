@@ -82,8 +82,7 @@ function holding_index(held: Holding[], dir: string): i32 {
 // A least fixed point admits seeded cycles without letting cycles create
 // authority. Every governed target starts empty; only a capability already
 // held by the grantor can propagate. Root and ungoverned grantors are exempt.
-function holdings(mans: ManifestAt[], root_dir: string): Holding[] {
-  let held: Holding[] = [];
+function grant_edges(mans: ManifestAt[]): GrantEdge[] {
   let edges: GrantEdge[] = [];
   for m in mans {
     for dep in m.man.deps {
@@ -91,7 +90,6 @@ function holdings(mans: ManifestAt[], root_dir: string): Holding[] {
         match (modloader.dependency_dir(m.man, m.dir + "/", dep.name)) {
           Some(dir) => {
             let to: string = canonical_dir(dir);
-            held = union_grant(held, to, []);
             edges = edges.append(GrantEdge { from: m.dir, to: to, grants: dep.caps });
           },
           None => {}
@@ -99,6 +97,20 @@ function holdings(mans: ManifestAt[], root_dir: string): Holding[] {
       }
     }
   }
+  return edges;
+}
+
+function empty_holdings(edges: GrantEdge[]): Holding[] {
+  let held: Holding[] = [];
+  for edge in edges {
+    held = union_grant(held, edge.to, []);
+  }
+  return held;
+}
+
+function holdings(mans: ManifestAt[], root_dir: string): Holding[] {
+  let edges: GrantEdge[] = grant_edges(mans);
+  let held: Holding[] = empty_holdings(edges);
   let changed: boolean = true;
   while (changed) {
     changed = false;

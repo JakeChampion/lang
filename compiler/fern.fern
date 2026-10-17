@@ -2413,6 +2413,23 @@ function read_bundle_module(s: Sources, mpath: string, from: string, ipath: stri
   return modloader.resolve_module(modloader.Overlay { ...modloader.no_overlay(), files: s.open }, from, ipath, util.module_name(ipath));
 }
 
+// Package provenance is collected while loading, before symbol mangling.
+function module_package_at(mdir: string, module_gov: Governed, root_gov_dir: string, root_package: caps.Pkg, is_stdlib: boolean): pkggrants.ModuleAt {
+  let package_dir: string = root_package.dir;
+  let package_name: string = root_package.name;
+  if (module_gov.found && module_gov.dir != root_gov_dir) {
+    package_dir = pkggrants.canonical_dir(module_gov.dir);
+    if (module_gov.man.name.len() > 0) {
+      package_name = module_gov.man.name;
+    }
+  }
+  let actual_dir: string = package_dir;
+  if (mdir != module_gov.dir || !module_gov.found) {
+    actual_dir = pkggrants.canonical_dir(mdir);
+  }
+  return pkggrants.ModuleAt { dir: actual_dir, owner_dir: package_dir, name: package_name, stdlib: is_stdlib };
+}
+
 // load_bundle loads `entry_mod`'s transitive imports off disk and flattens
 // them into one module (the import-driven scheme from asm_load_run), or says
 // why it cannot: an import that does not resolve or forms a cycle, or an entry
@@ -2499,19 +2516,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
       // Attribute this file to its own governing package, including
       // local modules imported from a dependency.
       let module_gov: Governed = governing_manifest(mdir);
-      let package_dir: string = root_package.dir;
-      let package_name: string = root_package.name;
-      if (module_gov.found && module_gov.dir != gov.dir) {
-        package_dir = pkggrants.canonical_dir(module_gov.dir);
-        if (module_gov.man.name.len() > 0) {
-          package_name = module_gov.man.name;
-        }
-      }
-      let actual_dir: string = package_dir;
-      if (mdir != module_gov.dir || !module_gov.found) {
-        actual_dir = pkggrants.canonical_dir(mdir);
-      }
-      module_packages = module_packages.append(pkggrants.ModuleAt { dir: actual_dir, owner_dir: package_dir, name: package_name, stdlib: is_stdlib });
+      module_packages = module_packages.append(module_package_at(mdir, module_gov, gov.dir, root_package, is_stdlib));
       grant_mans = pkggrants.with_manifest(grant_mans, module_gov.dir, module_gov.man);
       q = queue_imports(q, m, shown, mdir, root, fern_toml.dep_names(module_gov.man), is_stdlib);
     }
