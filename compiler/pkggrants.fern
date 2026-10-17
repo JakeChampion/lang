@@ -13,12 +13,17 @@ pub function canonical_dir(dir: string): string {
   if (dir.len() > 0 && dir[0] == b'/') {
     return util.clean_path(dir);
   }
-  match (getcwd()) {
-    Ok(cwd) => {
-      return util.clean_path(cwd + "/" + dir);
-    },
-    Err(_) => {
-      return util.clean_path(dir);
+  // WASI paths are relative to preopens; there is no process directory.
+  if (target_os() == "wasi") {
+    return util.clean_path(dir);
+  } else {
+    match (getcwd()) {
+      Ok(cwd) => {
+        return util.clean_path(cwd + "/" + dir);
+      },
+      Err(_) => {
+        return util.clean_path(dir);
+      }
     }
   }
 }
