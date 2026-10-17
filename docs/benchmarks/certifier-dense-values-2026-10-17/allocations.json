@@ -1,0 +1,37 @@
+{
+  "producer": "6ba6e1d017f1e95c8c6137f91ab78c38145f5d62c8760de1ab2d86b94902e624",
+  "rows": [
+    {
+      "compiler": "base",
+      "certifier": "disabled",
+      "allocs": 25939339,
+      "frees": 25939339,
+      "live_bytes": 0,
+      "output_sha256": "a0b19d959b4f1f5497cc8bb339b25ea8f2a878e667839be7eab3298e050071a9"
+    },
+    {
+      "compiler": "new",
+      "certifier": "disabled",
+      "allocs": 25939339,
+      "frees": 25939339,
+      "live_bytes": 0,
+      "output_sha256": "a0b19d959b4f1f5497cc8bb339b25ea8f2a878e667839be7eab3298e050071a9"
+    },
+    {
+      "compiler": "base",
+      "certifier": "enabled",
+      "allocs": 34730072,
+      "frees": 34730072,
+      "live_bytes": 0,
+      "output_sha256": "a0b19d959b4f1f5497cc8bb339b25ea8f2a878e667839be7eab3298e050071a9"
+    },
+    {
+      "compiler": "new",
+      "certifier": "enabled",
+      "allocs": 35173670,
+      "frees": 35173670,
+      "live_bytes": 0,
+      "output_sha256": "a0b19d959b4f1f5497cc8bb339b25ea8f2a878e667839be7eab3298e050071a9"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "enabled": {
+    "exit": 5,
+    "diagnostic": "FERN_RC_CERTIFY: run emits unbalanced reference counting (#11908):\n    run: spent without a unit of v59 (borrow ld_at) in b20: moved into wrap\n"
+  },
+  "disabled": {
+    "exit": 0,
+    "diagnostic": ""
+  },
+  "executed": false,
+  "compiler_sha256": "adde35779fc54c30f382d5449fd513d5cd778ab7b770060198d83145956d2fc2",
+  "source_head": "46a3e723a700988f4892c479c32538bcc92d1217"
+}

@@ -60,6 +60,7 @@ import "./ssa";
 import "./ssadeps";
 import "./ssalive";
 import "./rcsigs";
+import "./rcccompact";
 import "./util";
 
 // ---- the boundary ---------------------------------------------------------
@@ -4622,6 +4623,23 @@ function count_true(flags: boolean[]): i32 {
 }
 
 pub function certify(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: rcsigs.Table, ops: rcsigs.OpTable): Report {
+  let dense = rcccompact.compact(f);
+  let report = certify_graph(dense.f, irops, self_abi, abis, sigs, ops);
+  if (dense.original.len() == 0) {
+    return report;
+  }
+  let findings: Finding[] = [];
+  for x in report.findings {
+    let value = x.value;
+    if (value >= 0 && value < dense.original.len()) {
+      value = dense.original[value];
+    }
+    findings = findings.append(Finding { kind: x.kind, value: value, block: x.block, defined: x.defined, message: x.message });
+  }
+  return Report { findings: findings, tracked: report.tracked, unproved: report.unproved, opaque: report.opaque, skipped: report.skipped };
+}
+
+function certify_graph(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: rcsigs.Table, ops: rcsigs.OpTable): Report {
   if (f.blocks.len() == 0) {
     return skipped("no blocks");
   }

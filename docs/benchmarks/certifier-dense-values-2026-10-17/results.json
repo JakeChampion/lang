@@ -1,0 +1,177 @@
+{
+  "source_head": "46a3e723a700988f4892c479c32538bcc92d1217",
+  "compilers": {
+    "base": "6ba6e1d017f1e95c8c6137f91ab78c38145f5d62c8760de1ab2d86b94902e624",
+    "new": "4220ee09ee8910b186d675e8ac4d208b9a41ab750897c34d23d15e58dc9baef3"
+  },
+  "parity": [
+    {
+      "target": "x86-64-linux",
+      "entry": "compiler/fern.fern",
+      "compiler": "base",
+      "output_sha256": "4220ee09ee8910b186d675e8ac4d208b9a41ab750897c34d23d15e58dc9baef3",
+      "report_sha256": "d86ea3386fc57532dccd115537c65ba72d56cd4dc2c77df8e5566e3af791efd1",
+      "report_lines": 7589
+    },
+    {
+      "target": "x86-64-linux",
+      "entry": "compiler/fern.fern",
+      "compiler": "new",
+      "output_sha256": "4220ee09ee8910b186d675e8ac4d208b9a41ab750897c34d23d15e58dc9baef3",
+      "report_sha256": "d86ea3386fc57532dccd115537c65ba72d56cd4dc2c77df8e5566e3af791efd1",
+      "report_lines": 7589
+    },
+    {
+      "target": "arm64-linux",
+      "entry": "compiler/fern.fern",
+      "compiler": "base",
+      "output_sha256": "845f1ba5ed6217e95f03cca6760785b48afa4eeb784bc4b296cefd98ced91272",
+      "report_sha256": "d86ea3386fc57532dccd115537c65ba72d56cd4dc2c77df8e5566e3af791efd1",
+      "report_lines": 7589
+    },
+    {
+      "target": "arm64-linux",
+      "entry": "compiler/fern.fern",
+      "compiler": "new",
+      "output_sha256": "845f1ba5ed6217e95f03cca6760785b48afa4eeb784bc4b296cefd98ced91272",
+      "report_sha256": "d86ea3386fc57532dccd115537c65ba72d56cd4dc2c77df8e5566e3af791efd1",
+      "report_lines": 7589
+    },
+    {
+      "target": "wasm32-wasi",
+      "entry": "compiler/playground_run.fern",
+      "compiler": "base",
+      "output_sha256": "5ce89839bf0f6c2f4375a0d007bd730203597958ef1ddcd83767bb5723d70f86",
+      "report_sha256": "105ca74fc0e39570cbd010b3aeb3fa44c64113e0e1c079a8333991cce8328426",
+      "report_lines": 7010
+    },
+    {
+      "target": "wasm32-wasi",
+      "entry": "compiler/playground_run.fern",
+      "compiler": "new",
+      "output_sha256": "5ce89839bf0f6c2f4375a0d007bd730203597958ef1ddcd83767bb5723d70f86",
+      "report_sha256": "105ca74fc0e39570cbd010b3aeb3fa44c64113e0e1c079a8333991cce8328426",
+      "report_lines": 7010
+    }
+  ],
+  "instructions": [
+    {
+      "compiler": "base",
+      "instructions": 23807859262,
+      "output_sha256": "a0b19d959b4f1f5497cc8bb339b25ea8f2a878e667839be7eab3298e050071a9"
+    },
+    {
+      "compiler": "new",
+      "instructions": 23403855856,
+      "output_sha256": "a0b19d959b4f1f5497cc8bb339b25ea8f2a878e667839be7eab3298e050071a9"
+    }
+  ],
+  "times": [
+    {
+      "pair": 0,
+      "mode": "base",
+      "seconds": 27.913504864998686
+    },
+    {
+      "pair": 0,
+      "mode": "new",
+      "seconds": 26.07428105600411
+    },
+    {
+      "pair": 0,
+      "mode": "disabled",
+      "seconds": 18.08249358199828
+    },
+    {
+      "pair": 1,
+      "mode": "new",
+      "seconds": 25.752742615004536
+    },
+    {
+      "pair": 1,
+      "mode": "base",
+      "seconds": 26.61754386400571
+    },
+    {
+      "pair": 1,
+      "mode": "disabled",
+      "seconds": 18.53351665200171
+    },
+    {
+      "pair": 2,
+      "mode": "base",
+      "seconds": 26.00844537699595
+    },
+    {
+      "pair": 2,
+      "mode": "new",
+      "seconds": 26.54071540899895
+    },
+    {
+      "pair": 2,
+      "mode": "disabled",
+      "seconds": 18.269529054996383
+    },
+    {
+      "pair": 3,
+      "mode": "new",
+      "seconds": 26.249689996002417
+    },
+    {
+      "pair": 3,
+      "mode": "base",
+      "seconds": 26.417883813002845
+    },
+    {
+      "pair": 4,
+      "mode": "base",
+      "seconds": 26.252994032998686
+    },
+    {
+      "pair": 4,
+      "mode": "new",
+      "seconds": 25.91807154300477
+    },
+    {
+      "pair": 5,
+      "mode": "new",
+      "seconds": 27.233914688004006
+    },
+    {
+      "pair": 5,
+      "mode": "base",
+      "seconds": 26.70334857200214
+    },
+    {
+      "pair": 6,
+      "mode": "base",
+      "seconds": 26.802900383001543
+    },
+    {
+      "pair": 6,
+      "mode": "new",
+      "seconds": 25.922222647001036
+    }
+  ],
+  "fixedpoint": {
+    "bytes": 12599936,
+    "sha256": "4220ee09ee8910b186d675e8ac4d208b9a41ab750897c34d23d15e58dc9baef3"
+  },
+  "instruction_ratio": 0.9830306706052806,
+  "paired_ratios": [
+    0.9341098934766585,
+    0.9675101033581605,
+    1.0204652767317566,
+    0.9936333349714543,
+    0.9872425030999156,
+    1.0198688982608777,
+    0.9671424463988594
+  ],
+  "median_ratio": 0.9872425030999156,
+  "cold_ratios": [
+    1.441962688263411,
+    1.3895227278533304,
+    1.4527312296394717
+  ],
+  "cold_median_ratio": 1.441962688263411
+}
