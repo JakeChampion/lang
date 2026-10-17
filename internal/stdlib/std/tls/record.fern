@@ -176,6 +176,9 @@ pub function deframe(buf: [u8]): Result[Deframed, RecordError] {
     records = records.append(Record { content_type: t, version: buf[at + 1] as i32 << 8 | buf[at + 2] as i32, fragment: __copy(buf, at + 5, len) });
     at = at + 5 + len;
   }
+  if (at == buf.len()) {
+    return Ok(Deframed { records: records, rest: [] });
+  }
   return Ok(Deframed { records: records, rest: __copy(buf, at, buf.len() - at) });
 }
 

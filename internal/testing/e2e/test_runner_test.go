@@ -1400,7 +1400,7 @@ func TestRunnerTLSClientExamplePasses(t *testing.T) {
 // from the tickets it issues, requires client certificates, updates keys
 // both ways, and checks the contract of offloading to the kernel.
 func TestRunnerTLSServerExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_server", "std/tls/server", 14)
+	runnerSuitePasses(t, "tls_server", "std/tls/server", 15)
 }
 
 // `tests/stdlib/tls_handshake_test.fern` runs the client through RFC 8448 §3
