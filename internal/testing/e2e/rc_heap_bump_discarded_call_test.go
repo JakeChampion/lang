@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -25,23 +27,46 @@ import (
 // be read by nothing and semdead would not build it at all, which is not the
 // reclaim under test.
 func discardedCallStructBump(n string) string {
-	return `struct P { x: i32, y: i32 }
+	return `import "std/i32";
+struct P { x: i32, y: i32, values: i32[] }
+@noinline function mk(v: i32): P { return P { x: v, y: v, values: [v, v + 1] }; }
+function main(): i32 {
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < ` + n + `) { mk(i); i = i + 1; }
+    let bump = (__heap_bump_bytes() as i32) - before;
+    print("bump=" + bump.to_string());
+    return 0;
+}`
+}
+
+// Scalar-only call results no longer have a box to reclaim. Keep that case
+// separate from the reference-containing record above, whose parent and child
+// must both be reclaimed. @noinline keeps the factory calls out of the loop.
+func discardedCallScalarStructBump(n string) string {
+	return `import "std/i32";
+struct P { x: i32, y: i32 }
 @noinline function mk(v: i32): P { return P { x: v, y: v }; }
 function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
     let i: i32 = 0;
     while (i < ` + n + `) { mk(i); i = i + 1; }
-    return (__heap_bump_bytes() as i32) - before;
+    let bump = (__heap_bump_bytes() as i32) - before;
+    print("bump=" + bump.to_string());
+    return 0;
 }`
 }
 
 func discardedCallArrBump(n string) string {
-	return `function mk(v: i32): i32[] { return [v, v + 1, v + 2]; }
+	return `import "std/i32";
+@noinline function mk(v: i32): i32[] { return [v, v + 1, v + 2]; }
 function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
     let i: i32 = 0;
     while (i < ` + n + `) { mk(i); i = i + 1; }
-    return (__heap_bump_bytes() as i32) - before;
+    let bump = (__heap_bump_bytes() as i32) - before;
+    print("bump=" + bump.to_string());
+    return 0;
 }`
 }
 
@@ -98,6 +123,19 @@ func TestArm64DiscardedCallReclaim(t *testing.T) {
 }
 
 func TestWASMDiscardedCallReclaim(t *testing.T) {
+	// Capture the complete high-water count instead of an exit status's low byte.
+	bump := func(src string) int {
+		t.Helper()
+		output := strings.TrimSpace(runWasmCapturingStdout(t, src))
+		if !strings.HasPrefix(output, "bump=") {
+			t.Fatalf("missing high-water measurement: %q", output)
+		}
+		value, err := strconv.Atoi(strings.TrimPrefix(output, "bump="))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
 	for _, c := range []struct {
 		name string
 		src  func(string) string
@@ -105,13 +143,18 @@ func TestWASMDiscardedCallReclaim(t *testing.T) {
 		{"struct", discardedCallStructBump},
 		{"array", discardedCallArrBump},
 	} {
-		small := runWasm(t, c.src("50"))
-		large := runWasm(t, c.src("5000"))
+		small := bump(c.src("50"))
+		large := bump(c.src("5000"))
 		if small != large {
 			t.Errorf("%s discarded-call bump should be bounded: N=50 -> %d, N=5000 -> %d", c.name, small, large)
 		}
-		if small == 0 {
-			t.Errorf("%s: expected a non-zero bounded high-water, got 0", c.name)
+		if small <= 0 {
+			t.Errorf("%s: expected a positive bounded high-water, got %d", c.name, small)
+		}
+	}
+	for _, n := range []string{"50", "5000"} {
+		if got := bump(discardedCallScalarStructBump(n)); got != 0 {
+			t.Errorf("scalar-only discarded result: N=%s allocates %d bytes, want zero", n, got)
 		}
 	}
 	checkDiscardedCallSafe(t, func(t *testing.T, src string) (string, int) {
