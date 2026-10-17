@@ -83,7 +83,7 @@ function successors(t: ssa.STerm): i32[] {
 }
 
 function projection(kind: i32): boolean {
-  return kind == ssasem.variant_get() || kind == ssasem.record_get() || kind == ssasem.tuple_get();
+  return kind == ssasem.variant_get() || kind == ssasem.record_get() || kind == ssasem.tuple_get() || kind == ssasem.array_get();
 }
 
 // `at` is crossing_projections'.
@@ -138,8 +138,17 @@ function spend(own spent: i32[][], parent: boolean[], v: i32, bi: i32): i32[][] 
 }
 
 function counted_projection(ins: ssa.SInst, values: typeinfo.Type[]): boolean {
-  return projection(ins.kind_tag) && ins.args.len() == 1 && ins.result >= 0 && ins.result < values.len()
+  return projection(ins.kind_tag) && ins.args.len() == read_arity(ins.kind_tag) && ins.result >= 0 && ins.result < values.len()
     && ssasem.reference(values[ins.result]);
+}
+
+// An array read names its index after the array; the index is defined
+// above the read it repeats, so it is in hand wherever the re-read goes.
+function read_arity(kind: i32): i32 {
+  if (kind == ssasem.array_get()) {
+    return 2;
+  }
+  return 1;
 }
 
 // The position of each counted projection's block, by value, -1 for every
@@ -303,6 +312,13 @@ function sink_block(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock, values: typ
 // while the child lives: a parent handed on, a record moved into a loop say,
 // would have to be kept for the re-read and copied by whoever it went to.
 function read_above(rd: Reads, bi: i32, v: i32): boolean {
+  return read_above_for(rd, bi, v, v);
+}
+
+// read_above for `v`, a parent on the way to `leaf`, the value the block
+// uses: a parent spent while the leaf is still to be used is gone by the
+// time the block would re-read it.
+function read_above_for(rd: Reads, bi: i32, v: i32, leaf: i32): boolean {
   if (v < 0 || v >= rd.at.len() || rd.at[v] < 0 || rd.at[v] == bi) {
     return false;
   }
@@ -310,11 +326,11 @@ function read_above(rd: Reads, bi: i32, v: i32): boolean {
   if (!ssadeps.dom_holds(rd.dom, bi, rd.at[v]) || ssalive.live_out_has(rd.flow, bi, p)) {
     return false;
   }
-  if (!ssalive.live_out_has(rd.flow, rd.at[v], p) && !read_above(rd, bi, p)) {
+  if (!ssalive.live_out_has(rd.flow, rd.at[v], p) && !read_above_for(rd, bi, p, leaf)) {
     return false;
   }
   for s in rd.spent[p] {
-    if (s == rd.at[v] || ssalive.live_out_has(rd.flow, s, v)) {
+    if (s == rd.at[v] || ssalive.live_out_has(rd.flow, s, v) || ssalive.live_out_has(rd.flow, s, leaf)) {
       return false;
     }
   }
@@ -330,7 +346,7 @@ function reread(rd: Reads, g: ssa.SFunc, bi: i32, own r: Rereads, v: i32): Rerea
   let def: ssa.SInst = read_of(g, rd, v);
   r = reread(rd, g, bi, r, def.args[0]);
   let id: i32 = r.values.len();
-  let get: ssa.SInst = ssa.SInst { ...def, result: id, args: [standing(r, def.args[0])] };
+  let get: ssa.SInst = ssa.SInst { ...def, result: id, args: def.args.with(0, standing(r, def.args[0])) };
   return Rereads { old: r.old.append(v), fresh: r.fresh.append(id), insts: r.insts.append(get), values: r.values.append(r.values[v]) };
 }
 

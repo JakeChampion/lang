@@ -25,7 +25,7 @@ an earlier one.
 The seminline pass (`seminline.fern`) rewrites graphs before the plan: it
 inlines leaves, splits reads of known constructions into their parts, and
 runs tail recursion modulo cons. It is a graph-to-graph pass; the stages
-below never see what it removed. Three more run last. `semthread.fern` sends
+below never see what it removed. Four more run last. `semthread.fern` sends
 a branch the path to it already decided straight to the side it takes: a
 branch on a constant (the done flag a nested pattern's arms test), and a
 variant test an earlier test on the same value, or the same payload of one,
@@ -33,12 +33,17 @@ settled. A match whose first arm failed on a payload goes straight to the arm
 that payload picks, without testing the scrutinee's variant again.
 `semsink.fern` re-reads,
 in a block where a projection's parent dies, the counted projections the
-block uses that a dominating block read, so the plan takes them instead of
+block uses that a dominating block read (a record, tuple or payload field,
+or an array element at the same index), so the plan takes them instead of
 borrowing them. It re-reads only a read that borrowed, of a parent nothing
-spends while the child lives, so a re-read never holds a parent longer than
-the plan already does. Last, `semdead.fern` drops constructions nothing reads.
-`ssasem`'s guard check treats two reads of one slot of one box as one value,
-so a test of the first read settles the re-read.
+spends while the child, or the value the block reads through it, lives, so
+a re-read never holds a parent longer than the plan already does.
+`semcse.fern` then merges a block's repeated reads of one slot of one value,
+which the re-reads at a block's head most often make, so the slot has one
+holder for the plan to hold or take where its box is consumed. Last,
+`semdead.fern` drops constructions nothing reads. `ssasem`'s guard check
+treats two reads of one slot of one box (an array's at one index) as one
+value, so a test of the first read settles the re-read.
 
 ### 1.1 The semantic graph
 

@@ -97,9 +97,11 @@ func TestSelfHostServeAllocsPerRequestWasm(t *testing.T) {
 // encoder, 72.0 to 72.4 here; with the loop closing an incomplete
 // preface at EOF, an arm that hands the table on, 60.0 (the loop's
 // splices unchanged, so the plan's doing: the table through the HTTP/2
-// turn no longer copied); the CI runner reads a few lower, as the note on
-// serveAllocsH2Drift says.
-const ServeAllocsH2Ceiling = 62
+// turn no longer copied); with the connection, its stream array and a
+// stream rebuilt in their own boxes when a stream read in one block is
+// updated in another, 55.0 on arm64; the CI runner reads a few lower, as
+// the note on serveAllocsH2Drift says.
+const ServeAllocsH2Ceiling = 56
 
 func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
 	cli := buildSelfHostCLI(t)
@@ -114,8 +116,9 @@ func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
 
 // ServeAllocsH3Ceiling bounds allocations per hello request over one HTTP/3
 // connection. The 100,000-request measurement and ratchet are recorded in
-// docs/benchmarks/net-h3-2026-10-17.md.
-const ServeAllocsH3Ceiling = 281
+// docs/benchmarks/net-h3-2026-10-17.md; 265.2 on arm64 since elements are
+// re-read where their record dies.
+const ServeAllocsH3Ceiling = 267
 
 func TestSelfHostServeAllocsPerRequestH3(t *testing.T) {
 	cli := buildSelfHostCLI(t)
