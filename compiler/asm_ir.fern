@@ -8909,6 +8909,15 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   if (ins.kind_tag == 9 && ins.str == "and_not") {
     return ssa_and_not(ins, reg_of, s);
   }
+  if (ssa.carry_triple(blk, ii, fr.uses)) {
+    return ssa_carried_sum(ins, reg_of, s);
+  }
+  if (ssa.carry_triple(blk, ii - 1, fr.uses)) {
+    return s;
+  }
+  if (ssa.carry_triple(blk, ii - 2, fr.uses)) {
+    return ssa_carry_reader(ins, blk.insts[ii - 1].result, reg_of, s);
+  }
   if (ins.kind_tag == 37) {
     return ssa_carry(ins, reg_of, s);
   }
@@ -9001,6 +9010,40 @@ function ssa_and_not(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
 // ssa_carry reads a carry (ssa.fuse_carries) off CF: x goes to %r11 and y is
 // added or subtracted in place, an incoming carry first set into CF by bt
 // for adc or sbb to take. Loads and moves leave the flags alone.
+// ssa_carried_sum is a carry triple's (ssa.carry_triple) sum or difference,
+// which sets the flags: computed in its home register unless that holds the
+// right operand, else in %r11.
+function ssa_carried_sum(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let op: string = if (ins.str == "sub") { "subq" } else { "addq" };
+  let d: string = ssa_dst(reg_of, ins.result);
+  if (ssa_in_x(reg_of, ins.args[1]) && reg_of[ins.args[1]] == reg_of[ins.result]) {
+    d = "%r11";
+  }
+  s = ssa_load(reg_of, ins.args[0], d, s);
+  s = s.write("    " + op + " " + ssa_operand(reg_of, ins.args[1], s) + ", " + d + "\n");
+  if (d == "%r11") {
+    s = ssa_x0_forget(s);
+  }
+  return ssa_store(reg_of, ins.result, d, s);
+}
+
+// ssa_carry_reader is a carry triple's reader: its other operand plus the
+// carry, or less the borrow, read off the flags the sum left.
+function ssa_carry_reader(ins: ssa.SInst, carry: i32, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let other: i32 = ins.args[0];
+  if (other == carry) {
+    other = ins.args[1];
+  }
+  let op: string = if (ins.str == "sub") { "sbbq" } else { "adcq" };
+  let d: string = ssa_dst(reg_of, ins.result);
+  s = ssa_load(reg_of, other, d, s);
+  s = s.write("    " + op + " $0, " + d + "\n");
+  if (d == "%r11") {
+    s = ssa_x0_forget(s);
+  }
+  return ssa_store(reg_of, ins.result, d, s);
+}
+
 function ssa_carry(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   if (reg_of[ins.result] == 0 - 1) {
     return s;
