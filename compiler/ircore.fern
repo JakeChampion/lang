@@ -1516,7 +1516,7 @@ function fip_claim_diags(fn: parser.FuncDecl, r: irtables.LowerResult, acc: util
   let res: irfipverify.FipResult = irfipverify.verify_fip_fn(claim, r.ops);
   let out: util.Diag[] = acc;
   for p in res.problems {
-    out = out.append(util.Diag { code: "E068", message: irverify.problem_str(p), line: fn.line, col: fn.col, fix: None });
+    out = out.append(util.Diag { related: [], code: "E068", message: irverify.problem_str(p), line: fn.line, col: fn.col, fix: None });
   }
   return out;
 }

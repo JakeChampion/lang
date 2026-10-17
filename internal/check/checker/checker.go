@@ -33,7 +33,8 @@ type Error struct {
 	// Fix is an optional machine-applicable suggestion rendered as a
 	// `help:` line (diag.Suggestion — span + replacement + title). Only
 	// attached when applying the replacement is guaranteed to re-parse.
-	Fix *diag.Suggestion
+	Fix     *diag.Suggestion
+	Related []diag.Label
 }
 
 func (e *Error) Error() string          { return fmt.Sprintf("type error at %s: %s", e.Pos, e.Msg) }
@@ -45,6 +46,12 @@ func (e *Error) SetFile(p string)       { e.Path = p }
 func (e *Error) Code() string           { return e.ErrCode }
 
 func (e *Error) Suggestion() *diag.Suggestion { return e.Fix }
+func (e *Error) Labels() []diag.Label {
+	if len(e.Related) == 0 {
+		return nil
+	}
+	return append([]diag.Label{{Pos: e.Pos, Length: e.Span, Kind: diag.LabelPrimary}}, e.Related...)
+}
 
 var _ diag.FileSetter = (*Error)(nil)
 
@@ -12041,7 +12048,7 @@ func firstTryOp(e ast.Expr) (ast.Position, bool) {
 }
 
 // report records one diagnostic against the module at path.
-func (c *checker) report(path string, pos ast.Position, code, msg string) {
+func (c *checker) report(path string, pos ast.Position, code, msg string) *Error {
 	// Identical diagnostics at the same position are dropped. Several
 	// checks reach the same expression by different routes — a string
 	// `a < b` produced the same E009 twice, byte for byte — and a reader
@@ -12053,10 +12060,12 @@ func (c *checker) report(path string, pos ast.Position, code, msg string) {
 		c.seenDiags = map[diagKey]bool{}
 	}
 	if c.seenDiags[key] {
-		return
+		return nil
 	}
 	c.seenDiags[key] = true
-	c.errors = append(c.errors, &Error{Pos: pos, Msg: msg, Path: path, ErrCode: code})
+	err := &Error{Pos: pos, Msg: msg, Path: path, ErrCode: code}
+	c.errors = append(c.errors, err)
+	return err
 }
 
 // diagKey identifies a diagnostic for the duplicate check above: same
@@ -15500,7 +15509,10 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		}
 	case *ast.Var:
 		if _, dup := s.names[n.Name]; dup {
-			c.errfCode(n.P, "E013", "variable %q already declared in this scope", n.Name)
+			err := c.report(c.currentModule(), n.P, "E013", fmt.Sprintf("variable %q already declared in this scope", n.Name))
+			if prior := s.vars[n.Name]; prior != nil && err != nil {
+				err.Related = []diag.Label{{Pos: prior.P, Message: "previous declaration is here", Kind: diag.LabelSecondary}}
+			}
 		}
 		unannotated := n.Type == nil
 		c.setElemHintFor(n.Init, n.Type)
