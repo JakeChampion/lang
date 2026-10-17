@@ -8697,8 +8697,8 @@ function arm64_gas_emit_movwide(own a: Arm64Asm, mnem: string, ops: string[]): A
   // always claimed movn was handled, but there was no branch for it: the
   // mnemonic fell through to the end of this function and emitted NOTHING,
   // with nothing recorded on p.unknown either — a silently dropped
-  // instruction. The emitter only reaches MOVN through `mov Rd, #-imm`
-  // today, which is why it went unnoticed.
+  // instruction. The SSA emitter writes it for a constant one shifted
+  // halfword short of all ones (movwide_text).
   if (mnem == "movn") {
     let nsh: i32 = 0;
     if (ops.len() > 2) {
