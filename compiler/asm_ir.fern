@@ -11584,6 +11584,10 @@ function emit_array_helpers(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_bytes_range(), s);
   }
+  if (s.has_need("bytes_into")) {
+    s = s.write("    .text\n");
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_bytes_into(), s);
+  }
   return s;
 }
 

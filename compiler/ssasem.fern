@@ -405,7 +405,7 @@ pub function call(): i32 {
 // an array they built, so their result keeps no borrow of an argument. The
 // checkers' fresh-result lists name the same kernels.
 pub function fresh_result_builtin(name: string): boolean {
-  return name == "__bytes_owned" || name == "__bytes_range" || name == "__aes_expand_key" || name == "__aes_ctr32"
+  return name == "__bytes_owned" || name == "__bytes_range" || name == "__bytes_into" || name == "__aes_expand_key" || name == "__aes_ctr32"
     || name == "__ghash" || name == "__sha256_hw_blocks" || name == "__sha1_hw_blocks";
 }
 

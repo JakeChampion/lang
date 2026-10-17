@@ -166,7 +166,7 @@ pub function read(buf: u8[], from: i32, max_frame: i32): Result[Read, FrameError
   if (buf.len() - from - HEADER_LEN < len) {
     return Ok(More);
   }
-  let payload: u8[] = __slice(buf, from + HEADER_LEN, from + HEADER_LEN + len);
+  let payload: u8[] = __bytes_range(buf, from + HEADER_LEN, from + HEADER_LEN + len);
   return Ok(Got(__frame(kind, flags, stream, payload)?, HEADER_LEN + len));
 }
 
@@ -226,7 +226,7 @@ function __unpadded(flags: i32, stream: i32, payload: u8[]): Result[Padded, Fram
   if (pad >= payload.len()) {
     return Err(__connection(PROTOCOL_ERROR, "padding of " + int.int_to_string(pad) + " bytes in a payload of " + int.int_to_string(payload.len())));
   }
-  return Ok(Padded { body: __slice(payload, 1, payload.len() - pad), padding: pad + 1 });
+  return Ok(Padded { body: __bytes_range(payload, 1, payload.len() - pad), padding: pad + 1 });
 }
 
 function __data(flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameError] {
@@ -249,7 +249,7 @@ function __headers(flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameE
       return Err(__connection(FRAME_SIZE_ERROR, "HEADERS with PRIORITY shorter than its priority"));
     }
     priority = Some(__priority(block, 0));
-    block = __slice(block, 5, block.len());
+    block = __bytes_range(block, 5, block.len());
   }
   return Ok(Headers(HeadersFrame { stream: stream, end_stream: (flags & 1) != 0, end_headers: (flags & 4) != 0, priority: priority, block: block, padding: p.padding }));
 }
@@ -326,7 +326,7 @@ function __push_promise(flags: i32, stream: i32, payload: u8[]): Result[Frame, F
   if (p.body.len() < 4) {
     return Err(__connection(FRAME_SIZE_ERROR, "PUSH_PROMISE shorter than its promised stream"));
   }
-  return Ok(PushPromise(PushPromiseFrame { stream: stream, promised: __be32(p.body, 0) & MAX_WINDOW, end_headers: (flags & 4) != 0, block: __slice(p.body, 4, p.body.len()) }));
+  return Ok(PushPromise(PushPromiseFrame { stream: stream, promised: __be32(p.body, 0) & MAX_WINDOW, end_headers: (flags & 4) != 0, block: __bytes_range(p.body, 4, p.body.len()) }));
 }
 
 function __ping(flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameError] {
@@ -346,7 +346,7 @@ function __goaway(stream: i32, payload: u8[]): Result[Frame, FrameError] {
   if (payload.len() < 8) {
     return Err(__connection(FRAME_SIZE_ERROR, "GOAWAY of " + int.int_to_string(payload.len()) + " bytes"));
   }
-  return Ok(GoAway(GoAwayFrame { last_stream: __be32(payload, 0) & MAX_WINDOW, code: __be32(payload, 4), debug: __slice(payload, 8, payload.len()) }));
+  return Ok(GoAway(GoAwayFrame { last_stream: __be32(payload, 0) & MAX_WINDOW, code: __be32(payload, 4), debug: __bytes_range(payload, 8, payload.len()) }));
 }
 
 function __window_update(stream: i32, payload: u8[]): Result[Frame, FrameError] {
@@ -494,14 +494,4 @@ function __be32(buf: u8[], at: i32): i32 {
 
 function __be32_bytes(out: u8[], v: i32): u8[] {
   return out.append((v >> 24 & 255) as u8).append((v >> 16 & 255) as u8).append((v >> 8 & 255) as u8).append((v & 255) as u8);
-}
-
-function __slice(buf: u8[], from: i32, to: i32): u8[] {
-  let out: u8[] = __alloc_u8(to - from);
-  let i: i32 = 0;
-  while (from + i < to) {
-    out = out.with(i, buf[from + i]);
-    i = i + 1;
-  }
-  return out;
 }

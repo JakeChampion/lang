@@ -157,6 +157,8 @@ pub function table(): Table {
   // The reuse allocator consumes a token — a dying box the lowering has
   // already stopped counting, or null — and hands back a fresh box.
   rows = add(rows, ["__fern_alloc_reuse"], sig(0, effect_move_if_held(), result_fresh()));
+  // __bytes_into consumes the array it writes and hands it, or a copy, back.
+  rows = add(rows, ["__fern_bytes_into"], sig(0, effect_move(), result_fresh()));
   // The in-place string grow answers whether it appended; the unit movement
   // it implies is spelled by the lowering around it, in the moves it emits
   // on each answer, so the call itself touches nothing.

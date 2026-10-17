@@ -252,7 +252,8 @@ function is_text_helper(name: string): boolean {
     // __bytes_owned(b): a byte view copied into a fresh packed u8[]
     // (asmcore.rt_src_bytes_owned; wasm's $__fern_bytes_owned).
     || name == "__fern_bytes_owned"
-    || name == "__fern_bytes_range";
+    || name == "__fern_bytes_range"
+    || name == "__fern_bytes_into";
 }
 
 // is_c_call reports whether a call_direct callee is an FFI shim of the
@@ -673,7 +674,7 @@ function with_builtin_enums(lifted: parser.Module): parser.Module {
 pub function all_runtime_need_roots(): string[] {
   return [
     "alloc_u8", "args", "set_args", "arr_push", "arr_push_owned", "arr_slice",
-    "arr_str_join", "arr_concat", "bytes_owned", "bytes_range", "byte_append", "byte_write", "arr_inc_elems", "arr_own_elems", "str_own", "str_borrow", "str_grow", "account", "arrarr_free", "env", "eprint", "heap",
+    "arr_str_join", "arr_concat", "bytes_owned", "bytes_range", "bytes_into", "byte_append", "byte_write", "arr_inc_elems", "arr_own_elems", "str_own", "str_borrow", "str_grow", "account", "arrarr_free", "env", "eprint", "heap",
     "i32_to_string", "u32_to_string", "monotonic_ns", "now_ns", "now_unix_ms",
     "map_hash_seed",
     "chdir", "chroot", "setuid", "setgid", "setgroups",
