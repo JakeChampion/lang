@@ -6472,6 +6472,18 @@ pub function rt_src_arr_slice(): string {
   return "function __fern_arr_slice(a: i32[], start: i32, end: i32): i32[] { let n: i32 = a.len(); let bad: i32 = 0; if (end < 0) { bad = 1; } if (end > n) { bad = 1; } if (start < 0) { bad = 1; } if (start > end) { bad = 1; } if (bad == 1) { __fern_slice_abort(); } let m: i32 = end - start; let p: usize = __raw_arr_box(m); let dst: usize = p + 8; let src: usize = (__raw_arr_ptr(a) + 8); let skip: i32 = start; while (skip > 0) { let cs: i32 = skip; if (cs > 134217728) { cs = 134217728; } src = src + cs * 8; skip = skip - cs; } let left: i32 = m; while (left > 0) { let cc: i32 = left; if (cc > 134217728) { cc = 134217728; } __memcpy(dst, src, cc * 8); dst = dst + cc * 8; src = src + cc * 8; left = left - cc; } return __raw_array(p); }";
 }
 
+// The typed ownership pipeline releases user arrays. Native argument
+// replacement and diagnostic exits also own string-array buffers.
+pub function rt_src_str_arr_free(): string {
+  return "function __fern_str_arr_free(p: usize): void {\n"
+    + "  if (p >= 65536 as usize && __load_i32(p - 8) == 1) {\n"
+    + "    let n: i32 = __load_i32(p); let i: i32 = 0;\n"
+    + "    while (i < n) { __fern_str_free(__raw_load_ptr(p, i + 1)); i = i + 1; }\n"
+    + "  }\n"
+    + "  __fern_rc_dec(p);\n"
+    + "}\n";
+}
+
 // rt_src_str_cmp backs string ordering (< <= > >=) → __fern_str_cmp(a, b),
 // returning a signed i32: <0 if a<b, 0 if equal, >0 if a>b (#2649). Lexicographic
 // byte compare (unsigned bytes, like the asm's movzbq) with a length tiebreak;

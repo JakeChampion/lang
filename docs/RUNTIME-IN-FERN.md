@@ -100,7 +100,10 @@ native and WASI bodies and symbol registrations are also retired.
 
 The remaining `__fern_str_arr_free` is different: the hand-written `set_args`
 replacement and diagnostic exit path still call it. Its native emitter is
-now a single string-array release rather than a four-variant generator.
+now shared Fern source. It walks the elements only at an outer count of
+one, releases each through the string-release floor, and releases the outer
+buffer through the array-release floor. Shared, immortal and invalid-count
+handling stays with that floor, including the sanitizer checks.
 WASI's `$__fern_arr_dec_ptr` also remains for its live runtime callers.
 
 The reclaim tests cover scalar and string rows, struct arrays, optional

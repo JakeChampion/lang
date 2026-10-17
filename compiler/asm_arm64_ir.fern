@@ -9785,90 +9785,10 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   }
   s = s.write(".Lstrvfree_ret:\n");
   s = s.write("    ret\n");
-  // __fern_str_arr_free(arr) — string[] ELEMENT reclaim (#4355), the arm64
-  // sibling of the x86-64 body in asm_ir.emit_ir_runtime and the element-
-  // walking sibling of __fn___fern_arr_dec. rc@[arr-8]: negative = immortal
-  // (skip); rc>1 -> dec, elements untouched; rc==0 -> underflow detector;
-  // rc==1 -> __fn___fern_str_free every element box (each fully rc-guarded)
-  // then free the buffer to its size-class freelist (base=arr-16,
-  // class=cap+3), exactly as __fn___fern_arr_dec's free path. Array layout
-  // (__fern_arr_box): cap@[arr-16], rc@[arr-8], len@[arr], element i @
-  // [arr+8+i*8]. Called ONLY on compile-time-proven fresh string[] locals
-  // Stack-arg ABI (arr at [sp]); x19/x20/x21
-  // hold arr/len/i across the bl calls (callee-saved; x30 saved too —
-  // __fn___fern_str_free is a leaf and preserves them).
-  s = emit_arm64_str_arr_free(s);
+  s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_arr_free(), s);
   s = s.write("__fn___fern_drop_arr_ptr:\n");
   s = s.write("    ret\n");
 
-  return s;
-}
-
-// Release a string array and its elements when the buffer is uniquely owned.
-function emit_arm64_str_arr_free(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("__fn___fern_str_arr_free:\n");
-  s = s.write("    ldr x0, [sp]\n");  // arr
-  s = s.write("    mov x9, #0x10000\n");
-  s = s.write("    cmp x0, x9\n");
-  s = s.write("    blo .Lsaf_ret\n");  // low-addr guard
-  s = s.write("    ldur w1, [x0, #-8]\n");  // rc
-  s = s.write(san_poison_check("w1", "w10", ".Lsaf_sanlive", s.rc_free_debug));
-  s = s.write("    tbnz w1, #31, .Lsaf_ret\n");  // negative = immortal -> skip
-  s = s.write("    cmp w1, #1\n");
-  s = s.write("    bgt .Lsaf_dec\n");  // rc>1 -> dec, keep
-  s = s.write("    blt .Lsaf_uf\n");  // rc==0 -> underflow (double free)
-  // rc==1: sole owner -> release every element, then the buffer.
-  s = s.write("    stp x19, x30, [sp, #-16]!\n");  // save callee-saved + link
-  s = s.write("    stp x20, x21, [sp, #-16]!\n");
-  s = s.write("    mov x19, x0\n");  // arr
-  s = s.write("    ldr x20, [x19]\n");  // len @ [arr]
-  s = s.write("    mov x21, #0\n");  // i
-  s = s.write(".Lsaf_loop:\n");
-  s = s.write("    cmp x21, x20\n");
-  s = s.write("    bge .Lsaf_freebuf\n");
-  s = s.write("    add x9, x21, #1\n");
-  s = s.write("    ldr x0, [x19, x9, lsl #3]\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_free\n    add sp, sp, #16\n");
-  s = s.write("    add x21, x21, #1\n");
-  s = s.write("    b .Lsaf_loop\n");
-  s = s.write(".Lsaf_freebuf:\n");
-  // buffer free: __fn___fern_arr_dec's rc==1 path (base=arr-16, class=cap+3).
-  s = s.write(quarantine_rc("[x19, #-8]", "w10", s.rc_free_debug));  // release the rc word (defensive vs re-free)
-  s = s.write("    ldur x1, [x19, #-16]\n");  // cap
-  s = s.write("    add x1, x1, #3\n");  // class = cap + 3 words
-  s = s.write("    mov x9, #0x10000\n");
-  s = s.write("    cmp x1, x9\n");
-  s = s.write("    bhs .Lsaf_large\n");  // large tier -> __fern_large_push
-  s = s.write("    sub x2, x19, #16\n");  // base = arr - 16
-  s = lc_bump_free_words(s, "x1", "x3", "x9");
-  if (!s.rc_free_debug) {
-    s = freelist_push(s, "x2", "x1", "x3", "x9");
-  }
-  s = s.write(".Lsaf_pop:\n");
-  s = s.write("    ldp x20, x21, [sp], #16\n");
-  s = s.write("    ldp x19, x30, [sp], #16\n");
-  s = s.write("    b .Lsaf_ret\n");
-  s = s.write(".Lsaf_dec:\n");
-  s = s.write("    sub w1, w1, #1\n");
-  s = s.write("    stur w1, [x0, #-8]\n");
-  s = s.write("    b .Lsaf_ret\n");
-  s = s.write(".Lsaf_uf:\n");
-  s = s.write("    adrp x2, __fern_rc_underflow\n");
-  s = s.write("    add x2, x2, :lo12:__fern_rc_underflow\n");
-  s = s.write("    ldr w3, [x2]\n");
-  s = s.write("    add w3, w3, #1\n");
-  s = s.write("    str w3, [x2]\n");
-  s = s.write(san_underflow_abort(s));
-  s = s.write(".Lsaf_ret:\n");
-  s = s.write("    ret\n");
-  // Large tier (#3425): recycle the >=512 KiB outer buffer (base = arr-16,
-  // bytes = class*8) via __fern_large_push instead of leaking. x30 is saved in
-  // the frame (restored at _pop), so the bl is safe; large_push preserves
-  // x19/x20/x21. Accumulates across a -per-module-emit-all batch otherwise.
-  s = s.write(".Lsaf_large:\n");
-  s = s.write("    lsl x2, x1, #3\n");  // bytes = class*8
-  s = s.write("    sub x1, x19, #16\n");  // base = arr-16
-  s = s.write("    bl __fern_large_push\n");
-  s = s.write("    b .Lsaf_pop\n");
   return s;
 }
 
