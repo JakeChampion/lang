@@ -5473,7 +5473,7 @@ function cons_hole(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: 
 
 // Reads of values nothing can change, and operators that cannot stop the
 // program: a division or remainder can trap, so it stays behind the call.
-function reorderable(ins: ssa.SInst): boolean {
+pub function reorderable(ins: ssa.SInst): boolean {
   let k: i32 = ins.kind_tag;
   if (k == 9) {
     return ins.str != "/" && ins.str != "%";

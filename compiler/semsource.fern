@@ -20,6 +20,7 @@ import "./ownership";
 import "./util";
 import "./seminline";
 import "./semdead";
+import "./semhoist";
 import "./semsink";
 import "./semthread";
 import "./semfuse";
@@ -9421,9 +9422,10 @@ function fuse_pipelines(all: Produced[], names: string[], decls: parser.FuncDecl
   return result;
 }
 
-// A branch the path to it decided goes where it would (semthread), a block
-// that returns re-reads the projections it uses where their parents die
-// (semsink), and a construction nothing reads is not built (semdead). Last,
+// A branch the path to it decided goes where it would (semthread), an array
+// read after the update that consumes the array moves ahead of it (semhoist),
+// a block that returns re-reads the projections it uses where their parents
+// die (semsink), and a construction nothing reads is not built (semdead). Last,
 // since the splices above are what leave most such branches and
 // constructions behind.
 function prune_dead_constructions(all: Produced[]): Produced[] {
@@ -9435,6 +9437,10 @@ function prune_dead_constructions(all: Produced[]): Produced[] {
       let th: semthread.Threaded = semthread.thread(p.func);
       if (th.changed > 0) {
         p = Produced { ...p, func: th.f, analysis: None };
+      }
+      let ho: semhoist.Hoisted = semhoist.hoist(p.func);
+      if (ho.moved > 0) {
+        p = Produced { ...p, func: ho.f, analysis: None };
       }
       let sk: semsink.Sunk = semsink.sink(p.func);
       if (sk.reread > 0) {
