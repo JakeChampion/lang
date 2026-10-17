@@ -15,6 +15,8 @@ func TestSelfHostDebugPreservesNativeCode(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for name, source := range map[string]string{
 		"leaf-frame":        leafFrameSource(),
+		"append-report":     selfHostAppendReportSrc,
+		"abort-chain":       deepAbortSrc,
 		"tail-call":         ssaTailCallProg,
 		"register-pressure": dwarfVarsSrc,
 		"enum-locals":       dwarfEnumsSrc,
