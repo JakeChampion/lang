@@ -134,3 +134,15 @@ bootstrap/arm64-darwin/stage2.size_bytes	13894433
 bootstrap/arm64-darwin/stage3.wall_s	21
 bootstrap/arm64-darwin/stage3.peak_rss_mb	1955
 bootstrap/arm64-darwin/stage3.size_bytes	13894433
+
+# lane: net-tls-interop
+tls/client/openssl.bulk_mbytes_per_s	63.3
+tls/client/openssl.handshakes_per_s	44.6
+tls/client/go.bulk_mbytes_per_s	63.3
+tls/client/go.handshakes_per_s	44.5
+tls/client/rustls.handshakes_per_s	45.4
+tls/client/bssl.handshakes_per_s	45.2
+tls/server/go.bulk_mbytes_per_s	149.8
+tls/server/curl.bulk_mbytes_per_s	136.9
+tls/server/handshakes_per_s	193.2
+tls/server/resumed_handshakes_per_s	196.8
