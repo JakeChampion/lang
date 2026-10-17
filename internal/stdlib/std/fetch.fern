@@ -397,7 +397,7 @@ function __target_of(raw: string, policy: Policy): Result[__Target, FetchError] 
   let host_field: string = __host_field(u.host, port, tls);
   let target: string = __request_target(u)?;
   let authority: string = u.host + ":" + int.int_to_string(port);
-  match (policy.proxies.proxy_for(raw)) {
+  match (__proxy_for_url(policy.proxies, u)) {
     Some(spec) => {
       let name: string = "http_proxy";
       if (tls) {
@@ -1206,13 +1206,9 @@ function __roots_key(roots: Option[verify.Roots]): string {
 // bound is closed on the way.
 function __take_idle[T: Transport](tr: T, key: string): __Conn {
   let rows: Kept[] = __live_kept(tr);
-  let pick: i32 = 0 - 1;
-  let i: i32 = 0;
-  while (i < rows.len()) {
-    if (rows[i].key == key) {
-      pick = i;
-    }
-    i = i + 1;
+  let pick: i32 = rows.len() - 1;
+  while (pick >= 0 && rows[pick].key != key) {
+    pick = pick - 1;
   }
   if (pick < 0) {
     return __no_conn();
@@ -1232,23 +1228,33 @@ function __park[T: Transport](tr: T, key: string, conn: __Conn): void {
     __close(tr, __kept_conn(rows[from]));
     from = from + 1;
   }
-  tr.idle().kept.set(__kept_from(rows, from));
+  if (from > 0) {
+    rows = __kept_from(rows, from);
+  }
+  tr.idle().kept.set(rows);
 }
 
 // `__live_kept(tr)` — the pool's connections still inside its idle bound,
-// oldest first; the rest closed and dropped from the pool.
+// oldest first; the rest closed and dropped from the pool. A connection
+// goes in at the end when it goes idle, so the ones past the bound are
+// the rows before the first that is not.
 function __live_kept[T: Transport](tr: T): Kept[] {
   let pool: Idle = tr.idle();
+  let rows: Kept[] = pool.kept.get();
+  if (rows.len() == 0) {
+    return rows;
+  }
   let now: i64 = tr.now_ns();
   let bound: i64 = pool.idle.as_nanos();
-  let out: Kept[] = [];
-  for k in pool.kept.get() {
-    if (now - k.since > bound) {
-      __close(tr, __kept_conn(k));
-    } else {
-      out = out.append(k);
-    }
+  let from: i32 = 0;
+  while (from < rows.len() && now - rows[from].since > bound) {
+    __close(tr, __kept_conn(rows[from]));
+    from = from + 1;
   }
+  if (from == 0) {
+    return rows;
+  }
+  let out: Kept[] = __kept_from(rows, from);
   pool.kept.set(out);
   return out;
 }
@@ -3120,15 +3126,19 @@ function __or_empty(v: Option[string]): string {
 // entry limits it to that port. Names compare ASCII case-folded, without
 // a trailing dot.
 pub function (p: ProxyEnv) proxy_for(target_url: string): Option[string] {
-  let u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
   match (url.url_parse(target_url)) {
-    Some(parsed) => {
-      u = parsed;
+    Some(u) => {
+      return __proxy_for_url(p, u);
     },
     None => {
       return None;
     }
   }
+  return None;
+}
+
+// `__proxy_for_url(p, u)` — `p.proxy_for` for a URL already parsed.
+function __proxy_for_url(p: ProxyEnv, u: Url): Option[string] {
   let proxy: string = p.http_proxy;
   if (u.scheme == "https") {
     proxy = p.https_proxy;
@@ -3140,6 +3150,9 @@ pub function (p: ProxyEnv) proxy_for(target_url: string): Option[string] {
   let ip: Option[net.IpAddr] = __canonical_ip(host);
   if (__never_proxied(host, ip)) {
     return None;
+  }
+  if (p.no_proxy.len() == 0) {
+    return Some(proxy);
   }
   for entry in p.no_proxy.split(",") {
     if (__no_proxy_matches(entry.trim(), host, __effective_port(u), ip)) {
