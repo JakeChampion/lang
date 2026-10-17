@@ -5507,6 +5507,9 @@ function value_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowere
   if (ins.str == "__bytes_range") {
     return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_bytes_range", 3)) };
   }
+  if (ins.str == "__bytes_into") {
+    return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_bytes_into", 5)) };
+  }
   if (ins.str == "__rc_underflow_count") {
     return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_rc_underflow_get", 0)) };
   }

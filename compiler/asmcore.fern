@@ -6430,11 +6430,14 @@ pub function (s: EmitState) mark_array_helper(name: string): EmitState {
   if (name == "__fern_bytes_range") {
     return s.need("heap").need("bytes_range");
   }
+  if (name == "__fern_bytes_into") {
+    return s.need("heap").need("bytes_into");
+  }
   return s;
 }
 
 function array_helper_need(name: string): boolean {
-  return name == "arr_str_join" || name == "arr_concat" || name == "bytes_owned" || name == "bytes_range" || name == "byte_append" || name == "byte_write";
+  return name == "arr_str_join" || name == "arr_concat" || name == "bytes_owned" || name == "bytes_range" || name == "bytes_into" || name == "byte_append" || name == "byte_write";
 }
 
 pub function rt_src_byte_copy(append: boolean, write: boolean): string {
@@ -6673,6 +6676,16 @@ pub function rt_src_bytes_owned(): string {
 pub function rt_src_bytes_range(): string {
   return "function __fern_bytes_range(to: i32, from: i32, bytes: usize): i32[] { let n: i32 = 0; let p: usize = 0; if (((bytes as i32) & 2) != 0) { let base: usize = bytes - 2; n = __load_i32(base + 8); p = __raw_load_ptr(base, 0); } else { n = __load_i32(bytes); p = bytes + 8; } if (from < 0 || to < from || to > n) { __fern_slice_abort(); } let m: i32 = to - from; if (m == 0) { return []; } "
     + packed_box("b", "m") + " __memcpy(b + 8, p + from, m); return __raw_array(b); }";
+}
+
+// rt_src_bytes_into backs `__bytes_into(dst, at, src, from, n)`: src[from ..
+// from + n) written over dst[at ..], dst consumed and handed back, in its own
+// box when it was the only reference to it and in a copy otherwise, with the
+// slice's bounds trap. Its arguments arrive in reverse, as rt_src_bytes_range's
+// do, and the view is decoded as there.
+pub function rt_src_bytes_into(): string {
+  return "function __fern_bytes_into(n: i32, from: i32, src: usize, at: i32, dst: usize): i32[] { let sn: i32 = 0; let sp: usize = 0; if (((src as i32) & 2) != 0) { let base: usize = src - 2; sn = __load_i32(base + 8); sp = __raw_load_ptr(base, 0); } else { sn = __load_i32(src); sp = src + 8; } let dn: i32 = __load_i32(dst); if (n < 0 || at < 0 || from < 0 || at > dn - n || from > sn - n) { __fern_slice_abort(); } if (n == 0) { return __raw_array(dst); } let d: usize = dst; if (__fern_rc_is_unique(d) == 0) { "
+    + packed_box("b", "dn") + " __memcpy(b + 8, d + 8, dn); __fern_rc_dec(d); d = b; } __memcpy(d + 8 + at, sp + from, n); return __raw_array(d); }";
 }
 
 pub function rt_src_arr_slice_u8(): string {
@@ -11629,7 +11642,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     // xs.reverse() / xs.concat(ys) / a[start:end] (#3457): a LIBRARY module's
     // call resolves against the entry module's single definition, exactly
     // like the heap helpers above.
-    "__fn___fern_arr_slice", "__fn___fern_arr_str_join", "__fn___fern_arr_concat", "__fn___fern_bytes_owned", "__fn___fern_bytes_range",
+    "__fn___fern_arr_slice", "__fn___fern_arr_str_join", "__fn___fern_arr_concat", "__fn___fern_bytes_owned", "__fn___fern_bytes_range", "__fn___fern_bytes_into",
     "__fn___fern_bytes_append_range", "__fn___fern_bytes_write_range",
     "__fn___fern_str_concat", "__fn___fern_str_eq",
     "__fn___fern_string_from_bytes", "__fn___fern_str_bytes",

@@ -536,7 +536,7 @@ pub function core_builtins(): string[] {
     // wherever valgrind is not running.
     "__ct_secret", "__ct_public",
     // A byte view copied into a fresh array needs only the allocator.
-    "__bytes_owned", "__bytes_range",
+    "__bytes_owned", "__bytes_range", "__bytes_into",
     // The AES-GCM and SHA-256 kernels compute over bytes in memory and nothing
     // else; where a target has no SHA kernel, __sha256_hw or __sha1_hw says so.
     "__aes_expand_key", "__aes_ctr32", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks",

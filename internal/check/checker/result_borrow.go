@@ -189,7 +189,7 @@ func (c *checker) calleeResultBorrows(x *ast.Call) bool {
 // an array they built, so none can hand a view back however its parameters
 // look.
 var freshResultBuiltins = map[string]bool{
-	"__bytes_owned": true, "__bytes_range": true, "__aes_expand_key": true, "__aes_ctr32": true,
+	"__bytes_owned": true, "__bytes_range": true, "__bytes_into": true, "__aes_expand_key": true, "__aes_ctr32": true,
 	"__ghash": true, "__sha256_hw_blocks": true, "__sha1_hw_blocks": true,
 }
 
