@@ -5,43 +5,66 @@ pub function is_helper(name: string): boolean {
 }
 
 pub function native_source(reuse: boolean): string {
+  return native_helpers(reuse, true, true);
+}
+
+pub function native_helpers(reuse: boolean, append: boolean, write: boolean): string {
   let unique = "false";
   if (reuse) {
     unique = "__load_i32(__raw_arr_ptr(a) - 8) == 1";
   }
-  return checks()
-    + "@noinline function __fern_bytes_append_copy(a: i32[], src: i32[], from: i32, n: i32, total: i32, words: i32): i32[] { "
-    + "let p: usize = __raw_arr_box(words); __memcpy(p + 8, __raw_arr_ptr(a) + 8, a.len()); "
-    + "__memcpy(p + 8 + a.len(), __raw_arr_ptr(src) + 8 + from, n); __store_i64(p, total as i64); return __raw_array(p); } "
-    + "function __fern_bytes_append_range(own a: i32[], src: i32[], from: i32, n: i32): i32[] { "
-    + "if (n <= 0) { return a; } __fern_bytes_copy_bounds(src, from, n); "
-    + "let total64: i64 = (a.len() as i64) + (n as i64); if (total64 > 2147483647i64) { return __raw_array(__raw_arr_box(0 - 1)); } "
-    + "let total: i32 = total64 as i32; let cap: i64 = __load_i64(__raw_arr_ptr(a) - 16); "
-    + "if (" + unique + " && total64 <= cap * 8i64) { "
-    + "__memcpy(__raw_arr_ptr(a) + 8 + a.len(), __raw_arr_ptr(src) + 8 + from, n); "
-    + "__store_i64(__raw_arr_ptr(a), total64); return a; } "
+  let out = native_clone();
+  if (append) {
+    out = out + native_append(unique);
+  }
+  if (write) {
+    out = out + native_write(unique);
+  }
+  return out;
+}
+
+function native_append(unique: string): string {
+  return "function __fern_bytes_append_range(own a: i32[], src: i32[], from: i32, n: i32): i32[] { "
+    + "if (n <= 0) { return a; } " + native_bounds("src", "from")
+    + "let len = a.len(); let total64: i64 = (len as i64) + (n as i64); if (total64 > 2147483647i64) { return __raw_array(__raw_arr_box(0 - 1)); } "
+    + "let cap: i64 = __load_i64(__raw_arr_ptr(a) - 16); let reuse = " + unique + " && total64 <= cap * 8i64; "
+    + "let out = a; if (!reuse) { "
     + "let words: i64 = cap; if (words < 4i64) { words = 4i64; } "
     + "while (words * 8i64 < total64) { words = words * 2i64; } "
-    + "return __fern_bytes_append_copy(a, src, from, n, total, words as i32); } "
-    + "@noinline function __fern_bytes_write_copy(a: i32[], at: i32, src: i32[], from: i32, n: i32): i32[] { "
-    + "let p: usize = __raw_arr_box(__load_i64(__raw_arr_ptr(a) - 16) as i32); "
-    + "__memcpy(p + 8, __raw_arr_ptr(a) + 8, a.len()); __memcpy(p + 8 + at, __raw_arr_ptr(src) + 8 + from, n); "
-    + "__store_i64(p, a.len() as i64); return __raw_array(p); } "
-    + "function __fern_bytes_write_range(own a: i32[], at: i32, src: i32[], from: i32, n: i32): i32[] { "
-    + "if (n <= 0) { return a; } __fern_bytes_copy_bounds(src, from, n); __fern_bytes_copy_bounds(a, at, n); "
-    + "if (" + unique + ") { __memcpy(__raw_arr_ptr(a) + 8 + at, __raw_arr_ptr(src) + 8 + from, n); return a; } "
-    + "return __fern_bytes_write_copy(a, at, src, from, n); }";
+    + "out = __fern_bytes_clone(out, words as i32); } "
+    + "__memcpy(__raw_arr_ptr(out) + 8 + len, __raw_arr_ptr(src) + 8 + from, n); "
+    + "__store_i64(__raw_arr_ptr(out), total64); return out; } ";
 }
 
-function checks(): string {
-  return "@noinline function __fern_bytes_copy_bounds(a: i32[], from: i32, n: i32): void { "
-    + "if (from < 0 || from > a.len() || n > a.len() - from) { __fern_oob_abort(); } } ";
+function native_write(unique: string): string {
+  return "function __fern_bytes_write_range(own a: i32[], at: i32, src: i32[], from: i32, n: i32): i32[] { "
+    + "if (n <= 0) { return a; } " + native_bounds("src", "from") + native_bounds("a", "at")
+    + "let reuse = " + unique + "; let out = a; if (!reuse) { "
+    + "out = __fern_bytes_clone(out, __load_i64(__raw_arr_ptr(out) - 16) as i32); } "
+    + "__memcpy(__raw_arr_ptr(out) + 8 + at, __raw_arr_ptr(src) + 8 + from, n); return out; } ";
 }
 
-pub function wasm_source(): string {
-  return "  (func $__fern_bytes_copy_bounds (param $a i32) (param $from i32) (param $n i32)\n"
-    + "    (if (i32.or (i32.gt_u (local.get $from) (i32.load (local.get $a))) (i32.gt_s (local.get $n) (i32.sub (i32.load (local.get $a)) (local.get $from)))) (then (unreachable))))\n"
-    + wasm_append() + wasm_write();
+function native_clone(): string {
+  // The borrowed argument keeps the old storage alive through the raw copy.
+  return "@noinline function __fern_bytes_clone(a: i32[], words: i32): i32[] { "
+    + "let p: usize = __raw_arr_box(words); __memcpy(p + 8, __raw_arr_ptr(a) + 8, a.len()); "
+    + "__store_i64(p, a.len() as i64); return __raw_array(p); } ";
+}
+
+function native_bounds(a: string, from: string): string {
+  return "if ((" + from + " as u32) > (" + a + ".len() as u32) || n > " + a + ".len() - " + from + ") { __fern_oob_abort(); } ";
+}
+
+pub function wasm_source(append: boolean, write: boolean): string {
+  let out = "  (func $__fern_bytes_copy_bounds (param $a i32) (param $from i32) (param $n i32)\n"
+    + "    (if (i32.or (i32.gt_u (local.get $from) (i32.load (local.get $a))) (i32.gt_s (local.get $n) (i32.sub (i32.load (local.get $a)) (local.get $from)))) (then (unreachable))))\n";
+  if (append) {
+    out = out + wasm_append();
+  }
+  if (write) {
+    out = out + wasm_write();
+  }
+  return out;
 }
 
 function wasm_append(): string {

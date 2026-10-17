@@ -105,9 +105,9 @@ x86_64/struct_drop.text	1690
 x86_64/struct_drop.ir	308020547
 x86_64/tokenize.text	978
 x86_64/tokenize.ir	36960039
-x86_64/utf8_ingest_unchecked.text	7022
+x86_64/utf8_ingest_unchecked.text	7150
 x86_64/utf8_ingest_unchecked.ir	2833481
-x86_64/utf8_ingest_validated.text	7284
+x86_64/utf8_ingest_validated.text	7412
 x86_64/utf8_ingest_validated.ir	5916089
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
@@ -265,9 +265,9 @@ aarch64/struct_drop.text	1922
 aarch64/struct_drop.ir	348380825
 aarch64/tokenize.text	1203
 aarch64/tokenize.ir	38580038
-aarch64/utf8_ingest_unchecked.text	7402
+aarch64/utf8_ingest_unchecked.text	7561
 aarch64/utf8_ingest_unchecked.ir	2703816
-aarch64/utf8_ingest_validated.text	7667
+aarch64/utf8_ingest_validated.text	7826
 aarch64/utf8_ingest_validated.ir	6347933
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.

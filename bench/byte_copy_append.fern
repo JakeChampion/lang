@@ -1,0 +1,46 @@
+@noinline
+function data(n: i32): u8[] {
+  let a = __alloc_u8(n);
+  let i = 0;
+  while (i < n) {
+    a = a.with(i, (i + 1) as u8);
+    i = i + 1;
+  }
+  return a;
+}
+
+@noinline
+function cat(own a: u8[], src: u8[]): u8[] {
+  let i = 0;
+  while (i < src.len()) {
+    a = a.append(src[i]);
+    i = i + 1;
+  }
+  return a;
+}
+
+@noinline
+function checksum(a: u8[]): i32 {
+  let s = 0;
+  let i = 0;
+  while (i < a.len()) {
+    s = s + a[i] as i32;
+    i = i + 1;
+  }
+  return s;
+}
+
+function main(): i32 {
+  let src = data(16384);
+  let a: u8[] = [];
+  let i = 0;
+  while (i < 3000) {
+    let empty: u8[] = [];
+    a = cat(empty, src);
+    i = i + 1;
+  }
+  if (checksum(a) != 2088960) {
+    return 1;
+  }
+  return 0;
+}

@@ -159,6 +159,39 @@ function main(): i32 {
 			if !strings.Contains(string(assembly), "__fern_bytes_append_range") {
 				t.Fatal("length-bounded append kept its byte loop")
 			}
+			if strings.Contains(string(assembly), "__fn___fern_bytes_write_range:") || strings.Contains(string(assembly), "(func $__fern_bytes_write_range ") {
+				t.Fatal("append-only program emits the write kernel")
+			}
+		})
+	}
+}
+
+func TestSelfHostByteCopyConstantInputs(t *testing.T) {
+	const program = `@noinline function copied(own a: u8[], src: u8[], n: i32): u8[] {
+  let i = 0; while (i < n) { a = a.with(i, src[i]); i = i + 1; } return a;
+}
+function main(): i32 {
+  let a: u8[] = [9u8, 8u8, 7u8, 6u8]; let src: u8[] = [1u8, 2u8, 3u8, 4u8];
+  let out = copied(a, src, 4); if (out[0] != 1u8 || out[3] != 4u8) { return 1; } return 0;
+}`
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, program, target)
+			if code != 0 {
+				t.Fatalf("constant-input copy: exit %d\n%s", code, stderr)
+			}
+			src := filepath.Join(t.TempDir(), "copy.fern")
+			if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			assembly, err := os.ReadFile(cli.emit(t, src, target))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(assembly), "__fn___fern_bytes_append_range:") || strings.Contains(string(assembly), "(func $__fern_bytes_append_range ") {
+				t.Fatal("write-only program emits the append kernel")
+			}
 		})
 	}
 }

@@ -43,3 +43,10 @@ execution, balanced frees, bounds aborts, zero-trip behavior, observable final
 indices, sequential-source and effectful-loop controls, encoded WASI output,
 and sparse block identities after inlining. The compiler bootstrap remains a
 separate check over its full semantic graphs.
+
+`bench/byte_copy_append.fern` and `bench/byte_copy_with.fern` exercise repeated
+16 KiB copies and check the resulting contents. The runtime emits only the
+requested kernel family and shares its borrowed clone helper. The UTF-8
+ingestion benchmarks reach a copy loop in string padding: their native
+assembly-line footprint grows by 128 on x86-64 and 159 on ARM64. Those measured
+costs are recorded in the performance baseline; its tolerances are unchanged.

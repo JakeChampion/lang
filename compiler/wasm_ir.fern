@@ -1646,8 +1646,11 @@ function array_helper_needs(cache: irtables.LowerResult[], own out: string[]): s
   if (module_calls_direct(cache, "__fern_bytes_owned") || module_calls_direct(cache, "__fern_bytes_range")) {
     out = out.append("@uses_bytes_owned");
   }
-  if (module_calls_direct(cache, "__fern_bytes_append_range") || module_calls_direct(cache, "__fern_bytes_write_range")) {
-    out = out.append("@uses_byte_copy");
+  if (module_calls_direct(cache, "__fern_bytes_append_range")) {
+    out = out.append("@uses_byte_append");
+  }
+  if (module_calls_direct(cache, "__fern_bytes_write_range")) {
+    out = out.append("@uses_byte_write");
   }
   return out;
 }
@@ -1665,8 +1668,8 @@ function array_helper_parts(needs: string[], own parts: string[], empty: i32): s
   if (need(needs, "@uses_bytes_owned")) {
     parts = parts.append(bytes_owned_helper(empty));
   }
-  if (need(needs, "@uses_byte_copy")) {
-    parts = parts.append(rtbytecopy.wasm_source());
+  if (need(needs, "@uses_byte_append") || need(needs, "@uses_byte_write")) {
+    parts = parts.append(rtbytecopy.wasm_source(need(needs, "@uses_byte_append"), need(needs, "@uses_byte_write")));
   }
   return parts;
 }

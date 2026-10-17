@@ -11519,9 +11519,9 @@ function ir_i2f_rax(width: i32, unsigned: boolean, lb: string, d: string): strin
 // functions (#5328) that fill one exact-size block. Heap-dependent (present above). .text since
 // the heap runtime left us in .bss.
 function emit_array_helpers(s: asmcore.EmitState): asmcore.EmitState {
-  if (s.has_need("byte_copy")) {
+  if (s.has_need("byte_append") || s.has_need("byte_write")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_byte_copy(), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_byte_copy(s.has_need("byte_append"), s.has_need("byte_write")), s);
   }
   if (s.has_need("arr_str_join")) {
     s = s.write("    .text\n");

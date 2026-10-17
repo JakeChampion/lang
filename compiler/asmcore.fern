@@ -6406,8 +6406,11 @@ pub function rt_src_string_from_bytes(): string {
 // `+` in it, so the heap is the only runtime it reaches; runtime_need_deps
 // declares the same edge for close_needs.
 pub function (s: EmitState) mark_array_helper(name: string): EmitState {
-  if (rtbytecopy.is_helper(name)) {
-    return s.need("heap").need("byte_copy");
+  if (name == "__fern_bytes_append_range") {
+    return s.need("heap").need("byte_append");
+  }
+  if (name == "__fern_bytes_write_range") {
+    return s.need("heap").need("byte_write");
   }
   if (name == "__fern_arr_str_join") {
     return s.need("heap").need("arr_str_join");
@@ -6422,11 +6425,11 @@ pub function (s: EmitState) mark_array_helper(name: string): EmitState {
 }
 
 function array_helper_need(name: string): boolean {
-  return name == "arr_str_join" || name == "arr_concat" || name == "bytes_owned" || name == "byte_copy";
+  return name == "arr_str_join" || name == "arr_concat" || name == "bytes_owned" || name == "byte_append" || name == "byte_write";
 }
 
-pub function rt_src_byte_copy(): string {
-  return rtbytecopy.native_source(true);
+pub function rt_src_byte_copy(append: boolean, write: boolean): string {
+  return rtbytecopy.native_helpers(true, append, write);
 }
 
 // str_lines's helper builds its string[] with .append() → arr_push /
