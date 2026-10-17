@@ -128,12 +128,7 @@ function __copy(src: [u8], from: i32, len: i32): u8[] {
 }
 
 function __put(own dst: u8[], at: i32, src: [u8]): u8[] {
-  let i: i32 = 0;
-  while (i < src.len()) {
-    dst = dst.with(at + i, src[i]);
-    i = i + 1;
-  }
-  return dst;
+  return __bytes_into(dst, at, src, 0, src.len());
 }
 
 function __header(own dst: u8[], at: i32, t: i32, version: i32, len: i32): u8[] {

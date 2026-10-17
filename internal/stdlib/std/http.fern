@@ -1274,12 +1274,7 @@ function __chunked_body(buf: u8[], spans: i32[]): u8[] {
   let o: i32 = 0;
   k = 0;
   while (k + 1 < spans.len()) {
-    let start: i32 = spans[k];
-    let i: i32 = 0;
-    while (i < spans[k + 1]) {
-      out = out.with(o + i, buf[start + i]);
-      i = i + 1;
-    }
+    out = __bytes_into(out, o, buf, spans[k], spans[k + 1]);
     o = o + spans[k + 1];
     k = k + 2;
   }
