@@ -1,0 +1,53 @@
+[
+  {
+    "target": "x86-64-linux",
+    "compiler": "base",
+    "instructions": 5,
+    "listing": [
+      "movq 8(%rsp), %rax",
+      "movq 16(%rsp), %rsi",
+      "xorq $-1, %rsi",
+      "andq %rsi, %rax",
+      "ret"
+    ],
+    "compiler_sha256": "cc58899661530f0e562beb8b6ed585e53d21180693b42cd7ccd8288d91f12190"
+  },
+  {
+    "target": "x86-64-linux",
+    "compiler": "new",
+    "instructions": 4,
+    "listing": [
+      "movq 8(%rsp), %rax",
+      "movq 16(%rsp), %rsi",
+      "andnq %rax, %rsi, %rax",
+      "ret"
+    ],
+    "compiler_sha256": "e65e665567d2a91fa82fc6587808736cea2cb94bc3246a1dab8104c43e7461c4"
+  },
+  {
+    "target": "arm64-linux",
+    "compiler": "base",
+    "instructions": 6,
+    "listing": [
+      "ldr x0, [sp, #0]",
+      "ldr x9, [sp, #16]",
+      "movn x10, #0, lsl #0",
+      "eor x9, x9, x10",
+      "and x0, x0, x9",
+      "ret"
+    ],
+    "compiler_sha256": "cc58899661530f0e562beb8b6ed585e53d21180693b42cd7ccd8288d91f12190"
+  },
+  {
+    "target": "arm64-linux",
+    "compiler": "new",
+    "instructions": 4,
+    "listing": [
+      "ldr x0, [sp, #0]",
+      "ldr x9, [sp, #16]",
+      "bic x0, x0, x9",
+      "ret"
+    ],
+    "compiler_sha256": "e65e665567d2a91fa82fc6587808736cea2cb94bc3246a1dab8104c43e7461c4"
+  }
+]

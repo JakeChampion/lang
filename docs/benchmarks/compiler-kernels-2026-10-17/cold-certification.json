@@ -1,0 +1,49 @@
+{
+  "compiler_sha256": "e65e665567d2a91fa82fc6587808736cea2cb94bc3246a1dab8104c43e7461c4",
+  "memo": "disabled; cold certification every run",
+  "rows": [
+    {
+      "pair": 0,
+      "mode": "disabled",
+      "seconds": 18.57600848199945,
+      "output_sha256": "e65e665567d2a91fa82fc6587808736cea2cb94bc3246a1dab8104c43e7461c4"
+    },
+    {
+      "pair": 0,
+      "mode": "enabled",
+      "seconds": 27.907979114999762,
+      "output_sha256": "e65e665567d2a91fa82fc6587808736cea2cb94bc3246a1dab8104c43e7461c4"
+    },
+    {
+      "pair": 1,
+      "mode": "enabled",
+      "seconds": 27.118065561997355,
+      "output_sha256": "e65e665567d2a91fa82fc6587808736cea2cb94bc3246a1dab8104c43e7461c4"
+    },
+    {
+      "pair": 1,
+      "mode": "disabled",
+      "seconds": 18.63025981700048,
+      "output_sha256": "e65e665567d2a91fa82fc6587808736cea2cb94bc3246a1dab8104c43e7461c4"
+    },
+    {
+      "pair": 2,
+      "mode": "disabled",
+      "seconds": 21.3398670509996,
+      "output_sha256": "e65e665567d2a91fa82fc6587808736cea2cb94bc3246a1dab8104c43e7461c4"
+    },
+    {
+      "pair": 2,
+      "mode": "enabled",
+      "seconds": 26.800755774005665,
+      "output_sha256": "e65e665567d2a91fa82fc6587808736cea2cb94bc3246a1dab8104c43e7461c4"
+    }
+  ],
+  "ratios": [
+    1.5023668374206003,
+    1.4555924516549998,
+    1.2559007846653978
+  ],
+  "median_ratio": 1.4555924516549998,
+  "environment_note": "Other compiler builds and tests ran concurrently on this four-core development container. These elapsed-time samples are noisy; no improvement is claimed."
+}
