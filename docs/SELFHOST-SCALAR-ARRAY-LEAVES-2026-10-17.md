@@ -16,7 +16,9 @@ and `@noinline`, `fip` and `fbip` retain their masks.
 
 The control is the self-built compiler at `8b08453d8`, SHA-256
 `097d955d04442da04d2af425237fa38711157ded8cc7d0c5bf948c4329dc8234`.
-That compiler built the candidate from `de9bf396d`; its SHA-256 is
+That compiler built the candidate from the control sources plus the retained
+[compiler patch](benchmarks/scalar-array-leaves-2026-10-17/compiler-source.patch)
+(local measurement commit `de9bf396d`); its SHA-256 is
 `0b40ff31921db1f58569e0b08a50d4fcf11316b360fb32bc977870e48bfb4d6b`.
 Both compile exactly the same workload sources and stdlib. The separate
 self-built candidate is recorded below.
@@ -90,8 +92,10 @@ on later main revisions are recorded in the PR.
 
 ## Reproducing an instruction comparison
 
-Use a self-built control from `8b08453d8`, candidate sources at `de9bf396d`
-and the common stdlib from the control revision. Set `CONTROL_COMPILER`,
+Use a self-built control from `8b08453d8`. Prepare a second source checkout at
+that revision and apply the retained compiler patch to reconstruct the measured
+candidate independently of rebased commit IDs. Use the common stdlib from the
+control revision. Set `CONTROL_COMPILER`,
 `CANDIDATE_SOURCE`, `COMMON_STDLIB` and `CORPUS_PATH` to those local paths.
 The retained corpus metadata identifies the downloads and their hashes.
 

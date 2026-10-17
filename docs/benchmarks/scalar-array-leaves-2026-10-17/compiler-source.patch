@@ -1,0 +1,51 @@
+diff --git a/compiler/seminline.fern b/compiler/seminline.fern
+index cd9b6df65..07c874f26 100644
+--- a/compiler/seminline.fern
++++ b/compiler/seminline.fern
+@@ -1,10 +1,13 @@
+-// Tiny scalar leaves spliced into their callers, then constructions read apart.
++// Tiny scalar and scalar-array leaves spliced into their callers, then
++// constructions read apart.
+ //
+ // A leaf here computes only on scalars and tuples of them, reading a record
+ // parameter's scalar fields and a variant's position and payload at most,
+-// and calls nothing but a scalar primitive such as `__mulhi_u64`. Splicing it moves no count: every value it makes is a
+-// word or a fresh tuple or variant the splice then takes apart, and a field
+-// or payload read is planned in the caller like any other. A tuple,
++// and calls nothing but a scalar primitive such as `__mulhi_u64`. It may also
++// append or update a scalar array: those remain typed value operations for
++// the caller's count planner to choose copying or reuse, including when an
++// owned argument shares storage with an older alias. A field or payload read
++// is planned in the caller like any other. A tuple,
+ // record or variant built and only read, which is what a spliced `(ok, value)`
+ // return becomes, is never allocated: each read takes the part straight from
+ // the construction, through the phi that joins several returns, and a
+@@ -647,6 +650,19 @@ function leaf_kind(k: i32): boolean {
+     || line_mark(k);
+ }
+ 
++// Keep reference-element collections out of this leaf admission rule. Their
++// element ownership and child operations are a separate shape; scalar array
++// updates use the ordinary immutable operations the splice already handles.
++function leaf_array_op(f: ssasem.Func, ins: ssa.SInst): boolean {
++  if (ins.kind_tag != ssasem.append() && ins.kind_tag != ssasem.with()) {
++    return false;
++  }
++  if let typeinfo.TypeArray(a) = f.values[ins.args[0]] {
++    return !a.view && scalar(a.elem);
++  }
++  return false;
++}
++
+ function record(t: typeinfo.Type): boolean {
+   if let typeinfo.TypeStruct(_) = t {
+     return true;
+@@ -863,7 +879,7 @@ function leaf_body(f: ssasem.Func, ignored: i32): boolean {
+     }
+     returns = returns || b.term.kind_tag == 1;
+     for ins in b.insts {
+-      if (!leaf_kind(ins.kind_tag) && !(ins.kind_tag == ssasem.call() && ssasem.scalar_primitive(ins.str))) {
++      if (!leaf_kind(ins.kind_tag) && !leaf_array_op(f, ins) && !(ins.kind_tag == ssasem.call() && ssasem.scalar_primitive(ins.str))) {
+         return false;
+       }
+       if ((ins.kind_tag == ssasem.record_get() || ins.kind_tag == ssasem.variant_get() && member_read(f, ins)) && !scalar(f.values[ins.result])) {

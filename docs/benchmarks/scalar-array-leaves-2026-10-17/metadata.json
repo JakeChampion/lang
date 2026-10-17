@@ -79,5 +79,11 @@
     "All 35 frozen benchmark binaries are byte-identical; the map_string instruction variation is from randomized per-process hashing in the same binary.",
     "Native samples vary by several percent; Canada is inconclusive for runtime benefit.",
     "Instruction profiles and native timings are separate runs; timings ran with no other local heavy tasks."
-  ]
+  ],
+  "candidate_source_revision_is_local_measurement_commit": true,
+  "candidate_source_recipe": "Checkout control_source_revision and apply compiler-source.patch; the retained patch reconstructs the measured compiler sources independently of rebased commit IDs.",
+  "compiler_source_patch": {
+    "bytes": 2689,
+    "sha256": "e5cca34fc1c309bd111131d38a16ddf19c449a38710585102aa8395d692e89ce"
+  }
 }
