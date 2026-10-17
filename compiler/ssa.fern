@@ -19,6 +19,7 @@ import "./ast";
 import "./parser";
 import "./astwalk";
 import "./util";
+import "./ssafixed";
 
 // digits_to_i32 parses a decimal literal's text (non-negative; unary minus
 // is a separate ExprUnary). Mirrors the private helper in the emitters.
@@ -861,6 +862,32 @@ function pick_caller_reg(free: i32[], abi_reg: i32, want_abi: boolean, abi_ok: b
   return abi_reg;
 }
 
+function pick_fixed_reg(free: i32[], abi_reg: i32, want_abi: boolean, abi_ok: boolean, fixed: ssafixed.Table, lo: i32, hi: i32): i32 {
+  if (fixed.before.len() == 0) {
+    return pick_caller_reg(free, abi_reg, want_abi, abi_ok);
+  }
+  let take_abi = abi_ok && abi_reg >= 0 && ssafixed.allows(fixed, abi_reg, lo, hi) && index_of_reg(free, abi_reg) >= 0;
+  if (want_abi && take_abi) {
+    return abi_reg;
+  }
+  let i = free.len() - 1;
+  while (i >= 0) {
+    let r = free[i];
+    if (r != abi_reg && ssafixed.allows(fixed, r, lo, hi)) {
+      return r;
+    }
+    i = i - 1;
+  }
+  if (take_abi) {
+    return abi_reg;
+  }
+  return 0 - 1;
+}
+
+function preferred_register_allowed(reg: i32, abi: i32, abi_ok: boolean, calls: i32[], lo: i32, hi: i32, fixed: ssafixed.Table): boolean {
+  return reg >= 0 && !spans_call(calls, lo, hi) && (reg != abi || abi_ok) && ssafixed.allows(fixed, reg, lo, hi);
+}
+
 function remove_reg(free: i32[], reg: i32): i32[] {
   let out: i32[] = [];
   let dropped: boolean = false;
@@ -886,13 +913,13 @@ function forbidden_abi(abi_reg: i32, allowed: boolean): i32 {
 // position it covers (the latest ending on a tie), or -1. A spilled value pays
 // at every reference and frees its register for its whole interval, so what is
 // spilled should minimize weighted reference cost for its lifetime.
-function cheapest_active(act_val: i32[], act_reg: i32[], act_hi: i32[], shared_with: i32[], weight: i32[], lo: i32[], hi: i32[], now: i32, nregs: i32, need_saved: boolean, forbidden: i32): i32 {
+function cheapest_active(act_val: i32[], act_reg: i32[], act_hi: i32[], shared_with: i32[], weight: i32[], lo: i32[], hi: i32[], now: i32, nregs: i32, need_saved: boolean, forbidden: i32, fixed: ssafixed.Table, until: i32): i32 {
   let best: i32 = 0 - 1;
   let best_w: i32 = 0;
   let best_len: i32 = 1;
   let i: i32 = 0;
   while (i < act_val.len()) {
-    if (act_reg[i] >= nregs == need_saved && act_reg[i] != forbidden) {
+    if (act_reg[i] >= nregs == need_saved && act_reg[i] != forbidden && ssafixed.allows(fixed, act_reg[i], now, until)) {
       let w: i32 = chain_weight(act_val[i], shared_with, weight, hi, now);
       let len: i32 = act_hi[i] - chain_lo(act_val[i], shared_with, lo, hi, now) + 1;
       let cmp: i32 = cmp_spill_cost(w, len, best_w, best_len);
@@ -1224,6 +1251,10 @@ function count_false(fl: boolean[]): i32 {
 // for nothing. A value a block returns that names no register asks for
 // `abi_reg`, where the return reads it (`return_prefs`).
 pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32): Alloc {
+  return regalloc_linear_fixed(f, nregs, nsaved, abi_reg, abi_fixed_by_div, no_home, pref, fl, nf, nfs, ssafixed.none());
+}
+
+pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table): Alloc {
   let wish: i32[] = return_prefs(f, pref, abi_reg);
   let big: i32 = 2000000000;
   let lo: i32[] = __alloc_i32(f.nvals);
@@ -1341,6 +1372,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
     i = i + 1;
   }
   let total_pos: i32 = pos;
+  ssafixed.validate(fixed, nregs, total_pos);
   let at: i32[] = block_positions(f);
   // A phi reads its operand on the edge from the predecessor, at that
   // block's terminator, not at its own position inside the header. Read
@@ -1538,7 +1570,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
         if (v < wish.len()) {
           pr = wish[v];
         }
-        if (pr < 0 || spans_call(cum, lo[v], hi[v]) || pr == abi_reg && !abi_ok) {
+        if (!preferred_register_allowed(pr, abi_reg, abi_ok, cum, lo[v], hi[v], fixed)) {
           continue;
         }
         if (index_of_reg(free, pr) >= 0) {
@@ -1566,7 +1598,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
       if (call_def[v] == 1 && h != mates.hint[v] && hr != abi_reg) {
         continue;
       }
-      if (hr < cbase || spans_call(cum, lo[v], hi[v]) && hr < sat || hr == cabi && !abi_ok) {
+      if (hr < cbase || spans_call(cum, lo[v], hi[v]) && hr < sat || hr == cabi && !abi_ok || !ssafixed.allows(fixed, hr, lo[v], hi[v])) {
         continue;
       }
       let fi: i32 = index_of_reg(free, hr);
@@ -1618,7 +1650,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
       oi = oi + 1;
       continue;
     }
-    let pick: i32 = pick_caller_reg(free, cabi, call_def[v] == 1 && abi_ok, abi_ok);
+    let pick: i32 = pick_fixed_reg(free, cabi, call_def[v] == 1 && abi_ok, abi_ok, fixed, lo[v], hi[v]);
     let from_caller: boolean = !spans_call(cum, lo[v], hi[v]) && pick >= 0;
     if (!from_caller && free_s.len() == 0) {
       // Nothing free: take the register from the active interval whose
@@ -1626,7 +1658,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
       // instead. `need_saved` keeps the two pools apart, since a value
       // live across a call may only sit in a callee-saved register.
       let need_saved: boolean = spans_call(cum, lo[v], hi[v]);
-      let fa: i32 = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, lo, hi, lo[v], sat, need_saved, forbidden_abi(cabi, abi_ok));
+      let fa: i32 = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, lo, hi, lo[v], sat, need_saved, forbidden_abi(cabi, abi_ok), fixed, hi[v]);
       let cmp: i32 = 0;
       if (fa >= 0) {
         let fw: i32 = chain_weight(act_val[fa], shared_with, weight, hi, lo[v]);
