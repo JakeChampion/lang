@@ -206,22 +206,7 @@ pub function checked(mans: ManifestAt[], root: caps.Pkg, modules: ModuleAt[], pr
   while (i < modules.len()) {
     let m: ModuleAt = modules[i];
     if (!m.stdlib) {
-      let dir: string = m.owner_dir;
-      let name: string = m.name;
-      // Explicit grants define a package boundary even when the dependency
-      // has no manifest. Local imports inside that boundary remain governed.
-      for h in held {
-        if (within(m.dir, h.dir) && (!within(m.dir, dir) || h.dir.len() > dir.len())) {
-          dir = h.dir;
-          name = slice_unchecked(dir, modloader.dirname(dir).len(), dir.len()) + "";
-        }
-      }
-      let at: i32 = holding_index(held, dir);
-      let grants: string[] = [];
-      if (at >= 0) {
-        grants = held[at].grants;
-      }
-      pkgs = pkgs.append(caps.Pkg { module: prefixes[i], dir: dir, name: name, root: dir == root.dir, governed: at >= 0, grants: grants });
+      pkgs = pkgs.append(module_package(m, prefixes[i], root, held));
     }
     i = i + 1;
   }
@@ -238,4 +223,24 @@ function manifest_errors(mans: ManifestAt[]): string {
     }
   }
   return joined(sorted_unique(errors), "\n");
+}
+
+// Resolve a module's boundary independently of its display name.
+function module_package(m: ModuleAt, prefix: string, root: caps.Pkg, held: Holding[]): caps.Pkg {
+  let dir: string = m.owner_dir;
+  let name: string = m.name;
+  // Explicit grants define a package boundary even when the dependency
+  // has no manifest. Local imports inside that boundary remain governed.
+  for h in held {
+    if (within(m.dir, h.dir) && (!within(m.dir, dir) || h.dir.len() > dir.len())) {
+      dir = h.dir;
+      name = slice_unchecked(dir, modloader.dirname(dir).len(), dir.len()) + "";
+    }
+  }
+  let at: i32 = holding_index(held, dir);
+  let grants: string[] = [];
+  if (at >= 0) {
+    grants = held[at].grants;
+  }
+  return caps.Pkg { module: prefix, dir: dir, name: name, root: dir == root.dir, governed: at >= 0, grants: grants };
 }
