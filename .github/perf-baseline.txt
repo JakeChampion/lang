@@ -72,7 +72,7 @@ x86_64/int_loop.ir	12000022
 x86_64/map_int.text	5642
 x86_64/map_int.ir	38013213
 x86_64/map_probe_chain.text	5649
-x86_64/map_probe_chain.ir	358674901
+x86_64/map_probe_chain.ir	354691233
 x86_64/map_string.text	6168
 x86_64/map_string.ir	62112069	2
 x86_64/ordmap_insert.text	2808
@@ -230,11 +230,11 @@ aarch64/http_hello.ir	29648969
 aarch64/int_loop.text	90
 aarch64/int_loop.ir	18000025
 aarch64/map_int.text	6048
-aarch64/map_int.ir	37932494
+aarch64/map_int.ir	37224371
 aarch64/map_probe_chain.text	6059
-aarch64/map_probe_chain.ir	361845532
+aarch64/map_probe_chain.ir	353848242
 aarch64/map_string.text	6632
-aarch64/map_string.ir	64821463	2
+aarch64/map_string.ir	63502584	2
 aarch64/ordmap_insert.text	3184
 aarch64/ordmap_insert.ir	118541839
 aarch64/pmap_insert.text	2899
