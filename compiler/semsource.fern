@@ -8051,6 +8051,11 @@ function rc_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__map_hash_seed", params: [], modes: [], result: t_i32() },
     ssasem.Contract { name: "__fern_drop_arr_ptr", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
     ssasem.Contract { name: "__fern_arr_dec", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
+    // 1 when the box is its only reference, 0 when shared or immortal.
+    ssasem.Contract { name: "__fern_rc_is_unique", params: [t_usize()], modes: [v], result: t_i32() },
+    // One reference to a box given up, by a runtime helper that holds one it
+    // has replaced with a copy; the box is shared, so this never frees it.
+    ssasem.Contract { name: "__fern_rc_dec", params: [t_usize()], modes: [v], result: t_void() },
     // The handle release in __map_drop_impl: frees the rc'd block at the
     // address minus its header, and answers the address.
     ssasem.Contract { name: "__fern_box_free", params: [t_usize(), t_i32()], modes: [v, v], result: t_usize() },
@@ -8174,6 +8179,7 @@ function aes_gcm_contracts(): ssasem.Contract[] {
   return [
     ssasem.Contract { name: "__bytes_owned", params: [view], modes: [b], result: bytes },
     ssasem.Contract { name: "__bytes_range", params: [view, t_i32(), t_i32()], modes: [b, ssaunits.value_mode(), ssaunits.value_mode()], result: bytes },
+    ssasem.Contract { name: "__bytes_into", params: [bytes, t_i32(), view, t_i32(), t_i32()], modes: [ssaunits.counted_mode(), ssaunits.value_mode(), b, ssaunits.value_mode(), ssaunits.value_mode()], result: bytes },
     ssasem.Contract { name: "__aes_expand_key", params: [view], modes: [b], result: bytes },
     ssasem.Contract { name: "__aes_ctr32", params: [view, view, view], modes: [b, b, b], result: bytes },
     ssasem.Contract { name: "__ghash", params: [view, view, view], modes: [b, b, b], result: bytes },
