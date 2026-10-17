@@ -4976,7 +4976,7 @@ pub function carry_triple(blk: SBlock, ii: i32, uses: i32[]): boolean {
   if (sub) {
     return reader.args[1] == c.result && reader.args[0] != c.result;
   }
-  return (reader.args[0] == c.result) != (reader.args[1] == c.result);
+  return reader.args[0] == c.result != (reader.args[1] == c.result);
 }
 
 // fuse_carries rewrites the branch-free carry out of a 64-bit add,
