@@ -20,10 +20,7 @@ index cd9b6df65..07c874f26 100644
  // record or variant built and only read, which is what a spliced `(ok, value)`
  // return becomes, is never allocated: each read takes the part straight from
  // the construction, through the phi that joins several returns, and a
-@@ -647,6 +650,19 @@ function leaf_kind(k: i32): boolean {
-     || line_mark(k);
- }
- 
+@@ -650,3 +653,16 @@ function leaf_kind(k: i32): boolean {
 +// Keep reference-element collections out of this leaf admission rule. Their
 +// element ownership and child operations are a separate shape; scalar array
 +// updates use the ordinary immutable operations the splice already handles.
