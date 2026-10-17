@@ -1,6 +1,12 @@
 package e2ecompiler
 
-import "testing"
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 // bytesOwnedProgram copies byte views into owned arrays with
 // `__bytes_owned`: a slice of a packed u8[], a string's bytes (a view tagged
@@ -132,4 +138,86 @@ func TestSelfHostBytesRangeKeptInPlace(t *testing.T) {
 	want := "2 2 0\n"
 	runSemanticProgram(t, "keptrange", keptRangeProgram, []string{"rest", "compact"},
 		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want, "wasm32-wasi": want})
+}
+
+// bytesIntoProgram writes ranges over arrays with `__bytes_into`: from a
+// packed u8[], from a string's bytes and from a slice of a view; over an
+// array another binding still holds, which must keep its bytes while the
+// write lands in a copy; and an empty write at the very end of both. The
+// last line writes 100 times into one 64-byte buffer nothing else holds,
+// which allocates nothing: each write lands in the buffer's own box.
+const bytesIntoProgram = `import "std/i64";
+
+@noinline function into(own dst: u8[], at: i32, src: [u8], from: i32, n: i32): u8[] {
+  return __bytes_into(dst, at, src, from, n);
+}
+
+@noinline function sum(xs: u8[]): i64 {
+  let t: i64 = 0i64;
+  for x in xs {
+    t = t * 31i64 + x as i64;
+  }
+  return t;
+}
+
+function main(): i32 {
+  let src: u8[] = [10, 20, 30, 40, 50, 60];
+  let s: string = "abcdefgh";
+  let a: u8[] = __alloc_u8(8);
+  a = into(a, 1, src, 2, 3);
+  a = into(a, 5, s.as_bytes(), 1, 3);
+  let b: u8[] = a;
+  let c: u8[] = into(a, 0, src[3:6], 1, 2);
+  let d: u8[] = into(__alloc_u8(8), 8, src, 6, 0);
+  print(sum(b).to_string() + " " + sum(c).to_string() + " " + (b[0] as i64).to_string() + " " + (c[0] as i64).to_string() + " " + (d.len() as i64).to_string());
+  let buf: u8[] = __alloc_u8(64);
+  let before: i64 = __heap_alloc_count();
+  let i: i32 = 0;
+  while (i < 100) {
+    buf = into(buf, i % 60, src, 1, 4);
+    i = i + 1;
+  }
+  let n: i64 = __heap_alloc_count() - before;
+  print(sum(buf).to_string() + " " + n.to_string());
+  return 0;
+}
+`
+
+func TestSelfHostBytesInto(t *testing.T) {
+	want := "27816549867 1430072365847 0 50 8\n5052777686297646788 0\n"
+	runSemanticProgram(t, "bytesinto", bytesIntoProgram, []string{"into"},
+		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want, "wasm32-wasi": want})
+}
+
+// bytesIntoOutOfRange writes three bytes at offset 2 of a four-byte array,
+// which must abort as an out-of-range slice does rather than write past it.
+const bytesIntoOutOfRange = `@noinline function into(own dst: u8[], at: i32, src: [u8], from: i32, n: i32): u8[] {
+  return __bytes_into(dst, at, src, from, n);
+}
+function main(): i32 {
+  let src: u8[] = [1, 2, 3];
+  let d: u8[] = into(__alloc_u8(4), 2, src, 0, 3);
+  return d.len();
+}
+`
+
+func TestSelfHostBytesIntoOutOfRange(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "oob.fern")
+	if err := os.WriteFile(src, []byte(bytesIntoOutOfRange), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tg := range h.targets {
+		bin := filepath.Join(dir, "oob-"+tg.target)
+		h.compileWith(t, tg, src, bin)
+		cmd := exec.Command(bin)
+		if len(tg.runner) > 0 {
+			cmd = exec.Command(tg.runner[0], append(tg.runner[1:], bin)...)
+		}
+		out, _ := cmd.CombinedOutput()
+		if !strings.Contains(string(out), "slice range out of bounds") {
+			t.Errorf("%s: want the slice abort, got %v\n%s", tg.target, cmd.ProcessState, out)
+		}
+	}
 }
