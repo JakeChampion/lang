@@ -4759,20 +4759,24 @@ pub function append_report(f: ssasem.Func, p: ssaunits.Plan): semarrayreport.Sit
   let idx: i32[][] = ssaunits.step_index(q);
   for b in f.graph.blocks {
     let pos: i32 = 0;
-    let line: string = "";
     for ins in b.insts {
-      if (ins.kind_tag == 35) {
-        line = " line=" + util.i32_to_string(util.pos_line(ins.imm)) + ":" + ins.str;
-      }
       if (ins.kind_tag == ssasem.append()) {
         let why: i32 = append_reason(f, q, at(q, idx, b.id, pos, 0 - 1), ins);
-        let stage: string = "append@v" + util.i32_to_string(ins.result) + " receiver=v" + util.i32_to_string(ins.args[0]) + bound_names(f, ins.args[0]) + line;
+        let stage: string = "append@v" + util.i32_to_string(ins.result) + " receiver=v" + util.i32_to_string(ins.args[0]) + bound_names(f, ins.args[0]) + append_location(f, ins.result);
         out = out.append(semarrayreport.Site { owner: f.graph.name, stage: stage, plan: "append; ownership lowering", reason: why, storage: semarrayreport.append_storage(why) });
       }
       pos = pos + 1;
     }
   }
   return out;
+}
+
+function append_location(f: ssasem.Func, value: i32): string {
+  let pos = sourcepos.at(f.source_positions.values, value);
+  if (pos.line == 0) {
+    return "";
+  }
+  return " line=" + util.i32_to_string(util.pos_line(pos.line)) + ":" + pos.col;
 }
 
 // The order append_push takes its cases in.
