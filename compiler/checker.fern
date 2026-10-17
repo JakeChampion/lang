@@ -415,6 +415,9 @@ function byte_kernel_arity(name: string): i32 {
   if (name == "__aes_ctr32" || name == "__ghash") {
     return 3;
   }
+  if (name == "__aes_gcm_seal" || name == "__aes_gcm_open") {
+    return 5;
+  }
   return 0 - 1;
 }
 
@@ -18392,7 +18395,7 @@ function e079_visit_stmt(st: ast.Stmt, own acc: util.Diag[]): util.Diag[] {
 function registered_intrinsics(): string[] {
   return [
     "__task_cancelled", "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_wait",
-    "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
+    "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open", "__aes_gcm_seal", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
     "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
     "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
     "__c_call4", "__c_call4_f32", "__c_call4_f64", "__ceil_f64", "__clz32", "__clz64", "__count_byte",
@@ -21134,7 +21137,7 @@ function ow_fresh_builtins(): string[] {
     "signal_send", "set_extproc", "set_process_group", "set_window_size",
     "stderr", "stdin", "stdout", "target_arch", "target_os",
     "tcp_recv", "termios_get", "uname_field", "window_size",
-    "__bytes_owned", "__bytes_range", "__aes_expand_key", "__aes_ctr32", "__ghash", "__sha256_hw_blocks", "__sha1_hw_blocks",
+    "__bytes_owned", "__bytes_range", "__aes_expand_key", "__aes_ctr32", "__ghash", "__aes_gcm_seal", "__aes_gcm_open", "__sha256_hw_blocks", "__sha1_hw_blocks",
   ];
   // `termios_set` is deliberately absent beside its read half: it TAKES the
   // word array, and a pointer parameter is what the rule excludes. `chroot`

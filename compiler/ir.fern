@@ -2659,8 +2659,22 @@ pub function op_ghash(): Op {
   return op0(404);
 }
 
+// `aes_gcm_seal` pops [round_keys, h, nonce, aad, plaintext] and pushes the
+// ciphertext followed by its 16-byte tag, SP 800-38D's GCM-AE over a 96-bit
+// nonce. `aes_gcm_open` pops the same with the ciphertext last and pushes the
+// plaintext followed by the tag that ciphertext should carry, for the caller
+// to compare. A key schedule of neither size, a nonce that is not 12 bytes or
+// an h under 16 answer empty.
+pub function op_aes_gcm_seal(): Op {
+  return op0(444);
+}
+
+pub function op_aes_gcm_open(): Op {
+  return op0(445);
+}
+
 pub function is_aes_gcm_op(tag: i32): boolean {
-  return tag == 402 || tag == 403 || tag == 404;
+  return tag == 402 || tag == 403 || tag == 404 || tag == 444 || tag == 445;
 }
 
 // `sha256_hw` pushes 1 where the target has a SHA-256 kernel (arm64's
@@ -4538,6 +4552,12 @@ function kind_id_len12(name: string): i32 {
   if (name == "memchr_bytes") {
     return 358;
   }
+  if (name == "aes_gcm_seal") {
+    return 444;
+  }
+  if (name == "aes_gcm_open") {
+    return 445;
+  }
   let c: u8 = name[0];
   if (c == b'a' && name == "arr_push_i64") {
     return 94;
@@ -5577,6 +5597,12 @@ function kind_name_4(id: i32): string {
   if (id == 443) {
     return "raw_vdso";
   }
+  if (id == 444) {
+    return "aes_gcm_seal";
+  }
+  if (id == 445) {
+    return "aes_gcm_open";
+  }
   if (id == 380) {
     return "str_from_bytes_range";
   }
@@ -6474,7 +6500,7 @@ function kind_pops(t: i32): i32 {
   if (t == 206) {  // syscall4
     return 5;
   }
-  if (t == 245 || t == 378) {  // mismatch: a, ao, b, bo, n
+  if (t == 245 || t == 378 || t == 444 || t == 445) {  // mismatch: a, ao, b, bo, n; aes_gcm_seal / _open: rk, h, nonce, aad, data
     return 5;
   }
   if (t == 228 || t == 382) {  // syscall5, inner_mul_add_f64

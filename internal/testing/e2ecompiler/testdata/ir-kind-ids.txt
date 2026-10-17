@@ -387,3 +387,5 @@ sha1_hw=440
 sha1_hw_blocks=441
 udp_bind_with=442
 raw_vdso=443
+aes_gcm_seal=444
+aes_gcm_open=445

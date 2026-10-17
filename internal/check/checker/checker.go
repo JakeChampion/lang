@@ -1765,6 +1765,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	//     four bytes stepping as a big-endian u32 (GCM's inc32).
 	//   __ghash(h, y, data): the GHASH state y with data's 16-byte blocks
 	//     folded in under the hash key h, a short last block zero-padded.
+	//   __aes_gcm_seal(round_keys, h, nonce, aad, plaintext): the ciphertext
+	//     and its 16-byte tag, for a 12-byte nonce.
+	//   __aes_gcm_open(round_keys, h, nonce, aad, ciphertext): the plaintext
+	//     and the tag the ciphertext should carry, for the caller to compare.
 	// The native backends use AES-NI and PCLMULQDQ or AESE and PMULL, wasm a
 	// bitsliced AES; every one runs in constant time.
 	u8View := ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}}
@@ -1778,6 +1782,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["__aes_expand_key"] = &ast.FuncType{Params: []ast.Type{u8View}, Result: u8Arr}
 	c.info.FuncSigs["__aes_ctr32"] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View}, Result: u8Arr}
 	c.info.FuncSigs["__ghash"] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View}, Result: u8Arr}
+	for _, n := range []string{"__aes_gcm_seal", "__aes_gcm_open"} {
+		c.info.FuncSigs[n] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View, u8View, u8View}, Result: u8Arr}
+	}
 	// The SHA kernels (std/crypto): __sha256_hw() says whether the target has a
 	// SHA-256 kernel (arm64 and x86-64 do, wasm does not), and
 	// __sha256_hw_blocks(state, data) folds data's whole 64-byte blocks into the

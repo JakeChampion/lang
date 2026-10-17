@@ -2,6 +2,7 @@ package interp
 
 import (
 	"crypto/aes"
+	"crypto/cipher"
 	"encoding/binary"
 	"fmt"
 )
@@ -17,6 +18,8 @@ func registerAESGCM(i *Interp) {
 	i.Builtins["__aes_expand_key"] = &Builtin{Fn: builtinAESExpandKey}
 	i.Builtins["__aes_ctr32"] = &Builtin{Fn: builtinAESCtr32}
 	i.Builtins["__ghash"] = &Builtin{Fn: builtinGHASH}
+	i.Builtins["__aes_gcm_seal"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return aesGCM("__aes_gcm_seal", args, true) }}
+	i.Builtins["__aes_gcm_open"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return aesGCM("__aes_gcm_open", args, false) }}
 	// The interpreter has no SHA kernels, so std/crypto runs its own rounds
 	// here, as on wasm.
 	for _, name := range []string{"__sha256_hw", "__sha1_hw"} {
@@ -220,4 +223,46 @@ func builtinGHASH(_ *Interp, args []Value) (Value, error) {
 		yb = ghashMul(yb, hb)
 	}
 	return byteArray(yb[:]), nil
+}
+
+// aesGCM is __aes_gcm_seal (seal) or __aes_gcm_open over (round_keys, h,
+// nonce, aad, data): crypto/cipher's GCM, with the key recovered from the
+// round keys as in builtinAESCtr32. Opening answers the plaintext and the
+// tag the ciphertext should carry, which is the tag sealing that plaintext
+// gives. h goes unread: GCM derives it from the key, and the stdlib passes
+// the one that key gives.
+func aesGCM(name string, args []Value, seal bool) (Value, error) {
+	v, err := byteViews(name, args, 5)
+	if err != nil {
+		return nil, err
+	}
+	rk, h, nonce, aad, data := v[0], v[1], v[2], v[3], v[4]
+	keyLen := 0
+	switch {
+	case len(rk) >= 240:
+		keyLen = 32
+	case len(rk) >= 176:
+		keyLen = 16
+	}
+	if keyLen == 0 || len(h) < 16 || len(nonce) != 12 {
+		return newArray(0), nil
+	}
+	block, err := aes.NewCipher(rk[:keyLen])
+	if err != nil {
+		return nil, fmt.Errorf("%s: %v", name, err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %v", name, err)
+	}
+	if seal {
+		return byteArray(gcm.Seal(nil, nonce, data, aad)), nil
+	}
+	pt := make([]byte, len(data))
+	var ctr [16]byte
+	copy(ctr[:], nonce)
+	binary.BigEndian.PutUint32(ctr[12:], 2)
+	cipher.NewCTR(block, ctr[:]).XORKeyStream(pt, data)
+	sealed := gcm.Seal(nil, nonce, pt, aad)
+	return byteArray(append(pt, sealed[len(pt):]...)), nil
 }
