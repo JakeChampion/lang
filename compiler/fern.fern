@@ -5675,7 +5675,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
       let dv: i64 = arm64_native.macho_data_vaddr_dw(pa.text.len(), deh_len, prog.data.len(), prog.bss_size, emit_syms);
       let deh: i32[] = arm64_native.arm64_eh_frame_darwin(prog, tv, ev);
       util.arr_push_cliff_report("darwin:unwind", 0);
-      prog = arm64_native.arm64_gas_link(prog, tv, dv);
+      prog = arm64_native.arm64_gas_link_macho(prog, tv, dv);
       util.arr_push_cliff_report("darwin:linked", 0);
       if (prog.unknown.len() > 0) {
         let _lr: string = arm64_refusals("arm64-darwin", "linker", prog.unknown);

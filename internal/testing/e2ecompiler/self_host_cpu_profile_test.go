@@ -175,7 +175,6 @@ func TestSelfHostCPUProfileRefusals(t *testing.T) {
 		flags              []string
 	}{
 		{"wasm32-wasi", "cpu", "native Linux executable", nil},
-		{"arm64-darwin", "cpu", "native Linux executable", nil},
 		{"arm64-android", "cpu", "native Linux executable", nil},
 		{"x86-64-linux", "cpu", "native Linux executable", []string{"-shared"}},
 		{"x86-64-linux", "other", "FERN_PROFILE", nil},

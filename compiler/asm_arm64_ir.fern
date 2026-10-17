@@ -6539,7 +6539,11 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
     }
   }
   if (s.profile > 0) {
-    s = s.write("    adrp x0, .Lprofile_ring\n    add x0, x0, :lo12:.Lprofile_ring\n    mov x9, sp\n    adrp x10, .Lprofile_action\n    add x10, x10, :lo12:.Lprofile_action\n    adrp x11, .Lprofile_timer\n    add x11, x11, :lo12:.Lprofile_timer\n    bl __fn___fern_profile_start.r\n    mov x29, xzr\n    mov x30, xzr\n");
+    s = s.write("    adrp x0, .Lprofile_ring\n    add x0, x0, :lo12:.Lprofile_ring\n");
+    if (darwin) {
+      s = s.write("    adrp x13, __mh_execute_header\n    add x13, x13, :lo12:__mh_execute_header\n    str x13, [x0, #56]\n");
+    }
+    s = s.write("    mov x9, sp\n    adrp x10, .Lprofile_action\n    add x10, x10, :lo12:.Lprofile_action\n    adrp x11, .Lprofile_timer\n    add x11, x11, :lo12:.Lprofile_timer\n    bl __fn___fern_profile_start.r\n    mov x29, xzr\n    mov x30, xzr\n");
   }
   s = s.write("    stp x29, x30, [sp, #-16]!\n");
   s = s.write("    mov x29, sp\n");
@@ -12207,8 +12211,8 @@ function profile_return(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    ret\n");
 }
 
-// The C signal entry reads Linux's arm64 ucontext, saves the vDSO-restorer
-// link and calls the same raw-memory Fern sampler as x86. TID-owned
+// The signal entry reads the target's arm64 ucontext and calls the same
+// raw-memory Fern sampler as x86. TID-owned
 // acquire/release exclusives serialize captures; a busy handler never waits.
 // Profiling routes freelist shortcuts through the instrumented allocator.
 function profile_alloc_fast(s: asmcore.EmitState): boolean {
@@ -12231,17 +12235,45 @@ function emit_profile_alloc_runtime(s: asmcore.EmitState): asmcore.EmitState {
   return profile_return(s);
 }
 
-function emit_profile_runtime(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    .bss\n    .p2align 3\n.Lprofile_ring: .zero 4337824\n    .data\n    .p2align 3\n.Lprofile_action: .quad __fern_profile_signal, 268435460, 0, 0\n.Lprofile_timer: .quad 0, 10000, 0, 10000\n    .text\n");
-  s = emit_ir_runtime_fern_fn(rtprofile.source("arm64-linux", s.profile), s);
+function emit_profile_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+  s = s.write("    .bss\n    .p2align 3\n.Lprofile_ring: .zero 4337824\n    .data\n    .p2align 3\n");
+  let target = "arm64-linux";
+  if (darwin) {
+    target = "arm64-darwin";
+    // Darwin's raw sigaction has handler, trampoline, mask32 and flags32.
+    s = s.write(".Lprofile_action: .quad __fern_profile_signal, __fern_profile_trampoline\n    .long 0, 66\n");
+  } else {
+    s = s.write(".Lprofile_action: .quad __fern_profile_signal, 268435460, 0, 0\n");
+  }
+  s = s.write(".Lprofile_timer: .quad 0, 10000, 0, 10000\n    .text\n");
+  s = emit_ir_runtime_fern_fn(rtprofile.source(target, s.profile), s);
   s = profile_frame(s, "__fern_profile_signal");
-  s = s.write("    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    ldr x13, [x12, #24]\n    cbz x13, .Lprofile_signal_return\n    mov x8, #172\n    svc #0\n    ldr x13, [x12, #128]\n    cmp x0, x13\n    b.ne .Lprofile_signal_return\n    mov x8, #178\n    svc #0\n    mov x14, x0\n    add x15, x12, #40\n.Lprofile_signal_lock:\n    ldaxr x13, [x15]\n    cbnz x13, .Lprofile_busy\n    stlxr w16, x14, [x15]\n    cbnz w16, .Lprofile_signal_lock\n    ldr x0, [x2, #440]\n    ldr x9, [x2, #416]\n    ldr x10, [x2, #432]\n    mov x11, x12\n    mov x12, #1\n    bl __fn___fern_profile_sample.r\n    cbz x0, .Lprofile_signal_unlock\n    bl .Lprofile_drop\n.Lprofile_signal_unlock:\n    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    add x15, x12, #40\n    stlr xzr, [x15]\n    b .Lprofile_signal_return\n.Lprofile_busy:\n    bl .Lprofile_drop\n.Lprofile_signal_return:\n");
+  s = s.write("    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    ldr x13, [x12, #24]\n    cbz x13, .Lprofile_signal_return\n    mov x8, #172\n    svc #0\n    ldr x13, [x12, #128]\n    cmp x0, x13\n    b.ne .Lprofile_signal_return\n    mov x8, #178\n    svc #0\n    mov x14, x0\n    add x15, x12, #40\n.Lprofile_signal_lock:\n    ldaxr x13, [x15]\n    cbnz x13, .Lprofile_busy\n    stlxr w16, x14, [x15]\n    cbnz w16, .Lprofile_signal_lock\n" + profile_interrupted_state(darwin) + "    mov x11, x12\n    mov x12, #1\n    bl __fn___fern_profile_sample.r\n    cbz x0, .Lprofile_signal_unlock\n    bl .Lprofile_drop\n.Lprofile_signal_unlock:\n    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    add x15, x12, #40\n    stlr xzr, [x15]\n    b .Lprofile_signal_return\n.Lprofile_busy:\n    bl .Lprofile_drop\n.Lprofile_signal_return:\n");
   s = profile_return(s);
   s = s.write(".Lprofile_drop:\n    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    add x15, x12, #8\n.Lprofile_drop_retry:\n    ldaxr x13, [x15]\n    add x13, x13, #1\n    stlxr w16, x13, [x15]\n    cbnz w16, .Lprofile_drop_retry\n    ret\n");
   s = profile_frame(s, "__fern_profile_flush");
   s = s.write("    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    ldr x13, [x12, #32]\n    cmp x13, #2\n    b.eq .Lprofile_flush_return\n    mov x8, #172\n    svc #0\n    ldr x13, [x12, #128]\n    cmp x0, x13\n    b.ne .Lprofile_flush_return\n    mov x8, #178\n    svc #0\n    mov x14, x0\n    add x15, x12, #40\n.Lprofile_flush_lock:\n    ldaxr x13, [x15]\n    cbnz x13, .Lprofile_flush_locked\n    stlxr w16, x14, [x15]\n    cbnz w16, .Lprofile_flush_lock\n    b .Lprofile_flush_owned\n.Lprofile_flush_locked:\n    cmp x13, x14\n    b.eq .Lprofile_flush_reentrant\n    yield\n    b .Lprofile_flush_lock\n.Lprofile_flush_reentrant:\n    stlxr w16, x13, [x15]\n    ldr x13, [x12, #32]\n    cmp x13, #1\n    b.eq .Lprofile_flush_return\n.Lprofile_flush_owned:\n    ldr x13, [x12, #32]\n    cmp x13, #2\n    b.eq .Lprofile_flush_unlock\n    str xzr, [x12, #24]\n    mov x13, #1\n    str x13, [x12, #32]\n    mov x0, x12\n    bl __fn___fern_profile_finish.r\n    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    mov x13, #2\n    str x13, [x12, #32]\n.Lprofile_flush_unlock:\n    add x15, x12, #40\n    stlr xzr, [x15]\n.Lprofile_flush_return:\n");
   s = profile_return(s);
+  if (darwin) {
+    s = emit_profile_trampoline(s);
+  }
   return emit_profile_alloc_runtime(s);
+}
+
+function profile_interrupted_state(darwin: boolean): string {
+  if (darwin) {
+    // ucontext64.mcontext -> exception state (16), then thread state64.
+    // Opaque FP/SP values can carry top-byte/PAC bits in the saved context.
+    return "    ldr x13, [x2, #48]\n    ldr x0, [x13, #272]\n    ldr x9, [x13, #248]\n    ldr x10, [x13, #264]\n    and x9, x9, #0x0000ffffffffffff\n    and x10, x10, #0x0000ffffffffffff\n";
+  }
+  return "    ldr x0, [x2, #440]\n    ldr x9, [x2, #416]\n    ldr x10, [x2, #432]\n";
+}
+
+function emit_profile_trampoline(s: asmcore.EmitState): asmcore.EmitState {
+  s = profile_frame(s, "__fern_profile_trampoline");
+  // Kernel entry: handler, style, signal, siginfo, ucontext, sigreturn token.
+  // Keep style/context/token across the handler; sigreturn validates all three.
+  return s.write("    stp x1, x4, [sp, #-16]!\n    stp x5, xzr, [sp, #-16]!\n    mov x16, x0\n    mov x0, x2\n    mov x1, x3\n    mov x2, x4\n    blr x16\n    ldp x2, xzr, [sp], #16\n    ldp x1, x0, [sp], #16\n    ldp x29, x30, [sp], #16\n    mov x16, #184\n    svc #0x80\n    mov x0, #2\n    mov x16, #1\n    svc #0x80\n    brk #0\n");
 }
 
 // A typed runtime body can call a need-gated runtime block emitted before it,
@@ -12268,8 +12300,8 @@ function emit_ir_runtime_settled(s0: asmcore.EmitState, darwin: boolean): asmcor
 }
 
 pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
-  if (s.profile > 0 && !darwin) {
-    s = emit_profile_runtime(s);
+  if (s.profile > 0) {
+    s = emit_profile_runtime(s, darwin);
   }
   s = emit_rt_clock_and_print(s, darwin);
   s = emit_rt_io_and_string(s);
@@ -12631,6 +12663,29 @@ function darwin_sysno(n: i32): i32 {
   }
   if (n == 222) {  // mmap
     return 197;
+  }
+  return darwin_profile_process_sysno(n);
+}
+
+function darwin_profile_process_sysno(n: i32): i32 {
+  if (n == 172) {  // getpid
+    return 20;
+  }
+  if (n == 178) {  // gettid -> thread_selfid
+    return 372;
+  }
+  return darwin_profile_signal_sysno(n);
+}
+
+function darwin_profile_signal_sysno(n: i32): i32 {
+  if (n == 103) {  // setitimer
+    return 83;
+  }
+  if (n == 134) {  // rt_sigaction -> sigaction
+    return 46;
+  }
+  if (n == 135) {  // rt_sigprocmask -> sigprocmask
+    return 48;
   }
   return 0 - 1;
 }

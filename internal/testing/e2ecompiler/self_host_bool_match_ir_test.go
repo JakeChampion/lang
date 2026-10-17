@@ -1,7 +1,6 @@
 package e2ecompiler
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -84,8 +83,8 @@ func TestSelfHostBoolMatchIRX86_64(t *testing.T) {
 							t.Errorf("probe missing %s:\n%s", call, body)
 						}
 					}
-				} else if !bytes.Contains(asm, []byte(".K0:")) || bytes.Contains(asm, []byte("call __fn___fern_arr_dec")) {
-					t.Errorf("constant Point should use static storage without a reclaim call:\n%s", asm)
+				} else if strings.Contains(selfHostFnBody(t, asm, "main"), "call __fern_arr_box") || strings.Contains(selfHostFnBody(t, asm, "main"), "call __fn___fern_arr_dec") {
+					t.Errorf("constant Point must allocate and reclaim no heap storage:\n%s", asm)
 				}
 				progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 				var cmd *exec.Cmd

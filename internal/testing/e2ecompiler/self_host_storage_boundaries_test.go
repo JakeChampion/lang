@@ -181,7 +181,7 @@ func TestSelfHostStorageRejectsFreshCompletion(t *testing.T) {
 			t.Run(claim+"/"+target, func(t *testing.T) {
 				dir := t.TempDir()
 				path := filepath.Join(dir, "main.fern")
-				source := fmt.Sprintf("struct Completion { value:i64 }\n%s function fresh(v:i64):Completion {return Completion{value:v};}\nfunction main():i32 {return fresh(0i64).value as i32;}\n", claim)
+				source := fmt.Sprintf("struct Completion { value:i64, a:i64, b:i64, c:i64, d:i64 }\n%s function fresh(v:i64):Completion {return Completion{value:v,a:v,b:v,c:v,d:v};}\nfunction main():i32 {return fresh(0i64).value as i32;}\n", claim)
 				if err := os.WriteFile(path, []byte(source), 0600); err != nil {
 					t.Fatal(err)
 				}

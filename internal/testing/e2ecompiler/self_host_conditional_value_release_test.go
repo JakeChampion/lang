@@ -172,22 +172,22 @@ function main(): i32 {
 }
 `
 
-const condAliasStructSrc = `struct P { x: i32, y: i32 }
+const condAliasStructSrc = `struct P { x: i32, y: i32, a:i32, b:i32, c:i32 }
 function px(p: P): i32 { return p.x; }
-function mkp(j: i32): P { return P { x: j, y: 4 }; }
-function retp(j: i32): P { let p = P { x: j, y: 7 }; return if (j > 1) { p } else { mkp(j) }; }
-function retq(j: i32): P { let p = P { x: j, y: 8 }; return match (j) { 0 => P { x: 1, y: j }, _ => p }; }
+function mkp(j: i32): P { return P { x: j, y: 4, a:0, b:0, c:0 }; }
+function retp(j: i32): P { let p = P { x: j, y: 7, a:0, b:0, c:0 }; return if (j > 1) { p } else { mkp(j) }; }
+function retq(j: i32): P { let p = P { x: j, y: 8, a:0, b:0, c:0 }; return match (j) { 0 => P { x: 1, y: j, a:0, b:0, c:0 }, _ => p }; }
 function main(): i32 {
     let t: i32 = 0;
     let j: i32 = 0;
     while (j < 3) {
-        let p = P { x: j, y: 2 };
+        let p = P { x: j, y: 2, a:0, b:0, c:0 };
         t = t + px(if (j > 1) { p } else { mkp(j) });
-        t = t + px(match (j) { 0 => P { x: 6, y: j }, _ => p });
-        t = t + (if (j > 1) { p } else { P { x: 5, y: j } }).y;
+        t = t + px(match (j) { 0 => P { x: 6, y: j, a:0, b:0, c:0 }, _ => p });
+        t = t + (if (j > 1) { p } else { P { x: 5, y: j, a:0, b:0, c:0 } }).y;
         t = t + (match (j) { 1 => p, _ => mkp(j) }).x;
         let q = if (j > 0) { p } else { mkp(j) };
-        let w = match (j) { 2 => p, _ => P { x: 9, y: j } };
+        let w = match (j) { 2 => p, _ => P { x: 9, y: j, a:0, b:0, c:0 } };
         t = t + q.y + w.x;
         t = t + retp(j).y;
         let rp = retq(j);

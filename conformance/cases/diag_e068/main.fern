@@ -13,10 +13,11 @@
 // check — could never reach it. `expected.lowering-error` exists for
 // exactly this, and requires both halves: the front end must accept
 // this program and lowering must reject it.
-struct P { x: i32, y: i32 }
+// Five fields keep this allocation-contract probe boxed.
+struct P { x: i32, y: i32, a: i32, b: i32, c: i32 }
 
 fbip function mk(a: i32): P {
-    return P { x: a, y: a + 1 };   // error[E068]: fresh box, no donor
+    return P { x: a, y: a + 1, a: a, b: a, c: a };   // error[E068]: fresh box, no donor
 }
 
 function main(): i32 {

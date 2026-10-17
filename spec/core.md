@@ -242,7 +242,6 @@ is the number of slots it leaves.
 | `random_i32` | 186 | 0 | 1 |
 | `poll` | 187 | 2 | 1 |
 | `timer_fd` | 188 | 1 | 1 |
-| `struct_copy` | 198 | 1 | 1 |
 | `store_i64` | 199 | 2 | 1 |
 | `tcp_listen` | 200 | 1 | 1 |
 | `tcp_accept` | 201 | 1 | 1 |

@@ -350,11 +350,9 @@ func split_pair {
     v0 = param 0
     v1 = tuple_get 0 v0
     v2 = tuple_get 1 v0
-    v3 = tuple_get 0 v0
-    v4 = tuple_get 1 v0
     v5 = length v2
-    v6 = binary + v3 v5
-    v7 = length v4
+    v6 = binary + v1 v5
+    v7 = length v2
     v8 = binary + v6 v7
     ret v8
 }
@@ -2090,8 +2088,7 @@ func bump_each {
     v13 = record_get 1 v9
     v14 = record_new v12 v13
     v15 = record_get 0 v14
-    v16 = record_get 1 v9
-    v17 = length v16
+    v17 = length v13
     v18 = binary + v15 v17
     v19 = binary + v3 v18
     v20 = record_get 1 v14
