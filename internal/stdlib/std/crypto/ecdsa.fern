@@ -12,6 +12,7 @@
 import "core/bigint";
 import "std/crypto";
 import "std/crypto/montgomery" as mont;
+import "std/crypto/p256";
 import "std/hex";
 
 pub enum Curve {
@@ -333,8 +334,9 @@ pub function verify(key: PublicKey, hash: Hash, msg: [u8], sig: [u8]): boolean {
   return false;
 }
 
-// Signing. Everything a secret reaches runs over std/crypto/montgomery: no
-// branch on and no index by a secret value. Points are projective (X:Y:Z),
+// Signing. Everything a secret reaches runs over std/crypto/p256 for P-256
+// and std/crypto/montgomery for P-384: no branch on and no index by a secret
+// value. Points are projective (X:Y:Z),
 // added by the complete formula for a = -3 of Renes, Costello and Batina
 // (eprint 2015/1060), which has no exceptional case to branch on, so it
 // doubles too. The nonce is RFC 6979's, so a signature is deterministic.
@@ -359,11 +361,22 @@ function __signer(c: Curve): Signer {
 
 // private_key(curve, d) — d checked to be in [1, n) at the curve's size.
 pub function private_key(curve: Curve, d: [u8]): Result[PrivateKey, EcdsaError] {
-  let s: Signer = __signer(curve);
-  if (d.len() != s.bytes || !__revealed(mont.in_range(s.fn, d))) {
+  if (!__scalar_ok(curve, d)) {
     return Err(ScalarRange);
   }
   return Ok(PrivateKey { curve: curve, d: __copy(d) });
+}
+
+// __scalar_ok is whether d is in [1, n) at the curve's size.
+function __scalar_ok(curve: Curve, d: [u8]): boolean {
+  match (curve) {
+    P256 => {
+      return d.len() == 32 && __revealed(p256.in_scalar_range(d));
+    },
+    _ => {}
+  }
+  let s: Signer = __signer(curve);
+  return d.len() == s.bytes && __revealed(mont.in_range(s.fn, d));
 }
 
 function __copy(b: [u8]): u8[] {
@@ -376,6 +389,12 @@ function __copy(b: [u8]): u8[] {
 
 // (k).public_point() — [d]G as an uncompressed SEC 1 point.
 pub function (k: PrivateKey) public_point(): u8[] {
+  match (k.curve) {
+    P256 => {
+      return p256.base_point(k.d);
+    },
+    _ => {}
+  }
   let s: Signer = __signer(k.curve);
   let xy: (u8[], u8[]) = __affine(s, __base_mul(s, k.d));
   let out: u8[] = [4 as u8];
@@ -399,6 +418,12 @@ pub function ecdh(key: PrivateKey, peer: [u8]): Result[u8[], EcdsaError] {
       return Err(e);
     }
   }
+  match (key.curve) {
+    P256 => {
+      return Ok(p256.scalar_mul_x(key.d, peer));
+    },
+    _ => {}
+  }
   let s: Signer = __signer(key.curve);
   let q: Proj = Proj { x: mont.from_bytes(s.fp, peer[1:1 + s.bytes]), y: mont.from_bytes(s.fp, peer[1 + s.bytes:1 + 2 * s.bytes]), z: s.fp.one };
   return Ok(__affine(s, __scalar_mul(s, q, key.d)).0);
@@ -413,30 +438,44 @@ pub function sign(key: PrivateKey, hash: Hash, msg: [u8]): Result[u8[], EcdsaErr
     },
     _ => {}
   }
+  let digest: u8[] = __digest(hash, msg);
+  match (key.curve) {
+    P256 => {
+      let e: u8[] = p256.scalar_reduce(digest[0:32]);
+      return Ok(__sign_loop(hash, key.d, e, (k: u8[]): i64 => p256.in_scalar_range(k), (k: u8[]): (u8[], u8[]) => p256.sign_rs(key.d, e, k)));
+    },
+    _ => {}
+  }
   let s: Signer = __signer(key.curve);
-  let d: u8[] = __digest(hash, msg);
-  let take: i32 = d.len();
+  let take: i32 = digest.len();
   if (take > s.bytes) {
     take = s.bytes;
   }
-  let e: i64[] = mont.from_bytes(s.fn, d[0:take]);
-  let drbg: Drbg = __drbg_new(hash, key.d, mont.to_bytes(s.fn, e));
+  let e: i64[] = mont.from_bytes(s.fn, digest[0:take]);
+  return Ok(__sign_loop(hash, key.d, mont.to_bytes(s.fn, e), (k: u8[]): i64 => mont.in_range(s.fn, k), (k: u8[]): (u8[], u8[]) => __sign_with(s, key.d, e, k)));
+}
+
+// __sign_loop is the DER signature for the reduced digest e under the key
+// d, drawing RFC 6979's nonces until one is in range and gives an r and s
+// that are both nonzero; rs_of signs with a nonce.
+function __sign_loop(hash: Hash, d: [u8], e: [u8], in_range: (u8[]) => i64, rs_of: (u8[]) => (u8[], u8[])): u8[] {
+  let drbg: Drbg = __drbg_new(hash, d, e);
   while (true) {
-    let next: (Drbg, u8[]) = __drbg_next(drbg, s.bytes);
+    let next: (Drbg, u8[]) = __drbg_next(drbg, d.len());
     drbg = next.0;
     let k: u8[] = next.1;
-    if (__revealed(mont.in_range(s.fn, k))) {
-      let rs: (u8[], u8[]) = __sign_with(s, key.d, e, k);
+    if (__revealed(in_range(k))) {
+      let rs: (u8[], u8[]) = rs_of(k);
       // r and s are the signature, public once returned.
       __ct_public(rs.0);
       __ct_public(rs.1);
       if (!__all_zero(rs.0) && !__all_zero(rs.1)) {
-        return Ok(__der(rs.0, rs.1));
+        return __der(rs.0, rs.1);
       }
     }
     drbg = __drbg_reseed(drbg);
   }
-  return Err(SigningHash);
+  return [];
 }
 
 // __sign_with is (r, s) for nonce k: r the x of [k]G mod n, s = (e + r d)/k.

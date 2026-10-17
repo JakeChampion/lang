@@ -1133,6 +1133,12 @@ func TestRunnerMontgomeryExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "montgomery", "std/crypto/montgomery", 4)
 }
 
+// `tests/stdlib/p256_test.fern` checks std/crypto/p256's [k]G, [k]Q and
+// scalar range and reduction at their edges.
+func TestRunnerP256ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "p256", "std/crypto/p256", 4)
+}
+
 // `tests/stdlib/ed25519_test.fern` covers RFC 8032's Ed25519 vectors, one
 // from Go's crypto/ed25519, and every refusal.
 func TestRunnerEd25519ExamplePasses(t *testing.T) {
