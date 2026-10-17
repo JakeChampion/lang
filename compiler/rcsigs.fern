@@ -167,7 +167,7 @@ pub function table(): Table {
   rows = add(rows, ["__fern_str_own", "__fern_str_borrow", "__fern_arr_str_join", "__fern_arr_concat", "__fern_bytes_owned", "__fern_bytes_range", "__fern_i32_to_string", "__fern_u32_to_string", "__fern_i64_to_string", "__fern_u64_to_string"], inert(result_fresh()));
   // A cursor's map, read through core/map: the cursor holds the unit.
   rows = add(rows, ["__mapiter_map_impl"], inert(result_borrow()));
-  rows = add(rows, ["__fern_oob_abort", "__fern_slice_abort", "__fern_snapshot_dec", "__fern_account_entry"], inert(result_none()));
+  rows = add(rows, ["__fern_oob_abort", "__fern_slice_abort", "__fern_snapshot_dec", "__fern_account_entry", "__fern_vdso_clock"], inert(result_none()));
   // The byte-view helpers ssabytes writes in Fern: a length and a data
   // pointer read off a borrowed view, and a sub-range as a counted box.
   rows = add(rows, ["__sem_byte_view_len", "__sem_byte_view_data"], inert(result_none()));

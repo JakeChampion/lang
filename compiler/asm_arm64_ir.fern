@@ -3390,6 +3390,9 @@ function sym_addr_need(sym: string): string {
   if (sym == "__fern_task_state") {
     return "task";
   }
+  if (sym == "__fern_vdso") {
+    return "vdso";
+  }
   return "";
 }
 
@@ -6268,6 +6271,29 @@ function emit_ir_reloc(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
   return s;
 }
 
+// emit_vdso_scan walks the entry stack past envp's terminator to the
+// auxiliary vector and keeps AT_SYSINFO_EHDR (33), the vDSO's base, in
+// __fern_vdso's first word; the word stays zero when the kernel maps none.
+function emit_vdso_scan(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    ldr x0, [sp]\n");
+  s = s.write("    lsl x0, x0, #3\n");
+  s = s.write("    add x0, x0, #16\n");
+  s = s.write("    add x0, sp, x0\n");
+  s = s.write(".Lfern_auxv_env:\n");
+  s = s.write("    ldr x1, [x0], #8\n");
+  s = s.write("    cbnz x1, .Lfern_auxv_env\n");
+  s = s.write(".Lfern_auxv_scan:\n");
+  s = s.write("    ldp x1, x2, [x0], #16\n");
+  s = s.write("    cbz x1, .Lfern_auxv_done\n");
+  s = s.write("    cmp x1, #33\n");
+  s = s.write("    b.ne .Lfern_auxv_scan\n");
+  s = s.write("    adrp x1, __fern_vdso\n");
+  s = s.write("    add x1, x1, :lo12:__fern_vdso\n");
+  s = s.write("    str x2, [x1]\n");
+  s = s.write(".Lfern_auxv_done:\n");
+  return s;
+}
+
 function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   s = s.write("_start:\n");
   // Before anything that could read a relocated pointer.
@@ -6316,6 +6342,9 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
       s = s.write("    adrp x1, __fern_envp\n");
       s = s.write("    add x1, x1, :lo12:__fern_envp\n");
       s = s.write("    str x0, [x1]\n");
+    }
+    if (asmcore.vdso_wanted(s, "arm64-linux")) {
+      s = emit_vdso_scan(s);
     }
   }
   s = s.write("    stp x29, x30, [sp, #-16]!\n");
@@ -6618,6 +6647,11 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState, darwin: boolean): asm
 // emit_rt_clock_and_print emits the FFI call shims, the stdio leaves, and the clock / sleep helpers
 // (now_unix_ms, monotonic_ns, now_ns, sleep_ms, sleep_ns), which every module gets.
 function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+  // The Linux clocks call the vDSO through __c_call2, whose shim is emitted
+  // first.
+  if (!darwin && asmcore.vdso_wanted(s, "arm64-linux")) {
+    s = s.need("ccall:__c_call2").need("vdso");
+  }
   // FFI __c_call<n> shims (#4375): allocation-free arg-marshal + `blr fn`.
   s = emit_ccall_shims_arm64(s);
   // __fern_print_str, __fern_putchar and __fern_eprint_str are Fern runtime
@@ -6724,6 +6758,10 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     } else {
       s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("monotonic_ns", ctgt), s);
     }
+  }
+  if (!darwin && s.has_need("vdso")) {
+    s = s.write("    .section .bss\n    .p2align 3\n__fern_vdso: .quad 0, 0\n    .text\n");
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_vdso(ctgt), s);
   }
   return s;
 }

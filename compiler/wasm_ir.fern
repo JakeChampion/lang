@@ -1829,7 +1829,7 @@ function is_raw_floor_builtin(name: string): boolean {
   if (name == "__raw_alloc") {
     return true;
   }
-  if (name == "__raw_string" || name == "__raw_scratch" || name == "__raw_environ" || name == "__raw_splice_pipe" || name == "__raw_cover" || name == "__raw_task_state") {
+  if (name == "__raw_string" || name == "__raw_scratch" || name == "__raw_environ" || name == "__raw_splice_pipe" || name == "__raw_cover" || name == "__raw_task_state" || name == "__raw_vdso") {
     return true;
   }
   if (name == "__raw_arr_box" || name == "__raw_vg_request") {

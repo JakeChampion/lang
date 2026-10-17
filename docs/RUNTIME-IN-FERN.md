@@ -284,6 +284,13 @@ is genuinely out of reach: XNU's monotonic clock on Apple Silicon is not a
 syscall at all but `mrs cntvct_el0` scaled by `cntfrq_el0`, and Fern has no
 system-register-read intrinsic. That one helper stays hand-written.
 
+On Linux the clocks do not make the syscall when the kernel maps a vDSO
+(#12537): `_start` keeps `AT_SYSINFO_EHDR` from the auxiliary vector in
+`__fern_vdso` (the `raw_vdso` op), `asmcore.rt_src_vdso` finds
+`clock_gettime` in the image's symbol table once, and `clock_read` calls it
+through the `__c_call2` shim. Without an image or the symbol it falls back
+to the syscall.
+
 `read_dir` / `remove_dir_all` were the last two on that list, and went the
 same way. Both grounds recorded against them were table rows: Darwin's
 `getdirentries64` takes a 4th out-param `getdents64` has no equivalent of —
