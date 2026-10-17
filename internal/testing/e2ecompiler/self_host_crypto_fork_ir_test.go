@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// #8874: each streaming hasher calls __copy_in(own dst) with a buffer that
+// #8874: each streaming hasher calls __bytes_into(own dst) with a buffer that
 // can still belong to a retained state. Fork before completing the block,
 // update both branches, and check both digests after both writes. Expected
 // digests are independently generated with Python hashlib for abc and abd.
