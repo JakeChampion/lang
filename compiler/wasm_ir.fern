@@ -6695,8 +6695,6 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = emit_wasm_struct_get(o, parts);
   } else if (o.kind_tag == 140) {  // struct_set
     parts = emit_wasm_struct_set(eltmp, f64tmp, i64tmp, o, parts);
-  } else if (o.kind_tag == 198) {  // struct_copy
-    parts = emit_wasm_struct_copy(arrtmp, eltmp, o, parts);
   } else if (o.kind_tag == 144) {  // tuple_set
     parts = emit_wasm_tuple_set(eltmp, f64tmp, i64tmp, o, parts);
   } else if (o.kind_tag == 141) {  // struct_set_shape
@@ -17821,22 +17819,6 @@ function emit_wasm_struct_set(eltmp: i32, f64tmp: i32, i64tmp: i32, o: ir.Op, pa
   } else {
     parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n    i32.const " + util.i32_to_string(soff) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
   }
-
-  return parts;
-}
-
-function emit_wasm_struct_copy(arrtmp: i32, eltmp: i32, o: ir.Op, parts: string[]): string[] {
-  // stack: src box -> a fresh rc=1 box that is a byte-for-byte copy (the
-  // type_id@0 + nf 8-byte field slots, total 8+nf*8 bytes, matching
-  // struct_make). Alloc via $__fern_str_box(size) then memory.copy the whole
-  // box (field pointers shared, exactly like the inline base-copy). The
-  // compact base copy of `T { ...base, f: v }` (#4650). $eltmp holds src,
-  // $arrtmp the dst, across the alloc.
-  let scpsz: i32 = 8 + o.i32_imm * 8;
-  parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
-  parts = parts.append("    i32.const " + util.i32_to_string(scpsz) + "\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
-  parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.const " + util.i32_to_string(scpsz) + "\n    memory.copy\n");
-  parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
 
   return parts;
 }

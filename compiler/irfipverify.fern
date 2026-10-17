@@ -110,9 +110,6 @@ pub function fresh_alloc_what(o: ir.Op): string {
     }
     return "struct/enum construction";
   }
-  if (t == 198) {
-    return "functional struct update";
-  }
   if (t == 142) {
     return "tuple literal";
   }
