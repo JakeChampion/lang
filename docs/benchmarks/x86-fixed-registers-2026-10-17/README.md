@@ -152,3 +152,22 @@ The final broad x86 semantic/SSA/float/call/division/shift/scalar integration
 suite passes in 58.702 seconds. An explicit run of all six added debug corpus
 entries on the three native targets passes in 1.938 seconds; CI test-lane
 coverage passes in 1.276 seconds.
+
+
+## Integration with merged scalar-return main
+
+Starting fresh from main `2c23674c2`, source `52328b7d7` reaches identical
+stages 2 and 3 at 12,676,624 bytes, SHA-256
+`8d2d0c59bd20500f351c59334022ab856090c9e39ec3811aab26527837dd044d`.
+The focused execution, scalar-return, ARM-helper and complexity tests pass
+in 49.012 seconds. The fixed-register allocator's graph constraints pass
+separately in 1.949 seconds, and all six extra-caller debug fixtures pass
+in 2.167 seconds. Every one of eleven strict driver-size checks passes with
+complete coverage and unchanged baselines/tolerance (146.778 seconds).
+
+The fresh deterministic read-heavy comparison is `main-2c23-record.json`:
+current main `c7d93477…` takes 940,001,312 instructions and the candidate
+780,001,294, a 17% reduction, with identical checksum 4339612313273984.
+The hot function changes from five callee-saved pushes and two frame accesses
+to four pushes and no frame accesses. This integration repeat records no
+elapsed timings; the earlier speed measurements retain their original scope.
