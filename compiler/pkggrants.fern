@@ -141,6 +141,10 @@ pub function attenuation_error(mans: ManifestAt[]): string {
   if (mans.len() == 0) {
     return "";
   }
+  let invalid: string = manifest_errors(mans);
+  if (invalid.len() > 0) {
+    return invalid;
+  }
   let held: Holding[] = holdings(mans);
   let errors: string[] = [];
   for m in mans {
@@ -149,6 +153,18 @@ pub function attenuation_error(mans: ManifestAt[]): string {
         for err in violations(m, h.grants) {
           errors = errors.append(err);
         }
+      }
+    }
+  }
+  return joined(sorted_unique(errors), "\n");
+}
+
+function manifest_errors(mans: ManifestAt[]): string {
+  let errors: string[] = [];
+  for m in mans {
+    for dep in m.man.deps {
+      if (dep.cap_error.len() > 0) {
+        errors = errors.append(m.dir + "/fern.toml: dependency \"" + dep.name + "\": capabilities: " + dep.cap_error);
       }
     }
   }

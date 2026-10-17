@@ -24,6 +24,7 @@
 import "./parser";
 import "./astwalk";
 import "./util";
+import "./capvocab";
 
 // ---- vocabulary + classification ---------------------------------------
 
@@ -32,7 +33,7 @@ import "./util";
 // required — analyze emits a row's uses in this order rather than sorting
 // them afterwards.
 pub function capabilities(): string[] {
-  return ["env", "fs", "net", "random", "subprocess", "time"];
+  return capvocab.capabilities();
 }
 
 // BuiltinCap pairs a capability-relevant runtime builtin with the capability

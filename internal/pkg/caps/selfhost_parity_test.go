@@ -59,9 +59,16 @@ func fernList(t *testing.T, src, fn string) []string {
 // one side knows and the other does not is a grant that parses in fern.toml
 // and gates nothing.
 func TestSelfHostCapabilityVocabularyMatches(t *testing.T) {
-	got := fernList(t, readSelfHostCaps(t), "capabilities")
+	data, err := os.ReadFile("../../../compiler/capvocab.fern")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := fernList(t, string(data), "capabilities")
 	if strings.Join(got, ",") != strings.Join(Capabilities, ",") {
 		t.Errorf("vocabulary:\nnative    [%s]\nself-host [%s]", strings.Join(Capabilities, " "), strings.Join(got, " "))
+	}
+	if !regexp.MustCompile(`(?s)pub function capabilities\(\): string\[\] \{\s*return capvocab\.capabilities\(\);\s*\}`).MatchString(readSelfHostCaps(t)) {
+		t.Error("caps.capabilities must use the same vocabulary as manifest validation")
 	}
 }
 

@@ -202,6 +202,12 @@ order, before flattening and checking, including grants to unused dependencies.
 The independent Go loader is the differential oracle for the chain, diamond,
 workspace and vendor cases.
 
+Manifest capability grants must be arrays of known names. The parser keeps
+an explicit malformed key governed and records a manifest error, so it cannot
+fall into warn-and-allow as an absent key would. Check, compile and report modes
+all reject it. `capvocab.fern` is the shared vocabulary for manifest validation
+and the checker; the fast Go parity gate pins it against the Go loader's list.
+
 Phase 4 remains open: the component composer derives requested imports from
 the core module and the selected WIT world, rather than the package capability
 inventory.
