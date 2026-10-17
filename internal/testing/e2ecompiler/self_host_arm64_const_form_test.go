@@ -129,26 +129,31 @@ function main(): i32 { return page(1) - 4000 + odd(1) - 4090 + ((wide(1i64) % 10
 }
 
 // TestSelfHostI64ConstantTakesMovzFormArm64 pins the i64 constant form: a
-// literal in 0..65535 is one `mov`, anything wider keeps the literal pool,
-// and a small negative one, which `0i64 - 5i64` folds to, is one `mov` too.
+// literal in 0..65535 is one `mov`, one a single shifted halfword spells is
+// one `movz` (TestSelfHostArm64MovWideConstants covers the movn forms), a
+// wider one keeps the literal pool, and a small negative one, which
+// `0i64 - 5i64` folds to, is one `mov` too.
 func TestSelfHostI64ConstantTakesMovzFormArm64(t *testing.T) {
 	runArm64ShapeCases(t, []shapeCase{
 		{
 			name: "forms",
 			src: `@noinline function small(): i64 { return 65535i64; }
-@noinline function wide(): i64 { return 65536i64; }
+@noinline function shifted(): i64 { return 65536i64; }
+@noinline function wide(): i64 { return 65537i64; }
 @noinline function neg(): i64 { return 0i64 - 5i64; }
-function main(): i32 { return ((small() + wide() + neg()) % 1000i64) as i32; }`,
-			want: (65535 + 65536 - 5) % 1000,
+function main(): i32 { return ((small() + shifted() + wide() + neg()) % 250i64) as i32; }`,
+			want: (65535 + 65536 + 65537 - 5) % 250,
 			has: map[string][]string{
-				"small": {`\n    mov x[0-9]+, #65535\n`},
-				"wide":  {`\n    ldr x[0-9]+, =65536\n`},
-				"neg":   {`\n    mov x[0-9]+, #-5\n`},
+				"small":   {`\n    mov x[0-9]+, #65535\n`},
+				"shifted": {`\n    movz x[0-9]+, #1, lsl #16\n`},
+				"wide":    {`\n    ldr x[0-9]+, =65537\n`},
+				"neg":     {`\n    mov x[0-9]+, #-5\n`},
 			},
 			lacks: map[string][]string{
-				"small": {`ldr x[0-9]+, =`},
-				"wide":  {`mov x[0-9]+, #65536`},
-				"neg":   {`ldr x[0-9]+, =`, `sub x[0-9]+`},
+				"small":   {`ldr x[0-9]+, =`},
+				"shifted": {`ldr x[0-9]+, =`},
+				"wide":    {`mov x[0-9]+, #65537`},
+				"neg":     {`ldr x[0-9]+, =`, `sub x[0-9]+`},
 			},
 		},
 	})
