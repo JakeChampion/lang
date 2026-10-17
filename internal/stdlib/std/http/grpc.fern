@@ -189,7 +189,7 @@ function __percent(message: string): string {
 
 function __hex_byte(c: i32): string {
   let digits: string = "0123456789ABCDEF";
-  return string_from_bytes_unchecked([digits.bytes()[c >> 4 & 15], digits.bytes()[c & 15]]);
+  return string_from_bytes_unchecked([digits[c >> 4 & 15], digits[c & 15]]);
 }
 
 // `response(messages, code, message)` — a whole response: the messages

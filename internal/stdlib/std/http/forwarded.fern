@@ -698,7 +698,7 @@ function __v1_addr(text: string, v4: boolean, port: string): Option[net.SocketAd
 // `__v1_port(s)` — a port from 0 to 65535 without a leading zero, -1 for
 // anything else.
 function __v1_port(s: string): i32 {
-  if (!__port_digits(s) || s.len() > 1 && s.bytes()[0] == 48 as u8) {
+  if (!__port_digits(s) || s.len() > 1 && s[0] == b'0') {
     return 0 - 1;
   }
   let n: i32 = 0;
