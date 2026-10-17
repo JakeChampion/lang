@@ -2837,19 +2837,17 @@ function ssa_funary_direct(what: string): boolean {
 // Runtime arguments use x0-x2, which overlap allocatable homes. Resolve
 // their moves together so a swap or a longer cycle preserves every input.
 function ssa_load_abi_args(reg_of: i32[], args: i32[], count: i32, s: asmcore.EmitState): asmcore.EmitState {
-  let srcs: i32[] = [];
-  let dsts: i32[] = [];
-  let i: i32 = 0;
-  while (i < args.len() && i < count) {
-    let dst: i32 = 0;
-    if (i > 0) {
-      dst = ssa_nargs() + i - 1;
-    }
-    srcs = srcs.append(reg_of[args[i]]);
-    dsts = dsts.append(dst);
-    i = i + 1;
+  if (count == 0 || args.len() == 0) {
+    return s;
   }
-  return ssa_parallel_moves(srcs, dsts, s);
+  if (count == 1 || args.len() == 1) {
+    return ssa_load(reg_of, args[0], "x0", s);
+  }
+  // x1/x2 have pool indices 8/9; constant destination arrays are static.
+  if (count == 2 || args.len() == 2) {
+    return ssa_parallel_moves([reg_of[args[0]], reg_of[args[1]]], [0, 8], s);
+  }
+  return ssa_parallel_moves([reg_of[args[0]], reg_of[args[1]], reg_of[args[2]]], [0, 8, 9], s);
 }
 
 // ssa_push_operand stages one call argument: a store straight from the value's

@@ -78,12 +78,12 @@ def main():
             run([compiler, "-target", target, "-o", str(binary), str(benchmark), str(stdlib)])
             executables[name] = [str(binary)]
         print("X25519 native execution", flush=True)
-        results["x25519"] = measure(executables, 7)
+        results["x25519"] = measure(executables, 15)
         commands = {name: [compiler, "-target", target, "-o", str(work / f"checker-{name}"),
                            str(root / "compiler/checker.fern"), str(stdlib)]
                     for name, compiler in compilers.items()}
         print("Native compiler, fixed checker input", flush=True)
-        results["compiler"] = measure(commands, 5)
+        results["compiler"] = measure(commands, 15)
     report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text(json.dumps(results, indent=2) + "\n")
     for name in ["x25519", "compiler"]:
