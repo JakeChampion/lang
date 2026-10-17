@@ -38,14 +38,33 @@ env:
   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
 
 jobs:
-  # TWO JOBS, split over the coreutils corpus, which is most of the lane: one
-  # job ran 15.8 minutes, the longest in the suite. Each shard runs its half
-  # of the catalogue (~430 s each); shard 0 also runs the self-host native
-  # execution step (~160 s) and shard 1 every other step (~90 s), so the two
-  # finish together. The ratchet reads both halves in the darwin-ratchet job.
-  # The pool here is five macOS jobs account-wide, so two per suite leaves
-  # room for a PR suite beside main's.
+  # Publish native profiler results before the longer corpus and execution
+  # suites. This always executes on Apple Silicon, independently of a local
+  # signoff for the other native tests.
+  profile-arm64-darwin:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the pinned toolchain (mise.toml)
+        uses: jdx/mise-action@v4
+        with:
+          version: 2026.9.1
+          github_token: ${{ github.token }}
+      - uses: ./.github/actions/selfhost-driver-cache
+      - name: Execute all native Darwin profiling modes
+        run: |
+          gotestsum --format standard-verbose -- -count=1 -timeout 12m -run '^TestSelfHostDarwinProfile$' ./internal/testing/e2ecompiler/
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+
+  # The corpus still uses two shards, with the remaining native execution on
+  # shard 0 and the other Darwin checks on shard 1. Both start after profiling,
+  # so the lane's peak remains two concurrent macOS runners.
   test-arm64-darwin:
+    needs: profile-arm64-darwin
+    if: "!cancelled()"
     strategy:
       fail-fast: false
       matrix:
@@ -397,7 +416,7 @@ jobs:
         # this runner's twofold speed swing.
         timeout-minutes: 30
         run: |
-          gotestsum --format standard-verbose -- -timeout 25m -run '^(TestSelfHostArm64Darwin.*|TestSelfHostDarwinProfile|TestSelfHostCheckerFallbackHint|TestSelfHostStringArrayReleaseRuntime|TestSelfHostNativePollableAdapters)$' ./internal/testing/e2ecompiler/
+          gotestsum --format standard-verbose -- -timeout 25m -run '^(TestSelfHostArm64Darwin.*|TestSelfHostCheckerFallbackHint|TestSelfHostStringArrayReleaseRuntime|TestSelfHostNativePollableAdapters)$' ./internal/testing/e2ecompiler/
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
