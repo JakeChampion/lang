@@ -15539,7 +15539,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		}
 		if n.Type == nil {
 			if got == nil {
-				s.poison(n.Name)
+				s.bindVar(n.Name, nil, n)
 				return
 			}
 			// Polymorphic empty array `[]` with no annotation
@@ -15548,7 +15548,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			// recording a nil-elem type.
 			if at, ok := got.(ast.ArrayType); ok && at.Elem == nil {
 				c.errfCode(n.P, "E020", "empty array literal needs a type annotation")
-				s.poison(n.Name)
+				s.bindVar(n.Name, nil, n)
 				return
 			}
 			// An unannotated binding whose init is still polymorphic
