@@ -1,0 +1,48 @@
+{
+  "compiler_sha256": "b17eef564b315f7771555104255bcd4527df8f2becad8dfd5c85ed407cedabff",
+  "memo": "disabled; cold certification every run",
+  "rows": [
+    {
+      "pair": 0,
+      "mode": "disabled",
+      "seconds": 18.96657183700154,
+      "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+    },
+    {
+      "pair": 0,
+      "mode": "enabled",
+      "seconds": 28.733072952996736,
+      "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+    },
+    {
+      "pair": 1,
+      "mode": "enabled",
+      "seconds": 27.041497558002447,
+      "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+    },
+    {
+      "pair": 1,
+      "mode": "disabled",
+      "seconds": 18.58866986800058,
+      "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+    },
+    {
+      "pair": 2,
+      "mode": "disabled",
+      "seconds": 17.661166712998238,
+      "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+    },
+    {
+      "pair": 2,
+      "mode": "enabled",
+      "seconds": 25.698995032998937,
+      "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+    }
+  ],
+  "ratios": [
+    1.5149323346321295,
+    1.454730099034841,
+    1.4551130992996646
+  ],
+  "median_ratio": 1.4551130992996646
+}

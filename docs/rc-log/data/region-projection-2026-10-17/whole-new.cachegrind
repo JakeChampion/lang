@@ -1,0 +1,6 @@
+cmd: /workspace/scratch/fern-certifier-region-projection-final -target x86-64-linux -o /workspace/scratch/lang-certifier-region-final-whole-new.bin /workspace/lang-coreutils-parity/compiler/fern.fern /workspace/lang-coreutils-parity/internal/stdlib
+events: Ir
+fl=???
+fn=???
+0 123757257913
+summary: 123757257913

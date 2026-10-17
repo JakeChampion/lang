@@ -4,7 +4,10 @@
 # form, and BASE, the affine j * 16^i * G for i in 0..63 and j in 1..15. Run
 # it after changing anything below; it rewrites the region in place, and
 # checks the formulas it emits against Python's integers first.
-import os, random, re
+import os, random, sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from limbgen import M64, Gen, fe_return, limbs, lit, run, write_region
 
 P = 2**256 - 2**224 + 2**192 + 2**96 - 1
 N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551
@@ -12,48 +15,6 @@ B = 0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b
 GX = 0x6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296
 GY = 0x4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5
 R = 2**256
-M64 = 2**64 - 1
-
-def limbs(v):
-    return [(v >> (64 * i)) & M64 for i in range(4)]
-
-def lit(v):
-    return "0x%016xu64" % v
-
-class Gen:
-    def __init__(self):
-        self.lines = []
-        self.n = 0
-    def fresh(self, base="v"):
-        self.n += 1
-        return "%s%d" % (base, self.n)
-    def let(self, expr, base="v"):
-        name = self.fresh(base)
-        self.lines.append("  let %s: u64 = %s;" % (name, expr))
-        return name
-    # sum and carry of x + y (+ c): carry from the top bit, branch-free.
-    def add(self, x, y, c=None):
-        s = self.let("%s + %s" % (x, y) if c is None else "%s + %s + %s" % (x, y, c), "s")
-        k = self.let("(%s & %s | (%s | %s) & (%s ^ ALL)) >> 63u64" % (x, y, x, y, s), "c")
-        return s, k
-    def sub(self, x, y, b=None):
-        d = self.let("%s - %s" % (x, y) if b is None else "%s - %s - %s" % (x, y, b), "d")
-        k = self.let("((%s ^ ALL) & %s | (%s ^ ALL | %s) & %s) >> 63u64" % (x, y, x, y, d), "b")
-        return d, k
-    # (hi, lo) = x + y*z + c, each term below 2^64.
-    def mac(self, x, y, z, c):
-        lo = self.let("%s * %s" % (y, z), "lo")
-        hi = self.let("__mulhi_u64(%s, %s)" % (y, z), "hi")
-        terms = [t for t in (x, c) if t is not None]
-        for t in terms:
-            lo, k = self.add(lo, t)
-            hi = self.let("%s + %s" % (hi, k), "hi")
-        return hi, lo
-    # params binds an Fe parameter's limbs to locals, so each is read once and
-    # every use of a limb is the same value.
-    def params(self, name):
-        return [self.let("%s.l%d" % (name, i), name) for i in range(4)]
-
 # The Montgomery product a * b / R mod p, CIOS. For P-256's p, n0 is 1 and
 # the low limb is all ones, so the multiple of p that clears a limb is the
 # limb itself and its low product needs no multiplication.
@@ -182,36 +143,6 @@ def base_table():
         lines.append("  " + ", ".join(lit(w) for w in words[at:at + 4]) + ",")
     return "// BASE holds j * 16^i * G at ((i * 15 + j - 1) * 8): x then y, four limbs\n// each, in Montgomery form.\nconst BASE: u64[] = [\n" + "\n".join(lines) + "\n];\n"
 
-# The emitted straight-line code, run on Python integers.
-def run(fn_src, a, b):
-    env = {"ALL": M64}
-    for j in range(4):
-        env["a.l%d" % j] = limbs(a)[j]
-        env["b.l%d" % j] = limbs(b)[j]
-    ret = None
-    for line in fn_src.splitlines():
-        m = re.match(r"  let (\w+): u64 = (.*);$", line)
-        if m:
-            env[m.group(1)] = ev(m.group(2), env)
-        m = re.match(r"  return Fe \{ l0: (.*), l1: (.*), l2: (.*), l3: (.*) \};$", line)
-        if m:
-            ret = sum(ev(m.group(k + 1), env) << (64 * k) for k in range(4))
-        m = re.match(r"  return (\w+);$", line)
-        if m:
-            ret = env[m.group(1)]
-    return ret
-
-def ev(expr, env):
-    e = re.sub(r"0x([0-9a-f]+)u64", r"0x\1", expr)
-    e = re.sub(r"(\d+)u64", r"\1", e)
-    e = e.replace("__mulhi_u64", "mulhi")
-    e = re.sub(r"\b([ab])\.(l\d)\b", r"\1_\2", e)
-    names = {k.replace(".", "_"): v for k, v in env.items()}
-    names["mulhi"] = lambda x, y: (x * y) >> 64
-    # Python's precedence for these operators matches C's except that
-    # Python's & | ^ bind tighter than its comparisons, which are unused.
-    return eval(e, {}, names) & M64
-
 def check(fns):
     rnd = random.Random(1)
     rinv = pow(R, -1, P)
@@ -220,15 +151,15 @@ def check(fns):
     for k in range(3000):
         a = edge[k % len(edge)] if k < 49 else rnd.randrange(P)
         b = edge[k // len(edge) % len(edge)] if k < 49 else rnd.randrange(P)
-        assert run(fns["__fp_mul"], a, b) == a * b * rinv % P
-        assert run(fns["__fp_add"], a, b) == (a + b) % P
-        assert run(fns["__fp_sub"], a, b) == (a - b) % P
-        assert run(fns["__borrow"], a, b) == (1 if a < b else 0)
+        assert run(fns["__fp_mul"], {"a": a, "b": b}) == a * b * rinv % P
+        assert run(fns["__fp_add"], {"a": a, "b": b}) == (a + b) % P
+        assert run(fns["__fp_sub"], {"a": a, "b": b}) == (a - b) % P
+        assert run(fns["__borrow"], {"a": a, "b": b}) == (1 if a < b else 0)
         an, bn = a % N, b % N
-        assert run(fns["__fn_mul"], an, bn) == an * bn * rninv % N
-        assert run(fns["__fn_add"], an, bn) == (an + bn) % N
+        assert run(fns["__fn_mul"], {"a": an, "b": bn}) == an * bn * rninv % N
+        assert run(fns["__fn_add"], {"a": an, "b": bn}) == (an + bn) % N
         # One operand below the modulus is enough for the product.
-        assert run(fns["__fn_mul"], a, bn) == a * bn * rninv % N
+        assert run(fns["__fn_mul"], {"a": a, "b": bn}) == a * bn * rninv % N
 
 def region():
     fns = {
@@ -253,10 +184,4 @@ def region():
 
 if __name__ == "__main__":
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "internal", "stdlib", "std", "crypto", "p256.fern")
-    text = open(path).read()
-    begin = "// BEGIN GENERATED P-256 ARITHMETIC (scripts/gen-p256.py): do not edit by hand.\n"
-    end = "// END GENERATED P-256 ARITHMETIC\n"
-    i = text.index(begin) + len(begin)
-    j = text.index(end)
-    out = text[:i] + region() + text[j:]
-    open(path, "w").write(out)
+    write_region(path, "P-256 ARITHMETIC", "gen-p256.py", region())

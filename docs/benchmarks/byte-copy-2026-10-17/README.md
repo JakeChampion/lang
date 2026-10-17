@@ -51,3 +51,17 @@ shared copy kernel. Those four costs and the eight new benchmark measurements
 are explicitly recorded in the baseline, with no tolerance changes. The
 standard performance workflow on `f71565e6a` passed all lanes:
 https://github.com/JakeChampion/lang/actions/runs/39026648568.
+
+## Main integration verification
+
+After integrating main `38735b2b2` and the consuming-call alias fix, bootstrap
+stages 2 and 3 agree: 12,576,400 bytes, SHA-256
+`c7cc133ed8890d8d4d822e49e13f448de0116c1c09872e148362e59783404398`.
+All twelve ordinary/sanitized executions across x86-64, ARM64 and WASI pass
+again with the same allocation/free counts; see
+[the current execution record](main-387-execution.json). Ten executables,
+including all four x86-64 microbenchmark variants, are byte-identical to the
+recorded candidate. Two ARM64 executables changed. The timings above retain
+the original compiler hashes and are not new measurements of the refreshed
+compiler executable. All 11 strict driver size budgets also pass after this
+integration.

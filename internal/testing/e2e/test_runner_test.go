@@ -1117,7 +1117,7 @@ func TestRunnerAESGCMExamplePasses(t *testing.T) {
 // `tests/stdlib/x25519_test.fern` covers RFC 7748's vectors, a
 // non-canonical u-coordinate and the low-order refusal.
 func TestRunnerX25519ExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "x25519", "std/crypto/x25519", 8)
+	runnerSuitePasses(t, "x25519", "std/crypto/x25519", 9)
 }
 
 // `tests/stdlib/mlkem768_test.fern` covers FIPS 203 known answers from Go's
@@ -1131,6 +1131,12 @@ func TestRunnerMLKEM768ExamplePasses(t *testing.T) {
 // P-384's order.
 func TestRunnerMontgomeryExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "montgomery", "std/crypto/montgomery", 4)
+}
+
+// `tests/stdlib/field25519_test.fern` checks std/crypto/field25519's
+// arithmetic and encoding at the edges, unreduced inputs included.
+func TestRunnerField25519ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "field25519", "std/crypto/field25519", 5)
 }
 
 // `tests/stdlib/p256_test.fern` checks std/crypto/p256's [k]G, [k]Q and

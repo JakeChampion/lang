@@ -1,0 +1,20 @@
+{
+  "rows": [
+    {
+      "compiler": "base",
+      "compiler_sha256": "c7cc133ed8890d8d4d822e49e13f448de0116c1c09872e148362e59783404398",
+      "report_lines": 7509,
+      "report_sha256": "b87a75e20a441cfd9be1ae47b91a03d852ca8ac5254bfa1659df156ab37efa41",
+      "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+    },
+    {
+      "compiler": "new",
+      "compiler_sha256": "7c85699f16fe203d67a2c4e0c3c6aaaf8a713e2d4c1a6decb65b78116bf9f793",
+      "report_lines": 7509,
+      "report_sha256": "b87a75e20a441cfd9be1ae47b91a03d852ca8ac5254bfa1659df156ab37efa41",
+      "output_sha256": "4d676f3c789b9b9c4104417a7148d01c79756b1070c7699ae69cc4566db091d1"
+    }
+  ],
+  "full_report_equal": true,
+  "executable_equal": true
+}

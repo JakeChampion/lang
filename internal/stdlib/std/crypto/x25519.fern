@@ -7,12 +7,13 @@
 // takes the shared secret to all zeros (`LowOrder`), as TLS 1.3 requires.
 //
 // Constant time by construction: the field arithmetic
-// (`std/crypto/field25519`) is ten signed limbs of 26 and 25 bits in `i64`,
-// so every product fits; the ladder swaps with a mask, never a branch; and
-// the inversion's exponent is a public constant. The valgrind gate
+// (`std/crypto/field25519`) is straight-line code over four 64-bit limbs,
+// its carries taken from the top bits; the ladder swaps with a mask, never a
+// branch; and the inversion's exponent is a public constant. The valgrind gate
 // (`__ct_secret`, docs/TEST-GATES.md) checks this.
 
 import "core/int";
+import "std/crypto/ed25519";
 import "std/crypto/field25519" as fe;
 
 // X25519Error — a scalar or a point of the wrong length (the length it had),
@@ -45,7 +46,6 @@ function __ladder(k: [u8], u: fe.Fe): fe.Fe {
   let z2: fe.Fe = fe.from_i64(0);
   let x3: fe.Fe = u;
   let z3: fe.Fe = fe.from_i64(1);
-  let a24: fe.Fe = fe.from_i64(121665);
   let swap: i64 = 0;
   let t: i32 = 254;
   while (t >= 0) {
@@ -77,7 +77,7 @@ function __ladder(k: [u8], u: fe.Fe): fe.Fe {
     x3 = fe.sq(fe.add(da, cb));
     z3 = fe.mul(u, fe.sq(fe.sub(da, cb)));
     x2 = fe.mul(aa, bb);
-    z2 = fe.mul(e, fe.add(aa, fe.mul(a24, e)));
+    z2 = fe.mul(e, fe.add(aa, fe.mul_small(e, 121665u64)));
     t = t - 1;
   }
   let xs: (fe.Fe, fe.Fe) = fe.cswap(x2, x3, swap);
@@ -112,11 +112,19 @@ pub function x25519(scalar: [u8], point: [u8]): Result[u8[], X25519Error] {
   return Ok(out);
 }
 
-// public_key(scalar) — the public key of a 32-byte secret: the scalar times
-// the base point, u = 9.
+// public_key(scalar) — the public key of a 32-byte secret: the scalar,
+// clamped, times the base point u = 9, taken from Ed25519's fixed-base table
+// rather than the ladder.
 pub function public_key(scalar: [u8]): Result[u8[], X25519Error] {
   if (scalar.len() != 32) {
     return Err(ScalarLength(scalar.len()));
   }
-  return Ok(fe.to_bytes(__ladder(scalar, fe.from_i64(9))));
+  let k: u8[] = __alloc_u8(32);
+  let i: i32 = 0;
+  while (i < 32) {
+    k = k.with(i, scalar[i]);
+    i = i + 1;
+  }
+  k = k.with(0, k[0] & 248 as u8).with(31, k[31] & 127 as u8 | 64 as u8);
+  return Ok(ed25519.montgomery_base(k));
 }

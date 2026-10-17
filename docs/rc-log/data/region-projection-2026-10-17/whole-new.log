@@ -1,0 +1,7 @@
+==117998== Cachegrind, a high-precision tracing profiler
+==117998== Copyright (C) 2002-2024, and GNU GPL'd, by Nicholas Nethercote et al.
+==117998== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info
+==117998== Command: /workspace/scratch/fern-certifier-region-projection-final -target x86-64-linux -o /workspace/scratch/lang-certifier-region-final-whole-new.bin /workspace/lang-coreutils-parity/compiler/fern.fern /workspace/lang-coreutils-parity/internal/stdlib
+==117998== 
+==117998== 
+==117998== I refs:        123,757,257,913
