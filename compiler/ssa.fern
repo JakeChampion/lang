@@ -1873,7 +1873,7 @@ function shares_operand_home(op: string): boolean {
 
 // int_binary names the integer operators that cannot trap.
 function int_binary(op: string): boolean {
-  let ops: string[] = ["add", "sub", "mul", "and", "or", "xor", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "shl", "shr_s", "shr_u"];
+  let ops: string[] = ["add", "sub", "mul", "and", "and_not", "or", "xor", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "shl", "shr_s", "shr_u"];
   for o in ops {
     if (o == op) {
       return true;

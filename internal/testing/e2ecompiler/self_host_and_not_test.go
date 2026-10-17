@@ -82,6 +82,15 @@ func TestSelfHostAndNot(t *testing.T) {
 						t.Errorf("%s has no fused and-not:\n%s", fn, body)
 					}
 				}
+				direct := `(?m)^\s+andnq\s+[^\n]+, %rax$`
+				if target == "arm64-linux" {
+					direct = `(?m)^\s+bic x0,`
+				}
+				for _, fn := range []string{"right", "left", "commuted"} {
+					if !regexp.MustCompile(direct).MatchString(tailCallBody(t, string(raw), fn)) {
+						t.Errorf("%s does not reuse its dying result-register operand", fn)
+					}
+				}
 				if regexp.MustCompile(op).MatchString(tailCallBody(t, string(raw), "different_mask")) {
 					t.Error("partial inverse was treated as all bits")
 				}
