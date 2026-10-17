@@ -45,7 +45,6 @@ function __ladder(k: [u8], u: fe.Fe): fe.Fe {
   let z2: fe.Fe = fe.from_i64(0);
   let x3: fe.Fe = u;
   let z3: fe.Fe = fe.from_i64(1);
-  let a24: fe.Fe = fe.from_i64(121665);
   let swap: i64 = 0;
   let t: i32 = 254;
   while (t >= 0) {
@@ -77,7 +76,7 @@ function __ladder(k: [u8], u: fe.Fe): fe.Fe {
     x3 = fe.sq(fe.add(da, cb));
     z3 = fe.mul(u, fe.sq(fe.sub(da, cb)));
     x2 = fe.mul(aa, bb);
-    z2 = fe.mul(e, fe.add(aa, fe.mul(a24, e)));
+    z2 = fe.mul(e, fe.add(aa, fe.mul_small(e, 121665u64)));
     t = t - 1;
   }
   let xs: (fe.Fe, fe.Fe) = fe.cswap(x2, x3, swap);

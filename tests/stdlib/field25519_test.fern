@@ -1,0 +1,718 @@
+import "std/test";
+import "std/hex";
+import "std/crypto/field25519" as fe;
+
+// tests/stdlib/field25519_test.fern: std/crypto/field25519 on the values
+// at its edges, against Python's integers. Inputs run up to 2^255 - 1, so p
+// and the values above it arrive unreduced; to_bytes must answer each mod p.
+
+const ZERO: string = "0000000000000000000000000000000000000000000000000000000000000000";
+
+const ONE: string = "0100000000000000000000000000000000000000000000000000000000000000";
+
+const NINETEEN: string = "1300000000000000000000000000000000000000000000000000000000000000";
+
+const P_MINUS_1: string = "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f";
+
+const P: string = "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f";
+
+const P_PLUS_1: string = "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f";
+
+const TOP: string = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f";
+
+const MIXED: string = "0f1e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412";
+
+function el(h: string): fe.Fe {
+  return fe.from_bytes(hex.hex_decode(h));
+}
+
+function out(a: fe.Fe): string {
+  return hex.hex_encode(fe.to_bytes(a));
+}
+
+function test_mul(): test.TestOutcome {
+  if (out(fe.mul(el(ZERO), el(ZERO))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(ZERO, ZERO)");
+  }
+  if (out(fe.mul(el(ZERO), el(ONE))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(ZERO, ONE)");
+  }
+  if (out(fe.mul(el(ZERO), el(NINETEEN))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(ZERO, NINETEEN)");
+  }
+  if (out(fe.mul(el(ZERO), el(P_MINUS_1))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(ZERO, P_MINUS_1)");
+  }
+  if (out(fe.mul(el(ZERO), el(P))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(ZERO, P)");
+  }
+  if (out(fe.mul(el(ZERO), el(P_PLUS_1))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(ZERO, P_PLUS_1)");
+  }
+  if (out(fe.mul(el(ZERO), el(TOP))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(ZERO, TOP)");
+  }
+  if (out(fe.mul(el(ZERO), el(MIXED))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(ZERO, MIXED)");
+  }
+  if (out(fe.mul(el(ONE), el(ZERO))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(ONE, ZERO)");
+  }
+  if (out(fe.mul(el(ONE), el(ONE))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(ONE, ONE)");
+  }
+  if (out(fe.mul(el(ONE), el(NINETEEN))) != "1300000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(ONE, NINETEEN)");
+  }
+  if (out(fe.mul(el(ONE), el(P_MINUS_1))) != "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("mul(ONE, P_MINUS_1)");
+  }
+  if (out(fe.mul(el(ONE), el(P))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(ONE, P)");
+  }
+  if (out(fe.mul(el(ONE), el(P_PLUS_1))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(ONE, P_PLUS_1)");
+  }
+  if (out(fe.mul(el(ONE), el(TOP))) != "1200000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(ONE, TOP)");
+  }
+  if (out(fe.mul(el(ONE), el(MIXED))) != "0f1e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("mul(ONE, MIXED)");
+  }
+  if (out(fe.mul(el(NINETEEN), el(ZERO))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(NINETEEN, ZERO)");
+  }
+  if (out(fe.mul(el(NINETEEN), el(ONE))) != "1300000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(NINETEEN, ONE)");
+  }
+  if (out(fe.mul(el(NINETEEN), el(NINETEEN))) != "6901000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(NINETEEN, NINETEEN)");
+  }
+  if (out(fe.mul(el(NINETEEN), el(P_MINUS_1))) != "daffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("mul(NINETEEN, P_MINUS_1)");
+  }
+  if (out(fe.mul(el(NINETEEN), el(P))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(NINETEEN, P)");
+  }
+  if (out(fe.mul(el(NINETEEN), el(P_PLUS_1))) != "1300000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(NINETEEN, P_PLUS_1)");
+  }
+  if (out(fe.mul(el(NINETEEN), el(TOP))) != "5601000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(NINETEEN, TOP)");
+  }
+  if (out(fe.mul(el(NINETEEN), el(MIXED))) != "433b597795b3d1ef0d2c4a6886a4c2e041b73fc850d961eae28b047cf36ae259") {
+    return test.fail("mul(NINETEEN, MIXED)");
+  }
+  if (out(fe.mul(el(P_MINUS_1), el(ZERO))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(P_MINUS_1, ZERO)");
+  }
+  if (out(fe.mul(el(P_MINUS_1), el(ONE))) != "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("mul(P_MINUS_1, ONE)");
+  }
+  if (out(fe.mul(el(P_MINUS_1), el(NINETEEN))) != "daffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("mul(P_MINUS_1, NINETEEN)");
+  }
+  if (out(fe.mul(el(P_MINUS_1), el(P_MINUS_1))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(P_MINUS_1, P_MINUS_1)");
+  }
+  if (out(fe.mul(el(P_MINUS_1), el(P))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(P_MINUS_1, P)");
+  }
+  if (out(fe.mul(el(P_MINUS_1), el(P_PLUS_1))) != "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("mul(P_MINUS_1, P_PLUS_1)");
+  }
+  if (out(fe.mul(el(P_MINUS_1), el(TOP))) != "dbffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("mul(P_MINUS_1, TOP)");
+  }
+  if (out(fe.mul(el(P_MINUS_1), el(MIXED))) != "dee1d2c3b4a5968778695a4b3c2d1e0fefcdab89674523010f21436587a9cb6d") {
+    return test.fail("mul(P_MINUS_1, MIXED)");
+  }
+  if (out(fe.mul(el(P), el(ZERO))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(P, ZERO)");
+  }
+  if (out(fe.mul(el(P), el(ONE))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(P, ONE)");
+  }
+  if (out(fe.mul(el(P), el(NINETEEN))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(P, NINETEEN)");
+  }
+  if (out(fe.mul(el(P), el(P_MINUS_1))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(P, P_MINUS_1)");
+  }
+  if (out(fe.mul(el(P), el(P))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(P, P)");
+  }
+  if (out(fe.mul(el(P), el(P_PLUS_1))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(P, P_PLUS_1)");
+  }
+  if (out(fe.mul(el(P), el(TOP))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(P, TOP)");
+  }
+  if (out(fe.mul(el(P), el(MIXED))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(P, MIXED)");
+  }
+  if (out(fe.mul(el(P_PLUS_1), el(ZERO))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(P_PLUS_1, ZERO)");
+  }
+  if (out(fe.mul(el(P_PLUS_1), el(ONE))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(P_PLUS_1, ONE)");
+  }
+  if (out(fe.mul(el(P_PLUS_1), el(NINETEEN))) != "1300000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(P_PLUS_1, NINETEEN)");
+  }
+  if (out(fe.mul(el(P_PLUS_1), el(P_MINUS_1))) != "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("mul(P_PLUS_1, P_MINUS_1)");
+  }
+  if (out(fe.mul(el(P_PLUS_1), el(P))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(P_PLUS_1, P)");
+  }
+  if (out(fe.mul(el(P_PLUS_1), el(P_PLUS_1))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(P_PLUS_1, P_PLUS_1)");
+  }
+  if (out(fe.mul(el(P_PLUS_1), el(TOP))) != "1200000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(P_PLUS_1, TOP)");
+  }
+  if (out(fe.mul(el(P_PLUS_1), el(MIXED))) != "0f1e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("mul(P_PLUS_1, MIXED)");
+  }
+  if (out(fe.mul(el(TOP), el(ZERO))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(TOP, ZERO)");
+  }
+  if (out(fe.mul(el(TOP), el(ONE))) != "1200000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(TOP, ONE)");
+  }
+  if (out(fe.mul(el(TOP), el(NINETEEN))) != "5601000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(TOP, NINETEEN)");
+  }
+  if (out(fe.mul(el(TOP), el(P_MINUS_1))) != "dbffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("mul(TOP, P_MINUS_1)");
+  }
+  if (out(fe.mul(el(TOP), el(P))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(TOP, P)");
+  }
+  if (out(fe.mul(el(TOP), el(P_PLUS_1))) != "1200000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(TOP, P_PLUS_1)");
+  }
+  if (out(fe.mul(el(TOP), el(TOP))) != "4401000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(TOP, TOP)");
+  }
+  if (out(fe.mul(el(TOP), el(MIXED))) != "341d2c3b4a5968778695a4b3c2d1e0ef3085eb51b81e85ebf1ac47e17a14ae47") {
+    return test.fail("mul(TOP, MIXED)");
+  }
+  if (out(fe.mul(el(MIXED), el(ZERO))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(MIXED, ZERO)");
+  }
+  if (out(fe.mul(el(MIXED), el(ONE))) != "0f1e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("mul(MIXED, ONE)");
+  }
+  if (out(fe.mul(el(MIXED), el(NINETEEN))) != "433b597795b3d1ef0d2c4a6886a4c2e041b73fc850d961eae28b047cf36ae259") {
+    return test.fail("mul(MIXED, NINETEEN)");
+  }
+  if (out(fe.mul(el(MIXED), el(P_MINUS_1))) != "dee1d2c3b4a5968778695a4b3c2d1e0fefcdab89674523010f21436587a9cb6d") {
+    return test.fail("mul(MIXED, P_MINUS_1)");
+  }
+  if (out(fe.mul(el(MIXED), el(P))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul(MIXED, P)");
+  }
+  if (out(fe.mul(el(MIXED), el(P_PLUS_1))) != "0f1e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("mul(MIXED, P_PLUS_1)");
+  }
+  if (out(fe.mul(el(MIXED), el(TOP))) != "341d2c3b4a5968778695a4b3c2d1e0ef3085eb51b81e85ebf1ac47e17a14ae47") {
+    return test.fail("mul(MIXED, TOP)");
+  }
+  if (out(fe.mul(el(MIXED), el(MIXED))) != "f77f933ca1e735b2426b5cf65287a8cbc3c22aa7fc15de3f861a119a8fcb277e") {
+    return test.fail("mul(MIXED, MIXED)");
+  }
+  return test.pass();
+}
+
+function test_add(): test.TestOutcome {
+  if (out(fe.add(el(ZERO), el(ZERO))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(ZERO, ZERO)");
+  }
+  if (out(fe.add(el(ZERO), el(ONE))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(ZERO, ONE)");
+  }
+  if (out(fe.add(el(ZERO), el(NINETEEN))) != "1300000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(ZERO, NINETEEN)");
+  }
+  if (out(fe.add(el(ZERO), el(P_MINUS_1))) != "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("add(ZERO, P_MINUS_1)");
+  }
+  if (out(fe.add(el(ZERO), el(P))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(ZERO, P)");
+  }
+  if (out(fe.add(el(ZERO), el(P_PLUS_1))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(ZERO, P_PLUS_1)");
+  }
+  if (out(fe.add(el(ZERO), el(TOP))) != "1200000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(ZERO, TOP)");
+  }
+  if (out(fe.add(el(ZERO), el(MIXED))) != "0f1e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("add(ZERO, MIXED)");
+  }
+  if (out(fe.add(el(ONE), el(ZERO))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(ONE, ZERO)");
+  }
+  if (out(fe.add(el(ONE), el(ONE))) != "0200000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(ONE, ONE)");
+  }
+  if (out(fe.add(el(ONE), el(NINETEEN))) != "1400000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(ONE, NINETEEN)");
+  }
+  if (out(fe.add(el(ONE), el(P_MINUS_1))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(ONE, P_MINUS_1)");
+  }
+  if (out(fe.add(el(ONE), el(P))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(ONE, P)");
+  }
+  if (out(fe.add(el(ONE), el(P_PLUS_1))) != "0200000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(ONE, P_PLUS_1)");
+  }
+  if (out(fe.add(el(ONE), el(TOP))) != "1300000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(ONE, TOP)");
+  }
+  if (out(fe.add(el(ONE), el(MIXED))) != "101e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("add(ONE, MIXED)");
+  }
+  if (out(fe.add(el(NINETEEN), el(ZERO))) != "1300000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(NINETEEN, ZERO)");
+  }
+  if (out(fe.add(el(NINETEEN), el(ONE))) != "1400000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(NINETEEN, ONE)");
+  }
+  if (out(fe.add(el(NINETEEN), el(NINETEEN))) != "2600000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(NINETEEN, NINETEEN)");
+  }
+  if (out(fe.add(el(NINETEEN), el(P_MINUS_1))) != "1200000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(NINETEEN, P_MINUS_1)");
+  }
+  if (out(fe.add(el(NINETEEN), el(P))) != "1300000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(NINETEEN, P)");
+  }
+  if (out(fe.add(el(NINETEEN), el(P_PLUS_1))) != "1400000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(NINETEEN, P_PLUS_1)");
+  }
+  if (out(fe.add(el(NINETEEN), el(TOP))) != "2500000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(NINETEEN, TOP)");
+  }
+  if (out(fe.add(el(NINETEEN), el(MIXED))) != "221e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("add(NINETEEN, MIXED)");
+  }
+  if (out(fe.add(el(P_MINUS_1), el(ZERO))) != "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("add(P_MINUS_1, ZERO)");
+  }
+  if (out(fe.add(el(P_MINUS_1), el(ONE))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(P_MINUS_1, ONE)");
+  }
+  if (out(fe.add(el(P_MINUS_1), el(NINETEEN))) != "1200000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(P_MINUS_1, NINETEEN)");
+  }
+  if (out(fe.add(el(P_MINUS_1), el(P_MINUS_1))) != "ebffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("add(P_MINUS_1, P_MINUS_1)");
+  }
+  if (out(fe.add(el(P_MINUS_1), el(P))) != "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("add(P_MINUS_1, P)");
+  }
+  if (out(fe.add(el(P_MINUS_1), el(P_PLUS_1))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(P_MINUS_1, P_PLUS_1)");
+  }
+  if (out(fe.add(el(P_MINUS_1), el(TOP))) != "1100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(P_MINUS_1, TOP)");
+  }
+  if (out(fe.add(el(P_MINUS_1), el(MIXED))) != "0e1e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("add(P_MINUS_1, MIXED)");
+  }
+  if (out(fe.add(el(P), el(ZERO))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(P, ZERO)");
+  }
+  if (out(fe.add(el(P), el(ONE))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(P, ONE)");
+  }
+  if (out(fe.add(el(P), el(NINETEEN))) != "1300000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(P, NINETEEN)");
+  }
+  if (out(fe.add(el(P), el(P_MINUS_1))) != "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("add(P, P_MINUS_1)");
+  }
+  if (out(fe.add(el(P), el(P))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(P, P)");
+  }
+  if (out(fe.add(el(P), el(P_PLUS_1))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(P, P_PLUS_1)");
+  }
+  if (out(fe.add(el(P), el(TOP))) != "1200000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(P, TOP)");
+  }
+  if (out(fe.add(el(P), el(MIXED))) != "0f1e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("add(P, MIXED)");
+  }
+  if (out(fe.add(el(P_PLUS_1), el(ZERO))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(P_PLUS_1, ZERO)");
+  }
+  if (out(fe.add(el(P_PLUS_1), el(ONE))) != "0200000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(P_PLUS_1, ONE)");
+  }
+  if (out(fe.add(el(P_PLUS_1), el(NINETEEN))) != "1400000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(P_PLUS_1, NINETEEN)");
+  }
+  if (out(fe.add(el(P_PLUS_1), el(P_MINUS_1))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(P_PLUS_1, P_MINUS_1)");
+  }
+  if (out(fe.add(el(P_PLUS_1), el(P))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(P_PLUS_1, P)");
+  }
+  if (out(fe.add(el(P_PLUS_1), el(P_PLUS_1))) != "0200000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(P_PLUS_1, P_PLUS_1)");
+  }
+  if (out(fe.add(el(P_PLUS_1), el(TOP))) != "1300000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(P_PLUS_1, TOP)");
+  }
+  if (out(fe.add(el(P_PLUS_1), el(MIXED))) != "101e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("add(P_PLUS_1, MIXED)");
+  }
+  if (out(fe.add(el(TOP), el(ZERO))) != "1200000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(TOP, ZERO)");
+  }
+  if (out(fe.add(el(TOP), el(ONE))) != "1300000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(TOP, ONE)");
+  }
+  if (out(fe.add(el(TOP), el(NINETEEN))) != "2500000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(TOP, NINETEEN)");
+  }
+  if (out(fe.add(el(TOP), el(P_MINUS_1))) != "1100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(TOP, P_MINUS_1)");
+  }
+  if (out(fe.add(el(TOP), el(P))) != "1200000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(TOP, P)");
+  }
+  if (out(fe.add(el(TOP), el(P_PLUS_1))) != "1300000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(TOP, P_PLUS_1)");
+  }
+  if (out(fe.add(el(TOP), el(TOP))) != "2400000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("add(TOP, TOP)");
+  }
+  if (out(fe.add(el(TOP), el(MIXED))) != "211e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("add(TOP, MIXED)");
+  }
+  if (out(fe.add(el(MIXED), el(ZERO))) != "0f1e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("add(MIXED, ZERO)");
+  }
+  if (out(fe.add(el(MIXED), el(ONE))) != "101e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("add(MIXED, ONE)");
+  }
+  if (out(fe.add(el(MIXED), el(NINETEEN))) != "221e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("add(MIXED, NINETEEN)");
+  }
+  if (out(fe.add(el(MIXED), el(P_MINUS_1))) != "0e1e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("add(MIXED, P_MINUS_1)");
+  }
+  if (out(fe.add(el(MIXED), el(P))) != "0f1e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("add(MIXED, P)");
+  }
+  if (out(fe.add(el(MIXED), el(P_PLUS_1))) != "101e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("add(MIXED, P_PLUS_1)");
+  }
+  if (out(fe.add(el(MIXED), el(TOP))) != "211e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("add(MIXED, TOP)");
+  }
+  if (out(fe.add(el(MIXED), el(MIXED))) != "1e3c5a7896b4d2f00e2d4b6987a5c3e12164a8ec3075b9fde1bd7935f1ac6824") {
+    return test.fail("add(MIXED, MIXED)");
+  }
+  return test.pass();
+}
+
+function test_sub(): test.TestOutcome {
+  if (out(fe.sub(el(ZERO), el(ZERO))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(ZERO, ZERO)");
+  }
+  if (out(fe.sub(el(ZERO), el(ONE))) != "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("sub(ZERO, ONE)");
+  }
+  if (out(fe.sub(el(ZERO), el(NINETEEN))) != "daffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("sub(ZERO, NINETEEN)");
+  }
+  if (out(fe.sub(el(ZERO), el(P_MINUS_1))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(ZERO, P_MINUS_1)");
+  }
+  if (out(fe.sub(el(ZERO), el(P))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(ZERO, P)");
+  }
+  if (out(fe.sub(el(ZERO), el(P_PLUS_1))) != "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("sub(ZERO, P_PLUS_1)");
+  }
+  if (out(fe.sub(el(ZERO), el(TOP))) != "dbffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("sub(ZERO, TOP)");
+  }
+  if (out(fe.sub(el(ZERO), el(MIXED))) != "dee1d2c3b4a5968778695a4b3c2d1e0fefcdab89674523010f21436587a9cb6d") {
+    return test.fail("sub(ZERO, MIXED)");
+  }
+  if (out(fe.sub(el(ONE), el(ZERO))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(ONE, ZERO)");
+  }
+  if (out(fe.sub(el(ONE), el(ONE))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(ONE, ONE)");
+  }
+  if (out(fe.sub(el(ONE), el(NINETEEN))) != "dbffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("sub(ONE, NINETEEN)");
+  }
+  if (out(fe.sub(el(ONE), el(P_MINUS_1))) != "0200000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(ONE, P_MINUS_1)");
+  }
+  if (out(fe.sub(el(ONE), el(P))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(ONE, P)");
+  }
+  if (out(fe.sub(el(ONE), el(P_PLUS_1))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(ONE, P_PLUS_1)");
+  }
+  if (out(fe.sub(el(ONE), el(TOP))) != "dcffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("sub(ONE, TOP)");
+  }
+  if (out(fe.sub(el(ONE), el(MIXED))) != "dfe1d2c3b4a5968778695a4b3c2d1e0fefcdab89674523010f21436587a9cb6d") {
+    return test.fail("sub(ONE, MIXED)");
+  }
+  if (out(fe.sub(el(NINETEEN), el(ZERO))) != "1300000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(NINETEEN, ZERO)");
+  }
+  if (out(fe.sub(el(NINETEEN), el(ONE))) != "1200000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(NINETEEN, ONE)");
+  }
+  if (out(fe.sub(el(NINETEEN), el(NINETEEN))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(NINETEEN, NINETEEN)");
+  }
+  if (out(fe.sub(el(NINETEEN), el(P_MINUS_1))) != "1400000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(NINETEEN, P_MINUS_1)");
+  }
+  if (out(fe.sub(el(NINETEEN), el(P))) != "1300000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(NINETEEN, P)");
+  }
+  if (out(fe.sub(el(NINETEEN), el(P_PLUS_1))) != "1200000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(NINETEEN, P_PLUS_1)");
+  }
+  if (out(fe.sub(el(NINETEEN), el(TOP))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(NINETEEN, TOP)");
+  }
+  if (out(fe.sub(el(NINETEEN), el(MIXED))) != "f1e1d2c3b4a5968778695a4b3c2d1e0fefcdab89674523010f21436587a9cb6d") {
+    return test.fail("sub(NINETEEN, MIXED)");
+  }
+  if (out(fe.sub(el(P_MINUS_1), el(ZERO))) != "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("sub(P_MINUS_1, ZERO)");
+  }
+  if (out(fe.sub(el(P_MINUS_1), el(ONE))) != "ebffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("sub(P_MINUS_1, ONE)");
+  }
+  if (out(fe.sub(el(P_MINUS_1), el(NINETEEN))) != "d9ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("sub(P_MINUS_1, NINETEEN)");
+  }
+  if (out(fe.sub(el(P_MINUS_1), el(P_MINUS_1))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(P_MINUS_1, P_MINUS_1)");
+  }
+  if (out(fe.sub(el(P_MINUS_1), el(P))) != "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("sub(P_MINUS_1, P)");
+  }
+  if (out(fe.sub(el(P_MINUS_1), el(P_PLUS_1))) != "ebffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("sub(P_MINUS_1, P_PLUS_1)");
+  }
+  if (out(fe.sub(el(P_MINUS_1), el(TOP))) != "daffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("sub(P_MINUS_1, TOP)");
+  }
+  if (out(fe.sub(el(P_MINUS_1), el(MIXED))) != "dde1d2c3b4a5968778695a4b3c2d1e0fefcdab89674523010f21436587a9cb6d") {
+    return test.fail("sub(P_MINUS_1, MIXED)");
+  }
+  if (out(fe.sub(el(P), el(ZERO))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(P, ZERO)");
+  }
+  if (out(fe.sub(el(P), el(ONE))) != "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("sub(P, ONE)");
+  }
+  if (out(fe.sub(el(P), el(NINETEEN))) != "daffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("sub(P, NINETEEN)");
+  }
+  if (out(fe.sub(el(P), el(P_MINUS_1))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(P, P_MINUS_1)");
+  }
+  if (out(fe.sub(el(P), el(P))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(P, P)");
+  }
+  if (out(fe.sub(el(P), el(P_PLUS_1))) != "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("sub(P, P_PLUS_1)");
+  }
+  if (out(fe.sub(el(P), el(TOP))) != "dbffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("sub(P, TOP)");
+  }
+  if (out(fe.sub(el(P), el(MIXED))) != "dee1d2c3b4a5968778695a4b3c2d1e0fefcdab89674523010f21436587a9cb6d") {
+    return test.fail("sub(P, MIXED)");
+  }
+  if (out(fe.sub(el(P_PLUS_1), el(ZERO))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(P_PLUS_1, ZERO)");
+  }
+  if (out(fe.sub(el(P_PLUS_1), el(ONE))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(P_PLUS_1, ONE)");
+  }
+  if (out(fe.sub(el(P_PLUS_1), el(NINETEEN))) != "dbffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("sub(P_PLUS_1, NINETEEN)");
+  }
+  if (out(fe.sub(el(P_PLUS_1), el(P_MINUS_1))) != "0200000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(P_PLUS_1, P_MINUS_1)");
+  }
+  if (out(fe.sub(el(P_PLUS_1), el(P))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(P_PLUS_1, P)");
+  }
+  if (out(fe.sub(el(P_PLUS_1), el(P_PLUS_1))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(P_PLUS_1, P_PLUS_1)");
+  }
+  if (out(fe.sub(el(P_PLUS_1), el(TOP))) != "dcffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("sub(P_PLUS_1, TOP)");
+  }
+  if (out(fe.sub(el(P_PLUS_1), el(MIXED))) != "dfe1d2c3b4a5968778695a4b3c2d1e0fefcdab89674523010f21436587a9cb6d") {
+    return test.fail("sub(P_PLUS_1, MIXED)");
+  }
+  if (out(fe.sub(el(TOP), el(ZERO))) != "1200000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(TOP, ZERO)");
+  }
+  if (out(fe.sub(el(TOP), el(ONE))) != "1100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(TOP, ONE)");
+  }
+  if (out(fe.sub(el(TOP), el(NINETEEN))) != "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("sub(TOP, NINETEEN)");
+  }
+  if (out(fe.sub(el(TOP), el(P_MINUS_1))) != "1300000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(TOP, P_MINUS_1)");
+  }
+  if (out(fe.sub(el(TOP), el(P))) != "1200000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(TOP, P)");
+  }
+  if (out(fe.sub(el(TOP), el(P_PLUS_1))) != "1100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(TOP, P_PLUS_1)");
+  }
+  if (out(fe.sub(el(TOP), el(TOP))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(TOP, TOP)");
+  }
+  if (out(fe.sub(el(TOP), el(MIXED))) != "f0e1d2c3b4a5968778695a4b3c2d1e0fefcdab89674523010f21436587a9cb6d") {
+    return test.fail("sub(TOP, MIXED)");
+  }
+  if (out(fe.sub(el(MIXED), el(ZERO))) != "0f1e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("sub(MIXED, ZERO)");
+  }
+  if (out(fe.sub(el(MIXED), el(ONE))) != "0e1e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("sub(MIXED, ONE)");
+  }
+  if (out(fe.sub(el(MIXED), el(NINETEEN))) != "fc1d2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("sub(MIXED, NINETEEN)");
+  }
+  if (out(fe.sub(el(MIXED), el(P_MINUS_1))) != "101e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("sub(MIXED, P_MINUS_1)");
+  }
+  if (out(fe.sub(el(MIXED), el(P))) != "0f1e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("sub(MIXED, P)");
+  }
+  if (out(fe.sub(el(MIXED), el(P_PLUS_1))) != "0e1e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("sub(MIXED, P_PLUS_1)");
+  }
+  if (out(fe.sub(el(MIXED), el(TOP))) != "fd1d2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412") {
+    return test.fail("sub(MIXED, TOP)");
+  }
+  if (out(fe.sub(el(MIXED), el(MIXED))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("sub(MIXED, MIXED)");
+  }
+  return test.pass();
+}
+
+function test_unary(): test.TestOutcome {
+  if (out(el(ZERO)) != "0000000000000000000000000000000000000000000000000000000000000000" || out(fe.sq(el(ZERO))) != "0000000000000000000000000000000000000000000000000000000000000000" || out(fe.neg(el(ZERO))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("encoding, sq or neg of ZERO");
+  }
+  if (out(fe.invert(el(ZERO))) != "0000000000000000000000000000000000000000000000000000000000000000" || out(fe.pow22523(el(ZERO))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("invert or pow22523 of ZERO");
+  }
+  if (out(fe.mul_small(el(ZERO), 121665u64)) != "0000000000000000000000000000000000000000000000000000000000000000" || out(fe.mul_small(el(ZERO), 4294967295u64)) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul_small of ZERO");
+  }
+  if (out(el(ONE)) != "0100000000000000000000000000000000000000000000000000000000000000" || out(fe.sq(el(ONE))) != "0100000000000000000000000000000000000000000000000000000000000000" || out(fe.neg(el(ONE))) != "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("encoding, sq or neg of ONE");
+  }
+  if (out(fe.invert(el(ONE))) != "0100000000000000000000000000000000000000000000000000000000000000" || out(fe.pow22523(el(ONE))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("invert or pow22523 of ONE");
+  }
+  if (out(fe.mul_small(el(ONE), 121665u64)) != "41db010000000000000000000000000000000000000000000000000000000000" || out(fe.mul_small(el(ONE), 4294967295u64)) != "ffffffff00000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul_small of ONE");
+  }
+  if (out(el(NINETEEN)) != "1300000000000000000000000000000000000000000000000000000000000000" || out(fe.sq(el(NINETEEN))) != "6901000000000000000000000000000000000000000000000000000000000000" || out(fe.neg(el(NINETEEN))) != "daffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("encoding, sq or neg of NINETEEN");
+  }
+  if (out(fe.invert(el(NINETEEN))) != "14ca6b28afa1bc86f21aca6b28afa1bc86f21aca6b28afa1bc86f21aca6b282f" || out(fe.pow22523(el(NINETEEN))) != "562804c266ffb2d4f4203eb07fdb7c54c5fb421249ff72b7320edd235e7ff712") {
+    return test.fail("invert or pow22523 of NINETEEN");
+  }
+  if (out(fe.mul_small(el(NINETEEN), 121665u64)) != "d345230000000000000000000000000000000000000000000000000000000000" || out(fe.mul_small(el(NINETEEN), 4294967295u64)) != "edffffff12000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul_small of NINETEEN");
+  }
+  if (out(el(P_MINUS_1)) != "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f" || out(fe.sq(el(P_MINUS_1))) != "0100000000000000000000000000000000000000000000000000000000000000" || out(fe.neg(el(P_MINUS_1))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("encoding, sq or neg of P_MINUS_1");
+  }
+  if (out(fe.invert(el(P_MINUS_1))) != "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f" || out(fe.pow22523(el(P_MINUS_1))) != "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("invert or pow22523 of P_MINUS_1");
+  }
+  if (out(fe.mul_small(el(P_MINUS_1), 121665u64)) != "ac24feffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f" || out(fe.mul_small(el(P_MINUS_1), 4294967295u64)) != "eefffffffeffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("mul_small of P_MINUS_1");
+  }
+  if (out(el(P)) != "0000000000000000000000000000000000000000000000000000000000000000" || out(fe.sq(el(P))) != "0000000000000000000000000000000000000000000000000000000000000000" || out(fe.neg(el(P))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("encoding, sq or neg of P");
+  }
+  if (out(fe.invert(el(P))) != "0000000000000000000000000000000000000000000000000000000000000000" || out(fe.pow22523(el(P))) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("invert or pow22523 of P");
+  }
+  if (out(fe.mul_small(el(P), 121665u64)) != "0000000000000000000000000000000000000000000000000000000000000000" || out(fe.mul_small(el(P), 4294967295u64)) != "0000000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul_small of P");
+  }
+  if (out(el(P_PLUS_1)) != "0100000000000000000000000000000000000000000000000000000000000000" || out(fe.sq(el(P_PLUS_1))) != "0100000000000000000000000000000000000000000000000000000000000000" || out(fe.neg(el(P_PLUS_1))) != "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("encoding, sq or neg of P_PLUS_1");
+  }
+  if (out(fe.invert(el(P_PLUS_1))) != "0100000000000000000000000000000000000000000000000000000000000000" || out(fe.pow22523(el(P_PLUS_1))) != "0100000000000000000000000000000000000000000000000000000000000000") {
+    return test.fail("invert or pow22523 of P_PLUS_1");
+  }
+  if (out(fe.mul_small(el(P_PLUS_1), 121665u64)) != "41db010000000000000000000000000000000000000000000000000000000000" || out(fe.mul_small(el(P_PLUS_1), 4294967295u64)) != "ffffffff00000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul_small of P_PLUS_1");
+  }
+  if (out(el(TOP)) != "1200000000000000000000000000000000000000000000000000000000000000" || out(fe.sq(el(TOP))) != "4401000000000000000000000000000000000000000000000000000000000000" || out(fe.neg(el(TOP))) != "dbffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f") {
+    return test.fail("encoding, sq or neg of TOP");
+  }
+  if (out(fe.invert(el(TOP))) != "89e3388ee3388ee3388ee3388ee3388ee3388ee3388ee3388ee3388ee3388e23" || out(fe.pow22523(el(TOP))) != "63c5578c86047dcbbe50dd1c0184e08746f9a9df6ed58cdc81fa4a0dc030eb71") {
+    return test.fail("invert or pow22523 of TOP");
+  }
+  if (out(fe.mul_small(el(TOP), 121665u64)) != "926a210000000000000000000000000000000000000000000000000000000000" || out(fe.mul_small(el(TOP), 4294967295u64)) != "eeffffff11000000000000000000000000000000000000000000000000000000") {
+    return test.fail("mul_small of TOP");
+  }
+  if (out(el(MIXED)) != "0f1e2d3c4b5a69788796a5b4c3d2e1f01032547698badcfef0debc9a78563412" || out(fe.sq(el(MIXED))) != "f77f933ca1e735b2426b5cf65287a8cbc3c22aa7fc15de3f861a119a8fcb277e" || out(fe.neg(el(MIXED))) != "dee1d2c3b4a5968778695a4b3c2d1e0fefcdab89674523010f21436587a9cb6d") {
+    return test.fail("encoding, sq or neg of MIXED");
+  }
+  if (out(fe.invert(el(MIXED))) != "6d75dec90c329964371a2c9b363d148d9ec69d13bdf727cff334b3ff54898b34" || out(fe.pow22523(el(MIXED))) != "436f2c7b68a7473037802e2e0244a0d5bb5db2f855fb2c34c543c09cfde8cc56") {
+    return test.fail("invert or pow22523 of MIXED");
+  }
+  if (out(fe.mul_small(el(MIXED), 121665u64)) != "047b3ffec185490dd194581ce0a3672b402546444444444414c49dbbbbbbbb3b" || out(fe.mul_small(el(MIXED), 4294967295u64)) != "d4b79777c6c3c3c3c3c3c3c3c3c3c3c3b2a08d7a78777777a7db1f6478888808") {
+    return test.fail("mul_small of MIXED");
+  }
+  return test.pass();
+}
+
+// cswap and cmov swap or select by mask.
+function test_select(): test.TestOutcome {
+  let s: (fe.Fe, fe.Fe) = fe.cswap(el(ONE), el(MIXED), 1);
+  let k: (fe.Fe, fe.Fe) = fe.cswap(el(ONE), el(MIXED), 0);
+  if (out(s.0) != MIXED || out(s.1) != ONE || out(k.0) != ONE || out(k.1) != MIXED) {
+    return test.fail("cswap");
+  }
+  if (out(fe.cmov(el(ONE), el(MIXED), 1)) != MIXED) {
+    return test.fail("cmov taking b");
+  }
+  return test.assert_eq(out(fe.cmov(el(ONE), el(MIXED), 0)), ONE);
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/crypto/field25519");
+  r = r.it("mul", test_mul);
+  r = r.it("add", test_add);
+  r = r.it("sub", test_sub);
+  r = r.it("sq, neg, invert, pow22523 and mul_small", test_unary);
+  r = r.it("cswap and cmov", test_select);
+  return r.finish();
+}

@@ -44,23 +44,23 @@ struct Cached { ypx: fe.Fe, ymx: fe.Fe, z2: fe.Fe, t2d: fe.Fe }
 
 // __d is the curve constant d = -121665/121666.
 function __d(): fe.Fe {
-  return fe.Fe { f0: 56195235, f1: 13857412, f2: 51736253, f3: 6949390, f4: 114729, f5: 24766616, f6: 60832955, f7: 30306712, f8: 48412415, f9: 21499315 };
+  return fe.Fe { l0: 0x75eb4dca135978a3u64, l1: 0x00700a4d4141d8abu64, l2: 0x8cc740797779e898u64, l3: 0x52036cee2b6ffe73u64 };
 }
 
 function __d2(): fe.Fe {
-  return fe.Fe { f0: 45281625, f1: 27714825, f2: 36363642, f3: 13898781, f4: 229458, f5: 15978800, f6: 54557047, f7: 27058993, f8: 29715967, f9: 9444199 };
+  return fe.Fe { l0: 0xebd69b9426b2f159u64, l1: 0x00e0149a8283b156u64, l2: 0x198e80f2eef3d130u64, l3: 0x2406d9dc56dffce7u64 };
 }
 
 // __sqrt_m1 is 2^((p-1)/4), a square root of -1.
 function __sqrt_m1(): fe.Fe {
-  return fe.Fe { f0: 34513072, f1: 25610706, f2: 9377949, f3: 3500415, f4: 12389472, f5: 33281959, f6: 41962654, f7: 31548777, f8: 326685, f9: 11406482 };
+  return fe.Fe { l0: 0xc4ee1b274a0ea0b0u64, l1: 0x2f431806ad2fe478u64, l2: 0x2b4d00993dfbd7a7u64, l3: 0x2b8324804fc1df0bu64 };
 }
 
 // __base is the base point B: y = 4/5 and x even.
 function __base(): Point {
-  let x: fe.Fe = fe.carry(fe.Fe { f0: 52811034, f1: 25909283, f2: 16144682, f3: 17082669, f4: 27570973, f5: 30858332, f6: 40966398, f7: 8378388, f8: 20764389, f9: 8758491 });
-  let y: fe.Fe = fe.carry(fe.Fe { f0: 40265304, f1: 26843545, f2: 13421772, f3: 20132659, f4: 26843545, f5: 6710886, f6: 53687091, f7: 13421772, f8: 40265318, f9: 26843545 });
-  let t: fe.Fe = fe.carry(fe.Fe { f0: 28827043, f1: 27438313, f2: 39759291, f3: 244362, f4: 8635006, f5: 11264893, f6: 19351346, f7: 13413597, f8: 16611511, f9: 27139452 });
+  let x: fe.Fe = fe.Fe { l0: 0xc9562d608f25d51au64, l1: 0x692cc7609525a7b2u64, l2: 0xc0a4e231fdd6dc5cu64, l3: 0x216936d3cd6e53feu64 };
+  let y: fe.Fe = fe.Fe { l0: 0x6666666666666658u64, l1: 0x6666666666666666u64, l2: 0x6666666666666666u64, l3: 0x6666666666666666u64 };
+  let t: fe.Fe = fe.Fe { l0: 0x6dde8ab3a5b7dda3u64, l1: 0x20f09f80775152f5u64, l2: 0x66ea4e8e64abe37du64, l3: 0x67875f0fd78b7665u64 };
   return Point { x: x, y: y, z: fe.from_i64(1), t: t };
 }
 
@@ -98,7 +98,7 @@ function __double(p: Point): Point {
   let h: fe.Fe = fe.add(a, b);
   let e: fe.Fe = fe.sub(h, fe.sq(fe.add(p.x, p.y)));
   let g: fe.Fe = fe.sub(a, b);
-  let f: fe.Fe = fe.carry(fe.add(fe.add(zz, zz), g));
+  let f: fe.Fe = fe.add(fe.add(zz, zz), g);
   return Point { x: fe.mul(e, f), y: fe.mul(g, h), z: fe.mul(f, g), t: fe.mul(e, h) };
 }
 
@@ -200,7 +200,7 @@ function __equal(a: fe.Fe, b: fe.Fe): boolean {
 // __decode is RFC 8032 §5.1.3's decoding of a public 32-byte b, or nothing
 // when y is not below p or no point has that y and sign.
 function __decode(b: [u8]): Option[Point] {
-  let y: fe.Fe = fe.carry(fe.from_bytes(b));
+  let y: fe.Fe = fe.from_bytes(b);
   let yb: u8[] = fe.to_bytes(y);
   if (!__same(yb, b, 31) || yb[31] != (b[31] & 127 as u8)) {
     return None;
