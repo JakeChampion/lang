@@ -3714,6 +3714,9 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   if (ins.kind_tag == 36) {
     return ssa_select(ins, reg_of, fr, ssa_select_fuse(fr, blk, ii), s);
   }
+  if (ins.kind_tag == 37) {
+    return ssa_carry(ins, reg_of, s);
+  }
   if (ins.kind_tag == 6 || ins.kind_tag == 8 || ssa_select_fuse(fr, blk, ii + 1).fu.n > 0) {
     return s;
   }
@@ -3779,6 +3782,42 @@ function ssa_select(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, sc: SelectCond,
   s = ssa_select_load(reg_of, ins.args[2], b, s);
   let d: string = ssa_dst(reg_of, ins.result);
   s = s.write("    csel " + d + ", " + a + ", " + b + ", " + arm64_native.arm64_cond_name(cc) + "\n");
+  return ssa_store(reg_of, ins.result, d, s);
+}
+
+// ssa_carry reads a carry (ssa.fuse_carries) off the flags: cmn or cmp sets
+// them for two operands; an incoming carry sets C first (a borrow clears
+// it), and adcs or sbcs, discarding the sum, carries it through. Loads and
+// moves leave the flags alone.
+function ssa_carry(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (reg_of[ins.result] == 0 - 1) {
+    return s;
+  }
+  let sub: boolean = ins.imm == 1;
+  if (ins.args.len() == 3) {
+    let c: string = ssa_src(reg_of, ins.args[2], "x4");
+    s = ssa_load(reg_of, ins.args[2], c, s);
+    if (sub) {
+      s = s.write("    negs xzr, " + c + "\n");
+    } else {
+      s = s.write("    cmp " + c + ", #1\n");
+    }
+  }
+  let x: string = ssa_src(reg_of, ins.args[0], "x5");
+  s = ssa_load(reg_of, ins.args[0], x, s);
+  let y: string = ssa_src(reg_of, ins.args[1], "x6");
+  s = ssa_load(reg_of, ins.args[1], y, s);
+  if (ins.args.len() == 3) {
+    let op: string = if (sub) { "sbcs" } else { "adcs" };
+    s = s.write("    " + op + " xzr, " + x + ", " + y + "\n");
+  } else if (sub) {
+    s = s.write("    cmp " + x + ", " + y + "\n");
+  } else {
+    s = s.write("    cmn " + x + ", " + y + "\n");
+  }
+  let d: string = ssa_dst(reg_of, ins.result);
+  let cc: string = if (sub) { "lo" } else { "hs" };
+  s = s.write("    cset " + d + ", " + cc + "\n");
   return ssa_store(reg_of, ins.result, d, s);
 }
 

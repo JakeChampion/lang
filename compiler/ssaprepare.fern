@@ -104,7 +104,9 @@ pub function finish_formed(lowered: irtables.LowerResult, selected: physicalbody
 }
 
 // with_selects is the certified body with its small branches turned into
-// selects (ssa.select_branches), the form the emitter allocates.
+// selects (ssa.select_branches) and its branch-free carries fused
+// (ssa.fuse_carries), the form the emitter allocates. Neither moves a
+// reference count operation.
 pub function with_selects(b: Body): Body {
-  return Body { ...b, formed: ssa.Formed { ...b.formed, f: ssa.select_branches(b.formed.f) } };
+  return Body { ...b, formed: ssa.Formed { ...b.formed, f: ssa.fuse_carries(ssa.select_branches(b.formed.f)) } };
 }

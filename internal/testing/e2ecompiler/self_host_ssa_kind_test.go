@@ -30,8 +30,8 @@ func TestSelfHostSSAKindRegistry(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/ssa_kind_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/ssa_kind_run.fern", "ssa_kind_run")
 
-	const want = "kind_count=36\n" +
-		"bijection_ok=33\n" +
+	const want = "kind_count=37\n" +
+		"bijection_ok=34\n" +
 		"bijection_failures=0\n" +
 		"retired=3\n" +
 		"unknown_id=0\n" +
@@ -43,6 +43,7 @@ func TestSelfHostSSAKindRegistry(t *testing.T) {
 		"store_elem=16\n" +
 		"write_file=27\n" +
 		"select=36\n" +
+		"carry=37\n" +
 		"term_count=3\n" +
 		"term_bijection_ok=3\n" +
 		"term_bijection_failures=0\n" +
