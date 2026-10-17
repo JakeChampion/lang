@@ -56,8 +56,8 @@
 # its failures. h2load sends a connection's next request only once the
 # server has acknowledged the previous one, and h2o delays that
 # acknowledgement up to 25 ms when a connection sends one packet at a
-# time. So h2o's rows with one stream per connection measure that delay,
-# not its speed. scripts/net-bench.d/h3tools builds both from source.
+# time. So h2o's rows with one stream per connection, and any of its rows
+# whose p50 is near 25 ms, measure that delay, not its speed. scripts/net-bench.d/h3tools builds both from source.
 #
 # RECORDED, NOT GATED. Wall-clock throughput on a shared runner moves by
 # tens of percent between runs, which is why perf.yml counts instructions
