@@ -89,6 +89,7 @@ pub function fuse_pipelines(funcs: ssasem.Func[], names: string[], usable: boole
   return Fused { funcs: out, rewritten: rewritten, sites: sites };
 }
 
+@noinline
 function context(funcs: ssasem.Func[], names: string[], usable: boolean[], trusted: util.NameIndex, iter_trusted: util.NameIndex, report: boolean): Context {
   let index: util.NameIndex = util.name_index(names);
   let verbs: string[] = [];
@@ -370,6 +371,7 @@ function no_chain(): Chain {
   return Chain { ok: false, block: 0, sink: 0, verb: "", stages: [], verbs: [], fns: [], base: 0, roots: [], hi: 0 - 1 };
 }
 
+@noinline
 function find_chain(f: ssasem.Func, cx: Context): Chain {
   let uses: i32[] = use_counts(f.graph);
   let defs: Def[] = defs_of(f.graph);
@@ -658,6 +660,7 @@ function covered_stages(f: ssasem.Func, cx: Context, uses: i32[], defs: Def[], b
   return covered;
 }
 
+@noinline
 function remaining_sites(f: ssasem.Func, cx: Context, name: string, enabled: boolean): semarrayreport.Site[] {
   let out: semarrayreport.Site[] = [];
   let uses: i32[] = use_counts(f.graph);
@@ -1301,6 +1304,7 @@ function finish_seeded(f: ssasem.Func, c: Chain, e: Ended, l: Loop, p: Peeled, r
 // before the sink (less the stages) runs first, the loop follows, and what
 // came after the sink continues from the loop's exit under the old
 // terminator.
+@noinline
 function fuse(f: ssasem.Func, c: Chain): ssasem.Func {
   let g: ssa.SFunc = f.graph;
   let b: ssa.SBlock = g.blocks[c.block];
