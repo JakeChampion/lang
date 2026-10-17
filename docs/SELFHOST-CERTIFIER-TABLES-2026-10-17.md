@@ -15,7 +15,7 @@ Reuse of precomputed facts removes repeated work without changing the walk's fac
 
 ## Measurement
 
-The control compiler is stage 2 of main at
+The first three changes were measured together. The control compiler is stage 2 of main at
 `1a91fc49aae61ea1d0091e364ae2fe98ea47bd25`; it also built the candidate.
 Both compile frozen sources and stdlib from that revision. The candidate source
 is main at `d5b3f2fd0` with these changes. Valgrind 3.24 Callgrind counts guest
