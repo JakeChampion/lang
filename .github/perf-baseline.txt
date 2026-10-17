@@ -220,9 +220,9 @@ aarch64/array_with.ir	31219422
 aarch64/ascii_scan.text	1461
 aarch64/ascii_scan.ir	68660210
 aarch64/call_overhead.text	148
-aarch64/call_overhead.ir	11250762
+aarch64/call_overhead.ir	10250762
 aarch64/closure_call.text	1011
-aarch64/closure_call.ir	72624111
+aarch64/closure_call.ir	70224111
 aarch64/enum_match.text	1174
 aarch64/enum_match.ir	41400056
 aarch64/http_hello.text	17130
@@ -232,11 +232,11 @@ aarch64/int_loop.ir	18000025
 aarch64/map_int.text	6048
 aarch64/map_int.ir	37531450
 aarch64/map_probe_chain.text	6059
-aarch64/map_probe_chain.ir	361845532
+aarch64/map_probe_chain.ir	357275319
 aarch64/map_string.text	6632
 aarch64/map_string.ir	64821463	2
 aarch64/ordmap_insert.text	3184
-aarch64/ordmap_insert.ir	118541839
+aarch64/ordmap_insert.ir	116776221
 aarch64/pmap_insert.text	2899
 aarch64/pmap_insert.ir	71272111
 aarch64/pvec_with.text	3024

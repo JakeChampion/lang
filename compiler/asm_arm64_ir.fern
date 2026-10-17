@@ -3732,7 +3732,7 @@ function ssa_fusable_cmp(cmp: ssa.SInst): boolean {
 // parameter, a phi or a compare a select after it reads as flags.
 function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.LowerResult, own s: asmcore.EmitState): asmcore.EmitState {
   let ins: ssa.SInst = blk.insts[ii];
-  if (ssa_mul_literal(ins, fr.imm) == 19i64) {
+  if (ins.kind_tag == 9 && ins.str == "mul" && ssa_mul_literal(ins, fr.imm) == 19i64) {
     return ssa_mul_cached(ins, reg_of, fr.imm, ssa_previous_mul_literal(blk, ii, fr.imm) == 19i64, s);
   }
   if (ins.kind_tag == 36) {

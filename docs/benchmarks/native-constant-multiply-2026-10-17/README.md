@@ -14,6 +14,12 @@ by 19 reuse the reserved x5 literal. Only elided immediate definitions may
 separate them: other instructions and block boundaries end that known
 lifetime. This does not reserve an additional allocatable register.
 
-Native timing for the revised candidate is pending. These paired timings
-remain separate from instruction-count, allocation, constant-time and size
-gates.
+[The revised run, 39019596804](https://github.com/JakeChampion/lang/actions/runs/39019596804),
+measures 0.906505 for X25519 (9.3% faster) and 1.032369 for the compiler
+(3.2% slower), again with 15 alternating pairs each. [Its raw report](cached-literal-v2.json)
+retains every timing. The compiler cost is under investigation; the next
+candidate avoids asking the multiply-literal helper about every non-multiply
+instruction. No compiler-time regression is accepted on this evidence.
+
+These paired timings remain separate from instruction-count, allocation,
+constant-time and size gates.
