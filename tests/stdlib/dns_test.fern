@@ -4,6 +4,7 @@ import "std/array";
 import "std/net";
 import "std/dns";
 import "std/time";
+import "std/option";
 
 // tests/stdlib/dns_test.fern — std/dns over fixture files and RFC 1035
 // messages: the wire codec both ways, with compression pointers and the
@@ -1057,6 +1058,56 @@ function test_live_resolve(): test.TestOutcome {
   }
 }
 
+// A resolver answers as the free functions do, and keeps what it read:
+// an address literal's plain lookup reads nothing, a destination it has
+// probed is not probed again, and a copy of the value sees the same.
+function test_live_resolver(): test.TestOutcome {
+  let names: dns.Resolver = dns.resolver();
+  match (names.resolve_plain("192.0.2.1")) {
+    Ok(xs) => {
+      if (ips(xs) != "192.0.2.1") {
+        return test.fail("an address literal is itself, not " + ips(xs));
+      }
+    },
+    Err(e) => {
+      return test.fail("an address literal resolves: " + e.message());
+    }
+  }
+  if (names.seen.get().at >= 0 as i64) {
+    return test.fail("an address literal read the machine's files");
+  }
+  match (names.resolve("192.0.2.1")) {
+    Ok(xs) => {
+      if (ips(xs) != "192.0.2.1") {
+        return test.fail("an address literal is itself, not " + ips(xs));
+      }
+    },
+    Err(e) => {
+      return test.fail("an address literal resolves: " + e.message());
+    }
+  }
+  match (names.resolve("localhost")) {
+    Ok(xs) => {
+      if (!has_loopback(xs)) {
+        return test.fail("localhost resolves to a loopback address");
+      }
+    },
+    Err(e) => {
+      return test.fail("localhost resolves: " + e.message());
+    }
+  }
+  let Some(home) = net.ip_parse("127.0.0.1") else {
+    return test.fail("127.0.0.1 parses");
+  };
+  let first: Option[net.IpAddr] = names.source(home);
+  let probed: i32 = names.seen.get().routes.len();
+  let copy: dns.Resolver = names;
+  let again: Option[net.IpAddr] = copy.source(home);
+  let same: boolean = first.is_some() == again.is_some();
+  let kept: boolean = probed > 0 && names.seen.get().routes.len() == probed;
+  return test.assert_eq(kept.to_string() + " " + same.to_string() + " " + names.conf().ndots.to_string(), "true true " + dns.system_conf().ndots.to_string());
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/dns");
   r = r.it("a name on the wire", test_encode_name);
@@ -1094,5 +1145,6 @@ function main(): i32 {
   r = r.it("NAT64: an IPv4 address under a prefix", test_synthesize);
   r = r.it("live: this machine's /etc/hosts", test_live_hosts_file);
   r = r.it("live: resolve localhost and a literal", test_live_resolve);
+  r = r.it("live: a resolver keeps what it read", test_live_resolver);
   return r.finish();
 }
