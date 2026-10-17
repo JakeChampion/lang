@@ -121,8 +121,8 @@ func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
 // handed back bare through its operations and its filling chain, done
 // streams retired lazily and byte ranges copied whole, 348.72; with the
 // connection, QPACK's decoder, the session and the datagram planner handed
-// back bare, 309.03; with std/tls's byte helpers on the copy builtins,
-// 297.19.
+// back bare, 309.03; with a byte kernel's result known to be fresh
+// (#12552), 297.19.
 const ServeAllocsH3Ceiling = 303
 
 func TestSelfHostServeAllocsPerRequestH3(t *testing.T) {
