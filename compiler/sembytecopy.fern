@@ -1,0 +1,382 @@
+// Only invariant-source, zero-based byte walks qualify. A source carried by
+// the receiver phi has sequential update semantics and must keep its loop.
+import "./ssa";
+import "./ssasem";
+import "./typeinfo";
+import "./util";
+import "./sourcepos";
+
+pub struct Rewritten { func: ssasem.Func, changed: boolean }
+
+struct Index { defs: ssa.SInst[], homes: i32[], blocks: i32[] }
+
+struct Loop { ok: boolean, head: i32, body: i32, exit: i32, outer: i32, array: ssa.SInst, counter: ssa.SInst, update: ssa.SInst, count: i32, src: i32, from: i32, at: i32 }
+
+function none(): ssa.SInst {
+  return ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+}
+
+function no_loop(): Loop {
+  return Loop { ok: false, head: 0, body: 0, exit: 0, outer: 0, array: none(), counter: none(), update: none(), count: 0, src: 0, from: 0, at: 0 };
+}
+
+function bytes(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(a) = t {
+    if let typeinfo.TypeI32(e) = a.elem {
+      return !a.view && e.width == 8 && e.unsigned && !e.is_char;
+    }
+  }
+  return false;
+}
+
+function any_byte_update(f: ssasem.Func): boolean {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if ((ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.with()) && bytes(f.values[ins.result])) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function index(f: ssasem.Func): Index {
+  let defs: ssa.SInst[] = [];
+  let homes: i32[] = [];
+  let i = 0;
+  while (i < f.values.len()) {
+    defs = defs.append(none());
+    homes = homes.append(0 - 1);
+    i = i + 1;
+  }
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.result >= 0) {
+        defs = defs.with(ins.result, ins);
+        homes = homes.with(ins.result, b.id);
+      }
+    }
+  }
+  return Index { defs: defs, homes: homes, blocks: ssa.block_positions(f.graph) };
+}
+
+function literal(ix: Index, v: i32, n: i32): boolean {
+  let d = ix.defs[v];
+  return d.kind_tag == 1 && d.imm == n;
+}
+
+function invariant(ix: Index, v: i32, h: i32, b: i32): boolean {
+  return v >= 0 && ix.homes[v] != h && ix.homes[v] != b;
+}
+
+function offset(ix: Index, v: i32, counter: i32, h: i32, b: i32): i32 {
+  if (v == counter) {
+    return 0 - 1;
+  }
+  let d = ix.defs[v];
+  if (!addition(d)) {
+    return 0 - 2;
+  }
+  if (d.args[0] == counter && invariant(ix, d.args[1], h, b)) {
+    return d.args[1];
+  }
+  if (d.args[1] == counter && invariant(ix, d.args[0], h, b)) {
+    return d.args[0];
+  }
+  return 0 - 2;
+}
+
+function addition(ins: ssa.SInst): boolean {
+  return ins.kind_tag == 9 && ins.str == "+" && ins.args.len() == 2;
+}
+
+function loop_edges(h: ssa.SBlock, body: ssa.SBlock, exit: ssa.SBlock): boolean {
+  return body.term.kind_tag == 2 && body.term.target == h.id && body.preds.len() == 1 && body.preds[0] == h.id
+    && exit.preds.len() == 1 && exit.preds[0] == h.id;
+}
+
+function header_phis(f: ssasem.Func, h: ssa.SBlock, count: i32): Loop {
+  let array = none();
+  let counter = none();
+  for ins in h.insts {
+    if (ins.kind_tag == 8 && ins.args.len() == 2) {
+      if (bytes(f.values[ins.result]) && array.result < 0) {
+        array = ins;
+      } else if (ssasem.is_i32(f.values[ins.result]) && counter.result < 0) {
+        counter = ins;
+      } else {
+        return no_loop();
+      }
+    } else if (ins.result != h.term.cond && ins.result != count && ins.kind_tag != 35) {
+      return no_loop();
+    }
+  }
+  return Loop { ...no_loop(), ok: array.result >= 0 && counter.result >= 0, array: array, counter: counter };
+}
+
+function loop_compare(ins: ssa.SInst): boolean {
+  return ins.kind_tag == 9 && ins.str == "<" && ins.args.len() == 2;
+}
+
+function invariant_count(ix: Index, count: i32, h: i32, b: i32): boolean {
+  if (invariant(ix, count, h, b)) {
+    return true;
+  }
+  let d = ix.defs[count];
+  if (ix.homes[count] != h) {
+    return false;
+  }
+  if (d.kind_tag == 1) {
+    return true;
+  }
+  return d.kind_tag == ssasem.length() && d.args.len() == 1 && invariant(ix, d.args[0], h, b);
+}
+
+function header(f: ssasem.Func, ix: Index, h: ssa.SBlock): Loop {
+  let no = no_loop();
+  if (h.term.kind_tag != 3 || h.preds.len() != 2) {
+    return no;
+  }
+  let body = f.graph.blocks[ix.blocks[h.term.t]];
+  let exit = f.graph.blocks[ix.blocks[h.term.f]];
+  if (!loop_edges(h, body, exit)) {
+    return no;
+  }
+  let back = util.index_of_i32(h.preds, body.id);
+  if (back < 0) {
+    return no;
+  }
+  let outer = 1 - back;
+  let cmp = ix.defs[h.term.cond];
+  if (!loop_compare(cmp)) {
+    return no;
+  }
+  let phis = header_phis(f, h, cmp.args[1]);
+  if (!phis.ok || !literal(ix, phis.counter.args[outer], 0)) {
+    return no;
+  }
+  let array = phis.array;
+  let counter = phis.counter;
+  if (cmp.args[0] != counter.result) {
+    return no;
+  }
+  if (!invariant_count(ix, cmp.args[1], h.id, body.id)) {
+    return no;
+  }
+  return Loop { ...no, ok: true, head: h.id, body: body.id, exit: exit.id, outer: outer, array: array, counter: counter, count: cmp.args[1] };
+}
+
+function copy_update(ins: ssa.SInst, receiver: i32): boolean {
+  return (ins.kind_tag == ssasem.append() && ins.args.len() == 2 || ins.kind_tag == ssasem.with() && ins.args.len() == 3) && ins.args[0] == receiver;
+}
+
+function source_read(f: ssasem.Func, ix: Index, update: ssa.SInst, l: Loop): ssa.SInst {
+  let read = ix.defs[update.args[update.args.len() - 1]];
+  if (read.kind_tag != ssasem.array_get() || read.imm == ssasem.check_only() || read.args.len() != 2) {
+    return none();
+  }
+  if (!invariant(ix, read.args[0], l.head, l.body) || !bytes(f.values[read.args[0]])) {
+    return none();
+  }
+  return read;
+}
+
+function pure_body(b: ssa.SBlock, allowed: i32[]): boolean {
+  for ins in b.insts {
+    if (ins.kind_tag != 35 && util.index_of_i32(allowed, ins.result) < 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function body_loop(f: ssasem.Func, ix: Index, l: Loop): Loop {
+  let no = no_loop();
+  let back = 1 - l.outer;
+  let update = ix.defs[l.array.args[back]];
+  let write = update.kind_tag == ssasem.with();
+  if (!copy_update(update, l.array.result)) {
+    return no;
+  }
+  let read = source_read(f, ix, update, l);
+  if (read.result < 0) {
+    return no;
+  }
+  let from = offset(ix, read.args[1], l.counter.result, l.head, l.body);
+  let at = 0 - 1;
+  if (write) {
+    at = offset(ix, update.args[1], l.counter.result, l.head, l.body);
+  }
+  if (from < 0 - 1 || at < 0 - 1) {
+    return no;
+  }
+  let inc = ix.defs[l.counter.args[back]];
+  if (!increment(ix, inc, l.counter.result)) {
+    return no;
+  }
+  let allowed = [update.result, read.result, read.args[1], inc.result, inc.args[1]];
+  if (write) {
+    allowed = allowed.append(update.args[1]);
+  }
+  if (!pure_body(f.graph.blocks[ix.blocks[l.body]], allowed)) {
+    return no;
+  }
+  let out = Loop { ...l, update: update, src: read.args[0], from: from, at: at };
+  if (!closed_body(f, ix, out)) {
+    return no;
+  }
+  return out;
+}
+
+function increment(ix: Index, ins: ssa.SInst, counter: i32): boolean {
+  return ins.kind_tag == 9 && ins.str == "+" && ins.args.len() == 2 && ins.args[0] == counter && literal(ix, ins.args[1], 1);
+}
+
+function closed_body(f: ssasem.Func, ix: Index, l: Loop): boolean {
+  for b in f.graph.blocks {
+    if (b.id != l.head && b.id != l.body && body_escapes(b, ix, l.body)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function body_escapes(b: ssa.SBlock, ix: Index, body: i32): boolean {
+  for ins in b.insts {
+    for v in ins.args {
+      if (ix.homes[v] == body) {
+        return true;
+      }
+    }
+  }
+  let v = b.term.value;
+  if (b.term.kind_tag == 3) {
+    v = b.term.cond;
+  }
+  return (b.term.kind_tag == 1 || b.term.kind_tag == 3) && v >= 0 && ix.homes[v] == body;
+}
+
+pub function rewrite(f: ssasem.Func, contracts: ssasem.Contract[]): Rewritten {
+  if (!any_byte_update(f)) {
+    return Rewritten { func: f, changed: false };
+  }
+  let out = f;
+  let changed = false;
+  let ix = index(out);
+  let h = 0;
+  while (h < out.graph.blocks.len()) {
+    let l = header(out, ix, out.graph.blocks[h]);
+    if (l.ok) {
+      l = body_loop(out, ix, l);
+    }
+    if (l.ok) {
+      out = replace(out, l, contracts);
+      changed = true;
+      ix = index(out);
+    }
+    h = h + 1;
+  }
+  return Rewritten { func: out, changed: changed };
+}
+
+function copy(result: i32, v: i32): ssa.SInst {
+  return ssa.SInst { kind_tag: 7, result: result, args: [v], imm: 0, str: "" };
+}
+
+function replacement(v: i32, l: Loop, fresh: i32): i32 {
+  if (v == l.counter.result) {
+    return fresh;
+  }
+  return v;
+}
+
+function outside(blk: ssa.SBlock, l: Loop, fresh: i32): ssa.SBlock {
+  let insts: ssa.SInst[] = [];
+  for old in blk.insts {
+    let ins = old;
+    if (blk.id == l.exit && ins.kind_tag == 8) {
+      ins = copy(ins.result, ins.args[0]);
+    }
+    let args: i32[] = [];
+    for v in ins.args {
+      args = args.append(replacement(v, l, fresh));
+    }
+    insts = insts.append(ssa.SInst { ...ins, args: args });
+  }
+  return ssa.SBlock { ...blk, insts: insts, term: ssa.STerm { ...blk.term, cond: replacement(blk.term.cond, l, fresh), value: replacement(blk.term.value, l, fresh) } };
+}
+
+function replace(f: ssasem.Func, l: Loop, contracts: ssasem.Contract[]): ssasem.Func {
+  let fresh = f.values.len();
+  let values = f.values.append(f.values[l.counter.result]);
+  let zero = l.counter.args[l.outer];
+  let from = l.from;
+  if (from < 0) {
+    from = zero;
+  }
+  let at = l.at;
+  if (at < 0) {
+    at = zero;
+  }
+  let receiver = l.array.args[l.outer];
+  let args = [receiver, l.src, from, l.count];
+  let ci = 0;
+  if (l.update.kind_tag == ssasem.with()) {
+    args = [receiver, at, l.src, from, l.count];
+    ci = 1;
+  }
+  let call = ssa.SInst { ...l.update, result: l.array.result, kind_tag: ssasem.call(), args: args, str: contracts[ci].name, imm: 0 };
+  let blocks: ssa.SBlock[] = [];
+  for old in f.graph.blocks {
+    let b = old;
+    if (b.id == l.head) {
+      b = replaced_header(b, l, call, zero);
+    } else if (b.id == l.body) {
+      b = ssa.SBlock { ...b, insts: [], term: ssa.STerm { ...b.term, target: l.exit } };
+    } else {
+      b = outside(b, l, fresh);
+      if (b.id == l.exit) {
+        let phis = [ssa.SInst { kind_tag: 8, result: fresh, args: [zero, l.count], imm: 0, str: "" }];
+        b = ssa.SBlock { ...b, preds: [l.head, l.body], insts: util.append_all(phis, b.insts) };
+      }
+    }
+    blocks = blocks.append(b);
+  }
+  let calls = f.calls;
+  if (ssasem.find_contract_in(calls, contracts[ci].name) < 0) {
+    calls = calls.append(contracts[ci]);
+  }
+  return ssasem.Func { ...f, source_positions: replaced_source(f.source_positions, l, fresh), calls: calls, values: values, graph: ssa.SFunc { ...f.graph, nvals: values.len(), blocks: blocks } };
+}
+
+function replaced_header(b: ssa.SBlock, l: Loop, call: ssa.SInst, zero: i32): ssa.SBlock {
+  let insts: ssa.SInst[] = [];
+  for ins in b.insts {
+    if (ins.result == l.count) {
+      insts = insts.append(ins);
+    }
+  }
+  for old in b.insts {
+    let ins = old;
+    if (ins.result != l.count) {
+      if (ins.result == l.array.result) {
+        ins = call;
+      } else if (ins.result == l.counter.result) {
+        ins = copy(ins.result, zero);
+      }
+      insts = insts.append(ins);
+    }
+  }
+  return ssa.SBlock { ...b, insts: insts, preds: [b.preds[l.outer]] };
+}
+
+function replaced_source(source: sourcepos.SourceInfo, l: Loop, fresh: i32): sourcepos.SourceInfo {
+  if (source.entry.line == 0) {
+    return source;
+  }
+  let values = source.values;
+  while (values.len() <= fresh) {
+    values = values.append(sourcepos.SourcePos { line: 0, col: "0" });
+  }
+  return sourcepos.SourceInfo { ...source, values: values.with(l.array.result, sourcepos.at(source.values, l.update.result)) };
+}

@@ -16,6 +16,7 @@ import "./typeinfo";
 import "./util";
 import "./semarrayreport";
 import "./sempair";
+import "./rtbytecopy";
 
 function empty(why: string): irtables.LowerResult {
   return irtables.LowerResult {
@@ -3971,6 +3972,13 @@ function instruction_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssauni
   }
   if (ins.kind_tag == ssasem.append_range()) {
     r = concatenation(r, ins, scratch_base(f));
+  } else if (ins.kind_tag == ssasem.call() && rtbytecopy.is_helper(ins.str) && util.index_of_str(f.shadows, ins.str) < 0) {
+    // Fern runtime entries take parameter zero on top of the stack.
+    let i = ins.args.len() - 1;
+    while (i >= 0) {
+      r = emit(r, ir.op_load_local(ins.args[i]));
+      i = i - 1;
+    }
   } else if (unchecked_str_index(ins)) {
     // The string's data address, then the index: hoist_loop_invariants can
     // lift the address out of a loop that only reads the string.

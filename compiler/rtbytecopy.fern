@@ -1,0 +1,85 @@
+// Packed array helpers consume the receiver and borrow the source. The
+// i32[] carrier describes ownership; only raw byte accesses read its data.
+pub function is_helper(name: string): boolean {
+  return name == "__fern_bytes_append_range" || name == "__fern_bytes_write_range";
+}
+
+pub function native_source(reuse: boolean): string {
+  let unique = "false";
+  if (reuse) {
+    unique = "__load_i32(__raw_arr_ptr(a) - 8) == 1";
+  }
+  return checks()
+    + "@noinline function __fern_bytes_append_copy(a: i32[], src: i32[], from: i32, n: i32, total: i32, words: i32): i32[] { "
+    + "let p: usize = __raw_arr_box(words); __memcpy(p + 8, __raw_arr_ptr(a) + 8, a.len()); "
+    + "__memcpy(p + 8 + a.len(), __raw_arr_ptr(src) + 8 + from, n); __store_i64(p, total as i64); return __raw_array(p); } "
+    + "function __fern_bytes_append_range(own a: i32[], src: i32[], from: i32, n: i32): i32[] { "
+    + "if (n <= 0) { return a; } __fern_bytes_copy_bounds(src, from, n); "
+    + "let total64: i64 = (a.len() as i64) + (n as i64); if (total64 > 2147483647i64) { return __raw_array(__raw_arr_box(0 - 1)); } "
+    + "let total: i32 = total64 as i32; let cap: i64 = __load_i64(__raw_arr_ptr(a) - 16); "
+    + "if (" + unique + " && total64 <= cap * 8i64) { "
+    + "__memcpy(__raw_arr_ptr(a) + 8 + a.len(), __raw_arr_ptr(src) + 8 + from, n); "
+    + "__store_i64(__raw_arr_ptr(a), total64); return a; } "
+    + "let words: i64 = cap; if (words < 4i64) { words = 4i64; } "
+    + "while (words * 8i64 < total64) { words = words * 2i64; } "
+    + "return __fern_bytes_append_copy(a, src, from, n, total, words as i32); } "
+    + "@noinline function __fern_bytes_write_copy(a: i32[], at: i32, src: i32[], from: i32, n: i32): i32[] { "
+    + "let p: usize = __raw_arr_box(__load_i64(__raw_arr_ptr(a) - 16) as i32); "
+    + "__memcpy(p + 8, __raw_arr_ptr(a) + 8, a.len()); __memcpy(p + 8 + at, __raw_arr_ptr(src) + 8 + from, n); "
+    + "__store_i64(p, a.len() as i64); return __raw_array(p); } "
+    + "function __fern_bytes_write_range(own a: i32[], at: i32, src: i32[], from: i32, n: i32): i32[] { "
+    + "if (n <= 0) { return a; } __fern_bytes_copy_bounds(src, from, n); __fern_bytes_copy_bounds(a, at, n); "
+    + "if (" + unique + ") { __memcpy(__raw_arr_ptr(a) + 8 + at, __raw_arr_ptr(src) + 8 + from, n); return a; } "
+    + "return __fern_bytes_write_copy(a, at, src, from, n); }";
+}
+
+function checks(): string {
+  return "@noinline function __fern_bytes_copy_bounds(a: i32[], from: i32, n: i32): void { "
+    + "if (from < 0 || from > a.len() || n > a.len() - from) { __fern_oob_abort(); } } ";
+}
+
+pub function wasm_source(): string {
+  return "  (func $__fern_bytes_copy_bounds (param $a i32) (param $from i32) (param $n i32)\n"
+    + "    (if (i32.or (i32.gt_u (local.get $from) (i32.load (local.get $a))) (i32.gt_s (local.get $n) (i32.sub (i32.load (local.get $a)) (local.get $from)))) (then (unreachable))))\n"
+    + wasm_append() + wasm_write();
+}
+
+function wasm_append(): string {
+  return "  (func $__fern_bytes_append_range (param $n i32) (param $from i32) (param $src i32) (param $a i32) (result i32)\n"
+    + "    (local $len i32) (local $total i64) (local $cap i64) (local $r i32)\n"
+    + "    (if (i32.le_s (local.get $n) (i32.const 0)) (then (return (local.get $a))))\n"
+    + "    (call $__fern_bytes_copy_bounds (local.get $src) (local.get $from) (local.get $n))\n"
+    + "    (local.set $len (i32.load (local.get $a)))\n"
+    + "    (local.set $total (i64.add (i64.extend_i32_u (local.get $len)) (i64.extend_i32_u (local.get $n))))\n"
+    + "    (if (i64.gt_u (local.get $total) (i64.const 2147483647)) (then (unreachable)))\n"
+    + "    (local.set $cap (i64.extend_i32_u (i32.load offset=4 (local.get $a))))\n"
+    + "    (local.set $r (local.get $a))\n"
+    + "    (if (i32.or (i32.ne (i32.load (i32.sub (local.get $a) (i32.const 8))) (i32.const 1)) (i64.gt_u (local.get $total) (local.get $cap))) (then\n"
+    + "      (if (i64.lt_u (local.get $cap) (i64.const 32)) (then (local.set $cap (i64.const 32))))\n"
+    + "      (block $ready (loop $grow (br_if $ready (i64.ge_u (local.get $cap) (local.get $total))) (local.set $cap (i64.mul (local.get $cap) (i64.const 2))) (br $grow)))\n"
+    + "      (if (i64.gt_u (local.get $cap) (i64.const 2147483647)) (then (local.set $cap (local.get $total))))\n"
+    + "      (local.set $r (call $__fern_arr_elems (i32.wrap_i64 (local.get $cap)) (i32.const 1)))\n"
+    + "      (i32.store offset=4 (local.get $r) (i32.wrap_i64 (local.get $cap)))\n"
+    + "      (memory.copy (i32.add (local.get $r) (i32.const 8)) (i32.add (local.get $a) (i32.const 8)) (local.get $len))))\n"
+    + "    (memory.copy (i32.add (i32.add (local.get $r) (i32.const 8)) (local.get $len)) (i32.add (i32.add (local.get $src) (i32.const 8)) (local.get $from)) (local.get $n))\n"
+    + "    (i32.store (local.get $r) (i32.wrap_i64 (local.get $total)))\n"
+    + "    (if (i32.ne (local.get $r) (local.get $a)) (then (drop (call $__fern_arr_dec (local.get $a)))))\n"
+    + "    (local.get $r))\n";
+}
+
+function wasm_write(): string {
+  return "  (func $__fern_bytes_write_range (param $n i32) (param $from i32) (param $src i32) (param $at i32) (param $a i32) (result i32)\n"
+    + "    (local $len i32) (local $cap i32) (local $r i32)\n"
+    + "    (if (i32.le_s (local.get $n) (i32.const 0)) (then (return (local.get $a))))\n"
+    + "    (call $__fern_bytes_copy_bounds (local.get $src) (local.get $from) (local.get $n))\n"
+    + "    (call $__fern_bytes_copy_bounds (local.get $a) (local.get $at) (local.get $n))\n"
+    + "    (local.set $len (i32.load (local.get $a))) (local.set $r (local.get $a))\n"
+    + "    (if (i32.ne (i32.load (i32.sub (local.get $a) (i32.const 8))) (i32.const 1)) (then\n"
+    + "      (local.set $cap (i32.load offset=4 (local.get $a)))\n"
+    + "      (local.set $r (call $__fern_arr_elems (local.get $cap) (i32.const 1)))\n"
+    + "      (i32.store (local.get $r) (local.get $len)) (i32.store offset=4 (local.get $r) (local.get $cap))\n"
+    + "      (memory.copy (i32.add (local.get $r) (i32.const 8)) (i32.add (local.get $a) (i32.const 8)) (local.get $len))))\n"
+    + "    (memory.copy (i32.add (i32.add (local.get $r) (i32.const 8)) (local.get $at)) (i32.add (i32.add (local.get $src) (i32.const 8)) (local.get $from)) (local.get $n))\n"
+    + "    (if (i32.ne (local.get $r) (local.get $a)) (then (drop (call $__fern_arr_dec (local.get $a)))))\n"
+    + "    (local.get $r))\n";
+}
