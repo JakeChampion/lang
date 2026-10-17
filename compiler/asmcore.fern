@@ -90,11 +90,8 @@ pub struct EmitState {
   // interned once, so the first hit is its only index.
   slit_head: i32[],
   slit_next: i32[],
-  // needed: the set of runtime-library helpers this module
-  // requests, by name. Populated via need() / the mark_*
-  // wrappers; emit_module consults has_need() to decide which
-  // helper bodies to append. Replaces ~26 parallel needs_*
-  // booleans.
+  // The runtime helpers requested by this unit, closed over their dependencies
+  // by need(). has_need() decides which helper bodies to append.
   needed: string[],
   struct_decls: irtables.StructTab,
   // funcs: the whole program's FuncDecls, in a per-module unit too — used by
@@ -1077,29 +1074,13 @@ pub function (s: EmitState) local_type_of(name: string): Ty {
   return ty_unknown();
 }
 
-pub function (s: EmitState) mark_str_concat(): EmitState {
-  return s.need("heap").need("str_concat");
-}
-
 // rt_src_str_concat backs `+` on strings (#2649), via the raw-memory intrinsic
 // floor (docs/RUNTIME-INTRINSICS.md). Size lenA+lenB, alloc the buffer, bulk-copy
 // each operand in, box it (__raw_string). Tier-2 (builds a fresh buffer); heap is
-// its sole dep (mark_str_concat). No string `+` inside, so no self-recursion.
+// its sole dep. No string `+` inside, so no self-recursion.
 // Empty operands are a 0-length __memcpy, which every backend treats as a no-op.
 pub function rt_src_str_concat(): string {
   return "function __fern_str_concat(a: string, b: string): string { let la: i32 = a.len(); let lb: i32 = b.len(); let p: usize = __raw_alloc(la + lb); __memcpy(p, __raw_data(a), la); __memcpy(p + la, __raw_data(b), lb); return __raw_string(p, la + lb); }";
-}
-
-pub function (s: EmitState) mark_str_eq(): EmitState {
-  return s.need("str_eq");
-}
-
-pub function (s: EmitState) mark_str_cmp(): EmitState {
-  return s.need("str_cmp");
-}
-
-pub function (s: EmitState) mark_i32_to_string(): EmitState {
-  return s.need("heap").need("i32_to_string");
 }
 
 // rt_src_i32_to_string backs (n).to_string() / the i32_to_string free fn (#2649),
@@ -1118,10 +1099,6 @@ pub function rt_src_i32_to_string(): string {
   return "function __fern_i32_to_string(n: i32): string { let neg: i32 = 0; let m: i32 = n; if (n < 0) { neg = 1; m = 0 - n; } let v: u32 = m as u32; if (v == (0 as u32)) { let z: usize = __raw_alloc(1); __raw_store8(z, 0, 48); return __raw_string(z, 1); } let nd: i32 = 0; let t: u32 = v; while (t != (0 as u32)) { nd = nd + 1; t = t / (10 as u32); } let total: i32 = nd + neg; let p: usize = __raw_alloc(total); if (neg == 1) { __raw_store8(p, 0, 45); } let i: i32 = total - 1; while (v != (0 as u32)) { __raw_store8(p, i, 48 + ((v % (10 as u32)) as i32)); v = v / (10 as u32); i = i - 1; } return __raw_string(p, total); }";
 }
 
-pub function (s: EmitState) mark_u32_to_string(): EmitState {
-  return s.need("heap").need("u32_to_string");
-}
-
 // rt_src_u32_to_string backs (n).to_string() on a u32 value (#2649). The signed
 // __fern_i32_to_string can't format a u32 with bit 31 set (it reads the low 32
 // bits as a negative i32), so a u32 receiver routes here instead. The magnitude
@@ -1135,10 +1112,6 @@ pub function rt_src_u32_to_string(): string {
   return "function __fern_u32_to_string(n: i32): string { let v: i64 = (n as i64) & (4294967295 as i64); if (v == (0 as i64)) { let z: usize = __raw_alloc(1); __raw_store8(z, 0, 48); return __raw_string(z, 1); } let nd: i32 = 0; let t: i64 = v; while (t > (0 as i64)) { nd = nd + 1; t = t / (10 as i64); } let p: usize = __raw_alloc(nd); let i: i32 = nd - 1; while (v > (0 as i64)) { __raw_store8(p, i, 48 + ((v % (10 as i64)) as i32)); v = v / (10 as i64); i = i - 1; } return __raw_string(p, nd); }";
 }
 
-pub function (s: EmitState) mark_i64_to_string(): EmitState {
-  return s.need("heap").need("i64_to_string");
-}
-
 // rt_src_i64_to_string backs (n).to_string() on an i64 receiver. The old
 // is_int_tag shortcut sent 64-bit receivers to __fern_i32_to_string, which
 // reads only the low 32 bits of its arg slot — a wide value silently
@@ -1150,10 +1123,6 @@ pub function (s: EmitState) mark_i64_to_string(): EmitState {
 // i64.to_string works without `import \"std/i64\"`, as the i32 builtin did.
 pub function rt_src_i64_to_string(): string {
   return "function __fern_i64_to_string(n: i64): string { let neg: i32 = 0; let m: i64 = n; if (n < (0 as i64)) { neg = 1; m = (0 as i64) - n; } let v: u64 = m as u64; if (v == (0 as u64)) { let z: usize = __raw_alloc(1); __raw_store8(z, 0, 48); return __raw_string(z, 1); } let nd: i32 = 0; let t: u64 = v; while (t != (0 as u64)) { nd = nd + 1; t = t / (10 as u64); } let total: i32 = nd + neg; let p: usize = __raw_alloc(total); if (neg == 1) { __raw_store8(p, 0, 45); } let i: i32 = total - 1; while (v != (0 as u64)) { __raw_store8(p, i, 48 + ((v % (10 as u64)) as i32)); v = v / (10 as u64); i = i - 1; } return __raw_string(p, total); }";
-}
-
-pub function (s: EmitState) mark_u64_to_string(): EmitState {
-  return s.need("heap").need("u64_to_string");
 }
 
 // rt_src_u64_to_string backs (n).to_string() on a u64 receiver — the full
@@ -2597,8 +2566,7 @@ function dirent_name_len(t: string): string {
 // helper written in Fern, over the syscall sub-floor (docs/RUNTIME-INTRINSICS.md
 // step 5). Allocate n scratch bytes, fill them from the CSPRNG in <= 256-byte
 // chunks, then spread the bytes one-per-slot into a fresh `u8[]` box (all
-// self-host arrays use full element slots). Only dep is `heap`
-// (mark_random_bytes).
+// self-host arrays use full element slots). Only dep is `heap`.
 //
 // The three targets agree on the (buf, len, flags) argument shape — Darwin's
 // getentropy simply ignores the third arg — but NOT on the result: getrandom
@@ -6382,22 +6350,6 @@ pub function rt_src_environ(): string {
   return "function __fern_environ(): string[] { let out: string[] = []; let envp: usize = __raw_environ(); let idx: i32 = 0; let done: i32 = 0; while (done == 0) { let entry: usize = __raw_load_ptr(envp, idx); if (entry == 0) { done = 1; } else { let n: i32 = 0; while (__raw_load8(entry, n) != 0) { n = n + 1; } let e: string = \"\"; if (n > 0) { let b: usize = __raw_alloc(n); __memcpy(b, entry, n); e = __raw_string(b, n); } out = out.append(e); idx = idx + 1; } } return out; }";
 }
 
-pub function (s: EmitState) mark_arr_push(): EmitState {
-  return s.need("heap").need("arr_push");
-}
-
-pub function (s: EmitState) mark_arr_slice(): EmitState {
-  return s.need("heap").need("arr_slice");
-}
-
-// mark_str_from_bytes gates the Fern __fern_string_from_bytes runtime function
-// (#2649) on its own str_from_bytes need. The AST call sites previously only
-// marked heap (the hand-asm body rode the always-emitted heap block); the Fern
-// body is now emitted in the migrated-helpers section like the string builders.
-pub function (s: EmitState) mark_str_from_bytes(): EmitState {
-  return s.need("heap").need("str_from_bytes");
-}
-
 // rt_src_string_from_bytes backs `string_from_bytes_unchecked(arr)` (#2649) — pack each
 // array element's low byte into a fresh string, via the raw-memory intrinsic
 // floor. The parameter is typed i32[] (a slot u8[] gives each byte an 8-byte
@@ -6407,31 +6359,29 @@ pub function rt_src_string_from_bytes(): string {
   return "function __fern_string_from_bytes(a: i32[]): string { let n: i32 = a.len(); let p: usize = __raw_alloc(n); let i: i32 = 0; while (i < n) { __raw_store8(p, i, a[i]); i = i + 1; } return __raw_string(p, n); }";
 }
 
-// The array helpers a call names: `xs.join(sep)` and a scalar
-// `xs.concat(ys)`. Each sizes and fills one exact-size block with no string
-// `+` in it, so the heap is the only runtime it reaches; runtime_need_deps
-// declares the same edge for close_needs.
-pub function (s: EmitState) mark_array_helper(name: string): EmitState {
+// Register the helper named by a direct array-runtime call. Dependencies
+// belong to runtime_need_deps, which also covers the two private copy kernels.
+pub function (s: EmitState) need_array_helper(name: string): EmitState {
   if (name == "__fern_bytes_append_range") {
-    return s.need("heap").need("byte_append");
+    return s.need("byte_append");
   }
   if (name == "__fern_bytes_write_range") {
-    return s.need("heap").need("byte_write");
+    return s.need("byte_write");
   }
   if (name == "__fern_arr_str_join") {
-    return s.need("heap").need("arr_str_join");
+    return s.need("arr_str_join");
   }
   if (name == "__fern_arr_concat") {
-    return s.need("heap").need("arr_concat");
+    return s.need("arr_concat");
   }
   if (name == "__fern_bytes_owned") {
-    return s.need("heap").need("bytes_owned");
+    return s.need("bytes_owned");
   }
   if (name == "__fern_bytes_range") {
-    return s.need("heap").need("bytes_range");
+    return s.need("bytes_range");
   }
   if (name == "__fern_bytes_into") {
-    return s.need("heap").need("bytes_into");
+    return s.need("bytes_into");
   }
   return s;
 }
@@ -6444,52 +6394,18 @@ pub function rt_src_byte_copy(append: boolean, write: boolean): string {
   return rtbytecopy.native_helpers(true, append, write);
 }
 
-// str_lines's helper builds its string[] with .append() → arr_push /
-// arr_push_owned, marked as transitive deps directly — same shape as
-// mark_array_helper. runtime_need_deps declares the same edges for close_needs.
-pub function (s: EmitState) mark_str_lines(): EmitState {
-  // str_concat: each line is `slice + ""` since #7230, so the compiled body
-  // calls __fern_str_concat — without the dep a program that lines() but
-  // never concats itself fails to LINK (undefined __fn___fern_str_concat).
-  return s.need("heap").need("arr_push").need("arr_push_owned").need("str_concat").need("str_lines");
-}
-
-// str_bytes's helper pre-sizes its result with __raw_arr_box and stores each
-// slot, so it needs the allocator and nothing else. The arr_push /
-// arr_push_owned pair it used to demand went with the .append() loop.
-pub function (s: EmitState) mark_str_bytes(): EmitState {
-  return s.need("heap").need("str_bytes");
-}
-
-// str_split's Fern helper builds the result string[] with .append()
-// (__fern_arr_push_owned for the sole-owner local, __fern_arr_push otherwise) —
-// same pairing as str_lines. Marked directly here; runtime_need_deps declares the
-// same edges for close_needs.
-pub function (s: EmitState) mark_str_split(): EmitState {
-  // str_concat: same #7230 owned-segment dep as mark_str_lines.
-  return s.need("heap").need("arr_push").need("arr_push_owned").need("str_concat").need("str_split");
-}
-
-pub function (s: EmitState) mark_str_case(): EmitState {
-  return s.need("heap").need("str_case");
-}
-
 // rt_src_str_to_upper / rt_src_str_to_lower back `s.to_upper()` / `s.to_lower()`
 // (#2649), via the raw-memory intrinsic floor (docs/RUNTIME-INTRINSICS.md). Alloc
 // len bytes, copy each byte case-flipped if it's an ASCII letter (a-z 97-122 →
 // upper by -32; A-Z 65-90 → lower by +32), box it. Tier-2; heap is the sole dep.
 // Nested ifs instead of `&&` to stay in the proven subset.
-// Both gated on the single str_case need (mark_str_case emits both bodies).
+// Both gated on the single str_case need.
 pub function rt_src_str_to_upper(): string {
   return "function __fern_str_to_upper(s: string): string { let n: i32 = s.len(); let p: usize = __raw_alloc(n); let i: i32 = 0; while (i < n) { let c: i32 = s[i] as i32; if (c >= 97) { if (c <= 122) { c = c - 32; } } __raw_store8(p, i, c); i = i + 1; } return __raw_string(p, n); }";
 }
 
 pub function rt_src_str_to_lower(): string {
   return "function __fern_str_to_lower(s: string): string { let n: i32 = s.len(); let p: usize = __raw_alloc(n); let i: i32 = 0; while (i < n) { let c: i32 = s[i] as i32; if (c >= 65) { if (c <= 90) { c = c + 32; } } __raw_store8(p, i, c); i = i + 1; } return __raw_string(p, n); }";
-}
-
-pub function (s: EmitState) mark_str_repeat(): EmitState {
-  return s.need("heap").need("str_repeat");
 }
 
 // rt_src_str_repeat backs `str_repeat(s, n)` / `s.repeat(n)` (#2649) — n copies
@@ -6502,17 +6418,6 @@ pub function (s: EmitState) mark_str_repeat(): EmitState {
 // is its sole dep. Replaces the hand-written register-ABI body on every backend.
 pub function rt_src_str_repeat(): string {
   return "function __fern_str_repeat(s: string, n: i32): string { let slen: i32 = s.len(); let count: i32 = n; if (count < 0) { count = 0; } let total64: i64 = (slen as i64) * (count as i64); let total: i32 = total64 as i32; if (total64 > 2147483647) { total = 0 - 1; } if (total == 0) { return \"\"; } let p: usize = __raw_alloc(total); let w: i32 = 0; let k: i32 = 0; while (k < count) { let j: i32 = 0; while (j < slen) { __raw_store8(p, w, s[j] as i32); w = w + 1; j = j + 1; } k = k + 1; } return __raw_string(p, total); }";
-}
-
-pub function (s: EmitState) mark_str_trim(): EmitState {
-  // str_concat: the result is `s[start:end] + ""` since #7393, so the
-  // compiled body calls __fern_str_concat — the dep the trim-len link
-  // failure proved (a program that trims but never concats itself).
-  return s.need("heap").need("str_concat").need("str_trim");
-}
-
-pub function (s: EmitState) mark_str_replace(): EmitState {
-  return s.need("heap").need("str_replace");
 }
 
 // rt_src_str_replace backs `s.replace(old, new)` / `str_replace(s, old, new)`
@@ -9351,21 +9256,35 @@ pub function add_string_lit(own s: EmitState, v: string): StringLitOut {
   return StringLitOut { state: ns, idx: idx };
 }
 
+// Register a root and its transitive dependencies before any runtime gate reads them.
 pub function (s: EmitState) need(name: string): EmitState {
   if (s.has_need(name)) {
     return s;
   }
-  return EmitState { ...s, needed: s.needed.append(name) };
+  let i: i32 = s.needed.len();
+  let cur: EmitState = EmitState { ...s, needed: s.needed.append(name) };
+  while (i < cur.needed.len()) {
+    let deps: string[] = runtime_need_deps(cur.needed[i]);
+    let j: i32 = 0;
+    while (j < deps.len()) {
+      if (!cur.has_need(deps[j])) {
+        cur = EmitState { ...cur, needed: cur.needed.append(deps[j]) };
+      }
+      j = j + 1;
+    }
+    i = i + 1;
+  }
+  return cur;
 }
 
 // runtime_need_deps is the DECLARATIVE dependency table for runtime helpers: the
 // direct deps of `name` are the other needs whose helpers `name`'s helper calls
 // (links against). This is the single source of truth replacing the old, fragile
 // "remember to mark every transitively-needed helper by hand" — a backend marks
-// only the top-level need (e.g. "str_trim") and close_needs() pulls in the rest. Add
+// only the top-level need (e.g. "str_trim") and need() pulls in the rest. Add
 // an edge here whenever a helper gains a `call __fern_*` to another helper.
 // (End goal: when the runtime moves into Fern — issue #2649 — this table and
-// close_needs disappear, replaced by the real call graph + the deadcode pass.)
+// its expansion disappear, replaced by the real call graph + the deadcode pass.)
 pub function runtime_need_deps(name: string): string[] {
   if (name == "buf_text") {
     let deps: string[] = ["buf"];
@@ -9398,13 +9317,7 @@ pub function runtime_need_deps(name: string): string[] {
     return heap;
   }
   if (name == "str_trim") {
-    // __fern_str_trim ends `slice_unchecked(s, start, end) + ""` (#7393), so
-    // its body calls __fern_str_concat — the dep a trim-without-concat link
-    // failure proved. mark_str_trim has declared it all along; this table did
-    // not, so the two declarations of one edge disagreed and only the wrapper
-    // carried it. Byte-neutral today, because every str_trim need is seeded
-    // through that wrapper; the point is that the closure no longer depends on
-    // which route the need came in by.
+    // The owned result is `slice_unchecked(s, start, end) + ""`.
     let dtrim: string[] = ["heap", "str_concat"];
     return dtrim;
   }
@@ -9435,12 +9348,7 @@ pub function runtime_need_deps(name: string): string[] {
     return d4;
   }
   if (name == "str_lines") {
-    // __fern_str_lines scans for '\n' itself and appends each line —
-    // same arr_push / arr_push_owned pairing as __fern_str_split, plus the
-    // str_concat each line's `slice + ""` needs (#7230). mark_str_lines has
-    // declared that last edge since the link failure proved it; this table
-    // did not, so the closure carried it only when the need came in through
-    // the wrapper.
+    // Append each owned line (`slice + ""`) to the result array.
     let d5: string[] = ["heap", "arr_push", "arr_push_owned", "str_concat"];
     return d5;
   }
@@ -9488,42 +9396,6 @@ pub function runtime_need_deps(name: string): string[] {
   return none;
 }
 
-// close_needs expands `needed` to its transitive closure over runtime_need_deps,
-// so emitting the runtime after this is guaranteed to have every helper a marked
-// need links against. Iterates to a fixpoint (the dependency graph is small and
-// acyclic). Call it once, right before runtime emission.
-pub function (s: EmitState) close_needs(): EmitState {
-  let cur: EmitState = s;
-  let changed: boolean = true;
-  while (changed) {
-    changed = false;
-    // Iterate cur.needed by index against a captured LENGTH (an i32), NOT a
-    // `let snap: string[] = cur.needed` snapshot. That bind aliases the
-    // needed buffer into a local WITHOUT an alias-inc, so close_needs's
-    // function-exit dec-sweep frees a box cur.needed still references — a
-    // use-after-free the arm64 per-module self-build hit in has_need (the
-    // freed empty-needs box was reused for a `.rodata` string, so has_need
-    // read garbage as the array length; latent on x86, where the freed box
-    // isn't immediately reused). need() only ever APPENDS (gated on
-    // !has_need), so elements [0, n) stay put across the inner loop.
-    let n: i32 = cur.needed.len();
-    let i: i32 = 0;
-    while (i < n) {
-      let deps: string[] = runtime_need_deps(cur.needed[i]);
-      let j: i32 = 0;
-      while (j < deps.len()) {
-        if (!cur.has_need(deps[j])) {
-          cur = cur.need(deps[j]);
-          changed = true;
-        }
-        j = j + 1;
-      }
-      i = i + 1;
-    }
-  }
-  return cur;
-}
-
 pub function (s: EmitState) has_need(name: string): boolean {
   let i: i32 = 0;
   while (i < s.needed.len()) {
@@ -9547,10 +9419,6 @@ pub function (s: EmitState) any_need(names: string[]): boolean {
     i = i + 1;
   }
   return false;
-}
-
-pub function (s: EmitState) mark_heap(): EmitState {
-  return s.need("heap");
 }
 
 // ScanShape is how a block scan_set classifies a byte: through the nibble

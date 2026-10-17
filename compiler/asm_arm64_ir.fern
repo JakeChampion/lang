@@ -395,7 +395,7 @@ function set_entry_indexed(o: ir.Op): string {
 
 // emit_str_op emits one string operand-stack op (the bodies factored out of
 // emit_stack_op's dispatch — see ir.is_str_op_kind). The runtime helpers
-// come from asm_arm64.emit_runtime, gated by the mark_* needs set here.
+// come from asm_arm64.emit_runtime, gated by the registered needs set here.
 // emit_mismatch_arm64 emits the __mismatch kernel (#8791): operand stack
 // [a box, ao, b box, bo, n] (n on top) -> the offset of the first byte where
 // a[ao..ao+n) and b[bo..bo+n) differ, or the clamped n when they are equal.
@@ -514,7 +514,7 @@ function emit_outer_mul_f64(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    add x9, x2, x6, lsl #3\n    add x9, x9, #8\n    ldr d0, [x9]\n    fmul d2, d1, d0\n    str d2, [x7]\n    add x7, x7, #8\n");
   s = s.write(c.name + "_next:\n    add x3, x3, #1\n    b " + a.name + "\n");
   s = s.write(d.name + ":\n    str x0, [sp, #-16]!\n");
-  return s.mark_heap();
+  return s.need("heap");
 }
 
 function emit_inner_mul_add_f64(s: asmcore.EmitState): asmcore.EmitState {
@@ -532,7 +532,7 @@ function emit_inner_mul_add_f64(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(lb + "_tail:\n    cmp x9, x5\n    b.ge " + lb + "_next\n    add x11, x2, x9, lsl #3\n    fmov d2, d3\n    mov x10, #0\n");
   s = s.write(lb + "_scalar:\n    cmp x10, x4\n    b.ge " + lb + "_scalar_store\n    add x12, x7, x10, lsl #3\n    ldr d1, [x12]\n    ldr d0, [x11]\n    fmul d1, d1, d0\n    fadd d2, d2, d1\n    add x11, x11, x5, lsl #3\n    add x10, x10, #1\n    b " + lb + "_scalar\n");
   s = s.write(lb + "_scalar_store:\n    str d2, [x8]\n    add x8, x8, #8\n" + lb + "_next:\n    add x7, x7, x4, lsl #3\n    sub x3, x3, #1\n    cmp x3, #0\n    b.ne " + lb + "_row\n" + lb + "_done:\n    str x0, [sp, #-16]!\n");
-  return s.mark_heap();
+  return s.need("heap");
 }
 
 function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
@@ -552,7 +552,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
       s = s.write("    add x0, x0, #7\n    lsr x0, x0, #3\n");
     }
     s = s.write("    bl __fern_arr_box\n    str xzr, [x0]\n    str x0, [sp, #-16]!\n");
-    return s.mark_heap();
+    return s.need("heap");
   }
   if (o.kind_tag == 382) {
     return emit_inner_mul_add_f64(s);
@@ -561,7 +561,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     return emit_aes_gcm_op(o, s);
   }
   if (o.kind_tag == 410) {  // sha256_hw_blocks
-    s = s.need("sha256").mark_heap();
+    s = s.need("sha256").need("heap");
     return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_sha256_hw_blocks\n    str x0, [sp, #-16]!\n");
   }
   if (o.kind_tag == 381) {
@@ -866,7 +866,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ldr d0, [x6], #8\n    fmul d0, d0, d1\n    str d0, [x7], #8\n");
     s = s.write("    subs x3, x3, #1\n    b.ne " + sf_loop + "\n");
     s = s.write(sf_done + ":\n    str x0, [sp, #-16]!\n");
-    s = s.mark_heap();
+    s = s.need("heap");
     return s;
   }
   if (o.kind_tag == 390) {  // str_hash
@@ -1108,13 +1108,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == 104) {  // str_bytes
     // operand stack [str box]; __fern_str_bytes is a Fern runtime function now
     // (#2649): asm_arm64.emit_runtime emits the shared body gated on str_bytes
-    // (mark_str_bytes pulls in heap for its pre-sized box). The box on the
+    // (need("str_bytes") pulls in heap for its pre-sized box). The box on the
     // stack IS param[0] (at [x29,#16]); call, pop arg, push result.
     if (ir.is_packed(o)) {
-      s = s.mark_heap().need("str_bytes_u8");
+      s = s.need("str_bytes_u8");
       return s.write("    bl __fn___fern_str_bytes_u8\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     }
-    s = s.mark_str_bytes();
+    s = s.need("str_bytes");
     s = s.write("    bl __fn___fern_str_bytes\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     return s;
   }
@@ -1122,7 +1122,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // operand stack [haystack box, sep box] (sep top). Call the Fern-compiled
     // __fn___fern_str_split via the stack ABI: param[0]=haystack on top (+16),
     // param[1]=sep (+32). Shared body, need-gated on str_split. -> string[] in x0.
-    s = s.mark_str_split();
+    s = s.need("str_split");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_split\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
     return s;
@@ -1136,7 +1136,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     if (o.kind_tag == 107) {  // str_to_lower
       cfn = "__fn___fern_str_to_lower";
     }
-    s = s.mark_str_case();
+    s = s.need("str_case");
     s = s.write("    bl " + cfn + "\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     return s;
   }
@@ -1145,7 +1145,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // __fn___fern_str_repeat via the stack ABI: param[0]=s on top (+16),
     // param[1]=n (+32). asm_arm64.emit_runtime emits the shared body,
     // need-gated on str_repeat. -> fresh string box in x0.
-    s = s.mark_str_repeat();
+    s = s.need("str_repeat");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_repeat\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
     return s;
@@ -1153,9 +1153,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == 109) {  // str_trim
     // operand stack [s box]; __fern_str_trim is a Fern runtime function now
     // (#2649): asm_arm64.emit_runtime emits the shared body gated on the
-    // str_trim need (a zero-copy slice; mark_str_trim pulls in heap). The s box
+    // str_trim need (a zero-copy slice; need("str_trim") pulls in heap). The s box
     // already on the stack IS param[0] (at [x29,#16]); call, pop arg, push result.
-    s = s.mark_str_trim();
+    s = s.need("str_trim");
     s = s.write("    bl __fn___fern_str_trim\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     return s;
   }
@@ -1164,7 +1164,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // __fn___fern_str_replace via the stack ABI: param[0]=haystack on top
     // (+16), param[1]=old (+32), param[2]=new (+48). Shared body, need-gated
     // on str_replace. -> fresh string box in x0.
-    s = s.mark_str_replace();
+    s = s.need("str_replace");
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_replace\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
     return s;
@@ -1172,10 +1172,10 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == 113) {  // str_lines
     // operand stack [s box]; __fern_str_lines is a Fern runtime function now
     // (#2649): asm_arm64.emit_runtime emits the shared body gated on the
-    // str_lines need (mark_str_lines pulls in arr_push + heap). The s box
+    // str_lines need (need("str_lines") pulls in arr_push + heap). The s box
     // on the stack IS param[0] (at
     // [x29,#16]); call, pop arg, push result.
-    s = s.mark_str_lines();
+    s = s.need("str_lines");
     s = s.write("    bl __fn___fern_str_lines\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     return s;
   }
@@ -3154,7 +3154,7 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   }
   if (k == 42) {
     if (ins.imm != 1) {
-      s = s.mark_heap();
+      s = s.need("heap");
       s = ssa_ldst0(s, true, "x6", a);
       s = ssa_cmp_rr(s, b, "x6");
       s = ssa_trap_guard(s, CC_LO, "__fern_oob_abort");
@@ -3176,7 +3176,7 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
     return ssa_store(reg_of, ins.result, d, s);
   }
   if (k == 44) {
-    s = s.mark_heap();
+    s = s.need("heap");
     if (ins.imm != 1) {
       s = ssa_ldst(s, true, "x6", a, 8);
       s = ssa_cmp_rr(s, b, "x6");
@@ -3191,7 +3191,7 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   }
   let c: string = ssa_src(reg_of, ins.args[2], "x6");
   s = ssa_load(reg_of, ins.args[2], c, s);
-  s = s.mark_heap();
+  s = s.need("heap");
   if (ins.imm != 1) {
     s = ssa_ldst0(s, true, "x7", a);
     s = ssa_cmp_rr(s, b, "x7");
@@ -3211,7 +3211,7 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
 function ssa_mem_at(ins: ssa.SInst, reg_of: i32[], c: i32, a: string, d: string, s: asmcore.EmitState): asmcore.EmitState {
   let k: i32 = ins.kind_tag;
   if (k != 42 || ins.imm != 1) {
-    s = s.mark_heap();
+    s = s.need("heap");
   }
   if (ins.imm != 1) {
     let len_at: i32 = 0;
@@ -3272,7 +3272,7 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 // list) then rejects most arms without the call.
 function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
-  s = s.mark_str_eq();
+  s = s.need("str_eq");
   s = ssa_read(reg_of, ins.args[0], "x4", s);
   let a: string = ssa_src(reg_of, ins.args[0], "x4");
   s = ssa_read(reg_of, ins.args[1], "x5", s);
@@ -3375,34 +3375,34 @@ function ssa_host_bare(op: string): boolean {
 
 function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
   if (op == "temp_dir") {
-    return s.mark_heap().need("monotonic_ns").need("temp_dir");
+    return s.need("heap").need("monotonic_ns").need("temp_dir");
   }
   if (ssa_host_need(op) != "") {
-    return s.mark_heap().need(ssa_host_need(op));
+    return s.need("heap").need(ssa_host_need(op));
   }
   if (ssa_host_bare(op)) {
     return s.need(op);
   }
   if (op == "str_concat") {
-    return s.mark_heap().mark_str_concat();
+    return s.need("str_concat");
   }
   if (op == "str_eq") {
-    return s.mark_str_eq();
+    return s.need("str_eq");
   }
   if (op == "str_cmp") {
-    return s.mark_str_cmp();
+    return s.need("str_cmp");
   }
   if (op == "arr_slice") {
-    return s.mark_heap().mark_arr_slice();
+    return s.need("arr_slice");
   }
   if (op == "arr_slice_u8") {
-    return s.mark_heap().need("arr_slice_u8");
+    return s.need("arr_slice_u8");
   }
   if (op == "str_from_bytes_u8") {
-    return s.mark_heap().need("str_from_bytes_u8");
+    return s.need("str_from_bytes_u8");
   }
   if (op == "str_from_bytes_range_u8") {
-    return s.mark_heap().need("str_from_bytes_range_u8");
+    return s.need("str_from_bytes_range_u8");
   }
   if (op == "print_str") {
     return s.need("str_print");
@@ -3410,7 +3410,7 @@ function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
   if (op == "eprint_str") {
     return s.need("eprint");
   }
-  return s.mark_str_from_bytes();
+  return s.need("str_from_bytes");
 }
 
 // ssa_host_kind names the register-ABI ops ssa_host_call selects: the raw
@@ -3453,7 +3453,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
     s = s.write("    mov x8, #94\n    svc #0\n    mov x0, #0\n");
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
   }
-  s = s.mark_heap();
+  s = s.need("heap");
   s = ssa_load_abi_args(reg_of, ins.args, 2, s);
   s = s.write("    bl __fern_str_box_hdr\n");
   return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
@@ -3486,7 +3486,7 @@ function sym_addr_need(sym: string): string {
 // ssa_sym_addr is a static symbol's address, or the word at it (imm 1).
 function ssa_sym_addr(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   if (util.str_has_prefix(ins.str, "__fern_arr_push_")) {
-    s = s.mark_heap();
+    s = s.need("heap");
   }
   if (sym_addr_need(ins.str) != "") {
     s = s.need(sym_addr_need(ins.str));
@@ -3503,7 +3503,7 @@ function ssa_sym_addr(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 // ABI: the arguments in x0, x1, the result in x0.
 function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
-  s = s.mark_heap();
+  s = s.need("heap");
   let sym: string = "__fern_alloc";
   if (ins.str == "alloc_u8") {
     sym = "__fern_alloc_u8";
@@ -3511,10 +3511,10 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     s = s.need("alloc_bytes");
     sym = "__fern_alloc_bytes";
   } else if (ins.str == "arr_push_owned_u8") {
-    s = s.mark_arr_push().need("arr_push_u8");
+    s = s.need("arr_push_u8");
     sym = "__fern_arr_push_owned_u8";
   } else if (ins.str == "arr_push_u8") {
-    s = s.mark_arr_push().need("arr_push_u8");
+    s = s.need("arr_push_u8");
     sym = "__fern_arr_push_u8";
   } else if (ins.str == "struct_copy") {
     sym = "__fn___fern_struct_copy";
@@ -3527,10 +3527,10 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     s = s.need("random_i32").need("map_hash_seed");
     sym = "__fern_map_hash_seed";
   } else if (util.str_has_prefix(ins.str, "arr_push_owned")) {
-    s = s.mark_arr_push();
+    s = s.need("arr_push");
     sym = "__fern_arr_push_owned";
   } else if (util.str_has_prefix(ins.str, "arr_push")) {
-    s = s.mark_arr_push();
+    s = s.need("arr_push");
     sym = "__fern_arr_push";
   }
   s = ssa_load_abi_args(reg_of, ins.args, 2, s);
@@ -3680,7 +3680,7 @@ function ssa_view_count(views: i32[]): i32 {
 // since the call clobbers every register they could live in.
 function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
-  s = s.mark_heap();
+  s = s.need("heap");
   s = ssa_load_abi_args(reg_of, ins.args, 3, s);
   s = ssa_ldst(s, true, "x3", "x0", 8);
   s = ssa_cmp_rr(s, "x2", "x3");
@@ -4053,12 +4053,12 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
     s = sh.state;
     label = sh.label;
   } else if (k == 47) {
-    s = s.mark_heap();
+    s = s.need("heap");
     let lo: asmcore.StringLitOut = asmcore.add_string_lit(s, ins.str);
     s = lo.state;
     label = asmcore.str_box_label(s, lo.idx);
   } else {
-    s = s.mark_heap();
+    s = s.need("heap");
     s = ssa_bl_sym(ssa_mov_imm(s, "x0", util.i32_to_string(ins.imm)), "__fern_arr_box");
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
   }
@@ -4966,7 +4966,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     // () -> 1: the SHA-1 and SHA-256 instructions are in the ARMv8.2-A crypto baseline.
     s = s.write("    mov x0, #1\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 441) {  // sha1_hw_blocks
-    s = s.need("sha1").mark_heap();
+    s = s.need("sha1").need("heap");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_sha1_hw_blocks\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 74) {  // memcpy
     s = emit_arm64_op_memcpy(o, i, lp, s);
@@ -5006,7 +5006,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     // (__raw_arr_box — so the result carries the rc header
     // __fern_arr_box writes).
     let rb: string = "random_bytes" + asmcore.packed_suffix(ir.is_packed(o));
-    s = s.mark_heap();
+    s = s.need("heap");
     s = s.need(rb);
     s = s.write("    bl __fn___fern_" + rb + "\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 186) {  // random_i32
@@ -5063,7 +5063,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     // keeps the older entries reusable. One live mark at a time (the
     // shadow is a single buffer, so marks do not nest). x9-x12 are AAPCS
     // scratch and dead here — the operand stack lives on sp.
-    s = s.mark_heap();
+    s = s.need("heap");
     s = s.write("    adrp x0, __fern_heap_ptr\n    add x0, x0, :lo12:__fern_heap_ptr\n    ldr x0, [x0]\n");
     s = arm64_copy_words(s, "__fern_freelist", "__fern_freelist_shadow", 65536);
     s = arm64_copy_words(s, "__fern_large_freelist", "__fern_large_freelist_shadow", 2560);
@@ -5892,7 +5892,7 @@ function ssa_still_read(srcs: string[], done: boolean[], reg: string, self: i32)
 // x0.. in order. Only x0 can be a home, so it loads last.
 function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
-  s = s.mark_heap();
+  s = s.need("heap");
   s = s.need("buf");
   if (sym == "__fern_buf_take") {
     s = s.need("buf_text");
@@ -5979,7 +5979,7 @@ function emit_arm64_op_heap_bump_bytes(o: ir.Op, s: asmcore.EmitState): asmcore.
   // recorded end (__fern_heap_end = base + heap_size), so base =
   // end − heap_size and ptr − base = ptr − end + heap_size. The
   // cursor is 0 until the first alloc, so guard that to report 0.
-  s = s.mark_heap();
+  s = s.need("heap");
   s = s.write("    adrp x0, __fern_heap_ptr\n    add x0, x0, :lo12:__fern_heap_ptr\n    ldr x0, [x0]\n");  // cursor (0 if uninit)
   s = s.write("    adrp x1, __fern_heap_end\n    add x1, x1, :lo12:__fern_heap_end\n    ldr x1, [x1]\n");  // arena end
   s = s.write("    sub x2, x0, x1\n");  // ptr − end
@@ -5999,7 +5999,7 @@ function emit_arm64_op_heap_bump_bytes(o: ir.Op, s: asmcore.EmitState): asmcore.
 // the word and the tick into the runtime, so a program that never asks for
 // the number emits neither.
 function emit_arm64_op_heap_alloc_count(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
-  s = s.mark_heap();
+  s = s.need("heap");
   s = s.need("alloc_count");
   s = s.write("    adrp x0, __fern_alloc_count\n    add x0, x0, :lo12:__fern_alloc_count\n    ldr x0, [x0]\n");
   s = s.write("    str x0, [sp, #-16]!\n");
@@ -6016,7 +6016,7 @@ function emit_arm64_op_heap_release_to(o: ir.Op, s: asmcore.EmitState): asmcore.
   let hro: asmcore.LabelOut = asmcore.fresh_label(s);
   let hr_done: string = hro.name;
   s = hro.state;
-  s = s.mark_heap();
+  s = s.need("heap");
   s = s.write("    ldr x0, [sp], #16\n");
   s = s.write("    cbz x0, " + hr_done + "\n");
   s = s.write("    adrp x1, __fern_heap_ptr\n    add x1, x1, :lo12:__fern_heap_ptr\n    str x0, [x1]\n");
@@ -6046,7 +6046,7 @@ function emit_arm64_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == 351) {
     s = s.need("buf_push_bytes_range" + asmcore.packed_suffix(ir.is_packed(o)));
   }
-  s = s.mark_heap();
+  s = s.need("heap");
   s = s.need("buf");
   let k: i32 = asmcore.buf_arity(o.kind_tag);
   while (k > 0) {
@@ -6071,12 +6071,12 @@ function emit_arm64_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 // SSA backend's. A call_direct does not imply a need, so without these a
 // call site is emitted against a body the runtime never writes.
 function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitState {
-  s = s.mark_heap();
+  s = s.need("heap");
   // i32.to_string()'s decimal helper needs its body emitted (the
   // stack-ABI __fn___fern_i32_to_string wrapper in asm_arm64.emit_runtime,
   // gated on this need).
   if (name == "__fern_i32_to_string") {
-    s = s.mark_i32_to_string();
+    s = s.need("i32_to_string");
   }
   // u32.to_string()'s UNSIGNED decimal helper (#2649) — the x86 IR path
   // marks this (asm_ir), but the arm64 IR path was missing it, so a
@@ -6084,24 +6084,24 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   // without its body → "undefined reference to __fn___fern_u32_to_string"
   // at link (e.g. u32_arith through the self-host arm64 stdtest gate).
   if (name == "__fern_u32_to_string") {
-    s = s.mark_u32_to_string();
+    s = s.need("u32_to_string");
   }
   // The WIDE siblings (#5826). asm_arm64.emit_runtime already emits
   // both bodies gated on these needs; only the IR-path mark was
   // missing, exactly as it was for u32 above.
   if (name == "__fern_i64_to_string") {
-    s = s.mark_i64_to_string();
+    s = s.need("i64_to_string");
   }
   if (name == "__fern_u64_to_string") {
-    s = s.mark_u64_to_string();
+    s = s.need("u64_to_string");
   }
   // __fern_slice_abort's body is in the heap block, as __fern_oob_abort's is.
   if (name == "__fern_slice_abort") {
     s = s.need("heap");
   }
-  // arr.join(sep) and a scalar xs.concat(ys) (#5328): mark_array_helper
+  // arr.join(sep) and a scalar xs.concat(ys) (#5328): need_array_helper
   // sets each one's need and the heap's.
-  s = s.mark_array_helper(name);
+  s = s.need_array_helper(name);
   // arr-of-arr reclaim helpers (#4355 slice 9) — bodies gated on these
   // needs in asm_arm64's runtime writer, mirroring the x86 asm_ir
   // gating: an unrelated binary must not carry the strarrarr body's
@@ -6271,7 +6271,7 @@ function emit_arm64_op_dyn_box(o: ir.Op, own s: asmcore.EmitState): asmcore.Emit
   // alloc and is popped after — opt_make's alloc-then-store discipline.
   let dbl: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
   s = dbl.state;
-  s = s.mark_heap();
+  s = s.need("heap");
   s = s.write("    mov x0, #2\n    bl __fern_arr_box\n");  // x0 = cell ptr
   s = s.write("    adrp x2, " + dbl.label + "\n");
   s = s.write("    add x2, x2, :lo12:" + dbl.label + "\n");
@@ -6548,11 +6548,6 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
   // naming the symbol it defines.
   s = emit_named_bodies(cache, physical, unit.pre, mod.funcs.len(), s, vgate);
   irverifygate.report(vgate);
-  // Ahead of _start, which gates its envp save on the heap need. close_needs
-  // is what turns a root like str_concat into that heap need, so reading it
-  // first would leave __fern_envp null in a program that still gets the heap
-  // runtime.
-  s = s.close_needs();
   return emit_ir_start(s, darwin);
 }
 
@@ -6629,7 +6624,7 @@ function emit_named_bodies(cache: irtables.LowerResult[], physical: physicalbody
 // __bytes_range(b, from, to) are Fern runtime functions (#2649,
 // asmcore.rt_src_arr_str_join, rt_src_arr_concat, rt_src_bytes_owned and
 // rt_src_bytes_range). Each fills one exact-size block, so the heap is its
-// only dep and mark_array_helper declares it.
+// only dep, declared by runtime_need_deps.
 function emit_array_helpers(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("byte_append") || s.has_need("byte_write")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_byte_copy(s.has_need("byte_append"), s.has_need("byte_write")), s);
@@ -10889,14 +10884,11 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   // only because its bounds trap (#5419) is exit(134) through __syscall3 and
   // the exit number is per-target.
   s = emit_array_helpers(s);
-  // __fern_str_trim — Fern runtime function (#2649), Tier-1: returns the
-  // zero-copy sub-slice s[start:end] after skipping leading/trailing
-  // whitespace. The slice box allocates (heap dep via mark_str_trim).
+  // Trimming returns an owned copy of the non-whitespace range.
   if (s.has_need("str_trim")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_trim(), s);
   }
-  // __fern_str_lines — Fern runtime function (#2649), Tier-1. Shared by
-  // arm64 AST + IR. Deps pre-marked by mark_str_lines.
+  // Split lines through the shared Fern runtime.
   if (s.has_need("str_lines")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_lines(), s);
   }
@@ -11250,9 +11242,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   }
   // __fern_str_bytes is now a Fern runtime function (#2649): see
   // asmcore.rt_src_str_bytes, emitted (need-gated) in the migrated-helpers
-  // section below. The single shared body serves both arm64 AST + IR. It builds
-  // the i32[] by appending each byte (arr_push) — its deps are declared by
-  // mark_str_bytes / runtime_need_deps.
+  // section below. It fills a pre-sized array; runtime_need_deps declares heap.
   // random_i32: four bytes from the CSPRNG into __fern_scratch, reloaded as an
   // i32. Heap-independent — gated by its own need (NOT the heap block) so a
   // random_i32-only program still links it. Linux getrandom / Darwin
@@ -11592,8 +11582,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   }
   // __fern_str_lines is now a Fern runtime function (#2649): see
   // asmcore.rt_src_str_lines, emitted (need-gated) in the migrated-helpers
-  // section below. The single shared body serves both arm64 AST + IR; its deps
-  // are declared by mark_str_lines / runtime_need_deps.
+  // section below. runtime_need_deps declares its array and string dependencies.
   return s;
 }
 
@@ -11931,7 +11920,7 @@ function a64_ghash(): string {
 // emit_aes_gcm_op calls a kernel: [key] for aes_expand_key, three views for
 // aes_ctr32 and ghash.
 function emit_aes_gcm_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
-  s = s.need("aes_gcm").mark_heap();
+  s = s.need("aes_gcm").need("heap");
   if (o.kind_tag == 402) {
     return s.write("    ldr x0, [sp], #16\n    bl __fern_aes_expand_key\n    str x0, [sp, #-16]!\n");
   }
@@ -12388,7 +12377,6 @@ function emit_ir_runtime_settled(s0: asmcore.EmitState, darwin: boolean): asmcor
   let settled: boolean = false;
   let out: asmcore.EmitState = s0;
   while (!settled) {
-    s = s.close_needs();
     let h: usize = buf_new(65536);
     let t: asmcore.EmitState = emit_ir_runtime(asmcore.EmitState { ...s, capture: h }, darwin);
     let text: string = buf_take(h);
@@ -12580,7 +12568,6 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
     en = en + 1;
   }
   // Before _start, which gates its envp save on the closed heap need.
-  s = s.close_needs();
   // _start belongs only to the entry (one program entry point). This path is
   // Linux-only — see the `emit_ir_runtime(s, false)` below.
   if (is_entry) {

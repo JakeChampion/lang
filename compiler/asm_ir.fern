@@ -5404,7 +5404,7 @@ function set_entry_test(o: ir.Op, idx: string): string {
 // emit_str_op emits one string operand-stack op (the bodies factored out of
 // emit_stack_op's dispatch — see ir.is_str_op_kind). Each pops its box
 // operand(s), calls the matching __fern_str_* runtime, and pushes the result;
-// the mark_* needs pull in the helper bodies (emit_ir_runtime).
+// the registered needs pull in the helper bodies (emit_ir_runtime).
 // emit_mismatch_x86 emits the __mismatch kernel (#8791): operand stack
 // [a box, ao, b box, bo, n] (n on top) -> the offset of the first byte where
 // a[ao..ao+n) and b[bo..bo+n) differ, or the clamped n when they are equal.
@@ -6164,14 +6164,14 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == 104) {  // str_bytes
     // operand stack [str box]; __fern_str_bytes is a Fern runtime function now
     // (#2649): the box on the stack IS param[0] (at +16 after the call), so call
-    // directly, pop the arg, push the result i32[]. mark_str_bytes pulls in
+    // directly, pop the arg, push the result i32[]. need("str_bytes") pulls in
     // heap for the helper's pre-sized box.
     if (ir.is_packed(o)) {
       s = s.write("    call __fn___fern_str_bytes_u8\n    addq $8, %rsp\n    pushq %rax\n");
-      return s.need("heap").need("str_bytes_u8");
+      return s.need("str_bytes_u8");
     }
     s = s.write("    call __fn___fern_str_bytes\n    addq $8, %rsp\n    pushq %rax\n");
-    s = s.mark_str_bytes();
+    s = s.need("str_bytes");
     return s;
   }
   if (o.kind_tag == 105) {  // str_split
@@ -6180,7 +6180,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // on top (+16), param[1]=sep (+24). -> fresh string[] in %rax.
     s = s.write("    popq %rsi\n    popq %rdi\n");
     s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_split\n    addq $16, %rsp\n    pushq %rax\n");
-    s = s.mark_str_split();
+    s = s.need("str_split");
     return s;
   }
   if (o.kind_tag == 106 || o.kind_tag == 107) {  // str_to_upper, str_to_lower
@@ -6192,7 +6192,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
       cfn = "__fn___fern_str_to_lower";
     }
     s = s.write("    call " + cfn + "\n    addq $8, %rsp\n    pushq %rax\n");
-    s = s.mark_str_case();
+    s = s.need("str_case");
     return s;
   }
   if (o.kind_tag == 108) {  // str_repeat
@@ -6201,7 +6201,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // param[1]=n below (+24). -> fresh string box in %rax.
     s = s.write("    popq %rsi\n    popq %rdi\n");
     s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_repeat\n    addq $16, %rsp\n    pushq %rax\n");
-    s = s.mark_str_repeat();
+    s = s.need("str_repeat");
     return s;
   }
   if (o.kind_tag == 109) {  // str_trim
@@ -6209,7 +6209,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // (#2649): the s box already on the operand stack IS param[0] (at +16
     // after the call), so call directly, pop the arg, push the result.
     s = s.write("    call __fn___fern_str_trim\n    addq $8, %rsp\n    pushq %rax\n");
-    s = s.mark_str_trim();
+    s = s.need("str_trim");
     return s;
   }
   if (o.kind_tag == 111) {  // str_replace
@@ -6218,16 +6218,16 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // (+16), param[1]=old (+24), param[2]=new (+32). -> fresh string box in %rax.
     s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
     s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_replace\n    addq $24, %rsp\n    pushq %rax\n");
-    s = s.mark_str_replace();
+    s = s.need("str_replace");
     return s;
   }
   if (o.kind_tag == 113) {  // str_lines
     // operand stack [s box]; __fern_str_lines is a Fern runtime function now
     // (#2649): the s box already on the stack IS param[0] (at +16 after the
     // call), so call directly, pop the arg, push the result string[].
-    // mark_str_lines pulls in its arr_push + heap deps.
+    // need("str_lines") pulls in its arr_push + heap deps.
     s = s.write("    call __fn___fern_str_lines\n    addq $8, %rsp\n    pushq %rax\n");
-    s = s.mark_str_lines();
+    s = s.need("str_lines");
     return s;
   }
   // Guarded, so this tail is unreachable rather than a catch-all (#6917).
@@ -8204,7 +8204,7 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 // list) then rejects most arms without the call.
 function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
-  s = s.mark_str_eq();
+  s = s.need("str_eq");
   s = ssa_read(reg_of, ins.args[0], "%r11", s);
   let a: string = ssa_src(reg_of, ins.args[0], "%r11");
   s = ssa_read(reg_of, ins.args[1], "%rcx", s);
@@ -8315,25 +8315,25 @@ function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
     return s.need(op);
   }
   if (op == "str_concat") {
-    return s.mark_str_concat();
+    return s.need("str_concat");
   }
   if (op == "str_eq") {
-    return s.mark_str_eq();
+    return s.need("str_eq");
   }
   if (op == "str_cmp") {
-    return s.mark_str_cmp();
+    return s.need("str_cmp");
   }
   if (op == "arr_slice") {
-    return s.mark_arr_slice();
+    return s.need("arr_slice");
   }
   if (op == "arr_slice_u8") {
-    return s.need("heap").need("arr_slice_u8");
+    return s.need("arr_slice_u8");
   }
   if (op == "str_from_bytes_u8") {
-    return s.need("heap").need("str_from_bytes_u8");
+    return s.need("str_from_bytes_u8");
   }
   if (op == "str_from_bytes_range_u8") {
-    return s.need("heap").need("str_from_bytes_range_u8");
+    return s.need("str_from_bytes_range_u8");
   }
   if (op == "print_str") {
     return s.need("str_print");
@@ -8716,10 +8716,10 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     s = s.need("alloc_bytes");
     sym = "__fern_alloc_bytes";
   } else if (ins.str == "arr_push_owned_u8") {
-    s = s.mark_arr_push().need("arr_push_u8");
+    s = s.need("arr_push_u8");
     sym = "__fern_arr_push_owned_u8";
   } else if (ins.str == "arr_push_u8") {
-    s = s.mark_arr_push().need("arr_push_u8");
+    s = s.need("arr_push_u8");
     sym = "__fern_arr_push_u8";
   } else if (ins.str == "struct_copy") {
     sym = "__fn___fern_struct_copy";
@@ -8732,11 +8732,10 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     s = s.need("random_i32").need("map_hash_seed");
     sym = "__fern_map_hash_seed";
   } else if (util.str_has_prefix(ins.str, "arr_push_owned")) {
-    s = s.mark_arr_push();
     s = s.need("arr_push_owned");
     sym = "__fern_arr_push_owned";
   } else if (util.str_has_prefix(ins.str, "arr_push")) {
-    s = s.mark_arr_push();
+    s = s.need("arr_push");
     sym = "__fern_arr_push";
   }
   let srcs: i32[] = [];
@@ -11356,7 +11355,7 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   }
   // arr.join(sep) and a scalar xs.concat(ys) need their own bodies + the
   // heap runtime they fill one exact-size block from. #5328.
-  s = s.mark_array_helper(name);
+  s = s.need_array_helper(name);
   // arr-of-arr reclaim helpers (#4355 slice 9): bodies gated on these
   // needs in emit_ir_runtime — a binary with no arr-of-arr reclaim
   // must not carry them, since the strarrarr body's inner
@@ -11731,7 +11730,6 @@ pub function module_runtime_needs(mod: parser.Module, all_funcs: parser.FuncDecl
   let s: asmcore.EmitState = asmcore.new_state();
   s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs, retain_prepared: false, memo: irverifygate.open_memo("x86-64") }, all_funcs);
   s = emit_module_funcs(mod, all_funcs, s, false, 0, 0 - 1, cache, physical, false);
-  s = s.close_needs();
   irverifygate.close_memo(s.memo);
   s.release();
   return s.needed;
@@ -11885,11 +11883,8 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
   s = asmcore.emit_shape_lits_from(s, 0);
   // The "heap" needs were marked per-function during the emit loop
   // above (off the ops each function's lowering already produced), so there is
-  // no need to re-lower the module here. The whole-program extra_needs (sibling modules'
-  // needs, for the entry's single shared runtime) were folded in above, BEFORE
-  // _start (so its argc/argv save sees a sibling's args need) and hence before
-  // close_needs, so their declared deps resolve too.
-  s = s.close_needs();
+  // no need to re-lower the module here. Sibling modules' extra_needs were
+  // folded in before _start so its argc/argv save sees their args need.
   // The shared `__fern_*` runtime is emitted ONCE, by the entry module — a
   // non-entry library module references these helpers as externs (resolved at
   // link against the entry's copy), so emitting them again would duplicate-
@@ -11971,7 +11966,6 @@ function emit_entry_runtime_settled(s0: asmcore.EmitState): asmcore.EmitState {
   let settled: boolean = false;
   let out: asmcore.EmitState = s0;
   while (!settled) {
-    s = s.close_needs();
     let h: usize = buf_new(65536);
     let t: asmcore.EmitState = emit_entry_runtime(asmcore.EmitState { ...s, capture: h });
     let text: string = buf_take(h);
