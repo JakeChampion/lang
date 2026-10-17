@@ -110,8 +110,14 @@ pub function fn_param_from_type(name: string, t: typeinfo.Type): ast.ParamDecl {
       return declined(name);
     }
     let params: string[] = [];
-    for param in f.param_types {
-      params = params.append(capture_spelling(param));
+    let i: i32 = 0;
+    while (i < f.param_types.len()) {
+      let param = capture_spelling(f.param_types[i]);
+      if (typeinfo.fn_own_at(f, i)) {
+        param = "own " + param;
+      }
+      params = params.append(param);
+      i = i + 1;
     }
     return fn_param_decl(name, params, capture_spelling(f.ret_type));
   }

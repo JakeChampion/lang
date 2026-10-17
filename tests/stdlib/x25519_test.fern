@@ -85,6 +85,41 @@ function test_lengths(): test.TestOutcome {
   return test.assert_eq(shown(x25519.x25519(alice(), hex.hex_decode("0001"))), "x25519: the point is 2 bytes, want 32");
 }
 
+// public_key reads Ed25519's fixed-base table rather than the ladder; it
+// must agree with the ladder from u = 9 for scalars whose clamping matters
+// and for ones whose signed digits carry through every nibble.
+function test_public_key_matches_ladder(): test.TestOutcome {
+  let nine: u8[] = hex.hex_decode("0900000000000000000000000000000000000000000000000000000000000000");
+  let scalars: string[] = [
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "8888888888888888888888888888888888888888888888888888888888888888",
+    "7777777777777777777777777777777777777777777777777777777777777777",
+    "0123456789abcdeffedcba98765432100f1e2d3c4b5a69788796a5b4c3d2e1f0",
+  ];
+  for h in scalars {
+    let k: u8[] = hex.hex_decode(h);
+    match (x25519.public_key(k)) {
+      Ok(pk) => {
+        match (x25519.x25519(k, nine)) {
+          Ok(lad) => {
+            if (hex.hex_encode(pk) != hex.hex_encode(lad)) {
+              return test.fail("public_key(" + h + ") is " + hex.hex_encode(pk) + ", the ladder's " + hex.hex_encode(lad));
+            }
+          },
+          Err(e) => {
+            return test.fail(e.message());
+          }
+        }
+      },
+      Err(e) => {
+        return test.fail(e.message());
+      }
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/crypto/x25519");
   r = r.it("RFC 7748 5.2 vector 1", test_vector_1);
@@ -95,5 +130,6 @@ function main(): i32 {
   r = r.it("non-canonical u-coordinate", test_non_canonical);
   r = r.it("low-order peer keys", test_low_order);
   r = r.it("scalar and point lengths", test_lengths);
+  r = r.it("public_key agrees with the ladder", test_public_key_matches_ladder);
   return r.finish();
 }
