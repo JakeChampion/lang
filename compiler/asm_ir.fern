@@ -11796,108 +11796,9 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
   // _start belongs only to the entry module (one program entry point). A
   // non-entry library module exposes its `__fn_*` definitions and nothing else.
   if (is_entry) {
-    s = s.write("_start:\n");
-    // The sandbox is installed before anything else runs, so the filter
-    // covers the whole program, the arena mmap included.
-    if (asmcore.sandbox_on()) {
-      s = s.write("    call __fern_seccomp_install\n");
-    }
-    // args() reads __fern_argc / __fern_argv; save them from the initial stack
-    // (the kernel puts argc at the top of the stack on entry) BEFORE any push.
-    // Matches asm.fern's _start. Gated on the args need so a non-args program
-    // is byte-identical.
-    if (s.has_need("args")) {
-      s = s.write("    movq (%rsp), %rax\n");
-      s = s.write("    movq %rax, __fern_argc(%rip)\n");
-      s = s.write("    leaq 8(%rsp), %rax\n");
-      s = s.write("    movq %rax, __fern_argv(%rip)\n");
-    }
-    // env() reads __fern_envp; save it from the initial stack BEFORE any push.
-    // envp follows argv's NULL terminator: envp = rsp + 16 + argc*8 (argc at
-    // [rsp], argv at rsp+8 with argc+1 slots incl. the NULL). Gated on the env /
-    // subprocess needs (not heap, unlike asm.fern) so other programs stay
-    // byte-identical. Both __fern_env and __fern_subprocess (execve) read it.
-    if (s.any_need(["env", "subprocess", "environ", "raw_environ"])) {
-      s = s.write("    movq (%rsp), %rax\n");
-      s = s.write("    leaq 16(%rsp,%rax,8), %rax\n");
-      s = s.write("    movq %rax, __fern_envp(%rip)\n");
-    }
-    if (asmcore.vdso_wanted(s, "x86_64")) {
-      s = emit_vdso_scan(s);
-    }
-    if (s.profile > 0) {
-      s = s.write("    leaq .Lprofile_ring(%rip), %rax\n    movq %rsp, %rsi\n    leaq .Lprofile_action(%rip), %rdi\n    leaq .Lprofile_timer(%rip), %r8\n    call __fn___fern_profile_start.r\n");
-    }
-    s = s.write("    pushq %rbp\n");
-    s = s.write("    movq %rsp, %rbp\n");
-    // A MAIN-LESS module (a library compiled standalone — util.fern et al.
-    // under the bootstrap self-compile) has no __fn_main to call, so `_start`
-    // exits 0 directly. Mirrors the retired x86 AST emitter's own no-main branch, minus the
-    // top-level statements: a script-shaped source has already been rewritten
-    // into `function main()` by asmcore.synth_script_main upstream, so
-    // anything still main-less here is a library with functions only.
-    //
-    // Emitting the call unconditionally is what forced the gate to refuse such
-    // a module (`require_main`), which is why the bootstrap smoke test — it
-    // pipes each compiler SOURCE through this driver, and 7 of 9 are
-    // main-less — depended on the AST emitter.
-    if (asmcore.has_main(mod)) {
-      s = s.write("    call __fn_main\n");
-      // Leak summary before the exit syscall (#6068). main's return value
-      // is the exit code and is still in %rax, so it is held on the stack
-      // across the call rather than relying on a register contract.
-      if (s.leak_check) {
-        s = s.write("    pushq %rax\n");
-        s = s.write("    call __fern_lc_report\n");
-        s = ssa_pop_r(s, "%rax");
-      }
-      s = s.write("    movq %rax, %rdi\n");
-    } else {
-      if (s.leak_check) {
-        s = s.write("    call __fern_lc_report\n");
-      }
-      s = s.write("    movq $0, %rdi\n");
-    }
-    s = s.write("    movq $231, %rax\n");
-    s = s.syscall(231);
+    s = emit_process_entry(mod, s);
   }
-  // Pre-intern "FileStat" so the __fern_stat runtime helper (emitted after this
-  // literal pool, inside the heap/stat block) can reference its shape label. The
-  // helper's own shape_ref dedups to this slot; without the early intern the label
-  // would be undefined (the runtime emits AFTER the pool). Mirrors the
-  // retired AST emitters' FileStat pre-intern. Gated on the stat need.
-  if (s.has_need("stat") || s.has_need("lstat") || s.has_need("access") || s.has_need("fd_stat")) {
-    let fsPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "FileStat");
-    s = fsPre.state;
-  }
-  // Pre-intern "FsStat" for __fern_statfs's shape label, same reasoning as
-  // FileStat above. Its own gate: a stat-only program has no FsStat to build.
-  if (s.has_need("statfs")) {
-    let fvPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "FsStat");
-    s = fvPre.state;
-  }
-  if (s.has_need("mounts")) {
-    let mePre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "MountEntry");
-    s = mePre.state;
-  }
-  // Pre-intern "DirEntry" for __fern_read_dir_ino's shape label, same
-  // reasoning as FsStat above.
-  if (s.has_need("read_dir_ino") || s.has_need("read_dir_ino_all")) {
-    let dePre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "DirEntry");
-    s = dePre.state;
-  }
-  // Pre-intern "WinSize" for __fern_window_size's shape label, same
-  // reasoning as FsStat above.
-  if (s.has_need("window_size")) {
-    let wsPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "WinSize");
-    s = wsPre.state;
-  }
-  // Pre-intern "ProcessResult" for the __fern_subprocess runtime's shape label
-  // (same reasoning as FileStat above). Gated on the subprocess need.
-  if (s.has_need("subprocess")) {
-    let prPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "ProcessResult");
-    s = prPre.state;
-  }
+  s = intern_runtime_shapes(s);
   // .rodata: each interned string literal as a labelled `.ascii` directive
   // (GAS interprets the escapes), matching asm.fern's emit_module so the box's
   // .S<idx> data pointer resolves. string_lits was populated by const_str.
@@ -12023,6 +11924,115 @@ function emit_entry_runtime_settled(s0: asmcore.EmitState): asmcore.EmitState {
     }
   }
   return out;
+}
+
+function emit_process_entry(mod: parser.Module, s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("_start:\n");
+  // The sandbox is installed before anything else runs, so the filter
+  // covers the whole program, the arena mmap included.
+  if (asmcore.sandbox_on()) {
+    s = s.write("    call __fern_seccomp_install\n");
+  }
+  // args() reads __fern_argc / __fern_argv; save them from the initial stack
+  // (the kernel puts argc at the top of the stack on entry) BEFORE any push.
+  // Matches asm.fern's _start. Gated on the args need so a non-args program
+  // is byte-identical.
+  if (s.has_need("args")) {
+    s = s.write("    movq (%rsp), %rax\n");
+    s = s.write("    movq %rax, __fern_argc(%rip)\n");
+    s = s.write("    leaq 8(%rsp), %rax\n");
+    s = s.write("    movq %rax, __fern_argv(%rip)\n");
+  }
+  // env() reads __fern_envp; save it from the initial stack BEFORE any push.
+  // envp follows argv's NULL terminator: envp = rsp + 16 + argc*8 (argc at
+  // [rsp], argv at rsp+8 with argc+1 slots incl. the NULL). Gated on the env /
+  // subprocess needs (not heap, unlike asm.fern) so other programs stay
+  // byte-identical. Both __fern_env and __fern_subprocess (execve) read it.
+  if (s.any_need(["env", "subprocess", "environ", "raw_environ"])) {
+    s = s.write("    movq (%rsp), %rax\n");
+    s = s.write("    leaq 16(%rsp,%rax,8), %rax\n");
+    s = s.write("    movq %rax, __fern_envp(%rip)\n");
+  }
+  if (asmcore.vdso_wanted(s, "x86_64")) {
+    s = emit_vdso_scan(s);
+  }
+  if (s.profile > 0) {
+    s = s.write("    leaq .Lprofile_ring(%rip), %rax\n    movq %rsp, %rsi\n    leaq .Lprofile_action(%rip), %rdi\n    leaq .Lprofile_timer(%rip), %r8\n    call __fn___fern_profile_start.r\n");
+  }
+  s = s.write("    pushq %rbp\n");
+  s = s.write("    movq %rsp, %rbp\n");
+  // A MAIN-LESS module (a library compiled standalone — util.fern et al.
+  // under the bootstrap self-compile) has no __fn_main to call, so `_start`
+  // exits 0 directly. Mirrors the retired x86 AST emitter's own no-main branch, minus the
+  // top-level statements: a script-shaped source has already been rewritten
+  // into `function main()` by asmcore.synth_script_main upstream, so
+  // anything still main-less here is a library with functions only.
+  //
+  // Emitting the call unconditionally is what forced the gate to refuse such
+  // a module (`require_main`), which is why the bootstrap smoke test — it
+  // pipes each compiler SOURCE through this driver, and 7 of 9 are
+  // main-less — depended on the AST emitter.
+  if (asmcore.has_main(mod)) {
+    s = s.write("    call __fn_main\n");
+    // Leak summary before the exit syscall (#6068). main's return value
+    // is the exit code and is still in %rax, so it is held on the stack
+    // across the call rather than relying on a register contract.
+    if (s.leak_check) {
+      s = s.write("    pushq %rax\n");
+      s = s.write("    call __fern_lc_report\n");
+      s = ssa_pop_r(s, "%rax");
+    }
+    s = s.write("    movq %rax, %rdi\n");
+  } else {
+    if (s.leak_check) {
+      s = s.write("    call __fern_lc_report\n");
+    }
+    s = s.write("    movq $0, %rdi\n");
+  }
+  s = s.write("    movq $231, %rax\n");
+  s = s.syscall(231);
+  return s;
+}
+
+function intern_runtime_shapes(s: asmcore.EmitState): asmcore.EmitState {
+  // Pre-intern "FileStat" so the __fern_stat runtime helper (emitted after this
+  // literal pool, inside the heap/stat block) can reference its shape label. The
+  // helper's own shape_ref dedups to this slot; without the early intern the label
+  // would be undefined (the runtime emits AFTER the pool). Mirrors the
+  // retired AST emitters' FileStat pre-intern. Gated on the stat need.
+  if (s.has_need("stat") || s.has_need("lstat") || s.has_need("access") || s.has_need("fd_stat")) {
+    let fsPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "FileStat");
+    s = fsPre.state;
+  }
+  // Pre-intern "FsStat" for __fern_statfs's shape label, same reasoning as
+  // FileStat above. Its own gate: a stat-only program has no FsStat to build.
+  if (s.has_need("statfs")) {
+    let fvPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "FsStat");
+    s = fvPre.state;
+  }
+  if (s.has_need("mounts")) {
+    let mePre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "MountEntry");
+    s = mePre.state;
+  }
+  // Pre-intern "DirEntry" for __fern_read_dir_ino's shape label, same
+  // reasoning as FsStat above.
+  if (s.has_need("read_dir_ino") || s.has_need("read_dir_ino_all")) {
+    let dePre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "DirEntry");
+    s = dePre.state;
+  }
+  // Pre-intern "WinSize" for __fern_window_size's shape label, same
+  // reasoning as FsStat above.
+  if (s.has_need("window_size")) {
+    let wsPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "WinSize");
+    s = wsPre.state;
+  }
+  // Pre-intern "ProcessResult" for the __fern_subprocess runtime's shape label
+  // (same reasoning as FileStat above). Gated on the subprocess need.
+  if (s.has_need("subprocess")) {
+    let prPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "ProcessResult");
+    s = prPre.state;
+  }
+  return s;
 }
 
 // SIGPROF's C entry serializes captures with a TID-owned mutex. A handler
