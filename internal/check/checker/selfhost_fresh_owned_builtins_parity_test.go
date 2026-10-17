@@ -112,7 +112,7 @@ func nativeFreshOwnedBuiltins(t *testing.T) map[string]bool {
 				anyPtrParam = true
 			}
 		}
-		if !anyPtrParam {
+		if !anyPtrParam || freshResultBuiltins[name] {
 			out[name] = true
 		}
 	}

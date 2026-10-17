@@ -1105,3 +1105,25 @@ function bump(b: Box): Box {
     }
 }`)
 }
+
+// The byte kernels are lent views and answer an array they built, so their
+// result, and a function returning it, is fresh however their parameters look.
+const byteConsumer = `function take(own xs: u8[]): i32 { return xs.len(); }
+`
+
+func TestOwnGuardAcceptsAByteKernelResult(t *testing.T) {
+	wantOK(t, "byte-kernel-result", byteConsumer+`
+function main(): i32 {
+    let v: u8[] = [1, 2, 3];
+    return take(__bytes_owned(v)) + take(__bytes_range(v, 0, 2));
+}`)
+}
+
+func TestOwnGuardAcceptsAFunctionReturningAByteKernelResult(t *testing.T) {
+	wantOK(t, "byte-kernel-result-through-a-function", byteConsumer+`
+function copy(b: [u8]): u8[] { return __bytes_owned(b); }
+function main(): i32 {
+    let v: u8[] = [1, 2, 3];
+    return take(copy(v));
+}`)
+}
