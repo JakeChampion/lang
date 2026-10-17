@@ -158,11 +158,11 @@ pub function record_bytes(): i32 {
   return 400;
 }
 
-// GNU reads the compat field as unsigned seconds since 1970, extending its
-// usable dates through 2106. The native 64-bit layout retains signed seconds.
+// ut_tv.tv_sec: an i32 at 340 where the compat layout applies, an i64 at
+// 344 where it does not.
 function sec_at(bs: u8[], off: i32): i64 {
   if (time64_compat32()) {
-    return (i32_at(bs, off + 340) as u32) as i64;
+    return i32_at(bs, off + 340) as i64;
   }
   return i64_at(bs, off + 344);
 }
