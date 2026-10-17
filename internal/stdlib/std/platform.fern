@@ -134,9 +134,8 @@ pub trait Platform {
 // `allow` is the hosts its `http` may reach, once `with_allow` named them;
 // None reaches any global address. `peer` is the connection's peer, which
 // std/serve sets per connection, and `deadline` and `trace` the request's,
-// which it sets per request. `proxies` is the environment's proxy
-// configuration, read once when the platform is built.
-pub struct Host { reactor: i32, pool: fetch.Idle, jar: Option[cookie.Jar], allow: Option[fetch.Allow], peer: Option[net.SocketAddr], deadline: Option[i64], trace: Option[trace.Context], proxies: fetch.ProxyEnv }
+// which it sets per request.
+pub struct Host { reactor: i32, pool: fetch.Idle, jar: Option[cookie.Jar], allow: Option[fetch.Allow], peer: Option[net.SocketAddr], deadline: Option[i64], trace: Option[trace.Context] }
 
 // `host()` — a host platform with no reactor and an empty pool, for code
 // that has to build one: a test driving a handler directly, or a caller of
@@ -150,7 +149,7 @@ pub function host(): Host {
 // `host_on(reactor)` — the host platform of the worker whose reactor is
 // `reactor`; std/serve builds one per worker loop.
 pub function host_on(reactor: i32): Host {
-  return Host { reactor: reactor, pool: fetch.idle(), jar: None, allow: None, peer: None, deadline: None, trace: None, proxies: fetch.proxies() };
+  return Host { reactor: reactor, pool: fetch.idle(), jar: None, allow: None, peer: None, deadline: None, trace: None };
 }
 
 // `(h).with_pool(pool)` — the host whose `http` keeps its connections in
@@ -261,7 +260,7 @@ impl Platform for Host {
   }
 
   function http(self: Host, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
-    return fetch.send_on(fetch.sockets_with(self.pool), traced(req, self.trace, (): i32 => random_i32()), fetch.Policy { ...fetch.public_policy_via(self.proxies), jar: self.jar, allow: self.allow });
+    return fetch.send_on(fetch.sockets_with(self.pool), traced(req, self.trace, (): i32 => random_i32()), fetch.Policy { ...fetch.public_policy_via(self.pool.proxy_env()), jar: self.jar, allow: self.allow });
   }
 
   function stat(self: Host, path: string): Result[FileStat, IoError] {

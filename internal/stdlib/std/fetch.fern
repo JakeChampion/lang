@@ -610,8 +610,24 @@ pub trait Transport {
 // same place: at most `max` of them, none reused once idle past `idle`.
 // `kept` shares the table through a Cell. `shared`, under a serve loop,
 // is the HTTP/2 connections the loop drives for the handlers it runs, so
-// their requests to one origin go over one connection at once.
-pub struct Idle { kept: Cell[Kept[]], max: i32, idle: Duration, shared: Option[Shared] }
+// their requests to one origin go over one connection at once. `proxies`
+// is the environment's proxy configuration once `proxy_env` read it.
+pub struct Idle { kept: Cell[Kept[]], max: i32, idle: Duration, shared: Option[Shared], proxies: Cell[Option[ProxyEnv]] }
+
+// `(p).proxy_env()` — the environment's proxy configuration (`__proxies()`),
+// read on the pool's first request and kept, since nothing changes the
+// environment while the program runs.
+pub function (p: Idle) proxy_env(): ProxyEnv {
+  match (p.proxies.get()) {
+    Some(env) => {
+      return env;
+    },
+    None => {}
+  }
+  let env: ProxyEnv = __proxies();
+  p.proxies.set(Some(env));
+  return env;
+}
 
 // `Kept` — a connection the pool holds: where it reaches (`key`), the
 // transport's number for it, the nanosecond it went idle, its TLS session
@@ -629,7 +645,7 @@ pub function idle(): Idle {
 // connections, each for `idle`; a `max` of 0 keeps none.
 pub function idle_limited(max: i32, idle: Duration): Idle {
   let none: Kept[] = [];
-  return Idle { kept: cell_new(none), max: max, idle: idle, shared: None };
+  return Idle { kept: cell_new(none), max: max, idle: idle, shared: None, proxies: cell_new(None) };
 }
 
 // `idle_shared()` — `idle()` with a `Shared` table beside it, for a loop
@@ -1370,11 +1386,11 @@ function __send_closing(policy: Policy, req: Request): Result[HttpResponse, Fetc
   }
 }
 
-// `proxies()` — the environment's proxy configuration where this
+// `__proxies()` — the environment's proxy configuration where this
 // client dials: none on wasi-http, where the host dials and a proxy is
 // the host's own to go through. The `else` arm is what the fold drops,
 // so a wasi-http build imports no configuration store for it.
-pub function proxies(): ProxyEnv {
+function __proxies(): ProxyEnv {
   if (target_os() == "wasi-http") {
     return ProxyEnv { http_proxy: "", https_proxy: "", no_proxy: "" };
   } else {
@@ -1385,8 +1401,7 @@ pub function proxies(): ProxyEnv {
 // `Policy` — what a route may reach: `public_only` refuses a host that
 // resolves to an address `net.is_global` does not admit; `proxies` is the
 // proxy configuration, which `send` reads from the environment once per
-// request and `plat.http` once per platform, since nothing changes the
-// environment while the program runs; `roots` are the roots a server's chain
+// request and `plat.http` once per pool (`proxy_env`); `roots` are the roots a server's chain
 // must reach, the machine's (`verify.system_roots()`) when None; `jar` is
 // the cookie jar (std/http/cookie) every hop reads its `Cookie` header
 // from and stores its `Set-Cookie` into, none when None.
@@ -1395,7 +1410,7 @@ pub struct Policy { public_only: boolean, proxies: ProxyEnv, roots: Option[verif
 // `public_policy()` — the route `plat.http` takes: global addresses only,
 // the environment's proxies, the machine's roots, no jar, any host.
 pub function public_policy(): Policy {
-  return public_policy_via(proxies());
+  return public_policy_via(__proxies());
 }
 
 // `public_policy_via(proxies)` — `public_policy()` through `proxies` in
