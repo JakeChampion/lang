@@ -10018,9 +10018,15 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    ldur x2, [x0, #-16]\n");  // donor cap
   s = s.write("    cmp x2, x1\n");
   s = s.write("    beq .Lsarelo_ret\n");  // reuse: return token in x0
+  if (s.harden) {
+    s = s.write("    paciasp\n");
+  }
   s = s.write("    stp x29, x30, [sp, #-16]!\n");
   s = s.write("    bl __fn___fern_arr_dec.r\n");
   s = s.write("    ldp x29, x30, [sp], #16\n");
+  if (s.harden) {
+    s = s.write("    autiasp\n");
+  }
   s = s.write(".Lsarelo_fresh:\n");
   s = s.write("    ldr x0, [sp]\n");  // slots = arr_box cap
   // TAIL-branch (not bl): arr_box returns straight to OUR caller with

@@ -29,15 +29,19 @@ func TestSelfHostAllocReuseLargeDonor(t *testing.T) {
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			gcc, runner := x86_64Tooling(t)
+			armRunner := ""
 			if target == "arm64-linux" {
-				var qemu string
-				gcc, qemu = arm64Tooling(t)
+				gcc, armRunner = arm64Tooling(t)
 				runner = nil
-				if qemu != "" {
-					runner = []string{qemu}
+				if armRunner != "" {
+					runner = []string{armRunner}
 				}
 			}
-			for _, mode := range []string{"normal", "quarantine", "sanitized"} {
+			modes := []string{"normal", "quarantine", "sanitized"}
+			if target == "arm64-linux" {
+				modes = append(modes, "hardened")
+			}
+			for _, mode := range modes {
 				t.Run(mode, func(t *testing.T) {
 					env := []string{"FERN_LEAKCHECK=1"}
 					if mode == "quarantine" {
@@ -46,11 +50,36 @@ func TestSelfHostAllocReuseLargeDonor(t *testing.T) {
 					if mode == "sanitized" {
 						env = append(env, "FERN_SANITIZE=1")
 					}
-					raw, err := os.ReadFile(cli.emit(t, src, target, env...))
+					asmPath := cli.emit(t, src, target, env...)
+					if mode == "hardened" {
+						cmd := runX86_64Bin(cli.runner, cli.bin, "-harden", "-target", target, "-emit", "asm", "-o", asmPath, src, cli.stdlib)
+						cmd.Env = append(os.Environ(), env...)
+						if out, err := cmd.CombinedOutput(); err != nil {
+							t.Fatalf("hardened emit: %v\n%s", err, out)
+						}
+					}
+					raw, err := os.ReadFile(asmPath)
 					if err != nil {
 						t.Fatal(err)
 					}
 					text := string(raw)
+					hardenedFrame := ""
+					if mode == "hardened" {
+						at := strings.Index(text, "__fn___fern_alloc_reuse:\n")
+						if at < 0 {
+							t.Fatal("missing allocation reuse helper")
+						}
+						end := strings.Index(text[at:], ".Lsarelo_fresh:\n")
+						if end < 0 {
+							t.Fatal("missing allocation reuse fallback")
+						}
+						frame := text[at : at+end]
+						hardenedFrame = frame
+						protected := regexp.MustCompile(`(?s)paciasp\n\s+stp x29, x30, \[sp, #-16\]!\n\s+bl __fn___fern_arr_dec\.r\n\s+ldp x29, x30, \[sp\], #16\n\s+autiasp`)
+						if !protected.MatchString(frame) {
+							t.Fatalf("unprotected mismatch return-address frame:\n%s", frame)
+						}
+					}
 					start := strings.Index(text, "\n_start:\n")
 					if start < 0 {
 						t.Fatal("missing entry")
@@ -67,7 +96,7 @@ func TestSelfHostAllocReuseLargeDonor(t *testing.T) {
 					for _, stack := range entries {
 						for _, tc := range cases {
 							t.Run(fmt.Sprintf("%d-to-%d-stack-%t", tc.cap, tc.want, stack), func(t *testing.T) {
-								entry := allocReuseDonorProbe(target, tc.cap, tc.want, stack, mode != "normal")
+								entry := allocReuseDonorProbe(target, tc.cap, tc.want, stack, mode == "quarantine" || mode == "sanitized")
 								dir := t.TempDir()
 								asm, bin := filepath.Join(dir, "probe.s"), filepath.Join(dir, "probe")
 								if err := os.WriteFile(asm, []byte(text[:start]+entry+text[start+section[0]:]), 0o644); err != nil {
@@ -88,6 +117,13 @@ func TestSelfHostAllocReuseLargeDonor(t *testing.T) {
 								if code != 0 || !strings.Contains(stderr, want) || strings.Contains(stderr, "fern-sanitizer:") {
 									t.Fatalf("exit=%d, want balanced %q\n%s", code, want, stderr)
 								}
+								if mode == "hardened" && tc.cap == 65533 && tc.want == 1 && cpuEnforces(armRunner, " paca") {
+									assembly, err := os.ReadFile(asm)
+									if err != nil {
+										t.Fatal(err)
+									}
+									checkAllocReuseDonorPAC(t, gcc, armRunner, dir, string(assembly), hardenedFrame)
+								}
 							})
 						}
 					}
@@ -95,6 +131,25 @@ func TestSelfHostAllocReuseLargeDonor(t *testing.T) {
 			}
 		})
 	}
+}
+
+func checkAllocReuseDonorPAC(t *testing.T, gcc, runner, dir, assembly, frame string) {
+	t.Helper()
+	unsigned := strings.Replace(assembly, frame, strings.Replace(frame, "    paciasp\n", "    nop\n", 1), 1)
+	if unsigned == assembly {
+		t.Fatal("failed to remove the mismatch frame's signature")
+	}
+	asm, bin := filepath.Join(dir, "unsigned.s"), filepath.Join(dir, "unsigned")
+	if err := os.WriteFile(asm, []byte(unsigned), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asm, "-o", bin).CombinedOutput(); err != nil {
+		t.Fatalf("unsigned link: %v\n%s", err, out)
+	}
+	if out, err := runArm64Bin(runner, bin).CombinedOutput(); err == nil {
+		t.Fatalf("mismatch returned with an unsigned saved return address:\n%s", out)
+	}
+	t.Log("removing only the mismatch frame's PAC signature faults")
 }
 
 func allocReuseDonorProbe(target string, cap, want int, stack, quarantine bool) string {
