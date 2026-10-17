@@ -1642,8 +1642,11 @@ function array_helper_needs(cache: irtables.LowerResult[], own out: string[]): s
   if (module_calls_direct(cache, "__fern_arr_concat")) {
     out = out.append("@uses_arr_concat");
   }
-  if (module_calls_direct(cache, "__fern_bytes_owned") || module_calls_direct(cache, "__fern_bytes_range")) {
+  if (module_calls_direct(cache, "__fern_bytes_owned")) {
     out = out.append("@uses_bytes_owned");
+  }
+  if (module_calls_direct(cache, "__fern_bytes_range")) {
+    out = out.append("@uses_bytes_range");
   }
   return out;
 }
@@ -1660,6 +1663,9 @@ function array_helper_parts(needs: string[], own parts: string[], empty: i32): s
   }
   if (need(needs, "@uses_bytes_owned")) {
     parts = parts.append(bytes_owned_helper(empty));
+  }
+  if (need(needs, "@uses_bytes_range")) {
+    parts = parts.append(bytes_range_helper(empty));
   }
   return parts;
 }
@@ -12218,44 +12224,49 @@ pub function arr_slice8_helper(): string {
 // bytes_owned_helper emits $__fern_bytes_owned, `__bytes_owned(b)`: the
 // view's bytes in a fresh packed u8[]. A view is a packed array ([len] then
 // the bytes at +8) or a string tagged with bit 1 ([len] then the bytes at +4,
-// at v - 2).
+// at v - 2). `empty` is the static empty byte array's address, which an empty
+// copy answers, as __alloc_u8(0) does; -1 boxes zero bytes instead.
 pub function bytes_owned_helper(empty: i32): string {
-  // `empty` is the static empty byte array's address, which an empty copy
-  // answers, as __alloc_u8(0) does; -1 boxes zero bytes instead.
-  let none_owned: string = "";
-  let none_range: string = "";
-  if (empty >= 0) {
-    none_owned = "    (if (i32.eqz (local.get $n)) (then (return (i32.const " + util.i32_to_string(empty) + "))))\n";
-    none_range = "    (if (i32.eqz (local.get $m)) (then (return (i32.const " + util.i32_to_string(empty) + "))))\n";
-  }
-  let o: string = "";
-  o = o + "  (func $__fern_bytes_owned (param $v i32) (result i32)\n";
+  let o: string = "  (func $__fern_bytes_owned (param $v i32) (result i32)\n";
   o = o + "    (local $n i32) (local $p i32) (local $r i32)\n";
-  o = o + "    (local.set $n (i32.load (i32.and (local.get $v) (i32.const -3))))\n";
-  o = o + "    (local.set $p (i32.add (local.get $v) (i32.const 8)))\n";
-  o = o + "    (if (i32.and (local.get $v) (i32.const 2)) (then (local.set $p (i32.add (local.get $v) (i32.const 2)))))\n";
-  o = o + none_owned;
-  o = o + "    (local.set $r (call $__fern_arr_elems (local.get $n) (i32.const 1)))\n";
-  o = o + "    (i32.store (local.get $r) (local.get $n))\n";
-  o = o + "    (i32.store offset=4 (local.get $r) (local.get $n))\n";
-  o = o + "    (memory.copy (i32.add (local.get $r) (i32.const 8)) (local.get $p) (local.get $n))\n";
-  o = o + "    (local.get $r))\n";
-  o = o + "  (func $__fern_bytes_range (param $v i32) (param $from i32) (param $to i32) (result i32)\n";
+  o = o + bytes_view_decode();
+  o = o + bytes_copy_out("$n", "(local.get $p)", empty);
+  return o;
+}
+
+// bytes_range_helper emits $__fern_bytes_range, `__bytes_range(b, from, to)`:
+// b[from:to] copied as bytes_owned_helper copies a whole view, trapping on
+// the slice's bounds.
+pub function bytes_range_helper(empty: i32): string {
+  let o: string = "  (func $__fern_bytes_range (param $v i32) (param $from i32) (param $to i32) (result i32)\n";
   o = o + "    (local $n i32) (local $p i32) (local $m i32) (local $r i32)\n";
-  o = o + "    (local.set $n (i32.load (i32.and (local.get $v) (i32.const -3))))\n";
-  o = o + "    (local.set $p (i32.add (local.get $v) (i32.const 8)))\n";
-  o = o + "    (if (i32.and (local.get $v) (i32.const 2)) (then (local.set $p (i32.add (local.get $v) (i32.const 2)))))\n";
+  o = o + bytes_view_decode();
   o = o + "    (if (i32.lt_s (local.get $from) (i32.const 0)) (then (unreachable)))\n";
   o = o + "    (if (i32.lt_s (local.get $to) (local.get $from)) (then (unreachable)))\n";
   o = o + "    (if (i32.gt_s (local.get $to) (local.get $n)) (then (unreachable)))\n";
   o = o + "    (local.set $m (i32.sub (local.get $to) (local.get $from)))\n";
-  o = o + none_range;
-  o = o + "    (local.set $r (call $__fern_arr_elems (local.get $m) (i32.const 1)))\n";
-  o = o + "    (i32.store (local.get $r) (local.get $m))\n";
-  o = o + "    (i32.store offset=4 (local.get $r) (local.get $m))\n";
-  o = o + "    (memory.copy (i32.add (local.get $r) (i32.const 8)) (i32.add (local.get $p) (local.get $from)) (local.get $m))\n";
-  o = o + "    (local.get $r))\n";
+  o = o + bytes_copy_out("$m", "(i32.add (local.get $p) (local.get $from))", empty);
   return o;
+}
+
+// The view in $v as its length in $n and its first byte's address in $p.
+function bytes_view_decode(): string {
+  let o: string = "    (local.set $n (i32.load (i32.and (local.get $v) (i32.const -3))))\n";
+  o = o + "    (local.set $p (i32.add (local.get $v) (i32.const 8)))\n";
+  return o + "    (if (i32.and (local.get $v) (i32.const 2)) (then (local.set $p (i32.add (local.get $v) (i32.const 2)))))\n";
+}
+
+// The function's tail: `len` bytes from `src` in a fresh packed u8[] in $r.
+function bytes_copy_out(len: string, src: string, empty: i32): string {
+  let o: string = "";
+  if (empty >= 0) {
+    o = "    (if (i32.eqz (local.get " + len + ")) (then (return (i32.const " + util.i32_to_string(empty) + "))))\n";
+  }
+  o = o + "    (local.set $r (call $__fern_arr_elems (local.get " + len + ") (i32.const 1)))\n";
+  o = o + "    (i32.store (local.get $r) (local.get " + len + "))\n";
+  o = o + "    (i32.store offset=4 (local.get $r) (local.get " + len + "))\n";
+  o = o + "    (memory.copy (i32.add (local.get $r) (i32.const 8)) " + src + " (local.get " + len + "))\n";
+  return o + "    (local.get $r))\n";
 }
 
 // arr_concat_helper emits $__fern_arr_concat, `xs.concat(ys)` over scalar

@@ -671,7 +671,7 @@ function with_builtin_enums(lifted: parser.Module): parser.Module {
 pub function all_runtime_need_roots(): string[] {
   return [
     "alloc_u8", "args", "set_args", "arr_push", "arr_push_owned", "arr_slice",
-    "arr_str_join", "arr_concat", "bytes_owned", "arr_inc_elems", "arr_own_elems", "str_own", "str_borrow", "str_grow", "account", "arrarr_free", "env", "eprint", "heap",
+    "arr_str_join", "arr_concat", "bytes_owned", "bytes_range", "arr_inc_elems", "arr_own_elems", "str_own", "str_borrow", "str_grow", "account", "arrarr_free", "env", "eprint", "heap",
     "i32_to_string", "u32_to_string", "monotonic_ns", "now_ns", "now_unix_ms",
     "map_hash_seed",
     "chdir", "chroot", "setuid", "setgid", "setgroups",
