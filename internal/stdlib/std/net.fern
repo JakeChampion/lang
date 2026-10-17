@@ -733,51 +733,48 @@ function __has_byte(s: string, b: i32): boolean {
   return false;
 }
 
-// A decimal 0..255 with no sign and no leading zero (`0` itself is
-// fine): the only IPv4 octet spelling accepted, because `010` is octal
-// to some parsers and decimal to others, and an address that reads two
-// ways is how an allow list is bypassed.
-function __octet(s: string): i32 {
-  let n: i32 = s.len();
-  if (n == 0 || n > 3) {
-    return -1;
-  }
-  if (n > 1 && s[0] == 48) {
-    return -1;
-  }
+// The bytes of `s` from `from` up to its first `sep` or its end, as a
+// decimal 0..255 with no sign and no leading zero (`0` itself is fine),
+// and where it stopped, packed as `value | end << 8`; -1 for anything
+// else. It is the only IPv4 octet spelling accepted, because `010` is
+// octal to some parsers and decimal to others, and an address that reads
+// two ways is how an allow list is bypassed.
+function __octet(s: string, from: i32, sep: i32): i32 {
+  let i: i32 = from;
   let v: i32 = 0;
-  let i: i32 = 0;
-  while (i < n) {
+  while (i < s.len() && s[i] as i32 != sep) {
     let c: i32 = s[i] as i32;
-    if (c < 48 || c > 57) {
+    if (c < 48 || c > 57 || i - from == 3 || i > from && s[from] == 48) {
       return -1;
     }
     v = v * 10 + (c - 48);
     i = i + 1;
   }
-  if (v > 255) {
+  if (i == from || v > 255) {
     return -1;
   }
-  return v;
+  return v | i << 8;
 }
 
 // `ipv4_parse(s)` — `a.b.c.d`, four octets exactly.
 pub function ipv4_parse(s: string): Option[IpAddr] {
-  let parts: string[] = __pieces(s, 46);
-  if (parts.len() != 4) {
+  let a: i32 = __octet(s, 0, 46);
+  if (a < 0 || a >> 8 >= s.len()) {
     return None;
   }
-  let out: u8[] = [];
-  let i: i32 = 0;
-  while (i < 4) {
-    let v: i32 = __octet(parts[i]);
-    if (v < 0) {
-      return None;
-    }
-    out = out.append(v as u8);
-    i = i + 1;
+  let b: i32 = __octet(s, (a >> 8) + 1, 46);
+  if (b < 0 || b >> 8 >= s.len()) {
+    return None;
   }
-  return Some(V4(out));
+  let c: i32 = __octet(s, (b >> 8) + 1, 46);
+  if (c < 0 || c >> 8 >= s.len()) {
+    return None;
+  }
+  let d: i32 = __octet(s, (c >> 8) + 1, 46);
+  if (d < 0 || d >> 8 != s.len()) {
+    return None;
+  }
+  return Some(V4([(a & 255) as u8, (b & 255) as u8, (c & 255) as u8, (d & 255) as u8]));
 }
 
 function __hex_digit(c: i32): i32 {
