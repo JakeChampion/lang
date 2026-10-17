@@ -194,6 +194,9 @@ function summary(method: string, resp: HttpResponse): string {
   }
   if (method == "HEAD") {
     out = out + " content-length=" + resp.headers.get("content-length").unwrap_or("-");
+    if (resp.headers.has("date")) {
+      out = out + " dated";
+    }
   }
   let i: i32 = 0;
   while (i < resp.trailers.names.len()) {
@@ -319,9 +322,9 @@ POST /upload -> 200 got %d
 GET /slow -> 200 slept
 GET /chunks -> 200 part 0;part 1;part 2; | x-parts=3
 GET /stream?n=%d -> 200 %d bytes
-HEAD /hello -> 200 0 bytes content-length=12
-HEAD /chunks -> 200 0 bytes content-length=-
-HEAD /stream?n=2 -> 200 0 bytes content-length=-
+HEAD /hello -> 200 0 bytes content-length=12 dated
+HEAD /chunks -> 200 0 bytes content-length=- dated
+HEAD /stream?n=2 -> 200 0 bytes content-length=- dated
 GET /no-content-chunks -> 204 0 bytes
 GET /not-modified-chunks -> 304 0 bytes
 `, upload, chunks, chunks*8192)

@@ -378,6 +378,99 @@ func CheckReusePortReachesListener(t *testing.T, port int) {
 	}
 }
 
+// DefaultBacklogServerSource is a server on `port` under the default
+// accept queue depth, bound itself (with SO_REUSEPORT, for ReservedPort)
+// rather than inheriting a listener whose depth the test would choose, and
+// with no per-client cap, since every connection comes from loopback.
+func DefaultBacklogServerSource(port int) string {
+	return fmt.Sprintf(`import "std/http";
+import "std/serve";
+import "std/platform";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+    return http.ok("ok");
+}
+function main(): i32 {
+    let opts: serve.Config = serve.Config { ...serve.config(), reuse_port: true, max_connections_per_ip: 0 };
+    return serve.run(%d, opts, handle);
+}
+`, port)
+}
+
+// backlogBurst is how many connections arrive while the loop accepts none:
+// four times the 128 the default once was.
+const backlogBurst = 512
+
+// CheckDefaultBacklogHoldsBurst drives DefaultBacklogServerSource. With the
+// server stopped, the kernel completes handshakes only into the listener's
+// accept queue and drops the SYNs past it, so every one of backlogBurst
+// connections completing within a second proves the default queue holds
+// the burst; resumed, the loop answers each with 200. The kernel clamps the
+// queue to `net.core.somaxconn`, so a host that caps it under the burst
+// cannot run the check.
+func CheckDefaultBacklogHoldsBurst(t *testing.T, cmd *exec.Cmd, port int) {
+	t.Helper()
+	if b, err := os.ReadFile("/proc/sys/net/core/somaxconn"); err == nil {
+		var max int
+		if _, err := fmt.Sscan(strings.TrimSpace(string(b)), &max); err == nil && max <= backlogBurst {
+			t.Skipf("net.core.somaxconn is %d, under the %d-connection burst", max, backlogBurst)
+		}
+	}
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	WaitServerReady(t, addr, 10*time.Second)
+	group := -cmd.Process.Pid
+	if err := syscall.Kill(group, syscall.SIGSTOP); err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Kill(group, syscall.SIGCONT)
+	conns := make([]net.Conn, backlogBurst)
+	errs := make([]error, backlogBurst)
+	done := make(chan struct{})
+	for i := range conns {
+		go func(i int) {
+			conns[i], errs[i] = net.DialTimeout("tcp", addr, time.Second)
+			done <- struct{}{}
+		}(i)
+	}
+	for range conns {
+		<-done
+	}
+	defer func() {
+		for _, c := range conns {
+			if c != nil {
+				c.Close()
+			}
+		}
+	}()
+	failed := 0
+	var first error
+	for _, err := range errs {
+		if err != nil {
+			if first == nil {
+				first = err
+			}
+			failed++
+		}
+	}
+	if failed > 0 {
+		t.Fatalf("%d of %d connections made while the loop accepted none did not complete within a second (first: %v): the accept queue overflowed", failed, backlogBurst, first)
+	}
+	if err := syscall.Kill(group, syscall.SIGCONT); err != nil {
+		t.Fatal(err)
+	}
+	for i, c := range conns {
+		_ = c.SetDeadline(time.Now().Add(30 * time.Second))
+		if _, err := fmt.Fprintf(c, "GET /ok HTTP/1.1\r\nHost: x\r\n\r\n"); err != nil {
+			t.Fatalf("connection %d: %v", i, err)
+		}
+	}
+	for i, c := range conns {
+		line, err := bufio.NewReader(c).ReadString('\n')
+		if err != nil || !strings.HasPrefix(line, "HTTP/1.1 200") {
+			t.Fatalf("connection %d answered %q (%v), not 200", i, line, err)
+		}
+	}
+}
+
 // StalledSurvivorServerSource is WorkersServerSource with /stall holding its
 // worker in the handler for a minute, through the bag's clock as /slow does
 // (a handler may not reach `sleep_ms` around its bag, E080): the worker the

@@ -59,17 +59,16 @@ function main(): i32 {
   }
 
   // 1b. Extension-tag sweep — the registered ids BEYOND kind_count()
-  //     (struct_copy=198 … mismatch=245). Each must sit past
-  //     the dense table and round-trip through kind_name, so a tag reachable
-  //     from kind_id but unrendered by kind_name (the #5452 skew, which made
-  //     ssa_lift's struct_copy bail read "invalid") fails here.
+  //     (store_i64=199 … mismatch=245). Each must sit past
+  //     the original range and round-trip through kind_name, so a tag reachable
+  //     from kind_id but unrendered by kind_name fails here.
   //
   //     Adding an extension tag means adding it HERE too: `oob` below probes
   //     ext_max + 1, so an unregistered tag silently becomes the
   //     "past every registered id" probe and reports its own name where the
   //     invalid sentinel belongs.
   let ext_names: string[] = [
-    "struct_copy", "store_i64", "tcp_listen", "tcp_accept", "writer_write",
+    "store_i64", "tcp_listen", "tcp_accept", "writer_write",
     "open_file", "syscall3", "raw_scratch", "syscall4", "raw_environ", "raw_splice_pipe", "raw_cover", "line", "raw_task_state", "raw_vdso", "str_from_bytes_range",
     "udp_send", "proc_fork", "proc_waitpid",
     "proc_waitpid_nohang",
@@ -105,6 +104,9 @@ function main(): i32 {
     "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown",
     "mulhi_u", "writer_splice_forever", "utf8_blocks", "sha1_hw", "sha1_hw_blocks", "aes_gcm_seal", "aes_gcm_open",
   ];
+  if (!ir.kind_retired(198) || ir.kind_name(198) != "invalid") {
+    failures = failures + 1;
+  }
   let ext_max: i32 = n;
   let ext_ok: i32 = 0;
   let ext_failures: i32 = 0;
@@ -140,7 +142,7 @@ function main(): i32 {
   //     no kind_id_lenN owns), the empty string, and a one-byte tag. Every
   //     one of them must be KIND_INVALID.
   let neg_names: string[] = [
-    "", "a", "adz", "fadz", "zadd", "or_", "brif_", "call_direc",
+    "struct_copy", "", "a", "adz", "fadz", "zadd", "or_", "brif_", "call_direc",
     "tcp_connecx", "call_directt", "arr_push_shared_bytez",
     "aaaaaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaaaaaa", "ADD",
   ];

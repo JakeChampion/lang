@@ -397,7 +397,7 @@ jobs:
         # this runner's twofold speed swing.
         timeout-minutes: 30
         run: |
-          gotestsum --format standard-verbose -- -timeout 25m -run '^(TestSelfHostArm64Darwin.*|TestSelfHostDarwinProfile|TestSelfHostCheckerFallbackHint|TestSelfHostStringArrayReleaseRuntime)$' ./internal/testing/e2ecompiler/
+          gotestsum --format standard-verbose -- -timeout 25m -run '^(TestSelfHostArm64Darwin.*|TestSelfHostDarwinProfile|TestSelfHostCheckerFallbackHint|TestSelfHostStringArrayReleaseRuntime|TestSelfHostNativePollableAdapters)$' ./internal/testing/e2ecompiler/
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"

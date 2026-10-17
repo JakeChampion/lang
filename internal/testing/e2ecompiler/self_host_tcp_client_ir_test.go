@@ -57,18 +57,10 @@ func tcpClientIRProgram(port int) string {
 }`, host, port)
 }
 
-// TestSelfHostTcpClientIRX86_64 is slice 4 of putting async on the self-hosted
-// compiler's IR path (docs/ASYNC-SELFHOST-IR.md): the tcp_* CLIENT family
-// (tcp_connect / tcp_send / tcp_recv / tcp_close / tcp_pollable) now lowers to
-// dedicated IR ops on the self-host x86-64 IR backend, emitting calls into the
-// __fern_tcp_* runtime helpers (x86 had NO tcp at all before this). recv/send
-// use the SELF-HOST string ABI (a 16-byte box {data@0, len@8}), mirrored from
-// the proven self-host arm64 bodies; connect/pollable mirror the native socket
-// helpers. A tcp module is now IR-ELIGIBLE rather than failing to link.
-//
-// A real loopback round-trip against a Go server proves the whole path:
-// connect succeeds, pollable is the fd (identity), send writes the request,
-// recv reads the 6-byte reply, so the program exits 6.
+// The TCP operations use the self-host IR path and its Fern runtime helpers.
+// Native pollable conversion preserves the descriptor directly. A loopback
+// round-trip checks connect, identity, send and recv, returning the six-byte
+// reply length.
 func TestSelfHostTcpClientIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	port := startTcpPongServer(t)
@@ -86,7 +78,10 @@ func TestSelfHostTcpClientIRX86_64(t *testing.T) {
 	if len(asm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes")
 	}
-	for _, sym := range []string{"call __fn___fern_tcp_connect", "call __fn___fern_tcp_send", "call __fn___fern_tcp_recv", "call __fn___fern_tcp_close", "call __fern_tcp_pollable"} {
+	if strings.Contains(string(asm), "__fern_tcp_pollable") {
+		t.Fatal("native pollable identity still calls a runtime helper")
+	}
+	for _, sym := range []string{"call __fn___fern_tcp_connect", "call __fn___fern_tcp_send", "call __fn___fern_tcp_recv", "call __fn___fern_tcp_close"} {
 		if !strings.Contains(string(asm), sym) {
 			t.Errorf("emitted asm missing %q (tcp op did not lower through the IR path)", sym)
 		}

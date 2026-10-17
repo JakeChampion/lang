@@ -3516,8 +3516,6 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
   } else if (ins.str == "arr_push_u8") {
     s = s.need("arr_push_u8");
     sym = "__fern_arr_push_u8";
-  } else if (ins.str == "struct_copy") {
-    sym = "__fn___fern_struct_copy";
   } else if (ins.str == "raw_arr_box") {
     sym = "__fern_arr_box";
   } else if (ins.str == "args") {
@@ -4995,6 +4993,14 @@ function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 // fern-lint: allow cyclomatic-complexity
 // The arm64 half of the same op table as asm_ir.fern, one guard per op.
 function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
+  let pollable: string = asmcore.native_pollable_result(o.kind_tag);
+  if (pollable != "") {
+    return s.write("    mov x0, #" + pollable + "\n    str x0, [sp]\n");
+  }
+  if (o.kind_tag == 112) {
+    return s;
+  }
+
   if (o.kind_tag == 79) {  // ptr_width
     // () -> heap-pointer width in bytes. 8 on arm64.
     s = s.write("    mov x0, #8\n    str x0, [sp, #-16]!\n");
@@ -5312,24 +5318,6 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    bl __fn___fern_environ\n    str x0, [sp, #-16]!\n");
     s = s.need("heap");
     s = s.need("environ");
-  } else if (o.kind_tag == 148) {  // wasm_timer_pollable
-    // [ns] -> __fern_wasm_timer_pollable(x0=ns) -> -1 (native shim) in x0.
-    s = s.write("    ldr x0, [sp], #16\n    bl __fern_wasm_timer_pollable\n    str x0, [sp, #-16]!\n");
-    s = s.need("wasm_timer_pollable");
-  } else if (o.kind_tag == 161) {  // wasm_pollable_drop
-    // [p] -> __fern_wasm_pollable_drop(x0=p) -> 0 (native shim) in x0.
-    s = s.write("    ldr x0, [sp], #16\n    bl __fern_wasm_pollable_drop\n    str x0, [sp, #-16]!\n");
-    s = s.need("wasm_pollable_drop");
-  } else if (o.kind_tag == 162) {  // wasm_block
-    // [p] -> __fern_wasm_block(x0=p) -> 0 (native shim; no pollable to wait
-    // on, a deadline uses poll(2)) in x0.
-    s = s.write("    ldr x0, [sp], #16\n    bl __fern_wasm_block\n    str x0, [sp, #-16]!\n");
-    s = s.need("wasm_block");
-  } else if (o.kind_tag == 167) {  // wasm_poll
-    // [pollables ptr] -> __fern_wasm_poll(x0=ptr) -> -1 (native shim; no
-    // real pollables, readiness uses poll(2)) in x0.
-    s = s.write("    ldr x0, [sp], #16\n    bl __fern_wasm_poll\n    str x0, [sp, #-16]!\n");
-    s = s.need("wasm_poll");
   } else if (o.kind_tag == 110) {  // tcp_connect
     // [host_be, port] -> __fern_tcp_connect(x0=host_be, x1=port) -> fd.
     s = s.need("heap");
@@ -5397,10 +5385,6 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("heap");
     s = s.need("tcp_close");
     s = s.write("    bl __fn___fern_tcp_close\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 112) {  // tcp_pollable
-    // [fd] -> __fern_tcp_pollable(x0=fd) -> fd (native identity).
-    s = s.need("heap");
-    s = s.write("    ldr x0, [sp], #16\n    bl __fern_tcp_pollable\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 200) {  // tcp_listen (#4371)
     // [port] -> __fern_tcp_listen(x0=port) -> listener fd / -errno.
     s = s.need("heap");
@@ -5767,6 +5751,21 @@ function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
 // registers hold nothing live; its labels take the op's index under the SSA
 // function's prefix.
 function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
+  let kind: i32 = r.ops[ins.imm].kind_tag;
+  let pollable: string = asmcore.native_pollable_result(kind);
+  if (kind == 112 || pollable != "") {
+    // Arguments have already been evaluated. Select the native identity or
+    // constant directly; the generic adapter still models a call clobber.
+    s = ssa_x0_forget(s);
+    let d: string = ssa_dst(reg_of, ins.result);
+    if (kind == 112) {
+      s = ssa_load(reg_of, ins.args[0], d, s);
+    } else {
+      s = ssa_const_reg(pollable, d, s);
+    }
+    return ssa_store(reg_of, ins.result, d, s);
+  }
+
   if (asmcore.buf_helper(r.ops[ins.imm].kind_tag) != "") {
     return ssa_buf_call(ins, reg_of, asmcore.buf_table_helper(r.ops[ins.imm].kind_tag, ir.is_packed(r.ops[ins.imm])), s);
   }
@@ -6973,55 +6972,6 @@ function emit_rt_clocks(s: asmcore.EmitState, darwin: boolean, ctgt: string): as
   if (!darwin && s.has_need("vdso")) {
     s = s.write("    .section .bss\n    .p2align 3\n__fern_vdso: .quad 0, 0\n    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_vdso(ctgt), s);
-  }
-  return s;
-}
-
-function emit_rt_readiness(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
-  // poll: builds the pollfd[] and calls ppoll (arm64 Linux has no poll(2)).
-  // Fern now — asmcore.rt_src_poll, need-gated below with the other migrated
-  // helpers. Darwin has neither call in reach, and its arm answers -1 exactly
-  // as the hand-asm did.
-  // timer_fd is Fern now (#2649) — see the migrated-helpers section below.
-  if (s.has_need("wasm_timer_pollable")) {
-    s = s.write(".globl __fern_wasm_timer_pollable\n");
-    s = s.write(".type __fern_wasm_timer_pollable, %function\n");
-    s = s.write("__fern_wasm_timer_pollable:\n");
-    s = s.write("    mov x0, #-1\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_wasm_timer_pollable, .-__fern_wasm_timer_pollable\n");
-  }
-  // __fern_wasm_pollable_drop(x0 = p) -> 0: a pollable is just an fd on native
-  // (closed via tcp_close), nothing to drop. Portability shim for fetch_future.
-  if (s.has_need("wasm_pollable_drop")) {
-    s = s.write(".globl __fern_wasm_pollable_drop\n");
-    s = s.write(".type __fern_wasm_pollable_drop, %function\n");
-    s = s.write("__fern_wasm_pollable_drop:\n");
-    s = s.write("    mov x0, #0\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_wasm_pollable_drop, .-__fern_wasm_pollable_drop\n");
-  }
-  // __fern_wasm_block(x0 = p) -> 0: no native pollable to wait on (a deadline
-  // uses poll(2)'s timeout arg), so blocking is a 0 no-op. Portability shim
-  // for the reactor's with_deadline.
-  if (s.has_need("wasm_block")) {
-    s = s.write(".globl __fern_wasm_block\n");
-    s = s.write(".type __fern_wasm_block, %function\n");
-    s = s.write("__fern_wasm_block:\n");
-    s = s.write("    mov x0, #0\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_wasm_block, .-__fern_wasm_block\n");
-  }
-  // __fern_wasm_poll(x0 = pollables) -> -1: no real native pollables (readiness
-  // uses poll(2) directly), so nothing is ready; ignores its array arg.
-  // Portability shim for the wasm reactor's poll.
-  if (s.has_need("wasm_poll")) {
-    s = s.write(".globl __fern_wasm_poll\n");
-    s = s.write(".type __fern_wasm_poll, %function\n");
-    s = s.write("__fern_wasm_poll:\n");
-    s = s.write("    mov x0, #-1\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_wasm_poll, .-__fern_wasm_poll\n");
   }
   return s;
 }
@@ -8564,31 +8514,6 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    str x1, [x0, #16]\n");  // len = cap at base+16 (= data)
   s = s.write("    add x0, x0, #16\n");  // data ptr = base+16
   s = s.write("    add sp, sp, #16\n");  // pop saved cap
-  s = s.write("    ldp x29, x30, [sp], #16\n");
-  s = s.write("    ret\n");
-  // __fn___fern_struct_copy(x0 = src box data, x1 = nf) -> x0 = fresh box that is a
-  // shallow word-for-word copy of src (shape@0 + nf field slots). Allocates via
-  // __fern_arr_box(cap = nf+1) so the copy has a fresh rc=1 header + the same
-  // free size, byte-identical to struct_make's box; copies nf+1 words src -> dst
-  // (field pointers shared, matching the inline base-copy). The compact base copy
-  // of `T { ...base, f: v }` (#4650) — one bl instead of nf ldr/str pairs/site.
-  s = s.write("__fn___fern_struct_copy:\n");
-  s = s.write("    stp x29, x30, [sp, #-16]!\n");
-  s = s.write("    mov x29, sp\n");
-  s = s.write("    stp x0, x1, [sp, #-16]!\n");  // save src, nf
-  s = s.write("    add x0, x1, #1\n");  // cap = nf+1 words
-  s = s.write("    bl __fern_arr_box\n");  // x0 = dst data (rc=1)
-  s = s.write("    ldp x2, x3, [sp], #16\n");  // x2=src, x3=nf
-  s = s.write("    add x3, x3, #1\n");  // nf+1 words (shape + fields)
-  s = s.write("    mov x4, #0\n");  // i = 0
-  s = s.write(".Lfern_scp_loop:\n");
-  s = s.write("    cmp x4, x3\n");
-  s = s.write("    b.ge .Lfern_scp_done\n");
-  s = s.write("    ldr x5, [x2, x4, lsl #3]\n");
-  s = s.write("    str x5, [x0, x4, lsl #3]\n");
-  s = s.write("    add x4, x4, #1\n");
-  s = s.write("    b .Lfern_scp_loop\n");
-  s = s.write(".Lfern_scp_done:\n");
   s = s.write("    ldp x29, x30, [sp], #16\n");
   s = s.write("    ret\n");
   // __fern_str_box(x0 = data, x1 = len) -> x0 = box (rc-HEADERED, #2649 Option A
@@ -10265,7 +10190,7 @@ function emit_rt_subprocess(own s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // emit_rt_net emits the socket primitives (tcp listen / accept / recv / send /
-// close / connect / pollable, udp_send) plus __fern_alloc_u8.
+// close / connect, udp_send) plus __fern_alloc_u8.
 function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   // tcp_listen is Fern now (#2649) — see the migrated-helpers section.
   // tcp_recv is Fern now (#2649) — see the migrated-helpers section.
@@ -10274,14 +10199,6 @@ function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   // Darwin number comes from asmcore.sysno rather than darwin_sysno, which
   // has no row for connect (203) and so left the Mach-O emit issuing a Linux
   // syscall through the Linux trap.
-  // __fern_tcp_pollable(x0 = fd) → fd: a socket's readiness token IS its
-  // fd on native (ppoll takes fds directly), so identity.
-  s = s.write(".globl __fern_tcp_pollable\n");
-  s = s.write(".type __fern_tcp_pollable, %function\n");
-  s = s.write("__fern_tcp_pollable:\n");
-  s = s.write("    ret\n");  // fd already in x0
-  s = s.write(".size __fern_tcp_pollable, .-__fern_tcp_pollable\n");
-
   // __fern_udp_send is a Fern runtime function (#2649, #6917):
   // asmcore.rt_src_udp_send, emitted need-gated with the other net helpers. The
   // hand-written body that used to sit here was emitted but never called — the
@@ -11124,7 +11041,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   }
   // poll: ppoll over a freshly built pollfd[] on Linux, a bare -1 on Darwin.
   // It allocates, so it is heap-dependent — but emitted here beside the other
-  // migrated leaves rather than in emit_rt_readiness, which the hand-asm used.
+  // migrated leaves alongside the other Fern runtime functions.
   if (s.has_need("poll")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_poll(tgt), s);
   }
@@ -12387,7 +12304,6 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
     s = emit_profile_runtime(s, darwin);
   }
   s = emit_rt_clock_and_print(s, darwin);
-  s = emit_rt_readiness(s, darwin);
   s = emit_rt_io_and_string(s);
   s = emit_rt_heap(s, darwin);
   s = emit_rt_collections_and_proc(s, darwin);
