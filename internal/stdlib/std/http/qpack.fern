@@ -143,7 +143,7 @@ function __str(buf: [u8], at: i32, prefix: i32, room: i64): Result[(string, i32)
     if (n > room) {
       return Err(TOO_LONG);
     }
-    return Ok((string_from_bytes_unchecked(__copy(buf[from:end])), end));
+    return Ok((string_from_bytes_unchecked(__bytes_range(buf, from, end)), end));
   }
   let cap: i32 = 2147483647;
   if (room < cap as i64) {
@@ -280,7 +280,7 @@ pub function (d: Decoder) on_encoder_stream(bytes: [u8]): Result[Decoder, QpackE
         return Err(e);
       },
       Err(None()) => {
-        return Ok(Decoder { ...d, table: t, pending: __copy(buf[at:buf.len()]) }.__increment());
+        return Ok(Decoder { ...d, table: t, pending: __bytes_range(buf, at, buf.len()) }.__increment());
       }
     }
   }
@@ -673,7 +673,7 @@ pub function (e: Encoder) on_decoder_stream(bytes: [u8]): Result[Encoder, QpackE
         if (code != SHORT) {
           return Err(DecoderStreamError(__why(code)));
         }
-        return Ok(Encoder { ...e, pending: __copy(buf[at:buf.len()]) });
+        return Ok(Encoder { ...e, pending: __bytes_range(buf, at, buf.len()) });
       }
     }
   }
