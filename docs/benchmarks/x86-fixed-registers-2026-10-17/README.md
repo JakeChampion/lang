@@ -240,3 +240,12 @@ stages 2 and 3 at 12,684,816 bytes, SHA-256
 The current fixed-register/read/scalar/certifier/ARM-helper/complexity suite
 passes in 33.220 seconds, and all seven extra-caller debug fixtures pass
 in 2.298 seconds. This supersedes the unrefined `c2557ea2…` build above.
+
+
+All eleven strict current-main size checks pass with complete coverage and
+unchanged baselines/tolerance (79.322 seconds). The current nine-live-value
+executables are byte-identical, SHA-256
+`7f31c3ea52c48646fe80cca2dd9d89c9e6e922981450314b7e615eea233c60ee`.
+Both current read-heavy executables are byte-identical to the measured
+`main-2c23-record.json` pair, preserving the 17% instruction reduction.
+The fresh compiler/output hashes are `low-pressure-main-7929-programs.json`.
