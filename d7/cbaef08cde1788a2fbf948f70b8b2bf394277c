@@ -310,3 +310,8 @@ net/hyper-twofetch/c4096.failed	0
 net/fern/held.bytes_per_connection	996
 net/fern/held.bytes_per_suspended_handler	6549
 net/fern/held.bytes_per_stream	8011
+
+# lane: net-h2spec
+h2spec/passed	146
+h2spec/failed	0
+h2spec/skipped	0
