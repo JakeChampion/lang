@@ -38,3 +38,18 @@ The control and candidate emit byte-identical x86 executables for all 35 frozen
 performance programs and `compiler/checker.fern`. Program output and exit status
 also agree. The fusion execution, allocation, effect-order and reporting tests,
 including the ARM64 and WASI legs, and the unchanged complexity gate pass.
+
+## Reusing the checker's initial scopes
+
+The view-summary and diagnostic loops in `check_module_pass` built each
+function's initial scope with identical inputs. Diagnostics now read the initial
+scope from `slc_scopes`, which the view-summary loop already populated. Each
+diagnostic pass continues to thread its own local bindings.
+
+Measured independently against the same control, compiling its frozen
+`compiler/checker.fern` takes 24,642,259,751 instructions instead of
+24,650,405,816, a 0.033% reduction. The emitted checker executable is
+byte-identical. Checker diagnostic differentials, view-escape tests and the
+unchanged complexity gate pass, and bootstrap stages 2 and 3 agree. This removes
+a duplicate scope build; it does not supply the per-node fact tables proposed in
+#11534 or complete the walk consolidation in #11303.
