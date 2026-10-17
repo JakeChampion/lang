@@ -2029,10 +2029,19 @@ pub function order_addresses(dsts: net.IpAddr[], srcs: Option[net.IpAddr][]): ne
 // `sort_addresses(dsts)` — `order_addresses` over the source the host
 // would use for each destination.
 pub function sort_addresses(dsts: net.IpAddr[]): net.IpAddr[] {
+  return sort_by(dsts, source_for);
+}
+
+// `sort_by(dsts, src)` — `order_addresses` over the source `src` answers
+// for each destination.
+function sort_by(dsts: net.IpAddr[], src: (net.IpAddr) => Option[net.IpAddr]): net.IpAddr[] {
+  if (dsts.len() < 2) {
+    return dsts;
+  }
   let srcs: Option[net.IpAddr][] = [];
   let i: i32 = 0;
   while (i < dsts.len()) {
-    srcs = srcs.append(source_for(dsts[i]));
+    srcs = srcs.append(src(dsts[i]));
     i = i + 1;
   }
   return order_addresses(dsts, srcs);
@@ -2409,11 +2418,16 @@ pub function nat64_prefixes(conf: ResolvConf): Nat64Prefix[] {
 // block list checks beside `net.is_global`, which knows only the
 // well-known and local-use prefixes.
 pub function nat64_carried(addr: net.IpAddr): Option[net.IpAddr] {
+  return carried_by(addr, (): Nat64Prefix[] => nat64_prefixes(system_conf()));
+}
+
+function carried_by(addr: net.IpAddr, prefixes: () => Nat64Prefix[]): Option[net.IpAddr] {
   if (!addr.is_v6()) {
     return None;
   }
   let b: u8[] = addr.bytes();
-  for p in nat64_prefixes(system_conf()) {
+  let known: Nat64Prefix[] = prefixes();
+  for p in known {
     if (same_bytes(b.take(p.bits / 8), p.bytes.take(p.bits / 8))) {
       return addr.embedded_v4(p.bits);
     }
@@ -2451,6 +2465,10 @@ function same_bytes(a: u8[], b: u8[]): boolean {
 // replaced by its synthesis under every prefix the nameservers reveal;
 // elsewhere, or with no prefix revealed, `addrs` as it is.
 function with_nat64(conf: ResolvConf, addrs: net.IpAddr[]): net.IpAddr[] {
+  return nat64_by(addrs, source_for, (): Nat64Prefix[] => nat64_prefixes(conf));
+}
+
+function nat64_by(addrs: net.IpAddr[], src: (net.IpAddr) => Option[net.IpAddr], prefixes: () => Nat64Prefix[]): net.IpAddr[] {
   let i: i32 = 0;
   while (i < addrs.len()) {
     if (addrs[i].is_v6()) {
@@ -2461,22 +2479,22 @@ function with_nat64(conf: ResolvConf, addrs: net.IpAddr[]): net.IpAddr[] {
   if (addrs.len() == 0) {
     return addrs;
   }
-  match (source_for(addrs[0])) {
+  match (src(addrs[0])) {
     Some(_) => {
       return addrs;
     },
     None => {}
   }
-  let prefixes: Nat64Prefix[] = nat64_prefixes(conf);
-  if (prefixes.len() == 0) {
+  let found: Nat64Prefix[] = prefixes();
+  if (found.len() == 0) {
     return addrs;
   }
   let out: net.IpAddr[] = [];
   i = 0;
   while (i < addrs.len()) {
     let k: i32 = 0;
-    while (k < prefixes.len()) {
-      out = out.append(synthesize(prefixes[k], addrs[i]));
+    while (k < found.len()) {
+      out = out.append(synthesize(found[k], addrs[i]));
       k = k + 1;
     }
     i = i + 1;
@@ -2528,6 +2546,12 @@ pub function resolve(name: string): Result[net.IpAddr[], DnsError] {
 // before NAT64 synthesis and RFC 6724 ordering: what a policy judges,
 // since a synthesized address stands for the one it carries.
 pub function resolve_plain(name: string): Result[net.IpAddr[], DnsError] {
+  match (net.ip_parse(name)) {
+    Some(ip) => {
+      return Ok([ip]);
+    },
+    None => {}
+  }
   return resolve_with(system_conf(), name);
 }
 
@@ -2541,14 +2565,123 @@ function reachable(conf: ResolvConf, addrs: net.IpAddr[]): net.IpAddr[] {
   return sort_addresses(with_nat64(conf, addrs));
 }
 
-function resolve_with(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
+// ---- The machine's resolver, kept between lookups ------------------------
+//
+// `Resolver` — the lookups above for a long-lived client: the two files,
+// the NAT64 prefixes and the source address for each destination are read
+// once and kept for RECHECK_NS, as glibc and Go keep resolv.conf, then
+// read again. A lookup of an address literal touches no file and opens no
+// socket, and one of a name asks DNS but probes no route it has probed
+// within the interval. Copies of the value share what it has read.
+pub struct Resolver { seen: Cell[Seen] }
+
+// `Seen` — what a resolver read and when (monotonic nanoseconds, -1 for
+// never): the files, the NAT64 prefixes once asked for, and each probed
+// destination's source.
+pub struct Seen { at: i64, conf: ResolvConf, hosts: HostsEntry[], nat64: Option[Nat64Prefix[]], routes: Route[] }
+
+pub struct Route { dst: net.IpAddr, src: Option[net.IpAddr] }
+
+const RECHECK_NS: i64 = 5000000000;
+
+// At most this many probed destinations are kept; the oldest goes first.
+const ROUTES_KEPT: i32 = 64;
+
+// `resolver()` — a resolver that has read nothing yet.
+pub function resolver(): Resolver {
+  let routes: Route[] = [];
+  let hosts: HostsEntry[] = [];
+  return Resolver { seen: cell_new(Seen { at: 0 - 1 as i64, conf: parse_resolv_conf("", ""), hosts: hosts, nat64: None, routes: routes }) };
+}
+
+// `fresh()` — what the resolver has read, read again once it is older
+// than RECHECK_NS.
+function (r: Resolver) fresh(): Seen {
+  let s: Seen = r.seen.get();
+  let now: i64 = monotonic_ns();
+  if (s.at >= 0 as i64 && now - s.at < RECHECK_NS) {
+    return s;
+  }
+  let routes: Route[] = [];
+  let read: Seen = Seen { at: now, conf: system_conf(), hosts: system_hosts(), nat64: None, routes: routes };
+  r.seen.set(read);
+  return read;
+}
+
+// `conf()` — the machine's resolv.conf as the resolver last read it.
+pub function (r: Resolver) conf(): ResolvConf {
+  return r.fresh().conf;
+}
+
+// `source(dst)` — `source_for(dst)`, probed once per interval.
+pub function (r: Resolver) source(dst: net.IpAddr): Option[net.IpAddr] {
+  let s: Seen = r.fresh();
+  for route in s.routes {
+    if (route.dst.eq(dst)) {
+      return route.src;
+    }
+  }
+  let src: Option[net.IpAddr] = source_for(dst);
+  let kept: Route[] = s.routes;
+  if (kept.len() >= ROUTES_KEPT) {
+    kept = kept.drop(1);
+  }
+  r.seen.set(Seen { ...s, routes: kept.append(Route { dst: dst, src: src }) });
+  return src;
+}
+
+// `prefixes()` — `nat64_prefixes` of the machine's resolver, asked once per
+// interval.
+function (r: Resolver) prefixes(): Nat64Prefix[] {
+  let s: Seen = r.fresh();
+  if let Some(p) = s.nat64 {
+    return p;
+  }
+  let found: Nat64Prefix[] = nat64_prefixes(s.conf);
+  r.seen.set(Seen { ...r.seen.get(), nat64: Some(found) });
+  return found;
+}
+
+// `resolve_plain(name)` — `resolve_plain` over what the resolver has read.
+pub function (r: Resolver) resolve_plain(name: string): Result[net.IpAddr[], DnsError] {
   match (net.ip_parse(name)) {
     Some(ip) => {
       return Ok([ip]);
     },
     None => {}
   }
-  let hosts: net.IpAddr[] = hosts_lookup(system_hosts(), name);
+  let s: Seen = r.fresh();
+  return resolve_in(s.conf, (): HostsEntry[] => s.hosts, name);
+}
+
+// `resolve(name)` — `resolve` over what the resolver has read.
+pub function (r: Resolver) resolve(name: string): Result[net.IpAddr[], DnsError] {
+  return Ok(r.synthesized(r.resolve_plain(name)?));
+}
+
+// `synthesized(addrs)` — `synthesized` over the resolver's probes.
+pub function (r: Resolver) synthesized(addrs: net.IpAddr[]): net.IpAddr[] {
+  let src: (net.IpAddr) => Option[net.IpAddr] = (d: net.IpAddr): Option[net.IpAddr] => r.source(d);
+  return sort_by(nat64_by(addrs, src, (): Nat64Prefix[] => r.prefixes()), src);
+}
+
+// `nat64_carried(addr)` — `nat64_carried` under the resolver's prefixes.
+pub function (r: Resolver) nat64_carried(addr: net.IpAddr): Option[net.IpAddr] {
+  return carried_by(addr, (): Nat64Prefix[] => r.prefixes());
+}
+
+function resolve_with(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
+  return resolve_in(conf, (): HostsEntry[] => system_hosts(), name);
+}
+
+function resolve_in(conf: ResolvConf, hosts_of: () => HostsEntry[], name: string): Result[net.IpAddr[], DnsError] {
+  match (net.ip_parse(name)) {
+    Some(ip) => {
+      return Ok([ip]);
+    },
+    None => {}
+  }
+  let hosts: net.IpAddr[] = hosts_lookup(hosts_of(), name);
   if (hosts.len() > 0) {
     return Ok(hosts);
   }
