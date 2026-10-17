@@ -446,7 +446,7 @@ function test_reset_budgets(): test.TestOutcome {
 function test_malformed(): test.TestOutcome {
   let o: Opened = opened(h2.config());
   let cl: Client = o.client;
-  let shapes: hpack.Field[][] = [get("/").append(hpack.field("connection", "close")), [hpack.field(":method", "GET"), hpack.field(":scheme", "http")], [hpack.field(":method", "GET"), hpack.field("x", "y"), hpack.field(":path", "/")], get("/").append(hpack.field("te", "gzip")), get("/").append(hpack.field(":method", "POST")), [hpack.field(":method", ""), hpack.field(":method", "GET"), hpack.field(":scheme", "http"), hpack.field(":path", "/")]];
+  let shapes: hpack.Field[][] = [get("/").append(hpack.field("connection", "close")), [hpack.field(":method", "GET"), hpack.field(":scheme", "http")], [hpack.field(":method", "GET"), hpack.field("x", "y"), hpack.field(":path", "/")], get("/").append(hpack.field("te", "gzip")), get("/").append(hpack.field(":method", "POST")), [hpack.field(":method", ""), hpack.field(":method", "GET"), hpack.field(":scheme", "http"), hpack.field(":path", "/")], get("/").append(hpack.field("bad name", "x")), get("/").append(hpack.field("x-Upper", "x"))];
   let bytes: u8[] = [];
   let i: i32 = 0;
   while (i < shapes.len()) {
@@ -464,7 +464,7 @@ function test_malformed(): test.TestOutcome {
     let seen: h2.Step = o2.conn.read(r3.concat(closer));
     got = got + events_text(seen.events);
   }
-  return test.assert_eq(got, "RST_STREAM 1 1\nRST_STREAM 3 1\nRST_STREAM 5 1\nRST_STREAM 7 1\nRST_STREAM 9 1\nRST_STREAM 11 1\nopen 0\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 DATA on an idle stream\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 stream 2 is not a new client stream\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 PUSH_PROMISE with push disabled\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 CONTINUATION with no header block open\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 a frame inside a header block\n");
+  return test.assert_eq(got, "RST_STREAM 1 1\nRST_STREAM 3 1\nRST_STREAM 5 1\nRST_STREAM 7 1\nRST_STREAM 9 1\nRST_STREAM 11 1\nRST_STREAM 13 1\nRST_STREAM 15 1\nopen 0\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 DATA on an idle stream\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 stream 2 is not a new client stream\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 PUSH_PROMISE with push disabled\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 CONTINUATION with no header block open\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 a frame inside a header block\n");
 }
 
 // A frame on an idle stream the client never opened is a connection
