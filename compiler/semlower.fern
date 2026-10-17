@@ -651,7 +651,23 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts:
     i = i + 1;
   }
   let origins = physicalbody.Origins { producers: selected.producers, declarations: physicalbody.named_origins(declarations, 0), extra: physicalbody.select_origins(extra_origins, kept.extra_indices) };
-  return ircore.Sub { ...ircore.no_sub(), bodies: kept.result.bodies, extra: kept.result.extra, contracts: contract_rows(built.contracts, r), physical_contracts: built.contracts.list, physical_records: built.records, physical_enums: built.enums, physical_finalizers: built.finalizers, physical_origins: origins, records: inf.records };
+  return ircore.Sub { ...ircore.no_sub(), bodies: kept.result.bodies, extra: kept.result.extra, contracts: contract_rows(built.contracts, r), physical_contracts: selected.producers[0].contracts, physical_records: built.records, physical_enums: built.enums, physical_finalizers: built.finalizers, physical_origins: origins, records: inf.records };
+}
+
+// Scalarized record results no longer carry the original box's unit. Select
+// that actual result from the same produced body as the physical lowering;
+// legacy variant/pair contracts retain their per-word reference information.
+function physical_contracts(built: semsource.Built): ssasem.Contract[] {
+  let out: ssasem.Contract[] = built.contracts.list;
+  for p in util.append_all(built.decls, built.instances) {
+    if (p.ok && ssasem.is_wide(p.func.result)) {
+      let at: i32 = built.contracts.names.find(p.func.graph.name);
+      if (at >= 0 && semrecords.find(built.records, out[at].result) >= 0) {
+        out = out.with(at, ssasem.Contract { ...out[at], result: p.func.result });
+      }
+    }
+  }
+  return out;
 }
 
 struct SelectedHelpers { rows: irtables.LowerResult[], origins: physicalbody.Origin[], producers: physicalbody.Metadata[] }
@@ -682,7 +698,7 @@ function selected_helpers(built: semsource.Built, helpers: ssarc.Helpers): Selec
   for p in built.instances {
     keys = structural_keys(keys, p.func);
   }
-  let app = physicalbody.Metadata { contracts: built.contracts.list, records: built.records, enums: built.enums, finalizers: built.finalizers };
+  let app = physicalbody.Metadata { contracts: physical_contracts(built), records: built.records, enums: built.enums, finalizers: built.finalizers };
   let producers: physicalbody.Metadata[] = [app];
   let origins = helper_origins(helpers);
   if (keys.len() > 0) {
@@ -932,7 +948,7 @@ pub function runtime_lowering(src: string): physicalbody.Lowered {
     declarations = declarations.append(inf.built.names[i]);
     i = i + 1;
   }
-  return physicalbody.Lowered { bodies: all, declarations: declarations, helper_types: helper_types, contracts: inf.built.contracts.list, records: inf.built.records, enums: inf.built.enums, finalizers: inf.built.finalizers };
+  return physicalbody.Lowered { bodies: all, declarations: declarations, helper_types: helper_types, contracts: physical_contracts(inf.built), records: inf.built.records, enums: inf.built.enums, finalizers: inf.built.finalizers };
 }
 
 function runtime_refused(name: string, why: string): physicalbody.Lowered {

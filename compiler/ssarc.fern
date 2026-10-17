@@ -16,6 +16,7 @@ import "./typeinfo";
 import "./util";
 import "./semarrayreport";
 import "./sempair";
+import "./semscalarreturn";
 import "./rtbytecopy";
 
 function empty(why: string): irtables.LowerResult {
@@ -4020,6 +4021,9 @@ function instruction_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssauni
     r = emit(r, ir.op_call_word());
     r = emit(r, ir.op_store_local(ins.imm - 1));
   }
+  if (ins.kind_tag == ssasem.call() && ins.imm < 0) {
+    r = capture_scalar_words(r, ins.imm);
+  }
   r = took(r, p, ins);
   if (kept && ssaunits.payload_taken(f, p, ins)) {
     r = unless_unique(r, token_slot(f), ins.result, "__fern_rc_inc");
@@ -5131,7 +5135,7 @@ function lent_result(own r: irtables.LowerResult): irtables.LowerResult {
 
 function call_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   if (paired_op(ins.str)) {
-    return pair_site(r, ins);
+    return pair_site(r, f, ins);
   }
   if (util.index_of_str(f.shadows, ins.str) >= 0) {
     return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
@@ -5190,10 +5194,13 @@ function call_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
 // payload read off the word is the word; and a payload handed to
 // `__pair_set` waits in its own slot until the return sets it (terminator).
 function paired_op(name: string): boolean {
-  return name == sempair.pair_word_name() || util.str_has_prefix(name, sempair.word_as_prefix()) || util.str_has_prefix(name, sempair.pair_set_prefix());
+  return scalar_op(name) || name == sempair.pair_word_name() || util.str_has_prefix(name, sempair.word_as_prefix()) || util.str_has_prefix(name, sempair.pair_set_prefix());
 }
 
-function pair_site(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
+function pair_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  if (scalar_op(ins.str)) {
+    return scalar_site(r, f, ins);
+  }
   if (ins.str == sempair.pair_word_name()) {
     r = emit(r, ir.op_drop());
     return emit(r, ir.op_load_local(ins.result));
@@ -5203,6 +5210,79 @@ function pair_site(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerR
   }
   r = emit(r, ir.op_drop());
   return emit(r, ir.op_const_i32(0));
+}
+
+// Read the volatile lanes before cleanup, from the last scratch register
+// backwards. On x86 the bridge may use r11 while storing any other lane.
+function capture_scalar_words(own r: irtables.LowerResult, imm: i32): irtables.LowerResult {
+  let base: i32 = semscalarreturn.capture_base(imm);
+  let slot: i32 = semscalarreturn.capture_count(imm) - 1;
+  while (slot >= 0) {
+    r = emit(r, ir.op_call_scalar_word(slot));
+    r = emit(r, ir.op_store_local(base + slot));
+    slot = slot - 1;
+  }
+  return r;
+}
+
+function scalar_op(name: string): boolean {
+  return util.str_has_prefix(name, semscalarreturn.bits_name() + ":") || util.str_has_prefix(name, semscalarreturn.as_name() + ":")
+    || util.str_has_prefix(name, semscalarreturn.set_prefix()) || util.str_has_prefix(name, semscalarreturn.word_prefix());
+}
+
+function scalar_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  if (util.str_has_prefix(ins.str, semscalarreturn.word_prefix())) {
+    r = emit(r, ir.op_drop());
+    return emit(r, ir.op_load_local(ins.result));
+  }
+  if (util.str_has_prefix(ins.str, semscalarreturn.set_prefix())) {
+    r = emit(r, ir.op_drop());
+    return emit(r, ir.op_const_i32(0));
+  }
+  let encode: boolean = util.str_has_prefix(ins.str, semscalarreturn.bits_name() + ":");
+  return scalar_conversion(r, f, ins, encode);
+}
+
+function scalar_conversion(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, encode: boolean): irtables.LowerResult {
+  let ty: typeinfo.Type = f.values[ins.result];
+  if (encode) {
+    ty = f.values[ins.args[0]];
+  }
+  if (ssasem.is_float(ty)) {
+    if (encode) {
+      return emit(r, ir.op_f64_bits());
+    }
+    return emit(r, ir.op_f64_from_bits());
+  }
+  if (ssasem.is_wide(ty)) {
+    return r;
+  }
+  if (ssasem.is_usize(ty)) {
+    if (encode) {
+      return emit(r, ir.op_int_extend_ptr());
+    }
+    return emit(r, ir.op_int_wrap_ptr());
+  }
+  if (encode) {
+    return emit(r, ir.op_int_extend(ssasem.is_unsigned_int(ty) || ssasem.is_bool(ty)));
+  }
+  return emit(r, ir.op_int_wrap(ssasem.is_unsigned_int(ty) || ssasem.is_bool(ty)));
+}
+
+function return_scalar_words(own r: irtables.LowerResult, b: ssa.SBlock): irtables.LowerResult {
+  // Increasing order leaves the x86 scratch lane r11 set last.
+  let slot: i32 = 0;
+  while (slot < 3) {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.call() && ins.str == semscalarreturn.set_prefix() + util.i32_to_string(slot)) {
+        r = emit(r, ir.op_load_local(ins.args[0]));
+        r = emit(r, ir.op_ret_scalar_word(slot));
+        r = emit(r, ir.op_drop());
+      }
+    }
+    slot = slot + 1;
+  }
+  return r;
 }
 
 // The payload a paired return sets beside its result: the operand of the
@@ -6550,6 +6630,9 @@ function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[],
     if (b.term.kind_tag == 4) {
       e = Emit { ...e, r: emit(e.r, ir.op_const_i32(134)) };
       e = Emit { ...e, r: emit(e.r, ir.op_exit()) };
+    }
+    if (b.term.kind_tag == 1) {
+      e = Emit { ...e, r: return_scalar_words(e.r, b) };
     }
     let payload: i32 = pair_payload(b);
     if (payload == 0 - 2) {

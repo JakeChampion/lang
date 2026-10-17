@@ -6811,11 +6811,15 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
 // arm emits -- wrong code that looks plausible. asm_ir carries the same guard
 // for the same reason.
 function emit_str_op_wat(o: ir.Op): string {
-  if (o.kind_tag == 384) {
-    return "    global.set $__fern_ret_word\n    i32.const 0\n";
-  }
-  if (o.kind_tag == 385) {
-    return "    global.get $__fern_ret_word\n";
+  if (o.kind_tag == 384 || o.kind_tag == 385) {
+    let name: string = "$__fern_ret_word";
+    if (o.width == 64) {
+      name = "$__fern_scalar_word" + util.i32_to_string(o.i32_imm);
+    }
+    if (o.kind_tag == 385) {
+      return "    global.get " + name + "\n";
+    }
+    return "    global.set " + name + "\n    i32.const 0\n";
   }
   if (o.kind_tag == 383) {
     let stride: i32 = 4;
@@ -13242,6 +13246,11 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   parts = parts.append(lc_globals(lc));
   if (need(needs, "@ret_word")) {
     parts = parts.append("  (global $__fern_ret_word (mut i32) (i32.const 0))\n");
+    let slot: i32 = 0;
+    while (slot < 3) {
+      parts = parts.append("  (global $__fern_scalar_word" + util.i32_to_string(slot) + " (mut i64) (i64.const 0))\n");
+      slot = slot + 1;
+    }
   }
   // mode 2 folds into the heap gate: the $__fern_fd_write shim allocates its
   // canonical-ABI return area through $__fern_alloc, so a component-io core

@@ -134,6 +134,9 @@ function pair_first(t: typeinfo.Type): boolean {
 // payload is a reference as bits, 0 for none, -2 where the type is not one
 // the table describes.
 function pair_second(enums: semrecords.Enum[], t: typeinfo.Type): i32 {
+  if (ssasem.is_wide(t)) {
+    return 0;
+  }
   if let typeinfo.TypeTuple(tup) = t {
     if (tup.elements.len() == 2 && ssasem.reference(tup.elements[1])) {
       return -1;

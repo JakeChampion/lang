@@ -1019,6 +1019,16 @@ pub function op_call_word(): Op {
   return op0(385);
 }
 
+// Private scalar-record return lanes: full 64-bit bits, slot 0..2. Width zero
+// retains the existing pointer-sized paired-return protocol.
+pub function op_ret_scalar_word(slot: i32): Op {
+  return Op { ...op_ret_word(), width: 64, i32_imm: slot };
+}
+
+pub function op_call_scalar_word(slot: i32): Op {
+  return Op { ...op_call_word(), width: 64, i32_imm: slot };
+}
+
 // Physical ownership lowering has already established unique storage and
 // transfers its unit to the result. This form allocates nothing itself.
 pub function op_scale_f64_in_place(): Op {

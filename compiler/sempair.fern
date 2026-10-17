@@ -20,6 +20,7 @@ import "./ssasem";
 import "./typeinfo";
 import "./semtypes";
 import "./semrecords";
+import "./semscalarreturn";
 
 pub struct Paired { funcs: ssasem.Func[], changed: boolean[] }
 
@@ -47,7 +48,11 @@ pub function pair_returns(funcs: ssasem.Func[], names: string[], rewrite: boolea
     let f: ssasem.Func = funcs[i];
     let c: boolean = false;
     if (paired[i]) {
-      f = pair_callee(f, shape_of(f, f.result));
+      if (semscalarreturn.eligible(f, f.result)) {
+        f = semscalarreturn.callee(f);
+      } else {
+        f = pair_callee(f, shape_of(f, f.result));
+      }
       c = true;
     }
     if (rewrite[i] && calls_paired(f, ix, paired)) {
@@ -186,7 +191,7 @@ function joins_apart(phi: ssa.SInst, defs: ssa.SInst[], ix: util.NameIndex, ok: 
   for a in phi.args {
     let d: ssa.SInst = through_copies(defs, a);
     let k: i32 = d.kind_tag;
-    if (k != ssasem.variant_new() && k != ssasem.tuple_new() && k != ssasem.zero() && k != 8 && paired_callee(d, ix, ok) < 0) {
+    if (k != ssasem.variant_new() && k != ssasem.tuple_new() && k != ssasem.record_new() && k != ssasem.zero() && k != 8 && paired_callee(d, ix, ok) < 0) {
       return false;
     }
   }
@@ -244,7 +249,7 @@ function refs_of(funcs: ssasem.Func[], ix: util.NameIndex, rewrite: boolean[]): 
 // Whether `f`'s result is a union whose every variant carries at most one
 // payload a word holds, and which no finalizer watches, or a pair.
 function shaped(f: ssasem.Func): boolean {
-  if (pair_type(f, f.result)) {
+  if (pair_type(f, f.result) || semscalarreturn.eligible(f, f.result)) {
     return true;
   }
   let at: i32 = semrecords.find_enum(f.enums, f.result);
@@ -487,6 +492,9 @@ function rebuild_calls(f0: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex
 }
 
 function rebuild_at(f0: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Func {
+  if (semscalarreturn.eligible(callee, callee.result)) {
+    return semscalarreturn.caller(f0, bi, k, callee);
+  }
   let f: ssasem.Func = f0;
   let b: ssa.SBlock = f.graph.blocks[bi];
   let call: ssa.SInst = b.insts[k];
