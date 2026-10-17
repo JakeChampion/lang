@@ -685,8 +685,9 @@ pub function const_agg_values(cache: irtables.LowerResult[]): string[] {
       if (r.ops[i].kind_tag == 218) {  // const_struct
         vals = intern_const_agg(vals, r.ops[i].str);
       }
-      // alloc_u8's zero-length answer, the empty byte array.
-      if (r.ops[i].kind_tag == 77 && util.index_of_str(vals, empty_bytes_const()) < 0) {
+      // alloc_u8's zero-length answer, the empty byte array, which the
+      // byte-copy helpers answer for an empty copy too.
+      if (answers_empty_bytes(r.ops[i]) && util.index_of_str(vals, empty_bytes_const()) < 0) {
         vals = vals.append(empty_bytes_const());
       }
       i = i + 1;
@@ -694,6 +695,12 @@ pub function const_agg_values(cache: irtables.LowerResult[]): string[] {
     fi = fi + 1;
   }
   return vals;
+}
+
+// answers_empty_bytes names the ops that answer the static empty byte array
+// for zero bytes: alloc_u8, and the calls to the byte-copy helpers.
+function answers_empty_bytes(o: ir.Op): boolean {
+  return o.kind_tag == 77 || o.kind_tag == 149 && (o.str == "__fern_bytes_owned" || o.str == "__fern_bytes_range");
 }
 
 // A constant and every static box its fields hold, each once.
@@ -1568,32 +1575,35 @@ pub function task_funcs(lc: boolean): string {
     + "  (func $__fern_task_cancelled (result i32)\n"
     + "    (if (i32.eqz (global.get $__fern_task_cur_g)) (then (return (i32.const 0))))\n"
     + "    (i32.wrap_i64 (i64.load offset=24 (call $__fern_task_rec (global.get $__fern_task_cur_g)))))\n"
-    + "  (func $__fern_task_push64 (param $x i64) (result i32) (local $r i32) (local $len i32) (local $cap i32) (local $buf i32) (local $nbuf i32)\n"
+    + "  (func $__fern_task_reserve (param $n i32) (result i32) (local $r i32) (local $len i32) (local $cap i32) (local $buf i32) (local $nbuf i32) (local $need i32)\n"
     + "    (local.set $r (call $__fern_task_rec (global.get $__fern_task_cur_g)))\n"
     + "    (local.set $len (i32.wrap_i64 (i64.load offset=40 (local.get $r))))\n"
     + "    (local.set $cap (i32.wrap_i64 (i64.load offset=48 (local.get $r))))\n"
     + "    (local.set $buf (i32.wrap_i64 (i64.load offset=32 (local.get $r))))\n"
-    + "    (if (i32.ge_s (local.get $len) (local.get $cap)) (then\n"
+    + "    (local.set $need (i32.add (local.get $len) (local.get $n)))\n"
+    + "    (if (i32.gt_s (local.get $need) (local.get $cap)) (then\n"
     + "      (local.set $cap (select (i32.shl (local.get $cap) (i32.const 1)) (i32.const 64) (i32.gt_s (local.get $cap) (i32.const 0))))\n"
+    + "      (block $big (loop $grow\n"
+    + "        (br_if $big (i32.ge_s (local.get $cap) (local.get $need)))\n"
+    + "        (local.set $cap (i32.shl (local.get $cap) (i32.const 1)))\n"
+    + "        (br $grow)))\n"
     + "      (local.set $nbuf (call $__fern_task_alloc (i32.shl (local.get $cap) (i32.const 3))))\n"
     + "      (memory.copy (local.get $nbuf) (local.get $buf) (i32.shl (local.get $len) (i32.const 3)))\n"
     + "      (local.set $buf (local.get $nbuf))\n"
     + "      (i64.store offset=32 (local.get $r) (i64.extend_i32_u (local.get $buf)))\n"
     + "      (i64.store offset=48 (local.get $r) (i64.extend_i32_s (local.get $cap)))))\n"
-    + "    (i64.store (i32.add (local.get $buf) (i32.shl (local.get $len) (i32.const 3))) (local.get $x))\n"
-    + "    (i64.store offset=40 (local.get $r) (i64.extend_i32_s (i32.add (local.get $len) (i32.const 1))))\n"
-    + "    (i32.const 0))\n"
-    + "  (func $__fern_task_pop64 (result i64) (local $r i32) (local $len i32)\n"
+    + "    (i64.store offset=40 (local.get $r) (i64.extend_i32_s (local.get $need)))\n"
+    + "    (i32.add (local.get $buf) (i32.shl (local.get $len) (i32.const 3))))\n"
+    + "  (func $__fern_task_take (param $n i32) (result i32) (local $r i32) (local $len i32)\n"
+    + "    (local.set $r (call $__fern_task_rec (global.get $__fern_task_cur_g)))\n"
+    + "    (local.set $len (i32.sub (i32.wrap_i64 (i64.load offset=40 (local.get $r))) (local.get $n)))\n"
+    + "    (i64.store offset=40 (local.get $r) (i64.extend_i32_s (local.get $len)))\n"
+    + "    (i32.add (i32.wrap_i64 (i64.load offset=32 (local.get $r))) (i32.shl (local.get $len) (i32.const 3))))\n"
+    + "  (func $__fern_task_pop_w (result i32) (local $r i32) (local $len i32)\n"
     + "    (local.set $r (call $__fern_task_rec (global.get $__fern_task_cur_g)))\n"
     + "    (local.set $len (i32.sub (i32.wrap_i64 (i64.load offset=40 (local.get $r))) (i32.const 1)))\n"
     + "    (i64.store offset=40 (local.get $r) (i64.extend_i32_s (local.get $len)))\n"
-    + "    (i64.load (i32.add (i32.wrap_i64 (i64.load offset=32 (local.get $r))) (i32.shl (local.get $len) (i32.const 3)))))\n"
-    + "  (func $__fern_task_push_w (param $x i32) (result i32) (call $__fern_task_push64 (i64.extend_i32_u (local.get $x))))\n"
-    + "  (func $__fern_task_push_i64 (param $x i64) (result i32) (call $__fern_task_push64 (local.get $x)))\n"
-    + "  (func $__fern_task_push_f64 (param $x f64) (result i32) (call $__fern_task_push64 (i64.reinterpret_f64 (local.get $x))))\n"
-    + "  (func $__fern_task_pop_w (result i32) (i32.wrap_i64 (call $__fern_task_pop64)))\n"
-    + "  (func $__fern_task_pop_i64 (result i64) (call $__fern_task_pop64))\n"
-    + "  (func $__fern_task_pop_f64 (result f64) (f64.reinterpret_i64 (call $__fern_task_pop64)))\n";
+    + "    (i32.wrap_i64 (i64.load (i32.add (i32.wrap_i64 (i64.load offset=32 (local.get $r))) (i32.shl (local.get $len) (i32.const 3))))))\n";
 }
 
 // module_uses_i32_to_string reports whether any function emits the i32.to_string()
@@ -1641,7 +1651,7 @@ function array_helper_needs(cache: irtables.LowerResult[], own out: string[]): s
 // $__fern_arr_str_join (a shim over $__fern_str_join) backs xs.join(sep), the
 // register backends' __fern_arr_str_join runtime call, and $__fern_arr_concat a
 // scalar xs.concat(ys). Each is self-contained and emitted only when used.
-function array_helper_parts(needs: string[], own parts: string[]): string[] {
+function array_helper_parts(needs: string[], own parts: string[], empty: i32): string[] {
   if (need(needs, "@uses_arr_str_join")) {
     parts = parts.append(arr_str_join_helper());
   }
@@ -1649,7 +1659,7 @@ function array_helper_parts(needs: string[], own parts: string[]): string[] {
     parts = parts.append(arr_concat_helper());
   }
   if (need(needs, "@uses_bytes_owned")) {
-    parts = parts.append(bytes_owned_helper());
+    parts = parts.append(bytes_owned_helper(empty));
   }
   return parts;
 }
@@ -12209,13 +12219,22 @@ pub function arr_slice8_helper(): string {
 // view's bytes in a fresh packed u8[]. A view is a packed array ([len] then
 // the bytes at +8) or a string tagged with bit 1 ([len] then the bytes at +4,
 // at v - 2).
-pub function bytes_owned_helper(): string {
+pub function bytes_owned_helper(empty: i32): string {
+  // `empty` is the static empty byte array's address, which an empty copy
+  // answers, as __alloc_u8(0) does; -1 boxes zero bytes instead.
+  let none_owned: string = "";
+  let none_range: string = "";
+  if (empty >= 0) {
+    none_owned = "    (if (i32.eqz (local.get $n)) (then (return (i32.const " + util.i32_to_string(empty) + "))))\n";
+    none_range = "    (if (i32.eqz (local.get $m)) (then (return (i32.const " + util.i32_to_string(empty) + "))))\n";
+  }
   let o: string = "";
   o = o + "  (func $__fern_bytes_owned (param $v i32) (result i32)\n";
   o = o + "    (local $n i32) (local $p i32) (local $r i32)\n";
   o = o + "    (local.set $n (i32.load (i32.and (local.get $v) (i32.const -3))))\n";
   o = o + "    (local.set $p (i32.add (local.get $v) (i32.const 8)))\n";
   o = o + "    (if (i32.and (local.get $v) (i32.const 2)) (then (local.set $p (i32.add (local.get $v) (i32.const 2)))))\n";
+  o = o + none_owned;
   o = o + "    (local.set $r (call $__fern_arr_elems (local.get $n) (i32.const 1)))\n";
   o = o + "    (i32.store (local.get $r) (local.get $n))\n";
   o = o + "    (i32.store offset=4 (local.get $r) (local.get $n))\n";
@@ -12230,6 +12249,7 @@ pub function bytes_owned_helper(): string {
   o = o + "    (if (i32.lt_s (local.get $to) (local.get $from)) (then (unreachable)))\n";
   o = o + "    (if (i32.gt_s (local.get $to) (local.get $n)) (then (unreachable)))\n";
   o = o + "    (local.set $m (i32.sub (local.get $to) (local.get $from)))\n";
+  o = o + none_range;
   o = o + "    (local.set $r (call $__fern_arr_elems (local.get $m) (i32.const 1)))\n";
   o = o + "    (i32.store (local.get $r) (local.get $m))\n";
   o = o + "    (i32.store offset=4 (local.get $r) (local.get $m))\n";
@@ -13602,7 +13622,12 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need(needs, "str_split") || need(needs, "@uses_str_lines")) {
     parts = parts.append(str_split_helper());
   }
-  parts = array_helper_parts(needs, parts);
+  let ei: i32 = util.index_of_str(cv, empty_bytes_const());
+  let empty: i32 = 0 - 1;
+  if (ei >= 0) {
+    empty = const_agg_offset(sv, cv, ei) + 8;
+  }
+  parts = array_helper_parts(needs, parts, empty);
   // Scalar string search predicates (starts_with / ends_with / index_of /
   // contains) — self-contained, emitted only when used.
   // ASCII case transforms (to_upper / to_lower) — self-contained, emitted

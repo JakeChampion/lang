@@ -228,8 +228,8 @@ function __base(c: Config, server: boolean, scid: u8[], dcid: u8[], odcid: u8[],
 
 // client starts a connection: its first Initial is ready to `transmit`.
 pub function client(c: Config, entropy: [u8], now: i64): Result[Conn, string] {
-  let scid: u8[] = __copy(entropy[0:c.cid_len]);
-  let dcid: u8[] = __copy(entropy[c.cid_len:c.cid_len + 8]);
+  let scid: u8[] = __bytes_range(entropy, 0, c.cid_len);
+  let dcid: u8[] = __bytes_range(entropy, c.cid_len, c.cid_len + 8);
   let p: params.Params = params.Params { ...c.params, initial_source_connection_id: Some(scid) };
   let cc: handshake.ClientConfig = __tls_client_config(c, scid, params.encode(p, false));
   match (handshake.client_start(cc, entropy[c.cid_len + 8:entropy.len()])) {
@@ -250,8 +250,8 @@ pub function accept(c: Config, entropy: [u8], first: packet.Header, now: i64): R
   let Some(id) = c.identity else {
     return Err("quic: a server needs an identity");
   };
-  let scid: u8[] = __copy(entropy[0:c.cid_len]);
-  let reset: u8[] = __copy(entropy[c.cid_len:c.cid_len + 16]);
+  let scid: u8[] = __bytes_range(entropy, 0, c.cid_len);
+  let reset: u8[] = __bytes_range(entropy, c.cid_len, c.cid_len + 16);
   let p: params.Params = params.Params { ...c.params, original_destination_connection_id: Some(first.dcid), initial_source_connection_id: Some(scid), stateless_reset_token: Some(reset) };
   let sc: handshake.ServerConfig = __tls_server_config(c, id.chain, [id.key.scheme()], params.encode(p, true));
   match (handshake.server_new(sc, entropy[c.cid_len + 16:entropy.len()])) {
@@ -1891,11 +1891,5 @@ function __same(a: [u8], b: [u8]): boolean {
 }
 
 function __copy(b: [u8]): u8[] {
-  let out: u8[] = __alloc_u8(b.len());
-  let i: i32 = 0;
-  while (i < b.len()) {
-    out = out.with(i, b[i]);
-    i = i + 1;
-  }
-  return out;
+  return __bytes_owned(b);
 }

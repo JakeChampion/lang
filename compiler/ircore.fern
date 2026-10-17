@@ -678,7 +678,7 @@ pub function all_runtime_need_roots(): string[] {
     "signal_mask", "signal_disposition",
     "proc_exec", "proc_exec_as", "proc_fork", "proc_waitpid", "proc_waitpid_nohang", "proc_waitpid_status", "putchar", "random_bytes", "random_i32", "read_file",
     "read_file_bytes",
-    "sleep_ms", "sleep_ns", "str_bytes", "str_case", "str_cmp", "task",
+    "sleep_ms", "sleep_ns", "str_bytes", "str_case", "str_cmp", "task", "vdso",
     "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
     "str_read_line", "str_repeat", "str_replace",
     "optarrarr_free", "str_split", "str_trim", "strarrarr_free", "buf",

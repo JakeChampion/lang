@@ -185,9 +185,20 @@ func (c *checker) calleeResultBorrows(x *ast.Call) bool {
 	return c.signatureResultBorrows(id.Name)
 }
 
+// freshResultBuiltins are the builtins that are lent byte views and answer
+// an array they built, so none can hand a view back however its parameters
+// look.
+var freshResultBuiltins = map[string]bool{
+	"__bytes_owned": true, "__bytes_range": true, "__aes_expand_key": true, "__aes_ctr32": true,
+	"__ghash": true, "__sha256_hw_blocks": true, "__sha1_hw_blocks": true,
+}
+
 // signatureResultBorrows is the approximation used where no body is available:
 // a callee with a borrowed pointer parameter could hand that same pointer back.
 func (c *checker) signatureResultBorrows(name string) bool {
+	if freshResultBuiltins[name] {
+		return false
+	}
 	sig, ok := c.info.FuncSigs[name]
 	if !ok {
 		return true
