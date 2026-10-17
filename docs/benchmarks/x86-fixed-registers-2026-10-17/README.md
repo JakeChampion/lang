@@ -232,3 +232,11 @@ compilers, checker compilation takes 23,707,943,634 instructions before the
 refinement and 23,704,476,855 after it (-0.015%), with byte-identical assembly.
 The raw observations and hashes are `low-pressure-compiler-cost.json` and
 `low-pressure-cold-policy-cost.json`.
+
+
+With the refinement on main `792940195`, source `b111f6998` reaches identical
+stages 2 and 3 at 12,684,816 bytes, SHA-256
+`8e7094c82ba304fcf09ac96be46a0e286d45be1ce012336e4b9ab60702a3ac1e`.
+The current fixed-register/read/scalar/certifier/ARM-helper/complexity suite
+passes in 33.220 seconds, and all seven extra-caller debug fixtures pass
+in 2.298 seconds. This supersedes the unrefined `c2557ea2…` build above.
