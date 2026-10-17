@@ -1304,7 +1304,7 @@ function movn_text_ok(text: string): boolean {
 // the stack machine this replaced used, so the runtime helpers and the
 // flat-op arms it still runs are unchanged.
 //
-// Registers: x0 and x9..x15 are the caller-saved pool; x19..x28 are the
+// Registers: x0, x9..x15, x1..x3 and x8 are the caller-saved pool; x19..x28 are the
 // callee-saved pool a value live across a call takes, saved in pairs once per
 // function. x4..x7 are scratch; x16/x17 belong to fr_ldr and fr_sub_imm. A
 // spilled value lives at [x29, #-8*(slot+1)] by its allocator slot.
@@ -1313,12 +1313,19 @@ function movn_text_ok(text: string): boolean {
 // call result allocated there needs no move at all. The arms that are calls
 // may write it, since the allocator never leaves a caller-saved value live
 // across one.
-// x0 and x9-x15 are the caller-saved registers, x19-x28 the callee-saved;
+// x0, x9-x15, x1-x3 and x8 are caller-saved, x19-x28 callee-saved;
 // above them the float class's d16-d31, then its callee-saved d8-d15.
 function ssa_reg(k: i32): string {
   if (k >= ssa_fbase()) {
     return ssa_freg(k);
   }
+  if (k < ssa_nregs()) {
+    return ssa_caller_reg(k);
+  }
+  return ssa_saved_reg(k - ssa_nregs());
+}
+
+function ssa_caller_reg(k: i32): string {
   if (k == 0) {
     return "x0";
   }
@@ -1344,36 +1351,55 @@ function ssa_reg(k: i32): string {
     return "x15";
   }
   if (k == 8) {
-    return "x19";
+    return "x1";
   }
   if (k == 9) {
-    return "x20";
+    return "x2";
   }
   if (k == 10) {
+    return "x3";
+  }
+  return "x8";
+}
+
+function ssa_saved_reg(k: i32): string {
+  if (k == 0) {
+    return "x19";
+  }
+  if (k == 1) {
+    return "x20";
+  }
+  if (k == 2) {
     return "x21";
   }
-  if (k == 11) {
+  if (k == 3) {
     return "x22";
   }
-  if (k == 12) {
+  if (k == 4) {
     return "x23";
   }
-  if (k == 13) {
+  if (k == 5) {
     return "x24";
   }
-  if (k == 14) {
+  if (k == 6) {
     return "x25";
   }
-  if (k == 15) {
+  if (k == 7) {
     return "x26";
   }
-  if (k == 16) {
+  if (k == 8) {
     return "x27";
   }
   return "x28";
 }
 
 function ssa_nregs(): i32 {
+  return 12;
+}
+
+// Register homes and parameter registers are separate: the Fern ABI still
+// passes eight parameters in x0/x9..x15, with f64 arguments in d0..d7.
+function ssa_nargs(): i32 {
   return 8;
 }
 
@@ -2749,32 +2775,22 @@ function ssa_funary_direct(what: string): boolean {
   return ssa_fmath_op(what) != "" || what == "i32_to_f64:64" || what == "i32_to_f64:32" || what == "f64_to_i32" || what == "f64_to_i64";
 }
 
-// With x0 an allocatable home, an arm that fills the ABI's argument
-// registers in order can destroy a later argument: loading args[0] into x0
-// overwrites whatever lives there. ssa_load_abi_args loads the argument
-// homed in x0 first, into its own target, so nothing is read after it is
-// written. Only x0 is both a home and an argument register, so one
-// reordering is enough.
-function ssa_load_abi_args(reg_of: i32[], args: i32[], regs: string[], s: asmcore.EmitState): asmcore.EmitState {
-  let first: i32 = 0 - 1;
-  let i: i32 = 1;
-  while (i < args.len() && i < regs.len()) {
-    if (reg_of[args[i]] == 0) {
-      first = i;
+// Runtime arguments use x0-x2, which overlap allocatable homes. Resolve
+// their moves together so a swap or a longer cycle preserves every input.
+function ssa_load_abi_args(reg_of: i32[], args: i32[], count: i32, s: asmcore.EmitState): asmcore.EmitState {
+  let srcs: i32[] = [];
+  let dsts: i32[] = [];
+  let i: i32 = 0;
+  while (i < args.len() && i < count) {
+    let dst: i32 = 0;
+    if (i > 0) {
+      dst = ssa_nargs() + i - 1;
     }
+    srcs = srcs.append(reg_of[args[i]]);
+    dsts = dsts.append(dst);
     i = i + 1;
   }
-  if (first >= 0) {
-    s = ssa_load(reg_of, args[first], regs[first], s);
-  }
-  i = 0;
-  while (i < args.len() && i < regs.len()) {
-    if (i != first) {
-      s = ssa_load(reg_of, args[i], regs[i], s);
-    }
-    i = i + 1;
-  }
-  return s;
+  return ssa_parallel_moves(srcs, dsts, s);
 }
 
 // ssa_push_operand stages one call argument: a store straight from the value's
@@ -3363,7 +3379,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
   }
   s = s.mark_heap();
-  s = ssa_load_abi_args(reg_of, ins.args, ["x0", "x1"], s);
+  s = ssa_load_abi_args(reg_of, ins.args, 2, s);
   s = s.write("    bl __fern_str_box_hdr\n");
   return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
@@ -3442,7 +3458,7 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     s = s.mark_arr_push();
     sym = "__fern_arr_push";
   }
-  s = ssa_load_abi_args(reg_of, ins.args, ["x0", "x1"], s);
+  s = ssa_load_abi_args(reg_of, ins.args, 2, s);
   // raw_alloc asks for 24 bytes more and hands back the pointer past them,
   // the string box header a buffer may later grow (#7351).
   if (ins.str == "raw_alloc") {
@@ -3590,7 +3606,7 @@ function ssa_view_count(views: i32[]): i32 {
 function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   s = s.mark_heap();
-  s = ssa_load_abi_args(reg_of, ins.args, ["x0", "x1", "x2"], s);
+  s = ssa_load_abi_args(reg_of, ins.args, 3, s);
   s = ssa_ldst(s, true, "x3", "x0", 8);
   s = ssa_cmp_rr(s, "x2", "x3");
   s = ssa_trap_guard(s, CC_LS, "__fern_str_oob_abort");
@@ -3840,8 +3856,8 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
 
 // ssa_call_ind is a call through a function value, which names the callee's
 // `.k` entry: every argument in the pool registers in order, whatever its
-// type. Past ssa_nregs() arguments, every one is pushed, first on top, and the
-// first ssa_nregs() are loaded back from the pushes, since a spilled
+// type. Past ssa_nargs() arguments, every one is pushed, first on top, and the
+// first ssa_nargs() are loaded back from the pushes, since a spilled
 // operand's slot moves with sp. The target is read into x6 first, which is
 // neither a pool register nor a scratch the argument moves use.
 function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
@@ -3850,14 +3866,14 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   if (!ssa.slot_call(ins)) {
     s = ssa_load(reg_of, ins.args[0], "x6", s);
   }
-  if (argc > ssa_nregs()) {
+  if (argc > ssa_nargs()) {
     let i: i32 = argc;
     while (i >= 1) {
       s = ssa_push_operand(reg_of, ins.args[i], (argc - i) * 16, s);
       i = i - 1;
     }
     let p: i32 = 0;
-    while (p < ssa_nregs()) {
+    while (p < ssa_nargs()) {
       s = ssa_ldst(s, true, ssa_reg(p), "sp", 16 * p);
       p = p + 1;
     }
@@ -3877,7 +3893,7 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     s = ssa_ldst(s, true, "x6", "x0", 8);
   }
   s = s.write("    blr x6\n");
-  if (argc > ssa_nregs()) {
+  if (argc > ssa_nargs()) {
     s = ssa_addsub_imm(s, false, "sp", "sp", argc * 16);
   }
   return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
@@ -4428,7 +4444,7 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
 
 // ssa_load_params moves each parameter from the caller's slot to its home;
 // value p is parameter p.
-// The first ssa_nregs() parameters arrive in the pool's registers, in order
+// The first ssa_nargs() parameters arrive in the pool's registers, in order
 // (a stack caller's are loaded there by the entry shim); the rest stay in the
 // caller's slots. The register moves go first, since a later parameter's home
 // may be a register still holding an earlier one.
@@ -4459,10 +4475,10 @@ function ssa_load_params(f: ssa.SFunc, reg_of: i32[], mask: string, s: asmcore.E
 
 // ssa_reg_params is how many of f's parameters arrive in registers.
 function ssa_reg_params(f: ssa.SFunc): i32 {
-  if (f.nparams < ssa_nregs()) {
+  if (f.nparams < ssa_nargs()) {
     return f.nparams;
   }
-  return ssa_nregs();
+  return ssa_nargs();
 }
 
 // ssa_entry_shim is a function's three entries. `__fn_<name>`, the stack-ABI
@@ -4505,10 +4521,10 @@ function ssa_reg_helper(sym: string, argc: i32): boolean {
 
 // ssa_reg_call reports whether a direct call passes its arguments in
 // registers: the callee has a register entry in this unit and takes between
-// one and ssa_nregs() arguments.
+// one and ssa_nargs() arguments.
 function ssa_reg_call(ins: ssa.SInst, s: asmcore.EmitState): boolean {
   let argc: i32 = ins.args.len();
-  if (ins.kind_tag != 11 || argc == 0 || argc > ssa_nregs() || ssa.rc_inlined(ins)) {
+  if (ins.kind_tag != 11 || argc == 0 || argc > ssa_nargs() || ssa.rc_inlined(ins)) {
     return false;
   }
   if (ircore.is_fern_helper(ins.str) || ircore.is_c_call(ins.str)) {
