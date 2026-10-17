@@ -46,3 +46,18 @@ and the integrated candidate
 All eighteen executables are byte-identical to the corresponding earlier
 outputs, and every allocation count and checksum agrees. This repeat records
 no elapsed timings.
+
+Integrating the existing ARM buffer-helper argument fix from #12590 (source
+`714d7553d`) gives identical stage 2 and stage 3 at 12,699,520 bytes, SHA-256
+`a0cd57950240bd9c171e7a7de7113972581c40e2d574e233834212b2da1d2013`.
+The scalar, donor, helper, provided-symbol inventory and complexity tests pass
+in 88.770 seconds. All eleven strict driver-size checks pass with complete
+coverage and the existing 5% tolerance; the tracked baseline stays unchanged.
+The fresh allocation-only repeat is in `upstream-arm-fix-allocation.json`.
+
+`arm64-buffer-argument-repro.json` records a small actual x86-encoder consumer:
+assembling `vpsrlw $3, %ymm1, %ymm2` must give bytes `c5 ed 71 d1 03`.
+The program compiled for ARM64 crashes before the argument fix and exits 42
+after it. Its x86 control exits 42 both ways and is byte-identical. The
+permanent test executes both targets; ARM64 uses QEMU here. This tests the
+misordered runtime-helper arguments without an HTTP workload.

@@ -1,0 +1,30 @@
+[
+  {
+    "compiler": "before",
+    "target": "x86-64-linux",
+    "exit": 42,
+    "stderr": "",
+    "binary_sha256": "6e5b2b112125ab987b580aa1770acac1938640e6dc003c76eafcb824e8b30eb8"
+  },
+  {
+    "compiler": "before",
+    "target": "arm64-linux",
+    "exit": -11,
+    "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n",
+    "binary_sha256": "017f1d19e9c40f7cf5c1f26b54383bff0271ec5146697e4dbe35e37083b4b45b"
+  },
+  {
+    "compiler": "after",
+    "target": "x86-64-linux",
+    "exit": 42,
+    "stderr": "",
+    "binary_sha256": "6e5b2b112125ab987b580aa1770acac1938640e6dc003c76eafcb824e8b30eb8"
+  },
+  {
+    "compiler": "after",
+    "target": "arm64-linux",
+    "exit": 42,
+    "stderr": "",
+    "binary_sha256": "f0cb886e344502574ce7ddd34ae411865462980602439c2af260035316dbef7f"
+  }
+]
