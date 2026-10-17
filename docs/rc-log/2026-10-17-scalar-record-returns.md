@@ -81,3 +81,27 @@ A fresh allocation-only comparison against that measured main preserves all
 eighteen executable byte sequences from the earlier comparison. Allocation
 counts and checksums agree for every program and target; the raw repeat is
 `docs/benchmarks/scalar-record-returns-2026-10-17/current-main-allocation.json`.
+
+## Integration with main cf53f2397
+
+The integrated source `eebe7f11a` reaches identical stage 2 and stage 3 at
+12,672,208 bytes, SHA-256
+`c7d93477a830d5c5359bef48269cff32f54410416b689ea7b2dd3fd2d457fd9f`.
+A separate checkout of main `cf53f239737ee9b330c2ccfa19d1ff81d165622d`
+reaches identical stages at 12,643,888 bytes, SHA-256
+`117549816eb802ee53b5a6450f69296b08848708704b913fc3d9e69ca2e9aaa3`.
+The scalar-return change adds 28,320 bytes (0.22%). The tracked stage-2
+baseline is reduced from 12,699,472 to the measured 12,672,208 bytes; the
+other ten baselines and the 5% tolerance remain unchanged.
+
+The focused scalar, donor, ARM helper, provided-symbol inventory and complexity
+suite passes in 56.614 seconds. Discarded-call reclamation passes on all three
+targets in 2.294 seconds. All eleven strict driver-size checks pass with complete
+coverage. The raw logs and eighteen-row allocation-only comparison are archived
+under `main-cf53-*` in the benchmark directory.
+
+All targets preserve checksums. The generic scalar-return benchmark drops from
+1,000,000 allocations to zero and field multiplication from 30,000 to zero.
+Current main and the candidate both allocate 115,712 times for X25519; the
+older 107,520 count above belongs to the earlier standard-library source.
+This repeat records no elapsed benchmark timings.
