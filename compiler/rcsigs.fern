@@ -152,6 +152,8 @@ pub function table(): Table {
   // The copy-on-write moves: the receiver's unit is consumed and the result
   // carries one, in place when unique and on a fresh box otherwise.
   rows = add(rows, move_helpers(), sig(0, effect_move(), result_fresh()));
+  rows = add(rows, ["__fern_bytes_append_range"], sig(3, effect_move(), result_fresh()));
+  rows = add(rows, ["__fern_bytes_write_range"], sig(4, effect_move(), result_fresh()));
   // The reuse allocator consumes a token — a dying box the lowering has
   // already stopped counting, or null — and hands back a fresh box.
   rows = add(rows, ["__fern_alloc_reuse"], sig(0, effect_move_if_held(), result_fresh()));

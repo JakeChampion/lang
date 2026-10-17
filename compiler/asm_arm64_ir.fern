@@ -6585,6 +6585,9 @@ function emit_named_bodies(cache: irtables.LowerResult[], physical: physicalbody
 // rt_src_bytes_range). Each fills one exact-size block, so the heap is its
 // only dep and mark_array_helper declares it.
 function emit_array_helpers(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.has_need("byte_append") || s.has_need("byte_write")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_byte_copy(s.has_need("byte_append"), s.has_need("byte_write")), s);
+  }
   if (s.has_need("arr_str_join")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_join(), s);
   }

@@ -18,6 +18,7 @@
 // ("const_i32", "add", "call_direct", ...).
 //
 import "./util";
+import "./rtbytecopy";
 
 // SCOPE: the `Op` value and its constructor helpers. The typed lowering
 // (ssarc.fern) builds the `Op[]`; the backends consume it from their asm_*_ir
@@ -8925,6 +8926,9 @@ pub function render_op(o: Op): string {
 // function whose every construction is reused has no allocating tag left, and
 // the link failed on an undefined __fn___fern_alloc_reuse / __fn___fern_arr_dec.
 pub function call_needs_heap(name: string): boolean {
+  if (rtbytecopy.is_helper(name)) {
+    return true;
+  }
   if (name == "__fern_alloc_reuse" || name == "__fern_arr_dec") {
     return true;
   }

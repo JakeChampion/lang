@@ -1,0 +1,1028 @@
+[
+  {
+    "target": "x86-64-linux",
+    "source": "bench/array_append.fern",
+    "plain": 3252,
+    "debug": 3252,
+    "identical": true,
+    "plain_sha256": "9fd0381ccaa0e38ccd381c77387b118a3a5f08f9c6ab9114eeaa48ac1252a6c3",
+    "debug_sha256": "9fd0381ccaa0e38ccd381c77387b118a3a5f08f9c6ab9114eeaa48ac1252a6c3"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/array_index.fern",
+    "plain": 3204,
+    "debug": 3204,
+    "identical": true,
+    "plain_sha256": "64542d155de893b8f2cc5a1204b3e82bdc2a5786f342544f170b1c936e90914c",
+    "debug_sha256": "64542d155de893b8f2cc5a1204b3e82bdc2a5786f342544f170b1c936e90914c"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/array_scale_f64.fern",
+    "plain": 3676,
+    "debug": 3676,
+    "identical": true,
+    "plain_sha256": "ff4444ce520b76d18d503cc6f425580faeed206dd3a0238d14f61402df698005",
+    "debug_sha256": "ff4444ce520b76d18d503cc6f425580faeed206dd3a0238d14f61402df698005"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/array_with.fern",
+    "plain": 3724,
+    "debug": 3724,
+    "identical": true,
+    "plain_sha256": "5e5af1ea9c92be16eb3b2f34a8b60c36d70dfa23c52471ea1c94464f92eddc54",
+    "debug_sha256": "5e5af1ea9c92be16eb3b2f34a8b60c36d70dfa23c52471ea1c94464f92eddc54"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/ascii_scan.fern",
+    "plain": 4324,
+    "debug": 4324,
+    "identical": true,
+    "plain_sha256": "9c8f319e83725707b08f29a4ac476988c4fb9888386debaf221dfa17e2ebd6f6",
+    "debug_sha256": "9c8f319e83725707b08f29a4ac476988c4fb9888386debaf221dfa17e2ebd6f6"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/call_overhead.fern",
+    "plain": 340,
+    "debug": 340,
+    "identical": true,
+    "plain_sha256": "e6443ad70b4ff20720a09b511c8468dc8ecef30e9b40710ab0a945399ab3d97f",
+    "debug_sha256": "e6443ad70b4ff20720a09b511c8468dc8ecef30e9b40710ab0a945399ab3d97f"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/closure_call.fern",
+    "plain": 2900,
+    "debug": 2900,
+    "identical": true,
+    "plain_sha256": "d1225395d58360c5861e3b2a056b8669c39b385693debb059661b3625c0d1c2e",
+    "debug_sha256": "d1225395d58360c5861e3b2a056b8669c39b385693debb059661b3625c0d1c2e"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/enum_match.fern",
+    "plain": 3388,
+    "debug": 3388,
+    "identical": true,
+    "plain_sha256": "8939a6aa94c4abfe134c08ee7eb341bb240121dd480be5ab3359c88362ee9caf",
+    "debug_sha256": "8939a6aa94c4abfe134c08ee7eb341bb240121dd480be5ab3359c88362ee9caf"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/http_hello.fern",
+    "plain": 58124,
+    "debug": 58124,
+    "identical": true,
+    "plain_sha256": "f147b30e876c2e81bdd3669ba66876cf5f5e63b631053a3478f430920c24d584",
+    "debug_sha256": "f147b30e876c2e81bdd3669ba66876cf5f5e63b631053a3478f430920c24d584"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/int_loop.fern",
+    "plain": 180,
+    "debug": 180,
+    "identical": true,
+    "plain_sha256": "323d4be77669164016f093f869185b81629556538bc7a26c45f9624bb4a4d3fa",
+    "debug_sha256": "323d4be77669164016f093f869185b81629556538bc7a26c45f9624bb4a4d3fa"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/map_int.fern",
+    "plain": 20364,
+    "debug": 20364,
+    "identical": true,
+    "plain_sha256": "6d8c0960aa3eb22c0c0f5d244fdb97b0fe4ae7d9b154a5c3c339faa5eceaea4e",
+    "debug_sha256": "6d8c0960aa3eb22c0c0f5d244fdb97b0fe4ae7d9b154a5c3c339faa5eceaea4e"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/map_probe_chain.fern",
+    "plain": 20412,
+    "debug": 20412,
+    "identical": true,
+    "plain_sha256": "d9933592437ba658654d805de9a6530ac40c7299c50cb938a9d40f842b403a13",
+    "debug_sha256": "d9933592437ba658654d805de9a6530ac40c7299c50cb938a9d40f842b403a13"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/map_string.fern",
+    "plain": 22156,
+    "debug": 22156,
+    "identical": true,
+    "plain_sha256": "bcd5a1d393a2dce864db2a452b3c9fc50390012cf587831c76d725cc13c74e81",
+    "debug_sha256": "bcd5a1d393a2dce864db2a452b3c9fc50390012cf587831c76d725cc13c74e81"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/ordmap_insert.fern",
+    "plain": 10716,
+    "debug": 10716,
+    "identical": true,
+    "plain_sha256": "541bc4c534b24328bfe7dafebf0309fdac242c7b86b31a401f341ca7228f469d",
+    "debug_sha256": "541bc4c534b24328bfe7dafebf0309fdac242c7b86b31a401f341ca7228f469d"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/perceus_cfold.fern",
+    "plain": 7940,
+    "debug": 7940,
+    "identical": true,
+    "plain_sha256": "90260ae3bbd334078b73ae939433814a34152f230ea27e1be3aa787bc0de7da3",
+    "debug_sha256": "90260ae3bbd334078b73ae939433814a34152f230ea27e1be3aa787bc0de7da3"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/perceus_deriv.fern",
+    "plain": 8964,
+    "debug": 8964,
+    "identical": true,
+    "plain_sha256": "ad147dabb6f99310c8b22009c2c6b5052b03b06375ac51d06c31cfbe8fd44260",
+    "debug_sha256": "ad147dabb6f99310c8b22009c2c6b5052b03b06375ac51d06c31cfbe8fd44260"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/perceus_nqueens.fern",
+    "plain": 4884,
+    "debug": 4884,
+    "identical": true,
+    "plain_sha256": "11d4f56a5e1589aa8ab9a65322a84dfc24026f35b60e61afd1ae84fa1fbba78a",
+    "debug_sha256": "11d4f56a5e1589aa8ab9a65322a84dfc24026f35b60e61afd1ae84fa1fbba78a"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/perceus_rbtree.fern",
+    "plain": 9932,
+    "debug": 9932,
+    "identical": true,
+    "plain_sha256": "5fcd170c1fcd39ba20427c0dec710e97a6300e5e41f4bf5d34c63ed024e080cd",
+    "debug_sha256": "5fcd170c1fcd39ba20427c0dec710e97a6300e5e41f4bf5d34c63ed024e080cd"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/perceus_rbtree_ck.fern",
+    "plain": 10804,
+    "debug": 10804,
+    "identical": true,
+    "plain_sha256": "07ca4bdb3a4e7be2df70fe31b36d77cc250c5d6c9c495bc81c28c2cf75b0d64e",
+    "debug_sha256": "07ca4bdb3a4e7be2df70fe31b36d77cc250c5d6c9c495bc81c28c2cf75b0d64e"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/pmap_insert.fern",
+    "plain": 9164,
+    "debug": 9164,
+    "identical": true,
+    "plain_sha256": "ede8e8490811e434557cf75653e888c1fe343593a73f440e95b99726525e8608",
+    "debug_sha256": "ede8e8490811e434557cf75653e888c1fe343593a73f440e95b99726525e8608"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/pvec_with.fern",
+    "plain": 9508,
+    "debug": 9508,
+    "identical": true,
+    "plain_sha256": "60ac2c3274af5967bfc1fb13aad337b1c6872ffcb388dfe713f5dac85fa0a967",
+    "debug_sha256": "60ac2c3274af5967bfc1fb13aad337b1c6872ffcb388dfe713f5dac85fa0a967"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/record_update.fern",
+    "plain": 4748,
+    "debug": 4748,
+    "identical": true,
+    "plain_sha256": "d8047fee3b9dfc1111ef7949f5727512c772f58ae54fb303f0baf032104e4fc7",
+    "debug_sha256": "d8047fee3b9dfc1111ef7949f5727512c772f58ae54fb303f0baf032104e4fc7"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/sort_inplace.fern",
+    "plain": 4140,
+    "debug": 4140,
+    "identical": true,
+    "plain_sha256": "f142f41f6237360071cf2409965c4efb976582fa19cd3b93a853a9b2454ef33a",
+    "debug_sha256": "f142f41f6237360071cf2409965c4efb976582fa19cd3b93a853a9b2454ef33a"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/sort_ints.fern",
+    "plain": 5892,
+    "debug": 5892,
+    "identical": true,
+    "plain_sha256": "1e6fa5c5dce089944358588cb39f0afab7bdc172fcf23c7d1dbed8d35a8699fe",
+    "debug_sha256": "1e6fa5c5dce089944358588cb39f0afab7bdc172fcf23c7d1dbed8d35a8699fe"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/sort_strings.fern",
+    "plain": 8988,
+    "debug": 8988,
+    "identical": true,
+    "plain_sha256": "83b8dc2202532df0796b602574b47efdc008225501f0bd144d1f14f3cf03e940",
+    "debug_sha256": "83b8dc2202532df0796b602574b47efdc008225501f0bd144d1f14f3cf03e940"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/string_build.fern",
+    "plain": 4748,
+    "debug": 4748,
+    "identical": true,
+    "plain_sha256": "21ba8b81c45ff98a9904c7157f0e736beba2871edb749f326172e2f134c98981",
+    "debug_sha256": "21ba8b81c45ff98a9904c7157f0e736beba2871edb749f326172e2f134c98981"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/string_count_byte.fern",
+    "plain": 3820,
+    "debug": 3820,
+    "identical": true,
+    "plain_sha256": "85cfe2dc92f5c3038d49c5bc39272f888c4e6fda7d57272b7529c1047f477aae",
+    "debug_sha256": "85cfe2dc92f5c3038d49c5bc39272f888c4e6fda7d57272b7529c1047f477aae"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/string_find_byte.fern",
+    "plain": 5124,
+    "debug": 5124,
+    "identical": true,
+    "plain_sha256": "993395d97a1e950870126e28928206e77db5b5ca51ad90a559552ac064fe132a",
+    "debug_sha256": "993395d97a1e950870126e28928206e77db5b5ca51ad90a559552ac064fe132a"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/string_rfind_byte.fern",
+    "plain": 5396,
+    "debug": 5396,
+    "identical": true,
+    "plain_sha256": "341c4711683896ad68fa87328af4c117fb840b7f46f3738093f5af66418eef2f",
+    "debug_sha256": "341c4711683896ad68fa87328af4c117fb840b7f46f3738093f5af66418eef2f"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/string_scan.fern",
+    "plain": 5348,
+    "debug": 5348,
+    "identical": true,
+    "plain_sha256": "7ea5a7a06b4ba349705740fbedd784627dba4091ea12dab2bd39fd5c021f7d52",
+    "debug_sha256": "7ea5a7a06b4ba349705740fbedd784627dba4091ea12dab2bd39fd5c021f7d52"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/string_slice.fern",
+    "plain": 2636,
+    "debug": 2636,
+    "identical": true,
+    "plain_sha256": "65cceb311524426bb13fdd5d9184dce910ed4d0efc04f3d67e804c60c65f6187",
+    "debug_sha256": "65cceb311524426bb13fdd5d9184dce910ed4d0efc04f3d67e804c60c65f6187"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/struct_drop.fern",
+    "plain": 5788,
+    "debug": 5788,
+    "identical": true,
+    "plain_sha256": "70d3804dd93ccd4d5f7b5ea1494af2b9d486a3d0da8a2ed3422daac35bb7e0ee",
+    "debug_sha256": "70d3804dd93ccd4d5f7b5ea1494af2b9d486a3d0da8a2ed3422daac35bb7e0ee"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/tokenize.fern",
+    "plain": 3340,
+    "debug": 3340,
+    "identical": true,
+    "plain_sha256": "9d925489ef98cf8d1b1e4032ea8c3b77c1c858fe4f858183369189835e5bf29d",
+    "debug_sha256": "9d925489ef98cf8d1b1e4032ea8c3b77c1c858fe4f858183369189835e5bf29d"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/utf8_ingest_unchecked.fern",
+    "plain": 24732,
+    "debug": 24732,
+    "identical": true,
+    "plain_sha256": "bd046c2ebe1417d5828852e061c4f91ab0a153981350334176a34e88309439cd",
+    "debug_sha256": "bd046c2ebe1417d5828852e061c4f91ab0a153981350334176a34e88309439cd"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/utf8_ingest_validated.fern",
+    "plain": 25900,
+    "debug": 25900,
+    "identical": true,
+    "plain_sha256": "4db2c913d0d4e724c83d6e52d584ae2f688b30147fd91490559fb8da6950182e",
+    "debug_sha256": "4db2c913d0d4e724c83d6e52d584ae2f688b30147fd91490559fb8da6950182e"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/byte_copy_append.fern",
+    "plain": 3596,
+    "debug": 3596,
+    "identical": true,
+    "plain_sha256": "4bc48043a1a763d00c74f2fde155301f152c7524e7ba3a967e90b0812dc711f2",
+    "debug_sha256": "4bc48043a1a763d00c74f2fde155301f152c7524e7ba3a967e90b0812dc711f2"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "bench/byte_copy_with.fern",
+    "plain": 3452,
+    "debug": 3452,
+    "identical": true,
+    "plain_sha256": "a771e0ea21434028f2b44ce3ba9844b6fe242a46ddfaec017da2daae915cb1ab",
+    "debug_sha256": "a771e0ea21434028f2b44ce3ba9844b6fe242a46ddfaec017da2daae915cb1ab"
+  },
+  {
+    "target": "x86-64-linux",
+    "source": "compiler/checker.fern",
+    "plain": 2487540,
+    "debug": 2487540,
+    "identical": true,
+    "plain_sha256": "db4ba47803c45a1ac9bf8e5b09322d74575ef5d2de828a34106298690fa1d255",
+    "debug_sha256": "db4ba47803c45a1ac9bf8e5b09322d74575ef5d2de828a34106298690fa1d255"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/array_append.fern",
+    "plain": 4252,
+    "debug": 4252,
+    "identical": true,
+    "plain_sha256": "99cbb7f1232fe294a86a3a8418f40b6e9efed26f94cfe212e56f4ebdd53fa743",
+    "debug_sha256": "99cbb7f1232fe294a86a3a8418f40b6e9efed26f94cfe212e56f4ebdd53fa743"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/array_index.fern",
+    "plain": 4244,
+    "debug": 4244,
+    "identical": true,
+    "plain_sha256": "2e38a760714e42983b0a94638339ad8e91ec288c91c5bd270c63e6fbf450b73d",
+    "debug_sha256": "2e38a760714e42983b0a94638339ad8e91ec288c91c5bd270c63e6fbf450b73d"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/array_scale_f64.fern",
+    "plain": 4628,
+    "debug": 4628,
+    "identical": true,
+    "plain_sha256": "57dfa3b638a309899233a3e49ce13449a8e81ed4e19ccd1b6672afc39ccc0c81",
+    "debug_sha256": "57dfa3b638a309899233a3e49ce13449a8e81ed4e19ccd1b6672afc39ccc0c81"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/array_with.fern",
+    "plain": 4844,
+    "debug": 4844,
+    "identical": true,
+    "plain_sha256": "0ba6bc9d2df7c6b446cba63ef1cd90be5286e70217e1aa9bc83edd29c3a5c256",
+    "debug_sha256": "0ba6bc9d2df7c6b446cba63ef1cd90be5286e70217e1aa9bc83edd29c3a5c256"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/ascii_scan.fern",
+    "plain": 5636,
+    "debug": 5636,
+    "identical": true,
+    "plain_sha256": "d2a5b8c085e986db93029948c07659aca84f14dddf9f213933eb8723bcca7de4",
+    "debug_sha256": "d2a5b8c085e986db93029948c07659aca84f14dddf9f213933eb8723bcca7de4"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/call_overhead.fern",
+    "plain": 596,
+    "debug": 596,
+    "identical": true,
+    "plain_sha256": "b4579c79c931a702a1e01b10e7cab613c6dd6c0b2be32954815877b770d52fd8",
+    "debug_sha256": "b4579c79c931a702a1e01b10e7cab613c6dd6c0b2be32954815877b770d52fd8"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/closure_call.fern",
+    "plain": 3852,
+    "debug": 3852,
+    "identical": true,
+    "plain_sha256": "4c11246e5d45378729f1808692d50f825a4fa4882cebfb7b0418c91f44320f0a",
+    "debug_sha256": "4c11246e5d45378729f1808692d50f825a4fa4882cebfb7b0418c91f44320f0a"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/enum_match.fern",
+    "plain": 4484,
+    "debug": 4484,
+    "identical": true,
+    "plain_sha256": "a18526e016648db538ad3ac1b79a1bf8872664821f21ddad1c1ca14d0cb33fee",
+    "debug_sha256": "a18526e016648db538ad3ac1b79a1bf8872664821f21ddad1c1ca14d0cb33fee"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/http_hello.fern",
+    "plain": 67172,
+    "debug": 67172,
+    "identical": true,
+    "plain_sha256": "81c9788e1802b7ec472b981d8c4fbf7ff8cb1e2c2cbdd88d6b11e24089ea4813",
+    "debug_sha256": "81c9788e1802b7ec472b981d8c4fbf7ff8cb1e2c2cbdd88d6b11e24089ea4813"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/int_loop.fern",
+    "plain": 372,
+    "debug": 372,
+    "identical": true,
+    "plain_sha256": "7d5c0690598bc75e9ed61c990bbdf7863a1c4db8faf21282cf98c0180868ca7b",
+    "debug_sha256": "7d5c0690598bc75e9ed61c990bbdf7863a1c4db8faf21282cf98c0180868ca7b"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/map_int.fern",
+    "plain": 24636,
+    "debug": 24636,
+    "identical": true,
+    "plain_sha256": "58cf35a7739787a0e03a3d49ddd4427711b29109e1f2b0b7bd99a96e4acdc834",
+    "debug_sha256": "58cf35a7739787a0e03a3d49ddd4427711b29109e1f2b0b7bd99a96e4acdc834"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/map_probe_chain.fern",
+    "plain": 24692,
+    "debug": 24692,
+    "identical": true,
+    "plain_sha256": "f3ebd2d49b47f020d38d52ad5a40d21911bbecaa20be12b51e6152a06dd55883",
+    "debug_sha256": "f3ebd2d49b47f020d38d52ad5a40d21911bbecaa20be12b51e6152a06dd55883"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/map_string.fern",
+    "plain": 26980,
+    "debug": 26980,
+    "identical": true,
+    "plain_sha256": "abd9d8bb48e14176f4dcfcd39cfc16f525e0fcf8ded6b0af953adce32b91f218",
+    "debug_sha256": "abd9d8bb48e14176f4dcfcd39cfc16f525e0fcf8ded6b0af953adce32b91f218"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/ordmap_insert.fern",
+    "plain": 12412,
+    "debug": 12412,
+    "identical": true,
+    "plain_sha256": "dffdff3213c416bde5c1715509c1ba63a69321257012892273862d8c0794d6d2",
+    "debug_sha256": "dffdff3213c416bde5c1715509c1ba63a69321257012892273862d8c0794d6d2"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/perceus_cfold.fern",
+    "plain": 9836,
+    "debug": 9836,
+    "identical": true,
+    "plain_sha256": "c1356cef6f419847ec1e39c328bd72eb625ae02e7253077fa9c9d19339ce5ab2",
+    "debug_sha256": "c1356cef6f419847ec1e39c328bd72eb625ae02e7253077fa9c9d19339ce5ab2"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/perceus_deriv.fern",
+    "plain": 10996,
+    "debug": 10996,
+    "identical": true,
+    "plain_sha256": "8673af3ade16aa48485e414eca062be399331110cb97c5f089374203fb0c4f3d",
+    "debug_sha256": "8673af3ade16aa48485e414eca062be399331110cb97c5f089374203fb0c4f3d"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/perceus_nqueens.fern",
+    "plain": 6196,
+    "debug": 6196,
+    "identical": true,
+    "plain_sha256": "16406b260c2b77b2ca0a23f37f4c4952eb5e6eb45c56c0a01b37b1d175d0915e",
+    "debug_sha256": "16406b260c2b77b2ca0a23f37f4c4952eb5e6eb45c56c0a01b37b1d175d0915e"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/perceus_rbtree.fern",
+    "plain": 11532,
+    "debug": 11532,
+    "identical": true,
+    "plain_sha256": "1140c4e3117bd1da8ccdb553a89e8dea80164fdef95a694f10c20ad1a8e65fb6",
+    "debug_sha256": "1140c4e3117bd1da8ccdb553a89e8dea80164fdef95a694f10c20ad1a8e65fb6"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/perceus_rbtree_ck.fern",
+    "plain": 12556,
+    "debug": 12556,
+    "identical": true,
+    "plain_sha256": "cb18d5da32bb986d7566269c0b850afe4ccf1714744a1186bf3b2ab5b41f1be2",
+    "debug_sha256": "cb18d5da32bb986d7566269c0b850afe4ccf1714744a1186bf3b2ab5b41f1be2"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/pmap_insert.fern",
+    "plain": 11356,
+    "debug": 11356,
+    "identical": true,
+    "plain_sha256": "e1bf884d73b96b2b8d281f3762e4f3cfe81d471eda986bab3186423d27b5a73c",
+    "debug_sha256": "e1bf884d73b96b2b8d281f3762e4f3cfe81d471eda986bab3186423d27b5a73c"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/pvec_with.fern",
+    "plain": 11796,
+    "debug": 11796,
+    "identical": true,
+    "plain_sha256": "cb86e923f4fe7f192ef1676ac03220acf22e5f3e55c702f07bded79d21fe2271",
+    "debug_sha256": "cb86e923f4fe7f192ef1676ac03220acf22e5f3e55c702f07bded79d21fe2271"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/record_update.fern",
+    "plain": 6060,
+    "debug": 6060,
+    "identical": true,
+    "plain_sha256": "6eb3e9955796e65eae00a16fc1c34706c6257fff56b0647a46c3c866e40a0eb0",
+    "debug_sha256": "6eb3e9955796e65eae00a16fc1c34706c6257fff56b0647a46c3c866e40a0eb0"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/sort_inplace.fern",
+    "plain": 5364,
+    "debug": 5364,
+    "identical": true,
+    "plain_sha256": "20c303aababc66c713779eb5451a82ae1d7b68c5175c760861c51c215030974a",
+    "debug_sha256": "20c303aababc66c713779eb5451a82ae1d7b68c5175c760861c51c215030974a"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/sort_ints.fern",
+    "plain": 7588,
+    "debug": 7588,
+    "identical": true,
+    "plain_sha256": "b808906d52f916fc0022ac66e4e6651b17a5cfc751aff428d9d559d49e54df4a",
+    "debug_sha256": "b808906d52f916fc0022ac66e4e6651b17a5cfc751aff428d9d559d49e54df4a"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/sort_strings.fern",
+    "plain": 11236,
+    "debug": 11236,
+    "identical": true,
+    "plain_sha256": "04956d7201bd74a113ec27f1ae06e6068691237056ecf042c256cfe3b059f305",
+    "debug_sha256": "04956d7201bd74a113ec27f1ae06e6068691237056ecf042c256cfe3b059f305"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/string_build.fern",
+    "plain": 6396,
+    "debug": 6396,
+    "identical": true,
+    "plain_sha256": "ef412bb8a0bef5a0ca3fd7f7a5d4bb3f1b4349368362ec8fdedc9e932009f2e1",
+    "debug_sha256": "ef412bb8a0bef5a0ca3fd7f7a5d4bb3f1b4349368362ec8fdedc9e932009f2e1"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/string_count_byte.fern",
+    "plain": 5012,
+    "debug": 5012,
+    "identical": true,
+    "plain_sha256": "8705f89f8572bbeb0ef33e8e49e66708a097ad0a92c6124e04599125360998ec",
+    "debug_sha256": "8705f89f8572bbeb0ef33e8e49e66708a097ad0a92c6124e04599125360998ec"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/string_find_byte.fern",
+    "plain": 6644,
+    "debug": 6644,
+    "identical": true,
+    "plain_sha256": "3941617027af43b3504e54bcfd5b5ecc49bd18a55d071eee01c5c0bb4309ab78",
+    "debug_sha256": "3941617027af43b3504e54bcfd5b5ecc49bd18a55d071eee01c5c0bb4309ab78"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/string_rfind_byte.fern",
+    "plain": 6996,
+    "debug": 6996,
+    "identical": true,
+    "plain_sha256": "9723a60a711311a7d9a64877a961548c0b3db294c6fd55ad3ac0d7ba6c671d13",
+    "debug_sha256": "9723a60a711311a7d9a64877a961548c0b3db294c6fd55ad3ac0d7ba6c671d13"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/string_scan.fern",
+    "plain": 7028,
+    "debug": 7028,
+    "identical": true,
+    "plain_sha256": "0be54134426d9bb2aecb465bbba8a054d9a824f3df27afbd6f718578c8cdebbb",
+    "debug_sha256": "0be54134426d9bb2aecb465bbba8a054d9a824f3df27afbd6f718578c8cdebbb"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/string_slice.fern",
+    "plain": 3572,
+    "debug": 3572,
+    "identical": true,
+    "plain_sha256": "4e4b007700fa71f957c962db71459e4fbac01776c60b7ffb69da0e4ce388f57a",
+    "debug_sha256": "4e4b007700fa71f957c962db71459e4fbac01776c60b7ffb69da0e4ce388f57a"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/struct_drop.fern",
+    "plain": 7444,
+    "debug": 7444,
+    "identical": true,
+    "plain_sha256": "74b81a535912b42c2bd3519af6c57b8d202772c2a7f391cac0dd9743f4b3d3a9",
+    "debug_sha256": "74b81a535912b42c2bd3519af6c57b8d202772c2a7f391cac0dd9743f4b3d3a9"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/tokenize.fern",
+    "plain": 4524,
+    "debug": 4524,
+    "identical": true,
+    "plain_sha256": "c42ceaf1a4c621a4a59fc4c91419dfb00f4873197d08544fd3885cb3ead77979",
+    "debug_sha256": "c42ceaf1a4c621a4a59fc4c91419dfb00f4873197d08544fd3885cb3ead77979"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/utf8_ingest_unchecked.fern",
+    "plain": 29708,
+    "debug": 29708,
+    "identical": true,
+    "plain_sha256": "0b7217339fe27360a5b5216ce5f18ece8b04a4ec6636e0857cd5fdb2454a16c8",
+    "debug_sha256": "0b7217339fe27360a5b5216ce5f18ece8b04a4ec6636e0857cd5fdb2454a16c8"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/utf8_ingest_validated.fern",
+    "plain": 30780,
+    "debug": 30780,
+    "identical": true,
+    "plain_sha256": "a9d1ad67961aca9dadafe9c6191dc210d70ff062e13fef3f46cdd9f651e8afd5",
+    "debug_sha256": "a9d1ad67961aca9dadafe9c6191dc210d70ff062e13fef3f46cdd9f651e8afd5"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/byte_copy_append.fern",
+    "plain": 4996,
+    "debug": 4996,
+    "identical": true,
+    "plain_sha256": "711734fc611cf7548b3f885c83aeb67318654882f45b85fed325b6a73844742b",
+    "debug_sha256": "711734fc611cf7548b3f885c83aeb67318654882f45b85fed325b6a73844742b"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "bench/byte_copy_with.fern",
+    "plain": 4804,
+    "debug": 4804,
+    "identical": true,
+    "plain_sha256": "ed4d77b62186499a951bc49c573e9c72d4f38aa2925efdd7a653d7081f054155",
+    "debug_sha256": "ed4d77b62186499a951bc49c573e9c72d4f38aa2925efdd7a653d7081f054155"
+  },
+  {
+    "target": "arm64-linux",
+    "source": "compiler/checker.fern",
+    "plain": 2750700,
+    "debug": 2750700,
+    "identical": true,
+    "plain_sha256": "ae8f53bd6530292f8efa6cef9e00976a7ae74284d9f15b2315436a6c1ce9e349",
+    "debug_sha256": "ae8f53bd6530292f8efa6cef9e00976a7ae74284d9f15b2315436a6c1ce9e349"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/array_append.fern",
+    "plain": 3972,
+    "debug": 3972,
+    "identical": true,
+    "plain_sha256": "339f2f7e9eca1e8633429e9a63b8e9b5f0f59dda9bc6ac0023e9aacd389dc207",
+    "debug_sha256": "339f2f7e9eca1e8633429e9a63b8e9b5f0f59dda9bc6ac0023e9aacd389dc207"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/array_index.fern",
+    "plain": 3964,
+    "debug": 3964,
+    "identical": true,
+    "plain_sha256": "89e2f07af1d5a29c409f3569b9488283ab16af720a00439cb30887af54309302",
+    "debug_sha256": "89e2f07af1d5a29c409f3569b9488283ab16af720a00439cb30887af54309302"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/array_scale_f64.fern",
+    "plain": 4348,
+    "debug": 4348,
+    "identical": true,
+    "plain_sha256": "b90e6db726f272ac19a263858f6e32750a53bae204de611db8bacb7d5e376f03",
+    "debug_sha256": "b90e6db726f272ac19a263858f6e32750a53bae204de611db8bacb7d5e376f03"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/array_with.fern",
+    "plain": 4568,
+    "debug": 4568,
+    "identical": true,
+    "plain_sha256": "bb59fb6345a82e0814165ee20f7283c019a5edd97775ab144e97b1bc524bf770",
+    "debug_sha256": "bb59fb6345a82e0814165ee20f7283c019a5edd97775ab144e97b1bc524bf770"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/ascii_scan.fern",
+    "plain": 5352,
+    "debug": 5352,
+    "identical": true,
+    "plain_sha256": "29cb1ddf7d5bdb7700b0b56743d8ba47a85c9aa393575fe74134553fc764284d",
+    "debug_sha256": "29cb1ddf7d5bdb7700b0b56743d8ba47a85c9aa393575fe74134553fc764284d"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/call_overhead.fern",
+    "plain": 244,
+    "debug": 244,
+    "identical": true,
+    "plain_sha256": "57686c6e576ba65768730b091b19cd45f030622e228fc3b1538f58faeb6257da",
+    "debug_sha256": "57686c6e576ba65768730b091b19cd45f030622e228fc3b1538f58faeb6257da"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/closure_call.fern",
+    "plain": 3468,
+    "debug": 3468,
+    "identical": true,
+    "plain_sha256": "f73bbb843228fa142abb5a47b88bee73c6efe71dfcf46cca1de4cac5d9216fdc",
+    "debug_sha256": "f73bbb843228fa142abb5a47b88bee73c6efe71dfcf46cca1de4cac5d9216fdc"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/enum_match.fern",
+    "plain": 4120,
+    "debug": 4120,
+    "identical": true,
+    "plain_sha256": "1b88ee82ecc8cd9bc6e18af64d50f62bb26ed381ec5c7778f249a937a6b47093",
+    "debug_sha256": "1b88ee82ecc8cd9bc6e18af64d50f62bb26ed381ec5c7778f249a937a6b47093"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/http_hello.fern",
+    "plain": 62724,
+    "debug": 62724,
+    "identical": true,
+    "plain_sha256": "330c3ad721c1db5814b1430ad2d1f8b9d7ace336273eb25ec82ac0205732e046",
+    "debug_sha256": "330c3ad721c1db5814b1430ad2d1f8b9d7ace336273eb25ec82ac0205732e046"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/int_loop.fern",
+    "plain": 92,
+    "debug": 92,
+    "identical": true,
+    "plain_sha256": "ff18bbca844185cfe1bdfa4b7d8df484f586a9b1bd07cf9fb0a139dbb7fcfca2",
+    "debug_sha256": "ff18bbca844185cfe1bdfa4b7d8df484f586a9b1bd07cf9fb0a139dbb7fcfca2"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/map_int.fern",
+    "plain": 20740,
+    "debug": 20740,
+    "identical": true,
+    "plain_sha256": "f2fdf165ccfe97e474c2678f8d84186be6942a3360274eea93d8b666e42ec9e5",
+    "debug_sha256": "f2fdf165ccfe97e474c2678f8d84186be6942a3360274eea93d8b666e42ec9e5"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/map_probe_chain.fern",
+    "plain": 20796,
+    "debug": 20796,
+    "identical": true,
+    "plain_sha256": "888847e4aaf8b07ebd5be05ba7c58f9ea21c4dd50d71f47f6d4bc948888bb4cb",
+    "debug_sha256": "888847e4aaf8b07ebd5be05ba7c58f9ea21c4dd50d71f47f6d4bc948888bb4cb"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/map_string.fern",
+    "plain": 22904,
+    "debug": 22904,
+    "identical": true,
+    "plain_sha256": "5ae1f31fe070009336ff1bdbdabdaaed912fb433eea18d639f4af0f82a7ebdad",
+    "debug_sha256": "5ae1f31fe070009336ff1bdbdabdaaed912fb433eea18d639f4af0f82a7ebdad"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/ordmap_insert.fern",
+    "plain": 11812,
+    "debug": 11812,
+    "identical": true,
+    "plain_sha256": "7c964ef2014ab2567b2f9a9e53661b6fc3bbf90366d9f8de5edd4052fa1b1380",
+    "debug_sha256": "7c964ef2014ab2567b2f9a9e53661b6fc3bbf90366d9f8de5edd4052fa1b1380"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/perceus_cfold.fern",
+    "plain": 9052,
+    "debug": 9052,
+    "identical": true,
+    "plain_sha256": "50d74b9242763e17938766902b4689572e4985c22426616813d1376644c295a3",
+    "debug_sha256": "50d74b9242763e17938766902b4689572e4985c22426616813d1376644c295a3"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/perceus_deriv.fern",
+    "plain": 10216,
+    "debug": 10216,
+    "identical": true,
+    "plain_sha256": "fcc9f9167f6bba29956755b2c4fa5b73c9e29b51714289f8ba16956f69e63260",
+    "debug_sha256": "fcc9f9167f6bba29956755b2c4fa5b73c9e29b51714289f8ba16956f69e63260"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/perceus_nqueens.fern",
+    "plain": 5544,
+    "debug": 5544,
+    "identical": true,
+    "plain_sha256": "34bbabf036ca55d53d2aedc730111aa4b617ebba5f43080d1fed098da1f3d342",
+    "debug_sha256": "34bbabf036ca55d53d2aedc730111aa4b617ebba5f43080d1fed098da1f3d342"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/perceus_rbtree.fern",
+    "plain": 10920,
+    "debug": 10920,
+    "identical": true,
+    "plain_sha256": "e7d98d54970bee161a4bbadea702e280433c1fa90bf238ece5599efc52463d56",
+    "debug_sha256": "e7d98d54970bee161a4bbadea702e280433c1fa90bf238ece5599efc52463d56"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/perceus_rbtree_ck.fern",
+    "plain": 11812,
+    "debug": 11812,
+    "identical": true,
+    "plain_sha256": "34ca21d47ac68df78e681da8ae15c8c3646854d25a0bd319d60b5dcc71498f2d",
+    "debug_sha256": "34ca21d47ac68df78e681da8ae15c8c3646854d25a0bd319d60b5dcc71498f2d"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/pmap_insert.fern",
+    "plain": 10504,
+    "debug": 10504,
+    "identical": true,
+    "plain_sha256": "a51e0f0bd5028c88ca993ef485ea25f410f3642d35356226ab255e217d8cd696",
+    "debug_sha256": "a51e0f0bd5028c88ca993ef485ea25f410f3642d35356226ab255e217d8cd696"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/pvec_with.fern",
+    "plain": 10896,
+    "debug": 10896,
+    "identical": true,
+    "plain_sha256": "29edf3228c6f100ac5dfaad8205b400d2ff2148cab49642ead74757203592d81",
+    "debug_sha256": "29edf3228c6f100ac5dfaad8205b400d2ff2148cab49642ead74757203592d81"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/record_update.fern",
+    "plain": 5604,
+    "debug": 5604,
+    "identical": true,
+    "plain_sha256": "aae76f55da0dd8b621379c05487cc18f3899fc7132e8301cf67cd43900428aba",
+    "debug_sha256": "aae76f55da0dd8b621379c05487cc18f3899fc7132e8301cf67cd43900428aba"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/sort_inplace.fern",
+    "plain": 4992,
+    "debug": 4992,
+    "identical": true,
+    "plain_sha256": "fac8ab491bc5fd88a791d74538338ac372722979c204273133f51f9ce12443b7",
+    "debug_sha256": "fac8ab491bc5fd88a791d74538338ac372722979c204273133f51f9ce12443b7"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/sort_ints.fern",
+    "plain": 7208,
+    "debug": 7208,
+    "identical": true,
+    "plain_sha256": "3bd84e826c6441f782d5a7da068646b9eda83be0a49dcefacfb3c61403618f2d",
+    "debug_sha256": "3bd84e826c6441f782d5a7da068646b9eda83be0a49dcefacfb3c61403618f2d"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/sort_strings.fern",
+    "plain": 10648,
+    "debug": 10648,
+    "identical": true,
+    "plain_sha256": "e238d82e6418943574b649b787e01383e2beeb6308fdf312f2f858dc79d86b84",
+    "debug_sha256": "e238d82e6418943574b649b787e01383e2beeb6308fdf312f2f858dc79d86b84"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/string_build.fern",
+    "plain": 5972,
+    "debug": 5972,
+    "identical": true,
+    "plain_sha256": "0974ea2fdbccb50bc9dab24a7be19640982c879813cc3569af586df9a8700a98",
+    "debug_sha256": "0974ea2fdbccb50bc9dab24a7be19640982c879813cc3569af586df9a8700a98"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/string_count_byte.fern",
+    "plain": 4684,
+    "debug": 4684,
+    "identical": true,
+    "plain_sha256": "4db0933ce0939ea60c08f2171d601a0ee8d1ccdf5c70d71420b2f4ad08424352",
+    "debug_sha256": "4db0933ce0939ea60c08f2171d601a0ee8d1ccdf5c70d71420b2f4ad08424352"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/string_find_byte.fern",
+    "plain": 6260,
+    "debug": 6260,
+    "identical": true,
+    "plain_sha256": "82b83e25222b4731d5d1c0c316920ca4c7ce5d038f5bfa7f997de660a99322e9",
+    "debug_sha256": "82b83e25222b4731d5d1c0c316920ca4c7ce5d038f5bfa7f997de660a99322e9"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/string_rfind_byte.fern",
+    "plain": 6580,
+    "debug": 6580,
+    "identical": true,
+    "plain_sha256": "256e0bbe79fa79e2a84925b98c71ef72a56ff0bfe692849f05aa3a5da6ef25f0",
+    "debug_sha256": "256e0bbe79fa79e2a84925b98c71ef72a56ff0bfe692849f05aa3a5da6ef25f0"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/string_scan.fern",
+    "plain": 6564,
+    "debug": 6564,
+    "identical": true,
+    "plain_sha256": "36821c39737e9ccc73fa244315ecf802f8146a0eb01f9e926eaecf3cc9634e10",
+    "debug_sha256": "36821c39737e9ccc73fa244315ecf802f8146a0eb01f9e926eaecf3cc9634e10"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/string_slice.fern",
+    "plain": 3292,
+    "debug": 3292,
+    "identical": true,
+    "plain_sha256": "2dd47fcc046119c7fd1c4fc400c227a7565953e5c1ae62f57afb79f04ef064b2",
+    "debug_sha256": "2dd47fcc046119c7fd1c4fc400c227a7565953e5c1ae62f57afb79f04ef064b2"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/struct_drop.fern",
+    "plain": 6848,
+    "debug": 6848,
+    "identical": true,
+    "plain_sha256": "0aae2ee5b02bda60f406bb4ab4d4e8e9b2939b31b72f172f5d6baaf0311cd07e",
+    "debug_sha256": "0aae2ee5b02bda60f406bb4ab4d4e8e9b2939b31b72f172f5d6baaf0311cd07e"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/tokenize.fern",
+    "plain": 4244,
+    "debug": 4244,
+    "identical": true,
+    "plain_sha256": "e6811fa767afe42eb2367c754b5d1bdc6489cfd9ad814899553b1e87322e5416",
+    "debug_sha256": "e6811fa767afe42eb2367c754b5d1bdc6489cfd9ad814899553b1e87322e5416"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/utf8_ingest_unchecked.fern",
+    "plain": 27608,
+    "debug": 27608,
+    "identical": true,
+    "plain_sha256": "c20956f9ecfda97f90edb0b059920d024fc154f9808924c9e936496c726e4450",
+    "debug_sha256": "c20956f9ecfda97f90edb0b059920d024fc154f9808924c9e936496c726e4450"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/utf8_ingest_validated.fern",
+    "plain": 28688,
+    "debug": 28688,
+    "identical": true,
+    "plain_sha256": "537c66ad8b432ec59e1d5a856fd39886fcbe0d4172586eda39f74b5eb85c33ab",
+    "debug_sha256": "537c66ad8b432ec59e1d5a856fd39886fcbe0d4172586eda39f74b5eb85c33ab"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/byte_copy_append.fern",
+    "plain": 4488,
+    "debug": 4488,
+    "identical": true,
+    "plain_sha256": "0d083e1488ae6afc7928d439b3838d8c2f38b372c1916bfb28ffbc944e602bca",
+    "debug_sha256": "0d083e1488ae6afc7928d439b3838d8c2f38b372c1916bfb28ffbc944e602bca"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "bench/byte_copy_with.fern",
+    "plain": 4308,
+    "debug": 4308,
+    "identical": true,
+    "plain_sha256": "3a9c73a5eac9fa8c93e136fc4655917236672a5b9388016c2099becbe4089a9b",
+    "debug_sha256": "3a9c73a5eac9fa8c93e136fc4655917236672a5b9388016c2099becbe4089a9b"
+  },
+  {
+    "target": "arm64-darwin",
+    "source": "compiler/checker.fern",
+    "plain": 2649984,
+    "debug": 2649984,
+    "identical": true,
+    "plain_sha256": "63753198c3e6d557da3695b4e3176877c40bdc938e9496fb21cc9a61cc5b6e60",
+    "debug_sha256": "63753198c3e6d557da3695b4e3176877c40bdc938e9496fb21cc9a61cc5b6e60"
+  }
+]

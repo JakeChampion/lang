@@ -4,6 +4,7 @@ import "./parser";
 import "./astwalk";
 import "./util";
 import "./rtprofile";
+import "./rtbytecopy";
 import "./ir";
 import "./irtables";
 import "./ssa";
@@ -6411,6 +6412,12 @@ pub function rt_src_string_from_bytes(): string {
 // `+` in it, so the heap is the only runtime it reaches; runtime_need_deps
 // declares the same edge for close_needs.
 pub function (s: EmitState) mark_array_helper(name: string): EmitState {
+  if (name == "__fern_bytes_append_range") {
+    return s.need("heap").need("byte_append");
+  }
+  if (name == "__fern_bytes_write_range") {
+    return s.need("heap").need("byte_write");
+  }
   if (name == "__fern_arr_str_join") {
     return s.need("heap").need("arr_str_join");
   }
@@ -6427,7 +6434,11 @@ pub function (s: EmitState) mark_array_helper(name: string): EmitState {
 }
 
 function array_helper_need(name: string): boolean {
-  return name == "arr_str_join" || name == "arr_concat" || name == "bytes_owned" || name == "bytes_range";
+  return name == "arr_str_join" || name == "arr_concat" || name == "bytes_owned" || name == "bytes_range" || name == "byte_append" || name == "byte_write";
+}
+
+pub function rt_src_byte_copy(append: boolean, write: boolean): string {
+  return rtbytecopy.native_helpers(true, append, write);
 }
 
 // str_lines's helper builds its string[] with .append() → arr_push /
@@ -11619,6 +11630,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     // call resolves against the entry module's single definition, exactly
     // like the heap helpers above.
     "__fn___fern_arr_slice", "__fn___fern_arr_str_join", "__fn___fern_arr_concat", "__fn___fern_bytes_owned", "__fn___fern_bytes_range",
+    "__fn___fern_bytes_append_range", "__fn___fern_bytes_write_range",
     "__fn___fern_str_concat", "__fn___fern_str_eq",
     "__fn___fern_string_from_bytes", "__fn___fern_str_bytes",
     "__fn___fern_str_lines", "__fn___fern_str_split", "__fn___fern_str_repeat",
