@@ -63,9 +63,9 @@ function main(): i32 {
     }
     let high: string = "";
     let k: i32 = 0;
-    while (k < 300) { high = high + "\xff\x80"; k = k + 1; }
+    while (k < 300) { high = high + string_from_bytes_unchecked([255 as u8, 128 as u8]); k = k + 1; }
     if (__str_hash(high, 4660) != ref(high, 4660)) { return 5; }
-    let bytes: string = "\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff";
+    let bytes: string = string_from_bytes_unchecked([200 as u8, 201 as u8, 202 as u8, 203 as u8, 204 as u8, 205 as u8, 206 as u8, 207 as u8, 208 as u8, 209 as u8, 210 as u8, 211 as u8, 212 as u8, 213 as u8, 214 as u8, 215 as u8, 216 as u8, 217 as u8, 218 as u8, 219 as u8, 220 as u8, 221 as u8, 222 as u8, 223 as u8, 224 as u8, 225 as u8, 226 as u8, 227 as u8, 228 as u8, 229 as u8, 230 as u8, 231 as u8, 232 as u8, 233 as u8, 234 as u8, 235 as u8, 236 as u8, 237 as u8, 238 as u8, 239 as u8, 240 as u8, 241 as u8, 242 as u8, 243 as u8, 244 as u8, 245 as u8, 246 as u8, 247 as u8, 248 as u8, 249 as u8, 250 as u8, 251 as u8, 252 as u8, 253 as u8, 254 as u8, 255 as u8]);
     if (__str_hash("", 0) != 1339080641) { return 10; }
     if (__str_hash("a", 0) != 694301555) { return 11; }
     if (__str_hash("abcdefgh", 0) != 939000468) { return 12; }

@@ -321,10 +321,12 @@ int_bit_accessors                                    0
 int_byte_swap                                        0
 int_checked_div                                      0
 int_checked_ops                                      0
+int_checked_shl                                      0
 int_div_rem_by_zero                                  0
 int_extend_signedness                                0
 int_min_arithmetic                                   0
 int_saturating_ops                                   0
+int_saturating_shl                                   0
 int_shift_count_masked                               0
 int_wrap                                             0
 io_error_other_closed_stdout                         0
@@ -362,6 +364,7 @@ map_column_snapshot_outlives_the_map                 0
 map_delete_and_clear_rebuild_the_map                 0
 map_f32_derived_key                                  0
 map_f32_column                                       0
+map_hand_written_eq_hash_keys                        0
 map_heap_value_probe                                 0
 map_i32                                              0
 map_iter_struct_value                                0
@@ -916,6 +919,7 @@ string_replace                                       0
 string_slice                                         0
 string_slice_option                                  0
 string_split                                         0
+string_unicode_escapes                               0
 struct_alias_thread_reclaim                          0
 struct_destructure_inside_an_imported_module         0
 struct_field_subpattern                              0

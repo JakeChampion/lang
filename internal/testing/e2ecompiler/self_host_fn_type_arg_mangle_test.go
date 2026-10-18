@@ -41,6 +41,15 @@ function main(): i32 {
     return 0;
 }
 `, "r=9"},
+	{"explicit-call-type-arg", `import "std/i32";
+function id[T](x: T): T { return x; }
+function main(): i32 {
+    let f: (i32) => i32 = id[(i32) => i32](((q: i32) => q * 3));
+    let t: (i32, string) = id[(i32, string)]((4, "a"));
+    print("r=" + (f(t.0)).to_string() + t.1);
+    return 0;
+}
+`, "r=12a"},
 }
 
 func TestSelfHostFnTypeArgMangle(t *testing.T) {

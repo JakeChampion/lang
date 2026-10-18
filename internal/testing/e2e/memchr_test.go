@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // __memchr is the first kernel of docs/ATLAS-PLATFORM-PLAN.md §3 — the
@@ -178,12 +179,25 @@ func TestX86_64Memchr(t *testing.T) {
 	})
 }
 
-// fernQuote renders a Go string as a Fern string literal, escaping the bytes
-// the lexer cannot take raw. Bytes above 0x7f are emitted as \xNN so the
-// corpus can carry non-UTF-8 haystacks — __memchr is a BYTE search and must
-// not care whether its input is valid text.
+// fernQuote renders a Go string as a Fern expression holding exactly its
+// bytes. Valid UTF-8 is a string literal, escaping the bytes the lexer cannot
+// take raw; anything else goes through string_from_bytes_unchecked, since a
+// literal is always valid UTF-8 — the corpus carries non-UTF-8 haystacks
+// because __memchr is a BYTE search and must not care whether its input is
+// valid text.
 func fernQuote(s string) string {
 	var b strings.Builder
+	if !utf8.ValidString(s) {
+		b.WriteString("string_from_bytes_unchecked([")
+		for i := 0; i < len(s); i++ {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "%d as u8", s[i])
+		}
+		b.WriteString("])")
+		return b.String()
+	}
 	b.WriteByte('"')
 	for i := 0; i < len(s); i++ {
 		ch := s[i]
@@ -193,7 +207,7 @@ func fernQuote(s string) string {
 			b.WriteByte(ch)
 		case ch == '\n':
 			b.WriteString("\\n")
-		case ch < 0x20 || ch >= 0x7f:
+		case ch < 0x20 || ch == 0x7f:
 			fmt.Fprintf(&b, "\\x%02x", ch)
 		default:
 			b.WriteByte(ch)

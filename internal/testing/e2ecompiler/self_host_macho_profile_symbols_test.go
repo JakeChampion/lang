@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -90,17 +89,26 @@ function main(): i32 { print(rtprofilemacho.source()); return 0; }`
 					at += int(binary.LittleEndian.Uint32(mapped[at+4:]))
 				}
 			}
-			var literal strings.Builder
-			for _, b := range mapped {
-				fmt.Fprintf(&literal, `\x%02x`, b)
-			}
 			want := "true"
 			if name == "invalid-symbol-offset" {
 				want = "false"
 			}
 			source := string(helpers) + fmt.Sprintf(`
+function image_nibble(c: u8): i32 {
+  if (c >= b'a') { return c as i32 - 87; }
+  return c as i32 - 48;
+}
+function image_bytes(hex: string): u8[] {
+  let out: u8[] = [];
+  let i = 0;
+  while (i + 1 < hex.len()) {
+    out = out.append((image_nibble(hex[i]) * 16 + image_nibble(hex[i + 1])) as u8);
+    i = i + 2;
+  }
+  return out;
+}
 function main(): i32 {
-  let image: string = "%s";
+  let image: string = string_from_bytes_unchecked(image_bytes("%x"));
   let im = __raw_data(image);
   let pc = im + %du64 as usize;
   let size = image.len() as usize;
@@ -119,7 +127,7 @@ function main(): i32 {
   if (__fern_profile_name(pc, im, 31) != 0) { return 5; }
   return 42;
 }
-`, &literal, address-base+1, want)
+`, mapped, address-base+1, want)
 			program := compileCPUProfile(t, cli, source, "x86-64-linux", "")
 			cmd := runX86_64Bin(cli.runner, program)
 			out, _ := cmd.CombinedOutput()

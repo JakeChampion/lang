@@ -27,6 +27,9 @@ func TestPartialEnumPayloadInference(t *testing.T) {
 		{"direct-widening", `function f(n: i32): Result[i64, string] { return Ok(n); }`},
 		{"branch-join", `function main(): i32 { let o = if (true) { Ok(3) } else { Err("x") }; match (o) { Ok(v) => { return v + 1; }, Err(e) => { return e.len(); } } }`},
 		{"generic-join", `function first[T](a: T, b: T): T { return a; } function main(): i32 { let o = first(Ok(3), Err("x")); match (o) { Ok(v) => { return v + 1; }, Err(e) => { return e.len(); } } }`},
+		{"unreachable-err-payload", `function main(): i32 { let o = Ok(3); return match (o) { Ok(v) => v, Err(e) => e - (e +| e) }; }`},
+		{"unreachable-some-payload", `function main(): i32 { let a: i32 = 4; let o = None; return a % (match (o) { Some(x) => x, None => a }); }`},
+		{"unreachable-variant-payload", `enum E[T] { A(T), B } function main(): i32 { let e = E.B; return 1 + (match (e) { E.A(x) => x, E.B => 2 }); }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := checkSource(t, tc.source); err != nil {
@@ -50,6 +53,9 @@ func TestPartialEnumInferenceRejectsKnownConflicts(t *testing.T) {
 		`function main(): i32 { let o = if (true) { Ok(3) } else { Ok("x") }; return 0; }`,
 		`function main(): i32 { let o = Ok("x"); match (o) { Ok(v) => { return v + 1; }, Err(e) => { return 0; } } }`,
 		`function main(): i32 { let o = Err(3); match (o) { Ok(v) => { return 0; }, Err(e) => { return e.len(); } } }`,
+		`function main(): i32 { let o = Ok(1); o = Err("x"); return 0; }`,
+		`function main(): i32 { let o = None; o = Some(3); return 0; }`,
+		`enum E[T] { A(T), B } function main(): i32 { let e = E.B; e = E.A(3); return 0; }`,
 	} {
 		if err := checkSource(t, source); err == nil {
 			t.Fatalf("accepted conflicting payload type: %s", source)

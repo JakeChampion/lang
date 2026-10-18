@@ -8,12 +8,12 @@ import (
 	"testing"
 )
 
-// highByteProg prints the length and each byte of a string literal built from
-// \xNN escapes spanning the whole 0..255 range, so any byte the pipeline
+// highByteProg prints the length and each byte of a string literal whose
+// UTF-8 spans lead and continuation bytes up to 0xF4, so any byte the pipeline
 // mangles shows up as both a wrong value and a wrong length.
 const highByteProg = `import "std/i32";
 function main(): i32 {
-    let s: string = "\x00\x41\x7f\x80\xc8\xef\xfe\xff";
+    let s: string = "\x00\x41\x7f\u{80}\u{e9}\u{FFFE}\u{10FFFF}";
     let out: string = s.len().to_string() + ":";
     let i: i32 = 0;
     while (i < s.len()) { out = out + (s[i] as i32).to_string() + " "; i = i + 1; }
@@ -22,7 +22,7 @@ function main(): i32 {
 }
 `
 
-const highByteWant = "8:0 65 127 128 200 239 254 255 \n"
+const highByteWant = "14:0 65 127 194 128 195 169 239 191 190 244 143 191 191 \n"
 
 // TestHighByteStringLiteralNativeAssembler pins that a string literal carrying
 // bytes >= 0x80 survives the DEFAULT compile path — the in-process pure-Go
@@ -38,13 +38,6 @@ const highByteWant = "8:0 65 127 128 200 239 254 255 \n"
 // emitted beside it. The gcc fallback path assembled the same asm correctly, so
 // the two disagreed silently, and only programs with non-ASCII literals could
 // see it.
-//
-// What it broke in this repo is the self-hosted wasm Component-Model framing:
-// watbin.fern carries the component type/canon sections as binary blobs written
-// as \xNN escapes, so a natively-assembled self-host CLI emitted components
-// whose type section was corrupt (`wasm-tools validate` → "unexpected
-// end-of-file"). That is a whole feature broken by a silent byte-level
-// divergence, which is why this guards the pipeline and not just the decoder.
 //
 // The interpreter is the reference: it never routes literals through an
 // assembler, so its bytes are the source of truth.

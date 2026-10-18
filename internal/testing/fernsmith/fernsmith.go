@@ -702,6 +702,17 @@ func (t gtype) String() string {
 	return fmt.Sprintf("?dyn%d", int(t))
 }
 
+// maybeTypeArg writes a generic call's type argument (`id[i32](…)`) for t,
+// which inference would also bind, so the checker-mutant oracle can erase it
+// and both checkers must still agree. Exhaustion convention: `true` = none.
+func (g *Generator) maybeTypeArg(b *strings.Builder, t gtype) {
+	name := g.typeName(t)
+	if g.flip(0.75) || g.ch.exhausted() || strings.HasPrefix(name, "?") {
+		return
+	}
+	b.WriteString("[" + name + "]")
+}
+
 // typeName returns the source-level name token for type t. This
 // is the canonical name-fetcher: builtin gtypes resolve through
 // the static `gtypeNames` table, dynamic nominal types through
@@ -2016,7 +2027,9 @@ func (g *Generator) production(b *strings.Builder, sc *scope, t gtype, depth int
 		// returns t. Exhaustion convention: `true` => skip the
 		// generic call (smaller output, no extra clone for
 		// monomorph to handle).
-		fmt.Fprintf(b, "id(")
+		b.WriteString("id")
+		g.maybeTypeArg(b, t)
+		b.WriteString("(")
 		g.genericArg(b, sc, t, depth)
 		b.WriteString(")")
 		return
@@ -2027,7 +2040,9 @@ func (g *Generator) production(b *strings.Builder, sc *scope, t gtype, depth int
 		// unification produces a single T. Use genericArg so
 		// type-ambiguous values like bare `None` get forced
 		// into a concrete form before the inference runs.
-		b.WriteString("pick(")
+		b.WriteString("pick")
+		g.maybeTypeArg(b, t)
+		b.WriteString("(")
 		g.expr(b, sc, tBool, depth+1)
 		b.WriteString(", ")
 		g.genericArg(b, sc, t, depth)
@@ -2850,7 +2865,8 @@ func (g *Generator) numericExpr(b *strings.Builder, sc *scope, t gtype, depth in
 // there is no checked IR opcode either, and the desugar is a wider spread of
 // per-operator predicates — a carry-out test for unsigned `+?`, a sign-pattern
 // test for signed `+?`, a division round-trip for `*?`, divisor and `MIN / -1`
-// guards for `/?` / `%?`, a range test for the shifts.
+// guards for `/?` / `%?`, a range test for the shifts plus a shift-back round
+// trip for `<<?`.
 //
 // Verified identical on interp / x86-64 / arm64 / wasm before adding, values
 // matching those documented: `MAX +? 1` → None, `40 +? 2` → Some(42),
@@ -2863,10 +2879,10 @@ func (g *Generator) emitCheckedFold(b *strings.Builder, sc *scope, t gtype, dept
 	// Ordered by the size the checker desugars each one to, cheapest first,
 	// because an exhausted stream takes index 0 and the contract is that
 	// truncation never grows the program. Measured in AST nodes over the
-	// whole match production: shifts 25, `+?` / `-?` 29, `/?` / `%?` 35,
-	// `*?` 41 — the overflow test each check expands to differs by
+	// whole match production: `>>?` 25, `+?` / `-?` 29, `<<?` 31, `/?` /
+	// `%?` 35, `*?` 41 — the overflow test each check expands to differs by
 	// operator, so this is not a table where the order is cosmetic.
-	op := []string{"<<?", ">>?", "+?", "-?", "/?", "%?", "*?"}[g.ch.intN(7)]
+	op := []string{">>?", "+?", "-?", "<<?", "/?", "%?", "*?"}[g.ch.intN(7)]
 	bind := fmt.Sprintf("__chk_v%d", g.optBindCounter)
 	g.optBindCounter++
 	b.WriteString("(match ((")

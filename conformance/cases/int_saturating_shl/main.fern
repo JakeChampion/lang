@@ -1,0 +1,58 @@
+// spec: IS-13
+//
+// `<<|` clamps exactly where `<<?` answers None: when bits would be
+// shifted out, and when the count is negative or at least the width.
+// It clamps to MAX, or to MIN for a negative signed value. Zero loses
+// nothing at any count, so `0 <<| n` stays 0. The count is not masked
+// the way `<<` masks it — `3 << 32` is 3, `3 <<| 32` is MAX — which is
+// the case a lowering that reuses the plain shift's masking gets wrong.
+import "std/i32";
+import "std/i64";
+import "std/u32";
+import "std/u64";
+
+function i(n: i32): i32 { return n; }
+function l(n: i64): i64 { return n; }
+function b(n: u8): u8 { return n; }
+function u(n: u32): u32 { return n; }
+function w(n: u64): u64 { return n; }
+
+function main(): i32 {
+    print("i32");
+    print((i(5) <<| 0).to_string());
+    print((i(1) <<| 30).to_string());
+    print((i(1) <<| 31).to_string());
+    print((i(3) <<| 30).to_string());
+    print((i(0 - 1) <<| 31).to_string());
+    print((i(0 - 3) <<| 30).to_string());
+    print((i(3) <<| 32).to_string());
+    print((i(0 - 3) <<| 32).to_string());
+    print((i(0) <<| 32).to_string());
+    print((i(3) <<| (0 - 1)).to_string());
+    print((i(3) << 32).to_string());
+    print("i64");
+    print((l(1) <<| 62).to_string());
+    print((l(1) <<| 63).to_string());
+    print((l(0 - 1) <<| 63).to_string());
+    print((l(3) <<| 64).to_string());
+    print((l(0 - 3) <<| 64).to_string());
+    print((l(0) <<| 64).to_string());
+    print((l(3) <<| (0 - 1)).to_string());
+    print("u8");
+    print(((b(127) <<| 1) as i32).to_string());
+    print(((b(128) <<| 1) as i32).to_string());
+    print(((b(1) <<| 7) as i32).to_string());
+    print(((b(1) <<| 8) as i32).to_string());
+    print(((b(0) <<| 200) as i32).to_string());
+    print("u32");
+    print((u(1) <<| 31).to_string());
+    print((u(2) <<| 31).to_string());
+    print((u(1) <<| 32).to_string());
+    print((u(0) <<| 32).to_string());
+    print("u64");
+    print((w(1) <<| 63).to_string());
+    print((w(3) <<| 63).to_string());
+    print((w(1) <<| 64).to_string());
+    print((w(0) <<| 64).to_string());
+    return 0;
+}
