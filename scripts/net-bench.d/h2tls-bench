@@ -1,0 +1,425 @@
+#!/usr/bin/env bash
+# h2tls-bench — the Fern hello against H2O over HTTP/1.1 in the clear and
+# under TLS 1.3, and over HTTP/2 by prior knowledge (h2c) and under TLS,
+# with the deterministic per-request costs of each Fern path. The record
+# of its first run is docs/benchmarks/net-h2-tls-2026-10-18.md.
+#
+# Usage: h2tls-bench OUTDIR [load|determ|all]   (default: all)
+#
+#   OUTDIR/runs.tsv     one row per load run: round, shape, server, req/s,
+#                       p50 and p99 in microseconds, requests answered,
+#                       failures, server CPU in microseconds per request
+#                       (user plus system of the server's process group
+#                       over the run, from /proc), and the one-minute load
+#                       average as the run began
+#   OUTDIR/summary.tsv  per shape and server: the rounds' medians and the
+#                       spread (max minus min over the median) of req/s
+#   OUTDIR/determ.tsv   per Fern path, one worker: allocations per request
+#                       (`/count` bracketing), Ir per request under
+#                       callgrind, syscalls per request under strace, each
+#                       the slope between two request counts on one
+#                       connection, so what the connection costs to open
+#                       cancels; H2O's syscalls per request beside them
+#   OUTDIR/cg-*, strace-*, annotate-*   the raw profiles
+#
+# Environment:
+#
+#   FERN_NET_BENCH_SECONDS  how long each load runs. Default: 5.
+#   FERN_NET_BENCH_ROUNDS   rounds, each running Fern then H2O on every
+#                           shape (A B A B). Default: 5.
+#   FERN_OHA                the oha binary. Default: `oha` on PATH.
+#
+# The shapes: h1 c64 in the clear as the anchor to the nightly's rows;
+# h1tls at 64 and 1,024 connections; h2c and h2tls at 64 connections with
+# 1 and with 16 streams in flight on each (oha -p). Fern runs a worker
+# per core (`serve.supervise`) and H2O a thread per core; the Fern server
+# answering an HTTP/2 shape is started with H2 set, the one answering an
+# HTTP/1.1 shape without, so each path is measured as a server configured
+# for it. Everything shares the host's cores with oha.
+set -euo pipefail
+
+cd "$(dirname "$0")/../.."
+
+OUT="${1:?usage: h2tls-bench OUTDIR [load|determ|all]}"
+MODE="${2:-all}"
+mkdir -p "$OUT"
+OUT="$(cd "$OUT" && pwd)"
+SECONDS_PER="${FERN_NET_BENCH_SECONDS:-5}"
+ROUNDS="${FERN_NET_BENCH_ROUNDS:-5}"
+OHA="${FERN_OHA:-oha}"
+
+. scripts/net-lib
+
+for tool in "$OHA" h2o valgrind strace curl; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "h2tls-bench: $tool not found" >&2
+    exit 2
+  fi
+done
+
+ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
+
+bin/fern -target "$TARGET" -o "$work/fern-hello" scripts/net-bench.d/hello.fern
+bin/fern -g -target "$TARGET" -o "$work/fern-hello-g" scripts/net-bench.d/hello.fern
+certs="$work/certs"
+mkdir -p "$certs"
+tls_certificate hello P-256 '/CN=localhost' '' 'subjectAltName=DNS:localhost,IP:127.0.0.1'
+
+# h2o_hello_config PORT TLS — H2O's hello on PORT, under TLS 1.3 when TLS
+# is 1, to $work/h2o-hello.conf.
+h2o_hello_config() {
+  {
+    echo "listen:"
+    echo "  host: 127.0.0.1"
+    echo "  port: $1"
+    if [ "$2" = 1 ]; then
+      echo "  ssl:"
+      echo "    certificate-file: $certs/hello.pem"
+      echo "    key-file: $certs/hello.key"
+      echo "    min-version: TLSv1.3"
+    fi
+    cat <<EOF
+num-threads: $(nproc)
+hosts:
+  default:
+    paths:
+      /:
+        mruby.handler: |
+          Proc.new do |env|
+            [200, {"content-type" => "text/plain; charset=utf-8"}, ["hello"]]
+          end
+EOF
+  } > "$work/h2o-hello.conf"
+}
+
+# shape_tls SHAPE / shape_h2 SHAPE — whether the shape runs under TLS,
+# and whether over HTTP/2.
+shape_tls() { case "$1" in h1tls* | h2tls*) echo 1 ;; *) echo 0 ;; esac; }
+shape_h2() { case "$1" in h2*) echo 1 ;; *) echo 0 ;; esac; }
+
+# start_fern TLS H2 WORKERS PORT BIN PREFIX... — the Fern hello BIN on
+# PORT with the given switches, under PREFIX (valgrind, strace) when given.
+start_fern() {
+  local tls="$1" h2="$2" workers="$3" port="$4" bin="$5"
+  shift 5
+  local vars=(PORT="$port" WORKERS="$workers")
+  [ "$h2" = 1 ] && vars+=(H2=1)
+  [ "$tls" = 1 ] && vars+=(TLS_CERT="$certs/hello.pem" TLS_KEY="$certs/hello.key")
+  start_server "$work/server.log" env "${vars[@]}" "$@" "$bin"
+  await_port fern "$port" "$work/server.log"
+}
+
+# start_h2o TLS PORT PREFIX... — H2O's hello on PORT.
+start_h2o() {
+  local tls="$1" port="$2"
+  shift 2
+  h2o_hello_config "$port" "$tls"
+  start_server "$work/server.log" "$@" h2o -c "$work/h2o-hello.conf"
+  await_port h2o "$port" "$work/server.log"
+}
+
+# url SHAPE PORT PATH — the URL a shape loads.
+url() {
+  if [ "$(shape_tls "$1")" = 1 ]; then echo "https://127.0.0.1:$2$3"; else echo "http://127.0.0.1:$2$3"; fi
+}
+
+# curl_args SHAPE — curl's switches for the shape's protocol.
+curl_args() {
+  local args=(-s)
+  [ "$(shape_tls "$1")" = 1 ] && args+=(-k)
+  if [ "$(shape_h2 "$1")" = 1 ]; then
+    if [ "$(shape_tls "$1")" = 1 ]; then args+=(--http2); else args+=(--http2-prior-knowledge); fi
+  else
+    args+=(--http1.1)
+  fi
+  echo "${args[@]}"
+}
+
+# oha_args SHAPE — oha's switches for the shape: protocol, connections
+# and streams in flight per connection.
+oha_args() {
+  local args=(--no-tui --output-format json)
+  [ "$(shape_tls "$1")" = 1 ] && args+=(--insecure)
+  case "$1" in
+    h1-c64 | h1tls-c64) args+=(-c 64) ;;
+    h1tls-c1024) args+=(-c 1024) ;;
+    h2c-c64-p1 | h2tls-c64-p1) args+=(--http2 -c 64 -p 1) ;;
+    h2c-c64-p16 | h2tls-c64-p16) args+=(--http2 -c 64 -p 16) ;;
+    *) echo "h2tls-bench: unknown shape $1" >&2; exit 2 ;;
+  esac
+  echo "${args[@]}"
+}
+
+# group_ticks PGID — the user plus system clock ticks of every process in
+# the group, from /proc.
+group_ticks() {
+  python3 - "$1" <<'PY'
+import os, sys
+pgid = sys.argv[1]
+total = 0
+for pid in os.listdir('/proc'):
+    if not pid.isdigit():
+        continue
+    try:
+        stat = open(f'/proc/{pid}/stat').read()
+    except OSError:
+        continue
+    fields = stat[stat.rindex(')') + 2:].split()
+    if fields[2] == pgid:
+        total += int(fields[11]) + int(fields[12])
+print(total)
+PY
+}
+
+# load_row ROUND SHAPE SERVER PORT — one load run, appended to runs.tsv.
+load_row() {
+  local round="$1" shape="$2" server="$3" port="$4"
+  local json="$OUT/run-$round-$shape-$server.json"
+  local load1 t0 t1
+  load1="$(cut -d' ' -f1 /proc/loadavg)"
+  t0="$(group_ticks "$server_pgid")"
+  # shellcheck disable=SC2046
+  "$OHA" -z "${SECONDS_PER}s" $(oha_args "$shape") "$(url "$shape" "$port" /)" > "$json"
+  t1="$(group_ticks "$server_pgid")"
+  python3 - "$round" "$shape" "$server" "$json" "$t0" "$t1" "$load1" "$(getconf CLK_TCK)" <<'PY' >> "$OUT/runs.tsv"
+import json, sys
+rnd, shape, server, path, t0, t1, load1, hz = sys.argv[1:9]
+j = json.load(open(path))
+s, p = j["summary"], j["latencyPercentiles"]
+codes = j.get("statusCodeDistribution", {})
+requests = sum(codes.values())
+failed = sum(v for k, v in codes.items() if k != "200")
+failed += sum(v for k, v in j.get("errorDistribution", {}).items() if "deadline" not in k)
+cpu_us = (int(t1) - int(t0)) * 1e6 / int(hz) / max(requests, 1)
+print("\t".join([rnd, shape, server, str(int(s["requestsPerSec"])), str(int(p["p50"] * 1e6)),
+                 str(int(p["p99"] * 1e6)), str(requests), str(failed), f"{cpu_us:.2f}", load1]))
+PY
+  tail -1 "$OUT/runs.tsv" >&2
+}
+
+SHAPES_PLAIN_H1="h1-c64"
+SHAPES_PLAIN_H2="h2c-c64-p1 h2c-c64-p16"
+SHAPES_TLS_H1="h1tls-c64 h1tls-c1024"
+SHAPES_TLS_H2="h2tls-c64-p1 h2tls-c64-p16"
+
+# load_family ROUND TLS H2 SHAPES... — Fern then H2O over the shapes, each
+# server started once for the family.
+load_family() {
+  local round="$1" tls="$2" h2="$3"
+  shift 3
+  local port shape
+  port="$(free_port)"
+  start_fern "$tls" "$h2" 0 "$port" "$work/fern-hello"
+  for shape in "$@"; do load_row "$round" "$shape" fern "$port"; done
+  stop_server
+  port="$(free_port)"
+  start_h2o "$tls" "$port"
+  for shape in "$@"; do load_row "$round" "$shape" h2o "$port"; done
+  stop_server
+}
+
+run_loads() {
+  printf 'round\tshape\tserver\trps\tp50_us\tp99_us\trequests\tfailed\tcpu_us_per_req\tload1\n' > "$OUT/runs.tsv"
+  local round
+  for round in $(seq 1 "$ROUNDS"); do
+    # shellcheck disable=SC2086
+    load_family "$round" 0 0 $SHAPES_PLAIN_H1
+    # shellcheck disable=SC2086
+    load_family "$round" 0 1 $SHAPES_PLAIN_H2
+    # shellcheck disable=SC2086
+    load_family "$round" 1 0 $SHAPES_TLS_H1
+    # shellcheck disable=SC2086
+    load_family "$round" 1 1 $SHAPES_TLS_H2
+  done
+  python3 - "$OUT/runs.tsv" <<'PY' > "$OUT/summary.tsv"
+import csv, statistics, sys
+rows = list(csv.DictReader(open(sys.argv[1]), delimiter="\t"))
+order, groups = [], {}
+for r in rows:
+    k = (r["shape"], r["server"])
+    if k not in groups:
+        order.append(k); groups[k] = []
+    groups[k].append(r)
+print("shape\tserver\trounds\trps\trps_spread_pct\tp50_us\tp99_us\tcpu_us_per_req\tfailed\tload1")
+for k in order:
+    g = groups[k]
+    rps = [int(r["rps"]) for r in g]
+    med = statistics.median(rps)
+    spread = (max(rps) - min(rps)) * 100 / med if med else 0
+    print("\t".join([k[0], k[1], str(len(g)), str(int(med)), f"{spread:.0f}",
+                     str(int(statistics.median(int(r["p50_us"]) for r in g))),
+                     str(int(statistics.median(int(r["p99_us"]) for r in g))),
+                     f"{statistics.median(float(r['cpu_us_per_req']) for r in g):.2f}",
+                     str(sum(int(r["failed"]) for r in g)),
+                     f"{statistics.median(float(r['load1']) for r in g):.2f}"]))
+PY
+  cat "$OUT/summary.tsv" >&2
+}
+
+# count SHAPE PORT — the server's `/count` over the shape's protocol.
+count() {
+  # shellcheck disable=SC2046
+  curl $(curl_args "$1") "$(url "$1" "$2" /count)"
+}
+
+# requests SHAPE PORT N — N hello requests on one connection, with the
+# shape's streams in flight.
+requests() {
+  local p=1
+  case "$1" in *-p16) p=16 ;; esac
+  local args=(--no-tui --output-format json -n "$3" -c 1)
+  [ "$(shape_tls "$1")" = 1 ] && args+=(--insecure)
+  [ "$(shape_h2 "$1")" = 1 ] && args+=(--http2 -p "$p")
+  "$OHA" "${args[@]}" "$(url "$1" "$2" /)" > "$work/determ.json"
+  python3 -c 'import json, sys
+j = json.load(open(sys.argv[1]))
+codes = j.get("statusCodeDistribution", {})
+if codes.get("200", 0) != int(sys.argv[2]) or j.get("errorDistribution"):
+    sys.exit("h2tls-bench: %s of %s answered 200, errors %s" % (codes.get("200", 0), sys.argv[2], j.get("errorDistribution")))' "$work/determ.json" "$3"
+}
+
+# stop_slow — stop_server for a group under valgrind or strace, which may
+# take longer than net-lib's five seconds to drain and write its profile.
+stop_slow() {
+  kill -TERM -- "-$server_pgid" 2>/dev/null || true
+  local waited=0
+  while kill -0 -- "-$server_pgid" 2>/dev/null && [ "$waited" -lt 600 ]; do
+    sleep 0.2
+    waited=$((waited + 1))
+  done
+  stop_server
+}
+
+# callgrind_total FILE — the Ir total a callgrind profile records.
+callgrind_total() {
+  sed -n -E 's/^(summary|totals): ([0-9]+).*/\2/p' "$1" | tail -1
+}
+
+# strace_total FILE — the calls strace -c counted in all.
+strace_total() {
+  awk '/ total$/ { print $4 }' "$1"
+}
+
+# determ_fern SHAPE — the one-worker Fern server's allocations, Ir and
+# syscalls per request on the shape's protocol, appended to determ.tsv.
+determ_fern() {
+  local shape="$1" tls h2 port
+  tls="$(shape_tls "$shape")"
+  h2="$(shape_h2 "$shape")"
+  local lo=10000 hi=40000
+
+  # Allocations: /count around two request counts; the slope per request.
+  port="$(free_port)"
+  start_fern "$tls" "$h2" 1 "$port" "$work/fern-hello"
+  local c0 c1 c2 c3
+  requests "$shape" "$port" 2000
+  c0="$(count "$shape" "$port")"
+  requests "$shape" "$port" "$lo"
+  c1="$(count "$shape" "$port")"
+  requests "$shape" "$port" "$hi"
+  c2="$(count "$shape" "$port")"
+  requests "$shape" "$port" "$lo"
+  c3="$(count "$shape" "$port")"
+  stop_server
+  local allocs
+  allocs="$(python3 -c "print('%.3f' % ((($c2 - $c1) - ($c1 - $c0)) / ($hi - $lo)))")"
+  local allocs_again
+  allocs_again="$(python3 -c "print('%.3f' % ((($c2 - $c1) - ($c3 - $c2)) / ($hi - $lo)))")"
+  printf '%s\tallocs_per_request\t%s\t%s\n' "$shape" "$allocs" "counts $c0 $c1 $c2 $c3 at 2000, $lo, $hi, $lo requests; second reading $allocs_again" >> "$OUT/determ.tsv"
+
+  # Instructions: the group under callgrind at two request counts (the
+  # worker's profile is the larger), and the -g build once for the
+  # breakdown by function.
+  local n cglo cghi
+  for n in 4000 12000; do
+    port="$(free_port)"
+    start_fern "$tls" "$h2" 1 "$port" "$work/fern-hello" valgrind --tool=callgrind --trace-children=yes "--callgrind-out-file=$OUT/cg-$shape-$n-%p.out"
+    requests "$shape" "$port" "$n"
+    stop_slow
+    local biggest
+    biggest="$(for f in "$OUT"/cg-"$shape"-"$n"-*.out; do echo "$(callgrind_total "$f") $f"; done | sort -n | tail -1)"
+    if [ "$n" = 4000 ]; then cglo="${biggest%% *}"; else cghi="${biggest%% *}"; fi
+  done
+  local ir
+  ir="$(python3 -c "print(int(($cghi - $cglo) / 8000))")"
+  printf '%s\tir_per_request\t%s\t%s\n' "$shape" "$ir" "callgrind totals $cglo at 4000 and $cghi at 12000 requests" >> "$OUT/determ.tsv"
+  port="$(free_port)"
+  start_fern "$tls" "$h2" 1 "$port" "$work/fern-hello-g" valgrind --tool=callgrind --trace-children=yes "--callgrind-out-file=$OUT/cg-g-$shape-%p.out"
+  requests "$shape" "$port" 12000
+  stop_slow
+  local gfile
+  gfile="$(for f in "$OUT"/cg-g-"$shape"-*.out; do echo "$(callgrind_total "$f") $f"; done | sort -n | tail -1)"
+  gfile="${gfile#* }"
+  nm -n "$work/fern-hello-g" > "$OUT/fern-hello-g.nm"
+  callgrind_annotate "$gfile" > "$OUT/annotate-$shape.raw" 2>/dev/null || true
+  python3 - "$OUT/annotate-$shape.raw" "$OUT/fern-hello-g.nm" 12000 <<'PY' > "$OUT/annotate-$shape.txt"
+import bisect, re, sys
+raw, nmfile, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
+addrs, names = [], []
+for line in open(nmfile):
+    parts = line.split()
+    if len(parts) == 3 and parts[1] in "tTwW":
+        addrs.append(int(parts[0], 16)); names.append(parts[2])
+def resolve(addr):
+    i = bisect.bisect_right(addrs, addr) - 1
+    return names[i] if i >= 0 else hex(addr)
+for line in open(raw):
+    m = re.match(r"\s*([\d,]+)\s+\(\s*([\d.]+)%\)\s+(\S+)", line)
+    if not m:
+        continue
+    ir = int(m.group(1).replace(",", ""))
+    where = m.group(3)
+    a = re.search(r"0x([0-9a-fA-F]+)", where)
+    name = resolve(int(a.group(1), 16)) if a else where
+    print(f"{ir / n:10.1f}  {m.group(2):>6}%  {name}")
+PY
+  printf '%s\tir_breakdown\t%s\t%s\n' "$shape" "$(callgrind_total "$gfile")" "-g build, 12000 requests; per-request rows in annotate-$shape.txt" >> "$OUT/determ.tsv"
+
+  # Syscalls: strace -c over the group at two request counts; the slope.
+  local stlo sthi
+  for n in 10000 30000; do
+    port="$(free_port)"
+    start_fern "$tls" "$h2" 1 "$port" "$work/fern-hello" strace -f -c -o "$OUT/strace-$shape-$n.txt"
+    requests "$shape" "$port" "$n"
+    stop_slow
+    if [ "$n" = 10000 ]; then stlo="$(strace_total "$OUT/strace-$shape-$n.txt")"; else sthi="$(strace_total "$OUT/strace-$shape-$n.txt")"; fi
+  done
+  printf '%s\tsyscalls_per_request\t%s\t%s\n' "$shape" "$(python3 -c "print('%.3f' % (($sthi - $stlo) / 20000))")" "strace totals $stlo at 10000 and $sthi at 30000 requests" >> "$OUT/determ.tsv"
+}
+
+# determ_h2o SHAPE — H2O's syscalls per request on the shape's protocol.
+determ_h2o() {
+  local shape="$1" n port stlo sthi
+  for n in 10000 30000; do
+    port="$(free_port)"
+    start_h2o "$(shape_tls "$shape")" "$port" strace -f -c -o "$OUT/strace-h2o-$shape-$n.txt"
+    requests "$shape" "$port" "$n"
+    stop_slow
+    if [ "$n" = 10000 ]; then stlo="$(strace_total "$OUT/strace-h2o-$shape-$n.txt")"; else sthi="$(strace_total "$OUT/strace-h2o-$shape-$n.txt")"; fi
+  done
+  printf '%s\th2o_syscalls_per_request\t%s\t%s\n' "$shape" "$(python3 -c "print('%.3f' % (($sthi - $stlo) / 20000))")" "strace totals $stlo at 10000 and $sthi at 30000 requests" >> "$OUT/determ.tsv"
+}
+
+run_determ() {
+  printf 'shape\tmeasure\tvalue\tnote\n' > "$OUT/determ.tsv"
+  local shape
+  for shape in h1-c64 h1tls-c64 h2c-c64-p1 h2c-c64-p16 h2tls-c64-p1 h2tls-c64-p16; do
+    determ_fern "$shape"
+    determ_h2o "$shape"
+    tail -6 "$OUT/determ.tsv" >&2
+  done
+}
+
+{
+  echo "# h2tls-bench: $(date -u +%FT%TZ), $(nproc) cpus, load $(cut -d' ' -f1-3 /proc/loadavg), $(git rev-parse --short HEAD 2>/dev/null)"
+  echo "# ${SECONDS_PER}s per load, $ROUNDS rounds, $("$OHA" --version), $(h2o --version | head -1), $(valgrind --version), $(strace -V | head -1)"
+} > "$OUT/header.txt"
+cat "$OUT/header.txt" >&2
+
+case "$MODE" in
+  load) run_loads ;;
+  determ) run_determ ;;
+  all) run_loads; run_determ ;;
+  *) echo "h2tls-bench: mode $MODE is not load, determ or all" >&2; exit 2 ;;
+esac
+echo "# finished $(date -u +%FT%TZ), load $(cut -d' ' -f1-3 /proc/loadavg)" >> "$OUT/header.txt"
