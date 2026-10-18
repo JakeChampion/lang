@@ -3150,6 +3150,16 @@ function join_plus(bounds: string): string {
   return out;
 }
 
+// print_resource_decl renders `resource Name;` with its `@import` binding on
+// the line above, as native's formatResourceDecl does.
+function print_resource_decl(rd: parser.ResourceDecl): string {
+  let out: string = "";
+  if (rd.iface.len() > 0) {
+    out = "@import(" + quote_string(rd.iface) + ", " + quote_string(rd.wit) + ")\n";
+  }
+  return out + "resource " + rd.name + ";\n";
+}
+
 function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_never: boolean, f: Fmt): (string, Fmt) {
   // An `@import` extern (P4 — docs/WIT-BRING-YOUR-OWN.md) renders as the
   // attribute on its own line followed by a body-less function (`;`).
@@ -3825,7 +3835,8 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
   let wrote: boolean = false;
   // The declarations to emit, as (kind, index) pairs ordered by source line.
   // kind 0 = struct, 1 = enum (at its first variant's position), 2 = alias,
-  // 3 = function/const, 4 = trait, 5 = impl, 6 = import or `pub use`.
+  // 3 = function/const, 4 = trait, 5 = impl, 6 = import or `pub use`,
+  // 7 = resource.
   // Imports stay where they were written: hoisting one drained the comments
   // of every declaration above it into the import block (#10870).
   //
@@ -3884,6 +3895,13 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
     idxs = idxs.append(ai);
     lines = lines.append(mod.aliases[ai].line);
     ai = ai + 1;
+  }
+  let ri: i32 = 0;
+  while (ri < mod.resources.len()) {
+    kinds = kinds.append(7);
+    idxs = idxs.append(ri);
+    lines = lines.append(mod.resources[ri].line);
+    ri = ri + 1;
   }
   let ti2: i32 = 0;
   while (ti2 < traits.len()) {
@@ -3964,6 +3982,9 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
       f = ef;
     } else if (kinds[di] == 2) {
       chunks = chunks.append(print_type_alias(mod.aliases[idxs[di]]));
+      wrote = true;
+    } else if (kinds[di] == 7) {
+      chunks = chunks.append(print_resource_decl(mod.resources[idxs[di]]));
       wrote = true;
     } else if (kinds[di] == 4) {
       let (ttext, tf) = print_trait_decl(traits[idxs[di]], f);
