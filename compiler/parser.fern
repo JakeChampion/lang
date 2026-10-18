@@ -9189,6 +9189,10 @@ function parse_type_param_list(p: Par): (TpList, Par) {
             } else if (bpk == ",") {
               bargs = bargs + ", ";
               p = p.advance();
+            } else if (bpk == "=") {
+              // An associated-type pin belongs to a `dyn` type, not a bound.
+              p = Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected \"]\", got " + tok_desc(p.peek()))) };
+              p = p.advance();
             } else {
               let bseg: string = p.peek_ident();
               if (bseg.len() == 0) {
