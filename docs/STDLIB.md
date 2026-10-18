@@ -486,6 +486,19 @@ Parse a `.env` file (12-factor KEY=VALUE config) into a
   escapes) and `'...'` single-quoted (literal) values; a repeated key's
   last assignment wins. `\r\n` endings handled.
 
+### `std/envflag`
+
+The boolean `FERN_*` environment switches, read by one rule: unset, `""`,
+`0`, `false` and `off`, in any ASCII case, are off; anything else is on.
+It imports nothing, so a module can read a switch without loading
+another. `internal/envflag` is the Go twin.
+
+- `value_on(value): boolean` — whether a switch set to `value` is on.
+- `on(name): boolean` — whether the variable `name` switches on; off when
+  unset.
+- `value(name): Option[string]` — the variable's value, an empty one
+  counted as unset.
+
 ### `std/glob`
 
 Shell-style glob matching over a path-like string.

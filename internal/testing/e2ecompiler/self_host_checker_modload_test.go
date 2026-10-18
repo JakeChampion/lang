@@ -38,7 +38,8 @@ func buildCheckerModloadDriverX86(t *testing.T) (gcc string, runner []string, dr
 // checkSourceModload resolves `entrySrc`'s full stdlib closure (real Go
 // modload, like selfHostBundleFor), vendors it as a std/ and core/ tree next
 // to main.fern + builtins.fern, runs the file-based
-// checker driver, and returns its stdout (the diagnostic codes). The
+// checker driver, and returns its stdout (one `CODE\tMESSAGE` line per
+// diagnostic). The
 // driver exits 1 when diagnostics are emitted, so the non-zero exit is
 // tolerated.
 func checkSourceModload(t *testing.T, runner []string, driverBin, entrySrc string) string {

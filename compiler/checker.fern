@@ -1967,7 +1967,9 @@ function generic_sig_refs(all_type_params: string[], param_type_names: string[],
 // `derives` carries the declaration's `@derive(...)` list so a conformance
 // question can be answered from the Scope — the map-key Eq/Hash check needs it,
 // and a derive does not synthesise an entry in the impl table.
-pub struct StructSig { name: string, field_names: string[], field_types: typeinfo.Type[], type_params: string[], field_type_names: string[], variant_field_names: string[], derives: string[], enum_owner: string }
+// `module` is the declaring module's prefix ("" for the entry), which an
+// `opaque` struct's fields are private to.
+pub struct StructSig { name: string, field_names: string[], field_types: typeinfo.Type[], type_params: string[], field_type_names: string[], variant_field_names: string[], derives: string[], enum_owner: string, opaque: boolean, module: string }
 
 // MethodSig: nominal handle for a declared receiver method
 // `function (recv: RecvType) name(p1, p2): RT`. The receiver
@@ -2731,6 +2733,16 @@ function struct_destr_name(type_name: string): string {
   return slice_unchecked(rest, 0, colon) + "";
 }
 
+// opaque_access_diags is E021 for reaching into the fields of `sig` (`what`
+// names the access) from a module other than the one that declared it opaque.
+// The type's name and methods stay usable everywhere.
+function opaque_access_diags(sig: StructSig, s: Scope, what: string, line: i32, col: i32): util.Diag[] {
+  if (!sig.opaque || sig.module == s.fn_module) {
+    return [];
+  }
+  return [dg_at("E021", "cannot " + what + " opaque type " + util.demangle(sig.name) + " outside the module that defines it", line, col)];
+}
+
 // struct_destr_diags is E043 for each field a struct destructure
 // `let P { x, z } = e;` reads that the struct `e` is lacks, at the `let`, as
 // native reports it. The field has no position of its own, so its fix stands
@@ -2749,6 +2761,7 @@ function struct_destr_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
         return out.append(dg_at("E024", "struct destructure pattern names " + named + ", but the expression is " + st.name, v.line, v.col));
       }
       let sig: StructSig = s.lookup_struct(st.name);
+      out = util.append_diags(out, opaque_access_diags(sig, s, "destructure a field of", v.line, v.col));
       for f in fields {
         if (sig.name.len() > 0 && !util.has_str(sig.field_names, f)) {
           let d: util.Diag = dg_at("E043", "struct " + util.demangle(st.name) + " has no field \"" + f + "\"", v.line, v.col);
@@ -3800,7 +3813,7 @@ function (s: Scope) lookup_struct(name: string): StructSig {
   let empty_t: typeinfo.Type[] = [];
   let empty_tp: string[] = [];
   let empty_ftn: string[] = [];
-  return StructSig { name: "", field_names: empty_n, field_types: empty_t, type_params: empty_tp, field_type_names: empty_ftn, variant_field_names: empty_n, derives: [], enum_owner: "" };
+  return StructSig { name: "", field_names: empty_n, field_types: empty_t, type_params: empty_tp, field_type_names: empty_ftn, variant_field_names: empty_n, derives: [], enum_owner: "", opaque: false, module: "" };
 }
 
 // lookup_variant answers for the VARIANT namespace: the first enum variant
@@ -3974,8 +3987,10 @@ function variant_pattern_payload_type(s: Scope, name: string, whole: typeinfo.Ty
 
 // A payload of a user generic enum, `Box[i32, string]`'s `Blank(s)`, is its
 // spelling with the enum's type parameters replaced by the scrutinee's
-// arguments, as a generic struct's field is. Unknown when the enum is not
-// generic or the scrutinee names no arguments for it.
+// arguments, as a generic struct's field is. A scrutinee naming no arguments
+// (`E.B`, or a parameter annotated `E`) settles none, so only a payload that
+// spells a type parameter is the "unbound" one it never holds. Unknown when
+// the enum is not generic.
 function generic_variant_payload_type(s: Scope, name: string, whole: typeinfo.Type, index: i32): typeinfo.Type {
   let u: typeinfo.TypeUnion = typeinfo.TypeUnion { name: "", args: [] };
   if let typeinfo.TypeUnion(wu) = whole {
@@ -3984,11 +3999,13 @@ function generic_variant_payload_type(s: Scope, name: string, whole: typeinfo.Ty
     return t_unknown("not a union");
   }
   let us: UnionSig = s.lookup_union(u.name);
-  // An instance no construction settled (`E.B`) never holds a payload.
-  if (us.type_params.len() > 0 && u.args.len() == 0) {
-    return t_unknown("unbound payload");
+  let args: typeinfo.Type[] = u.args;
+  if (args.len() == 0) {
+    for tp in us.type_params {
+      args = args.append(t_unknown("unbound " + tp));
+    }
   }
-  if (us.type_params.len() == 0 || us.type_params.len() != u.args.len()) {
+  if (us.type_params.len() == 0 || us.type_params.len() != args.len()) {
     return t_unknown("not a generic enum instance");
   }
   let ss: StructSig = s.lookup_owned_struct(variant_pattern_name(name), u.name);
@@ -3999,7 +4016,7 @@ function generic_variant_payload_type(s: Scope, name: string, whole: typeinfo.Ty
   let i: i32 = 0;
   while (i < ss.field_names.len() && i < ss.field_type_names.len()) {
     if (ss.field_names[i] == want) {
-      return type_from_ref_subst(parser.parse_type_ref(ss.field_type_names[i]), us.type_params, u.args, s.type_names());
+      return type_from_ref_subst(parser.parse_type_ref(ss.field_type_names[i]), us.type_params, args, s.type_names());
     }
     i = i + 1;
   }
@@ -8581,7 +8598,7 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
       // piece 2).
       ftnames = ftnames.append(parser.fn_tag_spelling(elem.type_name, elem.fn_ret, elem.fn_param_types));
     }
-    out = out.append(StructSig { name: sd.name, field_names: fnames, field_types: ftypes, type_params: sd.type_params, field_type_names: ftnames, variant_field_names: sd.variant_field_names, derives: sd.derives, enum_owner: sd.enum_owner });
+    out = out.append(StructSig { name: sd.name, field_names: fnames, field_types: ftypes, type_params: sd.type_params, field_type_names: ftnames, variant_field_names: sd.variant_field_names, derives: sd.derives, enum_owner: sd.enum_owner, opaque: sd.opaque, module: sd.module });
   }
   return out;
 }
@@ -12114,7 +12131,7 @@ function find_struct_sig(structs: StructTable, name: string): StructSig {
   let nonet: typeinfo.Type[] = [];
   let none_tp: string[] = [];
   let none_ftn: string[] = [];
-  return StructSig { name: "", field_names: none, field_types: nonet, type_params: none_tp, field_type_names: none_ftn, variant_field_names: none, derives: [], enum_owner: "" };
+  return StructSig { name: "", field_names: none, field_types: nonet, type_params: none_tp, field_type_names: none_ftn, variant_field_names: none, derives: [], enum_owner: "", opaque: false, module: "" };
 }
 
 // find_variant_sig is find_struct_sig for the possibly enum-QUALIFIED spelling
@@ -15294,6 +15311,9 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           },
           _ => {}
         }
+        if let typeinfo.TypeStruct(ost) = check_expr(c.args[0], s) {
+          out = util.append_diags(out, opaque_access_diags(s.lookup_struct(ost.name), s, "access a field of", expr_line(c.args[1]), expr_col(c.args[1])));
+        }
         out = out.append(dg_at("E048", "cannot assign to field \"" + fld + "\": fields are immutable after construction; rebuild with a struct-update literal", expr_line(c.args[1]), expr_col(c.args[1])));
       }
       // E056: `arr[i] = v` is desugared by the parser to
@@ -16408,6 +16428,7 @@ function call_diags_field_access(fa: ast.ExprFieldAccess, s: Scope, out: util.Di
   match (ot) {
     typeinfo.TypeStruct(sn) => {
       let fsig: StructSig = s.lookup_struct(sn.name);
+      out = util.append_diags(out, opaque_access_diags(fsig, s, "access a field of", fa.line, fa.col));
       if (fsig.name.len() > 0 && !util.has_str(fsig.field_names, fa.field)) {
         out = out.append(s.member_fix(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + fa.field + "\"", fa.line, fa.col), fa, fsig));
       }
@@ -16450,6 +16471,7 @@ function tuple_field_diags(field: string, tt: typeinfo.TypeTuple, line: i32, col
 // field that contradicts an earlier one is refused as native refuses it.
 function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[], s: Scope, out: util.Diag[]): util.Diag[] {
   let fsig: StructSig = s.lookup_struct(sl.type_name);
+  out = util.append_diags(out, opaque_access_diags(fsig, s, "construct", sl.line, sl.col));
   let args: typeinfo.Type[] = dest_args;
   // The literal's own instantiation outranks its destination's, as natively;
   // a disagreement between the two is the assignment's to report.
@@ -18535,7 +18557,7 @@ function const_elems_err(elems: ast.Expr[], earlier: string[]): string {
 // refuses it (#6618).
 //
 // The diagnostic is UNCODED, matching native: an empty `code` renders as
-// `<line>:<col>: <message>` with no `error[…]` segment.
+// `<line>:<col>: error: <message>` with no `[…]` code.
 function const_grammar_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   let earlier: string[] = [];
