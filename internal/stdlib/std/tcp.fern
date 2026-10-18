@@ -26,11 +26,19 @@ pub function tcp_recv_deadline(fd: i32, max: i32, deadline: Duration): Recv {
 // `tcp_recv_within(fd, max, ms)` — `tcp_recv_deadline` with the wait in
 // milliseconds, for a caller that holds the bound as a number.
 pub function tcp_recv_within(fd: i32, max: i32, ms: i64): Recv {
+  return tcp_recv_watched(fd, max, ms, 1);
+}
+
+// `tcp_recv_watched(fd, max, ms, interest)` — `tcp_recv_within` with the
+// wait's interest word given: readable (1), with `async.KEEP` or
+// `async.WATCHED` from a caller whose descriptor stays watched across its
+// waits.
+pub function tcp_recv_watched(fd: i32, max: i32, ms: i64, interest: i32): Recv {
   let wait_ms: i32 = ms as i32;
   if (wait_ms < 1) {
     wait_ms = 1;
   }
-  let set: i32[] = [fd, 1];
+  let set: i32[] = [fd, interest];
   let woke: i32 = async.wait_any(set, wait_ms);
   if (woke == async.cancelled()) {
     return Abandoned;
