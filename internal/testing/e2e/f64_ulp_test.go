@@ -36,6 +36,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/envflag"
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
@@ -876,7 +877,7 @@ func requireBothRegisterBackends(t *testing.T) {
 	if len(missing) == 0 {
 		return
 	}
-	if os.Getenv("FERN_REQUIRE_CROSS_BACKENDS") != "" {
+	if envflag.On("FERN_REQUIRE_CROSS_BACKENDS") {
 		t.Fatalf("FERN_REQUIRE_CROSS_BACKENDS is set, so this lane is meant to have both register "+
 			"toolchains, but these are missing: %s", strings.Join(missing, "; "))
 	}

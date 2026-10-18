@@ -35,6 +35,7 @@
 # table ending in "every driver is within tolerance" as the whole compiler.
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/flag-lib"
 
 # Percentage drift, in either direction, that is worth a warning. Sizes are
 # deterministic per commit (the pinned self-host compiler's output is a
@@ -67,7 +68,7 @@ if [ ! -s "$REPORT" ]; then
   fi
   # Blind is a finding like any other, so strict mode has to fail on it. An
   # empty union is the loudest form of the thing this check exists to catch.
-  if [ "${FERN_CI_SIZE_GATE_STRICT:-0}" = "1" ]; then
+  if fern_flag FERN_CI_SIZE_GATE_STRICT; then
     echo "ci-check-driver-sizes: nothing was measured and FERN_CI_SIZE_GATE_STRICT=1" >&2
     exit 1
   fi
@@ -76,7 +77,8 @@ fi
 
 # Whether this report is meant to name every baselined driver. Off for the
 # per-job callers, whose reports are partial by construction.
-COMPLETE="${FERN_SIZE_REPORT_COMPLETE:-0}"
+COMPLETE=0
+if fern_flag FERN_SIZE_REPORT_COMPLETE; then COMPLETE=1; fi
 
 routed="$(awk -v B="$BASELINE" -v tol="$TOLERANCE" -v complete="$COMPLETE" '
   function mb(bytes) { return sprintf("%.1f MB", bytes / 1000000) }
@@ -206,7 +208,7 @@ while IFS=$'\t' read -r tag title msg; do
   fi
 done < <(printf '%s\n' "$routed")
 
-if [ "${FERN_CI_SIZE_GATE_STRICT:-0}" = "1" ] && [ "$findings" -gt 0 ]; then
+if fern_flag FERN_CI_SIZE_GATE_STRICT && [ "$findings" -gt 0 ]; then
   echo "ci-check-driver-sizes: $findings finding(s) and FERN_CI_SIZE_GATE_STRICT=1" >&2
   exit 1
 fi

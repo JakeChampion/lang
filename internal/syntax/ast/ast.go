@@ -11,6 +11,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/jakechampion/lang/internal/envflag"
 )
 
 // Position is a 1-based line/column pair used for diagnostics.
@@ -1137,9 +1139,9 @@ func (f FloatType) NormalWidth() int {
 // shipping one. x86-64 + arm64 natives; the wasm backend rejects it
 // rather than silently measuring nothing. With the flag OFF the emitted
 // asm is byte-identical to a build from a compiler without the feature.
-// Settable via FERN_COVER=1 (the LeakCheckEnabled precedent) so a
-// harness can instrument a child compile without a fork.
-var CoverEnabled = os.Getenv("FERN_COVER") == "1"
+// Settable via FERN_COVER so a harness can instrument a child compile
+// without a fork.
+var CoverEnabled = envflag.On("FERN_COVER")
 
 // CoverLinePrefix opens every line of the coverage report an
 // instrumented binary writes to stderr, and is what `fern -cover-report`
@@ -1174,9 +1176,14 @@ const CoverBranchPrefix = "fern-branch: "
 // ExitSanitizer are the same with the walk gone, so ARRAY-BOUNDS.md's
 // contract holds in both modes.
 //
-// Settable via FERN_BACKTRACE=0 (the RcFreeDebug precedent) or the CLI's
-// -backtrace=false, which defaults to whatever the env var left here.
-var BacktraceEnabled = os.Getenv("FERN_BACKTRACE") != "0"
+// Settable via FERN_BACKTRACE=0 or the CLI's -backtrace=false, which
+// defaults to whatever the env var left here.
+var BacktraceEnabled = backtraceFromEnv()
+
+func backtraceFromEnv() bool {
+	v, set := os.LookupEnv("FERN_BACKTRACE")
+	return !set || envflag.ValueOn(v)
+}
 
 // RcPoison is the rc-word marker a quarantined (freed) block carries
 // in RcFreeDebug mode: a large positive value that can't be a real

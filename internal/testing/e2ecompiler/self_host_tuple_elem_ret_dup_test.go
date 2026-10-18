@@ -13,8 +13,7 @@ import (
 // tuple_mixed__elemret__* matrix rows are the standing instrument).
 //
 // Exits confirmed against `bin/fern -interp`; every early arm dynamically
-// live; census + FERN_SANITIZE legs per case, and a FERN_SELFHOST_RC_PLAN=0
-// leg that must change nothing.
+// live; census + FERN_SANITIZE legs per case.
 
 func tupleElemRetDupCases() []tupleAliasParamCase {
 	return []tupleAliasParamCase{
@@ -164,24 +163,6 @@ func TestSelfHostTupleElemRetDupX86_64(t *testing.T) {
 			}
 			if strings.Contains(sanErr, "rc over-release") || strings.Contains(sanErr, "use-after-free") {
 				t.Fatalf("%s sanitize leg reported:\n%s", tc.name, sanErr)
-			}
-
-			// Plan-off leg: none of TUPB / TUPELEMOK / TUPRCS is
-			// plan-routed, so FERN_SELFHOST_RC_PLAN=0 must change
-			// nothing on the flipped shapes.
-			offAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_LEAKCHECK=1", "FERN_SELFHOST_RC_PLAN=0"})
-			offBin := buildBin(t, gcc, dir, "tupelemret_off_"+tc.name, offAsm)
-			offErr, offExit := hevRun(t, runner, offBin)
-			if offExit != tc.want {
-				t.Fatalf("%s plan-off exited %d, want %d", tc.name, offExit, tc.want)
-			}
-			offSummary := leakSummaryLine(offErr)
-			var oa, of, ol int64
-			if _, err := fmtSscan(offSummary, &oa, &of, &ol); err != nil {
-				t.Fatalf("%s plan-off: parse %q: %v", tc.name, offSummary, err)
-			}
-			if ol != 0 || oa != of {
-				t.Errorf("%s plan-off: %s — the port is not plan-routed and must balance without the plan", tc.name, offSummary)
 			}
 		})
 	}

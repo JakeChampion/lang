@@ -2086,7 +2086,7 @@ serializer.
   coding to an HTTP/1.1 client, and close-delimited (the connection ending
   with the body) to an HTTP/1.0 one, so the length need not be known up
   front. A response to HEAD, or with a 1xx, 204 or 304 status, produces no
-  body either way. `http_serialize_response_head_into(b, resp,
+  body either way. `http_serialize_response_head_into(b, version, resp,
   keep_alive, fields)` pushes the head alone into the builder `b`, the
   caller's field lines (the framing line, `Content-Length` or
   `Transfer-Encoding`, among them) after the handler's.
@@ -2316,15 +2316,20 @@ serializer.
   `http_header_value(block, key)` reads a raw header block by the same
   rules, so a block the parser would refuse names no header.
   `http_serialize_response(resp): string` writes `Connection: close`;
-  `http_serialize_response_conn(resp, keep_alive)` writes `keep-alive` or
-  `close` as the serve loop decided; `http_serialize_response_to(method,
-  resp, keep_alive)` is what the loop sends, with no body on a response
-  to HEAD (its `Content-Length` kept) or a 1xx, 204 or 304 (neither),
-  whatever the handler put in the body (RFC 9112 §6.3).
-  `http_serialize_response_to_bytes(method, resp, keep_alive)` is the same
-  as bytes, and `http_serialize_response_into(b, method, resp, keep_alive,
-  fields)` pushes them into a builder the caller keeps, `fields` after the
-  handler's: the loop serializes every reply into one builder, sends from
+  `http_serialize_response_conn(resp, keep_alive)` writes `close` when the
+  serve loop decided the connection ends and no `Connection` field when it
+  persists, which HTTP/1.1 implies; `http_serialize_response_to(method,
+  version, resp, keep_alive)` is what the loop sends to a request made
+  with `method` in `version`: no body on a response to HEAD (its
+  `Content-Length` kept) or a 1xx, 204 or 304 (neither), whatever the
+  handler put in the body (RFC 9112 §6.3), and `Connection: keep-alive`
+  only to an HTTP/1.0 request whose connection persists (RFC 9112 §9.3),
+  since an HTTP/1.1 client assumes persistence and would only strip the
+  field. `http_serialize_response_to_bytes(method, version, resp,
+  keep_alive)` is the same as bytes, and `http_serialize_response_into(b,
+  method, version, resp, keep_alive, fields)` pushes them into a builder
+  the caller keeps, `fields` after the handler's: the loop serializes
+  every reply into one builder, sends from
   it with `tcp_send_buf(fd, b, from)` and empties it with `buf_clear(b)`,
   so a reply allocates nothing once the builder has grown. The loop adds
   a `Date`, formatted once per second, unless the handler set one.
@@ -4120,7 +4125,14 @@ old `concurrent { … }` / `await` keyword surface.
   `wait_any(set, timeout_ms)` — a call chain that parks on a set of (fd,
   interest) pairs under a bound and runs on when its scheduler resumes it
   with the index of the ready pair, -1 at the timeout (`docs/ASYNC.md` §8,
-  `docs/NET-P3-SUSPENSION-PLAN.md`). `wait_any` blocks when no task is
+  `docs/NET-P3-SUSPENSION-PLAN.md`). An interest may carry `KEEP` (watch
+  the descriptor level-triggered and leave it watched when the wait ends)
+  or `WATCHED` (a `KEEP` wait already did, so this wait needs no watch and
+  no unwatch), for the owner of a descriptor that waits on it many times,
+  a pooled connection's reads; the owner tracks which descriptors it has
+  said `KEEP` for and unwatches or closes them itself, a scheduler honours
+  the two only on a driver whose `keeps` says a watch outlives its wait,
+  and `interest_bits(interest)` is the interest without them. `wait_any` blocks when no task is
   current, which is how std/tcp's recv-with-deadline and std/dns's connect
   and exchange waits work in a plain program; under a scheduler the
   self-host compiler lowers every function that reaches it to a resumable

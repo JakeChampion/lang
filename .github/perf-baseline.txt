@@ -232,6 +232,13 @@ x86_64/utf8_ingest_validated.ir	5916089
 # fewer instructions (string_build.ir -26%, struct_drop.ir -35%,
 # http_hello.ir -3%). Both arches' figures are the perf lanes' own.
 #
+# Re-pinned 2026-10-18 on x86_64/perceus_cfold.ir (-2.55%),
+# perceus_deriv.text (-1.24%) and perceus_deriv.ir (-8.84%): a record whose
+# fields are i64 or f64 constants, and an integer literal cast to its field's
+# width, are static boxes, so the constant records those programs build on
+# every round allocate nothing. The x86_64 figures are the dev container's
+# perf-bench run; the aarch64 rows take the perf lane's.
+#
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
 # (utf8_ingest_unchecked) — one ISA emitting fewer instructions than the other
@@ -305,9 +312,9 @@ aarch64/utf8_ingest_validated.ir	6347933
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 x86_64/perceus_cfold.text	2213
-x86_64/perceus_cfold.ir	56096816
-x86_64/perceus_deriv.text	2508
-x86_64/perceus_deriv.ir	73389448
+x86_64/perceus_cfold.ir	54667240
+x86_64/perceus_deriv.text	2477
+x86_64/perceus_deriv.ir	66901954
 x86_64/perceus_nqueens.text	1357
 x86_64/perceus_nqueens.ir	93164028
 x86_64/perceus_rbtree.text	2662

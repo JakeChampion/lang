@@ -65,8 +65,9 @@ request are:
   `Url`, four, and the `__Target` and `__Place` built from them;
 - the response parsed: a name and a value string per field, the two
   arrays of the map grown twice each, the body copied out of the read
-  buffer, and the map rebuilt once more because the Fern server sends
-  `Connection: keep-alive`, a hop-by-hop field the client strips;
+  buffer, and the map rebuilt once more because the Fern server then sent
+  `Connection: keep-alive`, a hop-by-hop field the client strips (it no
+  longer does, below);
 - the read: the 64 KiB `tcp_recv` buffer, the `[fd, 1]` wait set and the
   `poll` buffer behind `async.wait_any`, the `Chunk`;
 - the pool: the `__Conn` taken, the row parked and the array it goes in.
@@ -75,6 +76,50 @@ The instructions go mostly to the response head (the CRLF scans and the
 case-folded name lookups `http1-hot-path` replaces on the server side,
 which the response parser shares), `url_parse`, UTF-8 validation of each
 field value, and the allocator and reference counting under all of it.
+
+## The three follow-ups, later the same day
+
+The same harness, direct route, against a hello server built from the
+same compiler as the client (`bin/fern-selfhost` from the tree under
+test, so the base row is re-measured rather than copied from above; the
+server is the `std/serve` hello of `e2eharness.ServeAllocsServerSource`).
+Server instructions are callgrind over the server for 1,000 and 5,000
+client requests, the difference over 4,000.
+
+| change | response bytes | client Ir | client allocs | server Ir |
+|---|--:|--:|--:|--:|
+| main (00d1533e0) | 104 | 19,391 | 41 | 8,253 |
+| no `Connection: keep-alive` on a persisting HTTP/1.1 response | 80 | 15,380 | 36 | 8,271 |
+| a `Request`'s defaults are static boxes | 80 | 15,285 | 32 | 8,271 |
+
+- **The `Connection` field** goes out only where it carries meaning:
+  `close` when the response ends the connection, `keep-alive` to an
+  HTTP/1.0 request whose connection persists. A persisting HTTP/1.1
+  response carries none, so the client no longer parses a field, strips
+  it and rebuilds the header map: 24 bytes and 4,011 instructions per
+  request off the client, four allocations with it. The server pays 18
+  instructions for the request's version threaded to the serializer and
+  tested for HTTP/1.0 by its minor digit (`__http10`).
+- **The request's defaults.** `Timeouts` cost four boxes per `fetch.get`
+  (three `Duration`s and the record) because the compiler placed a record
+  in static data only when every field was a narrow scalar, and
+  `duration_seconds(10 as i64)` was a cast of a literal rather than a
+  literal, so the constructor leaf was never spliced. Both are compiler
+  fixes: an i64 or f64 constant field is a static box's word on every
+  backend, and an unsuffixed integer literal cast to an integer type is
+  that literal at the type's width. `fetch.get(url)` is now the one
+  `Request` box; with a literal URL it is none.
+- **One `epoll_ctl` per fetch in a handler.** The loop's pool keeps its
+  HTTP/1.1 connections watched level-triggered between a task's reads
+  (`async.KEEP` on the first read, `async.WATCHED` after), so a request
+  on a kept connection is `sendto`, the park's `epoll_pwait` and `read`:
+  three syscalls, as outside a loop. A readiness on a kept connection no
+  task is reading is an idle connection the peer closed or is writing to
+  unasked; the loop unwatches it and the pool closes it. The two-fetch
+  server (`TestSelfHostServeSyscallsPerRequestTwoFetch`) goes from 11 to
+  9 syscalls per request, and its allocations from 107.01 to 97.01 per
+  request (the two requests' defaults and the per-flight watch
+  bookkeeping); the gates pin 9 and a ceiling of 98.
 
 ## What is left
 
@@ -88,11 +133,5 @@ field value, and the allocator and reference counting under all of it.
   carry its last response's map. Against a Fern server it gains little
   because `Date` comes first and changes every second; against one that
   sends `Date` later it saves the strings and arrays above.
-- **`Connection: keep-alive` on every HTTP/1.1 response.** The server
-  sends a field the protocol implies, and every client has to parse and
-  strip it.
-- **One `epoll_ctl` per fetch in a handler.** Keeping a pooled socket
-  registered across fetches rather than re-arming it with ONESHOT saves
-  the fourth syscall.
-- **The caller's request defaults.** Nine allocations per `fetch.get`
-  are the defaults a `Request` carries by value.
+- **The URL.** `url_parse` still produces owned `scheme`, `host` and
+  `path` strings and a `Url` per request, four of the 32 allocations.

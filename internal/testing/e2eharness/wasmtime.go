@@ -1,9 +1,10 @@
 package e2eharness
 
 import (
-	"os"
 	"os/exec"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/envflag"
 )
 
 // Wasmtime returns wasmtime's path, skipping the test when it is not on PATH.
@@ -15,7 +16,7 @@ func Wasmtime(t testing.TB) string {
 	if err == nil {
 		return p
 	}
-	if os.Getenv("FERN_REQUIRE_WASMTIME") == "1" {
+	if envflag.On("FERN_REQUIRE_WASMTIME") {
 		t.Fatal("wasmtime not on PATH and FERN_REQUIRE_WASMTIME=1: this lane installs it, so a skip here covers nothing")
 	}
 	t.Skip("wasmtime not on PATH; skipping wasm e2e")

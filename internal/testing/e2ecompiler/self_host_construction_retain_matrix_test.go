@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/envflag"
 )
 
 // --- The construction-retain matrix ------------------------------------------
@@ -221,7 +223,7 @@ func TestSelfHostConstructionRetainMatrixX86_64(t *testing.T) {
 	// coverage: it prints measured matrix-file lines INSTEAD of comparing, so
 	// a lane setting it would disable this gate. The compare path below is
 	// the CI behaviour.
-	dump := os.Getenv("FERN_CONSTRUCTION_RETAIN_DUMP") == "1"
+	dump := envflag.On("FERN_CONSTRUCTION_RETAIN_DUMP")
 	var known map[string][2]leakVerdict
 	if !dump {
 		known = loadConstructionRetainMatrix(t)
