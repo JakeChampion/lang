@@ -92,7 +92,7 @@ func TestSelfHostSocketRuntimePerModule(t *testing.T) {
 					t.Fatal("library body was inlined away; the test must exercise a cross-unit runtime call")
 				}
 			}
-			for _, helper := range []string{"tcp_listen_with_u8", "tcp_socket_ctl", "tcp_connect_with_u8", "tcp_recv_u8", "tcp_recv_into_u8", "udp_bind_u8", "udp_bind_with_u8", "udp_sendto_u8", "udp_recvfrom_u8", "udp_connect_u8"} {
+			for _, helper := range []string{"tcp_listen_with_u8", "tcp_socket_ctl", "tcp_connect_with_u8", "tcp_recv_into_u8", "udp_bind_u8", "udp_bind_with_u8", "udp_sendto_u8", "udp_recvfrom_u8", "udp_connect_u8"} {
 				if !strings.Contains(asm.String(), ".globl __fn___fern_"+helper+"\n") {
 					t.Errorf("missing socket runtime export: %s", helper)
 				}

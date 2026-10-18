@@ -11340,7 +11340,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     // __fern_eprint_str / __fern_putchar are gone.
     "__fn___fern_print_str",
     "__fn___fern_eprint_str", "__fn___fern_putchar",
-    "__fn___fern_read_file", "__fn___fern_read_file_bytes",
+    "__fn___fern_read_file", "__fn___fern_read_file_bytes", "__fn___fern_read_file_bytes_u8",
     "__fn___fern_reader_read_chunk", "__fn___fern_reader_close", "__fn___fern_write_file",
     "__fn___fern_write_file_bytes", "__fn___fern_write_file_bytes_u8",
     "__fn___fern_reader_read_chunk_bytes", "__fn___fern_reader_read_chunk_bytes_u8", "__fn___fern_writer_write_bytes", "__fn___fern_writer_write_bytes_u8", "__fn___fern_writer_write_some_bytes", "__fn___fern_writer_write_some_bytes_u8",
