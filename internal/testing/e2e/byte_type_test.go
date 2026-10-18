@@ -33,14 +33,14 @@ var byteTypeCases = []struct {
 	// Two byte reads compared directly — both sides u8, no cast needed.
 	{"byte-cmp-byte", `function main(): i32 { let s: string = "AA"; if (s[0] == s[1]) { return 42; } return 1; }`, 42},
 	// A byte read indexes back into the string (byte used as a value, not an index).
-	{"byte-high-bit", `function main(): i32 { let s: string = "\xFF"; return s[0] as i32; }`, 255},
+	{"byte-high-bit", `function main(): i32 { let s: string = "\u{FF}"; return s[1] as i32; }`, 191},
 	// Shift AFTER widening — the precedence trap. In u8 this would overflow.
 	{"byte-shift-widened", `function main(): i32 { let s: string = "\x02"; return ((s[0] as i32) & 63) << 6; }`, 128},
 	// Two-byte UTF-8 decode (U+00E9 é = C3 A9) — the real-world shape of the
 	// shift trap above.
-	{"utf8-2byte", `function main(): i32 { let s: string = "\xC3\xA9"; let cp: i32 = (((s[0] as i32) & 31) << 6) | ((s[1] as i32) & 63); if (cp == 233) { return 42; } return cp; }`, 42},
+	{"utf8-2byte", `function main(): i32 { let s: string = "\u{E9}"; let cp: i32 = (((s[0] as i32) & 31) << 6) | ((s[1] as i32) & 63); if (cp == 233) { return 42; } return cp; }`, 42},
 	// Three-byte decode (U+20AC € = E2 82 AC), two shifted continuation bytes.
-	{"utf8-3byte", `function main(): i32 { let s: string = "\xE2\x82\xAC"; let cp: i32 = (((s[0] as i32) & 15) << 12) | (((s[1] as i32) & 63) << 6) | ((s[2] as i32) & 63); if (cp == 8364) { return 42; } return 1; }`, 42},
+	{"utf8-3byte", `function main(): i32 { let s: string = "\u{20AC}"; let cp: i32 = (((s[0] as i32) & 15) << 12) | (((s[1] as i32) & 63) << 6) | ((s[2] as i32) & 63); if (cp == 8364) { return 42; } return 1; }`, 42},
 }
 
 // TestX86_64ByteType — `s[i]` as u8 through the native x86-64 backend.

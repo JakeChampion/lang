@@ -916,6 +916,7 @@ string_replace                                       0
 string_slice                                         0
 string_slice_option                                  0
 string_split                                         0
+string_unicode_escapes                               0
 struct_alias_thread_reclaim                          0
 struct_destructure_inside_an_imported_module         0
 struct_field_subpattern                              0

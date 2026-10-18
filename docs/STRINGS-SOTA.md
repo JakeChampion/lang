@@ -853,6 +853,19 @@ PR #11459.
 The §2.8 invariant. `string` means *well-formed UTF-8*; arbitrary bytes
 live in `u8[]`/`[u8]` (which D8 makes ergonomic).
 
+#### Literals take the character-literal escapes — **LANDED** (#12666)
+
+A string or f-string literal decodes exactly the escapes a character
+literal does, appending each as UTF-8, so a literal cannot produce
+malformed text. `\xNN` stops at `\x7F`: above it a byte starts no
+character, and `"\xE9"` is the P001 `\xE9 is above ASCII in a string
+literal; write \u{E9} for the scalar`. `\u{...}` names any Unicode scalar
+value in one to six hex digits; a surrogate or anything past `10FFFF` is
+refused. Bytes above ASCII belong in a `u8[]`. Before this a string
+literal took `\xNN` for every byte and had no `\u{...}`, so the only
+escape that reached past ASCII was the one that could break the
+invariant.
+
 #### The constructor is a split, not a signature change — **LANDED** (slice 2)
 
 The obvious reading of "validate at `string_from_bytes`" is to change

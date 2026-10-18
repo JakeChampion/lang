@@ -98,8 +98,8 @@ function blocks(): i32 {
   if (!same(__aes_ctr32(r256, pt, zero), hex("8ea2b7ca516745bfeafc49904b496089"))) {
     return 11;
   }
-  // The counter and the data as views: a string's bytes and a slice.
-  if (!same(__aes_ctr32(r256[0:240], "\x00\x11\x22\x33\x44\x55\x66\x77\x88\x99\xaa\xbb\xcc\xdd\xee\xff".as_bytes(), zero[0:16]), hex("8ea2b7ca516745bfeafc49904b496089"))) {
+  // The counter and the data as views: a slice and a string's bytes.
+  if (!same(__aes_ctr32(r256[0:240], pt[0:16], "0123456789abcdef".as_bytes()), hex("be9385f965527388d2c528f2282d05ef"))) {
     return 12;
   }
   return 0;

@@ -181,9 +181,10 @@ func TestWASMSumBytes(t *testing.T) {
 }
 
 // The wrap, which no case in the corpus above can reach: 2^32 needs more than
-// 16 MiB of 0xff, so the input is built at run time rather than written as a
-// literal. 255 * 16843010 is 2^32 + 254, so the kernel must return 254 and a backend
-// that accumulates in 64 bits without truncating returns 4294967550.
+// 16 MiB of high bytes, so the input is built at run time rather than written
+// as a literal. U+FFFF is EF BF BF, 621 a copy, and 621 * 6916212 is
+// 2^32 + 356, so the kernel must return 356 and a backend that accumulates in
+// 64 bits without truncating returns 4294967652.
 //
 // It allocates the string, so it is not folded into the corpus runner: the
 // heap assertion below is about the KERNEL allocating nothing, and a 16 MiB
@@ -191,7 +192,7 @@ func TestWASMSumBytes(t *testing.T) {
 const sumBytesWrapSrc = `import "std/i32";
 
 function main(): i32 {
-    let big: string = "\xff".repeat(16843010);
+    let big: string = "\u{FFFF}".repeat(6916212);
     write((__sum_bytes(big)).to_string());
     write("\n");
     return 0;
@@ -203,9 +204,9 @@ func TestX86_64SumBytesWraps(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
 	}
-	if got := strings.TrimSpace(out); got != "254" {
-		t.Errorf("__sum_bytes over 16843010 0xff bytes = %s, want 254 "+
-			"(the sum is 2^32 + 254, so anything else means the result "+
+	if got := strings.TrimSpace(out); got != "356" {
+		t.Errorf("__sum_bytes over 6916212 copies of U+FFFF = %s, want 356 "+
+			"(the sum is 2^32 + 356, so anything else means the result "+
 			"was not truncated to 32 bits)", got)
 	}
 }
@@ -215,9 +216,9 @@ func TestArm64SumBytesWraps(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
 	}
-	if got := strings.TrimSpace(out); got != "254" {
-		t.Errorf("__sum_bytes over 16843010 0xff bytes = %s, want 254 "+
-			"(the sum is 2^32 + 254, so anything else means the result "+
+	if got := strings.TrimSpace(out); got != "356" {
+		t.Errorf("__sum_bytes over 6916212 copies of U+FFFF = %s, want 356 "+
+			"(the sum is 2^32 + 356, so anything else means the result "+
 			"was not truncated to 32 bits)", got)
 	}
 }

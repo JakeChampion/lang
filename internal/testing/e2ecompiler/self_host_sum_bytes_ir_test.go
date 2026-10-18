@@ -54,7 +54,7 @@ function main(): i32 {
         if (__sum_bytes(base) != n * 97) { return 2; }
         let at: i32 = 0;
         while (at < n) {
-            let hi: string = slice_unchecked(base, 0, at) + "\xff" + slice_unchecked(base, at + 1, n);
+            let hi: string = slice_unchecked(base, 0, at) + string_from_bytes_unchecked([255 as u8]) + slice_unchecked(base, at + 1, n);
             if (__sum_bytes(hi) != ref(hi)) { return 3; }
             if (__sum_bytes(hi) != (n - 1) * 97 + 255) { return 4; }
             let z: string = slice_unchecked(base, 0, at) + "\x00" + slice_unchecked(base, at + 1, n);
@@ -67,7 +67,7 @@ function main(): i32 {
     while (m <= 40) {
         let all: string = "";
         let k2: i32 = 0;
-        while (k2 < m) { all = all + "\xff"; k2 = k2 + 1; }
+        while (k2 < m) { all = all + string_from_bytes_unchecked([255 as u8]); k2 = k2 + 1; }
         if (__sum_bytes(all) != ref(all)) { return 6; }
         if (__sum_bytes(all) != m * 255) { return 7; }
         m = m + 1;
@@ -75,10 +75,10 @@ function main(): i32 {
     if (__sum_bytes("") != 0) { return 8; }
     if (__sum_bytes("abc") != 294) { return 9; }
     if (__sum_bytes("\x00b\x00") != 98) { return 10; }
-    if (__sum_bytes("\x7f\x80") != 255) { return 11; }
-    if (__sum_bytes("\x80\x80\x80\x80") != 512) { return 12; }
+    if (__sum_bytes("\x7f" + string_from_bytes_unchecked([128 as u8])) != 255) { return 11; }
+    if (__sum_bytes(string_from_bytes_unchecked([128 as u8, 128 as u8, 128 as u8, 128 as u8])) != 512) { return 12; }
     // 16 MiB of 0xff sums to 4278190080, which the 32-bit result wraps.
-    let big: string = "\xff";
+    let big: string = string_from_bytes_unchecked([255 as u8]);
     let d: i32 = 0;
     while (d < 24) { big = big + big; d = d + 1; }
     if (__sum_bytes(big) != 0 - 16777216) { return 13; }

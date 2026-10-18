@@ -2456,65 +2456,65 @@ pub function component_full(core: i32[]): i32[] {
 
 // tb_io_error: the wasi:io/error interface (the `error` resource). Always the
 // first type import (io/streams depends on it).
-function tb_io_error(): string {
-  return "\x07\r\x01B\x01\x04\x00\x05error\x03\x01\n\x18\x01\x00\x13wasi:io/error@0.2.0\x05\x00\x06\n\x01\x03\x00\x00\x05error";
+function tb_io_error(): i32[] {
+  return type_block("\x01B\x01\x04\x00\x05error\x03\x01", "\n\x18\x01\x00\x13wasi:io/error@0.2.0\x05\x00\x06\n\x01\x03\x00\x00\x05error");
 }
 
 // tb_io_streams_out: the wasi:io/streams interface exposing output-stream +
 // blocking-write-and-flush + the stream-error variant (the output-only shape;
 // the fs-read shapes additionally define input-stream).
-function tb_io_streams_out(): string {
-  return "\x07\xb2\x01\x01B\x0b\x04\x00\routput-stream\x03\x01\x02\x03\x02\x01\x01\x04\x00\x05error\x03\x00\x01\x01i\x02\x01q\x02\x15last-operation-failed\x01\x03\x00\x06closed\x00\x00\x04\x00\x0cstream-error\x03\x00\x04\x01h\x00\x01p}\x01j\x00\x01\x05\x01@\x02\x04self\x06\x08contents\x07\x00\x08\x04\x00.[method]output-stream.blocking-write-and-flush\x01\t\n\x1a\x01\x00\x15wasi:io/streams@0.2.0\x05\x02\x06\x12\x01\x03\x00\x01\routput-stream";
+function tb_io_streams_out(): i32[] {
+  return type_block("\x01B\x0b\x04\x00\routput-stream\x03\x01\x02\x03\x02\x01\x01\x04\x00\x05error\x03\x00\x01\x01i\x02\x01q\x02\x15last-operation-failed\x01\x03\x00\x06closed\x00\x00\x04\x00\x0cstream-error\x03\x00\x04\x01h\x00\x01p}\x01j\x00\x01\x05\x01@\x02\x04self\x06\x08contents\x07\x00\x08\x04\x00.[method]output-stream.blocking-write-and-flush\x01\t", "\n\x1a\x01\x00\x15wasi:io/streams@0.2.0\x05\x02\x06\x12\x01\x03\x00\x01\routput-stream");
 }
 
 // tb_io_streams_inout: the wasi:io/streams interface exposing BOTH output- and
 // input-stream (+ blocking-write-and-flush / the stream-error variant) -- the
 // shape the fs-read prefixes use (vs tb_io_streams_out for write/stdout only).
-function tb_io_streams_inout(): string {
-  return "\x07\x83\x02\x01B\x10\x04\x00\routput-stream\x03\x01\x04\x00\x0cinput-stream\x03\x01\x02\x03\x02\x01\x01\x04\x00\x05error\x03\x00\x02\x01i\x03\x01q\x02\x15last-operation-failed\x01\x04\x00\x06closed\x00\x00\x04\x00\x0cstream-error\x03\x00\x05\x01h\x00\x01h\x01\x01p}\x01j\x00\x01\x06\x01j\x01\t\x01\x06\x01@\x02\x04self\x07\x08contents\t\x00\n\x04\x00.[method]output-stream.blocking-write-and-flush\x01\x0c\x01@\x02\x04self\x08\x03lenw\x00\x0b\x04\x00\"[method]input-stream.blocking-read\x01\r\n\x1a\x01\x00\x15wasi:io/streams@0.2.0\x05\x02\x06\x12\x01\x03\x00\x01\routput-stream\x06\x11\x01\x03\x00\x01\x0cinput-stream";
+function tb_io_streams_inout(): i32[] {
+  return type_block("\x01B\x10\x04\x00\routput-stream\x03\x01\x04\x00\x0cinput-stream\x03\x01\x02\x03\x02\x01\x01\x04\x00\x05error\x03\x00\x02\x01i\x03\x01q\x02\x15last-operation-failed\x01\x04\x00\x06closed\x00\x00\x04\x00\x0cstream-error\x03\x00\x05\x01h\x00\x01h\x01\x01p}\x01j\x00\x01\x06\x01j\x01\t\x01\x06\x01@\x02\x04self\x07\x08contents\t\x00\n\x04\x00.[method]output-stream.blocking-write-and-flush\x01\x0c\x01@\x02\x04self\x08\x03lenw\x00\x0b\x04\x00\"[method]input-stream.blocking-read\x01\r", "\n\x1a\x01\x00\x15wasi:io/streams@0.2.0\x05\x02\x06\x12\x01\x03\x00\x01\routput-stream\x06\x11\x01\x03\x00\x01\x0cinput-stream");
 }
 
 // fs prefix tails: the filesystem/types + filesystem/preopens + cli/stdout
 // blocks specific to each fs shape (index-shifted, so per-shape), appended to
 // the shared io/error + io/streams head.
-function fs_read_tail(): string {
-  return "\x07\xc8\x06\x01B\x14\x04\x00\ndescriptor\x03\x01\x02\x03\x02\x01\x04\x04\x00\x0cinput-stream\x03\x00\x01\x01m%\x06access\x0bwould-block\x07already\x0ebad-descriptor\x04busy\x08deadlock\x05quota\x05exist\x0efile-too-large\x15illegal-byte-sequence\x0bin-progress\x0binterrupted\x07invalid\x02io\x0cis-directory\x04loop\x0etoo-many-links\x0cmessage-size\rname-too-long\tno-device\x08no-entry\x07no-lock\x13insufficient-memory\x12insufficient-space\rnot-directory\tnot-empty\x0fnot-recoverable\x0bunsupported\x06no-tty\x0eno-such-device\x08overflow\rnot-permitted\x04pipe\tread-only\x0cinvalid-seek\x0etext-file-busy\x0ccross-device\x04\x00\nerror-code\x03\x00\x03\x01n\x01\x0esymlink-follow\x04\x00\npath-flags\x03\x00\x05\x01n\x04\x06create\tdirectory\texclusive\x08truncate\x04\x00\nopen-flags\x03\x00\x07\x01n\x06\x04read\x05write\x13file-integrity-sync\x13data-integrity-sync\x14requested-write-sync\x10mutate-directory\x04\x00\x10descriptor-flags\x03\x00\t\x01i\x00\x01i\x02\x01h\x00\x01j\x01\x0b\x01\x04\x01j\x01\x0c\x01\x04\x01@\x05\x04self\r\npath-flags\x06\x04paths\nopen-flags\x08\x05flags\n\x00\x0e\x04\x00\x1a[method]descriptor.open-at\x01\x10\x01@\x02\x04self\r\x06offsetw\x00\x0f\x04\x00\"[method]descriptor.read-via-stream\x01\x11\n \x01\x00\x1bwasi:filesystem/types@0.2.0\x05\x05\x06\x0f\x01\x03\x00\x02\ndescriptor\x07<\x01B\x07\x02\x03\x02\x01\x06\x04\x00\ndescriptor\x03\x00\x00\x01i\x01\x01o\x02\x02s\x01p\x03\x01@\x00\x00\x04\x04\x00\x0fget-directories\x01\x05\n#\x01\x00\x1ewasi:filesystem/preopens@0.2.0\x05\x07\x072\x01B\x05\x02\x03\x02\x01\x03\x04\x00\routput-stream\x03\x00\x00\x01i\x01\x01@\x00\x00\x02\x04\x00\nget-stdout\x01\x03\n\x1a\x01\x00\x15wasi:cli/stdout@0.2.0\x05\x08";
+function fs_read_tail(): i32[] {
+  return type_block("\x01B\x14\x04\x00\ndescriptor\x03\x01\x02\x03\x02\x01\x04\x04\x00\x0cinput-stream\x03\x00\x01\x01m%\x06access\x0bwould-block\x07already\x0ebad-descriptor\x04busy\x08deadlock\x05quota\x05exist\x0efile-too-large\x15illegal-byte-sequence\x0bin-progress\x0binterrupted\x07invalid\x02io\x0cis-directory\x04loop\x0etoo-many-links\x0cmessage-size\rname-too-long\tno-device\x08no-entry\x07no-lock\x13insufficient-memory\x12insufficient-space\rnot-directory\tnot-empty\x0fnot-recoverable\x0bunsupported\x06no-tty\x0eno-such-device\x08overflow\rnot-permitted\x04pipe\tread-only\x0cinvalid-seek\x0etext-file-busy\x0ccross-device\x04\x00\nerror-code\x03\x00\x03\x01n\x01\x0esymlink-follow\x04\x00\npath-flags\x03\x00\x05\x01n\x04\x06create\tdirectory\texclusive\x08truncate\x04\x00\nopen-flags\x03\x00\x07\x01n\x06\x04read\x05write\x13file-integrity-sync\x13data-integrity-sync\x14requested-write-sync\x10mutate-directory\x04\x00\x10descriptor-flags\x03\x00\t\x01i\x00\x01i\x02\x01h\x00\x01j\x01\x0b\x01\x04\x01j\x01\x0c\x01\x04\x01@\x05\x04self\r\npath-flags\x06\x04paths\nopen-flags\x08\x05flags\n\x00\x0e\x04\x00\x1a[method]descriptor.open-at\x01\x10\x01@\x02\x04self\r\x06offsetw\x00\x0f\x04\x00\"[method]descriptor.read-via-stream\x01\x11", "\n \x01\x00\x1bwasi:filesystem/types@0.2.0\x05\x05\x06\x0f\x01\x03\x00\x02\ndescriptor\x07<\x01B\x07\x02\x03\x02\x01\x06\x04\x00\ndescriptor\x03\x00\x00\x01i\x01\x01o\x02\x02s\x01p\x03\x01@\x00\x00\x04\x04\x00\x0fget-directories\x01\x05\n#\x01\x00\x1ewasi:filesystem/preopens@0.2.0\x05\x07\x072\x01B\x05\x02\x03\x02\x01\x03\x04\x00\routput-stream\x03\x00\x00\x01i\x01\x01@\x00\x00\x02\x04\x00\nget-stdout\x01\x03\n\x1a\x01\x00\x15wasi:cli/stdout@0.2.0\x05\x08");
 }
 
-function fs_rw_tail(): string {
-  return "\x07\xa4\x07\x01B\x1a\x04\x00\ndescriptor\x03\x01\x02\x03\x02\x01\x04\x04\x00\x0cinput-stream\x03\x00\x01\x02\x03\x02\x01\x03\x04\x00\routput-stream\x03\x00\x03\x01m%\x06access\x0bwould-block\x07already\x0ebad-descriptor\x04busy\x08deadlock\x05quota\x05exist\x0efile-too-large\x15illegal-byte-sequence\x0bin-progress\x0binterrupted\x07invalid\x02io\x0cis-directory\x04loop\x0etoo-many-links\x0cmessage-size\rname-too-long\tno-device\x08no-entry\x07no-lock\x13insufficient-memory\x12insufficient-space\rnot-directory\tnot-empty\x0fnot-recoverable\x0bunsupported\x06no-tty\x0eno-such-device\x08overflow\rnot-permitted\x04pipe\tread-only\x0cinvalid-seek\x0etext-file-busy\x0ccross-device\x04\x00\nerror-code\x03\x00\x05\x01n\x01\x0esymlink-follow\x04\x00\npath-flags\x03\x00\x07\x01n\x04\x06create\tdirectory\texclusive\x08truncate\x04\x00\nopen-flags\x03\x00\t\x01n\x06\x04read\x05write\x13file-integrity-sync\x13data-integrity-sync\x14requested-write-sync\x10mutate-directory\x04\x00\x10descriptor-flags\x03\x00\x0b\x01i\x00\x01i\x02\x01i\x04\x01h\x00\x01j\x01\r\x01\x06\x01j\x01\x0e\x01\x06\x01j\x01\x0f\x01\x06\x01@\x05\x04self\x10\npath-flags\x08\x04paths\nopen-flags\n\x05flags\x0c\x00\x11\x04\x00\x1a[method]descriptor.open-at\x01\x14\x01@\x02\x04self\x10\x06offsetw\x00\x12\x04\x00\"[method]descriptor.read-via-stream\x01\x15\x01@\x02\x04self\x10\x06offsetw\x00\x13\x04\x00#[method]descriptor.write-via-stream\x01\x16\n \x01\x00\x1bwasi:filesystem/types@0.2.0\x05\x05\x06\x0f\x01\x03\x00\x02\ndescriptor\x07<\x01B\x07\x02\x03\x02\x01\x06\x04\x00\ndescriptor\x03\x00\x00\x01i\x01\x01o\x02\x02s\x01p\x03\x01@\x00\x00\x04\x04\x00\x0fget-directories\x01\x05\n#\x01\x00\x1ewasi:filesystem/preopens@0.2.0\x05\x07\x072\x01B\x05\x02\x03\x02\x01\x03\x04\x00\routput-stream\x03\x00\x00\x01i\x01\x01@\x00\x00\x02\x04\x00\nget-stdout\x01\x03\n\x1a\x01\x00\x15wasi:cli/stdout@0.2.0\x05\x08";
+function fs_rw_tail(): i32[] {
+  return type_block("\x01B\x1a\x04\x00\ndescriptor\x03\x01\x02\x03\x02\x01\x04\x04\x00\x0cinput-stream\x03\x00\x01\x02\x03\x02\x01\x03\x04\x00\routput-stream\x03\x00\x03\x01m%\x06access\x0bwould-block\x07already\x0ebad-descriptor\x04busy\x08deadlock\x05quota\x05exist\x0efile-too-large\x15illegal-byte-sequence\x0bin-progress\x0binterrupted\x07invalid\x02io\x0cis-directory\x04loop\x0etoo-many-links\x0cmessage-size\rname-too-long\tno-device\x08no-entry\x07no-lock\x13insufficient-memory\x12insufficient-space\rnot-directory\tnot-empty\x0fnot-recoverable\x0bunsupported\x06no-tty\x0eno-such-device\x08overflow\rnot-permitted\x04pipe\tread-only\x0cinvalid-seek\x0etext-file-busy\x0ccross-device\x04\x00\nerror-code\x03\x00\x05\x01n\x01\x0esymlink-follow\x04\x00\npath-flags\x03\x00\x07\x01n\x04\x06create\tdirectory\texclusive\x08truncate\x04\x00\nopen-flags\x03\x00\t\x01n\x06\x04read\x05write\x13file-integrity-sync\x13data-integrity-sync\x14requested-write-sync\x10mutate-directory\x04\x00\x10descriptor-flags\x03\x00\x0b\x01i\x00\x01i\x02\x01i\x04\x01h\x00\x01j\x01\r\x01\x06\x01j\x01\x0e\x01\x06\x01j\x01\x0f\x01\x06\x01@\x05\x04self\x10\npath-flags\x08\x04paths\nopen-flags\n\x05flags\x0c\x00\x11\x04\x00\x1a[method]descriptor.open-at\x01\x14\x01@\x02\x04self\x10\x06offsetw\x00\x12\x04\x00\"[method]descriptor.read-via-stream\x01\x15\x01@\x02\x04self\x10\x06offsetw\x00\x13\x04\x00#[method]descriptor.write-via-stream\x01\x16", "\n \x01\x00\x1bwasi:filesystem/types@0.2.0\x05\x05\x06\x0f\x01\x03\x00\x02\ndescriptor\x07<\x01B\x07\x02\x03\x02\x01\x06\x04\x00\ndescriptor\x03\x00\x00\x01i\x01\x01o\x02\x02s\x01p\x03\x01@\x00\x00\x04\x04\x00\x0fget-directories\x01\x05\n#\x01\x00\x1ewasi:filesystem/preopens@0.2.0\x05\x07\x072\x01B\x05\x02\x03\x02\x01\x03\x04\x00\routput-stream\x03\x00\x00\x01i\x01\x01@\x00\x00\x02\x04\x00\nget-stdout\x01\x03\n\x1a\x01\x00\x15wasi:cli/stdout@0.2.0\x05\x08");
 }
 
-function fs_write_tail(): string {
-  return "\x07\xca\x06\x01B\x14\x04\x00\ndescriptor\x03\x01\x02\x03\x02\x01\x03\x04\x00\routput-stream\x03\x00\x01\x01m%\x06access\x0bwould-block\x07already\x0ebad-descriptor\x04busy\x08deadlock\x05quota\x05exist\x0efile-too-large\x15illegal-byte-sequence\x0bin-progress\x0binterrupted\x07invalid\x02io\x0cis-directory\x04loop\x0etoo-many-links\x0cmessage-size\rname-too-long\tno-device\x08no-entry\x07no-lock\x13insufficient-memory\x12insufficient-space\rnot-directory\tnot-empty\x0fnot-recoverable\x0bunsupported\x06no-tty\x0eno-such-device\x08overflow\rnot-permitted\x04pipe\tread-only\x0cinvalid-seek\x0etext-file-busy\x0ccross-device\x04\x00\nerror-code\x03\x00\x03\x01n\x01\x0esymlink-follow\x04\x00\npath-flags\x03\x00\x05\x01n\x04\x06create\tdirectory\texclusive\x08truncate\x04\x00\nopen-flags\x03\x00\x07\x01n\x06\x04read\x05write\x13file-integrity-sync\x13data-integrity-sync\x14requested-write-sync\x10mutate-directory\x04\x00\x10descriptor-flags\x03\x00\t\x01i\x00\x01i\x02\x01h\x00\x01j\x01\x0b\x01\x04\x01j\x01\x0c\x01\x04\x01@\x05\x04self\r\npath-flags\x06\x04paths\nopen-flags\x08\x05flags\n\x00\x0e\x04\x00\x1a[method]descriptor.open-at\x01\x10\x01@\x02\x04self\r\x06offsetw\x00\x0f\x04\x00#[method]descriptor.write-via-stream\x01\x11\n \x01\x00\x1bwasi:filesystem/types@0.2.0\x05\x04\x06\x0f\x01\x03\x00\x02\ndescriptor\x07<\x01B\x07\x02\x03\x02\x01\x05\x04\x00\ndescriptor\x03\x00\x00\x01i\x01\x01o\x02\x02s\x01p\x03\x01@\x00\x00\x04\x04\x00\x0fget-directories\x01\x05\n#\x01\x00\x1ewasi:filesystem/preopens@0.2.0\x05\x06\x072\x01B\x05\x02\x03\x02\x01\x03\x04\x00\routput-stream\x03\x00\x00\x01i\x01\x01@\x00\x00\x02\x04\x00\nget-stdout\x01\x03\n\x1a\x01\x00\x15wasi:cli/stdout@0.2.0\x05\x07";
+function fs_write_tail(): i32[] {
+  return type_block("\x01B\x14\x04\x00\ndescriptor\x03\x01\x02\x03\x02\x01\x03\x04\x00\routput-stream\x03\x00\x01\x01m%\x06access\x0bwould-block\x07already\x0ebad-descriptor\x04busy\x08deadlock\x05quota\x05exist\x0efile-too-large\x15illegal-byte-sequence\x0bin-progress\x0binterrupted\x07invalid\x02io\x0cis-directory\x04loop\x0etoo-many-links\x0cmessage-size\rname-too-long\tno-device\x08no-entry\x07no-lock\x13insufficient-memory\x12insufficient-space\rnot-directory\tnot-empty\x0fnot-recoverable\x0bunsupported\x06no-tty\x0eno-such-device\x08overflow\rnot-permitted\x04pipe\tread-only\x0cinvalid-seek\x0etext-file-busy\x0ccross-device\x04\x00\nerror-code\x03\x00\x03\x01n\x01\x0esymlink-follow\x04\x00\npath-flags\x03\x00\x05\x01n\x04\x06create\tdirectory\texclusive\x08truncate\x04\x00\nopen-flags\x03\x00\x07\x01n\x06\x04read\x05write\x13file-integrity-sync\x13data-integrity-sync\x14requested-write-sync\x10mutate-directory\x04\x00\x10descriptor-flags\x03\x00\t\x01i\x00\x01i\x02\x01h\x00\x01j\x01\x0b\x01\x04\x01j\x01\x0c\x01\x04\x01@\x05\x04self\r\npath-flags\x06\x04paths\nopen-flags\x08\x05flags\n\x00\x0e\x04\x00\x1a[method]descriptor.open-at\x01\x10\x01@\x02\x04self\r\x06offsetw\x00\x0f\x04\x00#[method]descriptor.write-via-stream\x01\x11", "\n \x01\x00\x1bwasi:filesystem/types@0.2.0\x05\x04\x06\x0f\x01\x03\x00\x02\ndescriptor\x07<\x01B\x07\x02\x03\x02\x01\x05\x04\x00\ndescriptor\x03\x00\x00\x01i\x01\x01o\x02\x02s\x01p\x03\x01@\x00\x00\x04\x04\x00\x0fget-directories\x01\x05\n#\x01\x00\x1ewasi:filesystem/preopens@0.2.0\x05\x06\x072\x01B\x05\x02\x03\x02\x01\x03\x04\x00\routput-stream\x03\x00\x00\x01i\x01\x01@\x00\x00\x02\x04\x00\nget-stdout\x01\x03\n\x1a\x01\x00\x15wasi:cli/stdout@0.2.0\x05\x07");
 }
 
 // Composed fs prefixes (preamble + io/error + io/streams + fs tail), replacing
 // the former io_fs_*_prefix blobs.
 function io_fs_read_head(): i32[] {
   let o: i32[] = component_preamble();
-  o = wcat(o, blob_to_bytes(tb_io_error()));
-  o = wcat(o, blob_to_bytes(tb_io_streams_inout()));
-  return wcat(o, blob_to_bytes(fs_read_tail()));
+  o = wcat(o, tb_io_error());
+  o = wcat(o, tb_io_streams_inout());
+  return wcat(o, fs_read_tail());
 }
 
 function io_fs_rw_head(): i32[] {
   let o: i32[] = component_preamble();
-  o = wcat(o, blob_to_bytes(tb_io_error()));
-  o = wcat(o, blob_to_bytes(tb_io_streams_inout()));
-  return wcat(o, blob_to_bytes(fs_rw_tail()));
+  o = wcat(o, tb_io_error());
+  o = wcat(o, tb_io_streams_inout());
+  return wcat(o, fs_rw_tail());
 }
 
 function io_fs_write_head(): i32[] {
   let o: i32[] = component_preamble();
-  o = wcat(o, blob_to_bytes(tb_io_error()));
-  o = wcat(o, blob_to_bytes(tb_io_streams_out()));
-  return wcat(o, blob_to_bytes(fs_write_tail()));
+  o = wcat(o, tb_io_error());
+  o = wcat(o, tb_io_streams_out());
+  return wcat(o, fs_write_tail());
 }
 
 // tb_cli_stdout: the wasi:cli/stdout interface (get-stdout).
-function tb_cli_stdout(): string {
-  return "\x072\x01B\x05\x02\x03\x02\x01\x03\x04\x00\routput-stream\x03\x00\x00\x01i\x01\x01@\x00\x00\x02\x04\x00\nget-stdout\x01\x03\n\x1a\x01\x00\x15wasi:cli/stdout@0.2.0\x05\x04";
+function tb_cli_stdout(): i32[] {
+  return type_block("\x01B\x05\x02\x03\x02\x01\x03\x04\x00\routput-stream\x03\x00\x00\x01i\x01\x01@\x00\x00\x02\x04\x00\nget-stdout\x01\x03", "\n\x1a\x01\x00\x15wasi:cli/stdout@0.2.0\x05\x04");
 }
 
 // io_stdout_head: preamble + io/error + io/streams(out) + cli/stdout -- the
@@ -2522,62 +2522,79 @@ function tb_cli_stdout(): string {
 // from the per-interface type blocks.
 function io_stdout_head(): i32[] {
   let o: i32[] = component_preamble();
-  o = wcat(o, blob_to_bytes(tb_io_error()));
-  o = wcat(o, blob_to_bytes(tb_io_streams_out()));
-  return wcat(o, blob_to_bytes(tb_cli_stdout()));
+  o = wcat(o, tb_io_error());
+  o = wcat(o, tb_io_streams_out());
+  return wcat(o, tb_cli_stdout());
 }
 
 // Per-interface type blocks appended after the stdout head (canonical order).
-function tb_random(): string {
-  return "\x07\x1b\x01B\x02\x01@\x00\x00w\x04\x00\x0eget-random-u64\x01\x00\n\x1d\x01\x00\x18wasi:random/random@0.2.0\x05\x05";
+function tb_random(): i32[] {
+  return type_block("\x01B\x02\x01@\x00\x00w\x04\x00\x0eget-random-u64\x01\x00", "\n\x1d\x01\x00\x18wasi:random/random@0.2.0\x05\x05");
 }
 
-function tb_cli_environment_env(): string {
-  return "\x07$\x01B\x04\x01o\x02ss\x01p\x00\x01@\x00\x00\x01\x04\x00\x0fget-environment\x01\x02\n\x1f\x01\x00\x1awasi:cli/environment@0.2.0\x05\x05";
+function tb_cli_environment_env(): i32[] {
+  return type_block("\x01B\x04\x01o\x02ss\x01p\x00\x01@\x00\x00\x01\x04\x00\x0fget-environment\x01\x02", "\n\x1f\x01\x00\x1awasi:cli/environment@0.2.0\x05\x05");
 }
 
-function tb_cli_environment_args(): string {
-  return "\x07\x1d\x01B\x03\x01ps\x01@\x00\x00\x00\x04\x00\rget-arguments\x01\x01\n\x1f\x01\x00\x1awasi:cli/environment@0.2.0\x05\x05";
+function tb_cli_environment_args(): i32[] {
+  return type_block("\x01B\x03\x01ps\x01@\x00\x00\x00\x04\x00\rget-arguments\x01\x01", "\n\x1f\x01\x00\x1awasi:cli/environment@0.2.0\x05\x05");
 }
 
-function tb_wall_clock(): string {
-  return "\x077\x01B\x04\x01r\x02\x07secondsw\x0bnanosecondsy\x04\x00\x08datetime\x03\x00\x00\x01@\x00\x00\x01\x04\x00\x03now\x01\x02\n!\x01\x00\x1cwasi:clocks/wall-clock@0.2.0\x05\x05";
+function tb_wall_clock(): i32[] {
+  return type_block("\x01B\x04\x01r\x02\x07secondsw\x0bnanosecondsy\x04\x00\x08datetime\x03\x00\x00\x01@\x00\x00\x01\x04\x00\x03now\x01\x02", "\n!\x01\x00\x1cwasi:clocks/wall-clock@0.2.0\x05\x05");
 }
 
-function tb_monotonic_clock(): string {
-  return "\x07\x10\x01B\x02\x01@\x00\x00w\x04\x00\x03now\x01\x00\n&\x01\x00!wasi:clocks/monotonic-clock@0.2.0\x05\x05";
+function tb_monotonic_clock(): i32[] {
+  return type_block("\x01B\x02\x01@\x00\x00w\x04\x00\x03now\x01\x00", "\n&\x01\x00!wasi:clocks/monotonic-clock@0.2.0\x05\x05");
 }
 
-function tb_cli_exit(): string {
-  return "\x07\x1d\x01B\x03\x01j\x00\x00\x01@\x01\x06status\x00\x01\x00\x04\x00\x04exit\x01\x01\n\x18\x01\x00\x13wasi:cli/exit@0.2.0\x05\x05";
+function tb_cli_exit(): i32[] {
+  return type_block("\x01B\x03\x01j\x00\x00\x01@\x01\x06status\x00\x01\x00\x04\x00\x04exit\x01\x01", "\n\x18\x01\x00\x13wasi:cli/exit@0.2.0\x05\x05");
 }
 
 // tb_cli_stderr: the wasi:cli/stderr interface (get-stderr); in the type
 // section it follows cli/stdout (independent of the stderr-first function order).
-function tb_cli_stderr(): string {
-  return "\x072\x01B\x05\x02\x03\x02\x01\x03\x04\x00\routput-stream\x03\x00\x00\x01i\x01\x01@\x00\x00\x02\x04\x00\nget-stderr\x01\x03\n\x1a\x01\x00\x15wasi:cli/stderr@0.2.0\x05\x05";
+function tb_cli_stderr(): i32[] {
+  return type_block("\x01B\x05\x02\x03\x02\x01\x03\x04\x00\routput-stream\x03\x00\x00\x01i\x01\x01@\x00\x00\x02\x04\x00\nget-stderr\x01\x03", "\n\x1a\x01\x00\x15wasi:cli/stderr@0.2.0\x05\x05");
 }
 
 // Combination tails: the trailing interface block in fs context (index-
 // shifted from the stdout-family tails, so distinct), appended to a base fs
 // prefix to form a combination prefix.
-function tb_fsread_env_tail(): string {
-  return "\x07$\x01B\x04\x01o\x02ss\x01p\x00\x01@\x00\x00\x01\x04\x00\x0fget-environment\x01\x02\n\x1f\x01\x00\x1awasi:cli/environment@0.2.0\x05\t";
+function tb_fsread_env_tail(): i32[] {
+  return type_block("\x01B\x04\x01o\x02ss\x01p\x00\x01@\x00\x00\x01\x04\x00\x0fget-environment\x01\x02", "\n\x1f\x01\x00\x1awasi:cli/environment@0.2.0\x05\t");
 }
 
-function tb_fsread_args_tail(): string {
-  return "\x07\x1d\x01B\x03\x01ps\x01@\x00\x00\x00\x04\x00\rget-arguments\x01\x01\n\x1f\x01\x00\x1awasi:cli/environment@0.2.0\x05\t";
+function tb_fsread_args_tail(): i32[] {
+  return type_block("\x01B\x03\x01ps\x01@\x00\x00\x00\x04\x00\rget-arguments\x01\x01", "\n\x1f\x01\x00\x1awasi:cli/environment@0.2.0\x05\t");
 }
 
-function tb_fsrw_env_tail(): string {
-  return "\x07$\x01B\x04\x01o\x02ss\x01p\x00\x01@\x00\x00\x01\x04\x00\x0fget-environment\x01\x02\n\x1f\x01\x00\x1awasi:cli/environment@0.2.0\x05\t";
+function tb_fsrw_env_tail(): i32[] {
+  return type_block("\x01B\x04\x01o\x02ss\x01p\x00\x01@\x00\x00\x01\x04\x00\x0fget-environment\x01\x02", "\n\x1f\x01\x00\x1awasi:cli/environment@0.2.0\x05\t");
 }
 
-function tb_fswrite_random_tail(): string {
-  return "\x07\x1b\x01B\x02\x01@\x00\x00w\x04\x00\x0eget-random-u64\x01\x00\n\x1d\x01\x00\x18wasi:random/random@0.2.0\x05\x08";
+function tb_fswrite_random_tail(): i32[] {
+  return type_block("\x01B\x02\x01@\x00\x00w\x04\x00\x0eget-random-u64\x01\x00", "\n\x1d\x01\x00\x18wasi:random/random@0.2.0\x05\x08");
 }
 
-// blob_to_bytes unpacks an embedded byte-string into an i32[] buffer.
+// type_block is a component type section (id 7) holding `body`, then the
+// import and alias sections already encoded in `rest`.
+function type_block(body: string, rest: string): i32[] {
+  return wcat(wsection(7, blob_to_bytes(body)), blob_to_bytes(rest));
+}
+
+// hex_to_bytes unpacks a blob written two hex digits a byte.
+pub function hex_to_bytes(s: string): i32[] {
+  let o: i32[] = [];
+  let i: i32 = 0;
+  while (i + 1 < s.len()) {
+    o = o.append(hexval(s[i] as i32) * 16 + hexval(s[i + 1] as i32));
+    i = i + 2;
+  }
+  return o;
+}
+
+// blob_to_bytes unpacks an embedded ASCII byte-string into an i32[] buffer.
 pub function blob_to_bytes(s: string): i32[] {
   let o: i32[] = [];
   let i: i32 = 0;
@@ -2660,7 +2677,7 @@ pub function component_full_io_fs_rw(core: i32[]): i32[] {
 
 pub function component_full_io_random(core: i32[]): i32[] {
   let o: i32[] = io_stdout_head();
-  o = wcat(o, blob_to_bytes(tb_random()));
+  o = wcat(o, tb_random());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_random());
 }
@@ -2675,7 +2692,7 @@ pub function component_full_io_random(core: i32[]): i32[] {
 
 pub function component_full_io_env(core: i32[]): i32[] {
   let o: i32[] = io_stdout_head();
-  o = wcat(o, blob_to_bytes(tb_cli_environment_env()));
+  o = wcat(o, tb_cli_environment_env());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_env());
 }
@@ -2690,7 +2707,7 @@ pub function component_full_io_env(core: i32[]): i32[] {
 
 pub function component_full_io_args(core: i32[]): i32[] {
   let o: i32[] = io_stdout_head();
-  o = wcat(o, blob_to_bytes(tb_cli_environment_args()));
+  o = wcat(o, tb_cli_environment_args());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_args());
 }
@@ -2706,7 +2723,7 @@ pub function component_full_io_args(core: i32[]): i32[] {
 
 pub function component_full_io_clock(core: i32[]): i32[] {
   let o: i32[] = io_stdout_head();
-  o = wcat(o, blob_to_bytes(tb_wall_clock()));
+  o = wcat(o, tb_wall_clock());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_clock());
 }
@@ -2722,7 +2739,7 @@ pub function component_full_io_clock(core: i32[]): i32[] {
 
 pub function component_full_io_clock_mono(core: i32[]): i32[] {
   let o: i32[] = io_stdout_head();
-  o = wcat(o, blob_to_bytes(tb_monotonic_clock()));
+  o = wcat(o, tb_monotonic_clock());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_clock_mono());
 }
@@ -2740,7 +2757,7 @@ pub function component_full_io_clock_mono(core: i32[]): i32[] {
 
 pub function component_full_io_fs_read_env(core: i32[]): i32[] {
   let o: i32[] = io_fs_read_head();
-  o = wcat(o, blob_to_bytes(tb_fsread_env_tail()));
+  o = wcat(o, tb_fsread_env_tail());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_fs_read_env());
 }
@@ -2757,7 +2774,7 @@ pub function component_full_io_fs_read_env(core: i32[]): i32[] {
 
 pub function component_full_io_fs_rw_env(core: i32[]): i32[] {
   let o: i32[] = io_fs_rw_head();
-  o = wcat(o, blob_to_bytes(tb_fsrw_env_tail()));
+  o = wcat(o, tb_fsrw_env_tail());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_fs_rw_env());
 }
@@ -2774,7 +2791,7 @@ pub function component_full_io_fs_rw_env(core: i32[]): i32[] {
 
 pub function component_full_io_random_write(core: i32[]): i32[] {
   let o: i32[] = io_fs_write_head();
-  o = wcat(o, blob_to_bytes(tb_fswrite_random_tail()));
+  o = wcat(o, tb_fswrite_random_tail());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_random_write());
 }
@@ -2791,7 +2808,7 @@ pub function component_full_io_random_write(core: i32[]): i32[] {
 
 pub function component_full_io_eprint(core: i32[]): i32[] {
   let o: i32[] = io_stdout_head();
-  o = wcat(o, blob_to_bytes(tb_cli_stderr()));
+  o = wcat(o, tb_cli_stderr());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_eprint());
 }
@@ -2806,7 +2823,7 @@ pub function component_full_io_eprint(core: i32[]): i32[] {
 
 pub function component_full_io_exit(core: i32[]): i32[] {
   let o: i32[] = io_stdout_head();
-  o = wcat(o, blob_to_bytes(tb_cli_exit()));
+  o = wcat(o, tb_cli_exit());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_exit());
 }
@@ -2815,8 +2832,8 @@ pub function component_full_io_exit(core: i32[]): i32[] {
 // the stdout prefix; the exit interface is type 6 after stderr's type 5.
 pub function component_full_io_eprint_exit(core: i32[]): i32[] {
   let o: i32[] = io_stdout_head();
-  o = wcat(o, blob_to_bytes(tb_cli_stderr()));
-  o = wcat(o, blob_to_bytes("\x07\x1d\x01B\x03\x01j\x00\x00\x01@\x01\x06status\x00\x01\x00\x04\x00\x04exit\x01\x01\n\x18\x01\x00\x13wasi:cli/exit@0.2.0\x05\x06"));
+  o = wcat(o, tb_cli_stderr());
+  o = wcat(o, type_block("\x01B\x03\x01j\x00\x00\x01@\x01\x06status\x00\x01\x00\x04\x00\x04exit\x01\x01", "\n\x18\x01\x00\x13wasi:cli/exit@0.2.0\x05\x06"));
   o = wcat(o, wsection(1, core));
   let none: i32[] = [];
   return wcat(o, component_suffix_io(
@@ -2841,7 +2858,7 @@ pub function component_full_io_eprint_exit(core: i32[]): i32[] {
 
 pub function component_full_io_fs_args_read(core: i32[]): i32[] {
   let o: i32[] = io_fs_read_head();
-  o = wcat(o, blob_to_bytes(tb_fsread_args_tail()));
+  o = wcat(o, tb_fsread_args_tail());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_fs_args_read());
 }
@@ -2854,13 +2871,13 @@ pub function component_full_io_fs_args_read(core: i32[]): i32[] {
 // phase-3 prefix composition); the suffix is captured (per the design doc, the
 // suffix wiring is not yet generative).
 
-function tb_fsrw_args_tail(): string {
-  return "\x07\x1d\x01B\x03\x01ps\x01@\x00\x00\x00\x04\x00\rget-arguments\x01\x01\n\x1f\x01\x00\x1awasi:cli/environment@0.2.0\x05\t";
+function tb_fsrw_args_tail(): i32[] {
+  return type_block("\x01B\x03\x01ps\x01@\x00\x00\x00\x04\x00\rget-arguments\x01\x01", "\n\x1f\x01\x00\x1awasi:cli/environment@0.2.0\x05\t");
 }
 
 pub function component_full_io_fs_rw_args(core: i32[]): i32[] {
   let o: i32[] = io_fs_rw_head();
-  o = wcat(o, blob_to_bytes(tb_fsrw_args_tail()));
+  o = wcat(o, tb_fsrw_args_tail());
   o = wcat(o, wsection(1, core));
   return wcat(o, component_suffix_fs_rw_args());
 }

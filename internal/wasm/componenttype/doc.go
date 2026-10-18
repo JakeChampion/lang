@@ -33,7 +33,8 @@
 //	# 4. The self-host compiler embeds the fern and proxy payloads as Fern
 //	#    source (compiler/wit_fern_world.fern and
 //	#    wit_proxy_world.fern); rewrite each file's string literals from its
-//	#    .bin, one \xNN escape per byte, and run `fern -fmt -w` on it.
+//	#    .bin, two hex digits per byte (`xxd -p -c 60`), and run
+//	#    `fern -fmt -w` on it.
 //	#    TestWorldFernPayloads pins each pair equal.
 //
 // Anything that changes the WIT (adding/removing imports,
