@@ -1,18 +1,12 @@
 // Primary compiler array decisions. The rewriting passes supply the sites;
 // this module only formats them and counts their closed reason tags.
 import "./util";
+import "std/cli";
 
 pub struct Site { owner: string, stage: string, plan: string, reason: i32, storage: string }
 
 pub function enabled(): boolean {
-  match (env("FERN_ARRAY_REPORT")) {
-    Some(v) => {
-      return v == "1";
-    },
-    None => {
-      return false;
-    }
-  }
+  return cli.env_flag("FERN_ARRAY_REPORT");
 }
 
 // Named ordinals keep planner decisions tied to the closed diagnostic tags.

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jakechampion/lang/internal/envflag"
 )
 
 // Three legs run the fixture corpus through the SELF-HOST compiler:
@@ -341,7 +343,7 @@ type selfHostLeg struct {
 
 func requireSelfHostFixtureLeg(t *testing.T) {
 	t.Helper()
-	if os.Getenv("FERN_SELFHOST_FIXTURES") == "" {
+	if !envflag.On("FERN_SELFHOST_FIXTURES") {
 		t.Skip("set FERN_SELFHOST_FIXTURES=1 to run the fixture corpus through the self-host compiler")
 	}
 }

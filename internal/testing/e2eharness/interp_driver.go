@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/envflag"
 )
 
 // Interpret-the-driver mode (FERN_SELFHOST_INTERP=1).
@@ -49,8 +51,7 @@ import (
 // also the only path that exercises the x86-64 emit itself. Wiring a lane
 // would re-run the same assertions through a slower driver.
 func InterpDriverMode() bool {
-	v := os.Getenv("FERN_SELFHOST_INTERP")
-	return v != "" && v != "0"
+	return envflag.On("FERN_SELFHOST_INTERP")
 }
 
 // Program harvesting (FERN_DUMP_PROGRAMS=<dir>), layered on the same shim.

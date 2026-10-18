@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/envflag"
 )
 
 // The kernel's TLS record layer (std/tls/ktls, docs/NET-P4-TLS-PLAN.md):
@@ -19,7 +21,7 @@ func requireKtls(t *testing.T) {
 	if strings.Contains(string(ulps), "tls") {
 		return
 	}
-	if os.Getenv("FERN_REQUIRE_KTLS") == "1" {
+	if envflag.On("FERN_REQUIRE_KTLS") {
 		t.Fatalf("FERN_REQUIRE_KTLS=1 and the kernel offers no tls upper-layer protocol (available: %q); load it with modprobe tls", strings.TrimSpace(string(ulps)))
 	}
 	t.Skip("the kernel offers no tls upper-layer protocol: modprobe tls, or FERN_REQUIRE_KTLS=1 to fail here")

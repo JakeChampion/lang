@@ -44,6 +44,7 @@
 # spread — so those lines carry their own wider tolerance in the baseline.
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/flag-lib"
 
 # Default drift, in either direction, that is worth a warning. Per-entry
 # tolerances in the baseline's optional third column override it.
@@ -240,7 +241,7 @@ if [ -n "${FERN_CI_PERF_GATE_MAX_DRIFT:-}" ] && [ "$nmissing" -gt 0 ]; then
   exit 1
 fi
 
-if [ "${FERN_CI_PERF_GATE_STRICT:-0}" = "1" ] && [ "$findings" -gt 0 ]; then
+if fern_flag FERN_CI_PERF_GATE_STRICT && [ "$findings" -gt 0 ]; then
   echo "ci-check-perf: $findings finding(s) and FERN_CI_PERF_GATE_STRICT=1" >&2
   exit 1
 fi

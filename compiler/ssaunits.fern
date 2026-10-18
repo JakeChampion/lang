@@ -8,6 +8,7 @@ import "./semrecords";
 import "./semtypes";
 import "./typeinfo";
 import "./util";
+import "std/cli";
 
 pub function value_mode(): i32 {
   return ssasem.value_mode();
@@ -3908,21 +3909,13 @@ pub function no_reuse(): Reuse {
 }
 
 // reuse_layer_disabled: the #4350 §6.5 differential switch. When
-// FERN_SELFHOST_NO_REUSE is "1" in the compiler's environment no construction
+// FERN_SELFHOST_NO_REUSE is on in the compiler's environment no construction
 // builds in a donor's box and no map is updated in place: donors take their
 // normal drops and constructions allocate. Reuse on and off are
 // observationally identical (self_host_reuse_differential_test.go); off
 // trades only allocation count and peak heap.
 pub function reuse_layer_disabled(): boolean {
-  match (env("FERN_SELFHOST_NO_REUSE")) {
-    Some(v) => {
-      return v == "1";
-    },
-    None => {
-      return false;
-    }
-  }
-  return false;
+  return cli.env_flag("FERN_SELFHOST_NO_REUSE");
 }
 
 // `p` with its links and reuse tables. A static box, whose drop the lowering

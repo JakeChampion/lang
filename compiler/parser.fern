@@ -28,6 +28,7 @@ import "./astwalk";
 import "./util";
 import "./lexer";
 import "./typeinfo";
+import "std/cli";
 
 // =================== PARSER ====================
 
@@ -186,12 +187,9 @@ pub function warn_unresolved_imports(mod: Module, driver: string): boolean {
   eprint("warning: " + driver + " has no module loader; UNRESOLVED imports: " + paths);
   eprint("warning: any verdict below (ir/refused, exit code, eligibility bail) describes a BROKEN program, not the language.");
   eprint("warning: to judge this program use a loading driver: `fern <prog> <stdlib-root>`, or asm_load_run.");
-  match (env("FERN_STRICT_IMPORTS")) {
-    Some(_) => {
-      eprint("error: FERN_STRICT_IMPORTS=1 refuses an unresolvable-import run");
-      exit(3);
-    },
-    None => {}
+  if (cli.env_flag("FERN_STRICT_IMPORTS")) {
+    eprint("error: FERN_STRICT_IMPORTS refuses an unresolvable-import run");
+    exit(3);
   }
   return true;
 }

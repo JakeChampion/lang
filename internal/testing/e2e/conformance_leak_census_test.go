@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/envflag"
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
@@ -114,7 +115,7 @@ func TestConformanceLeakCensusX86_64(t *testing.T) {
 	// it prints measured census lines INSTEAD of comparing, so a lane
 	// setting it would disable this gate. The compare path below is the
 	// CI behaviour. Same reasoning as FERN_LEAK_MATRIX_DUMP.
-	if os.Getenv("FERN_LEAK_CENSUS_DUMP") == "1" {
+	if envflag.On("FERN_LEAK_CENSUS_DUMP") {
 		for _, r := range rows {
 			fmt.Printf("%-52s %d\n", r.name, r.unpaired)
 		}
