@@ -1493,6 +1493,33 @@ pub function demangle(name: string): string {
   return slice_unchecked(name, 0, cut) + "." + slice_unchecked(name, cut + 2, name.len());
 }
 
+// demangle_all demangles every identifier in `text`, so a composite type label
+// demangles each of its parts (`(a__A, b__B)`), not just the first. An
+// identifier starting with `_` is a runtime symbol, never a module mangling.
+pub function demangle_all(text: string): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < text.len()) {
+    if (!ident_start_byte(text[i])) {
+      out = out + slice_unchecked(text, i, i + 1);
+      i = i + 1;
+    } else {
+      let j: i32 = i;
+      while (ident_byte_at(text, j)) {
+        j = j + 1;
+      }
+      let word: string = slice_unchecked(text, i, j) + "";
+      if (text[i] == b'_') {
+        out = out + word;
+      } else {
+        out = out + demangle(word);
+      }
+      i = j;
+    }
+  }
+  return out;
+}
+
 // derive_hint renders the "add `@derive(…)` (or `impl … for T`)" clause
 // the derive hints share. `derive` is the attribute spelling and `trait`
 // the trait for the impl form, "" to offer the derive alone.
@@ -1866,33 +1893,6 @@ pub function to_u8(b: i32[]): u8[] {
     i = i + 1;
   }
   return o;
-}
-
-// io_error_reason is the reason part of a failed file operation's report.
-pub function io_error_reason(e: IoError): string {
-  match (e) {
-    NotFound(_) => {
-      return "not found";
-    },
-    PermissionDenied(_) => {
-      return "permission denied";
-    },
-    AlreadyExists(_) => {
-      return "already exists";
-    },
-    InvalidUtf8(_) => {
-      return "invalid UTF-8";
-    },
-    Interrupted => {
-      return "interrupted";
-    },
-    Unsupported => {
-      return "unsupported";
-    },
-    Other(_, msg, _) => {
-      return msg;
-    }
-  }
 }
 
 // cache_base is fern's per-user cache directory: $FERN_CACHE_DIR when that is

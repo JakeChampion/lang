@@ -10249,6 +10249,18 @@ func (c *checker) tryConvertErrToDyn(n *ast.TryOp, srcEnum, retEnum ast.EnumType
 	return block, true
 }
 
+// tryResidualMsg is E042's message for a `?` whose error type converts to the
+// function's neither way: boxed into a `dyn` set it does not implement, or
+// through a `from` constructor the function's error type does not have.
+func (c *checker) tryResidualMsg(srcEnum ast.EnumType, srcRes, retRes ast.Type) string {
+	sl, rl := typeLabel(srcRes), typeLabel(retRes)
+	if dt, ok := retRes.(ast.DynTraitType); ok {
+		return fmt.Sprintf("`?` cannot box %s into %s: %s does not implement %s", sl, rl, sl, c.missingDynTraits(dt, srcRes))
+	}
+	return fmt.Sprintf("`?` on %s carrying %s but the surrounding function carries %s, and %s has no `from(%s)` constructor to convert it (std/convert's `impl From[%s] for %s`)",
+		demangle(srcEnum.Name), sl, rl, rl, sl, sl, rl)
+}
+
 // tryConvertErrViaFrom builds the desugar for a `From`-based error-converting
 // `?`: when the function's error type `E2` has an associated `from(E1): E2`
 // (i.e. `impl From[E1] for E2`), a `Result[_, E1]` propagated through it maps
@@ -20780,8 +20792,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				n.Lowered = lowered
 				return n.Type
 			}
-			c.errfCode(n.P, "E042", "`?` on %s carrying %s but the surrounding function carries %s; the error types must match (implement %s for a `dyn`-error, or a `from(%s)` constructor on %s for the conversion)",
-				demangle(srcEnum.Name), srcRes, retRes, srcRes, srcRes, retRes)
+			c.errfCode(n.P, "E042", "%s", c.tryResidualMsg(srcEnum, srcRes, retRes))
 			return nil
 		}
 		return n.Type

@@ -16190,16 +16190,42 @@ function try_residual_diags(s: Scope, src: typeinfo.Type, u: ast.ExprUnary): uti
   if (!spellable(sr) || !spellable(rr) || type_eq(sr, rr)) {
     return out;
   }
-  let converts: boolean = from_converts(s, sr, rr);
-  if let typeinfo.TypeDyn(_) = rr {
-    converts = dyn_conforms(sr, rr, s);
+  let sl: string = util.demangle_all(type_label(sr));
+  let rl: string = util.demangle_all(type_label(rr));
+  if let typeinfo.TypeDyn(d) = rr {
+    if (dyn_conforms(sr, rr, s)) {
+      return out;
+    }
+    return out.append(dg_at("E042", "`?` cannot box " + sl + " into " + rl + ": " + sl + " does not implement " + unimplemented_traits(s, sr, d.traits), u.line, u.col));
   }
-  if (converts) {
+  if (from_converts(s, sr, rr)) {
     return out;
   }
-  let sl: string = type_label(sr);
-  let rl: string = type_label(rr);
-  return out.append(dg_at("E042", "`?` on Result carrying " + sl + " but the surrounding function carries " + rl + "; the error types must match (implement " + sl + " for a `dyn`-error, or a `from(" + sl + ")` constructor on " + rl + " for the conversion)", u.line, u.col));
+  return out.append(dg_at("E042", "`?` on Result carrying " + sl + " but the surrounding function carries " + rl + ", and " + rl + " has no `from(" + sl + ")` constructor to convert it (std/convert's `impl From[" + sl + "] for " + rl + "`)", u.line, u.col));
+}
+
+// unimplemented_traits names the traits of the dyn set `traits` that `src`
+// does not implement, joined by ` + ` as native's missingDynTraits does: the
+// set's first when `src` is a type no impl can name (a dyn or an array).
+function unimplemented_traits(s: Scope, src: typeinfo.Type, traits: string): string {
+  let set: string[] = parser.dyn_trait_set("dyn " + traits);
+  if (is_owned_array(src) || is_arr_view(src) || is_dyn_slot(src)) {
+    return util.demangle_all(set[0]);
+  }
+  let tn: string = util.base_type_name(type_label(src));
+  let missing: string = "";
+  for tr in set {
+    if (!conforms_to_dyn_trait(s, tn, tr)) {
+      if (missing.len() > 0) {
+        missing = missing + " + ";
+      }
+      missing = missing + util.demangle_all(tr);
+    }
+  }
+  if (missing.len() == 0) {
+    return util.demangle_all(set[0]);
+  }
+  return missing;
 }
 
 // result_residual is a Result type's error argument, unknown for any other.

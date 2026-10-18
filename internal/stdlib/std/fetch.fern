@@ -81,6 +81,7 @@ import "std/http/cookie";
 import "std/url";
 import "std/dns";
 import "std/net";
+import "std/error";
 import "std/base64";
 import "std/brotli";
 import "std/deflate";
@@ -228,6 +229,8 @@ function __later_message(e: FetchError): string {
 pub function (e: FetchError) to_string(): string {
   return e.message();
 }
+
+impl error.Error for FetchError {}
 
 // A handler that fetches upstream fails with `?`: a timeout answers 504, a
 // method, header or body the handler wrote that cannot go on the wire

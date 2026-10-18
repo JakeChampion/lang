@@ -371,6 +371,30 @@ function main(): i32 { let m: Map[string, i32] = map_new(4); let z = m.get(); re
 		spelling: "takes 1 argument but was given 0",
 	},
 	{
+		// `?` into a `dyn` error names the impl the error type lacks
+		// (#12668).
+		name: "E042 dyn residual names the missing impl",
+		src: `import "std/error";
+struct Oops { code: i32 }
+function g(): Result[i32, Oops] { return Err(Oops { code: 1 }); }
+function f(): Result[i32, dyn error.Error] { let v: i32 = g()?; return Ok(v); }
+function main(): i32 { return 0; }`,
+		code:     "E042",
+		spelling: "`?` cannot box Oops into dyn error.Error: Oops does not implement error.Error",
+	},
+	{
+		// Between two concrete error types the missing piece is the
+		// function's error type's `from` constructor.
+		name: "E042 concrete residual names the from constructor",
+		src: `struct A { code: i32 }
+struct B { code: i32 }
+function g(): Result[i32, A] { return Err(A { code: 1 }); }
+function f(): Result[i32, B] { let v: i32 = g()?; return Ok(v); }
+function main(): i32 { return 0; }`,
+		code:     "E042",
+		spelling: "B has no `from(A)` constructor to convert it",
+	},
+	{
 		name: "E042 Option operand in a void function",
 		src: `function f(o: Option[i32]): void { let v: i32 = o?; }
 function main(): i32 { return 0; }`,

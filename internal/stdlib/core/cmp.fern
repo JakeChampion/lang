@@ -24,6 +24,7 @@ import "std/u64";
 import "std/float";
 import "std/string";
 import "core/bigint";
+import "std/error";
 
 pub trait Display {
   function to_string(self: Self): string;
@@ -90,6 +91,9 @@ impl Display for f64 {}
 impl Display for f32 {}
 
 impl Display for string {}
+
+// IoError's `to_string` is std/error's.
+impl Display for IoError {}
 
 // `u8` has no scalar module, so no `to_string` to adopt — it widens to
 // i32 and borrows that one. Without this a byte cannot reach any

@@ -1,0 +1,40 @@
+// IoError and FetchError implement error.Error, so `?` boxes either into
+// `dyn error.Error` and the caller reads both through `message()` (#12668).
+// IoError is also cmp.Display. The fetch fails on its URL, before any socket.
+import "std/error";
+import "std/fetch";
+import "core/cmp";
+
+function load(path: string, url: string): Result[i32, dyn error.Error] {
+  if (url.len() > 0) {
+    let r: HttpResponse = fetch.send(fetch.get(url))?;
+    return Ok(r.status);
+  }
+  let text: string = read_file(path)?;
+  return Ok(text.len());
+}
+
+function report(r: Result[i32, dyn error.Error]): void {
+  match (r) {
+    Ok(n) => {
+      print("ok " + n.to_string());
+    },
+    Err(e) => {
+      print(e.message());
+    }
+  }
+}
+
+function show[T: cmp.Display](v: T): string {
+  return v.to_string();
+}
+
+function main(): i32 {
+  report(load("/nonexistent/fern-12668", ""));
+  report(load("", "not a url"));
+  let denied: IoError = IoError.PermissionDenied("/root");
+  print(show(denied));
+  let other: IoError = IoError.Other("/tmp", "Is a directory", 21);
+  print(other.to_string());
+  return 0;
+}
