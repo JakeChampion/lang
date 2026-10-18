@@ -25,7 +25,7 @@ func TestSelfHostLexicalCaptureTypesX86_64(t *testing.T) {
 		{"callable and string", `function f(callback: (f32, string) => i64, text: string): i32 { let cb = (): i32 => { callback(1.0f32, text); return 0; }; return 0; }`, "callback:((f32, string) => i64);text:string;"},
 		{"nominal callable", `struct Node { value: i32 } function f(callback: (Node) => Node): i32 { let cb = (n: Node): Node => callback(n); return 0; }`, "callback:((Node) => Node);"},
 		{"nominal array", `enum Item { Value(i32), Empty } function f(items: Item[]): i32 { function cb(): i32 { return items.len(); } return 0; }`, "items:Item[];"},
-		{"opaque shadows global", `function f[T](opaque: T): i32 { let cb = (): i32 => { opaque; return 0; }; return 0; } function opaque(): i32 { return 1; }`, "opaque:unknown;"},
+		{"opaque shadows global", `function f[T](opaque: T): i32 { let cb = (): i32 => { opaque; return 0; }; return 0; } function opaque(): i32 { return 1; }`, "opaque:rigid;"},
 		{"recursive binding", `function f(recur: str, outside: i64): i32 { function recur(n: i32): i32 { outside; return recur(n - 1); } return 0; }`, "outside:i64;"},
 		{"arrow reads outer binding", `function f(recur: string, outside: i64): i32 { let recur = (n: i32): i32 => { outside; return recur.len(); }; return 0; }`, "outside:i64;recur:string;"},
 		{"global is not capture", `function f(): i32 { let cb = (): i32 => global(); return 0; } function global(): i32 { return 7; }`, ""},
@@ -49,6 +49,7 @@ function lambdas(fd: parser.FuncDecl): ast.ExprLambda[] {
 }
 function spelling(ty: typeinfo.Type): string {
     if let typeinfo.TypeUnknown(u) = ty { return "unknown"; }
+    if let typeinfo.TypeErased(e) = ty { return "rigid"; }
     return typeinfo.spelling(ty);
 }
 function report(caps: ast.TypedBinding[]): string {
