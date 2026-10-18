@@ -77,6 +77,8 @@ costs a silent failure on the first target that lacks it.
 | `sched` | `priority`, `set_priority` | a scheduler knob: a nice value this process competes for the CPU by |
 | `subprocess` | `subprocess` | spawning a child and collecting its output; the hosted natives only |
 | `arena` | `__heap_mark`, `__heap_release_to` | native-only cursor rewind |
+| `syscall` | `__syscall3` … `__syscall6` | a kernel to trap into |
+| `rawmem` | `__raw_alloc`, `__raw_string`, `__raw_arr_box`, `__raw_scratch`, `__raw_environ`, `__raw_splice_pipe`, `__raw_cover`, `__raw_task_state`, `__raw_vdso`, `__raw_vg_request` | the native runtime's allocator block layout and static slots, which the register backends' runtime helpers are written on; wasm serves those helpers with hand-written WAT |
 
 ### Core
 

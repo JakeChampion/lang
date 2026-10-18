@@ -23,7 +23,7 @@ may rely on them firing for the described patterns. Koka's
 2026-07-13): annotate a function `fbip` (or graded `fbip(n)` /
 `fip(n)`) and the IR layer errors with **E068** unless every
 constructor site is reuse-paired (R1–R4 below) or within the
-allowance — `fern explain E068` for the exact contract,
+allowance — `fern -explain E068` for the exact contract,
 `compiler/irfipverify.fern` for the pass, which runs on every
 compile path. Still open: the drop-guided source selection default (plan E3 —
 evaluated, kept off). Where a shape has known non-firing edges,

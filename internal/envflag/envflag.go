@@ -1,5 +1,5 @@
 // Package envflag reads the boolean FERN_* environment variables by the one
-// rule the compiler's std/cli flag_on also applies: unset, "", "0", "false"
+// rule the compiler's std/envflag value_on also applies: unset, "", "0", "false"
 // and "off", in any ASCII case, are off; anything else is on.
 package envflag
 

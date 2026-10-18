@@ -228,8 +228,8 @@ guard excludes this shape.
 
 ### Clean error endpoints (not gaps)
 
-`c_call`, `subprocess`, and `timer_fd` are rejected before emit by
-`wasm_unsupported_builtin`. FFI `__c_call<n>` has no wasm C ABI, so refusing it
+`c_call`, `subprocess`, and `timer_fd` are rejected before emit by E066
+(`cabi`, `subprocess`, `pollfd`). FFI `__c_call<n>` has no wasm C ABI, so refusing it
 is the correct terminal answer, not a deferral to widen (#4375).
 
 ## Related: fn-typed tuple elements — CLOSED

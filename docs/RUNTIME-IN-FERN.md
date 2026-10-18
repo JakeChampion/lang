@@ -398,8 +398,8 @@ is selected — and selecting it is a semantic change, not wiring: `__raw_string
 on the register backends builds a box POINTING AT the raw bytes, while a wasm
 string is a single inline rc-headered block, so the same helper source would
 need one more allocation and a different aliasing contract. It also makes
-`wasm_unsupported_builtin`'s justification ("wasm has neither a raw address
-space nor syscalls") false, so the refusal gate has to move in lockstep. That
+the `rawmem` gate's justification ("wasm serves these helpers with
+hand-written WAT") false, so the refusal has to move in lockstep. That
 is its own change, and the syscall half is probably permanently out — wasm's
 I/O is WASI imports, not a syscall number.
 
@@ -742,7 +742,7 @@ remainder splits three ways:
   `wasm_binop_w` refuse in place of their comment fallback, and the eleven live
   ops that reached them — the `__raw_*` / `__syscall*` floor primitives, which
   exist for the register-backend runtime and have no wasm handlers — are named
-  by `wasm_unsupported_builtin` before emit, since a deliberate gap deserves the
+  by E066 before emit (`rawmem` / `syscall`), since a deliberate gap deserves the
   builtin's name rather than an IR op's. The refusal stays as the backstop for an
   op with no builtin name to report.
 

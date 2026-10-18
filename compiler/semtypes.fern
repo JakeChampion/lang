@@ -254,12 +254,16 @@ function concrete_leaf(t: typeinfo.Type, allow_void: boolean): boolean {
   return false;
 }
 
+// An array's elements and a tuple's slots stand where a union's payloads do,
+// so a never one (a `T[]` payload of a generic enum named without arguments)
+// is one no value holds, as it is there. A map's columns pick their runtime
+// storage by type, and a never column has none.
 function concrete_container(t: typeinfo.Type): boolean {
   if let typeinfo.TypeArray(a) = t {
-    return concrete(a.elem, false);
+    return is_never(a.elem) || concrete(a.elem, false);
   }
   if let typeinfo.TypeTuple(tup) = t {
-    return tup.elements.len() >= 2 && concrete_list(tup.elements);
+    return tup.elements.len() >= 2 && concrete_payloads(tup.elements);
   }
   if let typeinfo.TypeMap(m) = t {
     return concrete(m.key, false) && concrete(m.value, false);

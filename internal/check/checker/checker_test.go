@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -3799,6 +3800,93 @@ function main(): i32 { return area(Rect(3, 4)); }`
 	}
 }
 
+// A named-field variant pattern takes the struct pattern's two forms: a
+// `field: local` rename and a trailing `..` leaving fields out, at the arm,
+// nested in a payload, and in `if let`. `..` covers the
+// omitted fields, so an arm using it still exhausts its variant.
+func TestNamedFieldVariantRenameAndRest(t *testing.T) {
+	src := `enum Shape { Circle { r: i32 }, Rect { w: i32, h: i32 } }
+function area(s: Shape): i32 {
+    match (s) {
+        Circle { r: radius } => { return radius * radius; },
+        Rect { h: height, w } => { return w * height; },
+    }
+    return 0;
+}
+function width(s: Shape): i32 {
+    return match (s) {
+        Rect { w: ww, .. } => ww,
+        Circle { .. } => 0,
+    };
+}
+function nested(o: Option[Shape]): i32 {
+    match (o) {
+        Some(Rect { h: hh, .. }) => { return hh; },
+        Some(Circle { .. }) => { return 1; },
+        None => { return 0; },
+    }
+    return 0;
+}
+function zero_width(s: Shape): i32 {
+    return match (s) {
+        Rect { w: 0, h } => h,
+        Rect { .. } => 1,
+        Circle { .. } => 2,
+    };
+}
+function if_let(s: Shape): i32 {
+    if let Rect { w: ww, .. } = s {
+        return ww;
+    }
+    return 0;
+}
+function main(): i32 { return area(Rect(3, 4)) + width(Circle(1)) + nested(None) + zero_width(Rect(0, 5)) + if_let(Rect(2, 3)); }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("named-field variant rename / `..` should type-check: %v", err)
+	}
+	// The arm is settled into declaration order: the renamed local sits at
+	// its field's position and the omitted field binds `_`.
+	m, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Match)
+	if !ok {
+		t.Fatalf("area body[0] = %T, want *ast.Match", prog.Funcs[0].Body.Stmts[0])
+	}
+	if got := m.Arms[1].Bindings; !slices.Equal(got, []string{"w", "height"}) {
+		t.Errorf("Rect { h: height, w } settled to %v, want [w height]", got)
+	}
+	ret, ok := prog.Funcs[1].Body.Stmts[0].(*ast.Return)
+	if !ok {
+		t.Fatalf("width body[0] = %T, want *ast.Return", prog.Funcs[1].Body.Stmts[0])
+	}
+	me, ok := ret.Value.(*ast.MatchExpr)
+	if !ok {
+		t.Fatalf("width returns %T, want *ast.MatchExpr", ret.Value)
+	}
+	if got := me.Arms[0].Bindings; !slices.Equal(got, []string{"ww", "_"}) {
+		t.Errorf("Rect { w: ww, .. } settled to %v, want [ww _]", got)
+	}
+}
+
+// A struct pattern naming no field (`Pt { .. }`) in a payload slot is still a
+// struct pattern; the parser used to leave it looking positional (E035).
+func TestStructPatternRestOnlyInPayloadSlot(t *testing.T) {
+	src := `struct Pt { x: i32, y: i32 }
+enum H { S(Pt), N(i32) }
+function f(h: H): i32 {
+    match (h) {
+        S(Pt { .. }) => { return 1; },
+        N(n) => { return n; },
+    }
+}
+function main(): i32 { return f(N(4)); }`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("S(Pt { .. }) should type-check: %v", err)
+	}
+}
+
 func TestNamedFieldVariantMatchErrors(t *testing.T) {
 	cases := []struct {
 		src  string
@@ -3816,11 +3904,18 @@ function main(): i32 { return 0; }`, "must bind all"},
 		{`enum E { V(i32) }
 function f(e: E): i32 { match (e) { V { a } => { return a; }, } return 0; }
 function main(): i32 { return 0; }`, "positional payloads"},
-		// renaming (`field: local`) is not supported for enum named-field
-		// patterns — only struct-scrutinee matches allow it.
-		{`enum E { V { a: i32 } }
-function f(e: E): i32 { match (e) { V { a: x } => { return x; }, } return 0; }
-function main(): i32 { return 0; }`, "does not support renaming"},
+		// a field named twice, once renamed
+		{`enum E { V { a: i32, b: i32 } }
+function f(e: E): i32 { match (e) { V { a, a: x, .. } => { return x; }, } return 0; }
+function main(): i32 { return 0; }`, "bound more than once"},
+		// `..` leaves fields out but does not make an unknown one legal
+		{`enum E { V { a: i32, b: i32 } }
+function f(e: E): i32 { match (e) { V { c: x, .. } => { return 0; }, } return 0; }
+function main(): i32 { return 0; }`, "has no field"},
+		// a refutable field sub-pattern does not cover its variant
+		{`enum E { V { a: i32, b: i32 }, W }
+function f(e: E): i32 { return match (e) { V { a: 0, .. } => 1, W => 2 }; }
+function main(): i32 { return 0; }`, "does not cover variant V"},
 	}
 	for _, c := range cases {
 		err := checkSource(t, c.src)
@@ -7196,7 +7291,27 @@ function main(): i32 {
 		{"unknown resource",
 			`function f(h: borrow Bogus): i32 { return 0; }
 function main(): i32 { return 0; }`,
-			"unknown resource"},
+			"`Bogus` is not a resource, so `borrow Bogus` is not a handle type; a parameter borrows by default, written `name: Bogus`"},
+		{"struct is not a resource",
+			`struct Foo { v: i32 }
+function f(xs: own Foo): i32 { return 0; }
+function main(): i32 { return 0; }`,
+			"`Foo` is not a resource, so `own Foo` is not a handle type; a consuming parameter is written `own name: Foo`"},
+		{"contextual type name is not a resource",
+			"function f(s: own str): i32 { return 0; }\nfunction main(): i32 { return 0; }",
+			"`str` is not a resource"},
+		{"type parameter is not a resource",
+			"function f[T](x: own T): i32 { return 0; }\nfunction main(): i32 { return 0; }",
+			"`T` is not a resource"},
+		{"struct field",
+			"struct Foo { v: i32 }\nstruct S { h: own Foo }\nfunction main(): i32 { return 0; }",
+			"2:1: `Foo` is not a resource"},
+		{"enum payload",
+			"struct Foo { v: i32 }\nenum E { A(own Foo) }\nfunction main(): i32 { return 0; }",
+			"2:1: `Foo` is not a resource"},
+		{"let annotation",
+			"struct Foo { v: i32 }\nfunction main(): i32 {\n\tlet x: own Foo = Foo { v: 1 };\n\treturn 0;\n}",
+			"3:2: `Foo` is not a resource"},
 		{"plain i32 is not a handle",
 			prelude + `function main(): i32 {
 	let n: i32 = 7;

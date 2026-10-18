@@ -182,7 +182,7 @@ func TestSelfHostRlimitNofileIRWasmRefused(t *testing.T) {
 	if code := cmd.ProcessState.ExitCode(); code == 0 {
 		t.Errorf("wasm driver accepted rlimit_nofile; it enforces no resource limits")
 	}
-	if !strings.Contains(stderr.String(), "rlimit_nofile is not supported on the wasm target") {
+	if !strings.Contains(stderr.String(), "required by `rlimit_nofile`; targets providing it") {
 		t.Errorf("wasm refusal does not name the builtin:\n%s", stderr.String())
 	}
 }

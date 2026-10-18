@@ -21,6 +21,10 @@
 // EVERY combinator below works on a plain array — and, via a map's `.keys()` /
 // `.values()` snapshot, on map keys and values too.
 //
+// `for x in it` walks any Iterator, calling `next` until it returns None, and
+// a type whose `iter()` returns one (the persistent collections) walks the
+// same way.
+//
 // Iteration is value-semantic: `next` returns `Some((value, advanced))` where
 // `advanced` is a FRESH iterator positioned just after `value`, or `None` at
 // the end. There is no interior mutation — advancing yields a new iterator —

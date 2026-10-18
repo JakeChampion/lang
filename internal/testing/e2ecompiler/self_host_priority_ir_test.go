@@ -142,7 +142,7 @@ func TestSelfHostPriorityIRWasmRefused(t *testing.T) {
 	if code := cmd.ProcessState.ExitCode(); code == 0 {
 		t.Errorf("wasm driver accepted the priority pair; it has no scheduler knob")
 	}
-	if !strings.Contains(stderr.String(), "priority is not supported on the wasm target") {
+	if !strings.Contains(stderr.String(), "required by `priority`; targets providing it") {
 		t.Errorf("wasm refusal does not name the builtin:\n%s", stderr.String())
 	}
 }

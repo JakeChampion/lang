@@ -914,10 +914,11 @@ function ts_mentions_map(types: string[]): boolean {
   return false;
 }
 
-// ts_sig_types are the parameter and return types of a function and of every
-// lambda or nested function in its body.
+// ts_sig_types are the parameter and return types of a function, its receiver
+// type (which a `self: Self` parameter names), and those of every lambda or
+// nested function in its body.
 function ts_sig_types(fd: parser.FuncDecl): string[] {
-  let types: string[] = [fd.ret_type];
+  let types: string[] = [fd.ret_type, fd.receiver_type];
   for p in fd.params {
     types = types.append(p.type_name);
   }

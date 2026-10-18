@@ -66,6 +66,9 @@ func printStructDecl(b *strings.Builder, sd *ast.StructDecl) {
 	} else if sd.Public {
 		b.WriteString("pub ")
 	}
+	if sd.Opaque {
+		b.WriteString("opaque ")
+	}
 	b.WriteString("struct ")
 	b.WriteString(sd.Name)
 	writeDeclTypeParams(b, sd.TypeParams)

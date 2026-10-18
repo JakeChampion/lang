@@ -735,7 +735,7 @@ function add_variant_decl(acc: parser.StructDecl[], name: string, arity: i32, en
     fields = fields.append(parser.StructFieldDecl { name: fname, type_name: "", fn_ret: "", fn_param_types: "" });
     f = f + 1;
   }
-  return acc.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
+  return acc.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
 }
 
 // variant_arity returns the payload count of the enum variant of this name, or
@@ -2139,6 +2139,21 @@ function sat_u64(op: string, a: u64, b: u64): i64 {
 // operands. Pure in (op, lv, rv) — extracted from eval_expr's
 // ExprBinary arm so the operator semantics live in one place,
 // mirroring the VM's apply_binary (SH-048).
+// strings_ordered applies an ordering operator to two strings, compared by
+// their bytes.
+function strings_ordered(op: string, a: string, b: string): boolean {
+  if (op == "<") {
+    return a < b;
+  }
+  if (op == "<=") {
+    return a <= b;
+  }
+  if (op == ">") {
+    return a > b;
+  }
+  return a >= b;
+}
+
 function eval_binary(op: string, lv: Value, rv: Value): Value {
   // 64-bit integer arithmetic: when either operand is a VInt64, widen
   // both to i64, compute in 64 bits, then box back (narrowing to a VInt
@@ -2538,8 +2553,14 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
           }
         }
       },
+      VString(ls) => {
+        if let VString(rs) = rv {
+          return v_bool(strings_ordered(op, ls.v, rs.v));
+        }
+        return v_err("comparison rhs not a string");
+      },
       _ => {
-        return v_err("comparison lhs not i32 or f64");
+        return v_err("comparison lhs not i32, f64 or string");
       }
     }
   }
@@ -6366,18 +6387,17 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       return StepResult { env: env, ret: VErr { msg: "" }, sig: 3 + c.tag * 2 };
     },
     ast.StmtFor(f) => {
-      // Evaluate the iter expression — must be a VArr.
       let iv: Value = eval_expr(f.iter, env);
       if (is_err(iv)) {
         return step_stop(env, iv);
       }
       let elems: Value[] = [];
-      match (iv) {
-        VArr(a) => {
-          elems = a.elements;
+      match (for_elements(iv)) {
+        Some(walked) => {
+          elems = walked;
         },
-        _ => {
-          return step_stop(env, v_err("for-in iter not an array"));
+        None => {
+          return eval_iterator_for(f, iv, env);
         }
       }
       // Each iteration binds f.var_name to the current
@@ -6395,7 +6415,7 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       let cur: Env = env;
       let i: i32 = 0;
       while (i < elems.len()) {
-        let iter_env: Env = cur.bind_decl(f.var_name, elems[i], elem_ty);
+        let iter_env: Env = bind_element(cur, f.var_name, elems[i], elem_ty);
         let step: StepResult = eval_block(f.body, iter_env);
         if (step.sig == 2) {
           return step_none(trim_env(step.env, base));
@@ -6423,6 +6443,84 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
     }
   }
   return step_stop(env, v_err("unhandled Stmt variant"));
+}
+
+// for_elements is what a `for` walks without the Iterator protocol: an
+// array's elements, a string's bytes and a Map's (key, value) entries.
+function for_elements(iv: Value): Option[Value[]] {
+  let elems: Value[] = [];
+  match (iv) {
+    VArr(a) => {
+      return Some(a.elements);
+    },
+    VString(sv) => {
+      for b in sv.v {
+        elems = elems.append(v_int(b as i32));
+      }
+      return Some(elems);
+    },
+    VMap(m) => {
+      let i: i32 = 0;
+      while (i < m.keys.len()) {
+        elems = elems.append(v_tuple([m.keys[i], m.values[i]]));
+        i = i + 1;
+      }
+      return Some(elems);
+    },
+    _ => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// bind_element binds a `for` header to one element: a tuple header
+// (`for (k, v) in m`) binds each name to its slot.
+function bind_element(env: Env, header: string, elem: Value, elem_ty: string): Env {
+  if (is_destructure_name(header)) {
+    if let VTuple(tv) = elem {
+      let names: string[] = split_binding_names(header);
+      if (names.len() == tv.elements.len()) {
+        let out: Env = env;
+        let i: i32 = 0;
+        while (i < names.len()) {
+          out = out.bind(names[i], tv.elements[i]);
+          i = i + 1;
+        }
+        return out;
+      }
+    }
+  }
+  return env.bind_decl(header, elem, elem_ty);
+}
+
+// eval_iterator_for runs a `for` whose iterand `iv` is a core/iter Iterator,
+// or has an `iter()` returning one, as the loop the compiler lowers it to
+// (parser.iterator_loop) over the iterand evaluated once.
+function eval_iterator_for(f: ast.StmtFor, iv: Value, env: Env): StepResult {
+  let held: ast.Expr = ast.ExprIdent { name: "$for_subject", line: 0, col: 0, ty: "" };
+  let subject: ast.Expr = held;
+  if (!receiver_has_method(env.funcs, iv, "next")) {
+    if (!receiver_has_method(env.funcs, iv, "iter")) {
+      return step_stop(env, v_err("for-in iter is not iterable"));
+    }
+    subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: held, field: "iter", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
+  }
+  let base: i32 = env.names.len();
+  let step: StepResult = eval_stmt(parser.iterator_loop(f, subject, 0), env.bind("$for_subject", iv));
+  return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig };
+}
+
+// receiver_has_method reports whether a method `name` dispatches on `recv`
+// by its type, as call_method finds one.
+function receiver_has_method(funcs: parser.FuncDecl[], recv: Value, name: string): boolean {
+  let rt: string = value_type_name(recv);
+  for fd in funcs {
+    if (fd.name == name && fd.receiver_name.len() > 0 && util.base_type_name(fd.receiver_type) == rt) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // trim_env drops bindings past index `base`. Used by the while
@@ -6863,7 +6961,24 @@ function main(): i32 {
   if (rc != 0) {
     return rc;
   }
+  return check_string_ordering();
+}
 
+// check_string_ordering: `<` / `<=` / `>` / `>=` order strings by their bytes,
+// which core/cmp's `Ord for string` (and so every OrdMap keyed by string)
+// relies on.
+function check_string_ordering(): i32 {
+  let r: Value = run_source("let n = 0; if (\"apple\" < \"pear\") { n = n + 1; } if (\"b\" <= \"b\") { n = n + 2; } if (\"ab\" > \"a\") { n = n + 4; } if (\"a\" >= \"b\") { n = n + 8; } return n;");
+  match (r) {
+    VInt(i) => {
+      if (i.v != 7) {
+        return 940;
+      }
+    },
+    _ => {
+      return 941;
+    }
+  }
   return 0;
 }
 
@@ -7758,7 +7873,7 @@ function check_for_in_loops(): i32 {
     }
   }
 
-  // For-in: iter not an array → VErr.
+  // For-in: iter not iterable → VErr.
   let src60: string = "function main(): i32 { for n in 7 { } return 0; }";
   let r60: Value = run_module(src60);
   match (r60) {
@@ -7767,7 +7882,37 @@ function check_for_in_loops(): i32 {
       return 600;
     }
   }
+  return check_for_in_subjects();
+}
 
+// check_for_in_subjects: a string walks its bytes, a Map and an array of
+// tuples bind a pattern header per entry, and a value with `next()` (or an
+// `iter()` returning one) walks through the Iterator protocol, advancing
+// before the body so `continue` moves on.
+function check_for_in_subjects(): i32 {
+  let srcs: string[] = [
+    "function main(): i32 { let n: i32 = 0; for b in \"ab\" { n = n + (b as i32); } return n; }",
+    "function main(): i32 { let m = map_new(); m = m.insert(\"a\", 1); m = m.insert(\"bc\", 2); let n: i32 = 0; for (k, v) in m { n = n + k.len() * 10 + v; } return n; }",
+    "function main(): i32 { let n: i32 = 0; for (a, b) in [(1, 2), (3, 4)] { n = n + a * b; } return n; }",
+    "struct Cd { n: i32 }\nfunction (c: Cd) next(): Option[(i32, Cd)] { if (c.n == 0) { return None; } return Some((c.n, Cd { n: c.n - 1 })); }\nfunction main(): i32 { let n: i32 = 0; let c: Cd = Cd { n: 4 }; for v in c { if (v == 2) { continue; } n = n + v; } return n; }",
+    "struct Cd { n: i32 }\nstruct Box { n: i32 }\nfunction (c: Cd) next(): Option[(i32, Cd)] { if (c.n == 0) { return None; } return Some((c.n, Cd { n: c.n - 1 })); }\nfunction (b: Box) iter(): Cd { return Cd { n: b.n }; }\nfunction main(): i32 { let n: i32 = 0; let b: Box = Box { n: 3 }; for v in b { n = n + v; } return n; }",
+  ];
+  let wants: i32[] = [195, 33, 14, 8, 6];
+  let i: i32 = 0;
+  while (i < srcs.len()) {
+    let r: Value = run_module(srcs[i]);
+    match (r) {
+      VInt(got) => {
+        if (got.v != wants[i]) {
+          return 920 + i;
+        }
+      },
+      _ => {
+        return 930 + i;
+      }
+    }
+    i = i + 1;
+  }
   return 0;
 }
 

@@ -1701,8 +1701,8 @@ type Index struct {
 	// Unchecked, when set, tells the IR to lower an ARRAY index
 	// (not string/slice) without the per-access bounds check —
 	// the caller has statically proven `0 <= Idx < len(Array)`.
-	// Currently set only by DesugarForEachArray on its synthetic
-	// `iter[idx]` element read: `idx` starts at 0, steps +1, the
+	// Set by ForEachArrayLoop on its synthetic `iter[idx]` element
+	// read: `idx` starts at 0, steps +1, the
 	// loop guard is `idx < iter.len()` (captured once), and both
 	// `iter` and `idx` are compiler-generated names user code
 	// cannot touch — and Fern arrays never shrink in place — so
@@ -2349,11 +2349,10 @@ type For struct {
 
 // ForEach is the un-desugared `for IDENT in Iter Body` loop (the plain,
 // non-range form). The parser emits it instead of desugaring at parse time, so
-// a later type-aware pass can choose the lowering by Iter's type: an
-// array/string/slice → the `.len()` + index loop; a `stream[T]` → a lazy
-// per-element read loop; a `Map` under a destructuring header → the entry
-// cursor. ID gives the desugar unique helper-var names.
-// See docs/STREAM-TYPE-SURFACE.md.
+// the checker can choose the lowering by Iter's type: an array/string/slice →
+// the `.len()` + index loop; a `Map` under a destructuring header → the entry
+// cursor; a core/iter Iterator, or a value whose `iter()` returns one → the
+// `next()` loop. ID gives the desugar unique helper-var names.
 type ForEach struct {
 	P      Position
 	ID     int
@@ -2391,16 +2390,6 @@ func ForEachIterName(id int) string { return fmt.Sprintf("%s%d", ForEachIterPref
 // name the source wrote — that element IS the whole value — so a stage asking
 // whether one was written compares Var against this.
 func ForEachElemName(id int) string { return fmt.Sprintf("__foreach_elem_%d", id) }
-
-// DesugarForEachArray lowers a ForEach over an array/string/slice to the
-// `.len()` + index C-style loop — the exact shape the parser used to build at
-// parse time (moved here so a type-aware pass owns the choice of lowering).
-func DesugarForEachArray(fe *ForEach) *Block {
-	iterName := ForEachIterName(fe.ID)
-	declIter := &Var{P: fe.P, Name: iterName, Init: fe.Iter}
-	stmts := append([]Stmt{declIter}, ForEachArrayLoop(fe, iterName)...)
-	return &Block{P: fe.P, Stmts: stmts, Sugar: fe}
-}
 
 // ForEachArrayLoop builds the array lowering's statements BELOW the iterand
 // binding — the caller supplies `iterName`, already bound to the iterand. The
@@ -2485,6 +2474,45 @@ func ForEachMapLoop(fe *ForEach, iterName string) []Stmt {
 	return []Stmt{forLoop}
 }
 
+// ForEachIteratorLoop builds the statements BELOW the iterand binding for a
+// foreach over a core/iter Iterator, `iterName` bound to that Iterator (the
+// iterand, or its `iter()`). The iterator advances before the body runs, so a
+// `continue` moves on too.
+//
+//	loop {
+//	  match (__foreach_iter_N.next()) {
+//	    Some(__foreach_step_N) => {
+//	      __foreach_iter_N = __foreach_step_N.1;
+//	      let VAR = __foreach_step_N.0;
+//	      <body>
+//	    },
+//	    None => { break; },
+//	  }
+//	}
+func ForEachIteratorLoop(fe *ForEach, iterName string) []Stmt {
+	kw := fe.P
+	stepName := fmt.Sprintf("__foreach_step_%d", fe.ID)
+	mkIdent := func(name string) *Ident { return &Ident{P: kw, Name: name} }
+	stepField := func(i string) *FieldAccess {
+		return &FieldAccess{P: kw, Target: mkIdent(stepName), Field: i, FieldPos: kw}
+	}
+	innerStmts := []Stmt{
+		&ExprStmt{P: kw, Expr: &Assign{P: kw, Target: mkIdent(iterName), Value: stepField("1")}},
+		&Var{P: fe.VarPos, Name: fe.Var, Init: stepField("0")},
+	}
+	if fe.Pattern != nil {
+		fe.Pattern.Init = mkIdent(fe.Var)
+		innerStmts = append(innerStmts, fe.Pattern)
+	}
+	innerStmts = append(innerStmts, foreachBodyStmts(fe)...)
+	next := &Call{P: kw, Callee: &FieldAccess{P: kw, Target: mkIdent(iterName), Field: "next", FieldPos: kw}}
+	pull := &Match{P: kw, Tag: next, Arms: []*MatchArm{
+		{P: kw, VariantName: "Some", Bindings: []string{stepName}, Body: &Block{P: kw, Stmts: innerStmts}},
+		{P: kw, VariantName: "None", Body: &Block{P: kw, Stmts: []Stmt{&Break{P: kw}}}},
+	}}
+	return []Stmt{&Loop{P: kw, Body: &Block{P: kw, Stmts: []Stmt{pull}}, Label: fe.Label}}
+}
+
 // foreachBodyStmts flattens a loop body into the statements a lowering splices
 // after its bindings, so the user's body shares the scope those bindings live
 // in.
@@ -2563,8 +2591,9 @@ type Destructure struct {
 	Names      []string
 	Fields     []string // struct destructure: field projected for Names[i]; nil = tuple mode
 	StructName string   // struct destructure: the named struct type in the pattern; "" = tuple mode
-	// RestWritten records the pattern's trailing `..`, for the printer.
-	// See MatchArm.RestWritten — it binds nothing at either site.
+	// RestWritten records the pattern's trailing `..`. A struct destructure
+	// binds only the fields it lists either way, so here only the printer
+	// reads it.
 	RestWritten bool
 	Init        Expr
 	// AtName is the `@` binding naming the WHOLE value beside the pattern —
@@ -2664,9 +2693,10 @@ type TuplePatElem struct {
 	VariantBindings     []string
 	VariantBindingTypes []Type
 	// VariantFieldNames runs parallel to VariantBindings for a
-	// named-field variant sub-pattern (`Some(Rect { w, h })`): the field
+	// named-field sub-pattern (`Some(Rect { w: ww, h })`): the field
 	// projected for each binding. nil for the positional form. Mirrors
-	// MatchArm.FieldNames, which is the same list at the arm position.
+	// MatchArm.FieldNames, which is the same list at the arm position, and
+	// is settled into declaration order the same way for an enum variant.
 	VariantFieldNames []string
 	// VariantPayloads runs parallel to VariantBindings: a non-nil entry is
 	// a SUB-PATTERN matched against that payload rather than a binder —
@@ -2702,8 +2732,7 @@ type TuplePatElem struct {
 	// test: it is refutable only through its own sub-patterns.
 	IsStruct bool
 	// RestWritten records a named-field pattern's trailing `..` at this
-	// position. It binds nothing, so it reaches only the printer — see
-	// MatchArm.RestWritten.
+	// position — see MatchArm.RestWritten.
 	RestWritten bool
 }
 
@@ -2735,25 +2764,22 @@ type MatchArm struct {
 	VariantModule string
 	Bindings      []string // payload binding names, in payload order
 	BindingTypes  []Type   // resolved by the checker; same length as Bindings
-	// NamedFields marks a named-field pattern (`Rect { w, h }`): each
-	// Bindings entry is a field name (the bound local takes that name).
-	// The checker validates the names against the variant's FieldNames
-	// and reorders Bindings + BindingTypes into declaration order, so
-	// every later stage treats them positionally like a `Rect(w, h)`
-	// pattern. False for the positional form.
+	// NamedFields marks a named-field pattern (`Rect { w: ww, h }`), whose
+	// fields are named by FieldNames. For an enum variant the checker
+	// validates the names against the variant's FieldNames and rewrites
+	// Bindings, Payloads and FieldNames into declaration order, so every
+	// later stage treats the arm positionally like `Rect(ww, h)`. False for
+	// the positional form.
 	NamedFields bool
 	// FieldNames runs parallel to Bindings for a named-field pattern
 	// (`S { field: local }`): FieldNames[i] is the struct/variant field
 	// projected, Bindings[i] the local it binds. For the shorthand
 	// `S { x }`, FieldNames[i] == Bindings[i]. nil for non-named patterns.
-	// (Rename is supported for struct matches; enum named-field variant
-	// patterns stay shorthand — the checker rejects a rename there.)
 	FieldNames []string
 	// RestWritten records the trailing `..` of a named-field pattern
-	// (`Rect { w, .. }`). A named-field pattern binds only the fields it
-	// lists either way, so the `..` is documentation and reaches only the
-	// printer — which has to put it back, or `-fmt -w` deletes what the
-	// author wrote.
+	// (`Rect { w, .. }`). An enum variant pattern must name every field
+	// unless it ends in `..`; a struct pattern binds only the fields it
+	// lists either way, so there only the printer reads it.
 	RestWritten bool
 	IsWildcard  bool // `_ => …`
 	Literal     Expr // `0 => …` / `"yes" => …` / `true => …`; nil otherwise
@@ -3538,20 +3564,13 @@ type EnumVariant struct {
 // call `[resource-drop]<wit-name>` when an owned handle goes out of scope. The
 // type is referenced as `own Name` / `borrow Name` (HandleType); values are
 // opaque i32 handles. The checker registers each in Info.Resources; no later
-// pass sees ResourceDecl (handles erase to i32 before IR lowering).
+// pass sees ResourceDecl (handles erase to i32 before IR lowering). A resource
+// is module-local and has no visibility: `pub resource` is a P001.
 type ResourceDecl struct {
 	P             Position
 	Name          string
 	ImportIface   string
 	ImportWITName string
-	// Public marks the resource as exported across modules — same semantics
-	// as FuncDecl.Public.
-	Public bool
-	// PackageScoped marks a `pub(package)` declaration — visible to other
-	// modules in the same package (same directory; the stdlib is one
-	// package) but not exported to outside consumers. Mutually exclusive
-	// with Public. See docs/PUB-PACKAGE.md.
-	PackageScoped bool
 	// SourceModule mirrors FuncDecl.SourceModule (modload stamps the
 	// declaring module path). Empty for parser-only single-file programs.
 	SourceModule string

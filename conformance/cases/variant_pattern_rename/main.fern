@@ -1,0 +1,39 @@
+import "core/int";
+import "std/i32";
+
+// A named-field variant pattern renames a field the way a struct pattern
+// does: `field: local` binds the field to a local of another name. Fields
+// may be listed in any order and mixed with the shorthand form, in both
+// match forms.
+enum Shape {
+    Circle { r: i32 },
+    Rect { w: i32, h: i32 },
+    Label { text: string, size: i32 },
+}
+
+function area(s: Shape): i32 {
+    match (s) {
+        Circle { r: radius } => { return 3 * radius * radius; },
+        Rect { h: height, w: width } => { return width * height; },
+        Label { size, text: t } => { return t.len() * size; },
+    }
+}
+
+function describe(s: Shape): string {
+    return match (s) {
+        Circle { r: rr } => "circle " + rr.to_string(),
+        Rect { w, h: hh } => "rect " + w.to_string() + "x" + hh.to_string(),
+        Label { text: words, size: sz } => words + "@" + sz.to_string(),
+    };
+}
+
+function main(): i32 {
+    let shapes: Shape[] = [Circle(2), Rect(3, 4), Label("hey", 5)];
+    let total: i32 = 0;
+    for s in shapes {
+        print(describe(s));
+        total = total + area(s);
+    }
+    print(total.to_string());
+    return 0;
+}

@@ -1436,7 +1436,7 @@ syncHttpReqVisibility();
 
 // ---- Build a WebAssembly Component ----
 //
-// The self-host compiler's `-emit component` writes the wasi:cli/run
+// The self-host compiler's default form for a wasm target is the wasi:cli/run
 // component `fern -target wasm32-wasi` writes, or with `-target
 // wasm32-wasi-http` the incoming-handler component that target writes.
 // Either way we offer the bytes for download plus the exact command to
@@ -1481,7 +1481,7 @@ function buildComponentOnce() {
   metaEl.textContent = "";
   (async () => {
     try {
-      const built = await runDriver(getSrc(), driverArgs(["-emit", "component"], httpWorld));
+      const built = await runDriver(getSrc(), driverArgs([], httpWorld));
       if (built.exit !== 0) {
         outEl.textContent = "[component error]\n" + built.stderr;
         return;

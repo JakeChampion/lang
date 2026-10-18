@@ -1,5 +1,5 @@
 // Pins E058. The body is the example from that code's entry in the
-// diagnostic catalogue (`fern explain E058`), completed into a program
+// diagnostic catalogue (`fern -explain E058`), completed into a program
 // that compiles apart from the one error it documents — the catalogue's
 // snippet is a fragment whose loop conditions are stand-ins.
 function main(): i32 {

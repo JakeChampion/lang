@@ -1,0 +1,19 @@
+// `own R` / `borrow R` in a type is a WIT resource handle, so R must be a
+// declared `resource`. A consuming parameter puts `own` before the parameter's
+// name, and a function type's parameter slot may open with it; both are
+// accepted here beside the one rejected spelling (#12655).
+resource Conn;
+
+function peek(c: borrow Conn): i32 { return 0; }
+
+function close(c: own Conn): i32 { return peek(c); }
+
+function total(own xs: i32[]): i32 { return xs.len(); }
+
+function apply(f: (own i32[]) => i32): i32 { return f([1, 2]); }
+
+struct Point { x: i32 }
+
+function length(p: own Point): i32 { return 0; }   // error[E021]: `Point` is not a resource
+
+function main(): i32 { return apply(total); }

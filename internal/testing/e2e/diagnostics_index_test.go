@@ -57,7 +57,7 @@ func TestDiagnosticsIndexIsAccurate(t *testing.T) {
 
 	// 1. The index and the explanation catalogue must describe the same
 	//    set of codes. An explanation with no row is undocumented here; a
-	//    row with no explanation means `fern explain` cannot answer for a
+	//    row with no explanation means `fern -explain` cannot answer for a
 	//    code the index claims exists.
 	explained := explanationCodes(t)
 	inIndex := map[string]bool{}
@@ -74,7 +74,7 @@ func TestDiagnosticsIndexIsAccurate(t *testing.T) {
 	}
 	for _, r := range rows {
 		if !contains(explained, r.code) {
-			t.Errorf("%s: row for %s, which has no explanation file — `fern explain %s` cannot answer",
+			t.Errorf("%s: row for %s, which has no explanation file — `fern -explain %s` cannot answer",
 				diagIndexPath, r.code, r.code)
 		}
 	}
