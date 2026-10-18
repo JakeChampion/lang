@@ -47,15 +47,19 @@ fip function step(own s: State, t: i32): State {
 // Read through a call, so the probe's State is a box rather than its fields.
 @noinline function count_of(s: State): i32 { return s.count; }
 
+// A field no constant folds, so a State built with it is a heap box rather
+// than a static one, which cannot donate.
+@noinline function zero(): i32 { return 0; }
+
 function main(): i32 {
 	// The observable is not stuck at zero: a fresh box moves it. This runs
 	// first because a dead State later on would donate its box to the probe.
 	let before: i64 = __heap_alloc_count();
-	let fresh: State = State { count: 1, total: 1 as i64, tag: 1 };
+	let fresh: State = State { count: 1, total: 1 as i64, tag: zero() };
 	if (count_of(fresh) != 1) { return 94; }
 	if (__heap_alloc_count() - before <= (0 as i64)) { return 95; }
 
-	let s: State = State { count: 0, total: 0 as i64, tag: 0 };
+	let s: State = State { count: 0, total: 0 as i64, tag: zero() };
 	let at: i64 = __heap_alloc_count();
 	let i: i32 = 0;
 	while (i < 10000) {
