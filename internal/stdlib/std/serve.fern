@@ -1844,13 +1844,7 @@ function __serve_read_tls[D: async.Driver](drv: D, c: __Conns, at: i32, sess: se
       let took: (__Conns, server.Session, u8[], boolean) = __tls_taken(drv, c, at, s, scratch[0:n], opts);
       c = took.0;
       s = took.1;
-      // The first record of a read is the session's own decrypted buffer;
-      // take it as is rather than copy it onto an empty buffer.
-      if (buf.len() == 0) {
-        buf = took.2;
-      } else {
-        buf = buf.concat(took.2);
-      }
+      buf = __gathered(buf, took.2);
       done = took.3;
       more = !done && n == __recv_room() && buf.len() <= http.http_request_bytes_cap(opts.limits);
       if (buf.len() > http.http_request_bytes_cap(opts.limits)) {
@@ -1867,6 +1861,16 @@ function __serve_read_tls[D: async.Driver](drv: D, c: __Conns, at: i32, sess: se
   }
   let deadline: i64 = monotonic_ns() + opts.recv_deadline.as_nanos();
   return (__Conns { ...c, deadlines: c.deadlines.with(at, deadline), due: __sooner(c.due, deadline) }, false);
+}
+
+// __gathered(buf, more) — `buf` followed by `more`: `more` itself, not a
+// copy of it, when the buffer is empty, as it is for the first record of a
+// read, which is the session's own decrypted array.
+function __gathered(buf: u8[], more: u8[]): u8[] {
+  if (buf.len() == 0) {
+    return more;
+  }
+  return buf.concat(more);
 }
 
 // __serve_handshook(c, at, was, sess, done, opts) — a TLS read's `(conns,
