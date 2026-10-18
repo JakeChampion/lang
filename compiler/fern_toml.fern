@@ -148,6 +148,9 @@ pub function parse(src: string): Manifest {
   };
   let workspace: boolean = false;
   let section: string = "";
+  // Every section header and `section\nkey` seen so far: TOML defines each
+  // once, and a repeat is refused rather than silently overriding the first.
+  let seen: string[] = [];
   let lines: string[] = split_char(src, b'\n');
   let li: i32 = 0;
   while (li < lines.len() && m.err.len() == 0) {
@@ -163,10 +166,12 @@ pub function parse(src: string): Manifest {
       }
       section = util.trim(slice_unchecked(line, 1, line.len() - 1));
       workspace = workspace || section == "workspace";
-      m = Manifest { ...m, err: section_error(section, at) };
+      m = Manifest { ...m, err: section_error(section, seen, at) };
+      seen = seen.append("[" + section + "]");
       continue;
     }
-    m = with_entry(m, section, line, at);
+    m = with_entry(m, section, line, at, seen);
+    seen = seen.append(section + "\n" + entry_key(line));
   }
   if (m.err.len() == 0 && m.name.len() == 0 && !workspace) {
     return Manifest { ...m, err: "missing [package] name" };
@@ -174,12 +179,24 @@ pub function parse(src: string): Manifest {
   return m;
 }
 
-function section_error(section: string, at: string): string {
+function section_error(section: string, seen: string[], at: string): string {
   let known: string[] = ["package", "dependencies", "workspace", "exclude", "lint", "lint.options"];
-  if (util.has_str(known, section)) {
+  if (!util.has_str(known, section)) {
+    return at + "unknown section [" + section + "] (supported: [package], [dependencies], [workspace], [exclude], [lint], [lint.options])";
+  }
+  if (util.has_str(seen, "[" + section + "]")) {
+    return at + "duplicate section [" + section + "]";
+  }
+  return "";
+}
+
+// entry_key is the key of a `key = value` line.
+function entry_key(line: string): string {
+  let eq: i32 = index_of(line, b'=', 0);
+  if (eq < 0) {
     return "";
   }
-  return at + "unknown section [" + section + "] (supported: [package], [dependencies], [workspace], [exclude], [lint], [lint.options])";
+  return util.trim(slice_unchecked(line, 0, eq));
 }
 
 function failed(m: Manifest, err: string): Manifest {
@@ -187,13 +204,16 @@ function failed(m: Manifest, err: string): Manifest {
 }
 
 // with_entry is `m` with one `key = value` line of `section` applied.
-function with_entry(m: Manifest, section: string, line: string, at: string): Manifest {
+function with_entry(m: Manifest, section: string, line: string, at: string, seen: string[]): Manifest {
   let eq: i32 = index_of(line, b'=', 0);
   if (eq < 0) {
     return failed(m, at + "expected `key = value`, got " + docsummary.quote(line));
   }
   let key: string = util.trim(slice_unchecked(line, 0, eq));
   let val: string = util.trim(slice_unchecked(line, eq + 1, line.len()));
+  if (section.len() > 0 && util.has_str(seen, section + "\n" + key)) {
+    return failed(m, at + "duplicate key " + docsummary.quote(key) + " in [" + section + "]");
+  }
   if (section == "package") {
     return with_package_key(m, key, val, at);
   }

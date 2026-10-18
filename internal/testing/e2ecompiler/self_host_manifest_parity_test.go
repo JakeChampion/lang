@@ -36,6 +36,10 @@ var manifestParityCases = []struct{ name, src string }{
 	{"package value escaped", "[package]\nname = \"a\\\\b\"\n"},
 	{"unknown package key", "[package]\nname = \"app\"\nedtion = \"x\"\n"},
 	{"missing name", "[package]\nversion = \"1.0.0\"\n"},
+	{"duplicate section", "[package]\nname = \"app\"\n[dependencies]\n[package]\n"},
+	{"duplicate package key", "[package]\nname = \"app\"\nname = \"other\"\n"},
+	{"duplicate dependency", "[package]\nname = \"app\"\n[dependencies]\nh = { path = \"h\", capabilities = [] }\nh = { path = \"h\" }\n"},
+	{"same key in two sections", "[package]\nname = \"app\"\n[dependencies]\nname = { path = \"n\" }\n"},
 
 	{"bare dependency not a string", "[package]\nname = \"app\"\n[dependencies]\nh = 1\n"},
 	{"bare dependency not a version", "[package]\nname = \"app\"\n[dependencies]\nh = \"1.2\"\n"},

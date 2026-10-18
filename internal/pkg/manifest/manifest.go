@@ -205,6 +205,10 @@ func FindForDir(dir string) (*Manifest, error) {
 func Parse(src string) (*Manifest, error) {
 	m := &Manifest{Lib: DefaultLib, Deps: map[string]Dep{}}
 	section := ""
+	// TOML defines a table or a key once; a repeat is refused rather than
+	// silently overriding the first.
+	seenSections := map[string]bool{}
+	seenKeys := map[[2]string]bool{}
 	for ln, raw := range strings.Split(src, "\n") {
 		line := Line(raw)
 		if line == "" {
@@ -224,11 +228,21 @@ func Parse(src string) (*Manifest, error) {
 			default:
 				return nil, fmt.Errorf("line %d: unknown section [%s] (supported: [package], [dependencies], [workspace], [exclude], [lint], [lint.options])", ln+1, section)
 			}
+			if seenSections[section] {
+				return nil, fmt.Errorf("line %d: duplicate section [%s]", ln+1, section)
+			}
+			seenSections[section] = true
 			continue
 		}
 		key, val, ok := splitKeyValue(line)
 		if !ok {
 			return nil, fmt.Errorf("line %d: expected `key = value`, got %q", ln+1, line)
+		}
+		if section != "" {
+			if seenKeys[[2]string{section, key}] {
+				return nil, fmt.Errorf("line %d: duplicate key %q in [%s]", ln+1, key, section)
+			}
+			seenKeys[[2]string{section, key}] = true
 		}
 		switch section {
 		case "package":
