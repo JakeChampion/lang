@@ -69,15 +69,15 @@ x86_64/closure_call.text	774
 x86_64/closure_call.ir	63018106
 x86_64/enum_match.text	891
 x86_64/enum_match.ir	50850037
-x86_64/http_hello.text	14881
-x86_64/http_hello.ir	24984411
+x86_64/http_hello.text	15361
+x86_64/http_hello.ir	24268390
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
 x86_64/map_int.text	5590
 x86_64/map_int.ir	38013213
 x86_64/map_probe_chain.text	5597
 x86_64/map_probe_chain.ir	354691233
-x86_64/map_string.text	6116
+x86_64/map_string.text	6536
 x86_64/map_string.ir	62112069	2
 x86_64/ordmap_insert.text	2758
 x86_64/ordmap_insert.ir	109992304
@@ -91,22 +91,22 @@ x86_64/sort_inplace.text	1135
 x86_64/sort_inplace.ir	43386475
 x86_64/sort_ints.text	1610
 x86_64/sort_ints.ir	31486513
-x86_64/sort_strings.text	2502
+x86_64/sort_strings.text	2922
 x86_64/sort_strings.ir	105209600
-x86_64/string_build.text	1320
-x86_64/string_build.ir	58089760
+x86_64/string_build.text	1742
+x86_64/string_build.ir	42789760
 x86_64/string_count_byte.text	1033
 x86_64/string_count_byte.ir	135589294
 x86_64/string_find_byte.text	1400
 x86_64/string_find_byte.ir	43567332
 x86_64/string_rfind_byte.text	1469
 x86_64/string_rfind_byte.ir	43576238
-x86_64/string_scan.text	1517
+x86_64/string_scan.text	1937
 x86_64/string_scan.ir	53025531
 x86_64/string_slice.text	700
 x86_64/string_slice.ir	38700038
-x86_64/struct_drop.text	1645
-x86_64/struct_drop.ir	308020547
+x86_64/struct_drop.text	2065
+x86_64/struct_drop.ir	194940526
 x86_64/tokenize.text	934
 x86_64/tokenize.ir	36960039
 x86_64/utf8_ingest_unchecked.text	7106
@@ -224,6 +224,14 @@ x86_64/utf8_ingest_validated.ir	5916089
 # the benchmark parses without a previous request, so those compares never
 # run there. Both figures are the perf lanes' own.
 #
+# Re-pinned 2026-10-18 (#12743, merged with the lane red) on both arches:
+# core/int.int_to_string is a constant for 0 to 99, so every binary that
+# formats an integer carries the table (`.text` +3% on http_hello, +7% on
+# map_string, +17% to +33% on sort_strings, string_build, string_scan and
+# struct_drop) and the ones that format small integers in their loop run
+# fewer instructions (string_build.ir -26%, struct_drop.ir -35%,
+# http_hello.ir -3%). Both arches' figures are the perf lanes' own.
+#
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
 # (utf8_ingest_unchecked) — one ISA emitting fewer instructions than the other
@@ -250,15 +258,15 @@ aarch64/closure_call.text	965
 aarch64/closure_call.ir	72624111
 aarch64/enum_match.text	1085
 aarch64/enum_match.ir	41400056
-aarch64/http_hello.text	15395
-aarch64/http_hello.ir	27116643
+aarch64/http_hello.text	15919
+aarch64/http_hello.ir	26308603
 aarch64/int_loop.text	90
 aarch64/int_loop.ir	18000025
 aarch64/map_int.text	5955
 aarch64/map_int.ir	37224371
 aarch64/map_probe_chain.text	5966
 aarch64/map_probe_chain.ir	353848242
-aarch64/map_string.text	6539
+aarch64/map_string.text	7063
 aarch64/map_string.ir	63502584	2
 aarch64/ordmap_insert.text	3123
 aarch64/ordmap_insert.ir	118541839
@@ -272,22 +280,22 @@ aarch64/sort_inplace.text	1336
 aarch64/sort_inplace.ir	53111058
 aarch64/sort_ints.text	1891
 aarch64/sort_ints.ir	33759009
-aarch64/sort_strings.text	2803
+aarch64/sort_strings.text	3327
 aarch64/sort_strings.ir	106027235
-aarch64/string_build.text	1607
-aarch64/string_build.ir	64717394
+aarch64/string_build.text	2137
+aarch64/string_build.ir	47761394
 aarch64/string_count_byte.text	1259
 aarch64/string_count_byte.ir	295398919
 aarch64/string_find_byte.text	1665
 aarch64/string_find_byte.ir	55807313
 aarch64/string_rfind_byte.text	1755
 aarch64/string_rfind_byte.ir	55809919
-aarch64/string_scan.text	1771
+aarch64/string_scan.text	2295
 aarch64/string_scan.ir	60275834
 aarch64/string_slice.text	901
 aarch64/string_slice.ir	43620043
-aarch64/struct_drop.text	1876
-aarch64/struct_drop.ir	348380825
+aarch64/struct_drop.text	2400
+aarch64/struct_drop.ir	225980785
 aarch64/tokenize.text	1157
 aarch64/tokenize.ir	38580038
 aarch64/utf8_ingest_unchecked.text	7515

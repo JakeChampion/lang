@@ -20783,8 +20783,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// this check, and only surfaces at monomorph re-check as a
 			// confusing "compiler bug" — the verdict monomorph already
 			// reaches, just earlier and as a proper E043.
+			// A destination argument naming a type parameter that nothing in
+			// scope binds is the callee's own (`b(G { v: 1 })` for
+			// `b[T](g: G[T])`), still to be inferred, so it seeds nothing.
 			if et, ok := c.expectedType.(ast.StructType); ok && et.Name == sd.Name && len(et.Args) == len(sd.TypeParams) {
+				seedScope := c.typeParamsInScope()
 				for i, tp := range sd.TypeParams {
+					if _, escaped := paramTypeNotIn(et.Args[i], seedScope); escaped {
+						continue
+					}
 					sub[tp] = et.Args[i]
 					seeded[tp] = true
 				}

@@ -28,6 +28,10 @@ const ED_PKCS8: string = "-----BEGIN PRIVATE KEY-----\n"
 
 const MS: i64 = 1000000;
 
+// The wall clock the client starts at, in Unix milliseconds: inside the test
+// chain's validity.
+const WALL_MS: i64 = 1700000000000;
+
 function server_config(): conn.Config {
   match (identity.private_key_from_pem(ED_PKCS8)) {
     Ok(k) => {
@@ -64,7 +68,7 @@ struct Ends { client: h3q.Conn, server: Option[h3q.Conn], now: i64, log: string,
 
 function begin(): Result[Ends, string] {
   let cc: conn.Config = client_config();
-  let q: conn.Conn = conn.client(cc, entropy(1, conn.client_entropy(cc)), 0 as i64)?;
+  let q: conn.Conn = conn.client(cc, entropy(1, conn.client_entropy(cc)), 0 as i64, WALL_MS)?;
   return Ok(Ends { client: h3q.client(q, h3.config()), server: None, now: 0 as i64, log: "", lose_every: 0, carried: 0, reorder: false, requests: [], ids: [], responses: "" });
 }
 

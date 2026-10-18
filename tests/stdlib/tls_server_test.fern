@@ -214,10 +214,18 @@ function identity_of(leaf: string, key_pem: string): identity.Identity {
   return identity.Identity { chain: [], key: identity.Ed25519Seed([]) };
 }
 
+// The wall clock the sessions run at, in Unix milliseconds: inside the test
+// chains' validity (2020-01-01 to 2100-01-01), and the bounds of it.
+const WALL_MS: i64 = 1700000000000;
+
+const NOT_BEFORE_MS: i64 = 1577836800000;
+
+const NOT_AFTER_MS: i64 = 4102444800000;
+
 struct Pair { client: client.Session, server: server.Session, tickets: client.Ticket[] }
 
 function crd(s: client.Session, input: u8[]): Result[client.Step, string] {
-  match (s.read(input)) {
+  match (s.read(input, WALL_MS)) {
     Ok(step) => {
       return Ok(step);
     },
@@ -229,7 +237,11 @@ function crd(s: client.Session, input: u8[]): Result[client.Step, string] {
 }
 
 function srd(s: server.Session, input: u8[]): Result[server.Step, string] {
-  match (s.read(input)) {
+  return srd_at(s, input, WALL_MS);
+}
+
+function srd_at(s: server.Session, input: u8[], now: i64): Result[server.Step, string] {
+  match (s.read(input, now)) {
     Ok(step) => {
       return Ok(step);
     },
@@ -241,7 +253,7 @@ function srd(s: server.Session, input: u8[]): Result[server.Step, string] {
 }
 
 function started(cfg: client.Config): Result[client.Step, string] {
-  match (client.start(cfg)) {
+  match (client.start(cfg, WALL_MS)) {
     Ok(step) => {
       return Ok(step);
     },
@@ -266,11 +278,16 @@ function listening(cfg: server.Config): Result[server.Session, string] {
 
 // connect runs a handshake between a client session and a server session.
 function connect(cc: client.Config, sc: server.Config): Result[Pair, string] {
+  return connect_at(cc, sc, WALL_MS);
+}
+
+// connect_at is `connect` with the server's wall clock at `now`.
+function connect_at(cc: client.Config, sc: server.Config, now: i64): Result[Pair, string] {
   let c0: client.Step = started(cc)?;
   let s0: server.Session = listening(sc)?;
-  let s1: server.Step = srd(s0, c0.output)?;
+  let s1: server.Step = srd_at(s0, c0.output, now)?;
   let c1: client.Step = crd(c0.session, s1.output)?;
-  let s2: server.Step = srd(s1.session, c1.output)?;
+  let s2: server.Step = srd_at(s1.session, c1.output, now)?;
   if (!c1.session.connected() || !s2.session.connected()) {
     return Err("not connected");
   }
@@ -386,12 +403,12 @@ function refusal_alert(cc: client.Config, sc: server.Config): Result[string, str
   let c0: client.Step = started(cc)?;
   let s0: server.Session = listening(sc)?;
   let s1: server.Step = srd(s0, c0.output)?;
-  match (c0.session.read(s1.output)) {
+  match (c0.session.read(s1.output, WALL_MS)) {
     Ok(step) => {
       return Ok("client: accepted");
     },
     Err(f) => {
-      match (s1.session.read(f.alert)) {
+      match (s1.session.read(f.alert, WALL_MS)) {
         Ok(_) => {
           return Ok("client: " + f.message() + " / server: read on");
         },
@@ -412,7 +429,7 @@ function test_no_common_scheme(): test.TestOutcome {
     Ok(c0) => {
       match (server.start(server.config(identity_of(P256_LEAF, P256_PKCS8)))) {
         Ok(s0) => {
-          match (s0.read(c0.output)) {
+          match (s0.read(c0.output, WALL_MS)) {
             Ok(_) => {
               return test.fail("accepted");
             },
@@ -613,7 +630,13 @@ function client_identity(leaf: string): identity.Identity {
 // presented is how a server requiring a client certificate takes a client:
 // what each side ends with, and the client's chain length the server kept.
 function presented(cc: client.Config, sc: server.Config): string {
-  match (connect(cc, sc)) {
+  return presented_at(cc, sc, WALL_MS);
+}
+
+// presented_at is `presented` with the server judging the client's chain at
+// `now`.
+function presented_at(cc: client.Config, sc: server.Config, now: i64): string {
+  match (connect_at(cc, sc, now)) {
     Ok(p) => {
       match (exchange(p)) {
         Ok(t) => {
@@ -642,7 +665,7 @@ function refused_with(cc: client.Config, sc: server.Config): string {
             Ok(s1) => {
               match (crd(c0.session, s1.output)) {
                 Ok(c1) => {
-                  match (s1.session.read(c1.output)) {
+                  match (s1.session.read(c1.output, WALL_MS)) {
                     Ok(_) => {
                       return "accepted";
                     },
@@ -720,22 +743,37 @@ function test_client_certificate(): test.TestOutcome {
   return test.assert_eq(client_refusal(cc, sc), "client: tls handshake: the peer sent alert 116");
 }
 
+// The server judges a client's chain at the time its session is given, not
+// the machine's: a second outside either bound of its validity it is
+// refused, and a second inside either bound it is taken.
+function test_client_certificate_validity(): test.TestOutcome {
+  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8)).with_client_roots(roots());
+  let cc: client.Config = client.config("tls.example", roots()).with_identity(client_identity(CLIENT_LEAF));
+  if (presented_at(cc, sc, NOT_BEFORE_MS - 1000) != "server: the client's certificate is not trusted: tls verify: certificate 0 is not yet valid") {
+    return test.fail("before notBefore: " + presented_at(cc, sc, NOT_BEFORE_MS - 1000));
+  }
+  if (presented_at(cc, sc, NOT_AFTER_MS + 1000) != "server: the client's certificate is not trusted: tls verify: certificate 0 has expired") {
+    return test.fail("after notAfter: " + presented_at(cc, sc, NOT_AFTER_MS + 1000));
+  }
+  return test.assert_eq(presented_at(cc, sc, NOT_BEFORE_MS + 1000) + "; " + presented_at(cc, sc, NOT_AFTER_MS - 1000), "ping pong chain 1; ping pong chain 1");
+}
+
 // client_refusal is what the client reads of the server's refusal.
 function client_refusal(cc: client.Config, sc: server.Config): string {
   match (started(cc)) {
     Ok(c0) => {
       match (listening(sc)) {
         Ok(s0) => {
-          match (s0.read(c0.output)) {
+          match (s0.read(c0.output, WALL_MS)) {
             Ok(s1) => {
-              match (c0.session.read(s1.output)) {
+              match (c0.session.read(s1.output, WALL_MS)) {
                 Ok(c1) => {
-                  match (s1.session.read(c1.output)) {
+                  match (s1.session.read(c1.output, WALL_MS)) {
                     Ok(_) => {
                       return "accepted";
                     },
                     Err(f) => {
-                      match (c1.session.read(f.alert)) {
+                      match (c1.session.read(f.alert, WALL_MS)) {
                         Ok(_) => {
                           return "client: read on";
                         },
@@ -981,6 +1019,7 @@ function main(): i32 {
   r = r.it("offloaded to the kernel's record layer", test_offload);
   r = r.it("resumption", test_resumption);
   r = r.it("client certificate", test_client_certificate);
+  r = r.it("client certificate validity, at the given time", test_client_certificate_validity);
   r = r.it("client signature refused", test_client_signature_refused);
   r = r.it("client certificate and resumption", test_client_certificate_resumed);
   return r.finish();

@@ -19,8 +19,8 @@ import (
 func TestSelfHostCheckerDriverX86_64(t *testing.T) {
 	// Compile the self-hosted checker binary (checker_run, importing
 	// std/io + ./lexer + ./parser + ./checker) with the file-based asm
-	// driver via buildCheckerDriverBin — the loader resolves std/io to the
-	// vendored flat io.fern, so no ///MODULE bundle / import rewrite needed.
+	// driver via buildCheckerDriverBin, so no ///MODULE bundle / import
+	// rewrite is needed.
 	checkerBin, runner, _ := buildCheckerDriverBin(t, "drivers/checker_run.fern", false)
 
 	cases := []struct {
@@ -97,8 +97,8 @@ func TestSelfHostCheckerDriverArm64(t *testing.T) {
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
 
 	// Compile checker_run (importing std/io + ./lexer + ./parser +
-	// ./checker) with the arm64 file-based driver: the loader resolves
-	// std/io to the vendored flat io.fern, so the source is unmodified.
+	// ./checker) with the arm64 file-based driver, which is given the stdlib
+	// tree, so the source is unmodified.
 	// Derived from the driver's own imports, not listed — see the note in
 	// buildCheckerDriverBin (#6993).
 	files := map[string]string{}
@@ -112,11 +112,6 @@ func TestSelfHostCheckerDriverArm64(t *testing.T) {
 		}
 		files[filepath.Base(p)] = e2eharness.FlatDriverSource(string(src))
 	}
-	ioSrc, err := os.ReadFile("../../stdlib/std/io.fern")
-	if err != nil {
-		t.Fatalf("read std/io.fern: %v", err)
-	}
-	files["io.fern"] = string(ioSrc)
 	runSrc, err := os.ReadFile("../../../compiler/drivers/checker_run.fern")
 	if err != nil {
 		t.Fatalf("read checker_run.fern: %v", err)

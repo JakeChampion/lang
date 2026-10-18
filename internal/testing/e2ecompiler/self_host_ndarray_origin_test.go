@@ -79,18 +79,12 @@ func TestSelfHostNdarrayModuleOrigin(t *testing.T) {
 		name, imports, checks string
 	}{
 		{"custom-only", `import "./ndarray" as custom;`, customNdarrayChecks},
-		{"stdlib-fallback", `import "std/ndarray" as custom;`, customNdarrayChecks},
 		{"custom-first", "import \"./ndarray\" as custom;\nimport \"std/ndarray\" as standard;", customNdarrayChecks + standardNdarrayChecks},
 		{"standard-first", "import \"std/ndarray\" as standard;\nimport \"./ndarray\" as custom;", customNdarrayChecks + standardNdarrayChecks},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			compiler := *cli
-			if tc.name == "stdlib-fallback" {
-				// A missing configured stdlib can fall back to a local basename.
-				// The import spelling alone cannot grant stdlib provenance.
-				compiler.stdlib = t.TempDir()
-			}
 			for name, source := range map[string]string{
 				"ndarray.fern": customNdarrayModule,
 				"main.fern":    tc.imports + "\nfunction main(): i32 {\n" + tc.checks + "return 0;\n}\n",
@@ -128,4 +122,23 @@ func TestSelfHostNdarrayModuleOrigin(t *testing.T) {
 			}
 		})
 	}
+	// A `std/` import the configured stdlib does not hold is refused rather
+	// than read from a local module of the same basename (#12690).
+	t.Run("stdlib-missing", func(t *testing.T) {
+		dir := t.TempDir()
+		for name, source := range map[string]string{
+			"ndarray.fern": customNdarrayModule,
+			"main.fern":    "import \"std/ndarray\" as custom;\nfunction main(): i32 {\n" + customNdarrayChecks + "return 0;\n}\n",
+		} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		entry := filepath.Join(dir, "main.fern")
+		out, err := runX86_64Bin(cli.runner, cli.bin, "-check", entry, t.TempDir()).CombinedOutput()
+		want := entry + ":1:1: error: unknown stdlib module \"std/ndarray\""
+		if err == nil || !strings.HasPrefix(string(out), want) {
+			t.Fatalf("-check against an empty stdlib: %v\n%s\nwant it refused with %q", err, out, want)
+		}
+	})
 }

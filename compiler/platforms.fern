@@ -36,10 +36,12 @@ import "./util";
 // returns a nil *Descriptor there and callers skip enforcement, since the
 // -target flag validation owns that error.
 //
-// Native's descriptor also carries handler kinds, bindings and an entry shape.
-// They are absent here rather than mirrored-and-unread: nothing on the
-// self-host path consumes them yet, and the day one does is the day it can
-// say what it needs.
+// Native's descriptor also carries bindings and an entry shape. They are
+// absent here rather than mirrored-and-unread: nothing on the self-host path
+// consumes them yet, and the day one does is the day it can say what it needs.
+// The description and handler kinds `fern -targets` prints are separate
+// functions below rather than fields, so for_target does not build them on
+// every capability lookup.
 pub struct Descriptor {
   name: string,
   isa: string,
@@ -54,16 +56,9 @@ pub struct Descriptor {
 // different syscall vectors — and grant the same set, which Darwin extends by
 // `sysctl`, the one thing only its kernel answers.
 //
-// `subprocess` is the ONE entry that differs from native's table, and
-// deliberately. Native grants it nowhere, because no Go backend lowers it —
-// its table records a codegen limitation as a target property. The self-host's
-// x86-64 and arm64 emitters DO lower it (`__fern_subprocess`: pipe / fork /
-// execve / wait4, exercised end-to-end by TestSelfHostArm64DarwinBuilds), so
-// refusing it here would delete working, tested functionality to match a
-// limitation this compiler does not have. The wasm side is unchanged: the
-// wasi profiles grant it nowhere, which turns wasm_ir's late "unsupportable on
-// wasm" bail (#4320) into an up-front diagnostic — the same improvement
-// native's own note claims for it.
+// `subprocess` and `proc` are the hosted profiles' alone: the native emitters
+// lower `__fern_subprocess` (pipe / fork / execve / wait4), and the wasm worlds
+// have no process model.
 function capability_profile(profile: string): string[] {
   if (profile == "hosted-native") {
     return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "subprocess", "unix", "reactor"];
@@ -161,6 +156,55 @@ pub function targets(): string[] {
   ];
 }
 
+// description is the one-line summary `fern -targets` prints beside a target
+// name, or "" for a name that is not a target.
+pub function description(name: string): string {
+  if (name == "arm64-linux") {
+    return "ARM64 Linux ELF (AWS Graviton, Apple Silicon via container; ARMv8.2-A with the crypto extensions).";
+  }
+  if (name == "arm64-darwin") {
+    return "ARM64 macOS Mach-O (native Apple Silicon Macs; no Linux container needed).";
+  }
+  if (name == "arm64-android") {
+    return "ARM64 Android — Linux ELF as a static position-independent executable (ET_DYN, W^X), so it loads at an arbitrary base under Android's loader. Same syscalls / AAPCS64 as arm64-linux.";
+  }
+  if (name == "arm64-freestanding") {
+    return "ARM64 with no host — no kernel, no syscalls, no process. Type-checkable today; no backend emits for it yet (#6510).";
+  }
+  if (name == "x86-64-linux") {
+    return "x86-64 Linux ELF (native exec on x86_64 hosts, qemu-x86_64 elsewhere).";
+  }
+  if (name == "x86-64-freestanding") {
+    return "x86-64 with no host — no kernel, no syscalls, no process. Type-checkable today; no backend emits for it yet (#6510).";
+  }
+  if (name == "wasm32-wasi") {
+    return "WebAssembly Component Model — CLI world (wasi:cli/run + wasi:filesystem + wasi:clocks).";
+  }
+  if (name == "wasm32-wasi-http") {
+    return "WebAssembly Component Model — proxy world (wasi:http/incoming-handler).";
+  }
+  return "";
+}
+
+// handler_kinds lists the entry points a target's environment accepts, the
+// canonical one first: a process environment compiles both a `handle` program
+// and one that writes its own `main`, the proxy world only ever calls `handle`,
+// and a freestanding artifact is entered by nobody.
+pub function handler_kinds(name: string): string[] {
+  let env_name: string = target_environment(name);
+  if (env_name == "linux" || env_name == "darwin" || env_name == "android") {
+    return ["handle", "main"];
+  }
+  if (env_name == "wasi") {
+    return ["main", "handle"];
+  }
+  if (env_name == "wasi-http") {
+    return ["handle"];
+  }
+  let empty: string[] = [];
+  return empty;
+}
+
 // emits_code is false for a target no backend lowers yet: the freestanding
 // pair type-checks against an empty capability set (docs/FREESTANDING-CORE.md)
 // and has nothing to emit with. The driver refuses codegen for one rather than
@@ -226,8 +270,8 @@ pub struct Gate { builtin: string, capability: string }
 // TestSelfHostPlatformsGatesMatchNative.
 pub function gated_builtins(): Gate[] {
   return [
-    // Process spawning. Granted by the hosted-native profile (see the
-    // note there); the wasm worlds have no process model.
+    // Process spawning. Granted by the hosted profiles; the wasm worlds
+    // have no process model.
     Gate { builtin: "subprocess", capability: "subprocess" },
     // Process supervision (fork/waitpid). Native-only: wasm worlds have
     // no processes.

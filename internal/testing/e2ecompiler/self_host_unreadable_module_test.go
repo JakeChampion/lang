@@ -29,16 +29,12 @@ func TestSelfHostUnreadableModuleIsReported(t *testing.T) {
 	// The importer named is the module that wrote the import, not the entry.
 	midModule := write("mid.fern", "import \"./gone\";\npub function f(): i32 { return 1; }\n")
 	transEntry := write("uses_mid.fern", "import \"./mid\";\nfunction main(): i32 { return mid.f(); }\n")
-	// Shadowing: `std/mything` is under no stdlib root, so it resolves against
-	// the importer's directory, where the direct candidate std/mything.fern is
-	// present but unreadable and the flat mything.fern beside it is valid. The
-	// search must stop at the first rather than compile against the second.
-	if err := os.MkdirAll(filepath.Join(dir, "std"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	write(filepath.Join("std", "mything.fern"), "pub function f(): i32 { let s: string = \"\xb2\"; return 1; }\n")
-	write("mything.fern", "pub function f(): i32 { return 7; }\n")
-	shadowEntry := write("uses_mything.fern", "import \"std/mything\";\nfunction main(): i32 { return mything.f(); }\n")
+	// Shadowing: mything.fern is present but unreadable and its literate
+	// sibling mything.fern.md is valid. The search must stop at the first
+	// rather than compile against the second.
+	write("mything.fern", "pub function f(): i32 { let s: string = \"\xb2\"; return 1; }\n")
+	write("mything.fern.md", "```fern\n<<*>>=\npub function f(): i32 { return 7; }\n```\n")
+	shadowEntry := write("uses_mything.fern", "import \"./mything\";\nfunction main(): i32 { return mything.f(); }\n")
 	noEntry := filepath.Join(dir, "nosuch.fern")
 
 	cases := []struct {
@@ -49,7 +45,7 @@ func TestSelfHostUnreadableModuleIsReported(t *testing.T) {
 		{"invalid-utf8-module", []string{"-o", filepath.Join(dir, "a.out"), badEntry}, "fern: cannot resolve import \"./bad\" in " + badEntry + ": " + filepath.Join(dir, "bad.fern") + ": invalid UTF-8"},
 		{"missing-module", []string{"-o", filepath.Join(dir, "b.out"), missEntry}, "fern: cannot resolve import \"./gone\" in " + missEntry + ": " + filepath.Join(dir, "gone.fern") + ": not found"},
 		{"missing-module-check-transitive", []string{"-check", transEntry}, "fern: cannot resolve import \"./gone\" in " + midModule + ": " + filepath.Join(dir, "gone.fern") + ": not found"},
-		{"unreadable-candidate-is-not-shadowed", []string{"-o", filepath.Join(dir, "d.out"), shadowEntry}, "fern: cannot resolve import \"std/mything\" in " + shadowEntry + ": " + filepath.Join(dir, "std", "mything.fern") + ": invalid UTF-8"},
+		{"unreadable-candidate-is-not-shadowed", []string{"-o", filepath.Join(dir, "d.out"), shadowEntry}, "fern: cannot resolve import \"./mything\" in " + shadowEntry + ": " + filepath.Join(dir, "mything.fern") + ": invalid UTF-8"},
 		{"missing-entry", []string{"-o", filepath.Join(dir, "c.out"), noEntry}, "fern: cannot read entry file " + noEntry + ": not found"},
 		{"missing-entry-check", []string{"-check", noEntry}, "fern: cannot read entry file " + noEntry + ": not found"},
 	}
