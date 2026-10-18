@@ -47,14 +47,14 @@ func TestCheckTargetFreestandingAllowsCore(t *testing.T) {
 // enforcing that set against every `fern -check` — this pins the
 // empty-target opt-out that prevents it.
 func TestCheckWithoutTargetSkipsEnforcement(t *testing.T) {
-	// `subprocess` is interp-only: NO compiled target grants it, so a
-	// check that enforced any target at all would reject this.
-	entry := writeFern(t, "function main(): i32 {\n  let r = subprocess(\"/bin/echo\", [\"hi\"], \"\");\n  return r.exit_code;\n}\n")
+	// `sysctl` is Darwin's alone, so the default target's set would reject
+	// this.
+	entry := writeFern(t, "function main(): i32 {\n  match (sysctl([1, 1])) {\n    Ok(bs) => { return bs.len(); },\n    Err(_) => { return 2; }\n  }\n  return 0;\n}\n")
 	if err := runCheck(entry, ""); err != nil {
 		t.Fatalf("bare -check should not enforce a target: %v", err)
 	}
 	if err := runCheck(entry, "arm64-linux"); err == nil {
-		t.Fatal("-check -target arm64-linux should reject subprocess")
+		t.Fatal("-check -target arm64-linux should reject sysctl")
 	}
 }
 

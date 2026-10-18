@@ -14086,11 +14086,12 @@ function qual_variant_union(fa: ast.ExprFieldAccess, s: Scope): string {
 // spelling, still written in `Self`. An empty `ret` means "resolved, but the
 // return type is not recoverable here" and types to unknown. `owner` is the
 // trait that declared the requirement (empty for an inherent impl), which the
-// E021 "called as a method" message names.
-struct AssocHit { found: boolean, ret: string, owner: string }
+// E021 "called as a method" message names. `params` are the requirement's
+// parameter spellings, also in `Self`, read only when `owner` is set.
+struct AssocHit { found: boolean, ret: string, owner: string, params: string[] }
 
 function assoc_miss(): AssocHit {
-  return AssocHit { found: false, ret: "", owner: "" };
+  return AssocHit { found: false, ret: "", owner: "", params: [] };
 }
 
 // trait_req_idx resolves a bound's trait SPELLING to its requirement record.
@@ -14152,7 +14153,11 @@ function trait_assoc_req(reqs: parser.TraitReq[], tr: string, field: string, see
   for rs in req.assoc_sigs {
     if (rs.name == field) {
       // The parser already limits assoc_sigs to receiverless functions.
-      return AssocHit { found: true, ret: rs.ret_type, owner: req.trait_name };
+      let params: string[] = [];
+      for p in rs.params {
+        params = params.append(parser.fn_tag_spelling(p.type_name, p.fn_ret, p.fn_param_types));
+      }
+      return AssocHit { found: true, ret: rs.ret_type, owner: req.trait_name, params: params };
     }
   }
   for supertrait in req.supertraits {
@@ -14515,7 +14520,7 @@ function type_assoc_req(s: Scope, tyname: string, field: string): AssocHit {
         if (h.found) {
           return h;
         }
-        return AssocHit { found: true, ret: "", owner: "" };
+        return AssocHit { found: true, ret: "", owner: "", params: [] };
       }
     }
   }
@@ -14572,7 +14577,7 @@ function assoc_call_req(obj: ast.Expr, field: string, s: Scope): AssocHit {
       // A bounded parameter must resolve through its declared traits above:
       // treating the qualifier alone as a hit also accepts T.nope().
       if (util.index_of_str(s.tparams, oid.name) >= 0 && tp_bound_for(oid.name, s.tparams, s.tbounds).len() == 0) {
-        return AssocHit { found: true, ret: "", owner: "" };
+        return AssocHit { found: true, ret: "", owner: "", params: [] };
       }
       return assoc_miss();
     },
@@ -14599,6 +14604,40 @@ function assoc_hit_type(h: AssocHit, obj: ast.Expr, s: Scope): typeinfo.Type {
     _ => {}
   }
   return s.resolve_type(parser.subst_self(h.ret, self_name));
+}
+
+// assoc_arg_diags checks an associated call's arguments against the trait
+// requirement it resolved to, with `Self` read as the qualifier, or against
+// an inherent associated function's own declaration.
+function assoc_arg_diags(h: AssocHit, c: ast.ExprCall, mfa: ast.ExprFieldAccess, s: Scope): util.Diag[] {
+  let self_name: string = "";
+  if let ast.ExprIdent(oid) = mfa.obj {
+    self_name = oid.name;
+  }
+  let pts: typeinfo.Type[] = [];
+  if (h.owner.len() > 0) {
+    for ps in h.params {
+      pts = pts.append(s.resolve_type(parser.subst_self(ps, self_name)));
+    }
+  } else {
+    let asig: FuncSig = s.lookup_assoc_sig(self_name, mfa.field);
+    if (asig.name.len() == 0) {
+      return [];
+    }
+    pts = asig.param_types;
+  }
+  if (c.args.len() != pts.len()) {
+    return [dg_at("E004", util.arity_message("associated function \"" + mfa.field + "\"", pts.len(), c.args.len(), "argument"), c.line, c.col)];
+  }
+  let out: util.Diag[] = [];
+  let k: i32 = 0;
+  while (k < c.args.len()) {
+    if (!is_unknown(pts[k]) && !settles_or_assignable(c.args[k], pts[k], s)) {
+      out = out.append(dg_at("E038", "argument " + util.i32_to_string(k + 1) + " to \"" + mfa.field + "\": expected " + type_label(pts[k]) + ", got " + type_label(check_expr(c.args[k], s)), expr_line(c.args[k]), expr_col(c.args[k])));
+    }
+    k = k + 1;
+  }
+  return out;
 }
 
 function call_diags(e: ast.Expr, s: Scope): util.Diag[] {
@@ -15023,11 +15062,12 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       // so it must be diverted before the recursion reads it as a
       // value and reports E001 (#6933). The arguments are still
       // walked.
-      if (assoc_call_req(mfa.obj, mfa.field, s).found) {
+      let ah: AssocHit = assoc_call_req(mfa.obj, mfa.field, s);
+      if (ah.found) {
         for arg in c.args {
           out = util.append_diags(out, call_diags(arg, s));
         }
-        return out;
+        return util.append_diags(out, assoc_arg_diags(ah, c, mfa, s));
       }
       out = call_diags(mfa.obj, s);
       match (check_expr(mfa.obj, s)) {
@@ -16322,6 +16362,10 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[]
   }
   if (sl.has_base) {
     out = util.append_diags(out, call_diags(sl.base, s));
+    let bt: typeinfo.Type = check_expr(sl.base, s);
+    if (!is_unknown(bt) && !type_eq(bt, t_struct(sl.type_name))) {
+      out = out.append(dg_at("E003", "struct-update base must be " + sl.type_name + ", got " + type_label(bt), expr_line(sl.base), expr_col(sl.base)));
+    }
   }
   // E007: the same field initialised twice in one literal
   // (`Point { x: 1, x: 2, y: 3 }`). The declaration sibling of this
@@ -23947,16 +23991,11 @@ function e021_recv_method_idx(mod: parser.Module, ty: string, m: string): i32 {
 // the impl's providing method `impl_fn` (Self resolved to impl_type). It is
 // DELIBERATELY conservative — returns true (no diagnostic) whenever it can't
 // compare with certainty — so it never false-positives on the self-host bundle:
-//   - only receiver-shaped trait methods (a leading `self` param) are compared;
-//     associated functions (Default.default etc.) are skipped;
 //   - a generic trait method OR impl method (type params present) is skipped,
 //     since a bare type-name string compare can't see the erased params;
-//   - a requirement of a generic TRAIT (`trait Iterator[T]`) is skipped for the
-//     same reason one step out: its signature is written in the trait's type
-//     parameters (`next(self: Self): Option[(T, Self)]`), and ImplInfo keeps
-//     only the trait's bare name — `impl Iterator[i32] for Range` discards the
-//     `[i32]` — so there is nothing to substitute `T` with and every such impl
-//     compared as a mismatch;
+//   - a requirement of a generic TRAIT (`trait Iterator[T]`) is read at the
+//     impl's trait arguments (`impl Iterator[i32] for Range`), and skipped
+//     when the impl does not write one per trait parameter;
 // otherwise the trait's post-`self` param type list + return type (each rewritten
 // Self -> impl_type via the same parser.subst_self finalize_impl_method used on
 // the impl side) must equal the impl method's params + return, or it's a
@@ -23966,8 +24005,8 @@ function e021_recv_method_idx(mod: parser.Module, ty: string, m: string): i32 {
 // method's copy, so the requirement must be resolved the same way before the
 // two are compared, or every associated-type impl reads as a signature
 // mismatch. Native does the same in its conformance pass (resolveProjWith).
-function e021_sig_matches(req: parser.FuncDecl, impl_fn: parser.FuncDecl, impl_type: string, trait_generic: boolean, impls: parser.ImplInfo[]): boolean {
-  if (trait_generic) {
+function e021_sig_matches(req: parser.FuncDecl, impl_fn: parser.FuncDecl, im: parser.ImplInfo, tparams: string[], impls: parser.ImplInfo[]): boolean {
+  if (tparams.len() > 0 && parser.parse_type_ref(im.trait_ref).args.len() != tparams.len()) {
     return true;
   }
   if (req.type_params.len() > 0 || req.all_type_params.len() > 0) {
@@ -23976,43 +24015,47 @@ function e021_sig_matches(req: parser.FuncDecl, impl_fn: parser.FuncDecl, impl_t
   if (impl_fn.type_params.len() > 0 || impl_fn.all_type_params.len() > 0) {
     return true;
   }
-  if (req.params.len() == 0) {
-    return true;
-  }
-  if (req.params[0].name != "self") {
-    return true;
-  }
-  // Trait's post-self param count must equal the impl method's param count
-  // (the impl peeled its own `self` into the receiver).
-  if (req.params.len() - 1 != impl_fn.params.len()) {
+  if (!e021_self_matches(req, im, tparams, impls)) {
     return false;
   }
-  let i: i32 = 1;
+  // A requirement without a `self` is an associated function, whose every
+  // parameter the impl writes.
+  let first: i32 = 0;
+  if (req.params.len() > 0 && req.params[0].name == "self") {
+    first = 1;
+  }
+  if (req.params.len() - first != impl_fn.params.len()) {
+    return false;
+  }
+  let i: i32 = first;
   while (i < req.params.len()) {
-    let want: string = parser.resolve_proj_in_type(parser.subst_self(req.params[i].type_name, impl_type), impls);
-    if (want != impl_fn.params[i - 1].type_name) {
+    if (e021_req_spelling(req.params[i].type_name, im, tparams, impls) != impl_fn.params[i - first].type_name) {
       return false;
     }
     i = i + 1;
   }
-  if (parser.resolve_proj_in_type(parser.subst_self(req.ret_type, impl_type), impls) != impl_fn.ret_type) {
-    return false;
-  }
-  return true;
+  return e021_req_spelling(req.ret_type, im, tparams, impls) == impl_fn.ret_type;
 }
 
-// e021_trait_is_generic reports whether trait `trait_name` declares type
-// parameters (`trait Iterator[T]`). TraitReq drops them, so the written
-// TraitDecl is the only record.
-function e021_trait_is_generic(mod: parser.Module, trait_name: string): boolean {
-  for trait_decl in mod.trait_decls {
-    if (parser.derive_simple_name(trait_decl.name) == trait_name) {
-      if (trait_decl.type_params.len() > 0) {
-        return true;
-      }
-    }
+// e021_self_matches reports whether a requirement's `self`, if it has one,
+// names the impl type: the impl peels `self` into a receiver of that type,
+// an inherited default's copy included.
+function e021_self_matches(req: parser.FuncDecl, im: parser.ImplInfo, tparams: string[], impls: parser.ImplInfo[]): boolean {
+  if (req.params.len() == 0 || req.params[0].name != "self" || req.params[0].type_name.len() == 0) {
+    return true;
   }
-  return false;
+  return e021_req_spelling(req.params[0].type_name, im, tparams, impls) == im.impl_type;
+}
+
+// e021_req_spelling is a requirement's type spelling as the impl must write
+// it: `Self` the impl type, the trait's parameters its arguments, and each
+// projection resolved.
+function e021_req_spelling(t: string, im: parser.ImplInfo, tparams: string[], impls: parser.ImplInfo[]): string {
+  let spelled: string = parser.subst_self(t, im.impl_type);
+  if (tparams.len() > 0) {
+    spelled = dyn_ret_at_spelling(spelled, im.trait_ref, tparams);
+  }
+  return parser.resolve_proj_in_type(spelled, impls);
 }
 
 // e021_has_impl reports whether the module contains an `impl <trait_name> for
@@ -24066,7 +24109,6 @@ function e021_diags(mod: parser.Module): util.Diag[] {
         }
         let reqs: string[] = trait_req.methods;
         let sigs: parser.FuncDecl[] = trait_req.req_sigs;
-        let tgen: boolean = e021_trait_is_generic(mod, im.trait_name);
         let ri: i32 = 0;
         while (ri < reqs.len()) {
           // Satisfied if the impl block writes it OR the type already
@@ -24078,11 +24120,21 @@ function e021_diags(mod: parser.Module): util.Diag[] {
           } else if (midx >= 0 && ri < sigs.len()) {
             // Provided as a receiver method — check its signature
             // against the trait's declaration (#4347 slice 2).
-            if (!e021_sig_matches(sigs[ri], mod.funcs[midx], im.impl_type, tgen, mod.impls)) {
+            if (!e021_sig_matches(sigs[ri], mod.funcs[midx], im, trait_req.type_params, mod.impls)) {
               out = out.append(dg("E021", im.impl_type + "." + reqs[ri] + " has the wrong signature for trait " + im.trait_name));
             }
           }
           ri = ri + 1;
+        }
+        // An impl that overrides a defaulted method is held to the
+        // default's signature as to a requirement's; one that inherits it
+        // takes it with its receiver at the impl type.
+        for ds in trait_req.default_sigs {
+          let didx: i32 = e021_recv_method_idx(mod, im.impl_type, ds.name);
+          let written: boolean = name_in(ds.name, im.method_names) && didx >= 0;
+          if (written && !e021_sig_matches(ds, mod.funcs[didx], im, trait_req.type_params, mod.impls) || !written && !e021_self_matches(ds, im, trait_req.type_params, mod.impls)) {
+            out = out.append(dg("E021", im.impl_type + "." + ds.name + " has the wrong signature for trait " + im.trait_name));
+          }
         }
       }
     }

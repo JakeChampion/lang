@@ -9,6 +9,7 @@ import (
 	"github.com/jakechampion/lang/internal/check/checker"
 	"github.com/jakechampion/lang/internal/pkg/modload"
 	"github.com/jakechampion/lang/internal/syntax/ast"
+	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
 // writeFiles drops the supplied path → contents pairs into a fresh
@@ -1003,20 +1004,37 @@ function main(): i32 { return _test_empty.core_test_marker(); }`,
 	}
 }
 
-// Unknown stdlib module → a clear error rather than a fallthrough
-// to filesystem resolution (which would produce a confusing
-// "read stdlib://…: no such file" message from os.ReadFile).
+// Unknown stdlib module → an error at the import, rather than a
+// fallthrough to filesystem resolution: a module of the same basename
+// beside the importer is not the stdlib's (#12690).
 func TestLoadUnknownStdlibModule(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"main.fern": `import "std/does_not_exist";
+		"main.fern": `function helper(): i32 { return 0; }
+  import "std/does_not_exist";
 function main(): i32 { return 0; }`,
+		"does_not_exist.fern": `pub function f(): i32 { return 1; }`,
 	})
-	_, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	entry := filepath.Join(dir, "main.fern")
+	_, _, err := modload.Load(entry)
 	if err == nil {
 		t.Fatal("expected error for unknown stdlib module")
 	}
-	if !strings.Contains(err.Error(), "unknown stdlib module") {
-		t.Errorf("expected `unknown stdlib module` in error; got %v", err)
+	es, ok := err.(diag.Errors)
+	if !ok || len(es) != 1 {
+		t.Fatalf("want one diagnostic; got %T %v", err, err)
+	}
+	pe, ok := es[0].(diag.Positioned)
+	if !ok {
+		t.Fatalf("want a positioned error; got %T %v", es[0], es[0])
+	}
+	if pos := pe.Position(); pos.Line != 2 || pos.Col != 3 {
+		t.Errorf("position %d:%d, want 2:3 (the import)", pos.Line, pos.Col)
+	}
+	if f, ok := pe.(diag.Filed); !ok || f.File() != entry {
+		t.Errorf("want the error filed against %s; got %v", entry, pe)
+	}
+	if got := diag.Format("main.fern", "", pe); !strings.Contains(got, "main.fern:2:3: error: unknown stdlib module \"std/does_not_exist\"") {
+		t.Errorf("rendered %q", got)
 	}
 }
 

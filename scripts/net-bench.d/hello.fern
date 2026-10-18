@@ -8,8 +8,16 @@
 // under the roots TLS_CLIENT_CA names when that is set too, and /bulk is
 // a 16 MiB body: scripts/net-tls-interop's server cases and its
 // throughput record. With H3 set as well it serves HTTP/3 beside TCP:
-// scripts/net-bench's HTTP/3 rows. The caps are lifted for the load
-// generator, which is one client holding thousands of connections.
+// scripts/net-bench's HTTP/3 rows. With H2 set it serves HTTP/2 beside
+// HTTP/1.1, by prior knowledge in the clear and by ALPN under TLS:
+// scripts/net-bench.d/h2tls-bench's rows. WORKERS pins the worker count,
+// for a measurement of one worker, and /count answers
+// `__heap_alloc_count()`, so a run can be bracketed for the allocations
+// it cost. The caps are lifted for the load generator, which is one
+// client holding thousands of connections, and the requests a connection
+// may carry are unbounded as the servers it is compared with leave them:
+// under the default of 1,000 a TLS connection re-handshakes every
+// thousand requests, which the others never do.
 import "std/http";
 import "std/serve";
 import "std/platform";
@@ -22,6 +30,9 @@ import "core/int";
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   if (req.path == "/bulk") {
     return http.bytes(200, "x".repeat(16777216).bytes());
+  }
+  if (req.path == "/count") {
+    return http.ok(__heap_alloc_count().to_string());
   }
   if (req.body_len() == 0) {
     return http.ok("hello");
@@ -37,23 +48,25 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   return http.ok("");
 }
 
-function port(): i32 {
-  match (env("PORT")) {
+// env_int(name, dflt) — the integer the environment names, dflt when it
+// is unset or not a number.
+function env_int(name: string, dflt: i32): i32 {
+  match (env(name)) {
     Some(p) => {
       match (int.parse_int_radix(p, 10)) {
         Some(n) => {
           return n;
         },
         None => {
-          return 8080;
+          return dflt;
         }
       }
     },
     None => {
-      return 8080;
+      return dflt;
     }
   }
-  return 8080;
+  return dflt;
 }
 
 function identity_from(cert_path: string, key_path: string): Result[identity.Identity, string] {
@@ -137,10 +150,13 @@ function client_roots(cfg: server.Config): Result[server.Config, string] {
 }
 
 function main(): i32 {
-  let opts: serve.Config = serve.Config { ...serve.config(), max_connections: 16384, max_connections_per_ip: 0 };
+  let opts: serve.Config = serve.Config { ...serve.config(), max_connections: 16384, max_connections_per_ip: 0, keep_alive_requests: 1000000000, workers: env_int("WORKERS", 0) };
+  if (env("H2").is_some()) {
+    opts = opts.with_h2();
+  }
   match (secured(opts)) {
     Ok(o) => {
-      return serve.supervise(port(), o, handle);
+      return serve.supervise(env_int("PORT", 8080), o, handle);
     },
     Err(e) => {
       eprint("hello: " + e);

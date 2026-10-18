@@ -44,11 +44,15 @@
       "patterns": [
         {
           "name": "keyword.control.fern",
-          "match": "\\b(if|else|while|for|break|continue|return|match|when|default|defer|arena)\\b"
+          "match": "\\b(if|else|while|for|loop|break|continue|return|match|when|default|defer|errdefer)\\b"
         },
         {
           "name": "storage.type.fern",
-          "match": "\\b(function|struct|enum|type|const|import|pub|let|use|as)\\b"
+          "match": "\\b(function|struct|enum|type|trait|impl|dyn|const|import|pub|let|use|as)\\b"
+        },
+        {
+          "name": "storage.modifier.fern",
+          "match": "\\b(fip|fbip|async)\\b(?=(?:\\s+(?:fip|fbip|async))*\\s+function\\b)"
         },
         {
           "name": "constant.language.fern",

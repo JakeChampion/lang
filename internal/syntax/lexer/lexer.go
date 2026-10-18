@@ -112,18 +112,11 @@ var keywords = map[string]bool{
 	"break":    true,
 	"continue": true,
 	"return":   true,
-	// Structured-concurrency surface (docs/ASYNC-IMPLEMENTATION-PLAN.md
-	// Phase 3): `concurrent { let a = spawn f(...); … await a … }` fans
-	// out tasks; the parser desugars the block onto the std/task runtime.
-	// `race { spawn …; spawn …; }` — race spawned tasks, first-to-finish wins;
-	// an expression yielding (winnerIndex, result). Desugars onto std/task.select.
-	// (Named `race`, not `select`, so the runtime function `task.select` — already
-	// an identifier — keeps working.)
-	"true":    true,
-	"false":   true,
-	"boolean": true,
-	"void":    true,
-	"string":  true,
+	"true":     true,
+	"false":    true,
+	"boolean":  true,
+	"void":     true,
+	"string":   true,
 	// Sized numeric type names. The legacy `number` alias for
 	// `i32` was removed in the legacy-cleanup pass. `float` is
 	// the width-unqualified alias for f64 (#5363), handled
@@ -217,6 +210,9 @@ type Error struct {
 	Pos  ast.Position
 	Msg  string
 	Path string // source file path; populated by modload, empty otherwise
+	// Numeric marks a malformed numeric literal, P002; every other lex error
+	// is P001.
+	Numeric bool
 }
 
 func (e *Error) Error() string          { return fmt.Sprintf("lex error at %s: %s", e.Pos, e.Msg) }
@@ -224,7 +220,17 @@ func (e *Error) Position() ast.Position { return e.Pos }
 func (e *Error) File() string           { return e.Path }
 func (e *Error) SetFile(p string)       { e.Path = p }
 
-var _ diag.FileSetter = (*Error)(nil)
+func (e *Error) Code() string {
+	if e.Numeric {
+		return "P002"
+	}
+	return "P001"
+}
+
+var (
+	_ diag.FileSetter = (*Error)(nil)
+	_ diag.Coded      = (*Error)(nil)
+)
 
 // validNumericSuffix is the closed list of typed-literal suffixes
 // the lexer recognises. The same set is later honoured by the
@@ -499,7 +505,7 @@ func (l *lexer) next() (Token, error) {
 				l.advance()
 			}
 			if l.i == hexDigits {
-				return Token{}, &Error{Pos: start, Msg: "hex literal needs at least one digit after 0x"}
+				return Token{}, &Error{Pos: start, Msg: "hex literal needs at least one digit after 0x", Numeric: true}
 			}
 		} else if base := radixPrefix(l.src, l.i); base != 0 {
 			// `0o` octal / `0b` binary integer literal: no float upgrades
@@ -513,10 +519,10 @@ func (l *lexer) next() (Token, error) {
 				l.advance()
 			}
 			if l.i == digits {
-				return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("integer literal needs at least one digit after %s", prefix)}
+				return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("integer literal needs at least one digit after %s", prefix), Numeric: true}
 			}
 			if l.i < len(l.src) && asciiDigit(rune(l.src[l.i])) {
-				return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("invalid digit %q in a %s literal", l.src[l.i], prefix)}
+				return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("invalid digit %q in a %s literal", l.src[l.i], prefix), Numeric: true}
 			}
 		} else {
 			for l.i < len(l.src) && asciiDigit(rune(l.src[l.i])) {
@@ -579,10 +585,10 @@ func (l *lexer) next() (Token, error) {
 				}
 				suffix = l.src[sBegin:l.i]
 				if !validNumericSuffix(suffix) {
-					return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("unknown numeric suffix %q on %q", suffix, text)}
+					return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("unknown numeric suffix %q on %q", suffix, text), Numeric: true}
 				}
 				if isFloat && suffix[0] != 'f' {
-					return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("integer suffix %q on float literal %q", suffix, text)}
+					return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("integer suffix %q on float literal %q", suffix, text), Numeric: true}
 				}
 			}
 		}

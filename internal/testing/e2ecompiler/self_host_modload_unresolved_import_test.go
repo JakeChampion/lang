@@ -50,7 +50,7 @@ func TestSelfHostModloadUnresolvedImport(t *testing.T) {
 				"main.fern":      "import \"std/nosuch\";\nfunction main(): i32 { return 0; }\n",
 				"std/other.fern": "pub function x(): i32 { return 1; }\n",
 			},
-			want: `checker_modload_run: cannot resolve import "std/nosuch" in DIR/main.fern: DIR/std/nosuch.fern: not found`,
+			want: `checker_modload_run: DIR/main.fern:1:1: error: unknown stdlib module "std/nosuch"`,
 		},
 		{
 			// An empty path is an import of no file, as any other is.

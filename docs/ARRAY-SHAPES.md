@@ -316,10 +316,10 @@ nothing. No nominal type alone proves storage layout.
 The loader supplies stdlib provenance separately from function names. The
 planner checks it for the operation, constructor and metadata helpers, and
 the layout analysis checks it before applying a stdlib return guarantee.
-Relative user imports and flat-name or manifest fallbacks do not gain that
-provenance from their spelling. Execution regressions cover a custom module
-whose `map` and `outer` reverse the left input, both import orders alongside
-the real stdlib, and a missing stdlib that resolves through a local fallback.
+Relative user imports and modules found through a manifest do not gain that
+provenance, and a `std/` import resolves under the stdlib root or is refused.
+Execution regressions cover a custom module whose `map` and `outer` reverse
+the left input, and both import orders alongside the real stdlib.
 
 Captured factors and unresolved element functions still use scalar maps.
 These are coverage limits, not claims that those cases cannot be optimized.
