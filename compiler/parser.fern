@@ -8594,7 +8594,7 @@ function rest_starts_with_array_suffix(s: string, from: i32): boolean {
 // essential — and kept — when the group is a tuple (a top-level comma), a
 // function parameter list (a `=>` follows its `)`), or an array-of-closure
 // whose suffix a kept group stops splitting.
-function canonicalise_type_args(s: string): string {
+pub function canonicalise_type_args(s: string): string {
   let i: i32 = 0;
   while (i < s.len() && s[i] != b'(') {
     i = i + 1;
@@ -11865,21 +11865,28 @@ function infer_folded_inst(fd: FuncDecl, args: ast.Expr[], type_args: string[], 
 // per type parameter. It is read before the arguments and the destination
 // are: a type parameter that appears only in the result, or one forwarded
 // from the caller's own (`decode[T](s)` in a generic body, substituted by
-// the clone), binds from nothing else.
+// the clone), binds from nothing else. The list is written against the
+// declared parameters, which a promoted erased variable follows in
+// `type_params`, so each is read by name.
 function explicit_inst_key(fd: FuncDecl, type_args: string[]): string {
-  if (fd.type_params.len() == 0 || type_args.len() != fd.type_params.len()) {
+  let written: string[] = fd.all_type_params;
+  if (written.len() == 0) {
+    written = fd.type_params;
+  }
+  if (fd.type_params.len() == 0 || type_args.len() != written.len()) {
     return "";
   }
   let key: string = "";
   let j: i32 = 0;
-  while (j < type_args.len()) {
-    if (type_args[j].len() == 0) {
+  while (j < fd.type_params.len()) {
+    let at: i32 = util.index_of_str(written, fd.type_params[j]);
+    if (at < 0 || type_args[at].len() == 0) {
       return "";
     }
     if (j > 0) {
       key = key + ";";
     }
-    key = key + type_args[j];
+    key = key + type_args[at];
     j = j + 1;
   }
   return key;
