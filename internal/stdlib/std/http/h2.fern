@@ -1340,6 +1340,56 @@ pub function (c: Conn) respond(stream: i32, resp: HttpResponse): Step {
   // the rebuild reuses its box rather than copying it under the read.
   let headless: boolean = __headless(s, resp);
   let stream_window: i32 = s.send_window;
+  // A text or bytes body both windows and the frame size take goes out
+  // now, HEADERS and DATA in one buffer written from the body's own
+  // bytes, and the stream is done with.
+  let allowed: i32 = __min(c.peer_max_frame, __min(stream_window, c.send_window));
+  let whole: boolean = resp.trailers.len() == 0;
+  match (resp.body) {
+    BodyText(text) => {
+      if (whole && (headless || text.len() <= allowed)) {
+        return __respond_now(c, at, stream, resp, text.as_bytes(), headless);
+      }
+    },
+    BodyBytes(bs) => {
+      if (whole && (headless || bs.len() <= allowed)) {
+        return __respond_now(c, at, stream, resp, bs[0:bs.len()], headless);
+      }
+    },
+    _ => {}
+  }
+  return __respond_owed(c, at, stream, resp, headless, stream_window);
+}
+
+// __respond_now answers the request on `stream` with `body`, which both
+// windows and the frame size take: the header block written into a buffer
+// with the HEADERS frame's header reserved and the DATA frame appended
+// (`frame.headers_data`); a block past the peer's frame size goes as
+// HEADERS and CONTINUATION frames instead.
+function __respond_now(c: Conn, at: i32, stream: i32, resp: HttpResponse, body: [u8], headless: boolean): Step {
+  let n: i32 = body.len();
+  if (headless) {
+    n = 0;
+  }
+  let enc: hpack.Encoded = __response_block(frame.headers_room(n), c.encoder, resp, body.len(), c.date);
+  c = Conn { ...c, handling: c.handling - 1, encoder: enc.encoder, send_window: c.send_window - n };
+  let bytes: u8[] = enc.bytes;
+  if (bytes.len() - frame.HEADER_LEN > c.peer_max_frame) {
+    let r: __Run = __header_frames(__run(c), stream, __bytes_range(bytes, frame.HEADER_LEN, bytes.len()), n == 0);
+    if (n > 0) {
+      r = __send_bytes(r, frame.data_bytes(stream, true, __bytes_range(body, 0, n)));
+    }
+    return __step(__ended(r, at));
+  }
+  return __step(__ended(__send_bytes(__run(c), frame.headers_data(bytes, stream, body, n)), at));
+}
+
+// __respond_owed answers the request on `stream` with a response the
+// windows do not take whole, or one with trailers or a body read from a
+// stream: the headers go now, what the windows allow of the body after
+// them, and the rest is owed to the stream and sent as they open, the
+// trailers last.
+function __respond_owed(c: Conn, at: i32, stream: i32, resp: HttpResponse, headless: boolean, stream_window: i32): Step {
   let body: u8[] = resp.body_bytes();
   let length: i32 = body.len();
   if (headless) {
@@ -1348,11 +1398,8 @@ pub function (c: Conn) respond(stream: i32, resp: HttpResponse): Step {
   if (resp.trailers.len() > 0) {
     length = 0 - 1;
   }
-  let enc: hpack.Encoded = __response_block(c.encoder, resp, length, c.date);
+  let enc: hpack.Encoded = __response_block([], c.encoder, resp, length, c.date);
   c = Conn { ...c, handling: c.handling - 1, encoder: enc.encoder };
-  // A body both windows and the frame size take goes out now, in one
-  // DATA frame after the HEADERS, and the stream is done with; the rest
-  // is owed to the stream and sent as the windows allow.
   let n: i32 = __min(__min(body.len(), c.peer_max_frame), __min(stream_window, c.send_window));
   if (n == body.len() && resp.trailers.len() == 0) {
     let r: __Run = __header_frames(__run(c), stream, enc.bytes, n == 0);
@@ -1389,7 +1436,7 @@ pub function (c: Conn) respond_head(stream: i32, resp: HttpResponse): Step {
     return Step { conn: Conn { ...freed, streams: __without(freed.streams, at) }, output: [], events: [] };
   }
   let headless: boolean = __headless(s, resp);
-  let enc: hpack.Encoded = __response_block(freed.encoder, resp, 0 - 1, freed.date);
+  let enc: hpack.Encoded = __response_block([], freed.encoder, resp, 0 - 1, freed.date);
   let r: __Run = __header_frames(__run(Conn { ...freed, encoder: enc.encoder }), stream, enc.bytes, headless);
   let owed: __Stream = __Stream { ...s, handling: false, pending: [], trailers: headers.header_map_new(), owes_end: !headless, producing: !headless };
   r = __Run { ...r, conn: Conn { ...r.conn, streams: r.conn.streams.with(at, owed) } };
@@ -1474,13 +1521,14 @@ function __credited(r: __Run, at: i32, n: i32, stream_too: boolean): __Run {
   return __send(__Run { ...out, conn: Conn { ...out.conn, streams: out.conn.streams.with(at, filled) } }, frame.WindowUpdate(s.id, n));
 }
 
-// __response_block is the response's header block: `:status` first, then
-// each field in lower case, connection-specific ones dropped (§8.2.2),
-// cookies never indexed, the body's length when it is known (`length`
-// below 0 when it is not: trailers follow, or the body comes in parts),
-// and `date` when the response names no Date and `date` is not "".
-function __response_block(e: hpack.Encoder, resp: HttpResponse, length: i32, date: string): hpack.Encoded {
-  let en: hpack.Encoding = e.begin().put(":status", __status_text(resp.status), false);
+// __response_block is the response's header block, written behind the
+// bytes `out` holds: `:status` first, then each field in lower case,
+// connection-specific ones dropped (§8.2.2), cookies never indexed, the
+// body's length when it is known (`length` below 0 when it is not:
+// trailers follow, or the body comes in parts), and `date` when the
+// response names no Date and `date` is not "".
+function __response_block(own out: u8[], e: hpack.Encoder, resp: HttpResponse, length: i32, date: string): hpack.Encoded {
+  let en: hpack.Encoding = e.begin_in(out).put(":status", __status_text(resp.status), false);
   let i: i32 = 0;
   let has_length: boolean = false;
   let has_date: boolean = false;
