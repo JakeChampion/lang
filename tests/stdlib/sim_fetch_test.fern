@@ -38,12 +38,12 @@ const PROXY: string = "10.0.0.9";
 
 // The route `fetch.send` takes, with no proxy to consult.
 function __open(): fetch.Policy {
-  return fetch.Policy { public_only: false, proxies: fetch.ProxyEnv { http_proxy: "", https_proxy: "", no_proxy: "" }, roots: None, jar: None, allow: None };
+  return fetch.Policy { public_only: false, proxies: fetch.proxies("", "", ""), roots: None, jar: None, allow: None };
 }
 
 // The route `plat.http` takes: global addresses only.
 function __public(): fetch.Policy {
-  return fetch.Policy { public_only: true, proxies: fetch.ProxyEnv { http_proxy: "", https_proxy: "", no_proxy: "" }, roots: None, jar: None, allow: None };
+  return fetch.Policy { public_only: true, proxies: fetch.proxies("", "", ""), roots: None, jar: None, allow: None };
 }
 
 // A network where `example.test` is one origin listening on port 80

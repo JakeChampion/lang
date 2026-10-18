@@ -399,11 +399,7 @@ function __target_of(raw: string, policy: Policy): Result[__Target, FetchError] 
   let authority: string = u.host + ":" + int.int_to_string(port);
   match (__proxy_for_url(policy.proxies, u)) {
     Some(spec) => {
-      let name: string = "http_proxy";
-      if (tls) {
-        name = "https_proxy";
-      }
-      let p: __Proxy = __proxy_of(spec, name)?;
+      let p: __Proxy = __proxy_named(policy.proxies, spec, tls)?;
       if (!tls) {
         target = "http://" + host_field + target;
       }
@@ -1402,7 +1398,7 @@ function __send_closing(policy: Policy, req: Request): Result[HttpResponse, Fetc
 // so a wasi-http build imports no configuration store for it.
 function __proxies(): ProxyEnv {
   if (target_os() == "wasi-http") {
-    return ProxyEnv { http_proxy: "", https_proxy: "", no_proxy: "" };
+    return proxies("", "", "");
   } else {
     return proxy_env();
   }
@@ -3060,7 +3056,17 @@ function __rejected(code: i32): FetchError {
 // empty for none; `https_proxy`, the same for `https` URLs, which go
 // through a tunnel it opens; `no_proxy`, the comma-separated hosts reached
 // directly.
-pub struct ProxyEnv { http_proxy: string, https_proxy: string, no_proxy: string }
+pub struct ProxyEnv { http_proxy: string, https_proxy: string, no_proxy: string, rules: __Rule[], http: Option[__Proxy], https: Option[__Proxy] }
+
+// `proxies(http_proxy, https_proxy, no_proxy)` — the configuration from
+// the three variables' values, each as the environment would spell it.
+// The `no_proxy` entries are read into rules and each proxy spec into
+// where to dial it here, once, so a request matches and dials without
+// reading the text again; a spec that does not read as a proxy is
+// refused by the request that would use it (`InvalidUrl`).
+pub function proxies(http_proxy: string, https_proxy: string, no_proxy: string): ProxyEnv {
+  return ProxyEnv { http_proxy: http_proxy, https_proxy: https_proxy, no_proxy: no_proxy, rules: __rules_of(no_proxy), http: __proxy_read(http_proxy), https: __proxy_read(https_proxy) };
+}
 
 // `proxy_env()` — the configuration as the environment sets it, read
 // through `config_get` so it arrives the same way on every target (a
@@ -3079,14 +3085,14 @@ pub function proxy_env(): ProxyEnv {
 // `REQUEST_METHOD`, the sign of a CGI invocation, no proxy is read at all,
 // since there even the lowercase names may be the client's.
 pub function proxy_env_from(http_proxy: Option[string], https_proxy: Option[string], https_proxy_upper: Option[string], no_proxy: Option[string], no_proxy_upper: Option[string], request_method: Option[string]): ProxyEnv {
-  let env: ProxyEnv = ProxyEnv { http_proxy: __or_empty(http_proxy), https_proxy: __or_empty(__either(https_proxy, https_proxy_upper)), no_proxy: __or_empty(__either(no_proxy, no_proxy_upper)) };
+  let skip: string = __or_empty(__either(no_proxy, no_proxy_upper));
   match (request_method) {
     Some(m) => {
-      return ProxyEnv { ...env, http_proxy: "", https_proxy: "" };
+      return proxies("", "", skip);
     },
     None => {}
   }
-  return env;
+  return proxies(__or_empty(http_proxy), __or_empty(__either(https_proxy, https_proxy_upper)), skip);
 }
 
 function __either(first: Option[string], second: Option[string]): Option[string] {
@@ -3147,19 +3153,31 @@ function __proxy_for_url(p: ProxyEnv, u: Url): Option[string] {
     return None;
   }
   let host: string = __host_name(u.host);
-  let ip: Option[net.IpAddr] = __canonical_ip(host);
+  let ip: Option[net.IpAddr] = None;
+  if (__address_shaped(host)) {
+    ip = __canonical_ip(host);
+  }
   if (__never_proxied(host, ip)) {
     return None;
   }
-  if (p.no_proxy.len() == 0) {
-    return Some(proxy);
-  }
-  for entry in p.no_proxy.split(",") {
-    if (__no_proxy_matches(entry.trim(), host, __effective_port(u), ip)) {
+  let port: i32 = __effective_port(u);
+  for rule in p.rules {
+    if (__no_proxy_matches(rule, host, port, ip)) {
       return None;
     }
   }
   return Some(proxy);
+}
+
+// `__address_shaped(host)` — whether `host` can be an address literal: a
+// digit first (a dotted quad) or a colon anywhere (IPv6). A name shaped
+// so is parsed and found not to be one; every other name skips the parse.
+function __address_shaped(host: string): boolean {
+  if (host.len() == 0) {
+    return false;
+  }
+  let b: u8 = host[0];
+  return b >= 48 as u8 && b <= 57 as u8 || host.index_of(":") >= 0;
 }
 
 // `__never_proxied(host, ip)` — `localhost`, a name under it, or a
@@ -3181,11 +3199,18 @@ function __never_proxied(host: string, ip: Option[net.IpAddr]): boolean {
 
 // `__host_name(h)` — `h` ASCII case-folded, its trailing dot dropped.
 function __host_name(h: string): string {
-  let s: string = h.to_lower();
-  if (s.len() > 1 && s.ends_with(".")) {
-    return slice_unchecked(s, 0, s.len() - 1).to_owned();
+  let end: i32 = h.len();
+  if (end > 1 && h[end - 1] == 46 as u8) {
+    end = end - 1;
   }
-  return s;
+  let i: i32 = 0;
+  while (i < end && (h[i] < 65 as u8 || h[i] > 90 as u8)) {
+    i = i + 1;
+  }
+  if (i == end && end == h.len()) {
+    return h;
+  }
+  return slice_unchecked(h, 0, end).to_owned().to_lower();
 }
 
 // `__canonical_ip(text)` — `text` as an address, an IPv4 one unwrapped
@@ -3202,50 +3227,127 @@ function __canonical_ip(text: string): Option[net.IpAddr] {
   return None;
 }
 
-// One `no_proxy` entry: its name, address or block, and the port it is
-// limited to (0 for any, -1 for a port that does not read).
-struct __Rule { name: string, port: i32 }
+// One `no_proxy` entry as read once: what it names and the port it is
+// limited to (0 for any, -1 for a port that does not read, which no
+// request has). `Every` is `*`; `Named` a domain, matching the host and
+// its subdomains; `Under` a domain with its leading dot, the subdomains
+// only; `Addr` one address; `Block` the bytes of a CIDR prefix and its
+// length; `Nothing` an entry that reads as none of these.
+struct __Rule { what: __Match, port: i32 }
 
-// `__no_proxy_matches(entry, host, port, ip)` — whether one `no_proxy`
-// entry names `host` (an address `ip` when it is one) at `port`.
-function __no_proxy_matches(entry: string, host: string, port: i32, ip: Option[net.IpAddr]): boolean {
-  if (entry.len() == 0) {
-    return false;
+enum __Match { Every, Named(string), Under(string), Addr(net.IpAddr), Block(u8[], i32), Nothing }
+
+// `__rules_of(no_proxy)` — the variable's comma-separated entries as
+// rules, each trimmed, the empty ones dropped.
+function __rules_of(no_proxy: string): __Rule[] {
+  let out: __Rule[] = [];
+  if (no_proxy.len() == 0) {
+    return out;
   }
+  for entry in no_proxy.split(",") {
+    let e: string = entry.trim();
+    if (e.len() > 0) {
+      out = out.append(__rule_of(e));
+    }
+  }
+  return out;
+}
+
+// `__rule_of(entry)` — one non-empty entry read.
+function __rule_of(entry: string): __Rule {
   if (entry == "*") {
-    return true;
+    return __Rule { what: Every, port: 0 };
   }
-  let rule: __Rule = __entry_rule(entry);
-  if (rule.port != 0 && rule.port != port) {
-    return false;
-  }
-  let name: string = __host_name(rule.name);
+  let split: (string, i32) = __entry_split(entry);
+  let name: string = __host_name(split.0);
   if (name.index_of("/") >= 0) {
-    return __in_block(ip, name);
+    return __Rule { what: __block_of(name), port: split.1 };
   }
   match (__canonical_ip(name)) {
     Some(a) => {
-      return __same_ip(ip, a);
+      return __Rule { what: Addr(a), port: split.1 };
     },
     None => {}
   }
   if (name.starts_with(".")) {
-    return host.ends_with(name);
+    return __Rule { what: Under(name), port: split.1 };
   }
-  return host == name || host.ends_with("." + name);
+  return __Rule { what: Named(name), port: split.1 };
 }
 
-// `__entry_rule(entry)` — `entry` split into what it names and its
+// `__block_of(block)` — a CIDR entry's prefix bytes and length, or
+// `Nothing` when either does not read.
+function __block_of(block: string): __Match {
+  let slash: i32 = block.index_of("/");
+  let bits: i32 = -1;
+  match (int.parse_int_radix(slice_unchecked(block, slash + 1, block.len()).to_owned(), 10)) {
+    Some(n) => {
+      bits = n;
+    },
+    None => {}
+  }
+  match (__canonical_ip(slice_unchecked(block, 0, slash).to_owned())) {
+    Some(p) => {
+      let pb: u8[] = p.bytes();
+      if (bits < 0 || bits > pb.len() * 8) {
+        return Nothing;
+      }
+      return Block(pb, bits);
+    },
+    None => {
+      return Nothing;
+    }
+  }
+  return Nothing;
+}
+
+// `__no_proxy_matches(rule, host, port, ip)` — whether the rule names
+// `host` (the address `ip` when it is one) at `port`.
+function __no_proxy_matches(rule: __Rule, host: string, port: i32, ip: Option[net.IpAddr]): boolean {
+  if (rule.port != 0 && rule.port != port) {
+    return false;
+  }
+  match (rule.what) {
+    Every => {
+      return true;
+    },
+    Named(name) => {
+      return host == name || __under(host, name);
+    },
+    Under(suffix) => {
+      return host.ends_with(suffix);
+    },
+    Addr(a) => {
+      return __same_ip(ip, a);
+    },
+    Block(prefix, bits) => {
+      return __in_block(ip, prefix, bits);
+    },
+    Nothing => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// `__under(host, name)` — whether `host` is a subdomain of `name`: ends
+// with it, after a dot.
+function __under(host: string, name: string): boolean {
+  let at: i32 = host.len() - name.len() - 1;
+  return at >= 0 && host[at] == 46 as u8 && host.ends_with(name);
+}
+
+// `__entry_split(entry)` — `entry` split into what it names and its
 // `:port`: a bracketed address keeps its brackets' contents, a bare one
 // with more than one colon is an IPv6 address with no port, and a zone
 // (`%eth0`) is dropped from either, a `/bits` after it kept.
-function __entry_rule(entry: string): __Rule {
+function __entry_split(entry: string): (string, i32) {
   let name: string = entry;
   let rest: string = "";
   if (entry.starts_with("[")) {
     let close: i32 = entry.index_of("]");
     if (close < 0) {
-      return __Rule { name: entry, port: -1 };
+      return (entry, -1);
     }
     name = slice_unchecked(entry, 1, close).to_owned();
     rest = slice_unchecked(entry, close + 1, entry.len()).to_owned();
@@ -3256,7 +3358,7 @@ function __entry_rule(entry: string): __Rule {
       rest = slice_unchecked(entry, colon, entry.len()).to_owned();
     }
   }
-  return __Rule { name: __without_zone(name), port: __rule_port(rest) };
+  return (__without_zone(name), __rule_port(rest));
 }
 
 // `__without_zone(name)` — `name` less its `%zone`, a `/bits` after the
@@ -3310,28 +3412,12 @@ function __same_ip(ip: Option[net.IpAddr], a: net.IpAddr): boolean {
   return false;
 }
 
-// `__in_block(ip, block)` — whether the host is an address in the CIDR
-// `block`.
-function __in_block(ip: Option[net.IpAddr], block: string): boolean {
-  let slash: i32 = block.index_of("/");
-  let bits: i32 = -1;
-  match (int.parse_int_radix(slice_unchecked(block, slash + 1, block.len()).to_owned(), 10)) {
-    Some(n) => {
-      bits = n;
-    },
-    None => {}
-  }
-  let prefix: Option[net.IpAddr] = __canonical_ip(slice_unchecked(block, 0, slash).to_owned());
+// `__in_block(ip, prefix, bits)` — whether the host is an address whose
+// first `bits` bits are `prefix`'s.
+function __in_block(ip: Option[net.IpAddr], prefix: u8[], bits: i32): boolean {
   match (ip) {
     Some(a) => {
-      match (prefix) {
-        Some(p) => {
-          return __prefix_matches(a, p, bits);
-        },
-        None => {
-          return false;
-        }
-      }
+      return __prefix_matches(a.bytes(), prefix, bits);
     },
     None => {
       return false;
@@ -3340,12 +3426,10 @@ function __in_block(ip: Option[net.IpAddr], block: string): boolean {
   return false;
 }
 
-// `__prefix_matches(a, p, bits)` — same family and the first `bits` bits
-// equal.
-function __prefix_matches(a: net.IpAddr, p: net.IpAddr, bits: i32): boolean {
-  let ab: u8[] = a.bytes();
-  let pb: u8[] = p.bytes();
-  if (ab.len() != pb.len() || bits < 0 || bits > ab.len() * 8) {
+// `__prefix_matches(ab, pb, bits)` — same family and the first `bits`
+// bits equal.
+function __prefix_matches(ab: u8[], pb: u8[], bits: i32): boolean {
+  if (ab.len() != pb.len()) {
     return false;
   }
   let i: i32 = 0;
@@ -3392,6 +3476,43 @@ function __proxy_of(spec: string, name: string): Result[__Proxy, FetchError] {
     port = 80;
   }
   return Ok(__Proxy { host: u.host, port: port, auth: __proxy_auth(full) });
+}
+
+// `__proxy_read(spec)` — the proxy `spec` names, when it reads as one.
+function __proxy_read(spec: string): Option[__Proxy] {
+  if (spec.len() == 0) {
+    return None;
+  }
+  match (__proxy_of(spec, "")) {
+    Ok(p) => {
+      return Some(p);
+    },
+    Err(e) => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// `__proxy_named(p, spec, tls)` — the proxy `p` read from `spec` (the
+// `https_proxy` under `tls`, else the `http_proxy`), or the refusal the
+// spec earns when it did not read.
+function __proxy_named(p: ProxyEnv, spec: string, tls: boolean): Result[__Proxy, FetchError] {
+  let read: Option[__Proxy] = p.http;
+  let name: string = "http_proxy";
+  if (tls) {
+    read = p.https;
+    name = "https_proxy";
+  }
+  match (read) {
+    Some(proxy) => {
+      return Ok(proxy);
+    },
+    None => {
+      return __proxy_of(spec, name);
+    }
+  }
+  return __proxy_of(spec, name);
 }
 
 // `__proxy_auth(full)` — `Basic` with the URL's userinfo as RFC 7617's
