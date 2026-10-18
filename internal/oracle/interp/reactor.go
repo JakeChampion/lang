@@ -148,6 +148,8 @@ func (i *Interp) rawFd(handle int64) (int, bool) {
 		}
 	} else if fd, ok := i.udpSocks[handle]; ok {
 		return fd, true
+	} else if fd, ok := i.timerFds[handle]; ok {
+		return fd, true
 	}
 	if sc == nil {
 		return 0, false

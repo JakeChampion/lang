@@ -617,6 +617,9 @@ type Interp struct {
 	// udpSocks maps a datagram socket's handle to its raw descriptor
 	// (udp.go); handles are numbered from tcpNextHandle like the rest.
 	udpSocks map[int64]int
+	// timerFds maps a timer_fd handle to its timerfd (timer.go), numbered
+	// from tcpNextHandle so poll and tcp_close take it like a socket.
+	timerFds map[int64]int
 	// tcpNonblocking holds the connections tcp_socket_ctl put into
 	// non-blocking mode, which tcp_recv honours with a zero deadline.
 	tcpNonblocking map[int64]bool
@@ -1867,6 +1870,8 @@ func New() *Interp {
 	i.Builtins["udp_connect"] = &Builtin{Fn: builtinUdpConnect}
 	i.Builtins["udp_sendto"] = &Builtin{Fn: builtinUdpSendto}
 	i.Builtins["udp_sendto_bytes"] = &Builtin{Fn: builtinUdpSendtoBytes}
+	i.Builtins["udp_send"] = &Builtin{Fn: builtinUdpSend}
+	i.Builtins["timer_fd"] = &Builtin{Fn: builtinTimerFd}
 	i.Builtins["udp_send_bytes"] = &Builtin{Fn: builtinUdpSendBytes}
 	i.Builtins["udp_recvfrom"] = &Builtin{Fn: builtinUdpRecvfrom}
 	i.Builtins["tcp_close"] = &Builtin{Fn: builtinTcpClose}
@@ -2108,6 +2113,9 @@ func builtinTcpClose(i *Interp, args []Value) (Value, error) {
 		return Number(0), nil
 	}
 	if r, ok := i.udpClose(int64(id)); ok {
+		return r, nil
+	}
+	if r, ok := i.timerClose(int64(id)); ok {
 		return r, nil
 	}
 	return Number(-1), nil
@@ -2840,7 +2848,7 @@ func builtinArraySet(ip *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("__method_Array_set: index must be number, got %T", args[1])
 	}
 	if idx < 0 || int(idx) >= len(arr.E) {
-		return nil, fmt.Errorf("__method_Array_set: index %d out of range [0, %d)", int(idx), len(arr.E))
+		return nil, fmt.Errorf("array index %d out of range [0, %d)", int(idx), len(arr.E))
 	}
 	storeArray(args[2])
 	inPlace, err := ip.arrayWriteInPlace(arr)
@@ -4563,7 +4571,7 @@ func builtinSysctl(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("sysctl: expected 1 arg, got %d", len(args))
 	}
-	arr, ok := args[0].(*Array)
+	arr, ok := args[0].(Array)
 	if !ok {
 		return nil, fmt.Errorf("sysctl: expected i32[] arg, got %T", args[0])
 	}
