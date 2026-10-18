@@ -4803,6 +4803,11 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
           // (Scalar `unknown` is NOT treated as a wildcard — a
           // genuinely unresolved value should still surface its
           // assignment error, e.g. `let s: string = badcall()`.)
+          // A built-in variant's unbound argument is not a wildcard; a
+          // generic parameter erased to unknown is.
+          if (unbound_enum_argument(fe.elem) && !is_unknown(te.elem)) {
+            return false;
+          }
           if (is_unknown(fe.elem) || is_unknown(te.elem)) {
             return true;
           }
@@ -4817,10 +4822,10 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
       match (from) {
         typeinfo.TypeTuple(fe) => {
           // Same arity, element-wise assignable. An unknown element on
-          // EITHER side is a wildcard, exactly as the array arm above
-          // treats its element: a generic tuple `(T, U)` — whose params
-          // erase to `unknown` — flows into any concrete tuple slot, a
-          // literal whose element infers `unknown` doesn't false-positive,
+          // EITHER side is a wildcard, as in the array arm above; a
+          // built-in variant's unbound argument is not. A generic tuple
+          // `(T, U)` — whose params erase to `unknown` — flows into any
+          // concrete tuple slot, a literal whose element infers `unknown` doesn't false-positive,
           // and a DESTINATION element this resolver cannot name is not a
           // rejection. That last direction is what a spelling like
           // `Cell[i32]` needs: it resolves to unknown here, so a bare
@@ -4831,6 +4836,9 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
           }
           let i: i32 = 0;
           while (i < te.elements.len()) {
+            if (unbound_enum_argument(fe.elements[i]) && !is_unknown(te.elements[i])) {
+              return false;
+            }
             if (!is_unknown(fe.elements[i]) && !is_unknown(te.elements[i]) && !nested_assignable(fe.elements[i], te.elements[i], unions)) {
               return false;
             }
@@ -4866,7 +4874,11 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
           // same wildcard for the same reason the array and tuple arms
           // give it: a generic parameter erases to unknown there, so
           // `assert_eq_map[K, V](Map[K, V], …)` takes a concrete
-          // `Map[i32, i32]`.
+          // `Map[i32, i32]`. A built-in variant's unbound argument is not a
+          // wildcard, as in the array arm.
+          if (unbound_enum_argument(fm.key) && !is_unknown(tm.key) || unbound_enum_argument(fm.value) && !is_unknown(tm.value)) {
+            return false;
+          }
           let kok: boolean = is_unknown(fm.key) || is_unknown(tm.key) || nested_assignable(fm.key, tm.key, unions);
           let vok: boolean = is_unknown(fm.value) || is_unknown(tm.value) || nested_assignable(fm.value, tm.value, unions);
           return kok && vok;
@@ -6332,6 +6344,35 @@ function uninferred_method_diags(c: ast.ExprCall, recv: string, method: string, 
   return out;
 }
 
+// uninferred_recv_diags reports E040 for a variable of the receiver's type
+// that the receiver itself leaves unbound: `let o = GNil;` gives `o` no type
+// argument at all, so nothing binds `T` in `o.count()` unless an argument, the
+// result or a bound does, as in uninferred_method_diags. An argument that is a
+// type variable (`self` inside the type's own generic methods) binds it.
+function uninferred_recv_diags(c: ast.ExprCall, recv: string, method: string, msig: MethodSig, args: typeinfo.Type[]): util.Diag[] {
+  let out: util.Diag[] = [];
+  if (c.type_args.len() > 0 || msig.name.len() == 0 || c.args.len() != msig.param_type_names.len()) {
+    return out;
+  }
+  let rref: parser.TypeRef = parser.parse_type_ref(msig.receiver_type);
+  let ret: parser.TypeRef = parser.parse_type_ref(msig.ret_type_name);
+  let k: i32 = 0;
+  while (k < rref.args.len()) {
+    let ar: parser.TypeRef = rref.args[k];
+    let tp: string = ar.base;
+    let bare: boolean = ar.args.len() == 0 && ar.array_depth == 0 && !ar.is_tuple && !ar.is_fn;
+    let bound: boolean = k < args.len();
+    if (bare && !bound && !type_ref_names_any(ret, [tp]) && !bound_names_tp(msig.type_bounds, tp)) {
+      let (_, all_empty) = empty_array_positions(msig.param_type_names, c.args, tp);
+      if (all_empty) {
+        out = out.append(dg_at("E040", "could not infer type parameter " + tp + " for " + recv + "." + method + " — supply it explicitly at the call site (e.g. ." + method + "[i32](...)) or annotate the binding", c.line, c.col));
+      }
+    }
+    k = k + 1;
+  }
+  return out;
+}
+
 // empty_array_positions reads the values whose declared type spells `tp`:
 // whether any does, and whether every one binds nothing: an empty array
 // literal (#10499), or a `use` callback whose binding has no type (#10833).
@@ -7383,12 +7424,21 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
   }
   // An unsuffixed literal takes a concrete sibling's type, as in
   // call_diags_array's E034 rule.
+  // A built-in variant's argument its constructor left unbound (`e` in
+  // `Err(e)` over an un-annotated `Ok(5)`) is a contract no sibling makes
+  // concrete, so it types the literal.
   let first: typeinfo.Type = check_expr(a.elements[0], s);
+  if (unbound_enum_argument(first)) {
+    return t_array(first);
+  }
   let first_lit: i32 = numeric_literal_kind(a.elements[0]);
   let first_expr: ast.Expr = a.elements[0];
   let i: i32 = 1;
   while (i < a.elements.len()) {
     let et: typeinfo.Type = check_expr(a.elements[i], s);
+    if (unbound_enum_argument(et)) {
+      return t_array(et);
+    }
     let lit: i32 = numeric_literal_kind(a.elements[i]);
     // A mismatch is call_diags_array's E034; the literal keeps its
     // first element's type, as native types it. A sibling only ever makes
@@ -13899,7 +13949,7 @@ function settles_or_assignable(e: ast.Expr, want: typeinfo.Type, s: Scope): bool
     return true;
   }
   let t: typeinfo.Type = check_expr(e, s);
-  return is_unknown(t) || type_assignable(t, want, s.unions.unions);
+  return is_unknown(t) && !unbound_enum_argument(t) || type_assignable(t, want, s.unions.unions);
 }
 
 // settles_or_nested: the same for a TUPLE literal's elements, which are not a
@@ -13911,7 +13961,7 @@ function settles_or_nested(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean 
     return true;
   }
   let t: typeinfo.Type = check_expr(e, s);
-  return is_unknown(t) || nested_assignable(t, want, s.unions.unions);
+  return is_unknown(t) && !unbound_enum_argument(t) || nested_assignable(t, want, s.unions.unions);
 }
 
 // variant_ctor_diags checks a variant-constructor call's ARGUMENTS against the
@@ -13956,7 +14006,8 @@ function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag
     let at: typeinfo.Type = check_expr(c.args[i], s);
     let pt: typeinfo.Type = variant_pattern_payload_type(s, qname, whole, i);
     out = util.append_diags(out, int_dest_range_diags(c.args[i], pt));
-    if (!is_unknown(at) && !is_unknown(pt) && !settles_to(c.args[i], pt, s) && !coercible(at, pt, s)) {
+    let checked: boolean = !is_unknown(at) || unbound_enum_argument(at);
+    if (checked && !is_unknown(pt) && !settles_to(c.args[i], pt, s) && !coercible(at, pt, s)) {
       out = out.append(dg_at("E036", "variant " + vname + " payload " + util.i32_to_string(i) + " type " + type_label(at) + ", expected " + type_label(pt), expr_line(c.args[i]), expr_col(c.args[i])));
     }
     i = i + 1;
@@ -14167,6 +14218,31 @@ function dyn_method_type(traits: string, name: string, s: Scope): typeinfo.Type 
   return t_unknown("no method `" + name + "` on `dyn " + traits + "`");
 }
 
+// dyn_param_type is parameter `k` of the method `name` a `dyn` value
+// dispatches to, read at the dyn spelling as dyn_method_type reads its result.
+function dyn_param_type(traits: string, name: string, k: i32, s: Scope): typeinfo.Type {
+  for tr in parser.dyn_trait_set("dyn " + traits) {
+    let idx: i32 = trait_req_idx(util.base_type_name(tr), s.trait_reqs);
+    if (idx >= 0) {
+      match (trait_req_sig(s.trait_reqs[idx], name)) {
+        Some(m) => {
+          if (k >= m.params.len()) {
+            return t_unknown("no such parameter");
+          }
+          let p: ast.ParamDecl = m.params[k];
+          let pt: string = dyn_ret_at_spelling(parser.fn_tag_spelling(p.type_name, p.fn_ret, p.fn_param_types), tr, s.trait_reqs[idx].type_params);
+          if (pt.len() == 0 || parser.subst_self(pt, "__dyn") != pt) {
+            return t_unknown("dyn method parameter spells Self");
+          }
+          return s.resolve_type(pt);
+        },
+        None => {}
+      }
+    }
+  }
+  return t_unknown("no method `" + name + "` on `dyn " + traits + "`");
+}
+
 // dyn_ret_at_spelling reads a trait method's declared result at one trait of
 // a dyn spelling: its positional arguments replace the trait's type
 // parameters in order, and each `Name = T` pin replaces `Self::Name`.
@@ -14243,7 +14319,16 @@ function dyn_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, traits: strin
       if (c.args.len() != want) {
         return [dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", want, c.args.len(), "argument"), c.line, c.col)];
       }
-      return [];
+      let out: util.Diag[] = [];
+      let k: i32 = 0;
+      while (k < c.args.len()) {
+        let pt: typeinfo.Type = dyn_param_type(traits, mfa.field, k + 1, s);
+        if (!is_unknown(pt) && !settles_or_assignable(c.args[k], pt, s)) {
+          out = out.append(dg_at("E038", "argument " + util.i32_to_string(k + 1) + " to \"" + mfa.field + "\": expected " + type_label(pt) + ", got " + type_label(check_expr(c.args[k], s)), expr_line(c.args[k]), expr_col(c.args[k])));
+        }
+        k = k + 1;
+      }
+      return out;
     },
     None => {}
   }
@@ -15361,6 +15446,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
                 out = util.append_diags(out, method_arg_diags(c, mfa.field, msig, recv, s));
                 out = util.append_diags(out, method_type_arg_diags(c, mfa.field, msig, recv, s));
                 out = util.append_diags(out, uninferred_method_diags(c, sn.name, mfa.field, msig));
+                out = util.append_diags(out, uninferred_recv_diags(c, sn.name, mfa.field, msig, sn.args));
               }
             } else {
               // A call `obj.m(...)` on a known struct with no
@@ -15415,6 +15501,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
             out = util.append_diags(out, method_arg_diags(c, mfa.field, umsig, recv, s));
             out = util.append_diags(out, method_type_arg_diags(c, mfa.field, umsig, recv, s));
             out = util.append_diags(out, uninferred_method_diags(c, un.name, mfa.field, umsig));
+            out = util.append_diags(out, uninferred_recv_diags(c, un.name, mfa.field, umsig, un.args));
           }
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
