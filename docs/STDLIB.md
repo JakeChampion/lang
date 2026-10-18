@@ -4125,7 +4125,14 @@ old `concurrent { … }` / `await` keyword surface.
   `wait_any(set, timeout_ms)` — a call chain that parks on a set of (fd,
   interest) pairs under a bound and runs on when its scheduler resumes it
   with the index of the ready pair, -1 at the timeout (`docs/ASYNC.md` §8,
-  `docs/NET-P3-SUSPENSION-PLAN.md`). `wait_any` blocks when no task is
+  `docs/NET-P3-SUSPENSION-PLAN.md`). An interest may carry `KEEP` (watch
+  the descriptor level-triggered and leave it watched when the wait ends)
+  or `WATCHED` (a `KEEP` wait already did, so this wait needs no watch and
+  no unwatch), for the owner of a descriptor that waits on it many times,
+  a pooled connection's reads; the owner tracks which descriptors it has
+  said `KEEP` for and unwatches or closes them itself, a scheduler honours
+  the two only on a driver whose `keeps` says a watch outlives its wait,
+  and `interest_bits(interest)` is the interest without them. `wait_any` blocks when no task is
   current, which is how std/tcp's recv-with-deadline and std/dns's connect
   and exchange waits work in a plain program; under a scheduler the
   self-host compiler lowers every function that reaches it to a resumable

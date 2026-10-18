@@ -401,6 +401,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"deflate", langSrcAbs(t, "tests/stdlib/deflate_test.fern"), ""},
 		{"net", langSrcAbs(t, "tests/stdlib/net_test.fern"), ""},
 		{"fetch_proxy", langSrcAbs(t, "tests/stdlib/fetch_proxy_test.fern"), ""},
+		{"fetch_pool", langSrcAbs(t, "tests/stdlib/fetch_pool_test.fern"), ""},
 		{"cli", langSrcAbs(t, "tests/stdlib/cli_test.fern"), ""},
 		{"format", langSrcAbs(t, "tests/stdlib/format_test.fern"), ""},
 		{"csv", langSrcAbs(t, "tests/stdlib/csv_test.fern"), ""},

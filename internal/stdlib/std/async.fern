@@ -112,6 +112,13 @@ pub trait Driver {
   function oneshot(self: Self): boolean {
     return false;
   }
+  // Whether a `watch` without ONESHOT outlives the wait that made it,
+  // reporting the descriptor on every wait it is ready for until it is
+  // unwatched or closed (level-triggered), so a scheduler may honour KEEP
+  // and WATCHED.
+  function keeps(self: Self): boolean {
+    return false;
+  }
   function wait_into(self: Self, own events: i32[], timeout_ms: i32): i32[];
   function wait(self: Self, max: i32, timeout_ms: i32): i32[] {
     let got: i32[] = self.wait_into(event_room(max), timeout_ms);
@@ -181,6 +188,25 @@ pub struct RealDriver { reactor: Cell[i32], signals: Cell[string], ring: Cell[i6
 // then holds it disarmed until it is watched again, on a driver whose
 // `oneshot` says so; elsewhere it is ignored.
 pub const ONESHOT: i32 = 16;
+
+// KEEP and WATCHED, or'd into a `wait_any` interest by the owner of a
+// descriptor that waits on it many times (a pooled connection's reads):
+// KEEP asks the scheduler to watch the descriptor level-triggered and leave
+// it watched when the wait ends, and WATCHED says a KEEP wait already did,
+// so this wait needs no watch and no unwatch. The owner keeps the
+// registration's state (which descriptors it has said KEEP for) and must
+// unwatch or close the descriptor itself. Both are honoured only by a
+// scheduler on a driver whose `keeps` says so; everywhere else they are
+// stripped and the wait is an ordinary one.
+pub const KEEP: i32 = 32;
+
+pub const WATCHED: i32 = 64;
+
+// `interest_bits(interest)` — the readiness interest of a `wait_any` pair
+// without KEEP and WATCHED.
+pub function interest_bits(interest: i32): i32 {
+  return interest & 31;
+}
 
 // __eintr() — the errno a wait a signal interrupted fails with.
 function __eintr(): i32 {
@@ -300,6 +326,11 @@ impl Driver for RealDriver {
     return __real_ctl(self, 1, fd, interest);
   }
   function oneshot(self: RealDriver): boolean {
+    return self.ring.get() < 0 as i64 && target_os() != "wasi" && target_os() != "wasi-http";
+  }
+  // epoll and kqueue registrations are level-triggered and stay until
+  // unwatched or closed; a ring's poll is armed per wait.
+  function keeps(self: RealDriver): boolean {
     return self.ring.get() < 0 as i64 && target_os() != "wasi" && target_os() != "wasi-http";
   }
   function unwatch(self: RealDriver, fd: i32): i32 {
@@ -1162,7 +1193,7 @@ pub function wait_any(set: i32[], timeout_ms: i32): i32 {
   let reads: boolean = true;
   let i: i32 = 0;
   while (i < n) {
-    if (set[i * 2 + 1] != 1) {
+    if (interest_bits(set[i * 2 + 1]) != 1) {
       reads = false;
     }
     i = i + 1;
@@ -1211,7 +1242,7 @@ function __wait_watched(set: i32[], n: i32, timeout_ms: i32): i32 {
   let drv: RealDriver = real_driver();
   let i: i32 = 0;
   while (i < n) {
-    let watched: i32 = drv.watch(set[i * 2], set[i * 2 + 1]);
+    let watched: i32 = drv.watch(set[i * 2], interest_bits(set[i * 2 + 1]));
     i = i + 1;
   }
   let woke: i32[] = drv.wait(n, timeout_ms);

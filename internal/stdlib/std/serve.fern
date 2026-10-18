@@ -4965,17 +4965,26 @@ function __serve_abandon[D: async.Driver](drv: D, c: __Conns, fd: i32): __Conns 
 
 // __flight_watch(drv, fl, now) — the flight waiting on `fl.wait`: each pair
 // watched with its interest, once where the driver can, since the flight
-// runs on at the first event; the bound kept as the flight's due time.
+// runs on at the first event; the bound kept as the flight's due time. A
+// pair the waiter marked `async.KEEP` is watched level-triggered and left
+// so, and one marked `async.WATCHED` is already, where the driver keeps a
+// registration (`__kept_pair`); elsewhere both are ordinary pairs.
 function __flight_watch[D: async.Driver](drv: D, fl: __Flight, now: i64): __Flight {
   let w: async.Wait = fl.wait;
   let once: i32 = 0;
   if (drv.oneshot()) {
     once = async.ONESHOT;
   }
+  let keeps: boolean = drv.keeps();
   let i: i32 = 0;
   while (i + 1 < w.set.len()) {
-    if (!__own_connection(fl, w.set[i]) && w.set[i + 1] != fetch.MAIL_INTEREST) {
-      let watched: i32 = drv.watch(w.set[i], w.set[i + 1] | once);
+    let interest: i32 = w.set[i + 1];
+    if (!__own_connection(fl, w.set[i]) && interest != fetch.MAIL_INTEREST) {
+      if (!__kept_pair(keeps, interest)) {
+        let watched: i32 = drv.watch(w.set[i], async.interest_bits(interest) | once);
+      } else if ((interest & async.WATCHED) == 0) {
+        let kept: i32 = drv.watch(w.set[i], async.interest_bits(interest));
+      }
     }
     i = i + 2;
   }
@@ -4988,18 +4997,40 @@ function __flight_watch[D: async.Driver](drv: D, fl: __Flight, now: i64): __Flig
 
 // __flight_unwatch(drv, fl, fired) — the flight's pairs unwatched before it
 // runs on or goes, but for pair `fired` (-1 for none) on a driver that
-// watched it once: the event that woke the flight disarmed it.
+// watched it once, since the event that woke the flight disarmed it, and
+// for the pairs whose waiter keeps them watched (`__kept_pair`).
 function __flight_unwatch[D: async.Driver](drv: D, fl: __Flight, fired: i32): void {
   let spent: i32 = 0 - 1;
   if (drv.oneshot()) {
     spent = fired;
   }
+  let keeps: boolean = drv.keeps();
   let i: i32 = 0;
   while (i + 1 < fl.set.len()) {
-    if (!__own_connection(fl, fl.set[i]) && fl.set[i + 1] != fetch.MAIL_INTEREST && i / 2 != spent) {
+    if (!__own_connection(fl, fl.set[i]) && fl.set[i + 1] != fetch.MAIL_INTEREST && i / 2 != spent && !__kept_pair(keeps, fl.set[i + 1])) {
       let unwatched: i32 = drv.unwatch(fl.set[i]);
     }
     i = i + 2;
+  }
+}
+
+// __kept_pair(keeps, interest) — whether a wait pair's descriptor stays
+// watched across waits: its waiter said `async.KEEP` or `async.WATCHED`,
+// and the driver keeps a registration between waits.
+function __kept_pair(keeps: boolean, interest: i32): boolean {
+  return keeps && (interest & (async.KEEP | async.WATCHED)) != 0;
+}
+
+// __orphan_event(drv, pool, fd) — a readiness on a descriptor that is no
+// connection's, no flight's and no driven upstream's: a pooled HTTP/1.1
+// connection the loop keeps watched (`__kept_pair`) with no task reading it,
+// unwatched here and handed to the pool, which closes it when it holds it
+// idle (its peer closed it, or sent what nothing asked for) and otherwise
+// has its next read ask for the watch again. Anything else is ignored.
+function __orphan_event[D: async.Driver](drv: D, pool: fetch.Idle, fd: i32): void {
+  if (pool.armed(fd)) {
+    let unwatched: i32 = drv.unwatch(fd);
+    pool.disarm(fd);
   }
 }
 
@@ -5411,6 +5442,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
       conns = ev.0;
       let at: i32 = ev.1;
       if (at < 0) {
+        __orphan_event(drv, plat.pool, fd);
         continue;
       }
       let mode: i32 = __h2_mode(conns, at, opts);
@@ -5602,6 +5634,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
       conns = ev.0;
       let at: i32 = ev.1;
       if (at < 0) {
+        __orphan_event(drv, plat.pool, fd);
         continue;
       }
       let mode: i32 = __h2_mode(conns, at, opts);
