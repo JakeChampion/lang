@@ -193,6 +193,7 @@ destructure_repeated_discards_in_param               0
 destructure_tuple_and_struct_forms                   0
 div_modulo                                           0
 divmod_inline                                        0
+dyn_bound_satisfied                                  0
 dyn_no_implementer                                   0
 dyn_trait_dispatch                                   0
 dyn_two_word_dispatch                                0
@@ -255,6 +256,7 @@ generic_assoc_through_type_param                     0
 generic_associated_fn                                0
 generic_box                                          0
 generic_call_binds_through_closure_array_param       0
+generic_call_through_fn_value                        0
 generic_call_in_struct_field                         0
 generic_enum_bound_dispatch                          0
 generic_float_literal_arg                            0
@@ -983,6 +985,7 @@ union_lambda_param                                   0
 url_codec                                            0
 url_roundtrip                                        0
 use_callback_bind                                    0
+use_callback_result                                  0
 user_enum_mixed                                      0
 user_enum_payloaded_then_payloadless                 0
 user_enum_payloadless                                0
