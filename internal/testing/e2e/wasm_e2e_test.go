@@ -9557,7 +9557,7 @@ func TestCmdLangComponentWrapCliWithTcpServer(t *testing.T) {
 // This mixes wasi:sockets with wasi:cli/environment, which neither the
 // pure-TCP nor the CLI-stream composer handled before: the TCP composer
 // now optionally surfaces get-environment (mem+realloc, like
-// blocking-read). The whole thing composes adapter-free; the test runs
+// the socket read). The whole thing composes adapter-free; the test runs
 // it end-to-end (wasmtime serves, a Go client connects and round-trips
 // a payload) with PORT supplied via `--env`, proving the env-driven port
 // actually drives the bind.
@@ -9640,7 +9640,7 @@ function main(): i32 {
 	}
 	for _, want := range []string{
 		"wasi:cli/environment@0.2.0", "wasi:sockets/tcp@0.2.0",
-		"input-stream.blocking-read", "output-stream.blocking-write-and-flush",
+		"input-stream.read", "output-stream.blocking-write-and-flush",
 		"wasi:cli/run@0.2.0",
 	} {
 		if !bytes.Contains(printOut, []byte(want)) {
