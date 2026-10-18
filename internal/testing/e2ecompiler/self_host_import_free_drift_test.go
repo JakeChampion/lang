@@ -31,7 +31,8 @@ import (
 // / pf64_sub / pf64_all_zero exist in four copies each, ~410 redundant lines.
 // Sharing them through util.fern would break the concatenation drivers, so the
 // copies are the correct design and this test does NOT ask anyone to remove
-// them.
+// them. util.fern imports std/envflag, so its copy is held to the others by
+// TestSelfHostParseF64MirrorsAgree instead.
 //
 // What it asks is that they stay in step. A bug fixed in one copy of 139 lines
 // of IEEE-754 bit manipulation and not the other three is silent: every driver
@@ -39,10 +40,8 @@ import (
 // depends on which module handled it. Nothing else in the tree would notice.
 //
 // Comparison is on CODE, not text: `//` comments are stripped and a leading
-// `pub ` is normalised away, because those legitimately differ between copies
-// today (util.fern's parse_f64_bits is `pub` and carries fewer explanatory
-// comments than the three backend copies, while the executable lines are
-// identical). Diverging on a comment is not a bug; diverging on a statement is.
+// `pub ` is normalised away, because those legitimately differ between copies.
+// Diverging on a comment is not a bug; diverging on a statement is.
 func TestImportFreeModulesDoNotDrift(t *testing.T) {
 	paths, err := filepath.Glob(langSrcAbs(t, filepath.Join("compiler", "*.fern")))
 	inDrivers, _ := filepath.Glob(langSrcAbs(t, filepath.Join("compiler", "drivers", "*.fern")))
@@ -86,7 +85,7 @@ func TestImportFreeModulesDoNotDrift(t *testing.T) {
 	sort.Strings(free)
 	wantFree := []string{
 		"aesref", "arm64_native", "builtins", "capvocab", "docprintable", "elf", "lexer", "literate", "rtbytecopy", "rtprofilemacho",
-		"sourcepos", "ssadecrementcount", "ssafixed", "typeinfo", "util", "watbin", "wit_fern_world", "wit_proxy_world", "x86_native",
+		"sourcepos", "ssadecrementcount", "ssafixed", "typeinfo", "watbin", "wit_fern_world", "wit_proxy_world", "x86_native",
 	}
 	if strings.Join(free, ",") != strings.Join(wantFree, ",") {
 		t.Errorf("the import-free module set changed.\n  got:  %v\n  want: %v\n"+
@@ -96,14 +95,9 @@ func TestImportFreeModulesDoNotDrift(t *testing.T) {
 			"    say in the commit message which driver you checked.", free, wantFree)
 	}
 
-	// Names that legitimately differ. These are small local helpers that happen
-	// to share a name across modules with genuinely different behaviour, not
-	// copies that drifted — verified by reading all four pairs.
+	// Names that legitimately differ rather than copies that drifted.
 	allowed := map[string]string{
-		"contains":     "literate's takes a string[] haystack; util's takes a string and searches for a substring.",
-		"index_of_str": "watbin's scans its own name table and returns a section index; util's is the generic array search.",
-		"main":         "every driver entry point is different by definition.",
-		"trim":         "literate's trims only spaces (chunk headers are space-delimited); util's also trims tabs and CR.",
+		"main": "every driver entry point is different by definition.",
 	}
 
 	var names []string
