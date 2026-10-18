@@ -1,0 +1,16 @@
+of 1
+of 2
+of 3
+enumerate 0 a
+enumerate 1 b
+chain 0
+chain 4
+chain 16
+nested 0 10
+nested 0 30
+nested 1 10
+nested 1 30
+tick
+tick
+total 15
+first_above 7

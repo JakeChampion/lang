@@ -1493,6 +1493,33 @@ pub function demangle(name: string): string {
   return slice_unchecked(name, 0, cut) + "." + slice_unchecked(name, cut + 2, name.len());
 }
 
+// demangle_all applies demangle to every identifier in a type label, so a
+// composite (`iter__Taken[iter__Range, i32]`) demangles each part. A word
+// starting with `_` is a runtime symbol, never a module mangling.
+pub function demangle_all(text: string): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < text.len()) {
+    if (!ident_start_byte(text[i])) {
+      out = out + slice_unchecked(text, i, i + 1);
+      i = i + 1;
+      continue;
+    }
+    let j: i32 = i;
+    while (j < text.len() && (ident_start_byte(text[j]) || text[j] >= b'0' && text[j] <= b'9')) {
+      j = j + 1;
+    }
+    let word: string = slice_unchecked(text, i, j) + "";
+    if (word[0] == b'_') {
+      out = out + word;
+    } else {
+      out = out + demangle(word);
+    }
+    i = j;
+  }
+  return out;
+}
+
 // derive_hint renders the "add `@derive(…)` (or `impl … for T`)" clause
 // the derive hints share. `derive` is the attribute spelling and `trait`
 // the trait for the impl form, "" to offer the derive alone.

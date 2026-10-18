@@ -11483,16 +11483,25 @@ function split_dunder(s: string): string[] {
 // one piece where it names a declared struct or enum, taking that type's own
 // arguments with it where it is generic, and every other token is a piece by
 // itself. A key whose tokens already number `n` splits as `split_dunder` does.
+// A one-parameter key is the piece itself unless it is a tuple, whose
+// `tup`/`put` tokens read back as the tuple type.
 function split_key(s: string, n: i32, structs: StructDecl[], enums: EnumDecl[]): string[] {
-  if (n <= 1) {
+  if (n <= 1 && !util.str_has_prefix(s, "tup__")) {
     return [s];
   }
   let tokens: string[] = split_dunder(s);
-  if (tokens.len() <= n) {
+  if (n > 1 && tokens.len() <= n) {
     return tokens;
   }
-  let g: Grouped = group_tokens(tokens, 0, n, tokens.len() - n, structs, enums);
-  if (g.pieces.len() != n || g.at != tokens.len()) {
+  let want: i32 = n;
+  if (want < 1) {
+    want = 1;
+  }
+  let g: Grouped = group_tokens(tokens, 0, want, tokens.len() - want, structs, enums);
+  if (g.pieces.len() != want || g.at != tokens.len()) {
+    if (n <= 1) {
+      return [s];
+    }
     return tokens;
   }
   return g.pieces;
@@ -22662,6 +22671,41 @@ function range_for_at(st: ast.Stmt, own acc: boolean): boolean {
     return acc || range_call_name(fr.iter) != "";
   }
   return acc;
+}
+
+// iterator_loop is the loop a `for` over a core/iter Iterator lowers to, with
+// `subject` the Iterator it pulls from (the iterand, or its `iter()`):
+//
+//     {
+//         let $it_L_C = SUBJECT;
+//         while (true) {
+//             match ($it_L_C.next()) {
+//                 Some($at_L_C) => { $it_L_C = $at_L_C.1; let VAR = $at_L_C.0; <body> },
+//                 None => { break; }
+//             }
+//         }
+//     }
+//
+// The iterator advances before the body runs, so a `continue` moves on too.
+// The checker chooses this loop, since only the iterand's type says it is one.
+pub function iterator_loop(fr: ast.StmtFor, subject: ast.Expr, col: i32): ast.Stmt {
+  let at: string = util.i32_to_string(fr.line) + "_" + util.i32_to_string(col);
+  let it: string = "$it_" + at;
+  let step: string = "$at_" + at;
+  let body: ast.Stmt[] = [s_assign(it, e_field_access(e_ident(step), "1"))];
+  if (fr.var_name != "_") {
+    body = body.append(s_var(fr.var_name, "", e_field_access(e_ident(step), "0")));
+  }
+  for st in fr.body {
+    body = body.append(st);
+  }
+  let arms: ast.MatchArm[] = [
+    ast.MatchArm { pattern: p_variant("Some", step), body: body, line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false },
+    ast.MatchArm { pattern: p_variant("None", ""), body: [s_break()], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false },
+  ];
+  let pull: ast.Stmt = s_match(e_call(e_field_access(e_ident(it), "next"), []), arms);
+  let walk: ast.Stmt = ast.StmtWhile { cond: e_bool(true), body: [pull], label: fr.label, line: fr.line, is_loop: false, todo: false };
+  return s_block([s_var(it, "", subject), walk]);
 }
 
 pub function desugar_ranges_module(mod: Module): Module {
