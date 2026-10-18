@@ -798,7 +798,7 @@ Deferred to a follow-up:
   `slice_escape_diags` in `compiler/checker.fern` —
   and the self-host port is held to byte-for-byte code parity
   with the Go checker by the differential gate in
-  `internal/testing/e2e/self_host_checker_codes_test.go`. `fern explain
+  `internal/testing/e2e/self_host_checker_codes_test.go`. `fern -explain
   E063` prints the full rationale.
 - (The `number` deprecation alias has already been dropped
   — see PR 1's status block.)

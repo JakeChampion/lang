@@ -43,7 +43,7 @@ across `docs/` and `internal/`, and no (c).
 | Conformance suite | `conformance/cases/` — 364 `.fern` fixtures, declarative sidecars (`expected.stdout`, `expected.exit`, `stdin`, `match`, `backends`, `expected.error`), run across interp / x86-64 / arm64 / wasm | Lives inside `internal/`, i.e. inside one implementation. Incidental, not normative: nothing says which behaviours are *required* vs which merely happen to be what the interp does. |
 | Conformance report | `selfhost-{wasm,x86_64,arm64}-known-divergences.txt` — per-target expectation files, where a new divergence fails *and* a listed fixture that starts passing fails | Already the right mechanism. Framed as a bug list rather than a conformance delta. |
 | Multiple implementations to keep honest | Five: `internal/oracle/interp`, three native backends, and the self-host compiler (its own parser + checker + three emitters) | The self-host is measured *against native*, not against a spec. |
-| Static-semantics catalogue | 71+ stable diagnostic codes with a `fern explain E0NN` catalogue (`internal/syntax/diag/explanations`) and `catalogue_completeness_test.go` forbidding an unexplained code | The codes are stable and explained; the *rules* they enforce are written down only as checker code. |
+| Static-semantics catalogue | 71+ stable diagnostic codes with a `fern -explain E0NN` catalogue (`internal/syntax/diag/explanations`) and `catalogue_completeness_test.go` forbidding an unexplained code | The codes are stable and explained; the *rules* they enforce are written down only as checker code. |
 | Normative prose, per topic | `INTEGER-SEMANTICS.md` (portable, never-trapping, wrapping at width), `FLOAT-SEMANTICS.md` (IEEE core, explicitly under-specified edges), `ARRAY-BOUNDS.md`, `CLOSURE-CAPTURE.md`, `MODE-LATTICE.md`, `REUSE-CONTRACT.md`, `MUST-CONSUME.md`, `ITERATOR-FUSION-CONTRACT.md` | These are spec chapters in all but name — `INTEGER-SEMANTICS.md` even does the hard part, enumerating the *deliberate freedoms*. They are unindexed as such, not cross-referenced from tests, and their status tag is "policy doc". |
 | Reference implementation | `internal/oracle/interp` (4.4k lines), the oracle for every differential suite | Being frozen (see below). |
 | Grammar | None. `internal/syntax/parser/parser.go` is 5.9k lines of hand-written recursive descent; `site/…/reference/syntax.md` is 146 lines of examples | The largest single hole. There is no artefact anywhere that says what Fern's syntax *is*. |
@@ -386,7 +386,7 @@ diagnostics. Publishing the catalogue is not the work; asking what
   own arity and argument-type errors; no `errfCode` site emits it, and
   `len` is a method, so the example in its own explanation could not
   compile. `docs/SELFHOST-CHECKER-PORT.md` had already recorded the code
-  as dead without anyone deleting the explanation, so `fern explain
+  as dead without anyone deleting the explanation, so `fern -explain
   E039` went on describing a construct the language does not have. This
   is the diagnostics analogue of Layer 1's invented grammar rules, and
   it is the same lesson: catalogues acquire entries that nothing

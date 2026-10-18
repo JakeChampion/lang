@@ -345,7 +345,8 @@ The set is register-backend only, apart from `__raw_load_ptr` /
 `__raw_store_ptr` (and the two type-only bridges, `__raw_data` and
 `__raw_array`). wasm has neither a raw address space nor syscalls and serves the
 helpers these back with hand-written WAT, so a wasm compile of a program calling
-one is refused by name before emit — `wasm_ir.wasm_unsupported_builtin` (#6946).
+one is refused by name before emit: E066, on the `rawmem` or `syscall`
+capability no wasm world grants (`compiler/platforms.fern`, #6946).
 
 | intrinsic | lowers to | notes |
 |---|---|---|

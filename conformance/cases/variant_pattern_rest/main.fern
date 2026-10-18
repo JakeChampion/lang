@@ -1,0 +1,39 @@
+import "core/int";
+import "std/i32";
+
+// A trailing `..` lets a named-field variant pattern leave fields out, as a
+// struct pattern's does. `V { .. }` names no field at all. The omitted fields
+// match anything, so an arm using `..` covers its variant: neither match below
+// needs a `_` arm.
+enum Shape {
+    Circle { r: i32 },
+    Rect { w: i32, h: i32 },
+    Label { text: string, size: i32 },
+}
+
+function width(s: Shape): i32 {
+    match (s) {
+        Circle { r, .. } => { return 2 * r; },
+        Rect { w, .. } => { return w; },
+        Label { text, .. } => { return text.len(); },
+    }
+}
+
+function kind(s: Shape): string {
+    return match (s) {
+        Circle { .. } => "circle",
+        Rect { h, .. } => "rect h=" + h.to_string(),
+        Label { size, .. } => "label size=" + size.to_string(),
+    };
+}
+
+function main(): i32 {
+    let shapes: Shape[] = [Circle(2), Rect(3, 4), Label("hello", 9)];
+    let total: i32 = 0;
+    for s in shapes {
+        print(kind(s));
+        total = total + width(s);
+    }
+    print(total.to_string());
+    return 0;
+}

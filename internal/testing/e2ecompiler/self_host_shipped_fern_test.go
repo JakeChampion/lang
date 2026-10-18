@@ -84,8 +84,8 @@ func TestSelfHostShippedFernVersionAndExplain(t *testing.T) {
 		t.Errorf("-version: exit %d, output %q", code, out)
 	}
 	out, code = runFern(t, fern, cache, "-explain", "e003")
-	if code != 0 || !strings.HasPrefix(out, "error E003:\n\n# E003") {
-		t.Errorf("-explain e003: exit %d, output %q", code, out)
+	if code != 0 || !strings.HasPrefix(out, "error E003: Cannot assign value to variable of different type\n\n") || strings.Contains(out, "# E003") {
+		t.Errorf("-explain e003: exit %d, output %q; want the page's heading once, as the header", code, out)
 	}
 	out, code = runFern(t, fern, cache, "-explain")
 	if code != 0 || !strings.Contains(out, "\nE003\n") || !strings.HasPrefix(out, "E001\n") {
@@ -172,15 +172,31 @@ func TestSelfHostCLICoverReport(t *testing.T) {
 	}
 }
 
-// A build with no embedded tree has no VERSION or explanations, and says so.
+// A build with no embedded tree has no VERSION, and says so. It reads the
+// explanations of the source tree its stdlib root names, and without that root
+// has none.
 func TestSelfHostCLIWithoutEmbeddedTree(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
+	root := e2eharness.SelfHostStdlibRoot(t)
 	if out, _ := exec.Command(cli, "-version").CombinedOutput(); !strings.HasPrefix(string(out), "fern (unknown build)\n") {
 		t.Errorf("-version = %q", out)
 	}
-	cmd := exec.Command(cli, "-explain", "E003")
-	if out, _ := cmd.CombinedOutput(); cmd.ProcessState.ExitCode() != 1 || !strings.Contains(string(out), "carries no explanations") {
-		t.Errorf("-explain: exit %d, output %q", cmd.ProcessState.ExitCode(), out)
+	run := func(args ...string) (string, int) {
+		cmd := exec.Command(cli, args...)
+		out, _ := cmd.CombinedOutput()
+		return string(out), cmd.ProcessState.ExitCode()
+	}
+	if out, code := run("-explain", "E003"); code != 2 || !strings.Contains(out, "carries no explanations: pass the stdlib root") {
+		t.Errorf("-explain E003: exit %d, output %q", code, out)
+	}
+	if out, code := run("-explain", "e003", root); code != 0 || !strings.HasPrefix(out, "error E003: Cannot assign value to variable of different type\n\n") || strings.Contains(out, "# E003") {
+		t.Errorf("-explain e003 %s: exit %d, output %q; want the page's heading once, as the header", root, code, out)
+	}
+	if out, code := run("-explain=", root); code != 0 || !strings.HasPrefix(out, "E001\n") || !strings.Contains(out, "\nE003\n") {
+		t.Errorf("-explain= %s: exit %d, output %q; want the list of codes", root, code, out)
+	}
+	if out, code := run("-explain", "E003", root, "extra"); code != 2 {
+		t.Errorf("-explain E003 %s extra: exit %d, output %q; want the usage refusal 2", root, code, out)
 	}
 }
 

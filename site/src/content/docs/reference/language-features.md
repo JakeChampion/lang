@@ -13,8 +13,9 @@ boilerplate. None are exotic.
 ## Iteration — `for … in`
 
 The three-part `for (init; cond; step)` loop exists, but it is rarely what
-you want. `for x in …` walks an array, a slice, a range, or anything
-implementing `Iterator`, and binds each element directly:
+you want. `for x in …` walks an array, a slice, a string, a `Map`, a range,
+anything implementing `core/iter`'s `Iterator`, or a value whose `iter()`
+method returns one, and binds each element directly:
 
 ```fern
 let trees: string[] = ["ash", "beech", "elm"];
@@ -54,6 +55,27 @@ for (species, count) in stock {
     print(f"{species}={count}");
 }
 ```
+
+Any other subject goes through the iterator protocol: the loop calls
+`next()` until it returns `None`. That covers an `Iterator` value — a range
+held in a variable or returned from a function, `iter.of(xs)`, an adapter
+chain — and the library collections, whose `iter()` returns one: an
+`OrdMap` or a `PMap` binds `(key, value)` entries like a `Map`, and a `PVec`
+or a set binds its elements.
+
+```fern
+import "core/iter";
+import "std/ordmap";
+
+let evens = iter.range(0, 10).filter((n: i32): boolean => n % 2 == 0);
+for n in evens { print(n); }
+
+let ranks: ordmap.OrdMap[string, i32] = ordmap.ordmap_new();
+ranks = ranks.insert("fir", 2);
+for (tree, rank) in ranks { print(f"{tree}={rank}"); }
+```
+
+A subject that is none of these is error E083, naming its type.
 
 ### Labelled loops
 

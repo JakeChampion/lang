@@ -16,7 +16,7 @@ Every on/off `FERN_*` variable — the user-facing ones, the compiler's
 diagnostic modes (`FERN_STRICT_IR`, `FERN_RC_TRACE`, …) and the test and CI
 knobs — follows the rule in "Environment variables" in
 `site/src/content/docs/reference/tooling.md`. Each language reads it through
-one helper: `std/cli`'s `env_flag` / `flag_on` in the compiler and the
+one helper: `std/envflag`'s `on` / `value_on` in the compiler and the
 standard library, `internal/envflag` in Go, and `scripts/flag-lib`'s
 `fern_flag` in the shell scripts. A new switch reads through the helper too,
 never `== "1"` or "is it set".

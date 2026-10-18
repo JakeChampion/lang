@@ -1,7 +1,7 @@
 // Primary compiler array decisions. The rewriting passes supply the sites;
 // this module only formats them and counts their closed reason tags.
 import "./util";
-import "std/cli";
+import "std/envflag";
 
 pub struct Site { owner: string, stage: string, plan: string, reason: i32, storage: string }
 
@@ -20,7 +20,7 @@ pub function to_stdout(): i32 {
 }
 
 pub function from_env(): i32 {
-  if (cli.env_flag("FERN_ARRAY_REPORT")) {
+  if (envflag.on("FERN_ARRAY_REPORT")) {
     return to_stderr();
   }
   return off();

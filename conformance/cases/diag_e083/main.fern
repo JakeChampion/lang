@@ -1,0 +1,36 @@
+// E083: `for` walks an array, a string, a Map, a range, an Iterator, or a
+// value whose `iter()` returns one. A struct with none of those, a value
+// whose `iter()` returns something else, and a type parameter with no
+// Iterator bound are each refused, naming the type rather than the loop's
+// lowering. The `ok` loops show what is accepted beside them.
+import "core/iter";
+
+struct Point { x: i32, y: i32 }
+
+struct Counter { n: i32 }
+
+function (c: Counter) iter(): i32 {
+  return c.n;
+}
+
+function each[T](v: T): i32 {
+  for x in v {
+    print("no");
+  }
+  return 0;
+}
+
+function main(): i32 {
+  for ok in iter.range(0, 1) {
+    print("ok");
+  }
+  let p: Point = Point { x: 1, y: 2 };
+  for c in p {
+    print("no");
+  }
+  let k: Counter = Counter { n: 3 };
+  for n in k {
+    print("no");
+  }
+  return each(1);
+}

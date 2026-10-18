@@ -120,17 +120,17 @@ const CHECK_FLAG: string = "-check";
 // carries is the answer, so interpret lives here.
 const INTERP_FLAG: string = "-interp";
 
-// TARGET_FLAG names the machine the compile path emits for, as the CLI's
-// `-target` does: `wasm32-wasi` (the default), `x86-64-linux`, `arm64-linux`
-// or `arm64-darwin`. The native targets stop at the emitter's assembly text,
-// which is what a playground's assembly pane shows; nothing links.
+// TARGET_FLAG names the machine, as the CLI's `-target` does, from the same
+// platforms table: `wasm32-wasi` is the default. A freestanding target is
+// check-only here as it is there.
 const TARGET_FLAG: string = "-target";
 
-// EMIT_FLAG selects the wasm output form: `wat` (the default) is the core
-// module as text, `core-module` the same module assembled to the binary a
-// preview-1 host runs, and `component` the wasi:cli/run component the CLI
-// writes by default. A native target has one form, its assembly, and takes
-// no `-emit`.
+// EMIT_FLAG selects the output form with the CLI's vocabulary (fern.emit_refusal).
+// The default is what the CLI writes for the target: a wasm target's component,
+// and a native target's assembly text, since stdout is where the CLI puts it
+// and nothing links here. `asm` is the emitter's text (WAT on wasm), and
+// `core-module` (or `command-module` on wasm32-wasi) the core module a
+// preview-1 host runs.
 const EMIT_FLAG: string = "-emit";
 
 // report_diags prints `line:col: error[E0XX]: message` for each diagnostic,
@@ -168,14 +168,21 @@ function report_diags(diags: util.Diag[], files: string[]): boolean {
 // nothing printed to act on. Reporting what the checker can actually name means
 // this under-reports where the port is incomplete rather than rejecting valid
 // programs, which is the right side to err on for an editor-facing check.
-function check(merged: parser.Module, files: string[]): i32 {
+//
+// With a `-target`, the CLI's target gate (E066) reports beside the checker,
+// and the handler gate (E080) always does, as `fern -check` reports them.
+function check(merged: parser.Module, files: string[], target: string, target_given: boolean): i32 {
   if (report_diags(asmcore.parse_unknown_errors_module(merged), files)) {
     return 1;
   }
   if (report_diags(asmcore.check_decl_names(merged), files)) {
     return 1;
   }
-  if (report_diags(checker.check_module(merged).diags, files)) {
+  let diags: util.Diag[] = checker.check_module(merged).diags;
+  if (target_given) {
+    diags = util.append_diags(diags, fern.capability_diags(merged, target));
+  }
+  if (report_diags(util.append_diags(diags, fern.ambient_diags(merged)), files)) {
     return 1;
   }
   return 0;
@@ -246,25 +253,22 @@ function parse_argv(av: string[]): Argv {
 function run(): i32 {
   let o: Argv = parse_argv(args());
   let target: string = o.target;
-  let form: string = o.form;
-  if (!(target == "wasm32-wasi" || target == "wasm32-wasi-http" || target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin")) {
-    eprint("fern: unknown -target: " + target + " (want one of: arm64-darwin arm64-linux wasm32-wasi wasm32-wasi-http x86-64-linux)");
+  let bad_target: string = fern.target_refusal(target);
+  if (bad_target.len() > 0) {
+    eprint(bad_target);
     return 2;
   }
   if (o.lsp) {
     return fern.serve_lsp_in_memory(LSP_STDLIB_ROOT, embedded_stdlib_files(LSP_STDLIB_ROOT), target, o.target_given);
   }
-  if (platforms.for_target(target).isa == "wasm32") {
-    if (form.len() == 0) {
-      form = "wat";
-    }
-    if (!(form == "wat" || form == "core-module" || form == "component")) {
-      eprint("fern: unknown -emit: " + form + " (want wat, core-module or component)");
-      return 2;
-    }
-  } else if (form.len() > 0 && form != "asm") {
-    eprint("fern: -emit " + form + " is a wasm output form; -target " + target + " emits assembly text");
+  let bad_emit: string = fern.emit_refusal(target, o.form);
+  if (bad_emit.len() > 0) {
+    eprint(bad_emit);
     return 2;
+  }
+  let form: string = fern.core_form(o.form);
+  if (form.len() == 0 && platforms.for_target(target).isa != "wasm32") {
+    form = "asm";
   }
   let src: string = "";
   match (io.read_all_stdin()) {
@@ -301,7 +305,7 @@ function run(): i32 {
   merged = parser.resolve_variant_fields_module(merged);
 
   if (o.check) {
-    return check(merged, files);
+    return check(merged, files, target, o.target_given);
   }
   // Ahead of the emit gates below: those reject shapes the wasm EMITTER
   // would miscompile, and the evaluator does not emit. A program the
@@ -309,7 +313,7 @@ function run(): i32 {
   // decline it. It is checked first, as `fern -interp` is, so a type error
   // reads as a diagnostic rather than an evaluator failure mid-run.
   if (o.interp) {
-    let checked: i32 = check(merged, files);
+    let checked: i32 = check(merged, files, target, false);
     if (checked != 0) {
       return checked;
     }
@@ -318,13 +322,13 @@ function run(): i32 {
   return emit(merged, files, target, form);
 }
 
-// emit writes the program in the form the target selects: the emitter's
-// assembly for a native target, and for wasm the core module as text or
-// binary, or the wasi:cli/run component. The pipeline is the CLI's, so the
-// bytes are the ones `fern -target <t>` writes for the same program.
+// emit writes the program in `form`: "asm" for the emitter's text,
+// "core-module" for a wasm core module, and "" for a wasm target's component.
+// The pipeline is the CLI's, so the bytes are the ones `fern -target <t>`
+// writes for the same program.
 function emit(merged: parser.Module, files: string[], target: string, form: string): i32 {
-  // The same gates the CLI and wasm_ir_run put ahead of emit: each rejects a
-  // shape the emitter would otherwise miscompile rather than refuse.
+  // The same gates wasm_ir_run puts ahead of emit: each rejects a shape the
+  // emitter would otherwise miscompile rather than refuse.
   if (report_diags(asmcore.parse_unknown_errors_module(merged), files)) {
     return 1;
   }
@@ -336,25 +340,31 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
     eprint(util.format_diags_in(errs, files));
     return 1;
   }
+  // The target's name folded and its untaken branches pruned, then the
+  // target gate (E066) and the handler gate (E080), all where the CLI runs
+  // them, so the browser refuses what `fern -target <t>` refuses.
+  let desc: platforms.Descriptor = platforms.for_target(target);
+  merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
+  merged = constfold.prune_literal_branches(merged);
+  if (report_diags(fern.capability_diags(merged, target), files)) {
+    return 1;
+  }
+  if (report_diags(fern.ambient_diags(merged), files)) {
+    return 1;
+  }
   // Tree-shaking is required here rather than an optimisation: the
   // overlay hands the loader every stdlib module the program's imports reach,
   // and without the shake the emitted module carries all of them. It runs on
   // the annotated module, as in fern.fern: the checker's Display rewrite
   // (`print(q)` to `q.to_string()`, docs/TRAITS.md §3a) is what roots the
   // method the shake would otherwise drop.
-  let desc: platforms.Descriptor = platforms.for_target(target);
-  merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
   merged = constfold.fold_module(merged);
   merged = checker.annotate_module(merged);
   merged = treeshake.treeshake(merged);
-  // Judged on the shaken module, as the CLI's E066 pass is: a builtin only
-  // unreachable stdlib code names is not a refusal.
-  if (platforms.for_target(target).isa == "wasm32") {
-    let unsupported: string = wasm_ir.wasm_unsupported_builtin(merged);
-    if (unsupported.len() > 0) {
-      eprint(wasm_ir.wasm_unsupported_message(unsupported));
-      return 1;
-    }
+  let no_backend: string = fern.backend_refusal(target);
+  if (no_backend.len() > 0) {
+    eprint(no_backend);
+    return 2;
   }
 
   let typed: parser.Module = parser.module_with_builtins_typed(merged);
@@ -363,12 +373,12 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   let out: string = "";
   if (target == "x86-64-linux") {
     out = asm_ir.emit_module_or_error_sub(full, sub, 0 as usize);
-  } else if (target == "arm64-linux") {
+  } else if (target == "arm64-linux" || target == "arm64-android") {
     out = asm_arm64_ir.emit_module_or_error_sub(full, false, sub, 0 as usize);
   } else if (target == "arm64-darwin") {
     out = asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error_sub(full, true, sub, 0 as usize));
   } else if (target == "wasm32-wasi-http") {
-    if (form == "wat") {
+    if (form == "asm") {
       out = emitforms.wasm_http_core(full, sub);
     } else if (form == "core-module") {
       let hwat: string = emitforms.wasm_http_core(full, sub);
@@ -386,7 +396,7 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
       }
       out = string_from_bytes_unchecked(util.to_u8(hc.bytes));
     }
-  } else if (form == "wat") {
+  } else if (form == "asm") {
     out = wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub);
   } else if (form == "core-module") {
     out = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub))));

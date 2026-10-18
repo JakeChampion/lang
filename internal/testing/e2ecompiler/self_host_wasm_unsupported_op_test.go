@@ -18,13 +18,12 @@ import (
 // and ran it to completion with the operation simply gone.
 //
 // `__heap_mark` is the reproducer. It is a self-host-only intrinsic that both
-// register backends lower inline (#6728) and wasm does not model at all, and the
-// drivers are bare emitters that run no capability pass — so the CLI's E066
-// `arena` refusal (platforms.fern) does not fire here and the op reaches
-// instruction selection. The raw-memory / syscall floor used to serve as the
-// reproducer; it is now named by wasm_unsupported_builtin's pre-emit gate
-// (#6946), which is the better diagnostic for a builtin a user can write, and
-// leaves this refusal as the backstop it should be.
+// register backends lower inline (#6728) and wasm does not model at all, and
+// wasm_runio_run is a bare emitter that runs no capability pass — so the CLI's
+// E066 `arena` refusal (platforms.fern) does not fire here and the op reaches
+// instruction selection. Every driver a user reaches runs E066 first, which is
+// the better diagnostic for a builtin a user can write, and leaves this refusal
+// as the backstop it should be.
 //
 // Two halves, and they have to be asserted together: wasm refuses with exit 3 and
 // names the op, and the SAME program still compiles on x86-64, which is what
@@ -35,8 +34,8 @@ func TestSelfHostWasmUnsupportedOpRefused(t *testing.T) {
 		t.Skip("driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
-	wasmDriver := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasmdriver")
+	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
+	wasmDriver := buildSelfHostBin(t, gcc, dir, "drivers/wasm_runio_run.fern", "wasmdriver")
 
 	const src = `function main(): i32 { let m: i64 = __heap_mark(); __heap_release_to(m); return 0; }`
 
@@ -68,7 +67,7 @@ func TestSelfHostWasmUnsupportedOpRefused(t *testing.T) {
 		}
 	})
 
-	// The control. Without this the test would also pass if wasm_ir_run had
+	// The control. Without this the test would also pass if wasm_runio_run had
 	// simply started rejecting the program for an unrelated reason.
 	t.Run("x86-64-still-lowers-it", func(t *testing.T) {
 		asmDir := t.TempDir()
