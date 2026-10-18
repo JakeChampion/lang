@@ -1201,6 +1201,30 @@ func TestFormatMustConsumeAttr(t *testing.T) {
 	}
 }
 
+// Format and Print must keep `opaque`: dropping it makes the struct's fields
+// readable from every importing module (E021 stops firing).
+func TestFormatOpaqueStruct(t *testing.T) {
+	for _, src := range []string{
+		"pub opaque struct E { a: i32 }\n",
+		"pub(package) opaque struct E { a: i32 }\n",
+		"opaque struct E { a: i32 }\n",
+	} {
+		prog, err := parser.Parse(src)
+		if err != nil {
+			t.Fatalf("parse %q: %v", src, err)
+		}
+		for name, out := range map[string]string{"Format": Format(prog), "Print": Print(prog)} {
+			re, err := parser.Parse(out)
+			if err != nil {
+				t.Fatalf("%s output does not re-parse: %v\n%s", name, err, out)
+			}
+			if len(re.Structs) != 1 || !re.Structs[0].Opaque {
+				t.Errorf("%s dropped `opaque` from %q:\n%s", name, src, out)
+			}
+		}
+	}
+}
+
 // `todo;` / `todo("msg");` desugars in the parser to a `loop { eprint;
 // exit(101); }` stub, and the formatter must re-print the todo SUGAR: the
 // marker is a remaining-work inventory (`-check` warns per site) that

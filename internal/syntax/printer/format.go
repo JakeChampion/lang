@@ -659,6 +659,9 @@ func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
 	} else if sd.Public {
 		f.b.WriteString("pub ")
 	}
+	if sd.Opaque {
+		f.b.WriteString("opaque ")
+	}
 	f.b.WriteString("struct ")
 	f.b.WriteString(sd.Name)
 	f.writeTypeParams(sd.TypeParams, nil, nil)

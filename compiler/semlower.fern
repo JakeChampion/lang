@@ -513,7 +513,7 @@ function instance_records(built: semsource.Built): parser.StructDecl[] {
           for fl in rec.fields {
             fields = fields.append(parser.StructFieldDecl { name: fl.name, type_name: field_spelling(fl.ty), fn_ret: "", fn_param_types: "" });
           }
-          out = out.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: false, is_package: false });
+          out = out.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: false, is_package: false, opaque: false, module: "" });
         }
       }
     }
@@ -542,7 +542,7 @@ function instance_variants(built: semsource.Built): parser.StructDecl[] {
         for fl in v.fields {
           fields = fields.append(parser.StructFieldDecl { name: fl.name, type_name: field_spelling(fl.ty), fn_ret: "", fn_param_types: "" });
         }
-        out = out.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: ssasem.type_key(e.ty), must_consume: false, variant_field_names: [], is_pub: false, is_package: false });
+        out = out.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: ssasem.type_key(e.ty), must_consume: false, variant_field_names: [], is_pub: false, is_package: false, opaque: false, module: "" });
       }
     }
   }
