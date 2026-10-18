@@ -1209,15 +1209,17 @@ func TestRunnerHTTPJsonOfExamplePasses(t *testing.T) {
 }
 
 // `tests/stdlib/http_cors_test.fern` answers preflights and marks actual
-// responses for the origins a policy admits.
+// responses for the origins a policy admits, a preflight through a wrapped
+// router included.
 func TestRunnerHTTPCorsExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_cors", "std/http/cors", 8)
+	runnerSuitePasses(t, "http_cors", "std/http/cors", 9)
 }
 
 // `tests/stdlib/http_auth_test.fern` reads bearer and basic credentials,
-// hands the principal on and answers the challenges.
+// hands the principal on, answers the challenges and refuses a credential
+// holding a control character.
 func TestRunnerHTTPAuthExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_auth", "std/http/auth", 5)
+	runnerSuitePasses(t, "http_auth", "std/http/auth", 6)
 }
 
 // `tests/stdlib/http_requestid_test.fern` keeps a well-formed inbound
