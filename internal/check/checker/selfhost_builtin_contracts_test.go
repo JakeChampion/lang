@@ -14,7 +14,7 @@ import (
 // semantic boundary has no contract for refuses every function calling it,
 // which fails the compile; a contract with no op in ssarc lowers the call as a
 // direct call to a symbol nothing defines, and is refused the same way.
-// udp_send, wasm_block and wasm_poll were all three.
+// wasm_block and wasm_poll were both.
 //
 // A name counts as handled when semsource.fern names it (a contract row or an
 // arm of its own) or constfold.fern folds it before the boundary sees it. The

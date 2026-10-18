@@ -558,20 +558,16 @@ func runCLIComponent(t *testing.T, src string, opts runOpts) (stdout, stderr str
 	return runWasmArtifact(t, buildCLIComponent(t, src), opts)
 }
 
-// `read_line()` reads one line from stdin including the trailing
-// newline. The byte length is reported via main's return value;
-// `wasmtime --invoke` echoes that on stdout so we can verify
-// both the bytes (via `write`) and the count (via the printed
-// return value).
-// `read_line()` returns `Some(line)` for a present line (with the
-// trailing `\n` preserved) and `None` for end-of-file. Programs
-// pattern-match on the result; the post-Phase-3 typed shape
-// replaces the empty-string sentinel that previous PRs used.
-func TestWASMReadLineBuiltin(t *testing.T) {
-	src := `function main(): i32 {
-		match (stdin().read_line()) {
-			Some(line) => { write(line); return line.len(); },
-			None => { return -1; }
+// io.read_line(stdin()) answers Ok(Some(line)) with the trailing newline
+// kept. The byte length is main's return value, which `wasmtime --invoke`
+// echoes on stdout after the bytes `write` sent.
+func TestWASMReadLine(t *testing.T) {
+	src := `import "std/io";
+
+function main(): i32 {
+		match (io.read_line(stdin())) {
+			Ok(Some(line)) => { write(line); return line.len(); },
+			_ => { return -1; }
 		}
 		return -2;
 	}`
@@ -584,36 +580,14 @@ func TestWASMReadLineBuiltin(t *testing.T) {
 	}
 }
 
-// Bare `read_line()` builtin (the stdin-only __fern_read_line
-// path) on the default wasm target — distinct from
-// stdin().read_line()'s receiver-aware path above. Reads a line
-// and echoes it + its length.
-func TestWASMReadLineBareBuiltin(t *testing.T) {
-	src := `function main(): i32 {
-		match (read_line()) {
-			Some(line) => { write(line); return line.len(); },
-			None => { return -1; }
-		}
-		return -2;
-	}`
-	stdout, _, _ := runWasmStdinEnv(t, src, "hi\n", nil)
-	if !strings.Contains(stdout, "hi\n") {
-		t.Errorf("stdout missing `hi\\n`: %q", stdout)
-	}
-	if !strings.Contains(stdout, "3") {
-		t.Errorf("stdout should contain `3` (len of \"hi\\n\"): %q", stdout)
-	}
-}
+// EOF on the first byte answers Ok(None).
+func TestWASMReadLineEOF(t *testing.T) {
+	src := `import "std/io";
 
-// EOF on the first byte routes through the `None` arm; a
-// non-empty line (even just "\n") routes through `Some`. The
-// match arms are how callers disambiguate now — no sentinel
-// length comparison required.
-func TestWASMReadLineBuiltinEOF(t *testing.T) {
-	src := `function main(): i32 {
-		match (stdin().read_line()) {
-			Some(line) => { return 1; },
-			None => { return 0; }
+function main(): i32 {
+		match (io.read_line(stdin())) {
+			Ok(None()) => { return 0; },
+			_ => { return 1; }
 		}
 		return -1;
 	}`
@@ -6217,12 +6191,13 @@ func TestWASMStdStreams(t *testing.T) {
 }
 
 // `open_writer` + `Writer.write` + `Writer.close` produce
-// the file on disk, then `open_reader` + `Reader.read_line`
-// streams it back two lines at a time. EOF on the third
-// `read_line` returns `None`. End-to-end this exercises every
-// streaming primitive in 4b in one shot.
+// the file on disk, then `open_reader` + `io.read_line`
+// streams it back a line at a time. EOF on the third
+// read answers `Ok(None)`.
 func TestWASMStreamingRoundtrip(t *testing.T) {
-	src := `function main(): i32 {
+	src := `import "std/io";
+
+function main(): i32 {
 		match (open_writer("out.txt")) {
 			Ok(w) => {
 				match (w.write("line 1\n")) { Some(_) => { return 1; }, None => {} }
@@ -6233,9 +6208,9 @@ func TestWASMStreamingRoundtrip(t *testing.T) {
 		}
 		match (open_reader("out.txt")) {
 			Ok(r) => {
-				match (r.read_line()) { Some(line) => { write(line); }, None => { return 5; } }
-				match (r.read_line()) { Some(line) => { write(line); }, None => { return 6; } }
-				match (r.read_line()) { Some(_) => { return 7; }, None => {} }
+				match (io.read_line(r)) { Ok(Some(line)) => { write(line); }, _ => { return 5; } }
+				match (io.read_line(r)) { Ok(Some(line)) => { write(line); }, _ => { return 6; } }
+				match (io.read_line(r)) { Ok(None()) => {}, _ => { return 7; } }
 				match (r.close()) { Some(_) => { return 8; }, None => {} }
 				return 0;
 			},
@@ -9538,15 +9513,16 @@ func TestCmdLangComponentWrapCliWithTcpServer(t *testing.T) {
 		}
 	}
 
-	// echo server (tcp_recv / tcp_send) — adds input-stream.blocking-read
+	// echo server (tcp_recv_into / tcp_send_bytes) — adds input-stream.read
 	// + output-stream.blocking-write-and-flush on the connection. Just
 	// validated here (running it needs a connecting client); confirms the
 	// stream methods are composed in.
 	echo := build("tcpecho", `function main(): i32 {
     let s: i32 = tcp_listen(8080);
     let c: i32 = tcp_accept(s);
-    let d: string = string_from_bytes_unchecked(tcp_recv(c, 1024));
-    tcp_send(c, d);
+    let d: u8[] = __alloc_u8(1024);
+    let n: i32 = tcp_recv_into(c, d);
+    if (n > 0) { tcp_send_bytes(c, d); }
     tcp_close(c);
     tcp_close(s);
     return 0;
@@ -9555,7 +9531,7 @@ func TestCmdLangComponentWrapCliWithTcpServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("wasm-tools print failed: %v\n%s", err, echoOut)
 	}
-	for _, want := range []string{"input-stream.blocking-read", "output-stream.blocking-write-and-flush"} {
+	for _, want := range []string{"input-stream.read", "output-stream.blocking-write-and-flush"} {
 		if !bytes.Contains(echoOut, []byte(want)) {
 			t.Errorf("expected %q in echo component, got:\n%s", want, echoOut)
 		}
@@ -9612,7 +9588,9 @@ func TestCmdLangComponentWrapCliTcpServerWithEnv(t *testing.T) {
 	// env() (→ get-environment), parse the digits, fall back to 8080.
 	// Sending the port through env (rather than hardcoding) is the whole
 	// point — it forces the get-environment import alongside sockets.
-	src := `function port_from_env(): i32 {
+	src := `import "std/net";
+
+function port_from_env(): i32 {
     match (env("PORT")) {
         Some(s) => {
             let n: i32 = 0;
@@ -9635,9 +9613,11 @@ function main(): i32 {
     if (sock < 0) { return 1; }
     let conn = tcp_accept(sock);
     if (conn < 0) { return 2; }
-    let msg: string = string_from_bytes_unchecked(tcp_recv(conn, 1024));
-    let sent = tcp_send(conn, msg);
-    if (sent < 0) { return 3; }
+    let msg: u8[] = match (net.read_watched(conn, 1024, 5000i64, 1)) {
+        Ok(net.Chunk(b)) => b,
+        _ => { return 4; },
+    };
+    match (net.write(conn, msg)) { Err(_) => { return 3; }, Ok(_) => {} }
     tcp_close(conn);
     tcp_close(sock);
     return 0;
@@ -10121,8 +10101,8 @@ func TestCmdLangComponentWrapCliWithPrint(t *testing.T) {
 	}
 }
 
-// TestCmdLangComponentWrapCliWithReadLine drives a Lang program
-// that reads stdin via the bare `read_line()` builtin through
+// TestCmdLangComponentWrapCliWithReadLine drives a Fern program
+// that reads stdin via io.read_line through
 // `-component-wrap-cli`. The driver detects the read-only
 // preview-2 imports (wasi:cli/stdin::get-stdin +
 // wasi:io/streams::blocking-read), rebuilds with cabi_realloc
@@ -10140,10 +10120,12 @@ func TestCmdLangComponentWrapCliWithReadLine(t *testing.T) {
 	}
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "rd.fern")
-	src := []byte(`function main(): i32 {
-    match (read_line()) {
-        Some(line) => { return 0; },
-        None => { return 1; }
+	src := []byte(`import "std/io";
+
+function main(): i32 {
+    match (io.read_line(stdin())) {
+        Ok(Some(line)) => { if (line.len() == 6) { return 0; } return 2; },
+        _ => { return 1; }
     }
     return 1;
 }`)
@@ -10169,7 +10151,7 @@ func TestCmdLangComponentWrapCliWithReadLine(t *testing.T) {
 			t.Errorf("expected %q in component, got:\n%s", want, printOut)
 		}
 	}
-	// A present line → Some → exit 0.
+	// "hello\n" → Ok(Some) of 6 bytes → exit 0.
 	some := exec.Command("wasmtime", "run", compPath)
 	some.Stdin = strings.NewReader("hello\n")
 	if err := some.Run(); err != nil {
@@ -10200,10 +10182,12 @@ func TestCmdLangComponentWrapCliWithReadLinePrint(t *testing.T) {
 	}
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "rp.fern")
-	src := []byte(`function main(): i32 {
-    match (read_line()) {
-        Some(line) => { print(line); return 0; },
-        None => { return 1; }
+	src := []byte(`import "std/io";
+
+function main(): i32 {
+    match (io.read_line(stdin())) {
+        Ok(Some(line)) => { print(line); return 0; },
+        _ => { return 1; }
     }
     return 1;
 }`)
@@ -10280,10 +10264,12 @@ func TestCmdLangComponentWrapCliComposedCombos(t *testing.T) {
 	}
 
 	// read_line + exit: read side + structured. Some → exit 0, None → exit 1.
-	rle := build("rle", `function main(): i32 {
-    match (read_line()) {
-        Some(line) => { exit(0); return 0; },
-        None => { exit(1); return 1; }
+	rle := build("rle", `import "std/io";
+
+function main(): i32 {
+    match (io.read_line(stdin())) {
+        Ok(Some(line)) => { exit(0); return 0; },
+        _ => { exit(1); return 1; }
     }
     return 5;
 }`)
@@ -10300,10 +10286,12 @@ func TestCmdLangComponentWrapCliComposedCombos(t *testing.T) {
 
 	// read_line + print + exit: both stream trampolines + structured.
 	// stdin "echo me\n" → printed back (+ print's newline) → exit 0.
-	rlpe := build("rlpe", `function main(): i32 {
-    match (read_line()) {
-        Some(line) => { print(line); exit(0); return 0; },
-        None => { exit(2); return 2; }
+	rlpe := build("rlpe", `import "std/io";
+
+function main(): i32 {
+    match (io.read_line(stdin())) {
+        Ok(Some(line)) => { print(line); exit(0); return 0; },
+        _ => { exit(2); return 2; }
     }
     return 5;
 }`)
@@ -10523,59 +10511,6 @@ func TestCmdLangComponentWrapCliComposedMemTramp(t *testing.T) {
 }`)
 	if err := exec.Command("wasmtime", "run", ae, "progname").Run(); err != nil {
 		t.Errorf("args()+exit: want exit 0 (argc>=1), got %v", err)
-	}
-}
-
-// TestCmdLangComponentWrapCliWithStdinReadLine drives the Reader
-// streaming API — stdin().read_line() — through `-component-wrap-cli`.
-// Preview-2 has no fds, so the stdin Reader holds the get-stdin
-// input-stream handle and Reader.read_line blocking-reads on it;
-// the import set (get-stdin + blocking-read) matches the read-only
-// route. Distinct from the bare read_line() builtin.
-func TestCmdLangComponentWrapCliWithStdinReadLine(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH")
-	}
-	if _, err := exec.LookPath("wasm-tools"); err != nil {
-		t.Skip("wasm-tools not on PATH")
-	}
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "sr.fern")
-	src := []byte(`function main(): i32 {
-    match (stdin().read_line()) {
-        Some(line) => { if (line.len() == 6) { return 0; } return 2; },
-        None => { return 1; }
-    }
-    return 1;
-}`)
-	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	compPath := filepath.Join(dir, "sr.wasm")
-	cmd := exec.Command(buildFernCLI(t), "-target", "wasm32-wasi", "-o", compPath, srcPath)
-	cmd.Dir = projectRoot(t)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("fern -component-wrap-cli (stdin().read_line) failed: %v\n%s", err, out)
-	}
-	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
-		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
-	}
-	if out, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput(); err != nil {
-		t.Fatalf("wasm-tools print failed: %v\n%s", err, out)
-	} else if !strings.Contains(string(out), "wasi:cli/stdin@0.2.0") {
-		t.Errorf("expected wasi:cli/stdin import, got:\n%s", out)
-	}
-	// "hello\n" → Some("hello\n") len 6 → exit 0.
-	some := exec.Command("wasmtime", "run", compPath)
-	some.Stdin = strings.NewReader("hello\n")
-	if err := some.Run(); err != nil {
-		t.Errorf("stdin().read_line with input: wasmtime run failed (want exit 0): %v", err)
-	}
-	// Empty stdin → None → exit 1.
-	none := exec.Command("wasmtime", "run", compPath)
-	none.Stdin = strings.NewReader("")
-	if err := none.Run(); err == nil {
-		t.Errorf("stdin().read_line EOF: wasmtime run exited 0, want non-zero")
 	}
 }
 
@@ -10811,12 +10746,14 @@ func TestCmdLangComponentWrapCliWithOpenReader(t *testing.T) {
 		return compPath
 	}
 	// read_line: first line "hello\n" is 6 bytes → exit 0.
-	rl := build("orl", `function main(): i32 {
+	rl := build("orl", `import "std/io";
+
+function main(): i32 {
     match (open_reader("data.txt")) {
         Ok(r) => {
-            match (r.read_line()) {
-                Some(line) => { if (line.len() == 6) { return 0; } return 2; },
-                None => { return 3; }
+            match (io.read_line(r)) {
+                Ok(Some(line)) => { if (line.len() == 6) { return 0; } return 2; },
+                _ => { return 3; }
             }
             return 4;
         },
@@ -10847,7 +10784,7 @@ func TestCmdLangComponentWrapCliWithOpenReader(t *testing.T) {
 	// Missing file → open-at fails → Err → non-zero.
 	miss := build("ormiss", `function main(): i32 {
     match (open_reader("nope.txt")) {
-        Ok(r) => { match (r.read_line()) { Some(l) => { return 7; }, None => { return 8; } } return 4; },
+        Ok(r) => { match (r.read_chunk(4)) { Ok(_) => { return 7; }, Err(_) => { return 8; } } return 4; },
         Err(e) => { return 1; }
     }
     return 5;

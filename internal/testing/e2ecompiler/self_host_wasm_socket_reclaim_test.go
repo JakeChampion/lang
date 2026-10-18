@@ -41,14 +41,14 @@ func TestSelfHostWasmSocketSetupReclaimsOnError(t *testing.T) {
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
-	for _, tc := range []struct{ name, expr string }{
-		{"listen", "tcp_listen(0)"},
-		{"connect", "tcp_connect(0, 1)"},
-		{"udp", "udp_send(\"127.0.0.1\", 1, \"x\")"},
+	for _, tc := range []struct{ name, prelude, expr string }{
+		{"listen", "", "tcp_listen(0)"},
+		{"connect", "", "tcp_connect_with([0u8, 0u8, 0u8, 0u8], 1, false)"},
+		{"udp", e2eharness.UDPSendOnce, "send_once([127u8, 0u8, 0u8, 1u8], 1, \"x\")"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := runX86_64Bin(runner, bin)
-			cmd.Stdin = strings.NewReader("function main(): i32 { return " + tc.expr + "; }")
+			cmd.Stdin = strings.NewReader(tc.prelude + "function main(): i32 { return " + tc.expr + "; }")
 			wat, err := cmd.Output()
 			if err != nil {
 				t.Fatalf("self-host socket probe: %v", err)
@@ -69,7 +69,7 @@ func TestSelfHostWasmSocketCloseZeroHandles(t *testing.T) {
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 	for _, tc := range []struct{ name, expr string }{
 		{"listen", "tcp_listen(0)"},
-		{"connect", "tcp_connect(0, 1)"},
+		{"connect", "tcp_connect_with([0u8, 0u8, 0u8, 0u8], 1, false)"},
 		{"accept", "tcp_accept(0)"}, // harness supplies a borrowed listener record
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -112,7 +112,7 @@ func TestSelfHostWasmSocketGuestStorage(t *testing.T) {
 	})
 	for _, tc := range []struct{ name, expr string }{
 		{"listen", "tcp_listen(0)"},
-		{"connect", "tcp_connect(0, 1)"},
+		{"connect", "tcp_connect_with(any, 1, false)"},
 		{"accept", "tcp_accept(0)"}, // harness supplies a borrowed listener record
 		{"port", "tcp_local_port(0)"},
 	} {

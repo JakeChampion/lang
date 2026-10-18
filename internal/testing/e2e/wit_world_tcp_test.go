@@ -51,14 +51,18 @@ func TestComposeTcpFromWorld(t *testing.T) {
 
 	dir := t.TempDir()
 
-	src := strings.Replace(`function main(): i32 {
+	src := strings.Replace(`import "std/net";
+
+function main(): i32 {
     let sock = tcp_listen(__PORT__);
     if (sock < 0) { return 1; }
     let conn = tcp_accept(sock);
     if (conn < 0) { return 2; }
-    let msg: string = string_from_bytes_unchecked(tcp_recv(conn, 1024));
-    let sent = tcp_send(conn, msg);
-    if (sent < 0) { return 3; }
+    let msg: u8[] = match (net.read_watched(conn, 1024, 5000i64, 1)) {
+        Ok(net.Chunk(b)) => b,
+        _ => { return 5; },
+    };
+    match (net.write(conn, msg)) { Err(_) => { return 3; }, Ok(_) => {} }
     tcp_close(conn);
     tcp_close(sock);
     return 0;

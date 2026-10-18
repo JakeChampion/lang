@@ -8,8 +8,9 @@ import (
 // fernPrinters are checked-Fern definitions of the number printers and the
 // stdin integer reader that test programs call. Neither checker knows these
 // names, so a program that uses one has to define it. The printers write
-// decimal text with no newline and allocate nothing; read_int parses an
-// optional '-' and the leading decimal digits of one stdin line, 0 at EOF.
+// decimal text with no newline and allocate nothing; read_int consumes one
+// stdin line and parses its optional '-' and leading decimal digits, 0 at
+// EOF.
 var fernPrinters = []struct {
 	name string
 	def  string
@@ -42,15 +43,30 @@ function print_i64(n: i64): i32 {
 `},
 	{"read_int", `
 function read_int(): i32 {
-    let line: string = "";
-    match (read_line()) { Some(s) => { line = s; }, None => { return 0; } }
-    let i: i32 = 0;
+    let r: Reader = stdin();
     let neg: boolean = false;
-    if (line.len() > 0 && line[0] == (45 as u8)) { neg = true; i = 1; }
+    let digits: boolean = true;
     let acc: i32 = 0;
-    while (i < line.len() && line[i] >= (48 as u8) && line[i] <= (57 as u8)) {
-        acc = acc * 10 + ((line[i] - (48 as u8)) as i32);
-        i = i + 1;
+    let i: i32 = 0;
+    let more: boolean = true;
+    while (more) {
+        match (r.read_chunk_bytes(1)) {
+            Ok(b) => {
+                if (b.len() == 0 || b[0] == (10 as u8)) {
+                    more = false;
+                } else {
+                    if (i == 0 && b[0] == (45 as u8)) {
+                        neg = true;
+                    } else if (digits && b[0] >= (48 as u8) && b[0] <= (57 as u8)) {
+                        acc = acc * 10 + ((b[0] - (48 as u8)) as i32);
+                    } else {
+                        digits = false;
+                    }
+                    i = i + 1;
+                }
+            },
+            Err(e) => { more = false; }
+        }
     }
     if (neg) { return 0 - acc; }
     return acc;

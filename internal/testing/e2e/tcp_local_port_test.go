@@ -28,17 +28,16 @@ const tcpLocalPortRoundTrip = `function main(): i32 {
     let port: i32 = tcp_local_port(l);
     if (port <= 0) { return 91; }
     if (port > 65535) { return 92; }
-    let loopback: i32 = 127 + (1 << 24);
-    let c: i32 = tcp_connect(loopback, port);
+    let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
     if (c < 0) { return 93; }
     let s: i32 = tcp_accept(l);
     if (s < 0) { return 94; }
     // The accepted end is bound to the same listening port.
     if (tcp_local_port(s) != port) { return 95; }
-    let sent: i32 = tcp_send(c, "ping!");
-    let got: u8[] = tcp_recv(s, 16);
+    let sent: i32 = tcp_send_bytes(c, [112u8, 105u8, 110u8, 103u8, 33u8]);
+    let got: u8[] = __alloc_u8(16);
     if (sent != 5) { return 96; }
-    if (got.len() != 5) { return 97; }
+    if (tcp_recv_into(s, got) != 5) { return 97; }
     if (tcp_close(c) + tcp_close(s) + tcp_close(l) != 0) { return 98; }
     return 42;
 }`
@@ -99,9 +98,9 @@ func TestTcpLocalPortRoundTrip(t *testing.T) {
 func TestTcpLocalPortInterp(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
-	// The interp has no tcp_connect, so it gets the half of the contract it
-	// can run: an ephemeral listener reports a plausible port, and a handle
-	// that names no socket reports failure rather than a stale number.
+	// The half of the contract that needs no peer: an ephemeral listener
+	// reports a plausible port, and a handle that names no socket reports
+	// failure rather than a stale number.
 	src := `function main(): i32 {
     let l: i32 = tcp_listen(0);
     if (l < 0) { return 90; }

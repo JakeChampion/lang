@@ -2361,7 +2361,7 @@ func WasiIoStreamsInstanceTypeBody(outerErrorTypeidx uint32) []byte {
 // directions in one wasi:io/streams instance type — output-stream +
 // input-stream resources, the shared error / stream-error types,
 // and both methods (blocking-write-and-flush, blocking-read). It's
-// the io/streams import a mixed read+write program (e.g. read_line +
+// the io/streams import a mixed read+write program (e.g. io.read_line +
 // print) needs. Combines WasiIoStreamsInstanceTypeBody (write) and
 // WasiIoStreamsReadInstanceTypeBody (read); the extra input-stream
 // resource shifts the shared types up by one slot.

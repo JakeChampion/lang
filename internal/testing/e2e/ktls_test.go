@@ -501,7 +501,7 @@ function dial(port: i32): i32 {
       return 5;
     }
   }
-  let fd: i32 = tcp_connect(16777343, port);
+  let fd: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
   if (fd < 0) {
     print("client: connect " + fd.to_string());
     return 0;

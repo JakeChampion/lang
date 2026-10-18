@@ -1,7 +1,6 @@
 package e2ecompiler
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,35 +17,6 @@ func readLineTextSource(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return src
-}
-
-// Embed source so the interpreted program retains stdin for its own reads.
-// Building with the current backend also exercises the current runtime.
-func checkReadLineTextInterpreter(t *testing.T, compiler string, runner []string, target, stdlib string) {
-	t.Helper()
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "lexer.fern", "parser.fern", "interp.fern")
-	entry := filepath.Join(dir, "interp_run.fern")
-	source := fmt.Sprintf(`import "./lexer";
-import "./parser";
-import "./interp";
-function main(): i32 {
-  let mod: parser.Module = parser.parse_module(lexer.tokenize(%q));
-  match (interp.eval_module(mod)) {
-    interp.VInt(v) => { return v.v; },
-    _ => { return 254; }
-  }
-}
-`, e2eharness.ReadLineTextProgram)
-	if err := os.WriteFile(entry, []byte(source), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	bin := filepath.Join(dir, "line-interp")
-	cmd := runX86_64Bin(runner, compiler, "-target", target, "-o", bin, entry, stdlib)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("compile interpreter: %v\n%s", err, out)
-	}
-	e2eharness.CheckReadLineText(t, func() *exec.Cmd { return runX86_64Bin(runner, bin) }, nil)
 }
 
 func checkReadLineTextComponent(t *testing.T, compiler string, runner []string, stdlib, src string) {
@@ -70,7 +40,6 @@ func TestSelfHostReadLineText(t *testing.T) {
 	t.Run("pin-built-interp", func(t *testing.T) {
 		e2eharness.CheckReadLineText(t, func() *exec.Cmd { return runX86_64Bin(cli.runner, cli.bin, "-interp", src, cli.stdlib) }, nil)
 	})
-	t.Run("interp", func(t *testing.T) { checkReadLineTextInterpreter(t, cli.bin, cli.runner, "x86-64-linux", cli.stdlib) })
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			var bin string
@@ -111,7 +80,6 @@ func TestSelfHostArm64DarwinReadLineText(t *testing.T) {
 	t.Run("pin-built-interp", func(t *testing.T) {
 		e2eharness.CheckReadLineText(t, func() *exec.Cmd { return exec.Command(cli, "-interp", src, stdlib) }, nil)
 	})
-	t.Run("interp", func(t *testing.T) { checkReadLineTextInterpreter(t, cli, nil, "arm64-darwin", stdlib) })
 	bin := filepath.Join(t.TempDir(), "lines")
 	cmd := exec.Command(cli, "-target", "arm64-darwin", "-o", bin, src, stdlib)
 	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
@@ -123,7 +91,9 @@ func TestSelfHostArm64DarwinReadLineText(t *testing.T) {
 }
 
 func TestSelfHostPerModuleReadLineText(t *testing.T) {
-	checkSelfHostPerModuleByteSink(t, `pub function save(): i32 {
+	checkSelfHostPerModuleByteSink(t, `import "std/io";
+
+pub function save(): i32 {
   let first: string = "a".repeat(255) + "🙂\n";
   let second: string = "b".repeat(4095) + "€\n";
   match (write_file("lines.txt", first + second)) { Err(_) => { return 1; }, Ok(_) => {} }
@@ -131,10 +101,10 @@ func TestSelfHostPerModuleReadLineText(t *testing.T) {
     Err(_) => { return 2; },
     Ok(r) => {
       let held: string = "";
-      match (r.read_line()) { None => { return 3; }, Some(s) => { held = s; } }
-      match (r.read_line()) { None => { return 4; }, Some(s) => { if (s != second) { return 5; } } }
+      match (io.read_line(r)) { Ok(Some(s)) => { held = s; }, _ => { return 3; } }
+      match (io.read_line(r)) { Ok(Some(s)) => { if (s != second) { return 5; } }, _ => { return 4; } }
       if (held != first) { return 6; }
-      match (r.read_line()) { None => {}, Some(_) => { return 7; } }
+      match (io.read_line(r)) { Ok(None()) => {}, _ => { return 7; } }
       match (r.close()) { None => {}, Some(_) => { return 8; } }
     }
   }

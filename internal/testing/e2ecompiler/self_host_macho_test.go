@@ -662,15 +662,19 @@ function main(): i32 { let e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 }`,
 		7)
 
-	// udp_send — exercises the Darwin socket(97)/connect(98)/write(4)/close(6)
-	// path and the dotted-quad host parse. On a datagram socket connect only
-	// records the peer, so connect-then-write sends the same packet as sendto
-	// while staying within __syscall3. UDP is connectionless, so a send to a
-	// local port with no receiver still succeeds and returns the byte count
-	// (the datagram is simply dropped). Returns the 3 payload bytes iff
-	// socket→parse→connect→write→close all worked.
-	runCase("udp_send",
-		`function main(): i32 { return udp_send("127.0.0.1", 39518, "abc"); }`,
+	// udp_bind + udp_sendto — exercises the Darwin socket(97)/bind(104)/
+	// sendto(133)/close(6) path. UDP is connectionless, so a send to a local
+	// port with no receiver still succeeds and returns the byte count (the
+	// datagram is simply dropped). Returns the 3 payload bytes iff
+	// socket→bind→sendto→close all worked.
+	runCase("udp_sendto",
+		`function main(): i32 {
+  let s: i32 = udp_bind([0u8, 0u8, 0u8, 0u8], 0);
+  if (s < 0) { return 1; }
+  let n: i32 = udp_sendto(s, [127u8, 0u8, 0u8, 1u8], 39518, "abc");
+  if (tcp_close(s) < 0) { return 2; }
+  return n;
+}`,
 		3)
 }
 

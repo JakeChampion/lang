@@ -3368,14 +3368,6 @@ function sockaddr_head(t: string, buf: string): string {
   return "__raw_store8(" + buf + ", 0, 2); __raw_store8(" + buf + ", 1, 0);";
 }
 
-// sockaddr_v4 fills the 16-byte block named `buf` with a sockaddr_in for
-// host_be:port: the target's family head, the port in network order, the
-// four packed address bytes and eight zero bytes. The body it is spliced
-// into holds `host_be` and `port`.
-function sockaddr_v4(t: string, buf: string): string {
-  return sockaddr_head(t, buf) + " __raw_store8(" + buf + ", 2, (port >> 8) & 255); __raw_store8(" + buf + ", 3, port & 255); __raw_store8(" + buf + ", 4, host_be & 255); __raw_store8(" + buf + ", 5, (host_be >> 8) & 255); __raw_store8(" + buf + ", 6, (host_be >> 16) & 255); __raw_store8(" + buf + ", 7, (host_be >> 24) & 255); let z: i32 = 8; while (z < 16) { __raw_store8(" + buf + ", z, 0); z = z + 1; }";
-}
-
 // rt_src_tcp_listen backs `tcp_listen(port)` (#2649, syscall-leaf) → a listening
 // socket fd bound to INADDR_ANY:port, or -errno from whichever step failed.
 //
@@ -3390,57 +3382,15 @@ pub function rt_src_tcp_listen(t: string): string {
   return "function __fern_tcp_listen(port: i32): i32 { let fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 1, 0) as i32; if (fd < 0) { return fd; } let sa: usize = __raw_scratch(20); __raw_store8(sa, 16, 1); __raw_store8(sa, 17, 0); __raw_store8(sa, 18, 0); __raw_store8(sa, 19, 0); let ro: i32 = __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_reuseaddr") + ", (sa + 16) as i64, 4) as i32; if (ro < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return ro; } " + sockaddr_head(t, "sa") + " __raw_store8(sa, 2, (port >> 8) & 255); __raw_store8(sa, 3, port & 255); let z: i32 = 4; while (z < 16) { __raw_store8(sa, z, 0); z = z + 1; } let rb: i32 = __syscall3(" + sysno(t, "bind") + ", fd as i64, sa as i64, 16) as i32; if (rb < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return rb; } let rl: i32 = __syscall3(" + sysno(t, "listen") + ", fd as i64, 128, 0) as i32; if (rl < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return rl; } return fd; }";
 }
 
-// rt_src_tcp_connect backs `tcp_connect(host_be, port)` (#2649, syscall-leaf) →
-// a connected socket fd, or -errno. Same sockaddr_in as tcp_listen, with the
-// address filled in instead of INADDR_ANY.
-//
-// `host_be` arrives ALREADY in network order, so its four bytes go out in
-// little-endian order — reproducing the 32-bit word store the hand-asm did,
-// which is not the same as byte-swapping it again.
-//
-// Migrating this FIXES arm64-darwin. The hand-asm emitted `mov x8, #203`
-// (Linux connect) on both targets and relied on darwinize to remap it, but
-// darwin_sysno has no 203 row — so the Mach-O output issued Linux syscall 203
-// through the Linux trap. Baking the number per target is exactly the mechanism
-// that exists because darwinize cannot remap a number it only sees at runtime.
-pub function rt_src_tcp_connect(t: string): string {
-  return "function __fern_tcp_connect(host_be: i32, port: i32): i32 { let fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 1, 0) as i32; if (fd < 0) { return fd; } let sa: usize = __raw_scratch(16); " + sockaddr_v4(t, "sa") + " let rc: i32 = __syscall3(" + sysno(t, "connect") + ", fd as i64, sa as i64, 16) as i32; if (rc < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return rc; } return fd; }";
-}
-
 // rt_src_tcp_connect_with backs `tcp_connect_with(addr, port, nonblocking)`
 // (#9853): the socket connected to addr:port, or with `nonblocking` a
 // non-blocking socket whose connect is under way (-EINPROGRESS is then not
-// a failure); control op 5 reports how it ended. rt_src_tcp_connect stays
-// its own body: a runtime helper here is lowered on its own and cannot
-// name another.
+// a failure); control op 5 reports how it ended.
 pub function rt_src_tcp_connect_with(t: string, packed: boolean): string {
   let fc: string = sysno(t, "fcntl");
   return "function __fern_tcp_connect_with" + packed_suffix(packed) + "(addr: i32[], port: i32, nonblocking: boolean): i32 { " + af_of_addr(t) + " let fd: i32 = __syscall3(" + sysno(t, "socket") + ", af as i64, 1, 0) as i32; if (fd < 0) { return fd; } let rc: i32 = 0; if (nonblocking) { let flags: i32 = __syscall3(" + fc + ", fd as i64, 3, 0) as i32; rc = flags; if (flags >= 0) { rc = __syscall3(" + fc + ", fd as i64, 4, (flags | " + sockopt(t, "o_nonblock") + ") as i64) as i32; } } if (rc >= 0) { let sa: usize = __raw_scratch(28); " + sockaddr_of(t, "sa", packed) + " rc = __syscall3(" + sysno(t, "connect") + ", fd as i64, sa as i64, salen as i64) as i32; if (nonblocking && rc == 0 - " + sockopt(t, "einprogress") + ") { rc = 0; } } if (rc < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return rc; } return fd; }";
 }
 
-// rt_src_udp_send backs `udp_send(host, port, data)` (#2649, #6917) → the bytes
-// written, or -errno from whichever step failed.
-//
-// This op had NO backend case at all: it reached `ir_bin_asm`'s comment fallback
-// and the call was silently dropped on both register backends, while arm64 also
-// emitted a hand-written `__fern_udp_send` that nothing branched to. The dead
-// body is deleted and the op lowers here.
-//
-// The hand-asm used `sendto`, whose six arguments are past `__syscall5`. It needs
-// none: on a datagram socket `connect` only records the peer, so
-// connect-then-write sends exactly the same packet with two three-argument calls.
-// That is what keeps this slice free of a `__syscall6` and its kind-registry
-// churn. The fd is closed on both paths, so the one-shot leaks no descriptor.
-//
-// `host` is a dotted-quad LITERAL (the lowering passes the string, unlike
-// tcp_connect's pre-packed i32), so the quad is parsed here — accumulate each
-// octet, close a group on '.', and take the last after the loop.
-//
-// The parse runs BEFORE socket(2) and rejects anything that is not four
-// digit-only groups of at most 255, returning -3 (`invalid-argument`) with no
-// descriptor to close. It accumulated every non-'.' byte as (c - 48) until
-// #7740: a hostname reported success and sent to the address its letters
-// happened to make, and a fifth group stored past the 16-byte sockaddr.
 // sockopt is a socket-option constant as the target numbers it: the
 // socket level, the SOL_SOCKET options the primitives set, and the
 // O_NONBLOCK flag. XNU numbers all four differently from Linux.
@@ -3598,7 +3548,7 @@ function name_group(t: string, family: string, op: string, sys: string): string 
 // is the failure and its absence -EINPROGRESS); op 6 is how many bytes
 // handed to the socket the peer has not acknowledged (SIOCOUTQ on Linux,
 // SO_NWRITE on Darwin); op 7 is the peer's address as one 32-bit key (an
-// IPv4 address packed as tcp_connect takes it, a v4-mapped IPv6 address
+// IPv4 address packed with the first octet low, a v4-mapped IPv6 address
 // its IPv4 one, any other IPv6 address the two words of its first eight
 // bytes XORed and never 0; 0 with no peer); op 8 steers the listener's
 // SO_REUSEPORT group by CPU (the filter `ld cpu; ret a` attached with
@@ -3696,28 +3646,6 @@ function udp_byte_data(packed: boolean): string {
   return "let byte_n: i32 = data.len(); let byte_raw: usize = __raw_arr_box(byte_n / 8 + 1); let byte_scratch: i32[] = __raw_array(byte_raw); let byte_data: usize = (__raw_arr_ptr(byte_scratch) + 8); let byte_j: i32 = 0; while (byte_j < byte_n) { __raw_store8(byte_data, byte_j, data[byte_j]); byte_j = byte_j + 1; }";
 }
 
-pub function rt_src_udp_send(t: string): string {
-  return rt_src_udp_send_mode(t, false, false);
-}
-
-pub function rt_src_udp_send_bytes(t: string, packed: boolean): string {
-  return rt_src_udp_send_mode(t, true, packed);
-}
-
-function rt_src_udp_send_mode(t: string, raw: boolean, packed: boolean): string {
-  let name: string = "__fern_udp_send";
-  let dtype: string = "string";
-  let ptr: string = "__raw_data(data)";
-  let prep: string = "";
-  if (raw) {
-    name = "__fern_udp_send_bytes" + packed_suffix(packed);
-    dtype = "i32[]";
-    ptr = "byte_data";
-    prep = udp_byte_data(packed);
-  }
-  return "function " + name + "(host: string, port: i32, data: " + dtype + "): i32 { let o0: i32 = 0; let o1: i32 = 0; let o2: i32 = 0; let oct: i32 = 0; let idx: i32 = 0; let i: i32 = 0; let bad: i32 = 0; let dig: i32 = 0; let hn: i32 = host.len(); while (i < hn) { let c: i32 = host[i] as i32; if (c == 46) { if (dig == 0) { bad = 1; } if (idx == 0) { o0 = oct; } else if (idx == 1) { o1 = oct; } else if (idx == 2) { o2 = oct; } else { bad = 1; } idx = idx + 1; oct = 0; dig = 0; } else { if (c < 48) { bad = 1; } if (c > 57) { bad = 1; } oct = oct * 10 + (c - 48); dig = dig + 1; if (oct > 255) { bad = 1; } } i = i + 1; } if (bad != 0) { return -3; } if (idx != 3) { return -3; } if (dig == 0) { return -3; } let fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 2, 0) as i32; if (fd < 0) { return fd; } let host_be: i32 = o0 | (o1 << 8) | (o2 << 16) | (oct << 24); let sa: usize = __raw_scratch(16); " + sockaddr_v4(t, "sa") + " let rc: i32 = __syscall3(" + sysno(t, "connect") + ", fd as i64, sa as i64, 16) as i32; if (rc < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return rc; } " + prep + " let w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, " + ptr + " as i64, data.len() as i64) as i32; __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return w; }";
-}
-
 // The datagram sockets (#9853): a socket bound to addr:port, connect(2)
 // fixing a peer, one sendto(2) to an address or (an empty one) the peer,
 // and one recvfrom(2) into the caller's u8[].
@@ -3765,7 +3693,7 @@ function rt_src_udp_sendto_mode(t: string, raw: boolean, packed: boolean): strin
 }
 
 // The datagram lands in a raw buffer and is spread into the caller's array
-// (recv_spread), the way rt_src_tcp_recv fills a fresh one; the
+// (recv_spread), the way rt_src_tcp_recv_into fills one; the
 // buffer is adopted by a string only after its last read (#10486). The
 // sender goes into `from` when it has nineteen slots: the family (4 or
 // 6), the address bytes from slot 1, the port at 17 and 18.
@@ -4074,7 +4002,7 @@ pub function rt_src_ring(t: string): string {
 }
 
 // One read into the caller's slot array, spread one byte per slot like
-// rt_src_tcp_recv; the raw buffer is adopted after its last read (#10486).
+// rt_src_random_bytes; the raw buffer is adopted after its last read (#10486).
 pub function rt_src_tcp_recv_into(t: string): string {
   return "function __fern_tcp_recv_into(fd: i32, buf: i32[]): i32 { let max: i32 = buf.len(); if (max <= 0) { return 0; } let p: usize = __raw_alloc(max); let n: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, max as i64) as i32; let b: usize = __raw_arr_ptr(buf); let i: i32 = 0; while (i < n) { __raw_store_ptr(b, i + 1, __raw_load8(p, i) as usize); i = i + 1; } let p_own: string = __raw_string(p, max); return n; }";
 }
@@ -4106,24 +4034,6 @@ pub function rt_src_unix_connect(t: string): string {
   return "function __fern_unix_connect(path: string): i32 { " + sun_path_guard(t) + " let fd: i32 = __syscall3(" + sysno(t, "socket") + ", 1, 1, 0) as i32; if (fd < 0) { return fd; } " + sockaddr_un(t) + " let r: i32 = __syscall3(" + sysno(t, "connect") + ", fd as i64, sa as i64, (n + 3) as i64) as i32; if (r < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return r; } return fd; }";
 }
 
-// rt_src_tcp_send backs `tcp_send(fd, s)` (#2649, syscall-leaf) → bytes written
-// or -errno. One sendto(2) from the string's buffer with MSG_NOSIGNAL, so
-// a disconnected peer cannot terminate the process. Short writes stay visible.
-//
-// This was the last leaf, and it was held up by a floor addition it turned out
-// not to need. The blocker was described as a missing `__raw_data` OP — the
-// inverse of __raw_string — with the fallback being a byte-by-byte copy of the
-// payload on every send. Neither was necessary: a string value already IS its
-// box pointer and the data word is slot 0 of that box, so __raw_data lowers to
-// the raw_load_ptr the floor has had all along. No copy, and no new op.
-pub function rt_src_tcp_send(t: string): string {
-  let flags: string = "16384";
-  if (t == "arm64-darwin") {
-    flags = "524288";
-  }
-  return "function __fern_tcp_send(fd: i32, s: string): i32 { return __syscall6(" + sysno(t, "sendto") + ", fd as i64, __raw_data(s) as i64, s.len() as i64, " + flags + ", 0, 0) as i32; }";
-}
-
 pub function rt_src_tcp_send_bytes(t: string, packed: boolean): string {
   let flags: string = "16384";
   if (t == "arm64-darwin") {
@@ -4144,14 +4054,6 @@ pub function rt_src_tcp_send_buf(t: string): string {
     flags = "524288";
   }
   return "function __fern_tcp_send_buf(fd: i32, b: usize, from: i32): i32 { let n: i32 = __raw_load_ptr(b, 1) as i32; if (from < 0 || from >= n) { return 0; } let data: usize = __raw_load_ptr(b, 0); let p: usize = data + from; return __syscall6(" + sysno(t, "sendto") + ", fd as i64, p as i64, (n - from) as i64, " + flags + ", 0, 0) as i32; }";
-}
-
-// rt_src_tcp_recv backs `tcp_recv(fd, max)` (#5714, syscall-leaf) → a fresh
-// `u8[]` of up to `max` bytes, spread one-per-slot like rt_src_random_bytes. A
-// short read, EOF and -errno all come back as the empty array: the op has no
-// error channel, so a negative read result clamps to len 0.
-pub function rt_src_tcp_recv(t: string): string {
-  return "function __fern_tcp_recv(fd: i32, max: i32): i32[] { if (max <= 0) { let none: usize = __raw_arr_box(0); return __raw_array(none); } let p: usize = __raw_alloc(max); let n: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, max as i64) as i32; if (n < 0) { n = 0; } let b: usize = __raw_arr_box(n); let i: i32 = 0; while (i < n) { __raw_store_ptr(b, i + 1, __raw_load8(p, i) as usize); i = i + 1; } let p_own: string = __raw_string(p, max); return __raw_array(b); }";
 }
 
 // The stdout/stderr leaves (#2649). All four are plain write(2) calls, so unlike
@@ -4186,28 +4088,6 @@ pub function rt_src_eprint_str(t: string): string {
 pub function rt_src_putchar(t: string): string {
   return "function __fern_putchar(c: i32): i32 { let p: usize = __raw_scratch(1); __raw_store8(p, 0, c & 255); return __syscall3(" + sysno(t, "write") + ", 1, p as i64, 1) as i32; }";
 }
-
-// The three Option-returning Reader leaves (#2649). Here the migration is the RC
-// FIX, not a risk to be managed.
-//
-// Each hand-asm built its result with bare __fern_alloc, so the boxes carried NO
-// refcount header — read_line's inner strbox, and both of read_chunk's boxes plus
-// its Option. __fn___fern_str_free / __fn___fern_arr_dec read the refcount at
-// box-8, so a dec of one of those reads the last word of the PRECEDING
-// allocation; if that word happens to be 1, the block is pushed onto a freelist
-// bin chosen from another garbage word. Heap corruption rather than a clean crash.
-//
-// That never fired only because nothing decs them: the match lowering frees a
-// scrutinee box only for a map.get scrutinee, and the optret drop machinery only
-// fires for a direct Some(...) ctor or a function in the OPTFRESH registry — an op
-// is in neither set, so the boxes simply leak. The nearest miss is std/io's
-// `chunks.append(chunk)`: had `chunks` qualified for element reclaim, the exit
-// sweep would str_free each headerless element, and it fails to qualify only
-// because a bare ident may alias.
-//
-// Ordinary Some(__raw_string(...)) lowering keeps the payload at offset 8 and the
-// tag at 0 exactly where they were, and puts a real rc=1 at box-8. Nothing reads
-// that header today; anything that later does now reads a valid one.
 
 // rt_src_reader_read_chunk backs `r.read_chunk(n)` → up to n bytes from fd,
 // Ok("") at end of input, or the errno that stopped the read. A directory reads
@@ -4263,27 +4143,6 @@ pub function rt_src_reader_read_chunk_bytes(t: string, packed: boolean): string 
 // coreutils utility's exit status on `prog >&-` (#8569).
 pub function rt_src_reader_close(t: string): string {
   return "function __fern_reader_close(fd: i32): Option[IoError] { let r: i32 = __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0) as i32; if (r < 0) { return Some(__fern_io_error(0 - r, \"\")); } return None; }";
-}
-
-// rt_src_read_line backs `read_line()` / `r.read_line()` → one line from `fd`
-// including its '\n', None at EOF with nothing read. The fd is a parameter, not
-// a hard-coded 0: a Reader IS its fd, so a file reader's read_line has to read
-// that file (#7758). The bare builtin passes 0.
-//
-// ONE BYTE PER SYSCALL, which is required and not an oversight (#6052): a
-// single read(0, buf, 256) silently discarded every byte past the first newline,
-// because only the line was boxed and the rest of the buffer was dropped — a
-// read-until-EOF loop saw the first line and then a spurious EOF. Reading one byte
-// at a time is correct by construction, since the syscall never consumes a byte
-// this call will not return, and it leaves the rest of the stream in the OS for
-// the next call or a child process.
-//
-// Grow the scratch block when full: an internal capacity must not split a line
-// or a UTF-8 scalar. Each replaced block is owned at its allocated capacity so
-// reclaim returns it to the correct size class. The result owns an exact-size
-// copy, including on a short read, and EOF releases the unused scratch block.
-pub function rt_src_read_line(t: string): string {
-  return "function __fern_read_line(fd: i32): Option[string] { let cap: i32 = 256; let buf: usize = __raw_alloc(cap); let len: i32 = 0; let go: i32 = 1; while (go == 1) { if (len == cap) { let grown: usize = __raw_alloc(cap * 2); __memcpy(grown, buf, len); let old: string = __raw_string(buf, cap); buf = grown; cap = cap * 2; } let r: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, (buf + len) as i64, 1) as i32; if (r < 1) { go = 0; } else { let c: i32 = __raw_load8(buf, len); len = len + 1; if (c == 10) { go = 0; } } } if (len == 0) { let empty: string = __raw_string(buf, cap); return None; } let q: usize = __raw_alloc(len); __memcpy(q, buf, len); let full: string = __raw_string(buf, cap); return Some(__raw_string(q, len)); }";
 }
 
 // The strerror table (#8265): glibc's text per errno and the errno's number on
@@ -6591,10 +6450,6 @@ pub function rt_src_random_bytes_u8(t: string): string {
   return "function __fern_random_bytes_u8(n: i32): i32[] { if (n < 0) { n = 0; } " + packed_box("b", "n") + " let off: i32 = 0; while (off < n) { let want: i32 = n - off; if (want > 256) { want = 256; } let r: i32 = __syscall3(" + sysno(t, "getrandom") + ", (b + 8 + off) as i64, want as i64, 0) as i32; if (r < 0) { off = n; } else { off = off + want; } } return __raw_array(b); }";
 }
 
-pub function rt_src_tcp_recv_u8(t: string): string {
-  return "function __fern_tcp_recv_u8(fd: i32, max: i32): i32[] { if (max < 0) { max = 0; } " + packed_box("b", "max") + " let n: i32 = 0; if (max > 0) { n = __syscall3(" + sysno(t, "read") + ", fd as i64, (b + 8) as i64, max as i64) as i32; } if (n < 0) { n = 0; } __store_i64(b, n as i64); return __raw_array(b); }";
-}
-
 // tcp_ktls(fd, op, arg, data) is the kernel's TLS record layer on a
 // connected socket. Op 1 attaches the "tls" upper-layer protocol; ops 2 and
 // 3 install the transmit and receive keys, `data` being the kernel's
@@ -6629,7 +6484,7 @@ pub function rt_src_tcp_recv_into_u8(t: string): string {
 // of the string's byte values (each zero-extended into the array's uniform 8-byte
 // slot; s[i] yields the zero-extended byte).
 //
-// PRE-SIZED with __raw_arr_box, the shape __fern_random_bytes / __fern_tcp_recv /
+// PRE-SIZED with __raw_arr_box, the shape __fern_random_bytes /
 // __fern_read_file_bytes already use: slot 0 is the length and slot i+1 element i.
 // Growing from `[]` with .append() instead reallocated and copied the whole array
 // about log2(n) times per call, which on a 64 KiB chunk is sixteen copies of up
@@ -6693,9 +6548,6 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
           if (id.name == "read_file") {
             return ty_string();
           }
-          if (id.name == "tcp_recv") {
-            return ty_array_i32();
-          }
           if (id.name == "temp_dir") {
             return ty_string();
           }
@@ -6726,9 +6578,9 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
         },
         ast.ExprFieldAccess(fa) => {
           let rcv: Ty = infer_expr_type(fa.obj, s);
-          // Reader.read_line / Reader.read_chunk are Option[string], so
-          // the payload is the string. Keyed on the RECEIVER'S TYPE:
-          // `read_line` / `read_chunk` / `write` are ordinary method
+          // Reader.read_chunk is Result[string, IoError], so the
+          // payload is the string. Keyed on the RECEIVER'S TYPE:
+          // `read_chunk` / `write` are ordinary method
           // names a user struct may declare, and a name-keyed answer
           // hands a user method the resource signature (#8462).
           // Writer.write and Writer.truncate are Option[IoError], a
@@ -6737,8 +6589,7 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
           if (ty_struct_name(rcv) == "Reader" && fa.field == "read_chunk_bytes") {
             return ty_array_i32();
           }
-          if (ty_struct_name(rcv) == "Reader"
-            && (fa.field == "read_chunk" || fa.field == "read_line")) {
+          if (ty_struct_name(rcv) == "Reader" && fa.field == "read_chunk") {
             return ty_string();
           }
           // Reader.seek / Writer.seek are Result[i64, IoError]; the
@@ -7909,9 +7760,9 @@ pub function ty_friendly(t: Ty): string {
 // through a closure-valued field.
 function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState): Ty {
   let rt: Ty = infer_expr_type(fa.obj, s);
-  // Reader.read_chunk / Reader.read_line -> Option[string]; Writer.write(s) ->
+  // Reader.read_chunk -> Option[string]; Writer.write(s) ->
   // Option[IoError] (#4372, #7926 — native's signatures). Keyed on the
-  // RECEIVER'S TYPE: `write`, `read_line` and `read_chunk` are ordinary method
+  // RECEIVER'S TYPE: `write` and `read_chunk` are ordinary method
   // names, and answering on the name alone gave every user struct declaring one
   // the resource signature, rejecting the program before codegen (#8462). The
   // real non-struct-receiver gate is applied at lower time (the lowering's
@@ -7919,7 +7770,7 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
   if (ty_struct_name(rt) == "Reader" && fa.field == "read_chunk_bytes") {
     return ty_result(ty_array_i32());
   }
-  if (ty_struct_name(rt) == "Reader" && (fa.field == "read_chunk" || fa.field == "read_line")) {
+  if (ty_struct_name(rt) == "Reader" && fa.field == "read_chunk") {
     return ty_option(ty_string());
   }
   // Reader.stat / Writer.stat -> Result[FileStat, IoError] (the struct
@@ -8188,10 +8039,9 @@ function builtin_i32_names(): string[] {
     "wasm_block",
     // wasm_poll(pollables: i32[]) -> i32 (first ready index, or -1).
     "wasm_poll",
-    "tcp_connect",
     // tcp_listen(port) -> listener fd / -errno; tcp_accept(fd) ->
     // connection fd / -errno. The server half of the edge-handler
-    // use case (#4371); both are plain i32 like the client ops.
+    // use case (#4371); both are plain i32.
     "tcp_listen",
     "tcp_accept",
     // tcp_local_port(fd) -> the bound port / -errno.
@@ -8222,10 +8072,8 @@ function builtin_i32_names(): string[] {
     "ring_send_zc",
     "tcp_recv_into",
     "tcp_ktls",
-    "tcp_send",
     "tcp_send_bytes",
     "tcp_send_buf",
-    "udp_send_bytes",
     "udp_sendto_bytes",
     "tcp_close",
     "tcp_pollable",
@@ -8455,11 +8303,6 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (s.builtin_i32.has(id.name)) {
     return ty_i32();
   }
-  // tcp_recv(fd, max) -> u8[] box; the rest -> i32 (fd /
-  // byte count / pollable token / -errno).
-  if (id.name == "tcp_recv") {
-    return ty_array_i32();
-  }
   if (id.name == "remove_file") {
     return ty_option(ty_unknown());
   }
@@ -8607,11 +8450,6 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   }
   if (id.name == "stdout" || id.name == "stderr") {
     return ty_named("Writer");
-  }
-  // read_line() -> Option[string]: line INCLUDING '\n', None at EOF
-  // — matches native (#4369).
-  if (id.name == "read_line") {
-    return ty_option(ty_string());
   }
   if (s.builtin_string.has(id.name)) {
     return ty_string();
@@ -9283,12 +9121,12 @@ pub function runtime_need_deps(name: string): string[] {
   // Heap-only deps: the helper's body `call __fern_alloc`s (directly or via
   // __fern_arr_box / a result-box alloc), so marking it pulls in "heap".
   let heap: string[] = ["heap"];
-  if (name == "str_concat" || name == "str_read_line" || name == "i32_to_string"
+  if (name == "str_concat" || name == "i32_to_string"
     || name == "u32_to_string" || name == "i64_to_string" || name == "u64_to_string"
     || name == "args" || name == "read_file" || name == "read_file_bytes"
     || name == "random_bytes" || name == "write_file_bytes" || name == "write_file_bytes_u8"
     || name == "str_from_bytes" || name == "alloc_u8" || name == "buf"
-    || name == "read_file_bytes_u8" || name == "random_bytes_u8" || name == "tcp_recv_u8"
+    || name == "read_file_bytes_u8" || name == "random_bytes_u8"
     || name == "str_bytes_u8" || name == "str_from_bytes_u8" || name == "str_from_bytes_range_u8" || name == "arr_slice_u8" || name == "alloc_bytes"
     || name == "arr_push" || name == "arr_slice" || name == "str_own" || name == "str_borrow" || name == "str_grow"
     || name == "str_case" || name == "str_repeat"
@@ -11502,7 +11340,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     // __fern_eprint_str / __fern_putchar are gone.
     "__fn___fern_print_str",
     "__fn___fern_eprint_str", "__fn___fern_putchar",
-    "__fn___fern_read_line", "__fn___fern_read_file", "__fn___fern_read_file_bytes",
+    "__fn___fern_read_file", "__fn___fern_read_file_bytes",
     "__fn___fern_reader_read_chunk", "__fn___fern_reader_close", "__fn___fern_write_file",
     "__fn___fern_write_file_bytes", "__fn___fern_write_file_bytes_u8",
     "__fn___fern_reader_read_chunk_bytes", "__fn___fern_reader_read_chunk_bytes_u8", "__fn___fern_writer_write_bytes", "__fn___fern_writer_write_bytes_u8", "__fn___fern_writer_write_some_bytes", "__fn___fern_writer_write_some_bytes_u8",
@@ -11559,17 +11397,17 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_monotonic_ns", "__fn___fern_now_ns", "__fn___fern_now_unix_ms",
     "__fn___fern_poll",
     "__fn___fern_timer_fd",
-    "__fn___fern_tcp_connect", "__fn___fern_tcp_close",
-    "__fn___fern_udp_send", "__fn___fern_tcp_recv", "__fn___fern_tcp_send", "__fn___fern_tcp_listen", "__fn___fern_tcp_accept", "__fn___fern_tcp_local_port",
+    "__fn___fern_tcp_close",
+    "__fn___fern_tcp_listen", "__fn___fern_tcp_accept", "__fn___fern_tcp_local_port",
     "__fn___fern_tcp_send_bytes", "__fn___fern_tcp_send_bytes_u8",
-    "__fn___fern_udp_send_bytes", "__fn___fern_udp_send_bytes_u8", "__fn___fern_udp_sendto_bytes", "__fn___fern_udp_sendto_bytes_u8",
+    "__fn___fern_udp_sendto_bytes", "__fn___fern_udp_sendto_bytes_u8",
     "__fn___fern_udp_bind", "__fn___fern_udp_bind_with", "__fn___fern_udp_connect", "__fn___fern_udp_sendto", "__fn___fern_udp_recvfrom",
     "__fn___fern_tcp_connect_with", "__fn___fern_unix_listen", "__fn___fern_unix_connect",
     "__fn___fern_tcp_listen_with", "__fn___fern_tcp_socket_ctl",
     // Typed socket calls use packed address and data arrays. Library units
     // reference these helpers in the entry's single runtime too.
     "__fn___fern_tcp_listen_with_u8", "__fn___fern_tcp_connect_with_u8",
-    "__fn___fern_tcp_recv_u8", "__fn___fern_tcp_recv_into_u8", "__fn___fern_tcp_ktls_u8",
+    "__fn___fern_tcp_recv_into_u8", "__fn___fern_tcp_ktls_u8",
     "__fn___fern_udp_bind_u8", "__fn___fern_udp_bind_with_u8", "__fn___fern_udp_connect_u8",
     "__fn___fern_udp_sendto_u8", "__fn___fern_udp_recvfrom_u8",
     "__fn___fern_ring_new", "__fn___fern_ring_ctl", "__fn___fern_ring_wait", "__fn___fern_ring_recv_u8", "__fn___fern_ring_send_zc_u8",

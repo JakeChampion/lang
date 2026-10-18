@@ -2133,16 +2133,21 @@ func TestBuiltinPutchar(t *testing.T) {
 	}
 }
 
-func TestBuiltinUdpSend(t *testing.T) {
-	if err := checkSource(t, `function f(): i32 { return udp_send("127.0.0.1", 8125, "metric:1|c"); }`); err != nil {
-		t.Errorf("udp_send(string, number, string) should type-check: %v", err)
-	}
-	// Wrong arg types are rejected: host must be a string, port a number.
-	if err := checkSource(t, `function f(): i32 { return udp_send(8125, 8125, "x"); }`); err == nil {
-		t.Errorf("udp_send with a non-string host should fail")
-	}
-	if err := checkSource(t, `function f(): i32 { return udp_send("h", "p", "x"); }`); err == nil {
-		t.Errorf("udp_send with a non-number port should fail")
+// The socket and stdin builtins std/net and std/io replaced are not
+// builtins any more: a call to one is an unknown name.
+func TestRetiredIoBuiltinsAreUnknown(t *testing.T) {
+	for _, src := range []string{
+		`function f(): u8[] { return tcp_recv(3, 16); }`,
+		`function f(): i32 { return tcp_send(3, "x"); }`,
+		`function f(): i32 { return tcp_connect(16777343, 80); }`,
+		`function f(): i32 { return udp_send("127.0.0.1", 8125, "x"); }`,
+		`function f(b: u8[]): i32 { return udp_send_bytes("127.0.0.1", 8125, b); }`,
+		`function f(): Option[string] { return read_line(); }`,
+		`function f(): Option[string] { return stdin().read_line(); }`,
+	} {
+		if err := checkSource(t, src); err == nil {
+			t.Errorf("%s: want an error, the builtin is retired", src)
+		}
 	}
 }
 

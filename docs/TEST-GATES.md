@@ -72,8 +72,8 @@ the Darwin lane).
 `e2eharness.BytesFloorProbe`: a byte array shortened by `__arr_set_len`, and
 an inline and a heap string read through `__str_bytes` with scratch to spill
 into and without.
-The bodies written on the floor, `tcp_recv`, `tcp_send` and `udp_send`, are
-gated by every socket, serve, fetch and udp test that was already on the
+The bodies written on the floor, `tcp_recv_into` and `tcp_send_bytes`, are
+gated by every socket, serve and fetch test that was already on the
 builtins, on every backend.
 
 The per-request gates of #9853's exit criterion A: `TestBumpPerRequest`
@@ -331,7 +331,7 @@ by that lowering's design, and a gate on it would measure the lowering
 rather than the loop.
 `TestSelfHostSocketCtl` compiles them with the production self-host
 driver for x86-64, arm64 and wasm under strict IR with complete semantic
-lowering required (it is what caught the self-host `tcp_recv` body
+lowering required (it is what caught the self-host socket receive body
 adopting its buffer before the copy loop, #10486; the rest of that idiom
 in asmcore is `TestSelfHostRawOwnerAfterLastRead`'s, below);
 `TestSelfHostSupervisedServeReusePortWorkers` serves

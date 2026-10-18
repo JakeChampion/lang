@@ -1617,37 +1617,16 @@ pub function op_wasm_poll(): Op {
   return op0(167);
 }
 
-// tcp_* client primitives (the self-host twins of the native socket builtins).
-// `tcp_connect` [host_be, port] -> i32 connected fd (or -errno); host_be is the
-// IPv4 in network byte order packed into an i32. `tcp_send` [fd, str box] -> i32
-// bytes written (or -errno). `tcp_recv` [fd, max] -> a fresh `u8[]` box of up
-// to `max` bytes (empty on EOF/error), like `random_bytes` and
-// `read_file_bytes`; allocates. `tcp_close` [fd] -> i32 0/-errno. `tcp_pollable`
-// [fd] -> i32: the readiness token (the fd itself on native). All lower to the
-// matching __fern_tcp_* runtime helper. See docs/ASYNC-SELFHOST-IR.md.
-pub function op_tcp_connect(): Op {
-  return op0(110);
-}
-
-pub function op_tcp_send(): Op {
-  return op0(114);
-}
-
-// Borrow a byte array and report the number sent, or a negative error.
+// tcp_* stream primitives. `tcp_send_bytes` [fd, u8[]] -> i32 bytes written
+// (or -errno). `tcp_close` [fd] -> i32 0/-errno. `tcp_pollable` [fd] -> i32:
+// the readiness token (the fd itself on native). All lower to the matching
+// __fern_tcp_* runtime helper. See docs/ASYNC-SELFHOST-IR.md.
 pub function op_tcp_send_bytes(): Op {
   return op0(353);
 }
 
-pub function op_tcp_recv(): Op {
-  return op0(115);
-}
-
 pub function op_tcp_close(): Op {
   return op0(116);
-}
-
-pub function op_udp_send(): Op {
-  return op0(208);
 }
 
 pub function op_tcp_pollable(): Op {
@@ -1709,10 +1688,6 @@ pub function op_udp_connect(): Op {
 
 pub function op_udp_sendto(): Op {
   return op0(336);
-}
-
-pub function op_udp_send_bytes(): Op {
-  return op0(354);
 }
 
 pub function op_udp_sendto_bytes(): Op {
@@ -2044,15 +2019,6 @@ pub function op_eprint_str(): Op {
 // the pushed dummy keeps the operand-stack shape for a surrounding statement drop.
 pub function op_exit(): Op {
   return op0(166);
-}
-
-// `read_line` pops an fd and reads up to 256 bytes (one line) from it, pushing
-// `Option[string]` — Some(line, newline included) or None at EOF before any byte.
-// The fd is an operand, not fd 0, because `r.read_line()` on a file Reader has to
-// read THAT reader (a Reader is its fd); the bare `read_line()` builtin lowers a
-// const 0 for it. Lowers to each backend's __fern_read_line helper.
-pub function op_read_line(): Op {
-  return op0(168);
 }
 
 // `read_file` pops a path string value and reads the whole named file, pushing a
@@ -3366,10 +3332,11 @@ pub function kind_count(): i32 {
 }
 
 // Retired op ids remain reserved. The original range includes the former
-// transcendentals, string builder and map ops; 198 was the shallow struct
-// copy replaced by the typed lowering.
+// transcendentals, string builder and map ops, and tcp_connect, tcp_send,
+// tcp_recv and read_line, which std/net and std/io replaced; 198 was the
+// shallow struct copy replaced by the typed lowering.
 pub function kind_retired(id: i32): boolean {
-  return id >= 62 && id <= 66 || id >= 117 && id <= 119 || id == 121 || id >= 124 && id <= 137 || id == 198;
+  return id == 110 || id == 114 || id == 115 || id == 168 || id >= 62 && id <= 66 || id >= 117 && id <= 119 || id == 121 || id >= 124 && id <= 137 || id == 198;
 }
 
 // kind_id maps an op-kind tag to its stable integer id (0 = KIND_INVALID for
@@ -3385,8 +3352,7 @@ pub function kind_retired(id: i32): boolean {
 // (kind_id(kind_name(id)) != id). kind_name stays the ordered vocabulary.
 //
 // tcp_pollable is 112, not 197: it took the slot str_chars freed (#7231), and
-// tcp_send / tcp_recv / tcp_close are 114..116, the slots the string search
-// predicates freed (#9848), tcp_connect is 110, the slot str_reverse freed,
+// tcp_close is 116, a slot the string search predicates freed (#9848),
 // wasm_pollable_drop / wasm_block / wasm_poll are 161 / 162 / 167, the
 // slots print_int / print_i64 / read_int freed, and wasm_timer_pollable is
 // 148, the slot dyn_downcast freed when the AST lowering that emitted it
@@ -4013,9 +3979,6 @@ function kind_id_len8(name: string): i32 {
   if (c == b'u' && name == "u32_wrap") {
     return 10;
   }
-  if (c == b'u' && name == "udp_send") {
-    return 208;
-  }
   if (c == b'u' && name == "udp_bind") {
     return 334;
   }
@@ -4134,12 +4097,6 @@ function kind_id_len8_t(name: string): i32 {
   if (name == "timer_fd") {
     return 188;
   }
-  if (name == "tcp_send") {
-    return 114;
-  }
-  if (name == "tcp_recv") {
-    return 115;
-  }
   return 0;
 }
 
@@ -4252,9 +4209,6 @@ function kind_id_len9_r(name: string): i32 {
   }
   if (name == "raw_load8") {
     return 83;
-  }
-  if (name == "read_line") {
-    return 168;
   }
   if (name == "read_file") {
     return 169;
@@ -4471,9 +4425,6 @@ function kind_id_len11(name: string): i32 {
   }
   if (c == b's') {
     return kind_id_len11_s(name);
-  }
-  if (c == b't' && name == "tcp_connect") {
-    return 110;
   }
   if (c == b't' && name == "termios_get") {
     return 312;
@@ -4726,9 +4677,6 @@ function kind_id_len14(name: string): i32 {
   }
   if (name == "raw_task_state") {
     return 367;
-  }
-  if (name == "udp_send_bytes") {
-    return 354;
   }
   if (name == "tcp_send_bytes") {
     return 353;
@@ -5281,9 +5229,6 @@ function kind_name_2(id: i32): string {
   if (id == 109) {
     return "str_trim";
   }
-  if (id == 110) {
-    return "tcp_connect";
-  }
   if (id == 111) {
     return "str_replace";
   }
@@ -5292,12 +5237,6 @@ function kind_name_2(id: i32): string {
   }
   if (id == 113) {
     return "str_lines";
-  }
-  if (id == 114) {
-    return "tcp_send";
-  }
-  if (id == 115) {
-    return "tcp_recv";
   }
   if (id == 116) {
     return "tcp_close";
@@ -5408,9 +5347,6 @@ function kind_name_4(id: i32): string {
   }
   if (id == 167) {
     return "wasm_poll";
-  }
-  if (id == 168) {
-    return "read_line";
   }
   if (id == 169) {
     return "read_file";
@@ -5600,9 +5536,6 @@ function kind_name_4(id: i32): string {
   }
   if (id == 380) {
     return "str_from_bytes_range";
-  }
-  if (id == 208) {
-    return "udp_send";
   }
   if (id == 211) {
     return "proc_fork";
@@ -6086,9 +6019,6 @@ pub function kind_name(id: i32): string {
   if (id == 372) {
     return "buf_push_bytes_expanded";
   }
-  if (id == 354) {
-    return "udp_send_bytes";
-  }
   if (id == 355) {
     return "udp_sendto_bytes";
   }
@@ -6258,7 +6188,6 @@ function pops1_io(t: i32): boolean {
     || t == 310 || t == 391 || t == 432  // read_dir_all, read_dir_ino, read_dir_ino_all
     || t == 174 || t == 175 || t == 236 || t == 176 || t == 179 || t == 181  // temp_dir, stat, lstat, env, reader_close, sleep_ms
     || t == 266  // sleep_ns
-    || t == 168  // read_line (fd)
     || t == 231 || t == 232  // create_dir_all, isatty
     || t == 243 || t == 244  // signal_ignore, signal_default
     || t == 392 || t == 393 || t == 394  // signal_catch, signal_taken, signal_catch_interrupting
@@ -6325,7 +6254,7 @@ function pops2_io(t: i32): boolean {
     || t == 284  // set_process_group (pid, pgid)
     || t == 311  // fd_dup_onto (fd, newfd)
     || t == 178 || t == 348 || t == 349 || t == 350 || t == 187  // read_chunk, read_chunk_bytes, poll
-    || t == 110 || t == 114 || t == 353 || t == 115 || t == 334 || t == 339  // tcp_connect, tcp_send, tcp_send_bytes, tcp_recv, udp_bind, unix_listen
+    || t == 353 || t == 334 || t == 339  // tcp_send_bytes, udp_bind, unix_listen
     || t == 344  // tcp_recv_into (fd, buf)
     || t == 202 || t == 213 || t == 308 || t == 431  // writer_write, proc_exec, write_some, writer_splice_forever
     || t == 278  // signal_mask (how, mask)
@@ -6336,12 +6265,11 @@ function pops3(t: i32): boolean {
   return t == 379 || t == 361 || t == 360 || t == 358 || t == 74 || t == 75  // scan_set_bytes, rmemchr_bytes, memchr_bytes, memcpy, memset
     || t == 82 || t == 84  // raw_store8, raw_store_ptr
     || t == 89 || t == 96 || t == 102 || t == 111  // arr_set, arr_slice, str_slice, str_replace
-    || t == 177 || t == 208 || t == 225 || t == 234  // subprocess, udp_send, memchr, rmemchr
+    || t == 177 || t == 225 || t == 234  // subprocess, memchr, rmemchr
     || t == 333 || t == 335 || t == 337 || t == 338  // tcp_socket_ctl, udp_connect, udp_recvfrom, tcp_connect_with
     || t == 442  // udp_bind_with (addr, port, reuse_port)
     || t == 346  // tcp_sendfile (fd, file, max)
     || t == 387  // tcp_send_buf (fd, handle, from)
-    || t == 354  // udp_send_bytes (host, port, data)
     || t == 343 || t == 436  // reactor_wait / ring_wait (r, events, timeout_ms)
     || t == 438  // ring_recv (r, fd, buf)
     || t == 242  // reader_seek (fd, offset, whence)
@@ -9119,10 +9047,6 @@ pub function op_allocates(tag: i32): boolean {
   // subprocess boxes a fresh ProcessResult struct + its two stdout/stderr
   // string blocks, so it needs the heap runtime.
   if (tag == 177) {
-    return true;
-  }
-  // read_line boxes the line into a fresh string block, so it needs the heap.
-  if (tag == 168) {
     return true;
   }
   // hostname boxes the node name into a fresh string block, and uname_field

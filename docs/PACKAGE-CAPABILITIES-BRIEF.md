@@ -74,7 +74,7 @@ Rules:
   walks its functions' call graphs; reaching a capability-tagged
   builtin (directly or through a transitive callee in the same or a
   deeper package) without the grant is an error carrying the chain:
-  `json_fast → helper.fetch_cached → tcp_connect: package
+  `json_fast → helper.fetch_cached → tcp_connect_with: package
   'json_fast' has no 'net' capability`.
 - **Closures and `dyn` values** count at their *definition* package,
   not their call site — a callback the root hands to a dependency

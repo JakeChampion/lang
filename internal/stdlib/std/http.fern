@@ -2548,7 +2548,7 @@ function __http_reason(code: i32): string {
 // `http_serialize_response(resp)` builds the wire-format
 // response from an HttpResponse, advertising `Connection: close`
 // so the client's `read()` returns the EOF that tells it the
-// response is complete after the caller's `tcp_send` finishes the
+// response is complete after the caller's `net.write` finishes the
 // write. No chunked TE. This text form decodes byte bodies with replacement;
 // use http_serialize_response_bytes to preserve a binary body.
 pub function http_serialize_response(resp: HttpResponse): string {

@@ -11,6 +11,18 @@ package e2eharness
 func UnixSocketProbe() string {
 	return `import "core/int";
 import "std/string";
+import "std/net";
+
+// recv reads once from fd within five seconds: the bytes, none at the end
+// of the stream, when nothing came, or when the read failed.
+function recv(fd: i32, max: i32): u8[] {
+    match (net.read_watched(fd, max, 5000i64, 1)) {
+        Ok(net.Chunk(b)) => { return b; },
+        _ => {}
+    }
+    let none: u8[] = [];
+    return none;
+}
 
 function fail(n: i32): i32 {
     print(int.int_to_string(n));
@@ -30,11 +42,11 @@ function main(): i32 {
     if (c < 0) { return fail(2); }
     let a: i32 = tcp_accept(ln);
     if (a < 0) { return fail(3); }
-    if (tcp_send(c, "hi") != 2) { return fail(4); }
-    let got: u8[] = tcp_recv(a, 16);
+    if (tcp_send_bytes(c, [104u8, 105u8]) != 2) { return fail(4); }
+    let got: u8[] = recv(a, 16);
     if (got.len() != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(5); }
-    if (tcp_send(a, "yo") != 2) { return fail(6); }
-    let back: u8[] = tcp_recv(c, 16);
+    if (tcp_send_bytes(a, [121u8, 111u8]) != 2) { return fail(6); }
+    let back: u8[] = recv(c, 16);
     if (back.len() != 2 || back[0] != 121u8) { return fail(7); }
     if (unix_listen(path, 4) >= 0) { return fail(8); }
     tcp_close(a);
@@ -62,6 +74,17 @@ func NetUnixProbe() string {
 	return `import "core/int";
 import "std/net";
 import "std/string";
+
+// recv reads once from fd within five seconds: the bytes, none at the end
+// of the stream, when nothing came, or when the read failed.
+function recv(fd: i32, max: i32): u8[] {
+    match (net.read_watched(fd, max, 5000i64, 1)) {
+        Ok(net.Chunk(b)) => { return b; },
+        _ => {}
+    }
+    let none: u8[] = [];
+    return none;
+}
 
 function fail(n: i32): i32 {
     print(int.int_to_string(n));
@@ -97,8 +120,8 @@ function main(): i32 {
         Ok(fd) => { a = fd; },
         Err(e) => { return fail(3); },
     }
-    if (tcp_send(c, "hi") != 2) { return fail(4); }
-    let got: u8[] = tcp_recv(a, 16);
+    if (tcp_send_bytes(c, [104u8, 105u8]) != 2) { return fail(4); }
+    let got: u8[] = recv(a, 16);
     if (got.len() != 2 || got[0] != 104u8) { return fail(5); }
     match (net.listen_unix(path, 4)) {
         Ok(fd) => { return fail(6); },

@@ -12,6 +12,7 @@ import (
 // few dozen rounds and the round reports which builtin failed.
 const wasmFdReleaseProgram = `
 import "std/i32";
+import "std/io";
 
 function round(i: i32): i32 {
     let s: string = "line " + i.to_string() + "\n";
@@ -37,7 +38,7 @@ function round(i: i32): i32 {
     }
     match (open_reader("w.txt")) {
         Ok(r) => {
-            match (r.read_line()) { Some(l) => { if (l != "xy") { return 6; } }, None => { return 6; } }
+            match (io.read_line(r)) { Ok(Some(l)) => { if (l != "xy") { return 6; } }, _ => { return 6; } }
             match (r.close()) { Some(_) => { return 6; }, None => {} }
         },
         Err(_) => { return 6; }

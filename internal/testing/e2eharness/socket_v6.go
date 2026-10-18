@@ -15,6 +15,18 @@ package e2eharness
 // either.
 func SocketV6Probe() string {
 	return `import "core/int";
+import "std/net";
+
+// recv reads once from fd within five seconds: the bytes, none at the end
+// of the stream, when nothing came, or when the read failed.
+function recv(fd: i32, max: i32): u8[] {
+    match (net.read_watched(fd, max, 5000i64, 1)) {
+        Ok(net.Chunk(b)) => { return b; },
+        _ => {}
+    }
+    let none: u8[] = [];
+    return none;
+}
 
 function fail(n: i32): i32 {
     print(int.int_to_string(n));
@@ -68,11 +80,11 @@ function main(): i32 {
     if (c < 0) { return fail(3); }
     let a: i32 = tcp_accept(ln);
     if (a < 0) { return fail(4); }
-    if (tcp_send(c, "hi") != 2) { return fail(5); }
-    let got: u8[] = tcp_recv(a, 16);
+    if (tcp_send_bytes(c, [104u8, 105u8]) != 2) { return fail(5); }
+    let got: u8[] = recv(a, 16);
     if (got.len() != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(6); }
-    if (tcp_send(a, "yo") != 2) { return fail(7); }
-    let back: u8[] = tcp_recv(c, 16);
+    if (tcp_send_bytes(a, [121u8, 111u8]) != 2) { return fail(7); }
+    let back: u8[] = recv(c, 16);
     if (back.len() != 2 || back[0] != 121u8) { return fail(8); }
     tcp_close(a);
     tcp_close(c);
@@ -102,7 +114,7 @@ function main(): i32 {
     if (target_os() != "wasi") {
         let dl: i32 = tcp_listen_with(zeros(16), 0, 4, false);
         if (dl < 0) { return fail(30); }
-        let dc: i32 = tcp_connect(16777343, tcp_local_port(dl));
+        let dc: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], tcp_local_port(dl), false);
         if (dc < 0) { return fail(31); }
         let da: i32 = tcp_accept(dl);
         if (da < 0) { return fail(32); }
@@ -142,6 +154,17 @@ function main(): i32 {
 func NetV6Probe() string {
 	return `import "core/int";
 import "std/net";
+
+// recv reads once from fd within five seconds: the bytes, none at the end
+// of the stream, when nothing came, or when the read failed.
+function recv(fd: i32, max: i32): u8[] {
+    match (net.read_watched(fd, max, 5000i64, 1)) {
+        Ok(net.Chunk(b)) => { return b; },
+        _ => {}
+    }
+    let none: u8[] = [];
+    return none;
+}
 
 function fail(n: i32): i32 {
     print(int.int_to_string(n));
@@ -193,8 +216,8 @@ function main(): i32 {
     }
     let a: i32 = tcp_accept(ln);
     if (a < 0) { return fail(4); }
-    if (tcp_send(c, "hi") != 2) { return fail(5); }
-    let got: u8[] = tcp_recv(a, 16);
+    if (tcp_send_bytes(c, [104u8, 105u8]) != 2) { return fail(5); }
+    let got: u8[] = recv(a, 16);
     if (got.len() != 2 || got[0] != 104u8) { return fail(6); }
     tcp_close(a);
     tcp_close(c);

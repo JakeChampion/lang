@@ -1532,7 +1532,6 @@ TestSelfHostU64TupArrIR 2
 TestSelfHostUDPSendBytes 19
 TestSelfHostUafIncAfterFreeReportedArm64 21
 TestSelfHostUafQuarantineAsmContractArm64 19
-TestSelfHostUdpSendRejectsNonLiteralHostX86_64 2
 TestSelfHostUnionMemberLiteralIRArm64 2
 TestSelfHostUnionMemberLiteralIRX86_64 2
 TestSelfHostUnionMemberLiteralWasmIR 2

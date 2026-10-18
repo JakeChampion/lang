@@ -3711,7 +3711,7 @@ function main(): i32 { return signals(); }
 	// The sockets, `sync` and the set-id builtins, which no other row reaches:
 	// a loopback listener on an ephemeral port (a fixed one sits in TIME_WAIT
 	// for the leg that runs next), a connection, an accept, one send and its
-	// receive as a fresh u8[], a connection's readiness token (the fd itself
+	// receive into a u8[], a connection's readiness token (the fd itself
 	// on native), the three closes, `sync` as a statement, and
 	// the set-id calls asking for root, which a host refuses or grants and
 	// the row counts either way.
@@ -3720,15 +3720,14 @@ function sockets(): i32 {
     let n: i32 = 0;
     let listener: i32 = tcp_listen(0);
     if (listener >= 0) {
-        let host_be: i32 = 127 | (1 << 24);
-        let c: i32 = tcp_connect(host_be, tcp_local_port(listener));
+        let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], tcp_local_port(listener), false);
         if (c >= 0) {
             let a: i32 = tcp_accept(listener);
             if (a >= 0) {
-                if (tcp_send(c, "ping") == 4) { n = n + 1; }
+                if (tcp_send_bytes(c, [112u8, 105u8, 110u8, 103u8]) == 4) { n = n + 1; }
                 if (tcp_pollable(c) == c) { n = n + 1; }
-                let got: u8[] = tcp_recv(a, 16);
-                if (got.len() == 4 && got[0] as i32 == 112) { n = n + 1; }
+                let got: u8[] = __alloc_u8(16);
+                if (tcp_recv_into(a, got) == 4 && got[0] as i32 == 112) { n = n + 1; }
                 if (tcp_close(a) >= 0) { n = n + 1; }
             }
             if (tcp_close(c) >= 0) { n = n + 1; }
@@ -5800,13 +5799,12 @@ function main(): i32 {
     return n % 256;
 }
 `},
-	// The environment, host and stdin leaves.
-	{name: "sys-helpers-take-the-typed-path", atLeast: 1, want: "113|", nativeOnly: true, stdin: "ab\ncdef\n",
+	// The environment and host leaves.
+	{name: "sys-helpers-take-the-typed-path", atLeast: 1, want: "105|", nativeOnly: true,
 		reports: []string{
 			"runtime __fern_env: produced", "runtime __fern_environ: produced",
 			"runtime __fern_getcwd: produced", "runtime __fern_hostname: produced",
 			"runtime __fern_uname_field: produced", "runtime __fern_rlimit_nofile: produced",
-			"runtime __fern_read_line: produced",
 		}, src: `
 function main(): i32 {
     let n: i32 = 0;
@@ -5816,8 +5814,6 @@ function main(): i32 {
     if (hostname().len() > 0) { n = n + 1; }
     if (uname_field(0).len() > 0) { n = n + 1; }
     if (rlimit_nofile() > 0) { n = n + 1; }
-    match (read_line()) { Some(l) => { n = n + l.len() * 1000; }, None => {} }
-    match (read_line()) { Some(l) => { n = n + l.len() * 10000; }, None => {} }
     return n % 256;
 }
 `},

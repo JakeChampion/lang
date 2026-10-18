@@ -54,7 +54,7 @@ func NativeSocketFailureProbe(operation string, darwin, zero bool, connectErrno 
 		errno = 48
 	}
 	if operation == "connect" {
-		errno, expr = connectErrno, "tcp_connect(-1, 1)"
+		errno, expr = connectErrno, "tcp_connect_with([255u8, 255u8, 255u8, 255u8], 1, false)"
 	}
 	return fmt.Sprintf(`function main(): i32 {
     let listener: i32 = tcp_listen(0);

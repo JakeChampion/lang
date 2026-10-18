@@ -20,23 +20,9 @@
 //   }
 // json.json_parse / json.json_encode for the read/write halves;
 // std/string for (string).repeat used by the indent helper.
+import "std/io";
 import "std/json";
 import "std/string";
-
-function read_all(r: Reader): string {
-  let out: string = "";
-  while (true) {
-    match (r.read_line()) {
-      Some(line) => {
-        out = out + line + "\n";
-      },
-      None => {
-        return out;
-      }
-    }
-  }
-  return out;  // unreachable
-}
 
 function pretty(v: json.JsonValue, depth: i32): string {
   let pad: string = "  ".repeat(depth);
@@ -95,7 +81,16 @@ function pretty(v: json.JsonValue, depth: i32): string {
 }
 
 function main(): i32 {
-  let input: string = read_all(stdin());
+  let input: string = "";
+  match (io.read_all_stdin()) {
+    Ok(t) => {
+      input = t;
+    },
+    Err(_) => {
+      eprint("json_pretty: cannot read stdin");
+      return 1;
+    }
+  }
   match (json.json_parse(input)) {
     Some(v) => {
       print(pretty(v, 0));

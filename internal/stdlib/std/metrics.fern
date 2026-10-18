@@ -32,6 +32,7 @@ import "std/async";
 import "std/http";
 import "std/i32";
 import "std/i64";
+import "std/net";
 import "std/float";
 import "std/string";
 
@@ -580,7 +581,8 @@ function __index_of_i32(xs: i32[], x: i32): i32 {
 // the non-blocking flag never blocks in a second accept; the readiness is
 // level-triggered and reports the rest), or a connection's bytes read and,
 // once its request head is whole (or past 8 KiB, or the peer is done),
-// answered with `answer(path)` and closed.
+// answered with `answer(path)` and closed; one whose read fails is closed
+// unanswered.
 pub function (e: Exporter) wake[D: async.Driver](drv: D, fd: i32, answer: (string) => HttpResponse): Exporter {
   if (fd == e.listener) {
     return e.accept(drv);
@@ -589,7 +591,21 @@ pub function (e: Exporter) wake[D: async.Driver](drv: D, fd: i32, answer: (strin
   if (at < 0) {
     return e;
   }
-  let got: u8[] = tcp_recv(fd, 4096);
+  let room: u8[] = __alloc_u8(4096);
+  let got: u8[] = [];
+  match (net.read(fd, room)) {
+    Ok(n) => {
+      got = room.take(n);
+    },
+    Err(err) => {
+      if (err.eq(net.WouldBlock)) {
+        return e;
+      }
+      drv.unwatch(fd);
+      tcp_close(fd);
+      return Exporter { ...e, scrapes: __without_i32(e.scrapes, at), heads: __without_str(e.heads, at) };
+    }
+  }
   let head: string = e.heads[at] + string_from_bytes_unchecked(got);
   if (got.len() > 0 && head.index_of("\r\n\r\n") < 0 && head.len() < 8192) {
     return Exporter { ...e, heads: e.heads.with(at, head) };
@@ -623,7 +639,7 @@ function __answer(fd: i32, head: string, answer: (string) => HttpResponse): void
     },
     None => {}
   }
-  tcp_send(fd, http.http_serialize_response_conn(resp, false));
+  let sent: Result[i32, net.NetError] = net.write(fd, http.http_serialize_response_conn(resp, false).bytes());
 }
 
 // __path_of(head) — the path of the request line's target, less its

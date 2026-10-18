@@ -3,7 +3,6 @@ package interp
 import (
 	"fmt"
 	"net"
-	"strings"
 	"syscall"
 )
 
@@ -243,58 +242,6 @@ func udpSendto(i *Interp, args []Value, raw bool) (Value, error) {
 	return Number(len(data)), nil
 }
 
-func builtinUdpSendBytes(_ *Interp, args []Value) (Value, error) {
-	const name = "udp_send_bytes"
-	if len(args) != 3 {
-		return nil, fmt.Errorf("%s: expected 3 args, got %d", name, len(args))
-	}
-	host, ok := args[0].(String)
-	if !ok {
-		return nil, fmt.Errorf("%s: expected string host arg, got %T", name, args[0])
-	}
-	port, err := numberArgs(name, args[1:2], 1)
-	if err != nil {
-		return nil, err
-	}
-	data, err := udpPayload(name, args[2])
-	if err != nil {
-		return nil, err
-	}
-	parts := strings.Split(string(host), ".")
-	if len(parts) != 4 {
-		return Number(-3), nil
-	}
-	to := &syscall.SockaddrInet4{Port: int(port[0])}
-	for k, part := range parts {
-		if part == "" {
-			return Number(-3), nil
-		}
-		octet := 0
-		for _, digit := range part {
-			if digit < '0' || digit > '9' {
-				return Number(-3), nil
-			}
-			octet = octet*10 + int(digit-'0')
-			if octet > 255 {
-				return Number(-3), nil
-			}
-		}
-		to.Addr[k] = byte(octet)
-	}
-	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
-	if err != nil {
-		return negErrno(err), nil
-	}
-	defer syscall.Close(fd)
-	if err := syscall.Connect(fd, to); err != nil {
-		return negErrno(err), nil
-	}
-	if err := syscall.Sendto(fd, data, 0, nil); err != nil {
-		return negErrno(err), nil
-	}
-	return Number(len(data)), nil
-}
-
 func builtinUdpRecvfrom(i *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("udp_recvfrom: expected 3 args, got %d", len(args))
@@ -387,7 +334,7 @@ func (i *Interp) udpSocketCtl(id, op, arg int64) (Value, bool) {
 }
 
 // The Unix-domain sockets go through the net package like the tcp ones,
-// so tcp_accept, tcp_recv, tcp_send and tcp_close take them. A path longer
+// so tcp_accept, tcp_recv_into, tcp_send_bytes and tcp_close take them. A path longer
 // than a sockaddr_un holds is refused with the natives' errno, where the
 // net package would report EINVAL.
 const sunPathMax = 107

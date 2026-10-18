@@ -82,10 +82,10 @@ file at a nonzero offset, reads distinct bytes back, unmaps and closes, pins
 the errno of a bad descriptor, and round-trips bytes through the byte store.
 The Darwin legs run in the Apple Silicon lane.
 
-`tcp_listen`, `tcp_listen_with`, `tcp_connect`, `tcp_accept`,
-`tcp_local_port`, `tcp_close`, `tcp_socket_ctl`, `tcp_recv`, `tcp_send`,
-`udp_send`, `udp_bind`, `udp_bind_with`, `udp_connect`, `udp_sendto` and
-`udp_recvfrom` are one Fern body each in `asmcore.fern` over this floor, on x86-64-linux,
+`tcp_listen`, `tcp_listen_with`, `tcp_connect_with`, `tcp_accept`,
+`tcp_local_port`, `tcp_close`, `tcp_socket_ctl`, `tcp_recv_into`,
+`tcp_send_bytes`, `udp_bind`, `udp_bind_with`, `udp_connect`, `udp_sendto`
+and `udp_recvfrom` are one Fern body each in `asmcore.fern` over this floor, on x86-64-linux,
 arm64-linux and arm64-darwin (the sockaddr's leading `sin_len` byte, the
 option numbers and `MSG_NOSIGNAL` are the Darwin differences); wasm has
 wasi:sockets bodies in `wasm_ir.fern`, and the interpreter Go ones.
@@ -99,8 +99,7 @@ every interface, and `::` both families: `IPV6_V6ONLY` is cleared on an
 IPv6 listener whatever the host's default, except on wasi:sockets 0.2,
 which keeps an IPv6 socket IPv6-only. A host without IPv6 refuses the family:
 `-EAFNOSUPPORT` from `socket(2)` natively and in the interpreter, and on
-wasm the `-ENOTSUP` wasmtime answers for create-socket. `tcp_connect` and
-`udp_send` keep their packed IPv4 forms and box them for the same bodies.
+wasm the `-ENOTSUP` wasmtime answers for create-socket.
 The IPv6 leg (`TestSocketV6*` and the self-host twin) runs where Go can
 listen on `::1` and skips, with the probe's own "nov6" answer required,
 where it cannot.
@@ -110,7 +109,7 @@ op, arg)` (op 1 `TCP_NODELAY`, 2 `SO_KEEPALIVE`, 3 `O_NONBLOCK`, 4
 `shutdown(2)` with `arg` its how, 5 the result of a connect under way, 6
 the bytes queued to send that the peer has not acknowledged, `SIOCOUTQ`
 on Linux and `SO_NWRITE` on Darwin, 7 the peer's address as one 32-bit
-key: an IPv4 address packed as `tcp_connect` takes it, a v4-mapped IPv6
+key: an IPv4 address packed as `net.packed_v4` packs it, a v4-mapped IPv6
 address its IPv4 one, any other IPv6 address the two words of its first
 eight bytes XORed and never 0, and 0 for a socket with no peer, so a key
 is never mistaken for an error, 9 the socket's own address and 10 its
@@ -185,7 +184,7 @@ sockets: a stream listener at a filesystem path and a connection to one,
 each a descriptor or -errno (-ENAMETOOLONG for a path longer than the
 address holds, 107 bytes on Linux and 103 on Darwin, before any socket
 exists; a held path is -EADDRINUSE, and the socket file is not unlinked
-first), which `tcp_accept`, `tcp_recv`, `tcp_send` and `tcp_close` take.
+first), which `tcp_accept`, `tcp_recv_into`, `tcp_send_bytes` and `tcp_close` take.
 Fern bodies in `asmcore.fern` (Darwin leads the address with sun_len) and
 the net package in the interpreter. Native only: the `unix` capability is
 in no wasi profile, so E066 refuses them on both wasm worlds at check time,
@@ -253,15 +252,13 @@ of these at check time there.
 
 | Primitive | Linux natives | arm64-darwin | wasm32-wasi | wasi-http | interp |
 | --- | --- | --- | --- | --- | --- |
-| `tcp_listen`, `tcp_accept`, `tcp_local_port`, `tcp_close`, `tcp_pollable`, `tcp_recv`, `tcp_send` | Fern body; `tcp_pollable` answers the descriptor itself | Fern body; `tcp_pollable` answers the descriptor itself | wasi:sockets/tcp bodies (`wasm_ir.fern`); a "fd" is the 16-byte record | E066 | net package |
-| `tcp_connect` (packed IPv4) | Fern body | Fern body | boxes the address for `tcp_connect_with` | E066 | net package |
+| `tcp_listen`, `tcp_accept`, `tcp_local_port`, `tcp_close`, `tcp_pollable`, `tcp_send_bytes` | Fern body; `tcp_pollable` answers the descriptor itself | Fern body; `tcp_pollable` answers the descriptor itself | wasi:sockets/tcp bodies (`wasm_ir.fern`); a "fd" is the 16-byte record | E066 | net package |
 | `tcp_listen_with`, `tcp_connect_with` (byte address) | Fern body | Fern body | `__fern_ip_flat` then start-bind or start-connect; a started connect is kind 4 | E066 | net package, `JoinHostPort`; a started connect is finished before answering |
-| `tcp_socket_ctl` | Fern body; op 7 answers 0 on a datagram socket | Fern body; op 7 answers 0 on a datagram socket | ops 2, 4, 5, 7, 9 and 10 through wasi:sockets; 1, 3 and 6 `-ENOTSUP`; every op but 9 and 10 `-ENOTSUP` on a datagram record, op 7 0 | E066 | net package controls; op 3 makes `tcp_recv` and `tcp_send` one read(2) or write(2) on the descriptor, so a send answers what the kernel took or -EAGAIN; op 5 answers 0 at once; op 6 reads the host's send queue; op 7 keys `RemoteAddr`, 0 on a datagram socket; ops 9 and 10 read the descriptor's own sockaddr |
-| `tcp_recv_into` | Fern body, `read(2)` | Fern body | non-blocking read on the input stream, `-EAGAIN` when empty | E066 | a read through the descriptor |
+| `tcp_socket_ctl` | Fern body; op 7 answers 0 on a datagram socket | Fern body; op 7 answers 0 on a datagram socket | ops 2, 4, 5, 7, 9 and 10 through wasi:sockets; 1, 3 and 6 `-ENOTSUP`; every op but 9 and 10 `-ENOTSUP` on a datagram record, op 7 0 | E066 | net package controls; op 3 makes `tcp_recv_into` and `tcp_send_bytes` one read(2) or write(2) on the descriptor, so a send answers what the kernel took or -EAGAIN; op 5 answers 0 at once; op 6 reads the host's send queue; op 7 keys `RemoteAddr`, 0 on a datagram socket; ops 9 and 10 read the descriptor's own sockaddr |
+| `tcp_recv_into` | Fern body, `read(2)`, -errno on failure | Fern body | non-blocking read on the input stream, `-EAGAIN` when empty, `-EIO` on a stream error | E066 | a read through the descriptor |
 | `tcp_ktls` | Fern body: `setsockopt` for the `tls` upper-layer protocol and each direction's keys, `sendmsg` and `recvmsg` with the record type as a control message | `-ENOSYS` | `-ENOSYS` | E066 | `-ENOSYS` |
 | `tcp_sendfile` | Fern body, `sendfile(2)`, the file advanced by what the socket took | Fern body, the position read and moved around Darwin's offset-and-length form | `-ENOTSUP`: the serve loop reads the file and sends the piece | E066 | a read of the open file then one socket write, the file moved back over what the socket did not take |
 | `tcp_send_buf` | Fern body, one `sendto(2)` of the builder's bytes from `from` | Fern body | the builder's bytes written to the output stream in place, as `tcp_send_bytes` writes an array | E066 | one socket write of the builder's bytes |
-| `udp_send` | Fern body, dotted-quad parse | Fern body | `udp_bind` then `udp_sendto` then close | E066 | net package |
 | `udp_bind`, `udp_connect`, `udp_sendto`, `udp_recvfrom` (byte address) | Fern body | Fern body; `EISCONN` for a named address on a connected socket | wasi:sockets/udp bodies (`wasm_ir.fern`); `recvfrom` blocks on the incoming pollable | E066 | raw descriptors, the kernel's errnos |
 | `udp_bind_with` | Fern body | Fern body, Darwin's option numbers | `udp_bind`; `reuse_port` not read | E066 | raw descriptor, the options set before the bind |
 | `unix_listen`, `unix_connect` | Fern body | Fern body, `sun_len` head | E066: no `unix` | E066 | net package |

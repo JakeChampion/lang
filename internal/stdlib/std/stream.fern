@@ -162,8 +162,8 @@ pub function (s: Stream) read_all_string(): (Option[string], Stream) {
 // convention that this comment used to describe is RETIRED).
 // The fd-backed Reader is effectful — its position lives in
 // kernel fd state, not a Fern value — so it cannot adopt the
-// value-threaded cursor idiom: its `read_line()` stays a bare
-// `Option[string]` that advances the fd as a side effect.
+// value-threaded cursor idiom: `io.read_line(r)` answers a
+// `Result[Option[string], IoError]` and advances the fd as a side effect.
 // Immutable readers (Stream) and effectful readers (fd) are
 // distinct abstractions; unifying them waits on nominal
 // interface types AND a decision on how an effectful reader

@@ -319,7 +319,6 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "__heap_mark", capability: "arena" },
     Gate { builtin: "__heap_release_to", capability: "arena" },
     // Blocking stdin reads.
-    Gate { builtin: "read_line", capability: "stdin" },
     Gate { builtin: "stdin", capability: "stdin" },
     // `log` is somewhere to put a line of diagnostics; `stdout` is an
     // actual stdout stream. The proxy world grants the first and has no
@@ -368,14 +367,9 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "tcp_listen", capability: "tcp" },
     Gate { builtin: "tcp_accept", capability: "tcp" },
     Gate { builtin: "tcp_local_port", capability: "tcp" },
-    Gate { builtin: "tcp_connect", capability: "tcp" },
-    Gate { builtin: "tcp_recv", capability: "tcp" },
-    Gate { builtin: "tcp_send", capability: "tcp" },
     Gate { builtin: "tcp_send_bytes", capability: "tcp" },
     Gate { builtin: "tcp_close", capability: "tcp" },
     Gate { builtin: "tcp_pollable", capability: "tcp" },
-    Gate { builtin: "udp_send", capability: "tcp" },
-    Gate { builtin: "udp_send_bytes", capability: "tcp" },
     Gate { builtin: "tcp_listen_with", capability: "tcp" },
     Gate { builtin: "tcp_socket_ctl", capability: "tcp" },
     Gate { builtin: "tcp_sendfile", capability: "tcp" },

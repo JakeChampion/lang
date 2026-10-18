@@ -1,14 +1,16 @@
+import "std/io";
 import "std/string";
 // Reads a line, trims the trailing newline, parses an i32, doubles
 // it. Fed "21\n" -> 42. Exercises stdin + parse_i32 across backends.
 function main(): i32 {
-    match (read_line()) {
-        Some(line) => {
+    match (io.read_line(stdin())) {
+        Ok(Some(line)) => {
             match (line.trim().parse_int()) {
                 Some(n) => { return n * 2; },
                 None => { return 254; }
             }
         },
-        None => { return 0; }
+        Ok(None()) => { return 0; },
+        Err(_) => { return 253; }
     }
 }

@@ -5355,9 +5355,7 @@ function dir_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
 }
 
 // The builtins whose result is an instantiated builtin union: each is the
-// stack IR op the AST lowering emits for the same call. `read_line` reads a FD
-// operand and the bare builtin names none, so its lowering pushes the zero the
-// AST path pushes.
+// stack IR op the AST lowering emits for the same call.
 // The stream handles: a handle IS its descriptor, so the three standard ones
 // are constants and every method is the free op with the receiver as its
 // first operand. Writer.close shares Reader.close's op.
@@ -5391,9 +5389,6 @@ function handle_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   }
   if (ins.str == "open_writer_with") {
     return Lowered { found: true, r: emit(r, ir.op_open_writer_with()) };
-  }
-  if (ins.str == "Reader.read_line") {
-    return Lowered { found: true, r: emit(r, ir.op_read_line()) };
   }
   if (ins.str == "Reader.read_chunk") {
     return Lowered { found: true, r: emit(r, ir.op_read_chunk()) };
@@ -5528,10 +5523,6 @@ function union_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowere
   }
   if (ins.str == "lstat") {
     return Lowered { found: true, r: emit(r, ir.op_lstat()) };
-  }
-  if (ins.str == "read_line") {
-    r = emit(r, ir.op_const_i32(0));
-    return Lowered { found: true, r: emit(r, ir.op_read_line()) };
   }
   return outcome_builtin_site(r, ins);
 }
@@ -5697,9 +5688,6 @@ function os_query_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "proc_waitpid_status") {
     return Lowered { found: true, r: emit(r, ir.op_proc_waitpid_status()) };
   }
-  if (ins.str == "tcp_connect") {
-    return Lowered { found: true, r: emit(r, ir.op_tcp_connect()) };
-  }
   if (ins.str == "tcp_listen") {
     return Lowered { found: true, r: emit(r, ir.op_tcp_listen()) };
   }
@@ -5856,26 +5844,14 @@ function os_floor_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
 }
 
 function os_floor_process_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
-  if (ins.str == "tcp_send") {
-    return Lowered { found: true, r: emit(r, ir.op_tcp_send()) };
-  }
   if (ins.str == "tcp_send_bytes") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_tcp_send_bytes())) };
-  }
-  if (ins.str == "tcp_recv") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_tcp_recv())) };
   }
   if (ins.str == "tcp_pollable") {
     return Lowered { found: true, r: emit(r, ir.op_tcp_pollable()) };
   }
   if (ins.str == "tcp_close") {
     return Lowered { found: true, r: emit(r, ir.op_tcp_close()) };
-  }
-  if (ins.str == "udp_send") {
-    return Lowered { found: true, r: emit(r, ir.op_udp_send()) };
-  }
-  if (ins.str == "udp_send_bytes") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_udp_send_bytes())) };
   }
   if (ins.str == "tcp_listen_with") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_tcp_listen_with())) };

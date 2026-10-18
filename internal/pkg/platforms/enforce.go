@@ -92,8 +92,7 @@ var gatedBuiltins = map[string]string{
 	"__heap_release_to": "arena",
 
 	// Blocking stdin reads (a webserver target has no stdin).
-	"read_line": "stdin",
-	"stdin":     "stdin",
+	"stdin": "stdin",
 
 	// The line is `log` = somewhere to put a line of diagnostics,
 	// `stdout` = an actual stdout stream. wasi-http is why they are
@@ -154,16 +153,11 @@ var gatedBuiltins = map[string]string{
 	"tcp_listen":       "tcp",
 	"tcp_accept":       "tcp",
 	"tcp_local_port":   "tcp",
-	"tcp_connect":      "tcp",
-	"tcp_recv":         "tcp",
-	"tcp_send":         "tcp",
 	"tcp_send_bytes":   "tcp",
 	"tcp_sendfile":     "tcp",
 	"tcp_send_buf":     "tcp",
 	"tcp_close":        "tcp",
 	"tcp_pollable":     "tcp",
-	"udp_send":         "tcp",
-	"udp_send_bytes":   "tcp",
 	"udp_bind":         "tcp",
 	"udp_bind_with":    "tcp",
 	"udp_connect":      "tcp",
@@ -593,6 +587,15 @@ func Enforce(prog *ast.Program, target string) []Violation {
 // function is part of the artifact, so "what this program can reach" is
 // exactly the union over all bodies.
 func scanGatedCalls(prog *ast.Program, visit func(fn *ast.FuncDecl, call *ast.Call, builtin, capability string)) {
+	// A declared free function is the callee its name reaches, not the
+	// builtin of that name: a flat-loaded stdlib program keeps std/net's
+	// `write` bare beside the builtin.
+	declared := map[string]bool{}
+	for _, fn := range prog.Funcs {
+		if fn.Receiver == nil && fn.MethodRecv == "" && fn.ImplTrait == "" {
+			declared[fn.Name] = true
+		}
+	}
 	for _, fn := range prog.Funcs {
 		if fn.Body == nil {
 			continue
@@ -604,7 +607,7 @@ func scanGatedCalls(prog *ast.Program, visit func(fn *ast.FuncDecl, call *ast.Ca
 				return true
 			}
 			id, ok := call.Callee.(*ast.Ident)
-			if !ok {
+			if !ok || declared[id.Name] {
 				return true
 			}
 			capName, gated := gatedBuiltins[id.Name]

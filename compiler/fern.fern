@@ -104,6 +104,7 @@ import "./lspquery";
 import "./lsprefs";
 import "./lsptokens";
 import "std/cli";
+import "std/io";
 
 // blank_line_map marks the 1-based source lines that hold nothing but
 // whitespace, indexed by line number so the formatter can ask about one in
@@ -3271,16 +3272,20 @@ function run_repl(root: string, target: string): i32 {
   let done: boolean = false;
   while (!done) {
     write("> ");
-    match (read_line()) {
-      Some(raw) => {
+    match (io.read_line(stdin())) {
+      Ok(Some(raw)) => {
         let line: string = raw.trim();
         if (line.len() > 0) {
           s = repl_line(s, line);
         }
       },
-      None => {
+      Ok(None()) => {
         print("");
         done = true;
+      },
+      Err(e) => {
+        eprint("fern: cannot read stdin: " + util.io_error_reason(e));
+        return 1;
       }
     }
   }
@@ -3767,26 +3772,6 @@ function flatten_path(p: string): string {
     i = i + 1;
   }
   return out;
-}
-
-// read_stdin reads the whole of stdin, which is how `-` names a program with
-// no file behind it: a pipeline stage, an editor buffer, or a host with no
-// filesystem to open (#6643). `read_line` keeps its newline, so the lines
-// concatenate back into the source verbatim.
-function read_stdin(): string {
-  let src: string = "";
-  let more: boolean = true;
-  while (more) {
-    match (read_line()) {
-      Some(line) => {
-        src = src + line;
-      },
-      None => {
-        more = false;
-      }
-    }
-  }
-  return src;
 }
 
 // check_dir implements `-check <DIR>`: type-check the package governing DIR,
@@ -4792,7 +4777,15 @@ function cover_report(path: string, have_path: boolean, as_lcov: boolean): i32 {
   }
   let text: string = "";
   if (path == "-") {
-    text = read_stdin();
+    match (io.read_all_stdin()) {
+      Ok(t) => {
+        text = t;
+      },
+      Err(e) => {
+        eprint("fern: -cover-report: cannot read stdin: " + util.io_error_reason(e));
+        return 1;
+      }
+    }
   } else {
     match (read_file(path)) {
       Ok(t) => {
@@ -5772,9 +5765,18 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // `-fmt -` and a compile from `-` are file errors under native, and the
   // self-host accepting them would be a divergence in the permissive
   // direction — the one that lets a program build under one compiler only.
+  // A program on stdin is how a pipeline stage, an editor buffer, or a host
+  // with no filesystem to open names one with no file behind it (#6643).
   if (entry_path == "-" && (mode_check || mode_interp)) {
-    esrc = read_stdin();
-    eok = true;
+    match (io.read_all_stdin()) {
+      Ok(s) => {
+        esrc = s;
+        eok = true;
+      },
+      Err(e) => {
+        eerr = modloader.read_error_reason(e);
+      }
+    }
   } else {
     match (read_file(entry_path)) {
       Ok(s) => {

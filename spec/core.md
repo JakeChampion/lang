@@ -181,12 +181,9 @@ is the number of slots it leaves.
 | `str_to_lower` | 107 | 1 | 1 |
 | `str_repeat` | 108 | 2 | 1 |
 | `str_trim` | 109 | 1 | 1 |
-| `tcp_connect` | 110 | 2 | 1 |
 | `str_replace` | 111 | 3 | 1 |
 | `tcp_pollable` | 112 | 1 | 1 |
 | `str_lines` | 113 | 1 | 1 |
-| `tcp_send` | 114 | 2 | 1 |
-| `tcp_recv` | 115 | 2 | 1 |
 | `tcp_close` | 116 | 1 | 1 |
 | `opt_make` | 120 | 1 | 1 |
 | `opt_tag` | 122 | 1 | 1 |
@@ -221,7 +218,6 @@ is the number of slots it leaves.
 | `putchar` | 165 | 1 | 1 |
 | `exit` | 166 | 1 | 1 |
 | `wasm_poll` | 167 | 1 | 1 |
-| `read_line` | 168 | 1 | 1 |
 | `read_file` | 169 | 1 | 1 |
 | `write_file` | 170 | 2 | 1 |
 | `read_dir` | 171 | 1 | 1 |
@@ -251,7 +247,6 @@ is the number of slots it leaves.
 | `raw_scratch` | 205 | 1 | 1 |
 | `syscall4` | 206 | 5 | 1 |
 | `raw_environ` | 207 | 0 | 1 |
-| `udp_send` | 208 | 3 | 1 |
 | `proc_fork` | 211 | 0 | 1 |
 | `proc_waitpid` | 212 | 1 | 1 |
 | `proc_exec` | 213 | 2 | 1 |
@@ -385,7 +380,6 @@ is the number of slots it leaves.
 | `buf_push_bytes_range` | 351 | 4 | 1 |
 | `write_file_bytes` | 352 | 2 | 1 |
 | `tcp_send_bytes` | 353 | 2 | 1 |
-| `udp_send_bytes` | 354 | 3 | 1 |
 | `udp_sendto_bytes` | 355 | 4 | 1 |
 | `rename_noreplace` | 356 | 2 | 1 |
 | `rename_exchange` | 357 | 2 | 1 |

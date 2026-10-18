@@ -21,10 +21,12 @@ import (
 // remove_dir_all on a plain file leaves the file in place; x86-64 and the
 // interpreter answer as these cases do.
 
-// fsComponentPrelude names each IoError variant, and prints a Result[(), _] or
-// Option[IoError] as `label ok` / `label <variant>`.
+// fsComponentPrelude names each IoError variant, prints a Result[(), _] or
+// Option[IoError] as `label ok` / `label <variant>`, and a line read as
+// `label [line]`, `label <at-eof>` or `label <variant>`.
 const fsComponentPrelude = `import "std/i64";
 import "std/i32";
+import "std/io";
 
 function kind(e: IoError): string {
     match (e) {
@@ -44,6 +46,14 @@ function unit(label: string, r: Result[(), IoError]): void {
 
 function opt(label: string, r: Option[IoError]): void {
     match (r) { None => { print(label + " ok"); }, Some(e) => { print(label + " " + kind(e)); } }
+}
+
+function line(label: string, at_eof: string, r: Result[Option[string], IoError]): void {
+    match (r) {
+        Ok(Some(l)) => { print(label + " [" + l + "]"); },
+        Ok(None()) => { print(label + " " + at_eof); },
+        Err(e) => { print(label + " " + kind(e)); }
+    }
 }
 `
 
@@ -81,11 +91,11 @@ var fsComponentCases = []struct {
         Err(e) => { print("open_reader " + kind(e)); },
         Ok(r) => {
             match (r.flags()) { Ok(b) => { print(f"reader flags {b}"); }, Err(e) => { print("flags " + kind(e)); } }
-            match (r.read_line()) { Some(l) => { print("line [" + l + "]"); }, None => { print("line none"); } }
+            line("line", "none", io.read_line(r));
             match (r.read_chunk(4)) { Ok(c) => { print("chunk [" + c + "]"); }, Err(e) => { print("chunk " + kind(e)); } }
             match (r.read_chunk_bytes(3)) { Ok(c) => { print(f"bytes {c.len()}"); }, Err(e) => { print("bytes " + kind(e)); } }
             match (r.seek(0 as i64, 0)) { Ok(p) => { print(f"seek set {p}"); }, Err(e) => { print("seek " + kind(e)); } }
-            match (r.read_line()) { Some(l) => { print("again [" + l + "]"); }, None => { print("again none"); } }
+            line("again", "none", io.read_line(r));
             match (r.seek(-2 as i64, 2)) { Ok(p) => { print(f"seek end {p}"); }, Err(e) => { print("seek " + kind(e)); } }
             match (r.read_chunk(10)) { Ok(c) => { print("tail [" + c + "]"); }, Err(e) => { print("tail " + kind(e)); } }
             match (r.read_chunk(10)) { Ok(c) => { print("eof [" + c + "]"); }, Err(e) => { print("eof " + kind(e)); } }
@@ -157,9 +167,9 @@ missing NotFound
     match (so.flags()) { Ok(b) => { print(f"stdout flags {b}"); }, Err(e) => { print("stdout flags " + kind(e)); } }
     match (so.write_some_bytes([65 as u8, 10 as u8])) { Ok(n) => { print(f"write_some_bytes {n}"); }, Err(e) => { print("write_some_bytes " + kind(e)); } }
     let si = stdin();
-    match (si.read_line()) { Some(l) => { print("stdin [" + l + "]"); }, None => { print("stdin none"); } }
+    line("stdin", "none", io.read_line(si));
     match (si.read_chunk(100)) { Ok(c) => { print("stdin rest [" + c + "]"); }, Err(e) => { print("stdin " + kind(e)); } }
-    match (si.read_line()) { Some(l) => { print("stdin [" + l + "]"); }, None => { print("stdin eof"); } }
+    line("stdin", "eof", io.read_line(si));
     match (si.flags()) { Ok(b) => { print(f"stdin flags {b}"); }, Err(e) => { print("stdin flags " + kind(e)); } }
     opt("stdin close", si.close());
     let se = stderr();
@@ -391,7 +401,7 @@ temp_dir slash Other(Invalid argument)
     }
     print(f"{intact} files intact");
     match (open_reader("f3.txt")) {
-        Ok(r) => { match (r.read_line()) { Some(l) => { print("reopened [" + l + "]"); }, None => { print("reopened none"); } } },
+        Ok(r) => { line("reopened", "none", io.read_line(r)); },
         Err(e) => { print("reopen " + kind(e)); }
     }
     return 0;

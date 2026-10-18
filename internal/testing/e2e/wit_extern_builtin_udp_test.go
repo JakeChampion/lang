@@ -20,7 +20,7 @@ import (
 // stream, outgoing-datagram-stream.check-send / send / subscribe, plus the
 // three resource-drops (udp-socket, outgoing-datagram-stream,
 // incoming-datagram-stream). Before `wasi:sockets/udp` was added to the
-// `fern` world, an extern program that also called `udp_send()` failed to
+// `fern` world, an extern program that also sent a datagram failed to
 // compose with "core imports interface \"wasi:sockets/udp@0.2.0\" not
 // declared by the world".
 //
@@ -49,7 +49,11 @@ function rand_bytes(n: u64): u8[];
 function main(): i32 {
 	let b: u8[] = rand_bytes(4 as u64);
 	if (b.len() != 4) { return 2; }
-	if (udp_send("127.0.0.1", ` + strconv.Itoa(udpPort) + `, "` + want + `") > 0) { return 0; }
+	let s: i32 = udp_bind([0u8, 0u8, 0u8, 0u8], 0);
+	if (s < 0) { return 3; }
+	let n: i32 = udp_sendto(s, [127u8, 0u8, 0u8, 1u8], ` + strconv.Itoa(udpPort) + `, "` + want + `");
+	tcp_close(s);
+	if (n > 0) { return 0; }
 	return 1;
 }`
 	progPath := filepath.Join(dir, "prog.fern")

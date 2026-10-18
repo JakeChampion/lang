@@ -22,13 +22,20 @@ func TestSelfHostUDPBytesStorage(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/bytes%d", compiler.name, size), func(t *testing.T) {
 				dir := t.TempDir()
 				src, bin := filepath.Join(dir, "storage.fern"), filepath.Join(dir, "storage.wasm")
-				program := fmt.Sprintf(`function main(): i32 {
+				program := fmt.Sprintf(`function send_once(data: u8[]): i32 {
+    let s: i32 = udp_bind([0u8, 0u8, 0u8, 0u8], 0);
+    if (s < 0) { return s; }
+    let n: i32 = udp_sendto_bytes(s, [127u8, 0u8, 0u8, 1u8], 1, data);
+    tcp_close(s);
+    return n;
+}
+function main(): i32 {
     let data: u8[] = [];
     for i in 0..%d { data = data.append((i %% 256) as u8); }
     let stable: i64 = 0;
     let result: i32 = 0;
     for i in 0..32 {
-        result = udp_send_bytes("127.0.0.1", 1, data);
+        result = send_once(data);
         if (result >= 0) {
             if (result != data.len()) { return -1002; }
             result = 1;

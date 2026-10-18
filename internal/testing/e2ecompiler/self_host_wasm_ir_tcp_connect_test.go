@@ -12,7 +12,7 @@ import (
 )
 
 // TestSelfHostWasmIRTcpConnect pins the outbound TCP client on the self-host
-// wasm-IR path — slice 1 of #4318: tcp_connect + tcp_close.
+// wasm-IR path — slice 1 of #4318: tcp_connect_with + tcp_close.
 //
 // wasm has no file descriptors, so the i32 the language calls a "fd" is a
 // POINTER to a 12-byte heap struct, the same shape native uses
@@ -106,8 +106,8 @@ func TestSelfHostWasmIRTcpConnect(t *testing.T) {
 		if err != nil || len(wat) == 0 {
 			t.Fatalf("driver failed: %v", err)
 		}
-		if !strings.Contains(string(wat), "call $__fern_tcp_connect") {
-			t.Fatalf("%s: emitted WAT has no `call $__fern_tcp_connect` (module bailed off the IR path?)", name)
+		if !strings.Contains(string(wat), "call $__fern_tcp_connect_with") {
+			t.Fatalf("%s: emitted WAT has no `call $__fern_tcp_connect_with` (module bailed off the IR path?)", name)
 		}
 		watPath := filepath.Join(dir, name+".wat")
 		if err := os.WriteFile(watPath, wat, 0o644); err != nil {
@@ -137,18 +137,14 @@ func TestSelfHostWasmIRTcpConnect(t *testing.T) {
 		return strings.TrimSpace(string(out))
 	}
 
-	// 127.0.0.1 in the std/fetch host_be convention: a | b<<8 | c<<16 | d<<24.
-	const localhostBE = "127 + (0 * 256) + (0 * 65536) + (1 * 16777216)"
-
 	t.Run("connects_to_open_port", func(t *testing.T) {
 		src := fmt.Sprintf(`function main(): i32 {
-    let host: i32 = %s;
-    let c: i32 = tcp_connect(host, %d);
+    let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
     if (c < 0) { write("refused\n"); return 0; }
     write("connected\n");
     tcp_close(c);
     return 0;
-}`, localhostBE, openPort)
+}`, openPort)
 		if got := run(t, "tcp_open", src); got != "connected" {
 			t.Errorf("stdout = %q, want %q", got, "connected")
 		}
@@ -156,13 +152,12 @@ func TestSelfHostWasmIRTcpConnect(t *testing.T) {
 
 	t.Run("refused_on_closed_port_returns_negative", func(t *testing.T) {
 		src := fmt.Sprintf(`function main(): i32 {
-    let host: i32 = %s;
-    let c: i32 = tcp_connect(host, %d);
+    let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
     if (c < 0) { write("refused\n"); return 0; }
     write("connected\n");
     tcp_close(c);
     return 0;
-}`, localhostBE, closedPort)
+}`, closedPort)
 		if got := run(t, "tcp_closed", src); got != "refused" {
 			t.Errorf("stdout = %q, want %q — connect to an unbound port must return -errno", got, "refused")
 		}

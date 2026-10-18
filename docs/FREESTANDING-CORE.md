@@ -49,7 +49,7 @@ costs a silent failure on the first target that lacks it.
 | --- | --- | --- |
 | `log` | `print`, `eprint` | somewhere to put a line of diagnostics |
 | `stdout` | `stdout`, `stderr`, `write`, `putchar` | an actual stdout stream |
-| `stdin` | `stdin`, `read_line` | a blocking input stream |
+| `stdin` | `stdin` | a blocking input stream |
 | `now` | `now_unix_ms`, `now_ns`, `monotonic_ns`, `clock_resolution`, `clock_set`, `sleep_ms`, `sleep_ns`, `wasm_timer_pollable` | a clock, and wakeups driven by one |
 | `pollfd` | `timer_fd` | file descriptors a readiness primitive can wait on |
 | `env` | `env` | envp, captured at process start |

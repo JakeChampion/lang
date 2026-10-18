@@ -1707,12 +1707,6 @@ function reader_method(rs: VStruct, name: string, args: Value[]): Value {
     }
     return option_io_error_value(r.close());
   }
-  if (name == "read_line") {
-    if (args.len() != 0) {
-      return v_err("Reader.read_line takes no arguments");
-    }
-    return option_string_value(read_line_from_host());
-  }
   if (args.len() != 1 || !is_i32_arg(args[0])) {
     return v_err("Reader." + name + " takes one integer argument");
   }
@@ -1754,38 +1748,6 @@ function byte_array_value(bytes: u8[]): Value {
     i = i + 1;
   }
   return v_arr_of(out, "u8");
-}
-
-// Stage0 can still have a bounded text read_line. Read raw bytes here so the
-// installed stage1 interpreter also returns a complete line without consuming
-// any byte after its newline. Keep the D10 OS-text assumption at publication.
-function read_line_from_host(): Option[string] {
-  let r: Reader = stdin();
-  let h: usize = buf_new(256);
-  let done: boolean = false;
-  while (!done) {
-    match (r.read_chunk_bytes(1)) {
-      Ok(chunk) => {
-        if (chunk.len() == 0) {
-          done = true;
-        } else {
-          buf_push_byte(h, chunk[0] as i32);
-          if (chunk[0] == 10 as u8) {
-            done = true;
-          }
-        }
-      },
-      Err(_) => {
-        done = true;
-      }
-    }
-  }
-  let bytes: u8[] = buf_take_bytes(h);
-  buf_free(h);
-  if (bytes.len() == 0) {
-    return None;
-  }
-  return Some(string_from_bytes_unchecked(bytes));
 }
 
 function call_xattr(name: string, args: Value[]): Value {
@@ -1951,18 +1913,6 @@ function writer_method(rs: VStruct, name: string, args: Value[]): Value {
     return write_count_value(w.write_some(s.v));
   }
   return v_err("Writer." + name + ": expected string");
-}
-
-function option_string_value(o: Option[string]): Value {
-  match (o) {
-    Some(line) => {
-      return v_variant("Some", [v_string(line)]);
-    },
-    None => {
-      let none: Value[] = [];
-      return v_variant("None", none);
-    }
-  }
 }
 
 // io_error_value is the program's view of a host IoError: the same variant,
@@ -3975,7 +3925,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
       return cell_method(uc, name, args);
     },
     VStruct(rs) => {
-      if (rs.type_name == "Reader" && (name == "read_chunk" || name == "read_chunk_bytes" || name == "read_line" || name == "close")) {
+      if (rs.type_name == "Reader" && (name == "read_chunk" || name == "read_chunk_bytes" || name == "close")) {
         return reader_method(rs, name, args);
       }
       if (rs.type_name == "Writer" && (name == "write" || name == "write_some" || name == "splice_forever" || name == "write_bytes" || name == "write_some_bytes" || name == "close")) {
@@ -5786,12 +5736,6 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
       fd = 2;
     }
     return v_struct("Writer", ["fd"], [v_int(fd)]);
-  }
-  if (name == "read_line") {
-    if (args.len() != 0) {
-      return v_err("read_line takes no arguments");
-    }
-    return option_string_value(read_line_from_host());
   }
   if (name == "cell_new") {
     if (args.len() != 1) {

@@ -17,7 +17,7 @@ import (
 var table = map[string]string{
 	"write_file":    "fs",
 	"read_file":     "fs",
-	"tcp_connect":   "net",
+	"tcp_close":     "net",
 	"random_i32":    "random",
 	"now_unix_ms":   "time",
 	"env":           "env",

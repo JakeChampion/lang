@@ -29,10 +29,10 @@ func TestSelfHostSocketRuntimePerModule(t *testing.T) {
   let accepted: i32 = tcp_accept(ln);
   if (accepted < 0) { tcp_close(client); tcp_close(ln); return 3; }
   if (tcp_socket_ctl(client, 1, 1) != 0) { return 4; }
-  if (tcp_send(accepted, "hi") != 2) { return 5; }
-  let got: u8[] = tcp_recv(client, 2);
-  if (got.len() != 2 || got[0] != 104u8 || got[1] != 105u8) { return 6; }
-  if (tcp_send(accepted, "!") != 1) { return 7; }
+  if (tcp_send_bytes(accepted, [104u8, 105u8]) != 2) { return 5; }
+  let got: u8[] = [0u8, 0u8];
+  if (tcp_recv_into(client, got) != 2 || got[0] != 104u8 || got[1] != 105u8) { return 6; }
+  if (tcp_send_bytes(accepted, [33u8]) != 1) { return 7; }
   let into: u8[] = [0u8];
   if (tcp_recv_into(client, into) != 1 || into[0] != 33u8) { return 8; }
   tcp_close(accepted); tcp_close(client); tcp_close(ln);
