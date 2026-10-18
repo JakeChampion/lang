@@ -3987,8 +3987,10 @@ function variant_pattern_payload_type(s: Scope, name: string, whole: typeinfo.Ty
 
 // A payload of a user generic enum, `Box[i32, string]`'s `Blank(s)`, is its
 // spelling with the enum's type parameters replaced by the scrutinee's
-// arguments, as a generic struct's field is. Unknown when the enum is not
-// generic or the scrutinee names no arguments for it.
+// arguments, as a generic struct's field is. A scrutinee naming no arguments
+// (`E.B`, or a parameter annotated `E`) settles none, so only a payload that
+// spells a type parameter is the "unbound" one it never holds. Unknown when
+// the enum is not generic.
 function generic_variant_payload_type(s: Scope, name: string, whole: typeinfo.Type, index: i32): typeinfo.Type {
   let u: typeinfo.TypeUnion = typeinfo.TypeUnion { name: "", args: [] };
   if let typeinfo.TypeUnion(wu) = whole {
@@ -3997,11 +3999,13 @@ function generic_variant_payload_type(s: Scope, name: string, whole: typeinfo.Ty
     return t_unknown("not a union");
   }
   let us: UnionSig = s.lookup_union(u.name);
-  // An instance no construction settled (`E.B`) never holds a payload.
-  if (us.type_params.len() > 0 && u.args.len() == 0) {
-    return t_unknown("unbound payload");
+  let args: typeinfo.Type[] = u.args;
+  if (args.len() == 0) {
+    for tp in us.type_params {
+      args = args.append(t_unknown("unbound " + tp));
+    }
   }
-  if (us.type_params.len() == 0 || us.type_params.len() != u.args.len()) {
+  if (us.type_params.len() == 0 || us.type_params.len() != args.len()) {
     return t_unknown("not a generic enum instance");
   }
   let ss: StructSig = s.lookup_owned_struct(variant_pattern_name(name), u.name);
@@ -4012,7 +4016,7 @@ function generic_variant_payload_type(s: Scope, name: string, whole: typeinfo.Ty
   let i: i32 = 0;
   while (i < ss.field_names.len() && i < ss.field_type_names.len()) {
     if (ss.field_names[i] == want) {
-      return type_from_ref_subst(parser.parse_type_ref(ss.field_type_names[i]), us.type_params, u.args, s.type_names());
+      return type_from_ref_subst(parser.parse_type_ref(ss.field_type_names[i]), us.type_params, args, s.type_names());
     }
     i = i + 1;
   }
