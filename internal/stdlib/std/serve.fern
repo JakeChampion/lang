@@ -2074,14 +2074,18 @@ function __tail_persists(behind: __Behind, eof: boolean): boolean {
 // behind it hold, per `__tail_persists`, and never once the loop is
 // stopping): `(conns, keep_alive, behind, next)`, with `behind` and
 // `next` the one parse of the bytes behind the request, which the
-// response and the next turn of the loop read rather than parse again.
+// response and the next turn of the loop read rather than parse again;
+// a request with no byte behind it is `Idle` with no parse.
 function __serve_took(c: __Conns, at: i32, f: http.HttpFramed, opts: Config, eof: boolean, stop: __Stop): (__Conns, boolean, __Behind, http.HttpFramed) {
   let served: i32 = c.served[at] + 1;
   let keep: boolean = f.keep_alive && served < opts.keep_alive_requests && !__serve_stopping(stop);
   let due: i64 = __backlog_due(c, at);
   let queued: i32[] = __unqueued(c.queued, c.fds[at], c.backlog[at]);
   c = __Conns { ...c, offs: c.offs.with(at, c.offs[at] + f.len), served: c.served.with(at, served), due: due, queued: queued, backlog: c.backlog.with(at, false), continued: c.continued.with(at, false), last: http.http_framed_kept(f) };
-  let parsed: (__Behind, http.HttpFramed) = __serve_behind(http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits, c.last), f);
+  let parsed: (__Behind, http.HttpFramed) = (Idle, f);
+  if (c.offs[at] < c.bufs[at].len()) {
+    parsed = __serve_behind(http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits, c.last), f);
+  }
   if (keep) {
     keep = __tail_persists(parsed.0, eof);
   }
