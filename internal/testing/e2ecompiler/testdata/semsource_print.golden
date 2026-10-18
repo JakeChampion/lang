@@ -268,7 +268,16 @@ func unsigned_float {
     ret v1
 }
 
-refused operator contract: - u32
+modes 1 result u32
+v0:u32 v1:u32 v2:u32
+func wrapping_unsigned_negation {
+  b0:
+    v0 = param 0
+    v1 = const_int 0
+    v2 = binary - v1 v0
+    ret v2
+}
+
 modes 2 2 result boolean
 v0:string v1:string v2:boolean
 func sorted {

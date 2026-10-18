@@ -3807,6 +3807,9 @@ function constant(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): 
   if (ins.kind_tag == 1 && ssasem.is_u32(f.values[ins.result])) {
     return emit(r, ir.op_const_i32_text(ins.str));
   }
+  if (ins.kind_tag == 1 && ins.str != "" && ssasem.is_usize(f.values[ins.result])) {
+    return emit(r, ir.op_const_ptr_text(ins.str));
+  }
   if (ins.kind_tag == 1 && ssasem.is_f64(f.values[ins.result])) {
     return emit(r, ir.op_const_f64_text(ins.str));
   }

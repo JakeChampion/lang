@@ -43,7 +43,10 @@ pub struct VInt { v: i32, is_char: boolean }
 // bits (native's `Number` does too, and takes signedness from the checker's
 // static type); only div / rem / compares / `>>` and the receiver type name
 // read it — the 64-bit twin of the split VUint makes at 32 bits.
-pub struct VInt64 { hi: i32, lo: i32, unsigned: boolean }
+//
+// `ptr` tags a usize (always unsigned too), which wraps at ptr_bits() rather
+// than at 64 (v_usize).
+pub struct VInt64 { hi: i32, lo: i32, unsigned: boolean, ptr: boolean }
 
 // VUint carries a u32 as its 32-bit pattern in an i32 field. Unsigned
 // semantics (div / rem / compares / logical `>>`, docs/INTEGER-SEMANTICS.md)
@@ -181,7 +184,32 @@ function v_type(n: string): Value {
 // sign-extended into the high word); `hi` is the arithmetic-shifted top 32.
 // v_int64 / v_uint64 are the i64 / u64 spellings — same bits, different tag.
 function v_wide(n: i64, unsigned: boolean): Value {
-  return VInt64 { hi: (n >> 32) as i32, lo: (n & 4294967295) as i32, unsigned: unsigned };
+  return VInt64 { hi: (n >> 32) as i32, lo: (n & 4294967295) as i32, unsigned: unsigned, ptr: false };
+}
+
+// ptr_bits is the pointer width of the target this interpreter runs on: the
+// playground's wasm32 build models a 32-bit usize, every other build 64.
+function ptr_bits(): i64 {
+  if (target_arch() == "wasm32") {
+    return 32;
+  }
+  return 64;
+}
+
+// v_usize wraps `n` to the pointer width and tags it a usize.
+function v_usize(n: i64): Value {
+  let w: i64 = n;
+  if (ptr_bits() == 32) {
+    w = uint_zext(n as i32);
+  }
+  return VInt64 { hi: (w >> 32) as i32, lo: w as i32, unsigned: true, ptr: true };
+}
+
+function is_vusize(v: Value): boolean {
+  if let VInt64(i) = v {
+    return i.ptr;
+  }
+  return false;
 }
 
 function v_int64(n: i64): Value {
@@ -257,12 +285,20 @@ function zero_value_of(type_name: string): Value {
   if (type_name == "i64" || type_name == "u64") {
     return v_wide(0, type_name == "u64");
   }
+  if (type_name == "usize") {
+    return v_usize(0);
+  }
   return v_int(0);
 }
 
 function coerce_int_width(val: Value, type_name: string): Value {
   if (type_name == "char") {
     return char_value(val);
+  }
+  // A usize binding takes a value the checker already proved fits (a literal,
+  // or a lossless u8 / u32 widening), so this only retags it.
+  if (type_name == "usize" && is_int_like(val)) {
+    return v_usize(vint_as_i64(val));
   }
   if (type_name == "i64" || type_name == "u64") {
     // A declared u64 also (re)tags the pattern unsigned — the value plane
@@ -1349,6 +1385,9 @@ function cell_value(v: Value): Value {
     },
     VInt64(n) => {
       c.cl.set(vint_as_i64(v));
+      if (n.ptr) {
+        return VCell { ...c, kind: "usize" };
+      }
       if (n.unsigned) {
         return VCell { ...c, kind: "u64" };
       }
@@ -1421,7 +1460,9 @@ function cell_scalar_text(h: usize, v: Value): boolean {
     },
     VInt64(n) => {
       let tag: i32 = 108;
-      if (n.unsigned) {
+      if (n.ptr) {
+        tag = 122;
+      } else if (n.unsigned) {
         tag = 117;
       }
       cell_bits_text(h, tag, vint_as_i64(v));
@@ -1513,8 +1554,11 @@ function cell_scalar_value(tag: i32, bits: i64): Value {
   if (tag == 110) {
     return VUint { v: bits as i32 };
   }
+  if (tag == 122) {
+    return v_usize(bits);
+  }
   if (tag == 108 || tag == 117) {
-    return VInt64 { hi: (bits >> 32i64) as i32, lo: bits as i32, unsigned: tag == 117 };
+    return VInt64 { hi: (bits >> 32i64) as i32, lo: bits as i32, unsigned: tag == 117, ptr: false };
   }
   if (tag == 98) {
     return v_bool(bits != 0i64);
@@ -1615,7 +1659,7 @@ function cell_set_value(c: VCell, v: Value): Value {
       _ => {}
     }
   }
-  if ((c.kind == "i64" || c.kind == "u64") && is_int_like(v)) {
+  if ((c.kind == "i64" || c.kind == "u64" || c.kind == "usize") && is_int_like(v)) {
     c.cl.set(vint_as_i64(v));
     return v_void();
   }
@@ -1661,6 +1705,9 @@ function cell_method(c: VCell, name: string, args: Value[]): Value {
     }
     if (c.kind == "u64") {
       return v_uint64(c.cl.get());
+    }
+    if (c.kind == "usize") {
+      return v_usize(c.cl.get());
     }
     if (c.kind == "f64") {
       return VFloat { v: c.cf.get() };
@@ -2185,6 +2232,80 @@ function sat_u64(op: string, a: u64, b: u64): i64 {
   return prod as i64;
 }
 
+// eval_usize_binary is eval_binary at the pointer width: the operands read
+// unsigned, every result wraps at ptr_bits(), and a shift count masks to it.
+function eval_usize_binary(op: string, a: u64, b: u64): Value {
+  let sh: u64 = b & (ptr_bits() - 1) as u64;
+  if (op == "+") {
+    return v_usize((a + b) as i64);
+  }
+  if (op == "-") {
+    return v_usize((a - b) as i64);
+  }
+  if (op == "*") {
+    return v_usize((a * b) as i64);
+  }
+  if (op == "/" || op == "%") {
+    return usize_divide(op == "/", a, b);
+  }
+  if (op == "<<") {
+    return v_usize((a << sh) as i64);
+  }
+  if (op == ">>") {
+    return v_usize((a >> sh) as i64);
+  }
+  return usize_bitwise(op, a, b);
+}
+
+function usize_bitwise(op: string, a: u64, b: u64): Value {
+  if (op == "&") {
+    return v_usize((a & b) as i64);
+  }
+  if (op == "|") {
+    return v_usize((a | b) as i64);
+  }
+  if (op == "^") {
+    return v_usize((a ^ b) as i64);
+  }
+  return usize_compare(op, a, b);
+}
+
+// usize_divide is the total division and remainder: x / 0 == 0, x % 0 == x.
+function usize_divide(quotient: boolean, a: u64, b: u64): Value {
+  if (b == 0 as u64) {
+    if (quotient) {
+      return v_usize(0);
+    }
+    return v_usize(a as i64);
+  }
+  if (quotient) {
+    return v_usize((a / b) as i64);
+  }
+  return v_usize((a % b) as i64);
+}
+
+function usize_compare(op: string, a: u64, b: u64): Value {
+  if (op == "==") {
+    return v_bool(a == b);
+  }
+  if (op == "!=") {
+    return v_bool(a != b);
+  }
+  if (op == "<") {
+    return v_bool(a < b);
+  }
+  if (op == "<=") {
+    return v_bool(a <= b);
+  }
+  if (op == ">") {
+    return v_bool(a > b);
+  }
+  if (op == ">=") {
+    return v_bool(a >= b);
+  }
+  return v_err("operator `" + op + "` is not defined on usize");
+}
+
 // eval_binary applies a binary operator to two already-evaluated
 // operands. Pure in (op, lv, rv) — extracted from eval_expr's
 // ExprBinary arm so the operator semantics live in one place,
@@ -2211,6 +2332,9 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
   // untouched, so i32 overflow wrapping and every existing case behave
   // exactly as before. Total div/mod semantics match the i32 path
   // (x/0 == 0, x%0 == x).
+  if (is_int_like(lv) && is_int_like(rv) && (is_vusize(lv) || is_vusize(rv))) {
+    return eval_usize_binary(op, vint_as_i64(lv) as u64, vint_as_i64(rv) as u64);
+  }
   if (is_int_like(lv) && is_int_like(rv) && (is_vint64(lv) || is_vint64(rv))) {
     let a: i64 = vint_as_i64(lv);
     let b: i64 = vint_as_i64(rv);
@@ -2720,6 +2844,9 @@ function eval_unary(op: string, ov: Value): Value {
         return v_int(0 - i.v);
       },
       VInt64(i) => {
+        if (i.ptr) {
+          return v_usize(0 - unpack_i64(i));
+        }
         return v_wide(0 - unpack_i64(i), i.unsigned);
       },
       VUint(u) => {
@@ -2791,6 +2918,9 @@ function eval_unary(op: string, ov: Value): Value {
   // pattern and drops the unsigned tag).
   if (op == "as_i32") {
     return cast_i32_value(ov);
+  }
+  if (op == "as_usize") {
+    return cast_usize_value(ov);
   }
   // `as u32` is the same 32-bit narrowing but tags the pattern unsigned. A
   // float source is the unsigned SATURATING truncation instead (see
@@ -2938,6 +3068,22 @@ function eval_unary(op: string, ov: Value): Value {
     return ov;
   }
   return v_err("unknown unary op: " + op);
+}
+
+// `as usize` extends an integer to 64 bits by its own signedness and wraps it
+// to the pointer width; a float saturates into the pointer width's unsigned
+// range. Anything else is an address reinterpretation, which moves nothing.
+function cast_usize_value(v: Value): Value {
+  if (is_int_like(v)) {
+    return v_usize(vint_as_i64(v));
+  }
+  if (!is_float_like(v)) {
+    return v;
+  }
+  if (ptr_bits() == 32) {
+    return v_usize(uint_zext(f64_trunc_u32(vfloat_as_f64(v))));
+  }
+  return v_usize(f64_trunc_u64(vfloat_as_f64(v)));
 }
 
 // An explicit i32 cast drops scalar identity along with any wider payload.
@@ -3801,10 +3947,7 @@ function tyarg_of_value(v: Value): string {
       return int_type_name(n);
     },
     VInt64(w) => {
-      if (w.unsigned) {
-        return "u64";
-      }
-      return "i64";
+      return wide_type_name(w);
     },
     VUint(_) => {
       return "u32";
@@ -3885,6 +4028,16 @@ function bind_tyargs(env: Env, fd: parser.FuncDecl, has_recv: boolean, recv: Val
   return e;
 }
 
+function wide_type_name(w: VInt64): string {
+  if (w.ptr) {
+    return "usize";
+  }
+  if (w.unsigned) {
+    return "u64";
+  }
+  return "i64";
+}
+
 // value_type_name derives the receiver-type name a runtime value dispatches
 // under: a struct's declared type_name, and the language's primitive
 // type-keyword for a scalar so `function (s: string) len(): i32 { … }`
@@ -3902,10 +4055,7 @@ function value_type_name(v: Value): string {
       return int_type_name(n);
     },
     VInt64(iv64) => {
-      if (iv64.unsigned) {
-        return "u64";
-      }
-      return "i64";
+      return wide_type_name(iv64);
     },
     VUint(_) => {
       return "u32";
@@ -4314,9 +4464,8 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
 // plane has no shape for, and an append MUTATES the buffer two copies of a
 // handle share, which it has no expression for either.
 //
-// The handle is carried as an unsigned 64-bit value, so a pointer-width one
-// survives the round trip out through the interpreted program's `usize`
-// variables and back in as an argument.
+// The handle is carried as a usize, so it survives the round trip out through
+// the interpreted program's `usize` variables and back in as an argument.
 // That makes a handle an ADDRESS rather than a key into a table of live
 // builders, so a handle used after its free is a wild pointer here, not the
 // error internal/oracle/interp answers one with.
@@ -4334,7 +4483,7 @@ function is_buf_builtin(name: string): boolean {
 }
 
 function v_buf_handle(h: usize): Value {
-  return v_wide(h as i64, true);
+  return v_usize(h as i64);
 }
 
 function buf_handle_of(v: Value): usize {

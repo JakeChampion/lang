@@ -1078,11 +1078,11 @@ function sign_extended32(insts: ssa.SInst[], v: i32): boolean {
 }
 
 // lift_const_text_prod lifts a literal carried as source text to the text
-// constant (kind 3), `imm` 64 for an i64 literal, which each emitter
-// materialises the way its stack machine does.
+// constant (kind 3), `imm` 64 for an i64 or pointer-width literal, which each
+// emitter materialises the way its stack machine does.
 function lift_const_text_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[]): LiftVals {
   let width: i32 = 0;
-  if (k == "const_i64") {
+  if (k == "const_i64" || op.width == ir.width_ptr()) {
     width = 64;
   }
   let v: i32 = nvals;
