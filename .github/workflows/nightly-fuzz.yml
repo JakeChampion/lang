@@ -139,9 +139,10 @@ jobs:
   # x86-64 only, and no qemu: the driver is emitted as x86-64 asm and
   # takes host paths as argv (same constraint diff-selfhost documents).
   #
-  # No artifact upload: the seed is the reproducer, since GenMain(seed) is
+  # No reproducer upload: the seed is the reproducer, since GenMain(seed) is
   # deterministic for a given generator revision and the failure prints the
-  # program.
+  # program. A failure uploads only its findings, one signature line per
+  # failed seed, which the report job groups.
   differential-selfhost:
     needs: window
     name: nightly-differential-selfhost-shard${{ matrix.shard }}
@@ -162,6 +163,7 @@ jobs:
       - name: go test (self-host, seeds ${{ needs.window.outputs.base }}+, shard ${{ matrix.shard }}/4)
         env:
           FERN_SELFHOST_DIFF: "1"
+          FERN_FINDINGS: ${{ runner.temp }}/findings.jsonl
           DIFF_ORACLE_SEED_BASE: "${{ needs.window.outputs.base }}"
           DIFF_ORACLE_SHARD: "${{ matrix.shard }}/4"
           # Tile the whole window. The leg's own default is 512 — sized for
@@ -179,6 +181,13 @@ jobs:
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: findings-${{ github.job }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/findings.jsonl
+          retention-days: 14
+          if-no-files-found: ignore
 
   # The same window built under -sanitize: a leak, an rc over-release or a
   # use of a freed block fails a seed whose answer is right.
@@ -198,6 +207,7 @@ jobs:
       - name: go test (self-host -sanitize, seeds ${{ needs.window.outputs.base }}+, shard ${{ matrix.shard }}/4)
         env:
           FERN_SELFHOST_DIFF: "1"
+          FERN_FINDINGS: ${{ runner.temp }}/findings.jsonl
           DIFF_ORACLE_SEED_BASE: "${{ needs.window.outputs.base }}"
           DIFF_ORACLE_SHARD: "${{ matrix.shard }}/4"
           SELFHOST_DIFF_SEEDS: "${{ env.SEED_WINDOW }}"
@@ -207,6 +217,13 @@ jobs:
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: findings-${{ github.job }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/findings.jsonl
+          retention-days: 14
+          if-no-files-found: ignore
 
   # The moving window through the self-host ARM64 emitter (#7967).
   #
@@ -236,6 +253,7 @@ jobs:
       - name: go test (self-host arm64, seeds ${{ needs.window.outputs.base }}+, shard ${{ matrix.shard }}/2)
         env:
           FERN_SELFHOST_DIFF: "1"
+          FERN_FINDINGS: ${{ runner.temp }}/findings.jsonl
           DIFF_ORACLE_SEED_BASE: "${{ needs.window.outputs.base }}"
           DIFF_ORACLE_SHARD: "${{ matrix.shard }}/2"
         run: |
@@ -244,6 +262,13 @@ jobs:
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: findings-${{ github.job }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/findings.jsonl
+          retention-days: 14
+          if-no-files-found: ignore
 
   # The moving window through the wasm emitter. Needs neither a cross
   # toolchain nor qemu.
@@ -261,6 +286,7 @@ jobs:
       - name: go test (self-host wasm, seeds ${{ needs.window.outputs.base }}+)
         env:
           FERN_SELFHOST_DIFF: "1"
+          FERN_FINDINGS: ${{ runner.temp }}/findings.jsonl
           DIFF_ORACLE_SEED_BASE: "${{ needs.window.outputs.base }}"
           SELFHOST_DIFF_SEEDS: "${{ env.SEED_WINDOW }}"
         run: |
@@ -269,6 +295,13 @@ jobs:
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: findings-${{ github.job }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/findings.jsonl
+          retention-days: 14
+          if-no-files-found: ignore
 
   # The arm64 and wasm legs built under -sanitize. Each backend emits its own
   # rc ops and checks, so the x86-64 sanitize leg says nothing about these.
@@ -291,6 +324,7 @@ jobs:
       - name: go test (self-host arm64 -sanitize, seeds ${{ needs.window.outputs.base }}+, shard ${{ matrix.shard }}/2)
         env:
           FERN_SELFHOST_DIFF: "1"
+          FERN_FINDINGS: ${{ runner.temp }}/findings.jsonl
           DIFF_ORACLE_SEED_BASE: "${{ needs.window.outputs.base }}"
           DIFF_ORACLE_SHARD: "${{ matrix.shard }}/2"
         run: |
@@ -299,6 +333,13 @@ jobs:
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: findings-${{ github.job }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/findings.jsonl
+          retention-days: 14
+          if-no-files-found: ignore
 
   differential-selfhost-sanitize-wasm:
     needs: window
@@ -314,6 +355,7 @@ jobs:
       - name: go test (self-host wasm -sanitize, seeds ${{ needs.window.outputs.base }}+)
         env:
           FERN_SELFHOST_DIFF: "1"
+          FERN_FINDINGS: ${{ runner.temp }}/findings.jsonl
           DIFF_ORACLE_SEED_BASE: "${{ needs.window.outputs.base }}"
           SELFHOST_DIFF_SEEDS: "${{ env.SEED_WINDOW }}"
         run: |
@@ -322,6 +364,13 @@ jobs:
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: findings-${{ github.job }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/findings.jsonl
+          retention-days: 14
+          if-no-files-found: ignore
 
   fuzz:
     if: github.repository == 'JakeChampion/lang'
@@ -541,15 +590,27 @@ jobs:
     if: failure() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+      # Each differential leg's failed seeds, one JSON line apiece, grouped by
+      # signature (scripts/nightly-findings.mjs). A night with no findings
+      # uploads none, and the comment then goes out without the table.
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          pattern: findings-*
+          path: ${{ runner.temp }}/findings
+      - name: group the failed seeds by signature
+        run: node scripts/nightly-findings.mjs "${{ runner.temp }}/findings" > "${{ runner.temp }}/findings.md"
       - uses: actions/github-script@v8
         env:
           SEED_BASE: ${{ needs.window.outputs.base }}
+          FINDINGS: ${{ runner.temp }}/findings.md
         with:
           script: |
             const title = 'Nightly fuzz failures'
             const base = process.env.SEED_BASE || '(not computed)'
             const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
-            const body = [
+            const lines = [
               `Nightly run failed: ${url}`,
               ``,
               `Differential window: seeds \`${base}\` onward.`,
@@ -570,7 +631,12 @@ jobs:
               `\`nightly-fuzz-repro-*\` artifact and commit the minimised`,
               `entry under the target's \`testdata/fuzz/\` — that is what`,
               `keeps the case covered once the generator changes.`,
-            ].join('\n')
+            ]
+            const findings = require('fs').readFileSync(process.env.FINDINGS, 'utf8')
+            if (findings) {
+              lines.push(``, `Failed seeds by signature (leg, failure, the pass the decision bisect named):`, ``, findings)
+            }
+            const body = lines.join('\n')
             const open = await github.paginate(github.rest.issues.listForRepo, {
               ...context.repo, state: 'open', per_page: 100,
             })

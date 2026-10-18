@@ -62,10 +62,15 @@ pub function check(value: i32): ir.Op {
 // op kind's id.
 function read_value(op: ir.Op, call_direct: i32): i32 {
   if (op.kind_tag == call_direct && op.i64_imm > 0
-    && (op.str == length_name() || op.str == get_name(false) || op.str == get_name(true) || op.str == check_name() || op.str == word_name(4) || op.str == word_name(8))) {
+    && (op.str == length_name() || op.str == data_name() || op.str == get_name(false) || op.str == get_name(true) || op.str == check_name() || op.str == word_name(4) || op.str == word_name(8))) {
     return (op.i64_imm - 1) as i32;
   }
   return 0 - 1;
+}
+
+// The address of a view's first byte, decoded like its length.
+function data_read(value: i32): ir.Op {
+  return ir.Op { ...ir.op_call_direct(data_name(), 1), i64_imm: value as i64 + 1 };
 }
 
 // Decode each read view at its definition, including parameter entry and
@@ -85,6 +90,9 @@ function decode(value: i32, base: i32): ir.Op[] {
 function decoded_read(op: ir.Op, base: i32, index: i32): ir.Op[] {
   if (op.str == length_name()) {
     return [ir.op_drop(), ir.op_load_local(base + 1)];
+  }
+  if (op.str == data_name()) {
+    return [ir.op_drop(), ir.op_load_local(base)];
   }
   let ops: ir.Op[] = [ir.op_store_local(index), ir.op_drop()];
   if (op.str == get_name(false) || op.str == check_name()) {
@@ -245,6 +253,27 @@ function slice(): irtables.LowerResult {
 
 pub function borrow_name(): string {
   return "__fern_str_borrow";
+}
+
+// The same window over `src`, its descriptor built in the frame
+// (ir.op_raw_string_frame) rather than borrowed on the heap, for a view that
+// dies inside the frame that sliced it (ssaunits.frame_views). The source's
+// length and data are read decoded, so no helper is called; the result is
+// tagged as a string-backed view as the heap form's is. The reads are
+// annotated with `src`, which lower_reads decodes; ssarc.place_views gives
+// the box its slots.
+pub function slice_frame(src: i32, lo: i32, hi: i32): ir.Op[] {
+  let ops: ir.Op[] = [ir.op_load_local(lo), ir.op_const_i32(0), ir.op_bin("lt_s", 0, false)];
+  ops = abort_if(ops);
+  ops = joined(ops, [ir.op_load_local(hi), ir.op_load_local(lo), ir.op_bin("lt_s", 0, false)]);
+  ops = abort_if(ops);
+  ops = joined(ops, [ir.op_load_local(hi), ir.op_load_local(src), read(src, false, false), ir.op_bin("gt_s", 0, false)]);
+  ops = abort_if(ops);
+  return joined(ops, [
+    ir.op_load_local(src), data_read(src), ir.op_load_local(lo), ir.op_raw_addr(),
+    ir.op_load_local(hi), ir.op_load_local(lo), ir.op_bin("sub", 0, false),
+    ir.op_raw_string_frame(0), ir.op_const_i32(2), ir.op_raw_addr(),
+  ]);
 }
 
 pub function helpers(): irtables.LowerResult[] {

@@ -132,3 +132,38 @@ func TestRunSelfHostSeedBoundsAHungCompiler(t *testing.T) {
 		}
 	}
 }
+
+// TestBisectSelfHostSeedNamesTheDecision runs the x86-64 leg's bisect against
+// a stand-in compiler with three decisions, whose program exits 7 until the
+// second is declined.
+func TestBisectSelfHostSeedNamesTheDecision(t *testing.T) {
+	if _, err := exec.LookPath("gcc"); err != nil || runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skip("links and runs x86-64 Linux asm")
+	}
+	fake := filepath.Join(t.TempDir(), "fern")
+	script := `#!/bin/sh
+while [ $# -gt 0 ]; do
+  if [ "$1" = -o ]; then out=$2; fi
+  shift
+done
+if [ -n "$FERN_OPT_TRACE" ]; then
+  echo "opt-decision 10 inline a" >&2
+  echo "opt-decision 20 reuse b" >&2
+  echo "opt-decision 30 fuse c" >&2
+fi
+code=7
+if [ "${FERN_OPT_BISECT:-0}" -gt 20 ]; then code=0; fi
+printf '.globl _start\n_start:\n mov $60, %%eax\n mov $%s, %%edi\n syscall\n' $code > "$out"
+`
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const src = "function main(): i32 { return 0; }\n"
+	got, pass := bisectSelfHostSeed(t, fake, t.TempDir(), "x86-64-linux", src, nil, nil, func(env []string) bool {
+		r, gap := runSelfHostSeed(t, fake, t.TempDir(), src, nil, env, func(string, ...any) {})
+		return seedRunAgrees(r, gap, 0, src)
+	})
+	if want := "follows `reuse b` (FERN_OPT_BISECT=21 agrees, FERN_OPT_BISECT=20 does not)"; !strings.Contains(got, want) || pass != "reuse" {
+		t.Fatalf("got %q (pass %q), want it to contain %q (pass reuse)", got, pass, want)
+	}
+}

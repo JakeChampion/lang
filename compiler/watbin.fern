@@ -362,10 +362,10 @@ function wmagic(): i32[] {
 
 // index_of_str returns the index of `n` in `xs`, or -1. (A local copy so
 // this module stays usable on its own / concatenated.)
-function index_of_str(xs: string[], n: string): i32 {
+function index_of_str(xs: string[], s: string): i32 {
   let i: i32 = 0;
   while (i < xs.len()) {
-    if (xs[i] == n) {
+    if (xs[i] == s) {
       return i;
     }
     i = i + 1;
