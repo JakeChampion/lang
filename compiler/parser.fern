@@ -17924,11 +17924,11 @@ function fn_key_sanitize(s: string): string {
   return out;
 }
 
-// pk_is_fn_spelling reports whether `t` is a single-parameter-list function
-// type spelling — `(...) => R` with no depth-1 comma (a top-level comma is a
-// tuple, not a param list).
-// Lets ge_targ_mangle admit a fn type arg as a
-// (sanitised) monomorphisation key.
+// pk_is_fn_spelling reports whether `t` is a function type spelling,
+// `(...) => R`: a parameter list, of any arity, followed by the arrow. A
+// tuple `(A, B)` has no arrow after its closing paren, which is what tells
+// the two apart. Lets ge_targ_mangle admit a fn type arg as a (sanitised)
+// monomorphisation key.
 function pk_is_fn_spelling(t: string): boolean {
   let n: i32 = t.len();
   if (n < 5) {
@@ -17950,8 +17950,6 @@ function pk_is_fn_spelling(t: string): boolean {
         close = i;
         i = n;
       }
-    } else if (ch == 44 && depth == 1) {
-      return false;
     }
     i = i + 1;
   }

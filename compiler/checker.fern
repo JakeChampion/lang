@@ -28534,27 +28534,31 @@ function needs_pretype(stmts: ast.Stmt[]): boolean {
 }
 
 // use_untyped reports whether `c` is the source call of a `use NAME <- CALL;`
-// whose binding the author left unannotated: the parser appended the callback
-// lambda as CALL's last argument with `use_infer` set and its parameter untyped.
+// with something still to type: the parser appended the callback lambda as
+// CALL's last argument with no return type, and with `use_infer` set and its
+// parameter untyped when the author wrote no `: TYPE`.
 function use_untyped(c: ast.ExprCall): boolean {
   if (c.args.len() == 0) {
     return false;
   }
   if let ast.ExprLambda(lm) = c.args[c.args.len() - 1] {
-    return lm.use_infer && lm.params.len() > 0 && lm.params[0].type_name.len() == 0;
+    if (lm.origin != parser.ORIGIN_USE || lm.params.len() == 0) {
+      return false;
+    }
+    return lm.ret_type.len() == 0 || lm.use_infer && lm.params[0].type_name.len() == 0;
   }
   return false;
 }
 
-// use_binding_type is the type a `use` binding takes: the first parameter of
-// the callee's trailing callable parameter, the slot the callback is passed
-// into (native inferUseParam). A value binding shadows a module function of
-// the same name (#6302), so it is read first. Unknown when the callee is not a
-// bare name, is not callable, or its trailing parameter is not a callable
-// taking a parameter; E032 reports those. A generic callee's type parameters
-// are bound from the arguments written before the callback, and one they leave
-// unbound leaves the binding unannotated as well.
-function use_binding_type(c: ast.ExprCall, s: Scope): typeinfo.Type {
+// use_callback_type is the callee's trailing callable parameter, the slot the
+// callback is passed into (native inferUseParam): what the `use` binding is
+// typed from, and what the callback returns. A value binding shadows a module
+// function of the same name (#6302), so it is read first. Unknown when the
+// callee is not a bare name, is not callable, or its trailing parameter is not
+// a callable taking a parameter; E032 reports those. A generic callee's type
+// parameters are bound from the arguments written before the callback, and
+// one they leave unbound leaves the binding unannotated as well.
+function use_callback_type(c: ast.ExprCall, s: Scope): typeinfo.Type {
   if let ast.ExprIdent(id) = c.callee {
     let last: typeinfo.Type = t_unknown("use: callee has no signature");
     if let typeinfo.TypeFunc(ft) = s.lookup(id.name) {
@@ -28569,9 +28573,18 @@ function use_binding_type(c: ast.ExprCall, s: Scope): typeinfo.Type {
     }
     if let typeinfo.TypeFunc(cb) = last {
       if (cb.params_known && cb.param_types.len() > 0) {
-        return cb.param_types[0];
+        return last;
       }
     }
+  }
+  return t_unknown("use: callee has no signature");
+}
+
+// use_binding_type is the type a `use` binding takes: the first parameter of
+// the callback slot.
+function use_binding_type(c: ast.ExprCall, s: Scope): typeinfo.Type {
+  if let typeinfo.TypeFunc(cb) = use_callback_type(c, s) {
+    return cb.param_types[0];
   }
   return t_unknown("use: callee has no signature");
 }
@@ -28605,18 +28618,33 @@ function use_callback_slot(sig: FuncSig, c: ast.ExprCall, s: Scope): typeinfo.Ty
   if (type_ref_names_any(f.args[0], unbound)) {
     return t_unknown("use: callback parameter names an unbound type parameter");
   }
-  return type_from_ref_subst(slot, bn, bt, s.type_names());
+  let whole: typeinfo.Type = type_from_ref_subst(slot, bn, bt, s.type_names());
+  if (type_ref_names_any(parser.ref_fn_result(slot), unbound)) {
+    if let typeinfo.TypeFunc(cb) = whole {
+      return typeinfo.TypeFunc { ...cb, ret_type: t_unknown("use: callback result names an unbound type parameter") };
+    }
+  }
+  return whole;
 }
 
 // use_typed stamps the `use` binding's parameter with its inferred type, so
 // the body reads the binding at that type and a lift of the callback carries a
-// typed declaration. A type with no declaration spelling leaves the call as
-// written.
+// typed declaration, and the callback's return type with the slot's, so a `?`
+// or an `Ok` in the rest of the block is typed against what the callee hands
+// back rather than inferred from the block's returns alone. A binding type
+// with no declaration spelling leaves the call as written.
 function use_typed(c: ast.ExprCall, s: Scope): ast.ExprCall {
-  let t: typeinfo.Type = use_binding_type(c, s);
+  let cbt: typeinfo.Type = use_callback_type(c, s);
+  let t: typeinfo.Type = t_unknown("use: callee has no signature");
+  if let typeinfo.TypeFunc(cb) = cbt {
+    t = cb.param_types[0];
+  }
   let at: i32 = c.args.len() - 1;
   if let ast.ExprLambda(lm) = c.args[at] {
-    let p: ast.ParamDecl = decltypes.fn_param_from_type(lm.params[0].name, t);
+    let p: ast.ParamDecl = lm.params[0];
+    if (p.type_name.len() == 0) {
+      p = decltypes.fn_param_from_type(p.name, t);
+    }
     if (p.type_name.len() == 0) {
       let sp: string = typeinfo.spelling(t);
       if (sp.len() == 0) {
@@ -28636,10 +28664,30 @@ function use_typed(c: ast.ExprCall, s: Scope): ast.ExprCall {
       nargs = nargs.append(c.args[j]);
       j = j + 1;
     }
-    nargs = nargs.append(ast.ExprLambda { ...lm, params: nparams });
+    nargs = nargs.append(use_ret_typed(ast.ExprLambda { ...lm, params: nparams }, cbt));
     return ast.ExprCall { ...c, args: nargs };
   }
   return c;
+}
+
+// use_ret_typed is `lm` returning what the callback slot `cbt` returns. A
+// result the slot leaves unknown, or one with no declaration spelling, leaves
+// the lambda's result to be inferred from its returns as before.
+function use_ret_typed(lm: ast.ExprLambda, cbt: typeinfo.Type): ast.ExprLambda {
+  if (lm.ret_type.len() > 0) {
+    return lm;
+  }
+  if let typeinfo.TypeFunc(cb) = cbt {
+    if (is_unknown(cb.ret_type)) {
+      return lm;
+    }
+    let d: ast.ParamDecl = decltypes.param_from_type("", cb.ret_type);
+    if (d.type_name.len() == 0) {
+      return lm;
+    }
+    return ast.ExprLambda { ...lm, ret_type: d.type_name, ret_fn_ret: d.fn_ret, ret_fn_param_types: d.fn_param_types };
+  }
+  return lm;
 }
 
 // pretype_module re-declares what the parser typed from syntax alone before

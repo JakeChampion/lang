@@ -1,0 +1,45 @@
+// A generic call whose argument is a call through a function-typed value
+// of more than one parameter: the instantiation is read from the value's
+// declared result, `(i32, i32) => Result[i32, dyn Tr]` here, the same as
+// from a one-parameter value or a named function's declaration.
+trait Tr {
+    function code(self: Self): i32;
+}
+
+struct A { n: i32 }
+
+impl Tr for A {
+    function code(self: A): i32 { return self.n; }
+}
+
+function unwrap[E: Tr](r: Result[i32, E]): i32 {
+    match (r) {
+        Ok(v) => { return v; },
+        Err(e) => { return e.code(); }
+    }
+    return 0;
+}
+
+function via2(h: (i32, i32) => Result[i32, dyn Tr], a: i32, b: i32): i32 {
+    return unwrap(h(a, b));
+}
+
+function via1(h: (i32) => Result[i32, dyn Tr], a: i32): i32 {
+    return unwrap(h(a));
+}
+
+function sum(a: i32, b: i32): Result[i32, dyn Tr] {
+    if (a + b > 10) {
+        return Err(A { n: 50 });
+    }
+    return Ok(a + b);
+}
+
+function one(a: i32): Result[i32, dyn Tr] {
+    return Ok(a);
+}
+
+function main(): i32 {
+    // 7 + 50 + 4 = 61
+    return via2(sum, 3, 4) + via2(sum, 6, 6) + via1(one, 4);
+}
