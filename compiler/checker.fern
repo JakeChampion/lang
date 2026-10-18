@@ -1927,17 +1927,13 @@ function cast_pointer_shaped(t: typeinfo.Type, source: boolean): boolean {
 // the module, then read at every ExprCall site. ret_type is a
 // Type (post type-name resolution); param_types parallels the
 // FuncDecl's params in declaration order.
-// param_bound runs PARALLEL to param_types: param_bound[i] holds the
-// `+`-joined trait bound(s) when parameter i's declared type is exactly a
-// bounded type parameter (`x: T` where `T: Tr`), else "". Drives the E021
-// generic-bound conformance check at call sites (#4842) — see call_diags.
 // `typevars` is every parameter spelling that is a type VARIABLE of the
 // callee, each once in parameter order, as gc_is_typevar_name recognises
 // them: what the call binding and the literal settling read.
 // `refs` is a generic signature's parameter spellings parsed, then its return
 // spelling's, which every call to it binds against; empty for any other
 // (sig_param_ref, sig_ret_ref).
-pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, all_type_params: string[], type_params: string[], param_bound: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], param_names: string[], is_const: boolean, receiver: string, typevars: string[], module: string, refs: parser.TypeRef[] }
+pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, all_type_params: string[], type_params: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], param_names: string[], is_const: boolean, receiver: string, typevars: string[], module: string, refs: parser.TypeRef[] }
 
 function sig_param_ref(sig: FuncSig, i: i32): parser.TypeRef {
   if (sig.refs.len() > 0) {
@@ -3113,19 +3109,14 @@ function (s: Scope) lookup_sig(name: string): FuncSig {
   // reads it — every one gates on `name.len()` (or `is_const`) first — and
   // building one per miss concatenated a string the miss then discarded.
   let empty: typeinfo.Type[] = [];
-  let nob: string[] = [];
   let non: string[] = [];
-  return FuncSig { receiver: "", name: "", param_types: empty, param_own: [], ret_type: t_unknown("undefined function"), all_type_params: [], type_params: [], param_bound: nob, type_bounds: [], ret_type_name: "", param_type_names: non, param_names: [], is_const: false, typevars: [], module: "", refs: [] };
+  return FuncSig { receiver: "", name: "", param_types: empty, param_own: [], ret_type: t_unknown("undefined function"), all_type_params: [], type_params: [], type_bounds: [], ret_type_name: "", param_type_names: non, param_names: [], is_const: false, typevars: [], module: "", refs: [] };
 }
 
-// tp_bound_for returns the `+`-joined trait bound(s) on the type parameter
-// a parameter's declared type names, when that type is EXACTLY a bare
-// bounded type param (`x: T` with `T: Tr`), else "". type_params and
-// bound_traits run parallel (parser.parse_func_decl); a promoted unbounded
-// param has an empty bound_traits entry and yields "". Conservative by
-// design — anything but a bare `T` (e.g. `T[]`, `Box[T]`) yields "" and is
-// not conformance-checked, so the call-site check (#4842) never fires on a
-// shape whose concrete type argument it can't read directly.
+// tp_bound_for returns the `+`-joined trait bound(s) on type parameter
+// `ptype`, else "". type_params and bound_traits run parallel
+// (parser.parse_func_decl); a promoted unbounded param has an empty
+// bound_traits entry and yields "".
 function tp_bound_for(ptype: string, type_params: string[], bound_traits: string[]): string {
   let k: i32 = 0;
   while (k < type_params.len()) {
@@ -3141,10 +3132,7 @@ function tp_bound_for(ptype: string, type_params: string[], bound_traits: string
 }
 
 // e021_trait_idx returns the index of trait `tr`'s requirement record in
-// trait_reqs, or -1 if `tr` names no trait declared in this module. The
-// E021 call-site conformance check (#4842) gates on a hit so a bound whose
-// trait name doesn't resolve here (e.g. an import-qualified spelling that
-// never matched a local trait) is skipped rather than mis-flagged.
+// trait_reqs, or -1 if `tr` names no trait declared in this module.
 function e021_trait_idx(tr: string, trait_reqs: parser.TraitReq[]): i32 {
   let i: i32 = 0;
   while (i < trait_reqs.len()) {
@@ -3154,40 +3142,6 @@ function e021_trait_idx(tr: string, trait_reqs: parser.TraitReq[]): i32 {
     i = i + 1;
   }
   return 0 - 1;
-}
-
-// e021_conforms decides whether concrete type `cty` satisfies trait bound
-// `tr` — the parity-faithful conformance test. Two sources, both of which
-// native accepts: an explicit `impl tr for cty`, or a `@derive(tr)` on the
-// declaration, which synthesises the methods without an impl-table entry.
-//
-// It used to accept a third — `cty` merely HAVING receiver methods of the
-// required names — as a way to reach the derive case. That admitted an
-// INHERENT method as a trait impl, which native refuses with E021 and which
-// the lowering then had no dispatch for, so the program ran and answered
-// wrongly (#9486). Asking about the derive directly reaches the same case
-// without the hole.
-function e021_conforms(s: Scope, tr: string, cty: string): boolean {
-  return conforms_by_impl_or_derive(s, cty, tr);
-}
-
-// e021_type_known reports whether `cty` is a type this module knows well
-// enough to reason about conformance for: a primitive, or a declared
-// struct / enum (union) name. The check stays silent on anything else,
-// keeping it from firing on an opaque or externally-defined type.
-function e021_type_known(cty: string, at: typeinfo.Type, s: Scope): boolean {
-  if (is_primitive_type(at)) {
-    return true;
-  }
-  if (s.has_struct(cty)) {
-    return true;
-  }
-  for union in s.unions.unions {
-    if (union.name == cty) {
-      return true;
-    }
-  }
-  return false;
 }
 
 // e021_scope_has_impl is the scope-carried analogue of e021_has_impl: does
@@ -3459,41 +3413,205 @@ function e045_annot_diags(type_name: string, line: i32, col: i32, s: Scope): uti
   return out;
 }
 
-// e021_bound_call_diag emits E021 for a generic-bound conformance failure
-// at a call site (#4842): parameter `x: T` with `T: Tr` (pbound is the
-// `+`-joined bound list) whose call-site argument has concrete type `at`
-// that does not conform to Tr (no `impl Tr` and not @derive-provided).
-// Conservative gates (declared trait, known concrete type, bare-name
-// argument) keep it from firing on a type this module cannot reason about.
-// The bundle's own pervasive bounded-generic calls stay clean because they
-// carry their impls or derives, which is what conformance now asks about —
-// not because the check is lenient. Mirrors native checker.go's call-site
-// E021 arm.
-function e021_bound_call_diag(pbound: string, at: typeinfo.Type, s: Scope, ln: i32, cl: i32): util.Diag[] {
+// call_bound_diags is E021 for each trait bound that the type a generic call
+// binds its type parameter to does not implement, at the call (`ln`:`cl`),
+// naming the callee as `site` (native checkTypeArgBounds). `bounds` runs
+// parallel to `tparams` and was written in `module`. A parameter left unbound,
+// or bound to a type variable of the enclosing generic, is the instance's to
+// check.
+function call_bound_diags(tparams: string[], bounds: string[], module: string, site: string, bn: string[], bt: typeinfo.Type[], s: Scope, ln: i32, cl: i32): util.Diag[] {
   let out: util.Diag[] = [];
-  let cty: string = type_label(at);
-  if (cty.len() == 0) {
-    return out;
-  }
-  // A composite label (`Foo[]`, tuple/fn/map) can't be a bare type
-  // argument we look up an impl for — skip.
-  for ch in cty {
-    if (ch == b'[') {
-      return out;
+  let i: i32 = 0;
+  while (i < tparams.len() && i < bounds.len()) {
+    let bi: i32 = util.index_of_str(bn, tparams[i]);
+    if (bi >= 0 && !is_unknown(bt[bi]) && !is_type_variable(bt[bi])) {
+      out = util.append_diags(out, tp_bound_diags(tparams[i], bounds[i], module, site, bt[bi], s, ln, cl));
     }
+    i = i + 1;
   }
-  if (!e021_type_known(cty, at, s)) {
-    return out;
-  }
-  for entry in parser.split_plus_bounds(pbound) {
-    // The bound carries its type arguments as written; the trait is the base.
-    let tr: string = util.base_type_name(entry);
-    let tidx: i32 = e021_trait_idx(tr, s.trait_reqs);
-    if (tidx >= 0 && !e021_conforms(s, tr, cty)) {
-      out = out.append(dg_at("E021", "type argument " + cty + " does not implement trait " + tr, ln, cl));
+  return out;
+}
+
+// tp_bound_diags is call_bound_diags for type parameter `tp`, bound to `at`.
+function tp_bound_diags(tp: string, bound: string, module: string, site: string, at: typeinfo.Type, s: Scope, ln: i32, cl: i32): util.Diag[] {
+  let out: util.Diag[] = [];
+  for entry in parser.split_plus_bounds(bound) {
+    let base: string = util.base_type_name(entry);
+    if (!bound_import_unloaded(base, s.imports, s.trait_reqs) && !type_implements(s, at, base, module)) {
+      out = out.append(dg_at("E021", "type argument " + tp + " = " + util.demangle(type_label(at)) + " does not implement trait " + bound_trait_display(base, module, s.trait_reqs) + " required by " + site, ln, cl));
     }
   }
   return out;
+}
+
+// type_implements reports whether `t` implements the trait that bound `base`,
+// written in `module`, names: an impl for the name its methods register under,
+// a derive on its declaration, or a `dyn` that spans the trait.
+function type_implements(s: Scope, t: typeinfo.Type, base: string, module: string): boolean {
+  if let typeinfo.TypeDyn(d) = t {
+    let want: string = parser.derive_simple_name(base);
+    for tr in parser.dyn_trait_set("dyn " + d.traits) {
+      if (parser.derive_simple_name(util.base_type_name(tr)) == want) {
+        return true;
+      }
+    }
+    return false;
+  }
+  let tn: string = impl_type_name(t);
+  if (tn.len() == 0) {
+    return false;
+  }
+  for imp in s.impls {
+    if (util.base_type_name(imp.impl_type) == tn && bound_names_trait(base, module, imp.trait_name, imp.trait_module)) {
+      return true;
+    }
+  }
+  return derives_bound(s, tn, base, module);
+}
+
+// impl_type_name is the name `t`'s impls register under (native
+// ast.ReceiverTypeName), or "" for a type no impl can name: an array, a tuple,
+// a callable, a handle, void.
+function impl_type_name(t: typeinfo.Type): string {
+  match (t) {
+    typeinfo.TypeI32(_) => {},
+    typeinfo.TypeBool(_) => {},
+    typeinfo.TypeString(_) => {},
+    typeinfo.TypeFloat(_) => {},
+    typeinfo.TypeStruct(_) => {},
+    typeinfo.TypeUnion(_) => {},
+    typeinfo.TypeMap(_) => {},
+    _ => {
+      return "";
+    }
+  }
+  return receiver_namespace(util.base_type_name(type_label(t)));
+}
+
+// derives_bound: a `@derive` on `tyname`'s declaration (for an enum, on any
+// variant) of the trait that bound `base`, written in `module`, names. Flatten
+// spells a derive by the module declaring its trait, bare for the entry's own.
+function derives_bound(s: Scope, tyname: string, base: string, module: string): boolean {
+  for sd in s.structs.structs {
+    if (sd.name == tyname || sd.enum_owner == tyname) {
+      for derive in sd.derives {
+        let name: string = parser.derive_simple_name(derive);
+        if (bound_names_trait(base, module, name, spelling_qualifier(derive, name))) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+// spelling_qualifier is what precedes `.name` in a trait spelling ending in
+// `name`, "" for a bare one.
+function spelling_qualifier(spelling: string, name: string): string {
+  if (spelling.len() <= name.len()) {
+    return "";
+  }
+  return slice_unchecked(spelling, 0, spelling.len() - name.len() - 1) + "";
+}
+
+// bound_trait_display names the trait that bound `base`, written in `module`,
+// names as native prints it: qualified by the module that declares it, bare
+// for the entry's own.
+function bound_trait_display(base: string, module: string, reqs: parser.TraitReq[]): string {
+  let name: string = parser.derive_simple_name(base);
+  if (util.index_of_sub(base, ".") < 0) {
+    if (module.len() == 0) {
+      return name;
+    }
+    return module + "." + name;
+  }
+  let idx: i32 = bound_trait_req(base, module, reqs);
+  if (idx >= 0) {
+    return reqs[idx].module + "." + name;
+  }
+  return base;
+}
+
+// bound_trait_req is the index of the requirement record of the trait that
+// bound `base`, written in `module`, names, or -1: the writing module's own
+// for a bare name, an import's for a qualified one (bound_names_trait).
+function bound_trait_req(base: string, module: string, reqs: parser.TraitReq[]): i32 {
+  let name: string = parser.derive_simple_name(base);
+  let q: string = spelling_qualifier(base, name);
+  let want: string = module;
+  if (q.len() > 0) {
+    want = q;
+  }
+  let found: i32 = 0 - 1;
+  let i: i32 = 0;
+  while (i < reqs.len()) {
+    if (reqs[i].trait_name == name && reqs[i].module == want) {
+      return i;
+    }
+    if (found < 0 && reqs[i].trait_name == name && q.len() > 0 && reqs[i].module.len() > 0) {
+      found = i;
+    }
+    i = i + 1;
+  }
+  return found;
+}
+
+// bound_import_unloaded reports a qualified bound whose qualifier names one of
+// the program's imports but whose module was never loaded — a single-module
+// driver checks without its imports, so nothing can say what that module
+// declares.
+function bound_import_unloaded(base: string, imports: string[], reqs: parser.TraitReq[]): boolean {
+  let q: string = spelling_qualifier(base, parser.derive_simple_name(base));
+  if (q.len() == 0) {
+    return false;
+  }
+  for r in reqs {
+    if (r.module == q) {
+      return false;
+    }
+  }
+  for path in imports {
+    if (path == q || util.str_has_suffix(path, "/" + q)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// bound_decl_diags is E021 for each trait a function's type-parameter bounds
+// name that nothing declares, and for a bound supplying the wrong number of
+// trait arguments, at the function (native's bound validation).
+function bound_decl_diags(mod: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
+  let imports: string[] = import_paths_of(mod);
+  for fd in mod.funcs {
+    let i: i32 = 0;
+    while (i < fd.type_params.len() && i < fd.bound_traits.len()) {
+      for entry in parser.split_plus_bounds(fd.bound_traits[i]) {
+        out = util.append_diags(out, bound_entry_decl_diags(entry, fd, fd.type_params[i], imports, mod.trait_reqs));
+      }
+      i = i + 1;
+    }
+  }
+  return out;
+}
+
+function bound_entry_decl_diags(entry: string, fd: parser.FuncDecl, tp: string, imports: string[], reqs: parser.TraitReq[]): util.Diag[] {
+  let none: util.Diag[] = [];
+  let bref: parser.TypeRef = parser.parse_type_ref(entry);
+  if (bound_import_unloaded(bref.base, imports, reqs)) {
+    return none;
+  }
+  let display: string = bound_trait_display(bref.base, fd.module, reqs);
+  let idx: i32 = bound_trait_req(bref.base, fd.module, reqs);
+  if (idx < 0) {
+    return [dg_at("E021", "unknown trait \"" + util.demangle(display) + "\" in bound on type parameter " + tp, fd.line, fd.col)];
+  }
+  let want: i32 = reqs[idx].type_params.len();
+  if (bref.args.len() != want) {
+    return [dg_at("E021", "trait " + util.demangle(display) + " takes " + util.i32_to_string(want) + " type argument(s), " + util.i32_to_string(bref.args.len()) + " supplied in bound on type parameter " + tp, fd.line, fd.col)];
+  }
+  return none;
 }
 
 // array_recv_method resolves an ARRAY-RECEIVER method — one written
@@ -6433,19 +6551,8 @@ function bound_entry_diag(sig: FuncSig, tp: string, at: typeinfo.Type, bref: par
   if (!clash) {
     return none;
   }
-  let tr: string = trait_display(parser.derive_simple_name(bref.base), s.trait_reqs);
+  let tr: string = bound_trait_display(bref.base, sig.module, s.trait_reqs);
   return [dg_at("E021", "type argument " + tp + " = " + util.demangle(type_label(at)) + " implements " + tr + trait_args_label(iargs) + " but the bound requires " + tr + trait_args_label(want) + " (in " + util.demangle(sig.name) + ")", c.line, c.col)];
-}
-
-// trait_display names a trait as the reader wrote it, qualified by the module
-// that declares it when that is an import.
-function trait_display(name: string, trait_reqs: parser.TraitReq[]): string {
-  for r in trait_reqs {
-    if (r.trait_name == name && r.module.len() > 0) {
-      return r.module + "." + name;
-    }
-  }
-  return name;
 }
 
 function trait_args_label(args: typeinfo.Type[]): string {
@@ -6516,8 +6623,8 @@ function dest_bound_e021(sig: FuncSig, c: ast.ExprCall, dn: string[], dt: typein
   let di: i32 = from;
   while (di < dn.len()) {
     let ti: i32 = util.index_of_str(sig.type_params, dn[di]);
-    if (ti >= 0 && ti < sig.type_bounds.len() && sig.type_bounds[ti].len() > 0) {
-      out = util.append_diags(out, e021_bound_call_diag(sig.type_bounds[ti], dt[di], s, c.line, c.col));
+    if (ti >= 0 && ti < sig.type_bounds.len() && !is_unknown(dt[di]) && !is_type_variable(dt[di])) {
+      out = util.append_diags(out, tp_bound_diags(dn[di], sig.type_bounds[ti], sig.module, util.demangle(sig.name), dt[di], s, c.line, c.col));
     }
     di = di + 1;
   }
@@ -6636,7 +6743,7 @@ function impl_trait_args(bound: parser.TypeRef, module: string, at: typeinfo.Typ
   }
   let base: string = util.base_type_name(type_label(at));
   for imp in s.impls {
-    if (bound_names_impl_trait(bound.base, module, imp) && util.base_type_name(imp.impl_type) == base) {
+    if (bound_names_trait(bound.base, module, imp.trait_name, imp.trait_module) && util.base_type_name(imp.impl_type) == base) {
       let (in_, it_) = gc_bind_param(parser.parse_type_ref(imp.impl_type), at, imp.all_type_params, s.type_names(), [], []);
       let out: typeinfo.Type[] = [];
       for targ in parser.parse_type_ref(imp.trait_ref).args {
@@ -6676,20 +6783,19 @@ function dyn_trait_args(bound: parser.TypeRef, traits: string, s: Scope): typein
   return none;
 }
 
-// bound_names_impl_trait: the bound `base`, written in `module`'s function,
-// names the trait `imp` implements. The bundled impl table holds every
-// module's, so a name two modules declare is told apart by the declaring
+// bound_names_trait: the bound `base`, written in `module`'s function, names
+// the trait `name` that `trait_module` declares. The bundled impl table holds
+// every module's, so a name two modules declare is told apart by the declaring
 // module, as flatten's canon_trait spells it: a bare bound is the writing
 // module's own trait, and a qualified one an import's (#10845).
-function bound_names_impl_trait(base: string, module: string, imp: parser.ImplInfo): boolean {
-  let tr: string = parser.derive_simple_name(base);
-  if (imp.trait_name != tr) {
+function bound_names_trait(base: string, module: string, name: string, trait_module: string): boolean {
+  if (parser.derive_simple_name(base) != name) {
     return false;
   }
   if (util.index_of_sub(base, ".") >= 0) {
-    return imp.trait_module.len() > 0;
+    return trait_module.len() > 0;
   }
-  return imp.trait_module == module;
+  return trait_module == module;
 }
 
 // struct_lit_args are a generic struct literal's type arguments: each is bound
@@ -8141,7 +8247,6 @@ function collect_func_sigs(funcs: parser.FuncDecl[], tn: TypeNames): FuncSig[] {
     }
     let pts: typeinfo.Type[] = [];
     let powns: boolean[] = [];
-    let pbnd: string[] = [];
     let ptn: string[] = [];
     for param in fd.params {
       // A fn-typed param resolves through its sidecars to a real TypeFunc
@@ -8150,7 +8255,6 @@ function collect_func_sigs(funcs: parser.FuncDecl[], tn: TypeNames): FuncSig[] {
       // non-function argument is a real mismatch.
       pts = pts.append(param_decl_type(param, fd.type_params, erased_tparams(fd.type_params), tn));
       powns = powns.append(param.own);
-      pbnd = pbnd.append(tp_bound_for(param.type_name, fd.type_params, fd.bound_traits));
       ptn = ptn.append(parser.fn_tag_spelling(param.type_name, param.fn_ret, param.fn_param_types));
     }
     let tvs: string[] = [];
@@ -8160,7 +8264,7 @@ function collect_func_sigs(funcs: parser.FuncDecl[], tn: TypeNames): FuncSig[] {
       }
     }
     let rtn: string = parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types);
-    out = out.append(FuncSig { receiver: fd.receiver_type, name: fd.name, param_types: pts, param_own: callable_own_flags(powns, pts.len()), ret_type: func_ret_type(fd, fd.type_params, erased_tparams(fd.type_params), tn), all_type_params: fd.all_type_params, type_params: fd.type_params, param_bound: pbnd, type_bounds: fd.bound_traits, ret_type_name: rtn, param_type_names: ptn, param_names: param_decl_names(fd.params), is_const: fd.is_const, typevars: tvs, module: fd.module, refs: generic_sig_refs(fd.all_type_params, ptn, rtn) });
+    out = out.append(FuncSig { receiver: fd.receiver_type, name: fd.name, param_types: pts, param_own: callable_own_flags(powns, pts.len()), ret_type: func_ret_type(fd, fd.type_params, erased_tparams(fd.type_params), tn), all_type_params: fd.all_type_params, type_params: fd.type_params, type_bounds: fd.bound_traits, ret_type_name: rtn, param_type_names: ptn, param_names: param_decl_names(fd.params), is_const: fd.is_const, typevars: tvs, module: fd.module, refs: generic_sig_refs(fd.all_type_params, ptn, rtn) });
     i = i + 1;
   }
   return out;
@@ -8246,7 +8350,18 @@ function method_arg_diags(c: ast.ExprCall, method: string, msig: MethodSig, recv
     out = util.append_diags(out, array_elem_check(array_elem_type_of(msig.param_types[mi]), c.args[mi], s));
     mi = mi + 1;
   }
-  return out;
+  let (bn, bt) = bounds_bindings(msig.type_params, msig.type_bounds, msig.module, s, rmb.names, rmb.types);
+  return util.append_diags(out, call_bound_diags(msig.type_params, msig.type_bounds, msig.module, method_site(recv, msig.receiver_type, method), bn, bt, s, c.line, c.col));
+}
+
+// method_site names a method in a bound diagnostic as native does: by its
+// receiver's namespace, or bare when the receiver is a type parameter, whose
+// method a bound supplies.
+function method_site(recv: typeinfo.Type, owner: string, method: string): string {
+  if (is_unknown(recv) || is_type_variable(recv)) {
+    return method;
+  }
+  return util.demangle(method_count_subject(recv, owner, method));
 }
 
 // method_type_arg_diags is E040 for a method call writing more type arguments
@@ -15243,24 +15358,6 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
             let ai: i32 = 0;
             while (ai < c.args.len()) {
               let at: typeinfo.Type = check_expr(c.args[ai], s);
-              // E021 (#4842): generic-bound conformance. When
-              // param ai is a bare bounded type param `x: T`
-              // (T: Tr), the type T is bound to must provide
-              // `impl Tr` — the call's binding, not the argument's
-              // own type, which reads an untyped literal at its
-              // default width. Runs before the E038 skip because a
-              // bounded param's declared type is the erased-unknown
-              // T (E038 itself skips it).
-              if (ai < sig.param_bound.len() && sig.param_bound[ai].len() > 0) {
-                let tat: typeinfo.Type = at;
-                let tbi: i32 = util.index_of_str(cbn, sig.param_type_names[ai]);
-                if (tbi >= 0 && !type_contains_unknown(cbt[tbi])) {
-                  tat = cbt[tbi];
-                }
-                if (!is_unknown(tat)) {
-                  out = util.append_diags(out, e021_bound_call_diag(sig.param_bound[ai], tat, s, expr_line(c.args[ai]), expr_col(c.args[ai])));
-                }
-              }
               out = util.append_diags(out, int_dest_range_diags(c.args[ai], sig.param_types[ai]));
               out = util.append_diags(out, bound_type_arg_diags(sig, c, ai, at, s, cbn, cbt));
               out = util.append_diags(out, ctor_payload_diags(c.args[ai], sig.param_types[ai], s));
@@ -15282,6 +15379,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
               ai = ai + 1;
             }
             if (sig.all_type_params.len() > 0) {
+              out = util.append_diags(out, call_bound_diags(sig.type_params, sig.type_bounds, sig.module, util.demangle(sig.name), cbn, cbt, s, c.line, c.col));
               let (fbn, fbt) = call_bindings(sig, c, s);
               out = util.append_diags(out, bound_arg_diags(sig, c, fbn, fbt, s));
               out = util.append_diags(out, uninferred_call_diags(sig, c, fbn, id.name));
@@ -16638,21 +16736,6 @@ function fn_value_settles(e: ast.Expr, want: typeinfo.TypeFunc, s: Scope): boole
   return false;
 }
 
-// fn_value_bound_diags is E021 for each bounded type parameter whose binding
-// does not implement its bound, as a call binding it would report.
-function fn_value_bound_diags(sig: FuncSig, names: string[], types: typeinfo.Type[], s: Scope, ln: i32, cl: i32): util.Diag[] {
-  let out: util.Diag[] = [];
-  let i: i32 = 0;
-  while (i < sig.type_params.len() && i < sig.type_bounds.len()) {
-    let at: i32 = util.index_of_str(names, sig.type_params[i]);
-    if (at >= 0 && sig.type_bounds[i].len() > 0) {
-      out = util.append_diags(out, e021_bound_call_diag(sig.type_bounds[i], types[at], s, ln, cl));
-    }
-    i = i + 1;
-  }
-  return out;
-}
-
 // generic_fn_value_arg reports whether `e` names a generic function as a
 // value: an identifier bound to nothing, naming a generic signature.
 function generic_fn_value_arg(e: ast.Expr, s: Scope): boolean {
@@ -16850,9 +16933,10 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
   if let ast.ExprIdent(id) = e {
     if let typeinfo.TypeFunc(df) = dest {
       if (!s.known(id.name) && !s.is_bound(id.name) && generic_fn_value(s.lookup_sig(id.name))) {
-        let (bn, bt) = fn_value_binds(s.lookup_sig(id.name), df, s);
-        if (bn.len() == s.lookup_sig(id.name).all_type_params.len()) {
-          return fn_value_bound_diags(s.lookup_sig(id.name), bn, bt, s, id.line, id.col);
+        let sig: FuncSig = s.lookup_sig(id.name);
+        let (bn, bt) = fn_value_binds(sig, df, s);
+        if (bn.len() == sig.all_type_params.len()) {
+          return call_bound_diags(sig.type_params, sig.type_bounds, sig.module, util.demangle(sig.name), bn, bt, s, id.line, id.col);
         }
       }
     }
@@ -24212,7 +24296,7 @@ function e021_derive_field_known(mod: parser.Module, fty: string): boolean {
 // The method-set arm is right HERE and wrong for a bound: this asks whether
 // a derive on the owner can be synthesised from its fields, and a field whose
 // derive already ran carries the methods and no impl-table entry. The bound
-// check (e021_conforms) asks whether a type argument conforms, where an
+// check (type_implements) asks whether a type argument conforms, where an
 // inherent method is not an impl — see #9486. A trait with no required
 // methods conforms only via the explicit impl either way.
 function e021_derive_conforms(mod: parser.Module, tr: string, treq_idx: i32, fty: string): boolean {
@@ -25898,7 +25982,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   // template module's, which the first pass found clean.
   let decl_diags: util.Diag[] = [];
   if (focus_names.len() == 0) {
-    decl_diags = util.append_diags(util.append_diags(collect_decl_diags(mod), util.append_diags(orphan_impl_diags(mod), e021_diags(mod))), derive_diags);
+    decl_diags = util.append_diags(util.append_diags(collect_decl_diags(mod), util.append_diags(orphan_impl_diags(mod), util.append_diags(e021_diags(mod), bound_decl_diags(mod)))), derive_diags);
   }
   let dd: util.Diag[] = thin_map_import_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(fda_diags, decl_diags), body_diags), own_diags(mod, env, focus)), e049_diags(mod, env, focus)), e021_object_safety_diags(mod, focus)), e060_e062_diags(mod, focus)));
   if (dd.len() > 0) {
@@ -29636,7 +29720,7 @@ function gcall_sig(c: ast.ExprCall, s: Scope): FuncSig {
       return s.sigs.sigs[at];
     }
   }
-  return FuncSig { receiver: "", name: "", param_types: [], param_own: [], ret_type: t_unknown("no callee"), all_type_params: [], type_params: [], param_bound: [], type_bounds: [], ret_type_name: "", param_type_names: [], param_names: [], is_const: false, typevars: [], module: "", refs: [] };
+  return FuncSig { receiver: "", name: "", param_types: [], param_own: [], ret_type: t_unknown("no callee"), all_type_params: [], type_params: [], type_bounds: [], ret_type_name: "", param_type_names: [], param_names: [], is_const: false, typevars: [], module: "", refs: [] };
 }
 
 // lit_bound_typevar: every argument declared as `tp` is an untyped integer

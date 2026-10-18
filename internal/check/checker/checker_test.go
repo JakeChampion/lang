@@ -9094,6 +9094,26 @@ function main(): i32 { let s: string = "A"; let b: u8 = s[0]; print(b); return 0
 	}
 }
 
+// TestUsizeHasItsOwnImplSurface: `usize` registers and satisfies impls under
+// its own name. It used to share u32's, so u32's impl met a `T: Tr` bound at
+// usize, which nothing then provided a method for (#12649), and impls for
+// both widths collided.
+func TestUsizeHasItsOwnImplSurface(t *testing.T) {
+	const tr = `trait Same { function same(self: Self, o: Self): boolean; }
+function need[T: Same](a: T): boolean { return a.same(a); }
+`
+	err := checkSource(t, tr+`impl Same for u32 { function same(self: Self, o: Self): boolean { return true; } }
+function main(): i32 { let u: usize = 3; if (need(u)) { return 1; } return 0; }`)
+	if err == nil || !strings.Contains(err.Error(), "type argument T = usize does not implement trait Same required by need") {
+		t.Errorf("a u32 impl met a bound at usize: %v", err)
+	}
+	if err := checkSource(t, tr+`impl Same for u32 { function same(self: Self, o: Self): boolean { return true; } }
+impl Same for usize { function same(self: Self, o: Self): boolean { return self == o; } }
+function main(): i32 { let u: usize = 3; let w: u32 = 4; if (need(u) && need(w) && u.same(u)) { return 1; } return 0; }`); err != nil {
+		t.Errorf("separate impls for usize and u32: %v", err)
+	}
+}
+
 // A value binding SHADOWS a module-level function of the same name — and
 // that has to hold when the module function is GENERIC (#6302). The
 // generic-call path keys `c.info.GenericFuncs` by bare name, so a fn-typed
