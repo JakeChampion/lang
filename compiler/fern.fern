@@ -1515,31 +1515,40 @@ function usage(): i32 {
 }
 
 // list_targets implements `-targets`: every target the descriptor table
-// answers for, with what its environment grants. The self-host descriptor
-// carries no prose description (platforms.fern says why), so a target is
-// printed as the two axes its name spells out.
+// answers for, with what its environment grants and the entry points it
+// accepts. The listing is the oracle's `fern -targets` byte for byte.
 function list_targets(): i32 {
   let all: string[] = platforms.targets();
   let i: i32 = 0;
   while (i < all.len()) {
-    let d: platforms.Descriptor = platforms.for_target(all[i]);
-    let line: string = d.name + ": " + d.isa + " / " + d.environment + "\n    capabilities: [";
-    let c: i32 = 0;
-    while (c < d.capabilities.len()) {
-      if (c > 0) {
-        line = line + " ";
-      }
-      line = line + d.capabilities[c];
-      c = c + 1;
+    let name: string = all[i];
+    let line: string = name + ": " + platforms.description(name) + "\n";
+    line = line + "    capabilities: " + bracket_words(platforms.for_target(name).capabilities) + "\n";
+    let kinds: string[] = platforms.handler_kinds(name);
+    if (kinds.len() > 0) {
+      line = line + "    handlers:     " + bracket_words(kinds) + "\n";
     }
-    line = line + "]\n";
-    if (!platforms.emits_code(d.name)) {
+    if (!platforms.emits_code(name)) {
       line = line + "    note:         check-only — no backend emits for this target yet\n";
     }
     write(line);
     i = i + 1;
   }
   return 0;
+}
+
+// bracket_words renders a list the way Go's %v prints a []string: `[a b c]`.
+function bracket_words(xs: string[]): string {
+  let out: string = "[";
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    if (i > 0) {
+      out = out + " ";
+    }
+    out = out + xs[i];
+    i = i + 1;
+  }
+  return out + "]";
 }
 
 // main wraps `run` in the opt-in quadratic-copy readout (FERN_CLIFF_REPORT,

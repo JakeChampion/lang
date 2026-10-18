@@ -386,11 +386,9 @@ function emit_unit_to_file(out_dir: string, unit_spec: string, v: View, parts: f
 // spawn_batch runs ONE batch of units in a child process and returns its exit
 // code (or -1 if the fork itself failed).
 //
-// fork + proc_exec + waitpid rather than a `subprocess` builtin: no compiled
-// target lowers subprocess (it is interp-only, and the platform gate pins that
-// shut), whereas the crash-only process trio is granted by every native target.
-// It also needs no pipes, because the child communicates through the unit FILES
-// it writes rather than through stdout.
+// fork + proc_exec + waitpid rather than `subprocess`: the child communicates
+// through the unit FILES it writes rather than through stdout, so the pipes
+// and the output capture `subprocess` sets up would be wasted.
 function spawn_batch(self_exe: string, entry_path: string, tmp: string, lo: i32, hi: i32, target: string, cache_dir: string): i32 {
   let pid: i32 = proc_fork();
   if (pid < 0) {
