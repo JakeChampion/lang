@@ -28,8 +28,9 @@ import (
 // in the same words, so the rejects below read as native's do. A scalar
 // resolves it through the stdlib method the import closure brings in —
 // `core/cmp` pulls std/i32, std/i64, std/u32, std/u64 and std/float and
-// carries the boolean and u8 impls — so `print(7)` compiles with the import
-// and is refused without it, as it is on native (#9945). A program's own
+// carries the u8 impl — so `print(7)` compiles with the import and is refused
+// without it, as it is on native (#9945); a boolean's to_string is a builtin
+// (#12657), so `print(b)` needs none. A program's own
 // `to_string` on a primitive is the method called, as on native: the lowering
 // no longer bypasses a declared method for the built-in formatter.
 //
@@ -80,11 +81,6 @@ func TestSelfHostDisplayArgGate(t *testing.T) {
 			"write-i32",
 			"function main(): i32 {\n    let n: i32 = 5;\n    write(n);\n    return 0;\n}\n",
 			[]string{"E038", noDisplay("write", "i32"), "`import \"core/cmp\";`"},
-		},
-		{
-			"print-boolean",
-			"function main(): i32 {\n    let b: boolean = true;\n    print(b);\n    return 0;\n}\n",
-			[]string{"E038", noDisplay("print", "boolean")},
 		},
 		{
 			"print-f64",
@@ -169,11 +165,21 @@ function main(): i32 {
     return 0;
 }
 `
+	// A boolean's to_string is a builtin (#12657), so `print(b)` needs no
+	// import where the other scalars need core/cmp.
+	const booleanSrc = `function main(): i32 {
+    let b: boolean = true;
+    print(b);
+    print(false);
+    return 0;
+}
+`
 	accepts := []struct {
 		name, src, want string
 	}{
 		{"accept", acceptSrc, "litlocloc-catlabQ!Q!done\n"},
 		{"accept-primitives", primitivesSrc, "7\n7\n7\n7\n1.5\ntrue\n65\n7\n3\n7|"},
+		{"accept-boolean-without-import", booleanSrc, "true\nfalse\n"},
 		{"accept-shadowing-to-string", shadowSrc, "SHADOW\nSHADOW\n"},
 	}
 	for _, tc := range accepts {
