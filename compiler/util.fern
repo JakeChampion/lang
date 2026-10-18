@@ -4,7 +4,7 @@
 // i32_to_string (and similar duplicates of digits_to_i32,
 // is_all_digits, string-membership, etc. — see SH-020 in
 // docs/SELF-HOST-AUDIT.md). This module is the single home for
-// those pure, dependency-free helpers; consumer modules
+// those helpers; consumer modules
 // `import "./util"` and call them qualified (`util.i32_to_string`).
 //
 // It imports no other compiler module, so any self-host
@@ -14,7 +14,7 @@
 // churn in the Go-side test staging lists (each test that
 // compiles a converted module must also stage util.fern).
 
-import "std/cli";
+import "std/envflag";
 
 // arity_message is the one wording every count mismatch uses: "SUBJECT takes
 // N UNITs but was given M". Kept in lockstep with the native checker's arityMsg.
@@ -1136,7 +1136,7 @@ pub function rc_underflow_guard(who: string, code: i32): i32 {
 // unless its value is `quiet`. The re-checks catch compiler bugs, not errors
 // in the program, so a plain compile skips them; the test suites set quiet.
 pub function verify_on(): boolean {
-  return cli.env_flag("FERN_IR_VERIFY");
+  return envflag.on("FERN_IR_VERIFY");
 }
 
 // certify_mode is what the emitted-RC certifier (rccertify.fern) does with
@@ -1150,7 +1150,7 @@ pub function certify_mode(): i32 {
       if (v == "report") {
         return 1;
       }
-      if (!cli.flag_on(v)) {
+      if (!envflag.value_on(v)) {
         return 0;
       }
       return 2;
@@ -1186,7 +1186,7 @@ pub function certify_mode(): i32 {
 // __heap_bump_bytes() over peak RSS — so it is the instrument any accumulator
 // work should be measured with. See #6056.
 pub function arr_push_cliff_report(who: string, code: i32): i32 {
-  if (cli.env_flag("FERN_CLIFF_REPORT")) {
+  if (envflag.on("FERN_CLIFF_REPORT")) {
     let copied: i64 = __arr_push_shared_bytes();
     eprint(who + ": arr_push_shared_count=" + i32_to_string(__arr_push_shared_count())
       + " arr_push_shared_bytes=" + i64_to_string(copied)
@@ -1239,6 +1239,18 @@ pub struct Related { line: i32, col: i32, length: i32, message: string }
 // `title` is the line `-check` prints after `help:`, and an editor's name for
 // the quick fix.
 pub struct Fix { line: i32, col: i32, old: string, new_text: string, title: string }
+
+// violation_diag places a reachability violation found in `fn_module` ("" for
+// the entry). Only the entry module's positions index the file being reported
+// on — an imported module's line numbers index ITS source, so a violation from
+// one degrades to a position-less diagnostic whose message names the function
+// and module instead. Native's renderer makes the same split.
+pub function violation_diag(code: string, msg: string, fn_module: string, line: i32, col: i32): Diag {
+  if (fn_module.len() > 0) {
+    line = 0;
+  }
+  return Diag { related: [], code: code, message: msg, line: line, col: col, fix: None };
+}
 
 // is_diagnostic_code reports whether `code` is a real diagnostic code: `E` or
 // `P` followed by three digits. An uncoded diagnostic, such as the checker's
@@ -1491,6 +1503,33 @@ pub function demangle(name: string): string {
     return name;
   }
   return slice_unchecked(name, 0, cut) + "." + slice_unchecked(name, cut + 2, name.len());
+}
+
+// demangle_all applies demangle to every identifier in a type label, so a
+// composite (`iter__Taken[iter__Range, i32]`) demangles each part. A word
+// starting with `_` is a runtime symbol, never a module mangling.
+pub function demangle_all(text: string): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < text.len()) {
+    if (!ident_start_byte(text[i])) {
+      out = out + slice_unchecked(text, i, i + 1);
+      i = i + 1;
+      continue;
+    }
+    let j: i32 = i;
+    while (j < text.len() && (ident_start_byte(text[j]) || text[j] >= b'0' && text[j] <= b'9')) {
+      j = j + 1;
+    }
+    let word: string = slice_unchecked(text, i, j) + "";
+    if (word[0] == b'_') {
+      out = out + word;
+    } else {
+      out = out + demangle(word);
+    }
+    i = j;
+  }
+  return out;
 }
 
 // derive_hint renders the "add `@derive(…)` (or `impl … for T`)" clause
@@ -1868,33 +1907,6 @@ pub function to_u8(b: i32[]): u8[] {
   return o;
 }
 
-// io_error_reason is the reason part of a failed file operation's report.
-pub function io_error_reason(e: IoError): string {
-  match (e) {
-    NotFound(_) => {
-      return "not found";
-    },
-    PermissionDenied(_) => {
-      return "permission denied";
-    },
-    AlreadyExists(_) => {
-      return "already exists";
-    },
-    InvalidUtf8(_) => {
-      return "invalid UTF-8";
-    },
-    Interrupted => {
-      return "interrupted";
-    },
-    Unsupported => {
-      return "unsupported";
-    },
-    Other(_, msg, _) => {
-      return msg;
-    }
-  }
-}
-
 // cache_base is fern's per-user cache directory: $FERN_CACHE_DIR when that is
 // set, else the user cache directory's fern — ~/Library/Caches on darwin,
 // elsewhere $XDG_CACHE_HOME, else ~/.cache — as Go's os.UserCacheDir reads
@@ -1902,16 +1914,16 @@ pub function io_error_reason(e: IoError): string {
 // in. The package store, the shipped `fern`'s stdlib tree and the certifier
 // memo live under it.
 pub function cache_base(): string {
-  if let Some(d) = cli.env_value("FERN_CACHE_DIR") {
+  if let Some(d) = envflag.value("FERN_CACHE_DIR") {
     return d;
   }
   let darwin: boolean = target_os() == "darwin";
   if (!darwin) {
-    if let Some(x) = cli.env_value("XDG_CACHE_HOME") {
+    if let Some(x) = envflag.value("XDG_CACHE_HOME") {
       return x + "/fern";
     }
   }
-  if let Some(h) = cli.env_value("HOME") {
+  if let Some(h) = envflag.value("HOME") {
     if (darwin) {
       return h + "/Library/Caches/fern";
     }

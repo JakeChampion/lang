@@ -113,8 +113,7 @@ const setProcessGroupSelfHostSource = `function main(): i32 {
 }`
 
 // setProcessGroupWasmProbe is the refusal probe: set_process_group and nothing
-// else, because wasm_unsupported_builtin reports the FIRST unsupported name it
-// finds and the measuring probe above forks.
+// else, so the refusal it draws is set_process_group's own.
 const setProcessGroupWasmProbe = `function main(): i32 {
     match (set_process_group(0, 0)) {
         Ok(_) => { return 0; },
@@ -191,7 +190,7 @@ func TestSelfHostSetProcessGroupIRWasmRefused(t *testing.T) {
 	if code := cmd.ProcessState.ExitCode(); code == 0 {
 		t.Errorf("wasm driver accepted set_process_group; a component has no process table")
 	}
-	if !strings.Contains(stderr.String(), "set_process_group is not supported on the wasm target") {
+	if !strings.Contains(stderr.String(), "required by `set_process_group`; targets providing it") {
 		t.Errorf("wasm refusal does not name the builtin:\n%s", stderr.String())
 	}
 }

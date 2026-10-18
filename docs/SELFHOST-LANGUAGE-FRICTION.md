@@ -47,7 +47,7 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 |---|---|---|---|
 | Generic functions | ✅ monomorphised, with trait bounds | **15** — `astwalk`'s 9 fold spine and 5 accumulator map spine, and `util.append_all` | pinned |
 | Generic structs | ✅ | **0** — load-bearing: a generic struct in a signature promotes its type param to the monomorphiser, which the per-module emit path does not run (the accumulator spine returns bare tuples for exactly that reason) | pinned |
-| Closures / lambdas | Capturing and escaping lambdas and nested named functions | **101**: 87 nested named functions across 7 modules, plus 14 arrow lambdas across 4 modules. Visitors capture queried names, function-signature registries, declared types and instrumentation context. | pinned |
+| Closures / lambdas | Capturing and escaping lambdas and nested named functions | **103**: 89 nested named functions across 8 modules, plus 14 arrow lambdas across 4 modules. Visitors capture queried names, function-signature registries, declared types and instrumentation context. | pinned |
 | `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **2,026** in 66 modules — `checker.fern`, `parser.fern` and `semsource.fern` carry most of them | floor |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
 | Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **12** spellings in 5 modules (`wasm_ir`'s call set, `builtins`' mirror of `JObject`, `printer`'s line-id table for the linear-space diff (#8611), `modloader`'s fact-hash de-duplication set, and `ircore`'s unit-owner tables) | pinned |
@@ -844,7 +844,7 @@ Worth stating, because effort has gone the wrong way here before.
 - **The `LowerState` rebuild.** Also measured and ruled out (same doc's 2026-06-21
   correction): clean self-reassign threading is in-place even at 45 fields and 20
   parallel arrays. The clone fires only on a read-after-thread.
-- **Diagnostics as a whole.** 63 codes with `fern explain` pages, aggregated
+- **Diagnostics as a whole.** 63 codes with `fern -explain` pages, aggregated
   errors, Levenshtein hints, caret rendering. The defects in §4 are defects *in* a
   good system, not evidence against it.
 - **The machine-code encoders.** `x86_native`, `arm64_native`, `elf` — small,

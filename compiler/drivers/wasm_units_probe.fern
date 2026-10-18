@@ -81,7 +81,7 @@ function with_funcs(m: parser.Module, fs: parser.FuncDecl[]): parser.Module {
 
 function main(): i32 {
   let mod: parser.Module = rundriver.parse_stdin("wasm_units_probe");
-  if (asmcore.refuse_parse_unknowns([mod]) || asmcore.refuse_decl_names([mod])) {
+  if (asmcore.refuse_parse_errors([mod])) {
     return 1;
   }
 

@@ -6,8 +6,8 @@ the single-file-distributable epic
 [#6067](https://github.com/JakeChampion/lang/issues/6067).
 
 Fern embeds assets into the binary at **compile time**. A directory is
-handed to the compiler; each file becomes an ordinary string literal in the
-program.
+handed to the compiler; each use of a file becomes an ordinary literal in
+the program.
 
 ```
 fern -embed ./assets -target x86-64-linux -o prog prog.fern
@@ -25,7 +25,7 @@ const PAGE: string = __fern_asset("html/index.html");
 
 function main(): i32 {
     print(PAGE);
-    let icon: string = __fern_asset("img/favicon.png");
+    let icon: u8[] = __fern_asset_bytes("img/favicon.png");
     return 0;
 }
 ```
@@ -34,31 +34,53 @@ Names are slash-separated paths **relative to the embed root**, on every
 host OS: `-embed ./assets` publishes `assets/html/index.html` as
 `"html/index.html"`.
 
+## Text and bytes
+
+Every `string` is valid UTF-8 and arbitrary bytes live in `u8[]` (D9 in
+`docs/STRINGS-SOTA.md`), so the builtins split the way `read_file` and
+`read_file_bytes` do:
+
+| Builtin | Yields | A file that is not valid UTF-8 |
+| --- | --- | --- |
+| `__fern_asset("NAME")` | `string` | compile error naming the file |
+| `__fern_asset_bytes("NAME")` | `u8[]` | embedded as is |
+| `__fern_assets()` | `(string, string)[]` | compile error naming the file |
+| `__fern_assets_bytes()` | `(string, u8[])[]` | embedded as is |
+
+The text form checks the file when the program is compiled rather than when
+it runs: the file cannot change after that, so a runtime check could only
+ever give the answer the compiler already had. HTML, CSS, JS, SVG and a
+module's source are text; an image, a font, a wasm module or a compressed
+file is bytes.
+
+A file's **name** is always a string, so a file whose name is not valid
+UTF-8 makes the directory unembeddable: `-embed` reports it and nothing
+compiles.
+
 ## Enumeration
 
-`__fern_assets()` yields every embedded asset as a `(name, contents)`
-tuple, in sorted-name order:
+`__fern_assets()` and `__fern_assets_bytes()` yield every embedded asset as a
+`(name, contents)` tuple, in sorted-name order:
 
 ```fern
 function main(): i32 {
-    for a in __fern_assets() {
-        print(a.0);          // name
-        serve(a.0, a.1);     // contents
+    for (name, data) in __fern_assets_bytes() {
+        print(name);
+        serve(name, data);   // data is u8[]
     }
     return 0;
 }
 ```
 
-Use `.0` / `.1` rather than destructuring — `for (name, data) in ...` does
-not parse, because the parser reads the parenthesised pair as the iterable
-and reports `no method "iter"` on it. That is a general language gap, not
-specific to assets.
+A bundle that mixes text and binary files enumerates with
+`__fern_assets_bytes()`; `__fern_assets()` refuses it, because one of its
+strings could not be valid.
 
 Sorted order is deliberate: a filesystem-order walk would make the emitted
 program differ between hosts for identical input.
 
 Enumeration puts **every** asset in the binary, whether or not any
-`__fern_asset` call names it. That is inherent — reaching assets whose
+single-asset call names it. That is inherent — reaching assets whose
 names the program does not know is the whole point — so a bundle carrying
 files the program never serves pays for them in full.
 
@@ -66,57 +88,58 @@ An embed directory holding no files is legitimate: the loop body simply
 never runs. The empty array carries a stamped element type, so it does not
 demand the type annotation an empty `[]` normally would.
 
-## Why it is nearly free
+## Why it is free at run time
 
-`__fern_asset("name")` is not a function. It is resolved during const
-folding (`internal/check/constfold`), which replaces the call with a
-`StringLit` holding the file's bytes. Everything after that point —
-interning, the immortal rc sentinel, all four backends — sees a string
-literal and nothing else, so no backend carries asset-specific code and no
-container format exists to go wrong.
+No asset builtin is a function. Each is resolved as the program loads — by
+`internal/check/constfold` on the Go side and by `compiler/embed.fern` in
+the compiler — which replaces the call with a literal: a text form with a
+string literal, a bytes form with a `u8[]` literal of `u8` elements.
+Everything after that point sees a literal and nothing else, so no backend
+carries asset-specific code and no container format exists to go wrong.
 
-Three properties of the existing literal layout carry the feature:
-
-- **The explicit byte length at `data-4` makes it NUL-safe.** The `.asciz`
-  terminator is never load-bearing, so binary assets (images, fonts, wasm)
-  work unchanged.
-- **`escapeForGAS` already carries arbitrary bytes** — `\NNN` octal below
-  32, high bytes passed through raw rather than re-encoded as UTF-8.
-- **The rc sentinel (`0x80000000` at `data-8`) means zero refcount
-  traffic.** Assets are immortal, so `__fern_rc_inc/dec` short-circuit on
-  them and they can be aliased into containers safely.
-
-Handing an asset to user code is therefore a zero-copy pointer into
-demand-paged read-only memory: no parser, no self-reopen, no syscall, no
-heap allocation.
+Both literals are **immortal static boxes**: a string literal's box, and
+the packed byte box a constant `u8[]` literal folds to (`ir.op_const_bytes`,
+a byte an element). Their rc word is the immortal sentinel, so
+`__fern_rc_inc/dec` short-circuit on them and they can be aliased into
+containers safely; a byte box's capacity is 0, so growing or rewriting one
+copies it rather than writing through. Handing an asset to user code is
+therefore a pointer into the binary's data: no parser, no self-reopen, no
+syscall, no heap allocation.
 
 Because the substitution happens before the checker, an asset also works
-anywhere a string literal works — including in `const` initialisers and in
-constant expressions (`__fern_asset("a") + __fern_asset("b")` folds at
-compile time).
+anywhere a literal of its type works — including in `const` initialisers and,
+for the text form, in constant expressions (`__fern_asset("a") +
+__fern_asset("b")` folds at compile time).
 
 ## Cost: measured, not assumed
 
-Assets reach the native backends as GAS assembly text, which spends 4
-characters on each byte below 32 and 1 on most others. Measured on this
-repository's own site bundle (HTML, JS, CSS, SVG, WOFF2, PNG — 494 KB):
+**In the binary**, an asset costs its own size: the 1 MB bytes asset below
+adds 1,000,000 bytes to the x86-64 executable, 1,002,824 to the wasm module.
+A text asset is a string literal, which the assemblers carry at close to one
+character per byte.
 
-| Asset kind | Expansion |
-| --- | --- |
-| Pure ASCII text | 1.00x |
-| HTML / CSS / JS | 1.03x – 1.17x |
-| Compressed binary (PNG, WOFF2) | 1.37x – 1.51x |
-| **Realistic mixed bundle** | **1.31x** |
-| All-NUL bytes (worst case) | 4.00x |
+**In the compiler**, the two forms differ. A text asset is one literal node
+whatever its size. A bytes asset is a `u8[]` literal with one element per
+byte, and each element is a value through the semantic lowering until the
+constant folds back into one packed box, so compile time and memory are
+linear in the asset's size. Measured on a 4-core container, compiling a
+program that reads one random-byte asset:
 
-#6069 budgeted for ~4x as the *expected* cost and proposed a fourth slice —
-splicing raw bytes into a section from the in-process linker — to avoid it.
-The measurement says 4x is reachable only by data that is overwhelmingly
-low bytes, which is also data that compresses to nearly nothing. **That
-slice is therefore not built.** If a future asset bundle does make the asm
-text hurt, the linker-splice path remains available precisely because Fern
-owns its assembler and linker (`x86_native.fern`, `arm64_native.fern`,
-`elf.fern`, `macho.fern` in `compiler`).
+| Asset | Target | Compile | Peak memory |
+| --- | --- | --- | --- |
+| 100 KB | x86-64 | 0.7 s | 180 MB |
+| 1 MB | x86-64 | 8.7 s | 1.66 GB |
+| 1 MB | arm64 | 7.1 s | 1.65 GB |
+| 1 MB | wasm | 7.5 s | 1.67 GB |
+
+The x86-64 assembly text for the 1 MB asset is 4.6 MB: a packed byte box is
+written as `.byte` lists of decimal values. That stays inside the compiler,
+which assembles it itself.
+
+A text asset should therefore stay a text asset; the bytes form is for files
+that are not text. `TestSelfHostEmbedBytesCompileLinear` holds the bytes form
+to linear time: before it, one lookup in the RC lowering scanned a whole block
+per instruction, and a 100 KB asset took 61 s.
 
 ## Compression
 
@@ -134,7 +157,12 @@ Each is a compile-time diagnostic naming the call site:
 | Unknown name, near miss exists | `no embedded asset "html/index.htm"; did you mean "html/index.html"?` |
 | Unknown name, nothing close | `no embedded asset "..."` + the available names |
 | Computed name | `needs a string literal — assets are resolved at compile time` |
-| `__fern_assets()` given arguments | `takes no arguments, got N` |
+| An enumeration given arguments | `takes no arguments, got N` |
+| A text form on a file that is not UTF-8 | `__fern_asset: embedded asset "img/favicon.png" under DIR is not valid UTF-8 — read it as u8[] with __fern_asset_bytes` |
+| A bytes form under an operator in a `const` | `__fern_asset_bytes() builds an array, which an operator cannot take in a constant expression` |
+
+A file whose name is not UTF-8 is refused by `-embed` itself, before any
+call site is read: `-embed DIR: file name "bad\xff.txt" is not valid UTF-8`.
 
 A computed name can never work: there is no later point at which it could
 be resolved. Saying so directly beats letting it reach the checker as a
@@ -164,25 +192,27 @@ redbean's trailing-ZIP trick, whose whole value is that property; the
 reasoning is preserved in the issue. Nothing here forecloses it: appending
 a ZIP would be purely additive.
 
-Both a single asset and the enumeration are compile-time constants, so either
-may initialise a `const`: `const XS: (string, string)[] = __fern_assets();`
-folds to the same array a `let` would hold, on both compilers.
+Every form is a compile-time constant, so any may initialise a `const`:
+`const ICON: u8[] = __fern_asset_bytes("img/favicon.png");` and
+`const XS: (string, u8[])[] = __fern_assets_bytes();` fold to the same value
+a `let` would hold, on both compilers.
 
 ## Coverage
 
 | Layer | Tests |
 | --- | --- |
-| Loading, symlink skip, suggestions, nil set | `internal/pkg/embed/embed_test.go` |
-| Substitution, const initialisers, const folding, binary bytes, every error path | `internal/check/constfold/asset_test.go` |
+| Loading, symlink skip, a non-UTF-8 name, suggestions, nil set | `internal/pkg/embed/embed_test.go` |
+| Substitution of every form, const initialisers, const folding, binary bytes, the text forms refusing a non-UTF-8 file, every error path | `internal/check/constfold/asset_test.go` |
 | Enumeration: sorted order, contents, binary bytes, empty bundle, error paths | `internal/check/constfold/asset_test.go` |
-| End-to-end through the native backend + the CLI diagnostics | `cmd/fern/embed_test.go` |
-| Enumeration end-to-end + the empty-bundle compile | `cmd/fern/embed_test.go` |
+| The CLI diagnostics, the text form's refusal among them | `cmd/fern/embed_test.go` |
 | The self-host bundle + substitution, every error path | `compiler/drivers/embed_run.fern`, gated by `internal/testing/e2ecompiler/self_host_embed_test.go` |
-| Native and self-host agreeing on the same source + the same directory, symlinked entries and a symlinked root included | `internal/testing/e2ecompiler/self_host_embed_test.go` |
+| The oracle, its interpreter and the self-host agreeing on the same source + the same directory, symlinked entries, a symlinked root and a non-UTF-8 name included | `TestSelfHostEmbedMatchesNative` |
+| A non-UTF-8 asset read back byte-exact through every bytes form on x86-64, arm64 and wasm, under the sanitizer and the leak census | `TestSelfHostEmbedBytesEveryTarget` |
 | A symlinked root, followed | `internal/pkg/embed/embed_test.go` |
-| `lstat` itself, on every backend of both compilers | `internal/testing/e2e/lstat_native_test.go`, `internal/codegen/wasmbin/wasi_fs_dir_test.go`, `internal/testing/e2ecompiler/self_host_lstat_test.go` |
+| `lstat` itself | `internal/testing/e2e/lstat_native_test.go`, `internal/testing/e2ecompiler/self_host_lstat_test.go` |
 
 The e2e test's load-bearing assertion is the **binary** asset: its blob
-carries interior NULs and bytes >= 0x80, so a correct exit code proves both
-that the explicit length (not the `.asciz` terminator) bounds the literal
-and that high bytes survive the assembler.
+carries an interior NUL, a lone 0xff, an overlong encoding, a surrogate and a
+lead byte past U+10FFFF, so a correct exit code on all three targets proves
+the bytes reach the program unchanged — and the same program growing and
+rewriting its copy proves the shared static box is never written through.

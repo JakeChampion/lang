@@ -1,0 +1,80 @@
+import "std/i32";
+import "std/i64";
+
+function kind(e: IoError): string {
+  match (e) {
+    NotFound(_) => { return "NotFound"; },
+    PermissionDenied(_) => { return "PermissionDenied"; },
+    AlreadyExists(_) => { return "AlreadyExists"; },
+    InvalidUtf8(_) => { return "InvalidUtf8"; },
+    Interrupted => { return "Interrupted"; },
+    Unsupported => { return "Unsupported"; },
+    Other(_, m, n) => { return f"Other({m}, {n})"; }
+  }
+}
+
+function main(): i32 {
+  let a: string[] = args();
+  print(f"args: {a.len()}");
+  set_args(["x", "y", "z"]);
+  print(f"set_args: {args().len()} {args()[1]}");
+  match (env("FERN_HOSTED_PROBE")) {
+    Some(v) => { print("env: " + v); },
+    None => { print("env: none"); }
+  }
+  match (env("FERN_HOSTED_ABSENT")) {
+    Some(v) => { print("env absent: " + v); },
+    None => { print("env absent: none"); }
+  }
+  match (config_get("FERN_HOSTED_PROBE")) {
+    Some(v) => { print("config_get: " + v); },
+    None => { print("config_get: none"); }
+  }
+  let found: boolean = false;
+  for kv in environ() {
+    if (kv == "FERN_HOSTED_PROBE=yes") {
+      found = true;
+    }
+  }
+  print(f"environ: {found}");
+  print("hostname: " + hostname());
+  print(f"random_bytes: {random_bytes(16).len()}");
+  let ri: i32 = random_i32();
+  print(f"random_i32: {ri == ri}");
+  let t0: i64 = monotonic_ns();
+  sleep_ms(2i64);
+  sleep_ns(1000000i64);
+  let t1: i64 = monotonic_ns();
+  print(f"monotonic advanced: {t1 - t0 >= 3000000i64}");
+  print(f"now_unix_ms: {now_unix_ms() > 1600000000000i64}");
+  print(f"now_ns: {now_ns() > 1600000000000000000i64}");
+  print(f"clock_resolution: {clock_resolution() > 0i64}");
+  match (clock_set(0i64, 2000000000i64)) {
+    Ok(_) => { print("clock_set: ok"); },
+    Err(e) => { print("clock_set: " + kind(e)); }
+  }
+  print(f"isatty(0): {isatty(0)}");
+  print(f"poll none: {poll([], 0)}");
+  print(f"wasm: {wasm_timer_pollable(5i64)} {wasm_block(3)} {wasm_poll([1])} {wasm_pollable_drop(3)}");
+  let m: i64 = __heap_mark();
+  __heap_release_to(m);
+  print(f"heap mark: {m}");
+  print(f"account: {__account_entry(0, 0 as usize) == 0 as usize}");
+  match (stdin().read_line()) {
+    Some(l) => { print("stdin: " + l); },
+    None => { print("stdin: eof"); }
+  }
+  opt_print(stdout().write("stdout handle\n"));
+  opt_print(stderr().write("stderr handle\n"));
+  print(f"stdout isatty: {stdout().isatty()}");
+  exit(3);
+  print("not reached");
+  return 0;
+}
+
+function opt_print(r: Option[IoError]): void {
+  match (r) {
+    None => { print("write: ok"); },
+    Some(e) => { print("write: " + kind(e)); }
+  }
+}

@@ -186,9 +186,11 @@ function main(): i32 {
 }
 ```
 
-A named-field variant is matched with `{ }`, binding every field by name,
-in any order. It is constructed positionally, arguments in declaration
-order: `Rect(3.0, 4.0)` sets `w` then `h`.
+A named-field variant is matched with `{ }` like a struct: fields in any
+order, `w: width` to bind a field under another name, and a trailing `..`
+to leave the remaining fields out (`Rect { w, .. }`). Without `..`, every
+field must be named. It is constructed positionally, arguments in
+declaration order: `Rect(3.0, 4.0)` sets `w` then `h`.
 
 A tuple `(T, U)` reads its elements with `.0`, `.1`, … and destructures
 with `let (a, b) = t;`. The empty tuple `()` is the unit value, below.

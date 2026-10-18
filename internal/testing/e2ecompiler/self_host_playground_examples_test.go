@@ -80,7 +80,7 @@ func playgroundProgramRuns(t *testing.T, bin, src string) {
 // against web/wasi-http-shim.js, Build component offers the component.
 func playgroundHandlerBuilds(t *testing.T, bin, src string) {
 	t.Helper()
-	for _, form := range [][]string{{"-emit", "core-module"}, {"-emit", "component"}} {
+	for _, form := range [][]string{{"-emit", "core-module"}, nil} {
 		args := append([]string{"-target", "wasm32-wasi-http"}, form...)
 		out, stderr, code := runPlayground(t, bin, t.TempDir(), src, args...)
 		if code != 0 {

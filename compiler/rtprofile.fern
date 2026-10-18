@@ -3,7 +3,7 @@
 import "./util";
 import "./rtprofilemacho";
 import "std/string";
-import "std/cli";
+import "std/envflag";
 
 pub function mode(): i32 {
   match (env("FERN_PROFILE")) {
@@ -20,7 +20,7 @@ pub function mode(): i32 {
       if (v == "alloc-pprof") {
         return 4;
       }
-      if (cli.flag_on(v)) {
+      if (envflag.value_on(v)) {
         return 0 - 1;
       }
     },

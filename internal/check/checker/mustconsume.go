@@ -30,7 +30,7 @@ package checker
 //     loop as well, or bind inside the body. `break`/`continue`
 //     seen at the binding's own scope depth (binding declared in
 //     that loop body) end the scope and must be consumed-before;
-//   - known accepted holes (documented in `fern explain E067`):
+//   - known accepted holes (documented in `fern -explain E067`):
 //     paths that diverge inside a nested loop, labeled break across
 //     scopes, shadowing in nested blocks, and `defer`-based
 //     discharge (a follow-up will model defer's exit edges).

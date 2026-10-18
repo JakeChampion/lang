@@ -1,0 +1,8 @@
+// An index past the end stops the program: exit 1 and the Go interpreter's
+// message, after the output that came first.
+function main(): i32 {
+  let a: i32[] = [1, 2, 3];
+  let i: i32 = 5;
+  print("before");
+  return a[i];
+}

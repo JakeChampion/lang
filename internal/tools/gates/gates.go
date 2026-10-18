@@ -117,7 +117,7 @@ func Ambient(entry string, prog *ast.Program) diag.Errors {
 // any call to a runtime builtin the target's descriptor doesn't grant
 // (`subprocess` on wasm, filesystem/tcp/stdin under wasi-http, anything
 // host-mediated under freestanding) — turning mid-build "undefined
-// label"/"unsupported" failures into positioned, `fern explain`-able
+// label"/"unsupported" failures into positioned, `fern -explain`-able
 // errors. Tree-shake first so unused imported stdlib wrappers don't trip
 // gates: this mirrors each backend's own pre-shake (same dyn-dispatch roots
 // + -shared exports; backends re-shake idempotently), including wasi-http's

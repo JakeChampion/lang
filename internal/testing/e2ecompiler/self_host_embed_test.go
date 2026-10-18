@@ -40,6 +40,137 @@ func TestSelfHostEmbedBundleAndSubstitution(t *testing.T) {
 	}
 }
 
+// embedBytesBlob is an asset no string could hold: an interior NUL, a valid
+// two-byte sequence, a lone 0xff, an overlong encoding, a UTF-16 surrogate and
+// a lead byte past U+10FFFF.
+var embedBytesBlob = []byte{'A', 0x00, 0xc3, 0xa9, 0xff, 0xc0, 0x80, 0xed, 0xa0, 0x80, 0xf5, 'z'}
+
+// embedBytesSource reads embedBytesBlob back as `u8[]` every way the bytes
+// forms allow — a const, a call in a body, the enumeration — and requires it
+// byte-exact; it then grows and rewrites its copy and requires the asset
+// unchanged on the next evaluation, because an asset is shared static data.
+// The text asset beside it comes back through the text form as a string.
+// Exit 0 is success; any other code names the failed check.
+const embedBytesSource = `const WANT: u8[] = [65u8, 0u8, 195u8, 169u8, 255u8, 192u8, 128u8, 237u8, 160u8, 128u8, 245u8, 122u8];
+const BLOB: u8[] = __fern_asset_bytes("bin/blob.bin");
+
+function same(b: u8[]): boolean {
+  if (b.len() != WANT.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < b.len()) {
+    if (b[i] != WANT[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function main(): i32 {
+  if (!same(BLOB)) {
+    return 1;
+  }
+  let b: u8[] = __fern_asset_bytes("bin/blob.bin");
+  if (!same(b)) {
+    return 2;
+  }
+  let grown: u8[] = b.append(7u8).with(0, 66u8);
+  if (grown.len() != 13 || grown[0] != 66u8 || !same(b)) {
+    return 3;
+  }
+  if (!same(__fern_asset_bytes("bin/blob.bin"))) {
+    return 4;
+  }
+  let seen: i32 = 0;
+  for a in __fern_assets_bytes() {
+    if (a.0 == "bin/blob.bin" && same(a.1)) {
+      seen = seen + 1;
+    }
+    if (a.0 == "note.txt" && a.1.len() == 6) {
+      seen = seen + 10;
+    }
+  }
+  if (seen != 11) {
+    return 5;
+  }
+  if (__fern_asset("note.txt") != "h\u{e9}llo") {
+    return 6;
+  }
+  return 0;
+}
+`
+
+// TestSelfHostEmbedBytesEveryTarget compiles embedBytesSource with `-embed`
+// for each target under the strict IR path, the sanitizer and the leak
+// census, and requires a clean exit and a balanced census.
+func TestSelfHostEmbedBytesEveryTarget(t *testing.T) {
+	assets := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(assets, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assets, "bin", "blob.bin"), embedBytesBlob, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assets, "note.txt"), []byte("héllo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cli := buildSelfHostCLI(t)
+	cli.flags = []string{"-embed", assets}
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, embedBytesSource, target, "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+			if code != 0 {
+				t.Fatalf("exit = %d, want 0 — that code is the failing check in embedBytesSource\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
+	}
+}
+
+// TestSelfHostEmbedBytesCompileLinear pins compiling a bytes asset to time
+// linear in its size. Each byte is one element of one u8[] literal, so a big
+// asset is one block of that many instructions, and a lookup that scanned a
+// block's whole step list per instruction made it quadratic: 100 KB took 61 s.
+// The gate is a ratio of compile CPU times on the same machine — 8x the bytes
+// may cost at most 8x the time, where the quadratic form cost about 25x.
+func TestSelfHostEmbedBytesCompileLinear(t *testing.T) {
+	if testing.Short() {
+		t.Skip("compiles two large assets; skipped under -short")
+	}
+	assets := t.TempDir()
+	const small, large = 20_000, 160_000
+	for name, n := range map[string]int{"small.bin": small, "large.bin": large} {
+		body := make([]byte, n)
+		for i := range body {
+			body[i] = byte(i*131 + i/7)
+		}
+		if err := os.WriteFile(filepath.Join(assets, name), body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cli := buildSelfHostCLI(t)
+	cli.flags = []string{"-embed", assets}
+	cpu := func(name string) float64 {
+		src := filepath.Join(t.TempDir(), "main.fern")
+		prog := "function main(): i32 {\n  return __fern_asset_bytes(\"" + name + "\").len() % 7;\n}\n"
+		if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cmd := cli.compileCmd("x86-64-linux", filepath.Join(t.TempDir(), "out.s"), src, "-emit", "asm")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("compile %s: %v\n%s", name, err, out)
+		}
+		return (cmd.ProcessState.UserTime() + cmd.ProcessState.SystemTime()).Seconds()
+	}
+	s, l := cpu("small.bin"), cpu("large.bin")
+	t.Logf("compile CPU: %d bytes %.2fs, %d bytes %.2fs", small, s, large, l)
+	if l > 8*s {
+		t.Errorf("8x the asset took %.1fx the compile time (%.2fs vs %.2fs) — compiling one long block is superlinear again", l/s, l, s)
+	}
+}
+
 // TestSelfHostEmbedMatchesNative is the parity gate: the same source, the same
 // embed directory, and the same answer out of both compilers.
 //
@@ -95,6 +226,13 @@ func TestSelfHostEmbedMatchesNative(t *testing.T) {
 	if err := os.MkdirAll(empty, 0o755); err != nil {
 		t.Fatalf("mkdir empty: %v", err)
 	}
+	// A name reaches the program as a string, so a file whose name is not
+	// UTF-8 makes the whole directory unembeddable.
+	badName := filepath.Join(dir, "bad-name-assets")
+	if err := os.MkdirAll(badName, 0o755); err != nil {
+		t.Fatalf("mkdir bad-name: %v", err)
+	}
+	haveBadName := os.WriteFile(filepath.Join(badName, "bad\xff.txt"), []byte("x"), 0o644) == nil
 
 	// Symlinks. Entries are SKIPPED — that is what keeps an asset tree from
 	// reaching outside its root or wedging the walk on a cycle — while the
@@ -139,11 +277,13 @@ func TestSelfHostEmbedMatchesNative(t *testing.T) {
 		// 3 + 2 = 5: the bytes of two files, one of them nested.
 		{"asset-one", assets, "function main(): i32 {\n    return __fern_asset(\"a.txt\").len() + __fern_asset(\"sub/b.txt\").len();\n}\n", 5},
 		// Names sorted, contents alongside: 5+8+9+5 name bytes, 3+5+2+3
-		// contents, the 5 being the binary blob counted by its own length word.
-		{"assets-all", assets, "function main(): i32 {\n    let n: i32 = 0;\n    for a in __fern_assets() { n = n + a.0.len() + a.1.len(); }\n    return n;\n}\n", 40},
+		// contents, the 5 being the binary blob as u8[].
+		{"assets-all", assets, "function main(): i32 {\n    let n: i32 = 0;\n    for a in __fern_assets_bytes() { n = n + a.0.len() + a.1.len(); }\n    return n;\n}\n", 40},
 		// Sorted order is observable, and it is what keeps the emitted program
 		// identical across hosts — a filesystem-order walk would not be.
-		{"assets-sorted", assets, "function main(): i32 {\n    let first: string = \"\";\n    for a in __fern_assets() { if (first.len() == 0) { first = a.0; } }\n    if (first == \"a.txt\") { return 7; }\n    return 9;\n}\n", 7},
+		{"assets-sorted", assets, "function main(): i32 {\n    let first: string = \"\";\n    for a in __fern_assets_bytes() { if (first.len() == 0) { first = a.0; } }\n    if (first == \"a.txt\") { return 7; }\n    return 9;\n}\n", 7},
+		// A bundle of text enumerates as strings: 5 name bytes + 2 contents.
+		{"assets-text", filepath.Join(assets, "sub"), "function main(): i32 {\n    let n: i32 = 0;\n    for a in __fern_assets() { n = n + a.0.len() + a.1.len(); }\n    return n;\n}\n", 7},
 		// An empty bundle yields an empty typed array, so the loop body simply
 		// never runs. The element type has to be stamped for that to compile.
 		{"assets-empty-bundle", empty, "function main(): i32 {\n    let n: i32 = 0;\n    for a in __fern_assets() { n = n + 1; }\n    return n;\n}\n", 0},
@@ -156,11 +296,15 @@ func TestSelfHostEmbedMatchesNative(t *testing.T) {
 		{"symlinked-entry-is-not-an-asset", assets, "function main(): i32 {\n    return __fern_asset(\"escape.txt\").len();\n}\n", -1},
 		// Naming a symlinked directory on the command line embeds what it
 		// points at, and gives the same bundle as naming the directory itself.
-		{"assets-follow-symlinked-root", "SYMLINKED_ROOT", "function main(): i32 {\n    let n: i32 = 0;\n    for a in __fern_assets() { n = n + a.0.len() + a.1.len(); }\n    return n;\n}\n", 40},
+		{"assets-follow-symlinked-root", "SYMLINKED_ROOT", "function main(): i32 {\n    let n: i32 = 0;\n    for a in __fern_assets_bytes() { n = n + a.0.len() + a.1.len(); }\n    return n;\n}\n", 40},
 		// Binary bytes, asserted per byte: nothing truncated at the NUL and
 		// nothing rewrote the 0xff. The length alone would not catch either,
 		// since a walk that mangled the high byte in place keeps the count.
-		{"asset-binary", assets, "function main(): i32 {\n    let b: string = __fern_asset(\"blob.bin\");\n    if (b.len() != 5) { return 1; }\n    if (b[0] != 65 || b[1] != 0 || b[2] != 66) { return 2; }\n    if (b[3] != 255 || b[4] != 67) { return 3; }\n    return 0;\n}\n", 0},
+		{"asset-binary", assets, "function main(): i32 {\n    let b: u8[] = __fern_asset_bytes(\"blob.bin\");\n    if (b.len() != 5) { return 1; }\n    if (b[0] != 65u8 || b[1] != 0u8 || b[2] != 66u8) { return 2; }\n    if (b[3] != 255u8 || b[4] != 67u8) { return 3; }\n    return 0;\n}\n", 0},
+		// A string is always valid UTF-8, so neither text form takes the blob.
+		{"asset-text-refuses-binary", assets, "function main(): i32 {\n    return __fern_asset(\"blob.bin\").len();\n}\n", -1},
+		{"assets-text-refuses-binary", assets, "function main(): i32 {\n    let n: i32 = 0;\n    for a in __fern_assets() { n = n + 1; }\n    return n;\n}\n", -1},
+		{"non-utf8-name", "BAD_NAME", "function main(): i32 {\n    let n: i32 = 0;\n    for a in __fern_assets_bytes() { n = n + 1; }\n    return n;\n}\n", -1},
 
 		// Every refusal. Each of these is a program that would otherwise build
 		// with a silently empty asset in it.
@@ -177,7 +321,12 @@ func TestSelfHostEmbedMatchesNative(t *testing.T) {
 		{"nested-asset-name", assets, "function main(): i32 {\n    return __fern_asset(__fern_asset(\"a.txt\")).len();\n}\n", -1},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			if c.embedDir == "SYMLINKED_ROOT" {
+			if c.embedDir == "BAD_NAME" {
+				if !haveBadName {
+					t.Skip("this filesystem refuses a non-UTF-8 name")
+				}
+				c.embedDir = badName
+			} else if c.embedDir == "SYMLINKED_ROOT" {
 				if !haveSymlinks {
 					t.Skip("symlinks unavailable")
 				}
@@ -230,6 +379,12 @@ func TestSelfHostEmbedMatchesNative(t *testing.T) {
 			}
 			if shCode != c.wantExit {
 				t.Errorf("self-host-compiled program exited %d, want %d\n%s", shCode, c.wantExit, shRunOut)
+			}
+			// The oracle's interpreter reads the same bundle the same way.
+			interp := exec.Command(nativeBin, "-embed", c.embedDir, "-interp", src)
+			interpOut, _ := interp.CombinedOutput()
+			if code := interp.ProcessState.ExitCode(); code != c.wantExit {
+				t.Errorf("oracle interpreter exited %d, want %d\n%s", code, c.wantExit, interpOut)
 			}
 		})
 	}

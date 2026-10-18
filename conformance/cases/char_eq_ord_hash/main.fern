@@ -1,0 +1,60 @@
+// `char` implements cmp.Eq, cmp.Ord and cmp.Hash like the other scalars
+// (#12809): an array of chars answers `.contains`, `cmp.sort` orders one by
+// scalar value, and a char is a map key.
+import "core/cmp";
+import "core/map";
+import "std/array";
+import "std/i32";
+
+function yes(b: boolean): string {
+  if (b) {
+    return "yes";
+  }
+  return "no";
+}
+
+function codes(cs: char[]): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < cs.len()) {
+    if (i > 0) {
+      out = out + " ";
+    }
+    out = out + (cs[i] as i32).to_string();
+    i = i + 1;
+  }
+  return out;
+}
+
+function main(): i32 {
+  let cs: char[] = ['b', 'a', '\u{1F600}', 'Z', 'a'];
+  print("contains a " + yes(cs.contains('a')));
+  print("contains q " + yes(cs.contains('q')));
+  print("contains astral " + yes(cmp.contains(cs, '\u{1F600}')));
+
+  print("sorted " + codes(cmp.sort(cs)));
+  print("sorted desc " + codes(cmp.sort_desc(cs)));
+  print("is_sorted " + yes(cmp.is_sorted(cs)));
+  print("cmp " + 'a'.cmp('b').to_string() + " " + 'b'.cmp('a').to_string() + " " + 'a'.cmp('a').to_string());
+  print("eq " + yes('x'.eq('x')) + " " + yes('x'.eq('y')));
+  print("hash stable " + yes('x'.hash() == 'x'.hash()));
+
+  let m: Map[char, i32] = map_new(8);
+  m = m.insert('a', 1);
+  m = m.insert('b', 2);
+  m = m.insert('a', 3);
+  m = m.insert('\u{1F600}', 4);
+  print("len " + m.len().to_string());
+  print("get a " + m.get_or('a', -1).to_string());
+  print("get astral " + m.get_or('\u{1F600}', -1).to_string());
+  print("has c " + yes(m.has('c')));
+  print("keys " + codes(cmp.sort(m.keys())));
+  match (m.get('b')) {
+    Some(v) => { print("get b " + v.to_string()); },
+    None => { print("get b none"); },
+  }
+
+  let lit = Map { 'x': 7, 'y': 8 };
+  print("literal " + lit.get_or('y', -1).to_string() + " " + lit.len().to_string());
+  return 0;
+}

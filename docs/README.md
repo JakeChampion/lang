@@ -186,7 +186,7 @@ so explicitly.
 
 | Doc | Status | What it is |
 | --- | --- | --- |
-| `EMBED.md` | [reference] | Compile-time asset embedding (`-embed`, `__fern_asset`). |
+| `EMBED.md` | [reference] | Compile-time asset embedding (`-embed`, `__fern_asset`, `__fern_asset_bytes`). |
 | `LITERATE.md` | [reference] | Literate programming (`.fern.md`, tangle/weave). |
 | `LSP-INTEGRATION-PLAN.md` | [reference] | `fern -lsp`, the language server: what each request answers, how the playground runs it, its gates; post-MVP ideas in IDE-COMPILATION-RESEARCH. |
 | `TEST-RUNNER-MIGRATION.md` | [record] | Go-test → pure-Fern runner migration audit. |

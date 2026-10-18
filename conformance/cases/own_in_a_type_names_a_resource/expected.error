@@ -1,0 +1,1 @@
+`Point` is not a resource, so `own Point` is not a handle type; a consuming parameter is written `own name: Point`

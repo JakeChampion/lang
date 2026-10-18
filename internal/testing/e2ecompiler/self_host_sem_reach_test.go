@@ -246,24 +246,59 @@ func TestSelfHostSemReachTransport(t *testing.T) {
 	}
 }
 
+// serveWithoutH2Prog takes TLS and HTTP/3 from the environment, as the
+// nightly's hello does, but not HTTP/2, which the hello also offers.
+const serveWithoutH2Prog = `import "std/http";
+import "std/serve";
+import "std/platform";
+import "std/tls/identity";
+import "std/tls/server";
+
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+  return http.ok("hello");
+}
+
+function main(): i32 {
+  let opts: serve.Config = serve.Config { ...serve.config(), max_connections: 16384 };
+  match (env("TLS_PEM")) {
+    Some(pem) => {
+      match (identity.from_pem(pem, pem)) {
+        Ok(id) => {
+          opts = opts.with_tls(server.config(id));
+        },
+        Err(e) => {
+          eprint(e.message());
+          return 2;
+        }
+      }
+    },
+    None => {}
+  }
+  if (env("H3").is_some()) {
+    opts = opts.with_h3();
+  }
+  return serve.supervise(8080, opts, handle);
+}
+`
+
 // A server that never calls `with_h2` links no HTTP/2: no reachable
 // construction sets `Config.h2`, and the compiler-generated folds
 // (`__smm_*`, `__arrm_*`) that carry a Config are reached only through the
 // calls the bodies make. With the pass off, the HTTP/2 code is there.
 func TestSelfHostSemReachServeWithoutH2(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	path, err := filepath.Abs("../../../scripts/net-bench.d/hello.fern")
-	if err != nil {
+	path := filepath.Join(t.TempDir(), "server.fern")
+	if err := os.WriteFile(path, []byte(serveWithoutH2Prog), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	h2 := regexp.MustCompile(`(?m)^__fn_h2__\w+:`)
 	asm := readFile(t, cli.emit(t, path, "x86-64-linux", "FERN_SIZE=1"))
 	if fns := h2.FindAllString(asm, 4); len(fns) > 0 {
-		t.Errorf("the hello server links HTTP/2: %v", fns)
+		t.Errorf("the server links HTTP/2: %v", fns)
 	}
 	off := readFile(t, cli.emit(t, path, "x86-64-linux", "FERN_SIZE=1", "FERN_NO_SEM_REACH=1"))
 	if !h2.MatchString(off) {
-		t.Errorf("FERN_NO_SEM_REACH=1: the hello server links no HTTP/2 either, so this test shows nothing")
+		t.Errorf("FERN_NO_SEM_REACH=1: the server links no HTTP/2 either, so this test shows nothing")
 	}
 }
 

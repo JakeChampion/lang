@@ -61,10 +61,10 @@ pub struct Descriptor {
 // have no process model.
 function capability_profile(profile: string): string[] {
   if (profile == "hosted-native") {
-    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "subprocess", "unix", "reactor"];
+    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor"];
   }
   if (profile == "hosted-darwin") {
-    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "subprocess", "unix", "reactor", "sysctl"];
+    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "sysctl"];
   }
   if (profile == "wasi-cli") {
     // fs is preview1's fd helpers and tcp is wasi:sockets; there is no
@@ -552,6 +552,21 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "__syscall4", capability: "syscall" },
     Gate { builtin: "__syscall5", capability: "syscall" },
     Gate { builtin: "__syscall6", capability: "syscall" },
+    // The native runtime's raw-memory floor: its allocator's block layout
+    // and its static slots, which the register backends' runtime helpers
+    // are written on. Wasm serves those helpers with hand-written WAT and
+    // lowers none of these. The floor's loads, stores and type-only bridges
+    // lower everywhere and stay ungated.
+    Gate { builtin: "__raw_alloc", capability: "rawmem" },
+    Gate { builtin: "__raw_string", capability: "rawmem" },
+    Gate { builtin: "__raw_arr_box", capability: "rawmem" },
+    Gate { builtin: "__raw_scratch", capability: "rawmem" },
+    Gate { builtin: "__raw_environ", capability: "rawmem" },
+    Gate { builtin: "__raw_splice_pipe", capability: "rawmem" },
+    Gate { builtin: "__raw_cover", capability: "rawmem" },
+    Gate { builtin: "__raw_task_state", capability: "rawmem" },
+    Gate { builtin: "__raw_vdso", capability: "rawmem" },
+    Gate { builtin: "__raw_vg_request", capability: "rawmem" },
   ];
 }
 
@@ -785,6 +800,11 @@ function sorted(xs: string[]): string[] {
   return out;
 }
 
+// violation_diag is E066 for one violation, as every driver reports it.
+pub function violation_diag(v: Violation): util.Diag {
+  return util.violation_diag("E066", violation_message(v), v.fn_module, v.line, v.col);
+}
+
 // violation_message renders E066's text. It names the capability rather than
 // the builtin first, because the capability is what the user has to change
 // target for; the builtin is the evidence.
@@ -806,6 +826,22 @@ pub function violation_message(v: Violation): string {
     list = list + providers[i];
     i = i + 1;
   }
-  return "target \"" + v.target + "\" does not provide `" + v.capability + "`, required by `"
+  let msg: string = "target \"" + v.target + "\" does not provide `" + v.capability + "`, required by `"
     + v.builtin + "`" + where + "; targets providing it: [" + list + "]";
+  let alt: string = equivalent(v.builtin);
+  if (alt.len() > 0 && has_capability(v.target, gated_capability(alt))) {
+    msg = msg + "; use `" + alt + "`, which this target provides";
+  }
+  return msg;
+}
+
+// equivalent names, for a gated builtin, the builtin that reaches the same
+// thing on a target lacking the first, or "": timer_fd's wakeup as a
+// wasi:io/poll pollable rather than a file descriptor. Mirrors native's
+// platforms.equivalents.
+function equivalent(builtin: string): string {
+  if (builtin == "timer_fd") {
+    return "wasm_timer_pollable";
+  }
+  return "";
 }

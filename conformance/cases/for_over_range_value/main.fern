@@ -1,0 +1,27 @@
+// A range is a core/iter Range value wherever it comes from — a local, a
+// function's return, a parenthesised `..=` — and `for` walks it as it walks
+// a range written in the loop head.
+import "core/iter";
+
+function upto(n: i32): iter.Range {
+  return 0..n;
+}
+
+function main(): i32 {
+  let r = 2..5;
+  for x in r {
+    print(f"local {x}");
+  }
+  for y in upto(3) {
+    print(f"returned {y}");
+  }
+  for z in (1..=2) {
+    print(f"inclusive {z}");
+  }
+  let empty = 4..4;
+  for w in empty {
+    print(f"empty {w}");
+  }
+  print(f"count {r.count()}");
+  return 0;
+}

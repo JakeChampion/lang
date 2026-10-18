@@ -658,6 +658,9 @@ func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
 	} else if sd.Public {
 		f.b.WriteString("pub ")
 	}
+	if sd.Opaque {
+		f.b.WriteString("opaque ")
+	}
 	f.b.WriteString("struct ")
 	f.b.WriteString(sd.Name)
 	f.writeTypeParams(sd.TypeParams, nil, nil)
@@ -883,11 +886,6 @@ func (f *formatter) formatResourceDecl(rd *ast.ResourceDecl) {
 		f.b.WriteString("\", \"")
 		f.b.WriteString(rd.ImportWITName)
 		f.b.WriteString("\")\n")
-	}
-	if rd.PackageScoped {
-		f.b.WriteString("pub(package) ")
-	} else if rd.Public {
-		f.b.WriteString("pub ")
 	}
 	f.b.WriteString("resource ")
 	f.b.WriteString(rd.Name)

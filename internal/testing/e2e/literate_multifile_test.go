@@ -119,14 +119,10 @@ func TestLiterateMultiFileDiagnosticRemap(t *testing.T) {
 }
 
 // A top-level error (here a const initialiser type mismatch) in a
-// non-entry module is emitted UNATTRIBUTED (File()=="") because the
-// checker only stamps the file inside a FuncDecl. In a multi-file
-// document each module has its own tangle line map, so routing such an
-// error through the entry module's map would point a caret at the wrong
-// `.fern.md` line. The fix renders the bare message instead — accurate,
-// not misattributed. Regression for L3 in
-// docs/ADVERSARIAL-REVIEW-2026-06.md.
-func TestLiterateMultiFileUnattributedErrorNotMisremapped(t *testing.T) {
+// non-entry module carries that module's file, so it is remapped through
+// the module's own tangle line map rather than the entry's. Regression for
+// L3 in docs/ADVERSARIAL-REVIEW-2026-06.md.
+func TestLiterateMultiFileTopLevelErrorRemapsThroughItsModule(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
 	doc := "# Buggy\n" + // 1
@@ -156,10 +152,10 @@ func TestLiterateMultiFileUnattributedErrorNotMisremapped(t *testing.T) {
 	if !strings.Contains(msg, "does not match") {
 		t.Errorf("diagnostic should describe the type mismatch, got:\n%s", msg)
 	}
-	// Must NOT misattribute to a document position via the entry's map.
-	// (Before the fix, the unattributed error was remapped through
-	// main.fern's line map and pointed a caret at the wrong doc line.)
-	if strings.Contains(msg, "buggy.fern.md:") {
-		t.Errorf("unattributed multi-file error must not be remapped to a (wrong) document line, got:\n%s", msg)
+	if !strings.Contains(msg, "buggy.fern.md:9:") {
+		t.Errorf("diagnostic should point at buggy.fern.md line 9, got:\n%s", msg)
+	}
+	if !strings.Contains(msg, `pub const BAD: i32 = "oops";`) {
+		t.Errorf("diagnostic should render the document source line, got:\n%s", msg)
 	}
 }

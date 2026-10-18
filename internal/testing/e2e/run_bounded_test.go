@@ -2,8 +2,12 @@ package e2e
 
 import (
 	"bytes"
+	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -90,4 +94,41 @@ func x86_64RunnerOrEmpty() (runner []string, ok bool) {
 		return []string{p}, true
 	}
 	return nil, false
+}
+
+// TestRunSelfHostSeedBoundsAHungCompiler pins that a compiler which never
+// finishes is reported, not waited on, on every leg's seed runner: a mutant
+// compiler that loops held the nightly mutation score until its job timed
+// out, with every result lost.
+func TestRunSelfHostSeedBoundsAHungCompiler(t *testing.T) {
+	saved := selfHostCompileTimeout
+	selfHostCompileTimeout = 200 * time.Millisecond
+	defer func() { selfHostCompileTimeout = saved }()
+	fake := filepath.Join(t.TempDir(), "fern")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nsleep 600\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const src = "function main(): i32 { return 0; }\n"
+	legs := map[string]func(failFunc) (*selfHostRun, string){
+		"x86-64": func(f failFunc) (*selfHostRun, string) {
+			return runSelfHostSeed(t, fake, t.TempDir(), src, nil, nil, f)
+		},
+		"arm64": func(f failFunc) (*selfHostRun, string) {
+			return runSelfHostArm64Seed(t, fake, t.TempDir(), "qemu-aarch64", src, nil, nil, f)
+		},
+		"wasm": func(f failFunc) (*selfHostRun, string) {
+			return runSelfHostWasmSeed(t, fake, t.TempDir(), src, nil, nil, f)
+		},
+	}
+	for name, run := range legs {
+		failed := ""
+		start := time.Now()
+		r, gap := run(func(format string, args ...any) { failed = fmt.Sprintf(format, args...) })
+		if r != nil || gap != "" || !strings.Contains(failed, "did not finish") {
+			t.Errorf("%s: got run %v, gap %q, failure %q; want a reported hang", name, r, gap, failed)
+		}
+		if elapsed := time.Since(start); elapsed > 30*time.Second {
+			t.Errorf("%s: returned after %v, want about the timeout", name, elapsed)
+		}
+	}
 }

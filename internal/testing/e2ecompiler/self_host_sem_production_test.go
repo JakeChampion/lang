@@ -2750,7 +2750,7 @@ function main(): i32 { return (vb_words(3) + vb_rows(2) + vb_rows(0)) & 255; }
 	// The saturating and checked operators at every width, matched on the exit
 	// code: each function is one shape the shared op-list builders emit over
 	// the semantic lowering's own slots.
-	{name: "overflow-operators", atLeast: 7, want: "5|", src: `
+	{name: "overflow-operators", atLeast: 7, want: "4|", src: `
 function s32(a: i32, b: i32): i32 { return (a +| b) + (a -| b) + (a *| b) + (a <<| b); }
 function u32s(a: u32, b: u32): u32 { return (a +| b) + (a -| b) + (a *| b) + (a <<| b); }
 function s64(a: i64, b: i64): i64 { return (a +| b) + (a -| b) + (a *| b) + (a <<| b); }
@@ -4107,7 +4107,9 @@ function main(): i32 {
 	// the contract table for `Empty.to_string` and found nothing. Every other
 	// spelling of the same call already worked: a binding of the variant, an
 	// annotated binding, and a payloaded `Circle(1).to_string()`.
-	{name: "a-variant-is-a-value-not-a-type-head", atLeast: 94, want: "77|", src: `
+	// The shake keeps only the derived methods something calls, so the tally
+	// is the live declarations alone, every one produced.
+	{name: "a-variant-is-a-value-not-a-type-head", atLeast: 60, want: "77|", src: `
 import "core/cmp";
 @derive(cmp.Eq, cmp.Display, cmp.Ord)
 enum Shape { Circle(i32), Square(i32), Empty }
@@ -7624,6 +7626,10 @@ function main(): i32 { return pick(9); }
 const semTupleElementTakeSource = `
 struct T { a: i64[], b: i64[] }
 
+// A literal of constants is a static box, which no update can reuse; one
+// element from a call keeps the record's arrays on the heap.
+@noinline function zero(): i64 { return 0 as i64; }
+
 function touch(t: T, at: i32): T {
   return T { ...t, a: t.a.with(at, 1 as i64) };
 }
@@ -7633,7 +7639,7 @@ function pair(t: T, at: i32): (T, boolean) {
 }
 
 function main(): i32 {
-  let t: T = T { a: [0 as i64, 0 as i64, 0 as i64, 0 as i64], b: [0 as i64] };
+  let t: T = T { a: [zero(), 0 as i64, 0 as i64, 0 as i64], b: [zero()] };
   let k: i32 = 0;
   while (k < 10) {
     let p: (T, boolean) = pair(t, k % 4);
@@ -7651,6 +7657,10 @@ function main(): i32 {
 const semTupleDestructureTakeSource = `
 struct T { a: i64[], b: i64[] }
 
+// A literal of constants is a static box, which no update can reuse; one
+// element from a call keeps the record's arrays on the heap.
+@noinline function zero(): i64 { return 0 as i64; }
+
 function touch(t: T, at: i32): T {
   return T { ...t, a: t.a.with(at, 1 as i64) };
 }
@@ -7660,7 +7670,7 @@ function pair(t: T, at: i32): (T, boolean) {
 }
 
 function main(): i32 {
-  let t: T = T { a: [0 as i64, 0 as i64, 0 as i64, 0 as i64], b: [0 as i64] };
+  let t: T = T { a: [zero(), 0 as i64, 0 as i64, 0 as i64], b: [zero()] };
   let k: i32 = 0;
   while (k < 10) {
     let (u, ok) = pair(t, k % 4);
@@ -7681,12 +7691,16 @@ function main(): i32 {
 const semSpreadTwoWithsSource = `
 struct C { fds: i64[], t: i64[], k: boolean[] }
 
+// A literal of constants is a static box, which no update can reuse; one
+// element from a call keeps the record's arrays on the heap.
+@noinline function zero(): i64 { return 0 as i64; }
+
 @noinline function respond(c: C, at: i32, v: i64, keep: boolean): C {
   return C { ...c, t: c.t.with(at, v), k: c.k.with(at, c.k[at] && keep) };
 }
 
 function main(): i32 {
-  let c: C = C { fds: [1 as i64, 2 as i64, 3 as i64, 4 as i64], t: [0 as i64, 0 as i64, 0 as i64, 0 as i64], k: [true, true, true, true] };
+  let c: C = C { fds: [zero() + 1 as i64, 2 as i64, 3 as i64, 4 as i64], t: [zero(), 0 as i64, 0 as i64, 0 as i64], k: [true, true, true, true] };
   let r: i32 = 0;
   while (r < 10) {
     c = respond(c, r % 4, r as i64, true);
@@ -7779,8 +7793,7 @@ function main(): i32 {
 // `t.values[at]` next to `t`. The element read takes a unit of its own for
 // the call, so the table moves into the callee and its appends land in
 // place. As a borrow anchored to the table it pinned the table for the call,
-// and the callee copied both buffers on every append: 114 allocations for
-// this program, 46 once the reads are held.
+// and the callee copied both buffers on every append.
 const semElementBesideArraySource = `
 import "std/i32";
 import "std/string";
@@ -7847,7 +7860,7 @@ func TestSelfHostSemanticAllocationCounts(t *testing.T) {
 		{"element-read-outlives-the-array-write", 3, semHeldElementSource},
 		// 51 while the saved field pinned the record across each call.
 		{"field-read-outlives-the-record-move", 13, semHeldFieldSource},
-		{"an-element-handed-beside-its-dying-array", 46, semElementBesideArraySource},
+		{"an-element-handed-beside-its-dying-array", 44, semElementBesideArraySource},
 		// A view merged past a source that dominates the join stays a view.
 		{"a-view-of-a-dominating-source-is-not-copied", 28, semDominatingViewSource},
 		// A struct taken out of a returned tuple is updated in place while the

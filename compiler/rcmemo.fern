@@ -21,7 +21,7 @@ import "./ir";
 import "./rccertify";
 import "./ssa";
 import "./util";
-import "std/cli";
+import "std/envflag";
 
 // Memo is the digests one target has certified clean (`known`), the ones
 // this emit adds, and the hit and miss counters, one byte each in a buffer
@@ -46,7 +46,7 @@ pub function off(): Memo {
 function root(): string {
   match (env("FERN_RC_CERTIFY_MEMO")) {
     Some(v) => {
-      if (!cli.flag_on(v)) {
+      if (!envflag.value_on(v)) {
         return "";
       }
       return v;
