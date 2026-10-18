@@ -12,7 +12,8 @@ import (
 // `T` in `dyn Tc[i32]` is i32, and `Self::Item` in `dyn P[Item = i32]` is
 // i32. The self-host checker left both unknown, so -check refused a program
 // that used the result in arithmetic, and could not see a result used at the
-// wrong type. Found by TestDifferential_CheckerMutants.
+// wrong type. Found by TestDifferential_CheckerMutants. A call's arguments are
+// read at the same spelling and checked against it (#12639).
 func TestSelfHostDynTraitArgsCheck(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -41,6 +42,8 @@ impl Tc[i32] for B { function tc(self: Self, d: i32): i32 { return self.v + d; }
 		{"pin inside the result", "function f(d: dyn P[Item = i32]): i32 { match (d.opt()) { Some(x) => { return x + 1; }, None => { return 0; } } }", true},
 		{"pinned result at the wrong type", "function f(d: dyn P[Item = i32]): i32 { let s: string = d.get(); return s.len(); }", false},
 		{"trait argument at the wrong type", "function f(d: dyn Tc[i32]): i32 { let s: string = d.tc(3); return s.len(); }", false},
+		{"argument at the trait argument", "function f(d: dyn Tc[i32]): i32 { let x: i32 = 3; return d.tc(x); }", true},
+		{"argument against the trait argument", "function f(d: dyn Tc[i32]): i32 { return d.tc(\"three\"); }", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

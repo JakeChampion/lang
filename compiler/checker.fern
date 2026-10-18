@@ -6337,8 +6337,9 @@ function uninferred_method_diags(c: ast.ExprCall, recv: string, method: string, 
 
 // uninferred_recv_diags reports E040 for a variable of the receiver's type
 // that the receiver itself leaves unbound: `let o = GNil;` gives `o` no type
-// argument, so nothing binds `T` in `o.count()` unless an argument, the result
-// or a bound does, as in uninferred_method_diags.
+// argument at all, so nothing binds `T` in `o.count()` unless an argument, the
+// result or a bound does, as in uninferred_method_diags. An argument that is a
+// type variable (`self` inside the type's own generic methods) binds it.
 function uninferred_recv_diags(c: ast.ExprCall, recv: string, method: string, msig: MethodSig, args: typeinfo.Type[]): util.Diag[] {
   let out: util.Diag[] = [];
   if (c.type_args.len() > 0 || msig.name.len() == 0 || c.args.len() != msig.param_type_names.len()) {
@@ -6351,7 +6352,7 @@ function uninferred_recv_diags(c: ast.ExprCall, recv: string, method: string, ms
     let ar: parser.TypeRef = rref.args[k];
     let tp: string = ar.base;
     let bare: boolean = ar.args.len() == 0 && ar.array_depth == 0 && !ar.is_tuple && !ar.is_fn;
-    let bound: boolean = k < args.len() && !type_contains_unknown(args[k]);
+    let bound: boolean = k < args.len();
     if (bare && !bound && !type_ref_names_any(ret, [tp]) && !bound_names_tp(msig.type_bounds, tp)) {
       let (_, all_empty) = empty_array_positions(msig.param_type_names, c.args, tp);
       if (all_empty) {
@@ -14216,6 +14217,31 @@ function dyn_method_type(traits: string, name: string, s: Scope): typeinfo.Type 
   return t_unknown("no method `" + name + "` on `dyn " + traits + "`");
 }
 
+// dyn_param_type is parameter `k` of the method `name` a `dyn` value
+// dispatches to, read at the dyn spelling as dyn_method_type reads its result.
+function dyn_param_type(traits: string, name: string, k: i32, s: Scope): typeinfo.Type {
+  for tr in parser.dyn_trait_set("dyn " + traits) {
+    let idx: i32 = trait_req_idx(util.base_type_name(tr), s.trait_reqs);
+    if (idx >= 0) {
+      match (trait_req_sig(s.trait_reqs[idx], name)) {
+        Some(m) => {
+          if (k >= m.params.len()) {
+            return t_unknown("no such parameter");
+          }
+          let p: ast.ParamDecl = m.params[k];
+          let pt: string = dyn_ret_at_spelling(parser.fn_tag_spelling(p.type_name, p.fn_ret, p.fn_param_types), tr, s.trait_reqs[idx].type_params);
+          if (pt.len() == 0 || parser.subst_self(pt, "__dyn") != pt) {
+            return t_unknown("dyn method parameter spells Self");
+          }
+          return s.resolve_type(pt);
+        },
+        None => {}
+      }
+    }
+  }
+  return t_unknown("no method `" + name + "` on `dyn " + traits + "`");
+}
+
 // dyn_ret_at_spelling reads a trait method's declared result at one trait of
 // a dyn spelling: its positional arguments replace the trait's type
 // parameters in order, and each `Name = T` pin replaces `Self::Name`.
@@ -14292,7 +14318,16 @@ function dyn_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, traits: strin
       if (c.args.len() != want) {
         return [dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", want, c.args.len(), "argument"), c.line, c.col)];
       }
-      return [];
+      let out: util.Diag[] = [];
+      let k: i32 = 0;
+      while (k < c.args.len()) {
+        let pt: typeinfo.Type = dyn_param_type(traits, mfa.field, k + 1, s);
+        if (!is_unknown(pt) && !settles_or_assignable(c.args[k], pt, s)) {
+          out = out.append(dg_at("E038", "argument " + util.i32_to_string(k + 1) + " to \"" + mfa.field + "\": expected " + type_label(pt) + ", got " + type_label(check_expr(c.args[k], s)), expr_line(c.args[k]), expr_col(c.args[k])));
+        }
+        k = k + 1;
+      }
+      return out;
     },
     None => {}
   }
